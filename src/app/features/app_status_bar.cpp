@@ -215,6 +215,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         const auto state = lifetime.lock();
         return state && *state == generation && !exitRequested_ &&
             generalSettings_.statusBar.enabled && (action != Action::ShowDesktop || generalSettings_.statusBar.showDesktop) &&
+            (action != Action::MenuForegroundAppName || generalSettings_.statusBar.foregroundAppName) &&
             statusBar_ && IsWindow(owner) &&
             IsWindowVisible(owner) && MonitorFromWindow(owner, MONITOR_DEFAULTTONULL) == monitor &&
             statusBar_->IsInteractionAvailable(monitor);
@@ -238,7 +239,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 });
             }, snowdesktop::SystemCalendarActions{
                 [this](const std::string& date) {
-                    return widgetEngine_ ? widgetEngine_->RuntimeCalendarEvents(date, date) :
+                    return widgetEngine_ ? widgetEngine_->RuntimeCalendarEvents(date, date, true) :
                         std::vector<snowdesktop::calendar::CalendarEvent>{};
                 },
                 [this] {
@@ -285,13 +286,23 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                         return widgetEngine_->RuntimeCalendarSeriesRemove(id,revision);
                     }
                 }, [this](const std::string& from,const std::string& to) {
-                    return widgetEngine_?widgetEngine_->RuntimeCalendarEvents(from,to):
+                    return widgetEngine_?widgetEngine_->RuntimeCalendarEvents(from,to,true):
                         std::vector<snowdesktop::calendar::CalendarEvent>{};
                 }, [this](const std::string& from,const std::string& to) {
                     return widgetEngine_?widgetEngine_->RuntimeCalendarAnnotations(from,to):
                         std::vector<snowdesktop::calendar::DayAnnotation>{};
                 }, [this] {
                     return generalSettings_.calendarDisplay.calendar;
+                }, [this](const std::string& id) {
+                    using snowdesktop::calendar::SubscriptionAction;
+                    using snowdesktop::calendar::SubscriptionResult;
+                    return !exitRequested_ && widgetEngine_ &&
+                        widgetEngine_->RuntimeCalendarSubscription({SubscriptionAction::Refresh,id,{},{}})
+                            == SubscriptionResult::Applied;
+                }, [this](const std::string& id) {
+                    if (exitRequested_ || !widgetEngine_) return std::wstring{};
+                    auto details = widgetEngine_->RuntimeCalendarSubscriptionDetails(id);
+                    return details ? std::move(details->managementUrl) : std::wstring{};
                 }}, [this](std::string_view key, POINT screen) {
                     return statusBar_ && statusBar_->DropTrayIcon(key, screen);
                 }, &uiAnimationScheduler_, dcompDevice_.Get(), dwriteFactory_.Get(),
@@ -302,19 +313,37 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                         false, appearance.widgetBorderWidth * scale, &appearance, false, 0, scale);
                     brushCache_.clear(); brushCacheContext_ = nullptr;
                 });
-        systemPanel_->SetCalendarMenuHandler([this](POINT screen, HWND owner, bool series) -> UINT {
+        systemPanel_->SetCalendarMenuHandler([this](POINT screen, HWND owner, snowdesktop::CalendarMenuKind kind) -> UINT {
             if (exitRequested_) return 0;
             HMENU menu = CreatePopupMenu();
             if (!menu) return 0;
-            AppendMenuW(menu, MF_STRING, 1, _LW(series ? "settings.calendar.editOccurrence" : "settings.calendar.edit"));
-            if (series) AppendMenuW(menu, MF_STRING, 3, _LW("settings.calendar.editSeries"));
-            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(menu, MF_STRING, 2, _LW(series ? "settings.calendar.deleteOccurrence" : "app.settings.delete"));
-            if (series) AppendMenuW(menu, MF_STRING, 4, _LW("settings.calendar.deleteSeries"));
-            PrepareMenuIconsForPoint(screen);
             UINT command = 0;
-            try { command = ShowModernMenu(menu, screen, owner, false, false, nullptr,
-                {}, {}, {}, nullptr, {}, true); }
+            try
+            {
+                PrepareMenuIconsForPoint(screen);
+                const auto append = [&](UINT id, const wchar_t* label, const wchar_t* glyph) {
+                    if (AppendMenuW(menu, MF_STRING, id, label))
+                        SetMenuItemIcon(menu, id, glyph, MenuIconFont::FluentRegular);
+                };
+                if (kind == snowdesktop::CalendarMenuKind::Subscription ||
+                    kind == snowdesktop::CalendarMenuKind::ManagedSubscription)
+                {
+                    append(1, _LW("settings.calendar.refresh"), L"\uF13D");
+                    if (kind == snowdesktop::CalendarMenuKind::ManagedSubscription)
+                        append(2, _LW("settings.calendar.subscriptionOpenManagement"), L"\uF582");
+                }
+                else
+                {
+                    const bool series = kind == snowdesktop::CalendarMenuKind::Series;
+                    append(1, _LW(series ? "settings.calendar.editOccurrence" : "settings.calendar.edit"), L"\uF3DD");
+                    if (series) append(3, _LW("settings.calendar.editSeries"), L"\uF3DD");
+                    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+                    append(2, _LW(series ? "settings.calendar.deleteOccurrence" : "app.settings.delete"), L"\uF34C");
+                    if (series) append(4, _LW("settings.calendar.deleteSeries"), L"\uF34C");
+                }
+                command = ShowModernMenu(menu, screen, owner, false, false, nullptr,
+                    {}, {}, {}, nullptr, {}, true);
+            }
             catch (...) { DestroyMenu(menu); ClearMenuIcons(); throw; }
             DestroyMenu(menu);
             ClearMenuIcons();
@@ -724,6 +753,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             {"statusBar.menu", &Settings::menu, Action::MenuSystem, L"\uF133"}, // apps
             {"statusBar.quickSearch", &Settings::quickSearch, Action::MenuQuickSearch, L"\uF68F"}, // search
             {"statusBar.taskView", &Settings::taskView, Action::MenuTaskView, L"\uE05D"}, // app_recent
+            {"statusBar.foregroundAppName", &Settings::foregroundAppName, Action::MenuForegroundAppName, L"\uF133"}, // apps
             {"statusBar.cpu", &Settings::cpu, Action::MenuCpu, L"\uE4AC"}, // developer_board
             {"statusBar.memory", &Settings::memory, Action::MenuMemory, L"\uE9F3"}, // ram
             {"statusBar.gpu", &Settings::gpu, Action::MenuGpu, L"\uF359"}, // desktop
@@ -741,7 +771,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             {"statusBar.powerControls", &Settings::powerControls, Action::MenuControlCenter, L"\uF60E"}}; // power
         constexpr UINT positionBase = 42000, monitorBase = 42010, scaleBase = 42020;
         constexpr UINT flagBase = 42100, clockBase = 42200, timePositionBase = 42210, controlBase = 42220, inputPanelBase = 42230,
-            controlDisplayBase = 42240, summonOnlyCommand = 42250, revealGestureBase = 42260;
+            controlDisplayBase = 42240, summonOnlyCommand = 42250, revealGestureBase = 42260, appNamePositionBase = 42270;
+        constexpr std::size_t controlFlagsBegin = 13;
         const Settings currentSettings = generalSettings_.statusBar;
         const auto addChoice = [&](HMENU target, UINT command, const wchar_t* label, bool selected, bool disabled = false) {
             std::wstring text = label;
@@ -756,7 +787,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             else if (command == summonOnlyCommand || command == revealGestureBase + 1) glyph = L"\uE5F2"; // eye_20
             else if (command == revealGestureBase) glyph = L"\uF8E5"; // arrow_move_20
             else if (command == clockBase || command == clockBase + 1) glyph = L"\uE24E"; // calendar_ltr_20
-            else if (command == timePositionBase) glyph = L"\uE025"; // align_center_horizontal_20
+            else if (command == appNamePositionBase) glyph = L"\uF8E5"; // arrow_move_20
+            else if (command == timePositionBase || command == appNamePositionBase + 1) glyph = L"\uE025"; // align_center_horizontal_20
             else if (command == timePositionBase + 1) glyph = L"\uE039"; // align_right_20
             SetMenuItemIcon(target, command, glyph, MenuIconFont::FluentRegular);
         };
@@ -775,7 +807,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             { DestroyMenu(child); return static_cast<HMENU>(nullptr); }
             const std::string_view key(label);
             const wchar_t* glyph = L"\uF587"; // options_20
-            if (key == "statusBar.position" || key == "statusBar.timeNotificationPosition")
+            if (key == "statusBar.position" || key == "statusBar.timeNotificationPosition" || key == "statusBar.foregroundAppNamePosition")
                 glyph = L"\uF8E5"; // arrow_move_20
             else if (key == "statusBar.leftItems") glyph = L"\uF133"; // apps_20
             else if (key == "statusBar.information") glyph = L"\uE45F"; // data_usage_20
@@ -789,10 +821,19 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             return child;
         };
         const auto addTimePositionChoices = [&](HMENU target) {
+            if (currentSettings.foregroundAppName && currentSettings.foregroundAppNameCentered) return;
             if (const auto position = submenu(target, "statusBar.timeNotificationPosition"))
             {
                 addChoice(position, timePositionBase, _LW("app.settings.taskbar_center"), !currentSettings.timeNotificationRightAligned);
                 addChoice(position, timePositionBase + 1, _LW("app.dock.right"), currentSettings.timeNotificationRightAligned);
+            }
+        };
+        const auto addAppNamePositionChoices = [&](HMENU target) {
+            if (merged || !currentSettings.foregroundAppName) return;
+            if (const auto position = submenu(target, "statusBar.foregroundAppNamePosition"))
+            {
+                addChoice(position, appNamePositionBase, _LW("statusBar.foregroundAppNameHead"), !currentSettings.foregroundAppNameCentered);
+                addChoice(position, appNamePositionBase + 1, _LW("app.settings.taskbar_center"), currentSettings.foregroundAppNameCentered);
             }
         };
         const auto addTimeChoices = [&](HMENU target, HMENU independentTarget = nullptr) {
@@ -832,14 +873,15 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             // Keep quick settings scoped to the clicked control. The general
             // bar settings remain available through the settings submenu below.
             if (action == Action::MenuControlCenter) addControlChoices(menu);
-            for (std::size_t index = 0; index < std::size(flags); ++index)
-                if (flags[index].context == action && index < 12) addFlag(menu, index);
+            for (std::size_t index = 0; index < controlFlagsBegin; ++index)
+                if (flags[index].context == action) addFlag(menu, index);
+            if (action == Action::MenuForegroundAppName) addAppNamePositionChoices(menu);
             if (action == Action::MenuTime) addTimeChoices(menu);
             if (action == Action::MenuNotifications && !merged) addTimePositionChoices(menu);
             if (action == Action::MenuInputMethod) addInputChoices(menu);
             if (action == Action::MenuControlCenter)
                 if (const auto contents = submenu(menu, "statusBar.controlCenterContent"))
-                    for (std::size_t index = 12; index < std::size(flags); ++index) addFlag(contents, index);
+                    for (std::size_t index = controlFlagsBegin; index < std::size(flags); ++index) addFlag(contents, index);
         }
         HMENU settingsMenu = nullptr;
         HMENU independentDock = nullptr;
@@ -898,7 +940,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 }
             if (!merged) AppendMenuW(settingsMenu, MF_SEPARATOR, 0, nullptr);
             const char* labels[]{"statusBar.barItems", "statusBar.controlCenterContent"};
-            const std::size_t boundaries[]{0, 12, std::size(flags)};
+            const std::size_t boundaries[]{0, controlFlagsBegin, std::size(flags)};
             for (std::size_t group = 0; group < std::size(labels); ++group)
                 if (const auto section = submenu(settingsMenu, labels[group]))
                 {
@@ -908,6 +950,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     }
                     if (group == 0)
                     {
+                        addAppNamePositionChoices(section);
                         addTimeChoices(section, merged ? independentStatus : nullptr);
                         addInputChoices(section);
                         addControlChoices(section);
@@ -980,6 +1023,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             else if (command == inputPanelBase || command == inputPanelBase + 1) bar.inputMethodSystemPanel = command == inputPanelBase + 1;
             else if (command == timePositionBase || command == timePositionBase + 1)
                 bar.timeNotificationRightAligned = command == timePositionBase + 1;
+            else if (!merged && bar.foregroundAppName && (command == appNamePositionBase || command == appNamePositionBase + 1))
+                bar.foregroundAppNameCentered = command == appNamePositionBase + 1;
             else if ((command == controlBase || command == controlBase + 1) && snowdesktop::StatusBarSupportsSystemQuickSettings())
                 bar.controlCenterSystemPanel = command == controlBase + 1;
             else if (command >= controlDisplayBase && command < controlDisplayBase + 3)

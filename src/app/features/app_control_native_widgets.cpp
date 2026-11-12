@@ -352,10 +352,13 @@ bool DesktopApp::ApplyNativeWidgetSettings(const snowdesktop::control_settings::
         if (index < widgets_.size())
         {
             auto& owner = widgets_[index];
-            hoverExpandedWidgetIds_.erase(owner.id);
-            if (NativeKey(patch, "titleBarCollapsed")) hoverExpansionSuppressedWidgetId_ = owner.titleBarCollapsed ? owner.id : L"";
+            if (NativeKey(patch, "titleBarCollapsed"))
+            {
+                widgetHoverExpansion_.erase(owner.id);
+                hoverExpansionSuppressedWidgetId_ = owner.titleBarCollapsed ? owner.id : L"";
+                UpdateHostInputImePosition();
+            }
             if (NativeKey(patch, "titleBarExpandOnHover")) UpdateWidgetHoverExpansion(lastMousePoint_);
-            if (NativeKey(patch, "titleBarCollapsed")) UpdateHostInputImePosition();
             if (dockFolderPopupOpen_ && dockFolderPopupMappingWidgetId_ == owner.id)
             {
                 // The popup is a projection; preserve its file resources and

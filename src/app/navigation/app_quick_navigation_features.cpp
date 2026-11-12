@@ -1055,7 +1055,15 @@ bool DesktopApp::ActivateQuickNavigationListRow(size_t index)
         else CloseQuickNavigationThen([this, path = entry.path]() { LaunchPathWithShortcutPolicy(nullptr, path); });
     }
     else if (row.kind == Kind::ExpandApps) { quickNavigation_->appsExpanded = true; PositionQuickNavigationWindow(); InvalidateQuickNavigationWindow(); }
-    else if (row.kind == Kind::LoadMore) { quickNavigation_->everythingResultLimit += kQuickNavigationEverythingResultBatchSize; RefreshQuickNavigationEverythingResults(); PositionQuickNavigationWindow(); InvalidateQuickNavigationWindow(); }
+    else if (row.kind == Kind::LoadMore)
+    {
+        const bool appsExpanded = quickNavigation_->appsExpanded;
+        quickNavigation_->everythingResultLimit += kQuickNavigationEverythingResultBatchSize;
+        RefreshQuickNavigationEverythingResults();
+        quickNavigation_->appsExpanded = appsExpanded;
+        PositionQuickNavigationWindow();
+        InvalidateQuickNavigationWindow();
+    }
     else
     {
         const auto value = row.kind == Kind::Everything ? quickNavigation_->everythingResults[row.index].path : row.value;
@@ -1118,7 +1126,27 @@ bool DesktopApp::HandleQuickNavigationSearchKey(WPARAM key)
     const auto rows = BuildQuickNavigationListRows();
     if (key == VK_RETURN)
     {
-        if (quickNavigation_->listSelection >= 0 && ActivateQuickNavigationListRow(static_cast<size_t>(quickNavigation_->listSelection))) return true;
+        const size_t selected = static_cast<size_t>(quickNavigation_->listSelection);
+        if (selected < rows.size() && ActivateQuickNavigationListRow(selected))
+        {
+            using Kind = QuickNavigationListRow::Kind;
+            if (rows[selected].kind == Kind::ExpandApps || rows[selected].kind == Kind::LoadMore)
+            {
+                const auto& previous = rows[selected - 1];
+                const auto updatedRows = BuildQuickNavigationListRows();
+                const auto anchor = std::find_if(updatedRows.begin(), updatedRows.end(),
+                    [&previous](const auto& row) {
+                        return row.kind == previous.kind && row.index == previous.index;
+                    });
+                if (anchor != updatedRows.end())
+                {
+                    quickNavigation_->listSelection = static_cast<int>(anchor - updatedRows.begin());
+                    EnsureQuickNavigationKeyboardTargetVisible(
+                        GetQuickNavigationListRowRect(static_cast<size_t>(quickNavigation_->listSelection)));
+                }
+            }
+            return true;
+        }
         for (size_t i = 0; i < rows.size(); ++i) if (rows[i].enabled) { ActivateQuickNavigationListRow(i); break; }
         return true;
     }
@@ -1126,6 +1154,14 @@ bool DesktopApp::HandleQuickNavigationSearchKey(WPARAM key)
     const int count = static_cast<int>(rows.size());
     int next = quickNavigation_->listSelection;
     if (next < 0 && rows.size() > 1 && rows[1].kind == QuickNavigationListRow::Kind::Scope) next = 1;
+    if (key == VK_DOWN && quickNavigation_->everythingSearchPending &&
+        next >= 0 && next < count)
+    {
+        const auto& row = rows[static_cast<size_t>(next)];
+        if (row.kind == QuickNavigationListRow::Kind::Everything &&
+            row.index + 1 == quickNavigation_->everythingResults.size())
+            return true;
+    }
     for (int attempts = 0; attempts < count; ++attempts)
     {
         next = key == VK_DOWN ? (next + 1) % count : (next <= 0 ? count - 1 : next - 1);

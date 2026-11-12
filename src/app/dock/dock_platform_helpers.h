@@ -5,7 +5,6 @@
 #include <limits>
 #include <numeric>
 #include <optional>
-#include <tlhelp32.h>
 #include "dock/dock_process_snapshot.h"
 #include "dock/dock_process_discovery.h"
 #include "dock/dock_window_rules.h"
@@ -240,25 +239,7 @@ using DockProcessParentMap =
 
 inline DockProcessParentMap QueryDockProcessParentMap()
 {
-    DockProcessParentMap parents;
-    const HANDLE snapshot = CreateToolhelp32Snapshot(
-        TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE)
-        return parents;
-
-    PROCESSENTRY32W entry{};
-    entry.dwSize = sizeof(entry);
-    if (Process32FirstW(snapshot, &entry))
-    {
-        do
-        {
-            parents.parents.insert_or_assign(
-                entry.th32ProcessID,
-                entry.th32ParentProcessID);
-        } while (Process32NextW(snapshot, &entry));
-    }
-    CloseHandle(snapshot);
-    return parents;
+    return snowdesktop::dock_process_discovery::Capture();
 }
 
 inline std::vector<std::wstring>

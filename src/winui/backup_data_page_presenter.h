@@ -11,7 +11,7 @@ namespace snowdesktop::winui
  *
  * The presenter performs no file I/O, migration, shell launch, restart or
  * private background work. It only emits typed host requests. Host-published
- * snapshots drive lists, ProgressRing, cancellation state and InfoBar output.
+ * snapshots drive lists, inline progress, cancellation state and InfoBar output.
  */
 class BackupDataPagePresenter final
 {

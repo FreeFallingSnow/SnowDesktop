@@ -112,6 +112,10 @@ void DesktopApp::DrawStaticBackground(
     }
 
     // Widgets
+    const bool fadeOnHover = DesktopWidgetHoverFadeEnabled() &&
+        !dragSession_.HasContext() && !dragDropController_.IsExternalDragActive() &&
+        widgetAction_ == WidgetAction::None;
+    const bool stackIndicatorVisible = IsLuaStackIndicatorVisible();
     for (size_t widgetIndex = 0;
          widgetIndex < widgets_.size();
          ++widgetIndex)
@@ -132,14 +136,20 @@ void DesktopApp::DrawStaticBackground(
         const bool interactionPinned =
             !interactionPinnedWidgetId_.empty() &&
             widgetData.id == interactionPinnedWidgetId_;
+        const bool rollAnimating = IsWidgetHoverExpansionAnimating(widgetData);
         const bool interactionRetained =
-            popupOpen || interactionPinned || luaStackIndicator_.stackId == widgetData.id ||
+            popupOpen || interactionPinned ||
+            (stackIndicatorVisible && luaStackIndicator_.stackId == widgetData.id) ||
+            (rollAnimating && !fadeOnHover) ||
             snowdesktop::widget_visibility_rules::
                 ShouldRetainForKeyboardNavigation(
                     keyboardNavVisualFocus_,
                     keyboardNavInsideWidget_,
                     keyboardNavWidgetIndex_,
                     widgetIndex);
+        const RECT hoverFrame = rollAnimating && fadeOnHover
+            ? GetExpandedWidgetFrameRect(widgetData)
+            : GetDesktopWidgetHoverFrameRect(widgetData, widgetFrame);
         const bool interactionVisible =
             snowdesktop::widget_visibility_rules::ShouldRenderWidget(
                 widgetData.showOnHoverOnly,
@@ -149,12 +159,13 @@ void DesktopApp::DrawStaticBackground(
                 widgetData.selected,
                 HasSelectedFilesInWidget(widgetIndex),
                 interactionRetained,
-                PtInRect(&widgetFrame, lastMousePoint_) != FALSE);
-        const bool desktopSurfaceVisible =
+                PtInRect(&hoverFrame, lastMousePoint_) != FALSE);
+        const bool surfaceAvailable =
             !desktopPassthroughActive_ &&
             snowdesktop::widget_visibility_rules::IsDesktopSurfaceVisible(
                 hiddenMode, widgetData.keepWhenDesktopHidden,
-                hasDesktopBounds, interactionVisible);
+                hasDesktopBounds, true);
+        const bool desktopSurfaceVisible = surfaceAvailable && interactionVisible;
         const bool pageUnavailable =
             !widgetData.gridCell.pageId.empty() &&
             FindGridPage(gridPages_, widgetData.gridCell.pageId) == nullptr;
@@ -201,19 +212,18 @@ void DesktopApp::DrawStaticBackground(
                 dragSession_.SourceList().entries.end(), [&](const DragSourceEntry& entry) {
                     return entry.desktopWidgetIcon && entry.widgetId == widgetData.id;
                 });
-        const bool presentWidgetSurface =
+        const bool canPresentWidget =
             snowdesktop::widget_composition_layer_rules::
                 ShouldPresentWidgetSurface(
-                    desktopSurfaceVisible, previewSourceHidden || iconEntranceDragged);
-        if (HasDesktopWidgetComposition(widgetData.id))
-            SetDesktopWidgetCompositionVisible(
-                widgetData.id, presentWidgetSurface, widgetFrame);
+                    surfaceAvailable, previewSourceHidden || iconEntranceDragged);
+        const bool wantsWidgetSurface = canPresentWidget && interactionVisible;
+        const bool presentWidgetSurface = SyncDesktopWidgetPresentationVisibility(
+            widgetData, widgetFrame, wantsWidgetSurface,
+            canPresentWidget && fadeOnHover && widgetData.showOnHoverOnly);
         if (presentWidgetSurface && !IsGroupedWidget(widgetData) &&
             SyncDesktopWidgetOcclusion(widgetData, widgetFrame))
             continue;
-        if (!desktopSurfaceVisible)
-            continue;
-        if (!presentWidgetSurface)
+        if (!wantsWidgetSurface)
             continue;
 
         // A standalone widget is never painted into the root surface. Create

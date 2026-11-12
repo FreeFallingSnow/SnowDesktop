@@ -1,4 +1,5 @@
 #include "calendar_service.h"
+#include "calendar_subscriptions.h"
 
 #include "common/json_value.h"
 
@@ -268,9 +269,12 @@ std::string TriggerKey(long long absoluteMinute)
 CalendarService::CalendarService(
     std::filesystem::path path, Clock clock)
     : path_(std::move(path)),
+      subscriptions_(std::make_unique<CalendarSubscriptions>(path_.parent_path() / L"calendar-subscriptions")),
       clock_(clock ? std::move(clock) : CurrentLocalNow)
 {
 }
+
+CalendarService::~CalendarService() = default;
 
 CalendarNow CalendarService::CurrentLocalNow()
 {
@@ -311,6 +315,7 @@ std::optional<std::string> CalendarService::AddDays(
 
 bool CalendarService::Load()
 {
+    subscriptions_->Load();
     events_.clear();
     series_.clear();
     selectedDate_ = clock_().date;
@@ -557,8 +562,10 @@ bool CalendarService::ValidateAndNormalize(
     return true;
 }
 
-std::optional<CalendarEvent> CalendarService::EventById(const std::string& id) const
+std::optional<CalendarEvent> CalendarService::EventById(const std::string& id, bool includeSubscriptions) const
 {
+    if (includeSubscriptions && id.starts_with(SubscriptionEventIdPrefix))
+        return subscriptions_->EventById(id);
     for (const auto& event : events_)
         if (event.id == id) return event;
     const auto separator = id.find('/');
@@ -571,7 +578,7 @@ std::optional<CalendarEvent> CalendarService::EventById(const std::string& id) c
 
 std::vector<CalendarEvent> CalendarService::Events(
     const std::string& fromDate,
-    const std::string& toDate) const
+    const std::string& toDate, bool includeSubscriptions) const
 {
     if (!GetDateInfo(fromDate) ||
         !GetDateInfo(toDate) ||
@@ -611,7 +618,29 @@ std::vector<CalendarEvent> CalendarService::Events(
             }
         }
     }
+    if (includeSubscriptions)
+        subscriptions_->AppendEvents(result, fromDate, toDate);
     std::sort(result.begin(), result.end(), EventLess);
+    return result;
+}
+
+std::vector<SubscriptionInfo> CalendarService::Subscriptions() const
+{
+    return subscriptions_->List();
+}
+
+std::optional<SubscriptionDetails> CalendarService::SubscriptionDetailsById(const std::string& id) const
+{
+    return subscriptions_->Details(id);
+}
+
+SubscriptionResult CalendarService::ApplySubscription(SubscriptionCommand command)
+{
+    const auto action = command.action;
+    const auto result = subscriptions_->Apply(std::move(command));
+    if ((action == SubscriptionAction::Edit || action == SubscriptionAction::Remove) &&
+        result == SubscriptionResult::Applied && changedCallback_)
+        changedCallback_("events");
     return result;
 }
 
@@ -676,6 +705,8 @@ MutationResult CalendarService::Update(
     int expectedRevision,
     CalendarEvent event)
 {
+    if (id.starts_with(SubscriptionEventIdPrefix))
+        return { false, id, 0, "read_only" };
     if (const auto separator = id.find('/'); separator != std::string::npos)
     {
         for (auto& series : series_)
@@ -754,6 +785,8 @@ MutationResult CalendarService::Update(
 MutationResult CalendarService::Remove(
     const std::string& id, int expectedRevision)
 {
+    if (id.starts_with(SubscriptionEventIdPrefix))
+        return { false, id, 0, "read_only" };
     if (const auto separator = id.find('/'); separator != std::string::npos)
     {
         for (auto& series : series_)
@@ -1191,6 +1224,8 @@ std::string CalendarService::GenerateId()
 
 void CalendarService::Tick()
 {
+    if (subscriptions_->Tick() && changedCallback_)
+        changedCallback_("events");
     const auto steadyNow =
         std::chrono::steady_clock::now();
     if (nextReminderCheck_.time_since_epoch().count() != 0 &&

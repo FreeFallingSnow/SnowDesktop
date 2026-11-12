@@ -17,10 +17,11 @@ size_t SurfaceOwner(const std::vector<DesktopWidget>& widgets, std::wstring_view
     const MemberDrag* presentation = nullptr);
 std::vector<std::wstring> Members(const DesktopWidget& widget);
 bool Supports(const DesktopWidget& widget, GridSpan span) noexcept;
+// When dragging a member, source is still its owning stack.
 bool CanCombine(const std::vector<DesktopWidget>& widgets, size_t source, size_t target,
-    bool checkCachedSizes = true);
+    bool checkCachedSizes = true, const MemberDrag* memberDrag = nullptr);
 bool Combine(std::vector<DesktopWidget>& widgets, size_t source, size_t target,
-    std::wstring newId);
+    std::wstring newId, const MemberDrag* memberDrag = nullptr);
 void Normalize(std::vector<DesktopWidget>& widgets);
 // Dissolution inherits the wrapper's geometry; no member settings/storage are copied.
 void Dissolve(std::vector<DesktopWidget>& widgets);

@@ -15,6 +15,7 @@
 
 #include <array>
 #include <bit>
+#include <dwmapi.h>
 #include <sstream>
 
 namespace
@@ -25,6 +26,7 @@ constexpr UINT kStackIndicatorMouseLeavePollIntervalMs = 30;
 constexpr UINT_PTR kPopupPresentationRetryTimerId = 2;
 constexpr UINT kPopupPresentationRetryIntervalMs = 100;
 constexpr unsigned kPopupPresentationRetryLimit = 5;
+constexpr UINT kRefreshPopupBoundsMessage = WM_APP + 0x477;
 
 RECT UnionRects(const RECT& first, const RECT& second)
 {
@@ -416,7 +418,7 @@ bool DesktopApp::CreateFloatingPopupWindow()
         kFloatingPopupWindowClassName,
         L"SnowDesktopFloatingPopup",
         WS_POPUP,
-        0, 0, 1, 1,
+        virtualLeft_, virtualTop_, std::max(1, virtualWidth_), std::max(1, virtualHeight_),
         nullptr, nullptr, instance_, this);
     if (!floatingPopupHwnd_)
         return false;
@@ -438,7 +440,7 @@ bool DesktopApp::CreateFloatingPopupWindow()
 
 HRESULT DesktopApp::SyncFloatingPopupCompositionRootZOrder()
 {
-    if (!floatingPopupDcompVisual_)
+    if (!floatingPopupDcompVisual_ || !floatingPopupDcompLiveVisual_)
         return E_UNEXPECTED;
 
     const std::array<IDCompositionVisual2*, 2> bottomToTop{
@@ -456,7 +458,7 @@ HRESULT DesktopApp::SyncFloatingPopupCompositionRootZOrder()
 
     std::array<bool, 2> removedFromRoot{};
     const auto restoreRemovedPrefix = [&](std::size_t end) {
-        IDCompositionVisual2* predecessor = nullptr;
+        IDCompositionVisual2* predecessor = floatingPopupDcompLiveVisual_.Get();
         HRESULT restoreHr = S_OK;
         for (std::size_t index = 0; index < end; ++index)
         {
@@ -503,7 +505,7 @@ HRESULT DesktopApp::SyncFloatingPopupCompositionRootZOrder()
         }
     }
 
-    IDCompositionVisual2* predecessor = nullptr;
+    IDCompositionVisual2* predecessor = floatingPopupDcompLiveVisual_.Get();
     std::array<bool, 2> attachedToRoot{};
     HRESULT addFailure = S_OK;
     for (std::size_t index = 0;
@@ -526,7 +528,7 @@ HRESULT DesktopApp::SyncFloatingPopupCompositionRootZOrder()
 
     if (FAILED(addFailure))
     {
-        predecessor = nullptr;
+        predecessor = floatingPopupDcompLiveVisual_.Get();
         HRESULT restoreHr = S_OK;
         for (std::size_t index = 0;
              index < bottomToTop.size(); ++index)
@@ -574,8 +576,8 @@ void DesktopApp::ResetFloatingPopupCompositionResources()
     // Retire input before discarding the last usable pixels.
     PreserveFloatingPopupDragCapture();
     collectionPopupBackdropCompositor_.HidePopupWindowPair(floatingPopupHwnd_);
-    if (floatingPopupDcompVisual_)
-        floatingPopupDcompVisual_->SetContent(nullptr);
+    if (floatingPopupDcompLiveVisual_)
+        floatingPopupDcompLiveVisual_->SetContent(nullptr);
     floatingPopupDcompSurface_.Reset();
     floatingPopupCompWidth_ = 0;
     floatingPopupCompHeight_ = 0;
@@ -643,9 +645,10 @@ void DesktopApp::DestroyFloatingPopupWindow()
     }
     floatingPopupDropTargetRegistered_ = false;
     ResetFloatingPopupCompositionResources();
+    floatingPopupDcompLiveVisual_.Reset();
     floatingPopupDcompVisual_.Reset();
     floatingPopupDcompTarget_.Reset();
-    floatingPopupWindowBounds_ = {};
+    floatingPopupContentBounds_ = {};
     floatingPopupCollectionRegion_ = {};
     floatingPopupLuaPanelRegion_ = {};
     floatingPopupModalRegion_ = false;
@@ -655,18 +658,11 @@ void DesktopApp::DestroyFloatingPopupWindow()
     floatingPopupHwnd_ = nullptr;
 }
 
-HRESULT DesktopApp::CreateOrResizeFloatingPopupCompositionSurface()
+HRESULT DesktopApp::EnsureFloatingPopupCompositionRoot()
 {
     if (!dcompDevice_ || !floatingPopupHwnd_ ||
         !IsWindow(floatingPopupHwnd_))
         return E_UNEXPECTED;
-
-    RECT client{};
-    GetClientRect(floatingPopupHwnd_, &client);
-    const UINT width = static_cast<UINT>(
-        std::max<LONG>(1, client.right - client.left));
-    const UINT height = static_cast<UINT>(
-        std::max<LONG>(1, client.bottom - client.top));
 
     if (!floatingPopupDcompTarget_)
     {
@@ -678,31 +674,40 @@ HRESULT DesktopApp::CreateOrResizeFloatingPopupCompositionSurface()
     }
     if (!floatingPopupDcompVisual_)
     {
-        HRESULT hr = dcompDevice_->CreateVisual(
-            &floatingPopupDcompVisual_);
-        if (FAILED(hr) || !floatingPopupDcompVisual_)
-            return FAILED(hr) ? hr : E_FAIL;
-        hr = floatingPopupDcompTarget_->SetRoot(
-            floatingPopupDcompVisual_.Get());
+        ComPtr<IDCompositionVisual2> root, live;
+        HRESULT hr = dcompDevice_->CreateVisual(&root);
+        if (SUCCEEDED(hr)) hr = dcompDevice_->CreateVisual(&live);
+        if (SUCCEEDED(hr)) hr = root->AddVisual(live.Get(), TRUE, nullptr);
+        if (SUCCEEDED(hr)) hr = floatingPopupDcompTarget_->SetRoot(root.Get());
         if (FAILED(hr))
             return hr;
+        floatingPopupDcompVisual_ = std::move(root);
+        floatingPopupDcompLiveVisual_ = std::move(live);
     }
+    return S_OK;
+}
+
+HRESULT DesktopApp::CreateOrResizeFloatingPopupCompositionSurface()
+{
+    HRESULT hr = EnsureFloatingPopupCompositionRoot();
+    if (FAILED(hr))
+        return hr;
+    const auto& bounds = floatingPopupContentBounds_;
+    const UINT width = static_cast<UINT>(std::max<LONG>(1, bounds.right - bounds.left));
+    const UINT height = static_cast<UINT>(std::max<LONG>(1, bounds.bottom - bounds.top));
     if (floatingPopupDcompSurface_ &&
         floatingPopupCompWidth_ == width &&
         floatingPopupCompHeight_ == height)
         return S_OK;
 
     ComPtr<IDCompositionSurface> surface;
-    HRESULT hr = dcompDevice_->CreateSurface(
+    hr = dcompDevice_->CreateSurface(
         width, height,
         DXGI_FORMAT_B8G8R8A8_UNORM,
         DXGI_ALPHA_MODE_PREMULTIPLIED,
         &surface);
     if (FAILED(hr) || !surface)
         return FAILED(hr) ? hr : E_FAIL;
-    hr = floatingPopupDcompVisual_->SetContent(surface.Get());
-    if (FAILED(hr))
-        return hr;
     floatingPopupDcompSurface_ = std::move(surface);
     floatingPopupCompWidth_ = width;
     floatingPopupCompHeight_ = height;
@@ -714,7 +719,7 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
     if (graphicsDeviceRecovery_.Pending())
         return false;
     if (!ShouldShowFloatingPopupWindow() ||
-        IsRectEmpty(&floatingPopupWindowBounds_) ||
+        IsRectEmpty(&floatingPopupContentBounds_) ||
         floatingPopupCompositionPaintInProgress_)
         return false;
 
@@ -728,6 +733,7 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
     // Coalesce arriving folder/icons before BeginDraw on the host surface.
     // The animated child keeps its native timeline while only its pixels change.
     RefreshCollectionPopupAnimationContent();
+    const RECT bounds = floatingPopupContentBounds_;
     HRESULT hr = CreateOrResizeFloatingPopupCompositionSurface();
     if (FAILED(hr) || !floatingPopupDcompSurface_)
     {
@@ -759,10 +765,10 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
         D2D1::Matrix3x2F::Translation(
             static_cast<float>(
                 updateOffset.x -
-                floatingPopupWindowBounds_.left),
+                bounds.left),
             static_cast<float>(
                 updateOffset.y -
-                floatingPopupWindowBounds_.top)));
+                bounds.top)));
     context->SetAntialiasMode(
         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     context->Clear(D2D1::ColorF(0, 0, 0, 0));
@@ -783,6 +789,17 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
     {
         RecoverFloatingPopupCompositionFailure(
             L"EndDraw", hr);
+        return false;
+    }
+    // Publish the painted compact surface and its desktop offset together.
+    // Snapshot preparation can commit independently without exposing a new,
+    // unpainted surface or moving the last complete frame.
+    hr = floatingPopupDcompLiveVisual_->SetOffsetX(static_cast<float>(bounds.left));
+    if (SUCCEEDED(hr)) hr = floatingPopupDcompLiveVisual_->SetOffsetY(static_cast<float>(bounds.top));
+    if (SUCCEEDED(hr)) hr = floatingPopupDcompLiveVisual_->SetContent(floatingPopupDcompSurface_.Get());
+    if (FAILED(hr))
+    {
+        RecoverFloatingPopupCompositionFailure(L"Publish live surface", hr);
         return false;
     }
 
@@ -914,46 +931,38 @@ void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
     if (!collectionPopupBackdropCompositor_.IsAvailable())
         return;
 
-    if (IsLuaStackIndicatorVisible())
+    const auto* collection = GetOpenPopupWidget();
+    bool visible = IsLuaStackIndicatorVisible();
+    if (collection && !UsesCollectionPopupFan(*collection))
     {
-        collectionPopupBackdropCompositor_.SetVisualTransform(1.0f, 1.0f, 0.0f, 0.0f);
-        collectionPopupBackdropCompositor_.SetVisible(floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_));
-        collectionPopupBackdropCompositor_.CommitVisualChanges();
-        return;
+        const auto visual = popupAnimation_.GetVisual();
+        const bool animatingNatively = popupAnimationCompositorDriven_ && popupAnimation_.IsAnimating();
+        POINT anchor{(popupRect_.left + popupRect_.right) / 2, (popupRect_.top + popupRect_.bottom) / 2};
+        if (popupHasAnchor_)
+        {
+            anchor.x = std::clamp(popupAnchorPoint_.x, popupRect_.left, popupRect_.right);
+            anchor.y = std::clamp(popupAnchorPoint_.y, popupRect_.top, popupRect_.bottom);
+        }
+        collectionPopupBackdropCompositor_.SetPopupPanelTransform(
+            reinterpret_cast<std::uintptr_t>(&popupAnimation_),
+            visual.scale, visual.visible ? visual.opacity : 0.0f,
+            anchor, animatingNatively);
+        visible = visible || animatingNatively || visual.visible;
     }
-    if (popupAnimationCompositorDriven_ &&
-        popupAnimation_.IsAnimating())
+    if (IsLuaPanelHostedByFloatingWindow())
     {
-        collectionPopupBackdropCompositor_.SetVisible(
-            ShouldShowFloatingPopupWindow() &&
-            floatingPopupHwnd_ &&
-            IsWindowVisible(floatingPopupHwnd_));
-        collectionPopupBackdropCompositor_.CommitVisualChanges();
-        return;
+        const auto visual = luaWidgetPanelAnimation_.GetVisual();
+        const bool animatingNatively = luaWidgetPanelAnimationCompositorDriven_ &&
+            luaWidgetPanelAnimation_.IsAnimating();
+        const POINT anchor = GetLuaWidgetPanelAnimationAnchor(GetLuaWidgetPanelRect());
+        collectionPopupBackdropCompositor_.SetPopupPanelTransform(
+            reinterpret_cast<std::uintptr_t>(&luaWidgetPanelAnimation_),
+            visual.scale, visual.visible ? visual.opacity : 0.0f,
+            anchor, animatingNatively);
+        visible = visible || animatingNatively || visual.visible;
     }
-
-    const auto visual = popupAnimation_.GetVisual();
-    POINT anchor{
-        (popupRect_.left + popupRect_.right) / 2,
-        (popupRect_.top + popupRect_.bottom) / 2,
-    };
-    if (popupHasAnchor_)
-    {
-        anchor.x = std::clamp(
-            popupAnchorPoint_.x, popupRect_.left, popupRect_.right);
-        anchor.y = std::clamp(
-            popupAnchorPoint_.y, popupRect_.top, popupRect_.bottom);
-    }
-    collectionPopupBackdropCompositor_.SetVisualTransform(
-        visual.scale, visual.visible ? visual.opacity : 0.0f,
-        static_cast<float>(
-            anchor.x - floatingPopupWindowBounds_.left),
-        static_cast<float>(
-            anchor.y - floatingPopupWindowBounds_.top));
     collectionPopupBackdropCompositor_.SetVisible(
-        visual.visible && ShouldShowFloatingPopupWindow() &&
-        floatingPopupHwnd_ &&
-        IsWindowVisible(floatingPopupHwnd_));
+        visible && floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_));
     // Explicitly submit the same logical frame as the content. Relying on
     // WUC's implicit commit cycle can leave the glass behind a busy UI thread.
     collectionPopupBackdropCompositor_.CommitVisualChanges();
@@ -963,7 +972,10 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
 {
     snowdesktop::performance::Scope scope("popup", "backdrop.update");
     const DesktopWidget* popup = GetOpenPopupWidget();
-    if (!collectionPopupGlassTheme_ || (popup && UsesCollectionPopupFan(*popup)))
+    const bool collectionGlass = popup && !UsesCollectionPopupFan(*popup);
+    const bool luaGlass = IsLuaPanelHostedByFloatingWindow();
+    const bool stackGlass = IsLuaStackIndicatorVisible();
+    if (!collectionPopupGlassTheme_)
     {
         collectionPopupBackdropCompositor_.Reset();
         return;
@@ -973,7 +985,7 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
         collectionPopupBackdropCompositor_.Reset();
         return;
     }
-    if ((!popup && !IsLuaStackIndicatorVisible()) || IsRectEmpty(&floatingPopupWindowBounds_))
+    if ((!collectionGlass && !luaGlass && !stackGlass) || IsRectEmpty(&floatingPopupContentBounds_))
     {
         collectionPopupBackdropCompositor_.SetVisible(false);
         return;
@@ -991,7 +1003,8 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
     {
         const bool initiallyVisible =
             IsWindowVisible(floatingPopupHwnd_) != FALSE &&
-            popupAnimation_.GetVisual().visible;
+            (stackGlass || (collectionGlass && popupAnimation_.GetVisual().visible) ||
+                (luaGlass && luaWidgetPanelAnimation_.GetVisual().visible));
         if (!collectionPopupBackdropCompositor_.InitializePopup(
                 floatingPopupHwnd_, topmost, initiallyVisible))
         {
@@ -1014,17 +1027,22 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
         zOrderStage, menuZOrderBefore,
         CaptureMenuHostZOrder(floatingPopupHwnd_));
 
-    RECT panel = popup ? GetCollectionPopupRect(*popup) : luaStackIndicator_.bounds;
-    OffsetRect(
-        &panel,
-        -floatingPopupWindowBounds_.left,
-        -floatingPopupWindowBounds_.top);
-    const float cornerRadius = popup ? 18.0f * GetCollectionPopupLayoutMetrics(*popup).scale
-        : static_cast<float>(ScaleWidgetCu(12.0f, GetWidgetCellScale(widgets_[FindWidgetIndexById(luaStackIndicator_.stackId)])));
     collectionPopupBackdropCompositor_.BeginFrame(true);
-    collectionPopupBackdropCompositor_.AddPanel(
-        panel, cornerRadius, collectionPopupBlurRadius_,
-        reinterpret_cast<std::uintptr_t>(this));
+    const auto addPanel = [&](const RECT& panel, float radius, const void* owner) {
+        collectionPopupBackdropCompositor_.AddPanel(
+            panel, radius, collectionPopupBlurRadius_, reinterpret_cast<std::uintptr_t>(owner));
+    };
+    if (collectionGlass)
+        addPanel(GetCollectionPopupRect(*popup), 18.0f * GetCollectionPopupLayoutMetrics(*popup).scale,
+            &popupAnimation_);
+    if (luaGlass)
+        addPanel(GetLuaWidgetPanelRect(), kLuaWidgetPanelCornerRadius, &luaWidgetPanelAnimation_);
+    if (stackGlass)
+    {
+        const auto& stack = widgets_[FindWidgetIndexById(luaStackIndicator_.stackId)];
+        addPanel(luaStackIndicator_.bounds,
+            static_cast<float>(ScaleWidgetCu(12.0f, GetWidgetCellScale(stack))), &luaStackIndicator_);
+    }
     // Include geometry and the current pose in one backdrop transaction.
     collectionPopupBackdropCompositor_.EndFrame(false);
     ApplyCollectionPopupBackdropAnimationFrame();
@@ -1042,7 +1060,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
         StopFloatingPopupOutsideClickMonitor();
         collectionPopupBackdropCompositor_.HidePopupWindowPair(
             floatingPopupHwnd_);
-        floatingPopupWindowBounds_ = {};
+        floatingPopupContentBounds_ = {};
         floatingPopupCollectionRegion_ = {};
         floatingPopupLuaPanelRegion_ = {};
         floatingPopupModalRegion_ = false;
@@ -1061,10 +1079,10 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
         CalculateFloatingPopupWindowBounds();
     if (IsRectEmpty(&nextBounds))
         return;
-    const bool wasVisible =
+    bool wasVisible =
         IsWindowVisible(floatingPopupHwnd_) != FALSE;
     const bool boundsChanged =
-        !EqualRect(&nextBounds, &floatingPopupWindowBounds_);
+        !EqualRect(&nextBounds, &floatingPopupContentBounds_);
 
     RECT nextCollectionRegion = IsLuaStackIndicatorVisible() ? luaStackIndicator_.bounds : RECT{};
     if (IsCollectionPopupHostedByFloatingWindow())
@@ -1090,83 +1108,49 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             &floatingPopupLuaPanelRegion_) ||
         nextModalRegion != floatingPopupModalRegion_;
 
-    floatingPopupWindowBounds_ = nextBounds;
+    if (floatingPopupCompositionPaintInProgress_ && (boundsChanged || regionChanged))
+    {
+        // A Lua draw callback can replace the popup while BeginDraw owns the
+        // surface. Leave its geometry intact until that frame has ended.
+        PostMessageW(floatingPopupHwnd_, kRefreshPopupBoundsMessage, 0, 0);
+        return;
+    }
+
+    floatingPopupContentBounds_ = nextBounds;
     floatingPopupCollectionRegion_ = nextCollectionRegion;
     floatingPopupLuaPanelRegion_ = nextLuaPanelRegion;
     floatingPopupModalRegion_ = nextModalRegion;
 
-    if (boundsChanged)
-    {
-        const auto rebaseAnimationOverlay =
-            [&](UiCompositionAnimationOverlay& overlay) {
-                if (!overlay.active || !overlay.visual ||
-                    overlay.host !=
-                        UiCompositionAnimationHost::FloatingPopup)
-                {
-                    return;
-                }
-                // Overlay bounds stay in desktop coordinates, while their
-                // visual offsets are local to the shared popup HWND. When a
-                // closing popup leaves an opening popup behind, the host
-                // shrinks from A union B to B. Rebase every surviving child
-                // before moving the host so it keeps the same screen position
-                // instead of being shifted outside the new window region.
-                const POINT offset =
-                    snowdesktop::floating_popup_rules::
-                        AnimationVisualOffset(
-                            overlay.bounds, nextBounds);
-                overlay.visual->SetOffsetX(
-                    static_cast<float>(offset.x));
-                overlay.visual->SetOffsetY(
-                    static_cast<float>(offset.y));
-            };
-        rebaseAnimationOverlay(popupAnimationOverlay_);
-        rebaseAnimationOverlay(
-            luaWidgetPanelAnimationOverlay_);
-    }
-
     const bool topmost =
         snowdesktop::floating_popup_rules::ShouldBeTopmost(
             true, shellPopupMenuLayerDepth_);
-    if (!wasVisible || boundsChanged)
+    // The HWND and its glass helper use desktop coordinates. Only a display
+    // topology change can move them. The input region and compact paint
+    // surface still track the actual popup rectangles.
+    const int desktopWidth = std::max(1, virtualWidth_);
+    const int desktopHeight = std::max(1, virtualHeight_);
+    const RECT desktopBounds{
+        virtualLeft_, virtualTop_, virtualLeft_ + desktopWidth, virtualTop_ + desktopHeight};
+    RECT currentWindow{};
+    if (!GetWindowRect(floatingPopupHwnd_, &currentWindow) || !EqualRect(&currentWindow, &desktopBounds))
     {
-        const MenuHostZOrderSnapshot menuZOrderBefore =
-            CaptureMenuHostZOrder(floatingPopupHwnd_);
-        const BOOL positioned = SetWindowPos(
-            floatingPopupHwnd_,
-            topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
-            nextBounds.left + virtualLeft_,
-            nextBounds.top + virtualTop_,
-            std::max<LONG>(
-                1, nextBounds.right - nextBounds.left),
-            std::max<LONG>(
-                1, nextBounds.bottom - nextBounds.top),
-            SWP_NOACTIVATE | SWP_NOOWNERZORDER |
-                (wasVisible && snowdesktop::popup_window_pair_z_order::IsTopmost(
-                    floatingPopupHwnd_) == topmost ? SWP_NOZORDER : 0) |
-                (wasVisible ? SWP_SHOWWINDOW : 0));
-        TraceMenuHostZOrderTransition(
-            positioned
-                ? L"bounds-set-window-pos"
-                : L"bounds-set-window-pos-failed",
-            menuZOrderBefore,
-            CaptureMenuHostZOrder(floatingPopupHwnd_),
-            positioned == FALSE);
-        if (!positioned)
+        if (wasVisible)
+            SuspendFloatingPopupPresentation();
+        wasVisible = false;
+        if (!SetWindowPos(floatingPopupHwnd_, nullptr, virtualLeft_, virtualTop_,
+                desktopWidth, desktopHeight, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER))
         {
-            floatingPopupWindowBounds_ = {};
+            floatingPopupContentBounds_ = {};
             SuspendFloatingPopupPresentation();
             return;
         }
     }
-    else
-    {
+    if (wasVisible)
         ApplyFloatingPopupLayerPolicy();
-    }
 
     const DesktopWidget* collection = GetOpenPopupWidget();
-    const bool backdropRecovery = collectionPopupGlassTheme_ && collection &&
-        !UsesCollectionPopupFan(*collection) &&
+    const bool backdropRecovery = collectionPopupGlassTheme_ &&
+        ((collection && !UsesCollectionPopupFan(*collection)) || IsLuaPanelHostedByFloatingWindow()) &&
         !collectionPopupBackdropCompositor_.IsAvailable();
     const bool refreshContent = refreshStableContent || !wasVisible ||
         boundsChanged || regionChanged || backdropRecovery ||
@@ -1179,13 +1163,9 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     {
         HRGN windowRegion = CreateRectRgn(0, 0, 0, 0);
         bool regionReady = windowRegion != nullptr;
-        auto appendRegion = [&](RECT desktopRect, float radius) {
+        auto appendRegion = [&](const RECT& desktopRect, float radius) {
             if (!windowRegion || IsRectEmpty(&desktopRect))
                 return;
-            OffsetRect(
-                &desktopRect,
-                -floatingPopupWindowBounds_.left,
-                -floatingPopupWindowBounds_.top);
             HRGN added = snowdesktop::popup_round_geometry::CreateWindowFence(
                 desktopRect, radius, 0, static_cast<float>(snowdesktop::flat_glass_rim::kPanelOverdraw));
             if (added)
@@ -1203,13 +1183,13 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             18.f * GetCollectionPopupLayoutMetrics(*popup).scale : 18.f);
         appendRegion(
             floatingPopupLuaPanelRegion_,
-            floatingPopupModalRegion_ ? 0.f : 18.f);
+            floatingPopupModalRegion_ ? 0.f : kLuaWidgetPanelCornerRadius);
         if (!regionReady || !SetWindowRgn(floatingPopupHwnd_, windowRegion, FALSE))
         {
             if (windowRegion) DeleteObject(windowRegion);
             // Retry identical geometry too; failed native clipping must not
             // become a successful cached input region.
-            floatingPopupWindowBounds_ = {};
+            floatingPopupContentBounds_ = {};
             SuspendFloatingPopupPresentation();
             return;
         }
@@ -1234,7 +1214,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     }
 
     if (snowdesktop::floating_popup_rules::ShouldRevealHost(
-            wasVisible, immediatePresent))
+            wasVisible, immediatePresent) && ShouldShowFloatingPopupWindow())
     {
         const MenuHostZOrderSnapshot menuZOrderBefore =
             CaptureMenuHostZOrder(floatingPopupHwnd_);
@@ -1251,6 +1231,11 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             menuZOrderBefore,
             CaptureMenuHostZOrder(floatingPopupHwnd_),
             positioned == FALSE);
+        if (!positioned)
+        {
+            SuspendFloatingPopupPresentation();
+            return;
+        }
         ApplyCollectionPopupBackdropAnimationFrame();
         wchar_t message[224]{};
         wsprintfW(
@@ -1440,6 +1425,9 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
             static_cast<std::uint32_t>(wp),
             std::bit_cast<std::uint64_t>(lp));
         return 0;
+    case kRefreshPopupBoundsMessage:
+        UpdateFloatingPopupWindowBounds(true);
+        return 0;
     case WM_NCHITTEST:
         return ShouldShowFloatingPopupWindow()
             ? HTCLIENT : HTTRANSPARENT;
@@ -1610,13 +1598,8 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         handlingFloatingPopupInput_ = false;
         return 0;
     case WM_DPICHANGED:
-        // This reusable no-activate host is positioned in physical desktop
-        // pixels by UpdateFloatingPopupWindowBounds. Moving it to a monitor
-        // with another DPI therefore emits WM_DPICHANGED during the owning
-        // SetWindowPos call. Applying the suggested rectangle would scale the
-        // model-owned bounds a second time, while closing here interrupts the
-        // newly published popup. Preserve the content and let the outer bounds
-        // update submit the target monitor's frame after SetWindowPos returns.
+        // The host covers the virtual desktop in physical pixels. Keep the
+        // desktop-coordinate regions instead of applying a DPI-scaled HWND.
         InvalidateFloatingPopupWindow(false);
         return 0;
     case WM_DISPLAYCHANGE:

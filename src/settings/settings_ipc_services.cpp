@@ -16,6 +16,8 @@ bool ValidValue(const GeneralSettings& value)
     return std::find(std::begin(value.language), std::end(value.language), '\0') != std::end(value.language) &&
         value.animationMode == NormalizeMode(value.animationMode) &&
         value.popupAnimationEffect == NormalizePopupEffect(value.popupAnimationEffect) &&
+        value.widgetHoverExpandEffect == NormalizeWidgetHoverEffect(value.widgetHoverExpandEffect) &&
+        value.widgetHoverVisibilityEffect == NormalizeWidgetHoverEffect(value.widgetHoverVisibilityEffect) &&
         value.animationSpeed == NormalizeSpeed(value.animationSpeed) &&
         value.animationFrameLimit == NormalizeFrameLimit(value.animationFrameLimit);
 }

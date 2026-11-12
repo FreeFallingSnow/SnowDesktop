@@ -1041,6 +1041,8 @@ public:
                 app_.SyncStatusBar();
             }
             app_.generalSettings_.popupAnimationEffect = general.popupAnimationEffect;
+            app_.generalSettings_.widgetHoverExpandEffect = general.widgetHoverExpandEffect;
+            app_.generalSettings_.widgetHoverVisibilityEffect = general.widgetHoverVisibilityEffect;
             app_.generalSettings_.animationSpeed = general.animationSpeed;
             app_.generalSettings_.animationFrameLimit = general.animationFrameLimit;
             app_.generalSettings_.animationEnergySaver = general.animationEnergySaver;
@@ -1241,7 +1243,11 @@ public:
         // observes a desktop-style preset. Shell request rejection above must
         // still leave both mirrors untouched.
         if (dockCommitted) app_.dockSettings_ = requestedDockSettings;
-        if (generalCommitted) app_.generalSettings_ = snapshot.values.general;
+        if (generalCommitted)
+        {
+            app_.generalSettings_ = snapshot.values.general;
+            app_.ApplyScreenTimeEnabled();
+        }
 
         if (HasSettingsDomain(domains, SettingsDomain::Personalization))
         {
@@ -1605,6 +1611,18 @@ public:
             {
                 return snowdesktop::SettingsActionResult::Failure(
                     _LW("settings.about.link.openFailed"));
+            }
+            break;
+        }
+        case Action::ClearScreenTime:
+        {
+            app_.EnsureScreenTimeTracker();
+            std::string error;
+            if (!app_.screenTime_->Clear(&error))
+            {
+                const auto diagnostic = L"[ScreenTime] Could not clear history: " + Utf8ToWide(error);
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, diagnostic.c_str(), DiagnosticLogLevel::Error);
+                return snowdesktop::SettingsActionResult::Failure(_LW("settings.status.saveFailed"));
             }
             break;
         }
@@ -2223,6 +2241,7 @@ void DesktopApp::LoadGeneralSettingsAndApply()
             InvalidateRect(hwnd_, nullptr, TRUE);
         InvalidateFloatingDockWindow(false);
     }
+    ApplyScreenTimeEnabled();
 }
 
 void DesktopApp::ApplyQuickNavigationAppearance()
@@ -2267,6 +2286,8 @@ void DesktopApp::ApplyCollectionPopupAppearance()
     if (widgetEngine_)
         widgetEngine_->SetPanelTheme(collectionPopupAppearance_);
     ResetLuaWidgetPanelAnimationCache();
+    if (luaWidgetPanelAnimation_.IsAnimating())
+        EnsureUiAnimationFrame();
     UpdateCollectionPopupBackdrop();
     if (GetOpenPopupWidget() || !luaWidgetPanelRequest_.widgetId.empty())
         InvalidateFloatingPopupWindow(true);

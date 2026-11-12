@@ -17,6 +17,7 @@ SnowDesktop's embedded Regular font:
 | `search.svg` | Search 24 Regular + Filled (onboarding quick navigation) |
 | `context-menu.svg` | Text Bullet List Square 24 Regular + Filled |
 | `calendar.svg` | Calendar 24 Regular + Filled |
+| `screen-time.svg` | Data Usage 24 Regular + Filled |
 | `general.svg` | Settings 24 Regular + Filled |
 | `animation-performance.svg` | Filmstrip Play 24 Regular + Filled |
 | `appearance.svg` | Paint Brush 24 Regular + Filled |
@@ -30,7 +31,7 @@ SnowDesktop's embedded Regular font:
 | `desktop.svg` | Desktop 24 Regular + Filled |
 | `desktop-style.svg` | Desktop Edit 24 Regular + Filled |
 | `desktop-layout.svg` | Board 24 Regular + Filled |
-| `collections-folders.svg` | Options 24 Regular + Filled (widget preferences) |
+| `collections-folders.svg` | Toggle Multiple 24 Regular + Filled (widget preferences) |
 | `pages.svg` | Table Multiple 24 Regular + Filled |
 | `categories.svg` | Collections 24 Regular + Filled |
 | `dock.svg` | Panel Bottom 20 Regular + Filled (Dock) |

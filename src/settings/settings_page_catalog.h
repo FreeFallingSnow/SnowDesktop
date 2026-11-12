@@ -60,6 +60,7 @@ constexpr std::string_view SettingsPageTitleKey(SettingsPage page) noexcept
     case SettingsPage::AnimationPerformance: return "settings.nav.animation";
     case SettingsPage::ContextMenu: return "settings.contextMenu.page";
     case SettingsPage::Calendar: return "settings.calendar.page";
+    case SettingsPage::ScreenTime: return "settings.screenTime.page";
     case SettingsPage::DesktopStyle: return "settings.desktopStyle.title";
     case SettingsPage::Dock: case SettingsPage::DockAndTaskbar: return "settings.nav.dock";
     case SettingsPage::StatusBar: return "settings.nav.statusBar";

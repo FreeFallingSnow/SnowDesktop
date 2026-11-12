@@ -21,7 +21,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     LocalizeCallback localize;
     CalendarPageActions actions;
     muxc::StackPanel root, preferences, editor;
-    muxc::Border editorCard{nullptr};
+    muxc::Border editorCard{nullptr}, schedulesCard{nullptr}, subscriptionsCard{nullptr};
     muxc::ToggleSwitch calendarToggle;
     muxc::CheckBox allDay;
     muxc::ComboBox calendarChoice;
@@ -29,9 +29,21 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     SettingRow titleRow, modeRow, scopeRow, dateRow, multipleDatesRow;
     SettingRow intervalRow, weekdaysRow, monthDayRow, endTypeRow, untilRow;
     SettingRow occurrenceRow, allDayRow, startRow, endRow, reminderRow, notesRow, actionsRow;
-    muxc::TextBlock listHeading;
+    muxc::TextBlock listHeading, schedulesEmpty, subscriptionsEmpty;
     muxc::InfoBar scheduleFeedback;
     muxc::ListView list;
+    muxc::StackPanel subscriptionsSection;
+    muxc::TextBlock subscriptionsHeading;
+    muxc::InfoBar subscriptionsFeedback;
+    muxc::ListView subscriptionList;
+    muxc::HyperlinkButton addSubscription;
+    std::vector<calendar::SubscriptionInfo> subscriptions;
+    struct SubscriptionRow
+    {
+        SettingRow setting;
+        muxc::HyperlinkButton refresh;
+    };
+    std::vector<SubscriptionRow> subscriptionRows;
     muxc::TextBox title, notes;
     muxc::CalendarDatePicker date;
     muxc::CalendarDatePicker until, occurrenceDate;
@@ -117,11 +129,13 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         scheduleFeedback.IsOpen(false);
         presenter_controls::BindInfoBarVisibility(scheduleFeedback);
         schedulesSection.Children().Append(scheduleFeedback);
-        muxc::Border schedulesSurface;
-        auto schedules = Card(style, &schedulesSurface);
+        ConfigureEmptyMessage(schedulesEmpty);
+        schedulesSection.Children().Append(schedulesEmpty);
+        auto schedules = Card(style, &schedulesCard);
         root.Children().RemoveAtEnd();
-        schedulesSection.Children().Append(schedulesSurface);
-        schedulesSurface.Padding({0, 0, 0, 0});
+        schedulesSection.Children().Append(schedulesCard);
+        schedulesCard.Padding({0, 0, 0, 0});
+        schedulesCard.Visibility(mux::Visibility::Collapsed);
         list.MaxHeight(320);
         list.SelectionMode(muxc::ListViewSelectionMode::Single);
         list.ItemContainerTransitions(mux::Media::Animation::TransitionCollection());
@@ -134,6 +148,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         editor = Card(style, &editorCard);
         root.Children().RemoveAtEnd();
         schedulesSection.Children().Append(editorCard);
+        BuildSubscriptions(style);
         editorCard.Padding({0, 0, 0, 0});
         editor.Spacing(0);
         title.MaxLength(512); notes.MaxLength(8192);
@@ -303,9 +318,294 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         Click(save, [this] { Save(); });
         Click(remove, [this] { ConfirmDelete(); });
         timer.Interval(std::chrono::seconds(3));
-        auto tick = timer.Tick([this](const auto&, const auto&) { Refresh(false); });
+        auto tick = timer.Tick([this](const auto&, const auto&) {
+            Refresh(false);
+            RefreshSubscriptions();
+        });
         revoke.push_back([c = timer, tick] { c.Tick(tick); });
         Localize();
+    }
+    static void ConfigureEmptyMessage(const muxc::TextBlock& message)
+    {
+        message.FontSize(13);
+        message.Opacity(.72);
+        message.TextWrapping(mux::TextWrapping::Wrap);
+        message.Visibility(mux::Visibility::Collapsed);
+    }
+    static void ShowListOrEmpty(const muxc::Border& card, const muxc::TextBlock& message, bool hasItems)
+    {
+        card.Visibility(hasItems ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        message.Visibility(hasItems ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+    }
+    void BuildSubscriptions(const mux::Style& style)
+    {
+        subscriptionsSection.Spacing(8);
+        root.Children().Append(subscriptionsSection);
+        presenter_controls::ConfigureSettingsHeadingLink(addSubscription);
+        SettingRow heading;
+        heading.Initialize(addSubscription, 0.0);
+        heading.SetControlAlignment(mux::HorizontalAlignment::Right);
+        subscriptionsHeading = heading.label;
+        subscriptionsHeading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        subscriptionsSection.Children().Append(heading.root);
+
+        subscriptionsFeedback.IsClosable(true);
+        subscriptionsFeedback.Severity(muxc::InfoBarSeverity::Warning);
+        presenter_controls::BindInfoBarVisibility(subscriptionsFeedback);
+        subscriptionsSection.Children().Append(subscriptionsFeedback);
+        ConfigureEmptyMessage(subscriptionsEmpty);
+        subscriptionsSection.Children().Append(subscriptionsEmpty);
+        const auto content = Card(style, &subscriptionsCard);
+        root.Children().RemoveAtEnd();
+        subscriptionsSection.Children().Append(subscriptionsCard);
+        subscriptionsCard.Padding({0, 0, 0, 0});
+        content.Spacing(0);
+        subscriptionList.MaxHeight(256);
+        subscriptionList.SelectionMode(muxc::ListViewSelectionMode::None);
+        subscriptionList.ItemContainerTransitions(mux::Media::Animation::TransitionCollection());
+        mux::Automation::AutomationProperties::SetAutomationId(subscriptionList, L"CalendarSubscriptions");
+        mux::Automation::AutomationProperties::SetAutomationId(addSubscription, L"CalendarAddSubscription");
+        content.Children().Append(subscriptionList);
+        Click(addSubscription, [this] { ShowSubscriptionDialog(calendar::SubscriptionAction::Add); });
+    }
+    static void AppendListRow(const muxc::ListView& target, const std::wstring& name, const std::wstring& details)
+    {
+        muxc::StackPanel information;
+        information.Spacing(4);
+        muxc::TextBlock titleText, detailText;
+        titleText.Text(name);
+        titleText.TextWrapping(mux::TextWrapping::Wrap);
+        detailText.Text(details);
+        detailText.FontSize(12);
+        detailText.Opacity(.72);
+        detailText.TextWrapping(mux::TextWrapping::Wrap);
+        information.Children().Append(titleText);
+        information.Children().Append(detailText);
+        muxc::ListViewItem item;
+        item.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        item.ContentTransitions(mux::Media::Animation::TransitionCollection());
+        item.Padding({16, 12, 16, 12});
+        item.Content(information);
+        target.Items().Append(item);
+    }
+    void UpdateSubscriptionRow(SubscriptionRow& row, const calendar::SubscriptionInfo& source)
+    {
+        const auto key = source.status == calendar::SubscriptionStatus::Pending
+            ? "settings.calendar.subscriptionPending"
+            : source.status == calendar::SubscriptionStatus::Current ? "settings.calendar.subscriptionCurrent"
+            : source.hasCache ? "settings.calendar.subscriptionCached" : "settings.calendar.subscriptionFailed";
+        row.setting.SetText(source.name, L(key));
+        row.refresh.IsEnabled(source.status != calendar::SubscriptionStatus::Pending);
+    }
+    void RenderSubscriptions()
+    {
+        subscriptionList.Items().Clear();
+        subscriptionRows.clear();
+        const auto weak = weak_from_this();
+        const auto refreshLabel = L("settings.calendar.refresh");
+        const auto editLabel = L("settings.calendar.subscriptionEdit");
+        const auto removeLabel = L("settings.calendar.subscriptionRemove");
+        for (const auto& source : subscriptions)
+        {
+            auto& row = subscriptionRows.emplace_back();
+            muxc::HyperlinkButton editLink;
+            muxc::HyperlinkButton removeLink;
+            presenter_controls::ConfigureSettingsHeadingLink(row.refresh);
+            presenter_controls::ConfigureSettingsHeadingLink(editLink);
+            presenter_controls::ConfigureSettingsHeadingLink(removeLink);
+            row.refresh.Content(winrt::box_value(refreshLabel));
+            editLink.Content(winrt::box_value(editLabel));
+            removeLink.Content(winrt::box_value(removeLabel));
+            mux::Automation::AutomationProperties::SetName(row.refresh, refreshLabel + L" · " + source.name);
+            mux::Automation::AutomationProperties::SetName(editLink, editLabel + L" · " + source.name);
+            mux::Automation::AutomationProperties::SetName(removeLink, removeLabel + L" · " + source.name);
+            row.refresh.Click([weak, id = source.id](const auto&, const auto&) {
+                if (const auto self = weak.lock())
+                    self->ApplySubscription({calendar::SubscriptionAction::Refresh, id, {}, {}});
+            });
+            editLink.Click([weak, target = source](const auto&, const auto&) {
+                if (const auto self = weak.lock())
+                    self->ShowSubscriptionDialog(calendar::SubscriptionAction::Edit, target);
+            });
+            removeLink.Click([weak, target = source](const auto&, const auto&) {
+                if (const auto self = weak.lock())
+                    self->ShowSubscriptionDialog(calendar::SubscriptionAction::Remove, target);
+            });
+
+            muxc::StackPanel commands;
+            commands.Orientation(muxc::Orientation::Horizontal);
+            commands.Spacing(8);
+            commands.Children().Append(row.refresh);
+            if (actions.subscriptionDetails) commands.Children().Append(editLink);
+            commands.Children().Append(removeLink);
+            row.setting.Initialize(commands, 0.0);
+            row.setting.SetCompactEditor();
+            row.setting.SetControlAlignment(mux::HorizontalAlignment::Right);
+            presenter_controls::StyleSettingsSubrow(row.setting.root, subscriptionRows.size() == 1, 0.0);
+            UpdateSubscriptionRow(row, source);
+            muxc::ListViewItem item;
+            item.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+            item.IsTabStop(false);
+            item.Padding({0});
+            item.Content(row.setting.root);
+            subscriptionList.Items().Append(item);
+        }
+        ShowListOrEmpty(subscriptionsCard, subscriptionsEmpty, !subscriptions.empty());
+    }
+    void RefreshSubscriptions()
+    {
+        const bool available = actions.subscriptions && actions.subscription;
+        subscriptionsSection.Visibility(available ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        if (!available || !active || closed || !hasSnapshot) return;
+        try
+        {
+            auto result = actions.subscriptions(generation);
+            if (!result || *result == subscriptions) return;
+            const bool sameSources = std::ranges::equal(subscriptions, *result, [](const auto& first, const auto& second) {
+                return first.id == second.id && first.name == second.name;
+            });
+            if (sameSources)
+            {
+                for (std::size_t index = 0; index < result->size(); ++index)
+                    if (subscriptions[index] != (*result)[index])
+                        UpdateSubscriptionRow(subscriptionRows[index], (*result)[index]);
+            }
+            subscriptions = std::move(*result);
+            if (!sameSources) RenderSubscriptions();
+        }
+        catch (...) { }
+    }
+    std::wstring SubscriptionError(calendar::SubscriptionResult result) const
+    {
+        switch (result)
+        {
+        case calendar::SubscriptionResult::InvalidLink: return L("settings.calendar.subscriptionInvalidLink");
+        case calendar::SubscriptionResult::InvalidManagementLink: return L("settings.calendar.subscriptionInvalidManagementLink");
+        case calendar::SubscriptionResult::InvalidName: return L("settings.calendar.subscriptionInvalidName");
+        case calendar::SubscriptionResult::Duplicate: return L("settings.calendar.subscriptionDuplicate");
+        case calendar::SubscriptionResult::Limit: return L("settings.calendar.subscriptionLimit");
+        default: return L("settings.calendar.failed");
+        }
+    }
+    void ApplySubscription(calendar::SubscriptionCommand command)
+    {
+        if (!active || closed || !hasSnapshot || !actions.subscription) return;
+        try
+        {
+            const auto result = actions.subscription(generation, std::move(command));
+            subscriptionsFeedback.IsOpen(result != calendar::SubscriptionResult::Applied);
+            if (result != calendar::SubscriptionResult::Applied)
+                subscriptionsFeedback.Message(SubscriptionError(result));
+            RefreshSubscriptions();
+        }
+        catch (...)
+        {
+            subscriptionsFeedback.Message(L("settings.calendar.failed"));
+            subscriptionsFeedback.IsOpen(true);
+        }
+    }
+    winrt::fire_and_forget ShowSubscriptionDialog(calendar::SubscriptionAction action,
+        std::optional<calendar::SubscriptionInfo> target = std::nullopt)
+    {
+        const auto lifetime = shared_from_this();
+        if (!active || closed || !hasSnapshot || dialog || !actions.subscription) co_return;
+        using calendar::SubscriptionAction;
+        const bool adding = action == SubscriptionAction::Add;
+        const bool removing = action == SubscriptionAction::Remove;
+        if (!adding && !target) co_return;
+        const auto session = generation;
+        try
+        {
+            muxc::ContentDialog editorDialog;
+            dialog = editorDialog;
+            editorDialog.XamlRoot(root.XamlRoot());
+            const auto dialogTitle = L(adding ? "settings.calendar.subscriptionAdd" :
+                removing ? "settings.calendar.subscriptionRemove" : "settings.calendar.subscriptionEdit");
+            editorDialog.Title(winrt::box_value(dialogTitle));
+            editorDialog.PrimaryButtonText(adding || removing ? dialogTitle : L("app.settings.apply"));
+            editorDialog.CloseButtonText(L("app.settings.cancel"));
+            editorDialog.DefaultButton(removing ? muxc::ContentDialogButton::Close : muxc::ContentDialogButton::Primary);
+            if (!removing)
+            {
+                std::optional<calendar::SubscriptionDetails> details;
+                if (!adding)
+                {
+                    if (actions.subscriptionDetails) details = actions.subscriptionDetails(session, target->id);
+                    if (!details)
+                    {
+                        dialog = nullptr;
+                        subscriptionsFeedback.Message(L("settings.calendar.failed"));
+                        subscriptionsFeedback.IsOpen(true);
+                        RefreshSubscriptions();
+                        co_return;
+                    }
+                }
+                muxc::StackPanel form;
+                form.Spacing(12);
+                muxc::TextBox name;
+                name.Header(winrt::box_value(L("settings.calendar.subscriptionName")));
+                name.MaxLength(100);
+                muxc::PasswordBox url;
+                url.Header(winrt::box_value(L("settings.calendar.subscriptionLink")));
+                url.MaxLength(4096);
+                muxc::TextBox managementUrl;
+                managementUrl.Header(winrt::box_value(L("settings.calendar.subscriptionManagementLink")));
+                managementUrl.MaxLength(4096);
+                if (details)
+                {
+                    name.Text(details->name);
+                    url.Password(details->url);
+                    managementUrl.Text(details->managementUrl);
+                }
+                muxc::InfoBar error;
+                error.Severity(muxc::InfoBarSeverity::Warning);
+                error.IsClosable(false);
+                presenter_controls::BindInfoBarVisibility(error);
+                form.Children().Append(name);
+                form.Children().Append(url);
+                form.Children().Append(managementUrl);
+                form.Children().Append(error);
+                editorDialog.Content(form);
+                editorDialog.PrimaryButtonClick([this, session, action, id = target ? target->id : std::string{},
+                    name, url, managementUrl, error](const auto&, const auto& args) {
+                    if (closed || !active || generation != session || !actions.subscription) return;
+                    auto result = calendar::SubscriptionResult::Unavailable;
+                    try
+                    {
+                        result = actions.subscription(session,
+                            {action, id, std::wstring{name.Text()}, std::wstring{url.Password()},
+                                std::wstring{managementUrl.Text()}});
+                    }
+                    catch (...) { }
+                    if (result == calendar::SubscriptionResult::Applied) return;
+                    error.Message(SubscriptionError(result));
+                    error.IsOpen(true);
+                    args.Cancel(true);
+                });
+            }
+            else
+                editorDialog.Content(winrt::box_value(target->name));
+            const auto answer = co_await editorDialog.ShowAsync();
+            if (dialog == editorDialog) dialog = nullptr;
+            if (closed || !active || generation != session || answer != muxc::ContentDialogResult::Primary || !actions.subscription)
+                co_return;
+            if (!removing)
+            {
+                subscriptionsFeedback.IsOpen(false);
+                RefreshSubscriptions();
+            }
+            else
+                ApplySubscription({calendar::SubscriptionAction::Remove, target->id, {}, {}});
+        }
+        catch (...)
+        {
+            dialog = nullptr;
+            if (!closed)
+            {
+                subscriptionsFeedback.Message(L("settings.calendar.failed"));
+                subscriptionsFeedback.IsOpen(true);
+            }
+        }
     }
     void Commit()
     {
@@ -329,6 +629,11 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         calendarEnabledRow.SetText(L("settings.calendar.showSecondary"));
         calendarRow.SetText(L("settings.calendar.type"));
         listHeading.Text(L("settings.calendar.events"));
+        schedulesEmpty.Text(L("settings.calendar.empty"));
+        subscriptionsHeading.Text(L("settings.calendar.subscriptions"));
+        subscriptionsEmpty.Text(L("settings.calendar.subscriptionEmpty"));
+        addSubscription.Content(winrt::box_value(L("settings.calendar.subscriptionAdd")));
+        RenderSubscriptions();
         titleRow.SetText(L("settings.calendar.title"));
         dateRow.SetText(L("settings.calendar.date"));
         multipleDatesRow.SetText(L("settings.calendar.chooseDates"));
@@ -437,15 +742,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             events = *result; series = *seriesResult; rows.clear(); list.Items().Clear();
             int selected = -1;
             const auto appendRow = [&](const std::string& name, const std::wstring& details) {
-                muxc::StackPanel information; information.Spacing(4);
-                muxc::TextBlock titleText, detailText;
-                titleText.Text(winrt::to_hstring(name)); titleText.TextWrapping(mux::TextWrapping::Wrap);
-                detailText.Text(details); detailText.FontSize(12); detailText.Opacity(.72);
-                detailText.TextWrapping(mux::TextWrapping::Wrap);
-                information.Children().Append(titleText); information.Children().Append(detailText);
-                muxc::ListViewItem item; item.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-                item.ContentTransitions(mux::Media::Animation::TransitionCollection());
-                item.Padding({16, 12, 16, 12}); item.Content(information); list.Items().Append(item);
+                AppendListRow(list, std::wstring{winrt::to_hstring(name)}, details);
             };
             for (size_t i = 0; i < events.size(); ++i)
             {
@@ -468,7 +765,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             }
             list.SelectedIndex(selected); updating = false;
             editingListIndex = selected;
-            listHeading.Text(L(rows.empty() ? "settings.calendar.empty" : "settings.calendar.events"));
+            ShowListOrEmpty(schedulesCard, schedulesEmpty, !rows.empty());
             if (explicitRefresh)
             {
                 SetError(L"");
@@ -836,12 +1133,21 @@ void CalendarPagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
     if (!snapshot.sessionActive) impl_->Deactivate();
 }
 void CalendarPagePresenter::RefreshLocalizedText() { impl_->Localize(); }
-void CalendarPagePresenter::Activate() { if (impl_->closed) return; impl_->active = true; impl_->Refresh(true); impl_->timer.Start(); }
+void CalendarPagePresenter::Activate()
+{
+    if (impl_->closed) return;
+    impl_->active = true;
+    impl_->Refresh(true);
+    impl_->RefreshSubscriptions();
+    impl_->timer.Start();
+}
 void CalendarPagePresenter::Deactivate() { impl_->Deactivate(); }
 void CalendarPagePresenter::Close() { if (impl_) impl_->Close(); }
 void CalendarPagePresenter::RegisterFocusTargets(const FocusRegistrar& registrar) const
 {
     registrar("calendar.secondary", impl_->calendarToggle);
-    registrar("calendar.events", impl_->list);
+    if (impl_->rows.empty()) registrar("calendar.events", impl_->add);
+    else registrar("calendar.events", impl_->list);
+    registrar("calendar.subscriptions", impl_->addSubscription);
 }
 }

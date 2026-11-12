@@ -65,6 +65,9 @@ set(SNOWDESKTOP_SOURCES
     src/dock/dock_running_animation.h
     src/dock/dock_entry_removal.h
     src/app/features/app_status_bar.cpp
+    src/app/features/app_screen_time.cpp
+    src/system/screen_time/screen_time_tracker.cpp
+    src/system/screen_time/screen_time_tracker.h
     src/system/status_bar/status_bar_view.cpp
     src/system/status_bar/status_bar_tooltip.h
     src/system/status_bar/status_bar_view.h
@@ -360,6 +363,8 @@ set(SNOWDESKTOP_SOURCES
     src/steam/steam_widget_multiplayer.cpp
     src/steam/steam_presence.h
     src/system/calendar/calendar_service.cpp
+    src/system/calendar/calendar_ics.cpp
+    src/system/calendar/calendar_subscriptions.cpp
     src/system/calendar/calendar_display.cpp
     src/data/full_data_backup.cpp
     src/data/portable_data_migration.cpp
@@ -431,6 +436,9 @@ set(SNOWDESKTOP_SOURCES
     src/winui/status_bar_page_presenter.h
     src/winui/calendar_page_presenter.cpp
     src/winui/calendar_page_presenter.h
+    src/winui/screen_time_page_presenter.cpp
+    src/winui/screen_time_page_presenter.h
+    src/winui/screen_time_page_actions.h
     src/winui/context_menu_page_presenter.cpp
     src/winui/context_menu_page_presenter.h
     src/winui/animation_performance_page_presenter.cpp
@@ -494,6 +502,7 @@ set(SNOWDESKTOP_SOURCES
     src/platform/foreground_fullscreen.cpp
     src/platform/window_observation.cpp
     src/dock/dock_fullscreen_policy.cpp
+    src/dock/dock_process_discovery.cpp
     src/dock/dock_tray_rules.cpp
     src/dock/dock_layout_settings.cpp
     src/dock/dock_attention_dot.cpp

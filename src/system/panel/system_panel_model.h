@@ -31,6 +31,8 @@ struct SystemCalendarActions
     std::function<std::vector<calendar::CalendarEvent>(const std::string&,const std::string&)> eventsInRange;
     std::function<std::vector<calendar::DayAnnotation>(const std::string&,const std::string&)> secondaryAnnotations;
     std::function<std::string()> secondaryCalendarId;
+    std::function<bool(const std::string&)> refreshSubscription{};
+    std::function<std::wstring(const std::string&)> subscriptionManagementUrl{};
 };
 // Native EDIT children share the calendar panel's layout, draft and lifetime.
 // Bounds and clip are in panel-local DIPs, after scrolling.
@@ -118,6 +120,9 @@ public:
     bool CalendarBack();
     bool CalendarEventCommand(std::string_view nodeId, bool remove, bool wholeSeries=false);
     bool CalendarEventIsSeries(std::string_view nodeId) const;
+    bool CalendarCanRefreshSubscription(std::string_view nodeId) const;
+    std::wstring CalendarSubscriptionManagementUrl(std::string_view nodeId) const;
+    bool RefreshCalendarSubscription(std::string_view nodeId);
     std::vector<SystemCalendarInputField> ControlInputFields() const;
     bool SetControlInput(std::string_view id, std::wstring& text);
     std::string ControlFocusTarget() const;
@@ -138,6 +143,7 @@ private:
     std::map<std::string,std::string> calendarAnnotations_;
     std::map<std::string,calendar::DayAnnotation> calendarDetails_;
     std::map<std::string,calendar::CalendarEvent> calendarEvents_;
+    std::map<std::string,std::string,std::less<>> calendarSubscriptionTargets_;
     std::string calendarNotice_;
     std::shared_ptr<SystemCalendarEditorState> calendarEditor_;
     std::optional<calendar::CalendarSeries> calendarSeriesOriginal_;

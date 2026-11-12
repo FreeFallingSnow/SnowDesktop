@@ -1649,6 +1649,17 @@ function animation.cancelFrame(id) end
 ---@field width integer Decoded pixel width, at most 512.
 ---@field height integer Decoded pixel height, at most 512.
 
+---@class SnowScreenTimeAppDataValue
+---@field name string
+---@field seconds integer
+---@field icon? SnowImageResource Temporary icon handle, when data.system.screenTime.appIcons is supported and the icon is available.
+
+---@class SnowScreenTimeDataValue
+---@field enabled boolean
+---@field totalSeconds integer
+---@field hours integer[] Exactly 24 local-hour buckets.
+---@field apps SnowScreenTimeAppDataValue[] At most 8 apps ranked by today's duration.
+
 ---@class SnowDesktopItemDataValue
 ---@field id string Stable host reference; never an absolute path.
 ---@field title string
@@ -1743,6 +1754,7 @@ data = {}
 ---@overload fun(topic: 'process.summary', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowProcessSummaryDataValue>
 ---@overload fun(topic: 'system.gpu', options?: SnowGpuSubscribeOptions): SnowDataSubscription<SnowGpuDataValue>
 ---@overload fun(topic: 'system.power', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowPowerDataValue>
+---@overload fun(topic: 'system.screenTime', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowScreenTimeDataValue>
 ---@overload fun(topic: 'system.network.status', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowNetworkStatusDataValue>
 ---@overload fun(topic: 'system.network.traffic', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowNetworkTrafficDataValue>
 ---@overload fun(topic: 'system.storage.volumes', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowStorageVolumesDataValue>

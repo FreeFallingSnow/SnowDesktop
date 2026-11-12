@@ -144,4 +144,12 @@ std::optional<RECT> DockAppBars::Approved(const DockAppBarReservation& request) 
         if (window->applied == request && window->appbar.Registered()) return window->appbar.Bounds();
     return {};
 }
+
+std::optional<RECT> DockAppBars::ApprovedArea(HMONITOR monitor) const
+{
+    for (const auto& window : windows_)
+        if (window->applied.monitor == monitor && window->appbar.Registered())
+            return window->appbar.Bounds();
+    return {};
+}
 }

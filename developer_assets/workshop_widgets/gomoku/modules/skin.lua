@@ -1,6 +1,9 @@
 local board = module.require("modules/board.lua")
 
 local skin = {
+    reactionEnter = 480,
+    reactionFadeAt = 2820,
+    reactionDuration = 3100,
     modes = {
         ["local"] = "lua_widget.gomoku.hotseat",
         casual = "lua_widget.gomoku.ai_casual",
@@ -43,7 +46,7 @@ function skin.background()
     local w, h, c = layout.contentWidth(), layout.contentHeight(), palette()
     draw.gradientRect(0, 0, w, h, c.top, c.base, "vertical", 0, 1)
     local unit = math.max(9, math.min(w, h) * 0.044)
-    for row = 0, 4 do
+    for row = 0, 3 do
         for col = 0, 9 do
             local x, y = w - (col + row * 0.5) * unit * 1.55, row * unit * 0.83
             diamond(x, y, unit * 0.76, unit * 0.42, c.trim, 0.22)
@@ -55,14 +58,21 @@ function skin.background()
     end
 end
 
-local function text(value, x, y, width, size, color, bold, centered)
-    local measured = draw.measureText(value, size, 4096, bold).width
-    if measured > width then
-        size = math.max(size * 0.64, size * width / measured)
-        measured = draw.measureText(value, size, 4096, bold).width
+local function text(value, x, y, width, size, color, bold, centered, lineHeight, alpha)
+    local measured = draw.measureText(value, size, 4096, bold)
+    if measured.width > width then
+        size = math.max(size * 0.64, size * width / measured.width)
+        measured = draw.measureText(value, size, 4096, bold)
     end
-    local offset = centered and math.max(0, (width - measured) / 2) or 0
-    draw.text(x + offset, y, value, size, color, width - offset, bold, true)
+    local offset = centered and math.max(0, (width - measured.width) / 2) or 0
+    if lineHeight then
+        local ink = measured.ink
+        local height, top = measured.height, 0
+        if ink and ink.height > 0 then height, top = ink.height, ink.top end
+        y = y + (lineHeight - height) / 2 - top
+    end
+    draw.text(x + offset, y, value, size, color, width - offset, bold, true, nil, alpha)
+    return math.min(width, measured.width)
 end
 
 local function region(id, label, x, y, w, h, radius)
@@ -74,21 +84,52 @@ local function region(id, label, x, y, w, h, radius)
     })
 end
 
-local function stamp(icon, x, y, r)
+local function star(x, y, r, color, alpha)
+    local points = {}
+    for i = 0, 7 do
+        local angle = (i - 2) * math.pi / 4
+        local length = i % 2 == 0 and r or r * 0.28
+        points[i + 1] = {op = i == 0 and "move" or "line",
+            x = x + math.cos(angle) * length, y = y + math.sin(angle) * length}
+    end
+    points[9] = {op = "close"}
+    draw.path(points, {fillColor = color, alpha = alpha})
+end
+
+local function stamp(icon, x, y, r, alpha)
+    local function dot(dx, dy, radius, color)
+        draw.circle(x + r * dx, y + r * dy, r * radius, color, alpha)
+    end
+    local function arc(dx, dy, radius, start, sweep, color)
+        draw.arc(x + r * dx, y + r * dy, r * radius, start, sweep, r * 0.10, color, alpha)
+    end
     if icon == "smile" then
-        draw.circle(x, y, r, 0xEDBA6D)
-        draw.circle(x - r * 0.32, y - r * 0.16, r * 0.10, 0x4D352C)
-        draw.circle(x + r * 0.32, y - r * 0.16, r * 0.10, 0x4D352C)
-        draw.arc(x, y + r * 0.05, r * 0.47, 18, 144, math.max(1, r * 0.12), 0x4D352C)
+        dot(0, 0.07, 0.89, 0xA85E2E)
+        dot(0, -0.04, 0.85, 0xFFCD68)
+        dot(-0.34, -0.57, 0.15, 0xFFF1B7)
+        arc(-0.30, -0.14, 0.14, 195, 150, 0x54352A)
+        arc(0.30, -0.14, 0.14, 195, 150, 0x54352A)
+        dot(-0.51, 0.15, 0.13, 0xF18762)
+        dot(0.51, 0.15, 0.13, 0xF18762)
+        arc(0, 0.02, 0.34, 18, 144, 0x54352A)
     elseif icon == "spark" then
-        draw.circle(x, y, r, 0x6DBE9D)
-        draw.line(x - r * 0.54, y, x + r * 0.54, y, r * 0.16, 0xF5FFDF)
-        draw.line(x, y - r * 0.54, x, y + r * 0.54, r * 0.16, 0xF5FFDF)
-        diamond(x, y, r * 0.40, r * 0.40, 0xF5FFDF, 1)
-    else
-        draw.circle(x - r * 0.34, y + r * 0.1, r * 0.67, 0x252F2B)
-        draw.circle(x + r * 0.36, y - r * 0.14, r * 0.65, 0xF6E3BD)
-        draw.circle(x + r * 0.22, y - r * 0.28, r * 0.13, 0xFFFCED)
+        dot(-0.10, 0.08, 0.72, 0x287858)
+        dot(-0.10, 0.01, 0.68, 0x55BC8D)
+        star(x - r * 0.12, y + r * 0.02, r * 0.56, 0xFFF6C9, alpha)
+        star(x + r * 0.61, y - r * 0.52, r * 0.39, 0xFFD77C, alpha)
+        dot(0.72, 0.40, 0.10, 0x8CF3CA)
+    elseif icon == "pair" then
+        dot(-0.41, 0.28, 0.59, 0x83B19D)
+        dot(-0.41, 0.26, 0.53, 0x263C38)
+        dot(0.40, -0.17, 0.59, 0xA77548)
+        dot(0.40, -0.22, 0.55, 0xFFF0CB)
+        dot(-0.57, 0.14, 0.085, 0xCEE8D8)
+        dot(-0.28, 0.14, 0.085, 0xCEE8D8)
+        dot(0.27, -0.33, 0.085, 0x654736)
+        dot(0.54, -0.33, 0.085, 0x654736)
+        arc(-0.42, 0.24, 0.19, 20, 140, 0xCEE8D8)
+        arc(0.40, -0.22, 0.19, 20, 140, 0x654736)
+        star(x - r * 0.48, y - r * 0.63, r * 0.27, 0xFFD77C, alpha)
     end
 end
 
@@ -96,7 +137,7 @@ local function button(id, label, x, y, w, h, c, primary, icon)
     local r = h * 0.22
     draw.rect(x, y, w, h, primary and c.accent or c.raised, r, interaction.isHovered(id) and 1 or 0.90)
     if not primary then draw.strokeRect(x, y, w, h, c.trim, r, 1, 0.54) end
-    if icon then stamp(icon, x + w / 2, y + h * 0.49, h * 0.32)
+    if icon then stamp(icon, x + w / 2, y + h / 2, h * 0.39, 1)
     else text(label, x + h * 0.12, y + h * 0.20, w - h * 0.24, h * 0.45, primary and c.onAccent or c.ink, true, true) end
     if interaction.isFocused(id) then draw.strokeRect(x, y, w, h, c.gold, r, 2) end
     region(id, label, x, y, w, h, r)
@@ -106,7 +147,7 @@ local function chip(label, x, y, w, h, c, actionable)
     local r = h * 0.42
     draw.rect(x, y, w, h, c.raised, r, 0.94)
     draw.strokeRect(x, y, w, h, actionable and c.accent or c.trim, r, 1, 0.65)
-    text(label, x + 5, y + h * 0.18, w - 10, h * 0.43, c.ink, true, true)
+    text(label, x + h * 0.16, y, w - h * 0.32, h * 0.43, c.ink, true, true, h)
     if actionable then region("rules", label, x, y, w, h, r) end
 end
 
@@ -119,6 +160,16 @@ local function victory(x, y, r, c)
     draw.line(x + r * 0.24, y + r * 0.15, x + r * 0.46, y - r * 0.11, r * 0.10, c.gold)
 end
 
+local grainCurves = {
+    {0.04, 0.14, 0.26, 0.45, 0.69, 0.11, -0.008},
+    {0.32, 0.31, 0.55, 0.77, 0.96, 0.33, 0.013},
+    {0.05, 0.40, 0.17, 0.34, 0.57, 0.42, 0.009},
+    {0.60, 0.46, 0.73, 0.88, 0.95, 0.48, -0.009},
+    {0.05, 0.65, 0.25, 0.57, 0.89, 0.66, -0.016},
+    {0.15, 0.79, 0.41, 0.60, 0.82, 0.77, 0.012},
+    {0.48, 0.89, 0.66, 0.83, 0.96, 0.88, -0.009},
+}
+
 local function boardArt(game, pending, canMove, x, y, side)
     local step = side / (board.size + 1.65)
     local ox, oy = x + step * 1.325, y + step * 1.325
@@ -130,10 +181,14 @@ local function boardArt(game, pending, canMove, x, y, side)
     draw.strokeRect(x + step * 0.48, y + step * 0.48, side - step * 0.96, side - step * 0.96,
         0x8B663E, step * 0.21, 1, 0.28)
 
-    for i = 1, 8 do
-        local grain = y + step * (0.75 + i * 1.69)
-        draw.line(x + step * (0.59 + i % 3 * 0.16), grain, x + side - step * 0.63,
-            grain + step * 0.19, math.max(1, step * 0.052), 0x9F6D42, 0.11)
+    for _, grain in ipairs(grainCurves) do
+        local left, top, control1, control2, right, bottom, bend = table.unpack(grain)
+        draw.path({
+            {op = "move", x = x + side * left, y = y + side * top},
+            {op = "cubic", x1 = x + side * control1, y1 = y + side * (top + bend),
+                x2 = x + side * control2, y2 = y + side * (bottom - bend),
+                x = x + side * right, y = y + side * bottom},
+        }, {strokeColor = 0x99663D, thickness = step * 0.055, alpha = 0.09})
     end
 
     for i = 0, board.size - 1 do
@@ -238,56 +293,97 @@ local function overlay(model, x, y, side, u, c)
     end
 end
 
-function skin.render(model, game, status, canMove)
+local function reactionCard(reaction, width, height, u, c)
+    local age = time.monotonic() - reaction.startedAt
+    if age >= skin.reactionDuration then return end
+    local progress = reaction.animated and math.min(1, math.max(0, age / skin.reactionEnter)) or 1
+    local remaining = 1 - progress
+    local scale = 1 + remaining ^ 2 * (0.8 - 1.18 * remaining)
+    local w = math.min(220 * u, width * 0.84) * scale
+    u = u * scale
+    local h, radius = 48 * u, 11 * u
+    local x, y = (width - w) / 2, (height - h) / 2
+    local fade = 1
+    if reaction.animated and reaction.fade and age >= skin.reactionFadeAt then
+        fade = (skin.reactionDuration - age) / (skin.reactionDuration - skin.reactionFadeAt)
+    end
+    local alpha = math.min(1, 0.25 + progress * 2) * fade
+    local accent = reaction.peer and c.gold or c.accent
+    draw.rect(x, y + 3 * u, w, h, 0x081614, radius, 0.42 * alpha)
+    draw.gradientRect(x, y, w, h, c.raised, c.panel, "horizontal", radius, alpha)
+    draw.strokeRect(x, y, w, h, accent, radius, 1.15 * u, 0.88 * alpha)
+    draw.rect(x + 5 * u, y + 10 * u, 2.2 * u, h - 20 * u, accent, u, alpha)
+
+    local item = skin.reactions[reaction.id]
+    local iconX, iconY = x + 30 * u, y + h / 2
+    if item.stamp then
+        stamp(item.stamp, iconX, iconY, 17 * u, alpha)
+    else
+        draw.rect(iconX - 10 * u, iconY - 8 * u, 20 * u, 15 * u, accent, 5 * u, alpha)
+        draw.line(iconX - 4 * u, iconY + 4 * u, iconX - 7 * u, iconY + 9 * u, 2.5 * u, accent, alpha)
+        for i = -1, 1 do
+            draw.circle(iconX + i * 4.4 * u, iconY - 0.5 * u, 1.25 * u, c.onAccent, alpha)
+        end
+    end
+    if reaction.peer and progress < 1 then
+        star(iconX - (15 + progress * 11) * u, iconY - (11 + progress * 10) * u, 3.3 * u, accent, remaining * alpha)
+        star(iconX + (15 + progress * 9) * u, iconY - (9 + progress * 11) * u, 2.6 * u, accent, remaining * alpha)
+    end
+
+    local speaker = reaction.peer and l10n.tr("lua_widget.gomoku.opponent") or l10n.tr("lua_widget.gomoku.me")
+    local labelX, labelWidth = x + 56 * u, w - 68 * u
+    text(speaker, labelX, y + 7 * u, labelWidth, 11 * u, accent, true, false, 14 * u, alpha)
+    text(l10n.tr(item.label), labelX, y + 21 * u, labelWidth, 18 * u, c.ink, true, false, 21 * u, alpha)
+end
+
+function skin.render(model, game, status, canMove, canGiveFirst)
     local w, h, c = layout.contentWidth(), layout.contentHeight(), palette()
     local u = math.max(0.45, math.min(w, h) / 440)
-    local margin, headerH, buttonH = 18 * u, 87 * u, 32 * u
+    local margin, headerH, buttonH = 18 * u, 56 * u, 32 * u
+    local controlsWidth = w - 2 * margin
     local footer = h - margin - buttonH
     local statusH = 27 * u
-    local side = math.min(w - 2 * margin, footer - statusH - headerH - 15 * u)
+    local side = math.min(controlsWidth, footer - statusH - headerH - 15 * u)
     if side <= 0 then return end
     local x, y = (w - side) / 2, headerH + (footer - statusH - headerH - 15 * u - side) / 2
     local title = l10n.tr("lua_widget.gomoku.name")
     local modeKey = model.aiLevel and skin.modes[model.aiLevel] or "lua_widget.gomoku.hotseat"
     local mode = model.connected and l10n.tr("lua_widget.gomoku.online_game") or l10n.tr(modeKey)
-    text(title, margin, 12 * u, w - margin * 2, 27 * u, c.ink, true)
-    if model.reaction then
-        local reaction = skin.reactions[model.reaction.id]
-        local speaker = model.reaction.peer and l10n.tr("lua_widget.gomoku.opponent") or l10n.tr("lua_widget.gomoku.me")
-        local inset = reaction.stamp and 20 * u or 0
-        if reaction.stamp then stamp(reaction.stamp, margin + 8 * u, 56 * u, 8 * u) end
-        text(speaker .. " · " .. l10n.tr(reaction.label), margin + inset, 47 * u, w * 0.50 - inset, 13 * u, c.accent, true)
-    else
-        text(mode, margin + u, 47 * u, w * 0.51, 13 * u, c.muted, false)
-    end
-
     local canChoose = (not model.connected or model.host) and game.played == 0
     local badgeWidth = math.min(130 * u, w * 0.42)
-    chip(l10n.tr(skin.rules[game.rule]), w - margin - badgeWidth, 27 * u, badgeWidth, 30 * u, c, canChoose)
+    local badgeX = w - margin - badgeWidth
+    local headerY, headerRowHeight = 13 * u, 28 * u
+    local titleWidth = text(title, margin, headerY, (badgeX - margin) * 0.56, 21 * u, c.ink, true, false, headerRowHeight)
+    local modeX = margin + titleWidth + 10 * u
+    text(mode, modeX, headerY, badgeX - modeX - 10 * u, 13 * u, c.muted, false, false, headerRowHeight)
+    chip(l10n.tr(skin.rules[game.rule]), badgeX, headerY, badgeWidth, headerRowHeight, c, canChoose)
     boardArt(game, model.pendingIndex, canMove, x, y, side)
     if model.menu then overlay(model, x, y, side, u, c) end
 
     local statusY = y + side + 7 * u
-    local lineWidth = side - 38 * u
-    draw.rect(x, statusY, side, statusH, c.panel, 7 * u, 0.9)
-    draw.strokeRect(x, statusY, side, statusH, game.winner and c.gold or c.trim, 7 * u, 1, 0.60)
+    local statusIconX = margin + 16 * u
+    draw.rect(margin, statusY, controlsWidth, statusH, c.panel, 7 * u, 0.9)
+    draw.strokeRect(margin, statusY, controlsWidth, statusH, game.winner and c.gold or c.trim, 7 * u, 1, 0.60)
     if game.winner then
-        victory(x + 16 * u, statusY + statusH / 2, 11 * u, c)
+        victory(statusIconX, statusY + statusH / 2, 11 * u, c)
     else
-        draw.circle(x + 16 * u, statusY + statusH / 2, 6 * u, game.turn == "B" and 0x121D1A or 0xFFF0CC)
-        draw.arc(x + 16 * u, statusY + statusH / 2, 6.7 * u, 0, 360, math.max(1, u), c.trim)
+        draw.circle(statusIconX, statusY + statusH / 2, 6 * u, game.turn == "B" and 0x121D1A or 0xFFF0CC)
+        draw.arc(statusIconX, statusY + statusH / 2, 6.7 * u, 0, 360, math.max(1, u), c.trim)
     end
-    text(status, x + 30 * u, statusY + 4 * u, lineWidth, game.winner and 17 * u or 14 * u,
-        game.winner and c.gold or c.ink, true)
+    text(status, margin + 30 * u, statusY, controlsWidth - 38 * u, game.winner and 17 * u or 14 * u,
+        game.winner and c.gold or c.ink, true, false, statusH)
 
     local sync = model.connected and not model.host
     local actions = {
         {id = sync and "sync" or "new",
             label = sync and l10n.tr("lua_widget.gomoku.sync") or
                 (game.winner and l10n.tr("lua_widget.gomoku.play_again") or l10n.tr("lua_widget.gomoku.new"))},
-        {id = model.connected and "chat" or "mode",
-            label = model.connected and l10n.tr("lua_widget.gomoku.chat") or l10n.tr("lua_widget.gomoku.mode")},
     }
+    if canGiveFirst then
+        actions[#actions + 1] = {id = "give-first", label = l10n.tr("lua_widget.gomoku.give_first")}
+    end
+    actions[#actions + 1] = {id = model.connected and "chat" or "mode",
+        label = model.connected and l10n.tr("lua_widget.gomoku.chat") or l10n.tr("lua_widget.gomoku.mode")}
     if model.showSteam and model.state ~= "busy" then
         local label = l10n.tr("lua_widget.gomoku.steam_room")
         if model.connected or model.state == "waitingPeer" then label = l10n.tr("lua_widget.gomoku.local_game")
@@ -295,11 +391,12 @@ function skin.render(model, game, status, canMove)
         actions[#actions + 1] = {id = "steam", label = label}
     end
     local gap = 7 * u
-    local buttonWidth = (w - 2 * margin - gap * (#actions - 1)) / #actions
+    local buttonWidth = (controlsWidth - gap * (#actions - 1)) / #actions
     for i, item in ipairs(actions) do
         button(item.id, item.label, margin + (i - 1) * (buttonWidth + gap), footer, buttonWidth, buttonH, c,
             i == 1 and game.winner and not sync)
     end
+    if model.reaction then reactionCard(model.reaction, w, h, u, c) end
 end
 
 return skin

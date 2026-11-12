@@ -51,37 +51,42 @@ local function nearby(cells, index)
     return false
 end
 
-local function replyScore(cells, index, restricted, strongest)
-    local value = score(cells, index, black, restricted)
+local function replyScore(cells, index, stone, restricted, strongest)
+    local value = score(cells, index, stone, restricted)
     if value > strongest and (not restricted or not board.blackForbidden(cells, index)) then return value end
     return strongest
 end
 
-local function strongestReply(cells, chosen, ranked, restricted)
+local function strongestReply(cells, chosen, ranked, stone, restricted)
     local strongest = 0
     for i = 1, math.min(10, #ranked) do
         local index = ranked[i].index
-        if index ~= chosen then strongest = replyScore(cells, index, restricted, strongest) end
+        if index ~= chosen then strongest = replyScore(cells, index, stone, restricted, strongest) end
     end
     local x, y = board.coordinates(chosen)
     for ny = math.max(1, y - 1), math.min(board.size, y + 1) do
         for nx = math.max(1, x - 1), math.min(board.size, x + 1) do
             local index = (ny - 1) * board.size + nx
-            if cells:byte(index) == empty then strongest = replyScore(cells, index, restricted, strongest) end
+            if cells:byte(index) == empty then strongest = replyScore(cells, index, stone, restricted, strongest) end
         end
     end
     return strongest
 end
 
 function ai.choose(game, level)
-    if game.winner or game.turn ~= "W" then return end
+    if game.winner then return end
+    if game.played == 0 then return (board.count + 1) // 2 end
     local restricted = game.rule == "standard"
+    local attackStone = game.turn == "B" and black or white
+    local defenseStone = game.turn == "B" and white or black
+    local attackRestricted, defenseRestricted = restricted and attackStone == black, restricted and defenseStone == black
     local ranked, block = {}, nil
     for index = 1, board.count do
-        if game.cells:byte(index) == empty and nearby(game.cells, index) then
-            local attack = score(game.cells, index, white, false)
+        if game.cells:byte(index) == empty and nearby(game.cells, index) and
+            (not attackRestricted or not board.blackForbidden(game.cells, index)) then
+            local attack = score(game.cells, index, attackStone, attackRestricted)
             if attack == win then return index end
-            local defense = score(game.cells, index, black, restricted)
+            local defense = score(game.cells, index, defenseStone, defenseRestricted)
             if defense == win then block = block or index end
             local x, y = board.coordinates(index)
             local center = board.size // 2 + 1
@@ -94,7 +99,12 @@ function ai.choose(game, level)
         if a.value == b.value then return a.index < b.index end
         return a.value > b.value
     end)
-    if not ranked[1] then return game.cells:find(".", 1, true) end
+    if not ranked[1] then
+        for index in game.cells:gmatch("()%.") do
+            if not attackRestricted or not board.blackForbidden(game.cells, index) then return index end
+        end
+        return
+    end
     if level == "casual" then
         local choice = 1 + ((game.last or game.played) + game.played) % math.min(4, #ranked)
         return ranked[choice].index
@@ -104,8 +114,8 @@ function ai.choose(game, level)
         for i = 1, math.min(5, #ranked) do
             local candidate = ranked[i]
             local nextGame = board.play(game, candidate.index)
-            if nextGame.winner == "W" then return candidate.index end
-            local reply = strongestReply(nextGame.cells, candidate.index, ranked, restricted)
+            if nextGame.winner == game.turn then return candidate.index end
+            local reply = strongestReply(nextGame.cells, candidate.index, ranked, defenseStone, defenseRestricted)
             local value = candidate.value - reply * 0.9
             if value > bestValue then best, bestValue = candidate.index, value end
         end

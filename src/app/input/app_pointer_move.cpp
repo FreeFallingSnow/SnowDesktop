@@ -307,6 +307,7 @@ void DesktopApp::OnMouseMoveAt(
         GetSystemMetrics(SM_CYDRAG));
     const POINT tracePoint = current;
     if (DockTrayPopupPointerMove(current)) return;
+    if (TryStartWidgetTextDrag(current, wp)) return;
     const auto queueCategorizedDesktopOwner = [this](ScrollingItemWidget* view) {
         DesktopWidget* data = view->GetWidgetData();
         // Single-cell thumbnails read the unfiltered source list, not tab
@@ -381,8 +382,8 @@ void DesktopApp::OnMouseMoveAt(
     }
     UpdateListTitleHover();
     UpdatePopupHover(current);
-    if (UpdateWidgetHoverExpansion(current))
-        PresentPassiveHoverVisualChange();
+    // Let the pointer batch finish before painting the new widget frame.
+    UpdateWidgetHoverExpansion(current);
     if (HandleUsageGuidePointerMove(current)) return;
     if (IsUsageGuideVisible())
         for (const auto bounds : {usageGuidePauseRect_, usageGuideSettingsRect_,
@@ -839,10 +840,7 @@ void DesktopApp::OnMouseMoveAt(
         memberDragModeChanged = false;
         if (mouseDownWidgetIndex_ >= widgets_.size()) return false;
         if (widgets_[mouseDownWidgetIndex_].type != DesktopWidgetType::LuaStack) return true;
-        const bool detach = !rightButtonItemDrag_ &&
-            (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) != 0 &&
-            (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) == 0 &&
-            (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) == 0;
+        const bool detach = WantsLuaStackMemberDrag();
         if (detach == luaStackMemberDrag_.Armed()) return true;
         const std::wstring sourceId = widgets_[mouseDownWidgetIndex_].id;
         const auto* previous = ResolveLuaWidgetContent(&widgets_[mouseDownWidgetIndex_]);
@@ -980,10 +978,25 @@ void DesktopApp::OnMouseMoveAt(
             widgetDockTarget_ = false;
             widgetDockTargetContainer_ = nullptr;
             widgetPreviewSpan_ = widgetDragOriginalSpan_;
-            UpdateWidgetDragPageNavigation(current);
+            widgetPairTargetIndex_ = HitTestWidgetPairTarget(current, owner);
+            const bool overStackTarget = widgetPairTargetIndex_ < widgets_.size();
+            if (overStackTarget)
+            {
+                SetPageNavHotEdgeHover(0);
+                navAutoFlipDir_ = 0;
+                navAutoFlipTick_ = 0;
+            }
+            else UpdateWidgetDragPageNavigation(current);
             widgetPreviewCell_ = ResolveGridSpanDragCell(gridPages_, current,
                 widgetDragAnchor_, widgetDragOriginalSpan_, GetFirstPageGridPage());
-            ShowDragHintWindow(current, _LW("app.lua_stack.release"));
+            if (!overStackTarget)
+                ShowDragHintWindow(current, _LW("app.lua_stack.release"));
+            else if (CanStackLuaWidgets(owner, widgetPairTargetIndex_, &luaStackMemberDrag_))
+            {
+                widgetPairAction_ = pair::Action::CreateLuaStack;
+                ShowDragHintWindow(current, _LW("core.drag.create_lua_stack"), true);
+            }
+            else HideDragHintWindow();
             return;
         }
         const auto movingPayload = snowdesktop::slot_contract::
@@ -1981,8 +1994,8 @@ void DesktopApp::OnMouseMoveAt(
                 const auto& w = widgets_[widgetIndex];
                 if (!w.showOnHoverOnly)
                     continue;
-                const RECT frame =
-                    GetStandaloneWidgetFrameRect(w);
+                const RECT frame = GetDesktopWidgetHoverFrameRect(
+                    w, GetStandaloneWidgetFrameRect(w));
                 const bool pointerWasInside =
                     PtInRect(&frame, oldMouse) != FALSE;
                 const bool pointerIsInside =

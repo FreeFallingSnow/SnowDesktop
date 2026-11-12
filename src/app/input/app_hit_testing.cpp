@@ -1,9 +1,13 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "common/utils.h"
+#include "settings/animation_settings.h"
+#include "widget/view/widget_composition_layer_rules.h"
 #include "widgets/widget_chrome_rules.h"
 #include "widgets/storage_title_bar_layout.h"
 #include "widgets/single_cell_widget_rules.h"
+
+#include <cmath>
 
 // Desktop-item and standalone-widget hit testing.
 
@@ -125,25 +129,71 @@ RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const
         UnionRect(&withHandle, &frame, &handle);
         return withHandle;
     }
-    return snowdesktop::storage_title_bar::VisibleFrame(
-        GetExpandedWidgetFrameRect(widget), IsWidgetCollapsed(widget),
-        ScaleWidgetCu(GetCategorizedWidgetTabHeight(), GetWidgetCellScale(widget)),
-        ScaleWidgetCu(2.0f, GetWidgetCellScale(widget)));
+    const RECT fullFrame = GetExpandedWidgetFrameRect(widget);
+    const float progress = GetWidgetExpansionProgress(widget);
+    if (progress >= 1.0f) return fullFrame;
+    RECT frame = GetCollapsedWidgetFrameRect(widget, fullFrame);
+    frame.bottom += std::lround(static_cast<double>(fullFrame.bottom - frame.bottom) * progress);
+    return frame;
+}
+
+RECT DesktopApp::GetCollapsedWidgetFrameRect(const DesktopWidget& widget, const RECT& fullFrame) const
+{
+    const float scale = GetWidgetCellScale(widget);
+    return snowdesktop::storage_title_bar::VisibleFrame(fullFrame, true,
+        ScaleWidgetCu(GetCategorizedWidgetTabHeight(), scale), ScaleWidgetCu(2.0f, scale));
+}
+
+RECT DesktopApp::GetDesktopWidgetHoverFrameRect(const DesktopWidget& widget, const RECT& visibleFrame) const
+{
+    // A manually folded strip can appear from anywhere in the layout slot.
+    // The visible frame still defines the pixels and interactive controls.
+    if (widget.showOnHoverOnly && !widget.titleBarExpandOnHover &&
+        !IsRectEmpty(&widget.bounds) && CanFoldWidget(widget))
+        return GetExpandedWidgetFrameRect(widget);
+    return visibleFrame;
 }
 
 bool DesktopApp::IsWidgetCollapsed(const DesktopWidget& widget) const
+{
+    return GetWidgetExpansionProgress(widget) <= 0.0f;
+}
+
+bool DesktopApp::CanFoldWidget(const DesktopWidget& widget) const
 {
     return snowdesktop::storage_title_bar::IsCollapsed(widget,
         CurrentPersonalization().scrollableTitleBarOnTop,
         // Keep the target expanded through synchronous drop submission too.
         dragSession_.HasContext(), dragDropController_.IsExternalDragActive(),
-        widgetAction_ == WidgetAction::Move) &&
-        !(widget.titleBarExpandOnHover && hoverExpandedWidgetIds_.contains(widget.id));
+        widgetAction_ == WidgetAction::Move);
 }
 
-bool DesktopApp::UpdateWidgetHoverExpansion(POINT point)
+float DesktopApp::GetWidgetExpansionProgress(const DesktopWidget& widget) const
 {
-    std::unordered_set<std::wstring> expandedIds;
+    if (!CanFoldWidget(widget)) return 1.0f;
+    if (!widget.titleBarExpandOnHover) return 0.0f;
+    const auto expansion = widgetHoverExpansion_.find(widget.id);
+    if (expansion == widgetHoverExpansion_.end()) return 0.0f;
+    if (generalSettings_.widgetHoverExpandEffect != snowdesktop::animation::Roll)
+        return expansion->second.IsInteractive() ? 1.0f : 0.0f;
+    return expansion->second.GetVisual().progress;
+}
+
+bool DesktopApp::IsWidgetHoverExpansionAnimating(const DesktopWidget& widget) const
+{
+    if (generalSettings_.widgetHoverExpandEffect != snowdesktop::animation::Roll ||
+        !widget.titleBarExpandOnHover || !CanFoldWidget(widget))
+        return false;
+    const auto expansion = widgetHoverExpansion_.find(widget.id);
+    return expansion != widgetHoverExpansion_.end() && expansion->second.IsAnimating();
+}
+
+void DesktopApp::UpdateWidgetHoverExpansion(POINT point)
+{
+    namespace motion = snowdesktop::animation;
+    const bool pointerAvailable = !HasActiveContextMenuSession() &&
+        !IsPointOccludedByOpenPopup(point);
+    bool changed = false;
     bool suppressionStillInside = false;
     for (size_t index = 0; index < widgets_.size(); ++index)
     {
@@ -154,13 +204,19 @@ bool DesktopApp::UpdateWidgetHoverExpansion(POINT point)
             customDesktopVisible_ && !desktopPassthroughActive_ &&
             (!desktopIconsHidden_ || widget.keepWhenDesktopHidden) &&
             !IsRectEmptyRect(widget.bounds) && !IsGroupedWidget(widget);
-        if (!eligible) continue;
+        if (!eligible)
+        {
+            changed |= widgetHoverExpansion_.erase(widget.id) != 0;
+            continue;
+        }
 
         const RECT frame = GetExpandedWidgetFrameRect(widget);
         const bool inFrame = PtInRect(&frame, point) != FALSE;
         const bool suppressed = hoverExpansionSuppressedWidgetId_ == widget.id && inFrame;
         suppressionStillInside |= suppressed;
-        const bool wasExpanded = hoverExpandedWidgetIds_.contains(widget.id);
+        const auto existing = widgetHoverExpansion_.find(widget.id);
+        const bool wasExpanded = existing != widgetHoverExpansion_.end() &&
+            existing->second.IsInteractive();
         bool retained = interactionPinnedWidgetId_ == widget.id ||
             popupWidgetIndex_ == index ||
             (mouseDown_ && mouseDownWidgetIndex_ == index) ||
@@ -180,21 +236,114 @@ bool DesktopApp::UpdateWidgetHoverExpansion(POINT point)
                 }
             }
         }
-        const bool pointerAvailable = !HasActiveContextMenuSession() &&
-            !IsPointOccludedByOpenPopup(point);
-        if (snowdesktop::storage_title_bar::ExpandOnHover(eligible, wasExpanded,
-                suppressed, pointerAvailable && inFrame, widget.selected,
-                HasSelectedFilesInWidget(index), retained))
+        const bool expand = snowdesktop::storage_title_bar::ExpandOnHover(eligible, wasExpanded,
+            suppressed, pointerAvailable && inFrame, widget.selected,
+            HasSelectedFilesInWidget(index), retained);
+        if (expand == wasExpanded) continue;
+        changed = true;
+
+        auto& expansion = widgetHoverExpansion_[widget.id];
+        if (hwnd_ && generalSettings_.widgetHoverExpandEffect == motion::Roll &&
+            CanFoldWidget(widget) && motion::RuntimeAnimationsEnabled())
         {
-            expandedIds.insert(widget.id);
+            expansion.Configure(false, motion::RuntimeDurationScale(), true);
+            const auto tick = static_cast<std::uint64_t>(
+                snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
+            if (expand) expansion.Open(tick);
+            else expansion.Close(tick);
         }
+        else if (expand) expansion.ShowImmediately();
+        else expansion.ResetHidden();
     }
     if (!suppressionStillInside) hoverExpansionSuppressedWidgetId_.clear();
-    if (expandedIds == hoverExpandedWidgetIds_) return false;
-    hoverExpandedWidgetIds_ = std::move(expandedIds);
+    changed |= std::erase_if(widgetHoverExpansion_, [this](const auto& entry) {
+        return entry.second.IsHidden() || FindWidgetIndexById(entry.first) >= widgets_.size();
+    }) != 0;
+    if (!changed) return;
+
+    if (!widgetHoverExpansionFrameToken_ &&
+        std::ranges::any_of(widgetHoverExpansion_, [](const auto& entry) {
+            return entry.second.IsAnimating();
+        }))
+    {
+        widgetHoverExpansionFrameToken_ = uiAnimationScheduler_.StartAnimation(
+            snowdesktop::UiAnimationSurface::Desktop,
+            [this](double now) { return AdvanceWidgetHoverExpansion(now); });
+        if (!widgetHoverExpansionFrameToken_)
+            AdvanceWidgetHoverExpansion(0.0, true);
+    }
     InvalidateDragStaticScene();
-    InvalidateRect(hwnd_, nullptr, FALSE);
-    return true;
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+bool DesktopApp::AdvanceWidgetHoverExpansion(double nowMilliseconds, bool finish)
+{
+    namespace layers = snowdesktop::widget_composition_layer_rules;
+    const bool animate = !finish &&
+        generalSettings_.widgetHoverExpandEffect == snowdesktop::animation::Roll &&
+        snowdesktop::animation::RuntimeAnimationsEnabled();
+    const auto tick = static_cast<std::uint64_t>(nowMilliseconds);
+    const bool canPresentChild = animate && !desktopBackdropFullCollectionPending_ &&
+        !widgetGroupTransition_.ShouldDeferPaint() &&
+        !layers::ShouldDeferWidgetSurfaceDraw(compositionPaintInProgress_,
+            IsAnyPersistentDockHostPainting(), floatingPopupCompositionPaintInProgress_,
+            desktopWidgetPointerBatchActive_);
+    bool active = false;
+    bool redraw = false;
+    for (auto& [id, expansion] : widgetHoverExpansion_)
+    {
+        if (!expansion.IsAnimating()) continue;
+        const auto index = FindWidgetIndexById(id);
+        if (index >= widgets_.size())
+        {
+            expansion.ResetHidden();
+            continue;
+        }
+
+        const auto& widget = widgets_[index];
+        if (animate && widget.titleBarExpandOnHover && CanFoldWidget(widget)) expansion.Advance(tick);
+        else if (expansion.IsInteractive()) expansion.ShowImmediately();
+        else expansion.ResetHidden();
+        active |= expansion.IsAnimating();
+
+        // The compositor advances both clips. The scheduler still tracks the
+        // visible hit area and repaints the resting frame at the endpoint.
+        const auto child = desktopWidgetCompositionItems_.find(id);
+        if (expansion.IsAnimating() && child != desktopWidgetCompositionItems_.end() &&
+            child->second.visible && child->second.backdropRegistered &&
+            child->second.hoverRollOpening == expansion.IsInteractive())
+        {
+            const RECT fullFrame = GetExpandedWidgetFrameRect(widget);
+            if (EqualRect(&child->second.bounds, &fullFrame)) continue;
+        }
+        if (canPresentChild && expansion.IsAnimating())
+        {
+            if (child != desktopWidgetCompositionItems_.end() &&
+                child->second.visible && child->second.surface)
+            {
+                const RECT bounds = GetStandaloneWidgetFrameRect(widget);
+                if (EqualRect(&child->second.bounds, &bounds) ||
+                    SyncDesktopWidgetOcclusion(widget, bounds) ||
+                    QueueDesktopWidgetComposition(id))
+                    continue;
+            }
+        }
+
+        RECT dirty = GetExpandedWidgetFrameRect(widget);
+        if (IsRectEmpty(&dirty)) continue;
+        InflateRect(&dirty, layers::kWidgetSurfaceBorderOverdraw,
+            layers::kWidgetSurfaceBorderOverdraw);
+        InvalidateRect(hwnd_, &dirty, FALSE);
+        redraw = true;
+    }
+    std::erase_if(widgetHoverExpansion_, [](const auto& entry) { return entry.second.IsHidden(); });
+    if (redraw && !finish)
+        uiAnimationScheduler_.RequestFramePresentation(&widgetHoverExpansion_, [this] {
+            if (hwnd_ && !compositionPaintInProgress_ && !desktopWidgetPointerBatchActive_)
+                UpdateWindow(hwnd_);
+        });
+    if (!active) widgetHoverExpansionFrameToken_ = 0;
+    return active;
 }
 
 RECT DesktopApp::GetExpandedWidgetFrameRect(const DesktopWidget& widget) const

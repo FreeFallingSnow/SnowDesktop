@@ -64,7 +64,7 @@ public:
     void CancelFocusReturn(HWND origin = nullptr);
     void ObserveForeground(HWND window, DWORD eventTime);
     std::optional<FocusDelivery> TakeFocusReturn(HWND origin, std::uint64_t serial);
-    MenuPopupBindings MenuPopups(HWND target) const;
+    MenuPopupEvidence MenuPopups(HWND target) const;
     void OpenNativeTray();
 private:
     struct Impl;

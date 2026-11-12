@@ -34,18 +34,23 @@
 | [CF-008](#cf-008-插件输出与加载版本) | P2 | 关闭后 JSON 错误、状态过大、热更新版本不明 | 已解决：桥接与实际SDK检查通过 |
 | [CF-009](#cf-009-工具计划的默认资源申报) | P2 | 小范围工具计划的默认额度与低内存排队 | 已解决：资源准入回归通过 |
 | [CF-010](#cf-010-等待结束回执过大) | P2 | 等待结束回执重复输出整份证据 | 已解决：CLI及原件保持回归通过 |
-| [CF-011](#cf-011-独立检查等待共享编辑屏障) | P1 | 已就绪工具检查等待产品开发闭合 | 已确认：共享屏障等待 |
+| [CF-011](#cf-011-独立检查等待共享编辑屏障) | P1 | 已就绪工具检查等待产品开发闭合 | 无宿主执行的闭合计划可拆分；编译/测试仍需闭合依赖 |
 | [CF-012](#cf-012-观察等待默认超时导致模型轮询) | P2 | 观察等待固定超时，造成重复模型调用 | 已解决：通用等待与适配器检查通过 |
-| [CF-013](#cf-013-共享资源的键级编辑与提交粒度不闭合) | P1 | 语言键事务可合并，提交仍以整文件授权 | 已确认：键级提交尚未实现 |
+| [CF-013](#cf-013-共享资源的键级编辑与提交粒度不闭合) | P1 | 语言键事务可合并，提交仍以整文件授权 | 已实现：按资源请求提交精确键 |
 | [CF-014](#cf-014-候选环境失配没有字段差异) | P2 | 环境校验拒绝时缺少具体变化字段 | 待核实：恢复回执改进 |
 | [CF-015](#cf-015-模块计划无法声明临时定向验证) | P2 | 模块计划必须选择正式 CTest，无法只声明临时验证 | 已确认：计划准入限制 |
-| [CF-016](#cf-016-候选回收与人工验收登记存在竞争) | P1 | 已通过候选在人工验收登记前被回收 | 已确认：superseded-runtime 回收 |
+| [CF-016](#cf-016-候选回收与人工验收登记存在竞争) | P1 | 已通过候选在人工验收登记前被回收 | 已实现：计划和进行中验收有界保留 |
 | [CF-017](#cf-017-构建前缺少疑似重复构建提醒) | P2 | 未核对既有产物便提交构建，建议在执行前提示可复用候选 | 待核实：告警建议已登记 |
 | [CF-018](#cf-018-固定内存估算限制编译并行且缺少动态调整) | P2 | 普通与重型编译统一按固定内存成本估算，低申报使整轮维持单路 | 已实现；已有实际4路派发记录，最终修订待后续实际构建观察 |
 | [CF-019](#cf-019-应用全量被扩大为工具回归并阻断产物打包) | P1 | Agent 将应用 full 扩大为 full,tools，混合失败阻止独立通过的产品产物打包 | 已确认：范围已纠正；门禁分离待评估 |
 | [CF-020](#cf-020-验收产物路径拒绝缺少修正示例) | P2 | CandidateRun 产物路径误用后，错误回执未说明 runtime 相对路径 | 已澄清手册；拒绝回执待完善 |
 | [CF-021](#cf-021-协作提交无法直接保存空验收记录) | P2 | 提交规则允许空 verify，协作 commit 仍要求有差异的路径 | 已确认：源码与规则入口不闭合 |
 | [CF-022](#cf-022-冻结前空白检查遗漏未跟踪的新文件) | P2 | 新文件的空白问题到冻结后提交才暴露 | 已确认：冻结前检查覆盖缺口 |
+| [CF-023](#cf-023-dsh-插件精确版本限制阻止宿主升级) | P1 | DSH 宿主升级后，协作插件因精确版本限制拒载 | 已通过本机预检器对照 |
+| [CF-024](#cf-024-同一候选槽的局部续修重编多个宿主模块) | P2 | 局部续修后出现多组宿主源码重新编译 | 已观察重编，触发依赖待核实 |
+| [CF-025](#cf-025-文件观察提前结束) | P2 | 前序候选的文件仍有待提交改动，文件观察已返回可认领 | 已确认，待补充观察条件 |
+| [CF-026](#cf-026-打包脚本变更阻止复验已保存候选) | P2 | 无编译复验要求当前检出的打包脚本与旧候选一致 | 已确认，使用新快照定向执行 |
+| [CF-027](#cf-027-常规页低频状态预览按控件序号定位) | P2 | 共用模块提示插入后，常规页预览在首项中止 | 已解决：深浅预览各导出 13 张 |
 
 
 ### CF-001 持久执行器被父 Job 拒绝
@@ -107,6 +112,8 @@
 
 ### CF-010 等待结束回执过大
 
+- **指定批次的状态回执（2026-11-08）**：Task `dock-desktop-blur` 执行 `scripts/build.bat status -Batch 76b73a4d35c24415adbd5e6dff38c08a` 核对合成器文件归属时，返回包含全局 `tasks` 历史的状态。整对象以 Depth 3 投影后仍被工具截断。后续只投影 `current.batch.participants` 和 `activeCandidates.participants`，核对了候选 `d7c34e793bd344e19c56e369c1e793a7` 的文件归属，未重交构建。建议让指定批次状态提供窄回执并保留完整查询。此项涉及只读 `status`，不改变 `ready-and-wait` 精简结束回执的验证结论。
+
 - **候选 Run 等待的剩余输出（2026-11-07）**：Task `steam-beta-full-20261107` 在复用产品 Run `41840d218870446dba384ebd77214e58` 时，通过 `scripts/build.bat run wait -Task steam-beta-full-20261107 -RunId 6d4726de92b446519cd200994117e5ab -Seconds 60` 在原前台进程等待同快照应用全量。返回码 10 的超时快照也完整输出请求、runner 文件清单和累计阶段；原会话一次工具续接（chunk `9999c5`）被截断。持久原件见 `.build/collaboration/runs/6d4726de92b446519cd200994117e5ab.request.json`、同名 `.json` 和 `.stages.*.jsonl`。源码确认 `build_run.ps1` 的 `run wait` 有 60 秒上限且输出完整投影，与已精简的批次 `ready-and-wait` 路径不同；外层循环未丢弃中间快照，放大了读取成本。P2，候选 Run 入口的剩余缺口已确认（关联 CF-012）。继续观察原 Run，未重复提交构建或测试。后续为 Run 等待提供精简投影和不限时观察，保留原件、退出码与急件行为；未测额外耗时或 token。
 
 - **证据读取的输出边界（2026-11-05）**：Task `lua-widget-stacks` 的 Run `7be495bde67348b5b4b7b88f10ff1d15` 精简结束回执正常；随后 Agent 自行投影整个 `evidence` 并 `ConvertTo-Json -Depth 5`，其中逐测试依赖 observation.issues 重复列出大量 `source-report-not-in-generated-project`，输出仍被截断。此处不是精简 CLI 回归失败，未确认依赖采集根因，也未估填成本。后续只投影 tests 的 test/status/seconds 和 activation 的身份字段；完整依赖证据留在不可变结果中。可考虑提供窄字段证据摘要；未为记录追加构建或复现。
@@ -118,6 +125,14 @@
 - **本轮修复**：CLI 的 finish/wait/ready-and-wait 默认输出精简结束回执，返回状态、计数、最多 16 个失败名称、原始结果路径与恢复入口，保留完整 JSON 原件和退出码。`-FullResult` 取得原输出，直接 PowerShell 调用保持兼容、可选 `-Compact`。回归将核对默认 CLI 路由、完整输出兼容及原证据字节未被改写。
 
 ### CF-011 独立检查等待共享编辑屏障
+
+- **按依赖拆分（2026-11-08）**：Task `collab-dependency-split-20261108` 接入 `plan -Independent`。明确豁免宿主构建和测试的成员通过自身路径检查、核对实际认领后可提前归档。临时 Git 夹具验证了构建锁占用、其他成员无关空白错误、原修订提交与关闭、共同结果发布后仍能读取独立回执，以及路径重叠和未认领时继续等待。使用原批次和现有执行槽，未启动构建或测试 Run。
+
+- **定向修复与验证（2026-11-08）**：Task `collab-priority-fixes-20261108` 在活动编辑批次中通过 `scripts/test.bat list` 读到 34 项，提示配置输入较新；主检出的 CMake 缓存、测试清单和 CTest 日志的哈希与修改时间一致。隔离夹具独占 `build.lock` 时，第4版 `docs/none` 仍归档为 `skipped/not-required`、输入稳定，未创建 Run。清单查询与空计划不再申请构建租约；依赖拆批和闭合旧登记的退役仍按原问题记录。
+
+- **搜索验证计划（2026-11-08）**：Task `quick-search-grid-navigation` 在批次 `90e4819966cb40f28536032064ec8748` 修订 0 查询 `scripts/test.bat list`，返回码 1，原文为 `Shared output busy: batch 90e4819966cb40f28536032064ec8748 / editing / quick-search-grid-navigation:editing.`。通过 CMake 声明和现有 CTest 清单确认 `behavior_search` 后继续原批次。目录查询仍受自身编辑屏障限制，后续待分离查询与配置执行权。
+
+- **本轮目录查询（2026-11-08）**：Task `dock-hover-expand-20261108` 在批次 `d7c34e793bd344e19c56e369c1e793a7` 修订 0 执行 `scripts/test.bat list`，返回码 1，原始回执为 `Shared output busy: batch d7c34e793bd344e19c56e369c1e793a7 / editing / dock-hover-expand-20261108:editing, minimize-scale-easing:finished.`。改查当前 CMake 登记与现有 CTest 清单，再提交原共享批次。只读目录查询仍受编辑屏障限制，未另启构建。后续仍需将已有清单查询与配置、编译执行权分开。
 
 - **空文档批次受构建租约阻塞（2026-11-07）**：Task `geometric-icon-title-drop` 的批次 `17540adb42054997915cb0b3dae40bdc` 修订 0 声明 `docs/none`，轻量检查通过，`ready-and-wait` 随后返回码 1，原文为 `Unexpected occupied build lease; inspect status without clearing registrations.`。当时只读状态显示并行批次 `96150660c82445c883d13f4bb56edd84` 的 Run `01e1c6c6523e4aa5865f2bd47aa41f3e` 正在执行，状态回执未识别锁持有人。源码确认 `build_manager.ps1` 在判定可直接发布空计划前尝试取得 `build.lock`。并行 Run 归档后重开同一文档批次补记证据，产品构建无需重跑。下一步分离空计划发布所需的状态事务与执行租约，或在租约占用时保留前台等待。
 
@@ -131,12 +146,20 @@
 - **影响与边界**：21项工具需求随共享屏障延后；没有测量真实编译重叠率，不推定拆批一定更快。用户选择继续原流程等待，未授权跨聊天提醒。
 - **当前状态**：原共享Run `a98535f880644c2f94aadaa10c46d0ac` 因产品源码/链接失败；续修共享Run `120b0fb34113421090f97daf926ccfc0` 的标准产品构建和激活通过，后续测试编译进程中断。原产物与首次失败保留，工具检查未计通过。
 - **补充证据**：`winx-start-context-menu` 的 begin 也被上述封闭窗口阻塞。Task 于08:42:45Z登记，09:31:30Z确认仍无编辑权，09:57:12Z取得批次 `c1db4f5427724197bb8daf0f87a10589` 修订0；登记起点不能当作等待起点。任务记录位于 `.codex-probes/winx-start-context-menu/collaboration-feedback.md`。真实重叠路径经用户授权交接后由独立输入分支处理；没有新开编译槽或重复构建。
-- **下一步**：按真实输入闭合、目标依赖和槽位复用评估提前冻结独立需求；现有协议仍须共享屏障，不新开编译槽绕过。观察成本按CF-012立即处理；依赖调度改进尚未实现，不记作已解决。
+- **剩余边界**：需要编译或运行测试的计划仍使用共同候选。`New-CandidateSnapshot` 捕获全树，现有测试依赖观测未证明传递输入闭合。此类计划要提前执行，需先能生成只包含闭合改动的候选并复用原槽。历史已关闭空登记的退役问题另见下条。
 - **已结束登记的新证据**：批次 `b7bc697d9cb249b198b046f4a3538a92` 因已完成 Task `task-8071ca0eeffa4e399782658dd729d837` 的空文档计划仍绑定反馈文件旧摘要，拒绝冻结；`recover` 实现明确保留 finished 登记，现有入口无法只退出该闭合成员。用户明确要求当前任务直接处理后，在真实 `state.lock` 排他事务中核对 Task completed、无 ownedFiles、docs/none、无测试/执行者，仅将该成员标为 withdrawn 并保留原计划、check、Task账本及全部其他状态。忽略目录保存原件及 `closed-doc-registration-recovery.json`，不是通用恢复入口已修复。下一步提供闭合空登记的安全退役接口，避免已转移共享文档的变化阻断其他任务。
 
 - **本次等待证据**：Task `remove-tool-tests-20261104` 的 `begin` 等待已封闭批次 `c2e847c94366496eb443eef167f37cf5`，当时编辑者为 `task-d5e30970e8544fdca7461e632368ad5b`。原生工具测试删除不需要产品编译，仍需等待编辑窗口；其两处待删测试源码也有该任务的在编修改，须等归属闭合后接手。沿用原等待 session，不创建候选或重复提交，不估填等待成本。
 
 ### CF-012 观察等待默认超时导致模型轮询
+
+- **新需求登记中断旧候选回执（2026-11-11）**：Task `task-16065c1cdd3846c4a9e782099ce5fcc3` 的 `ready-and-wait` 正在观察批次 `75bb4514cee8497f9c13a6a9603fabc9`、Run `a1e0c45a81d34bce9dc40878df1cb736` 时，收到新需求并用同 ID `begin` 取得未认领文件的批次 `1bef5f6cf6254647bb6c8d6d72520abf`。原观察结束时仅输出 `This participant has a newer active batch. Its old result cannot verify new edits; use the batch ID from the latest begin.`，未返回已经归档的编译失败，须另读原回执；`repair` 又因空的新登记被拒绝。源码分别在 `build_manager.ps1` 和 `build_protocol.ps1` 确认两处校验。已用 `recover -ConfirmStopped` 撤回自己的空登记，并从原失败建立续修 `454c6e5ccd9f493e83a1032124afc88f`；未重交原 Run。待改进：原观察应返回与原批次绑定的只读结果并明确其不适用于新修订，空的新登记应提供明确的续修合入或撤回提示。
+
+- **观察参数误入执行（2026-11-10）**：Task `latest-build-application-tests-20261110` 在捕获 Run `4b62b5afc49a431cb5f108cc19adf0e1` 后误用 `run invoke -RunId <捕获Run>` 等待。CLI 接受了 `-RunId`，但仍走创建逻辑并提交默认 tests/list Run `2de03c8eed2c4f549fbfd38e3285d57e`，额外执行了一次 CMake 配置和清单查询（配置日志记载 17.36 秒），未执行 CTest。既有 Run 使用 `run wait`；后续可让 `invoke` 拒绝 `-RunId` 并指明观察入口，或显式支持只观察。
+
+- **工坊候选的观察提示（2026-11-09）**：Task `task-1723f991a9ca41aab8d21d8250c7cc86`、批次 `1bdd559292384c28b727ffd28415d7b7` 修订 0、Run `71efd003773f460887cd15d19494ee1a`。原 `ready-and-wait` session `43835` 多次交替输出 `Waiting for the collaboration state transaction.` 和同一编译阶段，入队时短暂输出 `resource reason not recorded`。原 Run 通过 Release 和七项测试，全程未重交。下一步仍是按业务状态去重并核对入队原因发布时序。
+
+- **编辑等待的重复提示（2026-11-08）**：Task `minimize-genie-perf` 在前台 `begin` session `99245` 两次收到 `Waiting for batch d7c34e793bd344e19c56e369c1e793a7: editing phase; editing peers dock-hover-expand-20261108.`，两次之间夹有 `Waiting for the collaboration state transaction.`。同一观察随后还短暂收到 Run `7e1ab48b28994011aa1e3496cbd63a7d` 的 `resource reason not recorded`。共享过渡文件确有其他任务改动，等待本身符合协议。继续原进程取得编辑批次，未重复登记或构建。下一步是按业务状态独立去重短时事务提示，并核对 Run 原因字段的发布时序。
 
 - **执行阶段的重复提示（2026-11-07）**：Task `geometric-icon-title-drop`，批次 `dade9af1c5cb479b84e47add78d40877` 修订 0，Run `8e306b73b26f4c0290a13cd8d92247e5`。同一 `ready-and-wait` session `22245` 在执行期间两次输出 `Waiting for the collaboration state transaction.`，并在两段回执中重复显示 `latest stage start compile`。同一 Run 最终通过 Release 构建和三项测试。记录的是观察输出重复，未发现重复提交或重复执行。后续按业务阶段标识与短时事务分别去重，保留实际阶段变化和最终结果。
 
@@ -150,6 +173,14 @@
 - **证据与边界**：已核对本机DSH的 `dsh-tool-call-timeout-policy`：未声明工具 `timeoutMs` 时不设置该层截止。进程内持续观察不调用模型；传输yield续接同一session。测试内部故障兜底仍有界。默认/0、事件到达、显式超时、取消与编辑权不变已通过既有通用/适配器驱动，实际SDK也验证工具注册后没有外层截止。真实用户Host的长期连接及重载仍需安装环境回验。
 
 ### CF-013 共享资源的键级编辑与提交粒度不闭合
+
+- **删除键的续证（2026-11-10）**：Task `task-e8cf5ce885b04bada68577e1cb187fff` 在批次 `fb53e9157ddd4a0b95948a79dec2cc1f` 删除前台应用菜单的两项文案。十个工作区语言文件均已有无关键的顺序差异。源码确认 `resource apply` 原来要求字符串补丁，整路径提交会带上其他差异。本轮让已准备的键接受 `null` 删除，并沿用原事务和精确键提交，保留其他工作区内容。
+
+- **工坊语言键实际提交（2026-11-09）**：Task `task-1723f991a9ca41aab8d21d8250c7cc86` 的批次 `1bdd559292384c28b727ffd28415d7b7` 修订 0 通过验证后，首次 `commit -ResourceRequests` 返回 `[Errno 32] Wait worker lease is occupied`，同请求重试成功为 `ae59bdd0`，十个归属键保存且工作区原件保留。相邻任务先提交后，HEAD 与工作区中新增键顺序不同，产生了无语义差异的剩余 Git diff。下一步核对观察 worker 租约释放时序，并评估如何在保留其他键的前提下消除残留顺序差异。此次只追加实测记录。
+
+- **定向修复与验证（2026-11-08）**：Task `collab-priority-fixes-20261108` 的 `commit -ResourceRequests` 可按已应用回执保存归属键。隔离 Git 仓库中两项任务修改同一语言文件，分别提交时保留其他暂存键、暂存文件和工作区内容。验证覆盖冲突、重开、冻结检查点及两处提交中断，其中回执落盘后的恢复保留随后新增的暂存项。旧回执继续使用审阅后的整文件流程。
+
+- **同一限制的续证（2026-11-08）**：Task `dock-hover-expand-20261108` 在批次 `9bbedfb79f084b298f0640acdb43a87a` 修订 0 通过键级事务写入十种语言，每种六键。Run `35f8cc2a6425485698ba6aa471027412` 的 Release 和 `localization_contract` 通过。源码核对确认冻结后的提交仍只接受整路径归属。对照 HEAD 确认每份文件仅含本任务六键后，在批次 `f833b48c9f43470693e9167a45ea1e0e` 补认领并保存，复用已验证的产品输入。额外批次用于归属补录，键级提交仍待实现。
 
 - **通过验证后的归属补录（2026-11-06）**：Steam 组件联机 Task `task-e8cf97d08e2c41299365e068559911c4` 的十份语言键级事务通过产品 Run `1f09dda6e3014a109f4f87fc21b6f16f` 和 `localization_contract`，但 `Invoke-OwnedCommit` 仍仅检查 `ownedFiles`。本轮对照 HEAD 确认每份目录只有本任务新增的两个键，随后在 `0c2db860530548539070dc84d9a0f75b` 显式补认领并合并保存。已验证的产品输入未改动，本次仅补归属和记录，不重编、不重测。键级提交仍待实现。
 
@@ -166,6 +197,9 @@
 
 ### CF-015 模块计划无法声明临时定向验证
 
+- **日历日程间距的续证（2026-11-10）**：Task `statusbar-calendar-agenda-spacing-20261110` 通过 `scripts/build.bat ready-and-wait` 执行批次 `2a18c215bac54fd8808719e0d00aff72` 修订 0、Run `9e828f4c005c4e79986e3d9ccf5781db`。正式 CTest 未登记原生日历间距场景，计划选择 `behavior_manifest` 核对交付产物，日历间距和滚动由 `scripts/preview.bat native -Component calendar-panel` 验证。该批次的 `.log.product.log` 与 `.log` 分别记录 `Configuring CMake (Release preset)` 和 `Configuring tests`，指向同一候选编译目录，测试阶段配置耗时 5.96 秒。Release、部署契约和日历预览均通过。第二次配置能否复用产品阶段结果待核实，未为反馈再启动构建或测试。
+
+- **状态栏间距的新证据**：2026-11-09，Task `task-6410e174671f4c9f9abd4acce724b74f`、批次 `01855ebdc0de41f4b7bc61c89b82dd77` 修订 0。右侧日期间距已有 `scripts/preview.bat native -Component status-bar` 的生产渲染和窄栏检查，正式 CTest 无对应条目。按 `New-TaskPlan` 的现有准入规则选择 `behavior_manifest` 检查交付产物，间距仍由离屏预览验证。未重复提交已知会拒绝的 `module/none`，未为反馈新增构建或测试。
 - **托盘中键的新证据与处理**：Task `task-3ce5856630f8469dad256d8d3b1e8fde`、批次 `853bba595c0146769419350d2d9179be`，现有 CTest 无托盘回调条目，仍按已确认限制选 `behavior_manifest` 核对运行文件；实际中键消息生成和旧版/v3/v4 封装由忽略任务目录中的临时消息窗口驱动验证。临时项已记录所属任务、生产输入、最小范围和结束条件，不新增永久测试或全量需求；实际结果和第三方应用待验边界另记任务记录。此计划准入限制尚未修改。
 - **VPN 修复的新证据与处理**：2026-11-05，Task `vpn-connect-saved-credentials-20261105`、批次 `e2afef9c94df420f8ef49d7f07d7c445` 修订0。VPN 私有后端仅有宿主消费者，当前正式 CTest 没有 VPN 条目；本任务需要复用生产后端做临时拨号参数检查及真实分流测试连接验证。依据已确认的准入限制，不重复提交已知会拒绝的 `module/none`，计划选择 `behavior_manifest` 核对交付产物，VPN 行为由忽略任务目录中的临时驱动另验。该正式条目只验证部署契约，不能作为 VPN 已验证的证据；不新增永久测试、不展开全量，临时编译仍经标准执行租约。执行结果随本任务记录保存；模块临时验证入口仍待统一。
 - **编译前检查入口的新证据**：Task `winx-start-context-menu`、批次 `687b59aa338844a4bd422c7f3c899789` 修订0，移除自绘 Win+X 兜底后尝试通过 `Enter-BuildEntry` 和 `RunLeasedCommand` 执行临时 `/Zs /W4 /WX` 头文件检查；因本任务仍处 editing 被拒绝，未启动编译。此为通用入口按现有协议正常拒绝，Agent 选用入口不适配，并非执行器故障；现有批次轻检查只接受 `builtin-basic`，尚无手册化的编辑期临时前端检查入口。本次不绕过租约、不反复重试，以后续标准构建覆盖消费者编译，保留该项前置检查未执行记录。建议统一临时检查与当前任务编辑许可、独立输出及执行权的衔接，避免前置检查只能延后。
@@ -174,6 +208,8 @@
 - **下一步**：允许模块声明“产品构建加临时定向验证”及可审查的正式测试豁免理由，继续绑定源码、执行权、命令和结果，避免为满足计划准入选择间接条目或新增永久测试。当前只登记，未修改准入实现，也未为反馈重复构建。
 
 ### CF-016 候选回收与人工验收登记存在竞争
+
+- **定向修复与验证（2026-11-08）**：Task `collab-priority-fixes-20261108` 增加绑定冻结计划和产物清单的保留意图，验收开始时转为 24 小时的进行中保留。PowerShell 7 与 5.1 的隔离候选夹具走过实际验收和清理入口，覆盖登记前、登记后、其他参与者、到期、取消、运行文件修改和实际回收，回收保留原证据。升级前已冻结的运行器仍沿用其原清理策略。
 
 - **回收发生在验收期间（2026-11-07）**：Task `task-a0a57ef0479d44e1b0732f484b0d472c`，批次 `d80a7cfd13c749c2b0a9d2402ba57138` 修订 0，Run `a6a031f21d4645f093e12fafd5c1c968`，验收 `58b3f996e74f48e4b2ae430ebfd4002b`。`acceptance-start` 已绑定保存的主程序，Win10 虚拟机部署和实测完成后，`acceptance-complete -AcceptanceOutcome passed` 返回 `Saved runtime was retired by the retention policy`。`retention.json` 记载 `runtimeRemoved=true`、`reason=superseded-runtime`，后续本机激活为 Run `cfc98b09057d46a0aaa57af82c4ae302`。此例说明成功开始的验收也会被回收打断。协调器记录以取消结束，匹配 SHA-256 的来宾实测回执和原始回收记录保存在 `.codex-probes/win10-menu-compatibility/`。后续应让进行中的验收持有有界保留租约。本次未为归档重复构建或恢复已回收目录。
 
@@ -197,6 +233,8 @@
 - **优先级、状态与下一步**：P2，待核实；仅登记建议，未修改协调器或实施告警。后续核对现有构建预检和复用提示能力，确认最小接入点及可用身份字段，再按实际改动选择定向验证。本次不为反馈新增构建或测试，不操作来源 Run，不改变原全量测试与 Steam 发布任务。
 
 ### CF-018 固定内存估算限制编译并行且缺少动态调整
+
+- **冻结队列的内存申报（2026-11-10）**：Task `calendar-ics-mixed-dns-20261110` 通过 `ready-and-wait` 提交批次 `a6e4c11a3bd047aca4319cdfbbf64449` 修订 0、Run `4fbc0fe964244421b9910adcd9f373b6`。产品仅改动一个 HTTP 实现文件。默认申报 18 CPU / 8704 MiB，Run 的 `resourceAdmission` 记录系统余量 4027 MiB、排队原因 `memory-headroom`。确认仅本任务参与且尚未开始编译后执行 `run cancel`，原回执保留 `cancelled`。对该回执执行 `repair` 返回 `Repair requires a failed/invalidated/interrupted saved attempt, never a live frozen batch.`。同 Task 通过 `begin` 在批次 `ac30398eb4534399b5ad96f79d9c910d` 修订 0 重新认领，按 2 CPU / 2048 MiB 申报。命令边界的动态并发尚未运行，冻结队列仍须通过初始预算准入。后续评估排队前能否依据实际变更预估更低预算，或明确文档化取消后重开流程。未为记录另启构建，额外耗时未单独测量。
 
 - **发现时间与来源**：2026-11-04，CLI / Codex；来源 Task、批次、Run 同CF-017，记录 Task `adaptive-build-parallelism-feedback-20261104`。用户在了解本轮资源配置后指出内存计算过于保守，并要求登记动态并行建议；与CF-009的小范围工具默认申报问题分别跟踪。
 - **源码确认**：`scripts/build_entry.ps1` 的 `Get-CompileResourceJobs` 统一使用 `min(cpuSlots, max(1, floor((memoryMiB - 1024) / 2048)))`；普通测试源码、WinUI和重型模板未在此区分。`Get-DefaultResourceRequest` 根据提交时可用内存计算申报，扣除系统余量后再留25%；各构建命令从冻结预算计算并行度，未按后续可用内存动态调整。`scripts/build_telemetry.ps1` 在Visual Studio入口传入 `--parallel 1`、`UseMultiToolTask=true` 和上述 `MultiProcMaxCount`，覆盖预设项目并行及缓存中的编译默认值。
@@ -251,3 +289,35 @@
 - **来源**：2026-11-06，CLI，Task `task-63ff9aa5c5324bad9c8dd7ff4b445101`，批次 `08a35cc2146c4d2f9578b28b9968d079` 修订 0，Run `db432d2617b34e34aa2b10c52d93be69`。
 - **实测与源码**：冻结前 `git diff --check` 未报告未跟踪的五子棋 `main.lua`。标准 Release 和五项测试通过后，协作提交对认领的新文件执行 `git add --intent-to-add`，随后拒绝提交并报告 `main.lua:226: new blank line at EOF`。原错误已留在任务目录。`Invoke-LightCheck` 的空白检查也调用 `git diff --check`，后续的未跟踪文件枚举仅用于脚本及 JSON 语法检查。
 - **影响与下一步**：先保存已通过构建的宿主改动，再在用户要求调整卡片位置的新编辑修订去掉尾部空行。未为空白单独重编。可在冻结前对认领的未跟踪文本补只读空白检查，使检查覆盖与提交一致。当前未修改检查器。
+
+### CF-023 DSH 插件精确版本限制阻止宿主升级
+
+- **来源**：2026-11-10，用户反馈，Task `dsh-plugin-compat`，批次 `d054afdc50304618ae146a73f22c1571` 修订 0。DSH `0.2.2-rc.1` 的桌面插件页显示协作插件异常。
+- **实测与影响**：调用本机 DSH `evaluatePluginCompatibility`，旧插件 `0.2.27` 的三个 DSH peer 均因锁定 `0.2.1-rc.5` 被拒。宿主升级后需要额外维护插件版本才能重新加载协作功能。预检对照保存在 `.codex-probes/dsh-plugin-compat/admission.txt`。
+- **处理**：`0.2.28` 由 `engines.dsh` 统一声明 `>=0.2.1-rc.5 <0.3.0-0`。当前宿主及范围内的预发行和正式样本通过预检，低于基线和 `0.3.0` 系列样本被拒。以后遇到实际 API 或协议不兼容时再调整代码或范围。
+- **用户反馈**：更新后回复“没问题了”。具体的 Host 回执和面板加载版本以 DSH 当次显示为准。
+
+### CF-024 同一候选槽的局部续修重编多个宿主模块
+
+- **来源**：2026-11-10，CLI，Task `calendar-ics-subscriptions-20261110`。对照批次 `6935a08f187f4e5ab54942c412c905be` 修订 2、Run `c77d7675a5e74747bdfd3ad852dc8080` 与续修批次 `b4e75fc6e1ac437ba0dbe344b5a46e23` 修订 4、Run `f5f1d056ef664e27ae2ed219cbcb4835`，入口均为 `scripts/build.bat ready-and-wait`。
+- **实测与影响**：本任务在两轮间只调整 `calendar_ics.cpp` 的两处 libical 调用。两轮产品日志均指向同一候选槽 `a32a06cfeb995ec8-batches`，后一轮记录了 `settings_ipc_backends.cpp`、`App.xaml.cpp` 和多份 WinUI 设置页源码的编译。原件为 `.build/collaboration/<批次>.log.product.log`。已观察到重编；其他冻结输入、生成文件和 MSBuild 依赖的触发链待核实，额外耗时未单独测量。
+- **下一步**：比较两次冻结输入和对应项目的 MSBuild 增量判据，确认可以保留的对象。原续修结果照常使用，反馈沿用日历空态批次，不为调查追加构建。
+
+### CF-025 文件观察提前结束
+
+- **实测**：2026-11-10，Task `equal-width-dialog-buttons` 的 `watch wait --condition files` 票据 `60dbdd917961def6c363b541ea23f1ae` 返回 `eligible`。前序日历 Run `f829e893544f42b2848fc5c0ffd7cc13` 已冻结，`src/system/panel/system_panel_model.cpp` 仍有前序任务的待提交改动。Task 在批次 `781988dcbc324ac5a85d2030414f7234` 修订 0 执行 `claim`，收到 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`
+- **源码确认及处理**：`build_wait_tasks.py` 的 `files` 条件只核对当前窗口的编辑成员，未核对指定路径的 Git 状态。认领保护正常，本任务等待前序提交后再认领，未接手他人改动或为反馈重建。
+- **下一步**：支持等待目标路径进入可安全认领的状态，区分前序冻结未提交、无归属的脏路径和显式接手，保留 `claim` 的原子复核。
+
+### CF-026 打包脚本变更阻止复验已保存候选
+
+- **实测**：2026-11-10，CLI，Task `latest-build-application-tests-20261110`。对基线批次 `a24756f9d67342ee83e12d07abf1a112`（Run `940f541489f44c28a2b593f29622200d`）调用 `run invoke -Action tests -Mode verify -Fresh`，Run 提交前退出 2，报 `Snapshot requires a matching candidate execution toolset; capture the updated runtime first.`。原命令及错误见 `.codex-probes/latest-build-application-tests-20261110/verify-preflight-failure.txt`。
+- **源码确认与影响**：`Assert-CandidateToolset` 检查 runner 中的全部脚本。原快照与当前 runner 文件的差异只有提交 `bb760455` 修改的 `deployment_payload.psm1` 和 `packaging_input.ps1`。原测试二进制和运行文件已通过本次提交前校验，但无法用原快照启动；需重新捕获并走同一编译槽的应用测试入口。
+- **下一步**：评估让复验复用已保存、可校验的原执行工具集，或按实际测试工具依赖约束比较范围。保留快照、运行文件、测试定义和执行环境的身份校验。
+- **本轮结果**：新快照 `865adbc4937546838693697adbee3fdb` 与基线相比只有两份打包脚本和本反馈文档变化。沿用候选编译槽执行应用全量 Run `aac77bfb00b14026a87d475e09636a96`，34/34 通过。新旧测试名称、定义摘要和测试程序 SHA-256 逐项一致，候选主程序 SHA-256 与 Steam Build `26565801` 一致。
+
+### CF-027 常规页低频状态预览按控件序号定位
+
+- **实测**：2026-11-12，Task `backup-status-render` 使用现有 Release 执行 `scripts/preview.bat settings -Page general -State general-notices -Appearance dark`，第一项报 `advanced-feature notice did not open`。原始回执见 `.codex-probes/backup-status-render/baseline-general-dark/result.txt`。
+- **源码确认与影响**：`PageCards` 首项新增共用模块提示后，原预览按序号取得启动归属提示，导致整组高级功能和启动归属的离线截图未生成。
+- **本轮处理**：续修批次 `2e5e4b1f63c14ed491b0d7334489e0cb` 修订 2 让每个样例只触发一类常规页提示，按页面内已打开且可见的提示取图。Run `e11c82a248d24bd08456cc14a09975dd` 的候选成功导出中文深色及德文浅色预览各 13 张，覆盖高级功能、展开的错误详情及启动归属。首轮失败回执保留。

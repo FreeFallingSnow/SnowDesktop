@@ -293,12 +293,13 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
     const auto downloadUrls = [stop](const content::Paths& urls) {
         return DownloadSlotUrls(urls, stop);
     };
-    auto read = [allowContent, downloadUrls, filesOnly = destination.fileDropTarget.has_value()](IDataObject* source, bool download,
+    auto read = [allowContent, downloadUrls, filesOnly = destination.fileDropTarget.has_value(),
+        literalText = widgetTextDragSource_.has_value()](IDataObject* source, bool download,
         const content::Paths& files) {
         const auto resolvedFiles = files.empty() ? GetDropPaths(source) : files;
         if (filesOnly) return content::Content{resolvedFiles, {}, false, true};
         const auto snapshot = resolvedFiles.empty()
-            ? ReadDropReferenceSnapshot(source) : DropReferenceSnapshot{};
+            ? ReadDropReferenceSnapshot(source, literalText) : DropReferenceSnapshot{};
         const auto urls = ExtractDropUrls(snapshot);
         auto descriptors = resolvedFiles.empty()
             ? snowdesktop::virtual_file_drop::ReadDescriptors(source)

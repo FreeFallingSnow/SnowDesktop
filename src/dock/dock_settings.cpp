@@ -1411,6 +1411,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     }
     ReadBoolField(text, "showWindowsButton", settings.showWindowsButton);
     ReadBoolField(text, "startMenuKeepTaskbarHidden", settings.startMenuKeepTaskbarHidden);
+    ReadBoolField(text, "startMenuKeepTaskbarHiddenOnWinKey", settings.startMenuKeepTaskbarHiddenOnWinKey);
     ReadBoolField(text, "showQuickSearchButton", settings.showQuickSearchButton);
     ReadBoolField(text, "showRunningApps", settings.showRunningApps);
     ReadBoolField(text, "showWindowPreviews", settings.showWindowPreviews);
@@ -1422,6 +1423,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     ReadBoolField(text, "allowDesktopContentOverlap",
         settings.allowDesktopContentOverlap);
     ReadBoolField(text, "reserveScreenSpace", settings.reserveScreenSpace);
+    ReadBoolField(text, "blurReservedSpace", settings.blurReservedSpace);
     ReadBoolField(text, "lastMonitorUseHomeSize", settings.lastMonitorUseHomeSize);
     if (ReadDoubleField(text, "mergedBarHeight", value) && std::isfinite(value))
         settings.mergedBarHeight = static_cast<int>(std::clamp(value, 32., 96.));
@@ -1598,6 +1600,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << (settings.showWindowsButton ? "true" : "false") << ",\n";
     file << "  \"startMenuKeepTaskbarHidden\": "
          << (settings.startMenuKeepTaskbarHidden ? "true" : "false") << ",\n";
+    file << "  \"startMenuKeepTaskbarHiddenOnWinKey\": "
+         << (settings.startMenuKeepTaskbarHiddenOnWinKey ? "true" : "false") << ",\n";
     file << "  \"showQuickSearchButton\": "
          << (settings.showQuickSearchButton ? "true" : "false") << ",\n";
     // Preserve the legacy keys for downgrade compatibility while migrating
@@ -1617,6 +1621,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << (settings.showOnlyWhenSummoned ? "true" : "false") << ",\n";
     file << "  \"reserveScreenSpace\": "
          << (settings.reserveScreenSpace ? "true" : "false") << ",\n";
+    file << "  \"blurReservedSpace\": "
+         << (settings.blurReservedSpace ? "true" : "false") << ",\n";
     file << "  \"summonOnlyLinkedPreferencesAreBase\": true,\n";
     file << "  \"frequentItemCount\": " << settings.frequentItemCount << ",\n";
     file << "  \"thicknessScale\": " << settings.thicknessScale << ",\n";

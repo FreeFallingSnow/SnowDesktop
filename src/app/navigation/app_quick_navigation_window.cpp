@@ -569,6 +569,18 @@ void DesktopApp::OnQuickNavigationEverythingSearchCompleted(
 void DesktopApp::ApplyQuickNavigationEverythingSearchResult(
     snowdesktop::QuickNavigationEverythingSearchResult result)
 {
+    using ListKind = QuickNavigationListRow::Kind;
+    std::optional<QuickNavigationListRow> selectedListRow;
+    if (UseQuickNavigationList() && quickNavigation_->listSelection >= 0)
+    {
+        auto rows = BuildQuickNavigationListRows();
+        const size_t selected = static_cast<size_t>(quickNavigation_->listSelection);
+        if (selected < rows.size() && rows[selected].enabled)
+            selectedListRow = std::move(rows[selected]);
+        else
+            quickNavigation_->listSelection = -1;
+    }
+
     const bool preserveLoadedOrder =
         result.query ==
             quickNavigation_->everythingResultsQuery &&
@@ -646,11 +658,48 @@ void DesktopApp::ApplyQuickNavigationEverythingSearchResult(
     for (const auto& entry : result.results)
         appendResult(entry);
 
+    // A page may omit files that disappeared since the previous request.
+    // Resolve the current selection against the committed rows by path.
+    const auto restoreFileIndex = [&](size_t oldIndex) -> std::optional<size_t> {
+        if (oldIndex >= previousResults.size())
+            return std::nullopt;
+        const auto& path = previousResults[oldIndex].path;
+        const auto& results = quickNavigation_->everythingResults;
+        const auto selected = std::find_if(results.begin(), results.end(), [&path](const auto& entry) {
+            return CompareStringOrdinal(entry.path.c_str(), -1, path.c_str(), -1, TRUE) == CSTR_EQUAL;
+        });
+        if (selected == results.end())
+            return std::nullopt;
+        return static_cast<size_t>(selected - results.begin());
+    };
+
+    if (quickNavigation_->keyboardTargetKind == QuickNavigationKeyboardTargetKind::Everything)
+    {
+        if (const auto index = restoreFileIndex(quickNavigation_->keyboardTargetIndex))
+            quickNavigation_->keyboardTargetIndex = *index;
+        else
+            ResetQuickNavigationKeyboardTarget();
+    }
+    if (selectedListRow)
+    {
+        const auto index = selectedListRow->kind == ListKind::Everything
+            ? restoreFileIndex(selectedListRow->index) : std::optional{selectedListRow->index};
+        quickNavigation_->listSelection = -1;
+        if (index)
+        {
+            const auto rows = BuildQuickNavigationListRows();
+            const auto selected = std::find_if(rows.begin(), rows.end(), [&](const auto& row) {
+                return row.kind == selectedListRow->kind && row.index == *index;
+            });
+            if (selected != rows.end())
+                quickNavigation_->listSelection = static_cast<int>(selected - rows.begin());
+        }
+    }
+
     quickNavigation_->scrollOffset = std::clamp(
         quickNavigation_->scrollOffset, 0,
         GetQuickNavigationMaxScrollOffset(
             quickNavigation_->rect));
-    ResetQuickNavigationKeyboardTarget();
     if (quickNavigation_->collapsed) PositionQuickNavigationWindow();
     InvalidateQuickNavigationWindow();
 }

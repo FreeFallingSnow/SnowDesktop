@@ -350,7 +350,7 @@ struct WidgetsPagePresenter::Impl
     SettingsCard developerToolsCard;
     SettingsCard debugRuntimeCard;
 
-    muxc::AutoSuggestBox searchBox{nullptr};
+    muxc::TextBox searchBox{nullptr};
     muxc::StackPanel filterActions{nullptr};
     muxc::RadioButton allFilterButton{nullptr};
     muxc::RadioButton installedFilterButton{nullptr};
@@ -361,11 +361,10 @@ struct WidgetsPagePresenter::Impl
     muxc::Button installFileButton{nullptr};
     muxc::Button workshopButton{nullptr};
     muxcp::ToggleButton selfDevelopButton{nullptr};
-    muxc::StackPanel taskPanel{nullptr};
+    muxc::Grid taskPanel{nullptr};
     muxc::StackPanel searchStatusPanel{nullptr};
     muxc::ProgressRing searchStatusRing{nullptr};
     muxc::TextBlock searchStatusText{nullptr};
-    muxc::ProgressRing taskRing{nullptr};
     muxc::ProgressBar taskProgress{nullptr};
     muxc::TextBlock taskStatus{nullptr};
     muxc::Button cancelTaskButton{nullptr};
@@ -435,6 +434,7 @@ struct WidgetsPagePresenter::Impl
     std::uint64_t requestedSearchRevision = 0;
     bool hasRevision = false;
     bool updatingControls = false;
+    bool composingSearch = false;
     bool active = false;
     bool closed = false;
 
@@ -443,6 +443,8 @@ struct WidgetsPagePresenter::Impl
     std::vector<std::function<void()>> debugRevokers;
 
     winrt::event_token searchChangedToken{};
+    winrt::event_token searchCompositionStartedToken{};
+    winrt::event_token searchCompositionEndedToken{};
     winrt::event_token allFilterToken{};
     winrt::event_token installedFilterToken{};
     winrt::event_token includedFilterToken{};
@@ -749,12 +751,11 @@ struct WidgetsPagePresenter::Impl
         searchStatusPanel.Children().Append(searchStatusText);
         filterCard.heading.Children().Append(searchStatusPanel);
 
-        searchBox = muxc::AutoSuggestBox{};
+        searchBox = muxc::TextBox{};
         searchBox.HorizontalAlignment(mux::HorizontalAlignment::Left);
         searchBox.Width(240.0);
         searchBox.MinWidth(200.0);
         searchBox.VerticalAlignment(mux::VerticalAlignment::Center);
-        searchBox.IsSuggestionListOpen(false);
         searchBox.UseSystemFocusVisuals(true);
         managementToolbar = muxc::Grid{};
         managementToolbar.ColumnSpacing(8.0);
@@ -797,26 +798,15 @@ struct WidgetsPagePresenter::Impl
         }
         filterCard.content.Children().Append(filterActions);
 
-        taskPanel = muxc::StackPanel{};
-        taskPanel.Spacing(8.0);
-        taskPanel.Visibility(mux::Visibility::Collapsed);
-        taskRing = muxc::ProgressRing{};
-        taskRing.Width(28.0);
-        taskRing.Height(28.0);
-        taskRing.IsActive(false);
         taskProgress = muxc::ProgressBar{};
-        taskProgress.Minimum(0.0);
-        taskProgress.Maximum(100.0);
-        taskProgress.Visibility(mux::Visibility::Collapsed);
         taskStatus = muxc::TextBlock{};
-        taskStatus.TextWrapping(mux::TextWrapping::Wrap);
         cancelTaskButton = muxc::Button{};
         cancelTaskButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
         cancelTaskButton.UseSystemFocusVisuals(true);
-        taskPanel.Children().Append(taskRing);
-        taskPanel.Children().Append(taskProgress);
-        taskPanel.Children().Append(taskStatus);
-        taskPanel.Children().Append(cancelTaskButton);
+        taskPanel = presenter_controls::BuildOperationProgressRow(taskStatus, cancelTaskButton, taskProgress);
+        presenter_controls::StyleSettingsSubrow(taskPanel, false, 0.0);
+        taskPanel.Padding({0.0, 8.0, 0.0, 8.0}); // The enclosing card already provides the horizontal inset.
+        taskPanel.Visibility(mux::Visibility::Collapsed);
         filterCard.content.Children().Append(taskPanel);
 
         installedRows = muxc::StackPanel{};
@@ -1026,25 +1016,34 @@ struct WidgetsPagePresenter::Impl
         debugRuntimeCard.content.Children().Append(debugDiagnosticRows);
     }
 
+    void SearchFromInput()
+    {
+        if (updatingControls || closed || !active || composingSearch)
+            return;
+        const auto text = searchBox.Text();
+        if (query == text.c_str())
+            return;
+
+        permissionPackage.clear();
+        query = text.c_str();
+        RenderInstalledRows();
+        WidgetsPageRequest request;
+        request.command = WidgetsPageCommand::SearchSources;
+        request.query = query;
+        request.searchRevision = ++requestedSearchRevision;
+        Emit(std::move(request));
+    }
+
     void HookStaticEvents()
     {
         searchChangedToken = searchBox.TextChanged(
-            [this](const muxc::AutoSuggestBox& sender,
-                const muxc::AutoSuggestBoxTextChangedEventArgs& args) {
-                if (updatingControls || closed || !active ||
-                    args.Reason() !=
-                        muxc::AutoSuggestionBoxTextChangeReason::UserInput)
-                {
-                    return;
-                }
-                permissionPackage.clear();
-                query = sender.Text().c_str();
-                RenderInstalledRows();
-                WidgetsPageRequest request;
-                request.command = WidgetsPageCommand::SearchSources;
-                request.query = query;
-                request.searchRevision = ++requestedSearchRevision;
-                Emit(std::move(request));
+            [this](const auto&, const auto&) { SearchFromInput(); });
+        searchCompositionStartedToken = searchBox.TextCompositionStarted(
+            [this](const auto&, const auto&) { composingSearch = true; });
+        searchCompositionEndedToken = searchBox.TextCompositionEnded(
+            [this](const auto&, const auto&) {
+                composingSearch = false;
+                SearchFromInput();
             });
 
         const auto selectFilter = [this](PackageFilter selected) {
@@ -3249,27 +3248,17 @@ struct WidgetsPagePresenter::Impl
 
     void RenderTask()
     {
-        const bool running = task.kind != WidgetsPageTaskKind::None;
         const bool searching = task.kind == WidgetsPageTaskKind::Searching;
+        const bool running = task.kind != WidgetsPageTaskKind::None && !searching;
         searchStatusPanel.Visibility(searching ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         searchStatusRing.IsActive(searching);
         searchStatusText.Text(searching ? L("settings.widgets.searching", L"Searching…") : L"");
-        taskPanel.Visibility(running && !searching
+        taskPanel.Visibility(running
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
-        taskRing.IsActive(running && !searching);
-        taskRing.Visibility(running
-                ? mux::Visibility::Visible
-                : mux::Visibility::Collapsed);
-
-        const bool determinate = running && task.progress.has_value();
-        taskProgress.Visibility(determinate
-                ? mux::Visibility::Visible
-                : mux::Visibility::Collapsed);
-        if (determinate)
-        {
-            taskProgress.Value(std::clamp(*task.progress, 0.0, 1.0) * 100.0);
-        }
+        taskProgress.IsIndeterminate(running && !task.progress.has_value());
+        if (task.progress)
+            taskProgress.Value(std::clamp(*task.progress, 0.0, 1.0));
         const std::wstring status = task.status.empty()
             ? TaskText(task.kind)
             : task.status;
@@ -3278,7 +3267,7 @@ struct WidgetsPagePresenter::Impl
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
         cancelTaskButton.IsEnabled(running && task.cancellable);
-        SetAutomation(taskRing, status);
+        SetAutomation(taskProgress, status);
         SetAutomation(cancelTaskButton,
             L("settings.progress.cancel", L"Cancel"), status);
     }
@@ -3373,8 +3362,12 @@ struct WidgetsPagePresenter::Impl
             requestedSearchRevision = std::max(
                 requestedSearchRevision, snapshot.searchRevision);
             sources = snapshot.sources;
-            query = snapshot.searchQuery;
-            searchBox.Text(query);
+            // Writing Text during composition can dismiss the IME candidates.
+            if (!composingSearch && query != snapshot.searchQuery)
+            {
+                query = snapshot.searchQuery;
+                searchBox.Text(query);
+            }
         }
         const bool installedQueryChanged = previousQuery != query;
         if (installedPresentationChanged || installedQueryChanged)
@@ -3680,6 +3673,7 @@ struct WidgetsPagePresenter::Impl
     void Deactivate() noexcept
     {
         active = false;
+        composingSearch = false;
         callbackGate->active.store(false, std::memory_order_release);
         callbackGate->activation.fetch_add(1, std::memory_order_acq_rel);
         diagnostics.clear();
@@ -3711,6 +3705,8 @@ struct WidgetsPagePresenter::Impl
         {
             managementToolbar.SizeChanged(managementToolbarSizeToken);
             searchBox.TextChanged(searchChangedToken);
+            searchBox.TextCompositionStarted(searchCompositionStartedToken);
+            searchBox.TextCompositionEnded(searchCompositionEndedToken);
             allFilterButton.Checked(allFilterToken);
             installedFilterButton.Checked(installedFilterToken);
             includedFilterButton.Checked(includedFilterToken);

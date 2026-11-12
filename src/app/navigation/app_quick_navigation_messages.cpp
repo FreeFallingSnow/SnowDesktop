@@ -642,6 +642,12 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
         point.x -= app->virtualLeft_;
         point.y -= app->virtualTop_;
         app->DismissQuickNavigationMenuAtPoint(point);
+        if (message == WM_LBUTTONDOWN &&
+            app->quickNavigation_->keyboardTargetKind != QuickNavigationKeyboardTargetKind::None)
+        {
+            app->ResetQuickNavigationKeyboardTarget();
+            app->InvalidateQuickNavigationWindow();
+        }
     }
     if (message == WM_NCHITTEST)
     {
@@ -708,15 +714,21 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
         app->CloseQuickNavigation();
         return 0;
     }
-    if (message == WM_KEYDOWN &&
-        snowdesktop::quick_navigation_rules::
-            ShouldRouteSearchEditKeyToResults(
-                wParam) &&
-        !snowdesktop::text_input::IsComposing(hwnd) &&
-        app->quickNavigation_->searchCompositionText.empty() &&
-        app->HandleQuickNavigationKeyboardInput(wParam))
+    if (message == WM_KEYDOWN && !snowdesktop::text_input::IsComposing(hwnd) &&
+        app->quickNavigation_->searchCompositionText.empty())
     {
-        return 0;
+        // With a query, Up/Down selects a result before Left/Right leaves the caret.
+        const bool moveAcrossGrid = (wParam == VK_LEFT || wParam == VK_RIGHT) &&
+            (app->quickNavigation_->keyboardTargetKind == QuickNavigationKeyboardTargetKind::Item ||
+                app->GetQuickNavigationEffectiveSearchText().empty()) &&
+            !(snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) &&
+            !(snowdesktop::private_pointer::KeyState(VK_CONTROL) & 0x8000);
+        if ((snowdesktop::quick_navigation_rules::ShouldRouteSearchEditKeyToResults(wParam) ||
+                moveAcrossGrid) &&
+            app->HandleQuickNavigationKeyboardInput(wParam))
+        {
+            return 0;
+        }
     }
     if (message == WM_MOUSEWHEEL)
     {

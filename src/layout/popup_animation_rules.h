@@ -131,6 +131,7 @@ public:
     {
         return popup_motion_curve::Remainder(springTimeline_, springElapsed_);
     }
+    void RebaseAnimationClock(std::uint64_t now) { lastTick_ = now; }
     void Open(std::uint64_t now)
     {
         Advance(now);
@@ -249,13 +250,9 @@ private:
         springElapsed_ = 0.0;
         springDuration_ = popup_motion_curve::AtRest(motion_, opening ? 1.0 : 0.0)
             ? 0.0 : DurationMilliseconds(opening);
-        // Opening covers 99% in the first 75%. Closing keeps meaningful size
-        // through its middle instead of crushing the popup in the first frames.
-        // Both tracks retain the same exact deadline and zero-velocity C1 tail.
-        double frequency = springDuration_ > 0.0
-            ? (opening ? 6.638352067994 : 3.0) / (springDuration_ * 0.00075) : 0.0;
-        frequency = popup_motion_curve::TargetBoundedFrequency(
-            motion_, opening ? 1.0 : 0.0, frequency);
+        const double frequency = popup_motion_curve::TargetBoundedFrequency(
+            motion_, opening ? 1.0 : 0.0,
+            popup_motion_curve::ScaleFrequency(opening, springDuration_));
         springTimeline_ = popup_motion_curve::Build(motion_, opening ? 1.0 : 0.0,
             frequency, springDuration_);
         animating_ = springDuration_ > 0.0;

@@ -117,6 +117,12 @@ struct Snapshot
     mutable ExecutablePaths<> executablePaths;
 };
 
+Snapshot Capture();
+
+// Resolve a helper executable to a related product's launcher for display.
+// The calling window remains the owner of commands and window operations.
+std::wstring ApplicationExecutablePath(DWORD processId, std::wstring imagePath);
+
 template<class ReadPath>
 std::vector<std::wstring> AncestorPaths(
     DWORD processId, const ParentMap& parents, ReadPath readPath)

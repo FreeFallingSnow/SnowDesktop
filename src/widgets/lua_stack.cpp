@@ -166,14 +166,17 @@ bool Supports(const DesktopWidget& widget, GridSpan span) noexcept
 }
 
 bool CanCombine(const std::vector<DesktopWidget>& widgets, size_t source, size_t target,
-    bool checkCachedSizes)
+    bool checkCachedSizes, const MemberDrag* memberDrag)
 {
     if (source >= widgets.size() || target >= widgets.size() || source == target ||
         !IsSurface(widgets[source].type) || !IsSurface(widgets[target].type) ||
         Owner(widgets, widgets[source].id) < widgets.size() ||
         Owner(widgets, widgets[target].id) < widgets.size()) return false;
+    const size_t member = memberDrag ? memberDrag->MemberIndex(widgets) : widgets.size();
+    if (memberDrag && (member >= widgets.size() || memberDrag->OwnerIndex(widgets) != source ||
+        widgets[source].childWidgetIds.size() < 2)) return false;
     const auto destination = Members(widgets[target]);
-    const auto incoming = Members(widgets[source]);
+    const auto incoming = memberDrag ? std::vector<std::wstring>{widgets[member].id} : Members(widgets[source]);
     if (destination.empty() || incoming.empty()) return false;
     std::set<std::wstring> unique;
     for (const auto& ids : {destination, incoming})
@@ -188,11 +191,14 @@ bool CanCombine(const std::vector<DesktopWidget>& widgets, size_t source, size_t
     return true;
 }
 
-bool Combine(std::vector<DesktopWidget>& widgets, size_t source, size_t target, std::wstring newId)
+bool Combine(std::vector<DesktopWidget>& widgets, size_t source, size_t target,
+    std::wstring newId, const MemberDrag* memberDrag)
 {
-    if (!CanCombine(widgets, source, target)) return false;
+    if (!CanCombine(widgets, source, target, true, memberDrag)) return false;
     auto destination = Members(widgets[target]);
-    const auto incoming = Members(widgets[source]);
+    const auto incoming = memberDrag
+        ? std::vector<std::wstring>{widgets[memberDrag->MemberIndex(widgets)].id}
+        : Members(widgets[source]);
     const std::wstring sourceId = widgets[source].id;
     const bool removeSource = widgets[source].type == DesktopWidgetType::LuaStack;
     if (widgets[target].type == DesktopWidgetType::LuaScript)
@@ -217,7 +223,14 @@ bool Combine(std::vector<DesktopWidget>& widgets, size_t source, size_t target, 
         if (std::find(wrapper.childWidgetIds.begin(), wrapper.childWidgetIds.end(), child.id) != wrapper.childWidgetIds.end())
             child.selected = false;
     wrapper.selected = true;
-    if (removeSource) std::erase_if(widgets, [&](const auto& value) { return value.id == sourceId; });
+    if (memberDrag)
+    {
+        widgets[source].selected = false;
+        std::erase(widgets[source].childWidgetIds, incoming.front());
+        Normalize(widgets);
+        Dissolve(widgets);
+    }
+    else if (removeSource) std::erase_if(widgets, [&](const auto& value) { return value.id == sourceId; });
     return true;
 }
 

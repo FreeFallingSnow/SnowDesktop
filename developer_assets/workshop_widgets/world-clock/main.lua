@@ -1,0 +1,340 @@
+local catalog = module.require("modules/cities.lua")
+local defaultCities = { "Tokyo Standard Time", "GMT Standard Time", "Eastern Standard Time" }
+
+local function dateKey(parts)
+    return parts.year * 10000 + parts.month * 100 + parts.day
+end
+
+local function minuteOfDay(parts)
+    return parts.hour * 60 + parts.min
+end
+
+local function dayFromUtc(parts, utc)
+    -- A Windows zone's UTC offset can move the civil date by at most one day.
+    local date, utcDate = dateKey(parts), dateKey(utc)
+    if date == utcDate then return 0 end
+    return date < utcDate and -1 or 1
+end
+
+local function formatClock(parts)
+    return string.format("%02d:%02d", parts.hour, parts.min)
+end
+
+local function formatDate(parts)
+    return l10n.tr("lua_widget.world_clock.date", tostring(parts.month), tostring(parts.day))
+end
+
+local function formatDay(dayDifference, parts)
+    if dayDifference == -1 then return l10n.tr("lua_widget.world_clock.yesterday") end
+    if dayDifference == 0 then return l10n.tr("lua_widget.world_clock.today") end
+    if dayDifference == 1 then return l10n.tr("lua_widget.world_clock.tomorrow") end
+    return formatDate(parts)
+end
+
+local function formatOffset(minutes)
+    local magnitude = math.abs(minutes)
+    local hours = (minutes < 0 and "−" or "+") .. tostring(magnitude // 60)
+    if magnitude % 60 == 0 then
+        return l10n.tr("lua_widget.world_clock.offset_hours", hours)
+    end
+    return l10n.tr("lua_widget.world_clock.offset_minutes", hours, string.format("%02d", magnitude % 60))
+end
+
+local function isDay(parts)
+    return parts.hour >= 6 and parts.hour < 18
+end
+
+local function refresh(model, now)
+    local localParts = time.parts(now, "local")
+    local utc = time.parts(now, "utc")
+    local localDay = dayFromUtc(localParts, utc)
+    local localMinute = minuteOfDay(localParts)
+    model.localTime = formatClock(localParts)
+    model.localDate = formatDate(localParts)
+    model.localDaylight = isDay(localParts)
+
+    for i, defaultCity in ipairs(defaultCities) do
+        local city = catalog.byId[storage.get("city" .. i)] or catalog.byId[defaultCity]
+        local parts = time.parts(now, city.zone)
+        local dayDifference = dayFromUtc(parts, utc) - localDay
+        local offset = dayDifference * 1440 + minuteOfDay(parts) - localMinute
+        model.cities[i] = {
+            id = city.storageId,
+            label = city.label,
+            clock = formatClock(parts),
+            detail = formatDay(dayDifference, parts) .. "  " .. formatOffset(offset),
+            daylight = isDay(parts),
+        }
+    end
+end
+
+local function update(model)
+    local now = time.now()
+    refresh(model, now)
+    schedule.at("minute", (now // 60000 + 1) * 60000, { whenHidden = "pause" })
+end
+
+local function setup()
+    local model = { cities = {}, query = "", results = catalog.search(""), queryRevision = 0 }
+    update(model)
+    return model
+end
+
+local function updateQuery(model, query)
+    if query == model.query then return end
+    model.query = query
+    model.results = catalog.search(query)
+    model.queryRevision = model.queryRevision + 1
+end
+
+local function selectCity(model, city)
+    local slot = model.pickerSlot
+    if not slot or not city then return end
+    if model.cities[slot].id ~= city.storageId then
+        storage.set("city" .. slot, city.storageId)
+        refresh(model, time.now())
+    end
+    widget.closePanel()
+end
+
+local function event(context, model, change)
+    if (change.kind == "schedule" and change.id == "minute")
+        or change.kind == "environment" or (change.kind == "visibility" and change.visible) then
+        update(model)
+    elseif change.kind == "panel" then
+        if change.action == "opened" then
+            model.pickerSlot = model.pendingPickerSlot
+            model.pendingPickerSlot = nil
+        elseif change.action == "closed" then
+            model.pickerSlot = nil
+            updateQuery(model, "")
+            model.queryRevision = model.queryRevision + 1
+        end
+    elseif change.kind == "action" then
+        if change.id == "open.city" and model.cities[change.value] then
+            if model.pickerSlot == change.value then return end
+            model.pendingPickerSlot = change.value
+            local row = ui.metrics().layoutRowHeight
+            widget.openPanel({ title = l10n.tr("lua_widget.world_clock.choose_city"),
+                width = math.ceil(row * 11), height = math.ceil(row * 12) })
+        elseif change.id == "query.change" then
+            updateQuery(model, change.text or "")
+        elseif change.id == "query.submit" and #model.results == 1 then
+            selectCity(model, model.results[1])
+        elseif change.id == "choose.city" then
+            selectCity(model, catalog.byId[change.value])
+        end
+    end
+end
+
+local function panel(context, model)
+    local row = ui.metrics().layoutRowHeight
+    local inset = math.min(row * 6 / 28, context.layoutSize.width / 4)
+    local gap = row * 4 / 28
+    local label = l10n.tr("lua_widget.world_clock.search_city")
+    local searchBox = view.searchBox({
+        key = "city.query", width = "fill", height = row, flexShrink = 0,
+        value = model.query, placeholder = label, maxBytes = 256, fontSize = row * 12 / 28,
+        padding = { horizontal = row * 9 / 28, vertical = 0 },
+        style = { foreground = "textPrimary", borderColor = "border",
+            borderWidth = row / 28, cornerRadius = row * 6 / 28 },
+        accessibility = { label = label },
+        events = { change = { id = "query.change" }, submit = { id = "query.submit" } },
+    })
+
+    local current = model.cities[model.pickerSlot or model.pendingPickerSlot or 1].id
+    local results = {}
+    for _, city in ipairs(model.results) do
+        local selected = city.storageId == current
+        results[#results + 1] = view.button({
+            key = "city.result." .. city.id, label = city.label,
+            width = "fill", height = row, flexShrink = 0,
+            fontSize = row * 12 / 28, textAlign = "start",
+            padding = { horizontal = row * 9 / 28, vertical = 0 },
+            style = { foreground = "textPrimary",
+                background = selected and "surfaceVariant" or nil,
+                borderColor = "systemAccent", borderWidth = selected and row / 28 or 0,
+                cornerRadius = row * 6 / 28 },
+            events = { click = { id = "choose.city", value = city.storageId } },
+        })
+    end
+    if #results == 0 then
+        results[1] = view.text({
+            key = "city.empty", text = l10n.tr("lua_widget.world_clock.no_matches"),
+            width = "fill", height = row, fontSize = row * 12 / 28,
+            padding = { horizontal = row * 9 / 28, vertical = 0 },
+            style = { foreground = "textSecondary" },
+        })
+    end
+
+    local scrollKey = "city.scroll." .. model.queryRevision
+    if context.layoutSize.height < 2 * row + 2 * inset + gap then
+        table.insert(results, 1, searchBox)
+        return view.scroll({ key = scrollKey, width = "fill", height = "fill", children = {
+            view.column({ key = "city.all", width = "fill", height = "auto",
+                padding = inset, gap = gap, children = results }),
+        } })
+    end
+    return view.column({ key = "city.panel", width = "fill", height = "fill", gap = gap, children = {
+        view.column({ key = "city.header", width = "fill", height = row + inset, flexShrink = 0,
+            padding = { left = inset, right = inset, top = inset, bottom = 0 },
+            children = { searchBox } }),
+        view.scroll({ key = scrollKey, width = "fill", height = "fill", children = {
+            view.column({ key = "city.results", width = "fill", height = "auto",
+                padding = { left = inset, right = inset, top = 0, bottom = inset },
+                gap = gap, children = results }),
+        } }),
+    } })
+end
+
+local lightInk = { main = 0xF8FAFF, muted = 0xD8E0EF, day = 0xFFC66D, night = 0xD7BCFF }
+local darkInk = { main = 0x152237, muted = 0x47566C, day = 0x875018, night = 0x63419B }
+
+local function glyphBounds(metrics)
+    return metrics.ink or { left = 0, top = 0, width = metrics.width, height = metrics.height }
+end
+
+local function drawDaylight(x, y, radius, daylight, palette, line)
+    local color = daylight and palette.day or palette.night
+    if daylight then
+        draw.arc(x, y, radius * 0.62, 0, 360, line, color)
+        for i = 0, 7 do
+            local angle = i * math.pi / 4
+            local dx, dy = math.cos(angle) * radius, math.sin(angle) * radius
+            draw.line(x + dx * 0.86, y + dy * 0.86, x + dx * 1.18, y + dy * 1.18, line, color)
+        end
+    else
+        draw.arc(x, y, radius, -90, -270, line, color)
+        draw.arc(x + radius * 0.5, y - radius * 0.5, radius / math.sqrt(2), -135, -180, line, color)
+    end
+end
+
+local function render(context, model)
+    local w, h = layout.contentWidth(), layout.contentHeight()
+    if w <= 0 or h <= 0 then return end
+    local stacked = w / h < 1.35
+    local scale = math.min(w / (stacked and 260 or 420), h / 224)
+    local inset = 17
+    local canvasWidth = w / scale
+    local right = canvasWidth - inset
+    local dividerY = h * (stacked and 0.36 or 0.47)
+    local theme = widget.theme()
+    local ink = theme and theme.contentTheme == 1 and darkInk or lightInk
+
+    local function textAt(value, x, y, size, maxWidth, color, bold, rightAligned)
+        local fontSize = size * scale
+        local budget = maxWidth * scale
+        local measured = draw.measureText(value, fontSize, 0, bold)
+        local bounds = glyphBounds(measured)
+        local width = math.max(measured.width, bounds.width)
+        if width > budget then
+            fontSize = fontSize * budget / width
+            measured = draw.measureText(value, fontSize, 0, bold)
+            bounds = glyphBounds(measured)
+        end
+        local start = x * scale
+        if rightAligned then start = start - bounds.width end
+        draw.text(start - bounds.left, y - bounds.top - bounds.height / 2,
+            value, fontSize, color, budget * 1.02, bold, true)
+        return start, bounds.width
+    end
+
+    local function rule(x1, y1, x2, y2)
+        draw.line(x1 * scale, y1, x2 * scale, y2, 0.7 * scale, ink.muted, 0.5)
+    end
+
+    local function cityButton(city, index, startX, endX, top, bottom, arrowY)
+        local key = "city." .. index
+        local label = l10n.tr("lua_widget.world_clock.change_city", city.label)
+        local x, y = startX * scale, top
+        local width = (endX - startX) * scale
+        local height = bottom - top
+        interaction.region({
+            key = key, cursor = "hand", focusable = true, tooltip = label,
+            shape = { type = "rect", x = x, y = y, width = width, height = height },
+            accessibility = { role = "button", label = label },
+            events = { click = { id = "open.city", value = index } },
+        })
+        local opacity = model.pickerSlot == index and 0.15 or interaction.isHovered(key) and 0.08
+        if opacity then
+            draw.rect(x, y, width, height, ink.main, 0, opacity)
+        end
+        if interaction.isFocused(key) then
+            local halfStroke = scale / 2
+            draw.strokeRect(x + halfStroke, y + halfStroke, width - scale, height - scale,
+                ink.main, 0, scale, 0.8)
+        end
+        if arrowY then
+            local arrowX = (endX - inset - 4) * scale
+            draw.line(arrowX - 4 * scale, arrowY - 2 * scale, arrowX, arrowY + 2 * scale,
+                0.8 * scale, ink.muted, 0.66)
+            draw.line(arrowX, arrowY + 2 * scale, arrowX + 4 * scale, arrowY - 2 * scale,
+                0.8 * scale, ink.muted, 0.66)
+        end
+    end
+
+    local function cityName(city, x, y, width)
+        local start, measured = textAt(city.label, x, y, 15, width - 18, ink.main, true)
+        drawDaylight(start + measured + 10 * scale, y,
+            5.8 * scale, city.daylight, ink, 0.95 * scale)
+    end
+
+    local headerLabelY = 22 * scale
+    local clockTop, clockBottom = headerLabelY + 15 * scale, dividerY - 11 * scale
+    local clockSize = stacked and 47 or 59
+    -- Fit against a fixed sample so the header size stays stable as the minute changes.
+    local sample = glyphBounds(draw.measureText("88:88", clockSize * scale, 0, true))
+    clockSize = clockSize * math.min(1, (clockBottom - clockTop) / math.max(sample.height, 1))
+    textAt(l10n.tr("lua_widget.world_clock.local"), inset, headerLabelY, 16, 125, ink.main, true)
+    textAt(model.localTime, inset, (clockTop + clockBottom) / 2, clockSize, 218, ink.main, true)
+    local dateStart = textAt(model.localDate, right, headerLabelY, 15, 81, ink.main, false, true)
+    drawDaylight(dateStart - 14 * scale, headerLabelY, 6.5 * scale, model.localDaylight, ink, scale)
+
+    if stacked then
+        local valueWidth = 69
+        local nameWidth = right - valueWidth - inset - 8
+        local rowHeight = (h - dividerY) / #model.cities
+        local halfLineGap = 8.5 * scale
+        for i, city in ipairs(model.cities) do
+            local top = dividerY + (i - 1) * rowHeight
+            local bottom = top + rowHeight
+            local center = (top + bottom) / 2
+            cityButton(city, i, 0, canvasWidth, top, bottom)
+            cityName(city, inset, center - halfLineGap, nameWidth)
+            textAt(city.detail, inset, center + halfLineGap, 12, nameWidth, ink.muted, false)
+            textAt(city.clock, right, center, 23, valueWidth, ink.main, true, true)
+        end
+        for i = 1, #model.cities - 1 do
+            local y = dividerY + i * rowHeight
+            rule(0, y, canvasWidth, y)
+        end
+    else
+        local columnWidth = canvasWidth / #model.cities
+        local center = (dividerY + h) / 2
+        local headingY = center - 32 * scale
+        local width = columnWidth - 2 * inset
+        for i, city in ipairs(model.cities) do
+            local columnLeft = (i - 1) * columnWidth
+            local x = columnLeft + inset
+            cityButton(city, i, columnLeft, i * columnWidth, dividerY, h, headingY)
+            cityName(city, x, headingY, width - 12)
+            textAt(city.clock, x, center - scale, 33, width, ink.main, true)
+            textAt(city.detail, x, center + 30 * scale, 13.5, width, ink.muted, false)
+        end
+        for i = 1, #model.cities - 1 do
+            local x = i * columnWidth
+            rule(x, dividerY, x, h)
+        end
+    end
+    rule(0, dividerY, canvasWidth, dividerY)
+end
+
+return widget.define({
+    useCustomStyle = true,
+    followPersonalizationDefault = true,
+    showTitle = false,
+    setup = setup,
+    event = event,
+    render = render,
+    panel = panel,
+})

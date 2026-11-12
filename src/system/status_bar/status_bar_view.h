@@ -38,6 +38,8 @@ struct StatusBarItem
     std::wstring batteryPercentageText;
 };
 
+inline constexpr wchar_t kStatusBarDesktopAppName[] = L"SnowDesktop";
+
 // Data boundary only: no HWND, sampling, Explorer or device operations.
 struct StatusBarSnapshot
 {
@@ -55,6 +57,7 @@ struct StatusBarSnapshot
     std::vector<tray::Icon> tray;
     bool trayExpanded = false;
     status_bar_input_method::Snapshot inputMethod;
+    std::wstring foregroundAppName = kStatusBarDesktopAppName;
 };
 struct StatusBarPalette
 {

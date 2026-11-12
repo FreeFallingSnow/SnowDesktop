@@ -231,13 +231,15 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   声明式/即时渲染、滚动、输入和 action 管线，但由宿主居中显示、绘制遮罩并隔离桌面输入。
   `popover` 由可信桌面手势调用 `widget.openPopover`，并锚定上一棵成功桌面 scene 中的
   稳定 `anchorKey`；回调收到 `context.surface="popover"`。
-  从直接桌面手势重复打开当前辅助面板时，宿主复用现有场景，不重播动画、不重发 opened/closed，
-  并保留焦点与滚动状态。同一弹窗按组件实例、surface、title 和 popover 的 anchorKey 识别；
-  仅尺寸或位置变化不构成新弹窗。不同标题、锚点或 surface 仍会切换内容。普通非手势调用
-  保留既有刷新行为，更新内容仍使用 model 与 widget.invalidate()。弹窗外任意位置的点击
-  均按 `dismissOnOutside` 关闭弹窗，所属组件、空白区域和交互元素不享有豁免；
-  Escape 继续按 `dismissOnEscape` 关闭。关闭中的相同桌面请求
-  不会反向重播打开动画。此行为纠正保持 API/schema v2，不新增 feature；较早构建仍可能重开。
+  直接桌面手势重复请求当前辅助面板时，宿主不重新打开。若此次点击按 `dismissOnOutside` 关闭弹窗，
+  只发送关闭事件；否则保留现有场景、焦点和滚动状态。同一弹窗按组件实例、surface 和 title 识别。
+  直接从有稳定 key 的桌面元素
+  打开的 panel 或 dialog 还按该元素区分，popover 则按 anchorKey 区分。
+  仅尺寸或位置变化不构成新弹窗。普通非手势调用
+  保留既有刷新行为，更新内容仍使用 model 与 widget.invalidate()。点击非模态弹窗所属组件的桌面卡片时，
+  宿主先处理该点击的操作。若操作打开另一个弹窗，宿主等旧弹窗关闭动画结束，再自动播放新弹窗的打开动画。
+  没有打开新弹窗的外点及 Escape 分别按 `dismissOnOutside` 和 `dismissOnEscape` 关闭。
+  关闭中的相同桌面请求不会反向重播打开动画。此行为保持 API/schema v2，不新增 feature。
   非模态辅助面板外仍分发桌面组件悬停。通过辅助面板内的可信指针操作调用 `widget.openPanel`
   打开另一面板时，宿主保留该次触发位置；切换面板会重新计算锚点，不沿用旧面板位置。
   `showTitle=true` 会启用宿主移动底栏并显示组件标题；默认值 `false` 表示无底栏，悬停时
@@ -1775,14 +1777,20 @@ ID 必须是 1–128 字节有效 UTF-8；同名请求在同一帧内合并，�
 
 ### `data`
 
-当前公开二十五个按需数据源：`system.cpu`、`system.memory`、`process.summary`、`system.gpu`、`system.power`、
+按需数据源包括 `system.cpu`、`system.memory`、`process.summary`、`system.gpu`、`system.power`、`system.screenTime`、
 `system.network.status`、`system.network.traffic`、`system.storage.volumes`、
 `system.storage.io`、`system.display.topology`、`system.display.current`、
 `audio.output.default`、`audio.output.volume`、`audio.output.analysis`、
 `media.sessions`、`media.current`、`media.timeline`、`media.artwork`、`desktop.items`、
 `desktop.selection`、`desktop.changes`、`calendar.events` 和
 `calendar.selectedDate`、`app.indexStatus`，以及 `filesystem.watch`。在 `setup` 或模块
-入口创建订阅，不要在每次 `render` 中重复订阅：
+入口创建订阅，不要在每次 `render` 中重复订阅。
+
+`system.screenTime` 受 `system.screenTime.read` 保护，返回今日的 `enabled`、
+`totalSeconds`、24 项的 `hours` 和最多 8 项的 `apps`。每项应用包含
+`name` 和 `seconds`。支持 `data.system.screenTime.appIcons` 的宿主在成功解析图标后
+提供可选的 `apps[].icon`。在当前渲染内将它传给 `draw.image`；该句柄不包含路径或应用
+标识，不能持久化。旧宿主或图标不可用时该字段省略。
 
 ```lua
 local cpu
@@ -2076,8 +2084,10 @@ canChangePlaybackRate`，执行时再次检查会话 ID、权限与能力；设�
 `calendar.events` 和 `calendar.selectedDate` 受 `calendar.read` 保护，同样不启动
 轮询线程。events 可在订阅选项中同时传入 `fromDate/toDate`（ISO `YYYY-MM-DD`、
 闭区间、最长 366 天）；未传时使用当前选中日期前后各 62 天。value 返回实际
-`fromDate/toDate`、最多 512 个本地事件、`revision` 和 `truncated`，事件包含
+`fromDate/toDate`、最多 512 个事件、`revision` 和 `truncated`，事件包含
 `id/revision/title/date/allDay/startMinutes/endMinutes/notes/reminderMinutes`。
+宿主可将用户添加的只读 ICS 订阅纳入同一结果。跨天订阅日程按本地日期分别显示，
+订阅缓存覆盖最近 366 天至未来 730 天。订阅链接和刷新状态由宿主管理。
 声明 `data.calendar.events.byId` 后可传入 `eventId`（1–128 字节、无 NUL 的稳定 ID），
 与 `fromDate/toDate` 互斥。该模式不限制日期范围，改名和跨年改期后仍跟踪同一日程；
 返回相同事件结构、最多一项，`fromDate/toDate` 为空字符串，`truncated=false`。
@@ -2355,8 +2365,9 @@ task.start("audio.setPlaybackMode", {playbackId=id, shuffle=true, repeatMode="li
 依赖新任务的官方社区组件，不能只凭版本号或原生控制中心可用来判断 Lua 支持。
 
 `system.openSettings` 要求 `shell.launch` 和当前可信用户手势，只接受宿主固定枚举的
-`page`：`notifications/audio/display/network/bluetooth/power/storage/apps/personalization`。
-宿主把枚举映射到微软公开的固定 `ms-settings:` 页面；Lua 不能传 URI、查询参数或
+`page`：`notifications/audio/display/network/bluetooth/power/storage/apps/personalization/screenTime`。
+除 `screenTime` 外，宿主把枚举映射到微软公开的固定 `ms-settings:` 页面。
+`screenTime` 打开 SnowDesktop 自己的屏幕使用时间设置页。Lua 不能传 URI、查询参数或
 任意设置页名称：
 
 ```lua
@@ -2701,8 +2712,8 @@ ID，应用重启后会绑定新的 Lua VM generation，错过不超过 24 小�
 create/update 共用 `title/date/allDay/startMinutes/endMinutes/notes/reminderMinutes`；
 update 另需宿主事件 `id` 和正整数 `expectedRevision`，remove 只接受 `id`。提醒值
 限定为 `-1/0/5/15/30/60/1440`，日期必须是有效 `YYYY-MM-DD`，文本和时间范围在
-进入日历服务前完成边界检查。新增和更新不要求手势；删除必须从直接指针动作或菜单
-命令的可信调用栈启动：
+进入日历服务前完成边界检查。宿主对 ICS 订阅日程的更新和删除返回 `read_only`。
+新增和更新不要求手势；删除必须从直接指针动作或菜单命令的可信调用栈启动。
 
 系列任务为 `calendar.series.create`、`calendar.series.update`、
 `calendar.series.remove`，要求 `calendar.write` 和

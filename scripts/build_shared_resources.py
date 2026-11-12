@@ -17,6 +17,10 @@ from powershell_runtime import powershell_executable, run as run_process
 from build_wait_tasks import atomic, lease, process_owner, reader, overlaps
 
 HEX = re.compile(r'^[a-f0-9]{32}$')
+KEY_OWNERSHIP = 'resource-ownership.json'
+WRITE_PENDING = 'resource-write-pending.json'
+COMMIT_PENDING = 'resource-commit-pending.json'
+GIT_CHECKOUT_OVERRIDES = ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_NAMESPACE')
 
 def strict_json(raw):
     def pairs(values):
@@ -39,13 +43,103 @@ def safe_file(root, relative):
             raise ValueError('Shared resource does not follow reparse points')
     return path
 
-def source(path):
-    raw = path.read_bytes()
+def decode_source(raw):
     text = raw.decode('utf-8-sig')
     values = strict_json(text)
     if not isinstance(values, dict) or any(not isinstance(value, str) for value in values.values()):
         raise ValueError('Shared language resources require flat string values; structural edits need an exclusive serial edit')
+    return text, values
+
+def source(path):
+    raw = path.read_bytes()
+    text, values = decode_source(raw)
     return raw, text, values
+
+def key_value(values, key):
+    return {'exists': key in values, 'value': values.get(key)}
+
+def desired_value(value):
+    return {'exists': value is not None, 'value': value}
+
+def load_key_ownership(folder):
+    path = folder / KEY_OWNERSHIP
+    if not path.exists():
+        return []
+    state = strict_json(path.read_bytes())
+    entries = state['entries']
+    if state['schemaVersion'] != 1 or not isinstance(entries, list):
+        raise ValueError('Invalid language key ownership ledger; preserve it for diagnosis')
+    pairs = {(entry['file'], entry['key']) for entry in entries}
+    if len(pairs) != len(entries):
+        raise ValueError('Conflicting language key ownership ledger; preserve it for diagnosis')
+    return entries
+
+def save_key_ownership(folder, entries):
+    atomic(folder / KEY_OWNERSHIP, {'schemaVersion': 1, 'entries': entries})
+
+def reconcile_resource_write(root, folder):
+    pending = folder / WRITE_PENDING
+    if not pending.exists():
+        return
+    intent = strict_json(pending.read_bytes())
+    request = intent['requestId']
+    if not HEX.fullmatch(request):
+        raise ValueError('Invalid interrupted language write; preserve its journal')
+    record_path = folder / (request + '.resource.json')
+    record = strict_json(record_path.read_bytes())
+    if record['requestId'] != request or record['file'] != intent['file'] or record['status'] not in ('prepared', 'writing', 'applied'):
+        raise ValueError('Interrupted language write has a mismatched receipt; preserve its journal')
+    current_hash = hashlib.sha256(safe_file(root, record['file']).read_bytes()).hexdigest()
+    owners = load_key_ownership(folder)
+    if current_hash == intent['afterHash']:
+        if owners != intent['ownersBefore'] and owners != intent['ownersAfter']:
+            raise ValueError('Interrupted language write ownership changed; preserve its journal')
+        if owners != intent['ownersAfter']:
+            save_key_ownership(folder, intent['ownersAfter'])
+        record.update(status='applied', beforeHash=intent['beforeHash'], afterHash=intent['afterHash'],
+                      appliedUtc=record.get('appliedUtc') or dt.datetime.now(dt.timezone.utc).isoformat(), keyOwnershipVersion=1)
+        atomic(record_path, record)
+    elif current_hash == intent['beforeHash'] and owners == intent['ownersBefore'] and record['status'] != 'applied':
+        # The file and ownership endpoints prove this attempt never published.
+        record.update(status='prepared')
+        atomic(record_path, record)
+    else:
+        raise ValueError('Interrupted language write has uncertain file or ownership changes; preserve its journal')
+    pending.unlink()
+
+def head_language(root, file):
+    if any(name in os.environ for name in GIT_CHECKOUT_OVERRIDES):
+        raise ValueError('Language editing requires the registered checkout and its ordinary Git index')
+    result = subprocess.run(['git.exe', 'cat-file', 'blob', 'HEAD:' + file], cwd=root,
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode != 0:
+        raise ValueError('Cannot read the tracked language resource from HEAD: ' + file)
+    return decode_source(result.stdout)[1]
+
+def next_key_ownership(root, owners, record, changes):
+    file = record['file']
+    current = {entry['key']: entry for entry in owners if entry['file'] == file}
+    baseline = head_language(root, file) if any(key not in current for key in changes) else None
+    touched = set()
+    for key, after in changes.items():
+        previous = current.get(key)
+        if previous and previous['participant'] != record['participant']:
+            raise ValueError('Uncommitted language key belongs to ' + previous['participant'] + ': ' + key)
+        before = record['expected'][key]
+        if previous:
+            if before != desired_value(previous['after']):
+                raise ValueError('Pending language key differs from its last applied value: ' + key)
+            before = previous['before']
+        elif before != key_value(baseline, key):
+            raise ValueError('Language key has an unowned working change relative to HEAD: ' + key)
+        touched.add(key)
+        if before != desired_value(after):
+            current[key] = {'file': file, 'key': key, 'before': before, 'after': after,
+                            **{name: record[name] for name in ('participant', 'batchId', 'editRevision', 'requestId')}}
+        else:
+            del current[key]
+    retained = [entry for entry in owners if entry['file'] != file or entry['key'] not in touched]
+    return retained + [entry for key, entry in current.items() if key in touched]
 
 def spans(text):
     """Locate flat object values without changing key order, whitespace or other entries."""
@@ -61,13 +155,14 @@ def spans(text):
     index = skip(index+1)
     result = {}
     while text[index] != '}':
+        start = index
         key, end = decoder.raw_decode(text, index)
         index = skip(end)
         if text[index] != ':':
             raise ValueError('Invalid language JSON')
         index = skip(index+1)
         _, end = decoder.raw_decode(text, index)
-        result[key] = (index, end)
+        result[key] = (start, index, end)
         index = skip(end)
         if text[index] == '}':
             break
@@ -76,14 +171,39 @@ def spans(text):
         index = skip(index+1)
     return result, index
 
-def patch_bytes(raw, text, current, values):
+def remove_keys(text, positions, values):
+    entries = list(positions.items())
+    removals = []
+    first = None
+    for index, (key, (start, _, _)) in enumerate(entries):
+        if key in values and values[key] is None:
+            if first is None:
+                first = index
+        elif first is not None:
+            # Keep the indentation before the first removed key for this entry.
+            removals.append((entries[first][1][0], start))
+            first = None
+    if first is not None:
+        # A trailing run must also consume the separator after the last survivor.
+        start = entries[first - 1][1][2] if first else entries[0][1][0]
+        removals.append((start, entries[-1][1][2]))
+    for start, end in reversed(removals):
+        text = text[:start] + text[end:]
+    return text
+
+def patch_bytes(raw, text, values):
     positions, closing = spans(text)
+    if any(value is None for value in values.values()):
+        text = remove_keys(text, positions, values)
+        positions, closing = spans(text)
     updates = []
     additions = []
     for key, value in values.items():
+        if value is None:
+            continue
         encoded = json.dumps(value, ensure_ascii=False)
-        if key in current:
-            start, end = positions[key]
+        if key in positions:
+            _, start, end = positions[key]
             updates.append((start, end, encoded))
         else:
             additions.append(json.dumps(key, ensure_ascii=False)+': '+encoded)
@@ -91,7 +211,7 @@ def patch_bytes(raw, text, current, values):
         newline = '\r\n' if '\r\n' in text else '\n'
         indent = re.search(r'\n([ \t]*)"', text)
         indent = indent.group(1) if indent else '  '
-        insertion = max(end for _, end in positions.values()) if positions else closing
+        insertion = max(end for _, _, end in positions.values()) if positions else closing
         updates.append((insertion, insertion, (',' if positions else '')+newline+indent+(','+newline+indent).join(additions)))
     for start, end, value in sorted(updates, reverse=True):
         text = text[:start]+value+text[end:]
@@ -191,6 +311,9 @@ def run(args):
     if not HEX.fullmatch(args.batch or '') or args.revision < 0 or not args.participant:
         raise ValueError('Participant, batch and live edit revision are required')
     with transaction(folder):
+        if (folder / COMMIT_PENDING).exists():
+            raise ValueError('A language commit needs recovery; retry its original commit before resource edits')
+        reconcile_resource_write(root, folder)
         state, batch, entry = editor(root, args)
         whitelist = strict_json((root/'scripts/shared_resources.json').read_text(encoding='utf-8-sig'))['languageFiles']
         if args.command == 'prepare':
@@ -203,7 +326,7 @@ def run(args):
             path = safe_file(root, args.file)
             raw, _, current = source(path)
             request = secrets.token_hex(16)
-            expected = {key:{'exists':key in current,'value':current.get(key)} for key in keys}
+            expected = {key:key_value(current,key) for key in keys}
             expires = (dt.datetime.now(dt.timezone.utc)+dt.timedelta(seconds=args.timeout)).isoformat()
             record = {'schemaVersion':1,'requestId':request,'participant':args.participant,'batchId':args.batch,'editRevision':args.revision,'file':args.file,'expected':expected,'expiresUtc':expires,'status':'prepared','preparedHash':hashlib.sha256(raw).hexdigest()}
             atomic(folder/(request+'.resource.json'), record)
@@ -234,21 +357,31 @@ def run(args):
             atomic(record_path,record)
             return record
         changes = strict_json((folder/'requests'/(args.request+'.json')).read_text(encoding='utf-8-sig'))
-        if not isinstance(changes,dict) or set(changes) != set(record['expected']) or any(not isinstance(value,str) for value in changes.values()):
-            raise ValueError('Patch must contain exactly the prepared keys with string values')
+        if not isinstance(changes,dict) or set(changes) != set(record['expected']) or any(value is not None and not isinstance(value,str) for value in changes.values()):
+            raise ValueError('Patch must contain exactly the prepared keys, with a string value or null to delete')
         for key, expected in record['expected'].items():
             if (key in current) != expected['exists'] or current.get(key) != expected['value']:
                 raise ValueError('Same-key conflict: '+key+' changed since prepare; no resource was written')
-        updated = patch_bytes(raw,text,current,changes)
-        if updated != raw:
-            refresh_ready(root,state,batch,args.participant,record['file'])
-        record.update(status='writing',beforeHash=hashlib.sha256(raw).hexdigest(),afterHash=hashlib.sha256(updated).hexdigest())
-        atomic(record_path,record)
+        effective = {key: value for key, value in changes.items() if current.get(key) != value}
+        if not effective:
+            digest = hashlib.sha256(raw).hexdigest()
+            record.update(status='applied', beforeHash=digest, afterHash=digest, keyOwnershipVersion=1,
+                          appliedUtc=dt.datetime.now(dt.timezone.utc).isoformat())
+            atomic(record_path, record)
+            return record
+        owners = load_key_ownership(folder)
+        updated_owners = next_key_ownership(root, owners, record, effective)
+        updated = patch_bytes(raw,text,effective)
+        refresh_ready(root,state,batch,args.participant,record['file'])
+        intent = {'requestId': args.request, 'file': record['file'],
+                  'beforeHash': hashlib.sha256(raw).hexdigest(), 'afterHash': hashlib.sha256(updated).hexdigest(),
+                  'ownersBefore': owners, 'ownersAfter': updated_owners}
+        atomic(folder / WRITE_PENDING, intent)
+        record.update(status='writing', beforeHash=intent['beforeHash'], afterHash=intent['afterHash'])
+        atomic(record_path, record)
         atomic_bytes(path,updated)
-        record.update(status='applied',appliedUtc=dt.datetime.now(dt.timezone.utc).isoformat())
-        atomic(record_path,record)
-        # Keep origin declarations for commits; patching itself grants no whole-file exclusivity.
-        return record
+        reconcile_resource_write(root, folder)
+        return strict_json(record_path.read_bytes())
 
 def main():
     parser=argparse.ArgumentParser()

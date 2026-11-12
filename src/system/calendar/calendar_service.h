@@ -1,15 +1,20 @@
 #pragma once
 
+#include "calendar_subscription_types.h"
+
 #include <chrono>
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace snowdesktop::calendar
 {
+
+class CalendarSubscriptions;
 
 struct CalendarNow
 {
@@ -43,6 +48,9 @@ struct CalendarEvent
     std::string seriesId;
     std::string occurrenceDate;
     bool occurrenceOverride = false;
+    // Owning ICS subscription, populated on reads for native calendar UI.
+    std::string subscriptionId{};
+    std::wstring subscriptionName{};
 };
 
 struct CalendarSeriesRule
@@ -92,6 +100,7 @@ public:
     explicit CalendarService(
         std::filesystem::path path,
         Clock clock = {});
+    ~CalendarService();
 
     bool Load();
     const std::string& SelectedDate() const
@@ -108,9 +117,12 @@ public:
 
     std::vector<CalendarEvent> Events(
         const std::string& fromDate,
-        const std::string& toDate) const;
+        const std::string& toDate, bool includeSubscriptions = false) const;
     std::vector<CalendarEvent> SingleEvents() const;
-    std::optional<CalendarEvent> EventById(const std::string& id) const;
+    std::optional<CalendarEvent> EventById(const std::string& id, bool includeSubscriptions = false) const;
+    std::vector<SubscriptionInfo> Subscriptions() const;
+    std::optional<SubscriptionDetails> SubscriptionDetailsById(const std::string& id) const;
+    SubscriptionResult ApplySubscription(SubscriptionCommand command);
     std::optional<CalendarSeries> SeriesById(const std::string& id) const;
     const std::vector<CalendarSeries>& Series() const { return series_; }
     static bool MatchesRule(const CalendarSeriesRule& rule, const std::string& date);
@@ -154,6 +166,7 @@ private:
     static std::string GenerateId();
 
     std::filesystem::path path_;
+    std::unique_ptr<CalendarSubscriptions> subscriptions_;
     Clock clock_;
     std::string selectedDate_;
     std::vector<CalendarEvent> events_;

@@ -32,6 +32,8 @@ struct StatusBarSettings
     // only. Never reinterpret "has visible windows" as "has no windows".
     StatusBarAppearanceRule legacyShellUi, legacyVisibleWindow;
     bool menu = true, quickSearch = true, taskView = true;
+    bool foregroundAppName = false;
+    bool foregroundAppNameCentered = false;
     bool showDesktop = true;
     bool clockSystemPanel = false, controlCenterSystemPanel = false;
     bool clockShowSeconds = false;

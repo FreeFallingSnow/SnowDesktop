@@ -37,5 +37,6 @@ inline HWND ResolveLaunchOwner(HWND requested, HWND desktopRender, HWND desktopI
     return IsLaunchOwner(desktopInput) ? desktopInput : nullptr;
 }
 
-bool ExecuteRequestWithApi(const Request& request, const ExecutionApi& api);
+bool ExecuteRequestWithApi(const Request& request, const ExecutionApi& api,
+    HANDLE acceptedEvent = nullptr);
 }

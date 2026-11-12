@@ -2167,6 +2167,22 @@ struct SettingsWindowHost::Impl
         auto calendar = options.calendarPage;
         calendar.commitGeneral = general.commitGeneral;
         shell->SetCalendarPageActions(std::move(calendar));
+        snowdesktop::winui::ScreenTimePageActions screenTime;
+        screenTime.commitGeneral = general.commitGeneral;
+        screenTime.clear = [weak](std::uint64_t generation) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation))
+                return false;
+            SettingsHostActions::Request request;
+            request.action = SettingsHostActions::Action::ClearScreenTime;
+            const auto result =
+                state->owner->controller->InvokeHostAction(request);
+            state->owner->ShowActionError(result);
+            return result.Succeeded();
+        };
+        shell->SetScreenTimePageActions(std::move(screenTime));
         shell->SetGeneralPageActions(std::move(general));
 
         PageLayoutPageActions pageLayout = options.pageLayoutPage;

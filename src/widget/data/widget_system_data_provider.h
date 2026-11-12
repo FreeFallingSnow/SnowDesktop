@@ -7,6 +7,7 @@
 #include "widget/runtime/widget_runtime_image.h"
 #include "widget/packages/widget_resource_history.h"
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -68,6 +69,29 @@ struct WidgetProcessSummaryDataSnapshot
     std::vector<WidgetProcessSummaryEntryDataSnapshot> processes;
     std::size_t observedCount = 0;
     bool truncated = false;
+    std::int64_t timestampMs = 0;
+    std::uint64_t revision = 0;
+    std::string error;
+};
+
+struct WidgetScreenTimeAppDataSnapshot
+{
+    std::string name;
+    std::int64_t seconds = 0;
+    std::string iconToken;
+    std::shared_ptr<const WidgetRuntimeImagePixels> icon;
+};
+
+WidgetScreenTimeAppDataSnapshot MakeScreenTimeAppSnapshot(
+    std::string name, std::int64_t seconds, std::string_view identity);
+
+struct WidgetScreenTimeDataSnapshot
+{
+    bool available = false;
+    bool enabled = true;
+    std::int64_t totalSeconds = 0;
+    std::array<std::int64_t, 24> hours{};
+    std::vector<WidgetScreenTimeAppDataSnapshot> apps;
     std::int64_t timestampMs = 0;
     std::uint64_t revision = 0;
     std::string error;
@@ -383,6 +407,10 @@ public:
     std::optional<WidgetMemoryDataSnapshot> Memory() const;
     std::optional<WidgetProcessSummaryDataSnapshot> ProcessSummary() const;
     std::optional<WidgetPowerDataSnapshot> Power() const;
+    std::optional<WidgetScreenTimeDataSnapshot> ScreenTime() const;
+    using ScreenTimeSampleSource =
+        std::function<WidgetScreenTimeDataSnapshot()>;
+    void SetScreenTimeSampleSource(ScreenTimeSampleSource source);
     std::optional<WidgetNetworkStatusDataSnapshot> NetworkStatus() const;
     std::optional<WidgetNetworkTrafficDataSnapshot> NetworkTraffic() const;
     std::optional<WidgetGpuDataSnapshot> Gpu(bool includeDetails = false) const;
@@ -432,6 +460,8 @@ private:
     void PublishMemory(WidgetMemoryDataSnapshot snapshot);
     void PublishProcessSummary(WidgetProcessSummaryDataSnapshot snapshot);
     void PublishPower(WidgetPowerDataSnapshot snapshot);
+    void PublishScreenTime(WidgetScreenTimeDataSnapshot snapshot);
+    WidgetScreenTimeDataSnapshot SampleScreenTime();
     void PublishNetworkStatus(WidgetNetworkStatusDataSnapshot snapshot);
     void PublishNetworkTraffic(WidgetNetworkTrafficDataSnapshot snapshot);
     void PublishGpu(WidgetGpuDataSnapshot snapshot);
@@ -462,6 +492,8 @@ private:
     std::optional<WidgetMemoryDataSnapshot> memory_;
     std::optional<WidgetProcessSummaryDataSnapshot> processSummary_;
     std::optional<WidgetPowerDataSnapshot> power_;
+    std::optional<WidgetScreenTimeDataSnapshot> screenTime_;
+    ScreenTimeSampleSource screenTimeSource_;
     std::optional<WidgetNetworkStatusDataSnapshot> networkStatus_;
     WidgetNetworkStatusDebouncer networkStatusDebouncer_;
     struct NetworkStatusCache;

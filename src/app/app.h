@@ -12,6 +12,7 @@
  *       Dock、快捷导航、渲染和平台生命周期拆分到对应 .cpp 文件。
  */
 #pragma once
+#include "system/screen_time/screen_time_tracker.h"
 #include "ui/render/font_weight_rules.h"
 #include "app/render/composition_state_types.h"
 #include "app/render/demo_icon_load_types.h"
@@ -22,6 +23,7 @@
 #include "ui/render/native_tooltip.h"
 #include "ui/render/inline_tooltip_backdrop.h"
 #include "ui/render/native_tooltip_content.h"
+#include "ui/input/text_input_state.h"
 #include "navigation/type_to_select.h"
 #include "layout/layout_scroll_save.h"
 #include "data/layout_save_queue.h"
@@ -918,6 +920,7 @@ private:
     void ApplyCollectionPopupBackdropAnimationFrame();
     void InvalidateFloatingPopupWindow(
         bool immediatePresent = false);
+    HRESULT EnsureFloatingPopupCompositionRoot();
     HRESULT CreateOrResizeFloatingPopupCompositionSurface();
     bool RenderFloatingPopupCompositionFrame();
     bool PresentFloatingPopupComposition();
@@ -1177,6 +1180,14 @@ private:
     void LoadNavigationSettingsAndApply();
     /** @brief 加载通用设置。 */
     void LoadGeneralSettingsAndApply();
+    void EnsureScreenTimeTracker();
+    void ApplyScreenTimeEnabled();
+    void ObserveScreenTime();
+    void RegisterScreenTimeNotifications(HWND window);
+    void UnregisterScreenTimeNotifications();
+    void HandleScreenTimePower(WPARAM wp, LPARAM lp);
+    void HandleScreenTimeSession(WPARAM wp);
+    void FlushScreenTime();
     /** @brief 按通用设置注册“切换桌面穿透”全局快捷键。 */
     void ApplyDesktopPassthroughHotkey();
     /** @brief 注销穿透快捷键并退出穿透状态。 */
@@ -2563,6 +2574,8 @@ private:
         ID2D1DeviceContext* ctx,
         bool applyAnimation = true);
     RECT GetLuaWidgetPanelRect() const;
+    static constexpr float kLuaWidgetPanelCornerRadius = 18.0f;
+    POINT GetLuaWidgetPanelAnimationAnchor(const RECT& panel) const;
     RECT GetLuaWidgetPanelContentRect() const;
     RECT GetLuaWidgetPanelCloseRect() const;
     void DrawLuaWidgetPanel(
@@ -2620,13 +2633,22 @@ private:
     void PauseWidgetMarqueeComposition(const std::wstring& widgetId);
     bool PresentQueuedDesktopWidgetComposition(bool passivePointerFrame = false);
     bool FlushPendingDesktopWidgetComposition();
+    bool StartDesktopWidgetHoverRoll(DesktopWidgetCompositionItem& item,
+        const RECT& frame, LONG collapsedHeight, float radius,
+        const snowdesktop::popup_motion_curve::Timeline& timeline);
     void DrainDesktopWidgetSurfaceResults();
     bool HasDesktopWidgetComposition(
         const std::wstring& widgetId) const;
+    bool DesktopWidgetHoverFadeEnabled() const;
+    bool SyncDesktopWidgetPresentationVisibility(const DesktopWidget& widget,
+        const RECT& bounds, bool visible, bool animate);
+    void StartDesktopWidgetHoverFade(DesktopWidgetCompositionItem& item, bool visible);
+    bool AdvanceDesktopWidgetHoverFades(double nowMilliseconds);
     void SetDesktopWidgetCompositionVisible(
         const std::wstring& widgetId,
         bool visible,
-        const RECT& bounds);
+        const RECT& bounds,
+        bool retainOnHeightChange = false);
     void KeepDesktopWidgetBackdropPanels();
     void LogDesktopWidgetBackdropState(const wchar_t* phase) const;
     void RemoveDesktopWidgetComposition(
@@ -2857,8 +2879,11 @@ private:
     const DesktopWidget* ResolveLuaWidgetContent(const DesktopWidget* widget) const;
     const DesktopWidget& ResolveLuaWidgetFrameOwner(const DesktopWidget& widget) const;
     bool IsLuaDesktopSurface(const DesktopWidget& widget) const;
-    bool CanStackLuaWidgets(size_t source, size_t target) const;
-    bool CommitLuaWidgetStack(size_t source, size_t target);
+    bool CanStackLuaWidgets(size_t source, size_t target,
+        const snowdesktop::lua_stack::MemberDrag* memberDrag = nullptr) const;
+    bool CommitLuaWidgetStack(size_t source, size_t target,
+        const snowdesktop::lua_stack::MemberDrag* memberDrag = nullptr);
+    bool WantsLuaStackMemberDrag() const;
     bool SelectLuaStackMember(std::wstring stackId, std::wstring memberId);
     bool ScrollLuaWidgetStack(const std::wstring& stackId, int delta);
     bool ReleaseLuaStackMember(const std::wstring& stackId);
@@ -2867,6 +2892,7 @@ private:
     bool IsLuaStackIndicatorVisible() const;
     void UpdateLuaStackIndicator(POINT point);
     void HideLuaStackIndicator();
+    void InvalidateLuaStackHoverVisibility(const std::wstring& stackId);
     bool HandleLuaStackIndicatorPointer(POINT point, bool pressed);
     void DrawLuaStackIndicator(ID2D1DeviceContext* context);
     struct LuaStackIndicatorState
@@ -3180,10 +3206,17 @@ private:
      * @return 框架矩形
     */
     RECT GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const;
+    RECT GetDesktopWidgetHoverFrameRect(const DesktopWidget& widget, const RECT& visibleFrame) const;
     RECT GetExpandedWidgetFrameRect(const DesktopWidget& widget) const;
+    RECT GetCollapsedWidgetFrameRect(const DesktopWidget& widget, const RECT& fullFrame) const;
     bool IsWidgetCollapsed(const DesktopWidget& widget) const;
-    bool UpdateWidgetHoverExpansion(POINT point);
-    std::unordered_set<std::wstring> hoverExpandedWidgetIds_;
+    bool CanFoldWidget(const DesktopWidget& widget) const;
+    float GetWidgetExpansionProgress(const DesktopWidget& widget) const;
+    bool IsWidgetHoverExpansionAnimating(const DesktopWidget& widget) const;
+    void UpdateWidgetHoverExpansion(POINT point);
+    bool AdvanceWidgetHoverExpansion(double nowMilliseconds, bool finish = false);
+    std::unordered_map<std::wstring, snowdesktop::popup_animation_rules::State> widgetHoverExpansion_;
+    snowdesktop::UiScheduleToken widgetHoverExpansionFrameToken_ = 0;
     std::wstring hoverExpansionSuppressedWidgetId_;
     void ToggleWidgetCollapsed(size_t widgetIndex);
     RECT GetLuaWidgetHostActionRect(const DesktopWidget& widget) const;
@@ -3327,6 +3360,9 @@ private:
     bool floatingDockPointerPresentPending_ = false;
     /** @brief 桌面覆盖窗口句柄 */
     HWND hwnd_ = nullptr;
+    std::unique_ptr<snowdesktop::screen_time::Tracker> screenTime_;
+    HPOWERNOTIFY screenTimeDisplayNotify_ = nullptr;
+    bool screenTimeSessionRegistered_ = false;
     /** @brief 虚拟桌面区域（左、上、宽、高） */
     int virtualLeft_ = 0, virtualTop_ = 0, virtualWidth_ = 0, virtualHeight_ = 0;
 
@@ -3381,6 +3417,8 @@ private:
     bool desktopWidgetPointerBatchActive_ = false;
     ULONGLONG desktopWidgetLastPointerPresentTick_ = 0;
     snowdesktop::UiScheduleToken desktopWidgetHoverTailToken_ = 0;
+    snowdesktop::UiScheduleToken desktopWidgetHoverFadeFrameToken_ = 0;
+    bool desktopWidgetHoverFadePending_ = false;
     bool hiddenWidgetSurfaceMaintenancePending_ = false;
     std::uint64_t widgetSurfaceReclaimCount_ = 0;
     std::uint64_t widgetSurfaceReclaimedBytes_ = 0;
@@ -3947,8 +3985,10 @@ private:
     std::optional<TrayDragPreview> trayDragPreview_;
     ComPtr<IDCompositionTarget> floatingPopupDcompTarget_;
     ComPtr<IDCompositionVisual2> floatingPopupDcompVisual_;
+    ComPtr<IDCompositionVisual2> floatingPopupDcompLiveVisual_;
     ComPtr<IDCompositionSurface> floatingPopupDcompSurface_;
-    RECT floatingPopupWindowBounds_{};
+    // Desktop coordinates. The HWND itself stays at the virtual desktop origin.
+    RECT floatingPopupContentBounds_{};
     RECT floatingPopupCollectionRegion_{};
     RECT floatingPopupLuaPanelRegion_{};
     UINT floatingPopupCompWidth_ = 0;
@@ -4130,9 +4170,50 @@ private:
     void FinalizePendingExternalOleDragLeave();
     HRESULT HandleExternalOleDragLeave(bool pointerOnDesktopSurface);
     size_t HitTestLuaFileDropTarget(POINT point) const;
+    struct WidgetTextDragSource
+    {
+        std::wstring widgetId;
+        std::string controlId;
+        std::string surface;
+        snowdesktop::text_input::DragSelection selection;
+        std::optional<std::uint32_t> popupGeneration;
+    };
+    struct LuaTextDropSurface
+    {
+        std::wstring widgetId;
+        std::string surface;
+        POINT local{};
+    };
+    std::optional<LuaTextDropSurface> FindLuaTextDropSurface(POINT point) const;
+    ScrollingItemWidget* FindNativeSearchTextDropSurface(
+        POINT point, std::optional<RECT>& popupFrame) const;
+    const RECT* GetNativeSearchTextDropCaret(const ScrollingItemWidget& view,
+        const RECT& searchRect) const;
+    bool IsWidgetTextComposing() const;
+    const snowdesktop::text_input::DragSelection* WidgetTextMoveSelection(
+        std::wstring_view widgetId, std::string_view controlId, std::string_view surface) const;
+    void InvalidateNativeSearchTextDrop(const std::wstring& widgetId, bool popup);
+    bool ClearWidgetTextDropPreview();
+    bool IsWidgetTextFileDropOccluded(POINT point) const;
+    bool HandleWidgetTextDragHover(POINT point, DWORD keyState, DWORD& effect);
+    std::optional<bool> DeliverWidgetTextDrop(POINT point, IDataObject* source,
+        bool copyAllowed);
+    bool TryStartWidgetTextDrag(POINT point, WPARAM keys);
+    void RunWidgetTextDrag(WidgetTextDragSource dragSource);
     bool DeliverLuaFileDrop(POINT point, const std::vector<std::wstring>& paths);
     bool externalLuaFileDropAvailable_ = false;
     bool externalOwnedContent_ = false;
+    bool externalWidgetTextAvailable_ = false;
+    std::optional<WidgetTextDragSource> widgetTextDragSource_;
+    bool widgetTextDropMovesSelection_ = false;
+    struct NativeSearchTextDropPreview
+    {
+        std::wstring widgetId;
+        RECT searchRect{};
+        RECT caret{};
+        bool popup = false;
+    };
+    std::optional<NativeSearchTextDropPreview> nativeSearchTextDropPreview_;
     std::vector<std::wstring> externalFileDropPaths_;
     DWORD ExternalFileDropPreferredEffect(POINT point) const;
     HRESULT HandleOleDragEnter(IDataObject* dataObject,
@@ -4299,10 +4380,10 @@ private:
     {
         snowdesktop::drop_text_rules::ResourceCandidates candidates;
         snowdesktop::drop_text_rules::Classification reference;
-        std::wstring unicodeText;
     };
     static DropReferenceSnapshot ReadDropReferenceSnapshot(
-        IDataObject* dataObject);
+        IDataObject* dataObject, bool literalText = false);
+    static std::wstring ReadDroppedUnicodeText(IDataObject* dataObject);
     static std::vector<std::wstring> TryGetNonFileDropPaths(
         IDataObject* dataObject,
         const DropReferenceSnapshot& snapshot);
@@ -4437,6 +4518,7 @@ private:
     RECT luaWidgetPanelRect_{};
     POINT luaWidgetPanelAnchorPoint_{};
     bool luaWidgetPanelMouseDown_ = false;
+    std::uint32_t luaPanelOutsidePressGeneration_ = 0;
     HWND luaWidgetPanelCaptureHwnd_ = nullptr;
     bool luaWidgetPanelFinalizing_ = false;
     std::optional<LuaWidgetPanelRequest>

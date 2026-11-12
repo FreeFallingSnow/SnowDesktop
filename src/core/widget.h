@@ -247,6 +247,7 @@ public:
 
     // ── Rendering ────────────────────────────────────────
     void DrawChrome(ID2D1DeviceContext* context, POINT mousePt) override;
+    void DrawHoverRollSnapshot(ID2D1DeviceContext* context, POINT mousePt);
     void DrawPreview(ID2D1DeviceContext* context, RECT frame,
         const snowdesktop::WidgetRenderOptions& options) override;
 
@@ -308,6 +309,7 @@ protected:
     float cachedClipRadius_ = 0.0f;
     RECT hostedFrame_{};
     bool hostedFrameActive_ = false;
+    bool drawingHoverRollSnapshot_ = false;
     bool popupFrameActive_ = false;
     float popupFrameScale_ = 1.0f;
 
@@ -424,7 +426,13 @@ public:
     void BeginSearchPointerSelection(
         POINT point, bool extendSelection);
     bool UpdateSearchPointerSelection(POINT point);
+    void FinishSearchPointerSelection(POINT point);
     void EndSearchPointerSelection();
+    std::optional<snowdesktop::text_input::DragSelection> TakeSearchTextDrag();
+    bool GetSearchTextDropCaret(POINT point, RECT& caret,
+        const snowdesktop::text_input::DragSelection* move) const;
+    bool DropSearchText(POINT point, std::wstring_view text,
+        const snowdesktop::text_input::DragSelection* move);
     bool IsSearchPointerSelecting() const
     {
         return searchPointerSelecting_;
@@ -540,6 +548,7 @@ protected:
     size_t searchCompositionCursor_ = 0;
     bool searchFocused_ = false;
     bool searchPointerSelecting_ = false;
+    bool searchSelectionDragArmed_ = false;
 
 private:
     size_t GetSearchSelectionStart() const;
@@ -547,7 +556,10 @@ private:
     bool HasSearchSelection() const;
     bool EraseSearchSelection();
     void ReplaceSearchSelection(const std::wstring& text);
-    size_t HitTestSearchTextPosition(POINT point) const;
+    void ReplaceSearchRange(size_t start, size_t end, std::wstring_view text);
+    void FinishSearchEdit(const snowdesktop::text_input::Snapshot& before);
+    size_t HitTestSearchTextPosition(POINT point, RECT* caret = nullptr,
+        std::optional<size_t>* hitCharacter = nullptr) const;
     std::wstring BuildSearchDisplayText(
         size_t& displayCursor,
         size_t& compositionStart,

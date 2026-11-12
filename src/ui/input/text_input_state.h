@@ -16,6 +16,25 @@
 // translate public Lua selections to/from UTF-8 at the existing API boundary.
 namespace snowdesktop::text_input
 {
+inline std::wstring NormalizeTransfer(
+    std::wstring_view text, bool multiline, std::size_t maximumUnits = 0)
+{
+    std::wstring result;
+    for (const auto& character : text)
+    {
+        if (character == L'\r') continue;
+        const std::wstring_view part = character == L'\n'
+            ? (multiline ? L"\n" : L" ")
+            : character == L'\t'
+                ? (multiline ? L"    " : L" ")
+                : std::wstring_view(&character, 1);
+        if (maximumUnits != 0 && part.size() > maximumUnits - result.size())
+            return {};
+        result.append(part);
+    }
+    return result;
+}
+
 inline std::uint32_t Codepoint(std::wstring_view value, std::size_t at,
     std::size_t& next) noexcept
 {
@@ -129,6 +148,37 @@ struct Snapshot
 {
     std::wstring text;
     std::size_t cursor = 0, anchor = 0;
+};
+
+// Capture the whole value to detect edits while the OLE loop pumps messages.
+struct DragSelection
+{
+    std::wstring text;
+    std::size_t start = 0, end = 0;
+
+    constexpr std::wstring_view SelectedText() const noexcept
+    {
+        return start < end && end <= text.size()
+            ? std::wstring_view(text).substr(start, end - start) : std::wstring_view{};
+    }
+
+    constexpr bool CanMove(std::wstring_view value, std::size_t landing) const noexcept
+    {
+        return !SelectedText().empty() && value == text && landing <= value.size() &&
+            (landing < start || landing > end);
+    }
+
+    constexpr std::optional<std::size_t> Move(std::wstring& value, std::size_t landing) const
+    {
+        if (!CanMove(value, landing)) return std::nullopt;
+        if (landing < start)
+        {
+            std::rotate(value.data() + landing, value.data() + start, value.data() + end);
+            return landing + end - start;
+        }
+        std::rotate(value.data() + start, value.data() + end, value.data() + landing);
+        return landing;
+    }
 };
 
 class History

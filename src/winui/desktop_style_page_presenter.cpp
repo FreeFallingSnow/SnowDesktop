@@ -698,6 +698,7 @@ struct DesktopStylePagePresenter::Impl
         data.audio.emplace(); data.audio->available = true; data.audio->volume = .45;
         data.power.emplace(); data.power->available = true; data.power->batteryPercent = 76;
         const auto items = BuildStatusBarItems(previewSettings, data);
+        const bool centeredAppName = !merged && settings.foregroundAppName && settings.foregroundAppNameCentered;
         muxc::StackPanel left, center, right;
         for (const auto& panel : {left, center, right})
         {
@@ -746,9 +747,10 @@ struct DesktopStylePagePresenter::Impl
             }
             if (item.key == "clock") clock = cell;
             else if (item.key == "notifications") notification = cell;
+            else if (item.key == "foregroundAppName") (centeredAppName ? center : left).Children().Append(cell);
             else (item.left ? left : right).Children().Append(cell);
         }
-        if (merged)
+        if (merged || centeredAppName || settings.timeNotificationRightAligned)
         {
             if (clock) right.Children().Append(clock);
             if (notification) right.Children().Append(notification);

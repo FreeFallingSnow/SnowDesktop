@@ -4,6 +4,7 @@
 #include "diagnostics/diagnostic_log.h"
 
 #include <windows.h>
+#include <objbase.h>
 #include <sddl.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -304,11 +305,88 @@ State QueryRegisteredTask(IRegisteredTask* task, const std::wstring& folder)
     return state;
 }
 
+ComPtr<ITaskDefinition> ReadRecoverableTask(
+    ITaskFolder* folder, BSTR name, const std::wstring& path, const std::wstring& userSid)
+{
+    ComPtr<IRegisteredTask> task;
+    Check(folder->GetTask(name, &task), L"ITaskFolder::GetTask(" + path + L")");
+    ComPtr<ITaskDefinition> definition;
+    Check(task->get_Definition(&definition), L"IRegisteredTask::get_Definition");
+    ComPtr<IRegistrationInfo> registration;
+    Check(definition->get_RegistrationInfo(&registration), L"ITaskDefinition::get_RegistrationInfo");
+    Check(ReadText(registration.Get(), &IRegistrationInfo::get_URI, L"IRegistrationInfo::get_URI") == path &&
+        ReadText(registration.Get(), &IRegistrationInfo::get_Source, L"IRegistrationInfo::get_Source") == kTaskAuthor
+        ? S_OK : HRESULT_FROM_WIN32(ERROR_INVALID_DATA), L"AutoStart.RepairTaskIdentity");
+    ComPtr<IPrincipal> principal;
+    Check(definition->get_Principal(&principal), L"ITaskDefinition::get_Principal");
+    TASK_LOGON_TYPE logonType{};
+    TASK_RUNLEVEL_TYPE runLevel{};
+    Check(principal->get_LogonType(&logonType), L"IPrincipal::get_LogonType");
+    Check(principal->get_RunLevel(&runLevel), L"IPrincipal::get_RunLevel");
+    Check(logonType == TASK_LOGON_INTERACTIVE_TOKEN && runLevel == TASK_RUNLEVEL_LUA
+        ? S_OK : HRESULT_FROM_WIN32(ERROR_INVALID_DATA), L"AutoStart.RepairTaskPrincipal");
+    const auto user = ReadText(principal.Get(), &IPrincipal::get_UserId, L"IPrincipal::get_UserId");
+    if (user != userSid)
+    {
+        alignas(DWORD) BYTE sid[SECURITY_MAX_SID_SIZE]{};
+        wchar_t domain[256]{};
+        DWORD sidSize = sizeof(sid);
+        DWORD domainSize = static_cast<DWORD>(std::size(domain));
+        SID_NAME_USE use{};
+        if (!LookupAccountNameW(nullptr, user.c_str(), sid, &sidSize, domain, &domainSize, &use))
+            Check(HRESULT_FROM_WIN32(GetLastError()), L"LookupAccountNameW(startup task owner)");
+        LPWSTR text = nullptr;
+        if (!ConvertSidToStringSidW(sid, &text))
+            Check(HRESULT_FROM_WIN32(GetLastError()), L"ConvertSidToStringSidW(startup task owner)");
+        const bool sameUser = userSid == text;
+        LocalFree(text);
+        Check(sameUser ? S_OK : E_ACCESSDENIED, L"AutoStart.RepairTaskOwner");
+    }
+    return definition;
+}
+
+void RecreateTask(ITaskFolder* folder, BSTR name, const std::wstring& path,
+    const std::wstring& userSid, VARIANT security, ITaskDefinition* replacement,
+    ComPtr<IRegisteredTask>& registered)
+{
+    const auto previous = ReadRecoverableTask(folder, name, path, userSid);
+    constexpr LONG flags = TASK_CREATE | TASK_DONT_ADD_PRINCIPAL_ACE | TASK_IGNORE_REGISTRATION_TRIGGERS;
+    const auto create = [&](BSTR taskName, ITaskDefinition* definition, LONG extraFlags) {
+        VARIANT empty{};
+        return folder->RegisterTaskDefinition(taskName, definition, flags | extraFlags,
+            empty, empty, TASK_LOGON_INTERACTIVE_TOKEN, security, registered.ReleaseAndGetAddressOf());
+    };
+
+    // Changing the shared parent ACL can strip even administrators' write
+    // access to an inherited task ACL. Test creation before removing it.
+    GUID guid{};
+    Check(CoCreateGuid(&guid), L"CoCreateGuid(startup repair)");
+    wchar_t suffix[40]{};
+    Check(StringFromGUID2(guid, suffix, static_cast<int>(std::size(suffix))) != 0
+        ? S_OK : E_UNEXPECTED, L"StringFromGUID2(startup repair)");
+    const ScopedBstr probeName(std::wstring(L"StartupRepair-") + suffix);
+    Check(create(probeName.get(), replacement, TASK_DISABLE), L"AutoStart.PreflightTaskRepair");
+    Check(folder->DeleteTask(probeName.get(), 0), L"AutoStart.DeleteRepairProbe");
+
+    Check(folder->DeleteTask(name, 0), L"ITaskFolder::DeleteTask(" + path + L")");
+    const HRESULT result = create(name, replacement, 0);
+    if (SUCCEEDED(result)) return;
+
+    auto error = FormatError(L"AutoStart.RecreateTask(" + path + L")", result);
+    if (result != HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS))
+    {
+        const HRESULT restored = create(name, previous.Get(), 0);
+        if (FAILED(restored))
+            error += L"\n" + FormatError(L"AutoStart.RestoreTask(" + path + L")", restored);
+    }
+    throw TaskFailure{std::move(error), result};
+}
+
 void ConfigureDefinition(ITaskDefinition* definition, const Target& target,
     bool enabled, std::wstring_view description, const std::wstring& folder,
     const std::wstring& userSid)
 {
-    const ScopedBstr sid(userSid.empty() ? CurrentUserSid() : userSid);
+    const ScopedBstr sid(userSid);
     const ScopedBstr author(kTaskAuthor);
     const ScopedBstr text(description);
     const ScopedBstr uri(folder + L"\\Startup");
@@ -550,10 +628,24 @@ bool LoginStore::Configure(const Target& target, bool enabled, std::wstring* err
         AppendError(taskError, elevationError);
     }
 
-    // Establish the replacement before disabling an old task. A failed enable
-    // must not remove a working registration. Disable requests still attempt
-    // both mechanisms even if the first fails.
     std::wstring disableError, runError;
+    const auto previousTask = task_.Query();
+    if (enabled && previousTask.enabledKnown && previousTask.enabled)
+    {
+        // Stage the replacement without enabling a second login entry.
+        if (run_.Configure(target, false, &runError) && task_.SetEnabled(false, &disableError))
+        {
+            if (run_.Configure(target, true, &runError)) return true;
+            // Restore the old task if Windows did not enable the replacement.
+            if (run_.Query().status == UnifiedAutoStartTaskState::Disabled)
+                (void)task_.SetEnabled(true, &disableError);
+        }
+        AppendError(taskError, disableError);
+        AppendError(taskError, runError);
+        return ReportFailure(std::move(taskError), error);
+    }
+
+    // Disable requests still attempt both mechanisms even if the first fails.
     const bool configured = run_.Configure(target, enabled, &runError);
     const bool disabled = (!enabled || configured) && task_.SetEnabled(false, &disableError);
     const auto task = task_.Query();
@@ -664,23 +756,27 @@ bool TaskStore::Configure(const Target& target, bool enabled,
         // old task must not veto an operation Windows would allow.
         const auto service = ConnectTaskService();
         const auto folder = EnsureTaskFolder(service.Get(), folder_);
+        const std::wstring sid = userSid_.empty() ? CurrentUserSid() : userSid_;
         ComPtr<ITaskDefinition> definition;
         Check(service->NewTask(0, &definition), L"ITaskService::NewTask");
-        ConfigureDefinition(definition.Get(), target, enabled, description, folder_, userSid_);
+        ConfigureDefinition(definition.Get(), target, enabled, description, folder_, sid);
         const ScopedBstr name(kTaskName);
         VARIANT empty{};
-        const ScopedBstr taskSecurity(userSid_.empty() ? L"" :
-            L"D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;" + userSid_ + L")");
+        // WindowSupport secures the shared parent directory. The login task
+        // needs its own user ACE so that this cannot remove its write access.
+        const ScopedBstr taskSecurity(L"D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;" + sid + L")");
         VARIANT security{};
-        if (!userSid_.empty())
-        {
-            security.vt = VT_BSTR;
-            security.bstrVal = taskSecurity.get();
-        }
+        security.vt = VT_BSTR;
+        security.bstrVal = taskSecurity.get();
         ComPtr<IRegisteredTask> registered;
-        Check(folder->RegisterTaskDefinition(name.get(), definition.Get(),
-            TASK_CREATE_OR_UPDATE, empty, empty, TASK_LOGON_INTERACTIVE_TOKEN,
-            security, &registered), L"ITaskFolder::RegisterTaskDefinition(" + folder_ + L"\\Startup)");
+        const HRESULT result = folder->RegisterTaskDefinition(name.get(), definition.Get(),
+            TASK_CREATE_OR_UPDATE | TASK_DONT_ADD_PRINCIPAL_ACE, empty, empty,
+            TASK_LOGON_INTERACTIVE_TOKEN, security, &registered);
+        const std::wstring path = folder_ + L"\\Startup";
+        if (result == E_ACCESSDENIED && !userSid_.empty())
+            RecreateTask(folder.Get(), name.get(), path, sid, security, definition.Get(), registered);
+        else
+            Check(result, L"ITaskFolder::RegisterTaskDefinition(" + path + L")");
         const State after = QueryRegisteredTask(registered.Get(), folder_);
         if (!after.error.empty()) throw TaskFailure{after.error};
         const auto expected = enabled ? UnifiedAutoStartTaskState::Enabled : UnifiedAutoStartTaskState::Disabled;

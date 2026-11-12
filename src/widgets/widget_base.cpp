@@ -523,6 +523,7 @@ RECT WidgetContainer::GetFrameRect() const
     if (IsSingleCellIconMode()) return data_->bounds;
     if (app_ && app_->IsGroupedWidget(*data_))
         return {};
+    if (drawingHoverRollSnapshot_) return GetLayoutFrameRect();
     return app_
         ? app_->GetStandaloneWidgetFrameRect(*data_)
         : data_->bounds;
@@ -540,7 +541,8 @@ bool WidgetContainer::IsCollapsed() const
 {
     // A source hosted inside a file group follows its host's layout, not its
     // own saved standalone collapse preference. Previews also stay expanded.
-    return !hostedFrameActive_ && data_ && app_ && app_->IsWidgetCollapsed(*data_);
+    return !drawingHoverRollSnapshot_ && !hostedFrameActive_ &&
+        data_ && app_ && app_->IsWidgetCollapsed(*data_);
 }
 
 bool WidgetContainer::IsSingleCellPresentation() const
@@ -1500,13 +1502,21 @@ bool ScrollingItemWidget::EraseSearchSelection()
 void ScrollingItemWidget::ReplaceSearchSelection(
     const std::wstring& text)
 {
+    ReplaceSearchRange(GetSearchSelectionStart(), GetSearchSelectionEnd(), text);
+}
+
+void ScrollingItemWidget::ReplaceSearchRange(
+    size_t start, size_t end, std::wstring_view text)
+{
     const snowdesktop::text_input::Snapshot before{searchText_, searchCursorPos_, searchSelectionAnchor_};
-    EraseSearchSelection();
-    searchCursorPos_ =
-        std::min(searchCursorPos_, searchText_.size());
-    searchText_.insert(searchCursorPos_, text);
-    searchCursorPos_ += text.size();
+    searchText_.replace(start, end - start, text);
+    searchCursorPos_ = start + text.size();
     searchSelectionAnchor_ = searchCursorPos_;
+    FinishSearchEdit(before);
+}
+
+void ScrollingItemWidget::FinishSearchEdit(const snowdesktop::text_input::Snapshot& before)
+{
     searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
     if (searchText_.empty()) folderSearch_.reset();
     InvalidateSlots();
@@ -1608,7 +1618,7 @@ void ScrollingItemWidget::SetSearchFocused(bool focused)
         searchSelectionAnchor_ = searchCursorPos_;
         searchCompositionText_.clear();
         searchCompositionCursor_ = 0;
-        searchPointerSelecting_ = false;
+        EndSearchPointerSelection();
     }
 }
 
@@ -1771,16 +1781,12 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
                         GlobalLock(data));
                 if (source)
                 {
-                    for (; *source; ++source)
-                    {
-                        if (*source == L'\r')
-                            continue;
-                        if (*source == L'\n' ||
-                            *source == L'\t')
-                            pasted.push_back(L' ');
-                        else
-                            pasted.push_back(*source);
-                    }
+                    const auto* end = source + GlobalSize(data) / sizeof(wchar_t);
+                    const auto* terminator = std::find(source, end, L'\0');
+                    if (terminator != end)
+                        pasted = snowdesktop::text_input::NormalizeTransfer(
+                            std::wstring_view(source, static_cast<size_t>(terminator - source)),
+                            false);
                     GlobalUnlock(data);
                 }
             }
@@ -1855,7 +1861,7 @@ std::wstring ScrollingItemWidget::BuildSearchDisplayText(
 }
 
 size_t ScrollingItemWidget::HitTestSearchTextPosition(
-    POINT point) const
+    POINT point, RECT* caret, std::optional<size_t>* hitCharacter) const
 {
     if (!app_)
         return 0;
@@ -1873,9 +1879,11 @@ size_t ScrollingItemWidget::HitTestSearchTextPosition(
             ? 0 : searchText_.size();
 
     ComPtr<IDWriteTextLayout> layout;
+    const std::wstring_view text = searchText_.empty()
+        ? std::wstring_view(L" ") : std::wstring_view(searchText_);
     if (FAILED(dwrite->CreateTextLayout(
-            searchText_.c_str(),
-            static_cast<UINT32>(searchText_.size()),
+            text.data(),
+            static_cast<UINT32>(text.size()),
             format,
             static_cast<float>(std::max<LONG>(
                 1, textRect.right - textRect.left)),
@@ -1893,29 +1901,55 @@ size_t ScrollingItemWidget::HitTestSearchTextPosition(
             static_cast<float>(point.y - textRect.top),
             &trailing, &inside, &metrics)))
         return searchText_.size();
-    size_t position = metrics.textPosition;
-    if (trailing)
-        position += std::max<UINT32>(1, metrics.length);
-    return std::min(position, searchText_.size());
+    const size_t rawPosition = static_cast<size_t>(metrics.textPosition) +
+        (trailing ? static_cast<size_t>(metrics.length) : 0);
+    const size_t position = snowdesktop::text_input::SnapBoundary(searchText_, rawPosition);
+    if (hitCharacter && inside && metrics.isText && metrics.textPosition < searchText_.size())
+        *hitCharacter = metrics.textPosition;
+    if (caret && !IsRectEmpty(&textRect))
+    {
+        const bool useHitEdge = !searchText_.empty() && position == rawPosition;
+        float x = 0.0f;
+        float y = 0.0f;
+        if (SUCCEEDED(layout->HitTestTextPosition(
+                useHitEdge ? metrics.textPosition : static_cast<UINT32>(position),
+                useHitEdge && trailing, &x, &y, &metrics)))
+        {
+            const LONG left = std::clamp(textRect.left + std::lround(x),
+                textRect.left, textRect.right - 1);
+            const LONG top = std::max(textRect.top, textRect.top + std::lround(y));
+            *caret = {left, top, left + 1, std::min(textRect.bottom,
+                textRect.top + std::lround(y + metrics.height))};
+        }
+    }
+    return position;
 }
 
 void ScrollingItemWidget::BeginSearchPointerSelection(
     POINT point, bool extendSelection)
 {
+    const bool mayDrag = searchFocused_ && !searchComposing_ &&
+        !extendSelection && HasSearchSelection() && !snowdesktop::private_pointer::Active();
     SetSearchFocused(true);
     ClearSearchComposition();
-    const size_t position =
-        HitTestSearchTextPosition(point);
-    if (!extendSelection)
-        searchSelectionAnchor_ = position;
-    searchCursorPos_ = position;
+    std::optional<size_t> hitCharacter;
+    const size_t position = HitTestSearchTextPosition(
+        point, nullptr, mayDrag ? &hitCharacter : nullptr);
+    searchSelectionDragArmed_ = hitCharacter &&
+        *hitCharacter >= GetSearchSelectionStart() && *hitCharacter < GetSearchSelectionEnd();
+    if (!searchSelectionDragArmed_)
+    {
+        if (!extendSelection)
+            searchSelectionAnchor_ = position;
+        searchCursorPos_ = position;
+    }
     searchPointerSelecting_ = true;
 }
 
 bool ScrollingItemWidget::UpdateSearchPointerSelection(
     POINT point)
 {
-    if (!searchPointerSelecting_)
+    if (!searchPointerSelecting_ || searchSelectionDragArmed_)
         return false;
     const size_t position = HitTestSearchTextPosition(point);
     if (position == searchCursorPos_)
@@ -1924,9 +1958,69 @@ bool ScrollingItemWidget::UpdateSearchPointerSelection(
     return true;
 }
 
+void ScrollingItemWidget::FinishSearchPointerSelection(POINT point)
+{
+    if (searchSelectionDragArmed_)
+        SetSearchCursorPosition(HitTestSearchTextPosition(point));
+    else
+        UpdateSearchPointerSelection(point);
+    EndSearchPointerSelection();
+}
+
 void ScrollingItemWidget::EndSearchPointerSelection()
 {
     searchPointerSelecting_ = false;
+    searchSelectionDragArmed_ = false;
+}
+
+std::optional<snowdesktop::text_input::DragSelection> ScrollingItemWidget::TakeSearchTextDrag()
+{
+    if (!searchPointerSelecting_ || !searchSelectionDragArmed_ ||
+        searchComposing_ || !HasSearchSelection())
+        return std::nullopt;
+    EndSearchPointerSelection();
+    return snowdesktop::text_input::DragSelection{
+        searchText_, GetSearchSelectionStart(), GetSearchSelectionEnd()};
+}
+
+bool ScrollingItemWidget::GetSearchTextDropCaret(POINT point, RECT& caret,
+    const snowdesktop::text_input::DragSelection* move) const
+{
+    caret = {};
+    const RECT box = GetSearchBoxRect();
+    if (searchComposing_ || !PtInRect(&box, point)) return false;
+    const auto position = HitTestSearchTextPosition(point, &caret);
+    return !IsRectEmpty(&caret) && (!move || move->CanMove(searchText_, position));
+}
+
+bool ScrollingItemWidget::DropSearchText(POINT point, std::wstring_view text,
+    const snowdesktop::text_input::DragSelection* move)
+{
+    const RECT box = GetSearchBoxRect();
+    if (searchComposing_ || !PtInRect(&box, point)) return false;
+    const auto normalized = move ? std::wstring{} :
+        snowdesktop::text_input::NormalizeTransfer(text, false);
+    if (!move && normalized.empty()) return false;
+    RECT caret{};
+    const auto position = HitTestSearchTextPosition(point, &caret);
+    if (IsRectEmpty(&caret) || (move && !move->CanMove(searchText_, position)))
+        return false;
+    SetSearchFocused(true);
+    EndSearchPointerSelection();
+    searchHighSurrogate_ = 0;
+    searchDuplicateImeResult_.clear();
+    if (move)
+    {
+        const snowdesktop::text_input::Snapshot before{
+            searchText_, searchCursorPos_, searchSelectionAnchor_};
+        const auto cursor = move->Move(searchText_, position);
+        if (!cursor) return false;
+        searchCursorPos_ = searchSelectionAnchor_ = *cursor;
+        FinishSearchEdit(before);
+    }
+    else
+        ReplaceSearchRange(position, position, normalized);
+    return true;
 }
 
 void ScrollingItemWidget::SetSearchComposition(
@@ -2286,6 +2380,17 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
                     caretBrush);
             }
         }
+    }
+    if (const auto* caret = app_->GetNativeSearchTextDropCaret(*this, searchRect))
+    {
+        const auto from = D2D1::Point2F(static_cast<float>(caret->left),
+            static_cast<float>(caret->top));
+        const auto to = D2D1::Point2F(static_cast<float>(caret->left),
+            static_cast<float>(caret->bottom));
+        if (auto* halo = getBrush(D2D1::ColorF(0x0B1220, 0.72f)))
+            context->DrawLine(from, to, halo, 4.0f);
+        if (auto* accent = getBrush(D2D1::ColorF(0x72C7FF)))
+            context->DrawLine(from, to, accent, 2.0f);
     }
     context->PopAxisAlignedClip();
 }
@@ -3042,6 +3147,17 @@ ID2D1Geometry* WidgetContainer::GetCachedClipGeometry(
  * @param context D2D 设备上下文
  * @param mousePt 当前鼠标位置
  */
+void WidgetContainer::DrawHoverRollSnapshot(ID2D1DeviceContext* context, POINT mousePt)
+{
+    struct SnapshotScope
+    {
+        bool& drawing;
+        ~SnapshotScope() { drawing = false; }
+    } snapshot{drawingHoverRollSnapshot_};
+    drawingHoverRollSnapshot_ = true;
+    DrawChrome(context, mousePt);
+}
+
 void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 {
     if (!data_ || !context || !app_) return;
@@ -3337,17 +3453,18 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
             const auto color = lightTheme
                 ? D2D1::ColorF(0.11f, 0.13f, 0.17f, hot ? 1.0f : 0.72f)
                 : D2D1::ColorF(1.0f, 1.0f, 1.0f, hot ? 1.0f : 0.80f);
-            // Reuse the bundled official right chevron; rotate it downward
-            // while expanded. The hit target itself does not rotate.
+            const bool hoverExpanded = !IsHosted() && data_->titleBarExpandOnHover &&
+                app_->CanFoldWidget(*data_) && app_->widgetHoverExpansion_.contains(data_->id);
             D2D1_MATRIX_3X2_F previousTransform;
             context->GetTransform(&previousTransform);
-            if (!IsCollapsed())
+            if (!hoverExpanded && !IsCollapsed())
                 context->SetTransform(D2D1::Matrix3x2F::Rotation(90.0f,
                     D2D1::Point2F((button.left + button.right) * 0.5f,
                         (button.top + button.bottom) * 0.5f)) * previousTransform);
             if (auto* format = GetCuFluentTextFormat(14.0f * GetBarScale()))
                 app_->DrawD2DText(context,
-                    snowdesktop::menu_fluent_glyphs::kChevronRight,
+                    hoverExpanded ? snowdesktop::menu_fluent_glyphs::kPin
+                                  : snowdesktop::menu_fluent_glyphs::kChevronRight,
                     button, format, color);
             context->SetTransform(previousTransform);
         }

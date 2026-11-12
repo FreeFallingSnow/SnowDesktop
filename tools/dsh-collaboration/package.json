@@ -1,6 +1,6 @@
 {
   "name": "@local/snowdesktop-collaboration",
-  "version": "0.2.27",
+  "version": "0.2.28",
   "private": true,
   "type": "module",
   "exports": {
@@ -16,10 +16,13 @@
     "bundle": {"patch": "./cordis.patch.yml"},
     "client": {"platform": "web", "immediately": true, "inject": ["@deepseek-ai/dsh-api-remotes", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-ui-conversation"]}
   },
+  "engines": {
+    "dsh": ">=0.2.1-rc.5 <0.3.0-0"
+  },
   "peerDependencies": {
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-llm": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-typert-protocol": "*",
     "@deepseek-ai/schemastery": "~3.18.5",
     "zod": "4.4.3"
   }

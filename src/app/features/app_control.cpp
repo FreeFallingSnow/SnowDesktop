@@ -347,7 +347,7 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
             constexpr Page pages[]{Page::General, Page::Desktop, Page::Widgets, Page::BackupAndData, Page::About,
                 Page::Dock, Page::Taskbar, Page::QuickNavigation, Page::ThemeManager, Page::StatusBar,
                 Page::AppearanceWidgets, Page::AppearanceDesktopIcons, Page::AppearanceIconBeautification,
-                Page::WidgetBehavior, Page::AnimationPerformance};
+                Page::WidgetBehavior, Page::AnimationPerformance, Page::ScreenTime};
             const auto key = Text(params, "page", false);
             Page selected = Page::General;
             bool found = key.empty();

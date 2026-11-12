@@ -19,11 +19,9 @@ inline std::wstring StatusBarClockText(const SYSTEMTIME& localTime, bool showSec
     return std::wstring(date) + L"   " + time;
 }
 
-// Widths are presentation contracts, independent of a sample's digits. The
-// localized memory label is reserved using its widest percentage separately.
+// Icon slots keep their width independently of the current label or sample.
 inline float StatusBarFixedWidth(std::string_view key)
 {
-    if (key == "traffic") return 152.f;
     if (key == "controlCenter") return 84.f;
     if (key == "inputMethod" || key == "inputMethodLayout") return 28.f;
     return 0.f;

@@ -798,6 +798,21 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // approved work area and merged geometry must already be authoritative.
     systemDataProvider_ = std::make_shared<
         snowdesktop::widget_runtime::WidgetSystemDataProvider>();
+    EnsureScreenTimeTracker();
+    systemDataProvider_->SetScreenTimeSampleSource([this] {
+        snowdesktop::widget_runtime::WidgetScreenTimeDataSnapshot snapshot;
+        if (!screenTime_) return snapshot;
+        const auto today = screenTime_->Today();
+        snapshot.enabled = today.enabled;
+        snapshot.totalSeconds = today.totalSeconds;
+        snapshot.hours = today.hours;
+        snapshot.apps.reserve(today.apps.size());
+        for (const auto& app : today.apps)
+            snapshot.apps.push_back(
+                snowdesktop::widget_runtime::MakeScreenTimeAppSnapshot(
+                    app.name, app.seconds, app.identity));
+        return snapshot;
+    });
     SyncStatusBar();
     if (!UpdateLayoutWorkArea())
     {
@@ -853,6 +868,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
     SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
     SetTimer(hwnd_, kWidgetRefreshTimerId, kWidgetRefreshIntervalMs, nullptr);
+    RegisterScreenTimeNotifications(controlHwnd_);
     SetTimer(hwnd_, kTaskbarRevealGuardTimerId,
         kTaskbarRevealGuardIntervalMs, nullptr);
     StartDockForegroundMonitor();
@@ -1521,6 +1537,12 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         });
         widgetEngine_->SetDesktopOpenCallback([this](const std::wstring& path) {
             return LuaOpenPath(path);
+        });
+        widgetEngine_->SetHostSettingsPageCallback([this](std::string_view page) {
+            if (page != "screen-time") return false;
+            ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
+                snowdesktop::SettingsPage::ScreenTime, "screenTime.enabled"));
+            return true;
         });
         widgetEngine_->SetDesktopRevealCallback([this](const std::wstring& path) {
             return LuaRevealPath(path);

@@ -3,7 +3,34 @@
     if(-not [IO.File]::Exists($manifest)){return @()}
     return @((Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json).languageFiles)
 }
+function Get-PendingResourceOwnership {
+    $path=Join-Path $repositoryRoot '.build/collaboration/resource-ownership.json'
+    if(-not [IO.File]::Exists($path)){return}
+    $ledger=Read-EntryJson $path
+    if(-not $ledger -or $ledger.schemaVersion -ne 1 -or -not $ledger.PSObject.Properties['entries']){throw 'Invalid language key ownership ledger; preserve it for diagnosis.'}
+    return $ledger.entries
+}
+function Get-ResourceCommitCheckpoint([string]$Participant) {
+    return @(Get-PendingResourceOwnership|Where-Object participant -eq $Participant|ForEach-Object requestId|Sort-Object -Unique)
+}
+function Assert-NoResourceCommitConflict([string[]]$Paths) {
+    $languageFiles=@(Get-SharedResourcePaths)
+    $scopes=@($Paths|Where-Object {$scope=$_;@($languageFiles|Where-Object {$_ -ieq $scope -or $_.StartsWith($scope+'/',[StringComparison]::OrdinalIgnoreCase)}).Count})
+    if(-not $scopes.Count){return}
+    $root=Join-Path $repositoryRoot '.build/collaboration'
+    foreach($pending in @('resource-write-pending.json','resource-commit-pending.json')){
+        if([IO.File]::Exists((Join-Path $root $pending))){throw 'A language operation needs recovery. Retry its original command before a whole-file language operation.'}
+    }
+    foreach($owner in @(Get-PendingResourceOwnership)){
+        if(@($scopes|Where-Object {$owner.file -ieq $_ -or $owner.file.StartsWith($_+'/',[StringComparison]::OrdinalIgnoreCase)}).Count){
+            throw ('Uncommitted language key belongs to '+$owner.participant+': '+$owner.file+':'+$owner.key+'. Save it first using commit -ResourceRequests.')
+        }
+    }
+}
 function Request-HandoffCheck($Current,$Other,[string]$Actor,[string]$File) {
+    # An independently archived result is terminal. The new owner's source
+    # claim still advances the ownership sequence and fences the old commit.
+    if(Get-Field $Other 'independentResult'){return}
     $plan=Get-Field $Other 'testPlan'
     if(-not $plan){return}
     $check=Get-Field $Other 'check'
@@ -34,6 +61,7 @@ function Set-Ownership($Current,$Entry,[string]$Files,[bool]$Adopt,[bool]$Add=$f
     if($paths.Count -eq 0){throw 'Claim requires at least one explicit path.'}
     if($Add){$paths=@($paths+@(Get-Field $Entry 'ownedFiles' @())|Sort-Object -Unique)}
     $shared=@(Get-SharedResourcePaths)
+    Assert-NoResourceCommitConflict @($paths|Where-Object {$_ -notin $shared})
     $handoffs=@()
     foreach($other in $Current.participants) {
         if($other.id -eq $Entry.id -or $other.state -eq 'withdrawn'){continue}
@@ -93,7 +121,22 @@ function Get-SourceChangeAudit($State) {
             $changes+= [pscustomobject]@{path=$path;kind=$kind;task=$(if($owner.Count){$owner[0].task}else{$null})}
         }
     }
-    return [pscustomobject]@{checkedUtc=[DateTime]::UtcNow.ToString('o');changes=$changes;limitation='Ownership follows recorded claims; pre-upgrade and unregistered edits remain unassigned.'}
+    $resourceRoot=Join-Path $repositoryRoot '.build/collaboration'
+    $pendingWrite=Read-EntryJson (Join-Path $resourceRoot 'resource-write-pending.json')
+    if($pendingWrite){
+        if($pendingWrite.requestId -cnotmatch '^[a-f0-9]{32}$'){throw 'Invalid interrupted language write; preserve its journal.'}
+        $request=Read-EntryJson (Join-Path $resourceRoot ($pendingWrite.requestId+'.resource.json'))
+        if(-not $request -or $request.file -ne $pendingWrite.file){throw 'Interrupted language write has a mismatched receipt. Preserve it for diagnosis.'}
+        $changes+= [pscustomobject]@{path=$request.file;kind='resource-write-pending';task=$request.participant}
+    }
+    $pendingCommit=Read-EntryJson (Join-Path $resourceRoot 'resource-commit-pending.json')
+    if($pendingCommit){
+        foreach($path in $pendingCommit.receipt.paths){$changes+= [pscustomobject]@{path=$path;kind='resource-commit-pending';task=$pendingCommit.receipt.participant}}
+    }
+    foreach($owner in @(Get-PendingResourceOwnership|Sort-Object -Property file,participant -Unique)){
+        $changes+= [pscustomobject]@{path=$owner.file;kind='resource-keys';task=$owner.participant}
+    }
+    return [pscustomobject]@{checkedUtc=[DateTime]::UtcNow.ToString('o');changes=$changes;limitation='Ownership follows recorded claims and language key receipts; pre-upgrade and unregistered edits remain unassigned.'}
 }
 function Get-OwnedCommitIdentity($Entry) {
     $scopes=@(Get-Field $Entry 'ownedFiles' @())
@@ -130,6 +173,10 @@ function Invoke-OwnedGitChange([string[]]$Arguments) {
 function Invoke-OwnedCommit($Selection,[string]$PathText,[string]$MessageFile) {
     $paths=@($PathText.Split(',') | Where-Object {$_} | ForEach-Object {Normalize-OwnedPath $_} | Sort-Object -Unique)
     if($paths.Count -eq 0 -or -not [IO.File]::Exists($MessageFile)){throw 'Commit requires Paths and an existing UTF-8 MessageFile.'}
+    if([IO.File]::Exists((Join-Path $repositoryRoot '.build/collaboration/resource-commit-pending.json'))){
+        throw 'An exact-key language commit needs recovery. Retry its original command before another Git checkpoint.'
+    }
+    Assert-NoResourceCommitConflict $paths
     foreach($path in $paths){if(@($Selection.ownedFiles | Where-Object {$path.Equals($_,[StringComparison]::OrdinalIgnoreCase) -or $path.StartsWith($_+'/',[StringComparison]::OrdinalIgnoreCase)}).Count -eq 0){throw "Unclaimed commit path: $path"}}
     if(Get-Field $Selection 'frozen' $false){Assert-CommitIdentity $Selection}
     $before=(& git.exe rev-parse HEAD) -join ''
@@ -150,6 +197,20 @@ function Invoke-OwnedCommit($Selection,[string]$PathText,[string]$MessageFile) {
     $otherAfter=@(& git.exe ls-files --stage | Where-Object { $name=($_ -split "`t",2)[-1];@($paths|Where-Object {$name -eq $_ -or $name.StartsWith($_+'/')}).Count -eq 0 })
     $indexStable=@(Compare-Object $otherBefore $otherAfter).Count -eq 0
     return [pscustomobject]@{parent=$before;commit=$after;paths=$paths;otherIndexEntriesUnchanged=$indexStable;utc=[DateTime]::UtcNow.ToString('o');limitation='Only cooperating Git callers honor the transaction lease; same-file edits still require reviewed ownership.'}
+}
+function Invoke-ResourceCommit($Selection,[string]$Requests,[string]$MessageFile) {
+    if(-not [IO.File]::Exists($MessageFile)){throw 'Resource commit requires an existing UTF-8 MessageFile.'}
+    $ids=@($Requests.Split(',')|Sort-Object -Unique)
+    if($ids.Count -gt 128 -or @($ids|Where-Object {$_ -cnotmatch '^[a-f0-9]{32}$'}).Count){throw 'Provide 1..128 applied resource request IDs.'}
+    if($Selection.frozen -and @($ids|Where-Object {$_ -cnotin $Selection.resourceCheckpoint}).Count){
+        throw 'A resource request is outside this ready checkpoint. Use the edit revision that carries its current ownership.'
+    }
+    . (Join-Path $PSScriptRoot 'build_runtime.ps1')
+    $python=Get-BuildPython
+    if(-not $python.available){throw ('Resource commit requires the same Python 3.8+ as resource apply. '+$python.reason)}
+    $result=@(& $python.path (Join-Path $PSScriptRoot 'build_resource_commit.py') --root $repositoryRoot --participant $Selection.participant --batch $Selection.batchId --revision $Selection.editRevision --requests ($ids -join ',') --message $MessageFile)
+    if($LASTEXITCODE -ne 0){throw 'Language key commit did not complete. Review the Git or ownership diagnostic before retrying.'}
+    return ($result -join "`n" | ConvertFrom-Json)
 }
 function Get-BinaryEvidence($Current,[bool]$BuildPassed) {
     $files=@('SnowDesktop.exe','snowwidget.exe','SnowDesktopLauncher.exe','SnowDesktopSteamBridge.exe','SnowDesktopWorkshopManager.exe')

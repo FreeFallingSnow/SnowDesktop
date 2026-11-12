@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <future>
 #include <memory>
+#include <span>
 #include <string>
 
 struct ID2D1Device;
@@ -76,13 +77,18 @@ public:
     void SetVisualTransform(
         float scale, float opacity,
         float anchorX, float anchorY);
+    // A popup panel keeps its own pose when other panels join the same host.
+    // The anchor is in content-window coordinates.
+    void SetPopupPanelTransform(std::uintptr_t ownerKey, float scale,
+        float opacity, POINT anchor, bool preserveAnimation);
     /** @brief 由 Windows Composition 自驱根视觉缩放，避免 UI 线程逐帧提交。 */
     [[nodiscard]] bool StartVisualScaleAnimation(
         float fromScale, float toScale, float opacity,
         float anchorX, float anchorY,
         std::uint32_t durationMilliseconds,
         float normalizedStartSlope = 0.0f);
-    /** @brief 由 Windows Composition 自驱根视觉缩放和透明度；弹窗可提供与内容层共用的弹簧轨迹。 */
+    // Animate the root, or the popup panel identified by panelOwnerKey.
+    // The anchor is in content-window coordinates in both cases.
     [[nodiscard]] bool StartVisualTransformAnimation(
         float fromScale, float toScale,
         float fromOpacity, float toOpacity,
@@ -90,7 +96,8 @@ public:
         std::uint32_t durationMilliseconds,
         float normalizedStartSlope = 0.0f,
         const snowdesktop::popup_motion_curve::Timeline* springTimeline = nullptr,
-        const snowdesktop::popup_motion_curve::Timeline* opacityTimeline = nullptr);
+        const snowdesktop::popup_motion_curve::Timeline* opacityTimeline = nullptr,
+        std::uintptr_t panelOwnerKey = 0);
     /**
      * @brief 使用与 Dock 内容相同的分片规则变形一个玻璃面板；矩形均为宿主坐标。
      *        由 CommitVisualChanges 或 EndFrame 统一提交，稳定几何不逐帧分配资源。
@@ -122,6 +129,9 @@ public:
     bool AddPanel(
         const RECT& frame, float cornerRadius, float blurRadius,
         std::uintptr_t ownerKey = 0, bool smoothCorners = true);
+    // Replace the desktop's rectangular background blur regions in the
+    // current frame, below the ordinary material panels.
+    void SetBackgroundPanels(std::span<const RECT> frames, float blurRadius);
     // Host-private icon regions share the same native blur backend.
     bool AddIconPanel(const RECT& frame, snowdesktop::IconBeautifyShape shape,
         float blurRadius, std::uintptr_t ownerKey,
@@ -135,18 +145,28 @@ public:
     /** @brief Apply a local card matrix and its projected window region in this frame's transaction. */
     bool SetPanelTransform(std::uintptr_t ownerKey,
         const D2D1_MATRIX_4X4_F& matrix, const RECT& projectedFrame);
+    // Reserve the full footprint of an animating desktop widget in the HWND
+    // region. The panel's visual clip still owns the visible contour.
+    // An empty frame restores the normal panel fence.
+    void SetPanelAnimationFence(std::uintptr_t ownerKey, const RECT& frame);
+    // Animate the clip inside a fixed, fully allocated widget backdrop.
+    bool StartPanelHeightAnimation(std::uintptr_t ownerKey,
+        float collapsedHeight, float radius,
+        const snowdesktop::popup_motion_curve::Timeline& timeline);
     /** @brief 移除玻璃面板并同步区域；非零 ownerKey 定位稳定身份，零值按矩形查找。 */
     bool RemovePanel(const RECT& frame, std::uintptr_t ownerKey = 0);
     /** @brief 在完整收集帧中保留一个由交接事务临时拥有的面板。 */
-    bool KeepPanel(const RECT& frame);
+    bool KeepPanel(const RECT& frame, std::uintptr_t ownerKey = 0);
     /** @brief 修改指定面板透明度；由 CommitVisualChanges 统一提交。 */
-    bool SetPanelOpacity(const RECT& frame, float opacity);
+    bool SetPanelOpacity(const RECT& frame, float opacity, std::uintptr_t ownerKey = 0);
     /** @brief 修改根视觉透明度；由 CommitVisualChanges 统一提交。 */
     bool SetVisualOpacity(float opacity);
     // Translation stays inside the stable popup allocation; no AppBar movement.
     void SetVisualTranslation(float x, float y);
     /** @brief 立即提交同线程所有 backdrop 目标的共享视觉事务，不等待 GPU 完成。 */
     void CommitVisualChanges();
+    // Submit a completed EndFrame(false) after the matching content commit.
+    void CommitDeferredFrame();
     /**
      * @brief 提交共享视觉事务，并在该批次真正完成后投递窗口消息。
      *
@@ -176,7 +196,7 @@ public:
 
 private:
     bool UpdatePanel(const RECT& frame, float cornerRadius, float blurRadius,
-        std::uintptr_t ownerKey, bool smoothCorners, bool customClip);
+        std::uintptr_t ownerKey, bool smoothCorners, bool customClip, bool background = false);
     bool SetDeformationTransform(const RECT& panelFrame, const RECT& dockFrame,
         int edge, float collapsed, float opacity, bool attraction);
     bool InitializeInternal(

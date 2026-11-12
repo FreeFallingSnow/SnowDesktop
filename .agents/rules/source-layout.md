@@ -21,7 +21,7 @@
 | `src/navigation/` | 快捷导航、查询匹配、拼音及 Everything 搜索 |
 | `src/settings/` | 设置模型、控制器、路由、搜索、独立进程及 IPC |
 | `src/shell/` | Windows Shell 文件操作、启动、上下文菜单及扩展管理 |
-| `src/system/` | 系统快照；设备控制、日历、系统面板、状态栏和托盘分别归入 `controls/`、`calendar/`、`panel/`、`status_bar/`、`tray/` |
+| `src/system/` | 系统快照；设备控制、日历、系统面板、状态栏、托盘和屏幕使用时间分别归入 `controls/`、`calendar/`、`panel/`、`status_bar/`、`tray/`、`screen_time/` |
 | `src/theme/` | 个性化、主题库、主题预览及外观材质 |
 | `src/ui/` | 共用原生界面设施，分别归入 `menu/`、`input/`、`render/`、`preview/` |
 | `src/widget/` | Lua 组件宿主、运行时及组件开发工具共用实现，按下文职责子目录归档 |

@@ -648,6 +648,13 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
         calendarPage_ = std::make_unique<snowdesktop::winui::CalendarPagePresenter>(localize, cardStyle());
         calendarPage_->SetActions(calendarPageActions_);
     };
+    const auto ensureScreenTime = [&]() {
+        if (screenTimePage_) return;
+        screenTimePage_ = std::make_unique<snowdesktop::winui::ScreenTimePagePresenter>(localize, cardStyle());
+        screenTimePage_->SetActions(screenTimePageActions_);
+        screenTimePage_->SetCollectionState(
+            navigation_.Generation(), screenTimeEnabled_);
+    };
     const auto ensureAnimation = [&]() {
         if (animationPage_) return;
         animationPage_ = std::make_unique<snowdesktop::winui::AnimationPerformancePagePresenter>(
@@ -723,6 +730,9 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
         break;
     case SettingsPage::Calendar:
         ensureCalendar();
+        break;
+    case SettingsPage::ScreenTime:
+        ensureScreenTime();
         break;
     case SettingsPage::AnimationPerformance:
         ensureAnimation();
@@ -892,6 +902,8 @@ void SettingsShell::Close() noexcept
     actualThemeChanged_ = {};
     if (calendarPage_) calendarPage_->Close();
     calendarPage_.reset();
+    if (screenTimePage_) screenTimePage_->Close();
+    screenTimePage_.reset();
     if (contextMenuPage_) contextMenuPage_->Close();
     contextMenuPage_.reset();
     generalPage_.reset();
@@ -915,6 +927,7 @@ void SettingsShell::Close() noexcept
     backupDataPage_.reset();
     generalPageActions_ = {};
     calendarPageActions_ = {};
+    screenTimePageActions_ = {};
     personalizationPageActions_ = {};
     desktopPageActions_ = {};
     dockPageActions_ = {};
@@ -1004,6 +1017,8 @@ void SettingsShell::ReleaseSessionResources() noexcept
     activeDialog_ = nullptr;
     if (calendarPage_) calendarPage_->Close();
     calendarPage_.reset();
+    if (screenTimePage_) screenTimePage_->Close();
+    screenTimePage_.reset();
     if (contextMenuPage_) contextMenuPage_->Close();
     contextMenuPage_.reset();
     generalPage_.reset();
@@ -1057,6 +1072,7 @@ void SettingsShell::RefreshLocalizedText()
     setNavigationLabel(PersonalizationItem(), Localize("settings.nav.group.appearanceInteraction"));
     for (const auto page : {SettingsPage::General, SettingsPage::QuickNavigation,
         SettingsPage::DesktopStyle, SettingsPage::AnimationPerformance, SettingsPage::Calendar,
+        SettingsPage::ScreenTime,
         SettingsPage::ContextMenu, SettingsPage::AppearanceTheme, SettingsPage::ThemeManager, SettingsPage::IconLibrary,
         SettingsPage::AppearanceDesktopIcons, SettingsPage::AppearanceIconBeautification,
         SettingsPage::WidgetBehavior, SettingsPage::Desktop, SettingsPage::DesktopPages,
@@ -1092,6 +1108,7 @@ void SettingsShell::RefreshLocalizedText()
     if (generalPage_)
         generalPage_->RefreshLocalizedText();
     if (calendarPage_) calendarPage_->RefreshLocalizedText();
+    if (screenTimePage_) screenTimePage_->RefreshLocalizedText();
     if (contextMenuPage_) contextMenuPage_->RefreshLocalizedText();
     if (personalizationPage_)
         personalizationPage_->RefreshLocalizedText();
@@ -1253,6 +1270,13 @@ void SettingsShell::SetCalendarPageActions(snowdesktop::winui::CalendarPageActio
 {
     calendarPageActions_ = std::move(actions);
     if (calendarPage_) calendarPage_->SetActions(calendarPageActions_);
+}
+
+void SettingsShell::SetScreenTimePageActions(
+    snowdesktop::winui::ScreenTimePageActions actions)
+{
+    screenTimePageActions_ = std::move(actions);
+    if (screenTimePage_) screenTimePage_->SetActions(screenTimePageActions_);
 }
 
 void SettingsShell::SetGeneralPageActions(
@@ -1703,6 +1727,8 @@ bool SettingsShell::ApplySnapshot(
         if (generalPage_)
             generalPage_->ApplySnapshot(snapshot);
         if (calendarPage_) calendarPage_->ApplySnapshot(snapshot);
+        screenTimeEnabled_ = snapshot.values.general.screenTimeEnabled;
+        if (screenTimePage_) screenTimePage_->ApplySnapshot(snapshot);
         if (contextMenuPage_) contextMenuPage_->ApplySnapshot(snapshot);
         if (personalizationPage_)
             personalizationPage_->ApplySnapshot(snapshot);
@@ -2194,7 +2220,7 @@ void SettingsShell::HookEvents()
                      SettingsPage::DesktopCategories,
                      SettingsPage::WidgetBehavior,
                      SettingsPage::DesktopStyle, SettingsPage::QuickNavigation, SettingsPage::Dock, SettingsPage::StatusBar, SettingsPage::Taskbar,
-                     SettingsPage::Widgets, SettingsPage::Calendar, SettingsPage::ContextMenu,
+                     SettingsPage::Widgets, SettingsPage::Calendar, SettingsPage::ScreenTime, SettingsPage::ContextMenu,
                      SettingsPage::BackupAndData, SettingsPage::About, SettingsPage::RuntimeModules,
                      SettingsPage::DeveloperTools, SettingsPage::AgentOperations, SettingsPage::Debug})
             {
@@ -2469,6 +2495,7 @@ void SettingsShell::ApplyNavigationIcons()
             L"ms-appx:///Assets/Settings/Icons/taskbar.svg", L"\xEBC8"},
         IconDescriptor{ContextMenuItem(), L"ms-appx:///Assets/Settings/Icons/context-menu.svg", L"\xE700"},
         IconDescriptor{CalendarItem(), L"ms-appx:///Assets/Settings/Icons/calendar.svg", L"\xE787"},
+        IconDescriptor{ScreenTimeItem(), L"ms-appx:///Assets/Settings/Icons/screen-time.svg", L"\xE81C"},
         IconDescriptor{WidgetsItem(),
             L"ms-appx:///Assets/Settings/Icons/widgets.svg", L"\xECA5"},
         IconDescriptor{WidgetBehaviorItem(),
@@ -2633,6 +2660,9 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     // width instead of the prose-reading column used by ordinary settings.
     PageSurface().MaxWidth(pageRoute.page == SettingsPage::IconLibrary
         ? std::numeric_limits<double>::infinity() : 1000.);
+    auto pageMargin = PageSurface().Margin();
+    pageMargin.Bottom = pageRoute.page == SettingsPage::ScreenTime ? 16.0 : 48.0;
+    PageSurface().Margin(pageMargin);
     pageRoute.focusId.clear();
     pageRoute.guideTopic.clear();
     if (!sessionActive_)
@@ -2703,6 +2733,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         pageRoute.page != SettingsPage::AnimationPerformance && pageRoute.page != SettingsPage::Dock)
         animationPage_->Deactivate();
     if (calendarPage_ && pageRoute.page != SettingsPage::Calendar) calendarPage_->Deactivate();
+    if (screenTimePage_ && pageRoute.page != SettingsPage::ScreenTime) screenTimePage_->Deactivate();
     if (statusBarPage_ && pageRoute.page != SettingsPage::StatusBar &&
         pageRoute.page != SettingsPage::AppearanceTheme && pageRoute.page != SettingsPage::Personalization) statusBarPage_->Deactivate();
     if (desktopStylePage_ && pageRoute.page != SettingsPage::DesktopStyle) desktopStylePage_->Deactivate();
@@ -2840,6 +2871,14 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(calendarPage_->Content());
             calendarPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) { RegisterFocusTarget(std::move(id), element); });
             calendarPage_->Activate();
+        }
+        break;
+    case SettingsPage::ScreenTime:
+        if (screenTimePage_)
+        {
+            PageCards().Children().Append(screenTimePage_->Content());
+            screenTimePage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) { RegisterFocusTarget(std::move(id), element); });
+            screenTimePage_->Activate();
         }
         break;
     case SettingsPage::AnimationPerformance:
@@ -3127,9 +3166,9 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "dock.fullscreenPolicy",
                 "dock.fullscreenExceptions",
                 "dock.startIcon", "dock.searchIcon",
-                "dock.showWindowsButton", "dock.startMenuKeepTaskbarHidden", "dock.showQuickSearchButton", "dock.showFrequentItems",
+                "dock.showWindowsButton", "dock.startMenuKeepTaskbarHidden", "dock.startMenuKeepTaskbarHiddenOnWinKey", "dock.showQuickSearchButton", "dock.showFrequentItems",
                 "dock.frequentItemCount", "dock.keepWhenDesktopHidden",
-                "dock.allowDesktopContentOverlap", "dock.reserveScreenSpace",
+                "dock.allowDesktopContentOverlap", "dock.reserveScreenSpace", "dock.blurReservedSpace",
                 "dock.showOnlyWhenSummoned"});
             generalPage_->Activate();
             dockPage_->Activate();
@@ -3402,7 +3441,8 @@ void SettingsShell::ApplyModuleRestrictions()
             id != "taskbar.systemSettings" && id != "taskbar.systemTheme" && id != "taskbar.systemPanel") disable = true;
         if (!runtimeModulePolicy_.Allows(Module::WindowMinimize) && (id == "dock.windowEffect" || id == "animation.windowEffect")) disable = true;
         if (!runtimeModulePolicy_.Allows(Module::Tray) && (id.starts_with("dock.tray") || id == "statusBar.tray")) disable = true;
-        if ((!runtimeModulePolicy_.Allows(Module::StartMenu) || !runtimeModulePolicy_.Allows(Module::Taskbar)) && id == "dock.startMenuKeepTaskbarHidden") disable = true;
+        if ((!runtimeModulePolicy_.Allows(Module::StartMenu) || !runtimeModulePolicy_.Allows(Module::Taskbar)) &&
+            (id == "dock.startMenuKeepTaskbarHidden" || id == "dock.startMenuKeepTaskbarHiddenOnWinKey")) disable = true;
         if (disable) restrictControl(control);
     }
 }
@@ -3776,6 +3816,7 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
     case SettingsPage::General: return GeneralItem();
     case SettingsPage::ContextMenu: return ContextMenuItem();
     case SettingsPage::Calendar: return CalendarItem();
+    case SettingsPage::ScreenTime: return ScreenTimeItem();
     case SettingsPage::AnimationPerformance: return AnimationItem();
     case SettingsPage::Personalization:
     case SettingsPage::AppearanceTheme: return AppearanceThemeItem();

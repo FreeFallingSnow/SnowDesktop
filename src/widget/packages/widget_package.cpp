@@ -19,6 +19,7 @@
 #include <chrono>
 #include <cmath>
 #include <cctype>
+#include <cstdlib>
 #include <cwctype>
 #include <fstream>
 #include <iomanip>
@@ -1349,6 +1350,20 @@ std::string PackagePermissionReviewFingerprint(const InstalledPackage& package)
         "version:" + package.manifest.version, "provider:" + package.source.providerId,
         "item:" + package.source.externalItemId };
     return WidgetPermissionBroker::ScopeFingerprint(identity, {});
+}
+
+bool MeetsWidgetMinimumHostVersion(std::string_view host, std::string_view minimum)
+{
+    std::istringstream actual{std::string(host)};
+    std::istringstream required{std::string(minimum)};
+    std::string actualPart, requiredPart;
+    for (int part = 0; part < 4; ++part)
+    {
+        const int a = std::getline(actual, actualPart, '.') ? std::atoi(actualPart.c_str()) : 0;
+        const int b = std::getline(required, requiredPart, '.') ? std::atoi(requiredPart.c_str()) : 0;
+        if (a != b) return a > b;
+    }
+    return true;
 }
 
 bool IsExecutablePackageContract(int schemaVersion, int apiVersion) noexcept
@@ -3344,8 +3359,10 @@ ValidationReport WidgetPackageManager::ValidateDirectory(
 }
 
 ValidationReport WidgetPackageManager::ValidateArchive(
-    const std::filesystem::path& archive, PackageManifest* manifest) const
+    const std::filesystem::path& archive, PackageManifest* manifest,
+    bool* malformedArchive) const
 {
+    if (malformedArchive) *malformedArchive = false;
     ValidationReport report = validator_.ValidateArchive(archive);
     if (!report.Ok()) return report;
     std::error_code ec;
@@ -3365,7 +3382,7 @@ ValidationReport WidgetPackageManager::ValidateArchive(
     const auto staging = CreateStagingPath("validation");
     std::string error;
     report = {};
-    if (!ExtractArchive(archive, staging, report, error))
+    if (!ExtractArchive(archive, staging, report, error, malformedArchive))
     {
         report.Add(ValidationSeverity::Error, "archive.content", archive,
             std::move(error));
@@ -3605,8 +3622,13 @@ bool WidgetPackageManager::InstallDirectory(
 bool WidgetPackageManager::ExtractArchive(
     const std::filesystem::path& archive,
     const std::filesystem::path& destination, ValidationReport& report,
-    std::string& error) const
+    std::string& error, bool* malformedArchive) const
 {
+    const auto malformed = [&](std::string message) {
+        if (malformedArchive) *malformedArchive = true;
+        error = std::move(message);
+        return false;
+    };
     std::string data;
     if (!ReadFile(archive, data, kMaxArchiveBytes))
     {
@@ -3621,10 +3643,7 @@ bool WidgetPackageManager::ExtractArchive(
     while (position + 4 <= data.size() && Read32(bytes + position) == 0x04034b50)
     {
         if (position + 30 > data.size())
-        {
-            error = "truncated ZIP local header";
-            return false;
-        }
+            return malformed("truncated ZIP local header");
         const std::uint16_t flags = Read16(bytes + position + 6);
         const std::uint16_t method = Read16(bytes + position + 8);
         const std::uint32_t expectedCrc = Read32(bytes + position + 14);
@@ -3633,18 +3652,12 @@ bool WidgetPackageManager::ExtractArchive(
         const std::uint16_t nameSize = Read16(bytes + position + 26);
         const std::uint16_t extraSize = Read16(bytes + position + 28);
         if ((flags & 0x0001) || (flags & 0x0008) || method != 0)
-        {
-            error = "v1 accepts unencrypted ZIP entries using the store method";
-            return false;
-        }
+            return malformed("v1 accepts unencrypted ZIP entries using the store method");
         const std::size_t payload = position + 30 + nameSize + extraSize;
         if (payload > data.size() ||
             compressedSize > data.size() - payload ||
             compressedSize != uncompressedSize)
-        {
-            error = "invalid ZIP entry bounds";
-            return false;
-        }
+            return malformed("invalid ZIP entry bounds");
         const std::string name(data.data() + position + 30, nameSize);
         if (name.find('\0') != std::string::npos || name.ends_with('/'))
         {
@@ -3656,18 +3669,12 @@ bool WidgetPackageManager::ExtractArchive(
             Lower(PathUtf8(relative.lexically_normal()));
         if (!WidgetPackageValidator::IsSafeRelativePath(relative) ||
             canonicalName.empty() || !names.insert(canonicalName).second)
-        {
-            error = "archive contains an unsafe or duplicate path: " + name;
-            return false;
-        }
+            return malformed("archive contains an unsafe or duplicate path: " + name);
         ++report.fileCount;
         report.totalBytes += uncompressedSize;
         if (report.fileCount > kMaxPackageFiles ||
             report.totalBytes > kMaxExtractedBytes)
-        {
-            error = "archive exceeds extraction quotas";
-            return false;
-        }
+            return malformed("archive exceeds extraction quotas");
         const auto target = destination / relative;
         std::filesystem::create_directories(target.parent_path(), ec);
         if (ec)
@@ -3677,10 +3684,7 @@ bool WidgetPackageManager::ExtractArchive(
         }
         const auto* payloadBytes = bytes + payload;
         if (Crc32(payloadBytes, uncompressedSize) != expectedCrc)
-        {
-            error = "archive entry CRC mismatch: " + name;
-            return false;
-        }
+            return malformed("archive entry CRC mismatch: " + name);
         std::ofstream file(target, std::ios::binary | std::ios::trunc);
         file.write(reinterpret_cast<const char*>(payloadBytes),
             static_cast<std::streamsize>(uncompressedSize));
@@ -3692,10 +3696,7 @@ bool WidgetPackageManager::ExtractArchive(
         position = payload + compressedSize;
     }
     if (report.fileCount == 0)
-    {
-        error = "archive contains no files";
-        return false;
-    }
+        return malformed("archive contains no files");
     return true;
 }
 
@@ -4264,6 +4265,37 @@ bool WidgetPackageManager::Rollback(const std::string& packageId,
     if (!SaveRegistry(error))
     {
         registry->second.activeVersion = previous;
+        return false;
+    }
+    return Refresh(error);
+}
+
+bool WidgetPackageManager::QuarantineInactiveVersion(
+    const InstalledPackage& package, std::string& error)
+{
+    const auto& id = package.manifest.id;
+    const auto& version = package.manifest.version;
+    const auto registered = registry_.find(id);
+    if (registered == registry_.end() || registered->second.source != package.source ||
+        registered->second.activeVersion == version ||
+        !WidgetPackageValidator::IsUuid(id) || !WidgetPackageValidator::IsSemVer(version))
+    {
+        error = "cannot quarantine the active or unowned package version";
+        return false;
+    }
+    const auto source = paths_.installed / Utf8ToWide(id) / Utf8ToWide(version);
+    if (source != package.root || PathContainsReparsePoint(source) ||
+        PathContainsReparsePoint(paths_.quarantine))
+    {
+        error = "cannot quarantine an unsafe package version path";
+        return false;
+    }
+    std::error_code ec;
+    std::filesystem::rename(source, paths_.quarantine /
+        Utf8ToWide(id + "-" + version + "-rejected-" + GenerateUuid()), ec);
+    if (ec)
+    {
+        error = "cannot quarantine rejected package version: " + ec.message();
         return false;
     }
     return Refresh(error);

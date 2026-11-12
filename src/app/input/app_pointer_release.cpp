@@ -18,6 +18,8 @@
 #include "widget/view/widget_scroll_rules.h"
 #include "layout/popup_scrollbar_layout.h"
 
+#include <utility>
+
 // Pointer leave, Dock click release and primary-button drag completion.
 
 namespace
@@ -414,8 +416,8 @@ std::uint64_t DesktopApp::HoverOnlyVisibleMask() const
                     keyboardNavInsideWidget_,
                     keyboardNavWidgetIndex_,
                     widgetIndex);
-        const RECT frame =
-            GetStandaloneWidgetFrameRect(widget);
+        const RECT frame = GetDesktopWidgetHoverFrameRect(
+            widget, GetStandaloneWidgetFrameRect(widget));
         if (snowdesktop::widget_visibility_rules::
                 ShouldRenderWidget(
                     true,
@@ -901,6 +903,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
 void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
     bool rightButtonRelease)
 {
+    const auto outsidePanelGeneration = std::exchange(luaPanelOutsidePressGeneration_, 0);
     const bool rightDrop = rightButtonItemDrag_;
     if (DockTrayPopupPointerUp(upPoint)) return;
     if (!snowdesktop::drag_input_rules::IsItemDragRelease(
@@ -925,7 +928,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             }
             RequestLayoutSave();
         }
-        else view->EndSearchPointerSelection();
+        else view->FinishSearchPointerSelection(upPoint);
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
@@ -1073,8 +1076,9 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             upPoint.x - content.left;
         const int localY =
             upPoint.y - content.top;
-        const std::string& surface =
+        const std::string surface =
             luaWidgetPanelRequest_.surface;
+        const auto panelGeneration = floatingPopupMouseHookGeneration_;
         const bool pointerCaptured = widgetEngine_ &&
             widgetEngine_->HasInteractionPointerCapture(
                 panelWidgetId, surface);
@@ -1098,7 +1102,9 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                 panelWidgetId,
                 upEvent,
                 localX, localY, 1, 0);
-            if (PtInRect(&content, upPoint))
+            if (panelGeneration == floatingPopupMouseHookGeneration_ &&
+                luaWidgetPanelRequest_.widgetId == panelWidgetId &&
+                luaWidgetPanelAnimation_.IsInteractive() && PtInRect(&content, upPoint))
             {
                 widgetEngine_->InvokeMouseEvent(
                     panelWidgetId,
@@ -1125,8 +1131,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         if (!searchable ||
             !searchable->IsSearchPointerSelecting())
             continue;
-        searchable->UpdateSearchPointerSelection(upPoint);
-        searchable->EndSearchPointerSelection();
+        searchable->FinishSearchPointerSelection(upPoint);
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ =
@@ -1228,8 +1233,15 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             if (commitMove && mouseDownWidgetIndex_ < widgets_.size() && luaStackMemberDrag_.Armed())
             {
                 widgetAction_ = WidgetAction::None;
-                if (IsPointOccludedByOpenPopup(upPoint) || IsExternalDropWindowAt(upPoint) ||
-                    !CommitLuaStackMemberDrag(widgetPreviewCell_))
+                bool committed = false;
+                if (!IsPointOccludedByOpenPopup(upPoint) && !IsExternalDropWindowAt(upPoint))
+                {
+                    if (widgetPairTargetIndex_ < widgets_.size())
+                        committed = CommitLuaWidgetStack(mouseDownWidgetIndex_, widgetPairTargetIndex_,
+                            &luaStackMemberDrag_);
+                    else committed = CommitLuaStackMemberDrag(widgetPreviewCell_);
+                }
+                if (!committed)
                     MessageBeep(MB_ICONWARNING);
             }
             else if (commitMove && mouseDownWidgetIndex_ < widgets_.size())
@@ -1446,6 +1458,11 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                     }
                 }
             }
+        }
+        if (outsidePanelGeneration && outsidePanelGeneration == floatingPopupMouseHookGeneration_ &&
+            !luaWidgetPanelRequest_.widgetId.empty())
+        {
+            CloseLuaWidgetPanel(luaWidgetPanelRequest_.widgetId, "outside");
         }
         if (pendingCtrlToggleDesktopIndex_ < items_.size())
             items_[pendingCtrlToggleDesktopIndex_].selected = false;

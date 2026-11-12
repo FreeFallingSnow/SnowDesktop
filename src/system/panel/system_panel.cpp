@@ -19,6 +19,7 @@
 #include <wrl/client.h>
 #include <windowsx.h>
 #include <commctrl.h>
+#include <shellapi.h>
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -65,7 +66,7 @@ struct SystemPanel::Impl
     TrayDragFeedback dragFeedback;std::function<void(HWND,RECT)> nativeControls;
     std::function<void(SystemPanelShortcut,HWND)> launchShortcut;
     std::function<void(HMONITOR,bool)> trayStateChanged;HMONITOR expandedTrayMonitor=nullptr;
-    std::function<UINT(POINT,HWND,bool)> calendarMenuHandler;
+    std::function<UINT(POINT,HWND,CalendarMenuKind)> calendarMenuHandler;
     std::function<UINT(POINT,HWND,const std::vector<std::wstring>&,std::size_t)> calendarChoiceMenuHandler;
     UiAnimationScheduler* scheduler=nullptr;UiScheduleToken animationToken=0;quick_navigation_animation_rules::State slide;
     ComPtr<IDCompositionDesktopDevice> composition;ComPtr<IDWriteFactory> text;ComPtr<IDCompositionTarget> target;ComPtr<IDCompositionVisual2> visual;ComPtr<IDCompositionSurface> surface;
@@ -610,12 +611,16 @@ struct SystemPanel::Impl
     }
     void CalendarContext(const std::string& id,POINT anchor)
     {
-        if(!model||!current||!calendarMenuHandler||!id.starts_with("event:")||model->CalendarEditing()||!model->View().Find(id))return;
+        if(!model||!current||!calendarMenuHandler||model->CalendarEditing()||!model->View().Find(id))return;
+        const bool subscription=model->CalendarCanRefreshSubscription(id);
+        if(!subscription&&!id.starts_with("event:"))return;
         const auto life=lifetime;auto active=model;
-        const bool series=model->CalendarEventIsSeries(id);
+        const auto kind=subscription?(model->CalendarSubscriptionManagementUrl(id).empty()?
+            CalendarMenuKind::Subscription:CalendarMenuKind::ManagedSubscription):
+            model->CalendarEventIsSeries(id)?CalendarMenuKind::Series:CalendarMenuKind::Local;
         StopPointerHover();input.Cancel();modal=calendarMenu=true;
         UINT command=0;
-        try{command=calendarMenuHandler(anchor,window,series);}
+        try{command=calendarMenuHandler(anchor,window,kind);}
         catch(...){if(life->alive)modal=calendarMenu=false;throw;}
         if(!life->alive)return;
         modal=calendarMenu=false;
@@ -623,8 +628,25 @@ struct SystemPanel::Impl
         if(!current||!model)return;
         if(!command&&GetForegroundWindow()!=window&&GetForegroundWindow()!=current->owner)
         {transition.Cancel();afterClose={};if(showing&&!closing)Animate(false);return;}
-        if(showing&&!closing&&model==active&&command>=1&&command<=4)
-        {active->CalendarEventCommand(id,command==2||command==4,command>=3);Arrange();FocusCalendarPage(false);Paint();}
+        if(!showing||closing||model!=active)return;
+        if(subscription)
+        {
+            if(kind==CalendarMenuKind::ManagedSubscription&&command==2)
+            {
+                const auto url=active->CalendarSubscriptionManagementUrl(id);
+                if(!url.empty())ShellExecuteW(window,L"open",url.c_str(),nullptr,nullptr,SW_SHOWNORMAL);
+                return;
+            }
+            if(command!=1)return;
+            active->RefreshCalendarSubscription(id);
+        }
+        else
+        {
+            if(command<1||command>4)return;
+            active->CalendarEventCommand(id,command==2||command==4,command>=3);
+        }
+        if(!life->alive||!model||model!=active)return;
+        if(Arrange()){FocusCalendarPage(false);Paint();}
     }
     void CalendarChoice(const std::string& id,bool keyboard)
     {
@@ -987,7 +1009,8 @@ void SystemPanel::SetTrayDragFeedback(TrayDragFeedback feedback){impl_->dragFeed
 void SystemPanel::SetTrayStateChanged(std::function<void(HMONITOR,bool)> callback){impl_->trayStateChanged=std::move(callback);}
 void SystemPanel::SetNativeControlsHandler(std::function<void(HWND,RECT)> callback){impl_->nativeControls=std::move(callback);}
 void SystemPanel::SetShortcutHandler(std::function<void(SystemPanelShortcut,HWND)> callback){impl_->launchShortcut=std::move(callback);}
-void SystemPanel::SetCalendarMenuHandler(std::function<UINT(POINT,HWND,bool)> callback){impl_->calendarMenuHandler=std::move(callback);}
+void SystemPanel::SetCalendarMenuHandler(std::function<UINT(POINT,HWND,CalendarMenuKind)> callback)
+{impl_->calendarMenuHandler=std::move(callback);}
 void SystemPanel::SetCalendarChoiceMenuHandler(std::function<UINT(POINT,HWND,const std::vector<std::wstring>&,std::size_t)> callback)
 {impl_->calendarChoiceMenuHandler=std::move(callback);}
 }

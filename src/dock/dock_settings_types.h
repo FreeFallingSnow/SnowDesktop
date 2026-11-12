@@ -39,6 +39,12 @@ struct DockSettings : DockLayoutSettings
 {
     bool operator==(const DockSettings&) const = default;
 
+    [[nodiscard]] bool UsesReservedSpaceBackdrop() const noexcept
+    {
+        return blurReservedSpace && reserveScreenSpace && !edgeAttached && !showOnlyWhenSummoned;
+    }
+
+    bool blurReservedSpace = false;
     // Legacy field name retained in the persisted format. This now controls
     // only the hotkey trigger; edge-swipe invocation is independently enabled.
     bool floatingShortcutMode = true;
@@ -57,6 +63,7 @@ struct DockSettings : DockLayoutSettings
     bool showWindowPreviews = true;
     bool singleClickLaunchItems = false;
     bool startMenuKeepTaskbarHidden = false;
+    bool startMenuKeepTaskbarHiddenOnWinKey = false;
     bool followComponentAppearance = true;
     bool followComponentCornerRadius = true;
     float cornerRadius = 12.0f;

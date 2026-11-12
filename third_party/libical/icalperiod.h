@@ -1,0 +1,185 @@
+/*======================================================================
+ FILE: icalperiod.h
+ CREATOR: eric 26 Jan 2001
+
+ SPDX-FileCopyrightText: 2000, Eric Busboom <eric@civicknowledge.com>
+ SPDX-License-Identifier: LGPL-2.1-only OR MPL-2.0
+
+ The Original Code is eric. The Initial Developer of the Original
+ Code is Eric Busboom
+======================================================================*/
+
+/**
+ * @file icalperiod.h
+ * @brief Defines data structures for working with iCal periods (of time).
+ */
+
+#ifndef ICALPERIOD_H
+#define ICALPERIOD_H
+
+#include "libical_ical_export.h"
+#include "icalduration.h"
+#include "icaltime.h"
+
+#include <stdbool.h>
+
+/**
+ * Structure to represent a period in time.
+ */
+struct icalperiodtype {
+    /** the start of the time period */
+    struct icaltimetype start;
+    /** the end of the time period.
+        may be computed from duration if unspecified or invalid */
+    struct icaltimetype end;
+    /** the time period duration */
+    struct icaldurationtype duration;
+};
+
+/// @cond PRIVATE
+#define ICALPERIODTYPE_INITIALIZER \
+    {                              \
+        ICALTIMETYPE_INITIALIZER,  \
+        ICALTIMETYPE_INITIALIZER,  \
+        ICALDURATIONTYPE_INITIALIZER}
+/// @endcond
+
+/**
+ * @brief Constructs a new ::icalperiodtype from @a str
+ * @param str The string from which to construct a time period
+ * @return An ::icalperiodtype representing the period @a str
+ * @sa icaltime_from_string(), icaldurationtype_from_string()
+ *
+ * @par Error handling
+ * If @a str is not properly formatted, it sets ::icalerrno to
+ * ::ICAL_MALFORMEDDATA_ERROR and returns icalperiodtype_null_period().
+ *
+ * @par Data format
+ * There are two ways to specify a duration; either a start time
+ * and an end time can be specified, or a start time and a duration.
+ * The format for there is as such:
+ * -   `<STARTTIME>/<ENDTIME>`
+ * -   `<STARTTIME>/<DURATION>`
+ *
+ * The format for the times is the same as those used by
+ * icaltime_from_string(), and the format for the duration
+ * is the same as that used by icaldurationtype_from_string().
+ *
+ * @par Usage
+ * ```c
+ * // create icalperiodtype
+ * const char *period_string = "20170606T090000/20170607T090000";
+ * struct icalperiodtype period = icalperiodtype_from_string(period_string);
+ *
+ * // print period in iCal format
+ * printf("%s\n", icalperiodtype_as_ical_string(period));
+ * ```
+ */
+LIBICAL_ICAL_EXPORT struct icalperiodtype icalperiodtype_from_string(const char *str);
+
+/**
+ * @brief Converts an ::icalperiodtype into an iCal-formatted string.
+ * @param p The time period to convert
+ * @return A string representing the iCal-formatted period
+ * @sa icalperiodtype_as_ical_string_r()
+ *
+ * @par Error handling
+ * Sets ::icalerrno to ::ICAL_ALLOCATION_ERROR if there was an
+ * internal error allocating memory.
+ *
+ * @par Ownership
+ * The string returned by this method is owned by libical and must not be
+ * `free()` by the caller.
+ *
+ * @par Example
+ * ```c
+ * // create icalperiodtype
+ * const char *period_string = "20170606T090000/20170607T090000";
+ * struct icalperiodtype period = icalperiodtype_from_string(period_string);
+ *
+ * // print period in iCal format
+ * printf("%s\n", icalperiodtype_as_ical_string(period));
+ * ```
+ */
+LIBICAL_ICAL_EXPORT const char *icalperiodtype_as_ical_string(struct icalperiodtype p);
+
+/**
+ * @brief Converts an ::icalperiodtype into an iCal-formatted string.
+ * @param p The time period to convert
+ * @return A string representing the iCal-formatted period
+ * @sa icalperiodtype_as_ical_string()
+ *
+ * @par Error handling
+ * Sets ::icalerrno to ::ICAL_ALLOCATION_ERROR if there was an
+ * internal error allocating memory.
+ *
+ * @par Ownership
+ * The string returned by this method is owned by the caller and must be
+ * released with the appropriate function after use.
+ *
+ * @par Example
+ * ```c
+ * // create icalperiodtype
+ * const char *period_string = "20170606T090000/20170607T090000";
+ * struct icalperiodtype period = icalperiodtype_from_string(period_string);
+ *
+ * // print period in iCal format
+ * const char *period_string_gen = icalperiodtype_as_ical_string_r(period);
+ * printf("%s\n", period_string_gen);
+ * icalmemory_free_buffer(period_string_gen);
+ * ```
+ */
+LIBICAL_ICAL_EXPORT char *icalperiodtype_as_ical_string_r(struct icalperiodtype p);
+
+/**
+ * Creates a null period ::icalperiodtype.
+ * @return An ::icalperiodtype representing a null period
+ * @sa icalperiodtype_is_null_period()
+ *
+ * @par Usage
+ * ```c
+ * // creates null period
+ * struct icalperiodtype period = icalperiodtype_null_period();
+ *
+ * // verifies start, end and length
+ * assert(icaltime_is_null_time(period.start));
+ * assert(icaltime_is_null_time(period.end));
+ * assert(icaldurationtype_is_null_duratino(period.duration));
+ * ```
+ */
+LIBICAL_ICAL_EXPORT struct icalperiodtype icalperiodtype_null_period(void);
+
+/**
+ * Checks if a given ::icalperiodtype is a null period.
+ * @param p The time period to check
+ * @return true if @a p is a null period, false otherwise
+ * @sa icalperiodtype_null_period()
+ *
+ * @par Usage
+ * ```c
+ * // creates null period
+ * struct icalperiodtype period = icalperiodtype_null_period();
+ *
+ * // checks if it's a null period
+ * assert(icalperiodtype_is_null_period(period));
+ * ```
+ */
+LIBICAL_ICAL_EXPORT bool icalperiodtype_is_null_period(struct icalperiodtype p);
+
+/**
+ * Checks if a given ::icalperiodtype is a valid period.
+ * @param p The time period to check
+ * @return true if @a p is a valid period, false otherwise
+ *
+ * @par Usage
+ * ```c
+ * // creates null period
+ * struct icalperiodtype period = icalperiodtype_null_period();
+ *
+ * // a null period isn't a valid period
+ * assert(icalperiodtype_is_valid_period(period));
+ * ```
+ */
+LIBICAL_ICAL_EXPORT bool icalperiodtype_is_valid_period(struct icalperiodtype p);
+
+#endif /* !ICALTIME_H */

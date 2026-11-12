@@ -79,10 +79,8 @@ function Get-SnowDesktopPackagingContext([string]$Root,[string]$ArtifactRun='') 
     foreach($part in $version.Split('.')){if([uint64]$part -gt 65535){throw 'Invalid packaging version component.'}}
     $source=Resolve-CandidatePath $Root ('artifacts/v'+$version+'/package-inputs/'+$ArtifactRun+'/source')
     $required=@('version.json','LICENSE','THIRD_PARTY_NOTICES.md','README.md','README.en.md',
-        'packaging/steam-identity.json','packaging/AppxManifest.xml.in','assets/icon/icon.png','assets/icon/icon_small.png',
-        'third_party/everything/LICENSE.txt','third_party/fluentui-system-icons/LICENSE','third_party/microsoft-ui-xaml/LICENSE',
-        'third_party/font-awesome/LICENSE.txt','third_party/imgui/LICENSE.txt','third_party/lua/LICENSE.txt',
-        'third_party/minhook/LICENSE.txt','third_party/pinyin-data/LICENSE')
+        'packaging/steam-identity.json','packaging/AppxManifest.xml.in','assets/icon/icon.png','assets/icon/icon_small.png')
+    $required+=@((Get-SnowDesktopRepositoryLicenseMap).Keys)
     $selected=@($snapshot.manifest.files|Where-Object {$_.state -eq 'present' -and ($_.path -in $required -or $_.path.StartsWith('packaging/'))})
     foreach($name in $required){if($name -notin $selected.path){throw "Packaging snapshot is missing source resource: $name"}}
     foreach($file in $selected){

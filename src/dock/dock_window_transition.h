@@ -71,11 +71,6 @@ double EaseDockWindowTransition(double progress) noexcept;
 BYTE ResolveDockWindowTransitionOpacity(
     DockWindowTransitionDirection direction,
     double progress) noexcept;
-int ResolveDockWindowTransitionCornerRadius(
-    const RECT& frame,
-    const RECT& dockRect) noexcept;
-RECT InterpolateDockWindowTransitionRect(
-    const RECT& from, const RECT& to, double progress) noexcept;
 RECT ResolveDockWindowImageHostRect(
     const RECT& from, const RECT& to) noexcept;
 // Keep temporary animation HWNDs from covering any complete monitor. At most
@@ -105,12 +100,6 @@ inline HWND ResolveDockWindowTransitionInsertAfter(HWND keepBelow, bool hostOwns
         (GetWindowLongPtrW(keepBelow, GWL_EXSTYLE) & WS_EX_TOPMOST)
         ? keepBelow : HWND_TOPMOST;
 }
-
-// Coordinates are physical screen pixels; the returned region belongs to the
-// caller and is local to hostBounds. This also handles negative monitor origins.
-HRGN CreateDockWindowTransitionOcclusionRegion(
-    const RECT& hostBounds, int cornerRadius,
-    const std::vector<RECT>& occluders);
 
 /**
  * @brief 使用 DWM 共享窗口图像在应用窗口与 Dock 图标之间播放过渡。
@@ -230,7 +219,7 @@ private:
     bool CommitCompositionTimeline(std::span<IDCompositionAnimation* const> animations);
     bool ScheduleAnimationWake();
     bool ApplyFrame(double progress);
-    bool ApplyOcclusion(const RECT& hostBounds, int cornerRadius);
+    bool ApplyOcclusion(const RECT& hostBounds);
     void LogPresentation(int requestedEffect,
         const wchar_t* fallbackStage);
     void LogAbort(const wchar_t* stage, HRESULT result = E_FAIL) const;
@@ -271,7 +260,6 @@ private:
     std::function<std::vector<RECT>()> occlusionRectsProvider_;
     std::function<void(const wchar_t*)> diagnosticCallback_;
     RECT occlusionHostBounds_{};
-    int occlusionCornerRadius_ = 0;
     std::vector<RECT> occlusionRects_;
     bool hasOcclusionRegion_ = false;
     const wchar_t* imageSource_ = L"none";

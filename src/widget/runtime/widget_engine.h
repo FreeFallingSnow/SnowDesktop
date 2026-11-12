@@ -35,6 +35,7 @@ namespace snowdesktop::widget_runtime { struct WidgetMultiplayer; }
 #include "system/system_snapshot.h"
 #include "platform/http_runtime.h"
 #include "system/calendar/calendar_service.h"
+#include "system/calendar/calendar_subscription_types.h"
 #include "system/calendar/calendar_display.h"
 #include "widget/packages/widget_package.h"
 #include "steam/steam_workshop_sync.h"
@@ -385,6 +386,7 @@ struct LuaWidgetDataSnapshot
     snowdesktop::widget_runtime::WidgetProcessSummaryDataSnapshot
         processSummary;
     snowdesktop::widget_runtime::WidgetPowerDataSnapshot power;
+    snowdesktop::widget_runtime::WidgetScreenTimeDataSnapshot screenTime;
     snowdesktop::widget_runtime::WidgetNetworkStatusDataSnapshot
         networkStatus;
     snowdesktop::widget_runtime::WidgetNetworkTrafficDataSnapshot
@@ -814,6 +816,11 @@ public:
     }
     /** @brief 设置桌面文件打开回调 */
     void SetDesktopOpenCallback(DesktopPathAction callback) { desktopOpenCallback_ = std::move(callback); }
+    using HostSettingsPageCallback = std::function<bool(std::string_view)>;
+    void SetHostSettingsPageCallback(HostSettingsPageCallback callback)
+    {
+        hostSettingsPageCallback_ = std::move(callback);
+    }
     /** @brief 设置桌面文件揭示回调（在资源管理器中定位） */
     void SetDesktopRevealCallback(DesktopPathAction callback) { desktopRevealCallback_ = std::move(callback); }
     /** @brief 设置桌面刷新回调 */
@@ -897,7 +904,8 @@ public:
      * @param widgetId 要重新加载的小部件 ID
      * @return 重载成功返回 true，否则返回 false
      */
-    bool ReloadWidget(const std::wstring& widgetId);
+    bool ReloadWidget(const std::wstring& widgetId,
+        bool* deterministicFailure = nullptr);
     bool RetryWidget(const std::wstring& widgetId,
         const std::wstring& packageId);
     snowdesktop::widget_runtime::WidgetHostState GetWidgetHostState(
@@ -1156,7 +1164,8 @@ public:
         const std::string& providerId, const std::string& externalItemId,
         const std::string& version, std::wstring& error,
         bool allowSourceChange = false,
-        bool allowPermissionExpansion = false);
+        bool allowPermissionExpansion = false,
+        bool retryWorkshop = false);
     int ApplySafeWidgetPackageUpdates(const std::string& providerId,
         std::string& report);
     static std::vector<snowdesktop::widget::PackageDetails>
@@ -1275,7 +1284,11 @@ public:
     std::vector<snowdesktop::calendar::CalendarEvent>
         RuntimeCalendarEvents(
             const std::string& fromDate,
-            const std::string& toDate) const;
+            const std::string& toDate, bool includeSubscriptions = false) const;
+    std::optional<std::vector<snowdesktop::calendar::SubscriptionInfo>> RuntimeCalendarSubscriptions() const;
+    std::optional<snowdesktop::calendar::SubscriptionDetails> RuntimeCalendarSubscriptionDetails(const std::string& id) const;
+    snowdesktop::calendar::SubscriptionResult RuntimeCalendarSubscription(
+        snowdesktop::calendar::SubscriptionCommand command);
     std::vector<snowdesktop::calendar::CalendarEvent>
         RuntimeCalendarSingleEvents() const;
     std::optional<snowdesktop::calendar::CalendarEvent>
@@ -1633,6 +1646,18 @@ public:
     bool GetFocusedHostInputCaretRect(RECT& rect) const;
     bool IsHostInputAt(const std::wstring& widgetId, int x, int y,
         std::string_view surface = "desktop") const;
+    // nullopt: outside an input; empty key: input that cannot accept text.
+    std::optional<std::string> FindHostInputTextDropTarget(
+        const std::wstring& widgetId, POINT point, std::string_view surface) const;
+    std::optional<bool> UpdateHostInputTextDropPreview(
+        const std::wstring& widgetId, POINT point, std::string_view surface,
+        bool copyAllowed, const snowdesktop::text_input::DragSelection* move);
+    bool ClearHostInputTextDropPreview();
+    bool DropHostInputText(const std::wstring& widgetId, std::string_view target,
+        POINT point, std::string_view surface, std::wstring_view text,
+        const snowdesktop::text_input::DragSelection* move);
+    std::optional<snowdesktop::text_input::DragSelection> TakeHostInputTextDrag(
+        std::wstring& widgetId, std::string& controlId, std::string& surface);
     bool PrepareHostInputContextMenu(const std::wstring& widgetId,
         int x, int y, std::string_view surface,
         bool clipboardHasText,
@@ -1713,9 +1738,33 @@ private:
         std::string_view focusedKey, bool drawLogicalSlotDrag);
     bool VerifyInstalledWidgetPackage(const std::string& packageId,
         const std::optional<std::string>& previousVersion,
-        std::wstring& error, std::uint64_t diagnosticQueryId = 0);
+        std::wstring& error, std::uint64_t diagnosticQueryId = 0,
+        const snowdesktop::widget::InstalledPackage* workshopCandidate = nullptr,
+        bool* deterministicFailure = nullptr);
     size_t HitTestHostInputPosition(const LuaWidget::HostControl& control,
         const std::wstring& widgetId, int x, int y) const;
+    struct HostInputDropCaret
+    {
+        float left, top, right, bottom;
+        RECT clip{};
+        bool operator==(const HostInputDropCaret& other) const noexcept
+        {
+            return left == other.left && top == other.top &&
+                right == other.right && bottom == other.bottom &&
+                EqualRect(&clip, &other.clip) != FALSE;
+        }
+    };
+    const LuaWidget::HostControl* HitTestHostInputTextDrop(
+        const LuaWidget& widget, POINT point, std::string_view surface) const;
+    std::optional<size_t> ResolveHostInputTextDropPosition(
+        const LuaWidget& widget, const LuaWidget::HostControl& control,
+        POINT point, const std::wstring& text, HostInputDropCaret* caret,
+        std::optional<size_t>* hitCharacter = nullptr) const;
+    bool HostInputAcceptsTextDrop(const LuaWidget::HostControl& control) const;
+    std::wstring HostInputTextForDrop(const LuaWidget& widget,
+        const LuaWidget::HostControl& control) const;
+    void FinishHostInputEdit(const snowdesktop::text_input::Snapshot& before,
+        const char* source);
     bool HandleHostScrollbarPointer(
         const std::wstring& widgetId, int x, int y,
         std::string_view surface, bool finish);
@@ -1732,7 +1781,8 @@ private:
             previewStorageOverrides = nullptr,
         const std::filesystem::path* packageRootOverride = nullptr,
         const LuaWidgetAuthorPreviewConfiguration*
-            previewConfiguration = nullptr);
+            previewConfiguration = nullptr,
+        bool* deterministicFailure = nullptr);
     bool IsPreviewWidget(const std::wstring& widgetId) const;
 
     /**
@@ -1855,6 +1905,7 @@ private:
     snowdesktop::widget_runtime::WidgetInvalidationBatch invalidationBatch_;
     NativeMarqueeSyncCallback nativeMarqueeSyncCallback_;
     DesktopPathAction desktopOpenCallback_;            ///< 打开桌面路径的回调
+    HostSettingsPageCallback hostSettingsPageCallback_;
     DesktopPathAction applicationLaunchCallback_;      ///< 启动已解析应用引用的回调
     DesktopPathAction desktopRevealCallback_;          ///< 在资源管理器中定位路径的回调
     DesktopRefreshCallback desktopRefreshCallback_;    ///< 刷新桌面的回调
@@ -2022,6 +2073,7 @@ private:
         size_t compositionCursor = 0;
         wchar_t pendingHighSurrogate = 0;
         bool pointerSelecting = false;
+        bool selectionDragArmed = false;
         bool controlled = false;
         bool readOnly = false;
         bool numeric = false;
@@ -2035,6 +2087,9 @@ private:
         std::size_t maximumUtf8Bytes = 0;
     };
     FocusedHostInput focusedHostInput_;
+    std::wstring hostInputDropWidgetId_;
+    std::string hostInputDropSurface_;
+    std::optional<HostInputDropCaret> hostInputDropCaret_;
     struct HostScrollbarDrag
     {
         bool active = false;

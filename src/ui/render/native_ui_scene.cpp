@@ -27,6 +27,8 @@ bool ControlRole(Role role)
 }
 bool Node::Interactive() const
 { return enabled && !id.empty() && ControlRole(role); }
+bool Node::CanOpenContextMenu() const
+{ return enabled && !id.empty() && (ControlRole(role) || role == Role::ReadOnlyListItem); }
 const Node* Scene::Find(std::string_view id) const
 {
     const auto it = std::find_if(nodes.begin(), nodes.end(), [&](const auto& n) { return n.id == id; });
@@ -109,7 +111,7 @@ void Input::Sync(const Scene& scene)
         if(!identities.emplace(r.key,n.id).second){regions_.AbortFrame();throw std::runtime_error("native scene identity collision");}
         r.shape={widget_runtime::InteractionShapeType::Rect,n.bounds.left,n.bounds.top,n.bounds.right-n.bounds.left,n.bounds.bottom-n.bounds.top,0};
         if(HasClip(n.clip))r.clip=widget_runtime::InteractionClipRect{n.clip.left,n.clip.top,n.clip.right-n.clip.left,n.clip.bottom-n.clip.top};
-        r.enabled=n.enabled;r.focusable=n.Interactive();r.tooltip=Utf8(n.tooltip);
+        r.enabled=n.enabled;r.focusable=n.CanOpenContextMenu();r.tooltip=Utf8(n.tooltip);
         r.accessibilityLabel=Utf8(!n.accessibilityLabel.empty()?n.accessibilityLabel:n.text.empty()?n.tooltip:n.text);
         r.accessibilityValue=Utf8(n.detail);r.accessibilityRole=ControlRole(n.role)?"button":"text";
         if(n.role==Role::Slider)
@@ -125,6 +127,7 @@ void Input::Sync(const Scene& scene)
             r.checked=n.selected;r.events["change"].id=r.key;
         }
         else if(ControlRole(n.role)){r.events["click"].id=r.key;r.events["contextMenu"].id=r.key;r.capturePointer=n.id.starts_with("tray:");}
+        else if(n.role==Role::ReadOnlyListItem)r.events["contextMenu"].id=r.key;
         if(r.capturePointer){r.events["pointerMove"].id=r.key;r.events["pointerUp"].id=r.key;}
         const bool visible=Overlaps(n.bounds,{0,0,scene.width,scene.height})&&(!HasClip(n.clip)||Overlaps(n.bounds,n.clip));
         if(visible)
@@ -140,7 +143,7 @@ void Input::Sync(const Scene& scene)
             if(!validation.Submit(r,error)){regions_.AbortFrame();throw std::runtime_error(error);}
             ++validated;
         }
-        if(n.Interactive())focusable.push_back(n.id);
+        if(r.focusable.value_or(false))focusable.push_back(n.id);
         semantics.push_back(std::move(r));
     }
     validation.AbortFrame();regions_.CommitFrame();identities_=std::move(identities);
@@ -152,7 +155,7 @@ void Input::Sync(const Scene& scene)
         if(focused_.empty())focusVisible_=false;
     }
     const auto* pressed=scene.Find(Pressed());
-    if(!pressed||!pressed->Interactive())Cancel();
+    if(!pressed||!(right_?pressed->CanOpenContextMenu():pressed->Interactive()))Cancel();
 }
 std::string Input::Pressed()const
 {const auto it=identities_.find(regions_.PressedKey());return it==identities_.end()?std::string{}:it->second;}
@@ -173,12 +176,14 @@ bool Input::Press(const Scene& scene,D2D1_POINT_2F p,bool right)
 {
     PointerInput();Cancel();Sync(scene);const auto pressed=regions_.PointerDown(p.x,p.y,right?2:1);
     const auto it=identities_.find(pressed.targetKey);if(it==identities_.end())return false;
+    const auto* node=scene.Find(it->second);
+    if(node&&node->role==Role::ReadOnlyListItem&&!right){Cancel();return false;}
     Focus(it->second,false);origin_=p;right_=right;return true;
 }
 InputResult Input::Move(const Scene& scene,D2D1_POINT_2F p)
 {
     Sync(scene);const auto id=Pressed();const auto* n=scene.Find(id);
-    if(!n||!n->Interactive()){Cancel();return {};}
+    if(!n||!(right_?n->CanOpenContextMenu():n->Interactive())){Cancel();return {};}
     if(!right_&&n->role==Role::Slider)return Resolve(regions_.ResolveAction(RegionKey(id),"change",p.x,p.y,0));
     if(!right_&&id.starts_with("tray:")&&(std::abs(p.x-origin_.x)>=8||std::abs(p.y-origin_.y)>=8))dragging_=true;
     return {};
@@ -188,7 +193,7 @@ InputResult Input::Release(const Scene& scene,D2D1_POINT_2F p,bool right)
     Sync(scene);const auto id=Pressed();const auto* n=scene.Find(id);const bool dragged=dragging_,matching=right==right_;
     const bool valid=regions_.HasPointerCapture();
     const auto result=regions_.PointerUp(p.x,p.y,right?2:1);dragging_=right_=false;
-    if(!n||!n->Interactive()||!matching)return {};
+    if(!n||!(right?n->CanOpenContextMenu():n->Interactive())||!matching)return {};
     if(dragged)return valid?InputResult{InputResult::Kind::Drag,id}:InputResult{};
     if(!right&&n->role==Role::Slider)return Resolve(regions_.ResolveAction(RegionKey(id),"change",p.x,p.y,0));
     if(result.clickTargetKey!=RegionKey(id))return {};
@@ -240,7 +245,11 @@ InputResult Input::Key(const Scene& scene,unsigned key,bool shift)
         if(key==VK_HOME||key==VK_END)return Resolve(keyboard.ResolveRangeValue(regionKey,key==VK_HOME?0.f:1.f));
         return Resolve(keyboard.ResolveKeyboardStep(regionKey,key==VK_LEFT||key==VK_DOWN?-1:1));
     }
-    if(key==VK_RETURN||key==VK_SPACE)return {InputResult::Kind::Invoke,focused_};
+    if(key==VK_RETURN||key==VK_SPACE)
+    {
+        const auto* node=scene.Find(focused_);
+        if(node&&node->Interactive())return {InputResult::Kind::Invoke,focused_};
+    }
     if(key==VK_APPS||(key==VK_F10&&shift))return {InputResult::Kind::Context,focused_};
     return {};
 }
@@ -283,8 +292,10 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
         if (HasClip(n.clip)) dc->PushAxisAlignedClip(n.clip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         const auto r = n.bounds;
         const bool groupedCard=n.role==Role::Card&&!n.hoverGroup.empty();
-        const bool hot = groupedCard ? hoverNode&&hoverNode->hoverGroup==n.hoverGroup : n.id==hovered&&n.Interactive();
-        const bool down = groupedCard ? pressedNode&&pressedNode->hoverGroup==n.hoverGroup : n.id==pressed&&n.Interactive();
+        const bool hot = groupedCard ? hoverNode&&hoverNode->hoverGroup==n.hoverGroup :
+            n.id==hovered&&n.CanOpenContextMenu();
+        const bool down = groupedCard ? pressedNode&&pressedNode->hoverGroup==n.hoverGroup :
+            n.id==pressed&&n.CanOpenContextMenu();
         const bool sharedRow=n.role==Role::ListItem&&!n.hoverGroup.empty();
         const bool fill = n.role == Role::Button || n.role == Role::Toggle || n.role == Role::Card || n.selected || ((hot || down)&&!sharedRow);
         if (fill && !n.switchStyle)
@@ -446,7 +457,7 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
             color(n.accent?p.accentText:p.accent,n.enabled);
             dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F((r.left+r.right)/2,r.bottom-4),1.5f,1.5f),brush.Get());
         }
-        if (!n.id.empty() && n.id == focused && n.Interactive())
+        if (!n.id.empty() && n.id == focused && n.CanOpenContextMenu())
         { color(p.accent); auto focus=r; focus.left+=2;focus.top+=2;focus.right-=2;focus.bottom-=2; dc->DrawRoundedRectangle(D2D1::RoundedRect(focus,5,5),brush.Get(),2); }
         if (HasClip(n.clip)) dc->PopAxisAlignedClip();
     }

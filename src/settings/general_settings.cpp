@@ -28,6 +28,8 @@ void NormalizeGeneralAnimationSettings(GeneralSettings& settings) noexcept
     using namespace snowdesktop::animation;
     settings.animationMode = NormalizeMode(settings.animationMode);
     settings.popupAnimationEffect = NormalizePopupEffect(settings.popupAnimationEffect);
+    settings.widgetHoverExpandEffect = NormalizeWidgetHoverEffect(settings.widgetHoverExpandEffect);
+    settings.widgetHoverVisibilityEffect = NormalizeWidgetHoverEffect(settings.widgetHoverVisibilityEffect);
     settings.animationSpeed = NormalizeSpeed(settings.animationSpeed);
     settings.animationFrameLimit = NormalizeFrameLimit(settings.animationFrameLimit);
 }
@@ -134,6 +136,8 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     ReadIntField(text, "desktopIdleHideDelaySeconds", settings.desktopIdleHideDelaySeconds);
     settings.desktopIdleHideDelaySeconds = snowdesktop::desktop_idle_hide::NormalizeDelay(settings.desktopIdleHideDelaySeconds);
     ReadBoolField(text, "desktopIdleHidePauseWithWindows", settings.desktopIdleHidePauseWithWindows);
+    settings.screenTimeEnabled = true;
+    ReadBoolField(text, "screenTimeEnabled", settings.screenTimeEnabled);
     if (ReadBoolField(text, "desktopPassthroughHotkeyEnabled", val))
         settings.desktopPassthroughHotkeyEnabled = val;
     if (ReadBoolField(text, "pageNavigationKeyboardEnabled", val))
@@ -241,6 +245,14 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     ReadStringField(text, "language", settings.language, sizeof(settings.language));
     ReadIntField(text, "animationMode", settings.animationMode);
     ReadIntField(text, "popupAnimationEffect", settings.popupAnimationEffect);
+    settings.widgetHoverExpandEffect = snowdesktop::animation::NoEffect;
+    ReadIntField(text, "widgetHoverExpandEffect", settings.widgetHoverExpandEffect);
+    // Older saves may contain the former default (None). Adopt Fade on load
+    // until a new-format save records the user's choice.
+    settings.widgetHoverVisibilityEffect = GeneralSettings::kDefaultWidgetHoverVisibilityEffect;
+    if (const auto* migrated = appearanceDocument.Find("widgetHoverVisibilityDefaultMigrated");
+        migrated && migrated->IsBoolean() && migrated->boolean)
+        ReadIntField(text, "widgetHoverVisibilityEffect", settings.widgetHoverVisibilityEffect);
     ReadIntField(text, "animationSpeed", settings.animationSpeed);
     ReadIntField(text, "animationFrameLimit", settings.animationFrameLimit);
     ReadBoolField(text, "animationEnergySaver", settings.animationEnergySaver);
@@ -295,6 +307,9 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "  \"globalCollectionPopupAppearance\": " << globalPopupAppearance << ",\n";
     file << "  \"animationMode\": " << snowdesktop::animation::NormalizeMode(settings.animationMode) << ",\n";
     file << "  \"popupAnimationEffect\": " << snowdesktop::animation::NormalizePopupEffect(settings.popupAnimationEffect) << ",\n";
+    file << "  \"widgetHoverExpandEffect\": " << snowdesktop::animation::NormalizeWidgetHoverEffect(settings.widgetHoverExpandEffect) << ",\n";
+    file << "  \"widgetHoverVisibilityEffect\": " << snowdesktop::animation::NormalizeWidgetHoverEffect(settings.widgetHoverVisibilityEffect) << ",\n";
+    file << "  \"widgetHoverVisibilityDefaultMigrated\": true,\n";
     file << "  \"animationSpeed\": " << snowdesktop::animation::NormalizeSpeed(settings.animationSpeed) << ",\n";
     file << "  \"animationFrameLimit\": " << snowdesktop::animation::NormalizeFrameLimit(settings.animationFrameLimit) << ",\n";
     file << "  \"animationEnergySaver\": " << (settings.animationEnergySaver ? "true" : "false") << ",\n";
@@ -319,6 +334,7 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "  \"desktopIdleHideEnabled\": " << (settings.desktopIdleHideEnabled ? "true" : "false") << ",\n";
     file << "  \"desktopIdleHideDelaySeconds\": " << snowdesktop::desktop_idle_hide::NormalizeDelay(settings.desktopIdleHideDelaySeconds) << ",\n";
     file << "  \"desktopIdleHidePauseWithWindows\": " << (settings.desktopIdleHidePauseWithWindows ? "true" : "false") << ",\n";
+    file << "  \"screenTimeEnabled\": " << (settings.screenTimeEnabled ? "true" : "false") << ",\n";
     file << "  \"desktopPassthroughHotkeyEnabled\": "
          << (settings.desktopPassthroughHotkeyEnabled ? "true" : "false")
          << ",\n";

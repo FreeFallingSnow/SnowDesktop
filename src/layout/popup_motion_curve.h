@@ -12,6 +12,15 @@ struct Sample
     double velocity = 0.0; // units per second
 };
 
+inline double ScaleFrequency(bool opening, double durationMilliseconds)
+{
+    // Opening covers 99% in the first 75%. Closing retains more size
+    // through its middle. Both tracks settle at the exact deadline.
+    return durationMilliseconds > 0.0
+        ? (opening ? 6.638352067994 : 3.0) / (durationMilliseconds * 0.00075)
+        : 0.0;
+}
+
 inline Sample Evaluate(Sample initial, double target, double frequency, double seconds)
 {
     if (seconds <= 0.0) return initial;

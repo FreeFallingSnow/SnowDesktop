@@ -112,7 +112,7 @@ HANDLE ParseHandle(std::wstring_view text)
         ? handle : nullptr;
 }
 
-void Monitor(Handle process, Handle job, DWORD timeoutMs,
+void Monitor(Handle process, Handle job, Handle acceptedEvent, DWORD timeoutMs,
     std::shared_ptr<HelperSlot> slot, std::wstring target)
 {
     const DWORD wait = WaitForSingleObject(process.value, timeoutMs);
@@ -130,13 +130,17 @@ void Monitor(Handle process, Handle job, DWORD timeoutMs,
     else if (wait == WAIT_FAILED) result = GetLastError();
     if (result != ERROR_SUCCESS)
     {
+        // The command may already have succeeded before an extension fails
+        // during COM release or process shutdown.
+        const bool accepted = WaitForSingleObject(acceptedEvent.value, 0) == WAIT_OBJECT_0;
         wchar_t message[160]{};
         swprintf_s(message,
-            L"SnowDesktop: Shell helper %lu ended with error %lu.\n",
-            GetProcessId(process.value), result);
+            L"SnowDesktop: Shell helper %lu ended with error %lu%ls.\n",
+            GetProcessId(process.value), result, accepted ? L" after open handoff" : L"");
         OutputDebugStringW(message);
-        operation_feedback::Report({"app.operation.openFailed",
-            target + L"\n" + message, result});
+        if (!accepted)
+            operation_feedback::Report({"app.operation.openFailed",
+                target + L"\n" + message, result});
     }
     // Closing the private kill-on-close job also covers an unexpected wait
     // failure. SILENT_BREAKAWAY_OK keeps successfully opened apps independent.
@@ -229,11 +233,15 @@ StartedProcess Start(const Request& request, DWORD timeoutMs, bool reportDispatc
             if (!view.value) return failed(L"MapViewOfFile", GetLastError());
             std::memcpy(view.value, bytes.data(), bytes.size());
         }
-        Handle childMapping, parent;
+        Handle acceptedEvent(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+        if (!acceptedEvent.value) return failed(L"helper acceptance event", GetLastError());
+        Handle childMapping, parent, childAcceptedEvent;
         if (!DuplicateHandle(GetCurrentProcess(), mapping.value, GetCurrentProcess(),
                 &childMapping.value, FILE_MAP_READ, TRUE, 0) ||
             !DuplicateHandle(GetCurrentProcess(), GetCurrentProcess(), GetCurrentProcess(),
-                &parent.value, SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, TRUE, 0))
+                &parent.value, SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, TRUE, 0) ||
+            !DuplicateHandle(GetCurrentProcess(), acceptedEvent.value, GetCurrentProcess(),
+                &childAcceptedEvent.value, EVENT_MODIFY_STATE, TRUE, 0))
             return failed(L"DuplicateHandle", GetLastError());
 
         Handle job(CreateJobObjectW(nullptr, nullptr));
@@ -255,7 +263,7 @@ StartedProcess Start(const Request& request, DWORD timeoutMs, bool reportDispatc
             LPPROC_THREAD_ATTRIBUTE_LIST value;
             ~AttributeGuard() { DeleteProcThreadAttributeList(value); }
         } guard{attributes};
-        HANDLE inherited[] = {childMapping.value, parent.value};
+        HANDLE inherited[] = {childMapping.value, parent.value, childAcceptedEvent.value};
         if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
                 inherited, sizeof(inherited), nullptr, nullptr))
             return failed(L"handle allowlist", GetLastError());
@@ -263,7 +271,8 @@ StartedProcess Start(const Request& request, DWORD timeoutMs, bool reportDispatc
         if (executable.empty()) return failed(L"executable path", GetLastError());
         std::wstring command = L"\"" + executable + L"\" " + kCommand + L" " +
             std::to_wstring(reinterpret_cast<std::uintptr_t>(childMapping.value)) + L" " +
-            std::to_wstring(reinterpret_cast<std::uintptr_t>(parent.value));
+            std::to_wstring(reinterpret_cast<std::uintptr_t>(parent.value)) + L" " +
+            std::to_wstring(reinterpret_cast<std::uintptr_t>(childAcceptedEvent.value));
         STARTUPINFOEXW startup{};
         startup.StartupInfo.cb = sizeof(startup);
         startup.StartupInfo.dwFlags = STARTF_USESHOWWINDOW;
@@ -288,8 +297,8 @@ StartedProcess Start(const Request& request, DWORD timeoutMs, bool reportDispatc
         AllowSetForegroundWindow(information.dwProcessId);
         if (ResumeThread(thread.value) == static_cast<DWORD>(-1))
             return failed(L"ResumeThread", GetLastError());
-        std::thread(Monitor, std::move(process), std::move(job), timeoutMs,
-            std::move(slot), request.path).detach();
+        std::thread(Monitor, std::move(process), std::move(job), std::move(acceptedEvent),
+            timeoutMs, std::move(slot), request.path).detach();
         return {information.dwProcessId};
     }
     catch (...)
@@ -312,19 +321,22 @@ std::optional<int> TryRunCommand(Executor executor)
     for (int i = 1; i < count; ++i)
         helper = helper || std::wstring_view(arguments[i]) == kCommand;
     if (!helper) return std::nullopt;
-    if (count != 4 || std::wstring_view(arguments[1]) != kCommand || !executor)
+    if (count != 5 || std::wstring_view(arguments[1]) != kCommand || !executor)
         return ERROR_INVALID_PARAMETER;
     try
     {
         const HANDLE mappingRaw = ParseHandle(arguments[2]);
         const HANDLE parentRaw = ParseHandle(arguments[3]);
-        if (!mappingRaw || !parentRaw || mappingRaw == parentRaw)
+        const HANDLE acceptedRaw = ParseHandle(arguments[4]);
+        if (!mappingRaw || !parentRaw || !acceptedRaw || mappingRaw == parentRaw ||
+            acceptedRaw == mappingRaw || acceptedRaw == parentRaw)
             return ERROR_INVALID_HANDLE;
-        Handle mapping(mappingRaw), parent(parentRaw);
+        Handle mapping(mappingRaw), parent(parentRaw), acceptedEvent(acceptedRaw);
         // Shell handlers may create children with handle inheritance enabled.
         // The request channel belongs only to this helper, never to opened apps.
         if (!SetHandleInformation(mapping.value, HANDLE_FLAG_INHERIT, 0) ||
-            !SetHandleInformation(parent.value, HANDLE_FLAG_INHERIT, 0))
+            !SetHandleInformation(parent.value, HANDLE_FLAG_INHERIT, 0) ||
+            !SetHandleInformation(acceptedEvent.value, HANDLE_FLAG_INHERIT, 0))
             return ERROR_INVALID_HANDLE;
         const DWORD parentId = GetProcessId(parent.value);
         // This helper gains no privileges. The inherited read-only request,
@@ -354,7 +366,7 @@ std::optional<int> TryRunCommand(Executor executor)
         // The executor refreshes Shell foreground access after resolving the
         // shortcut policy, immediately before invocation rather than here.
         SetLastError(ERROR_SUCCESS);
-        const bool opened = executor(*request);
+        const bool opened = executor(*request, acceptedEvent.value);
         const DWORD openError = GetLastError();
         CoUninitialize();
         return opened ? ERROR_SUCCESS : static_cast<int>(openError ? openError : ERROR_OPEN_FAILED);

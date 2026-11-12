@@ -332,11 +332,23 @@ std::vector<std::byte> EncodeUtf8WithBom(std::wstring_view text)
 }
 
 DesktopApp::DropReferenceSnapshot
-DesktopApp::ReadDropReferenceSnapshot(IDataObject* dataObject)
+DesktopApp::ReadDropReferenceSnapshot(IDataObject* dataObject, bool literalText)
 {
     DropReferenceSnapshot snapshot;
     if (!dataObject)
         return snapshot;
+
+    if (literalText)
+    {
+        auto text = ReadDroppedUnicodeText(dataObject);
+        if (!text.empty())
+        {
+            snapshot.candidates.back() = {
+                snowdesktop::drop_text_rules::Kind::PlainText, std::move(text)};
+            snapshot.reference = snapshot.candidates.back();
+        }
+        return snapshot;
+    }
 
     const std::wstring advertisedWide = ReadWideHGlobalFormat(
         dataObject, static_cast<CLIPFORMAT>(
@@ -344,14 +356,17 @@ DesktopApp::ReadDropReferenceSnapshot(IDataObject* dataObject)
     const std::wstring advertisedAnsi = ReadAnsiHGlobalFormat(
         dataObject, static_cast<CLIPFORMAT>(
             RegisterClipboardFormatW(CFSTR_INETURLA)));
-    snapshot.unicodeText = ReadWideHGlobalFormat(
-        dataObject, CF_UNICODETEXT);
     snapshot.candidates = snowdesktop::drop_text_rules::
         ClassifyResourceCandidates(advertisedWide, advertisedAnsi,
-            snapshot.unicodeText);
+            ReadDroppedUnicodeText(dataObject));
     snapshot.reference = snowdesktop::drop_text_rules::
         SelectResourceReference(snapshot.candidates);
     return snapshot;
+}
+
+std::wstring DesktopApp::ReadDroppedUnicodeText(IDataObject* dataObject)
+{
+    return ReadWideHGlobalFormat(dataObject, CF_UNICODETEXT);
 }
 
 std::vector<std::wstring> DesktopApp::GetDropPaths(IDataObject* dataObject)
@@ -615,17 +630,13 @@ std::vector<std::wstring> DesktopApp::TryExtractTextFromDataObject(
     if (advertisedReference.kind != Kind::PlainText)
         return paths;
 
-    auto classified = snowdesktop::drop_text_rules::Classify(
-        snapshot.unicodeText,
-        snowdesktop::drop_text_rules::Source::UnicodeText);
-    if (classified.kind != Kind::PlainText)
+    const auto& unicodeText = snapshot.candidates.back();
+    if (unicodeText.kind != Kind::PlainText)
         return paths;
-    std::wstring text = std::move(classified.value);
+    const std::wstring& text = unicodeText.value;
 
-    std::wstring firstLine = text;
-    size_t nl = firstLine.find_first_of(L"\r\n");
-    if (nl != std::wstring::npos) firstLine = firstLine.substr(0, nl);
-    if (firstLine.size() > 30) firstLine = firstLine.substr(0, 30);
+    const size_t prefix = std::min<size_t>(30, text.find_first_of(L"\r\n"));
+    std::wstring firstLine = text.substr(0, snowdesktop::text_input::SnapBoundary(text, prefix));
 
     for (auto& ch : firstLine)
         if (ch == L'\\' || ch == L'/' || ch == L':' || ch == L'*' || ch == L'?' || ch == L'"' || ch == L'<' || ch == L'>' || ch == L'|')

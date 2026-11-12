@@ -9,6 +9,12 @@ inline constexpr int DefaultMode = AlwaysOn;
 inline constexpr int NoEffect = 0;
 inline constexpr int Fade = 1;
 inline constexpr int Scale = 2;
+inline constexpr int Roll = 1;
+
+constexpr int NormalizeWidgetHoverEffect(int value) noexcept
+{
+    return value == 1 ? 1 : NoEffect;
+}
 
 int NormalizeMode(int value) noexcept;
 int NormalizePopupEffect(int value) noexcept;

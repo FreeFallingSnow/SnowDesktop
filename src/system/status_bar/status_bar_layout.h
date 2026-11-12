@@ -167,20 +167,22 @@ struct MergedStatusBarLayout
     std::vector<RECT> right;
 };
 // The clock and notification target form the last group on the complete bar.
-// Merged bars also keep the Dock's symmetric central reservation.
+// A merged bar reserves the Dock's center. A standalone bar may reserve its label there.
 inline MergedStatusBarLayout LayoutRightStatusBar(LONG width, LONG height, float scale,
     LONG padding, LONG clockWidth, LONG notificationWidth, std::span<const LONG> rightWidths,
-    std::optional<std::size_t> controlIndex, bool merged = false, LONG trailingInset = 0)
+    std::optional<std::size_t> controlIndex, bool merged = false, LONG trailingInset = 0,
+    LONG standaloneCenterWidth = 0)
 {
     MergedStatusBarLayout result;
     if (merged) result.center = MergedStatusBarCenter(width, height, scale);
-    const LONG centerWidth = result.center.right - result.center.left;
+    const LONG centerWidth = merged ? result.center.right - result.center.left : standaloneCenterWidth;
     clockWidth = std::max(0L, clockWidth);
     notificationWidth = std::max(0L, notificationWidth);
     if (controlIndex && *controlIndex >= rightWidths.size()) controlIndex.reset();
     const LONG controlWidth = controlIndex ? std::max(0L, rightWidths[*controlIndex]) : 0;
+    LONG clockGap = clockWidth && controlWidth ? static_cast<LONG>(std::ceil(8.f * scale)) : 0;
     std::vector<LONG> widths(rightWidths.begin(), rightWidths.end());
-    widths.push_back(clockWidth + notificationWidth);
+    widths.push_back(clockGap + clockWidth + notificationWidth);
     LONG edge = std::max(0L, padding);
     const auto arrange = [&] { return StatusBarHorizontalLayout(width, height, edge,
         std::span<const LONG>{}, centerWidth, widths, trailingInset); };
@@ -189,6 +191,13 @@ inline MergedStatusBarLayout LayoutRightStatusBar(LONG width, LONG height, float
     const auto missingEssential = [&] {
         return (notificationWidth && IsRectEmpty(&bounds.back())) || missingControl();
     };
+    // Give back the spacer before dropping the date or system controls.
+    if (clockGap && (IsRectEmpty(&bounds.back()) || missingControl()))
+    {
+        widths.back() -= clockGap;
+        clockGap = 0;
+        bounds = arrange();
+    }
     if (missingEssential())
     {
         // Retain the existing narrow-layout rule: first remove the date as a
@@ -211,8 +220,9 @@ inline MergedStatusBarLayout LayoutRightStatusBar(LONG width, LONG height, float
     const auto group = bounds.back();
     if (!IsRectEmpty(&group))
     {
-        if (clockWidth) result.clock = {group.left, 0, group.left + clockWidth, height};
-        if (notificationWidth) result.notifications = {group.left + clockWidth, 0, group.right, height};
+        const LONG clockLeft = group.left + clockGap;
+        if (clockWidth) result.clock = {clockLeft, 0, clockLeft + clockWidth, height};
+        if (notificationWidth) result.notifications = {clockLeft + clockWidth, 0, group.right, height};
     }
     return result;
 }

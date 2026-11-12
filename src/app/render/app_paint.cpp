@@ -3,6 +3,7 @@
 #include "app/render/desktop_backdrop_update_rules.h"
 #include "widget/view/widget_accessibility_provider.h"
 #include "diagnostics/performance_trace.h"
+#include "dock/dock_appbar.h"
 #include "desktop_backdrop_update_rules.h"
 
 // Desktop composition paint transaction.
@@ -152,7 +153,23 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
     }
 
     KeepDesktopWidgetBackdropPanels();
-    desktopBackdropCompositor_.EndFrame();
+    std::vector<RECT> dockBackdropFrames;
+    if (generalSettings_.dockEnabled && dockSettings_.UsesReservedSpaceBackdrop() && dockAppBars_)
+    {
+        for (const auto& [monitor, state] : observedMonitorWindows_)
+        {
+            if (!state.maximized) continue;
+            auto area = dockAppBars_->ApprovedArea(monitor);
+            if (!area) continue;
+            OffsetRect(&*area, -virtualLeft_, -virtualTop_);
+            RECT clipped{};
+            if (IntersectRect(&clipped, &*area, &clientRect))
+                dockBackdropFrames.push_back(clipped);
+        }
+    }
+    constexpr float kDockReservedSpaceBlur = 5.0f;
+    desktopBackdropCompositor_.SetBackgroundPanels(dockBackdropFrames, kDockReservedSpaceBlur);
+    desktopBackdropCompositor_.EndFrame(false);
     if (forceCompleteGlassCollection)
         desktopBackdropFullCollectionPending_ = false;
     if (!nativeGlassPanelReadyLogged_ &&
@@ -186,6 +203,10 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
             L"Queue Paint Commit", E_FAIL);
         return false;
     }
+    // The floating popup can commit the shared backdrop controller when its
+    // bounds change. Submit the completed desktop pair before touching it.
+    if (desktopBackdropCompositor_.IsAvailable() && !FlushPendingCompositionCommit())
+        return false;
     compositionRenderRecoveryPending_ = false;
     if (widgetAccessibilityProvider_)
         widgetAccessibilityProvider_->RefreshEvents();

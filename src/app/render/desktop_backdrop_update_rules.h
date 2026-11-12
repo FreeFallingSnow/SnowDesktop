@@ -27,7 +27,7 @@ void ReconcileIconPanel(Compositor& compositor, const RECT& frame, Shape shape,
         return;
     }
     if (compositor.AddIconPanel(frame, shape, blurRadius, ownerKey, contentClip))
-        (void)compositor.SetPanelOpacity(frame, opacity);
+        (void)compositor.SetPanelOpacity(frame, opacity, ownerKey);
 }
 
 // A retained widget can be painted before its backdrop target exists, or
@@ -38,11 +38,12 @@ bool KeepOrRestoreWidgetPanel(Compositor& compositor, const Widget& widget)
 {
     if (!widget.visible || !widget.backdropRequested)
         return false;
-    if (compositor.KeepPanel(widget.bounds))
+    const auto ownerKey = widget.BackdropOwnerKey();
+    if (compositor.KeepPanel(widget.bounds, ownerKey))
         return true;
     return compositor.AddPanel(widget.bounds,
         static_cast<float>(widget.backdropCornerRadius),
-        static_cast<float>(widget.backdropBlurRadius), 0, true);
+        static_cast<float>(widget.backdropBlurRadius), ownerKey, true);
 }
 
 // Call after the final panel collection, so a remove/add pair in one frame

@@ -18,6 +18,7 @@
 #include "diagnostics/performance_trace.h"
 #include "app/render/app_resource_statistics.h"
 #include "diagnostics/input_diagnostics.h"
+#include "shell/win_key_start_tap.h"
 #include "drag_drop/drag_input_rules.h"
 #include "layout/popup_icon_load_rules.h"
 #include "dock/dock_minimize_protocol.h"
@@ -393,6 +394,12 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
          msg == snowdesktop::dock_minimize::CancelMessage() ||
          msg == snowdesktop::window_support::BeforeNativeMinimizeMessage()))
         return HandleMessage(hwnd, msg, wp, lp);
+    static const UINT winKeyStart = RegisterWindowMessageW(snowdesktop::kWinKeyStartTapMessage);
+    if (winKeyStart && msg == winKeyStart)
+    {
+        UpdateDockStartMenu();
+        return 0;
+    }
     static const UINT menuUnavailable = RegisterWindowMessageW(L"SnowDesktop.MenuUnavailable");
     if (menuUnavailable && msg == menuUnavailable)
     {
@@ -527,6 +534,15 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     }
     switch (msg)
     {
+    case WM_POWERBROADCAST:
+        HandleScreenTimePower(wp, lp);
+        return TRUE;
+    case WM_WTSSESSION_CHANGE:
+        HandleScreenTimeSession(wp);
+        return 0;
+    case WM_QUERYENDSESSION:
+    case WM_ENDSESSION:
+        return HandleMessage(hwnd, msg, wp, lp);
     case kBackgroundShellReadyMessage:
         PollInitialShellRead();
         DrainBackgroundShellWork();
@@ -704,6 +720,8 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         RequestExit();
         return 0;
     case WM_DESTROY:
+        FlushScreenTime();
+        UnregisterScreenTimeNotifications();
         KillTimer(hwnd, kDisplayTopologyRefreshTimerId);
         snowdesktop::SoftwareDesktopHotkey().Unregister();
         if (floatingDockHotkeyHwnd_ == hwnd)

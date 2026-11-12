@@ -11,6 +11,7 @@
 #include "platform/taskbar_monitor.h"
 #include "taskbar_hook/taskbar_native.h"
 #include "diagnostics/performance_trace.h"
+#include "shell/win_key_start_tap.h"
 
 // Dock foreground monitoring and Windows taskbar appearance integration.
 
@@ -353,6 +354,20 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     bool forceWindowScan, bool skipUnchangedWindowState)
 {
     snowdesktop::performance::Scope trace("shared.taskbar", "refresh");
+    {
+        namespace modules = snowdesktop::runtime_modules;
+        const bool protectWinKey = modules::Allowed(modules::Module::StartMenu) &&
+            modules::Allowed(modules::Module::Taskbar) &&
+            snowdesktop::dock_settings_rules::ProtectWinKeyStart(
+                generalSettings_.dockEnabled,
+                ShowDockWindowsButton(dockSettings_),
+                dockSettings_.startMenuKeepTaskbarHidden,
+                dockSettings_.startMenuKeepTaskbarHiddenOnWinKey,
+                dockSettings_.suppressSystemTaskbar || IsSystemTaskbarAutoHideEnabled(),
+                desktopPassthroughActive_);
+        const HWND target = controlHwnd_ && IsWindow(controlHwnd_) ? controlHwnd_ : nullptr;
+        snowdesktop::SyncWinKeyStartTap(target, protectWinKey);
+    }
     const auto applyClassicSystemTheme = [this](bool enabled,
         const PersonalizationSettings& appearance) {
         if (!IsClassicSystemTaskbar()) return;

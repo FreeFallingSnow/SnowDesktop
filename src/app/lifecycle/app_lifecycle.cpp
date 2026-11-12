@@ -8,6 +8,7 @@
 #include "common/l10n.h"
 #include "taskbar_dynamic/search_visibility_detector.h"
 #include "shell/native_start_menu.h"
+#include "shell/win_key_start_tap.h"
 #include "diagnostics/diagnostic_log.h"
 #include "widget/runtime/widget_engine.h"
 #include "widget/data/widget_system_data_provider.h"
@@ -53,6 +54,8 @@ DesktopApp::DesktopApp()
 
 DesktopApp::~DesktopApp()
 {
+    snowdesktop::StopWinKeyStartTap();
+    UnregisterScreenTimeNotifications();
     // Closed draw lists retain images and fonts. Join before releasing any
     // graphics/runtime caches, not just before the final device teardown.
     widgetSurfaceRenderer_.reset();
@@ -78,6 +81,8 @@ DesktopApp::~DesktopApp()
     snowdesktop::shell_extensions::SharedMenuService().Shutdown();
     if (largeIconAssets_) largeIconAssets_->Stop();
     uiAnimationScheduler_.CancelAll();
+    widgetHoverExpansionFrameToken_ = 0;
+    widgetHoverExpansion_.clear();
     floatingDockPromotionInputToken_ = 0;
     floatingDockInputDeactivated_ = false;
     dockWindowActivationObservationToken_ = 0;
@@ -329,12 +334,9 @@ void DesktopApp::ResetDesktopWindowResources()
     ResetCollectionPopupAnimationCache();
     ResetLuaWidgetPanelAnimationCache();
     ResetPageNotifyTextCache();
-    popupAnimationOverlay_.visual.Reset();
-    popupAnimationOverlay_.effect.Reset();
-    luaWidgetPanelAnimationOverlay_.visual.Reset();
-    luaWidgetPanelAnimationOverlay_.effect.Reset();
-    pageNotifyAnimationOverlay_.visual.Reset();
-    pageNotifyAnimationOverlay_.effect.Reset();
+    popupAnimationOverlay_ = {};
+    luaWidgetPanelAnimationOverlay_ = {};
+    pageNotifyAnimationOverlay_ = {};
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     placeholderIconCache_.clear();

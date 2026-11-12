@@ -1,10 +1,15 @@
 #include "app/app.h"
+#include "grid_geometry.h"
 #include "common/utils.h"
 #include "layout/folder_sort_rules.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "layout/desktop_item_sort_rules.h"
 #include "shell/item_sort_metadata.h"
 #include "settings/control_native_widget_settings.h"
+
+#include <algorithm>
+#include <tuple>
+#include <utility>
 
 // Desktop and widget sorting plus clipboard cut-state updates.
 
@@ -49,42 +54,71 @@ snowdesktop::list_detail_rules::Column ContentSortColumnForMode(int mode)
 
 void DesktopApp::SortIcons(int mode, bool ascending)
 {
+    const bool horizontal = mode == snowdesktop::desktop_item_sort_rules::kFillGapsHorizontal;
+    const bool fillGaps = horizontal || mode == snowdesktop::desktop_item_sort_rules::kFillGapsVertical;
+    const GridPage* firstPage = GetFirstPageGridPage();
+    bool moved = false;
     auto sortForPage = [&](const GridPage& page) {
-        const GridPage* firstPage = GetFirstPageGridPage();
+        std::unordered_set<std::wstring> usedSlots;
         std::vector<size_t> order;
         for (size_t i = 0; i < items_.size(); ++i)
         {
-            if (items_[i].name.empty() || IsItemInAnyWidget(items_[i])) continue;
-            if (items_[i].gridCell.pageId.empty())
-                items_[i].gridCell.pageId = firstPage ? firstPage->id : L"";
-            if (items_[i].gridCell.pageId == page.id)
+            auto& item = items_[i];
+            if (item.name.empty() || IsItemInAnyWidget(item)) continue;
+            auto& cell = item.gridCell;
+            if (!fillGaps && cell.pageId.empty() && firstPage)
+                cell.pageId = firstPage->id;
+            const auto& pageId = cell.pageId.empty() && firstPage ? firstPage->id : cell.pageId;
+            if (pageId != page.id) continue;
+            if (fillGaps && (item.largeIcon || item.gridSpan.columns != 1 || item.gridSpan.rows != 1))
+                MarkGridArea(usedSlots, {pageId, cell.column, cell.row}, item.gridSpan);
+            else
                 order.push_back(i);
         }
 
-        const auto directories = TypeDirectoryIndices(items_, order, mode);
-        std::stable_sort(order.begin(), order.end(), [this, mode, ascending, &directories](size_t a, size_t b) {
-            return snowdesktop::desktop_item_sort_rules::LessOnDesktop(
-                items_[a], items_[b], mode, ascending, directories.contains(a), directories.contains(b));
-        });
+        if (fillGaps)
+        {
+            std::stable_sort(order.begin(), order.end(), [this, horizontal](size_t a, size_t b) {
+                const auto& first = items_[a].gridCell;
+                const auto& second = items_[b].gridCell;
+                return horizontal
+                    ? std::tie(first.row, first.column) < std::tie(second.row, second.column)
+                    : std::tie(first.column, first.row) < std::tie(second.column, second.row);
+            });
+        }
+        else
+        {
+            const auto directories = TypeDirectoryIndices(items_, order, mode);
+            std::stable_sort(order.begin(), order.end(), [this, mode, ascending, &directories](size_t a, size_t b) {
+                return snowdesktop::desktop_item_sort_rules::LessOnDesktop(
+                    items_[a], items_[b], mode, ascending, directories.contains(a), directories.contains(b));
+            });
+        }
 
-        std::unordered_set<std::wstring> usedSlots;
         for (const auto& widget : widgets_)
             if (!IsGroupedWidget(widget) &&
                 widget.gridCell.pageId == page.id)
                 MarkGridArea(usedSlots, widget.gridCell, widget.gridSpan);
 
         std::vector<PendingGridMove> placements;
+        placements.reserve(order.size());
+        const int stride = std::max(1, horizontal ? page.columns : page.rows);
+        int nextSlot = 0;
         for (size_t itemIndex : order)
         {
             const auto span = items_[itemIndex].gridSpan;
             bool placed = false;
-            for (int slot = 0; slot < page.columns * page.rows; ++slot)
+            for (int slot = nextSlot; slot < page.columns * page.rows; ++slot)
             {
-                GridCell cell{page.id, slot / std::max(1, page.rows), slot % std::max(1, page.rows)};
+                GridCell cell{page.id, slot / stride, slot % stride};
+                if (horizontal) std::swap(cell.column, cell.row);
                 if (cell.column + span.columns > page.columns || cell.row + span.rows > page.rows) continue;
                 if (AreGridSlotsMarked(usedSlots, cell, span)) continue;
                 placements.push_back({itemIndex, cell});
-                MarkGridArea(usedSlots, cell, span);
+                if (fillGaps)
+                    nextSlot = slot + 1;
+                else
+                    MarkGridArea(usedSlots, cell, span);
                 placed = true;
                 break;
             }
@@ -94,15 +128,27 @@ void DesktopApp::SortIcons(int mode, bool ascending)
         }
         for (const auto& placement : placements)
         {
-            items_[placement.index].gridCell = placement.cell;
-            items_[placement.index].slot = SlotFromCell(gridPages_, placement.cell);
+            auto& item = items_[placement.index];
+            const auto& cell = placement.cell;
+            if (fillGaps && item.gridCell.pageId == cell.pageId &&
+                item.gridCell.column == cell.column && item.gridCell.row == cell.row)
+                continue;
+            item.gridCell = cell;
+            item.slot = SlotFromCell(gridPages_, cell);
+            if (fillGaps)
+            {
+                // A full layout pass can resize or displace large icons.
+                item.bounds = GetGridRect(gridPages_, cell, item.gridSpan);
+                moved = true;
+            }
         }
     };
 
     for (const auto& page : gridPages_)
         sortForPage(page);
 
-    LayoutItems();
+    if (fillGaps && !moved) return;
+    if (!fillGaps) LayoutItems();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }

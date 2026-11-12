@@ -337,14 +337,14 @@ bool DesktopApp::PresentDesktopForegroundComposition(
     if (!RenderDesktopForegroundComposition(
             &clipped, desktopIconsHidden_))
     {
-        desktopBackdropCompositor_.EndFrame();
+        desktopBackdropCompositor_.EndFrame(false);
         RecoverCompositionRenderFailure(
             L"Desktop foreground direct update", E_FAIL);
         return false;
     }
 
     KeepDesktopWidgetBackdropPanels();
-    desktopBackdropCompositor_.EndFrame();
+    desktopBackdropCompositor_.EndFrame(false);
 
     if (!CommitCompositionAnimationFrame())
     {

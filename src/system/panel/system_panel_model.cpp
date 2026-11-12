@@ -415,7 +415,7 @@ void SystemPanelModel::ConfirmControl()
 }
 void SystemPanelModel::ControlForm(float& y,bool inCard)
 {
-    if(!controlDraft_)return;auto& draft=*controlDraft_;const float left=inCard?24.f:16.f,right=scene_.width-left,width=right-left;
+    if(!controlDraft_)return;auto& draft=*controlDraft_;const float left=inCard?24.f:16.f,width=scene_.width-2*left;
     const bool connect=draft.request.name=="network.wifi.connect",busy=draft.task!=0;
     if(draft.binding)actionBindings_[draft.control]=*draft.binding;
     const auto field=[&](const std::string& id,const wchar_t* label)
@@ -445,9 +445,10 @@ void SystemPanelModel::ControlForm(float& y,bool inCard)
         auto& text=Add("control.confirmation",ui::Role::Text,Rect(left,y,width,68),_LW(key));text.wrap=true;y+=76;
     }
     if(!draft.error.empty()){auto& error=Add("control.error",ui::Role::Text,Rect(left,y,width,52),draft.error);error.wrap=true;error.fontSize=12;y+=60;}
-    const float button=(std::min)(134.f,(width-8)/2);
-    Add("control.cancel",ui::Role::Button,Rect(right-2*button-8,y,button,36),_LW("settings.dialog.cancel")).centered=true;Command("control.cancel",[this]{ControlBack();});
-    auto& confirm=Add("control.confirm",ui::Role::Button,Rect(right-button,y,button,36),_LW(connect?"controlCenter.connect":"settings.dialog.confirm"));confirm.enabled=!busy;confirm.busy=busy;confirm.centered=confirm.accent=true;
+    constexpr float buttonGap=8.f;
+    const float buttonWidth=(width-buttonGap)/2;
+    Add("control.cancel",ui::Role::Button,Rect(left,y,buttonWidth,36),_LW("settings.dialog.cancel")).centered=true;Command("control.cancel",[this]{ControlBack();});
+    auto& confirm=Add("control.confirm",ui::Role::Button,Rect(left+buttonWidth+buttonGap,y,buttonWidth,36),_LW(connect?"controlCenter.connect":"settings.dialog.confirm"));confirm.enabled=!busy;confirm.busy=busy;confirm.centered=confirm.accent=true;
     if(draft.hidden){const int count=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,draft.ssid.data(),static_cast<int>(draft.ssid.size()),nullptr,0,nullptr,nullptr);confirm.enabled=confirm.enabled&&count>0&&count<=32;}
     Command("control.confirm",[this]{ConfirmControl();});y+=44;
 }
@@ -1379,6 +1380,7 @@ bool SystemPanelModel::Drop(std::string_view key,D2D1_POINT_2F p)
 void SystemPanelModel::Calendar()
 {
     calendarEvents_.clear();
+    calendarSubscriptionTargets_.clear();
     scene_.width=(std::min)(calendarStacked_?384.f:720.f,availableWidth_);
     auto today=source_.calendar.today?source_.calendar.today():calendar::CalendarService::CurrentLocalNow().date;
     if(!calendar::CalendarService::GetDateInfo(today))today=calendar::CalendarService::CurrentLocalNow().date;
@@ -1586,16 +1588,16 @@ void SystemPanelModel::Calendar()
     Add("calendar.add",ui::Role::Icon,Rect(scene_.width-84,y,32,32),L"",L"\uE710").tooltip=_LW("settings.calendar.add");
     Command("calendar.add",[this]{calendar::CalendarEvent event;event.date=date_;event.startMinutes=9*60;event.endMinutes=10*60;EditCalendar(std::move(event));});
     Add("calendar.manage",ui::Role::Icon,Rect(scene_.width-48,y,32,32),L"",L"\uE713").tooltip=_LW("statusBar.manageCalendar");
-    Command("calendar.manage",[this]{const auto manage=source_.calendar.manage;if(manage)manage();});y+=calendarDisplaySecondary_?56.f:40.f;
+    Command("calendar.manage",[this]{const auto manage=source_.calendar.manage;if(manage)manage();});y+=calendarDisplaySecondary_?56.f:36.f;
     if(calendarDisplaySecondary_)
     {
         auto& n=Add("calendar.selectedSecondary",ui::Role::Text,Rect(agendaLeft,y-16,agendaWidth,36),Wide(date_));
-        n.fontSize=12;n.secondary=true;y+=40;
+        n.fontSize=12;n.secondary=true;y+=26;
     }
     else if(const auto selected=calendarAnnotations_.find(date_);selected!=calendarAnnotations_.end())
     {
         const auto text=Wide(selected->second);
-        if(!text.empty()){auto& n=Add("calendar.selectedSecondary",ui::Role::Text,Rect(agendaLeft,y-16,agendaWidth,36),text);n.fontSize=12;n.secondary=n.wrap=true;y+=40;}
+        if(!text.empty()){auto& n=Add("calendar.selectedSecondary",ui::Role::Text,Rect(agendaLeft,y-16,agendaWidth,36),text);n.fontSize=12;n.secondary=n.wrap=true;y+=26;}
     }
     if(!calendarNotice_.empty())
     {
@@ -1613,24 +1615,59 @@ void SystemPanelModel::Calendar()
     }
     // The selected date is first; the following two days provide nearby agenda
     // without changing the selection or manufacturing events for empty dates.
+    constexpr float dayHeadingHeight=22.f,groupGap=4.f,eventRowHeight=46.f,eventGap=4.f;
     for(int offsetDay=0;offsetDay<3;++offsetDay)
     {
         const auto& [agendaDate,events]=agenda[offsetDay];if(agendaDate.empty())continue;
         if(offsetDay&&events.empty())continue;
-        if(offsetDay){auto& n=Add("calendar.agenda:"+agendaDate,ui::Role::Text,Rect(agendaLeft,y,agendaWidth,28),Wide(agendaDate));n.fontSize=12;n.secondary=true;y+=32;}
-        if(events.empty()&&hasEvents){Add("calendar.empty",ui::Role::Text,Rect(agendaLeft,y,agendaWidth,40),_LW("settings.calendar.empty")).fontSize=12;y+=48;}
+        if(offsetDay)
+        {
+            y+=groupGap;
+            auto& n=Add("calendar.agenda:"+agendaDate,ui::Role::Text,
+                Rect(agendaLeft,y,agendaWidth,dayHeadingHeight),Wide(agendaDate));
+            n.fontSize=12;n.secondary=true;y+=dayHeadingHeight;
+        }
+        if(events.empty()&&hasEvents){Add("calendar.empty",ui::Role::Text,Rect(agendaLeft,y,agendaWidth,30),_LW("statusBar.calendarEmpty")).fontSize=12;y+=32;}
         for(const auto& e:events)
         {
-            wchar_t when[32]{};swprintf_s(when,L"%02d:%02d",e.startMinutes/60,e.startMinutes%60);
-            auto& n=Add("event:"+agendaDate+":"+e.id,ui::Role::ListItem,Rect(agendaLeft,y,agendaWidth,56),Wide(e.title));
-            n.detail=e.allDay?_LW("settings.calendar.allDay"):when;n.tooltip=Wide(e.title)+L"\n"+Wide(e.date)+L" · "+n.detail;
-            if(!e.notes.empty())n.tooltip+=L"\n"+Wide(e.notes);
-            n.accessibilityLabel=Wide(e.title)+L" · "+Wide(e.date)+L" · "+n.detail;
-            calendarEvents_[n.id]=e;
-            Command(n.id,[this,id=n.id]{CalendarEventCommand(id,false);});y+=64;
+            const bool subscribed = e.id.starts_with(calendar::SubscriptionEventIdPrefix);
+            auto& n=Add((subscribed ? "subscription-event:" : "event:")+agendaDate+":"+e.id,
+                subscribed ? ui::Role::ReadOnlyListItem : ui::Role::ListItem,
+                Rect(agendaLeft,y,agendaWidth,eventRowHeight),Wide(e.title));
+            n.detail=e.allDay?_LW("settings.calendar.allDay"):ui::DateTimePicker::TimeText(e.startMinutes);
+            auto timing=n.detail;
+            if(subscribed&&!e.allDay&&e.endMinutes>e.startMinutes)
+                timing+=L" – "+ui::DateTimePicker::TimeText(e.endMinutes);
+            n.tooltip=n.text+L"\n"+Wide(e.date)+L" · "+timing;
+            n.accessibilityLabel=n.text+L" · "+Wide(e.date)+L" · "+timing;
+            if(!e.subscriptionName.empty())
+            {
+                const auto source=_LFW("statusBar.calendarSubscriptionSource",e.subscriptionName);
+                n.tooltip+=L"\n"+source;
+                n.accessibilityLabel+=L" · "+source;
+            }
+            constexpr std::string_view whitespace=" \t\r\n\v\f";
+            const std::string_view notes=e.notes;
+            const auto firstNote=notes.find_first_not_of(whitespace);
+            if(firstNote!=std::string_view::npos)
+            {
+                const auto lastNote=notes.find_last_not_of(whitespace);
+                n.tooltip+=L"\n"+Wide(notes.substr(firstNote,lastNote-firstNote+1));
+            }
+            if(subscribed)
+            {
+                if(!e.subscriptionId.empty())
+                    calendarSubscriptionTargets_.emplace(n.id,e.subscriptionId);
+            }
+            else
+            {
+                calendarEvents_[n.id]=e;
+                Command(n.id,[this,id=n.id]{CalendarEventCommand(id,false);});
+            }
+            y+=eventRowHeight+eventGap;
         }
     }
-    if(!hasEvents){auto& empty=Add("calendar.empty",ui::Role::Text,Rect(agendaLeft,y,agendaWidth,48),_LW("settings.calendar.empty"));empty.fontSize=12;empty.centered=empty.wrap=true;y+=two?48.f:104.f;}
+    if(!hasEvents){auto& empty=Add("calendar.empty",ui::Role::Text,Rect(agendaLeft,y,agendaWidth,48),_LW("statusBar.calendarEmpty"));empty.fontSize=12;empty.centered=empty.wrap=true;y+=two?48.f:104.f;}
     // Keep month navigation and the day grid stationary when the
     // full month fits. Short/narrow viewports retain one accessible scroll flow.
     bodyLeft_=fixedMonth?agendaLeft:0;bodyStart_=fixedMonth?agendaStart:0;
@@ -1877,6 +1914,22 @@ bool SystemPanelModel::CalendarEventIsSeries(std::string_view nodeId) const
 {
     const auto found=calendarEvents_.find(std::string(nodeId));
     return found!=calendarEvents_.end()&&!found->second.seriesId.empty();
+}
+bool SystemPanelModel::CalendarCanRefreshSubscription(std::string_view nodeId) const
+{
+    return !closed_&&action_==StatusBarAction::Calendar&&!CalendarEditing()&&
+        source_.calendar.refreshSubscription&&scene_.Find(nodeId)&&calendarSubscriptionTargets_.contains(nodeId);
+}
+std::wstring SystemPanelModel::CalendarSubscriptionManagementUrl(std::string_view nodeId) const
+{
+    if(!CalendarCanRefreshSubscription(nodeId)||!source_.calendar.subscriptionManagementUrl)return {};
+    return source_.calendar.subscriptionManagementUrl(calendarSubscriptionTargets_.find(nodeId)->second);
+}
+bool SystemPanelModel::RefreshCalendarSubscription(std::string_view nodeId)
+{
+    if(!CalendarCanRefreshSubscription(nodeId))return false;
+    const auto subscriptionId=calendarSubscriptionTargets_.find(nodeId)->second;
+    return source_.calendar.refreshSubscription(subscriptionId);
 }
 bool SystemPanelModel::CalendarEventCommand(std::string_view nodeId,bool remove,bool wholeSeries)
 {

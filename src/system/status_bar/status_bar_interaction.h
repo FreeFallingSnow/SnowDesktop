@@ -182,6 +182,7 @@ inline std::optional<StatusBarInvocation> ResolveStatusBarInvocation(
     const auto& item = items[*index];
     if (item.action == StatusBarAction::None || IsRectEmpty(&item.bounds)) return {};
     auto action = item.action;
+    if (action == StatusBarAction::MenuForegroundAppName && !context) return {};
     if (context)
     {
         using Action = StatusBarAction;
@@ -199,6 +200,7 @@ inline std::optional<StatusBarInvocation> ResolveStatusBarInvocation(
         case Action::QuickSearch: action = Action::MenuQuickSearch; break;
         case Action::SystemMenu: action = Action::MenuSystem; break;
         case Action::TaskView: action = Action::MenuTaskView; break;
+        case Action::MenuForegroundAppName: break;
         case Action::Cpu: action = Action::MenuCpu; break;
         case Action::Memory: action = Action::MenuMemory; break;
         case Action::Gpu: action = Action::MenuGpu; break;

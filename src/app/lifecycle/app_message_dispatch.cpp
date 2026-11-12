@@ -1499,6 +1499,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         // The hidden control window is top-level and receives session events.
         // Best-effort flush never vetoes shutdown or serializes a partial drag
         // or reload. Failure stays pending; a canceled session can still retry.
+        FlushScreenTime();
         if (snowdesktop::ShouldFlushScrollLayoutForSession(
                 layoutSavePending_, msg == WM_QUERYENDSESSION, wp != 0,
                 reloading_, dragSession_.HasContext(),
@@ -1510,6 +1511,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         RequestExit();
         return 0;
     case WM_DESTROY:
+        FlushScreenTime();
         if (widgetAccessibilityProvider_)
             widgetAccessibilityProvider_->DetachWindow(hwnd);
         StopDemoIconLoader();

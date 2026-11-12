@@ -369,6 +369,9 @@ struct DesktopBackdropCompositor::Impl
         std::uintptr_t ownerKey = 0;
         float cornerRadius = 0;
         float regionCornerRadius = 0;
+        std::optional<RECT> animationFence;
+        // Engaged once the popup lifecycle owns this panel's scale and opacity.
+        std::optional<bool> popupTransformAnimating;
         RECT synchronizedRegionFrame{};
         float synchronizedRegionRadius = 0;
         bool regionFenceSynchronized = false;
@@ -381,6 +384,7 @@ struct DesktopBackdropCompositor::Impl
         wuc::CompositionGeometricClip clip{nullptr};
         wuc::CompositionGeometry customGeometry{nullptr};
         bool seen = false;
+        bool background = false;
         int iconShape = -1;
         SIZE iconSize{};
         RECT iconFrame{};
@@ -398,6 +402,17 @@ struct DesktopBackdropCompositor::Impl
         std::optional<float> submittedRadius;
         std::optional<float> submittedOpacity;
         wuc::CompositionGeometry submittedClip{nullptr};
+
+        const RECT& FenceFrame() const noexcept
+        {
+            return animationFence ? *animationFence : regionFrame;
+        }
+        float FenceRadius() const noexcept
+        {
+            // A scaled contour can intersect the corners of its resting
+            // shape. Reserve the rectangle and let the visual clip shape it.
+            return animationFence || popupTransformAnimating.has_value() ? 0.0f : regionCornerRadius;
+        }
 
         void SetTransform(const wfn::float4x4& value)
         {
@@ -493,7 +508,7 @@ struct DesktopBackdropCompositor::Impl
     std::vector<PanelVisual> panels;
     std::unordered_map<std::uintptr_t, std::size_t> panelOwners;
 
-    auto FindPanel(const RECT& frame, std::uintptr_t ownerKey)
+    auto FindPanel(const RECT& frame, std::uintptr_t ownerKey, bool background = false)
     {
         if (ownerKey)
         {
@@ -502,8 +517,9 @@ struct DesktopBackdropCompositor::Impl
                 panels.begin() + static_cast<std::ptrdiff_t>(owner->second);
         }
         return std::find_if(panels.begin(), panels.end(), [&](const auto& panel) {
-            return snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
-                panel.ownerKey, panel.frame, ownerKey, frame);
+            return panel.background == background &&
+                snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
+                    panel.ownerKey, panel.frame, ownerKey, frame);
         });
     }
 
@@ -531,6 +547,7 @@ struct DesktopBackdropCompositor::Impl
     std::wstring lastError;
     bool completeCollection = true;
     bool collectingFrame = false;
+    bool frameCommitPending = false;
     bool blurFactoriesDirty = false;
     bool available = false;
     bool transformedRegionDirty = false;
@@ -762,8 +779,8 @@ struct DesktopBackdropCompositor::Impl
             for (const auto& panel : panels)
             {
                 if (!panel.regionFenceSynchronized ||
-                    !EqualRect(&panel.synchronizedRegionFrame, &panel.regionFrame) ||
-                    panel.synchronizedRegionRadius != panel.regionCornerRadius)
+                    !EqualRect(&panel.synchronizedRegionFrame, &panel.FenceFrame()) ||
+                    panel.synchronizedRegionRadius != panel.FenceRadius())
                 {
                     inputsMatch = false;
                     break;
@@ -781,8 +798,8 @@ struct DesktopBackdropCompositor::Impl
             if (!windowGeometryKnown) return;
             for (auto& panel : panels)
             {
-                panel.synchronizedRegionFrame = panel.regionFrame;
-                panel.synchronizedRegionRadius = panel.regionCornerRadius;
+                panel.synchronizedRegionFrame = panel.FenceFrame();
+                panel.synchronizedRegionRadius = panel.FenceRadius();
                 panel.regionFenceSynchronized = true;
             }
             synchronizedPanelCount = panels.size();
@@ -810,7 +827,7 @@ struct DesktopBackdropCompositor::Impl
                 // Composition owns the AA contour. The outward region preserves
                 // its coverage but excludes the fully transparent outer corners.
                 HRGN frameRegion = snowdesktop::popup_round_geometry::CreateWindowFence(
-                    panel.regionFrame, panel.regionCornerRadius);
+                    panel.FenceFrame(), panel.FenceRadius());
                 if (!frameRegion)
                 {
                     DeleteObject(panelRegion);
@@ -892,6 +909,7 @@ struct DesktopBackdropCompositor::Impl
             // the resized content and then save layout while glass is still
             // waiting for the UI dispatcher. Do not wait for GPU completion.
             compositorController.Commit();
+            frameCommitPending = false;
             return true;
         }
         catch (const winrt::hresult_error& error)
@@ -1034,6 +1052,7 @@ struct DesktopBackdropCompositor::Impl
         panelOwners.clear();
         blurFactories.clear();
         collectingFrame = false;
+        frameCommitPending = false;
         stagingFrame = false;
         stagedPanels.clear();
         stagedPanelOwners.clear();
@@ -1579,6 +1598,34 @@ void DesktopBackdropCompositor::SetVisualTransform(
     }
 }
 
+void DesktopBackdropCompositor::SetPopupPanelTransform(
+    std::uintptr_t ownerKey, float scale, float opacity,
+    POINT anchor, bool preserveAnimation)
+{
+    if (!impl_->available || !ownerKey)
+        return;
+    const auto panel = impl_->FindPanel({}, ownerKey);
+    if (panel == impl_->panels.end() ||
+        (preserveAnimation && panel->popupTransformAnimating.value_or(false)))
+        return;
+
+    try
+    {
+        panel->visual.CenterPoint(wfn::float3{
+            static_cast<float>(anchor.x - panel->frame.left),
+            static_cast<float>(anchor.y - panel->frame.top), 0.0f});
+        panel->visual.Scale(wfn::float3{scale, scale, 1.0f});
+        panel->visual.Opacity(std::clamp(opacity, 0.0f, 1.0f));
+        if (!panel->popupTransformAnimating.has_value())
+            impl_->transformedRegionDirty = true;
+        panel->popupTransformAnimating = false;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.update_panel"), error.code());
+    }
+}
+
 bool DesktopBackdropCompositor::StartVisualScaleAnimation(
     float fromScale, float toScale, float opacity,
     float anchorX, float anchorY,
@@ -1598,19 +1645,33 @@ bool DesktopBackdropCompositor::StartVisualTransformAnimation(
     std::uint32_t durationMilliseconds,
     float normalizedStartSlope,
     const snowdesktop::popup_motion_curve::Timeline* springTimeline,
-    const snowdesktop::popup_motion_curve::Timeline* opacityTimeline)
+    const snowdesktop::popup_motion_curve::Timeline* opacityTimeline,
+    std::uintptr_t panelOwnerKey)
 {
     if (!impl_ || !impl_->available || !impl_->root ||
         !impl_->compositor || durationMilliseconds == 0 ||
         !impl_->contentWindow || !IsWindow(impl_->contentWindow))
         return false;
 
-    ClearGenieTransform();
-    if (!impl_->available)
+    const auto panel = panelOwnerKey ? impl_->FindPanel({}, panelOwnerKey) : impl_->panels.end();
+    if (panelOwnerKey && panel == impl_->panels.end())
         return false;
+    wuc::Visual target = impl_->root;
+    if (panelOwnerKey)
+    {
+        target = panel->visual;
+        anchorX -= static_cast<float>(panel->frame.left);
+        anchorY -= static_cast<float>(panel->frame.top);
+    }
+    else
+    {
+        ClearGenieTransform();
+        if (!impl_->available)
+            return false;
+    }
 
-    const float clampedFrom =
-        std::clamp(fromScale, 0.0f, 1.0f);
+    const float initialScale =
+        panelOwnerKey ? fromScale : std::clamp(fromScale, 0.0f, 1.0f);
     const float clampedTo =
         std::clamp(toScale, 0.0f, 1.0f);
     const float clampedFromOpacity =
@@ -1636,7 +1697,7 @@ bool DesktopBackdropCompositor::StartVisualTransformAnimation(
                 durationMilliseconds) * 10'000LL });
         animation.InsertKeyFrame(
             0.0f,
-            wfn::float3{ clampedFrom, clampedFrom, 1.0f });
+            wfn::float3{ initialScale, initialScale, 1.0f });
         if (springTimeline)
         {
             if (springTimeline->segments.empty()) return false;
@@ -1675,18 +1736,33 @@ bool DesktopBackdropCompositor::StartVisualTransformAnimation(
         }
         else opacityAnimation.InsertKeyFrame(1.0f, clampedToOpacity, easing);
 
-        impl_->root.CenterPoint(wfn::float3{
+        target.CenterPoint(wfn::float3{
             anchorX, anchorY, 0.0f });
-        impl_->SetAnimationPathRegionExpanded(
-            std::min(clampedFrom, clampedTo) < 0.9995f);
+        if (panelOwnerKey)
+        {
+            if (!panel->popupTransformAnimating.has_value())
+                impl_->transformedRegionDirty = true;
+            panel->popupTransformAnimating = false;
+            if (impl_->transformedRegionDirty)
+                impl_->transformedRegionDirty = !impl_->SyncPanelWindowRegion();
+        }
+        else
+            impl_->SetAnimationPathRegionExpanded(std::min(initialScale, clampedTo) < 0.9995f);
         // Keep final values as the base properties. Direct assignments also
         // disconnect prior animations before a rapid reversal.
-        impl_->root.Scale(wfn::float3{
+        target.Scale(wfn::float3{
             clampedTo, clampedTo, 1.0f });
-        impl_->root.Opacity(clampedToOpacity);
-        impl_->root.StartAnimation(L"Scale", animation);
-        impl_->root.StartAnimation(L"Opacity", opacityAnimation);
-        impl_->RequestCommit();
+        target.Opacity(clampedToOpacity);
+        target.StartAnimation(L"Scale", animation);
+        target.StartAnimation(L"Opacity", opacityAnimation);
+        if (panelOwnerKey)
+        {
+            if (!impl_->RequestCommit())
+                return false;
+            panel->popupTransformAnimating = true;
+        }
+        else
+            impl_->RequestCommit();
         return true;
     }
     catch (...)
@@ -1696,11 +1772,13 @@ bool DesktopBackdropCompositor::StartVisualTransformAnimation(
 
     try
     {
-        impl_->root.Scale(wfn::float3{
-            clampedFrom, clampedFrom, 1.0f });
-        impl_->root.Opacity(clampedFromOpacity);
-        impl_->SetAnimationPathRegionExpanded(
-            clampedFrom < 0.9995f);
+        target.Scale(wfn::float3{
+            initialScale, initialScale, 1.0f });
+        target.Opacity(clampedFromOpacity);
+        if (panelOwnerKey && panel->popupTransformAnimating.has_value())
+            panel->popupTransformAnimating = false;
+        if (!panelOwnerKey)
+            impl_->SetAnimationPathRegionExpanded(initialScale < 0.9995f);
         impl_->RequestCommit();
     }
     catch (...)
@@ -1968,9 +2046,37 @@ bool DesktopBackdropCompositor::AddPanel(
     return UpdatePanel(frame, cornerRadius, blurRadius, ownerKey, smoothCorners, false);
 }
 
+void DesktopBackdropCompositor::SetBackgroundPanels(
+    std::span<const RECT> frames, float blurRadius)
+{
+    if (!impl_->available || !impl_->collectingFrame) return;
+    try
+    {
+        for (auto panel = impl_->panels.begin(); panel != impl_->panels.end();)
+        {
+            if (!panel->background || std::any_of(frames.begin(), frames.end(),
+                [&](const RECT& frame) { return EqualRect(&panel->frame, &frame) != FALSE; }))
+            {
+                ++panel;
+                continue;
+            }
+            impl_->root.Children().Remove(panel->visual);
+            panel->visual.Brush(nullptr);
+            panel = impl_->ErasePanel(panel);
+            impl_->blurFactoriesDirty = true;
+        }
+        for (const RECT& frame : frames)
+            UpdatePanel(frame, 0.0f, blurRadius, 0, false, false, true);
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.update_panel"), error.code());
+    }
+}
+
 bool DesktopBackdropCompositor::UpdatePanel(
     const RECT& frame, float cornerRadius,
-    float blurRadius, std::uintptr_t ownerKey, bool smoothCorners, bool customClip)
+    float blurRadius, std::uintptr_t ownerKey, bool smoothCorners, bool customClip, bool background)
 {
     if (!impl_->available || frame.right <= frame.left || frame.bottom <= frame.top)
         return false;
@@ -1997,12 +2103,13 @@ bool DesktopBackdropCompositor::UpdatePanel(
 
     try
     {
-        auto existing = impl_->FindPanel(frame, ownerKey);
+        auto existing = impl_->FindPanel(frame, ownerKey, background);
         if (existing == impl_->panels.end())
         {
             Impl::PanelVisual panel{};
             panel.frame = frame;
             panel.ownerKey = ownerKey;
+            panel.background = background;
             panel.cornerRadius = resolvedRadius;
             panel.blurRadius = blurKey;
             panel.visual = impl_->compositor.CreateSpriteVisual();
@@ -2010,7 +2117,10 @@ bool DesktopBackdropCompositor::UpdatePanel(
             panel.clip = impl_->compositor.CreateGeometricClip(panel.geometry);
             panel.submittedClip = panel.geometry;
             panel.visual.Clip(panel.clip);
-            impl_->root.Children().InsertAtTop(panel.visual);
+            if (background)
+                impl_->root.Children().InsertAtBottom(panel.visual);
+            else
+                impl_->root.Children().InsertAtTop(panel.visual);
             impl_->panels.push_back(std::move(panel));
             existing = std::prev(impl_->panels.end());
             if (ownerKey) impl_->panelOwners.emplace(ownerKey, impl_->panels.size() - 1);
@@ -2079,7 +2189,9 @@ bool DesktopBackdropCompositor::UpdatePanel(
             impl_->genieRoot.Opacity(impl_->genieOpacity);
             existing->SetOpacity(0.0f);
         }
-        else
+        // Popup geometry can be rebased mid-animation. Its opacity is owned
+        // by the popup lifecycle and a direct write would cancel the track.
+        else if (!existing->popupTransformAnimating.has_value())
             existing->SetOpacity(1.0f);
         existing->seen = true;
         impl_->PruneUnusedBlurFactories();
@@ -2102,7 +2214,7 @@ bool DesktopBackdropCompositor::HasPanelContaining(const RECT& frame) const
                 frame.right <= panel.frame.right && frame.bottom <= panel.frame.bottom;
         });
     return std::any_of(impl_->panels.begin(), impl_->panels.end(), [&](const auto& panel) {
-        return panel.iconShape < 0 && panel.largeIconShape < 0 && panel.seen &&
+        return !panel.background && panel.iconShape < 0 && panel.largeIconShape < 0 && panel.seen &&
             frame.left >= panel.frame.left && frame.top >= panel.frame.top &&
             frame.right <= panel.frame.right && frame.bottom <= panel.frame.bottom;
     });
@@ -2297,6 +2409,71 @@ bool DesktopBackdropCompositor::SetPanelTransform(std::uintptr_t ownerKey,
     }
 }
 
+bool DesktopBackdropCompositor::StartPanelHeightAnimation(
+    std::uintptr_t ownerKey, float collapsedHeight, float radius,
+    const snowdesktop::popup_motion_curve::Timeline& timeline)
+{
+    if (!impl_->available || !impl_->collectingFrame || !ownerKey ||
+        timeline.segments.empty() || timeline.durationMilliseconds <= 0.0)
+        return false;
+    const auto panel = impl_->FindPanel({}, ownerKey);
+    if (panel == impl_->panels.end()) return false;
+    const auto width = static_cast<float>(panel->frame.right - panel->frame.left);
+    const auto travel = static_cast<float>(panel->frame.bottom - panel->frame.top) - collapsedHeight;
+
+    try
+    {
+        auto animation = impl_->compositor.CreateVector2KeyFrameAnimation();
+        animation.Duration(wf::TimeSpan{std::llround(timeline.durationMilliseconds * 10'000.0)});
+        const auto size = [width, collapsedHeight, travel](double progress) {
+            return wfn::float2{width, static_cast<float>(collapsedHeight + travel * progress)};
+        };
+        animation.InsertKeyFrame(0.0f, size(timeline.segments.front().constant));
+        for (const auto& segment : timeline.segments)
+        {
+            const auto easing = impl_->compositor.CreateCubicBezierEasingFunction(
+                wfn::float2{1.0f / 3.0f, static_cast<float>(segment.StartControl())},
+                wfn::float2{2.0f / 3.0f, static_cast<float>(segment.EndControl())});
+            const float time = std::clamp(static_cast<float>(
+                (segment.startSeconds + segment.durationSeconds) * 1000.0 /
+                timeline.durationMilliseconds), 0.0f, 1.0f);
+            animation.InsertKeyFrame(time,
+                size(segment.EvaluateLocal(segment.durationSeconds).position), easing);
+        }
+
+        auto geometry = impl_->compositor.CreateRoundedRectangleGeometry();
+        geometry.CornerRadius(wfn::float2{radius, radius});
+        geometry.Size(size(timeline.target));
+        geometry.StartAnimation(L"Size", animation);
+        panel->SetClip(geometry);
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(L"backdrop.animate_height", error.code());
+        return false;
+    }
+}
+
+void DesktopBackdropCompositor::SetPanelAnimationFence(
+    std::uintptr_t ownerKey, const RECT& frame)
+{
+    if (!impl_->available || !impl_->collectingFrame || !ownerKey)
+        return;
+    const auto panel = impl_->FindPanel({}, ownerKey);
+    if (panel == impl_->panels.end()) return;
+
+    // SetWindowRgn takes effect separately from the Composition commit.
+    // The whole animation path must fit both the previous and new clip.
+    const RECT& visible = panel->regionFrame;
+    if (!IsRectEmpty(&frame) && frame.left == visible.left &&
+        frame.top == visible.top && frame.right == visible.right &&
+        frame.bottom >= visible.bottom)
+        panel->animationFence = frame;
+    else
+        panel->animationFence.reset();
+}
+
 bool DesktopBackdropCompositor::RemovePanel(const RECT& frame, std::uintptr_t ownerKey)
 {
     const auto matches = [&frame, ownerKey](const auto& panel) {
@@ -2311,7 +2488,9 @@ bool DesktopBackdropCompositor::RemovePanel(const RECT& frame, std::uintptr_t ow
     if (!impl_->available || !impl_->root)
         return false;
     auto existing = ownerKey ? impl_->FindPanel(frame, ownerKey) :
-        std::find_if(impl_->panels.begin(), impl_->panels.end(), matches);
+        std::find_if(impl_->panels.begin(), impl_->panels.end(), [&](const auto& panel) {
+            return !panel.background && matches(panel);
+        });
     if (existing == impl_->panels.end())
         return false;
 
@@ -2323,12 +2502,15 @@ bool DesktopBackdropCompositor::RemovePanel(const RECT& frame, std::uintptr_t ow
         existing->visual.Brush(nullptr);
         impl_->ErasePanel(existing);
         impl_->blurFactoriesDirty = true;
-        impl_->PruneUnusedBlurFactories();
-        if (impl_->genieRoot)
-            impl_->SetAnimationPathRegionExpanded(true);
-        else
-            impl_->SyncPanelWindowRegion();
-        impl_->RequestCommit();
+        if (!impl_->collectingFrame)
+        {
+            impl_->PruneUnusedBlurFactories();
+            if (impl_->genieRoot)
+                impl_->SetAnimationPathRegionExpanded(true);
+            else
+                impl_->SyncPanelWindowRegion();
+            impl_->RequestCommit();
+        }
         return true;
     }
     catch (const winrt::hresult_error& error)
@@ -2339,7 +2521,7 @@ bool DesktopBackdropCompositor::RemovePanel(const RECT& frame, std::uintptr_t ow
 }
 
 bool DesktopBackdropCompositor::KeepPanel(
-    const RECT& frame)
+    const RECT& frame, std::uintptr_t ownerKey)
 {
     // Staged frames are full redraws, not retained/partial collections.
     if (impl_->stagingFrame) return false;
@@ -2347,8 +2529,9 @@ bool DesktopBackdropCompositor::KeepPanel(
         return false;
     const auto existing = std::find_if(
         impl_->panels.begin(), impl_->panels.end(),
-        [&frame](const Impl::PanelVisual& panel) {
-            return EqualRect(&panel.frame, &frame) != FALSE;
+        [&frame, ownerKey](const Impl::PanelVisual& panel) {
+            return !panel.background && (ownerKey == 0 || panel.ownerKey == ownerKey) &&
+                EqualRect(&panel.frame, &frame) != FALSE;
         });
     if (existing == impl_->panels.end())
         return false;
@@ -2357,11 +2540,12 @@ bool DesktopBackdropCompositor::KeepPanel(
 }
 
 bool DesktopBackdropCompositor::SetPanelOpacity(
-    const RECT& frame, float opacity)
+    const RECT& frame, float opacity, std::uintptr_t ownerKey)
 {
     if (impl_->stagingFrame)
     {
-        auto panel = std::find_if(impl_->stagedPanels.begin(), impl_->stagedPanels.end(),
+        auto panel = ownerKey ? impl_->FindStagedPanel(frame, ownerKey) :
+            std::find_if(impl_->stagedPanels.begin(), impl_->stagedPanels.end(),
             [&](const auto& value) { return EqualRect(&value.frame, &frame) != FALSE; });
         if (panel == impl_->stagedPanels.end()) return false;
         panel->opacity = std::clamp(opacity, 0.0f, 1.0f);
@@ -2369,10 +2553,10 @@ bool DesktopBackdropCompositor::SetPanelOpacity(
     }
     if (!impl_->available)
         return false;
-    const auto existing = std::find_if(
+    const auto existing = ownerKey ? impl_->FindPanel(frame, ownerKey) : std::find_if(
         impl_->panels.begin(), impl_->panels.end(),
         [&frame](const Impl::PanelVisual& panel) {
-            return EqualRect(&panel.frame, &frame) != FALSE;
+            return !panel.background && EqualRect(&panel.frame, &frame) != FALSE;
         });
     if (existing == impl_->panels.end())
         return false;
@@ -2441,6 +2625,12 @@ void DesktopBackdropCompositor::CommitVisualChanges()
     }
 }
 
+void DesktopBackdropCompositor::CommitDeferredFrame()
+{
+    if (impl_ && impl_->frameCommitPending && !impl_->collectingFrame)
+        CommitVisualChanges();
+}
+
 bool DesktopBackdropCompositor::
 CommitVisualChangesAndNotify(
     HWND notifyWindow, UINT message, WPARAM token)
@@ -2487,6 +2677,7 @@ void DesktopBackdropCompositor::EndFrame(
             impl_->SetAnimationPathRegionExpanded(true);
         else
             impl_->transformedRegionDirty = !impl_->SyncPanelWindowRegion();
+        impl_->frameCommitPending = true;
         if (requestCommit)
             impl_->RequestCommit();
     }

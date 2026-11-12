@@ -3,6 +3,7 @@
 #include "common/utils.h"
 #include "app/render/desktop_backdrop_update_rules.h"
 #include "diagnostics/performance_trace.h"
+#include "settings/animation_settings.h"
 #include "widget/view/widget_surface_retention.h"
 #include "widget/view/widget_surface_renderer.h"
 #include "widget/runtime/widget_engine.h"
@@ -38,6 +39,28 @@ HRESULT RetireRenderedSurface(
     item.renderTarget.reset();
     item.renderedVisual.Reset();
     return result;
+}
+
+HRESULT UpdateHoverOpacity(IDCompositionDesktopDevice* device,
+    DesktopWidgetCompositionItem& item, float opacity)
+{
+    if (item.submittedOpacity == opacity) return S_OK;
+    if (item.opacityEffect)
+    {
+        const HRESULT hr = item.opacityEffect->SetOpacity(opacity);
+        if (FAILED(hr)) return hr;
+    }
+    else
+    {
+        Microsoft::WRL::ComPtr<IDCompositionEffectGroup> effect;
+        HRESULT hr = device->CreateEffectGroup(&effect);
+        if (SUCCEEDED(hr)) hr = effect->SetOpacity(opacity);
+        if (SUCCEEDED(hr)) hr = item.visual->SetEffect(effect.Get());
+        if (FAILED(hr)) return hr;
+        item.opacityEffect = std::move(effect);
+    }
+    item.submittedOpacity = opacity;
+    return S_OK;
 }
 }
 
@@ -227,7 +250,11 @@ bool DesktopApp::PresentQueuedDesktopWidgetComposition(bool passivePointerFrame)
                 IsAnyPersistentDockHostPainting(),
                 floatingPopupCompositionPaintInProgress_,
                 desktopWidgetPointerBatchActive_))
+    {
+        if (desktopWidgetHoverFadePending_ && hwnd_)
+            InvalidateRect(hwnd_, nullptr, FALSE);
         return true;
+    }
     if (passivePointerFrame && !pendingDesktopWidgetCompositions_.empty())
     {
         const UINT delay = snowdesktop::widget_composition_layer_rules::
@@ -269,6 +296,12 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
     if (desktopWidgetHoverTailToken_) return true;
     if (pendingDesktopWidgetCompositions_.empty())
     {
+        if (desktopWidgetHoverFadePending_ && !compositionPaintInProgress_)
+        {
+            desktopBackdropCompositor_.BeginFrame(false);
+            KeepDesktopWidgetBackdropPanels();
+            desktopBackdropCompositor_.EndFrame(false);
+        }
         if (SyncDesktopWidgetCompositionZOrder())
             return true;
         desktopWidgetCompositionFailurePending_ = true;
@@ -371,9 +404,23 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         snowdesktop::performance::Scope widgetPerformanceScope(
             "widget.composition", "draw", contentId);
 
-        const RECT bounds = GetStandaloneWidgetFrameRect(*widgetData);
+        auto& item = composition->second;
+        const auto expansion = widgetHoverExpansion_.find(widgetId);
+        const bool animating = widgetContainer && !widgetContainer->IsHosted() &&
+            expansion != widgetHoverExpansion_.end() && IsWidgetHoverExpansionAnimating(*widgetData);
+        if (!animating) item.hoverRollUnavailable = false;
+        const RECT visibleBounds = GetStandaloneWidgetFrameRect(*widgetData);
+        const RECT expandedBounds = animating ? GetExpandedWidgetFrameRect(*widgetData) : visibleBounds;
+        const RECT collapsedBounds = animating
+            ? GetCollapsedWidgetFrameRect(*widgetData, expandedBounds) : visibleBounds;
+        const bool drawRollSnapshot = animating && item.backdropRequested &&
+            desktopBackdropCompositor_.IsAvailable() && !item.hoverRollUnavailable &&
+            collapsedBounds.bottom < expandedBounds.bottom;
+        const RECT bounds = drawRollSnapshot ? expandedBounds : visibleBounds;
         const LONG rawWidth = bounds.right - bounds.left;
         const LONG rawHeight = bounds.bottom - bounds.top;
+        // The fallback also keeps one allocation throughout the transition.
+        const LONG surfaceHeight = expandedBounds.bottom - bounds.top;
         constexpr LONG surfaceOverdraw = static_cast<LONG>(
             snowdesktop::widget_composition_layer_rules::
                 kWidgetSurfaceBorderOverdraw);
@@ -382,7 +429,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             surfaceOverdraw * 2;
         if (rawWidth <= 0 || rawHeight <= 0 ||
             rawWidth > maximumLogicalSurfaceDimension ||
-            rawHeight > maximumLogicalSurfaceDimension)
+            surfaceHeight > maximumLogicalSurfaceDimension)
         {
             surfaceFailures.push_back({
                 widgetId, L"Validate bounds", E_INVALIDARG, false });
@@ -399,8 +446,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                 WidgetSurfaceExtent(rawWidth));
         const UINT height = static_cast<UINT>(
             snowdesktop::widget_composition_layer_rules::
-                WidgetSurfaceExtent(rawHeight));
-        auto& item = composition->second;
+                WidgetSurfaceExtent(surfaceHeight));
         const RECT oldBounds = item.bounds;
         const bool boundsChanged = !SameRect(oldBounds, bounds);
         const bool asynchronous = luaWidget && widgetSurfaceRenderer_ && !item.renderFailed;
@@ -505,7 +551,11 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         {
             lastMousePoint_ = { LONG_MIN, LONG_MIN };
         }
-        if (widgetContainer)
+        if (drawRollSnapshot)
+        {
+            widgetContainer->DrawHoverRollSnapshot(context.Get(), lastMousePoint_);
+        }
+        else if (widgetContainer)
         {
             widgetContainer->DrawChrome(context.Get(), lastMousePoint_);
         }
@@ -577,47 +627,84 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             continue;
         }
 
+        const bool hadRoll = item.hoverRollOpening.has_value();
+        const bool backdropChanged = !item.backdropRegistered || boundsChanged ||
+            item.backdropCornerRadius != backdropCornerRadius ||
+            item.backdropBlurRadius != backdropBlurRadius ||
+            (hadRoll && !drawRollSnapshot);
         item.backdropRequested = backdropRequested;
-        if (boundsChanged && item.backdropRegistered)
-        {
-            (void)desktopBackdropCompositor_.RemovePanel(oldBounds);
-            item.backdropRegistered = false;
-        }
         if (backdropRequested)
         {
-            const bool backdropChanged =
-                !item.backdropRegistered || boundsChanged ||
-                item.backdropCornerRadius != backdropCornerRadius ||
-                item.backdropBlurRadius != backdropBlurRadius;
             if (backdropChanged)
             {
                 item.backdropRegistered =
                     desktopBackdropCompositor_.AddPanel(
                         bounds,
                         static_cast<float>(backdropCornerRadius),
-                        static_cast<float>(backdropBlurRadius), 0, true);
+                        static_cast<float>(backdropBlurRadius), item.BackdropOwnerKey(), true);
             }
             item.backdropCornerRadius = backdropCornerRadius;
             item.backdropBlurRadius = backdropBlurRadius;
         }
         else if (item.backdropRegistered)
         {
-            (void)desktopBackdropCompositor_.RemovePanel(bounds);
+            (void)desktopBackdropCompositor_.RemovePanel(oldBounds, item.BackdropOwnerKey());
             item.backdropRegistered = false;
         }
 
-        item.bounds = bounds;
         hr = asynchronous ? S_OK : item.visual->SetContent(item.surface.Get());
         if (SUCCEEDED(hr))
             hr = item.visual->SetOffsetX(static_cast<float>(surfaceLeft));
         if (SUCCEEDED(hr))
             hr = item.visual->SetOffsetY(static_cast<float>(surfaceTop));
+
+        bool rollInstalled = false;
+        if (SUCCEEDED(hr) && drawRollSnapshot && item.backdropRegistered)
+        {
+            const bool opening = expansion->second.IsInteractive();
+            rollInstalled = !backdropChanged && item.hoverRollOpening == opening;
+            if (!rollInstalled)
+            {
+                rollInstalled = StartDesktopWidgetHoverRoll(item, bounds,
+                    collapsedBounds.bottom - collapsedBounds.top,
+                    static_cast<float>(backdropCornerRadius), expansion->second.RemainingTimeline());
+                if (rollInstalled)
+                    expansion->second.RebaseAnimationClock(static_cast<std::uint64_t>(
+                        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
+            }
+            if (rollInstalled) item.hoverRollOpening = opening;
+        }
+        item.bounds = rollInstalled ? bounds : visibleBounds;
+        if (!rollInstalled)
+        {
+            item.hoverRollOpening.reset();
+            if (drawRollSnapshot)
+            {
+                // Keep both visuals at the current sampled height if either
+                // compositor cannot install the paired animation.
+                item.hoverRollUnavailable = true;
+                if (item.backdropRegistered)
+                {
+                    item.backdropRegistered = desktopBackdropCompositor_.AddPanel(
+                        visibleBounds, static_cast<float>(backdropCornerRadius),
+                        static_cast<float>(backdropBlurRadius), item.BackdropOwnerKey(), true);
+                    if (!item.backdropRegistered)
+                        (void)desktopBackdropCompositor_.RemovePanel(bounds, item.BackdropOwnerKey());
+                }
+            }
+            if (SUCCEEDED(hr) && (hadRoll || drawRollSnapshot))
+                hr = item.visual->SetClip(item.clip.Get());
+        }
+
+        const float clipHeight = static_cast<float>(
+            snowdesktop::widget_composition_layer_rules::WidgetSurfaceExtent(
+                item.bounds.bottom - item.bounds.top));
         const bool showContent = item.visible &&
             (item.surface || item.renderedVisualAttached);
         if (SUCCEEDED(hr))
             hr = item.clip->SetRight(showContent ? static_cast<float>(width) : 0.0f);
         if (SUCCEEDED(hr))
-            hr = item.clip->SetBottom(showContent ? static_cast<float>(height) : 0.0f);
+            hr = item.clip->SetBottom(showContent ? clipHeight : 0.0f);
         if (FAILED(hr))
         {
             item.iconBackdrops.DiscardDraw();
@@ -628,7 +715,9 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         {
             if (luaWidget && !asynchronous)
                 item.renderedContentId = contentId;
-            item.iconBackdrops.Publish(desktopBackdropCompositor_);
+            if (!asynchronous && item.hoverFade && item.hoverFade->waitingForPixels)
+                StartDesktopWidgetHoverFade(item, true);
+            item.iconBackdrops.Publish(desktopBackdropCompositor_, item.HoverOpacity());
         }
     }
 
@@ -682,7 +771,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
     if (ownsPaintScope)
     {
         KeepDesktopWidgetBackdropPanels();
-        desktopBackdropCompositor_.EndFrame();
+        desktopBackdropCompositor_.EndFrame(false);
         compositionPaintInProgress_ = false;
     }
     if (!structuralOk && hwnd_ && IsWindow(hwnd_))
@@ -712,7 +801,12 @@ void DesktopApp::DrainDesktopWidgetSurfaceResults()
             if (SUCCEEDED(hr)) hr = item.clip->SetRight(static_cast<float>(item.width));
             if (SUCCEEDED(hr)) hr = item.clip->SetBottom(static_cast<float>(item.height));
             if (SUCCEEDED(hr)) hr = item.visual->SetContent(nullptr);
-            if (SUCCEEDED(hr)) item.surface.Reset();
+            if (SUCCEEDED(hr))
+            {
+                item.surface.Reset();
+                if (item.hoverFade && item.hoverFade->waitingForPixels)
+                    StartDesktopWidgetHoverFade(item, true);
+            }
             changed = true;
         }
         if (FAILED(hr))
@@ -738,10 +832,112 @@ bool DesktopApp::HasDesktopWidgetComposition(
     return desktopWidgetCompositionItems_.contains(widgetId);
 }
 
+bool DesktopApp::DesktopWidgetHoverFadeEnabled() const
+{
+    namespace motion = snowdesktop::animation;
+    return generalSettings_.widgetHoverVisibilityEffect == motion::Fade &&
+        motion::RuntimeAnimationsEnabled();
+}
+
+bool DesktopApp::SyncDesktopWidgetPresentationVisibility(
+    const DesktopWidget& widget, const RECT& bounds, bool visible, bool animate)
+{
+    auto position = desktopWidgetCompositionItems_.find(widget.id);
+    if (position == desktopWidgetCompositionItems_.end() && animate && visible)
+    {
+        // Create the child before drawing so its first pixels start at zero opacity.
+        (void)QueueDesktopWidgetComposition(widget.id);
+        position = desktopWidgetCompositionItems_.find(widget.id);
+    }
+    if (position == desktopWidgetCompositionItems_.end()) return visible;
+    auto& item = position->second;
+    if (!animate)
+        item.hoverFade.reset();
+    else
+    {
+        const bool pixelsVisible = item.visible && (item.surface || item.renderedVisualAttached);
+        if (!item.hoverFade)
+        {
+            auto& fade = item.hoverFade.emplace();
+            fade.motion.Configure(true, snowdesktop::animation::RuntimeDurationScale());
+            if (pixelsVisible) fade.motion.ShowImmediately();
+        }
+        auto& fade = *item.hoverFade;
+        if (visible != fade.motion.IsInteractive())
+        {
+            if (visible && !pixelsVisible)
+                fade.waitingForPixels = true;
+            else
+                StartDesktopWidgetHoverFade(item, visible);
+        }
+        if (!visible) fade.waitingForPixels = false;
+        visible = visible || fade.motion.IsAnimating();
+    }
+    SetDesktopWidgetCompositionVisible(widget.id, visible, bounds, widget.titleBarExpandOnHover);
+    return visible;
+}
+
+void DesktopApp::StartDesktopWidgetHoverFade(DesktopWidgetCompositionItem& item, bool visible)
+{
+    auto& fade = *item.hoverFade;
+    fade.waitingForPixels = false;
+    fade.motion.Configure(true, snowdesktop::animation::RuntimeDurationScale());
+    const auto tick = static_cast<std::uint64_t>(
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
+    if (visible) fade.motion.Open(tick);
+    else fade.motion.Close(tick);
+    desktopWidgetHoverFadePending_ = true;
+    if (!fade.motion.IsAnimating() || desktopWidgetHoverFadeFrameToken_) return;
+    desktopWidgetHoverFadeFrameToken_ = uiAnimationScheduler_.StartAnimation(
+        snowdesktop::UiAnimationSurface::Desktop,
+        [this](double now) { return AdvanceDesktopWidgetHoverFades(now); });
+    if (!desktopWidgetHoverFadeFrameToken_)
+    {
+        if (visible) fade.motion.ShowImmediately();
+        else fade.motion.ResetHidden();
+    }
+}
+
+bool DesktopApp::AdvanceDesktopWidgetHoverFades(double nowMilliseconds)
+{
+    const bool enabled = DesktopWidgetHoverFadeEnabled();
+    const auto tick = static_cast<std::uint64_t>(nowMilliseconds);
+    bool active = false;
+    bool changed = false;
+    for (auto& [_, item] : desktopWidgetCompositionItems_)
+    {
+        if (!item.hoverFade || !item.hoverFade->motion.IsAnimating()) continue;
+        auto& motion = item.hoverFade->motion;
+        if (enabled) motion.Advance(tick);
+        else if (motion.IsInteractive()) motion.ShowImmediately();
+        else motion.ResetHidden();
+        active |= motion.IsAnimating();
+        changed = true;
+        if (motion.IsHidden() && hwnd_)
+        {
+            // Let the scene retire the zero-opacity child and its retained pixels.
+            RECT dirty = item.bounds;
+            InflateRect(&dirty, 3, 3);
+            InvalidateRect(hwnd_, &dirty, FALSE);
+        }
+    }
+    if (changed)
+    {
+        desktopWidgetHoverFadePending_ = true;
+        (void)uiAnimationScheduler_.RequestScheduledPresentation(
+            &pendingDesktopWidgetCompositions_, [this] {
+                return PresentQueuedDesktopWidgetComposition();
+            });
+    }
+    if (!active) desktopWidgetHoverFadeFrameToken_ = 0;
+    return active;
+}
+
 void DesktopApp::SetDesktopWidgetCompositionVisible(
     const std::wstring& widgetId,
     bool visible,
-    const RECT& bounds)
+    const RECT& bounds,
+    bool retainOnHeightChange)
 {
     const auto position = desktopWidgetCompositionItems_.find(widgetId);
     if (position == desktopWidgetCompositionItems_.end())
@@ -760,9 +956,12 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
             uiAnimationScheduler_.Cancel(desktopWidgetHoverTailToken_);
             desktopWidgetHoverTailToken_ = 0;
         }
-        // FlushPendingDesktopWidgetComposition opens the clip only after
-        // EndDraw succeeds and the current surface has been attached.
-        if (item.clip)
+        // Keep the old, anchored hover frame until the new child pixels are
+        // ready, even if a pointer batch defers its draw past this commit.
+        const bool keepPresentedFrame = retainOnHeightChange && item.visible &&
+            item.surface && item.bounds.left == bounds.left &&
+            item.bounds.top == bounds.top && item.bounds.right == bounds.right;
+        if (item.clip && !keepPresentedFrame)
         {
             (void)item.clip->SetRight(0.0f);
             (void)item.clip->SetBottom(0.0f);
@@ -784,19 +983,26 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
     }
     if (!visible && item.backdropRegistered)
     {
-        (void)desktopBackdropCompositor_.RemovePanel(item.bounds);
+        (void)desktopBackdropCompositor_.RemovePanel(item.bounds, item.BackdropOwnerKey());
         item.backdropRegistered = false;
     }
     if (!visible)
     {
         // Stop queued/in-flight publication. A later show gets a fresh target
         // identity, so a late completion cannot open the hidden clip.
+        item.hoverFade.reset();
         (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
         item.renderedContentId.clear();
         item.iconBackdrops.Hide(desktopBackdropCompositor_);
     }
     if (!visible && item.clip)
     {
+        if (item.hoverRollOpening.has_value())
+        {
+            (void)item.visual->SetClip(item.clip.Get());
+            item.hoverRollOpening.reset();
+        }
+        item.hoverRollUnavailable = false;
         (void)item.clip->SetRight(0.0f);
         (void)item.clip->SetBottom(0.0f);
     }
@@ -823,15 +1029,54 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
 
 void DesktopApp::KeepDesktopWidgetBackdropPanels()
 {
-    for (auto& [_, item] : desktopWidgetCompositionItems_)
+    for (auto& [id, item] : desktopWidgetCompositionItems_)
     {
-        item.backdropRegistered = snowdesktop::desktop_backdrop_update_rules::
-            KeepOrRestoreWidgetPanel(desktopBackdropCompositor_, item);
+        const float opacity = item.HoverOpacity();
+        const HRESULT opacityResult = UpdateHoverOpacity(dcompDevice_.Get(), item, opacity);
+        if (FAILED(opacityResult) &&
+            !RequestGraphicsDeviceRecovery(L"Desktop widget hover opacity", opacityResult))
+        {
+            desktopWidgetCompositionFailurePending_ = true;
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        if (item.hoverRollOpening.has_value())
+        {
+            item.backdropRegistered = desktopBackdropCompositor_.KeepPanel(
+                item.bounds, item.BackdropOwnerKey());
+            // Recreate a lost animated panel with its clip in the next child
+            // draw. Restoring only its full static geometry would flash.
+            if (!item.backdropRegistered && item.visible)
+            {
+                pendingDesktopWidgetCompositions_.insert(id);
+                if (hwnd_) InvalidateRect(hwnd_, &item.bounds, FALSE);
+            }
+        }
+        else
+        {
+            item.backdropRegistered = snowdesktop::desktop_backdrop_update_rules::
+                KeepOrRestoreWidgetPanel(desktopBackdropCompositor_, item);
+        }
+        if (item.backdropRegistered)
+        {
+            RECT animationFence{};
+            const auto expansion = widgetHoverExpansion_.find(id);
+            if (expansion != widgetHoverExpansion_.end() && expansion->second.IsAnimating())
+            {
+                const auto index = FindWidgetIndexById(id);
+                if (index < widgets_.size() && IsWidgetHoverExpansionAnimating(widgets_[index]))
+                    animationFence = GetExpandedWidgetFrameRect(widgets_[index]);
+            }
+            desktopBackdropCompositor_.SetPanelAnimationFence(item.BackdropOwnerKey(), animationFence);
+            if (item.opacityEffect)
+                (void)desktopBackdropCompositor_.SetPanelOpacity(
+                    item.bounds, opacity, item.BackdropOwnerKey());
+        }
         if (item.visible)
-            item.iconBackdrops.Restore(desktopBackdropCompositor_);
+            item.iconBackdrops.Restore(desktopBackdropCompositor_, opacity);
         else
             item.iconBackdrops.Hide(desktopBackdropCompositor_);
     }
+    desktopWidgetHoverFadePending_ = false;
 }
 
 void DesktopApp::LogDesktopWidgetBackdropState(const wchar_t* phase) const
@@ -998,7 +1243,7 @@ void DesktopApp::RemoveDesktopWidgetComposition(
     (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), position->second);
     position->second.iconBackdrops.Hide(desktopBackdropCompositor_);
     if (position->second.backdropRegistered)
-        (void)desktopBackdropCompositor_.RemovePanel(bounds);
+        (void)desktopBackdropCompositor_.RemovePanel(bounds, position->second.BackdropOwnerKey());
     if (desktopWidgetCompositionLayer_ && position->second.visual)
     {
         (void)desktopWidgetCompositionLayer_->RemoveVisual(
@@ -1085,6 +1330,10 @@ void DesktopApp::ResetDesktopWidgetComposition()
     if (desktopWidgetHoverTailToken_)
         uiAnimationScheduler_.Cancel(desktopWidgetHoverTailToken_);
     desktopWidgetHoverTailToken_ = 0;
+    if (desktopWidgetHoverFadeFrameToken_)
+        uiAnimationScheduler_.Cancel(desktopWidgetHoverFadeFrameToken_);
+    desktopWidgetHoverFadeFrameToken_ = 0;
+    desktopWidgetHoverFadePending_ = false;
     desktopWidgetLastPointerPresentTick_ = 0;
     // Marquee visuals belong to these parents. Retire their cache and queued
     // submissions even when only WM_SIZE/topology (not the device) is reset;
@@ -1093,7 +1342,11 @@ void DesktopApp::ResetDesktopWidgetComposition()
     presentedWidgetDragFeedback_ = {};
     pendingDesktopWidgetCompositions_.clear();
     for (const auto& [_, item] : desktopWidgetCompositionItems_)
+    {
         item.iconBackdrops.Hide(desktopBackdropCompositor_);
+        if (item.backdropRegistered)
+            (void)desktopBackdropCompositor_.RemovePanel(item.bounds, item.BackdropOwnerKey());
+    }
     desktopWidgetCompositionItems_.clear();
     desktopWidgetCompositionZOrder_.clear();
     if (dcompVisual_ && desktopWidgetCompositionLayer_)

@@ -1,13 +1,111 @@
 #include "tray_menu_placement.h"
 #include "diagnostics/diagnostic_log.h"
+#include <tlhelp32.h>
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <cwchar>
+#include <iterator>
 #include <mutex>
 #include <thread>
 
 namespace snowdesktop::tray
 {
+namespace
+{
+MenuPopupBinding ReadHandoffPopup(HWND window)
+{
+    const auto style = GetWindowLongPtrW(window, GWL_STYLE);
+    const auto extendedStyle = GetWindowLongPtrW(window, GWL_EXSTYLE);
+    if (!(style & WS_POPUP) || (style & (WS_CHILD | WS_MAXIMIZE)) ||
+        !(extendedStyle & WS_EX_TOOLWINDOW) || (extendedStyle & (WS_EX_APPWINDOW | WS_EX_TRANSPARENT))) return {};
+    const auto owner = GetWindow(window, GW_OWNER);
+    DWORD process = 0;
+    const auto thread = GetWindowThreadProcessId(window, &process);
+    if (!owner || !thread || !process) return {};
+    return {reinterpret_cast<std::uint64_t>(window), reinterpret_cast<std::uint64_t>(owner),
+        process, thread, style, extendedStyle, false};
+}
+
+std::optional<FILETIME> ProcessCreation(DWORD pid)
+{
+    const auto process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!process) return {};
+    FILETIME created{}, exited{}, kernel{}, user{};
+    const bool available = GetProcessTimes(process, &created, &exited, &kernel, &user) != FALSE;
+    CloseHandle(process);
+    if (!available) return {};
+    return created;
+}
+
+bool IsDirectChildProcess(DWORD child, DWORD parent)
+{
+    const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W entry{sizeof(entry)};
+    bool related = false;
+    for (BOOL found = Process32FirstW(snapshot, &entry); found; found = Process32NextW(snapshot, &entry))
+    {
+        if (entry.th32ProcessID != child) continue;
+        related = entry.th32ParentProcessID == parent;
+        break;
+    }
+    CloseHandle(snapshot);
+    if (!related) return false;
+    const auto parentCreation = ProcessCreation(parent), childCreation = ProcessCreation(child);
+    return parentCreation && childCreation && CompareFileTime(&*parentCreation, &*childCreation) <= 0;
+}
+}
+
+MenuPopupBinding ProbeMenuHandoff(HWND target, HWND window)
+{
+    const auto popup = ReadHandoffPopup(window);
+    DWORD targetProcess = 0;
+    if (!popup.window || !GetWindowThreadProcessId(target, &targetProcess) || popup.process == targetProcess) return {};
+    const auto root = GetAncestor(target, GA_ROOTOWNER);
+    auto owner = reinterpret_cast<HWND>(popup.owner);
+    DWORD ownerProcess = 0;
+    GetWindowThreadProcessId(owner, &ownerProcess);
+    const bool ownedByHiddenHelper = ownerProcess == popup.process && !IsWindowVisible(owner);
+    for (unsigned depth = 0; owner && depth < 8; ++depth, owner = GetWindow(owner, GW_OWNER))
+    {
+        DWORD pid = 0;
+        if ((owner == target || owner == root) && GetWindowThreadProcessId(owner, &pid) && pid == targetProcess)
+            return popup;
+    }
+    // A child process can also own its own hidden menu host. Creation times
+    // reject a reused PID in the Toolhelp parent relationship.
+    if (ownedByHiddenHelper && IsDirectChildProcess(popup.process, targetProcess)) return popup;
+    return {};
+}
+
+bool LiveMenuPopup(const MenuPopupBinding& binding)
+{
+    const auto window = reinterpret_cast<HWND>(binding.window);
+    DWORD process = 0;
+    if (!window || GetWindowThreadProcessId(window, &process) != binding.thread || process != binding.process ||
+        !IsWindowVisible(window) || GetWindow(window, GW_OWNER) != reinterpret_cast<HWND>(binding.owner) ||
+        !SameMenuPopupStyles(binding.standardMenu, binding.style, binding.extendedStyle,
+            GetWindowLongPtrW(window, GWL_STYLE), GetWindowLongPtrW(window, GWL_EXSTYLE))) return false;
+    wchar_t name[64]{};
+    GetClassNameW(window, name, static_cast<int>(std::size(name)));
+    return binding.standardMenu == (wcscmp(name, L"#32768") == 0);
+}
+
+MenuPopupBinding ActiveMenuHandoff(const MenuPopupBinding& binding, const MenuPopupBindings& shown)
+{
+    const auto window = reinterpret_cast<HWND>(binding.window);
+    if (!window || GetForegroundWindow() != window) return {};
+    const auto seen = std::find_if(shown.begin(), shown.end(), [&](const auto& popup) {
+        return popup.window == binding.window && popup.thread == binding.thread &&
+            popup.process == binding.process && popup.owner == binding.owner;
+    });
+    GUITHREADINFO info{sizeof(info)};
+    if (seen == shown.end() || !LiveMenuPopup(*seen) ||
+        !GetGUIThreadInfo(binding.thread, &info) || info.hwndActive != window) return {};
+    return *seen;
+}
+
 void MenuPlacementSession::Arm(DWORD process, POINT anchor, RECT workArea, DWORD started, RECT barBounds, RECT iconBounds, bool contextGesture)
 {
     process_ = process; anchor_ = anchor; workArea_ = workArea; started_ = started; iconBounds_ = iconBounds;
@@ -174,11 +272,13 @@ struct MenuPlacementGuard::Impl
     HANDLE stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     std::jthread worker;
     MenuPlacementSession session;
-    MenuPopupBindings popups{};
+    MenuPopupEvidence evidence{};
+    bool placementEnabled = false;
     HWND target = nullptr;
     DWORD targetThread = 0;
     unsigned diagnosticSamples = 0;
     HWINEVENTHOOK hook = nullptr;
+    HWINEVENTHOOK handoffHook = nullptr;
     ULONGLONG expires = 0;
     static thread_local Impl* active;
 
@@ -193,14 +293,55 @@ struct MenuPlacementGuard::Impl
     void Unhook()
     {
         if (hook) UnhookWinEvent(hook);
-        hook = nullptr; session.Cancel();
+        if (handoffHook) UnhookWinEvent(handoffHook);
+        hook = handoffHook = nullptr;
+        session.Cancel();
+    }
+    void CancelLocked()
+    {
+        if (!worker.joinable()) return;
+        if (request.target)
+        {
+            wchar_t message[192]{};
+            swprintf_s(message, L"Tray menu session canceled pid=%lu age=%lu", request.process,
+                GetTickCount() - request.started);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, message, DiagnosticLogLevel::Debug);
+        }
+        request = {}; evidence = {}; placementEnabled = false;
+        ++requested; SetEvent(wake);
+    }
+    static void CALLBACK HandoffEvent(HWINEVENTHOOK, DWORD event, HWND window, LONG object, LONG child, DWORD, DWORD time)
+    {
+        if (!active || !window || object != OBJID_WINDOW || child != CHILDID_SELF) return;
+        std::lock_guard lock(active->mutex);
+        if (active->applied != active->requested || !active->evidence.discoveringHandoff ||
+            !active->session.Active(GetTickCount()) || static_cast<LONG>(time - active->request.started) < 0) return;
+        auto& shown = active->evidence.shownHandoffs;
+        const auto hwnd = reinterpret_cast<std::uint64_t>(window);
+        auto existing = std::find_if(shown.begin(), shown.end(), [&](const auto& binding) { return binding.window == hwnd; });
+        if (event == EVENT_OBJECT_HIDE)
+        {
+            if (existing != shown.end()) *existing = {};
+            return;
+        }
+        if (!IsWindowVisible(window)) return;
+        const auto popup = ReadHandoffPopup(window);
+        if (!popup.window || popup.process == active->request.process) return;
+        if (existing == shown.end())
+            existing = std::find_if(shown.begin(), shown.end(), [](const auto& binding) { return !binding.window; });
+        if (existing == shown.end())
+        {
+            std::rotate(shown.begin(), std::next(shown.begin()), shown.end());
+            existing = std::prev(shown.end());
+        }
+        *existing = popup;
     }
     static void CALLBACK Event(HWINEVENTHOOK, DWORD event, HWND window, LONG object, LONG child, DWORD, DWORD time)
     {
         if (!active || !window || object != OBJID_WINDOW || child != CHILDID_SELF ||
             (event != EVENT_OBJECT_SHOW && event != EVENT_OBJECT_LOCATIONCHANGE && event != EVENT_OBJECT_HIDE)) return;
         std::lock_guard lock(active->mutex);
-        if (active->applied != active->requested) return;
+        if (active->applied != active->requested || !active->placementEnabled) return;
         MenuPopupObservation popup;
         popup.window = reinterpret_cast<std::uint64_t>(window); popup.event = event; popup.eventTime = time;
         popup.notificationWindow = window == active->target;
@@ -230,7 +371,7 @@ struct MenuPlacementGuard::Impl
             if (ancestor == active->target || ancestor == targetRoot)
                 popup.strongTargetRelated = true;
             if (!popup.parentMenu)
-                for (const auto& binding : active->popups)
+                for (const auto& binding : active->evidence.placement)
                     if (binding.window == reinterpret_cast<std::uint64_t>(ancestor))
                         popup.parentMenu = binding.window;
             const auto next = GetWindow(ancestor, GW_OWNER);
@@ -252,7 +393,7 @@ struct MenuPlacementGuard::Impl
         }
         if (!GetWindowRect(window, &popup.bounds)) return;
         const auto position = active->session.Observe(popup, GetTickCount());
-        active->popups = active->session.Bindings();
+        active->evidence.placement = active->session.Bindings();
         if (event != EVENT_OBJECT_HIDE && active->diagnosticSamples++ < 8)
         {
             wchar_t message[768]{};
@@ -286,9 +427,9 @@ struct MenuPlacementGuard::Impl
         HANDLE handles[]{stop, wake};
         while (!token.stop_requested())
         {
-            if (hook && !session.Active(GetTickCount())) Unhook();
+            if ((hook || handoffHook) && !session.Active(GetTickCount())) Unhook();
             const auto now = GetTickCount64();
-            const DWORD timeout = hook ? static_cast<DWORD>(expires > now ? expires - now : 0) : INFINITE;
+            const DWORD timeout = (hook || handoffHook) ? static_cast<DWORD>(expires > now ? expires - now : 0) : INFINITE;
             const DWORD waited = MsgWaitForMultipleObjectsEx(2, handles, timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
             if (waited == WAIT_OBJECT_0 || waited == WAIT_FAILED) break;
             if (waited == WAIT_OBJECT_0 + 1)
@@ -309,7 +450,10 @@ struct MenuPlacementGuard::Impl
                         session.Arm(process, next.anchor, monitor.rcWork, next.started, next.barBounds, next.bounds, next.contextGesture);
                         hook = SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_LOCATIONCHANGE, nullptr, Event,
                             process, 0, WINEVENT_OUTOFCONTEXT);
-                        if (!hook) session.Cancel();
+                        if (next.contextGesture)
+                            handoffHook = SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_HIDE, nullptr, HandoffEvent,
+                                0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+                        if (!hook && !handoffHook) session.Cancel();
                         wchar_t message[384]{};
                         swprintf_s(message, L"Tray menu session pid=%lu target=%p thread=%lu started=%lu hook=%u context=%u rect=(%ld,%ld,%ld,%ld)",
                             process, target, targetThread, next.started, hook ? 1u : 0u, next.contextGesture ? 1u : 0u,
@@ -320,7 +464,12 @@ struct MenuPlacementGuard::Impl
                             MenuPlacementSession::kLifetimeMs - elapsed : 0);
                     }
                 }
-                { std::lock_guard lock(mutex); applied = serial; ready.notify_all(); }
+                {
+                    std::lock_guard lock(mutex);
+                    if (requested == serial) evidence.discoveringHandoff = handoffHook != nullptr;
+                    applied = serial;
+                    ready.notify_all();
+                }
             }
             MSG message{};
             while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
@@ -345,7 +494,8 @@ void MenuPlacementGuard::Arm(HWND target, POINT anchor, RECT iconBounds, bool co
         static_cast<DWORD>(now - impl_->request.started) < MenuPlacementSession::kLifetimeMs) return;
     if (IsRectEmpty(&iconBounds)) iconBounds = {anchor.x, anchor.y, anchor.x + 1, anchor.y + 1};
     impl_->request = {target, process, anchor, iconBounds, barBounds, now, contextGesture};
-    impl_->popups = {};
+    impl_->evidence = {};
+    impl_->placementEnabled = true;
     const auto serial = ++impl_->requested;
     SetEvent(impl_->wake);
     // Install before notifying the app, so menus created by its first callback
@@ -355,19 +505,29 @@ void MenuPlacementGuard::Arm(HWND target, POINT anchor, RECT iconBounds, bool co
 void MenuPlacementGuard::Cancel()
 {
     std::lock_guard lock(impl_->mutex);
-    if (!impl_->worker.joinable()) return;
-    if (impl_->request.target)
-    {
-        wchar_t message[192]{};
-        swprintf_s(message, L"Tray menu session canceled pid=%lu age=%lu", impl_->request.process,
-            GetTickCount() - impl_->request.started);
-        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, message, DiagnosticLogLevel::Debug);
-    }
-    impl_->request = {}; impl_->popups = {}; ++impl_->requested; SetEvent(impl_->wake);
+    impl_->CancelLocked();
 }
-MenuPopupBindings MenuPlacementGuard::Popups(HWND target) const
+void MenuPlacementGuard::CancelPlacement()
 {
     std::lock_guard lock(impl_->mutex);
-    return target && impl_->request.target == target ? impl_->popups : MenuPopupBindings{};
+    if (!impl_->request.contextGesture || static_cast<DWORD>(GetTickCount() - impl_->request.started) >=
+        MenuPlacementSession::kLifetimeMs)
+    {
+        impl_->CancelLocked();
+        return;
+    }
+    // A focus-return ticket never transfers to another process. Keep only
+    // the bounded observation needed to recognize a cross-process menu.
+    impl_->placementEnabled = false;
+    impl_->evidence.placement = {};
+}
+MenuPopupEvidence MenuPlacementGuard::Popups(HWND target) const
+{
+    std::lock_guard lock(impl_->mutex);
+    if (!target || impl_->request.target != target) return {};
+    auto evidence = impl_->evidence;
+    evidence.discoveringHandoff = evidence.discoveringHandoff &&
+        static_cast<DWORD>(GetTickCount() - impl_->request.started) < MenuPlacementSession::kLifetimeMs;
+    return evidence;
 }
 }

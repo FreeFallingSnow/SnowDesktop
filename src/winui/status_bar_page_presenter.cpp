@@ -38,6 +38,8 @@ struct StatusBarPagePresenter::Impl
     muxc::Expander leftSection, infoSection, controlCenterSection, rulesSection;
     muxc::TextBlock layoutTitle, clickTitle, visibilityTitle;
     muxc::ComboBox edge, monitors, clockPanel, controlPanel, inputPanel, timeNotificationPosition, controlDisplay, edgeRevealGesture;
+    muxc::ComboBox foregroundAppNamePosition;
+    SettingRow foregroundAppNamePositionRow;
     SettingRow edgeRevealGestureRow;
     muxc::Slider scale;
     muxc::NumberBox scaleNumber;
@@ -265,6 +267,19 @@ struct StatusBarPagePresenter::Impl
         ToggleRow(leftItems, "statusBar.menu", "statusBar.menu", &StatusBarSettings::menu);
         ToggleRow(leftItems, "statusBar.quickSearch", "statusBar.quickSearch", &StatusBarSettings::quickSearch);
         ToggleRow(leftItems, "statusBar.taskView", "statusBar.taskView", &StatusBarSettings::taskView);
+        ToggleRow(leftItems, "statusBar.foregroundAppName", "statusBar.foregroundAppName", &StatusBarSettings::foregroundAppName);
+        foregroundAppNamePosition.Width(200);
+        foregroundAppNamePositionRow.Initialize(foregroundAppNamePosition);
+        foregroundAppNamePositionRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        leftItems.Children().Append(foregroundAppNamePositionRow.root);
+        const auto foregroundPositionSelection = foregroundAppNamePosition.SelectionChanged([this](const auto&, const auto&) {
+            const auto selected = foregroundAppNamePosition.SelectedIndex();
+            if (selected >= 0 && !availability.allStatusMerged)
+                Emit([selected](auto& settings) { settings.foregroundAppNameCentered = selected == 1; });
+        });
+        revoke.push_back([control = foregroundAppNamePosition, foregroundPositionSelection] {
+            control.SelectionChanged(foregroundPositionSelection);
+        });
         ToggleRow(infoItems, "statusBar.cpu", "statusBar.cpu", &StatusBarSettings::cpu);
         ToggleRow(infoItems, "statusBar.memory", "statusBar.memory", &StatusBarSettings::memory);
         ToggleRow(infoItems, "statusBar.gpu", "statusBar.gpu", &StatusBarSettings::gpu);
@@ -454,7 +469,9 @@ struct StatusBarPagePresenter::Impl
         controlPanel.SelectedIndex(systemQuickSettings && value.controlCenterSystemPanel ? 1 : 0);
         controlDisplay.SelectedIndex(!value.controlCenter ? 2 : value.controlCenterSingleIcon ? 1 : 0);
         inputPanel.SelectedIndex(value.inputMethodSystemPanel ? 1 : 0);
-        timeNotificationPosition.SelectedIndex(value.timeNotificationRightAligned ? 1 : 0);
+        const bool centeredAppName = value.foregroundAppName && value.foregroundAppNameCentered && !availability.allStatusMerged;
+        foregroundAppNamePosition.SelectedIndex(!availability.allStatusMerged && value.foregroundAppNameCentered ? 1 : 0);
+        timeNotificationPosition.SelectedIndex(value.timeNotificationRightAligned || centeredAppName ? 1 : 0);
         SyncBehaviorHint();
         if (!scaleDirty)
         {
@@ -474,7 +491,8 @@ struct StatusBarPagePresenter::Impl
         edgeRevealGestureRow.SetEnabled(value.enabled);
         clockPanelRow.SetEnabled(value.enabled); controlPanelRow.SetEnabled(value.enabled);
         inputPanelRow.SetEnabled(value.enabled && value.inputMethod);
-        timeNotificationPositionRow.SetEnabled(value.enabled);
+        foregroundAppNamePositionRow.SetEnabled(value.enabled && value.foregroundAppName && !availability.allStatusMerged);
+        timeNotificationPositionRow.SetEnabled(value.enabled && !centeredAppName);
         controlDisplayRow.SetEnabled(value.enabled);
         for (auto& toggle : toggles)
             toggle->row.SetEnabled(toggle->member == &StatusBarSettings::enabled ||
@@ -500,10 +518,14 @@ struct StatusBarPagePresenter::Impl
     {
         Flush();
         syncing = true;
+        const auto on = winrt::box_value(L("app.interact.on"));
+        const auto off = winrt::box_value(L("app.interact.off"));
         for (auto& toggle : toggles)
         {
             toggle->row.SetText(L(toggle->key), toggle->member == &StatusBarSettings::showOnlyWhenSummoned
                 ? L("statusBar.showOnlyWhenSummoned.description") : L"");
+            toggle->control.OnContent(on);
+            toggle->control.OffContent(off);
             mux::Automation::AutomationProperties::SetName(toggle->control, toggle->row.label.Text());
             mux::Automation::AutomationProperties::SetHelpText(toggle->control, toggle->row.help.Text());
         }
@@ -528,6 +550,12 @@ struct StatusBarPagePresenter::Impl
         timeNotificationPosition.Items().Clear();
         timeNotificationPosition.Items().Append(winrt::box_value(L("app.settings.taskbar_center")));
         timeNotificationPosition.Items().Append(winrt::box_value(L("app.dock.right")));
+        foregroundAppNamePositionRow.SetText(L("statusBar.foregroundAppNamePosition"), L("statusBar.foregroundAppNamePositionHint"));
+        mux::Automation::AutomationProperties::SetName(foregroundAppNamePosition, foregroundAppNamePositionRow.label.Text());
+        mux::Automation::AutomationProperties::SetHelpText(foregroundAppNamePosition, foregroundAppNamePositionRow.help.Text());
+        foregroundAppNamePosition.Items().Clear();
+        foregroundAppNamePosition.Items().Append(winrt::box_value(L("statusBar.foregroundAppNameHead")));
+        foregroundAppNamePosition.Items().Append(winrt::box_value(L("app.settings.taskbar_center")));
         clockPanelRow.SetText(L("statusBar.clockPanel")); controlPanelRow.SetText(L("statusBar.controlCenterPanel"));
         inputPanelRow.SetText(L("statusBar.inputMethodPanel"));
         mux::Automation::AutomationProperties::SetName(inputPanel, inputPanelRow.label.Text());
@@ -706,6 +734,8 @@ mux::FrameworkElement StatusBarPagePresenter::FocusTarget(
         return enablingTarget(&StatusBarSettings::enabled);
     if (focusId == "statusBar.inputMethodPanel" && !impl_->value.inputMethod)
         return enablingTarget(&StatusBarSettings::inputMethod);
+    if (focusId == "statusBar.foregroundAppNamePosition" && !impl_->value.foregroundAppName)
+        return enablingTarget(&StatusBarSettings::foregroundAppName);
     if (result && focusId == "statusBar.mergedBarHeight" && !impl_->availability.anyMerged && prerequisite)
     {
         // A merged bar depends on both bars' current layout, not just an
@@ -726,6 +756,7 @@ void StatusBarPagePresenter::RegisterFocusTargets(const std::function<void(std::
     target("statusBar.clockPanel", impl_->clockPanelRow.root);
     target("statusBar.inputMethodPanel", impl_->inputPanelRow.root);
     target("statusBar.timeNotificationPosition", impl_->timeNotificationPositionRow.root);
+    target("statusBar.foregroundAppNamePosition", impl_->foregroundAppNamePositionRow.root);
     target("statusBar.controlCenterDisplay", impl_->controlDisplayRow.root);
     if (impl_->systemQuickSettings) target("statusBar.controlCenterPanel", impl_->controlPanelRow.root);
     target("statusBar.theme", impl_->defaultTheme.row.root);

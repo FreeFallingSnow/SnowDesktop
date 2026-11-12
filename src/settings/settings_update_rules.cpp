@@ -48,6 +48,7 @@ bool IsGeneralShortcutOnlyCommit(
         before.desktopIdleHideEnabled == after.desktopIdleHideEnabled &&
         before.desktopIdleHideDelaySeconds == after.desktopIdleHideDelaySeconds &&
         before.desktopIdleHidePauseWithWindows == after.desktopIdleHidePauseWithWindows &&
+        before.screenTimeEnabled == after.screenTimeEnabled &&
         before.contextMenuExpandQuickActions == after.contextMenuExpandQuickActions &&
         before.contextMenuHidePageManagement == after.contextMenuHidePageManagement &&
         before.contextMenuHideMoreManagement == after.contextMenuHideMoreManagement &&
@@ -63,6 +64,8 @@ bool IsGeneralShortcutOnlyCommit(
         before.statusBar == after.statusBar &&
         before.animationMode == after.animationMode &&
         before.popupAnimationEffect == after.popupAnimationEffect &&
+        before.widgetHoverExpandEffect == after.widgetHoverExpandEffect &&
+        before.widgetHoverVisibilityEffect == after.widgetHoverVisibilityEffect &&
         before.animationSpeed == after.animationSpeed &&
         before.animationFrameLimit == after.animationFrameLimit &&
         before.animationEnergySaver == after.animationEnergySaver &&
@@ -93,6 +96,7 @@ bool IsGeneralLoggingOnlyCommit(const GeneralSettings& before,
         before.desktopIdleHideEnabled == after.desktopIdleHideEnabled &&
         before.desktopIdleHideDelaySeconds == after.desktopIdleHideDelaySeconds &&
         before.desktopIdleHidePauseWithWindows == after.desktopIdleHidePauseWithWindows &&
+        before.screenTimeEnabled == after.screenTimeEnabled &&
         before.desktopPassthroughHotkeyEnabled == after.desktopPassthroughHotkeyEnabled &&
         before.desktopPassthroughHotkeyModifiers == after.desktopPassthroughHotkeyModifiers &&
         before.desktopPassthroughHotkeyVirtualKey == after.desktopPassthroughHotkeyVirtualKey &&
@@ -112,6 +116,8 @@ bool IsGeneralLoggingOnlyCommit(const GeneralSettings& before,
         before.widgetDeveloperToolsEnabled == after.widgetDeveloperToolsEnabled &&
         before.animationMode == after.animationMode &&
         before.popupAnimationEffect == after.popupAnimationEffect &&
+        before.widgetHoverExpandEffect == after.widgetHoverExpandEffect &&
+        before.widgetHoverVisibilityEffect == after.widgetHoverVisibilityEffect &&
         before.animationSpeed == after.animationSpeed &&
         before.animationFrameLimit == after.animationFrameLimit &&
         before.animationEnergySaver == after.animationEnergySaver &&

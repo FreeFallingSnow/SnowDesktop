@@ -12,7 +12,7 @@
 
 namespace snowdesktop::widget
 {
-// Background discovery may reuse successful validation of the exact bytes.
+// Background discovery may reuse validation of the exact bytes.
 // Metadata alone is insufficient: an archive can change without changing its
 // size or timestamp. The reader also prevents writers/replacement while the
 // digest and validator inspect it. Explicit online queries still validate fully.
@@ -24,6 +24,8 @@ public:
         ValidationReport report;
         PackageManifest manifest;
         bool reused = false;
+        std::string digest;
+        bool malformedArchive = false;
     };
 
     explicit SteamWorkshopValidationCache(std::size_t capacity = 256)
@@ -77,11 +79,17 @@ public:
         }
 
         Result result = std::forward<Validator>(validator)();
-        // Never cache errors, incomplete reads, or a result whose path resolved
-        // to different bytes during validation (for example a parent rename).
-        if (result.report.Ok() &&
+        // Only reuse errors derived from the bytes. Reads and staging can
+        // fail transiently with the very same archive.
+        const bool stable = result.malformedArchive || std::all_of(result.report.issues.begin(),
+            result.report.issues.end(), [](const auto& issue) {
+                return issue.severity != ValidationSeverity::Error ||
+                    (issue.code.starts_with("manifest.") && issue.code != "manifest.read");
+            });
+        if (stable &&
             WidgetPackageManager::Sha256File(archive) == digest)
         {
+            result.digest = digest;
             std::lock_guard lock(mutex_);
             if (!entries_.contains(key) && entries_.size() >= capacity_)
             {

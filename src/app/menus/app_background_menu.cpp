@@ -1,6 +1,7 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "layout/page_management_rules.h"
+#include "layout/desktop_item_sort_rules.h"
 #include "common/l10n.h"
 #include "ui/preview/component_preview.h"
 #include "ui/render/native_tooltip_preferences.h"
@@ -34,6 +35,10 @@ using snowdesktop::menu_icon::BuiltinIcon;
 
 constexpr int kFontSizePresets[] = {10, 12, 14, 16, 18, 20, 22, 24};
 constexpr int kFontWeightPercentPresets[] = {25, 50, 75, 100, 125, 150, 175};
+
+constexpr UINT kFillGapsDefaultCommand = 41834;
+constexpr UINT kFillGapsHorizontalCommand = 41835;
+constexpr UINT kFillGapsVerticalCommand = 41836;
 
 template<size_t N>
 std::optional<int> FontPresetForCommand(UINT command, UINT first,
@@ -1604,7 +1609,12 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     HMENU sortMenu = snowdesktop::sort_menu::Create(
         [](const char* key) { return _LW(key); });
     if (sortMenu)
+    {
+        AppendMenuW(sortMenu, MF_STRING, kFillGapsDefaultCommand, _LW("app.menu.sort_fill_gaps"));
+        AppendMenuW(sortMenu, MF_STRING, kFillGapsHorizontalCommand, _LW("app.menu.sort_fill_horizontal"));
+        AppendMenuW(sortMenu, MF_STRING, kFillGapsVerticalCommand, _LW("app.menu.sort_fill_vertical"));
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), _LW("app.menu.sort_by"));
+    }
 
     POINT clientPoint = screenPoint;
     ScreenToClient(hwnd_, &clientPoint);
@@ -1929,6 +1939,11 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             [this](HMENU target, UINT commandId, const wchar_t* glyph) {
                 SetMenuItemIcon(target, commandId, glyph, MenuIconFont::FluentRegular);
             });
+        SetMenuItemIcon(sortMenu, kFillGapsDefaultCommand,
+            snowdesktop::menu_fluent_glyphs::kCompactGrid, MenuIconFont::FluentRegular);
+        SetMenuItemInlineAction(sortMenu, kFillGapsDefaultCommand, kFillGapsDefaultCommand, false, false, true);
+        SetMenuItemInlineAction(sortMenu, kFillGapsHorizontalCommand, kFillGapsDefaultCommand, true, false, true);
+        SetMenuItemInlineAction(sortMenu, kFillGapsVerticalCommand, kFillGapsDefaultCommand, true, false, true);
     }
     if (widgetMenu)
     {
@@ -2257,6 +2272,14 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     if (const auto sort = snowdesktop::sort_menu::ResolveCommand(command))
     {
         SortIcons(sort->mode, sort->ascending);
+    }
+    else if (command == kFillGapsHorizontalCommand)
+    {
+        SortIcons(snowdesktop::desktop_item_sort_rules::kFillGapsHorizontal, true);
+    }
+    else if (command == kFillGapsDefaultCommand || command == kFillGapsVerticalCommand)
+    {
+        SortIcons(snowdesktop::desktop_item_sort_rules::kFillGapsVertical, true);
     }
     else if (command >= kContextAddLuaWidgetFirst &&
         command < kContextAddLuaWidgetFirst +

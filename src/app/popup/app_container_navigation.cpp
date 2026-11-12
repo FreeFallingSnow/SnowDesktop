@@ -28,11 +28,11 @@ void DesktopApp::ToggleWidgetCollapsed(size_t widgetIndex)
     if (auto* searchable = dynamic_cast<ScrollingItemWidget*>(target))
         searchable->SetSearchFocused(false);
     SelectWidgetOnly(widgetIndex);
-    // Pointer and direct IPC use one configuration transaction. The UI owns
-    // selection; the transaction changes presentation without moving the grid.
+    // The button toggles the saved fold preference. A hover-expanded widget
+    // is still folded in the saved layout, so this pins it open.
     const auto state = CaptureNativeWidgetSettings(widget.id);
     const auto patch = snowdesktop::control_settings::ParseNativeWidgetSettingsPatch(state,
-        snowdesktop::control::Object({{"titleBarCollapsed", snowdesktop::control::Boolean(!IsWidgetCollapsed(widget))}}));
+        snowdesktop::control::Object({{"titleBarCollapsed", snowdesktop::control::Boolean(!widget.titleBarCollapsed)}}));
     if (!ApplyNativeWidgetSettings(state, patch)) MessageBeep(MB_ICONWARNING);
 }
 
