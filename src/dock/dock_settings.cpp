@@ -302,6 +302,31 @@ bool ReadSystemTaskbarAutoHideEnabled()
     return (SHAppBarMessage(ABM_GETSTATE, &data) & ABS_AUTOHIDE) != 0;
 }
 
+// Native Windows 11 taskbar location, stored as an ABE_* value.
+constexpr wchar_t kTaskbarLocationKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced";
+constexpr wchar_t kTaskbarLocationValue[] = L"TaskbarLocation";
+
+std::optional<DWORD> ReadStoredTaskbarLocation()
+{
+    DWORD edge = 0;
+    DWORD size = sizeof(edge);
+    if (RegGetValueW(HKEY_CURRENT_USER, kTaskbarLocationKey, kTaskbarLocationValue,
+            RRF_RT_REG_DWORD, nullptr, &edge, &size) != ERROR_SUCCESS || edge > ABE_BOTTOM)
+        return std::nullopt;
+    return edge;
+}
+
+std::optional<UINT> ReadAppliedTaskbarEdge(HWND taskbar)
+{
+    APPBARDATA data{};
+    data.cbSize = sizeof(data);
+    data.hWnd = taskbar;
+    data.uEdge = UINT_MAX;
+    if (!SHAppBarMessage(ABM_GETTASKBARPOS, &data) || data.uEdge > ABE_BOTTOM)
+        return std::nullopt;
+    return data.uEdge;
+}
+
 bool ReadSystemTaskbarAlignmentCentered()
 {
     DWORD value = 1;
@@ -1169,38 +1194,18 @@ SystemTaskbarBottomResult MoveSystemTaskbarToBottomForAutoHide()
     using Result = SystemTaskbarBottomResult;
     if (!IsWindows11OrGreater()) return Result::Unchanged;
 
-    // Windows 11's native taskbar location is stored as an ABE_* value.
     // The value is absent on older shells and can be left behind by a rollback.
-    constexpr auto key = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced";
-    constexpr auto value = L"TaskbarLocation";
-    const auto readLocation = [&]() -> std::optional<DWORD> {
-        DWORD edge = 0;
-        DWORD size = sizeof(edge);
-        if (RegGetValueW(HKEY_CURRENT_USER, key, value, RRF_RT_REG_DWORD,
-                nullptr, &edge, &size) != ERROR_SUCCESS || edge > ABE_BOTTOM)
-            return std::nullopt;
-        return edge;
-    };
-    const auto location = readLocation();
+    const auto location = ReadStoredTaskbarLocation();
     if (!location || *location == ABE_BOTTOM) return Result::Unchanged;
 
     const HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
     if (!taskbar) return Result::Failed;
-    const auto readAppliedEdge = [taskbar]() -> std::optional<UINT> {
-        APPBARDATA data{};
-        data.cbSize = sizeof(data);
-        data.hWnd = taskbar;
-        data.uEdge = UINT_MAX;
-        if (!SHAppBarMessage(ABM_GETTASKBARPOS, &data) || data.uEdge > ABE_BOTTOM)
-            return std::nullopt;
-        return data.uEdge;
-    };
-    const auto edge = readAppliedEdge();
+    const auto edge = ReadAppliedTaskbarEdge(taskbar);
     if (edge == ABE_BOTTOM) return Result::Unchanged;
     if (!edge || *edge != *location) return Result::Failed;
 
     const DWORD bottom = ABE_BOTTOM;
-    if (RegSetKeyValueW(HKEY_CURRENT_USER, key, value, REG_DWORD,
+    if (RegSetKeyValueW(HKEY_CURRENT_USER, kTaskbarLocationKey, kTaskbarLocationValue, REG_DWORD,
             &bottom, sizeof(bottom)) != ERROR_SUCCESS)
         return Result::Failed;
 
@@ -1211,10 +1216,10 @@ SystemTaskbarBottomResult MoveSystemTaskbarToBottomForAutoHide()
     DWORD_PTR ignored = 0;
     if (!SendMessageTimeoutW(taskbar, traySettingMessage, taskbarLocationSetting,
             ABE_BOTTOM, SMTO_ABORTIFHUNG | SMTO_BLOCK, 1500, &ignored) ||
-        readAppliedEdge() != ABE_BOTTOM)
+        ReadAppliedTaskbarEdge(taskbar) != ABE_BOTTOM)
     {
-        if (readLocation() == ABE_BOTTOM)
-            RegSetKeyValueW(HKEY_CURRENT_USER, key, value, REG_DWORD,
+        if (ReadStoredTaskbarLocation() == ABE_BOTTOM)
+            RegSetKeyValueW(HKEY_CURRENT_USER, kTaskbarLocationKey, kTaskbarLocationValue, REG_DWORD,
                 &*location, sizeof(DWORD));
         return Result::Failed;
     }
@@ -1243,12 +1248,24 @@ bool IsSystemTaskbarAutoHideEnabled()
     return ReadSystemTaskbarAutoHideEnabled();
 }
 
-bool IsSystemTaskbarAutoHideEffective()
+SystemTaskbarAutoHideStatus GetSystemTaskbarAutoHideStatus()
 {
-    if (!ReadSystemTaskbarAutoHideEnabled()) return false;
+    using Status = SystemTaskbarAutoHideStatus;
+    const HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
+    if (!taskbar) return Status::Unavailable;
+    if (!ReadSystemTaskbarAutoHideEnabled())
+    {
+        if (IsWindows11OrGreater())
+        {
+            const auto location = ReadStoredTaskbarLocation();
+            if (location && *location != ABE_BOTTOM && ReadAppliedTaskbarEdge(taskbar) == *location)
+                return Status::RequiresBottom;
+        }
+        return Status::Disabled;
+    }
     using namespace snowdesktop::taskbar_hook;
     const HANDLE mapping = OpenFileMappingW(FILE_MAP_READ, FALSE, kSharedStateName);
-    if (!mapping) return true;
+    if (!mapping) return Status::Effective;
     const auto* state = static_cast<const SharedState*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(SharedState)));
     Snapshot snapshot;
     const bool blocked = ReadSharedSnapshot(state, snapshot) && snapshot.enabled && snapshot.suppressTaskbar &&
@@ -1257,7 +1274,7 @@ bool IsSystemTaskbarAutoHideEffective()
         });
     if (state) UnmapViewOfFile(state);
     CloseHandle(mapping);
-    return !blocked;
+    return blocked ? Status::NotEffective : Status::Effective;
 }
 
 bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed, DWORD deadline)

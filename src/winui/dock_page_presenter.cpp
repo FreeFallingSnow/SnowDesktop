@@ -912,6 +912,7 @@ struct DockPagePresenter::Impl
         presenter_controls::BindInfoBarVisibility(taskbarAutoHideWarning);
         taskbarAutoHideRetry = muxc::Button{};
         taskbarAutoHideRetry.UseSystemFocusVisuals(true);
+        taskbarAutoHideRetry.HorizontalAlignment(mux::HorizontalAlignment::Right);
         taskbarAutoHideWarning.ActionButton(taskbarAutoHideRetry);
         taskbarRoot.Children().Append(taskbarAutoHideWarning);
         InitializeCard(taskbarCard, cardStyle, taskbarRoot);
@@ -2382,7 +2383,34 @@ struct DockPagePresenter::Impl
             (modulePolicy.Allows(runtime_modules::Module::Taskbar) &&
                 (mode == 3 || (mode == 2 && dockEnabledToggle.IsOn())));
         if (taskbarAutoHideWarning && taskbarRoot.XamlRoot())
-            taskbarAutoHideWarning.IsOpen(needsAutoHide && !IsSystemTaskbarAutoHideEffective());
+        {
+            using Status = SystemTaskbarAutoHideStatus;
+            const auto status = needsAutoHide ? GetSystemTaskbarAutoHideStatus() : Status::Effective;
+            std::wstring message;
+            switch (status)
+            {
+            case Status::Disabled:
+                message = L("settings.taskbar.autoHide.disabled", L"Windows taskbar auto-hide is turned off.");
+                break;
+            case Status::RequiresBottom:
+                message = L("settings.taskbar.autoHide.requiresBottom",
+                    L"Windows requires the taskbar at the bottom for auto-hide. Enabling it will move the taskbar there.");
+                break;
+            case Status::NotEffective:
+                message = L("settings.taskbar.autoHide.notEffective",
+                    L"Windows auto-hide is on, but it hasn't taken effect for some taskbars.");
+                break;
+            case Status::Unavailable:
+                message = L("app.settings.taskbar_connecting", L"Connecting to the Explorer taskbar...");
+                break;
+            case Status::Effective:
+                break;
+            }
+            if (std::wstring_view(taskbarAutoHideWarning.Message()) != message)
+                taskbarAutoHideWarning.Message(message);
+            taskbarAutoHideRetry.IsEnabled(status != Status::Unavailable);
+            taskbarAutoHideWarning.IsOpen(status != Status::Effective);
+        }
         if (suppressionStatus)
         {
             const auto state = GetSystemTaskbarSuppressionRuntimeState();
@@ -3138,8 +3166,6 @@ struct DockPagePresenter::Impl
             L("settings.taskbar.systemSettings", L"Windows taskbar settings"));
         taskbarSettingsLink.Content(winrt::box_value(L(
             "settings.taskbar.systemSettings.open", L"Open settings")));
-        taskbarAutoHideWarning.Message(L("settings.taskbar.autoHide.notEffective",
-            L"Windows taskbar auto-hide is not active on one or more displays."));
         taskbarAutoHideRetry.Content(winrt::box_value(L(
             "settings.taskbar.autoHide.retry", L"Enable auto-hide")));
         muxa::AutomationProperties::SetName(
