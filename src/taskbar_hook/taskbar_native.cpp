@@ -54,7 +54,7 @@ struct WindowState
     CloakWriter cloakWriter = nullptr;
     bool detaching = false, updatingCloak = false;
     HMONITOR autoHideMonitor = nullptr;
-    TaskbarMaterialEdge autoHideEdge = TaskbarMaterialEdge::Bottom;
+    TaskbarMaterialEdge autoHideRim = TaskbarMaterialEdge::Top;
     RECT autoHideWorkArea{};
     bool observedNativeHide = false;
     std::mutex mutex;
@@ -613,12 +613,12 @@ bool ConfirmNativeAutoHide(HWND window, WindowState& state, HMONITOR monitor,
         state.autoHideMonitor = nullptr;
         return false;
     }
-    const auto edge = ResolveTaskbarMaterialEdge(rect, info.rcMonitor);
-    if (monitor != state.autoHideMonitor || edge != state.autoHideEdge ||
+    const auto rim = ResolveTaskbarMaterialEdge(rect, info.rcMonitor);
+    if (monitor != state.autoHideMonitor || rim != state.autoHideRim ||
         !EqualRect(&info.rcWork, &state.autoHideWorkArea))
     {
         state.autoHideMonitor = monitor;
-        state.autoHideEdge = edge;
+        state.autoHideRim = rim;
         state.autoHideWorkArea = info.rcWork;
         state.observedNativeHide = false;
     }
@@ -628,12 +628,14 @@ bool ConfirmNativeAutoHide(HWND window, WindowState& state, HMONITOR monitor,
     const LONG revealStrip = std::max(2L, static_cast<LONG>((2 * GetDpiForWindow(window) + 95) / 96));
     state.observedNativeHide |= IsAutoHiddenTaskbar(rect, info.rcMonitor, revealStrip);
     if (state.observedNativeHide) return true;
-    switch (edge)
+    // The material rim faces the desktop. Its opposite side is the screen
+    // edge where the taskbar can reserve work area.
+    switch (rim)
     {
-    case TaskbarMaterialEdge::Top: return info.rcWork.top == info.rcMonitor.top;
-    case TaskbarMaterialEdge::Bottom: return info.rcWork.bottom == info.rcMonitor.bottom;
-    case TaskbarMaterialEdge::Left: return info.rcWork.left == info.rcMonitor.left;
-    case TaskbarMaterialEdge::Right: return info.rcWork.right == info.rcMonitor.right;
+    case TaskbarMaterialEdge::Top: return info.rcWork.bottom == info.rcMonitor.bottom;
+    case TaskbarMaterialEdge::Bottom: return info.rcWork.top == info.rcMonitor.top;
+    case TaskbarMaterialEdge::Left: return info.rcWork.right == info.rcMonitor.right;
+    case TaskbarMaterialEdge::Right: return info.rcWork.left == info.rcMonitor.left;
     }
     return false;
 }
