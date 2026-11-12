@@ -805,6 +805,7 @@ struct WidgetsPagePresenter::Impl
         cancelTaskButton.UseSystemFocusVisuals(true);
         taskPanel = presenter_controls::BuildOperationProgressRow(taskStatus, cancelTaskButton, taskProgress);
         presenter_controls::StyleSettingsSubrow(taskPanel, false, 0.0);
+        taskPanel.Padding({0.0, 8.0, 0.0, 8.0}); // The enclosing card already provides the horizontal inset.
         taskPanel.Visibility(mux::Visibility::Collapsed);
         filterCard.content.Children().Append(taskPanel);
 
