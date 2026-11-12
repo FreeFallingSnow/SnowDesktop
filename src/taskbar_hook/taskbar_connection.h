@@ -46,6 +46,7 @@ inline bool AreTaskbarThreadsConnected(std::span<const HWND> taskbars,
         if (!GetWindowThreadProcessId(window, &owner) || owner != processId) return false;
         const HANDLE module = GetPropW(window, kHookOwnerProperty);
         if (!module || (instance && module != instance) ||
+            reinterpret_cast<std::uintptr_t>(GetPropW(window, kHookResumeProtocolProperty)) != kSharedStateVersion ||
             reinterpret_cast<std::uintptr_t>(GetPropW(window, kHookHostProcessProperty)) != hostProcessId)
             return false;
         instance = module;
