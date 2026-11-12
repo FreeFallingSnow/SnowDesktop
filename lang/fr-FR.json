@@ -2902,5 +2902,7 @@
   "settings.screenTime.clearConfirm": "Supprimer définitivement tout l’historique du temps d’écran sur cet ordinateur ?",
   "app.menu.sort_fill_gaps": "Combler les espaces",
   "app.menu.sort_fill_horizontal": "Horizontal",
-  "app.menu.sort_fill_vertical": "Vertical"
+  "app.menu.sort_fill_vertical": "Vertical",
+  "settings.taskbar.position.movedToBottom": "La barre des tâches a été déplacée en bas de l’écran.",
+  "settings.taskbar.position.moveToBottomFailed": "Impossible de déplacer la barre des tâches en bas de l’écran. Changez sa position dans les paramètres de la barre des tâches de Windows, puis réessayez."
 }

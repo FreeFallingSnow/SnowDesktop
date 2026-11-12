@@ -2902,5 +2902,7 @@
   "settings.screenTime.clearConfirm": "永久刪除這部電腦上的所有螢幕使用時間記錄？",
   "app.menu.sort_fill_gaps": "填補空隙",
   "app.menu.sort_fill_horizontal": "橫向",
-  "app.menu.sort_fill_vertical": "縱向"
+  "app.menu.sort_fill_vertical": "縱向",
+  "settings.taskbar.position.movedToBottom": "工作列已移到畫面底部。",
+  "settings.taskbar.position.moveToBottomFailed": "無法將工作列移到畫面底部。請在 Windows 工作列設定中調整位置後再試一次。"
 }

@@ -2902,5 +2902,7 @@
   "settings.screenTime.clearConfirm": "Excluir permanentemente todos os registros de tempo de tela deste computador?",
   "app.menu.sort_fill_gaps": "Preencher espaços",
   "app.menu.sort_fill_horizontal": "Horizontal",
-  "app.menu.sort_fill_vertical": "Vertical"
+  "app.menu.sort_fill_vertical": "Vertical",
+  "settings.taskbar.position.movedToBottom": "A barra de tarefas foi movida para a parte inferior da tela.",
+  "settings.taskbar.position.moveToBottomFailed": "Não foi possível mover a barra de tarefas para a parte inferior da tela. Altere a posição nas configurações da barra de tarefas do Windows e tente novamente."
 }
