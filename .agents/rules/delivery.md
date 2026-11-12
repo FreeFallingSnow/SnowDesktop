@@ -94,7 +94,7 @@ English:
 2. 通过 `scripts/squash_release_to_main.bat` 本地压缩合并，确保 `main` 每版只新增一条版本提交，并在该提交创建与 `version.json` 一致的本地注释标签 `vA.B.C.D`。不普通 merge 引入全部开发历史。
 3. squash 后只核对版本提交、标签、文件树、发行包和用户在本地 `main` 的实际测试。发现问题回版本分支修正、构建、验收后重新生成本地版本提交及标签，不在 `main` 追加修复/验证。
 4. **用户检查并测试本地 `main` 后，明确决定是否推送。** squash 脚本只允许本地分支/提交/标签，严禁 fetch/pull/push/远端 API/删分支；参数或环境变量不得放开此限制。
-5. `scripts/release.bat` 无参数为人工 TUI、有命令参数为非交互 CLI，两者复用 `scripts/release_manager.ps1`。远程动作与本地 squash 分开；用户测试后，以交互版本确认或 CLI `-Yes -ConfirmVersion A.B.C.D` 推送远端 `main` 和标签。
+5. 远程动作与本地 squash 分开。用户测试并授权推送后，先核对对应 `release/vA.B.C.D` 包含已合并的版本来源及已授权的后续记录，正常推送到官方 `origin`，并回查远端版本分支指向已核对的本地提交；推送失败或回查不一致时先处理，再推送 `main` 和标签。`scripts/release.bat` 无参数为人工 TUI、有命令参数为非交互 CLI，两者复用 `scripts/release_manager.ps1`；版本分支推送完成后，以交互版本确认或 CLI `-Yes -ConfirmVersion A.B.C.D` 推送远端 `main` 和标签。
 6. 所有发行包、校验、说明、状态、日志位于 `artifacts/vA.B.C.D/`。版本完成发布后停用旧版本分支，下一版从最新 `main` 创建。
 
 ### GitHub Release
