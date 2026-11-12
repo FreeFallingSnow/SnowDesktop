@@ -2904,5 +2904,7 @@
   "app.menu.sort_fill_horizontal": "Horizontal",
   "app.menu.sort_fill_vertical": "Vertikal",
   "settings.taskbar.position.movedToBottom": "Die Taskleiste wurde an den unteren Bildschirmrand verschoben.",
-  "settings.taskbar.position.moveToBottomFailed": "Die Taskleiste konnte nicht an den unteren Bildschirmrand verschoben werden. Ändern Sie die Position in den Windows-Taskleisteneinstellungen und versuchen Sie es erneut."
+  "settings.taskbar.position.moveToBottomFailed": "Die Taskleiste konnte nicht an den unteren Bildschirmrand verschoben werden. Ändern Sie die Position in den Windows-Taskleisteneinstellungen und versuchen Sie es erneut.",
+  "settings.taskbar.autoHide.retry": "Automatisches Ausblenden aktivieren",
+  "settings.taskbar.autoHide.notEffective": "Das automatische Ausblenden der Windows-Taskleiste ist auf mindestens einem Bildschirm nicht aktiv."
 }

@@ -2904,5 +2904,7 @@
   "app.menu.sort_fill_horizontal": "가로",
   "app.menu.sort_fill_vertical": "세로",
   "settings.taskbar.position.movedToBottom": "작업 표시줄이 화면 아래쪽으로 이동했습니다.",
-  "settings.taskbar.position.moveToBottomFailed": "작업 표시줄을 화면 아래쪽으로 이동할 수 없습니다. Windows 작업 표시줄 설정에서 위치를 변경한 후 다시 시도하세요."
+  "settings.taskbar.position.moveToBottomFailed": "작업 표시줄을 화면 아래쪽으로 이동할 수 없습니다. Windows 작업 표시줄 설정에서 위치를 변경한 후 다시 시도하세요.",
+  "settings.taskbar.autoHide.retry": "자동 숨기기 켜기",
+  "settings.taskbar.autoHide.notEffective": "하나 이상의 디스플레이에서 Windows 작업 표시줄 자동 숨기기가 적용되지 않았습니다."
 }

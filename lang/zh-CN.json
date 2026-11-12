@@ -2904,5 +2904,7 @@
   "app.menu.sort_fill_horizontal": "横向",
   "app.menu.sort_fill_vertical": "纵向",
   "settings.taskbar.position.movedToBottom": "任务栏已移到屏幕底部。",
-  "settings.taskbar.position.moveToBottomFailed": "无法将任务栏移到屏幕底部。请在 Windows 任务栏设置中调整位置后重试。"
+  "settings.taskbar.position.moveToBottomFailed": "无法将任务栏移到屏幕底部。请在 Windows 任务栏设置中调整位置后重试。",
+  "settings.taskbar.autoHide.retry": "启用自动隐藏",
+  "settings.taskbar.autoHide.notEffective": "至少有一个屏幕的 Windows 任务栏尚未启用自动隐藏。"
 }

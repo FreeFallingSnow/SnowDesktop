@@ -2904,5 +2904,7 @@
   "app.menu.sort_fill_horizontal": "Horizontal",
   "app.menu.sort_fill_vertical": "Vertical",
   "settings.taskbar.position.movedToBottom": "La barra de tareas se ha movido a la parte inferior de la pantalla.",
-  "settings.taskbar.position.moveToBottomFailed": "No se ha podido mover la barra de tareas a la parte inferior de la pantalla. Cambia su posición en la configuración de la barra de tareas de Windows y vuelve a intentarlo."
+  "settings.taskbar.position.moveToBottomFailed": "No se ha podido mover la barra de tareas a la parte inferior de la pantalla. Cambia su posición en la configuración de la barra de tareas de Windows y vuelve a intentarlo.",
+  "settings.taskbar.autoHide.retry": "Activar la ocultación automática",
+  "settings.taskbar.autoHide.notEffective": "La ocultación automática de la barra de tareas de Windows no está activa en una o más pantallas."
 }
