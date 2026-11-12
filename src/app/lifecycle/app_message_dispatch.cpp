@@ -413,6 +413,13 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 pendingCollectionPopupOpen_.reset();
                 CloseCollectionPopup();
             }
+            if (!(wp & MK_CONTROL))
+            {
+                ClearSelection();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                InvalidatePersistentDockHosts();
+                InvalidateFloatingPopupWindow();
+            }
             // The render child does not activate on clicks. Match the normal
             // press path so shell flyouts lose focus even while icons are hidden.
             RestoreInteractionInputFocus(true);
