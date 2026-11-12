@@ -65,8 +65,8 @@ inline bool PreserveOwnedMenuZOrder(
  * 同时再用另一个正在跨边界的窗口作为 hWndInsertAfter。跨带时按视觉
  * 安全顺序归一化：降级先移动 backdrop；提升在同一事务内分别指定
  * TOPMOST（backdrop 在先、内容窗在后），不从边界窗口推断所属带。
- * 同线程、同带的自有锚点也使用延迟事务。同带外部锚点使用
- * 同步定位，按移动方向调整两个窗口并保持背景位于内容下方。
+ * 同线程、同带的自有锚点也使用延迟事务。同带外部锚点及向普通
+ * 锚点降级使用同步定位，按移动方向保持背景位于内容下方。
  */
 inline bool Apply(
     HWND contentWindow,
@@ -201,8 +201,9 @@ inline bool Apply(
     // bars use their Dock HWND as that anchor. Hiding their glass for an
     // ordinary same-band repair exposes a missing background during popup
     // and window animations, even though its retained pixels are complete.
+    const bool contentTopmost = IsTopmost(contentWindow);
     const bool changesZOrderBand =
-        IsTopmost(contentWindow) != topmost ||
+        contentTopmost != topmost ||
         IsTopmost(backdropWindow) != topmost;
     const DWORD thread = GetCurrentThreadId();
     const bool sameThreadPair = GetWindowThreadProcessId(contentWindow, nullptr) == thread &&
@@ -211,17 +212,22 @@ inline bool Apply(
         contentInsertAfter != HWND_BOTTOM;
     const bool localAnchor = concreteAnchor && !changesZOrderBand &&
         GetWindowThreadProcessId(contentInsertAfter, nullptr) == thread;
-    if (concreteAnchor && !localAnchor && sameThreadPair && !changesZOrderBand &&
+    const bool lowersTopmostContent = contentTopmost && !topmost;
+    if (concreteAnchor && !localAnchor && sameThreadPair &&
+        (!changesZOrderBand || lowersTopmostContent) &&
         IsAbove(contentWindow, backdropWindow))
     {
         // When lowering the pair past the anchor, lower the helper first so
-        // it cannot sample the content. When raising it, move content first.
+        // it cannot sample the content. Inserting after an ordinary anchor
+        // also demotes a topmost helper before its content follows it down.
+        // When raising a same-band pair, move content first.
         // Synchronous calls tolerate an external HWND disappearing without
         // abandoning an HDWP or hiding the helper on each desktop-layer retry.
         const bool ready = IsAbove(contentInsertAfter, backdropWindow) ||
             SetWindowPos(backdropWindow, contentInsertAfter, 0, 0, 0, 0, contentFlags);
         const bool positioned = ready && IsWindow(contentInsertAfter) &&
             IsTopmost(contentInsertAfter) == topmost &&
+            IsAbove(contentInsertAfter, backdropWindow) &&
             SetWindowPos(contentWindow, contentInsertAfter, 0, 0, 0, 0, contentFlags);
         // Rejoin the live content even when the anchor disappeared between
         // calls, keeping the failed placement visible to the caller.
