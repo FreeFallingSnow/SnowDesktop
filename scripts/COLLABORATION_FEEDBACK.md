@@ -52,6 +52,7 @@
 | [CF-026](#cf-026-打包脚本变更阻止复验已保存候选) | P2 | 无编译复验要求当前检出的打包脚本与旧候选一致 | 已确认，使用新快照定向执行 |
 | [CF-027](#cf-027-常规页低频状态预览按控件序号定位) | P2 | 共用模块提示插入后，常规页预览在首项中止 | 已解决：深浅预览各导出 13 张 |
 | [CF-028](#cf-028-steam-打包将两种程序集布局误判为桥接程序过期) | P0 | 已通过的 Release 候选因两种部署清单产生不同 EXE 哈希而无法打包 | 已解决：复用原候选并通过打包 |
+| [CF-029](#cf-029-语言资源原子替换失败后缺少重试指引) | P2 | 语言键写入因原子替换失败退出，回执缺少同请求恢复指引 | 已确认：同请求恢复成功 |
 
 
 ### CF-001 持久执行器被父 Job 拒绝
@@ -328,3 +329,9 @@
 - **实测**：2026-11-12，Task `task-2b2217f910744f8c88a24073ce03b5da` 从已通过的 Run `f1d2e02206c04ed1af9eb7e676e1e0af` 打包，`steam-upload-dev` 在上传前报 `The Agent Skill Workshop CLI or Steam runtime is stale.`。原始日志为 `.codex-probes/issue-35-steam/upload-console.log`。
 - **源码确认与影响**：构建先将 Bridge 复制到 Skill，再为主目录 Bridge 写入私有程序集依赖。两份 Bridge 的 `configuration` 返回同一版本及应用身份，两份 Steam DLL 的哈希一致。主目录 Bridge 配同目录 DLL 在独立目录启动报 WinError 14001。完整 EXE 哈希相等的检查拦住可用候选，重复构建无法保证消除布局差异。
 - **处理与结果**：由同一候选 Bridge 生成两处打包副本，只在 Skill 副本移除私有程序集依赖，在打包时分别启动验证。用 `release.bat package-steam -ArtifactRun f1d2e02206c04ed1af9eb7e676e1e0af` 复用已保存 Release 候选成功生成 Steam ZIP，未重编宿主。
+
+### CF-029 语言资源原子替换失败后缺少重试指引
+
+- **实测**：2026-11-12，Task `task-8fea9da64f544f1c87c7b78d5944c644`，批次 `4e6ca21b417744518f859d8fc4941043` 修订 0。`scripts/build.bat resource apply` 对请求 `4e3f7ba01163b976c9f2e08763de5f7c` 写入 `lang/ja-JP.json` 时，临时文件原子替换报 `[WinError 5]`，当时尚未提交构建。
+- **源码确认与处理**：`reconcile_resource_write` 比对磁盘内容和键归属，确认未发布后允许沿用原请求。按原参数重试，回执为 `applied`，继续其余语言。
+- **影响与下一步**：首次错误缺少请求标识和恢复指引，批量应用脚本中断，需要读取事务回执、补续剩余条目。后续可在原子替换错误中打印同请求重试命令，保留现有端点校验。WinError 5 的底层来源待核实。
