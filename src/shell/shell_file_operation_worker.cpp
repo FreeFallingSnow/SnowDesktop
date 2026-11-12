@@ -967,7 +967,10 @@ bool ShellFileOperationWorker::Execute(
             allSucceeded = false;
             continue;
         }
-        if (FAILED(status = shellLink->SetPath(shortcut.source.c_str())))
+        status = shortcut.targetId.empty()
+            ? shellLink->SetPath(shortcut.source.c_str())
+            : shellLink->SetIDList(reinterpret_cast<PCIDLIST_ABSOLUTE>(shortcut.targetId.data()));
+        if (FAILED(status))
         {
             record(shortcut.destination, static_cast<DWORD>(status));
             allSucceeded = false;
@@ -1015,7 +1018,8 @@ bool ShellFileOperationWorker::Execute(
             allSucceeded = false;
         }
         else if (request.result)
-            request.result->outputs.push_back({shortcut.source, shortcut.destination, true});
+            request.result->outputs.push_back({shortcut.source, shortcut.destination,
+                shortcut.targetId.empty()});
     }
     if (failure)
     {

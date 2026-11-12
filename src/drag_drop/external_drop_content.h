@@ -38,6 +38,19 @@ struct Readers
 };
 
 Paths ReadFilePaths(IDataObject* source);
+
+struct ApplicationSource
+{
+    std::wstring id;
+    std::wstring name;
+    std::vector<BYTE> targetId;
+};
+// Read Shell selection metadata without rendering a delayed file payload.
+std::optional<ApplicationSource> ReadApplicationSource(IDataObject* source);
+// Some Start menu sources advertise an AppID in CF_HDROP. Resolve only a
+// single bare ID that matches an installed AppsFolder item.
+std::optional<ApplicationSource> ResolveApplicationSource(const Paths& paths);
+
 enum class ClipboardFileSource { None, FilePaths, ShellObjects };
 // Menu admission only: never render files/descriptors or start source IO.
 // Shell keeps ownership of namespace IDs and virtual-file folder hierarchies.

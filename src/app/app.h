@@ -101,6 +101,7 @@ namespace snowdesktop::component_preview { struct Model; struct ApplySettings; s
 namespace snowdesktop::native_component_preview { struct Request; struct Result; }
 namespace snowdesktop::control_settings { struct NativeWidgetSettingsState; struct NativeWidgetSettingsPatch; }
 namespace snowdesktop::dock_drop_model { struct Services; }
+namespace snowdesktop::external_drop_content { struct ApplicationSource; }
 namespace snowdesktop::dock_desktop_return { struct Services; struct Landing; }
 namespace snowdesktop::large_icon_renderer { struct CardResources; }
 namespace snowdesktop::widget_runtime { struct PackageImageSource; class WidgetSystemDataProvider; }
@@ -4248,6 +4249,9 @@ private:
         const std::vector<std::wstring>& paths, bool owned, bool copyOnly,
         FileOperationCompletion completion, bool synchronously,
         std::shared_ptr<snowdesktop::ShellFileOperationResult> result);
+    bool CommitExternalApplicationShortcut(
+        const snowdesktop::external_drop_content::ApplicationSource& source,
+        DropPreviewList preview, FileOperationCompletion completion, bool synchronously);
     HRESULT HandleOleQueryContinueDrag(
         BOOL escapePressed, DWORD keyState) override;
     HRESULT HandleOleGiveFeedback(DWORD effect) override;
