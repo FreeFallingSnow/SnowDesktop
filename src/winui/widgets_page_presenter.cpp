@@ -361,11 +361,10 @@ struct WidgetsPagePresenter::Impl
     muxc::Button installFileButton{nullptr};
     muxc::Button workshopButton{nullptr};
     muxcp::ToggleButton selfDevelopButton{nullptr};
-    muxc::StackPanel taskPanel{nullptr};
+    muxc::Grid taskPanel{nullptr};
     muxc::StackPanel searchStatusPanel{nullptr};
     muxc::ProgressRing searchStatusRing{nullptr};
     muxc::TextBlock searchStatusText{nullptr};
-    muxc::ProgressRing taskRing{nullptr};
     muxc::ProgressBar taskProgress{nullptr};
     muxc::TextBlock taskStatus{nullptr};
     muxc::Button cancelTaskButton{nullptr};
@@ -799,26 +798,14 @@ struct WidgetsPagePresenter::Impl
         }
         filterCard.content.Children().Append(filterActions);
 
-        taskPanel = muxc::StackPanel{};
-        taskPanel.Spacing(8.0);
-        taskPanel.Visibility(mux::Visibility::Collapsed);
-        taskRing = muxc::ProgressRing{};
-        taskRing.Width(28.0);
-        taskRing.Height(28.0);
-        taskRing.IsActive(false);
         taskProgress = muxc::ProgressBar{};
-        taskProgress.Minimum(0.0);
-        taskProgress.Maximum(100.0);
-        taskProgress.Visibility(mux::Visibility::Collapsed);
         taskStatus = muxc::TextBlock{};
-        taskStatus.TextWrapping(mux::TextWrapping::Wrap);
         cancelTaskButton = muxc::Button{};
         cancelTaskButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
         cancelTaskButton.UseSystemFocusVisuals(true);
-        taskPanel.Children().Append(taskRing);
-        taskPanel.Children().Append(taskProgress);
-        taskPanel.Children().Append(taskStatus);
-        taskPanel.Children().Append(cancelTaskButton);
+        taskPanel = presenter_controls::BuildOperationProgressRow(taskStatus, cancelTaskButton, taskProgress);
+        presenter_controls::StyleSettingsSubrow(taskPanel, false, 0.0);
+        taskPanel.Visibility(mux::Visibility::Collapsed);
         filterCard.content.Children().Append(taskPanel);
 
         installedRows = muxc::StackPanel{};
@@ -3260,27 +3247,17 @@ struct WidgetsPagePresenter::Impl
 
     void RenderTask()
     {
-        const bool running = task.kind != WidgetsPageTaskKind::None;
         const bool searching = task.kind == WidgetsPageTaskKind::Searching;
+        const bool running = task.kind != WidgetsPageTaskKind::None && !searching;
         searchStatusPanel.Visibility(searching ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         searchStatusRing.IsActive(searching);
         searchStatusText.Text(searching ? L("settings.widgets.searching", L"Searching…") : L"");
-        taskPanel.Visibility(running && !searching
+        taskPanel.Visibility(running
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
-        taskRing.IsActive(running && !searching);
-        taskRing.Visibility(running
-                ? mux::Visibility::Visible
-                : mux::Visibility::Collapsed);
-
-        const bool determinate = running && task.progress.has_value();
-        taskProgress.Visibility(determinate
-                ? mux::Visibility::Visible
-                : mux::Visibility::Collapsed);
-        if (determinate)
-        {
-            taskProgress.Value(std::clamp(*task.progress, 0.0, 1.0) * 100.0);
-        }
+        taskProgress.IsIndeterminate(running && !task.progress.has_value());
+        if (task.progress)
+            taskProgress.Value(std::clamp(*task.progress, 0.0, 1.0));
         const std::wstring status = task.status.empty()
             ? TaskText(task.kind)
             : task.status;
@@ -3289,7 +3266,7 @@ struct WidgetsPagePresenter::Impl
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
         cancelTaskButton.IsEnabled(running && task.cancellable);
-        SetAutomation(taskRing, status);
+        SetAutomation(taskProgress, status);
         SetAutomation(cancelTaskButton,
             L("settings.progress.cancel", L"Cancel"), status);
     }

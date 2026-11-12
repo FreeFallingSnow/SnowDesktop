@@ -251,8 +251,7 @@ struct BackupDataPagePresenter::Impl
     muxc::StackPanel root{nullptr};
     muxc::InfoBar infoBar{nullptr};
     muxc::Border progressCard{nullptr};
-    muxc::StackPanel progressContent{nullptr};
-    muxc::ProgressRing progressRing{nullptr};
+    muxc::ProgressBar progressBar{nullptr};
     muxc::TextBlock progressMessage{nullptr};
     muxc::Button cancelButton{nullptr};
 
@@ -338,20 +337,12 @@ struct BackupDataPagePresenter::Impl
         progressCard = muxc::Border{};
         if (cardStyle)
             progressCard.Style(cardStyle);
-        progressContent = muxc::StackPanel{};
-        progressContent.Spacing(10.0);
-        progressRing = muxc::ProgressRing{};
-        progressRing.Width(32.0);
-        progressRing.Height(32.0);
-        progressRing.Minimum(0.0);
-        progressRing.Maximum(1.0);
+        progressCard.Padding({16.0, 8.0, 16.0, 12.0});
+        progressCard.Visibility(mux::Visibility::Collapsed);
+        progressBar = muxc::ProgressBar{};
         progressMessage = muxc::TextBlock{};
-        progressMessage.TextWrapping(mux::TextWrapping::Wrap);
         cancelButton = NewButton();
-        progressContent.Children().Append(progressRing);
-        progressContent.Children().Append(progressMessage);
-        progressContent.Children().Append(cancelButton);
-        progressCard.Child(progressContent);
+        progressCard.Child(controls::BuildOperationProgressRow(progressMessage, cancelButton, progressBar));
         root.Children().Append(progressCard);
 
         InitializeCard(layoutCard, cardStyle, root);
@@ -1016,10 +1007,9 @@ struct BackupDataPagePresenter::Impl
         progressCard.Visibility(running
             ? mux::Visibility::Visible
             : mux::Visibility::Collapsed);
-        progressRing.IsActive(running);
-        progressRing.IsIndeterminate(operation.indeterminate);
+        progressBar.IsIndeterminate(running && operation.indeterminate);
         if (!operation.indeterminate)
-            progressRing.Value(std::clamp(operation.progress, 0.0, 1.0));
+            progressBar.Value(std::clamp(operation.progress, 0.0, 1.0));
         progressMessage.Text(operation.message.empty()
             ? L("settings.home.backup", L"Backup status")
             : operation.message);
@@ -1028,7 +1018,7 @@ struct BackupDataPagePresenter::Impl
             : mux::Visibility::Collapsed);
         cancelButton.IsEnabled(running && operation.cancellable &&
             operation.requestId != 0);
-        muxa::AutomationProperties::SetName(progressRing,
+        muxa::AutomationProperties::SetName(progressBar,
             progressMessage.Text());
         muxa::AutomationProperties::SetName(cancelButton,
             L("app.settings.cancel", L"Cancel"));
@@ -1216,7 +1206,8 @@ struct BackupDataPagePresenter::Impl
             migrateButton.Click(migrateToken);
             clearDataButton.Click(clearDataToken);
             cancelButton.Click(cancelToken);
-            progressRing.IsActive(false);
+            progressBar.IsIndeterminate(false);
+            progressCard.Visibility(mux::Visibility::Collapsed);
         }
         catch (...)
         {

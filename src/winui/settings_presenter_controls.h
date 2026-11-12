@@ -50,6 +50,39 @@ inline void BindInfoBarVisibility(const muxc::InfoBar& bar)
         });
 }
 
+inline muxc::Grid BuildOperationProgressRow(const muxc::TextBlock& message,
+    const muxc::Button& cancel, const muxc::ProgressBar& progress)
+{
+    muxc::Grid row;
+    row.ColumnSpacing(12.0);
+    row.RowSpacing(6.0);
+    muxc::ColumnDefinition messageColumn, actionColumn;
+    messageColumn.Width({1.0, mux::GridUnitType::Star});
+    actionColumn.Width(mux::GridLengthHelper::Auto());
+    row.ColumnDefinitions().Append(messageColumn);
+    row.ColumnDefinitions().Append(actionColumn);
+    muxc::RowDefinition messageRow, progressRow;
+    messageRow.Height(mux::GridLengthHelper::Auto());
+    messageRow.MinHeight(32.0);
+    progressRow.Height(mux::GridLengthHelper::Auto());
+    row.RowDefinitions().Append(messageRow);
+    row.RowDefinitions().Append(progressRow);
+
+    message.TextWrapping(mux::TextWrapping::Wrap);
+    message.VerticalAlignment(mux::VerticalAlignment::Center);
+    muxa::AutomationProperties::SetLiveSetting(message, muxa::Peers::AutomationLiveSetting::Polite);
+    cancel.VerticalAlignment(mux::VerticalAlignment::Center);
+    progress.Minimum(0.0);
+    progress.Maximum(1.0);
+    muxc::Grid::SetColumn(cancel, 1);
+    muxc::Grid::SetRow(progress, 1);
+    muxc::Grid::SetColumnSpan(progress, 2);
+    row.Children().Append(message);
+    row.Children().Append(cancel);
+    row.Children().Append(progress);
+    return row;
+}
+
 // Section headings have no surface. Keep their secondary actions equally
 // lightweight while retaining native hyperlink focus and keyboard behavior.
 inline void ConfigureSettingsHeadingLink(const muxc::HyperlinkButton& link)

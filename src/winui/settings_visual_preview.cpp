@@ -1028,7 +1028,9 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         GeneralAdvancedFeatureStatus status;
         status.bridgeAvailable = status.cardVisible = true;
         const auto mode = generalNotice->mode;
-        if (mode == GeneralNoticeFixture::Mode::Registered)
+        if (mode == GeneralNoticeFixture::Mode::Registered ||
+            mode == GeneralNoticeFixture::Mode::StartupInstalled ||
+            mode == GeneralNoticeFixture::Mode::StartupOther)
         {
             status.state = GeneralAdvancedFeatureState::Registered;
             status.registered = true;
@@ -1347,10 +1349,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     rows << "page\tlabel\tx\ty\twidth\theight\tpaddingLeft\tpaddingTop\tpaddingRight\tpaddingBottom\teditorX\teditorY\teditorWidth\teditorHeight\n";
     std::ofstream actions(output / L"actions.tsv");
     actions << "page\tgradientDetailsInvoked\tvisibleRemoveStopButtons\n";
-    // Diagnostic capture helpers for notices that are normally closed in the
-    // default preview state. The General notice fixture drives every dormant
-    // advanced-feature/startup warning, then this renders the production
-    // InfoBar in place so the exported PNG matches the real card layout.
+    // Render the production controls in place, including normally hidden states.
     const auto savePreviewElement = [&](const x::FrameworkElement& element, const std::wstring& name) {
         x::Media::Imaging::RenderTargetBitmap bitmap;
         Await(bitmap.RenderAsync(element));
@@ -1373,13 +1372,18 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     };
     const auto captureGeneralNotices = [&] {
         const auto cards = shell->FindName(L"PageCards").as<c::StackPanel>();
-        const auto findBars = [&] {
-            std::vector<c::InfoBar> bars;
+        const auto findOpenNotice = [&] {
+            c::InfoBar notice{nullptr};
             Walk(cards, [&](const x::DependencyObject& node) {
-                if (const auto bar = node.try_as<c::InfoBar>()) bars.push_back(bar);
+                if (const auto bar = node.try_as<c::InfoBar>(); bar &&
+                    bar.Parent() != cards.as<x::DependencyObject>() && bar.IsOpen() && IsPreviewElementVisible(bar))
+                {
+                    if (notice) throw std::runtime_error("multiple General page notices are open");
+                    notice = bar;
+                }
             });
-            if (bars.size() < 2) throw std::runtime_error("general page notices are not mounted");
-            return bars;
+            if (!notice) throw std::runtime_error("General page notice did not open");
+            return notice;
         };
         std::ofstream report(output / L"general-notices.tsv");
         report << "variant\tseverity\twidth\theight\tvisibleActions\n";
@@ -1400,10 +1404,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             generalNotice->mode = variant.mode;
             shell->RefreshRuntimeState();
             Settle(shell.as<x::FrameworkElement>());
-            auto bars = findBars();
-            auto bar = bars[1];
-            if (bar.Visibility() != x::Visibility::Visible || !bar.IsOpen())
-                throw std::runtime_error("advanced-feature notice did not open");
+            const auto bar = findOpenNotice();
             scrollPreviewElementIntoView(bar);
             unsigned actions = 0;
             Walk(bar, [&](const x::DependencyObject& node) {
@@ -1424,8 +1425,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             generalNotice->mode = GeneralNoticeFixture::Mode::SteamInitFailed;
             shell->RefreshRuntimeState();
             Settle(shell.as<x::FrameworkElement>());
-            auto bars = findBars();
-            auto bar = bars[1];
+            const auto bar = findOpenNotice();
             const auto cardContent = bar.Parent().try_as<x::FrameworkElement>();
             if (cardContent)
             {
@@ -1455,10 +1455,8 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             generalNotice->mode = variant.mode;
             shell->RefreshRuntimeState();
             Settle(shell.as<x::FrameworkElement>());
-            auto bars = findBars();
-            auto bar = bars[0];
-            if (bar.Visibility() != x::Visibility::Visible || bar.Message().empty())
-                throw std::runtime_error("startup-ownership notice did not open");
+            const auto bar = findOpenNotice();
+            if (bar.Message().empty()) throw std::runtime_error("startup-ownership notice has no message");
             scrollPreviewElementIntoView(bar);
             std::wstring fileName = L"general-";
             fileName += variant.slug;
@@ -1597,6 +1595,21 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 packages.diagnostics.push_back(std::move(diagnostic));
             }
             if (!shell->ApplyWidgetsPageSnapshot(packages)) throw std::runtime_error("preview component snapshot refused");
+            if (scenarioRules && page == SettingsPage::Widgets)
+            {
+                const auto captureTask = [&](const wchar_t* file, WidgetsPageTaskSnapshot task) {
+                    packages.task = std::move(task);
+                    packages.revision = ++revision;
+                    if (!shell->ApplyWidgetsPageSnapshot(packages)) throw std::runtime_error("preview component task refused");
+                    Settle(shell.as<x::FrameworkElement>());
+                    if (file) savePreviewElement(shell.as<x::FrameworkElement>(), file);
+                };
+                captureTask(L"widgets-status-searching.png", {.kind = WidgetsPageTaskKind::Searching});
+                captureTask(L"widgets-status-installing.png", {
+                    .taskId = 1, .kind = WidgetsPageTaskKind::Installing, .cancellable = true, .progress = 0.42});
+                captureTask(L"widgets-status-exporting.png", {.taskId = 2, .kind = WidgetsPageTaskKind::ExportingPackage});
+                captureTask(nullptr, {});
+            }
         }
         if (page == SettingsPage::BackupAndData)
         {
@@ -1610,6 +1623,56 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 backups.fullBackups.push_back({id, name, L"2026-10-13 09:00", L"Manual", 84, 12582912, false});
             }
             if (!shell->ApplyBackupDataPageSnapshot(backups)) throw std::runtime_error("preview backup snapshot refused");
+            if (scenarioRules)
+            {
+                const auto captureBackup = [&](BackupDataPageSnapshot& state, const wchar_t* file) {
+                    state.revision = ++revision;
+                    if (!shell->ApplyBackupDataPageSnapshot(state)) throw std::runtime_error("preview backup status refused");
+                    Settle(shell.as<x::FrameworkElement>());
+                    if (file) savePreviewElement(shell.as<x::FrameworkElement>(), file);
+                };
+                auto state = backups;
+                state.operation = {1, BackupDataOperation::CreateFullBackup, true, true, true, 0.0,
+                    _LW("settings.backup.progress.createFull")};
+                captureBackup(state, L"backup-status-creating.png");
+                state.operation.indeterminate = false;
+                state.operation.progress = 0.42;
+                captureBackup(state, L"backup-status-progress.png");
+                state.operation.cancellable = false;
+                state.operation.message = _LW("settings.backup.cancelling");
+                captureBackup(state, L"backup-status-cancelling.png");
+                state.operation = {2, BackupDataOperation::RestoreFullBackup, true, false, true, 0.0,
+                    _LW("settings.backup.progress.restoreFull")};
+                state.replacementPending = true;
+                captureBackup(state, L"backup-status-restoring.png");
+                state.replacementPending = false;
+                state.operation = {3, BackupDataOperation::ClearLayout, true, true, true, 0.0,
+                    _LW("settings.backup.clearData.progress")};
+                captureBackup(state, L"backup-status-clearing.png");
+                state.operation = {};
+                const std::wstring fullBackupTitle = _LW("app.settings.full_data_backups");
+                state.notice = BackupDataNotice{BackupDataNoticeSeverity::Success, fullBackupTitle,
+                    _LW("app.settings.create_full_backup_success")};
+                captureBackup(state, L"backup-status-succeeded.png");
+                state.notice = BackupDataNotice{BackupDataNoticeSeverity::Informational, fullBackupTitle,
+                    _LW("settings.backup.cancelled")};
+                captureBackup(state, L"backup-status-cancelled.png");
+                state.notice = BackupDataNotice{BackupDataNoticeSeverity::Error, fullBackupTitle,
+                    std::wstring(_LW("app.settings.create_full_backup_failed")) +
+                    L"\n\nD:\\Preview\\Backups\\Workspace-before-reorganization\\SnowDesktop-complete-backup.zip"};
+                captureBackup(state, L"backup-status-failed.png");
+                state.notice.reset();
+                state.layoutBackups.clear();
+                state.fullBackups.clear();
+                captureBackup(state, L"backup-status-empty.png");
+
+                if (!shell->ShowInfoForGeneration(backups.generation,
+                    winrt::SnowDesktop::implementation::SettingsShellInfoSeverity::Error,
+                    _LW("settings.status.error"), _LW("settings.status.saveFailed"), true))
+                    throw std::runtime_error("preview global settings status refused");
+                captureBackup(backups, L"settings-status-error.png");
+                shell->ClearInfo();
+            }
         }
         Settle(shell.as<x::FrameworkElement>());
         const auto cards = shell->FindName(L"PageCards").as<c::StackPanel>();
@@ -2457,10 +2520,10 @@ std::vector<NoticeCatalogSpec> BuildNoticeCatalog()
     // Settings shell level notices.
     notices.push_back({L"Settings shell", L"Error status", L"shell-status-error",
         c::InfoBarSeverity::Error, NoticeLocaleText("settings.status.error"),
-        NoticeLocaleText("settings.status.saveFailed"), {}, true, 1180.0});
+        NoticeLocaleText("settings.status.saveFailed"), {}, true, 1000.0});
     notices.push_back({L"Settings shell", L"Advanced features locked", L"shell-advanced-locked",
         c::InfoBarSeverity::Informational, NoticeLocaleText("settings.general.advancedFeatures"),
-        NoticeLocaleText("settings.general.advancedFeatures.unlockRequired"), {}, true, 1180.0});
+        NoticeLocaleText("settings.general.advancedFeatures.unlockRequired"), {}, true, 1000.0});
     notices.push_back({L"Settings shell", L"Focus prerequisite", L"shell-focus-prerequisite",
         c::InfoBarSeverity::Informational, {},
         NoticeFormatFirst(NoticeLocaleText("settings.search.prerequisite.enable"), L"{0}", L"Dock"),

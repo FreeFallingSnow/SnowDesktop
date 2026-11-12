@@ -232,7 +232,9 @@
 
                 <InfoBar x:Name="StatusInfoBar"
                          Grid.Row="0"
-                         Margin="24,8,24,8"
+                         MaxWidth="1000"
+                         HorizontalAlignment="Stretch"
+                         Margin="20,8,20,8"
                          IsOpen="False"
                          IsClosable="True" />
 
