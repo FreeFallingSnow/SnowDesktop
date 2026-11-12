@@ -51,6 +51,7 @@
 | [CF-025](#cf-025-文件观察提前结束) | P2 | 前序候选的文件仍有待提交改动，文件观察已返回可认领 | 已确认，待补充观察条件 |
 | [CF-026](#cf-026-打包脚本变更阻止复验已保存候选) | P2 | 无编译复验要求当前检出的打包脚本与旧候选一致 | 已确认，使用新快照定向执行 |
 | [CF-027](#cf-027-常规页低频状态预览按控件序号定位) | P2 | 共用模块提示插入后，常规页预览在首项中止 | 已解决：深浅预览各导出 13 张 |
+| [CF-028](#cf-028-steam-打包将两种程序集布局误判为桥接程序过期) | P0 | 已通过的 Release 候选因两种部署清单产生不同 EXE 哈希而无法打包 | 已解决：复用原候选并通过打包 |
 
 
 ### CF-001 持久执行器被父 Job 拒绝
@@ -321,3 +322,9 @@
 - **实测**：2026-11-12，Task `backup-status-render` 使用现有 Release 执行 `scripts/preview.bat settings -Page general -State general-notices -Appearance dark`，第一项报 `advanced-feature notice did not open`。原始回执见 `.codex-probes/backup-status-render/baseline-general-dark/result.txt`。
 - **源码确认与影响**：`PageCards` 首项新增共用模块提示后，原预览按序号取得启动归属提示，导致整组高级功能和启动归属的离线截图未生成。
 - **本轮处理**：续修批次 `2e5e4b1f63c14ed491b0d7334489e0cb` 修订 2 让每个样例只触发一类常规页提示，按页面内已打开且可见的提示取图。Run `e11c82a248d24bd08456cc14a09975dd` 的候选成功导出中文深色及德文浅色预览各 13 张，覆盖高级功能、展开的错误详情及启动归属。首轮失败回执保留。
+
+### CF-028 Steam 打包将两种程序集布局误判为桥接程序过期
+
+- **实测**：2026-11-12，Task `task-2b2217f910744f8c88a24073ce03b5da` 从已通过的 Run `f1d2e02206c04ed1af9eb7e676e1e0af` 打包，`steam-upload-dev` 在上传前报 `The Agent Skill Workshop CLI or Steam runtime is stale.`。原始日志为 `.codex-probes/issue-35-steam/upload-console.log`。
+- **源码确认与影响**：构建先将 Bridge 复制到 Skill，再为主目录 Bridge 写入私有程序集依赖。两份 Bridge 的 `configuration` 返回同一版本及应用身份，两份 Steam DLL 的哈希一致。主目录 Bridge 配同目录 DLL 在独立目录启动报 WinError 14001。完整 EXE 哈希相等的检查拦住可用候选，重复构建无法保证消除布局差异。
+- **处理与结果**：由同一候选 Bridge 生成两处打包副本，只在 Skill 副本移除私有程序集依赖，在打包时分别启动验证。用 `release.bat package-steam -ArtifactRun f1d2e02206c04ed1af9eb7e676e1e0af` 复用已保存 Release 候选成功生成 Steam ZIP，未重编宿主。
