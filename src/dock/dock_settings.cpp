@@ -1243,6 +1243,23 @@ bool IsSystemTaskbarAutoHideEnabled()
     return ReadSystemTaskbarAutoHideEnabled();
 }
 
+bool IsSystemTaskbarAutoHideEffective()
+{
+    if (!ReadSystemTaskbarAutoHideEnabled()) return false;
+    using namespace snowdesktop::taskbar_hook;
+    const HANDLE mapping = OpenFileMappingW(FILE_MAP_READ, FALSE, kSharedStateName);
+    if (!mapping) return true;
+    const auto* state = static_cast<const SharedState*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(SharedState)));
+    Snapshot snapshot;
+    const bool blocked = ReadSharedSnapshot(state, snapshot) && snapshot.enabled && snapshot.suppressTaskbar &&
+        std::any_of(snapshot.targets, snapshot.targets + snapshot.targetCount, [](const auto& target) {
+            return target.suppressTaskbar && native::ReadAutoHideState(reinterpret_cast<HWND>(target.taskbar)) == native::AutoHideState::Unavailable;
+        });
+    if (state) UnmapViewOfFile(state);
+    CloseHandle(mapping);
+    return !blocked;
+}
+
 bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed, DWORD deadline)
 {
     return GetTaskbarBackdropController().BeginMinimizeProtection(source, observed, deadline);
@@ -1265,7 +1282,7 @@ bool RequestSystemTaskbarAutoHideEnabled(bool enabled)
         if (overridden) InterlockedExchange(&state->autoHideRestore, enabled ? TRUE : FALSE);
         if (state) UnmapViewOfFile(state);
         CloseHandle(mapping);
-        if (overridden) return true;
+        if (overridden && !enabled) return true;
     }
     return GetWindowsShellSettingsController().RequestAutoHide(enabled);
 }

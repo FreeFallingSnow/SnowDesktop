@@ -48,10 +48,15 @@ struct WindowState
     DWORD ownerId = 0;
     bool classic = false;
     bool primary = false, ownsAutoHide = false, updatingAutoHide = false;
+    bool autoHideEnableAttempted = false;
     AppBarMessage appBarMessage = nullptr;
     CursorPosition cursorPosition = &GetCursorPos;
     CloakWriter cloakWriter = nullptr;
     bool detaching = false, updatingCloak = false;
+    HMONITOR autoHideMonitor = nullptr;
+    TaskbarMaterialEdge autoHideEdge = TaskbarMaterialEdge::Bottom;
+    RECT autoHideWorkArea{};
+    bool observedNativeHide = false;
     std::mutex mutex;
     bool cloaked = false, styled = false;
     MinimizeProtection minimize;
@@ -266,6 +271,7 @@ void HoldClassicMenuPosition(HWND window, const std::shared_ptr<WindowState>& st
             return value.taskbar == reinterpret_cast<std::uintptr_t>(window);
         });
     if (target == snapshot.targets + snapshot.targetCount || !target->suppressTaskbar ||
+        ReadAutoHideState(window) != AutoHideState::Ready ||
         !HasContextMenu(window, state)) return;
 
     RECT current{};
@@ -399,7 +405,7 @@ HRESULT WINAPI SetDwmHook(HWND window, DWORD attribute, const void* data, DWORD 
                         WaitForSingleObject(state->owner, 0) == WAIT_TIMEOUT && !contextMenu;
                 }
             }
-            if (enforce && !hookInstanceRetired.load())
+            if (enforce && ReadAutoHideState(window) != AutoHideState::Unavailable && !hookInstanceRetired.load())
             {
                 const BOOL cloak = TRUE;
                 return originalDwm(window, attribute, &cloak, sizeof(cloak));
@@ -577,7 +583,11 @@ bool UpdateAutoHide(HWND window, const std::shared_ptr<WindowState>& state, bool
     }
     if (!state->ownsAutoHide) return true;
     const bool wanted = requested || state->mapping->autoHideRestore == TRUE;
-    if (((current & ABS_AUTOHIDE) != 0) != wanted)
+    const bool apply = !requested || !state->autoHideEnableAttempted;
+    state->autoHideEnableAttempted = requested;
+    // Attempt enable once for this suppression request. Further attempts are
+    // explicit so an unavailable edge does not continuously change Shell state.
+    if (apply && ((current & ABS_AUTOHIDE) != 0) != wanted)
     {
         data.lParam = static_cast<LPARAM>(wanted ? current | ABS_AUTOHIDE :
             current & ~static_cast<UINT_PTR>(ABS_AUTOHIDE));
@@ -593,6 +603,39 @@ bool UpdateAutoHide(HWND window, const std::shared_ptr<WindowState>& state, bool
         InterlockedExchange(&state->mapping->autoHideRestore, -1);
     }
     return applied;
+}
+
+bool ConfirmNativeAutoHide(HWND window, WindowState& state, HMONITOR monitor,
+    const RECT& rect, const MONITORINFO& info, bool enabled)
+{
+    if (!enabled || !monitor || IsRectEmpty(&rect))
+    {
+        state.autoHideMonitor = nullptr;
+        return false;
+    }
+    const auto edge = ResolveTaskbarMaterialEdge(rect, info.rcMonitor);
+    if (monitor != state.autoHideMonitor || edge != state.autoHideEdge ||
+        !EqualRect(&info.rcWork, &state.autoHideWorkArea))
+    {
+        state.autoHideMonitor = monitor;
+        state.autoHideEdge = edge;
+        state.autoHideWorkArea = info.rcWork;
+        state.observedNativeHide = false;
+    }
+    // A Dock or other appbar can reserve the same edge even after Explorer
+    // has released its own space. In that case wait for a native hide at
+    // this edge, and remember it across temporary taskbar reveals.
+    const LONG revealStrip = std::max(2L, static_cast<LONG>((2 * GetDpiForWindow(window) + 95) / 96));
+    state.observedNativeHide |= IsAutoHiddenTaskbar(rect, info.rcMonitor, revealStrip);
+    if (state.observedNativeHide) return true;
+    switch (edge)
+    {
+    case TaskbarMaterialEdge::Top: return info.rcWork.top == info.rcMonitor.top;
+    case TaskbarMaterialEdge::Bottom: return info.rcWork.bottom == info.rcMonitor.bottom;
+    case TaskbarMaterialEdge::Left: return info.rcWork.left == info.rcMonitor.left;
+    case TaskbarMaterialEdge::Right: return info.rcWork.right == info.rcMonitor.right;
+    }
+    return false;
 }
 
 LRESULT CALLBACK Subclass(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
@@ -617,6 +660,7 @@ bool Detach(HWND window, const std::shared_ptr<WindowState>& state, bool destroy
     RemovePropW(window, kAttachedProperty);
     RemovePropW(window, kContextMenuProperty);
     RemovePropW(window, kMinimizeInputTickProperty);
+    RemovePropW(window, kAutoHideStateProperty);
     std::lock_guard lock(windowsMutex);
     windows.erase(window);
     return !windows.empty() || StopHooks();
@@ -637,15 +681,16 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
         Detach(window, state);
         return false;
     }
-    UpdateAutoHide(window, state, snapshot.suppressTaskbar);
+    const bool autoHideApplied = UpdateAutoHide(window, state, snapshot.suppressTaskbar);
     const bool contextMenu = HasContextMenu(window, state);
     if (contextMenu) SetPropW(window, kContextMenuProperty, reinterpret_cast<HANDLE>(1));
     else RemovePropW(window, kContextMenuProperty);
     RECT rect{};
     POINT cursor{};
     MONITORINFO monitor{sizeof(monitor)};
-    const bool geometryValid = GetWindowRect(window, &rect) && state->cursorPosition(&cursor) &&
-        GetMonitorInfoW(snowdesktop::taskbar_monitor::Resolve(window), &monitor);
+    const HMONITOR monitorHandle = snowdesktop::taskbar_monitor::Resolve(window);
+    const bool boundsValid = GetWindowRect(window, &rect) && GetMonitorInfoW(monitorHandle, &monitor);
+    const bool geometryValid = boundsValid && state->cursorPosition(&cursor);
     const HWND source = reinterpret_cast<HWND>(snapshot.minimizeSource);
     const bool sourceMinimized = source && (!IsWindow(source) || IsIconic(source) || !IsWindowVisible(source));
     const MinimizeProtectionInput protection{
@@ -660,13 +705,30 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
         std::any_of(snapshot.targets, snapshot.targets + snapshot.targetCount, [window](const auto& target) {
             return target.taskbar == reinterpret_cast<std::uintptr_t>(window) && target.suppressTaskbar;
         });
+    bool nativeAutoHide = permanent && autoHideApplied;
+    if (nativeAutoHide && !state->primary)
+    {
+        APPBARDATA data{};
+        data.cbSize = sizeof(data);
+        data.hWnd = window;
+        nativeAutoHide = (state->appBarMessage(ABM_GETSTATE, &data) & ABS_AUTOHIDE) != 0;
+    }
+    const bool autoHideReady = ConfirmNativeAutoHide(window, *state,
+        boundsValid ? monitorHandle : nullptr, rect, monitor, nativeAutoHide);
+    const auto autoHideState = !permanent ? AutoHideState::Unknown :
+        autoHideReady ? AutoHideState::Ready : AutoHideState::Unavailable;
+    if (autoHideState != ReadAutoHideState(window))
+    {
+        if (autoHideState == AutoHideState::Unknown) RemovePropW(window, kAutoHideStateProperty);
+        else SetPropW(window, kAutoHideStateProperty, reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(autoHideState)));
+    }
     bool temporary = false, temporaryChanged = false, protectStart = false;
     {
         std::lock_guard lock(state->mutex);
         const bool wasActive = state->minimize.active;
         temporary = state->minimize.Update(protection);
         temporaryChanged = temporary != wasActive;
-        protectStart = state->startMenu.Update(startLease, permanent, geometryValid,
+        protectStart = state->startMenu.Update(startLease, permanent && autoHideReady, geometryValid,
             geometryValid && IsTaskbarRevealEdge(rect, monitor.rcMonitor, cursor), cursor, protection.now);
     }
     if (temporaryChanged)
@@ -689,7 +751,7 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
     {
         if (SetTimer(window, kTimer, interval, nullptr)) state->timerInterval = interval;
     }
-    const bool suppress = (ShouldSuppressTaskbar(snapshot, reinterpret_cast<std::uintptr_t>(window),
+    const bool suppress = (!permanent || autoHideReady) && (ShouldSuppressTaskbar(snapshot, reinterpret_cast<std::uintptr_t>(window),
         protection.now, protectStart) || temporary) && !contextMenu;
     bool cloakChanged = false;
     BOOL restoreCloak = FALSE;

@@ -51,6 +51,7 @@ std::wstring GetDockSettingsPath();
 enum class SystemTaskbarBottomResult { Unchanged, Moved, Failed };
 SystemTaskbarBottomResult MoveSystemTaskbarToBottomForAutoHide();
 bool IsSystemTaskbarAutoHideEnabled();
+bool IsSystemTaskbarAutoHideEffective();
 bool RequestSystemTaskbarAutoHideEnabled(bool enabled);
 bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed = false, DWORD deadline = 0);
 // Worker-only, bounded acknowledgement before sending the Start invocation.

@@ -2416,6 +2416,14 @@ struct SettingsWindowHost::Impl
             {
                 return SettingsActionResult::Busy(L"The settings page is no longer active.");
             }
+            if (request.action == SettingsHostActions::Action::RetrySystemTaskbarAutoHide)
+            {
+                auto result = state->owner->controller->FlushPending();
+                if (result.Succeeded() && result.message.empty())
+                    result = state->owner->controller->InvokeHostAction(request);
+                state->owner->ShowCommitFeedback(result);
+                return result;
+            }
             SettingsActionResult result =
                 state->owner->controller->InvokeHostAction(request);
             // The optional animation dialog follows an accepted layout commit,

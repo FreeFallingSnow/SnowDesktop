@@ -230,6 +230,7 @@ inline bool AreSuppressedTaskbarsControlled(const Snapshot& snapshot)
         hasTarget = true;
         const HWND window = reinterpret_cast<HWND>(target.taskbar);
         if (!IsWindow(window) || !GetPropW(window, native::kAttachedProperty)) return false;
+        if (native::ReadAutoHideState(window) != native::AutoHideState::Ready) return false;
         // A panel temporarily reveals a controlled taskbar without disconnecting.
         if (target.shellPanelVisible) continue;
         DWORD cloak = 0;

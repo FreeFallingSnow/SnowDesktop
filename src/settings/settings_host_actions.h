@@ -71,6 +71,7 @@ public:
         SelectDebugEnvironment,
         RenameDebugEnvironment,
         ClearScreenTime,
+        RetrySystemTaskbarAutoHide,
     };
 
     struct Request

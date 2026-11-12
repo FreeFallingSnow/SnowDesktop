@@ -1506,6 +1506,21 @@ public:
         case Action::ApplyTaskbar:
             app_.RefreshSystemTaskbarAppearance(true);
             break;
+        case Action::RetrySystemTaskbarAutoHide:
+        {
+            if (!app_.dockSettings_.systemTaskbarAutoHide &&
+                !ShouldSuppressSystemTaskbar(app_.dockSettings_, app_.generalSettings_.dockEnabled))
+                break;
+            const auto location = MoveSystemTaskbarToBottomForAutoHide();
+            if (location == SystemTaskbarBottomResult::Failed)
+                return snowdesktop::SettingsActionResult::Failure(_LW("settings.taskbar.position.moveToBottomFailed"));
+            if (!RequestSystemTaskbarAutoHideEnabled(true))
+                return snowdesktop::SettingsActionResult::Failure(_LW("settings.taskbar.autoHide.queueFailed"));
+            auto result = snowdesktop::SettingsActionResult::Success();
+            if (location == SystemTaskbarBottomResult::Moved)
+                result.message = _LW("settings.taskbar.position.movedToBottom");
+            return result;
+        }
         case Action::ApplyDesktopLayout:
             app_.UpdateLayoutWorkArea();
             app_.LayoutItems();
@@ -2348,13 +2363,14 @@ void DesktopApp::SyncSystemTaskbarSettingsFromWindows()
     if (!FindWindowW(L"Shell_TrayWnd", nullptr))
         return;
 
-    const bool autoHide = IsSystemTaskbarAutoHideEnabled();
+    // Keep the application's selected mode when Explorer rejects or loses
+    // auto-hide. The settings page reports the independently observed state.
+    const bool autoHide = dockSettings_.systemTaskbarAutoHide || IsSystemTaskbarAutoHideEnabled();
     const int alignment = IsSystemTaskbarAlignmentCentered() ? 1 : 0;
     bool dockDraftPending = false;
 
-    // Auto-hide and alignment belong to Windows, but the rest of Dock can have
-    // an unrelated draft. Reconcile only these two fields; the controller
-    // protects either field when the user has edited it in this session.
+    // Reflect external enables and alignment changes without overwriting an
+    // in-progress Dock edit or losing the application's auto-hide requirement.
     if (settingsController_)
     {
         const auto snapshot = settingsController_->Snapshot();
