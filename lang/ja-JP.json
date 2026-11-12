@@ -2906,5 +2906,7 @@
   "settings.taskbar.position.movedToBottom": "タスク バーを画面の下部に移動しました。",
   "settings.taskbar.position.moveToBottomFailed": "タスク バーを画面の下部に移動できませんでした。Windows のタスク バー設定で位置を変更してから、もう一度お試しください。",
   "settings.taskbar.autoHide.retry": "自動非表示を有効にする",
-  "settings.taskbar.autoHide.notEffective": "一部の画面で Windows タスク バーの自動非表示が有効になっていません。"
+  "settings.taskbar.autoHide.notEffective": "Windows の自動非表示はオンですが、一部のタスク バーにはまだ適用されていません。",
+  "settings.taskbar.autoHide.requiresBottom": "Windows では、タスク バーが画面の下部にある場合のみ自動非表示にできます。有効にすると下部に移動します。",
+  "settings.taskbar.autoHide.disabled": "Windows のタスク バーの自動非表示はオフになっています。"
 }

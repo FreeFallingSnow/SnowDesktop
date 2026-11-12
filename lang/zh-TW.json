@@ -2906,5 +2906,7 @@
   "settings.taskbar.position.movedToBottom": "工作列已移到畫面底部。",
   "settings.taskbar.position.moveToBottomFailed": "無法將工作列移到畫面底部。請在 Windows 工作列設定中調整位置後再試一次。",
   "settings.taskbar.autoHide.retry": "啟用自動隱藏",
-  "settings.taskbar.autoHide.notEffective": "至少有一個畫面的 Windows 工作列尚未啟用自動隱藏。"
+  "settings.taskbar.autoHide.notEffective": "Windows 已開啟自動隱藏，但部分工作列尚未自動隱藏。",
+  "settings.taskbar.autoHide.requiresBottom": "Windows 只允許在畫面底部自動隱藏工作列。啟用後，工作列會移到底部。",
+  "settings.taskbar.autoHide.disabled": "Windows 的工作列自動隱藏已關閉。"
 }

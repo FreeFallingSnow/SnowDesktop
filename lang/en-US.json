@@ -2906,5 +2906,7 @@
   "settings.taskbar.position.movedToBottom": "The taskbar moved to the bottom of the screen.",
   "settings.taskbar.position.moveToBottomFailed": "The taskbar could not be moved to the bottom of the screen. Change its position in Windows taskbar settings and try again.",
   "settings.taskbar.autoHide.retry": "Enable auto-hide",
-  "settings.taskbar.autoHide.notEffective": "Windows taskbar auto-hide is not active on one or more displays."
+  "settings.taskbar.autoHide.notEffective": "Windows auto-hide is on, but it hasn't taken effect for some taskbars.",
+  "settings.taskbar.autoHide.requiresBottom": "Windows requires the taskbar at the bottom for auto-hide. Enabling it will move the taskbar there.",
+  "settings.taskbar.autoHide.disabled": "Windows taskbar auto-hide is turned off."
 }

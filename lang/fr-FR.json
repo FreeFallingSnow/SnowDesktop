@@ -2906,5 +2906,7 @@
   "settings.taskbar.position.movedToBottom": "La barre des tâches a été déplacée en bas de l’écran.",
   "settings.taskbar.position.moveToBottomFailed": "Impossible de déplacer la barre des tâches en bas de l’écran. Changez sa position dans les paramètres de la barre des tâches de Windows, puis réessayez.",
   "settings.taskbar.autoHide.retry": "Activer le masquage automatique",
-  "settings.taskbar.autoHide.notEffective": "Le masquage automatique de la barre des tâches Windows est inactif sur au moins un écran."
+  "settings.taskbar.autoHide.notEffective": "Le masquage automatique est activé dans Windows, mais ne s’applique pas encore à certaines barres des tâches.",
+  "settings.taskbar.autoHide.requiresBottom": "Windows exige que la barre des tâches soit en bas de l’écran pour la masquer automatiquement. L’activation la déplacera en bas.",
+  "settings.taskbar.autoHide.disabled": "Le masquage automatique de la barre des tâches Windows est désactivé."
 }
