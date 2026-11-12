@@ -3167,7 +3167,7 @@ struct DockPagePresenter::Impl
         taskbarSettingsLink.Content(winrt::box_value(L(
             "settings.taskbar.systemSettings.open", L"Open settings")));
         taskbarAutoHideRetry.Content(winrt::box_value(L(
-            "settings.taskbar.autoHide.retry", L"Enable auto-hide")));
+            "settings.taskbar.autoHide.retry", L"Enable hiding")));
         muxa::AutomationProperties::SetName(
             taskbarSettingsLink, taskbarSettingsRow.label.Text());
         muxa::AutomationProperties::SetHelpText(taskbarSettingsLink,
