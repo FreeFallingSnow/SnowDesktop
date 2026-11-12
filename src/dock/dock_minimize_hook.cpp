@@ -7,10 +7,12 @@ extern "C" __declspec(dllexport) LRESULT CALLBACK SnowDesktopDockSourceCloakHook
     if (code >= 0 && lParam)
     {
         const auto* message = reinterpret_cast<const CWPSTRUCT*>(lParam);
-        snowdesktop::dock_minimize::CloakRequest request;
-        if (message->message == WM_COPYDATA &&
-            snowdesktop::dock_minimize::ReadCloakRequest(
-                reinterpret_cast<const COPYDATASTRUCT*>(message->lParam), request))
+        namespace minimize = snowdesktop::dock_minimize;
+        const UINT command = minimize::CloakDispatchMessage();
+        minimize::CloakRequest request;
+        if (command && message->message == command &&
+            minimize::ReadForwardedCloakRequest(message->hwnd, reinterpret_cast<HWND>(message->wParam),
+                static_cast<DWORD>(message->lParam), request))
         {
             const HWND receiver = reinterpret_cast<HWND>(
                 GetPropW(message->hwnd, snowdesktop::dock_minimize::kTargetProperty));

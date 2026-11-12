@@ -14,7 +14,6 @@ inline constexpr wchar_t OwnerProperty[] = L"SnowDesktop.Dock.SourceCloak.Owner.
 inline constexpr wchar_t ProcessProperty[] = L"SnowDesktop.Dock.SourceCloak.Process.v1";
 inline constexpr wchar_t TokenProperty[] = L"SnowDesktop.Dock.SourceCloak.Token.v1";
 inline constexpr wchar_t HostTokenProperty[] = L"SnowDesktop.Dock.SourceCloak.LeaseHost.v1";
-inline constexpr wchar_t CommandName[] = L"SnowDesktop.Dock.SourceCloak.Command.v1";
 inline constexpr wchar_t ResultProperty[] = L"SnowDesktop.Dock.SourceCloak.Result.v5";
 inline constexpr wchar_t AckProperty[] = L"SnowDesktop.Dock.SourceCloak.Ack.v5";
 inline constexpr wchar_t RecoveryProperty[] = L"SnowDesktop.Dock.SourceCloak.Recovery.v1";
@@ -90,12 +89,6 @@ inline DWORD TaskWindowCloakFlags(HWND source, DWORD flags) noexcept
     // host first attaches its thread hook, then requests recovery on that thread.
     return (flags & DWM_CLOAKED_APP) && owner.window && owner.process && owner.token
         ? flags & ~static_cast<DWORD>(DWM_CLOAKED_APP) : flags;
-}
-
-inline UINT CommandMessage() noexcept
-{
-    static const UINT message = RegisterWindowMessageW(CommandName);
-    return message;
 }
 
 inline void RemoveOwner(HWND source, Owner owner) noexcept;
@@ -222,7 +215,7 @@ inline HRESULT RestoreWithCloak(HWND source, Owner owner) noexcept
 
 // DWMWA_CLOAK rejects a caller in a different process. The per-thread
 // CALLWNDPROC hook applies it inside the source process and acknowledges the
-// exact request; the source application's window procedure is unchanged.
+// exact request before the source window procedure sees the registered message.
 inline void HandleCommand(HWND source, const dock_minimize::CloakRequest& request) noexcept
 {
     const std::lock_guard lock(LocalLeaseMutex());
@@ -281,6 +274,8 @@ inline HRESULT ApplyCloak(HWND source, Owner owner, std::uint32_t operation, boo
         RemovePropW(source, ResultProperty);
     }
     const HWND dispatcher = reinterpret_cast<HWND>(GetPropW(source, dock_minimize::kCloakDispatcherProperty));
+    if (process != GetCurrentProcessId() && !dispatcher)
+        return HRESULT_FROM_WIN32(ERROR_NOT_READY);
     const DWORD maximum = dispatcher ? 180 : 120;
     const DWORD timeout = operation ? dock_minimize::CloakSendBudget(owner.window, maximum) : maximum;
     if (!timeout) return HRESULT_FROM_WIN32(ERROR_TIMEOUT);
@@ -290,7 +285,7 @@ inline HRESULT ApplyCloak(HWND source, Owner owner, std::uint32_t operation, boo
     const auto request = MakeRequest(source, owner, operation, requestId);
     bool sent = true;
     if (process == GetCurrentProcessId()) HandleCommand(source, request);
-    else sent = dock_minimize::SendCloakRequest(dispatcher ? dispatcher : source, request, timeout, ignored);
+    else sent = dock_minimize::SendCloakDispatchRequest(dispatcher, request, timeout, ignored);
     const DWORD error = GetLastError();
     const std::lock_guard lock(LocalLeaseMutex());
     if (SameOwner(source, owner) && GetPropW(source, AckProperty) == acknowledgement)
