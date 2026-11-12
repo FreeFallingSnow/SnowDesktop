@@ -55,6 +55,7 @@ DesktopApp::DesktopApp()
 DesktopApp::~DesktopApp()
 {
     snowdesktop::StopWinKeyStartTap();
+    UnregisterScreenTimeNotifications();
     // Closed draw lists retain images and fonts. Join before releasing any
     // graphics/runtime caches, not just before the final device teardown.
     widgetSurfaceRenderer_.reset();

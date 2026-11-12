@@ -225,21 +225,39 @@ struct Identity
     std::string name;
 };
 
-std::optional<Identity> ResolveForeground()
+struct ForegroundProcess
 {
-    const HWND window = GetForegroundWindow();
+    HWND window = nullptr;
+    DWORD pid = 0;
+    std::uint64_t created = 0;
+
+    bool operator==(const ForegroundProcess&) const = default;
+};
+
+DWORD ForegroundProcessId(HWND window)
+{
     if (!window || window == GetShellWindow() ||
         fullscreen::IsShellWindow(window))
-        return std::nullopt;
-    wchar_t windowClass[128]{};
-    GetClassNameW(window, windowClass, static_cast<int>(std::size(windowClass)));
-    const std::wstring_view kind(windowClass);
-    if (kind == L"Progman" || kind == L"WorkerW") return std::nullopt;
+        return 0;
 
     DWORD processId = 0;
     GetWindowThreadProcessId(window, &processId);
-    if (!processId || processId == GetCurrentProcessId()) return std::nullopt;
+    if (!processId || processId == GetCurrentProcessId()) return 0;
 
+    wchar_t windowClass[128]{};
+    GetClassNameW(window, windowClass, static_cast<int>(std::size(windowClass)));
+    if (std::wstring_view(windowClass) == L"ApplicationFrameWindow")
+    {
+        const HWND child = FindWindowExW(
+            window, nullptr, L"Windows.UI.Core.CoreWindow", nullptr);
+        processId = 0;
+        if (child) GetWindowThreadProcessId(child, &processId);
+    }
+    return processId;
+}
+
+std::optional<Identity> ResolveForeground(HWND window, DWORD processId, HANDLE process)
+{
     std::wstring aumid;
     std::wstring displayName;
     ComPtr<IPropertyStore> properties;
@@ -255,20 +273,6 @@ std::optional<Identity> ResolveForeground()
         PropVariantClear(&id);
     }
 
-    DWORD queryProcess = processId;
-    if (kind == L"ApplicationFrameWindow")
-    {
-        const HWND child = FindWindowExW(
-            window, nullptr, L"Windows.UI.Core.CoreWindow", nullptr);
-        DWORD hosted = 0;
-        if (!child || !GetWindowThreadProcessId(child, &hosted) || !hosted)
-            return std::nullopt;
-        queryProcess = hosted;
-    }
-
-    const HANDLE process = OpenProcess(
-        PROCESS_QUERY_LIMITED_INFORMATION, FALSE, queryProcess);
-    if (!process) return std::nullopt;
     if (aumid.empty())
     {
         UINT32 length = 0;
@@ -293,14 +297,13 @@ std::optional<Identity> ResolveForeground()
     DWORD pathLength = static_cast<DWORD>(std::size(path));
     const bool hasPath = QueryFullProcessImageNameW(
         process, 0, path, &pathLength) != FALSE;
-    CloseHandle(process);
     if (!hasPath && aumid.empty()) return std::nullopt;
 
     std::wstring resolvedPath;
     if (hasPath)
     {
         resolvedPath = dock_process_discovery::ApplicationExecutablePath(
-            queryProcess, std::wstring(path, pathLength));
+            processId, std::wstring(path, pathLength));
         if (resolvedPath.empty()) resolvedPath.assign(path, pathLength);
     }
     if (displayName.empty() && !resolvedPath.empty())
@@ -389,7 +392,8 @@ struct Tracker::State
         if (count && current && elapsed.count() > 0)
             Add(last, sliceEnd, *current);
         last = now;
-        current = count ? ResolveForeground() : std::nullopt;
+        if (count) UpdateForeground();
+        else current.reset();
         const auto sinceWrite = std::chrono::steady_clock::now() - lastWrite;
         if (dirty && sinceWrite >= std::chrono::seconds(60)) Write();
     }
@@ -431,15 +435,18 @@ struct Tracker::State
         if (dirty) Write();
     }
 
-    void Clear()
+    bool Clear(std::string* error)
     {
         std::scoped_lock guard(mutex);
+        constexpr std::string_view emptyHistory = "{\"version\":1,\"apps\":{},\"days\":{}}\n";
+        if (!atomic_file::WriteAll(path, emptyHistory, {}, error)) return false;
         names.clear();
         days.clear();
         current.reset();
         last = clock_type::now();
-        dirty = true;
-        Write();
+        lastWrite = std::chrono::steady_clock::now();
+        dirty = false;
+        return true;
     }
 
     TodayView Snapshot() const
@@ -473,6 +480,34 @@ struct Tracker::State
     {
         std::scoped_lock guard(mutex);
         return enabled;
+    }
+
+    void UpdateForeground()
+    {
+        const HWND window = GetForegroundWindow();
+        const DWORD pid = ForegroundProcessId(window);
+        struct ProcessHandle
+        {
+            HANDLE value;
+            ~ProcessHandle() { if (value) CloseHandle(value); }
+        } process{pid ? OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid) : nullptr};
+        if (!process.value)
+        {
+            current.reset();
+            return;
+        }
+
+        FILETIME created{}, exited{}, kernel{}, user{};
+        const bool hasCreationTime = GetProcessTimes(process.value, &created, &exited, &kernel, &user) != FALSE;
+        const ForegroundProcess sample{window, pid,
+            (static_cast<std::uint64_t>(created.dwHighDateTime) << 32) | created.dwLowDateTime};
+        const auto now = std::chrono::steady_clock::now();
+        // Process creation time distinguishes reused PIDs. Periodically refresh
+        // Shell metadata that can change even while the same window has focus.
+        if (current && hasCreationTime && foreground == sample && now < refreshForegroundAt) return;
+        current = ResolveForeground(window, pid, process.value);
+        foreground = hasCreationTime ? sample : ForegroundProcess{};
+        refreshForegroundAt = now + std::chrono::seconds{30};
     }
 
     void Settle(clock_type::time_point now)
@@ -648,6 +683,8 @@ struct Tracker::State
     bool dirty = false;
     clock_type::time_point last = clock_type::now();
     std::chrono::steady_clock::time_point lastWrite{};
+    std::chrono::steady_clock::time_point refreshForegroundAt{};
+    ForegroundProcess foreground;
     std::optional<Identity> current;
     std::map<std::string, std::string> names;
     std::map<std::string, DayData> days;
@@ -670,7 +707,7 @@ void Tracker::SetSessionLocked(bool locked) { state_->SetLocked(locked); }
 void Tracker::SetDisplayOn(bool on) { state_->SetDisplay(on); }
 void Tracker::SetSuspended(bool suspended) { state_->SetSleeping(suspended); }
 void Tracker::Flush() { state_->Flush(); }
-void Tracker::Clear() { state_->Clear(); }
+bool Tracker::Clear(std::string* error) { return state_->Clear(error); }
 TodayView Tracker::Today() const { return state_->Snapshot(); }
 
 std::vector<DayReport> Tracker::Reports() const

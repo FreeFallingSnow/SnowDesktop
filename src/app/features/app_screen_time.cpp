@@ -30,7 +30,10 @@ void DesktopApp::ApplyScreenTimeEnabled()
 
 void DesktopApp::ObserveScreenTime()
 {
-    if (screenTime_) screenTime_->Observe();
+    if (!screenTime_) return;
+    if (!screenTimeSessionRegistered_ || !screenTimeDisplayNotify_)
+        RegisterScreenTimeNotifications(controlHwnd_);
+    screenTime_->Observe();
 }
 
 void DesktopApp::RegisterScreenTimeNotifications(HWND window)
@@ -45,6 +48,27 @@ void DesktopApp::RegisterScreenTimeNotifications(HWND window)
     {
         screenTimeSessionRegistered_ =
             WTSRegisterSessionNotification(window, NOTIFY_FOR_THIS_SESSION) != FALSE;
+        if (screenTimeSessionRegistered_)
+        {
+            LPWSTR buffer = nullptr;
+            DWORD size = 0;
+            if (WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION,
+                    WTSSessionInfoEx, &buffer, &size))
+            {
+                if (buffer && size >= sizeof(WTSINFOEXW))
+                {
+                    const auto& info = *reinterpret_cast<const WTSINFOEXW*>(buffer);
+                    if (info.Level == 1)
+                    {
+                        const auto flags = info.Data.WTSInfoExLevel1.SessionFlags;
+                        if (flags == WTS_SESSIONSTATE_LOCK || flags == WTS_SESSIONSTATE_UNLOCK)
+                            HandleScreenTimeSession(flags == WTS_SESSIONSTATE_LOCK
+                                ? WTS_SESSION_LOCK : WTS_SESSION_UNLOCK);
+                    }
+                }
+                WTSFreeMemory(buffer);
+            }
+        }
     }
 }
 
@@ -55,9 +79,9 @@ void DesktopApp::UnregisterScreenTimeNotifications()
         UnregisterPowerSettingNotification(screenTimeDisplayNotify_);
         screenTimeDisplayNotify_ = nullptr;
     }
-    if (screenTimeSessionRegistered_ && hwnd_)
+    if (screenTimeSessionRegistered_)
     {
-        WTSUnRegisterSessionNotification(hwnd_);
+        if (controlHwnd_) WTSUnRegisterSessionNotification(controlHwnd_);
         screenTimeSessionRegistered_ = false;
     }
 }

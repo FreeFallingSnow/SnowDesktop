@@ -868,7 +868,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
     SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
     SetTimer(hwnd_, kWidgetRefreshTimerId, kWidgetRefreshIntervalMs, nullptr);
-    RegisterScreenTimeNotifications(hwnd_);
+    RegisterScreenTimeNotifications(controlHwnd_);
     SetTimer(hwnd_, kTaskbarRevealGuardTimerId,
         kTaskbarRevealGuardIntervalMs, nullptr);
     StartDockForegroundMonitor();

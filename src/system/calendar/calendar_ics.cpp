@@ -14,8 +14,10 @@ extern "C" {
 #include <chrono>
 #include <cstdio>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -173,6 +175,22 @@ Stamp ToDisplayTime(Stamp time, Zone zone, const time_zone* localZone)
     return zone.Zoned() ? Stamp{localZone->to_local(time).time_since_epoch()} : time;
 }
 
+Stamp InRecurrenceZone(EventTime time, Zone zone)
+{
+    if (!time.zone.Zoned() || !zone.Zoned() ||
+        (time.zone.embedded == zone.embedded && time.zone.iana == zone.iana && time.zone.utc == zone.utc))
+        return WallTime(time.value);
+    const auto instant = Timeline(time);
+    if (zone.iana) return Stamp{zone.iana->to_local(instant).time_since_epoch()};
+    if (zone.embedded)
+    {
+        const auto utcTime = ToIcal(instant, false);
+        int daylight = 0;
+        return instant + seconds{icaltimezone_get_utc_offset_of_utc_time(zone.embedded, &utcTime, &daylight)};
+    }
+    return instant;
+}
+
 std::string DateText(sys_days point)
 {
     const year_month_day date{point};
@@ -229,6 +247,21 @@ struct Appointment
     bool wallDuration = false;
     std::string title;
     std::string notes;
+};
+
+struct RecurrenceOverride
+{
+    Component* event = nullptr;
+    EventTime original{};
+    bool affectsFuture = false;
+};
+
+struct RangeChange
+{
+    seconds shift{};
+    std::optional<seconds> duration;
+    bool wallDuration = false;
+    bool cancelled = false;
 };
 
 Appointment ReadAppointment(Component* calendar, Component* event, const Appointment* master = nullptr)
@@ -325,19 +358,44 @@ struct Expansion
         if (group.master) master = ReadAppointment(calendar, group.master);
         const auto defaultZone = master ? master->start.zone : Zone{};
 
-        std::map<Stamp, Component*> overrides;
+        std::map<Stamp, RecurrenceOverride> overrides;
         for (auto* event : group.exceptions)
         {
             auto* property = icalcomponent_get_first_property(event, ICAL_RECURRENCEID_PROPERTY);
-            const auto id = Timeline(ReadTime(calendar, property, icalproperty_get_recurrenceid(property), defaultZone));
+            const auto original = ReadTime(calendar, property, icalproperty_get_recurrenceid(property), defaultZone);
+            const auto id = Timeline(original);
             auto& current = overrides[id];
-            if (!current || icalcomponent_get_sequence(event) >= icalcomponent_get_sequence(current))
-                current = event;
+            if (!current.event || icalcomponent_get_sequence(event) >= icalcomponent_get_sequence(current.event))
+            {
+                const auto* range = icalproperty_get_first_parameter(property, ICAL_RANGE_PARAMETER);
+                current = {event, original, range && icalparameter_get_range(range) == ICAL_RANGE_THISANDFUTURE};
+            }
         }
-        for (const auto& [id, event] : overrides)
+        std::map<Stamp, RangeChange> ranges;
+        seconds earliestShift{}, latestShift{};
+        auto longestDuration = master ? master->duration : seconds::zero();
+        for (const auto& [id, entry] : overrides)
         {
-            if (Cancelled(event)) continue;
-            const auto appointment = ReadAppointment(calendar, event, master ? &*master : nullptr);
+            const bool affectsFuture = master && entry.affectsFuture;
+            if (Cancelled(entry.event))
+            {
+                if (affectsFuture) ranges[id].cancelled = true;
+                continue;
+            }
+            const auto appointment = ReadAppointment(calendar, entry.event, master ? &*master : nullptr);
+            if (affectsFuture)
+            {
+                const auto shift = InRecurrenceZone(appointment.start, defaultZone) -
+                    InRecurrenceZone(entry.original, defaultZone);
+                const bool hasDuration = icalcomponent_get_first_property(entry.event, ICAL_DTEND_PROPERTY) ||
+                    icalcomponent_get_first_property(entry.event, ICAL_DURATION_PROPERTY);
+                ranges.emplace(id, RangeChange{shift,
+                    hasDuration ? std::optional{appointment.duration} : std::nullopt,
+                    appointment.wallDuration, false});
+                earliestShift = std::min(earliestShift, shift);
+                latestShift = std::max(latestShift, shift);
+                longestDuration = std::max(longestDuration, appointment.duration);
+            }
             Project(appointment, appointment.start, uid, std::to_string(id.time_since_epoch().count()));
         }
         if (!master) return;
@@ -361,8 +419,25 @@ struct Expansion
         const auto emit = [&](const Appointment& appointment, EventTime start) {
             const auto stamp = Timeline(start);
             const auto id = stamp.time_since_epoch().count();
-            if (!overrides.contains(stamp) && emitted.insert(id).second)
+            if (overrides.contains(stamp) || !emitted.insert(id).second) return;
+            const auto nextRange = ranges.upper_bound(stamp);
+            if (nextRange == ranges.begin())
+            {
                 Project(appointment, start, uid, std::to_string(id));
+                return;
+            }
+            const auto& range = std::prev(nextRange)->second;
+            if (range.cancelled) return;
+            start.value = ToIcal(WallTime(start.value) + range.shift, start.value.is_date);
+            if (!range.duration)
+                Project(appointment, start, uid, std::to_string(id));
+            else
+            {
+                auto changed = appointment;
+                changed.duration = *range.duration;
+                changed.wallDuration = range.wallDuration;
+                Project(changed, start, uid, std::to_string(id));
+            }
         };
         for (; rdate; rdate = icalcomponent_get_next_property(event, ICAL_RDATE_PROPERTY))
         {
@@ -395,7 +470,10 @@ struct Expansion
             using Iterator = std::unique_ptr<icalrecur_iterator, decltype(&icalrecur_iterator_free)>;
             Iterator iterator(icalrecur_iterator_new(recurrence.get(), floatingStart), icalrecur_iterator_free);
             if (!iterator) throw InvalidFeed{};
-            const Stamp earliest = first - days{2} - master->duration;
+            // An instance can now overlap the display window even if its
+            // original start is outside it. Bounds are in recurrence wall time.
+            const Stamp earliest = first - days{2} - longestDuration - latestShift;
+            const Stamp latest = end + days{2} - earliestShift;
             if (recurrence->count == 0 && earliest > WallTime(floatingStart) &&
                 !icalrecur_iterator_set_start(iterator.get(), ToIcal(earliest, floatingStart.is_date)))
                 throw InvalidFeed{};
@@ -404,7 +482,7 @@ struct Expansion
             {
                 if (++iterationCount > MaximumOccurrences || token.stop_requested()) throw InvalidFeed{};
                 const auto wall = WallTime(next);
-                if (wall >= end + days{2}) break;
+                if (wall >= latest) break;
                 const EventTime start{next, defaultZone};
                 if (!icaltime_is_null_time(until) &&
                     (icaltime_is_utc(until) ? Timeline(start) : wall) > WallTime(until)) break;

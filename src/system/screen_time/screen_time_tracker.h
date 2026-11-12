@@ -66,7 +66,7 @@ public:
     void SetDisplayOn(bool on);
     void SetSuspended(bool suspended);
     void Flush();
-    void Clear();
+    [[nodiscard]] bool Clear(std::string* error = nullptr);
 
     [[nodiscard]] TodayView Today() const;
     [[nodiscard]] std::vector<DayReport> Reports() const;

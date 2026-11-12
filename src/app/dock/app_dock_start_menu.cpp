@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <future>
+#include <iterator>
 #include <thread>
 
 namespace snowdesktop
@@ -23,10 +24,7 @@ struct WinKeyStartTapState
     std::atomic<bool> running{false};
     HANDLE stop = nullptr;
     std::thread worker;
-    bool winDown = false;
-    bool suppressed = false;
-    bool sawOther = false;
-    DWORD winVk = VK_LWIN;
+    DWORD tapCandidate = 0;
     bool failureLogged = false;
 };
 
@@ -36,22 +34,31 @@ WinKeyStartTapState& TapState()
     return state;
 }
 
-bool ModifierDown() noexcept
+bool KeyDown(int key) noexcept
 {
-    const auto down = [](int key) noexcept {
-        return (GetAsyncKeyState(key) & 0x8000) != 0;
-    };
-    return down(VK_CONTROL) || down(VK_MENU) || down(VK_SHIFT);
+    return (GetAsyncKeyState(key) & 0x8000) != 0;
 }
 
-void InjectWin(DWORD key, bool up) noexcept
+bool ModifierDown() noexcept
 {
-    INPUT input{};
-    input.type = INPUT_KEYBOARD;
-    input.ki.wVk = static_cast<WORD>(key);
-    input.ki.dwFlags = KEYEVENTF_EXTENDEDKEY;
-    if (up) input.ki.dwFlags |= KEYEVENTF_KEYUP;
-    SendInput(1, &input, sizeof(input));
+    return KeyDown(VK_CONTROL) || KeyDown(VK_MENU) || KeyDown(VK_SHIFT);
+}
+
+bool MaskNativeStartAndRelease(DWORD winKey) noexcept
+{
+    // A dummy key between Win down and up prevents the default Start toggle.
+    // Queue it with the replacement release so it precedes the release.
+    constexpr WORD menuMaskKey = 0xFF;
+    INPUT input[3]{};
+    for (auto& event : input) event.type = INPUT_KEYBOARD;
+    input[0].ki.wVk = menuMaskKey;
+    input[1].ki.wVk = menuMaskKey;
+    input[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    input[2].ki.wVk = static_cast<WORD>(winKey);
+    input[2].ki.dwFlags = KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP;
+    const UINT sent = SendInput(static_cast<UINT>(std::size(input)), input, sizeof(INPUT));
+    if (sent == 1) SendInput(1, &input[1], sizeof(INPUT));
+    return sent == std::size(input);
 }
 
 UINT TapMessage() noexcept
@@ -65,59 +72,34 @@ LRESULT CALLBACK WinKeyStartProc(int code, WPARAM message, LPARAM data)
     if (code != HC_ACTION || !data)
         return CallNextHookEx(nullptr, code, message, data);
     const auto& input = *reinterpret_cast<const KBDLLHOOKSTRUCT*>(data);
-    if ((input.flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED)) != 0)
-        return CallNextHookEx(nullptr, code, message, data);
     auto& state = TapState();
     const bool down = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
     const bool up = message == WM_KEYUP || message == WM_SYSKEYUP;
     const bool win = input.vkCode == VK_LWIN || input.vkCode == VK_RWIN;
-    if (!state.enabled.load(std::memory_order_acquire) && !state.suppressed)
-        return CallNextHookEx(nullptr, code, message, data);
-    if (win && down)
+    const bool injected = (input.flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED)) != 0;
+    if (down)
     {
-        if (state.winDown)
-            return state.suppressed ? 1 : CallNextHookEx(nullptr, code, message, data);
-        state.winDown = true;
-        state.sawOther = false;
-        state.winVk = input.vkCode;
-        // Eat the key-down as well as the key-up. Passing only the key-up
-        // would leave Windows believing the modifier is still held.
-        if (!state.enabled.load(std::memory_order_acquire) || ModifierDown())
-        {
-            state.suppressed = false;
-            return CallNextHookEx(nullptr, code, message, data);
-        }
-        state.suppressed = true;
-        return 1;
+        if (!win || injected || ModifierDown() || KeyDown(input.vkCode == VK_LWIN ? VK_RWIN : VK_LWIN))
+            state.tapCandidate = 0;
+        else if (!KeyDown(static_cast<int>(input.vkCode)))
+            state.tapCandidate = state.enabled.load(std::memory_order_acquire) ? input.vkCode : 0;
     }
-    if (win && up)
+    if (win && up && !injected && state.tapCandidate == input.vkCode)
     {
-        const bool plain = state.winDown && !state.sawOther && !ModifierDown();
-        const bool eat = state.suppressed;
-        const DWORD key = state.winVk;
-        state.winDown = false;
-        state.suppressed = false;
-        if (!eat) return CallNextHookEx(nullptr, code, message, data);
+        state.tapCandidate = 0;
         const HWND target = state.target.load(std::memory_order_acquire);
         const UINT id = TapMessage();
-        if (plain && state.enabled.load(std::memory_order_acquire) && target && id)
+        // Physical chords always go to Windows. If UIPI blocks the lone-tap
+        // replacement, let Windows receive the original key-up as well.
+        if (state.enabled.load(std::memory_order_acquire) && target && id &&
+            !ModifierDown() && MaskNativeStartAndRelease(input.vkCode))
         {
             state.pending.store(true, std::memory_order_release);
-            if (PostMessageW(target, id, 0, 0)) return 1;
-            if (!state.pending.exchange(false, std::memory_order_acq_rel)) return 1;
+            if (!PostMessageW(target, id, 0, 0) &&
+                state.pending.exchange(false, std::memory_order_acq_rel))
+                NativeStartMenu::Toggle();
+            return 1;
         }
-        if (plain)
-        {
-            InjectWin(key, false);
-            InjectWin(key, true);
-        }
-        return 1;
-    }
-    if (down && state.winDown && state.suppressed)
-    {
-        state.sawOther = true;
-        state.suppressed = false;
-        InjectWin(state.winVk, false);
     }
     return CallNextHookEx(nullptr, code, message, data);
 }
@@ -129,9 +111,7 @@ void TapThread(WinKeyStartTapState* state, std::promise<DWORD>* started)
     {
         MSG message{};
         PeekMessageW(&message, nullptr, 0, 0, PM_NOREMOVE);
-        state->winDown = false;
-        state->suppressed = false;
-        state->sawOther = false;
+        state->tapCandidate = 0;
         hook = SetWindowsHookExW(WH_KEYBOARD_LL, WinKeyStartProc, GetModuleHandleW(nullptr), 0);
         if (!hook)
         {
@@ -205,8 +185,7 @@ void StopTap(WinKeyStartTapState& state)
     }
     if (state.stop) { CloseHandle(state.stop); state.stop = nullptr; }
     state.running.store(false, std::memory_order_release);
-    state.winDown = false;
-    state.suppressed = false;
+    state.tapCandidate = 0;
 }
 }
 
@@ -326,6 +305,7 @@ void DesktopApp::UpdateDockStartMenu()
                 snowdesktop::NativeStartMenu::Toggle();
             }
         }
+        else snowdesktop::NativeStartMenu::Toggle();
     }
     if (!dockStartMenu_ || !dockStartMenuHeldMonitor_) return;
     const HMONITOR monitor = dockStartMenuHeldMonitor_;

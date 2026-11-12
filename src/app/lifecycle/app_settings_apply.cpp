@@ -1615,9 +1615,17 @@ public:
             break;
         }
         case Action::ClearScreenTime:
+        {
             app_.EnsureScreenTimeTracker();
-            if (app_.screenTime_) app_.screenTime_->Clear();
+            std::string error;
+            if (!app_.screenTime_->Clear(&error))
+            {
+                const auto diagnostic = L"[ScreenTime] Could not clear history: " + Utf8ToWide(error);
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, diagnostic.c_str(), DiagnosticLogLevel::Error);
+                return snowdesktop::SettingsActionResult::Failure(_LW("settings.status.saveFailed"));
+            }
             break;
+        }
         case Action::SetAnimationDiagnostics:
             app_.uiAnimationScheduler_.SetDiagnosticsEnabled(
                 request.boolValue);

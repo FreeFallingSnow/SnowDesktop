@@ -534,6 +534,15 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     }
     switch (msg)
     {
+    case WM_POWERBROADCAST:
+        HandleScreenTimePower(wp, lp);
+        return TRUE;
+    case WM_WTSSESSION_CHANGE:
+        HandleScreenTimeSession(wp);
+        return 0;
+    case WM_QUERYENDSESSION:
+    case WM_ENDSESSION:
+        return HandleMessage(hwnd, msg, wp, lp);
     case kBackgroundShellReadyMessage:
         PollInitialShellRead();
         DrainBackgroundShellWork();
@@ -711,6 +720,8 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         RequestExit();
         return 0;
     case WM_DESTROY:
+        FlushScreenTime();
+        UnregisterScreenTimeNotifications();
         KillTimer(hwnd, kDisplayTopologyRefreshTimerId);
         snowdesktop::SoftwareDesktopHotkey().Unregister();
         if (floatingDockHotkeyHwnd_ == hwnd)

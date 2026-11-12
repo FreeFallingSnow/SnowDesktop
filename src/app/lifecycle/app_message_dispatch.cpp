@@ -1491,12 +1491,6 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_TIMER:
         OnTimer(wp);
         return 0;
-    case WM_POWERBROADCAST:
-        HandleScreenTimePower(wp, lp);
-        return 0;
-    case WM_WTSSESSION_CHANGE:
-        HandleScreenTimeSession(wp);
-        return 0;
     case kTrayCallbackMessage:
         OnTrayCallback(lp);
         return 0;
@@ -1518,7 +1512,6 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_DESTROY:
         FlushScreenTime();
-        UnregisterScreenTimeNotifications();
         if (widgetAccessibilityProvider_)
             widgetAccessibilityProvider_->DetachWindow(hwnd);
         StopDemoIconLoader();
