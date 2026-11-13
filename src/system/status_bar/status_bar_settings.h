@@ -7,13 +7,14 @@ namespace snowdesktop
 {
 template<class Visitor> void VisitStatusBarAppearanceRules(Visitor visit)
 {
-    visit("noWindow", &StatusBarSettings::noWindow);
     visit("maximizedWindow", &StatusBarSettings::maximizedWindow);
+    visit("appWindow", &StatusBarSettings::appWindow);
 }
 
 template<class Visitor> void VisitStatusBarStoredAppearanceRules(Visitor visit)
 {
     VisitStatusBarAppearanceRules(visit);
+    visit("noWindow", &StatusBarSettings::noWindow);
     visit("shellUi", &StatusBarSettings::legacyShellUi);
     visit("visibleWindow", &StatusBarSettings::legacyVisibleWindow);
 }

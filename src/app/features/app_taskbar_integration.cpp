@@ -491,7 +491,7 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
         if (dockSettings_.systemTaskbarShellUi.enabled && shellPanelVisible)
             selectedRule = &dockSettings_.systemTaskbarShellUi;
         else if (dockSettings_.systemTaskbarMaximizedWindow.enabled &&
-            state.maximized)
+            state.MaximizedOrFullscreen())
             selectedRule = &dockSettings_.systemTaskbarMaximizedWindow;
         else if (dockSettings_.systemTaskbarVisibleWindow.enabled &&
             state.visible)

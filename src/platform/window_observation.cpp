@@ -123,6 +123,8 @@ Snapshot Observe(std::span<const RECT> pages, HWND desktopRoot)
         auto& state = scan.result.monitors[monitor];
         state.visible = true;
         state.maximized = state.maximized || sample->maximized;
+        state.fullscreen = state.fullscreen || (monitorGeometry &&
+            fullscreen::IsFullscreen(*sample, monitorGeometry->rcMonitor));
         if (!scan.reachedDesktop)
             for (const auto& [display, bounds] : scan.geometry)
             {

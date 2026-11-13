@@ -150,7 +150,7 @@ void DockRunningItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
         const auto* dock = dynamic_cast<const DockContainer*>(container_);
         app_->DrawDockRunningApp(
             context, app_->dockUnpinnedRunningApps_[index], rect, state,
-            dock ? dock->GetElementIconSize(bounds_, rect) : 0);
+            dock ? dock->GetElementIconSize(bounds_, rect) : 0, dock ? dock->GetMonitor() : nullptr);
     }
 }
 
@@ -218,7 +218,7 @@ void DockFrequentItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
         app_->items_[itemIndex_].layoutKey, true };
     const auto* dock = dynamic_cast<const DockContainer*>(container_);
     app_->DrawDockEntry(context, entry, rect, state,
-        dock ? dock->GetElementIconSize(bounds_, rect) : 0);
+        dock ? dock->GetElementIconSize(bounds_, rect) : 0, nullptr, nullptr, dock ? dock->GetMonitor() : nullptr);
 }
 
 ComPtr<IDataObject> DockFrequentItem::CreateDataObject()
@@ -369,7 +369,7 @@ void DockEntryItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             }
         }
         app_->DrawDockEntry(context, *entry, rect, state,
-            dock ? dock->GetElementIconSize(bounds_, rect) : 0);
+            dock ? dock->GetElementIconSize(bounds_, rect) : 0, nullptr, nullptr, dock ? dock->GetMonitor() : nullptr);
     }
 }
 
@@ -385,6 +385,14 @@ ComPtr<IDataObject> DockEntryItem::CreateDataObject()
 
 DockContainer::DockContainer(DesktopApp* app, std::vector<DockEntry>* entries, RECT area)
     : app_(app), entries_(entries), area_(area) {}
+
+HMONITOR DockContainer::GetMonitor() const
+{
+    if (!app_) return nullptr;
+    RECT screen = area_;
+    OffsetRect(&screen, app_->virtualLeft_, app_->virtualTop_);
+    return MonitorFromRect(&screen, MONITOR_DEFAULTTONEAREST);
+}
 
 DockContainer::PresentationState DockContainer::CapturePresentationState() const
 {
@@ -1423,9 +1431,7 @@ RECT DockContainer::GetVisualPanelBounds(POINT pointer) const
         panel = snowdesktop::dock_magnification::ClipPanelToWorkArea(panel, area_);
     if (app_->statusBar_ && !IsMergedWithStatusBar())
     {
-        RECT screen = area_;
-        OffsetRect(&screen, app_->virtualLeft_, app_->virtualTop_);
-        const auto monitor = MonitorFromRect(&screen, MONITOR_DEFAULTTONEAREST);
+        const auto monitor = GetMonitor();
         MONITORINFO info{sizeof(info)};
         if (GetMonitorInfoW(monitor, &info))
         {
@@ -1607,7 +1613,7 @@ RECT DockContainer::GetHoveredTitleBounds(
     const int position = static_cast<int>(
         app_->dockSettings_.position);
     const bool lightTheme =
-        (app_->CurrentDockAppearance().contentTheme == 1);
+        (app_->CurrentDockAppearance(GetMonitor()).contentTheme == 1);
     const float tooltipFontSize = snowdesktop::NativeTooltipFontSize() * TitleTooltipScale();
     const bool cachedMeasurement =
         tooltipFontSize == hoveredTitleBoundsCacheFontSize_ &&
@@ -2375,11 +2381,7 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 {
     if (!context || SharesStatusBarAppearance()) return;
     RECT bounds = GetVisualPanelBounds(mousePt);
-    PersonalizationSettings p = PersonalizationSettings::DarkPreset();
-    if (app_ && app_->renderingFloatingDock_)
-        p = app_->floatingDockPersonalization_;
-    else if (app_)
-        p = app_->CurrentDockAppearance();
+    const auto p = app_ ? app_->CurrentDockAppearance(GetMonitor()) : PersonalizationSettings::DarkPreset();
     const float panelRadius = IsEdgeAttached() ? 0.0f : p.cornerRadius;
     const D2D1_COLOR_F fill = D2D1::ColorF(
         p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
@@ -2473,7 +2475,8 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     const size_t folderEnd = folderBegin + folderCount;
     const bool hasRecycleBin = count > 0 && app_ &&
         app_->IsRecycleBinDockEntry(entries_->back());
-    const bool lt = app_->CurrentDockAppearance().contentTheme == 1;
+    const auto monitor = GetMonitor();
+    const bool lt = app_->CurrentDockAppearance(monitor).contentTheme == 1;
     std::wstring hoveredTitle;
     const RECT magnificationFocus =
         ResolveMagnificationFocusRect(app_->lastMousePoint_);
@@ -2502,7 +2505,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                 (windowsVisual.bottom - windowsVisual.top + backgroundSize) / 2
         };
         auto* custom = app_->GetSmallCustomIcon(context, L"control:start", backgroundSize);
-        if (!custom) app_->DrawDockControlBackground(context, background, 0, !lt);
+        if (!custom) app_->DrawDockControlBackground(context, background, 0, !lt, 0, monitor);
 
         const float logoSize = std::max(1.0f, backgroundSize * 0.58f);
         const float paneGap = std::max(1.5f, logoSize * 0.09f);
@@ -2842,7 +2845,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         };
         auto* custom = app_->GetSmallCustomIcon(context, L"control:search", backgroundSize);
         if (!custom) app_->DrawDockControlBackground(
-            context, searchBackground, 0, !lt);
+            context, searchBackground, 0, !lt, 0, monitor);
 
         ComPtr<ID2D1SolidColorBrush> brush;
         context->CreateSolidColorBrush(

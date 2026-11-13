@@ -801,7 +801,9 @@ void DesktopApp::OnTimer(WPARAM timerId)
         const bool windowStateChanged = windowStateTick !=
             observedWindowRevision_;
         const bool observeDesktopWindows = customDesktopVisible_ ||
-            generalSettings_.statusBar.enabled;
+            generalSettings_.statusBar.enabled ||
+            (generalSettings_.dockEnabled &&
+                (dockSettings_.appWindow.enabled || dockSettings_.maximizedWindow.enabled));
         const bool taskbarObserverActive = IsSystemTaskbarHookRequired(dockSettings_);
         const bool windowStateRefreshDue =
             windowStateChanged &&

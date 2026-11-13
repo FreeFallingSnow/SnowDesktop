@@ -27,9 +27,9 @@ struct StatusBarSettings
     int edgeRevealGesture = 1; // 0=swipe, 1=hover; independent bars default to hover.
     float scale = 1.0f;
     SurfaceTheme theme;
-    StatusBarAppearanceRule noWindow, maximizedWindow;
-    // Retired scenes are read and round-tripped under their original JSON keys
-    // only. Never reinterpret "has visible windows" as "has no windows".
+    StatusBarAppearanceRule appWindow, maximizedWindow;
+    // Retired scenes round-trip under their original JSON keys.
+    StatusBarAppearanceRule noWindow;
     StatusBarAppearanceRule legacyShellUi, legacyVisibleWindow;
     bool menu = true, quickSearch = true, taskView = true;
     bool foregroundAppName = false;

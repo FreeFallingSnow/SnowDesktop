@@ -37,6 +37,7 @@ SD_IPC_FIELDS(SurfaceTheme, v.mode, v.customized, v.appearance);
 SD_IPC_FIELDS(StatusBarAppearanceRule, v.enabled, v.theme);
 SD_IPC_FIELDS(SystemTaskbarDynamicRule,
     v.enabled, v.themeMode, v.contentTheme, v.appearance);
+SD_IPC_FIELDS(DockAppearanceRule, v.enabled, v.appearancePreset, v.appearance);
 SD_IPC_FIELDS(DockFullscreenException, v.executable, v.policy);
 SD_IPC_FIELDS(DockFullscreenApplication, v.name, v.executable);
 SD_IPC_FIELDS(DockTrayRule, v.executable, v.matchPath, v.enabled, v.doubleClick);
@@ -50,7 +51,7 @@ SD_IPC_FIELDS(DockSettings,
     v.systemTaskbarShellUi, v.hoverEffect, v.hoverScale, v.launchEffect, v.windowEffect,
     v.followComponentAppearance, v.customAppearance, v.appearancePreset, v.classicTaskbarSystemTheme, v.trayApplications,
     v.followComponentCornerRadius, v.cornerRadius, v.attentionDotSizeScale, v.attentionDotOffset,
-    v.blurReservedSpace);
+    v.blurReservedSpace, v.maximizedWindow, v.appWindow);
 SD_IPC_FIELDS(NavigationSettings,
     v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode, v.lastCollapsed, v.layout, v.prefixes, v.defaultEngine, v.engines, v.colors,
     v.mappingViewMode, v.widgetSortByInitial, v.appSuggestionsEnabled, v.favoritesEnabled, v.favorites);
@@ -76,7 +77,7 @@ SD_IPC_FIELDS(StatusBarSettings,
     v.legacyShellUi, v.maximizedWindow, v.legacyVisibleWindow, v.noWindow, v.inputMethod,
     v.quickControlOrder, v.hiddenQuickControls, v.clockShowSeconds, v.timeNotificationRightAligned, v.batteryPercentage, v.showDesktop,
     v.controlCenterSingleIcon, v.notifications, v.showOnlyWhenSummoned, v.edgeRevealGesture,
-    v.foregroundAppName, v.foregroundAppNameCentered);
+    v.foregroundAppName, v.foregroundAppNameCentered, v.appWindow);
 SD_IPC_FIELDS(app_fonts::Selection, v.package, v.family);
 SD_IPC_FIELDS(runtime_modules::Target, v.process, v.name, v.explorer);
 SD_IPC_FIELDS(runtime_modules::Status, v.module, v.allowed, v.active, v.error, v.residencyKnown, v.targets);

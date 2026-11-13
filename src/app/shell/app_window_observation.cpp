@@ -27,7 +27,8 @@ void DesktopApp::RefreshWindowObservations()
             const auto previous = observedMonitorWindows_.find(entry.first);
             return previous == observedMonitorWindows_.end() ||
                 previous->second.visible != entry.second.visible ||
-                previous->second.maximized != entry.second.maximized;
+                previous->second.maximized != entry.second.maximized ||
+                previous->second.fullscreen != entry.second.fullscreen;
         });
     const bool fullscreenChanged = sceneChanged ||
         std::any_of(snapshot.monitors.begin(), snapshot.monitors.end(), [this](const auto& entry) {
@@ -65,6 +66,13 @@ void DesktopApp::RefreshWindowObservations()
         OffsetRect(&bounds, -left, -top);
     UpdateDesktopWidgetCoverage(std::move(snapshot.desktopCoverage));
     if (statusBar_ && fullscreenChanged) statusBar_->NotifyWindowObservations();
+    if (sceneChanged && generalSettings_.dockEnabled &&
+        (dockSettings_.appWindow.enabled || dockSettings_.maximizedWindow.enabled))
+    {
+        InvalidateDragStaticScene();
+        ApplyPersistentDockHostAppearance();
+        InvalidateDockRects();
+    }
 }
 
 std::optional<HWND> DesktopApp::ObservedFullscreenSource(HMONITOR monitor) const

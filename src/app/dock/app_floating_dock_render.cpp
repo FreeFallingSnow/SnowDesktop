@@ -158,7 +158,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         }
         if (host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect))
         {
-            const auto& appearance = floatingDockPersonalization_;
+            const auto appearance = CurrentDockAppearance(host.monitor);
             const D2D1_COLOR_F background = D2D1::ColorF(appearance.widgetBgR,
                 appearance.widgetBgG, appearance.widgetBgB, 0.98f);
             const float contrast = background.r * 0.2126f + background.g * 0.7152f + background.b * 0.0722f;

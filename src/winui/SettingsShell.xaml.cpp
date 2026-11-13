@@ -2946,7 +2946,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             {
                 PageCards().Children().Append(statusBarPage_->AppearanceContent());
                 statusBarPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) {
-                    if (id == "statusBar.theme" || id == "statusBar.noWindow" || id == "statusBar.maximizedWindow")
+                    if (id == "statusBar.theme" || id == "statusBar.appWindow" || id == "statusBar.maximizedWindow")
                         RegisterFocusTarget(std::move(id), element);
                 });
                 statusBarPage_->Activate();
@@ -3148,6 +3148,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(dockPage_->DockContent());
             PageCards().Children().Append(dockPage_->DockAppearanceContent());
             RegisterFocusTarget("personalization.dockAppearance", personalizationPage_->FocusTarget("personalization.dockAppearance"));
+            for (const auto* id : {"dock.maximizedWindow", "dock.appWindow"})
+                RegisterFocusTarget(id, personalizationPage_->FocusTarget(id));
             personalizationPage_->Activate();
             animationPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) {
                 if (id == "animation.hover" || id == "animation.hoverScale" || id == "animation.launch" || id == "animation.window")

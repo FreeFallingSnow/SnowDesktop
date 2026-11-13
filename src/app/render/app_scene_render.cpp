@@ -291,7 +291,7 @@ void DesktopApp::DrawDesktopForeground(
                     // rectangle could keep a retired Container's glass owner.
                     if (!dock->SharesStatusBarAppearance())
                     {
-                        const auto appearance = CurrentDockAppearance();
+                        const auto appearance = CurrentDockAppearance(dock->GetMonitor());
                         if (appearance.glassEnabled)
                             (void)desktopBackdropCompositor_.AddPanel(panel,
                                 dockSettings_.edgeAttached ? 0.0f : appearance.cornerRadius,

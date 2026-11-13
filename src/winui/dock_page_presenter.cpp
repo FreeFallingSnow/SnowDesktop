@@ -2776,7 +2776,7 @@ struct DockPagePresenter::Impl
             return L("app.settings.taskbar_transparent", L"Transparent");
         default:
             return L("app.settings.taskbar_dynamic_theme",
-                L"Appearance when active");
+                L"Override theme");
         }
     }
 
@@ -2870,7 +2870,7 @@ struct DockPagePresenter::Impl
         muxa::AutomationProperties::SetName(control.appearanceDetails,
             ContextualText(context,
                 L("app.settings.taskbar_dynamic_theme",
-                    L"Appearance when active")));
+                    L"Override theme")));
         muxa::AutomationProperties::SetHelpText(
             control.appearanceDetails, help);
         RefreshDynamicRuleSummary(control);
@@ -3251,7 +3251,7 @@ struct DockPagePresenter::Impl
             L"When Start, Search, Task View, or a system panel is open");
         RefreshDynamicRuleText(maximizedWindowRule,
             "app.settings.taskbar_dynamic_maximized_window",
-            L"When this display has a maximized app window");
+            L"When this display has a maximized or fullscreen app window");
         RefreshDynamicRuleText(visibleWindowRule,
             "app.settings.taskbar_dynamic_visible_window",
             L"When this display has an app window");
@@ -3270,7 +3270,7 @@ struct DockPagePresenter::Impl
         control.detailTitle.Text(context);
         control.enabledRow.SetText(context);
         control.themeRow.SetText(L(
-            "app.settings.taskbar_dynamic_theme", L"Appearance when active"));
+            "app.settings.taskbar_dynamic_theme", L"Override theme"));
         ReplaceTaskbarThemeItems(control.theme);
         control.contentThemeRow.SetText(L(
             "app.settings.taskbar_foreground_color",

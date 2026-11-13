@@ -35,6 +35,15 @@ struct SystemTaskbarDynamicRule
         PersonalizationSettings::AcrylicDarkPreset();
 };
 
+struct DockAppearanceRule
+{
+    bool operator==(const DockAppearanceRule&) const = default;
+
+    bool enabled = false;
+    int appearancePreset = -1; // -1 follows the global theme.
+    PersonalizationSettings appearance;
+};
+
 struct DockSettings : DockLayoutSettings
 {
     bool operator==(const DockSettings&) const = default;
@@ -71,6 +80,7 @@ struct DockSettings : DockLayoutSettings
     float attentionDotOffset = snowdesktop::dock_attention_dot::kDefaultOffset;
     int appearancePreset = kAppearancePresetCustom;
     PersonalizationSettings customAppearance;
+    DockAppearanceRule maximizedWindow, appWindow;
     int hoverEffect = 2;
     float hoverScale = 1.28f;
     int launchEffect = 1;

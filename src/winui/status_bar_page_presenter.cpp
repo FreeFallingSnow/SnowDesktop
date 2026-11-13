@@ -115,7 +115,7 @@ struct StatusBarPagePresenter::Impl
                     theme.customized = true;
                 }, commit);
             }, false, true);
-        const std::string target = member == &StatusBarSettings::noWindow ? "statusBar/noWindow" :
+        const std::string target = member == &StatusBarSettings::appWindow ? "statusBar/appWindow" :
             member == &StatusBarSettings::maximizedWindow ? "statusBar/maximizedWindow" : "statusBar";
         control.themes = std::make_unique<ThemeLibraryControls>(localize, target, false, control.combo, 10, 9);
         if (member) control.themes->SetInlineSurface();
@@ -161,6 +161,7 @@ struct StatusBarPagePresenter::Impl
         rule->enabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         parent.Children().Append(rule->enabledRow.root);
         InitializeTheme(rule->theme, parent, member);
+        rule->theme.root.Visibility(mux::Visibility::Collapsed);
         const auto control = rule->enabled;
         const auto editor = rule->theme.editor;
         const auto token = control.Toggled([this, member, control, editor](const auto&, const auto&) {
@@ -377,9 +378,9 @@ struct StatusBarPagePresenter::Impl
         rulesSection.IsExpanded(false);
         appearance.Children().Append(presenter_controls::SettingsDisclosureRow(rulesSection));
         rulesHint.TextWrapping(mux::TextWrapping::Wrap); rulesHint.Opacity(.72); rulesHint.FontSize(12);
-        InitializeRule(scenarios, "statusBar.noWindow", "statusBar.noWindow", &StatusBarSettings::noWindow);
+        InitializeRule(scenarios, "app.settings.taskbar_dynamic_maximized_window", "statusBar.maximizedWindow", &StatusBarSettings::maximizedWindow);
         rules.front()->enabledRow.text.Children().Append(rulesHint);
-        InitializeRule(scenarios, "statusBar.maximizedWindow", "statusBar.maximizedWindow", &StatusBarSettings::maximizedWindow);
+        InitializeRule(scenarios, "app.settings.taskbar_dynamic_visible_window", "statusBar.appWindow", &StatusBarSettings::appWindow);
         calendarLinkRow.Initialize(calendarLink);
         relatedContent.Children().Append(calendarLinkRow.root);
         presenter_controls::UpdateSettingsSubrows(relatedContent, 0);
@@ -503,9 +504,9 @@ struct StatusBarPagePresenter::Impl
 
         syncing = false;
     }
-    void LocalizeTheme(ThemeControl& control)
+    void LocalizeTheme(ThemeControl& control, const char* labelKey = "app.settings.theme")
     {
-        control.row.SetText(L("app.settings.theme"));
+        control.row.SetText(L(labelKey));
         mux::Automation::AutomationProperties::SetName(control.combo, control.row.label.Text());
         control.combo.Items().Clear();
         for (const auto key : {"app.settings.taskbar_follow_global", "app.settings.dark", "app.settings.light",
@@ -591,9 +592,9 @@ struct StatusBarPagePresenter::Impl
             rule->enabledRow.SetText(L(rule->key));
             mux::Automation::AutomationProperties::SetName(rule->enabled, rule->title.Text());
             mux::Automation::AutomationProperties::SetHelpText(rule->enabled, rulesHint.Text());
-            LocalizeTheme(rule->theme);
+            LocalizeTheme(rule->theme, "app.settings.taskbar_dynamic_theme");
             mux::Automation::AutomationProperties::SetName(rule->theme.combo,
-                L(rule->key) + L" / " + L("app.settings.theme"));
+                L(rule->key) + L" / " + L("app.settings.taskbar_dynamic_theme"));
         }
         edge.Items().Clear(); monitors.Items().Clear();
         for (auto key : {"app.dock.bottom", "app.dock.top"}) edge.Items().Append(winrt::box_value(L(key)));

@@ -1240,7 +1240,7 @@ private:
     /** Application-owned appearance mirror, independent of settings UI. */
     const PersonalizationSettings& CurrentPersonalization() const noexcept
     { return personalizationSettings_; }
-    PersonalizationSettings CurrentDockAppearance() const;
+    PersonalizationSettings CurrentDockAppearance(HMONITOR monitor = nullptr) const;
     /** @brief 切换桌面图标可见性（双击空白处隐藏/恢复）。 */
     void ToggleDesktopIconsVisibility(bool automatic = false);
     void UpdateDesktopIdleHide();
@@ -2687,7 +2687,7 @@ private:
     bool StartLuaWidgetPanelCompositionAnimation();
     void DrawDockEntry(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT rect, int state,
         int requestedIconSize = 0, const DesktopWidget* widgetSource = nullptr,
-        snowdesktop::WidgetPreviewScene* previewScene = nullptr);
+        snowdesktop::WidgetPreviewScene* previewScene = nullptr, HMONITOR dockMonitor = nullptr);
     void OnDockFolderIconLoaded(const std::wstring& iconCacheKey,
         std::uint64_t ticket, HBITMAP source, bool refined);
     void RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
@@ -2696,11 +2696,12 @@ private:
         D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth, std::uintptr_t ownerKey = 0);
     void DrawPrivacyFaIcon(ID2D1DeviceContext* ctx, RECT rect, bool directory);
     bool DrawDockControlBackground(ID2D1DeviceContext* ctx, RECT rect, int state,
-        bool forceWhiteStyle = false, std::uintptr_t ownerKey = 0);
+        bool forceWhiteStyle = false, std::uintptr_t ownerKey = 0, HMONITOR dockMonitor = nullptr);
     void DrawDockSelectionIndicator(
         ID2D1DeviceContext* ctx, RECT iconRect, bool lightTheme);
     void DrawDockRunningApp(ID2D1DeviceContext* ctx,
-        const DockRunningAppInfo& app, RECT rect, int state, int requestedIconSize = 0);
+        const DockRunningAppInfo& app, RECT rect, int state, int requestedIconSize = 0,
+        HMONITOR dockMonitor = nullptr);
     void DrawDockAttentionDot(ID2D1DeviceContext* ctx, RECT iconRect, float opacity = 1.0f);
     /** @brief 将 RECT 转换为 D2D1_RECT_F。 @param r 输入矩形 @return D2D 矩形 */
     static D2D1_RECT_F ToD2DRect(const RECT& r);
@@ -3961,8 +3962,6 @@ private:
     const void* floatingDockHoverTargetOwner_ = nullptr;
     size_t floatingDockHoverTargetIndex_ = 0;
     int floatingDockHoverTargetKind_ = 0;
-    PersonalizationSettings floatingDockPersonalization_ =
-        PersonalizationSettings::DarkPreset();
     ComPtr<IDCompositionTarget> dragPreviewDcompTarget_;
     ComPtr<IDCompositionVisual2> dragPreviewDcompVisual_;
     ComPtr<IDCompositionSurface> dragPreviewDcompSurface_;

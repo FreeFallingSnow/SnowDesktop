@@ -93,6 +93,15 @@ PersonalizationSettings ResolveDockAppearance(const DockSettings& settings, cons
     return value;
 }
 
+PersonalizationSettings ResolveDockRuleAppearance(const DockSettings& settings,
+    const DockAppearanceRule& rule, const PersonalizationSettings& global)
+{
+    auto value = rule.appearancePreset == -1 ? global :
+        rule.appearancePreset == kAppearancePresetCustom ? rule.appearance : MakeAppearancePreset(rule.appearancePreset);
+    value.cornerRadius = settings.followComponentCornerRadius ? global.cornerRadius : settings.cornerRadius;
+    return value;
+}
+
 void SelectDockAppearance(DockSettings& settings, bool followGlobal,
     int preset, const PersonalizationSettings& global)
 {
@@ -1628,6 +1637,30 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.appearancePreset = NormalizeAppearancePresetId(static_cast<int>(value));
     if (const auto* appearance = gradientDocument.Find("customAppearance"))
         if (!snowdesktop::DecodePanelAppearance(*appearance, settings.customAppearance)) return false;
+    for (const auto& [key, rule] : {std::pair{"maximizedWindow", &settings.maximizedWindow},
+            std::pair{"appWindow", &settings.appWindow}})
+    {
+        *rule = {};
+        const auto* entry = gradientDocument.Find(key);
+        if (!entry) continue;
+        if (!entry->IsObject()) return false;
+        if (const auto* enabled = entry->Find("enabled"))
+        {
+            if (!enabled->IsBoolean()) return false;
+            rule->enabled = enabled->boolean;
+        }
+        if (const auto* preset = entry->Find("appearancePreset"))
+        {
+            if (!preset->IsNumber() || preset->number < -1 ||
+                preset->number > kAppearancePresetGlassTransparent ||
+                std::floor(preset->number) != preset->number) return false;
+            const int id = static_cast<int>(preset->number);
+            if (id != -1 && (NormalizeAppearancePresetId(id) != id || id == kAppearancePresetTaskbarTransparent)) return false;
+            rule->appearancePreset = id;
+        }
+        if (const auto* appearance = entry->Find("appearance"))
+            if (!snowdesktop::DecodePanelAppearance(*appearance, rule->appearance)) return false;
+    }
     settings.fullscreenPolicy = snowdesktop::dock_fullscreen::DecodePolicy(gradientDocument);
     if (!snowdesktop::dock_fullscreen::DecodeExceptions(gradientDocument, settings.fullscreenExceptions)) return false;
     if (!snowdesktop::dock_tray::DecodeRules(gradientDocument, settings.trayApplications)) return false;
@@ -1772,6 +1805,14 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"attentionDotOffset\": " << snowdesktop::dock_attention_dot::NormalizeOffset(settings.attentionDotOffset) << ",\n";
     file << "  \"dockAppearancePreset\": " << settings.appearancePreset << ",\n";
     file << "  \"customAppearance\": " << customAppearance << ",\n";
+    for (const auto& [key, rule] : {std::pair{"maximizedWindow", &settings.maximizedWindow},
+            std::pair{"appWindow", &settings.appWindow}})
+    {
+        const auto appearance = snowdesktop::EncodePanelAppearance(rule->appearance);
+        if (appearance.empty()) return false;
+        file << "  \"" << key << "\": {\"enabled\":" << (rule->enabled ? "true" : "false")
+             << ",\"appearancePreset\":" << rule->appearancePreset << ",\"appearance\":" << appearance << "},\n";
+    }
     file << "  \"dynamicTaskbarSchemaVersion\": 1\n";
     file << "}\n";
     return snowdesktop::atomic_file::WriteAll(path, file.str());

@@ -18,6 +18,8 @@ struct MonitorState
 {
     bool visible = false;
     bool maximized = false;
+    bool fullscreen = false;
+    [[nodiscard]] bool MaximizedOrFullscreen() const noexcept { return maximized || fullscreen; }
     // An empty optional is unknown. A null HWND is a known clear monitor.
     std::optional<HWND> fullscreenSource;
     RECT desktopCoverage{};

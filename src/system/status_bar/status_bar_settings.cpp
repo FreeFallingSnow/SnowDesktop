@@ -62,10 +62,13 @@ bool DecodeStatusBarSettings(const JsonValue& input, StatusBarSettings& output)
     if (!input.IsObject()) return false;
     StatusBarSettings value;
     bool valid = true;
-    // Missing/1 is the old three-scene schema. Preserve its retired data, keep
-    // maximizedWindow unchanged and leave the new noWindow rule disabled.
+    int sceneVersion = 1;
     if (const auto* version = input.Find("sceneRulesVersion"))
-        if (!version->IsNumber() || (version->number != 1 && version->number != 2)) return false;
+    {
+        if (!version->IsNumber() || (version->number != 1 &&
+            version->number != 2 && version->number != 3)) return false;
+        sceneVersion = static_cast<int>(version->number);
+    }
     VisitStatusBarFlags([&](const char* key, auto member) {
         if (const auto* field = input.Find(key))
         {
@@ -98,6 +101,7 @@ bool DecodeStatusBarSettings(const JsonValue& input, StatusBarSettings& output)
     if (const auto* field = input.Find("theme"))
         valid = DecodeSurfaceTheme(*field, value.theme, true) && valid;
     VisitStatusBarStoredAppearanceRules([&](const char* key, auto member) {
+        if (sceneVersion < 3 && member == &StatusBarSettings::appWindow) return;
         if (const auto* field = input.Find(key))
         {
             if (!field->IsObject()) { valid = false; return; }
@@ -111,6 +115,13 @@ bool DecodeStatusBarSettings(const JsonValue& input, StatusBarSettings& output)
                 valid = DecodeSurfaceTheme(*theme, rule.theme, true) && valid;
         }
     });
+    if (sceneVersion < 3 && value.noWindow.enabled)
+    {
+        // The old default applied to displays with windows whenever the
+        // maximized rule did not win. Preserve both appearances on upgrade.
+        value.appWindow = {true, value.theme};
+        value.theme = value.noWindow.theme;
+    }
     const auto readList = [&](const char* key, auto& list) {
         if (const auto* field = input.Find(key))
         {
@@ -145,7 +156,7 @@ std::string EncodeStatusBarSettings(StatusBarSettings value)
     if (theme.empty()) return {};
     std::ostringstream text;
     text.imbue(std::locale::classic());
-    text << "{\"sceneRulesVersion\":2,\"position\":" << static_cast<int>(value.position)
+    text << "{\"sceneRulesVersion\":3,\"position\":" << static_cast<int>(value.position)
          << ",\"monitorScope\":" << static_cast<int>(value.monitorScope)
          << ",\"edgeRevealGesture\":" << value.edgeRevealGesture
          << ",\"scale\":" << value.scale << ",\"theme\":" << theme;

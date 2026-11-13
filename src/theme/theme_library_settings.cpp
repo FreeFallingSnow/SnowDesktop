@@ -82,12 +82,19 @@ Kind TargetKind(std::string_view target)
 { return target == "icon" ? Kind::Icon : target == "quickPanel" ? Kind::QuickPanel : target == "popup" ? Kind::Popup : Kind::Global; }
 
 unsigned TargetScope(std::string_view target)
-{ return target == "dock" ? Dock : target == "statusBar" || target.starts_with("statusBar/") ? StatusBar : target == "taskbar" || target.starts_with("taskbar/") ? Taskbar : Components; }
+{ return target == "dock" || target.starts_with("dock/") ? Dock : target == "statusBar" || target.starts_with("statusBar/") ? StatusBar : target == "taskbar" || target.starts_with("taskbar/") ? Taskbar : Components; }
 
 StatusBarAppearanceRule StatusBarSettings::* StatusRule(std::string_view target)
 {
     return target == "statusBar/noWindow" ? &StatusBarSettings::noWindow :
+        target == "statusBar/appWindow" ? &StatusBarSettings::appWindow :
         target == "statusBar/maximizedWindow" ? &StatusBarSettings::maximizedWindow : nullptr;
+}
+
+static DockAppearanceRule DockSettings::* DockRule(std::string_view target)
+{
+    return target == "dock/maximizedWindow" ? &DockSettings::maximizedWindow :
+        target == "dock/appWindow" ? &DockSettings::appWindow : nullptr;
 }
 
 SystemTaskbarDynamicRule DockSettings::* TaskbarRule(std::string_view target)
@@ -107,6 +114,7 @@ Theme CaptureTarget(std::string_view target, const SettingsValues& values)
     }
     auto appearance = values.personalization;
     if (target == "dock") appearance = ResolveDockAppearance(values.dock, values.personalization);
+    if (const auto member = DockRule(target)) appearance = ResolveDockRuleAppearance(values.dock, values.dock.*member, values.personalization);
     if (target == "taskbar") appearance = ResolveTaskbarAppearance(values.dock, values.personalization);
     if (target == "statusBar") appearance = ResolveStatusBarAppearance(values.general.statusBar.theme, values.personalization);
     if (const auto member = StatusRule(target)) appearance = ResolveStatusBarAppearance((values.general.statusBar.*member).theme, values.personalization);
@@ -357,6 +365,12 @@ bool ApplyTarget(const Library& library, std::string_view target, std::string_vi
     else if (target == "statusBar") values.general.statusBar.theme = snapshot;
     else if (target == "dock")
     { ApplyAppearance(values.dock.customAppearance, theme->appearance); values.dock.appearancePreset = kAppearancePresetCustom; values.dock.followComponentAppearance = false; }
+    else if (const auto dockMember = DockRule(target))
+    {
+        auto& rule = values.dock.*dockMember;
+        ApplyAppearance(rule.appearance, theme->appearance);
+        rule.appearancePreset = kAppearancePresetCustom;
+    }
     else if (target == "taskbar")
     { ApplyAppearance(values.dock.systemTaskbarAppearance, theme->appearance); values.dock.systemTaskbarFollowPersonalization = false; values.dock.systemTaskbarContentTheme = theme->appearance.contentTheme; }
     else if (const auto statusMember = StatusRule(target)) (values.general.statusBar.*statusMember).theme = snapshot;

@@ -46,15 +46,15 @@ inline PersonalizationSettings ResolveStatusBarAppearance(const SurfaceTheme& th
 // transient scene never changes the user's default or saved custom appearance.
 struct StatusBarSceneState
 {
-    bool noWindow = false;
-    bool maximizedWindow = false;
+    bool appWindow = false;
+    bool maximizedOrFullscreen = false;
 };
 
 inline const SurfaceTheme& ResolveStatusBarSceneTheme(const StatusBarSettings& settings,
     const StatusBarSceneState& state)
 {
-    if (settings.maximizedWindow.enabled && state.maximizedWindow) return settings.maximizedWindow.theme;
-    if (settings.noWindow.enabled && state.noWindow && !state.maximizedWindow) return settings.noWindow.theme;
+    if (settings.maximizedWindow.enabled && state.maximizedOrFullscreen) return settings.maximizedWindow.theme;
+    if (settings.appWindow.enabled && state.appWindow) return settings.appWindow.theme;
     return settings.theme;
 }
 

@@ -2334,9 +2334,21 @@ PersonalizationSettings DesktopApp::ResolveSystemTaskbarAppearance(
     return snowdesktop::ResolveTaskbarAppearance(settings, CurrentPersonalization());
 }
 
-PersonalizationSettings DesktopApp::CurrentDockAppearance() const
+PersonalizationSettings DesktopApp::CurrentDockAppearance(HMONITOR monitor) const
 {
-    return ResolveDockAppearance(dockSettings_, CurrentPersonalization());
+    const auto& global = CurrentPersonalization();
+    if (monitor)
+    {
+        const auto observed = observedMonitorWindows_.find(monitor);
+        if (observed != observedMonitorWindows_.end())
+        {
+            if (dockSettings_.maximizedWindow.enabled && observed->second.MaximizedOrFullscreen())
+                return ResolveDockRuleAppearance(dockSettings_, dockSettings_.maximizedWindow, global);
+            if (dockSettings_.appWindow.enabled && observed->second.visible)
+                return ResolveDockRuleAppearance(dockSettings_, dockSettings_.appWindow, global);
+        }
+    }
+    return ResolveDockAppearance(dockSettings_, global);
 }
 
 void DesktopApp::LoadDockSettingsAndApply()

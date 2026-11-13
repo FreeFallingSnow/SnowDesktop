@@ -84,6 +84,8 @@ void Enrich(Value& schema, const std::string& path)
     if (Child(schema, "appearance") && Child(schema, "mode")) Range(schema, "mode", -2, path.find("statusBar") != path.npos ? 8 : 4);
     if (Child(schema, "appearance") && Child(schema, "themeMode") && Child(schema, "contentTheme"))
         Choices(schema, "contentTheme", {-1, 0, 1});
+    if (path == "dock.maximizedWindow" || path == "dock.appWindow")
+        Choices(schema, "appearancePreset", {-1, 0, 1, 6, 7, 9, 10, 11, 13});
     if (path == "dock")
     {
         Range(schema, "edgeDistanceScale", kDockMinimumEdgeDistanceScale, kDockMaximumEdgeDistanceScale);
@@ -120,6 +122,7 @@ void Enrich(Value& schema, const std::string& path)
     if (path == "general.statusBar")
     {
         Choices(schema, "position", {0, 1}); Choices(schema, "edgeRevealGesture", {0, 1}); Range(schema, "scale", .75, 3);
+        ReadOnly(schema, "noWindow", "Retired scene retained for persistence");
         ReadOnly(schema, "legacyShellUi", "Retired scene retained for persistence"); ReadOnly(schema, "legacyVisibleWindow", "Retired scene retained for persistence");
     }
     if (path == "desktop")
@@ -241,12 +244,14 @@ void CheckCorrelatedValues(const SettingsValues& values, const Value& changes, c
         const auto& general = values.general;
         for (const auto* surface : {&general.quickNavigationAppearance, &general.collectionPopupAppearance,
                 &general.globalQuickNavigationAppearance, &general.globalCollectionPopupAppearance,
-                &general.statusBar.theme, &general.statusBar.noWindow.theme, &general.statusBar.maximizedWindow.theme})
+                &general.statusBar.theme, &general.statusBar.appWindow.theme, &general.statusBar.maximizedWindow.theme})
             checkAppearance(surface->appearance);
     }
     if (changes.Find("dock"))
     {
         checkAppearance(values.dock.customAppearance); checkAppearance(values.dock.systemTaskbarAppearance);
+        checkAppearance(values.dock.maximizedWindow.appearance);
+        checkAppearance(values.dock.appWindow.appearance);
         for (const auto* rule : {&values.dock.systemTaskbarVisibleWindow, &values.dock.systemTaskbarMaximizedWindow, &values.dock.systemTaskbarShellUi})
             checkAppearance(rule->appearance);
     }

@@ -134,6 +134,7 @@ public:
     RECT GetWindowsButtonRect() const;
     RECT GetSearchRect() const;
     RECT GetInteractiveBounds() const;
+    HMONITOR GetMonitor() const;
     RECT GetAnimationVisualBounds(bool reserveForLaunch = false) const;
     std::vector<RECT> GetOcclusionRects(POINT pointer) const;
     bool ContainsInteractivePoint(POINT pt) const;

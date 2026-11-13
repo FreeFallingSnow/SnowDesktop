@@ -1277,7 +1277,7 @@ void DesktopApp::SyncStatusBar()
             }
             return state;
         });
-        statusBar_->SetMergedAppearanceProvider([this](HMONITOR) { return CurrentDockAppearance(); });
+        statusBar_->SetMergedAppearanceProvider([this](HMONITOR monitor) { return CurrentDockAppearance(monitor); });
         statusBar_->SetFullscreenSourceProvider([this](HMONITOR monitor) -> std::optional<HWND> {
             return ObservedFullscreenSource(monitor);
         });
@@ -1288,15 +1288,15 @@ void DesktopApp::SyncStatusBar()
         statusBar_->SetSceneProvider([this](HMONITOR monitor) {
             snowdesktop::StatusBarSceneState scene;
             const auto& settings = generalSettings_.statusBar;
-            if (!settings.noWindow.enabled && !settings.maximizedWindow.enabled)
+            if (!settings.appWindow.enabled && !settings.maximizedWindow.enabled)
                 return scene;
             // Empty entries are published only after successful window and
             // monitor observations. A missing entry remains unknown/default.
             if (const auto found = observedMonitorWindows_.find(monitor);
                 found != observedMonitorWindows_.end())
             {
-                scene.noWindow = !found->second.visible && !found->second.maximized;
-                scene.maximizedWindow = found->second.maximized;
+                scene.appWindow = found->second.visible;
+                scene.maximizedOrFullscreen = found->second.MaximizedOrFullscreen();
             }
             return scene;
         });

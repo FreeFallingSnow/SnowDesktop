@@ -311,13 +311,7 @@ bool DesktopApp::SyncPersistentDockHosts()
                 dynamic_cast<DockContainer*>(container.get());
             if (!dock)
                 continue;
-            const RECT bounds = dock->GetBounds();
-            const POINT centerScreen{
-                (bounds.left + bounds.right) / 2 + virtualLeft_,
-                (bounds.top + bounds.bottom) / 2 + virtualTop_
-            };
-            const HMONITOR monitor = MonitorFromPoint(
-                centerScreen, MONITOR_DEFAULTTONEAREST);
+            const HMONITOR monitor = dock->GetMonitor();
             PersistentDockHost* host = nullptr;
             for (const auto& existing : persistentDockHosts_)
             {
@@ -384,8 +378,6 @@ bool DesktopApp::SyncPersistentDockHosts()
         selected = persistentDockHosts_.front().get();
     SelectPersistentDockHost(selected);
 
-    floatingDockPersonalization_ =
-        CurrentDockAppearance();
     for (const auto& ownedHost : persistentDockHosts_)
     {
         PersistentDockHost& host = *ownedHost;
@@ -481,8 +473,6 @@ bool DesktopApp::SyncPersistentDockHost(
 
 void DesktopApp::ApplyPersistentDockHostAppearance()
 {
-    floatingDockPersonalization_ =
-        CurrentDockAppearance();
     for (const auto& ownedHost : persistentDockHosts_)
     {
         if (!ownedHost || !ownedHost->active)
@@ -805,10 +795,7 @@ CalculateFloatingDockStableSourceRect(
     // reserve pixels never become visible or interactive.
     const RECT dockRect =
         host.container->GetAnimationVisualBounds(true);
-    const PersonalizationSettings& appearance =
-        IsPersistentDockHostEffectivelyFloating(host)
-            ? floatingDockPersonalization_
-            : CurrentDockAppearance();
+    const auto appearance = CurrentDockAppearance(host.monitor);
     const float visualEdgeWidth = appearance.widgetEdgeHighlightEnabled
         ? std::max(appearance.widgetBorderWidth,
             appearance.widgetEdgeHighlightWidth)
@@ -861,10 +848,6 @@ std::vector<RECT> DesktopApp::GetDockWindowTransitionOcclusionRects() const
         MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&guide), 2);
         result.push_back(guide);
     }
-    const auto& appearance = CurrentDockAppearance();
-    const float borderWidth = appearance.widgetEdgeHighlightEnabled
-        ? std::max(appearance.widgetBorderWidth, appearance.widgetEdgeHighlightWidth)
-        : appearance.widgetBorderWidth;
     for (const auto& container : containers_)
     {
         const auto* dock = dynamic_cast<const DockContainer*>(container.get());
@@ -885,6 +868,10 @@ std::vector<RECT> DesktopApp::GetDockWindowTransitionOcclusionRects() const
             // If Windows refused to restack an independent Host, mask just its
             // visible content instead of sinking the whole effect to desktop.
         }
+        const auto appearance = CurrentDockAppearance(dock->GetMonitor());
+        const float borderWidth = appearance.widgetEdgeHighlightEnabled
+            ? std::max(appearance.widgetBorderWidth, appearance.widgetEdgeHighlightWidth)
+            : appearance.widgetBorderWidth;
         const auto visualRects = dock->GetOcclusionRects(lastMousePoint_);
         for (size_t index = 0; index < visualRects.size(); ++index)
         {
@@ -1162,8 +1149,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
 bool DesktopApp::ApplyFloatingDockWindowRegion(PersistentDockHost& host)
 {
     if (!host.windowRegionPending) return true;
-    const auto& appearance = IsPersistentDockHostEffectivelyFloating(host)
-        ? floatingDockPersonalization_ : CurrentDockAppearance();
+    const auto appearance = CurrentDockAppearance(host.monitor);
     const float borderWidth = std::clamp(appearance.widgetEdgeHighlightEnabled
         ? std::max(appearance.widgetBorderWidth, appearance.widgetEdgeHighlightWidth)
         : appearance.widgetBorderWidth, kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
