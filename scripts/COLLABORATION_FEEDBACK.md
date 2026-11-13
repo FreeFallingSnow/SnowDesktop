@@ -203,6 +203,8 @@
 
 ### CF-015 模块计划无法声明临时定向验证
 
+- **右侧时钟日历布局的续证（2026-11-13）**：Task `calendar-right-vertical` 在批次 `02eeaaccbf7a4b659193011deec3f3ed` 修订 0 经 `scripts/build.bat ready-and-wait` 执行 Run `5500c3fa9d524b258fbd749ca80cd2eb`。日历布局由现有 `scripts/preview.bat native -Component calendar-panel` 离屏入口检查，模块计划选择 `behavior_manifest` 核对交付产物。两份日志 `.log.product.log` 和 `.log` 分别记录产品和测试阶段对同一候选目录进行 CMake 配置，测试阶段配置耗时 5.09 秒。Release、部署契约及日历预览均通过。模块计划的临时验证准入和产品阶段配置复用仍待处理，未为反馈增加构建或测试。
+
 - **托盘悬浮的新证据**：2026-11-13，Task `tray-menu-hover-popup`、批次 `ca35a82e6c8c4897bbf6ee40d9aed819` 修订 0。核对 `cmake/testing/Tests.cmake` 未发现托盘悬浮回调或应用弹窗条目，`New-TaskPlan` 仍拒绝以 `module/none` 声明仅构建的模块计划。沿用 `behavior_manifest` 核对运行产物，原场景单独保留实机验收，未重复提交已知会拒绝的计划。模块计划准入限制仍待处理。
 
 - **日历日程间距的续证（2026-11-10）**：Task `statusbar-calendar-agenda-spacing-20261110` 通过 `scripts/build.bat ready-and-wait` 执行批次 `2a18c215bac54fd8808719e0d00aff72` 修订 0、Run `9e828f4c005c4e79986e3d9ccf5781db`。正式 CTest 未登记原生日历间距场景，计划选择 `behavior_manifest` 核对交付产物，日历间距和滚动由 `scripts/preview.bat native -Component calendar-panel` 验证。该批次的 `.log.product.log` 与 `.log` 分别记录 `Configuring CMake (Release preset)` 和 `Configuring tests`，指向同一候选编译目录，测试阶段配置耗时 5.96 秒。Release、部署契约和日历预览均通过。第二次配置能否复用产品阶段结果待核实，未为反馈再启动构建或测试。
