@@ -229,10 +229,11 @@ std::optional<POINT> MenuPlacementSession::Observe(const MenuPopupObservation& p
     std::int64_t desiredX = popup.bounds.left, desiredY = popup.bounds.top;
     const bool verticalOverflow = popup.bounds.top < workArea_.top || popup.bounds.bottom > workArea_.bottom;
     const bool haveIcon = iconBounds_.right > iconBounds_.left && iconBounds_.bottom > iconBounds_.top;
-    // Right-click menus choose their own anchor. Only bring clipped edges
-    // back onto the invoking display, including for apps using the cursor.
-    if (!contextGesture_ && !existing->submenu &&
-        ((!nearAnchor && existing->anchorBound) || (haveIcon && verticalOverflow)))
+    // Some menus use the original Windows taskbar edge even when the icon
+    // is presented on another edge. Reanchor that root; a nearby context
+    // menu only needs its clipped edges corrected.
+    const bool detachedRoot = !nearAnchor && existing->anchorBound;
+    if (!existing->submenu && (detachedRoot || (!contextGesture_ && haveIcon && verticalOverflow)))
     {
         // Root menus that use the old taskbar edge must follow this gesture.
         // Preserve already reasonable near-anchor placement and never collapse
