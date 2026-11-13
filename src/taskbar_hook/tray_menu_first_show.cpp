@@ -4,6 +4,7 @@
 #endif
 
 #include <commctrl.h>
+#include <dwmapi.h>
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -14,6 +15,8 @@ namespace snowdesktop::tray::first_show
 namespace
 {
 constexpr UINT_PTR kMenuSubclass = 0x53444D46;
+constexpr ULONGLONG kWpsLayoutQuietMs = 64;
+constexpr ULONGLONG kWpsPresentationLimitMs = 180;
 struct Watch
 {
     Request request;
@@ -23,19 +26,69 @@ struct Watch
     HWND shadow = nullptr;
     POINT shadowInset{};
     RECT qqStaging{};
+    UINT_PTR wpsPresentationTimer = 0;
+    ULONGLONG wpsFirstShow = 0;
+    ULONGLONG wpsLastLayout = 0;
+    bool wpsCandidateCloaked = false;
+    bool wpsShadowCloaked = false;
+    bool wpsPresented = false;
 };
 thread_local Watch watch;
 
 LRESULT CALLBACK MenuProcedure(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 
+void ReleaseWpsPresentation(const Watch& previous)
+{
+    if (previous.wpsPresentationTimer) KillTimer(nullptr, previous.wpsPresentationTimer);
+    const BOOL uncloak = FALSE;
+    // Reveal the owned shadow before its owner so both become compositable
+    // together when the owner's inherited cloak clears.
+    if (previous.wpsShadowCloaked && IsWindow(previous.shadow))
+        DwmSetWindowAttribute(previous.shadow, DWMWA_CLOAK, &uncloak, sizeof(uncloak));
+    if (previous.wpsCandidateCloaked && IsWindow(previous.candidate))
+        DwmSetWindowAttribute(previous.candidate, DWMWA_CLOAK, &uncloak, sizeof(uncloak));
+}
+
 void StopWatching()
 {
     const auto previous = watch;
     watch = {};
+    ReleaseWpsPresentation(previous);
     if (previous.candidate) RemoveWindowSubclass(previous.candidate, MenuProcedure, kMenuSubclass);
     if (previous.shadow) RemoveWindowSubclass(previous.shadow, MenuProcedure, kMenuSubclass);
     if (previous.timer) KillTimer(nullptr, previous.timer);
     if (previous.hook) UnhookWindowsHookEx(previous.hook);
+}
+
+void CALLBACK PresentWps(HWND, UINT, UINT_PTR timer, DWORD)
+{
+    if (timer != watch.wpsPresentationTimer) return;
+    const auto now = GetTickCount64();
+    if (now - watch.wpsFirstShow < kWpsPresentationLimitMs &&
+        (!IsWindowVisible(watch.candidate) || now - watch.wpsLastLayout < kWpsLayoutQuietMs)) return;
+    const auto previous = watch;
+    watch.wpsPresentationTimer = 0;
+    watch.wpsCandidateCloaked = false;
+    watch.wpsShadowCloaked = false;
+    watch.wpsPresented = true;
+    ReleaseWpsPresentation(previous);
+}
+
+void StageWpsPresentation(HWND window, bool& cloaked)
+{
+    if (watch.wpsPresented || cloaked) return;
+    DWORD flags = 0;
+    if (FAILED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &flags, sizeof(flags))) ||
+        (flags & DWM_CLOAKED_APP)) return;
+    if (!watch.wpsPresentationTimer)
+    {
+        watch.wpsPresentationTimer = SetTimer(nullptr, 0, 16, PresentWps);
+        if (!watch.wpsPresentationTimer) return;
+        watch.wpsFirstShow = watch.wpsLastLayout = GetTickCount64();
+    }
+    const BOOL cloak = TRUE;
+    cloaked = true;
+    if (FAILED(DwmSetWindowAttribute(window, DWMWA_CLOAK, &cloak, sizeof(cloak)))) cloaked = false;
 }
 
 void CALLBACK Expire(HWND, UINT, UINT_PTR timer, DWORD)
@@ -139,7 +192,7 @@ POINT HoverOffset(const Request& request, const RECT& bounds)
     const bool intersectsRow = IntersectRect(&overlap, &bounds, &request.row) != FALSE;
     const bool contained = bounds.left >= request.work.left && bounds.right <= request.work.right &&
         bounds.top >= request.work.top && bounds.bottom <= request.work.bottom;
-    if (request.surface == Surface::DouyinHover)
+    if (request.surface == Surface::DouyinHover || request.surface == Surface::WpsHover)
     {
         if (!intersectsRow && contained) return {};
     }
@@ -194,14 +247,24 @@ LRESULT CALLBACK MenuProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp, 
     else if (message == WM_NCDESTROY && window == watch.shadow)
     {
         watch.shadow = nullptr;
+        watch.wpsShadowCloaked = false;
         RemoveWindowSubclass(window, MenuProcedure, kMenuSubclass);
+    }
+    if (message == WM_WINDOWPOSCHANGED && lp && watch.request.surface == Surface::WpsHover)
+    {
+        const auto& position = *reinterpret_cast<const WINDOWPOS*>(lp);
+        if ((position.flags & SWP_HIDEWINDOW) && window == watch.candidate)
+            StopWatching();
+        else if (watch.wpsPresentationTimer &&
+            (position.flags & (SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)) != (SWP_NOMOVE | SWP_NOSIZE))
+            watch.wpsLastLayout = GetTickCount64();
     }
     if (message != WM_WINDOWPOSCHANGING || !lp)
         return DefSubclassProc(window, message, wp, lp);
     auto& position = *reinterpret_cast<WINDOWPOS*>(lp);
     if ((position.flags & SWP_HIDEWINDOW) && window == watch.candidate)
     {
-        StopWatching();
+        if (watch.request.surface != Surface::WpsHover) StopWatching();
         return DefSubclassProc(window, message, wp, lp);
     }
     auto request = watch.request;
@@ -304,6 +367,13 @@ LRESULT CALLBACK WatchMenu(int code, WPARAM wp, LPARAM lp)
                     watch.shadowInset = {ownerBounds.left - shadowBounds.left, ownerBounds.top - shadowBounds.top};
                     watch.shadow = message.hwnd;
                 }
+            }
+            if (showing && watch.request.surface == Surface::WpsHover)
+            {
+                if (message.hwnd == watch.candidate)
+                    StageWpsPresentation(message.hwnd, watch.wpsCandidateCloaked);
+                else if (message.hwnd == watch.shadow)
+                    StageWpsPresentation(message.hwnd, watch.wpsShadowCloaked);
             }
         }
     }
