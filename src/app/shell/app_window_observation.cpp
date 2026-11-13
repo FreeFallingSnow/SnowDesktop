@@ -121,30 +121,6 @@ void DesktopApp::RefreshWindowObservations()
         OffsetRect(&bounds, -left, -top);
     UpdateDesktopWidgetCoverage(std::move(snapshot.desktopCoverage));
     if (statusBar_ && fullscreenChanged) statusBar_->NotifyWindowObservations();
-    // Explorer can hide/minimize the Dock during Show Desktop even when
-    // another application receives foreground focus during the transition.
-    if (generalSettings_.dockEnabled && !dockSettings_.showOnlyWhenSummoned &&
-        !desktopStartupPresentationPending_)
-    {
-        for (const auto& host : persistentDockHosts_)
-        {
-            if (!host || !host->active || !host->hwnd || !host->container ||
-                host->container->IsMergedWithStatusBar() ||
-                (!IsIconic(host->hwnd) && IsWindowVisible(host->hwnd)) || !ShouldShowPersistentDockHost(*host)) continue;
-            const auto fullscreen = ObservedFullscreenSource(host->monitor);
-            if (!fullscreen.has_value() || RecheckFullscreenSource(host->monitor)) continue;
-            UpdatePersistentDockHostVisibility(*host);
-            if (snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Dock) &&
-                IsWindowVisible(host->hwnd) && !IsIconic(host->hwnd))
-            {
-                wchar_t message[256]{};
-                swprintf_s(message, L"Dock Show Desktop restored monitor=%p dock=%p foreground=%p guard=%d topmost=%d",
-                    host->monitor, host->hwnd, GetForegroundWindow(), systemShowDesktopLayerGuardActive_,
-                    (GetWindowLongPtrW(host->hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
-                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message);
-            }
-        }
-    }
     if (sceneChanged && generalSettings_.dockEnabled &&
         (dockSettings_.appWindow.enabled || dockSettings_.maximizedWindow.enabled))
     {

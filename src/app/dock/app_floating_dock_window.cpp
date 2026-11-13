@@ -604,16 +604,13 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
     // Desktop/floating transitions keep the pair visible and only change its
     // Z-order band. Avoid issuing a redundant SHOWWINDOW transaction, which
     // can make DWM re-evaluate the native backdrop source for one frame.
-    const bool minimized = IsIconic(host.hwnd) != FALSE;
-    if (IsWindowVisible(host.hwnd) && !minimized)
+    if (IsWindowVisible(host.hwnd))
         return;
-    if (minimized)
-        ShowWindow(host.hwnd, SW_SHOWNOACTIVATE);
     if (host.backdrop.IsAvailable())
         host.backdrop.ShowPopupWindowPair(host.hwnd);
     else
         ShowWindow(host.hwnd, SW_SHOWNOACTIVATE);
-    if (minimized || (dockWindowTransition_ && dockWindowTransition_->GetPresentationWindow()))
+    if (dockWindowTransition_ && dockWindowTransition_->GetPresentationWindow())
         ApplyFloatingDockLayerPolicy(host);
 }
 

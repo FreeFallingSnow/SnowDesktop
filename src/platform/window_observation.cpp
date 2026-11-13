@@ -51,9 +51,7 @@ bool IsBehindDesktop(HWND window, HWND desktopRoot, const RECT& monitor) noexcep
     if (!window || !IsWindow(window) || !desktopRoot ||
         !IsWindowVisible(desktopRoot) || IsIconic(desktopRoot)) return false;
     RECT bounds{};
-    const POINT center{monitor.left + (monitor.right - monitor.left) / 2,
-        monitor.top + (monitor.bottom - monitor.top) / 2};
-    if (!GetWindowRect(desktopRoot, &bounds) || !PtInRect(&bounds, center)) return false;
+    if (!GetWindowRect(desktopRoot, &bounds) || !fullscreen::CoversMonitorCenter(bounds, monitor)) return false;
     const bool desktopTopmost = (GetWindowLongPtrW(desktopRoot, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
     const bool windowTopmost = (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
     if (desktopTopmost != windowTopmost) return desktopTopmost;
@@ -154,8 +152,6 @@ Snapshot Observe(std::span<const RECT> pages, HWND desktopRoot, HWND coverageRoo
         auto& state = scan.result.monitors[monitor];
         state.visible = true;
         state.maximized = state.maximized || sample->maximized;
-        state.fullscreen = state.fullscreen || (monitorGeometry &&
-            fullscreen::IsFullscreen(*sample, monitorGeometry->rcMonitor));
         if (!scan.reachedDesktop)
             for (const auto& [display, bounds] : scan.geometry)
             {
@@ -181,7 +177,11 @@ Snapshot Observe(std::span<const RECT> pages, HWND desktopRoot, HWND coverageRoo
             (!sources[i] || !sources[i]->window))
             continue;
         auto& state = result.monitors[monitors[i]];
-        if (sources[i]) state.fullscreenSource = sources[i]->window;
+        if (sources[i])
+        {
+            state.fullscreenSource = sources[i]->window;
+            state.fullscreen = sources[i]->window != nullptr;
+        }
         if (!scanContext.reachedDesktop) state.desktopCoverage = {};
         if (!IsRectEmpty(&state.desktopCoverage))
             result.desktopCoverage.push_back(state.desktopCoverage);

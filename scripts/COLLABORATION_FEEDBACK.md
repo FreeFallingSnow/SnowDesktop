@@ -311,7 +311,8 @@
 
 - **来源**：2026-11-10，CLI，Task `calendar-ics-subscriptions-20261110`。对照批次 `6935a08f187f4e5ab54942c412c905be` 修订 2、Run `c77d7675a5e74747bdfd3ad852dc8080` 与续修批次 `b4e75fc6e1ac437ba0dbe344b5a46e23` 修订 4、Run `f5f1d056ef664e27ae2ed219cbcb4835`，入口均为 `scripts/build.bat ready-and-wait`。
 - **实测与影响**：本任务在两轮间只调整 `calendar_ics.cpp` 的两处 libical 调用。两轮产品日志均指向同一候选槽 `a32a06cfeb995ec8-batches`，后一轮记录了 `settings_ipc_backends.cpp`、`App.xaml.cpp` 和多份 WinUI 设置页源码的编译。原件为 `.build/collaboration/<批次>.log.product.log`。已观察到重编；其他冻结输入、生成文件和 MSBuild 依赖的触发链待核实，额外耗时未单独测量。
-- **下一步**：比较两次冻结输入和对应项目的 MSBuild 增量判据，确认可以保留的对象。原续修结果照常使用，反馈沿用日历空态批次，不为调查追加构建。
+- **Win+D 续修补证（2026-11-13）**：Task `task-64befa60faef4ee0a9686c204a93ac37`，批次 `b7ab8c14c7a441f5bf810fc12fe066dd` 修订 0、Run `748c845e73814f82aaacb12da4655dfa`，入口 `scripts/build.bat ready-and-wait`。同一候选槽的产品日志记录本轮未修改的 `app_background_menu.cpp`、`app_clipboard_interaction.cpp` 和 `app_icon_loader.cpp` 重新编译。源码确认本轮修改的 `floating_dock_rules.h` 由 `app/app.h` 包含，多个宿主目标复用同一宿主 PCH。该包含链会扩大此头文件修改的重编范围，未单独测量其成本。原 Run 已通过，未追加构建。
+- **下一步**：比较日历续修两次冻结输入的 MSBuild 增量判据。Dock 层级策略下次调整时评估将其模板移到实际调用点使用的头文件，缩小后续修改的影响范围。
 
 ### CF-025 文件观察提前结束
 
