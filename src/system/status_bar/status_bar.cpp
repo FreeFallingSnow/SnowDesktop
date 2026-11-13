@@ -272,6 +272,7 @@ struct StatusBar::Impl
         // Only the bar's own hide may take the surface away. WM_WINDOWPOSCHANGING
         // uses this to tell an external Shell request apart.
         bool hidingWindow = false;
+        bool presentationCheckQueued = false;
         ULONGLONG showDesktopTraceTick = 0;
         bool fullscreenObserved = false; // fullscreen is the effective hide/input gate.
         bool checkingFullscreen = false;
@@ -555,6 +556,21 @@ struct StatusBar::Impl
             return hwnd && IsWindow(hwnd) && !closing && !failed && positioned &&
                 owner.presentationEnabled && !fullscreen;
         }
+        bool IsPresentationTopmost() const
+        {
+            return (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+        }
+        bool NeedsIndependentPresentationRecovery() const
+        {
+            return !mergedDockHeight && !owner.settings.showOnlyWhenSummoned &&
+                !hidingWindow && WantsPresentation() &&
+                (!IsWindowVisible(hwnd) || IsIconic(hwnd) || !IsPresentationTopmost());
+        }
+        void QueuePresentationCheck()
+        {
+            if (!presentationCheckQueued)
+                presentationCheckQueued = PostMessageW(hwnd, kEnsurePresentation, 0, 0) != FALSE;
+        }
         void TraceSystemShowDesktop(const wchar_t* event, bool visible,
             bool topmost, bool iconic,
             DiagnosticLogLevel level = DiagnosticLogLevel::Info) const
@@ -589,8 +605,7 @@ struct StatusBar::Impl
             showDesktopTraceTick = now;
             TraceSystemShowDesktop(L"hide-refused",
                 IsWindowVisible(hwnd) != FALSE,
-                (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0,
-                IsIconic(hwnd) != FALSE);
+                IsPresentationTopmost(), IsIconic(hwnd) != FALSE);
         }
         // Rejoin the presented band after Explorer's transition: restore a
         // minimized window, repaint a discarded surface and re-promote the pair.
@@ -598,37 +613,35 @@ struct StatusBar::Impl
         {
             if (!WantsPresentation()) return;
             if (mergedDockHeight) return; // Dock owns the merged pair's band.
-            const bool visible = IsWindowVisible(hwnd) != FALSE;
-            const bool topmost =
-                (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
-            const bool iconic = IsIconic(hwnd) != FALSE;
+            const bool wasPresented = IsWindowVisible(hwnd) && IsPresentationTopmost() && !IsIconic(hwnd);
             const bool glass = appearance.glassEnabled && !HighContrast();
-            // The glass helper is a separate top-level HWND; Explorer can hide
-            // or cover it independently of the content window.
+            // Explorer can move or hide the glass helper independently.
             backdrop.SetPopupWindowPairZOrder(hwnd, HWND_TOPMOST, true);
-            if (visible && topmost && !iconic)
+            if (wasPresented)
             {
                 if (glass) backdrop.ShowPopupWindowPair(hwnd);
                 return;
             }
-            if (iconic) ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            if (IsIconic(hwnd)) ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             Paint(true);
-            if (paintDirty || !surface || !backgroundSurface)
+            const bool frameReady = !paintDirty && surface && backgroundSurface;
+            if (frameReady)
             {
-                const ULONGLONG now = GetTickCount64();
-                if (now - showDesktopTraceTick >= 1000)
-                {
-                    showDesktopTraceTick = now;
-                    TraceSystemShowDesktop(L"restore-pending", visible, topmost,
-                        iconic, DiagnosticLogLevel::Warning);
-                }
-                return;
+                backdrop.SetPopupWindowPairZOrder(hwnd, HWND_TOPMOST, true);
+                SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                if (glass) backdrop.ShowPopupWindowPair(hwnd);
             }
-            backdrop.SetPopupWindowPairZOrder(hwnd, HWND_TOPMOST, true);
-            SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-            if (glass) backdrop.ShowPopupWindowPair(hwnd);
-            TraceSystemShowDesktop(L"restored", visible, topmost, iconic);
+            const bool visible = IsWindowVisible(hwnd) != FALSE;
+            const bool topmost = IsPresentationTopmost();
+            const bool iconic = IsIconic(hwnd) != FALSE;
+            const bool restored = frameReady && visible && topmost && !iconic;
+            const ULONGLONG now = GetTickCount64();
+            if (!restored && now - showDesktopTraceTick < 5000) return;
+            showDesktopTraceTick = now;
+            TraceSystemShowDesktop(restored ? L"restored" : L"restore-pending",
+                visible, topmost, iconic,
+                restored ? DiagnosticLogLevel::Info : DiagnosticLogLevel::Warning);
         }
         void CheckFullscreen(std::optional<HWND> observed = {}, bool collect = true)
         {
@@ -1590,8 +1603,9 @@ struct StatusBar::Impl
                 return 0;
             }
             case kEnsurePresentation:
-                if (self->owner.systemShowDesktopActive)
+                if (self->owner.systemShowDesktopActive || self->NeedsIndependentPresentationRecovery())
                     self->EnsureSystemShowDesktopPresentation();
+                self->presentationCheckQueued = false;
                 return 0;
             case kPlace: self->Place(); return 0;
             case kForeground:
@@ -1629,6 +1643,8 @@ struct StatusBar::Impl
                     }
                     self->owner.RefreshForegroundApp();
                     if (self->UpdateAppearance()) self->QueuePlace();
+                    else if (self->NeedsIndependentPresentationRecovery())
+                        self->QueuePresentationCheck();
                     else self->Paint();
                     self->PollTrayMenu();
                 }
@@ -1660,6 +1676,10 @@ struct StatusBar::Impl
             case WM_SETTINGCHANGE:
             case WM_THEMECHANGED: self->appearanceDirty = true; self->QueuePlace(); break;
             case WM_WINDOWPOSCHANGED:
+                // The minimize event can precede the actual native window change.
+                // Repair after the change, outside the window-position callback.
+                if (self->NeedsIndependentPresentationRecovery())
+                    self->QueuePresentationCheck();
                 if (!self->placing && lp &&
                     (reinterpret_cast<WINDOWPOS*>(lp)->flags & (SWP_NOMOVE | SWP_NOSIZE)) != (SWP_NOMOVE | SWP_NOSIZE))
                     self->appbar.Notify(ABM_WINDOWPOSCHANGED);
@@ -1668,9 +1688,10 @@ struct StatusBar::Impl
                 // ShowWindow(SW_HIDE) delivers this notification before the
                 // WM_WINDOWPOSCHANGING veto decides the hide. Repair after the
                 // request settles instead of inside its notification.
-                if (!wp && !self->hidingWindow && self->owner.systemShowDesktopActive &&
-                    self->WantsPresentation())
-                    PostMessageW(window, kEnsurePresentation, 0, 0);
+                if (!wp && !self->hidingWindow && !self->mergedDockHeight &&
+                    self->WantsPresentation() &&
+                    (self->owner.systemShowDesktopActive || !self->owner.settings.showOnlyWhenSummoned))
+                    self->QueuePresentationCheck();
                 break;
             case WM_WINDOWPOSCHANGING:
                 if (lp)
