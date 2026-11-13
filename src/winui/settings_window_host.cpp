@@ -33,6 +33,7 @@
 #include "steam/steam_app_identity.h"
 #include "widget/runtime/widget_engine.h"
 #include "widget/settings/widget_settings_service.h"
+#include "widget/authoring/widget_author_preview.h"
 #include "widget/packages/widget_package_file_export.h"
 #include "common/utils.h"
 
@@ -1584,7 +1585,8 @@ struct SettingsWindowHost::Impl
                         if (FAILED(apartment))
                             throw std::runtime_error("export worker COM initialization failed");
                         const auto exported = snowdesktop::widget::detail::ExportDevelopmentPackageFile(
-                            projectRoot, output, packageId, version);
+                            projectRoot, output, packageId, version,
+                            snowdesktop::widget_authoring::CheckWidgetArchiveInstallation);
                         result.succeeded = exported.succeeded;
                         std::wstring detail = exported.succeeded ? output.wstring()
                             : Utf8ToWide(exported.report.Ok() ? exported.error : exported.report.ToJson());

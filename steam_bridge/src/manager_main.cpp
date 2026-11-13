@@ -2442,7 +2442,8 @@ private:
             if (!packageTool_.Inspect(snapshot.sourceDirectory,
                     inspection, error) ||
                 !packageTool_.Pack(snapshot.sourceDirectory,
-                    inspection, artifact, error))
+                    inspection, artifact, error,
+                    packageTool_.FindPublishedBaseline(snapshot, inspection.version)))
             {
                 SetMessage(false, error);
                 return;
@@ -2547,6 +2548,9 @@ private:
                         return saved;
                     }});
             std::string error;
+            std::string baselineError;
+            if (result.baseSubmitted && result.contentUploaded)
+                (void)packageTool_.SavePublishedBaseline(prepared.artifact, baselineError);
             {
                 std::lock_guard lock(mutex_);
                 publishTask_.Finish(result, published, coreError);
@@ -2574,6 +2578,7 @@ private:
                         return;
                     }
                 }
+                if (!baselineError.empty()) SetMessageUnlocked(false, baselineError);
             }
             if (!published)
             {

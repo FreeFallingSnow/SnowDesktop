@@ -283,8 +283,33 @@ Use the lowest-cost checks first:
 7. Run `snowwidget quality <directory>`. It combines package validation and
    source lint and fails on unresolved warnings, including a missing preview,
    hard-coded UI text and suspicious full-surface background drawing.
-8. Run `snowwidget pack <directory> <name.snowwidget>`, then validate the packed
-   archive as well.
+8. Run `snowwidget pack <directory> <name.snowwidget>`. The matching
+   SnowDesktop host validates a fresh install of the final archive in a
+   temporary data directory. For an update, add
+   `--previous-package <previous-release.snowwidget>` to also validate the
+   upgrade with a previous-version instance still loaded. Keep the exact
+   released archive for this check. Use `--host <SnowDesktop.exe>` when the
+   matching host is outside the bundled location. To check an archive you
+   already have, run `snowwidget verify-install <archive.snowwidget>` with the
+   same host and optional previous-package arguments.
+
+### Check a component on the running desktop
+
+Use the `snowdesktop-control` Skill for checks that depend on a live desktop.
+If it is missing, ask the user to install it under **SnowDesktop Settings →
+Advanced Settings → Agent Operations → SnowDesktop Control Skill**, then apply
+their assistant selection. In Chinese, look for **Agent 操作 → SnowDesktop 操作
+Skill → 应用选择**. Open the installed Skill before sending control requests.
+
+- Run its client with `-Method api.describe` and `-Method app.getState` to
+  check the host, capabilities, active data directory and debug profile.
+- Use `widgets.list` to identify the actual running instance. For requested
+  settings or placement checks, read `settings.catalog` and `settings.get`,
+  or `desktop.getLayout`. Use the current settings or layout revision for
+  writes. `widgets.place` moves or resizes an existing instance.
+- Use `widgets.open` and `widgets.close` for supported component surfaces.
+  For supported input and capture operations, follow the control Skill's
+  interaction reference and verify the resulting application state.
 
 The first meaningful preview must already show the widget's purpose, intended
 visual direction, representative content and primary affordance. Reject an

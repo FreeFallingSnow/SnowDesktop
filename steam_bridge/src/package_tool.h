@@ -13,6 +13,8 @@
 
 namespace snowdesktop::steam_bridge
 {
+struct WorkshopProject;
+
 struct WidgetInspection
 {
     bool valid = false;
@@ -58,11 +60,15 @@ public:
         WidgetInspection& inspection, std::string& error) const;
     bool Pack(const std::filesystem::path& source,
         const WidgetInspection& expected, PackagedWidget& package,
-        std::string& error) const;
+        std::string& error, const std::filesystem::path& previousPackage = {}) const;
+    std::filesystem::path FindPublishedBaseline(const WorkshopProject& project,
+        std::string_view candidateVersion) const;
+    bool SavePublishedBaseline(const PackagedWidget& package, std::string& error) const;
     const std::filesystem::path& Executable() const { return executable_; }
     const std::filesystem::path& StagingRoot() const { return stagingRoot_; }
 
 private:
+    std::filesystem::path PublishedBaselinePath(std::string_view sha256) const;
     bool Run(const std::vector<std::wstring>& arguments,
         std::string& output, std::string& error, unsigned timeoutMs) const;
     std::filesystem::path executable_;

@@ -191,7 +191,8 @@ void PrintUsage()
            " [--preview-source local|steam] [--tags-source local|steam]"
            " [--preview FILE] [--title TEXT] [--description TEXT]"
            " [--tag TAG|--clear-tags] [--visibility private|friends|public|unlisted]"
-           " [--change-note TEXT] [--timeout-seconds N] [--force-content]\n"
+           " [--change-note TEXT] [--timeout-seconds N] [--force-content]"
+           " [--previous-package FILE]\n"
         << "  SnowDesktopSteamBridge.exe workshop component-publish --source DIR"
            " [component-plan options] (--confirm-create|--confirm-update)"
            " [--open-page]\n\n"
@@ -1200,10 +1201,13 @@ int RunComponentWorkshopCommand(const ParsedOptions& options, bool execute)
     PackageTool packageTool({}, managerRoot / L"staging" / L"packages");
     WidgetInspection inspection;
     PackagedWidget artifact;
-    if (!packageTool.Inspect(project->sourceDirectory,
-            inspection, message) ||
-        !packageTool.Pack(project->sourceDirectory,
-            inspection, artifact, message))
+    if (!packageTool.Inspect(project->sourceDirectory, inspection, message))
+        return PrintError(kInvalidArguments, "component_validation_failed", message);
+    auto previousPackage = packageTool.FindPublishedBaseline(*project, inspection.version);
+    if (const auto supplied = options.Value(L"--previous-package"))
+        previousPackage = *supplied;
+    if (!packageTool.Pack(project->sourceDirectory,
+            inspection, artifact, message, previousPackage))
         return PrintError(kInvalidArguments, "component_validation_failed",
             message);
 
@@ -1295,6 +1299,13 @@ int RunComponentWorkshopCommand(const ParsedOptions& options, bool execute)
         project->publishedFileId = result.publishedFileId;
     if (result.baseSubmitted)
     {
+        if (result.contentUploaded)
+        {
+            std::string baselineError;
+            if (!packageTool.SavePublishedBaseline(artifact, baselineError) &&
+                progressStoreError.empty())
+                progressStoreError = std::move(baselineError);
+        }
         project->packageId = plan.packageId;
         project->lastPublishedVersion = plan.version;
         project->lastPublishedSha256 = plan.sha256;
@@ -1577,7 +1588,7 @@ int RunWorkshopCommand(const std::wstring& command,
               L"--text-source", L"--preview-source",
               L"--tags-source", L"--preview", L"--title",
               L"--description", L"--visibility", L"--change-note",
-              L"--timeout-seconds" },
+              L"--timeout-seconds", L"--previous-package" },
             { L"--tag" }, flags, options, error))
             return PrintError(kInvalidArguments,
                 "invalid_arguments", error);

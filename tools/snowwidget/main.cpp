@@ -61,7 +61,8 @@ void PrintUsage()
            " [--canvas-width N] [--canvas-height N] [--padding N]"
            " [--host SnowDesktop.exe]\n"
         << "  snowwidget validate <package-directory>\n"
-        << "  snowwidget pack <package-directory> <output.snowwidget>\n"
+        << "  snowwidget pack <package-directory> <output.snowwidget> [--host SnowDesktop.exe] [--previous-package <archive.snowwidget>]\n"
+        << "  snowwidget verify-install <archive.snowwidget> [--host SnowDesktop.exe] [--previous-package <archive.snowwidget>]\n"
         << "  snowwidget publish-local <package-directory> <catalog-directory>\n";
 }
 
@@ -291,6 +292,134 @@ std::string ReadUtf8File(const std::filesystem::path& path)
     std::ifstream input(path, std::ios::binary);
     if (!input) return {};
     return std::string(std::istreambuf_iterator<char>(input), {});
+}
+
+struct InstallCheckOptions
+{
+    std::filesystem::path host;
+    std::filesystem::path previousPackage;
+};
+
+bool ParseInstallCheckOptions(int argc, wchar_t** argv, int start,
+    InstallCheckOptions& options)
+{
+    for (int index = start; index + 1 < argc; index += 2)
+    {
+        const std::wstring_view option(argv[index]);
+        if (!argv[index + 1][0]) return false;
+        if (option == L"--host" && options.host.empty())
+            options.host = argv[index + 1];
+        else if (option == L"--previous-package" && options.previousPackage.empty())
+            options.previousPackage = argv[index + 1];
+        else
+            return false;
+    }
+    return (argc - start) % 2 == 0;
+}
+
+int VerifyArchiveInstall(const std::filesystem::path& archive,
+    const InstallCheckOptions& options, bool printSuccess)
+{
+    const auto fail = [](std::string_view error) {
+        std::cerr << "{\"ok\":false,\"stage\":\"host\",\"error\":"
+            << JsonEscape(error) << "}\n";
+        return 2;
+    };
+    const auto host = FindPreviewHost(options.host);
+    if (!host) return fail("SnowDesktop.exe not found; pass --host or set SNOWDESKTOP_HOST");
+    const auto resultPath = CreateResultPath();
+    if (!resultPath) return fail("cannot reserve installation check result path");
+    struct ResultFile
+    {
+        const std::filesystem::path& path;
+        ~ResultFile()
+        {
+            std::error_code ignored;
+            std::filesystem::remove(path, ignored);
+        }
+    } resultFile{*resultPath};
+    std::wstring command = QuoteWindowsArgument(host->wstring()) +
+        L" --widget-author-preview --install-check " +
+        QuoteWindowsArgument(std::filesystem::absolute(archive).wstring()) + L" " +
+        QuoteWindowsArgument(resultPath->wstring());
+    if (!options.previousPackage.empty())
+        command += L" " + QuoteWindowsArgument(
+            std::filesystem::absolute(options.previousPackage).wstring());
+
+    STARTUPINFOW startup{sizeof(startup)};
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(host->c_str(), command.data(), nullptr, nullptr, FALSE,
+            CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process))
+        return fail("cannot launch SnowDesktop installation check");
+    CloseHandle(process.hThread);
+    const auto waited = WaitForSingleObject(process.hProcess, 60000);
+    DWORD code = 2;
+    if (waited == WAIT_OBJECT_0)
+        GetExitCodeProcess(process.hProcess, &code);
+    else
+    {
+        TerminateProcess(process.hProcess, ERROR_TIMEOUT);
+        WaitForSingleObject(process.hProcess, 5000);
+    }
+    CloseHandle(process.hProcess);
+    if (waited != WAIT_OBJECT_0) return fail("SnowDesktop installation check timed out or could not be observed");
+
+    const auto json = ReadUtf8File(*resultPath);
+    JsonValue response;
+    std::string parseError;
+    const bool parsed = ParseJson(json, response, &parseError);
+    const auto* ok = parsed ? response.Find("ok") : nullptr;
+    if (!ok || !ok->IsBoolean() || ok->boolean != (code == 0) || code > 2)
+        return fail("SnowDesktop did not return an installation check result; use the host bundled with this snowwidget version");
+    if (code != 0) std::cerr << json;
+    else if (printSuccess) std::cout << json;
+    return static_cast<int>(code);
+}
+
+int ExportAndVerifyPackage(const snowdesktop::widget::WidgetPackageManager& manager,
+    const std::filesystem::path& source, const std::filesystem::path& destination,
+    const InstallCheckOptions& options, snowdesktop::widget::PackageArtifact& artifact)
+{
+    const auto uuid = snowdesktop::widget::WidgetPackageManager::GenerateUuid();
+    if (uuid.empty())
+    {
+        std::cerr << "cannot reserve a staging name for the archive\n";
+        return 2;
+    }
+    const auto staged = destination.parent_path() / (".snowwidget-" + uuid + ".snowwidget");
+    struct TemporaryArchive
+    {
+        const std::filesystem::path& path;
+        ~TemporaryArchive()
+        {
+            std::error_code ignored;
+            std::filesystem::remove(path, ignored);
+        }
+    } temporary{staged};
+    snowdesktop::widget::ValidationReport report;
+    std::string error;
+    if (!manager.ExportDirectory(source, staged, artifact, report, error))
+    {
+        std::cerr << report.ToJson() << '\n' << error << '\n';
+        return 1;
+    }
+    int result = VerifyArchiveInstall(staged, {options.host, {}}, false);
+    if (result == 0 && !options.previousPackage.empty())
+        result = VerifyArchiveInstall(staged, options, false);
+    if (result != 0) return result;
+    if (snowdesktop::widget::WidgetPackageManager::Sha256File(staged) != artifact.sha256)
+    {
+        std::cerr << "the checked archive changed before export\n";
+        return 2;
+    }
+    if (MoveFileExW(staged.c_str(), destination.c_str(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    {
+        artifact.localPath = destination;
+        return 0;
+    }
+    std::cerr << "cannot publish the verified archive\n";
+    return 2;
 }
 
 int RunPreviewHost(const std::filesystem::path& host,
@@ -538,7 +667,7 @@ int wmain(int argc, wchar_t** argv)
                "\"showSearchBox\"]},\"commands\":["
                "\"api-contract\",\"system-contract\",\"view-contract\",\"inspect\","
                "\"lint\",\"quality\",\"test\",\"profile\",\"preview\",\"permissions\","
-               "\"preview-native\",\"gpu-diagnostics\",\"validate\",\"pack\",\"publish-local\"]}"
+               "\"preview-native\",\"gpu-diagnostics\",\"validate\",\"pack\",\"verify-install\",\"publish-local\"]}"
             << '\n';
         return 0;
     }
@@ -578,8 +707,6 @@ int wmain(int argc, wchar_t** argv)
     snowdesktop::widget::WidgetPackageManager manager(paths);
     snowdesktop::widget::ValidationReport report;
     snowdesktop::widget::PackageArtifact artifact;
-    std::string error;
-
     if (command == L"preview-native")
     {
         const std::wstring_view component = argc >= 3
@@ -1160,16 +1287,23 @@ int wmain(int argc, wchar_t** argv)
     }
     if (command == L"pack")
     {
-        if (argc != 4)
+        InstallCheckOptions options;
+        if (argc < 4 || !ParseInstallCheckOptions(argc, argv, 4, options))
         {
             PrintUsage();
             return 2;
         }
-        if (!manager.ExportDirectory(source, argv[3], artifact, report, error))
+        const std::filesystem::path output(argv[3]);
+        auto extension = output.extension().wstring();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+            [](wchar_t value) { return static_cast<wchar_t>(std::towlower(value)); });
+        if (extension != L".snowwidget")
         {
-            std::cerr << report.ToJson() << '\n' << error << '\n';
-            return 1;
+            std::cerr << "output must use the .snowwidget extension\n";
+            return 2;
         }
+        const int result = ExportAndVerifyPackage(manager, source, output, options, artifact);
+        if (result != 0) return result;
         std::cout << "{\"ok\":true,\"packageId\":"
             << JsonEscape(artifact.packageId)
             << ",\"version\":" << JsonEscape(artifact.version)
@@ -1177,6 +1311,16 @@ int wmain(int argc, wchar_t** argv)
             << ",\"path\":"
             << JsonEscape(WideToUtf8(artifact.localPath.wstring())) << "}\n";
         return 0;
+    }
+    if (command == L"verify-install")
+    {
+        InstallCheckOptions options;
+        if (!ParseInstallCheckOptions(argc, argv, 3, options))
+        {
+            PrintUsage();
+            return 2;
+        }
+        return VerifyArchiveInstall(source, options, true);
     }
     if (command == L"publish-local")
     {
@@ -1200,12 +1344,13 @@ int wmain(int argc, wchar_t** argv)
             return 1;
         }
         const auto temporary = *transaction / L"package.snowwidget";
-        if (!manager.ExportDirectory(source, temporary, artifact, report, error))
+        const int installResult = ExportAndVerifyPackage(manager, source,
+            temporary, {}, artifact);
+        if (installResult != 0)
         {
             std::error_code cleanupError;
             std::filesystem::remove_all(*transaction, cleanupError);
-            std::cerr << report.ToJson() << '\n' << error << '\n';
-            return 1;
+            return installResult;
         }
         snowdesktop::widget::LocalCatalogPublisher publisher(
             argv[3], paths.staging);

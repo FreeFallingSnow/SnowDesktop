@@ -3,6 +3,7 @@
 #include "widget_package.h"
 #include <windows.h>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -22,7 +23,8 @@ struct PackageFileExportResult
 inline PackageFileExportResult ExportDevelopmentPackageFile(
     const std::filesystem::path& source,
     const std::filesystem::path& output,
-    std::string_view expectedId, std::string_view expectedVersion)
+    std::string_view expectedId, std::string_view expectedVersion,
+    const std::function<bool(const std::filesystem::path&, std::string&)>& verifyInstall = {})
 {
     PackageFileExportResult result;
     const auto extension = output.extension().wstring();
@@ -111,10 +113,15 @@ inline PackageFileExportResult ExportDevelopmentPackageFile(
     result.report = manager.ValidateArchive(temporary.archive, &manifest);
     if (!result.report.Ok() || manifest.id != expectedId ||
         manifest.version != expectedVersion || artifact.packageId != expectedId ||
-        artifact.version != expectedVersion || artifact.sha256.empty() ||
-        artifact.sha256 != WidgetPackageManager::Sha256File(temporary.archive))
+        artifact.version != expectedVersion || artifact.sha256.empty())
     {
         result.error = "exported package does not match the selected development component";
+        return result;
+    }
+    if (verifyInstall && !verifyInstall(temporary.archive, result.error)) return result;
+    if (artifact.sha256 != WidgetPackageManager::Sha256File(temporary.archive))
+    {
+        result.error = "exported package changed before publication";
         return result;
     }
     // Only publish a completely validated file. A failed export or rename

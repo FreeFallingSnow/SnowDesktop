@@ -60,8 +60,13 @@ bin\SnowDesktopSteamBridge.exe workshop component-plan `
   --data-directory <SnowDesktop-data-directory>
 ```
 
-The command inspects, validates and packs the component, then returns one JSON
-plan with `action` set to `create`, `update-content` or `update-metadata`. Show
+The command inspects and packs the component, then runs the host's installation
+validation on the resulting archive before returning a JSON plan. For updates,
+it also checks live upgrade when it has the previously published archive. To
+check an older release that the tool has not retained, supply its exact archive
+with `--previous-package FILE` on both plan and publish. Keep the chosen
+baseline with the release evidence. The plan's `action` is `create`,
+`update-content` or `update-metadata`. Show
 the listing localizations, preview policy, tags, visibility, package version and
 SHA-256 to the user. A successful plan is not authorization to publish.
 

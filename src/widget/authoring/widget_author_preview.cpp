@@ -1,7 +1,9 @@
 #include "widget_author_preview.h"
 
 #include "common/constants.h"
+#include "common/json_value.h"
 #include "data/data_paths.h"
+#include "platform/auto_start_launch.h"
 #include "common/l10n.h"
 #include "theme/personalization.h"
 #include "theme/panel_gradient_renderer.h"
@@ -24,6 +26,7 @@
 #include <cwchar>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -1211,19 +1214,64 @@ int TryRunWidgetAuthorPreviewHostCommand(bool& handled)
     return result.ok ? 0 : 1;
 }
 
+bool CheckWidgetArchiveInstallation(const std::filesystem::path& archive,
+    std::string& error)
+{
+    const auto host = std::filesystem::path(GetExecutableDirectoryPath()) / L"SnowDesktop.exe";
+    const auto resultPath = archive.parent_path() / L"install-check.json";
+    using snowdesktop::auto_start_launch::QuoteArgument;
+    std::wstring command = QuoteArgument(host.wstring()) +
+        L" --widget-author-preview --install-check " + QuoteArgument(archive.wstring()) +
+        L" " + QuoteArgument(resultPath.wstring());
+    STARTUPINFOW startup{sizeof(startup)};
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(host.c_str(), command.data(), nullptr, nullptr,
+            FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process))
+    {
+        error = "cannot launch SnowDesktop installation check";
+        return false;
+    }
+    CloseHandle(process.hThread);
+    const DWORD waited = WaitForSingleObject(process.hProcess, 60000);
+    DWORD code = 2;
+    if (waited == WAIT_OBJECT_0)
+        GetExitCodeProcess(process.hProcess, &code);
+    else
+    {
+        TerminateProcess(process.hProcess, ERROR_TIMEOUT);
+        WaitForSingleObject(process.hProcess, 5000);
+    }
+    CloseHandle(process.hProcess);
+
+    std::ifstream result(resultPath, std::ios::binary);
+    const std::string json((std::istreambuf_iterator<char>(result)), {});
+    result.close();
+    std::error_code ignored;
+    std::filesystem::remove(resultPath, ignored);
+    JsonValue response;
+    const bool parsed = ParseJson(json, response);
+    const auto* ok = parsed ? response.Find("ok") : nullptr;
+    if (code == 0 && ok && ok->IsBoolean() && ok->boolean) return true;
+    const auto* detail = parsed ? response.Find("error") : nullptr;
+    error = detail && detail->IsString() ? detail->string :
+        "SnowDesktop did not return an installation check result";
+    return false;
+}
+
 std::optional<int> TryRunWidgetAuthorInstallCommand()
 {
     int argumentCount = 0;
     const auto freeArguments = [](wchar_t** value) { LocalFree(value); };
     const std::unique_ptr<wchar_t*[], decltype(freeArguments)> arguments(
         CommandLineToArgvW(GetCommandLineW(), &argumentCount), freeArguments);
-    if (!arguments || argumentCount < 2 ||
-        std::wstring_view(arguments[1]) != L"--widget-author-install-check")
+    if (!arguments || argumentCount < 3 ||
+        std::wstring_view(arguments[1]) != kHostSwitch ||
+        std::wstring_view(arguments[2]) != L"--install-check")
         return std::nullopt;
-    if (argumentCount != 4 && argumentCount != 5) return 2;
+    if (argumentCount != 5 && argumentCount != 6) return 2;
 
     const auto report = [&](int code, std::string_view stage, std::string_view error) {
-        std::ofstream output(std::filesystem::path(arguments[3]), std::ios::binary);
+        std::ofstream output(std::filesystem::path(arguments[4]), std::ios::binary);
         output << "{\"ok\":" << (code == 0 ? "true" : "false")
             << ",\"stage\":" << JsonString(stage)
             << ",\"error\":" << JsonString(error) << "}\n";
@@ -1248,7 +1296,9 @@ std::optional<int> TryRunWidgetAuthorInstallCommand()
                 std::filesystem::remove_all(path, ignored);
             }
         } data{root};
-        snowdesktop::data_paths::SetIsolatedAuthoringDataRoot(root.wstring());
+        const auto isolatedRoot = std::filesystem::canonical(root, ec);
+        if (ec) return report(2, "isolation", ec.message());
+        snowdesktop::data_paths::SetIsolatedAuthoringDataRoot(isolatedRoot.wstring());
 
         const ScopedComInitialization com;
         if (!com.Ready()) return report(2, "graphics", "cannot initialize COM");
@@ -1265,14 +1315,17 @@ std::optional<int> TryRunWidgetAuthorInstallCommand()
         if (!engine.InitPreview(context.Get(), dwrite.Get()))
             return report(2, "engine", "cannot initialize isolated widget engine");
         engine.RenderAll(context.Get());
+        engine.SetInitializationExperimentStoragePath(
+            GetDataFilePath(L"SnowDesktop.storage.json"));
 
-        const std::filesystem::path archive(arguments[2]);
+        const std::filesystem::path archive(arguments[3]);
         if (archive.extension() != L".snowwidget")
             return report(2, "arguments", "candidate must be a .snowwidget archive");
         std::wstring error;
-        if (argumentCount == 5)
+        const bool upgrade = argumentCount == 6;
+        if (upgrade)
         {
-            const std::filesystem::path baseline(arguments[4]);
+            const std::filesystem::path baseline(arguments[5]);
             if (baseline.extension() != L".snowwidget")
                 return report(2, "arguments", "previous release must be a .snowwidget archive");
             snowdesktop::widget::WidgetPackageManager validator(engine.GetWidgetPackagePaths());
@@ -1286,9 +1339,11 @@ std::optional<int> TryRunWidgetAuthorInstallCommand()
             if (!installed || installed->builtin || installed->development)
                 return report(2, "baseline.load", "previous release does not match the candidate package ID");
             const auto& manifest = installed->manifest;
+            auto permissions = manifest.permissions;
+            std::erase(permissions, "native.execute");
             if (!engine.SetWidgetPermissionDecision(packageId,
                     snowdesktop::widget::PermissionDecisionState::Granted,
-                    manifest.permissions, manifest.networkDomains, graphicsError))
+                    permissions, manifest.networkDomains, graphicsError))
                 return report(2, "baseline.permissions", graphicsError);
             const wchar_t* instanceId = L"__snowwidget_install_check_baseline__";
             if (!engine.EnsureWidgetLoaded(instanceId, packageId))
@@ -1298,8 +1353,8 @@ std::optional<int> TryRunWidgetAuthorInstallCommand()
             }
         }
         if (!engine.InstallAndVerifyWidgetPackage(archive.wstring(), error))
-            return report(1, argumentCount == 5 ? "upgrade" : "install", WideToUtf8(error));
-        return report(0, argumentCount == 5 ? "upgrade" : "install", {});
+            return report(1, upgrade ? "upgrade" : "install", WideToUtf8(error));
+        return report(0, upgrade ? "upgrade" : "install", {});
     };
     try
     {
