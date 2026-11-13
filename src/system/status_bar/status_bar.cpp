@@ -1390,6 +1390,14 @@ struct StatusBar::Impl
             // Cancel the current tooltip before dispatch, then keep it hidden
             // throughout this gesture's discovery/retention session.
             tooltip.Hide();
+            if (action == tray::Activation::RightDown || action == tray::Activation::RightUp ||
+                action == tray::Activation::ContextKeyboard)
+            {
+                // A context menu can have the same window styles as a hover
+                // card. Let the menu session own its positioning.
+                trayHoverPopup.Reset();
+                trayHoverCovered = false;
+            }
             bool changed = ArmTrayMenu(key);
             bool accepted = false;
             const tray::FocusOrigin origin{hwnd, hwnd, owner.settings.position == DockPosition::Bottom};
