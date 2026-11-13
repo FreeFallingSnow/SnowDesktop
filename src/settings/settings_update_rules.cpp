@@ -58,6 +58,8 @@ bool IsGeneralShortcutOnlyCommit(
         before.collectionPopupAppearance == after.collectionPopupAppearance &&
         before.globalQuickNavigationAppearance == after.globalQuickNavigationAppearance &&
         before.globalCollectionPopupAppearance == after.globalCollectionPopupAppearance &&
+        before.tooltipAppearanceOverride == after.tooltipAppearanceOverride &&
+        before.barPanelAppearanceOverride == after.barPanelAppearanceOverride &&
         before.font == after.font &&
         before.tooltipFontSize == after.tooltipFontSize &&
         before.dockEnabled == after.dockEnabled &&
@@ -111,6 +113,8 @@ bool IsGeneralLoggingOnlyCommit(const GeneralSettings& before,
         before.collectionPopupAppearance == after.collectionPopupAppearance &&
         before.globalQuickNavigationAppearance == after.globalQuickNavigationAppearance &&
         before.globalCollectionPopupAppearance == after.globalCollectionPopupAppearance &&
+        before.tooltipAppearanceOverride == after.tooltipAppearanceOverride &&
+        before.barPanelAppearanceOverride == after.barPanelAppearanceOverride &&
         before.dockEnabled == after.dockEnabled &&
         before.statusBar == after.statusBar &&
         before.widgetDeveloperToolsEnabled == after.widgetDeveloperToolsEnabled &&

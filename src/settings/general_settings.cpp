@@ -220,6 +220,8 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     settings.collectionPopupAppearance = {};
     settings.globalQuickNavigationAppearance = {};
     settings.globalCollectionPopupAppearance = {};
+    settings.tooltipAppearanceOverride = {};
+    settings.barPanelAppearanceOverride = {};
     settings.quickNavigationAppearance.mode = -2;
     settings.collectionPopupAppearance.mode = -2;
     JsonValue appearanceDocument;
@@ -232,6 +234,10 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         if (!snowdesktop::DecodeSurfaceTheme(*value, settings.globalQuickNavigationAppearance)) return false;
     if (const auto* value = appearanceDocument.Find("globalCollectionPopupAppearance"))
         if (!snowdesktop::DecodeSurfaceTheme(*value, settings.globalCollectionPopupAppearance)) return false;
+    if (const auto* value = appearanceDocument.Find("tooltipAppearanceOverride"))
+        if (!snowdesktop::DecodePopupAppearanceRule(*value, settings.tooltipAppearanceOverride)) return false;
+    if (const auto* value = appearanceDocument.Find("barPanelAppearanceOverride"))
+        if (!snowdesktop::DecodePopupAppearanceRule(*value, settings.barPanelAppearanceOverride)) return false;
     if (const auto* value = appearanceDocument.Find("statusBar"))
         if (!snowdesktop::DecodeStatusBarSettings(*value, settings.statusBar)) return false;
     if (const auto* font = appearanceDocument.Find("font"))
@@ -271,9 +277,11 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     const auto popupAppearance = snowdesktop::EncodeSurfaceTheme(settings.collectionPopupAppearance);
     const auto globalQuickAppearance = snowdesktop::EncodeSurfaceTheme(settings.globalQuickNavigationAppearance);
     const auto globalPopupAppearance = snowdesktop::EncodeSurfaceTheme(settings.globalCollectionPopupAppearance);
+    const auto tooltipOverride = snowdesktop::EncodePopupAppearanceRule(settings.tooltipAppearanceOverride);
+    const auto barPanelOverride = snowdesktop::EncodePopupAppearanceRule(settings.barPanelAppearanceOverride);
     const auto statusBar = snowdesktop::EncodeStatusBarSettings(settings.statusBar);
     if (quickAppearance.empty() || popupAppearance.empty() || globalQuickAppearance.empty() ||
-        globalPopupAppearance.empty() || statusBar.empty()) return false;
+        globalPopupAppearance.empty() || tooltipOverride.empty() || barPanelOverride.empty() || statusBar.empty()) return false;
     std::ostringstream file;
     auto calendar = settings.calendarDisplay;
     snowdesktop::calendar::Normalize(calendar);
@@ -305,6 +313,8 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "  \"collectionPopupAppearance\": " << popupAppearance << ",\n";
     file << "  \"globalQuickNavigationAppearance\": " << globalQuickAppearance << ",\n";
     file << "  \"globalCollectionPopupAppearance\": " << globalPopupAppearance << ",\n";
+    file << "  \"tooltipAppearanceOverride\": " << tooltipOverride << ",\n";
+    file << "  \"barPanelAppearanceOverride\": " << barPanelOverride << ",\n";
     file << "  \"animationMode\": " << snowdesktop::animation::NormalizeMode(settings.animationMode) << ",\n";
     file << "  \"popupAnimationEffect\": " << snowdesktop::animation::NormalizePopupEffect(settings.popupAnimationEffect) << ",\n";
     file << "  \"widgetHoverExpandEffect\": " << snowdesktop::animation::NormalizeWidgetHoverEffect(settings.widgetHoverExpandEffect) << ",\n";

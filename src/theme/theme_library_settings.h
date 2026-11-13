@@ -13,10 +13,11 @@ bool WidgetMatches(const widget_runtime::WidgetHostAppearanceState& state, const
 Kind TargetKind(std::string_view target);
 unsigned TargetScope(std::string_view target);
 // Private settings source identities.
-inline constexpr std::array<std::string_view, 15> AppearanceTargets{
+inline constexpr std::array<std::string_view, 17> AppearanceTargets{
     "global", "dock", "statusBar", "taskbar", "quickPanel", "popup", "icon",
     "statusBar/noWindow", "statusBar/maximizedWindow", "statusBar/appWindow",
-    "dock/maximizedWindow", "dock/appWindow", "taskbar/shellUi", "taskbar/maximizedWindow", "taskbar/visibleWindow"};
+    "dock/maximizedWindow", "dock/appWindow", "taskbar/shellUi", "taskbar/maximizedWindow", "taskbar/visibleWindow",
+    "popup/tooltip", "popup/barPanel"};
 StatusBarAppearanceRule StatusBarSettings::* StatusRule(std::string_view target);
 SystemTaskbarDynamicRule DockSettings::* TaskbarRule(std::string_view target);
 Theme CaptureTarget(std::string_view target, const SettingsValues& values);

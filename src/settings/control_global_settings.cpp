@@ -82,6 +82,8 @@ void Enrich(Value& schema, const std::string& path)
         Choices(schema, "gradientDirection", {0, 1, 2, 3}); Choices(schema, "backgroundSource", {0, 1, 2}); Choices(schema, "filterMode", {0, 1, 2});
     }
     if (Child(schema, "appearance") && Child(schema, "mode")) Range(schema, "mode", -2, path.find("statusBar") != path.npos ? 8 : 4);
+    if (path == "general.tooltipAppearanceOverride.theme" || path == "general.barPanelAppearanceOverride.theme")
+        Choices(schema, "mode", {-1, 0, 1, 2, 3, 4});
     if (Child(schema, "appearance") && Child(schema, "themeMode") && Child(schema, "contentTheme"))
         Choices(schema, "contentTheme", {-1, 0, 1});
     if (path == "dock.maximizedWindow" || path == "dock.appWindow")
@@ -244,6 +246,7 @@ void CheckCorrelatedValues(const SettingsValues& values, const Value& changes, c
         const auto& general = values.general;
         for (const auto* surface : {&general.quickNavigationAppearance, &general.collectionPopupAppearance,
                 &general.globalQuickNavigationAppearance, &general.globalCollectionPopupAppearance,
+                &general.tooltipAppearanceOverride.theme, &general.barPanelAppearanceOverride.theme,
                 &general.statusBar.theme, &general.statusBar.appWindow.theme, &general.statusBar.maximizedWindow.theme})
             checkAppearance(surface->appearance);
     }

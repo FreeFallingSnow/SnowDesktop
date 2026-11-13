@@ -61,6 +61,8 @@ struct GeneralSettings
     // snapshots. Missing fields preserve the legacy global-preset resolver.
     snowdesktop::SurfaceTheme globalQuickNavigationAppearance;
     snowdesktop::SurfaceTheme globalCollectionPopupAppearance;
+    snowdesktop::PopupAppearanceRule tooltipAppearanceOverride;
+    snowdesktop::PopupAppearanceRule barPanelAppearanceOverride;
     bool dockEnabled = kDefaultDockEnabled;
     snowdesktop::StatusBarSettings statusBar;
     bool widgetDeveloperToolsEnabled = false;

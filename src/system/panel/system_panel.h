@@ -34,6 +34,7 @@ public:
     // Includes visible cards and the active prompt/retained tray menu.
     bool ContainsPoint(POINT screen) const;
     void UpdateSettings(const StatusBarSettings&);
+    void SetAppearance(const PersonalizationSettings&);
     bool PreTranslateMessage(MSG*);
     bool DropTrayIcon(std::string_view,POINT);
     bool PreviewTrayDrop(std::string_view,POINT);

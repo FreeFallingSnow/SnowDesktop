@@ -467,6 +467,8 @@ void NativeTooltip::SetTarget(std::string key, std::wstring body, RECT screenAnc
     if (targetChanged) self.HideWindow();
     self.contentDirty = self.contentDirty || contentChanged;
     self.anchor = screenAnchor; self.placement = placement;
+    if (!self.window && !self.dragFeedback)
+        if (const auto current = nativeTooltipAppearance.load()) self.appearance = *current;
     if (!self.EnsureWindow()) return;
     const auto now = GetTickCount64();
     if (immediate || self.visible || now >= self.state.readyAt) self.Sync(true);

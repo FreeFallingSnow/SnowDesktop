@@ -15,6 +15,7 @@
 #include "diagnostics/diagnostic_log.h"
 #include "system/tray/tray_hover_popup.h"
 #include "ui/render/native_tooltip.h"
+#include "ui/render/native_tooltip_preferences.h"
 #include "widget/view/widget_accessibility_provider.h"
 #include <d2d1_1helper.h>
 #include <wrl/client.h>
@@ -73,6 +74,7 @@ struct SystemPanel::Impl
     ComPtr<IDCompositionDesktopDevice> composition;ComPtr<IDWriteFactory> text;ComPtr<IDCompositionTarget> target;ComPtr<IDCompositionVisual2> visual;ComPtr<IDCompositionSurface> surface;
     DesktopBackdropCompositor backdrop;HWND window=nullptr;NativeTooltip tooltip;HMONITOR monitor=nullptr;std::optional<Request> current;
     SystemPanelTransition<Request> transition;
+    std::optional<PersonalizationSettings> updatedAppearance;
     std::unique_ptr<WidgetAccessibilityProviderHost> accessibility;
     std::unique_ptr<SystemCalendarInputs> calendarInputs;
     bool calendarMenu=false;
@@ -80,6 +82,7 @@ struct SystemPanel::Impl
     std::shared_ptr<PanelLifetime> lifetime=std::make_shared<PanelLifetime>();
     bool paintDirty=true;
     bool backdropDirty=true;
+    bool appearanceDirty=false;
     std::wstring lastBackdropError;
     bool controlInputRefreshPending=false;
     bool pointerRefreshPending=false;
@@ -309,6 +312,7 @@ struct SystemPanel::Impl
     void Open(Request request)
     {
         if(modal||transition.Releasing()){transition.Defer(std::move(request));return;}
+        if(updatedAppearance) request.appearance=*updatedAppearance;
         if(!Ensure())return;current=std::move(request);const auto& r=*current;monitor=MonitorFromRect(&r.anchor,MONITOR_DEFAULTTONEAREST);scale=GetDpiForWindow(r.owner)/96.f;
         auto source=LiveSystemPanelSource(r.data);source.calendar=calendar;source.tray=[service=r.tray]{return service?service->Current():tray::Snapshot{};};
         if(launchShortcut)source.launchShortcut=[this](SystemPanelShortcut shortcut){
@@ -319,7 +323,7 @@ struct SystemPanel::Impl
         if(nativeControls)source.nativeControls=[this] {if(current&&nativeControls){const auto fn=nativeControls;fn(current->owner,current->anchor);}};
         source.powerMenu=[this]{if(window)PostMessageW(window,kPowerMenu,0,0);};
         source.trayChanged=[this](const auto& value){if(current)current->settings=value;if(changed)changed(value);};
-        tooltip.Configure(window,composition.Get(),text.Get(),r.appearance,background);input={};pointerHover={};scrollbarDragging=false;middleTrayPress.reset();lastMiddleTray.reset();paintDirty=true;backdropDirty=true;
+        tooltip.Configure(window,composition.Get(),text.Get(),NativeTooltipAppearance(),background);input={};pointerHover={};scrollbarDragging=false;middleTrayPress.reset();lastMiddleTray.reset();paintDirty=true;backdropDirty=true;
         model=std::make_shared<SystemPanelModel>(std::move(source),r.settings,r.action,r.clockAtRight);if(!r.confirmPower.empty())model->BeginPowerConfirmation(r.confirmPower,true);showing=true;closing=false;if(!Arrange()){if(showing&&!closing)HideNow();return;}
         // HideNow clears these rectangles. Reopening the same layout need not
         // move or reshape the HWND, so Arrange alone may not publish them.
@@ -364,6 +368,7 @@ struct SystemPanel::Impl
         const bool shape=cards.size()!=next.size()||!std::equal(cards.begin(),cards.end(),next.begin(),[](const auto& x,const auto& y){return EqualRect(&x,&y);});cards=std::move(next);
         if(w!=width||h!=height){width=w;height=h;surface.Reset();paintDirty=true;}RECT previous{};GetWindowRect(window,&previous);const bool moved=previous.left!=left||previous.top!=top||previous.right!=left+w||previous.bottom!=top+h;
         if(moved){auto moving=transition.BeginPlacement();SetWindowPos(window,nullptr,left,top,w,h,SWP_NOACTIVATE|SWP_NOZORDER);}
+        const bool appearanceChanged=std::exchange(appearanceDirty,false);
         if(Glass()&&(moved||shape||backdropDirty||!backdrop.IsAvailable()))
         {
             bool prepared=backdrop.IsAvailable()||backdrop.InitializePopup(window,true,false);
@@ -383,7 +388,9 @@ struct SystemPanel::Impl
             if(showing)SyncTrayMenuLayer();
             backdrop.SetVisible(showing);
         }
-        else if(!Glass())backdrop.Reset();if(moved||shape)Pose();if(moved||shape||contentChanged)PublishGeometry();
+        else if(!Glass())backdrop.Reset();
+        if(moved||shape||appearanceChanged)Pose();
+        if(moved||shape||contentChanged)PublishGeometry();
         // A later overlay can split the pair without notifying our content.
         // The ordinary refresh repairs only the helper; intact pairs are no-ops.
         MaintainSystemPanelBackdropPlacement(backdrop,window,showing&&Glass());
@@ -482,6 +489,7 @@ struct SystemPanel::Impl
     void Queue(Request request)
     {
         if(destroying)return;
+        updatedAppearance.reset();
         afterClose={};
         const auto next=transition.Queue(std::move(request),current,showing,closing||modal);
         if(next==SystemPanelTransition<Request>::Action::Open)
@@ -1011,6 +1019,13 @@ bool SystemPanel::ContainsPoint(POINT screen)const
 }
 void SystemPanel::UpdateSettings(const StatusBarSettings& settings)
 {if(impl_->current)impl_->current->settings=settings;if(impl_->model){impl_->model->UpdateSettings(settings);impl_->paintDirty=true;}}
+void SystemPanel::SetAppearance(const PersonalizationSettings& appearance)
+{
+    impl_->updatedAppearance = appearance;
+    if (!impl_->current || impl_->closing || impl_->current->appearance == appearance) return;
+    impl_->current->appearance = appearance;
+    impl_->paintDirty = impl_->backdropDirty = impl_->appearanceDirty = true;
+}
 void SystemPanel::HideForMonitor(HMONITOR m, bool animate)
 {
     const bool canceled=impl_->transition.CancelForMonitor(m);

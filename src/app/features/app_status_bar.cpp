@@ -10,6 +10,8 @@
 #include "common/utils.h"
 #include "dock/dock_settings.h"
 #include "system/panel/system_panel.h"
+#include "theme/surface_theme.h"
+#include "ui/render/native_tooltip_preferences.h"
 #include "settings/settings_controller.h"
 #include "app/dock/persistent_dock_host.h"
 #include "system/panel/system_panel_model.h"
@@ -538,7 +540,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     }, owner);
                 };
                 systemPanel_->ShowInputMethod(std::move(actions), owner, anchor,
-                    collectionPopupAppearance_, generalSettings_.statusBar, systemDataProvider_);
+                    snowdesktop::ResolvePopupRuleTheme(generalSettings_.barPanelAppearanceOverride, collectionPopupAppearance_),
+                    generalSettings_.statusBar, systemDataProvider_);
                 TraceStatusBarShellActivation(snowdesktop::StatusBarAction::InputMethodPanel, generation,
                     L"finished", hold->shortcutStartedMilliseconds, L"panel-requested");
                 statusBarActivationMonitor_ = nullptr;
@@ -1074,7 +1077,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             (settings.timeNotificationRightAligned ||
                 (settings.foregroundAppName && settings.foregroundAppNameCentered) ||
                 statusBar_->MergedStripBounds(monitor).has_value());
-        systemPanel_->Show(action, owner, anchor, collectionPopupAppearance_, settings,
+        systemPanel_->Show(action, owner, anchor,
+            snowdesktop::ResolvePopupRuleTheme(generalSettings_.barPanelAppearanceOverride, collectionPopupAppearance_), settings,
             action == Action::Tray ? EnsureDockTrayService() : statusBar_->Tray(),
             systemDataProvider_, clockAtRight);
     }
@@ -1343,9 +1347,10 @@ void DesktopApp::SyncStatusBar()
     }
     statusBar_->SetPresentationEnabled(!desktopStartupPresentationPending_);
     auto effectiveStatusBar = generalSettings_.statusBar;
+    const auto tooltipAppearance = snowdesktop::NativeTooltipAppearance();
     if (!snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Tray)) effectiveStatusBar.tray = false;
     statusBar_->Configure(effectiveStatusBar, personalizationSettings_, monitors,
-        dcompDevice_.Get(), dwriteFactory_.Get(), &collectionPopupAppearance_,
+        dcompDevice_.Get(), dwriteFactory_.Get(), &tooltipAppearance,
         [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& appearance, float scale) {
             DrawWidgetPanelBackground(context, frame, appearance.cornerRadius * scale,
                 D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),

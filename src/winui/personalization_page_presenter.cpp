@@ -258,6 +258,29 @@ struct PersonalizationPagePresenter::Impl
         {&DockSettings::maximizedWindow, "dock/maximizedWindow", "app.settings.taskbar_dynamic_maximized_window"},
         {&DockSettings::appWindow, "dock/appWindow", "app.settings.taskbar_dynamic_visible_window"}
     }};
+    struct PopupSceneControl
+    {
+        PopupSceneControl(PopupAppearanceRule GeneralSettings::* member, const char* target,
+            const char* label, const wchar_t* fallback)
+            : member(member), target(target), label(label), fallback(fallback) {}
+
+        PopupAppearanceRule GeneralSettings::* member;
+        const char* target;
+        const char* label;
+        const wchar_t* fallback;
+        SettingRow toggleRow, themeRow;
+        muxc::ToggleSwitch toggle;
+        muxc::StackPanel body;
+        muxc::ComboBox combo;
+        std::shared_ptr<PanelAppearanceEditor> editor;
+        std::unique_ptr<ThemeLibraryControls> themes;
+        winrt::event_token toggled, selected;
+    };
+    muxc::Expander popupScenesSection;
+    std::array<PopupSceneControl, 2> popupScenes{{
+        {&GeneralSettings::tooltipAppearanceOverride, "popup/tooltip", "appearance.popupScene.tooltip", L"Hover tooltips"},
+        {&GeneralSettings::barPanelAppearanceOverride, "popup/barPanel", "appearance.popupScene.barPanel", L"Bar panels"}
+    }};
     std::unique_ptr<QuickNavigationOptions> quickAppearanceOptions;
     muxc::StackPanel quickAppearanceContent;
     muxc::StackPanel popupAppearanceContent;
@@ -682,6 +705,7 @@ struct PersonalizationPagePresenter::Impl
         popupAppearanceContent.Children().Append(popupThemes->SaveContent());
         presenter_controls::JoinSettingsSections(popupAppearanceContent);
         popupThemeCard.content.Children().Append(popupAppearanceContent);
+        InitializePopupScenes();
         dockThemeRoot = muxc::StackPanel{};
         dockThemeRoot.Spacing(8.0);
         dockThemeCard.content = muxc::StackPanel{};
@@ -1119,10 +1143,75 @@ struct PersonalizationPagePresenter::Impl
         }
     }
 
+    void InitializePopupScenes()
+    {
+        muxc::StackPanel rows;
+        rows.Spacing(0);
+        popupScenesSection.Content(rows);
+        popupScenesSection.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        popupScenesSection.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        popupScenesSection.Padding({0});
+        popupThemeCard.content.Children().Append(presenter_controls::SettingsDisclosureRow(popupScenesSection));
+        for (auto& scene : popupScenes)
+        {
+            scene.toggleRow.Initialize(scene.toggle);
+            scene.toggleRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+            presenter_controls::StyleSettingsSubrow(scene.toggleRow.root, &scene == &popupScenes.front(), 0);
+            rows.Children().Append(scene.toggleRow.root);
+
+            scene.body.Spacing(0);
+            scene.body.Margin({16, 0, 0, 0});
+            scene.combo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+            scene.combo.MaxWidth(520);
+            scene.themes = std::make_unique<ThemeLibraryControls>(localize, scene.target, false, scene.combo, 6, 5);
+            scene.themes->SetInlineSurface();
+            scene.themeRow.Initialize(scene.themes->SelectionContent());
+            presenter_controls::StyleSettingsSubrow(scene.themeRow.root, true, 0);
+            scene.body.Children().Append(scene.themeRow.root);
+            scene.body.Children().Append(scene.themes->Content());
+            scene.editor = PanelAppearanceEditor::Create(localize,
+                [this, member = scene.member](const auto& appearance, bool commit) {
+                    EmitGeneral(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
+                        [member, appearance](auto& settings) {
+                            (settings.*member).theme = {4, true, appearance};
+                        });
+                }, false, true);
+            scene.body.Children().Append(scene.editor->Content());
+            scene.body.Children().Append(scene.themes->SaveContent());
+            presenter_controls::JoinSettingsSections(scene.body);
+            scene.themes->SetCustomContent({scene.editor->Content()});
+            scene.body.Visibility(mux::Visibility::Collapsed);
+            rows.Children().Append(scene.body);
+
+            auto* control = &scene;
+            scene.toggled = scene.toggle.Toggled([this, control](const auto&, const auto&) {
+                if (!CanEmit()) return;
+                const bool enabled = control->toggle.IsOn();
+                control->editor->Flush();
+                EmitGeneral(SettingsUpdateMode::PreviewAndCommit,
+                    [member = control->member, enabled](auto& settings) { (settings.*member).enabled = enabled; });
+            });
+            scene.selected = scene.combo.SelectionChanged([this, control](const auto&, const auto&) {
+                if (!CanEmit() || control->themes->ApplySelection()) return;
+                const int index = control->combo.SelectedIndex();
+                if (index < 0 || index > 5) return;
+                control->editor->Flush();
+                EmitGeneral(SettingsUpdateMode::PreviewAndCommit,
+                    [member = control->member, index, global = currentGlobalAppearance](auto& settings) {
+                        auto& rule = settings.*member;
+                        const auto shared = ResolveSurfaceTheme(settings.collectionPopupAppearance, global,
+                            settings.collectionPopupTheme, false, &settings.globalCollectionPopupAppearance);
+                        SelectSurfaceThemeMode(rule.theme, index - 1, ResolvePopupOverrideTheme(rule.theme, shared));
+                    });
+            });
+        }
+    }
+
     auto ThemeForms() const
     {
         return std::array{globalThemes.get(), quickThemes.get(), popupThemes.get(), dockThemes.get(),
-            themeTransfers.get(), dockScenes[0].themes.get(), dockScenes[1].themes.get()};
+            themeTransfers.get(), dockScenes[0].themes.get(), dockScenes[1].themes.get(),
+            popupScenes[0].themes.get(), popupScenes[1].themes.get()};
     }
 
     void ConfigureThemes()
@@ -1926,6 +2015,8 @@ struct PersonalizationPagePresenter::Impl
         const auto scenesTitle = L("settings.taskbar.scenarioOverrides", L"Scenario overrides (advanced)");
         dockScenesSection.Header(winrt::box_value(scenesTitle));
         muxa::AutomationProperties::SetName(dockScenesSection, scenesTitle);
+        popupScenesSection.Header(winrt::box_value(scenesTitle));
+        muxa::AutomationProperties::SetName(popupScenesSection, scenesTitle);
         for (auto& scene : dockScenes)
         {
             const auto label = L(scene.label, scene.member == &DockSettings::maximizedWindow
@@ -1989,6 +2080,21 @@ struct PersonalizationPagePresenter::Impl
         };
         ReplaceComboItems(quickNavigationThemeCombo, themeChoices);
         ReplaceComboItems(collectionPopupThemeCombo, themeChoices);
+        for (auto& scene : popupScenes)
+        {
+            const auto label = L(scene.label, scene.fallback);
+            const auto themeLabel = L("app.settings.taskbar_dynamic_theme", L"Override theme");
+            scene.toggleRow.SetText(label);
+            scene.themeRow.SetText(themeLabel);
+            muxa::AutomationProperties::SetName(scene.toggle, label);
+            muxa::AutomationProperties::SetName(scene.combo, label + L" / " + themeLabel);
+            ReplaceComboItems(scene.combo, {
+                {"appearance.popupScene.followShared", L"Follow shared popup theme"},
+                {"app.settings.dark", L"Dark"}, {"app.settings.light", L"Light"},
+                {"app.settings.dark_acrylic", L"Dark Acrylic"}, {"app.settings.light_acrylic", L"Light Acrylic"},
+                {"app.settings.custom", L"Custom"}});
+            scene.editor->RefreshLocalizedText();
+        }
         muxa::AutomationProperties::SetName(quickNavigationThemeCombo,
             quickNavigationThemeRow.label.Text());
         muxa::AutomationProperties::SetName(collectionPopupThemeCombo,
@@ -2188,6 +2294,19 @@ struct PersonalizationPagePresenter::Impl
         quickThemes->SyncSelection(quickThemes->NativeSelection(), snapshot.values);
         popupThemes->SyncSelection(popupThemes->NativeSelection(), snapshot.values);
         dockThemes->SyncSelection(dockThemes->NativeSelection(), snapshot.values);
+        const auto& general = snapshot.values.general;
+        const auto sharedPopup = ResolveSurfaceTheme(general.collectionPopupAppearance, currentGlobalAppearance,
+            general.collectionPopupTheme, false, &general.globalCollectionPopupAppearance);
+        for (auto& scene : popupScenes)
+        {
+            const auto& rule = general.*scene.member;
+            scene.toggle.IsOn(rule.enabled);
+            scene.body.Visibility(rule.enabled ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+            if (generalChanged || personalizationChanged)
+                scene.editor->SetValue(ResolvePopupOverrideTheme(rule.theme, sharedPopup), newGeneration);
+            scene.themes->SetGeneration(generation);
+            scene.themes->SyncSelection(rule.theme.mode + 1, snapshot.values);
+        }
         for (auto& scene : dockScenes)
         {
             const auto& dock = snapshot.values.dock;
@@ -2411,6 +2530,7 @@ struct PersonalizationPagePresenter::Impl
         {
             quickAppearanceEditor->Flush(); popupAppearanceEditor->Flush(); dockAppearanceEditor->Flush();
             for (auto& scene : dockScenes) scene.editor->Flush();
+            for (auto& scene : popupScenes) scene.editor->Flush();
             if (panelGradientEditor) panelGradientEditor->Flush();
             if (edgeLightEditor) edgeLightEditor->Flush();
             for (ContinuousControl* control : continuousControls)
@@ -2433,6 +2553,12 @@ struct PersonalizationPagePresenter::Impl
         closed = true;
         quickAppearanceEditor->Close(); popupAppearanceEditor->Close(); dockAppearanceEditor->Close();
         for (auto& scene : dockScenes)
+        {
+            scene.editor->Close();
+            scene.toggle.Toggled(scene.toggled);
+            scene.combo.SelectionChanged(scene.selected);
+        }
+        for (auto& scene : popupScenes)
         {
             scene.editor->Close();
             scene.toggle.Toggled(scene.toggled);

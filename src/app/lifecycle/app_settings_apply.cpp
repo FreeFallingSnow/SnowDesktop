@@ -26,6 +26,7 @@
 #include "app/dock/persistent_dock_host.h"
 #include "dock/dock_settings.h"
 #include "system/tray/tray_service.h"
+#include "system/panel/system_panel.h"
 #include "app/dock/dock_platform_helpers.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "platform/single_instance.h"
@@ -1033,13 +1034,11 @@ public:
             // Preview animation and surface appearance only; other General fields
             // retain their commit side effects and old-value comparisons.
             const auto& general = snapshot.values.general;
+            const bool statusBarChanged = app_.generalSettings_.statusBar != general.statusBar;
             app_.generalSettings_.tooltipFontSize = general.tooltipFontSize;
             app_.generalSettings_.animationMode = general.animationMode;
-            if (app_.generalSettings_.statusBar != general.statusBar)
-            {
+            if (statusBarChanged)
                 app_.generalSettings_.statusBar = general.statusBar;
-                app_.SyncStatusBar();
-            }
             app_.generalSettings_.popupAnimationEffect = general.popupAnimationEffect;
             app_.generalSettings_.widgetHoverExpandEffect = general.widgetHoverExpandEffect;
             app_.generalSettings_.widgetHoverVisibilityEffect = general.widgetHoverVisibilityEffect;
@@ -1051,8 +1050,11 @@ public:
             app_.generalSettings_.collectionPopupAppearance = general.collectionPopupAppearance;
             app_.generalSettings_.globalQuickNavigationAppearance = general.globalQuickNavigationAppearance;
             app_.generalSettings_.globalCollectionPopupAppearance = general.globalCollectionPopupAppearance;
+            app_.generalSettings_.tooltipAppearanceOverride = general.tooltipAppearanceOverride;
+            app_.generalSettings_.barPanelAppearanceOverride = general.barPanelAppearanceOverride;
             app_.ApplyQuickNavigationAppearance();
             app_.ApplyCollectionPopupAppearance();
+            if (statusBarChanged) app_.SyncStatusBar();
             app_.ApplyAnimationPreferences();
             if (app_.widgetEngine_)
                 app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
@@ -2303,13 +2305,18 @@ void DesktopApp::ApplyCollectionPopupAppearance()
         generalSettings_.collectionPopupTheme, false, &generalSettings_.globalCollectionPopupAppearance);
     // Panel presets control the surface; menus keep the global style.
     collectionPopupAppearance_.contextMenuStyle = globalAppearance.contextMenuStyle;
-    if (snowdesktop::SetNativeTooltipPreferences(generalSettings_.tooltipFontSize, collectionPopupAppearance_))
+    const auto tooltip = snowdesktop::ResolvePopupRuleTheme(
+        generalSettings_.tooltipAppearanceOverride, collectionPopupAppearance_);
+    if (snowdesktop::SetNativeTooltipPreferences(generalSettings_.tooltipFontSize, tooltip))
     {
         InvalidateAllWidgetSlots();
         InvalidateDockContainers();
         InvalidateFloatingDockWindow(false);
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
     }
+    if (systemPanel_)
+        systemPanel_->SetAppearance(snowdesktop::ResolvePopupRuleTheme(
+            generalSettings_.barPanelAppearanceOverride, collectionPopupAppearance_));
     collectionPopupLightTheme_ =
         collectionPopupAppearance_.contentTheme == 1;
     collectionPopupGlassTheme_ =

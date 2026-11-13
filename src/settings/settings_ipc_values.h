@@ -79,6 +79,7 @@ SD_IPC_FIELDS(StatusBarSettings,
     v.controlCenterSingleIcon, v.notifications, v.showOnlyWhenSummoned, v.edgeRevealGesture,
     v.foregroundAppName, v.foregroundAppNameCentered, v.appWindow);
 SD_IPC_FIELDS(app_fonts::Selection, v.package, v.family);
+SD_IPC_FIELDS(PopupAppearanceRule, v.enabled, v.theme);
 SD_IPC_FIELDS(runtime_modules::Target, v.process, v.name, v.explorer);
 SD_IPC_FIELDS(runtime_modules::Status, v.module, v.allowed, v.active, v.error, v.residencyKnown, v.targets);
 SD_IPC_FIELDS(runtime_modules::Snapshot, v.policyRevision, v.modules);
@@ -97,7 +98,7 @@ SD_IPC_FIELDS(GeneralSettings,
     v.widgetHoverExpandEffect, v.widgetHoverVisibilityEffect,
     v.animationFrameLimit, v.animationEnergySaver, v.animationOnBattery,
     v.quickNavigationAppearance, v.collectionPopupAppearance, v.globalQuickNavigationAppearance,
-    v.globalCollectionPopupAppearance, v.shellExtensions, v.statusBar,
+    v.globalCollectionPopupAppearance, v.tooltipAppearanceOverride, v.barPanelAppearanceOverride, v.shellExtensions, v.statusBar,
     v.contextMenuExpandQuickActions, v.contextMenuHidePageManagement, v.contextMenuHideMoreManagement, v.tooltipFontSize);
 SD_IPC_FIELDS(CategoryRule,
     v.id, v.customLabel, v.extensions, v.enabled);

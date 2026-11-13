@@ -558,7 +558,7 @@ bool DesktopApp::DrawInlineTooltip(ID2D1DeviceContext* ctx, RECT bounds,
         else if (!renderingFloatingDock_)
             desktopForegroundTooltipDamage_.Record(bounds);
     }
-    const auto appearance = collectionPopupAppearance_;
+    const auto appearance = snowdesktop::NativeTooltipAppearance();
     if (snowdesktop::NativeTooltipHighContrast())
     {
         if (snowdesktop::foreground_paint_region::Intersects(updateRect, bounds))
