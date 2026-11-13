@@ -20,7 +20,7 @@ HoverPopup::~HoverPopup()
     Reset();
 }
 
-void HoverPopup::Watch(HWND receiver, HWND target, DWORD process, RECT iconBounds, POINT popupAnchor)
+void HoverPopup::Watch(HWND receiver, HWND target, DWORD process, RECT iconBounds, RECT row, bool preferAbove)
 {
     Reset();
     DWORD actualProcess = 0;
@@ -31,10 +31,16 @@ void HoverPopup::Watch(HWND receiver, HWND target, DWORD process, RECT iconBound
     target_ = target;
     process_ = process;
     started_ = GetTickCount();
-    const LONG distance = MulDiv(96, static_cast<int>(GetDpiForWindow(receiver)), USER_DEFAULT_SCREEN_DPI);
-    const RECT anchorBounds{popupAnchor.x, popupAnchor.y, popupAnchor.x + 1, popupAnchor.y + 1};
-    UnionRect(&vicinity_, &iconBounds, &anchorBounds);
+    const int dpi = static_cast<int>(GetDpiForWindow(receiver));
+    const LONG distance = MulDiv(96, dpi, USER_DEFAULT_SCREEN_DPI);
+    vicinity_ = iconBounds;
     InflateRect(&vicinity_, distance, distance);
+    row_ = row;
+    preferAbove_ = preferAbove;
+    gap_ = MulDiv(6, dpi, USER_DEFAULT_SCREEN_DPI);
+    MONITORINFO monitor{sizeof(monitor)};
+    workArea_ = GetMonitorInfoW(MonitorFromRect(&iconBounds, MONITOR_DEFAULTTONEAREST), &monitor)
+        ? monitor.rcWork : RECT{};
     hook_ = SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_LOCATIONCHANGE, nullptr, OnEvent,
         process, 0, WINEVENT_OUTOFCONTEXT);
     if (hook_) observers.emplace(hook_, this);
@@ -76,13 +82,47 @@ bool HoverPopup::IsNearAnchor(HWND window) const
 
 bool HoverPopup::Visible() const
 {
-    return std::any_of(shown_.begin(), shown_.end(), [this](HWND popup) { return IsNearAnchor(popup); });
+    return std::any_of(shown_.begin(), shown_.end(), [this](const Popup& popup) {
+        return popup.positionRequested ? IsCandidate(popup.window) : IsNearAnchor(popup.window);
+    });
 }
 
 bool HoverPopup::Covers(HWND window) const
 {
     // A mouse-leave message can arrive before the out-of-context show event.
-    return hook_ && window && IsNearAnchor(GetAncestor(window, GA_ROOT));
+    if (!hook_ || !window) return false;
+    const HWND root = GetAncestor(window, GA_ROOT);
+    if (IsNearAnchor(root)) return true;
+    return std::any_of(shown_.begin(), shown_.end(), [&](const Popup& popup) {
+        return popup.window == root && popup.positionRequested && IsCandidate(root);
+    });
+}
+
+void HoverPopup::AvoidRow(Popup& popup, const RECT& bounds) const
+{
+    RECT overlap{};
+    if (popup.positionRequested || !IntersectRect(&overlap, &bounds, &row_)) return;
+    const LONG width = bounds.right - bounds.left;
+    const LONG height = bounds.bottom - bounds.top;
+    if (width <= 0 || height <= 0 || width > workArea_.right - workArea_.left ||
+        height > workArea_.bottom - workArea_.top) return;
+
+    const LONG x = std::clamp(bounds.left, workArea_.left, workArea_.right - width);
+    const LONG y = std::clamp(bounds.top, workArea_.top, workArea_.bottom - height);
+    const POINT above{x, row_.top - gap_ - height};
+    const POINT below{x, row_.bottom + gap_};
+    const POINT left{row_.left - gap_ - width, y};
+    const POINT right{row_.right + gap_, y};
+    const std::array positions{preferAbove_ ? above : below, preferAbove_ ? below : above, left, right};
+    const auto position = std::find_if(positions.begin(), positions.end(), [&](POINT point) {
+        return point.x >= workArea_.left && point.x <= workArea_.right - width &&
+            point.y >= workArea_.top && point.y <= workArea_.bottom - height;
+    });
+    if (position == positions.end() || !IsCandidate(popup.window)) return;
+    // One attempt per show. Apps may reject the request or lay out again.
+    popup.positionRequested = true;
+    SetWindowPos(popup.window, nullptr, position->x, position->y, 0, 0,
+        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS);
 }
 
 void CALLBACK HoverPopup::OnEvent(HWINEVENTHOOK hook, DWORD event, HWND window,
@@ -95,25 +135,30 @@ void CALLBACK HoverPopup::OnEvent(HWINEVENTHOOK hook, DWORD event, HWND window,
     auto& self = *observer->second;
     if (window == self.target_ || static_cast<LONG>(time - self.started_) < 0) return;
 
-    auto slot = std::find(self.shown_.begin(), self.shown_.end(), window);
+    auto slot = std::find_if(self.shown_.begin(), self.shown_.end(),
+        [window](const Popup& popup) { return popup.window == window; });
     if (event == EVENT_OBJECT_SHOW)
     {
         // The window can become visible off-screen, then move beside the icon.
         if (!self.IsCandidate(window)) return;
         if (slot == self.shown_.end())
+        {
             slot = std::find_if(self.shown_.begin(), self.shown_.end(),
-                [&](HWND popup) { return !self.IsCandidate(popup); });
-        if (slot == self.shown_.end()) return;
-        *slot = window;
+                [&](const Popup& popup) { return !self.IsCandidate(popup.window); });
+            if (slot == self.shown_.end()) return;
+            *slot = {window};
+        }
     }
     else if (event == EVENT_OBJECT_HIDE)
     {
         if (slot == self.shown_.end()) return;
-        *slot = nullptr;
+        *slot = {};
     }
     else if (slot == self.shown_.end()) return;
 
     const UINT changed = HoverPopupChangedMessage();
     if (changed) PostMessageW(self.receiver_, changed, 0, 0);
+    RECT bounds{};
+    if (slot->window && GetWindowRect(window, &bounds)) self.AvoidRow(*slot, bounds);
 }
 }

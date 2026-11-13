@@ -19,28 +19,6 @@ namespace snowdesktop::tray
 {
 namespace
 {
-POINT PopupAnchorOutsideRow(POINT anchor, RECT row, HWND receiver, bool preferAbove)
-{
-    if (IsRectEmpty(&row)) return anchor;
-    MONITORINFO monitor{sizeof(monitor)};
-    if (!GetMonitorInfoW(MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST), &monitor)) return anchor;
-    const auto& work = monitor.rcWork;
-    const LONG gap = MulDiv(6, static_cast<int>(GetDpiForWindow(receiver)), USER_DEFAULT_SCREEN_DPI);
-    const LONG above = row.top - gap;
-    const LONG below = row.bottom + gap;
-    const bool fitsAbove = above >= work.top && above < work.bottom;
-    const bool fitsBelow = below >= work.top && below < work.bottom;
-    if (fitsAbove && (preferAbove || !fitsBelow))
-        anchor.y = above;
-    else if (fitsBelow)
-        anchor.y = below;
-    else if (row.right + gap < work.right)
-        anchor.x = row.right + gap;
-    else if (row.left - gap >= work.left)
-        anchor.x = row.left - gap;
-    return anchor;
-}
-
 std::string Utf8(const std::wstring& text)
 {
     if (text.empty()) return {};
@@ -584,13 +562,11 @@ void Service::BeginHover(const std::string& key, HWND receiver, RECT bounds, REC
     const POINT anchor{bounds.left + (bounds.right - bounds.left) / 2,
         bounds.top + (bounds.bottom - bounds.top) / 2};
     // Some apps display the popup while handling the first mouse callback.
-    const POINT popupAnchor = PopupAnchorOutsideRow(anchor, row, receiver, preferAbove);
-    popup.Watch(receiver, reinterpret_cast<HWND>(identity.window), identity.process, bounds, popupAnchor);
-    if (!Activate(key, Activation::Hover, anchor, {}, {}, identity, popupAnchor)) popup.Reset();
+    popup.Watch(receiver, reinterpret_cast<HWND>(identity.window), identity.process, bounds, row, preferAbove);
+    if (!Activate(key, Activation::Hover, anchor, {}, {}, identity)) popup.Reset();
 }
 bool Service::Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin origin,
-    std::optional<RECT> invocationBounds, std::optional<Identity> expectedIdentity,
-    std::optional<POINT> popupAnchor)
+    std::optional<RECT> invocationBounds, std::optional<Identity> expectedIdentity)
 {
     // Leaving an existing hover is cleanup, including after policy revocation.
     if (!runtime_modules::Allowed(runtime_modules::Module::Tray) && action != Activation::Leave) return false;
@@ -657,27 +633,13 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
             GetWindowRect(origin.target, &barBounds);
         const bool context = action == Activation::RightDown || action == Activation::RightUp ||
             action == Activation::ContextKeyboard;
-        if (context && !IsRectEmpty(&geometry) && !IsRectEmpty(&barBounds))
-        {
-            MONITORINFO monitor{sizeof(monitor)};
-            if (GetMonitorInfoW(MonitorFromRect(&barBounds, MONITOR_DEFAULTTONEAREST), &monitor) &&
-                barBounds.bottom - barBounds.top < (monitor.rcMonitor.bottom - monitor.rcMonitor.top) / 4)
-            {
-                const bool preferAbove = barBounds.top + barBounds.bottom >
-                    monitor.rcMonitor.top + monitor.rcMonitor.bottom;
-                // The expanded tray has several rows. Use the clicked row's
-                // vertical extent instead of the status bar below or above it.
-                const RECT row = origin.source == origin.target ? barBounds : geometry;
-                popupAnchor = PopupAnchorOutsideRow(anchor, row, origin.source, preferAbove);
-            }
-        }
-        impl_->menuPlacement.Arm(target, popupAnchor.value_or(anchor), geometry,
+        impl_->menuPlacement.Arm(target, anchor, geometry,
             action == Activation::LeftUp || action == Activation::RightUp || action == Activation::MiddleUp, barBounds,
             context);
     }
     bool accepted = true;
     DWORD error = ERROR_SUCCESS;
-    for (const auto callback : Callbacks(icon, action, anchor, popupAnchor))
+    for (const auto callback : Callbacks(icon, action, anchor))
     {
         if (!SendNotifyMessageW(target, icon.callback, callback.wp, callback.lp))
         { accepted = false; error = GetLastError(); }

@@ -36,8 +36,7 @@ enum class Activation
     LeftDown, LeftUp, DoubleClick, RightDown, RightUp, Keyboard, ContextKeyboard, Hover, Leave,
     MiddleDown, MiddleUp, MiddleDoubleClick
 };
-std::vector<Callback> Callbacks(const Icon& icon, Activation activation, POINT anchor,
-    std::optional<POINT> popupAnchor = {});
+std::vector<Callback> Callbacks(const Icon& icon, Activation activation, POINT anchor);
 struct FocusOrigin { HWND target = nullptr, source = nullptr; };
 // Host-private synchronous updates. Keys not present in this batch keep the
 // geometry supplied by other tray presenters.
@@ -62,8 +61,7 @@ public:
     void BeginHover(const std::string& key, HWND receiver, RECT bounds, RECT row, bool preferAbove,
         HoverPopup& popup);
     bool Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin focus = {},
-        std::optional<RECT> invocationBounds = {}, std::optional<Identity> expectedIdentity = {},
-        std::optional<POINT> popupAnchor = {});
+        std::optional<RECT> invocationBounds = {}, std::optional<Identity> expectedIdentity = {});
     bool ActivatePrimary(const std::string& key, bool doubleClick, POINT anchor,
         FocusOrigin focus = {}, std::optional<RECT> invocationBounds = {}, std::optional<Identity> expectedIdentity = {});
     void CancelFocusReturn(HWND origin = nullptr);
