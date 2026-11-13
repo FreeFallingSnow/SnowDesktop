@@ -16,7 +16,7 @@ public:
     HoverPopup(const HoverPopup&) = delete;
     HoverPopup& operator=(const HoverPopup&) = delete;
 
-    void Watch(HWND receiver, HWND target, DWORD process, RECT iconBounds, RECT row, bool preferAbove);
+    void Watch(HWND receiver, HWND target, DWORD process, RECT iconBounds, RECT row, bool preferAbove, bool firstShowArmed);
     void Reset();
     bool Visible() const;
     bool Covers(HWND window) const;
@@ -40,6 +40,7 @@ private:
     RECT workArea_{};
     LONG gap_ = 0;
     bool preferAbove_ = false;
+    bool firstShowArmed_ = false;
     HWINEVENTHOOK hook_ = nullptr;
     std::array<Popup, 4> shown_{};
 };

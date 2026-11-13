@@ -9,7 +9,8 @@ endif()
 if (NOT DEFINED SNOWDESKTOP_OUTPUT_DIR)
     message(FATAL_ERROR "SNOWDESKTOP_OUTPUT_DIR must be provided by the host build")
 endif()
-add_library(SnowDesktopDockMinimizeHook32 SHARED dock_minimize_hook.cpp)
+add_library(SnowDesktopDockMinimizeHook32 SHARED dock_minimize_hook.cpp
+    ../taskbar_hook/tray_menu_first_show.cpp)
 add_library(SnowDesktopHookEntry32 SHARED ../taskbar_hook/hook_entry.cpp)
 add_executable(SnowDesktopDockMinimizeHost32 WIN32
     dock_minimize_hook_host.cpp dock_cloak_dispatcher.cpp
@@ -17,7 +18,7 @@ add_executable(SnowDesktopDockMinimizeHost32 WIN32
 snowdesktop_add_executable_version_resource(SnowDesktopDockMinimizeHost32
     "SnowDesktop 32-bit Dock minimize animation host")
 target_link_libraries(SnowDesktopDockMinimizeHost32 PRIVATE shell32 user32)
-target_link_libraries(SnowDesktopDockMinimizeHook32 PRIVATE user32 dwmapi)
+target_link_libraries(SnowDesktopDockMinimizeHook32 PRIVATE user32 dwmapi comctl32)
 target_link_libraries(SnowDesktopHookEntry32 PRIVATE user32)
 foreach(target SnowDesktopDockMinimizeHook32 SnowDesktopDockMinimizeHost32 SnowDesktopHookEntry32)
     target_compile_features(${target} PRIVATE cxx_std_20)

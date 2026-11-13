@@ -1,6 +1,24 @@
 #include "dock_minimize_protocol.h"
 #include "dock_window_source_cloak.h"
 
+#ifndef _WIN64
+#include "../taskbar_hook/tray_menu_first_show.h"
+
+extern "C" __declspec(dllexport) LRESULT CALLBACK SnowDesktopTrayHookProc(int code, WPARAM wp, LPARAM lp)
+{
+    if (code == HC_ACTION && lp)
+    {
+        const auto& message = *reinterpret_cast<const CWPSTRUCT*>(lp);
+        if (message.message == RegisterWindowMessageW(snowdesktop::tray::first_show::kArmMessage))
+        {
+            try { snowdesktop::tray::first_show::Arm(message); }
+            catch (...) { /* Keep the original tray gesture available. */ }
+        }
+    }
+    return CallNextHookEx(nullptr, code, wp, lp);
+}
+#endif
+
 extern "C" __declspec(dllexport) LRESULT CALLBACK SnowDesktopDockSourceCloakHook(
     int code, WPARAM wParam, LPARAM lParam)
 {

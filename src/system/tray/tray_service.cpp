@@ -3,6 +3,7 @@
 #include "tray_hover_popup.h"
 #include "platform/runtime_module_policy.h"
 #include "platform/deployment_context.h"
+#include "platform/hook_entry_deployment.h"
 #include "diagnostics/diagnostic_log.h"
 #include "tray_menu_placement.h"
 #include "tray_modern_bootstrap.h"
@@ -48,54 +49,73 @@ void ResolveApplication(Icon& icon)
     CloseHandle(process);
 }
 
-void ArmWeixinMenu(const Icon& icon, HWND receiver, POINT anchor, RECT bounds)
+bool ApplicationIs(const Icon& icon, const wchar_t* expected)
 {
     const auto separator = icon.application.find_last_of(L"\\/");
     const auto* name = icon.application.c_str() + (separator == std::wstring::npos ? 0 : separator + 1);
-    if (_wcsicmp(name, L"Weixin.exe") != 0 || !first_show::IsWeixinReceiver(receiver) || IsRectEmpty(&bounds))
-        return;
-    if (!PtInRect(&bounds, anchor))
-        anchor = {bounds.left + (bounds.right - bounds.left) / 2, bounds.top + (bounds.bottom - bounds.top) / 2};
-    DWORD process = 0;
-    const DWORD thread = GetWindowThreadProcessId(receiver, &process);
-    if (!thread || process != icon.identity.process) return;
-    const UINT message = RegisterWindowMessageW(first_show::kArmMessage);
-    if (!message) return;
-    const auto path = deployment::GetTaskbarHookPath();
-    if (path.empty()) return;
-    static std::atomic<ULONG_PTR> nextSerial{0};
+    return _wcsicmp(name, expected) == 0;
+}
+
+void ArmWpsPopup(HWND receiver, DWORD process, DWORD owner, DWORD serial)
+{
+    if (deployment::GetInjectableRuntimeFilePath(L"SnowDesktopDockMinimizeHook32.dll").empty()) return;
+    const auto library = hook_entry::CurrentImplementation(hook_entry::Payload::Dock32);
+    const auto helper = deployment::GetRuntimeFilePath(L"SnowDesktopDockMinimizeHost32.exe");
+    if (library.empty() || helper.empty()) return;
+    auto command = L"\"" + helper + L"\" " + first_show::kArmHelperSwitch + L" " +
+        std::to_wstring(owner) + L" " + std::to_wstring(serial) + L" " +
+        std::to_wstring(HandleToULong(receiver)) + L" " + std::to_wstring(process) +
+        L" \"" + library.wstring() + L"\"";
+    STARTUPINFOW startup{sizeof(startup)};
+    PROCESS_INFORMATION child{};
+    if (CreateProcessW(helper.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+        nullptr, nullptr, &startup, &child))
+    {
+        CloseHandle(child.hThread);
+        WaitForSingleObject(child.hProcess, 150);
+        CloseHandle(child.hProcess);
+    }
+}
+
+bool ArmPopup(HWND receiver, first_show::Request request)
+{
+    if (IsRectEmpty(&request.icon)) return false;
+    if (!PtInRect(&request.icon, request.anchor))
+        request.anchor = {request.icon.left + (request.icon.right - request.icon.left) / 2,
+            request.icon.top + (request.icon.bottom - request.icon.top) / 2};
+    MONITORINFO monitor{sizeof(monitor)};
+    if (!GetMonitorInfoW(MonitorFromPoint(request.anchor, MONITOR_DEFAULTTONEAREST), &monitor))
+        return false;
+    request.work = monitor.rcWork;
+    static std::atomic<DWORD> nextSerial{0};
     const auto serial = ++nextSerial;
     const auto owner = GetCurrentProcessId();
     const auto requestName = first_show::RequestName(owner, serial);
-    const auto module = LoadLibraryExW(path.c_str(), nullptr,
-        LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-    if (!module) return;
-    const auto procedure = reinterpret_cast<HOOKPROC>(GetProcAddress(module, "SnowDesktopTrayHookProc"));
-    if (procedure)
+    const auto mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
+        0, sizeof(first_show::Request), requestName.c_str());
+    if (!mapping) return false;
+    const auto mappingStatus = GetLastError();
+    struct Close { HANDLE handle; ~Close() { CloseHandle(handle); } } close{mapping};
+    if (mappingStatus == ERROR_ALREADY_EXISTS) return false;
+    auto* view = static_cast<first_show::Request*>(MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, sizeof(request)));
+    if (!view) return false;
+    struct Unmap { void* view; ~Unmap() { UnmapViewOfFile(view); } } unmap{view};
+    request.receiver = reinterpret_cast<UINT_PTR>(receiver);
+    request.expires = GetTickCount64() + first_show::kLifetimeMs;
+    *view = request;
+    if (request.surface == first_show::Surface::WpsHover)
+        ArmWpsPopup(receiver, request.process, owner, serial);
+    else
     {
-        const auto mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
-            0, sizeof(first_show::Request), requestName.c_str());
-        const auto mappingStatus = GetLastError();
-        if (mapping)
+        const auto path = deployment::GetTaskbarHookPath();
+        if (const auto module = LoadLibraryExW(path.c_str(), nullptr,
+            LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS))
         {
-            auto* view = mappingStatus == ERROR_ALREADY_EXISTS ? nullptr :
-                static_cast<first_show::Request*>(MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, sizeof(first_show::Request)));
-            if (view)
-            {
-                *view = {reinterpret_cast<UINT_PTR>(receiver), GetTickCount64() + first_show::kLifetimeMs, anchor, bounds};
-                UnmapViewOfFile(view);
-                if (const auto hook = SetWindowsHookExW(WH_CALLWNDPROC, procedure, module, thread))
-                {
-                    DWORD_PTR ignored = 0;
-                    SendMessageTimeoutW(receiver, message, owner, static_cast<LPARAM>(serial),
-                        SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT, 80, &ignored);
-                    UnhookWindowsHookEx(hook);
-                }
-            }
-            CloseHandle(mapping);
+            first_show::SendArm(module, receiver, request.process, owner, serial);
+            FreeLibrary(module);
         }
     }
-    FreeLibrary(module);
+    return InterlockedCompareExchange(&view->armed, 0, 0) != 0;
 }
 struct Connection
 {
@@ -604,17 +624,34 @@ void Service::BeginHover(const std::string& key, HWND receiver, RECT bounds, REC
 {
     if (IsRectEmpty(&bounds)) return;
     Identity identity{};
+    std::optional<first_show::Surface> surface;
     {
         std::lock_guard guard(impl_->mutex);
         const auto found = std::find_if(impl_->snapshot.icons.begin(), impl_->snapshot.icons.end(),
             [&](const auto& icon) { return icon.key == key; });
         if (found == impl_->snapshot.icons.end() || (found->state & NIS_HIDDEN)) return;
         identity = found->identity;
+        if (ApplicationIs(*found, L"QQ.exe")) surface = first_show::Surface::QQHover;
+        else if (ApplicationIs(*found, L"wpscloudsvr.exe")) surface = first_show::Surface::WpsHover;
     }
     const POINT anchor{bounds.left + (bounds.right - bounds.left) / 2,
         bounds.top + (bounds.bottom - bounds.top) / 2};
     // Some apps display the popup while handling the first mouse callback.
-    popup.Watch(receiver, reinterpret_cast<HWND>(identity.window), identity.process, bounds, row, preferAbove);
+    const auto target = reinterpret_cast<HWND>(identity.window);
+    bool armed = false;
+    if (surface && runtime_modules::Allowed(runtime_modules::Module::Tray))
+    {
+        try
+        {
+            first_show::Request request;
+            request.anchor = anchor; request.icon = bounds; request.row = row;
+            request.gap = MulDiv(6, static_cast<int>(GetDpiForWindow(receiver)), USER_DEFAULT_SCREEN_DPI);
+            request.preferAbove = preferAbove; request.surface = *surface; request.process = identity.process;
+            armed = ArmPopup(target, request);
+        }
+        catch (...) { /* Keep the original hover if optional preparation fails. */ }
+    }
+    popup.Watch(receiver, target, identity.process, bounds, row, preferAbove, armed);
     if (!Activate(key, Activation::Hover, anchor, {}, {}, identity)) popup.Reset();
 }
 bool Service::Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin origin,
@@ -688,9 +725,15 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
         impl_->menuPlacement.Arm(target, anchor, geometry,
             action == Activation::LeftUp || action == Activation::RightUp || action == Activation::MiddleUp, barBounds,
             context);
-        if (action == Activation::RightUp || action == Activation::ContextKeyboard)
+        if ((action == Activation::RightUp || action == Activation::ContextKeyboard) &&
+            ApplicationIs(icon, L"Weixin.exe") && first_show::IsWeixinReceiver(target))
         {
-            try { ArmWeixinMenu(icon, target, anchor, geometry); }
+            try
+            {
+                first_show::Request request;
+                request.anchor = anchor; request.icon = geometry; request.process = pid;
+                ArmPopup(target, request);
+            }
             catch (...) { /* Keep dispatching the original gesture if optional preparation fails. */ }
         }
     }
@@ -700,6 +743,18 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
     {
         if (!SendNotifyMessageW(target, icon.callback, callback.wp, callback.lp))
         { accepted = false; error = GetLastError(); }
+    }
+    if ((action == Activation::Hover || action == Activation::Leave) &&
+        ShouldWriteDiagnosticLog(DiagnosticLogModule::Tray, DiagnosticLogLevel::Debug) &&
+        ApplicationIs(icon, L"douyin_tray.exe"))
+    {
+        POINT cursor{};
+        GetCursorPos(&cursor);
+        wchar_t message[320]{};
+        swprintf_s(message, L"Douyin tray hover action=%ls tick=%lu pid=%lu version=%lu cursor=(%ld,%ld) icon=(%ld,%ld,%ld,%ld) accepted=%u",
+            action == Activation::Hover ? L"open" : L"close", GetTickCount(), pid, icon.version,
+            cursor.x, cursor.y, geometry.left, geometry.top, geometry.right, geometry.bottom, accepted ? 1u : 0u);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, message, DiagnosticLogLevel::Debug);
     }
     if (gesture && action != Activation::LeftDown && action != Activation::RightDown && action != Activation::MiddleDown)
     {

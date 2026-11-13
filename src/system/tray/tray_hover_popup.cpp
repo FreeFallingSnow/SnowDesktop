@@ -20,7 +20,7 @@ HoverPopup::~HoverPopup()
     Reset();
 }
 
-void HoverPopup::Watch(HWND receiver, HWND target, DWORD process, RECT iconBounds, RECT row, bool preferAbove)
+void HoverPopup::Watch(HWND receiver, HWND target, DWORD process, RECT iconBounds, RECT row, bool preferAbove, bool firstShowArmed)
 {
     Reset();
     DWORD actualProcess = 0;
@@ -37,6 +37,7 @@ void HoverPopup::Watch(HWND receiver, HWND target, DWORD process, RECT iconBound
     InflateRect(&vicinity_, distance, distance);
     row_ = row;
     preferAbove_ = preferAbove;
+    firstShowArmed_ = firstShowArmed;
     gap_ = MulDiv(6, dpi, USER_DEFAULT_SCREEN_DPI);
     MONITORINFO monitor{sizeof(monitor)};
     workArea_ = GetMonitorInfoW(MonitorFromRect(&iconBounds, MONITOR_DEFAULTTONEAREST), &monitor)
@@ -101,7 +102,7 @@ bool HoverPopup::Covers(HWND window) const
 void HoverPopup::AvoidRow(Popup& popup, const RECT& bounds) const
 {
     RECT overlap{};
-    if (popup.positionRequested || !IntersectRect(&overlap, &bounds, &row_)) return;
+    if (firstShowArmed_ || popup.positionRequested || !IntersectRect(&overlap, &bounds, &row_)) return;
     const LONG width = bounds.right - bounds.left;
     const LONG height = bounds.bottom - bounds.top;
     if (width <= 0 || height <= 0 || width > workArea_.right - workArea_.left ||

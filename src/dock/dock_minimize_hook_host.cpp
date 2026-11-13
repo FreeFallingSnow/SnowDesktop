@@ -1,15 +1,54 @@
 #include "dock_minimize_hook_threads.h"
 #include "dock_minimize_protocol.h"
+#include "../taskbar_hook/tray_menu_first_show.h"
 
 #include <shellapi.h>
 #include <cstdlib>
 #include <vector>
+
+namespace
+{
+int ArmTrayPopup(wchar_t** args)
+{
+    namespace popup = snowdesktop::tray::first_show;
+    DWORD values[4]{};
+    for (int i = 0; i < 4; ++i)
+    {
+        wchar_t* end = nullptr;
+        values[i] = wcstoul(args[i + 2], &end, 10);
+        if (!values[i] || !end || *end) return 1;
+    }
+    const auto receiver = reinterpret_cast<HWND>(ULongToHandle(values[2]));
+    const auto mapping = OpenFileMappingW(FILE_MAP_READ, FALSE, popup::RequestName(values[0], values[1]).c_str());
+    if (!mapping) return 1;
+    const auto view = static_cast<const popup::Request*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(popup::Request)));
+    if (view && view->process == values[3] && view->receiver == values[2] &&
+        view->surface == popup::Surface::WpsHover && GetTickCount64() < view->expires)
+    {
+        if (const auto module = LoadLibraryExW(args[6], nullptr,
+            LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS))
+        {
+            popup::SendArm(module, receiver, values[3], values[0], values[1]);
+            FreeLibrary(module);
+        }
+    }
+    if (view) UnmapViewOfFile(view);
+    CloseHandle(mapping);
+    return 0;
+}
+}
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
     int count = 0;
     wchar_t** args = CommandLineToArgvW(GetCommandLineW(), &count);
     if (!args) return 1;
+    if (count == 7 && wcscmp(args[1], snowdesktop::tray::first_show::kArmHelperSwitch) == 0)
+    {
+        const int result = ArmTrayPopup(args);
+        LocalFree(args);
+        return result;
+    }
     if (count != 4) { LocalFree(args); return 1; }
     wchar_t* end = nullptr;
     const DWORD ownerId = wcstoul(args[1], &end, 10);
