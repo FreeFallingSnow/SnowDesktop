@@ -19,6 +19,7 @@ struct Watch
     HWND candidate = nullptr;
     HWND shadow = nullptr;
     POINT shadowInset{};
+    RECT qqStaging{};
 };
 thread_local Watch watch;
 
@@ -212,6 +213,21 @@ LRESULT CALLBACK MenuProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp, 
     if ((window != watch.candidate && window != watch.shadow) ||
         (position.flags & (SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)) == (SWP_NOMOVE | SWP_NOSIZE) ||
         !ConvertHoverGeometry(request)) return result;
+    if (request.surface == Surface::QQHover && !IsRectEmpty(&watch.qqStaging))
+    {
+        const RECT nearby{request.row.left - 512, request.row.top - 512,
+            request.row.right + 512, request.row.bottom + 512};
+        RECT overlap{};
+        if (!IntersectRect(&overlap, &bounds, &nearby))
+        {
+            // Chromium/DefWindowProc can clamp a staged SHOW to the top-left
+            // monitor. Keep that transaction at the application's staging
+            // coordinates until it requests a position beside the tray.
+            SetPosition(position, watch.qqStaging.left, watch.qqStaging.top);
+            return result;
+        }
+        watch.qqStaging = {};
+    }
     auto subject = bounds;
     if (window == watch.shadow)
     {
@@ -255,7 +271,11 @@ LRESULT CALLBACK WatchMenu(int code, WPARAM wp, LPARAM lp)
                     (!IsRectEmpty(&bounds) && bounds.right - bounds.left <= 640 && bounds.bottom - bounds.top <= 480 &&
                         ((bounds.right < -8000 && bounds.bottom < -8000) || IntersectRect(&overlap, &bounds, &vicinity)));
                 if (qqCard && SetWindowSubclass(message.hwnd, MenuProcedure, kMenuSubclass, 0))
+                {
                     watch.candidate = message.hwnd;
+                    if (watch.request.surface == Surface::QQHover && bounds.right < -8000 && bounds.bottom < -8000)
+                        watch.qqStaging = bounds;
+                }
             }
             if (!watch.shadow && showing && watch.request.surface == Surface::WpsHover && IsShadow(message.hwnd))
             {
