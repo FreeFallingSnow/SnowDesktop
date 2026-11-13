@@ -1202,18 +1202,19 @@ SystemTaskbarBottomResult MoveSystemTaskbarToBottomForAutoHide()
 {
     using Result = SystemTaskbarBottomResult;
     if (!IsWindows11OrGreater()) return Result::Unchanged;
+    constexpr UINT bottomEdge = ABE_BOTTOM;
 
     // The value is absent on older shells and can be left behind by a rollback.
     const auto location = ReadStoredTaskbarLocation();
-    if (!location || *location == ABE_BOTTOM) return Result::Unchanged;
+    if (!location || *location == bottomEdge) return Result::Unchanged;
 
     const HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
     if (!taskbar) return Result::Failed;
     const auto edge = ReadAppliedTaskbarEdge(taskbar);
-    if (edge == ABE_BOTTOM) return Result::Unchanged;
+    if (edge == bottomEdge) return Result::Unchanged;
     if (!edge || *edge != *location) return Result::Failed;
 
-    const DWORD bottom = ABE_BOTTOM;
+    const DWORD bottom = bottomEdge;
     if (RegSetKeyValueW(HKEY_CURRENT_USER, kTaskbarLocationKey, kTaskbarLocationValue, REG_DWORD,
             &bottom, sizeof(bottom)) != ERROR_SUCCESS)
         return Result::Failed;
@@ -1224,10 +1225,10 @@ SystemTaskbarBottomResult MoveSystemTaskbarToBottomForAutoHide()
     constexpr WPARAM taskbarLocationSetting = 6;
     DWORD_PTR ignored = 0;
     if (!SendMessageTimeoutW(taskbar, traySettingMessage, taskbarLocationSetting,
-            ABE_BOTTOM, SMTO_ABORTIFHUNG | SMTO_BLOCK, 1500, &ignored) ||
-        ReadAppliedTaskbarEdge(taskbar) != ABE_BOTTOM)
+            bottomEdge, SMTO_ABORTIFHUNG | SMTO_BLOCK, 1500, &ignored) ||
+        ReadAppliedTaskbarEdge(taskbar) != bottomEdge)
     {
-        if (ReadStoredTaskbarLocation() == ABE_BOTTOM)
+        if (ReadStoredTaskbarLocation() == bottomEdge)
             RegSetKeyValueW(HKEY_CURRENT_USER, kTaskbarLocationKey, kTaskbarLocationValue, REG_DWORD,
                 &*location, sizeof(DWORD));
         return Result::Failed;
@@ -1659,7 +1660,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
             rule->appearancePreset = id;
         }
         if (const auto* appearance = entry->Find("appearance"))
-            if (!snowdesktop::DecodePanelAppearance(*appearance, rule->appearance)) return false;
+            if (!snowdesktop::DecodePanelAppearance(*appearance, rule->appearance, true)) return false;
     }
     settings.fullscreenPolicy = snowdesktop::dock_fullscreen::DecodePolicy(gradientDocument);
     if (!snowdesktop::dock_fullscreen::DecodeExceptions(gradientDocument, settings.fullscreenExceptions)) return false;
@@ -1808,7 +1809,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     for (const auto& [key, rule] : {std::pair{"maximizedWindow", &settings.maximizedWindow},
             std::pair{"appWindow", &settings.appWindow}})
     {
-        const auto appearance = snowdesktop::EncodePanelAppearance(rule->appearance);
+        const auto appearance = snowdesktop::EncodePanelAppearance(rule->appearance, true);
         if (appearance.empty()) return false;
         file << "  \"" << key << "\": {\"enabled\":" << (rule->enabled ? "true" : "false")
              << ",\"appearancePreset\":" << rule->appearancePreset << ",\"appearance\":" << appearance << "},\n";
