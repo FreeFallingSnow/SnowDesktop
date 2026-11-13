@@ -1,29 +1,22 @@
 #include "tray_douyin_hover.h"
 
-#include <shellapi.h>
 #include <intrin.h>
 #include <algorithm>
 #include <cstring>
-#include <iterator>
 
 namespace snowdesktop::tray::first_show::douyin
 {
 namespace
 {
-// The native tray client uses a shared appbar helper and several distinct
-// cursor queries. Scope the compatibility answers to the verified callers.
+// Scope cursor compatibility to the verified hover callers in this image.
 constexpr DWORD kImageTimestamp = 0x63086893;
 constexpr DWORD kImageSize = 0x80e000;
 constexpr DWORD kRememberPointer = 0x1b7d59;
 constexpr DWORD kComparePointer = 0x1b7f1e;
 constexpr DWORD kCheckIconBounds = 0x1b8079;
-constexpr DWORD kTaskbarHelper = 0x2c9c85;
-constexpr DWORD kCardPlacement = 0x1f2ff9;
-constexpr DWORD kCardAvailableSize = 0x1f32d8;
 constexpr ULONGLONG kLeaveDelayMs = 220;
 
 using Cursor = decltype(&GetCursorPos);
-using AppBar = decltype(&SHAppBarMessage);
 struct State
 {
     Request request;
@@ -56,8 +49,7 @@ struct Import
 // Only one TRAY_CLASS thread is eligible. The originals never change while
 // a wrapper may be running on another thread.
 const Cursor originalCursor = &GetCursorPos;
-const AppBar originalAppBar = &SHAppBarMessage;
-Import cursorImport, appBarImport;
+Import cursorImport;
 
 std::uintptr_t Rva(const void* address)
 {
@@ -132,31 +124,11 @@ BOOL WINAPI CursorForHover(LPPOINT pointer)
     return result;
 }
 
-UINT_PTR WINAPI AppBarForHover(DWORD message, PAPPBARDATA data)
-{
-    if (message == ABM_GETTASKBARPOS && data && data->cbSize >= sizeof(APPBARDATA) &&
-        Rva(_ReturnAddress()) == kTaskbarHelper && LivePresenter())
-    {
-        void* frames[8]{};
-        const auto count = CaptureStackBackTrace(1, static_cast<DWORD>(std::size(frames)), frames, nullptr);
-        for (USHORT i = 0; i < count; ++i)
-        {
-            const auto caller = Rva(frames[i]);
-            if (caller != kCardPlacement && caller != kCardAvailableSize) continue;
-            data->uEdge = state.request.preferAbove ? ABE_BOTTOM : ABE_TOP;
-            data->rc = state.request.row;
-            return TRUE;
-        }
-    }
-    return originalAppBar(message, data);
-}
-
 void Disarm()
 {
     if (!state.timer) return;
     KillTimer(nullptr, state.timer);
     state = {};
-    appBarImport.Exchange(appBarImport.replacement, appBarImport.original);
     cursorImport.Exchange(cursorImport.replacement, cursorImport.original);
 }
 
@@ -181,22 +153,14 @@ bool Arm(const Request& request, DWORD host)
         return false;
     Disarm();
     const auto cursorSlot = FindImport("USER32.dll", "GetCursorPos");
-    const auto appBarSlot = FindImport("SHELL32.dll", "SHAppBarMessage");
-    if (!cursorSlot || !appBarSlot) return false;
+    if (!cursorSlot) return false;
     // Resolve the system entry points directly so another module's slot
     // replacement cannot become the original or be overwritten.
     cursorImport = {cursorSlot, reinterpret_cast<void*>(originalCursor), reinterpret_cast<void*>(&CursorForHover)};
-    appBarImport = {appBarSlot, reinterpret_cast<void*>(originalAppBar), reinterpret_cast<void*>(&AppBarForHover)};
     if (!cursorImport.Exchange(cursorImport.original, cursorImport.replacement)) return false;
-    if (!appBarImport.Exchange(appBarImport.original, appBarImport.replacement))
-    {
-        cursorImport.Exchange(cursorImport.replacement, cursorImport.original);
-        return false;
-    }
     const auto timer = SetTimer(nullptr, 0, 100, CheckLifetime);
     if (!timer)
     {
-        appBarImport.Exchange(appBarImport.replacement, appBarImport.original);
         cursorImport.Exchange(cursorImport.replacement, cursorImport.original);
         return false;
     }

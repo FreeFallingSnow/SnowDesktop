@@ -23,7 +23,7 @@ int ArmTrayPopup(wchar_t** args)
     if (!mapping) return 1;
     const auto view = static_cast<const popup::Request*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(popup::Request)));
     if (view && view->process == values[3] && view->receiver == values[2] &&
-        view->surface == popup::Surface::WpsHover && GetTickCount64() < view->expires)
+        GetTickCount64() < view->expires)
     {
         if (const auto module = LoadLibraryExW(args[6], nullptr,
             LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS))

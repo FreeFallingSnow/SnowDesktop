@@ -37,7 +37,7 @@ enum class Activation
     MiddleDown, MiddleUp, MiddleDoubleClick
 };
 std::vector<Callback> Callbacks(const Icon& icon, Activation activation, POINT anchor);
-struct FocusOrigin { HWND target = nullptr, source = nullptr; };
+struct FocusOrigin { HWND target = nullptr, source = nullptr; std::optional<bool> barAtBottom{}; };
 // Host-private synchronous updates. Keys not present in this batch keep the
 // geometry supplied by other tray presenters.
 struct GeometryUpdate { std::string key; RECT rect{}; };
@@ -58,7 +58,7 @@ public:
     void SetGeometry(const std::string& key, RECT rect);
     void SetGeometries(std::span<const GeometryUpdate> updates);
     void ClearGeometries();
-    void BeginHover(const std::string& key, HWND receiver, RECT bounds, RECT row, bool preferAbove,
+    void BeginHover(const std::string& key, HWND receiver, HWND bar, RECT bounds, RECT row, bool preferAbove,
         HoverPopup& popup);
     bool Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin focus = {},
         std::optional<RECT> invocationBounds = {}, std::optional<Identity> expectedIdentity = {});

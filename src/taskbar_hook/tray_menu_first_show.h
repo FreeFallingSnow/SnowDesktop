@@ -7,11 +7,11 @@
 
 namespace snowdesktop::tray::first_show
 {
-inline constexpr wchar_t kArmMessage[] = L"SnowDesktop.Tray.PopupPlacement.v3";
+inline constexpr wchar_t kArmMessage[] = L"SnowDesktop.Tray.PopupPlacement.v4";
 inline constexpr wchar_t kArmHelperSwitch[] = L"--tray-popup-placement";
 inline constexpr DWORD kLifetimeMs = 1500;
 
-enum class Surface : std::uint32_t { WeixinMenu, QQHover, WpsHover, DouyinHover };
+enum class Surface : std::uint32_t { WeixinMenu, QQHover, WpsHover, DouyinHover, AppBarOnly };
 
 struct Request
 {
@@ -27,12 +27,13 @@ struct Request
     DWORD process = 0;
     volatile LONG armed = 0;
     std::uint64_t presenter = 0;
+    std::uint64_t bar = 0;
 };
-static_assert(sizeof(Request) == 104);
+static_assert(sizeof(Request) == 112);
 
 inline std::wstring RequestName(DWORD owner, ULONG_PTR serial)
 {
-    return L"Local\\SnowDesktop.Tray.PopupPlacement.v3." +
+    return L"Local\\SnowDesktop.Tray.PopupPlacement.v4." +
         std::to_wstring(owner) + L"." + std::to_wstring(serial);
 }
 

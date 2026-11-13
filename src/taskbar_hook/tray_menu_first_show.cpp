@@ -1,4 +1,5 @@
 #include "tray_menu_first_show.h"
+#include "tray_appbar_position.h"
 #ifdef _WIN64
 #include "tray_douyin_hover.h"
 #endif
@@ -410,8 +411,19 @@ void Arm(const CWPSTRUCT& message)
         request.process != GetCurrentProcessId() ||
         request.expires <= now || request.expires - now > kLifetimeMs ||
         IsRectEmpty(&request.icon) || !PtInRect(&request.icon, request.anchor) || IsRectEmpty(&request.work) ||
-        (request.surface != Surface::WeixinMenu && IsRectEmpty(&request.row)))
+        (request.surface != Surface::WeixinMenu && request.surface != Surface::AppBarOnly && IsRectEmpty(&request.row)))
         return;
+    // The query session is independent of window classification and may be
+    // used by any tray client. Its answer expires even without a popup.
+    HMODULE pinned = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+        reinterpret_cast<LPCWSTR>(&WatchMenu), &pinned)) return;
+    const bool appbarArmed = appbar::Arm(request, static_cast<DWORD>(message.wParam));
+    if (request.surface == Surface::AppBarOnly)
+    {
+        if (appbarArmed) InterlockedExchange(&view->armed, 1);
+        return;
+    }
 #ifdef _WIN64
     if (request.surface == Surface::WeixinMenu)
     {
@@ -428,10 +440,6 @@ void Arm(const CWPSTRUCT& message)
 #endif
 
     StopWatching();
-    // The local hook and its timeout can outlive the remote arm message.
-    HMODULE pinned = nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
-        reinterpret_cast<LPCWSTR>(&WatchMenu), &pinned)) return;
     watch.request = request;
     watch.hook = SetWindowsHookExW(WH_CALLWNDPROC, WatchMenu, nullptr, GetCurrentThreadId());
     if (watch.hook) watch.timer = SetTimer(nullptr, 0, kLifetimeMs, Expire);

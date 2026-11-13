@@ -76,6 +76,8 @@ if (MSVC)
     add_library(SnowDesktopTaskbarHook SHARED
         src/taskbar_hook/taskbar_hook.cpp
         src/taskbar_hook/tray_collector.cpp
+        src/taskbar_hook/tray_appbar_position.cpp
+        src/taskbar_hook/tray_appbar_position.h
         src/taskbar_hook/tray_menu_first_show.cpp
         src/taskbar_hook/tray_menu_first_show.h
         src/taskbar_hook/tray_douyin_hover.cpp

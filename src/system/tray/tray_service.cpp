@@ -56,7 +56,14 @@ bool ApplicationIs(const Icon& icon, const wchar_t* expected)
     return _wcsicmp(name, expected) == 0;
 }
 
-void ArmWpsPopup(HWND receiver, DWORD process, DWORD owner, DWORD serial)
+bool CompatibilityEnabled(const wchar_t* disableFile)
+{
+    const auto path = GetDataFilePath(disableFile);
+    const auto attributes = path.empty() ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(path.c_str());
+    return attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+void ArmPopup32(HWND receiver, DWORD process, DWORD owner, DWORD serial)
 {
     if (deployment::GetInjectableRuntimeFilePath(L"SnowDesktopDockMinimizeHook32.dll").empty()) return;
     const auto library = hook_entry::CurrentImplementation(hook_entry::Payload::Dock32);
@@ -79,6 +86,15 @@ void ArmWpsPopup(HWND receiver, DWORD process, DWORD owner, DWORD serial)
 
 bool ArmPopup(HWND receiver, first_show::Request request)
 {
+    if (!request.process || request.process == GetCurrentProcessId()) return false;
+    const auto process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, request.process);
+    if (!process) return false;
+    USHORT processMachine = IMAGE_FILE_MACHINE_UNKNOWN, nativeMachine = IMAGE_FILE_MACHINE_UNKNOWN;
+    const bool architectureKnown = IsWow64Process2(process, &processMachine, &nativeMachine) != FALSE;
+    CloseHandle(process);
+    const USHORT machine = processMachine == IMAGE_FILE_MACHINE_UNKNOWN ? nativeMachine : processMachine;
+    if (!architectureKnown || (machine != IMAGE_FILE_MACHINE_I386 && machine != IMAGE_FILE_MACHINE_AMD64))
+        return false;
     if (IsRectEmpty(&request.icon)) return false;
     if (!PtInRect(&request.icon, request.anchor))
         request.anchor = {request.icon.left + (request.icon.right - request.icon.left) / 2,
@@ -103,8 +119,8 @@ bool ArmPopup(HWND receiver, first_show::Request request)
     request.receiver = reinterpret_cast<UINT_PTR>(receiver);
     request.expires = GetTickCount64() + first_show::kLifetimeMs;
     *view = request;
-    if (request.surface == first_show::Surface::WpsHover)
-        ArmWpsPopup(receiver, request.process, owner, serial);
+    if (machine == IMAGE_FILE_MACHINE_I386)
+        ArmPopup32(receiver, request.process, owner, serial);
     else
     {
         const auto path = deployment::GetTaskbarHookPath();
@@ -619,12 +635,12 @@ void Service::SetGeometries(std::span<const GeometryUpdate> updates)
 }
 void Service::ClearGeometries()
 { std::lock_guard guard(impl_->mutex); impl_->geometries.Clear(impl_->GeometryState()); }
-void Service::BeginHover(const std::string& key, HWND receiver, RECT bounds, RECT row, bool preferAbove,
+void Service::BeginHover(const std::string& key, HWND receiver, HWND bar, RECT bounds, RECT row, bool preferAbove,
     HoverPopup& popup)
 {
     if (IsRectEmpty(&bounds)) return;
     Identity identity{};
-    std::optional<first_show::Surface> surface;
+    auto surface = first_show::Surface::AppBarOnly;
     {
         std::lock_guard guard(impl_->mutex);
         const auto found = std::find_if(impl_->snapshot.icons.begin(), impl_->snapshot.icons.end(),
@@ -635,25 +651,34 @@ void Service::BeginHover(const std::string& key, HWND receiver, RECT bounds, REC
         else if (ApplicationIs(*found, L"wpscloudsvr.exe")) surface = first_show::Surface::WpsHover;
         else if (ApplicationIs(*found, L"douyin_tray.exe")) surface = first_show::Surface::DouyinHover;
     }
+    if ((surface == first_show::Surface::QQHover && !CompatibilityEnabled(L"tray-disable-qq")) ||
+        (surface == first_show::Surface::WpsHover && !CompatibilityEnabled(L"tray-disable-wps")) ||
+        (surface == first_show::Surface::DouyinHover && !CompatibilityEnabled(L"tray-disable-douyin")))
+        surface = first_show::Surface::AppBarOnly;
     const POINT anchor{bounds.left + (bounds.right - bounds.left) / 2,
         bounds.top + (bounds.bottom - bounds.top) / 2};
     // Some apps display the popup while handling the first mouse callback.
     const auto target = reinterpret_cast<HWND>(identity.window);
     bool armed = false;
-    if (surface && runtime_modules::Allowed(runtime_modules::Module::Tray))
+    const bool appbarEnabled = CompatibilityEnabled(L"tray-disable-appbar-position");
+    if ((appbarEnabled || surface != first_show::Surface::AppBarOnly) &&
+        runtime_modules::Allowed(runtime_modules::Module::Tray))
     {
         try
         {
             first_show::Request request;
             request.anchor = anchor; request.icon = bounds; request.row = row;
             request.gap = MulDiv(6, static_cast<int>(GetDpiForWindow(receiver)), USER_DEFAULT_SCREEN_DPI);
-            request.preferAbove = preferAbove; request.surface = *surface; request.process = identity.process;
+            request.preferAbove = preferAbove; request.surface = surface; request.process = identity.process;
             request.presenter = reinterpret_cast<UINT_PTR>(receiver);
+            if (appbarEnabled) request.bar = reinterpret_cast<UINT_PTR>(bar);
             armed = ArmPopup(target, request);
         }
         catch (...) { /* Keep the original hover if optional preparation fails. */ }
     }
-    popup.Watch(receiver, target, identity.process, bounds, row, preferAbove, armed);
+    popup.Watch(receiver, target, identity.process, bounds, row, preferAbove,
+        (armed && surface != first_show::Surface::AppBarOnly) ||
+        !CompatibilityEnabled(L"tray-disable-hover-reposition"));
     if (!Activate(key, Activation::Hover, anchor, {}, {}, identity)) popup.Reset();
 }
 bool Service::Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin origin,
@@ -727,13 +752,23 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
         impl_->menuPlacement.Arm(target, anchor, geometry,
             action == Activation::LeftUp || action == Activation::RightUp || action == Activation::MiddleUp, barBounds,
             context);
-        if ((action == Activation::RightUp || action == Activation::ContextKeyboard) &&
-            ApplicationIs(icon, L"Weixin.exe") && first_show::IsWeixinReceiver(target))
+        if (!CompatibilityEnabled(L"tray-disable-menu-reposition")) impl_->menuPlacement.CancelPlacement();
+        const bool weixinMenu = (action == Activation::RightUp || action == Activation::ContextKeyboard) &&
+            ApplicationIs(icon, L"Weixin.exe") && first_show::IsWeixinReceiver(target) &&
+            CompatibilityEnabled(L"tray-disable-weixin");
+        const bool answerAppbar = origin.barAtBottom.has_value() && CompatibilityEnabled(L"tray-disable-appbar-position");
+        if (answerAppbar || weixinMenu)
         {
             try
             {
                 first_show::Request request;
                 request.anchor = anchor; request.icon = geometry; request.process = pid;
+                request.surface = weixinMenu ? first_show::Surface::WeixinMenu : first_show::Surface::AppBarOnly;
+                if (answerAppbar)
+                {
+                    request.bar = reinterpret_cast<UINT_PTR>(origin.target);
+                    request.preferAbove = *origin.barAtBottom;
+                }
                 ArmPopup(target, request);
             }
             catch (...) { /* Keep dispatching the original gesture if optional preparation fails. */ }

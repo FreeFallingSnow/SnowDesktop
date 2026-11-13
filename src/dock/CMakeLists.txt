@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(SnowDesktopDockMinimize32 LANGUAGES CXX)
+project(SnowDesktopDockMinimize32 LANGUAGES C CXX)
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/SnowDesktop.DependencyEvidence.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/SnowDesktop.VersionResources.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/SnowDesktop.ProductBuild.cmake")
@@ -9,8 +9,19 @@ endif()
 if (NOT DEFINED SNOWDESKTOP_OUTPUT_DIR)
     message(FATAL_ERROR "SNOWDESKTOP_OUTPUT_DIR must be provided by the host build")
 endif()
+set(MINHOOK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/minhook")
+set(MINHOOK32_SOURCES
+    "${MINHOOK_ROOT}/src/buffer.c"
+    "${MINHOOK_ROOT}/src/hook.c"
+    "${MINHOOK_ROOT}/src/trampoline.c"
+    "${MINHOOK_ROOT}/src/hde/hde32.c")
 add_library(SnowDesktopDockMinimizeHook32 SHARED dock_minimize_hook.cpp
-    ../taskbar_hook/tray_menu_first_show.cpp)
+    ../taskbar_hook/tray_appbar_position.cpp
+    ../taskbar_hook/tray_menu_first_show.cpp
+    ${MINHOOK32_SOURCES})
+target_include_directories(SnowDesktopDockMinimizeHook32 PRIVATE "${MINHOOK_ROOT}/include")
+set_source_files_properties(${MINHOOK32_SOURCES} PROPERTIES
+    COMPILE_OPTIONS "/wd4100;/wd4201;/wd4244;/wd4267;/wd4310;/wd4701")
 add_library(SnowDesktopHookEntry32 SHARED ../taskbar_hook/hook_entry.cpp)
 add_executable(SnowDesktopDockMinimizeHost32 WIN32
     dock_minimize_hook_host.cpp dock_cloak_dispatcher.cpp
@@ -18,12 +29,12 @@ add_executable(SnowDesktopDockMinimizeHost32 WIN32
 snowdesktop_add_executable_version_resource(SnowDesktopDockMinimizeHost32
     "SnowDesktop 32-bit Dock minimize animation host")
 target_link_libraries(SnowDesktopDockMinimizeHost32 PRIVATE shell32 user32)
-target_link_libraries(SnowDesktopDockMinimizeHook32 PRIVATE user32 dwmapi comctl32)
+target_link_libraries(SnowDesktopDockMinimizeHook32 PRIVATE user32 dwmapi comctl32 shell32)
 target_link_libraries(SnowDesktopHookEntry32 PRIVATE user32)
 foreach(target SnowDesktopDockMinimizeHook32 SnowDesktopDockMinimizeHost32 SnowDesktopHookEntry32)
     target_compile_features(${target} PRIVATE cxx_std_20)
     target_compile_definitions(${target} PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-    target_compile_options(${target} PRIVATE /W4 /permissive- /EHsc /utf-8)
+    target_compile_options(${target} PRIVATE /W4 "$<$<COMPILE_LANGUAGE:CXX>:/permissive-;/EHsc>" /utf-8)
     set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     snowdesktop_private_runtime_target(${target} "${SNOWDESKTOP_OUTPUT_DIR}")
 endforeach()

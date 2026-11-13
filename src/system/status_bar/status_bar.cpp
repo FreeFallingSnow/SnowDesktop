@@ -1392,8 +1392,9 @@ struct StatusBar::Impl
             tooltip.Hide();
             bool changed = ArmTrayMenu(key);
             bool accepted = false;
-            if (leftClick) accepted = owner.tray->Activate(key, tray::Activation::LeftDown, point, {hwnd, hwnd});
-            accepted = owner.tray->Activate(key, action, point, {hwnd, hwnd}, {}, expectedIdentity) || accepted;
+            const tray::FocusOrigin origin{hwnd, hwnd, owner.settings.position == DockPosition::Bottom};
+            if (leftClick) accepted = owner.tray->Activate(key, tray::Activation::LeftDown, point, origin);
+            accepted = owner.tray->Activate(key, action, point, origin, {}, expectedIdentity) || accepted;
             if (!accepted) changed = CancelTrayMenu() || changed;
             if (changed && owner.dockChanged) owner.dockChanged(false);
         }
@@ -1870,7 +1871,7 @@ struct StatusBar::Impl
                         MapWindowPoints(window, nullptr, reinterpret_cast<POINT*>(&bounds), 2);
                         RECT row{};
                         GetWindowRect(window, &row);
-                        self->owner.tray->BeginHover(hoveredKey, window, bounds, row,
+                        self->owner.tray->BeginHover(hoveredKey, window, window, bounds, row,
                             self->owner.settings.position == DockPosition::Bottom, self->trayHoverPopup);
                     }
                     self->hoveredTray = std::move(hoveredKey);

@@ -195,7 +195,7 @@ struct SystemPanel::Impl
                 const RECT neighborBounds = ScreenBounds(neighbor);
                 UnionRect(&row, &row, &neighborBounds);
             }
-            service->BeginHover(hovered.substr(5), window, bounds, row,
+            service->BeginHover(hovered.substr(5), window, current->owner, bounds, row,
                 current->settings.position == DockPosition::Bottom, trayHoverPopup);
         }
     }
@@ -784,7 +784,8 @@ struct SystemPanel::Impl
         if(!life->alive||!current||model!=activeModel||closing||modal)return;
         const auto source=window,bar=current->owner;
         PublishGeometry();ArmContext(key);ClientToScreen(source,&point);
-        const bool accepted=service->Activate(key,action,point,{bar,source},{},identity);
+        const bool accepted=service->Activate(key,action,point,
+            {bar,source,current->settings.position==DockPosition::Bottom},{},identity);
         if(life->alive&&!accepted)context.Reset();
     }
     void Result(ui::InputResult result,POINT screen,bool keyboard=false)
@@ -797,8 +798,9 @@ struct SystemPanel::Impl
             PublishGeometry();
             ArmContext(key);
             bool accepted=false;
-            if(keyboard)accepted=service->Activate(key,result.kind==ui::InputResult::Kind::Context?tray::Activation::ContextKeyboard:tray::Activation::Keyboard,screen,{bar,source});
-            else{const bool right=result.kind==ui::InputResult::Kind::Context;const bool down=service->Activate(key,right?tray::Activation::RightDown:tray::Activation::LeftDown,screen,{bar,source});accepted=service->Activate(key,right?tray::Activation::RightUp:tray::Activation::LeftUp,screen,{bar,source})||down;}
+            const tray::FocusOrigin origin{bar,source,current->settings.position==DockPosition::Bottom};
+            if(keyboard)accepted=service->Activate(key,result.kind==ui::InputResult::Kind::Context?tray::Activation::ContextKeyboard:tray::Activation::Keyboard,screen,origin);
+            else{const bool right=result.kind==ui::InputResult::Kind::Context;const bool down=service->Activate(key,right?tray::Activation::RightDown:tray::Activation::LeftDown,screen,origin);accepted=service->Activate(key,right?tray::Activation::RightUp:tray::Activation::LeftUp,screen,origin)||down;}
             if(life->alive&&!accepted)context.Reset();return;
         }
         if(result.kind==ui::InputResult::Kind::Context){CalendarContext(result.id,screen);return;}
@@ -934,7 +936,8 @@ struct SystemPanel::Impl
                 {
                     POINT screen{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ClientToScreen(w,&screen);
                     const auto key=node->id.substr(5);const auto service=self->current->tray;const auto owner=self->current->owner;
-                    self->PublishGeometry();self->ArmContext(key);const bool accepted=service->Activate(key,tray::Activation::DoubleClick,screen,{owner,w});
+                    const tray::FocusOrigin origin{owner,w,self->current->settings.position==DockPosition::Bottom};
+                    self->PublishGeometry();self->ArmContext(key);const bool accepted=service->Activate(key,tray::Activation::DoubleClick,screen,origin);
                     if(life->alive&&!accepted)self->context.Reset();
                 }
                 return 0;
