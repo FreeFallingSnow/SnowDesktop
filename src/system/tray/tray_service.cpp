@@ -547,8 +547,10 @@ void Service::SetGeometries(std::span<const GeometryUpdate> updates)
 }
 void Service::ClearGeometries()
 { std::lock_guard guard(impl_->mutex); impl_->geometries.Clear(impl_->GeometryState()); }
-void Service::BeginHover(const std::string& key, HWND receiver, POINT anchor, HoverPopup& popup)
+void Service::BeginHover(const std::string& key, HWND receiver, RECT bounds, RECT row, bool preferAbove,
+    HoverPopup& popup)
 {
+    if (IsRectEmpty(&bounds)) return;
     Identity identity{};
     {
         std::lock_guard guard(impl_->mutex);
@@ -557,8 +559,10 @@ void Service::BeginHover(const std::string& key, HWND receiver, POINT anchor, Ho
         if (found == impl_->snapshot.icons.end() || (found->state & NIS_HIDDEN)) return;
         identity = found->identity;
     }
+    const POINT anchor{bounds.left + (bounds.right - bounds.left) / 2,
+        bounds.top + (bounds.bottom - bounds.top) / 2};
     // Some apps display the popup while handling the first mouse callback.
-    popup.Watch(receiver, reinterpret_cast<HWND>(identity.window), identity.process, anchor);
+    popup.Watch(receiver, reinterpret_cast<HWND>(identity.window), identity.process, anchor, row, preferAbove);
     if (!Activate(key, Activation::Hover, anchor, {}, {}, identity)) popup.Reset();
 }
 bool Service::Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin origin,

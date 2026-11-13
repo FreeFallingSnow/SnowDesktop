@@ -153,24 +153,27 @@ struct SystemPanel::Impl
             {trayPreview=true;dragFeedback.begin(window,icon,screen,static_cast<UINT>(std::lround(28*scale)));break;}
         if(dragFeedback.move)dragFeedback.move(key,screen);
     }
+    RECT ScreenBounds(const ui::Node& node) const
+    {
+        const auto b=model->View().VisibleBounds(node);
+        if(b.right<=b.left||b.bottom<=b.top)return {};
+        POINT origin{};ClientToScreen(window,&origin);origin.x+=kSurfacePadding;origin.y+=kSurfacePadding;
+        return {origin.x+static_cast<LONG>(b.left*scale),origin.y+static_cast<LONG>(b.top*scale),origin.x+static_cast<LONG>(b.right*scale),origin.y+static_cast<LONG>(b.bottom*scale)};
+    }
     void Tip(const ui::Node* node)
     {
-        if(!node||!current||!model||!showing||closing||modal||slide.IsAnimating()||context.process||!pointerHover.Enabled())
+        if(!node||!current||!model||!showing||closing||modal||slide.IsAnimating()||context.process||!pointerHover.Enabled()||
+            (node->id.starts_with("tray:") && trayHoverPopup.Visible()))
         {tooltip.Hide();return;}
-        if (node->id.starts_with("tray:") && trayHoverPopup.Visible())
-        {tooltip.Hide();return;}
-        const auto b=model->View().VisibleBounds(*node);
-        if(b.right<=b.left||b.bottom<=b.top){tooltip.Hide();return;}
-        POINT origin{};ClientToScreen(window,&origin);origin.x+=kSurfacePadding;origin.y+=kSurfacePadding;
-        RECT anchor{origin.x+static_cast<LONG>(b.left*scale),origin.y+static_cast<LONG>(b.top*scale),origin.x+static_cast<LONG>(b.right*scale),origin.y+static_cast<LONG>(b.bottom*scale)};
-        tooltip.SetTarget(node->id,node->tooltip,anchor,current->settings.position==DockPosition::Bottom?NativeTooltipPlacement::Above:NativeTooltipPlacement::Below);
+        tooltip.SetTarget(node->id,node->tooltip,ScreenBounds(*node),current->settings.position==DockPosition::Bottom?NativeTooltipPlacement::Above:NativeTooltipPlacement::Below);
     }
     void QueuePointerRefresh()
     {
         if(window&&!pointerRefreshPending&&PostMessageW(window,kPointerChanged,0,0))pointerRefreshPending=true;
     }
-    void UpdatePointerHover(std::string id, POINT screen)
+    void UpdatePointerHover(const ui::Node* node, POINT screen)
     {
+        auto id = node ? node->id : std::string{};
         if (hovered == id) return;
         const auto previous = std::exchange(hovered, std::move(id));
         paintDirty = true;
@@ -179,8 +182,19 @@ struct SystemPanel::Impl
         const auto service = current->tray;
         if (previous.starts_with("tray:"))
             service->Activate(previous.substr(5), tray::Activation::Leave, screen);
-        if (hovered.starts_with("tray:"))
-            service->BeginHover(hovered.substr(5), window, screen, trayHoverPopup);
+        if (node && hovered.starts_with("tray:"))
+        {
+            const RECT bounds = ScreenBounds(*node);
+            RECT row = bounds;
+            for (const auto& neighbor : model->View().nodes)
+            {
+                if (!neighbor.id.starts_with("tray:") || neighbor.bounds.top != node->bounds.top) continue;
+                const RECT neighborBounds = ScreenBounds(neighbor);
+                UnionRect(&row, &row, &neighborBounds);
+            }
+            service->BeginHover(hovered.substr(5), window, bounds, row,
+                current->settings.position == DockPosition::Bottom, trayHoverPopup);
+        }
     }
     void ClearPointerHover()
     {
@@ -188,7 +202,7 @@ struct SystemPanel::Impl
         if (hovered.empty()) return;
         POINT screen{};
         GetCursorPos(&screen);
-        UpdatePointerHover({}, screen);
+        UpdatePointerHover(nullptr, screen);
     }
     void StopPointerHover()
     {
@@ -198,19 +212,22 @@ struct SystemPanel::Impl
     void RefreshPointer(bool repaint=true)
     {
         const ui::Node* node=nullptr;POINT screen{};
+        bool covered = false;
         const bool located=GetCursorPos(&screen)!=FALSE;
         if(located)pointerHover.Observe(screen);
         if(showing&&!closing&&!modal&&!slide.IsAnimating()&&!context.process&&pointerHover.Enabled()&&model&&input.Pressed().empty()&&!scrollbarDragging&&located)
         {
             const auto pointerWindow=WindowFromPoint(screen);
-            if(pointerWindow==window||(calendarInputs&&calendarInputs->Contains(pointerWindow)))
+            covered = trayHoverPopup.Covers(pointerWindow);
+            if (covered) node = model->View().Find(hovered);
+            else if(pointerWindow==window||(calendarInputs&&calendarInputs->Contains(pointerWindow)))
             {
                 POINT point=screen;
                 if(ScreenToClient(window,&point)&&ContainsClientPoint(point))node=model->View().Hit(ModelPoint(point.x,point.y),false);
             }
         }
-        UpdatePointerHover(node ? node->id : std::string{}, screen);
-        Tip(node);
+        UpdatePointerHover(node, screen);
+        Tip(covered ? nullptr : node);
         if(repaint&&paintDirty&&showing)Paint();
     }
     ui::Palette Palette()const
@@ -804,7 +821,7 @@ struct SystemPanel::Impl
             if(m==kPointerChanged){self->pointerRefreshPending=false;self->RefreshPointer();return 0;}
             if (m == tray::HoverPopupChangedMessage())
             {
-                self->Tip(self->model ? self->model->View().Find(self->hovered) : nullptr);
+                self->RefreshPointer();
                 return 0;
             }
             if(m==kPowerMenu){self->PowerMenu();return 0;}

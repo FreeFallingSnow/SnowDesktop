@@ -58,7 +58,8 @@ public:
     void SetGeometry(const std::string& key, RECT rect);
     void SetGeometries(std::span<const GeometryUpdate> updates);
     void ClearGeometries();
-    void BeginHover(const std::string& key, HWND receiver, POINT anchor, HoverPopup& popup);
+    void BeginHover(const std::string& key, HWND receiver, RECT bounds, RECT row, bool preferAbove,
+        HoverPopup& popup);
     bool Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin focus = {},
         std::optional<RECT> invocationBounds = {}, std::optional<Identity> expectedIdentity = {});
     bool ActivatePrimary(const std::string& key, bool doubleClick, POINT anchor,

@@ -16,20 +16,31 @@ public:
     HoverPopup(const HoverPopup&) = delete;
     HoverPopup& operator=(const HoverPopup&) = delete;
 
-    void Watch(HWND receiver, HWND target, DWORD process, POINT anchor);
+    void Watch(HWND receiver, HWND target, DWORD process, POINT anchor, RECT row, bool preferAbove);
     void Reset();
     bool Visible() const;
+    bool Covers(HWND window) const;
 
 private:
     static void CALLBACK OnEvent(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD);
+    bool IsCandidate(HWND window) const;
     bool IsNearAnchor(HWND window) const;
+    struct Popup
+    {
+        HWND window = nullptr;
+        bool anchored = false;
+        unsigned moves = 0;
+    };
+    void AvoidRow(Popup& popup) const;
 
     HWND receiver_ = nullptr;
     HWND target_ = nullptr;
     DWORD process_ = 0;
     DWORD started_ = 0;
     RECT vicinity_{};
+    RECT row_{};
+    bool preferAbove_ = false;
     HWINEVENTHOOK hook_ = nullptr;
-    std::array<HWND, 4> shown_{};
+    std::array<Popup, 4> shown_{};
 };
 }

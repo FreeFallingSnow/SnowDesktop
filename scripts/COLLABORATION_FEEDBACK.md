@@ -114,6 +114,8 @@
 
 ### CF-010 等待结束回执过大
 
+- **Run 中断后的诊断回执（2026-11-13）**：Task `tray-menu-hover-popup`，批次 `1d39d51bf35648e784acdb91b9203d8c` 修订 0，Run `bf51917ebf3c41d8aadfca35dfadfd85`。工具会话失效后续接 `wait` 没有返回终态，`run status` 确认 `interrupted`、`ownerState: exited`，同时输出 4058 行并截断。已按原回执 `recover`，由续修批次 `ca7b49ddd3dd42b7978a3833698a3969` 复用候选编译槽。执行者退出原因待确认。Run 终态摘要和批次观察如何提示该终态仍待改进，未为反馈重现或另建 Run。
+
 - **定向测试结果的读取范围（2026-11-12）**：Task `fix-hidden-desktop-selection`、批次 `a0636dc6f15b469cbf6118978b822e68` 修订 0、Run `bff864dba7214013b178a708042df590`。`ready-and-wait` 的精简回执正常返回一项测试通过。随后 Agent 从批次 JSON 读取完整 `coverage` 并执行 `ConvertTo-Json -Depth 4`，内嵌的执行上下文和 `source-report-not-in-generated-project` 明细导致输出截断。核对状态时直接读取 `coverage.completed`，产物另读 `productBuild.exitCode` 与 `activation`。窄字段摘要可同时覆盖测试和产品构建。本次没有重复构建或测试，依赖报告的根因待核实。
 
 - **指定批次的状态回执（2026-11-08）**：Task `dock-desktop-blur` 执行 `scripts/build.bat status -Batch 76b73a4d35c24415adbd5e6dff38c08a` 核对合成器文件归属时，返回包含全局 `tasks` 历史的状态。整对象以 Depth 3 投影后仍被工具截断。后续只投影 `current.batch.participants` 和 `activeCandidates.participants`，核对了候选 `d7c34e793bd344e19c56e369c1e793a7` 的文件归属，未重交构建。建议让指定批次状态提供窄回执并保留完整查询。此项涉及只读 `status`，不改变 `ready-and-wait` 精简结束回执的验证结论。
@@ -339,3 +341,8 @@
 - **实测**：2026-11-12，Task `task-8fea9da64f544f1c87c7b78d5944c644`，批次 `4e6ca21b417744518f859d8fc4941043` 修订 0。`scripts/build.bat resource apply` 对请求 `4e3f7ba01163b976c9f2e08763de5f7c` 写入 `lang/ja-JP.json` 时，临时文件原子替换报 `[WinError 5]`，当时尚未提交构建。
 - **源码确认与处理**：`reconcile_resource_write` 比对磁盘内容和键归属，确认未发布后允许沿用原请求。按原参数重试，回执为 `applied`，继续其余语言。
 - **影响与下一步**：首次错误缺少请求标识和恢复指引，批量应用脚本中断，需要读取事务回执、补续剩余条目。后续可在原子替换错误中打印同请求重试命令，保留现有端点校验。WinError 5 的底层来源待核实。
+
+### CF-030 链接中断后复用不完整的候选程序
+
+- **实测（2026-11-13）**：Task `tray-menu-hover-popup`，批次 `1d39d51bf35648e784acdb91b9203d8c`、Run `bf51917ebf3c41d8aadfca35dfadfd85` 在链接阶段中断。续修批次 `ca7b49ddd3dd42b7978a3833698a3969` 修订 2、Run `7c2558930f82411e8aee8fff1e7adb37` 复用了先前的 2097152 字节 `SnowDesktop.exe`，整理阶段报 `mt.exe: c101008c ... The binary is not a valid Windows image.`，未激活也未运行 CTest。
+- **处理与下一步**：在候选槽及编译锁内，把无效候选 EXE 移到本任务的忽略目录。续修批次 `eb37472cdf904edaa7da10e59e435e86`、Run `b56dd466039143cdb8ba2b89da328eef` 仍未链接，整理阶段报 `SnowDesktop build executable was not found`。随后在两把锁内归档该目标的 `link*.tlog`，保留对象文件，由批次 `603b065eb84e46539a32764c5b88228f` 重试。构建系统可在中断恢复时识别未完成的链接输出，同时使该产物和链接跟踪失效。本次未修改构建逻辑。

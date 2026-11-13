@@ -292,6 +292,7 @@ struct StatusBar::Impl
         status_bar_input_method::Snapshot lastInputMethod;
         std::string hoveredTray;
         tray::HoverPopup trayHoverPopup;
+        bool trayHoverCovered = false;
         NativeTooltip tooltip;
         std::optional<std::size_t> tooltipControlPart;
         std::vector<StatusBarItem> items;
@@ -459,6 +460,7 @@ struct StatusBar::Impl
         {
             tooltip.Hide();
             trayHoverPopup.Reset();
+            trayHoverCovered = false;
             tooltipControlPart.reset();
             if (!hoveredTray.empty() && owner.tray)
             {
@@ -473,7 +475,7 @@ struct StatusBar::Impl
                 !interaction.hovered || *interaction.hovered >= items.size())
             { tooltip.Hide(); return; }
             const auto& item = items[*interaction.hovered];
-            if (item.icon && item.icon->key == hoveredTray && trayHoverPopup.Visible())
+            if (item.icon && item.icon->key == hoveredTray && (trayHoverCovered || trayHoverPopup.Visible()))
             { tooltip.Hide(); return; }
             auto body = item.icon ? (item.icon->tip.empty() ? item.icon->application : item.icon->tip) : item.tip;
             auto key = item.icon ? "tray/" + item.icon->key : "bar/" + item.key;
@@ -500,6 +502,21 @@ struct StatusBar::Impl
             tooltip.SetTarget(std::move(key), std::move(body), anchor,
                 owner.settings.position == DockPosition::Bottom ? NativeTooltipPlacement::Above : NativeTooltipPlacement::Below,
                 immediate);
+        }
+        bool PointerOverTrayPopup() const
+        {
+            POINT point{};
+            return !hoveredTray.empty() && GetCursorPos(&point) && trayHoverPopup.Covers(WindowFromPoint(point));
+        }
+        void CheckTrayPopupLeave()
+        {
+            if (!trayHoverCovered || PointerOverTrayPopup()) return;
+            trayHoverCovered = false;
+            POINT point{};
+            if (interaction.hovered && *interaction.hovered < items.size() && GetCursorPos(&point) &&
+                WindowFromPoint(point) == hwnd && ScreenToClient(hwnd, &point) &&
+                PtInRect(&items[*interaction.hovered].bounds, point)) return;
+            ClearHover();
         }
         void Hide(bool notify = true)
         {
@@ -1507,7 +1524,13 @@ struct StatusBar::Impl
             if (message == tray::FocusReturnMessage())
             { self->ReturnTrayFocus(static_cast<std::uint64_t>(wp)); return 0; }
             if (message == tray::HoverPopupChangedMessage())
-            { self->SyncTooltip(); return 0; }
+            {
+                const auto previousHover = self->interaction.hovered;
+                self->CheckTrayPopupLeave();
+                if (previousHover != self->interaction.hovered) self->PaintHover();
+                else self->SyncTooltip();
+                return 0;
+            }
             if (message == tray::ChangeMessage())
             {
                 if (self->owner.tray && self->owner.tray->AcknowledgeChange(window, static_cast<std::uint64_t>(wp)))
@@ -1595,6 +1618,7 @@ struct StatusBar::Impl
                 performance::Scope timerTrace("timer.callback", StatusBarTimerPhase(wp), traceOwner);
                 if (wp == kClockTimer)
                 {
+                    self->CheckTrayPopupLeave();
                     self->owner.appNameWork.Drain();
                     // One service consumer and one pending audio target across
                     // all bars: the first monitor must not drain another's result.
@@ -1813,12 +1837,21 @@ struct StatusBar::Impl
                 }
                 const auto previousHover = self->interaction.hovered;
                 self->interaction.hovered = hover;
+                self->trayHoverCovered = false;
                 if (hoveredKey != self->hoveredTray && self->owner.tray)
                 {
                     POINT screen = point; ClientToScreen(window, &screen);
                     self->trayHoverPopup.Reset();
                     if (!self->hoveredTray.empty()) self->owner.tray->Activate(self->hoveredTray, tray::Activation::Leave, screen);
-                    if (!hoveredKey.empty()) self->owner.tray->BeginHover(hoveredKey, window, screen, self->trayHoverPopup);
+                    if (!hoveredKey.empty() && hover)
+                    {
+                        RECT bounds = self->items[*hover].bounds;
+                        MapWindowPoints(window, nullptr, reinterpret_cast<POINT*>(&bounds), 2);
+                        RECT row{};
+                        GetWindowRect(window, &row);
+                        self->owner.tray->BeginHover(hoveredKey, window, bounds, row,
+                            self->owner.settings.position == DockPosition::Bottom, self->trayHoverPopup);
+                    }
                     self->hoveredTray = std::move(hoveredKey);
                 }
                 TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, window, 0}; TrackMouseEvent(&tracking);
@@ -1884,6 +1917,12 @@ struct StatusBar::Impl
             case WM_MOUSELEAVE:
             {
                 if (!self->pressedTray.empty()) return 0;
+                if (self->PointerOverTrayPopup())
+                {
+                    self->trayHoverCovered = true;
+                    self->tooltip.Hide();
+                    return 0;
+                }
                 self->presentationPreparation.Run([&] {
                     self->EndDragFeedback();
                     self->trayDragging = false;
