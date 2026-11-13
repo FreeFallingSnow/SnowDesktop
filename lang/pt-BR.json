@@ -2906,5 +2906,8 @@
   "settings.taskbar.autoHide.retry": "Ativar ocultamento",
   "settings.taskbar.autoHide.notEffective": "O ocultamento automático está ativado no Windows, mas ainda não foi aplicado a algumas barras de tarefas.",
   "settings.taskbar.autoHide.requiresBottom": "O Windows exige que a barra de tarefas esteja na parte inferior da tela para ocultá-la automaticamente. Ao ativar a opção, a barra será movida para lá.",
-  "settings.taskbar.autoHide.disabled": "O ocultamento automático da barra de tarefas do Windows está desativado."
+  "settings.taskbar.autoHide.disabled": "O ocultamento automático da barra de tarefas do Windows está desativado.",
+  "appearance.popupScene.tooltip": "Dicas ao passar o mouse",
+  "appearance.popupScene.barPanel": "Painéis da barra de status",
+  "appearance.popupScene.followShared": "Seguir o tema compartilhado de janelas pop-up"
 }

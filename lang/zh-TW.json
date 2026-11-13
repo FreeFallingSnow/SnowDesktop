@@ -2906,5 +2906,8 @@
   "settings.taskbar.autoHide.retry": "啟用隱藏",
   "settings.taskbar.autoHide.notEffective": "Windows 已開啟自動隱藏，但部分工作列尚未自動隱藏。",
   "settings.taskbar.autoHide.requiresBottom": "Windows 只允許在畫面底部自動隱藏工作列。啟用後，工作列會移到底部。",
-  "settings.taskbar.autoHide.disabled": "Windows 的工作列自動隱藏已關閉。"
+  "settings.taskbar.autoHide.disabled": "Windows 的工作列自動隱藏已關閉。",
+  "appearance.popupScene.tooltip": "滑鼠停駐提示",
+  "appearance.popupScene.barPanel": "狀態列面板",
+  "appearance.popupScene.followShared": "跟隨共用彈出視窗主題"
 }

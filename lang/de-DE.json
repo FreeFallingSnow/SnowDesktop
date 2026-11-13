@@ -2906,5 +2906,8 @@
   "settings.taskbar.autoHide.retry": "Ausblenden aktivieren",
   "settings.taskbar.autoHide.notEffective": "Das automatische Ausblenden ist in Windows eingeschaltet, greift aber noch nicht für alle Taskleisten.",
   "settings.taskbar.autoHide.requiresBottom": "Windows blendet die Taskleiste nur am unteren Bildschirmrand automatisch aus. Beim Aktivieren wird sie dorthin verschoben.",
-  "settings.taskbar.autoHide.disabled": "Das automatische Ausblenden der Windows-Taskleiste ist ausgeschaltet."
+  "settings.taskbar.autoHide.disabled": "Das automatische Ausblenden der Windows-Taskleiste ist ausgeschaltet.",
+  "appearance.popupScene.tooltip": "Hover-QuickInfos",
+  "appearance.popupScene.barPanel": "Panels der Statusleiste",
+  "appearance.popupScene.followShared": "Gemeinsames Popup-Design übernehmen"
 }

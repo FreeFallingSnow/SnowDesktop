@@ -2906,5 +2906,8 @@
   "settings.taskbar.autoHide.retry": "Enable hiding",
   "settings.taskbar.autoHide.notEffective": "Windows auto-hide is on, but it hasn't taken effect for some taskbars.",
   "settings.taskbar.autoHide.requiresBottom": "Windows requires the taskbar at the bottom for auto-hide. Enabling it will move the taskbar there.",
-  "settings.taskbar.autoHide.disabled": "Windows taskbar auto-hide is turned off."
+  "settings.taskbar.autoHide.disabled": "Windows taskbar auto-hide is turned off.",
+  "appearance.popupScene.tooltip": "Hover tooltips",
+  "appearance.popupScene.barPanel": "Bar panels",
+  "appearance.popupScene.followShared": "Follow shared popup theme"
 }

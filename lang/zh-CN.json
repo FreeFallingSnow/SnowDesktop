@@ -2906,5 +2906,8 @@
   "settings.taskbar.autoHide.retry": "启用隐藏",
   "settings.taskbar.autoHide.notEffective": "Windows 已开启自动隐藏，但部分任务栏尚未自动隐藏。",
   "settings.taskbar.autoHide.requiresBottom": "Windows 只允许在屏幕底部自动隐藏任务栏。启用后，任务栏会移到底部。",
-  "settings.taskbar.autoHide.disabled": "Windows 的任务栏自动隐藏已关闭。"
+  "settings.taskbar.autoHide.disabled": "Windows 的任务栏自动隐藏已关闭。",
+  "appearance.popupScene.tooltip": "悬浮提示",
+  "appearance.popupScene.barPanel": "栏上面板",
+  "appearance.popupScene.followShared": "跟随共享弹窗主题"
 }
