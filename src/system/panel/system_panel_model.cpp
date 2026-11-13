@@ -492,7 +492,9 @@ ui::InputResult SystemPanelModel::HandleKey(ui::Input& input,unsigned key,bool s
     const auto* focused=scene_.Find(input.Focused());
     const bool fixedCalendar=action_==StatusBarAction::Calendar&&focused&&
         ((bodyLeft_>0&&(focused->bounds.right<=bodyLeft_||focused->bounds.bottom<=bodyStart_))||
-            (calendarStacked_&&scene_.cards.size()>1&&focused->bounds.top>=scene_.cards.back().top));
+            (calendarStacked_&&scene_.cards.size()>1&&focused->clip.bottom<=focused->clip.top&&
+                (settings_.position==DockPosition::Bottom?focused->bounds.top>=scene_.cards.back().top:
+                    focused->bounds.bottom<=scene_.cards.front().bottom)));
     if(result.kind==ui::InputResult::Kind::None&&!fixedCalendar&&!focusMoved)
     {
         const float page=(std::max)(42.f,scrollViewport_.bottom-scrollViewport_.top-32);
@@ -534,8 +536,9 @@ void SystemPanelModel::DragScrollbar(int startOffset,int pointerDelta)
 }
 void SystemPanelModel::UpdateSettings(const StatusBarSettings& settings)
 {
-    if(closed_||(settings_.trayOrder==settings.trayOrder&&settings_.pinnedTrayItems==settings.pinnedTrayItems&&
+    if(closed_||(settings_.position==settings.position&&settings_.trayOrder==settings.trayOrder&&settings_.pinnedTrayItems==settings.pinnedTrayItems&&
         settings_.quickControlOrder==settings.quickControlOrder&&settings_.hiddenQuickControls==settings.hiddenQuickControls))return;
+    settings_.position=settings.position;
     settings_.trayOrder=settings.trayOrder;settings_.pinnedTrayItems=settings.pinnedTrayItems;
     settings_.quickControlOrder=settings.quickControlOrder;settings_.hiddenQuickControls=settings.hiddenQuickControls;
     NormalizeStatusBarSettings(settings_);
@@ -1693,7 +1696,10 @@ void SystemPanelModel::FinishStackedCalendar(float monthEnd,float agendaTop,floa
     const bool separate=room>=240.f;
     const float agendaHeight=separate?(std::min)(400.f,room):
         (std::max)(220.f,agendaEnd-agendaTop+24.f);
-    const float monthShift=agendaHeight+gap,agendaShift=16.f-agendaTop;
+    const bool agendaAbove=settings_.position==DockPosition::Bottom;
+    const float monthShift=agendaAbove?agendaHeight+gap:0.f;
+    const float agendaCardTop=agendaAbove?0.f:monthHeight+gap;
+    const float agendaBottom=agendaCardTop+agendaHeight,agendaShift=agendaCardTop+16.f-agendaTop;
     const float scrollTop=agendaStart+agendaShift;
     const auto shift=[](ui::Node& node,float amount) {
         node.bounds.top+=amount;node.bounds.bottom+=amount;
@@ -1701,9 +1707,9 @@ void SystemPanelModel::FinishStackedCalendar(float monthEnd,float agendaTop,floa
     };
     if(separate)
     {
-        maxScroll_=(std::max)(0.f,agendaEnd+agendaShift+8.f-agendaHeight);
+        maxScroll_=(std::max)(0.f,agendaEnd+agendaShift+8.f-agendaBottom);
         scroll_=std::clamp(scroll_,0.f,maxScroll_);
-        scrollViewport_=Rect(0,scrollTop,scene_.width,agendaHeight-scrollTop-8.f);
+        scrollViewport_=Rect(0,scrollTop,scene_.width,agendaBottom-scrollTop-8.f);
         bodyLeft_=0;bodyStart_=scrollTop;
     }
     else
@@ -1721,17 +1727,19 @@ void SystemPanelModel::FinishStackedCalendar(float monthEnd,float agendaTop,floa
         for(auto& node:scene_.nodes)if(node.id=="calendar.empty")
         {
             node.bounds.top=separate?scrollTop:agendaStart+agendaShift;
-            node.bounds.bottom=agendaHeight-8.f;
+            node.bounds.bottom=agendaBottom-8.f;
             break;
         }
+    const float height=monthHeight+gap+agendaHeight;
     if(!separate)
     {
-        Finish(monthEnd+monthShift,false);
+        Finish(height-8.f,false);
         return;
     }
-    scene_.cards.push_back(Rect(0,0,scene_.width,agendaHeight));
-    scene_.cards.push_back(Rect(0,monthShift,scene_.width,monthHeight));
-    scene_.height=monthShift+monthHeight;
+    const auto monthCard=Rect(0,monthShift,scene_.width,monthHeight);
+    const auto agendaCard=Rect(0,agendaCardTop,scene_.width,agendaHeight);
+    scene_.cards={agendaAbove?agendaCard:monthCard,agendaAbove?monthCard:agendaCard};
+    scene_.height=height;
     if(maxScroll_>0)
     {
         const auto axis=ScrollbarGeometry();

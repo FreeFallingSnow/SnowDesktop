@@ -1069,9 +1069,14 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     else if (statusBar_ && statusBar_->IsInteractionAvailable(monitor))
     {
         ensureSystemPanel();
-        systemPanel_->Show(action, owner, anchor, collectionPopupAppearance_, generalSettings_.statusBar,
+        const auto& settings = generalSettings_.statusBar;
+        const bool clockAtRight = action == Action::Calendar &&
+            (settings.timeNotificationRightAligned ||
+                (settings.foregroundAppName && settings.foregroundAppNameCentered) ||
+                statusBar_->MergedStripBounds(monitor).has_value());
+        systemPanel_->Show(action, owner, anchor, collectionPopupAppearance_, settings,
             action == Action::Tray ? EnsureDockTrayService() : statusBar_->Tray(),
-            systemDataProvider_, statusBar_->MergedStripBounds(monitor).has_value());
+            systemDataProvider_, clockAtRight);
     }
 }
 
