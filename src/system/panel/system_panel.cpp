@@ -13,6 +13,7 @@
 #include "settings/animation_settings.h"
 #include "common/l10n.h"
 #include "diagnostics/diagnostic_log.h"
+#include "system/tray/tray_hover_popup.h"
 #include "ui/render/native_tooltip.h"
 #include "widget/view/widget_accessibility_provider.h"
 #include <d2d1_1helper.h>
@@ -83,6 +84,7 @@ struct SystemPanel::Impl
     bool controlInputRefreshPending=false;
     bool pointerRefreshPending=false;
     NativePointerHoverState pointerHover;
+    tray::HoverPopup trayHoverPopup;
     bool scrollbarDragging=false;int scrollbarPointerStart=0,scrollbarOffsetStart=0;
     std::optional<tray::Identity> middleTrayPress,lastMiddleTray;
     bool trayPreview=false;std::optional<D2D1_RECT_F> dropIndicator;
@@ -155,6 +157,8 @@ struct SystemPanel::Impl
     {
         if(!node||!current||!model||!showing||closing||modal||slide.IsAnimating()||context.process||!pointerHover.Enabled())
         {tooltip.Hide();return;}
+        if (node->id.starts_with("tray:") && trayHoverPopup.Visible())
+        {tooltip.Hide();return;}
         const auto b=model->View().VisibleBounds(*node);
         if(b.right<=b.left||b.bottom<=b.top){tooltip.Hide();return;}
         POINT origin{};ClientToScreen(window,&origin);origin.x+=kSurfacePadding;origin.y+=kSurfacePadding;
@@ -165,10 +169,26 @@ struct SystemPanel::Impl
     {
         if(window&&!pointerRefreshPending&&PostMessageW(window,kPointerChanged,0,0))pointerRefreshPending=true;
     }
+    void UpdatePointerHover(std::string id, POINT screen)
+    {
+        if (hovered == id) return;
+        const auto previous = std::exchange(hovered, std::move(id));
+        paintDirty = true;
+        trayHoverPopup.Reset();
+        if (!current || !current->tray) return;
+        const auto service = current->tray;
+        if (previous.starts_with("tray:"))
+            service->Activate(previous.substr(5), tray::Activation::Leave, screen);
+        if (hovered.starts_with("tray:"))
+            service->BeginHover(hovered.substr(5), window, screen, trayHoverPopup);
+    }
     void ClearPointerHover()
     {
         tooltip.Hide();
-        if(!hovered.empty()){hovered.clear();paintDirty=true;}
+        if (hovered.empty()) return;
+        POINT screen{};
+        GetCursorPos(&screen);
+        UpdatePointerHover({}, screen);
     }
     void StopPointerHover()
     {
@@ -177,17 +197,20 @@ struct SystemPanel::Impl
     }
     void RefreshPointer(bool repaint=true)
     {
-        const ui::Node* node=nullptr;POINT point{};
-        const bool located=GetCursorPos(&point)!=FALSE;
-        if(located)pointerHover.Observe(point);
+        const ui::Node* node=nullptr;POINT screen{};
+        const bool located=GetCursorPos(&screen)!=FALSE;
+        if(located)pointerHover.Observe(screen);
         if(showing&&!closing&&!modal&&!slide.IsAnimating()&&!context.process&&pointerHover.Enabled()&&model&&input.Pressed().empty()&&!scrollbarDragging&&located)
         {
-            const auto pointerWindow=WindowFromPoint(point);
+            const auto pointerWindow=WindowFromPoint(screen);
             if(pointerWindow==window||(calendarInputs&&calendarInputs->Contains(pointerWindow)))
+            {
+                POINT point=screen;
                 if(ScreenToClient(window,&point)&&ContainsClientPoint(point))node=model->View().Hit(ModelPoint(point.x,point.y),false);
+            }
         }
-        Tip(node);const auto id=node?node->id:std::string{};
-        if(hovered!=id){hovered=id;paintDirty=true;}
+        UpdatePointerHover(node ? node->id : std::string{}, screen);
+        Tip(node);
         if(repaint&&paintDirty&&showing)Paint();
     }
     ui::Palette Palette()const
@@ -403,7 +426,7 @@ struct SystemPanel::Impl
         if(!opening&&(closing||transition.Releasing()))return;
         // Mark the close before notifications, capture release or menu
         // dismissal can dispatch another status-bar click.
-        if(!opening)closing=true;
+        if(!opening){closing=true;ClearPointerHover();}
         if(!opening)ReportTrayState(nullptr);
         if(!opening&&model){model->CancelControlInput();if(calendarInputs)calendarInputs->Sync(InputFields(),current->appearance,static_cast<UINT>(std::lround(scale*96)));}
         if(!opening){KillTimer(window,kTrayMenuTimer);EndDragFeedback();dropIndicator.reset();middleTrayPress.reset();lastMiddleTray.reset();if(GetCapture()==window)ReleaseCapture();}
@@ -411,7 +434,7 @@ struct SystemPanel::Impl
         if(scheduler)scheduler->Cancel(animationToken);animationToken=0;
         if(!scheduler||animation::RuntimePopupEffect()==animation::NoEffect){if(opening){slide.ShowImmediately();Pose();}else FinishClose();return;}
         slide.Configure(quick_navigation_animation_rules::Effect::Fade,animation::RuntimeDurationScale(),false,true);const auto now=static_cast<std::uint64_t>(UiAnimationScheduler::MonotonicMilliseconds());
-        if(opening){slide.ResetHidden();slide.Open(now);}else{closing=true;input.Cancel();Tip(nullptr);slide.Close(now);}Pose();
+        if(opening){slide.ResetHidden();slide.Open(now);}else{input.Cancel();slide.Close(now);}Pose();
         animationToken=scheduler->StartAnimation(UiAnimationSurface::Popup,[this](double time){slide.Advance(static_cast<std::uint64_t>(time));Pose();if(slide.IsAnimating())return true;animationToken=0;if(slide.IsHidden())FinishClose();else if(accessibility)accessibility->RefreshEvents();return false;});
     }
     void CancelPrompt(){if(calendarMenu)modern_menu::DismissActive();}
@@ -425,6 +448,7 @@ struct SystemPanel::Impl
     {
         auto release=transition.BeginRelease();if(!release)return;
         showing=false;closing=true;
+        ClearPointerHover();
         // Detach the old model/request before callbacks. Reentrant requests
         // stay queued until this guard ends and cannot be cleared below.
         auto oldModel=std::move(model);auto oldRequest=std::move(current);current.reset();
@@ -432,7 +456,7 @@ struct SystemPanel::Impl
         ReportTrayState(nullptr);
         EndDragFeedback();dropIndicator.reset();
         middleTrayPress.reset();lastMiddleTray.reset();
-        if(scheduler)scheduler->Cancel(animationToken);animationToken=0;input.Cancel();scrollbarDragging=false;hovered.clear();Tip(nullptr);if(GetCapture()==window)ReleaseCapture();
+        if(scheduler)scheduler->Cancel(animationToken);animationToken=0;input.Cancel();scrollbarDragging=false;if(GetCapture()==window)ReleaseCapture();
         if(calendarInputs)calendarInputs->Clear();if(oldModel)oldModel->Close();CancelPrompt();
         if(window){KillTimer(window,1);KillTimer(window,kTrayMenuTimer);backdrop.HidePopupWindowPair(window);backdrop.SetPopupTopmost(false);ShowWindow(window,SW_HIDE);}
         if(oldRequest&&oldRequest->tray&&oldModel){oldRequest->tray->CancelFocusReturn(oldRequest->owner);for(const auto& n:oldModel->View().nodes)if(n.id.starts_with("tray:"))oldRequest->tray->SetGeometry(n.id.substr(5),{});}
@@ -778,6 +802,11 @@ struct SystemPanel::Impl
             if(m==WM_WINDOWPOSCHANGED&&lp)
                 MaintainSystemPanelBackdropPlacement(self->backdrop,w,self->showing&&self->Glass());
             if(m==kPointerChanged){self->pointerRefreshPending=false;self->RefreshPointer();return 0;}
+            if (m == tray::HoverPopupChangedMessage())
+            {
+                self->Tip(self->model ? self->model->View().Find(self->hovered) : nullptr);
+                return 0;
+            }
             if(m==kPowerMenu){self->PowerMenu();return 0;}
             if(m==kFormInputChanged)
             {

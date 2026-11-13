@@ -201,6 +201,8 @@
 
 ### CF-015 模块计划无法声明临时定向验证
 
+- **托盘悬浮的新证据**：2026-11-13，Task `tray-menu-hover-popup`、批次 `ca35a82e6c8c4897bbf6ee40d9aed819` 修订 0。核对 `cmake/testing/Tests.cmake` 未发现托盘悬浮回调或应用弹窗条目，`New-TaskPlan` 仍拒绝以 `module/none` 声明仅构建的模块计划。沿用 `behavior_manifest` 核对运行产物，原场景单独保留实机验收，未重复提交已知会拒绝的计划。模块计划准入限制仍待处理。
+
 - **日历日程间距的续证（2026-11-10）**：Task `statusbar-calendar-agenda-spacing-20261110` 通过 `scripts/build.bat ready-and-wait` 执行批次 `2a18c215bac54fd8808719e0d00aff72` 修订 0、Run `9e828f4c005c4e79986e3d9ccf5781db`。正式 CTest 未登记原生日历间距场景，计划选择 `behavior_manifest` 核对交付产物，日历间距和滚动由 `scripts/preview.bat native -Component calendar-panel` 验证。该批次的 `.log.product.log` 与 `.log` 分别记录 `Configuring CMake (Release preset)` 和 `Configuring tests`，指向同一候选编译目录，测试阶段配置耗时 5.96 秒。Release、部署契约和日历预览均通过。第二次配置能否复用产品阶段结果待核实，未为反馈再启动构建或测试。
 
 - **状态栏间距的新证据**：2026-11-09，Task `task-6410e174671f4c9f9abd4acce724b74f`、批次 `01855ebdc0de41f4b7bc61c89b82dd77` 修订 0。右侧日期间距已有 `scripts/preview.bat native -Component status-bar` 的生产渲染和窄栏检查，正式 CTest 无对应条目。按 `New-TaskPlan` 的现有准入规则选择 `behavior_manifest` 检查交付产物，间距仍由离屏预览验证。未重复提交已知会拒绝的 `module/none`，未为反馈新增构建或测试。

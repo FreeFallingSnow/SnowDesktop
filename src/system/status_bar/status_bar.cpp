@@ -17,6 +17,7 @@
 #include "common/l10n.h"
 #include "system/tray/tray_service.h"
 #include "system/tray/tray_focus.h"
+#include "system/tray/tray_hover_popup.h"
 #include "system/tray/tray_order.h"
 #include "diagnostics/diagnostic_log.h"
 #include "diagnostics/performance_trace.h"
@@ -290,6 +291,7 @@ struct StatusBar::Impl
         HRESULT lastPaintError = S_OK;
         status_bar_input_method::Snapshot lastInputMethod;
         std::string hoveredTray;
+        tray::HoverPopup trayHoverPopup;
         NativeTooltip tooltip;
         std::optional<std::size_t> tooltipControlPart;
         std::vector<StatusBarItem> items;
@@ -456,6 +458,7 @@ struct StatusBar::Impl
         void ClearHover()
         {
             tooltip.Hide();
+            trayHoverPopup.Reset();
             tooltipControlPart.reset();
             if (!hoveredTray.empty() && owner.tray)
             {
@@ -470,6 +473,8 @@ struct StatusBar::Impl
                 !interaction.hovered || *interaction.hovered >= items.size())
             { tooltip.Hide(); return; }
             const auto& item = items[*interaction.hovered];
+            if (item.icon && item.icon->key == hoveredTray && trayHoverPopup.Visible())
+            { tooltip.Hide(); return; }
             auto body = item.icon ? (item.icon->tip.empty() ? item.icon->application : item.icon->tip) : item.tip;
             auto key = item.icon ? "tray/" + item.icon->key : "bar/" + item.key;
             RECT anchor = item.bounds;
@@ -1501,6 +1506,8 @@ struct StatusBar::Impl
                     message == WM_SYSKEYDOWN || message == WM_SYSKEYUP || message == WM_SYSCHAR)) return 0;
             if (message == tray::FocusReturnMessage())
             { self->ReturnTrayFocus(static_cast<std::uint64_t>(wp)); return 0; }
+            if (message == tray::HoverPopupChangedMessage())
+            { self->SyncTooltip(); return 0; }
             if (message == tray::ChangeMessage())
             {
                 if (self->owner.tray && self->owner.tray->AcknowledgeChange(window, static_cast<std::uint64_t>(wp)))
@@ -1809,8 +1816,9 @@ struct StatusBar::Impl
                 if (hoveredKey != self->hoveredTray && self->owner.tray)
                 {
                     POINT screen = point; ClientToScreen(window, &screen);
+                    self->trayHoverPopup.Reset();
                     if (!self->hoveredTray.empty()) self->owner.tray->Activate(self->hoveredTray, tray::Activation::Leave, screen);
-                    if (!hoveredKey.empty()) self->owner.tray->Activate(hoveredKey, tray::Activation::Hover, screen);
+                    if (!hoveredKey.empty()) self->owner.tray->BeginHover(hoveredKey, window, screen, self->trayHoverPopup);
                     self->hoveredTray = std::move(hoveredKey);
                 }
                 TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, window, 0}; TrackMouseEvent(&tracking);

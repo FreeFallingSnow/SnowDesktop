@@ -1,5 +1,6 @@
 #include "tray_service.h"
 #include "tray_geometry_table.h"
+#include "tray_hover_popup.h"
 #include "platform/runtime_module_policy.h"
 #include "platform/deployment_context.h"
 #include "diagnostics/diagnostic_log.h"
@@ -546,6 +547,20 @@ void Service::SetGeometries(std::span<const GeometryUpdate> updates)
 }
 void Service::ClearGeometries()
 { std::lock_guard guard(impl_->mutex); impl_->geometries.Clear(impl_->GeometryState()); }
+void Service::BeginHover(const std::string& key, HWND receiver, POINT anchor, HoverPopup& popup)
+{
+    Identity identity{};
+    {
+        std::lock_guard guard(impl_->mutex);
+        const auto found = std::find_if(impl_->snapshot.icons.begin(), impl_->snapshot.icons.end(),
+            [&](const auto& icon) { return icon.key == key; });
+        if (found == impl_->snapshot.icons.end() || (found->state & NIS_HIDDEN)) return;
+        identity = found->identity;
+    }
+    // Some apps display the popup while handling the first mouse callback.
+    popup.Watch(receiver, reinterpret_cast<HWND>(identity.window), identity.process, anchor);
+    if (!Activate(key, Activation::Hover, anchor, {}, {}, identity)) popup.Reset();
+}
 bool Service::Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin origin,
     std::optional<RECT> invocationBounds, std::optional<Identity> expectedIdentity)
 {
