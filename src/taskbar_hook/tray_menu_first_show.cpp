@@ -24,7 +24,6 @@ struct Watch
     UINT_PTR timer = 0;
     HWND candidate = nullptr;
     HWND shadow = nullptr;
-    POINT shadowInset{};
     RECT qqStaging{};
     UINT_PTR wpsPresentationTimer = 0;
     ULONGLONG wpsFirstShow = 0;
@@ -36,6 +35,14 @@ struct Watch
 thread_local Watch watch;
 
 LRESULT CALLBACK MenuProcedure(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
+
+POINT WpsShadowOrigin(const RECT& card, const RECT& shadow)
+{
+    // WPS pads its transparent surface equally on the horizontal axis.
+    // The vertical padding is distributed 1:2 above and below the card.
+    return {card.left - (shadow.right - shadow.left - (card.right - card.left)) / 2,
+        card.top - (shadow.bottom - shadow.top - (card.bottom - card.top)) / 3};
+}
 
 void ReleaseWpsPresentation(const Watch& previous)
 {
@@ -66,6 +73,18 @@ void CALLBACK PresentWps(HWND, UINT, UINT_PTR timer, DWORD)
     const auto now = GetTickCount64();
     if (now - watch.wpsFirstShow < kWpsPresentationLimitMs &&
         (!IsWindowVisible(watch.candidate) || now - watch.wpsLastLayout < kWpsLayoutQuietMs)) return;
+    // Snap the shadow while it is still cloaked. It may have been positioned
+    // before Qt's owner geometry was final, so use the settled rectangles.
+    RECT card{}, shadow{};
+    if (watch.wpsShadowCloaked && IsWindowVisible(watch.candidate) &&
+        GetWindowRect(watch.candidate, &card) && GetWindowRect(watch.shadow, &shadow) &&
+        !IsRectEmpty(&card) && !IsRectEmpty(&shadow))
+    {
+        const auto origin = WpsShadowOrigin(card, shadow);
+        if (origin.x != shadow.left || origin.y != shadow.top)
+            SetWindowPos(watch.shadow, nullptr, origin.x, origin.y, 0, 0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE);
+    }
     const auto previous = watch;
     watch.wpsPresentationTimer = 0;
     watch.wpsCandidateCloaked = false;
@@ -302,19 +321,18 @@ LRESULT CALLBACK MenuProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp, 
         }
         watch.qqStaging = {};
     }
-    auto subject = bounds;
     if (window == watch.shadow)
     {
-        // The WPS shadow is an owned input-transparent window. Use its
-        // owner as the placement subject while preserving the shadow inset.
         RECT ownerBounds{};
-        if (!GetWindowRect(watch.candidate, &ownerBounds)) return result;
-        const LONG width = ownerBounds.right - ownerBounds.left, height = ownerBounds.bottom - ownerBounds.top;
-        subject = {bounds.left + watch.shadowInset.x, bounds.top + watch.shadowInset.y, 0, 0};
-        subject.right = subject.left + width;
-        subject.bottom = subject.top + height;
+        if (GetWindowRect(watch.candidate, &ownerBounds) && !IsRectEmpty(&ownerBounds) && !IsRectEmpty(&bounds))
+        {
+            const auto origin = WpsShadowOrigin(ownerBounds, bounds);
+            if (origin.x != bounds.left || origin.y != bounds.top)
+                SetPosition(position, origin.x, origin.y);
+        }
+        return result;
     }
-    const auto offset = HoverOffset(request, subject);
+    const auto offset = HoverOffset(request, bounds);
     if (offset.x || offset.y) SetPosition(position, bounds.left + offset.x, bounds.top + offset.y);
     return result;
 }
@@ -359,14 +377,8 @@ LRESULT CALLBACK WatchMenu(int code, WPARAM wp, LPARAM lp)
                 const auto owner = GetWindow(message.hwnd, GW_OWNER);
                 if (!watch.candidate && SetWindowSubclass(owner, MenuProcedure, kMenuSubclass, 0))
                     watch.candidate = owner;
-                RECT ownerBounds{}, shadowBounds{};
-                if (owner == watch.candidate && GetWindowRect(owner, &ownerBounds) &&
-                    GetWindowRect(message.hwnd, &shadowBounds) &&
-                    SetWindowSubclass(message.hwnd, MenuProcedure, kMenuSubclass, 0))
-                {
-                    watch.shadowInset = {ownerBounds.left - shadowBounds.left, ownerBounds.top - shadowBounds.top};
+                if (owner == watch.candidate && SetWindowSubclass(message.hwnd, MenuProcedure, kMenuSubclass, 0))
                     watch.shadow = message.hwnd;
-                }
             }
             if (showing && watch.request.surface == Surface::WpsHover)
             {
