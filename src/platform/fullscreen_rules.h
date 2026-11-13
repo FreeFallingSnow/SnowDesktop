@@ -9,7 +9,7 @@ namespace snowdesktop::fullscreen
 // means the scan succeeded and found no unobscured fullscreen source.
 template<class Enumerate>
 std::vector<std::optional<WindowSample>> ScanMonitors(
-    std::span<const std::optional<RECT>> monitors, Enumerate&& enumerate)
+    std::span<const std::optional<RECT>> monitors, Enumerate&& enumerate, HWND desktopRoot = nullptr)
 {
     std::vector<std::optional<WindowSample>> sources(monitors.size());
     std::vector<bool> settled(monitors.size(), false);
@@ -22,6 +22,16 @@ std::vector<std::optional<WindowSample>> ScanMonitors(
         {
             if (!monitors[i] || settled[i]) continue;
             const RECT monitor = *monitors[i];
+            const POINT center{monitor.left + (monitor.right - monitor.left) / 2,
+                monitor.top + (monitor.bottom - monitor.top) / 2};
+            // Show Desktop can move an unminimized game behind the desktop.
+            // Only the desktop root is a boundary, on screens it covers.
+            if (desktopRoot && window.window == desktopRoot && PtInRect(&window.frame, center))
+            {
+                settled[i] = true;
+                --remaining;
+                continue;
+            }
             if (IsFullscreen(window, monitor))
             {
                 sources[i] = window;
@@ -31,8 +41,6 @@ std::vector<std::optional<WindowSample>> ScanMonitors(
             }
             // An ordinary application covering this screen's center obscures
             // a background fullscreen source. Passive/desktop surfaces do not.
-            const POINT center{monitor.left + (monitor.right - monitor.left) / 2,
-                monitor.top + (monitor.bottom - monitor.top) / 2};
             if (!window.shell && !window.cloaked && !window.nonRude && PtInRect(&window.client, center) &&
                 !(window.extended & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT)))
             {

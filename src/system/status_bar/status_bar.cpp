@@ -273,6 +273,7 @@ struct StatusBar::Impl
         // uses this to tell an external Shell request apart.
         bool hidingWindow = false;
         bool presentationCheckQueued = false;
+        const wchar_t* presentationCheckReason = nullptr;
         ULONGLONG showDesktopTraceTick = 0;
         bool fullscreenObserved = false; // fullscreen is the effective hide/input gate.
         bool checkingFullscreen = false;
@@ -566,10 +567,13 @@ struct StatusBar::Impl
                 !hidingWindow && WantsPresentation() &&
                 (!IsWindowVisible(hwnd) || IsIconic(hwnd) || !IsPresentationTopmost());
         }
-        void QueuePresentationCheck()
+        void QueuePresentationCheck(const wchar_t* reason)
         {
             if (!presentationCheckQueued)
+            {
                 presentationCheckQueued = PostMessageW(hwnd, kEnsurePresentation, 0, 0) != FALSE;
+                if (presentationCheckQueued) presentationCheckReason = reason;
+            }
         }
         void TraceSystemShowDesktop(const wchar_t* event, bool visible,
             bool topmost, bool iconic,
@@ -609,14 +613,17 @@ struct StatusBar::Impl
         }
         // Rejoin the presented band after Explorer's transition: restore a
         // minimized window, repaint a discarded surface and re-promote the pair.
-        void EnsureSystemShowDesktopPresentation()
+        void EnsureSystemShowDesktopPresentation(const wchar_t* reason)
         {
             if (!WantsPresentation()) return;
             if (mergedDockHeight) return; // Dock owns the merged pair's band.
-            const bool wasPresented = IsWindowVisible(hwnd) && IsPresentationTopmost() && !IsIconic(hwnd);
+            const bool wasVisible = IsWindowVisible(hwnd) != FALSE;
+            const bool wasTopmost = IsPresentationTopmost();
+            const bool wasIconic = IsIconic(hwnd) != FALSE;
+            const bool wasPresented = wasVisible && wasTopmost && !wasIconic;
             const bool glass = appearance.glassEnabled && !HighContrast();
             // Explorer can move or hide the glass helper independently.
-            backdrop.SetPopupWindowPairZOrder(hwnd, HWND_TOPMOST, true);
+            bool pairAccepted = backdrop.SetPopupWindowPairZOrder(hwnd, HWND_TOPMOST, true);
             if (wasPresented)
             {
                 if (glass) backdrop.ShowPopupWindowPair(hwnd);
@@ -625,23 +632,35 @@ struct StatusBar::Impl
             if (IsIconic(hwnd)) ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             Paint(true);
             const bool frameReady = !paintDirty && surface && backgroundSurface;
+            bool showAccepted = false;
+            DWORD showError = ERROR_SUCCESS;
             if (frameReady)
             {
-                backdrop.SetPopupWindowPairZOrder(hwnd, HWND_TOPMOST, true);
-                SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                pairAccepted = backdrop.SetPopupWindowPairZOrder(hwnd, HWND_TOPMOST, true);
+                showAccepted = SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW) != FALSE;
+                if (!showAccepted) showError = GetLastError();
                 if (glass) backdrop.ShowPopupWindowPair(hwnd);
             }
+            if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::System)) return;
             const bool visible = IsWindowVisible(hwnd) != FALSE;
             const bool topmost = IsPresentationTopmost();
             const bool iconic = IsIconic(hwnd) != FALSE;
-            const bool restored = frameReady && visible && topmost && !iconic;
+            DWORD cloaked = 0;
+            const bool cloakKnown = SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked)));
+            const bool restored = frameReady && visible && topmost && !iconic && !cloaked;
             const ULONGLONG now = GetTickCount64();
             if (!restored && now - showDesktopTraceTick < 5000) return;
             showDesktopTraceTick = now;
-            TraceSystemShowDesktop(restored ? L"restored" : L"restore-pending",
-                visible, topmost, iconic,
-                restored ? DiagnosticLogLevel::Info : DiagnosticLogLevel::Warning);
+            wchar_t message[512]{};
+            swprintf_s(message, L"StatusBar Show Desktop %ls reason=%ls monitor=%p bar=%p foreground=%p "
+                L"guard=%d beforeVisible=%d beforeTopmost=%d beforeIconic=%d frameReady=%d "
+                L"pairAccepted=%d showAccepted=%d showError=%lu visible=%d topmost=%d iconic=%d "
+                L"cloakKnown=%d cloaked=%lu",
+                restored ? L"restored" : L"restore-pending", reason, monitor, hwnd, GetForegroundWindow(),
+                owner.systemShowDesktopActive, wasVisible, wasTopmost, wasIconic, frameReady,
+                pairAccepted, showAccepted, showError, visible, topmost, iconic, cloakKnown, cloaked);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message);
         }
         void CheckFullscreen(std::optional<HWND> observed = {}, bool collect = true)
         {
@@ -690,7 +709,9 @@ struct StatusBar::Impl
                 // Shell leave it minimized or outside the TOPMOST band. The bar
                 // is never minimized by its own policy, so restoring an iconic
                 // surface is unconditional.
-                if (owner.systemShowDesktopActive) EnsureSystemShowDesktopPresentation();
+                if (owner.systemShowDesktopActive ||
+                    (!owner.settings.showOnlyWhenSummoned && (!shown || !topmost || IsIconic(hwnd))))
+                    EnsureSystemShowDesktopPresentation(L"visibility-policy");
                 else { if (IsIconic(hwnd)) ShowWindow(hwnd, SW_SHOWNOACTIVATE); Show(); }
             }
         }
@@ -1604,8 +1625,9 @@ struct StatusBar::Impl
             }
             case kEnsurePresentation:
                 if (self->owner.systemShowDesktopActive || self->NeedsIndependentPresentationRecovery())
-                    self->EnsureSystemShowDesktopPresentation();
+                    self->EnsureSystemShowDesktopPresentation(self->presentationCheckReason);
                 self->presentationCheckQueued = false;
+                self->presentationCheckReason = nullptr;
                 return 0;
             case kPlace: self->Place(); return 0;
             case kForeground:
@@ -1644,7 +1666,7 @@ struct StatusBar::Impl
                     self->owner.RefreshForegroundApp();
                     if (self->UpdateAppearance()) self->QueuePlace();
                     else if (self->NeedsIndependentPresentationRecovery())
-                        self->QueuePresentationCheck();
+                        self->QueuePresentationCheck(L"clock");
                     else self->Paint();
                     self->PollTrayMenu();
                 }
@@ -1679,7 +1701,7 @@ struct StatusBar::Impl
                 // The minimize event can precede the actual native window change.
                 // Repair after the change, outside the window-position callback.
                 if (self->NeedsIndependentPresentationRecovery())
-                    self->QueuePresentationCheck();
+                    self->QueuePresentationCheck(L"window-position");
                 if (!self->placing && lp &&
                     (reinterpret_cast<WINDOWPOS*>(lp)->flags & (SWP_NOMOVE | SWP_NOSIZE)) != (SWP_NOMOVE | SWP_NOSIZE))
                     self->appbar.Notify(ABM_WINDOWPOSCHANGED);
@@ -1691,7 +1713,7 @@ struct StatusBar::Impl
                 if (!wp && !self->hidingWindow && !self->mergedDockHeight &&
                     self->WantsPresentation() &&
                     (self->owner.systemShowDesktopActive || !self->owner.settings.showOnlyWhenSummoned))
-                    self->QueuePresentationCheck();
+                    self->QueuePresentationCheck(L"window-hide");
                 break;
             case WM_WINDOWPOSCHANGING:
                 if (lp)
@@ -2708,7 +2730,7 @@ void StatusBar::SetSystemShowDesktopActive(bool active)
     {
         (void)id;
         if (window && !window->closing)
-            window->EnsureSystemShowDesktopPresentation();
+            window->EnsureSystemShowDesktopPresentation(L"desktop-guard");
     }
 }
 

@@ -46,6 +46,25 @@ RECT DesktopCoverage(const fullscreen::WindowSample& window, const MONITORINFO& 
 }
 }
 
+bool IsBehindDesktop(HWND window, HWND desktopRoot, const RECT& monitor) noexcept
+{
+    if (!window || !IsWindow(window) || !desktopRoot ||
+        !IsWindowVisible(desktopRoot) || IsIconic(desktopRoot)) return false;
+    RECT bounds{};
+    const POINT center{monitor.left + (monitor.right - monitor.left) / 2,
+        monitor.top + (monitor.bottom - monitor.top) / 2};
+    if (!GetWindowRect(desktopRoot, &bounds) || !PtInRect(&bounds, center)) return false;
+    const bool desktopTopmost = (GetWindowLongPtrW(desktopRoot, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+    const bool windowTopmost = (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+    if (desktopTopmost != windowTopmost) return desktopTopmost;
+    for (unsigned visited = 0; window && visited < 4096; ++visited)
+    {
+        window = GetWindow(window, GW_HWNDPREV);
+        if (window == desktopRoot) return true;
+    }
+    return false;
+}
+
 std::optional<WindowPlacement> ObservePlacement(HWND window) noexcept
 {
     if (!window || !IsWindowVisible(window) || IsIconic(window) ||
@@ -63,7 +82,7 @@ std::optional<WindowPlacement> ObservePlacement(HWND window) noexcept
     return Placement(monitor, IsZoomed(window) != FALSE, frame, geometryKnown ? &info : nullptr);
 }
 
-Snapshot Observe(std::span<const RECT> pages, HWND desktopRoot)
+Snapshot Observe(std::span<const RECT> pages, HWND desktopRoot, HWND coverageRoot)
 {
     performance::Scope trace("shared.windows", "observe");
     std::unordered_map<HMONITOR, MONITORINFO> geometry;
@@ -100,12 +119,24 @@ Snapshot Observe(std::span<const RECT> pages, HWND desktopRoot)
         Snapshot& result;
         IVirtualDesktopManager* virtualDesktop;
         HWND desktopRoot;
+        HWND coverageRoot;
         bool reachedDesktop = false;
         std::vector<fullscreen::WindowSample> samples;
-    } scanContext{geometry, result, virtualDesktop.Get(), desktopRoot, false, {}};
+    } scanContext{geometry, result, virtualDesktop.Get(), desktopRoot, coverageRoot, false, {}};
     if (!EnumWindows([](HWND window, LPARAM value) -> BOOL {
         auto& scan = *reinterpret_cast<Scan*>(value);
-        if (window == scan.desktopRoot) scan.reachedDesktop = true;
+        if (window == scan.coverageRoot) scan.reachedDesktop = true;
+        if (window == scan.desktopRoot)
+        {
+            fullscreen::WindowSample desktop;
+            if (IsWindowVisible(window) && !IsIconic(window) && GetWindowRect(window, &desktop.frame))
+            {
+                desktop.window = window;
+                desktop.shell = true;
+                scan.samples.push_back(desktop);
+            }
+            return TRUE;
+        }
         const auto sample = fullscreen::SampleWindow(window);
         if (!sample) return TRUE;
         BOOL currentDesktop = TRUE;
@@ -143,7 +174,7 @@ Snapshot Observe(std::span<const RECT> pages, HWND desktopRoot)
         for (const auto& sample : scanContext.samples)
             if (!visit(sample)) break;
         return true;
-    });
+    }, desktopRoot);
     for (std::size_t i = 0; i < monitors.size(); ++i)
     {
         if (!monitorsKnown && !result.monitors.contains(monitors[i]) &&
@@ -159,13 +190,14 @@ Snapshot Observe(std::span<const RECT> pages, HWND desktopRoot)
 }
 
 std::optional<fullscreen::WindowSnapshot> RecheckFullscreenSource(
-    HMONITOR monitor, HWND knownSource)
+    HMONITOR monitor, HWND knownSource, HWND desktopRoot)
 {
     MONITORINFO info{sizeof(info)};
     if (!monitor || !GetMonitorInfoW(monitor, &info)) return std::nullopt;
     const auto recheck = [&](HWND window) -> std::optional<fullscreen::WindowSnapshot> {
         const auto sample = fullscreen::SampleWindow(window);
-        if (!sample || !fullscreen::IsFullscreen(*sample, info.rcMonitor))
+        if (!sample || !fullscreen::IsFullscreen(*sample, info.rcMonitor) ||
+            IsBehindDesktop(window, desktopRoot, info.rcMonitor))
             return std::nullopt;
         return fullscreen::WindowSnapshot{window, monitor, sample->process,
             sample->client, info.rcMonitor};

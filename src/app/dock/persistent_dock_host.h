@@ -64,6 +64,8 @@ struct DesktopApp::PersistentDockHost
     bool desktopLayerRestorePending = false;
     ULONGLONG desktopLayerRestoreRetryTick = 0;
     HWND desktopLayerForegroundWindow = nullptr;
+    ULONGLONG fullscreenLayerTraceTick = 0;
+    HWND fullscreenLayerTraceSource = nullptr;
     std::uint64_t presentationRevision = 0;
     bool dropTargetRegistered = false;
     DesktopBackdropCompositor backdrop;

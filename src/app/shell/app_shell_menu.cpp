@@ -457,7 +457,9 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         const HWND desktopHost =
             desktopWindows_.host && IsWindow(desktopWindows_.host)
                 ? desktopWindows_.host : nullptr;
-        const auto isApplicationWindow = [](HWND window) {
+        const auto fullscreen = RecheckFullscreenSource(host.monitor);
+        const HWND fullscreenWindow = fullscreen ? fullscreen->window : nullptr;
+        const auto isTaskWindow = [](HWND window) {
             // Reject hidden/tool surfaces before the task-window query
             // reaches DWM; background windows cannot cover this Dock.
             return IsWindowVisible(window) && !IsIconic(window) &&
@@ -465,38 +467,95 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
                     GetWindowLongPtrW(window, GWL_EXSTYLE), GetWindow(window, GW_OWNER) != nullptr) &&
                 IsDockTaskWindow(window);
         };
+        const auto isApplicationWindow = [fullscreenWindow, &isTaskWindow](HWND window) {
+            return window == fullscreenWindow || isTaskWindow(window);
+        };
         const auto isDockWindow = [this](HWND window) {
             return IsPersistentDockHostWindow(window) || IsPersistentDockBackdropWindow(window);
         };
         const HWND desktopRoot = desktopHost ? GetAncestor(desktopHost, GA_ROOT) : nullptr;
-        const HWND nextWindow = GetWindow(host.hwnd, GW_HWNDNEXT);
         // The desktop-layer contract permits other non-application windows
         // between the Dock and the lowest application. Requiring an exact
         // predecessor in that case needlessly restacks the backdrop against
         // an external HWND and can hide it during the fallback path.
-        RECT backdropBounds{};
-        const bool pairIntact = !host.backdrop.IsAvailable() ||
-            (host.backdrop.IsBackdropWindow(nextWindow) &&
-                !snowdesktop::popup_window_pair_z_order::IsTopmost(nextWindow) &&
-                hasDockBounds && GetWindowRect(nextWindow, &backdropBounds) &&
-                EqualRect(&dockBounds, &backdropBounds));
-        const bool alreadyRestored = pairIntact &&
-            snowdesktop::floating_dock_rules::IsDesktopLayerRestored(
+        namespace layer = snowdesktop::floating_dock_rules;
+        namespace pair = snowdesktop::popup_window_pair_z_order;
+        const auto isPairIntact = [&] {
+            if (!host.backdrop.IsAvailable()) return true;
+            const HWND next = GetWindow(host.hwnd, GW_HWNDNEXT);
+            RECT backdropBounds{};
+            return host.backdrop.IsBackdropWindow(next) && !pair::IsTopmost(next) &&
+                hasDockBounds && GetWindowRect(next, &backdropBounds) &&
+                EqualRect(&dockBounds, &backdropBounds);
+        };
+        const auto belowFullscreen = [&](HWND window) {
+            if (!fullscreenWindow) return true;
+            if (!window || !IsWindow(window) || !IsWindow(fullscreenWindow)) return false;
+            const bool fullscreenTopmost = pair::IsTopmost(fullscreenWindow);
+            const bool windowTopmost = pair::IsTopmost(window);
+            return fullscreenTopmost != windowTopmost ? fullscreenTopmost :
+                layer::IsWindowAbove(fullscreenWindow, window);
+        };
+        const auto pairBelowFullscreen = [&] {
+            return belowFullscreen(host.hwnd) &&
+                (!host.backdrop.IsAvailable() || belowFullscreen(GetWindow(host.hwnd, GW_HWNDNEXT)));
+        };
+        const bool alreadyRestored = isPairIntact() && pairBelowFullscreen() &&
+            layer::IsDesktopLayerRestored(
                 host.hwnd, desktopRoot, isApplicationWindow, isDockWindow);
         perf::Value("dock", "desktop.layer.already_restored", {}, alreadyRestored);
-        const bool restored = alreadyRestored || snowdesktop::floating_dock_rules::RestoreDesktopLayer(
-            host.hwnd, desktopHost, isApplicationWindow, isDockWindow,
-            [&host](HWND anchor) {
-                perf::Scope placement("dock", "desktop.layer.place");
-                const bool placed = host.backdrop.SetPopupWindowPairZOrder(host.hwnd, anchor, false);
-                perf::Value("dock", "desktop.layer.place.accepted", {}, placed);
-                return placed;
-            }, GetAncestor(snowdesktop::private_pointer::ForegroundWindow(), GA_ROOT));
+        HWND lastAnchor = nullptr;
+        bool placementAccepted = false;
+        const auto placePair = [&](HWND anchor) {
+            perf::Scope placement("dock", "desktop.layer.place");
+            lastAnchor = anchor;
+            placementAccepted = host.backdrop.SetPopupWindowPairZOrder(host.hwnd, anchor, false);
+            perf::Value("dock", "desktop.layer.place.accepted", {}, placementAccepted);
+            return placementAccepted;
+        };
+        const HWND ordinaryFullscreen = fullscreenWindow && !pair::IsTopmost(fullscreenWindow)
+            ? fullscreenWindow : nullptr;
+        bool placed = alreadyRestored || layer::RestoreDesktopLayer(
+            host.hwnd, desktopHost, isApplicationWindow, isDockWindow, placePair,
+            ordinaryFullscreen ? ordinaryFullscreen : GetAncestor(host.desktopLayerForegroundWindow, GA_ROOT));
+        // The application scan may race a native reorder. Put the pair behind
+        // the actual fullscreen source, even if the desktop scan accepted it.
+        if (ordinaryFullscreen && !pairBelowFullscreen() && lastAnchor != ordinaryFullscreen)
+            placed = placePair(ordinaryFullscreen) && layer::IsDesktopLayerRestored(
+                host.hwnd, desktopRoot, isApplicationWindow, isDockWindow);
+        const bool pairIntact = !fullscreenWindow || isPairIntact();
+        const bool belowSource = pairIntact && pairBelowFullscreen();
+        const bool restored = placed && belowSource;
         perf::Value("dock", "desktop.layer.restored", {}, restored);
         host.desktopLayerRestorePending = !restored;
         host.desktopLayerRestoreRetryTick = GetTickCount64() +
             snowdesktop::floating_dock_rules::kDesktopLayerRestoreRetryMs;
         host.desktopLayerForegroundWindow = snowdesktop::private_pointer::ForegroundWindow();
+        if (fullscreenWindow && snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Dock))
+        {
+            const ULONGLONG now = GetTickCount64();
+            if (fullscreenWindow != host.fullscreenLayerTraceSource ||
+                (wasTopmost && !desktopRestoreWasPending) ||
+                (restored && desktopRestoreWasPending) ||
+                (!restored && now - host.fullscreenLayerTraceTick >= 5000))
+            {
+                host.fullscreenLayerTraceSource = fullscreenWindow;
+                host.fullscreenLayerTraceTick = now;
+                const HWND next = GetWindow(host.hwnd, GW_HWNDNEXT);
+                const HWND glass = host.backdrop.IsBackdropWindow(next) ? next : nullptr;
+                wchar_t message[448]{};
+                swprintf_s(message, L"Dock fullscreen layer monitor=%p source=%p sourcePid=%lu "
+                    L"sourceTopmost=%d sourceTask=%d foreground=%p dock=%p glassAdjacent=%p "
+                    L"anchor=%p attempted=%d accepted=%d dockTopmost=%d glassTopmost=%d "
+                    L"pairIntact=%d belowSource=%d restored=%d retry=%d",
+                    host.monitor, fullscreenWindow, fullscreen->process, pair::IsTopmost(fullscreenWindow),
+                    isTaskWindow(fullscreenWindow), host.desktopLayerForegroundWindow, host.hwnd, glass,
+                    lastAnchor, !alreadyRestored, placementAccepted, pair::IsTopmost(host.hwnd),
+                    pair::IsTopmost(glass), pairIntact, belowSource, restored, !restored);
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message);
+            }
+        }
+        else host.fullscreenLayerTraceSource = nullptr;
         if (wasTopmost && restored)
             snowdesktop::dock_taskbar_diagnostics::Record(
                 L"dock-returned-to-desktop-band", host.hwnd);
