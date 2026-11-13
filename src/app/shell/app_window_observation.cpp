@@ -66,9 +66,24 @@ void DesktopApp::RefreshWindowObservations()
         {
             if (!host || !host->active) continue;
             const auto observed = snapshot.monitors.find(host->monitor);
-            if (observed != snapshot.monitors.end() && observed->second.fullscreenSource.value_or(nullptr) &&
-                observed->second.fullscreenSource != ObservedFullscreenSource(host->monitor))
-                host->desktopLayerRestorePending = true;
+            if (observed == snapshot.monitors.end() || !observed->second.fullscreenSource.has_value()) continue;
+            const auto previous = ObservedFullscreenSource(host->monitor);
+            const HWND source = *observed->second.fullscreenSource;
+            if (previous == observed->second.fullscreenSource) continue;
+            host->desktopLayerRestorePending = true;
+            if (!source && previous.value_or(nullptr) && host->hwnd &&
+                snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Dock))
+            {
+                MONITORINFO info{sizeof(info)};
+                const bool behindDesktop = GetMonitorInfoW(host->monitor, &info) &&
+                    snowdesktop::window_observation::IsBehindDesktop(host->hwnd, desktopRoot, info.rcMonitor);
+                wchar_t message[320]{};
+                swprintf_s(message, L"Dock fullscreen cleared monitor=%p dock=%p foreground=%p guard=%d "
+                    L"visible=%d iconic=%d behindDesktop=%d shouldShow=%d",
+                    host->monitor, host->hwnd, GetForegroundWindow(), systemShowDesktopLayerGuardActive_,
+                    IsWindowVisible(host->hwnd), IsIconic(host->hwnd), behindDesktop, ShouldShowPersistentDockHost(*host));
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message);
+            }
         }
     }
     if (fullscreenChanged && snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::System))
@@ -106,25 +121,25 @@ void DesktopApp::RefreshWindowObservations()
         OffsetRect(&bounds, -left, -top);
     UpdateDesktopWidgetCoverage(std::move(snapshot.desktopCoverage));
     if (statusBar_ && fullscreenChanged) statusBar_->NotifyWindowObservations();
-    // Explorer can hide/minimize the Dock after the guard first observes the
-    // transition. Reconcile a missing desktop Dock during normal observation.
-    const HWND foreground = GetForegroundWindow();
+    // Explorer can hide/minimize the Dock during Show Desktop even when
+    // another application receives foreground focus during the transition.
     if (generalSettings_.dockEnabled && !dockSettings_.showOnlyWhenSummoned &&
-        (systemShowDesktopLayerGuardActive_ || IsBaseDesktopHoverSurfaceWindow(foreground)))
+        !desktopStartupPresentationPending_)
     {
         for (const auto& host : persistentDockHosts_)
         {
-            if (!host || !host->active || !host->hwnd || !host->container || desktopStartupPresentationPending_ ||
+            if (!host || !host->active || !host->hwnd || !host->container ||
                 host->container->IsMergedWithStatusBar() ||
-                (!IsIconic(host->hwnd) && IsWindowVisible(host->hwnd)) || !ShouldShowPersistentDockHost(*host) ||
-                RecheckFullscreenSource(host->monitor)) continue;
+                (!IsIconic(host->hwnd) && IsWindowVisible(host->hwnd)) || !ShouldShowPersistentDockHost(*host)) continue;
+            const auto fullscreen = ObservedFullscreenSource(host->monitor);
+            if (!fullscreen.has_value() || RecheckFullscreenSource(host->monitor)) continue;
             UpdatePersistentDockHostVisibility(*host);
             if (snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Dock) &&
                 IsWindowVisible(host->hwnd) && !IsIconic(host->hwnd))
             {
                 wchar_t message[256]{};
                 swprintf_s(message, L"Dock Show Desktop restored monitor=%p dock=%p foreground=%p guard=%d topmost=%d",
-                    host->monitor, host->hwnd, foreground, systemShowDesktopLayerGuardActive_,
+                    host->monitor, host->hwnd, GetForegroundWindow(), systemShowDesktopLayerGuardActive_,
                     (GetWindowLongPtrW(host->hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
                 WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message);
             }
