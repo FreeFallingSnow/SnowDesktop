@@ -149,12 +149,29 @@ POINT HoverOffset(const Request& request, const RECT& bounds)
     return {};
 }
 
-bool ConvertRect(HWND window, RECT& rect)
+bool ConvertHoverGeometry(Request& request)
 {
-    POINT topLeft{rect.left, rect.top}, bottomRight{rect.right, rect.bottom};
-    if (!PhysicalToLogicalPointForPerMonitorDPI(window, &topLeft) ||
-        !PhysicalToLogicalPointForPerMonitorDPI(window, &bottomRight)) return false;
-    rect = {topLeft.x, topLeft.y, bottomRight.x, bottomRight.y};
+    // User32 passes WINDOWPOS in the window thread's coordinate space.
+    // Look up the same monitor in both spaces. A window-relative point
+    // transform rejects work-area corners outside the popup itself.
+    const auto previous = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    if (!previous) return false;
+    const auto monitor = MonitorFromPoint(request.anchor, MONITOR_DEFAULTTONULL);
+    MONITORINFO physical{sizeof(physical)};
+    const bool found = monitor && GetMonitorInfoW(monitor, &physical);
+    SetThreadDpiAwarenessContext(previous);
+    MONITORINFO logical{sizeof(logical)};
+    if (!found || !GetMonitorInfoW(monitor, &logical)) return false;
+    const auto& from = physical.rcMonitor;
+    const auto& to = logical.rcMonitor;
+    const LONG physicalWidth = from.right - from.left, physicalHeight = from.bottom - from.top;
+    const LONG logicalWidth = to.right - to.left, logicalHeight = to.bottom - to.top;
+    if (physicalWidth <= 0 || physicalHeight <= 0 || logicalWidth <= 0 || logicalHeight <= 0) return false;
+    const auto x = [&](LONG value) { return to.left + MulDiv(value - from.left, logicalWidth, physicalWidth); };
+    const auto y = [&](LONG value) { return to.top + MulDiv(value - from.top, logicalHeight, physicalHeight); };
+    request.row = {x(request.row.left), y(request.row.top), x(request.row.right), y(request.row.bottom)};
+    request.work = logical.rcWork;
+    request.gap = MulDiv(request.gap, logicalHeight, physicalHeight);
     return true;
 }
 
@@ -176,7 +193,6 @@ LRESULT CALLBACK MenuProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp, 
         return DefSubclassProc(window, message, wp, lp);
     }
     auto request = watch.request;
-    const LONG physicalRowHeight = request.row.bottom - request.row.top;
     if (request.surface == Surface::WeixinMenu)
     {
         if (!(position.flags & SWP_SHOWWINDOW)) return DefSubclassProc(window, message, wp, lp);
@@ -195,8 +211,7 @@ LRESULT CALLBACK MenuProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp, 
     }
     if ((window != watch.candidate && window != watch.shadow) ||
         (position.flags & (SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)) == (SWP_NOMOVE | SWP_NOSIZE) ||
-        !ConvertRect(window, request.row) || !ConvertRect(window, request.work)) return result;
-    request.gap = MulDiv(request.gap, request.row.bottom - request.row.top, physicalRowHeight);
+        !ConvertHoverGeometry(request)) return result;
     auto subject = bounds;
     if (window == watch.shadow)
     {
