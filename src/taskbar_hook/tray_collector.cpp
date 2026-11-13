@@ -1,4 +1,5 @@
 #include "tray_protocol.h"
+#include "tray_menu_first_show.h"
 #include "../system/tray/tray_modern_bootstrap.h"
 #include <commctrl.h>
 #include <MemoryBuffer.h>
@@ -572,6 +573,11 @@ SnowDesktopTrayHookProc(int code, WPARAM wp, LPARAM lp)
             if (wcscmp(name, L"Shell_TrayWnd") == 0)
                 try { snowdesktop::tray::Attach(message.hwnd, static_cast<DWORD>(message.wParam)); }
                 catch (...) { /* A failed optional collector must not unwind through Explorer. */ }
+        }
+        else if (message.message == RegisterWindowMessageW(snowdesktop::tray::first_show::kArmMessage))
+        {
+            try { snowdesktop::tray::first_show::Arm(message); }
+            catch (...) { /* Keep the original tray gesture available. */ }
         }
     }
     return CallNextHookEx(nullptr, code, wp, lp);

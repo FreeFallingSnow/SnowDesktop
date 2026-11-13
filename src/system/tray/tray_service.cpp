@@ -10,8 +10,10 @@
 #include "tray_reregistration.h"
 #include "taskbar_hook/taskbar_symbol_resolver.h"
 #include "taskbar_hook/tray_connection.h"
+#include "taskbar_hook/tray_menu_first_show.h"
 #include "platform/hook_registration_retry.h"
 #include "data/data_paths.h"
+#include <atomic>
 #include <future>
 #include <thread>
 
@@ -44,6 +46,56 @@ void ResolveApplication(Icon& icon)
         }
     }
     CloseHandle(process);
+}
+
+void ArmWeixinMenu(const Icon& icon, HWND receiver, POINT anchor, RECT bounds)
+{
+    const auto separator = icon.application.find_last_of(L"\\/");
+    const auto* name = icon.application.c_str() + (separator == std::wstring::npos ? 0 : separator + 1);
+    if (_wcsicmp(name, L"Weixin.exe") != 0 || !first_show::IsWeixinReceiver(receiver) || IsRectEmpty(&bounds))
+        return;
+    if (!PtInRect(&bounds, anchor))
+        anchor = {bounds.left + (bounds.right - bounds.left) / 2, bounds.top + (bounds.bottom - bounds.top) / 2};
+    DWORD process = 0;
+    const DWORD thread = GetWindowThreadProcessId(receiver, &process);
+    if (!thread || process != icon.identity.process) return;
+    const UINT message = RegisterWindowMessageW(first_show::kArmMessage);
+    if (!message) return;
+    const auto path = deployment::GetTaskbarHookPath();
+    if (path.empty()) return;
+    static std::atomic<ULONG_PTR> nextSerial{0};
+    const auto serial = ++nextSerial;
+    const auto owner = GetCurrentProcessId();
+    const auto requestName = first_show::RequestName(owner, serial);
+    const auto module = LoadLibraryExW(path.c_str(), nullptr,
+        LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    if (!module) return;
+    const auto procedure = reinterpret_cast<HOOKPROC>(GetProcAddress(module, "SnowDesktopTrayHookProc"));
+    if (procedure)
+    {
+        const auto mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
+            0, sizeof(first_show::Request), requestName.c_str());
+        const auto mappingStatus = GetLastError();
+        if (mapping)
+        {
+            auto* view = mappingStatus == ERROR_ALREADY_EXISTS ? nullptr :
+                static_cast<first_show::Request*>(MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, sizeof(first_show::Request)));
+            if (view)
+            {
+                *view = {reinterpret_cast<UINT_PTR>(receiver), GetTickCount64() + first_show::kLifetimeMs, anchor, bounds};
+                UnmapViewOfFile(view);
+                if (const auto hook = SetWindowsHookExW(WH_CALLWNDPROC, procedure, module, thread))
+                {
+                    DWORD_PTR ignored = 0;
+                    SendMessageTimeoutW(receiver, message, owner, static_cast<LPARAM>(serial),
+                        SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT, 80, &ignored);
+                    UnhookWindowsHookEx(hook);
+                }
+            }
+            CloseHandle(mapping);
+        }
+    }
+    FreeLibrary(module);
 }
 struct Connection
 {
@@ -636,6 +688,11 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
         impl_->menuPlacement.Arm(target, anchor, geometry,
             action == Activation::LeftUp || action == Activation::RightUp || action == Activation::MiddleUp, barBounds,
             context);
+        if (action == Activation::RightUp || action == Activation::ContextKeyboard)
+        {
+            try { ArmWeixinMenu(icon, target, anchor, geometry); }
+            catch (...) { /* Keep dispatching the original gesture if optional preparation fails. */ }
+        }
     }
     bool accepted = true;
     DWORD error = ERROR_SUCCESS;
