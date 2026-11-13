@@ -45,14 +45,17 @@ Explorer 私有托盘结构、WNF 状态和部分设备 API 的兼容性依赖 W
 | 文件 | 关闭的行为 |
 | --- | --- |
 | `tray-disable-appbar-position` | 状态栏触发会话内对 `ABM_GETTASKBARPOS` 的通用回答 |
-| `tray-disable-weixin` | 微信右键和键盘菜单的首次显示前定位 |
 | `tray-disable-qq` | QQ 悬浮窗口的屏外准备与首次显示前定位 |
 | `tray-disable-wps` | WPS 悬浮窗口和阴影的首次定位与显示 |
+| `tray-disable-chromium-hover` | 其他 Electron 应用同结构分层悬浮卡片的首次定位 |
+| `tray-disable-qt-hover` | 其他 Qt 5 应用同结构悬浮卡片与透明阴影的同步定位 |
 | `tray-disable-douyin` | 抖音悬浮窗口的首次定位和应用内鼠标判断兼容 |
 | `tray-disable-menu-reposition` | 通用菜单显示后的位置修正 |
 | `tray-disable-hover-reposition` | 通用悬浮卡片显示后的图标行避让 |
 
 验证通用方位是否足以替代专用处理时，同时关闭该应用的专用处理和对应的显示后位置修正，保留通用方位回答。使用同一栏位重复测试。抖音的鼠标离开判断独立于方位查询。
+
+微信右键菜单使用通用方位回答和菜单边界检查。Electron 卡片通过托盘回调窗口与同线程的置顶分层小窗识别。Qt 5 卡片和阴影须使用同一 Qt 窗口类前缀，并具有所有者关系。WPS 保留实测的阴影留边比例。
 
 ## 诊断与测试
 

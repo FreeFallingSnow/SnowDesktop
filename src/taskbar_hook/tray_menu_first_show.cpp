@@ -6,18 +6,20 @@
 
 #include <commctrl.h>
 #include <dwmapi.h>
+#include <strsafe.h>
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <iterator>
+#include <string_view>
 
 namespace snowdesktop::tray::first_show
 {
 namespace
 {
-constexpr UINT_PTR kMenuSubclass = 0x53444D46;
-constexpr ULONGLONG kWpsLayoutQuietMs = 64;
-constexpr ULONGLONG kWpsPresentationLimitMs = 180;
+constexpr UINT_PTR kHoverSubclass = 0x53444D46;
+constexpr ULONGLONG kQtLayoutQuietMs = 64;
+constexpr ULONGLONG kQtPresentationLimitMs = 180;
 struct Watch
 {
     Request request;
@@ -25,35 +27,40 @@ struct Watch
     UINT_PTR timer = 0;
     HWND candidate = nullptr;
     HWND shadow = nullptr;
-    RECT qqStaging{};
-    UINT_PTR wpsPresentationTimer = 0;
-    ULONGLONG wpsFirstShow = 0;
-    ULONGLONG wpsLastLayout = 0;
-    bool wpsCandidateCloaked = false;
-    bool wpsShadowCloaked = false;
-    bool wpsPresented = false;
+    RECT chromiumStaging{};
+    UINT_PTR qtPresentationTimer = 0;
+    ULONGLONG qtFirstShow = 0;
+    ULONGLONG qtLastLayout = 0;
+    bool qtCandidateCloaked = false;
+    bool qtShadowCloaked = false;
+    bool qtPresented = false;
+    bool wpsLayout = false;
+    bool knownChromiumLayout = false;
+    wchar_t qtPrefix[80]{};
 };
 thread_local Watch watch;
 
-LRESULT CALLBACK MenuProcedure(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
+LRESULT CALLBACK HoverProcedure(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 
 POINT WpsShadowOrigin(const RECT& card, const RECT& shadow)
 {
-    // WPS pads its transparent surface equally on the horizontal axis.
-    // The vertical padding is distributed 1:2 above and below the card.
+    // WPS uses 1:1 horizontal and 1:2 vertical shadow padding.
     return {card.left - (shadow.right - shadow.left - (card.right - card.left)) / 2,
         card.top - (shadow.bottom - shadow.top - (card.bottom - card.top)) / 3};
 }
 
-void ReleaseWpsPresentation(const Watch& previous)
+POINT HoverOffset(const Request& request, const RECT& bounds);
+bool ConvertHoverGeometry(Request& request);
+
+void ReleaseQtPresentation(const Watch& previous)
 {
-    if (previous.wpsPresentationTimer) KillTimer(nullptr, previous.wpsPresentationTimer);
+    if (previous.qtPresentationTimer) KillTimer(nullptr, previous.qtPresentationTimer);
     const BOOL uncloak = FALSE;
     // Reveal the owned shadow before its owner so both become compositable
     // together when the owner's inherited cloak clears.
-    if (previous.wpsShadowCloaked && IsWindow(previous.shadow))
+    if (previous.qtShadowCloaked && IsWindow(previous.shadow))
         DwmSetWindowAttribute(previous.shadow, DWMWA_CLOAK, &uncloak, sizeof(uncloak));
-    if (previous.wpsCandidateCloaked && IsWindow(previous.candidate))
+    if (previous.qtCandidateCloaked && IsWindow(previous.candidate))
         DwmSetWindowAttribute(previous.candidate, DWMWA_CLOAK, &uncloak, sizeof(uncloak));
 }
 
@@ -61,50 +68,72 @@ void StopWatching()
 {
     const auto previous = watch;
     watch = {};
-    ReleaseWpsPresentation(previous);
-    if (previous.candidate) RemoveWindowSubclass(previous.candidate, MenuProcedure, kMenuSubclass);
-    if (previous.shadow) RemoveWindowSubclass(previous.shadow, MenuProcedure, kMenuSubclass);
+    ReleaseQtPresentation(previous);
+    if (previous.candidate) RemoveWindowSubclass(previous.candidate, HoverProcedure, kHoverSubclass);
+    if (previous.shadow) RemoveWindowSubclass(previous.shadow, HoverProcedure, kHoverSubclass);
     if (previous.timer) KillTimer(nullptr, previous.timer);
     if (previous.hook) UnhookWindowsHookEx(previous.hook);
 }
 
-void CALLBACK PresentWps(HWND, UINT, UINT_PTR timer, DWORD)
+void CALLBACK PresentQt(HWND, UINT, UINT_PTR timer, DWORD)
 {
-    if (timer != watch.wpsPresentationTimer) return;
+    if (timer != watch.qtPresentationTimer) return;
     const auto now = GetTickCount64();
-    if (now - watch.wpsFirstShow < kWpsPresentationLimitMs &&
-        (!IsWindowVisible(watch.candidate) || now - watch.wpsLastLayout < kWpsLayoutQuietMs)) return;
-    // Snap the shadow while it is still cloaked. It may have been positioned
-    // before Qt's owner geometry was final, so use the settled rectangles.
+    if (now - watch.qtFirstShow < kQtPresentationLimitMs &&
+        (!IsWindowVisible(watch.candidate) || (!watch.wpsLayout && !IsWindowVisible(watch.shadow)) ||
+            now - watch.qtLastLayout < kQtLayoutQuietMs)) return;
     RECT card{}, shadow{};
-    if (watch.wpsShadowCloaked && IsWindowVisible(watch.candidate) &&
+    if (watch.qtShadowCloaked && IsWindowVisible(watch.candidate) &&
         GetWindowRect(watch.candidate, &card) && GetWindowRect(watch.shadow, &shadow) &&
         !IsRectEmpty(&card) && !IsRectEmpty(&shadow))
     {
-        const auto origin = WpsShadowOrigin(card, shadow);
-        if (origin.x != shadow.left || origin.y != shadow.top)
-            SetWindowPos(watch.shadow, nullptr, origin.x, origin.y, 0, 0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE);
+        constexpr UINT flags = SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE;
+        if (watch.wpsLayout)
+        {
+            // The WPS shadow may still reflect the application's original owner position.
+            const auto origin = WpsShadowOrigin(card, shadow);
+            if (origin.x != shadow.left || origin.y != shadow.top)
+                SetWindowPos(watch.shadow, nullptr, origin.x, origin.y, 0, 0, flags);
+        }
+        else if (watch.qtCandidateCloaked && IsWindowVisible(watch.shadow))
+        {
+            // Preserve the application's settled offset between the card and its shadow.
+            auto request = watch.request;
+            if (ConvertHoverGeometry(request))
+            {
+                const auto offset = HoverOffset(request, card);
+                if (offset.x || offset.y)
+                {
+                    const auto positions = BeginDeferWindowPos(2);
+                    const auto movedCard = positions ? DeferWindowPos(positions, watch.candidate, nullptr,
+                        card.left + offset.x, card.top + offset.y, 0, 0, flags) : nullptr;
+                    const auto movedPair = movedCard ? DeferWindowPos(movedCard, watch.shadow, nullptr,
+                        shadow.left + offset.x, shadow.top + offset.y, 0, 0, flags) : nullptr;
+                    if (movedPair) EndDeferWindowPos(movedPair);
+                }
+            }
+        }
     }
+    if (timer != watch.qtPresentationTimer) return;
     const auto previous = watch;
-    watch.wpsPresentationTimer = 0;
-    watch.wpsCandidateCloaked = false;
-    watch.wpsShadowCloaked = false;
-    watch.wpsPresented = true;
-    ReleaseWpsPresentation(previous);
+    watch.qtPresentationTimer = 0;
+    watch.qtCandidateCloaked = false;
+    watch.qtShadowCloaked = false;
+    watch.qtPresented = true;
+    ReleaseQtPresentation(previous);
 }
 
-void StageWpsPresentation(HWND window, bool& cloaked)
+void StageQtPresentation(HWND window, bool& cloaked)
 {
-    if (watch.wpsPresented || cloaked) return;
+    if (watch.qtPresented || cloaked) return;
     DWORD flags = 0;
     if (FAILED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &flags, sizeof(flags))) ||
         (flags & DWM_CLOAKED_APP)) return;
-    if (!watch.wpsPresentationTimer)
+    if (!watch.qtPresentationTimer)
     {
-        watch.wpsPresentationTimer = SetTimer(nullptr, 0, 16, PresentWps);
-        if (!watch.wpsPresentationTimer) return;
-        watch.wpsFirstShow = watch.wpsLastLayout = GetTickCount64();
+        watch.qtPresentationTimer = SetTimer(nullptr, 0, 16, PresentQt);
+        if (!watch.qtPresentationTimer) return;
+        watch.qtFirstShow = watch.qtLastLayout = GetTickCount64();
     }
     const BOOL cloak = TRUE;
     cloaked = true;
@@ -116,11 +145,12 @@ void CALLBACK Expire(HWND, UINT, UINT_PTR timer, DWORD)
     if (watch.timer == timer && GetTickCount64() >= watch.request.expires) StopWatching();
 }
 
-bool HasClass(HWND window, const wchar_t* expected)
+bool IsQtWindow(HWND window, std::wstring_view suffix)
 {
     wchar_t name[80]{};
-    GetClassNameW(window, name, static_cast<int>(std::size(name)));
-    return wcscmp(name, expected) == 0;
+    if (!GetClassNameW(window, name, static_cast<int>(std::size(name)))) return false;
+    const std::wstring_view className(name), prefix(watch.qtPrefix);
+    return !prefix.empty() && className.starts_with(prefix) && className.substr(prefix.size()) == suffix;
 }
 
 bool IsPopup(HWND window, Surface surface)
@@ -131,31 +161,45 @@ bool IsPopup(HWND window, Surface surface)
     const auto extended = GetWindowLongPtrW(window, GWL_EXSTYLE);
     if ((style & (WS_CHILD | WS_SYSMENU | WS_THICKFRAME)) ||
         (extended & (WS_EX_APPWINDOW | WS_EX_TRANSPARENT))) return false;
-    if (surface == Surface::QQHover)
-        return (extended & WS_EX_LAYERED) && HasClass(window, L"Chrome_WidgetWin_1");
+    if (surface == Surface::ChromiumHover)
+        return (extended & WS_EX_LAYERED) && HasClass(window, L"Chrome_WidgetWin_1") &&
+            (watch.knownChromiumLayout || (extended & WS_EX_TOPMOST));
     if (surface == Surface::DouyinHover)
         return (extended & WS_EX_NOACTIVATE) && (style & WS_POPUP) && HasClass(window, L"LynxMessageBox");
     if (!(extended & WS_EX_TOOLWINDOW) || (style & WS_CAPTION) == WS_CAPTION) return false;
-    return HasClass(window, surface == Surface::WpsHover ? L"Qt5QWindowToolSaveBits" : L"Qt51514QWindowPopupSaveBits");
+    return IsQtWindow(window, L"QWindowToolSaveBits");
 }
 
 bool IsShadow(HWND window)
 {
-    return HasClass(window, L"Qt5QWindowIcon") &&
+    return GetWindowThreadProcessId(window, nullptr) == GetCurrentThreadId() &&
+        IsQtWindow(window, L"QWindowIcon") &&
         (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TRANSPARENT) != 0 &&
-        IsPopup(GetWindow(window, GW_OWNER), Surface::WpsHover);
+        IsPopup(GetWindow(window, GW_OWNER), Surface::QtToolHover);
 }
 
-#ifndef _WIN64
-bool IsWpsProcess()
+BOOL CALLBACK FindQtShadow(HWND window, LPARAM context)
+{
+    auto& match = *reinterpret_cast<HWND*>(context);
+    if (GetWindow(window, GW_OWNER) != match || !IsShadow(window)) return TRUE;
+    match = nullptr;
+    return FALSE;
+}
+
+bool HasQtShadow(HWND owner)
+{
+    EnumThreadWindows(GetCurrentThreadId(), FindQtShadow, reinterpret_cast<LPARAM>(&owner));
+    return !owner;
+}
+
+bool IsProcessImage(const wchar_t* expected)
 {
     wchar_t path[MAX_PATH]{};
     const DWORD length = GetModuleFileNameW(nullptr, path, static_cast<DWORD>(std::size(path)));
     if (!length || length >= std::size(path)) return false;
     const auto* separator = wcsrchr(path, L'\\');
-    return separator && _wcsicmp(separator + 1, L"wpscloudsvr.exe") == 0;
+    return separator && _wcsicmp(separator + 1, expected) == 0;
 }
-#endif
 
 RECT ProposedBounds(HWND window, const WINDOWPOS& position)
 {
@@ -175,35 +219,6 @@ void SetPosition(WINDOWPOS& position, LONG x, LONG y)
     position.flags &= ~static_cast<UINT>(SWP_NOMOVE);
 }
 
-void PlaceMenu(const Request& request, const RECT& bounds, WINDOWPOS& position)
-{
-    const auto& work = request.work;
-    using Coordinate = std::int64_t;
-    const Coordinate width = static_cast<Coordinate>(bounds.right) - bounds.left;
-    const Coordinate height = static_cast<Coordinate>(bounds.bottom) - bounds.top;
-    if (width <= 0 || height <= 0 || width > static_cast<Coordinate>(work.right) - work.left ||
-        height > static_cast<Coordinate>(work.bottom) - work.top) return;
-    const Coordinate x = bounds.left, y = bounds.top;
-    constexpr Coordinate proximity = 96;
-    const bool nearX = request.anchor.x >= x - proximity && request.anchor.x <= x + width + proximity;
-    const bool nearY = request.anchor.y >= y - proximity && request.anchor.y <= y + height + proximity;
-    Coordinate desiredX = x, desiredY = y;
-    if (!nearX || !nearY)
-    {
-        if (!nearX) desiredX = request.anchor.x;
-        const Coordinate above = request.icon.top - height, below = request.icon.bottom;
-        bool preferBelow = static_cast<Coordinate>(request.icon.top) + request.icon.bottom <=
-            static_cast<Coordinate>(work.top) + work.bottom;
-        if (preferBelow && below + height > work.bottom && above >= work.top) preferBelow = false;
-        if (!preferBelow && above < work.top && below + height <= work.bottom) preferBelow = true;
-        desiredY = preferBelow ? below : above;
-    }
-    desiredX = std::clamp(desiredX, static_cast<Coordinate>(work.left), work.right - width);
-    desiredY = std::clamp(desiredY, static_cast<Coordinate>(work.top), work.bottom - height);
-    if (desiredX == x && desiredY == y) return;
-    SetPosition(position, static_cast<LONG>(desiredX), static_cast<LONG>(desiredY));
-}
-
 POINT HoverOffset(const Request& request, const RECT& bounds)
 {
     RECT overlap{};
@@ -212,7 +227,7 @@ POINT HoverOffset(const Request& request, const RECT& bounds)
     const bool intersectsRow = IntersectRect(&overlap, &bounds, &request.row) != FALSE;
     const bool contained = bounds.left >= request.work.left && bounds.right <= request.work.right &&
         bounds.top >= request.work.top && bounds.bottom <= request.work.bottom;
-    if (request.surface == Surface::DouyinHover || request.surface == Surface::WpsHover)
+    if (request.surface == Surface::DouyinHover || request.surface == Surface::QtToolHover)
     {
         if (!intersectsRow && contained) return {};
     }
@@ -260,54 +275,44 @@ bool ConvertHoverGeometry(Request& request)
     return true;
 }
 
-LRESULT CALLBACK MenuProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR)
+LRESULT CALLBACK HoverProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR)
 {
     if (message == WM_NCDESTROY && window == watch.candidate)
         StopWatching();
     else if (message == WM_NCDESTROY && window == watch.shadow)
     {
         watch.shadow = nullptr;
-        watch.wpsShadowCloaked = false;
-        RemoveWindowSubclass(window, MenuProcedure, kMenuSubclass);
+        watch.qtShadowCloaked = false;
+        RemoveWindowSubclass(window, HoverProcedure, kHoverSubclass);
     }
-    if (message == WM_WINDOWPOSCHANGED && lp && watch.request.surface == Surface::WpsHover)
+    if (message == WM_WINDOWPOSCHANGED && lp && watch.request.surface == Surface::QtToolHover)
     {
         const auto& position = *reinterpret_cast<const WINDOWPOS*>(lp);
         if ((position.flags & SWP_HIDEWINDOW) && window == watch.candidate)
             StopWatching();
-        else if (watch.wpsPresentationTimer &&
+        else if (watch.qtPresentationTimer &&
             (position.flags & (SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)) != (SWP_NOMOVE | SWP_NOSIZE))
-            watch.wpsLastLayout = GetTickCount64();
+            watch.qtLastLayout = GetTickCount64();
     }
     if (message != WM_WINDOWPOSCHANGING || !lp)
         return DefSubclassProc(window, message, wp, lp);
     auto& position = *reinterpret_cast<WINDOWPOS*>(lp);
     if ((position.flags & SWP_HIDEWINDOW) && window == watch.candidate)
     {
-        if (watch.request.surface != Surface::WpsHover) StopWatching();
+        if (watch.request.surface != Surface::QtToolHover) StopWatching();
         return DefSubclassProc(window, message, wp, lp);
     }
     auto request = watch.request;
-    if (request.surface == Surface::WeixinMenu)
-    {
-        if (!(position.flags & SWP_SHOWWINDOW)) return DefSubclassProc(window, message, wp, lp);
-        StopWatching();
-    }
     const auto result = DefSubclassProc(window, message, wp, lp);
     // Apply after the application handles the message, before User32 commits
-    // the move and show together. The menu keeps its original size and z-order.
+    // the move and show together. The card keeps its original size and z-order.
     if (GetTickCount64() >= request.expires || (position.flags & SWP_HIDEWINDOW)) return result;
+    if (request.surface == Surface::QtToolHover && !watch.wpsLayout) return result;
     const RECT bounds = ProposedBounds(window, position);
-    if (request.surface == Surface::WeixinMenu)
-    {
-        if ((position.flags & SWP_SHOWWINDOW) && IsPopup(window, request.surface))
-            PlaceMenu(request, bounds, position);
-        return result;
-    }
     if ((window != watch.candidate && window != watch.shadow) ||
         (position.flags & (SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)) == (SWP_NOMOVE | SWP_NOSIZE) ||
         !ConvertHoverGeometry(request)) return result;
-    if (request.surface == Surface::QQHover && !IsRectEmpty(&watch.qqStaging))
+    if (request.surface == Surface::ChromiumHover && !IsRectEmpty(&watch.chromiumStaging))
     {
         const RECT nearby{request.row.left - 512, request.row.top - 512,
             request.row.right + 512, request.row.bottom + 512};
@@ -317,10 +322,10 @@ LRESULT CALLBACK MenuProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp, 
             // Chromium/DefWindowProc can clamp a staged SHOW to the top-left
             // monitor. Keep that transaction at the application's staging
             // coordinates until it requests a position beside the tray.
-            SetPosition(position, watch.qqStaging.left, watch.qqStaging.top);
+            SetPosition(position, watch.chromiumStaging.left, watch.chromiumStaging.top);
             return result;
         }
-        watch.qqStaging = {};
+        watch.chromiumStaging = {};
     }
     if (window == watch.shadow)
     {
@@ -338,7 +343,7 @@ LRESULT CALLBACK MenuProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp, 
     return result;
 }
 
-LRESULT CALLBACK WatchMenu(int code, WPARAM wp, LPARAM lp)
+LRESULT CALLBACK WatchHover(int code, WPARAM wp, LPARAM lp)
 {
     if (code == HC_ACTION && lp && watch.hook)
     {
@@ -352,41 +357,44 @@ LRESULT CALLBACK WatchMenu(int code, WPARAM wp, LPARAM lp)
         {
             const auto& position = *reinterpret_cast<const WINDOWPOS*>(message.lParam);
             const bool showing = (position.flags & SWP_SHOWWINDOW) != 0;
-            const bool movingQq = watch.request.surface == Surface::QQHover && IsWindowVisible(message.hwnd) &&
+            const bool movingChromium = watch.knownChromiumLayout && IsWindowVisible(message.hwnd) &&
                 !(position.flags & SWP_NOMOVE);
-            if (!watch.candidate && (showing || movingQq) && IsPopup(message.hwnd, watch.request.surface))
+            if (!watch.candidate && (showing || movingChromium) && IsPopup(message.hwnd, watch.request.surface))
             {
                 const auto bounds = ProposedBounds(message.hwnd, position);
                 const RECT vicinity{watch.request.icon.left - 512, watch.request.icon.top - 512,
                     watch.request.icon.right + 512, watch.request.icon.bottom + 512};
                 RECT overlap{};
-                const bool qqCard = watch.request.surface != Surface::QQHover ||
+                const bool chromiumCard = watch.request.surface != Surface::ChromiumHover ||
                     (!IsRectEmpty(&bounds) && bounds.right - bounds.left <= 640 && bounds.bottom - bounds.top <= 480 &&
                         ((bounds.right < -8000 && bounds.bottom < -8000) || IntersectRect(&overlap, &bounds, &vicinity)));
-                if (qqCard && SetWindowSubclass(message.hwnd, MenuProcedure, kMenuSubclass, 0))
+                const bool qtCard = watch.request.surface != Surface::QtToolHover ||
+                    watch.wpsLayout || HasQtShadow(message.hwnd);
+                if (chromiumCard && qtCard && SetWindowSubclass(message.hwnd, HoverProcedure, kHoverSubclass, 0))
                 {
                     watch.candidate = message.hwnd;
 #ifdef _WIN64
                     if (watch.request.surface == Surface::DouyinHover) douyin::Bind(message.hwnd);
 #endif
-                    if (watch.request.surface == Surface::QQHover && bounds.right < -8000 && bounds.bottom < -8000)
-                        watch.qqStaging = bounds;
+                    if (watch.request.surface == Surface::ChromiumHover && bounds.right < -8000 && bounds.bottom < -8000)
+                        watch.chromiumStaging = bounds;
                 }
             }
-            if (!watch.shadow && showing && watch.request.surface == Surface::WpsHover && IsShadow(message.hwnd))
+            if (!watch.shadow && showing && watch.request.surface == Surface::QtToolHover && IsShadow(message.hwnd))
             {
                 const auto owner = GetWindow(message.hwnd, GW_OWNER);
-                if (!watch.candidate && SetWindowSubclass(owner, MenuProcedure, kMenuSubclass, 0))
+                if (!watch.candidate && (watch.wpsLayout || !IsWindowVisible(owner)) &&
+                    SetWindowSubclass(owner, HoverProcedure, kHoverSubclass, 0))
                     watch.candidate = owner;
-                if (owner == watch.candidate && SetWindowSubclass(message.hwnd, MenuProcedure, kMenuSubclass, 0))
+                if (owner == watch.candidate && SetWindowSubclass(message.hwnd, HoverProcedure, kHoverSubclass, 0))
                     watch.shadow = message.hwnd;
             }
-            if (showing && watch.request.surface == Surface::WpsHover)
+            if (showing && watch.request.surface == Surface::QtToolHover)
             {
                 if (message.hwnd == watch.candidate)
-                    StageWpsPresentation(message.hwnd, watch.wpsCandidateCloaked);
+                    StageQtPresentation(message.hwnd, watch.qtCandidateCloaked);
                 else if (message.hwnd == watch.shadow)
-                    StageWpsPresentation(message.hwnd, watch.wpsShadowCloaked);
+                    StageQtPresentation(message.hwnd, watch.qtShadowCloaked);
             }
         }
     }
@@ -411,37 +419,50 @@ void Arm(const CWPSTRUCT& message)
         request.process != GetCurrentProcessId() ||
         request.expires <= now || request.expires - now > kLifetimeMs ||
         IsRectEmpty(&request.icon) || !PtInRect(&request.icon, request.anchor) || IsRectEmpty(&request.work) ||
-        (request.surface != Surface::WeixinMenu && request.surface != Surface::AppBarOnly && IsRectEmpty(&request.row)))
+        (request.surface != Surface::AppBarOnly && IsRectEmpty(&request.row)))
         return;
     // The query session is independent of window classification and may be
     // used by any tray client. Its answer expires even without a popup.
     HMODULE pinned = nullptr;
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
-        reinterpret_cast<LPCWSTR>(&WatchMenu), &pinned)) return;
+        reinterpret_cast<LPCWSTR>(&WatchHover), &pinned)) return;
     const bool appbarArmed = appbar::Arm(request, static_cast<DWORD>(message.wParam));
     if (request.surface == Surface::AppBarOnly)
     {
         if (appbarArmed) InterlockedExchange(&view->armed, 1);
         return;
     }
+    wchar_t qtPrefix[80]{};
+    bool wpsLayout = false;
+    bool knownChromiumLayout = false;
+    switch (request.surface)
+    {
+    case Surface::ChromiumHover:
+        if (!HasClass(message.hwnd, kElectronTrayClass)) return;
+        knownChromiumLayout = IsProcessImage(L"QQ.exe");
+        break;
+    case Surface::QtToolHover:
+        wpsLayout = IsProcessImage(L"wpscloudsvr.exe");
+        if (wpsLayout)
+            StringCchCopyW(qtPrefix, std::size(qtPrefix), L"Qt5");
+        else if (!ReadQt5TrayPrefix(message.hwnd, qtPrefix))
+            return;
+        break;
 #ifdef _WIN64
-    if (request.surface == Surface::WeixinMenu)
-    {
-        if (!IsWeixinReceiver(message.hwnd)) return;
-    }
-    else if (request.surface == Surface::QQHover)
-    {
-        if (!HasClass(message.hwnd, L"Electron_NotifyIconHostWindow")) return;
-    }
-    else if (request.surface != Surface::DouyinHover || !HasClass(message.hwnd, L"TRAY_CLASS"))
-        return;
-#else
-    if (request.surface != Surface::WpsHover || !IsWpsProcess()) return;
+    case Surface::DouyinHover:
+        if (!HasClass(message.hwnd, L"TRAY_CLASS")) return;
+        break;
 #endif
+    default:
+        return;
+    }
 
     StopWatching();
     watch.request = request;
-    watch.hook = SetWindowsHookExW(WH_CALLWNDPROC, WatchMenu, nullptr, GetCurrentThreadId());
+    watch.wpsLayout = wpsLayout;
+    watch.knownChromiumLayout = knownChromiumLayout;
+    StringCchCopyW(watch.qtPrefix, std::size(watch.qtPrefix), qtPrefix);
+    watch.hook = SetWindowsHookExW(WH_CALLWNDPROC, WatchHover, nullptr, GetCurrentThreadId());
     if (watch.hook) watch.timer = SetTimer(nullptr, 0, kLifetimeMs, Expire);
     if (!watch.timer)
     {

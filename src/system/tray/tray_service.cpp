@@ -640,6 +640,7 @@ void Service::BeginHover(const std::string& key, HWND receiver, HWND bar, RECT b
 {
     if (IsRectEmpty(&bounds)) return;
     Identity identity{};
+    const wchar_t* disableHover = nullptr;
     auto surface = first_show::Surface::AppBarOnly;
     {
         std::lock_guard guard(impl_->mutex);
@@ -647,18 +648,45 @@ void Service::BeginHover(const std::string& key, HWND receiver, HWND bar, RECT b
             [&](const auto& icon) { return icon.key == key; });
         if (found == impl_->snapshot.icons.end() || (found->state & NIS_HIDDEN)) return;
         identity = found->identity;
-        if (ApplicationIs(*found, L"QQ.exe")) surface = first_show::Surface::QQHover;
-        else if (ApplicationIs(*found, L"wpscloudsvr.exe")) surface = first_show::Surface::WpsHover;
-        else if (ApplicationIs(*found, L"douyin_tray.exe")) surface = first_show::Surface::DouyinHover;
+        if (ApplicationIs(*found, L"QQ.exe"))
+        {
+            surface = first_show::Surface::ChromiumHover;
+            disableHover = L"tray-disable-qq";
+        }
+        else if (ApplicationIs(*found, L"wpscloudsvr.exe"))
+        {
+            surface = first_show::Surface::QtToolHover;
+            disableHover = L"tray-disable-wps";
+        }
+        else if (ApplicationIs(*found, L"douyin_tray.exe"))
+        {
+            surface = first_show::Surface::DouyinHover;
+            disableHover = L"tray-disable-douyin";
+        }
     }
-    if ((surface == first_show::Surface::QQHover && !CompatibilityEnabled(L"tray-disable-qq")) ||
-        (surface == first_show::Surface::WpsHover && !CompatibilityEnabled(L"tray-disable-wps")) ||
-        (surface == first_show::Surface::DouyinHover && !CompatibilityEnabled(L"tray-disable-douyin")))
+    const auto target = reinterpret_cast<HWND>(identity.window);
+    DWORD process = 0;
+    if (!GetWindowThreadProcessId(target, &process) || process != identity.process) return;
+    const bool knownHover = disableHover != nullptr;
+    if (!knownHover)
+    {
+        wchar_t qtPrefix[80]{};
+        if (first_show::HasClass(target, first_show::kElectronTrayClass))
+        {
+            surface = first_show::Surface::ChromiumHover;
+            disableHover = L"tray-disable-chromium-hover";
+        }
+        else if (first_show::ReadQt5TrayPrefix(target, qtPrefix))
+        {
+            surface = first_show::Surface::QtToolHover;
+            disableHover = L"tray-disable-qt-hover";
+        }
+    }
+    if (disableHover && !CompatibilityEnabled(disableHover))
         surface = first_show::Surface::AppBarOnly;
     const POINT anchor{bounds.left + (bounds.right - bounds.left) / 2,
         bounds.top + (bounds.bottom - bounds.top) / 2};
     // Some apps display the popup while handling the first mouse callback.
-    const auto target = reinterpret_cast<HWND>(identity.window);
     bool armed = false;
     const bool appbarEnabled = CompatibilityEnabled(L"tray-disable-appbar-position");
     if ((appbarEnabled || surface != first_show::Surface::AppBarOnly) &&
@@ -677,7 +705,7 @@ void Service::BeginHover(const std::string& key, HWND receiver, HWND bar, RECT b
         catch (...) { /* Keep the original hover if optional preparation fails. */ }
     }
     popup.Watch(receiver, target, identity.process, bounds, row, preferAbove,
-        (armed && surface != first_show::Surface::AppBarOnly) ||
+        (armed && knownHover && surface != first_show::Surface::AppBarOnly) ||
         !CompatibilityEnabled(L"tray-disable-hover-reposition"));
     if (!Activate(key, Activation::Hover, anchor, {}, {}, identity)) popup.Reset();
 }
@@ -753,22 +781,15 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
             action == Activation::LeftUp || action == Activation::RightUp || action == Activation::MiddleUp, barBounds,
             context);
         if (!CompatibilityEnabled(L"tray-disable-menu-reposition")) impl_->menuPlacement.CancelPlacement();
-        const bool weixinMenu = (action == Activation::RightUp || action == Activation::ContextKeyboard) &&
-            ApplicationIs(icon, L"Weixin.exe") && first_show::IsWeixinReceiver(target) &&
-            CompatibilityEnabled(L"tray-disable-weixin");
         const bool answerAppbar = origin.barAtBottom.has_value() && CompatibilityEnabled(L"tray-disable-appbar-position");
-        if (answerAppbar || weixinMenu)
+        if (answerAppbar)
         {
             try
             {
                 first_show::Request request;
                 request.anchor = anchor; request.icon = geometry; request.process = pid;
-                request.surface = weixinMenu ? first_show::Surface::WeixinMenu : first_show::Surface::AppBarOnly;
-                if (answerAppbar)
-                {
-                    request.bar = reinterpret_cast<UINT_PTR>(origin.target);
-                    request.preferAbove = *origin.barAtBottom;
-                }
+                request.bar = reinterpret_cast<UINT_PTR>(origin.target);
+                request.preferAbove = *origin.barAtBottom;
                 ArmPopup(target, request);
             }
             catch (...) { /* Keep dispatching the original gesture if optional preparation fails. */ }

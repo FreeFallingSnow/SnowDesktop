@@ -1,5 +1,6 @@
 #include "tray_hover_popup.h"
 #include <algorithm>
+#include <dwmapi.h>
 #include <unordered_map>
 
 namespace snowdesktop::tray
@@ -103,6 +104,9 @@ void HoverPopup::AvoidRow(Popup& popup, const RECT& bounds) const
 {
     RECT overlap{};
     if (firstShowArmed_ || popup.positionRequested || !IntersectRect(&overlap, &bounds, &row_)) return;
+    DWORD cloaked = 0;
+    if (SUCCEEDED(DwmGetWindowAttribute(popup.window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked)
+        return;
     const LONG width = bounds.right - bounds.left;
     const LONG height = bounds.bottom - bounds.top;
     if (width <= 0 || height <= 0 || width > workArea_.right - workArea_.left ||

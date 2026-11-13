@@ -11,7 +11,7 @@ inline constexpr wchar_t kArmMessage[] = L"SnowDesktop.Tray.PopupPlacement.v4";
 inline constexpr wchar_t kArmHelperSwitch[] = L"--tray-popup-placement";
 inline constexpr DWORD kLifetimeMs = 1500;
 
-enum class Surface : std::uint32_t { WeixinMenu, QQHover, WpsHover, DouyinHover, AppBarOnly };
+enum class Surface : std::uint32_t { ChromiumHover = 1, QtToolHover = 2, DouyinHover = 3, AppBarOnly = 4 };
 
 struct Request
 {
@@ -21,7 +21,7 @@ struct Request
     RECT icon{};
     RECT row{};
     RECT work{};
-    Surface surface = Surface::WeixinMenu;
+    Surface surface = Surface::AppBarOnly;
     LONG gap = 0;
     BOOL preferAbove = FALSE;
     DWORD process = 0;
@@ -37,11 +37,25 @@ inline std::wstring RequestName(DWORD owner, ULONG_PTR serial)
         std::to_wstring(owner) + L"." + std::to_wstring(serial);
 }
 
-inline bool IsWeixinReceiver(HWND window)
+inline bool HasClass(HWND window, const wchar_t* expected)
 {
     wchar_t name[80]{};
     GetClassNameW(window, name, static_cast<int>(sizeof(name) / sizeof(name[0])));
-    return wcscmp(name, L"Qt51514WxTrayIconMessageWindowClass") == 0;
+    return wcscmp(name, expected) == 0;
+}
+
+inline constexpr wchar_t kElectronTrayClass[] = L"Electron_NotifyIconHostWindow";
+
+inline bool ReadQt5TrayPrefix(HWND window, wchar_t (&name)[80])
+{
+    if (!GetClassNameW(window, name, static_cast<int>(sizeof(name) / sizeof(name[0]))) ||
+        wcsncmp(name, L"Qt5", 3) != 0) return false;
+    auto* suffix = name + 3;
+    while (*suffix >= L'0' && *suffix <= L'9') ++suffix;
+    if (*suffix == L'd') ++suffix;
+    if (wcscmp(suffix, L"TrayIconMessageWindowClass") != 0) return false;
+    *suffix = L'\0';
+    return true;
 }
 
 void Arm(const CWPSTRUCT& message);
