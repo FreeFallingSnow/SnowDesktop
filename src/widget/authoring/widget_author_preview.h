@@ -73,5 +73,6 @@ PreviewRenderResult RenderWidgetPreview(
  * Returns the command exit code and sets handled only when the switch exists.
  */
 int TryRunWidgetAuthorPreviewHostCommand(bool& handled);
+std::optional<int> TryRunWidgetAuthorInstallCommand();
 
 } // namespace snowdesktop::widget_authoring

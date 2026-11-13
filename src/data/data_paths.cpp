@@ -16,6 +16,7 @@
 
 #include <cwchar>
 #include <iterator>
+#include <utility>
 
 namespace
 {
@@ -120,10 +121,19 @@ std::wstring GetExecutableDirectoryPath()
 
 namespace
 {
+std::wstring isolatedAuthoringDataRoot;
+
 snowdesktop::data_paths::RuntimeDataPathPolicy ResolveActivePolicy(
     const snowdesktop::deployment::RuntimeDeploymentContext& context,
     const std::filesystem::path& packageLocalState)
 {
+    if (!isolatedAuthoringDataRoot.empty())
+    {
+        snowdesktop::data_paths::RuntimeDataPathPolicy policy;
+        policy.dataRoot = isolatedAuthoringDataRoot;
+        policy.pendingMigrationStateRoot = isolatedAuthoringDataRoot;
+        return policy;
+    }
     if (snowdesktop::debug_profile::Enabled())
     {
         snowdesktop::data_paths::RuntimeDataPathPolicy policy;
@@ -134,6 +144,11 @@ snowdesktop::data_paths::RuntimeDataPathPolicy ResolveActivePolicy(
     return snowdesktop::data_paths::ResolveRuntimeDataPathPolicy(
         context, packageLocalState, GetExecutableDirectoryPath());
 }
+}
+
+void snowdesktop::data_paths::SetIsolatedAuthoringDataRoot(std::wstring root)
+{
+    isolatedAuthoringDataRoot = std::move(root);
 }
 
 bool InitializeDebugProfile(std::string& error)
@@ -147,6 +162,8 @@ bool InitializeDebugProfile(std::string& error)
 
 std::wstring GetDataStateRootPath()
 {
+    if (!isolatedAuthoringDataRoot.empty())
+        return isolatedAuthoringDataRoot;
     if (snowdesktop::debug_profile::Enabled())
         return snowdesktop::debug_profile::Current().paths.root.wstring();
     const auto packaged = snowdesktop::deployment::GetPackageLocalStatePath();

@@ -433,6 +433,8 @@ void ShowStartupFailure(const snowdesktop::operation_feedback::Failure& failure)
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCommand)
 {
+    if (const auto result = snowdesktop::widget_authoring::TryRunWidgetAuthorInstallCommand())
+        return *result;
     if (const auto result = snowdesktop::taskbar_hook::TryRunTaskbarSymbolHelper()) return *result;
     if (const auto result = snowdesktop::start_menu::TryRunLauncherHelper()) return *result;
     if (const auto result = snowdesktop::winui::TryRunSettingsVisualPreview()) return *result;
