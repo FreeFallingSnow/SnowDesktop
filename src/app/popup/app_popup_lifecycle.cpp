@@ -444,33 +444,10 @@ void DesktopApp::StartCollectionPopupAnimation(
     bool reverseClosingAnimation)
 {
     snowdesktop::performance::Scope openingScope("popup", "animation.prepare");
-    std::vector<RECT> previousDockTitles;
-    if (hwnd_ && IsWindow(hwnd_))
-    {
-        for (const auto& container : containers_)
-        {
-            auto* dock = dynamic_cast<DockContainer*>(container.get());
-            if (!dock || IsDockHostedByPersistentHost(dock))
-                continue;
-            const RECT title = dock->GetHoveredTitleBounds(lastMousePoint_);
-            if (!IsRectEmpty(&title))
-                previousDockTitles.push_back(title);
-        }
-    }
     const auto refreshDockTitles = [&]() {
-        // Popup state suppresses Dock titles even when the pointer stays still.
-        // Refresh each host's title region as well as its rendered pixels.
-        for (const auto& host : persistentDockHosts_)
-            if (host && !IsRectEmpty(&host->tooltipRect))
-                UpdateFloatingDockWindowBounds(*host);
+        SyncDockTitleTooltip();
         InvalidateDockRects();
-        // Desktop-hosted Dock titles extend beyond the Dock body, so repaint
-        // their old bounds explicitly instead of waiting for WM_MOUSEMOVE.
-        for (const RECT& title : previousDockTitles)
-            if (!PresentDesktopForegroundComposition(title))
-                InvalidateRect(hwnd_, &title, FALSE);
     };
-
     const DesktopWidget* widget = GetOpenPopupWidget();
     popupAnimation_.Configure(
         snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,

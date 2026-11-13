@@ -1156,8 +1156,6 @@ void DesktopApp::HandleStatusBarPointerPressed()
             else
             {
                 RECT frame = dock->GetAnimationVisualBounds();
-                const RECT title = dock->GetHoveredTitleBounds(lastMousePoint_);
-                UnionRect(&frame, &frame, &title);
                 addDesktop(frame, 8);
             }
         }

@@ -1,6 +1,7 @@
 #include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "app/app.h"
+#include "widget/runtime/widget_engine.h"
 #include "platform/usage_guide.h"
 #include "common/l10n.h"
 #include "ui/render/native_tooltip_preferences.h"
@@ -153,390 +154,190 @@ void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx, const RECT* 
     drawButton(usageGuidePauseRect_, pauseText, smallFormat.Get());
 }
 
+void DesktopApp::ResetPageNotify()
+{
+    if (pageNotifyFadeOutToken_) uiAnimationScheduler_.Cancel(pageNotifyFadeOutToken_);
+    if (pageNotifyAnimationFrameToken_) uiAnimationScheduler_.Cancel(pageNotifyAnimationFrameToken_);
+    pageNotifyFadeOutToken_ = pageNotifyAnimationFrameToken_ = 0;
+    pageNotifyActive_ = false;
+    pageNotifyTooltip_.Hide();
+}
+
 void DesktopApp::ShowPageNotify(const std::wstring& text)
 {
-    if (text.empty()) return;
-    if (pageNotifyAnimationFrameToken_)
-        uiAnimationScheduler_.Cancel(pageNotifyAnimationFrameToken_);
-    pageNotifyAnimationFrameToken_ = 0;
-    pageNotifyText_ = text;
-    PreparePageNotifyTextCache();
-    pageNotifyStartTick_ = GetTickCount();
+    ResetPageNotify();
+    const auto order = BuildMonitorRenderOrder();
+    if (text.empty() || order.empty() || !hwnd_ || desktopIconsHidden_ ||
+        !dcompDevice_ || !dwriteFactory_ || HasActiveContextMenuSession()) return;
+
+    const RECT work = gridPages_[order.back()].workArea;
+    ComPtr<IDWriteTextFormat> format;
+    if (FAILED(snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_.Get(), L"Segoe UI",
+            DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, 42.0f, L"", &format))) return;
+    format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    snowdesktop::NativeTooltipLayoutOptions options;
+    options.centered = true;
+    options.paddingXRatio = 28.f / 42.f;
+    options.paddingYRatio = 14.f / 42.f;
+    snowdesktop::NativeTooltipTextLayout measured;
+    if (FAILED(snowdesktop::MeasureNativeTooltip(dwriteFactory_.Get(), format.Get(), {}, text,
+            std::clamp(static_cast<float>(work.right - work.left) - 48.f, 1.f, 2056.f),
+            std::max(1.f, static_cast<float>(work.bottom - work.top) - 48.f), measured, options))) return;
+    RECT bounds{work.left + 24, work.top + 24,
+        work.left + 24 + static_cast<LONG>(std::ceil(measured.width)),
+        work.top + 24 + static_cast<LONG>(std::ceil(measured.height))};
+    OffsetRect(&bounds, virtualLeft_, virtualTop_);
+    ConfigureFixedTooltip(pageNotifyTooltip_, hwnd_);
+
+    const bool animate = snowdesktop::animation::RuntimeAnimationsEnabled();
+    const DWORD fade = static_cast<DWORD>(std::max(1.0,
+        std::round(kPageNotifyFadeMs * snowdesktop::animation::RuntimeDurationScale())));
+    pageNotifyTooltip_.SetOpacity(animate ? 0.f : 1.f);
+    pageNotifyTooltip_.ShowAt(text, bounds, measured, true);
+    if (!pageNotifyTooltip_.Visible()) return;
     pageNotifyActive_ = true;
-    pageNotifyUseAnimation_ =
-        snowdesktop::animation::RuntimeAnimationsEnabled();
-    pageNotifyFadeMs_ = static_cast<DWORD>(std::max(1.0,
-        std::round(kPageNotifyFadeMs *
-            snowdesktop::animation::RuntimeDurationScale())));
-    // Keep the reading pause unchanged while both fades follow animation speed.
-    const DWORD visibleMs = pageNotifyUseAnimation_
-        ? kPageNotifyVisibleMs - 2 * kPageNotifyFadeMs +
-            2 * pageNotifyFadeMs_
-        : kPageNotifyVisibleMs;
-    if (pageNotifyUseAnimation_)
+    if (animate)
     {
-        PreparePageNotifyAnimationCache();
-        const RECT bounds = pageNotifyAnimationOverlay_.bounds;
-        const POINT anchor{
-            (bounds.left + bounds.right) / 2,
-            (bounds.top + bounds.bottom) / 2,
+        const auto startFade = [this, fade](bool opening) {
+            const ULONGLONG start = GetTickCount64();
+            pageNotifyAnimationFrameToken_ = uiAnimationScheduler_.StartAnimation(
+                snowdesktop::UiAnimationSurface::Desktop, [this, fade, opening, start](double) {
+                    const float progress = std::min(1.f, static_cast<float>(GetTickCount64() - start) / fade);
+                    const bool keep = pageNotifyTooltip_.SetOpacity(opening ? progress : 1.f - progress) &&
+                        progress < 1.f;
+                    if (!keep) pageNotifyAnimationFrameToken_ = 0;
+                    if (!keep && !opening) ResetPageNotify();
+                    return keep;
+                });
+            if (!pageNotifyAnimationFrameToken_)
+            {
+                if (opening) pageNotifyTooltip_.SetOpacity(1.f);
+                else ResetPageNotify();
+            }
         };
-        pageNotifyCompositorDriven_ =
-            AnimateCompositionAnimationOverlay(
-                pageNotifyAnimationOverlay_,
-                1.0f, 1.0f, anchor,
-                0.0f, 1.0f,
-                pageNotifyFadeMs_);
-        if (!pageNotifyCompositorDriven_)
-            UpdatePageNotifyCompositionAnimation(0.0f);
+        startFade(true);
+        pageNotifyFadeOutToken_ = uiAnimationScheduler_.ScheduleOnce(
+            fade + kPageNotifyVisibleMs - 2 * kPageNotifyFadeMs,
+            [this, startFade](snowdesktop::UiScheduleToken token) {
+                if (pageNotifyFadeOutToken_ != token) return;
+                pageNotifyFadeOutToken_ = 0;
+                if (pageNotifyAnimationFrameToken_) uiAnimationScheduler_.Cancel(pageNotifyAnimationFrameToken_);
+                startFade(false);
+            });
     }
     else
     {
-        ResetPageNotifyAnimationCache();
-    }
-    if (pageNotifyFadeOutToken_)
-        uiAnimationScheduler_.Cancel(pageNotifyFadeOutToken_);
-    const UINT wakeDelay = pageNotifyUseAnimation_
-        ? visibleMs - pageNotifyFadeMs_
-        : visibleMs;
-    pageNotifyFadeOutToken_ =
-        uiAnimationScheduler_.ScheduleOnce(
-            wakeDelay,
-            [this, visibleMs](snowdesktop::UiScheduleToken token) {
-                if (pageNotifyFadeOutToken_ != token)
-                    return;
-                pageNotifyFadeOutToken_ = 0;
-                if (!pageNotifyActive_)
-                    return;
-                const DWORD elapsed = GetTickCount() - pageNotifyStartTick_;
-                if (pageNotifyUseAnimation_ &&
-                    snowdesktop::animation::RuntimeAnimationsEnabled() &&
-                    elapsed < visibleMs)
-                {
-                    if (pageNotifyCompositorDriven_)
-                    {
-                        const RECT bounds =
-                            pageNotifyAnimationOverlay_.bounds;
-                        const POINT anchor{
-                            (bounds.left + bounds.right) / 2,
-                            (bounds.top + bounds.bottom) / 2,
-                        };
-                        if (AnimateCompositionAnimationOverlay(
-                                pageNotifyAnimationOverlay_,
-                                1.0f, 1.0f, anchor,
-                                1.0f, 0.0f,
-                                std::min(pageNotifyFadeMs_, visibleMs - elapsed)))
-                        {
-                            pageNotifyFadeOutToken_ =
-                                uiAnimationScheduler_.ScheduleOnce(
-                                    visibleMs - elapsed + 2,
-                                    [this](
-                                        snowdesktop::UiScheduleToken
-                                            completionToken) {
-                                        if (pageNotifyFadeOutToken_ !=
-                                                completionToken)
-                                            return;
-                                        pageNotifyFadeOutToken_ = 0;
-                                        if (!pageNotifyActive_)
-                                            return;
-                                        const RECT dirty =
-                                            GetPageNotifyBounds();
-                                        pageNotifyActive_ = false;
-                                        pageNotifyText_.clear();
-                                        ResetPageNotifyTextCache();
-                                        if (hwnd_ && IsWindow(hwnd_))
-                                        {
-                                            InvalidateRect(
-                                                hwnd_,
-                                                IsRectEmpty(&dirty)
-                                                    ? nullptr : &dirty,
-                                                FALSE);
-                                        }
-                                    });
-                            if (pageNotifyFadeOutToken_)
-                                return;
-                            pageNotifyCompositorDriven_ = false;
-                        }
-                        pageNotifyCompositorDriven_ = false;
-                    }
-                    EnsureUiAnimationFrame();
-                    return;
-                }
-                const RECT dirty = GetPageNotifyBounds();
-                pageNotifyActive_ = false;
-                pageNotifyText_.clear();
-                ResetPageNotifyTextCache();
-                if (hwnd_ && IsWindow(hwnd_))
-                {
-                    InvalidateRect(
-                        hwnd_,
-                        IsRectEmpty(&dirty) ? nullptr : &dirty,
-                        FALSE);
-                }
+        pageNotifyFadeOutToken_ = uiAnimationScheduler_.ScheduleOnce(
+            kPageNotifyVisibleMs, [this](snowdesktop::UiScheduleToken token) {
+                if (pageNotifyFadeOutToken_ == token) ResetPageNotify();
             });
-    if (!pageNotifyFadeOutToken_ && pageNotifyUseAnimation_)
-        pageNotifyCompositorDriven_ = false;
-    if (pageNotifyUseAnimation_ &&
-        !pageNotifyCompositorDriven_)
-        EnsureUiAnimationFrame();
-    if (hwnd_)
-    {
-        const RECT dirty = GetPageNotifyBounds();
-        InvalidateRect(
-            hwnd_, IsRectEmpty(&dirty) ? nullptr : &dirty,
-            FALSE);
     }
+    if (!pageNotifyFadeOutToken_) ResetPageNotify();
 }
 
-RECT DesktopApp::GetPageNotifyBounds() const
+void DesktopApp::ConfigureFixedTooltip(snowdesktop::NativeTooltip& tooltip, HWND owner)
 {
-    const std::vector<size_t> order = BuildMonitorRenderOrder();
-    if (order.empty() || order.back() >= gridPages_.size())
-        return {};
-
-    const GridPage& targetPage = gridPages_[order.back()];
-    constexpr float padX = 28.0f;
-    constexpr float padY = 14.0f;
-    const float boxWidth = pageNotifyTextMetrics_.width + padX * 2.0f;
-    const float boxHeight = pageNotifyTextMetrics_.height + padY * 2.0f;
-    RECT bounds = MakeRect(
-        targetPage.workArea.left + 20,
-        targetPage.workArea.top + 20,
-        static_cast<LONG>(std::ceil(
-            static_cast<float>(targetPage.workArea.left) +
-            28.0f + boxWidth)),
-        static_cast<LONG>(std::ceil(
-            static_cast<float>(targetPage.workArea.top) +
-            28.0f + boxHeight)));
-    return bounds;
-}
-
-void DesktopApp::ResetPageNotifyTextCache()
-{
-    ResetPageNotifyAnimationCache();
-    pageNotifyTextLayout_.Reset();
-    pageNotifyTextFormat_.Reset();
-    pageNotifyTextMetrics_ = {};
-}
-
-void DesktopApp::ResetPageNotifyAnimationCache()
-{
-    const bool hadOverlay = pageNotifyAnimationOverlay_.active;
-    pageNotifyCompositorDriven_ = false;
-    ResetCompositionAnimationOverlay(
-        pageNotifyAnimationOverlay_);
-    pageNotifyAnimationRenderCache_.Reset();
-    pageNotifyAnimationCacheRect_ = {};
-    if (hadOverlay)
-        CommitCompositionAnimationFrame();
-}
-
-void DesktopApp::PreparePageNotifyAnimationCache()
-{
-    ResetPageNotifyAnimationCache();
-    if (!d2dDevice_ || !pageNotifyTextLayout_ ||
-        !pageNotifyActive_)
-        return;
-    pageNotifyAnimationCacheRect_ = GetPageNotifyBounds();
-    if (IsRectEmpty(&pageNotifyAnimationCacheRect_))
-        return;
-    const UINT width = static_cast<UINT>(std::max<LONG>(
-        1, pageNotifyAnimationCacheRect_.right -
-            pageNotifyAnimationCacheRect_.left));
-    const UINT height = static_cast<UINT>(std::max<LONG>(
-        1, pageNotifyAnimationCacheRect_.bottom -
-            pageNotifyAnimationCacheRect_.top));
-    const bool ready = pageNotifyAnimationRenderCache_.Ensure(
-        d2dDevice_.Get(), D2D1::SizeU(width, height), 1,
-        [&](ID2D1DeviceContext* cacheContext) {
-            cacheContext->SetTransform(
-                D2D1::Matrix3x2F::Translation(
-                    static_cast<float>(
-                        -pageNotifyAnimationCacheRect_.left),
-                    static_cast<float>(
-                        -pageNotifyAnimationCacheRect_.top)));
-            DrawPageNotify(cacheContext, false);
+    tooltip.Configure(owner, dcompDevice_.Get(), dwriteFactory_.Get(),
+        snowdesktop::NativeTooltipAppearance(),
+        [this](ID2D1DeviceContext* context, RECT bounds, const PersonalizationSettings& appearance, float scale) {
+            DrawWidgetPanelBackground(context, bounds, appearance.cornerRadius * scale,
+                D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
+                D2D1::ColorF(appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB,
+                    appearance.widgetBorderAlpha),
+                false, appearance.widgetBorderWidth * scale, &appearance, false, 0, scale);
         });
-    if (!ready)
-    {
-        pageNotifyAnimationCacheRect_ = {};
-        return;
-    }
-    PrepareCompositionAnimationOverlay(
-        pageNotifyAnimationOverlay_,
-        pageNotifyAnimationRenderCache_,
-        pageNotifyAnimationCacheRect_,
-        UiCompositionAnimationHost::Desktop);
-    brushCache_.clear();
-    brushCacheContext_ = nullptr;
 }
 
-bool DesktopApp::UpdatePageNotifyCompositionAnimation(
-    float opacity, bool commit)
+void DesktopApp::SyncDockTitleTooltip()
 {
-    if (!pageNotifyAnimationOverlay_.active)
-        return false;
-    const RECT bounds = pageNotifyAnimationOverlay_.bounds;
-    const POINT anchor{
-        (bounds.left + bounds.right) / 2,
-        (bounds.top + bounds.bottom) / 2,
-    };
-    return UpdateCompositionAnimationOverlay(
-        pageNotifyAnimationOverlay_, 1.0f,
-        anchor, opacity, commit);
+    POINT screen{};
+    if (!hwnd_ || !dcompDevice_ || !dwriteFactory_ || HasActiveContextMenuSession() ||
+        !GetCursorPos(&screen))
+    {
+        dockTitleTooltip_.Hide();
+        return;
+    }
+    const HWND hit = snowdesktop::private_pointer::WindowAtPoint(screen);
+    POINT point = screen;
+    ScreenToClient(hwnd_, &point);
+    for (const auto& host : persistentDockHosts_)
+    {
+        if (host && host->active && host->container && host->hwnd && IsWindowVisible(host->hwnd) &&
+            (hit == host->hwnd || host->backdrop.IsBackdropWindow(hit)))
+        {
+            host->container->ShowHoveredTitle(point, host->hwnd, dockTitleTooltip_);
+            return;
+        }
+    }
+    if ((!desktopIconsHidden_ || dockSettings_.keepWhenDesktopHidden) && IsBaseDesktopHoverSurfaceWindow(hit))
+    {
+        if (auto* dock = GetDockContainerAtPoint(point); dock && !IsDockHostedByPersistentHost(dock))
+        {
+            dock->ShowHoveredTitle(point, hwnd_, dockTitleTooltip_);
+            return;
+        }
+    }
+    dockTitleTooltip_.Hide();
 }
 
-void DesktopApp::PreparePageNotifyTextCache()
+void DesktopApp::SyncLuaWidgetTooltip()
 {
-    ResetPageNotifyTextCache();
-    auto* dwrite = GetDWriteFactory();
-    if (!dwrite || pageNotifyText_.empty())
-        return;
-    if (FAILED(snowdesktop::app_fonts::CreateTextFormat(dwrite, L"Segoe UI",
-            DWRITE_FONT_WEIGHT_SEMI_BOLD,
-            DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL,
-            42.0f, L"", &pageNotifyTextFormat_)) ||
-        !pageNotifyTextFormat_)
-        return;
-    pageNotifyTextFormat_->SetTextAlignment(
-        DWRITE_TEXT_ALIGNMENT_CENTER);
-    pageNotifyTextFormat_->SetParagraphAlignment(
-        DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    pageNotifyTextFormat_->SetWordWrapping(
-        DWRITE_WORD_WRAPPING_NO_WRAP);
-
-    ComPtr<IDWriteTextLayout> measured;
-    if (FAILED(dwrite->CreateTextLayout(
-            pageNotifyText_.c_str(),
-            static_cast<UINT32>(pageNotifyText_.size()),
-            pageNotifyTextFormat_.Get(),
-            2000.0f, 200.0f, &measured)) ||
-        !measured ||
-        FAILED(measured->GetMetrics(&pageNotifyTextMetrics_)))
+    POINT screen{};
+    if (!widgetEngine_ || !hwnd_ || !dcompDevice_ || !dwriteFactory_ || desktopIconsHidden_ ||
+        HasActiveContextMenuSession() || dragSession_.IsActive() ||
+        dragDropController_.IsTransportActive() || widgetAction_ != WidgetAction::None ||
+        !GetCursorPos(&screen))
     {
-        ResetPageNotifyTextCache();
-        return;
-    }
-    const auto order = BuildMonitorRenderOrder();
-    float maximumWidth = 2000.0f;
-    if (!order.empty())
-    {
-        const auto& work = gridPages_[order.back()].workArea;
-        maximumWidth = std::max(1.0f, static_cast<float>(work.right - work.left) - 104.0f);
-    }
-    pageNotifyTextMetrics_.width = std::min(pageNotifyTextMetrics_.width, maximumWidth);
-    DWRITE_TRIMMING trimming{};
-    trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
-    ComPtr<IDWriteInlineObject> ellipsis;
-    if (SUCCEEDED(dwrite->CreateEllipsisTrimmingSign(pageNotifyTextFormat_.Get(), &ellipsis)))
-        pageNotifyTextFormat_->SetTrimming(&trimming, ellipsis.Get());
-    if (FAILED(dwrite->CreateTextLayout(
-            pageNotifyText_.c_str(),
-            static_cast<UINT32>(pageNotifyText_.size()),
-            pageNotifyTextFormat_.Get(),
-            std::max(1.0f, pageNotifyTextMetrics_.width),
-            std::max(1.0f, pageNotifyTextMetrics_.height),
-            &pageNotifyTextLayout_)))
-    {
-        ResetPageNotifyTextCache();
-    }
-}
-
-/**
- * @brief 绘制换页通知覆盖层（左上角角标，类似电视台换台）。
- *
- * 保留固定阅读停留时间，淡入淡出时长遵循动画速度设置。
- * 位置：末屏左上角（若有末屏），否则主屏左上角。
- * @param ctx D2D 设备上下文。
- */
-void DesktopApp::DrawPageNotify(
-    ID2D1DeviceContext* ctx,
-    bool applyAnimation,
-    const RECT* updateRect)
-{
-    if (!ctx || !pageNotifyActive_ || pageNotifyText_.empty()) return;
-
-    if (applyAnimation && pageNotifyAnimationOverlay_.active)
-        return;
-
-    const DWORD now = GetTickCount();
-    const DWORD elapsed = now - pageNotifyStartTick_;
-    const DWORD visibleMs = pageNotifyUseAnimation_
-        ? kPageNotifyVisibleMs - 2 * kPageNotifyFadeMs +
-            2 * pageNotifyFadeMs_
-        : kPageNotifyVisibleMs;
-    if (applyAnimation && elapsed >= visibleMs)
-    {
-        pageNotifyActive_ = false;
-        pageNotifyText_.clear();
-        ResetPageNotifyTextCache();
+        luaWidgetTooltip_.Hide();
         return;
     }
 
-    // 动画关闭时直接呈现稳定终态，由单次截止时间负责清理。
-    float alpha = 1.0f;
-    const DWORD fadeMs = pageNotifyFadeMs_;
-    const bool animate = applyAnimation && pageNotifyUseAnimation_ &&
-        snowdesktop::animation::RuntimeAnimationsEnabled();
-    if (animate && elapsed < fadeMs)
-        alpha = static_cast<float>(elapsed) / static_cast<float>(fadeMs);
-    else if (animate && elapsed > visibleMs - fadeMs)
-        alpha = static_cast<float>(visibleMs - elapsed) / static_cast<float>(fadeMs);
-    alpha = std::clamp(alpha, 0.0f, 1.0f);
-
-    // 定位：渲染顺序的末屏显示器（不依赖 lastMonitorPageId_，单屏时也能定位）
-    const GridPage* targetPage = nullptr;
+    const HWND hit = snowdesktop::private_pointer::WindowAtPoint(screen);
+    POINT point = screen;
+    ScreenToClient(hwnd_, &point);
+    HWND owner = hwnd_;
+    std::wstring widgetId;
+    std::string_view surface = "desktop";
+    RECT frame{};
+    if (!luaWidgetPanelRequest_.widgetId.empty() && luaWidgetPanelAnimation_.IsInteractive() &&
+        floatingPopupHwnd_ && (hit == floatingPopupHwnd_ || IsChild(floatingPopupHwnd_, hit)))
     {
-        std::vector<size_t> order = BuildMonitorRenderOrder();
-        if (!order.empty()) targetPage = &gridPages_[order.back()];
+        owner = floatingPopupHwnd_;
+        frame = GetLuaWidgetPanelContentRect();
+        widgetId = luaWidgetPanelRequest_.widgetId;
+        surface = luaWidgetPanelRequest_.surface;
     }
-    if (!targetPage) return;
+    else if (IsBaseDesktopHoverSurfaceWindow(hit) && !IsPointOccludedByOpenPopup(point))
+    {
+        const size_t index = HitTestStandaloneWidgetIndex(point);
+        if (index < widgets_.size() && IsLuaDesktopSurface(widgets_[index]) &&
+            HitTestStandaloneWidget(index, point) == WidgetHit::Content)
+        {
+            if (const auto* widget = ResolveLuaWidgetContent(&widgets_[index]))
+            {
+                widgetId = widget->id;
+                frame = GetStandaloneWidgetFrameRect(widgets_[index]);
+            }
+        }
+    }
 
-    if (!pageNotifyTextLayout_)
-        PreparePageNotifyTextCache();
-    if (!pageNotifyTextLayout_)
+    snowdesktop::NativeTooltipTextLayout measured;
+    D2D1_RECT_F hint{};
+    std::wstring name;
+    if (widgetId.empty() || !PtInRect(&frame, point) ||
+        !widgetEngine_->MeasureHoveredInteractionTooltip(widgetId, surface, frame, measured, hint, name))
+    {
+        luaWidgetTooltip_.Hide();
         return;
+    }
 
-    if (!snowdesktop::foreground_paint_region::Intersects(updateRect, GetPageNotifyBounds()))
-        return;
-
-    // 背景圆角矩形（半透明深色）
-    const float padX = 28.0f;
-    const float padY = 14.0f;
-    const float boxW = pageNotifyTextMetrics_.width + padX * 2.0f;
-    const float boxH = pageNotifyTextMetrics_.height + padY * 2.0f;
-    const float boxLeft = static_cast<float>(targetPage->workArea.left) + 24.0f;
-    const float boxTop = static_cast<float>(targetPage->workArea.top) + 24.0f;
-
-    const RECT backgroundRect = MakeRect(
-        static_cast<LONG>(std::floor(boxLeft)),
-        static_cast<LONG>(std::floor(boxTop)),
-        static_cast<LONG>(std::ceil(boxLeft + boxW)),
-        static_cast<LONG>(std::ceil(boxTop + boxH)));
-    DrawD2DRoundedRectangle(
-        ctx, backgroundRect, 10.0f,
-        D2D1::ColorF(
-            0.05f, 0.05f, 0.08f, 0.72f * alpha),
-        D2D1::ColorF(
-            0.4f, 0.6f, 1.0f, 0.5f * alpha),
-        1.5f);
-
-    // 文本（带阴影）
-    const float textX = boxLeft + padX;
-    const float textY = boxTop + padY;
-
-    ComPtr<ID2D1SolidColorBrush> shadowBrush;
-    ctx->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.6f * alpha), &shadowBrush);
-    if (shadowBrush)
-        ctx->DrawTextLayout(D2D1::Point2F(textX + 2.0f, textY + 2.0f),
-            pageNotifyTextLayout_.Get(), shadowBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
-
-    ComPtr<ID2D1SolidColorBrush> textBrush;
-    ctx->CreateSolidColorBrush(D2D1::ColorF(0.95f, 0.96f, 1.0f, 0.97f * alpha), &textBrush);
-    if (textBrush)
-        ctx->DrawTextLayout(D2D1::Point2F(textX, textY),
-            pageNotifyTextLayout_.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    RECT bounds{static_cast<LONG>(std::floor(hint.left)), static_cast<LONG>(std::floor(hint.top)),
+        static_cast<LONG>(std::ceil(hint.right)), static_cast<LONG>(std::ceil(hint.bottom))};
+    IntersectRect(&bounds, &bounds, &frame);
+    OffsetRect(&bounds, virtualLeft_, virtualTop_);
+    ConfigureFixedTooltip(luaWidgetTooltip_, owner);
+    luaWidgetTooltip_.ShowAt(std::move(name), bounds, measured);
 }
 
 void DesktopApp::ClearInlineTooltipBackdrop(std::uintptr_t ownerKey)
@@ -551,13 +352,8 @@ bool DesktopApp::DrawInlineTooltip(ID2D1DeviceContext* ctx, RECT bounds,
     snowdesktop::InlineTooltipBackdrop& backdrop, const RECT* updateRect)
 {
     if (!ctx || !measured.layout || IsRectEmptyRect(bounds)) return false;
-    if (!desktopWidgetCompositionDrawInProgress_ && !renderingFloatingPopup_)
-    {
-        if (renderingFloatingDock_ && renderingPersistentDockHost_)
-            renderingPersistentDockHost_->tooltipPaintDamage.Record(bounds);
-        else if (!renderingFloatingDock_)
-            desktopForegroundTooltipDamage_.Record(bounds);
-    }
+    if (!desktopWidgetCompositionDrawInProgress_ && !renderingFloatingPopup_ && !renderingFloatingDock_)
+        desktopForegroundTooltipDamage_.Record(bounds);
     const auto appearance = snowdesktop::NativeTooltipAppearance();
     if (snowdesktop::NativeTooltipHighContrast())
     {

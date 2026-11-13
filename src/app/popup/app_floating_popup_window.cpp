@@ -849,6 +849,7 @@ bool DesktopApp::PresentFloatingPopupComposition()
     }
     KillTimer(floatingPopupHwnd_, kPopupPresentationRetryTimerId);
     floatingPopupPresentationRetryCount_ = 0;
+    SyncLuaWidgetTooltip();
     return true;
 }
 
@@ -1054,6 +1055,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     SyncPopupMouseLeaveTimer();
     if (!ShouldShowFloatingPopupWindow())
     {
+        luaWidgetTooltip_.Hide();
         PreserveFloatingPopupDragCapture();
         if (floatingPopupHwnd_) KillTimer(floatingPopupHwnd_, kPopupPresentationRetryTimerId);
         floatingPopupPresentationRetryCount_ = 0;
@@ -1353,7 +1355,9 @@ void DesktopApp::PaintFloatingPopupWindow(HWND hwnd)
         ShouldShowFloatingPopupWindow() &&
         RenderFloatingPopupCompositionFrame();
     EndPaint(hwnd, &paint);
-    if (ShouldShowFloatingPopupWindow() && !rendered)
+    if (rendered && FlushPendingCompositionCommit())
+        SyncLuaWidgetTooltip();
+    else if (ShouldShowFloatingPopupWindow())
         SuspendFloatingPopupPresentation();
 }
 

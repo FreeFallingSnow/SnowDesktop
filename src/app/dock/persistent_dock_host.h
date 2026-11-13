@@ -5,7 +5,6 @@
 #include "dock/floating_dock_rules.h"
 #include "navigation/quick_navigation_animation_rules.h"
 #include "system/status_bar/status_bar.h"
-#include "ui/render/inline_tooltip_backdrop.h"
 #include "ui/render/ui_animation_scheduler.h"
 #include "app/render/desktop_backdrop_compositor.h"
 
@@ -21,8 +20,6 @@ struct DesktopApp::PersistentDockHost
     RECT dockRect{};
     RECT animationVisualRect{};
     RECT popupRect{};
-    RECT tooltipRect{};
-    snowdesktop::InlineTooltipPaintDamage tooltipPaintDamage;
     RECT guideOcclusionRect{};
     bool active = false;
     snowdesktop::desktop_hover_rules::RetainedDockLeaveTracking retainedLeaveTracking;

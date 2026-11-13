@@ -221,7 +221,7 @@ bool DesktopApp::IsPointInPromotedDockLayer(
                     point,
                     host->dockRect,
                     host->popupRect,
-                    host->tooltipRect)))
+                    RECT{})))
         {
             return true;
         }
@@ -336,7 +336,6 @@ bool DesktopApp::SyncPersistentDockHosts()
             host->dockRect = {};
             host->animationVisualRect = {};
             host->popupRect = {};
-            host->tooltipRect = {};
         }
     }
 
@@ -537,7 +536,6 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
             if (shouldShow) host.mergedAnimation.Open(now);
             else host.mergedAnimation.Close(now);
             host.mergedPresentation.inputEnabled = false;
-            host.tooltipRect = {};
             if (snowdesktop::private_pointer::Capture() == host.hwnd) snowdesktop::private_pointer::ReleasePointerCapture();
             if (rightButtonDownDockHost_ == &host) rightButtonDownDockHost_ = nullptr;
             if (floatingDockHost_ == &host)
@@ -913,7 +911,6 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     RECT& floatingDockSourceRect_ = host.sourceRect;
     RECT& floatingDockRect_ = host.dockRect;
     RECT& floatingDockPopupRect_ = host.popupRect;
-    RECT& floatingDockTooltipRect_ = host.tooltipRect;
     bool& floatingDockRevealPending_ =
         host.revealPending;
     DesktopBackdropCompositor&
@@ -930,10 +927,6 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         host.container->GetInteractiveBounds();
     const RECT nextAnimationVisualRect =
         host.container->GetAnimationVisualBounds();
-    const RECT nextTooltipRect =
-        host.container->
-            GetHoveredTitleBounds(
-                lastMousePoint_);
     const RECT nextPopupRect{};
     RECT nextDismissRect{};
     MONITORINFO dismissMonitor{sizeof(dismissMonitor)};
@@ -948,7 +941,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     const bool dismissRegionChanged = !EqualRect(&nextDismissRect, &host.explicitDismissRect);
     host.explicitDismissRect = nextDismissRect;
     // Collection and folder popups live in the shared floating popup host.
-    // This window retains only the Dock and its hover-title layer.
+    // Dock hover titles also have their own native window.
     RECT requiredSourceRect =
         CalculateFloatingDockStableSourceRect(host);
     const RECT previousSourceRect =
@@ -983,9 +976,6 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             &floatingDockPopupRect_);
     const bool animationRegionChanged =
         !EqualRect(&nextAnimationVisualRect, &host.animationVisualRect);
-    const bool titleRegionChanged =
-        !EqualRect(&nextTooltipRect,
-            &floatingDockTooltipRect_);
     const bool sourceRectChanged =
         !EqualRect(&previousSourceRect,
             &floatingDockSourceRect_);
@@ -993,7 +983,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     {
         const unsigned changes = (dockGeometryChanged ? 1u : 0u) |
             (sourceRectChanged ? 2u : 0u) | (animationRegionChanged ? 4u : 0u) |
-            (titleRegionChanged ? 8u : 0u) | (guideRegionChanged ? 16u : 0u) |
+            (guideRegionChanged ? 16u : 0u) |
             (forceRegionRefresh ? 32u : 0u);
         snowdesktop::performance::Value("dock", "floating.layout_flags",
             std::to_wstring(reinterpret_cast<UINT_PTR>(host.hwnd)), changes,
@@ -1004,7 +994,6 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         !guideRegionChanged &&
         !animationRegionChanged &&
         !popupRegionChanged &&
-        !titleRegionChanged &&
         !sourceRectChanged &&
         !forceRegionRefresh)
     {
@@ -1017,7 +1006,6 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     floatingDockRect_ = nextDockRect;
     host.animationVisualRect = nextAnimationVisualRect;
     floatingDockPopupRect_ = nextPopupRect;
-    floatingDockTooltipRect_ = nextTooltipRect;
 
     const int width = std::max<LONG>(
         1, floatingDockSourceRect_.right -
@@ -1030,7 +1018,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     // pixels have finished. The frame renderer applies both regions below.
     host.windowRegionPending = true;
 
-    // Popup and title changes only alter the visible/input region inside the
+    // Clipping changes only alter the visible/input region inside the
     // stable host allocation. Do not resize the HWND or recreate its DComp
     // surface after the floating Dock has been revealed.
     if (!dockGeometryChanged &&
@@ -1155,7 +1143,7 @@ bool DesktopApp::ApplyFloatingDockWindowRegion(PersistentDockHost& host)
         : appearance.widgetBorderWidth, kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
     const int radius = std::max(1, static_cast<int>(std::round(appearance.cornerRadius)));
     HRGN region = snowdesktop::floating_dock_rules::CreateHostWindowRegion(
-        host.dockRect, host.animationVisualRect, host.popupRect, host.tooltipRect,
+        host.dockRect, host.animationVisualRect, host.popupRect, RECT{},
         host.sourceRect, radius, borderWidth);
     if (host.mergedPresentationActive && host.mergedAnimation.IsAnimating())
     {

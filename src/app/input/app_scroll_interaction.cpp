@@ -185,9 +185,6 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         {
             (void)refreshDragAfterScroll();
             RECT dirty = dock->GetVisualPanelBounds(pt);
-            const RECT title = dock->GetHoveredTitleBounds(pt);
-            if (!IsRectEmptyRect(title))
-                UnionRect(&dirty, &dirty, &title);
             InflateRect(&dirty, 4, 4);
             (void)PresentDesktopForegroundComposition(dirty);
             return;

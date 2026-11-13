@@ -537,6 +537,10 @@ bool DesktopApp::ShouldKeepFloatingPopupTopmostForShellMenu() const
 
 void DesktopApp::BeginShellPopupMenuLayer()
 {
+    dockTitleTooltip_.Hide();
+    navHotEdgeTooltip_.Hide();
+    luaWidgetTooltip_.Hide();
+    ResetPageNotify();
     // Flush the frame that opened the native menu before its tracking thread
     // takes pointer capture. The desktop pump remains live for the session.
     FlushPendingCompositionCommit();

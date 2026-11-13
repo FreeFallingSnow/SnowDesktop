@@ -425,6 +425,7 @@ void DockContainer::SetReservedArea(RECT area)
 
     area_ = area;
     InvalidateSlots();
+    hoveredTitleLayout_ = {};
     hoveredTitleBoundsCacheText_.clear();
     hoveredTitleBoundsCacheAnchor_ = {};
     hoveredTitleBoundsCache_ = {};
@@ -1466,6 +1467,7 @@ RECT DockContainer::CalculateTitleTooltipBounds(const std::wstring& title,
     options.scale = scale; options.centered = true;
     if (FAILED(snowdesktop::MeasureNativeTooltip(app_->dwriteFactory_.Get(), measurementFormat, {}, title,
         300.f * scale, 96.f * scale, measured, options))) return {};
+    hoveredTitleLayout_ = measured;
     return PositionTitleTooltipBounds(hoveredBounds, static_cast<int>(std::ceil(measured.width)),
         static_cast<int>(std::ceil(measured.height)));
 }
@@ -1526,15 +1528,15 @@ RECT DockContainer::PositionTitleTooltipBounds(
     return tooltip;
 }
 
-RECT DockContainer::GetHoveredTitleBounds(
-    POINT pointer) const
+RECT DockContainer::GetHoveredTitleBounds(POINT pointer) const
 {
-    if (IsMagnificationSuppressed() || (app_ && (app_->dragSession_.IsActive() ||
-            app_->widgetAction_ == DesktopApp::WidgetAction::Move)) ||
-        (app_ && app_->dockTrayPopup_ && !app_->popupAnimation_.IsHidden()) ||
-        (app_ && ((app_->dockWindowPreview_ && app_->dockWindowPreview_->IsVisible()) ||
-            !app_->quickNavigation_->animation.IsHidden() ||
-            app_->quickNavigation_->open || app_->HasActiveContextMenuSession())))
+    if (!app_ || IsMagnificationSuppressed() || app_->IsPointOccludedByOpenPopup(pointer) ||
+        app_->dragSession_.IsActive() || app_->dragDropController_.IsTransportActive() ||
+        app_->widgetAction_ == DesktopApp::WidgetAction::Move ||
+        (app_->dockTrayPopup_ && !app_->popupAnimation_.IsHidden()) ||
+        (app_->dockWindowPreview_ && app_->dockWindowPreview_->IsVisible()) ||
+        !app_->quickNavigation_->animation.IsHidden() || app_->quickNavigation_->open ||
+        app_->HasActiveContextMenuSession())
         return RECT{};
 
     const auto* host = app_->FindPersistentDockHost(this);
@@ -1655,10 +1657,24 @@ RECT DockContainer::GetHoveredTitleBounds(
         position;
     hoveredTitleBoundsCacheLightTheme_ =
         lightTheme;
+    hoveredTitleLayout_ = {};
     hoveredTitleBoundsCache_ =
         CalculateTitleTooltipBounds(
             title, visualBounds);
     return hoveredTitleBoundsCache_;
+}
+
+void DockContainer::ShowHoveredTitle(POINT pointer, HWND owner, snowdesktop::NativeTooltip& tooltip) const
+{
+    RECT bounds = GetHoveredTitleBounds(pointer);
+    if (IsRectEmpty(&bounds) || !hoveredTitleLayout_.layout)
+    {
+        tooltip.Hide();
+        return;
+    }
+    OffsetRect(&bounds, app_->virtualLeft_, app_->virtualTop_);
+    app_->ConfigureFixedTooltip(tooltip, owner);
+    tooltip.ShowAt(hoveredTitleBoundsCacheText_, bounds, hoveredTitleLayout_);
 }
 
 bool DockContainer::IsFocusedElementRect(
@@ -1797,9 +1813,6 @@ std::vector<RECT> DockContainer::GetOcclusionRects(POINT pointer) const
         if (!IsRectEmpty(&icon))
             result.push_back(icon);
     }
-    const RECT title = GetHoveredTitleBounds(pointer);
-    if (!IsRectEmpty(&title))
-        result.push_back(title);
     return result;
 }
 
@@ -2454,18 +2467,8 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
             context, bounds, panelRadius, fill, &p);
 }
 
-void DockContainer::ClearTitleTooltipBackdrop()
-{
-    titleTooltipBackdrop_.Clear([this](std::uintptr_t key) {
-        if (app_) app_->ClearInlineTooltipBackdrop(key);
-    });
-}
-
 void DockContainer::DrawContents(ID2D1DeviceContext* context)
 {
-    auto tooltipPaint = titleTooltipBackdrop_.BeginPaint([this](std::uintptr_t key) {
-        if (app_) app_->ClearInlineTooltipBackdrop(key);
-    });
     if (!context) return;
     const auto& slots = GetSlots();
     const size_t count = entries_ ? entries_->size() : 0;
@@ -2477,7 +2480,6 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         app_->IsRecycleBinDockEntry(entries_->back());
     const auto monitor = GetMonitor();
     const bool lt = app_->CurrentDockAppearance(monitor).contentTheme == 1;
-    std::wstring hoveredTitle;
     const RECT magnificationFocus =
         ResolveMagnificationFocusRect(app_->lastMousePoint_);
     auto isFocused = [&](const RECT& rect) {
@@ -2491,7 +2493,6 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     const RECT windowsButton = GetWindowsButtonRect();
     if (!IsRectEmpty(&windowsButton))
     {
-        const bool hovered = isFocused(windowsButton);
         const RECT windowsVisual = visualRectFor(windowsButton);
         const int backgroundSize = GetElementIconSize(windowsButton, windowsVisual);
         RECT background{
@@ -2529,10 +2530,6 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             context->FillRectangle(D2D1::RectF(
                 logoLeft + paneSize + paneGap, logoTop + paneSize + paneGap,
                 logoLeft + logoSize, logoTop + logoSize), windowsBrush.Get());
-        }
-        if (hovered && !IsMagnificationSuppressed())
-        {
-            hoveredTitle = _LW("app.dock.start_menu");
         }
     }
 
@@ -2654,10 +2651,6 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             return;
         const RECT visualBounds = visualRectFor(itemBounds);
         item->Draw(context, visualBounds, item->IsSelected() ? 2 : 0);
-        if (hovered && !IsMagnificationSuppressed())
-        {
-            hoveredTitle = item->GetTitle();
-        }
     };
     auto drawScrollablePass = [&](bool focusedPass) {
         for (size_t i = 0; i < fixedCount && i < slots.size(); ++i)
@@ -2801,7 +2794,6 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                 const bool hovered = isFocused(itemBounds);
                 if (hovered != focusedPass) continue;
                 item->Draw(context, visualRectFor(itemBounds), item->IsSelected() ? 2 : 0);
-                if (hovered && !IsMagnificationSuppressed()) hoveredTitle = item->GetTitle();
             }
         };
         drawFixedFolderPass(false);
@@ -2816,20 +2808,14 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         if (recycleBin)
         {
             const RECT recycleBounds = slots[count - 1]->GetBounds();
-            const bool hovered = isFocused(recycleBounds);
             const RECT recycleVisual = visualRectFor(recycleBounds);
             recycleBin->Draw(context, recycleVisual,
                 recycleBin->IsSelected() ? 2 : 0);
-            if (hovered && !IsMagnificationSuppressed())
-            {
-                hoveredTitle = recycleBin->GetTitle();
-            }
         }
     }
 
     if (!IsRectEmpty(&search))
     {
-        const bool searchHovered = isFocused(search);
         const RECT searchVisual = visualRectFor(search);
         const int backgroundSize = GetElementIconSize(search, searchVisual);
         const float searchScale = static_cast<float>(backgroundSize) / 52.0f;
@@ -2879,26 +2865,6 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                     centerY + 13.5f * searchScale),
                 brush.Get(), searchStroke, roundedStroke.Get());
         }
-
-        if (searchHovered && !IsMagnificationSuppressed())
-        {
-            hoveredTitle = _LW("app.dock.quick_search");
-        }
-    }
-
-    if (!hoveredTitle.empty() && app_->dwriteFactory_)
-    {
-        const RECT bounds = GetHoveredTitleBounds(app_->lastMousePoint_);
-        if (IsRectEmpty(&bounds)) return;
-        const float scale = TitleTooltipScale();
-        ComPtr<IDWriteTextFormat> format;
-        if (FAILED(snowdesktop::CreateNativeTooltipTextFormat(app_->dwriteFactory_.Get(), &format, scale, false))) return;
-        snowdesktop::NativeTooltipTextLayout measured;
-        snowdesktop::NativeTooltipLayoutOptions options;
-        options.scale = scale; options.centered = true;
-        if (SUCCEEDED(snowdesktop::MeasureNativeTooltip(app_->dwriteFactory_.Get(), format.Get(), {}, hoveredTitle,
-            static_cast<float>(bounds.right - bounds.left), static_cast<float>(bounds.bottom - bounds.top), measured, options)))
-            tooltipPaint.Keep(app_->DrawInlineTooltip(context, bounds, measured, scale, titleTooltipBackdrop_));
     }
 }
 

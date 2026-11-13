@@ -205,12 +205,16 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
     }
     // The floating popup can commit the shared backdrop controller when its
     // bounds change. Submit the completed desktop pair before touching it.
-    if (desktopBackdropCompositor_.IsAvailable() && !FlushPendingCompositionCommit())
+    if (!FlushPendingCompositionCommit())
         return false;
     compositionRenderRecoveryPending_ = false;
     if (widgetAccessibilityProvider_)
         widgetAccessibilityProvider_->RefreshEvents();
     UpdateFloatingPopupWindowBounds(false);
+    SyncDockTitleTooltip();
+    SyncPageNavHotEdgeTooltip();
+    SyncLuaWidgetTooltip();
+    if (desktopIconsHidden_) ResetPageNotify();
     RecordShellHoverTrace(ShellHoverTraceEvent::PaintEnd);
     TraceDesktopPresentation(L"paint-queued", S_OK, updateRect);
     return true;

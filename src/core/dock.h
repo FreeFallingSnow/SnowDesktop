@@ -7,12 +7,13 @@
 #include "dock/dock_running_drag_rules.h"
 #include "dock/dock_folder_rules.h"
 #include "dock/dock_entry_removal.h"
-#include "ui/render/inline_tooltip_backdrop.h"
+#include "ui/render/native_tooltip_content.h"
 
 #include <memory>
 #include <vector>
 
 class DesktopApp;
+namespace snowdesktop { class NativeTooltip; }
 
 class DockRunningItem final : public Item
 {
@@ -114,7 +115,6 @@ public:
         Slot* targetSlot, HitRegion region, int mods) override;
     void DrawChrome(ID2D1DeviceContext* context, POINT mousePt) override;
     void DrawContents(ID2D1DeviceContext* context) override;
-    void ClearTitleTooltipBackdrop();
     RECT GetBounds() const override;
     BarStyle GetInsertionStyle() const override;
     std::vector<Item*> GetSelectedItems() const override;
@@ -141,7 +141,7 @@ public:
     RECT GetElementVisualRect(RECT baseRect, POINT pointer) const;
     int GetElementIconSize(const RECT& baseRect, const RECT& visualRect) const;
     RECT GetVisualPanelBounds(POINT pointer) const;
-    RECT GetHoveredTitleBounds(POINT pointer) const;
+    void ShowHoveredTitle(POINT pointer, HWND owner, snowdesktop::NativeTooltip& tooltip) const;
     RECT GetDesktopItemVisualRect(
         size_t itemIndex, POINT pointer) const;
     void SetReservedArea(RECT area);
@@ -232,6 +232,7 @@ private:
         const RECT& baseRect, const RECT& focusRect,
         POINT pointer) const;
     RECT MagnifyElementRect(const RECT& baseRect, const RECT& focusRect, POINT pointer) const;
+    RECT GetHoveredTitleBounds(POINT pointer) const;
     float TitleTooltipScale() const;
     RECT CalculateTitleTooltipBounds(
         const std::wstring& title,
@@ -274,7 +275,7 @@ private:
     mutable int hoveredTitleBoundsCachePosition_ = -1;
     mutable bool hoveredTitleBoundsCacheLightTheme_ = false;
     mutable float hoveredTitleBoundsCacheFontSize_ = 0;
-    snowdesktop::InlineTooltipBackdrop titleTooltipBackdrop_;
+    mutable snowdesktop::NativeTooltipTextLayout hoveredTitleLayout_;
     // Magnification is a continuous pointer-distance field, but the semantic
     // hover owner needs spatial hysteresis at item and Dock boundaries.
     mutable RECT magnificationFocusRect_{};

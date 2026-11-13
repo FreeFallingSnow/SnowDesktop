@@ -661,8 +661,6 @@ void DesktopApp::RefreshDockRunningWindows(
             if (IntersectRect(&intersection, &icon, &content))
                 UnionRect(&bounds, &bounds, &icon);
         }
-        const RECT title = dock.GetHoveredTitleBounds(lastMousePoint_);
-        if (!IsRectEmpty(&title)) UnionRect(&bounds, &bounds, &title);
         if (!IsRectEmpty(&bounds)) InflateRect(&bounds, 4, 4);
         return bounds;
     };

@@ -144,7 +144,6 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     brushCache_.clear();
     brushCacheContext_ = context.Get();
     renderingFloatingDock_ = true;
-    host.tooltipPaintDamage.BeginDraw();
     try
     {
         if (host.container)
@@ -190,7 +189,6 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     }
     catch (...)
     {
-        host.tooltipPaintDamage.EndDraw();
         context.Reset();
         brushCache_.clear();
         brushCacheContext_ = nullptr;
@@ -199,7 +197,6 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
             FAILED(finish) ? finish : E_FAIL, preserveExistingFrame && replacingSurface);
         return false;
     }
-    host.tooltipPaintDamage.EndDraw();
     renderingFloatingDock_ = false;
 
     context->SetTransform(
@@ -250,10 +247,6 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
             host, L"Queue Commit", E_FAIL);
         return false;
     }
-    // Popup/menu dismissal can change tooltip visibility without running the
-    // pointer geometry path. Reconcile the HWND clip with the actual completed
-    // label frame before publishing its independently collected glass.
-    host.tooltipPaintDamage.UpdateWindowRegionBounds(host.tooltipRect, host.windowRegionPending);
     if (!ApplyFloatingDockWindowRegion(host))
     {
         RecoverFloatingDockCompositionFailure(host, L"Window region", E_FAIL, true);
@@ -316,6 +309,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     host.frameReady = true;
     host.compositionRenderRecoveryPending =
         false;
+    SyncDockTitleTooltip();
     if (dockWindowTransition_ && dockWindowTransition_->GetPresentationWindow())
     {
         ApplyFloatingDockLayerPolicy(host);

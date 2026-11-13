@@ -246,14 +246,10 @@ void DesktopApp::DrawDesktopForeground(
     bool hiddenMode,
     const RECT* updateRect)
 {
-    if (hiddenMode)
-        navHotEdgeHintBackdrop_.Clear([this](std::uintptr_t key) { ClearInlineTooltipBackdrop(key); });
     snowdesktop::performance::Scope performanceScope("dock", "desktop.foreground");
     for (const auto& container : containers_)
     {
         auto* dock = dynamic_cast<DockContainer*>(container.get());
-        if (dock && hiddenMode && !dockSettings_.keepWhenDesktopHidden)
-            dock->ClearTitleTooltipBackdrop();
         if (!dock ||
             (hiddenMode && !dockSettings_.keepWhenDesktopHidden) ||
             IsDockHostedByPersistentHost(dock))
@@ -278,14 +274,9 @@ void DesktopApp::DrawDesktopForeground(
             if (IsRectEmpty(&focus) && !PtInRect(&pointerEnvelope, lastMousePoint_) &&
                 !snowdesktop::foreground_paint_region::Intersects(updateRect, visual, overdraw))
             {
-                // Tooltip discovery must run even outside the requested pixels:
-                // popup dismissal can expose text without another pointer message.
-                const RECT title = dock->GetHoveredTitleBounds(lastMousePoint_);
                 const RECT panel = dock->GetVisualPanelBounds(lastMousePoint_);
-                if (IsRectEmpty(&title) &&
-                    !snowdesktop::foreground_paint_region::Intersects(updateRect, panel, overdraw))
+                if (!snowdesktop::foreground_paint_region::Intersects(updateRect, panel, overdraw))
                 {
-                    dock->ClearTitleTooltipBackdrop();
                     // Reconcile the same stable owner/material as DrawChrome.
                     // AddPanel restores a missing target, while retaining only by
                     // rectangle could keep a retired Container's glass owner.
@@ -843,7 +834,6 @@ void DesktopApp::DrawDynamicOverlays(
         !renderingFloatingPopup_)
     {
         DrawPageNavHotEdgeHint(ctx, updateRect);
-        DrawPageNotify(ctx, true, updateRect);
     }
 }
 

@@ -500,8 +500,10 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
         target.floatingLayer
             ? floatingDockHwnd_ : nullptr);
     if (dockWindowPreview_->IsVisible())
-        dockWindowPreviewHover_.MarkPreviewShown(
-            target.targetToken);
+    {
+        dockTitleTooltip_.Hide();
+        dockWindowPreviewHover_.MarkPreviewShown(target.targetToken);
+    }
 }
 
 void DesktopApp::RefreshDockWindowPreviewItems()

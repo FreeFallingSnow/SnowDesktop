@@ -1401,6 +1401,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     StartSteamEntitlementRegistration(true);
 
     widgetEngine_ = std::make_unique<WidgetEngine>();
+    widgetEngine_->EnableHostedInteractionTooltips();
     widgetEngine_->SetSystemDataProvider(systemDataProvider_);
     if (widgetEngine_->Init(d2dContext_.Get(), dwriteFactory_.Get()))
     {

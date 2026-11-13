@@ -10,6 +10,7 @@ struct ID2D1DeviceContext;
 
 namespace snowdesktop
 {
+struct NativeTooltipTextLayout;
 // UI-thread-only, nonactivating popup; owns no graphics device or worker.
 // The owner must Hide on capture/menu/fullscreen/target removal and Close
 // before destroying its HWND. Configure again after graphics device recovery.
@@ -30,6 +31,10 @@ public:
     void SetTarget(std::string key, std::wstring body, RECT screenAnchor,
         NativeTooltipPlacement placement = NativeTooltipPlacement::Below,
         bool immediate = false, std::wstring title = {});
+    // Use the caller's screen-space panel bounds and measured text in pixels.
+    void ShowAt(std::wstring body, RECT screenBounds,
+        const NativeTooltipTextLayout& measured, bool allowCapture = false);
+    bool SetOpacity(float opacity);
     void Hide();
     void Close();
     void Invalidate();

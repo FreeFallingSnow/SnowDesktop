@@ -22,10 +22,9 @@ HRESULT DesktopApp::SyncDesktopCompositionRootZOrder()
                     UiCompositionAnimationHost::Desktop)
             ? overlay.visual.Get() : nullptr;
     };
-    const std::array<IDCompositionVisual2*, 5> bottomToTop{
+    const std::array<IDCompositionVisual2*, 4> bottomToTop{
         desktopWidgetCompositionLayer_.Get(),
         desktopForegroundCompositionVisual_.Get(),
-        desktopOverlayVisual(pageNotifyAnimationOverlay_),
         desktopOverlayVisual(popupAnimationOverlay_),
         desktopOverlayVisual(luaWidgetPanelAnimationOverlay_),
     };
@@ -353,7 +352,11 @@ bool DesktopApp::PresentDesktopForegroundComposition(
         return false;
     }
     compositionRenderRecoveryPending_ = false;
-    return FlushPendingCompositionCommit();
+    if (!FlushPendingCompositionCommit()) return false;
+    SyncDockTitleTooltip();
+    SyncPageNavHotEdgeTooltip();
+    SyncLuaWidgetTooltip();
+    return true;
 }
 
 void DesktopApp::ResetDesktopForegroundComposition()

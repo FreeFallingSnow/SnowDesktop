@@ -549,19 +549,12 @@ private:
         const RECT* updateRect = nullptr);
     /** @brief 绘制全高翻页热边的悬停提示。 */
     void DrawPageNavHotEdgeHint(ID2D1DeviceContext* ctx, const RECT* updateRect = nullptr);
+    void SyncPageNavHotEdgeTooltip();
+    void SyncDockTitleTooltip();
+    void ConfigureFixedTooltip(snowdesktop::NativeTooltip& tooltip, HWND owner);
+    void SyncLuaWidgetTooltip();
+    void ResetPageNotify();
     std::wstring GetPageNavHotEdgeHintText(int side) const;
-    /** @brief 绘制换页通知覆盖层（左上角角标，类似电视台换台）。 @param ctx D2D 设备上下文 */
-    void DrawPageNotify(
-        ID2D1DeviceContext* ctx,
-        bool applyAnimation = true,
-        const RECT* updateRect = nullptr);
-    void PreparePageNotifyTextCache();
-    void ResetPageNotifyTextCache();
-    void PreparePageNotifyAnimationCache();
-    void ResetPageNotifyAnimationCache();
-    bool UpdatePageNotifyCompositionAnimation(
-        float opacity, bool commit = true);
-    RECT GetPageNotifyBounds() const;
     /** @brief 绘制隐藏状态提示（双击取消隐藏）。 */
     void DrawHiddenHintOverlay(ID2D1DeviceContext* ctx, const RECT* updateRect = nullptr);
     /** @brief 绘制添加组件操作提示。 */
@@ -603,7 +596,8 @@ private:
     /** @brief 获取末屏用于翻页导航的显示器页面。 */
     const GridPage* GetPageNavigationGridPage() const;
     /** @brief 获取指定热边提示的重绘范围。 */
-    RECT GetPageNavHotEdgeHintBounds(int side, POINT point) const;
+    RECT GetPageNavHotEdgeHintBounds(int side, POINT point,
+        snowdesktop::NativeTooltipTextLayout* layout = nullptr) const;
     /** @brief 更新翻页热边悬停方向并管理延迟文字提示。 */
     void SetPageNavHotEdgeHover(int side);
     /** @brief 按当前指针位置和翻页边界重新计算热边悬停。 */
@@ -3449,12 +3443,6 @@ private:
     ComPtr<IDWriteTextFormat> fileCategoryTabTextFormat_;
     ComPtr<IDWriteTextFormat> faTextFormat_;
     ComPtr<IDWriteTextFormat> fluentIconTextFormat_;
-    ComPtr<IDWriteTextFormat> pageNotifyTextFormat_;
-    ComPtr<IDWriteTextLayout> pageNotifyTextLayout_;
-    DWRITE_TEXT_METRICS pageNotifyTextMetrics_{};
-    DragRenderCache pageNotifyAnimationRenderCache_;
-    RECT pageNotifyAnimationCacheRect_{};
-    UiCompositionAnimationOverlay pageNotifyAnimationOverlay_;
     ComPtr<ID2D1Bitmap1> privacyFileIconBitmap_;
     ComPtr<ID2D1Bitmap1> privacyFolderIconBitmap_;
     std::unordered_map<std::wstring, snowdesktop::ItemTextLayoutCacheEntry> itemTextLayoutCache_;
@@ -3821,20 +3809,18 @@ private:
     int navHoverSide_ = 0;
     bool navHotEdgeHover_ = false;
     bool navHotEdgeHintVisible_ = false;
-    snowdesktop::InlineTooltipBackdrop navHotEdgeHintBackdrop_;
+    snowdesktop::NativeTooltip navHotEdgeTooltip_;
+    snowdesktop::NativeTooltip dockTitleTooltip_;
+    snowdesktop::NativeTooltip pageNotifyTooltip_;
+    snowdesktop::NativeTooltip luaWidgetTooltip_;
     snowdesktop::InlineTooltipBackdrop hiddenHintBackdrop_;
     snowdesktop::InlineTooltipBackdrop widgetAddedHintBackdrop_;
     snowdesktop::UiScheduleToken navHotEdgeHintToken_ = 0;
     DWORD navAutoFlipTick_ = 0;
     int navAutoFlipDir_ = 0;
     // ── 换页通知覆盖层（电视台换台式角标） ──
-    std::wstring pageNotifyText_;
-    DWORD pageNotifyStartTick_ = 0;
-    DWORD pageNotifyFadeMs_ = kPageNotifyFadeMs;
     snowdesktop::UiScheduleToken pageNotifyFadeOutToken_ = 0;
     bool pageNotifyActive_ = false;
-    bool pageNotifyUseAnimation_ = true;
-    bool pageNotifyCompositorDriven_ = false;
     POINT lastContextMenuScreenPoint_{};
     /** @} */
 

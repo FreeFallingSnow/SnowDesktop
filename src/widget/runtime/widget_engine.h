@@ -73,6 +73,7 @@ namespace snowdesktop::widget_runtime { struct WidgetMultiplayer; }
 #include "widget/storage/widget_storage_write_budget.h"
 #include "widget/storage/widget_secret_store.h"
 
+namespace snowdesktop { struct NativeTooltipTextLayout; }
 namespace snowdesktop::widget_menu { struct Entry; }
 
 namespace snowdesktop::widget_runtime
@@ -1454,6 +1455,11 @@ public:
     void UpdateInteractionHover(const std::wstring& widgetId, int x, int y,
         std::string_view surface = "desktop");
     void ClearInteractionHover(std::string_view surface = {});
+    void EnableHostedInteractionTooltips() { hostedInteractionTooltips_ = true; }
+    bool UsesHostedInteractionTooltips() const { return hostedInteractionTooltips_; }
+    bool MeasureHoveredInteractionTooltip(const std::wstring& widgetId,
+        std::string_view surface, RECT frame, snowdesktop::NativeTooltipTextLayout& measured,
+        D2D1_RECT_F& bounds, std::wstring& name) const;
     std::string InteractionCursorAt(const std::wstring& widgetId,
         int x, int y, std::string_view surface = "desktop") const;
     bool RuntimeCanWriteWidgetStorage(
@@ -1803,6 +1809,7 @@ private:
      * @param widgetId 小部件实例 ID
      * @return 找到返回索引，否则返回 -1
      */
+    bool hostedInteractionTooltips_ = false;
     int FindWidget(const std::wstring& widgetId) const;
     void RecordWidgetHostFailure(const std::wstring& widgetId,
         const std::string& message, bool quotaExceeded = false,

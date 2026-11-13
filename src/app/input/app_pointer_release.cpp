@@ -265,7 +265,7 @@ void DesktopApp::ReconcileDesktopHoverState(
                     host->backdrop.IsBackdropWindow(dockHitWindow)) &&
                 snowdesktop::floating_dock_rules::IsPointInVisibleLayer(
                     cursorPoint, host->dockRect,
-                    host->popupRect, host->tooltipRect))
+                    host->popupRect, RECT{}))
             {
                 pointerInDockLayer = true;
                 break;

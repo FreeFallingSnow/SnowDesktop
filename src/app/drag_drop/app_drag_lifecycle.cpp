@@ -36,8 +36,7 @@ bool DesktopApp::CollectPointerInteractionBounds(RECT& result)
         !luaWidgetPanelRequest_.widgetId.empty() || largeIconGesture_ ||
         IsUsageGuideVisible() ||
         dockBounceAnimationFrameToken_ || dockRunningAnimationFrameToken_ ||
-        dockMagnificationAnimationFrameToken_ ||
-        (pageNotifyActive_ && !pageNotifyCompositorDriven_)) return false;
+        dockMagnificationAnimationFrameToken_) return false;
 
     // Resizing affordances are a separate foreground overlay and can change
     // with the pointer even when their icon is not part of the selection.

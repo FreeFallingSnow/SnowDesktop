@@ -333,10 +333,13 @@ void DesktopApp::ResetDesktopWindowResources()
     dragRenderCache_.Reset();
     ResetCollectionPopupAnimationCache();
     ResetLuaWidgetPanelAnimationCache();
-    ResetPageNotifyTextCache();
+    ResetPageNotify();
+    pageNotifyTooltip_.Close();
+    navHotEdgeTooltip_.Close();
+    dockTitleTooltip_.Close();
+    luaWidgetTooltip_.Close();
     popupAnimationOverlay_ = {};
     luaWidgetPanelAnimationOverlay_ = {};
-    pageNotifyAnimationOverlay_ = {};
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     placeholderIconCache_.clear();
