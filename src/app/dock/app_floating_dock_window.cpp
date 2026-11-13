@@ -604,7 +604,7 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
     // Desktop/floating transitions keep the pair visible and only change its
     // Z-order band. Avoid issuing a redundant SHOWWINDOW transaction, which
     // can make DWM re-evaluate the native backdrop source for one frame.
-    if (IsWindowVisible(host.hwnd))
+    if (host.hiddenForFullscreenLayer || IsWindowVisible(host.hwnd))
         return;
     if (host.backdrop.IsAvailable())
         host.backdrop.ShowPopupWindowPair(host.hwnd);

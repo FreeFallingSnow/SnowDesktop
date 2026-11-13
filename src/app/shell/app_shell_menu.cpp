@@ -351,6 +351,17 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         }
     } layerUpdateScope{*this, host.hwnd, wasTopmost};
     const bool merged = host.container && host.container->IsMergedWithStatusBar();
+    const auto releaseFullscreenLayerHide = [&] {
+        if (!host.hiddenForFullscreenLayer) return;
+        host.hiddenForFullscreenLayer = false;
+        if (desktopStartupPresentationPending_ || !ShouldShowPersistentDockHost(host) ||
+            IsWindowVisible(host.hwnd)) return;
+        if (host.backdrop.IsAvailable())
+            host.backdrop.ShowPopupWindowPair(host.hwnd);
+        else
+            SetWindowPos(host.hwnd, nullptr, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    };
     const bool desktopRestoreWasPending = host.desktopLayerRestorePending;
     host.desktopLayerRestorePending = false;
     host.desktopLayerRestoreRetryTick = GetTickCount64() +
@@ -358,6 +369,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     host.desktopLayerForegroundWindow = snowdesktop::private_pointer::ForegroundWindow();
     if (merged)
     {
+        host.hiddenForFullscreenLayer = false;
         // The visible merged strip is one topmost surface. Summon/hover policy
         // still owns its visibility; menu holds never move it between bands.
         host.mergedPresentation.topmost = true;
@@ -497,8 +509,10 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
                 layer::IsWindowAbove(fullscreenWindow, window);
         };
         const auto pairBelowFullscreen = [&] {
-            return belowFullscreen(host.hwnd) &&
-                (!host.backdrop.IsAvailable() || belowFullscreen(GetWindow(host.hwnd, GW_HWNDNEXT)));
+            if (!fullscreenWindow) return true;
+            const HWND next = GetWindow(host.hwnd, GW_HWNDNEXT);
+            return belowFullscreen(host.hwnd) && (!host.backdrop.IsAvailable() ||
+                (host.backdrop.IsBackdropWindow(next) && belowFullscreen(next)));
         };
         const bool alreadyRestored = isPairIntact() && pairBelowFullscreen() &&
             layer::IsDesktopLayerRestored(
@@ -523,9 +537,38 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         if (ordinaryFullscreen && !pairBelowFullscreen() && lastAnchor != ordinaryFullscreen)
             placed = placePair(ordinaryFullscreen) && layer::IsDesktopLayerRestored(
                 host.hwnd, desktopRoot, isApplicationWindow, isDockWindow);
+        const HWND initialAnchor = lastAnchor;
+        const bool initialPlacementAccepted = placementAccepted;
+        HWND fallbackAnchor = nullptr;
+        if (ordinaryFullscreen && desktopRoot && !pairBelowFullscreen())
+        {
+            // An ordinary window between Explorer and the game is also a
+            // valid anchor. Keep the actual fullscreen window as the bound.
+            HWND candidate = GetWindow(desktopRoot, GW_HWNDPREV);
+            for (unsigned visited = 0; candidate && candidate != ordinaryFullscreen && visited < 4096;
+                 ++visited, candidate = GetWindow(candidate, GW_HWNDPREV))
+            {
+                if (candidate == lastAnchor || isDockWindow(candidate) || pair::IsTopmost(candidate) ||
+                    !IsWindowVisible(candidate) || IsIconic(candidate)) continue;
+                if (!layer::IsWindowAbove(ordinaryFullscreen, candidate)) break;
+                fallbackAnchor = candidate;
+                placed = placePair(candidate) && layer::IsDesktopLayerRestored(
+                    host.hwnd, desktopRoot, isApplicationWindow, isDockWindow);
+                break;
+            }
+        }
         const bool pairIntact = !fullscreenWindow || isPairIntact();
         const bool belowSource = pairIntact && pairBelowFullscreen();
         const bool restored = placed && belowSource;
+        const bool wasHiddenForLayer = host.hiddenForFullscreenLayer;
+        if (fullscreenWindow && !belowSource)
+        {
+            host.hiddenForFullscreenLayer = true;
+            if (!wasHiddenForLayer || IsWindowVisible(host.hwnd))
+                host.backdrop.HidePopupWindowPair(host.hwnd);
+        }
+        else
+            releaseFullscreenLayerHide();
         perf::Value("dock", "desktop.layer.restored", {}, restored);
         host.desktopLayerRestorePending = !restored;
         host.desktopLayerRestoreRetryTick = GetTickCount64() +
@@ -535,6 +578,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         {
             const ULONGLONG now = GetTickCount64();
             if (fullscreenWindow != host.fullscreenLayerTraceSource ||
+                wasHiddenForLayer != host.hiddenForFullscreenLayer ||
                 (wasTopmost && !desktopRestoreWasPending) ||
                 (restored && desktopRestoreWasPending) ||
                 (!restored && now - host.fullscreenLayerTraceTick >= 5000))
@@ -543,19 +587,32 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
                 host.fullscreenLayerTraceTick = now;
                 const HWND next = GetWindow(host.hwnd, GW_HWNDNEXT);
                 const HWND glass = host.backdrop.IsBackdropWindow(next) ? next : nullptr;
-                wchar_t message[448]{};
+                wchar_t message[640]{};
                 swprintf_s(message, L"Dock fullscreen layer monitor=%p source=%p sourcePid=%lu "
                     L"sourceTopmost=%d sourceTask=%d foreground=%p dock=%p glassAdjacent=%p "
                     L"anchor=%p attempted=%d accepted=%d dockTopmost=%d glassTopmost=%d "
-                    L"pairIntact=%d belowSource=%d restored=%d retry=%d",
+                    L"pairIntact=%d belowSource=%d restored=%d retry=%d "
+                    L"initialAnchor=%p initialAccepted=%d fallbackAnchor=%p hiddenForLayer=%d visible=%d",
                     host.monitor, fullscreenWindow, fullscreen->process, pair::IsTopmost(fullscreenWindow),
                     isTaskWindow(fullscreenWindow), host.desktopLayerForegroundWindow, host.hwnd, glass,
                     lastAnchor, !alreadyRestored, placementAccepted, pair::IsTopmost(host.hwnd),
-                    pair::IsTopmost(glass), pairIntact, belowSource, restored, !restored);
+                    pair::IsTopmost(glass), pairIntact, belowSource, restored, !restored,
+                    initialAnchor, initialPlacementAccepted, fallbackAnchor,
+                    host.hiddenForFullscreenLayer, IsWindowVisible(host.hwnd));
                 WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message);
             }
         }
-        else host.fullscreenLayerTraceSource = nullptr;
+        else
+        {
+            host.fullscreenLayerTraceSource = nullptr;
+            if (wasHiddenForLayer && snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Dock))
+            {
+                wchar_t message[224]{};
+                swprintf_s(message, L"Dock fullscreen layer released monitor=%p dock=%p visible=%d restored=%d",
+                    host.monitor, host.hwnd, IsWindowVisible(host.hwnd), restored);
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message);
+            }
+        }
         if (wasTopmost && restored)
             snowdesktop::dock_taskbar_diagnostics::Record(
                 L"dock-returned-to-desktop-band", host.hwnd);
@@ -572,6 +629,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         shouldBeTopmost
             ? HWND_TOPMOST : HWND_NOTOPMOST,
         shouldBeTopmost);
+    releaseFullscreenLayerHide();
     if (wasTopmost != shouldBeTopmost)
         snowdesktop::dock_taskbar_diagnostics::Record(
             systemShowDesktopGuard ? L"dock-show-desktop-band" : L"dock-normal-layer-policy",

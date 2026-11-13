@@ -64,6 +64,7 @@ struct DesktopApp::PersistentDockHost
     bool desktopLayerRestorePending = false;
     ULONGLONG desktopLayerRestoreRetryTick = 0;
     HWND desktopLayerForegroundWindow = nullptr;
+    bool hiddenForFullscreenLayer = false;
     ULONGLONG fullscreenLayerTraceTick = 0;
     HWND fullscreenLayerTraceSource = nullptr;
     std::uint64_t presentationRevision = 0;

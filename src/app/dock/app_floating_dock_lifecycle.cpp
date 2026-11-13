@@ -540,7 +540,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     {
         if (host && host->active && host->container &&
             !desktopPassthroughActive_ && !HasActiveContextMenuSession() &&
-            host->hwnd && IsWindowVisible(host->hwnd) &&
+            host->hwnd && (IsWindowVisible(host->hwnd) || host->hiddenForFullscreenLayer) &&
             !host->container->IsMergedWithStatusBar() &&
             !systemShowDesktopLayerGuardActive_ &&
             layerNow >= host->desktopLayerRestoreRetryTick &&
