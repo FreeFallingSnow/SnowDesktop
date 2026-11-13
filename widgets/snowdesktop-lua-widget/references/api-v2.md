@@ -203,6 +203,7 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 - `module.package`：安全包内模块；`resource.package`：包内图片、字体和资源状态；
 - `resource.image.lazy`：`resource.image(name, {lazy=true})` 显式延后像素解码；
   句柄仍在加载阶段创建，首次绘制前 `resource.status` 可以返回 `pending`；
+- `resource.image.onDemand`：`resource.image(name, {onDemand=true})` 创建包内图片引用，绘制时后台读取并解码，停止使用后释放像素和图片额度；
 - `state.transient`：仅存活于当前实例 VM 的瞬态状态；`schedule.visibility`：计划的
   `whenHidden=pause|throttle|continue` 生命周期；
 - `slots.mutation.userGesture`：binding/collection 的选择、清除、移除、撤销与重做仍要求
@@ -3400,7 +3401,7 @@ local sky = lazy and resource.image("sky", {lazy=true}) or resource.image("sky")
 `ready`，解码失败为带 `error="unavailable"` 的 `error`。句柄不会自行要求轮询或启动定时器，
 使用场景由绘制决定。损坏的像素数据可能在首次解码时才报错，不能把懒句柄的创建成功当作
 完整解码验证。第二参数仅接受可选布尔字段 `lazy`，无效选项报 `resource.image: invalidOptions`。
-默认调用的加载阶段报错语义保持不变。
+可用选项见下文。默认调用的加载阶段报错语义保持不变。
 
 支持 `resource.image.lazy` 的宿主还会在图片状态中返回布尔字段 `resident`，表示当前有可用的
 解码像素。已验证图片的像素被回收后仍为 `ready`，但 `resident=false`；再次绘制会请求恢复。
@@ -3409,6 +3410,25 @@ local sky = lazy and resource.image("sky", {lazy=true}) or resource.image("sky")
 此能力是 API v2 的可选扩展，不提高 `apiVersion`。旧宿主（包括同版本号的早期构建）不支持
 该 feature 时必须使用原调用；不要仅根据版本号传入新选项。官方社区组件采用此能力时应先
 交付对应宿主，再发布组件，或像上例保留可运行的降级路径。
+
+### 按需读取包内图片
+
+`resource.image(name, {onDemand=true})` 在入口加载阶段创建一个清单资源引用。
+桌面宿主在首次通过 `draw.image`、`draw.imageFit` 或 `view.image` 绘制时，
+从当前包版本读取图片元数据，再按绘制分辨率异步读取和解码。等待期间图片为空，
+结果就绪后宿主请求重绘。独立预览在该次绘制内完成读取和解码。菜单图标仍使用默认图片句柄。
+
+引用创建时不保留压缩图片或预留像素额度。图片解码后按当前像素尺寸占用共享额度。
+最后一个绘制面停止请求该图片约两秒后，宿主释放解码像素、缓存位图和对应额度。
+下一次绘制会重新读取磁盘。静态缓存绘制面在继续展示期间保留图片需求。
+
+`resource.status(handle)` 在尚未绘制、等待额度、读取中或回收后返回
+`state="pending", resident=false`。读取或解码失败返回 `state="error"`。
+查询状态本身不会触发读取。开发目录中的素材变化应通过组件热重载重新绑定。
+同一资源名在一个组件实例内须使用同一种读取模式。两个选项都为 true 时返回 `invalidOptions`。
+
+该能力属于 API v2 增量扩展。组件可在 manifest 中声明 `resource.image.onDemand`，
+或者先通过 `widget.hasFeature("resource.image.onDemand")` 探测，并在旧宿主上选择可用的素材和加载方式。
 
 ## 添加预设（`widget.creationPresets`）
 

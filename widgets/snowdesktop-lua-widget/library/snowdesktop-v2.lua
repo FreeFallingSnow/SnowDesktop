@@ -2,7 +2,7 @@
 
 ---@alias SnowWidgetSizeClass 'small'|'medium'|'large'
 ---@alias SnowWidgetSurfaceKind 'desktop'|'panel'|'dialog'|'popover'|'preview'
----@alias SnowResourceState 'ready'|'error'
+---@alias SnowResourceState 'pending'|'ready'|'error'
 ---@alias SnowResourceLoadError 'loadPhaseRequired'|'invalidName'|'notDeclared'|'typeMismatch'|'hostUnavailable'|'unavailable'|'quotaExceeded'|'decodeFailed'|'deviceUnavailable'|'fontLoadFailed'|'invalidHandle'
 ---@alias SnowDateStyle 'none'|'short'|'long'
 ---@alias SnowTimeStyle 'none'|'short'|'long'
@@ -919,6 +919,7 @@
 ---@field state SnowResourceState
 ---@field type 'image'|'font'|'audio'
 ---@field name string
+---@field resident? boolean Whether an image currently has decoded pixels.
 ---@field error? 'unavailable' Stable when state is error.
 
 ---@class SnowTextMetrics
@@ -2467,10 +2468,15 @@ resource = {}
 ---@return boolean
 function resource.exists(name) end
 
----Create a declared image handle synchronously during entry evaluation. Failure raises `resource.image: <SnowResourceLoadError>`.
+---@class SnowPackageImageOptions
+---@field lazy? boolean Keep a compressed snapshot and defer pixel decoding.
+---@field onDemand? boolean Read and decode from disk on first draw. Requires resource.image.onDemand. Mutually exclusive with lazy.
+
+---Create a declared image handle during entry evaluation. Failure raises `resource.image: <SnowResourceLoadError>`.
 ---@param name string
+---@param options? SnowPackageImageOptions
 ---@return SnowImageResource
-function resource.image(name) end
+function resource.image(name, options) end
 
 ---Create a declared package-private font handle synchronously during entry evaluation. Failure raises `resource.font: <SnowResourceLoadError>`.
 ---@param name string
