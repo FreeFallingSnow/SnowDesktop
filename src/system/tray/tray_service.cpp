@@ -633,6 +633,7 @@ void Service::BeginHover(const std::string& key, HWND receiver, RECT bounds, REC
         identity = found->identity;
         if (ApplicationIs(*found, L"QQ.exe")) surface = first_show::Surface::QQHover;
         else if (ApplicationIs(*found, L"wpscloudsvr.exe")) surface = first_show::Surface::WpsHover;
+        else if (ApplicationIs(*found, L"douyin_tray.exe")) surface = first_show::Surface::DouyinHover;
     }
     const POINT anchor{bounds.left + (bounds.right - bounds.left) / 2,
         bounds.top + (bounds.bottom - bounds.top) / 2};
@@ -647,6 +648,7 @@ void Service::BeginHover(const std::string& key, HWND receiver, RECT bounds, REC
             request.anchor = anchor; request.icon = bounds; request.row = row;
             request.gap = MulDiv(6, static_cast<int>(GetDpiForWindow(receiver)), USER_DEFAULT_SCREEN_DPI);
             request.preferAbove = preferAbove; request.surface = *surface; request.process = identity.process;
+            request.presenter = reinterpret_cast<UINT_PTR>(receiver);
             armed = ArmPopup(target, request);
         }
         catch (...) { /* Keep the original hover if optional preparation fails. */ }

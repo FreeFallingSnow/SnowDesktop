@@ -78,6 +78,8 @@ if (MSVC)
         src/taskbar_hook/tray_collector.cpp
         src/taskbar_hook/tray_menu_first_show.cpp
         src/taskbar_hook/tray_menu_first_show.h
+        src/taskbar_hook/tray_douyin_hover.cpp
+        src/taskbar_hook/tray_douyin_hover.h
         src/taskbar_hook/thumbnail_toolbar_collector.cpp
         src/taskbar_hook/tray_protocol.h
         src/taskbar_hook/taskbar_native.cpp

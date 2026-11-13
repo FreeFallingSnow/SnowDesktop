@@ -1,4 +1,7 @@
 #include "tray_menu_first_show.h"
+#ifdef _WIN64
+#include "tray_douyin_hover.h"
+#endif
 
 #include <commctrl.h>
 #include <algorithm>
@@ -57,6 +60,8 @@ bool IsPopup(HWND window, Surface surface)
         (extended & (WS_EX_APPWINDOW | WS_EX_TRANSPARENT))) return false;
     if (surface == Surface::QQHover)
         return (extended & WS_EX_LAYERED) && HasClass(window, L"Chrome_WidgetWin_1");
+    if (surface == Surface::DouyinHover)
+        return (extended & WS_EX_NOACTIVATE) && (style & WS_POPUP) && HasClass(window, L"LynxMessageBox");
     if (!(extended & WS_EX_TOOLWINDOW) || (style & WS_CAPTION) == WS_CAPTION) return false;
     return HasClass(window, surface == Surface::WpsHover ? L"Qt5QWindowToolSaveBits" : L"Qt51514QWindowPopupSaveBits");
 }
@@ -131,11 +136,17 @@ POINT HoverOffset(const Request& request, const RECT& bounds)
     RECT overlap{};
     // Chromium may show the first window far outside the desktop while
     // producing its content. Preserve staging and handle its first on-screen move.
-    if (!IntersectRect(&overlap, &bounds, &request.work) ||
-        !IntersectRect(&overlap, &bounds, &request.row)) return {};
+    const bool intersectsRow = IntersectRect(&overlap, &bounds, &request.row) != FALSE;
+    const bool contained = bounds.left >= request.work.left && bounds.right <= request.work.right &&
+        bounds.top >= request.work.top && bounds.bottom <= request.work.bottom;
+    if (request.surface == Surface::DouyinHover)
+    {
+        if (!intersectsRow && contained) return {};
+    }
+    else if (!intersectsRow || !IntersectRect(&overlap, &bounds, &request.work)) return {};
     const auto& work = request.work;
     const auto width = bounds.right - bounds.left, height = bounds.bottom - bounds.top;
-    if (width > work.right - work.left || height > work.bottom - work.top) return {};
+    if (width <= 0 || height <= 0 || width > work.right - work.left || height > work.bottom - work.top) return {};
     const auto x = std::clamp(bounds.left, work.left, work.right - width);
     const auto y = std::clamp(bounds.top, work.top, work.bottom - height);
     const POINT above{x, request.row.top - request.gap - height};
@@ -273,6 +284,9 @@ LRESULT CALLBACK WatchMenu(int code, WPARAM wp, LPARAM lp)
                 if (qqCard && SetWindowSubclass(message.hwnd, MenuProcedure, kMenuSubclass, 0))
                 {
                     watch.candidate = message.hwnd;
+#ifdef _WIN64
+                    if (watch.request.surface == Surface::DouyinHover) douyin::Bind(message.hwnd);
+#endif
                     if (watch.request.surface == Surface::QQHover && bounds.right < -8000 && bounds.bottom < -8000)
                         watch.qqStaging = bounds;
                 }
@@ -321,7 +335,11 @@ void Arm(const CWPSTRUCT& message)
     {
         if (!IsWeixinReceiver(message.hwnd)) return;
     }
-    else if (request.surface != Surface::QQHover || !HasClass(message.hwnd, L"Electron_NotifyIconHostWindow"))
+    else if (request.surface == Surface::QQHover)
+    {
+        if (!HasClass(message.hwnd, L"Electron_NotifyIconHostWindow")) return;
+    }
+    else if (request.surface != Surface::DouyinHover || !HasClass(message.hwnd, L"TRAY_CLASS"))
         return;
 #else
     if (request.surface != Surface::WpsHover || !IsWpsProcess()) return;
@@ -335,7 +353,15 @@ void Arm(const CWPSTRUCT& message)
     watch.request = request;
     watch.hook = SetWindowsHookExW(WH_CALLWNDPROC, WatchMenu, nullptr, GetCurrentThreadId());
     if (watch.hook) watch.timer = SetTimer(nullptr, 0, kLifetimeMs, Expire);
-    if (!watch.timer) StopWatching();
-    else InterlockedExchange(&view->armed, 1);
+    if (!watch.timer)
+    {
+        StopWatching();
+        return;
+    }
+#ifdef _WIN64
+    // Other client builds can still benefit from placing the card in view.
+    if (request.surface == Surface::DouyinHover) douyin::Arm(request, static_cast<DWORD>(message.wParam));
+#endif
+    InterlockedExchange(&view->armed, 1);
 }
 }
