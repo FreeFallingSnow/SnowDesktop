@@ -24026,8 +24026,9 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId,
     const size_t oldIndex = static_cast<size_t>(idx);
     if (!LoadWidget(path, widgetId, false, nullptr, nullptr, nullptr, deterministicFailure))
     {
-        RecoverWidgetPackage(packageId,
-            widgets_[idx].manifest.version);
+        // The enclosing package verification owns rollback for all instances.
+        if (!snowdesktop::widget_runtime::HasStorageOverlay())
+            RecoverWidgetPackage(packageId, widgets_[idx].manifest.version);
         return false;
     }
 

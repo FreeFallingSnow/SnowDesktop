@@ -28,6 +28,7 @@
 #include "status_bar_tooltip.h"
 #include "system/controls/system_controls.h"
 #include "common/utils.h"
+#include "common/background_work.h"
 
 #include <appmodel.h>
 #include <dcomp.h>
@@ -55,7 +56,7 @@ using Microsoft::WRL::ComPtr;
 namespace
 {
 constexpr UINT kAppBar = WM_APP + 41, kPlace = WM_APP + 42, kFullscreen = WM_APP + 43, kForeground = WM_APP + 44,
-    kActivate = WM_APP + 45, kEnsurePresentation = WM_APP + 46;
+    kActivate = WM_APP + 45, kEnsurePresentation = WM_APP + 46, kAppNameReady = WM_APP + 47;
 constexpr UINT_PTR kClockTimer = 1, kTrayMenuTimer = 2, kPlacementTimer = 3, kInputMethodTimer = 4, kTrayScrollTimer = 5,
     kRevealTimer = 6;
 const char* StatusBarTimerPhase(WPARAM timer) noexcept
@@ -207,6 +208,15 @@ bool IsOpenAppWindow(const ApplicationWindow& app)
     DWORD process = 0;
     return app.window && GetWindowThreadProcessId(app.window, &process) &&
         process == app.process && IsOpenAppWindow(app.window, process);
+}
+
+ApplicationWindow ObserveForegroundApp()
+{
+    const HWND window = GetForegroundWindow();
+    DWORD process = 0;
+    if (window) GetWindowThreadProcessId(window, &process);
+    if (IsOpenAppWindow(window, process)) return {window, process, {}};
+    return {};
 }
 
 ApplicationWindow FindBackgroundApp(DWORD preferredProcess)
@@ -1561,6 +1571,9 @@ struct StatusBar::Impl
                 else if (self->dataSnapshot.foregroundAppName != self->owner.displayedApp.name) self->Paint();
                 self->PollTrayMenu();
                 return 0;
+            case kAppNameReady:
+                self->owner.appNameWork.Drain();
+                return 0;
             case kFullscreen:
                 if (self->owner.fullscreenRequest.Consume(window)) self->owner.CheckFullscreenWindows(true);
                 return 0;
@@ -1575,6 +1588,7 @@ struct StatusBar::Impl
                 performance::Scope timerTrace("timer.callback", StatusBarTimerPhase(wp), traceOwner);
                 if (wp == kClockTimer)
                 {
+                    self->owner.appNameWork.Drain();
                     // One service consumer and one pending audio target across
                     // all bars: the first monitor must not drain another's result.
                     for (const auto& completion : self->owner.data->Controls()->DrainCompletions("statusBarVolume"))
@@ -1909,28 +1923,18 @@ struct StatusBar::Impl
     StatusBarSettings settings;
     ApplicationWindow lastForegroundApp;
     ApplicationWindow displayedApp;
-    ULONGLONG nextBackgroundAppSearch = 0;
+    BackgroundWork appNameWork{1, 1};
+    ApplicationWindow lastAppNameRequest;
+    ULONGLONG nextAppNameRequest = 0;
+    bool appNamePending = false;
     void ClearForegroundApp()
     {
+        if (appNamePending) appNameWork.Cancel();
+        appNamePending = false;
         lastForegroundApp = {};
         displayedApp = {};
-        nextBackgroundAppSearch = 0;
-    }
-    void RefreshBackgroundApp()
-    {
-        if (IsOpenAppWindow(lastForegroundApp))
-        {
-            if (!displayedApp.Matches(lastForegroundApp.window, lastForegroundApp.process))
-                displayedApp = lastForegroundApp;
-            return;
-        }
-        if (IsOpenAppWindow(displayedApp)) return;
-        // Several bars share this observation. Throttle only the empty case
-        // so a window that was just minimized or closed is replaced promptly.
-        if (!displayedApp.window && GetTickCount64() < nextBackgroundAppSearch) return;
-        displayedApp = FindBackgroundApp(lastForegroundApp.process);
-        nextBackgroundAppSearch = GetTickCount64() + 1000;
-        if (!displayedApp.window) displayedApp.name = kStatusBarDesktopAppName;
+        lastAppNameRequest = {};
+        nextAppNameRequest = 0;
     }
     void RefreshForegroundApp()
     {
@@ -1939,26 +1943,53 @@ struct StatusBar::Impl
             ClearForegroundApp();
             return;
         }
-        const auto window = GetForegroundWindow();
-        DWORD process = 0;
-        if (window) GetWindowThreadProcessId(window, &process);
-        if (!IsOpenAppWindow(window, process))
+        const auto foreground = ObserveForegroundApp();
+        const bool lastOpen = IsOpenAppWindow(lastForegroundApp);
+        if (lastOpen && (!foreground.window ||
+                lastForegroundApp.Matches(foreground.window, foreground.process)))
         {
-            RefreshBackgroundApp();
+            displayedApp = lastForegroundApp;
             return;
         }
-        if (!lastForegroundApp.Matches(window, process))
-        {
-            auto name = ForegroundAppName(window, process);
-            if (name.empty())
-            {
-                RefreshBackgroundApp();
+        const bool displayedOpen = IsOpenAppWindow(displayedApp);
+        if (!foreground.window && displayedOpen) return;
+        if (!displayedOpen)
+            displayedApp = lastOpen ? lastForegroundApp : ApplicationWindow{nullptr, 0, kStatusBarDesktopAppName};
+        if (appNamePending || (lastAppNameRequest.Matches(foreground.window, foreground.process) &&
+                GetTickCount64() < nextAppNameRequest))
+            return;
+        const auto receiver = std::find_if(windows.begin(), windows.end(), [](const auto& entry) {
+            return entry.second && entry.second->hwnd && !entry.second->closing;
+        });
+        if (receiver == windows.end()) return;
+
+        // Shell properties and executable metadata can call into providers.
+        // Keep that work off the window thread and apply only current results.
+        const DWORD preferred = lastForegroundApp.process;
+        const bool hasFallback = lastOpen || displayedOpen;
+        appNamePending = appNameWork.Submit(L"app-name", [foreground, preferred, hasFallback] {
+            if (IsOpenAppWindow(foreground))
+                if (auto name = ForegroundAppName(foreground.window, foreground.process); !name.empty())
+                    return ApplicationWindow{foreground.window, foreground.process, std::move(name)};
+            return hasFallback ? ApplicationWindow{} : FindBackgroundApp(preferred);
+        }, [this, foreground](ApplicationWindow result) {
+            appNamePending = false;
+            const auto current = ObserveForegroundApp();
+            if (!settings.foregroundAppName || !current.Matches(foreground.window, foreground.process))
                 return;
-            }
-            lastForegroundApp = {window, process, std::move(name)};
+            if (!IsOpenAppWindow(result))
+                return;
+            if (current.Matches(result.window, result.process)) lastForegroundApp = result;
+            displayedApp = std::move(result);
+            for (const auto& [id, window] : windows)
+                if (window && !window->closing && window->hwnd)
+                    InvalidateRect(window->hwnd, nullptr, FALSE);
+        }, receiver->second->hwnd, kAppNameReady);
+        if (appNamePending)
+        {
+            lastAppNameRequest = foreground;
+            nextAppNameRequest = GetTickCount64() + 1000;
         }
-        if (!displayedApp.Matches(window, process) || displayedApp.name != lastForegroundApp.name)
-            displayedApp = lastForegroundApp;
     }
     PersonalizationSettings globalAppearance;
     PersonalizationSettings tooltipAppearance;
