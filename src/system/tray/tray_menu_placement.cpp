@@ -221,6 +221,9 @@ std::optional<POINT> MenuPlacementSession::Observe(const MenuPopupObservation& p
         existing->anchorBound = nearAnchor || strongRoot;
     }
     existing->bounds = popup.bounds;
+    // A context menu has already presented when this asynchronous event
+    // arrives. Keep its binding for focus and stacking without moving it.
+    if (contextGesture_) return {};
     if (existing->pending && existing->pending->x == popup.bounds.left &&
         existing->pending->y == popup.bounds.top) existing->pending.reset();
 

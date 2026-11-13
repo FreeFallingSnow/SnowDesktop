@@ -113,10 +113,15 @@ bool Apply(std::vector<Icon>& icons, const Event& event)
     }
     return true;
 }
-std::vector<Callback> Callbacks(const Icon& icon, Activation activation, POINT anchor)
+std::vector<Callback> Callbacks(const Icon& icon, Activation activation, POINT anchor,
+    std::optional<POINT> popupAnchor)
 {
     std::vector<Callback> result;
-    const auto add = [&](UINT message) { result.push_back(MakeCallback(icon.version, icon.identity.id, message, anchor)); };
+    const auto add = [&](UINT message) {
+        const POINT point = message == NIN_POPUPOPEN || message == WM_CONTEXTMENU
+            ? popupAnchor.value_or(anchor) : anchor;
+        result.push_back(MakeCallback(icon.version, icon.identity.id, message, point));
+    };
     switch (activation)
     {
     case Activation::LeftDown: add(WM_LBUTTONDOWN); break;
