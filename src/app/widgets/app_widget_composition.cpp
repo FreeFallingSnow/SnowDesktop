@@ -282,7 +282,11 @@ bool DesktopApp::PresentQueuedDesktopWidgetComposition(bool passivePointerFrame)
         SyncWidgetMarqueeCompositionVisibility() &&
         CommitCompositionAnimationFrame() &&
         FlushPendingCompositionCommit())
+    {
+        // Lua tooltips live outside the widget surface and need to follow local commits too.
+        SyncLuaWidgetTooltip();
         return true;
+    }
     desktopWidgetCompositionFailurePending_ = true;
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, FALSE);
