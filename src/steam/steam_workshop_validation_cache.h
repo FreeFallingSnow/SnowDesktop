@@ -3,21 +3,81 @@
 #include "widget/packages/widget_package.h"
 
 #include <windows.h>
+#include <winioctl.h>
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
+#include <iterator>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <utility>
 
 namespace snowdesktop::widget
 {
-// Background discovery may reuse validation of the exact bytes.
-// Metadata alone is insufficient: an archive can change without changing its
-// size or timestamp. The reader also prevents writers/replacement while the
-// digest and validator inspect it. Explicit online queries still validate fully.
+// Background discovery can reuse the digest and validation while a read oplock
+// still covers the same file. Otherwise it hashes the archive under a short
+// lease that excludes writers. Explicit online queries still validate fully.
 class SteamWorkshopValidationCache final
 {
+    struct ArchiveWatch
+    {
+        HANDLE file = INVALID_HANDLE_VALUE;
+        OVERLAPPED operation{};
+        REQUEST_OPLOCK_OUTPUT_BUFFER output{};
+        FILE_ID_INFO identity{};
+        bool pending = false;
+
+        ArchiveWatch() = default;
+        ArchiveWatch(const ArchiveWatch&) = delete;
+        ArchiveWatch& operator=(const ArchiveWatch&) = delete;
+        ~ArchiveWatch()
+        {
+            if (pending)
+            {
+                CancelIoEx(file, &operation);
+                DWORD transferred = 0;
+                GetOverlappedResult(file, &operation, &transferred, TRUE);
+            }
+            if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+            if (operation.hEvent) CloseHandle(operation.hEvent);
+        }
+
+        static std::unique_ptr<ArchiveWatch> Start(HANDLE lease, const FILE_ID_INFO& identity)
+        {
+            auto watch = std::make_unique<ArchiveWatch>();
+            // Keep this handle shareable even for writers and replacements.
+            // An R oplock breaks without an acknowledgement or waiting for this cache.
+            watch->file = ReOpenFile(lease, GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_FLAG_OVERLAPPED);
+            if (watch->file == INVALID_HANDLE_VALUE) return {};
+            watch->operation.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            if (!watch->operation.hEvent) return {};
+            REQUEST_OPLOCK_INPUT_BUFFER input{};
+            input.StructureVersion = REQUEST_OPLOCK_CURRENT_VERSION;
+            input.StructureLength = sizeof(input);
+            input.RequestedOplockLevel = OPLOCK_LEVEL_CACHE_READ;
+            input.Flags = REQUEST_OPLOCK_INPUT_FLAG_REQUEST;
+            DWORD transferred = 0;
+            if (DeviceIoControl(watch->file, FSCTL_REQUEST_OPLOCK, &input, sizeof(input),
+                &watch->output, sizeof(watch->output), &transferred, &watch->operation) ||
+                GetLastError() != ERROR_IO_PENDING)
+                return {};
+            watch->pending = true;
+            watch->identity = identity;
+            return watch;
+        }
+
+        bool Covers(const FILE_ID_INFO& current) const noexcept
+        {
+            return identity.VolumeSerialNumber == current.VolumeSerialNumber &&
+                std::memcmp(identity.FileId.Identifier, current.FileId.Identifier,
+                    sizeof(identity.FileId.Identifier)) == 0 &&
+                WaitForSingleObject(operation.hEvent, 0) == WAIT_TIMEOUT;
+        }
+    };
+
 public:
     struct Result
     {
@@ -62,19 +122,30 @@ public:
             information.nFileSizeLow > kMaxArchiveBytes)
             return std::forward<Validator>(validator)();
 
-        const std::string digest = WidgetPackageManager::Sha256File(archive);
-        if (digest.empty()) return std::forward<Validator>(validator)();
         const auto key = std::make_pair(archive.lexically_normal().native(),
             validationRoot.lexically_normal().native());
+        FILE_ID_INFO identity{};
+        const bool canWatch = GetFileInformationByHandleEx(lease.value, FileIdInfo, &identity, sizeof(identity)) &&
+            std::any_of(std::begin(identity.FileId.Identifier), std::end(identity.FileId.Identifier),
+                [](BYTE byte) { return byte != 0; });
+        if (canWatch)
+        {
+            std::lock_guard lock(mutex_);
+            const auto found = entries_.find(key);
+            if (found != entries_.end() && found->second.watch && found->second.watch->Covers(identity))
+                return Reuse(found->second);
+        }
+
+        auto watch = canWatch ? ArchiveWatch::Start(lease.value, identity) : nullptr;
+        const std::string digest = WidgetPackageManager::Sha256File(archive);
+        if (digest.empty()) return std::forward<Validator>(validator)();
         {
             std::lock_guard lock(mutex_);
             const auto found = entries_.find(key);
             if (found != entries_.end() && found->second.digest == digest)
             {
-                found->second.used = ++sequence_;
-                Result result = found->second.result;
-                result.reused = true;
-                return result;
+                if (watch && watch->Covers(identity)) found->second.watch = std::move(watch);
+                return Reuse(found->second);
             }
         }
 
@@ -99,7 +170,8 @@ public:
                     });
                 entries_.erase(oldest);
             }
-            entries_[key] = Entry{digest, result, ++sequence_};
+            if (watch && !watch->Covers(identity)) watch.reset();
+            entries_[key] = Entry{digest, result, std::move(watch), ++sequence_};
         }
         return result;
     }
@@ -109,8 +181,16 @@ private:
     {
         std::string digest;
         Result result;
+        std::unique_ptr<ArchiveWatch> watch;
         std::uint64_t used = 0;
     };
+    Result Reuse(Entry& entry)
+    {
+        entry.used = ++sequence_;
+        Result result = entry.result;
+        result.reused = true;
+        return result;
+    }
     const std::size_t capacity_;
     std::mutex mutex_;
     std::map<std::pair<std::wstring, std::wstring>, Entry> entries_;
