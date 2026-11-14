@@ -2909,5 +2909,8 @@
   "settings.taskbar.autoHide.disabled": "Windows 的任务栏自动隐藏已关闭。",
   "appearance.popupScene.tooltip": "悬浮提示",
   "appearance.popupScene.barPanel": "栏上面板",
-  "appearance.popupScene.followShared": "跟随共享弹窗主题"
+  "appearance.popupScene.followShared": "跟随共享弹窗主题",
+  "settings.pages.gridPreview": "网格布局预览",
+  "settings.pages.gridPreview.enabled": "启用网格预览",
+  "settings.pages.gridPreview.description": "在桌面按住快捷键，显示所有空网格。"
 }

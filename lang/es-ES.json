@@ -2909,5 +2909,8 @@
   "settings.taskbar.autoHide.disabled": "La ocultación automática de la barra de tareas de Windows está desactivada.",
   "appearance.popupScene.tooltip": "Información al pasar el puntero",
   "appearance.popupScene.barPanel": "Paneles de la barra de estado",
-  "appearance.popupScene.followShared": "Usar el tema compartido de ventanas emergentes"
+  "appearance.popupScene.followShared": "Usar el tema compartido de ventanas emergentes",
+  "settings.pages.gridPreview": "Vista previa de la cuadrícula",
+  "settings.pages.gridPreview.enabled": "Activar la vista previa",
+  "settings.pages.gridPreview.description": "Mantén pulsado el atajo en el escritorio para ver todas las celdas vacías."
 }

@@ -2909,5 +2909,8 @@
   "settings.taskbar.autoHide.disabled": "Windows のタスク バーの自動非表示はオフになっています。",
   "appearance.popupScene.tooltip": "ホバー時のヒント",
   "appearance.popupScene.barPanel": "ステータスバーのパネル",
-  "appearance.popupScene.followShared": "共通のポップアップテーマに従う"
+  "appearance.popupScene.followShared": "共通のポップアップテーマに従う",
+  "settings.pages.gridPreview": "グリッドレイアウトのプレビュー",
+  "settings.pages.gridPreview.enabled": "プレビューを有効にする",
+  "settings.pages.gridPreview.description": "デスクトップでショートカットを押している間、空いているグリッドセルをすべて表示します。"
 }

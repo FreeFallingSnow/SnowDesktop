@@ -2909,5 +2909,8 @@
   "settings.taskbar.autoHide.disabled": "Das automatische Ausblenden der Windows-Taskleiste ist ausgeschaltet.",
   "appearance.popupScene.tooltip": "Hover-QuickInfos",
   "appearance.popupScene.barPanel": "Panels der Statusleiste",
-  "appearance.popupScene.followShared": "Gemeinsames Popup-Design übernehmen"
+  "appearance.popupScene.followShared": "Gemeinsames Popup-Design übernehmen",
+  "settings.pages.gridPreview": "Rastervorschau",
+  "settings.pages.gridPreview.enabled": "Rastervorschau aktivieren",
+  "settings.pages.gridPreview.description": "Tastenkürzel auf dem Desktop gedrückt halten, um alle freien Rasterfelder anzuzeigen."
 }
