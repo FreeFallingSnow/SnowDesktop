@@ -850,8 +850,10 @@ local function appendSortMenu(items, total)
         enabled = total > 1 and not automaticSorting(),
     }
     items[#items + 1] = {
-        id = "task.autoSort", label = l10n.tr("lua_widget.reminders.auto_sort"),
-        icon = fluent.autoSort, iconFont = "fluent", checked = automaticSorting(),
+        id = "task.autoSort",
+        label = l10n.tr("lua_widget.reminders.auto_sort") .. "\t" ..
+            (automaticSorting() and l10n.tr("menu.status.on") or l10n.tr("menu.status.off")),
+        icon = fluent.autoSort, iconFont = "fluent",
     }
 end
 

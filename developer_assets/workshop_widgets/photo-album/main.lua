@@ -336,7 +336,8 @@ return widget.define({name=l10n.tr("album.name"),useCustomStyle=true,followPerso
         if request.id~="album.menu" then return nil end
         local a=m.album;local photo=a.photos[a.loadedIndex or a.index]
         m.menuPhoto=photo and {handle=photo.handle,child=photo.child} or nil
-        return ui.menu({{id="fill",label=l10n.tr("album.fill"),icon=fluent.fill,iconFont="fluent",checked=enabled("fill",true)},
+        local fillStatus=enabled("fill",true) and l10n.tr("menu.status.on") or l10n.tr("menu.status.off")
+        return ui.menu({{id="fill",label=l10n.tr("album.fill").."\t"..fillStatus,icon=fluent.fill,iconFont="fluent"},
             {id="removePhoto",label=copy().removePhoto,icon=fluent.remove,iconFont="fluent",enabled=photo~=nil and not m.preview},
             {id="clear",label=copy().clearAll,icon=fluent.clear,iconFont="fluent",enabled=not m.preview and (#a.sources>0 or a.importing~=nil or a.picking~=nil)},
             {id="manage",label=copy().manage,icon=fluent.manage,iconFont="fluent"}})

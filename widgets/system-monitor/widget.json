@@ -19,6 +19,7 @@
   ],
   "locales": {
     "zh-CN": {
+      "menu.status.current": "当前",
       "lua_widget.system_monitor.name": "系统状态",
       "lua_widget.system_monitor.card_size": "{0} 卡片大小（宽×高）",
       "lua_widget.system_monitor.description": "显示性能、存储、网络、电源和运行时长状态。",
@@ -73,6 +74,7 @@
       "lua_widget.system_monitor.orientation_horizontal": "横向"
     },
     "en-US": {
+      "menu.status.current": "Current",
       "lua_widget.system_monitor.name": "System Monitor",
       "lua_widget.system_monitor.card_size": "{0} card size (width × height)",
       "lua_widget.system_monitor.description": "Displays performance, storage, network, power, and uptime status.",
@@ -127,6 +129,7 @@
       "lua_widget.system_monitor.orientation_horizontal": "Horizontal"
     },
     "zh-TW": {
+      "menu.status.current": "目前",
       "lua_widget.system_monitor.name": "系統監視器",
       "lua_widget.system_monitor.card_size": "{0} 卡片大小（寬×高）",
       "lua_widget.system_monitor.description": "顯示效能、儲存空間、網路、電源和運作時間狀態。",
@@ -181,6 +184,7 @@
       "lua_widget.system_monitor.orientation_horizontal": "橫向"
     },
     "ja-JP": {
+      "menu.status.current": "現在",
       "lua_widget.system_monitor.name": "システムモニター",
       "lua_widget.system_monitor.card_size": "{0} カードのサイズ（幅×高さ）",
       "lua_widget.system_monitor.description": "パフォーマンス、ストレージ、ネットワーク、電源、稼働時間を表示します。",
@@ -235,6 +239,7 @@
       "lua_widget.system_monitor.orientation_horizontal": "横"
     },
     "ko-KR": {
+      "menu.status.current": "현재",
       "lua_widget.system_monitor.name": "시스템 모니터",
       "lua_widget.system_monitor.card_size": "{0} 카드 크기 (너비 × 높이)",
       "lua_widget.system_monitor.description": "성능, 저장소, 네트워크, 전원 및 가동 시간을 표시합니다.",
@@ -289,6 +294,7 @@
       "lua_widget.system_monitor.orientation_horizontal": "가로"
     },
     "de-DE": {
+      "menu.status.current": "Aktuell",
       "lua_widget.system_monitor.name": "Systemmonitor",
       "lua_widget.system_monitor.card_size": "Kartengröße für {0} (Breite × Höhe)",
       "lua_widget.system_monitor.description": "Zeigt Leistung, Speicher, Netzwerk, Stromversorgung und Betriebszeit an.",
@@ -343,6 +349,7 @@
       "lua_widget.system_monitor.orientation_horizontal": "Horizontal"
     },
     "fr-FR": {
+      "menu.status.current": "Actuel",
       "lua_widget.system_monitor.name": "Moniteur système",
       "lua_widget.system_monitor.card_size": "Taille de la carte {0} (largeur × hauteur)",
       "lua_widget.system_monitor.description": "Affiche les performances, le stockage, le réseau, l'alimentation et la durée de fonctionnement.",
@@ -397,6 +404,7 @@
       "lua_widget.system_monitor.orientation_horizontal": "Horizontale"
     },
     "es-ES": {
+      "menu.status.current": "Actual",
       "lua_widget.system_monitor.name": "Monitor del sistema",
       "lua_widget.system_monitor.card_size": "Tamaño de la tarjeta {0} (ancho × alto)",
       "lua_widget.system_monitor.description": "Muestra el rendimiento, el almacenamiento, la red, la alimentación y el tiempo de actividad.",
@@ -451,6 +459,7 @@
       "lua_widget.system_monitor.orientation_horizontal": "Horizontal"
     },
     "es-419": {
+      "menu.status.current": "Actual",
       "lua_widget.system_monitor.name": "Monitor del sistema",
       "lua_widget.system_monitor.card_size": "Tamaño de la tarjeta {0} (ancho × alto)",
       "lua_widget.system_monitor.description": "Muestra el rendimiento, el almacenamiento, la red, la energía y el tiempo de actividad.",
@@ -505,6 +514,7 @@
       "lua_widget.system_monitor.orientation_horizontal": "Horizontal"
     },
     "pt-BR": {
+      "menu.status.current": "Atual",
       "lua_widget.system_monitor.name": "Monitor do sistema",
       "lua_widget.system_monitor.card_size": "Tamanho do cartão {0} (largura × altura)",
       "lua_widget.system_monitor.description": "Exibe desempenho, armazenamento, rede, energia e tempo de atividade.",

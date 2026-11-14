@@ -8,13 +8,14 @@
   "minHostVersion": "1.0.14.0",
   "author": "SnowDesktop Workshop Lab",
   "license": "GPL-3.0-only",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "name": "Single Monitor",
   "nameKey": "monitor.name",
   "description": "A focused instrument for CPU, GPU, memory, VRAM, battery, disk, or network.",
   "descriptionKey": "monitor.description",
   "locales": {
     "zh-CN": {
+      "menu.status.current": "当前",
       "monitor.name": "单项系统监控",
       "monitor.description": "专注显示 CPU、GPU、内存、显存、电池、磁盘或网络。",
       "monitor.cpu": "CPU",
@@ -52,6 +53,7 @@
       "monitor.preview_intro": "在预览中选择信息预设，添加后也可点击标题或右键切换。"
     },
     "zh-TW": {
+      "menu.status.current": "目前",
       "monitor.name": "單項系統監控",
       "monitor.description": "專注顯示 CPU、GPU、記憶體、顯示記憶體、電池、磁碟或網路。",
       "monitor.cpu": "CPU",
@@ -89,6 +91,7 @@
       "monitor.preview_intro": "在預覽中選擇資訊預設，加入後也可點擊標題或按右鍵切換。"
     },
     "en-US": {
+      "menu.status.current": "Current",
       "monitor.name": "Single Monitor",
       "monitor.description": "A focused instrument for CPU, GPU, memory, VRAM, battery, disk, or network.",
       "monitor.cpu": "CPU",
@@ -126,6 +129,7 @@
       "monitor.preview_intro": "Choose a metric preset in the preview. After adding, click the title or right-click to switch."
     },
     "de-DE": {
+      "menu.status.current": "Aktuell",
       "monitor.name": "Einzelmonitor",
       "monitor.description": "Zeigt gezielt CPU, GPU, Arbeitsspeicher, Grafikspeicher, Akku, Laufwerk oder Netzwerk an.",
       "monitor.cpu": "CPU",
@@ -163,6 +167,7 @@
       "monitor.preview_intro": "In der Vorschau einen Messwert wählen. Nach dem Hinzufügen über den Titel oder per Rechtsklick wechseln."
     },
     "fr-FR": {
+      "menu.status.current": "Actuel",
       "monitor.name": "Moniteur individuel",
       "monitor.description": "Affiche au choix le processeur, le GPU, la mémoire, la VRAM, la batterie, le disque ou le réseau.",
       "monitor.cpu": "CPU",
@@ -200,6 +205,7 @@
       "monitor.preview_intro": "Choisissez une information dans l’aperçu. Après l’ajout, cliquez sur le titre ou faites un clic droit pour changer."
     },
     "ja-JP": {
+      "menu.status.current": "現在",
       "monitor.name": "単項目システムモニター",
       "monitor.description": "CPU、GPU、メモリ、VRAM、バッテリー、ディスク、ネットワークのいずれかを表示します。",
       "monitor.cpu": "CPU",
@@ -237,6 +243,7 @@
       "monitor.preview_intro": "プレビューで表示項目を選択します。追加後もタイトルのクリックや右クリックで切り替えられます。"
     },
     "ko-KR": {
+      "menu.status.current": "현재",
       "monitor.name": "단일 시스템 모니터",
       "monitor.description": "CPU, GPU, 메모리, VRAM, 배터리, 디스크 또는 네트워크 중 하나를 표시합니다.",
       "monitor.cpu": "CPU",
@@ -274,6 +281,7 @@
       "monitor.preview_intro": "미리 보기에서 표시할 정보를 선택하세요. 추가한 후에도 제목을 클릭하거나 오른쪽 클릭으로 전환할 수 있습니다."
     },
     "es-ES": {
+      "menu.status.current": "Actual",
       "monitor.name": "Monitor individual",
       "monitor.description": "Muestra CPU, GPU, memoria, VRAM, batería, disco o red de forma individual.",
       "monitor.cpu": "CPU",
@@ -311,6 +319,7 @@
       "monitor.preview_intro": "Elige la información en la vista previa. Después de añadirlo, haz clic en el título o usa el botón derecho para cambiarla."
     },
     "es-419": {
+      "menu.status.current": "Actual",
       "monitor.name": "Monitor individual",
       "monitor.description": "Muestra CPU, GPU, memoria, VRAM, batería, disco o red de forma individual.",
       "monitor.cpu": "CPU",
@@ -348,6 +357,7 @@
       "monitor.preview_intro": "Elige la información en la vista previa. Después de agregarlo, haz clic en el título o usa el botón derecho para cambiarla."
     },
     "pt-BR": {
+      "menu.status.current": "Atual",
       "monitor.name": "Monitor individual",
       "monitor.description": "Exibe CPU, GPU, memória, VRAM, bateria, disco ou rede individualmente.",
       "monitor.cpu": "CPU",

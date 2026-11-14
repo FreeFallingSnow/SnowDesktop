@@ -59,6 +59,17 @@ std::wstring FontMenuValue(double value, const wchar_t* unit)
     return text;
 }
 
+std::wstring SpacingPresetLabel(int percent, int currentPercent)
+{
+    auto label = std::to_wstring(percent) + L"%";
+    if (percent == currentPercent)
+    {
+        label += L'\t';
+        label += _LW("statusBar.menu.current");
+    }
+    return label;
+}
+
 std::wstring FontWeightMenuLabel(int weight)
 {
     return std::wstring(_LW("app.settings.title_font_weight")) + L": " +
@@ -514,9 +525,13 @@ std::vector<snowdesktop::modern_menu::Item> DesktopApp::BuildGridAdjustmentMenuI
             child.command = firstCommand + static_cast<UINT>(i);
             child.label = std::move(childLabel);
             child.glyph = L"\uF462";
-            child.checked = page &&
+            if (page &&
                 page->columns == recommended.columns &&
-                page->rows == recommended.rows;
+                page->rows == recommended.rows)
+            {
+                child.label += L" · ";
+                child.label += _LW("statusBar.menu.current");
+            }
             parent.children.push_back(std::move(child));
         }
         items.push_back(std::move(parent));
@@ -1655,12 +1670,9 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
                 std::round(iconSpacingScale_ * 100.0f));
             for (int pct : presets)
             {
-                wchar_t label[16]{};
-                swprintf_s(label, L"%d%%", pct);
-                UINT flags = MF_STRING;
-                if (currentSpacingPercent == pct) flags |= MF_CHECKED;
-                AppendMenuW(spacingMenu, flags,
-                    kContextSpacingPresetFirst + static_cast<UINT>(pct), label);
+                AppendMenuW(spacingMenu, MF_STRING,
+                    kContextSpacingPresetFirst + static_cast<UINT>(pct),
+                    SpacingPresetLabel(pct, currentSpacingPercent).c_str());
             }
             AppendMenuW(spacingMenu, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(spacingMenu, MF_STRING, kContextSpacingIncrease, _LW("app.menu.inc_spacing"));
@@ -2193,7 +2205,8 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             if (item.command == static_cast<UINT>(reinterpret_cast<UINT_PTR>(fontSizeMenu))) item.label = _LFW("app.menu.title_font_size_cu", FontMenuValue(itemFontSizeCu_, L""));
             if (item.command == static_cast<UINT>(reinterpret_cast<UINT_PTR>(listFontSizeMenu))) item.label = _LFW("app.menu.list_font_size_cu", FontMenuValue(listItemFontSizeCu_, L""));
             if (item.command == static_cast<UINT>(reinterpret_cast<UINT_PTR>(fontWeightMenu))) item.label = FontWeightMenuLabel(itemFontWeight_);
-            if (item.command >= kContextSpacingPresetFirst && item.command <= kContextSpacingPresetFirst + 200) item.checked = static_cast<int>(item.command - kContextSpacingPresetFirst) == spacing;
+            if (item.command >= kContextSpacingPresetFirst && item.command <= kContextSpacingPresetFirst + 200)
+                item.label = SpacingPresetLabel(static_cast<int>(item.command - kContextSpacingPresetFirst), spacing);
             if (const auto size = FontPresetForCommand(item.command, kContextFontSizePresetFirst, kFontSizePresets))
                 item.checked = itemFontSizeCu_ == static_cast<float>(*size);
             if (const auto size = FontPresetForCommand(item.command, kContextListFontSizePresetFirst, kFontSizePresets))

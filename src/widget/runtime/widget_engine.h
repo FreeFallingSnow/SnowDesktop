@@ -235,9 +235,11 @@ struct LuaWidgetMenuItem
     std::string imageResourceName; ///< 包内 image resource 名称
     bool enabled = true;       ///< 是否可用（灰显）
     bool checked = false;      ///< 是否显示选中标记
+    bool keepOpen = false;     ///< 选择后重新查询当前菜单
     bool separator = false;    ///< 是否为分隔线（为 true 时忽略其他字段）
     bool elementContext = false;
     std::string actionId;
+    std::string bindingId;
     std::string targetKey;
     std::string surface = "desktop";
     snowdesktop::widget_runtime::InteractionValue contextValue;
@@ -1026,9 +1028,10 @@ public:
     std::vector<LuaWidgetMenuItem> GetContextMenu(
         const std::wstring& widgetId, int x = -1, int y = -1,
         std::string_view surface = "desktop",
-        bool componentScopeOnly = false);
+        bool componentScopeOnly = false,
+        const LuaWidgetMenuItem* refreshTarget = nullptr);
 
-    void InvokeMenu(const std::wstring& widgetId,
+    bool InvokeMenu(const std::wstring& widgetId,
         const LuaWidgetMenuItem& menuItem);
 
     /**

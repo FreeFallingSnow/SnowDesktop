@@ -334,6 +334,14 @@ void DesktopApp::ShowItemContextMenu(
         }
         return true;
     };
+    const auto largeIconToggleLabel = [&](const char* key, auto predicate) {
+        const auto* status = allLargeIcons(predicate) ? _LW("app.interact.on")
+            : allLargeIcons([&](const auto& config) { return !predicate(config); })
+                ? _LW("app.interact.off") : _LW("largeIcon.mixed");
+        return std::wstring(_LW(key)) + L"\t" + status;
+    };
+    const auto hoverOnly = [](const auto& config) { return config.showOnHoverOnly; };
+    const auto keepWhenHidden = [](const auto& config) { return config.keepWhenDesktopHidden; };
     const bool largeIconMenu = (selectedCount == 1 || allLargeIcons([](const auto&) { return true; })) && !dockFrequentItem && !dockApplicationItem &&
         !dockMapping && !dockEntryIndex && !keepQuickNavigationOpen &&
         !IsItemInAnyWidget(items_[itemIndex]) && items_[itemIndex].gridCell.pageId != kDockPageId;
@@ -380,8 +388,10 @@ void DesktopApp::ShowItemContextMenu(
             }
             AppendMenuW(settings, MF_POPUP | (editable ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(backgrounds), _LW("largeIcon.backgroundSettings"));
             AppendMenuW(settings, MF_POPUP | (editable ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(effects), _LW("largeIcon.effectsSection"));
-            AppendMenuW(settings, MF_STRING | (editable ? 0 : MF_GRAYED) | (allLargeIcons([](const auto& c) { return c.showOnHoverOnly; }) ? MF_CHECKED : 0), kContextLargeIconHoverOnly, _LW("app.interact.hover_only"));
-            AppendMenuW(settings, MF_STRING | (editable ? 0 : MF_GRAYED) | (allLargeIcons([](const auto& c) { return c.keepWhenDesktopHidden; }) ? MF_CHECKED : 0), kContextLargeIconKeepWhenHidden, _LW("app.interact.keep_when_hidden"));
+            AppendMenuW(settings, MF_STRING | (editable ? 0 : MF_GRAYED),
+                kContextLargeIconHoverOnly, largeIconToggleLabel("app.interact.hover_only", hoverOnly).c_str());
+            AppendMenuW(settings, MF_STRING | (editable ? 0 : MF_GRAYED),
+                kContextLargeIconKeepWhenHidden, largeIconToggleLabel("app.interact.keep_when_hidden", keepWhenHidden).c_str());
             SetMenuItemIcon(settings, kContextLargeIconHoverOnly, L"\uF06E");
             SetMenuItemIcon(settings, kContextLargeIconKeepWhenHidden, L"\uF108");
             AppendMenuW(settings, MF_STRING, kContextLargeIconSettings, _LW("largeIcon.detailedSettings"));
@@ -664,8 +674,8 @@ void DesktopApp::ShowItemContextMenu(
             // The menu runs a nested loop: resolve identity and entitlement again at commit time.
             if (!CanEditLargeIcons()) { OpenLargeIconSettings(largeIconKeys); return; }
             std::vector<std::pair<size_t, std::optional<snowdesktop::LargeIconConfig>>> changes;
-            const bool showOnHover = !allLargeIcons([](const auto& c) { return c.showOnHoverOnly; });
-            const bool keepWhenHidden = !allLargeIcons([](const auto& c) { return c.keepWhenDesktopHidden; });
+            const bool showOnHover = !allLargeIcons(hoverOnly);
+            const bool keepOnDesktopHide = !allLargeIcons(keepWhenHidden);
             for (const auto& key : largeIconKeys)
             {
                 const auto index = FindItemIndexByKey(key);
@@ -676,7 +686,7 @@ void DesktopApp::ShowItemContextMenu(
                 if (visibilityCommand && CanEditLargeIcons())
                 {
                     if (command == kContextLargeIconHoverOnly) config.showOnHoverOnly = showOnHover;
-                    else config.keepWhenDesktopHidden = keepWhenHidden;
+                    else config.keepWhenDesktopHidden = keepOnDesktopHide;
                 }
                 const bool changed = visibilityCommand ? CanEditLargeIcons() : backgroundCommand ? presets::ApplyBackground(config,
                     presets::backgrounds[command - kContextLargeIconBackgroundFirst].value, CanEditLargeIcons(),
@@ -704,8 +714,16 @@ void DesktopApp::ShowItemContextMenu(
         if (index >= items_.size() || !items_[index].largeIcon) { snowdesktop::modern_menu::DismissActive(); return true; }
         const bool editable = CanEditLargeIcons();
         snowdesktop::modern_menu::VisitItems(currentItems, [&](auto& item) {
-            if (item.command == kContextLargeIconHoverOnly) { item.checked = allLargeIcons([](const auto& c) { return c.showOnHoverOnly; }); item.enabled = editable; }
-            if (item.command == kContextLargeIconKeepWhenHidden) { item.checked = allLargeIcons([](const auto& c) { return c.keepWhenDesktopHidden; }); item.enabled = editable; }
+            if (item.command == kContextLargeIconHoverOnly)
+            {
+                item.label = largeIconToggleLabel("app.interact.hover_only", hoverOnly);
+                item.enabled = editable;
+            }
+            if (item.command == kContextLargeIconKeepWhenHidden)
+            {
+                item.label = largeIconToggleLabel("app.interact.keep_when_hidden", keepWhenHidden);
+                item.enabled = editable;
+            }
             if (item.command >= kContextLargeIconBackgroundFirst && item.command < kContextLargeIconBackgroundFirst + presets::backgrounds.size())
             {
                 item.checked = allLargeIcons([&](const auto& c) { return presets::Background(c) == presets::backgrounds[item.command - kContextLargeIconBackgroundFirst].value; });

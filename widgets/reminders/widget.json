@@ -19,6 +19,8 @@
   "descriptionKey": "lua_widget.reminders.description",
   "locales": {
     "zh-CN": {
+      "menu.status.on": "开",
+      "menu.status.off": "关",
       "lua_widget.reminders.name": "ToDo 清单",
       "lua_widget.reminders.legacy_name": "提醒事项",
       "lua_widget.reminders.description": "可快速添加、勾选、编辑和筛选的本地 ToDo 清单。",
@@ -48,6 +50,8 @@
       "lua_widget.reminders.auto_sort": "自动按紧急程度排序"
     },
     "en-US": {
+      "menu.status.on": "On",
+      "menu.status.off": "Off",
       "lua_widget.reminders.name": "ToDo List",
       "lua_widget.reminders.legacy_name": "Reminders",
       "lua_widget.reminders.description": "An interactive local ToDo list with quick add, completion, editing, and filtering.",
@@ -77,6 +81,8 @@
       "lua_widget.reminders.auto_sort": "Automatically Sort by Urgency"
     },
     "zh-TW": {
+      "menu.status.on": "開",
+      "menu.status.off": "關",
       "lua_widget.reminders.name": "ToDo列表",
       "lua_widget.reminders.legacy_name": "提醒事項",
       "lua_widget.reminders.description": "可快速新增、勾選、編輯和篩選的本地 ToDo 清單。",
@@ -106,6 +112,8 @@
       "lua_widget.reminders.auto_sort": "自動依緊急程度排序"
     },
     "ja-JP": {
+      "menu.status.on": "オン",
+      "menu.status.off": "オフ",
       "lua_widget.reminders.name": "ToDo リスト",
       "lua_widget.reminders.legacy_name": "リマインダー",
       "lua_widget.reminders.description": "クイック追加、入力、編集、フィルター機能を備えたインタラクティブなローカル ToDo リスト。",
@@ -135,6 +143,8 @@
       "lua_widget.reminders.auto_sort": "緊急度順に自動で並べ替え"
     },
     "ko-KR": {
+      "menu.status.on": "켜짐",
+      "menu.status.off": "꺼짐",
       "lua_widget.reminders.name": "할 일 목록",
       "lua_widget.reminders.legacy_name": "알림",
       "lua_widget.reminders.description": "빠른 추가, 완성, 편집 및 필터링 기능을 갖춘 대화형 로컬 ToDo 목록입니다.",
@@ -164,6 +174,8 @@
       "lua_widget.reminders.auto_sort": "긴급도순 자동 정렬"
     },
     "de-DE": {
+      "menu.status.on": "Ein",
+      "menu.status.off": "Aus",
       "lua_widget.reminders.name": "Aufgabenliste",
       "lua_widget.reminders.legacy_name": "Erinnerungen",
       "lua_widget.reminders.description": "Eine interaktive lokale ToDo-Liste mit schnellem Hinzufügen, Vervollständigen, Bearbeiten und Filtern.",
@@ -193,6 +205,8 @@
       "lua_widget.reminders.auto_sort": "Automatisch nach Dringlichkeit sortieren"
     },
     "fr-FR": {
+      "menu.status.on": "Activé",
+      "menu.status.off": "Désactivé",
       "lua_widget.reminders.name": "Liste de tâches",
       "lua_widget.reminders.legacy_name": "Rappels",
       "lua_widget.reminders.description": "Une liste de tâches locale interactive avec ajout, complétion, modification et filtrage rapides.",
@@ -222,6 +236,8 @@
       "lua_widget.reminders.auto_sort": "Trier automatiquement par urgence"
     },
     "es-ES": {
+      "menu.status.on": "Activado",
+      "menu.status.off": "Desactivado",
       "lua_widget.reminders.name": "Tareas",
       "lua_widget.reminders.legacy_name": "Recordatorios",
       "lua_widget.reminders.description": "Una lista local e interactiva de tareas, con opciones para añadirlas, completarlas, editarlas y filtrarlas.",
@@ -251,6 +267,8 @@
       "lua_widget.reminders.auto_sort": "Ordenar automáticamente por urgencia"
     },
     "es-419": {
+      "menu.status.on": "Activado",
+      "menu.status.off": "Desactivado",
       "lua_widget.reminders.name": "Lista de tareas",
       "lua_widget.reminders.legacy_name": "Recordatorios",
       "lua_widget.reminders.description": "Una lista de tareas pendientes local interactiva con funciones de adición, finalización, edición y filtrado rápidos.",
@@ -280,6 +298,8 @@
       "lua_widget.reminders.auto_sort": "Ordenar automáticamente por urgencia"
     },
     "pt-BR": {
+      "menu.status.on": "Ativado",
+      "menu.status.off": "Desativado",
       "lua_widget.reminders.name": "Lista de tarefas",
       "lua_widget.reminders.legacy_name": "Lembretes",
       "lua_widget.reminders.description": "Uma lista de tarefas local interativa com adição, conclusão, edição e filtragem rápidas.",

@@ -641,6 +641,7 @@
 ---@field type? 'separator'
 ---@field enabled? boolean
 ---@field checked? boolean
+---@field keepOpen? boolean Keep this action's menu open and refresh its rows after dispatch. Requires interaction.contextMenu.keepOpen and a stable menu structure.
 ---@field icon? string Optional host glyph.
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
 ---@field image? SnowImageResource Optional declared package image; mutually exclusive with icon and requires interaction.contextMenu.resourceImage.

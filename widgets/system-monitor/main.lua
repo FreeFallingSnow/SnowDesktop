@@ -1154,6 +1154,15 @@ local function menu(_context, _model, request)
     if request.id ~= "system.menu" then return nil end
     persistGpuSelection()
     local items = {}
+    local function appendFlatChoices(choices)
+        for _, item in ipairs(choices) do
+            if item.checked then
+                item.label = item.label .. "\t" .. l10n.tr("menu.status.current")
+            end
+            item.checked = nil
+            items[#items + 1] = item
+        end
+    end
     local cardId = request.value and request.value.cardId
     if cardId and cardTitles[cardId] and showCard(cardId) then
         local selectedSize = cardLayout.size(storage.get("size_" .. cardId))
@@ -1168,7 +1177,7 @@ local function menu(_context, _model, request)
                 icon = fluent.size, iconFont = "fluent" }
         else
             items[#items + 1] = { id = "system.size.heading", label = heading, enabled = false }
-            for _, item in ipairs(sizes) do items[#items + 1] = item end
+            appendFlatChoices(sizes)
         end
         items[#items + 1] = { type = "separator" }
         local saved = storage.get("card_order")
@@ -1204,7 +1213,7 @@ local function menu(_context, _model, request)
         else
             items[#items + 1] = { id = "system.orientation.heading",
                 label = heading, enabled = false }
-            for _, item in ipairs(directions) do items[#items + 1] = item end
+            appendFlatChoices(directions)
         end
         items[#items + 1] = { type = "separator" }
     end
@@ -1254,7 +1263,7 @@ local function menu(_context, _model, request)
                 label = l10n.tr("lua_widget.system_monitor.gpu_choose"),
                 enabled = false,
             }
-            for _, item in ipairs(gpuItems) do items[#items + 1] = item end
+            appendFlatChoices(gpuItems)
         end
         items[#items + 1] = { type = "separator" }
     end

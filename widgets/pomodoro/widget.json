@@ -28,6 +28,8 @@
   ],
   "locales": {
     "zh-CN": {
+      "menu.status.on": "开",
+      "menu.status.off": "关",
       "lua_widget.pomodoro.name": "番茄钟",
       "lua_widget.pomodoro.description": "支持专注与休息循环、暂停继续以及自定义时长和颜色的番茄钟。",
       "lua_widget.pomodoro.work_minutes": "专注时长",
@@ -58,6 +60,8 @@
       "lua_widget.pomodoro.sound": "完成提示音"
     },
     "en-US": {
+      "menu.status.on": "On",
+      "menu.status.off": "Off",
       "lua_widget.pomodoro.name": "Pomodoro",
       "lua_widget.pomodoro.description": "A Pomodoro timer with focus and break cycles, pause and resume, and customizable durations and colors.",
       "lua_widget.pomodoro.work_minutes": "Focus duration",
@@ -88,6 +92,8 @@
       "lua_widget.pomodoro.sound": "Completion sound"
     },
     "zh-TW": {
+      "menu.status.on": "開",
+      "menu.status.off": "關",
       "lua_widget.pomodoro.name": "番茄鐘",
       "lua_widget.pomodoro.description": "支援專注與休息循環、暫停繼續以及自訂長度和顏色的番茄鐘。",
       "lua_widget.pomodoro.work_minutes": "專注時長",
@@ -118,6 +124,8 @@
       "lua_widget.pomodoro.sound": "完成提示音"
     },
     "ja-JP": {
+      "menu.status.on": "オン",
+      "menu.status.off": "オフ",
       "lua_widget.pomodoro.name": "ポモドーロ",
       "lua_widget.pomodoro.description": "フォーカスと休憩のサイクル、一時停止と再開、カスタマイズ可能な期間と色を備えたポモドーロ タイマー。",
       "lua_widget.pomodoro.work_minutes": "集中時間",
@@ -148,6 +156,8 @@
       "lua_widget.pomodoro.sound": "完了音"
     },
     "ko-KR": {
+      "menu.status.on": "켜짐",
+      "menu.status.off": "꺼짐",
       "lua_widget.pomodoro.name": "포모도로",
       "lua_widget.pomodoro.description": "집중 및 휴식 주기, 일시 중지와 재개, 사용자 지정 시간과 색상을 지원하는 Pomodoro 타이머입니다.",
       "lua_widget.pomodoro.work_minutes": "집중 시간",
@@ -178,6 +188,8 @@
       "lua_widget.pomodoro.sound": "완료 알림음"
     },
     "de-DE": {
+      "menu.status.on": "Ein",
+      "menu.status.off": "Aus",
       "lua_widget.pomodoro.name": "Pomodoro",
       "lua_widget.pomodoro.description": "Ein Pomodoro-Timer mit Fokus- und Pausenzyklen, Pause und Fortsetzen sowie anpassbaren Dauern und Farben.",
       "lua_widget.pomodoro.work_minutes": "Konzentrationsdauer",
@@ -208,6 +220,8 @@
       "lua_widget.pomodoro.sound": "Abschlusston"
     },
     "fr-FR": {
+      "menu.status.on": "Activé",
+      "menu.status.off": "Désactivé",
       "lua_widget.pomodoro.name": "Pomodoro",
       "lua_widget.pomodoro.description": "Une minuterie Pomodoro avec des cycles de mise au point et de pause, une pause et une reprise, ainsi que des durées et des couleurs personnalisables.",
       "lua_widget.pomodoro.work_minutes": "Durée de concentration",
@@ -238,6 +252,8 @@
       "lua_widget.pomodoro.sound": "Son de fin"
     },
     "es-ES": {
+      "menu.status.on": "Activado",
+      "menu.status.off": "Desactivado",
       "lua_widget.pomodoro.name": "Pomodoro",
       "lua_widget.pomodoro.description": "Un temporizador Pomodoro con ciclos de enfoque y pausa, pausa y reanudación, y duraciones y colores personalizables.",
       "lua_widget.pomodoro.work_minutes": "Duración de concentración",
@@ -268,6 +284,8 @@
       "lua_widget.pomodoro.sound": "Sonido al terminar"
     },
     "es-419": {
+      "menu.status.on": "Activado",
+      "menu.status.off": "Desactivado",
       "lua_widget.pomodoro.name": "Pomodoro",
       "lua_widget.pomodoro.description": "Un temporizador Pomodoro con ciclos de enfoque y pausa, pausa y reanudación, y duraciones y colores personalizables.",
       "lua_widget.pomodoro.work_minutes": "Duración de concentración",
@@ -298,6 +316,8 @@
       "lua_widget.pomodoro.sound": "Sonido al terminar"
     },
     "pt-BR": {
+      "menu.status.on": "Ativado",
+      "menu.status.off": "Desativado",
       "lua_widget.pomodoro.name": "Pomodoro",
       "lua_widget.pomodoro.description": "Um cronômetro Pomodoro com ciclos de foco e pausa, pausa e retomada, além de durações e cores personalizáveis.",
       "lua_widget.pomodoro.work_minutes": "Duração do foco",
@@ -363,6 +383,7 @@
     "widget.size.aspectRatio"
   ],
   "optionalFeatures": [
+    "interaction.contextMenu.keepOpen",
     "task.notification.show",
     "task.start",
     "task.audio.playback"

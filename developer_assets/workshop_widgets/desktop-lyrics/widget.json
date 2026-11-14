@@ -12,9 +12,10 @@
   "nameKey": "lua_widget.desktop_lyrics.name",
   "description": "Read-only lyrics synchronized to Windows SMTC, on a transparent background.",
   "descriptionKey": "lua_widget.desktop_lyrics.description",
-  "version": "1.1.19",
+  "version": "1.1.20",
   "locales": {
     "en-US": {
+      "menu.status.current": "Current",
       "lua_widget.desktop_lyrics.offset": "Extra lyric delay (ms)",
       "lua_widget.desktop_lyrics.text_scale": "Lyric size (%)",
       "lua_widget.desktop_lyrics.translation": "Show translation",
@@ -47,6 +48,7 @@
       "lua_widget.desktop_lyrics.mode_dynamic": "Dynamic lyrics"
     },
     "zh-CN": {
+      "menu.status.current": "当前",
       "lua_widget.desktop_lyrics.offset": "额外歌词延迟（毫秒）",
       "lua_widget.desktop_lyrics.text_scale": "歌词字号（%）",
       "lua_widget.desktop_lyrics.translation": "显示翻译",
@@ -79,6 +81,7 @@
       "lua_widget.desktop_lyrics.mode_dynamic": "动态歌词"
     },
     "zh-TW": {
+      "menu.status.current": "目前",
       "lua_widget.desktop_lyrics.offset": "額外歌詞延遲（毫秒）",
       "lua_widget.desktop_lyrics.text_scale": "歌詞字級（%）",
       "lua_widget.desktop_lyrics.translation": "顯示翻譯",
@@ -111,6 +114,7 @@
       "lua_widget.desktop_lyrics.mode_dynamic": "動態歌詞"
     },
     "ja-JP": {
+      "menu.status.current": "現在",
       "lua_widget.desktop_lyrics.offset": "歌詞の追加遅延（ms）",
       "lua_widget.desktop_lyrics.text_scale": "歌詞サイズ（%）",
       "lua_widget.desktop_lyrics.translation": "翻訳を表示",
@@ -143,6 +147,7 @@
       "lua_widget.desktop_lyrics.mode_dynamic": "ダイナミック歌詞"
     },
     "ko-KR": {
+      "menu.status.current": "현재",
       "lua_widget.desktop_lyrics.offset": "추가 가사 지연(ms)",
       "lua_widget.desktop_lyrics.text_scale": "가사 크기(%)",
       "lua_widget.desktop_lyrics.translation": "번역 표시",
@@ -175,6 +180,7 @@
       "lua_widget.desktop_lyrics.mode_dynamic": "동적 가사"
     },
     "de-DE": {
+      "menu.status.current": "Aktuell",
       "lua_widget.desktop_lyrics.offset": "Zusätzliche Textverzögerung (ms)",
       "lua_widget.desktop_lyrics.text_scale": "Textgröße (%)",
       "lua_widget.desktop_lyrics.translation": "Übersetzung anzeigen",
@@ -207,6 +213,7 @@
       "lua_widget.desktop_lyrics.mode_dynamic": "Dynamischer Liedtext"
     },
     "fr-FR": {
+      "menu.status.current": "Actuel",
       "lua_widget.desktop_lyrics.offset": "Retard supplémentaire des paroles (ms)",
       "lua_widget.desktop_lyrics.text_scale": "Taille des paroles (%)",
       "lua_widget.desktop_lyrics.translation": "Afficher la traduction",
@@ -239,6 +246,7 @@
       "lua_widget.desktop_lyrics.mode_dynamic": "Paroles animées"
     },
     "es-ES": {
+      "menu.status.current": "Actual",
       "lua_widget.desktop_lyrics.offset": "Retraso adicional de letras (ms)",
       "lua_widget.desktop_lyrics.text_scale": "Tamaño de letra (%)",
       "lua_widget.desktop_lyrics.translation": "Mostrar traducción",
@@ -271,6 +279,7 @@
       "lua_widget.desktop_lyrics.mode_dynamic": "Letras dinámicas"
     },
     "es-419": {
+      "menu.status.current": "Actual",
       "lua_widget.desktop_lyrics.offset": "Retraso adicional de letras (ms)",
       "lua_widget.desktop_lyrics.text_scale": "Tamaño de letra (%)",
       "lua_widget.desktop_lyrics.translation": "Mostrar traducción",
@@ -303,6 +312,7 @@
       "lua_widget.desktop_lyrics.mode_dynamic": "Letras dinámicas"
     },
     "pt-BR": {
+      "menu.status.current": "Atual",
       "lua_widget.desktop_lyrics.offset": "Atraso adicional da letra (ms)",
       "lua_widget.desktop_lyrics.text_scale": "Tamanho da letra (%)",
       "lua_widget.desktop_lyrics.translation": "Mostrar tradução",

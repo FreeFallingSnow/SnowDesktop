@@ -1134,16 +1134,9 @@ local function menu(_context, model, request)
     local items = {
         {
             id = "launcher.configure",
-            label = l10n.tr("workshop.aurora_player.configure_launcher"),
+            label = l10n.tr("workshop.aurora_player.configure_launcher") .. "\t" ..
+                (launcher and launcher.title or l10n.tr("workshop.aurora_player.not_set")),
             icon = fluent.settings, iconFont = "fluent",
-        },
-        { type = "separator" },
-        {
-            id = "launcher.current",
-            label = launcher and launcher.title or
-                l10n.tr("workshop.aurora_player.not_set"),
-            checked = true,
-            enabled = false,
         },
     }
     local sourceItems=localPlayback.menuItems(model.localPlayback)

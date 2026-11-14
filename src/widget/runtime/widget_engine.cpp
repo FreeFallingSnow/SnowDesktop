@@ -23410,7 +23410,8 @@ static bool PushProtectedMenuField(lua_State* state, int tableIndex,
 
 std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
     const std::wstring& widgetId, int x, int y,
-    std::string_view surface, bool componentScopeOnly)
+    std::string_view surface, bool componentScopeOnly,
+    const LuaWidgetMenuItem* refreshTarget)
 {
     std::vector<LuaWidgetMenuItem> result;
     int idx = FindWidget(widgetId);
@@ -23424,10 +23425,27 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
         auto& interactionRegions =
             InteractionRegionsForSurface(w, surface);
         std::string targetKey;
-        const auto* requestActionPointer =
-            interactionRegions.ContextMenuActionAt(
+        const snowdesktop::widget_runtime::InteractionAction* requestActionPointer;
+        if (refreshTarget)
+        {
+            if (w.runtimeToken != refreshTarget->runtimeToken) return result;
+            targetKey = refreshTarget->targetKey;
+            const auto* region = interactionRegions.Find(targetKey);
+            if (!region || !region->enabled) return result;
+            requestActionPointer = interactionRegions.FindAction(targetKey, "contextMenu");
+            if (!requestActionPointer || requestActionPointer->id != refreshTarget->bindingId ||
+                requestActionPointer->value != refreshTarget->contextValue ||
+                (requestActionPointer->contextMenuScope ==
+                    snowdesktop::widget_runtime::InteractionAction::ContextMenuScope::Element) !=
+                    refreshTarget->elementContext)
+                return result;
+        }
+        else
+        {
+            requestActionPointer = interactionRegions.ContextMenuActionAt(
                 static_cast<float>(x), static_cast<float>(y),
                 componentScopeOnly, &targetKey);
+        }
         if (!requestActionPointer || targetKey.empty()) return result;
         const auto requestAction = *requestActionPointer;
         WidgetExecutionContextGuard contextGuard(d2dState_, widgetId);
@@ -23580,6 +23598,9 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
                 if (!pushField(-1, "checked")) return false;
                 item.checked = lua_toboolean(state, -1) != 0;
                 lua_pop(state, 1);
+                if (!pushField(-1, "keepOpen")) return false;
+                item.keepOpen = lua_isboolean(state, -1) && lua_toboolean(state, -1);
+                lua_pop(state, 1);
                 if (item.label.empty() || item.label.size() > 512)
                 {
                     menuError =
@@ -23596,10 +23617,10 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
                 }
                 if (hasChildren)
                 {
-                    if (!item.actionId.empty())
+                    if (!item.actionId.empty() || item.keepOpen)
                     {
                         menuError =
-                            "Widget submenu parents cannot also declare an id";
+                            "Widget submenu parents cannot declare id or keepOpen";
                         return false;
                     }
                     if (depth >= kMaxSubmenuDepth)
@@ -23632,6 +23653,7 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
                         snowdesktop::widget_runtime::InteractionAction::
                             ContextMenuScope::Element;
                     item.targetKey = targetKey;
+                    item.bindingId = requestAction.id;
                     item.surface = normalizedSurface;
                     item.contextValue = requestAction.value;
                     item.runtimeToken = w.runtimeToken;
@@ -23651,11 +23673,11 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
     return result;
 }
 
-void WidgetEngine::InvokeMenu(const std::wstring& widgetId,
+bool WidgetEngine::InvokeMenu(const std::wstring& widgetId,
     const LuaWidgetMenuItem& menuItem)
 {
     const int index = FindWidget(widgetId);
-    if (index < 0) return;
+    if (index < 0) return false;
     auto& widget = widgets_[index];
     auto& interactionRegions = InteractionRegionsForSurface(
         widget, menuItem.surface);
@@ -23663,11 +23685,22 @@ void WidgetEngine::InvokeMenu(const std::wstring& widgetId,
         !snowdesktop::widget_runtime::IsWidgetMenuSelectionCurrent(
             interactionRegions, menuItem.targetKey,
             menuItem.runtimeToken, widget.runtimeToken))
-        return;
+        return false;
+    if (menuItem.keepOpen)
+    {
+        const auto* region = interactionRegions.Find(menuItem.targetKey);
+        const auto* action = interactionRegions.FindAction(menuItem.targetKey, "contextMenu");
+        if (!region || !region->enabled || !action || action->id != menuItem.bindingId ||
+            action->value != menuItem.contextValue ||
+            (action->contextMenuScope ==
+                snowdesktop::widget_runtime::InteractionAction::ContextMenuScope::Element) !=
+                menuItem.elementContext)
+            return false;
+    }
     snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
         trustedGestureState_, true);
     WidgetSurfaceScope surfaceScope(d2dState_, menuItem.surface.c_str());
-    (void)InvokeLifecycleEvent(widget, "action",
+    return InvokeLifecycleEvent(widget, "action",
         [&menuItem](lua_State* eventState) {
             lua_pushlstring(eventState, menuItem.actionId.data(),
                 menuItem.actionId.size());

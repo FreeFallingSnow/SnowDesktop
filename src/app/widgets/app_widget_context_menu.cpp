@@ -470,6 +470,10 @@ void DesktopApp::ShowWidgetContextMenu(
         label += status;
         return label;
     };
+    const auto currentOptionLabel = [&](const wchar_t* title, bool current) {
+        return current ? statusLabel(title, _LW("statusBar.menu.current"))
+                       : std::wstring(title);
+    };
     const auto visibilityLabel = [&](const wchar_t* title,
                                      bool visible) {
         return statusLabel(title,
@@ -488,10 +492,9 @@ void DesktopApp::ShowWidgetContextMenu(
     const auto appendAutoCollectMenu = [&]() {
         autoCollectMenu = CreatePopupMenu();
         if (!autoCollectMenu) return;
-        AppendMenuW(autoCollectMenu,
-            MF_STRING | (effectiveSource.autoCollect &&
-                effectiveSource.autoCollectCategoryIds.empty() ? MF_CHECKED : 0),
-            kContextWidgetAutoCollectAll, _LW("app.interact.auto_collect_all"));
+        AppendMenuW(autoCollectMenu, MF_STRING, kContextWidgetAutoCollectAll,
+            currentOptionLabel(_LW("app.interact.auto_collect_all"),
+                effectiveSource.autoCollect && effectiveSource.autoCollectCategoryIds.empty()).c_str());
         setFluentIcon(autoCollectMenu, kContextWidgetAutoCollectAll,
             snowdesktop::menu_fluent_glyphs::kCollectItems);
         AppendMenuW(autoCollectMenu, MF_SEPARATOR, 0, nullptr);
@@ -505,15 +508,14 @@ void DesktopApp::ShowWidgetContextMenu(
             const bool checked = effectiveSource.autoCollect &&
                 snowdesktop::file_category_auto_collect_rules::Matches(
                     effectiveSource, category);
-            AppendMenuW(autoCollectMenu, MF_STRING | (checked ? MF_CHECKED : 0),
-                commandId, GetCategoryLabel(categorySettings_, category).c_str());
+            AppendMenuW(autoCollectMenu, MF_STRING, commandId,
+                currentOptionLabel(GetCategoryLabel(categorySettings_, category).c_str(), checked).c_str());
             setFluentIcon(autoCollectMenu, commandId,
                 snowdesktop::menu_fluent_glyphs::kCategoryBar);
         }
         AppendMenuW(autoCollectMenu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(autoCollectMenu,
-            MF_STRING | (!effectiveSource.autoCollect ? MF_CHECKED : 0),
-            kContextWidgetToggleAutoCollect, _LW("app.interact.auto_collect_off"));
+        AppendMenuW(autoCollectMenu, MF_STRING, kContextWidgetToggleAutoCollect,
+            currentOptionLabel(_LW("app.interact.auto_collect_off"), !effectiveSource.autoCollect).c_str());
         setFluentIcon(autoCollectMenu, kContextWidgetToggleAutoCollect,
             snowdesktop::menu_fluent_glyphs::kAutoCollect);
         const auto label = statusLabel(_LW("app.interact.auto_collect"),
@@ -587,6 +589,70 @@ void DesktopApp::ShowWidgetContextMenu(
     };
     std::vector<LuaWidgetMenuItem> luaMenuItems;
     std::vector<LuaWidgetMenuItem> luaMenuActions;
+    std::vector<std::unique_ptr<MenuIconEntry>> luaRefreshIcons;
+    const auto appendLuaMenu = [&](HMENU root,
+                                   const std::vector<LuaWidgetMenuItem>& items,
+                                   std::vector<LuaWidgetMenuItem>& actions) {
+        UINT submenuCommand = kContextLuaWidgetMenuLast;
+        const auto setIcon = [&](HMENU target, UINT command, const LuaWidgetMenuItem& item) {
+            if (!item.imageResourceName.empty())
+            {
+                const auto* image = widgetEngine_->RuntimeFindPackageImageSource(
+                    menuWidgetId, item.imageResourceName);
+                if (image) SetMenuItemImage(target, command, *image);
+                return;
+            }
+            if (item.icon.empty()) return;
+            const auto glyph = Utf8ToWide(item.icon);
+            const bool fluent = _stricmp(item.iconFont.c_str(), "fluent") == 0 ||
+                _stricmp(item.iconFont.c_str(), "fluent-regular") == 0;
+            SetMenuItemIcon(target, command, glyph.c_str(),
+                fluent ? MenuIconFont::FluentRegular : MenuIconFont::FontAwesomeSolid);
+        };
+        const auto append = [&](auto&& self, HMENU target,
+                                const std::vector<LuaWidgetMenuItem>& rows) -> bool {
+            for (const auto& row : rows)
+            {
+                if (row.separator)
+                {
+                    if (!AppendMenuW(target, MF_SEPARATOR, 0, nullptr)) return false;
+                    continue;
+                }
+                auto label = Utf8ToWide(row.label);
+                if (!row.children.empty())
+                {
+                    const UINT command = submenuCommand--;
+                    HMENU submenu = CreatePopupMenu();
+                    if (!submenu) return false;
+                    MENUITEMINFOW info{sizeof(info)};
+                    info.fMask = MIIM_ID | MIIM_STATE | MIIM_STRING | MIIM_SUBMENU;
+                    info.wID = command;
+                    info.fState = (row.enabled ? MFS_ENABLED : MFS_DISABLED) |
+                        (row.checked ? MFS_CHECKED : MFS_UNCHECKED);
+                    info.dwTypeData = label.data();
+                    info.hSubMenu = submenu;
+                    if (!InsertMenuItemW(target, GetMenuItemCount(target), TRUE, &info))
+                    {
+                        DestroyMenu(submenu);
+                        return false;
+                    }
+                    setIcon(target, command, row);
+                    if (!self(self, submenu, row.children)) return false;
+                    continue;
+                }
+                const UINT command = kContextLuaWidgetMenuFirst + static_cast<UINT>(actions.size());
+                const UINT appendFlags = MF_STRING | (row.enabled ? 0 : MF_GRAYED) |
+                    (row.checked ? MF_CHECKED : 0);
+                if (!AppendMenuW(target, appendFlags, command, label.c_str())) return false;
+                setIcon(target, command, row);
+                actions.push_back(row);
+            }
+            return true;
+        };
+        // The Lua parser caps the entire tree at 64 entries. Leaves count up
+        // and parents count down within the 200 reserved command IDs.
+        return append(append, root, items);
+    };
     auto luaMenuScope = snowdesktop::right_click_contract::
         LuaWidgetMenuScope::Widget;
     bool luaElementMenu = false;
@@ -785,72 +851,12 @@ void DesktopApp::ShowWidgetContextMenu(
                 AppendMenuW(menu, MF_STRING, kContextWidgetEdit,
                     _LW("app.interact.detailed_settings"));
             }
-            const auto setLuaItemIcon = [this, &widget](HMENU targetMenu,
-                                                 UINT_PTR itemId,
-                                                 const LuaWidgetMenuItem& item) {
-                if (!item.imageResourceName.empty())
-                {
-                    const auto* source = widgetEngine_->
-                        RuntimeFindPackageImageSource(widget.id,
-                            item.imageResourceName);
-                    if (source)
-                        SetMenuItemImage(targetMenu, itemId, *source);
-                    return;
-                }
-                if (item.icon.empty()) return;
-                const std::wstring icon = Utf8ToWide(item.icon);
-                const bool useFluent =
-                    _stricmp(item.iconFont.c_str(), "fluent") == 0 ||
-                    _stricmp(item.iconFont.c_str(), "fluent-regular") == 0;
-                SetMenuItemIcon(targetMenu, itemId, icon.c_str(),
-                    useFluent
-                        ? MenuIconFont::FluentRegular
-                        : MenuIconFont::FontAwesomeSolid);
-            };
-            std::function<void(HMENU,
-                const std::vector<LuaWidgetMenuItem>&)> appendLuaMenuItems;
-            appendLuaMenuItems = [&](HMENU targetMenu,
-                                     const std::vector<LuaWidgetMenuItem>& items) {
-                for (const auto& item : items)
-                {
-                    if (item.separator)
-                    {
-                        AppendMenuW(targetMenu, MF_SEPARATOR, 0, nullptr);
-                        continue;
-                    }
-                    UINT flags = (item.enabled ? 0 : MF_GRAYED) |
-                        (item.checked ? MF_CHECKED : 0);
-                    if (!item.children.empty())
-                    {
-                        HMENU submenu = CreatePopupMenu();
-                        if (!submenu) continue;
-                        appendLuaMenuItems(submenu, item.children);
-                        const UINT_PTR submenuId =
-                            reinterpret_cast<UINT_PTR>(submenu);
-                        if (!AppendMenuW(targetMenu, flags | MF_POPUP,
-                                submenuId,
-                                Utf8ToWide(item.label).c_str()))
-                        {
-                            DestroyMenu(submenu);
-                            continue;
-                        }
-                        setLuaItemIcon(targetMenu, submenuId, item);
-                        continue;
-                    }
-                    if (kContextLuaWidgetMenuFirst +
-                            static_cast<UINT>(luaMenuActions.size()) >
-                        kContextLuaWidgetMenuLast)
-                        continue;
-                    const UINT commandId = kContextLuaWidgetMenuFirst +
-                        static_cast<UINT>(luaMenuActions.size());
-                    if (!AppendMenuW(targetMenu, flags | MF_STRING,
-                            commandId, Utf8ToWide(item.label).c_str()))
-                        continue;
-                    setLuaItemIcon(targetMenu, commandId, item);
-                    luaMenuActions.push_back(item);
-                }
-            };
-            appendLuaMenuItems(menu, luaMenuItems);
+            if (!appendLuaMenu(menu, luaMenuItems, luaMenuActions))
+            {
+                DestroyMenu(menu);
+                ClearMenuIcons();
+                return;
+            }
             if (snowdesktop::right_click_contract::
                     ShouldOfferComponentPanelShortcut(luaMenuScope))
             {
@@ -1053,7 +1059,7 @@ void DesktopApp::ShowWidgetContextMenu(
         shellRequest.extended = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
     }
     // Toggling an auto-collect option is a continuous configuration step: keep
-    // the submenu open, refresh its check marks in place, and apply the
+    // the submenu open, refresh its status text in place, and apply the
     // resulting collection/layout work once the menu session ends.
     bool autoCollectPending = false;
     DesktopWidget autoCollectCandidate;
@@ -1103,22 +1109,23 @@ void DesktopApp::ShowWidgetContextMenu(
             {
                 if (child.command == kContextWidgetAutoCollectAll)
                 {
-                    child.checked = source.autoCollect &&
-                        source.autoCollectCategoryIds.empty();
+                    child.label = currentOptionLabel(_LW("app.interact.auto_collect_all"),
+                        source.autoCollect && source.autoCollectCategoryIds.empty());
                 }
                 else if (child.command == kContextWidgetToggleAutoCollect)
                 {
-                    child.checked = !source.autoCollect;
+                    child.label = currentOptionLabel(_LW("app.interact.auto_collect_off"), !source.autoCollect);
                 }
                 else if (child.command >= kContextWidgetAutoCollectCategoryFirst &&
                     child.command <= kContextWidgetAutoCollectCategoryLast)
                 {
                     const size_t categoryIndex =
                         child.command - kContextWidgetAutoCollectCategoryFirst;
-                    child.checked = source.autoCollect &&
-                        categoryIndex < autoCollectCategories.size() &&
-                        snowdesktop::file_category_auto_collect_rules::Matches(
-                            source, autoCollectCategories[categoryIndex]);
+                    if (categoryIndex >= autoCollectCategories.size()) continue;
+                    const auto& category = autoCollectCategories[categoryIndex];
+                    const bool current = source.autoCollect &&
+                        snowdesktop::file_category_auto_collect_rules::Matches(source, category);
+                    child.label = currentOptionLabel(GetCategoryLabel(categorySettings_, category).c_str(), current);
                 }
             }
             item.label = statusLabel(_LW("app.interact.auto_collect"),
@@ -1134,10 +1141,74 @@ void DesktopApp::ShowWidgetContextMenu(
             PrepareShellNewSubmenu(shellNewMenu, newItemDirectory, children,
                 newItemWidgetId);
     };
+    const auto applyMenuCommand = [&](UINT menuCommand,
+        std::vector<snowdesktop::modern_menu::Item>& items) {
+        if (menuCommand < kContextLuaWidgetMenuFirst)
+            return applyAutoCollectMenuCommand(menuCommand, items);
+        const size_t index = menuCommand - kContextLuaWidgetMenuFirst;
+        if (index >= luaMenuActions.size() || !luaMenuActions[index].keepOpen)
+            return applyAutoCollectMenuCommand(menuCommand, items);
+
+        const auto selected = luaMenuActions[index];
+        const auto closeMenu = [] {
+            snowdesktop::modern_menu::DismissActive();
+            return true; // The normal close path must not dispatch this action again.
+        };
+        if (!widgetEngine_ || !resolvedLuaLocalPoint ||
+            !widgetEngine_->InvokeMenu(menuWidgetId, selected))
+            return closeMenu();
+        const auto updated = widgetEngine_->GetContextMenu(menuWidgetId,
+            resolvedLuaLocalPoint->x, resolvedLuaLocalPoint->y,
+            luaSurface, forceComponentMenu, &selected);
+        const auto sameStructure = [](auto&& self, const auto& before,
+                                      const auto& after) -> bool {
+            if (before.size() != after.size()) return false;
+            for (size_t i = 0; i < before.size(); ++i)
+            {
+                if (before[i].separator != after[i].separator ||
+                    before[i].actionId != after[i].actionId ||
+                    !self(self, before[i].children, after[i].children))
+                    return false;
+            }
+            return true;
+        };
+        if (!sameStructure(sameStructure, luaMenuItems, updated))
+            return closeMenu();
+
+        std::vector<LuaWidgetMenuItem> updatedActions;
+        const HMENU freshMenu = CreatePopupMenu();
+        if (!freshMenu) return closeMenu();
+        const size_t initialIcons = menuIconPool_.size();
+        const bool appended = appendLuaMenu(freshMenu, updated, updatedActions);
+        auto refreshedRows = appended ? BuildModernMenuItems(freshMenu)
+            : std::vector<snowdesktop::modern_menu::Item>{};
+        DestroyMenu(freshMenu);
+        std::vector<std::unique_ptr<MenuIconEntry>> refreshedIcons;
+        for (size_t i = initialIcons; i < menuIconPool_.size(); ++i)
+            refreshedIcons.push_back(std::move(menuIconPool_[i]));
+        menuIconPool_.resize(initialIcons);
+        if (!appended) return closeMenu();
+        snowdesktop::modern_menu::VisitItems(refreshedRows, [&](const auto& updatedRow) {
+            if (updatedRow.separator) return;
+            snowdesktop::modern_menu::VisitItems(items, [&](auto& row) {
+                if (row.command != updatedRow.command) return;
+                row.label = updatedRow.label;
+                row.accessKey = updatedRow.accessKey;
+                row.enabled = updatedRow.enabled;
+                row.checked = updatedRow.checked;
+                row.glyph = updatedRow.glyph;
+                row.iconFont = updatedRow.iconFont;
+                row.image = updatedRow.image;
+            });
+        });
+        luaRefreshIcons = std::move(refreshedIcons);
+        luaMenuActions = std::move(updatedActions);
+        return true;
+    };
     if (!luaElementMenu) snowdesktop::background_menu_order::Mark(menu);
     UINT command = ShowModernMenu(
         menu, screenPoint, hwnd_, dockRenameAnchor.has_value(), false, nullptr,
-        applyAutoCollectMenuCommand, {}, {}, &shellRequest, {}, false, 0, 0,
+        applyMenuCommand, {}, {}, &shellRequest, {}, false, 0, 0,
         prepareNewSubmenu);
     DestroyMenu(menu);
     ClearMenuIcons();
@@ -1197,8 +1268,7 @@ void DesktopApp::ShowWidgetContextMenu(
         size_t itemIndex = static_cast<size_t>(command - kContextLuaWidgetMenuFirst);
         if (itemIndex < luaMenuActions.size() && widgetEngine_)
         {
-            widgetEngine_->InvokeMenu(
-                widgets_[widgetIndex].id, luaMenuActions[itemIndex]);
+            widgetEngine_->InvokeMenu(menuWidgetId, luaMenuActions[itemIndex]);
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
         return;

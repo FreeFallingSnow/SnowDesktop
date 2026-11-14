@@ -1589,12 +1589,17 @@ scroll key 同样是实例内稳定的 1–128 字节 UTF-8 字符串；只接�
 
 ```lua
 local menuOpenImage = resource.image("menuOpen")
+local pinGlyph = utf8.char(0xF601)
 
 local function menu(_context, _model, request)
     if request.id ~= "item.menu" then return nil end
+    local pinTitle = l10n.tr("menu.pin")
+    local pinStatus = storage.get("pinned") and l10n.tr("menu.on") or l10n.tr("menu.off")
     return ui.menu({
         { id = "item.open", label = "Open", image = menuOpenImage },
-        { id = "item.pin", label = "Pin", checked = false },
+        { id = "item.pin", label = pinTitle .. "\t" .. pinStatus,
+            icon = pinGlyph, iconFont = "fluent",
+            keepOpen = widget.hasFeature("interaction.contextMenu.keepOpen") },
         { label = "Open with", children = {
             { id = "item.open.editor", label = "Editor" },
             { id = "item.open.browser", label = "Browser" },
@@ -1610,17 +1615,25 @@ end
 形成子菜单；动作 `id` 在整棵树中唯一，最多嵌套 3 层，整棵树（含父项和分隔线）最多 64 项。
 探测 `interaction.contextMenu.resourceImage` 后，普通项或子菜单父项可用 `image=resource.image(...)`
 显示已声明的包内图片；它与宿主字形 `icon` 互斥，不接受媒体封面、剪贴板图片等临时运行时句柄。
+普通菜单项的 `label` 可用 `标题 .. "\t" .. 状态` 在右侧对齐显示本地化状态。
+仅由无图标选项组成的子菜单可使用 `checked`。带图标的父入口属于上一级菜单。
 宿主从已解码的包资源缓存生成按菜单 DPI 限制尺寸的预乘 alpha 位图，菜单关闭后释放副本；禁用项
 降低整体图像不透明度。图片解码失败时 `resource.image(...)` 已在组件入口加载阶段报错，不在打开
 菜单时同步读取文件。
 回调必须同步、快速且不执行 I/O。用户选择叶子项后收到
 `event.kind == "action"`，其中 `id` 为菜单项 ID，`source == "contextMenu"`，并带
-原 region 的 `targetKey` 与 `value`。菜单打开后只要 region 集合产生新一代提交，
-旧菜单动作就会失效，避免重排或复用 key 后误操作。`request.scope` 为 `element` 或
+原 region 的 `targetKey` 与 `value`。动作投递时会核对原组件运行实例和目标。
+`request.scope` 为 `element` 或
 `component`；元素级菜单独立显示，组件级菜单才与 SnowDesktop 的设置、授权、诊断和
 移除入口合并。该 API 不要求 `ui.contextMenu` 权限；对应 feature 为
 `interaction.region`、`interaction.pointerActions` 和 `interaction.contextMenu`；嵌套菜单另需
 `interaction.contextMenu.submenu`，包内图片另需 `interaction.contextMenu.resourceImage`。
+
+探测 `interaction.contextMenu.keepOpen` 后，叶子项可设 `keepOpen = true`。
+宿主先同步投递这次动作，再用同一目标调用 `menu`，刷新文字、图标、启用和勾选状态。
+菜单项的 ID、顺序、分隔线和嵌套结构须保持稳定，已展开的子菜单可继续操作。
+原实例或绑定失效、回调失败、返回空菜单或结构变化时，本次菜单关闭。
+普通动作及旧宿主沿用点击后关闭的行为。用于打开设置、选择器等界面的操作保持默认行为。
 
 探测 `ui.semanticMetrics.rowUnit` 后，`ui.metrics()` 仅返回
 `layoutRowHeight`。它表示搜索框、普通输入、按钮或单行条目的可见内容高度，不包含组件

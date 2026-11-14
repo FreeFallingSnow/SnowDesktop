@@ -10,11 +10,13 @@
   "license": "GPL-3.0-only",
   "name": "Photo Album",
   "nameKey": "album.name",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Create a slideshow from multiple folders or images, or display a single photo.",
   "descriptionKey": "album.description",
   "locales": {
     "zh-CN": {
+      "menu.status.on": "开",
+      "menu.status.off": "关",
       "album.name": "相册轮播",
       "album.description": "从多个文件夹或图片创建相册，也可固定显示单张照片。",
       "album.empty": "拖入图片或文件夹",
@@ -59,6 +61,8 @@
       "album.single_folder": "一次只能绑定一个文件夹"
     },
     "zh-TW": {
+      "menu.status.on": "開",
+      "menu.status.off": "關",
       "album.name": "相簿輪播",
       "album.description": "從多個資料夾或圖片建立相簿，也可固定顯示單張照片。",
       "album.empty": "拖入圖片或資料夾",
@@ -103,6 +107,8 @@
       "album.single_folder": "一次只能綁定一個資料夾"
     },
     "en-US": {
+      "menu.status.on": "On",
+      "menu.status.off": "Off",
       "album.name": "Photo Album",
       "album.description": "Create a slideshow from multiple folders or images, or display a single photo.",
       "album.empty": "Drop photos or folders here",
@@ -147,6 +153,8 @@
       "album.single_folder": "Bind only one folder at a time"
     },
     "ja-JP": {
+      "menu.status.on": "オン",
+      "menu.status.off": "オフ",
       "album.name": "フォトアルバム",
       "album.description": "複数のフォルダーや画像でスライドショーを作成。写真1枚の固定表示にも対応。",
       "album.empty": "画像やフォルダーをドロップ",
@@ -191,6 +199,8 @@
       "album.single_folder": "連携できるフォルダーは1つです"
     },
     "ko-KR": {
+      "menu.status.on": "켜짐",
+      "menu.status.off": "꺼짐",
       "album.name": "사진 앨범",
       "album.description": "여러 폴더나 이미지로 슬라이드 쇼를 만들거나 사진 한 장을 고정해 표시합니다.",
       "album.empty": "사진이나 폴더를 끌어 놓으세요",
@@ -235,6 +245,8 @@
       "album.single_folder": "폴더는 하나만 연결할 수 있습니다"
     },
     "de-DE": {
+      "menu.status.on": "Ein",
+      "menu.status.off": "Aus",
       "album.name": "Fotoalbum",
       "album.description": "Erstellen Sie eine Diashow aus mehreren Ordnern oder Bildern oder zeigen Sie ein einzelnes Foto.",
       "album.empty": "Bilder oder Ordner hierher ziehen",
@@ -279,6 +291,8 @@
       "album.single_folder": "Nur einen Ordner gleichzeitig verknüpfen"
     },
     "fr-FR": {
+      "menu.status.on": "Activé",
+      "menu.status.off": "Désactivé",
       "album.name": "Album photo",
       "album.description": "Créez un diaporama à partir de plusieurs dossiers ou images, ou affichez une seule photo.",
       "album.empty": "Déposez des photos ou des dossiers",
@@ -323,6 +337,8 @@
       "album.single_folder": "Un seul dossier peut être lié à la fois"
     },
     "es-ES": {
+      "menu.status.on": "Activado",
+      "menu.status.off": "Desactivado",
       "album.name": "Álbum de fotos",
       "album.description": "Crea una presentación con varias carpetas o imágenes, o muestra una sola foto.",
       "album.empty": "Arrastra fotos o carpetas aquí",
@@ -367,6 +383,8 @@
       "album.single_folder": "Solo se puede vincular una carpeta a la vez"
     },
     "es-419": {
+      "menu.status.on": "Activado",
+      "menu.status.off": "Desactivado",
       "album.name": "Álbum de fotos",
       "album.description": "Crea una presentación con varias carpetas o imágenes, o muestra una sola foto.",
       "album.empty": "Arrastra fotos o carpetas aquí",
@@ -411,6 +429,8 @@
       "album.single_folder": "Solo se puede vincular una carpeta a la vez"
     },
     "pt-BR": {
+      "menu.status.on": "Ativado",
+      "menu.status.off": "Desativado",
       "album.name": "Álbum de fotos",
       "album.description": "Crie uma apresentação com várias pastas ou imagens, ou exiba uma única foto.",
       "album.empty": "Arraste fotos ou pastas aqui",

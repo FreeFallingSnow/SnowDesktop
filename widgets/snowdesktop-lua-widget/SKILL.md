@@ -194,13 +194,26 @@ queries, write storage or rebuild invariant data on every frame.
   the host's component-settings entry. Do not add another settings button,
   context-menu command or configuration panel unless the user explicitly asks
   for a separate workflow.
-- Give each actionable context-menu command a semantic host glyph through
+- Give ordinary context-menu commands a semantic host glyph through
   `icon` and `iconFont`, or a declared resource image when that feature is
   available. Reuse the host's Fluent icon vocabulary for actions such as
-  refresh; separators and informational rows do not need command icons. Follow
+  refresh. Follow
   [Icon meaning and glyph verification](references/visual-authoring.md#icon-meaning-and-glyph-verification)
   to check the symbol's meaning, actual font mapping and rendered result;
   unrelated substitute icons are prohibited.
+- Evaluate each popup level across its separators. Show state at the right
+  edge on the root menu and on any level containing icons or ordinary commands.
+  Set `label = title .. "\t" .. status` with localized text such as On, Off, or
+  Current. A semantic icon may change with state. Use `checked` only in a
+  submenu whose entries are all choices with no `icon` or `image` at that level.
+  The submenu entry itself may have an icon in its parent. Use right-aligned
+  text when old-host fallback flattens those choices into the root menu.
+- For a quick setting that should stay open, probe
+  `widget.hasFeature("interaction.contextMenu.keepOpen")` and set `keepOpen`
+  on the action row. Apply the change synchronously in the action handler and
+  derive its new state in `menu`. Keep the item IDs, order and nesting stable
+  during refresh. Use the default close behavior for actions that open other
+  surfaces.
 - Expose a selectable component appearance, such as a transparent theme,
   through `settings.presets` with a stable `id`, localized `label` and grouped
   `values`. Mark the intended initial choice with `default=true`; put its

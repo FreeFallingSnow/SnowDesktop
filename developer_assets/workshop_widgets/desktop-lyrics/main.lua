@@ -115,10 +115,11 @@ return widget.define({name=strings().name,useCustomStyle=true,followPersonalizat
     setup=setup,view=V.view,event=event,settings=settings(),
     menu=function()
         local c=strings();local mode=storage.get("lyricMode")=="dynamic" and "dynamic" or "scroll"
+        local current="\t"..l10n.tr("menu.status.current")
         return ui.menu({
             -- Fluent System Icons Regular: text_continuous_24, text_effects_20.
-            {id="mode.scroll",label=c.mode_scroll,checked=mode=="scroll",icon=utf8.char(0xECFD),iconFont="fluent"},
-            {id="mode.dynamic",label=c.mode_dynamic,checked=mode=="dynamic",icon=utf8.char(0xF7DB),iconFont="fluent"},
+            {id="mode.scroll",label=c.mode_scroll..(mode=="scroll" and current or ""),icon=utf8.char(0xECFD),iconFont="fluent"},
+            {id="mode.dynamic",label=c.mode_dynamic..(mode=="dynamic" and current or ""),icon=utf8.char(0xF7DB),iconFont="fluent"},
             {type="separator"},
             {id="retry",label=c.retry,icon=utf8.char(0xF13D),iconFont="fluent"}})
     end,

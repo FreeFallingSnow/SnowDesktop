@@ -52,7 +52,7 @@ local format = {
 -- FluentSystemIcons-Regular.ttf: developer_board, desktop_pulse, ram,
 -- battery_9, hard_drive and globe, all at the semantic 20-unit size.
 local glyphs={cpu=0xE4AC,gpu=0xE49D,memory=0xE9F3,vram=0xE9F3,battery=0xF1CD,disk=0xE6E3,network=0xF45A}
-local deviceGlyph,automaticGlyph=0xE4AA,0xF190 -- desktop_toolbox, arrow_sync
+local deviceGlyph=0xE4AA -- desktop_toolbox
 local function selected(mode)
     if mode=="gpu" or mode=="vram" then return storage.get("gpuId") or "" end
     if mode=="disk" then return storage.get("volumeId") or "" end
@@ -203,7 +203,9 @@ local function menu(_context,m,request)
     if request.id~="monitor.menu" then return nil end
     local c,items=copy(),{}
     for _,mode in ipairs(metrics.order) do
-        items[#items+1]={id="mode."..mode,label=c[mode],checked=m.mode==mode,
+        local label=c[mode]
+        if m.mode==mode then label=label.."\t"..l10n.tr("menu.status.current") end
+        items[#items+1]={id="mode."..mode,label=label,
             icon=utf8.char(glyphs[mode]),iconFont="fluent"}
     end
     if m.mode=="gpu" or m.mode=="vram" or m.mode=="disk" then
@@ -212,8 +214,7 @@ local function menu(_context,m,request)
         for i,choice in ipairs(m.choices) do
             local action="device.menu."..i
             m.menuTargets[action]={id=choice.id,mode=m.mode}
-            choices[#choices+1]={id=action,label=choice.label,checked=choice.id==selected(m.mode),
-                icon=utf8.char(choice.id=="" and automaticGlyph or glyphs[m.mode]),iconFont="fluent"}
+            choices[#choices+1]={id=action,label=choice.label,checked=choice.id==selected(m.mode)}
         end
         items[#items+1]={type="separator"}
         if #choices>0 then
