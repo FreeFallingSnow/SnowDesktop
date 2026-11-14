@@ -34,7 +34,10 @@ bool IsGeneralShortcutOnlyCommit(
         before.pageNavigationNextModifiers !=
             after.pageNavigationNextModifiers ||
         before.pageNavigationNextVirtualKey !=
-            after.pageNavigationNextVirtualKey;
+            after.pageNavigationNextVirtualKey ||
+        before.gridPreviewHotkeyEnabled != after.gridPreviewHotkeyEnabled ||
+        before.gridPreviewHotkeyModifiers != after.gridPreviewHotkeyModifiers ||
+        before.gridPreviewHotkeyVirtualKey != after.gridPreviewHotkeyVirtualKey;
     return shortcutChanged &&
         before.showAdvancedSettings == after.showAdvancedSettings &&
         before.steamShowRunningStatus == after.steamShowRunningStatus &&
@@ -107,6 +110,9 @@ bool IsGeneralLoggingOnlyCommit(const GeneralSettings& before,
         before.pageNavigationPreviousVirtualKey == after.pageNavigationPreviousVirtualKey &&
         before.pageNavigationNextModifiers == after.pageNavigationNextModifiers &&
         before.pageNavigationNextVirtualKey == after.pageNavigationNextVirtualKey &&
+        before.gridPreviewHotkeyEnabled == after.gridPreviewHotkeyEnabled &&
+        before.gridPreviewHotkeyModifiers == after.gridPreviewHotkeyModifiers &&
+        before.gridPreviewHotkeyVirtualKey == after.gridPreviewHotkeyVirtualKey &&
         before.quickNavTheme == after.quickNavTheme &&
         before.collectionPopupTheme == after.collectionPopupTheme &&
         before.quickNavigationAppearance == after.quickNavigationAppearance &&

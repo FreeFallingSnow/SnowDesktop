@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/input/grid_preview_shortcut.h"
 #include "dock/dock_window_transition.h"
 #include "layout/collection_popup_layout.h"
 #include "widget/runtime/widget_engine.h"
@@ -247,6 +248,39 @@ void DesktopApp::DrawDesktopForeground(
     const RECT* updateRect)
 {
     snowdesktop::performance::Scope performanceScope("dock", "desktop.foreground");
+    if (!hiddenMode && generalSettings_.gridPreviewHotkeyEnabled &&
+        snowdesktop::grid_preview_shortcut::IsActive(hwnd_))
+    {
+        using namespace snowdesktop::grid_occupancy;
+        Slots occupied;
+        for (const auto& item : items_)
+            if (!item.name.empty() && FindGridPage(gridPages_, item.gridCell.pageId) &&
+                !IsItemInAnyWidget(item))
+                Mark(occupied, item.gridCell, item.gridSpan);
+        for (const auto& widget : widgets_)
+            if (FindGridPage(gridPages_, widget.gridCell.pageId) &&
+                !IsGroupedWidget(widget) && !IsDockExclusiveWidgetId(widget.id))
+                Mark(occupied, widget.gridCell, widget.gridSpan);
+
+        for (const auto& page : gridPages_)
+        {
+            if (!snowdesktop::foreground_paint_region::Intersects(updateRect, page.workArea)) continue;
+            GridCell cell{page.id, 0, 0};
+            for (cell.column = 0; cell.column < page.columns; ++cell.column)
+            {
+                for (cell.row = 0; cell.row < page.rows; ++cell.row)
+                {
+                    if (Occupied(occupied, cell, {})) continue;
+                    RECT bounds = GetGridRect(gridPages_, cell);
+                    // Inset the strokes so adjacent cells remain distinguishable at zero gap.
+                    InflateRect(&bounds, -1, -1);
+                    if (!snowdesktop::foreground_paint_region::Intersects(updateRect, bounds, 1)) continue;
+                    DrawD2DFilledRectangle(ctx, bounds,
+                        D2D1::ColorF(0x000000, 0.16f), D2D1::ColorF(0xffffff, 0.65f));
+                }
+            }
+        }
+    }
     for (const auto& container : containers_)
     {
         auto* dock = dynamic_cast<DockContainer*>(container.get());

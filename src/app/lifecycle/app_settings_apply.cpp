@@ -1744,6 +1744,8 @@ private:
             return "app.settings.page_navigation_previous";
         case HotkeyTarget::PageNext:
             return "app.settings.page_navigation_next";
+        case HotkeyTarget::GridPreview:
+            return "settings.pages.gridPreview";
         case HotkeyTarget::None:
         default:
             return "app.settings.hotkey";
@@ -1813,9 +1815,15 @@ private:
                 app_.generalSettings_.pageNavigationNextModifiers,
                 app_.generalSettings_.pageNavigationNextVirtualKey))
             return { false, HotkeyTarget::PageNext };
+        if (conflictsWith(HotkeyTarget::GridPreview,
+                app_.generalSettings_.gridPreviewHotkeyEnabled,
+                app_.generalSettings_.gridPreviewHotkeyModifiers,
+                app_.generalSettings_.gridPreviewHotkeyVirtualKey))
+            return { false, HotkeyTarget::GridPreview };
 
         if ((target == HotkeyTarget::PagePrevious ||
-                target == HotkeyTarget::PageNext) &&
+                target == HotkeyTarget::PageNext ||
+                target == HotkeyTarget::GridPreview) &&
             snowdesktop::page_navigation_rules::
                 IsReservedDesktopSingleKey(
                     normalizedModifiers, virtualKey))
@@ -1881,6 +1889,9 @@ private:
         case HotkeyTarget::PagePrevious:
         case HotkeyTarget::PageNext:
             return { true, HotkeyTarget::None };
+        case HotkeyTarget::GridPreview:
+            return { normalizedModifiers != MOD_ALT || virtualKey != VK_F4,
+                HotkeyTarget::None };
         case HotkeyTarget::None:
             return {};
         }

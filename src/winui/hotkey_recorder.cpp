@@ -112,7 +112,9 @@ std::vector<std::wstring> ChordParts(
         parts.push_back(text.shift);
     if ((chord.modifiers & HotkeyRecorderRules::ModifierWindows) != 0)
         parts.push_back(text.windows);
-    if (!chord.Empty())
+    if (chord.virtualKey == VK_MENU)
+        parts.push_back(text.alt);
+    else if (!chord.Empty())
         parts.push_back(VirtualKeyName(chord.virtualKey));
     return parts;
 }
@@ -340,6 +342,7 @@ struct HotkeyRecorderState
     std::uint64_t committedRequestId = 0;
     bool enabled = true;
     bool localDesktopHotkey = false;
+    bool allowStandaloneAlt = false;
     bool alive = true;
     bool lastActionCleared = false;
     bool dialogOpen = false;
@@ -764,7 +767,7 @@ HotkeyRecorder::HotkeyRecorder()
                 return;
             }
             const auto transition = state->rules.KeyDown(
-                virtualKey, SamplePhysicalModifiers());
+                virtualKey, SamplePhysicalModifiers(), state->allowStandaloneAlt);
             args.Handled(true);
             ApplyTransition(state, transition);
         });
@@ -948,6 +951,11 @@ void HotkeyRecorder::CancelCapture()
     ApplyTransition(state_, state_->rules.CancelCapture());
     if (state_->dialogOpen)
         state_->dialog.Hide();
+}
+
+void HotkeyRecorder::SetAllowStandaloneAlt(bool allow) noexcept
+{
+    state_->allowStandaloneAlt = allow;
 }
 
 void HotkeyRecorder::CaptureRegisteredHotkey(

@@ -142,6 +142,7 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         settings.desktopPassthroughHotkeyEnabled = val;
     if (ReadBoolField(text, "pageNavigationKeyboardEnabled", val))
         settings.pageNavigationKeyboardEnabled = val;
+    ReadBoolField(text, "gridPreviewHotkeyEnabled", settings.gridPreviewHotkeyEnabled);
     if (ReadBoolField(text, "widgetDeveloperToolsEnabled", val))
         settings.widgetDeveloperToolsEnabled = val;
     if (ReadBoolField(text, "contextMenuExpandQuickActions", val))
@@ -151,6 +152,12 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     if (ReadBoolField(text, "contextMenuHideMoreManagement", val))
         settings.contextMenuHideMoreManagement = val;
     int hotkeyValue = 0;
+    if (ReadIntField(text, "gridPreviewHotkeyModifiers", hotkeyValue))
+        settings.gridPreviewHotkeyModifiers = static_cast<UINT>(hotkeyValue) &
+            (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
+    if (ReadIntField(text, "gridPreviewHotkeyVirtualKey", hotkeyValue) &&
+        hotkeyValue >= 0 && hotkeyValue <= 0xff)
+        settings.gridPreviewHotkeyVirtualKey = static_cast<UINT>(hotkeyValue);
     if (ReadIntField(text, "forceRestartHotkeyModifiers", hotkeyValue))
         settings.forceRestartHotkeyModifiers = static_cast<UINT>(hotkeyValue) &
             (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
@@ -363,6 +370,12 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
          << settings.pageNavigationNextModifiers << ",\n";
     file << "  \"pageNavigationNextVirtualKey\": "
          << settings.pageNavigationNextVirtualKey << ",\n";
+    file << "  \"gridPreviewHotkeyEnabled\": "
+         << (settings.gridPreviewHotkeyEnabled ? "true" : "false") << ",\n";
+    file << "  \"gridPreviewHotkeyModifiers\": "
+         << settings.gridPreviewHotkeyModifiers << ",\n";
+    file << "  \"gridPreviewHotkeyVirtualKey\": "
+         << settings.gridPreviewHotkeyVirtualKey << ",\n";
     file << "  \"quickNavTheme\": " << settings.quickNavTheme << ",\n";
     file << "  \"tooltipFontSize\": " << snowdesktop::NormalizeTooltipFontSize(settings.tooltipFontSize) << ",\n";
     file << "  \"collectionPopupTheme\": "

@@ -226,6 +226,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::DesktopPages, "general.pageNavigation.next",
         "app.settings.page_navigation_next",
         "settings.general.pageNavigation.description"},
+    {SettingsPage::DesktopPages, "pages.gridPreview",
+        "settings.pages.gridPreview", "settings.pages.gridPreview.description"},
     {SettingsPage::DesktopPages, "pages.order",
         "settings.pages.manage",
         "settings.pages.manage.description"},

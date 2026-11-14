@@ -28,6 +28,7 @@
 #include "ui/input/private_pointer.h"
 #include "app/features/app_control_runtime.h"
 #include "app/input/software_desktop_hotkey.h"
+#include "app/input/grid_preview_shortcut.h"
 #include "ui/menu/modern_menu.h"
 #include "system/controls/system_control_prompt.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
@@ -1987,10 +1988,48 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             const bool systemPanelMessageHandled = !settingsMessageHandled && systemPanel_ && systemPanel_->PreTranslateMessage(&msg);
             if (!settingsMessageHandled && !systemPanelMessageHandled)
             {
-                TranslateMessage(&msg);
-                const double dispatchStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
-                DispatchMessageW(&msg);
-                LogSlowMessageLoopCall(snowdesktop::SlowCallPhase::Message, dispatchStarted, &msg);
+                bool gridPreviewHandled = false;
+                if ((msg.hwnd == inputHwnd_ || msg.hwnd == hwnd_) &&
+                    (msg.message == WM_KEYDOWN || msg.message == WM_SYSKEYDOWN ||
+                        msg.message == WM_KEYUP || msg.message == WM_SYSKEYUP) &&
+                    (generalSettings_.gridPreviewHotkeyEnabled ||
+                        snowdesktop::grid_preview_shortcut::IsActive(hwnd_)))
+                {
+                    namespace preview = snowdesktop::grid_preview_shortcut;
+                    const bool down = msg.message == WM_KEYDOWN || msg.message == WM_SYSKEYDOWN;
+                    const bool shortcutKey = msg.wParam == generalSettings_.gridPreviewHotkeyVirtualKey;
+                    const bool wasActive = preview::IsActive(hwnd_);
+                    if (wasActive && ((down && !shortcutKey) || (!down && shortcutKey) ||
+                            !preview::MatchesHeldKeys(generalSettings_)))
+                        preview::SetActive(hwnd_, false);
+
+                    const bool repeated = (static_cast<ULONG_PTR>(msg.lParam) & (ULONG_PTR{1} << 30)) != 0;
+                    if (down && shortcutKey && !repeated && customDesktopVisible_ &&
+                        !desktopIconsHidden_ && !desktopPassthroughActive_ &&
+                        !renameController_.IsActive() && !typeToSelectImeComposing_ &&
+                        !IsCollectionPopupInteractive() && luaWidgetPanelRequest_.widgetId.empty() &&
+                        !HasActiveContextMenuSession() && !keyboardNavInsideWidget_ &&
+                        !(widgetEngine_ && (widgetEngine_->HasHostViewKeyboardFocus() ||
+                            widgetEngine_->HasFocusedHostInput())) &&
+                        preview::MatchesHeldKeys(generalSettings_))
+                    {
+                        const bool searchFocused = std::any_of(containers_.begin(), containers_.end(),
+                            [](const auto& container) {
+                                const auto* searchable = dynamic_cast<const ScrollingItemWidget*>(container.get());
+                                return searchable && searchable->IsSearchFocused();
+                            });
+                        if (!searchFocused) preview::SetActive(hwnd_, true);
+                    }
+                    gridPreviewHandled = shortcutKey &&
+                        (preview::IsActive(hwnd_) || (!down && wasActive));
+                }
+                if (!gridPreviewHandled)
+                {
+                    TranslateMessage(&msg);
+                    const double dispatchStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+                    DispatchMessageW(&msg);
+                    LogSlowMessageLoopCall(snowdesktop::SlowCallPhase::Message, dispatchStarted, &msg);
+                }
             }
             if (exitRequested_) break;
             operationFeedback.Drain();
