@@ -74,15 +74,21 @@ public:
     void Forget(const std::wstring& identity) { displayed_.erase(identity); }
 
     template<class Release>
-    void Reconcile(const std::vector<IconLibraryEntry>& assets, Release release)
+    bool Reconcile(const std::vector<IconLibraryEntry>& assets, Release release)
     {
         std::unordered_set<std::string> valid;
+        valid.reserve(assets.size());
         for (const auto& asset : assets) if (!asset.missing) valid.insert(asset.id);
+        // Content-addressed IDs describe pixels independently of names, groups,
+        // subscription state and the presence of a decoded bitmap in the cache.
+        const bool changed = availableAssets_ != valid;
         std::vector<std::string> removed;
         for (const auto& [key, entry] : entries_)
             if (!valid.contains(entry.asset) || (!entry.pending && (!entry.bitmap || !entry.bitmap->bitmap)))
                 removed.push_back(key);
         for (const auto& key : removed) Erase(key, release);
+        availableAssets_ = std::move(valid);
+        return changed;
     }
     template<class Release>
     void Erase(std::string key, Release release)
@@ -114,6 +120,7 @@ private:
     }
     size_t capacity_;
     std::uint64_t clock_ = 0, serial_ = 0;
+    std::unordered_set<std::string> availableAssets_;
     std::unordered_map<std::string, Entry> entries_;
     std::unordered_map<std::wstring, Displayed> displayed_;
 };

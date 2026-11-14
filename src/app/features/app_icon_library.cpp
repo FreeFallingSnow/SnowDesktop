@@ -223,10 +223,13 @@ snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLi
                 if(request.action=="publishPrepared"&&result.succeeded)current->validPreparation.clear();
                 for(auto& group:result.groups)group.publishedUrl=group.workshopItem.empty()?
                     snowdesktop::steam_bridge::IconPackPublishedUrl(data,group.id):"https://steamcommunity.com/sharedfiles/filedetails/?id="+group.workshopItem;
-                // Refresh/import/group edits do not change content-addressed
-                // originals. Release only removed/missing sources after a
-                // successful result; a failed operation is not an empty library.
-                if (result.succeeded)
+                const bool backgroundMaintenance = request.action == "autoSyncSubscriptions" ||
+                    request.action == "collectRetired";
+                // A sync can report an error for one package and still publish
+                // entries from successful updates. A failed empty result does
+                // not establish that the library has lost all its assets.
+                const bool haveAssets = result.succeeded || (backgroundMaintenance && !result.entries.empty());
+                const bool assetsChanged = haveAssets &&
                     current->bitmaps.Reconcile(result.entries, [this, &current](const auto& key, const auto& bitmap) {
                         current->images.Cancel(Utf8ToWide(key));
                         if (bitmap && bitmap->bitmap) EraseD2DIconCacheForBitmap(bitmap->bitmap);
@@ -240,8 +243,11 @@ snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLi
                 }
                 else if (pending)
                     largeIconRuntime_[pending->key].error = current->snapshot.error.empty() ? "iconLibrary.invalid" : current->snapshot.error;
-                InvalidateDockRects();
-                if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+                if (!backgroundMaintenance || assetsChanged)
+                {
+                    InvalidateDockRects();
+                    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+                }
                 if((request.action=="syncSubscriptions"||request.action=="autoSyncSubscriptions")&&current->snapshot.succeeded)
                 {snowdesktop::IconLibraryRequest collect;collect.action="collectRetired";(void)EditIconLibrary(collect);}
             }, controlHwnd_, kLargeIconAssetsReadyMessage);
