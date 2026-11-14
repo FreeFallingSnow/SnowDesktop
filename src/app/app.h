@@ -116,7 +116,6 @@ namespace snowdesktop::tray { struct Icon; class Service; }
 #include "desktop/display_topology_refresh.h"
 #include "desktop/explorer_icon_visibility.h"
 #include "dock/dock_settings_types.h"
-#include "app/dock/dock_refraction.h"
 #include "dock/dock_fullscreen_types.h"
 #include "platform/window_observation.h"
 #include "dock/dock_drop_rules.h"
@@ -3369,7 +3368,6 @@ private:
     /** @{ */
     ComPtr<ID3D11Device> d3dDevice_;
     ComPtr<ID3D11DeviceContext> d3dImmediateContext_;
-    snowdesktop::DockRefractionSource dockRefractionSource_;
     ComPtr<ID2D1Factory1> d2dFactory_;
     ID2D1Factory1* GetD2DFactory() const { return d2dFactory_.Get(); }
     IDWriteFactory* GetDWriteFactory() const { return dwriteFactory_.Get(); }

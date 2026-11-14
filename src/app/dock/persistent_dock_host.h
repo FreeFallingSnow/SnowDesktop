@@ -7,6 +7,7 @@
 #include "system/status_bar/status_bar.h"
 #include "ui/render/ui_animation_scheduler.h"
 #include "app/render/desktop_backdrop_compositor.h"
+#include "app/dock/dock_refraction.h"
 
 // Each monitor owns its persistent window, input promotion and composition
 // resources. The combination root only stores owners/references to these hosts.
@@ -72,6 +73,7 @@ struct DesktopApp::PersistentDockHost
     DesktopBackdropCompositor backdrop;
     static constexpr UINT_PTR refractionTimerId = 1;
     bool refractionActive = false;
+    snowdesktop::DockRefractionSource refractionSource;
     snowdesktop::DockRefractionMaterial refractionMaterial;
     ComPtr<IDCompositionTarget> dcompTarget;
     ComPtr<IDCompositionVisual2> dcompVisual;

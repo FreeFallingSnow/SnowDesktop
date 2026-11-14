@@ -118,8 +118,9 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
                         screenOffset.x += static_cast<LONG>(std::lround(host.mergedPresentation.offsetX));
                         screenOffset.y += static_cast<LONG>(std::lround(host.mergedPresentation.offsetY));
                     }
-                    refracted = host.refractionMaterial.Draw(ctx, dockRefractionSource_,
-                        frame, screenOffset, radius, p.glassBlurRadius);
+                    refracted = host.refractionMaterial.Draw(ctx, host.refractionSource,
+                        frame, screenOffset, radius, p.glassBlurRadius,
+                        p.dockRefractionWidth, p.dockRefractionStrength);
                 }
             }
             if (!refracted) host.backdrop.AddPanel(

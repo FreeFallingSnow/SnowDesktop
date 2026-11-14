@@ -219,19 +219,6 @@ private:
         sync_.push_back([this, acrylic] { acrylic.IsOn(value_.acrylicEnabled); });
         Row(sections_.material, "app.settings.acrylic_noise", acrylic, [](auto& value) { value.acrylicEnabled = false; }, [](auto const& value) { return value.glassEnabled; });
         Number(sections_.material, "app.settings.blur_radius", &PersonalizationSettings::glassBlurRadius, 4, 48, 1, 1, L"px", [](auto const& value) { return value.glassEnabled; });
-        if (dockRefraction_)
-        {
-            c::ToggleSwitch refraction;
-            refraction.HorizontalAlignment(x::HorizontalAlignment::Right);
-            refraction.Toggled([weak, refraction](auto const&, auto const&) {
-                if (auto self = weak.lock())
-                    self->Apply([&](auto& value) { value.dockEdgeRefraction = refraction.IsOn(); }, true);
-            });
-            sync_.push_back([this, refraction] { refraction.IsOn(value_.dockEdgeRefraction); });
-            Row(sections_.material, "settings.dock.edgeRefraction", refraction,
-                [](auto& value) { value.dockEdgeRefraction = false; },
-                [](auto const& value) { return value.glassEnabled; }, "settings.dock.edgeRefraction.description");
-        }
         c::ComboBox theme; theme.HorizontalAlignment(x::HorizontalAlignment::Right);
         theme.Items().Append(winrt::box_value(L("app.settings.light"))); theme.Items().Append(winrt::box_value(L("app.settings.dark")));
         theme.SelectionChanged([weak, theme](auto const&, auto const&) { if (auto self = weak.lock()) self->Apply([&](auto& value) { value.contentTheme = std::clamp(theme.SelectedIndex(), 0, 1); }, true); });
@@ -253,6 +240,25 @@ private:
         });
         sections_.border.Children().Append(edge_->Content());
         sync_.push_back([this] { edge_->Content().Visibility(value_.widgetEdgeHighlightEnabled ? x::Visibility::Visible : x::Visibility::Collapsed); });
+        if (dockRefraction_)
+        {
+            c::ToggleSwitch refraction;
+            refraction.HorizontalAlignment(x::HorizontalAlignment::Right);
+            refraction.Toggled([weak, refraction](auto const&, auto const&) {
+                if (auto self = weak.lock())
+                    self->Apply([&](auto& value) { value.dockEdgeRefraction = refraction.IsOn(); }, true);
+            });
+            sync_.push_back([this, refraction] { refraction.IsOn(value_.dockEdgeRefraction); });
+            Row(sections_.border, "settings.dock.edgeRefraction", refraction,
+                [](auto& value) { value.dockEdgeRefraction = false; },
+                [](auto const& value) { return value.glassEnabled || value.dockEdgeRefraction; },
+                "settings.dock.edgeRefraction.description");
+            const auto refractionOn = [](auto const& value) { return value.glassEnabled && value.dockEdgeRefraction; };
+            Number(sections_.border, "settings.dock.refractionWidth", &PersonalizationSettings::dockRefractionWidth,
+                1, 32, 1, 1, L"px", refractionOn);
+            Number(sections_.border, "settings.dock.refractionStrength", &PersonalizationSettings::dockRefractionStrength,
+                0, 24, 1, 1, L"px", refractionOn);
+        }
         if (inlineSurface_)
             presenter_controls::JoinSettingsSections(root_);
         Sync();

@@ -16,7 +16,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cwchar>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -29,16 +28,12 @@ namespace wgc = graphics::Capture;
 namespace
 {
 constexpr auto kFormat = graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized;
-constexpr float kDisplacementScale = 18.f;
-
-bool DesktopCaptureBounds(HWND window, graphics::SizeInt32 size, RECT& bounds)
+bool MonitorCaptureBounds(HMONITOR monitor, RECT& bounds)
 {
-    if (SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_EXTENDED_FRAME_BOUNDS,
-            &bounds, sizeof(bounds))) &&
-        bounds.right - bounds.left == size.Width && bounds.bottom - bounds.top == size.Height)
-        return true;
-    return GetWindowRect(window, &bounds) &&
-        bounds.right - bounds.left == size.Width && bounds.bottom - bounds.top == size.Height;
+    MONITORINFO info{sizeof(info)};
+    if (!GetMonitorInfoW(monitor, &info)) return false;
+    bounds = info.rcMonitor;
+    return true;
 }
 
 bool ValidSize(graphics::SizeInt32 size)
@@ -47,11 +42,74 @@ bool ValidSize(graphics::SizeInt32 size)
         size.Width <= static_cast<int>(D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION) &&
         size.Height <= static_cast<int>(D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION);
 }
+
+bool CanExcludeFromCapture()
+{
+    static const bool supported = [] {
+        using QueryVersion = LONG(WINAPI*)(OSVERSIONINFOW*);
+        const auto query = reinterpret_cast<QueryVersion>(
+            GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion"));
+        OSVERSIONINFOW version{};
+        version.dwOSVersionInfoSize = sizeof(version);
+        return query && query(&version) == 0 && version.dwBuildNumber >= 19041;
+    }();
+    return supported;
+}
+
+struct CaptureExclusion
+{
+    HWND window{};
+    DWORD previous = WDA_NONE;
+    bool changed = false;
+
+    ~CaptureExclusion()
+    {
+        if (changed && IsWindow(window) && !SetWindowDisplayAffinity(window, previous))
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock,
+                L"Could not restore the Dock window's display affinity", DiagnosticLogLevel::Warning);
+    }
+
+    void Apply(HWND target)
+    {
+        window = target;
+        if (!window) return;
+        // These are the Dock's own HWNDs. A newly created non-layered window
+        // can have no queryable affinity, in which case its default is NONE.
+        if (!GetWindowDisplayAffinity(window, &previous))
+        {
+            if (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_LAYERED)
+                winrt::throw_last_error();
+            previous = WDA_NONE;
+        }
+        if (previous == WDA_EXCLUDEFROMCAPTURE) return;
+        winrt::check_bool(SetWindowDisplayAffinity(window, WDA_EXCLUDEFROMCAPTURE));
+        changed = true;
+    }
+};
+
+bool HasWindowAbove(HWND dock, const RECT& sample)
+{
+    unsigned remaining = 4096;
+    for (HWND window = GetWindow(dock, GW_HWNDPREV); window; window = GetWindow(window, GW_HWNDPREV))
+    {
+        if (!remaining--) return true;
+        RECT bounds{}, intersection{};
+        if (!IsWindowVisible(window) || IsIconic(window) ||
+            !GetWindowRect(window, &bounds) || !IntersectRect(&intersection, &bounds, &sample))
+            continue;
+        DWORD cloaked = 0;
+        if (SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked)
+            continue;
+        return true;
+    }
+    return false;
+}
 }
 
 struct DockRefractionSource::Capture
 {
-    HWND window{};
+    HMONITOR monitor{};
+    CaptureExclusion content, backdrop;
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11Texture2D> texture;
     ComPtr<ID2D1Bitmap1> bitmap;
@@ -69,17 +127,16 @@ struct DockRefractionSource::Capture
         try { if (pool) pool.Close(); } catch (...) {}
     }
 
-    void Start(ID3D11Device* renderDevice, HWND shell)
+    void Start(ID3D11Device* renderDevice, HMONITOR output, HWND dock, HWND glass)
     {
-        wchar_t name[32]{};
-        if (!renderDevice || !shell || !GetClassNameW(shell, name, ARRAYSIZE(name)) ||
-            std::wstring_view(name) != L"Progman" || !wgc::GraphicsCaptureSession::IsSupported())
+        if (!renderDevice || !dock || !CanExcludeFromCapture() || !MonitorCaptureBounds(output, bounds) ||
+            !wgc::GraphicsCaptureSession::IsSupported())
             winrt::throw_hresult(E_NOTIMPL);
 
-        window = shell;
+        monitor = output;
         device = renderDevice;
         const auto interop = winrt::get_activation_factory<wgc::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
-        winrt::check_hresult(interop->CreateForWindow(window, winrt::guid_of<wgc::GraphicsCaptureItem>(),
+        winrt::check_hresult(interop->CreateForMonitor(monitor, winrt::guid_of<wgc::GraphicsCaptureItem>(),
             winrt::put_abi(item)));
         size = item.Size();
         if (!ValidSize(size)) winrt::throw_hresult(E_INVALIDARG);
@@ -94,6 +151,9 @@ struct DockRefractionSource::Capture
         try { session.IsCursorCaptureEnabled(false); } catch (...) {}
         try { session.IsBorderRequired(false); } catch (...) {}
         try { session.MinUpdateInterval(winrt::Windows::Foundation::TimeSpan{333333}); } catch (...) {}
+        content.Apply(dock);
+        backdrop.Apply(glass);
+        winrt::check_hresult(DwmFlush());
         session.StartCapture();
     }
 
@@ -116,7 +176,9 @@ struct DockRefractionSource::Capture
         const auto content = frame.ContentSize();
         if (!ValidSize(content)) winrt::throw_hresult(E_INVALIDARG);
         RECT newBounds{};
-        if (!DesktopCaptureBounds(window, content, newBounds))
+        if (!MonitorCaptureBounds(monitor, newBounds) ||
+            newBounds.right - newBounds.left != content.Width ||
+            newBounds.bottom - newBounds.top != content.Height)
             winrt::throw_hresult(E_UNEXPECTED);
         if (content.Width != size.Width || content.Height != size.Height)
         {
@@ -164,11 +226,11 @@ void DockRefractionSource::Reset() noexcept
     retryAt_ = 0;
 }
 
-bool DockRefractionSource::Update(ID3D11Device* device) noexcept
+bool DockRefractionSource::Update(ID3D11Device* device, HMONITOR monitor, HWND content, HWND backdrop) noexcept
 {
-    const HWND shell = GetShellWindow();
     const bool hadFrame = capture_ && capture_->texture;
-    if (capture_ && (capture_->window != shell || capture_->device.Get() != device))
+    if (capture_ && (capture_->monitor != monitor || capture_->device.Get() != device ||
+            capture_->content.window != content || capture_->backdrop.window != backdrop))
         Reset();
     if (GetTickCount64() < retryAt_) return false;
     try
@@ -176,7 +238,7 @@ bool DockRefractionSource::Update(ID3D11Device* device) noexcept
         if (!capture_)
         {
             capture_ = std::make_unique<Capture>();
-            capture_->Start(device, shell);
+            capture_->Start(device, monitor, content, backdrop);
         }
         return capture_->LoadLatest() || (hadFrame && !capture_->texture);
     }
@@ -213,26 +275,43 @@ RECT DockRefractionSource::Bounds() const noexcept
     return capture_ ? capture_->bounds : RECT{};
 }
 
-bool DockRefractionMaterial::Draw(ID2D1DeviceContext* context, DockRefractionSource& source,
-    RECT panel, POINT screenOffset, float radius, float blur)
+bool DockRefractionSource::CanSample(RECT panel, float padding) const noexcept
 {
+    if (!capture_ || !capture_->texture) return false;
+    const RECT bounds = Bounds();
+    if (IsRectEmpty(&panel) || panel.left < bounds.left || panel.top < bounds.top ||
+        panel.right > bounds.right || panel.bottom > bounds.bottom)
+        return false;
+    const auto margin = static_cast<int>(std::ceil(padding));
+    InflateRect(&panel, margin, margin);
+    IntersectRect(&panel, &panel, &bounds);
+    return !HasWindowAbove(capture_->content.window, panel);
+}
+
+bool DockRefractionMaterial::Draw(ID2D1DeviceContext* context, DockRefractionSource& source,
+    RECT panel, POINT screenOffset, float radius, float blur, float widthSetting, float strength)
+{
+    if (!std::isfinite(widthSetting) || !std::isfinite(strength) || !std::isfinite(blur) ||
+        !std::isfinite(radius) || strength <= 0.f)
+        return false;
+    const float deviation = std::round(std::clamp(blur, 0.f, 48.f));
+    const float peak = std::clamp(strength, 0.f, 24.f);
+    RECT screen = panel;
+    OffsetRect(&screen, screenOffset.x, screenOffset.y);
+    if (!source.CanSample(screen, deviation * 3.f + peak)) return false;
     auto* background = source.Bitmap(context);
     if (!background) return false;
     const RECT bounds = source.Bounds();
-    RECT screen = panel;
-    OffsetRect(&screen, screenOffset.x, screenOffset.y);
-    if (IsRectEmpty(&screen) || screen.left < bounds.left || screen.top < bounds.top ||
-        screen.right > bounds.right || screen.bottom > bounds.bottom)
-        return false;
 
     const auto width = static_cast<UINT>(screen.right - screen.left);
     const auto height = static_cast<UINT>(screen.bottom - screen.top);
     const float w = static_cast<float>(width), h = static_cast<float>(height);
-    if (!displacement_ || size_.width != width || size_.height != height || radius_ != radius)
+    const float band = std::min(std::clamp(widthSetting, 1.f, 32.f), std::min(w, h) * 0.5f);
+    if (!displacement_ || size_.width != width || size_.height != height ||
+        radius_ != radius || band_ != band)
     {
         std::vector<UINT32> pixels(static_cast<std::size_t>(width) * height);
         const smooth_corners::Distance distance(w, h, radius);
-        const float band = std::clamp(radius * 0.7f, 4.f, 14.f);
         const auto encode = [](float value) {
             return static_cast<UINT32>(std::lround(std::clamp(0.5f + value, 0.f, 1.f) * 255.f));
         };
@@ -248,8 +327,8 @@ bool DockRefractionMaterial::Draw(ID2D1DeviceContext* context, DockRefractionSou
                 {
                     const float t = 1.f - std::clamp(depth / band, 0.f, 1.f);
                     const float weight = t * t * (3.f - 2.f * t);
-                    dx = (distance.At(px + 0.5f, py) - distance.At(px - 0.5f, py)) * weight * 0.45f;
-                    dy = (distance.At(px, py + 0.5f) - distance.At(px, py - 0.5f)) * weight * 0.45f;
+                    dx = (distance.At(px + 0.5f, py) - distance.At(px - 0.5f, py)) * weight * 0.5f;
+                    dy = (distance.At(px, py + 0.5f) - distance.At(px, py - 0.5f)) * weight * 0.5f;
                 }
                 pixels[static_cast<std::size_t>(y) * width + x] = 0xff000000u | (encode(dx) << 16) | (encode(dy) << 8);
             }
@@ -263,6 +342,7 @@ bool DockRefractionMaterial::Draw(ID2D1DeviceContext* context, DockRefractionSou
         displacement_ = std::move(field);
         size_ = {width, height};
         radius_ = radius;
+        band_ = band;
     }
 
     ComPtr<ID2D1Effect> blurEffect, align, displacement;
@@ -272,10 +352,11 @@ bool DockRefractionMaterial::Draw(ID2D1DeviceContext* context, DockRefractionSou
         return false;
     const auto translation = D2D1::Matrix3x2F::Translation(
         static_cast<float>(bounds.left - screen.left), static_cast<float>(bounds.top - screen.top));
-    if (FAILED(blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, std::clamp(blur * 0.16f, 0.5f, 3.f))) ||
+    if (FAILED(blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, deviation)) ||
+        FAILED(blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION, D2D1_GAUSSIANBLUR_OPTIMIZATION_BALANCED)) ||
         FAILED(blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_HARD)) ||
         FAILED(align->SetValue(D2D1_2DAFFINETRANSFORM_PROP_TRANSFORM_MATRIX, translation)) ||
-        FAILED(displacement->SetValue(D2D1_DISPLACEMENTMAP_PROP_SCALE, kDisplacementScale)) ||
+        FAILED(displacement->SetValue(D2D1_DISPLACEMENTMAP_PROP_SCALE, 2.f * peak)) ||
         FAILED(displacement->SetValue(D2D1_DISPLACEMENTMAP_PROP_X_CHANNEL_SELECT, D2D1_CHANNEL_SELECTOR_R)) ||
         FAILED(displacement->SetValue(D2D1_DISPLACEMENTMAP_PROP_Y_CHANNEL_SELECT, D2D1_CHANNEL_SELECTOR_G)))
         return false;

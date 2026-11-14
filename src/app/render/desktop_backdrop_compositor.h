@@ -190,6 +190,7 @@ public:
     bool IsAvailable() const;
     /** @brief 判断窗口是否为该实例创建的 backdrop 辅助窗口。 */
     bool IsBackdropWindow(HWND window) const;
+    [[nodiscard]] HWND BackdropWindow() const noexcept;
     std::size_t PanelCount() const;
     std::size_t BlurFactoryCount() const;
     const std::wstring& LastError() const;

@@ -24,7 +24,8 @@ void DesktopApp::SyncDockRefraction(PersistentDockHost& host)
         !host.container->SharesStatusBarAppearance())
     {
         const auto appearance = CurrentDockAppearance(host.monitor);
-        if (appearance.glassEnabled && appearance.dockEdgeRefraction && appearance.cornerRadius > 0)
+        if (appearance.glassEnabled && appearance.dockEdgeRefraction &&
+            appearance.dockRefractionStrength > 0.f && appearance.cornerRadius > 0)
         {
             if (!host.refractionActive)
             {
@@ -41,10 +42,8 @@ void DesktopApp::StopDockRefraction(PersistentDockHost& host)
     if (!host.refractionActive) return;
     if (host.hwnd) KillTimer(host.hwnd, host.refractionTimerId);
     host.refractionActive = false;
+    host.refractionSource.Reset();
     host.refractionMaterial = {};
-    for (const auto& other : persistentDockHosts_)
-        if (other && other->refractionActive) return;
-    dockRefractionSource_.Reset();
 }
 
 bool DesktopApp::RenderFloatingDockCompositionFrame(
@@ -85,6 +84,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     const bool recoveringBackdrop = host.backdropRecoveryPending;
     if (recoveringBackdrop)
     {
+        host.refractionSource.Reset();
         host.backdropRecoveryPending = false;
         // Recreate only after an actual backend failure, never on ordinary
         // animation geometry changes. Keep the helper hidden until ready.
@@ -495,12 +495,9 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         if (wp != host.refractionTimerId) break;
         SyncDockRefraction(host);
         if (host.refractionActive && !graphicsDeviceRecovery_.Pending() &&
-            dockRefractionSource_.Update(d3dDevice_.Get()))
-        {
-            for (const auto& dock : persistentDockHosts_)
-                if (dock && dock->refractionActive)
-                    InvalidateRect(dock->hwnd, nullptr, FALSE);
-        }
+            host.refractionSource.Update(d3dDevice_.Get(), host.monitor,
+                host.hwnd, host.backdrop.BackdropWindow()))
+            InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     case WM_MOUSEMOVE:
     {

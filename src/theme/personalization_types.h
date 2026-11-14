@@ -220,6 +220,8 @@ struct PersonalizationSettings
      */
     bool acrylicEnabled = false;
     bool dockEdgeRefraction = false;
+    float dockRefractionWidth = 8.f;
+    float dockRefractionStrength = 8.f;
 
     /**
      * @brief 文字颜色主题 (0=浅色/白字, 1=深色/黑字)
