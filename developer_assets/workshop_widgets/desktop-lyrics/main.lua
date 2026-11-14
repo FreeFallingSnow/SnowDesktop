@@ -116,10 +116,13 @@ return widget.define({name=strings().name,useCustomStyle=true,followPersonalizat
     menu=function()
         local c=strings();local mode=storage.get("lyricMode")=="dynamic" and "dynamic" or "scroll"
         local current="\t"..l10n.tr("menu.status.current")
+        local keepOpen=widget.hasFeature("interaction.contextMenu.keepOpen")
         return ui.menu({
             -- Fluent System Icons Regular: text_continuous_24, text_effects_20.
-            {id="mode.scroll",label=c.mode_scroll..(mode=="scroll" and current or ""),icon=utf8.char(0xECFD),iconFont="fluent"},
-            {id="mode.dynamic",label=c.mode_dynamic..(mode=="dynamic" and current or ""),icon=utf8.char(0xF7DB),iconFont="fluent"},
+            {id="mode.scroll",label=c.mode_scroll..(mode=="scroll" and current or ""),
+                icon=utf8.char(0xECFD),iconFont="fluent",keepOpen=keepOpen},
+            {id="mode.dynamic",label=c.mode_dynamic..(mode=="dynamic" and current or ""),
+                icon=utf8.char(0xF7DB),iconFont="fluent",keepOpen=keepOpen},
             {type="separator"},
             {id="retry",label=c.retry,icon=utf8.char(0xF13D),iconFont="fluent"}})
     end,

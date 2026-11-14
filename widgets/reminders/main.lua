@@ -842,7 +842,7 @@ local function event(_context, model, value)
     end
 end
 
-local function appendSortMenu(items, total)
+local function appendSortMenu(items, total, keepOpen)
     items[#items + 1] = { type = "separator" }
     items[#items + 1] = {
         id = "task.sortPriority", label = l10n.tr("lua_widget.reminders.sort_priority"),
@@ -854,12 +854,14 @@ local function appendSortMenu(items, total)
         label = l10n.tr("lua_widget.reminders.auto_sort") .. "\t" ..
             (automaticSorting() and l10n.tr("menu.status.on") or l10n.tr("menu.status.off")),
         icon = fluent.autoSort, iconFont = "fluent",
+        keepOpen = keepOpen,
     }
 end
 
 local function menu(_context, model, request)
     if request.id ~= "task.menu" then return nil end
     cancelDrag(model)
+    local keepOpen = widget.hasFeature("interaction.contextMenu.keepOpen")
     local total, completed = taskCounts()
     local taskId = request.value and tostring(request.value) or nil
     if taskId and storage.get(taskTextKey(taskId)) ~= nil then
@@ -871,6 +873,7 @@ local function menu(_context, model, request)
                 id = "task.priority." .. level,
                 label = labels[level],
                 checked = currentPriority == level,
+                keepOpen = keepOpen,
             }
         end
         local items = {
@@ -893,7 +896,7 @@ local function menu(_context, model, request)
                 iconFont = "fluent",
             },
         }
-        appendSortMenu(items, total)
+        appendSortMenu(items, total, keepOpen)
         return ui.menu(items)
     end
     local items = {
@@ -904,7 +907,7 @@ local function menu(_context, model, request)
             iconFont = "fluent",
         },
     }
-    appendSortMenu(items, total)
+    appendSortMenu(items, total, keepOpen)
     items[#items + 1] = { type = "separator" }
     items[#items + 1] = {
         id = "task.clearCompleted",

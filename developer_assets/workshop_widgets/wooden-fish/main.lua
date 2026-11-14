@@ -427,7 +427,8 @@ local function menu(_context, _model, request)
     return ui.menu({
         { id = "wooden-fish.sound", label = l10n.tr("lua_widget.wooden_fish.sound") .. "\t" ..
             (soundEnabled() and l10n.tr("menu.status.on") or l10n.tr("menu.status.off")),
-            icon = utf8.char(0xEB42), iconFont = "fluent" }, -- speaker_2_20_regular
+            icon = utf8.char(0xEB42), iconFont = "fluent", -- speaker_2_20_regular
+            keepOpen = widget.hasFeature("interaction.contextMenu.keepOpen") },
         {
             id = "wooden-fish.reset",
             label = l10n.tr("lua_widget.wooden_fish.reset"),

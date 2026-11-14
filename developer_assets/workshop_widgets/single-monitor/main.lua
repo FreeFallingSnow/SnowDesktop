@@ -202,19 +202,28 @@ end
 local function menu(_context,m,request)
     if request.id~="monitor.menu" then return nil end
     local c,items=copy(),{}
+    local keepOpen=widget.hasFeature("interaction.contextMenu.keepOpen")
+    local function deviceGroup(mode)
+        if mode=="gpu" or mode=="vram" then return "gpu" end
+        if mode=="disk" then return "disk" end
+        return ""
+    end
+    local currentGroup=deviceGroup(m.mode)
     for _,mode in ipairs(metrics.order) do
         local label=c[mode]
         if m.mode==mode then label=label.."\t"..l10n.tr("menu.status.current") end
         items[#items+1]={id="mode."..mode,label=label,
-            icon=utf8.char(glyphs[mode]),iconFont="fluent"}
+            icon=utf8.char(glyphs[mode]),iconFont="fluent",
+            keepOpen=keepOpen and deviceGroup(mode)==currentGroup}
     end
-    if m.mode=="gpu" or m.mode=="vram" or m.mode=="disk" then
+    if currentGroup~="" then
         local choices={}
         m.menuTargets={}
-        for i,choice in ipairs(m.choices) do
-            local action="device.menu."..i
+        for _,choice in ipairs(m.choices) do
+            local action="device.menu."..choice.id
             m.menuTargets[action]={id=choice.id,mode=m.mode}
-            choices[#choices+1]={id=action,label=choice.label,checked=choice.id==selected(m.mode)}
+            choices[#choices+1]={id=action,label=choice.label,
+                checked=choice.id==selected(m.mode),keepOpen=keepOpen}
         end
         items[#items+1]={type="separator"}
         if #choices>0 then

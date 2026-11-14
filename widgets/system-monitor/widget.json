@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "System Monitor",
   "nameKey": "lua_widget.system_monitor.name",
-  "version": "2.6.1",
+  "version": "2.6.2",
   "description": "Displays performance, storage, network, power, and uptime status.",
   "descriptionKey": "lua_widget.system_monitor.description",
   "preview": "preview.png",
@@ -606,6 +606,7 @@
     "settings.changeEvent"
   ],
   "optionalFeatures": [
+    "interaction.contextMenu.keepOpen",
     "draw.advanced",
     "data.system.network.status",
     "data.system.network.traffic",

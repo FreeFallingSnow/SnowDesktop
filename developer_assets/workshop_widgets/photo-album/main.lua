@@ -149,7 +149,9 @@ local function desktop(context,m)
                 }}),
             }})
     end
-    local events={contextMenu={id="album.menu",scope="component"},
+    local photo=a.photos[a.loadedIndex or a.index]
+    local events={contextMenu={id="album.menu",scope="component",
+            value=photo and {handle=photo.handle,child=photo.child} or nil},
         pointerEnter={id="album.hover"},pointerLeave={id="album.hover"}}
     if not a:isClearing() then events.fileDrop={id="import",value=a.dropRevision} end
     return view.stack({key="album",width="fill",height="fill",padding=unit*0.03,children=children,events=events})
@@ -286,12 +288,11 @@ local function event(context,m,e)
         elseif id=="clear" then m.confirmClear=true;widget.openPanel({title=copy().manage,width=560,height=600})
         elseif id=="clear.cancel" then m.confirmClear=false
         elseif id=="clear.confirm" and m.confirmClear and not m.preview then
-            if a:clear() then m.confirmClear=false;m.menuPhoto=nil;m.tab="sources";m.page=1 end
-        elseif id=="removePhoto" and m.menuPhoto then
+            if a:clear() then m.confirmClear=false;m.tab="sources";m.page=1 end
+        elseif id=="removePhoto" and e.value then
             for index,photo in ipairs(a.photos) do
-                if photo.handle==m.menuPhoto.handle and photo.child==m.menuPhoto.child then a:removePhoto(index);break end
+                if photo.handle==e.value.handle and photo.child==e.value.child then a:removePhoto(index);break end
             end
-            m.menuPhoto=nil
         elseif id=="refresh" then a.warning=nil; a:refresh(nil,true)
         elseif id=="previous" then a:step(-1,false)
         elseif id=="next" then a:step(1,false)
@@ -332,13 +333,13 @@ return widget.define({name=l10n.tr("album.name"),useCustomStyle=true,followPerso
         {key="fill",label=l10n.tr("album.fill"),type="bool",default=true},
     }},
     setup=setup,view=desktop,panel=panel,event=event,
-    menu=function(context,m,request)
+    menu=function(_context,m,request)
         if request.id~="album.menu" then return nil end
-        local a=m.album;local photo=a.photos[a.loadedIndex or a.index]
-        m.menuPhoto=photo and {handle=photo.handle,child=photo.child} or nil
+        local a=m.album
         local fillStatus=enabled("fill",true) and l10n.tr("menu.status.on") or l10n.tr("menu.status.off")
-        return ui.menu({{id="fill",label=l10n.tr("album.fill").."\t"..fillStatus,icon=fluent.fill,iconFont="fluent"},
-            {id="removePhoto",label=copy().removePhoto,icon=fluent.remove,iconFont="fluent",enabled=photo~=nil and not m.preview},
+        return ui.menu({{id="fill",label=l10n.tr("album.fill").."\t"..fillStatus,icon=fluent.fill,iconFont="fluent",
+                keepOpen=widget.hasFeature("interaction.contextMenu.keepOpen")},
+            {id="removePhoto",label=copy().removePhoto,icon=fluent.remove,iconFont="fluent",enabled=request.value~=nil and not m.preview},
             {id="clear",label=copy().clearAll,icon=fluent.clear,iconFont="fluent",enabled=not m.preview and (#a.sources>0 or a.importing~=nil or a.picking~=nil)},
             {id="manage",label=copy().manage,icon=fluent.manage,iconFont="fluent"}})
     end,

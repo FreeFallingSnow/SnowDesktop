@@ -8,7 +8,7 @@
   "minHostVersion": "1.0.14.0",
   "author": "SnowDesktop Workshop Lab",
   "license": "GPL-3.0-only",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "name": "Single Monitor",
   "nameKey": "monitor.name",
   "description": "A focused instrument for CPU, GPU, memory, VRAM, battery, disk, or network.",
@@ -442,6 +442,7 @@
     "widget.size.aspectRatio"
   ],
   "optionalFeatures": [
+    "interaction.contextMenu.keepOpen",
     "data.subscription.history",
     "data.system.cpu",
     "data.system.gpu",

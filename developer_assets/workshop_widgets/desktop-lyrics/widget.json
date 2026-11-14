@@ -12,7 +12,7 @@
   "nameKey": "lua_widget.desktop_lyrics.name",
   "description": "Read-only lyrics synchronized to Windows SMTC, on a transparent background.",
   "descriptionKey": "lua_widget.desktop_lyrics.description",
-  "version": "1.1.20",
+  "version": "1.1.21",
   "locales": {
     "en-US": {
       "menu.status.current": "Current",
@@ -410,7 +410,7 @@
     "view.transform.affine",
     "view.theme.tokens"
   ],
-  "optionalFeatures": [],
+  "optionalFeatures": ["interaction.contextMenu.keepOpen"],
   "permissions": [
     "media.read",
     "network.internet"

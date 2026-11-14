@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Wooden Fish",
   "nameKey": "lua_widget.wooden_fish.name",
-  "version": "1.0.21",
+  "version": "1.0.22",
   "description": "A calming wooden fish counter with tactile visual feedback.",
   "descriptionKey": "lua_widget.wooden_fish.description",
   "preview": "workshop-preview.png",
@@ -245,6 +245,7 @@
     "widget.size.aspectRatio"
   ],
   "optionalFeatures": [
+    "interaction.contextMenu.keepOpen",
     "task.audio.playback",
     "task.start"
   ],

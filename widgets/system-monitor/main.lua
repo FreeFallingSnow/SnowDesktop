@@ -1153,6 +1153,7 @@ end
 local function menu(_context, _model, request)
     if request.id ~= "system.menu" then return nil end
     persistGpuSelection()
+    local keepOpen = widget.hasFeature("interaction.contextMenu.keepOpen")
     local items = {}
     local function appendFlatChoices(choices)
         for _, item in ipairs(choices) do
@@ -1169,7 +1170,8 @@ local function menu(_context, _model, request)
         local sizes = {}
         for _, size in ipairs(cardLayout.sizes) do
             sizes[#sizes + 1] = { id = "system.size." .. cardId .. "." .. size,
-                label = size:gsub("x", " × "), checked = size == selectedSize }
+                label = size:gsub("x", " × "), checked = size == selectedSize,
+                keepOpen = keepOpen }
         end
         local heading = l10n.tr("lua_widget.system_monitor.card_size", cardTitles[cardId])
         if widget.hasFeature("interaction.contextMenu.submenu") then
@@ -1201,10 +1203,10 @@ local function menu(_context, _model, request)
         local directions = {
             { id = "system.orientation.vertical",
                 label = l10n.tr("lua_widget.system_monitor.orientation_vertical"),
-                checked = orientation == "vertical" },
+                checked = orientation == "vertical", keepOpen = keepOpen },
             { id = "system.orientation.horizontal",
                 label = l10n.tr("lua_widget.system_monitor.orientation_horizontal"),
-                checked = orientation == "horizontal" },
+                checked = orientation == "horizontal", keepOpen = keepOpen },
         }
         local heading = l10n.tr("lua_widget.system_monitor.orientation")
         if widget.hasFeature("interaction.contextMenu.submenu") then
@@ -1234,9 +1236,11 @@ local function menu(_context, _model, request)
                 id = "system.gpu.select." .. choice.id,
                 label = choice.label,
                 checked = choice.id == selectedId,
+                keepOpen = keepOpen,
             }
         end
         if selectedId and selectedId ~= "" and not found then
+            -- Choosing a replacement removes this row and closes the menu.
             gpuItems[#gpuItems + 1] = {
                 id = "system.gpu.unavailable",
                 label = detailsWithStatus(selectedName or
