@@ -2909,5 +2909,7 @@
   "settings.taskbar.autoHide.disabled": "Windows のタスク バーの自動非表示はオフになっています。",
   "appearance.popupScene.tooltip": "ホバー時のヒント",
   "appearance.popupScene.barPanel": "ステータスバーのパネル",
-  "appearance.popupScene.followShared": "共通のポップアップテーマに従う"
+  "appearance.popupScene.followShared": "共通のポップアップテーマに従う",
+  "settings.dock.edgeRefraction": "縁の屈折",
+  "settings.dock.edgeRefraction.description": "デスクトップの背景を使い、Dock の縁で光の屈折を表現します。"
 }

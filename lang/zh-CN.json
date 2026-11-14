@@ -2909,5 +2909,7 @@
   "settings.taskbar.autoHide.disabled": "Windows 的任务栏自动隐藏已关闭。",
   "appearance.popupScene.tooltip": "悬浮提示",
   "appearance.popupScene.barPanel": "栏上面板",
-  "appearance.popupScene.followShared": "跟随共享弹窗主题"
+  "appearance.popupScene.followShared": "跟随共享弹窗主题",
+  "settings.dock.edgeRefraction": "边缘折射",
+  "settings.dock.edgeRefraction.description": "采样桌面背景，在 Dock 边缘呈现折射。"
 }

@@ -2909,5 +2909,7 @@
   "settings.taskbar.autoHide.disabled": "Das automatische Ausblenden der Windows-Taskleiste ist ausgeschaltet.",
   "appearance.popupScene.tooltip": "Hover-QuickInfos",
   "appearance.popupScene.barPanel": "Panels der Statusleiste",
-  "appearance.popupScene.followShared": "Gemeinsames Popup-Design übernehmen"
+  "appearance.popupScene.followShared": "Gemeinsames Popup-Design übernehmen",
+  "settings.dock.edgeRefraction": "Kantenbrechung",
+  "settings.dock.edgeRefraction.description": "Verwendet den Desktop-Hintergrund für die Lichtbrechung am Dock-Rand."
 }

@@ -2909,5 +2909,7 @@
   "settings.taskbar.autoHide.disabled": "Windows taskbar auto-hide is turned off.",
   "appearance.popupScene.tooltip": "Hover tooltips",
   "appearance.popupScene.barPanel": "Bar panels",
-  "appearance.popupScene.followShared": "Follow shared popup theme"
+  "appearance.popupScene.followShared": "Follow shared popup theme",
+  "settings.dock.edgeRefraction": "Edge refraction",
+  "settings.dock.edgeRefraction.description": "Uses the desktop background to refract light along the Dock edge."
 }

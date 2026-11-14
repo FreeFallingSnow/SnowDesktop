@@ -2909,5 +2909,7 @@
   "settings.taskbar.autoHide.disabled": "Le masquage automatique de la barre des tâches Windows est désactivé.",
   "appearance.popupScene.tooltip": "Info-bulles au survol",
   "appearance.popupScene.barPanel": "Panneaux de la barre d’état",
-  "appearance.popupScene.followShared": "Suivre le thème commun des fenêtres contextuelles"
+  "appearance.popupScene.followShared": "Suivre le thème commun des fenêtres contextuelles",
+  "settings.dock.edgeRefraction": "Réfraction des bords",
+  "settings.dock.edgeRefraction.description": "Utilise l’arrière-plan du bureau pour réfracter la lumière le long du bord du Dock."
 }

@@ -2909,5 +2909,7 @@
   "settings.taskbar.autoHide.disabled": "Windows 작업 표시줄 자동 숨기기가 꺼져 있습니다.",
   "appearance.popupScene.tooltip": "마우스 오버 도구 설명",
   "appearance.popupScene.barPanel": "상태 표시줄 패널",
-  "appearance.popupScene.followShared": "공유 팝업 테마 따르기"
+  "appearance.popupScene.followShared": "공유 팝업 테마 따르기",
+  "settings.dock.edgeRefraction": "가장자리 굴절",
+  "settings.dock.edgeRefraction.description": "바탕 화면 배경을 사용해 Dock 가장자리의 굴절을 표현합니다."
 }
