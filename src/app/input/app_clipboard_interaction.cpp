@@ -8,6 +8,10 @@
 #include "drag_drop/external_drop_content.h"
 #include "drag_drop/clipboard_file_operation.h"
 
+#include <atomic>
+#include <chrono>
+#include <cwchar>
+
 // Folder-entry clipboard, delete and paste operations.
 
 bool DesktopApp::HasPasteableFileClipboardData() const
@@ -238,12 +242,44 @@ size_t DesktopApp::FindFolderMappingShortcutTarget() const
     return static_cast<size_t>(-1);
 }
 
+std::uint64_t DesktopApp::PublishFileClipboard(IDataObject* data, const wchar_t* copySource)
+{
+    if (!copySource || !snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Shell))
+    {
+        OleSetClipboard(data);
+        OleFlushClipboard();
+        return 0;
+    }
+
+    using Clock = std::chrono::steady_clock;
+    using Milliseconds = std::chrono::duration<double, std::milli>;
+    static std::atomic<std::uint64_t> nextCopyId{0};
+    const auto copyId = nextCopyId.fetch_add(1, std::memory_order_relaxed) + 1;
+    const auto setStarted = Clock::now();
+    const HRESULT setResult = OleSetClipboard(data);
+    const auto flushStarted = Clock::now();
+    const HRESULT flushResult = OleFlushClipboard();
+    const auto flushFinished = Clock::now();
+    const DWORD sequence = GetClipboardSequenceNumber();
+    wchar_t message[320]{};
+    swprintf_s(message,
+        L"File clipboard copy pid=%lu copy_id=%llu source=%ls sequence=%lu "
+        L"OleSetClipboard_hr=0x%08lX OleSetClipboard_ms=%.3f "
+        L"OleFlushClipboard_hr=0x%08lX OleFlushClipboard_ms=%.3f",
+        GetCurrentProcessId(), static_cast<unsigned long long>(copyId), copySource, sequence,
+        static_cast<unsigned long>(setResult), Milliseconds(flushStarted - setStarted).count(),
+        static_cast<unsigned long>(flushResult), Milliseconds(flushFinished - flushStarted).count());
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, message);
+    return copyId;
+}
+
 /**
  * @brief 复制或剪切选中的文件夹条目到剪贴板
  * @param cut true 为剪切，false 为复制
+ * @param copySource 需要记录诊断的右键复制来源，其他入口传 nullptr
  * @return 是否成功
  */
-bool DesktopApp::CopyCutSelectedFolderEntries(bool cut)
+bool DesktopApp::CopyCutSelectedFolderEntries(bool cut, const wchar_t* copySource)
 {
     std::vector<std::wstring> paths = GetSelectedFolderEntryPaths();
     if (paths.empty()) return false;
@@ -270,9 +306,8 @@ bool DesktopApp::CopyCutSelectedFolderEntries(bool cut)
             cutPaths_.insert(path);
     }
 
-    OleSetClipboard(dataObj.Get());
-    OleFlushClipboard();
-    UpdateCutState();
+    const auto clipboardCopyId = PublishFileClipboard(dataObj.Get(), copySource);
+    UpdateCutState(clipboardCopyId);
     InvalidateRect(hwnd_, nullptr, FALSE);
     InvalidateFloatingDockWindow();
     return true;

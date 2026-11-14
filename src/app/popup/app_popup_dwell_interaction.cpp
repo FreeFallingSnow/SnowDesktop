@@ -1293,7 +1293,7 @@ ShowDockFolderPopupContextMenu(
         break;
     case kContextCopyCommand:
         CopyCutSelectedFolderEntries(
-            false);
+            false, L"folder_popup_menu");
         break;
     case kContextDeleteCommand:
         DeleteSelectedFolderEntries(

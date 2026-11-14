@@ -3,11 +3,14 @@
 #include "common/utils.h"
 #include "layout/folder_sort_rules.h"
 #include "app/lifecycle/startup_diagnostics.h"
+#include "diagnostics/diagnostic_log.h"
 #include "layout/desktop_item_sort_rules.h"
 #include "shell/item_sort_metadata.h"
 #include "settings/control_native_widget_settings.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cwchar>
 #include <tuple>
 #include <utility>
 
@@ -268,59 +271,89 @@ void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending
 /**
  * @brief 更新所有桌面项的剪切状态（从剪贴板读取 DROPEFFECT_MOVE）。
  */
-void DesktopApp::UpdateCutState()
+void DesktopApp::UpdateCutState(std::uint64_t clipboardCopyId)
 {
+    using Clock = std::chrono::steady_clock;
+    using Milliseconds = std::chrono::duration<double, std::milli>;
     const auto sequence = GetClipboardSequenceNumber();
-    clipboardReadWork_.Submit(L"cut-state", [] {
+    const auto queuedAt = clipboardCopyId ? Clock::now() : Clock::time_point{};
+    const bool submitted = clipboardReadWork_.Submit(L"cut-state",
+        [clipboardCopyId, queuedAt, sequence] {
+        const auto started = clipboardCopyId ? Clock::now() : Clock::time_point{};
+        const DWORD readSequence = clipboardCopyId ? GetClipboardSequenceNumber() : 0;
         const auto initialized = OleInitialize(nullptr);
         struct OleScope { HRESULT hr; ~OleScope() { if (SUCCEEDED(hr)) OleUninitialize(); } } ole{initialized};
-    std::unordered_set<std::wstring> clipCutPaths;
-
-    ComPtr<IDataObject> clipObj;
-    if (SUCCEEDED(snowdesktop::startup_diagnostics::Call(L"Clipboard.OleGetClipboard", [&] {
+        std::unordered_set<std::wstring> clipCutPaths;
+        ComPtr<IDataObject> clipObj;
+        const auto getStarted = clipboardCopyId ? Clock::now() : Clock::time_point{};
+        const HRESULT getResult = snowdesktop::startup_diagnostics::Call(L"Clipboard.OleGetClipboard", [&] {
             return OleGetClipboard(&clipObj);
-        })) && clipObj)
-    {
-        CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
-        FORMATETC fmtPref{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
-        STGMEDIUM medPref{};
-        bool isMove = false;
-
-        if (SUCCEEDED(snowdesktop::startup_diagnostics::Call(L"Clipboard.GetData.DropEffect", [&] {
+        });
+        const auto getFinished = clipboardCopyId ? Clock::now() : Clock::time_point{};
+        wchar_t preferredDetails[112]{};
+        if (SUCCEEDED(getResult) && clipObj)
+        {
+            CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
+            FORMATETC fmtPref{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+            STGMEDIUM medPref{};
+            bool isMove = false;
+            const auto preferredStarted = clipboardCopyId ? Clock::now() : Clock::time_point{};
+            const HRESULT preferredResult = snowdesktop::startup_diagnostics::Call(L"Clipboard.GetData.DropEffect", [&] {
                 return clipObj->GetData(&fmtPref, &medPref);
-            })) && medPref.hGlobal)
-        {
-            DWORD* pEffect = static_cast<DWORD*>(GlobalLock(medPref.hGlobal));
-            if (pEffect)
+            });
+            if (clipboardCopyId)
             {
-                if (*pEffect & DROPEFFECT_MOVE)
-                    isMove = true;
-                GlobalUnlock(medPref.hGlobal);
+                swprintf_s(preferredDetails, L" PreferredDropEffect_hr=0x%08lX PreferredDropEffect_ms=%.3f",
+                    static_cast<unsigned long>(preferredResult),
+                    Milliseconds(Clock::now() - preferredStarted).count());
             }
-            ReleaseStgMedium(&medPref);
-        }
-
-        if (isMove)
-        {
-            FORMATETC fmtDrop{ CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
-            STGMEDIUM medDrop{};
-            if (SUCCEEDED(snowdesktop::startup_diagnostics::Call(L"Clipboard.GetData.FileList", [&] {
-                    return clipObj->GetData(&fmtDrop, &medDrop);
-                })) && medDrop.hGlobal)
+            if (SUCCEEDED(preferredResult) && medPref.hGlobal)
             {
-                HDROP hDrop = static_cast<HDROP>(medDrop.hGlobal);
-                UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
-                for (UINT i = 0; i < count; ++i)
+                DWORD* pEffect = static_cast<DWORD*>(GlobalLock(medPref.hGlobal));
+                if (pEffect)
                 {
-                    wchar_t path[MAX_PATH]{};
-                    if (DragQueryFileW(hDrop, i, path, MAX_PATH) > 0)
-                        clipCutPaths.insert(ToUpperInvariant(path));
+                    if (*pEffect & DROPEFFECT_MOVE)
+                        isMove = true;
+                    GlobalUnlock(medPref.hGlobal);
                 }
-                ReleaseStgMedium(&medDrop);
+                ReleaseStgMedium(&medPref);
+            }
+
+            if (isMove)
+            {
+                FORMATETC fmtDrop{ CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+                STGMEDIUM medDrop{};
+                if (SUCCEEDED(snowdesktop::startup_diagnostics::Call(L"Clipboard.GetData.FileList", [&] {
+                        return clipObj->GetData(&fmtDrop, &medDrop);
+                    })) && medDrop.hGlobal)
+                {
+                    HDROP hDrop = static_cast<HDROP>(medDrop.hGlobal);
+                    UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
+                    for (UINT i = 0; i < count; ++i)
+                    {
+                        wchar_t path[MAX_PATH]{};
+                        if (DragQueryFileW(hDrop, i, path, MAX_PATH) > 0)
+                            clipCutPaths.insert(ToUpperInvariant(path));
+                    }
+                    ReleaseStgMedium(&medDrop);
+                }
             }
         }
-    }
-
+        if (clipboardCopyId)
+        {
+            const auto readFinished = Clock::now();
+            const auto finishedSequence = GetClipboardSequenceNumber();
+            wchar_t message[420]{};
+            swprintf_s(message,
+                L"File clipboard read pid=%lu copy_id=%llu queued_sequence=%lu "
+                L"read_sequence=%lu finished_sequence=%lu "
+                L"queue_ms=%.3f read_ms=%.3f OleGetClipboard_hr=0x%08lX OleGetClipboard_ms=%.3f%ls",
+                GetCurrentProcessId(), static_cast<unsigned long long>(clipboardCopyId),
+                sequence, readSequence, finishedSequence, Milliseconds(started - queuedAt).count(),
+                Milliseconds(readFinished - started).count(), static_cast<unsigned long>(getResult),
+                Milliseconds(getFinished - getStarted).count(), preferredDetails);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, message);
+        }
         return clipCutPaths;
     }, [this, sequence](auto clipCutPaths) {
         if (GetClipboardSequenceNumber() != sequence) { UpdateCutState(); return; }
@@ -362,6 +395,13 @@ void DesktopApp::UpdateCutState()
         InvalidateFloatingPopupWindow(false);
         InvalidateQuickNavigationWindow();
     }, hwnd_, kBackgroundShellReadyMessage);
+    if (clipboardCopyId && !submitted)
+    {
+        wchar_t message[160]{};
+        swprintf_s(message, L"File clipboard read not queued pid=%lu copy_id=%llu sequence=%lu",
+            GetCurrentProcessId(), static_cast<unsigned long long>(clipboardCopyId), sequence);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, message);
+    }
 }
 
 // ── Shell 变更通知 ──────────────────────────────────────────

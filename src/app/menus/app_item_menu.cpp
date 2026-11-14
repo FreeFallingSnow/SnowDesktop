@@ -1071,6 +1071,7 @@ void DesktopApp::ShowItemContextMenu(
     case kContextCopyCommand:
     {
         cutPaths_.clear();
+        std::uint64_t clipboardCopyId = 0;
 
         std::vector<PCUITEMID_CHILD> pidls;
         std::vector<size_t> selectedIndexes;
@@ -1103,8 +1104,8 @@ void DesktopApp::ShowItemContextMenu(
                     }
                 }
 
-                OleSetClipboard(dataObj.Get());
-                OleFlushClipboard();
+                clipboardCopyId = PublishFileClipboard(dataObj.Get(),
+                    command == kContextCopyCommand ? L"desktop_menu" : nullptr);
             }
         }
 
@@ -1118,7 +1119,7 @@ void DesktopApp::ShowItemContextMenu(
             }
         }
 
-        UpdateCutState();
+        UpdateCutState(clipboardCopyId);
         InvalidateRect(hwnd_, nullptr, FALSE);
         break;
     }

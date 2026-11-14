@@ -1587,9 +1587,11 @@ private:
     /**
      * @brief 复制或剪切选中的文件夹条目。
      * @param cut true 为剪切，false 为复制
+     * @param copySource 内置右键复制的诊断来源
      * @return 操作是否成功
      */
-    bool CopyCutSelectedFolderEntries(bool cut);
+    bool CopyCutSelectedFolderEntries(bool cut, const wchar_t* copySource = nullptr);
+    std::uint64_t PublishFileClipboard(IDataObject* data, const wchar_t* copySource);
     /** @brief 删除选中的文件夹条目。 @param permanentDelete true 时永久删除并显示确认。 @return 操作是否成功 */
     bool DeleteSelectedFolderEntries(bool permanentDelete = false);
     /**
@@ -1734,7 +1736,7 @@ private:
      */
     void SortWidgetContents(size_t widgetIndex, int mode, bool ascending = true, bool persist = true);
     /** @brief 更新剪切状态高亮显示。 */
-    void UpdateCutState();
+    void UpdateCutState(std::uint64_t clipboardCopyId = 0);
 
     // ── Tray ────────────────────────────────────────────────
     /** @brief 添加托盘图标。 @param force 是否强制重新添加 */
