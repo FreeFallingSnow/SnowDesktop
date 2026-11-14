@@ -145,6 +145,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/dock/app_floating_dock_interaction.cpp
     src/app/dock/app_floating_dock_lifecycle.cpp
     src/app/dock/app_floating_dock_render.cpp
+    src/app/dock/dock_refraction.cpp
     src/app/dock/app_floating_dock_window.cpp
     src/app/popup/app_floating_popup_window.cpp
     src/app/render/app_graphics_device.cpp

@@ -700,6 +700,7 @@ void DesktopApp::UpdatePersistentDockHostVisibility()
 void DesktopApp::ResetFloatingDockCompositionResources(
     PersistentDockHost& host)
 {
+    StopDockRefraction(host);
     ResetMergedDockPresentation(host);
     host.frameReady = false;
     brushCache_.clear();

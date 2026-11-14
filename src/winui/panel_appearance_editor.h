@@ -21,12 +21,13 @@ public:
     using Localize = PanelGradientEditor::Localize;
     using Change = std::function<void(const PersonalizationSettings&, bool)>;
     static std::shared_ptr<PanelAppearanceEditor> Create(Localize localize, Change change,
-        bool borderOnly = false, bool inlineSurface = false)
+        bool borderOnly = false, bool inlineSurface = false, bool dockRefraction = false)
     {
         auto result = std::make_shared<PanelAppearanceEditor>();
         result->localize_ = std::move(localize); result->change_ = std::move(change);
         result->borderOnly_ = borderOnly;
         result->inlineSurface_ = inlineSurface;
+        result->dockRefraction_ = dockRefraction;
         std::weak_ptr<PanelAppearanceEditor> weak = result;
         result->preview_.Initialize([weak](auto const& value) {
             if (auto self = weak.lock(); self && self->change_) self->change_(value, false);
@@ -89,6 +90,7 @@ private:
     bool syncing_ = false, dirty_ = false, closed_ = false;
     bool borderOnly_ = false;
     bool inlineSurface_ = false;
+    bool dockRefraction_ = false;
     std::wstring L(const char* key) const { return localize_ ? localize_(key) : std::wstring{}; }
     void Sync()
     {
@@ -108,7 +110,8 @@ private:
         else preview_.Queue(value_);
         Sync();
     }
-    void Row(Panel parent, const char* key, Element control, Edit reset, Condition visible = {})
+    void Row(Panel parent, const char* key, Element control, Edit reset, Condition visible = {},
+        const char* description = nullptr)
     {
         namespace x = winrt::Microsoft::UI::Xaml; namespace c = x::Controls;
         if (auto toggle = control.try_as<c::ToggleSwitch>()) toggle.MinWidth(0);
@@ -125,7 +128,8 @@ private:
         row.SetCompactEditor(control.try_as<c::ToggleSwitch>() || control.try_as<c::Button>());
         if (control.try_as<c::ToggleSwitch>() || control.try_as<c::Button>())
             row.SetControlAlignment(x::HorizontalAlignment::Right);
-        row.SetText(L(key)); row.root.MinHeight(44); parent.Children().Append(row.root);
+        row.SetText(L(key), description ? L(description) : std::wstring{});
+        row.root.MinHeight(44); parent.Children().Append(row.root);
         x::Automation::AutomationProperties::SetName(control, L(key));
         targets_.insert_or_assign(key, control.as<x::FrameworkElement>());
         if (visible) sync_.push_back([this, visible, root = row.root] { root.Visibility(visible(value_) ? x::Visibility::Visible : x::Visibility::Collapsed); });
@@ -215,6 +219,19 @@ private:
         sync_.push_back([this, acrylic] { acrylic.IsOn(value_.acrylicEnabled); });
         Row(sections_.material, "app.settings.acrylic_noise", acrylic, [](auto& value) { value.acrylicEnabled = false; }, [](auto const& value) { return value.glassEnabled; });
         Number(sections_.material, "app.settings.blur_radius", &PersonalizationSettings::glassBlurRadius, 4, 48, 1, 1, L"px", [](auto const& value) { return value.glassEnabled; });
+        if (dockRefraction_)
+        {
+            c::ToggleSwitch refraction;
+            refraction.HorizontalAlignment(x::HorizontalAlignment::Right);
+            refraction.Toggled([weak, refraction](auto const&, auto const&) {
+                if (auto self = weak.lock())
+                    self->Apply([&](auto& value) { value.dockEdgeRefraction = refraction.IsOn(); }, true);
+            });
+            sync_.push_back([this, refraction] { refraction.IsOn(value_.dockEdgeRefraction); });
+            Row(sections_.material, "settings.dock.edgeRefraction", refraction,
+                [](auto& value) { value.dockEdgeRefraction = false; },
+                [](auto const& value) { return value.glassEnabled; }, "settings.dock.edgeRefraction.description");
+        }
         c::ComboBox theme; theme.HorizontalAlignment(x::HorizontalAlignment::Right);
         theme.Items().Append(winrt::box_value(L("app.settings.light"))); theme.Items().Append(winrt::box_value(L("app.settings.dark")));
         theme.SelectionChanged([weak, theme](auto const&, auto const&) { if (auto self = weak.lock()) self->Apply([&](auto& value) { value.contentTheme = std::clamp(theme.SelectedIndex(), 0, 1); }, true); });

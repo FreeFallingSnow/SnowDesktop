@@ -45,6 +45,7 @@ template<class Visit> void VisitPanelAppearanceFlags(Visit visit)
     visit("glass", &PersonalizationSettings::glassEnabled);
     visit("acrylic", &PersonalizationSettings::acrylicEnabled);
     visit("highlight", &PersonalizationSettings::widgetEdgeHighlightEnabled);
+    visit("dockEdgeRefraction", &PersonalizationSettings::dockEdgeRefraction);
 }
 
 // Taskbar material storage deliberately excludes the legacy widget bottom-bar

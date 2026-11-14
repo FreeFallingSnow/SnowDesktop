@@ -731,7 +731,7 @@ struct PersonalizationPagePresenter::Impl
             [this](const auto& value, bool commit) {
                 EmitDockAppearance(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
                     [value](auto& settings) { settings.customAppearance = value; settings.appearancePreset = kAppearancePresetCustom; });
-            }, false, true);
+            }, false, true, true);
         dockThemeCard.content.Children().Append(dockAppearanceEditor->Content());
         dockThemeCard.content.Children().Append(dockThemes->SaveContent());
         InitializeDockScenes();
@@ -1105,7 +1105,7 @@ struct PersonalizationPagePresenter::Impl
                 [this, member = scene.member](const auto& appearance, bool commit) {
                     EmitDockAppearance(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
                         [member, appearance](auto& settings) { (settings.*member).appearance = appearance; });
-                }, false, true);
+                }, false, true, true);
             scene.body.Children().Append(scene.editor->Content());
             scene.body.Children().Append(scene.themes->SaveContent());
             presenter_controls::JoinSettingsSections(scene.body);

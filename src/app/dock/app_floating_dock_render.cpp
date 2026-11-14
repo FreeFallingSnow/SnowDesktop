@@ -17,6 +17,36 @@
 
 // Floating-Dock paint and window-message dispatch.
 
+void DesktopApp::SyncDockRefraction(PersistentDockHost& host)
+{
+    if (host.active && host.hwnd && IsWindowVisible(host.hwnd) &&
+        d3dDevice_ && host.container && !dockSettings_.edgeAttached &&
+        !host.container->SharesStatusBarAppearance())
+    {
+        const auto appearance = CurrentDockAppearance(host.monitor);
+        if (appearance.glassEnabled && appearance.dockEdgeRefraction && appearance.cornerRadius > 0)
+        {
+            if (!host.refractionActive)
+            {
+                host.refractionActive = SetTimer(host.hwnd, host.refractionTimerId, 33, nullptr) != 0;
+            }
+            return;
+        }
+    }
+    StopDockRefraction(host);
+}
+
+void DesktopApp::StopDockRefraction(PersistentDockHost& host)
+{
+    if (!host.refractionActive) return;
+    if (host.hwnd) KillTimer(host.hwnd, host.refractionTimerId);
+    host.refractionActive = false;
+    host.refractionMaterial = {};
+    for (const auto& other : persistentDockHosts_)
+        if (other && other->refractionActive) return;
+    dockRefractionSource_.Reset();
+}
+
 bool DesktopApp::RenderFloatingDockCompositionFrame(
     PersistentDockHost& host)
 {
@@ -47,6 +77,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         renderingFloatingDock_, renderingFloatingDock_
     };
     renderingPersistentDockHost_ = &host;
+    SyncDockRefraction(host);
     const auto revision = ++host.presentationRevision;
     const std::wstring diagnosticOwner = snowdesktop::performance::Enabled()
         ? std::to_wstring(reinterpret_cast<UINT_PTR>(host.hwnd)) : std::wstring{};
@@ -417,6 +448,11 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     switch (msg)
     {
     case WM_WINDOWPOSCHANGED:
+        if (lp && (reinterpret_cast<const WINDOWPOS*>(lp)->flags & (SWP_HIDEWINDOW | SWP_SHOWWINDOW)))
+        {
+            SyncDockRefraction(host);
+            if (host.refractionActive) InvalidateRect(hwnd, nullptr, FALSE);
+        }
         if (host.promoted && !(GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST))
             snowdesktop::dock_input_diagnostics::RecordLayer(L"observed-low-while-promoted", hwnd, host.promoted);
         break;
@@ -454,6 +490,17 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return 1;
     case WM_PAINT:
         PaintFloatingDockWindow(host, hwnd);
+        return 0;
+    case WM_TIMER:
+        if (wp != host.refractionTimerId) break;
+        SyncDockRefraction(host);
+        if (host.refractionActive && !graphicsDeviceRecovery_.Pending() &&
+            dockRefractionSource_.Update(d3dDevice_.Get()))
+        {
+            for (const auto& dock : persistentDockHosts_)
+                if (dock && dock->refractionActive)
+                    InvalidateRect(dock->hwnd, nullptr, FALSE);
+        }
         return 0;
     case WM_MOUSEMOVE:
     {
@@ -674,6 +721,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         CloseFloatingDock(host);
         return 0;
     case WM_DESTROY:
+        StopDockRefraction(host);
         if (rightButtonDownDockHost_ == &host)
             rightButtonDownDockHost_ = nullptr;
         host.hwnd = nullptr;

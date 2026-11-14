@@ -219,6 +219,7 @@ struct PersonalizationSettings
      *          系统 AcrylicBrush；仅 glassEnabled=true 时生效。
      */
     bool acrylicEnabled = false;
+    bool dockEdgeRefraction = false;
 
     /**
      * @brief 文字颜色主题 (0=浅色/白字, 1=深色/黑字)

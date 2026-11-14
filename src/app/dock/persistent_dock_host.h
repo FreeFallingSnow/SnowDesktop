@@ -70,6 +70,9 @@ struct DesktopApp::PersistentDockHost
     std::uint64_t presentationRevision = 0;
     bool dropTargetRegistered = false;
     DesktopBackdropCompositor backdrop;
+    static constexpr UINT_PTR refractionTimerId = 1;
+    bool refractionActive = false;
+    snowdesktop::DockRefractionMaterial refractionMaterial;
     ComPtr<IDCompositionTarget> dcompTarget;
     ComPtr<IDCompositionVisual2> dcompVisual;
     ComPtr<IDCompositionSurface> dcompSurface;
