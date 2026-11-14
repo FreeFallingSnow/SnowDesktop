@@ -71,6 +71,7 @@
 
 ### CF-003 任务关闭后同会话无法继续
 
+- **滚轮音量提示验收补录（2026-11-15）**：`music-volume-wheel-popup` 关闭后收到用户反馈「实测通过」。后继 Task `task-1769c78936524282a92749b07cd74047` 核对原批次 `c422b6989dce4cf2adac91038e4d001a` 修订 0、Run `f5d9abba2aa64a3facd830fcc0fc42a8`。保存的运行文件、激活回执和本地 Release 可执行文件的 SHA-256 一致。源码确认 `acceptance-start` 仍要求活跃任务及原候选成员资格。后继任务将用户反馈与原构建绑定到 `verify` 提交，保留验收起点未知的事实。这次只处理记录，无需重编或重测。
 - **后继任务验收关联缺口（源码确认）**：2026-11-05，托盘实现 Task `task-3ce5856630f8469dad256d8d3b1e8fde` 已关闭，用户随后明确反馈固定托盘与展开面板中键均正常。`task-new` 正常创建验证 Task `task-5ae4d391375140a7a5fe6ba92e8e8f05`，保留前序与 continuationRoot；但 `build_manager.ps1` 禁止关闭的 Task 登记验收，`Start-TaskAcceptance` 又只接受候选原成员，`Start-RunAcceptance` 要求原请求 task 完全相同，均未解析后继关系。此为源码确认，没有提交已知会失败的验收命令。本次在独立 verify 提交和忽略任务记录中绑定用户原话、候选 `b85ab212`、Run `772b51ec3d9e4d428ee21e0c51f9e499` 及匹配的运行文件哈希，不补造历史验收起点、不创建新产品候选或重跑构建。下一步应支持同一 continuationRoot 下的可审查验收关联，并保留原需求修订及产物校验；原 task-new 登记修复仍有效。
 - **后继验收补录（2026-11-07）**：Lua 首帧修复 Task `task-4932f8440e3045d98b477fc4ba7ef362` 关闭后，用户重启确认内容与毛玻璃一起显示、首次异步刷新无闪空。后继 Task `task-20ff05487820495c83fe414b7d58c96a` 核对批次 `1cc4f84ab406479785f40b62d9b09b74`、Run `7adb4dc5ee9b437e9c83b1a46c369280` 及保存、激活与当前 EXE 哈希一致。现有入口仍要求原任务关联，此为源码确认。事后验收保存在独立 verify 提交及 `.codex-probes/lua-startup-glass/user-verification.json`，复用原候选与回归结果。后继关联与无历史起点的补录入口待实现。
 - **原始反馈**：关闭任务后，新增“可见性改到管理页”“名称改 VPN”需求，`open/begin` 报 `Task ID is closed; use a new ID for a new task`。插件没有下一任务入口，只能创建新 teammate，重复整轮登记、实现、提交和汇报。
@@ -289,6 +290,7 @@
 
 ### CF-021 协作提交无法直接保存空验收记录
 
+- **滚轮音量提示续证（2026-11-15）**：同 [CF-003](#cf-003-任务关闭后同会话无法继续) 的后继任务。协作提交仍要求具体差异路径，事后实测通过与本次反馈通过文档轻量批次 `f9b027a781ee4664a6aec14a2550b229` 保存。增加了文档认领与归档操作，复用原 Run 的产品和测试结果。
 - **发现时间与来源**：2026-11-05，CLI，Task `music-resource-attribution-20261105`；采样尝试 `cab65ec4`，最终产品Run `3f0feba1daae471b98535bab21146e90`、验收 `da8bbd8ab573452c82162d8d0db181cd`，热点提交 `7637193a`。归档批次 `f3feb142ca9d4c7fadeec31aadfd28cd`。
 - **现象与证据（源码确认，未执行已知失败命令）**：`.agents/rules/delivery.md` 要求无代码修改的后续验收创建独立 `verify`，允许空提交；`build_manager.ps1` 的 `commit` 没有空提交参数，`build_ownership.ps1::Invoke-OwnedCommit` 要求非空路径并调用 `git commit --only`，没有 `--allow-empty`。目标路径已提交且无差异时，入口不能直接记录所需空验收；不能把其他暂存内容纳入来满足提交。
 - **效率影响与状态**：P2，增加收尾调查及归档步骤，没有因此配置、编译或重跑通过测试；额外耗时/token未测量。本任务在独立verify提交中纳入本条真实反馈，并绑定原采样与用户验收，保留此前try历史，没有修改协作实现或绕过Git事务。
