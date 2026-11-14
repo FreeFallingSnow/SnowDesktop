@@ -2911,5 +2911,7 @@
   "appearance.popupScene.barPanel": "Panels der Statusleiste",
   "appearance.popupScene.followShared": "Gemeinsames Popup-Design übernehmen",
   "settings.dock.edgeRefraction": "Kantenbrechung",
-  "settings.dock.edgeRefraction.description": "Verwendet den Desktop-Hintergrund für die Lichtbrechung am Dock-Rand."
+  "settings.dock.edgeRefraction.description": "Erfasst den Bildschirm hinter dem Dock. Währenddessen kann das Dock in Bildschirmaufnahmen fehlen.",
+  "settings.dock.refractionWidth": "Breite der Brechung",
+  "settings.dock.refractionStrength": "Stärke der Brechung"
 }

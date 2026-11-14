@@ -2911,5 +2911,7 @@
   "appearance.popupScene.barPanel": "Panneaux de la barre d’état",
   "appearance.popupScene.followShared": "Suivre le thème commun des fenêtres contextuelles",
   "settings.dock.edgeRefraction": "Réfraction des bords",
-  "settings.dock.edgeRefraction.description": "Utilise l’arrière-plan du bureau pour réfracter la lumière le long du bord du Dock."
+  "settings.dock.edgeRefraction.description": "Échantillonne l’écran derrière le Dock. Le Dock peut être absent des captures et des enregistrements pendant l’utilisation.",
+  "settings.dock.refractionWidth": "Largeur de réfraction",
+  "settings.dock.refractionStrength": "Intensité de la réfraction"
 }

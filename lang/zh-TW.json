@@ -2911,5 +2911,7 @@
   "appearance.popupScene.barPanel": "狀態列面板",
   "appearance.popupScene.followShared": "跟隨共用彈出視窗主題",
   "settings.dock.edgeRefraction": "邊緣折射",
-  "settings.dock.edgeRefraction.description": "取樣桌面背景，在 Dock 邊緣呈現折射。"
+  "settings.dock.edgeRefraction.description": "取樣 Dock 後方的螢幕畫面。使用時，螢幕截圖和錄影可能不顯示 Dock。",
+  "settings.dock.refractionWidth": "折射寬度",
+  "settings.dock.refractionStrength": "折射強度"
 }

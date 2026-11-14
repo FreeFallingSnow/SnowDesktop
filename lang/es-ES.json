@@ -2911,5 +2911,7 @@
   "appearance.popupScene.barPanel": "Paneles de la barra de estado",
   "appearance.popupScene.followShared": "Usar el tema compartido de ventanas emergentes",
   "settings.dock.edgeRefraction": "Refracción en los bordes",
-  "settings.dock.edgeRefraction.description": "Utiliza el fondo del escritorio para refractar la luz en el borde del Dock."
+  "settings.dock.edgeRefraction.description": "Muestrea la pantalla situada detrás del Dock. Mientras está activo, el Dock puede quedar fuera de las capturas y grabaciones.",
+  "settings.dock.refractionWidth": "Anchura de refracción",
+  "settings.dock.refractionStrength": "Intensidad de refracción"
 }
