@@ -1,6 +1,7 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app/navigation/quick_navigation_state.h"
+#include "app/layout/new_item_placement.h"
 #include "dock/dock_window_rules.h"
 #include "dock/dock_window_transition.h"
 #include "common/l10n.h"
@@ -17,6 +18,7 @@
 #include "shell/shell_context_menu_invoke.h"
 #include "shell/shell_context_menu_site.h"
 #include "shell/shell_start_pin.h"
+#include "desktop/desktop_membership_recovery.h"
 #include "shell/shell_new_item_capture.h"
 #include "shell/shell_new_menu.h"
 #include "shell/shell_popup_menu_tracker.h"
@@ -185,17 +187,21 @@ void DesktopApp::AppendShellNewSubmenu(HMENU menu, const std::wstring& targetDir
 }
 
 HRESULT DesktopApp::InitializeShellNewMenu(snowdesktop::ShellNewMenu& menu,
-    const std::wstring& targetDir, std::wstring desktopFilesWidgetId)
+    const std::wstring& targetDir, const std::optional<NewItemTarget>& target)
 {
     const auto attachCapture = [&](IContextMenu* context) -> HRESULT
     {
-        if (desktopFilesWidgetId.empty()) return S_OK;
-        const size_t target = FindWidgetIndexById(desktopFilesWidgetId);
-        if (target >= widgets_.size() ||
-            widgets_[target].type != DesktopWidgetType::FileCategories) return E_INVALIDARG;
+        if (!target) return S_OK;
+        size_t insertIndex = 0;
+        if (target->surface == NewItemTarget::Surface::FileCategories)
+        {
+            const size_t index = FindWidgetIndexById(target->sourceId);
+            if (index >= widgets_.size() ||
+                widgets_[index].type != DesktopWidgetType::FileCategories) return E_INVALIDARG;
+            insertIndex = widgets_[index].itemKeys.size();
+        }
         auto capture = std::make_shared<snowdesktop::ShellNewItemCapture>(
-            targetDir, std::move(desktopFilesWidgetId), widgets_[target].itemKeys.size(),
-            hwnd_, kShellChangeMessage);
+            targetDir, hwnd_, kShellChangeMessage);
         const HRESULT hr = snowdesktop::AttachShellNewItemCapture(context, capture);
         if (FAILED(hr))
         {
@@ -203,22 +209,111 @@ HRESULT DesktopApp::InitializeShellNewMenu(snowdesktop::ShellNewMenu& menu,
             MessageBeep(MB_ICONWARNING);
             return hr;
         }
-        pendingNewItemCaptures_.push_back(std::move(capture));
+        pendingNewItemCaptures_.push_back({*target, std::move(capture), insertIndex});
         return S_OK;
     };
     return menu.Initialize(targetDir, attachCapture);
+}
+
+bool DesktopApp::HasPendingDesktopNewItems() const
+{
+    return std::any_of(pendingNewItemCaptures_.begin(), pendingNewItemCaptures_.end(), [](const auto& pending) {
+        return (pending.target.surface == NewItemTarget::Surface::Desktop ||
+            pending.target.surface == NewItemTarget::Surface::FileCategories) && pending.capture->HasPendingPaths();
+    });
+}
+
+std::unordered_set<std::wstring> DesktopApp::PendingDesktopNewItemPaths() const
+{
+    std::unordered_set<std::wstring> paths;
+    for (const auto& pending : pendingNewItemCaptures_)
+        if (pending.target.surface == NewItemTarget::Surface::Desktop)
+            pending.capture->ForEachPendingPath([&](const auto& path) { paths.insert(ToUpperInvariant(path)); });
+    return paths;
+}
+
+std::optional<DesktopApp::NewItemRename> DesktopApp::ApplyPendingNewItems(
+    std::unordered_set<std::wstring>* desktopSlots,
+    const std::unordered_set<std::wstring>* desktopPaths)
+{
+    using Surface = NewItemTarget::Surface;
+    using snowdesktop::pending_drop::MatchesExactPath;
+    std::optional<NewItemRename> rename;
+    bool membershipChanged = false;
+    std::erase_if(pendingNewItemCaptures_, [&](auto& pending) {
+        const auto& target = pending.target;
+        const bool desktopTarget = target.surface == Surface::Desktop || target.surface == Surface::FileCategories;
+        return pending.capture->Consume([&](const auto& path, bool edit) {
+            if (desktopTarget != (desktopSlots != nullptr)) return false;
+            if (target.surface == Surface::FolderPopup || target.surface == Surface::FolderMapping)
+            {
+                const DesktopWidget* folder = nullptr;
+                if (target.surface == Surface::FolderPopup)
+                {
+                    if (dockFolderPopupOpen_ && target.sourceId == dockFolderPopupSourceId_)
+                        folder = &dockFolderPopupWidget_;
+                }
+                else if (const size_t index = FindWidgetIndexById(target.sourceId);
+                    index < widgets_.size() && widgets_[index].type == DesktopWidgetType::FolderMapping)
+                    folder = &widgets_[index];
+                if (!folder) return true;
+                if (std::none_of(folder->folderEntries.begin(), folder->folderEntries.end(), [&](const auto& entry) {
+                        return MatchesExactPath(entry.fullPath, path);
+                    })) return false;
+            }
+            else if (target.surface == Surface::FileCategories)
+            {
+                using snowdesktop::new_item_placement::Result;
+                const auto result = snowdesktop::new_item_placement::Apply(
+                    widgets_, items_, target.sourceId, path, pending.insertIndex, ToUpperInvariant);
+                if (result == Result::Pending) return false;
+                if (result == Result::Discarded) return true;
+                ++pending.insertIndex;
+                membershipChanged = true;
+            }
+            else
+            {
+                if (!desktopPaths || !desktopPaths->contains(ToUpperInvariant(path))) return false;
+                const auto item = std::find_if(items_.begin(), items_.end(), [&](const auto& candidate) {
+                    return MatchesExactPath(candidate.parsingName, path);
+                });
+                if (item == items_.end()) return false;
+                if (IsItemInAnyWidget(*item))
+                {
+                    const std::vector<std::wstring> keys{ToUpperInvariant(item->layoutKey)};
+                    for (auto& widget : widgets_)
+                        if (widget.type == DesktopWidgetType::FileCategories)
+                            snowdesktop::desktop_membership_recovery::Forget(widget, keys);
+                    membershipChanged = true;
+                }
+                if (const auto* page = FindGridPage(gridPages_, target.cell.pageId))
+                    snowdesktop::new_item_placement::PlaceOnPage(*item, target.cell, *page, *desktopSlots);
+                else if (savedPageColumns_.contains(target.cell.pageId) && savedPageRows_.contains(target.cell.pageId))
+                {
+                    GridPage savedPage;
+                    savedPage.id = target.cell.pageId;
+                    savedPage.columns = savedPageColumns_.at(savedPage.id);
+                    savedPage.rows = savedPageRows_.at(savedPage.id);
+                    snowdesktop::new_item_placement::PlaceOnPage(*item, target.cell, savedPage, *desktopSlots);
+                }
+            }
+            if (edit) rename = NewItemRename{target, path};
+            return true;
+        });
+    });
+    if (membershipChanged) RefreshCollectedKeysCache();
+    return rename;
 }
 
 void DesktopApp::PrepareShellNewSubmenu(
     std::unique_ptr<snowdesktop::ShellNewMenu>& menu,
     const std::wstring& targetDir,
     std::vector<snowdesktop::modern_menu::Item>& children,
-    std::wstring desktopFilesWidgetId)
+    const std::optional<NewItemTarget>& target)
 {
     if (menu) return;
     menu = std::make_unique<snowdesktop::ShellNewMenu>();
-    if (FAILED(InitializeShellNewMenu(*menu, targetDir,
-            std::move(desktopFilesWidgetId))))
+    if (FAILED(InitializeShellNewMenu(*menu, targetDir, target)))
     {
         children = {snowdesktop::modern_menu::Item{}};
         children.front().label = _LW("settings.contextMenu.failed");
@@ -237,11 +332,10 @@ void DesktopApp::PrepareShellNewSubmenu(
 }
 
 void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir,
-    bool folderOnly, std::wstring desktopFilesWidgetId)
+    bool folderOnly, const std::optional<NewItemTarget>& target)
 {
     snowdesktop::ShellNewMenu newMenu;
-    if (FAILED(InitializeShellNewMenu(newMenu, targetDir,
-            std::move(desktopFilesWidgetId)))) return;
+    if (FAILED(InitializeShellNewMenu(newMenu, targetDir, target))) return;
 
     UINT cmd = 0;
     if (folderOnly)

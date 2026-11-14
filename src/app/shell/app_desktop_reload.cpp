@@ -888,10 +888,16 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
             MarkGridArea(usedSlots, w.gridCell, w.gridSpan);
 
     // Mark items with valid existing positions as used; flag unslotted items
+    const auto pendingNewPaths = PendingDesktopNewItemPaths();
     std::unordered_set<std::wstring> placedKeys;
     for (auto& item : items_)
     {
         if (item.name.empty()) continue;
+        if (!pendingNewPaths.empty() && pendingNewPaths.contains(ToUpperInvariant(item.parsingName)))
+        {
+            item.gridCell = {};
+            continue;
+        }
         if (IsItemInAnyWidget(item)) continue;
 
         auto* page = item.gridCell.pageId.empty()
@@ -941,6 +947,8 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
             if (!item.largeIcon) item.gridSpan = {1, 1};
         }
     }
+
+    const auto newItemRename = ApplyPendingNewItems(&usedSlots, &pendingNewPaths);
 
     // Assign free cells to unslotted items
     std::vector<DesktopItem*> unslotted;
@@ -1108,6 +1116,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         ScheduleDataCleanup();
         ScheduleIconCustomizationCleanup();
     }
+    BeginNewItemRename(newItemRename);
 }
 
 void DesktopApp::EnqueueIconLoad(IconLoadTask task)

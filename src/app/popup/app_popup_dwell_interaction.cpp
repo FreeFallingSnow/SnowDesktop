@@ -1012,6 +1012,7 @@ ShowDockFolderPopupContextMenu(
     }
     HMENU sortMenu = nullptr;
     const std::wstring newItemDirectory = dockFolderPopupWidget_.sourceFolderPath;
+    const NewItemTarget newItemTarget{NewItemTarget::Surface::FolderPopup, {}, dockFolderPopupSourceId_};
     std::unique_ptr<snowdesktop::ShellNewMenu> shellNewMenu;
 
     if (itemMenu)
@@ -1197,7 +1198,7 @@ ShowDockFolderPopupContextMenu(
     const auto prepareNewSubmenu = [&](UINT submenuCommand,
         std::vector<snowdesktop::modern_menu::Item>& children) {
         if (submenuCommand == kContextNewMenu)
-            PrepareShellNewSubmenu(shellNewMenu, newItemDirectory, children);
+            PrepareShellNewSubmenu(shellNewMenu, newItemDirectory, children, newItemTarget);
     };
     if (!itemMenu) snowdesktop::background_menu_order::Mark(menu);
     const UINT command = ShowModernMenu(
@@ -1320,7 +1321,7 @@ ShowDockFolderPopupContextMenu(
                 sourceFolderPath);
         break;
     case kContextNewMenu:
-        ShowNewMenuAndInvoke(screenPoint, newItemDirectory);
+        ShowNewMenuAndInvoke(screenPoint, newItemDirectory, false, newItemTarget);
         RequestShellRefresh();
         break;
     default:

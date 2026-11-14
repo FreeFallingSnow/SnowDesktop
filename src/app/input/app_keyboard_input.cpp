@@ -497,18 +497,26 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         if (!repeated)
         {
             std::wstring directory;
-            std::wstring desktopFilesWidgetId;
+            std::optional<NewItemTarget> newItemTarget;
             if (dockFolderPopupOpen_ && dockFolderPopupAvailable_)
+            {
                 directory = dockFolderPopupWidget_.sourceFolderPath;
+                newItemTarget = NewItemTarget{NewItemTarget::Surface::FolderPopup, {}, dockFolderPopupSourceId_};
+            }
             else
             {
                 const size_t target = FindNewItemShortcutTarget();
                 if (target < widgets_.size() &&
                     widgets_[target].type == DesktopWidgetType::FolderMapping)
+                {
                     directory = widgets_[target].sourceFolderPath;
+                    newItemTarget = NewItemTarget{NewItemTarget::Surface::FolderMapping, {}, widgets_[target].id};
+                }
                 else
                 {
-                    if (target < widgets_.size()) desktopFilesWidgetId = widgets_[target].id;
+                    newItemTarget = target < widgets_.size()
+                        ? NewItemTarget{NewItemTarget::Surface::FileCategories, {}, widgets_[target].id}
+                        : NewItemTarget{NewItemTarget::Surface::Desktop, CellFromPoint(lastMousePoint_), {}};
                     wchar_t desktopPath[MAX_PATH]{};
                     if (snowdesktop::desktop_source::CopyDirectory(desktopPath)) directory = desktopPath;
                 }
@@ -517,7 +525,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             {
                 POINT point = lastMousePoint_;
                 ClientToScreen(hwnd_, &point);
-                ShowNewMenuAndInvoke(point, directory, true, std::move(desktopFilesWidgetId));
+                ShowNewMenuAndInvoke(point, directory, true, newItemTarget);
                 RequestShellRefresh();
             }
         }

@@ -438,13 +438,16 @@ void DesktopApp::ShowWidgetContextMenu(
     const DesktopWidget& effectiveSource =
         widgets_[effectiveSourceIndex];
     std::wstring newItemDirectory;
-    std::wstring newItemWidgetId;
+    std::optional<NewItemTarget> newItemTarget;
     if (effectiveSource.type == DesktopWidgetType::FolderMapping)
+    {
         newItemDirectory = effectiveSource.sourceFolderPath;
+        newItemTarget = NewItemTarget{NewItemTarget::Surface::FolderMapping, {}, effectiveSource.id};
+    }
     else if (effectiveSource.type == DesktopWidgetType::FileCategories)
     {
         newItemDirectory = snowdesktop::desktop_source::Directory();
-        newItemWidgetId = effectiveSource.id;
+        newItemTarget = NewItemTarget{NewItemTarget::Surface::FileCategories, {}, effectiveSource.id};
     }
     std::unique_ptr<snowdesktop::ShellNewMenu> shellNewMenu;
     size_t contentSortTargetIndex = effectiveSourceIndex;
@@ -1139,7 +1142,7 @@ void DesktopApp::ShowWidgetContextMenu(
         std::vector<snowdesktop::modern_menu::Item>& children) {
         if (submenuCommand == kContextNewMenu)
             PrepareShellNewSubmenu(shellNewMenu, newItemDirectory, children,
-                newItemWidgetId);
+                newItemTarget);
     };
     const auto applyMenuCommand = [&](UINT menuCommand,
         std::vector<snowdesktop::modern_menu::Item>& items) {
@@ -1494,7 +1497,7 @@ void DesktopApp::ShowWidgetContextMenu(
         if (!newItemDirectory.empty())
         {
             ShowNewMenuAndInvoke(screenPoint, newItemDirectory, false,
-                newItemWidgetId);
+                newItemTarget);
             RequestShellRefresh();
         }
         break;

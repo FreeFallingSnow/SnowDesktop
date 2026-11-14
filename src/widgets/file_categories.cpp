@@ -463,6 +463,7 @@ bool FileCategories::CollectTopLevelDesktopItems()
 {
     if (!data_ || !app_) return false;
 
+    const auto pendingNewPaths = app_->PendingDesktopNewItemPaths();
     std::unordered_set<std::wstring> existing;
     for (const auto& key : data_->itemKeys)
         existing.insert(ToUpperInvariant(key));
@@ -477,7 +478,8 @@ bool FileCategories::CollectTopLevelDesktopItems()
                 !data_->autoCollectCategoryIds.empty()) &&
             (extension == L".LNK" || extension == L".URL") && !item.shortcutTarget.classified)
             continue;
-        if (!IsCollectable(app_->GetCategorySettings(), item) || app_->IsItemInAnyWidget(item))
+        if (!IsCollectable(app_->GetCategorySettings(), item) || app_->IsItemInAnyWidget(item) ||
+            (!pendingNewPaths.empty() && pendingNewPaths.contains(ToUpperInvariant(item.parsingName))))
             continue;
         if (!snowdesktop::file_category_auto_collect_rules::Matches(*data_,
                 FileCategoryIdForItem(item, app_->GetCategorySettings())))

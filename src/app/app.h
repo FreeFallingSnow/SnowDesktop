@@ -1820,17 +1820,36 @@ private:
         std::optional<RECT> renameAnchor = std::nullopt,
         std::optional<size_t> dockMappingEntryIndex = std::nullopt,
         snowdesktop::shell_extensions::NativeMenuSelection selection = {});
+    struct NewItemTarget
+    {
+        enum class Surface { Desktop, FileCategories, FolderMapping, FolderPopup };
+        Surface surface;
+        GridCell cell;
+        std::wstring sourceId;
+    };
+    struct PendingNewItemCapture
+    {
+        NewItemTarget target;
+        std::shared_ptr<snowdesktop::ShellNewItemCapture> capture;
+        size_t insertIndex;
+    };
+    struct NewItemRename
+    {
+        NewItemTarget target;
+        std::wstring path;
+    };
+
     /** @brief 显示"新建"菜单并执行选择的命令。 @param screenPoint 屏幕坐标 @param targetDir 目标目录 */
     void ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir,
-        bool folderOnly = false, std::wstring desktopFilesWidgetId = {});
+        bool folderOnly = false, const std::optional<NewItemTarget>& target = std::nullopt);
     void AppendShellNewSubmenu(HMENU menu, const std::wstring& targetDir,
         bool enabled = true);
     HRESULT InitializeShellNewMenu(snowdesktop::ShellNewMenu& menu,
-        const std::wstring& targetDir, std::wstring desktopFilesWidgetId = {});
+        const std::wstring& targetDir, const std::optional<NewItemTarget>& target);
     void PrepareShellNewSubmenu(std::unique_ptr<snowdesktop::ShellNewMenu>& menu,
         const std::wstring& targetDir,
         std::vector<snowdesktop::modern_menu::Item>& children,
-        std::wstring desktopFilesWidgetId = {});
+        const std::optional<NewItemTarget>& target = std::nullopt);
     std::vector<snowdesktop::modern_menu::Item> BuildShellNewMenuItems(
         HMENU menu, IContextMenu* context);
     void InvokeNewMenuCommand(IContextMenu* context, UINT command,
@@ -4246,7 +4265,7 @@ private:
     /** @name 待处理放置缓存（源列表 -> 预览在外壳刷新后仍存活） */
     /** @{ */
     std::vector<PendingLandingCache> pendingLandingCaches_;
-    std::vector<std::shared_ptr<snowdesktop::ShellNewItemCapture>> pendingNewItemCaptures_;
+    std::vector<PendingNewItemCapture> pendingNewItemCaptures_;
     /** @} */
 
     /** @brief 将屏幕坐标转换为客户端坐标。 @param screen 屏幕坐标 @return 客户端坐标 */
@@ -4405,6 +4424,12 @@ private:
     static bool MatchPendingName(const std::wstring& itemName, const std::wstring& srcFileName);
     /** @brief 应用待处理的放置操作（外壳刷新后执行）。 */
     void ApplyPendingPlacement();
+    std::optional<NewItemRename> ApplyPendingNewItems(
+        std::unordered_set<std::wstring>* desktopSlots = nullptr,
+        const std::unordered_set<std::wstring>* desktopPaths = nullptr);
+    bool HasPendingDesktopNewItems() const;
+    std::unordered_set<std::wstring> PendingDesktopNewItemPaths() const;
+    void BeginNewItemRename(const std::optional<NewItemRename>& request);
     bool ApplyPendingPlacement(PendingLandingCache& cache,
         std::unordered_set<std::wstring>& claimed);
     bool ApplyPendingFolderPlacements(PendingLandingCache& cache,

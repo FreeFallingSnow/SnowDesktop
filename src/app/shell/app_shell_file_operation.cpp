@@ -643,7 +643,7 @@ void DesktopApp::RefreshShellItemsAsync()
         const size_t metadataHits = snapshot->metadata.hits;
         const size_t metadataQueries = snapshot->metadata.queries;
         shellMetadataCache_ = std::move(snapshot->metadata);
-        const bool contentOnly = desktopItemsReady_ && !layoutReload_.Pending() &&
+        const bool contentOnly = desktopItemsReady_ && !layoutReload_.Pending() && !HasPendingDesktopNewItems() &&
             snowdesktop::shell_refresh::ApplyDesktopContentRefresh(items_, *snapshot,
                 [this](const DesktopItem& item) {
                     IconLoadTask task;

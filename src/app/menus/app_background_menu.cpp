@@ -1634,6 +1634,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     POINT clientPoint = screenPoint;
     ScreenToClient(hwnd_, &clientPoint);
     const GridPage* gridPage = GridPageFromPoint(clientPoint);
+    const NewItemTarget newItemTarget{NewItemTarget::Surface::Desktop, CellFromPoint(clientPoint), {}};
 
     HMENU gridAdjustmentMenu = nullptr, spacingMenu = nullptr, fontSizeMenu = nullptr, listFontSizeMenu = nullptr, fontWeightMenu = nullptr;
     HMENU displaySettingsMenu = CreatePopupMenu();
@@ -2226,7 +2227,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         std::vector<snowdesktop::modern_menu::Item>& children) {
         if (submenuCommand == kContextNewMenu)
         {
-            PrepareShellNewSubmenu(shellNewMenu, newItemDirectory, children);
+            PrepareShellNewSubmenu(shellNewMenu, newItemDirectory, children, newItemTarget);
             return;
         }
         if (!widgetMenu || luaWidgetCatalogueLoaded ||
@@ -2340,15 +2341,9 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             (void)OpenSteamWorkshop();
             break;
         case kContextNewMenu:
-        {
-            wchar_t desktopPath[MAX_PATH]{};
-            if (snowdesktop::desktop_source::CopyDirectory(desktopPath))
-            {
-                ShowNewMenuAndInvoke(screenPoint, desktopPath);
-                RequestShellRefresh();
-            }
+            ShowNewMenuAndInvoke(screenPoint, newItemDirectory, false, newItemTarget);
+            RequestShellRefresh();
             break;
-        }
         case kContextPasteCommand:
             PasteClipboardToDesktop();
             break;

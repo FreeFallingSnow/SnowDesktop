@@ -303,6 +303,7 @@ void DesktopApp::DrainBackgroundShellWork()
     shellModelWork_.Drain();
     appIndexWork_.Drain();
     clipboardReadWork_.Drain();
+    BeginNewItemRename(ApplyPendingNewItems());
 }
 
 void DesktopApp::QueueIconTask(IconLoadTask value)
