@@ -2,18 +2,22 @@
 #include "window_support_authorization.h"
 #include "window_support_security.h"
 #include "window_support_pipe.h"
+#include "window_support_poll.h"
 #include "window_pointer_observer.h"
 #include "window_pointer_events.h"
 #include "window_operation_failures.h"
 #include "platform/operation_feedback.h"
 
+#include <algorithm>
+#include <array>
 #include <chrono>
+#include <cstddef>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
+#include <span>
 #include <thread>
 #include <utility>
-#include <algorithm>
 
 namespace snowdesktop::window_support
 {
@@ -44,7 +48,7 @@ struct Runtime::Impl
     HWND peekTarget = nullptr;
     bool stopping = false, running = false, polling = false, workerFailed = false;
     std::uint64_t nextSequence = 0;
-    std::uint32_t wireVersion = protocol::Version;
+    std::uint32_t wireVersion = protocol::CompactPollVersion;
     RecentPointerEvents recentPointerEvents;
     WindowOperationFailures failures;
     ULONGLONG lastResponse = 0;
@@ -103,8 +107,18 @@ struct Runtime::Impl
         request.sequence = ++nextSequence;
         request.version = wireVersion;
         request.hostProcess = GetCurrentProcessId();
-        if (!pipe::Transfer(connection, &request, sizeof(request), true) ||
-            !pipe::Transfer(connection, &response, sizeof(response), false)) return false;
+        if (protocol::UsesCompactPoll(request.version, request.command))
+        {
+            protocol::PollRequest poll{request.magic, request.version, request.command, request.hostProcess, request.sequence};
+            std::array<std::byte, sizeof(protocol::Response)> bytes;
+            DWORD received = 0;
+            if (!pipe::Transfer(connection, &poll, sizeof(poll), true) ||
+                !pipe::Transfer(connection, bytes.data(), static_cast<DWORD>(bytes.size()), false, &received)) return false;
+            if (!protocol::DecodePollResponse(std::span{bytes}.first(received), response))
+            { SetLastError(ERROR_INVALID_DATA); return false; }
+        }
+        else if (!pipe::Transfer(connection, &request, sizeof(request), true) ||
+                 !pipe::Transfer(connection, &response, sizeof(response), false)) return false;
         if (response.magic != protocol::Magic || response.version != request.version ||
             response.sequence != request.sequence || response.pointerCount > response.pointerEvents.size())
         { SetLastError(ERROR_REVISION_MISMATCH); return false; }
@@ -184,7 +198,7 @@ struct Runtime::Impl
         }
         ULONGLONG nextAttempt = 0;
         ULONGLONG nextAuthorizationCheck = 0;
-        bool alternateVersionTried = false;
+        unsigned versionFallbacks = 0;
         for (;;)
         {
             std::optional<Configuration> configure;
@@ -212,7 +226,7 @@ struct Runtime::Impl
                         // Verify that it actually works before replacing the bundle.
                         if (!ConnectAuthorized(connection, response) && (response.capabilities & required) == required)
                         {
-                            alternateVersionTried = false;
+                            versionFallbacks = 0;
                             Publish(response);
                             std::lock_guard guard(mutex);
                             status.authorization = authorization.state;
@@ -252,6 +266,8 @@ struct Runtime::Impl
                     configured.emplace_back(std::move(configure->completion), error);
                 }
                 nextAttempt = 0;
+                wireVersion = protocol::CompactPollVersion;
+                versionFallbacks = 0;
                 continue;
             }
             if (GetTickCount64() >= nextAuthorizationCheck)
@@ -294,17 +310,19 @@ struct Runtime::Impl
                     if (connection != INVALID_HANDLE_VALUE) CloseHandle(connection);
                     connection = INVALID_HANDLE_VALUE;
                     Disconnect(error);
-                    const bool versionProbe = !alternateVersionTried && (error == ERROR_BROKEN_PIPE ||
-                        error == ERROR_NO_DATA || error == ERROR_REVISION_MISMATCH || error == ERROR_INVALID_DATA);
+                    const bool versionProbe = versionFallbacks < 2 && (error == ERROR_BROKEN_PIPE ||
+                        error == ERROR_NO_DATA || error == ERROR_PIPE_NOT_CONNECTED ||
+                        error == ERROR_REVISION_MISMATCH || error == ERROR_INVALID_DATA);
                     if (versionProbe)
                     {
-                        wireVersion = wireVersion == 2 ? 1 : 2;
-                        alternateVersionTried = true;
+                        wireVersion = wireVersion == 1 ? protocol::CompactPollVersion : wireVersion - 1;
+                        ++versionFallbacks;
                     }
+                    else versionFallbacks = 0;
                     nextAttempt = GetTickCount64() + (versionProbe ? 200 : 10000);
                     continue;
                 }
-                alternateVersionTried = false;
+                versionFallbacks = 0;
                 Publish(response);
             }
             Work current;

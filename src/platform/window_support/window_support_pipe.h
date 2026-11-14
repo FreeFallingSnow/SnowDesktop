@@ -6,7 +6,7 @@ namespace snowdesktop::window_support::pipe
 {
 // Overlapped operations have a bounded lifetime, including cancellation. No
 // stack-backed OVERLAPPED or packet survives a returned transfer.
-inline bool Transfer(HANDLE handle, void* bytes, DWORD size, bool write, DWORD timeout = 1500)
+inline bool Transfer(HANDLE handle, void* bytes, DWORD size, bool write, DWORD* messageSize = nullptr)
 {
     const HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!event) return false;
@@ -18,7 +18,7 @@ inline bool Transfer(HANDLE handle, void* bytes, DWORD size, bool write, DWORD t
     DWORD error = result ? ERROR_SUCCESS : GetLastError();
     if (!result && error == ERROR_IO_PENDING)
     {
-        if (WaitForSingleObject(event, timeout) != WAIT_OBJECT_0)
+        if (WaitForSingleObject(event, 1500) != WAIT_OBJECT_0)
         {
             CancelIoEx(handle, &operation);
             GetOverlappedResult(handle, &operation, &transferred, TRUE);
@@ -31,7 +31,9 @@ inline bool Transfer(HANDLE handle, void* bytes, DWORD size, bool write, DWORD t
         }
     }
     CloseHandle(event);
-    if (error || transferred != size) { SetLastError(error ? error : ERROR_INVALID_DATA); return false; }
+    if (error || (!messageSize && transferred != size))
+    { SetLastError(error ? error : ERROR_INVALID_DATA); return false; }
+    if (messageSize) *messageSize = transferred;
     return true;
 }
 }
