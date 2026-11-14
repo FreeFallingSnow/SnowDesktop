@@ -2909,9 +2909,5 @@
   "settings.taskbar.autoHide.disabled": "Windows 的工作列自動隱藏已關閉。",
   "appearance.popupScene.tooltip": "滑鼠停駐提示",
   "appearance.popupScene.barPanel": "狀態列面板",
-  "appearance.popupScene.followShared": "跟隨共用彈出視窗主題",
-  "settings.dock.edgeRefraction": "邊緣折射",
-  "settings.dock.edgeRefraction.description": "取樣 Dock 後方的螢幕畫面。使用時，螢幕截圖和錄影可能不顯示 Dock。",
-  "settings.dock.refractionWidth": "折射寬度",
-  "settings.dock.refractionStrength": "折射強度"
+  "appearance.popupScene.followShared": "跟隨共用彈出視窗主題"
 }

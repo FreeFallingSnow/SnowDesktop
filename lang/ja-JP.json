@@ -2909,9 +2909,5 @@
   "settings.taskbar.autoHide.disabled": "Windows のタスク バーの自動非表示はオフになっています。",
   "appearance.popupScene.tooltip": "ホバー時のヒント",
   "appearance.popupScene.barPanel": "ステータスバーのパネル",
-  "appearance.popupScene.followShared": "共通のポップアップテーマに従う",
-  "settings.dock.edgeRefraction": "縁の屈折",
-  "settings.dock.edgeRefraction.description": "Dock の背後の画面をサンプリングします。有効中はスクリーンショットや録画に Dock が映らない場合があります。",
-  "settings.dock.refractionWidth": "屈折の幅",
-  "settings.dock.refractionStrength": "屈折の強さ"
+  "appearance.popupScene.followShared": "共通のポップアップテーマに従う"
 }

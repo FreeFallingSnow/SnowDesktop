@@ -2909,9 +2909,5 @@
   "settings.taskbar.autoHide.disabled": "O ocultamento automático da barra de tarefas do Windows está desativado.",
   "appearance.popupScene.tooltip": "Dicas ao passar o mouse",
   "appearance.popupScene.barPanel": "Painéis da barra de status",
-  "appearance.popupScene.followShared": "Seguir o tema compartilhado de janelas pop-up",
-  "settings.dock.edgeRefraction": "Refração nas bordas",
-  "settings.dock.edgeRefraction.description": "Amostra a tela atrás do Dock. Durante o uso, o Dock pode ficar de fora de capturas e gravações.",
-  "settings.dock.refractionWidth": "Largura da refração",
-  "settings.dock.refractionStrength": "Intensidade da refração"
+  "appearance.popupScene.followShared": "Seguir o tema compartilhado de janelas pop-up"
 }
