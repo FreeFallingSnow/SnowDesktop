@@ -105,28 +105,11 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
         {
             if (!renderingPersistentDockHost_)
                 return;
-            auto& host = *renderingPersistentDockHost_;
-            bool refracted = false;
-            if (p.dockEdgeRefraction && host.refractionActive &&
-                host.container && backdropOwnerKey == reinterpret_cast<std::uintptr_t>(host.container))
-            {
-                POINT screenOffset{-host.sourceRect.left, -host.sourceRect.top};
-                if (ClientToScreen(host.hwnd, &screenOffset))
-                {
-                    if (host.mergedPresentationActive)
-                    {
-                        screenOffset.x += static_cast<LONG>(std::lround(host.mergedPresentation.offsetX));
-                        screenOffset.y += static_cast<LONG>(std::lround(host.mergedPresentation.offsetY));
-                    }
-                    refracted = host.refractionMaterial.Draw(ctx, host.refractionSource,
-                        frame, screenOffset, radius, p.glassBlurRadius,
-                        p.dockRefractionWidth, p.dockRefractionStrength);
-                }
-            }
-            if (!refracted) host.backdrop.AddPanel(
+            renderingPersistentDockHost_->backdrop.AddPanel(
                 snowdesktop::floating_dock_rules::
                     DesktopRectToWindowRect(
-                        frame, host.sourceRect),
+                        frame,
+                        renderingPersistentDockHost_->sourceRect),
                 radius, p.glassBlurRadius,
                 backdropOwnerKey, true);
         }

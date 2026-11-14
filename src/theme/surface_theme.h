@@ -38,8 +38,6 @@ template<class Visit> void VisitPanelAppearanceFields(Visit visit)
     visit("highlightWidth", &PersonalizationSettings::widgetEdgeHighlightWidth, .5, 4.);
     visit("highlightStrength", &PersonalizationSettings::widgetEdgeHighlightStrength, 0., 1.);
     visit("blurRadius", &PersonalizationSettings::glassBlurRadius, 4., 48.);
-    visit("dockRefractionWidth", &PersonalizationSettings::dockRefractionWidth, 1., 32.);
-    visit("dockRefractionStrength", &PersonalizationSettings::dockRefractionStrength, 0., 24.);
     visit("cornerRadius", &PersonalizationSettings::cornerRadius, 0., 100.);
 }
 template<class Visit> void VisitPanelAppearanceFlags(Visit visit)
@@ -47,7 +45,6 @@ template<class Visit> void VisitPanelAppearanceFlags(Visit visit)
     visit("glass", &PersonalizationSettings::glassEnabled);
     visit("acrylic", &PersonalizationSettings::acrylicEnabled);
     visit("highlight", &PersonalizationSettings::widgetEdgeHighlightEnabled);
-    visit("dockEdgeRefraction", &PersonalizationSettings::dockEdgeRefraction);
 }
 
 // Taskbar material storage deliberately excludes the legacy widget bottom-bar
