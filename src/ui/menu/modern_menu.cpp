@@ -2512,8 +2512,12 @@ private:
         ImmSetCompositionWindow(context, &composition);
         CANDIDATEFORM candidate{};
         candidate.dwIndex = 0;
-        candidate.dwStyle = CFS_CANDIDATEPOS;
-        candidate.ptCurrentPos = {caret.x, caret.y + textBounds.bottom - textBounds.top};
+        candidate.dwStyle = CFS_EXCLUDE;
+        candidate.ptCurrentPos = caret;
+        // Give the IME the input line's vertical extent so it can place
+        // candidates next to the line, including near a screen edge.
+        candidate.rcArea = {caret.x, caret.y, caret.x + 1,
+            caret.y + textBounds.bottom - textBounds.top};
         ImmSetCandidateWindow(context, &candidate);
         ImmReleaseContext(focusWindow, context);
     }
