@@ -135,6 +135,8 @@
 - **发现**：同 CF-009。首批 `ready-and-wait` 返回 cancelled 后，工具输出约 1279 行、12026 个估算 token，触发截断；整份计划、输入与 19 项未运行证据占主要部分。
 - **本轮修复**：CLI 的 finish/wait/ready-and-wait 默认输出精简结束回执，返回状态、计数、最多 16 个失败名称、原始结果路径与恢复入口，保留完整 JSON 原件和退出码。`-FullResult` 取得原输出，直接 PowerShell 调用保持兼容、可选 `-Compact`。回归将核对默认 CLI 路由、完整输出兼容及原证据字节未被改写。
 
+- **排队阶段重复状态（2026-11-15）**：Task popup-new-item-animation，批次 366fdad9e1a94842b5f803d972c0035d 修订 0、Run 76ad03c1951d4eb5b80f202535bc8909。原 ready-and-wait 前台会话 14107 的单次续接（chunk 8c5c72）交替重复 Waiting for the collaboration state transaction 和同一条 Candidate slot is busy 状态。Run JSON 保留 candidate-slot 排队记录，排队后进入构建。建议按等待原因去重，仍保留真实阶段变化与急件。未重复提交或估填成本。
+
 ### CF-011 独立检查等待共享编辑屏障
 
 - **非空计划冻结遇到共享租约（2026-11-15）**：Task `dock-liquid-glass-preset` 的批次 `158b9cbde5fb4b9ca6ceb0c948f73303` 修订 0 声明 `module/selected`，轻量检查通过，`ready-and-wait` 在冻结前返回 1，原文为 `Unexpected occupied build lease; inspect status without clearing registrations.`。只读状态确认本批次仍是就绪成员，无本批次 Run；执行租约归批次 `52ec2edf1f404ddf9767db3f29d482f9` 的 Run `8cbc6a26035240dfaee1ecec50caeda5`。源码确认非空计划在冻结时尝试 `build.lock`，租约已用时会结束前台等待。本次保留同批次，等待正常释放后继续，不清除登记或开启额外构建槽。下一步是在合法竞争时等待冻结租约并保留原观察进程。
@@ -330,6 +332,8 @@
 - **Win+D 续修补证（2026-11-13）**：Task `task-64befa60faef4ee0a9686c204a93ac37`，批次 `b7ab8c14c7a441f5bf810fc12fe066dd` 修订 0、Run `748c845e73814f82aaacb12da4655dfa`，入口 `scripts/build.bat ready-and-wait`。同一候选槽的产品日志记录本轮未修改的 `app_background_menu.cpp`、`app_clipboard_interaction.cpp` 和 `app_icon_loader.cpp` 重新编译。源码确认本轮修改的 `floating_dock_rules.h` 由 `app/app.h` 包含，多个宿主目标复用同一宿主 PCH。该包含链会扩大此头文件修改的重编范围，未单独测量其成本。原 Run 已通过，未追加构建。
 - **图标交付修订补证（2026-11-15）**：Task `task-085eddd4e7e84de0b8f1dbda00e78fea`、批次 `c364ce3a23f44979b3dfe94f9f01b776` 修订 0、Run `c4ec5646568e428581fc02f513b2b1e7`，入口 `scripts/build.bat ready-and-wait`。图标队列头由 `app/app.h` 包含，产品日志记录 PCH 以及未改动的 `app_clipboard_interaction.cpp`、`app_hit_testing.cpp` 编译。完整产品阶段耗时 861.462 秒，包含配置、编译、链接和产物整理，尚未分离头文件的单项成本。测试配置另记 2.8 秒，关联 CF-015。Release 与两项定向测试通过。后续评估将图像交付与分类提交的非模板实现移出宿主 PCH 包含链。
 - **下一步**：比较日历续修两次冻结输入的 MSBuild 增量判据。Dock 层级策略下次调整时评估将其模板移到实际调用点使用的头文件，缩小后续修改的影响范围。
+
+- **弹窗过渡补证（2026-11-15）**：Task popup-new-item-animation，批次 52ec2edf1f404ddf9767db3f29d482f9 修订 0、Run 8cbc6a26035240dfaee1ecec50caeda5，入口 ready-and-wait。弹窗运行时过渡改动涉及 core/widget.h；产品日志记录了本批未修改的 app_hit_testing.cpp 编译。Release 产品构建阶段共 420.758 秒，包含配置、编译、链接与整理，两项定向行为测试通过。仅确认超出任务改动单元的重编，未拆分头文件、其他共享输入与单项目的成本。
 
 ### CF-025 文件观察提前结束
 
