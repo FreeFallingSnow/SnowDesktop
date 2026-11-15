@@ -66,8 +66,15 @@ filtering and choose the tags that describe the component.
 - `News & Feeds` for news, RSS and other feed readers.
 
 In Workshop Manager, open **Publishing details → Add tag**. The selected tag
-is added to the comma-separated field. Click **Save tags** to save the project
-tags, then enable **Also update tags** when updating an existing listing.
+is added to the comma-separated field. **Save tags** stores the local list for
+the project. When creating a listing, the Manager submits those saved tags.
+
+On a bound project, **Read Steam tags** loads the current listing tags into the
+editor. **Publish tags** submits the entire list from the editor to the existing
+Workshop item without building or uploading a component archive. An empty list
+clears the listing tags. After Steam confirms the update, the Manager saves the
+submitted tags locally. Ordinary component updates preserve the listing tags.
+
 With the CLI, use `--tags-source local` and repeat `--tag` for each tag, for
 example `--tags-source local --tag "Utilities" --tag "System Monitor"`.
 

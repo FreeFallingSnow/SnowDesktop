@@ -7,6 +7,7 @@
 #include "manager_connection_state.h"
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -23,6 +24,8 @@ inline constexpr int kSteamInitializationFailed = 4;
 inline constexpr int kSteamOperationFailed = 5;
 inline constexpr int kSteamOperationTimedOut = 6;
 inline constexpr int kInvalidArguments = 64;
+inline constexpr std::size_t kMaxWorkshopTags = 100;
+inline constexpr std::size_t kMaxWorkshopTagBytes = 255;
 
 // Steam visibility values: public=0, friends=1, private=2, unlisted=3.
 inline std::optional<int> ResolveWorkshopVisibility(bool creating,
@@ -155,6 +158,7 @@ struct PublishRequest
     std::optional<int> visibility;
     std::string changeNote;
     std::chrono::seconds timeout = std::chrono::minutes(30);
+    std::optional<std::uint64_t> expectedOwnerSteamId;
 };
 
 struct PublishResult
@@ -179,6 +183,7 @@ struct WorkshopPreviewUpdate
     std::vector<std::filesystem::path> additions;
 };
 
+enum class WorkshopItemQuery { Previews, Tags, Identity };
 using PublishProgressCallback = std::function<void(const PublishProgress&)>;
 
 class SteamWorkshopCore
@@ -202,7 +207,8 @@ public:
     SteamStatus Status() const;
     std::optional<PublishedPage> ListPublished(
         std::uint32_t page, CoreError& error);
-    std::optional<PublishedItem> FindItem(std::uint64_t id, CoreError& error);
+    std::optional<PublishedItem> FindItem(std::uint64_t id, CoreError& error,
+        WorkshopItemQuery query = WorkshopItemQuery::Previews);
     bool UpdatePreviews(const WorkshopPreviewUpdate& request,
         const PublishProgressCallback& progress, CoreError& error);
     std::optional<WorkshopEulaStatus> GetEulaStatus(CoreError& error);

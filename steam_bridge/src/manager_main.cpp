@@ -862,7 +862,7 @@ private:
         SetMessageUnlocked(success, std::move(value));
     }
 
-    enum class WorkKind { Local, TextPreview, Prepare, Publish, Published, Binding, PreviewUpdate };
+    enum class WorkKind { Local, TextPreview, Prepare, Publish, Published, Binding, PreviewUpdate, TagPublish };
     struct WorkTarget
     {
         WorkKind kind = WorkKind::Local;
@@ -972,7 +972,8 @@ private:
                         publishInProgress_.store(false);
                     }
                     if (kind == WorkKind::TextPreview) localizationPreviewLoading_ = false;
-                    if (kind == WorkKind::PreviewUpdate) publishInProgress_.store(false);
+                    if (kind == WorkKind::PreviewUpdate || kind == WorkKind::TagPublish)
+                        publishInProgress_.store(false);
                     SetMessageUnlocked(false, error.what());
                 }
                 busy_.store(false);
@@ -2007,7 +2008,6 @@ private:
         auto& publishPublic_ = draft.publishPublic;
         auto& syncPackageLocalization_ = draft.reusePackageText;
         auto& updatePreview_ = draft.updatePreview;
-        auto& updateTags_ = draft.updateTags;
         const bool creating = !project.publishedFileId.has_value();
         if (localizationStateProjectId_ != project.localId ||
             localizationStateCreating_ != creating)
@@ -2045,7 +2045,8 @@ private:
             ImGui::BeginDisabled(busy_.load());
             ImGui::Spacing();
             RenderLocalPreviewManager(window, project);
-            std::array<char, 1024> tags{};
+            constexpr auto tagBufferSize = kMaxWorkshopTags * (kMaxWorkshopTagBytes + 2) + 1;
+            std::array<char, tagBufferSize> tags{};
             std::copy_n(tagsBuffer_.c_str(),
                 std::min(tagsBuffer_.size(), tags.size() - 1), tags.data());
             bool saveTags = false;
@@ -2102,12 +2103,12 @@ private:
             }
             if (saveTags)
             {
-                InvalidatePreparedPublishUnlocked();
-                project.tags = SplitTags(tagsBuffer_);
                 std::string error;
-                if (!store_.Save(error)) SetMessageUnlocked(false, error);
-                else { draft.TagsSaved(); SetMessageUnlocked(true, T("标签已保存", "Tags saved")); }
+                if (SaveProjectTagsUnlocked(project, SplitTags(tagsBuffer_), error))
+                    SetMessageUnlocked(true, T("标签已保存", "Tags saved"));
+                else SetMessageUnlocked(false, error);
             }
+            if (!creating) RenderSteamTagActions(project, tagsBuffer_);
             if (creating)
             {
                 BeginSettingRow(T("公开发布", "Publish publicly"), ImGui::GetFrameHeight());
@@ -2297,25 +2298,6 @@ private:
                     {
                         project.publishPreferences.previewSource = previous;
                         updatePreview_ = previous == WorkshopAssetSource::Local;
-                        SetMessageUnlocked(false, error);
-                    }
-                    else InvalidatePreparedPublishUnlocked();
-                }
-                BeginSettingRow(T("同时更新标签", "Also update tags"),
-                    ImGui::GetFrameHeight());
-                bool tagsValue = updateTags_;
-                if (ImGui::Checkbox("##update-tags", &tagsValue))
-                {
-                    draft.SetUpdateTags(tagsValue);
-                    const WorkshopAssetSource previous =
-                        project.publishPreferences.tagsSource;
-                    project.publishPreferences.tagsSource = updateTags_ ?
-                        WorkshopAssetSource::Local : WorkshopAssetSource::Steam;
-                    std::string error;
-                    if (!store_.Save(error))
-                    {
-                        project.publishPreferences.tagsSource = previous;
-                        updateTags_ = previous == WorkshopAssetSource::Local;
                         SetMessageUnlocked(false, error);
                     }
                     else InvalidatePreparedPublishUnlocked();
@@ -2541,6 +2523,129 @@ private:
         }, WorkKind::TextPreview);
     }
 
+    bool SaveProjectTagsUnlocked(WorkshopProject& project,
+        std::vector<std::string> tags, std::string& error)
+    {
+        auto previous = std::exchange(project.tags, std::move(tags));
+        if (!store_.Save(error))
+        {
+            project.tags = std::move(previous);
+            return false;
+        }
+        drafts_.ForProject(project, JoinTags(project.tags)).TagsSaved();
+        if (!project.publishedFileId) InvalidatePreparedPublishUnlocked();
+        return true;
+    }
+
+    std::optional<PublishedItem> FindSteamTagItem(const WorkshopProject& project,
+        const SteamStatus& connection, WorkshopItemQuery query)
+    {
+        CoreError error;
+        auto item = steam_.FindItem(project.publishedFileId.value_or(0), error, query);
+        if (!item)
+        {
+            if (!ShowSteamRecovery(error)) SetMessage(false, error.code + ": " + error.message);
+            return std::nullopt;
+        }
+        const auto current = steam_.Status();
+        if (!current.loggedOn || current.steamId != connection.steamId ||
+            item->ownerSteamId != ParseItemId(connection.steamId).value_or(0) ||
+            item->consumerAppId != connection.appId || item->banned)
+        {
+            SetMessage(false, T("只能管理当前 Steam 账号拥有的项目。",
+                "You can only manage items owned by the current Steam account."));
+            return std::nullopt;
+        }
+        const auto identity = DescribeManagerWorkshopItem(item->metadata);
+        if (identity.kind != ManagerWorkshopItemKind::Widget || !identity.Complete() ||
+            (!project.packageId.empty() && project.packageId != identity.identity))
+        {
+            SetMessage(false, T("没有匹配的本地组件", "No matching local component"));
+            return std::nullopt;
+        }
+        return item;
+    }
+
+    void RenderSteamTagActions(const WorkshopProject& project, const std::string& tagsText)
+    {
+        const auto connection = steam_.Status();
+        const char* readLabel = T("读取 Steam 标签", "Read Steam tags");
+        const char* publishLabel = T("发布标签", "Publish tags");
+        const float width = ButtonWidth(readLabel) + ButtonWidth(publishLabel) +
+            ImGui::GetStyle().ItemSpacing.x;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+            std::max(0.0f, ImGui::GetContentRegionAvail().x - width));
+        ImGui::BeginDisabled(!connection.initialized || !connection.loggedOn);
+        if (SecondaryButton(readLabel))
+        {
+            StartWork([this, project, connection]
+            {
+                const auto item = FindSteamTagItem(project, connection, WorkshopItemQuery::Tags);
+                if (!item) return;
+                std::lock_guard lock(mutex_);
+                const auto* current = FindProjectUnlocked(project.localId);
+                if (!current || current->publishedFileId != project.publishedFileId) return;
+                auto& draft = drafts_.ForProject(*current, JoinTags(current->tags));
+                draft.EditTags(JoinTags(item->tags));
+                SetMessageUnlocked(true, T("已读取 Steam 标签", "Steam tags loaded"));
+            }, WorkKind::Local, project.localId);
+        }
+        ContinueButtonRow(publishLabel);
+        if (BlueButton(publishLabel)) StartPublishTags(project, connection, SplitTags(tagsText));
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", T("提交编辑框中的全部标签。留空会清除标签。",
+                "Publish the entire tag list. An empty list clears the tags."));
+        ImGui::EndDisabled();
+    }
+
+    void StartPublishTags(const WorkshopProject& project, const SteamStatus& connection,
+        std::vector<std::string> tags)
+    {
+        const auto owner = ParseItemId(connection.steamId);
+        if (!project.publishedFileId || !connection.loggedOn || !owner) return;
+        publishInProgress_.store(true);
+        if (!StartWork([this, project, connection, owner = *owner, tags = std::move(tags)]() mutable
+        {
+            PublishRequest request;
+            request.publishedFileId = project.publishedFileId;
+            request.expectedOwnerSteamId = owner;
+            request.expectedPackageId = project.packageId;
+            if (request.expectedPackageId.empty())
+            {
+                const auto item = FindSteamTagItem(project, connection, WorkshopItemQuery::Identity);
+                if (!item) { publishInProgress_.store(false); return; }
+                request.expectedPackageId = DescribeManagerWorkshopItem(item->metadata).identity;
+            }
+            request.updateContent = false;
+            request.tags = std::move(tags);
+            request.timeout = std::chrono::minutes(5);
+            CoreError error;
+            const auto result = steam_.Publish(request, {}, error);
+            publishInProgress_.store(false);
+            if (!result)
+            {
+                if (!ShowSteamRecovery(error)) SetMessage(false, error.code + ": " + error.message);
+                return;
+            }
+            if (result->needsLegalAgreement)
+            {
+                SetMessage(false, T("请先在 Steam 接受创意工坊协议。",
+                    "Accept the Steam Workshop agreement in Steam first."));
+                return;
+            }
+            std::lock_guard lock(mutex_);
+            auto* current = FindProjectUnlocked(project.localId);
+            if (!current || current->publishedFileId != project.publishedFileId) return;
+            publishedRefreshRequested_.store(true);
+            std::string saveError;
+            if (SaveProjectTagsUnlocked(*current, std::move(*request.tags), saveError))
+                SetMessageUnlocked(true, T("标签已发布到 Steam", "Tags published to Steam"));
+            else
+                SetMessageUnlocked(false, T("标签已发布到 Steam，但本地保存失败：%s",
+                    "Tags published to Steam, but local saving failed: %s", saveError.c_str()));
+        }, WorkKind::TagPublish, project.localId)) publishInProgress_.store(false);
+    }
+
     void StartPreparePublish(std::string localId)
     {
         preparedPublish_.reset();
@@ -2551,11 +2656,10 @@ private:
         const std::string description = draft.manualEnglishDescription;
         const bool syncPackageLocalization = draft.reusePackageText;
         const bool updatePreview = draft.updatePreview;
-        const bool updateTags = draft.updateTags;
         const bool publishPublic = draft.publishPublic;
         const std::uint64_t inputRevision = publishInputsRevision_;
         StartWork([this, localId = std::move(localId), title, description,
-                   syncPackageLocalization, updatePreview, updateTags,
+                   syncPackageLocalization, updatePreview,
                    inputRevision, publishPublic]
         {
             WorkshopProject snapshot;
@@ -2572,7 +2676,7 @@ private:
                     WorkshopTextSource::Steam);
             snapshot.publishPreferences.previewSource = updatePreview ?
                 WorkshopAssetSource::Local : WorkshopAssetSource::Steam;
-            snapshot.publishPreferences.tagsSource = updateTags ?
+            snapshot.publishPreferences.tagsSource = creating ?
                 WorkshopAssetSource::Local : WorkshopAssetSource::Steam;
             snapshot.publishPreferences.manualEnglishTitle = title;
             snapshot.publishPreferences.manualEnglishDescription =

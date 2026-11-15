@@ -116,6 +116,8 @@
 
 ### CF-010 等待结束回执过大
 
+- **工坊管理器定向编译终态（2026-11-15）**：Task `workshop-tag-shortcuts`、批次 `51db66e07c034a55bf500c67dcf7516b` 修订 0、Run `2dee1c34d3824199bf02e92a723e5810`。`run wait -Task workshop-tag-shortcuts -RunId 2dee1c34d3824199bf02e92a723e5810 -Seconds 60` 返回 `passed`，但同回执包含请求、runner 文件列表与全部阶段，工具记录 2029 行并截断（chunk `041dca`）。终态默认精简、完整历史另取的缺口仍存在。在后续调查中复用原记录，未重跑此请求。
+
 - **毛玻璃路径认领冲突后的状态查询（2026-11-15）**：Task `task-b9ff6102968348489b9cabee59b69358`、批次 `08000882cb61448595c027f89c5699f0`、编辑修订 0。`claim` 因 `dock-rim-backdrop` 持有 `src/app/render/app_bitmap_cache.cpp` 被拒绝。随后的 `scripts/build.bat status -Batch 08000882cb61448595c027f89c5699f0` 返回全局任务历史，工具输出被截断（chunk `d63343`）。用 `current.batch.participants` 与相关 Task 字段的窄投影核对同批归属。复用上面的指定批次状态回执缺口，当时未重交构建。
 
 - **等待非空批次释放租约（2026-11-15）**：Task `dock-liquid-glass-preset` 为批次 `158b9cbde5fb4b9ca6ceb0c948f73303` 等待现有执行者，用 `scripts/build.bat run wait -RunId 8cbc6a26035240dfaee1ecec50caeda5 -Seconds 45` 得到尚在运行的回执。工具捕获 2897 行请求、runner 文件和阶段记录后截断（chunk `cfd4f3`）。后续仅投影 Run 状态和终态字段，未提交新的执行请求。Run 等待的默认精简回执仍待处理。

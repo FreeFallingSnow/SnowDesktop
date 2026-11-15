@@ -646,7 +646,8 @@ std::optional<PublishedPage> SteamWorkshopCore::ListPublished(
 #endif
 }
 
-std::optional<PublishedItem> SteamWorkshopCore::FindItem(std::uint64_t id, CoreError& error)
+std::optional<PublishedItem> SteamWorkshopCore::FindItem(std::uint64_t id,
+    CoreError& error, WorkshopItemQuery query)
 {
     if (!id || !Initialize(error)) return std::nullopt;
 #if SNOWDESKTOP_HAS_STEAMWORKS
@@ -657,7 +658,10 @@ std::optional<PublishedItem> SteamWorkshopCore::FindItem(std::uint64_t id, CoreE
     guard.handle = ugc->CreateQueryUGCDetailsRequest(&itemId, 1);
     if (guard.handle == k_UGCQueryHandleInvalid) { SetError(error, kSteamOperationFailed, "query_failed", "invalid query"); return std::nullopt; }
     ugc->SetReturnMetadata(guard.handle, true);
-    ugc->SetReturnAdditionalPreviews(guard.handle, true);
+    if (query == WorkshopItemQuery::Previews)
+        ugc->SetReturnAdditionalPreviews(guard.handle, true);
+    else
+        ugc->SetAllowCachedResponse(guard.handle, 0);
     SteamUGCQueryCompleted_t completed{}; std::string message; SteamUGCDetails_t details{};
     if (!WaitForCall(ugc->SendQueryUGCRequest(guard.handle), completed,
             std::chrono::seconds(30), connectionCallbacks_->sessionInvalid,
@@ -669,9 +673,32 @@ std::optional<PublishedItem> SteamWorkshopCore::FindItem(std::uint64_t id, CoreE
     result.consumerAppId = details.m_nConsumerAppID; result.creatorAppId = details.m_nCreatorAppID; result.banned = details.m_bBanned;
     result.metadata = QueryText(*ugc, guard.handle, 0, &ISteamUGC::GetQueryUGCMetadata);
     result.previewUrl = QueryText(*ugc, guard.handle, 0, &ISteamUGC::GetQueryUGCPreviewURL);
-    if (!ReadAdditionalPreviews(*ugc, guard.handle, 0, result, error)) return std::nullopt;
+    if (query == WorkshopItemQuery::Previews)
+    {
+        if (!ReadAdditionalPreviews(*ugc, guard.handle, 0, result, error)) return std::nullopt;
+        return result;
+    }
+    if (query == WorkshopItemQuery::Identity) return result;
+    const auto count = ugc->GetQueryUGCNumTags(guard.handle, 0);
+    if (count > kMaxWorkshopTags)
+    {
+        SetError(error, kSteamOperationFailed, "tag_query_failed", "Too many Workshop tags");
+        return std::nullopt;
+    }
+    for (std::uint32_t index = 0; index < count; ++index)
+    {
+        std::array<char, kMaxWorkshopTagBytes + 1> tag{};
+        if (!ugc->GetQueryUGCTag(guard.handle, 0, index,
+                tag.data(), static_cast<std::uint32_t>(tag.size())) || tag.back() != '\0')
+        {
+            SetError(error, kSteamOperationFailed, "tag_query_failed", "Cannot read all Workshop tags");
+            return std::nullopt;
+        }
+        result.tags.emplace_back(tag.data());
+    }
     return result;
 #else
+    (void)query;
     return std::nullopt;
 #endif
 }
@@ -1128,9 +1155,11 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
     std::vector<std::string> previousPreviews;
     if (!creating && request.contentKind == WorkshopContentKind::Widget && !request.expectedPackageId.empty())
     {
-        const auto item = FindItem(itemId, error);
+        const auto item = FindItem(itemId, error, request.expectedOwnerSteamId ?
+            WorkshopItemQuery::Identity : WorkshopItemQuery::Previews);
         WorkshopProject project; project.packageId = request.expectedPackageId;
         std::string detail;
+        if (!item && request.expectedOwnerSteamId) return std::nullopt;
         if (!item || item->banned || !CanBindWorkshopItem(project, item->metadata, item->ownerSteamId,
             SteamUser()->GetSteamID().ConvertToUint64(), item->consumerAppId, appId, detail))
         { SetError(error, kInvalidArguments, "project_item_mismatch", detail.empty() ? "Workshop item identity changed before upload" : detail); return std::nullopt; }
@@ -1142,6 +1171,12 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
         if (!item || item->ownerSteamId != SteamUser()->GetSteamID().ConvertToUint64() || item->consumerAppId != appId || item->banned)
         { SetError(error, kSteamOperationFailed, "authorMismatch", "Theme gallery owner changed"); return std::nullopt; }
         if(request.contentKind==WorkshopContentKind::Theme)previousPreviews = item->additionalPreviewFilenames;
+    }
+    if (request.expectedOwnerSteamId &&
+        SteamUser()->GetSteamID().ConvertToUint64() != *request.expectedOwnerSteamId)
+    {
+        SetError(error, kSteamOperationFailed, "authorMismatch", "The active Steam account changed");
+        return std::nullopt;
     }
     const UGCUpdateHandle_t update = ugc->StartItemUpdate(appId, itemId);
     if (update == k_UGCUpdateHandleInvalid)
@@ -1219,7 +1254,7 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
     }
     if (request.tags)
     {
-        if (request.tags->size() > 100)
+        if (request.tags->size() > kMaxWorkshopTags)
         {
             SetError(error, kInvalidArguments, "invalid_tags",
                 "at most 100 Workshop tags are allowed");
@@ -1227,7 +1262,7 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
         }
         for (const auto& tag : *request.tags)
         {
-            if (tag.empty() || tag.size() > 255)
+            if (tag.empty() || tag.size() > kMaxWorkshopTagBytes)
             {
                 SetError(error, kInvalidArguments, "invalid_tags",
                     "Workshop tags must contain 1 to 255 UTF-8 bytes");
