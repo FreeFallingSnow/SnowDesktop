@@ -23,6 +23,7 @@
 #include "navigation/quick_navigation_attraction_rules.h"
 #include "layout/popup_round_geometry.h"
 #include "ui/render/smooth_corner_geometry.h"
+#include "ui/render/blur_sampling_bounds.h"
 #include "icons/large_icon_shape_geometry.h"
 #include "icons/icon_backdrop_geometry.h"
 #include "icons/icon_bitmap_renderer.h"
@@ -466,7 +467,9 @@ struct DesktopBackdropCompositor::Impl
         struct IconRegions
         {
             std::vector<snowdesktop::PanelBackdropIcon> icons;
-            RECT base{}, allocation{}, visibleBounds{}, samplingFrame{};
+            RECT base{}, allocation{}, visibleBounds{}, samplingFrame{}, sampleBounds{};
+            RECT animationEnvelope{};
+            LONG sampleMargin = 0;
             float corners = 0.0f;
             int blurRadius = 0;
             bool extendOutline = false;
@@ -490,6 +493,9 @@ struct DesktopBackdropCompositor::Impl
         bool regionFenceSynchronized = false;
         int blurRadius = 0;
         wuc::SpriteVisual visual{nullptr};
+        wuc::SpriteVisual sample{nullptr};
+        RECT sampleBounds{}, sampleLocal{};
+        LONG sampleMargin = 0;
         wuc::CompositionEffectBrush baseBlur{nullptr};
         wuc::CompositionRoundedRectangleGeometry geometry{nullptr};
         wuc::CompositionPathGeometry smoothGeometry{nullptr};
@@ -527,7 +533,34 @@ struct DesktopBackdropCompositor::Impl
         {
             // A scaled contour can intersect the corners of its resting
             // shape. Reserve the rectangle and let the visual clip shape it.
-            return animationFence || popupTransformAnimating.has_value() ? 0.0f : regionCornerRadius;
+            return sampleMargin || animationFence || popupTransformAnimating.has_value() ? 0.0f : regionCornerRadius;
+        }
+
+        RECT SamplingFence() const noexcept
+        {
+            RECT bounds = snowdesktop::blur_sampling::SampleBounds(FenceFrame(), {}, sampleMargin);
+            UnionRect(&bounds, &bounds, &sampleBounds);
+            return bounds;
+        }
+
+        void SetSampleBounds(const RECT& allocation, const RECT& bounds, LONG margin)
+        {
+            sampleMargin = margin;
+            sampleBounds = bounds;
+            RECT local = bounds;
+            OffsetRect(&local, -allocation.left, -allocation.top);
+            if (EqualRect(&sampleLocal, &local)) return;
+            sample.Offset({static_cast<float>(local.left), static_cast<float>(local.top), 0.0f});
+            sample.Size({static_cast<float>(local.right - local.left),
+                static_cast<float>(local.bottom - local.top)});
+            sampleLocal = local;
+        }
+
+        void SetBaseSampleBounds()
+        {
+            const LONG margin = snowdesktop::blur_sampling::KernelMargin(static_cast<float>(blurRadius));
+            SetSampleBounds(frame, snowdesktop::blur_sampling::SampleBounds(
+                frame, animationFence.value_or(RECT{}), margin), margin);
         }
 
         void SetTransform(const wfn::float4x4& value)
@@ -621,6 +654,7 @@ struct DesktopBackdropCompositor::Impl
     wucc::CompositorController compositorController{nullptr};
     wuc::Compositor compositor{nullptr};
     wucd::DesktopWindowTarget target{nullptr};
+    wuc::ContainerVisual placementRoot{nullptr};
     wuc::ContainerVisual root{nullptr};
     std::unordered_map<int, wuc::CompositionEffectFactory> blurFactories;
     wuc::CompositionEffectFactory iconMaterialFactory{nullptr};
@@ -805,9 +839,10 @@ struct DesktopBackdropCompositor::Impl
             return false;
         if (popupMode)
         {
-            origin = { rect.left - popupPadding.left, rect.top - popupPadding.top };
-            size.cx = std::max<LONG>(1, rect.right + popupPadding.right - origin.x);
-            size.cy = std::max<LONG>(1, rect.bottom + popupPadding.bottom - origin.y);
+            const LONG margin = PlacementMargin();
+            origin = { rect.left - popupPadding.left - margin, rect.top - popupPadding.top - margin };
+            size.cx = std::max<LONG>(1, rect.right + popupPadding.right + margin - origin.x);
+            size.cy = std::max<LONG>(1, rect.bottom + popupPadding.bottom + margin - origin.y);
             return true;
         }
         if (!parent || !IsWindow(parent))
@@ -821,6 +856,11 @@ struct DesktopBackdropCompositor::Impl
         size.cx = std::max<LONG>(1, points[1].x - points[0].x);
         size.cy = std::max<LONG>(1, points[1].y - points[0].y);
         return true;
+    }
+
+    LONG PlacementMargin() const noexcept
+    {
+        return popupMode ? snowdesktop::blur_sampling::kMaximumBackdropMargin : 0;
     }
 
     bool SyncWindowPlacement()
@@ -921,8 +961,9 @@ struct DesktopBackdropCompositor::Impl
         {
             for (const auto& panel : panels)
             {
+                const RECT samplingFence = panel.SamplingFence();
                 if (!panel.regionFenceSynchronized ||
-                    !EqualRect(&panel.synchronizedRegionFrame, &panel.FenceFrame()) ||
+                    !EqualRect(&panel.synchronizedRegionFrame, &samplingFence) ||
                     panel.synchronizedRegionRadius != panel.FenceRadius())
                 {
                     inputsMatch = false;
@@ -941,7 +982,7 @@ struct DesktopBackdropCompositor::Impl
             if (!windowGeometryKnown) return;
             for (auto& panel : panels)
             {
-                panel.synchronizedRegionFrame = panel.FenceFrame();
+                panel.synchronizedRegionFrame = panel.SamplingFence();
                 panel.synchronizedRegionRadius = panel.FenceRadius();
                 panel.regionFenceSynchronized = true;
             }
@@ -967,10 +1008,13 @@ struct DesktopBackdropCompositor::Impl
         {
             for (const PanelVisual& panel : panels)
             {
-                // Composition owns the AA contour. The outward region preserves
-                // its coverage but excludes the fully transparent outer corners.
+                // This native region also reserves the filter's input. Only
+                // the visual clip chooses which blurred pixels are displayed.
+                RECT samplingFence = panel.SamplingFence();
+                const LONG margin = PlacementMargin();
+                OffsetRect(&samplingFence, margin, margin);
                 HRGN frameRegion = snowdesktop::popup_round_geometry::CreateWindowFence(
-                    panel.FenceFrame(), panel.FenceRadius());
+                    samplingFence, panel.FenceRadius());
                 if (!frameRegion)
                 {
                     DeleteObject(panelRegion);
@@ -990,7 +1034,10 @@ struct DesktopBackdropCompositor::Impl
 
         if (!IsRectEmpty(&occlusionRect))
         {
-            HRGN excluded = CreateRectRgnIndirect(&occlusionRect);
+            RECT exclusion = occlusionRect;
+            const LONG margin = PlacementMargin();
+            OffsetRect(&exclusion, margin, margin);
+            HRGN excluded = CreateRectRgnIndirect(&exclusion);
             const bool ok = excluded && CombineRgn(panelRegion, panelRegion, excluded, RGN_DIFF) != ERROR;
             if (excluded) DeleteObject(excluded);
             if (!ok) { DeleteObject(panelRegion); return false; }
@@ -1141,7 +1188,8 @@ struct DesktopBackdropCompositor::Impl
             wgx::DirectXPixelFormat::B8G8R8A8UIntNormalized, wgx::DirectXAlphaMode::Premultiplied);
     }
 
-    void PaintRadiusMask(const wuc::CompositionDrawingSurface& surface, ID2D1Geometry* geometry)
+    void PaintRadiusMask(const wuc::CompositionDrawingSurface& surface, ID2D1Geometry* geometry,
+        POINT inset = {})
     {
         const auto interop = surface.as<awuci::ICompositionDrawingSurfaceInterop>();
         POINT offset{};
@@ -1151,7 +1199,7 @@ struct DesktopBackdropCompositor::Impl
         context->SetDpi(96.0f, 96.0f);
         context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
         context->SetTransform(D2D1::Matrix3x2F::Translation(
-            static_cast<float>(offset.x), static_cast<float>(offset.y)));
+            static_cast<float>(offset.x + inset.x), static_cast<float>(offset.y + inset.y)));
         context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         context->Clear(D2D1::ColorF(0, 0.0f));
         winrt::com_ptr<ID2D1SolidColorBrush> ink;
@@ -1309,17 +1357,19 @@ struct DesktopBackdropCompositor::Impl
     void SetRegionalBlurBrush(ID2D1Device* device, const snowdesktop::panel_blur::Geometry& geometry,
         PanelVisual::IconRegions& next, const PanelVisual::IconRegions& previous)
     {
-        const bool reuse = !IsRectEmpty(&next.samplingFrame) && maskDrawDevice.get() == device &&
+        const bool reuse = maskDrawDevice.get() == device &&
             previous.brush && previous.blurRadius == next.blurRadius &&
-            EqualRect(&previous.allocation, &next.allocation) &&
+            EqualRect(&previous.sampleBounds, &next.sampleBounds) &&
             std::equal(previous.masks.begin(), previous.masks.end(),
                 geometry.strongerMasks.begin(), geometry.strongerMasks.end(),
                 [](const auto& a, const auto& b) { return a.first == b.first; });
+        const POINT inset{next.allocation.left - next.sampleBounds.left,
+            next.allocation.top - next.sampleBounds.top};
         if (reuse)
         {
             next.masks = previous.masks;
             for (const auto& [radius, mask] : geometry.strongerMasks)
-                PaintRadiusMask(next.masks.at(radius), mask.Get());
+                PaintRadiusMask(next.masks.at(radius), mask.Get(), inset);
             next.brush = previous.brush;
             return;
         }
@@ -1337,12 +1387,12 @@ struct DesktopBackdropCompositor::Impl
         }
         auto brush = found->second.CreateBrush();
         brush.SetSourceParameter(L"backdrop", compositor.CreateBackdropBrush());
-        const SIZE size{geometry.allocation.right - geometry.allocation.left,
-            geometry.allocation.bottom - geometry.allocation.top};
+        const SIZE size{next.sampleBounds.right - next.sampleBounds.left,
+            next.sampleBounds.bottom - next.sampleBounds.top};
         for (const auto& [radius, mask] : geometry.strongerMasks)
         {
             const auto surface = CreateRadiusMask(size);
-            PaintRadiusMask(surface, mask.Get());
+            PaintRadiusMask(surface, mask.Get(), inset);
             brush.SetSourceParameter(RadiusMaskName(radius), MakeRadiusMaskBrush(surface));
             next.masks.emplace(radius, surface);
         }
@@ -1431,6 +1481,7 @@ struct DesktopBackdropCompositor::Impl
             // already faulted; otherwise its helper HWND can remain visible.
         }
         root = nullptr;
+        placementRoot = nullptr;
         target = nullptr;
         // The compositor and dispatcher queue are shared by every backdrop
         // target on this UI thread. Releasing one target must not invalidate
@@ -1735,7 +1786,11 @@ bool DesktopBackdropCompositor::InitializeInternal(
     try
     {
         impl_->root = impl_->compositor.CreateContainerVisual();
-        impl_->target.Root(impl_->root);
+        impl_->placementRoot = impl_->compositor.CreateContainerVisual();
+        const auto margin = static_cast<float>(impl_->PlacementMargin());
+        impl_->placementRoot.Offset({margin, margin, 0.0f});
+        impl_->placementRoot.Children().InsertAtTop(impl_->root);
+        impl_->target.Root(impl_->placementRoot);
         impl_->available = true;
         impl_->SyncWindowPlacement();
         impl_->SyncPanelWindowRegion();
@@ -2194,7 +2249,7 @@ bool DesktopBackdropCompositor::SetDeformationTransform(
             [&panelFrame](const Impl::PanelVisual& item) {
                 return EqualRect(&item.frame, &panelFrame) != FALSE;
             });
-        if (panel == impl_->panels.end() || !panel->visual.Brush())
+        if (panel == impl_->panels.end() || !panel->sample.Brush())
         {
             impl_->ClearGenieTransform();
             return false;
@@ -2229,7 +2284,14 @@ bool DesktopBackdropCompositor::SetDeformationTransform(
             // Backdrop brushes sample the region behind each consuming visual.
             // One host-sized visual avoids repeated blur evaluation and does
             // not resize/share the ordinary panel's smaller effect brush.
-            glass.Brush(impl_->CreateBlurBrush(panel->blurRadius));
+            auto sample = impl_->compositor.CreateSpriteVisual();
+            const auto margin = static_cast<float>(snowdesktop::blur_sampling::KernelMargin(
+                static_cast<float>(panel->blurRadius)));
+            sample.Offset({-margin, -margin, 0.0f});
+            sample.Size({static_cast<float>(hostFrame.right) + 2.0f * margin,
+                static_cast<float>(hostFrame.bottom) + 2.0f * margin});
+            sample.Brush(impl_->CreateBlurBrush(panel->blurRadius));
+            glass.Children().InsertAtBottom(sample);
             auto geometry = impl_->compositor.CreatePathGeometry();
             glass.Clip(impl_->compositor.CreateGeometricClip(geometry));
             auto outline = BuildGenieSourceOutline(width, height,
@@ -2459,8 +2521,14 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
     // The HWND allocation is reserved for the Dock's motion envelope. Keep
     // sampling in its pixel coordinates while the animated silhouettes move.
     RECT samplingFrame{};
-    if (extendOutline && impl_->stableWindowRegion)
-        GetClientRect(impl_->backdropWindow, &samplingFrame);
+    if (extendOutline && impl_->stableWindowRegion && GetClientRect(impl_->backdropWindow, &samplingFrame))
+    {
+        // The HWND reserves a maximum halo around its logical allocation.
+        // The sprite below adds only the halo needed by this actual brush.
+        const LONG margin = impl_->PlacementMargin();
+        samplingFrame.right -= margin * 2;
+        samplingFrame.bottom -= margin * 2;
+    }
     const auto needsRegion = [&](const snowdesktop::PanelBackdropIcon& icon) {
         return blur::RadiusKey(icon.blurRadius) > panel->blurRadius ||
             (extendOutline && !blur::Covered(panel->frame, panel->cornerRadius, icon.frame));
@@ -2475,7 +2543,7 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
             try
             {
                 if (panel->iconRegions.brush)
-                    panel->visual.Brush(panel->baseBlur);
+                    panel->sample.Brush(panel->baseBlur);
                 if (panel->iconRegions.clip)
                 {
                     const RECT& frame = panel->frame;
@@ -2489,6 +2557,8 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
                     impl_->transformedRegionDirty = true;
                 }
                 panel->iconRegionsApplied = false;
+                panel->SetBaseSampleBounds();
+                impl_->transformedRegionDirty = true;
                 impl_->frameCommitPending = true;
             }
             catch (const winrt::hresult_error& error)
@@ -2503,8 +2573,10 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
     try
     {
         auto& cached = panel->iconRegions;
+        const RECT animationEnvelope = panel->animationFence.value_or(RECT{});
         const bool changed = !EqualRect(&cached.base, &panel->frame) ||
             !EqualRect(&cached.samplingFrame, &samplingFrame) ||
+            !EqualRect(&cached.animationEnvelope, &animationEnvelope) ||
             cached.corners != panel->cornerRadius || cached.blurRadius != panel->blurRadius ||
             cached.extendOutline != extendOutline ||
             !std::equal(cached.icons.begin(), cached.icons.end(), icons.begin(), icons.end(), blur::SameIcon);
@@ -2515,6 +2587,7 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
             next.icons.assign(icons.begin(), icons.end());
             next.base = panel->frame;
             next.samplingFrame = samplingFrame;
+            next.animationEnvelope = animationEnvelope;
             next.corners = panel->cornerRadius;
             next.blurRadius = panel->blurRadius;
             next.extendOutline = extendOutline;
@@ -2525,6 +2598,13 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
                 next.blurRadius, icons, extendOutline, samplingFrame, geometry));
             next.allocation = geometry.allocation;
             next.visibleBounds = geometry.visibleBounds;
+            const int maximumRadius = geometry.strongerMasks.empty() ? next.blurRadius :
+                geometry.strongerMasks.rbegin()->first;
+            next.sampleMargin = snowdesktop::blur_sampling::KernelMargin(static_cast<float>(maximumRadius));
+            RECT displayEnvelope{};
+            UnionRect(&displayEnvelope, &next.visibleBounds, &animationEnvelope);
+            next.sampleBounds = snowdesktop::blur_sampling::SampleBounds(
+                next.allocation, displayEnvelope, next.sampleMargin);
             if (geometry.outline)
             {
                 winrt::com_ptr<ID2D1Geometry> outline;
@@ -2548,8 +2628,8 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
             cached = std::move(next);
         }
         const auto& brush = cached.brush ? cached.brush : panel->baseBlur;
-        if (panel->visual.Brush() != brush)
-            panel->visual.Brush(brush);
+        if (panel->sample.Brush() != brush)
+            panel->sample.Brush(brush);
         if (cached.clip)
         {
             const RECT& area = cached.allocation;
@@ -2560,6 +2640,8 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
             panel->regionCornerRadius = 0.0f;
             impl_->transformedRegionDirty = true;
         }
+        panel->SetSampleBounds(cached.allocation, cached.sampleBounds, cached.sampleMargin);
+        impl_->transformedRegionDirty = true;
         panel->iconRegionsApplied = true;
         impl_->frameCommitPending = true;
         return true;
@@ -2597,7 +2679,7 @@ void DesktopBackdropCompositor::SetBackgroundPanels(
                 continue;
             }
             impl_->root.Children().Remove(panel->visual);
-            panel->visual.Brush(nullptr);
+            panel->sample.Brush(nullptr);
             panel = impl_->ErasePanel(panel);
             impl_->blurFactoriesDirty = true;
         }
@@ -2649,6 +2731,8 @@ bool DesktopBackdropCompositor::UpdatePanel(
             panel.cornerRadius = resolvedRadius;
             panel.blurRadius = blurKey;
             panel.visual = impl_->compositor.CreateSpriteVisual();
+            panel.sample = impl_->compositor.CreateSpriteVisual();
+            panel.visual.Children().InsertAtBottom(panel.sample);
             panel.geometry = impl_->compositor.CreateRoundedRectangleGeometry();
             panel.clip = impl_->compositor.CreateGeometricClip(panel.geometry);
             panel.submittedClip = panel.geometry;
@@ -2691,14 +2775,15 @@ bool DesktopBackdropCompositor::UpdatePanel(
             static_cast<float>(frame.bottom - frame.top) };
         if (!keepDockSampling)
         {
-            if (existing->visual.Brush() != existing->baseBlur)
-                existing->visual.Brush(existing->baseBlur);
+            if (existing->sample.Brush() != existing->baseBlur)
+                existing->sample.Brush(existing->baseBlur);
             existing->iconRegionsApplied = false;
             existing->regionFrame = frame;
             existing->regionCornerRadius = resolvedRadius;
             existing->SetOffset({static_cast<float>(frame.left), static_cast<float>(frame.top), 0.0f});
             existing->SetSize(panelSize);
             existing->SetRadius(resolvedRadius);
+            existing->SetBaseSampleBounds();
         }
         if (!keepDockSampling && smoothCorners)
         {
@@ -2783,7 +2868,7 @@ bool DesktopBackdropCompositor::RemoveIconPanel(const RECT& frame, std::uintptr_
     try
     {
         impl_->root.Children().Remove(found->visual);
-        found->visual.Brush(nullptr);
+        found->sample.Brush(nullptr);
         impl_->ErasePanel(found);
         impl_->blurFactoriesDirty = true;
         // The enclosing EndFrame submits geometry and retirement together.
@@ -3247,15 +3332,24 @@ void DesktopBackdropCompositor::SetPanelAnimationFence(
     const auto panel = impl_->FindPanel({}, ownerKey);
     if (panel == impl_->panels.end()) return;
 
-    // SetWindowRgn takes effect separately from the Composition commit.
-    // The whole animation path must fit both the previous and new clip.
+    // Reserve the whole roll envelope for both native coverage and sampling.
+    // The displayed height can change without moving the edge of the filter input.
     const RECT& visible = panel->regionFrame;
+    const RECT previous = panel->animationFence.value_or(RECT{});
     if (!IsRectEmpty(&frame) && frame.left == visible.left &&
         frame.top == visible.top && frame.right == visible.right &&
         frame.bottom >= visible.bottom)
         panel->animationFence = frame;
     else
         panel->animationFence.reset();
+    const RECT current = panel->animationFence.value_or(RECT{});
+    if (!EqualRect(&previous, &current))
+    {
+        if (!panel->iconRegionsApplied) panel->SetBaseSampleBounds();
+        // Regional brushes are prepared with their matching masks by the
+        // component's icon collection before committing this frame.
+        impl_->transformedRegionDirty = true;
+    }
 }
 
 bool DesktopBackdropCompositor::RemovePanel(const RECT& frame, std::uintptr_t ownerKey)
@@ -3283,7 +3377,7 @@ bool DesktopBackdropCompositor::RemovePanel(const RECT& frame, std::uintptr_t ow
         if (impl_->genieSource == existing->visual)
             impl_->ClearGenieTransform();
         impl_->root.Children().Remove(existing->visual);
-        existing->visual.Brush(nullptr);
+        existing->sample.Brush(nullptr);
         impl_->ErasePanel(existing);
         impl_->blurFactoriesDirty = true;
         if (!impl_->collectingFrame)
@@ -3451,7 +3545,7 @@ void DesktopBackdropCompositor::EndFrame(
                 if (impl_->genieSource == iterator->visual)
                     impl_->ClearGenieTransform();
                 children.Remove(iterator->visual);
-                iterator->visual.Brush(nullptr);
+                iterator->sample.Brush(nullptr);
                 iterator = impl_->ErasePanel(iterator);
                 impl_->blurFactoriesDirty = true;
             }

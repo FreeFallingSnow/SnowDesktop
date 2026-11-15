@@ -422,6 +422,10 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             desktopBackdropCompositor_.IsAvailable() && !item.hoverRollUnavailable &&
             collapsedBounds.bottom < expandedBounds.bottom;
         const RECT bounds = drawRollSnapshot ? expandedBounds : visibleBounds;
+        const bool reserveHoverSampling = widgetContainer && !widgetContainer->IsHosted() &&
+            widgetData->titleBarCollapsed && widgetData->titleBarExpandOnHover && CanFoldWidget(*widgetData);
+        const RECT hoverSamplingEnvelope = reserveHoverSampling
+            ? (animating ? expandedBounds : GetExpandedWidgetFrameRect(*widgetData)) : RECT{};
         const LONG rawWidth = bounds.right - bounds.left;
         const LONG rawHeight = bounds.bottom - bounds.top;
         // The fallback also keeps one allocation throughout the transition.
@@ -747,6 +751,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                 item.renderedContentId = contentId;
             if (!asynchronous && item.hoverFade && item.hoverFade->waitingForPixels)
                 StartDesktopWidgetHoverFade(item, true);
+            if (item.backdropRegistered)
+                desktopBackdropCompositor_.SetPanelAnimationFence(item.BackdropOwnerKey(), hoverSamplingEnvelope);
             item.iconBackdrops.Publish(desktopBackdropCompositor_, item.HoverOpacity(),
                 item.backdropRegistered ? item.BackdropOwnerKey() : 0, d2dDevice_.Get());
         }
@@ -1108,12 +1114,12 @@ void DesktopApp::KeepDesktopWidgetBackdropPanels()
         if (item.backdropRegistered)
         {
             RECT animationFence{};
-            const auto expansion = widgetHoverExpansion_.find(id);
-            if (expansion != widgetHoverExpansion_.end() && expansion->second.IsAnimating())
+            const auto index = FindWidgetIndexById(id);
+            if (index < widgets_.size())
             {
-                const auto index = FindWidgetIndexById(id);
-                if (index < widgets_.size() && IsWidgetHoverExpansionAnimating(widgets_[index]))
-                    animationFence = GetExpandedWidgetFrameRect(widgets_[index]);
+                const auto& widget = widgets_[index];
+                if (widget.titleBarCollapsed && widget.titleBarExpandOnHover && CanFoldWidget(widget))
+                    animationFence = GetExpandedWidgetFrameRect(widget);
             }
             desktopBackdropCompositor_.SetPanelAnimationFence(item.BackdropOwnerKey(), animationFence);
             if (item.opacityEffect)
