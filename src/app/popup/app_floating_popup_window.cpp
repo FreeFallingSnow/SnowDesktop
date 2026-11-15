@@ -1469,6 +1469,17 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         break;
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
+    case WM_KEYDOWN:
+    case WM_SYSKEYDOWN:
+        // With no focused window, User32 sends WM_SYSKEYDOWN without Alt to
+        // the active popup. Route Delete through the same input handling.
+        if (wp == VK_DELETE && !dockTrayPopup_ && IsCollectionPopupInteractive() &&
+            (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 29)) == 0)
+        {
+            const snowdesktop::private_pointer::ForwardScope forward(hwnd, WM_KEYDOWN);
+            return HandleInputMessage(hwnd, WM_KEYDOWN, wp, lp);
+        }
+        break;
     case kFloatingPopupExternalPointerMessage:
         HandleFloatingPopupExternalPointerDown(
             static_cast<std::uint32_t>(wp),

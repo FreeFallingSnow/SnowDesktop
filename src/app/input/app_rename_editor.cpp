@@ -561,8 +561,17 @@ LRESULT CALLBACK DesktopApp::RenameEditSubclassProc(
     case WM_KEYDOWN:
         if (snowdesktop::text_input::IsComposing(hwnd))
             break;
-        if (wParam == VK_RETURN) { app->CommitRename(false); return 0; }
-        if (wParam == VK_ESCAPE) { app->CommitRename(true); return 0; }
+        if (wParam == VK_RETURN || wParam == VK_ESCAPE)
+        {
+            const bool returnFocusToPopupInput = app->IsCollectionPopupInteractive() &&
+                !app->renameController_.IsQuickNavigationPresentation();
+            app->CommitRename(wParam == VK_ESCAPE);
+            // The editor is an owned window. Destroying it can move focus
+            // to the popup host instead of the keyboard input proxy.
+            if (returnFocusToPopupInput && app->IsCollectionPopupInteractive())
+                app->RestoreInteractionInputFocus();
+            return 0;
+        }
         break;
     case WM_KILLFOCUS:
         if (snowdesktop::text_input::HasEditingMenu(hwnd))
