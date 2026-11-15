@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "popup_item_transition.h"
 #include "diagnostics/diagnostic_log.h"
 #include "common/utils.h"
 #include "layout/floating_popup_rules.h"
@@ -365,8 +366,11 @@ RECT DesktopApp::CalculateFloatingPopupWindowBounds() const
     {
         if (const DesktopWidget* popup = GetOpenPopupWidget())
         {
-            bounds = InflateCopy(
-                GetCollectionPopupRect(*popup), 6);
+            RECT panel = GetCollectionPopupRect(*popup);
+            if (popup == &dockFolderPopupWidget_ && dockFolderPopupContainer_)
+                if (const auto& motion = dockFolderPopupContainer_->PopupItemTransition())
+                    panel = motion->ReservedPanel(panel);
+            bounds = InflateCopy(panel, 6);
         }
     }
     if (IsLuaPanelHostedByFloatingWindow())
@@ -1034,8 +1038,12 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
             panel, radius, collectionPopupBlurRadius_, reinterpret_cast<std::uintptr_t>(owner));
     };
     if (collectionGlass)
-        addPanel(GetCollectionPopupRect(*popup), 18.0f * GetCollectionPopupLayoutMetrics(*popup).scale,
-            &popupAnimation_);
+    {
+        RECT panel = GetCollectionPopupRect(*popup);
+        if (popup == &dockFolderPopupWidget_ && dockFolderPopupContainer_)
+            if (const auto& motion = dockFolderPopupContainer_->PopupItemTransition()) panel = motion->Panel(panel);
+        addPanel(panel, 18.0f * GetCollectionPopupLayoutMetrics(*popup).scale, &popupAnimation_);
+    }
     if (luaGlass)
         addPanel(GetLuaWidgetPanelRect(), kLuaWidgetPanelCornerRadius, &luaWidgetPanelAnimation_);
     if (stackGlass)
@@ -1090,7 +1098,12 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     if (IsCollectionPopupHostedByFloatingWindow())
     {
         if (const DesktopWidget* popup = GetOpenPopupWidget())
+        {
             nextCollectionRegion = GetCollectionPopupRect(*popup);
+            if (popup == &dockFolderPopupWidget_ && dockFolderPopupContainer_)
+                if (const auto& motion = dockFolderPopupContainer_->PopupItemTransition())
+                    nextCollectionRegion = motion->Panel(nextCollectionRegion);
+        }
     }
     RECT nextLuaPanelRegion{};
     const bool nextModalRegion =

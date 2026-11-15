@@ -6,6 +6,7 @@
 #include "layout/folder_sort_rules.h"
 #include "app/dock/dock_tray_popup_state.h"
 #include "popup_opacity_scope.h"
+#include "popup_item_transition.h"
 #include "app/navigation/quick_navigation_theme.h"
 #include "layout/item_render_layer_rules.h"
 #include "layout/popup_scrollbar_layout.h"
@@ -14,6 +15,33 @@
 #include <d2d1effects.h>
 
 // Collection-popup rendering.
+
+namespace
+{
+class PopupItemPresenceScope
+{
+public:
+    PopupItemPresenceScope(ID2D1DeviceContext* context, const RECT& bounds, float amount)
+        : context_(amount < 1.0f ? context : nullptr), opacity_(context, context_ != nullptr, amount)
+    {
+        if (!context_) return;
+        context_->GetTransform(&previous_);
+        const auto center = D2D1::Point2F((bounds.left + bounds.right) * 0.5f,
+            (bounds.top + bounds.bottom) * 0.5f);
+        context_->SetTransform(D2D1::Matrix3x2F::Scale(amount, amount, center) * previous_);
+    }
+
+    ~PopupItemPresenceScope()
+    {
+        if (context_) context_->SetTransform(previous_);
+    }
+
+private:
+    ID2D1DeviceContext* context_;
+    PopupOpacityScope opacity_;
+    D2D1_MATRIX_3X2_F previous_{};
+};
+}
 
 IDWriteTextFormat* DesktopApp::GetCollectionPopupTextFormat(float scale, bool title)
 {
@@ -66,6 +94,9 @@ void DesktopApp::DrawCollectionPopup(
     if (!offsetView || !offsetView->IsSearchActive())
         popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
             GetCollectionPopupMaxScrollOffset(widget, popupRect_));
+    const auto motion = openWidget == &dockFolderPopupWidget_ && dockFolderPopupContainer_
+        ? dockFolderPopupContainer_->PopupItemTransition() : nullptr;
+    const RECT presentedPanel = motion ? motion->Panel(popupRect_) : popupRect_;
 
     const auto animation =
         popupAnimation_.GetVisual();
@@ -131,7 +162,7 @@ void DesktopApp::DrawCollectionPopup(
             collectionPopupAppearance_;
         popupBackgroundAppearance.widgetEdgeHighlightEnabled = false;
         DrawWidgetPanelBackground(
-            ctx, popupRect_, 18.0f * popupMetrics.scale,
+            ctx, presentedPanel, 18.0f * popupMetrics.scale,
             D2D1::ColorF(
                 collectionPopupAppearance_.widgetBgR,
                 collectionPopupAppearance_.widgetBgG,
@@ -153,8 +184,8 @@ void DesktopApp::DrawCollectionPopup(
             &popupBackgroundAppearance, false, 0, popupMetrics.scale);
 
         const RECT titleRect = snowdesktop::collection_popup_layout::
-            ResolveTitleRect(popupRect_, popupMetrics.scale,
-                dockFolderPopupOpen_ ? GetDockFolderPopupSortButtonRect(popupRect_).left -
+            ResolveTitleRect(presentedPanel, popupMetrics.scale,
+                dockFolderPopupOpen_ ? GetDockFolderPopupSortButtonRect(presentedPanel).left -
                     snowdesktop::collection_popup_layout::ScaleDimension(10, popupMetrics.scale)
                     : (std::numeric_limits<LONG>::max)());
         std::wstring title = ShouldUseDemoCollectionIdentity(&widget)
@@ -179,7 +210,7 @@ void DesktopApp::DrawCollectionPopup(
         {
             const RECT sortRect =
                 GetDockFolderPopupSortButtonRect(
-                    popupRect_);
+                    presentedPanel);
             const bool hovered =
                 popupAnimation_.IsInteractive() &&
                 PtInRect(
@@ -241,6 +272,7 @@ void DesktopApp::DrawCollectionPopup(
     }
 
     RECT content = GetCollectionPopupContentRect(popupRect_);
+    if (motion) content = motion->Content(content, popupRect_);
     if (auto* view = GetDateGroupedPopupView(popupRect_))
     {
         const RECT frame = view->GetLayoutFrameRect();
@@ -268,8 +300,8 @@ void DesktopApp::DrawCollectionPopup(
     }
     if (auto* view = GetCategorizedPopupView())
     {
-        const RECT controls = GetCollectionPopupControlsRect(popupRect_);
-        const RECT frame = GetCategorizedPopupFrame(popupRect_);
+        const RECT controls = GetCollectionPopupControlsRect(presentedPanel);
+        const RECT frame = GetCategorizedPopupFrame(presentedPanel);
         CategorizedPopupScope scope(view, frame);
         ctx->PushAxisAlignedClip(ToD2DRect(controls), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         view->DrawContent(ctx, frame);
@@ -315,6 +347,9 @@ void DesktopApp::DrawCollectionPopup(
         fanOffset, fanCapacity, popupItemCount);
     const size_t firstItem = fan ? fanRange.first : 0;
     const size_t endItem = fan ? fanRange.end : popupItemCount;
+    const auto itemPresence = [&](size_t index, const FolderEntry& item) {
+        return motion ? motion->ItemOpacity(index, item.fullPath, popupRect_, popupScrollOffset_) : 1.0f;
+    };
     if (fan && !popupFanIconRecorder_ && d2dDevice_)
         (void)d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &popupFanIconRecorder_);
     const auto iconRecorder = popupFanIconRecorder_;
@@ -487,6 +522,9 @@ void DesktopApp::DrawCollectionPopup(
                 popupAnimation_.IsInteractive() &&
                 !entry.selected &&
                 PtInRect(&itemRect, lastMousePoint_);
+            const float presence = itemPresence(i, entry);
+            if (presence <= 0.0f) continue;
+            PopupItemPresenceScope presenceScope(ctx, itemRect, presence);
             FolderEntryIcon icon(
                 &entry, dockFolderPopupContainer_.get(), this);
             const auto titleLayers =
@@ -583,6 +621,9 @@ void DesktopApp::DrawCollectionPopup(
             FolderEntry& entry =
                 dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(widget, i)];
             if (!entry.selected) continue;
+            const float presence = itemPresence(i, entry);
+            if (presence <= 0.0f) continue;
+            PopupItemPresenceScope presenceScope(ctx, itemRect, presence);
             FolderEntryIcon icon(
                 &entry, dockFolderPopupContainer_.get(), this);
             icon.DrawTitle(
@@ -664,12 +705,12 @@ void DesktopApp::DrawCollectionPopup(
     const int contentScroll = searchPopup && searchPopup->IsSearchActive()
         ? searchPopup->GetScrollOffset() : popupScrollOffset_;
     if (!fan) DrawScrollbarAt(
-        ctx, snowdesktop::popup_scrollbar_layout::Viewport(popupRect_, content), contentHeight, visibleHeight,
+        ctx, snowdesktop::popup_scrollbar_layout::Viewport(presentedPanel, content), contentHeight, visibleHeight,
         contentScroll, popupHovered,
         collectionPopupLightTheme_, popupMetrics.scale);
 
     if (!fan) (void)DrawWidgetPanelEdgeHighlight(
-        ctx, popupRect_, 18.0f * popupMetrics.scale,
+        ctx, presentedPanel, 18.0f * popupMetrics.scale,
         D2D1::ColorF(
             collectionPopupAppearance_.widgetBgR,
             collectionPopupAppearance_.widgetBgG,

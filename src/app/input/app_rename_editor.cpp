@@ -374,6 +374,11 @@ BeginRenameDockFolderPopupEntry(
                 folderEntries.size())
         return;
 
+    if (dockFolderPopupContainer_ && dockFolderPopupContainer_->PopupItemTransition())
+    {
+        dockFolderPopupContainer_->SetPopupItemTransition({});
+        RefreshDockFolderPopupGeometry();
+    }
     ShowAllCollectionPopupItems();
     // memberIndex addresses the source folder; geometry addresses the
     // filtered visible order. A hidden entry has no rename anchor.

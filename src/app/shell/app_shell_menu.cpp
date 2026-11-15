@@ -251,7 +251,11 @@ std::optional<DesktopApp::NewItemRename> DesktopApp::ApplyPendingNewItems(
                 if (target.surface == Surface::FolderPopup)
                 {
                     if (dockFolderPopupOpen_ && target.sourceId == dockFolderPopupSourceId_)
+                    {
+                        if (edit && dockFolderPopupContainer_ && dockFolderPopupContainer_->PopupItemTransition())
+                            return false;
                         folder = &dockFolderPopupWidget_;
+                    }
                 }
                 else if (const size_t index = FindWidgetIndexById(target.sourceId);
                     index < widgets_.size() && widgets_[index].type == DesktopWidgetType::FolderMapping)

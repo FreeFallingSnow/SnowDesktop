@@ -34,6 +34,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 #include <memory>
 #include "ui/render/scroll_content_clip.h"
@@ -43,6 +44,7 @@ struct CategorySettings;
 class DesktopApp;
 namespace snowdesktop::group_tab_drag_preview { struct Layout; }
 namespace snowdesktop::widget_runtime { struct WidgetSurfacePaint; }
+namespace snowdesktop::popup_item_transition { class Transition; }
 class WidgetEngine;
 namespace snowdesktop { struct WidgetFolderSearchState; }
 struct GridPage;
@@ -833,6 +835,12 @@ public:
     void InvalidateFilterCache();
     const CategorySettings& GetCategorySettingsForDisplay() const;
 
+    const auto& PopupItemTransition() const { return popupItemTransition_; }
+    void SetPopupItemTransition(std::shared_ptr<snowdesktop::popup_item_transition::Transition> transition)
+    {
+        popupItemTransition_ = std::move(transition);
+    }
+
     struct DateLayoutSegment
     {
         bool isHeader = false;
@@ -852,6 +860,8 @@ public:
 private:
     void EnsureCategorySnapshot() const;
     std::wstring CachedActiveCategoryId() const;
+
+    std::shared_ptr<snowdesktop::popup_item_transition::Transition> popupItemTransition_;
 
     mutable std::vector<std::wstring> categorySnapshotPaths_;
     mutable std::unordered_map<std::wstring, std::vector<size_t>> entryIndicesByCategory_;
