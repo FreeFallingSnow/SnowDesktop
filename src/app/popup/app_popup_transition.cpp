@@ -14,8 +14,40 @@
 #include "layout/collection_popup_layout.h"
 #include "popup_resize_transition.h"
 #include <cmath>
+#include <string_view>
+#include <unordered_map>
 
 // Collection and Dock-folder popup transitions.
+
+namespace
+{
+bool SameDockFolderListing(const std::vector<FolderEntry>& displayed,
+    const snowdesktop::shell_refresh::FolderSnapshot& snapshot)
+{
+    if (displayed.size() != snapshot.entries.size()) return false;
+    // The popup owns its sort order. A directory read returns enumeration
+    // order and may leave icon/type metadata to the existing icon loader.
+    std::unordered_map<std::wstring_view, const FolderEntry*> byPath;
+    byPath.reserve(displayed.size());
+    for (const auto& entry : displayed)
+        byPath.emplace(entry.fullPath, &entry);
+    for (const auto& fresh : snapshot.entries)
+    {
+        const auto found = byPath.find(fresh.fullPath);
+        if (found == byPath.end()) return false;
+        const auto& current = *found->second;
+        if (current.name != fresh.name || current.DisplayName() != fresh.DisplayName() ||
+            current.isDirectory != fresh.isDirectory || current.fileSize != fresh.fileSize ||
+            CompareFileTime(&current.lastWriteTime, &fresh.lastWriteTime) != 0 ||
+            (fresh.sysIconIndex >= 0 && current.sysIconIndex != fresh.sysIconIndex) ||
+            (!fresh.typeName.empty() && current.typeName != fresh.typeName) ||
+            current.iconState == IconState::Loading)
+            return false;
+        byPath.erase(found);
+    }
+    return byPath.empty();
+}
+}
 
 namespace snowdesktop::popup_resize_transition
 {
@@ -557,6 +589,20 @@ void DesktopApp::RefreshDockFolderPopup(
             SyncFolderChangeNotifications();
         }
     }
+    const bool refreshVisibleDockFolder = snapshot && snapshot->complete && present &&
+        !targetPending && popupAnchoredToDock_ && dockFolderPopupMappingWidgetId_.empty() &&
+        dockFolderPopupAvailable_ && !dockFolderPopupLoading_ &&
+        dockFolderPopupContainer_ && IsCollectionPopupInteractive() &&
+        !popupAnimation_.IsAnimating() && !popupAnimationCompositorDriven_ &&
+        floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_);
+    if (refreshVisibleDockFolder && pendingLandingCaches_.empty() &&
+        (snapshot->error == ERROR_SUCCESS || snapshot->error == ERROR_FILE_NOT_FOUND) &&
+        snowdesktop::shell_refresh::FolderKey(snapshot->path) ==
+            snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath) &&
+        SameDockFolderListing(dockFolderPopupWidget_.folderEntries, *snapshot))
+        return; // The file-operation completion and Shell change can report the same listing.
+
+    const RECT previousBounds = popupRect_;
     if (!snapshot)
         CancelDockFolderPopupIconLoads();
     PreserveDockFolderPopupDragSourceForTransition();
@@ -720,6 +766,16 @@ void DesktopApp::RefreshDockFolderPopup(
         {
             dockFolderPopupContainer_->SetPopupResizeTransition({});
         }
+    }
+    if (refreshVisibleDockFolder && dockFolderPopupAvailable_)
+    {
+        RefreshDockFolderPopupGeometry(false);
+        InvalidateCollectionPopupContent();
+        InvalidateDragStaticScene();
+        if (!EqualRect(&previousBounds, &popupRect_))
+            UpdateFloatingPopupWindowBounds(false, false);
+        InvalidateFloatingPopupWindow(false);
+        return;
     }
     // Empty-to-populated listings are content updates of the existing popup.
     // The geometry refresh preserves its current opening or closing timeline.

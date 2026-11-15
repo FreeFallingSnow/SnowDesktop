@@ -598,7 +598,11 @@ void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapsh
     InvalidateDragStaticScene();
     reloading_ = false;
     InvalidateRect(hwnd_, nullptr, FALSE);
-    InvalidateFloatingPopupWindow(false);
+    // A Dock folder publishes only when its own snapshot changes. A second
+    // invalidation here would also repaint unchanged or unrelated results.
+    if (!dockFolderPopupOpen_ || !popupAnchoredToDock_ || !dockFolderPopupMappingWidgetId_.empty() ||
+        IsLuaPanelHostedByFloatingWindow() || IsLuaStackIndicatorVisible())
+        InvalidateFloatingPopupWindow(false);
     InvalidateQuickNavigationWindow();
     wchar_t timing[192]{};
     swprintf_s(timing, L"Folder refresh async: folders=%zu readMs=%llu metadataHits=%zu metadataQueries=%zu",
