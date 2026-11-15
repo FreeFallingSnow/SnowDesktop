@@ -2927,5 +2927,6 @@
   "workshop_manager.publish_tags_tooltip": "태그 목록 전체를 게시합니다. 빈 목록을 게시하면 태그가 모두 삭제됩니다.",
   "workshop_manager.manage_owned_item": "현재 Steam 계정이 소유한 항목만 관리할 수 있습니다.",
   "workshop_manager.accept_workshop_agreement": "먼저 Steam에서 창작마당 이용 약관에 동의하세요.",
-  "workshop_manager.tag_actions": "태그 작업"
+  "workshop_manager.tag_actions": "태그 작업",
+  "modules.dllBlockedByPolicy": "Windows 애플리케이션 제어 정책이 DLL 로드를 차단했습니다."
 }

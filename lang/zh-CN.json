@@ -2927,5 +2927,6 @@
   "workshop_manager.publish_tags_tooltip": "提交编辑框中的全部标签。留空会清除标签。",
   "workshop_manager.manage_owned_item": "只能管理当前 Steam 账号拥有的项目。",
   "workshop_manager.accept_workshop_agreement": "请先在 Steam 接受创意工坊协议。",
-  "workshop_manager.tag_actions": "标签操作"
+  "workshop_manager.tag_actions": "标签操作",
+  "modules.dllBlockedByPolicy": "Windows 应用程序控制策略阻止了 DLL 加载。"
 }

@@ -2927,5 +2927,6 @@
   "workshop_manager.publish_tags_tooltip": "Publica a lista completa de marcadores. Uma lista vazia remove todos os marcadores.",
   "workshop_manager.manage_owned_item": "Você só pode gerenciar itens que pertencem à conta Steam atual.",
   "workshop_manager.accept_workshop_agreement": "Aceite primeiro o acordo da Oficina no Steam.",
-  "workshop_manager.tag_actions": "Ações de marcadores"
+  "workshop_manager.tag_actions": "Ações de marcadores",
+  "modules.dllBlockedByPolicy": "Uma política de controle de aplicativos do Windows bloqueou o carregamento de uma DLL."
 }

@@ -2927,5 +2927,6 @@
   "workshop_manager.publish_tags_tooltip": "Publie toute la liste. Une liste vide efface toutes les étiquettes.",
   "workshop_manager.manage_owned_item": "Vous pouvez uniquement gérer les articles qui appartiennent au compte Steam actuel.",
   "workshop_manager.accept_workshop_agreement": "Acceptez d’abord les conditions du Workshop dans Steam.",
-  "workshop_manager.tag_actions": "Actions sur les étiquettes"
+  "workshop_manager.tag_actions": "Actions sur les étiquettes",
+  "modules.dllBlockedByPolicy": "Une stratégie de contrôle des applications de Windows a bloqué le chargement d’une DLL."
 }

@@ -2927,5 +2927,6 @@
   "workshop_manager.publish_tags_tooltip": "タグ一覧全体を公開します。空の一覧を公開するとすべてのタグが削除されます。",
   "workshop_manager.manage_owned_item": "現在の Steam アカウントが所有するアイテムのみ管理できます。",
   "workshop_manager.accept_workshop_agreement": "先に Steam でワークショップ利用規約に同意してください。",
-  "workshop_manager.tag_actions": "タグ操作"
+  "workshop_manager.tag_actions": "タグ操作",
+  "modules.dllBlockedByPolicy": "Windows のアプリケーション制御ポリシーにより、DLL の読み込みがブロックされました。"
 }

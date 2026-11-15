@@ -2927,5 +2927,6 @@
   "workshop_manager.publish_tags_tooltip": "提交編輯欄中的所有標籤。留空會清除標籤。",
   "workshop_manager.manage_owned_item": "只能管理目前 Steam 帳號擁有的項目。",
   "workshop_manager.accept_workshop_agreement": "請先在 Steam 接受工作坊協議。",
-  "workshop_manager.tag_actions": "標籤操作"
+  "workshop_manager.tag_actions": "標籤操作",
+  "modules.dllBlockedByPolicy": "Windows 應用程式控制原則已封鎖 DLL 載入。"
 }

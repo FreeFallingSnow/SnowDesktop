@@ -2927,5 +2927,6 @@
   "workshop_manager.publish_tags_tooltip": "Veröffentlicht die gesamte Tag-Liste. Eine leere Liste entfernt alle Tags.",
   "workshop_manager.manage_owned_item": "Du kannst nur Einträge verwalten, die dem aktuellen Steam-Konto gehören.",
   "workshop_manager.accept_workshop_agreement": "Akzeptiere zuerst die Workshop-Vereinbarung in Steam.",
-  "workshop_manager.tag_actions": "Tag-Aktionen"
+  "workshop_manager.tag_actions": "Tag-Aktionen",
+  "modules.dllBlockedByPolicy": "Die Windows-Richtlinie zur Anwendungssteuerung hat das Laden einer DLL blockiert."
 }
