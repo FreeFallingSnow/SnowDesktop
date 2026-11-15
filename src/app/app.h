@@ -2589,6 +2589,7 @@ private:
     void DrawCollectionPopup(
         ID2D1DeviceContext* ctx,
         bool applyAnimation = true);
+    void PublishCollectionPopupFanBackdrops();
     RECT GetLuaWidgetPanelRect() const;
     static constexpr float kLuaWidgetPanelCornerRadius = 18.0f;
     POINT GetLuaWidgetPanelAnimationAnchor(const RECT& panel) const;
@@ -3469,6 +3470,9 @@ private:
     mutable std::unordered_map<std::wstring, ComPtr<IDWriteTextLayout>> popupFanTextLayouts_;
     ComPtr<ID2D1DeviceContext> popupFanIconRecorder_;
     std::unordered_map<std::wstring, PopupFanIconDrawing> popupFanIconDrawings_;
+    std::vector<PopupFanBackdrop> popupFanBackdropCandidates_;
+    std::size_t popupFanBackdropCount_ = 0;
+    RECT popupFanBackdropViewport_{};
     ComPtr<IDWriteTextFormat> listItemTextFormat_;
     ComPtr<IDWriteTextFormat> navTabTextFormat_;
     ComPtr<IDWriteTextFormat> fileCategoryTabTextFormat_;

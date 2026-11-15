@@ -2995,6 +2995,31 @@ bool DesktopBackdropCompositor::AddIconPanel(const RECT& frame,
     }
 }
 
+bool DesktopBackdropCompositor::AddClippedPanel(const RECT& envelope,
+    ID2D1Geometry* clip, float blurRadius, std::uintptr_t ownerKey)
+{
+    if (!clip || !ownerKey || impl_->stagingFrame ||
+        !UpdatePanel(envelope, 0.f, blurRadius, ownerKey, false, true)) return false;
+    const auto panel = impl_->FindPanel(envelope, ownerKey);
+    if (panel == impl_->panels.end()) return false;
+    try
+    {
+        auto geometry = panel->customGeometry.try_as<wuc::CompositionPathGeometry>();
+        if (!geometry) geometry = impl_->compositor.CreatePathGeometry();
+        winrt::com_ptr<ID2D1Geometry> source;
+        source.copy_from(clip);
+        geometry.Path(wuc::CompositionPath(winrt::make<BackdropGeometrySource>(std::move(source))));
+        panel->customGeometry = geometry;
+        panel->SetClip(geometry);
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(L"backdrop.clipped_panel", error.code());
+        return false;
+    }
+}
+
 bool DesktopBackdropCompositor::AddLargeIconPanel(const RECT& frame,
     int shape, float cornerRadius, float blurRadius, std::uintptr_t ownerKey, int flagDirection)
 {

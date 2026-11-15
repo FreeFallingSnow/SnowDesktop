@@ -44,6 +44,14 @@ struct PopupFanIconDrawing
     D2D1_RECT_F shadowBounds{};
 };
 
+struct PopupFanBackdrop
+{
+    RECT viewport{};
+    Microsoft::WRL::ComPtr<ID2D1Geometry> silhouette;
+    D2D1_RECT_F bounds{};
+    float blurRadius = 0.f, opacity = 0.f;
+};
+
 struct WidgetMarqueeCompositionItem
 {
     std::wstring instanceId;

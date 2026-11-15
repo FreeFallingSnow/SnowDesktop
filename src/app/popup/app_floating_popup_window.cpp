@@ -779,6 +779,7 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
 
     brushCache_.clear();
     brushCacheContext_ = context.Get();
+    popupFanBackdropCandidates_.clear();
     renderingFloatingPopup_ = true;
     DrawDynamicOverlays(context.Get(), false);
     DrawLuaStackIndicator(context.Get());
@@ -815,6 +816,7 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
         RecoverFloatingPopupCompositionFailure(L"Publish live surface", hr);
         return false;
     }
+    PublishCollectionPopupFanBackdrops();
 
     // A panel callback or a re-entrant provider wake may request a desktop
     // widget update while this popup surface owns BeginDraw. The queue defers
@@ -955,8 +957,11 @@ void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
         return;
 
     const auto* collection = GetOpenPopupWidget();
-    bool visible = IsLuaStackIndicatorVisible();
-    if (collection && !UsesCollectionPopupFan(*collection))
+    bool visible = collectionPopupGlassTheme_ && IsLuaStackIndicatorVisible();
+    const bool fan = collection && UsesCollectionPopupFan(*collection);
+    if (fan)
+        visible = visible || (popupFanBackdropCount_ > 0 && popupAnimation_.GetVisual().visible);
+    if (collectionPopupGlassTheme_ && collection && !fan)
     {
         const auto visual = popupAnimation_.GetVisual();
         const bool animatingNatively = popupAnimationCompositorDriven_ && popupAnimation_.IsAnimating();
@@ -972,7 +977,7 @@ void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
             anchor, animatingNatively);
         visible = visible || animatingNatively || visual.visible;
     }
-    if (IsLuaPanelHostedByFloatingWindow())
+    if (collectionPopupGlassTheme_ && IsLuaPanelHostedByFloatingWindow())
     {
         const auto visual = luaWidgetPanelAnimation_.GetVisual();
         const bool animatingNatively = luaWidgetPanelAnimationCompositorDriven_ &&
@@ -995,20 +1000,17 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
 {
     snowdesktop::performance::Scope scope("popup", "backdrop.update");
     const DesktopWidget* popup = GetOpenPopupWidget();
-    const bool collectionGlass = popup && !UsesCollectionPopupFan(*popup);
-    const bool luaGlass = IsLuaPanelHostedByFloatingWindow();
-    const bool stackGlass = IsLuaStackIndicatorVisible();
-    if (!collectionPopupGlassTheme_)
+    const bool fan = popup && UsesCollectionPopupFan(*popup);
+    const bool collectionGlass = collectionPopupGlassTheme_ && popup && !fan;
+    const bool luaGlass = collectionPopupGlassTheme_ && IsLuaPanelHostedByFloatingWindow();
+    const bool stackGlass = collectionPopupGlassTheme_ && IsLuaStackIndicatorVisible();
+    if ((!collectionPopupGlassTheme_ && !fan) || !floatingPopupHwnd_ || !IsWindow(floatingPopupHwnd_))
     {
         collectionPopupBackdropCompositor_.Reset();
+        popupFanBackdropCount_ = 0;
         return;
     }
-    if (!floatingPopupHwnd_ || !IsWindow(floatingPopupHwnd_))
-    {
-        collectionPopupBackdropCompositor_.Reset();
-        return;
-    }
-    if ((!collectionGlass && !luaGlass && !stackGlass) || IsRectEmpty(&floatingPopupContentBounds_))
+    if ((!fan && !collectionGlass && !luaGlass && !stackGlass) || IsRectEmpty(&floatingPopupContentBounds_))
     {
         collectionPopupBackdropCompositor_.SetVisible(false);
         return;
@@ -1051,6 +1053,13 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
         CaptureMenuHostZOrder(floatingPopupHwnd_));
 
     collectionPopupBackdropCompositor_.BeginFrame(true);
+    if (fan && IsWindowVisible(floatingPopupHwnd_))
+    {
+        for (std::size_t i = 0; i < popupFanBackdropCount_; ++i)
+            (void)collectionPopupBackdropCompositor_.KeepPanel(popupFanBackdropViewport_,
+                static_cast<std::uintptr_t>(i + 1));
+    }
+    else popupFanBackdropCount_ = 0;
     const auto addPanel = [&](const RECT& panel, float radius, const void* owner) {
         collectionPopupBackdropCompositor_.AddPanel(
             panel, radius, collectionPopupBlurRadius_, reinterpret_cast<std::uintptr_t>(owner));
@@ -1182,9 +1191,9 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
         ApplyFloatingPopupLayerPolicy();
 
     const DesktopWidget* collection = GetOpenPopupWidget();
-    const bool backdropRecovery = collectionPopupGlassTheme_ &&
-        ((collection && !UsesCollectionPopupFan(*collection)) || IsLuaPanelHostedByFloatingWindow()) &&
-        !collectionPopupBackdropCompositor_.IsAvailable();
+    const bool backdropRecovery = !collectionPopupBackdropCompositor_.IsAvailable() &&
+        ((collection && (UsesCollectionPopupFan(*collection) || collectionPopupGlassTheme_)) ||
+            (collectionPopupGlassTheme_ && IsLuaPanelHostedByFloatingWindow()));
     const bool refreshContent = refreshStableContent || !wasVisible ||
         boundsChanged || regionChanged || backdropRecovery ||
         !floatingPopupDcompSurface_ || !floatingPopupDcompVisual_ ||

@@ -269,6 +269,7 @@ struct StatusBar::Impl
         bool reserveSpace = true, positioned = false;
         RECT placedBounds{};
         RECT glassPadding{};
+        RECT glassDisplayBounds{};
         DWORD explorerPid = 0;
         bool placing = false, queued = false, fullscreen = false, failed = false, closing = false;
         // Only the bar's own hide may take the surface away. WM_WINDOWPOSCHANGING
@@ -748,6 +749,13 @@ struct StatusBar::Impl
             return owner.presentationEnabled && !closing && !fullscreen && !failed && IsWindowVisible(hwnd) &&
                 (!mergedDockHeight || mergedPresentation.inputEnabled);
         }
+        RECT GlassDisplayBounds(const StatusBarDockPresentation& frame) const
+        {
+            RECT bounds = glassDisplayBounds;
+            if (mergedDockHeight && frame.hiddenFraction > 0.f)
+                bounds.top = std::max(bounds.top, placedBounds.top);
+            return bounds;
+        }
         void ApplyDockPose(const StatusBarDockPresentation& frame)
         {
             if (!mergedDockHeight || !visual || !owner.composition) return;
@@ -759,6 +767,7 @@ struct StatusBar::Impl
             }
             visual->SetOffsetX(frame.offsetX);
             visual->SetOffsetY(frame.offsetY);
+            (void)backdrop.SetPopupWindowPadding(glassPadding, GlassDisplayBounds(frame));
             backdrop.SetVisualOpacity(frame.opacity);
             backdrop.SetVisualTranslation(frame.offsetX, frame.offsetY);
             backdrop.SetSrgbRootPose(frame.opacity, frame.offsetX, frame.offsetY);
@@ -914,7 +923,8 @@ struct StatusBar::Impl
                         break;
                     }
                 }
-                if (backdrop.SetPopupWindowPadding(padding, displayBounds)) glassPadding = padding;
+                glassDisplayBounds = displayBounds;
+                if (backdrop.SetPopupWindowPadding(padding, GlassDisplayBounds(mergedPresentation))) glassPadding = padding;
                 if (rebuild)
                 {
                     const RECT panel{glassPadding.left, glassPadding.top,
@@ -933,6 +943,7 @@ struct StatusBar::Impl
             {
                 backdrop.Reset();
                 glassPadding = {};
+                glassDisplayBounds = {};
             }
             paintDirty = paintDirty || moved || appearanceDirty;
             backgroundDirty = backgroundDirty || moved || appearanceDirty;

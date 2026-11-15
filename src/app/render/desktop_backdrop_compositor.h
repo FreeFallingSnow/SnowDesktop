@@ -163,6 +163,9 @@ public:
     bool AddIconPanel(const RECT& frame, snowdesktop::IconBeautifyShape shape,
         float blurRadius, std::uintptr_t ownerKey,
         const snowdesktop::IconBackdropClip* contentClip = nullptr);
+    // The clip is local to a fixed sampling envelope and can animate independently.
+    bool AddClippedPanel(const RECT& envelope, ID2D1Geometry* clip,
+        float blurRadius, std::uintptr_t ownerKey);
     bool TrySetIconMaterial(const RECT& frame, std::uintptr_t ownerKey,
         ID2D1DeviceContext* drawContext, ID2D1Bitmap* bitmap, bool preserveAspectRatio);
     // Stage a completed app-owned DComp drawing rectangle before EndDraw.
