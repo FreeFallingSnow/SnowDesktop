@@ -372,5 +372,6 @@ the API with undocumented globals, filesystem access or a misleading mock.
 
 Package creation and external publishing are separate. When the user asks to
 publish or update a Steam Workshop item, read
-`references/workshop-publishing.md`, generate a plan first, show the exact plan,
-and obtain approval immediately before the external mutation.
+[the publishing reference](references/workshop-publishing.md) for the supported
+Workshop tags and publishing workflow. Generate a plan first, show the exact
+plan, and obtain approval immediately before submitting it to Steam.

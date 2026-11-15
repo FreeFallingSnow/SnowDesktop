@@ -270,7 +270,8 @@ void DrawEllipsizedText(ImVec2 origin, float width, ImU32 color,
 
 bool TwoLineProjectSelectable(const std::string& id,
     const std::string& title, bool selected,
-    const std::string& metadata, const std::string& version = {})
+    const std::string& metadata, const std::string& version = {},
+    bool uploadPending = false)
 {
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const float width = std::max(1.0f, ImGui::GetContentRegionAvail().x);
@@ -288,8 +289,15 @@ bool TwoLineProjectSelectable(const std::string& id,
     ImGui::PopID();
     const ImVec2 textOrigin(origin.x + padding.x, origin.y + padding.y);
     const float textWidth = std::max(0.0f, width - padding.x * 2.0f);
-    DrawEllipsizedText(textOrigin, textWidth,
+    const float dotSpace = 14.0f * gDpiScale;
+    const bool showDot = uploadPending && textWidth >= dotSpace;
+    DrawEllipsizedText(textOrigin, textWidth - (showDot ? dotSpace : 0.0f),
         ImGui::GetColorU32(ImGuiCol_Text), title);
+    if (showDot)
+        ImGui::GetWindowDrawList()->AddCircleFilled(
+            ImVec2(textOrigin.x + textWidth - 4.0f * gDpiScale,
+                textOrigin.y + lineHeight * 0.5f),
+            3.5f * gDpiScale, ImGui::GetColorU32(ImGuiCol_Button));
     const ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
     const float versionWidth = version.empty() ? 0.0f :
         std::min(ImGui::CalcTextSize(version.c_str()).x, textWidth * 0.42f);
@@ -491,6 +499,33 @@ std::string JoinTags(const std::vector<std::string>& tags)
     return output;
 }
 
+// Match the names in the SnowDesktop Workshop's Widget filter.
+constexpr const char* kWorkshopWidgetTags[] = {
+    "Utilities",
+    "System Monitor",
+    "Media",
+    "Fun & Interaction",
+    "Decoration",
+    "News & Feeds",
+};
+
+struct LocalPackageWatch
+{
+    explicit LocalPackageWatch(const std::filesystem::path& path)
+        : handle(FindFirstChangeNotificationW(path.c_str(), TRUE,
+            FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
+            FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE)) {}
+    ~LocalPackageWatch()
+    {
+        if (handle != INVALID_HANDLE_VALUE) FindCloseChangeNotification(handle);
+    }
+    LocalPackageWatch(const LocalPackageWatch&) = delete;
+    LocalPackageWatch& operator=(const LocalPackageWatch&) = delete;
+
+    HANDLE handle;
+    std::optional<WidgetPackageFingerprint> fingerprint;
+};
+
 std::optional<std::uint64_t> ParseItemId(std::string_view text)
 {
     try
@@ -620,12 +655,18 @@ public:
         {
             RunWorker(stop);
         });
+        packageWatchWorker_ = std::jthread([this](std::stop_token stop)
+        {
+            WatchLocalPackages(stop);
+        });
     }
 
     ~WorkshopManagerApp()
     {
+        packageWatchWorker_.request_stop();
         worker_.request_stop();
         workChanged_.notify_all();
+        if (packageWatchWorker_.joinable()) packageWatchWorker_.join();
         if (worker_.joinable()) worker_.join();
         SaveDraftPreferencesUnlocked();
     }
@@ -816,7 +857,7 @@ private:
         return found == store_.Projects().end() ? nullptr : &*found;
     }
 
-    const PublishedItem* FindWorkshopItemUnlocked(std::uint64_t id)
+    const PublishedItem* FindWorkshopItemUnlocked(std::uint64_t id) const
     {
         const auto& items = publishedPages_.Snapshot().items;
         const auto found = std::find_if(items.begin(), items.end(),
@@ -979,6 +1020,81 @@ private:
             previousAccount = status.steamId;
         }
         steam_.Shutdown();
+    }
+
+    void WatchLocalPackages(std::stop_token stop)
+    {
+        std::map<std::filesystem::path, LocalPackageWatch> watches;
+        std::mutex delayMutex;
+        std::condition_variable_any delay;
+        while (!stop.stop_requested())
+        {
+            const auto status = steam_.Status();
+            std::vector<std::filesystem::path> paths;
+            if (status.initialized && status.loggedOn)
+            {
+                std::lock_guard lock(mutex_);
+                for (const auto& project : store_.Projects())
+                    if (project.publishedFileId) paths.push_back(project.sourceDirectory);
+            }
+            std::erase_if(watches, [&](const auto& entry)
+            {
+                return entry.second.handle == INVALID_HANDLE_VALUE ||
+                    std::find(paths.begin(), paths.end(), entry.first) == paths.end();
+            });
+            std::map<std::filesystem::path, WidgetPackageFingerprint> fingerprints;
+            for (const auto& path : paths)
+            {
+                if (stop.stop_requested()) return;
+                auto [entry, newWatch] = watches.try_emplace(path, path);
+                auto& watch = entry->second;
+                if (watch.handle == INVALID_HANDLE_VALUE) continue;
+                const DWORD change = WaitForSingleObject(watch.handle, 0);
+                if (change == WAIT_FAILED || (change == WAIT_OBJECT_0 &&
+                        !FindNextChangeNotification(watch.handle)))
+                {
+                    watches.erase(entry);
+                    continue;
+                }
+                if (newWatch || change == WAIT_OBJECT_0)
+                    watch.fingerprint = packageTool_.ProbePackage(path);
+                if (watch.fingerprint) fingerprints.emplace(path, *watch.fingerprint);
+            }
+            {
+                std::lock_guard lock(mutex_);
+                if (fingerprints != localPackageFingerprints_)
+                {
+                    localPackageFingerprints_ = std::move(fingerprints);
+                    RequestManagerFrame();
+                }
+            }
+            std::unique_lock lock(delayMutex);
+            delay.wait_for(lock, stop, std::chrono::seconds(1), [] { return false; });
+        }
+    }
+
+    const char* LocalUploadStatusUnlocked(const WorkshopProject& project) const
+    {
+        if (!project.publishedFileId)
+            return T("本地草稿 · 尚未创建 Workshop 项目", "Local draft · no Workshop item yet");
+        const auto current = localPackageFingerprints_.find(project.sourceDirectory);
+        if (current == localPackageFingerprints_.end() ||
+            (!project.packageId.empty() && project.packageId != current->second.packageId))
+            return nullptr;
+        if (!project.lastPublishedSha256.empty())
+            return project.lastPublishedSha256 != current->second.sha256 ?
+                T("组件更新待上传", "Component update pending") : nullptr;
+
+        std::string version = project.lastPublishedVersion;
+        if (const auto* item = FindWorkshopItemUnlocked(*project.publishedFileId))
+        {
+            const auto remote = DescribeManagerWorkshopItem(item->metadata);
+            if (remote.kind == ManagerWorkshopItemKind::Widget && remote.Complete() &&
+                remote.identity == current->second.packageId)
+                version = remote.version;
+        }
+        return !version.empty() && version != current->second.version ?
+            T("组件更新待上传", "Component update pending") : nullptr;
     }
 
     void RenderHeader(HWND window)
@@ -1188,6 +1304,8 @@ private:
             }
             else
             {
+                const auto status = steam_.Status();
+                const bool connected = status.initialized && status.loggedOn;
                 for (const auto& project : store_.Projects())
                 {
                     const std::string name = WideToUtf8(project.sourceDirectory.filename().wstring());
@@ -1195,14 +1313,16 @@ private:
                     const std::string haystack = name + " " + project.packageId + " " + project.localId + " " + path;
                     if (search[0] && haystack.find(search) == std::string::npos) continue;
                     matched = true;
+                    const char* uploadStatus = connected ? LocalUploadStatusUnlocked(project) : nullptr;
                     if (TwoLineProjectSelectable(project.localId, name,
                             selectedLocalId_ == project.localId,
                             project.publishedFileId ? T("已绑定 Workshop", "Workshop bound") :
-                                T("未绑定", "Not bound"), project.lastPublishedVersion))
+                                T("未绑定", "Not bound"), project.lastPublishedVersion, uploadStatus != nullptr))
                         SelectLocalProjectUnlocked(project);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s%s%s", path.c_str(),
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s%s%s%s%s", path.c_str(),
                         project.publishedFileId ? T("已绑定 Workshop", "Workshop bound") : T("未绑定", "Not bound"),
-                        project.lastPublishedVersion.empty() ? "" : " · ", project.lastPublishedVersion.c_str());
+                        project.lastPublishedVersion.empty() ? "" : " · ", project.lastPublishedVersion.c_str(),
+                        uploadStatus ? "\n" : "", uploadStatus ? uploadStatus : "");
                     ImGui::Spacing();
                 }
             }
@@ -1956,6 +2076,25 @@ private:
                 if (ImGui::InputText("##project-tags", tags.data(), tags.size())) draft.EditTags(tags.data());
                 ImGui::TableSetColumnIndex(2);
                 saveTags = SecondaryButton(T("保存标签", "Save tags"));
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(1);
+                if (SecondaryButton(T("添加标签", "Add tag")))
+                    ImGui::OpenPopup("widget-tag-options");
+                if (ImGui::BeginPopup("widget-tag-options"))
+                {
+                    const auto currentTags = SplitTags(tagsBuffer_);
+                    const std::string prefix = currentTags.empty() ?
+                        std::string{} : JoinTags(currentTags) + ", ";
+                    for (const char* tag : kWorkshopWidgetTags)
+                    {
+                        const bool added = std::find(currentTags.begin(),
+                            currentTags.end(), tag) != currentTags.end();
+                        const bool fits = prefix.size() + std::string_view(tag).size() < tags.size();
+                        if (ImGui::MenuItem(tag, nullptr, added, !added && fits))
+                            draft.EditTags(prefix + tag);
+                    }
+                    ImGui::EndPopup();
+                }
                 ImGui::EndTable();
             }
             if (saveTags)
@@ -2661,6 +2800,12 @@ private:
             { SetMessageUnlocked(false, BindingIssueText(decision.issue)); return; }
             const WorkshopProject previous = *project;
             project->packageId = inspection.packageId;
+            if (project->publishedFileId != currentItem->publishedFileId)
+            {
+                project->lastPublishedVersion = DescribeManagerWorkshopItem(currentItem->metadata).version;
+                project->lastPublishedSha256.clear();
+                project->lastPublishedAt.clear();
+            }
             project->publishedFileId = currentItem->publishedFileId;
             if (!store_.Save(error))
             { *project = previous; SetMessageUnlocked(false, error); return; }
@@ -3062,6 +3207,8 @@ private:
     std::function<void()> pendingWork_;
     WorkTarget runningWork_;
     std::jthread worker_;
+    std::jthread packageWatchWorker_;
+    std::map<std::filesystem::path, WidgetPackageFingerprint> localPackageFingerprints_;
     std::atomic_bool connectionCheckRequested_ = false;
     std::atomic_bool publishedRefreshRequested_ = false;
     std::atomic_bool busy_ = false;

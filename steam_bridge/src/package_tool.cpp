@@ -375,6 +375,28 @@ bool PackageTool::Pack(const std::filesystem::path& source,
     const WidgetInspection& expected, PackagedWidget& package,
     std::string& error, const std::filesystem::path& previousPackage) const
 {
+    if (!BuildArchive(source, package, error, previousPackage, false)) return false;
+    if (package.packageId == expected.packageId && package.version == expected.version)
+        return true;
+    error = "packed artifact does not match inspection";
+    package.Cleanup();
+    return false;
+}
+
+std::optional<WidgetPackageFingerprint> PackageTool::ProbePackage(
+    const std::filesystem::path& source) const
+{
+    PackagedWidget package;
+    std::string error;
+    if (!BuildArchive(source, package, error, {}, true)) return std::nullopt;
+    return WidgetPackageFingerprint{std::move(package.packageId),
+        std::move(package.version), std::move(package.sha256)};
+}
+
+bool PackageTool::BuildArchive(const std::filesystem::path& source,
+    PackagedWidget& package, std::string& error,
+    const std::filesystem::path& previousPackage, bool probe) const
+{
     package.Cleanup();
     std::error_code ec;
     std::filesystem::create_directories(stagingRoot_, ec);
@@ -406,13 +428,14 @@ bool PackageTool::Pack(const std::filesystem::path& source,
     package.packagePath = package.temporaryDirectory / L"package.snowwidget";
     std::string output;
     std::vector<std::wstring> arguments{
-        L"pack", source.wstring(), package.packagePath.wstring() };
+        probe ? L"--manager-probe-package" : L"pack",
+        source.wstring(), package.packagePath.wstring() };
     if (!previousPackage.empty())
     {
         arguments.emplace_back(L"--previous-package");
         arguments.push_back(previousPackage.wstring());
     }
-    if (!Run(arguments, output, error, 150000))
+    if (!Run(arguments, output, error, probe ? 5000 : 150000))
     {
         package.Cleanup();
         return false;
@@ -428,8 +451,7 @@ bool PackageTool::Pack(const std::filesystem::path& source,
     auto id = RequiredString(root, "packageId", error);
     auto version = RequiredString(root, "version", error);
     auto sha256 = RequiredString(root, "sha256", error);
-    if (!id || !version || !sha256 || *id != expected.packageId ||
-        *version != expected.version || sha256->size() != 64 ||
+    if (!id || !version || !sha256 || sha256->size() != 64 ||
         !std::filesystem::is_regular_file(package.packagePath, ec) || ec)
     {
         if (error.empty()) error = "packed artifact does not match inspection";

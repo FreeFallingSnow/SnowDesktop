@@ -893,13 +893,16 @@ struct WidgetsPagePresenter::Impl
         developerWorkspaceCard.content.Children().Append(
             developmentWorkspacePath);
 
-        InitializeCard(developerCliCard, cardStyle, developerRoot);
+        muxc::StackPanel cliPublishCards;
+        cliPublishCards.Spacing(8.0);
+        developerRoot.Children().Append(cliPublishCards);
+        InitializeCard(developerCliCard, cardStyle, cliPublishCards);
         cliRows = muxc::StackPanel{};
         cliRows.Spacing(8.0);
         cliRows.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         developerCliCard.content.Children().Append(cliRows);
 
-        InitializeCard(developerPublishCard, cardStyle, developerRoot);
+        InitializeCard(developerPublishCard, cardStyle, cliPublishCards);
         publishWorkspaceButton = muxc::Button{};
         publishWorkspaceButton.UseSystemFocusVisuals(true);
         publishWorkspaceButton.HorizontalAlignment(
@@ -2140,21 +2143,11 @@ struct WidgetsPagePresenter::Impl
             "app.settings.widgets_authoring_folder",
             L"Development components folder"));
 
-        const auto quote = [](std::wstring value) {
-            return L"\"" + value + L"\"";
-        };
-        const std::wstring project = quote(developmentWorkspace.empty()
-                ? L"my-widget"
-                : developmentWorkspace + L"\\my-widget");
-        const std::wstring output = quote(developmentWorkspace.empty()
-                ? L"my-widget.snowwidget"
-                : developmentWorkspace + L"\\my-widget.snowwidget");
-        const std::wstring cli = quote(componentCliPath);
-        const auto addCommandRow = [this](std::string_view labelKey,
+        const auto addCliRow = [this](std::string_view labelKey,
                                            std::wstring_view fallback,
-                                           std::wstring command) {
+                                           std::wstring text) {
             muxc::TextBox value;
-            value.Text(command);
+            value.Text(text);
             value.IsReadOnly(true);
             value.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
             value.MinWidth(80.0);
@@ -2176,16 +2169,15 @@ struct WidgetsPagePresenter::Impl
             muxc::Grid::SetColumn(copy, 1);
             controls.Children().Append(copy);
             HookClick(copy,
-                [this, command = std::move(command)](
+                [this, text = std::move(text)](
                     const winrt::Windows::Foundation::IInspectable&,
                     const mux::RoutedEventArgs&) {
-                    if (CopyText(command))
+                    if (CopyText(text))
                     {
                         developerFeedbackBar.Severity(
                             muxc::InfoBarSeverity::Success);
                         developerFeedbackBar.Message(L(
-                            "app.settings.widgets_command_copied",
-                            L"Command copied."));
+                            "app.settings.widgets_cli_copied", L"Copied."));
                         developerFeedbackBar.IsOpen(true);
                     }
                 },
@@ -2195,14 +2187,18 @@ struct WidgetsPagePresenter::Impl
             row.SetText(L(labelKey, fallback));
             cliRows.Children().Append(row.root);
         };
-        addCommandRow("app.settings.widgets_cli_capabilities",
-            L"Capabilities", cli + L" capabilities");
-        addCommandRow("app.settings.widgets_cli_validate",
-            L"Validate component", cli + L" validate " + project);
-        addCommandRow("app.settings.widgets_cli_pack",
-            L"Package component",
-            cli + L" pack " + project + L" " + output);
-        cliRows.Children().Append(MakeSecondaryText(componentCliPath));
+        if (!componentCliPath.empty())
+        {
+            std::wstring helpCommand = L"& '";
+            for (const wchar_t character : componentCliPath)
+            {
+                if (character == L'\'') helpCommand.push_back(L'\'');
+                helpCommand.push_back(character);
+            }
+            helpCommand += L"' --help";
+            addCliRow("app.settings.widgets_cli_path", L"CLI path", componentCliPath);
+            addCliRow("app.settings.widgets_cli_help", L"Help command", std::move(helpCommand));
+        }
 
         developerPublishCard.root.Visibility(developerPublisherAvailable
                 ? mux::Visibility::Visible

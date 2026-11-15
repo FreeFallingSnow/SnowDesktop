@@ -50,6 +50,14 @@ struct PackagedWidget
     void Cleanup();
 };
 
+struct WidgetPackageFingerprint
+{
+    std::string packageId;
+    std::string version;
+    std::string sha256;
+    bool operator==(const WidgetPackageFingerprint&) const = default;
+};
+
 class PackageTool
 {
 public:
@@ -61,6 +69,8 @@ public:
     bool Pack(const std::filesystem::path& source,
         const WidgetInspection& expected, PackagedWidget& package,
         std::string& error, const std::filesystem::path& previousPackage = {}) const;
+    std::optional<WidgetPackageFingerprint> ProbePackage(
+        const std::filesystem::path& source) const;
     std::filesystem::path FindPublishedBaseline(const WorkshopProject& project,
         std::string_view candidateVersion) const;
     bool SavePublishedBaseline(const PackagedWidget& package, std::string& error) const;
@@ -68,6 +78,9 @@ public:
     const std::filesystem::path& StagingRoot() const { return stagingRoot_; }
 
 private:
+    bool BuildArchive(const std::filesystem::path& source,
+        PackagedWidget& package, std::string& error,
+        const std::filesystem::path& previousPackage, bool probe) const;
     std::filesystem::path PublishedBaselinePath(std::string_view sha256) const;
     bool Run(const std::vector<std::wstring>& arguments,
         std::string& output, std::string& error, unsigned timeoutMs) const;

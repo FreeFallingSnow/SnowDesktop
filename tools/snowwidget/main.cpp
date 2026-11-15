@@ -30,6 +30,7 @@ void PrintUsage()
 {
     std::cout
         << "SnowDesktop widget package tool\n"
+        << "  snowwidget --help\n"
         << "  snowwidget --version\n"
         << "  snowwidget capabilities\n"
         << "  snowwidget api-contract\n"
@@ -639,6 +640,11 @@ int RunNativePreviewHost(const std::filesystem::path& host,
 int wmain(int argc, wchar_t** argv)
 {
     SetConsoleOutputCP(CP_UTF8);
+    if (argc == 2 && std::wstring_view(argv[1]) == L"--help")
+    {
+        PrintUsage();
+        return 0;
+    }
     if (argc == 2 && std::wstring_view(argv[1]) == L"--version")
     {
         std::cout << SNOWDESKTOP_VERSION << '\n';
@@ -707,6 +713,20 @@ int wmain(int argc, wchar_t** argv)
     snowdesktop::widget::WidgetPackageManager manager(paths);
     snowdesktop::widget::ValidationReport report;
     snowdesktop::widget::PackageArtifact artifact;
+    // Private Workshop Manager probe using the same deterministic archive as pack.
+    if (command == L"--manager-probe-package" && argc == 4)
+    {
+        std::string error;
+        if (!manager.ExportDirectory(source, argv[3], artifact, report, error))
+        {
+            std::cerr << error << '\n';
+            return 1;
+        }
+        std::cout << "{\"ok\":true,\"packageId\":" << JsonEscape(artifact.packageId)
+            << ",\"version\":" << JsonEscape(artifact.version)
+            << ",\"sha256\":" << JsonEscape(artifact.sha256) << "}\n";
+        return 0;
+    }
     if (command == L"preview-native")
     {
         const std::wstring_view component = argc >= 3

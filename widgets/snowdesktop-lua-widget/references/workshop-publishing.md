@@ -52,6 +52,25 @@ prepare a new plan for each publishing attempt. A changed prepared or staged
 image aborts submission. Images are uploaded once, independently of the
 existing multilingual title and description updates.
 
+## Widget tags
+
+The [SnowDesktop Workshop](https://steamcommunity.com/workshop/browse/?appid=5080330)
+lists these tags under **Widget**. Use the exact English spelling for Steam
+filtering and choose the tags that describe the component.
+
+- `Utilities` for general-purpose tools such as calendars, clocks and timers.
+- `System Monitor` for hardware, system load and resource monitoring.
+- `Media` for playback controls, lyrics and audio visualizers.
+- `Fun & Interaction` for games and interactive experiences.
+- `Decoration` for components such as photo displays and desktop ornaments.
+- `News & Feeds` for news, RSS and other feed readers.
+
+In Workshop Manager, open **Publishing details → Add tag**. The selected tag
+is added to the comma-separated field. Click **Save tags** to save the project
+tags, then enable **Also update tags** when updating an existing listing.
+With the CLI, use `--tags-source local` and repeat `--tag` for each tag, for
+example `--tags-source local --tag "Utilities" --tag "System Monitor"`.
+
 ## Plan before changing Steam
 
 ```powershell
