@@ -10,6 +10,8 @@
 #include <windows.h>
 #include <vector>
 
+inline constexpr int kDockAppearancePresetLiquidGlass = 14;
+
 enum class SystemTaskbarThemeMode
 {
     Native = 0,

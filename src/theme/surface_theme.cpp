@@ -87,39 +87,50 @@ std::string EncodePopupAppearanceRule(const PopupAppearanceRule& rule)
 }
 
 bool DecodePanelAppearance(const JsonValue& input, PersonalizationSettings& output,
-    bool includeBottomBarOpacity)
+    bool includeBottomBarOpacity, bool rejectUnknownFields)
 {
     if (!input.IsObject()) return false;
     PersonalizationSettings value;
     value.backgroundPreset = kAppearancePresetCustom;
     bool valid = true;
-    VisitPanelAppearanceFields([&](auto key, auto field, double minimum, double maximum) {
-        if (const auto* json = input.Find(key))
+    std::size_t recognized = 0;
+    const auto find = [&](std::string_view key) {
+        const auto* json = input.Find(key);
+        if (json) ++recognized;
+        return json;
+    };
+    const auto readNumber = [&](auto key, auto field, double minimum, double maximum) {
+        if (const auto* json = find(key))
         {
             if (!json->IsNumber() || !std::isfinite(json->number) || json->number < minimum || json->number > maximum) valid = false;
             else value.*field = static_cast<float>(json->number);
         }
-    });
-    VisitPanelAppearanceFlags([&](auto key, auto field) {
-        if (const auto* json = input.Find(key))
+    };
+    const auto readFlag = [&](auto key, auto field) {
+        if (const auto* json = find(key))
         {
             if (!json->IsBoolean()) valid = false;
             else value.*field = json->boolean;
         }
-    });
-    if (const auto* theme = input.Find("contentTheme"))
+    };
+    VisitPanelAppearanceFields(readNumber);
+    VisitDockRefractionFields(readNumber);
+    VisitPanelAppearanceFlags(readFlag);
+    readFlag("dockEdgeRefraction", &PersonalizationSettings::dockEdgeRefraction);
+    if (const auto* theme = find("contentTheme"))
     {
         if (!theme->IsNumber() || (theme->number != 0 && theme->number != 1)) valid = false;
         else value.contentTheme = static_cast<int>(theme->number);
     }
-    if (const auto* opacity = includeBottomBarOpacity ? input.Find("gradientEndOpacity") : nullptr)
+    if (const auto* opacity = includeBottomBarOpacity ? find("gradientEndOpacity") : nullptr)
     {
         if (!opacity->IsNumber() || !std::isfinite(opacity->number) || opacity->number < 0 || opacity->number > 1) valid = false;
         else value.gradientEndA = static_cast<float>(opacity->number);
     }
-    if (const auto* gradient = input.Find("gradient"))
+    if (const auto* gradient = find("gradient"))
         valid = DecodePanelGradient(*gradient, value.panelGradient) && valid;
-    if (const auto* light = input.Find("edgeLight")) valid = DecodeEdgeLight(*light, value.edgeLight) && valid;
+    if (const auto* light = find("edgeLight")) valid = DecodeEdgeLight(*light, value.edgeLight) && valid;
+    if (rejectUnknownFields && recognized != input.object.size()) return false;
     if (valid) output = value;
     return valid;
 }
@@ -131,11 +142,17 @@ std::string EncodePanelAppearance(const PersonalizationSettings& value,
     output << '{';
     bool valid = (value.contentTheme == 0 || value.contentTheme == 1) &&
         (!includeBottomBarOpacity || (std::isfinite(value.gradientEndA) && value.gradientEndA >= 0 && value.gradientEndA <= 1));
-    VisitPanelAppearanceFields([&](auto key, auto field, double minimum, double maximum) {
+    const auto writeNumber = [&](auto key, auto field, double minimum, double maximum) {
         const double number = value.*field;
         if (!std::isfinite(number) || number < minimum || number > maximum) valid = false;
         output << '"' << key << "\":" << number << ',';
-    });
+    };
+    VisitPanelAppearanceFields(writeNumber);
+    if (HasDockRefractionSettings(value))
+    {
+        VisitDockRefractionFields(writeNumber);
+        output << "\"dockEdgeRefraction\":" << (value.dockEdgeRefraction ? "true" : "false") << ',';
+    }
     VisitPanelAppearanceFlags([&](auto key, auto field) { output << '"' << key << "\":" << (value.*field ? "true" : "false") << ','; });
     const auto gradient = EncodePanelGradient(value.panelGradient);
     const auto light = EncodeEdgeLight(value.edgeLight);

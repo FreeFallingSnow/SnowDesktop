@@ -56,7 +56,7 @@ void ThemeAppearanceRoundTrip()
     theme.quickPanel = "builtin/quickpanel/dark";
     theme.popup = "builtin/popup/dark";
 
-    // Custom themes write all appearance fields, including disabled flags. The
+    // Custom themes write their appearance fields, including material flags. The
     // library must accept its own output when a new field is added to the writer.
     std::string id, error;
     themes::Library saved;
@@ -85,8 +85,47 @@ void ThemeAppearanceRoundTrip()
     Require(exportedTheme, "export the saved global theme: " + error);
     const bool readPackage = themes::ReadPackage(packagePath, imported, error);
     Require(readPackage, "read the exported theme package: " + error);
-    Require(themes::EncodePackage(imported, error) == Read(packagePath),
+    const auto packageText = Read(packagePath);
+    Require(packageText.find("\"version\":1") != std::string::npos &&
+        themes::EncodePackage(imported, error) == packageText,
         "the exported theme package preserves its contents after decoding");
+
+    SelectDockAppearance(applied.dock, false, kDockAppearancePresetLiquidGlass, applied.personalization);
+    const auto dockPath = temporary.path / L"SnowDesktop.dock.json";
+    DockSettings reloadedDock;
+    Require(SaveDockSettings(dockPath.c_str(), applied.dock) && LoadDockSettings(dockPath.c_str(), reloadedDock) &&
+        reloadedDock.appearancePreset == kDockAppearancePresetLiquidGlass &&
+        ResolveDockAppearance(reloadedDock, applied.personalization).dockEdgeRefraction,
+        "the built-in Liquid Glass preset survives a Dock settings reload");
+    SelectDockAppearance(applied.dock, false, kAppearancePresetCustom, applied.personalization);
+    applied.dock.customAppearance.dockRefractionWidth = 7.f;
+    applied.dock.customAppearance.dockRefractionStrength = 18.f;
+    auto dockTheme = themes::CaptureTarget("dock", applied);
+    dockTheme.name = "Custom lens";
+    dockTheme.id = "custom-lens";
+    const themes::Package lensPackage{{dockTheme.id, dockTheme}};
+    const auto lensText = themes::EncodePackage(lensPackage, error);
+    const bool decodedLens = themes::DecodePackage(lensText, imported, error);
+    Require(decodedLens && lensText.find("\"version\":4") != std::string::npos,
+        "a custom Dock lens exports and reloads as a version 4 package: " + error);
+    const bool savedLens = themes::Transact(libraryPath,
+        [&](themes::Library& library, std::string& detail) {
+            std::map<std::string, std::string> mapping;
+            return themes::Import(library, imported, mapping, detail) &&
+                themes::Select(library, "dock", dockTheme.id, themes::Kind::Global, themes::Dock, detail);
+        }, saved, error);
+    Require(savedLens, "save the imported Dock lens and its reference snapshot: " + error);
+    Require(themes::ApplyTarget(saved, "dock", dockTheme.id, applied, error) &&
+        SaveDockSettings(dockPath.c_str(), applied.dock) && LoadDockSettings(dockPath.c_str(), reloadedDock),
+        "the imported Dock theme applies and persists in Dock settings");
+    const auto lens = ResolveDockAppearance(reloadedDock, applied.personalization);
+    Require(lens.dockEdgeRefraction && lens.dockRefractionWidth == 7.f && lens.dockRefractionStrength == 18.f,
+        "the imported Dock theme keeps its refraction toggle, width, and strength");
+    auto unknownField = lensText;
+    unknownField.insert(unknownField.find("\"appearance\":{") + std::string_view("\"appearance\":{").size(),
+        "\"unknownMaterialField\":true,");
+    Require(!themes::DecodePackage(unknownField, imported, error) && error == "invalidPackage",
+        "the shared appearance decoder still rejects unknown fields in imported packages");
 }
 
 void Settings()

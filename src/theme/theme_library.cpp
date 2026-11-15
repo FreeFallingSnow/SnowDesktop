@@ -160,10 +160,7 @@ bool DecodeTheme(const JsonValue& json, Kind kind, Theme& theme)
     if (kind == Kind::QuickPanel && !Keys(json, {"id", "name", "appearance", "layout", "colors"})) return false;
     if (kind == Kind::Popup && !Keys(json, {"id", "name", "appearance"})) return false;
     const auto* appearance = json.Find("appearance");
-    if (!appearance || !Keys(*appearance, {"backgroundR", "backgroundG", "backgroundB", "opacity", "borderR",
-        "borderG", "borderB", "borderOpacity", "borderWidth", "highlightWidth", "highlightStrength", "blurRadius",
-        "cornerRadius", "glass", "acrylic", "highlight", "edgeLight", "contentTheme", "gradient", "gradientEndOpacity"}) ||
-        !DecodePanelAppearance(*appearance, out.appearance, true)) return false;
+    if (!appearance || !DecodePanelAppearance(*appearance, out.appearance, true, true)) return false;
     if (kind == Kind::Global)
     {
         const auto* scopes = json.Find("scopes");
@@ -198,11 +195,20 @@ bool DecodeTheme(const JsonValue& json, Kind kind, Theme& theme)
 }
 int PackageVersion(const Package& package)
 {
-    for (const auto& [id, theme] : package) { (void)id; if (theme.kind == Kind::Icon) return kPackageVersion; }
-    return 1;
+    int version = 1;
+    for (const auto& [id, theme] : package)
+    {
+        (void)id;
+        if (HasDockRefractionSettings(theme.appearance)) return kPackageVersion;
+        if (theme.kind == Kind::Icon) version = 3;
+    }
+    return version;
 }
 bool SupportedVersion(const JsonValue* version)
-{ return version && version->IsNumber() && (version->number == 1 || version->number == 2 || version->number == kPackageVersion); }
+{
+    return version && version->IsNumber() && version->number >= 1 &&
+        version->number <= kPackageVersion && std::floor(version->number) == version->number;
+}
 std::string Sections(const Package& package, bool includeIcon = false)
 {
     std::string out;
@@ -225,24 +231,26 @@ std::string Sections(const Package& package, bool includeIcon = false)
 bool ReadSections(const JsonValue& document, Package& package, std::string& error, bool allowEmpty)
 {
     Package out;
+    const auto* version = document.Find("version");
+    if (!SupportedVersion(version)) return Fail(error, "unsupportedVersion");
     for (const auto kind : {Kind::Global, Kind::QuickPanel, Kind::Popup, Kind::Icon})
     {
         const auto* section = document.Find(KindName(kind));
         if (kind == Kind::Icon && !section)
         {
-            const auto* version = document.Find("version");
-            if (version && version->IsNumber() && version->number == 1) continue;
+            if (version->number == 1) continue;
         }
         if (kind == Kind::Icon && section)
         {
-            const auto* version = document.Find("version");
-            if (!SupportedVersion(version) || version->number < 2) return Fail(error, "unsupportedVersion");
+            if (version->number < 2) return Fail(error, "unsupportedVersion");
         }
         if (!section || !section->IsArray() || section->array.size() > 512) return Fail(error, "invalidPackage");
         for (const auto& entry : section->array)
         {
             Theme theme;
             if (!DecodeTheme(entry, kind, theme) || !out.emplace(theme.id, theme).second) return Fail(error, "invalidPackage");
+            if (version->number < 4 && HasDockRefractionSettings(theme.appearance))
+                return Fail(error, "unsupportedVersion");
         }
     }
     if (!allowEmpty && out.empty()) return Fail(error, "emptyPackage");
@@ -374,6 +382,8 @@ bool Validate(const Package& package, std::string& error)
         if ((theme.kind != Kind::Global && theme.kind != Kind::QuickPanel && theme.kind != Kind::Popup && theme.kind != Kind::Icon) ||
             id != theme.id || !Id(id) || (!Builtin(id) && (id.starts_with("builtin/") || !Text(theme.name, 256))) ||
             EncodeTheme(theme).empty()) return Fail(error, "invalidPackage");
+        if (HasDockRefractionSettings(theme.appearance) && theme.kind != Kind::Global)
+            return Fail(error, "invalidPackage");
         if (theme.kind == Kind::Global)
         {
             auto quick = Resolve(package, theme.quickPanel), popup = Resolve(package, theme.popup);
@@ -561,6 +571,8 @@ void ApplyAppearance(PersonalizationSettings& target, const PersonalizationSetti
 {
     VisitPanelAppearanceFields([&](auto, auto member, double, double) { target.*member = appearance.*member; });
     VisitPanelAppearanceFlags([&](auto, auto member) { target.*member = appearance.*member; });
+    VisitDockRefractionFields([&](auto, auto member, double, double) { target.*member = appearance.*member; });
+    target.dockEdgeRefraction = appearance.dockEdgeRefraction;
     target.gradientEndA = appearance.gradientEndA;
     target.panelGradient = appearance.panelGradient; target.edgeLight = appearance.edgeLight;
     target.contentTheme = appearance.contentTheme; target.backgroundPreset = kAppearancePresetCustom;
@@ -572,13 +584,28 @@ void ApplyQuickPanel(NavigationSettings& target, const Theme& theme)
 Theme Capture(Kind kind, const PersonalizationSettings& appearance, const NavigationSettings& navigation)
 {
     Theme theme; theme.kind = kind; ApplyAppearance(theme.appearance, appearance);
+    if (kind != Kind::Global)
+    {
+        const PersonalizationSettings defaults;
+        VisitDockRefractionFields([&](auto, auto member, double, double) {
+            theme.appearance.*member = defaults.*member;
+        });
+        theme.appearance.dockEdgeRefraction = false;
+    }
     if (kind == Kind::QuickPanel) { theme.layout = navigation.layout; theme.colors = navigation.colors; }
     return theme;
 }
 std::string EncodeLibrary(const Library& library, std::string& error)
 {
     if (!Validate(library.themes, error)) return {};
-    std::string out = "{\"format\":\"snowdesktop.theme-library\",\"version\":3" + Sections(library.themes, true) + ",\"references\":{";
+    int version = std::max(3, PackageVersion(library.themes));
+    for (const auto& [target, ref] : library.references)
+    {
+        (void)target;
+        version = std::max(version, PackageVersion(ref.snapshot));
+    }
+    std::string out = "{\"format\":\"snowdesktop.theme-library\",\"version\":" + std::to_string(version) +
+        Sections(library.themes, true) + ",\"references\":{";
     bool first = true;
     for (const auto& [target, ref] : library.references)
     {

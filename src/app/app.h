@@ -760,6 +760,8 @@ private:
         POINT screenPoint) const;
     void PrepareDockBackdropForDragTransition();
     bool CreateFloatingDockWindow(PersistentDockHost& host);
+    void SyncDockRefraction(PersistentDockHost& host);
+    void StopDockRefraction(PersistentDockHost& host);
     void DestroyFloatingDockWindow();
     void DestroyPersistentDockHost(PersistentDockHost& host);
     PersistentDockHost* FindPersistentDockHost(HWND hwnd);

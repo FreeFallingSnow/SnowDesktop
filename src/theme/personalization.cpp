@@ -12,6 +12,7 @@
 #include "personalization.h"
 #include "appearance_edge_presets.h"
 #include "edge_light_codec.h"
+#include "surface_theme.h"
 #include "data/data_paths.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
 
@@ -257,6 +258,14 @@ bool LoadPersonalization(
     bool b = false;
     if (ReadBoolField(text, "glassEnabled", b)) s.glassEnabled = b;
     if (ReadDoubleField(text, "glassBlurRadius", v)) s.glassBlurRadius = (float)v;
+    s.dockEdgeRefraction = false;
+    ReadBoolField(text, "dockEdgeRefraction", s.dockEdgeRefraction);
+    const PersonalizationSettings defaults;
+    snowdesktop::VisitDockRefractionFields([&](const char* key, auto field, double minimum, double maximum) {
+        double number = 0;
+        s.*field = ReadDoubleField(text, key, number) && std::isfinite(number)
+            ? static_cast<float>(std::clamp(number, minimum, maximum)) : defaults.*field;
+    });
     if (ReadDoubleField(text, "contentTheme", v)) s.contentTheme = std::clamp(static_cast<int>(v), 0, 1);
     bool b2 = false;
     if (ReadBoolField(text, "acrylicEnabled", b2)) s.acrylicEnabled = b2;
@@ -384,6 +393,16 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"contextMenuStyleVersion\": 1,\n";
     file << "  \"glassEnabled\": " << (s.glassEnabled ? "true" : "false") << ",\n";
     file << "  \"glassBlurRadius\": " << s.glassBlurRadius << ",\n";
+    if (snowdesktop::HasDockRefractionSettings(s))
+    {
+        file << "  \"dockEdgeRefraction\": " << (s.dockEdgeRefraction ? "true" : "false") << ",\n";
+        snowdesktop::VisitDockRefractionFields([&](const char* key, auto field, double minimum, double maximum) {
+            const double value = s.*field;
+            const PersonalizationSettings defaults;
+            file << "  \"" << key << "\": " << (std::isfinite(value)
+                ? std::clamp(value, minimum, maximum) : defaults.*field) << ",\n";
+        });
+    }
     file << "  \"contentTheme\": " << s.contentTheme << ",\n";
     file << "  \"acrylicEnabled\": " << (s.acrylicEnabled ? "true" : "false") << "\n";
     file << "}\n";

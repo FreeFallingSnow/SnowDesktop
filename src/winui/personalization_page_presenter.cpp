@@ -87,6 +87,15 @@ constexpr std::array<int, 8> kPresetIds = {
     kAppearancePresetCustom,
 };
 
+constexpr std::array<int, kPresetIds.size() + 1> kDockPresetIds = [] {
+    std::array<int, kPresetIds.size() + 1> result{};
+    std::copy(kPresetIds.begin(), kPresetIds.end() - 1, result.begin());
+    result[result.size() - 2] = kDockAppearancePresetLiquidGlass;
+    result.back() = kAppearancePresetCustom;
+    return result;
+}();
+constexpr int kDockCustomIndex = static_cast<int>(kDockPresetIds.size());
+
 struct SettingsCard
 {
     muxc::Border root{nullptr};
@@ -724,14 +733,14 @@ struct PersonalizationPagePresenter::Impl
         dockAppearanceRow.Initialize(dockAppearanceCombo);
         presenter_controls::StyleSettingsSubrow(dockAppearanceRow.root, true, 0);
         dockThemeCard.content.Children().Append(dockAppearanceRow.root);
-        dockThemes = std::make_unique<ThemeLibraryControls>(localize, "dock", false, dockAppearanceCombo, 9, 8);
+        dockThemes = std::make_unique<ThemeLibraryControls>(localize, "dock", false, dockAppearanceCombo, kDockCustomIndex + 1, kDockCustomIndex);
         dockAppearanceRow.controlHost.Content(nullptr); dockAppearanceRow.controlHost.Content(dockThemes->SelectionContent());
         dockThemeCard.content.Children().Append(dockThemes->Content());
         dockAppearanceEditor = PanelAppearanceEditor::Create(localize,
             [this](const auto& value, bool commit) {
                 EmitDockAppearance(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
                     [value](auto& settings) { settings.customAppearance = value; settings.appearancePreset = kAppearancePresetCustom; });
-            }, false, true);
+            }, false, true, true);
         dockThemeCard.content.Children().Append(dockAppearanceEditor->Content());
         dockThemeCard.content.Children().Append(dockThemes->SaveContent());
         InitializeDockScenes();
@@ -1095,7 +1104,7 @@ struct PersonalizationPagePresenter::Impl
             scene.body.Margin({16, 0, 0, 0});
             scene.combo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
             scene.combo.MaxWidth(520);
-            scene.themes = std::make_unique<ThemeLibraryControls>(localize, scene.target, false, scene.combo, 9, 8);
+            scene.themes = std::make_unique<ThemeLibraryControls>(localize, scene.target, false, scene.combo, kDockCustomIndex + 1, kDockCustomIndex);
             scene.themes->SetInlineSurface();
             scene.themeRow.Initialize(scene.themes->SelectionContent());
             presenter_controls::StyleSettingsSubrow(scene.themeRow.root, true, 0);
@@ -1105,7 +1114,7 @@ struct PersonalizationPagePresenter::Impl
                 [this, member = scene.member](const auto& appearance, bool commit) {
                     EmitDockAppearance(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
                         [member, appearance](auto& settings) { (settings.*member).appearance = appearance; });
-                }, false, true);
+                }, false, true, true);
             scene.body.Children().Append(scene.editor->Content());
             scene.body.Children().Append(scene.themes->SaveContent());
             presenter_controls::JoinSettingsSections(scene.body);
@@ -1126,9 +1135,9 @@ struct PersonalizationPagePresenter::Impl
             scene.selected = scene.combo.SelectionChanged([this, control](const auto&, const auto&) {
                 if (!CanEmit() || control->themes->ApplySelection()) return;
                 const int index = control->combo.SelectedIndex();
-                if (index < 0 || index > static_cast<int>(kPresetIds.size())) return;
+                if (index < 0 || index > kDockCustomIndex) return;
                 control->editor->Flush();
-                const int preset = index == 0 ? -1 : kPresetIds[static_cast<std::size_t>(index - 1)];
+                const int preset = index == 0 ? -1 : kDockPresetIds[static_cast<std::size_t>(index - 1)];
                 EmitDockAppearance(SettingsUpdateMode::PreviewAndCommit,
                     [member = control->member, preset, global = currentGlobalAppearance](auto& settings) {
                         auto& rule = settings.*member;
@@ -1364,12 +1373,12 @@ struct PersonalizationPagePresenter::Impl
             if (!CanEmit()) return;
             if (dockThemes->ApplySelection()) return;
             const int index = dockAppearanceCombo.SelectedIndex();
-            if (index < 0 || index > static_cast<int>(kPresetIds.size())) return;
+            if (index < 0 || index > kDockCustomIndex) return;
             dockAppearanceEditor->Flush();
             const auto global = currentGlobalAppearance;
             EmitDockAppearance(SettingsUpdateMode::PreviewAndCommit, [index, global](auto& settings) {
                 SelectDockAppearance(settings, index == 0,
-                    index > 0 ? kPresetIds[index - 1] : settings.appearancePreset, global);
+                    index > 0 ? kDockPresetIds[index - 1] : settings.appearancePreset, global);
             });
         });
         dockFollowCornerRadiusToken = dockFollowCornerRadius.Toggled([this](const auto&, const auto&) {
@@ -2009,6 +2018,7 @@ struct PersonalizationPagePresenter::Impl
                 {"app.settings.dark_glass", L"Dark glass"}, {"app.settings.light_glass", L"Light glass"},
                 {"app.settings.transparent_glass", L"Transparent glass"},
                 {"app.settings.dark_acrylic", L"Dark acrylic"}, {"app.settings.light_acrylic", L"Light acrylic"},
+                {"settings.dock.liquidGlass", L"Liquid Glass"},
                 {"app.settings.custom", L"Custom"}});
         };
         populateDockThemes(dockAppearanceCombo);
@@ -2266,9 +2276,9 @@ struct PersonalizationPagePresenter::Impl
         if (dockChanged || personalizationChanged)
         {
             const auto& dock = snapshot.values.dock;
-            const auto found = std::find(kPresetIds.begin(), kPresetIds.end(), dock.appearancePreset);
+            const auto found = std::find(kDockPresetIds.begin(), kDockPresetIds.end(), dock.appearancePreset);
             dockAppearanceCombo.SelectedIndex(dock.followComponentAppearance ? 0 :
-                found == kPresetIds.end() ? static_cast<int>(kPresetIds.size()) : static_cast<int>(found - kPresetIds.begin()) + 1);
+                found == kDockPresetIds.end() ? kDockCustomIndex : static_cast<int>(found - kDockPresetIds.begin()) + 1);
             dockAppearanceEditor->SetValue(ResolveDockAppearance(dock, currentGlobalAppearance), newGeneration);
             dockAppearanceEditor->Content().Visibility(!dock.followComponentAppearance && dock.appearancePreset == kAppearancePresetCustom ? mux::Visibility::Visible : mux::Visibility::Collapsed);
             dockThemes->SaveContent().Visibility(dockAppearanceEditor->Content().Visibility());
@@ -2311,9 +2321,9 @@ struct PersonalizationPagePresenter::Impl
         {
             const auto& dock = snapshot.values.dock;
             const auto& rule = dock.*scene.member;
-            const auto found = std::find(kPresetIds.begin(), kPresetIds.end(), rule.appearancePreset);
-            const int index = rule.appearancePreset == -1 ? 0 : found == kPresetIds.end()
-                ? static_cast<int>(kPresetIds.size()) : static_cast<int>(found - kPresetIds.begin()) + 1;
+            const auto found = std::find(kDockPresetIds.begin(), kDockPresetIds.end(), rule.appearancePreset);
+            const int index = rule.appearancePreset == -1 ? 0 : found == kDockPresetIds.end()
+                ? kDockCustomIndex : static_cast<int>(found - kDockPresetIds.begin()) + 1;
             scene.toggle.IsOn(rule.enabled);
             scene.body.Visibility(rule.enabled ? mux::Visibility::Visible : mux::Visibility::Collapsed);
             if (dockChanged || personalizationChanged)
