@@ -262,9 +262,18 @@ void DesktopApp::DrawDesktopForeground(
                 !IsGroupedWidget(widget) && !IsDockExclusiveWidgetId(widget.id))
                 Mark(occupied, widget.gridCell, widget.gridSpan);
 
+        ComPtr<ID2D1SolidColorBrush> fill;
+        ComPtr<ID2D1SolidColorBrush> border;
+        const bool brushesReady = SUCCEEDED(ctx->CreateSolidColorBrush(
+            D2D1::ColorF(0x000000, 0.16f), &fill)) &&
+            SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(0xffffff, 0.65f), &border));
         for (const auto& page : gridPages_)
         {
+            if (!brushesReady) break;
             if (!snowdesktop::foreground_paint_region::Intersects(updateRect, page.workArea)) continue;
+            constexpr float kPreviewRadiusDip = 6.0f;
+            const float pageRadius = kPreviewRadiusDip * static_cast<float>(page.dpiX) /
+                USER_DEFAULT_SCREEN_DPI;
             GridCell cell{page.id, 0, 0};
             for (cell.column = 0; cell.column < page.columns; ++cell.column)
             {
@@ -274,9 +283,13 @@ void DesktopApp::DrawDesktopForeground(
                     RECT bounds = GetGridRect(gridPages_, cell);
                     // Inset the strokes so adjacent cells remain distinguishable at zero gap.
                     InflateRect(&bounds, -1, -1);
+                    if (IsRectEmpty(&bounds)) continue;
                     if (!snowdesktop::foreground_paint_region::Intersects(updateRect, bounds, 1)) continue;
-                    DrawD2DFilledRectangle(ctx, bounds,
-                        D2D1::ColorF(0x000000, 0.16f), D2D1::ColorF(0xffffff, 0.65f));
+                    const float radius = std::min(pageRadius, 0.25f *
+                        static_cast<float>(std::min(bounds.right - bounds.left, bounds.bottom - bounds.top)));
+                    const auto rounded = D2D1::RoundedRect(ToD2DRect(bounds), radius, radius);
+                    ctx->FillRoundedRectangle(rounded, fill.Get());
+                    ctx->DrawRoundedRectangle(rounded, border.Get());
                 }
             }
         }

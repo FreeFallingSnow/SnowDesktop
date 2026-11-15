@@ -807,7 +807,6 @@ struct HomeAboutPagePresenter::Impl
         text.conflict = L("app.settings.hotkey_status_conflict");
         text.cleared = L("app.settings.hotkey_not_set");
         text.none = L("app.settings.hotkey_not_set");
-        text.disabled = L("app.settings.hotkey_status_disabled");
         text.captureActive = L("app.settings.hotkey_capture_active");
         text.notSetWarning = L("app.settings.hotkey_not_set_warning");
         text.availableStatus = L("app.settings.hotkey_status_available");
