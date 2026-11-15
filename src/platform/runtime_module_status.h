@@ -28,7 +28,7 @@ struct Snapshot
     std::vector<Status> modules;
 };
 // Never connects a controller, loads a DLL or sends an attach message.
-inline Snapshot Inspect()
+inline Snapshot Inspect(bool includeResidency = true)
 {
     Snapshot result;
     result.policyRevision = policyRevision.load(std::memory_order_acquire);
@@ -41,6 +41,8 @@ inline Snapshot Inspect()
         status.error = lastError[i].load(std::memory_order_acquire);
         result.modules.push_back(std::move(status));
     }
+    if (!includeResidency) return result;
+
     const HANDLE processes = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (processes == INVALID_HANDLE_VALUE)
     {

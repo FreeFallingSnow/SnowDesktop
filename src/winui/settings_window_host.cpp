@@ -2486,7 +2486,12 @@ struct SettingsWindowHost::Impl
         else
         {
             const auto dispatcher = callbacks->dispatcher;
-            shell->SetRuntimeModulesQuery([dispatcher](auto completed) {
+            shell->SetRuntimeModulesQuery([dispatcher](RuntimeModulesQueryScope scope, auto completed) {
+                if (scope == RuntimeModulesQueryScope::Status)
+                {
+                    completed(runtime_modules::Inspect(false));
+                    return;
+                }
                 std::thread([dispatcher, completed = std::move(completed)]() mutable {
                     auto result = runtime_modules::Inspect();
                     dispatcher.TryEnqueue([completed = std::move(completed), result = std::move(result)]() mutable { completed(std::move(result)); });

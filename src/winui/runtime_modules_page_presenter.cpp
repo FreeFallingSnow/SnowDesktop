@@ -131,7 +131,7 @@ struct RuntimeModulesPagePresenter::Impl
         pending = true;
         const auto expected = serial;
         const auto weak = std::weak_ptr<Lifetime>(lifetime);
-        query([weak, expected](m::Snapshot snapshot) {
+        query(RuntimeModulesQueryScope::StatusAndResidency, [weak, expected](m::Snapshot snapshot) {
             const auto gate = weak.lock(); if (!gate || !gate->owner) return;
             auto& self = *gate->owner;
             self.pending = false;
@@ -145,6 +145,7 @@ struct RuntimeModulesPagePresenter::Impl
                 if (i >= self.cards.size() || status.allowed != self.policy.allowed[i]) continue;
                 auto& card = self.cards[i];
                 const char* state = !status.allowed ? (status.active ? "modules.stopping" : "modules.disabled") :
+                    status.error == ERROR_SYSTEM_INTEGRITY_POLICY_VIOLATION ? "modules.dllBlockedByPolicy" :
                     status.active ? "modules.active" : status.error == ERROR_IO_PENDING ? "modules.loading" :
                     status.error == ERROR_NOT_SUPPORTED ? "modules.unsupported" : status.error ? "modules.failed" : "modules.idle";
                 card.state.Text(self.L(state));
