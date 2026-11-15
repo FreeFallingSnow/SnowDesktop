@@ -13,6 +13,7 @@
 #include <iterator>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <unordered_map>
 #include <utility>
 #include <cwchar>
@@ -98,6 +99,15 @@ std::shared_ptr<WindowState> Find(HWND window)
     std::lock_guard lock(windowsMutex);
     const auto found = windows.find(window);
     return found == windows.end() ? nullptr : found->second;
+}
+
+std::unique_ptr<const Snapshot> ReadNativeSnapshot(const SharedState* mapping)
+{
+    // Synchronous window messages can nest on the Explorer thread. Keep the
+    // full multi-monitor snapshot off that stack and private to each reader.
+    auto snapshot = std::unique_ptr<Snapshot>(new (std::nothrow) Snapshot);
+    if (!snapshot || !ReadSharedSnapshot(mapping, *snapshot)) return nullptr;
+    return snapshot;
 }
 
 bool IsTrayOrigin(HWND source, HWND taskbar)
@@ -263,14 +273,14 @@ void HoldClassicMenuPosition(HWND window, const std::shared_ptr<WindowState>& st
 {
     if (!state->classic || (position.flags & SWP_NOMOVE) ||
         WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT) return;
-    Snapshot snapshot;
-    if (!ReadSharedSnapshot(state->mapping, snapshot) || !snapshot.enabled ||
-        !snapshot.suppressTaskbar || snapshot.ownerProcessId != state->ownerId) return;
-    const auto target = std::find_if(snapshot.targets, snapshot.targets + snapshot.targetCount,
+    const auto snapshot = ReadNativeSnapshot(state->mapping);
+    if (!snapshot || !snapshot->enabled ||
+        !snapshot->suppressTaskbar || snapshot->ownerProcessId != state->ownerId) return;
+    const auto target = std::find_if(snapshot->targets, snapshot->targets + snapshot->targetCount,
         [window](const TargetAppearance& value) {
             return value.taskbar == reinterpret_cast<std::uintptr_t>(window);
         });
-    if (target == snapshot.targets + snapshot.targetCount || !target->suppressTaskbar ||
+    if (target == snapshot->targets + snapshot->targetCount || !target->suppressTaskbar ||
         ReadAutoHideState(window) != AutoHideState::Ready ||
         !HasContextMenu(window, state)) return;
 
@@ -389,17 +399,17 @@ HRESULT WINAPI SetDwmHook(HWND window, DWORD attribute, const void* data, DWORD 
                 if (state->cloaked)
                 {
                     state->restoreCloak = *static_cast<const BOOL*>(data);
-                    Snapshot snapshot;
+                    const auto snapshot = ReadNativeSnapshot(state->mapping);
                     // Observe a newly opened panel before the posted apply
                     // message arrives, so Explorer's own reveal is not blocked.
-                    enforce = (ReadSharedSnapshot(state->mapping, snapshot)
-                            ? snapshot.ownerProcessId == state->ownerId &&
-                                (ShouldSuppressTaskbar(snapshot, reinterpret_cast<std::uintptr_t>(window),
+                    enforce = (snapshot
+                            ? snapshot->ownerProcessId == state->ownerId &&
+                                (ShouldSuppressTaskbar(*snapshot, reinterpret_cast<std::uintptr_t>(window),
                                         GetTickCount64(), state->startMenu.suppress) ||
                                     (state->minimize.active &&
-                                        state->minimize.sequence == snapshot.minimizeSequence &&
-                                        snapshot.minimizeCancelled != snapshot.minimizeSequence &&
-                                        ProtectsTaskbarMinimize(snapshot, reinterpret_cast<std::uintptr_t>(window))))
+                                        state->minimize.sequence == snapshot->minimizeSequence &&
+                                        snapshot->minimizeCancelled != snapshot->minimizeSequence &&
+                                        ProtectsTaskbarMinimize(*snapshot, reinterpret_cast<std::uintptr_t>(window))))
                             : state->mapping->ownerProcessId == state->ownerId && state->mapping->enabled &&
                                 (state->mapping->suppressTaskbar || state->minimize.active)) &&
                         WaitForSingleObject(state->owner, 0) == WAIT_TIMEOUT && !contextMenu;
@@ -676,8 +686,9 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
         Detach(window, state);
         return false;
     }
-    Snapshot snapshot;
-    if (!ReadSharedSnapshot(state->mapping, snapshot)) return true;
+    const auto snapshotStorage = ReadNativeSnapshot(state->mapping);
+    if (!snapshotStorage) return true;
+    const auto& snapshot = *snapshotStorage;
     if (!snapshot.enabled || snapshot.ownerProcessId != state->ownerId)
     {
         Detach(window, state);
@@ -898,10 +909,10 @@ LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lPara
         ((message == 0x55c || message == 0x55d) && wParam != 0);
     if (explicitReveal)
     {
-        Snapshot snapshot;
-        if (ReadSharedSnapshot(state->mapping, snapshot) && snapshot.ownerProcessId == state->ownerId)
+        if (const auto snapshot = ReadNativeSnapshot(state->mapping);
+            snapshot && snapshot->ownerProcessId == state->ownerId)
         {
-            InterlockedExchange(&state->mapping->minimizeCancelled, snapshot.minimizeSequence);
+            InterlockedExchange(&state->mapping->minimizeCancelled, snapshot->minimizeSequence);
             { std::lock_guard lock(state->mutex); state->startMenu.Reveal(GetTickCount64()); }
             // Other taskbars may belong to different UI threads. Cancel their
             // matching request too without synchronous cross-thread recursion.
@@ -915,13 +926,12 @@ LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lPara
     const bool powerMenuAccess = PowerMenuAccessMessage() != 0 && message == PowerMenuAccessMessage();
     if (message == RegisterWindowMessageW(kBeginMenuAccess) || powerMenuAccess)
     {
-        Snapshot snapshot;
         const HWND powerMenuOwner = powerMenuAccess ? reinterpret_cast<HWND>(lParam) : nullptr;
         if (state->detaching || wParam != state->ownerId || !lParam ||
             (powerMenuAccess && !IsPowerUserMenuOwner(powerMenuOwner)) ||
-            WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT ||
-            !ReadSharedSnapshot(state->mapping, snapshot) || !snapshot.enabled ||
-            snapshot.ownerProcessId != state->ownerId) return 0;
+            WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT) return 0;
+        if (const auto snapshot = ReadNativeSnapshot(state->mapping);
+            !snapshot || !snapshot->enabled || snapshot->ownerProcessId != state->ownerId) return 0;
         ArmContextMenu(window, state);
         { std::lock_guard lock(state->mutex);
           if (powerMenuAccess)
@@ -1027,11 +1037,10 @@ void ObserveTaskbarInput(HWND source, DWORD messageTime) noexcept try
     for (const auto& [window, state] : targets)
     {
         if (!IsTrayOrigin(source, window) || WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT) continue;
-        Snapshot snapshot;
-        if (!ReadSharedSnapshot(state->mapping, snapshot) || !snapshot.enabled ||
-            snapshot.ownerProcessId != state->ownerId) continue;
+        const auto snapshot = ReadNativeSnapshot(state->mapping);
+        if (!snapshot || !snapshot->enabled || snapshot->ownerProcessId != state->ownerId) continue;
         SetPropW(window, kMinimizeInputTickProperty, ULongToHandle(messageTime));
-        InterlockedExchange(&state->mapping->minimizeCancelled, snapshot.minimizeSequence);
+        InterlockedExchange(&state->mapping->minimizeCancelled, snapshot->minimizeSequence);
         // All taskbar threads release the current request before a subsequent
         // application minimize can be mistaken for a passive activation.
         for (const auto& [other, otherState] : targets)
@@ -1074,11 +1083,11 @@ bool Attach(HWND window, SharedState* mapping, bool classic, AppBarMessage appBa
     wchar_t name[64]{};
     GetClassNameW(window, name, 64);
     if (wcscmp(name, L"Shell_TrayWnd") != 0 && wcscmp(name, L"Shell_SecondaryTrayWnd") != 0) return false;
-    Snapshot snapshot;
-    if (!ReadSharedSnapshot(mapping, snapshot) || !snapshot.enabled ||
-        (!classic && !snapshot.suppressTaskbar && !HasMinimizeProtection(snapshot))) return false;
+    const auto snapshot = ReadNativeSnapshot(mapping);
+    if (!snapshot || !snapshot->enabled ||
+        (!classic && !snapshot->suppressTaskbar && !HasMinimizeProtection(*snapshot))) return false;
     auto state = std::make_shared<WindowState>();
-    state->mapping = mapping; state->classic = classic; state->ownerId = snapshot.ownerProcessId;
+    state->mapping = mapping; state->classic = classic; state->ownerId = snapshot->ownerProcessId;
     state->primary = wcscmp(name, L"Shell_TrayWnd") == 0;
     state->appBarMessage = appBarMessage;
     state->cursorPosition = cursorPosition ? cursorPosition : &GetCursorPos;
