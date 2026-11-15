@@ -7,7 +7,7 @@ the existing `.snowwidget` parser. Hosts without theme package support reject
 `.snowtheme`; a bridge file or matching application version does not prove
 that future online theme operations are supported.
 
-## Package versions 1 to 4
+## Package versions 1, 2 and 3
 
 The package is a UTF-8 JSON document, at most 4 MiB, with these required fields:
 
@@ -37,14 +37,9 @@ Smart versus shrink-all processing is a separate local preference; capture,
 selection, reference reconciliation and theme updates never replace that choice.
 Version 2's `mode` is validated on import and discarded. Built-in presets and
 layout reload also preserve the local strategy.
-Packages with only classic panel materials export version 1. Version 4 supports
-optional Dock material fields in a global-kind theme's appearance:
-`dockEdgeRefraction` (boolean), `dockRefractionWidth` (1–32 pixels), and
-`dockRefractionStrength` (0–24 pixels). Their defaults are false, 9 and 15.
-The renderer uses them only for the rounded floating Dock. A version 4
-package includes the icon array, which can be empty. Earlier hosts reject
-version 4 with an unsupported-version error. The private library writes version
-4 when its themes or snapshots use these fields and version 3 otherwise.
+Packages without icon themes continue to export version 1. New readers accept
+versions 1, 2 and 3; older readers reject version 3. The private library writes version
+3 and reads versions 1 and 2, retaining old references and immutable snapshots.
 Legacy tint and two-color gradients remain available when loading older settings.
 New tint defaults to 35% luminosity-preserving coloring; duotone gradient-maps bitmap luminosity to dark/light variants of the chosen tint, preserving opaque icon details.
 Background color is resolved per icon: original plate (accent fallback) or a

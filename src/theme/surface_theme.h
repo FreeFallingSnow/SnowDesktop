@@ -24,19 +24,6 @@ PersonalizationSettings ResolvePopupOverrideTheme(const SurfaceTheme& theme,
 bool DecodePopupAppearanceRule(const JsonValue& input, PopupAppearanceRule& output);
 std::string EncodePopupAppearanceRule(const PopupAppearanceRule& rule);
 
-template<class Visit> void VisitDockRefractionFields(Visit visit)
-{
-    visit("dockRefractionWidth", &PersonalizationSettings::dockRefractionWidth, 1., 32.);
-    visit("dockRefractionStrength", &PersonalizationSettings::dockRefractionStrength, 0., 24.);
-}
-
-inline bool HasDockRefractionSettings(const PersonalizationSettings& value)
-{
-    const PersonalizationSettings defaults;
-    return value.dockEdgeRefraction || value.dockRefractionWidth != defaults.dockRefractionWidth ||
-        value.dockRefractionStrength != defaults.dockRefractionStrength;
-}
-
 template<class Visit> void VisitPanelAppearanceFields(Visit visit)
 {
     visit("backgroundR", &PersonalizationSettings::widgetBgR, 0., 1.);
@@ -63,7 +50,7 @@ template<class Visit> void VisitPanelAppearanceFlags(Visit visit)
 // Taskbar material storage deliberately excludes the legacy widget bottom-bar
 // opacity. Complete theme and surface snapshots explicitly opt into that field.
 bool DecodePanelAppearance(const JsonValue& input, PersonalizationSettings& output,
-    bool includeBottomBarOpacity = false, bool rejectUnknownFields = false);
+    bool includeBottomBarOpacity = false);
 
 std::string EncodePanelAppearance(const PersonalizationSettings& value,
     bool includeBottomBarOpacity = false);

@@ -2,7 +2,6 @@
 #include <algorithm>
 #include "theme/panel_gradient.h"
 #include "theme/edge_light_settings.h"
-#include "theme/surface_theme.h"
 #include "diagnostics/diagnostic_log_modules.h"
 #include "shell_extension_settings.h"
 #include "system/status_bar/status_bar_settings.h"
@@ -55,9 +54,6 @@ void Enrich(Value& schema, const std::string& path)
                 "windowPinBorderG", "windowPinBorderB", "windowPinBorderOpacity"}) Range(schema, key, 0, 1);
         Range(schema, "widgetBorderWidth", .5, 4); Range(schema, "widgetEdgeHighlightWidth", .5, 4);
         Range(schema, "glassBlurRadius", 4, 48); Range(schema, "barHeight", 16, 48);
-        VisitDockRefractionFields([&](const char* key, auto, double minimum, double maximum) {
-            Range(schema, key, minimum, maximum);
-        });
         Range(schema, "categorizedTabHeight", 24, 48); Range(schema, "luaWidgetContentRowHeight", 18, 48);
         Range(schema, "cornerRadius", 0, 100); Range(schema, "windowPinBorderWidth", 1, 20);
         Range(schema, "popupHoverDelayMs", 100, 3000); Range(schema, "tabHoverDelayMs", 100, 3000);
@@ -91,7 +87,7 @@ void Enrich(Value& schema, const std::string& path)
     if (Child(schema, "appearance") && Child(schema, "themeMode") && Child(schema, "contentTheme"))
         Choices(schema, "contentTheme", {-1, 0, 1});
     if (path == "dock.maximizedWindow" || path == "dock.appWindow")
-        Choices(schema, "appearancePreset", {-1, 0, 1, 6, 7, 9, 10, 11, 13, kDockAppearancePresetLiquidGlass});
+        Choices(schema, "appearancePreset", {-1, 0, 1, 6, 7, 9, 10, 11, 13});
     if (path == "dock")
     {
         Range(schema, "edgeDistanceScale", kDockMinimumEdgeDistanceScale, kDockMaximumEdgeDistanceScale);
@@ -101,7 +97,7 @@ void Enrich(Value& schema, const std::string& path)
         Range(schema, "edgeHoverDelayMs", dock_settings_rules::kMinimumEdgeHoverDelayMs, dock_settings_rules::kMaximumEdgeHoverDelayMs);
         Range(schema, "frequentItemCount", 1, 8); Range(schema, "mergedBarHeight", 32, 96);
         Choices(schema, "hoverEffect", {0, 1, 2}); Choices(schema, "launchEffect", {0, 1, 2}); Choices(schema, "windowEffect", {0, 1, 2, 3, 4});
-        Choices(schema, "appearancePreset", {0, 1, 6, 7, 9, 10, 11, 13, kDockAppearancePresetLiquidGlass}); Choices(schema, "edgeRevealGesture", {0, 1});
+        Choices(schema, "appearancePreset", {0, 1, 6, 7, 9, 10, 11, 13}); Choices(schema, "edgeRevealGesture", {0, 1});
         Choices(schema, "systemTaskbarAlignment", {0, 1}); Choices(schema, "systemTaskbarContentTheme", {-1, 0, 1});
         Choices(schema, "classicTaskbarSystemTheme", {-1, 0, 1});
         ReadOnly(schema, "showRunningApps", "Always enabled by the current product");

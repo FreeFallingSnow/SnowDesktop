@@ -207,9 +207,6 @@ struct PersonalizationSettings
      *          填充色作为半透明色调叠加；边框样式由独立字段控制。
      */
     bool glassEnabled = false;
-    bool dockEdgeRefraction = false;
-    float dockRefractionWidth = 9.f;
-    float dockRefractionStrength = 15.f;
 
     /**
      * @brief 毛玻璃模糊半径（像素），取值约 [4.0f, 48.0f]

@@ -2703,11 +2703,6 @@ bool DesktopBackdropCompositor::IsBackdropWindow(HWND window) const
     return impl_ && window && impl_->backdropWindow == window;
 }
 
-HWND DesktopBackdropCompositor::BackdropWindow() const noexcept
-{
-    return impl_ ? impl_->backdropWindow : nullptr;
-}
-
 std::size_t DesktopBackdropCompositor::PanelCount() const
 {
     return impl_ ? impl_->panels.size() : 0;

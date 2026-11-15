@@ -85,33 +85,10 @@ bool ShouldProtectAutoHideTaskbar(const DockSettings& settings,
     return snowdesktop::runtime_modules::ProtectAutoHide(dockEnabled, autoHideEnabled, settings.suppressSystemTaskbar);
 }
 
-namespace
-{
-PersonalizationSettings MakeDockPreset(int preset)
-{
-    if (preset != kDockAppearancePresetLiquidGlass) return MakeAppearancePreset(preset);
-
-    auto appearance = PersonalizationSettings::GlassTransparentPreset();
-    appearance.backgroundPreset = kAppearancePresetCustom;
-    appearance.widgetAlpha = .13f;
-    appearance.widgetBorderAlpha = .13f;
-    appearance.widgetEdgeHighlightWidth = 1.0f;
-    appearance.widgetEdgeHighlightStrength = .69f;
-    appearance.edgeLight.direction = 64.f;
-    appearance.edgeLight.ambient = .18f;
-    appearance.edgeLight.primary = .64f;
-    appearance.edgeLight.opposite = .34f;
-    appearance.edgeLight.glowStrength = .20f;
-    appearance.glassBlurRadius = 10.f;
-    appearance.dockEdgeRefraction = true;
-    return appearance;
-}
-}
-
 PersonalizationSettings ResolveDockAppearance(const DockSettings& settings, const PersonalizationSettings& global)
 {
     auto value = settings.followComponentAppearance ? global :
-        settings.appearancePreset == kAppearancePresetCustom ? settings.customAppearance : MakeDockPreset(settings.appearancePreset);
+        settings.appearancePreset == kAppearancePresetCustom ? settings.customAppearance : MakeAppearancePreset(settings.appearancePreset);
     value.cornerRadius = settings.followComponentCornerRadius ? global.cornerRadius : settings.cornerRadius;
     return value;
 }
@@ -120,7 +97,7 @@ PersonalizationSettings ResolveDockRuleAppearance(const DockSettings& settings,
     const DockAppearanceRule& rule, const PersonalizationSettings& global)
 {
     auto value = rule.appearancePreset == -1 ? global :
-        rule.appearancePreset == kAppearancePresetCustom ? rule.appearance : MakeDockPreset(rule.appearancePreset);
+        rule.appearancePreset == kAppearancePresetCustom ? rule.appearance : MakeAppearancePreset(rule.appearancePreset);
     value.cornerRadius = settings.followComponentCornerRadius ? global.cornerRadius : settings.cornerRadius;
     return value;
 }
@@ -150,7 +127,6 @@ void NormalizeDockSettings(DockSettings& settings)
     case kAppearancePresetDark: case kAppearancePresetLight:
     case kAppearancePresetGlassDark: case kAppearancePresetGlassLight:
     case kAppearancePresetGlassTransparent:
-    case kDockAppearancePresetLiquidGlass:
     case kAppearancePresetAcrylicDark: case kAppearancePresetAcrylicLight:
     case kAppearancePresetCustom: break;
     default: settings.appearancePreset = kAppearancePresetCustom; break;
@@ -1659,8 +1635,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         }
     }
     if (ReadDoubleField(text, "dockAppearancePreset", value))
-        settings.appearancePreset = value == kDockAppearancePresetLiquidGlass
-            ? kDockAppearancePresetLiquidGlass : NormalizeAppearancePresetId(static_cast<int>(value));
+        settings.appearancePreset = NormalizeAppearancePresetId(static_cast<int>(value));
     if (const auto* appearance = gradientDocument.Find("customAppearance"))
         if (!snowdesktop::DecodePanelAppearance(*appearance, settings.customAppearance)) return false;
     for (const auto& [key, rule] : {std::pair{"maximizedWindow", &settings.maximizedWindow},
@@ -1678,11 +1653,10 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         if (const auto* preset = entry->Find("appearancePreset"))
         {
             if (!preset->IsNumber() || preset->number < -1 ||
-                preset->number > kDockAppearancePresetLiquidGlass ||
+                preset->number > kAppearancePresetGlassTransparent ||
                 std::floor(preset->number) != preset->number) return false;
             const int id = static_cast<int>(preset->number);
-            if (id != -1 && id != kDockAppearancePresetLiquidGlass &&
-                (NormalizeAppearancePresetId(id) != id || id == kAppearancePresetTaskbarTransparent)) return false;
+            if (id != -1 && (NormalizeAppearancePresetId(id) != id || id == kAppearancePresetTaskbarTransparent)) return false;
             rule->appearancePreset = id;
         }
         if (const auto* appearance = entry->Find("appearance"))

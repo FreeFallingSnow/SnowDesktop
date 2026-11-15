@@ -221,15 +221,11 @@ bool AppliedAppearanceMatches(const PersonalizationSettings& saved,
     };
     bool matches = saved.panelGradient == current.panelGradient &&
         saved.edgeLight == current.edgeLight && saved.contentTheme == current.contentTheme &&
-        saved.dockEdgeRefraction == current.dockEdgeRefraction &&
         same(saved.gradientEndA, current.gradientEndA);
     VisitPanelAppearanceFields([&](auto, auto field, double, double) {
         matches = matches && same(saved.*field, current.*field);
     });
     VisitPanelAppearanceFlags([&](auto, auto field) { matches = matches && saved.*field == current.*field; });
-    VisitDockRefractionFields([&](auto, auto field, double, double) {
-        matches = matches && same(saved.*field, current.*field);
-    });
     return matches;
 }
 
