@@ -453,21 +453,18 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 SetMenuItemIcon(menu, id, glyph, MenuIconFont::FluentRegular);
                 if (quick) SetMenuItemQuickAction(menu, id);
             };
-            const auto separator = [&] { AppendMenuW(menu, MF_SEPARATOR, 0, nullptr); };
             add(kContextCutCommand, _LW("app.menu.cut"), state.cut, L"\uF33A", true);
             add(kContextCopyCommand, _LW("app.menu.copy"), state.copy, glyphs::kCopy, true);
             add(kContextPasteCommand, _LW("app.menu.paste"), state.paste, L"\uF2D5", true);
             add(kContextSelectAllCommand, _LW("app.menu.select_all"), state.selectAll,
                 glyphs::kSelectAll, true);
-            if (kind != Kind::LuaComponent)
-            {
-                separator();
-                add(kFileUndoCommand, _LW("app.menu.undo"), state.undo, L"\uF199");
-                add(kFileRedoCommand, _LW("app.menu.redo"), state.redo, L"\uF16E");
-            }
+            if (state.undo)
+                add(kFileUndoCommand, _LW("app.menu.undo"), true, L"\uF199", true);
+            if (state.redo)
+                add(kFileRedoCommand, _LW("app.menu.redo"), true, L"\uF16E", true);
             if (kind != Kind::Editor)
             {
-                separator();
+                AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
                 add(kContextWidgetOpenComponentPanel, _LW("app.interact.open_component_panel"),
                     true, glyphs::kChevronRight);
             }
