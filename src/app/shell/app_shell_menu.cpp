@@ -252,7 +252,7 @@ std::optional<DesktopApp::NewItemRename> DesktopApp::ApplyPendingNewItems(
                 {
                     if (dockFolderPopupOpen_ && target.sourceId == dockFolderPopupSourceId_)
                     {
-                        if (edit && dockFolderPopupContainer_ && dockFolderPopupContainer_->PopupItemTransition())
+                        if (edit && dockFolderPopupContainer_ && dockFolderPopupContainer_->PopupResizeTransition())
                             return false;
                         folder = &dockFolderPopupWidget_;
                     }

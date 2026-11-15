@@ -374,9 +374,9 @@ BeginRenameDockFolderPopupEntry(
                 folderEntries.size())
         return;
 
-    if (dockFolderPopupContainer_ && dockFolderPopupContainer_->PopupItemTransition())
+    if (dockFolderPopupContainer_ && dockFolderPopupContainer_->PopupResizeTransition())
     {
-        dockFolderPopupContainer_->SetPopupItemTransition({});
+        dockFolderPopupContainer_->SetPopupResizeTransition({});
         RefreshDockFolderPopupGeometry();
     }
     ShowAllCollectionPopupItems();

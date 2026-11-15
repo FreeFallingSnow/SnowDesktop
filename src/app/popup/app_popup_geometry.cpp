@@ -4,7 +4,7 @@
 #include "layout/collection_popup_layout.h"
 #include "diagnostics/diagnostic_log.h"
 #include "settings/animation_settings.h"
-#include "popup_item_transition.h"
+#include "popup_resize_transition.h"
 #include "common/utils.h"
 #include "layout/popup_drag_rules.h"
 #include "app/dock/dock_tray_popup_state.h"
@@ -364,14 +364,8 @@ bool DesktopApp::HitTestCollectionPopupItem(const RECT& popup, size_t index, POI
     const RECT item = GetCollectionPopupItemRect(popup, index);
     RECT content = GetCollectionPopupContentRect(popup);
     if (widget == &dockFolderPopupWidget_ && dockFolderPopupContainer_)
-        if (const auto& motion = dockFolderPopupContainer_->PopupItemTransition())
-        {
+        if (const auto& motion = dockFolderPopupContainer_->PopupResizeTransition())
             content = motion->Content(content, popup);
-            const size_t member = GetPopupFolderEntryIndex(*widget, index);
-            if (member >= widget->folderEntries.size() ||
-                motion->ItemOpacity(index, widget->folderEntries[member].fullPath, popup, popupScrollOffset_) < 0.15f)
-                return false;
-        }
     return PtInRect(&item, point) && PtInRect(&content, point);
 }
 
@@ -887,7 +881,7 @@ RECT DesktopApp::GetDockFolderPopupSortButtonRect(
         return {};
     RECT panel = popup;
     if (dockFolderPopupOpen_ && dockFolderPopupContainer_)
-        if (const auto& motion = dockFolderPopupContainer_->PopupItemTransition()) panel = motion->Panel(panel);
+        if (const auto& motion = dockFolderPopupContainer_->PopupResizeTransition()) panel = motion->Panel(panel);
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     const auto headerBounds =
         snowdesktop::collection_popup_layout::
@@ -997,17 +991,8 @@ RECT DesktopApp::GetCollectionPopupItemRect(const RECT& popup, size_t linearInde
         return snowdesktop::widget_item_layout::ItemRect(
             layout, linearIndex, popupScrollOffset_);
     }
-    const auto bounds = snowdesktop::collection_popup_layout::ResolveFixedGridItemRect(
+    return snowdesktop::collection_popup_layout::ResolveFixedGridItemRect(
         metrics, content, linearIndex, popupScrollOffset_);
-    if (dockFolderPopupOpen_ && dockFolderPopupContainer_)
-        if (const auto& motion = dockFolderPopupContainer_->PopupItemTransition())
-        {
-            const size_t member = GetPopupFolderEntryIndex(dockFolderPopupWidget_, linearIndex);
-            if (member < dockFolderPopupWidget_.folderEntries.size())
-                return motion->Item(linearIndex, dockFolderPopupWidget_.folderEntries[member].fullPath,
-                    bounds, popup, popupScrollOffset_).bounds;
-        }
-    return bounds;
 }
 
 RECT DesktopApp::GetCollectionPopupFanDragBounds(const Item* item) const
@@ -1169,7 +1154,7 @@ bool DesktopApp::IsPointInsideOpenPopup(POINT point) const
     if (!widget) return false;
     RECT popup = GetCollectionPopupRect(*widget);
     if (widget == &dockFolderPopupWidget_ && dockFolderPopupContainer_)
-        if (const auto& motion = dockFolderPopupContainer_->PopupItemTransition()) popup = motion->Panel(popup);
+        if (const auto& motion = dockFolderPopupContainer_->PopupResizeTransition()) popup = motion->Panel(popup);
     return PtInRect(&popup, point) != FALSE;
 }
 
@@ -1181,7 +1166,7 @@ bool DesktopApp::IsPointOccludedByOpenPopup(POINT point) const
     if (!widget) return false;
     RECT popup = GetCollectionPopupRect(*widget);
     if (widget == &dockFolderPopupWidget_ && dockFolderPopupContainer_)
-        if (const auto& motion = dockFolderPopupContainer_->PopupItemTransition()) popup = motion->Panel(popup);
+        if (const auto& motion = dockFolderPopupContainer_->PopupResizeTransition()) popup = motion->Panel(popup);
     return PtInRect(&popup, point) != FALSE;
 }
 

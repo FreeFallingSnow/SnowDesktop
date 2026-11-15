@@ -12,14 +12,12 @@
 #include "shell/item_sort_metadata.h"
 #include "settings/animation_settings.h"
 #include "layout/collection_popup_layout.h"
-#include "popup_item_transition.h"
+#include "popup_resize_transition.h"
 #include <cmath>
-#include <string_view>
-#include <unordered_map>
 
 // Collection and Dock-folder popup transitions.
 
-namespace snowdesktop::popup_item_transition
+namespace snowdesktop::popup_resize_transition
 {
 namespace
 {
@@ -34,66 +32,40 @@ RECT Interpolate(RECT from, RECT to, float amount)
 }
 }
 
-Transition::Transition(Frame from, Frame target, double now, double durationScale)
-    : target_(std::move(target)), fromPanel_(from.panel), fromContent_(from.content)
+Transition::Transition(Geometry from, Geometry target, double now, double durationScale)
+    : from_(from), target_(target)
 {
-    std::unordered_map<std::wstring_view, Visual> previous;
-    previous.reserve(from.entries.size());
-    for (const auto& entry : from.entries) previous.emplace(entry.path, entry.visual);
-    fromItems_.reserve(target_.entries.size());
-    for (const auto& entry : target_.entries)
-    {
-        const auto found = previous.find(entry.path);
-        fromItems_.push_back(found != previous.end() ? found->second : Visual{entry.visual.bounds, 0.0f});
-    }
-    presence_.SetVisible(true, now, true, durationScale);
+    progress_.SetVisible(true, now, true, durationScale);
 }
 
 bool Transition::Advance(double now)
 {
-    presence_.Advance(now);
-    return presence_.IsAnimating();
+    progress_.Advance(now);
+    return progress_.IsAnimating();
+}
+
+bool Transition::Targets(const Geometry& geometry) const
+{
+    return EqualRect(&geometry.panel, &target_.panel) && EqualRect(&geometry.content, &target_.content);
 }
 
 RECT Transition::Panel(RECT target) const
 {
     return EqualRect(&target, &target_.panel)
-        ? Interpolate(fromPanel_, target, presence_.Amount()) : target;
+        ? Interpolate(from_.panel, target, progress_.Amount()) : target;
 }
 
 RECT Transition::ReservedPanel(RECT target) const
 {
     RECT bounds = target;
-    if (EqualRect(&target, &target_.panel)) UnionRect(&bounds, &fromPanel_, &target);
+    if (EqualRect(&target, &target_.panel)) UnionRect(&bounds, &from_.panel, &target);
     return bounds;
 }
 
 RECT Transition::Content(RECT target, RECT layoutPanel) const
 {
-    return EqualRect(&layoutPanel, &target_.panel) && EqualRect(&target, &target_.content)
-        ? Interpolate(fromContent_, target, presence_.Amount()) : target;
-}
-
-Visual Transition::Item(std::size_t index, const std::wstring& path, RECT target,
-    RECT layoutPanel, int scroll) const
-{
-    const auto* from = FindStart(index, path, layoutPanel, scroll);
-    if (!from) return {target};
-    const float amount = presence_.Amount();
-    return {Interpolate(from->bounds, target, amount), std::lerp(from->opacity, 1.0f, amount)};
-}
-
-float Transition::ItemOpacity(std::size_t index, const std::wstring& path, RECT layoutPanel, int scroll) const
-{
-    const auto* from = FindStart(index, path, layoutPanel, scroll);
-    return from ? std::lerp(from->opacity, 1.0f, presence_.Amount()) : 1.0f;
-}
-
-const Visual* Transition::FindStart(std::size_t index, const std::wstring& path, RECT layoutPanel, int scroll) const
-{
-    if (!EqualRect(&layoutPanel, &target_.panel) || scroll != target_.scroll ||
-        index >= target_.entries.size() || target_.entries[index].path != path) return nullptr;
-    return &fromItems_[index];
+    return Targets({layoutPanel, target})
+        ? Interpolate(from_.content, target, progress_.Amount()) : target;
 }
 }
 
@@ -648,27 +620,12 @@ void DesktopApp::RefreshDockFolderPopup(
                 clear();
         }
     }
-    using namespace snowdesktop::popup_item_transition;
-    const auto snapshotLayout = [this](const Transition* transition) {
-        const auto& widget = dockFolderPopupWidget_;
-        const RECT panel = GetCollectionPopupRect(widget);
-        const RECT content = GetCollectionPopupContentRect(panel);
-        const auto metrics = GetCollectionPopupLayoutMetrics(widget);
-        Frame frame{transition ? transition->Panel(panel) : panel,
-            transition ? transition->Content(content, panel) : content, popupScrollOffset_, {}};
-        const size_t count = GetPopupItemCount(widget);
-        frame.entries.reserve(count);
-        for (size_t index = 0; index < count; ++index)
-        {
-            const auto& path = widget.folderEntries[GetPopupFolderEntryIndex(widget, index)].fullPath;
-            const auto bounds = snowdesktop::collection_popup_layout::ResolveFixedGridItemRect(
-                metrics, content, index, popupScrollOffset_);
-            frame.entries.push_back({path,
-                transition ? transition->Item(index, path, bounds, panel, popupScrollOffset_) : Visual{bounds}});
-        }
-        return frame;
+    using namespace snowdesktop::popup_resize_transition;
+    const auto popupGeometry = [this]() {
+        const RECT panel = GetCollectionPopupRect(dockFolderPopupWidget_);
+        return Geometry{panel, GetCollectionPopupContentRect(panel)};
     };
-    std::optional<Frame> before;
+    std::optional<Geometry> before;
     if (snapshot && snapshot->complete && snapshot->entries.size() != dockFolderPopupWidget_.folderEntries.size() &&
         present && dockFolderPopupAvailable_ && dockFolderPopupContainer_ &&
         IsCollectionPopupInteractive() && !popupAnimation_.IsAnimating() &&
@@ -676,7 +633,14 @@ void DesktopApp::RefreshDockFolderPopup(
         !dockFolderPopupWidget_.dateHeaders && !mouseDown_ && !dragSession_.HasContext() &&
         !dragDropController_.IsTransportActive() &&
         snowdesktop::animation::RuntimePopupEffect() != snowdesktop::animation::NoEffect)
-        before = snapshotLayout(dockFolderPopupContainer_->PopupItemTransition().get());
+    {
+        before = popupGeometry();
+        if (const auto& active = dockFolderPopupContainer_->PopupResizeTransition())
+        {
+            before->content = active->Content(before->content, before->panel);
+            before->panel = active->Panel(before->panel);
+        }
+    }
 
     const bool accepted = snowdesktop::dock_folder_popup_read::Refresh(
         dockFolderPopupWidget_.sourceFolderPath, snapshot,
@@ -690,7 +654,7 @@ void DesktopApp::RefreshDockFolderPopup(
                 CommitDockFolderPopupStateToSource();
         }, targetPending);
     if (!accepted) return;
-    if (!dockFolderPopupWidget_.folderEntries.empty())
+    if (snapshot && snapshot->complete && dockFolderPopupAvailable_)
         dockFolderPopupKnownItemCount_ = dockFolderPopupWidget_.folderEntries.size();
     if (snapshot)
     {
@@ -725,28 +689,36 @@ void DesktopApp::RefreshDockFolderPopup(
     if (before && dockFolderPopupAvailable_)
     {
         RefreshDockFolderPopupGeometry(false);
-        auto target = snapshotLayout(nullptr);
-        if (!EqualRect(&before->panel, &target.panel) || target.entries.size() != before->entries.size())
+        const auto target = popupGeometry();
+        const auto& active = dockFolderPopupContainer_->PopupResizeTransition();
+        const bool sizeChanged =
+            before->panel.right - before->panel.left != target.panel.right - target.panel.left ||
+            before->panel.bottom - before->panel.top != target.panel.bottom - target.panel.top;
+        if (sizeChanged && (!active || !active->Targets(target)))
         {
-            const auto transition = std::make_shared<Transition>(std::move(*before), std::move(target),
+            const auto transition = std::make_shared<Transition>(*before, target,
                 snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(), snowdesktop::animation::RuntimeDurationScale());
-            dockFolderPopupContainer_->SetPopupItemTransition(transition);
+            dockFolderPopupContainer_->SetPopupResizeTransition(transition);
             const auto token = uiAnimationScheduler_.StartAnimation(snowdesktop::UiAnimationSurface::Popup,
                 [this, weak = std::weak_ptr<Transition>(transition)](double now) {
                     const auto current = weak.lock();
                     if (!current || !dockFolderPopupOpen_ || !dockFolderPopupContainer_ ||
-                        dockFolderPopupContainer_->PopupItemTransition() != current) return false;
+                        dockFolderPopupContainer_->PopupResizeTransition() != current) return false;
                     const bool keep = IsCollectionPopupInteractive() && !exitRequested_ &&
                         snowdesktop::animation::RuntimePopupEffect() != snowdesktop::animation::NoEffect &&
                         current->Advance(now);
-                    if (!keep) dockFolderPopupContainer_->SetPopupItemTransition({});
+                    if (!keep) dockFolderPopupContainer_->SetPopupResizeTransition({});
                     UpdateFloatingPopupWindowBounds(!keep, false);
                     InvalidateFloatingPopupWindow(false);
                     if (!keep && hwnd_)
                         PostMessageW(hwnd_, kBackgroundShellReadyMessage, 0, 0);
                     return keep;
                 });
-            if (!token) dockFolderPopupContainer_->SetPopupItemTransition({});
+            if (!token) dockFolderPopupContainer_->SetPopupResizeTransition({});
+        }
+        else if (active && !active->Targets(target))
+        {
+            dockFolderPopupContainer_->SetPopupResizeTransition({});
         }
     }
     // Empty-to-populated listings are content updates of the existing popup.

@@ -6,7 +6,7 @@
 #include "layout/folder_sort_rules.h"
 #include "app/dock/dock_tray_popup_state.h"
 #include "popup_opacity_scope.h"
-#include "popup_item_transition.h"
+#include "popup_resize_transition.h"
 #include "app/navigation/quick_navigation_theme.h"
 #include "layout/item_render_layer_rules.h"
 #include "layout/popup_scrollbar_layout.h"
@@ -15,33 +15,6 @@
 #include <d2d1effects.h>
 
 // Collection-popup rendering.
-
-namespace
-{
-class PopupItemPresenceScope
-{
-public:
-    PopupItemPresenceScope(ID2D1DeviceContext* context, const RECT& bounds, float amount)
-        : context_(amount < 1.0f ? context : nullptr), opacity_(context, context_ != nullptr, amount)
-    {
-        if (!context_) return;
-        context_->GetTransform(&previous_);
-        const auto center = D2D1::Point2F((bounds.left + bounds.right) * 0.5f,
-            (bounds.top + bounds.bottom) * 0.5f);
-        context_->SetTransform(D2D1::Matrix3x2F::Scale(amount, amount, center) * previous_);
-    }
-
-    ~PopupItemPresenceScope()
-    {
-        if (context_) context_->SetTransform(previous_);
-    }
-
-private:
-    ID2D1DeviceContext* context_;
-    PopupOpacityScope opacity_;
-    D2D1_MATRIX_3X2_F previous_{};
-};
-}
 
 IDWriteTextFormat* DesktopApp::GetCollectionPopupTextFormat(float scale, bool title)
 {
@@ -95,7 +68,7 @@ void DesktopApp::DrawCollectionPopup(
         popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
             GetCollectionPopupMaxScrollOffset(widget, popupRect_));
     const auto motion = openWidget == &dockFolderPopupWidget_ && dockFolderPopupContainer_
-        ? dockFolderPopupContainer_->PopupItemTransition() : nullptr;
+        ? dockFolderPopupContainer_->PopupResizeTransition() : nullptr;
     const RECT presentedPanel = motion ? motion->Panel(popupRect_) : popupRect_;
 
     const auto animation =
@@ -347,9 +320,6 @@ void DesktopApp::DrawCollectionPopup(
         fanOffset, fanCapacity, popupItemCount);
     const size_t firstItem = fan ? fanRange.first : 0;
     const size_t endItem = fan ? fanRange.end : popupItemCount;
-    const auto itemPresence = [&](size_t index, const FolderEntry& item) {
-        return motion ? motion->ItemOpacity(index, item.fullPath, popupRect_, popupScrollOffset_) : 1.0f;
-    };
     if (fan && !popupFanIconRecorder_ && d2dDevice_)
         (void)d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &popupFanIconRecorder_);
     const auto iconRecorder = popupFanIconRecorder_;
@@ -522,9 +492,6 @@ void DesktopApp::DrawCollectionPopup(
                 popupAnimation_.IsInteractive() &&
                 !entry.selected &&
                 PtInRect(&itemRect, lastMousePoint_);
-            const float presence = itemPresence(i, entry);
-            if (presence <= 0.0f) continue;
-            PopupItemPresenceScope presenceScope(ctx, itemRect, presence);
             FolderEntryIcon icon(
                 &entry, dockFolderPopupContainer_.get(), this);
             const auto titleLayers =
@@ -621,9 +588,6 @@ void DesktopApp::DrawCollectionPopup(
             FolderEntry& entry =
                 dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(widget, i)];
             if (!entry.selected) continue;
-            const float presence = itemPresence(i, entry);
-            if (presence <= 0.0f) continue;
-            PopupItemPresenceScope presenceScope(ctx, itemRect, presence);
             FolderEntryIcon icon(
                 &entry, dockFolderPopupContainer_.get(), this);
             icon.DrawTitle(

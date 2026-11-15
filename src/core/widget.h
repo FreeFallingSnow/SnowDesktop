@@ -44,7 +44,7 @@ struct CategorySettings;
 class DesktopApp;
 namespace snowdesktop::group_tab_drag_preview { struct Layout; }
 namespace snowdesktop::widget_runtime { struct WidgetSurfacePaint; }
-namespace snowdesktop::popup_item_transition { class Transition; }
+namespace snowdesktop::popup_resize_transition { class Transition; }
 class WidgetEngine;
 namespace snowdesktop { struct WidgetFolderSearchState; }
 struct GridPage;
@@ -835,10 +835,10 @@ public:
     void InvalidateFilterCache();
     const CategorySettings& GetCategorySettingsForDisplay() const;
 
-    const auto& PopupItemTransition() const { return popupItemTransition_; }
-    void SetPopupItemTransition(std::shared_ptr<snowdesktop::popup_item_transition::Transition> transition)
+    const auto& PopupResizeTransition() const { return popupResizeTransition_; }
+    void SetPopupResizeTransition(std::shared_ptr<snowdesktop::popup_resize_transition::Transition> transition)
     {
-        popupItemTransition_ = std::move(transition);
+        popupResizeTransition_ = std::move(transition);
     }
 
     struct DateLayoutSegment
@@ -861,7 +861,7 @@ private:
     void EnsureCategorySnapshot() const;
     std::wstring CachedActiveCategoryId() const;
 
-    std::shared_ptr<snowdesktop::popup_item_transition::Transition> popupItemTransition_;
+    std::shared_ptr<snowdesktop::popup_resize_transition::Transition> popupResizeTransition_;
 
     mutable std::vector<std::wstring> categorySnapshotPaths_;
     mutable std::unordered_map<std::wstring, std::vector<size_t>> entryIndicesByCategory_;

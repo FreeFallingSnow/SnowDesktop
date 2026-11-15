@@ -1,6 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
-#include "popup_item_transition.h"
+#include "popup_resize_transition.h"
 #include "diagnostics/diagnostic_log.h"
 #include "common/utils.h"
 #include "layout/floating_popup_rules.h"
@@ -368,7 +368,7 @@ RECT DesktopApp::CalculateFloatingPopupWindowBounds() const
         {
             RECT panel = GetCollectionPopupRect(*popup);
             if (popup == &dockFolderPopupWidget_ && dockFolderPopupContainer_)
-                if (const auto& motion = dockFolderPopupContainer_->PopupItemTransition())
+                if (const auto& motion = dockFolderPopupContainer_->PopupResizeTransition())
                     panel = motion->ReservedPanel(panel);
             bounds = InflateCopy(panel, 6);
         }
@@ -1041,7 +1041,7 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
     {
         RECT panel = GetCollectionPopupRect(*popup);
         if (popup == &dockFolderPopupWidget_ && dockFolderPopupContainer_)
-            if (const auto& motion = dockFolderPopupContainer_->PopupItemTransition()) panel = motion->Panel(panel);
+            if (const auto& motion = dockFolderPopupContainer_->PopupResizeTransition()) panel = motion->Panel(panel);
         addPanel(panel, 18.0f * GetCollectionPopupLayoutMetrics(*popup).scale, &popupAnimation_);
     }
     if (luaGlass)
@@ -1101,7 +1101,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
         {
             nextCollectionRegion = GetCollectionPopupRect(*popup);
             if (popup == &dockFolderPopupWidget_ && dockFolderPopupContainer_)
-                if (const auto& motion = dockFolderPopupContainer_->PopupItemTransition())
+                if (const auto& motion = dockFolderPopupContainer_->PopupResizeTransition())
                     nextCollectionRegion = motion->Panel(nextCollectionRegion);
         }
     }

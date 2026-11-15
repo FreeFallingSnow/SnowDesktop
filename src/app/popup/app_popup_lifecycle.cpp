@@ -648,7 +648,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
 
 void DesktopApp::ClearDockFolderPopupEntries()
 {
-    if (dockFolderPopupContainer_) dockFolderPopupContainer_->SetPopupItemTransition({});
+    if (dockFolderPopupContainer_) dockFolderPopupContainer_->SetPopupResizeTransition({});
     // FolderEntry releases its HBITMAP in the destructor, while the shared
     // D2D cache is keyed by that handle value. Remove both raw/beautified GPU
     // entries first so repeated popup lifecycles cannot retain stale bitmaps
@@ -719,7 +719,7 @@ void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
     }
     UpdateFloatingPopupWindowBounds(false);
     PrepareCollectionPopupAnimationCache();
-    if (dockFolderPopupContainer_) dockFolderPopupContainer_->SetPopupItemTransition({});
+    if (dockFolderPopupContainer_) dockFolderPopupContainer_->SetPopupResizeTransition({});
     if (popupAnimationOverlay_.active &&
         popupAnimationOverlay_.host ==
             UiCompositionAnimationHost::Desktop)
