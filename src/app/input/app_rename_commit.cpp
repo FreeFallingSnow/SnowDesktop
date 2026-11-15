@@ -77,6 +77,7 @@ void DesktopApp::ApplyPendingRenames()
     const ULONGLONG started = GetTickCount64();
     const auto pending = std::exchange(pendingRenames_, {});
     bool changed = false;
+    bool desktopViewsChanged = false;
     bool popupChanged = false;
     bool usageChanged = false;
     bool categoryChanged = false;
@@ -98,6 +99,9 @@ void DesktopApp::ApplyPendingRenames()
             dockFolderPopupOpen_ ? &dockFolderPopupWidget_ : nullptr);
         if (changes.needsReload || changes.folderRootsChanged) RequestShellRefresh();
         changed = changed || !result->path.empty();
+        desktopViewsChanged = desktopViewsChanged || (!result->path.empty() &&
+            (!changes.popup || changes.needsReload || changes.folderRootsChanged || changes.referencesChanged ||
+                !changes.desktopItems.empty() || !changes.folders.empty()));
         categoryChanged = categoryChanged ||
             (!changes.desktopItems.empty() &&
                 snowdesktop::folder_sort_rules::CompareInsensitive(
@@ -150,24 +154,34 @@ void DesktopApp::ApplyPendingRenames()
     }
     if (changed)
     {
-        RefreshDesktopItemIndexCache();
-        InvalidateDockShellMetadata();
-        PruneDockShellMetadata();
-        if (categoryChanged)
+        if (desktopViewsChanged)
         {
-            ApplyAutoCollectFileCategoryWidgets();
-            LayoutItems();
+            RefreshDesktopItemIndexCache();
+            InvalidateDockShellMetadata();
+            PruneDockShellMetadata();
+            if (categoryChanged)
+            {
+                ApplyAutoCollectFileCategoryWidgets();
+                LayoutItems();
+            }
+            SaveLayoutSlots();
+            RebuildContainersAndItems();
         }
-        SaveLayoutSlots();
-        // Rebind the lightweight views without enumerating files or reloading
-        // Lua storage. Their underlying item vectors and bitmaps are retained.
-        RebuildContainersAndItems();
         if (popupChanged)
         {
-            dockFolderPopupContainer_ =
-                std::make_unique<FolderMapping>(&dockFolderPopupWidget_, this);
+            if (!dockFolderPopupContainer_)
+                dockFolderPopupContainer_ = std::make_unique<FolderMapping>(&dockFolderPopupWidget_, this);
             dockFolderPopupContainer_->InvalidateFilterCache();
-            RefreshDockFolderPopupGeometry();
+            dockFolderPopupContainer_->RefreshFolderSearch();
+            if (!desktopViewsChanged) CommitDockFolderPopupStateToSource();
+            // Renaming an entry normally changes only the live content and
+            // its order. Update the native region only when the frame moved.
+            const RECT previousBounds = popupRect_;
+            RefreshDockFolderPopupGeometry(false);
+            InvalidateCollectionPopupContent();
+            if (!EqualRect(&previousBounds, &popupRect_) ||
+                (ShouldShowFloatingPopupWindow() && (!floatingPopupHwnd_ || !IsWindowVisible(floatingPopupHwnd_))))
+                UpdateFloatingPopupWindowBounds(false, false);
         }
         if (usageChanged)
             SaveDockUsageStats();

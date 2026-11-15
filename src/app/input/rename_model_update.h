@@ -34,6 +34,7 @@ struct Changes
     bool popup = false;
     bool needsReload = false;
     bool folderRootsChanged = false;
+    bool referencesChanged = false;
 };
 
 inline bool MigrateDirectoryPath(std::wstring& value,
@@ -71,7 +72,8 @@ inline Changes Apply(const ShellRenameResult& result, const std::wstring& newLay
         return changes;
     }
     namespace migration = desktop_item_reference_migration;
-    migration::MigrateReferences(widgets, dockEntries, result.sourcePath, result.path);
+    changes.referencesChanged = migration::MigrateReferences(
+        widgets, dockEntries, result.sourcePath, result.path).Changed();
     if (popup)
         for (auto& key : popup->itemKeys)
             migration::ReplaceMatchingKey(key, result.sourcePath, result.path);

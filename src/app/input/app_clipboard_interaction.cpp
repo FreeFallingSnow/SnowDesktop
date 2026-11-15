@@ -323,6 +323,17 @@ bool DesktopApp::DeleteSelectedFolderEntries(bool permanentDelete)
     std::vector<std::wstring> paths = GetSelectedFolderEntryPaths();
     if (paths.empty()) return false;
 
+    std::wstring popupDirectory;
+    if (dockFolderPopupOpen_ && IsCollectionPopupInteractive() && desktopItemsReady_ &&
+        std::none_of(paths.begin(), paths.end(), [this](const auto& path) {
+            return FindItemIndexByKey(path) < items_.size() ||
+                std::any_of(dockEntries_.begin(), dockEntries_.end(), [&](const auto& entry) {
+                    return entry.type == DockEntryType::DesktopItem &&
+                        _wcsicmp(entry.reference.c_str(), path.c_str()) == 0;
+                });
+        }))
+        popupDirectory = dockFolderPopupWidget_.sourceFolderPath;
+
     for (const auto& path : paths)
         cutPaths_.erase(path);
 
@@ -338,11 +349,10 @@ bool DesktopApp::DeleteSelectedFolderEntries(bool permanentDelete)
                FOF_NOERRORUI)) });
     return QueueShellFileOperation(
         std::move(steps),
-        [this](bool succeeded) {
-            if (!succeeded)
-                return;
-            RequestShellRefresh();
-
+        [this, popupDirectory = std::move(popupDirectory)](bool succeeded) {
+            if (!succeeded) return;
+            if (popupDirectory.empty()) RequestShellRefresh();
+            else RequestFolderRefresh({popupDirectory});
         });
 }
 

@@ -669,7 +669,7 @@ void DesktopApp::RefreshDockFolderPopup(
         return frame;
     };
     std::optional<Frame> before;
-    if (snapshot && snapshot->complete && snapshot->entries.size() > dockFolderPopupWidget_.folderEntries.size() &&
+    if (snapshot && snapshot->complete && snapshot->entries.size() != dockFolderPopupWidget_.folderEntries.size() &&
         present && dockFolderPopupAvailable_ && dockFolderPopupContainer_ &&
         IsCollectionPopupInteractive() && !popupAnimation_.IsAnimating() &&
         !UsesCollectionPopupFan(dockFolderPopupWidget_) && !UsesCollectionPopupList(dockFolderPopupWidget_) &&
@@ -726,7 +726,7 @@ void DesktopApp::RefreshDockFolderPopup(
     {
         RefreshDockFolderPopupGeometry(false);
         auto target = snapshotLayout(nullptr);
-        if (!EqualRect(&before->panel, &target.panel) || target.entries.size() > before->entries.size())
+        if (!EqualRect(&before->panel, &target.panel) || target.entries.size() != before->entries.size())
         {
             const auto transition = std::make_shared<Transition>(std::move(*before), std::move(target),
                 snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(), snowdesktop::animation::RuntimeDurationScale());

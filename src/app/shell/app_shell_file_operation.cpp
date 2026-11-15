@@ -593,7 +593,8 @@ void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapsh
             RefreshDockFolderPopup(&folder->second);
     }
     if (orderChanged) SaveLayoutSlots();
-    RefreshOpenCollectionPopupGeometry();
+    // The matching Dock folder snapshot has already published its geometry.
+    if (!dockFolderPopupOpen_) RefreshOpenCollectionPopupGeometry();
     InvalidateDragStaticScene();
     reloading_ = false;
     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -680,8 +681,6 @@ void DesktopApp::RefreshShellItemsAsync()
                 snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath));
             if (folder != snapshot->folders.end())
                 RefreshDockFolderPopup(&folder->second);
-            else
-                QueueFolderRead(dockFolderPopupWidget_.sourceFolderPath);
         }
         InvalidateFloatingPopupWindow(false);
         InvalidateQuickNavigationWindow();
