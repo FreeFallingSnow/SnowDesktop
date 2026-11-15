@@ -1210,9 +1210,9 @@ ShowDockFolderPopupContextMenu(
     if (shellNewMenu && shellNewMenu->Contains(command))
     {
         InvokeNewMenuCommand(shellNewMenu->Context(), command, newItemDirectory);
-        RequestShellRefresh();
         RestoreDesktopWindowLayer();
-        RestoreInteractionInputFocus();
+        if (!renameController_.IsActive()) RestoreInteractionInputFocus();
+        RequestFolderRefresh({newItemDirectory});
         return;
     }
     if (!itemMenu && ExecuteDockFolderPopupDisplayCommand(command))
@@ -1322,7 +1322,7 @@ ShowDockFolderPopupContextMenu(
         break;
     case kContextNewMenu:
         ShowNewMenuAndInvoke(screenPoint, newItemDirectory, false, newItemTarget);
-        RequestShellRefresh();
+        RequestFolderRefresh({newItemDirectory});
         break;
     default:
         break;

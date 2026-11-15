@@ -370,7 +370,7 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
     if (newMenu.Contains(cmd))
         InvokeNewMenuCommand(newMenu.Context(), cmd, targetDir);
     RestoreDesktopWindowLayer();
-    RestoreInteractionInputFocus();
+    if (!renameController_.IsActive()) RestoreInteractionInputFocus();
 }
 
 /**

@@ -15,7 +15,8 @@ void DesktopApp::BeginNewItemRename(const std::optional<NewItemRename>& request)
     if (!request || renameController_.IsActive() || HasActiveContextMenuSession() ||
         luaInlineEdit_ || quickNavigation_->open) return;
     const HWND foreground = snowdesktop::private_pointer::ForegroundWindow();
-    if (foreground && !IsDesktopInteractionSurfaceWindow(foreground) &&
+    if (foreground && foreground != floatingDockInputHwnd_ &&
+        !IsDesktopInteractionSurfaceWindow(foreground) &&
         !IsShellDesktopForegroundWindow(foreground)) return;
 
     using Surface = NewItemTarget::Surface;
@@ -431,6 +432,8 @@ BeginRenameDockFolderPopupEntry(
     const DWORD style = snowdesktop::rename_edit_layout::EditStyle(
         UsesCollectionPopupList(dockFolderPopupWidget_),
         !UsesCollectionPopupList(dockFolderPopupWidget_));
+    const HWND owner = IsCollectionPopupHostedByFloatingWindow() &&
+        floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_) ? floatingPopupHwnd_ : hwnd_;
     renameInputWindow_ = CreateWindowExW(
             WS_EX_TOOLWINDOW |
             WS_EX_TOPMOST |
@@ -443,7 +446,7 @@ BeginRenameDockFolderPopupEntry(
             screenRect.left,
         screenRect.bottom -
             screenRect.top,
-        hwnd_, nullptr, instance_, nullptr);
+        owner, nullptr, instance_, nullptr);
     if (!renameInputWindow_)
     {
         renameController_.Reset();

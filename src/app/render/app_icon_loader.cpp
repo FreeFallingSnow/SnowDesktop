@@ -271,10 +271,17 @@ void DesktopApp::DrainBackgroundShellWork()
 {
     layoutSaveQueue_.Drain();
     if (exitRequested_ || compositionPaintInProgress_ || floatingPopupCompositionPaintInProgress_ || reloading_ ||
-        HasActiveContextMenuSession() || renameController_.IsActive() ||
+        HasActiveContextMenuSession() ||
         shellFileOperationInFlight_ > 0 || !pendingRenames_.empty() ||
         (dockWindowTransition_ && dockWindowTransition_->IsActive()))
         return; // The maintenance timer retries after the interaction fence.
+    if (renameController_.IsActive())
+    {
+        // Pixels can update in place while shortcut classification and folder
+        // results wait to update membership and rebuild views after editing.
+        iconWork_.DrainImages();
+        return;
+    }
     snowdesktop::performance::Scope deliveryScope("shell.refresh", "delivery");
     // Directory results can fill a newly opened drop destination while the
     // pointer is still held. The delivery mailbox defers all source/model edits.
