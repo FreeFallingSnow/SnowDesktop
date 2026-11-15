@@ -6,6 +6,7 @@
 #include "data/data_paths.h"
 #include "icons/icon_render_rules.h"
 #include "icons/icon_loading_placeholder.h"
+#include "ui/render/highlight_coverage.h"
 #include "platform/demo_mode_rules.h"
 #include "platform/demo_collection_rules.h"
 #include <commoncontrols.h>
@@ -475,6 +476,7 @@ void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
     }
     ctx->DrawBitmap(cached->Get(), ToD2DRect(rect), 1.0f,
         D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    snowdesktop::HighlightCoverage::RecordMask(ctx, cached->Get(), ToD2DRect(rect));
 }
 
 void DesktopApp::DrawPrivacyFaIcon(

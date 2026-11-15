@@ -1523,7 +1523,10 @@ void DesktopApp::CloseQuickNavigationThen(
 void DesktopApp::ApplyQuickNavigationAnimationFrame()
 {
     const auto srgbKey = reinterpret_cast<std::uintptr_t>(quickNavigation_->hwnd);
-    if ((quickNavigation_->animation.IsAnimating() || quickNavigation_->animationCompositorDriven) &&
+    namespace rules = snowdesktop::quick_navigation_animation_rules;
+    const auto effect = quickNavigation_->animation.GetEffect();
+    bool deformationFrame = quickNavigation_->animation.IsAnimating() && rules::IsDeformationEffect(effect);
+    if (deformationFrame &&
         quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey) &&
         quickNavigation_->dcompVisual &&
         SUCCEEDED(quickNavigation_->dcompVisual->SetContent(quickNavigation_->dcompSurface.Get())))
@@ -1543,10 +1546,6 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
         quickNavigation_->animationAnchorPoint.y -
         quickNavigation_->hostRect.top);
 
-    namespace rules = snowdesktop::quick_navigation_animation_rules;
-    const auto effect = quickNavigation_->animation.GetEffect();
-    bool deformationFrame = quickNavigation_->animation.IsAnimating() &&
-        rules::IsDeformationEffect(effect);
     const float collapsed = 1.0f - rules::EaseInOutSmooth(visual.progress);
     if (deformationFrame && !(effect == rules::Effect::Attraction
             ? ApplyQuickNavigationAttractionFrame(collapsed, visual.opacity)
@@ -1563,6 +1562,11 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
         ClearQuickNavigationDeformation();
         quickNavigation_->backdropCompositor.SetVisualTransform(
             visual.scale, visual.opacity, anchorX, anchorY);
+        if (quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey))
+            quickNavigation_->backdropCompositor.SetSrgbContentPose(srgbKey,
+                {quickNavigation_->animationAnchorPoint.x - quickNavigation_->hostRect.left,
+                 quickNavigation_->animationAnchorPoint.y - quickNavigation_->hostRect.top},
+                visual.scale, visual.opacity);
     }
     quickNavigation_->backdropCompositor.SetVisible(
         visual.visible);
@@ -1611,7 +1615,10 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
     // Paint publishes content first, then the matching backdrop in one place.
     // Visibility-only frames have no pending pixel update.
     if (!quickNavigation_->compositionPaintInProgress)
+    {
         quickNavigation_->backdropCompositor.CommitVisualChanges();
+        (void)quickNavigation_->backdropCompositor.CommitSrgbContent();
+    }
 
     if (quickNavigation_->searchEdit && IsWindow(quickNavigation_->searchEdit))
     {

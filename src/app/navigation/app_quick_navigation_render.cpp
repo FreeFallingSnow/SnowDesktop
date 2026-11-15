@@ -26,7 +26,9 @@ void DesktopApp::ClearQuickNavigationDeformation()
     if (quickNavigation_->dcompVisual)
     {
         quickNavigation_->dcompVisual->RemoveAllVisuals();
-        quickNavigation_->dcompVisual->SetContent(quickNavigation_->dcompSurface.Get());
+        const auto contentKey = reinterpret_cast<std::uintptr_t>(quickNavigation_->hwnd);
+        quickNavigation_->dcompVisual->SetContent(quickNavigation_->backdropCompositor.HasSrgbContent(contentKey)
+            ? nullptr : quickNavigation_->dcompSurface.Get());
         quickNavigation_->dcompVisual->SetTransform(quickNavigation_->dcompScaleTransform.Get());
     }
     quickNavigation_->genieStrips.clear();
@@ -572,16 +574,25 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             sourceContext->SetTransform(D2D1::Matrix3x2F::Translation(
                 -static_cast<float>(quickNavigation_->rect.left), -static_cast<float>(quickNavigation_->rect.top)));
             brushCacheContext_ = sourceContext.Get();
-            DrawQuickNavigationSurface(sourceContext.Get());
+            snowdesktop::HighlightCoverage sourceCoverage;
+            {
+                snowdesktop::HighlightCoverage::Scope captureSource(sourceContext.Get(), sourceCoverage);
+                DrawQuickNavigationSurface(sourceContext.Get());
+            }
             contentResult = sourceContext->EndDraw();
             sourceContext->SetTarget(nullptr);
             brushCache_.clear();
             brushCacheContext_ = ctx.Get();
             if (SUCCEEDED(contentResult))
-                ctx->DrawBitmap(quickNavigation_->attractionBitmap.Get(), D2D1::RectF(
+            {
+                const auto frame = D2D1::RectF(
                     static_cast<float>(quickNavigation_->rect.left), static_cast<float>(quickNavigation_->rect.top),
                     static_cast<float>(quickNavigation_->rect.left) + static_cast<float>(quickNavigation_->compWidth),
-                    static_cast<float>(quickNavigation_->rect.top) + static_cast<float>(quickNavigation_->compHeight)));
+                    static_cast<float>(quickNavigation_->rect.top) + static_cast<float>(quickNavigation_->compHeight));
+                sourceCoverage.AttachToSnapshot(d2dDevice_.Get(), quickNavigation_->attractionBitmap.Get());
+                ctx->DrawBitmap(quickNavigation_->attractionBitmap.Get(), frame);
+                snowdesktop::HighlightCoverage::RecordBitmap(ctx.Get(), quickNavigation_->attractionBitmap.Get(), frame);
+            }
         }
     }
     else
@@ -592,9 +603,13 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     const auto srgbKey = reinterpret_cast<std::uintptr_t>(hwnd);
     RECT srgbFrame = quickNavigation_->rect;
     OffsetRect(&srgbFrame, -quickNavigation_->hostRect.left, -quickNavigation_->hostRect.top);
+    const bool deforming = quickNavigation_->animation.IsAnimating() &&
+        snowdesktop::quick_navigation_animation_rules::IsDeformationEffect(
+            quickNavigation_->animation.GetEffect());
+    const bool previouslySrgb = quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey);
     const bool stagedSrgb = SUCCEEDED(contentResult) && quickNavigation_->glassTheme &&
-        quickNavigation_->backdropCompositor.IsAvailable() && !quickNavigation_->animation.IsAnimating() &&
-        !quickNavigation_->animationCompositorDriven &&
+        quickNavigation_->backdropCompositor.IsAvailable() && !deforming &&
+        (!quickNavigation_->animationCompositorDriven || previouslySrgb) &&
         quickNavigation_->backdropCompositor.StageSrgbContent(hwnd, srgbKey, srgbFrame, ctx.Get(), updateOffset);
     ctx->SetTransform(D2D1::Matrix3x2F::Identity());
     ctx.Reset();
@@ -609,11 +624,11 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         EndPaint(hwnd, &ps);
         return;
     }
-    const bool previouslySrgb = quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey);
     // Preserve the native animation timeline during hover and caret repaints.
     if (!quickNavigation_->animationCompositorDriven)
         UpdateQuickNavigationBackdrop();
-    const bool srgbPresented = stagedSrgb && quickNavigation_->backdropCompositor.PublishSrgbContent(srgbKey);
+    const bool srgbPresented = stagedSrgb && quickNavigation_->backdropCompositor.PublishSrgbContent(
+        srgbKey, quickNavigation_->animationCompositorDriven ? -1.f : 1.f);
     if (!srgbPresented) quickNavigation_->backdropCompositor.RemoveSrgbContent(srgbKey);
     if (srgbPresented || previouslySrgb || previousSurface != quickNavigation_->dcompSurface.Get())
     {

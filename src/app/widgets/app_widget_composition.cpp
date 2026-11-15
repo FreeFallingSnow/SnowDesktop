@@ -464,9 +464,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         POINT center{bounds.left + (bounds.right - bounds.left) / 2,
             bounds.top + (bounds.bottom - bounds.top) / 2};
         namespace display = snowdesktop::display_color;
-        // The independent native text scroller and roll clip remain children
-        // of their original surface during their staged transition.
-        const bool srgbEligible = !drawRollSnapshot &&
+        // The independent native text scroller remains a child of the original surface.
+        const bool srgbEligible =
             !widgetMarqueeCompositionItems_.contains(widgetId) && ClientToScreen(hwnd_, &center) &&
             display::ModeForMonitor(MonitorFromPoint(center, MONITOR_DEFAULTTONULL)) == display::Mode::WideColor;
         const bool asynchronous = luaWidget && widgetSurfaceRenderer_ && !item.renderFailed && !srgbEligible;
@@ -709,6 +708,9 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         if (!rollInstalled)
         {
             item.hoverRollOpening.reset();
+            if (srgbPresented)
+                desktopBackdropCompositor_.SetSrgbContentRollClip(item.BackdropOwnerKey(),
+                    drawRollSnapshot ? visibleBounds : RECT{}, static_cast<float>(backdropCornerRadius));
             if (drawRollSnapshot)
             {
                 // Keep both visuals at the current sampled height if either

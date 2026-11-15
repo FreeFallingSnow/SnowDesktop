@@ -683,14 +683,23 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
         const float light = material.Intensity(distance / rasterScale, depth / rasterScale, lighting);
         const int alpha = static_cast<int>(std::lround(light * settings.edgeHighlightStrength * mask[index]));
         output[index] = SourceOver(PackPremultiplied(255, 255, 255, alpha), output[index]);
-        if (coverage && alpha > 0) (*coverage)[index] = 255;
+        int shadowAlpha = 0;
         if (material.settings.shadowStrength > 0.f)
         {
-            const int shadowAlpha = static_cast<int>(std::lround(
+            shadowAlpha = static_cast<int>(std::lround(
                 material.Occlusion(distance / rasterScale, depth / rasterScale, lighting) *
                 settings.edgeHighlightStrength * material.settings.shadowStrength * mask[index]));
             output[index] = SourceOver(
                 PackPremultiplied(4, 6, 9, shadowAlpha), output[index]);
+        }
+        if (coverage && alpha > 0)
+        {
+            // Use the reflection's share of the pixel so the correction fades
+            // with the reflected light through the inner edge of the rim.
+            const int outputAlpha = static_cast<int>(output[index] >> 24);
+            const int reflected = alpha * (255 - shadowAlpha);
+            (*coverage)[index] = static_cast<std::uint8_t>(
+                std::min(255, (reflected + outputAlpha / 2) / outputAlpha));
         }
     }
 }

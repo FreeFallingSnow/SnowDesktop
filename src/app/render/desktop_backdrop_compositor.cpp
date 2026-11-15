@@ -2663,7 +2663,7 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
 
 bool DesktopBackdropCompositor::SetPopupWindowPadding(const RECT& padding, const RECT& displayBounds)
 {
-    if (!impl_->available || !impl_->popupMode || IsRectEmpty(&displayBounds)) return false;
+    if (!impl_->available || !impl_->popupMode) return false;
     if (EqualRect(&impl_->popupPadding, &padding) && EqualRect(&impl_->popupDisplayBounds, &displayBounds))
         return true;
     const RECT previousPadding = impl_->popupPadding;
@@ -3328,12 +3328,57 @@ bool DesktopBackdropCompositor::StartPanelHeightAnimation(
         geometry.Size(size(timeline.target));
         geometry.StartAnimation(L"Size", animation);
         panel->SetClip(geometry);
+        const auto content = impl_->srgbContent.find(ownerKey);
+        if (content != impl_->srgbContent.end() && content->second.visual)
+        {
+            auto contentClip = impl_->compositor.CreateRoundedRectangleGeometry();
+            contentClip.Offset({static_cast<float>(panel->frame.left - content->second.stagedFrame.left),
+                static_cast<float>(panel->frame.top - content->second.stagedFrame.top)});
+            contentClip.CornerRadius({radius, radius});
+            contentClip.Size(size(timeline.target));
+            contentClip.StartAnimation(L"Size", animation);
+            content->second.visual.Clip(impl_->compositor.CreateGeometricClip(contentClip));
+            impl_->srgbContentCommitPending = true;
+        }
         return true;
     }
     catch (const winrt::hresult_error& error)
     {
         impl_->SetError(L"backdrop.animate_height", error.code());
         return false;
+    }
+}
+
+void DesktopBackdropCompositor::SetSrgbContentRollClip(std::uintptr_t ownerKey,
+    const RECT& bounds, float radius)
+{
+    const auto found = impl_->srgbContent.find(ownerKey);
+    if (found == impl_->srgbContent.end() || !found->second.visual) return;
+    auto& content = found->second;
+    try
+    {
+        if (IsRectEmpty(&bounds))
+        {
+            if (!content.visual.Clip()) return;
+            content.visual.Clip(nullptr);
+        }
+        else
+        {
+            const float width = static_cast<float>(bounds.right - bounds.left);
+            const float height = static_cast<float>(bounds.bottom - bounds.top);
+            radius = std::min({radius, width * .5f, height * .5f});
+            auto geometry = impl_->compositor.CreateRoundedRectangleGeometry();
+            geometry.Offset({static_cast<float>(bounds.left - content.stagedFrame.left),
+                static_cast<float>(bounds.top - content.stagedFrame.top)});
+            geometry.Size({width, height});
+            geometry.CornerRadius({radius, radius});
+            content.visual.Clip(impl_->compositor.CreateGeometricClip(geometry));
+        }
+        impl_->srgbContentCommitPending = true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.srgb_content_roll_clip", error.code());
     }
 }
 

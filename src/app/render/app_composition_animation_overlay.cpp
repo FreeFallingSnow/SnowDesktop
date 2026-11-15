@@ -617,6 +617,18 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
     // Prepare content before starting the glass timeline, then submit both
     // channels together at this call site. Deferring the DComp half until the
     // message returns lets unrelated UI work separate the two start times.
+    const auto contentKey = reinterpret_cast<std::uintptr_t>(quickNavigation_->hwnd);
+    if (quickNavigation_->backdropCompositor.HasSrgbContent(contentKey) &&
+        !quickNavigation_->backdropCompositor.StartVisualTransformAnimation(
+            visual.scale, targetScale, visual.opacity, targetOpacity,
+            static_cast<float>(quickNavigation_->animationAnchorPoint.x - quickNavigation_->hostRect.left),
+            static_cast<float>(quickNavigation_->animationAnchorPoint.y - quickNavigation_->hostRect.top),
+            duration, normalizedStartSlope, responsive ? &scaleTimeline : nullptr,
+            responsive ? &revealTimeline : nullptr, 0, contentKey))
+    {
+        ApplyQuickNavigationAnimationFrame();
+        return false;
+    }
     if (quickNavigation_->glassTheme && quickNavigation_->backdropCompositor.IsAvailable() &&
         !quickNavigation_->backdropCompositor.StartVisualTransformAnimation(
             visual.scale, targetScale, visual.opacity, targetOpacity,
@@ -629,7 +641,8 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
         ApplyQuickNavigationAnimationFrame();
         return false;
     }
-    if (!FlushPendingQuickNavigationCompositionCommit())
+    if (!FlushPendingQuickNavigationCompositionCommit() ||
+        !quickNavigation_->backdropCompositor.CommitSrgbContent())
     {
         ApplyQuickNavigationAnimationFrame();
         return false;
