@@ -43,6 +43,7 @@ struct DesktopWidget;
 struct CategorySettings;
 class DesktopApp;
 namespace snowdesktop::group_tab_drag_preview { struct Layout; }
+namespace snowdesktop::text_input { enum class MenuCommand : UINT; struct MenuState; }
 namespace snowdesktop::widget_runtime { struct WidgetSurfacePaint; }
 namespace snowdesktop::popup_resize_transition { class Transition; }
 class WidgetEngine;
@@ -425,6 +426,8 @@ public:
     void MoveCursorHome(bool extendSelection = false);
     void MoveCursorEnd(bool extendSelection = false);
     bool HandleSearchKey(WPARAM key);
+    snowdesktop::text_input::MenuState GetSearchMenuState() const;
+    void ExecuteSearchEditCommand(snowdesktop::text_input::MenuCommand command);
     void BeginSearchPointerSelection(
         POINT point, bool extendSelection);
     bool UpdateSearchPointerSelection(POINT point);

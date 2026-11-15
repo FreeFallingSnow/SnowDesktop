@@ -1,6 +1,7 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app/navigation/quick_navigation_state.h"
+#include "app/popup/categorized_popup_scope.h"
 #include "common/l10n.h"
 #include "diagnostics/diagnostic_log.h"
 #include "widget/runtime/widget_engine.h"
@@ -8,6 +9,7 @@
 #include "app/dock/dock_tray_popup_state.h"
 #include "app/dock/persistent_dock_host.h"
 #include "widget_search_context_menu.h"
+#include "ui/input/text_input_window.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "layout/page_navigation_rules.h"
 #include "ui/menu/right_click_contract.h"
@@ -16,6 +18,7 @@
 #include "app/widgets/widget_right_drag_actions.h"
 #include "drag_drop/right_drag_actions.h"
 
+#include <imm.h>
 #include <utility>
 
 // Page-navigation clicks and right-button context dispatch.
@@ -84,53 +87,14 @@ bool DesktopApp::ShowHostInputContextMenu(
     ClearSelection();
     InvalidateRect(hwnd_, nullptr, FALSE);
 
-    PrepareMenuIconsForPoint(screenPoint);
-    HMENU menu = CreatePopupMenu();
-    if (!menu)
-    {
-        interactionPinnedWidgetId_ = previousPinnedWidgetId;
-        InvalidateRect(hwnd_, nullptr, FALSE);
-        return true;
-    }
-    const auto flags = [](bool enabled) {
-        return MF_STRING | (enabled ? 0 : MF_GRAYED);
-    };
-    AppendMenuW(menu, flags(state.canCut),
-        kContextCutCommand, _LW("app.menu.cut"));
-    AppendMenuW(menu, flags(state.canCopy),
-        kContextCopyCommand, _LW("app.menu.copy"));
-    AppendMenuW(menu, flags(state.canPaste),
-        kContextPasteCommand, _LW("app.menu.paste"));
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, flags(state.canSelectAll),
-        kContextSelectAllCommand, _LW("app.menu.select_all"));
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING,
-        kContextWidgetOpenComponentPanel,
-        _LW("app.interact.open_component_panel"));
-
-    SetMenuItemIcon(menu, kContextCutCommand, L"\uf0c4");
-    SetMenuItemIcon(menu, kContextCopyCommand, L"\uf0c5");
-    SetMenuItemIcon(menu, kContextPasteCommand, L"\uf0ea");
-    SetMenuItemIcon(menu, kContextSelectAllCommand,
-        snowdesktop::menu_fluent_glyphs::kSelectAll,
-        MenuIconFont::FluentRegular);
-    SetMenuItemIcon(menu, kContextWidgetOpenComponentPanel,
-        snowdesktop::menu_fluent_glyphs::kChevronRight,
-        MenuIconFont::FluentRegular);
-    SetMenuItemQuickAction(menu, kContextCutCommand);
-    SetMenuItemQuickAction(menu, kContextCopyCommand);
-    SetMenuItemQuickAction(menu, kContextPasteCommand);
-    SetMenuItemQuickAction(menu, kContextSelectAllCommand);
-
+    namespace text = snowdesktop::text_input;
     RestoreInteractionInputFocus();
-    const UINT command = ShowModernMenu(
-        menu, screenPoint, hwnd_);
-    DestroyMenu(menu);
-    ClearMenuIcons();
+    const auto command = text::ShowEditingMenu(hwnd_, screenPoint,
+        {false, false, state.canCut, state.canCopy, state.canPaste, state.canSelectAll},
+        text::MenuKind::LuaComponent);
     RestoreDesktopWindowLayer();
 
-    if (command == kContextWidgetOpenComponentPanel)
+    if (command == text::MenuCommand::OpenComponentPanel)
     {
         const size_t widgetIndex = FindWidgetIndexById(widgetId);
         if (widgetIndex < widgets_.size())
@@ -153,19 +117,19 @@ bool DesktopApp::ShowHostInputContextMenu(
     using snowdesktop::widget_runtime::HostInputEditCommand;
     switch (command)
     {
-    case kContextSelectAllCommand:
+    case text::MenuCommand::SelectAll:
         widgetEngine_->ExecuteHostInputEditCommand(
             HostInputEditCommand::SelectAll);
         break;
-    case kContextCutCommand:
+    case text::MenuCommand::Cut:
         widgetEngine_->ExecuteHostInputEditCommand(
             HostInputEditCommand::Cut);
         break;
-    case kContextCopyCommand:
+    case text::MenuCommand::Copy:
         widgetEngine_->ExecuteHostInputEditCommand(
             HostInputEditCommand::Copy);
         break;
-    case kContextPasteCommand:
+    case text::MenuCommand::Paste:
         widgetEngine_->ExecuteHostInputEditCommand(
             HostInputEditCommand::Paste);
         break;
@@ -879,6 +843,93 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
 
     if (popupOccludesPoint)
         popupFanActionFocused_ = false;
+
+    const auto findSearchInput = [&]() -> ScrollingItemWidget* {
+        if (IsPointOccludedByOpenPopup(pt))
+        {
+            const auto* popup = GetOpenPopupWidget();
+            if (!popup || !IsCollectionPopupInteractive()) return nullptr;
+            auto* view = GetCategorizedPopupView();
+            if (!view) return nullptr;
+            const CategorizedPopupScope layout(view, GetCategorizedPopupFrame(GetCollectionPopupRect(*popup)));
+            const RECT search = view->GetSearchBoxRect();
+            return PtInRect(&search, pt) ? view : nullptr;
+        }
+        for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+        {
+            auto* widget = dynamic_cast<WidgetContainer*>(it->get());
+            if (!widget || (desktopIconsHidden_ && !IsRetainedContainer(widget))) continue;
+            const auto hit = widget->HitTestWidget(pt);
+            if (hit != WidgetHit::None)
+                return hit == WidgetHit::SearchBox ? dynamic_cast<ScrollingItemWidget*>(widget) : nullptr;
+        }
+        return nullptr;
+    };
+    if (auto* view = findSearchInput())
+    {
+        namespace text = snowdesktop::text_input;
+        const std::wstring widgetId = view->GetWidgetData()->id;
+        const bool dockFolder = view == dockFolderPopupContainer_.get();
+        const std::wstring folderPath = dockFolder ? dockFolderPopupWidget_.sourceFolderPath : std::wstring{};
+        if (widgetEngine_ && widgetEngine_->HasFocusedHostInput())
+            widgetEngine_->BlurHostInput(false);
+        if (auto* popupView = GetCategorizedPopupView(); popupView && popupView != view)
+            popupView->SetSearchFocused(false);
+        for (const auto& container : containers_)
+            if (auto* other = dynamic_cast<ScrollingItemWidget*>(container.get()); other && other != view)
+                other->SetSearchFocused(false);
+        if (!popupOccludesPoint && !view->GetWidgetData()->selected)
+            SelectWidgetOnly(FindWidgetIndexById(widgetId));
+        view->SetSearchFocused(true);
+        RestoreInteractionInputFocus(true);
+        UpdateHostInputImePosition();
+        HWND owner = snowdesktop::private_pointer::FocusWindow();
+        if (!owner || (owner != inputHwnd_ && owner != floatingDockInputHwnd_))
+            owner = hwnd_;
+        if (view->IsSearchComposing())
+        {
+            if (const auto ime = ImmGetContext(owner))
+            {
+                ImmNotifyIME(ime, NI_COMPOSITIONSTR, CPS_COMPLETE, 0);
+                ImmReleaseContext(owner, ime);
+            }
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+
+        const auto command = text::ShowEditingMenu(owner, screenPt,
+            view->GetSearchMenuState(), text::MenuKind::ComponentSearch);
+        RestoreDesktopWindowLayer();
+        if (command == text::MenuCommand::None) return;
+
+        // The menu pumps messages, so resolve the visible input again.
+        view = findSearchInput();
+        if (!view || view->GetWidgetData()->id != widgetId || !view->IsSearchFocused() ||
+            popupOccludesPoint != IsPointOccludedByOpenPopup(pt) ||
+            (dockFolder && dockFolderPopupWidget_.sourceFolderPath != folderPath))
+            return;
+        if (command == text::MenuCommand::OpenComponentPanel)
+        {
+            if (dockFolder)
+                ShowDockFolderPopupContextMenu(screenPt);
+            else if (const size_t index = FindWidgetIndexById(widgetId); index < widgets_.size())
+            {
+                SelectWidgetOnly(index);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                ShowWidgetContextMenu(screenPt, index);
+            }
+            return;
+        }
+        view->ExecuteSearchEditCommand(command);
+        if (popupOccludesPoint)
+        {
+            popupScrollOffset_ = 0;
+            InvalidateCollectionPopupContent();
+            InvalidateFloatingPopupWindow();
+        }
+        UpdateHostInputImePosition();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
 
     if (dockFolderPopupOpen_ &&
         popupOccludesPoint)

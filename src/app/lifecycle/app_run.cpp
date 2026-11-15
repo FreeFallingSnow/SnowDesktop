@@ -30,6 +30,7 @@
 #include "app/input/software_desktop_hotkey.h"
 #include "app/input/grid_preview_shortcut.h"
 #include "ui/menu/modern_menu.h"
+#include "ui/menu/menu_fluent_glyphs.h"
 #include "system/controls/system_control_prompt.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "startup_animation.h"
@@ -435,21 +436,61 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             FlushPendingCompositionCommit();
             FlushPendingQuickNavigationCompositionCommit();
         });
-    snowdesktop::text_input::SetMenuHandler([this](HWND window,POINT point,const snowdesktop::text_input::MenuState& state){
-        namespace menu=snowdesktop::modern_menu;
-        using Command=snowdesktop::text_input::MenuCommand;
-        std::vector<menu::Item> items;
-        const auto add=[&](Command command,const wchar_t* label,bool enabled){menu::Item item;item.command=static_cast<UINT>(command);item.label=label;item.enabled=enabled;items.push_back(std::move(item));};
-        add(Command::Undo,_LW("app.menu.undo"),state.undo);add(Command::Redo,_LW("app.menu.redo"),state.redo);
-        menu::Item separator;separator.separator=true;items.push_back(separator);
-        add(Command::Cut,_LW("app.menu.cut"),state.cut);add(Command::Copy,_LW("app.menu.copy"),state.copy);add(Command::Paste,_LW("app.menu.paste"),state.paste);
-        items.push_back(separator);add(Command::SelectAll,_LW("app.menu.select_all"),state.selectAll);
-        menu::Options options;options.owner=window;options.anchor=point;options.dpi=GetDpiForWindow(window);
-        options.zOrderOwner=(GetWindowLongPtrW(window,GWL_STYLE)&WS_CHILD)?GetParent(window):window;
-        options.topmost=(GetWindowLongPtrW(options.zOrderOwner,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0;
-        options.appearance=static_cast<menu::Appearance>(menuAppearanceStyle_);
-        return static_cast<Command>(menu::Show(items,options).command);
-    });
+    snowdesktop::text_input::SetMenuHandler(
+        [this](HWND window, POINT point, const snowdesktop::text_input::MenuState& state,
+            snowdesktop::text_input::MenuKind kind) {
+            using Command = snowdesktop::text_input::MenuCommand;
+            using Kind = snowdesktop::text_input::MenuKind;
+            namespace glyphs = snowdesktop::menu_fluent_glyphs;
+            HMENU menu = CreatePopupMenu();
+            if (!menu)
+                return Command::None;
+            PrepareMenuIconsForPoint(point);
+
+            const auto add = [&](UINT id, const wchar_t* label, bool enabled,
+                const wchar_t* glyph, bool quick = false) {
+                AppendMenuW(menu, MF_STRING | (enabled ? 0 : MF_GRAYED), id, label);
+                SetMenuItemIcon(menu, id, glyph, MenuIconFont::FluentRegular);
+                if (quick) SetMenuItemQuickAction(menu, id);
+            };
+            const auto separator = [&] { AppendMenuW(menu, MF_SEPARATOR, 0, nullptr); };
+            add(kContextCutCommand, _LW("app.menu.cut"), state.cut, L"\uF33A", true);
+            add(kContextCopyCommand, _LW("app.menu.copy"), state.copy, glyphs::kCopy, true);
+            add(kContextPasteCommand, _LW("app.menu.paste"), state.paste, L"\uF2D5", true);
+            add(kContextSelectAllCommand, _LW("app.menu.select_all"), state.selectAll,
+                glyphs::kSelectAll, true);
+            if (kind != Kind::LuaComponent)
+            {
+                separator();
+                add(kFileUndoCommand, _LW("app.menu.undo"), state.undo, L"\uF199");
+                add(kFileRedoCommand, _LW("app.menu.redo"), state.redo, L"\uF16E");
+            }
+            if (kind != Kind::Editor)
+            {
+                separator();
+                add(kContextWidgetOpenComponentPanel, _LW("app.interact.open_component_panel"),
+                    true, glyphs::kChevronRight);
+            }
+
+            const HWND root = GetAncestor(window, GA_ROOT);
+            const bool topmostEditor = kind == Kind::Editor && root &&
+                (GetWindowLongPtrW(root, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+            const UINT command = ShowModernMenu(menu, point, window, false, false, nullptr,
+                {}, {}, {}, nullptr, {}, topmostEditor);
+            DestroyMenu(menu);
+            ClearMenuIcons();
+            switch (command)
+            {
+            case kContextCutCommand: return Command::Cut;
+            case kContextCopyCommand: return Command::Copy;
+            case kContextPasteCommand: return Command::Paste;
+            case kContextSelectAllCommand: return Command::SelectAll;
+            case kFileUndoCommand: return Command::Undo;
+            case kFileRedoCommand: return Command::Redo;
+            case kContextWidgetOpenComponentPanel: return Command::OpenComponentPanel;
+            default: return Command::None;
+            }
+        });
     struct InputMenuSession{~InputMenuSession(){snowdesktop::text_input::SetMenuHandler({});}} inputMenuSession;
 
     const ULONGLONG startupStarted = GetTickCount64();

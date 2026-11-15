@@ -1681,22 +1681,24 @@ void ScrollingItemWidget::MoveCursorEnd(bool extendSelection)
     ClearSearchComposition();
 }
 
-bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
+snowdesktop::text_input::MenuState ScrollingItemWidget::GetSearchMenuState() const
 {
-    if (!searchFocused_)
-        return false;
+    if (!searchFocused_ || searchComposing_) return {};
+    const bool selected = HasSearchSelection();
+    return {searchHistory_.CanUndo(), searchHistory_.CanRedo(), selected, selected,
+        IsClipboardFormatAvailable(CF_UNICODETEXT) != FALSE, !searchText_.empty()};
+}
 
+void ScrollingItemWidget::ExecuteSearchEditCommand(snowdesktop::text_input::MenuCommand command)
+{
+    using Command = snowdesktop::text_input::MenuCommand;
+    if (!searchFocused_ || searchComposing_) return;
     searchDuplicateImeResult_.clear();
-    if(searchComposing_)return true;
-
-    const bool control =
-        (snowdesktop::private_pointer::KeyState(VK_CONTROL) & 0x8000) != 0;
-    const bool shift =
-        (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
     searchHighSurrogate_ = 0;
-    if (control && (key == 'Z' || key == 'Y'))
+
+    if (command == Command::Undo || command == Command::Redo)
     {
-        const bool changed = key == 'Y' || shift
+        const bool changed = command == Command::Redo
             ? searchHistory_.Redo(searchText_, searchCursorPos_, searchSelectionAnchor_)
             : searchHistory_.Undo(searchText_, searchCursorPos_, searchSelectionAnchor_);
         if (changed)
@@ -1705,32 +1707,26 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
             if (searchText_.empty()) folderSearch_.reset();
             InvalidateSlots();
         }
-        return true;
+        return;
     }
     searchCursorPos_ =
         std::min(searchCursorPos_, searchText_.size());
     searchSelectionAnchor_ =
         std::min(searchSelectionAnchor_, searchText_.size());
-    searchPointerSelecting_ = false;
+    EndSearchPointerSelection();
 
-    if (key == VK_ESCAPE)
-    {
-        ClearSearchText();
-        return true;
-    }
-    if (control && key == 'A')
+    if (command == Command::SelectAll)
     {
         searchSelectionAnchor_ = 0;
         searchCursorPos_ = searchText_.size();
         ClearSearchComposition();
-        return true;
+        return;
     }
-    if (control && (key == 'C' || key == 'X'))
+    if (command == Command::Copy || command == Command::Cut)
     {
         bool copied = false;
-        if (HasSearchSelection() && OpenClipboard(nullptr))
+        if (HasSearchSelection() && app_ && app_->hwnd_ && OpenClipboard(app_->hwnd_))
         {
-            EmptyClipboard();
             const std::wstring selected =
                 searchText_.substr(
                     GetSearchSelectionStart(),
@@ -1746,7 +1742,7 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
                 {
                     memcpy(destination, selected.c_str(), bytes);
                     GlobalUnlock(memory);
-                    if (SetClipboardData(
+                    if (EmptyClipboard() && SetClipboardData(
                             CF_UNICODETEXT, memory))
                         copied = true;
                     else
@@ -1757,7 +1753,7 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
             }
             CloseClipboard();
         }
-        if (key == 'X' && copied)
+        if (command == Command::Cut && copied)
         {
             const snowdesktop::text_input::Snapshot before{searchText_, searchCursorPos_, searchSelectionAnchor_};
             EraseSearchSelection();
@@ -1766,9 +1762,9 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
             InvalidateSlots();
         }
         ClearSearchComposition();
-        return true;
+        return;
     }
-    if (control && key == 'V')
+    if (command == Command::Paste)
     {
         std::wstring pasted;
         if (OpenClipboard(nullptr))
@@ -1795,6 +1791,41 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
         if (!pasted.empty())
             ReplaceSearchSelection(pasted);
         ClearSearchComposition();
+    }
+}
+
+bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
+{
+    if (!searchFocused_) return false;
+    searchDuplicateImeResult_.clear();
+    if (searchComposing_) return true;
+
+    const bool control =
+        (snowdesktop::private_pointer::KeyState(VK_CONTROL) & 0x8000) != 0;
+    const bool shift =
+        (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
+    if (control)
+    {
+        using Command = snowdesktop::text_input::MenuCommand;
+        switch (key)
+        {
+        case 'Z': ExecuteSearchEditCommand(shift ? Command::Redo : Command::Undo); return true;
+        case 'Y': ExecuteSearchEditCommand(Command::Redo); return true;
+        case 'A': ExecuteSearchEditCommand(Command::SelectAll); return true;
+        case 'C': ExecuteSearchEditCommand(Command::Copy); return true;
+        case 'X': ExecuteSearchEditCommand(Command::Cut); return true;
+        case 'V': ExecuteSearchEditCommand(Command::Paste); return true;
+        }
+    }
+
+    searchHighSurrogate_ = 0;
+    searchCursorPos_ = std::min(searchCursorPos_, searchText_.size());
+    searchSelectionAnchor_ = std::min(searchSelectionAnchor_, searchText_.size());
+    searchPointerSelecting_ = false;
+
+    if (key == VK_ESCAPE)
+    {
+        ClearSearchText();
         return true;
     }
     if (key == VK_BACK)
