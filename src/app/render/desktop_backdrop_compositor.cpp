@@ -730,6 +730,9 @@ struct DesktopBackdropCompositor::Impl
     bool popupMode = false;
     bool popupTopmost = false;
     RECT popupPadding{};
+    RECT popupDisplayBounds{};
+    RECT submittedPopupDisplayClip{};
+    wuc::CompositionRectangleGeometry popupDisplayClip{nullptr};
     bool visible = true;
     bool animationPathRegionExpanded = false;
     bool stableWindowRegion = false;
@@ -863,6 +866,42 @@ struct DesktopBackdropCompositor::Impl
         return popupMode ? snowdesktop::blur_sampling::kMaximumBackdropMargin : 0;
     }
 
+    bool SyncPopupDisplayClip(POINT screenOrigin)
+    {
+        // The animation moves root inside a fixed display clip on
+        // placementRoot. The native window still reserves the blur halo.
+        RECT clip = popupDisplayBounds;
+        const bool enabled = !IsRectEmpty(&clip);
+        const LONG margin = PlacementMargin();
+        if (enabled) OffsetRect(&clip, -screenOrigin.x - margin, -screenOrigin.y - margin);
+        if (!enabled && !popupDisplayClip) return true;
+        if (enabled && popupDisplayClip && EqualRect(&submittedPopupDisplayClip, &clip)) return true;
+        try
+        {
+            if (enabled)
+            {
+                auto geometry = popupDisplayClip ? popupDisplayClip : compositor.CreateRectangleGeometry();
+                geometry.Offset({static_cast<float>(clip.left), static_cast<float>(clip.top)});
+                geometry.Size({static_cast<float>(clip.right - clip.left), static_cast<float>(clip.bottom - clip.top)});
+                if (!popupDisplayClip) placementRoot.Clip(compositor.CreateGeometricClip(geometry));
+                popupDisplayClip = std::move(geometry);
+            }
+            else
+            {
+                placementRoot.Clip(nullptr);
+                popupDisplayClip = nullptr;
+            }
+            submittedPopupDisplayClip = clip;
+            frameCommitPending = true;
+            return true;
+        }
+        catch (const winrt::hresult_error& error)
+        {
+            SetError(L"backdrop.popup_display_clip", error.code());
+            return false;
+        }
+    }
+
     bool SyncWindowPlacement()
     {
         if (!available || !backdropWindow || !IsWindow(backdropWindow) ||
@@ -917,7 +956,7 @@ struct DesktopBackdropCompositor::Impl
             // glass pair through the coordinated Z-order policy; issuing another
             // helper-only SetWindowPos/SWP_SHOWWINDOW here would make DWM
             // re-evaluate the BackdropBrush source for an extra frame.
-            return true;
+            return SyncPopupDisplayClip(screenOrigin);
         }
 
         UINT flags = SWP_NOACTIVATE | SWP_NOOWNERZORDER;
@@ -931,7 +970,7 @@ struct DesktopBackdropCompositor::Impl
             backdropWindow,
             pairedZOrder ? nullptr : contentWindow,
             origin.x, origin.y, size.cx, size.cy,
-            flags) != FALSE;
+            flags) != FALSE && SyncPopupDisplayClip(screenOrigin);
     }
 
     bool SyncPanelWindowRegion()
@@ -1482,6 +1521,7 @@ struct DesktopBackdropCompositor::Impl
         }
         root = nullptr;
         placementRoot = nullptr;
+        popupDisplayClip = nullptr;
         target = nullptr;
         // The compositor and dispatcher queue are shared by every backdrop
         // target on this UI thread. Releasing one target must not invalidate
@@ -1496,6 +1536,8 @@ struct DesktopBackdropCompositor::Impl
         popupMode = false;
         popupTopmost = false;
         popupPadding = {};
+        popupDisplayBounds = {};
+        submittedPopupDisplayClip = {};
         visible = true;
         animationPathRegionExpanded = false;
         stableWindowRegion = false;
@@ -2653,14 +2695,19 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
     }
 }
 
-bool DesktopBackdropCompositor::SetPopupWindowPadding(const RECT& padding)
+bool DesktopBackdropCompositor::SetPopupWindowPadding(const RECT& padding, const RECT& displayBounds)
 {
-    if (!impl_->available || !impl_->popupMode) return false;
-    if (EqualRect(&impl_->popupPadding, &padding)) return true;
-    const RECT previous = impl_->popupPadding;
+    if (!impl_->available || !impl_->popupMode || IsRectEmpty(&displayBounds)) return false;
+    if (EqualRect(&impl_->popupPadding, &padding) && EqualRect(&impl_->popupDisplayBounds, &displayBounds))
+        return true;
+    const RECT previousPadding = impl_->popupPadding;
+    const RECT previousDisplayBounds = impl_->popupDisplayBounds;
     impl_->popupPadding = padding;
+    impl_->popupDisplayBounds = displayBounds;
     if (impl_->SyncWindowPlacement()) return true;
-    impl_->popupPadding = previous;
+    impl_->popupPadding = previousPadding;
+    impl_->popupDisplayBounds = previousDisplayBounds;
+    (void)impl_->SyncWindowPlacement();
     return false;
 }
 

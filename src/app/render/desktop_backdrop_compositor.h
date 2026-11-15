@@ -146,8 +146,8 @@ public:
     // Apply regions to the existing rounded panel, sampling its backdrop once.
     bool SetPanelIconRegions(std::uintptr_t ownerKey, ID2D1Device* drawDevice,
         std::span<const snowdesktop::PanelBackdropIcon> icons, bool extendOutline);
-    // A merged status strip needs room for Dock icons beyond its content HWND.
-    bool SetPopupWindowPadding(const RECT& padding);
+    // Extra popup allocation for shared Dock icons, with a fixed screen-space display clip.
+    bool SetPopupWindowPadding(const RECT& padding, const RECT& displayBounds);
     /**
      * @brief 注册或更新一个圆角玻璃面板。
      * @param ownerKey 非零时作为跨几何变化保持稳定的面板身份；零值保留
