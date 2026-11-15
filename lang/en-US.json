@@ -2926,5 +2926,6 @@
   "workshop_manager.tags_published_save_failed": "Tags published to Steam, but local saving failed: %s",
   "workshop_manager.publish_tags_tooltip": "Publish the entire tag list. An empty list clears the tags.",
   "workshop_manager.manage_owned_item": "You can only manage items owned by the current Steam account.",
-  "workshop_manager.accept_workshop_agreement": "Accept the Steam Workshop agreement in Steam first."
+  "workshop_manager.accept_workshop_agreement": "Accept the Steam Workshop agreement in Steam first.",
+  "workshop_manager.tag_actions": "Tag actions"
 }
