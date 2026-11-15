@@ -28,11 +28,19 @@ public:
         if (_wcsicmp(normalized.parent_path().c_str(), directory_.c_str()) != 0) return;
         {
             std::lock_guard lock(mutex_);
-            if (std::any_of(seen_.begin(), seen_.end(), [&](const auto& seen) {
-                    return _wcsicmp(seen.c_str(), normalized.c_str()) == 0;
-                })) return;
-            seen_.push_back(normalized.wstring());
-            pending_.push_back({normalized.wstring(), GetTickCount64(), edit});
+            const auto output = std::find_if(outputs_.begin(), outputs_.end(), [&](const auto& entry) {
+                return _wcsicmp(entry.path.c_str(), normalized.c_str()) == 0;
+            });
+            if (output == outputs_.end())
+                outputs_.push_back({normalized.wstring(), GetTickCount64(), edit});
+            else
+            {
+                // Shell can select the output first, then ask to edit the same path.
+                if (!edit || output->edit) return;
+                output->edit = true;
+                output->reportedAt = GetTickCount64();
+                if (output->delivery == Delivery::Complete) output->delivery = Delivery::Rename;
+            }
         }
         Notify();
     }
@@ -46,14 +54,17 @@ public:
     bool HasPendingPaths()
     {
         std::lock_guard lock(mutex_);
-        return !pending_.empty();
+        return std::any_of(outputs_.begin(), outputs_.end(), [](const auto& item) {
+            return item.delivery != Delivery::Complete;
+        });
     }
 
     template<class Consumer>
-    void ForEachPendingPath(Consumer&& consumer)
+    void ForEachUnplacedPath(Consumer&& consumer)
     {
         std::lock_guard lock(mutex_);
-        for (const auto& item : pending_) consumer(item.path);
+        for (const auto& item : outputs_)
+            if (item.delivery == Delivery::Placement) consumer(item.path);
     }
 
     // Keep exact outputs across refreshes until enumeration catches up. A
@@ -63,11 +74,17 @@ public:
     bool Consume(Consumer&& consumer, ULONGLONG now = GetTickCount64())
     {
         std::lock_guard lock(mutex_);
-        std::erase_if(pending_, [&](const auto& item) {
-            if (now >= item.reportedAt && now - item.reportedAt > 30000) return true;
-            return consumer(item.path, item.edit);
-        });
-        return finished_ && pending_.empty();
+        bool pending = false;
+        for (auto& item : outputs_)
+        {
+            if (item.delivery == Delivery::Complete) continue;
+            const bool expired = now >= item.reportedAt && now - item.reportedAt > 30000;
+            if (expired || consumer(item.path, item.delivery == Delivery::Placement, item.edit))
+                item.delivery = Delivery::Complete;
+            else
+                pending = true;
+        }
+        return finished_ && !pending;
     }
 
 private:
@@ -89,13 +106,19 @@ private:
         if (notifyWindow_ && notifyMessage_)
             PostMessageW(notifyWindow_, notifyMessage_, 0, 0);
     }
-    struct Output { std::wstring path; ULONGLONG reportedAt; bool edit; };
+    enum class Delivery { Placement, Rename, Complete };
+    struct Output
+    {
+        std::wstring path;
+        ULONGLONG reportedAt;
+        bool edit;
+        Delivery delivery = Delivery::Placement;
+    };
     std::filesystem::path directory_;
     HWND notifyWindow_;
     UINT notifyMessage_;
     std::mutex mutex_;
-    std::vector<Output> pending_;
-    std::vector<std::wstring> seen_;
+    std::vector<Output> outputs_;
     bool finished_ = false;
 };
 

@@ -228,7 +228,7 @@ std::unordered_set<std::wstring> DesktopApp::PendingDesktopNewItemPaths() const
     std::unordered_set<std::wstring> paths;
     for (const auto& pending : pendingNewItemCaptures_)
         if (pending.target.surface == NewItemTarget::Surface::Desktop)
-            pending.capture->ForEachPendingPath([&](const auto& path) { paths.insert(ToUpperInvariant(path)); });
+            pending.capture->ForEachUnplacedPath([&](const auto& path) { paths.insert(ToUpperInvariant(path)); });
     return paths;
 }
 
@@ -243,7 +243,7 @@ std::optional<DesktopApp::NewItemRename> DesktopApp::ApplyPendingNewItems(
     std::erase_if(pendingNewItemCaptures_, [&](auto& pending) {
         const auto& target = pending.target;
         const bool desktopTarget = target.surface == Surface::Desktop || target.surface == Surface::FileCategories;
-        return pending.capture->Consume([&](const auto& path, bool edit) {
+        return pending.capture->Consume([&](const auto& path, bool needsPlacement, bool edit) {
             if (desktopTarget != (desktopSlots != nullptr)) return false;
             if (target.surface == Surface::FolderPopup || target.surface == Surface::FolderMapping)
             {
@@ -261,7 +261,7 @@ std::optional<DesktopApp::NewItemRename> DesktopApp::ApplyPendingNewItems(
                         return MatchesExactPath(entry.fullPath, path);
                     })) return false;
             }
-            else if (target.surface == Surface::FileCategories)
+            else if (needsPlacement && target.surface == Surface::FileCategories)
             {
                 using snowdesktop::new_item_placement::Result;
                 const auto result = snowdesktop::new_item_placement::Apply(
@@ -271,7 +271,7 @@ std::optional<DesktopApp::NewItemRename> DesktopApp::ApplyPendingNewItems(
                 ++pending.insertIndex;
                 membershipChanged = true;
             }
-            else
+            else if (needsPlacement)
             {
                 if (!desktopPaths || !desktopPaths->contains(ToUpperInvariant(path))) return false;
                 const auto item = std::find_if(items_.begin(), items_.end(), [&](const auto& candidate) {
