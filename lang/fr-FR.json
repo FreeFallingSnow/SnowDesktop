@@ -213,10 +213,6 @@
   "app.settings.widgets_authoring_folder": "Dossier des composants en développement",
   "app.settings.widgets_component_cli": "CLI des composants",
   "app.settings.widgets_copy_command": "Copier",
-  "app.settings.widgets_command_copied": "Commande copiée.",
-  "app.settings.widgets_cli_capabilities": "Capacités",
-  "app.settings.widgets_cli_validate": "Valider le composant",
-  "app.settings.widgets_cli_pack": "Empaqueter le composant",
   "app.settings.widgets_export_package": "Exporter un paquet autonome",
   "app.settings.widgets_exporting_package": "Exportation du paquet du composant",
   "app.settings.widgets_export_package_success": "Paquet du composant exporté : {0}",
@@ -2912,5 +2908,10 @@
   "appearance.popupScene.followShared": "Suivre le thème commun des fenêtres contextuelles",
   "settings.pages.gridPreview": "Aperçu de la grille",
   "settings.pages.gridPreview.enabled": "Activer l’aperçu",
-  "settings.pages.gridPreview.description": "Maintenez le raccourci enfoncé sur le bureau pour afficher toutes les cases libres."
+  "settings.pages.gridPreview.description": "Maintenez le raccourci enfoncé sur le bureau pour afficher toutes les cases libres.",
+  "workshop_manager.add_tag": "Ajouter une étiquette",
+  "app.settings.widgets_cli_path": "Chemin de la CLI",
+  "app.settings.widgets_cli_help": "Commande d’aide",
+  "app.settings.widgets_cli_copied": "Copié.",
+  "workshop_manager.component_update_pending": "Mise à jour du composant en attente"
 }

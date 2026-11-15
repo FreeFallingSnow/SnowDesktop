@@ -213,10 +213,6 @@
   "app.settings.widgets_authoring_folder": "Ordner für Entwicklungskomponenten",
   "app.settings.widgets_component_cli": "Komponenten-CLI",
   "app.settings.widgets_copy_command": "Kopieren",
-  "app.settings.widgets_command_copied": "Befehl kopiert.",
-  "app.settings.widgets_cli_capabilities": "Funktionen",
-  "app.settings.widgets_cli_validate": "Komponente prüfen",
-  "app.settings.widgets_cli_pack": "Komponente paketieren",
   "app.settings.widgets_export_package": "Eigenständiges Paket exportieren",
   "app.settings.widgets_exporting_package": "Komponentenpaket wird exportiert",
   "app.settings.widgets_export_package_success": "Komponentenpaket exportiert: {0}",
@@ -2912,5 +2908,10 @@
   "appearance.popupScene.followShared": "Gemeinsames Popup-Design übernehmen",
   "settings.pages.gridPreview": "Rastervorschau",
   "settings.pages.gridPreview.enabled": "Rastervorschau aktivieren",
-  "settings.pages.gridPreview.description": "Tastenkürzel auf dem Desktop gedrückt halten, um alle freien Rasterfelder anzuzeigen."
+  "settings.pages.gridPreview.description": "Tastenkürzel auf dem Desktop gedrückt halten, um alle freien Rasterfelder anzuzeigen.",
+  "workshop_manager.add_tag": "Tag hinzufügen",
+  "app.settings.widgets_cli_path": "CLI-Pfad",
+  "app.settings.widgets_cli_help": "Hilfebefehl",
+  "app.settings.widgets_cli_copied": "Kopiert.",
+  "workshop_manager.component_update_pending": "Komponentenupdate ausstehend"
 }

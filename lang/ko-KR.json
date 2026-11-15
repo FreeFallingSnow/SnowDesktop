@@ -213,10 +213,6 @@
   "app.settings.widgets_authoring_folder": "개발 구성 요소 폴더",
   "app.settings.widgets_component_cli": "구성 요소 CLI",
   "app.settings.widgets_copy_command": "복사",
-  "app.settings.widgets_command_copied": "명령을 복사했습니다.",
-  "app.settings.widgets_cli_capabilities": "기능 정보",
-  "app.settings.widgets_cli_validate": "구성 요소 검증",
-  "app.settings.widgets_cli_pack": "구성 요소 패키징",
   "app.settings.widgets_export_package": "독립 패키지 내보내기",
   "app.settings.widgets_exporting_package": "구성 요소 패키지를 내보내는 중",
   "app.settings.widgets_export_package_success": "구성 요소 패키지를 내보냈습니다: {0}",
@@ -2912,5 +2908,10 @@
   "appearance.popupScene.followShared": "공유 팝업 테마 따르기",
   "settings.pages.gridPreview": "격자 배치 미리 보기",
   "settings.pages.gridPreview.enabled": "미리 보기 켜기",
-  "settings.pages.gridPreview.description": "바탕 화면에서 단축키를 누르고 있는 동안 비어 있는 모든 격자 칸이 표시됩니다."
+  "settings.pages.gridPreview.description": "바탕 화면에서 단축키를 누르고 있는 동안 비어 있는 모든 격자 칸이 표시됩니다.",
+  "workshop_manager.add_tag": "태그 추가",
+  "app.settings.widgets_cli_path": "CLI 경로",
+  "app.settings.widgets_cli_help": "도움말 명령",
+  "app.settings.widgets_cli_copied": "복사했습니다.",
+  "workshop_manager.component_update_pending": "컴포넌트 업데이트 업로드 대기 중"
 }

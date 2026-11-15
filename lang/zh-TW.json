@@ -213,10 +213,6 @@
   "app.settings.widgets_authoring_folder": "開發元件目錄",
   "app.settings.widgets_component_cli": "元件 CLI",
   "app.settings.widgets_copy_command": "複製",
-  "app.settings.widgets_command_copied": "已複製命令。",
-  "app.settings.widgets_cli_capabilities": "能力檢測",
-  "app.settings.widgets_cli_validate": "驗證元件",
-  "app.settings.widgets_cli_pack": "封裝元件",
   "app.settings.widgets_export_package": "匯出獨立套件",
   "app.settings.widgets_exporting_package": "正在匯出元件套件",
   "app.settings.widgets_export_package_success": "元件套件已匯出：{0}",
@@ -2912,5 +2908,10 @@
   "appearance.popupScene.followShared": "跟隨共用彈出視窗主題",
   "settings.pages.gridPreview": "網格配置預覽",
   "settings.pages.gridPreview.enabled": "啟用網格預覽",
-  "settings.pages.gridPreview.description": "在桌面按住快速鍵，即可顯示所有空白網格。"
+  "settings.pages.gridPreview.description": "在桌面按住快速鍵，即可顯示所有空白網格。",
+  "workshop_manager.add_tag": "新增標籤",
+  "app.settings.widgets_cli_path": "CLI 路徑",
+  "app.settings.widgets_cli_help": "說明命令",
+  "app.settings.widgets_cli_copied": "已複製。",
+  "workshop_manager.component_update_pending": "元件更新待上傳"
 }
