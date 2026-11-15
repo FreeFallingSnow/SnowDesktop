@@ -178,7 +178,9 @@ struct SystemPanel::Impl
         auto nextCards = controls ? controls->CardBounds(scale) : std::vector<RECT>{{0, 0, width, height}};
         const bool sameCards = nextCards.size() == cardBounds.size() && std::equal(nextCards.begin(), nextCards.end(), cardBounds.begin(),
             [](const auto& a, const auto& b) { return EqualRect(&a, &b) != FALSE; });
-        if (showing && sameCards && regionRadius == radius && previous.left == left && previous.top == top && previous.right == left + width && previous.bottom == top + height) return;
+        if (showing && sameCards && regionRadius == radius && previous.left == left && previous.top == top &&
+            previous.right == left + width && previous.bottom == top + height &&
+            (!appearance.glassEnabled || backdrop.IsAvailable())) return;
         cardBounds = std::move(nextCards);
         SetWindowPos(window, HWND_TOPMOST, left, top, width, height, SWP_NOACTIVATE);
         runtime.ResizeToClient();
@@ -186,12 +188,17 @@ struct SystemPanel::Impl
         if (appearance.glassEnabled)
         {
             if (!backdrop.IsAvailable()) backdrop.InitializePopup(window, showing, false);
-            backdrop.Reattach(window); backdrop.BeginFrame(true);
-            for (std::size_t i = 0; i < cardBounds.size(); ++i)
-                backdrop.AddPanel(cardBounds[i], appearance.cornerRadius * static_cast<float>(scale),
-                    appearance.glassBlurRadius * static_cast<float>(scale), reinterpret_cast<std::uintptr_t>(this) + i);
-            backdrop.EndFrame();
-            if (showing) backdrop.ShowPopupWindowPair(window);
+            RECT viewport{};
+            if (GetWindowRect(window, &viewport) && backdrop.SetPopupWindowPadding({}, viewport))
+            {
+                backdrop.Reattach(window); backdrop.BeginFrame(true);
+                for (std::size_t i = 0; i < cardBounds.size(); ++i)
+                    backdrop.AddPanel(cardBounds[i], appearance.cornerRadius * static_cast<float>(scale),
+                        appearance.glassBlurRadius * static_cast<float>(scale), reinterpret_cast<std::uintptr_t>(this) + i);
+                backdrop.EndFrame();
+                if (showing) backdrop.ShowPopupWindowPair(window);
+            }
+            else backdrop.Reset();
         }
         else backdrop.Reset();
         if (slide.IsAnimating()) ApplyAnimation();

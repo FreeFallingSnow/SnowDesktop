@@ -270,7 +270,6 @@ struct StatusBar::Impl
         bool reserveSpace = true, positioned = false;
         RECT placedBounds{};
         RECT glassPadding{};
-        RECT glassDisplayBounds{};
         DWORD explorerPid = 0;
         bool placing = false, queued = false, fullscreen = false, failed = false, closing = false;
         // Only the bar's own hide may take the surface away. WM_WINDOWPOSCHANGING
@@ -750,13 +749,6 @@ struct StatusBar::Impl
             return owner.presentationEnabled && !closing && !fullscreen && !failed && IsWindowVisible(hwnd) &&
                 (!mergedDockHeight || mergedPresentation.inputEnabled);
         }
-        RECT GlassDisplayBounds(const StatusBarDockPresentation& frame) const
-        {
-            RECT bounds = glassDisplayBounds;
-            if (mergedDockHeight && frame.hiddenFraction > 0.f)
-                bounds.top = std::max(bounds.top, placedBounds.top);
-            return bounds;
-        }
         void ApplyDockPose(const StatusBarDockPresentation& frame)
         {
             if (!mergedDockHeight || !visual || !owner.composition) return;
@@ -768,7 +760,6 @@ struct StatusBar::Impl
             }
             visual->SetOffsetX(frame.offsetX);
             visual->SetOffsetY(frame.offsetY);
-            (void)backdrop.SetPopupWindowPadding(glassPadding, GlassDisplayBounds(frame));
             backdrop.SetVisualOpacity(frame.opacity);
             backdrop.SetVisualTranslation(frame.offsetX, frame.offsetY);
             backdrop.SetSrgbRootPose(frame.opacity, frame.offsetX, frame.offsetY);
@@ -888,63 +879,38 @@ struct StatusBar::Impl
                     rect.left,rect.top,rect.right,rect.bottom,placedWindow,placedWindow?0:GetLastError());
                 WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message, placedWindow ? DiagnosticLogLevel::Info : DiagnosticLogLevel::Warning);
             }
-            if (appearance.glassEnabled && !HighContrast())
+            if ((moved || appearanceDirty) && appearance.glassEnabled && !HighContrast())
             {
-                const bool rebuild = moved || appearanceDirty;
-                if (rebuild)
-                {
-                    if (!backdrop.IsAvailable()) backdrop.InitializePopup(hwnd, !fullscreen, false);
-                    backdrop.Reattach(hwnd);
-                }
+                if (!backdrop.IsAvailable()) backdrop.InitializePopup(hwnd, !fullscreen, false);
+                backdrop.Reattach(hwnd);
                 // Allocate room towards the monitor interior once per layout.
                 // The content HWND and AppBar reservation keep their original size.
                 RECT padding{};
-                RECT displayBounds = info.rcMonitor;
                 if (mergedDockHeight)
                 {
-                    // During a slide, glass must leave view at the same edge
-                    // as the content HWND, including an inset AppBar placement.
                     switch (edge)
                     {
-                    case ABE_LEFT:
-                        padding.right = thickness;
-                        displayBounds.left = std::max(displayBounds.left, rect.left);
-                        break;
-                    case ABE_RIGHT:
-                        padding.left = thickness;
-                        displayBounds.right = std::min(displayBounds.right, rect.right);
-                        break;
-                    case ABE_TOP:
-                        padding.bottom = thickness;
-                        displayBounds.top = std::max(displayBounds.top, rect.top);
-                        break;
-                    case ABE_BOTTOM:
-                        padding.top = thickness;
-                        displayBounds.bottom = std::min(displayBounds.bottom, rect.bottom);
-                        break;
+                    case ABE_LEFT: padding.right = thickness; break;
+                    case ABE_RIGHT: padding.left = thickness; break;
+                    case ABE_TOP: padding.bottom = thickness; break;
+                    case ABE_BOTTOM: padding.top = thickness; break;
                     }
                 }
-                glassDisplayBounds = displayBounds;
-                if (backdrop.SetPopupWindowPadding(padding, GlassDisplayBounds(mergedPresentation))) glassPadding = padding;
-                if (rebuild)
-                {
-                    const RECT panel{glassPadding.left, glassPadding.top,
-                        rect.right - rect.left + glassPadding.left, rect.bottom - rect.top + glassPadding.top};
-                    const bool staged = mergedDockHeight && backdrop.BeginStagedFrame();
-                    if (!staged) backdrop.BeginFrame(true);
-                    backdrop.AddPanel(panel,
-                        0, appearance.glassBlurRadius * dpi / 96.f,
-                        reinterpret_cast<std::uintptr_t>(this));
-                    if (staged) (void)backdrop.ApplyStagedFrame();
-                    else backdrop.EndFrame();
-                }
-                else backdrop.CommitDeferredFrame();
+                if (backdrop.SetPopupWindowPadding(padding, {})) glassPadding = padding;
+                const RECT panel{glassPadding.left, glassPadding.top,
+                    rect.right - rect.left + glassPadding.left, rect.bottom - rect.top + glassPadding.top};
+                const bool staged = mergedDockHeight && backdrop.BeginStagedFrame();
+                if (!staged) backdrop.BeginFrame(true);
+                backdrop.AddPanel(panel,
+                    0, appearance.glassBlurRadius * dpi / 96.f,
+                    reinterpret_cast<std::uintptr_t>(this));
+                if (staged) (void)backdrop.ApplyStagedFrame();
+                else backdrop.EndFrame();
             }
             else if (appearanceDirty && (!appearance.glassEnabled || HighContrast()))
             {
                 backdrop.Reset();
                 glassPadding = {};
-                glassDisplayBounds = {};
             }
             paintDirty = paintDirty || moved || appearanceDirty;
             backgroundDirty = backgroundDirty || moved || appearanceDirty;

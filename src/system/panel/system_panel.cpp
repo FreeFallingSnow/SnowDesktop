@@ -376,6 +376,18 @@ struct SystemPanel::Impl
             if(!prepared)ReportBackdropFailure(L"initialize");
             if(prepared)
             {
+                // Pose clips the moving controls to the content HWND. Use
+                // that stationary clip for glass while keeping its halo.
+                RECT viewport{};
+                prepared=GetWindowRect(window,&viewport)&&backdrop.SetPopupWindowPadding({},viewport);
+                if(!prepared)
+                {
+                    ReportBackdropFailure(L"viewport");
+                    backdrop.Reset();
+                }
+            }
+            if(prepared)
+            {
                 backdrop.Reattach(window);backdrop.BeginFrame(true);
                 for(std::size_t i=0;i<cards.size();++i)prepared=backdrop.AddPanel(cards[i],current->appearance.cornerRadius*scale,current->appearance.glassBlurRadius*scale,reinterpret_cast<std::uintptr_t>(this)+i)&&prepared;
                 backdrop.EndFrame(false);Pose();
@@ -387,7 +399,7 @@ struct SystemPanel::Impl
             // A rebuilt helper starts hidden even when the content HWND is
             // already shown. Restore the pair without changing keyboard focus.
             if(showing)SyncTrayMenuLayer();
-            backdrop.SetVisible(showing);
+            backdrop.SetVisible(showing&&prepared);
         }
         else if(!Glass())backdrop.Reset();
         if(moved||shape||appearanceChanged)Pose();
