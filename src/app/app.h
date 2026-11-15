@@ -2624,6 +2624,7 @@ private:
     bool UpdateCompositionAnimationOverlayContent(
         UiCompositionAnimationOverlay& overlay,
         const DragRenderCache& cache);
+    DesktopBackdropCompositor& AnimationHighlightCompositor(const UiCompositionAnimationOverlay& overlay);
     bool UpdateCompositionAnimationOverlay(
         UiCompositionAnimationOverlay& overlay,
         float scale, POINT anchor, float opacity,
@@ -2706,9 +2707,8 @@ private:
         snowdesktop::WidgetPreviewScene* previewScene = nullptr, HMONITOR dockMonitor = nullptr);
     void OnDockFolderIconLoaded(const std::wstring& iconCacheKey,
         std::uint64_t ticket, HBITMAP source, bool refined);
-    bool RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
-        float opacity, std::uintptr_t ownerKey, const snowdesktop::IconBeautifySettings* style = nullptr,
-        ID2D1Bitmap* material = nullptr, bool preserveAspectRatio = true);
+    void RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
+        float opacity, std::uintptr_t ownerKey, const snowdesktop::IconBeautifySettings* style = nullptr);
     void DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
         D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth, std::uintptr_t ownerKey = 0);
     void DrawPrivacyFaIcon(ID2D1DeviceContext* ctx, RECT rect, bool directory);
@@ -2797,8 +2797,7 @@ private:
     ID2D1Bitmap* GetDockCustomIcon(ID2D1RenderTarget* context, const std::string& id, int pixels, std::wstring_view identity = {});
     void DrawIconBitmap(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap,
         RECT destination, float opacity = 1.0f,
-        std::uintptr_t ownerKey = 0, bool preserveAspectRatio = true,
-        bool composeMaterialWithBackdrop = false);
+        std::uintptr_t ownerKey = 0, bool preserveAspectRatio = true);
     std::uintptr_t GetD2DIconCacheKey(HBITMAP hbm, bool beautified) const;
     void EraseD2DIconCacheForBitmap(HBITMAP hbm);
     bool ShouldBeautifyIconBitmap(bool iconIsMediaThumbnail) const;
@@ -3453,7 +3452,7 @@ private:
         RECT frame{};
     };
     std::vector<DesktopSrgbTile> desktopSrgbTiles_;
-    std::vector<RECT>* desktopSrgbTileDraws_ = nullptr;
+    std::vector<DesktopSrgbTile> foregroundSrgbTiles_;
     std::uintptr_t nextDesktopSrgbKey_ = 1;
     /** @brief 拖拽静态场景变化后，下一帧必须完整核对原生毛玻璃面板。 */
     bool desktopBackdropFullCollectionPending_ = false;
@@ -3984,6 +3983,8 @@ private:
     size_t floatingDockHoverTargetIndex_ = 0;
     int floatingDockHoverTargetKind_ = 0;
     ComPtr<IDCompositionTarget> dragPreviewDcompTarget_;
+    DesktopBackdropCompositor dragPreviewHighlights_;
+    HMONITOR dragPreviewMaterialMonitor_ = nullptr;
     ComPtr<IDCompositionVisual2> dragPreviewDcompVisual_;
     ComPtr<IDCompositionSurface> dragPreviewDcompSurface_;
     RECT dragPreviewContentBounds_{};

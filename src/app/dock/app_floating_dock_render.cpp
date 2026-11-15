@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "ui/render/highlight_coverage.h"
 #include "app/app.h"
 #include "dock/dock_window_transition.h"
 #include "diagnostics/diagnostic_log.h"
@@ -129,6 +130,8 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     } surfaceDrawScope{frameSurface.Get()};
     ComPtr<ID2D1DeviceContext> context;
     context.Attach(rawContext);
+    snowdesktop::HighlightCoverage highlightCoverage;
+    snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), highlightCoverage);
     context->SetDpi(96.0f, 96.0f);
     context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
     context->SetTransform(

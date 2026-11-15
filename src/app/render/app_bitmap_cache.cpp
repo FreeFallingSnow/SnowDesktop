@@ -8,7 +8,7 @@
 #include "app/dock/persistent_dock_host.h"
 #include "desktop_backdrop_update_rules.h"
 #include "diagnostics/performance_trace.h"
-#include "desktop/display_color_mode.h"
+#include "ui/render/highlight_coverage.h"
 
 // HBITMAP analysis, icon beautification and Direct2D bitmap caching.
 
@@ -534,6 +534,15 @@ ComPtr<ID2D1Bitmap1> DesktopApp::UploadStyledIconPixels(
 
     iconGlassBackdrop_[bitmap.Get()] = prepared.needsGlassBackdrop;
     iconBitmapStyles_[bitmap.Get()] = prepared.style;
+    if (!prepared.highlightCoverage.empty())
+    {
+        ComPtr<ID2D1Bitmap1> mask;
+        const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
+            D2D1::PixelFormat(DXGI_FORMAT_A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        if (SUCCEEDED(d2dContext_->CreateBitmap(bitmap->GetPixelSize(),
+            prepared.highlightCoverage.data(), static_cast<UINT32>(buffer.width), &properties, &mask)))
+            snowdesktop::HighlightCoverage::SetBitmapMask(bitmap.Get(), mask.Get());
+    }
     return bitmap;
 }
 
@@ -608,7 +617,7 @@ ID2D1Bitmap* DesktopApp::GetOrCreateManagedD2DBitmap(ID2D1RenderTarget* target, 
 
 void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
     ID2D1Bitmap* bitmap, RECT destination, float opacity,
-    std::uintptr_t ownerKey, bool preserveAspectRatio, bool composeMaterialWithBackdrop)
+    std::uintptr_t ownerKey, bool preserveAspectRatio)
 {
     if (!target || !bitmap || IsRectEmptyRect(destination))
         return;
@@ -625,23 +634,22 @@ void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
     const auto& style = styled == iconBitmapStyles_.end() ? iconBeautifySettings_ : styled->second;
     const bool translucentMaterial = glass != iconGlassBackdrop_.end() && glass->second &&
         style.enabled && style.glassEnabled;
-    ID2D1Bitmap* material = composeMaterialWithBackdrop && style.edgeHighlightEnabled ? bitmap : nullptr;
-    if (translucentMaterial && RegisterIconBackdrop(target, plan.bounds, opacity, ownerKey, &style,
-        material, preserveAspectRatio))
-        return;
-
+    if (translucentMaterial) RegisterIconBackdrop(target, plan.bounds, opacity, ownerKey, &style);
     snowdesktop::icon_bitmap_renderer::Draw(target, bitmap, plan, opacity, translucentMaterial);
+    if (opacity > 0.f)
+        snowdesktop::HighlightCoverage::RecordBitmap(target, bitmap,
+            D2D1::RectF(static_cast<float>(plan.bounds.left), static_cast<float>(plan.bounds.top),
+                static_cast<float>(plan.bounds.right), static_cast<float>(plan.bounds.bottom)));
 }
 
-bool DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
-    float opacity, std::uintptr_t ownerKey, const snowdesktop::IconBeautifySettings* style,
-    ID2D1Bitmap* material, bool preserveAspectRatio)
+void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
+    float opacity, std::uintptr_t ownerKey, const snowdesktop::IconBeautifySettings* style)
 {
-    if (drawingIconAppearanceSource_ || dragPreviewCompositionPaintInProgress_) return false;
+    if (drawingIconAppearanceSource_ || dragPreviewCompositionPaintInProgress_) return;
     const auto& appearance = style ? *style : iconBeautifySettings_;
     // Popup/quick-navigation backdrops are collected by their own animation
     // transaction. Icons inherit that panel rather than adding a second blur.
-    if (renderingFloatingPopup_ || quickNavigation_->compositionPaintInProgress) return false;
+    if (renderingFloatingPopup_ || quickNavigation_->compositionPaintInProgress) return;
     DesktopBackdropCompositor* compositor = &desktopBackdropCompositor_;
     const bool parentSuppliesGlass = desktopWidgetCompositionDrawInProgress_ &&
         desktopWidgetBackdropRequestedDuringDraw_;
@@ -652,10 +660,8 @@ bool DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
             desktopWidgetIconBackdropsDrawing_->Collect({frame,
                 appearance.shape, appearance.glassBlurRadius,
                 opacity, parentSuppliesGlass, std::move(contentClip)});
-        return false;
+        return;
     }
-    const POINT screenCenter{virtualLeft_ + frame.left + (frame.right - frame.left) / 2,
-        virtualTop_ + frame.top + (frame.bottom - frame.top) / 2};
     if (renderingPersistentDockHost_)
     {
         auto& host = *renderingPersistentDockHost_;
@@ -668,29 +674,21 @@ bool DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
                 icon.Offset(virtualLeft_, virtualTop_);
                 host.mergedGlassIcons.push_back(std::move(icon));
             }
-            return false;
+            return;
         }
         compositor = &host.backdrop;
         snowdesktop::PanelBackdropIcon icon{frame, appearance.shape,
             appearance.glassBlurRadius, std::move(contentClip)};
         icon.Offset(-host.sourceRect.left, -host.sourceRect.top);
         if (host.collectingPanelIcons && opacity > 0.0f &&
-            compositor->CollectStagedPanelIcon(reinterpret_cast<std::uintptr_t>(host.container), icon)) return false;
+            compositor->CollectStagedPanelIcon(reinterpret_cast<std::uintptr_t>(host.container), icon)) return;
         frame = icon.frame;
         contentClip = std::move(icon.clip);
     }
     const auto key = ownerKey ? ownerKey | 1u : 0;
-    const bool registered = snowdesktop::desktop_backdrop_update_rules::ReconcileIconPanel(*compositor,
+    snowdesktop::desktop_backdrop_update_rules::ReconcileIconPanel(*compositor,
         frame, appearance.shape, appearance.glassBlurRadius,
         opacity, key, parentSuppliesGlass, contentClip ? &*contentClip : nullptr);
-    if (!registered || !material || !key || contentClip || opacity != 1.f ||
-        snowdesktop::display_color::ModeForMonitor(MonitorFromPoint(screenCenter,
-            MONITOR_DEFAULTTONULL)) != snowdesktop::display_color::Mode::WideColor)
-        return false;
-    ComPtr<ID2D1DeviceContext> context;
-    return SUCCEEDED(target->QueryInterface(IID_PPV_ARGS(&context))) &&
-        compositor->TrySetIconMaterial(frame, key, context.Get(),
-            material, preserveAspectRatio);
 }
 
 void DesktopApp::ClearStyledIconCache()

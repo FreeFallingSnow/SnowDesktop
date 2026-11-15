@@ -4,6 +4,7 @@
 #include "ui/render/acrylic_noise_asset.h"
 #include "ui/render/smooth_corner_geometry.h"
 #include "theme/flat_glass_rim.h"
+#include "ui/render/highlight_coverage.h"
 #include "widget/view/widget_composition_layer_rules.h"
 
 #include <d2d1effects.h>
@@ -905,6 +906,7 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     }
     context->FillOpacityMask(
         mask.Get(), reflectionBrush.Get(), &reflectionBounds, nullptr);
+    HighlightCoverage::RecordMask(context, mask.Get(), reflectionBounds);
     if (shadowMask && shadowBrush)
         context->FillOpacityMask(shadowMask.Get(), shadowBrush.Get(),
             &reflectionBounds, nullptr);

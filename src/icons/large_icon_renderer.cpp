@@ -100,19 +100,19 @@ void DrawEdgeGlow(ID2D1RenderTarget* target, const LargeIconConfig& c, const Vie
     const float depth = std::min(10.f * view.scale, std::min(frame.right - frame.left, frame.bottom - frame.top) * .08f);
     constexpr int steps = 12;
     const float stroke = depth / steps;
+    ComPtr<ID2D1Factory> factory;
+    target->GetFactory(&factory);
     for (int i = 0; i < steps; ++i)
     {
         const float inset = (i + .5f) * stroke;
         const auto inner = D2D1::RectF(frame.left + inset, frame.top + inset, frame.right - inset, frame.bottom - inset);
         const float innerRadius = std::max(0.f, radius - inset);
         brush->SetOpacity(static_cast<float>(c.glowStrength) * view.hover * view.opacity * std::exp(-3.f * i / (steps - 1)));
-        if (c.shape <= 1) smooth_corners::Stroke(target, inner, innerRadius, brush.Get(), stroke);
-        else
-        {
-            ComPtr<ID2D1Factory> factory; target->GetFactory(&factory);
-            const auto outline = large_icon_shape::Geometry(factory.Get(), c.shape, inner, innerRadius, c.flagDirection);
-            if (outline) target->DrawGeometry(outline.Get(), brush.Get(), stroke);
-        }
+        const auto outline = large_icon_shape::Geometry(factory.Get(), c.shape, inner, innerRadius, c.flagDirection);
+        if (!outline) continue;
+        target->DrawGeometry(outline.Get(), brush.Get(), stroke);
+        if (brush->GetOpacity() > 0.f)
+            HighlightCoverage::RecordStroke(target, outline.Get(), stroke);
     }
 }
 }

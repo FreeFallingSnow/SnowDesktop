@@ -191,7 +191,8 @@ std::vector<std::uint32_t> Render(
     int height,
     const IconBeautifySettings& settings,
     std::optional<PlateFill> detectedEdgeFill = std::nullopt,
-    SourceKind sourceKind = SourceKind::Image);
+    SourceKind sourceKind = SourceKind::Image,
+    std::vector<std::uint8_t>* highlightCoverage = nullptr);
 
 /** Directional reflection without a fill or glyph, for vector control plates. */
 std::vector<std::uint32_t> RenderEdgeReflection(int width, int height,

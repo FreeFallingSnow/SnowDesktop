@@ -1,4 +1,5 @@
 #include "system_panel.h"
+#include "ui/render/highlight_coverage.h"
 #include "system_panel_model.h"
 #include "system/controls/system_quick_controls.h"
 #include "system/calendar/system_calendar_editor.h"
@@ -411,6 +412,8 @@ struct SystemPanel::Impl
         if(!model||!current||!visual||closing||width<=0||height<=0)return;
         if(!surface&&FAILED(composition->CreateSurface(width,height,DXGI_FORMAT_B8G8R8A8_UNORM,DXGI_ALPHA_MODE_PREMULTIPLIED,&surface)))return;
         ComPtr<ID2D1DeviceContext> dc;POINT offset{};if(FAILED(surface->BeginDraw(nullptr,IID_PPV_ARGS(&dc),&offset)))return;
+        HighlightCoverage coverage;
+        HighlightCoverage::Scope capture(dc.Get(), coverage);
         dc->SetDpi(96,96);dc->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);dc->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x),static_cast<float>(offset.y)));dc->Clear(D2D1::ColorF(0,0.f));
         for(const auto& card:cards)
         {

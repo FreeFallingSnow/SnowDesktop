@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "ui/render/highlight_coverage.h"
 #include "popup_resize_transition.h"
 #include "diagnostics/diagnostic_log.h"
 #include "common/utils.h"
@@ -763,6 +764,8 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
 
     ComPtr<ID2D1DeviceContext> context;
     context.Attach(rawContext);
+    snowdesktop::HighlightCoverage coverage;
+    snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), coverage);
     context->SetDpi(96.0f, 96.0f);
     context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
     context->SetTransform(
@@ -785,9 +788,8 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
     DrawLuaStackIndicator(context.Get());
     renderingFloatingPopup_ = false;
     const auto srgbKey = reinterpret_cast<std::uintptr_t>(floatingPopupHwnd_);
-    const bool stagedSrgb = !popupAnimation_.IsAnimating() && !luaWidgetPanelAnimation_.IsAnimating() &&
-        collectionPopupBackdropCompositor_.StageSrgbContent(
-            floatingPopupHwnd_, srgbKey, bounds, context.Get(), updateOffset);
+    const bool stagedSrgb = collectionPopupBackdropCompositor_.StageSrgbContent(
+        floatingPopupHwnd_, srgbKey, bounds, context.Get(), updateOffset);
     context->SetTransform(D2D1::Matrix3x2F::Identity());
     context.Reset();
     brushCache_.clear();
@@ -809,6 +811,9 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
     {
         const bool srgbPresented = stagedSrgb && collectionPopupBackdropCompositor_.PublishSrgbContent(srgbKey);
         if (!srgbPresented) collectionPopupBackdropCompositor_.RemoveSrgbContent(srgbKey);
+        const std::array order{srgbKey, reinterpret_cast<std::uintptr_t>(&popupAnimationOverlay_),
+            reinterpret_cast<std::uintptr_t>(&luaWidgetPanelAnimationOverlay_)};
+        collectionPopupBackdropCompositor_.SetSrgbContentOrder(order);
         hr = floatingPopupDcompLiveVisual_->SetContent(srgbPresented ? nullptr : floatingPopupDcompSurface_.Get());
     }
     if (FAILED(hr))

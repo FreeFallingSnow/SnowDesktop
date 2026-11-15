@@ -127,6 +127,14 @@ winrt::com_ptr<Effect> Transfer(MakeInput&& makeInput, bool encode)
         std::vector<graphics::IGraphicsEffectSource>{*magnitude, *sign});
 }
 
+inline winrt::com_ptr<Effect> Composite(D2D1_COMPOSITE_MODE mode,
+    const graphics::IGraphicsEffectSource& background, const graphics::IGraphicsEffectSource& foreground)
+{
+    return winrt::make_self<Effect>(CLSID_D2D1Composite,
+        std::vector<wf::IInspectable>{wf::PropertyValue::CreateUInt32(mode)},
+        std::vector{background, foreground});
+}
+
 inline composition::CompositionEffectFactory CreateFactory(const composition::Compositor& compositor)
 {
     const auto makeMixed = []() -> graphics::IGraphicsEffectSource {
@@ -134,12 +142,17 @@ inline composition::CompositionEffectFactory CreateFactory(const composition::Co
             return composition::CompositionEffectSourceParameter(L"backdrop");
         }, true);
         const auto material = Gamma(composition::CompositionEffectSourceParameter(L"material"), 1.f / 2.4f);
-        const auto mixed = winrt::make_self<Effect>(CLSID_D2D1Composite,
-            std::vector<wf::IInspectable>{wf::PropertyValue::CreateUInt32(D2D1_COMPOSITE_MODE_SOURCE_OVER)},
-            std::vector<graphics::IGraphicsEffectSource>{*backdrop, *material});
-        return *mixed;
+        return *Composite(D2D1_COMPOSITE_MODE_SOURCE_OVER, *backdrop, *material);
     };
-    auto factory = compositor.CreateEffectFactory(*Transfer(makeMixed, false));
+    const auto corrected = Transfer(makeMixed, false);
+    const auto coverage = composition::CompositionEffectSourceParameter(L"coverage");
+    const auto ordinary = Composite(D2D1_COMPOSITE_MODE_SOURCE_OVER,
+        composition::CompositionEffectSourceParameter(L"backdrop"),
+        composition::CompositionEffectSourceParameter(L"material"));
+    const auto outside = Composite(D2D1_COMPOSITE_MODE_DESTINATION_OUT, *ordinary, coverage);
+    const auto inside = Composite(D2D1_COMPOSITE_MODE_DESTINATION_IN, *corrected, coverage);
+    const auto output = Composite(D2D1_COMPOSITE_MODE_PLUS, *outside, *inside);
+    auto factory = compositor.CreateEffectFactory(*output);
     winrt::check_hresult(factory.ExtendedError());
     return factory;
 }

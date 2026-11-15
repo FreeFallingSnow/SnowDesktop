@@ -1,4 +1,5 @@
 #include "status_bar.h"
+#include "ui/render/highlight_coverage.h"
 #include "platform/foreground_fullscreen.h"
 #include "platform/window_observation.h"
 #include "platform/window_peek_policy.h"
@@ -1264,6 +1265,8 @@ struct StatusBar::Impl
                 const auto beginBackground = backgroundSurface->BeginDraw(nullptr, IID_PPV_ARGS(&background), &origin);
                 TraceValue(SUCCEEDED(beginBackground) ? "surface.begin.success" : "surface.begin.failure");
                 if (FAILED(beginBackground)) { paintError(beginBackground); return; }
+                HighlightCoverage coverage;
+                HighlightCoverage::Scope capture(background.Get(), coverage);
                 background->SetDpi(96, 96);
                 background->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(origin.x), static_cast<float>(origin.y)));
                 background->Clear(hc ? SystemColor(COLOR_WINDOW) : D2D1::ColorF(0, 0.f));

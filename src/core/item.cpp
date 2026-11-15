@@ -185,16 +185,6 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
                        : D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * alpha));
     }
 
-    // The idle icon can use its own brush. Interaction frames keep the fill
-    // and icon together in the desktop surface.
-    const bool composeMaterialWithBackdrop = state == 0 && !widget && !quickNavLayout && !demoCollection;
-    if ((hovered || (selected && !dragged)) && !widget && !quickNavLayout && !demoCollection &&
-        app_->desktopSrgbTileDraws_)
-    {
-        const auto style = app_->ResolveIconAppearance(item_->layoutKey, item_->iconIsMediaThumbnail);
-        if (style.enabled && style.edgeHighlightEnabled)
-            app_->desktopSrgbTileDraws_->push_back(rect);
-    }
     if (useDemoIdentity)
     {
         if (demoCollection)
@@ -206,7 +196,7 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
     // Loading describes pending work, not whether the last image is drawable.
     else if (auto custom = app_->GetSmallCustomIcon(context, item_->layoutKey, iconRect.right - iconRect.left))
         app_->DrawIconBitmap(context, custom, iconRect, alpha,
-            reinterpret_cast<std::uintptr_t>(item_), true, composeMaterialWithBackdrop);
+            reinterpret_cast<std::uintptr_t>(item_), true);
     else if (!item_->iconBitmap)
     {
         app_->DrawPlaceholderIcon(context, item_->sysIconIndex, iconRect, alpha);
@@ -217,7 +207,7 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
         if (bmp)
         {
             app_->DrawIconBitmap(context, bmp, iconRect, alpha,
-                reinterpret_cast<std::uintptr_t>(item_), true, composeMaterialWithBackdrop);
+                reinterpret_cast<std::uintptr_t>(item_), true);
         }
         else
         {

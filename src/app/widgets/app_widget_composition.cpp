@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "ui/render/highlight_coverage.h"
 #include "diagnostics/diagnostic_log.h"
 #include "common/utils.h"
 #include "app/render/desktop_backdrop_update_rules.h"
@@ -463,17 +464,11 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         POINT center{bounds.left + (bounds.right - bounds.left) / 2,
             bounds.top + (bounds.bottom - bounds.top) / 2};
         namespace display = snowdesktop::display_color;
-        // The retained overlay is above the legacy tree. Keep native clips,
-        // independent text animations and overlap order on their current paths.
-        const bool srgbEligible = !drawRollSnapshot && !marqueeActive_ &&
+        // The independent native text scroller and roll clip remain children
+        // of their original surface during their staged transition.
+        const bool srgbEligible = !drawRollSnapshot &&
             !widgetMarqueeCompositionItems_.contains(widgetId) && ClientToScreen(hwnd_, &center) &&
-            display::ModeForMonitor(MonitorFromPoint(center, MONITOR_DEFAULTTONULL)) == display::Mode::WideColor &&
-            std::none_of(desktopWidgetCompositionItems_.begin(), desktopWidgetCompositionItems_.end(),
-                [&](const auto& neighbor) {
-                    RECT intersection{};
-                    return &neighbor.second != &item && neighbor.second.visible &&
-                        IntersectRect(&intersection, &contentFrame, &neighbor.second.bounds);
-                });
+            display::ModeForMonitor(MonitorFromPoint(center, MONITOR_DEFAULTTONULL)) == display::Mode::WideColor;
         const bool asynchronous = luaWidget && widgetSurfaceRenderer_ && !item.renderFailed && !srgbEligible;
         // The synchronous surface and the worker target may coexist during handoff
         // when they represent the same Lua content at the same size.
@@ -552,6 +547,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
 
         ComPtr<ID2D1DeviceContext> context;
         context.Attach(rawContext);
+        snowdesktop::HighlightCoverage highlightCoverage;
+        snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), highlightCoverage);
         context->SetDpi(96.0f, 96.0f);
         context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
         if (!asynchronous)
@@ -1075,8 +1072,7 @@ void DesktopApp::KeepDesktopWidgetBackdropPanels()
     for (auto& [id, item] : desktopWidgetCompositionItems_)
     {
         const float opacity = item.HoverOpacity();
-        if (item.presentingSrgb && (marqueeActive_ ||
-            !desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey())))
+        if (item.presentingSrgb && !desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey()))
         {
             if (SUCCEEDED(item.visual->SetContent(item.surface.Get())))
             {
@@ -1349,8 +1345,6 @@ void DesktopApp::PruneDesktopWidgetCompositions()
 
 bool DesktopApp::SyncDesktopWidgetCompositionZOrder()
 {
-    if (!desktopWidgetCompositionLayer_)
-        return desktopWidgetCompositionItems_.empty();
     std::vector<std::wstring> desired;
     desired.reserve(desktopWidgetCompositionItems_.size());
     for (const auto& widget : widgets_)
@@ -1366,7 +1360,13 @@ bool DesktopApp::SyncDesktopWidgetCompositionZOrder()
         const auto& item = desktopWidgetCompositionItems_.at(widgetId);
         if (item.presentingSrgb) srgbOrder.push_back(item.BackdropOwnerKey());
     }
+    for (const auto& tile : foregroundSrgbTiles_) srgbOrder.push_back(tile.key);
+    for (const auto* overlay : {&popupAnimationOverlay_, &luaWidgetPanelAnimationOverlay_})
+        if (overlay->presentingHighlights && overlay->host == UiCompositionAnimationHost::Desktop)
+            srgbOrder.push_back(reinterpret_cast<std::uintptr_t>(overlay));
     desktopBackdropCompositor_.SetSrgbContentOrder(srgbOrder);
+    if (!desktopWidgetCompositionLayer_)
+        return desktopWidgetCompositionItems_.empty();
     if (desired == desktopWidgetCompositionZOrder_)
         return true;
 

@@ -117,7 +117,7 @@ public:
         float normalizedStartSlope = 0.0f,
         const snowdesktop::popup_motion_curve::Timeline* springTimeline = nullptr,
         const snowdesktop::popup_motion_curve::Timeline* opacityTimeline = nullptr,
-        std::uintptr_t panelOwnerKey = 0);
+        std::uintptr_t panelOwnerKey = 0, std::uintptr_t contentKey = 0);
     /**
      * @brief 使用与 Dock 内容相同的分片规则变形一个玻璃面板；矩形均为宿主坐标。
      *        由 CommitVisualChanges 或 EndFrame 统一提交，稳定几何不逐帧分配资源。
@@ -166,10 +166,6 @@ public:
     // The clip is local to a fixed sampling envelope and can animate independently.
     bool AddClippedPanel(const RECT& envelope, ID2D1Geometry* clip,
         float blurRadius, std::uintptr_t ownerKey);
-    bool TrySetIconMaterial(const RECT& frame, std::uintptr_t ownerKey,
-        ID2D1DeviceContext* drawContext, ID2D1Bitmap* bitmap, bool preserveAspectRatio);
-    // Stage a completed app-owned DComp drawing rectangle before EndDraw.
-    // Publishing replaces its legacy visual only after the original draw succeeds.
     bool StageSrgbContent(HWND window, std::uintptr_t key, const RECT& clientFrame,
         ID2D1DeviceContext* context, POINT atlasOffset);
     bool PublishSrgbContent(std::uintptr_t key, float opacity = 1.0f);
@@ -177,6 +173,7 @@ public:
     void RemoveSrgbContent(std::uintptr_t key);
     void SetSrgbContentOrder(std::span<const std::uintptr_t> bottomToTop);
     void SetSrgbContentOpacity(std::uintptr_t key, float opacity);
+    bool SetSrgbContentPose(std::uintptr_t key, POINT anchor, float scale, float opacity);
     void SetSrgbRootPose(float opacity, float offsetX, float offsetY);
     bool CommitSrgbContent();
     // Host-private large-icon silhouettes use the same geometry as the card.

@@ -32,6 +32,7 @@ struct UiCompositionAnimationOverlay
     UiCompositionAnimationHost host =
         UiCompositionAnimationHost::Desktop;
     bool active = false;
+    bool presentingHighlights = false;
 
     HRESULT SetPlacementOffset(POINT offset) const;
 };

@@ -1278,23 +1278,50 @@ private:
         context->SetDpi(96.f, 96.f);
         context->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x), static_cast<float>(offset.y)));
         context->Clear(D2D1::ColorF(0, 0));
+        namespace display = snowdesktop::display_color;
+        const bool correctHighlights = display::ModeForMonitor(
+            MonitorFromWindow(control.edgeTaskbar, MONITOR_DEFAULTTONULL)) == display::Mode::WideColor;
+        std::vector<std::uint32_t> coverage;
         const HRESULT drawResult = DrawTaskbarEdges(context.get(), width, height, scale, control.edgeStyle,
-            ResolveTaskbarMaterialEdge(control.edgeTaskbar));
+            ResolveTaskbarMaterialEdge(control.edgeTaskbar), correctHighlights ? &coverage : nullptr);
         const HRESULT endResult = interop->EndDraw();
         winrt::check_hresult(drawResult); winrt::check_hresult(endResult);
         const auto source = compositor.CreateSurfaceBrush(surface);
         wuc::CompositionBrush brush = source;
-        namespace display = snowdesktop::display_color;
-        if (display::ModeForMonitor(MonitorFromWindow(control.edgeTaskbar, MONITOR_DEFAULTTONULL)) ==
-            display::Mode::WideColor)
+        if (correctHighlights && !coverage.empty())
         {
             try
             {
+                const auto mask = control.edgeDevice.CreateDrawingSurface(
+                    {static_cast<float>(width), static_cast<float>(height)},
+                    winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+                    winrt::Windows::Graphics::DirectX::DirectXAlphaMode::Premultiplied);
+                const auto maskInterop = mask.as<ABI::Windows::UI::Composition::ICompositionDrawingSurfaceInterop>();
+                context = nullptr;
+                winrt::check_hresult(maskInterop->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
+                    context.put_void(), &offset));
+                const auto properties = D2D1::BitmapProperties(
+                    D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+                winrt::com_ptr<ID2D1Bitmap> bitmap;
+                const auto created = context->CreateBitmap({width, height}, coverage.data(),
+                    width * static_cast<UINT32>(sizeof(std::uint32_t)), properties, bitmap.put());
+                if (SUCCEEDED(created))
+                {
+                    context->SetDpi(96.f, 96.f);
+                    context->SetTransform(D2D1::Matrix3x2F::Translation(
+                        static_cast<float>(offset.x), static_cast<float>(offset.y)));
+                    context->Clear(D2D1::ColorF(0, 0.f));
+                    context->DrawBitmap(bitmap.get());
+                }
+                const auto maskEnd = maskInterop->EndDraw();
+                winrt::check_hresult(created);
+                winrt::check_hresult(maskEnd);
                 if (!control.edgeEffectFactory)
                     control.edgeEffectFactory = snowdesktop::backdrop_srgb::CreateFactory(compositor);
                 const auto material = control.edgeEffectFactory.CreateBrush();
                 material.SetSourceParameter(L"backdrop", compositor.CreateBackdropBrush());
                 material.SetSourceParameter(L"material", source);
+                material.SetSourceParameter(L"coverage", compositor.CreateSurfaceBrush(mask));
                 brush = material;
             }
             catch (const winrt::hresult_error&) {}

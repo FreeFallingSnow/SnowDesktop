@@ -1,4 +1,5 @@
 #include "ui/render/app_font.h"
+#include "ui/render/highlight_coverage.h"
 #include "app/app.h"
 #include "navigation/quick_navigation_animation_rules.h"
 #include "app/navigation/quick_navigation_state.h"
@@ -524,6 +525,8 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
 
     ComPtr<ID2D1DeviceContext> ctx;
     ctx.Attach(rawContext);
+    snowdesktop::HighlightCoverage highlightCoverage;
+    snowdesktop::HighlightCoverage::Scope captureHighlights(ctx.Get(), highlightCoverage);
     ctx->SetDpi(96.0f, 96.0f);
     ctx->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
     // 内容 surface 只按目标面板大小分配；顶层宿主可以覆盖完整动画路径。

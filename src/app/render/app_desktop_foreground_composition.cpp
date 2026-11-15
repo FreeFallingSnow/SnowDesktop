@@ -1,7 +1,10 @@
 #include "app/app.h"
+#include "app/render/desktop_highlight_tiles.h"
 #include "diagnostics/diagnostic_log.h"
 
 #include <array>
+
+namespace highlight_tiles = snowdesktop::desktop_highlight_tiles;
 
 HRESULT DesktopApp::SyncDesktopCompositionRootZOrder()
 {
@@ -226,6 +229,7 @@ bool DesktopApp::RenderDesktopForegroundComposition(
         !IsRectEmpty(&clippedUpdate))
     {
         clippedUpdate = desktopForegroundTooltipDamage_.IncludePrevious(clippedUpdate, client);
+        highlight_tiles::IncludeRetainedTiles(clippedUpdate, client, foregroundSrgbTiles_);
         dcompUpdate = &clippedUpdate;
     }
 
@@ -244,6 +248,8 @@ bool DesktopApp::RenderDesktopForegroundComposition(
 
         ComPtr<ID2D1DeviceContext> context;
         context.Attach(rawContext);
+        snowdesktop::HighlightCoverage coverage;
+        snowdesktop::HighlightCoverage::Scope capture(context.Get(), coverage);
         context->SetDpi(96.0f, 96.0f);
         context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
         const LONG updateLeft = dcompUpdate ? dcompUpdate->left : 0;
@@ -263,6 +269,9 @@ bool DesktopApp::RenderDesktopForegroundComposition(
         };
         { TooltipDrawScope tooltipDraw(desktopForegroundTooltipDamage_);
           DrawDesktopForeground(context.Get(), hiddenMode, dcompUpdate); }
+        const RECT dirty = dcompUpdate ? *dcompUpdate : client;
+        const auto candidates = highlight_tiles::Stage(desktopBackdropCompositor_, hwnd_,
+            context.Get(), coverage, client, dirty, updateOffset, foregroundSrgbTiles_, nextDesktopSrgbKey_);
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
         brushCache_.clear();
@@ -270,12 +279,15 @@ bool DesktopApp::RenderDesktopForegroundComposition(
 
         hr = desktopForegroundCompositionSurface_->EndDraw();
         if (FAILED(hr)) return false;
+        if (!highlight_tiles::Publish(desktopBackdropCompositor_, dirty, candidates, foregroundSrgbTiles_))
+            return false;
         if (dcompUpdate)
         {
             const RECT required = desktopForegroundTooltipDamage_.IncludeCurrent(clippedUpdate, client);
             if (!EqualRect(&required, &clippedUpdate))
             {
                 clippedUpdate = required;
+                highlight_tiles::IncludeRetainedTiles(clippedUpdate, client, foregroundSrgbTiles_);
                 // If geometry changes again during repair, finish with one
                 // bounded full draw rather than exposing glass without text.
                 if (pass > 0) dcompUpdate = nullptr;
@@ -283,6 +295,7 @@ bool DesktopApp::RenderDesktopForegroundComposition(
             }
         }
         desktopForegroundTooltipDamage_.AcceptDraw();
+        if (!SyncDesktopWidgetCompositionZOrder()) return false;
         // Another transaction may change interaction pixels on this same
         // allocation. Only an actual pointer frame can retain its footprint.
         if (!presentingPointerInteractionFrame_)
@@ -361,6 +374,8 @@ bool DesktopApp::PresentDesktopForegroundComposition(
 
 void DesktopApp::ResetDesktopForegroundComposition()
 {
+    for (const auto& tile : foregroundSrgbTiles_) desktopBackdropCompositor_.RemoveSrgbContent(tile.key);
+    foregroundSrgbTiles_.clear();
     desktopForegroundCompositionSurface_.Reset();
     desktopForegroundCompositionWidth_ = 0;
     desktopForegroundCompositionHeight_ = 0;

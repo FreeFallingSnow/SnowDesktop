@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "ui/render/highlight_coverage.h"
 #include "navigation/quick_navigation_animation_rules.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "diagnostics/diagnostic_log.h"
@@ -112,6 +113,12 @@ bool DesktopApp::StartDesktopWidgetHoverRoll(DesktopWidgetCompositionItem& item,
 // Independent DComp layers for popup snapshots. Content arrivals update only
 // surface pixels; the compositor advances scale/opacity without UI frame work.
 
+DesktopBackdropCompositor& DesktopApp::AnimationHighlightCompositor(const UiCompositionAnimationOverlay& overlay)
+{
+    return overlay.host == UiCompositionAnimationHost::FloatingPopup
+        ? collectionPopupBackdropCompositor_ : desktopBackdropCompositor_;
+}
+
 bool DesktopApp::UpdateCompositionAnimationOverlayContent(
     UiCompositionAnimationOverlay& overlay,
     const DragRenderCache& cache)
@@ -127,6 +134,8 @@ bool DesktopApp::UpdateCompositionAnimationOverlayContent(
         return false;
     ComPtr<ID2D1DeviceContext> context;
     context.Attach(rawContext);
+    snowdesktop::HighlightCoverage coverage;
+    snowdesktop::HighlightCoverage::Scope capture(context.Get(), coverage);
     bool drawn = false;
     if (context)
     {
@@ -138,9 +147,19 @@ bool DesktopApp::UpdateCompositionAnimationOverlayContent(
             D2D1::Point2F(static_cast<float>(updateOffset.x), static_cast<float>(updateOffset.y)),
             D2D1_INTERPOLATION_MODE_LINEAR);
     }
+    auto& material = AnimationHighlightCompositor(overlay);
+    const auto materialKey = reinterpret_cast<std::uintptr_t>(&overlay);
+    const HWND owner = overlay.host == UiCompositionAnimationHost::FloatingPopup ? floatingPopupHwnd_ : hwnd_;
+    const bool staged = drawn && !coverage.Empty() &&
+        material.StageSrgbContent(owner, materialKey, overlay.bounds, context.Get(), updateOffset);
     context.Reset();
     const HRESULT endDrawHr = overlay.surface->EndDraw();
-    return drawn && SUCCEEDED(endDrawHr);
+    if (!drawn || FAILED(endDrawHr)) return false;
+    overlay.presentingHighlights = staged &&
+        material.PublishSrgbContent(materialKey, overlay.active ? -1.f : 0.f);
+    if (!overlay.presentingHighlights) material.RemoveSrgbContent(materialKey);
+    return SUCCEEDED(overlay.visual->SetContent(
+        overlay.presentingHighlights ? nullptr : overlay.surface.Get()));
 }
 
 HRESULT UiCompositionAnimationOverlay::SetPlacementOffset(POINT offset) const
@@ -242,15 +261,14 @@ bool DesktopApp::PrepareCompositionAnimationOverlay(
         overlay.surfaceHeight = height;
     }
 
+    overlay.bounds = bounds;
     if (!UpdateCompositionAnimationOverlayContent(overlay, cache))
     {
         overlay.surface.Reset();
         return false;
     }
 
-    overlay.bounds = bounds;
-    if (FAILED(overlay.SetPlacementOffset({bounds.left, bounds.top})) ||
-        FAILED(overlay.visual->SetContent(overlay.surface.Get())))
+    if (FAILED(overlay.SetPlacementOffset({bounds.left, bounds.top})))
         return false;
     overlay.scaleTransform->SetScaleX(1.0f);
     overlay.scaleTransform->SetScaleY(1.0f);
@@ -270,6 +288,10 @@ bool DesktopApp::UpdateCompositionAnimationOverlay(
         !overlay.effect || !overlay.scaleTransform ||
         !dcompDevice_)
         return false;
+    if (overlay.presentingHighlights)
+        return AnimationHighlightCompositor(overlay).SetSrgbContentPose(
+            reinterpret_cast<std::uintptr_t>(&overlay), anchor, scale, opacity) &&
+            (!commit || CommitCompositionAnimationFrame());
 
     const D2D1_POINT_2F localAnchor = D2D1::Point2F(
         static_cast<float>(anchor.x - overlay.bounds.left),
@@ -304,6 +326,15 @@ bool DesktopApp::AnimateCompositionAnimationOverlay(
         !overlay.effect || !overlay.scaleTransform ||
         !dcompDevice_ || durationMilliseconds == 0)
         return false;
+    if (overlay.presentingHighlights)
+    {
+        if (!AnimationHighlightCompositor(overlay).StartVisualTransformAnimation(
+            fromScale, toScale, fromOpacity, toOpacity, static_cast<float>(anchor.x),
+            static_cast<float>(anchor.y), durationMilliseconds, normalizedScaleStartSlope,
+            springTimeline, nullptr, 0, reinterpret_cast<std::uintptr_t>(&overlay))) return false;
+        return overlay.host == UiCompositionAnimationHost::FloatingPopup
+            ? RenderFloatingPopupCompositionFrame() : CommitCompositionAnimationFrame();
+    }
 
     const D2D1_POINT_2F localAnchor = D2D1::Point2F(
         static_cast<float>(anchor.x - overlay.bounds.left),
@@ -374,6 +405,16 @@ bool DesktopApp::FlushPendingCompositionCommit()
     if (SUCCEEDED(hr))
     {
         compositionCommitPending_ = false;
+        if (!collectionPopupBackdropCompositor_.CommitSrgbContent()) return false;
+        if (!dragPreviewHighlights_.CommitSrgbContent())
+        {
+            dragPreviewHighlights_.Reset();
+            if (dragPreviewDcompVisual_)
+            {
+                (void)dragPreviewDcompVisual_->SetContent(dragPreviewDcompSurface_.Get());
+                (void)dcompDevice_->Commit();
+            }
+        }
         // Keep desktop glass adjacent to the content submission. In
         // particular, a roll frame must not publish its new glass while
         // the corresponding child surface is still queued on this device.
@@ -390,7 +431,7 @@ bool DesktopApp::FlushPendingCompositionCommit()
             }
             (void)dcompDevice_->Commit();
             (void)desktopBackdropCompositor_.CommitSrgbContent();
-            if (!desktopSrgbTiles_.empty())
+            if (!desktopSrgbTiles_.empty() || !foregroundSrgbTiles_.empty())
             {
                 RecoverCompositionRenderFailure(L"Desktop sRGB content commit", E_FAIL);
                 return false;
@@ -698,6 +739,12 @@ void DesktopApp::PrepareCompositionAnimationOverlayRetirement(
 void DesktopApp::ResetCompositionAnimationOverlay(
     UiCompositionAnimationOverlay& overlay)
 {
+    if (overlay.presentingHighlights)
+    {
+        AnimationHighlightCompositor(overlay).RemoveSrgbContent(reinterpret_cast<std::uintptr_t>(&overlay));
+        overlay.presentingHighlights = false;
+        (void)CommitCompositionAnimationFrame();
+    }
     if (overlay.effect)
         overlay.effect->SetOpacity(0.0f);
     if (overlay.visual)

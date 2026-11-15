@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "ui/render/highlight_coverage.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_transition.h"
 #include "common/utils.h"
@@ -37,6 +38,8 @@ bool DesktopApp::CreateDragPreviewWindow()
 
 void DesktopApp::ResetDragPreviewCompositionResources()
 {
+    dragPreviewHighlights_.Reset();
+    dragPreviewMaterialMonitor_ = nullptr;
     if (trayDragPreview_) trayDragPreview_->dirty = true;
     if (dragPreviewDcompVisual_)
         dragPreviewDcompVisual_->SetContent(nullptr);
@@ -201,6 +204,8 @@ bool DesktopApp::RenderDragPreviewCompositionFrame(
 
     ComPtr<ID2D1DeviceContext> context;
     context.Attach(rawContext);
+    snowdesktop::HighlightCoverage coverage;
+    snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), coverage);
     context->SetDpi(96.0f, 96.0f);
     context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
     context->SetTransform(D2D1::Matrix3x2F::Translation(
@@ -274,6 +279,10 @@ bool DesktopApp::RenderDragPreviewCompositionFrame(
         }
         else item->Draw(context.Get(), destination, 3);
     }
+    constexpr std::uintptr_t materialKey = 1;
+    const RECT client{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
+    const bool stagedHighlights = !coverage.Empty() && dragPreviewHighlights_.StageSrgbContent(
+        dragPreviewHwnd_, materialKey, client, context.Get(), updateOffset);
     context->SetTransform(D2D1::Matrix3x2F::Identity());
     context.Reset();
     brushCache_.clear();
@@ -281,6 +290,15 @@ bool DesktopApp::RenderDragPreviewCompositionFrame(
 
     hr = dragPreviewDcompSurface_->EndDraw();
     if (FAILED(hr))
+    {
+        ResetDragPreviewCompositionResources();
+        return false;
+    }
+    const bool presentingHighlights = stagedHighlights &&
+        dragPreviewHighlights_.PublishSrgbContent(materialKey);
+    if (!presentingHighlights) dragPreviewHighlights_.RemoveSrgbContent(materialKey);
+    if (FAILED(dragPreviewDcompVisual_->SetContent(
+        presentingHighlights ? nullptr : dragPreviewDcompSurface_.Get())))
     {
         ResetDragPreviewCompositionResources();
         return false;
@@ -528,9 +546,11 @@ void DesktopApp::SyncDragPreviewWindow()
     // the synchronous WM_WINDOWPOSCHANGING/WM_WINDOWPOSCHANGED pair it emits
     // for every pointer pixel.
 
+    const auto materialMonitor = MonitorFromWindow(dragPreviewHwnd_, MONITOR_DEFAULTTONULL);
     const bool needsRender =
         !dragPreviewDcompSurface_ ||
         geometryChanged ||
+        materialMonitor != dragPreviewMaterialMonitor_ ||
         dragPreviewRenderRevision_ !=
             dragSession_.StaticSceneRevision();
     if (needsRender &&
@@ -545,6 +565,7 @@ void DesktopApp::SyncDragPreviewWindow()
         // The outer pointer message may still have larger work to do, but the
         // compositor can start presenting the ghost immediately.
         FlushPendingCompositionCommit();
+        dragPreviewMaterialMonitor_ = materialMonitor;
     }
     if (!previewWasVisible)
     {
@@ -608,6 +629,8 @@ bool DesktopApp::RenderTrayDragPreviewFrame()
     const auto& preview = *trayDragPreview_;
     const UINT extent = preview.iconSize + (std::max)(8u, preview.iconSize / 3u) + 4u;
     if (FAILED(CreateOrResizeDragPreviewCompositionSurface(extent, extent))) return false;
+    dragPreviewHighlights_.RemoveSrgbContent(1);
+    if (FAILED(dragPreviewDcompVisual_->SetContent(dragPreviewDcompSurface_.Get()))) return false;
     ComPtr<ID2D1DeviceContext> context;
     POINT offset{};
     if (FAILED(dragPreviewDcompSurface_->BeginDraw(nullptr, IID_PPV_ARGS(&context), &offset))) return false;
