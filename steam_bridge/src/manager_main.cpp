@@ -499,16 +499,6 @@ std::string JoinTags(const std::vector<std::string>& tags)
     return output;
 }
 
-// Match the names in the SnowDesktop Workshop's Widget filter.
-constexpr const char* kWorkshopWidgetTags[] = {
-    "Utilities",
-    "System Monitor",
-    "Media",
-    "Fun & Interaction",
-    "Decoration",
-    "News & Feeds",
-};
-
 struct LocalPackageWatch
 {
     explicit LocalPackageWatch(const std::filesystem::path& path)
@@ -2059,14 +2049,16 @@ private:
             std::copy_n(tagsBuffer_.c_str(),
                 std::min(tagsBuffer_.size(), tags.size() - 1), tags.data());
             bool saveTags = false;
-            if (ImGui::BeginTable("tags-row", 3, ImGuiTableFlags_SizingFixedFit |
+            const char* addTagLabel = T("添加标签", "Add tag");
+            const char* saveTagsLabel = T("保存标签", "Save tags");
+            if (ImGui::BeginTable("tags-row", 4, ImGuiTableFlags_SizingFixedFit |
                     ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoPadOuterX))
             {
                 ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableSetupColumn("input", ImGuiTableColumnFlags_WidthFixed,
                     std::min(SettingControlWidth(), ImGui::GetContentRegionAvail().x * 0.38f));
-                ImGui::TableSetupColumn("save", ImGuiTableColumnFlags_WidthFixed,
-                    ButtonWidth(T("保存标签", "Save tags")));
+                ImGui::TableSetupColumn("add", ImGuiTableColumnFlags_WidthFixed, ButtonWidth(addTagLabel));
+                ImGui::TableSetupColumn("save", ImGuiTableColumnFlags_WidthFixed, ButtonWidth(saveTagsLabel));
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::AlignTextToFramePadding();
@@ -2075,26 +2067,37 @@ private:
                 ImGui::SetNextItemWidth(-FLT_MIN);
                 if (ImGui::InputText("##project-tags", tags.data(), tags.size())) draft.EditTags(tags.data());
                 ImGui::TableSetColumnIndex(2);
-                saveTags = SecondaryButton(T("保存标签", "Save tags"));
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(1);
-                if (SecondaryButton(T("添加标签", "Add tag")))
+                if (SecondaryButton(addTagLabel))
                     ImGui::OpenPopup("widget-tag-options");
                 if (ImGui::BeginPopup("widget-tag-options"))
                 {
+                    struct TagOption { const char* value; const char* label; };
+                    // Steam filtering uses the original values in its Widget group.
+                    const TagOption options[] = {
+                        {"Utilities", T("实用工具", "Utilities")},
+                        {"System Monitor", T("系统监控", "System Monitor")},
+                        {"Media", T("媒体", "Media")},
+                        {"Fun & Interaction", T("娱乐与互动", "Fun & Interaction")},
+                        {"Decoration", T("桌面装饰", "Decoration")},
+                        {"News & Feeds", T("新闻与订阅源", "News & Feeds")},
+                    };
                     const auto currentTags = SplitTags(tagsBuffer_);
                     const std::string prefix = currentTags.empty() ?
                         std::string{} : JoinTags(currentTags) + ", ";
-                    for (const char* tag : kWorkshopWidgetTags)
+                    for (const auto& option : options)
                     {
                         const bool added = std::find(currentTags.begin(),
-                            currentTags.end(), tag) != currentTags.end();
-                        const bool fits = prefix.size() + std::string_view(tag).size() < tags.size();
-                        if (ImGui::MenuItem(tag, nullptr, added, !added && fits))
-                            draft.EditTags(prefix + tag);
+                            currentTags.end(), option.value) != currentTags.end();
+                        const bool fits = prefix.size() + std::string_view(option.value).size() < tags.size();
+                        const char* canonicalLabel = std::string_view(option.label) == option.value ?
+                            nullptr : option.value;
+                        if (ImGui::MenuItem(option.label, canonicalLabel, added, !added && fits))
+                            draft.EditTags(prefix + option.value);
                     }
                     ImGui::EndPopup();
                 }
+                ImGui::TableSetColumnIndex(3);
+                saveTags = SecondaryButton(saveTagsLabel);
                 ImGui::EndTable();
             }
             if (saveTags)
