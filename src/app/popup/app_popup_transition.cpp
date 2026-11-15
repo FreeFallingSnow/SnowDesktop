@@ -563,8 +563,16 @@ void DesktopApp::RefreshDockFolderPopup(
     }
     shellDockFolderPopupRefreshPending_ = false;
     if (!dockFolderPopupOpen_) return;
+    const bool dockEntryOwnsBinding = dockFolderPopupMappingWidgetId_.empty();
+    if (snapshot && dockEntryOwnsBinding &&
+        snowdesktop::shell_refresh::FolderKey(snapshot->path) !=
+            snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath))
+        return;
+
     bool targetPending = false;
-    if (dockFolderPopupMappingWidgetId_.empty())
+    // After binding, deliver a directory listing just as a mapped folder does.
+    // Only a separate target update can rebind the popup to a different folder.
+    if (!snapshot && dockEntryOwnsBinding)
     {
         const auto source = std::find_if(dockEntries_.begin(), dockEntries_.end(), [&](const auto& entry) {
             return std::to_wstring(static_cast<int>(entry.type)) + L":" +
@@ -583,10 +591,12 @@ void DesktopApp::RefreshDockFolderPopup(
             CancelDockFolderPopupIconLoads();
             ClearDockFolderPopupEntries();
             popupScrollOffset_ = 0;
-            // A read for the old path cannot supply this binding. Queue the
-            // newly confirmed path instead; late old snapshots are rejected.
-            snapshot = nullptr;
             SyncFolderChangeNotifications();
+        }
+        else if (!targetPending && dockFolderPopupAvailable_)
+        {
+            QueueFolderRead(dockFolderPopupWidget_.sourceFolderPath);
+            return;
         }
     }
     const bool refreshVisibleDockFolder = snapshot && snapshot->complete && present &&
@@ -597,8 +607,6 @@ void DesktopApp::RefreshDockFolderPopup(
         floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_);
     if (refreshVisibleDockFolder && pendingLandingCaches_.empty() &&
         (snapshot->error == ERROR_SUCCESS || snapshot->error == ERROR_FILE_NOT_FOUND) &&
-        snowdesktop::shell_refresh::FolderKey(snapshot->path) ==
-            snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath) &&
         SameDockFolderListing(dockFolderPopupWidget_.folderEntries, *snapshot))
         return; // The file-operation completion and Shell change can report the same listing.
 

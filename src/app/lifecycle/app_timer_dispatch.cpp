@@ -601,16 +601,10 @@ void DesktopApp::OnTimer(WPARAM timerId)
             return;
         }
         ApplyPendingRenames();
-        if (shellReloadPending_)
-        {
-            RefreshShellItemsAsync();
-        }
         if (shellDockFolderPopupRefreshPending_)
-        {
-            shellDockFolderPopupRefreshPending_ = false;
-            if (!shellReloadPending_)
-                RequestShellRefresh();
-        }
+            RefreshDockFolderPopup();
+        if (shellReloadPending_)
+            RefreshShellItemsAsync();
     }
     else if (timerId == kRecycleBinPollTimerId)
     {

@@ -61,8 +61,13 @@ DesktopApp::ResolveDockFolderTarget(const DockEntry& entry, bool* targetPending,
     const auto key = (mapping ? L"M:" : L"I:") +
         ToUpperInvariant(snowdesktop::dock_refresh_cache::SourceKey(entry.reference, path));
     const auto cached = dockFolderTargetCache_.Read(key, stamp);
-    if (targetPending) *targetPending = snowdesktop::dock_folder_popup_read::TargetPending(
-        mapping, cached.fresh, cached.sameSourceVersion);
+    // A regular folder resolves to its own path. Its last-write stamp can
+    // change with the contents without invalidating that path. Shortcuts
+    // still require a target from the current version of the link file.
+    const bool knownDirectory = cached.value && cached.value->kind == FolderTargetKind::Directory;
+    const bool needsTarget = snowdesktop::dock_folder_popup_read::TargetPending(
+        mapping || knownDirectory, cached.fresh, cached.sameSourceVersion);
+    if (targetPending) *targetPending = needsTarget;
     if (cached.fresh) return cached.value.value_or(FolderTarget{});
     const bool wasFolder = cached.value && cached.value->kind != FolderTargetKind::None;
     auto* owner = const_cast<DesktopApp*>(this);
@@ -119,7 +124,7 @@ DesktopApp::ResolveDockFolderTarget(const DockEntry& entry, bool* targetPending,
         auto pending = *cached.value;
         // Retain section membership, but don't execute an obsolete shortcut
         // target after the source itself changed.
-        if (!cached.sameSourceVersion)
+        if (needsTarget)
         {
             pending.available = false;
             pending.path.clear();
