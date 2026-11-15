@@ -2705,8 +2705,9 @@ private:
         snowdesktop::WidgetPreviewScene* previewScene = nullptr, HMONITOR dockMonitor = nullptr);
     void OnDockFolderIconLoaded(const std::wstring& iconCacheKey,
         std::uint64_t ticket, HBITMAP source, bool refined);
-    void RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
-        float opacity, std::uintptr_t ownerKey, const snowdesktop::IconBeautifySettings* style = nullptr);
+    bool RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
+        float opacity, std::uintptr_t ownerKey, const snowdesktop::IconBeautifySettings* style = nullptr,
+        ID2D1Bitmap* material = nullptr, bool preserveAspectRatio = true);
     void DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
         D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth, std::uintptr_t ownerKey = 0);
     void DrawPrivacyFaIcon(ID2D1DeviceContext* ctx, RECT rect, bool directory);
@@ -2795,7 +2796,8 @@ private:
     ID2D1Bitmap* GetDockCustomIcon(ID2D1RenderTarget* context, const std::string& id, int pixels, std::wstring_view identity = {});
     void DrawIconBitmap(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap,
         RECT destination, float opacity = 1.0f,
-        std::uintptr_t ownerKey = 0, bool preserveAspectRatio = true);
+        std::uintptr_t ownerKey = 0, bool preserveAspectRatio = true,
+        bool composeMaterialWithBackdrop = false);
     std::uintptr_t GetD2DIconCacheKey(HBITMAP hbm, bool beautified) const;
     void EraseD2DIconCacheForBitmap(HBITMAP hbm);
     bool ShouldBeautifyIconBitmap(bool iconIsMediaThumbnail) const;

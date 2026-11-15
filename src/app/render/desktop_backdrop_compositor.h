@@ -163,6 +163,8 @@ public:
     bool AddIconPanel(const RECT& frame, snowdesktop::IconBeautifyShape shape,
         float blurRadius, std::uintptr_t ownerKey,
         const snowdesktop::IconBackdropClip* contentClip = nullptr);
+    bool TrySetIconMaterial(const RECT& frame, std::uintptr_t ownerKey,
+        ID2D1DeviceContext* drawContext, ID2D1Bitmap* bitmap, bool preserveAspectRatio);
     // Host-private large-icon silhouettes use the same geometry as the card.
     bool AddLargeIconPanel(const RECT& frame, int shape, float cornerRadius,
         float blurRadius, std::uintptr_t ownerKey, int flagDirection = 0);

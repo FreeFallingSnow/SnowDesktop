@@ -15,7 +15,7 @@ namespace snowdesktop::desktop_backdrop_update_rules
 // Reconcile during the same frame even for partial collections, retiring an
 // old per-icon blur before it can sample the enclosing strip a second time.
 template<class Compositor, class Shape>
-void ReconcileIconPanel(Compositor& compositor, const RECT& frame, Shape shape,
+bool ReconcileIconPanel(Compositor& compositor, const RECT& frame, Shape shape,
     float blurRadius, float opacity, std::uintptr_t ownerKey, bool inheritedGlass,
     const IconBackdropClip* contentClip = nullptr)
 {
@@ -24,10 +24,12 @@ void ReconcileIconPanel(Compositor& compositor, const RECT& frame, Shape shape,
         (contentClip && !IntersectRect(&visible, &frame, &contentClip->bounds)))
     {
         compositor.RemoveIconPanel(frame, ownerKey);
-        return;
+        return false;
     }
-    if (compositor.AddIconPanel(frame, shape, blurRadius, ownerKey, contentClip))
-        (void)compositor.SetPanelOpacity(frame, opacity, ownerKey);
+    if (!compositor.AddIconPanel(frame, shape, blurRadius, ownerKey, contentClip))
+        return false;
+    (void)compositor.SetPanelOpacity(frame, opacity, ownerKey);
+    return true;
 }
 
 // A retained widget can be painted before its backdrop target exists, or
