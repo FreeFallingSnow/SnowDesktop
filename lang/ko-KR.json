@@ -2912,5 +2912,10 @@
   "appearance.popupScene.followShared": "공유 팝업 테마 따르기",
   "settings.pages.gridPreview": "격자 배치 미리 보기",
   "settings.pages.gridPreview.enabled": "미리 보기 켜기",
-  "settings.pages.gridPreview.description": "바탕 화면에서 단축키를 누르고 있는 동안 비어 있는 모든 격자 칸이 표시됩니다."
+  "settings.pages.gridPreview.description": "바탕 화면에서 단축키를 누르고 있는 동안 비어 있는 모든 격자 칸이 표시됩니다.",
+  "settings.dock.liquidGlass": "리퀴드 글래스",
+  "settings.dock.edgeRefraction": "가장자리 굴절",
+  "settings.dock.edgeRefraction.description": "플로팅 Dock 뒤의 화면을 실시간으로 샘플링합니다. 샘플링 중에는 지원되는 스크린샷과 화면 녹화에 Dock이 표시되지 않습니다.",
+  "settings.dock.refractionWidth": "굴절 너비",
+  "settings.dock.refractionStrength": "굴절 강도"
 }

@@ -2912,5 +2912,10 @@
   "appearance.popupScene.followShared": "Gemeinsames Popup-Design übernehmen",
   "settings.pages.gridPreview": "Rastervorschau",
   "settings.pages.gridPreview.enabled": "Rastervorschau aktivieren",
-  "settings.pages.gridPreview.description": "Tastenkürzel auf dem Desktop gedrückt halten, um alle freien Rasterfelder anzuzeigen."
+  "settings.pages.gridPreview.description": "Tastenkürzel auf dem Desktop gedrückt halten, um alle freien Rasterfelder anzuzeigen.",
+  "settings.dock.liquidGlass": "Flüssiges Glas",
+  "settings.dock.edgeRefraction": "Lichtbrechung am Rand",
+  "settings.dock.edgeRefraction.description": "Verwendet das Live-Bild hinter dem schwebenden Dock. Während der Abtastung erscheint das Dock nicht in unterstützten Screenshots und Aufnahmen.",
+  "settings.dock.refractionWidth": "Breite der Lichtbrechung",
+  "settings.dock.refractionStrength": "Stärke der Lichtbrechung"
 }

@@ -2912,5 +2912,10 @@
   "appearance.popupScene.followShared": "Suivre le thème commun des fenêtres contextuelles",
   "settings.pages.gridPreview": "Aperçu de la grille",
   "settings.pages.gridPreview.enabled": "Activer l’aperçu",
-  "settings.pages.gridPreview.description": "Maintenez le raccourci enfoncé sur le bureau pour afficher toutes les cases libres."
+  "settings.pages.gridPreview.description": "Maintenez le raccourci enfoncé sur le bureau pour afficher toutes les cases libres.",
+  "settings.dock.liquidGlass": "Verre liquide",
+  "settings.dock.edgeRefraction": "Réfraction des bords",
+  "settings.dock.edgeRefraction.description": "Utilise en temps réel le contenu derrière le Dock flottant. Pendant la réfraction, le Dock est exclu des captures et des enregistrements compatibles.",
+  "settings.dock.refractionWidth": "Largeur de la réfraction",
+  "settings.dock.refractionStrength": "Intensité de la réfraction"
 }

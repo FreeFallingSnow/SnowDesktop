@@ -2912,5 +2912,10 @@
   "appearance.popupScene.followShared": "跟隨共用彈出視窗主題",
   "settings.pages.gridPreview": "網格配置預覽",
   "settings.pages.gridPreview.enabled": "啟用網格預覽",
-  "settings.pages.gridPreview.description": "在桌面按住快速鍵，即可顯示所有空白網格。"
+  "settings.pages.gridPreview.description": "在桌面按住快速鍵，即可顯示所有空白網格。",
+  "settings.dock.liquidGlass": "液態玻璃",
+  "settings.dock.edgeRefraction": "邊緣折射",
+  "settings.dock.edgeRefraction.description": "即時取樣浮動 Dock 後方的畫面。取樣期間，支援擷取排除的螢幕截圖與錄影不會顯示 Dock。",
+  "settings.dock.refractionWidth": "折射寬度",
+  "settings.dock.refractionStrength": "折射強度"
 }

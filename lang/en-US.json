@@ -2912,5 +2912,10 @@
   "appearance.popupScene.followShared": "Follow shared popup theme",
   "settings.pages.gridPreview": "Grid layout preview",
   "settings.pages.gridPreview.enabled": "Enable grid preview",
-  "settings.pages.gridPreview.description": "Hold the shortcut on the desktop to show all empty grid cells."
+  "settings.pages.gridPreview.description": "Hold the shortcut on the desktop to show all empty grid cells.",
+  "settings.dock.liquidGlass": "Liquid Glass",
+  "settings.dock.edgeRefraction": "Edge refraction",
+  "settings.dock.edgeRefraction.description": "Uses live pixels behind the floating Dock. While sampling is active, the Dock is excluded from supported screenshots and recordings.",
+  "settings.dock.refractionWidth": "Refraction width",
+  "settings.dock.refractionStrength": "Refraction strength"
 }

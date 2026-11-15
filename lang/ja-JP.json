@@ -2912,5 +2912,10 @@
   "appearance.popupScene.followShared": "共通のポップアップテーマに従う",
   "settings.pages.gridPreview": "グリッドレイアウトのプレビュー",
   "settings.pages.gridPreview.enabled": "プレビューを有効にする",
-  "settings.pages.gridPreview.description": "デスクトップでショートカットを押している間、空いているグリッドセルをすべて表示します。"
+  "settings.pages.gridPreview.description": "デスクトップでショートカットを押している間、空いているグリッドセルをすべて表示します。",
+  "settings.dock.liquidGlass": "リキッドガラス",
+  "settings.dock.edgeRefraction": "縁の屈折",
+  "settings.dock.edgeRefraction.description": "フローティング Dock の背後をリアルタイムでサンプリングします。サンプリング中、対応するスクリーンショットや画面録画には Dock が表示されません。",
+  "settings.dock.refractionWidth": "屈折の幅",
+  "settings.dock.refractionStrength": "屈折の強さ"
 }

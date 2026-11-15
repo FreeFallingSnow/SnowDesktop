@@ -2912,5 +2912,10 @@
   "appearance.popupScene.followShared": "跟随共享弹窗主题",
   "settings.pages.gridPreview": "网格布局预览",
   "settings.pages.gridPreview.enabled": "启用网格预览",
-  "settings.pages.gridPreview.description": "在桌面按住快捷键，显示所有空网格。"
+  "settings.pages.gridPreview.description": "在桌面按住快捷键，显示所有空网格。",
+  "settings.dock.liquidGlass": "液态玻璃",
+  "settings.dock.edgeRefraction": "边缘折射",
+  "settings.dock.edgeRefraction.description": "实时取样浮动 Dock 后方的画面。取样期间，支持捕获排除的截图与录屏不会显示 Dock。",
+  "settings.dock.refractionWidth": "折射宽度",
+  "settings.dock.refractionStrength": "折射强度"
 }
