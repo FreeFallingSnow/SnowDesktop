@@ -715,22 +715,35 @@ public:
         ImGui::Spacing();
         bool hasTask;
         bool runningTask;
+        float messageHeight = 0.0f;
         {
             std::lock_guard lock(mutex_);
             hasTask = publishTask_.Snapshot().HasTask() &&
                 (!taskResultDismissed_ || publishTask_.Snapshot().Running());
             runningTask = publishTask_.Snapshot().Running();
+            if (footerFeedback_)
+            {
+                const auto& style = ImGui::GetStyle();
+                const float textWidth = std::max(1.0f, ImGui::GetContentRegionAvail().x -
+                    ButtonWidth("X") - 2.0f * (style.WindowPadding.x + style.CellPadding.x));
+                const auto textSize = ImGui::CalcTextSize(footerFeedback_->text.c_str(),
+                    nullptr, false, textWidth);
+                messageHeight = std::max(ImGui::GetFrameHeight(), textSize.y + style.FramePadding.y) +
+                    2.0f * (style.WindowPadding.y + style.CellPadding.y) + 2.0f * gDpiScale;
+            }
         }
+        const float messageSpace = messageHeight > 0.0f ?
+            messageHeight + ImGui::GetStyle().ItemSpacing.y : 0.0f;
         const float splitterHeight = hasTask ? 8.0f * gDpiScale : 0.0f;
         const float maximumFooterHeight = std::max(40.0f * gDpiScale,
-            ImGui::GetContentRegionAvail().y - 280.0f * gDpiScale - splitterHeight);
+            ImGui::GetContentRegionAvail().y - 280.0f * gDpiScale - splitterHeight - messageSpace);
         const float naturalHeight = std::max(runningTask ? 104.0f : 70.0f,
             taskPanelNaturalHeightDip_);
         const float footerHeight = hasTask ? std::clamp(
             (taskPanelUserSized_ ? taskPanelHeightDip_ : naturalHeight) * gDpiScale,
             40.0f * gDpiScale, maximumFooterHeight) : 0.0f;
         const float mainHeight = std::max(1.0f,
-            ImGui::GetContentRegionAvail().y - footerHeight - splitterHeight -
+            ImGui::GetContentRegionAvail().y - footerHeight - splitterHeight - messageSpace -
                 ImGui::GetStyle().ItemSpacing.y * (hasTask ? 2.0f : 0.0f));
         const float sidebarPadding = 8.0f * gDpiScale;
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
@@ -793,6 +806,20 @@ public:
             if (hasTask && !taskPanelUserSized_) RequestManagerFrame();
         }
         ImGui::EndChild();
+        }
+        if (messageHeight > 0.0f)
+        {
+            ImGui::BeginChild("manager-messages", ImVec2(0, messageHeight),
+                ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+            {
+                std::lock_guard lock(mutex_);
+                if (footerFeedback_ && RenderFeedbackUnlocked(*footerFeedback_))
+                {
+                    footerFeedback_.reset();
+                    RequestManagerFrame();
+                }
+            }
+            ImGui::EndChild();
         }
         RenderImageViewer();
         ImGui::End();
@@ -893,9 +920,13 @@ private:
         }
         // Publication results already have a persistent task view.
         if (target.kind == WorkKind::Publish && success) return;
-        feedback_[{target.page, target.localId}] = {success, std::move(value),
-            success && outputFile.empty() && !retain ? std::chrono::steady_clock::now() + std::chrono::seconds(5) :
+        const bool inFooter = target.kind == WorkKind::TagPublish;
+        Feedback feedback{success, std::move(value),
+            success && outputFile.empty() && !retain && !inFooter ?
+                std::chrono::steady_clock::now() + std::chrono::seconds(5) :
                 std::chrono::steady_clock::time_point::max(), std::move(outputFile)};
+        if (inFooter) footerFeedback_ = std::move(feedback);
+        else feedback_[{target.page, target.localId}] = std::move(feedback);
         RequestManagerFrame();
     }
 
@@ -1526,6 +1557,42 @@ private:
         }
     }
 
+    bool RenderFeedbackUnlocked(const Feedback& feedback)
+    {
+        const auto outputFile = feedback.outputFile;
+        const char* openLabel = T("打开所在位置", "Open file location");
+        const float actionsWidth = ButtonWidth("X") + (outputFile.empty() ? 0.0f :
+            ButtonWidth(openLabel) + ImGui::GetStyle().ItemSpacing.x);
+        bool dismiss = false;
+        bool open = false;
+        if (ImGui::BeginTable("operation-feedback", 2, ImGuiTableFlags_SizingFixedFit |
+                ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoPadOuterX))
+        {
+            ImGui::TableSetupColumn("message", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("actions", ImGuiTableColumnFlags_WidthFixed, actionsWidth);
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::AlignTextToFramePadding();
+            ImGui::PushStyleColor(ImGuiCol_Text, feedback.success ?
+                ImVec4(0.18f, 0.58f, 0.32f, 1) : ImVec4(0.78f, 0.20f, 0.18f, 1));
+            ImGui::TextWrapped("%s", feedback.text.c_str());
+            ImGui::PopStyleColor();
+            ImGui::TableSetColumnIndex(1);
+            if (!outputFile.empty())
+            {
+                open = BlueButton(openLabel);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s",
+                    WideToUtf8(outputFile.wstring()).c_str());
+                ImGui::SameLine();
+            }
+            dismiss = BlueButton("X##dismiss-feedback");
+            ImGui::EndTable();
+        }
+        if (!dismiss && open && !OpenFileLocation(outputFile))
+            SetMessageUnlocked(false, T("无法打开所在位置。", "Could not open the file location."), outputFile);
+        return dismiss;
+    }
+
     void RenderOperationFeedbackUnlocked()
     {
         WorkTarget work;
@@ -1544,38 +1611,7 @@ private:
             { feedback_.erase(found); return; }
             ImGui::Spacing();
             ImGui::PushID(found->first.second.c_str());
-            const auto outputFile = found->second.outputFile;
-            const char* openLabel = T("打开所在位置", "Open file location");
-            const float actionsWidth = ButtonWidth("X") + (outputFile.empty() ? 0.0f :
-                ButtonWidth(openLabel) + ImGui::GetStyle().ItemSpacing.x);
-            bool dismiss = false;
-            bool open = false;
-            if (ImGui::BeginTable("operation-feedback", 2, ImGuiTableFlags_SizingFixedFit |
-                    ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoPadOuterX))
-            {
-                ImGui::TableSetupColumn("message", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("actions", ImGuiTableColumnFlags_WidthFixed, actionsWidth);
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::AlignTextToFramePadding();
-                ImGui::PushStyleColor(ImGuiCol_Text, found->second.success ?
-                    ImVec4(0.18f, 0.58f, 0.32f, 1) : ImVec4(0.78f, 0.20f, 0.18f, 1));
-                ImGui::TextWrapped("%s", found->second.text.c_str());
-                ImGui::PopStyleColor();
-                ImGui::TableSetColumnIndex(1);
-                if (!outputFile.empty())
-                {
-                    open = BlueButton(openLabel);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s",
-                        WideToUtf8(outputFile.wstring()).c_str());
-                    ImGui::SameLine();
-                }
-                dismiss = BlueButton("X##dismiss-feedback");
-                ImGui::EndTable();
-            }
-            if (dismiss) feedback_.erase(found);
-            else if (open && !OpenFileLocation(outputFile))
-                SetMessageUnlocked(false, T("无法打开所在位置。", "Could not open the file location."), outputFile);
+            if (RenderFeedbackUnlocked(found->second)) feedback_.erase(found);
             ImGui::PopID();
         };
         render({activePage_, {}});
@@ -2050,16 +2086,20 @@ private:
             std::copy_n(tagsBuffer_.c_str(),
                 std::min(tagsBuffer_.size(), tags.size() - 1), tags.data());
             bool saveTags = false;
-            const char* addTagLabel = T("添加标签", "Add tag");
-            const char* saveTagsLabel = T("保存标签", "Save tags");
+            const auto connection = steam_.Status();
+            const bool connected = connection.initialized && connection.loggedOn;
+            const char* tagMenuLabel = creating ? T("添加标签", "Add tag") :
+                T("标签操作", "Tag actions");
+            const char* submitTagsLabel = creating ? T("保存标签", "Save tags") :
+                T("发布标签", "Publish tags");
             if (ImGui::BeginTable("tags-row", 4, ImGuiTableFlags_SizingFixedFit |
                     ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoPadOuterX))
             {
                 ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableSetupColumn("input", ImGuiTableColumnFlags_WidthFixed,
                     std::min(SettingControlWidth(), ImGui::GetContentRegionAvail().x * 0.38f));
-                ImGui::TableSetupColumn("add", ImGuiTableColumnFlags_WidthFixed, ButtonWidth(addTagLabel));
-                ImGui::TableSetupColumn("save", ImGuiTableColumnFlags_WidthFixed, ButtonWidth(saveTagsLabel));
+                ImGui::TableSetupColumn("menu", ImGuiTableColumnFlags_WidthFixed, ButtonWidth(tagMenuLabel));
+                ImGui::TableSetupColumn("submit", ImGuiTableColumnFlags_WidthFixed, ButtonWidth(submitTagsLabel));
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::AlignTextToFramePadding();
@@ -2068,7 +2108,7 @@ private:
                 ImGui::SetNextItemWidth(-FLT_MIN);
                 if (ImGui::InputText("##project-tags", tags.data(), tags.size())) draft.EditTags(tags.data());
                 ImGui::TableSetColumnIndex(2);
-                if (SecondaryButton(addTagLabel))
+                if (SecondaryButton(tagMenuLabel))
                     ImGui::OpenPopup("widget-tag-options");
                 if (ImGui::BeginPopup("widget-tag-options"))
                 {
@@ -2095,10 +2135,26 @@ private:
                         if (ImGui::MenuItem(option.label, canonicalLabel, added, !added && fits))
                             draft.EditTags(prefix + option.value);
                     }
+                    if (!creating)
+                    {
+                        ImGui::Separator();
+                        if (ImGui::MenuItem(T("读取 Steam 标签", "Read Steam tags"),
+                                nullptr, false, connected))
+                            StartReadSteamTags(project, connection);
+                    }
                     ImGui::EndPopup();
                 }
                 ImGui::TableSetColumnIndex(3);
-                saveTags = SecondaryButton(saveTagsLabel);
+                if (creating) saveTags = SecondaryButton(submitTagsLabel);
+                else
+                {
+                    ImGui::BeginDisabled(!connected);
+                    if (BlueButton(submitTagsLabel)) StartPublishTags(project, connection, SplitTags(tagsBuffer_));
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", T("提交编辑框中的全部标签。留空会清除标签。",
+                            "Publish the entire tag list. An empty list clears the tags."));
+                    ImGui::EndDisabled();
+                }
                 ImGui::EndTable();
             }
             if (saveTags)
@@ -2108,7 +2164,6 @@ private:
                     SetMessageUnlocked(true, T("标签已保存", "Tags saved"));
                 else SetMessageUnlocked(false, error);
             }
-            if (!creating) RenderSteamTagActions(project, tagsBuffer_);
             if (creating)
             {
                 BeginSettingRow(T("公开发布", "Publish publicly"), ImGui::GetFrameHeight());
@@ -2566,36 +2621,19 @@ private:
         return item;
     }
 
-    void RenderSteamTagActions(const WorkshopProject& project, const std::string& tagsText)
+    void StartReadSteamTags(const WorkshopProject& project, const SteamStatus& connection)
     {
-        const auto connection = steam_.Status();
-        const char* readLabel = T("读取 Steam 标签", "Read Steam tags");
-        const char* publishLabel = T("发布标签", "Publish tags");
-        const float width = ButtonWidth(readLabel) + ButtonWidth(publishLabel) +
-            ImGui::GetStyle().ItemSpacing.x;
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
-            std::max(0.0f, ImGui::GetContentRegionAvail().x - width));
-        ImGui::BeginDisabled(!connection.initialized || !connection.loggedOn);
-        if (SecondaryButton(readLabel))
+        StartWork([this, project, connection]
         {
-            StartWork([this, project, connection]
-            {
-                const auto item = FindSteamTagItem(project, connection, WorkshopItemQuery::Tags);
-                if (!item) return;
-                std::lock_guard lock(mutex_);
-                const auto* current = FindProjectUnlocked(project.localId);
-                if (!current || current->publishedFileId != project.publishedFileId) return;
-                auto& draft = drafts_.ForProject(*current, JoinTags(current->tags));
-                draft.EditTags(JoinTags(item->tags));
-                SetMessageUnlocked(true, T("已读取 Steam 标签", "Steam tags loaded"));
-            }, WorkKind::Local, project.localId);
-        }
-        ContinueButtonRow(publishLabel);
-        if (BlueButton(publishLabel)) StartPublishTags(project, connection, SplitTags(tagsText));
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("%s", T("提交编辑框中的全部标签。留空会清除标签。",
-                "Publish the entire tag list. An empty list clears the tags."));
-        ImGui::EndDisabled();
+            const auto item = FindSteamTagItem(project, connection, WorkshopItemQuery::Tags);
+            if (!item) return;
+            std::lock_guard lock(mutex_);
+            const auto* current = FindProjectUnlocked(project.localId);
+            if (!current || current->publishedFileId != project.publishedFileId) return;
+            auto& draft = drafts_.ForProject(*current, JoinTags(current->tags));
+            draft.EditTags(JoinTags(item->tags));
+            SetMessageUnlocked(true, T("已读取 Steam 标签", "Steam tags loaded"));
+        }, WorkKind::Local, project.localId);
     }
 
     void StartPublishTags(const WorkshopProject& project, const SteamStatus& connection,
@@ -2644,6 +2682,7 @@ private:
                 SetMessageUnlocked(false, T("标签已发布到 Steam，但本地保存失败：%s",
                     "Tags published to Steam, but local saving failed: %s", saveError.c_str()));
         }, WorkKind::TagPublish, project.localId)) publishInProgress_.store(false);
+        else footerFeedback_.reset();
     }
 
     void StartPreparePublish(std::string localId)
@@ -3350,6 +3389,7 @@ private:
     bool localizationPreviewLoading_ = false;
     SteamConnectionProblem steamConnectionProblem_ = SteamConnectionProblem::None;
     std::map<std::pair<int, std::string>, Feedback> feedback_;
+    std::optional<Feedback> footerFeedback_;
 };
 
 WorkshopManagerApp* gApp = nullptr;
