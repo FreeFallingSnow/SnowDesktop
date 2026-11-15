@@ -8,6 +8,8 @@
 #include "ui/render/ui_animation_scheduler.h"
 #include "app/render/desktop_backdrop_compositor.h"
 
+#include <vector>
+
 // Each monitor owns its persistent window, input promotion and composition
 // resources. The combination root only stores owners/references to these hosts.
 struct DesktopApp::PersistentDockHost
@@ -58,6 +60,9 @@ struct DesktopApp::PersistentDockHost
     ComPtr<IDCompositionEffectGroup> mergedOpacity;
     bool compositionRenderRecoveryPending = false;
     bool compositionPaintInProgress = false;
+    bool collectingPanelIcons = false;
+    bool collectingMergedGlass = false;
+    std::vector<snowdesktop::PanelBackdropIcon> mergedGlassIcons;
     bool immediatePaintDeferred = false;
     bool windowRegionPending = false;
     bool backdropRecoveryPending = false;

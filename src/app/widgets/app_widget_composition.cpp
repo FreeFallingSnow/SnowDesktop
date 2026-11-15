@@ -721,7 +721,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                 item.renderedContentId = contentId;
             if (!asynchronous && item.hoverFade && item.hoverFade->waitingForPixels)
                 StartDesktopWidgetHoverFade(item, true);
-            item.iconBackdrops.Publish(desktopBackdropCompositor_, item.HoverOpacity());
+            item.iconBackdrops.Publish(desktopBackdropCompositor_, item.HoverOpacity(),
+                item.backdropRegistered ? item.BackdropOwnerKey() : 0, d2dDevice_.Get());
         }
     }
 
@@ -1076,7 +1077,8 @@ void DesktopApp::KeepDesktopWidgetBackdropPanels()
                     item.bounds, opacity, item.BackdropOwnerKey());
         }
         if (item.visible)
-            item.iconBackdrops.Restore(desktopBackdropCompositor_, opacity);
+            item.iconBackdrops.Restore(desktopBackdropCompositor_, opacity,
+                item.backdropRegistered ? item.BackdropOwnerKey() : 0, d2dDevice_.Get());
         else
             item.iconBackdrops.Hide(desktopBackdropCompositor_);
     }

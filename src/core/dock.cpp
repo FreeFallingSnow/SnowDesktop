@@ -20,6 +20,7 @@
 #include "slot.h"
 #include "common/l10n.h"
 #include "layout/item_location.h"
+#include "ui/render/icon_backdrop_clip.h"
 #include "ui/render/smooth_corner_geometry.h"
 #include "ui/render/ui_animation_scheduler.h"
 
@@ -27,6 +28,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <shlwapi.h>
 
 namespace
@@ -2549,12 +2551,14 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         static_cast<float>(scrollVisualViewport.right),
         static_cast<float>(scrollVisualViewport.bottom));
     bool scrollClipPushed = false;
+    std::optional<snowdesktop::ScopedIconBackdropClip> scrollGlassClip;
     if (hasOverflow)
     {
         context->PushAxisAlignedClip(
             scrollVisualViewportF,
             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         scrollClipPushed = true;
+        scrollGlassClip.emplace(context, scrollVisualViewport);
     }
 
     const bool hasLeadingOverflow =
@@ -2782,6 +2786,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     drawBoundaries(true);
     if (overflowMaskPushed) context->PopLayer();
     if (scrollClipPushed) context->PopAxisAlignedClip();
+    scrollGlassClip.reset();
 
     {
         auto drawFixedFolderPass = [&](bool focusedPass) {

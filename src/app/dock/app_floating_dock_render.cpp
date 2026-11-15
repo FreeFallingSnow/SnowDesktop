@@ -47,6 +47,9 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         renderingFloatingDock_, renderingFloatingDock_
     };
     renderingPersistentDockHost_ = &host;
+    host.mergedGlassIcons.clear();
+    host.collectingMergedGlass = statusBar_ && host.container &&
+        host.container->IsMergedWithStatusBar() && statusBar_->HasMergedGlassBackdrop(host.monitor);
     const auto revision = ++host.presentationRevision;
     const std::wstring diagnosticOwner = snowdesktop::performance::Enabled()
         ? std::to_wstring(reinterpret_cast<UINT_PTR>(host.hwnd)) : std::wstring{};
@@ -152,6 +155,12 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
                 host.container->DrawChrome(context.Get(), lastMousePoint_);
             });
             snowdesktop::startup_diagnostics::Call(L"Dock.DrawContents", [&] {
+                host.collectingPanelIcons = true;
+                struct CollectionScope
+                {
+                    bool& collecting;
+                    ~CollectionScope() { collecting = false; }
+                } collection{host.collectingPanelIcons};
                 host.container->DrawContents(context.Get());
             });
         }
@@ -260,7 +269,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     if (stagedBackdrop)
     {
         snowdesktop::performance::Scope backdropScope("dock", "floating.backdrop_apply", diagnosticOwner, revision);
-        if (!host.backdrop.ApplyStagedFrame())
+        if (!host.backdrop.ApplyStagedFrame(d2dDevice_.Get()))
         {
             std::wstring message = L"Floating Dock backdrop candidate failed: " + host.backdrop.LastError();
             WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message.c_str(), DiagnosticLogLevel::Warning);
@@ -269,6 +278,8 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
             return false;
         }
     }
+    if (host.collectingMergedGlass && statusBar_)
+        statusBar_->ApplyMergedDockIconGlass(host.monitor, d2dDevice_.Get(), host.mergedGlassIcons);
     if (recoveringBackdrop && host.backdrop.IsAvailable())
     {
         host.backdrop.SetVisible(IsWindowVisible(host.hwnd) != FALSE);

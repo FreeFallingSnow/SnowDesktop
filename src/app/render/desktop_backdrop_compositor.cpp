@@ -16,6 +16,7 @@
 #include "diagnostics/performance_trace.h"
 
 #include "desktop_backdrop_update_rules.h"
+#include "panel_blur_geometry.h"
 #include "app/popup/popup_window_pair_z_order.h"
 #include "dock/dock_genie_rules.h"
 #include "navigation/quick_navigation_genie_rules.h"
@@ -53,6 +54,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -65,6 +67,7 @@
 namespace wf = winrt::Windows::Foundation;
 namespace wfn = winrt::Windows::Foundation::Numerics;
 namespace wge = winrt::Windows::Graphics::Effects;
+namespace wgx = winrt::Windows::Graphics::DirectX;
 namespace ws = winrt::Windows::System;
 namespace wuc = winrt::Windows::UI::Composition;
 namespace wucc = winrt::Windows::UI::Composition::Core;
@@ -330,12 +333,91 @@ struct BackgroundBlurFactory
     std::shared_future<bool> result = completion.get_future().share();
 };
 
-wuc::CompositionEffectFactory CreateBlurFactory(const wuc::Compositor& compositor, int radius)
+winrt::com_ptr<GaussianBlurEffect> MakeBackdropBlur(int radius)
 {
     auto blur = winrt::make_self<GaussianBlurEffect>();
     blur->effectSource = wuc::CompositionEffectSourceParameter(L"backdrop");
     blur->blurAmount = static_cast<float>(radius);
-    return compositor.CreateEffectFactory(*blur);
+    return blur;
+}
+
+wuc::CompositionEffectFactory CreateBlurFactory(const wuc::Compositor& compositor, int radius)
+{
+    return compositor.CreateEffectFactory(*MakeBackdropBlur(radius));
+}
+
+struct BlurCompositeEffect : winrt::implements<BlurCompositeEffect,
+    wge::IGraphicsEffect, wge::IGraphicsEffectSource, awge::IGraphicsEffectD2D1Interop>
+{
+    HRESULT STDMETHODCALLTYPE GetEffectId(GUID* id) noexcept override
+    {
+        if (!id) return E_INVALIDARG;
+        *id = CLSID_D2D1Composite;
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE GetNamedPropertyMapping(LPCWSTR, UINT*,
+        awge::GRAPHICS_EFFECT_PROPERTY_MAPPING*) noexcept override { return E_INVALIDARG; }
+    HRESULT STDMETHODCALLTYPE GetPropertyCount(UINT* count) noexcept override
+    {
+        if (!count) return E_INVALIDARG;
+        *count = 1;
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE GetProperty(UINT index,
+        ABI::Windows::Foundation::IPropertyValue** value) noexcept override try
+    {
+        if (!value) return E_INVALIDARG;
+        if (index != D2D1_COMPOSITE_PROP_MODE) return E_BOUNDS;
+        *value = wf::PropertyValue::CreateUInt32(static_cast<UINT32>(mode))
+            .as<ABI::Windows::Foundation::IPropertyValue>().detach();
+        return S_OK;
+    }
+    catch (...) { return winrt::to_hresult(); }
+    HRESULT STDMETHODCALLTYPE GetSource(UINT index,
+        awge::IGraphicsEffectSource** source) noexcept override
+    {
+        if (!source) return E_INVALIDARG;
+        if (index >= sources.size()) return E_BOUNDS;
+        winrt::copy_to_abi(sources[index], *reinterpret_cast<void**>(source));
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE GetSourceCount(UINT* count) noexcept override
+    {
+        if (!count) return E_INVALIDARG;
+        *count = static_cast<UINT>(sources.size());
+        return S_OK;
+    }
+    winrt::hstring Name() const { return name; }
+    void Name(const winrt::hstring& value) { name = value; }
+
+    D2D1_COMPOSITE_MODE mode = D2D1_COMPOSITE_MODE_SOURCE_OVER;
+    std::array<wge::IGraphicsEffectSource, 2> sources{nullptr, nullptr};
+    winrt::hstring name;
+};
+
+winrt::hstring RadiusMaskName(int radius)
+{
+    return winrt::hstring(L"radiusMask" + std::to_wstring(radius));
+}
+
+wuc::CompositionEffectFactory CreateRegionalBlurFactory(const wuc::Compositor& compositor,
+    const std::vector<int>& radii)
+{
+    wge::IGraphicsEffect result = *MakeBackdropBlur(radii.front());
+    for (std::size_t i = 1; i < radii.size(); ++i)
+    {
+        // Each blur reads the same raw input. The mask selects its contribution
+        // only after the filter has sampled neighbours outside the icon.
+        auto masked = winrt::make_self<BlurCompositeEffect>();
+        masked->mode = D2D1_COMPOSITE_MODE_DESTINATION_IN;
+        masked->sources[0] = *MakeBackdropBlur(radii[i]);
+        masked->sources[1] = wuc::CompositionEffectSourceParameter(RadiusMaskName(radii[i]));
+        auto composite = winrt::make_self<BlurCompositeEffect>();
+        composite->sources[0] = result;
+        composite->sources[1] = *masked;
+        result = *composite;
+    }
+    return compositor.CreateEffectFactory(result);
 }
 
 struct SharedBackdropCompositionContext
@@ -364,6 +446,19 @@ struct DesktopBackdropCompositor::Impl
 
     struct PanelVisual
     {
+        struct IconRegions
+        {
+            std::vector<snowdesktop::PanelBackdropIcon> icons;
+            RECT base{}, allocation{};
+            float corners = 0.0f;
+            int blurRadius = 0;
+            bool extendOutline = false;
+            wuc::CompositionEffectBrush brush{nullptr};
+            wuc::CompositionPathGeometry clip{nullptr};
+        };
+        IconRegions iconRegions;
+        bool iconRegionsApplied = false;
+        bool smoothCorners = false;
         RECT frame{};
         RECT regionFrame{};
         std::uintptr_t ownerKey = 0;
@@ -377,6 +472,7 @@ struct DesktopBackdropCompositor::Impl
         bool regionFenceSynchronized = false;
         int blurRadius = 0;
         wuc::SpriteVisual visual{nullptr};
+        wuc::CompositionEffectBrush baseBlur{nullptr};
         wuc::CompositionRoundedRectangleGeometry geometry{nullptr};
         wuc::CompositionPathGeometry smoothGeometry{nullptr};
         SIZE smoothSize{};
@@ -472,6 +568,7 @@ struct DesktopBackdropCompositor::Impl
         D2D1_MATRIX_4X4_F transform{};
         RECT projectedFrame{};
         std::optional<snowdesktop::IconBackdropClip> iconContentClip;
+        std::vector<snowdesktop::PanelBackdropIcon> panelIcons;
     };
     std::vector<StagedPanel> stagedPanels;
     std::unordered_map<std::uintptr_t, std::size_t> stagedPanelOwners;
@@ -505,6 +602,9 @@ struct DesktopBackdropCompositor::Impl
     wucd::DesktopWindowTarget target{nullptr};
     wuc::ContainerVisual root{nullptr};
     std::unordered_map<int, wuc::CompositionEffectFactory> blurFactories;
+    std::map<std::vector<int>, wuc::CompositionEffectFactory> regionalFactories;
+    winrt::com_ptr<ID2D1Device> maskDrawDevice;
+    wuc::CompositionGraphicsDevice maskGraphicsDevice{nullptr};
     std::vector<PanelVisual> panels;
     std::unordered_map<std::uintptr_t, std::size_t> panelOwners;
 
@@ -553,6 +653,7 @@ struct DesktopBackdropCompositor::Impl
     bool transformedRegionDirty = false;
     bool popupMode = false;
     bool popupTopmost = false;
+    RECT popupPadding{};
     bool visible = true;
     bool animationPathRegionExpanded = false;
     bool stableWindowRegion = false;
@@ -662,9 +763,9 @@ struct DesktopBackdropCompositor::Impl
             return false;
         if (popupMode)
         {
-            origin = { rect.left, rect.top };
-            size.cx = std::max<LONG>(1, rect.right - rect.left);
-            size.cy = std::max<LONG>(1, rect.bottom - rect.top);
+            origin = { rect.left - popupPadding.left, rect.top - popupPadding.top };
+            size.cx = std::max<LONG>(1, rect.right + popupPadding.right - origin.x);
+            size.cy = std::max<LONG>(1, rect.bottom + popupPadding.bottom - origin.y);
             return true;
         }
         if (!parent || !IsWindow(parent))
@@ -991,6 +1092,65 @@ struct DesktopBackdropCompositor::Impl
         return brush;
     }
 
+    wuc::CompositionSurfaceBrush DrawRadiusMask(const SIZE& size, ID2D1Geometry* geometry)
+    {
+        const auto surface = maskGraphicsDevice.CreateDrawingSurface(wf::Size{
+            static_cast<float>(size.cx), static_cast<float>(size.cy)},
+            wgx::DirectXPixelFormat::B8G8R8A8UIntNormalized, wgx::DirectXAlphaMode::Premultiplied);
+        const auto interop = surface.as<awuci::ICompositionDrawingSurfaceInterop>();
+        POINT offset{};
+        winrt::com_ptr<ID2D1DeviceContext> context;
+        winrt::check_hresult(interop->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
+            context.put_void(), &offset));
+        context->SetDpi(96.0f, 96.0f);
+        context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+        context->SetTransform(D2D1::Matrix3x2F::Translation(
+            static_cast<float>(offset.x), static_cast<float>(offset.y)));
+        context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        context->Clear(D2D1::ColorF(0, 0.0f));
+        winrt::com_ptr<ID2D1SolidColorBrush> ink;
+        const HRESULT draw = context->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), ink.put());
+        if (SUCCEEDED(draw)) context->FillGeometry(geometry, ink.get());
+        const HRESULT finish = interop->EndDraw();
+        winrt::check_hresult(draw);
+        winrt::check_hresult(finish);
+        const auto mask = compositor.CreateSurfaceBrush(surface);
+        mask.Stretch(wuc::CompositionStretch::None);
+        mask.HorizontalAlignmentRatio(0.0f);
+        mask.VerticalAlignmentRatio(0.0f);
+        return mask;
+    }
+
+    wuc::CompositionEffectBrush CreateRegionalBlurBrush(ID2D1Device* device, int baseRadius,
+        const snowdesktop::panel_blur::Geometry& geometry)
+    {
+        if (maskDrawDevice.get() != device)
+        {
+            wuc::CompositionGraphicsDevice graphics{nullptr};
+            winrt::check_hresult(compositor.as<awuci::ICompositorInterop>()->CreateGraphicsDevice(
+                device, reinterpret_cast<awuci::ICompositionGraphicsDevice**>(winrt::put_abi(graphics))));
+            maskGraphicsDevice = std::move(graphics);
+            maskDrawDevice.copy_from(device);
+        }
+        std::vector<int> radii{baseRadius};
+        for (const auto& entry : geometry.strongerMasks)
+            radii.push_back(entry.first);
+        auto found = regionalFactories.find(radii);
+        if (found == regionalFactories.end())
+        {
+            if (regionalFactories.size() >= 16) regionalFactories.clear();
+            auto factory = CreateRegionalBlurFactory(compositor, radii);
+            found = regionalFactories.emplace(std::move(radii), std::move(factory)).first;
+        }
+        auto brush = found->second.CreateBrush();
+        brush.SetSourceParameter(L"backdrop", compositor.CreateBackdropBrush());
+        const SIZE size{geometry.allocation.right - geometry.allocation.left,
+            geometry.allocation.bottom - geometry.allocation.top};
+        for (const auto& [radius, mask] : geometry.strongerMasks)
+            brush.SetSourceParameter(RadiusMaskName(radius), DrawRadiusMask(size, mask.Get()));
+        return brush;
+    }
+
     void PruneUnusedBlurFactories()
     {
         if (collectingFrame || !blurFactoriesDirty)
@@ -1051,6 +1211,9 @@ struct DesktopBackdropCompositor::Impl
         panels.clear();
         panelOwners.clear();
         blurFactories.clear();
+        regionalFactories.clear();
+        maskGraphicsDevice = nullptr;
+        maskDrawDevice = nullptr;
         collectingFrame = false;
         frameCommitPending = false;
         stagingFrame = false;
@@ -1081,6 +1244,7 @@ struct DesktopBackdropCompositor::Impl
         contentWindow = nullptr;
         popupMode = false;
         popupTopmost = false;
+        popupPadding = {};
         visible = true;
         animationPathRegionExpanded = false;
         stableWindowRegion = false;
@@ -1990,7 +2154,23 @@ void DesktopBackdropCompositor::DiscardStagedFrame()
     impl_->stagedPanelOwners.clear();
 }
 
-bool DesktopBackdropCompositor::ApplyStagedFrame()
+bool DesktopBackdropCompositor::CollectStagedPanelIcon(std::uintptr_t ownerKey,
+    snowdesktop::PanelBackdropIcon icon)
+{
+    if (!impl_->stagingFrame || !ownerKey) return false;
+    const auto panel = impl_->FindStagedPanel({}, ownerKey);
+    if (panel == impl_->stagedPanels.end() || panel->kind != Impl::StagedPanel::Kind::Rounded)
+        return false;
+    RECT visible = icon.frame;
+    if (icon.clip && !IntersectRect(&visible, &icon.frame, &icon.clip->bounds)) return true;
+    if (snowdesktop::panel_blur::RadiusKey(icon.blurRadius) >
+        snowdesktop::panel_blur::RadiusKey(panel->blurRadius) ||
+        !snowdesktop::panel_blur::Covered(panel->frame, panel->cornerRadius, visible))
+        panel->panelIcons.push_back(std::move(icon));
+    return true;
+}
+
+bool DesktopBackdropCompositor::ApplyStagedFrame(ID2D1Device* drawDevice)
 {
     if (!impl_->available || !impl_->stagingFrame) return false;
     const RECT occlusion = impl_->stagedOcclusionRect;
@@ -2011,6 +2191,8 @@ bool DesktopBackdropCompositor::ApplyStagedFrame()
         {
         case Impl::StagedPanel::Kind::Rounded:
             applied = AddPanel(panel.frame, panel.cornerRadius, panel.blurRadius, panel.ownerKey, panel.smoothCorners);
+            if (applied && !panel.panelIcons.empty())
+                (void)SetPanelIconRegions(panel.ownerKey, drawDevice, panel.panelIcons, true);
             break;
         case Impl::StagedPanel::Kind::Icon:
             applied = AddIconPanel(panel.frame, static_cast<snowdesktop::IconBeautifyShape>(panel.shape),
@@ -2023,7 +2205,7 @@ bool DesktopBackdropCompositor::ApplyStagedFrame()
             break;
         }
         if (applied && panel.opacity != 1.0f)
-            applied = SetPanelOpacity(panel.frame, panel.opacity);
+            applied = SetPanelOpacity(panel.frame, panel.opacity, panel.ownerKey);
         if (applied && panel.transformed)
             applied = SetPanelTransform(panel.ownerKey, panel.transform, panel.projectedFrame);
         if (!applied)
@@ -2044,6 +2226,131 @@ bool DesktopBackdropCompositor::AddPanel(
     float blurRadius, std::uintptr_t ownerKey, bool smoothCorners)
 {
     return UpdatePanel(frame, cornerRadius, blurRadius, ownerKey, smoothCorners, false);
+}
+
+bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
+    ID2D1Device* drawDevice, std::span<const snowdesktop::PanelBackdropIcon> icons,
+    bool extendOutline)
+{
+    if (!impl_->available || impl_->stagingFrame || !ownerKey) return false;
+    const auto panel = impl_->FindPanel({}, ownerKey);
+    if (panel == impl_->panels.end()) return false;
+    namespace blur = snowdesktop::panel_blur;
+    const auto needsRegion = [&](const snowdesktop::PanelBackdropIcon& icon) {
+        return blur::RadiusKey(icon.blurRadius) > panel->blurRadius ||
+            (extendOutline && !blur::Covered(panel->frame, panel->cornerRadius, icon.frame));
+    };
+    if (!drawDevice || std::none_of(icons.begin(), icons.end(), needsRegion))
+    {
+        if (panel->iconRegionsApplied)
+        {
+            // Restore the clip and sampling footprint without changing the
+            // opacity or transform owned by the panel's presentation.
+            try
+            {
+                if (panel->iconRegions.brush)
+                    panel->visual.Brush(panel->baseBlur);
+                if (panel->iconRegions.clip)
+                {
+                    const RECT& frame = panel->frame;
+                    panel->SetOffset({static_cast<float>(frame.left), static_cast<float>(frame.top), 0.0f});
+                    panel->SetSize({static_cast<float>(frame.right - frame.left),
+                        static_cast<float>(frame.bottom - frame.top)});
+                    if (panel->smoothCorners) panel->SetClip(panel->smoothGeometry);
+                    else panel->SetClip(panel->geometry);
+                    panel->regionFrame = frame;
+                    panel->regionCornerRadius = panel->cornerRadius;
+                    impl_->transformedRegionDirty = true;
+                }
+                panel->iconRegionsApplied = false;
+                impl_->frameCommitPending = true;
+            }
+            catch (const winrt::hresult_error& error)
+            {
+                impl_->SetError(L"backdrop.icon_regions", error.code());
+                return false;
+            }
+        }
+        return true;
+    }
+
+    try
+    {
+        auto& cached = panel->iconRegions;
+        const bool changed = cached.icons.empty() || !EqualRect(&cached.base, &panel->frame) ||
+            cached.corners != panel->cornerRadius || cached.blurRadius != panel->blurRadius ||
+            cached.extendOutline != extendOutline ||
+            !std::equal(cached.icons.begin(), cached.icons.end(), icons.begin(), icons.end(), blur::SameIcon);
+        if (!changed && panel->iconRegionsApplied) return true;
+        if (changed)
+        {
+            Impl::PanelVisual::IconRegions next;
+            next.icons.assign(icons.begin(), icons.end());
+            next.base = panel->frame;
+            next.corners = panel->cornerRadius;
+            next.blurRadius = panel->blurRadius;
+            next.extendOutline = extendOutline;
+            winrt::com_ptr<ID2D1Factory> factory;
+            drawDevice->GetFactory(factory.put());
+            blur::Geometry geometry;
+            winrt::check_hresult(blur::Build(*factory.get(), next.base, next.corners,
+                next.blurRadius, icons, extendOutline, geometry));
+            next.allocation = geometry.allocation;
+            if (geometry.outline)
+            {
+                winrt::com_ptr<ID2D1Geometry> outline;
+                outline.copy_from(geometry.outline.Get());
+                next.clip = impl_->compositor.CreatePathGeometry();
+                next.clip.Path(wuc::CompositionPath(winrt::make<BackdropGeometrySource>(std::move(outline))));
+            }
+            if (!geometry.strongerMasks.empty())
+            {
+                try
+                {
+                    next.brush = impl_->CreateRegionalBlurBrush(drawDevice, next.blurRadius, geometry);
+                }
+                catch (const winrt::hresult_error& error)
+                {
+                    // Keep one uniform parent blur and the correct outline if
+                    // an effect or mask surface is rejected by the backend.
+                    impl_->lastError = FormatHresult(L"backdrop.icon_radius_mask", error.code());
+                }
+            }
+            cached = std::move(next);
+        }
+        const auto& brush = cached.brush ? cached.brush : panel->baseBlur;
+        if (panel->visual.Brush() != brush)
+            panel->visual.Brush(brush);
+        if (cached.clip)
+        {
+            const RECT& area = cached.allocation;
+            panel->SetOffset({static_cast<float>(area.left), static_cast<float>(area.top), 0.0f});
+            panel->SetSize({static_cast<float>(area.right - area.left), static_cast<float>(area.bottom - area.top)});
+            panel->SetClip(cached.clip);
+            panel->regionFrame = area;
+            panel->regionCornerRadius = 0.0f;
+            impl_->transformedRegionDirty = true;
+        }
+        panel->iconRegionsApplied = true;
+        impl_->frameCommitPending = true;
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.icon_regions", error.code());
+        return false;
+    }
+}
+
+bool DesktopBackdropCompositor::SetPopupWindowPadding(const RECT& padding)
+{
+    if (!impl_->available || !impl_->popupMode) return false;
+    if (EqualRect(&impl_->popupPadding, &padding)) return true;
+    const RECT previous = impl_->popupPadding;
+    impl_->popupPadding = padding;
+    if (impl_->SyncWindowPlacement()) return true;
+    impl_->popupPadding = previous;
+    return false;
 }
 
 void DesktopBackdropCompositor::SetBackgroundPanels(
@@ -2139,12 +2446,16 @@ bool DesktopBackdropCompositor::UpdatePanel(
         existing->regionFrame = frame;
         existing->SetTransform(wfn::float4x4{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1});
 
-        if (existing->blurRadius != blurKey || !existing->visual.Brush())
+        if (existing->blurRadius != blurKey || !existing->baseBlur)
         {
             impl_->blurFactoriesDirty = true;
             existing->blurRadius = blurKey;
-            existing->visual.Brush(impl_->CreateBlurBrush(blurKey));
+            existing->baseBlur = impl_->CreateBlurBrush(blurKey);
         }
+        if (existing->visual.Brush() != existing->baseBlur)
+            existing->visual.Brush(existing->baseBlur);
+        existing->iconRegionsApplied = false;
+        existing->smoothCorners = smoothCorners;
         existing->cornerRadius = resolvedRadius;
         existing->regionCornerRadius = resolvedRadius;
         existing->SetOffset(wfn::float3{

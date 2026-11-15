@@ -13,11 +13,31 @@
 #include <cstdint>
 #include <future>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 
 struct ID2D1Device;
 namespace snowdesktop::popup_motion_curve { struct Timeline; }
+namespace snowdesktop
+{
+struct PanelBackdropIcon
+{
+    RECT frame{};
+    IconBeautifyShape shape{};
+    float blurRadius = 0;
+    std::optional<IconBackdropClip> clip;
+
+    void Offset(LONG x, LONG y)
+    {
+        OffsetRect(&frame, x, y);
+        if (!clip) return;
+        OffsetRect(&clip->bounds, x, y);
+        clip->geometryOffset.x += x;
+        clip->geometryOffset.y += y;
+    }
+};
+}
 
 /**
  * @brief 独立桌面玻璃合成窗口。
@@ -119,8 +139,15 @@ public:
     // Applied Dock frames retain the host-sized HWND fence; Composition clips
     // own moving panel contours without prematurely clipping the old frame.
     bool BeginStagedFrame();
-    bool ApplyStagedFrame();
+    bool ApplyStagedFrame(ID2D1Device* drawDevice = nullptr);
     void DiscardStagedFrame();
+    // Dock's content pass contributes silhouettes to the already staged chrome.
+    bool CollectStagedPanelIcon(std::uintptr_t ownerKey, snowdesktop::PanelBackdropIcon icon);
+    // Apply regions to the existing rounded panel, sampling its backdrop once.
+    bool SetPanelIconRegions(std::uintptr_t ownerKey, ID2D1Device* drawDevice,
+        std::span<const snowdesktop::PanelBackdropIcon> icons, bool extendOutline);
+    // A merged status strip needs room for Dock icons beyond its content HWND.
+    bool SetPopupWindowPadding(const RECT& padding);
     /**
      * @brief 注册或更新一个圆角玻璃面板。
      * @param ownerKey 非零时作为跨几何变化保持稳定的面板身份；零值保留

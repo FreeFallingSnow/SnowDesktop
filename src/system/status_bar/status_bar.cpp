@@ -267,6 +267,7 @@ struct StatusBar::Impl
         int mergedDockHeight = 0;
         bool reserveSpace = true, positioned = false;
         RECT placedBounds{};
+        RECT glassPadding{};
         DWORD explorerPid = 0;
         bool placing = false, queued = false, fullscreen = false, failed = false, closing = false;
         // Only the bar's own hide may take the surface away. WM_WINDOWPOSCHANGING
@@ -870,13 +871,35 @@ struct StatusBar::Impl
             {
                 if (!backdrop.IsAvailable()) backdrop.InitializePopup(hwnd, !fullscreen, false);
                 backdrop.Reattach(hwnd);
-                backdrop.BeginFrame(true);
-                backdrop.AddPanel({0, 0, rect.right - rect.left, rect.bottom - rect.top},
+                // Allocate room towards the monitor interior once per layout.
+                // The content HWND and AppBar reservation keep their original size.
+                RECT padding{};
+                if (mergedDockHeight)
+                {
+                    switch (edge)
+                    {
+                    case ABE_LEFT: padding.right = thickness; break;
+                    case ABE_RIGHT: padding.left = thickness; break;
+                    case ABE_TOP: padding.bottom = thickness; break;
+                    case ABE_BOTTOM: padding.top = thickness; break;
+                    }
+                }
+                if (backdrop.SetPopupWindowPadding(padding)) glassPadding = padding;
+                const RECT panel{glassPadding.left, glassPadding.top,
+                    rect.right - rect.left + glassPadding.left, rect.bottom - rect.top + glassPadding.top};
+                const bool staged = mergedDockHeight && backdrop.BeginStagedFrame();
+                if (!staged) backdrop.BeginFrame(true);
+                backdrop.AddPanel(panel,
                     0, appearance.glassBlurRadius * dpi / 96.f,
                     reinterpret_cast<std::uintptr_t>(this));
-                backdrop.EndFrame();
+                if (staged) (void)backdrop.ApplyStagedFrame();
+                else backdrop.EndFrame();
             }
-            else if (appearanceDirty && (!appearance.glassEnabled || HighContrast())) backdrop.Reset();
+            else if (appearanceDirty && (!appearance.glassEnabled || HighContrast()))
+            {
+                backdrop.Reset();
+                glassPadding = {};
+            }
             paintDirty = paintDirty || moved || appearanceDirty;
             backgroundDirty = backgroundDirty || moved || appearanceDirty;
             appearanceDirty = false;
@@ -2522,20 +2545,38 @@ std::optional<RECT> StatusBar::MergedStripBounds(HMONITOR monitor) const
     }
     return {};
 }
-bool StatusBar::HasMergedGlassBackdrop(HMONITOR monitor, const RECT& screenFrame) const
+bool StatusBar::HasMergedGlassBackdrop(HMONITOR monitor) const
 {
-    if (impl_->removingWindows || IsRectEmpty(&screenFrame) || HighContrast()) return false;
+    if (impl_->removingWindows || HighContrast()) return false;
     for (const auto& [id, window] : impl_->windows)
     {
         (void)id;
         if (!window || window->monitor != monitor || !window->mergedDockHeight ||
             window->failed || !window->positioned || !window->appearance.glassEnabled ||
             !window->backdrop.IsAvailable() || window->backdrop.PanelCount() == 0) continue;
-        const auto& strip = window->placedBounds;
-        return screenFrame.left >= strip.left && screenFrame.top >= strip.top &&
-            screenFrame.right <= strip.right && screenFrame.bottom <= strip.bottom;
+        return true;
     }
     return false;
+}
+
+void StatusBar::ApplyMergedDockIconGlass(HMONITOR monitor, ID2D1Device* drawDevice,
+    std::vector<PanelBackdropIcon>& screenIcons)
+{
+    if (impl_->removingWindows) return;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (!window || window->monitor != monitor || !window->mergedDockHeight ||
+            window->failed || !window->positioned || !window->backdrop.IsAvailable()) continue;
+        for (auto& icon : screenIcons)
+            icon.Offset(window->glassPadding.left - window->placedBounds.left,
+                window->glassPadding.top - window->placedBounds.top);
+        const auto key = reinterpret_cast<std::uintptr_t>(window.get());
+        if (!window->backdrop.SetPanelIconRegions(key, drawDevice, screenIcons, true))
+            (void)window->backdrop.SetPanelIconRegions(key, drawDevice, {}, true);
+        window->backdrop.CommitDeferredFrame();
+        return;
+    }
 }
 bool StatusBar::IsFullscreen(HMONITOR monitor) const
 {

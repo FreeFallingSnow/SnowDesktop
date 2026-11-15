@@ -12,8 +12,10 @@
 struct IDCompositionDesktopDevice;
 struct IDWriteFactory;
 struct ID2D1DeviceContext;
+struct ID2D1Device;
 namespace snowdesktop
 {
+struct PanelBackdropIcon;
 namespace widget_runtime { class WidgetSystemDataProvider; }
 namespace tray { class Service; struct Icon; }
 // One application-owned drag surface shared with Dock. Only the captured
@@ -130,9 +132,9 @@ public:
     std::optional<RECT> MergedDockArea(HMONITOR monitor) const;
     bool MergesDock(HMONITOR monitor) const;
     std::optional<RECT> MergedStripBounds(HMONITOR monitor) const;
-    // Host-private query: include prepared hidden strips, but require a live
-    // glass target and complete screen-space coverage before icons inherit it.
-    bool HasMergedGlassBackdrop(HMONITOR monitor, const RECT& screenFrame) const;
+    bool HasMergedGlassBackdrop(HMONITOR monitor) const;
+    void ApplyMergedDockIconGlass(HMONITOR monitor, ID2D1Device* drawDevice,
+        std::vector<PanelBackdropIcon>& screenIcons);
     void SetDockChanged(std::function<void(bool geometry)> changed);
     // Host-private selection boundary for pointer presses, including tray icons
     // and merged blank background. Does not activate the no-activate bar.
