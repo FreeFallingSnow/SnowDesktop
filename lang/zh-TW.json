@@ -2913,5 +2913,11 @@
   "app.settings.widgets_cli_path": "CLI 路徑",
   "app.settings.widgets_cli_help": "說明命令",
   "app.settings.widgets_cli_copied": "已複製。",
-  "workshop_manager.component_update_pending": "元件更新待上傳"
+  "workshop_manager.component_update_pending": "元件更新待上傳",
+  "workshop_manager.widget_tag_utilities": "實用工具",
+  "workshop_manager.widget_tag_system_monitor": "系統監控",
+  "workshop_manager.widget_tag_media": "媒體",
+  "workshop_manager.widget_tag_fun_interaction": "娛樂與互動",
+  "workshop_manager.widget_tag_decoration": "桌面裝飾",
+  "workshop_manager.widget_tag_news_feeds": "新聞與訂閱來源"
 }

@@ -2913,5 +2913,11 @@
   "app.settings.widgets_cli_path": "Caminho da CLI",
   "app.settings.widgets_cli_help": "Comando de ajuda",
   "app.settings.widgets_cli_copied": "Copiado.",
-  "workshop_manager.component_update_pending": "Atualização do componente pendente"
+  "workshop_manager.component_update_pending": "Atualização do componente pendente",
+  "workshop_manager.widget_tag_utilities": "Utilitários",
+  "workshop_manager.widget_tag_system_monitor": "Monitoramento do sistema",
+  "workshop_manager.widget_tag_media": "Mídia",
+  "workshop_manager.widget_tag_fun_interaction": "Diversão e interação",
+  "workshop_manager.widget_tag_decoration": "Decoração",
+  "workshop_manager.widget_tag_news_feeds": "Notícias e feeds"
 }
