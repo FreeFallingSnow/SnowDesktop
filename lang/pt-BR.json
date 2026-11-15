@@ -1048,7 +1048,6 @@
   "workshop_manager.initial_title": "Título inicial",
   "workshop_manager.initial_description": "Descrição inicial",
   "workshop_manager.update_preview": "Atualizar também as imagens de prévia",
-  "workshop_manager.update_tags": "Atualizar também as tags",
   "workshop_manager.submit_locked": "O Steam está enviando os dados. Mantenha esta janela aberta; você pode minimizá-la.",
   "workshop_manager.remove_local": "Remover apenas registro local",
   "workshop_manager.removed": "Registro removido; a fonte e o conteúdo do Workshop não foram excluídos",
@@ -2919,5 +2918,13 @@
   "workshop_manager.widget_tag_media": "Mídia",
   "workshop_manager.widget_tag_fun_interaction": "Diversão e interação",
   "workshop_manager.widget_tag_decoration": "Decoração",
-  "workshop_manager.widget_tag_news_feeds": "Notícias e feeds"
+  "workshop_manager.widget_tag_news_feeds": "Notícias e feeds",
+  "workshop_manager.read_steam_tags": "Ler marcadores do Steam",
+  "workshop_manager.publish_tags": "Publicar marcadores",
+  "workshop_manager.steam_tags_loaded": "Marcadores do Steam carregados",
+  "workshop_manager.tags_published": "Marcadores publicados no Steam",
+  "workshop_manager.tags_published_save_failed": "Marcadores publicados no Steam, mas houve falha ao salvar localmente: %s",
+  "workshop_manager.publish_tags_tooltip": "Publica a lista completa de marcadores. Uma lista vazia remove todos os marcadores.",
+  "workshop_manager.manage_owned_item": "Você só pode gerenciar itens que pertencem à conta Steam atual.",
+  "workshop_manager.accept_workshop_agreement": "Aceite primeiro o acordo da Oficina no Steam."
 }

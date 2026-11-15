@@ -1048,7 +1048,6 @@
   "workshop_manager.initial_title": "Titre initial",
   "workshop_manager.initial_description": "Description initiale",
   "workshop_manager.update_preview": "Mettre aussi à jour les images d’aperçu",
-  "workshop_manager.update_tags": "Mettre également à jour les balises",
   "workshop_manager.submit_locked": "Steam transmet les données. Gardez cette fenêtre ouverte ; vous pouvez la réduire.",
   "workshop_manager.remove_local": "Supprimer l'enregistrement local uniquement",
   "workshop_manager.removed": "Enregistrement supprimé ; le code source et le contenu du Workshop n’ont pas été supprimés",
@@ -2919,5 +2918,13 @@
   "workshop_manager.widget_tag_media": "Multimédia",
   "workshop_manager.widget_tag_fun_interaction": "Divertissement et interaction",
   "workshop_manager.widget_tag_decoration": "Décoration",
-  "workshop_manager.widget_tag_news_feeds": "Actualités et flux"
+  "workshop_manager.widget_tag_news_feeds": "Actualités et flux",
+  "workshop_manager.read_steam_tags": "Lire les étiquettes Steam",
+  "workshop_manager.publish_tags": "Publier les étiquettes",
+  "workshop_manager.steam_tags_loaded": "Étiquettes Steam chargées",
+  "workshop_manager.tags_published": "Étiquettes publiées sur Steam",
+  "workshop_manager.tags_published_save_failed": "Étiquettes publiées sur Steam, mais échec de l’enregistrement local : %s",
+  "workshop_manager.publish_tags_tooltip": "Publie toute la liste. Une liste vide efface toutes les étiquettes.",
+  "workshop_manager.manage_owned_item": "Vous pouvez uniquement gérer les articles qui appartiennent au compte Steam actuel.",
+  "workshop_manager.accept_workshop_agreement": "Acceptez d’abord les conditions du Workshop dans Steam."
 }

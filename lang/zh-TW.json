@@ -1048,7 +1048,6 @@
   "workshop_manager.initial_title": "初始標題",
   "workshop_manager.initial_description": "初始說明",
   "workshop_manager.update_preview": "同時更新預覽圖片",
-  "workshop_manager.update_tags": "同時更新標籤",
   "workshop_manager.submit_locked": "Steam 正在提交，請保持此視窗開啟，可以最小化。",
   "workshop_manager.remove_local": "僅移除本機記錄",
   "workshop_manager.removed": "已移除記錄；原始碼與工作坊內容均未刪除",
@@ -2919,5 +2918,13 @@
   "workshop_manager.widget_tag_media": "媒體",
   "workshop_manager.widget_tag_fun_interaction": "娛樂與互動",
   "workshop_manager.widget_tag_decoration": "桌面裝飾",
-  "workshop_manager.widget_tag_news_feeds": "新聞與訂閱來源"
+  "workshop_manager.widget_tag_news_feeds": "新聞與訂閱來源",
+  "workshop_manager.read_steam_tags": "讀取 Steam 標籤",
+  "workshop_manager.publish_tags": "發佈標籤",
+  "workshop_manager.steam_tags_loaded": "已讀取 Steam 標籤",
+  "workshop_manager.tags_published": "標籤已發佈至 Steam",
+  "workshop_manager.tags_published_save_failed": "標籤已發佈至 Steam，但本機儲存失敗：%s",
+  "workshop_manager.publish_tags_tooltip": "提交編輯欄中的所有標籤。留空會清除標籤。",
+  "workshop_manager.manage_owned_item": "只能管理目前 Steam 帳號擁有的項目。",
+  "workshop_manager.accept_workshop_agreement": "請先在 Steam 接受工作坊協議。"
 }

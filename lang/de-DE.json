@@ -1048,7 +1048,6 @@
   "workshop_manager.initial_title": "Ursprünglicher Titel",
   "workshop_manager.initial_description": "Erstbeschreibung",
   "workshop_manager.update_preview": "Vorschaubilder ebenfalls aktualisieren",
-  "workshop_manager.update_tags": "Aktualisieren Sie auch Tags",
   "workshop_manager.submit_locked": "Steam übermittelt die Daten. Lassen Sie dieses Fenster geöffnet; Sie können es minimieren.",
   "workshop_manager.remove_local": "Nur lokalen Datensatz entfernen",
   "workshop_manager.removed": "Datensatz entfernt; Quelle und Workshop-Inhalt wurden nicht gelöscht",
@@ -2919,5 +2918,13 @@
   "workshop_manager.widget_tag_media": "Medien",
   "workshop_manager.widget_tag_fun_interaction": "Spaß und Interaktion",
   "workshop_manager.widget_tag_decoration": "Dekoration",
-  "workshop_manager.widget_tag_news_feeds": "Nachrichten und Feeds"
+  "workshop_manager.widget_tag_news_feeds": "Nachrichten und Feeds",
+  "workshop_manager.read_steam_tags": "Steam-Tags abrufen",
+  "workshop_manager.publish_tags": "Tags veröffentlichen",
+  "workshop_manager.steam_tags_loaded": "Steam-Tags geladen",
+  "workshop_manager.tags_published": "Tags auf Steam veröffentlicht",
+  "workshop_manager.tags_published_save_failed": "Tags auf Steam veröffentlicht, aber das lokale Speichern ist fehlgeschlagen: %s",
+  "workshop_manager.publish_tags_tooltip": "Veröffentlicht die gesamte Tag-Liste. Eine leere Liste entfernt alle Tags.",
+  "workshop_manager.manage_owned_item": "Du kannst nur Einträge verwalten, die dem aktuellen Steam-Konto gehören.",
+  "workshop_manager.accept_workshop_agreement": "Akzeptiere zuerst die Workshop-Vereinbarung in Steam."
 }

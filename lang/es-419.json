@@ -1065,7 +1065,6 @@
   "workshop_manager.initial_title": "Título inicial",
   "workshop_manager.initial_description": "Descripción inicial",
   "workshop_manager.update_preview": "Actualizar también las imágenes de vista previa",
-  "workshop_manager.update_tags": "Actualizar también las etiquetas",
   "settings.shell.title": "Configuración",
   "settings.shell.back": "Atrás",
   "settings.shell.toggleNavigation": "Alternar panel de navegación",
@@ -2919,5 +2918,13 @@
   "workshop_manager.widget_tag_media": "Multimedia",
   "workshop_manager.widget_tag_fun_interaction": "Diversión e interacción",
   "workshop_manager.widget_tag_decoration": "Decoración",
-  "workshop_manager.widget_tag_news_feeds": "Noticias y fuentes"
+  "workshop_manager.widget_tag_news_feeds": "Noticias y fuentes",
+  "workshop_manager.read_steam_tags": "Leer etiquetas de Steam",
+  "workshop_manager.publish_tags": "Publicar etiquetas",
+  "workshop_manager.steam_tags_loaded": "Se cargaron las etiquetas de Steam",
+  "workshop_manager.tags_published": "Se publicaron las etiquetas en Steam",
+  "workshop_manager.tags_published_save_failed": "Se publicaron las etiquetas en Steam, pero no se pudieron guardar localmente: %s",
+  "workshop_manager.publish_tags_tooltip": "Publica toda la lista de etiquetas. Si está vacía, se eliminan todas las etiquetas.",
+  "workshop_manager.manage_owned_item": "Solo puedes administrar los elementos de la cuenta de Steam actual.",
+  "workshop_manager.accept_workshop_agreement": "Primero acepta el acuerdo de Steam Workshop en Steam."
 }

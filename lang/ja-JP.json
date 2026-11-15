@@ -1048,7 +1048,6 @@
   "workshop_manager.initial_title": "初期タイトル",
   "workshop_manager.initial_description": "初期説明",
   "workshop_manager.update_preview": "プレビュー画像も更新",
-  "workshop_manager.update_tags": "タグも更新します",
   "workshop_manager.submit_locked": "Steam が送信中です。このウィンドウを開いたままにしてください。最小化は可能です。",
   "workshop_manager.remove_local": "ローカル レコードのみを削除",
   "workshop_manager.removed": "レコードが削除されました。ソースとワークショップのコンテンツは削除されませんでした",
@@ -2919,5 +2918,13 @@
   "workshop_manager.widget_tag_media": "メディア",
   "workshop_manager.widget_tag_fun_interaction": "娯楽・インタラクション",
   "workshop_manager.widget_tag_decoration": "デコレーション",
-  "workshop_manager.widget_tag_news_feeds": "ニュースとフィード"
+  "workshop_manager.widget_tag_news_feeds": "ニュースとフィード",
+  "workshop_manager.read_steam_tags": "Steam のタグを読み込む",
+  "workshop_manager.publish_tags": "タグを公開",
+  "workshop_manager.steam_tags_loaded": "Steam のタグを読み込みました",
+  "workshop_manager.tags_published": "タグを Steam に公開しました",
+  "workshop_manager.tags_published_save_failed": "タグを Steam に公開しましたが、ローカルへの保存に失敗しました: %s",
+  "workshop_manager.publish_tags_tooltip": "タグ一覧全体を公開します。空の一覧を公開するとすべてのタグが削除されます。",
+  "workshop_manager.manage_owned_item": "現在の Steam アカウントが所有するアイテムのみ管理できます。",
+  "workshop_manager.accept_workshop_agreement": "先に Steam でワークショップ利用規約に同意してください。"
 }

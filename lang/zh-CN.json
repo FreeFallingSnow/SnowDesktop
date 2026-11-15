@@ -1048,7 +1048,6 @@
     "workshop_manager.initial_title": "初始标题",
     "workshop_manager.initial_description": "初始说明",
     "workshop_manager.update_preview": "同时更新预览图片",
-    "workshop_manager.update_tags": "同时更新标签",
     "workshop_manager.submit_locked": "Steam 正在提交，请保持此窗口打开，可以最小化。",
     "workshop_manager.remove_local": "仅移除本地记录",
     "workshop_manager.removed": "已移除记录；源码和 Workshop 内容未删除",
@@ -2919,5 +2918,13 @@
   "workshop_manager.widget_tag_media": "媒体",
   "workshop_manager.widget_tag_fun_interaction": "娱乐与互动",
   "workshop_manager.widget_tag_decoration": "桌面装饰",
-  "workshop_manager.widget_tag_news_feeds": "新闻与订阅源"
+  "workshop_manager.widget_tag_news_feeds": "新闻与订阅源",
+  "workshop_manager.read_steam_tags": "读取 Steam 标签",
+  "workshop_manager.publish_tags": "发布标签",
+  "workshop_manager.steam_tags_loaded": "已读取 Steam 标签",
+  "workshop_manager.tags_published": "标签已发布到 Steam",
+  "workshop_manager.tags_published_save_failed": "标签已发布到 Steam，但本地保存失败：%s",
+  "workshop_manager.publish_tags_tooltip": "提交编辑框中的全部标签。留空会清除标签。",
+  "workshop_manager.manage_owned_item": "只能管理当前 Steam 账号拥有的项目。",
+  "workshop_manager.accept_workshop_agreement": "请先在 Steam 接受创意工坊协议。"
 }
