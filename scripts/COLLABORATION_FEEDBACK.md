@@ -115,6 +115,8 @@
 
 ### CF-010 等待结束回执过大
 
+- **毛玻璃路径认领冲突后的状态查询（2026-11-15）**：Task `task-b9ff6102968348489b9cabee59b69358`、批次 `08000882cb61448595c027f89c5699f0`、编辑修订 0。`claim` 因 `dock-rim-backdrop` 持有 `src/app/render/app_bitmap_cache.cpp` 被拒绝。随后的 `scripts/build.bat status -Batch 08000882cb61448595c027f89c5699f0` 返回全局任务历史，工具输出被截断（chunk `d63343`）。用 `current.batch.participants` 与相关 Task 字段的窄投影核对同批归属。复用上面的指定批次状态回执缺口，当时未重交构建。
+
 - **等待非空批次释放租约（2026-11-15）**：Task `dock-liquid-glass-preset` 为批次 `158b9cbde5fb4b9ca6ceb0c948f73303` 等待现有执行者，用 `scripts/build.bat run wait -RunId 8cbc6a26035240dfaee1ecec50caeda5 -Seconds 45` 得到尚在运行的回执。工具捕获 2897 行请求、runner 文件和阶段记录后截断（chunk `cfd4f3`）。后续仅投影 Run 状态和终态字段，未提交新的执行请求。Run 等待的默认精简回执仍待处理。
 
 - **Run 中断后的诊断回执（2026-11-13）**：Task `tray-menu-hover-popup`，批次 `1d39d51bf35648e784acdb91b9203d8c` 修订 0，Run `bf51917ebf3c41d8aadfca35dfadfd85`。工具会话失效后续接 `wait` 没有返回终态，`run status` 确认 `interrupted`、`ownerState: exited`，同时输出 4058 行并截断。已按原回执 `recover`，由续修批次 `ca7b49ddd3dd42b7978a3833698a3969` 复用候选编译槽。执行者退出原因待确认。Run 终态摘要和批次观察如何提示该终态仍待改进，未为反馈重现或另建 Run。
