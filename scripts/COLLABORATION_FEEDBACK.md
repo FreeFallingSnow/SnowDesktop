@@ -115,6 +115,8 @@
 
 ### CF-010 等待结束回执过大
 
+- **等待非空批次释放租约（2026-11-15）**：Task `dock-liquid-glass-preset` 为批次 `158b9cbde5fb4b9ca6ceb0c948f73303` 等待现有执行者，用 `scripts/build.bat run wait -RunId 8cbc6a26035240dfaee1ecec50caeda5 -Seconds 45` 得到尚在运行的回执。工具捕获 2897 行请求、runner 文件和阶段记录后截断（chunk `cfd4f3`）。后续仅投影 Run 状态和终态字段，未提交新的执行请求。Run 等待的默认精简回执仍待处理。
+
 - **Run 中断后的诊断回执（2026-11-13）**：Task `tray-menu-hover-popup`，批次 `1d39d51bf35648e784acdb91b9203d8c` 修订 0，Run `bf51917ebf3c41d8aadfca35dfadfd85`。工具会话失效后续接 `wait` 没有返回终态，`run status` 确认 `interrupted`、`ownerState: exited`，同时输出 4058 行并截断。已按原回执 `recover`，由续修批次 `ca7b49ddd3dd42b7978a3833698a3969` 复用候选编译槽。执行者退出原因待确认。Run 终态摘要和批次观察如何提示该终态仍待改进，未为反馈重现或另建 Run。
 
 - **定向测试结果的读取范围（2026-11-12）**：Task `fix-hidden-desktop-selection`、批次 `a0636dc6f15b469cbf6118978b822e68` 修订 0、Run `bff864dba7214013b178a708042df590`。`ready-and-wait` 的精简回执正常返回一项测试通过。随后 Agent 从批次 JSON 读取完整 `coverage` 并执行 `ConvertTo-Json -Depth 4`，内嵌的执行上下文和 `source-report-not-in-generated-project` 明细导致输出截断。核对状态时直接读取 `coverage.completed`，产物另读 `productBuild.exitCode` 与 `activation`。窄字段摘要可同时覆盖测试和产品构建。本次没有重复构建或测试，依赖报告的根因待核实。
@@ -134,6 +136,8 @@
 - **本轮修复**：CLI 的 finish/wait/ready-and-wait 默认输出精简结束回执，返回状态、计数、最多 16 个失败名称、原始结果路径与恢复入口，保留完整 JSON 原件和退出码。`-FullResult` 取得原输出，直接 PowerShell 调用保持兼容、可选 `-Compact`。回归将核对默认 CLI 路由、完整输出兼容及原证据字节未被改写。
 
 ### CF-011 独立检查等待共享编辑屏障
+
+- **非空计划冻结遇到共享租约（2026-11-15）**：Task `dock-liquid-glass-preset` 的批次 `158b9cbde5fb4b9ca6ceb0c948f73303` 修订 0 声明 `module/selected`，轻量检查通过，`ready-and-wait` 在冻结前返回 1，原文为 `Unexpected occupied build lease; inspect status without clearing registrations.`。只读状态确认本批次仍是就绪成员，无本批次 Run；执行租约归批次 `52ec2edf1f404ddf9767db3f29d482f9` 的 Run `8cbc6a26035240dfaee1ecec50caeda5`。源码确认非空计划在冻结时尝试 `build.lock`，租约已用时会结束前台等待。本次保留同批次，等待正常释放后继续，不清除登记或开启额外构建槽。下一步是在合法竞争时等待冻结租约并保留原观察进程。
 
 - **按依赖拆分（2026-11-08）**：Task `collab-dependency-split-20261108` 接入 `plan -Independent`。明确豁免宿主构建和测试的成员通过自身路径检查、核对实际认领后可提前归档。临时 Git 夹具验证了构建锁占用、其他成员无关空白错误、原修订提交与关闭、共同结果发布后仍能读取独立回执，以及路径重叠和未认领时继续等待。使用原批次和现有执行槽，未启动构建或测试 Run。
 
