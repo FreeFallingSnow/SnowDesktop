@@ -653,8 +653,8 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             nullptr);
         windowClipPushed = true;
     }
-    const float borderAlpha = quickNavigation_->animation.IsAnimating()
-        ? 0.0f : std::clamp(quickNavigation_->appearance.widgetBorderAlpha, 0.0f, 1.0f);
+    const float borderAlpha =
+        std::clamp(quickNavigation_->appearance.widgetBorderAlpha, 0.0f, 1.0f);
     auto background = quickNavigation_->appearance;
     background.widgetEdgeHighlightEnabled = false;
     background.acrylicEnabled = false;
