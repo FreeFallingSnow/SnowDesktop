@@ -3,6 +3,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -12,6 +13,8 @@
 
 namespace snowdesktop::steam_bridge
 {
+std::string WorkshopFileSha256(const std::filesystem::path& path, std::uintmax_t maxBytes);
+
 struct ComponentPreviewImage
 {
     std::filesystem::path path;

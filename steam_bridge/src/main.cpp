@@ -24,6 +24,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "bridge_json.h"
 #include "component_workshop_publish.h"
 #include "theme_workshop_publish.h"
 #include "icon_pack_workshop_publish.h"
@@ -49,6 +50,7 @@ constexpr int kSteamInitializationFailed = 4;
 constexpr int kSteamOperationFailed = 5;
 constexpr int kSteamOperationTimedOut = 6;
 constexpr int kInvalidArguments = 64;
+constexpr int kComponentPlanApprovalProtocolVersion = 1;
 constexpr std::uint64_t kMaximumWidgetPackageBytes =
     20ull * 1024ull * 1024ull;
 constexpr std::uint64_t kMaximumWorkshopPreviewBytes =
@@ -194,7 +196,8 @@ void PrintUsage()
            " [--change-note TEXT] [--timeout-seconds N] [--force-content]"
            " [--previous-package FILE]\n"
         << "  SnowDesktopSteamBridge.exe workshop component-publish --source DIR"
-           " [component-plan options] (--confirm-create|--confirm-update)"
+           " --data-directory DIR [component-plan options] --plan-sha256 HASH"
+           " (--confirm-create|--confirm-update)"
            " [--open-page]\n\n"
         << "All successful command output is JSON. Long-running download and"
            " publish commands emit JSON Lines progress events before the final result.\n";
@@ -210,6 +213,7 @@ int PrintConfiguration()
               << ",\"windowsDepotId\":" <<
         snowdesktop::steam_bridge::kSteamWindowsDepotId
               << ",\"componentWorkflowProtocolVersion\":1"
+              << ",\"componentPlanApprovalProtocolVersion\":" << kComponentPlanApprovalProtocolVersion
               << ",\"componentPreviewGalleryProtocolVersion\":1"
               << ",\"iconPackWorkflowProtocolVersion\":1"
               << ",\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.icon-pack.v1\",\"workshop.widget.v1\",\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\",\"workshop.theme.icon.v1\",\"workshop.theme.icon-style.v1\""
@@ -1031,109 +1035,96 @@ bool ApplyComponentSources(const ParsedOptions& options,
     return true;
 }
 
-void PrintComponentPlan(
+snowdesktop::steam_bridge::JsonValue ComponentPlanReport(
     const snowdesktop::steam_bridge::WorkshopProject& project,
     const snowdesktop::steam_bridge::ComponentPublishPlan& plan,
-    bool registered, bool event)
+    const std::filesystem::path& dataDirectory, bool registered)
 {
     using namespace snowdesktop::steam_bridge;
-    std::cout << '{';
-    if (event) std::cout << "\"event\":\"component-plan\",";
-    std::cout << "\"ok\":true,\"protocolVersion\":1,\"registered\":"
-              << (registered ? "true" : "false")
-              << ",\"localId\":";
-    WriteJsonString(std::cout, project.localId);
-    std::cout << ",\"sourceDirectory\":";
-    WriteJsonString(std::cout,
-        WideToUtf8(project.sourceDirectory.wstring()));
-    std::cout << ",\"action\":";
-    WriteJsonString(std::cout, ComponentPublishActionName(plan.action));
-    std::cout << ",\"confirmationRequired\":";
-    WriteJsonString(std::cout,
-        plan.action == ComponentPublishAction::Create ?
-            "confirm-create" : "confirm-update");
-    std::cout << ",\"publishedFileId\":";
-    if (plan.publishedFileId)
-        WriteJsonString(std::cout, std::to_string(*plan.publishedFileId));
-    else std::cout << "null";
-    std::cout << ",\"package\":{\"id\":";
-    WriteJsonString(std::cout, plan.packageId);
-    std::cout << ",\"version\":";
-    WriteJsonString(std::cout, plan.version);
-    std::cout << ",\"sha256\":";
-    WriteJsonString(std::cout, plan.sha256);
-    std::cout << ",\"uploadContent\":"
-              << (plan.updateContent ? "true" : "false") << '}';
-    std::cout << ",\"listing\":{\"source\":";
-    WriteJsonString(std::cout,
-        WorkshopTextSourceName(project.publishPreferences.textSource));
-    std::cout << ",\"localizations\":[";
-    for (std::size_t index = 0; index < plan.localizations.size(); ++index)
+    auto report = JsonValue::Object();
+    auto& fields = report.object;
+    fields["componentPlanApprovalProtocolVersion"] =
+        JsonValue::Number(kComponentPlanApprovalProtocolVersion);
+    fields["appId"] = JsonValue::Number(kSteamAppId);
+    fields["registered"] = JsonValue::Boolean(registered);
+    // A new project gets a different provisional local ID on each plan.
+    if (registered) fields["localId"] = JsonValue::String(project.localId);
+    fields["sourceDirectory"] = JsonValue::String(WideToUtf8(project.sourceDirectory.wstring()));
+    fields["dataDirectory"] = JsonValue::String(WideToUtf8(dataDirectory.wstring()));
+    fields["action"] = JsonValue::String(std::string(ComponentPublishActionName(plan.action)));
+    fields["confirmationRequired"] = JsonValue::String(
+        plan.action == ComponentPublishAction::Create ? "confirm-create" : "confirm-update");
+    fields["publishedFileId"] = plan.publishedFileId ?
+        JsonValue::String(std::to_string(*plan.publishedFileId)) : JsonValue{};
+
+    auto& package = (fields["package"] = JsonValue::Object()).object;
+    package["id"] = JsonValue::String(plan.packageId);
+    package["version"] = JsonValue::String(plan.version);
+    package["sha256"] = JsonValue::String(plan.sha256);
+    package["uploadContent"] = JsonValue::Boolean(plan.updateContent);
+
+    auto& listing = (fields["listing"] = JsonValue::Object()).object;
+    listing["source"] = JsonValue::String(std::string(
+        WorkshopTextSourceName(project.publishPreferences.textSource)));
+    auto& localizations = (listing["localizations"] = JsonValue::Array()).array;
+    for (const auto& localization : plan.localizations)
     {
-        if (index) std::cout << ',';
-        const auto& localized = plan.localizations[index];
-        std::cout << "{\"language\":";
-        WriteJsonString(std::cout, localized.language);
-        std::cout << ",\"title\":";
-        WriteJsonString(std::cout, localized.title);
-        std::cout << ",\"description\":";
-        WriteJsonString(std::cout, localized.description);
-        std::cout << '}';
+        auto entry = JsonValue::Object();
+        entry.object["language"] = JsonValue::String(localization.language);
+        entry.object["title"] = JsonValue::String(localization.title);
+        entry.object["description"] = JsonValue::String(localization.description);
+        localizations.push_back(std::move(entry));
     }
-    std::cout << "]},\"preview\":{\"source\":";
-    WriteJsonString(std::cout,
-        WorkshopAssetSourceName(project.publishPreferences.previewSource));
-    std::cout << ",\"path\":";
-    if (plan.preview)
-        WriteJsonString(std::cout, WideToUtf8((plan.preparedPreviews && plan.preparedPreviews->primary ?
-            plan.preparedPreviews->primary->source : *plan.preview).wstring()));
-    else std::cout << "null";
+
+    auto& preview = (fields["preview"] = JsonValue::Object()).object;
+    preview["source"] = JsonValue::String(std::string(
+        WorkshopAssetSourceName(project.publishPreferences.previewSource)));
+    preview["path"] = JsonValue{};
     if (plan.preparedPreviews && plan.preparedPreviews->primary)
     {
-        std::cout << ",\"sha256\":";
-        WriteJsonString(std::cout, plan.preparedPreviews->primary->sha256);
+        const auto& primary = *plan.preparedPreviews->primary;
+        preview["path"] = JsonValue::String(WideToUtf8(primary.source.wstring()));
+        preview["sha256"] = JsonValue::String(primary.sha256);
     }
-    std::cout << ",\"gallery\":";
-    if (!plan.previewGallery) std::cout << "null";
-    else
+    preview["gallery"] = JsonValue{};
+    if (plan.previewGallery)
     {
-        std::cout << '[';
-        for (std::size_t index = 0; index < plan.previewGallery->size(); ++index)
+        auto& gallery = (preview["gallery"] = JsonValue::Array()).array;
+        for (const auto& image : *plan.previewGallery)
         {
-            if (index) std::cout << ',';
-            const auto& image = (*plan.previewGallery)[index];
-            std::cout << "{\"path\":";
-            WriteJsonString(std::cout, WideToUtf8(image.source.wstring()));
-            std::cout << ",\"sha256\":";
-            WriteJsonString(std::cout, image.sha256);
-            std::cout << '}';
+            auto entry = JsonValue::Object();
+            entry.object["path"] = JsonValue::String(WideToUtf8(image.source.wstring()));
+            entry.object["sha256"] = JsonValue::String(image.sha256);
+            gallery.push_back(std::move(entry));
         }
-        std::cout << ']';
     }
-    std::cout << "},\"tags\":{\"source\":";
-    WriteJsonString(std::cout,
-        WorkshopAssetSourceName(project.publishPreferences.tagsSource));
-    std::cout << ",\"values\":";
-    if (!plan.tags) std::cout << "null";
-    else
+
+    auto& tags = (fields["tags"] = JsonValue::Object()).object;
+    tags["source"] = JsonValue::String(std::string(
+        WorkshopAssetSourceName(project.publishPreferences.tagsSource)));
+    tags["values"] = JsonValue{};
+    if (plan.tags)
     {
-        std::cout << '[';
-        for (std::size_t index = 0; index < plan.tags->size(); ++index)
-        {
-            if (index) std::cout << ',';
-            WriteJsonString(std::cout, (*plan.tags)[index]);
-        }
-        std::cout << ']';
+        auto& values = (tags["values"] = JsonValue::Array()).array;
+        for (const auto& tag : *plan.tags) values.push_back(JsonValue::String(tag));
     }
-    std::cout << "},\"visibility\":";
+    fields["visibility"] = JsonValue{};
     if (plan.action == ComponentPublishAction::Create)
-        WriteJsonString(std::cout, plan.visibility == 1 ? "friends" :
-            plan.visibility == 2 ? "private" :
-            plan.visibility == 3 ? "unlisted" : "public");
+        fields["visibility"] = JsonValue::String(plan.visibility == 1 ? "friends" :
+            plan.visibility == 2 ? "private" : plan.visibility == 3 ? "unlisted" : "public");
     else if (plan.visibility)
-        std::cout << *plan.visibility;
-    else std::cout << "null";
-    std::cout << "}\n";
+        fields["visibility"] = JsonValue::Number(*plan.visibility);
+    fields["changeNote"] = JsonValue::String(plan.changeNote);
+    fields["metadata"] = JsonValue::String(plan.metadata);
+    fields["timeoutSeconds"] = JsonValue::Number(static_cast<double>(plan.timeout.count()));
+
+    // These overrides are saved even when their Steam-managed policy leaves
+    // the corresponding listing field untouched.
+    auto& local = (fields["localOverrides"] = JsonValue::Object()).object;
+    local["preview"] = JsonValue::String(WideToUtf8(project.primaryPreview.wstring()));
+    auto& localTags = (local["tags"] = JsonValue::Array()).array;
+    for (const auto& tag : project.tags) localTags.push_back(JsonValue::String(tag));
+    return report;
 }
 
 int PrintComponentPublishError(int exitCode, std::string_view code,
@@ -1159,10 +1150,22 @@ int RunComponentWorkshopCommand(const ParsedOptions& options, bool execute)
     using namespace snowdesktop::steam_bridge;
     const auto source = options.Value(L"--source");
     const auto dataDirectoryValue = options.Value(L"--data-directory");
-    if (!source || !dataDirectoryValue)
+    if (!source || source->empty() || !dataDirectoryValue || dataDirectoryValue->empty())
         return PrintError(kInvalidArguments, "invalid_arguments",
             "component workflow requires --source and --data-directory");
-    const std::filesystem::path dataDirectory = *dataDirectoryValue;
+    const bool confirmCreate = options.HasFlag(L"--confirm-create");
+    const bool confirmUpdate = options.HasFlag(L"--confirm-update");
+    const auto approvedHash = WideToUtf8(options.Value(L"--plan-sha256").value_or(L""));
+    if (execute && (approvedHash.size() != 64 ||
+            approvedHash.find_first_not_of("0123456789abcdef") != std::string::npos ||
+            confirmCreate == confirmUpdate))
+        return PrintError(kInvalidArguments, "confirmation_required",
+            "review component-plan, then pass its --plan-sha256 and exactly one confirmation flag");
+    std::error_code pathError;
+    const auto dataDirectory = std::filesystem::absolute(*dataDirectoryValue, pathError);
+    if (pathError)
+        return PrintError(kInvalidArguments, "invalid_arguments",
+            "cannot resolve --data-directory");
     const auto managerRoot = WorkshopManagerDataRoot(dataDirectory);
     ProjectStore store(managerRoot);
     std::string message;
@@ -1232,16 +1235,26 @@ int RunComponentWorkshopCommand(const ParsedOptions& options, bool execute)
     if (!BuildComponentPublishPlan(*project, inspection, artifact,
             publishOptions, plan, message))
         return PrintError(kInvalidArguments, "publish_plan_failed", message);
+    auto report = ComponentPlanReport(*project, plan, dataDirectory.lexically_normal(), registered);
+    const auto hash = ThemeSha256(WriteJson(report, -1));
+    if (hash.empty())
+        return PrintError(kSteamOperationFailed, "publish_plan_failed",
+            "cannot compute the component plan SHA-256");
+    report.object["ok"] = JsonValue::Boolean(true);
+    report.object["protocolVersion"] = JsonValue::Number(1);
+    report.object["localId"] = JsonValue::String(project->localId);
+    report.object["planSha256"] = JsonValue::String(hash);
     if (!execute)
     {
-        PrintComponentPlan(*project, plan, registered, false);
+        std::cout << WriteJson(report, -1) << '\n';
         return 0;
     }
 
-    const bool confirmCreate = options.HasFlag(L"--confirm-create");
-    const bool confirmUpdate = options.HasFlag(L"--confirm-update");
+    if (approvedHash != hash)
+        return PrintError(kInvalidArguments, "stale_plan",
+            "the approved component plan changed; run component-plan again and review the new plan");
     const bool creating = plan.action == ComponentPublishAction::Create;
-    if (confirmCreate == confirmUpdate || creating != confirmCreate)
+    if (creating != confirmCreate)
     {
         return PrintError(kInvalidArguments, "confirmation_required",
             creating ?
@@ -1253,7 +1266,8 @@ int RunComponentWorkshopCommand(const ParsedOptions& options, bool execute)
         return PrintError(kSteamOperationFailed, "project_store_failed",
             message);
 
-    PrintComponentPlan(*project, plan, registered, true);
+    report.object["event"] = JsonValue::String("component-plan");
+    std::cout << WriteJson(report, -1) << '\n';
     SteamWorkshopCore steam(managerRoot / L"staging" / L"uploads");
     ComponentPublishResult result;
     CoreError coreError;
@@ -1577,19 +1591,21 @@ int RunWorkshopCommand(const std::wstring& command,
         std::set<std::wstring> flags = {
             L"--clear-tags", L"--force-content"
         };
+        std::set<std::wstring> values = {
+            L"--source", L"--data-directory", L"--item",
+            L"--text-source", L"--preview-source",
+            L"--tags-source", L"--preview", L"--title",
+            L"--description", L"--visibility", L"--change-note",
+            L"--timeout-seconds", L"--previous-package"
+        };
         if (execute)
         {
             flags.insert(L"--confirm-create");
             flags.insert(L"--confirm-update");
             flags.insert(L"--open-page");
+            values.insert(L"--plan-sha256");
         }
-        if (!ParseOptions(arguments,
-            { L"--source", L"--data-directory", L"--item",
-              L"--text-source", L"--preview-source",
-              L"--tags-source", L"--preview", L"--title",
-              L"--description", L"--visibility", L"--change-note",
-              L"--timeout-seconds", L"--previous-package" },
-            { L"--tag" }, flags, options, error))
+        if (!ParseOptions(arguments, values, { L"--tag" }, flags, options, error))
             return PrintError(kInvalidArguments,
                 "invalid_arguments", error);
         return RunComponentWorkshopCommand(options, execute);

@@ -11,13 +11,11 @@
 
 namespace snowdesktop::steam_bridge
 {
-namespace
-{
-std::string ImageHash(const std::filesystem::path& path)
+std::string WorkshopFileSha256(const std::filesystem::path& path, std::uintmax_t maxBytes)
 {
     std::error_code ec;
     const auto size = std::filesystem::file_size(path, ec);
-    if (ec || size == 0 || size >= 1024 * 1024) return {};
+    if (ec || size == 0 || size > maxBytes) return {};
     std::ifstream file(path, std::ios::binary);
     std::vector<unsigned char> bytes(static_cast<std::size_t>(size));
     if (!file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size())) ||
@@ -25,6 +23,7 @@ std::string ImageHash(const std::filesystem::path& path)
     BCRYPT_ALG_HANDLE algorithm = nullptr;
     BCRYPT_HASH_HANDLE hash = nullptr;
     if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) return {};
+    std::vector<unsigned char> storage;
     struct Cleanup
     {
         BCRYPT_ALG_HANDLE algorithm; BCRYPT_HASH_HANDLE& hash;
@@ -33,7 +32,7 @@ std::string ImageHash(const std::filesystem::path& path)
     DWORD storageSize = 0, copied = 0;
     if (BCryptGetProperty(algorithm, BCRYPT_OBJECT_LENGTH,
             reinterpret_cast<PUCHAR>(&storageSize), sizeof(storageSize), &copied, 0) < 0) return {};
-    std::vector<unsigned char> storage(storageSize);
+    storage.resize(storageSize);
     std::array<unsigned char, 32> result{};
     if (BCryptCreateHash(algorithm, &hash, storage.data(), storageSize, nullptr, 0, 0) < 0 ||
         BCryptHashData(hash, bytes.data(), static_cast<ULONG>(bytes.size()), 0) < 0 ||
@@ -42,6 +41,13 @@ std::string ImageHash(const std::filesystem::path& path)
     std::string text;
     for (const auto byte : result) { text += digits[byte >> 4]; text += digits[byte & 15]; }
     return text;
+}
+
+namespace
+{
+std::string ImageHash(const std::filesystem::path& path)
+{
+    return WorkshopFileSha256(path, 1024 * 1024 - 1);
 }
 }
 

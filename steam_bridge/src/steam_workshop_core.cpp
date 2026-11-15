@@ -1063,9 +1063,11 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
             if (ec) { SetError(error, kInvalidArguments, "stalePreparation", "Cannot freeze component gallery"); return std::nullopt; }
             additionalPreviews.push_back(staged);
         }
-        if (!request.validateStagedArtifacts({}, previewPath) ||
+        const auto stagedPackage = request.updateContent ?
+            upload.root / L"package.snowwidget" : std::filesystem::path{};
+        if (!request.validateStagedArtifacts(stagedPackage, previewPath) ||
             (request.syncAdditionalPreviews && !request.validateStagedPreviews(additionalPreviews)))
-        { SetError(error, kInvalidArguments, "stalePreparation", "Component preview images changed before upload"); return std::nullopt; }
+        { SetError(error, kInvalidArguments, "stalePreparation", "Component package or preview images changed before upload"); return std::nullopt; }
     }
     if (request.contentKind == WorkshopContentKind::Theme)
     {

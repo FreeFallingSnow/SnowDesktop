@@ -7,6 +7,9 @@
 `executableSchemaVersions:[2]` / `executableApiVersions:[2]`。宿主、校验、预览和打包
 只接受 schema/API v2。
 
+PowerShell 中按 [工具路径设置](../SKILL.md#use-the-bundled-tools) 解析 `$SnowWidget`。
+下文的 `snowwidget` 命令均通过 `& $SnowWidget` 调用。
+
 编辑器类型定义位于 `library/snowdesktop-v2.lua`，其函数签名是本文档的配套
 机器可读契约。
 
@@ -43,10 +46,10 @@ Shell、系统数据、存储或其他副作用 API。命令输出文件数、�
 `--canvas-size 512 --padding 48`。宿主会保持组件原始宽高比，将透明层等比放入带内边距的
 正方形画布，再把它合成到按 center-cover 裁切的背景上；不会拉伸背景，也不会为了方图改变
 组件布局跨度。`--padding` 只在指定 `--canvas-size` 时有效，且必须为画布留下正尺寸内容区。
-未指定时使用中性的兼容背景。输出 PNG 始终包含背景、解析后的普通/毛玻璃/亚克力材质层和组件
-内容，像素完全不透明；组件自定义材质
-优先，`followPersonalization` 则回到所选宿主外观。应先用 `preview` 生成清单声明的最终预览图，
-再运行 `pack`；`pack` 只校验和归档现有预览文件，不会启动宿主或改写源码目录。
+未指定背景时使用中性的兼容背景。默认 PNG 完全不透明，包含背景、解析后的宿主材质和组件内容。
+`--content-only` 输出透明背景的组件前景，省略舞台与宿主表面合成，且不能与 `--background` 同用。
+组件自定义材质优先，`followPersonalization` 则回到所选宿主外观。打包、隔离安装和升级验证见
+[验证与打包](validation-and-packaging.md#deliver-an-installable-archive)。
 `--data-state` 可为 `ready/empty/loading/error/stale/permission-denied`，用于让全部预览数据订阅
 返回对应的确定性包络；`empty` 保留 `available=true` 但使用空/零值，`error` 返回
 `providerUnavailable`，拒权返回 `permissionDenied`；包络时间戳与 `time.now()` 共用固定预览
@@ -3444,6 +3447,11 @@ local sky = lazy and resource.image("sky", {lazy=true}) or resource.image("sky")
 或者先通过 `widget.hasFeature("resource.image.onDemand")` 探测，并在旧宿主上选择可用的素材和加载方式。
 
 ## 添加预设（`widget.creationPresets`）
+
+显式默认尺寸、预览尺寸和有限边界的行列使用 1–8。省略 `minSize` 时使用 1 × 1。
+省略 `maxSize`，或在 schema 允许的最大尺寸轴上设为 `0`，表示不额外限制该轴。
+`previewData.variants` 最多提供四个可选起始尺寸。其 `storage` 仅用于预览，
+不会复制到新实例。
 
 默认尺寸与预设尺寸支持能力 `widget.size.aspectRatio`，API/schema 仍为 2。
 例如 `"defaultSize":{"rows":2,"aspectRatio":1}` 固定高 2 格，添加时按目标屏幕
