@@ -162,6 +162,8 @@
 
 ### CF-012 观察等待默认超时导致模型轮询
 
+- **候选槽排队续证（2026-11-15）**：Task `ime-search-candidate-position`、批次 `e9de509e81f74f608fe6ae5408402da5` 修订 0、Run `0c528b8495b642cbb3e8819324cd1d00` 的 `.stderr.log` 重复记录 38 条 `Candidate slot is busy; existing materialization/executor retains its files.`。只读核对了前序 Run `c4ec5646568e428581fc02f513b2b1e7` 的执行阶段，继续原 `ready-and-wait` 会话并过滤重复等待提示，原 Run 后续通过。建议仅在排队原因或阶段改变时输出一条提示，保留原有排队状态与等待证据。
+
 - **新需求登记中断旧候选回执（2026-11-11）**：Task `task-16065c1cdd3846c4a9e782099ce5fcc3` 的 `ready-and-wait` 正在观察批次 `75bb4514cee8497f9c13a6a9603fabc9`、Run `a1e0c45a81d34bce9dc40878df1cb736` 时，收到新需求并用同 ID `begin` 取得未认领文件的批次 `1bef5f6cf6254647bb6c8d6d72520abf`。原观察结束时仅输出 `This participant has a newer active batch. Its old result cannot verify new edits; use the batch ID from the latest begin.`，未返回已经归档的编译失败，须另读原回执；`repair` 又因空的新登记被拒绝。源码分别在 `build_manager.ps1` 和 `build_protocol.ps1` 确认两处校验。已用 `recover -ConfirmStopped` 撤回自己的空登记，并从原失败建立续修 `454c6e5ccd9f493e83a1032124afc88f`；未重交原 Run。待改进：原观察应返回与原批次绑定的只读结果并明确其不适用于新修订，空的新登记应提供明确的续修合入或撤回提示。
 
 - **观察参数误入执行（2026-11-10）**：Task `latest-build-application-tests-20261110` 在捕获 Run `4b62b5afc49a431cb5f108cc19adf0e1` 后误用 `run invoke -RunId <捕获Run>` 等待。CLI 接受了 `-RunId`，但仍走创建逻辑并提交默认 tests/list Run `2de03c8eed2c4f549fbfd38e3285d57e`，额外执行了一次 CMake 配置和清单查询（配置日志记载 17.36 秒），未执行 CTest。既有 Run 使用 `run wait`；后续可让 `invoke` 拒绝 `-RunId` 并指明观察入口，或显式支持只观察。
@@ -205,6 +207,8 @@
 - **下一步**：核对原观测记录，在有界回执中给出变化字段及旧/新摘要，保留完整记录路径；不为收录反馈重跑构建或打印全量环境。该诊断改进尚未实现。
 
 ### CF-015 模块计划无法声明临时定向验证
+
+- **组件搜索输入法候选续证（2026-11-15）**：Task `ime-search-candidate-position`、批次 `e9de509e81f74f608fe6ae5408402da5` 修订 0、Run `0c528b8495b642cbb3e8819324cd1d00`。现有 CTest 没有候选窗定位场景，模块计划选择 `behavior_manifest` 核对交付产物。`.log.product.log` 和 `.log` 对同一候选目录分别配置 Release 和测试，后者记录 CMake 用时 6.10 秒，并经部署测试的目标依赖再次进入宿主处理和资源复制步骤。构建、激活、部署契约通过，输入法仍待实机。后续核对配置能否复用及哪些宿主步骤已经有效，未追加构建或测试。
 
 - **桌面新建重命名续证（2026-11-15）**：Task `task-3ca60eff59cc451598d8ff08695e34b6`、批次 `b25dfb595ff245c28177e87a6d7fa28c` 修订 0、Run `c6a02c5ef3ec4fb1a9d0742f2a24deac`。`ready-and-wait` 的产品日志和测试日志在同一候选目录分别记录 Release 配置和测试配置，两次日志各记 2.4 秒。原生 Windows 新建菜单回调探针独立保留，正式批次的 4 项定向检查均通过。后续核对产品配置能否供测试阶段复用。本条仅记录实际执行，无追加构建。
 
