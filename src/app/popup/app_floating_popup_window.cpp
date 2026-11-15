@@ -783,6 +783,10 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
     DrawDynamicOverlays(context.Get(), false);
     DrawLuaStackIndicator(context.Get());
     renderingFloatingPopup_ = false;
+    const auto srgbKey = reinterpret_cast<std::uintptr_t>(floatingPopupHwnd_);
+    const bool stagedSrgb = !popupAnimation_.IsAnimating() && !luaWidgetPanelAnimation_.IsAnimating() &&
+        collectionPopupBackdropCompositor_.StageSrgbContent(
+            floatingPopupHwnd_, srgbKey, bounds, context.Get(), updateOffset);
     context->SetTransform(D2D1::Matrix3x2F::Identity());
     context.Reset();
     brushCache_.clear();
@@ -800,7 +804,12 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
     // unpainted surface or moving the last complete frame.
     hr = floatingPopupDcompLiveVisual_->SetOffsetX(static_cast<float>(bounds.left));
     if (SUCCEEDED(hr)) hr = floatingPopupDcompLiveVisual_->SetOffsetY(static_cast<float>(bounds.top));
-    if (SUCCEEDED(hr)) hr = floatingPopupDcompLiveVisual_->SetContent(floatingPopupDcompSurface_.Get());
+    if (SUCCEEDED(hr))
+    {
+        const bool srgbPresented = stagedSrgb && collectionPopupBackdropCompositor_.PublishSrgbContent(srgbKey);
+        if (!srgbPresented) collectionPopupBackdropCompositor_.RemoveSrgbContent(srgbKey);
+        hr = floatingPopupDcompLiveVisual_->SetContent(srgbPresented ? nullptr : floatingPopupDcompSurface_.Get());
+    }
     if (FAILED(hr))
     {
         RecoverFloatingPopupCompositionFailure(L"Publish live surface", hr);
@@ -850,6 +859,15 @@ bool DesktopApp::PresentFloatingPopupComposition()
         ResetFloatingPopupCompositionResources();
         SuspendFloatingPopupPresentation();
         return false;
+    }
+    if (!collectionPopupBackdropCompositor_.CommitSrgbContent())
+    {
+        const auto srgbKey = reinterpret_cast<std::uintptr_t>(floatingPopupHwnd_);
+        collectionPopupBackdropCompositor_.RemoveSrgbContent(srgbKey);
+        (void)floatingPopupDcompLiveVisual_->SetContent(floatingPopupDcompSurface_.Get());
+        (void)CommitCompositionAnimationFrame();
+        (void)FlushPendingCompositionCommit();
+        (void)collectionPopupBackdropCompositor_.CommitSrgbContent();
     }
     KillTimer(floatingPopupHwnd_, kPopupPresentationRetryTimerId);
     floatingPopupPresentationRetryCount_ = 0;

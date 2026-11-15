@@ -185,9 +185,16 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
                        : D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * alpha));
     }
 
-    // Selection and hover fills live in the foreground transaction beneath
-    // the icon, so only plain desktop icons can move to the backdrop visual.
+    // The idle icon can use its own brush. Interaction frames keep the fill
+    // and icon together in the desktop surface.
     const bool composeMaterialWithBackdrop = state == 0 && !widget && !quickNavLayout && !demoCollection;
+    if ((hovered || (selected && !dragged)) && !widget && !quickNavLayout && !demoCollection &&
+        app_->desktopSrgbTileDraws_)
+    {
+        const auto style = app_->ResolveIconAppearance(item_->layoutKey, item_->iconIsMediaThumbnail);
+        if (style.enabled && style.edgeHighlightEnabled)
+            app_->desktopSrgbTileDraws_->push_back(rect);
+    }
     if (useDemoIdentity)
     {
         if (demoCollection)

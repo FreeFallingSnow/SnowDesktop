@@ -1522,6 +1522,15 @@ void DesktopApp::CloseQuickNavigationThen(
 
 void DesktopApp::ApplyQuickNavigationAnimationFrame()
 {
+    const auto srgbKey = reinterpret_cast<std::uintptr_t>(quickNavigation_->hwnd);
+    if ((quickNavigation_->animation.IsAnimating() || quickNavigation_->animationCompositorDriven) &&
+        quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey) &&
+        quickNavigation_->dcompVisual &&
+        SUCCEEDED(quickNavigation_->dcompVisual->SetContent(quickNavigation_->dcompSurface.Get())))
+    {
+        quickNavigation_->backdropCompositor.RemoveSrgbContent(srgbKey);
+        (void)quickNavigation_->backdropCompositor.CommitSrgbContent();
+    }
     if (quickNavigation_->animationCompositorDriven)
         return;
 

@@ -13,6 +13,7 @@
 #include "status_bar_reveal.h"
 #include "widget/data/widget_system_data_provider.h"
 #include "app/render/desktop_backdrop_compositor.h"
+#include "desktop/display_color_mode.h"
 #include "theme/panel_gradient_renderer.h"
 #include "common/l10n.h"
 #include "system/tray/tray_service.h"
@@ -411,7 +412,16 @@ struct StatusBar::Impl
         HRESULT CommitWithTrace()
         {
             performance::Scope trace("shared.status_bar", "commit");
-            const auto result = owner.composition->Commit();
+            auto result = owner.composition->Commit();
+            if (SUCCEEDED(result) && !backdrop.CommitSrgbContent())
+            {
+                backdrop.RemoveSrgbContent(reinterpret_cast<std::uintptr_t>(this));
+                backdrop.RemoveSrgbContent(reinterpret_cast<std::uintptr_t>(this) + 1);
+                if (visual) (void)visual->SetContent(backgroundSurface.Get());
+                if (contentVisual) (void)contentVisual->SetContent(surface.Get());
+                result = owner.composition->Commit();
+                (void)backdrop.CommitSrgbContent();
+            }
             TraceValue(SUCCEEDED(result) ? "commit.success" : "commit.failure");
             return result;
         }
@@ -751,6 +761,7 @@ struct StatusBar::Impl
             visual->SetOffsetY(frame.offsetY);
             backdrop.SetVisualOpacity(frame.opacity);
             backdrop.SetVisualTranslation(frame.offsetX, frame.offsetY);
+            backdrop.SetSrgbRootPose(frame.opacity, frame.offsetX, frame.offsetY);
         }
         bool PrepareDockPresentation(const StatusBarDockPresentation& frame)
         {
@@ -1119,7 +1130,13 @@ struct StatusBar::Impl
                 focusFrame->factory == drawResources.factory && focusFrame->fontSelection == drawResources.fontSelection &&
                 focusFrame->fontRevision == drawResources.fontRevision && focusFrame->fontBuilds == drawResources.fontBuilds &&
                 focusFrame->scale == drawResources.scale && focusFrame->layoutReusable);
-            const bool partialCandidate = samePreparedFont && partialHoverUpdates && !paintDirty && !backgroundDirty && !appearanceDirty &&
+            const auto backgroundKey = reinterpret_cast<std::uintptr_t>(this);
+            const auto contentKey = backgroundKey + 1;
+            const bool srgbEligible = !HighContrast() &&
+                display_color::ModeForMonitor(monitor) == display_color::Mode::WideColor;
+            if (srgbEligible && !backdrop.HasSrgbContent(backgroundKey)) backgroundDirty = true;
+            const bool partialCandidate = !srgbEligible && !backdrop.HasSrgbContent(contentKey) &&
+                samePreparedFont && partialHoverUpdates && !paintDirty && !backgroundDirty && !appearanceDirty &&
                 surface && backgroundSurface && width == w && height == h &&
                 drawResources.FrameTextMatches(owner.text.Get(), TrayScale(), retainedTextGeneration) &&
                 retainedFrameValid && retainedPalette;
@@ -1202,6 +1219,7 @@ struct StatusBar::Impl
             }
             const auto& a = appearance;
             const bool hc = HighContrast();
+            bool stagedBackground = false;
             if (backgroundDirty)
             {
                 backgroundSurface.Reset();
@@ -1225,11 +1243,12 @@ struct StatusBar::Impl
                     DrawStatusBarEdge(background.Get(), client, a, dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale),
                         owner.settings.position, adjacentClient);
                 }
+                stagedBackground = srgbEligible &&
+                    backdrop.StageSrgbContent(hwnd, backgroundKey, client, background.Get(), origin);
                 background.Reset();
                 const auto drawn = backgroundSurface->EndDraw();
                 TraceValue(SUCCEEDED(drawn) ? "surface.end.success" : "surface.end.failure");
                 if (FAILED(drawn)) { paintError(drawn); return; }
-                visual->SetContent(backgroundSurface.Get());
                 backgroundDirty = false;
             }
             if (scrollFrame && !focusFrame)
@@ -1268,6 +1287,9 @@ struct StatusBar::Impl
                 scrollFrame != nullptr || focusFrame != nullptr, &retainedFrameValid);
             DrawStatusBarDropIndicator(context.Get(), drawnInteraction.indicator, a, palette, dpi);
             if (!scrollFrame && !focusFrame) PublishTrayGeometry();
+            const bool stagedContent = srgbEligible && SUCCEEDED(contentResult) &&
+                (stagedBackground || backdrop.HasSrgbContent(backgroundKey)) &&
+                backdrop.StageSrgbContent(hwnd, contentKey, client, context.Get(), offset);
             context.Reset();
             const auto surfaceResult = surface->EndDraw();
             TraceValue(SUCCEEDED(surfaceResult) ? "surface.end.success" : "surface.end.failure");
@@ -1277,7 +1299,21 @@ struct StatusBar::Impl
             if (SUCCEEDED(result))
             {
                 if (ReplayTrayScrollPaint(prepareHidden, trayOnly, scrollFrame, presentation)) return;
-                contentVisual->SetContent(surface.Get());
+                const bool srgbPresented = stagedContent &&
+                    (!stagedBackground || backdrop.PublishSrgbContent(backgroundKey)) &&
+                    backdrop.PublishSrgbContent(contentKey);
+                if (srgbPresented)
+                {
+                    const std::array order{backgroundKey, contentKey};
+                    backdrop.SetSrgbContentOrder(order);
+                }
+                else
+                {
+                    backdrop.RemoveSrgbContent(backgroundKey);
+                    backdrop.RemoveSrgbContent(contentKey);
+                }
+                visual->SetContent(srgbPresented ? nullptr : backgroundSurface.Get());
+                contentVisual->SetContent(srgbPresented ? nullptr : surface.Get());
                 ApplyDockPose(mergedPresentation);
                 const auto commit = CommitWithTrace();
                 if (FAILED(commit)) paintError(commit);

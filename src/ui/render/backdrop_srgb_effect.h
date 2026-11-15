@@ -4,6 +4,7 @@
 #include <windows.graphics.effects.interop.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Graphics.Effects.h>
+#include <winrt/Windows.UI.Composition.h>
 
 #include <utility>
 #include <vector>
@@ -13,6 +14,7 @@ namespace snowdesktop::backdrop_srgb
 namespace wf = winrt::Windows::Foundation;
 namespace graphics = winrt::Windows::Graphics::Effects;
 namespace abi = ABI::Windows::Graphics::Effects;
+namespace composition = winrt::Windows::UI::Composition;
 
 struct Effect : winrt::implements<Effect,
     graphics::IGraphicsEffect, graphics::IGraphicsEffectSource,
@@ -123,5 +125,22 @@ winrt::com_ptr<Effect> Transfer(MakeInput&& makeInput, bool encode)
         wf::PropertyValue::CreateBoolean(false)};
     return winrt::make_self<Effect>(CLSID_D2D1ArithmeticComposite, std::move(properties),
         std::vector<graphics::IGraphicsEffectSource>{*magnitude, *sign});
+}
+
+inline composition::CompositionEffectFactory CreateFactory(const composition::Compositor& compositor)
+{
+    const auto makeMixed = []() -> graphics::IGraphicsEffectSource {
+        const auto backdrop = Transfer([] {
+            return composition::CompositionEffectSourceParameter(L"backdrop");
+        }, true);
+        const auto material = Gamma(composition::CompositionEffectSourceParameter(L"material"), 1.f / 2.4f);
+        const auto mixed = winrt::make_self<Effect>(CLSID_D2D1Composite,
+            std::vector<wf::IInspectable>{wf::PropertyValue::CreateUInt32(D2D1_COMPOSITE_MODE_SOURCE_OVER)},
+            std::vector<graphics::IGraphicsEffectSource>{*backdrop, *material});
+        return *mixed;
+    };
+    auto factory = compositor.CreateEffectFactory(*Transfer(makeMixed, false));
+    winrt::check_hresult(factory.ExtendedError());
+    return factory;
 }
 }

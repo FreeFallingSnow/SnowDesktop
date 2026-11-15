@@ -3,6 +3,7 @@
 #include "common/utils.h"
 #include "app/render/desktop_backdrop_update_rules.h"
 #include "diagnostics/performance_trace.h"
+#include "desktop/display_color_mode.h"
 #include "settings/animation_settings.h"
 #include "widget/view/widget_surface_retention.h"
 #include "widget/view/widget_surface_renderer.h"
@@ -453,7 +454,23 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                 WidgetSurfaceExtent(surfaceHeight));
         const RECT oldBounds = item.bounds;
         const bool boundsChanged = !SameRect(oldBounds, bounds);
-        const bool asynchronous = luaWidget && widgetSurfaceRenderer_ && !item.renderFailed;
+        const RECT contentFrame{surfaceLeft, surfaceTop,
+            surfaceLeft + static_cast<LONG>(width), surfaceTop + static_cast<LONG>(height)};
+        POINT center{bounds.left + (bounds.right - bounds.left) / 2,
+            bounds.top + (bounds.bottom - bounds.top) / 2};
+        namespace display = snowdesktop::display_color;
+        // The retained overlay is above the legacy tree. Keep native clips,
+        // independent text animations and overlap order on their current paths.
+        const bool srgbEligible = !drawRollSnapshot && !marqueeActive_ &&
+            !widgetMarqueeCompositionItems_.contains(widgetId) && ClientToScreen(hwnd_, &center) &&
+            display::ModeForMonitor(MonitorFromPoint(center, MONITOR_DEFAULTTONULL)) == display::Mode::WideColor &&
+            std::none_of(desktopWidgetCompositionItems_.begin(), desktopWidgetCompositionItems_.end(),
+                [&](const auto& neighbor) {
+                    RECT intersection{};
+                    return &neighbor.second != &item && neighbor.second.visible &&
+                        IntersectRect(&intersection, &contentFrame, &neighbor.second.bounds);
+                });
+        const bool asynchronous = luaWidget && widgetSurfaceRenderer_ && !item.renderFailed && !srgbEligible;
         // The synchronous surface and the worker target may coexist during handoff
         // when they represent the same Lua content at the same size.
         const bool sameSurface = item.width == width && item.height == height &&
@@ -608,6 +625,9 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                 desktopWidgetBackdropBlurRadiusDuringDraw_)), 0, 48);
         desktopWidgetBackdropRequestedDuringDraw_ = false;
 
+        const bool stagedSrgb = srgbEligible && !asynchronous &&
+            desktopBackdropCompositor_.StageSrgbContent(hwnd_, item.BackdropOwnerKey(),
+                contentFrame, context.Get(), updateOffset);
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
         HRESULT endDrawHr = asynchronous
@@ -656,7 +676,13 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             item.backdropRegistered = false;
         }
 
-        hr = asynchronous ? S_OK : item.visual->SetContent(item.surface.Get());
+        const bool srgbPresented = stagedSrgb && desktopBackdropCompositor_.PublishSrgbContent(
+            item.BackdropOwnerKey(), item.HoverOpacity());
+        if (!srgbPresented)
+            desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
+        hr = asynchronous ? S_OK : item.visual->SetContent(srgbPresented ? nullptr : item.surface.Get());
+        if (SUCCEEDED(hr))
+            item.presentingSrgb = srgbPresented;
         if (SUCCEEDED(hr))
             hr = item.visual->SetOffsetX(static_cast<float>(surfaceLeft));
         if (SUCCEEDED(hr))
@@ -761,6 +787,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         }
 
         auto& item = position->second;
+        desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
+        item.presentingSrgb = false;
         (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
         item.surface.Reset();
         item.width = 0;
@@ -968,6 +996,8 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
             item.bounds.top == bounds.top && item.bounds.right == bounds.right;
         if (item.clip && !keepPresentedFrame)
         {
+            desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
+            item.presentingSrgb = false;
             (void)item.clip->SetRight(0.0f);
             (void)item.clip->SetBottom(0.0f);
         }
@@ -993,6 +1023,8 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
     }
     if (!visible)
     {
+        desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
+        item.presentingSrgb = false;
         // Stop queued/in-flight publication. A later show gets a fresh target
         // identity, so a late completion cannot open the hidden clip.
         item.hoverFade.reset();
@@ -1037,6 +1069,18 @@ void DesktopApp::KeepDesktopWidgetBackdropPanels()
     for (auto& [id, item] : desktopWidgetCompositionItems_)
     {
         const float opacity = item.HoverOpacity();
+        if (item.presentingSrgb && (marqueeActive_ ||
+            !desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey())))
+        {
+            if (SUCCEEDED(item.visual->SetContent(item.surface.Get())))
+            {
+                desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
+                item.presentingSrgb = false;
+                pendingDesktopWidgetCompositions_.insert(id);
+            }
+        }
+        if (item.presentingSrgb)
+            desktopBackdropCompositor_.SetSrgbContentOpacity(item.BackdropOwnerKey(), opacity);
         const HRESULT opacityResult = UpdateHoverOpacity(dcompDevice_.Get(), item, opacity);
         if (FAILED(opacityResult) &&
             !RequestGraphicsDeviceRecovery(L"Desktop widget hover opacity", opacityResult))
@@ -1246,6 +1290,7 @@ void DesktopApp::RemoveDesktopWidgetComposition(
     if (position == desktopWidgetCompositionItems_.end())
         return;
     const RECT bounds = position->second.bounds;
+    desktopBackdropCompositor_.RemoveSrgbContent(position->second.BackdropOwnerKey());
     (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), position->second);
     position->second.iconBackdrops.Hide(desktopBackdropCompositor_);
     if (position->second.backdropRegistered)
@@ -1307,6 +1352,15 @@ bool DesktopApp::SyncDesktopWidgetCompositionZOrder()
         if (desktopWidgetCompositionItems_.contains(widget.id))
             desired.push_back(widget.id);
     }
+    std::vector<std::uintptr_t> srgbOrder;
+    for (const auto& tile : desktopSrgbTiles_)
+        srgbOrder.push_back(tile.key);
+    for (const auto& widgetId : desired)
+    {
+        const auto& item = desktopWidgetCompositionItems_.at(widgetId);
+        if (item.presentingSrgb) srgbOrder.push_back(item.BackdropOwnerKey());
+    }
+    desktopBackdropCompositor_.SetSrgbContentOrder(srgbOrder);
     if (desired == desktopWidgetCompositionZOrder_)
         return true;
 
@@ -1349,6 +1403,7 @@ void DesktopApp::ResetDesktopWidgetComposition()
     pendingDesktopWidgetCompositions_.clear();
     for (const auto& [_, item] : desktopWidgetCompositionItems_)
     {
+        desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
         item.iconBackdrops.Hide(desktopBackdropCompositor_);
         if (item.backdropRegistered)
             (void)desktopBackdropCompositor_.RemovePanel(item.bounds, item.BackdropOwnerKey());

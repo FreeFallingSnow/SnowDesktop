@@ -433,8 +433,30 @@ struct SystemPanel::Impl
                 else dc->DrawRoundedRectangle(D2D1::RoundedRect(*dropIndicator,4,4),line.Get(),2);
             }
         }
-        dc.Reset();const auto end=surface->EndDraw();
-        if(SUCCEEDED(result)&&SUCCEEDED(end)){visual->SetContent(surface.Get());composition->Commit();paintDirty=false;}else surface.Reset();
+        const auto srgbKey = reinterpret_cast<std::uintptr_t>(this);
+        const RECT client{0, 0, width, height};
+        const bool stagedSrgb = SUCCEEDED(result) && Glass() && !HighContrast() &&
+            backdrop.StageSrgbContent(window, srgbKey, client, dc.Get(), offset);
+        dc.Reset();
+        const auto end = surface->EndDraw();
+        if (FAILED(result) || FAILED(end))
+        {
+            surface.Reset();
+            return;
+        }
+        const bool srgbPresented = stagedSrgb && backdrop.PublishSrgbContent(srgbKey);
+        if (!srgbPresented) backdrop.RemoveSrgbContent(srgbKey);
+        backdrop.SetSrgbRootPose(1.f, 0.f, SlideOffset());
+        visual->SetContent(srgbPresented ? nullptr : surface.Get());
+        composition->Commit();
+        if (!backdrop.CommitSrgbContent())
+        {
+            backdrop.RemoveSrgbContent(srgbKey);
+            visual->SetContent(surface.Get());
+            composition->Commit();
+            (void)backdrop.CommitSrgbContent();
+        }
+        paintDirty = false;
     }
     void Pose()
     {
@@ -444,6 +466,8 @@ struct SystemPanel::Impl
         const auto clip=CreateRectRgn(0,0,width,height);CombineRgn(region,region,clip,RGN_AND);DeleteObject(clip);if(!SetWindowRgn(window,region,FALSE))DeleteObject(region);
         if(calendarInputs)calendarInputs->Pose(y,showing&&!closing&&!modal&&!slide.IsAnimating());
         composition->Commit();if(Glass())backdrop.CommitVisualChanges();
+        backdrop.SetSrgbRootPose(1.f, 0.f, y);
+        (void)backdrop.CommitSrgbContent();
     }
     void Animate(bool opening)
     {

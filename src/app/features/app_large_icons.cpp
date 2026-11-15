@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "theme/personalization.h"
+#include "theme/flat_glass_rim.h"
 #include "common/l10n.h"
 #include "common/utils.h"
 #include "data/data_paths.h"
@@ -706,6 +707,13 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
     view.background.opacity = appearance.widgetAlpha; view.background.gradient = appearance.panelGradient;
     view.componentForeground = appearance.contentTheme == 1 ? 0x161616 : 0xffffff;
     const bool fill = snowdesktop::IsLargeIconFill(config);
+    if (desktopSrgbTileDraws_ && state != 3 && !fill && appearance.widgetEdgeHighlightEnabled)
+    {
+        RECT material = view.frame;
+        InflateRect(&material, snowdesktop::flat_glass_rim::kPanelOverdraw,
+            snowdesktop::flat_glass_rim::kPanelOverdraw);
+        desktopSrgbTileDraws_->push_back(material);
+    }
     auto& runtime = largeIconRuntime_[item.layoutKey];
     if (config.effect == 2 && !fill)
     {

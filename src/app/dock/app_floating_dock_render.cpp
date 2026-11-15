@@ -208,6 +208,11 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     }
     renderingFloatingDock_ = false;
 
+    RECT contentFrame{};
+    GetClientRect(host.hwnd, &contentFrame);
+    const auto srgbKey = reinterpret_cast<std::uintptr_t>(&host);
+    const bool stagedSrgb = host.backdrop.StageSrgbContent(
+        host.hwnd, srgbKey, contentFrame, context.Get(), updateOffset);
     context->SetTransform(
         D2D1::Matrix3x2F::Identity());
     context.Reset();
@@ -225,8 +230,10 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     // SetContent only after the replacement surface contains a complete
     // frame. The following composition commit then publishes the pixels and
     // the content switch atomically instead of exposing an empty surface.
-    hr = host.dcompVisual->SetContent(
-        frameSurface.Get());
+    const bool srgbPresented = stagedSrgb && host.backdrop.PublishSrgbContent(
+        srgbKey, host.presentationMerged ? host.mergedPresentation.opacity : 1.f);
+    if (!srgbPresented) host.backdrop.RemoveSrgbContent(srgbKey);
+    hr = host.dcompVisual->SetContent(srgbPresented ? nullptr : frameSurface.Get());
     if (FAILED(hr))
     {
         RecoverFloatingDockCompositionFailure(
@@ -277,6 +284,14 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
             RecoverFloatingDockCompositionFailure(host, L"Backdrop candidate", E_FAIL, true);
             return false;
         }
+    }
+    if (!host.backdrop.CommitSrgbContent())
+    {
+        host.backdrop.RemoveSrgbContent(srgbKey);
+        (void)host.dcompVisual->SetContent(frameSurface.Get());
+        (void)CommitCompositionAnimationFrame();
+        (void)FlushPendingCompositionCommit();
+        (void)host.backdrop.CommitSrgbContent();
     }
     if (host.collectingMergedGlass && statusBar_)
         statusBar_->ApplyMergedDockIconGlass(host.monitor, d2dDevice_.Get(), host.mergedGlassIcons);

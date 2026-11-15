@@ -378,6 +378,24 @@ bool DesktopApp::FlushPendingCompositionCommit()
         // particular, a roll frame must not publish its new glass while
         // the corresponding child surface is still queued on this device.
         desktopBackdropCompositor_.CommitDeferredFrame();
+        if (!desktopBackdropCompositor_.CommitSrgbContent())
+        {
+            for (auto& [id, item] : desktopWidgetCompositionItems_)
+            {
+                if (!item.presentingSrgb) continue;
+                desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
+                (void)item.visual->SetContent(item.surface.Get());
+                item.presentingSrgb = false;
+                pendingDesktopWidgetCompositions_.insert(id);
+            }
+            (void)dcompDevice_->Commit();
+            (void)desktopBackdropCompositor_.CommitSrgbContent();
+            if (!desktopSrgbTiles_.empty())
+            {
+                RecoverCompositionRenderFailure(L"Desktop sRGB content commit", E_FAIL);
+                return false;
+            }
+        }
     }
     TraceDesktopPresentation(L"composition-commit", hr);
     RecordShellHoverTrace(

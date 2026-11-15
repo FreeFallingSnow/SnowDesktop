@@ -38,6 +38,7 @@ inline bool Covered(const RECT& panel, float cornerRadius, const RECT& rect)
 struct Geometry
 {
     RECT allocation{};
+    RECT visibleBounds{};
     ComPtr<ID2D1Geometry> outline;
     std::map<int, ComPtr<ID2D1Geometry>> strongerMasks;
 };
@@ -67,18 +68,22 @@ inline HRESULT Union(ID2D1Factory& factory, ComPtr<ID2D1Geometry>& destination,
 
 inline HRESULT Build(ID2D1Factory& factory, const RECT& panel,
     float cornerRadius, int panelRadius, std::span<const PanelBackdropIcon> icons,
-    bool extendOutline, Geometry& result)
+    bool extendOutline, const RECT& samplingFrame, Geometry& result)
 {
     Geometry candidate;
-    candidate.allocation = panel;
+    candidate.visibleBounds = panel;
     if (extendOutline)
     {
         for (const auto& icon : icons)
         {
             RECT visible = icon.frame;
             if (icon.clip && !IntersectRect(&visible, &icon.frame, &icon.clip->bounds)) continue;
-            UnionRect(&candidate.allocation, &candidate.allocation, &visible);
+            UnionRect(&candidate.visibleBounds, &candidate.visibleBounds, &visible);
         }
+    }
+    candidate.allocation = IsRectEmpty(&samplingFrame) ? candidate.visibleBounds : samplingFrame;
+    if (extendOutline)
+    {
         const auto& area = candidate.allocation;
         candidate.outline = smooth_corners::Geometry(&factory,
             D2D1::RectF(static_cast<float>(panel.left - area.left),

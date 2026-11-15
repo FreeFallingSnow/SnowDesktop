@@ -648,6 +648,8 @@ void DesktopApp::ApplyMergedDockPresentationFrame(PersistentDockHost& host)
     }
     host.backdrop.SetVisualOpacity(frame.opacity);
     host.backdrop.SetVisualTranslation(frame.offsetX, frame.offsetY);
+    host.backdrop.SetSrgbRootPose(1.f, frame.offsetX, frame.offsetY);
+    host.backdrop.SetSrgbContentOpacity(reinterpret_cast<std::uintptr_t>(&host), frame.opacity);
     // The complete strip is prepared above and revealed before its central
     // icon surface, so a first/no-animation frame cannot show a partial Dock.
     if (host.presentationMerged && statusBar_) statusBar_->ApplyMergedDockPresentation(host.monitor, frame);
@@ -665,6 +667,7 @@ void DesktopApp::ApplyMergedDockPresentationFrame(PersistentDockHost& host)
     }
     else host.backdrop.HidePopupWindowPair(host.hwnd);
     host.backdrop.CommitVisualChanges();
+    (void)host.backdrop.CommitSrgbContent();
     CommitCompositionAnimationFrame();
 }
 

@@ -26,6 +26,7 @@
 #include "icons/large_icon_shape_geometry.h"
 #include "icons/icon_backdrop_geometry.h"
 #include "icons/icon_bitmap_renderer.h"
+#include "desktop/display_color_mode.h"
 #include "platform/shell_overlay_window.h"
 
 #include <d2d1_1.h>
@@ -49,7 +50,7 @@
 #include <winrt/Windows.UI.Composition.h>
 #include <winrt/Windows.UI.Composition.Core.h>
 #include <winrt/Windows.UI.Composition.Desktop.h>
-#include "backdrop_srgb_effect.h"
+#include "ui/render/backdrop_srgb_effect.h"
 #pragma pop_macro("GetCurrentTime")
 
 #include <algorithm>
@@ -429,23 +430,6 @@ wuc::CompositionEffectFactory CreateRegionalBlurFactory(const wuc::Compositor& c
     return factory;
 }
 
-wuc::CompositionEffectFactory CreateIconMaterialFactory(const wuc::Compositor& compositor)
-{
-    using snowdesktop::backdrop_srgb::Transfer;
-    const auto makeMixed = []() -> wge::IGraphicsEffectSource {
-        auto mixed = winrt::make_self<BlurCompositeEffect>();
-        mixed->sources[0] = *Transfer([] {
-            return wuc::CompositionEffectSourceParameter(L"backdrop");
-        }, true);
-        mixed->sources[1] = *snowdesktop::backdrop_srgb::Gamma(
-            wuc::CompositionEffectSourceParameter(L"icon"), 1.f / 2.4f);
-        return *mixed;
-    };
-    auto factory = compositor.CreateEffectFactory(*Transfer(makeMixed, false));
-    winrt::check_hresult(factory.ExtendedError());
-    return factory;
-}
-
 struct SharedBackdropCompositionContext
 {
     ws::DispatcherQueueController dispatcherController{nullptr};
@@ -482,12 +466,13 @@ struct DesktopBackdropCompositor::Impl
         struct IconRegions
         {
             std::vector<snowdesktop::PanelBackdropIcon> icons;
-            RECT base{}, allocation{};
+            RECT base{}, allocation{}, visibleBounds{}, samplingFrame{};
             float corners = 0.0f;
             int blurRadius = 0;
             bool extendOutline = false;
             wuc::CompositionEffectBrush brush{nullptr};
             wuc::CompositionPathGeometry clip{nullptr};
+            std::map<int, wuc::CompositionDrawingSurface> masks;
         };
         IconRegions iconRegions;
         bool iconRegionsApplied = false;
@@ -639,6 +624,26 @@ struct DesktopBackdropCompositor::Impl
     wuc::ContainerVisual root{nullptr};
     std::unordered_map<int, wuc::CompositionEffectFactory> blurFactories;
     wuc::CompositionEffectFactory iconMaterialFactory{nullptr};
+    struct SrgbContent
+    {
+        struct Buffer
+        {
+            wuc::CompositionDrawingSurface surface{nullptr};
+            wuc::CompositionEffectBrush effect{nullptr};
+            SIZE size{};
+        };
+        Buffer active, candidate;
+        RECT stagedFrame{};
+        bool staged = false;
+        wuc::SpriteVisual visual{nullptr};
+    };
+    HWND srgbContentWindow = nullptr;
+    wucd::DesktopWindowTarget srgbContentTarget{nullptr};
+    wuc::ContainerVisual srgbContentRoot{nullptr};
+    std::unordered_map<std::uintptr_t, SrgbContent> srgbContent;
+    std::vector<std::uintptr_t> srgbContentOrder;
+    bool srgbContentOrderDirty = false;
+    bool srgbContentCommitPending = false;
     std::map<std::vector<int>, wuc::CompositionEffectFactory> regionalFactories;
     winrt::com_ptr<ID2D1Device> maskDrawDevice;
     wuc::CompositionGraphicsDevice maskGraphicsDevice{nullptr};
@@ -1129,11 +1134,15 @@ struct DesktopBackdropCompositor::Impl
         return brush;
     }
 
-    wuc::CompositionSurfaceBrush DrawRadiusMask(const SIZE& size, ID2D1Geometry* geometry)
+    wuc::CompositionDrawingSurface CreateRadiusMask(const SIZE& size)
     {
-        const auto surface = maskGraphicsDevice.CreateDrawingSurface(wf::Size{
+        return maskGraphicsDevice.CreateDrawingSurface(wf::Size{
             static_cast<float>(size.cx), static_cast<float>(size.cy)},
             wgx::DirectXPixelFormat::B8G8R8A8UIntNormalized, wgx::DirectXAlphaMode::Premultiplied);
+    }
+
+    void PaintRadiusMask(const wuc::CompositionDrawingSurface& surface, ID2D1Geometry* geometry)
+    {
         const auto interop = surface.as<awuci::ICompositionDrawingSurfaceInterop>();
         POINT offset{};
         winrt::com_ptr<ID2D1DeviceContext> context;
@@ -1151,6 +1160,10 @@ struct DesktopBackdropCompositor::Impl
         const HRESULT finish = interop->EndDraw();
         winrt::check_hresult(draw);
         winrt::check_hresult(finish);
+    }
+
+    wuc::CompositionSurfaceBrush MakeRadiusMaskBrush(const wuc::CompositionDrawingSurface& surface)
+    {
         const auto mask = compositor.CreateSurfaceBrush(surface);
         mask.Stretch(wuc::CompositionStretch::None);
         mask.HorizontalAlignmentRatio(0.0f);
@@ -1195,10 +1208,10 @@ struct DesktopBackdropCompositor::Impl
         icon.VerticalAlignmentRatio(0.f);
         icon.BitmapInterpolationMode(wuc::CompositionBitmapInterpolationMode::NearestNeighbor);
 
-        if (!iconMaterialFactory) iconMaterialFactory = CreateIconMaterialFactory(compositor);
+        if (!iconMaterialFactory) iconMaterialFactory = snowdesktop::backdrop_srgb::CreateFactory(compositor);
         auto brush = iconMaterialFactory.CreateBrush();
         brush.SetSourceParameter(L"backdrop", compositor.CreateBackdropBrush());
-        brush.SetSourceParameter(L"icon", icon);
+        brush.SetSourceParameter(L"material", icon);
         return brush;
     }
 
@@ -1224,11 +1237,95 @@ struct DesktopBackdropCompositor::Impl
         panel.materialVisual.IsVisible(true);
     }
 
-    wuc::CompositionEffectBrush CreateRegionalBlurBrush(ID2D1Device* device, int baseRadius,
-        const snowdesktop::panel_blur::Geometry& geometry)
+    void ResetSrgbContent()
     {
+        if (srgbContentTarget) srgbContentTarget.Root(nullptr);
+        srgbContent.clear();
+        srgbContentOrder.clear();
+        srgbContentOrderDirty = false;
+        srgbContentCommitPending = false;
+        srgbContentRoot = nullptr;
+        srgbContentTarget = nullptr;
+        srgbContentWindow = nullptr;
+    }
+
+    void EnsureSrgbContentTarget(HWND window)
+    {
+        if (srgbContentWindow == window && srgbContentTarget) return;
+        ResetSrgbContent();
+        const auto interop = compositor.as<awucd::ICompositorDesktopInterop>();
+        wucd::DesktopWindowTarget frameTarget{nullptr};
+        winrt::check_hresult(interop->CreateDesktopWindowTarget(window, TRUE,
+            reinterpret_cast<awucd::IDesktopWindowTarget**>(winrt::put_abi(frameTarget))));
+        auto frameRoot = compositor.CreateContainerVisual();
+        frameTarget.Root(frameRoot);
+        srgbContentWindow = window;
+        srgbContentTarget = std::move(frameTarget);
+        srgbContentRoot = std::move(frameRoot);
+    }
+
+    SrgbContent::Buffer CreateSrgbContentBuffer(SIZE size)
+    {
+        SrgbContent::Buffer buffer;
+        buffer.size = size;
+        buffer.surface = maskGraphicsDevice.CreateDrawingSurface(wf::Size{
+            static_cast<float>(size.cx), static_cast<float>(size.cy)},
+            wgx::DirectXPixelFormat::B8G8R8A8UIntNormalized, wgx::DirectXAlphaMode::Premultiplied);
+        const auto source = compositor.CreateSurfaceBrush(buffer.surface);
+        source.Stretch(wuc::CompositionStretch::None);
+        source.HorizontalAlignmentRatio(0.f);
+        source.VerticalAlignmentRatio(0.f);
+        source.BitmapInterpolationMode(wuc::CompositionBitmapInterpolationMode::NearestNeighbor);
+        if (!iconMaterialFactory) iconMaterialFactory = snowdesktop::backdrop_srgb::CreateFactory(compositor);
+        buffer.effect = iconMaterialFactory.CreateBrush();
+        buffer.effect.SetSourceParameter(L"backdrop", compositor.CreateBackdropBrush());
+        buffer.effect.SetSourceParameter(L"material", source);
+        return buffer;
+    }
+
+    static void CopySrgbContent(const SrgbContent::Buffer& buffer,
+        ID2D1Bitmap1* source, const D2D1_RECT_U& sourceRect)
+    {
+        auto interop = buffer.surface.as<awuci::ICompositionDrawingSurfaceInterop>();
+        winrt::com_ptr<ID2D1DeviceContext> context;
+        POINT offset{};
+        winrt::check_hresult(interop->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
+            context.put_void(), &offset));
+        winrt::com_ptr<ID2D1Image> image;
+        winrt::com_ptr<ID2D1Bitmap1> bitmap;
+        context->GetTarget(image.put());
+        HRESULT result = image ? image->QueryInterface(__uuidof(ID2D1Bitmap1), bitmap.put_void()) : E_FAIL;
+        if (SUCCEEDED(result))
+        {
+            const auto destination = D2D1::Point2U(static_cast<UINT32>(offset.x),
+                static_cast<UINT32>(offset.y));
+            result = bitmap->CopyFromBitmap(&destination, source, &sourceRect);
+        }
+        const HRESULT end = interop->EndDraw();
+        winrt::check_hresult(result);
+        winrt::check_hresult(end);
+    }
+
+    void SetRegionalBlurBrush(ID2D1Device* device, const snowdesktop::panel_blur::Geometry& geometry,
+        PanelVisual::IconRegions& next, const PanelVisual::IconRegions& previous)
+    {
+        const bool reuse = !IsRectEmpty(&next.samplingFrame) && maskDrawDevice.get() == device &&
+            previous.brush && previous.blurRadius == next.blurRadius &&
+            EqualRect(&previous.allocation, &next.allocation) &&
+            std::equal(previous.masks.begin(), previous.masks.end(),
+                geometry.strongerMasks.begin(), geometry.strongerMasks.end(),
+                [](const auto& a, const auto& b) { return a.first == b.first; });
+        if (reuse)
+        {
+            next.masks = previous.masks;
+            for (const auto& [radius, mask] : geometry.strongerMasks)
+                PaintRadiusMask(next.masks.at(radius), mask.Get());
+            next.brush = previous.brush;
+            return;
+        }
+
         EnsureMaskGraphicsDevice(device);
-        std::vector<int> radii{baseRadius};
+        std::vector<int> radii{next.blurRadius};
         for (const auto& entry : geometry.strongerMasks)
             radii.push_back(entry.first);
         auto found = regionalFactories.find(radii);
@@ -1243,8 +1340,13 @@ struct DesktopBackdropCompositor::Impl
         const SIZE size{geometry.allocation.right - geometry.allocation.left,
             geometry.allocation.bottom - geometry.allocation.top};
         for (const auto& [radius, mask] : geometry.strongerMasks)
-            brush.SetSourceParameter(RadiusMaskName(radius), DrawRadiusMask(size, mask.Get()));
-        return brush;
+        {
+            const auto surface = CreateRadiusMask(size);
+            PaintRadiusMask(surface, mask.Get());
+            brush.SetSourceParameter(RadiusMaskName(radius), MakeRadiusMaskBrush(surface));
+            next.masks.emplace(radius, surface);
+        }
+        next.brush = std::move(brush);
     }
 
     void PruneUnusedBlurFactories()
@@ -1319,6 +1421,7 @@ struct DesktopBackdropCompositor::Impl
         blurFactoriesDirty = false;
         try
         {
+            ResetSrgbContent();
             if (target)
                 target.Root(nullptr);
         }
@@ -2287,10 +2390,16 @@ bool DesktopBackdropCompositor::ApplyStagedFrame(ID2D1Device* drawDevice)
         switch (panel.kind)
         {
         case Impl::StagedPanel::Kind::Rounded:
-            applied = AddPanel(panel.frame, panel.cornerRadius, panel.blurRadius, panel.ownerKey, panel.smoothCorners);
-            if (applied && !panel.panelIcons.empty())
-                (void)SetPanelIconRegions(panel.ownerKey, drawDevice, panel.panelIcons, true);
+        {
+            const bool dockSampling = drawDevice && panel.ownerKey;
+            applied = UpdatePanel(panel.frame, panel.cornerRadius, panel.blurRadius,
+                panel.ownerKey, panel.smoothCorners, dockSampling);
+            if (applied && dockSampling &&
+                !SetPanelIconRegions(panel.ownerKey, drawDevice, panel.panelIcons, true))
+                applied = AddPanel(panel.frame, panel.cornerRadius, panel.blurRadius,
+                    panel.ownerKey, panel.smoothCorners);
             break;
+        }
         case Impl::StagedPanel::Kind::Icon:
             applied = AddIconPanel(panel.frame, static_cast<snowdesktop::IconBeautifyShape>(panel.shape),
                 panel.blurRadius, panel.ownerKey,
@@ -2347,11 +2456,17 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
     const auto panel = impl_->FindPanel({}, ownerKey);
     if (panel == impl_->panels.end()) return false;
     namespace blur = snowdesktop::panel_blur;
+    // The HWND allocation is reserved for the Dock's motion envelope. Keep
+    // sampling in its pixel coordinates while the animated silhouettes move.
+    RECT samplingFrame{};
+    if (extendOutline && impl_->stableWindowRegion)
+        GetClientRect(impl_->backdropWindow, &samplingFrame);
     const auto needsRegion = [&](const snowdesktop::PanelBackdropIcon& icon) {
         return blur::RadiusKey(icon.blurRadius) > panel->blurRadius ||
             (extendOutline && !blur::Covered(panel->frame, panel->cornerRadius, icon.frame));
     };
-    if (!drawDevice || std::none_of(icons.begin(), icons.end(), needsRegion))
+    if (!drawDevice || (IsRectEmpty(&samplingFrame) &&
+        std::none_of(icons.begin(), icons.end(), needsRegion)))
     {
         if (panel->iconRegionsApplied)
         {
@@ -2388,7 +2503,8 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
     try
     {
         auto& cached = panel->iconRegions;
-        const bool changed = cached.icons.empty() || !EqualRect(&cached.base, &panel->frame) ||
+        const bool changed = !EqualRect(&cached.base, &panel->frame) ||
+            !EqualRect(&cached.samplingFrame, &samplingFrame) ||
             cached.corners != panel->cornerRadius || cached.blurRadius != panel->blurRadius ||
             cached.extendOutline != extendOutline ||
             !std::equal(cached.icons.begin(), cached.icons.end(), icons.begin(), icons.end(), blur::SameIcon);
@@ -2398,6 +2514,7 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
             Impl::PanelVisual::IconRegions next;
             next.icons.assign(icons.begin(), icons.end());
             next.base = panel->frame;
+            next.samplingFrame = samplingFrame;
             next.corners = panel->cornerRadius;
             next.blurRadius = panel->blurRadius;
             next.extendOutline = extendOutline;
@@ -2405,20 +2522,21 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
             drawDevice->GetFactory(factory.put());
             blur::Geometry geometry;
             winrt::check_hresult(blur::Build(*factory.get(), next.base, next.corners,
-                next.blurRadius, icons, extendOutline, geometry));
+                next.blurRadius, icons, extendOutline, samplingFrame, geometry));
             next.allocation = geometry.allocation;
+            next.visibleBounds = geometry.visibleBounds;
             if (geometry.outline)
             {
                 winrt::com_ptr<ID2D1Geometry> outline;
                 outline.copy_from(geometry.outline.Get());
-                next.clip = impl_->compositor.CreatePathGeometry();
+                next.clip = cached.clip ? cached.clip : impl_->compositor.CreatePathGeometry();
                 next.clip.Path(wuc::CompositionPath(winrt::make<BackdropGeometrySource>(std::move(outline))));
             }
             if (!geometry.strongerMasks.empty())
             {
                 try
                 {
-                    next.brush = impl_->CreateRegionalBlurBrush(drawDevice, next.blurRadius, geometry);
+                    impl_->SetRegionalBlurBrush(drawDevice, geometry, next, cached);
                 }
                 catch (const winrt::hresult_error& error)
                 {
@@ -2438,7 +2556,7 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
             panel->SetOffset({static_cast<float>(area.left), static_cast<float>(area.top), 0.0f});
             panel->SetSize({static_cast<float>(area.right - area.left), static_cast<float>(area.bottom - area.top)});
             panel->SetClip(cached.clip);
-            panel->regionFrame = area;
+            panel->regionFrame = cached.visibleBounds;
             panel->regionCornerRadius = 0.0f;
             impl_->transformedRegionDirty = true;
         }
@@ -2553,8 +2671,9 @@ bool DesktopBackdropCompositor::UpdatePanel(
         {
             impl_->ClearGenieTransform();
         }
+        const bool keepDockSampling = customClip && existing->iconRegionsApplied &&
+            !IsRectEmpty(&existing->iconRegions.samplingFrame);
         existing->frame = frame;
-        existing->regionFrame = frame;
         existing->SetTransform(wfn::float4x4{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1});
 
         if (existing->blurRadius != blurKey || !existing->baseBlur)
@@ -2563,22 +2682,25 @@ bool DesktopBackdropCompositor::UpdatePanel(
             existing->blurRadius = blurKey;
             existing->baseBlur = impl_->CreateBlurBrush(blurKey);
         }
-        if (existing->visual.Brush() != existing->baseBlur)
-            existing->visual.Brush(existing->baseBlur);
         if (existing->materialVisual)
             existing->materialVisual.IsVisible(false);
-        existing->iconRegionsApplied = false;
         existing->smoothCorners = smoothCorners;
         existing->cornerRadius = resolvedRadius;
-        existing->regionCornerRadius = resolvedRadius;
-        existing->SetOffset(wfn::float3{
-            static_cast<float>(frame.left), static_cast<float>(frame.top), 0.0f });
         const wfn::float2 panelSize{
             static_cast<float>(frame.right - frame.left),
             static_cast<float>(frame.bottom - frame.top) };
-        existing->SetSize(panelSize);
-        existing->SetRadius(resolvedRadius);
-        if (smoothCorners)
+        if (!keepDockSampling)
+        {
+            if (existing->visual.Brush() != existing->baseBlur)
+                existing->visual.Brush(existing->baseBlur);
+            existing->iconRegionsApplied = false;
+            existing->regionFrame = frame;
+            existing->regionCornerRadius = resolvedRadius;
+            existing->SetOffset({static_cast<float>(frame.left), static_cast<float>(frame.top), 0.0f});
+            existing->SetSize(panelSize);
+            existing->SetRadius(resolvedRadius);
+        }
+        if (!keepDockSampling && smoothCorners)
         {
             const SIZE size{frame.right-frame.left, frame.bottom-frame.top};
             if (!existing->smoothGeometry || existing->smoothRadius != resolvedRadius ||
@@ -2599,7 +2721,7 @@ bool DesktopBackdropCompositor::UpdatePanel(
             }
             if (!customClip) existing->SetClip(existing->smoothGeometry);
         }
-        else if (!customClip) existing->SetClip(existing->geometry);
+        else if (!keepDockSampling && !customClip) existing->SetClip(existing->geometry);
         // AddPanel represents an ordinarily rendered, visible panel. A
         // floating-Dock hand-off can temporarily set an existing panel to
         // zero opacity; reusing that same rectangle on the next desktop paint
@@ -2837,6 +2959,196 @@ bool DesktopBackdropCompositor::TrySetIconMaterial(const RECT& frame, std::uintp
     {
         impl_->lastError = FormatHresult(L"backdrop.icon_material", error.code());
         return false;
+    }
+}
+
+bool DesktopBackdropCompositor::StageSrgbContent(HWND window, std::uintptr_t key,
+    const RECT& clientFrame, ID2D1DeviceContext* context, POINT atlasOffset)
+{
+    if (const auto existing = impl_->srgbContent.find(key); existing != impl_->srgbContent.end())
+        existing->second.staged = false;
+    if (!window || !key || !context || IsRectEmpty(&clientFrame) || atlasOffset.x < 0 || atlasOffset.y < 0)
+        return false;
+    const SIZE size{clientFrame.right - clientFrame.left, clientFrame.bottom - clientFrame.top};
+    POINT center{clientFrame.left + size.cx / 2, clientFrame.top + size.cy / 2};
+    namespace display = snowdesktop::display_color;
+    if (!ClientToScreen(window, &center) ||
+        display::ModeForMonitor(MonitorFromPoint(center, MONITOR_DEFAULTTONULL)) != display::Mode::WideColor)
+        return false;
+
+    try
+    {
+        if (!impl_->compositor && !impl_->EnsureDispatcherQueue()) return false;
+        impl_->EnsureSrgbContentTarget(window);
+        winrt::com_ptr<ID2D1Device> device;
+        context->GetDevice(device.put());
+        if (!device) return false;
+        impl_->EnsureMaskGraphicsDevice(device.get());
+
+        winrt::com_ptr<ID2D1Image> target;
+        context->GetTarget(target.put());
+        if (!target) return false;
+        const auto source = target.try_as<ID2D1Bitmap1>();
+        if (!source || source->GetPixelFormat().format != DXGI_FORMAT_B8G8R8A8_UNORM)
+            return false;
+        const auto atlas = source->GetPixelSize();
+        const auto left = static_cast<UINT32>(atlasOffset.x), top = static_cast<UINT32>(atlasOffset.y);
+        const auto width = static_cast<UINT32>(size.cx), height = static_cast<UINT32>(size.cy);
+        if (left > atlas.width || top > atlas.height ||
+            width > atlas.width - left || height > atlas.height - top)
+            return false;
+        winrt::check_hresult(context->Flush());
+
+        auto& frame = impl_->srgbContent[key];
+        auto& candidate = frame.candidate;
+        if (!candidate.surface || candidate.size.cx != size.cx || candidate.size.cy != size.cy)
+            candidate = impl_->CreateSrgbContentBuffer(size);
+        Impl::CopySrgbContent(candidate, source.get(),
+            D2D1::RectU(left, top, left + width, top + height));
+        frame.stagedFrame = clientFrame;
+        frame.staged = true;
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.srgb_content_copy", error.code());
+        return false;
+    }
+}
+
+bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opacity)
+{
+    const auto entry = impl_->srgbContent.find(key);
+    if (entry == impl_->srgbContent.end() || !entry->second.staged) return false;
+    auto& frame = entry->second;
+    try
+    {
+        if (!frame.visual)
+        {
+            auto visual = impl_->compositor.CreateSpriteVisual();
+            auto children = impl_->srgbContentRoot.Children();
+            children.InsertAtTop(visual);
+            frame.visual = std::move(visual);
+            impl_->srgbContentOrderDirty = true;
+        }
+        frame.visual.Offset({static_cast<float>(frame.stagedFrame.left),
+            static_cast<float>(frame.stagedFrame.top), 0.f});
+        frame.visual.Size({static_cast<float>(frame.candidate.size.cx),
+            static_cast<float>(frame.candidate.size.cy)});
+        frame.visual.Opacity(std::clamp(opacity, 0.f, 1.f));
+        frame.visual.Brush(frame.candidate.effect);
+        std::swap(frame.active, frame.candidate);
+        frame.staged = false;
+        impl_->srgbContentCommitPending = true;
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.srgb_content_publish", error.code());
+        RemoveSrgbContent(key);
+        return false;
+    }
+}
+
+bool DesktopBackdropCompositor::HasSrgbContent(std::uintptr_t key) const noexcept
+{
+    const auto item = impl_->srgbContent.find(key);
+    return item != impl_->srgbContent.end() && item->second.visual && item->second.active.surface;
+}
+
+void DesktopBackdropCompositor::RemoveSrgbContent(std::uintptr_t key)
+{
+    const auto item = impl_->srgbContent.find(key);
+    if (item == impl_->srgbContent.end()) return;
+    if (item->second.visual)
+    {
+        try
+        {
+            impl_->srgbContentRoot.Children().Remove(item->second.visual);
+            impl_->srgbContentCommitPending = true;
+        }
+        catch (const winrt::hresult_error& error)
+        {
+            impl_->lastError = FormatHresult(L"backdrop.srgb_content_remove", error.code());
+        }
+    }
+    impl_->srgbContent.erase(item);
+}
+
+void DesktopBackdropCompositor::SetSrgbContentOrder(std::span<const std::uintptr_t> bottomToTop)
+{
+    if (!impl_->srgbContentRoot || (!impl_->srgbContentOrderDirty &&
+        std::equal(bottomToTop.begin(), bottomToTop.end(), impl_->srgbContentOrder.begin(),
+            impl_->srgbContentOrder.end()))) return;
+    try
+    {
+        const auto children = impl_->srgbContentRoot.Children();
+        for (const auto key : bottomToTop)
+        {
+            const auto found = impl_->srgbContent.find(key);
+            if (found == impl_->srgbContent.end() || !found->second.visual) continue;
+            children.Remove(found->second.visual);
+            children.InsertAtTop(found->second.visual);
+        }
+        impl_->srgbContentOrder.assign(bottomToTop.begin(), bottomToTop.end());
+        impl_->srgbContentOrderDirty = false;
+        impl_->srgbContentCommitPending = true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.srgb_content_order", error.code());
+    }
+}
+
+void DesktopBackdropCompositor::SetSrgbContentOpacity(std::uintptr_t key, float opacity)
+{
+    const auto found = impl_->srgbContent.find(key);
+    if (found == impl_->srgbContent.end() || !found->second.visual) return;
+    try
+    {
+        const float clamped = std::clamp(opacity, 0.f, 1.f);
+        if (found->second.visual.Opacity() == clamped) return;
+        found->second.visual.Opacity(clamped);
+        impl_->srgbContentCommitPending = true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.srgb_content_opacity", error.code());
+    }
+}
+
+bool DesktopBackdropCompositor::CommitSrgbContent()
+{
+    if (!impl_->srgbContentCommitPending) return true;
+    try
+    {
+        impl_->compositorController.Commit();
+        impl_->srgbContentCommitPending = false;
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.srgb_content_commit", error.code());
+        return false;
+    }
+}
+
+void DesktopBackdropCompositor::SetSrgbRootPose(float opacity, float offsetX, float offsetY)
+{
+    if (!impl_->srgbContentRoot) return;
+    try
+    {
+        const float clamped = std::clamp(opacity, 0.f, 1.f);
+        const wfn::float3 offset{offsetX, offsetY, 0.f};
+        if (impl_->srgbContentRoot.Opacity() == clamped && impl_->srgbContentRoot.Offset() == offset)
+            return;
+        impl_->srgbContentRoot.Opacity(clamped);
+        impl_->srgbContentRoot.Offset(offset);
+        impl_->srgbContentCommitPending = true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.srgb_root_pose", error.code());
     }
 }
 

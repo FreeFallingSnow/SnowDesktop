@@ -15,6 +15,7 @@
 #include "taskbar_hook_lifecycle.h"
 #include "taskbar_xaml_readiness.h"
 #include "taskview_visibility.h"
+#include "desktop/display_color_mode.h"
 #include "../shell/shell_start_pin_command.h"
 
 #include <windows.h>
@@ -41,6 +42,7 @@
 #include <winrt/Windows.UI.Xaml.Hosting.h>
 #include <winrt/Windows.UI.Xaml.Media.h>
 #include <winrt/Windows.UI.Xaml.Shapes.h>
+#include "ui/render/backdrop_srgb_effect.h"
 #pragma pop_macro("GetCurrentTime")
 
 #include <algorithm>
@@ -1054,6 +1056,7 @@ private:
         wuc::ContainerVisual materialVisual{nullptr};
         wuc::SpriteVisual edgeVisual{nullptr};
         wuc::CompositionGraphicsDevice edgeDevice{nullptr};
+        wuc::CompositionEffectFactory edgeEffectFactory{nullptr};
         TargetAppearance edgeStyle;
         HWND edgeTaskbar = nullptr;
         winrt::event_token edgeSizeToken{};
@@ -1279,7 +1282,24 @@ private:
             ResolveTaskbarMaterialEdge(control.edgeTaskbar));
         const HRESULT endResult = interop->EndDraw();
         winrt::check_hresult(drawResult); winrt::check_hresult(endResult);
-        control.edgeVisual.Brush(compositor.CreateSurfaceBrush(surface));
+        const auto source = compositor.CreateSurfaceBrush(surface);
+        wuc::CompositionBrush brush = source;
+        namespace display = snowdesktop::display_color;
+        if (display::ModeForMonitor(MonitorFromWindow(control.edgeTaskbar, MONITOR_DEFAULTTONULL)) ==
+            display::Mode::WideColor)
+        {
+            try
+            {
+                if (!control.edgeEffectFactory)
+                    control.edgeEffectFactory = snowdesktop::backdrop_srgb::CreateFactory(compositor);
+                const auto material = control.edgeEffectFactory.CreateBrush();
+                material.SetSourceParameter(L"backdrop", compositor.CreateBackdropBrush());
+                material.SetSourceParameter(L"material", source);
+                brush = material;
+            }
+            catch (const winrt::hresult_error&) {}
+        }
+        control.edgeVisual.Brush(brush);
         control.edgeVisual.Size(size);
     }
 

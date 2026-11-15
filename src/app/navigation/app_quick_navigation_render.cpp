@@ -586,6 +586,13 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         quickNavigation_->attractionBitmap.Reset();
         DrawQuickNavigationSurface(ctx.Get());
     }
+    const auto srgbKey = reinterpret_cast<std::uintptr_t>(hwnd);
+    RECT srgbFrame = quickNavigation_->rect;
+    OffsetRect(&srgbFrame, -quickNavigation_->hostRect.left, -quickNavigation_->hostRect.top);
+    const bool stagedSrgb = SUCCEEDED(contentResult) && quickNavigation_->glassTheme &&
+        quickNavigation_->backdropCompositor.IsAvailable() && !quickNavigation_->animation.IsAnimating() &&
+        !quickNavigation_->animationCompositorDriven &&
+        quickNavigation_->backdropCompositor.StageSrgbContent(hwnd, srgbKey, srgbFrame, ctx.Get(), updateOffset);
     ctx->SetTransform(D2D1::Matrix3x2F::Identity());
     ctx.Reset();
     brushCache_.clear();
@@ -599,9 +606,16 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         EndPaint(hwnd, &ps);
         return;
     }
-    if (previousSurface != quickNavigation_->dcompSurface.Get())
+    const bool previouslySrgb = quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey);
+    // Preserve the native animation timeline during hover and caret repaints.
+    if (!quickNavigation_->animationCompositorDriven)
+        UpdateQuickNavigationBackdrop();
+    const bool srgbPresented = stagedSrgb && quickNavigation_->backdropCompositor.PublishSrgbContent(srgbKey);
+    if (!srgbPresented) quickNavigation_->backdropCompositor.RemoveSrgbContent(srgbKey);
+    if (srgbPresented || previouslySrgb || previousSurface != quickNavigation_->dcompSurface.Get())
     {
-        hr = quickNavigation_->dcompVisual->SetContent(quickNavigation_->dcompSurface.Get());
+        hr = quickNavigation_->dcompVisual->SetContent(
+            srgbPresented ? nullptr : quickNavigation_->dcompSurface.Get());
         if (FAILED(hr))
         {
             RecoverQuickNavCompositionFailure(L"Publish painted surface", hr);
@@ -609,11 +623,6 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             return;
         }
     }
-    // A caret/hover repaint must not replace the backdrop's running native
-    // opening/closing transform with the logical timeline's static pose.
-    // Positioning stops that timeline first whenever the geometry changes.
-    if (!quickNavigation_->animationCompositorDriven)
-        UpdateQuickNavigationBackdrop();
     ApplyQuickNavigationAnimationFrame();
     if (!CommitQuickNavigationCompositionFrame())
     {
@@ -628,6 +637,14 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         return;
     }
     quickNavigation_->backdropCompositor.CommitVisualChanges();
+    if (!quickNavigation_->backdropCompositor.CommitSrgbContent())
+    {
+        quickNavigation_->backdropCompositor.RemoveSrgbContent(srgbKey);
+        (void)quickNavigation_->dcompVisual->SetContent(quickNavigation_->dcompSurface.Get());
+        (void)CommitQuickNavigationCompositionFrame();
+        (void)FlushPendingQuickNavigationCompositionCommit();
+        (void)quickNavigation_->backdropCompositor.CommitSrgbContent();
+    }
     quickNavigation_->compositionRenderRecoveryPending = false;
 
     EndPaint(hwnd, &ps);

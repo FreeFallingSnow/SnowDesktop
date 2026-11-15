@@ -232,6 +232,9 @@ void DesktopApp::RecreateFanTitleTextFormat()
 
 void DesktopApp::ResetCompositionRenderCaches()
 {
+    for (const auto& tile : desktopSrgbTiles_)
+        desktopBackdropCompositor_.RemoveSrgbContent(tile.key);
+    desktopSrgbTiles_.clear();
     ResetDesktopWidgetComposition();
     ResetDesktopForegroundComposition();
     ResetDragPreviewCompositionResources();

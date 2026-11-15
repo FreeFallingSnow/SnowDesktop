@@ -1,12 +1,39 @@
 #include "app/app.h"
+#include "common/utils.h"
+#include "desktop/display_color_mode.h"
 #include "diagnostics/diagnostic_log.h"
 #include "app/render/desktop_backdrop_update_rules.h"
 #include "widget/view/widget_accessibility_provider.h"
 #include "diagnostics/performance_trace.h"
 #include "dock/dock_appbar.h"
-#include "desktop_backdrop_update_rules.h"
 
 // Desktop composition paint transaction.
+
+namespace
+{
+bool Intersects(const RECT& first, const RECT& second)
+{
+    RECT overlap{};
+    return IntersectRect(&overlap, &first, &second) != FALSE;
+}
+
+void MergeSrgbTiles(std::vector<RECT>& frames)
+{
+    for (std::size_t i = 0; i < frames.size();)
+    {
+        const auto overlap = std::find_if(frames.begin() + i + 1, frames.end(),
+            [&](const RECT& frame) { return Intersects(frames[i], frame); });
+        if (overlap == frames.end())
+        {
+            ++i;
+            continue;
+        }
+        UnionRect(&frames[i], &frames[i], &*overlap);
+        frames.erase(overlap);
+        i = 0;
+    }
+}
+}
 
 bool DesktopApp::OnPaint(const RECT* updateRect)
 {
@@ -66,6 +93,18 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
         IntersectRect(&clippedUpdate, updateRect, &clientRect) &&
         !IsRectEmpty(&clippedUpdate))
     {
+        // Repaint the whole retained tile before falling back or replacing it.
+        // Expand transitively if the union reaches another tile.
+        bool expanded;
+        do
+        {
+            const RECT before = clippedUpdate;
+            for (const auto& tile : desktopSrgbTiles_)
+                if (Intersects(clippedUpdate, tile.frame))
+                    UnionRect(&clippedUpdate, &clippedUpdate, &tile.frame);
+            expanded = !EqualRect(&before, &clippedUpdate);
+        } while (expanded);
+        IntersectRect(&clippedUpdate, &clippedUpdate, &clientRect);
         dcompUpdate = &clippedUpdate;
     }
 
@@ -120,10 +159,45 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
             GetStandaloneWidgetFrameRect(
                 widgets_[mouseDownWidgetIndex_]));
     }
-    RenderFrame(
-        context.Get(),
-        forceCompleteGlassCollection ? nullptr : dcompUpdate,
-        desktopIconsHidden_);
+    std::vector<RECT> srgbDraws;
+    {
+        struct CollectSrgb
+        {
+            std::vector<RECT>*& slot;
+            ~CollectSrgb() { slot = nullptr; }
+        } collect{desktopSrgbTileDraws_};
+        if (!desktopIconsHidden_ && !dragSession_.IsActive() && !desktopMarqueeActive && !widgetPreviewActive &&
+            snowdesktop::display_color::AnyWideColorMonitor())
+            desktopSrgbTileDraws_ = &srgbDraws;
+        RenderFrame(context.Get(), forceCompleteGlassCollection ? nullptr : dcompUpdate, desktopIconsHidden_);
+    }
+
+    MergeSrgbTiles(srgbDraws);
+    const RECT dirty = dcompUpdate ? *dcompUpdate : clientRect;
+    std::vector<DesktopSrgbTile> srgbCandidates;
+    for (RECT frame : srgbDraws)
+    {
+        if (!IntersectRect(&frame, &frame, &clientRect) || !Intersects(frame, dirty)) continue;
+        RECT visible{};
+        IntersectRect(&visible, &frame, &dirty);
+        if (!EqualRect(&frame, &visible))
+        {
+            InvalidateRect(hwnd_, &frame, FALSE);
+            continue;
+        }
+        const auto old = std::find_if(desktopSrgbTiles_.begin(), desktopSrgbTiles_.end(),
+            [&](const auto& tile) { return EqualRect(&tile.frame, &frame) != FALSE; });
+        const auto key = old == desktopSrgbTiles_.end() ? nextDesktopSrgbKey_ : old->key;
+        const POINT atlas{updateOffset.x + frame.left - updateLeft,
+            updateOffset.y + frame.top - updateTop};
+        if (!desktopBackdropCompositor_.StageSrgbContent(hwnd_, key, frame, context.Get(), atlas))
+            continue;
+        if (old == desktopSrgbTiles_.end()) nextDesktopSrgbKey_ += 2;
+        srgbCandidates.push_back({key, frame});
+        context->PushAxisAlignedClip(ToD2DRect(frame), D2D1_ANTIALIAS_MODE_ALIASED);
+        context->Clear(D2D1::ColorF(0, 0.f));
+        context->PopAxisAlignedClip();
+    }
 
     context->SetTransform(D2D1::Matrix3x2F::Identity());
     context.Reset();
@@ -132,6 +206,22 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
     {
         RecoverCompositionRenderFailure(L"Background EndDraw", hr);
         return false;
+    }
+    std::erase_if(desktopSrgbTiles_, [&](const auto& old) {
+        if (!Intersects(old.frame, dirty)) return false;
+        if (std::none_of(srgbCandidates.begin(), srgbCandidates.end(),
+            [&](const auto& next) { return next.key == old.key; }))
+            desktopBackdropCompositor_.RemoveSrgbContent(old.key);
+        return true;
+    });
+    for (const auto& tile : srgbCandidates)
+    {
+        if (!desktopBackdropCompositor_.PublishSrgbContent(tile.key))
+        {
+            RecoverCompositionRenderFailure(L"Publish desktop sRGB tile", E_FAIL);
+            return false;
+        }
+        desktopSrgbTiles_.push_back(tile);
     }
 
     if (!FlushPendingDesktopWidgetComposition() ||

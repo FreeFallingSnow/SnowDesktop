@@ -3446,6 +3446,14 @@ private:
     float desktopWidgetBackdropBlurRadiusDuringDraw_ = 0.0f;
     /** @brief DWM 原生 backdrop 子窗口。 */
     DesktopBackdropCompositor desktopBackdropCompositor_;
+    struct DesktopSrgbTile
+    {
+        std::uintptr_t key = 0;
+        RECT frame{};
+    };
+    std::vector<DesktopSrgbTile> desktopSrgbTiles_;
+    std::vector<RECT>* desktopSrgbTileDraws_ = nullptr;
+    std::uintptr_t nextDesktopSrgbKey_ = 1;
     /** @brief 拖拽静态场景变化后，下一帧必须完整核对原生毛玻璃面板。 */
     bool desktopBackdropFullCollectionPending_ = false;
     /** @brief 是否已经记录过本次合成目标的首个原生玻璃面板。 */

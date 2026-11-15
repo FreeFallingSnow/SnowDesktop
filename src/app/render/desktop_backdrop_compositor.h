@@ -165,6 +165,17 @@ public:
         const snowdesktop::IconBackdropClip* contentClip = nullptr);
     bool TrySetIconMaterial(const RECT& frame, std::uintptr_t ownerKey,
         ID2D1DeviceContext* drawContext, ID2D1Bitmap* bitmap, bool preserveAspectRatio);
+    // Stage a completed app-owned DComp drawing rectangle before EndDraw.
+    // Publishing replaces its legacy visual only after the original draw succeeds.
+    bool StageSrgbContent(HWND window, std::uintptr_t key, const RECT& clientFrame,
+        ID2D1DeviceContext* context, POINT atlasOffset);
+    bool PublishSrgbContent(std::uintptr_t key, float opacity = 1.0f);
+    bool HasSrgbContent(std::uintptr_t key) const noexcept;
+    void RemoveSrgbContent(std::uintptr_t key);
+    void SetSrgbContentOrder(std::span<const std::uintptr_t> bottomToTop);
+    void SetSrgbContentOpacity(std::uintptr_t key, float opacity);
+    void SetSrgbRootPose(float opacity, float offsetX, float offsetY);
+    bool CommitSrgbContent();
     // Host-private large-icon silhouettes use the same geometry as the card.
     bool AddLargeIconPanel(const RECT& frame, int shape, float cornerRadius,
         float blurRadius, std::uintptr_t ownerKey, int flagDirection = 0);
