@@ -2912,10 +2912,5 @@
   "appearance.popupScene.followShared": "Usar el tema compartido de ventanas emergentes",
   "settings.pages.gridPreview": "Vista previa de la cuadrícula",
   "settings.pages.gridPreview.enabled": "Activar la vista previa",
-  "settings.pages.gridPreview.description": "Mantén presionado el atajo en el escritorio para ver todas las celdas vacías.",
-  "settings.dock.liquidGlass": "Vidrio líquido",
-  "settings.dock.edgeRefraction": "Refracción en los bordes",
-  "settings.dock.edgeRefraction.description": "Usa la imagen en tiempo real detrás del Dock flotante. Durante el muestreo, el Dock no aparece en las capturas ni en las grabaciones compatibles.",
-  "settings.dock.refractionWidth": "Ancho de la refracción",
-  "settings.dock.refractionStrength": "Intensidad de la refracción"
+  "settings.pages.gridPreview.description": "Mantén presionado el atajo en el escritorio para ver todas las celdas vacías."
 }

@@ -2912,10 +2912,5 @@
   "appearance.popupScene.followShared": "Seguir o tema compartilhado de janelas pop-up",
   "settings.pages.gridPreview": "Prévia da grade",
   "settings.pages.gridPreview.enabled": "Ativar prévia da grade",
-  "settings.pages.gridPreview.description": "Mantenha o atalho pressionado na área de trabalho para ver todas as células vazias.",
-  "settings.dock.liquidGlass": "Vidro líquido",
-  "settings.dock.edgeRefraction": "Refração nas bordas",
-  "settings.dock.edgeRefraction.description": "Usa a imagem em tempo real atrás do Dock flutuante. Durante a amostragem, o Dock não aparece em capturas de tela e gravações compatíveis.",
-  "settings.dock.refractionWidth": "Largura da refração",
-  "settings.dock.refractionStrength": "Intensidade da refração"
+  "settings.pages.gridPreview.description": "Mantenha o atalho pressionado na área de trabalho para ver todas as células vazias."
 }
