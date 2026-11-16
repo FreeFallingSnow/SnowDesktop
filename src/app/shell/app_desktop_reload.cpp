@@ -1317,7 +1317,16 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                         InvalidateFloatingPopupWindow(false);
                     }
                     else
-                        InvalidateRect(hwnd_, nullptr, FALSE);
+                    {
+                        const size_t groupIndex = FindFileGroupIndexForChild(widget.id);
+                        const auto& owner = groupIndex < widgets_.size() ? widgets_[groupIndex] : widget;
+                        RECT dirty = GetStandaloneWidgetFrameRect(owner);
+                        if (hwnd_ && !IsRectEmpty(&dirty))
+                        {
+                            InflateRect(&dirty, 4, 4);
+                            InvalidateRect(hwnd_, &dirty, FALSE);
+                        }
+                    }
                     if (quickNavigation_->open)
                         InvalidateQuickNavigationWindow();
                     return true;
