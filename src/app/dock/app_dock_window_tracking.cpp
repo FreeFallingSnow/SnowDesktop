@@ -731,11 +731,15 @@ void DesktopApp::RefreshDockRunningWindows(
         return bounds;
     };
     std::vector<std::pair<DockContainer*, RECT>> desktopDocks;
-    if (invalidateChanged && hwnd_)
-        for (const auto& container : containers_)
-            if (auto* dock = dynamic_cast<DockContainer*>(container.get());
-                dock && !IsDockHostedByPersistentHost(dock))
+    bool hasDesktopDock = false;
+    for (const auto& container : containers_)
+        if (auto* dock = dynamic_cast<DockContainer*>(container.get());
+            dock && !IsDockHostedByPersistentHost(dock))
+        {
+            hasDesktopDock = true;
+            if (invalidateChanged && hwnd_)
                 desktopDocks.emplace_back(dock, visualBounds(*dock));
+        }
     PruneDockPendingCloseWindows();
     const DWORD observedWindowStateTick = dockWindowListChangedTick_.load();
     snowdesktop::dock_window_order::Current().Prune();
@@ -1143,11 +1147,12 @@ void DesktopApp::RefreshDockRunningWindows(
                         app.appUserModelId != appId || app.iconRequestedSize > requestSize) continue;
                     // A slow local completion must not replace a refined icon.
                     if (!refined && app.iconBitmap) return;
+                    snowdesktop::performance::Scope iconApply("dock", "running.icon.apply");
                     if (app.iconBitmap) { EraseD2DIconCacheForBitmap(app.iconBitmap); DeleteObject(app.iconBitmap); }
                     app.iconBitmap = std::exchange(result->bitmap, nullptr);
                     app.iconBitmapSize = result->size;
                     app.iconRequestedSize = requestSize;
-                    InvalidateDragStaticScene();
+                    InvalidateDragStaticScene(false); // The replacement changes pixels within the same slot.
                     InvalidateDockRects();
                     break;
                 }
@@ -1205,7 +1210,7 @@ void DesktopApp::RefreshDockRunningWindows(
     if (runningLayoutChanged)
     {
         InvalidateDockContainers();
-        InvalidateDragStaticScene();
+        InvalidateDragStaticScene(hasDesktopDock);
         // Startup discovers running apps after the persistent hosts are laid
         // out. Refresh their HWND regions before repainting the wider Dock;
         // painting alone updates the glass but retains the old content clip.
@@ -1767,10 +1772,12 @@ bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
         return true;
 
     RECT desktopDirty{};
+    bool hasDesktopDock = false;
     for (const auto& container : containers_)
         if (auto* dock = dynamic_cast<DockContainer*>(container.get());
-            dock && !FindPersistentDockHost(dock))
+            dock && !IsDockHostedByPersistentHost(dock))
         {
+            hasDesktopDock = true;
             RECT bounds = snowdesktop::floating_dock_rules::ExpandHostForTitleLayer(
                 dock->GetAnimationVisualBounds(), dockSettings_.position);
             UnionRect(&desktopDirty, &desktopDirty, &bounds);
@@ -1795,11 +1802,13 @@ bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
     }
     std::erase_if(dockUnpinnedRunningApps_, [](const auto& app) { return app.presence.IsHidden(); });
     InvalidateDockContainers();
-    InvalidateDragStaticScene();
+    // Persistent hosts reconcile their own glass. Only a desktop-owned Dock
+    // can change the desktop backdrop geometry during the running animation.
+    InvalidateDragStaticScene(hasDesktopDock);
     for (const auto& container : containers_)
         if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
         {
-            if (FindPersistentDockHost(dock))
+            if (IsDockHostedByPersistentHost(dock))
                 RequestDockAnimationPresentation(*dock);
             else
             {
