@@ -204,8 +204,9 @@ void DesktopApp::ReconcileDesktopHoverState(
         snowdesktop::desktop_hover_rules::HasForegroundSettled(
             foregroundTick != 0,
             GetTickCount() - foregroundTick);
-    if (foregroundTick != 0 &&
-        foregroundTick != desktopHoverForegroundObservedTick_)
+    const bool foregroundChanged = foregroundTick != 0 &&
+        foregroundTick != desktopHoverForegroundObservedTick_;
+    if (foregroundChanged)
     {
         // Foreground/minimize transitions can make Explorer restack the
         // desktop content child without its separate backdrop sibling. A
@@ -392,21 +393,24 @@ void DesktopApp::ReconcileDesktopHoverState(
     const bool previewVisible =
         dockWindowPreview_ &&
         dockWindowPreview_->IsVisible();
-    const bool foregroundAlreadyReconciled =
-        foregroundTick != 0 &&
-        desktopHoverForegroundObservedTick_ == foregroundTick;
-    if (foregroundAlreadyReconciled &&
-        pointerAlreadyCleared &&
-        navHoverSide_ == 0 &&
-        !previewVisible)
+    desktopHoverForegroundObservedTick_ = foregroundTick;
+    if (pointerAlreadyCleared && navHoverSide_ == 0 && !previewVisible &&
+        listTitleHoverOwner_.empty() && !dragDropController_.IsTransportActive() &&
+        !GetOpenPopupWidget() && luaWidgetPanelRequest_.widgetId.empty())
     {
+        // Window placement is repaired above. Reuse the cleared desktop
+        // frame while cancelling any pending Dock preview on a new handoff.
+        if (foregroundChanged)
+        {
+            snowdesktop::performance::Scope skipped("input", "hover.reconcile.already_clear");
+            HideDockWindowPreview();
+        }
         return;
     }
 
-    desktopHoverForegroundObservedTick_ = foregroundTick;
     // Reconcile through the current preview generation. A foreground handoff
     // must not manufacture a leave before its first native pointer entry.
-    if (dockWindowPreview_ && dockWindowPreview_->IsVisible()) dockWindowPreview_->ScheduleHide();
+    if (previewVisible) dockWindowPreview_->ScheduleHide();
     else HideDockWindowPreview();
     OnMouseLeave();
     RecordShellHoverTrace(
