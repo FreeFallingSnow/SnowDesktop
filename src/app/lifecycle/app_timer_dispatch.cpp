@@ -24,6 +24,7 @@
 #include "desktop/desktop_membership_recovery.h"
 #include "platform/user_object_recovery.h"
 #include "diagnostics/performance_trace.h"
+#include "ui/render/ui_animation_scheduler.h"
 
 namespace
 {
@@ -748,15 +749,32 @@ void DesktopApp::OnTimer(WPARAM timerId)
         const bool dockStateChanged =
             foregroundTick != dockRunningWindowsForegroundTick_ ||
             windowStateTick != dockRunningWindowsStateTick_;
-        const bool fallbackRefreshDue =
-            dockRunningWindowsRefreshTick_ == 0 ||
-            now - dockRunningWindowsRefreshTick_ >= 10000;
+        constexpr DWORD fallbackDiscoveryIntervalMs = 10000;
+        constexpr DWORD maxFallbackDeferralMs = 3000;
+        constexpr ULONGLONG dockHoverQuietIntervalMs = 100;
+        const DWORD discoveryAge = now - dockRunningWindowsRefreshTick_;
+        const bool fallbackRefreshDue = dockRunningWindowsRefreshTick_ == 0 ||
+            discoveryAge >= fallbackDiscoveryIntervalMs;
         if (generalSettings_.dockEnabled &&
             (dockStateChanged || fallbackRefreshDue))
         {
-            snowdesktop::performance::Value("shared.maintenance", dockStateChanged
-                ? "dock.discovery.dirty" : "dock.discovery.fallback", {}, 1);
-            RefreshDockRunningWindows();
+            const bool canDeferFallback = !dockStateChanged &&
+                dockRunningWindowsRefreshTick_ != 0 &&
+                discoveryAge < fallbackDiscoveryIntervalMs + maxFallbackDeferralMs &&
+                floatingDockHoverTargetOwner_ && floatingDockLastPointerPresentTick_ != 0;
+            const auto pointerNow = canDeferFallback ? static_cast<ULONGLONG>(
+                snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()) : 0;
+            const bool recentlyPresentedDockHover = canDeferFallback &&
+                pointerNow >= floatingDockLastPointerPresentTick_ &&
+                pointerNow - floatingDockLastPointerPresentTick_ < dockHoverQuietIntervalMs;
+            if (recentlyPresentedDockHover)
+                snowdesktop::performance::Value("dock", "running.fallback_deferred", {}, 1);
+            else
+            {
+                snowdesktop::performance::Value("shared.maintenance", dockStateChanged
+                    ? "dock.discovery.dirty" : "dock.discovery.fallback", {}, 1);
+                RefreshDockRunningWindows();
+            }
         }
         UpdateDockExternalMinimizeTargets();
     }

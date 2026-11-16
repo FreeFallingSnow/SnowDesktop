@@ -1601,7 +1601,11 @@ void DesktopApp::OnMouseMoveAt(
         }
     }
 
-    if (oldMouse.x != current.x || oldMouse.y != current.y)
+    // Floating surfaces have their own hover presentation. Skip the desktop
+    // hit tests before they walk the old and new points.
+    if ((oldMouse.x != current.x || oldMouse.y != current.y) &&
+        snowdesktop::floating_dock_rules::ShouldInvalidateDesktopHover(
+            handlingFloatingDockInput_ || handlingFloatingPopupInput_))
     {
         struct MouseHoverVisual
         {
@@ -1845,11 +1849,6 @@ void DesktopApp::OnMouseMoveAt(
             (oldVisual.owner && oldVisual.continuous) ||
             (newVisual.owner && newVisual.continuous) ||
             dockHoverPresentationTracked;
-        const bool invalidateDesktopHover =
-            snowdesktop::floating_dock_rules::
-                ShouldInvalidateDesktopHover(
-                    handlingFloatingDockInput_ ||
-                    handlingFloatingPopupInput_);
         const auto isDesktopDockVisual = [](const MouseHoverVisual& visual) {
             return visual.kind >= 8 && visual.kind <= 13 &&
                 snowdesktop::widget_composition_layer_rules::
@@ -1859,9 +1858,7 @@ void DesktopApp::OnMouseMoveAt(
             isDesktopDockVisual(oldVisual) ||
             isDesktopDockVisual(newVisual) ||
             dockHoverPresentationTracked;
-        if (invalidateDesktopHover &&
-            (marqueeActive_ || hoverChanged ||
-                needsContinuousHoverPaint))
+        if (marqueeActive_ || hoverChanged || needsContinuousHoverPaint)
         {
             auto refreshWidgetVisual = [&](
                     const MouseHoverVisual& visual) {
@@ -1984,7 +1981,6 @@ void DesktopApp::OnMouseMoveAt(
             }
         }
 
-        if (invalidateDesktopHover)
         {
             bool hoverOnlyVisibilityChanged = false;
             for (size_t widgetIndex = 0;
