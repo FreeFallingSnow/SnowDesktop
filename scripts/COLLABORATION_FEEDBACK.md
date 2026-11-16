@@ -176,6 +176,8 @@
 
 ### CF-012 观察等待默认超时导致模型轮询
 
+- **前台构建重复提示（2026-11-16）**：Task `dock-single-preview-anchor-20261116`、批次 `27d647c2f4494e6baf4b8888c1db0380` 修订 0、Run `4e6e544084eb4594b04bc186c82d58b0`。原 `ready-and-wait` 会话 54194 入队时显示 `resource reason not recorded`，执行时交替重复 `latest stage start compile` 与 `Waiting for the collaboration state transaction.`，见同一续接回执 `8a133f`。全程复用该观察进程。待按业务阶段和短时事务分别去重，保留实际变化。
+
 - **候选槽排队续证（2026-11-15）**：Task `ime-search-candidate-position`、批次 `e9de509e81f74f608fe6ae5408402da5` 修订 0、Run `0c528b8495b642cbb3e8819324cd1d00` 的 `.stderr.log` 重复记录 38 条 `Candidate slot is busy; existing materialization/executor retains its files.`。只读核对了前序 Run `c4ec5646568e428581fc02f513b2b1e7` 的执行阶段，继续原 `ready-and-wait` 会话并过滤重复等待提示，原 Run 后续通过。建议仅在排队原因或阶段改变时输出一条提示，保留原有排队状态与等待证据。
 
 - **新需求登记中断旧候选回执（2026-11-11）**：Task `task-16065c1cdd3846c4a9e782099ce5fcc3` 的 `ready-and-wait` 正在观察批次 `75bb4514cee8497f9c13a6a9603fabc9`、Run `a1e0c45a81d34bce9dc40878df1cb736` 时，收到新需求并用同 ID `begin` 取得未认领文件的批次 `1bef5f6cf6254647bb6c8d6d72520abf`。原观察结束时仅输出 `This participant has a newer active batch. Its old result cannot verify new edits; use the batch ID from the latest begin.`，未返回已经归档的编译失败，须另读原回执；`repair` 又因空的新登记被拒绝。源码分别在 `build_manager.ps1` 和 `build_protocol.ps1` 确认两处校验。已用 `recover -ConfirmStopped` 撤回自己的空登记，并从原失败建立续修 `454c6e5ccd9f493e83a1032124afc88f`；未重交原 Run。待改进：原观察应返回与原批次绑定的只读结果并明确其不适用于新修订，空的新登记应提供明确的续修合入或撤回提示。
@@ -390,3 +392,4 @@
 - **实测（2026-11-16）**：Task `task-621263ef5e7742ee939c4464ed1932c0` 在 `ready-and-wait` 进程指定 `CMAKE_GENERATOR_TOOLSET=version=14.50.35717`。批次 `1f7ee821c03e4e1f95249baa0073689d` 修订 5 的 Run `58c7b61427ea40189904056036996f0c` 由已就绪的 `lua-clipboard` 等待进程提交。候选仍采用 `19.52.37029.0`，产品日志第 84–85 行重现 `shell_extension_menu.cpp` 的 `MSB6006`，其退出码为 `0xC00000FD`。
 - **源码确认与下一步**：`build_manager.ps1` 在 `repair` 时启动已就绪成员的等待进程，后续任何等待方都可能提交 Run。为本次续修在启动继承等待进程前指定工具链。后续可在冻结前记录与比对实际工具链和候选所需值，提示等待进程上下文差异。原回执保留，本条未增加构建。
 - **续修结果**：批次 `50b5b4d46a6644dd92c5a55a753acd49` 修订 7、Run `289c9d9fba8e4fea8e27776a35fc81cd` 在创建等待进程前传入两个 CMake 选择变量。产品日志第 11–12 行确认编译器为 `19.50.35740.0`，第 611–620 行记录 Shell 文件和静态库编译成功。Release 激活，同批 11 项定向检查通过。该结果证实本次恢复路径，协作器的提交前检查仍待完善。
+- **默认工具链再次失败（2026-11-16）**：Task `dock-single-preview-anchor-20261116`、批次 `27d647c2f4494e6baf4b8888c1db0380` 修订 0、Run `4e6e544084eb4594b04bc186c82d58b0`。产品日志第 11–12 行显示默认 `19.52.37029.0`，第 549 行记录 Dock 所在 `SnowDesktopHost_app` 编译成功，第 623 行记录 `SnowDesktopHost_shell` 的 `MSB6006` 和 `0xC00000FD`，定向测试未执行。失败原件保留，续修批次 `cb8e98ab754e46d1bd8e7c029dd0a583` 在登记时选择 `14.50.35717`，复用上条恢复路径。下一步仍是候选冻结前核对工具链，避免已知失败占用构建槽。
