@@ -7,6 +7,7 @@
 #include "dock_taskbar_diagnostics.h"
 #include "dock/dock_window_order.h"
 #include "diagnostics/performance_trace.h"
+#include "ui/input/private_pointer.h"
 
 namespace
 {
@@ -315,6 +316,19 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
 
     RECT anchor{};
     bool found = false;
+    const auto resolveDesktopItem = [&](size_t itemIndex, RECT bounds) {
+        if (itemIndex >= items_.size() ||
+            GetDockWindowVisualState(itemIndex) == DockWindowVisualState::Closed)
+            return false;
+        target.identity = ResolveDockAppIdentity(itemIndex);
+        if (target.identity.kind == DockAppIdentityKind::None)
+            return false;
+        const auto tracked = dockRunningWindows_.find(DockItemWindowKey(items_[itemIndex]));
+        if (tracked != dockRunningWindows_.end())
+            target.trackedWindows = tracked->second.trackedWindows;
+        anchor = bounds;
+        return true;
+    };
     if (DockRunningItem* running = dock->RunningItemAtPoint(clientPoint))
     {
         const size_t index = running->GetRunningIndex();
@@ -328,6 +342,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
                 !target.identity.appUserModelId.empty()
                 ? DockAppIdentityKind::Applications
                 : DockAppIdentityKind::Executable;
+            target.trackedWindows = app.trackedWindows;
             anchor = running->GetBounds();
             found = true;
         }
@@ -341,30 +356,13 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
         {
             const size_t itemIndex = FindItemIndexByKey(
                 dockEntries_[entryIndex].reference);
-            if (itemIndex < items_.size() &&
-                GetDockWindowVisualState(itemIndex) !=
-                    DockWindowVisualState::Closed)
-            {
-                target.identity = ResolveDockAppIdentity(itemIndex);
-                anchor = entry->GetBounds();
-                found = target.identity.kind !=
-                    DockAppIdentityKind::None;
-            }
+            found = resolveDesktopItem(itemIndex, entry->GetBounds());
         }
     }
     else if (DockFrequentItem* frequent =
         dock->FrequentItemAtPoint(clientPoint))
     {
-        const size_t itemIndex = frequent->GetItemIndex();
-        if (itemIndex < items_.size() &&
-            GetDockWindowVisualState(itemIndex) !=
-                DockWindowVisualState::Closed)
-        {
-            target.identity = ResolveDockAppIdentity(itemIndex);
-            anchor = frequent->GetBounds();
-            found = target.identity.kind !=
-                DockAppIdentityKind::None;
-        }
+        found = resolveDesktopItem(frequent->GetItemIndex(), frequent->GetBounds());
     }
 
     if (!found)
@@ -441,9 +439,13 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
     }
     if (transition.armTimer && hwnd_)
     {
-        // Use the existing hover delay for native toolbar discovery, so the
-        // first preview layout can include its buttons and final geometry.
-        dockWindowPreview_->PrepareToolbars(CollectDockWindowPreviewItems(target.identity));
+        // Warm up toolbars for already tracked windows during the hover delay.
+        // The live preview resolves the final window list after that delay.
+        std::vector<DockWindowPreviewItem> toolbarTargets;
+        toolbarTargets.reserve(target.trackedWindows.size());
+        for (const HWND window : target.trackedWindows)
+            toolbarTargets.push_back({window, {}});
+        dockWindowPreview_->PrepareToolbars(toolbarTargets);
         SetTimer(hwnd_, kDockWindowPreviewHoverTimerId,
             QueryDockWindowPreviewHoverTime(), nullptr);
     }
@@ -458,7 +460,7 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
     KillTimer(hwnd_, kDockWindowPreviewHoverTimerId);
 
     POINT cursorScreen{};
-    GetCursorPos(&cursorScreen);
+    snowdesktop::private_pointer::CursorPosition(&cursorScreen);
     POINT cursorClient = cursorScreen;
     ScreenToClient(hwnd_, &cursorClient);
 
