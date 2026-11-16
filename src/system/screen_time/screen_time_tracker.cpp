@@ -3,6 +3,7 @@
 #include "common/json_value.h"
 #include "common/utils.h"
 #include "data/atomic_file.h"
+#include "diagnostics/performance_trace.h"
 #include "dock/dock_process_discovery.h"
 #include "platform/foreground_fullscreen.h"
 
@@ -258,6 +259,7 @@ DWORD ForegroundProcessId(HWND window)
 
 std::optional<Identity> ResolveForeground(HWND window, DWORD processId, HANDLE process)
 {
+    performance::Scope trace("shared.maintenance", "screen_time.identity");
     std::wstring aumid;
     std::wstring displayName;
     ComPtr<IPropertyStore> properties;
@@ -302,6 +304,7 @@ std::optional<Identity> ResolveForeground(HWND window, DWORD processId, HANDLE p
     std::wstring resolvedPath;
     if (hasPath)
     {
+        performance::Scope trace("shared.maintenance", "screen_time.launcher");
         resolvedPath = dock_process_discovery::ApplicationExecutablePath(
             processId, std::wstring(path, pathLength));
         if (resolvedPath.empty()) resolvedPath.assign(path, pathLength);
@@ -558,6 +561,7 @@ struct Tracker::State
 
     void Prune()
     {
+        performance::Scope trace("shared.maintenance", "screen_time.prune");
         const auto today = ToLocal(clock_type::now());
         std::tm cursor{};
         cursor.tm_year = today.year - 1900;
@@ -635,6 +639,7 @@ struct Tracker::State
 
     void Write()
     {
+        performance::Scope trace("shared.maintenance", "screen_time.history_write");
         Prune();
         std::string text;
         text += "{\n  \"version\": 1,\n  \"apps\": {\n";

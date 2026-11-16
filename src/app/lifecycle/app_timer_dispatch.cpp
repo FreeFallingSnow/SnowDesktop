@@ -706,15 +706,24 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kWidgetRefreshTimerId)
     {
-        ObserveScreenTime();
-        UpdateDesktopIdleHide();
+        {
+            snowdesktop::performance::Scope trace("shared.maintenance", "screen_time.observe");
+            ObserveScreenTime();
+        }
+        {
+            snowdesktop::performance::Scope trace("shared.maintenance", "desktop.idle_hide");
+            UpdateDesktopIdleHide();
+        }
         // This periodic sample may restore hover after a missed mouse message,
         // but its reconcile mode still enforces the foreground-settle delay in
         // case the free-running timer lands inside the WindowFromPoint race.
         // The immediate foreground callback remains deactivation-only.
-        ReconcileDesktopHoverState(
-            snowdesktop::desktop_hover_rules::
-                ReconcileMode::AllowActivationAfterForegroundSettle);
+        {
+            snowdesktop::performance::Scope trace("shared.maintenance", "desktop.hover_reconcile");
+            ReconcileDesktopHoverState(
+                snowdesktop::desktop_hover_rules::
+                    ReconcileMode::AllowActivationAfterForegroundSettle);
+        }
         // Keep display hot-plug recovery independent from the hidden control
         // window's host-watch timer. Some display-driver paths leave that
         // timer alive but do not deliver its low-priority WM_TIMER promptly.
@@ -722,6 +731,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (quickNavigation_->open && quickNavigation_->searchType == QuickNavigationSearchType::Settings &&
             GetTickCount64() - quickNavigation_->settingsRefreshTick >= 1000)
         {
+            snowdesktop::performance::Scope trace("shared.maintenance", "navigation.settings_refresh");
             quickNavigation_->settingsRefreshTick = GetTickCount64();
             const auto previous = quickNavigation_->settingsResults;
             const auto selection = quickNavigation_->listSelection;
@@ -739,7 +749,10 @@ void DesktopApp::OnTimer(WPARAM timerId)
             TrimHiddenDesktopWidgetSurfaces();
         }
         if (uiAnimationScheduler_.DiagnosticsEnabled())
+        {
+            snowdesktop::performance::Scope trace("shared.maintenance", "diagnostics.publish");
             PublishHomeAboutStatus();
+        }
         PollSteamWorkshopSubscriptions();
         const DWORD now = GetTickCount();
         const DWORD foregroundTick =
@@ -747,7 +760,10 @@ void DesktopApp::OnTimer(WPARAM timerId)
         // Foreground feedback only changes the state of tracked windows.
         // Membership changes arrive through their own notifications.
         if (generalSettings_.dockEnabled && foregroundTick != dockRunningWindowsForegroundTick_)
+        {
+            snowdesktop::performance::Scope trace("shared.maintenance", "dock.foreground");
             RefreshDockForegroundState();
+        }
         const DWORD windowStateTick =
             dockWindowListChangedTick_.load();
         const bool dockStateChanged =
@@ -779,7 +795,10 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 RefreshDockRunningWindows();
             }
         }
-        UpdateDockExternalMinimizeTargets();
+        {
+            snowdesktop::performance::Scope trace("shared.maintenance", "dock.minimize_targets");
+            UpdateDockExternalMinimizeTargets();
+        }
     }
     else if (timerId == kDockWindowPreviewHoverTimerId)
     {
