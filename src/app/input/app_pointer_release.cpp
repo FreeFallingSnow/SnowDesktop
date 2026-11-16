@@ -393,18 +393,21 @@ void DesktopApp::ReconcileDesktopHoverState(
     const bool previewVisible =
         dockWindowPreview_ &&
         dockWindowPreview_->IsVisible();
+    const bool hoverAlreadyCleared = pointerAlreadyCleared && navHoverSide_ == 0 && !previewVisible;
+    const bool foregroundAlreadyReconciled = foregroundTick != 0 && !foregroundChanged;
     desktopHoverForegroundObservedTick_ = foregroundTick;
-    if (pointerAlreadyCleared && navHoverSide_ == 0 && !previewVisible &&
+
+    if (hoverAlreadyCleared && foregroundAlreadyReconciled)
+        return;
+
+    if (hoverAlreadyCleared && foregroundChanged &&
         listTitleHoverOwner_.empty() && !dragDropController_.IsTransportActive() &&
         !GetOpenPopupWidget() && luaWidgetPanelRequest_.widgetId.empty())
     {
         // Window placement is repaired above. Reuse the cleared desktop
         // frame while cancelling any pending Dock preview on a new handoff.
-        if (foregroundChanged)
-        {
-            snowdesktop::performance::Scope skipped("input", "hover.reconcile.already_clear");
-            HideDockWindowPreview();
-        }
+        snowdesktop::performance::Scope skipped("input", "hover.reconcile.already_clear");
+        HideDockWindowPreview();
         return;
     }
 
