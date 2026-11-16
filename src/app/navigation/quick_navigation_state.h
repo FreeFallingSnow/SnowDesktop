@@ -103,6 +103,7 @@ struct State
         animation;
     snowdesktop::UiScheduleToken
         animationCompletionToken = 0;
+    snowdesktop::UiScheduleToken idleReleaseToken = 0;
     bool animationCompositorDriven = false;
     QuickNavigationInvocationSource invocationSource =
         QuickNavigationInvocationSource::Pointer;

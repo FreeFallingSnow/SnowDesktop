@@ -193,7 +193,8 @@ void DesktopApp::ShowPageNotify(const std::wstring& text)
     const bool animate = snowdesktop::animation::RuntimeAnimationsEnabled();
     const DWORD fade = static_cast<DWORD>(std::max(1.0,
         std::round(kPageNotifyFadeMs * snowdesktop::animation::RuntimeDurationScale())));
-    pageNotifyTooltip_.SetOpacity(animate ? 0.f : 1.f);
+    pageNotifyOpacity_ = animate ? 0.f : 1.f;
+    pageNotifyTooltip_.SetOpacity(pageNotifyOpacity_);
     pageNotifyTooltip_.ShowAt(text, bounds, measured, true);
     if (!pageNotifyTooltip_.Visible()) return;
     pageNotifyActive_ = true;
@@ -203,12 +204,12 @@ void DesktopApp::ShowPageNotify(const std::wstring& text)
             const double start = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
             pageNotifyAnimationFrameToken_ = uiAnimationScheduler_.StartAnimation(
                 snowdesktop::UiAnimationSurface::Desktop,
-                [this, fade, opening, start, previous = -1.f](double now) mutable {
+                [this, fade, opening, start](double now) {
                     const float progress = static_cast<float>(std::clamp((now - start) / fade, 0.0, 1.0));
                     const float opacity = opening ? progress : 1.f - progress;
-                    const bool visible = opacity == previous ? pageNotifyTooltip_.Visible() :
+                    const bool visible = opacity == pageNotifyOpacity_ ? pageNotifyTooltip_.Visible() :
                         pageNotifyTooltip_.SetOpacity(opacity);
-                    previous = opacity;
+                    if (visible) pageNotifyOpacity_ = opacity;
                     const bool keep = visible && progress < 1.f;
                     if (!keep) pageNotifyAnimationFrameToken_ = 0;
                     if (!keep && !opening) ResetPageNotify();
@@ -216,7 +217,10 @@ void DesktopApp::ShowPageNotify(const std::wstring& text)
                 });
             if (!pageNotifyAnimationFrameToken_)
             {
-                if (opening) pageNotifyTooltip_.SetOpacity(1.f);
+                if (opening)
+                {
+                    if (pageNotifyTooltip_.SetOpacity(1.f)) pageNotifyOpacity_ = 1.f;
+                }
                 else ResetPageNotify();
             }
         };

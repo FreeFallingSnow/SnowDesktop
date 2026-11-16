@@ -665,6 +665,41 @@ void DesktopApp::RefreshDockRunningWindows(
     if (dockDiscoveryRetryToken_)
         uiAnimationScheduler_.Cancel(std::exchange(dockDiscoveryRetryToken_, 0));
     dockDiscoveryDeferUntil_ = 0.0;
+
+    // Process enumeration is independent of HWND eligibility and Dock model
+    // updates. Move that snapshot to the Shell worker for routine discovery.
+    // User actions resolving a new target still have a synchronous path.
+    const bool useBackgroundSnapshot = invalidateChanged && !preferredWindow &&
+        generalSettings_.dockEnabled && dockRunningAppsInitialized_ && hwnd_ && !reloading_;
+    if (useBackgroundSnapshot)
+    {
+        constexpr double maxSnapshotAgeMs = 500.0;
+        if (dockProcessSnapshot_ && snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() -
+                dockProcessSnapshotTime_ > maxSnapshotAgeMs)
+            dockProcessSnapshot_.reset();
+        if (!dockProcessSnapshot_ && !dockProcessSnapshotPending_)
+        {
+            const DWORD observedRefresh = dockRunningWindowsRefreshTick_;
+            dockProcessSnapshotPending_ = shellVisualWork_.Submit(L"dock-discovery:process-snapshot", [] {
+                snowdesktop::performance::Scope snapshotScope("dock", "running.process_snapshot");
+                auto snapshot = std::make_shared<DockProcessParentMap>(QueryDockProcessParentMap());
+                return std::make_pair(std::move(snapshot), snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
+            }, [this, observedRefresh](std::pair<std::shared_ptr<DockProcessParentMap>, double> result) {
+                dockProcessSnapshotPending_ = false;
+                if (!result.first || exitRequested_ || !generalSettings_.dockEnabled)
+                    return;
+                if (dockRunningWindowsRefreshTick_ != 0 && dockRunningWindowsRefreshTick_ != observedRefresh &&
+                    dockRunningWindowsStateTick_ == dockWindowListChangedTick_.load())
+                    return;
+                dockProcessSnapshot_ = std::move(result.first);
+                dockProcessSnapshotTime_ = result.second;
+                RefreshDockRunningWindows();
+            }, hwnd_, kBackgroundShellReadyMessage);
+        }
+        if (!dockProcessSnapshot_ && dockProcessSnapshotPending_)
+            return;
+    }
+    const auto preparedProcessSnapshot = std::exchange(dockProcessSnapshot_, nullptr);
     snowdesktop::performance::Scope performanceScope("dock", "running.discovery");
     // GetBounds reads the running model directly. Retain the currently
     // displayed envelope before replacing it, including the old title chip.
@@ -790,10 +825,11 @@ void DesktopApp::RefreshDockRunningWindows(
         bool hasApplicationPins = false;
         std::unordered_map<DWORD, std::wstring> processAppIds;
     };
-    const DockProcessParentMap processParents =
-        generalSettings_.dockEnabled
-        ? QueryDockProcessParentMap()
-        : DockProcessParentMap{};
+    DockProcessParentMap processParents;
+    if (useBackgroundSnapshot && preparedProcessSnapshot)
+        processParents = std::move(*preparedProcessSnapshot);
+    else if (generalSettings_.dockEnabled)
+        processParents = QueryDockProcessParentMap();
     EnumContext context{ this, &targets, scoringForeground, actualForeground, &fixedIdentities,
         &runningCandidates, &runningCandidateIndices,
         &dockPendingCloseWindows_, &processParents };

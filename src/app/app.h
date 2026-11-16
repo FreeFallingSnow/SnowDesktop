@@ -91,6 +91,7 @@ namespace steam_presence { class Service; }
 namespace winui { struct LayoutRestorePayload; }
 }
 namespace snowdesktop::quick_navigation { struct State; }
+namespace snowdesktop::dock_process_discovery { struct Snapshot; }
 namespace snowdesktop::usage_guide { enum class Topic; }
 namespace snowdesktop { struct QuickNavigationEverythingSearchResult; }
 namespace snowdesktop::page_management { struct RemovalPlan; }
@@ -214,6 +215,7 @@ namespace snowdesktop::demo_collection_rules { struct Category; }
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -1286,6 +1288,7 @@ private:
     bool CreateQuickNavigationWindow();
     /** @brief 销毁快速导航窗口。 */
     void DestroyQuickNavigationWindow();
+    void DestroyQuickNavigationSearchEdit();
     /** @brief 计算并设置快速导航窗口的位置。 */
     void PositionQuickNavigationWindow(bool present = true);
     /** @brief 在动画路径区域与最终面板区域之间切换原生窗口裁剪。 */
@@ -3362,6 +3365,7 @@ private:
     snowdesktop::UiScheduleToken dockMagnificationAnimationFrameToken_ = 0;
     RECT dockAnimationDesktopDirty_{};
     snowdesktop::UiScheduleToken pageNotifyAnimationFrameToken_ = 0;
+    float pageNotifyOpacity_ = 0.f;
     snowdesktop::UiScheduleToken pointerRecoveryFrameToken_ = 0;
     snowdesktop::UiScheduleToken listTitleHoverFrameToken_ = 0;
     std::wstring listTitleHoverOwner_, listTitleHoverKey_;
@@ -3730,6 +3734,9 @@ private:
     DWORD dockRunningWindowsRefreshTick_ = 0;
     snowdesktop::UiScheduleToken dockDiscoveryRetryToken_ = 0;
     double dockDiscoveryDeferUntil_ = 0.0;
+    bool dockProcessSnapshotPending_ = false;
+    double dockProcessSnapshotTime_ = 0.0;
+    std::shared_ptr<snowdesktop::dock_process_discovery::Snapshot> dockProcessSnapshot_;
     // Shell Show Desktop transition, consumed by the Dock layer policy and the
     // independent status bar presentation guard.
     bool systemShowDesktopLayerGuardActive_ = false;

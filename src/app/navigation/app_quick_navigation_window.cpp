@@ -75,9 +75,12 @@ void DesktopApp::UnregisterNavigationHotkey()
  */
 bool DesktopApp::CreateQuickNavigationWindow()
 {
+    if (quickNavigation_->idleReleaseToken)
+        uiAnimationScheduler_.Cancel(std::exchange(quickNavigation_->idleReleaseToken, 0));
     if (quickNavigation_->hwnd && IsWindow(quickNavigation_->hwnd))
         return true;
 
+    snowdesktop::performance::Scope createScope("navigation", "host.create");
     quickNavigation_->hwnd = snowdesktop::CreateShellOverlayWindowEx(
         WS_EX_TOOLWINDOW |
             (quickNavigation_->topmost ? WS_EX_TOPMOST : 0) |
@@ -98,22 +101,15 @@ _LW("app.interact.snow_nav_title"),
  */
 void DesktopApp::DestroyQuickNavigationWindow()
 {
+    snowdesktop::performance::Scope releaseScope("navigation", "host.release");
+    if (quickNavigation_->idleReleaseToken)
+        uiAnimationScheduler_.Cancel(std::exchange(quickNavigation_->idleReleaseToken, 0));
     quickNavigation_->externalDialogActive = false;
     if (quickNavigation_->hwnd) RemovePropW(quickNavigation_->hwnd, kQuickNavigationOutsidePress);
     CancelQuickNavigationTabHover();
     quickNavigation_->hasLastEditAnimationFrame = false;
     quickNavigation_->backdropCompositor.Reset();
-    if (quickNavigation_->searchEdit && IsWindow(quickNavigation_->searchEdit))
-    {
-        RemoveWindowSubclass(quickNavigation_->searchEdit, &DesktopApp::QuickNavigationSearchSubclassProc, 1);
-        DestroyWindow(quickNavigation_->searchEdit);
-    }
-    quickNavigation_->searchEdit = nullptr;
-    if (quickNavigation_->searchFont)
-    {
-        DeleteObject(quickNavigation_->searchFont);
-        quickNavigation_->searchFont = nullptr;
-    }
+    DestroyQuickNavigationSearchEdit();
     ResetQuickNavCompositionResources();
     quickNavigation_->dcompScaleTransform.Reset();
     quickNavigation_->dcompEffect = nullptr;
@@ -123,6 +119,7 @@ void DesktopApp::DestroyQuickNavigationWindow()
         quickNavigation_->dcompTarget = nullptr;
     quickNavigation_->dcompDevice.Reset();
     quickNavigation_->compositionCommitPending = false;
+    quickNavigation_->measuredTabFormat.Reset();
     quickNavigation_->tabTextFormat.Reset();
     quickNavigation_->itemTextFormat.Reset();
     quickNavigation_->searchTextFormat.Reset();
@@ -137,6 +134,18 @@ void DesktopApp::DestroyQuickNavigationWindow()
     quickNavigation_->animation.ResetHidden();
     quickNavigation_->topmost = true;
     ApplyFloatingDockLayerPolicy();
+}
+
+void DesktopApp::DestroyQuickNavigationSearchEdit()
+{
+    if (quickNavigation_->searchEdit && IsWindow(quickNavigation_->searchEdit))
+    {
+        RemoveWindowSubclass(quickNavigation_->searchEdit, &DesktopApp::QuickNavigationSearchSubclassProc, 1);
+        DestroyWindow(quickNavigation_->searchEdit);
+    }
+    quickNavigation_->searchEdit = nullptr;
+    if (auto font = std::exchange(quickNavigation_->searchFont, nullptr))
+        DeleteObject(font);
 }
 
 void DesktopApp::SetQuickNavigationTopmost(
@@ -1671,13 +1680,7 @@ void DesktopApp::FinalizeCloseQuickNavigation()
             quickNavigation_->searchEdit,
             SW_HIDE);
     }
-    if (quickNavigation_->hwnd &&
-        IsWindow(quickNavigation_->hwnd))
-    {
-        ShowWindow(
-            quickNavigation_->hwnd,
-            SW_HIDE);
-    }
+    quickNavigation_->backdropCompositor.HidePopupWindowPair(quickNavigation_->hwnd);
 
     quickNavigation_->scrollOffset = 0;
     quickNavigation_->tabScrollOffset = 0;
@@ -1689,11 +1692,36 @@ void DesktopApp::FinalizeCloseQuickNavigation()
     quickNavigation_->rect = {};
     quickNavigation_->hostRect = {};
     quickNavigation_->animation.ResetHidden();
-    DestroyQuickNavigationWindow();
     quickNavigation_->invocationSource =
         QuickNavigationInvocationSource::Pointer;
     quickNavigationDockHost_ = nullptr;
     quickNavigation_->slotPickerRequest = {};
+    if (!postCloseAction && !exitRequested_ && quickNavigation_->hwnd && quickNavigation_->dcompSurface)
+    {
+        // Retain the hidden composition host for a quick reopen. Search and
+        // IME state, capture and hit geometry belong only to the old session.
+        DestroyQuickNavigationSearchEdit();
+        quickNavigation_->hoverRegions.clear();
+        quickNavigation_->pointerTarget = {};
+        if (!quickNavigation_->topmost) SetQuickNavigationTopmost(true);
+        // Reopening shows the HWND before its first content paint. Commit the
+        // hidden pose even when the close animation was disabled.
+        ApplyQuickNavigationAnimationFrame();
+        if (FlushPendingQuickNavigationCompositionCommit())
+        {
+            quickNavigation_->idleReleaseToken = uiAnimationScheduler_.ScheduleOnce(2000,
+                [this](snowdesktop::UiScheduleToken token) {
+                    if (token != quickNavigation_->idleReleaseToken) return;
+                    quickNavigation_->idleReleaseToken = 0;
+                    if (!quickNavigation_->open && !quickNavigation_->animation.IsAnimating())
+                        DestroyQuickNavigationWindow();
+                });
+        }
+    }
+    if (quickNavigation_->idleReleaseToken)
+        ApplyFloatingDockLayerPolicy();
+    else
+        DestroyQuickNavigationWindow();
     if (postCloseAction)
         postCloseAction();
 }
