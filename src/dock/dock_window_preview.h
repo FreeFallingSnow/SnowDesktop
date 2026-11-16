@@ -131,10 +131,6 @@ private:
     void StopSlide();
     void SetSlideClosing(bool closing);
     void MoveSlideCards();
-    RECT SlideVisibleBounds(double visibleFraction) const;
-    void ApplySlideClip(double visibleFraction, bool layoutChanged = false);
-    void ApplyThumbnailClip(size_t index, const RECT* clip);
-    void ApplyToolbarClip(HWND owner, const RECT* cardClip);
     POINT ToLayoutPoint(HWND window, POINT point) const;
     void OnMouseMove(HWND window, POINT point);
     void OnMouseLeave(HWND window);
@@ -181,7 +177,6 @@ private:
     snowdesktop::UiAnimationScheduler* scheduler_ = nullptr;
     std::uint64_t slideToken_ = 0;
     POINT slideOffset_{};
-    double slideVisibleFraction_ = 1.0;
     bool slideClosing_ = false;
     RECT panelRect_{};
     std::vector<DockWindowPreviewItem> items_;
@@ -193,7 +188,6 @@ private:
     std::vector<RECT> cardRects_;
     std::vector<RECT> thumbnailRects_;
     std::vector<HTHUMBNAIL> thumbnails_;
-    std::vector<DWM_THUMBNAIL_PROPERTIES> thumbnailProperties_;
     std::vector<HTHUMBNAIL> measuredThumbnails_;
     SIZE panelSize_{};
     RECT anchorScreen_{};

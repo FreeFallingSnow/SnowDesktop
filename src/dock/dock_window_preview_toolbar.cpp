@@ -424,25 +424,6 @@ void DockWindowPreview::ClearToolbarTooltips()
     for (HWND tooltip : toolbarTooltips_) if (tooltip) DestroyWindow(tooltip);
     toolbarTooltips_.clear();
 }
-
-void DockWindowPreview::ApplyToolbarClip(HWND owner, const RECT* cardClip)
-{
-    const auto* layer = FindToolbarLayer(owner);
-    if (!layer || !layer->window) return;
-    const BOOL redraw = IsWindowVisible(layer->window);
-    if (!cardClip)
-    {
-        SetWindowRgn(layer->window, nullptr, redraw);
-        return;
-    }
-    RECT client{};
-    if (!GetClientRect(owner, &client)) return;
-    RECT clip = *cardClip;
-    OffsetRect(&clip, 0, layer->size.cy - client.bottom);
-    const HRGN region = CreateRectRgnIndirect(&clip);
-    if (region && !SetWindowRgn(layer->window, region, redraw)) DeleteObject(region);
-}
-
 void DockWindowPreview::UpdateToolbarTooltips()
 {
     ClearToolbarTooltips();
