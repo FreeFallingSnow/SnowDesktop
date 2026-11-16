@@ -1307,15 +1307,19 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                         phase2.phase = IconLoadPhase::Phase2;
                         EnqueueIconLoad(std::move(phase2));
                     }
-                    InvalidateRect(hwnd_, nullptr, FALSE);
-                    if (quickNavigation_->open)
-                        InvalidateQuickNavigationWindow();
                     if (dockFolderPopup)
                     {
+                        snowdesktop::performance::Scope trace("popup", "folder.icon.delivery");
+                        // This transient entry belongs to the popup projection.
+                        // A bitmap replacement does not change desktop geometry.
                         InvalidateCollectionPopupContent();
-                        InvalidateDragStaticScene();
+                        InvalidateDragStaticScene(false);
                         InvalidateFloatingPopupWindow(false);
                     }
+                    else
+                        InvalidateRect(hwnd_, nullptr, FALSE);
+                    if (quickNavigation_->open)
+                        InvalidateQuickNavigationWindow();
                     return true;
                 }
             }
