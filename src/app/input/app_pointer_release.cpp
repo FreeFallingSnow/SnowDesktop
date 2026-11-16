@@ -4,6 +4,7 @@
 #include "dock/dock_window_rules.h"
 #include "dock/dock_window_preview.h"
 #include "diagnostics/diagnostic_log.h"
+#include "diagnostics/performance_trace.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
 #include "app/dock/persistent_dock_host.h"
@@ -62,6 +63,7 @@ bool OpenMissingWidgetWorkshopPage(HWND owner,
 
 void DesktopApp::OnMouseLeave()
 {
+    snowdesktop::performance::Scope trace("input", "hover.mouse_leave");
     UpdateLuaStackIndicator(POINT{LONG_MIN, LONG_MIN});
     POINT popupPoint{};
     if (hwnd_ && IsWindow(hwnd_) && snowdesktop::private_pointer::CursorPosition(&popupPoint) &&
@@ -190,6 +192,7 @@ void DesktopApp::OnMouseLeave()
 void DesktopApp::ReconcileDesktopHoverState(
     snowdesktop::desktop_hover_rules::ReconcileMode mode)
 {
+    snowdesktop::performance::Scope trace("input", "hover.reconcile");
     RecordShellHoverTrace(
         ShellHoverTraceEvent::ReconcileBegin);
     if (!hwnd_ || !IsWindow(hwnd_))

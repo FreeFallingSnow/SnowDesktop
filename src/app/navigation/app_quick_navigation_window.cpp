@@ -1427,6 +1427,7 @@ void DesktopApp::OpenQuickNavigation(
  */
 void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
 {
+    snowdesktop::performance::Scope trace("navigation", "close.request");
     quickNavigation_->externalDialogActive = false;
     if (quickNavigation_->hwnd) RemovePropW(quickNavigation_->hwnd, kQuickNavigationOutsidePress);
     const HWND captured = snowdesktop::private_pointer::Capture();
@@ -1510,7 +1511,10 @@ void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
     if (snowdesktop::quick_navigation_rules::ShouldRestoreDesktopFocusOnClose(
             restoreDesktopFocus, customDesktopVisible_,
             static_cast<bool>(quickNavigation_->postCloseAction), searchHasForeground))
+    {
+        snowdesktop::performance::Scope focusTrace("navigation", "close.restore_focus");
         FocusDesktopInputWindow();
+    }
 
     if (!quickNavigation_->hwnd ||
         !IsWindow(quickNavigation_->hwnd))

@@ -1000,6 +1000,7 @@ void DesktopApp::CommitDragVisualEndBeforeShellOperation()
 
 void DesktopApp::PresentPassiveHoverVisualChange()
 {
+    snowdesktop::performance::Scope trace("input", "hover.passive.present");
     UpdateWidgetHoverExpansion(lastMousePoint_);
     RecordShellHoverTrace(
         ShellHoverTraceEvent::PassivePresent);
