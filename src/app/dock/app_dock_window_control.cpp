@@ -109,6 +109,7 @@ DesktopApp::CollectDockWindowPreviewItems(
     bool includeCloaked,
     bool preferTaskbarDocumentProxies)
 {
+    snowdesktop::performance::Scope trace("dock.preview", "windows.collect");
     PruneDockPendingCloseWindows();
     struct TaskbarDocumentProxyCohort
     {
@@ -151,7 +152,7 @@ DesktopApp::CollectDockWindowPreviewItems(
         const bool taskWindow = IsDockTaskWindow(
             window, context->includeCloaked);
         const bool taskbarDocumentProxyCandidate =
-            context->preferTaskbarDocumentProxies &&
+            !taskWindow && context->preferTaskbarDocumentProxies &&
             IsDockTaskbarDocumentProxyCandidate(window);
         if (!taskWindow && !taskbarDocumentProxyCandidate)
             return TRUE;
@@ -161,7 +162,7 @@ DesktopApp::CollectDockWindowPreviewItems(
         const bool ownedByCurrentProcess =
             processId == GetCurrentProcessId();
         const bool applicationLevelWindow =
-            context->owner &&
+            ownedByCurrentProcess &&
             context->owner->IsSettingsApplicationWindow(window);
         if (!processId ||
             !snowdesktop::dock_window_rules::

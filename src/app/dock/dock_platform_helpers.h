@@ -525,20 +525,9 @@ inline bool DockWindowsShareApplicationIdentity(
 
 inline bool IsDockTaskWindow(HWND window, bool includeCloaked = false)
 {
-    if (!window || GetAncestor(window, GA_ROOT) != window)
-        return false;
-    DWORD cloaked = 0;
-    const bool isCloaked = !includeCloaked &&
-        SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED,
-            &cloaked, sizeof(cloaked))) &&
-        snowdesktop::dock_source_cloak::TaskWindowCloakFlags(window, cloaked) != 0;
-    if (!snowdesktop::dock_window_rules::
-            IsTaskWindowPresentationEligible(
-                IsWindowVisible(window) != FALSE,
-                IsIconic(window) != FALSE,
-                isCloaked,
-                snowdesktop::dock_window_rules::
-                    IsTaskWindowExplicitlyExcluded(window)))
+    if (!window || !IsWindowVisible(window) ||
+        GetAncestor(window, GA_ROOT) != window ||
+        snowdesktop::dock_window_rules::IsTaskWindowExplicitlyExcluded(window))
         return false;
     wchar_t className[64]{};
     GetClassNameW(window, className, static_cast<int>(std::size(className)));
@@ -551,7 +540,15 @@ inline bool IsDockTaskWindow(HWND window, bool includeCloaked = false)
     if (!snowdesktop::dock_window_rules::IsTaskWindowStyleEligible(
             exStyle, GetWindow(window, GW_OWNER) != nullptr))
         return false;
-    return true;
+
+    // Only ask DWM about windows that can otherwise appear in the Dock.
+    DWORD cloaked = 0;
+    const bool isCloaked = !includeCloaked &&
+        SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED,
+            &cloaked, sizeof(cloaked))) &&
+        snowdesktop::dock_source_cloak::TaskWindowCloakFlags(window, cloaked) != 0;
+    return snowdesktop::dock_window_rules::
+        IsTaskWindowPresentationEligible(true, false, isCloaked);
 }
 
 inline bool IsDockTaskbarDocumentProxyCandidate(HWND window)

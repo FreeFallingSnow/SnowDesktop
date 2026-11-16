@@ -425,6 +425,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
                 dragSession_.IsActive(),
                 dragDropController_.IsTransportActive());
         const bool primaryButtonDown =
+            nativeDragActive &&
             (snowdesktop::private_pointer::AsyncKeyState(PointerGestureVirtualKey()) & 0x8000) != 0;
         POINT point{};
         if (snowdesktop::drag_input_rules::
@@ -493,7 +494,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
             snowdesktop::desktop_hover_rules::ObserveRetainedDockLeavePointer(
                 host.retainedLeaveTracking, livePointer.x, livePointer.y);
         constexpr WPARAM buttons = MK_LBUTTON | MK_RBUTTON | MK_MBUTTON | MK_XBUTTON1 | MK_XBUTTON2;
-        if (!(wp & buttons) && cursorKnown && host.promoted &&
+        if (!(wp & buttons) && cursorKnown && host.promoted && !host.promotionInputPointerRetryUsed &&
             host.promotionInputCapabilityMissing == true && snowdesktop::private_pointer::WindowAtPoint(livePointer) == hwnd)
         {
             auto* identity = &host;
@@ -511,17 +512,20 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         handlingFloatingDockInput_ = true;
         handlingPersistentDockHost_ = &host;
         bool dragPreviewSynced = false;
-        const bool pointerUpdated = OnNativeMouseMoveAt(
-            wp, latestDesktopPointer(),
-            &dragPreviewSynced);
+        bool pointerUpdated;
+        {
+            snowdesktop::performance::Scope routeScope("dock.input", "mouse.route");
+            pointerUpdated = OnNativeMouseMoveAt(
+                wp, latestDesktopPointer(), &dragPreviewSynced);
+        }
         handlingFloatingDockInput_ = false;
         handlingPersistentDockHost_ = nullptr;
         if (!pointerUpdated) return 0;
         // The pointer presenter refreshes both region and pixels at its
         // deadline. An invalidation here would bypass that limit and feed
         // stationary region-generated moves back into WM_PAINT.
-        PresentPointerInteractionFrame(
-            dragPreviewSynced);
+        snowdesktop::performance::Scope presentScope("dock.input", "mouse.present");
+        PresentPointerInteractionFrame(dragPreviewSynced);
         return 0;
     }
     case WM_MOUSELEAVE:
