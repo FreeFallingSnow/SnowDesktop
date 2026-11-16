@@ -6,6 +6,7 @@
 #include "app/dock/persistent_dock_host.h"
 #include "drag_drop/drag_visual_rules.h"
 #include "layout/page_navigation_rules.h"
+#include "ui/render/ui_animation_scheduler.h"
 #include "widget/runtime/widget_visibility_rules.h"
 #include "widgets/single_cell_widget_rules.h"
 
@@ -585,10 +586,7 @@ void DesktopApp::PresentPointerInteractionFrame(
         const void* hoverOwner = nullptr;
         size_t hoverIndex = 0;
         int hoverKind = 0;
-        if (DockContainer* dock =
-                GetDockContainerAtPoint(lastMousePoint_);
-            dock && dock->ContainsInteractivePoint(
-                lastMousePoint_))
+        if (DockContainer* dock = GetDockContainerAtPoint(lastMousePoint_))
         {
             hoverOwner = dock;
             if (DockEntryItem* entry =
@@ -632,7 +630,10 @@ void DesktopApp::PresentPointerInteractionFrame(
         const bool needsPointerFrame = immediateFloatingDockPresent ||
             hoverTargetChanged ||
             (hoverOwner && pointerMoved);
-        const ULONGLONG now = GetTickCount64();
+        // Use the same monotonic clock as the scheduled tail frame. The
+        // system tick can advance in steps larger than the hover budget.
+        const auto now = static_cast<ULONGLONG>(
+            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
         const bool presentNow = needsPointerFrame &&
             snowdesktop::floating_dock_rules::
                 ShouldPresentDockPointerFrame(
@@ -671,7 +672,8 @@ void DesktopApp::PresentPointerInteractionFrame(
                         if (!floatingDockHostActive_)
                             return;
                         floatingDockLastPointerPresentTick_ =
-                            GetTickCount64();
+                            static_cast<ULONGLONG>(
+                                snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
                         floatingDockLastPointerPresentPoint_ = lastMousePoint_;
                         PresentFloatingDockPointerHosts(nullptr, false);
                     });

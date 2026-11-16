@@ -257,7 +257,7 @@ void DesktopApp::ReconcileDesktopHoverState(
                 ? snowdesktop::private_pointer::WindowAtPoint(dockScreenPoint) : nullptr;
         const bool pointerOnBaseDesktopSurface =
             IsBaseDesktopHoverSurfaceWindow(dockHitWindow);
-        bool pointerInDockLayer = false;
+        const PersistentDockHost* pointerDockHost = nullptr;
         for (const auto& host : persistentDockHosts_)
         {
             if (host && ShouldShowPersistentDockHost(*host) &&
@@ -267,7 +267,7 @@ void DesktopApp::ReconcileDesktopHoverState(
                     cursorPoint, host->dockRect,
                     host->popupRect, RECT{}))
             {
-                pointerInDockLayer = true;
+                pointerDockHost = host.get();
                 break;
             }
         }
@@ -276,7 +276,7 @@ void DesktopApp::ReconcileDesktopHoverState(
                 pointerOnBaseDesktopSurface,
                 IsPersistentDockHostWindow(dockHitWindow) ||
                     IsPersistentDockBackdropWindow(dockHitWindow),
-                pointerInDockLayer);
+                pointerDockHost != nullptr);
         const POINT activeCursorPoint = cursorPoint;
         const bool pointerPositionChanged =
             pointerOnActiveHoverSurface &&
@@ -320,15 +320,30 @@ void DesktopApp::ReconcileDesktopHoverState(
         }
         if (activateHover || refreshActiveHover)
         {
+            const bool sameDockHover = refreshActiveHover && pointerDockHost &&
+                pointerDockHost->container &&
+                floatingDockHoverTargetOwner_ == pointerDockHost->container &&
+                PtInRect(&pointerDockHost->dockRect, lastMousePoint_) &&
+                PtInRect(&pointerDockHost->dockRect, activeCursorPoint) &&
+                !dragDropController_.IsTransportActive() &&
+                !GetOpenPopupWidget() && !ShouldShowFloatingPopupWindow();
             lastMousePoint_ = activateHover
                 ? cursorPoint : activeCursorPoint;
             UpdateListTitleHover();
-            // A stale floating-Dock leave may have consumed tracking before
-            // the cursor reached its final desktop or Dock point. Keep the title
-            // HRGN synchronized with the repaired point before presenting so
-            // an old visual/input island cannot outlive the hover state.
-            UpdateFloatingDockWindowBounds(false);
-            PresentPassiveHoverVisualChange();
+            if (sameDockHover)
+            {
+                // Recover this sample through the normal rate-limited Dock path.
+                UpdateWidgetHoverExpansion(lastMousePoint_);
+                UpdateDockWindowPreview(lastMousePoint_);
+                PresentPointerInteractionFrame();
+            }
+            else
+            {
+                // On a surface handoff, synchronize both the old and new
+                // regions so stale visuals cannot outlive the hover state.
+                UpdateFloatingDockWindowBounds(false);
+                PresentPassiveHoverVisualChange();
+            }
             RecordShellHoverTrace(
                 activateHover
                     ? ShellHoverTraceEvent::ReconcileActivate
