@@ -344,6 +344,8 @@
 
 - **弹窗过渡补证（2026-11-15）**：Task popup-new-item-animation，批次 52ec2edf1f404ddf9767db3f29d482f9 修订 0、Run 8cbc6a26035240dfaee1ecec50caeda5，入口 ready-and-wait。弹窗运行时过渡改动涉及 core/widget.h；产品日志记录了本批未修改的 app_hit_testing.cpp 编译。Release 产品构建阶段共 420.758 秒，包含配置、编译、链接与整理，两项定向行为测试通过。仅确认超出任务改动单元的重编，未拆分头文件、其他共享输入与单项目的成本。
 
+- **目录绘制续修补证（2026-11-16）**：Task `task-73694d317c60435baadfe2e7e2ff0863`，以同一入口比较批次 `eec01ffbe02343f2986f9501b6ca617f`、Run `a119d5f5cbe240e49ca0fc2f84d765ff` 与批次 `30ec8ae4f6534ed196c90298d533c9f0`、Run `d9d61e9dcab845c89eef858ff8048a1f`，两批修订均为 0，产品日志均指向 `a32a06cfeb995ec8-batches`。后一批任务差异仅含三个 `.cpp`，产品日志从 2 条 `app_*.cpp` 编译行增至 128 条，并重新探测 C++ 编译器 ABI。产品阶段总耗时分别为 83.508 秒和 865.153 秒，含配置、编译、链接和整理。两批 Release 和定向检查均通过。触发重新配置和扩大编译的原因待查，尚未将两批总耗时的差额归于单一原因。本条复用现有日志，无追加构建。
+
 ### CF-025 文件观察提前结束
 
 - **实测**：2026-11-10，Task `equal-width-dialog-buttons` 的 `watch wait --condition files` 票据 `60dbdd917961def6c363b541ea23f1ae` 返回 `eligible`。前序日历 Run `f829e893544f42b2848fc5c0ffd7cc13` 已冻结，`src/system/panel/system_panel_model.cpp` 仍有前序任务的待提交改动。Task 在批次 `781988dcbc324ac5a85d2030414f7234` 修订 0 执行 `claim`，收到 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`
