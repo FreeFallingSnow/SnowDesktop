@@ -378,10 +378,15 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         break;
     case WM_PAINT:
     {
+        // The desktop's non-redirection HWND can have an update region even
+        // when its GDI paint DC reports an empty rcPaint. Read the region
+        // before BeginPaint validates it so composition can honor the damage.
+        RECT update{};
+        const bool hasUpdate = GetUpdateRect(hwnd, &update, FALSE) != FALSE;
         PAINTSTRUCT ps{};
-        BeginPaint(hwnd_, &ps);
-        EndPaint(hwnd_, &ps);
-        OnPaint(&ps.rcPaint);
+        BeginPaint(hwnd, &ps);
+        EndPaint(hwnd, &ps);
+        OnPaint(hasUpdate ? &update : &ps.rcPaint);
         return 0;
     }
     case WM_ERASEBKGND:
