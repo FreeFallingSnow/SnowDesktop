@@ -37,7 +37,7 @@ inline std::wstring RunningWindowIdentity(const std::wstring& executable,
 }
 
 inline bool IsPathInsideDirectory(
-    const std::wstring& path, const std::wstring& directory)
+    std::wstring_view path, std::wstring_view directory)
 {
     if (path.empty() || directory.empty() ||
         path.size() <= directory.size() ||
@@ -47,31 +47,26 @@ inline bool IsPathInsideDirectory(
         path[directory.size()] == L'\\';
 }
 
+inline bool IsInLauncherInstallDirectory(
+    std::wstring_view launcherExecutablePath,
+    std::wstring_view runningExecutablePath)
+{
+    const size_t separator = launcherExecutablePath.find_last_of(L'\\');
+    return separator != std::wstring_view::npos && separator > 2 &&
+        IsPathInsideDirectory(runningExecutablePath, launcherExecutablePath.substr(0, separator));
+}
+
 inline bool MatchesExecutableProcessFamily(
     const std::wstring& launcherExecutablePath,
     const std::wstring& runningExecutablePath,
     std::span<const std::wstring> ancestorExecutablePaths)
 {
-    if (launcherExecutablePath.empty() ||
-        runningExecutablePath.empty())
+    if (launcherExecutablePath.empty() || runningExecutablePath.empty())
         return false;
-    if (launcherExecutablePath == runningExecutablePath)
-        return true;
-
-    const size_t separator =
-        launcherExecutablePath.find_last_of(L'\\');
-    if (separator == std::wstring::npos || separator <= 2)
-        return false;
-    const std::wstring installDirectory =
-        launcherExecutablePath.substr(0, separator);
-    if (!IsPathInsideDirectory(
-            runningExecutablePath, installDirectory))
-        return false;
-    return std::find(
-        ancestorExecutablePaths.begin(),
-        ancestorExecutablePaths.end(),
-        launcherExecutablePath) !=
-        ancestorExecutablePaths.end();
+    return launcherExecutablePath == runningExecutablePath ||
+        (IsInLauncherInstallDirectory(launcherExecutablePath, runningExecutablePath) &&
+            std::find(ancestorExecutablePaths.begin(), ancestorExecutablePaths.end(),
+                launcherExecutablePath) != ancestorExecutablePaths.end());
 }
 
 inline bool MatchesSquirrelVersionedExecutable(
