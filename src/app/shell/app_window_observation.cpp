@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "app/dock/persistent_dock_host.h"
 #include "diagnostics/diagnostic_log.h"
+#include "diagnostics/performance_trace.h"
 #include "dock/dock_appbar.h"
 #include "platform/window_observation.h"
 #include <dwmapi.h>
@@ -124,6 +125,7 @@ void DesktopApp::RefreshWindowObservations()
     if (sceneChanged && generalSettings_.dockEnabled &&
         (dockSettings_.appWindow.enabled || dockSettings_.maximizedWindow.enabled))
     {
+        snowdesktop::performance::Scope trace("desktop", "window-observation.dock-appearance");
         InvalidateDragStaticScene();
         ApplyPersistentDockHostAppearance();
         InvalidateDockRects();

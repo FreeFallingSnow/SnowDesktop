@@ -3,6 +3,7 @@
 #include "dock/dock_window_rules.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
+#include "diagnostics/performance_trace.h"
 #include "app/dock/persistent_dock_host.h"
 #include "drag_drop/drag_visual_rules.h"
 #include "layout/page_navigation_rules.h"
@@ -215,7 +216,10 @@ void DesktopApp::InvalidateDragStaticScene(bool collectAllDesktopBackdrops)
     // 静态位图里。页面或布局变化时必须在下一帧完整核对一次，否则
     // 交互帧的“保留旧面板”策略会让上一页的玻璃区域残留。
     if (collectAllDesktopBackdrops)
+    {
+        snowdesktop::performance::Scope trace("desktop", "backdrop.full.request");
         desktopBackdropFullCollectionPending_ = true;
+    }
 }
 
 /**

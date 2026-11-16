@@ -110,6 +110,8 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
         marqueeWidgetIndex_ >= widgets_.size();
     const bool forceCompleteGlassCollection =
         desktopBackdropFullCollectionPending_;
+    snowdesktop::performance::Value("desktop", "backdrop_full_requested_for_paint", {},
+        forceCompleteGlassCollection ? 1.0 : 0.0);
     const bool completeGlassCollection =
         snowdesktop::desktop_backdrop_update_rules::
             ShouldCollectAllPanels(
