@@ -5,6 +5,7 @@
 #include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "diagnostics/diagnostic_log.h"
+#include "diagnostics/performance_trace.h"
 #include "settings/animation_settings.h"
 #include "shell/native_start_menu.h"
 #include "common/utils.h"
@@ -707,7 +708,7 @@ void DesktopApp::ApplyQuickNavigationEverythingSearchResult(
 /**
  * @brief 定位并显示快捷导航窗口
  */
-void DesktopApp::PositionQuickNavigationWindow()
+void DesktopApp::PositionQuickNavigationWindow(bool present)
 {
     if (!quickNavigation_->hwnd || !IsWindow(quickNavigation_->hwnd))
         return;
@@ -826,6 +827,7 @@ void DesktopApp::PositionQuickNavigationWindow()
     }
     EnsureQuickNavigationSearchEdit();
     UpdateQuickNavigationSearchEditRect();
+    if (!present) return;
     if (geometryChanged || hostChanged)
     {
         // Paint the pixels before publishing the new pose and backdrop.
@@ -946,13 +948,12 @@ void DesktopApp::ApplyNavigationHotkey()
 /**
  * @brief 获取指定标签页的显示名称
  */
-std::wstring DesktopApp::GetQuickNavTabLabel(size_t tab) const
+std::wstring DesktopApp::GetQuickNavTabLabel(size_t tab, std::span<const size_t> collections) const
 {
     if (tab == 0) return _LW("app.nav.tab_desktop");
     if (tab == 1) return _LW("app.nav.tab_mapping");
-    std::vector<size_t> ci = GetQuickNavigationCollectionIndices();
-    if (tab - 2 >= ci.size()) return L"";
-    const DesktopWidget& widget = widgets_[ci[tab - 2]];
+    if (tab - 2 >= collections.size()) return L"";
+    const DesktopWidget& widget = widgets_[collections[tab - 2]];
     if (ShouldUseDemoCollectionIdentity(&widget))
         return GetDemoCollectionCategoryTitle(widget);
     if (!widget.title.empty())
@@ -969,16 +970,32 @@ std::wstring DesktopApp::GetQuickNavTabLabel(size_t tab) const
  */
 void DesktopApp::UpdateQuickNavTabWidths()
 {
-    std::vector<size_t> ci = GetQuickNavigationCollectionIndices();
-    const size_t tabCount = ci.size() + 2;
-    quickNavigation_->tabWidths.resize(tabCount, QuickNavScale(72));
-    quickNavigation_->viewModeSlotWidth = QuickNavScale(60);
+    const auto collections = GetQuickNavigationCollectionIndices();
+    const size_t tabCount = collections.size() + 2;
+    const auto* format = quickNavigation_->tabTextFormat.Get();
 
-    if (!dwriteFactory_ || !quickNavigation_->tabTextFormat)
+    if (!dwriteFactory_ || !format)
+    {
+        quickNavigation_->tabWidths.assign(tabCount, QuickNavScale(72));
+        quickNavigation_->viewModeSlotWidth = QuickNavScale(60);
+        quickNavigation_->measuredTabFormat.Reset();
+        return;
+    }
+
+    std::vector<std::wstring> labels;
+    labels.reserve(tabCount);
+    for (size_t i = 0; i < tabCount; ++i)
+        labels.push_back(GetQuickNavTabLabel(i, collections));
+    std::wstring viewLabel = QuickNavigationViewLabel();
+    if (quickNavigation_->measuredTabFormat.Get() == format &&
+        quickNavigation_->measuredTabDpiScale == quickNavigation_->dpiScale &&
+        quickNavigation_->measuredViewLabel == viewLabel &&
+        quickNavigation_->measuredTabLabels == labels)
         return;
 
-    // Rendering and hit testing share the width of the current mode label.
-    const std::wstring viewLabel = QuickNavigationViewLabel();
+    quickNavigation_->tabWidths.assign(tabCount, QuickNavScale(72));
+    quickNavigation_->viewModeSlotWidth = QuickNavScale(60);
+    bool measured = false;
     ComPtr<IDWriteTextLayout> viewLayout;
     if (SUCCEEDED(dwriteFactory_->CreateTextLayout(viewLabel.c_str(),
             static_cast<UINT32>(viewLabel.size()), quickNavigation_->tabTextFormat.Get(),
@@ -986,25 +1003,44 @@ void DesktopApp::UpdateQuickNavTabWidths()
     {
         DWRITE_TEXT_METRICS metrics{};
         if (SUCCEEDED(viewLayout->GetMetrics(&metrics)))
+        {
             quickNavigation_->viewModeSlotWidth = std::clamp(
                 static_cast<int>(std::ceil(metrics.widthIncludingTrailingWhitespace)) + QuickNavScale(30),
                 QuickNavScale(60), QuickNavScale(164));
+            measured = true;
+        }
     }
 
     for (size_t i = 0; i < tabCount; ++i)
     {
-        std::wstring label = GetQuickNavTabLabel(i);
+        const auto& label = labels[i];
         ComPtr<IDWriteTextLayout> layout;
         if (FAILED(dwriteFactory_->CreateTextLayout(label.c_str(),
             static_cast<UINT32>(label.size()), quickNavigation_->tabTextFormat.Get(),
             10000.0f, 10000.0f, &layout)) || !layout)
+        {
+            measured = false;
             continue;
+        }
         DWRITE_TEXT_METRICS metrics{};
-        layout->GetMetrics(&metrics);
+        if (FAILED(layout->GetMetrics(&metrics)))
+        {
+            measured = false;
+            continue;
+        }
         quickNavigation_->tabWidths[i] = static_cast<int>(std::clamp(
             static_cast<LONG>(static_cast<long>(std::ceil(metrics.widthIncludingTrailingWhitespace)) + QuickNavScale(20)),
             static_cast<LONG>(QuickNavScale(56)), static_cast<LONG>(QuickNavScale(200))));
     }
+    if (measured)
+    {
+        quickNavigation_->measuredTabLabels = std::move(labels);
+        quickNavigation_->measuredViewLabel = std::move(viewLabel);
+        quickNavigation_->measuredTabFormat = quickNavigation_->tabTextFormat;
+        quickNavigation_->measuredTabDpiScale = quickNavigation_->dpiScale;
+    }
+    else
+        quickNavigation_->measuredTabFormat.Reset();
 }
 
 /**
@@ -1318,24 +1354,17 @@ void DesktopApp::OpenQuickNavigation(
         MessageBeep(MB_ICONWARNING);
         return;
     }
-    const RECT contentRectBeforePosition = quickNavigation_->rect;
-    PositionQuickNavigationWindow();
     const bool searchNeedsClearing = quickNavigation_->searchEdit &&
         GetWindowTextLengthW(quickNavigation_->searchEdit) != 0;
     if (searchNeedsClearing)
         SetWindowTextW(quickNavigation_->searchEdit, L"");
-    // Positioning deliberately leaves every quick-navigation visual at zero
-    // opacity. Build and present the first content surface while it is still
-    // hidden; attaching an empty DComp surface after the open animation has
-    // started otherwise exposes a transparent frame when opened from the
-    // floating Dock.
-    // Positioning already paints synchronously when the content bounds change.
-    // Reuse that first surface unless the edit changed its contents, positioning
-    // did not paint, or the first draw requested graphics recovery.
-    if (searchNeedsClearing ||
-        EqualRect(&contentRectBeforePosition, &quickNavigation_->rect) ||
-        quickNavigation_->compositionRenderRecoveryPending)
+    {
+        snowdesktop::performance::Scope firstFrame("navigation", "first_frame");
+        // Resolve the final empty-query geometry before publishing one hidden
+        // content frame. The timeline must never start with an empty surface.
+        PositionQuickNavigationWindow(false);
         InvalidateQuickNavigationWindow(true);
+    }
     if (quickNavigation_->searchEdit &&
         IsWindow(quickNavigation_->searchEdit))
     {

@@ -5,6 +5,7 @@
 #include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "diagnostics/diagnostic_log.h"
+#include "diagnostics/performance_trace.h"
 #include "common/utils.h"
 #include "ui/input/text_input_window.h"
 #include "quick_navigation_helpers.h"
@@ -476,6 +477,7 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
 
 void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
 {
+    snowdesktop::performance::Scope presentScope("navigation", "paint");
     PAINTSTRUCT ps{};
     HDC hdc = BeginPaint(hwnd, &ps);
     if (!hdc)
@@ -889,7 +891,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             DrawD2DRoundedRectangle(ctx.Get(), tabRect,
                 static_cast<float>(QuickNavScale(navigationSettings_.layout.tabRadius)), fill, stroke);
 
-            std::wstring label = GetQuickNavTabLabel(tab);
+            std::wstring label = GetQuickNavTabLabel(tab, collectionIndices);
             RECT textRect = tabRect;
             textRect.left += QuickNavScale(8);
             textRect.right -= QuickNavScale(8);
@@ -975,7 +977,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                 ToD2DColor(t.tabDragFloatFill, 0.82f),
                 ToD2DColor(t.tabDragFloatStroke, 0.88f));
 
-            std::wstring label = GetQuickNavTabLabel(quickNavigation_->tabDragIndex);
+            std::wstring label = GetQuickNavTabLabel(quickNavigation_->tabDragIndex, collectionIndices);
             RECT textRect = tabRect;
             textRect.left += QuickNavScale(8);
             textRect.right -= QuickNavScale(8);

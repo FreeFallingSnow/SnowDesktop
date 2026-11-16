@@ -744,10 +744,13 @@ void DesktopApp::OnTimer(WPARAM timerId)
         const DWORD now = GetTickCount();
         const DWORD foregroundTick =
             dockForegroundChangedTick_.load();
+        // Foreground feedback only changes the state of tracked windows.
+        // Membership changes arrive through their own notifications.
+        if (generalSettings_.dockEnabled && foregroundTick != dockRunningWindowsForegroundTick_)
+            RefreshDockForegroundState();
         const DWORD windowStateTick =
             dockWindowListChangedTick_.load();
         const bool dockStateChanged =
-            foregroundTick != dockRunningWindowsForegroundTick_ ||
             windowStateTick != dockRunningWindowsStateTick_;
         constexpr DWORD fallbackDiscoveryIntervalMs = 10000;
         constexpr DWORD maxFallbackDeferralMs = 3000;

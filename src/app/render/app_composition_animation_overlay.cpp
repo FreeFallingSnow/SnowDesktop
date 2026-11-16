@@ -929,13 +929,15 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
                     return;
                 }
                 const RECT dirty = popupAnimationCacheRect_;
+                const bool onDesktop = popupAnimationOverlay_.host ==
+                    UiCompositionAnimationHost::Desktop;
                 // Content changes kept the original bounds during the native
                 // track. Size the live host before the atomic snapshot handoff.
                 UpdateFloatingPopupWindowBounds(false);
                 PrepareCompositionAnimationOverlayRetirement(
                     popupAnimationOverlay_, dirty);
                 ResetCollectionPopupAnimationCache();
-                if (hwnd_ && IsWindow(hwnd_))
+                if (onDesktop && hwnd_ && IsWindow(hwnd_))
                     InvalidateRect(hwnd_, &dirty, FALSE);
             });
     if (!popupAnimationCompletionToken_)

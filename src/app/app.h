@@ -1287,7 +1287,7 @@ private:
     /** @brief 销毁快速导航窗口。 */
     void DestroyQuickNavigationWindow();
     /** @brief 计算并设置快速导航窗口的位置。 */
-    void PositionQuickNavigationWindow();
+    void PositionQuickNavigationWindow(bool present = true);
     /** @brief 在动画路径区域与最终面板区域之间切换原生窗口裁剪。 */
     void UpdateQuickNavigationWindowRegion(bool expanded);
     /** @brief 根据当前主题创建、同步或移除快捷导航原生毛玻璃层。 */
@@ -1450,7 +1450,7 @@ private:
     /** @brief 计算快捷导航标签页的宽度。 */
     int GetQuickNavigationTabWidth() const;
     /** @brief 获取指定标签页的显示名称。 */
-    std::wstring GetQuickNavTabLabel(size_t tab) const;
+    std::wstring GetQuickNavTabLabel(size_t tab, std::span<const size_t> collections) const;
     /** @brief 根据文字测量更新标签宽度缓存。 */
     void UpdateQuickNavTabWidths();
     /** @brief 根据拖拽位移计算目标标签索引（≥2）。 */
@@ -2586,10 +2586,11 @@ private:
      * @brief 绘制集合弹出面板内容。
      * @param ctx D2D 上下文
      * @param applyAnimation 是否应用当前缩放动画
+     * @param preparedRect 已为当前快照计算好的面板位置
      */
     void DrawCollectionPopup(
         ID2D1DeviceContext* ctx,
-        bool applyAnimation = true);
+        bool applyAnimation = true, const RECT* preparedRect = nullptr);
     void PublishCollectionPopupFanBackdrops();
     RECT GetLuaWidgetPanelRect() const;
     static constexpr float kLuaWidgetPanelCornerRadius = 18.0f;
@@ -2612,7 +2613,7 @@ private:
     void ForgetLuaWidgetPanelCapture(HWND hostWindow);
     /** @brief 在动画开始前将完整弹窗录制到 GPU 位图。 */
     void PrepareCollectionPopupAnimationCache();
-    bool DrawCollectionPopupAnimationCache();
+    bool DrawCollectionPopupAnimationCache(const RECT* preparedRect = nullptr);
     void RefreshCollectionPopupAnimationContent();
     /** @brief 撤下弹窗动画并使旧内容失效，保留有界的可复用存储。 */
     void ResetCollectionPopupAnimationCache();
@@ -3727,6 +3728,8 @@ private:
     DWORD desktopHoverForegroundObservedTick_ = 0;
     DWORD dockRunningWindowsStateTick_ = 0;
     DWORD dockRunningWindowsRefreshTick_ = 0;
+    snowdesktop::UiScheduleToken dockDiscoveryRetryToken_ = 0;
+    double dockDiscoveryDeferUntil_ = 0.0;
     // Shell Show Desktop transition, consumed by the Dock layer policy and the
     // independent status bar presentation guard.
     bool systemShowDesktopLayerGuardActive_ = false;

@@ -200,12 +200,16 @@ void DesktopApp::ShowPageNotify(const std::wstring& text)
     if (animate)
     {
         const auto startFade = [this, fade](bool opening) {
-            const ULONGLONG start = GetTickCount64();
+            const double start = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
             pageNotifyAnimationFrameToken_ = uiAnimationScheduler_.StartAnimation(
-                snowdesktop::UiAnimationSurface::Desktop, [this, fade, opening, start](double) {
-                    const float progress = std::min(1.f, static_cast<float>(GetTickCount64() - start) / fade);
-                    const bool keep = pageNotifyTooltip_.SetOpacity(opening ? progress : 1.f - progress) &&
-                        progress < 1.f;
+                snowdesktop::UiAnimationSurface::Desktop,
+                [this, fade, opening, start, previous = -1.f](double now) mutable {
+                    const float progress = static_cast<float>(std::clamp((now - start) / fade, 0.0, 1.0));
+                    const float opacity = opening ? progress : 1.f - progress;
+                    const bool visible = opacity == previous ? pageNotifyTooltip_.Visible() :
+                        pageNotifyTooltip_.SetOpacity(opacity);
+                    previous = opacity;
+                    const bool keep = visible && progress < 1.f;
                     if (!keep) pageNotifyAnimationFrameToken_ = 0;
                     if (!keep && !opening) ResetPageNotify();
                     return keep;

@@ -113,10 +113,13 @@ IDWriteTextFormat* DesktopApp::GetCollectionPopupTextFormat(float scale, bool ti
 
 void DesktopApp::DrawCollectionPopup(
     ID2D1DeviceContext* ctx,
-    bool applyAnimation)
+    bool applyAnimation, const RECT* preparedRect)
 {
     const DesktopWidget* openWidget = GetOpenPopupWidget();
     if (!ctx || !openWidget) return;
+    const auto animation = popupAnimation_.GetVisual();
+    if (applyAnimation && (!animation.visible || popupAnimationOverlay_.active))
+        return;
 
     const DesktopWidget& widget = *openWidget;
     const bool fan = UsesCollectionPopupFan(widget);
@@ -129,7 +132,7 @@ void DesktopApp::DrawCollectionPopup(
         color.a *= std::clamp(alpha, 0.0f, 1.0f);
         return color;
     };
-    popupRect_ = GetCollectionPopupRect(widget);
+    popupRect_ = preparedRect ? *preparedRect : GetCollectionPopupRect(widget);
     auto* offsetView = GetCategorizedPopupView();
     if (!offsetView || !offsetView->IsSearchActive())
         popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
@@ -138,12 +141,6 @@ void DesktopApp::DrawCollectionPopup(
         ? dockFolderPopupContainer_->PopupResizeTransition() : nullptr;
     const RECT presentedPanel = motion ? motion->Panel(popupRect_) : popupRect_;
 
-    const auto animation =
-        popupAnimation_.GetVisual();
-    if (applyAnimation && !animation.visible)
-        return;
-    if (applyAnimation && popupAnimationOverlay_.active)
-        return;
     PopupOpacityScope opacity(ctx, applyAnimation, animation.opacity);
 
     D2D1_MATRIX_3X2_F previousTransform{};

@@ -195,6 +195,19 @@ void DesktopApp::UpdateWidgetHoverExpansion(POINT point)
         !IsPointOccludedByOpenPopup(point);
     bool changed = false;
     bool suppressionStillInside = false;
+    bool needsFullPaint = false;
+    RECT dirty{};
+    const auto markWidgetDamage = [&](RECT frame) {
+        changed = true;
+        if (IsRectEmpty(&frame))
+        {
+            needsFullPaint = true;
+            return;
+        }
+        constexpr int overdraw = snowdesktop::widget_composition_layer_rules::kWidgetSurfaceBorderOverdraw;
+        InflateRect(&frame, overdraw, overdraw);
+        UnionRect(&dirty, &dirty, &frame);
+    };
     for (size_t index = 0; index < widgets_.size(); ++index)
     {
         const auto& widget = widgets_[index];
@@ -206,7 +219,8 @@ void DesktopApp::UpdateWidgetHoverExpansion(POINT point)
             !IsRectEmptyRect(widget.bounds) && !IsGroupedWidget(widget);
         if (!eligible)
         {
-            changed |= widgetHoverExpansion_.erase(widget.id) != 0;
+            if (widgetHoverExpansion_.erase(widget.id) != 0)
+                markWidgetDamage(GetExpandedWidgetFrameRect(widget));
             continue;
         }
 
@@ -236,11 +250,13 @@ void DesktopApp::UpdateWidgetHoverExpansion(POINT point)
                 }
             }
         }
+        const bool pointerInFrame = pointerAvailable && inFrame;
+        const bool selectedFilesRetain = wasExpanded && !suppressed && !pointerInFrame &&
+            !widget.selected && !retained && HasSelectedFilesInWidget(index);
         const bool expand = snowdesktop::storage_title_bar::ExpandOnHover(eligible, wasExpanded,
-            suppressed, pointerAvailable && inFrame, widget.selected,
-            HasSelectedFilesInWidget(index), retained);
+            suppressed, pointerInFrame, widget.selected, selectedFilesRetain, retained);
         if (expand == wasExpanded) continue;
-        changed = true;
+        markWidgetDamage(frame);
 
         auto& expansion = widgetHoverExpansion_[widget.id];
         if (hwnd_ && generalSettings_.widgetHoverExpandEffect == motion::Roll &&
@@ -256,9 +272,15 @@ void DesktopApp::UpdateWidgetHoverExpansion(POINT point)
         else expansion.ResetHidden();
     }
     if (!suppressionStillInside) hoverExpansionSuppressedWidgetId_.clear();
-    changed |= std::erase_if(widgetHoverExpansion_, [this](const auto& entry) {
-        return entry.second.IsHidden() || FindWidgetIndexById(entry.first) >= widgets_.size();
-    }) != 0;
+    std::erase_if(widgetHoverExpansion_, [this, &markWidgetDamage](const auto& entry) {
+        const auto index = FindWidgetIndexById(entry.first);
+        if (index >= widgets_.size())
+        {
+            markWidgetDamage({});
+            return true;
+        }
+        return entry.second.IsHidden();
+    });
     if (!changed) return;
 
     if (!widgetHoverExpansionFrameToken_ &&
@@ -273,7 +295,7 @@ void DesktopApp::UpdateWidgetHoverExpansion(POINT point)
             AdvanceWidgetHoverExpansion(0.0, true);
     }
     InvalidateDragStaticScene();
-    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    if (hwnd_) InvalidateRect(hwnd_, needsFullPaint ? nullptr : &dirty, FALSE);
 }
 
 bool DesktopApp::AdvanceWidgetHoverExpansion(double nowMilliseconds, bool finish)

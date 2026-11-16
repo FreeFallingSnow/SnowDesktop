@@ -1196,7 +1196,7 @@ void DesktopApp::PrepareCollectionPopupAnimationCache()
     popupRect_ = GetCollectionPopupRect(*openWidget);
     popupAnimationCacheRect_ = popupRect_;
     InflateRect(&popupAnimationCacheRect_, 4, 4);
-    if (!DrawCollectionPopupAnimationCache())
+    if (!DrawCollectionPopupAnimationCache(&popupRect_))
         popupAnimationCacheRect_ = {};
     else
         (void)PrepareCompositionAnimationOverlay(
@@ -1204,7 +1204,7 @@ void DesktopApp::PrepareCollectionPopupAnimationCache()
             popupAnimationCacheRect_, UiCompositionAnimationHost::FloatingPopup);
 }
 
-bool DesktopApp::DrawCollectionPopupAnimationCache()
+bool DesktopApp::DrawCollectionPopupAnimationCache(const RECT* preparedRect)
 {
     if (!d2dDevice_ || !GetOpenPopupWidget() || IsRectEmptyRect(popupAnimationCacheRect_))
         return false;
@@ -1232,7 +1232,7 @@ bool DesktopApp::DrawCollectionPopupAnimationCache()
                         static_cast<float>(
                             -popupAnimationCacheRect_.top)));
                 DrawCollectionPopup(
-                    cacheContext, false);
+                    cacheContext, false, preparedRect);
             });
     snowdesktop::performance::Value("popup", "snapshot.bitmap_allocations", {},
         static_cast<double>(popupAnimationRenderCache_.BitmapAllocationCount()));

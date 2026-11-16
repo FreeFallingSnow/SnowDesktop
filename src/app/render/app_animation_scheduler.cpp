@@ -492,7 +492,14 @@ std::optional<float> DesktopApp::ResolveListTitleHover(const std::wstring& owner
                 const bool isPopup = listTitleHoverPopup_;
                 UpdateListTitleHover();
                 if (isPopup)
-                    InvalidateCollectionPopupAnimation(true);
+                {
+                    // A moving label only changes the popup's pixels. Its
+                    // desktop backing scene and input geometry stay valid.
+                    if (IsCollectionPopupHostedByFloatingWindow())
+                        InvalidateFloatingPopupWindow(true);
+                    else
+                        InvalidateCollectionPopupAnimation(false);
+                }
                 else if (QueueDesktopWidgetComposition(ownerId))
                     (void)PresentQueuedDesktopWidgetComposition();
                 return listTitleHoverFrameToken_ != 0;

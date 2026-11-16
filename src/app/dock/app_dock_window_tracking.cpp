@@ -16,6 +16,7 @@
 #include "drag_drop/drag_input_rules.h"
 #include "settings/animation_settings.h"
 #include "diagnostics/performance_trace.h"
+#include "app/navigation/quick_navigation_state.h"
 
 #include <cmath>
 
@@ -634,6 +635,36 @@ void DesktopApp::RefreshDockRunningWindows(
     {
         return;
     }
+    if (invalidateChanged && generalSettings_.dockEnabled && dockRunningAppsInitialized_ &&
+        (quickNavigation_->animation.IsAnimating() || popupAnimation_.IsAnimating() ||
+            luaWidgetPanelAnimation_.IsAnimating() || widgetHoverExpansionFrameToken_))
+    {
+        const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+        if (dockDiscoveryDeferUntil_ == 0.0)
+            dockDiscoveryDeferUntil_ = now + 250.0;
+        if (now < dockDiscoveryDeferUntil_)
+        {
+            if (!dockDiscoveryRetryToken_)
+            {
+                const UINT delay = static_cast<UINT>(std::clamp(
+                    std::ceil(dockDiscoveryDeferUntil_ - now), 1.0, 32.0));
+                dockDiscoveryRetryToken_ = uiAnimationScheduler_.ScheduleOnce(delay,
+                    [this](snowdesktop::UiScheduleToken token) {
+                        if (token != dockDiscoveryRetryToken_) return;
+                        dockDiscoveryRetryToken_ = 0;
+                        RefreshDockRunningWindows();
+                    });
+            }
+            if (dockDiscoveryRetryToken_)
+            {
+                snowdesktop::performance::Value("dock", "running.discovery_deferred", {}, 1);
+                return;
+            }
+        }
+    }
+    if (dockDiscoveryRetryToken_)
+        uiAnimationScheduler_.Cancel(std::exchange(dockDiscoveryRetryToken_, 0));
+    dockDiscoveryDeferUntil_ = 0.0;
     snowdesktop::performance::Scope performanceScope("dock", "running.discovery");
     // GetBounds reads the running model directly. Retain the currently
     // displayed envelope before replacing it, including the old title chip.
