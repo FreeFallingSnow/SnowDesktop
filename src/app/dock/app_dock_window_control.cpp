@@ -403,8 +403,16 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
     // keeps shifting the icon's visual rect while the preview is open, so a
     // matching identity with a moved anchor must follow in place instead of
     // tearing the preview down and re-showing it.
-    if (previewMatchesTarget && previewVisible)
+    const DockPreviewHoverTransition transition =
+        dockWindowPreviewHover_.UpdateTarget(
+            hasTarget ? target.targetToken : std::wstring{},
+            previewVisible, previewMatchesTarget);
+
+    if (transition.cancelTimer && hwnd_)
+        KillTimer(hwnd_, kDockWindowPreviewHoverTimerId);
+    if (transition.keepPreviewVisible)
     {
+        dockWindowPreview_->KeepVisible();
         const bool anchorChanged =
             EqualRect(&dockWindowPreviewAnchorScreen_,
                 &target.anchorScreen) == FALSE;
@@ -418,18 +426,18 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
             dockWindowPreviewAnchorScreen_ =
                 target.anchorScreen;
         }
+        return;
     }
-    const DockPreviewHoverTransition transition =
-        dockWindowPreviewHover_.UpdateTarget(
-            hasTarget ? target.targetToken : std::wstring{},
-            previewVisible, previewMatchesTarget);
-
-    if (transition.cancelTimer && hwnd_)
-        KillTimer(hwnd_, kDockWindowPreviewHoverTimerId);
-    if (transition.keepPreviewVisible)
-        dockWindowPreview_->KeepVisible();
-    if (transition.schedulePreviewHide)
-        dockWindowPreview_->ScheduleHide();
+    if (transition.switchPreview && ShowDockWindowPreview(std::move(target), clientPoint))
+        return;
+    if (previewVisible)
+    {
+        if (hasTarget || GetDockContainerAtPoint(clientPoint))
+            dockWindowPreview_->ScheduleDockHide();
+        else
+            dockWindowPreview_->ScheduleHide();
+        return;
+    }
     if (transition.armTimer && hwnd_)
     {
         // Use the existing hover delay for native toolbar discovery, so the
@@ -438,7 +446,7 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
         SetTimer(hwnd_, kDockWindowPreviewHoverTimerId,
             QueryDockWindowPreviewHoverTime(), nullptr);
     }
-    else if (!hasTarget && !previewVisible)
+    else if (!hasTarget)
         dockWindowPreview_->PrepareToolbars({});
 }
 
@@ -466,10 +474,15 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
         return;
     }
 
-    std::vector<DockWindowPreviewItem> previewItems =
+    ShowDockWindowPreview(std::move(target), cursorClient);
+}
+
+bool DesktopApp::ShowDockWindowPreview(DockWindowPreviewTarget target, POINT clientPoint)
+{
+    const std::vector<DockWindowPreviewItem> previewItems =
         CollectDockWindowPreviewItems(target.identity);
     if (previewItems.empty())
-        return;
+        return false;
 
     if (!target.floatingLayer)
     {
@@ -484,8 +497,8 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
         {
             DockWindowPreviewTarget floatingTarget;
             if (ResolveDockWindowPreviewTarget(
-                    cursorClient, floatingTarget) &&
-                floatingTarget.targetToken == observedToken)
+                    clientPoint, floatingTarget) &&
+                floatingTarget.targetToken == target.targetToken)
             {
                 target = std::move(floatingTarget);
             }
@@ -499,11 +512,10 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
         IsLightContentTheme(),
         target.floatingLayer
             ? floatingDockHwnd_ : nullptr);
-    if (dockWindowPreview_->IsVisible())
-    {
-        dockTitleTooltip_.Hide();
-        dockWindowPreviewHover_.MarkPreviewShown(target.targetToken);
-    }
+    if (!dockWindowPreview_->IsVisible()) return false;
+    dockTitleTooltip_.Hide();
+    dockWindowPreviewHover_.MarkPreviewShown(target.targetToken);
+    return true;
 }
 
 void DesktopApp::RefreshDockWindowPreviewItems()

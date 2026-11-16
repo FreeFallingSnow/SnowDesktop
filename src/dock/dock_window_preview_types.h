@@ -30,7 +30,7 @@ struct DockPreviewHoverTransition
     bool armTimer = false;
     bool cancelTimer = false;
     bool keepPreviewVisible = false;
-    bool schedulePreviewHide = false;
+    bool switchPreview = false;
 };
 
 class DockPreviewHoverController

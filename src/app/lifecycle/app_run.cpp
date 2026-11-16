@@ -708,7 +708,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // even when the child is hidden. The startup layer has its own UI thread.
     dockWindowPreview_ = std::make_unique<DockWindowPreview>();
     if (!dockWindowPreview_->Initialize(
-            instance_,
+            instance_, uiAnimationScheduler_,
             [this](HWND window) {
                 ActivateDockWindowFromPreviewAnimated(window);
             },
@@ -725,6 +725,13 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                         UpdateFloatingDockWindowBounds(*host, false, true);
                     }
                 InvalidateDockRects();
+            }, [this](POINT screen) {
+                const HWND hit = snowdesktop::private_pointer::WindowAtPoint(screen);
+                const HWND root = hit ? GetAncestor(hit, GA_ROOT) : nullptr;
+                return (IsBaseDesktopHoverSurfaceWindow(hit) ||
+                    IsPersistentDockHostWindow(hit) || IsPersistentDockHostWindow(root) ||
+                    IsPersistentDockBackdropWindow(hit) || IsPersistentDockBackdropWindow(root)) &&
+                    ScreenToClient(hwnd_, &screen) && GetDockContainerAtPoint(screen);
             }))
         dockWindowPreview_.reset();
     if (dockWindowPreview_)

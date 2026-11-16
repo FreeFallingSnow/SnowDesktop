@@ -1038,6 +1038,7 @@ private:
         POINT clientPoint, DockWindowPreviewTarget& target);
     void UpdateDockWindowPreview(POINT clientPoint);
     void OnDockWindowPreviewHoverTimer();
+    bool ShowDockWindowPreview(DockWindowPreviewTarget target, POINT clientPoint);
     void RefreshDockWindowPreviewItems();
     void HideDockWindowPreview();
     void DismissDockWindowPreviewUntilLeave();
