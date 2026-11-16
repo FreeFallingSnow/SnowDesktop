@@ -383,13 +383,14 @@ struct Tracker::State
         enabled = value;
         current.reset();
         last = clock_type::now();
-        Write();
+        WriteNow();
     }
 
     void Observe()
     {
         std::scoped_lock guard(mutex);
         foregroundWork.Drain();
+        historyWork.Drain();
         const auto now = clock_type::now();
         if (now < last)
         {
@@ -410,7 +411,8 @@ struct Tracker::State
         if (count) UpdateForeground();
         else current.reset();
         const auto sinceWrite = std::chrono::steady_clock::now() - lastWrite;
-        if (dirty && sinceWrite >= std::chrono::seconds(60)) Write();
+        if (dirty && !historyWritePending && sinceWrite >= std::chrono::seconds(60))
+            QueueHistoryWrite();
     }
 
     void SetLocked(bool value)
@@ -441,21 +443,22 @@ struct Tracker::State
         suspended = value;
         current.reset();
         last = clock_type::now();
-        if (!suspended) Write();
+        if (!suspended) WriteNow();
     }
 
     void Flush()
     {
         std::scoped_lock guard(mutex);
         foregroundWork.Drain();
-        if (dirty) Write();
+        historyWork.Drain();
+        if (dirty) WriteNow();
     }
 
     bool Clear(std::string* error)
     {
         std::scoped_lock guard(mutex);
         constexpr std::string_view emptyHistory = "{\"version\":1,\"apps\":{},\"days\":{}}\n";
-        if (!atomic_file::WriteAll(path, emptyHistory, {}, error)) return false;
+        if (!ReplaceHistory(emptyHistory, error)) return false;
         foregroundWork.Cancel();
         names.clear();
         days.clear();
@@ -610,6 +613,7 @@ struct Tracker::State
         day.hours[static_cast<std::size_t>(local.hour)] += whole;
         if (!app.name.empty()) names[app.key] = app.name;
         dirty = true;
+        ++historyRevision;
         Prune();
     }
 
@@ -691,9 +695,9 @@ struct Tracker::State
         Prune();
     }
 
-    void Write()
+    std::string SerializeHistory()
     {
-        performance::Scope trace("shared.maintenance", "screen_time.history_write");
+        performance::Scope trace("shared.maintenance", "screen_time.history_serialize");
         Prune();
         std::string text;
         text += "{\n  \"version\": 1,\n  \"apps\": {\n";
@@ -729,7 +733,50 @@ struct Tracker::State
             text += "}}";
         }
         text += "\n  }\n}\n";
-        dirty = !atomic_file::WriteAll(path, text);
+        return text;
+    }
+
+    struct HistoryFile
+    {
+        std::mutex mutex;
+        std::uint64_t generation = 0;
+    };
+
+    void QueueHistoryWrite()
+    {
+        const auto revision = historyRevision;
+        historyWritePending = historyWork.Submit(L"history",
+            [file = historyFile, generation = historyFile->generation,
+                destination = path, text = SerializeHistory()] {
+                performance::Scope trace("shared.maintenance", "screen_time.history_write");
+                std::scoped_lock guard(file->mutex);
+                return generation == file->generation && atomic_file::WriteAll(destination, text);
+            },
+            [this, revision](bool written) {
+                historyWritePending = false;
+                if (written)
+                {
+                    if (historyRevision == revision) dirty = false;
+                    lastWrite = std::chrono::steady_clock::now();
+                }
+            }, nullptr, 0);
+    }
+
+    bool ReplaceHistory(std::string_view text, std::string* error = nullptr)
+    {
+        // A clear or final flush must win over an older periodic snapshot,
+        // whether the worker is already writing or has yet to enter the lock.
+        std::scoped_lock guard(historyFile->mutex);
+        ++historyFile->generation;
+        historyWork.Cancel();
+        historyWritePending = false;
+        performance::Scope trace("shared.maintenance", "screen_time.history_write");
+        return atomic_file::WriteAll(path, text, {}, error);
+    }
+
+    void WriteNow()
+    {
+        dirty = !ReplaceHistory(SerializeHistory());
         if (!dirty) lastWrite = std::chrono::steady_clock::now();
     }
 
@@ -747,6 +794,10 @@ struct Tracker::State
     std::map<std::string, std::string> names;
     std::map<std::string, DayData> days;
     BackgroundWork foregroundWork{1, 8};
+    std::uint64_t historyRevision = 0;
+    bool historyWritePending = false;
+    std::shared_ptr<HistoryFile> historyFile = std::make_shared<HistoryFile>();
+    BackgroundWork historyWork{1, 1};
 };
 
 Tracker::Tracker(std::filesystem::path path)
