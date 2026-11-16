@@ -34127,8 +34127,10 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
     const snowdesktop::widget::SteamWorkshopSubscriptionSnapshot& snapshot)
 {
     auto& manager = GetWidgetPackageManager();
-    const auto plan = snowdesktop::widget::BuildSteamWorkshopSyncPlan(
-        manager.ListPackages(), snapshot);
+    const auto plan = [&] {
+        snowdesktop::performance::Scope planTrace("shared.maintenance", "steam.apply.plan");
+        return snowdesktop::widget::BuildSteamWorkshopSyncPlan(manager.ListPackages(), snapshot);
+    }();
     const auto trace = [&](std::string_view message) {
         snowdesktop::widget::WriteSteamWorkshopDiagnostic(snapshot.diagnosticQueryId, message);
     };
@@ -34148,6 +34150,7 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
         snapshot.preparationErrors.begin(), snapshot.preparationErrors.end());
     for (const auto& action : plan.actions)
     {
+        snowdesktop::performance::Scope actionTrace("shared.maintenance", "steam.apply.package_action");
         trace("phase=apply.action item=" + action.externalItemId + " package=" + action.packageId +
             " kind=" + snowdesktop::widget::SteamWorkshopDiagnosticActionName(action.kind) +
             " version=" + action.version);
@@ -34284,12 +34287,16 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
         !snapshot.activeSteamAccountId.empty())
     {
         std::string historyError;
-        const auto libraryHistory = snowdesktop::widget::BuildSteamWorkshopLibraryHistory(
-            snapshot, manager.SteamLibraryHistory(), manager.ListPackages());
+        const auto [subscriptionHistory, libraryHistory] = [&] {
+            snowdesktop::performance::Scope historyTrace("shared.maintenance", "steam.apply.history_build");
+            return std::pair(snowdesktop::widget::BuildSteamWorkshopSubscriptionHistory(
+                    snapshot, manager.SteamSubscriptionHistory()),
+                snowdesktop::widget::BuildSteamWorkshopLibraryHistory(
+                    snapshot, manager.SteamLibraryHistory(), manager.ListPackages()));
+        }();
+        snowdesktop::performance::Scope historySaveTrace("shared.maintenance", "steam.apply.history_save");
         if (!manager.UpdateSteamSubscriptionHistory(
-                snapshot.activeSteamAccountId,
-                snowdesktop::widget::BuildSteamWorkshopSubscriptionHistory(
-                    snapshot, manager.SteamSubscriptionHistory()), historyError,
+                snapshot.activeSteamAccountId, subscriptionHistory, historyError,
                 &libraryHistory))
         {
             result.errors.push_back(

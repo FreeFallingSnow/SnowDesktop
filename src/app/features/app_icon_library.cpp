@@ -69,24 +69,39 @@ void DesktopApp::DrainIconLibrary()
 
 snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLibraryRequest request)
 {
-    auto& state = EnsureIconLibrary(); DrainIconLibrary();
-    if (!FlushExpiredIconCustomizations())
+    const bool autoSync = request.action == "autoSyncSubscriptions";
+    auto& state = EnsureIconLibrary();
+    {
+        std::optional<snowdesktop::performance::Scope> trace;
+        if (autoSync) trace.emplace("shared.maintenance", "steam.icons.drain");
+        DrainIconLibrary();
+    }
+    const bool customizationSaved = [&] {
+        std::optional<snowdesktop::performance::Scope> trace;
+        if (autoSync) trace.emplace("shared.maintenance", "steam.icons.flush_customizations");
+        return FlushExpiredIconCustomizations();
+    }();
+    if (!customizationSaved)
     { auto result = state.snapshot; result.succeeded = false; result.error = "iconLibrary.saveFailed"; return result; }
     std::unordered_map<std::string, std::vector<std::wstring>> uses;
-    const auto retain = [&](const std::string& id, const std::wstring& name) {
-        if (!id.empty()) uses[id].push_back(name);
-    };
-    for (const auto& [target, asset] : iconOverrides_)
-        if (IsActiveIconCustomization(target)) retain(asset, IconOverrideTargetName(target));
-    for (const auto& widget : widgets_) retain(widget.dockIconAssetId, widget.title);
-    const auto retainLarge = [&](const auto& config, const std::wstring& name) {
-        retain(config.imageAssetId, name); retain(config.foregroundImageAssetId, name);
-    };
-    for (const auto& item : items_) if (item.largeIcon) retainLarge(*item.largeIcon, item.name);
-    for (const auto& [key, record] : layoutRecords_) if (record.largeIcon && FindItemIndexByKey(key) >= items_.size())
-        retainLarge(*record.largeIcon, key);
-    for (const auto& [key, config] : largeIconEdit_.previews) retainLarge(config, key);
-    if (largeIconEdit_.preview) retainLarge(*largeIconEdit_.preview, largeIconEdit_.key);
+    {
+        std::optional<snowdesktop::performance::Scope> trace;
+        if (autoSync) trace.emplace("shared.maintenance", "steam.icons.references");
+        const auto retain = [&](const std::string& id, const std::wstring& name) {
+            if (!id.empty()) uses[id].push_back(name);
+        };
+        for (const auto& [target, asset] : iconOverrides_)
+            if (IsActiveIconCustomization(target)) retain(asset, IconOverrideTargetName(target));
+        for (const auto& widget : widgets_) retain(widget.dockIconAssetId, widget.title);
+        const auto retainLarge = [&](const auto& config, const std::wstring& name) {
+            retain(config.imageAssetId, name); retain(config.foregroundImageAssetId, name);
+        };
+        for (const auto& item : items_) if (item.largeIcon) retainLarge(*item.largeIcon, item.name);
+        for (const auto& [key, record] : layoutRecords_) if (record.largeIcon && FindItemIndexByKey(key) >= items_.size())
+            retainLarge(*record.largeIcon, key);
+        for (const auto& [key, config] : largeIconEdit_.previews) retainLarge(config, key);
+        if (largeIconEdit_.preview) retainLarge(*largeIconEdit_.preview, largeIconEdit_.key);
+    }
 
     if (request.action == "begin" && IsIconOverrideTarget(request.target))
     { state.target = request.target; ++state.session; request.action = "read"; }

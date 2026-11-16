@@ -321,15 +321,23 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
             kSteamWorkshopSubscriptionFallbackPollIntervalMs)
         return;
     steamWorkshopSubscriptionLastQueryTick_ = now;
-    snowdesktop::IconLibraryRequest iconRequest;
-    iconRequest.action = "autoSyncSubscriptions";
-    (void)EditIconLibrary(iconRequest);
+    snowdesktop::performance::Scope prepareTrace("shared.maintenance", "steam.prepare");
+    {
+        snowdesktop::performance::Scope iconTrace("shared.maintenance", "steam.prepare.icons");
+        snowdesktop::IconLibraryRequest iconRequest;
+        iconRequest.action = "autoSyncSubscriptions";
+        (void)EditIconLibrary(iconRequest);
+    }
     const std::string locale = Locale::Instance().GetEffectiveLanguage();
-    const auto installedPackages = widgetEngine_->ListWidgetPackages();
-    const auto subscriptionHistory =
-        WidgetEngine::GetSteamWorkshopSubscriptionHistory();
-    const auto libraryHistory =
-        WidgetEngine::GetSteamWorkshopLibrarySubscriptionHistory();
+    const auto installedPackages = [] {
+        snowdesktop::performance::Scope packagesTrace("shared.maintenance", "steam.prepare.packages");
+        return WidgetEngine::ListWidgetPackages();
+    }();
+    const auto [subscriptionHistory, libraryHistory] = [] {
+        snowdesktop::performance::Scope historyTrace("shared.maintenance", "steam.prepare.histories");
+        return std::pair(WidgetEngine::GetSteamWorkshopSubscriptionHistory(),
+            WidgetEngine::GetSteamWorkshopLibrarySubscriptionHistory());
+    }();
     const auto packageStaging =
         WidgetEngine::GetWidgetPackagePaths().staging;
     const auto state = steamWorkshopSubscriptionPollState_;
@@ -354,6 +362,7 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         installedPackages, subscriptionHistory, libraryHistory, packageStaging,
         confirmedUnsubscriptions = std::move(confirmedUnsubscriptions)]() mutable
     {
+        snowdesktop::performance::Scope queryTrace("shared.maintenance", "steam.query.worker");
         const auto trace = [queryId](std::string_view message) {
             snowdesktop::widget::WriteSteamWorkshopDiagnostic(queryId, message);
         };
