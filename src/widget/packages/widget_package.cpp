@@ -2876,7 +2876,8 @@ bool WidgetPackageManager::Refresh(std::string& error, bool persistDiscovery)
     catalogueRefresh_->Begin({paths_.builtin, paths_.installed, paths_.development});
     const auto previousKnown = knownDevelopmentIds_;
     const auto previousOverrides = developmentOverrides_;
-    packages_.clear();
+    auto scanned = std::make_shared<std::vector<InstalledPackage>>();
+    auto& packages = *scanned;
     invalidPackages_.clear();
     enum class ExplicitDecisionResult
     {
@@ -3020,7 +3021,7 @@ bool WidgetPackageManager::Refresh(std::string& error, bool persistDiscovery)
                     package.grantedPermissions.clear();
                     package.grantedNetworkDomains.clear();
                 }
-                packages_.push_back(std::move(package));
+                packages.push_back(std::move(package));
                 continue;
             }
             const std::string id = WideToUtf8(it->path().filename().wstring());
@@ -3093,7 +3094,7 @@ bool WidgetPackageManager::Refresh(std::string& error, bool persistDiscovery)
                     package.grantedNetworkDomains =
                         package.manifest.networkDomains;
                 }
-                packages_.push_back(std::move(package));
+                packages.push_back(std::move(package));
             }
         }
         if (ec && error.empty())
@@ -3103,30 +3104,36 @@ bool WidgetPackageManager::Refresh(std::string& error, bool persistDiscovery)
     scanRoot(paths_.installed, false, false);
     scanRoot(paths_.development, false, true);
 
-    if (!error.empty()) return false;
+    if (!error.empty())
+    {
+        packages_ = std::move(scanned);
+        return false;
+    }
     if (persistDiscovery && knownDevelopmentIds_ != previousKnown && !SaveRegistry(error))
     {
         knownDevelopmentIds_ = previousKnown;
         developmentOverrides_ = previousOverrides;
-        packages_.clear();
+        packages.clear();
+        packages_ = std::move(scanned);
         return false;
     }
     // Newly discovered projects become the active source; persisted opt-outs remain off.
     std::set<std::string> developmentIds;
-    for (const auto& package : packages_)
+    for (const auto& package : packages)
         if (package.development && package.active)
             developmentIds.insert(package.manifest.id);
-    for (auto& package : packages_)
+    for (auto& package : packages)
         if (!package.development && developmentIds.contains(package.manifest.id))
             package.active = false;
 
     // Built-ins are the fallback when no installed active version exists.
     std::set<std::string> activeIds;
-    for (const auto& package : packages_)
+    for (const auto& package : packages)
         if (!package.builtin && package.active) activeIds.insert(package.manifest.id);
-    for (auto& package : packages_)
+    for (auto& package : packages)
         if (package.builtin && activeIds.contains(package.manifest.id))
             package.active = false;
+    packages_ = std::move(scanned);
     catalogueRevision_ = std::make_shared<const char>('\0');
     catalogueRefresh_->Complete(catalogueRevision_);
     return error.empty();
@@ -3134,7 +3141,7 @@ bool WidgetPackageManager::Refresh(std::string& error, bool persistDiscovery)
 
 std::vector<InstalledPackage> WidgetPackageManager::ListPackages() const
 {
-    return packages_;
+    return *packages_;
 }
 
 std::vector<InvalidPackage> WidgetPackageManager::ListInvalidPackages() const
@@ -3144,7 +3151,7 @@ std::vector<InvalidPackage> WidgetPackageManager::ListInvalidPackages() const
 
 bool WidgetPackageManager::ContainsPackage(const std::string& packageId) const
 {
-    return std::any_of(packages_.begin(), packages_.end(),
+    return std::any_of(packages_->begin(), packages_->end(),
         [&](const auto& package)
         {
             return package.manifest.id == packageId;
@@ -3183,18 +3190,33 @@ bool WidgetPackageManager::UpdateSteamSubscriptionHistory(
         return false;
     }
 
+    std::unordered_set<std::string> subscriptions(publishedFileIds.begin(), publishedFileIds.end());
+    SteamLibrarySubscriptions nextLibraries;
+    if (libraries)
+    {
+        nextLibraries = *libraries;
+        for (auto& [library, ids] : nextLibraries)
+        {
+            (void)library;
+            std::sort(ids.begin(), ids.end());
+            ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+        }
+    }
+
     const auto previous = steamSubscriptionsByAccount_.find(accountId);
     const bool existed = previous != steamSubscriptionsByAccount_.end();
-    std::unordered_set<std::string> previousSubscriptions;
-    if (existed) previousSubscriptions = previous->second;
     const auto previousLibraries = steamLibrarySubscriptionsByAccount_.find(accountId);
     const bool librariesExisted = previousLibraries != steamLibrarySubscriptionsByAccount_.end();
+    if (existed && previous->second == subscriptions &&
+        (!libraries || (librariesExisted && previousLibraries->second == nextLibraries)))
+        return true;
+
+    std::unordered_set<std::string> previousSubscriptions;
+    if (existed) previousSubscriptions = std::move(previous->second);
     SteamLibrarySubscriptions savedLibraries;
-    if (libraries && librariesExisted) savedLibraries = previousLibraries->second;
-    steamSubscriptionsByAccount_[accountId] =
-        std::unordered_set<std::string>(publishedFileIds.begin(),
-            publishedFileIds.end());
-    if (libraries) steamLibrarySubscriptionsByAccount_[accountId] = *libraries;
+    if (libraries && librariesExisted) savedLibraries = std::move(previousLibraries->second);
+    steamSubscriptionsByAccount_[accountId] = std::move(subscriptions);
+    if (libraries) steamLibrarySubscriptionsByAccount_[accountId] = std::move(nextLibraries);
     if (SaveRegistry(error)) return true;
     if (libraries)
     {
@@ -3231,7 +3253,7 @@ const InstalledPackage* WidgetPackageManager::FindResolved(
         !developmentOverrides_.contains(packageId))
         return nullptr;
     const InstalledPackage* builtinFallback = nullptr;
-    for (const auto& package : packages_)
+    for (const auto& package : *packages_)
     {
         if (package.manifest.id != packageId) continue;
         if (package.active && package.enabled) return &package;
@@ -3244,11 +3266,11 @@ const InstalledPackage* WidgetPackageManager::FindResolved(
 std::optional<InstalledPackage> WidgetPackageManager::ResolveSelected(
     const std::string& packageId) const
 {
-    const auto found = std::find_if(packages_.begin(), packages_.end(),
+    const auto found = std::find_if(packages_->begin(), packages_->end(),
         [&](const InstalledPackage& package) {
             return package.manifest.id == packageId && package.active;
         });
-    return found == packages_.end() ? std::nullopt : std::optional<InstalledPackage>(*found);
+    return found == packages_->end() ? std::nullopt : std::optional<InstalledPackage>(*found);
 }
 
 std::optional<std::filesystem::path> WidgetPackageManager::ResolveEntry(
@@ -3288,7 +3310,7 @@ std::optional<InstalledPackage> WidgetPackageManager::ResolveSelectedEntryPath(
     std::error_code ec;
     const auto input = std::filesystem::weakly_canonical(entryPath, ec);
     if (ec) return std::nullopt;
-    for (const auto& package : packages_)
+    for (const auto& package : *packages_)
     {
         if (!package.active) continue;
         const auto entry = ResolveSelectedEntry(package.manifest.id);
@@ -3305,7 +3327,7 @@ std::optional<InstalledPackage> WidgetPackageManager::ResolveEntryPath(
     const auto canonicalInput =
         std::filesystem::weakly_canonical(entryPath, ec);
     if (ec) return std::nullopt;
-    for (const auto& package : packages_)
+    for (const auto& package : *packages_)
     {
         if (!package.active || !package.enabled)
             continue;
@@ -3930,24 +3952,24 @@ bool WidgetPackageManager::SetPermissionDecision(
         if (const auto registered = registry_.find(packageId);
             registered != registry_.end())
         {
-            const auto managed = std::find_if(packages_.begin(),
-                packages_.end(), [&](const auto& candidate) {
+            const auto managed = std::find_if(packages_->begin(),
+                packages_->end(), [&](const auto& candidate) {
                     return candidate.manifest.id == packageId &&
                         candidate.manifest.version ==
                             registered->second.activeVersion &&
                         candidate.source == registered->second.source;
                 });
-            if (managed != packages_.end()) package = *managed;
+            if (managed != packages_->end()) package = *managed;
         }
     }
     if (!package)
     {
-        const auto selected = std::find_if(packages_.begin(),
-            packages_.end(), [&](const auto& candidate) {
+        const auto selected = std::find_if(packages_->begin(),
+            packages_->end(), [&](const auto& candidate) {
                 return candidate.manifest.id == packageId &&
                     candidate.active;
             });
-        if (selected != packages_.end()) package = *selected;
+        if (selected != packages_->end()) package = *selected;
     }
     if (!package)
     {
@@ -4057,23 +4079,23 @@ bool WidgetPackageManager::CreateDevelopmentProject(
 {
     projectRoot.clear();
     const auto existingDevelopment = std::find_if(
-        packages_.begin(), packages_.end(), [&](const auto& package)
+        packages_->begin(), packages_->end(), [&](const auto& package)
         {
             return package.development && package.manifest.id == packageId;
         });
-    if (existingDevelopment != packages_.end())
+    if (existingDevelopment != packages_->end())
     {
         error = "a development project already exists for this component";
         return false;
     }
 
     const auto installed = std::find_if(
-        packages_.begin(), packages_.end(), [&](const auto& package)
+        packages_->begin(), packages_->end(), [&](const auto& package)
         {
             return package.manifest.id == packageId && package.active &&
                 !package.builtin && !package.development;
         });
-    if (installed == packages_.end())
+    if (installed == packages_->end())
     {
         error = "the installed component is unavailable";
         return false;
@@ -4152,12 +4174,12 @@ bool WidgetPackageManager::CreateDevelopmentProject(
     }
 
     const auto created = std::find_if(
-        packages_.begin(), packages_.end(), [&](const auto& package)
+        packages_->begin(), packages_->end(), [&](const auto& package)
         {
             return package.development && package.manifest.id == packageId &&
                 package.root == destination;
         });
-    if (created == packages_.end())
+    if (created == packages_->end())
     {
         std::filesystem::remove_all(destination, ec);
         std::string refreshError;
@@ -4173,7 +4195,7 @@ bool WidgetPackageManager::SetDevelopmentOverride(
     const std::string& packageId, bool active, std::string& error)
 {
     const bool developmentExists = std::any_of(
-        packages_.begin(), packages_.end(), [&](const auto& package)
+        packages_->begin(), packages_->end(), [&](const auto& package)
         {
             return package.development &&
                 package.manifest.id == packageId;

@@ -125,7 +125,8 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         {
             const auto result = [&] {
                 snowdesktop::performance::Scope applyTrace("shared.maintenance", "steam.apply");
-                return widgetEngine_->ApplySteamWorkshopSubscriptions(ready->snapshot);
+                return widgetEngine_->ApplySteamWorkshopSubscriptions(
+                    ready->snapshot, ready->catalog, ready->plan);
             }();
             if (result.Changed())
             {
@@ -211,7 +212,7 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                 }
             }
         }
-        std::optional<decltype(WidgetEngine::ListWidgetPackages())> reconciledPackages;
+        snowdesktop::widget::InstalledPackageCatalog reconciledPackages;
         const auto targetRemoved = [&](const auto& completion) {
             const auto& expectedId = completion.expectedUnsubscribedPublishedFileId;
             if (expectedId.empty() || std::any_of(ready->snapshot.subscribedPublishedFileIds.begin(),
@@ -221,7 +222,7 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
             if (!reconciledPackages)
             {
                 snowdesktop::performance::Scope packagesTrace("shared.maintenance", "steam.unsubscribe_packages");
-                reconciledPackages.emplace(WidgetEngine::ListWidgetPackages());
+                reconciledPackages = WidgetEngine::SnapshotWidgetPackageCatalog();
             }
             return std::none_of(reconciledPackages->begin(), reconciledPackages->end(),
                 [&](const auto& package) {
@@ -328,17 +329,17 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         iconRequest.action = "autoSyncSubscriptions";
         (void)EditIconLibrary(iconRequest);
     }
-    const std::string locale = Locale::Instance().GetEffectiveLanguage();
-    const auto installedPackages = [] {
+    std::string locale = Locale::Instance().GetEffectiveLanguage();
+    auto installedPackages = [] {
         snowdesktop::performance::Scope packagesTrace("shared.maintenance", "steam.prepare.packages");
-        return WidgetEngine::ListWidgetPackages();
+        return WidgetEngine::SnapshotWidgetPackageCatalog();
     }();
-    const auto [subscriptionHistory, libraryHistory] = [] {
+    auto [subscriptionHistory, libraryHistory] = [] {
         snowdesktop::performance::Scope historyTrace("shared.maintenance", "steam.prepare.histories");
         return std::pair(WidgetEngine::GetSteamWorkshopSubscriptionHistory(),
             WidgetEngine::GetSteamWorkshopLibrarySubscriptionHistory());
     }();
-    const auto packageStaging =
+    auto packageStaging =
         WidgetEngine::GetWidgetPackagePaths().staging;
     const auto state = steamWorkshopSubscriptionPollState_;
     const HWND notifyWindow = hwnd_;
@@ -355,17 +356,18 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         state->activeQueryId = queryId;
         state->queryInFlight.store(true);
     }
-    snowdesktop::widget::WriteSteamWorkshopDiagnostic(queryId,
-        "phase=poll.begin host=" SNOWDESKTOP_VERSION " registered=" +
-        std::to_string(installedPackages.size()));
-    std::thread([state, locale, notifyWindow, queryId,
-        installedPackages, subscriptionHistory, libraryHistory, packageStaging,
+    std::thread([state, notifyWindow, queryId, locale = std::move(locale),
+        installedPackages = std::move(installedPackages),
+        subscriptionHistory = std::move(subscriptionHistory),
+        libraryHistory = std::move(libraryHistory), packageStaging = std::move(packageStaging),
         confirmedUnsubscriptions = std::move(confirmedUnsubscriptions)]() mutable
     {
         snowdesktop::performance::Scope queryTrace("shared.maintenance", "steam.query.worker");
         const auto trace = [queryId](std::string_view message) {
             snowdesktop::widget::WriteSteamWorkshopDiagnostic(queryId, message);
         };
+        trace("phase=poll.begin host=" SNOWDESKTOP_VERSION " registered=" +
+            std::to_string(installedPackages->size()));
         trace("phase=theme_probe.begin");
         // Background reconciliation consumes only Steam's local manifests and
         // completed downloads. It must never start a Steam API process.
@@ -395,13 +397,13 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         snapshot.confirmedUnsubscribedPublishedFileIds =
             std::move(confirmedUnsubscriptions);
         snowdesktop::widget::ResolveSteamWorkshopSubscriptionRemovals(
-            snapshot, subscriptionHistory, installedPackages, libraryHistory);
-        WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(snapshot,
-            installedPackages, packageStaging);
+            snapshot, subscriptionHistory, *installedPackages, libraryHistory);
+        auto plan = WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(snapshot,
+            *installedPackages, packageStaging);
         {
             std::lock_guard lock(state->mutex);
             state->ready = SteamWorkshopSubscriptionPollState::ReadyQuery{
-                queryId, std::move(snapshot)};
+                queryId, std::move(snapshot), std::move(installedPackages), std::move(plan)};
             if (state->activeQueryId == queryId)
                 state->activeQueryId = 0;
             state->queryInFlight.store(false);

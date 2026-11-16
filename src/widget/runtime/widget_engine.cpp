@@ -34004,13 +34004,18 @@ WidgetEngine::GetSteamWorkshopLibrarySubscriptionHistory()
     return GetWidgetPackageManager().SteamLibraryHistory();
 }
 
-void WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(
+snowdesktop::widget::InstalledPackageCatalog WidgetEngine::SnapshotWidgetPackageCatalog()
+{
+    return GetWidgetPackageManager().CatalogSnapshot();
+}
+
+snowdesktop::widget::SteamWorkshopSyncPlan WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(
     snowdesktop::widget::SteamWorkshopSubscriptionSnapshot& snapshot,
     const std::vector<snowdesktop::widget::InstalledPackage>& installed,
     const std::filesystem::path& stagingRoot)
 {
-    if (!snapshot.CanSynchronize()) return;
-    const auto plan = snowdesktop::widget::BuildSteamWorkshopSyncPlan(
+    if (!snapshot.CanSynchronize()) return {};
+    auto plan = snowdesktop::widget::BuildSteamWorkshopSyncPlan(
         installed, snapshot);
     const auto trace = [&](std::string_view message) {
         snowdesktop::widget::WriteSteamWorkshopDiagnostic(snapshot.diagnosticQueryId, message);
@@ -34038,7 +34043,7 @@ void WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(
     if (plan.actions.empty())
     {
         trace("phase=prepare.end prepared=0 errors=0");
-        return;
+        return plan;
     }
 
     std::error_code filesystemError;
@@ -34049,7 +34054,7 @@ void WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(
             "cannot create local Workshop staging directory: " +
             filesystemError.message());
         trace("phase=prepare.end result=failed error=" + filesystemError.message());
-        return;
+        return plan;
     }
 
     for (const auto& action : plan.actions)
@@ -34104,6 +34109,7 @@ void WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(
     }
     trace("phase=prepare.end prepared=" + std::to_string(snapshot.preparedArtifacts.size()) +
         " errors=" + std::to_string(snapshot.preparationErrors.size()));
+    return plan;
 }
 
 std::unordered_map<std::string, std::string>
@@ -34124,13 +34130,19 @@ WidgetEngine::CachedSteamWorkshopInstallFailures()
 
 snowdesktop::widget::SteamWorkshopSyncResult
 WidgetEngine::ApplySteamWorkshopSubscriptions(
-    const snowdesktop::widget::SteamWorkshopSubscriptionSnapshot& snapshot)
+    const snowdesktop::widget::SteamWorkshopSubscriptionSnapshot& snapshot,
+    const snowdesktop::widget::InstalledPackageCatalog& preparedCatalog,
+    const snowdesktop::widget::SteamWorkshopSyncPlan& preparedPlan)
 {
     auto& manager = GetWidgetPackageManager();
-    const auto plan = [&] {
+    const auto currentCatalog = manager.CatalogSnapshot();
+    std::optional<snowdesktop::widget::SteamWorkshopSyncPlan> updatedPlan;
+    if (currentCatalog != preparedCatalog)
+    {
         snowdesktop::performance::Scope planTrace("shared.maintenance", "steam.apply.plan");
-        return snowdesktop::widget::BuildSteamWorkshopSyncPlan(manager.ListPackages(), snapshot);
-    }();
+        updatedPlan.emplace(snowdesktop::widget::BuildSteamWorkshopSyncPlan(*currentCatalog, snapshot));
+    }
+    const auto& plan = updatedPlan ? *updatedPlan : preparedPlan;
     const auto trace = [&](std::string_view message) {
         snowdesktop::widget::WriteSteamWorkshopDiagnostic(snapshot.diagnosticQueryId, message);
     };
@@ -34292,7 +34304,7 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
             return std::pair(snowdesktop::widget::BuildSteamWorkshopSubscriptionHistory(
                     snapshot, manager.SteamSubscriptionHistory()),
                 snowdesktop::widget::BuildSteamWorkshopLibraryHistory(
-                    snapshot, manager.SteamLibraryHistory(), manager.ListPackages()));
+                    snapshot, manager.SteamLibraryHistory(), *manager.CatalogSnapshot()));
         }();
         snowdesktop::performance::Scope historySaveTrace("shared.maintenance", "steam.apply.history_save");
         if (!manager.UpdateSteamSubscriptionHistory(
@@ -34327,7 +34339,7 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
         " updated=" + std::to_string(result.updated) +
         " uninstalled=" + std::to_string(result.uninstalled) +
         " errors=" + std::to_string(result.errors.size()) +
-        " registered=" + std::to_string(manager.ListPackages().size()));
+        " registered=" + std::to_string(manager.CatalogSnapshot()->size()));
     return result;
 }
 

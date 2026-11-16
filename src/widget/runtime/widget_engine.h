@@ -1152,7 +1152,8 @@ public:
         GetSteamWorkshopSubscriptionHistory();
     static snowdesktop::widget::SteamLibrarySubscriptionHistory
         GetSteamWorkshopLibrarySubscriptionHistory();
-    static void PrepareSteamWorkshopSubscriptionArtifacts(
+    static snowdesktop::widget::InstalledPackageCatalog SnapshotWidgetPackageCatalog();
+    static snowdesktop::widget::SteamWorkshopSyncPlan PrepareSteamWorkshopSubscriptionArtifacts(
         snowdesktop::widget::SteamWorkshopSubscriptionSnapshot& snapshot,
         const std::vector<snowdesktop::widget::InstalledPackage>& installed,
         const std::filesystem::path& stagingRoot);
@@ -1162,8 +1163,9 @@ public:
         CachedSteamWorkshopInstallFailures();
     snowdesktop::widget::SteamWorkshopSyncResult
         ApplySteamWorkshopSubscriptions(
-            const snowdesktop::widget::SteamWorkshopSubscriptionSnapshot&
-                snapshot);
+            const snowdesktop::widget::SteamWorkshopSubscriptionSnapshot& snapshot,
+            const snowdesktop::widget::InstalledPackageCatalog& preparedCatalog,
+            const snowdesktop::widget::SteamWorkshopSyncPlan& preparedPlan);
     bool InstallAndVerifyWidgetPackageFromSource(
         const std::string& providerId, const std::string& externalItemId,
         const std::string& version, std::wstring& error,

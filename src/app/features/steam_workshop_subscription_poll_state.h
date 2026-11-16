@@ -15,6 +15,8 @@ struct SteamWorkshopSubscriptionPollState {
     {
         std::uint64_t queryId = 0;
         snowdesktop::widget::SteamWorkshopSubscriptionSnapshot snapshot;
+        snowdesktop::widget::InstalledPackageCatalog catalog;
+        snowdesktop::widget::SteamWorkshopSyncPlan plan;
     };
     struct SettingsCompletion
     {
