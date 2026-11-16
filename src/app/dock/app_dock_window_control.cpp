@@ -367,7 +367,10 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
 
     if (!found)
         return false;
-    anchor = dock->GetElementVisualRect(anchor, clientPoint);
+    // Keep window previews anchored to the slot in single-icon mode, even
+    // while the icon grows or shifts during the hover animation.
+    if (dockSettings_.hoverEffect != 1)
+        anchor = dock->GetElementVisualRect(anchor, clientPoint);
     target.identityKey =
         DockWindowPreviewIdentityKey(target.identity);
     if (target.identityKey.empty())
@@ -398,10 +401,8 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
         dockWindowPreview_->IsVisible();
     const bool previewMatchesTarget =
         hasTarget && dockWindowPreviewKey_ == target.targetToken;
-    // The target token covers only the app identity. Dock magnification
-    // keeps shifting the icon's visual rect while the preview is open, so a
-    // matching identity with a moved anchor must follow in place instead of
-    // tearing the preview down and re-showing it.
+    // The target token covers only the app identity. Update a moved anchor
+    // in place when the preview still belongs to the same app.
     const DockPreviewHoverTransition transition =
         dockWindowPreviewHover_.UpdateTarget(
             hasTarget ? target.targetToken : std::wstring{},
