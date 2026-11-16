@@ -1680,7 +1680,8 @@ private:
      */
     bool HitTestPopupForDrag(POINT client, Container*& targetContainer, Slot*& targetSlot, HitRegion& targetRegion);
     /** @brief 清除所有选中项。 */
-    bool ClearSelection();
+    // The return value ignores the local widget's own selection outline.
+    bool ClearSelection(const DesktopWidget* localWidget = nullptr);
     void ClearSelectionForExternalWindow(HWND window);
     /**
      * @brief 判断指定的桌面项是否存在于任一部件中。
@@ -1701,7 +1702,7 @@ private:
     /** @brief 仅选择指定索引的桌面项。 @param index 桌面项索引 */
     void SelectOnly(int index);
     /** @brief 仅选中指定索引的部件。 @param index 部件索引 */
-    void SelectWidgetOnly(size_t index);
+    bool SelectWidgetOnly(size_t index);
     /** @brief 切换指定桌面项的选择状态。 @param index 桌面项索引 */
     void ToggleSelection(int index);
     std::vector<SelectionController::Target> GetDesktopSelectionTargets(

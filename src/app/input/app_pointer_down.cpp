@@ -37,6 +37,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     // receive WM_KILLFOCUS. Finish before hit testing can change its target.
     if (renameController_.IsActive())
         CommitRename(false);
+    const bool hadKeyboardVisualFocus = keyboardNavVisualFocus_;
     keyboardNavVisualFocus_ = false;
     ClearPopupMouseDownItem();
     ClearPopupDragTarget();
@@ -944,10 +945,9 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         // An input field owns its pointer interaction. Do not select the
         // containing Lua widget here, otherwise the outer blue selection
         // frame appears on top of the field and disrupts live editing.
-        if (hostInputArea)
-            ClearSelection();
-        else
-            SelectWidgetOnly(wi);
+        const bool otherSelectionChanged = hostInputArea
+            ? ClearSelection(&ResolveLuaWidgetFrameOwner(widgets_[wi]))
+            : SelectWidgetOnly(wi);
         mouseDownWidgetIndex_ = wi;
         mouseDownHit_ = nullptr;
         snowdesktop::private_pointer::SetPointerCapture(hwnd_);
@@ -964,7 +964,13 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             else
                 UpdateHostInputImePosition();
         }
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        if (hadKeyboardVisualFocus || otherSelectionChanged || IsRectEmpty(&luaFrame))
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        else
+        {
+            InflateRect(&luaFrame, 4, 4);
+            InvalidateRect(hwnd_, &luaFrame, FALSE);
+        }
         return;
     }
 

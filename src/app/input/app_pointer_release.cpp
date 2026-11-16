@@ -1397,7 +1397,10 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
     {
         if (HandleDockClickRelease(upPoint))
             return;
+        const bool otherSelectionDamage = marqueeActive_ || dockPressedContainer_ ||
+            pendingCtrlToggleDesktopIndex_ < items_.size() || pendingCtrlToggleWidgetItem_;
         ClearDockPressedState();
+        RECT luaDamage{};
         if (mouseDownWidgetIndex_ < widgets_.size() &&
             IsLuaDesktopSurface(widgets_[mouseDownWidgetIndex_]) &&
             widgetEngine_)
@@ -1447,6 +1450,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             }
             else if (loaded)
             {
+                luaDamage = frame;
                 const bool pointerCaptured =
                     widgetEngine_->HasInteractionPointerCapture(
                         luaContent->id);
@@ -1502,7 +1506,13 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         ++expectedCaptureReleaseDepth_;
         snowdesktop::private_pointer::ReleasePointerCapture();
         --expectedCaptureReleaseDepth_;
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        if (otherSelectionDamage || IsRectEmpty(&luaDamage))
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        else
+        {
+            InflateRect(&luaDamage, 4, 4);
+            InvalidateRect(hwnd_, &luaDamage, FALSE);
+        }
         return;
     }
 

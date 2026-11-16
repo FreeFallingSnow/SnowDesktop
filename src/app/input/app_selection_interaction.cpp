@@ -248,7 +248,7 @@ bool DesktopApp::IsMarqueePointerGesturePendingOrActive() const
         luaWidgetPanelMouseDown_, hasMarqueeTarget);
 }
 
-bool DesktopApp::ClearSelection()
+bool DesktopApp::ClearSelection(const DesktopWidget* localWidget)
 {
     bool changed = keyboardNavVisualFocus_;
     for (const auto& container : containers_)
@@ -262,7 +262,7 @@ bool DesktopApp::ClearSelection()
 
     changed |= selectionController_.ClearAll(
         items_, dockEntries_,
-        dockUnpinnedRunningApps_, widgets_);
+        dockUnpinnedRunningApps_, widgets_, localWidget);
     keyboardNavInsideWidget_ = false;
     keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
     keyboardNavMemberIndex_ = -1;
@@ -881,15 +881,17 @@ void DesktopApp::UpdateMarqueeSelection(POINT current)
  * @brief 仅选中指定小部件（清除其他所有选中状态）
  * @param index 小部件索引
  */
-void DesktopApp::SelectWidgetOnly(size_t index)
+bool DesktopApp::SelectWidgetOnly(size_t index)
 {
-    if (index >= widgets_.size()) return;
+    if (index >= widgets_.size()) return false;
     index = FindWidgetIndexById(ResolveLuaWidgetFrameOwner(widgets_[index]).id);
-    ClearSelection();
+    if (index >= widgets_.size()) return false;
+    const bool otherSelectionChanged = ClearSelection(&widgets_[index]);
     selectionController_.SelectWidget(widgets_, index);
     const auto* content = ResolveLuaWidgetContent(&widgets_[index]);
     if (widgetEngine_ && content && widgetEngine_->EnsureWidgetLoaded(content->id, content->packageId))
         widgetEngine_->InvokeSelected(content->id);
+    return otherSelectionChanged;
 }
 
 /**
