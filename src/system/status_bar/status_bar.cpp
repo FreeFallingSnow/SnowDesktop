@@ -1842,12 +1842,15 @@ struct StatusBar::Impl
                     const auto key = std::exchange(self->pressedTray, {});
                     const bool dragging = std::exchange(self->trayDragging, false);
                     POINT screen{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)}; ClientToScreen(window, &screen);
+                    bool dropped = false;
                     self->UpdateInteraction([&] {
                         self->EndDragFeedback(); ReleaseCapture(); self->interaction.CancelPointer();
+                        // Present the indicator removal and local reorder together.
+                        if (dragging) dropped = self->owner.Drop(key, screen);
                     });
                     if (dragging)
                     {
-                        if (!self->owner.Drop(key, screen) && self->owner.dropOutside) self->owner.dropOutside(key, screen);
+                        if (!dropped && self->owner.dropOutside) self->owner.dropOutside(key, screen);
                     }
                     else if (self->owner.tray && std::any_of(self->items.begin(), self->items.end(), [&](const auto& item) {
                         return item.icon && item.icon->key == key && PtInRect(&item.bounds, {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
@@ -2218,9 +2221,23 @@ struct StatusBar::Impl
     bool Drop(std::string_view key,POINT point)
     {
         const auto target=FindDrop(key,point);
-        if(target&&tray::PlaceIcon(settings,tray->Current(),key,target->pinned,target->before))
-        {const auto value=settings;const auto callback=trayChanged;if(callback)callback(value);return true;}
-        return false;
+        if (!target) return false;
+        auto next = settings;
+        if (!tray::PlaceIcon(next, tray->Current(), key, target->pinned, target->before)) return false;
+        if (next != settings)
+        {
+            UpdateTrayPlacement(next);
+            const auto callback = trayChanged;
+            if (callback) callback(next);
+        }
+        return true;
+    }
+    void UpdateTrayPlacement(const StatusBarSettings& next)
+    {
+        settings.pinnedTrayItems = next.pinnedTrayItems;
+        settings.trayOrder = next.trayOrder;
+        for (const auto& [id, window] : windows)
+            if (window) window->Paint(false, true);
     }
     Impl(std::shared_ptr<widget_runtime::WidgetSystemDataProvider> source,
         Activate action, Hidden hide, Error report, DrawBackground draw, std::shared_ptr<tray::Service> shared)
@@ -2644,12 +2661,38 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
 {
     NormalizeStatusBarSettings(settings);
     auto& self = *impl_;
+    const auto& nextTooltip = tooltipAppearance ? *tooltipAppearance : global;
+    if (settings.enabled && !monitors.empty() && self.tray &&
+        self.composition.Get() == composition && self.text.Get() == text &&
+        self.globalAppearance == global && self.tooltipAppearance == nextTooltip &&
+        (settings.pinnedTrayItems != self.settings.pinnedTrayItems || settings.trayOrder != self.settings.trayOrder) &&
+        self.windows.size() == monitors.size() &&
+        std::all_of(monitors.begin(), monitors.end(), [&](const auto& monitor) {
+            const auto found = self.windows.find(monitor.id);
+            if (found == self.windows.end() || !found->second) return false;
+            const auto& window = *found->second;
+            return window.positioned && window.monitor == monitor.monitor &&
+                window.mergedDockHeight == monitor.mergedDockHeight &&
+                window.reserveSpace == ReserveIndependentStatusBarSpace(monitor.mergedDockHeight != 0,
+                    monitor.reserveSpace, settings.showOnlyWhenSummoned);
+        }))
+    {
+        auto comparable = self.settings;
+        comparable.pinnedTrayItems = settings.pinnedTrayItems;
+        comparable.trayOrder = settings.trayOrder;
+        if (comparable == settings)
+        {
+            // Ordering changes the content frame without invalidating the AppBar or its backdrop.
+            self.UpdateTrayPlacement(settings);
+            return;
+        }
+    }
     const bool changed = settings != self.settings || global != self.globalAppearance;
     const bool revealChanged = settings.showOnlyWhenSummoned != self.settings.showOnlyWhenSummoned ||
         settings.edgeRevealGesture != self.settings.edgeRevealGesture || settings.position != self.settings.position;
     self.settings = std::move(settings);
     self.globalAppearance = global;
-    self.tooltipAppearance = tooltipAppearance ? *tooltipAppearance : global;
+    self.tooltipAppearance = nextTooltip;
     self.drawTooltipBackground = std::move(drawTooltipBackground);
     if (self.composition.Get() != composition)
         ReleaseGraphicsResources();

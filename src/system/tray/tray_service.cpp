@@ -14,7 +14,10 @@
 #include "taskbar_hook/tray_menu_first_show.h"
 #include "platform/hook_registration_retry.h"
 #include "data/data_paths.h"
+#include <winternl.h>
 #include <atomic>
+#include <bit>
+#include <cwchar>
 #include <future>
 #include <thread>
 
@@ -30,23 +33,80 @@ std::string Utf8(const std::wstring& text)
     WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), size, nullptr, nullptr);
     return result;
 }
+std::wstring QueryProcessImageById(DWORD processId)
+{
+    // Some tray owners expose their executable through the PID query even
+    // when Windows declines to grant a process handle. This optional native
+    // information class returns a device path and may be unavailable.
+    constexpr auto processIdInformation = static_cast<SYSTEM_INFORMATION_CLASS>(88);
+    struct ProcessIdInformation { HANDLE processId; UNICODE_STRING imageName; };
+    using Query = NTSTATUS(NTAPI*)(SYSTEM_INFORMATION_CLASS, PVOID, ULONG, PULONG);
+    static const auto query = std::bit_cast<Query>(
+        GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQuerySystemInformation"));
+    if (!query) return {};
+
+    std::wstring buffer(32767, L'\0');
+    ProcessIdInformation request{ULongToHandle(processId),
+        {0, static_cast<USHORT>(buffer.size() * sizeof(wchar_t)), buffer.data()}};
+    if (query(processIdInformation, &request, sizeof(request), nullptr) < 0 ||
+        request.imageName.Buffer != buffer.data() ||
+        request.imageName.Length > buffer.size() * sizeof(wchar_t) ||
+        request.imageName.Length % sizeof(wchar_t) != 0)
+        return {};
+
+    const std::wstring_view devicePath(buffer.data(), request.imageName.Length / sizeof(wchar_t));
+    // Use the same Win32 path format as QueryFullProcessImageNameW so access
+    // changes do not create a second saved identity for the same icon.
+    const DWORD drives = GetLogicalDrives();
+    wchar_t drive[]{L'A', L':', L'\0'};
+    std::wstring path;
+    std::size_t prefixLength = 0;
+    for (unsigned i = 0; i < 26; ++i)
+    {
+        if (!(drives & (DWORD{1} << i))) continue;
+        drive[0] = static_cast<wchar_t>(L'A' + i);
+        wchar_t target[2048];
+        if (!QueryDosDeviceW(drive, target, static_cast<DWORD>(std::size(target)))) continue;
+        const auto length = std::wcslen(target);
+        if (length > prefixLength && devicePath.size() > length && devicePath[length] == L'\\' &&
+            CompareStringOrdinal(devicePath.data(), static_cast<int>(length), target, static_cast<int>(length), TRUE) == CSTR_EQUAL)
+        {
+            path.assign(drive);
+            path.append(devicePath.substr(length));
+            prefixLength = length;
+        }
+    }
+    return path;
+}
+
 void ResolveApplication(Icon& icon)
 {
     if (!icon.application.empty()) return;
-    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, icon.identity.process);
-    if (!process) return;
-    wchar_t path[32768]{}; DWORD count = static_cast<DWORD>(std::size(path));
-    if (QueryFullProcessImageNameW(process, 0, path, &count))
+    const auto pid = icon.identity.process;
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    DWORD error = process ? ERROR_SUCCESS : GetLastError();
+    if (process)
     {
-        icon.application.assign(path, count);
-        if (icon.persistentKey.empty())
-        {
-            std::wstring normalized = icon.application;
-            CharLowerBuffW(normalized.data(), static_cast<DWORD>(normalized.size()));
-            icon.persistentKey = "app:" + Utf8(normalized) + ":" + std::to_string(icon.identity.id);
-        }
+        wchar_t path[32768]{};
+        DWORD count = static_cast<DWORD>(std::size(path));
+        const BOOL resolved = QueryFullProcessImageNameW(process, 0, path, &count);
+        if (!resolved) error = GetLastError();
+        CloseHandle(process);
+        if (resolved) icon.application.assign(path, count);
     }
-    CloseHandle(process);
+    if (error == ERROR_ACCESS_DENIED)
+    {
+        // The PID query does not hold a process handle. Confirm that the
+        // registered HWND still belongs to this process after resolving it.
+        auto path = QueryProcessImageById(pid);
+        DWORD owner = 0;
+        if (!path.empty() && GetWindowThreadProcessId(reinterpret_cast<HWND>(icon.identity.window), &owner) && owner == pid)
+            icon.application = std::move(path);
+    }
+    if (icon.application.empty() || !icon.persistentKey.empty()) return;
+    auto normalized = icon.application;
+    CharLowerBuffW(normalized.data(), static_cast<DWORD>(normalized.size()));
+    icon.persistentKey = "app:" + Utf8(normalized) + ":" + std::to_string(icon.identity.id);
 }
 
 bool ApplicationIs(const Icon& icon, const wchar_t* expected)
