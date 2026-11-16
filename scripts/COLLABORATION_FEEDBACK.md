@@ -116,6 +116,8 @@
 
 ### CF-010 等待结束回执过大
 
+- **单任务状态查询（2026-11-16）**：Task `task-c4672fc2024d4b49b86093109d956516` 用 `scripts/build.bat status task-c4672fc2024d4b49b86093109d956516` 核对批次 `225f0675906f49d89daa16aa7d9a955d` 的编辑修订，回执仍包含全局历史并被工具截断（chunk `ae2715`）。已从批次成员和目标 Task 字段恢复修订，继续原批次，未为反馈重复查询或构建。单任务状态查询仍需要默认窄回执，完整历史按需读取。
+
 - **工坊管理器定向编译终态（2026-11-15）**：Task `workshop-tag-shortcuts`、批次 `51db66e07c034a55bf500c67dcf7516b` 修订 0、Run `2dee1c34d3824199bf02e92a723e5810`。`run wait -Task workshop-tag-shortcuts -RunId 2dee1c34d3824199bf02e92a723e5810 -Seconds 60` 返回 `passed`，但同回执包含请求、runner 文件列表与全部阶段，工具记录 2029 行并截断（chunk `041dca`）。终态默认精简、完整历史另取的缺口仍存在。在后续调查中复用原记录，未重跑此请求。
 
 - **毛玻璃路径认领冲突后的状态查询（2026-11-15）**：Task `task-b9ff6102968348489b9cabee59b69358`、批次 `08000882cb61448595c027f89c5699f0`、编辑修订 0。`claim` 因 `dock-rim-backdrop` 持有 `src/app/render/app_bitmap_cache.cpp` 被拒绝。随后的 `scripts/build.bat status -Batch 08000882cb61448595c027f89c5699f0` 返回全局任务历史，工具输出被截断（chunk `d63343`）。用 `current.batch.participants` 与相关 Task 字段的窄投影核对同批归属。复用上面的指定批次状态回执缺口，当时未重交构建。

@@ -123,9 +123,10 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         std::wstring synchronizationMessage;
         if (ready->snapshot.CanSynchronize())
         {
-            const auto result =
-                widgetEngine_->ApplySteamWorkshopSubscriptions(
-                    ready->snapshot);
+            const auto result = [&] {
+                snowdesktop::performance::Scope applyTrace("shared.maintenance", "steam.apply");
+                return widgetEngine_->ApplySteamWorkshopSubscriptions(ready->snapshot);
+            }();
             if (result.Changed())
             {
                 ReloadItems(false);
@@ -210,28 +211,30 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                 }
             }
         }
-        const auto reconciledPackages = WidgetEngine::ListWidgetPackages();
+        std::optional<decltype(WidgetEngine::ListWidgetPackages())> reconciledPackages;
         const auto targetRemoved = [&](const auto& completion) {
             const auto& expectedId = completion.expectedUnsubscribedPublishedFileId;
-            return !expectedId.empty() &&
-                std::none_of(ready->snapshot.subscribedPublishedFileIds.begin(),
+            if (expectedId.empty() || std::any_of(ready->snapshot.subscribedPublishedFileIds.begin(),
                     ready->snapshot.subscribedPublishedFileIds.end(), [&](const auto& value) {
                         return snowdesktop::widget::SteamPublishedFileId(value) == expectedId;
-                    }) &&
-                std::none_of(reconciledPackages.begin(), reconciledPackages.end(),
-                    [&](const auto& package) {
-                        if (package.builtin || package.development) return false;
-                        return (package.source.providerId == "steam-workshop" &&
-                            snowdesktop::widget::SteamPublishedFileId(package.source.externalItemId) == expectedId) ||
-                            std::find(completion.expectedRemovedPackageIds.begin(),
-                                completion.expectedRemovedPackageIds.end(), package.manifest.id) !=
-                                    completion.expectedRemovedPackageIds.end();
-                    });
+                    })) return false;
+            if (!reconciledPackages)
+            {
+                snowdesktop::performance::Scope packagesTrace("shared.maintenance", "steam.unsubscribe_packages");
+                reconciledPackages.emplace(WidgetEngine::ListWidgetPackages());
+            }
+            return std::none_of(reconciledPackages->begin(), reconciledPackages->end(),
+                [&](const auto& package) {
+                    if (package.builtin || package.development) return false;
+                    return (package.source.providerId == "steam-workshop" &&
+                        snowdesktop::widget::SteamPublishedFileId(package.source.externalItemId) == expectedId) ||
+                        std::find(completion.expectedRemovedPackageIds.begin(),
+                            completion.expectedRemovedPackageIds.end(), package.manifest.id) !=
+                                completion.expectedRemovedPackageIds.end();
+                });
         };
-        const bool hasReconciledUnsubscribe = std::any_of(
-            completions.begin(), completions.end(), targetRemoved);
-        if (ready->snapshot.CanSynchronize() && hasReconciledUnsubscribe &&
-            !hostReloaded)
+        if (ready->snapshot.CanSynchronize() && !hostReloaded &&
+            std::any_of(completions.begin(), completions.end(), targetRemoved))
         {
             // Run the same host reconciliation pass even if the managed
             // package was already absent. Completion means both the package
@@ -242,7 +245,10 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
             hostReloaded = true;
         }
         if (settingsWindow_)
+        {
+            snowdesktop::performance::Scope settingsTrace("shared.maintenance", "steam.settings_refresh");
             settingsWindow_->RefreshWidgetsPage();
+        }
         snowdesktop::widget::WriteSteamWorkshopDiagnostic(ready->queryId,
             "phase=poll.reconciled success=" + std::to_string(synchronizationSucceeded) +
             " hostReloaded=" + std::to_string(hostReloaded));
