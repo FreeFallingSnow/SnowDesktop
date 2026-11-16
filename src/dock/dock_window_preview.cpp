@@ -241,22 +241,30 @@ POINT PreviewSwitchOffset(const RECT& previous, const RECT& next, DockPosition p
 void SetPreviewCardRegion(HWND window, const RECT& card, UINT dpi, BOOL redraw,
     const RECT* clip = nullptr)
 {
-    const int radius = ScaleForDpi(14, dpi);
-    const HRGN region = CreateRoundRectRgn(
-        0, 0, card.right - card.left + 1, card.bottom - card.top + 1, radius, radius);
-    if (!region) return;
-    if (clip)
-    {
-        const HRGN clipRegion = CreateRectRgnIndirect(clip);
-        if (!clipRegion || CombineRgn(region, region, clipRegion, RGN_AND) == ERROR)
-        {
-            if (clipRegion) DeleteObject(clipRegion);
-            DeleteObject(region);
-            return;
-        }
-        DeleteObject(clipRegion);
-    }
-    if (!SetWindowRgn(window, region, redraw)) DeleteObject(region);
+    const RECT bounds = clip ? *clip :
+        RECT{0, 0, card.right - card.left + 1, card.bottom - card.top + 1};
+    const int corner = clip ? std::max(4, ScaleForDpi(8, dpi)) : ScaleForDpi(14, dpi);
+    const LONG radius = std::min<LONG>(corner,
+        std::min(bounds.right - bounds.left, bounds.bottom - bounds.top));
+    const HRGN region = IsRectEmpty(&bounds) ? CreateRectRgn(0, 0, 0, 0) :
+        CreateRoundRectRgn(bounds.left, bounds.top, bounds.right, bounds.bottom, radius, radius);
+    if (region && !SetWindowRgn(window, region, redraw)) DeleteObject(region);
+}
+
+RECT PreviewCardClip(const RECT& card, const RECT& panelClip)
+{
+    RECT clip{};
+    if (IntersectRect(&clip, &card, &panelClip))
+        OffsetRect(&clip, -card.left, -card.top);
+    return clip;
+}
+
+LONG MapThumbnailEdge(LONG coordinate, LONG destinationOrigin, LONG destinationLength,
+    LONG sourceOrigin, LONG sourceLength, bool roundUp)
+{
+    const auto scaled = static_cast<std::int64_t>(coordinate - destinationOrigin) * sourceLength;
+    return sourceOrigin + static_cast<LONG>(
+        (scaled + (roundUp ? destinationLength - 1 : 0)) / destinationLength);
 }
 
 } // namespace
@@ -913,8 +921,9 @@ void DockWindowPreview::Show(
     }
 
     const BOOL darkMode = lightTheme_ ? FALSE : TRUE;
-    const DWM_WINDOW_CORNER_PREFERENCE corner =
-        DWMWCP_ROUNDSMALL;
+    // The card paints and clips its own changing outline.
+    const DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_DONOTROUND;
+    const COLORREF systemBorder = DWMWA_COLOR_NONE;
     const bool useDockLayer =
         dockLayerOwner &&
         IsWindow(dockLayerOwner);
@@ -941,6 +950,8 @@ void DockWindowPreview::Show(
             &darkMode, sizeof(darkMode));
         DwmSetWindowAttribute(window, DWMWA_WINDOW_CORNER_PREFERENCE,
             &corner, sizeof(corner));
+        DwmSetWindowAttribute(window, DWMWA_BORDER_COLOR,
+            &systemBorder, sizeof(systemBorder));
         const HWND currentOwner = reinterpret_cast<HWND>(
             GetWindowLongPtrW(window, GWLP_HWNDPARENT));
         if (currentOwner != requestedOwner)
@@ -975,7 +986,7 @@ void DockWindowPreview::Show(
         RECT client{};
         if (GetClientRect(window, &client)) PaintToolbar(nullptr, index, client);
     }
-    if (slideVisibleFraction_ < 1.0) ApplySlideClip(slideVisibleFraction_);
+    if (slideVisibleFraction_ < 1.0) ApplySlideClip(slideVisibleFraction_, true);
     if (startSlide) StartSlide();
     if (!wasVisible && IsVisible() && visibilityChanged_) visibilityChanged_();
     UpdateToolbarTooltips();
@@ -1078,6 +1089,7 @@ void DockWindowPreview::RegisterThumbnails()
     snowdesktop::performance::Scope trace("dock.preview", "thumbnails.register");
     ReleaseThumbnails(thumbnails_);
     thumbnails_.swap(measuredThumbnails_);
+    thumbnailProperties_.assign(items_.size(), {});
     for (size_t index = 0; index < items_.size(); ++index)
     {
         HTHUMBNAIL thumbnail = thumbnails_[index];
@@ -1119,13 +1131,60 @@ void DockWindowPreview::RegisterThumbnails()
             continue;
         }
         thumbnails_[index] = thumbnail;
+        thumbnailProperties_[index] = properties;
     }
 }
 
 void DockWindowPreview::UnregisterThumbnails()
 {
     ReleaseThumbnails(thumbnails_);
+    thumbnailProperties_.clear();
     ReleaseThumbnails(measuredThumbnails_);
+}
+
+void DockWindowPreview::ApplyThumbnailClip(size_t index, const RECT* clip)
+{
+    if (index >= thumbnails_.size() || index >= thumbnailProperties_.size() || !thumbnails_[index])
+        return;
+    const auto& full = thumbnailProperties_[index];
+    auto properties = full;
+    if (clip)
+    {
+        RECT interior = *clip;
+        InflateRect(&interior, -1, -1); // Reserve the moving card outline.
+        RECT destination{};
+        if (!IntersectRect(&destination, &full.rcDestination, &interior))
+            properties.fVisible = FALSE;
+        else if (!EqualRect(&destination, &full.rcDestination))
+        {
+            if (!(full.dwFlags & DWM_TNP_RECTSOURCE))
+                properties.fVisible = FALSE;
+            else
+            {
+                const RECT& target = full.rcDestination;
+                const RECT& source = full.rcSource;
+                const LONG targetWidth = target.right - target.left;
+                const LONG targetHeight = target.bottom - target.top;
+                const LONG sourceWidth = source.right - source.left;
+                const LONG sourceHeight = source.bottom - source.top;
+                properties.rcDestination = destination;
+                properties.rcSource = {
+                    MapThumbnailEdge(destination.left, target.left, targetWidth, source.left, sourceWidth, false),
+                    MapThumbnailEdge(destination.top, target.top, targetHeight, source.top, sourceHeight, false),
+                    MapThumbnailEdge(destination.right, target.left, targetWidth, source.left, sourceWidth, true),
+                    MapThumbnailEdge(destination.bottom, target.top, targetHeight, source.top, sourceHeight, true)
+                };
+            }
+        }
+    }
+    const HRESULT result = DwmUpdateThumbnailProperties(thumbnails_[index], &properties);
+    if (clip && FAILED(result))
+    {
+        // A rejected crop must not leave the previous, larger thumbnail on screen.
+        DWM_THUMBNAIL_PROPERTIES hidden{};
+        hidden.dwFlags = DWM_TNP_VISIBLE;
+        DwmUpdateThumbnailProperties(thumbnails_[index], &hidden);
+    }
 }
 
 void DockWindowPreview::UpdateAnchor(
@@ -1184,7 +1243,7 @@ void DockWindowPreview::UpdateAnchor(
             previous.bottom - previous.top != desired.bottom - desired.top)
             SetPreviewCardRegion(windows_[index], card, dpi_, FALSE);
     }
-    if (layoutChanged && slideVisibleFraction_ < 1.0) ApplySlideClip(slideVisibleFraction_);
+    if (layoutChanged && slideVisibleFraction_ < 1.0) ApplySlideClip(slideVisibleFraction_, true);
     if (layoutChanged) UpdateToolbarTooltips();
     InvalidatePopups();
     RefreshPointerTracking(layoutChanged);
@@ -1206,10 +1265,12 @@ void DockWindowPreview::StartSlide(POINT destination)
             const double progress = snowdesktop::animation::RuntimeAnimationsEnabled()
                 ? std::clamp((now - started) / duration, 0.0, 1.0) : 1.0;
             const double remaining = 1.0 - progress;
-            const double eased = remaining * remaining * remaining;
+            const double eased = animateClip
+                ? progress * progress * (3.0 - 2.0 * progress)
+                : 1.0 - remaining * remaining * remaining;
             const POINT offset{
-                destination.x + std::lround((origin.x - destination.x) * eased),
-                destination.y + std::lround((origin.y - destination.y) * eased)
+                std::lround(std::lerp(static_cast<double>(origin.x), static_cast<double>(destination.x), eased)),
+                std::lround(std::lerp(static_cast<double>(origin.y), static_cast<double>(destination.y), eased))
             };
             if (offset.x != slideOffset_.x || offset.y != slideOffset_.y)
             {
@@ -1219,10 +1280,7 @@ void DockWindowPreview::StartSlide(POINT destination)
             if (animateClip)
             {
                 if (progress < 1.0 || !slideClosing_)
-                {
-                    const double reveal = progress * progress * (3.0 - 2.0 * progress);
-                    ApplySlideClip(std::lerp(visibleFrom, visibleTo, reveal));
-                }
+                    ApplySlideClip(std::lerp(visibleFrom, visibleTo, eased));
                 if (progress < 1.0) return true;
             }
             else if (offset.x != destination.x || offset.y != destination.y) return true;
@@ -1273,9 +1331,8 @@ void DockWindowPreview::MoveSlideCards()
     }
 }
 
-void DockWindowPreview::ApplySlideClip(double visibleFraction)
+RECT DockWindowPreview::SlideVisibleBounds(double visibleFraction) const
 {
-    slideVisibleFraction_ = visibleFraction;
     RECT visible{0, 0, panelSize_.cx, panelSize_.cy};
     const LONG width = static_cast<LONG>(std::ceil(panelSize_.cx * visibleFraction));
     const LONG height = static_cast<LONG>(std::ceil(panelSize_.cy * visibleFraction));
@@ -1286,6 +1343,15 @@ void DockWindowPreview::ApplySlideClip(double visibleFraction)
     case DockPosition::Right: visible.left = panelSize_.cx - width; break;
     default: visible.top = panelSize_.cy - height; break;
     }
+    return visible;
+}
+
+void DockWindowPreview::ApplySlideClip(double visibleFraction, bool layoutChanged)
+{
+    const RECT previous = SlideVisibleBounds(slideVisibleFraction_);
+    const RECT visible = SlideVisibleBounds(visibleFraction);
+    slideVisibleFraction_ = visibleFraction;
+    if (!layoutChanged && EqualRect(&previous, &visible)) return;
 
     // Clip against the whole panel so a multi-row group retracts along one
     // edge. The live thumbnails keep their original proportions.
@@ -1295,12 +1361,20 @@ void DockWindowPreview::ApplySlideClip(double visibleFraction)
         const HWND window = windows_[index];
         if (!window) continue;
         const RECT& card = cardRects_[index];
-        RECT clip{};
-        IntersectRect(&clip, &card, &visible);
-        const bool full = visibleFraction >= 1.0 || EqualRect(&clip, &card);
-        OffsetRect(&clip, -card.left, -card.top);
-        SetPreviewCardRegion(window, card, dpi_, IsWindowVisible(window), full ? nullptr : &clip);
-        ApplyToolbarClip(window, full ? nullptr : &clip);
+        const RECT clip = PreviewCardClip(card, visible);
+        const RECT oldClip = PreviewCardClip(card, previous);
+        if (!layoutChanged && EqualRect(&oldClip, &clip)) continue;
+        const RECT* partial = (clip.right - clip.left == card.right - card.left &&
+            clip.bottom - clip.top == card.bottom - card.top) ? nullptr : &clip;
+        const BOOL redraw = IsWindowVisible(window);
+        SetPreviewCardRegion(window, card, dpi_, redraw, partial);
+        ApplyThumbnailClip(index, partial);
+        ApplyToolbarClip(window, partial);
+        if (redraw && !IsRectEmpty(&clip))
+        {
+            InvalidateRect(window, &clip, FALSE);
+            UpdateWindow(window);
+        }
     }
 }
 
@@ -1343,6 +1417,8 @@ void DockWindowPreview::RemoveWindow(HWND window)
         ReleaseThumbnail(thumbnails_[index]);
         thumbnails_.erase(thumbnails_.begin() + index);
     }
+    if (index < thumbnailProperties_.size())
+        thumbnailProperties_.erase(thumbnailProperties_.begin() + index);
     ReleaseThumbnails(measuredThumbnails_);
     if (popup) DestroyWindow(popup);
     const POINT anchorCenter{(anchorScreen_.left + anchorScreen_.right) / 2,
@@ -1487,6 +1563,7 @@ bool DockWindowPreview::IsCleared() const
         cardRects_.empty() &&
         thumbnailRects_.empty() &&
         thumbnails_.empty() &&
+        thumbnailProperties_.empty() &&
         measuredThumbnails_.empty() &&
         !windowPeek_.Active() && !peekCandidate_.window &&
         !peekTimerWindow_ && !peekSuppressedWindow_ && !peekOwner_ &&
@@ -1576,13 +1653,19 @@ void DockWindowPreview::Paint(HWND window)
     if (index < cardRects_.size() && index < items_.size())
     {
         const RECT& bounds = client;
+        const RECT outlineBounds = slideVisibleFraction_ < 1.0
+            ? PreviewCardClip(cardRects_[index], SlideVisibleBounds(slideVisibleFraction_))
+            : bounds;
+        const LONG outlineCorner = std::min<LONG>(corner,
+            std::min(outlineBounds.right - outlineBounds.left, outlineBounds.bottom - outlineBounds.top));
         HBRUSH fill = CreateSolidBrush(
             static_cast<int>(index) == hoveredIndex_ ? hovered : card);
         HPEN outline = CreatePen(PS_SOLID, 1, border);
         HGDIOBJ oldBrush = SelectObject(dc, fill);
         HGDIOBJ oldPen = SelectObject(dc, outline);
-        RoundRect(dc, bounds.left, bounds.top, bounds.right, bounds.bottom,
-            corner, corner);
+        if (!IsRectEmpty(&outlineBounds))
+            RoundRect(dc, outlineBounds.left, outlineBounds.top, outlineBounds.right, outlineBounds.bottom,
+                outlineCorner, outlineCorner);
         SelectObject(dc, oldPen);
         SelectObject(dc, oldBrush);
         DeleteObject(outline);
