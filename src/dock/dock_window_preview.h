@@ -80,6 +80,7 @@ public:
         };
     }
     void Hide();
+    void Dismiss();
     void RemoveWindow(HWND window);
     void UpdateItems(const std::vector<DockWindowPreviewItem>& items);
     // One-shot input provenance survives card reflow and final-card Hide.
@@ -87,11 +88,13 @@ public:
     void ObserveForwardedPointer(UINT message, DWORD time);
     bool RetainsCloseForeground(HWND foreground);
     void ReleaseCloseRetention() { closeRetentionUntil_ = 0; }
-    bool IsAwaitingPointerEntry() const { return IsVisible() && pointerSession_ == PointerSession::AwaitingEntry; }
+    bool IsAwaitingPointerEntry() const
+    { return !slideClosing_ && IsVisible() && pointerSession_ == PointerSession::AwaitingEntry; }
     void ScheduleHide();
     void ScheduleDockHide();
     void KeepVisible();
     bool IsVisible() const;
+    bool IsClosing() const { return slideClosing_; }
     bool IsCleared() const;
     bool IsShowingWindow(HWND window) const;
     bool ContainsInteractionPoint(POINT screenPoint) const;
@@ -104,7 +107,7 @@ private:
     static constexpr UINT_PTR kPeekTimerId = 2;
     static constexpr UINT kPeekTimerIntervalMs = 50;
     static constexpr UINT kTransitionHideDelayMs = 120;
-    static constexpr ULONGLONG kDockHideDelayMs = 350;
+    static constexpr ULONGLONG kDockHideDelayMs = 650;
     static constexpr UINT kPointerReconcileMessage = WM_APP + 1;
     static constexpr UINT kToolbarUpdateMessage = WM_APP + 2;
 
@@ -124,8 +127,9 @@ private:
     void ClearToolbarTooltips();
     void UpdateToolbarTooltips();
     void InvalidatePopups();
-    void StartSlide();
+    void StartSlide(POINT destination = {});
     void StopSlide();
+    void SetSlideClosing(bool closing);
     void MoveSlideCards();
     POINT ToLayoutPoint(HWND window, POINT point) const;
     void OnMouseMove(HWND window, POINT point);
@@ -173,6 +177,7 @@ private:
     snowdesktop::UiAnimationScheduler* scheduler_ = nullptr;
     std::uint64_t slideToken_ = 0;
     POINT slideOffset_{};
+    bool slideClosing_ = false;
     RECT panelRect_{};
     std::vector<DockWindowPreviewItem> items_;
     std::unique_ptr<snowdesktop::thumbnail_toolbar::Client> toolbarClient_;

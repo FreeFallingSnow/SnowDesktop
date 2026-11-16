@@ -1536,7 +1536,6 @@ RECT DockContainer::GetHoveredTitleBounds(POINT pointer) const
         app_->dragSession_.IsActive() || app_->dragDropController_.IsTransportActive() ||
         app_->widgetAction_ == DesktopApp::WidgetAction::Move ||
         (app_->dockTrayPopup_ && !app_->popupAnimation_.IsHidden()) ||
-        (app_->dockWindowPreview_ && app_->dockWindowPreview_->IsVisible()) ||
         !app_->quickNavigation_->animation.IsHidden() || app_->quickNavigation_->open ||
         app_->HasActiveContextMenuSession())
         return RECT{};
@@ -1610,6 +1609,15 @@ RECT DockContainer::GetHoveredTitleBounds(POINT pointer) const
     }
     if (title.empty() || IsRectEmpty(&baseBounds))
         return RECT{};
+
+    if (app_->dockWindowPreview_ && !app_->dockWindowPreview_->IsClosing() &&
+        app_->dockWindowPreview_->IsVisible() && !app_->dockWindowPreviewKey_.empty())
+    {
+        DockWindowPreviewTarget target;
+        if (app_->ResolveDockWindowPreviewTarget(pointer, target) &&
+            target.targetToken == app_->dockWindowPreviewKey_)
+            return RECT{};
+    }
 
     const RECT visualBounds =
         GetElementVisualRect(baseBounds, pointer);

@@ -281,7 +281,7 @@ void DesktopApp::CloseDockWindowFromPreview(
     if (!RequestTrackedDockWindowClose(window)) return;
     if (dockWindowPreview_ && dockWindowPreview_->IsVisible())
         dockWindowPreview_->RemoveWindow(window);
-    if (!dockWindowPreview_ || !dockWindowPreview_->IsVisible())
+    if (!dockWindowPreview_ || !dockWindowPreview_->IsVisible() || dockWindowPreview_->IsClosing())
         DismissDockWindowPreviewUntilLeave();
     // The card has already been removed locally. Let maintenance reconcile
     // running membership once, after the asynchronous close notifications.
@@ -552,7 +552,7 @@ void DesktopApp::DismissDockWindowPreviewUntilLeave()
         KillTimer(hwnd_, kDockWindowPreviewHoverTimerId);
     dockWindowPreviewHover_.SuppressForActivation();
     if (dockWindowPreview_)
-        dockWindowPreview_->Hide();
+        dockWindowPreview_->Dismiss();
     dockWindowPreviewKey_.clear();
     dockWindowPreviewIdentity_ = {};
     dockWindowPreviewAnchorScreen_ = {};
