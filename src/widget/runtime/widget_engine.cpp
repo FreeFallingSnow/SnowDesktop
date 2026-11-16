@@ -3374,6 +3374,48 @@ static bool IsPreviewFilesystemHandle(std::string_view handle)
         handle == "filesystem:11111111111111111111111111111111";
 }
 
+static const char* ResolveClipboardWriteFiles(const LuaWidget& owner,
+    const snowdesktop::widget_runtime::TaskBrokerAction& action,
+    const snowdesktop::widget_runtime::WidgetFilesystemHandleStore* handleStore,
+    std::vector<std::filesystem::path>& files)
+{
+    using snowdesktop::widget::WidgetPermissionBroker;
+    using snowdesktop::widget_runtime::WidgetClipboardTaskExecutor;
+    using snowdesktop::widget_runtime::WidgetFilesystemHandleAccess;
+    for (std::size_t index = 1; index <= WidgetClipboardTaskExecutor::MaximumFileReferences; ++index)
+    {
+        const auto item = action.arguments.find("item" + std::to_string(index));
+        if (item == action.arguments.end()) break;
+        const auto& reference = item->second;
+        if (reference.starts_with("item:"))
+        {
+            if (!WidgetPermissionBroker::AllowsPermission(owner.permissions, kClipboardReadPermission))
+                return "permissionDenied";
+            const auto found = owner.itemReferences.find(reference);
+            if (found == owner.itemReferences.end() || found->second.sourceTask != "clipboard.read")
+                return "invalidReference";
+            files.emplace_back(Utf8ToWideLocal(found->second.target));
+        }
+        else
+        {
+            if (!WidgetPermissionBroker::AllowsPermission(owner.permissions, kFilesystemReadPermission))
+                return "permissionDenied";
+            if (action.preview && IsPreviewFilesystemHandle(reference))
+            {
+                files.emplace_back(L"C:\\Preview\\Preview.txt");
+                continue;
+            }
+            const auto entry = handleStore ? handleStore->Resolve(
+                { action.instanceId, owner.packageId }, reference) : std::nullopt;
+            if (!entry) return "invalidReference";
+            if (entry->access == WidgetFilesystemHandleAccess::Write)
+                return "handleAccessDenied";
+            files.push_back(entry->path);
+        }
+    }
+    return nullptr;
+}
+
 static bool ReadInteractionValue(lua_State* state, int index,
     snowdesktop::widget_runtime::InteractionValue& output,
     std::size_t depth, std::size_t& nodes, std::size_t& stringBytes,
@@ -5538,6 +5580,115 @@ static void RegisterDataSubscriptionHandle(lua_State* state)
 
 #include "widget_data_subscribe_lua.inc"
 
+static const char* ReadClipboardTaskArguments(lua_State* state,
+    std::string_view taskName, bool hasArguments,
+    std::unordered_map<std::string, std::string>& arguments)
+{
+    using snowdesktop::widget_runtime::WidgetClipboardTaskExecutor;
+    const bool clear = taskName == "clipboard.clear";
+    const bool write = taskName == "clipboard.write";
+    if (!hasArguments)
+        return clear ? nullptr : "clipboard read and write require an arguments table";
+
+    std::string format;
+    const char* payload = nullptr;
+    if (!clear)
+    {
+        lua_getfield(state, 2, "format");
+        size_t length = 0;
+        if (lua_type(state, -1) == LUA_TSTRING)
+        {
+            const char* value = lua_tolstring(state, -1, &length);
+            if (length <= std::string_view("file-reference").size())
+                format.assign(value, length);
+        }
+        lua_pop(state, 1);
+        if (!WidgetClipboardTaskExecutor::SupportsFormat(format))
+            return "clipboard format must be text, html, image, or file-reference";
+        arguments.emplace("format", format);
+        if (write)
+            payload = format == "file-reference" ? "items" :
+                format == "text" ? "text" : format == "html" ? "html" : "image";
+    }
+
+    lua_pushnil(state);
+    while (lua_next(state, 2) != 0)
+    {
+        size_t length = 0;
+        const char* raw = lua_type(state, -2) == LUA_TSTRING
+            ? lua_tolstring(state, -2, &length) : nullptr;
+        const std::string_view key(raw ? raw : "", length);
+        if (clear || (key != "format" && (!payload || key != payload)))
+        {
+            lua_pop(state, 2);
+            return "unknown clipboard argument";
+        }
+        lua_pop(state, 1);
+    }
+    if (!payload) return nullptr;
+
+    lua_getfield(state, 2, payload);
+    const char* error = nullptr;
+    if (format == "image")
+    {
+        const auto* handle = TestResourceHandle(state, -1);
+        if (!handle || handle->type != LuaResourceType::Image)
+            error = "clipboard.write image must be a SnowImageResource handle";
+        else
+            arguments.emplace("image", handle->name);
+    }
+    else if (format == "file-reference")
+    {
+        const auto count = lua_istable(state, -1) ? lua_rawlen(state, -1) : 0;
+        error = "clipboard.write items must be a dense array of 1 to 32 opaque file references or handles";
+        if (count > 0 && count <= WidgetClipboardTaskExecutor::MaximumFileReferences)
+        {
+            std::size_t seen = 0;
+            lua_pushnil(state);
+            while (lua_next(state, -2) != 0)
+            {
+                const auto index = lua_isinteger(state, -2) ? lua_tointeger(state, -2) : 0;
+                size_t length = 0;
+                const char* raw = lua_type(state, -1) == LUA_TSTRING
+                    ? lua_tolstring(state, -1, &length) : nullptr;
+                const std::string_view reference(raw ? raw : "", length);
+                const bool valid = index > 0 && static_cast<std::size_t>(index) <= count &&
+                    ((reference.starts_with("item:") && reference.size() == 37) ||
+                        snowdesktop::widget_runtime::WidgetFilesystemHandleStore::
+                            IsOpaqueHandle(reference));
+                if (!valid)
+                {
+                    lua_pop(state, 3);
+                    return error;
+                }
+                arguments.emplace("item" + std::to_string(index), reference);
+                ++seen;
+                lua_pop(state, 1);
+            }
+            if (seen == count) error = nullptr;
+        }
+    }
+    else
+    {
+        size_t length = 0;
+        const char* raw = lua_type(state, -1) == LUA_TSTRING
+            ? lua_tolstring(state, -1, &length) : nullptr;
+        if (!raw || length > WidgetClipboardTaskExecutor::MaximumTextBytes)
+            error = "clipboard.write text or html must be a string of at most 262144 bytes";
+        else
+        {
+            std::string value(raw, length);
+            if (value.find('\0') != std::string::npos ||
+                (!value.empty() && !IsValidUtf8Local(value)))
+                error = "clipboard.write text or html must be valid UTF-8 without NUL";
+            else
+                arguments.emplace(payload, std::move(value));
+        }
+    }
+    lua_pop(state, 1);
+    return error;
+}
+
 static __declspec(noinline) int LuaTaskStartWithDeferredSecretError(lua_State* state)
 {
     if (lua_gettop(state) < 1 || lua_gettop(state) > 2)
@@ -5937,86 +6088,9 @@ static __declspec(noinline) int LuaTaskStartWithDeferredSecretError(lua_State* s
     else if (snowdesktop::widget_runtime::WidgetClipboardTaskExecutor::
             SupportsAction(taskName))
     {
-        const bool clear = taskName == "clipboard.clear";
-        const bool write = taskName == "clipboard.write";
-        if (!clear && !hasArguments)
-            return luaL_error(state,
-                "task.start: %s requires an arguments table",
-                taskName.c_str());
-        if (hasArguments)
-        {
-            lua_pushnil(state);
-            while (lua_next(state, 2) != 0)
-            {
-                if (lua_type(state, -2) != LUA_TSTRING)
-                {
-                    lua_pop(state, 2);
-                    return luaL_error(state,
-                        "task.start: clipboard argument keys must be strings");
-                }
-                size_t keyLength = 0;
-                const char* keyValue = lua_tolstring(
-                    state, -2, &keyLength);
-                const std::string_view key(
-                    keyValue ? keyValue : "", keyLength);
-                const bool allowed = !clear &&
-                    (key == "format" || (write && key == "text"));
-                if (!allowed)
-                {
-                    lua_pop(state, 2);
-                    return luaL_error(state,
-                        "task.start: %s received an unknown argument",
-                        taskName.c_str());
-                }
-                lua_pop(state, 1);
-            }
-        }
-        if (!clear)
-        {
-            lua_getfield(state, 2, "format");
-            size_t formatLength = 0;
-            const char* formatValue = lua_type(state, -1) == LUA_TSTRING
-                ? lua_tolstring(state, -1, &formatLength) : nullptr;
-            const std::string format(
-                formatValue ? formatValue : "", formatLength);
-            const bool supported = write
-                ? format == "text"
-                : (format == "text" || format == "image" ||
-                    format == "file-reference");
-            if (!formatValue || !supported)
-            {
-                lua_pop(state, 1);
-                return luaL_error(state,
-                    write
-                        ? "task.start: clipboard.write supports only format text"
-                        : "task.start: clipboard.read format must be text, image, or file-reference");
-            }
-            lua_pop(state, 1);
-            arguments.emplace("format", format);
-        }
-        if (write)
-        {
-            lua_getfield(state, 2, "text");
-            if (lua_type(state, -1) != LUA_TSTRING)
-            {
-                lua_pop(state, 1);
-                return luaL_error(state,
-                    "task.start: clipboard.write text must be a string");
-            }
-            size_t length = 0;
-            const char* value = lua_tolstring(state, -1, &length);
-            std::string text(value ? value : "", length);
-            lua_pop(state, 1);
-            if (text.size() > snowdesktop::widget_runtime::
-                    WidgetClipboardTaskExecutor::MaximumTextBytes ||
-                text.find('\0') != std::string::npos ||
-                (!text.empty() && !IsValidUtf8Local(text)))
-            {
-                return luaL_error(state,
-                    "task.start: clipboard.write text must be at most 262144 bytes of valid UTF-8 without NUL");
-            }
-            arguments.emplace("text", std::move(text));
-        }
+        if (const char* error = ReadClipboardTaskArguments(
+                state, taskName, hasArguments, arguments))
+            return luaL_error(state, "task.start: %s", error);
     }
     else if (IsFilesystemPickerTask(taskName))
     {
@@ -14724,9 +14798,55 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             if (const auto format = action.arguments.find("format");
                 format != action.arguments.end())
                 clipboardRequest.format = format->second;
-            if (const auto text = action.arguments.find("text");
-                text != action.arguments.end())
-                clipboardRequest.text = text->second;
+            if (action.name == "clipboard.write")
+            {
+                if (clipboardRequest.format == "text" || clipboardRequest.format == "html")
+                {
+                    const auto value = action.arguments.find(clipboardRequest.format);
+                    if (value == action.arguments.end())
+                    {
+                        (void)taskBroker_->Complete(action.id, false, "invalidArguments");
+                        continue;
+                    }
+                    clipboardRequest.text = value->second;
+                }
+                else if (clipboardRequest.format == "image")
+                {
+                    if (const auto image = action.arguments.find("image");
+                        image != action.arguments.end())
+                    {
+                        if (snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(image->second))
+                        {
+                            if (d2dState_)
+                            {
+                                const auto source = d2dState_->runtimeImages.find(image->second);
+                                if (source != d2dState_->runtimeImages.end() &&
+                                    source->second.ownerWidgetId == owner->widgetId)
+                                    clipboardRequest.image = source->second.pixels;
+                            }
+                        }
+                        else if (const auto path = RuntimeResolvePackageResource(
+                                owner->widgetId, image->second, "image"))
+                        {
+                            clipboardRequest.imagePath = *path;
+                        }
+                    }
+                    if (!clipboardRequest.image && clipboardRequest.imagePath.empty())
+                    {
+                        (void)taskBroker_->Complete(action.id, false, "clipboardImageUnavailable");
+                        continue;
+                    }
+                }
+                else if (clipboardRequest.format == "file-reference")
+                {
+                    if (const char* error = ResolveClipboardWriteFiles(*owner,
+                            action, filesystemHandleStore_.get(), clipboardRequest.files))
+                    {
+                        (void)taskBroker_->Complete(action.id, false, error);
+                        continue;
+                    }
+                }
+            }
             if (!snowdesktop::widget_runtime::WidgetClipboardTaskExecutor::
                     ValidateRequest(clipboardRequest))
             {
@@ -14747,6 +14867,10 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                     if (completion.format == "text")
                     {
                         completion.text = "Preview clipboard";
+                    }
+                    else if (completion.format == "html")
+                    {
+                        completion.text = "<strong>Preview clipboard</strong>";
                     }
                     else if (completion.format == "image")
                     {
@@ -15802,12 +15926,12 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                             clipboardResult->format.data(),
                             clipboardResult->format.size());
                         lua_setfield(eventState, -2, "format");
-                        if (clipboardResult->format == "text")
+                        if (clipboardResult->format == "text" || clipboardResult->format == "html")
                         {
                             lua_pushlstring(eventState,
                                 clipboardResult->text.data(),
                                 clipboardResult->text.size());
-                            lua_setfield(eventState, -2, "text");
+                            lua_setfield(eventState, -2, clipboardResult->format.c_str());
                         }
                         else if (clipboardResult->format == "image")
                         {

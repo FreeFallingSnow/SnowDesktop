@@ -2174,7 +2174,8 @@ feature ID `task.start`、`task.media.control`、`task.audio.output.control`、`
 `task.notification.structured`、`task.notification.actions`、
 `task.calendar.write`、`task.network.request` 和
 `task.shell.openUri`、`task.system.openSettings`、`task.clipboard.text`、
-`task.clipboard.image`、`task.clipboard.fileReference`、
+`task.clipboard.html`、`task.clipboard.image`、`task.clipboard.image.write`、
+`task.clipboard.fileReference`、`task.clipboard.fileReference.write`、
 `task.filesystem.picker`、`task.filesystem.access`、`task.filesystem.binary`，以及 `task.desktop.search`、`task.everything.search`、
 `task.shell.item`、`task.desktop.refresh`。媒体动作要求 `media.action` 权限，而且只能在
 `click/doubleClick/pointerDown/pointerUp/wheel`、宿主按钮、菜单命令或由宿主明确
@@ -2398,46 +2399,58 @@ local settingsTask = task.start("system.openSettings", {
 确定性成功结果，不启动 Windows 设置。
 
 剪贴板任务都要求当前可信用户手势，并按读取与修改分别检查 `clipboard.read` 和
-`clipboard.write`。读取必须显式请求 `text`、`image` 或 `file-reference` format；写入
-仍只接受 `text`，且最多 262144 字节、无 NUL、有效 UTF-8；清空不接受参数：
+`clipboard.write`。每次读写指定一个 `format`，写入替换系统剪贴板当前内容。
+`clipboard.clear` 清空当前内容。
+
+| `format` | `clipboard.read` 的 `event.value` 字段 | `clipboard.write` 参数字段 | Feature |
+| --- | --- | --- | --- |
+| `text` | `text` | `text` | `task.clipboard.text` |
+| `html` | `html` | `html` | 读写均用 `task.clipboard.html` |
+| `image` | `image`、`width`、`height` | `image` | 读 `task.clipboard.image`，写 `task.clipboard.image.write` |
+| `file-reference` | `items` | `items` | 读 `task.clipboard.fileReference`，写 `task.clipboard.fileReference.write` |
+
+读取成功时 `event.value.format` 为请求的格式，写入或清空成功时 `event.value` 为
+`{ accepted = true }`。对可选格式用 `widget.hasFeature` 探测当前构建。依赖新格式的组件
+需等支持该 capability 的宿主发布后再分发。必需能力写入 manifest 的 `requiredFeatures`，
+`minHostVersion` 可设为首个支持该能力的发布版本，仍以 feature 区分同版本的早期构建。
 
 ```lua
-local readTask = task.start("clipboard.read", { format = "text" })
-local imageTask = task.start("clipboard.read", { format = "image" })
-local filesTask = task.start("clipboard.read", {
-    format = "file-reference",
-})
-local writeTask = task.start("clipboard.write", {
-    format = "text",
-    text = "SnowDesktop",
-})
-local clearTask = task.start("clipboard.clear")
-
--- readTask 成功：event.value = { format = "text", text = "..." }
--- imageTask 成功：event.value = {
---     format = "image", image = imageHandle, width = 256, height = 256,
--- }
--- filesTask 成功：event.value = {
---     format = "file-reference",
---     items = { { ref = itemRef, name = "photo.png", type = "file" } },
--- }
--- write/clear 成功：event.value = { accepted = true }
+-- 在用户点击“复制”时运行。旧版宿主可复制纯文本。
+local taskId, err
+if widget.hasFeature("task.clipboard.html") then
+    taskId, err = task.start("clipboard.write", {
+        format = "html", html = "<strong>SnowDesktop</strong>",
+    })
+else
+    taskId, err = task.start("clipboard.write", {
+        format = "text", text = "SnowDesktop",
+    })
+end
 ```
 
-任务在独立 worker 访问 Win32 剪贴板，同一实例最短间隔 100 ms；稳定错误包括
+`text` 和 `html` 均接受最多 262144 字节的有效 UTF-8，字符串内禁止 NUL。`html`
+读取 Windows `HTML Format` 中的片段，写入时由宿主生成剪贴板头，不附带纯文本表示。
+宿主将 HTML 作为字符串传递。
+
+图片读取支持 PNG 和 Windows 位图。输入块最多 64 MiB，源图每边最多 16384 像素且总计最多
+67108864 像素，返回等比缩放至每边不超过 512 像素的临时 `SnowImageResource`。该句柄可用于
+`draw.image` 或 `view.image.source`，在热重载、实例卸载或资源回收后失效。写入接受当前实例
+仍可用的图片句柄或 `resource.image` 返回的包内资源，包内图片按比例缩放至每边不超过 2048 像素。
+宿主以带 alpha 通道的 `CF_DIBV5` 发布图片。
+
+文件引用读取一次最多返回 32 项，每项为 `{ ref, name, type }`，其中 `type` 为 `file`
+或 `folder`。`ref` 可用于 `draw.icon`、`shell.openItem` 和 `shell.revealItem`。写入的 `items`
+为包含 1 至 32 个引用字符串的连续数组，可使用本实例从 `clipboard.read` 获得的当前 `ref`
+或可读的 `filesystem` 句柄，分别要求 `clipboard.read` 或 `filesystem.userSelected.read` 权限。
+剪贴板文件项采用 Explorer 兼容的 `CF_HDROP` 复制格式。引用隐藏实际路径，文件内容读取继续使用
+独立的 `filesystem` 授权。
+
+任务在后台访问 Win32 剪贴板，同一实例最短间隔 100 ms。可能返回的错误包括
 `rateLimited`、`clipboardBusy`、`formatUnavailable`、`clipboardTooLarge`、
 `clipboardReadFailed`、`clipboardWriteFailed`、`clipboardImageDecodeFailed`、
-`clipboardImageDimensionsInvalid`、`clipboardReferenceUnavailable`、
-`permissionRevoked` 和 `canceled`。预览按所请求 format 返回确定性 mock，不访问真实
-剪贴板。
-
-图片输入块上限为 64 MiB，源尺寸每边上限 16384；宿主解码并等比缩放到每边不超过
-512 像素，返回的临时 `SnowImageResource` 可直接用于 `draw.image` 或
-`view.image.source`。句柄绑定当前组件实例，在热重载、实例卸载或运行时资源限额回收
-后失效，不得持久化。文件引用一次最多返回 32 项，每项仅有 `{ref,name,type}`；`ref`
-可用于 `draw.icon`、`shell.openItem` 和 `shell.revealItem`，但不暴露路径、不允许读取
-文件内容，也不等同于 `filesystem` 授权。剪贴板历史仍未开放，组件不得用文本路径
-冒充文件引用。
+`clipboardImageDimensionsInvalid`、`clipboardImageUnavailable`、`clipboardReferenceUnavailable`、
+`invalidReference`、`handleAccessDenied`、`permissionRevoked` 和 `canceled`。预览从固定样例读取，
+写入和清空返回模拟结果，系统剪贴板保持原样。
 
 文件选择器只在当前可信用户手势中启动，并且只把用户实际选择的范围授予当前组件
 包与当前实例。`filesystem.pickOpen` 要求 `filesystem.userSelected.read`；
