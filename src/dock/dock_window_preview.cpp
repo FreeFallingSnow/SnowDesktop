@@ -1155,14 +1155,18 @@ void DockWindowPreview::UpdateAnchor(
         RECT previous{};
         const bool known = GetWindowRect(windows_[index], &previous) != FALSE;
         if (known && EqualRect(&previous, &desired)) continue;
-        layoutChanged = true;
+        const bool sizeChanged = !known ||
+            previous.right - previous.left != card.right - card.left ||
+            previous.bottom - previous.top != card.bottom - card.top;
+        layoutChanged = layoutChanged || sizeChanged;
+        // Translate the existing card surfaces when the magnified anchor moves.
+        // A resize needs a new region and tooltip layout.
         SetWindowPos(windows_[index], nullptr,
             desired.left, desired.top,
             card.right - card.left, card.bottom - card.top,
             SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER |
-                SWP_NOSENDCHANGING | SWP_NOREDRAW);
-        if (!known || previous.right - previous.left != desired.right - desired.left ||
-            previous.bottom - previous.top != desired.bottom - desired.top)
+                SWP_NOSENDCHANGING | SWP_NOREDRAW | (sizeChanged ? 0 : SWP_NOSIZE));
+        if (sizeChanged)
         {
             HRGN region = CreateRoundRectRgn(0, 0,
                 card.right - card.left + 1, card.bottom - card.top + 1,
@@ -1171,7 +1175,6 @@ void DockWindowPreview::UpdateAnchor(
         }
     }
     if (layoutChanged) UpdateToolbarTooltips();
-    InvalidatePopups();
     RefreshPointerTracking(layoutChanged);
 }
 
@@ -1932,9 +1935,12 @@ void DockWindowPreview::RefreshPointerTracking(bool layoutChanged)
     }
     trackingMouse_ = false;
     trackingWindow_ = nullptr;
+    const bool hoverChanged = hoveredIndex_ >= 0 || hoveredCloseIndex_ >= 0 ||
+        hoveredPinIndex_ >= 0 || hoveredToolbar_.first >= 0;
     hoveredIndex_ = hoveredCloseIndex_ = hoveredPinIndex_ = -1;
+    hoveredToolbar_ = {-1, -1};
     UpdatePeekTarget(nullptr);
-    InvalidatePopups();
+    if (layoutChanged || hoverChanged) InvalidatePopups();
     // Relayout can move a card away from a stationary pointer without a new
     // native mouse message. Recheck the new geometry after the normal delay.
     ArmHideTimer();
