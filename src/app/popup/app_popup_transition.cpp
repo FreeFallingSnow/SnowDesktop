@@ -451,7 +451,10 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
             InvalidateFloatingDockWindow(*host, true);
         }
     }
-    InvalidateDragStaticScene();
+    // The floating popup owns its backdrop. Repaint its desktop footprint
+    // without recollecting unrelated desktop panels outside a drag session.
+    InvalidateDragStaticScene(dragSession_.HasContext() ||
+        dragDropController_.IsExternalDragActive());
     if (hwnd_ && IsWindow(hwnd_))
     {
         RECT dirty = popupRect_;

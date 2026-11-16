@@ -206,7 +206,7 @@ bool DesktopApp::IsPointOverWidgetChrome(POINT pt) const
 /**
  * @brief 使拖拽静态场景失效（更新拖拽渲染缓存）
  */
-void DesktopApp::InvalidateDragStaticScene()
+void DesktopApp::InvalidateDragStaticScene(bool collectAllDesktopBackdrops)
 {
     ResetPointerInteractionDamage();
     dragSession_.InvalidateStaticScene();
@@ -214,7 +214,8 @@ void DesktopApp::InvalidateDragStaticScene()
     // 原生毛玻璃面板位于独立的 Composition 视觉树中，不包含在 D2D
     // 静态位图里。页面或布局变化时必须在下一帧完整核对一次，否则
     // 交互帧的“保留旧面板”策略会让上一页的玻璃区域残留。
-    desktopBackdropFullCollectionPending_ = true;
+    if (collectAllDesktopBackdrops)
+        desktopBackdropFullCollectionPending_ = true;
 }
 
 /**

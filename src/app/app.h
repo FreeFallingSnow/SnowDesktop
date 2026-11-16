@@ -605,7 +605,7 @@ private:
     /** @brief 按当前指针位置和翻页边界重新计算热边悬停。 */
     void RefreshPageNavHotEdgeHoverAt(POINT point);
     /** @brief 使拖拽静态场景缓存失效，下次拖拽时重建缓存。 */
-    void InvalidateDragStaticScene();
+    void InvalidateDragStaticScene(bool collectAllDesktopBackdrops = true);
     /** @brief 停止 Dock 驻留计时并清空当前驻留目标。 */
     void ResetDockHandoffDwell();
     /** @brief 停止无字紧凑集合的图标移交驻留计时。 */
@@ -1680,7 +1680,7 @@ private:
      */
     bool HitTestPopupForDrag(POINT client, Container*& targetContainer, Slot*& targetSlot, HitRegion& targetRegion);
     /** @brief 清除所有选中项。 */
-    void ClearSelection();
+    bool ClearSelection();
     void ClearSelectionForExternalWindow(HWND window);
     /**
      * @brief 判断指定的桌面项是否存在于任一部件中。

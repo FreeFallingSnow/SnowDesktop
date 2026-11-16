@@ -248,13 +248,19 @@ bool DesktopApp::IsMarqueePointerGesturePendingOrActive() const
         luaWidgetPanelMouseDown_, hasMarqueeTarget);
 }
 
-void DesktopApp::ClearSelection()
+bool DesktopApp::ClearSelection()
 {
+    bool changed = keyboardNavVisualFocus_;
     for (const auto& container : containers_)
         if (const auto* view = dynamic_cast<const ScrollingItemWidget*>(container.get()); view && view->folderSearch_)
-            for (const auto& row : view->folderSearch_->rows) if (row.recursive) row.recursive->selected = false;
+            for (const auto& row : view->folderSearch_->rows)
+                if (row.recursive)
+                {
+                    changed |= row.recursive->selected;
+                    row.recursive->selected = false;
+                }
 
-    selectionController_.ClearAll(
+    changed |= selectionController_.ClearAll(
         items_, dockEntries_,
         dockUnpinnedRunningApps_, widgets_);
     keyboardNavInsideWidget_ = false;
@@ -264,6 +270,7 @@ void DesktopApp::ClearSelection()
     keyboardNavSearchBox_ = false;
     keyboardNavCollectionGroupTabs_ = false;
     keyboardNavFileGroupCategoryTabs_ = false;
+    return changed;
 }
 
 void DesktopApp::ClearSelectionForExternalWindow(HWND window)

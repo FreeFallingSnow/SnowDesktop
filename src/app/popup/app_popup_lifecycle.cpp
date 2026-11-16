@@ -505,7 +505,8 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
     bool invalidateStaticScene)
 {
     if (invalidateStaticScene)
-        InvalidateDragStaticScene();
+        InvalidateDragStaticScene(!IsCollectionPopupHostedByFloatingWindow() ||
+            dragSession_.HasContext() || dragDropController_.IsExternalDragActive());
     if (hwnd_ && IsWindow(hwnd_))
     {
         if (invalidateStaticScene)
@@ -545,6 +546,8 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
 
 void DesktopApp::FinalizeCloseCollectionPopup()
 {
+    const bool collectAllDesktopBackdrops = !IsCollectionPopupHostedByFloatingWindow() ||
+        dragSession_.HasContext() || dragDropController_.IsExternalDragActive();
     if (listTitleHoverPopup_) ClearListTitleHover();
     if (auto* view = GetCategorizedPopupView())
     {
@@ -608,7 +611,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     popupCategoryId_.clear();
     popupRect_ = {};
     InvalidateDockRects();
-    InvalidateDragStaticScene();
+    InvalidateDragStaticScene(collectAllDesktopBackdrops);
     if (hwnd_ && IsWindow(hwnd_) &&
         !IsRectEmptyRect(dirty))
     {
@@ -701,7 +704,9 @@ void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
     PreserveDockFolderPopupDragSourceForTransition();
     if (clearSelection && !dragSession_.HasContext())
     {
-        ClearSelection();
+        // Clearing desktop selection can change retained surfaces outside the popup.
+        if (ClearSelection())
+            desktopBackdropFullCollectionPending_ = true;
         for (auto& entry :
              dockFolderPopupWidget_.folderEntries)
             entry.selected = false;
