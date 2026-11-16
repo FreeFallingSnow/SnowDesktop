@@ -3110,6 +3110,7 @@ private:
         bool reverseClosingAnimation = false);
     void InvalidateCollectionPopupAnimation(
         bool invalidateStaticScene = false);
+    void InvalidateCollectionPopupDesktopScene(RECT previousBounds = {});
     /**
      * @brief 判断坐标点是否位于当前打开的弹出面板内。
      * @param point 客户端坐标

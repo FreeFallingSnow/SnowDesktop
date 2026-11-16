@@ -451,16 +451,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
             InvalidateFloatingDockWindow(*host, true);
         }
     }
-    // The floating popup owns its backdrop. Repaint its desktop footprint
-    // without recollecting unrelated desktop panels outside a drag session.
-    InvalidateDragStaticScene(dragSession_.HasContext() ||
-        dragDropController_.IsExternalDragActive());
-    if (hwnd_ && IsWindow(hwnd_))
-    {
-        RECT dirty = popupRect_;
-        InflateRect(&dirty, 6, 6);
-        InvalidateRect(hwnd_, &dirty, FALSE);
-    }
+    InvalidateCollectionPopupDesktopScene();
     UpdateFloatingPopupWindowBounds(true);
 }
 
@@ -782,7 +773,7 @@ void DesktopApp::RefreshDockFolderPopup(
     {
         RefreshDockFolderPopupGeometry(false);
         InvalidateCollectionPopupContent();
-        InvalidateDragStaticScene();
+        InvalidateCollectionPopupDesktopScene(previousBounds);
         if (!EqualRect(&previousBounds, &popupRect_))
             UpdateFloatingPopupWindowBounds(false, false);
         InvalidateFloatingPopupWindow(false);
@@ -795,6 +786,7 @@ void DesktopApp::RefreshDockFolderPopup(
 
 void DesktopApp::RefreshDockFolderPopupGeometry(bool present)
 {
+    const RECT previousBounds = popupRect_;
     popupRect_ =
         GetCollectionPopupRect(
             dockFolderPopupWidget_);
@@ -809,9 +801,7 @@ void DesktopApp::RefreshDockFolderPopupGeometry(bool present)
     InvalidateCollectionPopupContent();
     if (popupAnimationCompositorDriven_)
         return; // The queued paint updates pixels; geometry settles at completion.
-    InvalidateDragStaticScene();
-    if (hwnd_ && IsWindow(hwnd_))
-        InvalidateRect(hwnd_, nullptr, TRUE);
+    InvalidateCollectionPopupDesktopScene(previousBounds);
     UpdateFloatingPopupWindowBounds(true);
 }
 
@@ -829,6 +819,7 @@ void DesktopApp::RefreshOpenCollectionPopupGeometry()
     if (popupWidgetIndex_ >= widgets_.size())
         return;
 
+    const RECT previousBounds = popupRect_;
     popupRect_ =
         GetCollectionPopupRect(
             widgets_[popupWidgetIndex_]);
@@ -837,10 +828,8 @@ void DesktopApp::RefreshOpenCollectionPopupGeometry()
         GetCollectionPopupMaxScrollOffset(
             widgets_[popupWidgetIndex_],
             popupRect_));
-    InvalidateDragStaticScene();
+    InvalidateCollectionPopupDesktopScene(previousBounds);
     UpdateFloatingPopupWindowBounds(true);
-    if (hwnd_ && IsWindow(hwnd_))
-        InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
 void DesktopApp::

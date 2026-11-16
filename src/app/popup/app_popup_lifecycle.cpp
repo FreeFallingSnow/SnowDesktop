@@ -219,6 +219,7 @@ void DesktopApp::OpenDockFolderPopupAt(
     bool targetPending = false;
     const auto target = ResolveDockFolderTarget(entry, &targetPending);
     const bool reverseClosingAnimation = popupAnimation_.IsClosing() && sameSource;
+    const RECT previousBounds = popupRect_;
     ResetCollectionPopupAnimationCache();
     AdvanceFloatingPopupContentGeneration();
     dockFolderPopupOpen_ = true;
@@ -435,8 +436,7 @@ void DesktopApp::OpenDockFolderPopupAt(
             InvalidateFloatingDockWindow(*host, true);
         }
     }
-    InvalidateDragStaticScene();
-    InvalidateRect(hwnd_, nullptr, TRUE);
+    InvalidateCollectionPopupDesktopScene(previousBounds);
     UpdateFloatingPopupWindowBounds(true);
 }
 
@@ -501,42 +501,34 @@ void DesktopApp::StartCollectionPopupAnimation(
 
 
 
+void DesktopApp::InvalidateCollectionPopupDesktopScene(RECT previousBounds)
+{
+    // A windowed popup owns its backdrop. The desktop only updates the
+    // popup footprint and any scene invalidation required by an active drag.
+    InvalidateDragStaticScene(!IsCollectionPopupHostedByFloatingWindow() ||
+        dragSession_.HasContext() || dragDropController_.IsExternalDragActive());
+    if (!hwnd_ || !IsWindow(hwnd_)) return;
+
+    RECT dirty{};
+    UnionRect(&dirty, &previousBounds, &popupRect_);
+    UnionRect(&dirty, &dirty, &popupAnimationCacheRect_);
+    if (IsRectEmptyRect(dirty)) return;
+    InflateRect(&dirty, 6, 6);
+    InvalidateRect(hwnd_, &dirty, FALSE);
+}
+
 void DesktopApp::InvalidateCollectionPopupAnimation(
     bool invalidateStaticScene)
 {
     if (invalidateStaticScene)
-        InvalidateDragStaticScene(!IsCollectionPopupHostedByFloatingWindow() ||
-            dragSession_.HasContext() || dragDropController_.IsExternalDragActive());
-    if (hwnd_ && IsWindow(hwnd_))
+        InvalidateCollectionPopupDesktopScene();
+    else if (hwnd_ && IsWindow(hwnd_) && !IsCollectionPopupHostedByFloatingWindow() &&
+        !(popupAnchoredToDock_ && persistentDockHostOwnsVisual_) &&
+        !IsRectEmptyRect(popupRect_))
     {
-        if (invalidateStaticScene)
-        {
-            RECT dirty = popupRect_;
-            if (!IsRectEmptyRect(popupAnimationCacheRect_))
-            {
-                if (IsRectEmptyRect(dirty))
-                    dirty = popupAnimationCacheRect_;
-                else
-                    UnionRect(
-                        &dirty, &dirty,
-                        &popupAnimationCacheRect_);
-            }
-            if (!IsRectEmptyRect(dirty))
-            {
-                InflateRect(&dirty, 6, 6);
-                InvalidateRect(hwnd_, &dirty, FALSE);
-            }
-        }
-        else if (!IsCollectionPopupHostedByFloatingWindow() &&
-                 !(popupAnchoredToDock_ &&
-                   persistentDockHostOwnsVisual_) &&
-                 !IsRectEmptyRect(popupRect_))
-        {
-            RECT dirty = popupRect_;
-            InflateRect(&dirty, 4, 4);
-            InvalidateRect(
-                hwnd_, &dirty, FALSE);
-        }
+        RECT dirty = popupRect_;
+        InflateRect(&dirty, 4, 4);
+        InvalidateRect(hwnd_, &dirty, FALSE);
     }
     // The popup owns an independent compact DComp surface. Animation frames
     // therefore never repaint either the desktop foreground or floating Dock.
