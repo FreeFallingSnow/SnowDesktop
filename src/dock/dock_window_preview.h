@@ -131,6 +131,8 @@ private:
     void StopSlide();
     void SetSlideClosing(bool closing);
     void MoveSlideCards();
+    void ApplySlideClip(double visibleFraction);
+    void ApplyToolbarClip(HWND owner, const RECT* cardClip);
     POINT ToLayoutPoint(HWND window, POINT point) const;
     void OnMouseMove(HWND window, POINT point);
     void OnMouseLeave(HWND window);
@@ -177,6 +179,7 @@ private:
     snowdesktop::UiAnimationScheduler* scheduler_ = nullptr;
     std::uint64_t slideToken_ = 0;
     POINT slideOffset_{};
+    double slideVisibleFraction_ = 1.0;
     bool slideClosing_ = false;
     RECT panelRect_{};
     std::vector<DockWindowPreviewItem> items_;
