@@ -24,15 +24,14 @@ const std::wstring& DockPreviewHoverController::SuppressedTarget() const
 { return suppressedTarget_; }
 
 bool DockPreviewHoverController::TimerArmed() const
-{ return timerArmed_; }
+{ return timerDueTick_ != 0; }
 
 bool DockPreviewHoverController::IsIdle() const
 {
     return currentTarget_.empty() &&
-        pendingTarget_.empty() &&
         shownTarget_.empty() &&
         suppressedTarget_.empty() &&
-        !timerArmed_;
+        !TimerArmed();
 }
 
 namespace
@@ -639,10 +638,8 @@ DockPreviewHoverTransition DockPreviewHoverController::UpdateTarget(
     if (!previewVisible) shownTarget_.clear();
     if (targetChanged)
     {
-        if (timerArmed_)
-            transition.cancelTimer = true;
-        timerArmed_ = false;
-        pendingTarget_.clear();
+        transition.cancelTimer = TimerArmed();
+        timerDueTick_ = 0;
         if (!suppressedTarget_.empty() &&
             targetToken != suppressedTarget_)
             suppressedTarget_.clear();
@@ -651,39 +648,36 @@ DockPreviewHoverTransition DockPreviewHoverController::UpdateTarget(
 
     if (targetToken.empty() || targetToken == suppressedTarget_)
         return transition;
-    if (previewVisible)
-    {
-        transition.keepPreviewVisible = previewMatchesTarget;
-        transition.switchPreview = !previewMatchesTarget && targetChanged;
-        return transition;
-    }
-    if (!timerArmed_)
-    {
-        pendingTarget_ = targetToken;
-        timerArmed_ = true;
-        transition.armTimer = true;
-    }
+    transition.keepPreviewVisible = previewVisible && previewMatchesTarget;
+    transition.armTimer = !transition.keepPreviewVisible && !TimerArmed() &&
+        (!previewVisible || targetChanged);
     return transition;
+}
+
+void DockPreviewHoverController::TrackTimer(ULONGLONG dueTick)
+{
+    timerDueTick_ = dueTick;
+}
+
+UINT DockPreviewHoverController::TimerDelayRemaining(ULONGLONG now) const
+{
+    return now < timerDueTick_ ? static_cast<UINT>(timerDueTick_ - now) : 0;
 }
 
 bool DockPreviewHoverController::ConsumeTimer(
     const std::wstring& observedTargetToken)
 {
-    const bool accepted = timerArmed_ &&
-        !pendingTarget_.empty() &&
-        pendingTarget_ == currentTarget_ &&
-        pendingTarget_ == observedTargetToken &&
-        pendingTarget_ != suppressedTarget_;
-    timerArmed_ = false;
-    pendingTarget_.clear();
+    const bool accepted = TimerArmed() &&
+        currentTarget_ == observedTargetToken &&
+        currentTarget_ != suppressedTarget_;
+    timerDueTick_ = 0;
     return accepted;
 }
 
 bool DockPreviewHoverController::SuppressForActivation()
 {
-    const bool cancelTimer = timerArmed_;
-    timerArmed_ = false;
-    pendingTarget_.clear();
+    const bool cancelTimer = TimerArmed();
+    timerDueTick_ = 0;
     suppressedTarget_ = !shownTarget_.empty()
         ? shownTarget_ : currentTarget_;
     shownTarget_.clear();
@@ -699,10 +693,9 @@ void DockPreviewHoverController::MarkPreviewShown(
 void DockPreviewHoverController::Reset()
 {
     currentTarget_.clear();
-    pendingTarget_.clear();
     shownTarget_.clear();
     suppressedTarget_.clear();
-    timerArmed_ = false;
+    timerDueTick_ = 0;
 }
 
 bool IsPointInDockPreviewEntryRegion(POINT point, POINT origin, const RECT& preview, int tolerance)

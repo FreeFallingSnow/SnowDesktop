@@ -112,7 +112,12 @@ void DesktopApp::OnMouseLeave()
     POINT cursorScreen{};
     const bool cursorValid = snowdesktop::private_pointer::CursorPosition(&cursorScreen) != FALSE;
     if (dockWindowPreview_ && dockWindowPreview_->IsVisible())
+    {
+        if (dockWindowPreviewHover_.TimerArmed() &&
+            dockWindowPreviewHover_.UpdateTarget({}, true, false).cancelTimer)
+            KillTimer(hwnd_, kDockWindowPreviewHoverTimerId);
         dockWindowPreview_->ScheduleHide();
+    }
     else
         HideDockWindowPreview();
     SetPageNavHotEdgeHover(0);

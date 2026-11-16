@@ -11,6 +11,8 @@
 
 namespace
 {
+constexpr UINT kDockPreviewSwitchDelayMs = 200;
+
 const char* TaskbarDirtyEventMetric(DWORD event) noexcept
 {
     switch (event)
@@ -428,8 +430,28 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
         }
         return;
     }
-    if (transition.switchPreview && ShowDockWindowPreview(std::move(target), clientPoint))
-        return;
+    if (transition.armTimer && hwnd_)
+    {
+        if (!previewVisible)
+        {
+            // Warm up the first preview's toolbars during the hover delay.
+            // An open preview still needs its own toolbar targets.
+            std::vector<DockWindowPreviewItem> toolbarTargets;
+            toolbarTargets.reserve(target.trackedWindows.size());
+            for (const HWND window : target.trackedWindows)
+                toolbarTargets.push_back({window, {}});
+            dockWindowPreview_->PrepareToolbars(toolbarTargets);
+        }
+        const UINT delay = previewVisible
+            ? kDockPreviewSwitchDelayMs : QueryDockWindowPreviewHoverTime();
+        const ULONGLONG dueTick = GetTickCount64() + delay;
+        if (SetTimer(hwnd_, kDockWindowPreviewHoverTimerId, delay, nullptr))
+        {
+            dockWindowPreviewHover_.TrackTimer(dueTick);
+            if (previewVisible && !dockWindowPreview_->IsClosing())
+                dockWindowPreview_->KeepVisible();
+        }
+    }
     if (previewVisible)
     {
         if (hasTarget || GetDockContainerAtPoint(clientPoint))
@@ -438,38 +460,42 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
             dockWindowPreview_->ScheduleHide();
         return;
     }
-    if (transition.armTimer && hwnd_)
-    {
-        // Warm up toolbars for already tracked windows during the hover delay.
-        // The live preview resolves the final window list after that delay.
-        std::vector<DockWindowPreviewItem> toolbarTargets;
-        toolbarTargets.reserve(target.trackedWindows.size());
-        for (const HWND window : target.trackedWindows)
-            toolbarTargets.push_back({window, {}});
-        dockWindowPreview_->PrepareToolbars(toolbarTargets);
-        SetTimer(hwnd_, kDockWindowPreviewHoverTimerId,
-            QueryDockWindowPreviewHoverTime(), nullptr);
-    }
-    else if (!hasTarget)
+    if (!hasTarget)
         dockWindowPreview_->PrepareToolbars({});
 }
 
 void DesktopApp::OnDockWindowPreviewHoverTimer()
 {
-    if (!hwnd_ || !dockWindowPreview_)
+    if (!hwnd_ || !dockWindowPreview_ || !dockWindowPreviewHover_.TimerArmed())
         return;
+
+    // Use the new icon's deadline even if its predecessor left a queued WM_TIMER.
+    if (const UINT remaining = dockWindowPreviewHover_.TimerDelayRemaining(GetTickCount64()))
+    {
+        SetTimer(hwnd_, kDockWindowPreviewHoverTimerId, remaining, nullptr);
+        return;
+    }
     KillTimer(hwnd_, kDockWindowPreviewHoverTimerId);
 
-    POINT cursorScreen{};
-    snowdesktop::private_pointer::CursorPosition(&cursorScreen);
-    POINT cursorClient = cursorScreen;
-    ScreenToClient(hwnd_, &cursorClient);
+    if (!generalSettings_.dockEnabled || !dockSettings_.showWindowPreviews || dragSession_.IsActive())
+    {
+        HideDockWindowPreview();
+        return;
+    }
+
+    const bool previewVisible = dockWindowPreview_->IsVisible();
+    const RECT previewBounds = previewVisible ? dockWindowPreview_->GetBounds() : RECT{};
+    POINT cursorClient{};
+    if (!snowdesktop::private_pointer::CursorPosition(&cursorClient) ||
+        PtInRect(&previewBounds, cursorClient) ||
+        !ScreenToClient(hwnd_, &cursorClient))
+    {
+        dockWindowPreviewHover_.UpdateTarget({}, previewVisible, false);
+        return;
+    }
 
     DockWindowPreviewTarget target;
-    const bool hasTarget =
-        generalSettings_.dockEnabled && dockSettings_.showWindowPreviews &&
-        !dragSession_.IsActive() &&
-        ResolveDockWindowPreviewTarget(cursorClient, target);
+    const bool hasTarget = ResolveDockWindowPreviewTarget(cursorClient, target);
     const std::wstring observedToken =
         hasTarget ? target.targetToken : std::wstring{};
     if (!dockWindowPreviewHover_.ConsumeTimer(observedToken))

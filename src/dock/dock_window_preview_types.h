@@ -30,7 +30,6 @@ struct DockPreviewHoverTransition
     bool armTimer = false;
     bool cancelTimer = false;
     bool keepPreviewVisible = false;
-    bool switchPreview = false;
 };
 
 class DockPreviewHoverController
@@ -40,6 +39,8 @@ public:
         const std::wstring& targetToken,
         bool previewVisible,
         bool previewMatchesTarget);
+    void TrackTimer(ULONGLONG dueTick);
+    UINT TimerDelayRemaining(ULONGLONG now) const;
     bool ConsumeTimer(const std::wstring& observedTargetToken);
     bool SuppressForActivation();
     void MarkPreviewShown(const std::wstring& targetToken);
@@ -52,8 +53,7 @@ public:
 
 private:
     std::wstring currentTarget_;
-    std::wstring pendingTarget_;
     std::wstring shownTarget_;
     std::wstring suppressedTarget_;
-    bool timerArmed_ = false;
+    ULONGLONG timerDueTick_ = 0;
 };
