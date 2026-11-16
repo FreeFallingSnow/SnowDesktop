@@ -1,7 +1,6 @@
 #include "app/app.h"
 #include "dock/dock_window_rules.h"
 #include "diagnostics/diagnostic_log.h"
-#include "diagnostics/performance_trace.h"
 #include "common/utils.h"
 #include "dock/dock_collection_icon_rules.h"
 #include "widget/preview/widget_preview_scene.h"
@@ -23,7 +22,6 @@ void DesktopApp::OnDockFolderIconLoaded(const std::wstring& iconCacheKey,
     }
     else if (!refined || !dockFolderBitmapCache_.PublishFailure(iconCacheKey, ticket, std::chrono::seconds(5))) return;
 
-    snowdesktop::performance::Scope trace("dock", "folder.cover.delivery");
     bool refreshDocks = false;
     bool recollectGlass = iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled;
     std::vector<RECT> desktopFrames;
@@ -59,17 +57,11 @@ void DesktopApp::OnDockFolderIconLoaded(const std::wstring& iconCacheKey,
             if (!IsRectEmptyRect(frame)) desktopFrames.push_back(frame);
         }
     }
-    const bool desktopDockUsesIcon = recollectGlass && refreshDocks && std::any_of(containers_.begin(), containers_.end(),
-        [this](const auto& container) {
-            const auto* dock = dynamic_cast<const DockContainer*>(container.get());
-            return dock && !IsDockHostedByPersistentHost(dock);
-        });
-    const bool collectDesktopGlass = recollectGlass && (!desktopFrames.empty() || desktopDockUsesIcon);
-    snowdesktop::performance::Value("dock", "folder.cover.full_desktop_skipped", {},
-        recollectGlass && !collectDesktopGlass ? 1.0 : 0.0);
-    // Persistent Docks reconcile their own glass. Only a desktop consumer
-    // can require recollecting the old and new icon plate on the desktop.
-    if (collectDesktopGlass) InvalidateDragStaticScene();
+    // Bitmap content cannot move the scene. Retire drag snapshots without
+    // forcing unrelated root icons and widget surfaces through a full draw.
+    // Native glass can change when a source gains/loses its own plate; keep
+    // the complete owner recollection for both the old and requested style.
+    if (recollectGlass) InvalidateDragStaticScene();
     else
     {
         dragSession_.InvalidateStaticScene();

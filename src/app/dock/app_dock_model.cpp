@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "widgets/lua_stack.h"
 #include "diagnostics/diagnostic_log.h"
+#include "diagnostics/performance_trace.h"
 #include "common/utils.h"
 #include "dock/dock_folder_rules.h"
 #include "desktop/desktop_item_reference_migration.h"
@@ -106,9 +107,16 @@ DesktopApp::ResolveDockFolderTarget(const DockEntry& entry, bool* targetPending,
         const bool isFolder = target.kind != FolderTargetKind::None;
         const auto targetPath = target.path;
         if (!owner->dockFolderTargetCache_.Publish(key, ticket, std::move(target))) return;
+        snowdesktop::performance::Scope trace("dock", "folder.target.delivery");
         if (wasFolder != isFolder) owner->NormalizeDockRecycleBinPosition();
         owner->InvalidateDockContainers();
-        owner->InvalidateDragStaticScene();
+        const bool hasDesktopDock = std::any_of(owner->containers_.begin(), owner->containers_.end(),
+            [owner](const auto& container) {
+                const auto* dock = dynamic_cast<const DockContainer*>(container.get());
+                return dock && !owner->IsDockHostedByPersistentHost(dock);
+            });
+        // Persistent Dock windows update their glass when they repaint below.
+        owner->InvalidateDragStaticScene(hasDesktopDock);
         owner->UpdateFloatingDockWindowBounds(false);
         owner->InvalidateDockRects();
         const auto sourceId = std::to_wstring(static_cast<int>(entry.type)) +
