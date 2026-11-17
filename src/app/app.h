@@ -2642,7 +2642,8 @@ private:
     void AppendFolderPreviewOpenMenuItem(HMENU menu, POINT point, const std::wstring& path);
     bool TryFolderPreviewDoubleClick(POINT point, WPARAM keyState, const std::wstring& menuPath = {});
     bool HandleFolderPreviewHeaderPress(POINT point);
-    void DrawFolderPreviewTitle(ID2D1DeviceContext* context, RECT row, POINT pointer, float scale, bool lightTheme);
+    bool HandleFolderPreviewBreadcrumbContextMenu(POINT point, bool show);
+    UINT TrackFolderPreviewPathMenu(HMENU menu, POINT screenPoint, bool textOnly);
     void ShowFolderPreviewDirectory(const std::wstring& path, bool fromFan = false, bool present = true);
     void NavigateFolderPreviewBack();
     void DiscardFolderPreview();

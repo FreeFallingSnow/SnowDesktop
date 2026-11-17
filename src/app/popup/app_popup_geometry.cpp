@@ -592,8 +592,7 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
                     std::max(0L, frame.bottom - viewport.bottom))};
     };
     const auto controlsHeightForWidth = [&](int popupWidth) {
-        if (preview)
-            return metrics.controlRowHeight + metrics.controlGap;
+        if (preview) return 0; // The navigation bar takes the regular first row.
         if (groupView) return 0;
         const RECT controls = GetCollectionPopupControlsRect({work.left + metrics.edgeMargin, work.top + metrics.edgeMargin,
             work.left + metrics.edgeMargin + popupWidth, work.bottom - metrics.edgeMargin});

@@ -10,6 +10,7 @@
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "widgets/widget_folder_search.h"
 
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <string_view>
@@ -24,6 +25,13 @@ std::wstring FolderName(const std::wstring& path)
     if (!value.filename().empty()) return value.filename().wstring();
     if (!value.parent_path().filename().empty()) return value.parent_path().filename().wstring();
     return path;
+}
+
+std::wstring EscapePathMenuLabel(std::wstring label)
+{
+    for (size_t amp = label.find(L'&'); amp != std::wstring::npos; amp = label.find(L'&', amp + 2))
+        label.insert(amp, 1, L'&');
+    return label;
 }
 
 std::wstring FolderPreviewViewKey(const std::wstring& hostId, const std::wstring& sourceId,
@@ -171,7 +179,8 @@ void DesktopApp::AppendFolderPreviewOpenMenuItem(HMENU menu, POINT point, const 
         if (!directory && !directoryShortcut) return;
     }
     if (AppendMenuW(menu, MF_STRING, kContextFolderPreviewOpen, _LW("app.folderPreview.open")))
-        SetMenuItemIcon(menu, kContextFolderPreviewOpen, snowdesktop::menu_fluent_glyphs::kFolderMapping);
+        SetMenuItemIcon(menu, kContextFolderPreviewOpen, snowdesktop::menu_fluent_glyphs::kFolderPreview,
+            MenuIconFont::FluentRegular);
 }
 
 bool DesktopApp::TryFolderPreviewDoubleClick(POINT point, WPARAM keyState, const std::wstring& menuPath)
@@ -742,6 +751,7 @@ snowdesktop::folder_preview::NavigationRow DesktopApp::GetFolderPreviewNavigatio
     namespace layout = snowdesktop::collection_popup_layout;
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     RECT row = layout::ResolveBodyRect(panel, metrics);
+    row.top = std::min<LONG>(panel.bottom, panel.top + metrics.topPadding);
     float scale = metrics.scale;
     int height = metrics.controlRowHeight;
     if (folderPreview_->inlineBounds)
@@ -763,7 +773,9 @@ snowdesktop::folder_preview::NavigationRow DesktopApp::GetFolderPreviewNavigatio
                 }
                 break;
             }
-        row.top = std::clamp(folderPreview_->inlineRowTop, panel.top, panel.bottom);
+        const bool bottomTitle = folderPreview_->inlineRowTop == panel.top;
+        const int topGap = bottomTitle ? ScaleWidgetCu(12.0f, scale) : ScaleWidgetCu(4.0f, scale);
+        row.top = std::clamp(folderPreview_->inlineRowTop + topGap, panel.top, panel.bottom);
         height = layout::ResolveControlRowHeight(GetCategorizedWidgetTabHeight(), scale);
     }
     row.bottom = std::min<LONG>(row.bottom, row.top + height);
@@ -850,6 +862,119 @@ std::vector<snowdesktop::folder_preview::Breadcrumb> DesktopApp::GetFolderPrevie
     return crumbs;
 }
 
+UINT DesktopApp::TrackFolderPreviewPathMenu(HMENU menu, POINT screenPoint, bool textOnly)
+{
+    const auto* owner = GetFolderPreviewComponent(false);
+    const std::wstring hostId = owner ? owner->id : std::wstring{};
+    const auto previousPin = interactionPinnedWidgetId_;
+    if (!hostId.empty()) interactionPinnedWidgetId_ = hostId;
+    const UINT choice = ShowModernMenu(menu, screenPoint, hwnd_, false, false, nullptr,
+        {}, {}, {}, nullptr, {}, false, 0, 0, {}, textOnly);
+    if (!hostId.empty() && interactionPinnedWidgetId_ == hostId)
+    {
+        interactionPinnedWidgetId_ = previousPin;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+    DestroyMenu(menu);
+    ClearMenuIcons();
+    return choice;
+}
+
+bool DesktopApp::HandleFolderPreviewBreadcrumbContextMenu(POINT point, bool show)
+{
+    if (!folderPreview_ || !IsCollectionPopupInteractive() || !IsPointOccludedByOpenPopup(point)) return false;
+    const RECT panel = GetPresentedCollectionPopupGeometry().panel;
+    const auto row = GetFolderPreviewNavigationRow(panel);
+    if (!PtInRect(&row.breadcrumb, point)) return false;
+    const auto crumbs = GetFolderPreviewBreadcrumbs(panel);
+    const auto crumb = std::find_if(crumbs.begin(), crumbs.end(), [&](const auto& candidate) {
+        return PtInRect(&candidate.bounds, point) != FALSE;
+    });
+    if (crumb == crumbs.end()) return false;
+    if (!show) return true;
+    const bool overflow = !crumb->hiddenParents.empty();
+    const auto paths = overflow ? crumb->hiddenParents : std::vector{crumb->path};
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return true;
+    POINT screenPoint = point;
+    ClientToScreen(hwnd_, &screenPoint);
+    PrepareMenuIconsForPoint(screenPoint);
+
+    namespace glyphs = snowdesktop::menu_fluent_glyphs;
+    enum class Action { Copy, Shortcut, Mapping, Open };
+    struct ActionItem { const char* label; const wchar_t* glyph; };
+    constexpr std::array actions{
+        ActionItem{"app.folderPreview.copyAddress", glyphs::kCopy},
+        ActionItem{"app.nav.send_to_desktop", glyphs::kLinkAdd},
+        ActionItem{"app.folderPreview.createDesktopMapping", glyphs::kFolderMapping},
+        ActionItem{"app.interact.open_in_explorer", glyphs::kFolderOpen},
+    };
+    for (size_t index = 0; index < paths.size(); ++index)
+    {
+        HMENU current = overflow ? CreatePopupMenu() : menu;
+        if (!current) continue;
+        if (overflow)
+        {
+            const UINT_PTR submenu = reinterpret_cast<UINT_PTR>(current);
+            if (!AppendMenuW(menu, MF_POPUP, submenu, EscapePathMenuLabel(FolderName(paths[index])).c_str()))
+            {
+                DestroyMenu(current);
+                continue;
+            }
+            SetMenuItemIcon(menu, submenu, glyphs::kDesktopFiles, MenuIconFont::FluentRegular);
+        }
+        for (size_t action = 0; action < actions.size(); ++action)
+        {
+            const UINT command = static_cast<UINT>(index * actions.size() + action + 1);
+            if (AppendMenuW(current, MF_STRING, command, _LW(actions[action].label)))
+                SetMenuItemIcon(current, command, actions[action].glyph, MenuIconFont::FluentRegular);
+        }
+    }
+    const UINT choice = TrackFolderPreviewPathMenu(menu, screenPoint, false);
+    if (!choice || exitRequested_) return true;
+    const auto index = (choice - 1) / actions.size();
+    if (index >= paths.size()) return true;
+    const auto& path = paths[index];
+    switch (static_cast<Action>((choice - 1) % actions.size()))
+    {
+    case Action::Copy:
+        CopyPathsToClipboard({path});
+        break;
+    case Action::Shortcut:
+        if (!CreateDesktopShortcutForPath(path, true, FolderName(path))) MessageBeep(MB_ICONWARNING);
+        break;
+    case Action::Mapping:
+    {
+        const bool queued = shellVisualWork_.Submit(L"folder-preview:map:" + snowdesktop::shell_refresh::FolderKey(path),
+            [path] { return snowdesktop::item_location::ResolveFolderTarget(path); },
+            [this, screenPoint](snowdesktop::item_location::FolderTarget target) {
+                if (exitRequested_ || !hwnd_) return;
+                if (!target) { MessageBeep(MB_ICONWARNING); return; }
+                DesktopWidget widget;
+                widget.id = MakeNewWidgetId();
+                const auto id = widget.id;
+                widget.type = DesktopWidgetType::FolderMapping;
+                widget.title = FolderName(target.path);
+                widget.showTitle = true;
+                widget.sourceFolderPath = std::move(target.path);
+                lastContextMenuScreenPoint_ = screenPoint;
+                AddWidgetToGrid(std::move(widget), {3, 3});
+                const auto created = FindWidgetIndexById(id);
+                if (created >= widgets_.size()) { MessageBeep(MB_ICONWARNING); return; }
+                EnumerateFolderMappingEntries(widgets_[created]);
+                ClearWidgetAddedHint();
+                ShowWidgetAddedHint();
+            }, hwnd_, kBackgroundShellReadyMessage);
+        if (!queued) MessageBeep(MB_ICONWARNING);
+        break;
+    }
+    case Action::Open:
+        shellLaunchWorker_.Enqueue(hwnd_, path);
+        break;
+    }
+    return true;
+}
+
 bool DesktopApp::HandleFolderPreviewHeaderPress(POINT point)
 {
     if (!folderPreview_ || !IsCollectionPopupInteractive()) return false;
@@ -863,8 +988,6 @@ bool DesktopApp::HandleFolderPreviewHeaderPress(POINT point)
     const RECT popup = GetCollectionPopupRect(dockFolderPopupWidget_);
     const auto* motion = GetCollectionPopupResizeTransition();
     const RECT panel = motion ? motion->Panel(popup) : popup;
-    const RECT title = folderPreview_->inlineBounds ? folderPreview_->inlineTitle
-        : snowdesktop::collection_popup_layout::ResolveTitleRect(panel, GetOpenCollectionPopupLayoutMetrics());
     const auto row = GetFolderPreviewNavigationRow(panel);
     if (PtInRect(&row.back, point))
     {
@@ -876,7 +999,8 @@ bool DesktopApp::HandleFolderPreviewHeaderPress(POINT point)
         shellLaunchWorker_.Enqueue(hwnd_, dockFolderPopupWidget_.sourceFolderPath);
         return true;
     }
-    if (PtInRect(&row.home, point) || PtInRect(&title, point))
+    if (PtInRect(&row.home, point) ||
+        (folderPreview_->inlineBounds && PtInRect(&folderPreview_->inlineTitle, point)))
     {
         RestoreFolderPreviewHome(true);
         return true;
@@ -909,25 +1033,11 @@ bool DesktopApp::HandleFolderPreviewHeaderPress(POINT point)
                     for (size_t n = 0; n < destinations.size(); ++n)
                     {
                         const auto& path = destinations[n];
-                        std::wstring label = i == 0 ? path : FolderName(path);
-                        for (size_t amp = label.find(L'&'); amp != std::wstring::npos; amp = label.find(L'&', amp + 2))
-                            label.insert(amp, 1, L'&');
-                        AppendMenuW(menu, MF_STRING, n + 1, label.c_str());
+                        AppendMenuW(menu, MF_STRING, n + 1, EscapePathMenuLabel(i == 0 ? path : FolderName(path)).c_str());
                     }
                     const auto originalPath = dockFolderPopupWidget_.sourceFolderPath;
                     const auto viewKey = folderPreview_->viewKey;
-                    const auto hostId = folderPreview_->inlineBounds ? folderPreview_->hostWidgetId : std::wstring{};
-                    const auto previousPin = interactionPinnedWidgetId_;
-                    if (!hostId.empty()) interactionPinnedWidgetId_ = hostId;
-                    const UINT choice = ShowModernMenu(menu, screenPoint, hwnd_, false, false, nullptr,
-                        {}, {}, {}, nullptr, {}, false, 0, 0, {}, true);
-                    if (!hostId.empty() && interactionPinnedWidgetId_ == hostId)
-                    {
-                        interactionPinnedWidgetId_ = previousPin;
-                        InvalidateRect(hwnd_, nullptr, FALSE);
-                    }
-                    DestroyMenu(menu);
-                    ClearMenuIcons();
+                    const UINT choice = TrackFolderPreviewPathMenu(menu, screenPoint, true);
                     if (choice > 0 && choice <= destinations.size() && folderPreview_ && folderPreview_->viewKey == viewKey &&
                         dockFolderPopupWidget_.sourceFolderPath == originalPath)
                         OpenFolderPreviewPath(destinations[choice - 1]);

@@ -19,7 +19,7 @@ inline NavigationRow ResolveNavigationRow(const RECT& bounds, float scale)
 {
     using collection_popup_layout::ScaleDimension;
     const auto [left, top, right, bottom] = bounds;
-    const int buttonWidth = ScaleDimension(24, scale);
+    const int buttonWidth = ScaleDimension(20, scale);
     const LONG backRight = std::min(right, left + buttonWidth);
     const LONG homeRight = std::min(right, backRight + buttonWidth);
     const LONG breadcrumbLeft = std::min(right, homeRight + ScaleDimension(3, scale));

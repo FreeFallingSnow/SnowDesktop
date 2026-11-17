@@ -196,6 +196,7 @@ void DesktopApp::OnRightButtonDown(
 
     ActivateInlineFolderPreviewAtPoint(point);
     ClearPopupMouseDownItem();
+    if (HandleFolderPreviewBreadcrumbContextMenu(point, false)) return;
     Item* pressed = nullptr;
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
     const auto beginWidgetMove = [&](size_t index) {
@@ -774,6 +775,8 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                 POINT{ pt.x - frame.left, pt.y - frame.top }))
             return;
     }
+
+    if (HandleFolderPreviewBreadcrumbContextMenu(pt, true)) return;
 
     // A hover-only widget must remain visible while any context menu opened
     // from its frame, contents, tabs, or collection popup is active.  The

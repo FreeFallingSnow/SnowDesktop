@@ -8,6 +8,8 @@ namespace snowdesktop::menu_fluent_glyphs
 inline constexpr wchar_t kCollection[] = L"\uF122";       // app_folder
 inline constexpr wchar_t kDesktopFiles[] = L"\uF418";     // folder
 inline constexpr wchar_t kFolderMapping[] = L"\uF425";    // folder_link
+inline constexpr wchar_t kFolderPreview[] = L"\U000F07AE"; // folder_open_down_20_regular
+inline constexpr wchar_t kFolderOpen[] = L"\uF42E";      // folder_open_20_regular
 inline constexpr wchar_t kCollectionGroup[] = L"\U000F0829"; // collections_empty
 inline constexpr auto kFanExpansion = kCollectionGroup; // overlapping collection cards
 inline constexpr wchar_t kFileGroup[] = L"\U000F0ADE";    // folder_multiple

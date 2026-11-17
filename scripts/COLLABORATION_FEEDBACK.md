@@ -201,6 +201,8 @@
 
 ### CF-013 共享资源的键级编辑与提交粒度不闭合
 
+- **预览退出标题提交续证（2026-11-17）**：Task `folder-preview-in-place` 的批次 `d4bce4f63c1044efafa91f6e6673d544` 修订 0、Run `313b42a7ba6d491aab7c8315665a54a8` 通过后，源码提交成功，紧接的 `commit -ResourceRequests` 返回 `[Errno 32] Wait worker lease is occupied`。同一批资源请求重试成功并生成 `3940e1bc1`，额外产生一次 CLI 调用，未重跑构建或测试。等待结束回执与观察者租约释放的顺序仍待核对。
+
 - **目录双击设置提交续证（2026-11-17）**：Task `folder-preview-in-place` 的批次 `b9f37841b0b04386b6544ce84b38e43c` 修订 0、Run `b7f4de7f803247a18a5d08058493387e` 通过后，首次 `commit -ResourceRequests` 返回 `[Errno 32] Wait worker lease is occupied`。使用同一组请求重试成功，提交 `78cdcadab`，保存十种语言的三项键变更。观察 worker 释放租约的时序仍待处理；此次未额外构建或复现。
 
 - **删除键的续证（2026-11-10）**：Task `task-e8cf5ce885b04bada68577e1cb187fff` 在批次 `fb53e9157ddd4a0b95948a79dec2cc1f` 删除前台应用菜单的两项文案。十个工作区语言文件均已有无关键的顺序差异。源码确认 `resource apply` 原来要求字符串补丁，整路径提交会带上其他差异。本轮让已准备的键接受 `null` 删除，并沿用原事务和精确键提交，保留其他工作区内容。

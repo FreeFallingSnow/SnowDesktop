@@ -113,14 +113,6 @@ IDWriteTextFormat* DesktopApp::GetCollectionPopupTextFormat(float scale, bool ti
     return format.Get();
 }
 
-void DesktopApp::DrawFolderPreviewTitle(ID2D1DeviceContext* context, RECT row, POINT,
-    float scale, bool lightTheme)
-{
-    const auto& theme = lightTheme ? kQuickNavLight : kQuickNavDark;
-    DrawD2DTextEllipsis(context, dockFolderPopupWidget_.title, row, GetCollectionPopupTextFormat(scale, true),
-        theme.popupTitle, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-}
-
 void DesktopApp::DrawCollectionPopup(
     ID2D1DeviceContext* ctx,
     bool applyAnimation, const RECT* preparedRect)
@@ -246,8 +238,6 @@ void DesktopApp::DrawCollectionPopup(
         if (folderPreview_)
         {
             const auto row = GetFolderPreviewNavigationRow(presentedPanel);
-            if (!inlinePreview)
-                DrawFolderPreviewTitle(ctx, titleRect, pointer, row.scale, lightTheme);
             const auto controlColor = [&](float alpha) {
                 return lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, alpha)
                                   : D2D1::ColorF(1.0f, 1.0f, 1.0f, alpha);
@@ -310,7 +300,7 @@ void DesktopApp::DrawCollectionPopup(
                         DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                     label.left = chevron.right;
                 }
-                const bool hovered = (i == 0 || i + 1 < crumbs.size()) && PtInRect(&crumb.bounds, pointer);
+                const bool hovered = PtInRect(&crumb.bounds, pointer) != FALSE;
                 if (hovered) highlight(label);
                 InflateRect(&label, -snowdesktop::collection_popup_layout::ScaleDimension(3, row.scale), 0);
                 DrawD2DTextEllipsis(ctx, crumb.label, label, textFormat,
