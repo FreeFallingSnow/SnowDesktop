@@ -39,7 +39,9 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             dragDropController_.IsExternalDragActive()
                 ? DropAction::Copy : DropAction::Move);
 
-    if (!luaWidgetPanelRequest_.widgetId.empty() &&
+    const bool overStackIndicator = IsLuaStackIndicatorVisible() &&
+        PtInRect(&luaStackIndicator_.bounds, pt);
+    if (!overStackIndicator && !luaWidgetPanelRequest_.widgetId.empty() &&
         luaWidgetPanelAnimation_.IsInteractive())
     {
         const RECT content =
@@ -133,7 +135,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         }
     }
 
-    if (IsLuaStackIndicatorVisible() && PtInRect(&luaStackIndicator_.bounds, pt))
+    if (overStackIndicator)
     {
         (void)ScrollLuaWidgetStack(luaStackIndicator_.stackId, GET_WHEEL_DELTA_WPARAM(wp));
         return;

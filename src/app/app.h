@@ -892,6 +892,7 @@ private:
     bool IsLuaPanelHostedByFloatingWindow() const;
     bool ShouldShowFloatingPopupWindow() const;
     RECT CalculateFloatingPopupWindowBounds() const;
+    RECT GetFloatingCollectionPopupRegion() const;
     bool StartFloatingPopupOutsideClickMonitor();
     void StopFloatingPopupOutsideClickMonitor();
     void AdvanceFloatingPopupContentGeneration();
@@ -921,6 +922,7 @@ private:
         bool immediatePresent = false);
     HRESULT EnsureFloatingPopupCompositionRoot();
     HRESULT CreateOrResizeFloatingPopupCompositionSurface();
+    HRESULT PrepareFloatingStackIndicatorComposition(SIZE size);
     bool RenderFloatingPopupCompositionFrame();
     bool PresentFloatingPopupComposition();
     void SuspendFloatingPopupPresentation();
@@ -2962,6 +2964,7 @@ private:
     bool CommitLuaStackMemberDrag(GridCell targetCell);
     bool RemoveLuaStackMember(const std::wstring& stackId, POINT screenPoint);
     bool IsLuaStackIndicatorVisible() const;
+    bool IsLuaStackIndicatorOccluded(const RECT& bounds) const;
     void UpdateLuaStackIndicator(POINT point);
     void HideLuaStackIndicator();
     void InvalidateLuaStackHoverVisibility(const std::wstring& stackId);
@@ -4085,10 +4088,14 @@ private:
     ComPtr<IDCompositionVisual2> floatingPopupDcompVisual_;
     ComPtr<IDCompositionVisual2> floatingPopupDcompLiveVisual_;
     ComPtr<IDCompositionSurface> floatingPopupDcompSurface_;
+    ComPtr<IDCompositionVisual2> floatingStackIndicatorVisual_;
+    ComPtr<IDCompositionSurface> floatingStackIndicatorSurface_;
+    SIZE floatingStackIndicatorSurfaceSize_{};
     // Desktop coordinates. The HWND itself stays at the virtual desktop origin.
     RECT floatingPopupContentBounds_{};
     RECT floatingPopupCollectionRegion_{};
     RECT floatingPopupLuaPanelRegion_{};
+    RECT floatingStackIndicatorRegion_{};
     UINT floatingPopupCompWidth_ = 0;
     UINT floatingPopupCompHeight_ = 0;
     bool floatingPopupModalRegion_ = false;

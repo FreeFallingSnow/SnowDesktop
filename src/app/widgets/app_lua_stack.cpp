@@ -152,6 +152,8 @@ bool DesktopApp::SelectLuaStackMember(std::wstring stackId, std::wstring memberI
             InvalidateRect(hwnd_, &dirty, FALSE);
         }
     }
+    if (luaStackIndicator_.stackId == stackId && floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_))
+        InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
     return true;
 }
 
@@ -257,11 +259,22 @@ bool DesktopApp::IsLuaStackIndicatorVisible() const
     if (luaStackIndicator_.stackId.empty() || IsRectEmpty(&luaStackIndicator_.bounds) ||
         !customDesktopVisible_ || desktopPassthroughActive_ || HasActiveContextMenuSession() ||
         widgetAction_ != WidgetAction::None || dragSession_.HasContext() ||
-        dragDropController_.IsTransportActive() || !luaWidgetPanelRequest_.widgetId.empty() ||
-        IsCollectionPopupHostedByFloatingWindow()) return false;
+        dragDropController_.IsTransportActive() ||
+        (IsLuaPanelHostedByFloatingWindow() && luaWidgetPanelRequest_.modal)) return false;
     const size_t index = FindWidgetIndexById(luaStackIndicator_.stackId);
     return index < widgets_.size() && widgets_[index].type == DesktopWidgetType::LuaStack &&
-        (!desktopIconsHidden_ || widgets_[index].keepWhenDesktopHidden) && !IsRectEmpty(&widgets_[index].bounds);
+        (!desktopIconsHidden_ || widgets_[index].keepWhenDesktopHidden) &&
+        !IsRectEmpty(&widgets_[index].bounds) && !IsLuaStackIndicatorOccluded(luaStackIndicator_.bounds);
+}
+
+bool DesktopApp::IsLuaStackIndicatorOccluded(const RECT& bounds) const
+{
+    RECT overlap{};
+    const RECT collection = GetFloatingCollectionPopupRegion();
+    if (IntersectRect(&overlap, &bounds, &collection)) return true;
+    if (!IsLuaPanelHostedByFloatingWindow()) return false;
+    const RECT panel = GetLuaWidgetPanelRect();
+    return IntersectRect(&overlap, &bounds, &panel) != FALSE;
 }
 
 void DesktopApp::InvalidateLuaStackHoverVisibility(const std::wstring& stackId)
@@ -279,7 +292,10 @@ void DesktopApp::HideLuaStackIndicator()
     // The leave timer can close the indicator after the final pointer sample.
     // Its hover-only owner still needs a desktop paint to start fading out.
     if (shown) InvalidateLuaStackHoverVisibility(luaStackIndicator_.stackId);
+    const bool pressed = !luaStackIndicator_.pressedMember.empty();
     luaStackIndicator_ = {};
+    if (pressed && snowdesktop::private_pointer::Capture() == floatingPopupHwnd_)
+        snowdesktop::private_pointer::ReleasePointerCapture();
     if (shown) UpdateFloatingPopupWindowBounds();
 }
 
@@ -288,16 +304,24 @@ void DesktopApp::UpdateLuaStackIndicator(POINT point)
     if (widgetAction_ != WidgetAction::None || dragSession_.HasContext() ||
         dragDropController_.IsTransportActive() || !customDesktopVisible_ ||
         desktopPassthroughActive_ || HasActiveContextMenuSession() ||
-        !luaWidgetPanelRequest_.widgetId.empty() || IsCollectionPopupHostedByFloatingWindow())
+        (IsLuaPanelHostedByFloatingWindow() && luaWidgetPanelRequest_.modal))
     {
         HideLuaStackIndicator();
         return;
     }
-    // The outside popup and its bridge own hover before components underneath.
+    if (!luaStackIndicator_.pressedMember.empty())
+    {
+        if (!IsLuaStackIndicatorVisible()) HideLuaStackIndicator();
+        return;
+    }
+    // The indicator and its bridge own hover before components underneath.
     const bool indicatorHover = IsLuaStackIndicatorVisible() &&
         (PtInRect(&luaStackIndicator_.bounds, point) || PtInRect(&luaStackIndicator_.bridge, point));
-    const size_t target = indicatorHover ? FindWidgetIndexById(luaStackIndicator_.stackId)
-        : HitTestStandaloneWidgetIndex(point);
+    const RECT pointer{point.x, point.y, point.x + 1, point.y + 1};
+    size_t target = static_cast<size_t>(-1);
+    if (!IsLuaStackIndicatorOccluded(pointer))
+        target = indicatorHover ? FindWidgetIndexById(luaStackIndicator_.stackId)
+            : HitTestStandaloneWidgetIndex(point);
     if (target >= widgets_.size() || widgets_[target].type != DesktopWidgetType::LuaStack)
     {
         if (!luaStackIndicator_.stackId.empty())
@@ -313,13 +337,6 @@ void DesktopApp::UpdateLuaStackIndicator(POINT point)
     if (ids.size() < 2) { HideLuaStackIndicator(); return; }
     const bool newTarget = luaStackIndicator_.stackId != stack.id;
     const RECT oldBounds = luaStackIndicator_.bounds;
-    if (newTarget)
-    {
-        InvalidateLuaStackHoverVisibility(luaStackIndicator_.stackId);
-        luaStackIndicator_ = {};
-    }
-    luaStackIndicator_.stackId = stack.id;
-    luaStackIndicator_.hideAfter = 0;
     const float scale = GetWidgetCellScale(stack);
     const auto cu = [&](float value) { return std::max(1, ScaleWidgetCu(value, scale)); };
     const RECT frame = GetStandaloneWidgetFrameRect(stack);
@@ -332,22 +349,47 @@ void DesktopApp::UpdateLuaStackIndicator(POINT point)
     const int pitch = cu(16), padding = cu(8), width = cu(24), gap = cu(6);
     const size_t visible = std::min(ids.size(), static_cast<size_t>(std::max<LONG>(1, (work.bottom - work.top - padding * 2) / pitch)));
     const int height = static_cast<int>(visible) * pitch + padding * 2;
-    int left = frame.right + gap;
-    if (left + width > work.right) left = frame.left - gap - width;
-    left = std::clamp(left, static_cast<int>(work.left), std::max<int>(work.left, work.right - width));
     const int top = std::clamp<int>((frame.top + frame.bottom - height) / 2, work.top, std::max<int>(work.top, work.bottom - height));
-    luaStackIndicator_.bounds = {left, top, left + width, top + height};
+    const LONG rightOfStack = frame.right + gap;
+    const LONG leftOfStack = frame.left - gap - width;
+    const bool preferRight = rightOfStack + width <= work.right;
+    const auto boundsAt = [&](LONG left) {
+        left = std::clamp(left, work.left, std::max<LONG>(work.left, work.right - width));
+        return RECT{left, top, left + width, top + height};
+    };
+    RECT bounds = boundsAt(preferRight ? rightOfStack : leftOfStack);
+    if (IsLuaStackIndicatorOccluded(bounds))
+    {
+        bounds = boundsAt(preferRight ? leftOfStack : rightOfStack);
+        if (IsLuaStackIndicatorOccluded(bounds))
+        {
+            HideLuaStackIndicator();
+            return;
+        }
+    }
+    if (newTarget)
+    {
+        InvalidateLuaStackHoverVisibility(luaStackIndicator_.stackId);
+        luaStackIndicator_ = {};
+    }
+    luaStackIndicator_.stackId = stack.id;
+    luaStackIndicator_.hideAfter = 0;
+    luaStackIndicator_.bounds = bounds;
+    const LONG left = bounds.left;
     luaStackIndicator_.bridge = {std::min(frame.right, static_cast<LONG>(left + width)), std::max(frame.top, static_cast<LONG>(top)),
         std::max(frame.left, static_cast<LONG>(left)), std::min(frame.bottom, static_cast<LONG>(top + height))};
+    const auto active = std::find(ids.begin(), ids.end(), stack.activeCategoryId);
+    const size_t activeIndex = active == ids.end() ? 0 : static_cast<size_t>(active - ids.begin());
+    const size_t first = std::min(activeIndex > visible / 2 ? activeIndex - visible / 2 : 0, ids.size() - visible);
+    const bool rowsChanged = first != luaStackIndicator_.first || visible != luaStackIndicator_.visibleCount ||
+        pitch != luaStackIndicator_.pitch || padding != luaStackIndicator_.padding;
     luaStackIndicator_.pitch = pitch;
     luaStackIndicator_.padding = padding;
     luaStackIndicator_.visibleCount = visible;
-    const auto active = std::find(ids.begin(), ids.end(), stack.activeCategoryId);
-    const size_t activeIndex = active == ids.end() ? 0 : static_cast<size_t>(active - ids.begin());
-    luaStackIndicator_.first = std::min(activeIndex > visible / 2 ? activeIndex - visible / 2 : 0, ids.size() - visible);
+    luaStackIndicator_.first = first;
     if (newTarget) InvalidateLuaStackHoverVisibility(stack.id);
     if (newTarget || !EqualRect(&oldBounds, &luaStackIndicator_.bounds)) UpdateFloatingPopupWindowBounds(true);
-    else if (floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_))
+    else if (rowsChanged && floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_))
         InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
 }
 
