@@ -801,10 +801,8 @@ struct CompositeEffect : winrt::implements<CompositeEffect,
 class XamlBlurBrush : public wux::Media::XamlCompositionBrushBaseT<XamlBlurBrush>
 {
 public:
-    XamlBlurBrush(wuc::Compositor compositor, float blurAmount, wfn::float4 tint,
-        bool sampleHostBackdrop)
-        : compositor_(std::move(compositor)), blurAmount_(blurAmount), tint_(tint),
-          sampleHostBackdrop_(sampleHostBackdrop)
+    XamlBlurBrush(wuc::Compositor compositor, float blurAmount, wfn::float4 tint)
+        : compositor_(std::move(compositor)), blurAmount_(blurAmount), tint_(tint)
     {
     }
 
@@ -812,16 +810,7 @@ public:
     {
         if (CompositionBrush())
             return;
-        wuc::CompositionBackdropBrush backdropBrush{nullptr};
-        if (sampleHostBackdrop_)
-        {
-            // The secondary taskbar island can sample its own surface with a
-            // visual backdrop. The host backdrop samples behind the window.
-            try { backdropBrush = compositor_.CreateHostBackdropBrush(); }
-            catch (const winrt::hresult_error&) {}
-        }
-        if (!backdropBrush)
-            backdropBrush = compositor_.CreateBackdropBrush();
+        auto backdropBrush = compositor_.CreateBackdropBrush();
         auto blur = winrt::make_self<GaussianBlurEffect>();
         blur->effectSource = wuc::CompositionEffectSourceParameter(L"backdrop");
         blur->blurAmount = blurAmount_;
@@ -848,7 +837,6 @@ private:
     wuc::Compositor compositor_{nullptr};
     float blurAmount_ = 24.0f;
     wfn::float4 tint_{};
-    bool sampleHostBackdrop_ = false;
 };
 
 class VisualTreeWatcher;
@@ -1027,7 +1015,7 @@ public:
             {
                 auto material = effective;
                 if (DecodeGradient(effective.gradient).enabled) material.alpha = 0;
-                ApplyBackdrop(info.background, material, info.secondaryTaskbar);
+                ApplyBackdrop(info.background, material);
                 ApplyGradient(info.background, effective.gradient);
                 ApplySolidFill(info.border, 0.f, 0.f, 0.f, 0.f);
                 ApplyEdges(info.background, effective, info.taskbar);
@@ -1140,7 +1128,7 @@ private:
                 wux::DependencyProperty::UnsetValue();
     }
 
-    static void ApplyBackdrop(ControlInfo& control, const Snapshot& snapshot, bool sampleHostBackdrop)
+    static void ApplyBackdrop(ControlInfo& control, const Snapshot& snapshot)
     {
         if (!control.control)
             return;
@@ -1197,7 +1185,7 @@ private:
                 wfn::float4{
                     tint.R / 255.0f, tint.G / 255.0f,
                     tint.B / 255.0f, tint.A / 255.0f
-                }, sampleHostBackdrop);
+                });
         }
         if (!brush)
         {
