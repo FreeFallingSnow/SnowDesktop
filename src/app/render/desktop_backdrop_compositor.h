@@ -222,6 +222,8 @@ public:
      *        两侧属性全部设置后，通过 CommitVisualChangesAndNotify 一次提交。
      */
     void EndFrame(bool requestCommit = true);
+    /** @brief 释放背景辅助窗口和面板，保留内容窗口的 sRGB 合成层。 */
+    void ResetBackdrop();
     /** @brief 销毁合成目标和辅助窗口。 */
     void Reset();
 

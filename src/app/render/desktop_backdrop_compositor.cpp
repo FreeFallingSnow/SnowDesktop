@@ -1451,7 +1451,7 @@ struct DesktopBackdropCompositor::Impl
         SetAnimationPathRegionExpanded(false);
     }
 
-    void Reset()
+    void Reset(bool preserveSrgbContent = false)
     {
         available = false;
         panelRegionSnapshotValid = false;
@@ -1466,10 +1466,14 @@ struct DesktopBackdropCompositor::Impl
         panels.clear();
         panelOwners.clear();
         blurFactories.clear();
-        highlightMaterialFactory = nullptr;
+        if (!preserveSrgbContent)
+            highlightMaterialFactory = nullptr;
         regionalFactories.clear();
-        maskGraphicsDevice = nullptr;
-        maskDrawDevice = nullptr;
+        if (!preserveSrgbContent)
+        {
+            maskGraphicsDevice = nullptr;
+            maskDrawDevice = nullptr;
+        }
         collectingFrame = false;
         frameCommitPending = false;
         stagingFrame = false;
@@ -1478,7 +1482,8 @@ struct DesktopBackdropCompositor::Impl
         blurFactoriesDirty = false;
         try
         {
-            ResetSrgbContent();
+            if (!preserveSrgbContent)
+                ResetSrgbContent();
             if (target)
                 target.Root(nullptr);
         }
@@ -1491,12 +1496,14 @@ struct DesktopBackdropCompositor::Impl
         placementRoot = nullptr;
         popupDisplayClip = nullptr;
         target = nullptr;
-        // The compositor and dispatcher queue are shared by every backdrop
-        // target on this UI thread. Releasing one target must not invalidate
-        // the desktop/floating counterpart during a hand-off.
-        compositor = nullptr;
-        compositorController = nullptr;
-        dispatcherController = nullptr;
+        // The controller is shared across backdrop instances on this thread.
+        // Keep this instance attached while its sRGB content is still live.
+        if (!preserveSrgbContent)
+        {
+            compositor = nullptr;
+            compositorController = nullptr;
+            dispatcherController = nullptr;
+        }
         if (backdropWindow && IsWindow(backdropWindow))
             DestroyWindow(backdropWindow);
         backdropWindow = nullptr;
@@ -3621,6 +3628,12 @@ void DesktopBackdropCompositor::EndFrame(
     {
         impl_->SetError(_LW("backdrop.remove_panel"), error.code());
     }
+}
+
+void DesktopBackdropCompositor::ResetBackdrop()
+{
+    if (impl_ && impl_->backdropWindow)
+        impl_->Reset(true);
 }
 
 void DesktopBackdropCompositor::Reset()

@@ -1009,9 +1009,16 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
     const bool collectionGlass = collectionPopupGlassTheme_ && popup && !fan;
     const bool luaGlass = collectionPopupGlassTheme_ && IsLuaPanelHostedByFloatingWindow();
     const bool stackGlass = collectionPopupGlassTheme_ && IsLuaStackIndicatorVisible();
-    if ((!collectionPopupGlassTheme_ && !fan) || !floatingPopupHwnd_ || !IsWindow(floatingPopupHwnd_))
+    if (!floatingPopupHwnd_ || !IsWindow(floatingPopupHwnd_))
     {
         collectionPopupBackdropCompositor_.Reset();
+        popupFanBackdropCount_ = 0;
+        return;
+    }
+    if (!collectionPopupGlassTheme_ && !fan)
+    {
+        // The sRGB layer can own the full popup frame between paints.
+        collectionPopupBackdropCompositor_.ResetBackdrop();
         popupFanBackdropCount_ = 0;
         return;
     }
