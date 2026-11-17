@@ -2930,6 +2930,7 @@
   "workshop_manager.tag_actions": "Tag-Aktionen",
   "modules.dllBlockedByPolicy": "Die Windows-Richtlinie zur Anwendungssteuerung hat das Laden einer DLL blockiert.",
   "app.interact.open_in_explorer": "Im Datei-Explorer öffnen",
-  "settings.widgetBehavior.folderDoubleClick": "Standardaktion beim Doppelklick",
-  "settings.widgetBehavior.folderDoubleClickHint": "Gilt für Ordner und Ordnerverknüpfungen in Datei-Widgets. Strg für die Vorschau oder Umschalt zum Öffnen gedrückt halten."
+  "settings.widgetBehavior.folderDoubleClick": "Standardaktion für Doppelklicks auf Ordner in Widgets und Dock-Popups",
+  "settings.widgetBehavior.folderDoubleClickHint": "Gilt für Ordner und Ordnerverknüpfungen in Desktopdateien, Ordnerzuordnungen und Dock-Ordnerpopups. Strg + Doppelklick zeigt die Vorschau, Umschalt + Doppelklick öffnet den Datei-Explorer.",
+  "settings.widgetBehavior.previewFolderInPlace": "Vorschau im Widget oder Popup"
 }

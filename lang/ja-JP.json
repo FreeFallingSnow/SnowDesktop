@@ -2930,6 +2930,7 @@
   "workshop_manager.tag_actions": "タグ操作",
   "modules.dllBlockedByPolicy": "Windows のアプリケーション制御ポリシーにより、DLL の読み込みがブロックされました。",
   "app.interact.open_in_explorer": "エクスプローラーで開く",
-  "settings.widgetBehavior.folderDoubleClick": "既定のダブルクリック動作",
-  "settings.widgetBehavior.folderDoubleClickHint": "ファイルウィジェット内のフォルダーとフォルダーのショートカットが対象です。Ctrl を押しながらプレビュー、Shift を押しながら開きます。"
+  "settings.widgetBehavior.folderDoubleClick": "ウィジェットと Dock ポップアップ内のフォルダーの既定のダブルクリック動作",
+  "settings.widgetBehavior.folderDoubleClickHint": "デスクトップファイル、マッピングフォルダー、Dock のフォルダーポップアップ内のフォルダーとフォルダーのショートカットが対象です。Ctrl ＋ ダブルクリックでその場でプレビューし、Shift ＋ ダブルクリックでエクスプローラーを開きます。",
+  "settings.widgetBehavior.previewFolderInPlace": "ウィジェットまたはポップアップ内でプレビュー"
 }

@@ -2930,6 +2930,7 @@
   "workshop_manager.tag_actions": "标签操作",
   "modules.dllBlockedByPolicy": "Windows 应用程序控制策略阻止了 DLL 加载。",
   "app.interact.open_in_explorer": "在资源管理器中打开",
-  "settings.widgetBehavior.folderDoubleClick": "默认双击行为",
-  "settings.widgetBehavior.folderDoubleClickHint": "适用于文件收纳组件中的文件夹和目录快捷方式。按住 Ctrl 预览，按住 Shift 打开。"
+  "settings.widgetBehavior.folderDoubleClick": "组件与 Dock 弹窗内文件夹的默认双击行为",
+  "settings.widgetBehavior.folderDoubleClickHint": "适用于桌面文件、映射文件夹和 Dock 文件夹弹窗中的文件夹及其快捷方式。Ctrl + 双击原位预览，Shift + 双击在资源管理器中打开。",
+  "settings.widgetBehavior.previewFolderInPlace": "在组件或弹窗内原位预览"
 }

@@ -2930,6 +2930,7 @@
   "workshop_manager.tag_actions": "Actions sur les étiquettes",
   "modules.dllBlockedByPolicy": "Une stratégie de contrôle des applications de Windows a bloqué le chargement d’une DLL.",
   "app.interact.open_in_explorer": "Ouvrir dans l’Explorateur de fichiers",
-  "settings.widgetBehavior.folderDoubleClick": "Action par défaut au double-clic",
-  "settings.widgetBehavior.folderDoubleClickHint": "Concerne les dossiers et leurs raccourcis dans les widgets de fichiers. Maintenez Ctrl pour prévisualiser ou Maj pour ouvrir."
+  "settings.widgetBehavior.folderDoubleClick": "Action par défaut au double-clic sur un dossier dans un widget ou le Dock",
+  "settings.widgetBehavior.folderDoubleClickHint": "Concerne les dossiers et leurs raccourcis dans Fichiers du bureau, Dossiers liés et les fenêtres de dossiers du Dock. Ctrl + double-clic affiche un aperçu sur place. Maj + double-clic ouvre l’Explorateur de fichiers.",
+  "settings.widgetBehavior.previewFolderInPlace": "Aperçu dans le widget ou la fenêtre"
 }

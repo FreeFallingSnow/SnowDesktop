@@ -2930,6 +2930,7 @@
   "workshop_manager.tag_actions": "Acciones de etiquetas",
   "modules.dllBlockedByPolicy": "Una directiva de control de aplicaciones de Windows bloqueó la carga de una DLL.",
   "app.interact.open_in_explorer": "Abrir en el Explorador de archivos",
-  "settings.widgetBehavior.folderDoubleClick": "Acción predeterminada al hacer doble clic",
-  "settings.widgetBehavior.folderDoubleClickHint": "Se aplica a las carpetas y sus accesos directos en los widgets de archivos. Mantén pulsada Ctrl para obtener una vista previa o Mayús para abrir."
+  "settings.widgetBehavior.folderDoubleClick": "Acción predeterminada al hacer doble clic en carpetas de widgets y ventanas del Dock",
+  "settings.widgetBehavior.folderDoubleClickHint": "Se aplica a las carpetas y sus accesos directos en Archivos del escritorio, Carpetas asignadas y ventanas de carpetas del Dock. Ctrl + doble clic muestra la vista previa. Mayús + doble clic abre el Explorador de archivos.",
+  "settings.widgetBehavior.previewFolderInPlace": "Vista previa en el widget o la ventana"
 }

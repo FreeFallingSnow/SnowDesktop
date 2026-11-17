@@ -2930,6 +2930,7 @@
   "workshop_manager.tag_actions": "Ações de marcadores",
   "modules.dllBlockedByPolicy": "Uma política de controle de aplicativos do Windows bloqueou o carregamento de uma DLL.",
   "app.interact.open_in_explorer": "Abrir no Explorador de Arquivos",
-  "settings.widgetBehavior.folderDoubleClick": "Ação padrão do clique duplo",
-  "settings.widgetBehavior.folderDoubleClickHint": "Aplica-se a pastas e atalhos de pasta nos widgets de arquivos. Segure Ctrl para visualizar ou Shift para abrir."
+  "settings.widgetBehavior.folderDoubleClick": "Ação padrão ao clicar duas vezes nas pastas de widgets e pop-ups do Dock",
+  "settings.widgetBehavior.folderDoubleClickHint": "Aplica-se a pastas e atalhos de pasta em Arquivos da área de trabalho, Pastas mapeadas e pop-ups de pastas do Dock. Ctrl + clique duplo mostra a prévia no local. Shift + clique duplo abre o Explorador de Arquivos.",
+  "settings.widgetBehavior.previewFolderInPlace": "Visualizar no widget ou no pop-up"
 }

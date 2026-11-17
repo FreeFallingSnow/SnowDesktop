@@ -2930,6 +2930,7 @@
   "workshop_manager.tag_actions": "태그 작업",
   "modules.dllBlockedByPolicy": "Windows 애플리케이션 제어 정책이 DLL 로드를 차단했습니다.",
   "app.interact.open_in_explorer": "파일 탐색기에서 열기",
-  "settings.widgetBehavior.folderDoubleClick": "기본 두 번 클릭 동작",
-  "settings.widgetBehavior.folderDoubleClickHint": "파일 위젯의 폴더와 폴더 바로 가기에 적용됩니다. Ctrl을 누르면 미리 보고 Shift를 누르면 엽니다."
+  "settings.widgetBehavior.folderDoubleClick": "위젯 및 Dock 팝업의 폴더 기본 두 번 클릭 동작",
+  "settings.widgetBehavior.folderDoubleClickHint": "바탕 화면 파일, 매핑 폴더 및 Dock 폴더 팝업의 폴더와 폴더 바로 가기에 적용됩니다. Ctrl + 두 번 클릭으로 제자리에서 미리 보고 Shift + 두 번 클릭으로 파일 탐색기에서 엽니다.",
+  "settings.widgetBehavior.previewFolderInPlace": "위젯 또는 팝업에서 미리 보기"
 }
