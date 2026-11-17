@@ -4,8 +4,12 @@
 #include "common/utils.h"
 #include "layout/collection_popup_layout.h"
 #include "ui/menu/menu_fluent_glyphs.h"
+#include "widgets/widget_folder_search.h"
 
 #include <filesystem>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace
 {
@@ -207,6 +211,13 @@ bool DesktopApp::TryFolderPreviewDoubleClick(POINT point)
             for (const auto& widget : widgets_)
                 for (const auto& entry : widget.folderEntries)
                     if (entry.selected) session.selectedFolderPaths.emplace_back(widget.id, entry.fullPath);
+            for (const auto& container : containers_)
+                if (const auto* view = dynamic_cast<const ScrollingItemWidget*>(container.get());
+                    view && view->folderSearch_ && view->GetWidgetData())
+                    for (const auto& row : view->folderSearch_->rows)
+                        if (row.recursive && row.recursive->selected)
+                            session.selectedFolderPaths.emplace_back(
+                                view->GetWidgetData()->id, row.recursive->fullPath);
             if (dockFolderPopupOpen_)
             {
                 CancelDockFolderPopupIconLoads();
@@ -318,17 +329,30 @@ void DesktopApp::RestoreFolderPreviewHome(bool present)
     dockFolderPopupMappingWidgetId_.clear();
     dockFolderPopupAvailable_ = dockFolderPopupLoading_ = false;
     dockFolderPopupKnownItemCount_ = 0;
-    for (const auto& key : session.selectedDesktopKeys)
+    if (present)
     {
-        const size_t index = FindItemIndexByKey(key);
-        if (index < items_.size()) items_[index].selected = true;
-    }
-    for (const auto& [widgetId, path] : session.selectedFolderPaths)
-    {
-        const size_t index = FindWidgetIndexById(widgetId);
-        if (index >= widgets_.size()) continue;
-        for (auto& entry : widgets_[index].folderEntries)
-            if (entry.fullPath == path) entry.selected = true;
+        ClearSelection();
+        for (const auto& key : session.selectedDesktopKeys)
+        {
+            const size_t index = FindItemIndexByKey(key);
+            if (index < items_.size()) items_[index].selected = true;
+        }
+        std::unordered_map<std::wstring_view, std::unordered_set<std::wstring_view>> paths;
+        for (const auto& [owner, path] : session.selectedFolderPaths)
+            paths[owner].insert(path);
+        const auto selected = [&](std::wstring_view owner, std::wstring_view path) {
+            const auto found = paths.find(owner);
+            return found != paths.end() && found->second.contains(path);
+        };
+        for (auto& widget : widgets_)
+            for (auto& entry : widget.folderEntries)
+                if (selected(widget.id, entry.fullPath)) entry.selected = true;
+        for (const auto& container : containers_)
+            if (const auto* view = dynamic_cast<const ScrollingItemWidget*>(container.get());
+                view && view->folderSearch_ && view->GetWidgetData())
+                for (const auto& row : view->folderSearch_->rows)
+                    if (row.recursive && selected(view->GetWidgetData()->id, row.recursive->fullPath))
+                        row.recursive->selected = true;
     }
     if (session.folderHome)
     {
@@ -385,8 +409,12 @@ bool DesktopApp::ToggleFolderPreview(const std::wstring& sourceId)
         enabled = !enabled;
         return false;
     }
-    if (!enabled && folderPreview_ && folderPreview_->sourceWidgetId == sourceId)
-        RestoreFolderPreviewHome(true);
+    if (!enabled)
+    {
+        folderReadWork_.Cancel(snowdesktop::folder_preview::kResolveWorkKey);
+        if (folderPreview_ && folderPreview_->sourceWidgetId == sourceId)
+            RestoreFolderPreviewHome(true);
+    }
     return true;
 }
 

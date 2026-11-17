@@ -575,7 +575,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     popupAnimation_.ResetHidden();
     ResetCollectionPopupAnimationCache();
     if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
-        !dockFolderPopupOpen_ && !dockTrayPopup_)
+        !dockFolderPopupOpen_ && !dockTrayPopup_ && !pendingOpen)
     {
         if (!IsRectEmptyRect(previewBounds)) InvalidateCollectionPopupDesktopScene(previewBounds);
         return;
