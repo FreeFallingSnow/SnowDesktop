@@ -2934,5 +2934,7 @@
   "settings.widgetBehavior.folderDoubleClickHint": "Applies to folders and folder shortcuts in Desktop Files, Folder Mapping, and Dock folder popups. Ctrl + double-click previews in place. Shift + double-click opens File Explorer.",
   "settings.widgetBehavior.previewFolderInPlace": "Preview in the widget or popup",
   "app.folderPreview.title": "Click here to exit preview",
-  "app.folderPreview.open": "Preview in place"
+  "app.folderPreview.open": "Preview in place",
+  "app.folderPreview.copyAddress": "Copy address",
+  "app.folderPreview.createDesktopMapping": "Create desktop folder mapping"
 }

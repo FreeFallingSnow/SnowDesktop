@@ -2934,5 +2934,7 @@
   "settings.widgetBehavior.folderDoubleClickHint": "Concerne les dossiers et leurs raccourcis dans Fichiers du bureau, Dossiers liés et les fenêtres de dossiers du Dock. Ctrl + double-clic affiche un aperçu sur place. Maj + double-clic ouvre l’Explorateur de fichiers.",
   "settings.widgetBehavior.previewFolderInPlace": "Aperçu dans le widget ou la fenêtre",
   "app.folderPreview.title": "Cliquer ici pour quitter l’aperçu",
-  "app.folderPreview.open": "Afficher un aperçu sur place"
+  "app.folderPreview.open": "Afficher un aperçu sur place",
+  "app.folderPreview.copyAddress": "Copier l’adresse",
+  "app.folderPreview.createDesktopMapping": "Créer un dossier mappé sur le Bureau"
 }

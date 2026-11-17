@@ -2934,5 +2934,7 @@
   "settings.widgetBehavior.folderDoubleClickHint": "デスクトップファイル、マッピングフォルダー、Dock のフォルダーポップアップ内のフォルダーとフォルダーのショートカットが対象です。Ctrl ＋ ダブルクリックでその場でプレビューし、Shift ＋ ダブルクリックでエクスプローラーを開きます。",
   "settings.widgetBehavior.previewFolderInPlace": "ウィジェットまたはポップアップ内でプレビュー",
   "app.folderPreview.title": "ここをクリックしてプレビューを終了",
-  "app.folderPreview.open": "その場でプレビュー"
+  "app.folderPreview.open": "その場でプレビュー",
+  "app.folderPreview.copyAddress": "アドレスをコピー",
+  "app.folderPreview.createDesktopMapping": "デスクトップにフォルダーのマッピングを作成"
 }

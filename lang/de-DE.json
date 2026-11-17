@@ -2934,5 +2934,7 @@
   "settings.widgetBehavior.folderDoubleClickHint": "Gilt für Ordner und Ordnerverknüpfungen in Desktopdateien, Ordnerzuordnungen und Dock-Ordnerpopups. Strg + Doppelklick zeigt die Vorschau, Umschalt + Doppelklick öffnet den Datei-Explorer.",
   "settings.widgetBehavior.previewFolderInPlace": "Vorschau im Widget oder Popup",
   "app.folderPreview.title": "Hier klicken, um die Vorschau zu beenden",
-  "app.folderPreview.open": "Vorschau an Ort und Stelle"
+  "app.folderPreview.open": "Vorschau an Ort und Stelle",
+  "app.folderPreview.copyAddress": "Adresse kopieren",
+  "app.folderPreview.createDesktopMapping": "Ordnerzuordnung auf dem Desktop erstellen"
 }

@@ -2934,5 +2934,7 @@
   "settings.widgetBehavior.folderDoubleClickHint": "Aplica-se a pastas e atalhos de pasta em Arquivos da área de trabalho, Pastas mapeadas e pop-ups de pastas do Dock. Ctrl + clique duplo mostra a prévia no local. Shift + clique duplo abre o Explorador de Arquivos.",
   "settings.widgetBehavior.previewFolderInPlace": "Visualizar no widget ou no pop-up",
   "app.folderPreview.title": "Clique aqui para sair da visualização",
-  "app.folderPreview.open": "Visualizar no local"
+  "app.folderPreview.open": "Visualizar no local",
+  "app.folderPreview.copyAddress": "Copiar endereço",
+  "app.folderPreview.createDesktopMapping": "Criar mapeamento de pasta na área de trabalho"
 }

@@ -2934,5 +2934,7 @@
   "settings.widgetBehavior.folderDoubleClickHint": "适用于桌面文件、映射文件夹和 Dock 文件夹弹窗中的文件夹及其快捷方式。Ctrl + 双击原位预览，Shift + 双击在资源管理器中打开。",
   "settings.widgetBehavior.previewFolderInPlace": "在组件或弹窗内原位预览",
   "app.folderPreview.title": "点此退出预览",
-  "app.folderPreview.open": "原位预览"
+  "app.folderPreview.open": "原位预览",
+  "app.folderPreview.copyAddress": "复制地址",
+  "app.folderPreview.createDesktopMapping": "在桌面创建文件夹映射"
 }
