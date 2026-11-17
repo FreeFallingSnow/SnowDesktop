@@ -580,6 +580,7 @@ void DesktopApp::OnMouseMoveAt(
 
     if (detailColumnResizeActive_)
     {
+        snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_SIZEWE));
         DesktopWidget* resizedWidget =
             detailColumnResizePopup_
             ? GetOpenPopupWidget()
@@ -603,21 +604,28 @@ void DesktopApp::OnMouseMoveAt(
                     widget.detailShowType,
                     widget.detailShowSize,
                     positions);
+            float* dividerPosition = nullptr;
             switch (detailColumnResizeColumn_)
             {
             case snowdesktop::list_detail_rules::Column::Modified:
-                widget.detailModifiedPosition = position;
+                dividerPosition = &widget.detailModifiedPosition;
                 break;
             case snowdesktop::list_detail_rules::Column::Type:
-                widget.detailTypePosition = position;
+                dividerPosition = &widget.detailTypePosition;
                 break;
             case snowdesktop::list_detail_rules::Column::Size:
-                widget.detailSizePosition = position;
+                dividerPosition = &widget.detailSizePosition;
                 break;
             default:
                 break;
             }
-            if (detailColumnResizePopup_)
+            if (!dividerPosition || *dividerPosition == position) return;
+            *dividerPosition = position;
+            if (detailColumnResizePopup_ && folderPreview_ && folderPreview_->inlineBounds)
+            {
+                (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+            }
+            else if (detailColumnResizePopup_)
             {
                 const RECT popup =
                     GetCollectionPopupRect(*resizedWidget);
@@ -629,7 +637,6 @@ void DesktopApp::OnMouseMoveAt(
                 (void)QueueDesktopWidgetComposition(resizedWidget->id);
             }
         }
-        snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_SIZEWE));
         return;
     }
 

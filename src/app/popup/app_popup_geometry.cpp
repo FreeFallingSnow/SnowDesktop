@@ -842,6 +842,10 @@ RECT DesktopApp::GetCollectionPopupScrollbarViewport(const RECT& popup) const
 RECT DesktopApp::GetCollectionPopupDetailsHeaderRect(
     const RECT& popup) const
 {
+    const auto* motion = GetCollectionPopupResizeTransition();
+    if (auto* view = GetHostedFolderMappingPopupView(motion ? motion->Panel(popup) : popup))
+        return view->GetDetailsHeaderRectFromViewport(view->GetContentViewportRect());
+
     const DesktopWidget* widget = GetOpenPopupWidget();
     const auto* contentView = ResolveWidgetContentViewData(widget);
     if (!widget ||
@@ -856,7 +860,8 @@ RECT DesktopApp::GetCollectionPopupDetailsHeaderRect(
     }
 
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
-    const RECT content = GetCollectionPopupContentRect(popup);
+    RECT content = GetCollectionPopupContentRect(popup);
+    if (motion) content = motion->Content(content, popup);
     return MakeRect(
         content.left,
         content.top - snowdesktop::collection_popup_layout::ResolveDetailsHeaderHeight(

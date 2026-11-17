@@ -19,6 +19,31 @@
 
 // Primary-button press handling and drag-source initialization.
 
+namespace
+{
+int DetailsFolderSortMode(snowdesktop::list_detail_rules::Column column)
+{
+    using snowdesktop::list_detail_rules::Column;
+    namespace sort = snowdesktop::folder_sort_rules;
+    switch (column)
+    {
+    case Column::Name: return sort::kName;
+    case Column::Modified: return sort::kModified;
+    case Column::Type: return sort::kType;
+    case Column::Size: return sort::kSize;
+    default: return sort::kManual;
+    }
+}
+
+bool NextDetailsSortAscending(
+    const DesktopWidget* data, snowdesktop::list_detail_rules::Column column)
+{
+    return data && data->contentSortColumn == column
+        ? !data->contentSortAscending
+        : snowdesktop::list_detail_rules::DefaultAscending(column);
+}
+}
+
 void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
     luaPanelOutsidePressGeneration_ = 0;
@@ -487,6 +512,15 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 else
                 {
                     mouseDown_ = false;
+                    if (folderPreview_ && dockFolderPopupAvailable_ && dockFolderPopupContainer_)
+                    {
+                        const auto columns = dockFolderPopupContainer_->GetDetailsColumns(
+                            detailsHeader.right - detailsHeader.left);
+                        const auto column = snowdesktop::list_detail_rules::HitColumn(
+                            columns, pt.x - detailsHeader.left);
+                        SortDockFolderPopupContents(DetailsFolderSortMode(column),
+                            NextDetailsSortAscending(&dockFolderPopupWidget_, column));
+                    }
                 }
                 return;
             }
@@ -1156,29 +1190,14 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             auto* list = dynamic_cast<ScrollingItemWidget*>(wc);
             if (!list) return;
             auto column = snowdesktop::list_detail_rules::Column::Name;
-            int mode = snowdesktop::folder_sort_rules::kName;
             if (wh == WidgetHit::DetailsModifiedHeader)
-            {
                 column = snowdesktop::list_detail_rules::Column::Modified;
-                mode = snowdesktop::folder_sort_rules::kModified;
-            }
             else if (wh == WidgetHit::DetailsTypeHeader)
-            {
                 column = snowdesktop::list_detail_rules::Column::Type;
-                mode = snowdesktop::folder_sort_rules::kType;
-            }
             else if (wh == WidgetHit::DetailsSizeHeader)
-            {
                 column = snowdesktop::list_detail_rules::Column::Size;
-                mode = snowdesktop::folder_sort_rules::kSize;
-            }
-            const DesktopWidget* sortData = list->GetDetailsSortData();
-            const bool ascending = sortData &&
-                sortData->contentSortColumn == column
-                ? !sortData->contentSortAscending
-                : snowdesktop::list_detail_rules::
-                    DefaultAscending(column);
-            SortWidgetContents(wi, mode, ascending);
+            SortWidgetContents(wi, DetailsFolderSortMode(column),
+                NextDetailsSortAscending(list->GetDetailsSortData(), column));
             return;
         }
         else if (wh == WidgetHit::Content)
