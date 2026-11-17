@@ -474,8 +474,12 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         POINT center{bounds.left + (bounds.right - bounds.left) / 2,
             bounds.top + (bounds.bottom - bounds.top) / 2};
         namespace display = snowdesktop::display_color;
+        const bool stack = widgetData->type == DesktopWidgetType::LuaStack;
         // The independent native text scroller remains a child of the original surface.
+        // Keep an already visible stack on that surface after a direct draw.
+        // Promoting it to the separate sRGB tree can expose glass between commits.
         const bool srgbEligible =
+            (!stack || !item.contentVisible || item.presentingSrgb) &&
             !widgetMarqueeCompositionItems_.contains(widgetId) && ClientToScreen(hwnd_, &center) &&
             display::ModeForMonitor(MonitorFromPoint(center, MONITOR_DEFAULTTONULL)) == display::Mode::WideColor;
         // Draw a new or restored frame before its glass and marquees are
@@ -484,7 +488,9 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             item.renderedContentId == contentId;
         const bool hasPresentedFrame = item.renderedVisualAttached ||
             (item.surface && !item.presentingSrgb);
-        const bool asynchronous = luaWidget && widgetSurfaceRenderer_ && !item.renderFailed &&
+        // Member changes paint into the stack's one surface. Use the same
+        // surface for later updates so a new worker cannot replace its first frame.
+        const bool asynchronous = luaWidget && !stack && widgetSurfaceRenderer_ && !item.renderFailed &&
             !srgbEligible && sameSurface && hasPresentedFrame;
         if (asynchronous && !item.renderTarget)
         {
