@@ -602,14 +602,16 @@ void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapsh
             desktopDamage.push_back(dirty);
         }
     }
-    std::unordered_set<std::wstring> activePaths;
+    std::unordered_set<std::wstring> cachePaths;
     for (const auto& widget : widgets_)
         if (widget.type == DesktopWidgetType::FolderMapping)
-            activePaths.insert(snowdesktop::shell_refresh::FolderKey(widget.sourceFolderPath));
-    if (dockFolderPopupOpen_)
-        activePaths.insert(snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath));
+            cachePaths.insert(snowdesktop::shell_refresh::FolderKey(widget.sourceFolderPath));
+    // The preview uses the live snapshot below. Caching its transient paths
+    // here would retain file metadata from every directory visited.
+    if (dockFolderPopupOpen_ && !folderPreview_)
+        cachePaths.insert(snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath));
     for (auto& [key, metadata] : snapshot.metadata.folders)
-        if (activePaths.contains(key))
+        if (cachePaths.contains(key))
             shellMetadataCache_.folders.insert_or_assign(key, std::move(metadata));
     if (dockFolderPopupOpen_)
     {
