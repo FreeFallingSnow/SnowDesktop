@@ -969,7 +969,9 @@ struct DesktopBackdropCompositor::Impl
             flags) != FALSE && SyncPopupDisplayClip(screenOrigin);
     }
 
-    bool SyncPanelWindowRegion()
+    // A deferred frame may retire old pixels before it publishes new ones.
+    // A shrink-only update returns true only if the final region is in place.
+    bool SyncPanelWindowRegion(bool shrinkOnly = false)
     {
         if (!available || !backdropWindow ||
             !IsWindow(backdropWindow))
@@ -1084,6 +1086,26 @@ struct DesktopBackdropCompositor::Impl
         const bool unchanged =
             currentRegionType != ERROR &&
             EqualRgn(panelRegion, currentRegion) != FALSE;
+        bool appliedFinalRegion = true;
+        if (shrinkOnly && !unchanged)
+        {
+            // Intersect the existing fence with the new one. Removed areas
+            // disappear now, while additions wait for the body and glass commits.
+            const HRGN intersection = currentRegionType != ERROR
+                ? CreateRectRgn(0, 0, 0, 0) : nullptr;
+            if (!intersection ||
+                CombineRgn(intersection, currentRegion, panelRegion, RGN_AND) == ERROR ||
+                EqualRgn(intersection, currentRegion))
+            {
+                if (intersection) DeleteObject(intersection);
+                if (currentRegion) DeleteObject(currentRegion);
+                DeleteObject(panelRegion);
+                return false;
+            }
+            appliedFinalRegion = EqualRgn(intersection, panelRegion) != FALSE;
+            DeleteObject(panelRegion);
+            panelRegion = intersection;
+        }
         if (currentRegion)
             DeleteObject(currentRegion);
         if (unchanged)
@@ -1101,8 +1123,9 @@ struct DesktopBackdropCompositor::Impl
             DeleteObject(panelRegion);
             return false;
         }
-        rememberSynchronizedRegion();
-        return true;
+        if (appliedFinalRegion)
+            rememberSynchronizedRegion();
+        return appliedFinalRegion;
     }
 
     void SetAnimationPathRegionExpanded(bool expanded)
@@ -3632,9 +3655,7 @@ void DesktopBackdropCompositor::EndFrame(
         else if (requestCommit || impl_->popupMode)
             impl_->transformedRegionDirty = !impl_->SyncPanelWindowRegion();
         else
-            // Opening the desktop helper region here could uncover old glass
-            // before the matching content commit. Apply it with the glass.
-            impl_->transformedRegionDirty = true;
+            impl_->transformedRegionDirty = !impl_->SyncPanelWindowRegion(true);
         impl_->frameCommitPending = true;
         if (requestCommit)
             impl_->RequestCommit();

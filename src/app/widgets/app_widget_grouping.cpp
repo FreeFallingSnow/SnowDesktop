@@ -439,6 +439,7 @@ void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
 
     widget.gridCell = cell;
     widget.gridSpan = span;
+    widget.keepInitialComposition = true;
     widgets_.push_back(std::move(widget));
     EnsureNavTabOrder();
     LayoutItems();

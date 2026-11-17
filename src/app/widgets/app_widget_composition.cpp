@@ -474,12 +474,13 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         POINT center{bounds.left + (bounds.right - bounds.left) / 2,
             bounds.top + (bounds.bottom - bounds.top) / 2};
         namespace display = snowdesktop::display_color;
-        const bool stack = widgetData->type == DesktopWidgetType::LuaStack;
+        const bool keepComposition = widgetData->type == DesktopWidgetType::LuaStack ||
+            widgetData->keepInitialComposition;
         // The independent native text scroller remains a child of the original surface.
-        // Keep an already visible stack on that surface after a direct draw.
-        // Promoting it to the separate sRGB tree can expose glass between commits.
+        // Keep a visible new widget or stack on its direct surface. Promoting
+        // it to the separate sRGB tree can expose glass between commits.
         const bool srgbEligible =
-            (!stack || !item.contentVisible || item.presentingSrgb) &&
+            (!keepComposition || !item.contentVisible || item.presentingSrgb) &&
             !widgetMarqueeCompositionItems_.contains(widgetId) && ClientToScreen(hwnd_, &center) &&
             display::ModeForMonitor(MonitorFromPoint(center, MONITOR_DEFAULTTONULL)) == display::Mode::WideColor;
         // Draw a new or restored frame before its glass and marquees are
@@ -488,9 +489,9 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             item.renderedContentId == contentId;
         const bool hasPresentedFrame = item.renderedVisualAttached ||
             (item.surface && !item.presentingSrgb);
-        // Member changes paint into the stack's one surface. Use the same
-        // surface for later updates so a new worker cannot replace its first frame.
-        const bool asynchronous = luaWidget && !stack && widgetSurfaceRenderer_ && !item.renderFailed &&
+        // Keep the host surface through stack switches and a new widget's
+        // first visible interval, avoiding a second device at the handoff.
+        const bool asynchronous = luaWidget && !keepComposition && widgetSurfaceRenderer_ && !item.renderFailed &&
             !srgbEligible && sameSurface && hasPresentedFrame;
         if (asynchronous && !item.renderTarget)
         {
@@ -1050,6 +1051,9 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
     }
     if (!visible)
     {
+        const auto index = FindWidgetIndexById(widgetId);
+        if (index < widgets_.size())
+            widgets_[index].keepInitialComposition = false;
         desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
         item.presentingSrgb = false;
         item.hoverFade.reset();
@@ -1337,11 +1341,12 @@ void DesktopApp::RemoveDesktopWidgetComposition(
     if (position == desktopWidgetCompositionItems_.end())
         return;
     const RECT bounds = position->second.bounds;
-    desktopBackdropCompositor_.RemoveSrgbContent(position->second.BackdropOwnerKey());
-    (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), position->second);
+    const auto backdropOwner = position->second.BackdropOwnerKey();
+    desktopBackdropCompositor_.RemoveSrgbContent(backdropOwner);
     position->second.iconBackdrops.Hide(desktopBackdropCompositor_);
-    if (position->second.backdropRegistered)
-        (void)desktopBackdropCompositor_.RemovePanel(bounds, position->second.BackdropOwnerKey());
+    // Query by owner even when cached registration was lost during recovery.
+    (void)desktopBackdropCompositor_.RemovePanel(bounds, backdropOwner);
+    (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), position->second);
     if (desktopWidgetCompositionLayer_ && position->second.visual)
     {
         (void)desktopWidgetCompositionLayer_->RemoveVisual(

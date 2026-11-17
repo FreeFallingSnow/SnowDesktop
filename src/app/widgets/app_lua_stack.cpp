@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widgets/lua_logical_slot.h"
 #include "widgets/lua_stack.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
@@ -115,16 +116,42 @@ bool DesktopApp::SelectLuaStackMember(std::wstring stackId, std::wstring memberI
         CloseLuaWidgetPanel(oldId, "host");
     // Close callbacks may rebuild the model: reacquire both stable identities.
     const size_t current = FindWidgetIndexById(stackId);
-    if (current >= widgets_.size() || widgets_[current].type != DesktopWidgetType::LuaStack ||
+    const size_t incoming = FindWidgetIndexById(memberId);
+    if (current >= widgets_.size() || incoming >= widgets_.size() ||
+        widgets_[current].type != DesktopWidgetType::LuaStack ||
+        widgets_[incoming].type != DesktopWidgetType::LuaScript ||
         std::find(widgets_[current].childWidgetIds.begin(), widgets_[current].childWidgetIds.end(), memberId) ==
             widgets_[current].childWidgetIds.end()) return false;
+    const bool removesLogicalSlots = !oldId.empty() &&
+        std::ranges::any_of(containers_, [&](const auto& container) {
+            const auto* slot = dynamic_cast<const LuaLogicalSlotContainer*>(container.get());
+            return slot && slot->WidgetId() == oldId;
+        });
+    const bool addsLogicalSlots = widgetEngine_ &&
+        !WidgetEngine::GetWidgetManifest(widgets_[incoming].packageId).logicalSlots.empty();
     widgets_[current].activeCategoryId = memberId;
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
-    RebuildContainersAndItems();
+    // The stack wrapper already resolves its active member when it draws.
+    // Only a logical-slot change needs a rebuilt tree and a Dock rebind.
+    const bool rebuild = removesLogicalSlots || addsLogicalSlots;
+    if (rebuild)
+        RebuildContainersAndItems();
+    else
+        InvalidateDragStaticScene(false);
     RequestLayoutSave();
     // The desktop paint updates member visibility before drawing the new
     // body. Hiding here would commit the old member's marquee removal alone.
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    if (rebuild)
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    else
+    {
+        RECT dirty = GetStandaloneWidgetFrameRect(widgets_[current]);
+        if (!IsRectEmpty(&dirty))
+        {
+            InflateRect(&dirty, 3, 3);
+            InvalidateRect(hwnd_, &dirty, FALSE);
+        }
+    }
     return true;
 }
 

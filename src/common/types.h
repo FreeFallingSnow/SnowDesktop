@@ -512,6 +512,7 @@ struct DesktopWidget
     GridSpan maxGridSpan{ 0, 0 }; // 0 means unrestricted (up to the current grid page)
     RECT bounds{};
     float cellScale = 1.0f; // Runtime layout cache; recalculated by LayoutItems().
+    bool keepInitialComposition = false; // Runtime only, until a new widget is first hidden.
     bool selected = false;
     bool autoCollect = false;
     // Empty preserves the legacy All scope; IDs reference category settings.
