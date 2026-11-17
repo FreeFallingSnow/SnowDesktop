@@ -442,6 +442,8 @@ void SetHookStatus(LONG status, DWORD error = ERROR_SUCCESS)
     std::lock_guard lock(g_hookStatusMutex);
     if (!g_sharedState || g_retired.load())
         return;
+    if (status == kStatusConnected && g_hookStatus != kStatusInjecting)
+        return; // A visual callback may have applied (or failed) before Advise returned.
     g_hookStatus = status;
     g_hookError = error;
     InterlockedExchange(&g_sharedState->lastError, static_cast<LONG>(error));
@@ -857,11 +859,7 @@ public:
             if (g_sharedState)
                 InterlockedExchange(&g_sharedState->diagnosticStage, 240);
             if (SUCCEEDED(result))
-            {
-                if (g_sharedState &&
-                    g_sharedState->status < kStatusConnected)
-                    InterlockedExchange(&g_sharedState->status, kStatusConnected);
-            }
+                SetHookStatus(kStatusConnected);
             else
                 SetHookStatus(kStatusFailed, static_cast<DWORD>(result));
             SignalReady();
@@ -883,7 +881,7 @@ public:
             }
             else if (type == L"Taskbar.TaskbarFrame")
             {
-                RegisterTaskbarFrame(element.Handle);
+                RegisterTaskbarFrame(element.Handle, FromHandle<wux::FrameworkElement>(element.Handle));
             }
             else if (type == winrt::name_of<wux::Shapes::Rectangle>())
             {
@@ -1468,12 +1466,12 @@ private:
         return inspectable.as<T>();
     }
 
-    wux::FrameworkElement FindParent(std::wstring_view name,
-        wux::FrameworkElement element)
+    static wux::FrameworkElement FindTaskbarFrame(wux::FrameworkElement element)
     {
         while (element)
         {
-            if (element.Name() == name)
+            if (element.Name() == L"TaskbarFrame" ||
+                winrt::get_class_name(element) == L"Taskbar.TaskbarFrame")
                 return element;
             auto parent = wux::Media::VisualTreeHelper::GetParent(element)
                 .try_as<wux::FrameworkElement>();
@@ -1484,17 +1482,24 @@ private:
         return nullptr;
     }
 
-    void RegisterTaskbarFrame(InstanceHandle frameHandle)
+    void RegisterTaskbarFrame(InstanceHandle frameHandle, const wux::FrameworkElement& frame)
     {
-        // The content can be the frame itself or an ancestor on Insider builds.
-        const auto xamlRoot = FromHandle<wux::UIElement>(frameHandle).XamlRoot();
-        if (!xamlRoot) return;
-        const auto rootContent = xamlRoot.Content();
-        if (!rootContent) return;
-        for (auto iterator = xamlSources_.begin(); iterator != xamlSources_.end();
-            ++iterator)
+        if (taskbars_.contains(frameHandle)) return;
+        const auto xamlRoot = frame.XamlRoot();
+        auto rootContent = xamlRoot ? xamlRoot.Content() : wux::UIElement{nullptr};
+        if (!rootContent)
         {
-            const auto source = FromHandle<wuxh::DesktopWindowXamlSource>(*iterator);
+            // Diagnostics can report the frame before XamlRoot is populated.
+            rootContent = frame;
+            while (auto parent = wux::Media::VisualTreeHelper::GetParent(rootContent)
+                .try_as<wux::UIElement>())
+                rootContent = std::move(parent);
+        }
+        // One island can acquire a new frame without rebuilding its XAML source.
+        // Retain the source handles until their own Remove notifications.
+        for (const auto sourceHandle : xamlSources_)
+        {
+            const auto source = FromHandle<wuxh::DesktopWindowXamlSource>(sourceHandle);
             wux::UIElement content{nullptr};
             try
             {
@@ -1513,22 +1518,16 @@ private:
             HWND taskbar = GetAncestor(xamlWindow, GA_PARENT);
             wchar_t type[64]{};
             GetClassNameW(taskbar, type, 64);
-            if (!IsCurrentHookInstance() && !g_retired.load() &&
-                wcscmp(type, L"Shell_TrayWnd") == 0)
+            const bool primary = wcscmp(type, L"Shell_TrayWnd") == 0;
+            const bool secondary = wcscmp(type, L"Shell_SecondaryTrayWnd") == 0;
+            if (!primary && !secondary) continue;
+            if (!IsCurrentHookInstance() && !g_retired.load() && primary)
             {
                 const DWORD error = ClaimHookInstance(taskbar);
                 if (error) { SetHookStatus(kStatusFailed, error); return; }
             }
             if (!IsCurrentHookInstance()) return;
-            auto& info = taskbars_[frameHandle];
-            info.xamlWindow = xamlWindow;
-            info.taskbar = taskbar;
-            info.secondaryTaskbar = wcscmp(type, L"Shell_SecondaryTrayWnd") == 0;
-            info.rootElement = rootContent.try_as<wux::FrameworkElement>();
-            info.appliedContentTheme = -1;
-            if (info.rootElement)
-                info.nativeRequestedTheme = info.rootElement.RequestedTheme();
-            if (taskbar && subclassedTaskbars_.insert(taskbar).second)
+            if (subclassedTaskbars_.insert(taskbar).second)
             {
                 if (AttachHookOwner(taskbar) != ERROR_SUCCESS ||
                     !SetWindowSubclass(taskbar, TaskbarSubclassProc,
@@ -1539,7 +1538,13 @@ private:
                     return;
                 }
             }
-            xamlSources_.erase(iterator);
+            auto& info = taskbars_[frameHandle];
+            info.xamlWindow = xamlWindow;
+            info.taskbar = taskbar;
+            info.secondaryTaskbar = secondary;
+            info.rootElement = rootContent.try_as<wux::FrameworkElement>();
+            if (info.rootElement)
+                info.nativeRequestedTheme = info.rootElement.RequestedTheme();
             break;
         }
     }
@@ -1548,13 +1553,14 @@ private:
         InstanceHandle controlHandle, bool border)
     {
         const auto parent = FromHandle<wux::FrameworkElement>(parentHandle);
-        const auto frame = FindParent(L"TaskbarFrame", parent);
+        const auto frame = FindTaskbarFrame(parent);
         if (!frame)
             return;
         InstanceHandle frameHandle = 0;
         winrt::check_hresult(diagnostics_->GetHandleFromIInspectable(
             reinterpret_cast<::IInspectable*>(winrt::get_abi(frame)),
             &frameHandle));
+        RegisterTaskbarFrame(frameHandle, frame);
         auto iterator = taskbars_.find(frameHandle);
         if (iterator == taskbars_.end())
             return;
