@@ -273,6 +273,18 @@ bool DesktopApp::ClearSelection(const DesktopWidget* localWidget)
     return changed;
 }
 
+void DesktopApp::ClearInlineFolderPreviewSelectionOutside(POINT point)
+{
+    if (!folderPreview_ || !folderPreview_->inlineBounds || PtInRect(&*folderPreview_->inlineBounds, point)) return;
+    folderPreview_->keyboardFocused = false;
+    bool changed = false;
+    for (auto& entry : dockFolderPopupWidget_.folderEntries)
+        changed |= std::exchange(entry.selected, false);
+    if (!changed) return;
+    UpdateWidgetHoverExpansion(point);
+    InvalidateRect(hwnd_, &*folderPreview_->inlineBounds, FALSE);
+}
+
 void DesktopApp::ClearSelectionForExternalWindow(HWND window)
 {
     // Focus can move between our non-activating surfaces and input proxies.
@@ -354,6 +366,9 @@ bool DesktopApp::HasSelectedFilesInWidget(
     };
 
     const auto& widget = widgets_[widgetIndex];
+    if (const auto* preview = GetInlineFolderPreviewData(widget);
+        preview && std::any_of(preview->folderEntries.begin(), preview->folderEntries.end(),
+            [](const FolderEntry& entry) { return entry.selected; })) return true;
     for (const auto& container : containers_)
         if (const auto* view = dynamic_cast<const ScrollingItemWidget*>(container.get()); view && view->GetWidgetData() == &widget && view->folderSearch_)
             for (const auto& row : view->folderSearch_->rows) if (row.recursive && row.recursive->selected) return true;

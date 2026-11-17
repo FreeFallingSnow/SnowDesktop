@@ -257,7 +257,7 @@ void DesktopApp::DrawCollectionPopup(
                 if (hovered) highlight(bounds);
                 ComPtr<ID2D1SolidColorBrush> brush;
                 if (FAILED(ctx->CreateSolidColorBrush(controlColor(hovered ? 1.0f : 0.82f), &brush))) return;
-                const float centerX = (bounds.left + bounds.right) * 0.5f;
+                const float centerX = (bounds.left + bounds.right) * 0.5f + (home ? -2.0f : 2.0f) * row.scale;
                 const float centerY = (bounds.top + bounds.bottom) * 0.5f;
                 const auto line = [&](float x1, float y1, float x2, float y2) {
                     ctx->DrawLine(D2D1::Point2F(centerX + x1 * row.scale, centerY + y1 * row.scale),

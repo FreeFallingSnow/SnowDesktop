@@ -3224,13 +3224,30 @@ ID2D1Geometry* WidgetContainer::GetCachedClipGeometry(
  */
 void WidgetContainer::DrawHoverRollSnapshot(ID2D1DeviceContext* context, POINT mousePt)
 {
+    const DesktopApp::InlineFolderPreviewProjection projection(!IsPreviewRendering() ? app_ : nullptr,
+        data_ ? data_->id : std::wstring{});
+    const bool showingFolderPreview = !IsPreviewRendering() && app_ && data_ && app_->GetInlineFolderPreviewData(*data_);
+    const int previousScroll = showingFolderPreview ? app_->popupScrollOffset_ : 0;
+    const int previousModelScroll = showingFolderPreview ? app_->dockFolderPopupWidget_.scrollOffset : 0;
     struct SnapshotScope
     {
         bool& drawing;
         ~SnapshotScope() { drawing = false; }
-    } snapshot{drawingHoverRollSnapshot_};
-    drawingHoverRollSnapshot_ = true;
-    DrawChrome(context, mousePt);
+    };
+    {
+        const SnapshotScope snapshot{drawingHoverRollSnapshot_};
+        drawingHoverRollSnapshot_ = true;
+        DrawChrome(context, mousePt);
+    }
+    if (showingFolderPreview)
+    {
+        // The expanded image is clipped by the roll animation. Keep the live
+        // interaction bounds and scroll position for the next normal frame.
+        app_->folderPreview_->SetInlineGeometry(*this);
+        app_->popupRect_ = app_->dockFolderPopupWidget_.bounds = *app_->folderPreview_->inlineBounds;
+        app_->popupScrollOffset_ = previousScroll;
+        app_->dockFolderPopupWidget_.scrollOffset = previousModelScroll;
+    }
 }
 
 void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
@@ -3290,11 +3307,9 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     RECT frame = GetFrameRect();
     RECT body = GetBodyRect();
     if (frame.right <= frame.left || body.bottom <= body.top) return;
-    const DesktopApp::InlineFolderPreviewProjection previewProjection(
-        !IsPreviewRendering() && !drawingHoverRollSnapshot_ ? app_ : nullptr, data_->id);
+    const DesktopApp::InlineFolderPreviewProjection previewProjection(!IsPreviewRendering() ? app_ : nullptr, data_->id);
     const auto& preview = app_->folderPreview_;
-    const bool showingFolderPreview = preview && preview->inlineBounds &&
-        preview->hostWidgetId == data_->id && !drawingHoverRollSnapshot_;
+    const bool showingFolderPreview = !IsPreviewRendering() && preview && preview->inlineBounds && preview->hostWidgetId == data_->id;
     if (showingFolderPreview && !IsPreviewRendering())
     {
         const RECT titleBar = GetMoveHandleRect();

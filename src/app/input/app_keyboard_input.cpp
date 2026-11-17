@@ -256,6 +256,9 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     bool alt = (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) != 0;
     bool restoreFloatingDockLayer = false;
     if (key == VK_RETURN && repeated && popupKeyboardTarget) return true;
+    if (key == VK_RETURN && !alt && !repeated && !quickNavigation_->open && luaWidgetPanelRequest_.widgetId.empty() &&
+        TryFolderPreviewActivation({}, (ctrl ? MK_CONTROL : 0) | (shift ? MK_SHIFT : 0), {}, true))
+        return true;
 
     // Keyboard selection follows the whole fan's order and scrolls its window
     // as needed; the final action still opens the complete grid.
@@ -783,7 +786,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             else if (paths.empty()) InvokeSelectedShellVerb("properties");
             break;
         }
-        if (!ctrl && !shift && dockFolderPopupOpen_ && popupKeyboardTarget)
+        if (dockFolderPopupOpen_ && popupKeyboardTarget)
         {
             if (repeated) break;
             const auto paths = GetSelectedFolderEntryPaths();

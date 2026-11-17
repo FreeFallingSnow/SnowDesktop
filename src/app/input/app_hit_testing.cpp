@@ -214,7 +214,7 @@ void DesktopApp::UpdateWidgetHoverExpansion(POINT point)
 {
     namespace motion = snowdesktop::animation;
     const bool pointerAvailable = !HasActiveContextMenuSession() &&
-        !IsPointOccludedByOpenPopup(point);
+        !(IsCollectionPopupHostedByFloatingWindow() && IsPointOccludedByOpenPopup(point));
     bool changed = false;
     bool suppressionStillInside = false;
     bool needsFullPaint = false;

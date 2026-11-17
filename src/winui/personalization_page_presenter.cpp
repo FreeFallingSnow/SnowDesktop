@@ -2209,7 +2209,7 @@ struct PersonalizationPagePresenter::Impl
         muxa::AutomationProperties::SetName(
             popupCloseOnMouseLeave, popupCloseOnMouseLeaveRow.label.Text());
         folderDoubleClickActionRow.SetText(
-            L("settings.widgetBehavior.folderDoubleClick", L"Default double-click action for folders in widgets and Dock popups"),
+            L("settings.widgetBehavior.folderDoubleClick", L"Default action for opening folders in widgets and Dock popups"),
             L("settings.widgetBehavior.folderDoubleClickHint"));
         ReplaceComboItems(folderDoubleClickAction, {
             {"app.interact.open_in_explorer", L"Open in File Explorer"},

@@ -43,14 +43,17 @@ std::wstring FolderPreviewViewKey(const std::wstring& hostId, const std::wstring
 }
 }
 
-std::optional<DesktopApp::FolderPreviewTarget> DesktopApp::FindFolderPreviewTargetAtPoint(POINT point)
+std::optional<DesktopApp::FolderPreviewTarget> DesktopApp::FindFolderPreviewTarget(POINT point, bool keyboard)
 {
     using namespace snowdesktop::folder_preview;
     if (dockTrayPopup_) return std::nullopt;
     const DesktopWidget* source = nullptr;
     const DesktopWidget* host = nullptr;
     FolderPreviewTarget target;
-    target.inPopup = IsPointOccludedByOpenPopup(point);
+    target.inPopup = keyboard ? IsCollectionPopupKeyboardTarget() : IsPointOccludedByOpenPopup(point);
+    if (keyboard && (popupFanActionFocused_ || (!dockFolderPopupOpen_ &&
+        (keyboardNavSearchBox_ || keyboardNavCollectionGroupTabs_ || keyboardNavFileGroupCategoryTabs_))))
+        return std::nullopt;
     const bool ordinaryDockFolder = target.inPopup && dockFolderPopupOpen_ &&
         (folderPreview_ ? folderPreview_->sourceWidgetId.empty() && folderPreview_->folderHome.has_value()
                         : dockFolderPopupMappingWidgetId_.empty());
@@ -66,14 +69,15 @@ std::optional<DesktopApp::FolderPreviewTarget> DesktopApp::FindFolderPreviewTarg
     };
     const auto resolveInView = [&](ScrollingItemWidget& view) {
         const RECT viewport = view.GetContentViewportRect();
-        if (!PtInRect(&viewport, point)) return;
+        if (!keyboard && !PtInRect(&viewport, point)) return;
         source = view.GetWidgetData();
         for (const auto& slot : view.GetSlots())
         {
             if (!slot) continue;
             const RECT bounds = slot->GetBounds();
-            if (!PtInRect(&bounds, point)) continue;
             const Item* item = slot->GetItem();
+            if (keyboard ? (!item || !item->IsSelected()) : !PtInRect(&bounds, point)) continue;
+            if (!target.path.empty()) { target.path.clear(); return; }
             if (const auto* icon = dynamic_cast<const DesktopIcon*>(item))
             {
                 if (const auto* desktop = icon->GetDesktopItem()) setDesktopItem(*desktop);
@@ -87,7 +91,7 @@ std::optional<DesktopApp::FolderPreviewTarget> DesktopApp::FindFolderPreviewTarg
                 auto* memberSource = group->GetSourceContainerForItem(item);
                 source = memberSource ? memberSource->GetWidgetData() : nullptr;
             }
-            return;
+            if (!keyboard) return;
         }
     };
     if (target.inPopup)
@@ -115,29 +119,37 @@ std::optional<DesktopApp::FolderPreviewTarget> DesktopApp::FindFolderPreviewTarg
                 source = host = popup;
             const RECT bounds = GetCollectionPopupRect(*popup);
             const size_t count = GetPopupItemCount(*popup);
+            const auto& keys = GetPopupItemKeysView(*popup);
             for (size_t i = 0; i < count; ++i)
             {
-                if (!HitTestCollectionPopupItem(bounds, i, point)) continue;
+                if (!keyboard && !HitTestCollectionPopupItem(bounds, i, point)) continue;
                 if (dockFolderPopupOpen_)
                 {
                     const auto index = GetPopupFolderEntryIndex(*popup, i);
-                    if (index < popup->folderEntries.size()) setFolderEntry(popup->folderEntries[index]);
+                    if (index >= popup->folderEntries.size()) continue;
+                    const auto& entry = popup->folderEntries[index];
+                    if (keyboard && !entry.selected) continue;
+                    if (!target.path.empty()) return std::nullopt;
+                    setFolderEntry(entry);
                 }
                 else
                 {
-                    const auto& keys = GetPopupItemKeysView(*popup);
                     if (i >= keys.size()) break;
                     const size_t index = FindItemIndexByKey(keys[i]);
-                    if (index < items_.size()) setDesktopItem(items_[index]);
+                    if (index >= items_.size() || (keyboard && !items_[index].selected)) continue;
+                    if (!target.path.empty()) return std::nullopt;
+                    setDesktopItem(items_[index]);
                 }
-                break;
+                if (!keyboard) break;
             }
         }
     }
     else
     {
         if ((GetOpenPopupWidget() && !(folderPreview_ && folderPreview_->inlineBounds)) ||
-            GetDockContainerAtPoint(point)) return std::nullopt;
+            (!keyboard && GetDockContainerAtPoint(point))) return std::nullopt;
+        if (keyboard && (!keyboardNavInsideWidget_ || keyboardNavWidgetIndex_ >= widgets_.size()))
+            return std::nullopt;
         for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
         {
             auto* view = dynamic_cast<ScrollingItemWidget*>(it->get());
@@ -148,7 +160,7 @@ std::optional<DesktopApp::FolderPreviewTarget> DesktopApp::FindFolderPreviewTarg
                 (desktopIconsHidden_ && !data->keepWhenDesktopHidden))
                 continue;
             const RECT frame = view->GetFrameRect();
-            if (!PtInRect(&frame, point)) continue;
+            if (keyboard ? data != &widgets_[keyboardNavWidgetIndex_] : !PtInRect(&frame, point)) continue;
             host = data;
             target.inlineBounds = frame;
             if (Supports(data->type) || data->type == DesktopWidgetType::FileGroup)
@@ -167,7 +179,7 @@ std::optional<DesktopApp::FolderPreviewTarget> DesktopApp::FindFolderPreviewTarg
 
 void DesktopApp::AppendFolderPreviewOpenMenuItem(HMENU menu, POINT point, const std::wstring& path)
 {
-    const auto target = FindFolderPreviewTargetAtPoint(point);
+    const auto target = FindFolderPreviewTarget(point);
     if (!target || !PathsEqualInsensitive(target->path, path)) return;
     if (!target->knownDirectory)
     {
@@ -185,14 +197,21 @@ void DesktopApp::AppendFolderPreviewOpenMenuItem(HMENU menu, POINT point, const 
 
 bool DesktopApp::TryFolderPreviewDoubleClick(POINT point, WPARAM keyState, const std::wstring& menuPath)
 {
+    return TryFolderPreviewActivation(point, keyState, menuPath, false);
+}
+
+bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const std::wstring& menuPath, bool keyboard)
+{
     using namespace snowdesktop::folder_preview;
     const bool fromMenu = !menuPath.empty();
     if (!fromMenu && (keyState & MK_SHIFT)) return false;
     const bool clearTriggerSelection = !fromMenu && (keyState & MK_CONTROL);
     const bool forcePreview = fromMenu || clearTriggerSelection;
     if (!forcePreview && !personalizationSettings_.folderDoubleClickPreview) return false;
-    auto hit = FindFolderPreviewTargetAtPoint(point);
+    auto hit = FindFolderPreviewTarget(point, keyboard);
     if (!hit || (fromMenu && !PathsEqualInsensitive(hit->path, menuPath))) return false;
+    if (keyboard && hit->desktopKey.empty() && !hit->knownDirectory &&
+        _wcsicmp(std::filesystem::path(hit->path).extension().c_str(), L".lnk") != 0) return false;
     auto target = std::move(*hit);
 
     const auto expectedPopupPath = folderPreview_ ? dockFolderPopupWidget_.sourceFolderPath : std::wstring{};
@@ -640,6 +659,8 @@ void DesktopApp::SwapInlineFolderPreview(snowdesktop::folder_preview::InlinePrev
 DesktopApp::InlineFolderPreviewProjection::InlineFolderPreviewProjection(DesktopApp* app, const std::wstring& hostId)
     : app_(app)
 {
+    if (app_ && app_->folderPreview_ && app_->folderPreview_->inlineBounds && app_->folderPreview_->hostWidgetId == hostId)
+        return;
     if (app_)
         if (auto found = app_->inactiveInlineFolderPreviews_.find(hostId); found != app_->inactiveInlineFolderPreviews_.end())
         {
@@ -751,7 +772,7 @@ snowdesktop::folder_preview::NavigationRow DesktopApp::GetFolderPreviewNavigatio
     namespace layout = snowdesktop::collection_popup_layout;
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     RECT row = layout::ResolveBodyRect(panel, metrics);
-    row.top = std::min<LONG>(panel.bottom, panel.top + metrics.topPadding);
+    row.top = std::min<LONG>(panel.bottom, panel.top + metrics.paddingX);
     float scale = metrics.scale;
     int height = metrics.controlRowHeight;
     if (folderPreview_->inlineBounds)

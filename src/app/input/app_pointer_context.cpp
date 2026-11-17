@@ -194,6 +194,8 @@ void DesktopApp::OnRightButtonDown(
             return;
     }
 
+    if (!(snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000))
+        ClearInlineFolderPreviewSelectionOutside(point);
     ActivateInlineFolderPreviewAtPoint(point);
     ClearPopupMouseDownItem();
     if (HandleFolderPreviewBreadcrumbContextMenu(point, false)) return;

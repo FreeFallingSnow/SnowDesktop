@@ -2638,9 +2638,11 @@ private:
         bool inPopup = false;
     };
     static constexpr UINT kContextFolderPreviewOpen = 41074;
-    std::optional<FolderPreviewTarget> FindFolderPreviewTargetAtPoint(POINT point);
+    std::optional<FolderPreviewTarget> FindFolderPreviewTarget(POINT point, bool keyboard = false);
     void AppendFolderPreviewOpenMenuItem(HMENU menu, POINT point, const std::wstring& path);
     bool TryFolderPreviewDoubleClick(POINT point, WPARAM keyState, const std::wstring& menuPath = {});
+    bool TryFolderPreviewActivation(POINT point, WPARAM keyState, const std::wstring& menuPath, bool keyboard);
+    void ClearInlineFolderPreviewSelectionOutside(POINT point);
     bool HandleFolderPreviewHeaderPress(POINT point);
     bool HandleFolderPreviewBreadcrumbContextMenu(POINT point, bool show);
     UINT TrackFolderPreviewPathMenu(HMENU menu, POINT screenPoint, bool textOnly);

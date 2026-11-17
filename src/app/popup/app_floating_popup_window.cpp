@@ -1565,7 +1565,8 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         // the active popup. Keep file commands in the common input handler.
         const bool historyShortcut = folderPreview_ && IsCollectionPopupKeyboardTarget() && (wp == 'Z' || wp == 'Y') &&
             (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000);
-        if ((wp == VK_DELETE || historyShortcut) && !dockTrayPopup_ && IsCollectionPopupInteractive() &&
+        const bool previewEnter = wp == VK_RETURN && IsCollectionPopupKeyboardTarget();
+        if ((wp == VK_DELETE || historyShortcut || previewEnter) && !dockTrayPopup_ && IsCollectionPopupInteractive() &&
             (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 29)) == 0)
         {
             const snowdesktop::private_pointer::ForwardScope forward(hwnd, WM_KEYDOWN);
