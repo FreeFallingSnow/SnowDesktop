@@ -3,6 +3,7 @@
 #include "common/l10n.h"
 #include "common/utils.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/folder_preview_header_layout.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "widgets/widget_folder_search.h"
 
@@ -129,10 +130,10 @@ bool DesktopApp::TryFolderPreviewDoubleClick(POINT point)
                 view->IsSingleCellPresentation() ||
                 (desktopIconsHidden_ && !data->keepWhenDesktopHidden))
                 continue;
-            const RECT frame = view->GetBodyRect();
+            const RECT frame = view->GetFrameRect();
             if (!PtInRect(&frame, point)) continue;
             host = data;
-            inlineBounds = view->GetContentViewportRect();
+            inlineBounds = frame;
             if (Supports(data->type) || data->type == DesktopWidgetType::FileGroup)
                 resolveInView(*view);
             break;
@@ -158,11 +159,9 @@ bool DesktopApp::TryFolderPreviewDoubleClick(POINT point)
         if (!hostId.empty() && hostIndex >= widgets_.size()) return;
         if (inlineBounds)
         {
-            RECT overlap{};
-            if (hostIndex >= widgets_.size() ||
-                !IntersectRect(&overlap, &widgets_[hostIndex].bounds, &*inlineBounds) ||
-                !EqualRect(&overlap, &*inlineBounds))
-                return;
+            if (hostIndex >= widgets_.size()) return;
+            const RECT hostFrame = GetStandaloneWidgetFrameRect(widgets_[hostIndex]);
+            if (!EqualRect(&hostFrame, &*inlineBounds)) return;
         }
         if (inPopup && !folderPreview_)
         {
@@ -431,18 +430,14 @@ void DesktopApp::AppendFolderPreviewToggle(HMENU menu, const DesktopWidget& sour
 
 RECT DesktopApp::GetFolderPreviewBackRect(const RECT& popup) const
 {
-    const auto metrics = GetOpenCollectionPopupLayoutMetrics();
-    RECT button = GetDockFolderPopupSortButtonRect(popup);
-    button.left = popup.left + snowdesktop::collection_popup_layout::ScaleDimension(6, metrics.scale);
-    button.right = button.left + snowdesktop::collection_popup_layout::ScaleDimension(26, metrics.scale);
-    return button;
+    return snowdesktop::folder_preview::ResolveHeader(
+        popup, GetOpenCollectionPopupLayoutMetrics().scale).back;
 }
 
 RECT DesktopApp::GetFolderPreviewExplorerRect(const RECT& popup) const
 {
-    RECT button = GetDockFolderPopupSortButtonRect(popup);
-    OffsetRect(&button, button.left - button.right, 0);
-    return button;
+    return snowdesktop::folder_preview::ResolveHeader(
+        popup, GetOpenCollectionPopupLayoutMetrics().scale).explorer;
 }
 
 bool DesktopApp::HandleFolderPreviewHeaderPress(POINT point)

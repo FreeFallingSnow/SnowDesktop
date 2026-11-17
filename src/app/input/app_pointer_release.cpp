@@ -1022,7 +1022,10 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
         snowdesktop::private_pointer::ReleasePointerCapture();
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        if (folderPreview_ && folderPreview_->inlineBounds)
+            (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+        else
+            InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
 

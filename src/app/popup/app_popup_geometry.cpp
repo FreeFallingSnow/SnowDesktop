@@ -2,6 +2,7 @@
 #include "app/app.h"
 #include "common/l10n.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/folder_preview_header_layout.h"
 #include "diagnostics/diagnostic_log.h"
 #include "settings/animation_settings.h"
 #include "popup_resize_transition.h"
@@ -882,6 +883,9 @@ DesktopApp::HitTestCollectionPopupDetailsDivider(
 RECT DesktopApp::GetDockFolderPopupSortButtonRect(
     const RECT& popup) const
 {
+    if (folderPreview_)
+        return snowdesktop::folder_preview::ResolveHeader(
+            popup, GetOpenCollectionPopupLayoutMetrics().scale).sort;
     if (const auto* widget = GetOpenPopupWidget(); widget && UsesCollectionPopupFan(*widget))
         return {};
     RECT panel = popup;

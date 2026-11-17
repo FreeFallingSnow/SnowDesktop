@@ -3246,6 +3246,9 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     RECT frame = GetFrameRect();
     RECT body = GetBodyRect();
     if (frame.right <= frame.left || body.bottom <= body.top) return;
+    const auto& preview = app_->folderPreview_;
+    const bool showingFolderPreview = preview && preview->inlineBounds &&
+        preview->hostWidgetId == data_->id && !drawingHoverRollSnapshot_;
 
     const bool selected = data_->selected;
     const bool hovered = IsPreviewInteractive() &&
@@ -3326,22 +3329,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                 D2D1::RectF((float)frame.left, (float)frame.top, (float)frame.right, (float)frame.bottom),
                 clipGeo), nullptr);
 
-        if (const auto& preview = app_->folderPreview_;
-            preview && preview->inlineBounds && preview->hostWidgetId == data_->id &&
-            !drawingHoverRollSnapshot_)
-        {
-            RECT controls = body;
-            controls.bottom = preview->inlineBounds->top;
-            if (controls.bottom > controls.top)
-            {
-                context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(controls.left),
-                    static_cast<float>(controls.top), static_cast<float>(controls.right),
-                    static_cast<float>(controls.bottom)), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-                DrawContent(context, body);
-                context->PopAxisAlignedClip();
-            }
+        if (showingFolderPreview)
             app_->DrawCollectionPopup(context, false, &*preview->inlineBounds);
-        }
         else if (IsSingleCellPresentation()) DrawSingleCellContents(context, body);
         else DrawContent(context, body);
 
@@ -3364,7 +3353,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         (data_->type == DesktopWidgetType::Collection && data_->scrollContainerMode);
 
     // ── 3. Gradient bottom bar (reuses cached geometry for clip) ──
-    const bool showGradient = bottomBarTitle &&
+    const bool showGradient = !showingFolderPreview && bottomBarTitle &&
         (persistentBottomBar || !data_->bottomBarHover || hovered);
     if (showGradient)
     {
@@ -3414,8 +3403,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     // Large folders without a bottom title show only the resize dot over their
     // content on hover. Otherwise the regular title-bar rules apply, so an
     // exactly filled collection keeps its bottom title and rename anchor.
-    const bool showHandle = largeFolder && !bottomBarTitle ? hovered :
-        persistentBottomBar || !data_->bottomBarHover || hovered;
+    const bool showHandle = !showingFolderPreview && (largeFolder && !bottomBarTitle ? hovered :
+        persistentBottomBar || !data_->bottomBarHover || hovered);
 
     if (showHandle)
     {
@@ -3524,7 +3513,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     }
 
     // ── Scrollbar (on top of everything, hover only) ──────────
-    if (!IsCollapsed() && !IsSingleCellPresentation()) DrawScrollbar(context, hovered);
+    if (!showingFolderPreview && !IsCollapsed() && !IsSingleCellPresentation())
+        DrawScrollbar(context, hovered);
 
     // Draw the outline once, above content and the title gradient. Translucent
     // borders would darken if drawn both below and above these layers.

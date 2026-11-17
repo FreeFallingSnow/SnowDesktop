@@ -178,7 +178,8 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         return true;
     };
 
-    if (DockContainer* dock = GetDockContainerAtPoint(pt))
+    const bool insideFolderPreview = folderPreview_ && IsPointInsideOpenPopup(pt);
+    if (DockContainer* dock = insideFolderPreview ? nullptr : GetDockContainerAtPoint(pt))
     {
         const int delta = GET_WHEEL_DELTA_WPARAM(wp);
         if (dock->ScrollByWheelDelta(pt, delta))
@@ -250,7 +251,10 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                     popupWidgetIndex_)))
                 UpdateMarqueeSelection(pt);
             (void)refreshDragAfterScroll();
-            (void)PresentDesktopForegroundComposition(popup);
+            if (folderPreview_ && folderPreview_->inlineBounds)
+                (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+            else
+                (void)PresentDesktopForegroundComposition(popup);
             return;
         }
     }

@@ -530,7 +530,10 @@ void DesktopApp::OnMouseMoveAt(
                     current.y - popupScrollbarDragStartY_, geometry);
             auto* search = GetCategorizedPopupView();
             if (!search || !search->SetFolderSearchScrollOffset(scroll)) popupScrollOffset_ = scroll;
-            (void)PresentDesktopForegroundComposition(popup);
+            if (folderPreview_ && folderPreview_->inlineBounds)
+                (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+            else
+                (void)PresentDesktopForegroundComposition(popup);
         }
         return;
     }
@@ -1636,6 +1639,14 @@ void DesktopApp::OnMouseMoveAt(
                 !IsRectEmptyRect(popupRect_) &&
                 PtInRect(&popupRect_, point))
             {
+                using snowdesktop::widget_composition_layer_rules::PointerVisualLayer;
+                const DesktopWidget* previewHost = nullptr;
+                if (folderPreview_ && folderPreview_->inlineBounds)
+                {
+                    const size_t host = FindWidgetIndexById(folderPreview_->hostWidgetId);
+                    if (host < widgets_.size()) previewHost = &widgets_[host];
+                }
+                const auto layer = previewHost ? PointerVisualLayer::Widget : PointerVisualLayer::Foreground;
                 RECT content = GetCollectionPopupContentRect(popupRect_);
                 if (PtInRect(&content, point))
                 {
@@ -1650,9 +1661,7 @@ void DesktopApp::OnMouseMoveAt(
                         if (HitTestCollectionPopupItem(popupRect_, i, point))
                             return {
                                 popupWidget, popupWidget, 1, i, false,
-                                nullptr, popupRect_,
-                                snowdesktop::widget_composition_layer_rules::
-                                    PointerVisualLayer::Foreground };
+                                previewHost, popupRect_, layer };
                     }
                 }
                 if (UsesCollectionPopupFan(*popupWidget) &&
@@ -1662,10 +1671,7 @@ void DesktopApp::OnMouseMoveAt(
                     return {popupWidget, popupWidget, 3, 0, true, nullptr, popupRect_,
                         snowdesktop::widget_composition_layer_rules::PointerVisualLayer::Foreground};
                 return {
-                    popupWidget, popupWidget, 2, 0, true,
-                    nullptr, popupRect_,
-                    snowdesktop::widget_composition_layer_rules::
-                        PointerVisualLayer::Foreground };
+                    popupWidget, popupWidget, 2, 0, true, previewHost, popupRect_, layer };
             }
 
             if (DockContainer* dock = GetDockContainerAtPoint(point))

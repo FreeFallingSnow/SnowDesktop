@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "common/l10n.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/folder_preview_header_layout.h"
 #include "settings/animation_settings.h"
 #include "common/utils.h"
 #include "layout/folder_sort_rules.h"
@@ -123,9 +124,19 @@ void DesktopApp::DrawCollectionPopup(
 
     const DesktopWidget& widget = *openWidget;
     const bool fan = UsesCollectionPopupFan(widget);
+    const bool inlinePreview = folderPreview_ && folderPreview_->inlineBounds;
+    POINT pointer = lastMousePoint_;
+    if (inlinePreview && !SuppressDesktopWidgetDragTargets())
+    {
+        // The desktop composition pass masks the underlying widget's hover.
+        // The directory page uses the pointer on its own surface.
+        POINT screen{};
+        if (GetCursorPos(&screen) && ScreenToClient(hwnd_, &screen)) pointer = screen;
+    }
+    const bool lightTheme = inlinePreview ? IsLightContentTheme() : collectionPopupLightTheme_;
     const auto popupMetrics =
         GetCollectionPopupLayoutMetrics(widget);
-    const QuickNavTheme& popupTheme = collectionPopupLightTheme_
+    const QuickNavTheme& popupTheme = lightTheme
         ? kQuickNavLight : kQuickNavDark;
     const auto popupTextColor = [&](float alpha) {
         D2D1_COLOR_F color = popupTheme.popupTitle;
@@ -195,7 +206,7 @@ void DesktopApp::DrawCollectionPopup(
     const auto& popupKeys = GetPopupItemKeysView(widget);
     if (!fan)
     {
-        if (!folderPreview_ || !folderPreview_->inlineBounds)
+        if (!inlinePreview)
         {
             PersonalizationSettings popupBackgroundAppearance = collectionPopupAppearance_;
             popupBackgroundAppearance.widgetEdgeHighlightEnabled = false;
@@ -224,18 +235,23 @@ void DesktopApp::DrawCollectionPopup(
                     : (std::numeric_limits<LONG>::max)());
         if (folderPreview_)
         {
-            const RECT back = GetFolderPreviewBackRect(presentedPanel);
-            const RECT explorer = GetFolderPreviewExplorerRect(presentedPanel);
+            const auto header = snowdesktop::folder_preview::ResolveHeader(presentedPanel, popupMetrics.scale);
             const auto drawButton = [&](const wchar_t* label, const RECT& bounds) {
-                DrawD2DTextEllipsis(ctx, label, bounds,
-                    GetCollectionPopupTextFormat(popupMetrics.scale, true),
-                    popupTextColor(PtInRect(&bounds, lastMousePoint_) ? 1.0f : 0.8f),
+                const bool hovered = popupAnimation_.IsInteractive() && PtInRect(&bounds, pointer);
+                DrawD2DRoundedRectangle(ctx, bounds, 6.0f * popupMetrics.scale,
+                    popupTextColor(hovered ? (lightTheme ? 0.08f : 0.13f) : 0.04f),
+                    popupTextColor(0.0f), 0.0f);
+                RECT text = bounds;
+                InflateRect(&text, -snowdesktop::collection_popup_layout::ScaleDimension(3, popupMetrics.scale), 0);
+                DrawD2DTextEllipsis(ctx, label, text,
+                    GetCollectionPopupTextFormat(popupMetrics.scale, false),
+                    popupTextColor(hovered ? 1.0f : 0.87f),
                     DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             };
-            drawButton(L"‹", back);
-            drawButton(L"↗", explorer);
-            titleRect.left = back.right;
-            titleRect.right = explorer.left;
+            drawButton(_LW("guide.back"), header.back);
+            drawButton(_LW("app.interact.open_in_explorer"), header.explorer);
+            drawButton(_LW("app.menu.sort_by"), header.sort);
+            titleRect = header.title;
         }
         std::wstring title = ShouldUseDemoCollectionIdentity(&widget)
             ? GetDemoCollectionCategoryTitle(widget)
@@ -255,7 +271,7 @@ void DesktopApp::DrawCollectionPopup(
             return;
         }
 
-        if (dockFolderPopupOpen_)
+        if (dockFolderPopupOpen_ && !folderPreview_)
         {
             const RECT sortRect =
                 GetDockFolderPopupSortButtonRect(
@@ -606,13 +622,13 @@ void DesktopApp::DrawCollectionPopup(
                         entry.fileSize,
                         entry.isDirectory,
                     },
-                    collectionPopupLightTheme_, !IsRenamingItem(&entry), entry.fullPath, content);
+                    lightTheme, !IsRenamingItem(&entry), entry.fullPath, content);
                 continue;
             }
             const bool hovered =
                 popupAnimation_.IsInteractive() &&
                 !entry.selected &&
-                PtInRect(&itemRect, lastMousePoint_);
+                PtInRect(&content, pointer) && PtInRect(&itemRect, pointer);
             FolderEntryIcon icon(
                 &entry, dockFolderPopupContainer_.get(), this);
             const auto titleLayers =
@@ -620,7 +636,7 @@ void DesktopApp::DrawCollectionPopup(
                     ResolveTitleLayerPlan(entry.selected);
             icon.Draw(ctx, itemRect,
                 entry.selected ? 2 : (hovered ? 1 : 0),
-                collectionPopupLightTheme_,
+                lightTheme,
                 titleLayers.drawWithItem);
         }
         else
@@ -784,7 +800,7 @@ void DesktopApp::DrawCollectionPopup(
             widget, popupRect_);
     bool popupHovered =
         popupAnimation_.IsInteractive() &&
-        PtInRect(&popupRect_, lastMousePoint_);
+        PtInRect(&popupRect_, pointer);
     popupHovered = popupHovered || popupScrollbarDragging_;
     auto* searchPopup = GetCategorizedPopupView();
     const int contentScroll = searchPopup && searchPopup->IsSearchActive()
@@ -792,9 +808,9 @@ void DesktopApp::DrawCollectionPopup(
     if (!fan) DrawScrollbarAt(
         ctx, snowdesktop::popup_scrollbar_layout::Viewport(presentedPanel, content), contentHeight, visibleHeight,
         contentScroll, popupHovered,
-        collectionPopupLightTheme_, popupMetrics.scale);
+        lightTheme, popupMetrics.scale);
 
-    if (!fan) (void)DrawWidgetPanelEdgeHighlight(
+    if (!fan && !inlinePreview) (void)DrawWidgetPanelEdgeHighlight(
         ctx, presentedPanel, 18.0f * popupMetrics.scale,
         D2D1::ColorF(
             collectionPopupAppearance_.widgetBgR,
