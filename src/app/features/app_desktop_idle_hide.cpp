@@ -12,7 +12,6 @@ void DesktopApp::UpdateDesktopIdleHide()
 
     using namespace snowdesktop::desktop_idle_hide;
     Sample sample;
-    sample.now = GetTickCount64();
     sample.enabled = generalSettings_.desktopIdleHideEnabled;
     sample.delaySeconds = generalSettings_.desktopIdleHideDelaySeconds;
     sample.desktopHidden = desktopIconsHidden_;
@@ -21,7 +20,8 @@ void DesktopApp::UpdateDesktopIdleHide()
     sample.interactionBusy = mouseDown_ || dragSession_.HasContext() ||
         dragDropController_.IsTransportActive() ||
         widgetAction_ != WidgetAction::None || largeIconGesture_ ||
-        middleButtonWidgetMove_ || renameController_.IsActive() ||
+        middleButtonWidgetMove_ || detailColumnResizeActive_ ||
+        widgetScrollbarDragging_ || popupScrollbarDragging_ || renameController_.IsActive() ||
         HasActiveContextMenuSession() || shellPopupMenuLayerDepth_ > 0 ||
         quickNavigation_->open || IsCollectionPopupInteractive() ||
         !luaWidgetPanelRequest_.widgetId.empty();
@@ -39,15 +39,18 @@ void DesktopApp::UpdateDesktopIdleHide()
     sample.pointerValid = snowdesktop::private_pointer::CursorPosition(&pointer) != FALSE;
     sample.pointerX = pointer.x;
     sample.pointerY = pointer.y;
-    sample.pointerOnDesktop = sample.pointerValid &&
+    sample.pointerOnDesktop = sample.desktopHidden && desktopIdleHide_.AutoHidden() &&
+        !sample.suspended && !sample.interactionBusy && sample.pointerValid &&
         IsBaseDesktopHoverSurfaceWindow(snowdesktop::private_pointer::WindowAtPoint(pointer));
     LASTINPUTINFO input{sizeof(input)};
-    sample.inputKnown = GetLastInputInfo(&input) != FALSE;
+    sample.inputKnown = !sample.desktopHidden && !sample.suspended &&
+        !sample.interactionBusy && sample.pointerValid && GetLastInputInfo(&input) != FALSE;
+    sample.now = GetTickCount64();
     if (sample.inputKnown)
     {
-        // GetLastInputInfo may contain a future timestamp supplied by SendInput.
-        // Preserve normal DWORD wraparound while treating that case as activity.
-        const DWORD elapsed = GetTickCount() - input.dwTime;
+        // Unsigned subtraction preserves tick wraparound. A timestamp
+        // ahead of this sample (e.g. from SendInput) counts as activity.
+        const DWORD elapsed = static_cast<DWORD>(sample.now) - input.dwTime;
         sample.inputIdleMs = elapsed <= MAXLONG ? elapsed : 0;
     }
     const Action action = desktopIdleHide_.Update(sample);

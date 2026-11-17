@@ -42,9 +42,9 @@ public:
     {
         const bool moved = sample.pointerValid && pointerKnown_ &&
             (sample.pointerX != pointerX_ || sample.pointerY != pointerY_);
-        if (sample.pointerValid)
+        pointerKnown_ = sample.pointerValid;
+        if (pointerKnown_)
         {
-            pointerKnown_ = true;
             pointerX_ = sample.pointerX;
             pointerY_ = sample.pointerY;
         }
@@ -58,23 +58,30 @@ public:
             Reset(sample.now);
             return restore ? Action::Show : Action::None;
         }
-        if (moved && sample.pointerOnDesktop)
-        {
+        if (moved || sample.interactionBusy)
             idleFloor_ = sample.now;
-            if (autoHidden_ && sample.desktopHidden)
+        if (sample.interactionBusy)
+            return Action::None;
+        if (sample.desktopHidden)
+        {
+            if (autoHidden_ && moved && sample.pointerOnDesktop)
             {
                 autoHidden_ = false;
                 return Action::Show;
             }
+            return Action::None;
         }
-        if (sample.interactionBusy || !sample.inputKnown)
+        if (!sample.pointerValid || !sample.inputKnown)
         {
             idleFloor_ = sample.now;
             return Action::None;
         }
+        // A Windows input timestamp can regress. Keep the newest activity
+        // observed so far, including cursor movement and desktop interactions.
+        if (sample.inputIdleMs < sample.now - idleFloor_)
+            idleFloor_ = sample.now - sample.inputIdleMs;
         const auto delay = static_cast<std::uint64_t>(NormalizeDelay(sample.delaySeconds)) * 1000;
-        if (!sample.desktopHidden && sample.inputIdleMs >= delay &&
-            sample.now - idleFloor_ >= delay)
+        if (sample.now - idleFloor_ >= delay)
         {
             autoHidden_ = true;
             return Action::Hide;

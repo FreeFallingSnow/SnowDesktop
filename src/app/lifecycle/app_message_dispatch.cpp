@@ -452,6 +452,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         // The guide owns its captured gesture, including moves outside its
         // bounds. Handle it before passive-hover filtering can discard them.
         if (HandleUsageGuidePointerMove(pt)) return 0;
+        // Check for movement over empty wallpaper before filtering hidden
+        // content or passive hover on the paired render surfaces.
+        if (desktopIconsHidden_ && desktopIdleHide_.AutoHidden())
+            UpdateDesktopIdleHide();
         const bool nativeDragActive =
             snowdesktop::drag_input_rules::IsNativeDragActive(
                 dragSession_.IsActive(),

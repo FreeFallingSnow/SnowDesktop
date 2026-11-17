@@ -267,7 +267,6 @@ void DesktopApp::OnMouseMoveAt(
     WPARAM wp, POINT current,
     bool* dragPreviewSynced)
 {
-    UpdateDesktopIdleHide();
     if (dragPreviewSynced)
         *dragPreviewSynced = false;
     // This updater is also called after button-up was dequeued and by keyboard,
