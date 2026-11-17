@@ -2932,5 +2932,7 @@
   "app.interact.open_in_explorer": "Open in File Explorer",
   "settings.widgetBehavior.folderDoubleClick": "Default double-click action for folders in widgets and Dock popups",
   "settings.widgetBehavior.folderDoubleClickHint": "Applies to folders and folder shortcuts in Desktop Files, Folder Mapping, and Dock folder popups. Ctrl + double-click previews in place. Shift + double-click opens File Explorer.",
-  "settings.widgetBehavior.previewFolderInPlace": "Preview in the widget or popup"
+  "settings.widgetBehavior.previewFolderInPlace": "Preview in the widget or popup",
+  "app.folderPreview.title": "Previewing: {0}",
+  "app.folderPreview.open": "Preview in place"
 }

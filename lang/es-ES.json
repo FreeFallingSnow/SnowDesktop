@@ -2932,5 +2932,7 @@
   "app.interact.open_in_explorer": "Abrir en el Explorador de archivos",
   "settings.widgetBehavior.folderDoubleClick": "Acción predeterminada al hacer doble clic en carpetas de widgets y ventanas del Dock",
   "settings.widgetBehavior.folderDoubleClickHint": "Se aplica a las carpetas y sus accesos directos en Archivos del escritorio, Carpetas asignadas y ventanas de carpetas del Dock. Ctrl + doble clic muestra la vista previa. Mayús + doble clic abre el Explorador de archivos.",
-  "settings.widgetBehavior.previewFolderInPlace": "Vista previa en el widget o la ventana"
+  "settings.widgetBehavior.previewFolderInPlace": "Vista previa en el widget o la ventana",
+  "app.folderPreview.title": "Vista previa: {0}",
+  "app.folderPreview.open": "Vista previa aquí"
 }

@@ -2932,5 +2932,7 @@
   "app.interact.open_in_explorer": "파일 탐색기에서 열기",
   "settings.widgetBehavior.folderDoubleClick": "위젯 및 Dock 팝업의 폴더 기본 두 번 클릭 동작",
   "settings.widgetBehavior.folderDoubleClickHint": "바탕 화면 파일, 매핑 폴더 및 Dock 폴더 팝업의 폴더와 폴더 바로 가기에 적용됩니다. Ctrl + 두 번 클릭으로 제자리에서 미리 보고 Shift + 두 번 클릭으로 파일 탐색기에서 엽니다.",
-  "settings.widgetBehavior.previewFolderInPlace": "위젯 또는 팝업에서 미리 보기"
+  "settings.widgetBehavior.previewFolderInPlace": "위젯 또는 팝업에서 미리 보기",
+  "app.folderPreview.title": "미리 보는 중: {0}",
+  "app.folderPreview.open": "제자리에서 미리 보기"
 }

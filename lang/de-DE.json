@@ -2932,5 +2932,7 @@
   "app.interact.open_in_explorer": "Im Datei-Explorer öffnen",
   "settings.widgetBehavior.folderDoubleClick": "Standardaktion für Doppelklicks auf Ordner in Widgets und Dock-Popups",
   "settings.widgetBehavior.folderDoubleClickHint": "Gilt für Ordner und Ordnerverknüpfungen in Desktopdateien, Ordnerzuordnungen und Dock-Ordnerpopups. Strg + Doppelklick zeigt die Vorschau, Umschalt + Doppelklick öffnet den Datei-Explorer.",
-  "settings.widgetBehavior.previewFolderInPlace": "Vorschau im Widget oder Popup"
+  "settings.widgetBehavior.previewFolderInPlace": "Vorschau im Widget oder Popup",
+  "app.folderPreview.title": "Vorschau: {0}",
+  "app.folderPreview.open": "Vorschau an Ort und Stelle"
 }
