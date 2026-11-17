@@ -71,7 +71,10 @@ RECT CollectionGroupTabsRect(CollectionGroup* widget)
 RECT CollectionGroupContentRect(CollectionGroup* widget)
 {
     if (!widget) return {};
-    RECT body = snowdesktop::storage_title_bar::InsetContent(
+    namespace popup = snowdesktop::collection_popup_layout;
+    const bool hostedPopup = widget->IsPopupHosted();
+    RECT body = hostedPopup ? popup::ResolveHostedContentRect(widget->GetBodyRect(), widget->GetCellScale())
+        : snowdesktop::storage_title_bar::InsetContent(
         widget->GetBodyRect(), widget->UsesTopTitleBar(),
         widget->Cu(4.0f), widget->Cu(8.0f), widget->Cu(4.0f));
     body.bottom = std::max<LONG>(body.top,
@@ -81,11 +84,12 @@ RECT CollectionGroupContentRect(CollectionGroup* widget)
     if (!IsRectEmptyRect(search))
         body.top = std::min<LONG>(
             body.bottom,
-            search.bottom + widget->Cu(8.0f));
+            search.bottom + widget->Cu(hostedPopup ? popup::kControlGapCu : 8.0f));
     RECT tabs = CollectionGroupTabsRect(widget);
     if (!IsRectEmptyRect(tabs))
         body.top = std::min<LONG>(
-            body.bottom, std::max(body.top, tabs.bottom + widget->Cu(8.0f)));
+            body.bottom, std::max(body.top, tabs.bottom + (hostedPopup
+                ? widget->Cu(popup::kControlGapCu) - widget->Cu(popup::kTabSegmentInsetCu) : widget->Cu(8.0f))));
     return widget->ApplyDetailsHeaderToViewport(body);
 }
 

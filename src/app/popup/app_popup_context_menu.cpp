@@ -2,6 +2,7 @@
 #include "common/l10n.h"
 #include "settings/animation_settings.h"
 #include "ui/menu/menu_fluent_glyphs.h"
+#include "widgets/storage_title_bar_layout.h"
 
 void DesktopApp::AppendDockFolderPopupDisplayMenu(HMENU menu)
 {
@@ -17,10 +18,10 @@ void DesktopApp::AppendDockFolderPopupDisplayMenu(HMENU menu)
     append(kContextWidgetOpenFolder,
         _LW(folderPreview_ ? "app.interact.open_in_explorer" : "app.interact.open_folder"),
         nullptr, L"\uF42E");
-    if (folderPreview_) return;
-    append(kContextPopupFan, _LW("app.interact.popup_fan"),
-        widget.fanPopup ? _LW("app.interact.on") : _LW("app.interact.off"),
-        snowdesktop::menu_fluent_glyphs::kFanExpansion);
+    if (!folderPreview_)
+        append(kContextPopupFan, _LW("app.interact.popup_fan"),
+            widget.fanPopup ? _LW("app.interact.on") : _LW("app.interact.off"),
+            snowdesktop::menu_fluent_glyphs::kFanExpansion);
     append(kContextWidgetToggleListMode, _LW("app.interact.display_type"),
         widget.listMode ? _LW("app.interact.list_view_state") : _LW("app.interact.icon_view_state"),
         snowdesktop::menu_fluent_glyphs::kContentLayout);
@@ -47,14 +48,32 @@ void DesktopApp::AppendDockFolderPopupDisplayMenu(HMENU menu)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(details),
             L"\uF168", MenuIconFont::FluentRegular);
     }
-    append(kContextWidgetToggleFileCategories, _LW("app.interact.file_categories"),
-        widget.showFileCategories ? _LW("app.interact.shown") : _LW("app.interact.hidden"),
-        snowdesktop::menu_fluent_glyphs::kCategoryBar);
-    append(kContextWidgetToggleSearchBox, _LW("app.interact.search_box"),
-        widget.showSearchBox ? _LW("app.interact.shown") : _LW("app.interact.hidden"), L"\uF68F");
+    if (!folderPreview_)
+    {
+        append(kContextWidgetToggleFileCategories, _LW("app.interact.file_categories"),
+            widget.showFileCategories ? _LW("app.interact.shown") : _LW("app.interact.hidden"),
+            snowdesktop::menu_fluent_glyphs::kCategoryBar);
+        append(kContextWidgetToggleSearchBox, _LW("app.interact.search_box"),
+            widget.showSearchBox ? _LW("app.interact.shown") : _LW("app.interact.hidden"), L"\uF68F");
+    }
     append(kContextWidgetToggleDateGroup, _LW("app.interact.date_header"),
         widget.dateHeaders ? _LW("app.interact.shown") : _LW("app.interact.hidden"),
         snowdesktop::menu_fluent_glyphs::kDateHeader);
+    if (const auto* host = GetFolderPreviewComponent(false))
+    {
+        const auto state = [](bool enabled) { return _LW(enabled ? "app.interact.on" : "app.interact.off"); };
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        append(host->showOnHoverOnly ? kContextWidgetShowOnHoverOff : kContextWidgetShowOnHoverOn,
+            _LW("app.interact.hover_only"), state(host->showOnHoverOnly), L"\uF387");
+        if (snowdesktop::storage_title_bar::UsesTop(*host, CurrentPersonalization().scrollableTitleBarOnTop))
+            append(kContextWidgetToggleExpandOnHover, _LW("app.interact.expand_on_hover"),
+                state(host->titleBarExpandOnHover), snowdesktop::menu_fluent_glyphs::kChevronRight);
+        append(host->keepWhenDesktopHidden ? kContextWidgetKeepWhenHiddenOff : kContextWidgetKeepWhenHiddenOn,
+            _LW("app.interact.keep_when_hidden"), state(host->keepWhenDesktopHidden),
+            snowdesktop::menu_fluent_glyphs::kKeepWhenDesktopHidden);
+        append(host->privacyMode ? kContextWidgetPrivacyModeOff : kContextWidgetPrivacyModeOn,
+            _LW("app.interact.privacy_mode"), state(host->privacyMode), L"\uF50C");
+    }
 }
 
 bool DesktopApp::ExecuteDockFolderPopupDisplayCommand(UINT command)
@@ -66,7 +85,34 @@ bool DesktopApp::ExecuteDockFolderPopupDisplayCommand(UINT command)
         LaunchPathWithShortcutPolicy(hwnd_, widget.sourceFolderPath);
         return true;
     }
-    if (folderPreview_) return false;
+    if (auto* host = GetFolderPreviewComponent(false))
+    {
+        const bool behavior = [&] {
+            switch (command)
+            {
+            case kContextWidgetShowOnHoverOn: case kContextWidgetShowOnHoverOff:
+                host->showOnHoverOnly = command == kContextWidgetShowOnHoverOn; return true;
+            case kContextWidgetKeepWhenHiddenOn: case kContextWidgetKeepWhenHiddenOff:
+                host->keepWhenDesktopHidden = command == kContextWidgetKeepWhenHiddenOn; return true;
+            case kContextWidgetToggleExpandOnHover:
+                host->titleBarExpandOnHover = !host->titleBarExpandOnHover; return true;
+            case kContextWidgetPrivacyModeOn: case kContextWidgetPrivacyModeOff:
+                widget.privacyMode = host->privacyMode = command == kContextWidgetPrivacyModeOn; return true;
+            default: return false;
+            }
+        }();
+        if (behavior)
+        {
+            SaveLayoutSlots();
+            UpdateWidgetHoverExpansion(lastMousePoint_);
+            InvalidateDragStaticScene();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            InvalidateCollectionPopupContent();
+            return true;
+        }
+    }
+    if (folderPreview_ && (command == kContextPopupFan || command == kContextWidgetToggleSearchBox ||
+        command == kContextWidgetToggleFileCategories)) return false;
     switch (command)
     {
     case kContextPopupFan: widget.fanPopup = !widget.fanPopup; break;
@@ -121,7 +167,46 @@ bool DesktopApp::ExecuteDockFolderPopupDisplayCommand(UINT command)
         if (!widget.showFileCategories) dockFolderPopupContainer_->EndCategoryTabDrag(false);
         dockFolderPopupContainer_->InvalidateFilterCache();
     }
-    CommitDockFolderPopupStateToSource();
+    if (folderPreview_)
+    {
+        const auto copyDisplay = [&](auto& target) {
+            target.listMode = widget.listMode;
+            target.listColumns = widget.listColumns;
+            target.dateHeaders = widget.dateHeaders;
+            target.detailShowModified = widget.detailShowModified;
+            target.detailShowType = widget.detailShowType;
+            target.detailShowSize = widget.detailShowSize;
+            target.detailModifiedPosition = widget.detailModifiedPosition;
+            target.detailTypePosition = widget.detailTypePosition;
+            target.detailSizePosition = widget.detailSizePosition;
+            if constexpr (requires { target.showDetails; }) target.showDetails = widget.showDetails;
+        };
+        if (auto* source = GetFolderPreviewComponent(true))
+        {
+            copyDisplay(*source);
+            for (auto& container : containers_)
+                if (auto* view = dynamic_cast<ScrollingItemWidget*>(container.get()); view && view->GetWidgetData() == source)
+                    view->InvalidateSlots();
+        }
+        if (folderPreview_->folderHome)
+        {
+            auto& home = *folderPreview_->folderHome;
+            copyDisplay(home.data);
+            if (home.mappingId.empty())
+                for (auto& entry : dockEntries_)
+                    if (IsFolderDockEntry(entry) && std::to_wstring(static_cast<int>(entry.type)) +
+                        L":" + ToUpperInvariant(entry.reference) == home.dockSourceId)
+                    {
+                        copyDisplay(entry);
+                        break;
+                    }
+        }
+        folderPreview_->inlineListMode = widget.listMode;
+        folderPreview_->inlineDateHeaders = widget.dateHeaders;
+        SaveFolderPreviewView();
+        SaveLayoutSlots();
+    }
+    else CommitDockFolderPopupStateToSource();
     InvalidateCollectionPopupContent();
     RefreshDockFolderPopupGeometry();
     return true;

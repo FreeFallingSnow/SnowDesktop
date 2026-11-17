@@ -1151,14 +1151,16 @@ private:
         popup.rowMetrics = metrics_;
         // Each cascade owns its gutter; icons in descendants or separators
         // do not reserve space here. Search and inline controls keep their metrics.
-        if (popup.depth > 0 && std::ranges::none_of(*popup.items,
+        const bool compactTextRoot = popup.depth == 0 && options_.compactTextRoot;
+        if ((popup.depth > 0 || compactTextRoot) && std::ranges::none_of(*popup.items,
                 [](const Item& item) {
                     return !item.separator && !item.textInput && !item.inlineAction &&
                         (item.checked || item.image || !item.glyph.empty());
                 }))
             popup.rowMetrics.iconColumnWidth = 0;
         HDC screenDc = GetDC(nullptr);
-        int width = metrics_.minimumWidth;
+        if (compactTextRoot) popup.rowMetrics.minimumWidth = Scale(120, options_.dpi);
+        int width = popup.rowMetrics.minimumWidth;
         std::vector<int> quickIndices;
         std::vector<int> regularIndices;
         std::vector<int> inlineWidths(popup.items->size(), 0);

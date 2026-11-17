@@ -113,6 +113,39 @@ IDWriteTextFormat* DesktopApp::GetCollectionPopupTextFormat(float scale, bool ti
     return format.Get();
 }
 
+void DesktopApp::DrawFolderPreviewTitle(ID2D1DeviceContext* context, RECT row, POINT pointer,
+    float scale, bool lightTheme)
+{
+    if (IsRectEmpty(&row)) return;
+    const auto ink = [lightTheme](float alpha) {
+        return lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, alpha) : D2D1::ColorF(1.0f, 1.0f, 1.0f, alpha);
+    };
+    const bool hovered = PtInRect(&row, pointer) != FALSE;
+    if (hovered)
+        DrawD2DRoundedRectangle(context, row, ScaleWidgetCu(8.0f, scale), ink(0.10f), ink(0.0f), 0.0f);
+    const int iconWidth = ScaleWidgetCu(24.0f, scale);
+    if (row.right - row.left >= iconWidth)
+    {
+        const float x = row.left + iconWidth * 0.5f;
+        const float y = (row.top + row.bottom) * 0.5f;
+        const float radius = 4.0f * scale;
+        ComPtr<ID2D1SolidColorBrush> brush;
+        if (SUCCEEDED(context->CreateSolidColorBrush(ink(hovered ? 1.0f : 0.84f), &brush)))
+        {
+            const float stroke = std::max(1.0f, 1.25f * scale);
+            context->DrawLine({x - radius, y - radius}, {x + radius, y + radius}, brush.Get(), stroke);
+            context->DrawLine({x - radius, y + radius}, {x + radius, y - radius}, brush.Get(), stroke);
+        }
+        row.left += iconWidth;
+    }
+    const RECT panel = folderPreview_->inlineBounds ? *folderPreview_->inlineBounds : popupRect_;
+    const bool masked = dockFolderPopupWidget_.privacyMode && !PtInRect(&panel, pointer) &&
+        !dragSession_.IsActive() && !dragDropController_.IsExternalDragActive();
+    const auto title = masked ? _LFW("app.folderPreview.title", L"…") : dockFolderPopupWidget_.title;
+    DrawD2DTextEllipsis(context, title, row, GetCollectionPopupTextFormat(scale, true),
+        ink(0.95f), DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+}
+
 void DesktopApp::DrawCollectionPopup(
     ID2D1DeviceContext* ctx,
     bool applyAnimation, const RECT* preparedRect)
@@ -151,6 +184,9 @@ void DesktopApp::DrawCollectionPopup(
             GetCollectionPopupMaxScrollOffset(widget, popupRect_));
     const auto* motion = GetCollectionPopupResizeTransition();
     const RECT presentedPanel = motion ? motion->Panel(popupRect_) : popupRect_;
+    if (auto* host = GetFolderPreviewComponent(false)) dockFolderPopupWidget_.privacyMode = host->privacyMode;
+    const bool privatePreview = folderPreview_ && widget.privacyMode && !PtInRect(&presentedPanel, pointer) &&
+        !dragSession_.IsActive() && !dragDropController_.IsExternalDragActive();
 
     PopupOpacityScope opacity(ctx, applyAnimation, animation.opacity);
 
@@ -205,7 +241,7 @@ void DesktopApp::DrawCollectionPopup(
 
     const auto& popupKeys = GetPopupItemKeysView(widget);
     const auto drawPreviewMarquee = [&] {
-        if (folderPreview_ && marqueeActive_ && marqueeDockFolderPopup_)
+        if (folderPreview_ && folderPreview_->keyboardFocused && marqueeActive_ && marqueeDockFolderPopup_)
             DrawD2DFilledRectangle(ctx, marqueeRect_,
                 D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.20f),
                 D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f));
@@ -234,19 +270,16 @@ void DesktopApp::DrawCollectionPopup(
                 &popupBackgroundAppearance, false, 0, popupMetrics.scale);
         }
 
-        RECT titleRect = snowdesktop::collection_popup_layout::
-            ResolveTitleRect(presentedPanel, popupMetrics.scale,
+        const RECT titleRect = snowdesktop::collection_popup_layout::
+            ResolveTitleRect(presentedPanel, popupMetrics,
                 dockFolderPopupOpen_ && !folderPreview_ ? GetDockFolderPopupSortButtonRect(popupRect_).left -
-                    snowdesktop::collection_popup_layout::ScaleDimension(10, popupMetrics.scale)
+                    popupMetrics.controlGap
                     : (std::numeric_limits<LONG>::max)());
         if (folderPreview_)
         {
             const auto row = GetFolderPreviewNavigationRow(presentedPanel);
             if (!inlinePreview)
-            {
-                titleRect.left = row.bounds.left + ScaleWidgetCu(4.0f, row.scale);
-                titleRect.bottom = std::min(titleRect.bottom, row.bounds.top - ScaleWidgetCu(2.0f, row.scale));
-            }
+                DrawFolderPreviewTitle(ctx, titleRect, pointer, row.scale, lightTheme);
             const auto controlColor = [&](float alpha) {
                 return lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, alpha)
                                   : D2D1::ColorF(1.0f, 1.0f, 1.0f, alpha);
@@ -295,7 +328,8 @@ void DesktopApp::DrawCollectionPopup(
             if (!IsRectEmpty(&row.home) && !IsRectEmpty(&row.breadcrumb))
                 DrawD2DSeparator(ctx, {row.home.right, row.home.top + dividerInset,
                     row.home.right + 1, row.home.bottom - dividerInset}, controlColor(0.16f));
-            const auto crumbs = GetFolderPreviewBreadcrumbs(presentedPanel);
+            const auto crumbs = privatePreview ? std::vector<snowdesktop::folder_preview::Breadcrumb>{}
+                : GetFolderPreviewBreadcrumbs(presentedPanel);
             for (size_t i = 0; i < crumbs.size(); ++i)
             {
                 const auto& crumb = crumbs[i];
@@ -308,9 +342,21 @@ void DesktopApp::DrawCollectionPopup(
                         DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                     label.left = chevron.right;
                 }
-                const bool hovered = i + 1 < crumbs.size() && PtInRect(&crumb.bounds, pointer);
+                const bool hovered = (i == 0 || i + 1 < crumbs.size()) && PtInRect(&crumb.bounds, pointer);
                 if (hovered) highlight(label);
                 InflateRect(&label, -snowdesktop::collection_popup_layout::ScaleDimension(3, row.scale), 0);
+                if (i == 0)
+                {
+                    const LONG indicator = std::min<LONG>(label.right - label.left,
+                        ScaleWidgetCu(snowdesktop::folder_preview::kDriveIndicatorWidthCu, row.scale));
+                    if (indicator > 0)
+                    {
+                        RECT arrow{label.right - indicator, label.top, label.right, label.bottom};
+                        DrawD2DTextEllipsis(ctx, L"⌄", arrow, textFormat, controlColor(0.82f),
+                            DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                        label.right = arrow.left;
+                    }
+                }
                 DrawD2DTextEllipsis(ctx, crumb.label, label, textFormat,
                     controlColor(hovered || i + 1 == crumbs.size() ? 0.97f : 0.82f),
                     DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -320,14 +366,14 @@ void DesktopApp::DrawCollectionPopup(
             ? GetDemoCollectionCategoryTitle(widget)
             : (widget.title.empty()
                 ? _LW("app.overlay.collection_default") : widget.title);
-        if (!inlinePreview) DrawD2DTextEllipsis(
+        if (!folderPreview_) DrawD2DTextEllipsis(
             ctx, title, titleRect,
             GetCollectionPopupTextFormat(popupMetrics.scale, true),
             popupTextColor(1.0f),
             DWRITE_TEXT_ALIGNMENT_LEADING,
             DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-        if (dockTrayPopup_)
+        if (dockTrayPopup_ && !inlinePreview)
         {
             DrawDockTrayPopup(ctx, popupRect_);
             if (animationApplied) ctx->SetTransform(previousTransform);
@@ -403,16 +449,19 @@ void DesktopApp::DrawCollectionPopup(
     RECT content = targetContent;
     if (motion) content = motion->Content(content, popupRect_);
     if (auto* view = GetHostedFolderMappingPopupView(popupRect_);
-        view && (!inlinePreview || (!dockFolderPopupLoading_ && dockFolderPopupAvailable_)))
+        view && (!folderPreview_ || (!dockFolderPopupLoading_ && dockFolderPopupAvailable_)))
     {
+        if (!inlinePreview && motion) view = GetHostedFolderMappingPopupView(presentedPanel);
         const RECT frame = view->GetLayoutFrameRect();
         const snowdesktop::ScopedIconBackdropClip highlightClip(ctx, frame);
         ctx->PushAxisAlignedClip(ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        const POINT oldPointer = std::exchange(lastMousePoint_, pointer);
         view->DrawContent(ctx, frame);
-        view->DrawScrollbar(ctx, PtInRect(&frame, lastMousePoint_) != FALSE);
+        lastMousePoint_ = oldPointer;
         if (dragSession_.TargetContainer() == view)
             view->DrawDropPreview(ctx, dragSession_.TargetSlot(), dragSession_.TargetRegion());
         ctx->PopAxisAlignedClip();
+        view->DrawScrollbar(ctx, PtInRect(&presentedPanel, pointer) != FALSE);
         if (inlinePreview)
         {
             ctx->PushAxisAlignedClip(ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
@@ -429,10 +478,10 @@ void DesktopApp::DrawCollectionPopup(
         const snowdesktop::ScopedIconBackdropClip highlightClip(ctx, frame);
         ctx->PushAxisAlignedClip(ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         group->DrawContent(ctx, frame);
-        group->DrawScrollbar(ctx, PtInRect(&frame, lastMousePoint_) != FALSE);
         if (dragSession_.TargetContainer() == group)
             group->DrawDropPreview(ctx, dragSession_.TargetSlot(), dragSession_.TargetRegion());
         ctx->PopAxisAlignedClip();
+        group->DrawScrollbar(ctx, PtInRect(&presentedPanel, pointer) != FALSE);
         if (animationApplied) ctx->SetTransform(previousTransform);
         return;
     }
@@ -702,6 +751,11 @@ void DesktopApp::DrawCollectionPopup(
         if (widget.type == DesktopWidgetType::FolderMapping)
         {
             FolderEntry& entry = dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(widget, i)];
+            if (privatePreview)
+            {
+                popupListRenderer.DrawPrivacyPlaceholder(ctx, itemRect, {}, entry.isDirectory);
+                continue;
+            }
             if (fan)
             {
                 drawFanItem(i, entry, nullptr);
@@ -814,7 +868,7 @@ void DesktopApp::DrawCollectionPopup(
                     ? &widget : nullptr);
         }
     }
-    for (size_t i = 0; i < popupItemCount; ++i)
+    for (size_t i = firstItem; !privatePreview && i < endItem; ++i)
     {
         if (UsesCollectionPopupList(widget) || fan) break;
         RECT itemRect = GetCollectionPopupItemRect(popupRect_, i);

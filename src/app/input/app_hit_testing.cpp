@@ -6,6 +6,7 @@
 #include "widgets/widget_chrome_rules.h"
 #include "widgets/storage_title_bar_layout.h"
 #include "widgets/single_cell_widget_rules.h"
+#include "layout/collection_popup_layout.h"
 
 #include <cmath>
 
@@ -26,8 +27,25 @@ bool DesktopApp::UpdateWidgetHandleCursor(POINT point)
     {
         cursor = PtInRect(&folderPreview_->inlineResizeHandle, point) ? resizeCursor : IDC_HAND;
     }
-    else if (!dragSession_.IsActive() && !HasActiveContextMenuSession() && !IsPointOccludedByOpenPopup(point))
+    else if (folderPreview_ && IsCollectionPopupInteractive() && !dragSession_.HasContext() && !HasActiveContextMenuSession())
     {
+        const RECT title = folderPreview_->inlineBounds ? folderPreview_->inlineTitle
+            : snowdesktop::collection_popup_layout::ResolveTitleRect(
+                GetPresentedCollectionPopupGeometry().panel, GetOpenCollectionPopupLayoutMetrics());
+        if (PtInRect(&title, point)) cursor = IDC_HAND;
+    }
+    if (!cursor && !dragSession_.IsActive() && !HasActiveContextMenuSession() && !IsPointOccludedByOpenPopup(point))
+    {
+        if (const auto* host = FindInactiveInlineFolderPreviewHostAtPoint(point))
+        {
+            const auto& preview = inactiveInlineFolderPreviews_.at(host->id).session;
+            if (preview && PtInRect(&preview->inlineTitle, point)) cursor = IDC_HAND;
+        }
+        if (cursor)
+        {
+            snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, cursor));
+            return true;
+        }
         WidgetHit hit = WidgetHit::None;
         const auto standalone = HitTestStandaloneWidgetIndex(point);
         if (standalone < widgets_.size()) hit = HitTestStandaloneWidget(standalone, point);

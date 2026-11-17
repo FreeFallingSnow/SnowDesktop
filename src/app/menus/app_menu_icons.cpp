@@ -552,7 +552,8 @@ UINT DesktopApp::ShowModernMenu(
     bool forceTopmost,
     UINT textInputSubmitCommand, UINT textInputCancelCommand,
     std::function<void(UINT,
-        std::vector<snowdesktop::modern_menu::Item>&)> onPrepareSubmenu)
+        std::vector<snowdesktop::modern_menu::Item>&)> onPrepareSubmenu,
+    bool compactTextRoot)
 {
     if (!rootMenu)
         return 0;
@@ -590,6 +591,7 @@ UINT DesktopApp::ShowModernMenu(
     options.onTextChanged = std::move(onTextChanged);
     options.textInputSubmitCommand = textInputSubmitCommand;
     options.textInputCancelCommand = textInputCancelCommand;
+    options.compactTextRoot = compactTextRoot;
     options.onPrepareSubmenu = std::move(onPrepareSubmenu);
     options.onHover = std::move(onHover);
     options.zOrderCompanion = std::move(zOrderCompanion);

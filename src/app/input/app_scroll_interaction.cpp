@@ -17,6 +17,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
 
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     ScreenToClient(hwnd_, &pt);
+    ActivateInlineFolderPreviewAtPoint(pt);
     if (dockTrayPopup_ && IsPointOccludedByOpenPopup(pt))
     {
         const RECT popup = GetCollectionPopupRect(dockTrayPopup_->widget);

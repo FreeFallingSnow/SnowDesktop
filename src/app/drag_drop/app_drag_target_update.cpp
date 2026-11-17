@@ -398,6 +398,18 @@ void DesktopApp::RebindDragSourceAfterRebuild()
 bool DesktopApp::HitTestPopupForDrag(POINT client,
     Container*& targetContainer, Slot*& targetSlot, HitRegion& targetRegion)
 {
+    if (!inactiveInlineFolderPreviews_.empty() && !IsPointOccludedByOpenPopup(client) &&
+        FindInactiveInlineFolderPreviewHostAtPoint(client))
+    {
+        ActivateInlineFolderPreviewAtPoint(client, true);
+        if (!IsPointOccludedByOpenPopup(client))
+        {
+            // Keep a live preview's dragged wrappers in place. An inactive
+            // preview must not hand a drop to the hidden homepage beneath it.
+            targetRegion = HitRegion::Blocked;
+            return true;
+        }
+    }
     if (!IsCollectionPopupInteractive())
         return false;
     if (desktopIconsHidden_ && !IsOpenPopupRetained())

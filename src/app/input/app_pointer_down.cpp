@@ -173,6 +173,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     }
     if (!quickNavigation_->open)
     {
+        ActivateInlineFolderPreviewAtPoint(pt);
         if (folderPreview_) folderPreview_->keyboardFocused = IsPointOccludedByOpenPopup(pt);
         if (HandleFolderPreviewHeaderPress(pt)) return;
     }

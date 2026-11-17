@@ -15,6 +15,7 @@
  * - CreateWidget：组件工厂函数，根据 DesktopWidgetType 创建对应的具体组件实例。
  */
 #include "core/widget.h"
+#include "layout/collection_popup_layout.h"
 #include "widget/view/widget_clip_geometry.h"
 #include "common/types.h"
 #include "common/constants.h"
@@ -730,7 +731,16 @@ RECT WidgetContainer::GetScrollbarViewportRect() const
 {
     RECT viewport = GetContentViewportRect();
     if (popupFrameActive_)
-        return snowdesktop::popup_scrollbar_layout::Viewport(hostedFrame_, viewport);
+    {
+        RECT panel = hostedFrame_;
+        if (app_ && !(app_->folderPreview_ && app_->folderPreview_->inlineBounds))
+        {
+            const auto metrics = app_->GetOpenCollectionPopupLayoutMetrics();
+            panel.right += metrics.paddingX - snowdesktop::collection_popup_layout::ScaleDimension(
+                snowdesktop::collection_popup_layout::kHostedBodyInsetCu, metrics.scale);
+        }
+        return snowdesktop::popup_scrollbar_layout::Viewport(panel, viewport);
+    }
     if (UsesTopTitleBar())
         viewport.bottom = std::max<LONG>(viewport.top,
             std::min(viewport.bottom, GetResizeHandleRect().top));
@@ -1223,6 +1233,18 @@ RECT ScrollingItemWidget::GetCategorizedSearchBoxRect(
     if (categorizedSearchVisibilityOverrideActive_)
         visible = categorizedSearchVisible_;
     if (!visible) return {};
+    if (IsPopupHosted())
+    {
+        namespace layout = snowdesktop::collection_popup_layout;
+        RECT row = layout::ResolveHostedContentRect(GetBodyRect(), GetCellScale());
+        const int height = Cu(GetCategorizedSearchBoxHeight());
+        const bool groupTabs = data_ && IsGroupWidgetType(data_->type) && !data_->childWidgetIds.empty() &&
+            (data_->type != DesktopWidgetType::FileGroup ||
+                snowdesktop::collection_group_rules::ShouldShowFileGroupSourceTabs(data_->showSearchBox, searchText_.empty()));
+        if (groupTabs || categorizedTabRowOffset_ > 0) row.top += height + Cu(layout::kControlGapCu);
+        row.bottom = std::min<LONG>(row.bottom, row.top + height);
+        return IsRectEmpty(&row) ? RECT{} : row;
+    }
     RECT body = snowdesktop::storage_title_bar::InsetContent(
         GetBodyRect(), UsesTopTitleBar(), Cu(10.0f), Cu(12.0f), Cu(4.0f));
     if ((data_ && IsGroupWidgetType(data_->type) && !data_->childWidgetIds.empty()) ||
@@ -1248,6 +1270,24 @@ RECT ScrollingItemWidget::GetCategorizedTabsRect(
     if (categorizedTabsVisibilityOverrideActive_)
         visible = categorizedTabsVisible_;
     if (!visible) return {};
+    if (IsPopupHosted())
+    {
+        namespace layout = snowdesktop::collection_popup_layout;
+        RECT row = layout::ResolveHostedContentRect(GetBodyRect(), GetCellScale());
+        const int outlineInset = Cu(layout::kTabSegmentInsetCu);
+        const int height = Cu(GetCategorizedSearchBoxHeight());
+        const int gap = Cu(layout::kControlGapCu);
+        const RECT search = data_ && IsGroupWidgetType(data_->type) ? RECT{} : GetSearchBoxRect();
+        const LONG top = IsRectEmptyRect(search)
+            ? row.top + categorizedTabRowOffset_ * (height + gap) : search.bottom + gap;
+        // Segment painters trim 2 CU on each edge. Give the raw tab strip
+        // that allowance so its visible outline matches the search row.
+        row.left -= outlineInset;
+        row.right += outlineInset;
+        row.top = top - outlineInset;
+        row.bottom = std::min<LONG>(row.bottom + outlineInset, top + height + outlineInset);
+        return IsRectEmpty(&row) ? RECT{} : row;
+    }
     RECT body = snowdesktop::storage_title_bar::InsetContent(
         GetBodyRect(), UsesTopTitleBar(), Cu(10.0f), Cu(8.0f), Cu(4.0f));
     if (IsRectEmptyRect(body)) return {};
@@ -1314,6 +1354,8 @@ float ScrollingItemWidget::
 float ScrollingItemWidget::
     GetCategorizedTabRowPitch() const
 {
+    if (IsPopupHosted())
+        return GetCategorizedSearchBoxHeight() + snowdesktop::collection_popup_layout::kControlGapCu;
     return snowdesktop::collection_group_rules::
         ResolveCategorizedControlMetrics(
             GetCategorizedTabHeight()).rowPitchCu;
@@ -3247,6 +3289,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     RECT frame = GetFrameRect();
     RECT body = GetBodyRect();
     if (frame.right <= frame.left || body.bottom <= body.top) return;
+    const DesktopApp::InlineFolderPreviewProjection previewProjection(
+        !IsPreviewRendering() && !drawingHoverRollSnapshot_ ? app_ : nullptr, data_->id);
     const auto& preview = app_->folderPreview_;
     const bool showingFolderPreview = preview && preview->inlineBounds &&
         preview->hostWidgetId == data_->id && !drawingHoverRollSnapshot_;
@@ -3423,10 +3467,18 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         // Top title: larger centered text, without a shadow.
         const bool demoCollectionTitle =
             app_->ShouldUseDemoCollectionIdentity(data_);
-        const std::wstring displayTitle = showingFolderPreview ? app_->dockFolderPopupWidget_.title : demoCollectionTitle
+        const std::wstring displayTitle = demoCollectionTitle
             ? app_->GetDemoCollectionCategoryTitle(*data_)
             : data_->title;
-        if (bottomBarTitle && !displayTitle.empty() && data_->showTitle)
+        if (showingFolderPreview)
+        {
+            POINT pointer = mousePt;
+            POINT screen{};
+            if (!app_->SuppressDesktopWidgetDragTargets() && GetCursorPos(&screen) && ScreenToClient(app_->hwnd_, &screen))
+                pointer = screen;
+            app_->DrawFolderPreviewTitle(context, preview->inlineTitle, pointer, preview->inlineScale, lightTheme);
+        }
+        else if (bottomBarTitle && !displayTitle.empty() && data_->showTitle)
         {
             RECT titleRect = GetTitleRect();
             LONG tw = titleRect.right - titleRect.left;

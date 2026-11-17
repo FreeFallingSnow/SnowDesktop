@@ -52,6 +52,7 @@ struct Session
     RECT inlineCollapseButton{};
     RECT inlineResizeHandle{};
     RECT inlineTitleBar{};
+    RECT inlineTitle{};
     RECT inlineExplorerButton{};
     LONG inlineRowTop = 0;
     LONG inlineContentBottom = 0;
@@ -76,6 +77,7 @@ struct Session
         inlineCollapseButton = host.GetCollapseButtonRect();
         inlineResizeHandle = host.GetResizeHandleRect();
         inlineTitleBar = host.GetMoveHandleRect();
+        inlineTitle = host.GetTitleRect();
         inlineRowTop = host.UsesTopTitleBar() ? inlineTitleBar.bottom : inlineBounds->top;
         inlineContentBottom = host.UsesTopTitleBar() ? inlineBounds->bottom : inlineTitleBar.top;
         if (!IsRectEmpty(&inlineResizeHandle))
@@ -88,5 +90,17 @@ struct Session
                 break;
             }
     }
+};
+
+// Inline views keep their own directory model while another surface owns input.
+// The native FolderMapping is bound to the projected popup model when drawn.
+struct InlinePreview
+{
+    std::optional<Session> session;
+    FolderPopupHome model;
+    std::wstring pageId;
+    RECT bounds{};
+    int scroll = 0;
+    bool open = false;
 };
 }

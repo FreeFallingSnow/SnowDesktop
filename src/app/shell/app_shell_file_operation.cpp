@@ -620,6 +620,7 @@ void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapsh
         if (folder != snapshot.folders.end())
             RefreshDockFolderPopup(&folder->second);
     }
+    RefreshInactiveInlineFolderPreviews(snapshot);
     if (orderChanged) SaveLayoutSlots();
     // The matching Dock folder snapshot has already published its geometry.
     if (!dockFolderPopupOpen_) RefreshOpenCollectionPopupGeometry();

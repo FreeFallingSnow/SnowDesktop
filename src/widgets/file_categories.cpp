@@ -575,7 +575,10 @@ static RECT FileCategoryTabsRect(FileCategories* widget)
 static RECT FileCategoryContentRect(FileCategories* widget)
 {
     if (!widget) return {};
-    RECT body = snowdesktop::storage_title_bar::InsetContent(
+    namespace popup = snowdesktop::collection_popup_layout;
+    const bool hostedPopup = widget->IsPopupHosted();
+    RECT body = hostedPopup ? popup::ResolveHostedContentRect(widget->GetBodyRect(), widget->GetCellScale())
+        : snowdesktop::storage_title_bar::InsetContent(
         widget->GetBodyRect(), widget->UsesTopTitleBar(),
         widget->Cu(4.0f), widget->Cu(8.0f), widget->Cu(4.0f));
     body.bottom = std::max<LONG>(body.top,
@@ -596,8 +599,8 @@ static RECT FileCategoryContentRect(FileCategories* widget)
                 !IsRectEmptyRect(search), search.bottom,
                 widget->GetCategorizedTabRowOffset(),
                 widget->Cu(widget->GetCategorizedTabRowPitch()),
-                widget->Cu(8.0f),
-                widget->Cu(4.0f)));
+                hostedPopup ? widget->Cu(popup::kControlGapCu) - widget->Cu(popup::kTabSegmentInsetCu) : widget->Cu(8.0f),
+                widget->Cu(hostedPopup ? popup::kControlGapCu : 4.0f)));
     return widget->ApplyDetailsHeaderToViewport(body);
 }
 

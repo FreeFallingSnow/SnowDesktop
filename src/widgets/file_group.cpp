@@ -1420,37 +1420,27 @@ int FileGroup::GetMaxScrollOffset() const
 
 RECT FileGroup::GetContentViewportRect() const
 {
-    if (IsGroupSearchActive())
-    {
-        RECT body = snowdesktop::storage_title_bar::InsetContent(
-            GetBodyRect(), UsesTopTitleBar(), Cu(4.0f), Cu(8.0f), Cu(4.0f));
-        body.bottom = std::max<LONG>(body.top,
-            std::min<LONG>(body.bottom + Cu(4.0f),
-                GetScrollContentBottom()));
-        RECT search = GetSearchBoxRect();
-        if (!IsRectEmptyRect(search))
-            body.top = std::min<LONG>(
-                body.bottom,
-                search.bottom + Cu(4.0f));
-        return ApplyDetailsHeaderToViewport(body);
-    }
-    auto* source = GetActiveSourceContainer();
+    namespace popup = snowdesktop::collection_popup_layout;
+    const bool searching = IsGroupSearchActive();
+    auto* source = searching ? nullptr : GetActiveSourceContainer();
     if (!source)
     {
-        RECT body = snowdesktop::storage_title_bar::InsetContent(
-            GetBodyRect(), UsesTopTitleBar(), Cu(4.0f), Cu(8.0f), Cu(4.0f));
+        const bool hostedPopup = IsPopupHosted();
+        RECT body = hostedPopup ? popup::ResolveHostedContentRect(GetBodyRect(), GetCellScale())
+            : snowdesktop::storage_title_bar::InsetContent(
+                GetBodyRect(), UsesTopTitleBar(), Cu(4.0f), Cu(8.0f), Cu(4.0f));
         body.bottom = std::max<LONG>(body.top,
             std::min<LONG>(body.bottom + Cu(4.0f),
                 GetScrollContentBottom()));
         RECT search = GetSearchBoxRect();
         if (!IsRectEmptyRect(search))
             body.top = std::min<LONG>(
-                body.bottom, search.bottom + Cu(4.0f));
-        RECT tabs = FileGroupSourceTabsRect(
-            const_cast<FileGroup*>(this));
+                body.bottom, search.bottom + Cu(hostedPopup ? popup::kControlGapCu : 4.0f));
+        const RECT tabs = searching ? RECT{} : FileGroupSourceTabsRect(const_cast<FileGroup*>(this));
         if (!IsRectEmptyRect(tabs))
             body.top = std::min<LONG>(
-                body.bottom, std::max(body.top, tabs.bottom + Cu(8.0f)));
+                body.bottom, std::max(body.top, tabs.bottom + (hostedPopup
+                    ? Cu(popup::kControlGapCu) - Cu(popup::kTabSegmentInsetCu) : Cu(8.0f))));
         return ApplyDetailsHeaderToViewport(body);
     }
     HostedFileSourceScope hosted(

@@ -158,6 +158,7 @@ struct Options
     bool lightTheme = true;
     /** 托盘菜单使用；确保根菜单和子菜单位于任务栏之上。 */
     bool topmost = false;
+    bool compactTextRoot = false;
     Appearance appearance = Appearance::FollowSystem;
     RootPlacement rootPlacement = RootPlacement::Default;
     RECT anchorRect{};

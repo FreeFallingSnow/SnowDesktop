@@ -194,6 +194,7 @@ void DesktopApp::OnRightButtonDown(
             return;
     }
 
+    ActivateInlineFolderPreviewAtPoint(point);
     ClearPopupMouseDownItem();
     Item* pressed = nullptr;
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
@@ -590,6 +591,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
     if (renameController_.IsActive()) return;
     keyboardNavVisualFocus_ = false;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+    ActivateInlineFolderPreviewAtPoint(pt);
     auto* popupGroup = IsPointOccludedByOpenPopup(pt) ? GetGroupPopupView() : nullptr;
     POINT screenPt = pt;
     ClientToScreen(hwnd_, &screenPt);

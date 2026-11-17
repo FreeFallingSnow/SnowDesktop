@@ -6,6 +6,8 @@
 
 namespace snowdesktop::folder_preview
 {
+inline constexpr float kDriveIndicatorWidthCu = 12.0f;
+
 struct NavigationRow
 {
     RECT bounds;
@@ -15,26 +17,15 @@ struct NavigationRow
     float scale = 1.0f;
 };
 
-inline int NavigationRowHeight(float tabHeightCu, float scale)
-{
-    return ScaleWidgetCu(collection_group_rules::ResolveCategorizedControlMetrics(tabHeightCu).searchBoxHeightCu, scale);
-}
-
-inline constexpr int kPopupNavigationTitleInsetCu = 7;
-inline constexpr int kPopupNavigationBottomGapCu = 6;
-
-inline NavigationRow ResolveNavigationRow(const RECT& frame, LONG top, float tabHeightCu, float scale)
+inline NavigationRow ResolveNavigationRow(const RECT& bounds, float scale)
 {
     using collection_popup_layout::ScaleDimension;
-    const LONG inset = ScaleDimension(12, scale);
-    const LONG left = std::min(frame.left + inset, frame.right);
-    const LONG right = std::max(left, frame.right - inset);
-    top = std::clamp(top, frame.top, frame.bottom);
-    const LONG bottom = std::min(frame.bottom, top + NavigationRowHeight(tabHeightCu, scale));
-    const LONG backRight = std::min(right, left + ScaleDimension(29, scale));
-    const LONG homeRight = std::min(right, backRight + ScaleDimension(29, scale));
-    const LONG breadcrumbLeft = std::min(right, homeRight + ScaleDimension(4, scale));
-    return {{left, top, right, bottom}, {left, top, backRight, bottom}, {backRight, top, homeRight, bottom},
+    const auto [left, top, right, bottom] = bounds;
+    const int buttonWidth = ScaleDimension(24, scale);
+    const LONG backRight = std::min(right, left + buttonWidth);
+    const LONG homeRight = std::min(right, backRight + buttonWidth);
+    const LONG breadcrumbLeft = std::min(right, homeRight + ScaleDimension(3, scale));
+    return {bounds, {left, top, backRight, bottom}, {backRight, top, homeRight, bottom},
         {breadcrumbLeft, top, right, bottom}, scale};
 }
 }

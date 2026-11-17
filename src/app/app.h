@@ -1934,7 +1934,8 @@ private:
         UINT textInputSubmitCommand = 0,
         UINT textInputCancelCommand = 0,
         std::function<void(UINT,
-            std::vector<snowdesktop::modern_menu::Item>&)> onPrepareSubmenu = {});
+            std::vector<snowdesktop::modern_menu::Item>&)> onPrepareSubmenu = {},
+        bool compactTextRoot = false);
     void ConfigureModernMenuEventPump(
         snowdesktop::modern_menu::Options& options);
     BOOL InvokeShellMenuCommand(IContextMenu* menu,
@@ -2639,6 +2640,7 @@ private:
     void AppendFolderPreviewOpenMenuItem(HMENU menu, POINT point, const std::wstring& path);
     bool TryFolderPreviewDoubleClick(POINT point, WPARAM keyState, const std::wstring& menuPath = {});
     bool HandleFolderPreviewHeaderPress(POINT point);
+    void DrawFolderPreviewTitle(ID2D1DeviceContext* context, RECT row, POINT pointer, float scale, bool lightTheme);
     void ShowFolderPreviewDirectory(const std::wstring& path, bool fromFan = false, bool present = true);
     void NavigateFolderPreviewBack();
     void DiscardFolderPreview();
@@ -2646,6 +2648,22 @@ private:
     void SuspendDockFolderPreviewHome(snowdesktop::folder_preview::Session& session);
     bool ResumeFolderPreviewForPopup(const std::wstring& hostId, const std::wstring& sourceId);
     void ResumeInlineFolderPreview();
+    void SuspendInlineFolderPreview();
+    const DesktopWidget* FindInactiveInlineFolderPreviewHostAtPoint(POINT point) const;
+    void ActivateInlineFolderPreviewAtPoint(POINT point, bool duringDrag = false);
+    void SwapInlineFolderPreview(snowdesktop::folder_preview::InlinePreview& view);
+    void RefreshInactiveInlineFolderPreviews(const snowdesktop::shell_refresh::Snapshot& snapshot);
+    class InlineFolderPreviewProjection
+    {
+    public:
+        InlineFolderPreviewProjection(DesktopApp* app, const std::wstring& hostId);
+        ~InlineFolderPreviewProjection();
+        InlineFolderPreviewProjection(const InlineFolderPreviewProjection&) = delete;
+        InlineFolderPreviewProjection& operator=(const InlineFolderPreviewProjection&) = delete;
+    private:
+        DesktopApp* app_;
+        snowdesktop::folder_preview::InlinePreview* view_ = nullptr;
+    };
     void RestoreFolderPreviewHome(bool present);
     const snowdesktop::popup_resize_transition::Transition* GetCollectionPopupResizeTransition() const;
     snowdesktop::popup_resize_transition::Geometry GetPresentedCollectionPopupGeometry() const;
@@ -3134,6 +3152,7 @@ private:
     snowdesktop::folder_preview::NavigationRow GetFolderPreviewNavigationRow(const RECT& panel) const;
     std::vector<snowdesktop::folder_preview::Breadcrumb> GetFolderPreviewBreadcrumbs(const RECT& popup) const;
     void OpenFolderPreviewPath(const std::wstring& path, bool fromFan = false);
+    DesktopWidget* GetFolderPreviewComponent(bool contentSource);
     void SortDockFolderPopupContents(int mode, bool ascending);
     void ShowDockFolderPopupSortMenu(POINT screenPoint);
     void ShowDockFolderPopupContextMenu(
@@ -4554,6 +4573,7 @@ private:
     std::unique_ptr<Item> popupMouseDownItem_;
     bool dockFolderPopupOpen_ = false;
     std::optional<snowdesktop::folder_preview::Session> folderPreview_;
+    std::unordered_map<std::wstring, snowdesktop::folder_preview::InlinePreview> inactiveInlineFolderPreviews_;
     std::shared_ptr<snowdesktop::popup_resize_transition::Transition> folderPreviewPopupResize_;
     snowdesktop::folder_preview::SortPreferences folderPreviewSort_;
     snowdesktop::folder_preview::ViewPreferences folderPreviewViews_;
