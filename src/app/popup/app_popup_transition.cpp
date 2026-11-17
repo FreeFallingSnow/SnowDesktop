@@ -788,6 +788,8 @@ void DesktopApp::RefreshDockFolderPopup(
     if (refreshVisibleDockFolder && dockFolderPopupAvailable_)
     {
         RefreshDockFolderPopupGeometry(false);
+        if (folderPreview_ && folderPreview_->inlineBounds)
+            (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
         InvalidateCollectionPopupContent();
         InvalidateCollectionPopupDesktopScene(previousBounds);
         if (!EqualRect(&previousBounds, &popupRect_))
@@ -817,6 +819,11 @@ void DesktopApp::RefreshDockFolderPopupGeometry(bool present)
     InvalidateCollectionPopupContent();
     if (popupAnimationCompositorDriven_)
         return; // The queued paint updates pixels; geometry settles at completion.
+    if (folderPreview_ && folderPreview_->inlineBounds)
+    {
+        (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+        return;
+    }
     InvalidateCollectionPopupDesktopScene(previousBounds);
     UpdateFloatingPopupWindowBounds(true);
 }

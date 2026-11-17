@@ -62,6 +62,19 @@ bool DesktopApp::QueueFileHistory(bool redo)
             }
             if (!historyResult->removed.empty()) RemoveDesktopKeysFromWidgets(historyResult->removed);
             ApplyPendingRenames();
+            if (folderPreview_)
+            {
+                const auto& directory = dockFolderPopupWidget_.sourceFolderPath;
+                const auto key = snowdesktop::shell_refresh::FolderKey(directory);
+                const auto inDirectory = [&](const std::wstring& path) {
+                    return snowdesktop::shell_refresh::FolderKey(std::filesystem::path(path).parent_path().wstring()) == key;
+                };
+                if (std::ranges::any_of(historyResult->renames, [&](const auto& rename) {
+                        return inDirectory(rename.first) || inDirectory(rename.second);
+                    }) || std::ranges::any_of(historyResult->removed, inDirectory) ||
+                    std::ranges::any_of(historyResult->restored, inDirectory))
+                    RequestFolderRefresh({directory});
+            }
             RequestShellRefresh();
         }};
     if (!completion) return false;

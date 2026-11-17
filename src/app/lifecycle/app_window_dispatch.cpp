@@ -290,6 +290,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
     auto focusedSearchWidget =
         [this]() -> ScrollingItemWidget* {
         if (auto* view = GetCategorizedPopupView(); view && view->IsSearchFocused()) return view;
+        if (folderPreview_ && IsCollectionPopupKeyboardTarget()) return nullptr;
         for (auto& container : containers_)
         {
             auto* searchable =

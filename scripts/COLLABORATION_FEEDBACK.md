@@ -201,6 +201,8 @@
 
 ### CF-013 共享资源的键级编辑与提交粒度不闭合
 
+- **目录双击设置提交续证（2026-11-17）**：Task `folder-preview-in-place` 的批次 `b9f37841b0b04386b6544ce84b38e43c` 修订 0、Run `b7f4de7f803247a18a5d08058493387e` 通过后，首次 `commit -ResourceRequests` 返回 `[Errno 32] Wait worker lease is occupied`。使用同一组请求重试成功，提交 `78cdcadab`，保存十种语言的三项键变更。观察 worker 释放租约的时序仍待处理；此次未额外构建或复现。
+
 - **删除键的续证（2026-11-10）**：Task `task-e8cf5ce885b04bada68577e1cb187fff` 在批次 `fb53e9157ddd4a0b95948a79dec2cc1f` 删除前台应用菜单的两项文案。十个工作区语言文件均已有无关键的顺序差异。源码确认 `resource apply` 原来要求字符串补丁，整路径提交会带上其他差异。本轮让已准备的键接受 `null` 删除，并沿用原事务和精确键提交，保留其他工作区内容。
 
 - **工坊语言键实际提交（2026-11-09）**：Task `task-1723f991a9ca41aab8d21d8250c7cc86` 的批次 `1bdd559292384c28b727ffd28415d7b7` 修订 0 通过验证后，首次 `commit -ResourceRequests` 返回 `[Errno 32] Wait worker lease is occupied`，同请求重试成功为 `ae59bdd0`，十个归属键保存且工作区原件保留。相邻任务先提交后，HEAD 与工作区中新增键顺序不同，产生了无语义差异的剩余 Git diff。下一步核对观察 worker 租约释放时序，并评估如何在保留其他键的前提下消除残留顺序差异。此次只追加实测记录。

@@ -70,7 +70,7 @@ std::vector<std::wstring> DesktopApp::GetSelectedFolderEntryPaths(size_t* firstW
     if (firstWidgetIndex)
         *firstWidgetIndex = static_cast<size_t>(-1);
 
-    if (IsCollectionPopupInteractive() &&
+    if (IsCollectionPopupKeyboardTarget() &&
         dockFolderPopupOpen_)
     {
         std::vector<std::wstring> paths;
@@ -324,7 +324,7 @@ bool DesktopApp::DeleteSelectedFolderEntries(bool permanentDelete)
     if (paths.empty()) return false;
 
     std::wstring popupDirectory;
-    if (dockFolderPopupOpen_ && IsCollectionPopupInteractive() && desktopItemsReady_ &&
+    if (dockFolderPopupOpen_ && IsCollectionPopupKeyboardTarget() && desktopItemsReady_ &&
         std::none_of(paths.begin(), paths.end(), [this](const auto& path) {
             return FindItemIndexByKey(path) < items_.size() ||
                 std::any_of(dockEntries_.begin(), dockEntries_.end(), [&](const auto& entry) {

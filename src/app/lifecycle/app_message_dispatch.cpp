@@ -1046,7 +1046,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     const std::wstring path =
                         dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(dockFolderPopupWidget_, i)].fullPath;
                     if (LaunchPathWithShortcutPolicy(
-                            hwnd_, path))
+                            hwnd_, path) && !folderPreview_)
                         CloseCollectionPopup();
                     return 0;
                 }

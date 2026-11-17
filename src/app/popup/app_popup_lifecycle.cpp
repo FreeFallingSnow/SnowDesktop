@@ -441,7 +441,7 @@ void DesktopApp::OpenDockFolderPopupAt(
 }
 
 void DesktopApp::StartCollectionPopupAnimation(
-    bool reverseClosingAnimation)
+    bool reverseClosingAnimation, bool fromFan)
 {
     snowdesktop::performance::Scope openingScope("popup", "animation.prepare");
     const auto refreshDockTitles = [&]() {
@@ -450,9 +450,9 @@ void DesktopApp::StartCollectionPopupAnimation(
     };
     const DesktopWidget* widget = GetOpenPopupWidget();
     popupAnimation_.Configure(
-        snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
+        fromFan || snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
         snowdesktop::animation::RuntimeDurationScale() *
-            (widget && UsesCollectionPopupFan(*widget) ? 2.4 : 1.0),
+            (fromFan ? 0.7 : (widget && UsesCollectionPopupFan(*widget) ? 2.4 : 1.0)),
         !(widget && UsesCollectionPopupFan(*widget)));
     if (!reverseClosingAnimation)
     {

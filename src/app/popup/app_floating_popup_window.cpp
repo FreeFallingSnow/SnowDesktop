@@ -319,7 +319,9 @@ void DesktopApp::HandleFloatingPopupExternalPointerDown(
     const HMONITOR hitMonitor = MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONULL);
     const bool statusBarOutsideCollection = !pointOnHostedPopup && targetWindow &&
         statusBar_ && hitMonitor && targetWindow == statusBar_->InteractionWindow(hitMonitor);
-    const bool dismissCollection =
+    if (folderPreview_ && !pointOnHostedPopup && !targetBelongsToInternalSurface)
+        folderPreview_->keyboardFocused = false;
+    const bool dismissCollection = !folderPreview_ &&
         snowdesktop::floating_popup_rules::
             ShouldDismissForExternalPointerDown(
                 IsCollectionPopupHostedByFloatingWindow(),
@@ -1334,7 +1336,7 @@ void DesktopApp::PresentFloatingPopupPointerFrame(
 void DesktopApp::SyncPopupMouseLeaveTimer()
 {
     const bool shouldPoll = ((!luaStackIndicator_.stackId.empty() && !IsRectEmpty(&luaStackIndicator_.bounds)) ||
-        (personalizationSettings_.popupCloseOnMouseLeave && IsCollectionPopupInteractive())) &&
+        (!folderPreview_ && personalizationSettings_.popupCloseOnMouseLeave && IsCollectionPopupInteractive())) &&
         floatingPopupHwnd_ && IsWindow(floatingPopupHwnd_);
     if (shouldPoll)
     {
@@ -1355,7 +1357,7 @@ void DesktopApp::SyncPopupMouseLeaveTimer()
 
 void DesktopApp::UpdatePopupCloseOnMouseLeave(POINT point)
 {
-    if (!personalizationSettings_.popupCloseOnMouseLeave ||
+    if (folderPreview_ || !personalizationSettings_.popupCloseOnMouseLeave ||
         !IsCollectionPopupInteractive())
     {
         popupMouseLeaveController_.Reset();
@@ -1478,15 +1480,19 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         return MA_NOACTIVATE;
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
+    {
         // With no focused window, User32 sends WM_SYSKEYDOWN without Alt to
-        // the active popup. Route Delete through the same input handling.
-        if (wp == VK_DELETE && !dockTrayPopup_ && IsCollectionPopupInteractive() &&
+        // the active popup. Keep file commands in the common input handler.
+        const bool historyShortcut = folderPreview_ && IsCollectionPopupKeyboardTarget() && (wp == 'Z' || wp == 'Y') &&
+            (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000);
+        if ((wp == VK_DELETE || historyShortcut) && !dockTrayPopup_ && IsCollectionPopupInteractive() &&
             (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 29)) == 0)
         {
             const snowdesktop::private_pointer::ForwardScope forward(hwnd, WM_KEYDOWN);
             return HandleInputMessage(hwnd, WM_KEYDOWN, wp, lp);
         }
         break;
+    }
     case kFloatingPopupExternalPointerMessage:
         HandleFloatingPopupExternalPointerDown(
             static_cast<std::uint32_t>(wp),

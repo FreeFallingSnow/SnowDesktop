@@ -19,7 +19,7 @@ void DesktopApp::BeginRenameSelected(
         ShowAllCollectionPopupItems();
     renameCommitPending_ = false;
 
-    if (IsCollectionPopupInteractive() &&
+    if (IsCollectionPopupKeyboardTarget() &&
         dockFolderPopupOpen_ &&
         std::none_of(widgets_.begin(), widgets_.end(),
             [](const DesktopWidget& widget) { return widget.selected; }))

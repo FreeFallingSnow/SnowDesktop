@@ -150,6 +150,8 @@ bool DesktopApp::ShowHostInputContextMenu(
 void DesktopApp::OnRightButtonDown(
     PersistentDockHost* dockHost, POINT point)
 {
+    if (folderPreview_ && point.x != LONG_MIN && point.y != LONG_MIN)
+        folderPreview_->keyboardFocused = IsPointOccludedByOpenPopup(point);
     typeToSelectSession_.Reset();
     // Nonactivating Dock Hosts do not dismiss another menu on their own.
     // Unwind that session before release starts an asynchronous running-app

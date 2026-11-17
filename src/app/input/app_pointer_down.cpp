@@ -173,11 +173,12 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     }
     if (!quickNavigation_->open)
     {
+        if (folderPreview_) folderPreview_->keyboardFocused = IsPointOccludedByOpenPopup(pt);
         if (HandleFolderPreviewHeaderPress(pt)) return;
-        if (folderPreview_ && folderPreview_->inlineBounds &&
-            !PtInRect(&*folderPreview_->inlineBounds, pt))
-            RestoreFolderPreviewHome(true);
     }
+    const bool inlinePreviewChromePress = folderPreview_ && folderPreview_->inlineBounds &&
+        (PtInRect(&folderPreview_->inlineTitleBar, pt) ||
+            PtInRect(&folderPreview_->inlineResizeHandle, pt) || PtInRect(&folderPreview_->inlineCollapseButton, pt));
     auto* popupGroup = IsPointOccludedByOpenPopup(pt) ? GetGroupPopupView() : nullptr;
     DockContainer* pointDock = popupGroup ? nullptr : GetDockContainerAtPoint(pt);
     PersistentDockHost* pointDockHost =
@@ -322,7 +323,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     }
 
     // 外部点击先关闭集合弹窗，但保留本次按下事件，继续命中弹窗下方的真实目标。
-    if (IsCollectionPopupInteractive() &&
+    if (!folderPreview_ && IsCollectionPopupInteractive() &&
         popupWidgetIndex_ < widgets_.size())
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
@@ -337,7 +338,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             collectionPopupClosedByPointerDown = true;
         }
     }
-    else if (IsCollectionPopupInteractive() &&
+    else if (!folderPreview_ && IsCollectionPopupInteractive() &&
         dockFolderPopupOpen_)
     {
         const RECT popup =
@@ -367,7 +368,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     bool ctrl = (wp & MK_CONTROL) != 0;
     const bool shift = (wp & MK_SHIFT) != 0;
 
-    if (IsCollectionPopupInteractive())
+    if (IsCollectionPopupInteractive() && !inlinePreviewChromePress)
     {
         DesktopWidget* popupWidget = nullptr;
         bool pressedPopupToggle = false;
@@ -431,6 +432,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
     if (IsCollectionPopupInteractive() &&
         dockFolderPopupOpen_ &&
+        !inlinePreviewChromePress &&
         !pressedOpenPopupFolderToggle)
     {
         const RECT popup = GetCollectionPopupRect(

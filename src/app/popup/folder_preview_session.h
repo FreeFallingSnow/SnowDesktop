@@ -5,6 +5,7 @@
 #include "layout/collection_popup_types.h"
 #include "app/popup/popup_resize_transition.h"
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <string>
@@ -57,6 +58,8 @@ struct Session
     RECT inlineExplorerButton{};
     LONG inlineRowTop = 0;
     LONG inlineContentBottom = 0;
+    float inlineScale = 1.0f;
+    bool keyboardFocused = true;
     bool inlineListMode = false;
     bool inlineDateHeaders = false;
     std::optional<FolderPopupHome> folderHome;
@@ -68,5 +71,25 @@ struct Session
     bool homeFanActionFocused = false;
     std::vector<std::wstring> selectedDesktopKeys;
     std::vector<std::pair<std::wstring, std::wstring>> selectedFolderPaths;
+
+    void SetInlineGeometry(const WidgetContainer& host)
+    {
+        inlineBounds = host.GetFrameRect();
+        inlineScale = host.GetCellScale();
+        inlineCollapseButton = host.GetCollapseButtonRect();
+        inlineResizeHandle = host.GetResizeHandleRect();
+        inlineTitleBar = host.GetMoveHandleRect();
+        inlineRowTop = host.UsesTopTitleBar() ? inlineTitleBar.bottom : inlineBounds->top;
+        inlineContentBottom = host.UsesTopTitleBar() ? inlineBounds->bottom : inlineTitleBar.top;
+        if (!IsRectEmpty(&inlineResizeHandle))
+            inlineContentBottom = std::min(inlineContentBottom, inlineResizeHandle.top);
+        inlineExplorerButton = {};
+        for (const auto& control : host.GetControlRegions())
+            if (control.hit == WidgetHit::OpenFolderBtn)
+            {
+                inlineExplorerButton = control.bounds;
+                break;
+            }
+    }
 };
 }

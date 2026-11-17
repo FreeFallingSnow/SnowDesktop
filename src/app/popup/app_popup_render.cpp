@@ -241,38 +241,52 @@ void DesktopApp::DrawCollectionPopup(
                     : (std::numeric_limits<LONG>::max)());
         if (folderPreview_)
         {
+            const auto row = GetFolderPreviewNavigationRow(presentedPanel);
+            const auto controlColor = [&](float alpha) {
+                return lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, alpha)
+                                  : D2D1::ColorF(1.0f, 1.0f, 1.0f, alpha);
+            };
+            const auto highlight = [&](RECT rect) {
+                InflateRect(&rect, -ScaleWidgetCu(2.0f, row.scale), -ScaleWidgetCu(3.0f, row.scale));
+                if (!IsRectEmpty(&rect))
+                    DrawD2DRoundedRectangle(ctx, rect, static_cast<float>(ScaleWidgetCu(5.0f, row.scale)),
+                        controlColor(0.10f), controlColor(0.0f), 0.0f);
+            };
+            if (!IsRectEmpty(&row.bounds))
+                DrawD2DRoundedRectangle(ctx, row.bounds, static_cast<float>(ScaleWidgetCu(8.0f, row.scale)),
+                    controlColor(lightTheme ? 0.035f : 0.05f), controlColor(lightTheme ? 0.14f : 0.20f), 1.0f);
             const auto drawNavigationButton = [&](const RECT& bounds, const wchar_t* label, IDWriteTextFormat* font) {
                 const bool hovered = PtInRect(&bounds, pointer) != FALSE;
-                if (hovered)
-                    DrawD2DRoundedRectangle(ctx, bounds, 5.0f * popupMetrics.scale,
-                        popupTextColor(0.10f), popupTextColor(0.0f), 0.0f);
-                DrawD2DTextEllipsis(ctx, label, bounds, font, popupTextColor(hovered ? 1.0f : 0.82f),
+                if (hovered) highlight(bounds);
+                DrawD2DTextEllipsis(ctx, label, bounds, font, controlColor(hovered ? 1.0f : 0.82f),
                     DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             };
-            auto* textFormat = GetCollectionPopupTextFormat(popupMetrics.scale, false);
-            const auto row = GetFolderPreviewNavigationRow(presentedPanel);
-            drawNavigationButton(row.back, L"←", textFormat);
+            auto* textFormat = GetCollectionPopupTextFormat(row.scale, false);
+            drawNavigationButton(row.back, L"←", GetCollectionPopupTextFormat(row.scale, true));
             drawNavigationButton(row.home,
                 snowdesktop::menu_fluent_glyphs::kCollection, fluentIconTextFormat_.Get());
+            const LONG dividerInset = ScaleWidgetCu(8.0f, row.scale);
+            if (!IsRectEmpty(&row.home) && !IsRectEmpty(&row.breadcrumb))
+                DrawD2DSeparator(ctx, {row.home.right, row.home.top + dividerInset,
+                    row.home.right + 1, row.home.bottom - dividerInset}, controlColor(0.16f));
             const auto crumbs = GetFolderPreviewBreadcrumbs(presentedPanel);
             for (size_t i = 0; i < crumbs.size(); ++i)
             {
                 const auto& crumb = crumbs[i];
                 RECT label = crumb.bounds;
-                const LONG separator = snowdesktop::collection_popup_layout::ScaleDimension(12, popupMetrics.scale);
+                const LONG separator = snowdesktop::collection_popup_layout::ScaleDimension(10, row.scale);
                 if (i != 0)
                 {
                     const RECT chevron{label.left, label.top, std::min(label.right, label.left + separator), label.bottom};
-                    DrawD2DTextEllipsis(ctx, L"›", chevron, textFormat, popupTextColor(0.52f),
+                    DrawD2DTextEllipsis(ctx, L"›", chevron, textFormat, controlColor(0.52f),
                         DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                     label.left = chevron.right;
                 }
                 const bool hovered = i + 1 < crumbs.size() && PtInRect(&crumb.bounds, pointer);
-                if (hovered)
-                    DrawD2DRoundedRectangle(ctx, label, 5.0f * popupMetrics.scale,
-                        popupTextColor(0.10f), popupTextColor(0.0f), 0.0f);
-                InflateRect(&label, -snowdesktop::collection_popup_layout::ScaleDimension(3, popupMetrics.scale), 0);
-                DrawD2DTextEllipsis(ctx, crumb.label, label, textFormat, popupTextColor(0.90f),
+                if (hovered) highlight(label);
+                InflateRect(&label, -snowdesktop::collection_popup_layout::ScaleDimension(3, row.scale), 0);
+                DrawD2DTextEllipsis(ctx, crumb.label, label, textFormat,
+                    controlColor(hovered || i + 1 == crumbs.size() ? 0.97f : 0.82f),
                     DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             }
         }

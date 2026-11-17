@@ -2625,7 +2625,7 @@ private:
     void ResetCollectionPopupAnimationCache();
     bool TryFolderPreviewDoubleClick(POINT point, WPARAM keyState);
     bool HandleFolderPreviewHeaderPress(POINT point);
-    void ShowFolderPreviewDirectory(const std::wstring& path);
+    void ShowFolderPreviewDirectory(const std::wstring& path, bool fromFan = false);
     void NavigateFolderPreviewBack();
     void DiscardFolderPreview();
     void RestoreFolderPreviewHome(bool present);
@@ -3050,6 +3050,10 @@ private:
         return GetOpenPopupWidget() != nullptr &&
             popupAnimation_.IsInteractive();
     }
+    bool IsCollectionPopupKeyboardTarget() const
+    {
+        return IsCollectionPopupInteractive() && (!folderPreview_ || folderPreview_->keyboardFocused);
+    }
     DesktopWidget* ResolveWidgetContentViewData(DesktopWidget* widget) const;
     const DesktopWidget* ResolveWidgetContentViewData(const DesktopWidget* widget) const
     {
@@ -3107,7 +3111,7 @@ private:
     const DesktopWidget* GetInlineFolderPreviewData(const DesktopWidget& host) const;
     snowdesktop::folder_preview::NavigationRow GetFolderPreviewNavigationRow(const RECT& panel) const;
     std::vector<snowdesktop::folder_preview::Breadcrumb> GetFolderPreviewBreadcrumbs(const RECT& popup) const;
-    void OpenFolderPreviewPath(const std::wstring& path);
+    void OpenFolderPreviewPath(const std::wstring& path, bool fromFan = false);
     void SortDockFolderPopupContents(int mode, bool ascending);
     void ShowDockFolderPopupSortMenu(POINT screenPoint);
     void ShowDockFolderPopupContextMenu(
@@ -3123,7 +3127,7 @@ private:
     /** @brief Esc 优先处理前景弹窗，保留仍按住的拖拽及其来源。 */
     bool TryDismissPopupForEscape();
     void StartCollectionPopupAnimation(
-        bool reverseClosingAnimation = false);
+        bool reverseClosingAnimation = false, bool fromFan = false);
     void InvalidateCollectionPopupAnimation(
         bool invalidateStaticScene = false);
     void InvalidateCollectionPopupDesktopScene(RECT previousBounds = {});

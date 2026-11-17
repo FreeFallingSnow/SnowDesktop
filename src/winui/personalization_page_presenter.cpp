@@ -2209,9 +2209,12 @@ struct PersonalizationPagePresenter::Impl
         muxa::AutomationProperties::SetName(
             popupCloseOnMouseLeave, popupCloseOnMouseLeaveRow.label.Text());
         folderDoubleClickActionRow.SetText(
-            L("settings.widgetBehavior.folderDoubleClick", L"Default double-click action"),
+            L("settings.widgetBehavior.folderDoubleClick", L"Default double-click action for folders in widgets and Dock popups"),
             L("settings.widgetBehavior.folderDoubleClickHint"));
-        ReplaceComboItems(folderDoubleClickAction, {{"app.menu.open", L"Open"}, {"app.menu.preview", L"Preview"}});
+        ReplaceComboItems(folderDoubleClickAction, {
+            {"app.interact.open_in_explorer", L"Open in File Explorer"},
+            {"settings.widgetBehavior.previewFolderInPlace", L"Preview in the widget"},
+        });
         muxa::AutomationProperties::SetName(folderDoubleClickAction, folderDoubleClickActionRow.label.Text());
         muxa::AutomationProperties::SetName(
             gradientToggle, gradientToggleRow.label.Text());

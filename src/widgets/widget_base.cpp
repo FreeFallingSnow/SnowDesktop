@@ -3250,6 +3250,17 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     const auto& preview = app_->folderPreview_;
     const bool showingFolderPreview = preview && preview->inlineBounds &&
         preview->hostWidgetId == data_->id && !drawingHoverRollSnapshot_;
+    if (showingFolderPreview && !IsPreviewRendering())
+    {
+        const RECT titleBar = GetMoveHandleRect();
+        if (!EqualRect(&frame, &*preview->inlineBounds) || !EqualRect(&titleBar, &preview->inlineTitleBar))
+        {
+            app_->folderPreview_->SetInlineGeometry(*this);
+            app_->dockFolderPopupWidget_.bounds = frame;
+            app_->dockFolderPopupWidget_.gridSpan = data_->gridSpan;
+            app_->popupPageId_ = data_->gridCell.pageId;
+        }
+    }
 
     const bool selected = data_->selected;
     const bool hovered = IsPreviewInteractive() &&
@@ -3438,6 +3449,11 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                         (float)tw, (float)th, &layout);
                     if (layout)
                     {
+                        layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                        const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+                        ComPtr<IDWriteInlineObject> ellipsis;
+                        if (SUCCEEDED(dwrite->CreateEllipsisTrimmingSign(fmt, &ellipsis)))
+                            layout->SetTrimming(&trimming, ellipsis.Get());
                         if (!lightTheme && !UsesTopTitleBar())
                         {
                             if (auto* shadowBrush = getBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)))

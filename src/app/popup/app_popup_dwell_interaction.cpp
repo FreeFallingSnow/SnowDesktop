@@ -1115,6 +1115,7 @@ ShowDockFolderPopupContextMenu(
     else
     {
         AppendDockFolderPopupDisplayMenu(menu);
+        if (folderPreview_) AppendFileHistoryMenu(menu);
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         const bool canPaste = dockFolderPopupAvailable_ &&
             HasPasteableFileClipboardData();
@@ -1234,6 +1235,10 @@ ShowDockFolderPopupContextMenu(
 
     switch (command)
     {
+    case kFileUndoCommand:
+    case kFileRedoCommand:
+        if (!QueueFileHistory(command == kFileRedoCommand)) MessageBeep(MB_ICONWARNING);
+        break;
     case kContextOpenCommand:
         if (!canOpen)
             break;
