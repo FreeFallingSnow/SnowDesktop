@@ -6,6 +6,7 @@
 // effects, XamlBlurBrush, visual-tree watcher, and TAP initialization code at:
 // https://github.com/TranslucentTB/TranslucentTB/tree/322e2b7395a51975150126276308b415970e080b
 // Taskbar source matching also follows upstream fix b8716c1207037013515a289c365918cb4aea109e.
+// Secondary taskbar background painting follows upstream workaround e8bbe7669d2d5358db49a5147cb78dea2fbf62fe.
 
 #include "taskbar_hook_protocol.h"
 #include "thumbnail_toolbar_protocol.h"
@@ -1022,7 +1023,7 @@ public:
                 ApplyEdges(info.background, effective, info.taskbar);
             }
             info.appliedGeneration = snapshot.generation;
-            info.appliedEnabled = enabled;
+            SetAppearanceApplied(info, enabled);
             if (!controllerEnabled && restoredNativeVisuals && info.taskbar)
             {
                 // Explorer owns the normal taskbar appearance. Replaying its
@@ -1074,7 +1075,17 @@ private:
         LONG appliedContentTheme = -1;
         wux::ElementTheme nativeRequestedTheme = wux::ElementTheme::Default;
         bool appliedEnabled = false;
+        bool secondaryTaskbar = false;
     };
+
+    static void SetAppearanceApplied(TaskbarInfo& info, bool enabled)
+    {
+        if (info.appliedEnabled == enabled)
+            return;
+        info.appliedEnabled = enabled;
+        if (info.secondaryTaskbar)
+            InvalidateRect(info.taskbar, nullptr, !enabled);
+    }
 
     static bool RestoreContentTheme(TaskbarInfo& info)
     {
@@ -1102,7 +1113,7 @@ private:
         restored = RestoreControl(info.background) || restored;
         restored = RestoreControl(info.border) || restored;
         info.appliedGeneration = -1;
-        info.appliedEnabled = false;
+        SetAppearanceApplied(info, false);
         return restored;
     }
 
@@ -1512,6 +1523,7 @@ private:
             auto& info = taskbars_[frameHandle];
             info.xamlWindow = xamlWindow;
             info.taskbar = taskbar;
+            info.secondaryTaskbar = wcscmp(type, L"Shell_SecondaryTrayWnd") == 0;
             info.rootElement = rootContent.try_as<wux::FrameworkElement>();
             info.appliedContentTheme = -1;
             if (info.rootElement)
@@ -1607,6 +1619,27 @@ private:
         return true;
     }
 
+    void ClearSecondaryTaskbarBackground(HWND window) const
+    {
+        if (!std::any_of(taskbars_.begin(), taskbars_.end(), [window](const auto& entry) {
+                const auto& info = entry.second;
+                return info.taskbar == window && info.secondaryTaskbar &&
+                    info.appliedEnabled && info.background.appliedFill;
+            }))
+            return;
+
+        // Explorer's legacy surface can cover the XAML brush. Clear it before
+        // Explorer paints, leaving the normal WM_PAINT chain in place.
+        RECT rect{};
+        if (!GetClientRect(window, &rect))
+            return;
+        if (const HDC dc = GetDCEx(window, nullptr, DCX_WINDOW | DCX_CACHE))
+        {
+            FillRect(dc, &rect, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+            ReleaseDC(window, dc);
+        }
+    }
+
     static LRESULT CALLBACK TaskbarSubclassProc(HWND window, UINT message,
         WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR reference)
     {
@@ -1626,6 +1659,8 @@ private:
             // observe graceful shutdown; a TAP must not consume their Apply.
             return DefSubclassProc(window, message, wParam, lParam);
         }
+        if (self && message == WM_PAINT && !g_forceRestore.load() && IsCurrentHookInstance())
+            self->ClearSecondaryTaskbarBackground(window);
         if (self && message == WM_NCDESTROY)
         {
             RemoveWindowSubclass(window, TaskbarSubclassProc,
