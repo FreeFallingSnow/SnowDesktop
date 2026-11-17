@@ -135,6 +135,7 @@ constexpr UINT kContextWidgetListColumnsLast = kContextWidgetListColumnsFirst + 
 constexpr UINT kContextFavoriteQuickNavigationCommand = 41071;
 constexpr UINT kQuickNavigationFavoriteFileCommand = 41072;
 constexpr UINT kQuickNavigationFavoriteFolderCommand = 41073;
+constexpr UINT kContextWidgetFolderPreview = 41074;
 constexpr UINT kContextPopupFan = 41064;
 constexpr UINT kContextAddFolderMappingWidget = 41026;
 constexpr UINT kContextAddLuaWidgetFirst = 41450;

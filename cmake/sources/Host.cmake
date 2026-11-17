@@ -218,6 +218,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/input/app_pointer_release.cpp
     src/app/popup/app_popup_geometry.cpp
     src/app/popup/app_popup_dwell_interaction.cpp
+    src/app/popup/app_folder_preview.cpp
     src/app/popup/app_popup_context_menu.cpp
     src/app/popup/app_popup_lifecycle.cpp
     src/app/popup/app_popup_render.cpp
@@ -336,6 +337,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/lifecycle/startup_animation.cpp
     src/app/features/wallpaper_engine_capture.cpp
     src/data/atomic_file.cpp
+    src/data/folder_preview_sort.cpp
     src/dock/dock_window_preview.cpp
     src/dock/dock_window_preview_toolbar.cpp
     src/dock/dock_thumbnail_toolbar.cpp

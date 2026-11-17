@@ -195,36 +195,48 @@ void DesktopApp::DrawCollectionPopup(
     const auto& popupKeys = GetPopupItemKeysView(widget);
     if (!fan)
     {
-        PersonalizationSettings popupBackgroundAppearance =
-            collectionPopupAppearance_;
-        popupBackgroundAppearance.widgetEdgeHighlightEnabled = false;
-        DrawWidgetPanelBackground(
-            ctx, presentedPanel, 18.0f * popupMetrics.scale,
-            D2D1::ColorF(
-                collectionPopupAppearance_.widgetBgR,
-                collectionPopupAppearance_.widgetBgG,
-                collectionPopupAppearance_.widgetBgB,
-                std::clamp(
-                    collectionPopupAppearance_.widgetAlpha,
-                    0.0f, 1.0f)),
-            D2D1::ColorF(
-                collectionPopupAppearance_.widgetBorderR,
-                collectionPopupAppearance_.widgetBorderG,
-                collectionPopupAppearance_.widgetBorderB,
-                std::clamp(
-                    collectionPopupAppearance_.widgetBorderAlpha,
-                    0.0f, 1.0f)),
-            false,
-            std::clamp(collectionPopupAppearance_.widgetBorderWidth,
-                kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) *
-                popupMetrics.scale,
-            &popupBackgroundAppearance, false, 0, popupMetrics.scale);
+        if (!folderPreview_ || !folderPreview_->inlineBounds)
+        {
+            PersonalizationSettings popupBackgroundAppearance = collectionPopupAppearance_;
+            popupBackgroundAppearance.widgetEdgeHighlightEnabled = false;
+            DrawWidgetPanelBackground(
+                ctx, presentedPanel, 18.0f * popupMetrics.scale,
+                D2D1::ColorF(
+                    collectionPopupAppearance_.widgetBgR,
+                    collectionPopupAppearance_.widgetBgG,
+                    collectionPopupAppearance_.widgetBgB,
+                    std::clamp(collectionPopupAppearance_.widgetAlpha, 0.0f, 1.0f)),
+                D2D1::ColorF(
+                    collectionPopupAppearance_.widgetBorderR,
+                    collectionPopupAppearance_.widgetBorderG,
+                    collectionPopupAppearance_.widgetBorderB,
+                    std::clamp(collectionPopupAppearance_.widgetBorderAlpha, 0.0f, 1.0f)),
+                false,
+                std::clamp(collectionPopupAppearance_.widgetBorderWidth,
+                    kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) * popupMetrics.scale,
+                &popupBackgroundAppearance, false, 0, popupMetrics.scale);
+        }
 
-        const RECT titleRect = snowdesktop::collection_popup_layout::
+        RECT titleRect = snowdesktop::collection_popup_layout::
             ResolveTitleRect(presentedPanel, popupMetrics.scale,
                 dockFolderPopupOpen_ ? GetDockFolderPopupSortButtonRect(presentedPanel).left -
                     snowdesktop::collection_popup_layout::ScaleDimension(10, popupMetrics.scale)
                     : (std::numeric_limits<LONG>::max)());
+        if (folderPreview_)
+        {
+            const RECT back = GetFolderPreviewBackRect(presentedPanel);
+            const RECT explorer = GetFolderPreviewExplorerRect(presentedPanel);
+            const auto drawButton = [&](const wchar_t* label, const RECT& bounds) {
+                DrawD2DTextEllipsis(ctx, label, bounds,
+                    GetCollectionPopupTextFormat(popupMetrics.scale, true),
+                    popupTextColor(PtInRect(&bounds, lastMousePoint_) ? 1.0f : 0.8f),
+                    DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            };
+            drawButton(L"‹", back);
+            drawButton(L"↗", explorer);
+            titleRect.left = back.right;
+            titleRect.right = explorer.left;
+        }
         std::wstring title = ShouldUseDemoCollectionIdentity(&widget)
             ? GetDemoCollectionCategoryTitle(widget)
             : (widget.title.empty()

@@ -468,6 +468,11 @@ void DesktopApp::ShowAllCollectionPopupItems()
 
 RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
 {
+    if (folderPreview_ && &widget == &dockFolderPopupWidget_)
+    {
+        if (folderPreview_->inlineBounds) return *folderPreview_->inlineBounds;
+        if (!folderPreview_->homeWasFan) return folderPreview_->homeBounds;
+    }
     if (popupAnimationCompositorDriven_ && popupAnimationOverlay_.active &&
         &widget == GetOpenPopupWidget() && !IsRectEmptyRect(popupAnimationCacheRect_))
     {

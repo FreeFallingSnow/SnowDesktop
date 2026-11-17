@@ -557,7 +557,11 @@ void DesktopApp::RefreshDockFolderPopup(
     }
     shellDockFolderPopupRefreshPending_ = false;
     if (!dockFolderPopupOpen_) return;
-    const bool dockEntryOwnsBinding = dockFolderPopupMappingWidgetId_.empty();
+    const bool dockEntryOwnsBinding = !folderPreview_ && dockFolderPopupMappingWidgetId_.empty();
+    if (snapshot && folderPreview_ &&
+        snowdesktop::shell_refresh::FolderKey(snapshot->path) !=
+            snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath))
+        return;
     if (snapshot && dockEntryOwnsBinding &&
         snowdesktop::shell_refresh::FolderKey(snapshot->path) !=
             snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath))
@@ -674,7 +678,7 @@ void DesktopApp::RefreshDockFolderPopup(
         return Geometry{panel, GetCollectionPopupContentRect(panel)};
     };
     std::optional<Geometry> before;
-    if (snapshot && snapshot->complete && snapshot->entries.size() != dockFolderPopupWidget_.folderEntries.size() &&
+    if (!folderPreview_ && snapshot && snapshot->complete && snapshot->entries.size() != dockFolderPopupWidget_.folderEntries.size() &&
         present && dockFolderPopupAvailable_ && dockFolderPopupContainer_ &&
         IsCollectionPopupInteractive() && !popupAnimation_.IsAnimating() &&
         !UsesCollectionPopupFan(dockFolderPopupWidget_) && !UsesCollectionPopupList(dockFolderPopupWidget_) &&
@@ -696,12 +700,14 @@ void DesktopApp::RefreshDockFolderPopup(
         [this](const auto& path) { QueueFolderRead(path); },
         [this](const auto& folder) {
             EnumerateFolderMappingEntries(dockFolderPopupWidget_, true, &folder);
-            if (dockFolderPopupAvailable_ && !dragSession_.HasContext() &&
+            if (!folderPreview_ && dockFolderPopupAvailable_ && !dragSession_.HasContext() &&
                 !dragDropController_.IsTransportActive() && ApplyPendingFolderPlacements(
                     dockFolderPopupWidget_, dockFolderPopupMappingWidgetId_, dockFolderPopupSourceId_))
                 CommitDockFolderPopupStateToSource();
         }, targetPending);
     if (!accepted) return;
+    if (folderPreview_ && snapshot && !dockFolderPopupAvailable_)
+        ClearDockFolderPopupEntries();
     if (snapshot && snapshot->complete && dockFolderPopupAvailable_)
         dockFolderPopupKnownItemCount_ = dockFolderPopupWidget_.folderEntries.size();
     if (snapshot)
@@ -709,7 +715,7 @@ void DesktopApp::RefreshDockFolderPopup(
         // Remember a successfully listed plain Dock folder in memory. Its next
         // open can reserve the real footprint instead of the empty-grid size.
         // Do not persist settings or trigger another folder refresh here.
-        if (dockFolderPopupAvailable_ && dockFolderPopupMappingWidgetId_.empty())
+        if (!folderPreview_ && dockFolderPopupAvailable_ && dockFolderPopupMappingWidgetId_.empty())
         {
             for (auto& entry : dockEntries_)
             {
@@ -835,7 +841,7 @@ void DesktopApp::RefreshOpenCollectionPopupGeometry()
 void DesktopApp::
 CommitDockFolderPopupStateToSource()
 {
-    if (!dockFolderPopupOpen_)
+    if (!dockFolderPopupOpen_ || folderPreview_)
         return;
 
     if (!dockFolderPopupMappingWidgetId_.empty())
@@ -958,6 +964,16 @@ void DesktopApp::SortDockFolderPopupContents(
     if (mode ==
         snowdesktop::folder_sort_rules::kManual)
         return;
+    if (folderPreview_)
+    {
+        if (!dockFolderPopupAvailable_) return;
+        const auto key = snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath);
+        if (!folderPreviewSort_.Set(key, {mode, ascending}))
+        {
+            MessageBeep(MB_ICONWARNING);
+            return;
+        }
+    }
 
     const size_t sourceIndex =
         dockFolderPopupMappingWidgetId_.empty()

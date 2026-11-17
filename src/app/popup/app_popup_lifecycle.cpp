@@ -538,6 +538,8 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
 
 void DesktopApp::FinalizeCloseCollectionPopup()
 {
+    const RECT previewBounds = folderPreview_ ? popupRect_ : RECT{};
+    DiscardFolderPreview();
     const bool collectAllDesktopBackdrops = !IsCollectionPopupHostedByFloatingWindow() ||
         dragSession_.HasContext() || dragDropController_.IsExternalDragActive();
     if (listTitleHoverPopup_) ClearListTitleHover();
@@ -559,7 +561,8 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     auto pendingOpen =
         std::move(pendingCollectionPopupOpen_);
     pendingCollectionPopupOpen_.reset();
-    RECT dirty = popupRect_;
+    RECT dirty{};
+    UnionRect(&dirty, &popupRect_, &previewBounds);
     if (!IsRectEmptyRect(popupAnimationCacheRect_))
     {
         if (IsRectEmptyRect(dirty))
@@ -573,7 +576,10 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     ResetCollectionPopupAnimationCache();
     if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
         !dockFolderPopupOpen_ && !dockTrayPopup_)
+    {
+        if (!IsRectEmptyRect(previewBounds)) InvalidateCollectionPopupDesktopScene(previewBounds);
         return;
+    }
     ResetDockTrayPopup();
     if (dockFolderPopupOpen_)
         CancelDockFolderPopupIconLoads();
@@ -684,6 +690,7 @@ void DesktopApp::ContinueCollectionPopupSwitch()
 void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
 {
     CancelRenameClick();
+    folderReadWork_.Cancel(snowdesktop::folder_preview::kResolveWorkKey);
     if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
         !dockFolderPopupOpen_ && !dockTrayPopup_)
         return;
@@ -709,7 +716,8 @@ void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
     marqueeDockFolderPopup_ = false;
     dockFolderPopupMarqueeInitialSelection_.clear();
 
-    if (!(snowdesktop::animation::RuntimePopupEffect() != 0))
+    if ((folderPreview_ && folderPreview_->inlineBounds) ||
+        snowdesktop::animation::RuntimePopupEffect() == 0)
     {
         FinalizeCloseCollectionPopup();
         return;

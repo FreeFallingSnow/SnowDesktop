@@ -465,6 +465,7 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
     {
         auto* targetWidget = dynamic_cast<WidgetContainer*>(preview.targetContainer);
         if (!targetWidget) return false;
+        if (folderPreview_ && targetWidget == dockFolderPopupContainer_.get()) return true;
         std::vector<size_t> indices = sourceMemberIndices();
         if (indices.empty())
             indices = targetWidget->GetSelectedMemberIndices();
@@ -571,6 +572,7 @@ PendingFolderPlacement DesktopApp::BuildPendingFolderPlacement(
 
 void DesktopApp::ActivatePendingFolderPlacement(PendingFolderPlacement placement)
 {
+    if (placement.popupSourceId.starts_with(L"folder-preview:")) return;
     PendingLandingCache cache;
     cache.folderPlacements.push_back(std::move(placement));
     snowdesktop::pending_drop::Publish(pendingLandingCaches_, std::move(cache));

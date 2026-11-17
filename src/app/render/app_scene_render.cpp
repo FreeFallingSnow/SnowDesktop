@@ -132,8 +132,9 @@ void DesktopApp::DrawStaticBackground(
         const RECT widgetFrame =
             GetStandaloneWidgetFrameRect(widgetData);
         const bool popupOpen =
-            popupWidgetIndex_ < widgets_.size() &&
-            widgetIndex == popupWidgetIndex_;
+            (popupWidgetIndex_ < widgets_.size() && widgetIndex == popupWidgetIndex_) ||
+            (folderPreview_ && folderPreview_->inlineBounds &&
+                folderPreview_->hostWidgetId == widgetData.id);
         const bool interactionPinned =
             !interactionPinnedWidgetId_.empty() &&
             widgetData.id == interactionPinnedWidgetId_;
@@ -759,6 +760,7 @@ void DesktopApp::DrawDynamicOverlays(
                 !(popupAnchoredToDock_ &&
                     persistentDockHostOwnsVisual_);
     if (popupBelongsToCurrentSurface &&
+        !(folderPreview_ && folderPreview_->inlineBounds) &&
         (!hiddenMode || IsOpenPopupRetained()) &&
         GetOpenPopupWidget())
     {

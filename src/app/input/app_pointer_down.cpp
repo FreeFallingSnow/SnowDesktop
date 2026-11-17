@@ -44,6 +44,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     pendingWidgetButtonAction_ = WidgetHit::None;
     pendingWidgetButtonClosedPopup_ = false;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+    folderReadWork_.Cancel(snowdesktop::folder_preview::kResolveWorkKey);
     if (DockTrayPopupPointerDown(pt))
     {
         mouseDown_ = true;
@@ -169,6 +170,13 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 hwnd_, &panel, FALSE);
             return;
         }
+    }
+    if (!quickNavigation_->open)
+    {
+        if (HandleFolderPreviewHeaderPress(pt)) return;
+        if (folderPreview_ && folderPreview_->inlineBounds &&
+            !PtInRect(&*folderPreview_->inlineBounds, pt))
+            RestoreFolderPreviewHome(true);
     }
     auto* popupGroup = IsPointOccludedByOpenPopup(pt) ? GetGroupPopupView() : nullptr;
     DockContainer* pointDock = popupGroup ? nullptr : GetDockContainerAtPoint(pt);

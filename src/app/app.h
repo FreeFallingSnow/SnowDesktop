@@ -121,6 +121,8 @@ namespace snowdesktop::tray { struct Icon; class Service; }
 #include "platform/window_observation.h"
 #include "dock/dock_drop_rules.h"
 #include "layout/collection_popup_types.h"
+#include "app/popup/folder_preview_session.h"
+#include "data/folder_preview_sort.h"
 #include "layout/popup_animation_rules.h"
 #include "icons/icon_beautify.h"
 #include "icons/icon_appearance.h"
@@ -2621,6 +2623,16 @@ private:
     void RefreshCollectionPopupAnimationContent();
     /** @brief 撤下弹窗动画并使旧内容失效，保留有界的可复用存储。 */
     void ResetCollectionPopupAnimationCache();
+    bool TryFolderPreviewDoubleClick(POINT point);
+    bool HandleFolderPreviewHeaderPress(POINT point);
+    void ShowFolderPreviewDirectory(const std::wstring& path);
+    void NavigateFolderPreviewBack();
+    void DiscardFolderPreview();
+    void RestoreFolderPreviewHome(bool present);
+    bool ToggleFolderPreview(const std::wstring& sourceId);
+    void AppendFolderPreviewToggle(HMENU menu, const DesktopWidget& source);
+    RECT GetFolderPreviewBackRect(const RECT& popup) const;
+    RECT GetFolderPreviewExplorerRect(const RECT& popup) const;
     void InvalidateCollectionPopupContent();
     bool PrepareCompositionAnimationOverlay(
         UiCompositionAnimationOverlay& overlay,
@@ -4509,6 +4521,8 @@ private:
         pendingCollectionPopupOpen_;
     std::unique_ptr<Item> popupMouseDownItem_;
     bool dockFolderPopupOpen_ = false;
+    std::optional<snowdesktop::folder_preview::Session> folderPreview_;
+    snowdesktop::folder_preview::SortPreferences folderPreviewSort_;
     std::shared_ptr<DockTrayPopupState> dockTrayPopup_;
     bool dockFolderPopupAvailable_ = false;
     bool dockFolderPopupLoading_ = false;

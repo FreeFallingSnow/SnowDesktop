@@ -495,6 +495,7 @@ void DesktopApp::LoadLayoutSlots()
         {
             widget.showFileCategories = saved.showFileCategories;
             widget.showSearchBox = saved.showSearchBox;
+            widget.folderPreviewEnabled = saved.folderPreviewEnabled;
         }
         widget.showOnHoverOnly = saved.showOnHoverOnly;
         widget.privacyMode = saved.privacyMode;

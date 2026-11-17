@@ -144,6 +144,7 @@ inline void Write(std::ostream& file, const DesktopWidget& w, Escape escape, Enc
          << ", \"dateHeaders\": " << (w.dateHeaders ? "true" : "false")
          << ", \"showFileCategories\": " << (w.showFileCategories ? "true" : "false")
          << ", \"showSearchBox\": " << (w.showSearchBox ? "true" : "false")
+         << ", \"folderPreviewEnabled\": " << (w.folderPreviewEnabled ? "true" : "false")
          << ", \"showOnHoverOnly\": " << (w.showOnHoverOnly ? "true" : "false")
          << ", \"privacyMode\": " << (w.privacyMode ? "true" : "false")
          << ", \"singleCellIconMode\": " << (w.singleCellIconMode ? "true" : "false")

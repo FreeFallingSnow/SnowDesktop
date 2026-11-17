@@ -792,6 +792,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 return 0;
         }
 
+        if (TryFolderPreviewDoubleClick(pt)) return 0;
+
         if (IsCollectionPopupInteractive() && IsPointOccludedByOpenPopup(pt))
         {
             if (auto* popupGroup = GetGroupPopupView())

@@ -498,6 +498,11 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         {
             std::wstring directory;
             std::optional<NewItemTarget> newItemTarget;
+            if (folderPreview_ && !dockFolderPopupAvailable_)
+            {
+                MessageBeep(MB_ICONWARNING);
+                break;
+            }
             if (dockFolderPopupOpen_ && dockFolderPopupAvailable_)
             {
                 directory = dockFolderPopupWidget_.sourceFolderPath;
@@ -862,6 +867,8 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
                     luaWidgetPanelRequest_.widgetId,
                     "escape");
         }
+        else if (folderPreview_)
+            NavigateFolderPreviewBack();
         else if (IsCollectionPopupInteractive())
         {
             if (keyboardNavInsideWidget_ && keyboardNavWidgetIndex_ < widgets_.size() &&
@@ -921,6 +928,11 @@ bool DesktopApp::TryDismissPopupForEscape()
     case PopupEscapeAction::KeepLuaPanel:
         return true;
     case PopupEscapeAction::CloseCollectionPopup:
+        if (folderPreview_)
+        {
+            NavigateFolderPreviewBack();
+            return true;
+        }
         pendingCollectionPopupOpen_.reset();
         CancelCollectionPopupDwell();
         CancelCollectionGroupTabDwell();

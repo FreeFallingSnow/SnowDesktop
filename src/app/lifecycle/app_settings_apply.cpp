@@ -2603,6 +2603,12 @@ bool DesktopApp::IsOpenPopupRetained() const
         return GetOpenPopupWidget() != nullptr;
     if (!GetOpenPopupWidget())
         return false;
+    if (folderPreview_ && !popupAnchoredToDock_)
+    {
+        const size_t host = FindWidgetIndexById(folderPreview_->hostWidgetId.empty()
+            ? folderPreview_->sourceWidgetId : folderPreview_->hostWidgetId);
+        return host < widgets_.size() && widgets_[host].keepWhenDesktopHidden;
+    }
     if (dockFolderPopupOpen_ || popupAnchoredToDock_)
         return dockSettings_.keepWhenDesktopHidden ||
             (collectionPopupDockHost_ &&

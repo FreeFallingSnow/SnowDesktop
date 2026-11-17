@@ -130,6 +130,7 @@ void TraceMenuHostZOrderTransition(
 
 bool DesktopApp::IsCollectionPopupHostedByFloatingWindow() const
 {
+    if (folderPreview_ && folderPreview_->inlineBounds) return false;
     return snowdesktop::floating_popup_rules::HostsCollectionPopup(
         GetOpenPopupWidget() != nullptr);
 }
@@ -885,6 +886,8 @@ bool DesktopApp::PresentFloatingPopupComposition()
 void DesktopApp::InvalidateFloatingPopupWindow(
     bool immediatePresent)
 {
+    if (folderPreview_ && folderPreview_->inlineBounds && hwnd_)
+        InvalidateRect(hwnd_, &*folderPreview_->inlineBounds, FALSE);
     if (!ShouldShowFloatingPopupWindow() ||
         !floatingPopupHwnd_ ||
         !IsWindow(floatingPopupHwnd_) ||

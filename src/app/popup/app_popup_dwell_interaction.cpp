@@ -1140,7 +1140,14 @@ ShowDockFolderPopupContextMenu(
         sortMenu = snowdesktop::sort_menu::Create(
             [](const char* key) { return _LW(key); });
         if (sortMenu)
+        {
+            if (folderPreview_)
+                for (const auto& row : snowdesktop::sort_menu::kRows)
+                    if (row.mode == dockFolderPopupWidget_.folderSortMode)
+                        CheckMenuItem(sortMenu, dockFolderPopupWidget_.folderSortAscending
+                            ? row.ascendingCommand : row.descendingCommand, MF_BYCOMMAND | MF_CHECKED);
             AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), _LW("app.menu.sort_by"));
+        }
     }
 
     SetMenuItemIcon(menu, kContextOpenCommand, L"\uF08E");

@@ -3326,7 +3326,23 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                 D2D1::RectF((float)frame.left, (float)frame.top, (float)frame.right, (float)frame.bottom),
                 clipGeo), nullptr);
 
-        if (IsSingleCellPresentation()) DrawSingleCellContents(context, body);
+        if (const auto& preview = app_->folderPreview_;
+            preview && preview->inlineBounds && preview->hostWidgetId == data_->id &&
+            !drawingHoverRollSnapshot_)
+        {
+            RECT controls = body;
+            controls.bottom = preview->inlineBounds->top;
+            if (controls.bottom > controls.top)
+            {
+                context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(controls.left),
+                    static_cast<float>(controls.top), static_cast<float>(controls.right),
+                    static_cast<float>(controls.bottom)), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                DrawContent(context, body);
+                context->PopAxisAlignedClip();
+            }
+            app_->DrawCollectionPopup(context, false, &*preview->inlineBounds);
+        }
+        else if (IsSingleCellPresentation()) DrawSingleCellContents(context, body);
         else DrawContent(context, body);
 
         if (clipGeo) context->PopLayer();
