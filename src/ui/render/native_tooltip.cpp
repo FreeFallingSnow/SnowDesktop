@@ -7,6 +7,7 @@
 #include "drag_drop/drag_hint_rules.h"
 #include "app/render/desktop_backdrop_compositor.h"
 #include "diagnostics/diagnostic_log.h"
+#include "platform/window_peek_policy.h"
 #include <dcomp.h>
 #include <d2d1_1.h>
 #include <shellscalingapi.h>
@@ -154,6 +155,7 @@ struct NativeTooltip::Impl
             WS_EX_TRANSPARENT | WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOPMOST,
             cls.lpszClassName, L"", WS_POPUP, 0, 0, 1, 1, owner, nullptr, cls.hInstance, this);
         if (!window) return false;
+        ExcludeDesktopWindowFromPeek(window);
         nativeTooltipWindows.push_back(window);
         provider.Attach(new TooltipProvider(accessible));
         { std::lock_guard guard(accessible->mutex); accessible->window = window; }
