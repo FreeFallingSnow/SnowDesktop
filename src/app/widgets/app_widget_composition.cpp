@@ -468,12 +468,15 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         const bool srgbEligible =
             !widgetMarqueeCompositionItems_.contains(widgetId) && ClientToScreen(hwnd_, &center) &&
             display::ModeForMonitor(MonitorFromPoint(center, MONITOR_DEFAULTTONULL)) == display::Mode::WideColor;
-        const bool asynchronous = luaWidget && widgetSurfaceRenderer_ && !item.renderFailed && !srgbEligible;
-        // The synchronous surface and the worker target may coexist during handoff
-        // when they represent the same Lua content at the same size.
+        // Draw a new or restored frame before its glass and marquees are
+        // committed. Keep the existing frame visible during a worker handoff.
         const bool sameSurface = item.width == width && item.height == height &&
             item.renderedContentId == contentId;
-        if (item.renderTarget && (!asynchronous || !sameSurface))
+        const bool hasPresentedFrame = item.renderedVisualAttached ||
+            (item.surface && !item.presentingSrgb);
+        const bool asynchronous = luaWidget && widgetSurfaceRenderer_ && !item.renderFailed &&
+            !srgbEligible && sameSurface && hasPresentedFrame;
+        if (item.renderTarget && !asynchronous)
         {
             const HRESULT retired = RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
             if (FAILED(retired))
@@ -481,16 +484,6 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                 surfaceFailures.push_back({widgetId, L"Retire worker visual", retired, true});
                 continue;
             }
-        }
-        if (asynchronous && item.surface && !sameSurface)
-        {
-            const HRESULT detached = item.visual->SetContent(nullptr);
-            if (FAILED(detached))
-            {
-                surfaceFailures.push_back({widgetId, L"Detach synchronous surface", detached, true});
-                continue;
-            }
-            item.surface.Reset();
         }
         if (asynchronous && !item.renderTarget)
         {
@@ -502,9 +495,6 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                 surfaceFailures.push_back({widgetId, L"Create worker visual", E_FAIL, true});
                 continue;
             }
-            item.renderedContentId = contentId;
-            item.width = width;
-            item.height = height;
         }
 
         if (!asynchronous && (!item.surface || item.width != width || item.height != height))
