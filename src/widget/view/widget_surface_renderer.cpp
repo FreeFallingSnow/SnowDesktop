@@ -341,6 +341,11 @@ struct WidgetSurfaceRenderer::Impl
         if (FAILED(result)) return result;
         if (firstDraw) result = target.visual->SetContent(target.surface.Get());
         if (SUCCEEDED(result)) result = composition->Commit();
+        // The host replaces its fallback surface on the first ready message.
+        // Wait here so the compositor has processed the new visual's content
+        // before the host attaches it and removes the fallback on its device.
+        if (firstDraw && SUCCEEDED(result))
+            result = composition->WaitForCommitCompletion();
         if (SUCCEEDED(result))
         {
             target.committedPaintBounds = paintBounds;

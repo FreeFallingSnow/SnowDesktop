@@ -615,9 +615,17 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                 desktopWidgetBackdropBlurRadiusDuringDraw_)), 0, 48);
         desktopWidgetBackdropRequestedDuringDraw_ = false;
 
-        const bool stagedSrgb = srgbEligible && !asynchronous &&
-            desktopBackdropCompositor_.StageSrgbContent(hwnd_, item.BackdropOwnerKey(),
-                contentFrame, context.Get(), updateOffset);
+        bool stagedSrgb = false;
+        if (srgbEligible && !asynchronous)
+        {
+            // A new marquee may still be queued. Keep the body on the
+            // widget visual that owns the text children in this frame too.
+            const auto pendingMarquee = pendingWidgetMarqueeCompositions_.find(contentId);
+            if (pendingMarquee == pendingWidgetMarqueeCompositions_.end() ||
+                pendingMarquee->second.marquees.empty())
+                stagedSrgb = desktopBackdropCompositor_.StageSrgbContent(hwnd_, item.BackdropOwnerKey(),
+                    contentFrame, context.Get(), updateOffset);
+        }
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
         HRESULT endDrawHr = asynchronous
