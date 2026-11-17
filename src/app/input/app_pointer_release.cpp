@@ -335,7 +335,7 @@ void DesktopApp::ReconcileDesktopHoverState(
                 PtInRect(&pointerDockHost->dockRect, lastMousePoint_) &&
                 PtInRect(&pointerDockHost->dockRect, activeCursorPoint) &&
                 !dragDropController_.IsTransportActive() &&
-                !GetOpenPopupWidget() && !ShouldShowFloatingPopupWindow();
+                !ShouldShowFloatingPopupWindow();
             lastMousePoint_ = activateHover
                 ? cursorPoint : activeCursorPoint;
             UpdateListTitleHover();
@@ -407,7 +407,7 @@ void DesktopApp::ReconcileDesktopHoverState(
 
     if (hoverAlreadyCleared && foregroundChanged &&
         listTitleHoverOwner_.empty() && !dragDropController_.IsTransportActive() &&
-        !GetOpenPopupWidget() && luaWidgetPanelRequest_.widgetId.empty())
+        !IsCollectionPopupHostedByFloatingWindow() && luaWidgetPanelRequest_.widgetId.empty())
     {
         // Window placement is repaired above. Reuse the cleared desktop
         // frame while cancelling any pending Dock preview on a new handoff.

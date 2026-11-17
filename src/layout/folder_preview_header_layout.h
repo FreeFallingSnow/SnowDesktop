@@ -6,8 +6,6 @@
 
 namespace snowdesktop::folder_preview
 {
-inline constexpr float kDriveIndicatorWidthCu = 12.0f;
-
 struct NavigationRow
 {
     RECT bounds;

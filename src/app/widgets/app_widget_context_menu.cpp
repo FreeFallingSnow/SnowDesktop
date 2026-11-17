@@ -993,11 +993,11 @@ void DesktopApp::ShowWidgetContextMenu(
     SetMenuItemQuickAction(menu, kContextWidgetRename);
     SetMenuItemQuickAction(menu, kLuaStackRelease);
     SetMenuItemQuickAction(menu, kContextWidgetDelete);
-    setFluentIcon(menu, hoverToggleCommand, L"\uE5F2");
+    setFluentIcon(menu, hoverToggleCommand, snowdesktop::menu_fluent_glyphs::kWidgetHoverOnly);
     if (showExpandOnHoverOption)
         setFluentIcon(menu, kContextWidgetToggleExpandOnHover,
             snowdesktop::menu_fluent_glyphs::kChevronRight);
-    setFluentIcon(menu, keepToggleCommand, L"\uF359");
+    setFluentIcon(menu, keepToggleCommand, snowdesktop::menu_fluent_glyphs::kWidgetKeepWhenHidden);
     if (widget.type == DesktopWidgetType::Collection ||
         widget.type == DesktopWidgetType::FileCategories ||
         widget.type == DesktopWidgetType::FolderMapping ||
@@ -1005,7 +1005,8 @@ void DesktopApp::ShowWidgetContextMenu(
         widget.type == DesktopWidgetType::FileGroup)
     {
         setFluentIcon(menu, privacyToggleCommand,
-            widget.privacyMode ? L"\uE78F" : L"\uE795");
+            widget.privacyMode ? snowdesktop::menu_fluent_glyphs::kWidgetPrivacyOn
+                               : snowdesktop::menu_fluent_glyphs::kWidgetPrivacyOff);
     }
     if (showLargeFolderTitlelessOption)
     {

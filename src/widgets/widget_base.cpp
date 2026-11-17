@@ -2874,7 +2874,8 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
 
     const bool light = lightTheme.value_or(
         UsesLightContentTheme());
-    bool hovered = PtInRect(&cell, app_->lastMousePoint_) != FALSE;
+    const POINT pointer = GetRenderPointer();
+    const bool hovered = PtInRect(&cell, pointer) && (!hoverViewport || PtInRect(&*hoverViewport, pointer));
     if (hovered && !selected)
     {
         app_->DrawD2DRoundedRectangle(context, cell, static_cast<float>(Cu(6.0f)),
@@ -3297,7 +3298,9 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     if (showingFolderPreview && !IsPreviewRendering())
     {
         const RECT titleBar = GetMoveHandleRect();
-        if (!EqualRect(&frame, &*preview->inlineBounds) || !EqualRect(&titleBar, &preview->inlineTitleBar))
+        const RECT title = GetTitleRect();
+        if (!EqualRect(&frame, &*preview->inlineBounds) || !EqualRect(&titleBar, &preview->inlineTitleBar) ||
+            !EqualRect(&title, &preview->inlineTitle))
         {
             app_->folderPreview_->SetInlineGeometry(*this);
             app_->dockFolderPopupWidget_.bounds = frame;
@@ -3467,18 +3470,10 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         // Top title: larger centered text, without a shadow.
         const bool demoCollectionTitle =
             app_->ShouldUseDemoCollectionIdentity(data_);
-        const std::wstring displayTitle = demoCollectionTitle
+        const std::wstring displayTitle = showingFolderPreview ? app_->dockFolderPopupWidget_.title : demoCollectionTitle
             ? app_->GetDemoCollectionCategoryTitle(*data_)
             : data_->title;
-        if (showingFolderPreview)
-        {
-            POINT pointer = mousePt;
-            POINT screen{};
-            if (!app_->SuppressDesktopWidgetDragTargets() && GetCursorPos(&screen) && ScreenToClient(app_->hwnd_, &screen))
-                pointer = screen;
-            app_->DrawFolderPreviewTitle(context, preview->inlineTitle, pointer, preview->inlineScale, lightTheme);
-        }
-        else if (bottomBarTitle && !displayTitle.empty() && data_->showTitle)
+        if (bottomBarTitle && !displayTitle.empty() && (showingFolderPreview || data_->showTitle))
         {
             RECT titleRect = GetTitleRect();
             LONG tw = titleRect.right - titleRect.left;

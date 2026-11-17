@@ -404,8 +404,8 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
         ActivateInlineFolderPreviewAtPoint(client, true);
         if (!IsPointOccludedByOpenPopup(client))
         {
-            // Keep a live preview's dragged wrappers in place. An inactive
-            // preview must not hand a drop to the hidden homepage beneath it.
+            // An inactive preview must not hand a drop to the hidden homepage
+            // beneath it when a separate popup owns the active interaction.
             targetRegion = HitRegion::Blocked;
             return true;
         }

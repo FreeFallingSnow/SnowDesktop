@@ -1632,10 +1632,14 @@ void DesktopApp::OnMouseMoveAt(
                 a.index == b.index;
         };
         auto findHoverVisual = [&](POINT point) -> MouseHoverVisual {
+            const bool coveredByWindow = IsCollectionPopupHostedByFloatingWindow() && IsPointOccludedByOpenPopup(point);
+            const auto* inactiveHost = coveredByWindow ? nullptr : FindInactiveInlineFolderPreviewHostAtPoint(point);
+            const InlineFolderPreviewProjection projection(inactiveHost ? this : nullptr,
+                inactiveHost ? inactiveHost->id : std::wstring{});
             if (const DesktopWidget* popupWidget =
                     GetOpenPopupWidget();
-                IsCollectionPopupInteractive() &&
-                (!desktopIconsHidden_ || IsOpenPopupRetained()) &&
+                (inactiveHost || IsCollectionPopupInteractive()) &&
+                (inactiveHost || !desktopIconsHidden_ || IsOpenPopupRetained()) &&
                 popupWidget &&
                 !IsRectEmptyRect(popupRect_) &&
                 PtInRect(&popupRect_, point))
@@ -1648,6 +1652,7 @@ void DesktopApp::OnMouseMoveAt(
                     if (host < widgets_.size()) previewHost = &widgets_[host];
                 }
                 const auto layer = previewHost ? PointerVisualLayer::Widget : PointerVisualLayer::Foreground;
+                const auto* hoverOwner = previewHost ? previewHost : popupWidget;
                 RECT content = GetCollectionPopupContentRect(popupRect_);
                 if (PtInRect(&content, point))
                 {
@@ -1661,7 +1666,7 @@ void DesktopApp::OnMouseMoveAt(
                             continue;
                         if (HitTestCollectionPopupItem(popupRect_, i, point))
                             return {
-                                popupWidget, popupWidget, 1, i, false,
+                                hoverOwner, hoverOwner, 1, i, false,
                                 previewHost, popupRect_, layer };
                     }
                 }
@@ -1672,7 +1677,7 @@ void DesktopApp::OnMouseMoveAt(
                     return {popupWidget, popupWidget, 3, 0, true, nullptr, popupRect_,
                         snowdesktop::widget_composition_layer_rules::PointerVisualLayer::Foreground};
                 return {
-                    popupWidget, popupWidget, 2, 0, true, previewHost, popupRect_, layer };
+                    hoverOwner, hoverOwner, 2, 0, true, previewHost, popupRect_, layer };
             }
 
             if (DockContainer* dock = GetDockContainerAtPoint(point))

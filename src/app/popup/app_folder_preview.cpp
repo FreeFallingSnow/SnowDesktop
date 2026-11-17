@@ -345,7 +345,7 @@ void DesktopApp::ShowFolderPreviewDirectory(const std::wstring& path, bool fromF
     view.id = kDockFolderPopupWidgetId;
     view.gridCell.pageId = kDockPageId;
     view.sourceFolderPath = path;
-    view.title = _LFW("app.folderPreview.title", FolderName(path));
+    view.title = _LW("app.folderPreview.title");
     view.folderSortMode = sort.mode;
     view.folderSortAscending = sort.ascending;
     view.contentSortColumn = snowdesktop::list_detail_rules::FromLegacyFolderSortMode(sort.mode);
@@ -649,6 +649,8 @@ void DesktopApp::SuspendInlineFolderPreview()
     if (!folderPreview_ || !folderPreview_->inlineBounds) return;
     SaveFolderPreviewView();
     folderPreview_->keyboardFocused = false;
+    folderReadWork_.Cancel(snowdesktop::folder_preview::kResolveWorkKey);
+    PreserveDockFolderPopupDragSourceForTransition();
     CancelDockFolderPopupIconLoads();
     ClearPopupMouseDownItem();
     ClearPopupDragTarget();
@@ -677,8 +679,7 @@ void DesktopApp::ActivateInlineFolderPreviewAtPoint(POINT point, bool duringDrag
 {
     if (inactiveInlineFolderPreviews_.empty() || quickNavigation_->open ||
         (GetOpenPopupWidget() && !(folderPreview_ && folderPreview_->inlineBounds))) return;
-    if (duringDrag ? dockFolderPopupContainer_ && dragSession_.Source() == dockFolderPopupContainer_.get()
-                   : dragSession_.HasContext() || dragDropController_.IsTransportActive()) return;
+    if (!duringDrag && (dragSession_.HasContext() || dragDropController_.IsTransportActive())) return;
     const auto* target = FindInactiveInlineFolderPreviewHostAtPoint(point);
     if (!target) return;
     if (folderPreview_) SuspendInlineFolderPreview();
@@ -746,7 +747,22 @@ snowdesktop::folder_preview::NavigationRow DesktopApp::GetFolderPreviewNavigatio
     if (folderPreview_->inlineBounds)
     {
         scale = folderPreview_->inlineScale;
-        row = layout::ResolveHostedContentRect(panel, scale);
+        row = panel;
+        const LONG inset = ScaleWidgetCu(10.0f, scale) + ScaleWidgetCu(2.0f, scale);
+        row.left = std::min(panel.left + inset, (panel.left + panel.right) / 2);
+        row.right = std::max(row.left, panel.right - inset);
+        for (const auto& container : containers_)
+            if (const auto* host = dynamic_cast<const ScrollingItemWidget*>(container.get()); host &&
+                host->GetWidgetData() && host->GetWidgetData()->id == folderPreview_->hostWidgetId)
+            {
+                const RECT search = host->GetCategorizedSearchBoxRect(true);
+                if (!IsRectEmpty(&search))
+                {
+                    row.left = search.left;
+                    row.right = search.right;
+                }
+                break;
+            }
         row.top = std::clamp(folderPreview_->inlineRowTop, panel.top, panel.bottom);
         height = layout::ResolveControlRowHeight(GetCategorizedWidgetTabHeight(), scale);
     }
@@ -799,8 +815,7 @@ std::vector<snowdesktop::folder_preview::Breadcrumb> DesktopApp::GetFolderPrevie
                     labelWidth = static_cast<LONG>(std::ceil(metrics.width));
             }
         }
-        const LONG segmentWidth = labelWidth + padding + (widths.empty()
-            ? ScaleDimension(snowdesktop::folder_preview::kDriveIndicatorWidthCu, scale) : separator);
+        const LONG segmentWidth = labelWidth + padding + (widths.empty() ? 0 : separator);
         widths.push_back(segmentWidth);
         total += segmentWidth;
     }

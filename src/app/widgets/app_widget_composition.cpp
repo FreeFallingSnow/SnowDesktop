@@ -566,7 +566,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         snowdesktop::widget_runtime::WidgetSurfacePaint surfacePaint;
         const POINT interactionPoint = lastMousePoint_;
         if (SuppressDesktopWidgetDragTargets() ||
-            IsPointOccludedByOpenPopup(lastMousePoint_))
+            (IsCollectionPopupHostedByFloatingWindow() && IsPointOccludedByOpenPopup(lastMousePoint_)))
         {
             lastMousePoint_ = { LONG_MIN, LONG_MIN };
         }

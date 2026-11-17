@@ -34,6 +34,10 @@ inline constexpr wchar_t kShowFrequent[] = L"\uF70F";
 inline constexpr wchar_t kHideFrequent[] = L"\uF71A";
 inline constexpr wchar_t kCompactGrid[] = L"\uF462"; // grid_20
 inline constexpr wchar_t kKeepWhenDesktopHidden[] = L"\U000F05EB";
+inline constexpr wchar_t kWidgetHoverOnly[] = L"\uE5F2";
+inline constexpr wchar_t kWidgetKeepWhenHidden[] = L"\uF359";
+inline constexpr wchar_t kWidgetPrivacyOn[] = L"\uE78F";
+inline constexpr wchar_t kWidgetPrivacyOff[] = L"\uE795";
 inline constexpr wchar_t kWorkshop[] = L"\uE6B2"; // globe
 
 inline constexpr wchar_t kQuickNavigationTileView[] = L"\uF462";    // grid_20

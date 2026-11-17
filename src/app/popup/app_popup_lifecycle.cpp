@@ -162,6 +162,7 @@ void DesktopApp::OpenDockFolderPopupAt(
     else entry = dockEntries_[entryIndex];
 
     DismissActiveContextMenuForPopupTransition();
+    SuspendInlineFolderPreview();
 
     if (DockContainer* dock =
             GetDockContainerAtPoint(anchorPoint))
@@ -703,11 +704,9 @@ void DesktopApp::ContinueCollectionPopupSwitch()
 
 void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
 {
+    if (!IsCollectionPopupHostedByFloatingWindow()) return;
     CancelRenameClick();
     folderReadWork_.Cancel(snowdesktop::folder_preview::kResolveWorkKey);
-    if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
-        !dockFolderPopupOpen_ && !dockTrayPopup_)
-        return;
     if (popupAnimation_.IsClosing())
         return;
 
@@ -730,8 +729,7 @@ void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
     marqueeDockFolderPopup_ = false;
     dockFolderPopupMarqueeInitialSelection_.clear();
 
-    if ((folderPreview_ && folderPreview_->inlineBounds) ||
-        snowdesktop::animation::RuntimePopupEffect() == 0)
+    if (snowdesktop::animation::RuntimePopupEffect() == 0)
     {
         FinalizeCloseCollectionPopup();
         return;

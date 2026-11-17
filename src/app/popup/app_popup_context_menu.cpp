@@ -64,15 +64,18 @@ void DesktopApp::AppendDockFolderPopupDisplayMenu(HMENU menu)
         const auto state = [](bool enabled) { return _LW(enabled ? "app.interact.on" : "app.interact.off"); };
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         append(host->showOnHoverOnly ? kContextWidgetShowOnHoverOff : kContextWidgetShowOnHoverOn,
-            _LW("app.interact.hover_only"), state(host->showOnHoverOnly), L"\uF387");
+            _LW("app.interact.hover_only"), state(host->showOnHoverOnly),
+            snowdesktop::menu_fluent_glyphs::kWidgetHoverOnly);
         if (snowdesktop::storage_title_bar::UsesTop(*host, CurrentPersonalization().scrollableTitleBarOnTop))
             append(kContextWidgetToggleExpandOnHover, _LW("app.interact.expand_on_hover"),
                 state(host->titleBarExpandOnHover), snowdesktop::menu_fluent_glyphs::kChevronRight);
         append(host->keepWhenDesktopHidden ? kContextWidgetKeepWhenHiddenOff : kContextWidgetKeepWhenHiddenOn,
             _LW("app.interact.keep_when_hidden"), state(host->keepWhenDesktopHidden),
-            snowdesktop::menu_fluent_glyphs::kKeepWhenDesktopHidden);
+            snowdesktop::menu_fluent_glyphs::kWidgetKeepWhenHidden);
         append(host->privacyMode ? kContextWidgetPrivacyModeOff : kContextWidgetPrivacyModeOn,
-            _LW("app.interact.privacy_mode"), state(host->privacyMode), L"\uF50C");
+            _LW("app.interact.privacy_mode"), state(host->privacyMode),
+            host->privacyMode ? snowdesktop::menu_fluent_glyphs::kWidgetPrivacyOn
+                              : snowdesktop::menu_fluent_glyphs::kWidgetPrivacyOff);
     }
 }
 
@@ -95,6 +98,8 @@ bool DesktopApp::ExecuteDockFolderPopupDisplayCommand(UINT command)
             case kContextWidgetKeepWhenHiddenOn: case kContextWidgetKeepWhenHiddenOff:
                 host->keepWhenDesktopHidden = command == kContextWidgetKeepWhenHiddenOn; return true;
             case kContextWidgetToggleExpandOnHover:
+                if (!snowdesktop::storage_title_bar::UsesTop(*host, CurrentPersonalization().scrollableTitleBarOnTop))
+                    return false;
                 host->titleBarExpandOnHover = !host->titleBarExpandOnHover; return true;
             case kContextWidgetPrivacyModeOn: case kContextWidgetPrivacyModeOff:
                 widget.privacyMode = host->privacyMode = command == kContextWidgetPrivacyModeOn; return true;

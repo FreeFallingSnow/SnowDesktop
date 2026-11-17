@@ -1084,8 +1084,8 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
                 DrawPrivacyPlaceholder(context, cell, entry.DisplayName(), entry.isDirectory);
             else
             {
-                RECT bodyRect = GetBodyRect();
-                bool hovered = !preview && !entry.selected && PtInRect(&cell, GetRenderPointer()) && PtInRect(&bodyRect, GetRenderPointer());
+                const POINT pointer = GetRenderPointer();
+                const bool hovered = !preview && !entry.selected && PtInRect(&cell, pointer) && PtInRect(&content, pointer);
                 const auto titleLayers =
                     snowdesktop::item_render_layer_rules::
                         ResolveTitleLayerPlan(entry.selected);

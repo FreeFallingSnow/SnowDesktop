@@ -293,7 +293,7 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
     if (allowOpen && popupHoverController_.IsReady(now, delayMs))
     {
         snowdesktop::popup_animation_rules::OpenAfterClose(
-            popupAnimation_, GetOpenPopupWidget() != nullptr,
+            popupAnimation_, IsCollectionPopupHostedByFloatingWindow(),
             [this] {
                 pendingCollectionPopupOpen_.reset();
                 BeginCollectionPopupClose(false);
@@ -663,7 +663,7 @@ bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now,
     // timer stays armed while closing, and each poll rechecks the current drag
     // and candidate instead of queuing an open into the close callback.
     return snowdesktop::popup_animation_rules::OpenAfterClose(
-        popupAnimation_, GetOpenPopupWidget() != nullptr,
+        popupAnimation_, IsCollectionPopupHostedByFloatingWindow(),
         [this] {
             pendingCollectionPopupOpen_.reset();
             BeginCollectionPopupClose(false);

@@ -975,7 +975,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
                     return;
                 }
                 snowdesktop::popup_animation_rules::OpenAfterClose(
-                    popupAnimation_, GetOpenPopupWidget() != nullptr,
+                    popupAnimation_, IsCollectionPopupHostedByFloatingWindow(),
                     [this] { pendingCollectionPopupOpen_.reset(); BeginCollectionPopupClose(false); },
                     [this, group, dwellPoint] {
                         ResetDockHandoffDwell();
@@ -994,7 +994,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 // another folder during its close. Keep polling the live drag
                 // target, so leaving, cancellation or a third folder wins.
                 snowdesktop::popup_animation_rules::OpenAfterClose(
-                    popupAnimation_, GetOpenPopupWidget() != nullptr,
+                    popupAnimation_, IsCollectionPopupHostedByFloatingWindow(),
                     [this] {
                         pendingCollectionPopupOpen_.reset();
                         BeginCollectionPopupClose(false);

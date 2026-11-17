@@ -113,37 +113,12 @@ IDWriteTextFormat* DesktopApp::GetCollectionPopupTextFormat(float scale, bool ti
     return format.Get();
 }
 
-void DesktopApp::DrawFolderPreviewTitle(ID2D1DeviceContext* context, RECT row, POINT pointer,
+void DesktopApp::DrawFolderPreviewTitle(ID2D1DeviceContext* context, RECT row, POINT,
     float scale, bool lightTheme)
 {
-    if (IsRectEmpty(&row)) return;
-    const auto ink = [lightTheme](float alpha) {
-        return lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, alpha) : D2D1::ColorF(1.0f, 1.0f, 1.0f, alpha);
-    };
-    const bool hovered = PtInRect(&row, pointer) != FALSE;
-    if (hovered)
-        DrawD2DRoundedRectangle(context, row, ScaleWidgetCu(8.0f, scale), ink(0.10f), ink(0.0f), 0.0f);
-    const int iconWidth = ScaleWidgetCu(24.0f, scale);
-    if (row.right - row.left >= iconWidth)
-    {
-        const float x = row.left + iconWidth * 0.5f;
-        const float y = (row.top + row.bottom) * 0.5f;
-        const float radius = 4.0f * scale;
-        ComPtr<ID2D1SolidColorBrush> brush;
-        if (SUCCEEDED(context->CreateSolidColorBrush(ink(hovered ? 1.0f : 0.84f), &brush)))
-        {
-            const float stroke = std::max(1.0f, 1.25f * scale);
-            context->DrawLine({x - radius, y - radius}, {x + radius, y + radius}, brush.Get(), stroke);
-            context->DrawLine({x - radius, y + radius}, {x + radius, y - radius}, brush.Get(), stroke);
-        }
-        row.left += iconWidth;
-    }
-    const RECT panel = folderPreview_->inlineBounds ? *folderPreview_->inlineBounds : popupRect_;
-    const bool masked = dockFolderPopupWidget_.privacyMode && !PtInRect(&panel, pointer) &&
-        !dragSession_.IsActive() && !dragDropController_.IsExternalDragActive();
-    const auto title = masked ? _LFW("app.folderPreview.title", L"…") : dockFolderPopupWidget_.title;
-    DrawD2DTextEllipsis(context, title, row, GetCollectionPopupTextFormat(scale, true),
-        ink(0.95f), DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    const auto& theme = lightTheme ? kQuickNavLight : kQuickNavDark;
+    DrawD2DTextEllipsis(context, dockFolderPopupWidget_.title, row, GetCollectionPopupTextFormat(scale, true),
+        theme.popupTitle, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 }
 
 void DesktopApp::DrawCollectionPopup(
@@ -159,14 +134,7 @@ void DesktopApp::DrawCollectionPopup(
     const DesktopWidget& widget = *openWidget;
     const bool fan = UsesCollectionPopupFan(widget);
     const bool inlinePreview = folderPreview_ && folderPreview_->inlineBounds;
-    POINT pointer = lastMousePoint_;
-    if (inlinePreview && !SuppressDesktopWidgetDragTargets())
-    {
-        // The desktop composition pass masks the underlying widget's hover.
-        // The directory page uses the pointer on its own surface.
-        POINT screen{};
-        if (GetCursorPos(&screen) && ScreenToClient(hwnd_, &screen)) pointer = screen;
-    }
+    const POINT pointer = lastMousePoint_;
     const bool lightTheme = inlinePreview ? IsLightContentTheme() : collectionPopupLightTheme_;
     const auto popupMetrics =
         GetCollectionPopupLayoutMetrics(widget);
@@ -345,18 +313,6 @@ void DesktopApp::DrawCollectionPopup(
                 const bool hovered = (i == 0 || i + 1 < crumbs.size()) && PtInRect(&crumb.bounds, pointer);
                 if (hovered) highlight(label);
                 InflateRect(&label, -snowdesktop::collection_popup_layout::ScaleDimension(3, row.scale), 0);
-                if (i == 0)
-                {
-                    const LONG indicator = std::min<LONG>(label.right - label.left,
-                        ScaleWidgetCu(snowdesktop::folder_preview::kDriveIndicatorWidthCu, row.scale));
-                    if (indicator > 0)
-                    {
-                        RECT arrow{label.right - indicator, label.top, label.right, label.bottom};
-                        DrawD2DTextEllipsis(ctx, L"⌄", arrow, textFormat, controlColor(0.82f),
-                            DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                        label.right = arrow.left;
-                    }
-                }
                 DrawD2DTextEllipsis(ctx, crumb.label, label, textFormat,
                     controlColor(hovered || i + 1 == crumbs.size() ? 0.97f : 0.82f),
                     DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -455,9 +411,7 @@ void DesktopApp::DrawCollectionPopup(
         const RECT frame = view->GetLayoutFrameRect();
         const snowdesktop::ScopedIconBackdropClip highlightClip(ctx, frame);
         ctx->PushAxisAlignedClip(ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        const POINT oldPointer = std::exchange(lastMousePoint_, pointer);
         view->DrawContent(ctx, frame);
-        lastMousePoint_ = oldPointer;
         if (dragSession_.TargetContainer() == view)
             view->DrawDropPreview(ctx, dragSession_.TargetSlot(), dragSession_.TargetRegion());
         ctx->PopAxisAlignedClip();

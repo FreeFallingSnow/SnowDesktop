@@ -179,11 +179,7 @@ const std::vector<std::wstring>& DesktopApp::GetPopupItemKeysView(const DesktopW
 
 DesktopWidget* DesktopApp::GetOpenPopupWidget()
 {
-    if (dockTrayPopup_) return &dockTrayPopup_->widget;
-    if (dockFolderPopupOpen_)
-        return &dockFolderPopupWidget_;
-    return popupWidgetIndex_ < widgets_.size()
-        ? &widgets_[popupWidgetIndex_] : nullptr;
+    return const_cast<DesktopWidget*>(static_cast<const DesktopApp&>(*this).GetOpenPopupWidget());
 }
 
 const DesktopWidget* DesktopApp::GetOpenPopupWidget() const

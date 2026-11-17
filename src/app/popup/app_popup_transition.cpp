@@ -242,7 +242,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
             static_cast<unsigned long long>(widgetIndex),
             floatingPopupMouseHookGeneration_,
             luaWidgetPanelRequest_.widgetId.empty() ? 0 : 1,
-            GetOpenPopupWidget() ? 1 : 0,
+            IsCollectionPopupHostedByFloatingWindow() ? 1 : 0,
             mouseDown_ ? 1 : 0,
             snowdesktop::private_pointer::Capture());
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message);
@@ -257,6 +257,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     CancelCollectionPopupDwell();
 
     DismissActiveContextMenuForPopupTransition();
+    SuspendInlineFolderPreview();
 
     PersistentDockHost* requestedDockHost = nullptr;
     if (DockContainer* requestedDock =
