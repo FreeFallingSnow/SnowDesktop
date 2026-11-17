@@ -1,4 +1,5 @@
 #include "ui/render/app_font.h"
+#include "ui/render/highlight_coverage.h"
 #include "layout/item_title_layout.h"
 #include "app/app.h"
 #include "app/navigation/quick_navigation_state.h"
@@ -25,7 +26,16 @@ void DesktopApp::DrawItemSelectionBackground(ID2D1RenderTarget* context,
                       : D2D1::ColorF(.78f, .78f, .78f, .55f * opacity))
         : (lightTheme ? D2D1::ColorF(0, 0, 0, .12f * opacity)
                       : D2D1::ColorF(1, 1, 1, .20f * opacity));
-    DrawD2DRoundedRectangle(context, frame, 6.0f * GetItemLayoutScale(bounds), fill, border);
+    if (IsRectEmptyRect(frame)) return;
+    constexpr float strokeWidth = 1.0f;
+    DrawD2DRoundedRectangle(context, frame, 6.0f * GetItemLayoutScale(bounds), fill, border, strokeWidth);
+    if (selected && opacity > 0.0f)
+    {
+        constexpr float outset = strokeWidth * 0.5f;
+        const auto rect = ToD2DRect(frame);
+        snowdesktop::HighlightCoverage::RecordMaterialBounds(context,
+            D2D1::RectF(rect.left - outset, rect.top - outset, rect.right + outset, rect.bottom + outset));
+    }
 }
 
 void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,

@@ -108,6 +108,18 @@ public:
 
     bool Empty() const noexcept { return draws_.empty(); }
 
+    // Keep a translucent background together when a highlight tile moves
+    // some of its pixels into the compositor. This does not add mask coverage.
+    static void RecordMaterialBounds(ID2D1RenderTarget* target, const D2D1_RECT_F& bounds)
+    {
+        if (auto* scope = Find(target))
+        {
+            D2D1::Matrix3x2F transform;
+            target->GetTransform(&transform);
+            scope->coverage_.materialBounds_.push_back(PixelBounds(TransformBounds(bounds, transform)));
+        }
+    }
+
     std::vector<RECT> Bounds(POINT offset) const
     {
         std::vector<RECT> result;
@@ -131,17 +143,22 @@ public:
                     area = {std::min(area.left, area.right) - inset, std::min(area.top, area.bottom) - inset,
                         std::max(area.left, area.right) + inset, std::max(area.top, area.bottom) + inset};
                 }
-                const auto lt = t.TransformPoint({area.left, area.top});
-                const auto rt = t.TransformPoint({area.right, area.top});
-                const auto lb = t.TransformPoint({area.left, area.bottom});
-                const auto rb = t.TransformPoint({area.right, area.bottom});
-                bounds = {std::min({lt.x, rt.x, lb.x, rb.x}), std::min({lt.y, rt.y, lb.y, rb.y}),
-                    std::max({lt.x, rt.x, lb.x, rb.x}), std::max({lt.y, rt.y, lb.y, rb.y})};
+                bounds = TransformBounds(area, t);
             }
-            result.push_back({static_cast<LONG>(std::floor(bounds.left)) + offset.x,
-                static_cast<LONG>(std::floor(bounds.top)) + offset.y,
-                static_cast<LONG>(std::ceil(bounds.right)) + offset.x,
-                static_cast<LONG>(std::ceil(bounds.bottom)) + offset.y});
+            auto pixels = PixelBounds(bounds);
+            OffsetRect(&pixels, offset.x, offset.y);
+            result.push_back(pixels);
+        }
+        const auto highlightCount = result.size();
+        for (auto material : materialBounds_)
+        {
+            OffsetRect(&material, offset.x, offset.y);
+            const bool intersectsHighlight = std::any_of(result.begin(), result.begin() + highlightCount,
+                [&](const RECT& highlight) {
+                    RECT overlap{};
+                    return IntersectRect(&overlap, &material, &highlight) != FALSE;
+                });
+            if (intersectsHighlight) result.push_back(material);
         }
         return result;
     }
@@ -244,6 +261,22 @@ public:
     }
 
 private:
+    static D2D1_RECT_F TransformBounds(const D2D1_RECT_F& bounds, const D2D1::Matrix3x2F& transform)
+    {
+        const auto lt = transform.TransformPoint({bounds.left, bounds.top});
+        const auto rt = transform.TransformPoint({bounds.right, bounds.top});
+        const auto lb = transform.TransformPoint({bounds.left, bounds.bottom});
+        const auto rb = transform.TransformPoint({bounds.right, bounds.bottom});
+        return {std::min({lt.x, rt.x, lb.x, rb.x}), std::min({lt.y, rt.y, lb.y, rb.y}),
+            std::max({lt.x, rt.x, lb.x, rb.x}), std::max({lt.y, rt.y, lb.y, rb.y})};
+    }
+
+    static RECT PixelBounds(const D2D1_RECT_F& bounds)
+    {
+        return {static_cast<LONG>(std::floor(bounds.left)), static_cast<LONG>(std::floor(bounds.top)),
+            static_cast<LONG>(std::ceil(bounds.right)), static_cast<LONG>(std::ceil(bounds.bottom))};
+    }
+
     inline static constexpr GUID kCoverageKey{
         0x49c3bafd, 0x8b1e, 0x47bd, {0x8e, 0xd1, 0xb4, 0x37, 0x40, 0x18, 0x89, 0xad}};
     static Scope* Find(ID2D1RenderTarget* target)
@@ -263,5 +296,6 @@ private:
     }
 
     std::vector<Draw> draws_;
+    std::vector<RECT> materialBounds_;
 };
 }
