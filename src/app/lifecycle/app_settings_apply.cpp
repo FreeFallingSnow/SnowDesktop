@@ -2605,6 +2605,7 @@ bool DesktopApp::IsOpenPopupRetained() const
         return false;
     if (folderPreview_ && !popupAnchoredToDock_)
     {
+        if (folderPreview_->IsTemporary()) return false;
         const size_t host = FindWidgetIndexById(folderPreview_->hostWidgetId.empty()
             ? folderPreview_->sourceWidgetId : folderPreview_->hostWidgetId);
         return host < widgets_.size() && widgets_[host].keepWhenDesktopHidden;

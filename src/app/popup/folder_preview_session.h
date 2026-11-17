@@ -70,6 +70,8 @@ struct Session
     std::vector<std::wstring> selectedDesktopKeys;
     std::vector<std::pair<std::wstring, std::wstring>> selectedFolderPaths;
 
+    bool IsTemporary() const { return viewKey.empty(); }
+
     void SetInlineGeometry(const WidgetContainer& host)
     {
         inlineBounds = host.GetFrameRect();

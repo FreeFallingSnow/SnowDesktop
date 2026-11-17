@@ -551,6 +551,7 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
 void DesktopApp::FinalizeCloseCollectionPopup()
 {
     const RECT previewBounds = folderPreview_ ? popupRect_ : RECT{};
+    const bool temporaryPreview = folderPreview_ && folderPreview_->IsTemporary();
     DiscardFolderPreview();
     const bool collectAllDesktopBackdrops = !IsCollectionPopupHostedByFloatingWindow() ||
         dragSession_.HasContext() || dragDropController_.IsExternalDragActive();
@@ -587,7 +588,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     popupAnimation_.ResetHidden();
     ResetCollectionPopupAnimationCache();
     if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
-        !dockFolderPopupOpen_ && !dockTrayPopup_ && !pendingOpen)
+        !dockFolderPopupOpen_ && !dockTrayPopup_ && !pendingOpen && !temporaryPreview)
     {
         if (!IsRectEmptyRect(previewBounds)) InvalidateCollectionPopupDesktopScene(previewBounds);
         ResumeInlineFolderPreview();

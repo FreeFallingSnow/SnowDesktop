@@ -29,10 +29,15 @@ void SortPreferences::Load()
         const auto* ascending = value.Find("ascending");
         if (path.empty() || !mode || !mode->IsNumber() || !ascending || !ascending->IsBoolean())
             continue;
-        for (int column = folder_sort_rules::kName; column <= folder_sort_rules::kSize; ++column)
+        for (int column = folder_sort_rules::kManual; column <= folder_sort_rules::kSize; ++column)
         {
             if (mode->number != column) continue;
-            entries_.emplace(Utf8ToWide(path), Sort{column, ascending->boolean});
+            Sort sort{column, ascending->boolean};
+            if (column == folder_sort_rules::kManual)
+                if (const auto* order = value.Find("order"); order && order->IsArray())
+                    for (const auto& item : order->array)
+                        if (item.IsString() && !item.string.empty()) sort.order.push_back(Utf8ToWide(item.string));
+            entries_.emplace(Utf8ToWide(path), std::move(sort));
             break;
         }
     }
@@ -51,7 +56,7 @@ bool SortPreferences::Set(const std::wstring& key, Sort sort)
     if (const auto found = entries_.find(key); found != entries_.end() && found->second == sort)
         return true;
     auto updated = entries_;
-    updated.insert_or_assign(key, sort);
+    updated.insert_or_assign(key, std::move(sort));
     std::ostringstream json;
     json << "{\n";
     bool first = true;
@@ -60,7 +65,18 @@ bool SortPreferences::Set(const std::wstring& key, Sort sort)
         if (!first) json << ",\n";
         first = false;
         json << "  \"" << JsonEscapeUtf8(path) << "\": { \"mode\": " << preference.mode
-             << ", \"ascending\": " << (preference.ascending ? "true" : "false") << " }";
+             << ", \"ascending\": " << (preference.ascending ? "true" : "false");
+        if (preference.mode == folder_sort_rules::kManual)
+        {
+            json << ", \"order\": [";
+            for (size_t index = 0; index < preference.order.size(); ++index)
+            {
+                if (index != 0) json << ", ";
+                json << "\"" << JsonEscapeUtf8(preference.order[index]) << "\"";
+            }
+            json << "]";
+        }
+        json << " }";
     }
     json << "\n}\n";
     if (!atomic_file::WriteAll(GetDataFilePath(kFilename), json.str())) return false;

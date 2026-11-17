@@ -603,7 +603,9 @@ void DesktopApp::DrawDynamicOverlays(
                 const bool fanMode = UsesCollectionPopupFan(*openPopupWidget);
                 // List rows use their own font/spacing-dependent geometry.
                 // Both sides of a boundary must meet halfway across that gap.
-                popupInsertionPad = UsesCollectionPopupList(*openPopupWidget) && !fanMode
+                popupInsertionPad = folderPreview_ && targetSlot
+                    ? GetFolderPreviewInsertionPad(popup, targetSlot->GetIndex(), targetRegion == HitRegion::SortAfter)
+                    : UsesCollectionPopupList(*openPopupWidget) && !fanMode
                     ? snowdesktop::widget_item_layout::InsertionBoundaryPad(
                         GetCollectionPopupItemRect(popup, 0),
                         GetCollectionPopupItemRect(popup, 1), !listMode)

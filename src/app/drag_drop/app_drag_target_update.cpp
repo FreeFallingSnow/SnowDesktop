@@ -567,7 +567,9 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                 const auto popupMetrics =
                     GetOpenCollectionPopupLayoutMetrics();
                 const bool listLayout = UsesCollectionPopupList(dockFolderPopupWidget_);
-                const long gutter = listLayout
+                const long gutter = folderPreview_
+                    ? static_cast<long>(std::ceil(GetFolderPreviewInsertionPad(popup, i, after)))
+                    : listLayout
                     ? static_cast<long>(snowdesktop::widget_item_layout::InsertionBoundaryPad(
                         GetCollectionPopupItemRect(popup, 0), GetCollectionPopupItemRect(popup, 1),
                         GetCollectionPopupColumnCount(popup) > 1))

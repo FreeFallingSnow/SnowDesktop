@@ -2,6 +2,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 namespace snowdesktop::folder_preview
 {
@@ -9,6 +10,7 @@ struct Sort
 {
     int mode;
     bool ascending;
+    std::vector<std::wstring> order{};
 
     bool operator==(const Sort&) const = default;
 };

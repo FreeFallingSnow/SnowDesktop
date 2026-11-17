@@ -403,7 +403,19 @@ void DesktopApp::DrawCollectionPopup(
         ctx->PushAxisAlignedClip(ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         view->DrawContent(ctx, frame);
         if (dragSession_.TargetContainer() == view)
-            view->DrawDropPreview(ctx, dragSession_.TargetSlot(), dragSession_.TargetRegion());
+        {
+            auto* slot = dragSession_.TargetSlot();
+            const auto region = dragSession_.TargetRegion();
+            if (folderPreview_ && slot && slot == popupDragTarget_.Get() &&
+                (region == HitRegion::SortBefore || region == HitRegion::SortAfter))
+            {
+                const auto style = UsesCollectionPopupList(widget) && GetCollectionPopupColumnCount(presentedPanel) == 1
+                    ? BarStyle::HBar : BarStyle::VBar;
+                slot->DrawDropIndicatorWithStyle(ctx, region, style,
+                    GetFolderPreviewInsertionPad(presentedPanel, slot->GetIndex(), region == HitRegion::SortAfter));
+            }
+            else view->DrawDropPreview(ctx, slot, region);
+        }
         ctx->PopAxisAlignedClip();
         view->DrawScrollbar(ctx, PtInRect(&presentedPanel, pointer) != FALSE);
         if (inlinePreview)

@@ -8,6 +8,8 @@
 #include "layout/folder_preview_header_layout.h"
 #include "settings/animation_settings.h"
 #include "ui/menu/menu_fluent_glyphs.h"
+#include "widget/runtime/widget_item_layout.h"
+#include "widgets/folder_member_order.h"
 #include "widgets/widget_folder_search.h"
 
 #include <array>
@@ -41,6 +43,17 @@ std::wstring FolderPreviewViewKey(const std::wstring& hostId, const std::wstring
     if (!sourceId.empty()) return L"widget:" + sourceId;
     return dockSourceId.empty() ? std::wstring{} : L"dock:" + dockSourceId;
 }
+
+bool UsesTemporaryFolderPreview(DesktopWidgetType type)
+{
+    return type == DesktopWidgetType::Collection || type == DesktopWidgetType::CollectionGroup;
+}
+
+POINT ItemCenter(RECT bounds)
+{
+    return {bounds.left + (bounds.right - bounds.left) / 2,
+        bounds.top + (bounds.bottom - bounds.top) / 2};
+}
 }
 
 std::optional<DesktopApp::FolderPreviewTarget> DesktopApp::FindFolderPreviewTarget(POINT point, bool keyboard)
@@ -54,9 +67,9 @@ std::optional<DesktopApp::FolderPreviewTarget> DesktopApp::FindFolderPreviewTarg
     if (keyboard && (popupFanActionFocused_ || (!dockFolderPopupOpen_ &&
         (keyboardNavSearchBox_ || keyboardNavCollectionGroupTabs_ || keyboardNavFileGroupCategoryTabs_))))
         return std::nullopt;
+    const bool browsingPreview = target.inPopup && folderPreview_;
     const bool ordinaryDockFolder = target.inPopup && dockFolderPopupOpen_ &&
-        (folderPreview_ ? folderPreview_->sourceWidgetId.empty() && folderPreview_->folderHome.has_value()
-                        : dockFolderPopupMappingWidgetId_.empty());
+        !browsingPreview && dockFolderPopupMappingWidgetId_.empty();
     const auto setDesktopItem = [&](const DesktopItem& item) {
         target.path = item.parsingName;
         target.desktopKey = item.layoutKey;
@@ -78,6 +91,7 @@ std::optional<DesktopApp::FolderPreviewTarget> DesktopApp::FindFolderPreviewTarg
             const Item* item = slot->GetItem();
             if (keyboard ? (!item || !item->IsSelected()) : !PtInRect(&bounds, point)) continue;
             if (!target.path.empty()) { target.path.clear(); return; }
+            target.anchor = ItemCenter(bounds);
             if (const auto* icon = dynamic_cast<const DesktopIcon*>(item))
             {
                 if (const auto* desktop = icon->GetDesktopItem()) setDesktopItem(*desktop);
@@ -106,13 +120,16 @@ std::optional<DesktopApp::FolderPreviewTarget> DesktopApp::FindFolderPreviewTarg
             group->SetPopupFrame(&frame);
             resolveInView(*group);
         }
-        else if (dockFolderPopupOpen_ || popup->type == DesktopWidgetType::FileCategories)
+        else if (dockFolderPopupOpen_ || popup->type == DesktopWidgetType::FileCategories ||
+                 popup->type == DesktopWidgetType::Collection)
         {
             if (dockFolderPopupOpen_)
             {
                 const size_t index = FindWidgetIndexById(
                     folderPreview_ ? folderPreview_->sourceWidgetId : dockFolderPopupMappingWidgetId_);
-                if (!dockFolderPopupAvailable_ || (index >= widgets_.size() && !ordinaryDockFolder)) return std::nullopt;
+                if (!dockFolderPopupAvailable_ ||
+                    (index >= widgets_.size() && !ordinaryDockFolder && !browsingPreview))
+                    return std::nullopt;
                 if (index < widgets_.size()) source = &widgets_[index];
             }
             else
@@ -148,7 +165,7 @@ std::optional<DesktopApp::FolderPreviewTarget> DesktopApp::FindFolderPreviewTarg
     {
         if ((GetOpenPopupWidget() && !(folderPreview_ && folderPreview_->inlineBounds)) ||
             (!keyboard && GetDockContainerAtPoint(point))) return std::nullopt;
-        if (keyboard && (!keyboardNavInsideWidget_ || keyboardNavWidgetIndex_ >= widgets_.size()))
+        if (keyboard && keyboardNavInsideWidget_ && keyboardNavWidgetIndex_ >= widgets_.size())
             return std::nullopt;
         for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
         {
@@ -160,19 +177,52 @@ std::optional<DesktopApp::FolderPreviewTarget> DesktopApp::FindFolderPreviewTarg
                 (desktopIconsHidden_ && !data->keepWhenDesktopHidden))
                 continue;
             const RECT frame = view->GetFrameRect();
-            if (keyboard ? data != &widgets_[keyboardNavWidgetIndex_] : !PtInRect(&frame, point)) continue;
+            if (keyboard ? (!keyboardNavInsideWidget_ || data != &widgets_[keyboardNavWidgetIndex_])
+                         : !PtInRect(&frame, point)) continue;
             host = data;
-            target.inlineBounds = frame;
             if (Supports(data->type) || data->type == DesktopWidgetType::FileGroup)
+            {
+                target.inlineBounds = frame;
+                resolveInView(*view);
+            }
+            else if (UsesTemporaryFolderPreview(data->type))
                 resolveInView(*view);
             break;
         }
+        if (!host)
+        {
+            const DesktopItem* item = nullptr;
+            if (keyboard)
+            {
+                if (keyboardNavInsideWidget_ || std::any_of(widgets_.begin(), widgets_.end(),
+                        [](const DesktopWidget& widget) { return widget.selected; })) return std::nullopt;
+                for (const auto& candidate : items_)
+                    if (candidate.selected && !IsItemInAnyWidget(candidate) &&
+                        (!desktopIconsHidden_ || IsRetainedLargeIcon(candidate)))
+                    {
+                        if (item) return std::nullopt;
+                        item = &candidate;
+                    }
+            }
+            else if (HitTestStandaloneWidgetIndex(point) == static_cast<size_t>(-1))
+            {
+                if (const auto* icon = HitTestIcon(point)) item = icon->GetDesktopItem();
+            }
+            if (item)
+            {
+                setDesktopItem(*item);
+                target.anchor = ItemCenter(item->largeIcon ? GetLargeIconFrameRect(*item) : item->bounds);
+            }
+        }
     }
-    if ((!ordinaryDockFolder && (!source || !Supports(source->type))) ||
-        target.path.empty() || !std::filesystem::path(target.path).is_absolute())
+    target.temporary = !browsingPreview && !ordinaryDockFolder &&
+        (!host || UsesTemporaryFolderPreview(host->type));
+    if (target.path.empty() || !std::filesystem::path(target.path).is_absolute() ||
+        (!browsingPreview && !ordinaryDockFolder && !target.temporary &&
+            (!source || !Supports(source->type))))
         return std::nullopt;
 
-    if (source) target.sourceId = source->id;
+    if (source && !target.temporary) target.sourceId = source->id;
     if (host) target.hostId = host->id;
     return target;
 }
@@ -216,7 +266,9 @@ bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const 
 
     const auto expectedPopupPath = folderPreview_ ? dockFolderPopupWidget_.sourceFolderPath : std::wstring{};
     const auto dockFolderSourceId = dockFolderPopupOpen_ ? dockFolderPopupSourceId_ : std::wstring{};
-    const auto finish = [this, target, expectedPopupPath, forcePreview, clearTriggerSelection, fromMenu, dockFolderSourceId]
+    const auto popupGeneration = floatingPopupMouseHookGeneration_;
+    const auto finish = [this, target, expectedPopupPath, forcePreview, clearTriggerSelection, fromMenu,
+                            dockFolderSourceId, popupGeneration]
         (snowdesktop::item_location::FolderTarget resolved) {
         const auto& sourceId = target.sourceId;
         const auto& hostId = target.hostId;
@@ -229,10 +281,10 @@ bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const 
         if ((!sourceId.empty() && index >= widgets_.size()) ||
             (!forcePreview && !personalizationSettings_.folderDoubleClickPreview)) return;
         const bool openingInline = !inPopup && inlineBounds.has_value();
+        const bool openingStandalone = !inPopup && target.temporary;
         const bool existingInline = folderPreview_ && folderPreview_->inlineBounds;
-        if ((!openingInline && inPopup != (GetOpenPopupWidget() != nullptr)) ||
-            (openingInline && GetOpenPopupWidget() && !existingInline) ||
-            (inPopup && !IsCollectionPopupInteractive()) ||
+        if ((!inPopup && GetOpenPopupWidget() && !existingInline) ||
+            (inPopup && (!IsCollectionPopupInteractive() || popupGeneration != floatingPopupMouseHookGeneration_)) ||
             (folderPreview_ && dockFolderPopupWidget_.sourceFolderPath != expectedPopupPath))
             return;
         const size_t hostIndex = FindWidgetIndexById(hostId);
@@ -258,7 +310,7 @@ bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const 
             const bool accepted = !desktopKey.empty()
                 ? item < items_.size() && LaunchDesktopItem(item)
                 : LaunchPathWithShortcutPolicy(hwnd_, path);
-            if (accepted && (!folderPreview_ || openingInline))
+            if (accepted && (!folderPreview_ || openingInline || openingStandalone))
             {
                 ClearSelection();
                 if (inPopup) CloseCollectionPopup();
@@ -267,14 +319,15 @@ bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const 
             return;
         }
 
-        if (openingInline && existingInline) SuspendInlineFolderPreview();
+        if (!desktopKey.empty() && FindItemIndexByKey(desktopKey) >= items_.size()) return;
+        if ((openingInline || openingStandalone) && existingInline) SuspendInlineFolderPreview();
         bool fromFan = false;
         if (!folderPreview_)
         {
             Session session;
             session.sourceWidgetId = sourceId;
-            session.hostWidgetId = hostId;
-            session.viewKey = FolderPreviewViewKey(hostId, sourceId, dockFolderSourceId);
+            if (!openingStandalone) session.hostWidgetId = hostId;
+            if (!target.temporary) session.viewKey = FolderPreviewViewKey(hostId, sourceId, dockFolderSourceId);
             session.inlineBounds = inlineBounds;
             if (inlineBounds)
             {
@@ -294,6 +347,18 @@ bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const 
                 fromFan = UsesCollectionPopupFan(*popup);
                 if (!fromFan)
                     session.pendingPopupResize = GetPresentedCollectionPopupGeometry();
+            }
+            if (openingStandalone)
+            {
+                pendingCollectionPopupOpen_.reset();
+                popupWidgetIndex_ = static_cast<size_t>(-1);
+                popupHasAnchor_ = true;
+                popupAnchoredToDock_ = false;
+                collectionPopupDockHost_ = nullptr;
+                popupAnchorPoint_ = target.anchor;
+                const auto* page = GridPageFromPoint(target.anchor);
+                popupPageId_ = page ? page->id : std::wstring{};
+                popupCategoryId_.clear();
             }
             session.homeScroll = popupScrollOffset_;
             session.homeFanScroll = popupFanScroll_;
@@ -341,9 +406,14 @@ bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const 
 void DesktopApp::ShowFolderPreviewDirectory(const std::wstring& path, bool fromFan, bool present)
 {
     const RECT previous = popupRect_;
+    const bool keepTemporaryDisplay = folderPreview_->IsTemporary() && dockFolderPopupOpen_;
     CancelRenameClick();
-    CancelPointerPressWithoutCaptureRelease();
-    ReleaseCapturePreservingPointerState();
+    if (!dragSession_.HasContext() && !dragDropController_.IsTransportActive() &&
+        !dragDropController_.IsExternalDragActive())
+    {
+        CancelPointerPressWithoutCaptureRelease();
+        ReleaseCapturePreservingPointerState();
+    }
     CancelPopupHover(true);
     ClearListTitleHover();
     ClearPopupDragTarget();
@@ -366,9 +436,10 @@ void DesktopApp::ShowFolderPreviewDirectory(const std::wstring& path, bool fromF
     popupScrollOffset_ = 0;
     const auto key = snowdesktop::shell_refresh::FolderKey(path);
     dockFolderPopupSourceId_ = L"folder-preview:" + key;
-    const auto sort = folderPreviewSort_.Get(key);
+    auto sort = folderPreviewSort_.Get(key);
     auto& view = dockFolderPopupWidget_;
-    view = {};
+    if (!keepTemporaryDisplay) view = {};
+    view.scrollOffset = 0;
     view.type = DesktopWidgetType::FolderMapping;
     view.id = kDockFolderPopupWidgetId;
     view.gridCell.pageId = kDockPageId;
@@ -376,6 +447,7 @@ void DesktopApp::ShowFolderPreviewDirectory(const std::wstring& path, bool fromF
     view.title = _LW("app.folderPreview.title");
     view.folderSortMode = sort.mode;
     view.folderSortAscending = sort.ascending;
+    view.itemKeys = std::move(sort.order);
     view.contentSortColumn = snowdesktop::list_detail_rules::FromLegacyFolderSortMode(sort.mode);
     view.contentSortAscending = sort.ascending;
     const size_t source = FindWidgetIndexById(folderPreview_->sourceWidgetId);
@@ -454,9 +526,15 @@ void DesktopApp::OpenFolderPreviewPath(const std::wstring& path, bool fromFan)
 void DesktopApp::RestoreFolderPreviewHome(bool present)
 {
     if (!folderPreview_) return;
+    if (present && folderPreview_->IsTemporary() &&
+        FindWidgetIndexById(folderPreview_->hostWidgetId) >= widgets_.size())
+    {
+        CloseCollectionPopup(false);
+        return;
+    }
     if (present)
     {
-        if (!folderPreviewViews_.Set(folderPreview_->viewKey, {}))
+        if (!folderPreview_->IsTemporary() && !folderPreviewViews_.Set(folderPreview_->viewKey, {}))
             WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, L"Could not clear folder preview state", DiagnosticLogLevel::Warning);
     }
     else SaveFolderPreviewView();
@@ -566,6 +644,7 @@ void DesktopApp::SaveFolderPreviewView()
 void DesktopApp::SuspendDockFolderPreviewHome(snowdesktop::folder_preview::Session& session)
 {
     if (!dockFolderPopupOpen_) return;
+    PreserveDockFolderPopupDragSourceForTransition();
     CancelDockFolderPopupIconLoads();
     session.folderHome.emplace(snowdesktop::folder_preview::FolderPopupHome{
         std::move(dockFolderPopupWidget_), std::move(dockFolderPopupContainer_),
@@ -730,6 +809,26 @@ void DesktopApp::ActivateInlineFolderPreviewAtPoint(POINT point, bool duringDrag
     QueueFolderRead(dockFolderPopupWidget_.sourceFolderPath);
 }
 
+void DesktopApp::SyncFolderPreviewSortToOtherViews()
+{
+    const auto key = snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath);
+    const auto sort = folderPreviewSort_.Get(key);
+    for (auto& [host, preview] : inactiveInlineFolderPreviews_)
+    {
+        auto& model = preview.model;
+        auto& data = model.data;
+        if (snowdesktop::shell_refresh::FolderKey(data.sourceFolderPath) != key) continue;
+        data.folderSortMode = sort.mode;
+        data.folderSortAscending = sort.ascending;
+        data.contentSortColumn = snowdesktop::list_detail_rules::FromLegacyFolderSortMode(sort.mode);
+        data.contentSortAscending = sort.ascending;
+        data.itemKeys = sort.order;
+        if (model.available) snowdesktop::folder_member_order::Refresh(data, ToUpperInvariant);
+        if (model.view) model.view->InvalidateFilterCache();
+        (void)QueueDesktopWidgetComposition(host);
+    }
+}
+
 void DesktopApp::RefreshInactiveInlineFolderPreviews(const snowdesktop::shell_refresh::Snapshot& snapshot)
 {
     for (auto& [host, preview] : inactiveInlineFolderPreviews_)
@@ -760,7 +859,7 @@ const DesktopWidget* DesktopApp::GetInlineFolderPreviewData(const DesktopWidget&
 
 DesktopWidget* DesktopApp::GetFolderPreviewComponent(bool contentSource)
 {
-    if (!folderPreview_) return nullptr;
+    if (!folderPreview_ || folderPreview_->IsTemporary()) return nullptr;
     const auto& id = !contentSource && !folderPreview_->hostWidgetId.empty()
         ? folderPreview_->hostWidgetId : folderPreview_->sourceWidgetId;
     const size_t index = FindWidgetIndexById(id);
@@ -1109,6 +1208,18 @@ snowdesktop::popup_resize_transition::Geometry DesktopApp::GetPresentedCollectio
     if (const auto* motion = GetCollectionPopupResizeTransition())
         return {motion->Panel(panel), motion->Content(content, panel)};
     return {panel, content};
+}
+
+float DesktopApp::GetFolderPreviewInsertionPad(const RECT& popup, size_t index, bool after) const
+{
+    const size_t count = GetPopupItemCount(dockFolderPopupWidget_);
+    if (index >= count || (after ? index + 1 == count : index == 0)) return 0.0f;
+    const size_t first = after ? index : index - 1;
+    const bool verticalBar = !UsesCollectionPopupList(dockFolderPopupWidget_) ||
+        GetCollectionPopupColumnCount(popup) > 1;
+    return snowdesktop::widget_item_layout::InsertionBoundaryPad(
+        GetCollectionPopupItemRect(popup, first),
+        GetCollectionPopupItemRect(popup, first + 1), verticalBar);
 }
 
 void DesktopApp::StartFolderPreviewPopupResize(snowdesktop::popup_resize_transition::Geometry before)

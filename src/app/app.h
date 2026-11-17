@@ -2633,9 +2633,11 @@ private:
         std::wstring sourceId;
         std::wstring hostId;
         std::optional<RECT> inlineBounds;
+        POINT anchor{};
         bool knownDirectory = false;
         bool directoryShortcut = false;
         bool inPopup = false;
+        bool temporary = false;
     };
     static constexpr UINT kContextFolderPreviewOpen = 41074;
     std::optional<FolderPreviewTarget> FindFolderPreviewTarget(POINT point, bool keyboard = false);
@@ -2644,6 +2646,8 @@ private:
     bool TryFolderPreviewActivation(POINT point, WPARAM keyState, const std::wstring& menuPath, bool keyboard);
     void ClearInlineFolderPreviewSelectionOutside(POINT point);
     bool HandleFolderPreviewHeaderPress(POINT point);
+    float GetFolderPreviewInsertionPad(const RECT& popup, size_t index, bool after) const;
+    void SyncFolderPreviewSortToOtherViews();
     bool HandleFolderPreviewBreadcrumbContextMenu(POINT point, bool show);
     UINT TrackFolderPreviewPathMenu(HMENU menu, POINT screenPoint, bool textOnly);
     void ShowFolderPreviewDirectory(const std::wstring& path, bool fromFan = false, bool present = true);

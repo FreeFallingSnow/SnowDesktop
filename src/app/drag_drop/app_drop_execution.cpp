@@ -7,6 +7,7 @@
 #include "settings/settings_controller.h"
 #include "drag_drop/pending_drop_completion.h"
 #include "widgets/collection_group_rules.h"
+#include "widgets/folder_member_order.h"
 #include "widgets/widget_group_drop.h"
 #include "layout/folder_self_drop_rules.h"
 #include "layout/item_location.h"
@@ -465,7 +466,40 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
     {
         auto* targetWidget = dynamic_cast<WidgetContainer*>(preview.targetContainer);
         if (!targetWidget) return false;
-        if (folderPreview_ && targetWidget == dockFolderPopupContainer_.get()) return true;
+        if (folderPreview_ && targetWidget == dockFolderPopupContainer_.get())
+        {
+            auto& widget = dockFolderPopupWidget_;
+            std::unordered_set<std::wstring> movingPaths;
+            for (const auto& entry : sourceList.entries)
+                if (!entry.filePath.empty()) movingPaths.insert(ToUpperInvariant(entry.filePath));
+            std::vector<size_t> indices;
+            for (size_t i = 0; i < widget.folderEntries.size(); ++i)
+                if (movingPaths.contains(ToUpperInvariant(widget.folderEntries[i].fullPath))) indices.push_back(i);
+            const int previousMode = widget.folderSortMode;
+            const auto previousColumn = widget.contentSortColumn;
+            const auto previousOrder = widget.itemKeys;
+            if (!snowdesktop::folder_member_order::Reorder(widget, indices, preview.insertIndex)) return false;
+
+            const bool changed = previousOrder != widget.itemKeys;
+            const bool saved = !changed || folderPreviewSort_.Set(
+                snowdesktop::shell_refresh::FolderKey(widget.sourceFolderPath),
+                {snowdesktop::folder_sort_rules::kManual, widget.folderSortAscending, widget.itemKeys});
+            if (!changed || !saved)
+            {
+                widget.folderSortMode = previousMode;
+                widget.contentSortColumn = previousColumn;
+                if (!saved)
+                {
+                    widget.itemKeys = previousOrder;
+                    snowdesktop::folder_member_order::Refresh(widget, ToUpperInvariant);
+                    MessageBeep(MB_ICONWARNING);
+                }
+            }
+            dockFolderPopupContainer_->InvalidateFilterCache();
+            if (changed && saved) SyncFolderPreviewSortToOtherViews();
+            RefreshDockFolderPopupGeometry();
+            return saved;
+        }
         std::vector<size_t> indices = sourceMemberIndices();
         if (indices.empty())
             indices = targetWidget->GetSelectedMemberIndices();

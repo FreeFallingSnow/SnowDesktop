@@ -172,7 +172,7 @@ bool DesktopApp::ExecuteDockFolderPopupDisplayCommand(UINT command)
         if (!widget.showFileCategories) dockFolderPopupContainer_->EndCategoryTabDrag(false);
         dockFolderPopupContainer_->InvalidateFilterCache();
     }
-    if (folderPreview_)
+    if (folderPreview_ && !folderPreview_->IsTemporary())
     {
         const auto copyDisplay = [&](auto& target) {
             target.listMode = widget.listMode;
@@ -211,7 +211,7 @@ bool DesktopApp::ExecuteDockFolderPopupDisplayCommand(UINT command)
         SaveFolderPreviewView();
         SaveLayoutSlots();
     }
-    else CommitDockFolderPopupStateToSource();
+    else if (!folderPreview_) CommitDockFolderPopupStateToSource();
     InvalidateCollectionPopupContent();
     RefreshDockFolderPopupGeometry();
     return true;

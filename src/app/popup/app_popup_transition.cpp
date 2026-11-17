@@ -1002,7 +1002,7 @@ void DesktopApp::SortDockFolderPopupContents(
     }
 
     const size_t sourceIndex =
-        dockFolderPopupMappingWidgetId_.empty()
+        folderPreview_ || dockFolderPopupMappingWidgetId_.empty()
             ? static_cast<size_t>(-1)
             : FindWidgetIndexById(
                 dockFolderPopupMappingWidgetId_);
@@ -1043,7 +1043,8 @@ void DesktopApp::SortDockFolderPopupContents(
         if (dockFolderPopupContainer_)
             dockFolderPopupContainer_->
                 InvalidateFilterCache();
-        CommitDockFolderPopupStateToSource();
+        if (folderPreview_) SyncFolderPreviewSortToOtherViews();
+        else CommitDockFolderPopupStateToSource();
     }
 
     popupScrollOffset_ = 0;
