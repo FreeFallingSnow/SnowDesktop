@@ -32,7 +32,7 @@ SD_IPC_FIELDS(PersonalizationSettings,
     v.glassEnabled, v.glassBlurRadius, v.acrylicEnabled, v.contentTheme, v.panelGradient,
     v.groupTabHoverSwitch, v.categoryTabHoverSwitch, v.tabHoverDelayMs,
     v.windowPinBorderEnabled, v.windowPinBorderR, v.windowPinBorderG, v.windowPinBorderB,
-    v.windowPinBorderWidth, v.windowPinBorderOpacity);
+    v.windowPinBorderWidth, v.windowPinBorderOpacity, v.folderDoubleClickPreview);
 SD_IPC_FIELDS(SurfaceTheme, v.mode, v.customized, v.appearance);
 SD_IPC_FIELDS(StatusBarAppearanceRule, v.enabled, v.theme);
 SD_IPC_FIELDS(SystemTaskbarDynamicRule,

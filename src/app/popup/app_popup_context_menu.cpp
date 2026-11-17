@@ -17,9 +17,6 @@ void DesktopApp::AppendDockFolderPopupDisplayMenu(HMENU menu)
     append(kContextWidgetOpenFolder,
         _LW(folderPreview_ ? "app.interact.open_in_explorer" : "app.interact.open_folder"),
         nullptr, L"\uF42E");
-    const size_t source = FindWidgetIndexById(folderPreview_
-        ? folderPreview_->sourceWidgetId : dockFolderPopupMappingWidgetId_);
-    if (source < widgets_.size()) AppendFolderPreviewToggle(menu, widgets_[source]);
     if (folderPreview_) return;
     append(kContextPopupFan, _LW("app.interact.popup_fan"),
         widget.fanPopup ? _LW("app.interact.on") : _LW("app.interact.off"),
@@ -68,12 +65,6 @@ bool DesktopApp::ExecuteDockFolderPopupDisplayCommand(UINT command)
     {
         LaunchPathWithShortcutPolicy(hwnd_, widget.sourceFolderPath);
         return true;
-    }
-    if (command == kContextWidgetFolderPreview)
-    {
-        const std::wstring source = folderPreview_
-            ? folderPreview_->sourceWidgetId : dockFolderPopupMappingWidgetId_;
-        return ToggleFolderPreview(source);
     }
     if (folderPreview_) return false;
     switch (command)

@@ -91,7 +91,6 @@ namespace steam_presence { class Service; }
 namespace winui { struct LayoutRestorePayload; }
 }
 namespace snowdesktop::quick_navigation { struct State; }
-namespace snowdesktop::widget_item_layout { struct Layout; }
 namespace snowdesktop::dock_process_discovery { struct Snapshot; }
 namespace snowdesktop::usage_guide { enum class Topic; }
 namespace snowdesktop { struct QuickNavigationEverythingSearchResult; }
@@ -2624,16 +2623,12 @@ private:
     void RefreshCollectionPopupAnimationContent();
     /** @brief 撤下弹窗动画并使旧内容失效，保留有界的可复用存储。 */
     void ResetCollectionPopupAnimationCache();
-    bool TryFolderPreviewDoubleClick(POINT point);
+    bool TryFolderPreviewDoubleClick(POINT point, WPARAM keyState);
     bool HandleFolderPreviewHeaderPress(POINT point);
     void ShowFolderPreviewDirectory(const std::wstring& path);
     void NavigateFolderPreviewBack();
     void DiscardFolderPreview();
     void RestoreFolderPreviewHome(bool present);
-    bool ToggleFolderPreview(const std::wstring& sourceId);
-    void AppendFolderPreviewToggle(HMENU menu, const DesktopWidget& source);
-    RECT GetFolderPreviewBackRect(const RECT& popup) const;
-    RECT GetFolderPreviewExplorerRect(const RECT& popup) const;
     const snowdesktop::popup_resize_transition::Transition* GetCollectionPopupResizeTransition() const;
     snowdesktop::popup_resize_transition::Geometry GetPresentedCollectionPopupGeometry() const;
     void StartFolderPreviewPopupResize(snowdesktop::popup_resize_transition::Geometry before);
@@ -3108,7 +3103,11 @@ private:
     void CommitDockFolderPopupStateToSource();
     void AppendDockFolderPopupDisplayMenu(HMENU menu);
     bool ExecuteDockFolderPopupDisplayCommand(UINT command);
-    FolderMapping* GetDateGroupedPopupView(const RECT& popup) const;
+    FolderMapping* GetHostedFolderMappingPopupView(const RECT& popup) const;
+    const DesktopWidget* GetInlineFolderPreviewData(const DesktopWidget& host) const;
+    snowdesktop::folder_preview::NavigationRow GetFolderPreviewNavigationRow(const RECT& panel) const;
+    std::vector<snowdesktop::folder_preview::Breadcrumb> GetFolderPreviewBreadcrumbs(const RECT& popup) const;
+    void OpenFolderPreviewPath(const std::wstring& path);
     void SortDockFolderPopupContents(int mode, bool ascending);
     void ShowDockFolderPopupSortMenu(POINT screenPoint);
     void ShowDockFolderPopupContextMenu(
@@ -3219,7 +3218,6 @@ private:
     RECT GetCollectionPopupContentRect(const RECT& popup) const;
     /** @brief 获取集合弹出面板中的列数。 @param popup 面板矩形 @return 列数 */
     int GetCollectionPopupColumnCount(const RECT& popup) const;
-    snowdesktop::widget_item_layout::Layout GetFolderPreviewGridLayout(const RECT& popup) const;
     /** @brief 获取集合弹出面板中的行数。 @param widget 部件引用 @param popup 面板矩形 @return 行数 */
     int GetCollectionPopupRowCount(const DesktopWidget& widget, const RECT& popup) const;
     /** @brief 获取集合弹出面板中内容的最大滚动偏移。 @param widget 部件引用 @param popup 面板矩形 @return 最大滚动偏移 */

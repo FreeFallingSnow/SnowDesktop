@@ -273,7 +273,8 @@ bool Widget::UsesLightContentTheme() const
 {
     if (!app_) return false;
     const auto* container = dynamic_cast<const WidgetContainer*>(this);
-    return container && container->IsPopupHosted()
+    const auto* mapping = dynamic_cast<const FolderMapping*>(this);
+    return container && container->IsPopupHosted() && !(mapping && mapping->IsInlinePreview())
         ? app_->collectionPopupLightTheme_ : app_->IsLightContentTheme();
 }
 
@@ -3353,7 +3354,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         (data_->type == DesktopWidgetType::Collection && data_->scrollContainerMode);
 
     // ── 3. Gradient bottom bar (reuses cached geometry for clip) ──
-    const bool showGradient = !showingFolderPreview && bottomBarTitle &&
+    const bool showGradient = bottomBarTitle &&
         (persistentBottomBar || !data_->bottomBarHover || hovered);
     if (showGradient)
     {
@@ -3411,10 +3412,10 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         // Top title: larger centered text, without a shadow.
         const bool demoCollectionTitle =
             app_->ShouldUseDemoCollectionIdentity(data_);
-        const std::wstring displayTitle = demoCollectionTitle
+        const std::wstring displayTitle = showingFolderPreview ? app_->dockFolderPopupWidget_.title : demoCollectionTitle
             ? app_->GetDemoCollectionCategoryTitle(*data_)
             : data_->title;
-        if (!showingFolderPreview && bottomBarTitle && !displayTitle.empty() && data_->showTitle)
+        if (bottomBarTitle && !displayTitle.empty() && data_->showTitle)
         {
             RECT titleRect = GetTitleRect();
             LONG tw = titleRect.right - titleRect.left;
@@ -3508,7 +3509,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         // Subclass buttons
         {
             RECT handle = GetMoveHandleRect();
-            if (!showingFolderPreview && !largeFolder && !IsSingleCellPresentation())
+            if (!largeFolder && !IsSingleCellPresentation())
                 DrawButtons(context, handle, hovered);
         }
     }

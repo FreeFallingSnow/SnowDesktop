@@ -455,7 +455,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             }
 
             const RECT content =
-                GetCollectionPopupContentRect(popup);
+                folderPreview_ ? GetPresentedCollectionPopupGeometry().content : GetCollectionPopupContentRect(popup);
             const RECT detailsHeader =
                 GetCollectionPopupDetailsHeaderRect(popup);
             if (!IsRectEmptyRect(detailsHeader) &&
@@ -548,7 +548,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 snowdesktop::
                     collection_popup_layout::
                         AllowsMarqueeStart(
-                            true,
+                            !folderPreview_ || PtInRect(&content, pt),
                             clickedPopupItem,
                             false);
             if (!clickedPopupItem && !ctrl)
@@ -581,7 +581,10 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             mouseDownWidgetIndex_ =
                 static_cast<size_t>(-1);
             snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
-            InvalidateRect(hwnd_, nullptr, FALSE);
+            if (folderPreview_ && folderPreview_->inlineBounds)
+                (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+            else
+                InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
     }

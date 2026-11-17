@@ -13,6 +13,7 @@
 
 namespace snowdesktop::folder_preview
 {
+struct NavigationRow;
 inline constexpr wchar_t kResolveWorkKey[] = L"folder-preview:resolve";
 
 inline bool Supports(DesktopWidgetType type)
@@ -31,6 +32,14 @@ struct FolderPopupHome
     bool loading = false;
 };
 
+struct Breadcrumb
+{
+    RECT bounds;
+    std::wstring path;
+    std::wstring label;
+    std::vector<std::wstring> hiddenParents;
+};
+
 struct Session
 {
     struct Page
@@ -44,6 +53,12 @@ struct Session
     std::optional<RECT> inlineBounds;
     RECT inlineCollapseButton{};
     RECT inlineResizeHandle{};
+    RECT inlineTitleBar{};
+    RECT inlineExplorerButton{};
+    LONG inlineRowTop = 0;
+    LONG inlineContentBottom = 0;
+    bool inlineListMode = false;
+    bool inlineDateHeaders = false;
     std::optional<FolderPopupHome> folderHome;
     std::optional<popup_resize_transition::Geometry> pendingPopupResize;
     RECT homeBounds{};

@@ -273,6 +273,20 @@ void DesktopApp::PresentPointerInteractionFrame(
         ~PointerFrameScope() { active = previous; }
     } pointerFrameScope{presentingPointerInteractionFrame_, previousPointerFrame};
 
+    if (folderPreview_ && marqueeActive_ && marqueeDockFolderPopup_)
+    {
+        if (folderPreview_->inlineBounds)
+            (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+        else if (ShouldShowFloatingPopupWindow())
+            InvalidateFloatingPopupWindow(true);
+        else
+        {
+            InvalidateRect(hwnd_, &popupRect_, FALSE);
+            PresentDesktopPointerUpdate();
+        }
+        return;
+    }
+
     // Move the cached compact drag surface before any desktop or Dock paint.
     // This keeps the ghost attached to the input message even when the
     // larger feedback surfaces need more time to redraw.
@@ -872,6 +886,8 @@ bool DesktopApp::CanCancelPointerPressAfterCaptureLoss() const
 
 void DesktopApp::CancelPointerPressWithoutCaptureRelease()
 {
+    const bool inlinePreviewMarquee = folderPreview_ && folderPreview_->inlineBounds &&
+        marqueeActive_ && marqueeDockFolderPopup_;
     luaPanelOutsidePressGeneration_ = 0;
     rightButtonItemDrag_ = false;
     if (auto* view = GetCategorizedPopupView())
@@ -971,6 +987,8 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
         InvalidateRect(hwnd_, nullptr, FALSE);
     InvalidateFloatingDockWindow();
     InvalidateFloatingPopupWindow();
+    if (inlinePreviewMarquee && folderPreview_)
+        (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
 }
 
 void DesktopApp::ReleaseCapturePreservingPointerState()

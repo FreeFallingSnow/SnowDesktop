@@ -2355,10 +2355,12 @@ void FileGroup::DrawButtons(
                         1.0f, 1.0f, 1.0f,
                         hot ? 0.50f : 0.28f)));
     };
+    const auto* content = app_->GetInlineFolderPreviewData(*data_);
+    if (!content) content = GetContentViewData();
     draw(buttons.date,
         snowdesktop::menu_fluent_glyphs::kDateHeader,
-        GetContentViewData()->dateHeaders);
+        content->dateHeaders);
     draw(buttons.list,
-        GetContentViewData()->listMode ? L"\uF462" : L"\uF4ED", true);
+        content->listMode ? L"\uF462" : L"\uF4ED", true);
     if (includeOpen) draw(buttons.open, L"\uF42E", true);
 }

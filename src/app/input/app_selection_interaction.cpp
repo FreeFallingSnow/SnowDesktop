@@ -712,6 +712,7 @@ RECT DesktopApp::GetMarqueeViewportRect() const
     if (marqueeDockFolderPopup_ &&
         dockFolderPopupOpen_)
     {
+        if (folderPreview_) return GetPresentedCollectionPopupGeometry().content;
         return GetCollectionPopupContentRect(
             GetCollectionPopupRect(
                 dockFolderPopupWidget_));
@@ -751,8 +752,8 @@ void DesktopApp::UpdateMarqueeSelection(POINT current)
         const RECT popup =
             GetCollectionPopupRect(
                 dockFolderPopupWidget_);
-        const RECT viewport =
-            GetCollectionPopupContentRect(popup);
+        const RECT viewport = GetMarqueeViewportRect();
+        if (IsRectEmpty(&viewport)) return;
         const POINT contentAnchor{
             marqueeAnchorPoint_.x,
             marqueeAnchorPoint_.y +
@@ -778,8 +779,18 @@ void DesktopApp::UpdateMarqueeSelection(POINT current)
         OffsetRect(
             &marqueeRect_, 0,
             -currentScroll);
-        for (size_t i = 0;
-            i < GetPopupItemCount(dockFolderPopupWidget_); ++i)
+        if (folderPreview_ && folderPreview_->inlineBounds && dockFolderPopupContainer_)
+        {
+            auto& view = *dockFolderPopupContainer_;
+            view.ApplyMarqueeSelection(contentSelectionRect);
+            auto& entries = dockFolderPopupWidget_.folderEntries;
+            for (size_t i = 0; i < std::min(entries.size(), dockFolderPopupMarqueeInitialSelection_.size()); ++i)
+                entries[i].selected = entries[i].selected || dockFolderPopupMarqueeInitialSelection_[i];
+            return;
+        }
+        const size_t count = GetPopupItemCount(dockFolderPopupWidget_);
+        auto& entries = dockFolderPopupWidget_.folderEntries;
+        for (size_t i = 0; i < count; ++i)
         {
             RECT itemRect =
                 GetCollectionPopupItemRect(
@@ -787,11 +798,10 @@ void DesktopApp::UpdateMarqueeSelection(POINT current)
             OffsetRect(
                 &itemRect, 0,
                 currentScroll);
-            dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(dockFolderPopupWidget_, i)].selected =
-                (GetPopupFolderEntryIndex(dockFolderPopupWidget_, i) <
-                    dockFolderPopupMarqueeInitialSelection_.
-                        size() &&
-                 dockFolderPopupMarqueeInitialSelection_[GetPopupFolderEntryIndex(dockFolderPopupWidget_, i)]) ||
+            const size_t entry = GetPopupFolderEntryIndex(dockFolderPopupWidget_, i);
+            entries[entry].selected =
+                (entry < dockFolderPopupMarqueeInitialSelection_.size() &&
+                    dockFolderPopupMarqueeInitialSelection_[entry]) ||
                 (!IsRectEmptyRect(itemRect) && RectsIntersect(
                     itemRect,
                     contentSelectionRect));

@@ -568,7 +568,7 @@ void DesktopApp::DrawDynamicOverlays(
         // and animation. A generic pass would blend the same indicator again.
         if (popupTarget &&
             (wc == GetGroupPopupView() ||
-                wc == GetDateGroupedPopupView(GetCollectionPopupRect(*openPopupWidget))))
+                wc == GetHostedFolderMappingPopupView(GetCollectionPopupRect(*openPopupWidget))))
             return;
         const bool targetUsesPopupLayer =
             snowdesktop::popup_drag_rules::
@@ -822,7 +822,7 @@ void DesktopApp::DrawDynamicOverlays(
         snowdesktop::widget_composition_layer_rules::MarqueeBelongsToSurface(
             popupMarquee, popupBelongsToCurrentSurface,
             renderingFloatingDock_, renderingFloatingPopup_);
-    if (marqueeActive_ && marqueeBelongsToCurrentSurface)
+    if (marqueeActive_ && marqueeBelongsToCurrentSurface && !(folderPreview_ && marqueeDockFolderPopup_))
     {
         if (!marqueeDockFolderPopup_ &&
             marqueeWidgetIndex_ >= widgets_.size())

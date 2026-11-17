@@ -410,6 +410,13 @@ RECT FolderMapping::GetContentViewportRect() const
     return FolderMappingContentRect(const_cast<FolderMapping*>(this));
 }
 
+void FolderMapping::SetInlinePreviewFrame(const RECT& frame)
+{
+    if (!inlinePreview_) InvalidateSlots();
+    inlinePreview_ = true;
+    SetPopupFrame(&frame);
+}
+
 void FolderMapping::ApplyMarqueeSelection(const RECT& contentRect)
 {
     if (UsesFolderSearch()) { ApplyFolderSearchMarquee(contentRect); return; }
@@ -452,7 +459,7 @@ static snowdesktop::widget_item_layout::Layout FolderMappingLocalLayout(
             std::max(widget->GetListRowHeight(),
                 metrics.minimumListHeight), widget->GetListSpacing(), snowdesktop::list_detail_rules::ListColumns(*data));
     return snowdesktop::widget_item_layout::ResolveGrid(
-        content, widget->IsPopupHosted()
+        content, widget->IsPopupHosted() && !widget->IsInlinePreview()
             ? snowdesktop::collection_popup_layout::ResolveGridColumnCount(
                 content.right - content.left, metrics.minimumGridWidth)
             : std::max(1, data->gridSpan.columns), 0,
@@ -1152,6 +1159,8 @@ void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bo
     const auto toggleBtn = FolderMappingFooterRect(this, WidgetHit::ListToggleBtn, handleRect);
     const auto dateBtn = FolderMappingFooterRect(this, WidgetHit::DateHeaderToggleBtn, handleRect);
     const auto openBtn = FolderMappingFooterRect(this, WidgetHit::OpenFolderBtn, handleRect);
+    const auto* content = app_->GetInlineFolderPreviewData(*data_);
+    if (!content) content = data_;
 
     IDWriteTextFormat* fluentFormat =
         GetCuFluentTextFormat(14.0f * bs);
@@ -1179,9 +1188,9 @@ void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bo
 
     drawFluentButton(dateBtn,
         snowdesktop::menu_fluent_glyphs::kDateHeader,
-        data_->dateHeaders);
+        content->dateHeaders);
     drawFluentButton(toggleBtn,
-        data_->listMode ? L"\uF462" : L"\uF4ED", true);
+        content->listMode ? L"\uF462" : L"\uF4ED", true);
     drawFluentButton(openBtn, L"\uF42E", true);
     (void)hovered;
 }

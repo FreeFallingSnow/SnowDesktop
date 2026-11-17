@@ -362,6 +362,9 @@ struct PersonalizationPagePresenter::Impl
     muxc::ToggleSwitch popupCloseOnMouseLeave{nullptr};
     SettingRow popupCloseOnMouseLeaveRow;
     winrt::event_token popupCloseOnMouseLeaveToken{};
+    muxc::ComboBox folderDoubleClickAction{nullptr};
+    SettingRow folderDoubleClickActionRow;
+    winrt::event_token folderDoubleClickActionToken{};
 
     SettingRow presetRow;
     SettingRow quickNavigationThemeRow;
@@ -883,6 +886,10 @@ struct PersonalizationPagePresenter::Impl
         widgetTransformCursorsRow.Initialize(widgetTransformCursors);
         widgetTransformCursorsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         widgetInteractionCard.content.Children().Append(widgetTransformCursorsRow.root);
+        folderDoubleClickAction = muxc::ComboBox{};
+        folderDoubleClickActionRow.Initialize(folderDoubleClickAction);
+        folderDoubleClickActionRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        widgetInteractionCard.content.Children().Append(folderDoubleClickActionRow.root);
         presenter_controls::UpdateSettingsSubrows(fontCard.content, 0.0);
         presenter_controls::UpdateSettingsSubrows(contextMenuCard.content, 0.0);
         presenter_controls::UpdateSettingsSubrows(widgetInteractionCard.content, 0.0);
@@ -1509,6 +1516,14 @@ struct PersonalizationPagePresenter::Impl
                         settings.popupCloseOnMouseLeave = enabled;
                     });
             });
+        folderDoubleClickActionToken = folderDoubleClickAction.SelectionChanged(
+            [this](const auto&, const auto&) {
+                const int action = folderDoubleClickAction.SelectedIndex();
+                if (action < 0) return;
+                Emit(SettingsUpdateMode::PreviewAndCommit, [action](PersonalizationSettings& settings) {
+                    settings.folderDoubleClickPreview = action == 1;
+                });
+            });
         widgetTransformCursorsToken = widgetTransformCursors.Toggled(
             [this](const auto&, const auto&) {
                 const bool enabled = widgetTransformCursors.IsOn();
@@ -1688,6 +1703,7 @@ struct PersonalizationPagePresenter::Impl
         groupTabHoverSwitch.IsOn(settings.groupTabHoverSwitch);
         categoryTabHoverSwitch.IsOn(settings.categoryTabHoverSwitch);
         popupCloseOnMouseLeave.IsOn(settings.popupCloseOnMouseLeave);
+        folderDoubleClickAction.SelectedIndex(settings.folderDoubleClickPreview ? 1 : 0);
         topTitleBarToggle.IsOn(settings.scrollableTitleBarOnTop);
         widgetTransformCursors.IsOn(settings.widgetTransformCursors);
         contentThemeCombo.SelectedIndex(
@@ -2192,6 +2208,11 @@ struct PersonalizationPagePresenter::Impl
                 L"Close collection and Dock folder popups after the pointer moves out, including while dragging. Keep them open during renaming or context menu actions."));
         muxa::AutomationProperties::SetName(
             popupCloseOnMouseLeave, popupCloseOnMouseLeaveRow.label.Text());
+        folderDoubleClickActionRow.SetText(
+            L("settings.widgetBehavior.folderDoubleClick", L"Default double-click action"),
+            L("settings.widgetBehavior.folderDoubleClickHint"));
+        ReplaceComboItems(folderDoubleClickAction, {{"app.menu.open", L"Open"}, {"app.menu.preview", L"Preview"}});
+        muxa::AutomationProperties::SetName(folderDoubleClickAction, folderDoubleClickActionRow.label.Text());
         muxa::AutomationProperties::SetName(
             gradientToggle, gradientToggleRow.label.Text());
         const auto explain = [](auto& row, const std::wstring& text) { row.SetText(std::wstring(row.label.Text().c_str()), text); };
@@ -2462,6 +2483,8 @@ struct PersonalizationPagePresenter::Impl
         }
         if (id == "personalization.popupCloseOnMouseLeave")
             return popupCloseOnMouseLeave;
+        if (id == "personalization.folderDoubleClickPreview")
+            return folderDoubleClickAction;
         if (id == "personalization.popupHoverDelayMs")
         {
             if (!popupHoverOpen.IsOn())
@@ -2601,6 +2624,7 @@ struct PersonalizationPagePresenter::Impl
             groupTabHoverSwitch.Toggled(groupTabHoverToken);
             categoryTabHoverSwitch.Toggled(categoryTabHoverToken);
             popupCloseOnMouseLeave.Toggled(popupCloseOnMouseLeaveToken);
+            folderDoubleClickAction.SelectionChanged(folderDoubleClickActionToken);
             topTitleBarToggle.Toggled(topTitleBarToken);
             widgetTransformCursors.Toggled(widgetTransformCursorsToken);
         }

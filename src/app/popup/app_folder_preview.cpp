@@ -5,7 +5,6 @@
 #include "layout/collection_popup_layout.h"
 #include "layout/folder_preview_header_layout.h"
 #include "settings/animation_settings.h"
-#include "ui/menu/menu_fluent_glyphs.h"
 #include "widgets/widget_folder_search.h"
 
 #include <filesystem>
@@ -42,15 +41,14 @@ std::wstring FolderName(const std::wstring& path)
 }
 }
 
-bool DesktopApp::TryFolderPreviewDoubleClick(POINT point)
+bool DesktopApp::TryFolderPreviewDoubleClick(POINT point, WPARAM keyState)
 {
     using namespace snowdesktop::folder_preview;
-    if (dockTrayPopup_) return false;
+    if (dockTrayPopup_ || (keyState & MK_SHIFT)) return false;
+    const bool forcePreview = (keyState & MK_CONTROL) != 0;
     const DesktopWidget* source = nullptr;
     const DesktopWidget* host = nullptr;
     std::optional<RECT> inlineBounds;
-    RECT inlineCollapseButton{};
-    RECT inlineResizeHandle{};
     const bool inPopup = IsPointOccludedByOpenPopup(point);
     PreviewItem target;
     const auto resolveInView = [&](ScrollingItemWidget& view) {
@@ -137,26 +135,24 @@ bool DesktopApp::TryFolderPreviewDoubleClick(POINT point)
             if (!PtInRect(&frame, point)) continue;
             host = data;
             inlineBounds = frame;
-            inlineCollapseButton = view->GetCollapseButtonRect();
-            inlineResizeHandle = view->GetResizeHandleRect();
             if (Supports(data->type) || data->type == DesktopWidgetType::FileGroup)
                 resolveInView(*view);
             break;
         }
     }
-    if (!source || !Supports(source->type) || !source->folderPreviewEnabled ||
+    const bool usePreview = forcePreview || folderPreview_.has_value();
+    if (!source || !Supports(source->type) || (!usePreview && !personalizationSettings_.folderDoubleClickPreview) ||
         target.path.empty() || !std::filesystem::path(target.path).is_absolute())
         return false;
 
     const auto sourceId = source->id;
     const auto hostId = host ? host->id : std::wstring{};
     const auto expectedPopupPath = folderPreview_ ? dockFolderPopupWidget_.sourceFolderPath : std::wstring{};
-    const auto finish = [this, target, sourceId, hostId, inlineBounds, inlineCollapseButton,
-        inlineResizeHandle, inPopup, expectedPopupPath]
+    const auto finish = [this, target, sourceId, hostId, inlineBounds, inPopup, expectedPopupPath, usePreview]
         (snowdesktop::item_location::FolderTarget resolved) {
         if (exitRequested_ || dragSession_.HasContext() || dragDropController_.IsTransportActive()) return;
         const size_t index = FindWidgetIndexById(sourceId);
-        if (index >= widgets_.size() || !widgets_[index].folderPreviewEnabled) return;
+        if (index >= widgets_.size() || (!usePreview && !personalizationSettings_.folderDoubleClickPreview)) return;
         if (inPopup != (GetOpenPopupWidget() != nullptr) ||
             (inPopup && !IsCollectionPopupInteractive()) ||
             (folderPreview_ && dockFolderPopupWidget_.sourceFolderPath != expectedPopupPath))
@@ -192,22 +188,39 @@ bool DesktopApp::TryFolderPreviewDoubleClick(POINT point)
             return;
         }
 
-        if (folderPreview_ && snowdesktop::shell_refresh::FolderKey(resolved.path) ==
-            snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath))
-            return;
-
         if (!folderPreview_)
         {
             Session session;
             session.sourceWidgetId = sourceId;
             session.hostWidgetId = hostId;
             session.inlineBounds = inlineBounds;
-            session.inlineCollapseButton = inlineCollapseButton;
-            session.inlineResizeHandle = inlineResizeHandle;
+            if (inlineBounds)
+            {
+                session.inlineRowTop = inlineBounds->top;
+                session.inlineContentBottom = inlineBounds->bottom;
+                for (const auto& container : containers_)
+                {
+                    const auto* view = dynamic_cast<const WidgetContainer*>(container.get());
+                    if (!view || view->GetWidgetData() != &widgets_[hostIndex]) continue;
+                    session.inlineCollapseButton = view->GetCollapseButtonRect();
+                    session.inlineResizeHandle = view->GetResizeHandleRect();
+                    session.inlineTitleBar = view->GetMoveHandleRect();
+                    if (view->UsesTopTitleBar()) session.inlineRowTop = session.inlineTitleBar.bottom;
+                    else session.inlineContentBottom = std::min(session.inlineContentBottom, session.inlineTitleBar.top);
+                    if (!IsRectEmpty(&session.inlineResizeHandle))
+                        session.inlineContentBottom = std::min(session.inlineContentBottom, session.inlineResizeHandle.top);
+                    for (const auto& control : view->GetControlRegions())
+                        if (control.hit == WidgetHit::OpenFolderBtn)
+                            session.inlineExplorerButton = control.bounds;
+                    break;
+                }
+                session.inlineListMode = widgets_[index].listMode;
+            }
             if (const auto* popup = GetOpenPopupWidget())
             {
                 session.homeBounds = GetCollectionPopupRect(*popup);
-                session.pendingPopupResize = GetPresentedCollectionPopupGeometry();
+                if (!UsesCollectionPopupFan(*popup))
+                    session.pendingPopupResize = GetPresentedCollectionPopupGeometry();
             }
             session.homeScroll = popupScrollOffset_;
             session.homeFanScroll = popupFanScroll_;
@@ -236,14 +249,7 @@ bool DesktopApp::TryFolderPreviewDoubleClick(POINT point)
             folderPreview_.emplace(std::move(session));
             ClearSelection();
         }
-        else
-        {
-            folderPreview_->pages.back().scroll = popupScrollOffset_;
-            if (!folderPreview_->inlineBounds)
-                folderPreview_->pendingPopupResize = GetPresentedCollectionPopupGeometry();
-        }
-        folderPreview_->pages.push_back({resolved.path});
-        ShowFolderPreviewDirectory(resolved.path);
+        OpenFolderPreviewPath(resolved.path);
     };
     folderReadWork_.Cancel(kResolveWorkKey);
     if (target.knownDirectory)
@@ -309,6 +315,8 @@ void DesktopApp::ShowFolderPreviewDirectory(const std::wstring& path)
             popupPageId_ = widgets_[host].gridCell.pageId;
             view.gridSpan = widgets_[host].gridSpan;
         }
+        view.listMode = folderPreview_->inlineListMode;
+        view.dateHeaders = folderPreview_->inlineDateHeaders;
     }
     SyncFolderChangeNotifications();
     RefreshDockFolderPopup();
@@ -329,6 +337,21 @@ void DesktopApp::NavigateFolderPreviewBack()
     if (!folderPreview_->inlineBounds)
         folderPreview_->pendingPopupResize = GetPresentedCollectionPopupGeometry();
     folderPreview_->pages.pop_back();
+    ShowFolderPreviewDirectory(folderPreview_->pages.back().path);
+}
+
+void DesktopApp::OpenFolderPreviewPath(const std::wstring& path)
+{
+    folderReadWork_.Cancel(snowdesktop::folder_preview::kResolveWorkKey);
+    if (!folderPreview_->pages.empty())
+    {
+        if (snowdesktop::shell_refresh::FolderKey(path) ==
+            snowdesktop::shell_refresh::FolderKey(folderPreview_->pages.back().path)) return;
+        folderPreview_->pages.back().scroll = popupScrollOffset_;
+        if (!folderPreview_->inlineBounds)
+            folderPreview_->pendingPopupResize = GetPresentedCollectionPopupGeometry();
+    }
+    folderPreview_->pages.push_back({path});
     ShowFolderPreviewDirectory(folderPreview_->pages.back().path);
 }
 
@@ -424,51 +447,61 @@ void DesktopApp::DiscardFolderPreview()
     RestoreFolderPreviewHome(false);
 }
 
-bool DesktopApp::ToggleFolderPreview(const std::wstring& sourceId)
+const DesktopWidget* DesktopApp::GetInlineFolderPreviewData(const DesktopWidget& host) const
 {
-    const size_t index = FindWidgetIndexById(sourceId);
-    if (index >= widgets_.size() || !snowdesktop::folder_preview::Supports(widgets_[index].type)) return false;
-    auto& enabled = widgets_[index].folderPreviewEnabled;
-    enabled = !enabled;
-    if (!SaveLayoutSlots())
+    return folderPreview_ && folderPreview_->inlineBounds && folderPreview_->hostWidgetId == host.id
+        ? &dockFolderPopupWidget_ : nullptr;
+}
+
+snowdesktop::folder_preview::NavigationRow DesktopApp::GetFolderPreviewNavigationRow(const RECT& panel) const
+{
+    const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+    const LONG top = folderPreview_->inlineBounds ? folderPreview_->inlineRowTop
+        : panel.top + metrics.headerHeight;
+    return snowdesktop::folder_preview::ResolveNavigationRow(panel, top, metrics.scale);
+}
+
+std::vector<snowdesktop::folder_preview::Breadcrumb> DesktopApp::GetFolderPreviewBreadcrumbs(const RECT& popup) const
+{
+    const float scale = GetOpenCollectionPopupLayoutMetrics().scale;
+    const RECT rect = GetFolderPreviewNavigationRow(popup).breadcrumb;
+    if (IsRectEmpty(&rect)) return {};
+    const auto directory = std::filesystem::path(dockFolderPopupWidget_.sourceFolderPath).lexically_normal();
+    auto path = directory.root_path();
+    const auto relative = directory.relative_path();
+    auto component = relative.begin();
+    // A UNC share is the first navigable directory on a network path.
+    if (directory.root_name().native().starts_with(L"\\\\") && component != relative.end())
     {
-        enabled = !enabled;
-        return false;
+        path /= *component;
+        ++component;
     }
-    if (!enabled)
+    using snowdesktop::folder_preview::Breadcrumb;
+    std::vector<Breadcrumb> crumbs{{{}, path.wstring(), path.wstring(), {}}};
+    for (; component != relative.end(); ++component)
     {
-        folderReadWork_.Cancel(snowdesktop::folder_preview::kResolveWorkKey);
-        if (folderPreview_ && folderPreview_->sourceWidgetId == sourceId)
-            RestoreFolderPreviewHome(true);
+        if (component->empty()) continue;
+        path /= *component;
+        crumbs.push_back({{}, path.wstring(), component->wstring(), {}});
     }
-    return true;
-}
-
-void DesktopApp::AppendFolderPreviewToggle(HMENU menu, const DesktopWidget& source)
-{
-    using namespace snowdesktop::folder_preview;
-    if (!Supports(source.type)) return;
-    const std::wstring label = std::wstring(_LW("app.interact.folder_preview")) + L"\t" +
-        (source.folderPreviewEnabled ? _LW("app.interact.on") : _LW("app.interact.off"));
-    AppendMenuW(menu, MF_STRING, kContextWidgetFolderPreview, label.c_str());
-    SetMenuItemIcon(menu, kContextWidgetFolderPreview,
-        snowdesktop::menu_fluent_glyphs::kFolderMapping, MenuIconFont::FluentRegular);
-}
-
-RECT DesktopApp::GetFolderPreviewBackRect(const RECT& popup) const
-{
-    const auto* motion = GetCollectionPopupResizeTransition();
-    return snowdesktop::folder_preview::ResolveHeader(
-        motion ? motion->Panel(popup) : popup,
-        GetOpenCollectionPopupLayoutMetrics().scale, folderPreview_->inlineCollapseButton).back;
-}
-
-RECT DesktopApp::GetFolderPreviewExplorerRect(const RECT& popup) const
-{
-    const auto* motion = GetCollectionPopupResizeTransition();
-    return snowdesktop::folder_preview::ResolveHeader(
-        motion ? motion->Panel(popup) : popup,
-        GetOpenCollectionPopupLayoutMetrics().scale, folderPreview_->inlineCollapseButton).explorer;
+    const LONG width = rect.right - rect.left;
+    const auto capacity = static_cast<size_t>(std::max<LONG>(3, width / std::max(1, ScaleWidgetCu(68.0f, scale))));
+    if (crumbs.size() > capacity)
+    {
+        const auto firstVisible = crumbs.end() - (capacity - 2);
+        std::vector<std::wstring> hidden;
+        for (auto it = crumbs.begin() + 1; it != firstVisible; ++it)
+            hidden.push_back(std::move(it->path));
+        crumbs.erase(crumbs.begin() + 1, firstVisible);
+        crumbs.insert(crumbs.begin() + 1, Breadcrumb{{}, {}, L"…", std::move(hidden)});
+    }
+    for (size_t i = 0; i < crumbs.size(); ++i)
+    {
+        const LONG left = rect.left + width * static_cast<LONG>(i) / static_cast<LONG>(crumbs.size());
+        const LONG right = rect.left + width * static_cast<LONG>(i + 1) / static_cast<LONG>(crumbs.size());
+        crumbs[i].bounds = {left, rect.top, right, rect.bottom};
+    }
+    return crumbs;
 }
 
 bool DesktopApp::HandleFolderPreviewHeaderPress(POINT point)
@@ -483,15 +516,64 @@ bool DesktopApp::HandleFolderPreviewHeaderPress(POINT point)
         return false;
     }
     const RECT popup = GetCollectionPopupRect(dockFolderPopupWidget_);
-    const RECT back = GetFolderPreviewBackRect(popup);
-    if (PtInRect(&back, point))
+    const auto* motion = GetCollectionPopupResizeTransition();
+    const RECT panel = motion ? motion->Panel(popup) : popup;
+    const auto row = GetFolderPreviewNavigationRow(panel);
+    if (PtInRect(&row.back, point))
     {
         NavigateFolderPreviewBack();
         return true;
     }
-    const RECT explorer = GetFolderPreviewExplorerRect(popup);
-    if (!PtInRect(&explorer, point)) return false;
-    shellLaunchWorker_.Enqueue(hwnd_, dockFolderPopupWidget_.sourceFolderPath);
+    if (PtInRect(&folderPreview_->inlineExplorerButton, point))
+    {
+        shellLaunchWorker_.Enqueue(hwnd_, dockFolderPopupWidget_.sourceFolderPath);
+        return true;
+    }
+    if (PtInRect(&row.home, point))
+    {
+        RestoreFolderPreviewHome(true);
+        return true;
+    }
+    if (PtInRect(&row.breadcrumb, point))
+    {
+        for (const auto& crumb : GetFolderPreviewBreadcrumbs(panel))
+            if (PtInRect(&crumb.bounds, point))
+            {
+                if (crumb.hiddenParents.empty()) OpenFolderPreviewPath(crumb.path);
+                else if (HMENU menu = CreatePopupMenu())
+                {
+                    POINT screenPoint{crumb.bounds.left, crumb.bounds.bottom};
+                    ClientToScreen(hwnd_, &screenPoint);
+                    PrepareMenuIconsForPoint(screenPoint);
+                    for (size_t i = 0; i < crumb.hiddenParents.size(); ++i)
+                        AppendMenuW(menu, MF_STRING, i + 1, FolderName(crumb.hiddenParents[i]).c_str());
+                    const auto originalPath = dockFolderPopupWidget_.sourceFolderPath;
+                    const UINT choice = ShowModernMenu(menu, screenPoint, hwnd_);
+                    DestroyMenu(menu);
+                    ClearMenuIcons();
+                    if (choice > 0 && choice <= crumb.hiddenParents.size() && folderPreview_ &&
+                        dockFolderPopupWidget_.sourceFolderPath == originalPath)
+                        OpenFolderPreviewPath(crumb.hiddenParents[choice - 1]);
+                }
+                return true;
+            }
+        return true;
+    }
+    if (!folderPreview_->inlineBounds || !PtInRect(&folderPreview_->inlineTitleBar, point)) return false;
+    const size_t hostIndex = FindWidgetIndexById(folderPreview_->hostWidgetId);
+    const auto hit = HitTestStandaloneWidget(hostIndex, point);
+    if (hit != WidgetHit::DateHeaderToggleBtn && hit != WidgetHit::ListToggleBtn)
+    {
+        RestoreFolderPreviewHome(true);
+        return false;
+    }
+    if (hit == WidgetHit::DateHeaderToggleBtn)
+        dockFolderPopupWidget_.dateHeaders = folderPreview_->inlineDateHeaders = !folderPreview_->inlineDateHeaders;
+    else
+        dockFolderPopupWidget_.listMode = folderPreview_->inlineListMode = !folderPreview_->inlineListMode;
+    if (dockFolderPopupContainer_) dockFolderPopupContainer_->InvalidateFilterCache();
+    popupScrollOffset_ = 0;
+    (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
     return true;
 }
 

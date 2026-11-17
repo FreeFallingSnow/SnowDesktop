@@ -829,6 +829,8 @@ public:
     RECT GetContentViewportRect() const override;
     void ApplyMarqueeSelection(const RECT& contentRect) override;
     bool NeedsShellReloadAfterDrop() const override { return false; }
+    void SetInlinePreviewFrame(const RECT& frame);
+    bool IsInlinePreview() const { return inlinePreview_; }
     RECT GetSearchBoxRect() const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
     bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) override;
@@ -865,6 +867,7 @@ private:
     std::wstring CachedActiveCategoryId() const;
 
     std::shared_ptr<snowdesktop::popup_resize_transition::Transition> popupResizeTransition_;
+    bool inlinePreview_ = false;
 
     mutable std::vector<std::wstring> categorySnapshotPaths_;
     mutable std::unordered_map<std::wstring, std::vector<size_t>> entryIndicesByCategory_;

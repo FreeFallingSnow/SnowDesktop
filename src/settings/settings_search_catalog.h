@@ -350,6 +350,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::WidgetBehavior, "personalization.scrollableTitleBarOnTop",
         "app.settings.scrollable_title_bar_position",
         "app.settings.scrollable_title_bar_position_hint"},
+    {SettingsPage::WidgetBehavior, "personalization.folderDoubleClickPreview",
+        "settings.widgetBehavior.folderDoubleClick", "settings.widgetBehavior.folderDoubleClickHint"},
     {SettingsPage::AppearanceDesktopIcons, "desktop.categoryLayout",
         "app.settings.tab_height",
         ""},

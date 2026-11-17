@@ -525,8 +525,6 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
                 error) ||
             !ReadBoolean(object, "showSearchBox", path + ".showSearchBox",
                 record.showSearchBox, error) ||
-            !ReadBoolean(object, "folderPreviewEnabled",
-                path + ".folderPreviewEnabled", record.folderPreviewEnabled, error) ||
             !ReadBoolean(object, "showOnHoverOnly",
                 path + ".showOnHoverOnly", record.showOnHoverOnly,
                 error) ||

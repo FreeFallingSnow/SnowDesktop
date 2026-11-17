@@ -1540,13 +1540,15 @@ void DesktopApp::OnMouseMoveAt(
             std::abs(current.y - mouseDownPoint_.y) > 3)
         {
             const bool startingMarquee = !marqueeActive_;
-            if (startingMarquee)
+            const bool previewMarquee = folderPreview_ && marqueeDockFolderPopup_;
+            if (startingMarquee && !previewMarquee)
             {
                 dragRenderCache_.Reset();
                 marqueeFullPresentPending_ = true;
             }
             marqueeActive_ = true;
             UpdateMarqueeSelection(current);
+            if (previewMarquee) return;
             if (!startingMarquee &&
                 marqueeWidgetIndex_ < widgets_.size() &&
                 popupWidgetIndex_ != marqueeWidgetIndex_)

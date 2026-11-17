@@ -1415,6 +1415,8 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
     {
         if (HandleDockClickRelease(upPoint))
             return;
+        const bool previewMarquee = folderPreview_ && marqueeActive_ && marqueeDockFolderPopup_;
+        if (previewMarquee) UpdateMarqueeSelection(upPoint);
         const bool otherSelectionDamage = marqueeActive_ || dockPressedContainer_ ||
             pendingCtrlToggleDesktopIndex_ < items_.size() || pendingCtrlToggleWidgetItem_;
         ClearDockPressedState();
@@ -1524,7 +1526,11 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         ++expectedCaptureReleaseDepth_;
         snowdesktop::private_pointer::ReleasePointerCapture();
         --expectedCaptureReleaseDepth_;
-        if (otherSelectionDamage || IsRectEmpty(&luaDamage))
+        if (previewMarquee && folderPreview_ && folderPreview_->inlineBounds)
+            (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+        else if (previewMarquee && ShouldShowFloatingPopupWindow())
+            InvalidateFloatingPopupWindow(true);
+        else if (otherSelectionDamage || IsRectEmpty(&luaDamage))
             InvalidateRect(hwnd_, nullptr, FALSE);
         else
         {

@@ -1459,6 +1459,8 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
 {
     if (!data_ || !app_) return;
     const bool lt = UsesLightContentTheme();
+    const auto* content = app_->GetInlineFolderPreviewData(*data_);
+    if (!content) content = data_;
 
     RECT dateToggle = FileCategoryDateToggleRect(this);
     bool dateHot = IsPreviewInteractive() &&
@@ -1475,10 +1477,10 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
         snowdesktop::menu_fluent_glyphs::kDateHeader, dateToggle,
         iconFormat,
         lt
-            ? (data_->dateHeaders
+            ? (content->dateHeaders
                 ? (dateHot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.85f) : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.50f))
                 : (dateHot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.45f) : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.25f)))
-            : (data_->dateHeaders
+            : (content->dateHeaders
                 ? (dateHot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f))
                 : (dateHot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f))));
 
@@ -1486,7 +1488,7 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
     bool hot = IsPreviewInteractive() &&
         PtInRect(&toggle, GetRenderPointer()) != FALSE;
     app_->DrawD2DText(context,
-        data_->listMode ? L"\uF462" : L"\uF4ED", toggle,
+        content->listMode ? L"\uF462" : L"\uF4ED", toggle,
         iconFormat,
         lt
             ? (hot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.85f) : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.50f))

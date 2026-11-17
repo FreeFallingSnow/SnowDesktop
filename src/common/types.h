@@ -560,7 +560,6 @@ struct DesktopWidget
     bool dateHeaders = false;
     bool showFileCategories = false;
     bool showSearchBox = false;
-    bool folderPreviewEnabled = false;
     std::vector<std::wstring> itemKeys;
     // Temporarily absent desktop members never occupy visible collection slots.
     std::vector<MissingDesktopWidgetItem> missingItems;

@@ -3024,6 +3024,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 personalizationPage_->WidgetBehaviorContent());
             registerPersonalizationFocus({
                 "personalization.widgetTransformCursors",
+                "personalization.folderDoubleClickPreview",
                 "personalization.scrollableTitleBarOnTop",
                 "personalization.showGroupTabCounts",
                 "personalization.popupHoverOpen",

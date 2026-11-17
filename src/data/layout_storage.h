@@ -95,7 +95,6 @@ struct WidgetRecord
     bool dateHeaders = false;
     bool showFileCategories = false;
     bool showSearchBox = false;
-    bool folderPreviewEnabled = false;
     bool showOnHoverOnly = false;
     bool privacyMode = false;
     bool scrollContainerMode = false;

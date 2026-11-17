@@ -225,19 +225,13 @@ void DesktopApp::ShowFileGroupSourceTabContextMenu(
     SetMenuItemIcon(
         menu, kContextWidgetRename, L"\U000F0A39",
         MenuIconFont::FluentRegular);
-    AppendFolderPreviewToggle(menu, widgets_[childIndex]);
     RestoreInteractionInputFocus();
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     DestroyMenu(menu);
     ClearMenuIcons();
     RestoreDesktopWindowLayer();
 
-    if (command == kContextWidgetFolderPreview)
-    {
-        ToggleFolderPreview(childId);
-        RestoreInteractionInputFocus();
-    }
-    else if (command == kContextWidgetRename)
+    if (command == kContextWidgetRename)
     {
         ClearSelection();
         widgets_[childIndex].selected = true;
@@ -443,7 +437,6 @@ void DesktopApp::ShowWidgetContextMenu(
     }
     const DesktopWidget& effectiveSource =
         widgets_[effectiveSourceIndex];
-    const auto previewSourceId = effectiveSource.id;
     std::wstring newItemDirectory;
     std::optional<NewItemTarget> newItemTarget;
     if (effectiveSource.type == DesktopWidgetType::FolderMapping)
@@ -969,7 +962,6 @@ void DesktopApp::ShowWidgetContextMenu(
             _LW(stackMenuId.empty() ? "app.interact.delete_widget" : "app.lua_stack.remove_current"));
     }
 
-    AppendFolderPreviewToggle(menu, effectiveSource);
     setFluentIcon(menu, kContextPopupFan, snowdesktop::menu_fluent_glyphs::kFanExpansion);
     setFluentIcon(menu, kContextWidgetOpen, L"\uF582");
     setFluentIcon(menu, kContextWidgetManualCollect,
@@ -1309,9 +1301,6 @@ void DesktopApp::ShowWidgetContextMenu(
 
     switch (command)
     {
-    case kContextWidgetFolderPreview:
-        ToggleFolderPreview(previewSourceId);
-        break;
     case kContextWidgetToggleSingleCellMode:
         SelectWidgetOnly(widgetIndex);
         (void)applyNativeSettings(snowdesktop::control::Object({{"singleCellIconMode", snowdesktop::control::Boolean(!widgets_[widgetIndex].singleCellIconMode)}}));

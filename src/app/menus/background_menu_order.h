@@ -70,7 +70,6 @@ inline Position Resolve(const modern_menu::Item& item)
     case kContextWidgetToggleFileCategories: return {Group::Visibility, 0};
     case kContextWidgetToggleSearchBox: return {Group::Visibility, 10};
     case kContextWidgetToggleDateGroup: return {Group::Visibility, 20};
-    case kContextWidgetFolderPreview: return {Group::Visibility, 25};
     case kContextWidgetShowOnHoverOn:
     case kContextWidgetShowOnHoverOff: return {Group::Behavior, 0};
     case kContextWidgetToggleExpandOnHover: return {Group::Behavior, 10};

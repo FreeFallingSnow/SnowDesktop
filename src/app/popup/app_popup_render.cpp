@@ -2,7 +2,7 @@
 #include "common/l10n.h"
 #include "layout/collection_popup_layout.h"
 #include "layout/folder_preview_header_layout.h"
-#include "widget/runtime/widget_item_layout.h"
+#include "ui/menu/menu_fluent_glyphs.h"
 #include "settings/animation_settings.h"
 #include "common/utils.h"
 #include "layout/folder_sort_rules.h"
@@ -204,6 +204,12 @@ void DesktopApp::DrawCollectionPopup(
     }
 
     const auto& popupKeys = GetPopupItemKeysView(widget);
+    const auto drawPreviewMarquee = [&] {
+        if (folderPreview_ && marqueeActive_ && marqueeDockFolderPopup_)
+            DrawD2DFilledRectangle(ctx, marqueeRect_,
+                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.20f),
+                D2D1::ColorF(0.25f, 0.55f, 0.95f, 0.75f));
+    };
     if (!fan)
     {
         if (!inlinePreview)
@@ -228,37 +234,53 @@ void DesktopApp::DrawCollectionPopup(
                 &popupBackgroundAppearance, false, 0, popupMetrics.scale);
         }
 
-        RECT titleRect = snowdesktop::collection_popup_layout::
+        const RECT titleRect = snowdesktop::collection_popup_layout::
             ResolveTitleRect(presentedPanel, popupMetrics.scale,
-                dockFolderPopupOpen_ ? GetDockFolderPopupSortButtonRect(popupRect_).left -
+                dockFolderPopupOpen_ && !folderPreview_ ? GetDockFolderPopupSortButtonRect(popupRect_).left -
                     snowdesktop::collection_popup_layout::ScaleDimension(10, popupMetrics.scale)
                     : (std::numeric_limits<LONG>::max)());
         if (folderPreview_)
         {
-            const auto header = snowdesktop::folder_preview::ResolveHeader(
-                presentedPanel, popupMetrics.scale, folderPreview_->inlineCollapseButton);
-            const auto drawButton = [&](const wchar_t* label, const RECT& bounds) {
-                const bool hovered = popupAnimation_.IsInteractive() && PtInRect(&bounds, pointer);
-                DrawD2DRoundedRectangle(ctx, bounds, 6.0f * popupMetrics.scale,
-                    popupTextColor(hovered ? (lightTheme ? 0.08f : 0.13f) : 0.04f),
-                    popupTextColor(0.0f), 0.0f);
-                RECT text = bounds;
-                InflateRect(&text, -snowdesktop::collection_popup_layout::ScaleDimension(3, popupMetrics.scale), 0);
-                DrawD2DTextEllipsis(ctx, label, text,
-                    GetCollectionPopupTextFormat(popupMetrics.scale, false),
-                    popupTextColor(hovered ? 1.0f : 0.87f),
+            const auto drawNavigationButton = [&](const RECT& bounds, const wchar_t* label, IDWriteTextFormat* font) {
+                const bool hovered = PtInRect(&bounds, pointer) != FALSE;
+                if (hovered)
+                    DrawD2DRoundedRectangle(ctx, bounds, 5.0f * popupMetrics.scale,
+                        popupTextColor(0.10f), popupTextColor(0.0f), 0.0f);
+                DrawD2DTextEllipsis(ctx, label, bounds, font, popupTextColor(hovered ? 1.0f : 0.82f),
                     DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             };
-            drawButton(_LW("guide.back"), header.back);
-            drawButton(_LW("app.interact.open_in_explorer"), header.explorer);
-            drawButton(_LW("app.menu.sort_by"), header.sort);
-            titleRect = header.title;
+            auto* textFormat = GetCollectionPopupTextFormat(popupMetrics.scale, false);
+            const auto row = GetFolderPreviewNavigationRow(presentedPanel);
+            drawNavigationButton(row.back, L"←", textFormat);
+            drawNavigationButton(row.home,
+                snowdesktop::menu_fluent_glyphs::kCollection, fluentIconTextFormat_.Get());
+            const auto crumbs = GetFolderPreviewBreadcrumbs(presentedPanel);
+            for (size_t i = 0; i < crumbs.size(); ++i)
+            {
+                const auto& crumb = crumbs[i];
+                RECT label = crumb.bounds;
+                const LONG separator = snowdesktop::collection_popup_layout::ScaleDimension(12, popupMetrics.scale);
+                if (i != 0)
+                {
+                    const RECT chevron{label.left, label.top, std::min(label.right, label.left + separator), label.bottom};
+                    DrawD2DTextEllipsis(ctx, L"›", chevron, textFormat, popupTextColor(0.52f),
+                        DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                    label.left = chevron.right;
+                }
+                const bool hovered = i + 1 < crumbs.size() && PtInRect(&crumb.bounds, pointer);
+                if (hovered)
+                    DrawD2DRoundedRectangle(ctx, label, 5.0f * popupMetrics.scale,
+                        popupTextColor(0.10f), popupTextColor(0.0f), 0.0f);
+                InflateRect(&label, -snowdesktop::collection_popup_layout::ScaleDimension(3, popupMetrics.scale), 0);
+                DrawD2DTextEllipsis(ctx, crumb.label, label, textFormat, popupTextColor(0.90f),
+                    DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            }
         }
         std::wstring title = ShouldUseDemoCollectionIdentity(&widget)
             ? GetDemoCollectionCategoryTitle(widget)
             : (widget.title.empty()
                 ? _LW("app.overlay.collection_default") : widget.title);
-        DrawD2DTextEllipsis(
+        if (!inlinePreview) DrawD2DTextEllipsis(
             ctx, title, titleRect,
             GetCollectionPopupTextFormat(popupMetrics.scale, true),
             popupTextColor(1.0f),
@@ -339,7 +361,8 @@ void DesktopApp::DrawCollectionPopup(
 
     RECT content = GetCollectionPopupContentRect(popupRect_);
     if (motion) content = motion->Content(content, popupRect_);
-    if (auto* view = GetDateGroupedPopupView(popupRect_))
+    if (auto* view = GetHostedFolderMappingPopupView(popupRect_);
+        view && (!inlinePreview || (!dockFolderPopupLoading_ && dockFolderPopupAvailable_)))
     {
         const RECT frame = view->GetLayoutFrameRect();
         ctx->PushAxisAlignedClip(ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
@@ -348,6 +371,12 @@ void DesktopApp::DrawCollectionPopup(
         if (dragSession_.TargetContainer() == view)
             view->DrawDropPreview(ctx, dragSession_.TargetSlot(), dragSession_.TargetRegion());
         ctx->PopAxisAlignedClip();
+        if (inlinePreview)
+        {
+            ctx->PushAxisAlignedClip(ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            drawPreviewMarquee();
+            ctx->PopAxisAlignedClip();
+        }
         if (animationApplied) ctx->SetTransform(previousTransform);
         return;
     }
@@ -412,13 +441,8 @@ void DesktopApp::DrawCollectionPopup(
     const double fanOffset = fan ? GetCollectionPopupFanScrollOffset(popupRect_) : 0;
     const auto fanRange = snowdesktop::collection_popup_layout::FanVisibleRange(
         fanOffset, fanCapacity, popupItemCount);
-    const auto previewGrid = folderPreview_ && !UsesCollectionPopupList(widget)
-        ? std::optional{GetFolderPreviewGridLayout(popupRect_)}
-        : std::optional<snowdesktop::widget_item_layout::Layout>{};
-    const auto [firstItem, endItem] = previewGrid
-        ? snowdesktop::widget_item_layout::VisibleRange(*previewGrid, popupItemCount,
-            popupScrollOffset_, content.bottom - content.top)
-        : std::pair{fan ? fanRange.first : size_t{0}, fan ? fanRange.end : popupItemCount};
+    const size_t firstItem = fan ? fanRange.first : 0;
+    const size_t endItem = fan ? fanRange.end : popupItemCount;
     if (fan && !popupFanIconRecorder_ && d2dDevice_)
         (void)d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &popupFanIconRecorder_);
     const auto iconRecorder = popupFanIconRecorder_;
@@ -602,9 +626,7 @@ void DesktopApp::DrawCollectionPopup(
     };
     for (size_t i = firstItem; i < endItem; ++i)
     {
-        RECT itemRect = previewGrid
-            ? snowdesktop::widget_item_layout::ItemRect(*previewGrid, i, popupScrollOffset_)
-            : GetCollectionPopupItemRect(popupRect_, i);
+        RECT itemRect = GetCollectionPopupItemRect(popupRect_, i);
         if (itemRect.bottom <= content.top || itemRect.top >= content.bottom) continue;
 
         if (widget.type == DesktopWidgetType::FolderMapping)
@@ -785,6 +807,7 @@ void DesktopApp::DrawCollectionPopup(
             }
         });
     }
+    drawPreviewMarquee();
     ctx->PopAxisAlignedClip();
 
     if (!fan && widget.type == DesktopWidgetType::FolderMapping &&
