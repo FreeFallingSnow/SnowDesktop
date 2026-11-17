@@ -122,7 +122,7 @@ bool DesktopApp::SyncDesktopWidgetOcclusion(const DesktopWidget& widget, const R
     item.occluded = covered;
     snowdesktop::performance::Value("desktop", "widget_occluded", widget.id, covered ? 1 : 0);
     if (widgetSurfaceRenderer_)
-        widgetSurfaceRenderer_->SetPaused(item.renderTarget, covered);
+        widgetSurfaceRenderer_->SetPaused(item.renderTarget, covered || !item.visible);
     if (covered)
     {
         pendingDesktopWidgetCompositions_.erase(widget.id);
@@ -1014,6 +1014,8 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
         // Ownership survives eviction. Rebuild even when this widget lies
         // outside the current dirty rectangle; hidden data may have changed.
         pendingDesktopWidgetCompositions_.insert(widgetId);
+        if (widgetSurfaceRenderer_)
+            widgetSurfaceRenderer_->SetPaused(item.renderTarget, item.occluded);
     }
     else if (GetDesktopWidgetSurfaceBytes(widgetId) != 0)
     {
@@ -1028,11 +1030,19 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
     {
         desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
         item.presentingSrgb = false;
-        // Stop queued/in-flight publication. A later show gets a fresh target
-        // identity, so a late completion cannot open the hidden clip.
         item.hoverFade.reset();
-        (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
-        item.renderedContentId.clear();
+        if (desktopIconsHidden_ && item.renderedVisualAttached && widgetSurfaceRenderer_)
+        {
+            // Keep the presented body behind the closed clip. A brief desktop
+            // hide can show the same pixels while the worker refreshes them.
+            widgetSurfaceRenderer_->SetPaused(item.renderTarget, true);
+        }
+        else
+        {
+            // Reject late ready messages from a target that never appeared.
+            (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
+            item.renderedContentId.clear();
+        }
         item.iconBackdrops.Hide(desktopBackdropCompositor_);
     }
     if (!visible && item.clip)
@@ -1220,16 +1230,25 @@ void DesktopApp::TrimHiddenDesktopWidgetSurfaces()
         const auto& id = owners[release.index];
         auto& item = desktopWidgetCompositionItems_.at(id);
         HRESULT hr = S_OK;
-        if (item.surface)
+        if (item.renderTarget)
+        {
+            hr = RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
+            changed = true;
+        }
+        if (SUCCEEDED(hr) && item.surface)
         {
             // Resetting our ComPtr alone leaves the visual's reference alive.
             hr = item.visual->SetContent(nullptr);
             if (SUCCEEDED(hr))
             {
                 item.surface.Reset();
-                item.width = item.height = 0;
                 changed = true;
             }
+        }
+        if (!item.surface && !item.renderTarget)
+        {
+            item.width = item.height = 0;
+            item.renderedContentId.clear();
         }
         const auto marquees = widgetMarqueeCompositionItems_.find(id);
         if (SUCCEEDED(hr) && marquees != widgetMarqueeCompositionItems_.end())
