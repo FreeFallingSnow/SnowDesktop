@@ -8,17 +8,29 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 
 namespace snowdesktop
 {
 
 enum class ScrollContentAxis { Vertical, Horizontal };
 
+struct ScrollContentOpacityMask
+{
+    D2D1_RECT_F bounds;
+    D2D1_MATRIX_3X2_F transform;
+    float leading;
+    float trailing;
+    ScrollContentAxis axis;
+    std::shared_ptr<const ScrollContentOpacityMask> parent;
+};
+
 // Each native scrolling widget reuses its mask while the viewport and edge
 // distances are unchanged. A new D2D device must never reuse the old brush.
 class ScrollContentFadeCache
 {
     friend class ScrollContentClip;
+    friend class HighlightCoverage;
 
     ID2D1LinearGradientBrush* Resolve(ID2D1DeviceContext* context,
         const D2D1_RECT_F& viewport, float leading, float trailing,
@@ -107,6 +119,12 @@ public:
             static_cast<float>(contentExtent) - extent - offset, 0.0f, length);
         auto* brush = cache.Resolve(context_, bounds, leading, trailing, axis);
         if (!brush) return;
+        D2D1_MATRIX_3X2_F transform{};
+        context_->GetTransform(&transform);
+        opacityMask_ = std::make_shared<ScrollContentOpacityMask>(ScrollContentOpacityMask{
+            bounds, transform, leading, trailing, axis, CurrentOpacityMask(context_)});
+        previousMaskScope_ = currentMaskScope_;
+        currentMaskScope_ = this;
         context_->PushLayer(D2D1::LayerParameters1(bounds, nullptr,
             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::Matrix3x2F::Identity(),
             1.0f, brush), nullptr);
@@ -116,17 +134,31 @@ public:
     ~ScrollContentClip()
     {
         if (!context_) return;
-        if (layerPushed_) context_->PopLayer();
+        if (layerPushed_)
+        {
+            currentMaskScope_ = previousMaskScope_;
+            context_->PopLayer();
+        }
         context_->PopAxisAlignedClip();
     }
 
     ScrollContentClip(const ScrollContentClip&) = delete;
     ScrollContentClip& operator=(const ScrollContentClip&) = delete;
 
+    static std::shared_ptr<const ScrollContentOpacityMask> CurrentOpacityMask(ID2D1RenderTarget* target)
+    {
+        for (auto* scope = currentMaskScope_; scope; scope = scope->previousMaskScope_)
+            if (scope->context_ == target) return scope->opacityMask_;
+        return {};
+    }
+
 private:
     ID2D1DeviceContext* context_;
     ScopedIconBackdropClip backdropClip_;
     bool layerPushed_ = false;
+    std::shared_ptr<const ScrollContentOpacityMask> opacityMask_;
+    const ScrollContentClip* previousMaskScope_ = nullptr;
+    inline static thread_local const ScrollContentClip* currentMaskScope_ = nullptr;
 };
 
 } // namespace snowdesktop

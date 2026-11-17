@@ -906,7 +906,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
             L":" + ToUpperInvariant(reference);
         if (IsCollectionPopupInteractive() &&
             dockFolderPopupOpen_ &&
-            dockFolderPopupSourceId_ == sourceId &&
+            GetDockFolderPopupEntrySourceId() == sourceId &&
             collectionPopupDockHost_ == requestedDockHost)
             CloseCollectionPopup();
         else
@@ -999,8 +999,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         if (popupWidget && IsCollectionPopupInteractive())
         {
             const RECT popup = GetCollectionPopupRect(*popupWidget);
-            const RECT viewport = snowdesktop::popup_scrollbar_layout::Viewport(
-                popup, GetCollectionPopupContentRect(popup));
+            const RECT viewport = GetCollectionPopupScrollbarViewport(popup);
             const int visible = std::max<int>(
                 1, viewport.bottom - viewport.top);
             const int maximum = GetCollectionPopupMaxScrollOffset(
@@ -1024,6 +1023,8 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         snowdesktop::private_pointer::ReleasePointerCapture();
         if (folderPreview_ && folderPreview_->inlineBounds)
             (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+        else if (ShouldShowFloatingPopupWindow())
+            InvalidateFloatingPopupWindow(true);
         else
             InvalidateRect(hwnd_, nullptr, FALSE);
         return;

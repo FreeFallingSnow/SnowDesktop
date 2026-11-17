@@ -971,6 +971,8 @@ ShowDockFolderPopupContextMenu(
     const std::vector<std::wstring>
         selectedPaths =
             GetSelectedFolderEntryPaths();
+    POINT clientPoint = screenPoint;
+    ScreenToClient(hwnd_, &clientPoint);
     const bool singleSelection =
         selectedPaths.size() == 1;
     const bool hasSelection =
@@ -1024,6 +1026,8 @@ ShowDockFolderPopupContextMenu(
                 : MF_STRING | MF_GRAYED,
             kContextOpenCommand,
             _LW("app.menu.open"));
+        if (canOpen && singleSelection)
+            AppendFolderPreviewOpenMenuItem(menu, clientPoint, selectedPaths.front());
         AppendMenuW(
             menu,
             hasSelection
@@ -1239,6 +1243,9 @@ ShowDockFolderPopupContextMenu(
     case kFileRedoCommand:
         if (!QueueFileHistory(command == kFileRedoCommand)) MessageBeep(MB_ICONWARNING);
         break;
+    case kContextFolderPreviewOpen:
+        if (singleSelection) TryFolderPreviewDoubleClick(clientPoint, 0, selectedPaths.front());
+        return;
     case kContextOpenCommand:
         if (!canOpen)
             break;

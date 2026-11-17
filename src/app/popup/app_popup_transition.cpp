@@ -96,8 +96,15 @@ RECT Transition::ReservedPanel(RECT target) const
 
 RECT Transition::Content(RECT target, RECT layoutPanel) const
 {
-    return Targets({layoutPanel, target})
-        ? Interpolate(from_.content, target, progress_.Amount()) : target;
+    if (!Targets({layoutPanel, target})) return target;
+    const RECT panel = Panel(layoutPanel);
+    // The new page's chrome is already visible. Its insets stay attached to
+    // the moving frame even if the old page had a different header.
+    const LONG top = panel.top + target.top - layoutPanel.top;
+    const LONG left = panel.left + target.left - layoutPanel.left;
+    return {left, top,
+        std::max(left, panel.right - (layoutPanel.right - target.right)),
+        std::max(top, panel.bottom - (layoutPanel.bottom - target.bottom))};
 }
 }
 
@@ -438,6 +445,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     GetCategorizedPopupView();
     popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
         GetCollectionPopupMaxScrollOffset(widgets_[widgetIndex], popupRect_));
+    (void)ResumeFolderPreviewForPopup(widgets_[widgetIndex].id, {});
     StartCollectionPopupAnimation();
     if (popupAnchoredToDock_)
     {

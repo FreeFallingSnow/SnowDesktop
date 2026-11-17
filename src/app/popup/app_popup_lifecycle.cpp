@@ -131,7 +131,7 @@ TryActivateDockPopupFromMenuPointerPress(
         L":" + ToUpperInvariant(entry.reference);
     if (IsCollectionPopupInteractive() &&
         dockFolderPopupOpen_ &&
-        dockFolderPopupSourceId_ == sourceId &&
+        GetDockFolderPopupEntrySourceId() == sourceId &&
         collectionPopupDockHost_ == requestedDockHost)
     {
         CloseCollectionPopup();
@@ -201,8 +201,18 @@ void DesktopApp::OpenDockFolderPopupAt(
         }
     }
     const bool sameSource = dockFolderPopupOpen_ &&
-        dockFolderPopupSourceId_ == sourceId &&
+        GetDockFolderPopupEntrySourceId() == sourceId &&
         collectionPopupDockHost_ == requestedDockHost;
+    if (sameSource && folderPreview_)
+    {
+        if (popupAnimation_.IsClosing())
+        {
+            pendingCollectionPopupOpen_.reset();
+            StartCollectionPopupAnimation(true);
+            UpdateFloatingPopupWindowBounds(true);
+        }
+        return;
+    }
     if (!sameSource && GetOpenPopupWidget() &&
         snowdesktop::popup_animation_rules::OccludesSurface(popupAnimation_))
     {
@@ -421,7 +431,8 @@ void DesktopApp::OpenDockFolderPopupAt(
     SyncFolderChangeNotifications();
     // Prepare the model/geometry without revealing a loading frame under the
     // previous timeline. Start the new animation before presenting the host.
-    RefreshDockFolderPopup(nullptr, false);
+    if (!ResumeFolderPreviewForPopup({}, dockFolderPopupMappingWidgetId_))
+        RefreshDockFolderPopup(nullptr, false);
     StartCollectionPopupAnimation(
         reverseClosingAnimation);
     if (popupAnchoredToDock_)
@@ -578,6 +589,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
         !dockFolderPopupOpen_ && !dockTrayPopup_ && !pendingOpen)
     {
         if (!IsRectEmptyRect(previewBounds)) InvalidateCollectionPopupDesktopScene(previewBounds);
+        ResumeInlineFolderPreview();
         return;
     }
     ResetDockTrayPopup();
@@ -596,6 +608,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     dockFolderPopupDragItems_.clear();
     dockFolderPopupMarqueeInitialSelection_.clear();
     ClearDockFolderPopupEntries();
+    dockFolderPopupWidget_ = {};
     marqueeDockFolderPopup_ = false;
     popupScrollOffset_ = 0;
     ResetCollectionPopupFanScroll();
@@ -645,6 +658,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
                 pendingOpen->categoryId);
         }
     }
+    else ResumeInlineFolderPreview();
 }
 
 void DesktopApp::ClearDockFolderPopupEntries()

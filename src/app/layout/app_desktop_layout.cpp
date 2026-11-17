@@ -333,6 +333,7 @@ void DesktopApp::RebuildContainersAndItems()
             const auto* dock = dynamic_cast<const DockContainer*>(container.get());
             return dock && dock->IsEntryRemovalAnimating();
         })) EnsureUiAnimationFrame();
+    ResumeInlineFolderPreview();
 }
 
 /**

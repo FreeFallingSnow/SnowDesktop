@@ -149,6 +149,7 @@ void DesktopApp::ShowItemContextMenu(
         return;
     }
     const std::wstring menuItemKey = items_[itemIndex].layoutKey;
+    const std::wstring menuParsingPath = items_[itemIndex].parsingName;
     PrepareMenuIconsForPoint(screenPoint);
 
     const bool dockMapping =
@@ -417,6 +418,9 @@ void DesktopApp::ShowItemContextMenu(
     }
     AppendMenuW(menu, canOpen ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextOpenCommand, _LW("app.menu.open"));
+    if (canOpen && !keepQuickNavigationOpen && !dockEntryIndex && !dockMappingEntryIndex &&
+        !dockFrequentItem && !dockApplicationItem && !namespaceItem)
+        AppendFolderPreviewOpenMenuItem(menu, clientPoint, menuParsingPath);
     if (canConvertFolderMapping)
         AppendMenuW(menu, MF_STRING, kContextAddFolderMappingWidget,
             _LW("app.menu.convert_folder_mapping"));
@@ -943,6 +947,9 @@ void DesktopApp::ShowItemContextMenu(
             if (!SetLargeIconConfigs(changes)) snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
         }
         break;
+    case kContextFolderPreviewOpen:
+        TryFolderPreviewDoubleClick(clientPoint, 0, menuParsingPath);
+        return;
     case kContextOpenCommand:
     {
         if (!canOpen)

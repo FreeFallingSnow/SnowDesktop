@@ -200,7 +200,8 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
     {
         RECT popup =
             GetCollectionPopupRect(*popupWidget);
-        if (PtInRect(&popup, pt))
+        const auto presented = GetPresentedCollectionPopupGeometry();
+        if (PtInRect(&presented.panel, pt))
         {
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
             if (auto* group = GetGroupPopupView())
@@ -215,7 +216,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                     else group->InvalidateSlots();
                 }
                 (void)refreshDragAfterScroll();
-                InvalidateRect(hwnd_, nullptr, FALSE);
+                (void)PresentDesktopForegroundComposition(presented.panel);
                 return;
             }
             if (auto* view = GetCategorizedPopupView())
@@ -224,12 +225,12 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                 if (view->IsSearchActive() && view->SetFolderSearchScrollOffset(view->GetScrollOffset() - delta / 2))
                 {
                     (void)refreshDragAfterScroll();
-                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    (void)PresentDesktopForegroundComposition(presented.panel);
                     return;
                 }
                 if (view->TryScrollTabs(pt, delta))
                 {
-                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    (void)PresentDesktopForegroundComposition(presented.panel);
                     return;
                 }
             }
@@ -254,7 +255,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             if (folderPreview_ && folderPreview_->inlineBounds)
                 (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
             else
-                (void)PresentDesktopForegroundComposition(popup);
+                (void)PresentDesktopForegroundComposition(presented.panel);
             return;
         }
     }

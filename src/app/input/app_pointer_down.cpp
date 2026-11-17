@@ -176,7 +176,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         if (folderPreview_) folderPreview_->keyboardFocused = IsPointOccludedByOpenPopup(pt);
         if (HandleFolderPreviewHeaderPress(pt)) return;
     }
-    const bool inlinePreviewChromePress = folderPreview_ && folderPreview_->inlineBounds &&
+    const bool inlineFolderPreview = folderPreview_ && folderPreview_->inlineBounds;
+    const bool inlinePreviewChromePress = inlineFolderPreview &&
         (PtInRect(&folderPreview_->inlineTitleBar, pt) ||
             PtInRect(&folderPreview_->inlineResizeHandle, pt) || PtInRect(&folderPreview_->inlineCollapseButton, pt));
     auto* popupGroup = IsPointOccludedByOpenPopup(pt) ? GetGroupPopupView() : nullptr;
@@ -215,7 +216,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 pressedOpenPopupFolderToggle =
                     IsCollectionPopupInteractive() &&
                     dockFolderPopupOpen_ &&
-                    dockFolderPopupSourceId_ == sourceId &&
+                    GetDockFolderPopupEntrySourceId() == sourceId &&
                     popupOwnedByPointDock;
             }
         }
@@ -338,12 +339,10 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             collectionPopupClosedByPointerDown = true;
         }
     }
-    else if (!folderPreview_ && IsCollectionPopupInteractive() &&
+    else if (!inlineFolderPreview && IsCollectionPopupInteractive() &&
         dockFolderPopupOpen_)
     {
-        const RECT popup =
-            GetCollectionPopupRect(
-                dockFolderPopupWidget_);
+        const RECT popup = GetPresentedCollectionPopupGeometry().panel;
         if (!PtInRect(&popup, pt) &&
             !pressedOpenPopupFolderToggle)
         {
@@ -401,8 +400,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     return;
                 }
             }
-            const RECT viewport = snowdesktop::popup_scrollbar_layout::Viewport(
-                popup, GetCollectionPopupContentRect(popup));
+            const RECT viewport = GetCollectionPopupScrollbarViewport(popup);
             const float scrollbarScale = GetOpenCollectionPopupLayoutMetrics().scale;
             const int visible = std::max<int>(
                 1, viewport.bottom - viewport.top);

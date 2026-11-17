@@ -2,6 +2,7 @@
 
 #include "common/types.h"
 #include "core/widget.h"
+#include "data/folder_preview_view_state.h"
 #include "layout/collection_popup_types.h"
 #include "app/popup/popup_resize_transition.h"
 
@@ -43,14 +44,10 @@ struct Breadcrumb
 
 struct Session
 {
-    struct Page
-    {
-        std::wstring path;
-        int scroll = 0;
-    };
+    std::wstring viewKey;
     std::wstring sourceWidgetId;
     std::wstring hostWidgetId;
-    std::vector<Page> pages;
+    std::vector<ViewPage> pages;
     std::optional<RECT> inlineBounds;
     RECT inlineCollapseButton{};
     RECT inlineResizeHandle{};

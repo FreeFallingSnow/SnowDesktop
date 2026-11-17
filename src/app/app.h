@@ -2623,11 +2623,29 @@ private:
     void RefreshCollectionPopupAnimationContent();
     /** @brief 撤下弹窗动画并使旧内容失效，保留有界的可复用存储。 */
     void ResetCollectionPopupAnimationCache();
-    bool TryFolderPreviewDoubleClick(POINT point, WPARAM keyState);
+    struct FolderPreviewTarget
+    {
+        std::wstring path;
+        std::wstring desktopKey;
+        std::wstring sourceId;
+        std::wstring hostId;
+        std::optional<RECT> inlineBounds;
+        bool knownDirectory = false;
+        bool directoryShortcut = false;
+        bool inPopup = false;
+    };
+    static constexpr UINT kContextFolderPreviewOpen = 41074;
+    std::optional<FolderPreviewTarget> FindFolderPreviewTargetAtPoint(POINT point);
+    void AppendFolderPreviewOpenMenuItem(HMENU menu, POINT point, const std::wstring& path);
+    bool TryFolderPreviewDoubleClick(POINT point, WPARAM keyState, const std::wstring& menuPath = {});
     bool HandleFolderPreviewHeaderPress(POINT point);
-    void ShowFolderPreviewDirectory(const std::wstring& path, bool fromFan = false);
+    void ShowFolderPreviewDirectory(const std::wstring& path, bool fromFan = false, bool present = true);
     void NavigateFolderPreviewBack();
     void DiscardFolderPreview();
+    void SaveFolderPreviewView();
+    void SuspendDockFolderPreviewHome(snowdesktop::folder_preview::Session& session);
+    bool ResumeFolderPreviewForPopup(const std::wstring& hostId, const std::wstring& sourceId);
+    void ResumeInlineFolderPreview();
     void RestoreFolderPreviewHome(bool present);
     const snowdesktop::popup_resize_transition::Transition* GetCollectionPopupResizeTransition() const;
     snowdesktop::popup_resize_transition::Geometry GetPresentedCollectionPopupGeometry() const;
@@ -3054,6 +3072,10 @@ private:
     {
         return IsCollectionPopupInteractive() && (!folderPreview_ || folderPreview_->keyboardFocused);
     }
+    const std::wstring& GetDockFolderPopupEntrySourceId() const
+    {
+        return folderPreview_ && folderPreview_->folderHome ? folderPreview_->folderHome->dockSourceId : dockFolderPopupSourceId_;
+    }
     DesktopWidget* ResolveWidgetContentViewData(DesktopWidget* widget) const;
     const DesktopWidget* ResolveWidgetContentViewData(const DesktopWidget* widget) const
     {
@@ -3220,10 +3242,12 @@ private:
             POINT point, const RECT& popup) const;
     /** @brief 获取集合弹出面板中内容区域的矩形。 @param popup 面板矩形 @return 内容矩形 */
     RECT GetCollectionPopupContentRect(const RECT& popup) const;
+    RECT GetCollectionPopupScrollbarViewport(const RECT& popup) const;
     /** @brief 获取集合弹出面板中的列数。 @param popup 面板矩形 @return 列数 */
     int GetCollectionPopupColumnCount(const RECT& popup) const;
     /** @brief 获取集合弹出面板中的行数。 @param widget 部件引用 @param popup 面板矩形 @return 行数 */
     int GetCollectionPopupRowCount(const DesktopWidget& widget, const RECT& popup) const;
+    int GetCollectionPopupContentHeight(const DesktopWidget& widget, const RECT& popup, const RECT& content) const;
     /** @brief 获取集合弹出面板中内容的最大滚动偏移。 @param widget 部件引用 @param popup 面板矩形 @return 最大滚动偏移 */
     int GetCollectionPopupMaxScrollOffset(const DesktopWidget& widget, const RECT& popup) const;
     /** @brief 获取集合弹出面板中指定项的矩形。 @param popup 面板矩形 @param linearIndex 项索引 @return 项矩形 */
@@ -3489,6 +3513,7 @@ private:
     ComPtr<IDWriteTextFormat> itemTextFormat_;
     ComPtr<IDWriteTextFormat> collectionPopupTitleTextFormat_;
     ComPtr<IDWriteTextFormat> collectionPopupControlTextFormat_;
+    snowdesktop::ScrollContentFadeCache collectionPopupScrollFadeCache_;
     std::uint64_t collectionPopupFontRevision_ = 0;
     ComPtr<IDWriteTextFormat> componentListTextFormat_;
     ComPtr<IDWriteTextFormat> fanTitleTextFormat_;
@@ -4531,6 +4556,7 @@ private:
     std::optional<snowdesktop::folder_preview::Session> folderPreview_;
     std::shared_ptr<snowdesktop::popup_resize_transition::Transition> folderPreviewPopupResize_;
     snowdesktop::folder_preview::SortPreferences folderPreviewSort_;
+    snowdesktop::folder_preview::ViewPreferences folderPreviewViews_;
     std::shared_ptr<DockTrayPopupState> dockTrayPopup_;
     bool dockFolderPopupAvailable_ = false;
     bool dockFolderPopupLoading_ = false;

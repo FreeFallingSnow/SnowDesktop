@@ -47,7 +47,7 @@ void DesktopApp::DrawStaticBackground(
 
     const bool suppressDesktopWidgetTargets = SuppressDesktopWidgetDragTargets();
     const bool popupOccludesPointer =
-        IsPointOccludedByOpenPopup(lastMousePoint_);
+        !(folderPreview_ && folderPreview_->inlineBounds) && IsPointOccludedByOpenPopup(lastMousePoint_);
     const POINT interactionMousePoint = lastMousePoint_;
     if (suppressDesktopWidgetTargets)
         lastMousePoint_ = { LONG_MIN, LONG_MIN };
@@ -131,10 +131,7 @@ void DesktopApp::DrawStaticBackground(
         // artifact at the desktop origin.
         const RECT widgetFrame =
             GetStandaloneWidgetFrameRect(widgetData);
-        const bool popupOpen =
-            (popupWidgetIndex_ < widgets_.size() && widgetIndex == popupWidgetIndex_) ||
-            (folderPreview_ && folderPreview_->inlineBounds &&
-                folderPreview_->hostWidgetId == widgetData.id);
+        const bool popupOpen = popupWidgetIndex_ < widgets_.size() && widgetIndex == popupWidgetIndex_;
         const bool interactionPinned =
             !interactionPinnedWidgetId_.empty() &&
             widgetData.id == interactionPinnedWidgetId_;

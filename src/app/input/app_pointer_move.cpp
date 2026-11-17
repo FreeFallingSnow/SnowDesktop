@@ -513,8 +513,7 @@ void DesktopApp::OnMouseMoveAt(
         if (popupWidget)
         {
             const RECT popup = GetCollectionPopupRect(*popupWidget);
-            const RECT viewport = snowdesktop::popup_scrollbar_layout::Viewport(
-                popup, GetCollectionPopupContentRect(popup));
+            const RECT viewport = GetCollectionPopupScrollbarViewport(popup);
             const int visible = std::max<int>(
                 1, viewport.bottom - viewport.top);
             const int maximum = GetCollectionPopupMaxScrollOffset(

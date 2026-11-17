@@ -1,12 +1,13 @@
 #pragma once
 
-#include "ui/render/icon_backdrop_clip.h"
+#include "ui/render/scroll_content_clip.h"
 
 #include <d2d1_1.h>
 #include <d2d1_1helper.h>
 #include <dxgi.h>
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 #include <vector>
 
 namespace snowdesktop
@@ -22,6 +23,7 @@ class HighlightCoverage
         D2D1_RECT_F destination{};
         D2D1_MATRIX_3X2_F transform{};
         std::optional<IconBackdropClip> clip;
+        std::shared_ptr<const ScrollContentOpacityMask> scrollOpacity;
         float stroke = 0.f;
     };
 
@@ -180,8 +182,30 @@ public:
         const auto offset = D2D1::Matrix3x2F::Translation(
             static_cast<float>(outputOrigin.x - sourceOrigin.x),
             static_cast<float>(outputOrigin.y - sourceOrigin.y));
+        std::unordered_map<const ScrollContentOpacityMask*, ScrollContentFadeCache> fadeBrushes;
+        const ScrollContentOpacityMask* activeFade = nullptr;
+        std::size_t fadeLayers = 0;
         for (const auto& draw : draws_)
         {
+            if (activeFade != draw.scrollOpacity.get())
+            {
+                while (fadeLayers > 0)
+                {
+                    target->PopLayer();
+                    --fadeLayers;
+                }
+                activeFade = draw.scrollOpacity.get();
+                for (auto* fade = activeFade; fade; fade = fade->parent.get())
+                {
+                    auto& cache = fadeBrushes.try_emplace(fade).first->second;
+                    auto* opacity = cache.Resolve(target, fade->bounds, fade->leading, fade->trailing, fade->axis);
+                    if (!opacity) continue;
+                    target->SetTransform(*D2D1::Matrix3x2F::ReinterpretBaseType(&fade->transform) * offset);
+                    target->PushLayer(D2D1::LayerParameters1(fade->bounds, nullptr,
+                        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::Matrix3x2F::Identity(), 1.0f, opacity), nullptr);
+                    ++fadeLayers;
+                }
+            }
             target->SetTransform(*D2D1::Matrix3x2F::ReinterpretBaseType(&draw.transform) * offset);
             std::size_t layers = 0;
             if (draw.clip)
@@ -214,6 +238,7 @@ public:
             for (std::size_t i = 0; i < layers; ++i) target->PopLayer();
             if (draw.clip) target->PopAxisAlignedClip();
         }
+        for (std::size_t i = 0; i < fadeLayers; ++i) target->PopLayer();
         target->SetTransform(D2D1::Matrix3x2F::Identity());
         return S_OK;
     }
@@ -232,6 +257,8 @@ private:
     {
         scope.target_->GetTransform(&draw.transform);
         draw.clip = ScopedIconBackdropClip::Current(scope.target_);
+        if (draw.clip && IsRectEmpty(&draw.clip->bounds)) return;
+        draw.scrollOpacity = ScrollContentClip::CurrentOpacityMask(scope.target_);
         scope.coverage_.draws_.push_back(std::move(draw));
     }
 

@@ -1199,6 +1199,7 @@ void DesktopApp::RequestExit()
 void DesktopApp::CompleteExitRequest()
 {
     if (exitRequested_) return;
+    SaveFolderPreviewView();
     exitRequested_ = true;
     steamPresenceService_.reset();
     if (steamEntitlementService_) steamEntitlementService_->Stop();

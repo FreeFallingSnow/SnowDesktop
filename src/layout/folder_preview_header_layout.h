@@ -20,6 +20,9 @@ inline int NavigationRowHeight(float tabHeightCu, float scale)
     return ScaleWidgetCu(collection_group_rules::ResolveCategorizedControlMetrics(tabHeightCu).searchBoxHeightCu, scale);
 }
 
+inline constexpr int kPopupNavigationTitleInsetCu = 7;
+inline constexpr int kPopupNavigationBottomGapCu = 6;
+
 inline NavigationRow ResolveNavigationRow(const RECT& frame, LONG top, float tabHeightCu, float scale)
 {
     using collection_popup_layout::ScaleDimension;

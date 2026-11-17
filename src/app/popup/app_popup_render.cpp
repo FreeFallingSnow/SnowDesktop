@@ -2,7 +2,7 @@
 #include "common/l10n.h"
 #include "layout/collection_popup_layout.h"
 #include "layout/folder_preview_header_layout.h"
-#include "ui/menu/menu_fluent_glyphs.h"
+#include "widget/runtime/widget_item_layout.h"
 #include "settings/animation_settings.h"
 #include "common/utils.h"
 #include "layout/folder_sort_rules.h"
@@ -234,7 +234,7 @@ void DesktopApp::DrawCollectionPopup(
                 &popupBackgroundAppearance, false, 0, popupMetrics.scale);
         }
 
-        const RECT titleRect = snowdesktop::collection_popup_layout::
+        RECT titleRect = snowdesktop::collection_popup_layout::
             ResolveTitleRect(presentedPanel, popupMetrics.scale,
                 dockFolderPopupOpen_ && !folderPreview_ ? GetDockFolderPopupSortButtonRect(popupRect_).left -
                     snowdesktop::collection_popup_layout::ScaleDimension(10, popupMetrics.scale)
@@ -242,6 +242,11 @@ void DesktopApp::DrawCollectionPopup(
         if (folderPreview_)
         {
             const auto row = GetFolderPreviewNavigationRow(presentedPanel);
+            if (!inlinePreview)
+            {
+                titleRect.left = row.bounds.left + ScaleWidgetCu(4.0f, row.scale);
+                titleRect.bottom = std::min(titleRect.bottom, row.bounds.top - ScaleWidgetCu(2.0f, row.scale));
+            }
             const auto controlColor = [&](float alpha) {
                 return lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, alpha)
                                   : D2D1::ColorF(1.0f, 1.0f, 1.0f, alpha);
@@ -255,16 +260,37 @@ void DesktopApp::DrawCollectionPopup(
             if (!IsRectEmpty(&row.bounds))
                 DrawD2DRoundedRectangle(ctx, row.bounds, static_cast<float>(ScaleWidgetCu(8.0f, row.scale)),
                     controlColor(lightTheme ? 0.035f : 0.05f), controlColor(lightTheme ? 0.14f : 0.20f), 1.0f);
-            const auto drawNavigationButton = [&](const RECT& bounds, const wchar_t* label, IDWriteTextFormat* font) {
+            const auto drawNavigationButton = [&](const RECT& bounds, bool home) {
+                if (IsRectEmpty(&bounds)) return;
                 const bool hovered = PtInRect(&bounds, pointer) != FALSE;
                 if (hovered) highlight(bounds);
-                DrawD2DTextEllipsis(ctx, label, bounds, font, controlColor(hovered ? 1.0f : 0.82f),
-                    DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                ComPtr<ID2D1SolidColorBrush> brush;
+                if (FAILED(ctx->CreateSolidColorBrush(controlColor(hovered ? 1.0f : 0.82f), &brush))) return;
+                const float centerX = (bounds.left + bounds.right) * 0.5f;
+                const float centerY = (bounds.top + bounds.bottom) * 0.5f;
+                const auto line = [&](float x1, float y1, float x2, float y2) {
+                    ctx->DrawLine(D2D1::Point2F(centerX + x1 * row.scale, centerY + y1 * row.scale),
+                        D2D1::Point2F(centerX + x2 * row.scale, centerY + y2 * row.scale),
+                        brush.Get(), std::max(1.0f, 1.25f * row.scale));
+                };
+                if (home)
+                {
+                    line(-6, 0, 0, -6);
+                    line(0, -6, 6, 0);
+                    line(-4.5f, -1.5f, -4.5f, 5.5f);
+                    line(4.5f, -1.5f, 4.5f, 5.5f);
+                    line(-4.5f, 5.5f, 4.5f, 5.5f);
+                }
+                else
+                {
+                    line(-5.5f, 0, 5.5f, 0);
+                    line(-5.5f, 0, -1, -4.5f);
+                    line(-5.5f, 0, -1, 4.5f);
+                }
             };
             auto* textFormat = GetCollectionPopupTextFormat(row.scale, false);
-            drawNavigationButton(row.back, L"←", GetCollectionPopupTextFormat(row.scale, true));
-            drawNavigationButton(row.home,
-                snowdesktop::menu_fluent_glyphs::kCollection, fluentIconTextFormat_.Get());
+            drawNavigationButton(row.back, false);
+            drawNavigationButton(row.home, true);
             const LONG dividerInset = ScaleWidgetCu(8.0f, row.scale);
             if (!IsRectEmpty(&row.home) && !IsRectEmpty(&row.breadcrumb))
                 DrawD2DSeparator(ctx, {row.home.right, row.home.top + dividerInset,
@@ -373,12 +399,14 @@ void DesktopApp::DrawCollectionPopup(
 
     }
 
-    RECT content = GetCollectionPopupContentRect(popupRect_);
+    const RECT targetContent = GetCollectionPopupContentRect(popupRect_);
+    RECT content = targetContent;
     if (motion) content = motion->Content(content, popupRect_);
     if (auto* view = GetHostedFolderMappingPopupView(popupRect_);
         view && (!inlinePreview || (!dockFolderPopupLoading_ && dockFolderPopupAvailable_)))
     {
         const RECT frame = view->GetLayoutFrameRect();
+        const snowdesktop::ScopedIconBackdropClip highlightClip(ctx, frame);
         ctx->PushAxisAlignedClip(ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         view->DrawContent(ctx, frame);
         view->DrawScrollbar(ctx, PtInRect(&frame, lastMousePoint_) != FALSE);
@@ -396,10 +424,10 @@ void DesktopApp::DrawCollectionPopup(
     }
     if (auto* group = GetGroupPopupView())
     {
-        const RECT frame = GetCategorizedPopupFrame(popupRect_);
+        const RECT frame = GetCategorizedPopupFrame(presentedPanel);
         group->SetPopupFrame(&frame);
-        const RECT clip = motion ? GetCategorizedPopupFrame(presentedPanel) : frame;
-        ctx->PushAxisAlignedClip(ToD2DRect(clip), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        const snowdesktop::ScopedIconBackdropClip highlightClip(ctx, frame);
+        ctx->PushAxisAlignedClip(ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         group->DrawContent(ctx, frame);
         group->DrawScrollbar(ctx, PtInRect(&frame, lastMousePoint_) != FALSE);
         if (dragSession_.TargetContainer() == group)
@@ -410,12 +438,17 @@ void DesktopApp::DrawCollectionPopup(
     }
     if (auto* view = GetCategorizedPopupView())
     {
-        const RECT controls = GetCollectionPopupControlsRect(presentedPanel);
-        const RECT frame = GetCategorizedPopupFrame(presentedPanel);
-        CategorizedPopupScope scope(view, frame);
-        ctx->PushAxisAlignedClip(ToD2DRect(controls), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        view->DrawContent(ctx, frame);
-        ctx->PopAxisAlignedClip();
+        RECT controls = GetCollectionPopupControlsRect(presentedPanel);
+        controls.bottom = std::min(controls.bottom, content.top);
+        if (!IsRectEmpty(&controls))
+        {
+            const RECT frame = GetCategorizedPopupFrame(presentedPanel);
+            CategorizedPopupScope scope(view, frame);
+            const snowdesktop::ScopedIconBackdropClip highlightClip(ctx, controls);
+            ctx->PushAxisAlignedClip(ToD2DRect(controls), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            view->DrawContent(ctx, frame);
+            ctx->PopAxisAlignedClip();
+        }
     }
     DesktopWidget popupListStyle;
     popupListStyle.type = widget.type;
@@ -449,14 +482,37 @@ void DesktopApp::DrawCollectionPopup(
         popupListRenderer.DrawDetailsHeader(
             ctx, content, collectionPopupLightTheme_);
     }
-    ctx->PushAxisAlignedClip(ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    std::optional<snowdesktop::ScrollContentClip> scrollClip;
+    if (fan) ctx->PushAxisAlignedClip(ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    else scrollClip.emplace(ctx, collectionPopupScrollFadeCache_, content, popupScrollOffset_,
+        GetCollectionPopupContentHeight(widget, popupRect_, targetContent), static_cast<float>(ScaleWidgetCu(16.0f, popupMetrics.scale)));
     const size_t popupItemCount = GetPopupItemCount(widget);
     const size_t fanCapacity = GetCollectionPopupFanVisibleCount(popupRect_);
     const double fanOffset = fan ? GetCollectionPopupFanScrollOffset(popupRect_) : 0;
     const auto fanRange = snowdesktop::collection_popup_layout::FanVisibleRange(
         fanOffset, fanCapacity, popupItemCount);
-    const size_t firstItem = fan ? fanRange.first : 0;
-    const size_t endItem = fan ? fanRange.end : popupItemCount;
+    size_t firstItem = fan ? fanRange.first : 0;
+    size_t endItem = fan ? fanRange.end : popupItemCount;
+    if (!fan)
+    {
+        const int visibleHeight = std::max(0, static_cast<int>(content.bottom - content.top));
+        if (UsesCollectionPopupList(widget))
+        {
+            const auto layout = snowdesktop::widget_item_layout::ResolveList(targetContent,
+                snowdesktop::collection_popup_layout::ResolveListRowHeight(popupMetrics, listItemFontSizeCu_),
+                GetListSpacing(), snowdesktop::list_detail_rules::ListColumns(widget));
+            std::tie(firstItem, endItem) = snowdesktop::widget_item_layout::VisibleRange(
+                layout, popupItemCount, popupScrollOffset_, visibleHeight);
+        }
+        else
+        {
+            const int columns = GetCollectionPopupColumnCount(popupRect_);
+            const int stride = std::max(1, popupMetrics.cellHeight + popupMetrics.gapY);
+            firstItem = std::min(popupItemCount, static_cast<size_t>(popupScrollOffset_ / stride) * columns);
+            endItem = std::min(popupItemCount,
+                static_cast<size_t>((popupScrollOffset_ + visibleHeight + stride - 1) / stride) * columns);
+        }
+    }
     if (fan && !popupFanIconRecorder_ && d2dDevice_)
         (void)d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &popupFanIconRecorder_);
     const auto iconRecorder = popupFanIconRecorder_;
@@ -822,7 +878,8 @@ void DesktopApp::DrawCollectionPopup(
         });
     }
     drawPreviewMarquee();
-    ctx->PopAxisAlignedClip();
+    if (fan) ctx->PopAxisAlignedClip();
+    else scrollClip.reset();
 
     if (!fan && widget.type == DesktopWidgetType::FolderMapping &&
         popupItemCount == 0)

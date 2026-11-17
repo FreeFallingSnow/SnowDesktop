@@ -321,7 +321,7 @@ void DesktopApp::HandleFloatingPopupExternalPointerDown(
         statusBar_ && hitMonitor && targetWindow == statusBar_->InteractionWindow(hitMonitor);
     if (folderPreview_ && !pointOnHostedPopup && !targetBelongsToInternalSurface)
         folderPreview_->keyboardFocused = false;
-    const bool dismissCollection = !folderPreview_ &&
+    const bool dismissCollection =
         snowdesktop::floating_popup_rules::
             ShouldDismissForExternalPointerDown(
                 IsCollectionPopupHostedByFloatingWindow(),

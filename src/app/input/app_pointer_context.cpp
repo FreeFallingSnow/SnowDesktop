@@ -590,9 +590,6 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
     if (renameController_.IsActive()) return;
     keyboardNavVisualFocus_ = false;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-    if (folderPreview_ && folderPreview_->inlineBounds &&
-        !PtInRect(&*folderPreview_->inlineBounds, pt))
-        RestoreFolderPreviewHome(true);
     auto* popupGroup = IsPointOccludedByOpenPopup(pt) ? GetGroupPopupView() : nullptr;
     POINT screenPt = pt;
     ClientToScreen(hwnd_, &screenPt);

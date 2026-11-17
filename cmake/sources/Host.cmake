@@ -338,6 +338,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/features/wallpaper_engine_capture.cpp
     src/data/atomic_file.cpp
     src/data/folder_preview_sort.cpp
+    src/data/folder_preview_view_state.cpp
     src/dock/dock_window_preview.cpp
     src/dock/dock_window_preview_toolbar.cpp
     src/dock/dock_thumbnail_toolbar.cpp
