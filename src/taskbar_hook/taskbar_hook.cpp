@@ -998,7 +998,7 @@ public:
                 }
             }
 
-            if (!info.background.control || !info.background.originalFill)
+            if (!info.background.control)
                 continue;
             if (info.appliedGeneration == snapshot.generation &&
                 info.appliedEnabled == enabled)
@@ -1060,6 +1060,7 @@ private:
         HWND edgeTaskbar = nullptr;
         winrt::event_token edgeSizeToken{};
         bool edgeSizeSubscribed = false;
+        bool originalFillWasUnset = false;
     };
 
     struct TaskbarInfo
@@ -1115,19 +1116,24 @@ private:
         return restored;
     }
 
+    static void RememberNativeFill(ControlInfo& control, const wux::Media::Brush& currentFill)
+    {
+        if (control.appliedFill && currentFill == control.appliedFill)
+            return;
+        // Explorer may supply no brush, or replace it after a system theme change.
+        // Preserve an unset empty fill so the template can supply a later value.
+        control.originalFill = currentFill;
+        control.originalFillWasUnset = !currentFill &&
+            control.control.ReadLocalValue(wux::Shapes::Shape::FillProperty()) ==
+                wux::DependencyProperty::UnsetValue();
+    }
+
     static void ApplyBackdrop(ControlInfo& control, const Snapshot& snapshot)
     {
-        if (!control.control || !control.originalFill)
+        if (!control.control)
             return;
         const auto currentFill = control.control.Fill();
-        if (currentFill && (!control.appliedFill ||
-                currentFill != control.appliedFill))
-        {
-            // Windows replaces its native brushes when the system theme changes.
-            // Keep the latest native brush so disabling our material restores the
-            // current theme rather than the one active when the hook was loaded.
-            control.originalFill = currentFill;
-        }
+        RememberNativeFill(control, currentFill);
         const LONG backdropStyle = snapshot.style &
             (kStyleGlassBackdrop | kStyleAcrylicBackdrop);
         const bool parametersMatch = control.appliedStyle == backdropStyle &&
@@ -1200,14 +1206,10 @@ private:
     static void ApplySolidFill(ControlInfo& control, float red, float green,
         float blue, float alpha)
     {
-        if (!control.control || !control.originalFill)
+        if (!control.control)
             return;
         const auto currentFill = control.control.Fill();
-        if (currentFill && (!control.appliedFill ||
-                currentFill != control.appliedFill))
-        {
-            control.originalFill = currentFill;
-        }
+        RememberNativeFill(control, currentFill);
         const bool parametersMatch = control.appliedStyle == 0 &&
             control.appliedRed == red && control.appliedGreen == green &&
             control.appliedBlue == blue && control.appliedAlpha == alpha &&
@@ -1450,8 +1452,13 @@ private:
             control.edgeVisual = nullptr; control.edgeDevice = nullptr;
             control.materialVisual.Close(); control.materialVisual = nullptr; control.originalChildVisual = nullptr;
         }
-        if (control.control && control.originalFill)
-            control.control.Fill(control.originalFill);
+        if (control.control && wasApplied && control.control.Fill() == control.appliedFill)
+        {
+            if (control.originalFillWasUnset)
+                control.control.ClearValue(wux::Shapes::Shape::FillProperty());
+            else
+                control.control.Fill(control.originalFill);
+        }
         control.appliedFill = nullptr;
         control.appliedStyle = -1;
         return wasApplied;
@@ -1569,7 +1576,6 @@ private:
             ? iterator->second.border : iterator->second.background;
         if (control.control) RestoreControl(control);
         control.control = shape;
-        control.originalFill = shape.Fill();
         iterator->second.appliedGeneration = -1;
         ApplyTaskbar(iterator->second.taskbar);
     }
