@@ -91,6 +91,7 @@ namespace steam_presence { class Service; }
 namespace winui { struct LayoutRestorePayload; }
 }
 namespace snowdesktop::quick_navigation { struct State; }
+namespace snowdesktop::widget_item_layout { struct Layout; }
 namespace snowdesktop::dock_process_discovery { struct Snapshot; }
 namespace snowdesktop::usage_guide { enum class Topic; }
 namespace snowdesktop { struct QuickNavigationEverythingSearchResult; }
@@ -2633,6 +2634,9 @@ private:
     void AppendFolderPreviewToggle(HMENU menu, const DesktopWidget& source);
     RECT GetFolderPreviewBackRect(const RECT& popup) const;
     RECT GetFolderPreviewExplorerRect(const RECT& popup) const;
+    const snowdesktop::popup_resize_transition::Transition* GetCollectionPopupResizeTransition() const;
+    snowdesktop::popup_resize_transition::Geometry GetPresentedCollectionPopupGeometry() const;
+    void StartFolderPreviewPopupResize(snowdesktop::popup_resize_transition::Geometry before);
     void InvalidateCollectionPopupContent();
     bool PrepareCompositionAnimationOverlay(
         UiCompositionAnimationOverlay& overlay,
@@ -3215,6 +3219,7 @@ private:
     RECT GetCollectionPopupContentRect(const RECT& popup) const;
     /** @brief 获取集合弹出面板中的列数。 @param popup 面板矩形 @return 列数 */
     int GetCollectionPopupColumnCount(const RECT& popup) const;
+    snowdesktop::widget_item_layout::Layout GetFolderPreviewGridLayout(const RECT& popup) const;
     /** @brief 获取集合弹出面板中的行数。 @param widget 部件引用 @param popup 面板矩形 @return 行数 */
     int GetCollectionPopupRowCount(const DesktopWidget& widget, const RECT& popup) const;
     /** @brief 获取集合弹出面板中内容的最大滚动偏移。 @param widget 部件引用 @param popup 面板矩形 @return 最大滚动偏移 */
@@ -4522,6 +4527,7 @@ private:
     std::unique_ptr<Item> popupMouseDownItem_;
     bool dockFolderPopupOpen_ = false;
     std::optional<snowdesktop::folder_preview::Session> folderPreview_;
+    std::shared_ptr<snowdesktop::popup_resize_transition::Transition> folderPreviewPopupResize_;
     snowdesktop::folder_preview::SortPreferences folderPreviewSort_;
     std::shared_ptr<DockTrayPopupState> dockTrayPopup_;
     bool dockFolderPopupAvailable_ = false;

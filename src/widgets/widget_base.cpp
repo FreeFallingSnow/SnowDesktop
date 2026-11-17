@@ -3403,7 +3403,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     // Large folders without a bottom title show only the resize dot over their
     // content on hover. Otherwise the regular title-bar rules apply, so an
     // exactly filled collection keeps its bottom title and rename anchor.
-    const bool showHandle = !showingFolderPreview && (largeFolder && !bottomBarTitle ? hovered :
+    const bool showHandle = showingFolderPreview || (largeFolder && !bottomBarTitle ? hovered :
         persistentBottomBar || !data_->bottomBarHover || hovered);
 
     if (showHandle)
@@ -3414,7 +3414,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         const std::wstring displayTitle = demoCollectionTitle
             ? app_->GetDemoCollectionCategoryTitle(*data_)
             : data_->title;
-        if (bottomBarTitle && !displayTitle.empty() && data_->showTitle)
+        if (!showingFolderPreview && bottomBarTitle && !displayTitle.empty() && data_->showTitle)
         {
             RECT titleRect = GetTitleRect();
             LONG tw = titleRect.right - titleRect.left;
@@ -3508,7 +3508,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         // Subclass buttons
         {
             RECT handle = GetMoveHandleRect();
-            if (!largeFolder && !IsSingleCellPresentation()) DrawButtons(context, handle, hovered);
+            if (!showingFolderPreview && !largeFolder && !IsSingleCellPresentation())
+                DrawButtons(context, handle, hovered);
         }
     }
 

@@ -2,6 +2,7 @@
 #include "common/l10n.h"
 #include "layout/collection_popup_layout.h"
 #include "layout/folder_preview_header_layout.h"
+#include "widget/runtime/widget_item_layout.h"
 #include "settings/animation_settings.h"
 #include "common/utils.h"
 #include "layout/folder_sort_rules.h"
@@ -148,8 +149,7 @@ void DesktopApp::DrawCollectionPopup(
     if (!offsetView || !offsetView->IsSearchActive())
         popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
             GetCollectionPopupMaxScrollOffset(widget, popupRect_));
-    const auto motion = openWidget == &dockFolderPopupWidget_ && dockFolderPopupContainer_
-        ? dockFolderPopupContainer_->PopupResizeTransition() : nullptr;
+    const auto* motion = GetCollectionPopupResizeTransition();
     const RECT presentedPanel = motion ? motion->Panel(popupRect_) : popupRect_;
 
     PopupOpacityScope opacity(ctx, applyAnimation, animation.opacity);
@@ -230,12 +230,13 @@ void DesktopApp::DrawCollectionPopup(
 
         RECT titleRect = snowdesktop::collection_popup_layout::
             ResolveTitleRect(presentedPanel, popupMetrics.scale,
-                dockFolderPopupOpen_ ? GetDockFolderPopupSortButtonRect(presentedPanel).left -
+                dockFolderPopupOpen_ ? GetDockFolderPopupSortButtonRect(popupRect_).left -
                     snowdesktop::collection_popup_layout::ScaleDimension(10, popupMetrics.scale)
                     : (std::numeric_limits<LONG>::max)());
         if (folderPreview_)
         {
-            const auto header = snowdesktop::folder_preview::ResolveHeader(presentedPanel, popupMetrics.scale);
+            const auto header = snowdesktop::folder_preview::ResolveHeader(
+                presentedPanel, popupMetrics.scale, folderPreview_->inlineCollapseButton);
             const auto drawButton = [&](const wchar_t* label, const RECT& bounds) {
                 const bool hovered = popupAnimation_.IsInteractive() && PtInRect(&bounds, pointer);
                 DrawD2DRoundedRectangle(ctx, bounds, 6.0f * popupMetrics.scale,
@@ -275,7 +276,7 @@ void DesktopApp::DrawCollectionPopup(
         {
             const RECT sortRect =
                 GetDockFolderPopupSortButtonRect(
-                    presentedPanel);
+                    popupRect_);
             const bool hovered =
                 popupAnimation_.IsInteractive() &&
                 PtInRect(
@@ -354,7 +355,8 @@ void DesktopApp::DrawCollectionPopup(
     {
         const RECT frame = GetCategorizedPopupFrame(popupRect_);
         group->SetPopupFrame(&frame);
-        ctx->PushAxisAlignedClip(ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        const RECT clip = motion ? GetCategorizedPopupFrame(presentedPanel) : frame;
+        ctx->PushAxisAlignedClip(ToD2DRect(clip), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         group->DrawContent(ctx, frame);
         group->DrawScrollbar(ctx, PtInRect(&frame, lastMousePoint_) != FALSE);
         if (dragSession_.TargetContainer() == group)
@@ -410,8 +412,13 @@ void DesktopApp::DrawCollectionPopup(
     const double fanOffset = fan ? GetCollectionPopupFanScrollOffset(popupRect_) : 0;
     const auto fanRange = snowdesktop::collection_popup_layout::FanVisibleRange(
         fanOffset, fanCapacity, popupItemCount);
-    const size_t firstItem = fan ? fanRange.first : 0;
-    const size_t endItem = fan ? fanRange.end : popupItemCount;
+    const auto previewGrid = folderPreview_ && !UsesCollectionPopupList(widget)
+        ? std::optional{GetFolderPreviewGridLayout(popupRect_)}
+        : std::optional<snowdesktop::widget_item_layout::Layout>{};
+    const auto [firstItem, endItem] = previewGrid
+        ? snowdesktop::widget_item_layout::VisibleRange(*previewGrid, popupItemCount,
+            popupScrollOffset_, content.bottom - content.top)
+        : std::pair{fan ? fanRange.first : size_t{0}, fan ? fanRange.end : popupItemCount};
     if (fan && !popupFanIconRecorder_ && d2dDevice_)
         (void)d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &popupFanIconRecorder_);
     const auto iconRecorder = popupFanIconRecorder_;
@@ -595,7 +602,9 @@ void DesktopApp::DrawCollectionPopup(
     };
     for (size_t i = firstItem; i < endItem; ++i)
     {
-        RECT itemRect = GetCollectionPopupItemRect(popupRect_, i);
+        RECT itemRect = previewGrid
+            ? snowdesktop::widget_item_layout::ItemRect(*previewGrid, i, popupScrollOffset_)
+            : GetCollectionPopupItemRect(popupRect_, i);
         if (itemRect.bottom <= content.top || itemRect.top >= content.bottom) continue;
 
         if (widget.type == DesktopWidgetType::FolderMapping)

@@ -19,6 +19,13 @@ bool DesktopApp::UpdateWidgetHandleCursor(POINT point)
     LPCWSTR cursor = nullptr;
     if (widgetAction_ == WidgetAction::Resize) cursor = resizeCursor;
     else if (widgetAction_ == WidgetAction::Move) cursor = moveCursor;
+    else if (folderPreview_ && folderPreview_->inlineBounds &&
+        !dragSession_.IsActive() && !HasActiveContextMenuSession() && IsCollectionPopupInteractive() &&
+        (PtInRect(&folderPreview_->inlineResizeHandle, point) ||
+            PtInRect(&folderPreview_->inlineCollapseButton, point)))
+    {
+        cursor = PtInRect(&folderPreview_->inlineResizeHandle, point) ? resizeCursor : IDC_HAND;
+    }
     else if (!dragSession_.IsActive() && !HasActiveContextMenuSession() && !IsPointOccludedByOpenPopup(point))
     {
         WidgetHit hit = WidgetHit::None;

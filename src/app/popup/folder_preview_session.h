@@ -3,6 +3,7 @@
 #include "common/types.h"
 #include "core/widget.h"
 #include "layout/collection_popup_types.h"
+#include "app/popup/popup_resize_transition.h"
 
 #include <memory>
 #include <optional>
@@ -32,13 +33,20 @@ struct FolderPopupHome
 
 struct Session
 {
+    struct Page
+    {
+        std::wstring path;
+        int scroll = 0;
+    };
     std::wstring sourceWidgetId;
     std::wstring hostWidgetId;
-    std::vector<std::wstring> paths;
+    std::vector<Page> pages;
     std::optional<RECT> inlineBounds;
+    RECT inlineCollapseButton{};
+    RECT inlineResizeHandle{};
     std::optional<FolderPopupHome> folderHome;
+    std::optional<popup_resize_transition::Geometry> pendingPopupResize;
     RECT homeBounds{};
-    bool homeWasFan = false;
     int homeScroll = 0;
     collection_popup_layout::FanScrollState homeFanScroll;
     bool homeFanShowAll = false;

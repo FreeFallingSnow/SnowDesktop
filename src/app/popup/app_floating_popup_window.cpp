@@ -369,9 +369,8 @@ RECT DesktopApp::CalculateFloatingPopupWindowBounds() const
         if (const DesktopWidget* popup = GetOpenPopupWidget())
         {
             RECT panel = GetCollectionPopupRect(*popup);
-            if (popup == &dockFolderPopupWidget_ && dockFolderPopupContainer_)
-                if (const auto& motion = dockFolderPopupContainer_->PopupResizeTransition())
-                    panel = motion->ReservedPanel(panel);
+            if (const auto* motion = GetCollectionPopupResizeTransition())
+                panel = motion->ReservedPanel(panel);
             bounds = InflateCopy(panel, 6);
         }
     }
@@ -1082,8 +1081,7 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
     if (collectionGlass)
     {
         RECT panel = GetCollectionPopupRect(*popup);
-        if (popup == &dockFolderPopupWidget_ && dockFolderPopupContainer_)
-            if (const auto& motion = dockFolderPopupContainer_->PopupResizeTransition()) panel = motion->Panel(panel);
+        if (const auto* motion = GetCollectionPopupResizeTransition()) panel = motion->Panel(panel);
         addPanel(panel, 18.0f * GetCollectionPopupLayoutMetrics(*popup).scale, &popupAnimation_);
     }
     if (luaGlass)
@@ -1142,9 +1140,8 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
         if (const DesktopWidget* popup = GetOpenPopupWidget())
         {
             nextCollectionRegion = GetCollectionPopupRect(*popup);
-            if (popup == &dockFolderPopupWidget_ && dockFolderPopupContainer_)
-                if (const auto& motion = dockFolderPopupContainer_->PopupResizeTransition())
-                    nextCollectionRegion = motion->Panel(nextCollectionRegion);
+            if (const auto* motion = GetCollectionPopupResizeTransition())
+                nextCollectionRegion = motion->Panel(nextCollectionRegion);
         }
     }
     RECT nextLuaPanelRegion{};

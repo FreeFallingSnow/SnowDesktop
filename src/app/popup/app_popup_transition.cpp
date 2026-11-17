@@ -562,6 +562,8 @@ void DesktopApp::RefreshDockFolderPopup(
         snowdesktop::shell_refresh::FolderKey(snapshot->path) !=
             snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath))
         return;
+    const bool previewDirectoryLoaded = folderPreview_ && snapshot && dockFolderPopupLoading_ &&
+        !dockFolderPopupAvailable_;
     if (snapshot && dockEntryOwnsBinding &&
         snowdesktop::shell_refresh::FolderKey(snapshot->path) !=
             snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath))
@@ -706,6 +708,8 @@ void DesktopApp::RefreshDockFolderPopup(
                 CommitDockFolderPopupStateToSource();
         }, targetPending);
     if (!accepted) return;
+    if (previewDirectoryLoaded)
+        popupScrollOffset_ = folderPreview_->pages.back().scroll;
     if (folderPreview_ && snapshot && !dockFolderPopupAvailable_)
         ClearDockFolderPopupEntries();
     if (snapshot && snapshot->complete && dockFolderPopupAvailable_)
@@ -740,6 +744,12 @@ void DesktopApp::RefreshDockFolderPopup(
             std::make_unique<FolderMapping>(
                 &dockFolderPopupWidget_, this);
     dockFolderPopupContainer_->InvalidateFilterCache();
+    if (folderPreview_ && snapshot && folderPreview_->pendingPopupResize)
+    {
+        const auto from = *folderPreview_->pendingPopupResize;
+        folderPreview_->pendingPopupResize.reset();
+        if (present) StartFolderPreviewPopupResize(from);
+    }
     if (before && dockFolderPopupAvailable_)
     {
         RefreshDockFolderPopupGeometry(false);
