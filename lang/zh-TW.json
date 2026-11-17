@@ -2933,6 +2933,6 @@
   "settings.widgetBehavior.folderDoubleClick": "元件與 Dock 彈出視窗內資料夾的預設雙擊行為",
   "settings.widgetBehavior.folderDoubleClickHint": "適用於桌面檔案、映射資料夾和 Dock 資料夾彈出視窗中的資料夾及其捷徑。Ctrl + 雙擊可就地預覽，Shift + 雙擊可在檔案總管中開啟。",
   "settings.widgetBehavior.previewFolderInPlace": "在元件或彈出視窗內就地預覽",
-  "app.folderPreview.title": "正在預覽：{0}",
+  "app.folderPreview.title": "點此結束預覽",
   "app.folderPreview.open": "就地預覽"
 }

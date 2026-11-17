@@ -2933,6 +2933,6 @@
   "settings.widgetBehavior.folderDoubleClick": "ウィジェットと Dock ポップアップ内のフォルダーの既定のダブルクリック動作",
   "settings.widgetBehavior.folderDoubleClickHint": "デスクトップファイル、マッピングフォルダー、Dock のフォルダーポップアップ内のフォルダーとフォルダーのショートカットが対象です。Ctrl ＋ ダブルクリックでその場でプレビューし、Shift ＋ ダブルクリックでエクスプローラーを開きます。",
   "settings.widgetBehavior.previewFolderInPlace": "ウィジェットまたはポップアップ内でプレビュー",
-  "app.folderPreview.title": "プレビュー中：{0}",
+  "app.folderPreview.title": "ここをクリックしてプレビューを終了",
   "app.folderPreview.open": "その場でプレビュー"
 }
