@@ -222,6 +222,7 @@
 - **影响与边界**：需要额外读取记录判断环境变化，增加恢复成本；当前按反馈登记，尚未核实具体差异和触发输入。标准产品成功、中断与补验拒绝分别保留，不放松环境校验。
 - **下一步**：核对原观测记录，在有界回执中给出变化字段及旧/新摘要，保留完整记录路径；不为收录反馈重跑构建或打印全量环境。该诊断改进尚未实现。
 - **只读等待续证（2026-11-16）**：Task `dock-thumbnail-hover-delay` 通过 `scripts/build.bat wait` 观察前序批次 `cb8e98ab754e46d1bd8e7c029dd0a583` 修订 2、Run `0b81da26d37f4c9f8a538e380b977882`。观察进程沿用默认工具集，候选产品日志记录 `19.50.35740.0`。等待结束返回 `Candidate observed environment/tools changed.`，须另读原批次 JSON 才取得已归档的通过结果。后续可在保留环境复验的同时输出归档结果路径、观察方的核对状态及差异字段。本次复用原结果，未重交运行。
+- **应用全量续证（2026-11-17）**：Task `latest-release-msix-20261117` 先以 `run start -Action tests -Mode full` 获得 Run `ba6d5004972e40709c39950722ce42e5`，原检出 CMake 缓存指向已不存在的 Visual Studio 实例版本 `18.5.11723.231`，配置失败。随后 `run start -Action candidate -Snapshot d27bd211d61047b6a7ffc3c1c4eb4c9a -CandidateAction tests -Mode full` 的 Run `9f5cff79e08f4c1a8bbe1fd5716c8304` 报 `Candidate observed tools/environment changed; capture a new context.`，两次均未执行测试。只读对照定位到两个选择器 `CMAKE_GENERATOR` 和 `CMAKE_GENERATOR_TOOLSET`。按原候选缓存恢复 `Visual Studio 18 2026` 和 `version=14.52.37025` 后，完整上下文摘要匹配，同一快照的全量执行 Run 为 `95f8e9dcb5ea4c048eb308848e0d7548`。路径由原 Run 记录保留。后续诊断可直接给出不匹配字段名和已记录选择器的恢复依据，继续保留摘要校验。
 
 ### CF-015 模块计划无法声明临时定向验证
 
