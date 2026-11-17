@@ -737,9 +737,20 @@ void DesktopApp::OnTimer(WPARAM timerId)
         // The immediate foreground callback remains deactivation-only.
         {
             snowdesktop::performance::Scope trace("shared.maintenance", "desktop.hover_reconcile");
-            ReconcileDesktopHoverState(
-                snowdesktop::desktop_hover_rules::
-                    ReconcileMode::AllowActivationAfterForegroundSettle);
+            // A modern menu can stay open while the desktop receives normal
+            // pointer moves. Preserve that hover while the live hit still
+            // agrees with the last sample; the fallback still clears a leave
+            // that the menu loop may have consumed.
+            POINT cursorPoint{};
+            const bool retainMenuHover = snowdesktop::modern_menu::IsActive() &&
+                TryGetDesktopHoverPointFromCursor(cursorPoint) &&
+                cursorPoint.x == lastMousePoint_.x && cursorPoint.y == lastMousePoint_.y;
+            if (!retainMenuHover)
+            {
+                ReconcileDesktopHoverState(
+                    snowdesktop::desktop_hover_rules::
+                        ReconcileMode::AllowActivationAfterForegroundSettle);
+            }
         }
         // Keep display hot-plug recovery independent from the hidden control
         // window's host-watch timer. Some display-driver paths leave that
