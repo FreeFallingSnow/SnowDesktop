@@ -2929,6 +2929,7 @@
   "workshop_manager.accept_workshop_agreement": "请先在 Steam 接受创意工坊协议。",
   "workshop_manager.tag_actions": "标签操作",
   "modules.dllBlockedByPolicy": "Windows 应用程序控制策略阻止了 DLL 加载。",
-  "app.interact.folder_preview": "文件夹原位预览",
-  "app.interact.open_in_explorer": "在资源管理器中打开"
+  "app.interact.open_in_explorer": "在资源管理器中打开",
+  "settings.widgetBehavior.folderDoubleClick": "默认双击行为",
+  "settings.widgetBehavior.folderDoubleClickHint": "适用于文件收纳组件中的文件夹和目录快捷方式。按住 Ctrl 预览，按住 Shift 打开。"
 }

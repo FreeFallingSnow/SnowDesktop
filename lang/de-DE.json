@@ -2929,6 +2929,7 @@
   "workshop_manager.accept_workshop_agreement": "Akzeptiere zuerst die Workshop-Vereinbarung in Steam.",
   "workshop_manager.tag_actions": "Tag-Aktionen",
   "modules.dllBlockedByPolicy": "Die Windows-Richtlinie zur Anwendungssteuerung hat das Laden einer DLL blockiert.",
-  "app.interact.folder_preview": "Ordnervorschau im Widget",
-  "app.interact.open_in_explorer": "Im Datei-Explorer öffnen"
+  "app.interact.open_in_explorer": "Im Datei-Explorer öffnen",
+  "settings.widgetBehavior.folderDoubleClick": "Standardaktion beim Doppelklick",
+  "settings.widgetBehavior.folderDoubleClickHint": "Gilt für Ordner und Ordnerverknüpfungen in Datei-Widgets. Strg für die Vorschau oder Umschalt zum Öffnen gedrückt halten."
 }

@@ -2929,6 +2929,7 @@
   "workshop_manager.accept_workshop_agreement": "Accept the Steam Workshop agreement in Steam first.",
   "workshop_manager.tag_actions": "Tag actions",
   "modules.dllBlockedByPolicy": "Windows App Control policy blocked a DLL from loading.",
-  "app.interact.folder_preview": "In-place folder preview",
-  "app.interact.open_in_explorer": "Open in File Explorer"
+  "app.interact.open_in_explorer": "Open in File Explorer",
+  "settings.widgetBehavior.folderDoubleClick": "Default double-click action",
+  "settings.widgetBehavior.folderDoubleClickHint": "Applies to folders and folder shortcuts in file widgets. Hold Ctrl to preview or Shift to open."
 }

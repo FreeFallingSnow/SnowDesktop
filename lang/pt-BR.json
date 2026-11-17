@@ -2929,6 +2929,7 @@
   "workshop_manager.accept_workshop_agreement": "Aceite primeiro o acordo da Oficina no Steam.",
   "workshop_manager.tag_actions": "Ações de marcadores",
   "modules.dllBlockedByPolicy": "Uma política de controle de aplicativos do Windows bloqueou o carregamento de uma DLL.",
-  "app.interact.folder_preview": "Prévia de pastas no widget",
-  "app.interact.open_in_explorer": "Abrir no Explorador de Arquivos"
+  "app.interact.open_in_explorer": "Abrir no Explorador de Arquivos",
+  "settings.widgetBehavior.folderDoubleClick": "Ação padrão do clique duplo",
+  "settings.widgetBehavior.folderDoubleClickHint": "Aplica-se a pastas e atalhos de pasta nos widgets de arquivos. Segure Ctrl para visualizar ou Shift para abrir."
 }
