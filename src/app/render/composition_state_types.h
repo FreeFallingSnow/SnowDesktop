@@ -103,6 +103,8 @@ struct DesktopWidgetCompositionItem
     UINT height = 0;
     std::uint64_t hiddenSince = 0;
     bool visible = false;
+    // The body has finished drawing and its clip is open for this frame.
+    bool contentVisible = false;
     struct HoverFade
     {
         snowdesktop::popup_animation_rules::State motion;

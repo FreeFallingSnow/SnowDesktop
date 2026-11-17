@@ -1135,6 +1135,9 @@ struct DesktopBackdropCompositor::Impl
             // waiting for the UI dispatcher. Do not wait for GPU completion.
             compositorController.Commit();
             frameCommitPending = false;
+            // The glass and sRGB visuals share this compositor and were
+            // submitted together by this commit.
+            srgbContentCommitPending = false;
             return true;
         }
         catch (const winrt::hresult_error& error)
@@ -3570,8 +3573,16 @@ void DesktopBackdropCompositor::CommitVisualChanges()
 
 void DesktopBackdropCompositor::CommitDeferredFrame()
 {
-    if (impl_ && impl_->frameCommitPending && !impl_->collectingFrame)
+    if (!impl_ || !impl_->frameCommitPending || impl_->collectingFrame)
+        return;
+    if (impl_->popupMode)
         CommitVisualChanges();
+    else if (impl_->RequestCommit() && impl_->transformedRegionDirty)
+    {
+        // This HWND fence can expose pixels immediately. Submit both the
+        // desktop body and the matching glass before changing its region.
+        impl_->transformedRegionDirty = !impl_->SyncPanelWindowRegion();
+    }
 }
 
 bool DesktopBackdropCompositor::
@@ -3618,8 +3629,12 @@ void DesktopBackdropCompositor::EndFrame(
         impl_->PruneUnusedBlurFactories();
         if (impl_->genieRoot)
             impl_->SetAnimationPathRegionExpanded(true);
-        else
+        else if (requestCommit || impl_->popupMode)
             impl_->transformedRegionDirty = !impl_->SyncPanelWindowRegion();
+        else
+            // Opening the desktop helper region here could uncover old glass
+            // before the matching content commit. Apply it with the glass.
+            impl_->transformedRegionDirty = true;
         impl_->frameCommitPending = true;
         if (requestCommit)
             impl_->RequestCommit();

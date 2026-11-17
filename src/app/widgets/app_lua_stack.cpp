@@ -110,7 +110,6 @@ bool DesktopApp::SelectLuaStackMember(std::wstring stackId, std::wstring memberI
         widgetEngine_->BlurHostInput(false);
         UpdateHostInputImePosition();
         widgetEngine_->CancelInteractionPointerPress("desktop");
-        if (!oldId.empty()) widgetEngine_->SetWidgetDesktopVisible(oldId, false);
     }
     if (!oldId.empty() && luaWidgetPanelRequest_.widgetId == oldId)
         CloseLuaWidgetPanel(oldId, "host");
@@ -123,6 +122,8 @@ bool DesktopApp::SelectLuaStackMember(std::wstring stackId, std::wstring memberI
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
     RebuildContainersAndItems();
     RequestLayoutSave();
+    // The desktop paint updates member visibility before drawing the new
+    // body. Hiding here would commit the old member's marquee removal alone.
     InvalidateRect(hwnd_, nullptr, FALSE);
     return true;
 }
