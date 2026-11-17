@@ -145,22 +145,12 @@ inline composition::CompositionEffectFactory CreateFactory(const composition::Co
         return *Composite(D2D1_COMPOSITE_MODE_SOURCE_OVER, *backdrop, *material);
     };
     const auto corrected = Transfer(makeMixed, false);
-    const auto material = composition::CompositionEffectSourceParameter(L"material");
-    const auto backdrop = composition::CompositionEffectSourceParameter(L"backdrop");
-
-    // The sprite will source-over the real backdrop. Remove that contribution
-    // from the corrected pixels here so the effect keeps the material's alpha.
-    const auto backdropThroughMaterial = Composite(D2D1_COMPOSITE_MODE_DESTINATION_OUT,
-        backdrop, material);
-    const float subtract[]{0.f, 1.f, -1.f, 0.f};
-    const auto correctedMaterial = winrt::make_self<Effect>(CLSID_D2D1ArithmeticComposite,
-        std::vector<wf::IInspectable>{wf::PropertyValue::CreateSingleArray(subtract),
-            wf::PropertyValue::CreateBoolean(false)},
-        std::vector<graphics::IGraphicsEffectSource>{*corrected, *backdropThroughMaterial});
-
     const auto coverage = composition::CompositionEffectSourceParameter(L"coverage");
-    const auto outside = Composite(D2D1_COMPOSITE_MODE_DESTINATION_OUT, material, coverage);
-    const auto inside = Composite(D2D1_COMPOSITE_MODE_DESTINATION_IN, *correctedMaterial, coverage);
+    const auto ordinary = Composite(D2D1_COMPOSITE_MODE_SOURCE_OVER,
+        composition::CompositionEffectSourceParameter(L"backdrop"),
+        composition::CompositionEffectSourceParameter(L"material"));
+    const auto outside = Composite(D2D1_COMPOSITE_MODE_DESTINATION_OUT, *ordinary, coverage);
+    const auto inside = Composite(D2D1_COMPOSITE_MODE_DESTINATION_IN, *corrected, coverage);
     const auto output = Composite(D2D1_COMPOSITE_MODE_PLUS, *outside, *inside);
     auto factory = compositor.CreateEffectFactory(*output);
     winrt::check_hresult(factory.ExtendedError());
