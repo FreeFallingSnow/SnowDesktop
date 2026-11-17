@@ -116,6 +116,31 @@ foreground or `1` for a dark/black foreground so host chrome follows that
 preset. Pass it directly to the preview CLI for authoring overrides, and never
 read or persist it from component Lua.
 
+## Settings, menus and appearance presets
+
+Use `widget.define({settings=...})` and the host's component-settings entry for
+ordinary preferences. Add a separate settings surface when the requested
+workflow needs one.
+
+Give ordinary menu actions a pertinent host glyph using `icon` and
+`iconFont`, or a declared image with the required feature. Use localized,
+right-aligned state with `label = title .. "\t" .. status` on the root menu
+and on levels with ordinary actions or icons. Evaluate each level across its
+separators. Use `checked` in a submenu consisting exclusively of choices with
+no icons or images at that level. The parent item can have an icon. Use
+right-aligned text for choices flattened into an older host's root menu.
+
+For quick adjustments, probe `interaction.contextMenu.keepOpen` and set
+`keepOpen` on the action row. Apply the change synchronously and derive the
+current state when rebuilding `menu`. Preserve stable IDs, item order and
+nesting so the host can refresh the open menu. Use the usual closing behavior
+for actions that open another surface.
+
+Put selectable appearances in `settings.presets` with stable IDs, localized
+labels and grouped values. Include the material, opacity and foreground values
+that define the preset. Use `default=true` for the intended initial choice,
+keep descriptor style values as fallbacks, and preserve saved choices.
+
 ## Icon meaning and glyph verification
 
 Choose icons whose established meaning matches the command or information they
@@ -138,9 +163,11 @@ check that `icon` is nonempty cannot replace this visual check.
 ## Real preview contract
 
 `snowwidget preview` launches the installed SnowDesktop renderer out of process
-and writes a real API v2/D2D PNG. It does not emulate the view tree. The output
-is opaque and contains the chosen background, resolved host material and widget
-content.
+and writes a real API v2/D2D PNG. By default it composites the chosen
+background, resolved host material and widget content into an opaque PNG.
+Use `--content-only` for transparent output of the authored content, including
+any component-defined `backgroundLayer`. This mode omits the stage and
+host-owned surface composition and cannot be combined with `--background`.
 
 Use `--appearance` with `dark`, `light`, `glass-dark`, `glass-light`, `glass-transparent`,
 `acrylic-dark` or `acrylic-light`. The legacy `--theme dark|light` shorthand
@@ -157,15 +184,16 @@ For an ordinary component that follows personalization, exercise each supported
 host appearance with `followPersonalization=1`; include both `glass-light` and
 `acrylic-light` so the two different default foregrounds remain visible. Only
 force `__contentTheme=0` and `1` with `followPersonalization=0` when the
-component exposes an independent foreground selector. For example:
+component exposes an independent foreground selector. Resolve `$SnowWidget`
+using the [bundled tool setup](../SKILL.md#use-the-bundled-tools).
 
 ```powershell
-bin\snowwidget.exe preview <directory> <light-fg.png> `
+& $SnowWidget preview $Widget $LightForegroundPng `
   --appearance acrylic-light `
   --storage followPersonalization=0 `
   --storage __contentTheme=0
 
-bin\snowwidget.exe preview <directory> <dark-fg.png> `
+& $SnowWidget preview $Widget $DarkForegroundPng `
   --appearance acrylic-light `
   --storage followPersonalization=0 `
   --storage __contentTheme=1

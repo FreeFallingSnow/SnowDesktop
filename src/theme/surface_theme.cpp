@@ -48,6 +48,44 @@ PersonalizationSettings ResolveSurfaceTheme(const SurfaceTheme& theme,
     return quickNavigation ? MakeQuickNavigationAppearancePreset(preset) : MakeCollectionPopupAppearancePreset(preset);
 }
 
+PersonalizationSettings ResolvePopupRuleTheme(const PopupAppearanceRule& rule,
+    const PersonalizationSettings& shared)
+{
+    return rule.enabled ? ResolvePopupOverrideTheme(rule.theme, shared) : shared;
+}
+
+PersonalizationSettings ResolvePopupOverrideTheme(const SurfaceTheme& theme,
+    const PersonalizationSettings& shared)
+{
+    if (theme.mode < 0)
+        return shared;
+    auto appearance = ResolveSurfaceTheme(theme, shared, 0, false);
+    appearance.contextMenuStyle = shared.contextMenuStyle;
+    return appearance;
+}
+
+bool DecodePopupAppearanceRule(const JsonValue& input, PopupAppearanceRule& output)
+{
+    if (!input.IsObject()) return false;
+    PopupAppearanceRule rule;
+    if (const auto* enabled = input.Find("enabled"))
+    {
+        if (!enabled->IsBoolean()) return false;
+        rule.enabled = enabled->boolean;
+    }
+    if (const auto* theme = input.Find("theme"))
+        if (!DecodeSurfaceTheme(*theme, rule.theme) || rule.theme.mode < -1) return false;
+    output = rule;
+    return true;
+}
+
+std::string EncodePopupAppearanceRule(const PopupAppearanceRule& rule)
+{
+    const auto theme = EncodeSurfaceTheme(rule.theme);
+    if (theme.empty() || rule.theme.mode < -1) return {};
+    return std::string("{\"enabled\":") + (rule.enabled ? "true" : "false") + ",\"theme\":" + theme + '}';
+}
+
 bool DecodePanelAppearance(const JsonValue& input, PersonalizationSettings& output,
     bool includeBottomBarOpacity)
 {

@@ -135,7 +135,7 @@ void WriteTask(std::ostream& output, const SystemTaskContract& contract)
            << contract.maximumPerInstance << ",\"argumentsType\":";
     WriteNullableString(output, contract.argumentsType);
     output << ",\"resultType\":";
-    WriteJsonString(output, contract.resultType);
+    WriteNullableString(output, contract.resultType);
     output << '}';
 }
 }

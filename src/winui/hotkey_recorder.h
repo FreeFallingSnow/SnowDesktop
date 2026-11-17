@@ -62,6 +62,7 @@ public:
     /** Rebinds the control to an immutable settings generation. */
     void SetValue(HotkeyChord value, std::uint64_t generation);
     void SetDefaultValue(HotkeyChord value);
+    void SetAllowStandaloneAlt(bool allow) noexcept;
     [[nodiscard]] HotkeyChord Value() const noexcept;
     [[nodiscard]] bool IsCapturing() const noexcept;
 

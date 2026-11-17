@@ -133,6 +133,9 @@ public:
     static bool ValidateRequest(
         const WidgetFilesystemTaskRequest& request) noexcept;
     static bool IsDirectChildName(std::string_view name) noexcept;
+    // The caller supplies an authorized absolute image path and output bound.
+    static std::shared_ptr<const WidgetRuntimeImagePixels> DecodeImageFile(
+        const std::filesystem::path& path, std::size_t maxDimension);
 
 private:
     struct QueuedRequest

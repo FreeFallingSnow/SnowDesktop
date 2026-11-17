@@ -3,9 +3,11 @@
 #include "dock/dock_window_rules.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
+#include "diagnostics/performance_trace.h"
 #include "app/dock/persistent_dock_host.h"
 #include "drag_drop/drag_visual_rules.h"
 #include "layout/page_navigation_rules.h"
+#include "ui/render/ui_animation_scheduler.h"
 #include "widget/runtime/widget_visibility_rules.h"
 #include "widgets/single_cell_widget_rules.h"
 
@@ -36,8 +38,7 @@ bool DesktopApp::CollectPointerInteractionBounds(RECT& result)
         !luaWidgetPanelRequest_.widgetId.empty() || largeIconGesture_ ||
         IsUsageGuideVisible() ||
         dockBounceAnimationFrameToken_ || dockRunningAnimationFrameToken_ ||
-        dockMagnificationAnimationFrameToken_ ||
-        (pageNotifyActive_ && !pageNotifyCompositorDriven_)) return false;
+        dockMagnificationAnimationFrameToken_) return false;
 
     // Resizing affordances are a separate foreground overlay and can change
     // with the pointer even when their icon is not part of the selection.
@@ -206,7 +207,7 @@ bool DesktopApp::IsPointOverWidgetChrome(POINT pt) const
 /**
  * @brief 使拖拽静态场景失效（更新拖拽渲染缓存）
  */
-void DesktopApp::InvalidateDragStaticScene()
+void DesktopApp::InvalidateDragStaticScene(bool collectAllDesktopBackdrops)
 {
     ResetPointerInteractionDamage();
     dragSession_.InvalidateStaticScene();
@@ -214,7 +215,11 @@ void DesktopApp::InvalidateDragStaticScene()
     // 原生毛玻璃面板位于独立的 Composition 视觉树中，不包含在 D2D
     // 静态位图里。页面或布局变化时必须在下一帧完整核对一次，否则
     // 交互帧的“保留旧面板”策略会让上一页的玻璃区域残留。
-    desktopBackdropFullCollectionPending_ = true;
+    if (collectAllDesktopBackdrops)
+    {
+        snowdesktop::performance::Scope trace("desktop", "backdrop.full.request");
+        desktopBackdropFullCollectionPending_ = true;
+    }
 }
 
 /**
@@ -586,10 +591,7 @@ void DesktopApp::PresentPointerInteractionFrame(
         const void* hoverOwner = nullptr;
         size_t hoverIndex = 0;
         int hoverKind = 0;
-        if (DockContainer* dock =
-                GetDockContainerAtPoint(lastMousePoint_);
-            dock && dock->ContainsInteractivePoint(
-                lastMousePoint_))
+        if (DockContainer* dock = GetDockContainerAtPoint(lastMousePoint_))
         {
             hoverOwner = dock;
             if (DockEntryItem* entry =
@@ -633,7 +635,10 @@ void DesktopApp::PresentPointerInteractionFrame(
         const bool needsPointerFrame = immediateFloatingDockPresent ||
             hoverTargetChanged ||
             (hoverOwner && pointerMoved);
-        const ULONGLONG now = GetTickCount64();
+        // Use the same monotonic clock as the scheduled tail frame. The
+        // system tick can advance in steps larger than the hover budget.
+        const auto now = static_cast<ULONGLONG>(
+            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
         const bool presentNow = needsPointerFrame &&
             snowdesktop::floating_dock_rules::
                 ShouldPresentDockPointerFrame(
@@ -672,7 +677,8 @@ void DesktopApp::PresentPointerInteractionFrame(
                         if (!floatingDockHostActive_)
                             return;
                         floatingDockLastPointerPresentTick_ =
-                            GetTickCount64();
+                            static_cast<ULONGLONG>(
+                                snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
                         floatingDockLastPointerPresentPoint_ = lastMousePoint_;
                         PresentFloatingDockPointerHosts(nullptr, false);
                     });
@@ -994,6 +1000,7 @@ void DesktopApp::CommitDragVisualEndBeforeShellOperation()
 
 void DesktopApp::PresentPassiveHoverVisualChange()
 {
+    snowdesktop::performance::Scope trace("input", "hover.passive.present");
     UpdateWidgetHoverExpansion(lastMousePoint_);
     RecordShellHoverTrace(
         ShellHoverTraceEvent::PassivePresent);

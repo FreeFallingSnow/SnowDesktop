@@ -69,24 +69,39 @@ void DesktopApp::DrainIconLibrary()
 
 snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLibraryRequest request)
 {
-    auto& state = EnsureIconLibrary(); DrainIconLibrary();
-    if (!FlushExpiredIconCustomizations())
+    const bool autoSync = request.action == "autoSyncSubscriptions";
+    auto& state = EnsureIconLibrary();
+    {
+        std::optional<snowdesktop::performance::Scope> trace;
+        if (autoSync) trace.emplace("shared.maintenance", "steam.icons.drain");
+        DrainIconLibrary();
+    }
+    const bool customizationSaved = [&] {
+        std::optional<snowdesktop::performance::Scope> trace;
+        if (autoSync) trace.emplace("shared.maintenance", "steam.icons.flush_customizations");
+        return FlushExpiredIconCustomizations();
+    }();
+    if (!customizationSaved)
     { auto result = state.snapshot; result.succeeded = false; result.error = "iconLibrary.saveFailed"; return result; }
     std::unordered_map<std::string, std::vector<std::wstring>> uses;
-    const auto retain = [&](const std::string& id, const std::wstring& name) {
-        if (!id.empty()) uses[id].push_back(name);
-    };
-    for (const auto& [target, asset] : iconOverrides_)
-        if (IsActiveIconCustomization(target)) retain(asset, IconOverrideTargetName(target));
-    for (const auto& widget : widgets_) retain(widget.dockIconAssetId, widget.title);
-    const auto retainLarge = [&](const auto& config, const std::wstring& name) {
-        retain(config.imageAssetId, name); retain(config.foregroundImageAssetId, name);
-    };
-    for (const auto& item : items_) if (item.largeIcon) retainLarge(*item.largeIcon, item.name);
-    for (const auto& [key, record] : layoutRecords_) if (record.largeIcon && FindItemIndexByKey(key) >= items_.size())
-        retainLarge(*record.largeIcon, key);
-    for (const auto& [key, config] : largeIconEdit_.previews) retainLarge(config, key);
-    if (largeIconEdit_.preview) retainLarge(*largeIconEdit_.preview, largeIconEdit_.key);
+    {
+        std::optional<snowdesktop::performance::Scope> trace;
+        if (autoSync) trace.emplace("shared.maintenance", "steam.icons.references");
+        const auto retain = [&](const std::string& id, const std::wstring& name) {
+            if (!id.empty()) uses[id].push_back(name);
+        };
+        for (const auto& [target, asset] : iconOverrides_)
+            if (IsActiveIconCustomization(target)) retain(asset, IconOverrideTargetName(target));
+        for (const auto& widget : widgets_) retain(widget.dockIconAssetId, widget.title);
+        const auto retainLarge = [&](const auto& config, const std::wstring& name) {
+            retain(config.imageAssetId, name); retain(config.foregroundImageAssetId, name);
+        };
+        for (const auto& item : items_) if (item.largeIcon) retainLarge(*item.largeIcon, item.name);
+        for (const auto& [key, record] : layoutRecords_) if (record.largeIcon && FindItemIndexByKey(key) >= items_.size())
+            retainLarge(*record.largeIcon, key);
+        for (const auto& [key, config] : largeIconEdit_.previews) retainLarge(config, key);
+        if (largeIconEdit_.preview) retainLarge(*largeIconEdit_.preview, largeIconEdit_.key);
+    }
 
     if (request.action == "begin" && IsIconOverrideTarget(request.target))
     { state.target = request.target; ++state.session; request.action = "read"; }
@@ -223,10 +238,13 @@ snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLi
                 if(request.action=="publishPrepared"&&result.succeeded)current->validPreparation.clear();
                 for(auto& group:result.groups)group.publishedUrl=group.workshopItem.empty()?
                     snowdesktop::steam_bridge::IconPackPublishedUrl(data,group.id):"https://steamcommunity.com/sharedfiles/filedetails/?id="+group.workshopItem;
-                // Refresh/import/group edits do not change content-addressed
-                // originals. Release only removed/missing sources after a
-                // successful result; a failed operation is not an empty library.
-                if (result.succeeded)
+                const bool backgroundMaintenance = request.action == "autoSyncSubscriptions" ||
+                    request.action == "collectRetired";
+                // A sync can report an error for one package and still publish
+                // entries from successful updates. A failed empty result does
+                // not establish that the library has lost all its assets.
+                const bool haveAssets = result.succeeded || (backgroundMaintenance && !result.entries.empty());
+                const bool assetsChanged = haveAssets &&
                     current->bitmaps.Reconcile(result.entries, [this, &current](const auto& key, const auto& bitmap) {
                         current->images.Cancel(Utf8ToWide(key));
                         if (bitmap && bitmap->bitmap) EraseD2DIconCacheForBitmap(bitmap->bitmap);
@@ -240,8 +258,11 @@ snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLi
                 }
                 else if (pending)
                     largeIconRuntime_[pending->key].error = current->snapshot.error.empty() ? "iconLibrary.invalid" : current->snapshot.error;
-                InvalidateDockRects();
-                if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+                if (!backgroundMaintenance || assetsChanged)
+                {
+                    InvalidateDockRects();
+                    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+                }
                 if((request.action=="syncSubscriptions"||request.action=="autoSyncSubscriptions")&&current->snapshot.succeeded)
                 {snowdesktop::IconLibraryRequest collect;collect.action="collectRetired";(void)EditIconLibrary(collect);}
             }, controlHwnd_, kLargeIconAssetsReadyMessage);

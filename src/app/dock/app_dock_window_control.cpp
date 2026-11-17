@@ -7,9 +7,12 @@
 #include "dock_taskbar_diagnostics.h"
 #include "dock/dock_window_order.h"
 #include "diagnostics/performance_trace.h"
+#include "ui/input/private_pointer.h"
 
 namespace
 {
+constexpr UINT kDockPreviewSwitchDelayMs = 200;
+
 const char* TaskbarDirtyEventMetric(DWORD event) noexcept
 {
     switch (event)
@@ -109,6 +112,7 @@ DesktopApp::CollectDockWindowPreviewItems(
     bool includeCloaked,
     bool preferTaskbarDocumentProxies)
 {
+    snowdesktop::performance::Scope trace("dock.preview", "windows.collect");
     PruneDockPendingCloseWindows();
     struct TaskbarDocumentProxyCohort
     {
@@ -151,7 +155,7 @@ DesktopApp::CollectDockWindowPreviewItems(
         const bool taskWindow = IsDockTaskWindow(
             window, context->includeCloaked);
         const bool taskbarDocumentProxyCandidate =
-            context->preferTaskbarDocumentProxies &&
+            !taskWindow && context->preferTaskbarDocumentProxies &&
             IsDockTaskbarDocumentProxyCandidate(window);
         if (!taskWindow && !taskbarDocumentProxyCandidate)
             return TRUE;
@@ -161,7 +165,7 @@ DesktopApp::CollectDockWindowPreviewItems(
         const bool ownedByCurrentProcess =
             processId == GetCurrentProcessId();
         const bool applicationLevelWindow =
-            context->owner &&
+            ownedByCurrentProcess &&
             context->owner->IsSettingsApplicationWindow(window);
         if (!processId ||
             !snowdesktop::dock_window_rules::
@@ -281,7 +285,7 @@ void DesktopApp::CloseDockWindowFromPreview(
     if (!RequestTrackedDockWindowClose(window)) return;
     if (dockWindowPreview_ && dockWindowPreview_->IsVisible())
         dockWindowPreview_->RemoveWindow(window);
-    if (!dockWindowPreview_ || !dockWindowPreview_->IsVisible())
+    if (!dockWindowPreview_ || !dockWindowPreview_->IsVisible() || dockWindowPreview_->IsClosing())
         DismissDockWindowPreviewUntilLeave();
     // The card has already been removed locally. Let maintenance reconcile
     // running membership once, after the asynchronous close notifications.
@@ -314,6 +318,19 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
 
     RECT anchor{};
     bool found = false;
+    const auto resolveDesktopItem = [&](size_t itemIndex, RECT bounds) {
+        if (itemIndex >= items_.size() ||
+            GetDockWindowVisualState(itemIndex) == DockWindowVisualState::Closed)
+            return false;
+        target.identity = ResolveDockAppIdentity(itemIndex);
+        if (target.identity.kind == DockAppIdentityKind::None)
+            return false;
+        const auto tracked = dockRunningWindows_.find(DockItemWindowKey(items_[itemIndex]));
+        if (tracked != dockRunningWindows_.end())
+            target.trackedWindows = tracked->second.trackedWindows;
+        anchor = bounds;
+        return true;
+    };
     if (DockRunningItem* running = dock->RunningItemAtPoint(clientPoint))
     {
         const size_t index = running->GetRunningIndex();
@@ -327,6 +344,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
                 !target.identity.appUserModelId.empty()
                 ? DockAppIdentityKind::Applications
                 : DockAppIdentityKind::Executable;
+            target.trackedWindows = app.trackedWindows;
             anchor = running->GetBounds();
             found = true;
         }
@@ -340,35 +358,21 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
         {
             const size_t itemIndex = FindItemIndexByKey(
                 dockEntries_[entryIndex].reference);
-            if (itemIndex < items_.size() &&
-                GetDockWindowVisualState(itemIndex) !=
-                    DockWindowVisualState::Closed)
-            {
-                target.identity = ResolveDockAppIdentity(itemIndex);
-                anchor = entry->GetBounds();
-                found = target.identity.kind !=
-                    DockAppIdentityKind::None;
-            }
+            found = resolveDesktopItem(itemIndex, entry->GetBounds());
         }
     }
     else if (DockFrequentItem* frequent =
         dock->FrequentItemAtPoint(clientPoint))
     {
-        const size_t itemIndex = frequent->GetItemIndex();
-        if (itemIndex < items_.size() &&
-            GetDockWindowVisualState(itemIndex) !=
-                DockWindowVisualState::Closed)
-        {
-            target.identity = ResolveDockAppIdentity(itemIndex);
-            anchor = frequent->GetBounds();
-            found = target.identity.kind !=
-                DockAppIdentityKind::None;
-        }
+        found = resolveDesktopItem(frequent->GetItemIndex(), frequent->GetBounds());
     }
 
     if (!found)
         return false;
-    anchor = dock->GetElementVisualRect(anchor, clientPoint);
+    // Keep window previews anchored to the slot in single-icon mode, even
+    // while the icon grows or shifts during the hover animation.
+    if (dockSettings_.hoverEffect != 1)
+        anchor = dock->GetElementVisualRect(anchor, clientPoint);
     target.identityKey =
         DockWindowPreviewIdentityKey(target.identity);
     if (target.identityKey.empty())
@@ -399,12 +403,18 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
         dockWindowPreview_->IsVisible();
     const bool previewMatchesTarget =
         hasTarget && dockWindowPreviewKey_ == target.targetToken;
-    // The target token covers only the app identity. Dock magnification
-    // keeps shifting the icon's visual rect while the preview is open, so a
-    // matching identity with a moved anchor must follow in place instead of
-    // tearing the preview down and re-showing it.
-    if (previewMatchesTarget && previewVisible)
+    // The target token covers only the app identity. Update a moved anchor
+    // in place when the preview still belongs to the same app.
+    const DockPreviewHoverTransition transition =
+        dockWindowPreviewHover_.UpdateTarget(
+            hasTarget ? target.targetToken : std::wstring{},
+            previewVisible, previewMatchesTarget);
+
+    if (transition.cancelTimer && hwnd_)
+        KillTimer(hwnd_, kDockWindowPreviewHoverTimerId);
+    if (transition.keepPreviewVisible)
     {
+        dockWindowPreview_->KeepVisible();
         const bool anchorChanged =
             EqualRect(&dockWindowPreviewAnchorScreen_,
                 &target.anchorScreen) == FALSE;
@@ -418,46 +428,74 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
             dockWindowPreviewAnchorScreen_ =
                 target.anchorScreen;
         }
+        return;
     }
-    const DockPreviewHoverTransition transition =
-        dockWindowPreviewHover_.UpdateTarget(
-            hasTarget ? target.targetToken : std::wstring{},
-            previewVisible, previewMatchesTarget);
-
-    if (transition.cancelTimer && hwnd_)
-        KillTimer(hwnd_, kDockWindowPreviewHoverTimerId);
-    if (transition.keepPreviewVisible)
-        dockWindowPreview_->KeepVisible();
-    if (transition.schedulePreviewHide)
-        dockWindowPreview_->ScheduleHide();
     if (transition.armTimer && hwnd_)
     {
-        // Use the existing hover delay for native toolbar discovery, so the
-        // first preview layout can include its buttons and final geometry.
-        dockWindowPreview_->PrepareToolbars(CollectDockWindowPreviewItems(target.identity));
-        SetTimer(hwnd_, kDockWindowPreviewHoverTimerId,
-            QueryDockWindowPreviewHoverTime(), nullptr);
+        if (!previewVisible)
+        {
+            // Warm up the first preview's toolbars during the hover delay.
+            // An open preview still needs its own toolbar targets.
+            std::vector<DockWindowPreviewItem> toolbarTargets;
+            toolbarTargets.reserve(target.trackedWindows.size());
+            for (const HWND window : target.trackedWindows)
+                toolbarTargets.push_back({window, {}});
+            dockWindowPreview_->PrepareToolbars(toolbarTargets);
+        }
+        const UINT delay = previewVisible
+            ? kDockPreviewSwitchDelayMs : QueryDockWindowPreviewHoverTime();
+        const ULONGLONG dueTick = GetTickCount64() + delay;
+        if (SetTimer(hwnd_, kDockWindowPreviewHoverTimerId, delay, nullptr))
+        {
+            dockWindowPreviewHover_.TrackTimer(dueTick);
+            if (previewVisible && !dockWindowPreview_->IsClosing())
+                dockWindowPreview_->KeepVisible();
+        }
     }
-    else if (!hasTarget && !previewVisible)
+    if (previewVisible)
+    {
+        if (hasTarget || GetDockContainerAtPoint(clientPoint))
+            dockWindowPreview_->ScheduleDockHide();
+        else
+            dockWindowPreview_->ScheduleHide();
+        return;
+    }
+    if (!hasTarget)
         dockWindowPreview_->PrepareToolbars({});
 }
 
 void DesktopApp::OnDockWindowPreviewHoverTimer()
 {
-    if (!hwnd_ || !dockWindowPreview_)
+    if (!hwnd_ || !dockWindowPreview_ || !dockWindowPreviewHover_.TimerArmed())
         return;
+
+    // Use the new icon's deadline even if its predecessor left a queued WM_TIMER.
+    if (const UINT remaining = dockWindowPreviewHover_.TimerDelayRemaining(GetTickCount64()))
+    {
+        SetTimer(hwnd_, kDockWindowPreviewHoverTimerId, remaining, nullptr);
+        return;
+    }
     KillTimer(hwnd_, kDockWindowPreviewHoverTimerId);
 
-    POINT cursorScreen{};
-    GetCursorPos(&cursorScreen);
-    POINT cursorClient = cursorScreen;
-    ScreenToClient(hwnd_, &cursorClient);
+    if (!generalSettings_.dockEnabled || !dockSettings_.showWindowPreviews || dragSession_.IsActive())
+    {
+        HideDockWindowPreview();
+        return;
+    }
+
+    const bool previewVisible = dockWindowPreview_->IsVisible();
+    const RECT previewBounds = previewVisible ? dockWindowPreview_->GetBounds() : RECT{};
+    POINT cursorClient{};
+    if (!snowdesktop::private_pointer::CursorPosition(&cursorClient) ||
+        PtInRect(&previewBounds, cursorClient) ||
+        !ScreenToClient(hwnd_, &cursorClient))
+    {
+        dockWindowPreviewHover_.UpdateTarget({}, previewVisible, false);
+        return;
+    }
 
     DockWindowPreviewTarget target;
-    const bool hasTarget =
-        generalSettings_.dockEnabled && dockSettings_.showWindowPreviews &&
-        !dragSession_.IsActive() &&
-        ResolveDockWindowPreviewTarget(cursorClient, target);
+    const bool hasTarget = ResolveDockWindowPreviewTarget(cursorClient, target);
     const std::wstring observedToken =
         hasTarget ? target.targetToken : std::wstring{};
     if (!dockWindowPreviewHover_.ConsumeTimer(observedToken))
@@ -466,10 +504,15 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
         return;
     }
 
-    std::vector<DockWindowPreviewItem> previewItems =
+    ShowDockWindowPreview(std::move(target), cursorClient);
+}
+
+bool DesktopApp::ShowDockWindowPreview(DockWindowPreviewTarget target, POINT clientPoint)
+{
+    const std::vector<DockWindowPreviewItem> previewItems =
         CollectDockWindowPreviewItems(target.identity);
     if (previewItems.empty())
-        return;
+        return false;
 
     if (!target.floatingLayer)
     {
@@ -484,8 +527,8 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
         {
             DockWindowPreviewTarget floatingTarget;
             if (ResolveDockWindowPreviewTarget(
-                    cursorClient, floatingTarget) &&
-                floatingTarget.targetToken == observedToken)
+                    clientPoint, floatingTarget) &&
+                floatingTarget.targetToken == target.targetToken)
             {
                 target = std::move(floatingTarget);
             }
@@ -499,9 +542,10 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
         IsLightContentTheme(),
         target.floatingLayer
             ? floatingDockHwnd_ : nullptr);
-    if (dockWindowPreview_->IsVisible())
-        dockWindowPreviewHover_.MarkPreviewShown(
-            target.targetToken);
+    if (!dockWindowPreview_->IsVisible()) return false;
+    dockTitleTooltip_.Hide();
+    dockWindowPreviewHover_.MarkPreviewShown(target.targetToken);
+    return true;
 }
 
 void DesktopApp::RefreshDockWindowPreviewItems()
@@ -538,7 +582,7 @@ void DesktopApp::DismissDockWindowPreviewUntilLeave()
         KillTimer(hwnd_, kDockWindowPreviewHoverTimerId);
     dockWindowPreviewHover_.SuppressForActivation();
     if (dockWindowPreview_)
-        dockWindowPreview_->Hide();
+        dockWindowPreview_->Dismiss();
     dockWindowPreviewKey_.clear();
     dockWindowPreviewIdentity_ = {};
     dockWindowPreviewAnchorScreen_ = {};

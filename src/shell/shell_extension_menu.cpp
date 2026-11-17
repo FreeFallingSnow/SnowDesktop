@@ -966,7 +966,8 @@ struct Host
             const auto countBefore = count;
             const auto tokenBefore = next;
             bool pending = false;
-            std::function<std::optional<Entry>(IExplorerCommand*, int)> read = [&](IExplorerCommand* current, int depth) -> std::optional<Entry> {
+            // Keep the recursion statically typed for the MSVC 19.52 front end.
+            const auto read = [&](const auto& self, IExplorerCommand* current, int depth) -> std::optional<Entry> {
                 if (depth > 8 || count >= kMaximumEntries) return {};
                 source->site.Attach(current);
                 EXPCMDSTATE state = ECS_HIDDEN;
@@ -997,7 +998,7 @@ struct Host
                         {
                             ComPtr<IExplorerCommand> child; ULONG fetched = 0;
                             if (enumeration->Next(1, &child, &fetched) != S_OK || fetched != 1 || !child) break;
-                            if (auto value = read(child.Get(), depth + 1))
+                            if (auto value = self(self, child.Get(), depth + 1))
                             {
                                 entry.children.push_back(std::move(*value));
                             }
@@ -1013,7 +1014,7 @@ struct Host
                 }
                 return entry;
             };
-            auto entry = read(source->explorer.Get(), 0);
+            auto entry = read(read, source->explorer.Get(), 0);
             if (pending)
             {
                 // The fast pass may have visited siblings before a slow child.

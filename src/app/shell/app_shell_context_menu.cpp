@@ -262,7 +262,7 @@ void DesktopApp::ShowFolderEntryContextMenu(
         CopyCutSelectedFolderEntries(true);
         break;
     case kContextCopyCommand:
-        CopyCutSelectedFolderEntries(false);
+        CopyCutSelectedFolderEntries(false, L"folder_entry_menu");
         break;
     case kContextDeleteCommand:
         DeleteSelectedFolderEntries(false);

@@ -51,6 +51,9 @@
 | [CF-025](#cf-025-文件观察提前结束) | P2 | 前序候选的文件仍有待提交改动，文件观察已返回可认领 | 已确认，待补充观察条件 |
 | [CF-026](#cf-026-打包脚本变更阻止复验已保存候选) | P2 | 无编译复验要求当前检出的打包脚本与旧候选一致 | 已确认，使用新快照定向执行 |
 | [CF-027](#cf-027-常规页低频状态预览按控件序号定位) | P2 | 共用模块提示插入后，常规页预览在首项中止 | 已解决：深浅预览各导出 13 张 |
+| [CF-028](#cf-028-steam-打包将两种程序集布局误判为桥接程序过期) | P0 | 已通过的 Release 候选因两种部署清单产生不同 EXE 哈希而无法打包 | 已解决：复用原候选并通过打包 |
+| [CF-029](#cf-029-语言资源原子替换失败后缺少重试指引) | P2 | 语言键写入因原子替换失败退出，回执缺少同请求恢复指引 | 已确认：同请求恢复成功 |
+| [CF-031](#cf-031-共同续修采用早先等待进程的工具链) | P1 | 已就绪成员的等待进程可以用不同于最后一位提交者的工具链启动构建 | 实测一次重复失败，待改进提交前诊断 |
 
 
 ### CF-001 持久执行器被父 Job 拒绝
@@ -69,6 +72,8 @@
 
 ### CF-003 任务关闭后同会话无法继续
 
+- **快捷导航外框验收补录（2026-11-15）**：实现 Task `task-36d46c6113de48faac177538597573dd` 关闭后，用户确认外框在展开和收起时都跟随面板。后继 Task `task-45798df55a754d0d927ec28648657bf6` 核对批次 `5e685b6473264dfd9d7d99290f753259` 修订 0 和 Run `5a5239b3ba44481aafe18adbb4456f22`，保存的候选 EXE、激活回执和本地 Release EXE 的 SHA-256 一致。源码仍要求原候选成员为活跃任务，后继任务无法通过 `acceptance-start` 绑定该候选。本次以 `verify` 提交记录用户反馈及运行文件身份，无需重编或重测。后继验收关联及无历史起点的补录入口仍待实现。
+- **滚轮音量提示验收补录（2026-11-15）**：`music-volume-wheel-popup` 关闭后收到用户反馈「实测通过」。后继 Task `task-1769c78936524282a92749b07cd74047` 核对原批次 `c422b6989dce4cf2adac91038e4d001a` 修订 0、Run `f5d9abba2aa64a3facd830fcc0fc42a8`。保存的运行文件、激活回执和本地 Release 可执行文件的 SHA-256 一致。源码确认 `acceptance-start` 仍要求活跃任务及原候选成员资格。后继任务将用户反馈与原构建绑定到 `verify` 提交，保留验收起点未知的事实。这次只处理记录，无需重编或重测。
 - **后继任务验收关联缺口（源码确认）**：2026-11-05，托盘实现 Task `task-3ce5856630f8469dad256d8d3b1e8fde` 已关闭，用户随后明确反馈固定托盘与展开面板中键均正常。`task-new` 正常创建验证 Task `task-5ae4d391375140a7a5fe6ba92e8e8f05`，保留前序与 continuationRoot；但 `build_manager.ps1` 禁止关闭的 Task 登记验收，`Start-TaskAcceptance` 又只接受候选原成员，`Start-RunAcceptance` 要求原请求 task 完全相同，均未解析后继关系。此为源码确认，没有提交已知会失败的验收命令。本次在独立 verify 提交和忽略任务记录中绑定用户原话、候选 `b85ab212`、Run `772b51ec3d9e4d428ee21e0c51f9e499` 及匹配的运行文件哈希，不补造历史验收起点、不创建新产品候选或重跑构建。下一步应支持同一 continuationRoot 下的可审查验收关联，并保留原需求修订及产物校验；原 task-new 登记修复仍有效。
 - **后继验收补录（2026-11-07）**：Lua 首帧修复 Task `task-4932f8440e3045d98b477fc4ba7ef362` 关闭后，用户重启确认内容与毛玻璃一起显示、首次异步刷新无闪空。后继 Task `task-20ff05487820495c83fe414b7d58c96a` 核对批次 `1cc4f84ab406479785f40b62d9b09b74`、Run `7adb4dc5ee9b437e9c83b1a46c369280` 及保存、激活与当前 EXE 哈希一致。现有入口仍要求原任务关联，此为源码确认。事后验收保存在独立 verify 提交及 `.codex-probes/lua-startup-glass/user-verification.json`，复用原候选与回归结果。后继关联与无历史起点的补录入口待实现。
 - **原始反馈**：关闭任务后，新增“可见性改到管理页”“名称改 VPN”需求，`open/begin` 报 `Task ID is closed; use a new ID for a new task`。插件没有下一任务入口，只能创建新 teammate，重复整轮登记、实现、提交和汇报。
@@ -112,7 +117,21 @@
 
 ### CF-010 等待结束回执过大
 
+- **单任务状态查询（2026-11-16）**：Task `task-c4672fc2024d4b49b86093109d956516` 用 `scripts/build.bat status task-c4672fc2024d4b49b86093109d956516` 核对批次 `225f0675906f49d89daa16aa7d9a955d` 的编辑修订，回执仍包含全局历史并被工具截断（chunk `ae2715`）。已从批次成员和目标 Task 字段恢复修订，继续原批次，未为反馈重复查询或构建。单任务状态查询仍需要默认窄回执，完整历史按需读取。
+
+- **工坊管理器定向编译终态（2026-11-15）**：Task `workshop-tag-shortcuts`、批次 `51db66e07c034a55bf500c67dcf7516b` 修订 0、Run `2dee1c34d3824199bf02e92a723e5810`。`run wait -Task workshop-tag-shortcuts -RunId 2dee1c34d3824199bf02e92a723e5810 -Seconds 60` 返回 `passed`，但同回执包含请求、runner 文件列表与全部阶段，工具记录 2029 行并截断（chunk `041dca`）。终态默认精简、完整历史另取的缺口仍存在。在后续调查中复用原记录，未重跑此请求。
+
+- **毛玻璃路径认领冲突后的状态查询（2026-11-15）**：Task `task-b9ff6102968348489b9cabee59b69358`、批次 `08000882cb61448595c027f89c5699f0`、编辑修订 0。`claim` 因 `dock-rim-backdrop` 持有 `src/app/render/app_bitmap_cache.cpp` 被拒绝。随后的 `scripts/build.bat status -Batch 08000882cb61448595c027f89c5699f0` 返回全局任务历史，工具输出被截断（chunk `d63343`）。用 `current.batch.participants` 与相关 Task 字段的窄投影核对同批归属。复用上面的指定批次状态回执缺口，当时未重交构建。
+
+- **等待非空批次释放租约（2026-11-15）**：Task `dock-liquid-glass-preset` 为批次 `158b9cbde5fb4b9ca6ceb0c948f73303` 等待现有执行者，用 `scripts/build.bat run wait -RunId 8cbc6a26035240dfaee1ecec50caeda5 -Seconds 45` 得到尚在运行的回执。工具捕获 2897 行请求、runner 文件和阶段记录后截断（chunk `cfd4f3`）。后续仅投影 Run 状态和终态字段，未提交新的执行请求。Run 等待的默认精简回执仍待处理。
+
+- **Run 中断后的诊断回执（2026-11-13）**：Task `tray-menu-hover-popup`，批次 `1d39d51bf35648e784acdb91b9203d8c` 修订 0，Run `bf51917ebf3c41d8aadfca35dfadfd85`。工具会话失效后续接 `wait` 没有返回终态，`run status` 确认 `interrupted`、`ownerState: exited`，同时输出 4058 行并截断。已按原回执 `recover`，由续修批次 `ca7b49ddd3dd42b7978a3833698a3969` 复用候选编译槽。执行者退出原因待确认。Run 终态摘要和批次观察如何提示该终态仍待改进，未为反馈重现或另建 Run。
+
+- **定向测试结果的读取范围（2026-11-12）**：Task `fix-hidden-desktop-selection`、批次 `a0636dc6f15b469cbf6118978b822e68` 修订 0、Run `bff864dba7214013b178a708042df590`。`ready-and-wait` 的精简回执正常返回一项测试通过。随后 Agent 从批次 JSON 读取完整 `coverage` 并执行 `ConvertTo-Json -Depth 4`，内嵌的执行上下文和 `source-report-not-in-generated-project` 明细导致输出截断。核对状态时直接读取 `coverage.completed`，产物另读 `productBuild.exitCode` 与 `activation`。窄字段摘要可同时覆盖测试和产品构建。本次没有重复构建或测试，依赖报告的根因待核实。
+
 - **指定批次的状态回执（2026-11-08）**：Task `dock-desktop-blur` 执行 `scripts/build.bat status -Batch 76b73a4d35c24415adbd5e6dff38c08a` 核对合成器文件归属时，返回包含全局 `tasks` 历史的状态。整对象以 Depth 3 投影后仍被工具截断。后续只投影 `current.batch.participants` 和 `activeCandidates.participants`，核对了候选 `d7c34e793bd344e19c56e369c1e793a7` 的文件归属，未重交构建。建议让指定批次状态提供窄回执并保留完整查询。此项涉及只读 `status`，不改变 `ready-and-wait` 精简结束回执的验证结论。
+
+- **指定成员和批次的状态回执（2026-11-15）**：Task `grid-preview-hotkey`、批次 `f9b027a781ee4664a6aec14a2550b229` 修订 0。执行 `scripts/build.bat status grid-preview-hotkey -Batch f9b027a781ee4664a6aec14a2550b229` 确认共享文件归属，回执仍含全局 `tasks` 历史，序列化为 Depth 3 后工具输出仍被截断。P2，后续只读取 `current.batch.participants`，继续使用原批次。建议为带成员和批次过滤的查询提供窄回执。
 
 - **候选 Run 等待的剩余输出（2026-11-07）**：Task `steam-beta-full-20261107` 在复用产品 Run `41840d218870446dba384ebd77214e58` 时，通过 `scripts/build.bat run wait -Task steam-beta-full-20261107 -RunId 6d4726de92b446519cd200994117e5ab -Seconds 60` 在原前台进程等待同快照应用全量。返回码 10 的超时快照也完整输出请求、runner 文件清单和累计阶段；原会话一次工具续接（chunk `9999c5`）被截断。持久原件见 `.build/collaboration/runs/6d4726de92b446519cd200994117e5ab.request.json`、同名 `.json` 和 `.stages.*.jsonl`。源码确认 `build_run.ps1` 的 `run wait` 有 60 秒上限且输出完整投影，与已精简的批次 `ready-and-wait` 路径不同；外层循环未丢弃中间快照，放大了读取成本。P2，候选 Run 入口的剩余缺口已确认（关联 CF-012）。继续观察原 Run，未重复提交构建或测试。后续为 Run 等待提供精简投影和不限时观察，保留原件、退出码与急件行为；未测额外耗时或 token。
 
@@ -124,7 +143,11 @@
 - **发现**：同 CF-009。首批 `ready-and-wait` 返回 cancelled 后，工具输出约 1279 行、12026 个估算 token，触发截断；整份计划、输入与 19 项未运行证据占主要部分。
 - **本轮修复**：CLI 的 finish/wait/ready-and-wait 默认输出精简结束回执，返回状态、计数、最多 16 个失败名称、原始结果路径与恢复入口，保留完整 JSON 原件和退出码。`-FullResult` 取得原输出，直接 PowerShell 调用保持兼容、可选 `-Compact`。回归将核对默认 CLI 路由、完整输出兼容及原证据字节未被改写。
 
+- **排队阶段重复状态（2026-11-15）**：Task popup-new-item-animation，批次 366fdad9e1a94842b5f803d972c0035d 修订 0、Run 76ad03c1951d4eb5b80f202535bc8909。原 ready-and-wait 前台会话 14107 的单次续接（chunk 8c5c72）交替重复 Waiting for the collaboration state transaction 和同一条 Candidate slot is busy 状态。Run JSON 保留 candidate-slot 排队记录，排队后进入构建。建议按等待原因去重，仍保留真实阶段变化与急件。未重复提交或估填成本。
+
 ### CF-011 独立检查等待共享编辑屏障
+
+- **非空计划冻结遇到共享租约（2026-11-15）**：Task `dock-liquid-glass-preset` 的批次 `158b9cbde5fb4b9ca6ceb0c948f73303` 修订 0 声明 `module/selected`，轻量检查通过，`ready-and-wait` 在冻结前返回 1，原文为 `Unexpected occupied build lease; inspect status without clearing registrations.`。只读状态确认本批次仍是就绪成员，无本批次 Run；执行租约归批次 `52ec2edf1f404ddf9767db3f29d482f9` 的 Run `8cbc6a26035240dfaee1ecec50caeda5`。源码确认非空计划在冻结时尝试 `build.lock`，租约已用时会结束前台等待。本次保留同批次，等待正常释放后继续，不清除登记或开启额外构建槽。下一步是在合法竞争时等待冻结租约并保留原观察进程。
 
 - **按依赖拆分（2026-11-08）**：Task `collab-dependency-split-20261108` 接入 `plan -Independent`。明确豁免宿主构建和测试的成员通过自身路径检查、核对实际认领后可提前归档。临时 Git 夹具验证了构建锁占用、其他成员无关空白错误、原修订提交与关闭、共同结果发布后仍能读取独立回执，以及路径重叠和未认领时继续等待。使用原批次和现有执行槽，未启动构建或测试 Run。
 
@@ -152,6 +175,10 @@
 - **本次等待证据**：Task `remove-tool-tests-20261104` 的 `begin` 等待已封闭批次 `c2e847c94366496eb443eef167f37cf5`，当时编辑者为 `task-d5e30970e8544fdca7461e632368ad5b`。原生工具测试删除不需要产品编译，仍需等待编辑窗口；其两处待删测试源码也有该任务的在编修改，须等归属闭合后接手。沿用原等待 session，不创建候选或重复提交，不估填等待成本。
 
 ### CF-012 观察等待默认超时导致模型轮询
+
+- **前台构建重复提示（2026-11-16）**：Task `dock-single-preview-anchor-20261116`、批次 `27d647c2f4494e6baf4b8888c1db0380` 修订 0、Run `4e6e544084eb4594b04bc186c82d58b0`。原 `ready-and-wait` 会话 54194 入队时显示 `resource reason not recorded`，执行时交替重复 `latest stage start compile` 与 `Waiting for the collaboration state transaction.`，见同一续接回执 `8a133f`。全程复用该观察进程。待按业务阶段和短时事务分别去重，保留实际变化。
+
+- **候选槽排队续证（2026-11-15）**：Task `ime-search-candidate-position`、批次 `e9de509e81f74f608fe6ae5408402da5` 修订 0、Run `0c528b8495b642cbb3e8819324cd1d00` 的 `.stderr.log` 重复记录 38 条 `Candidate slot is busy; existing materialization/executor retains its files.`。只读核对了前序 Run `c4ec5646568e428581fc02f513b2b1e7` 的执行阶段，继续原 `ready-and-wait` 会话并过滤重复等待提示，原 Run 后续通过。建议仅在排队原因或阶段改变时输出一条提示，保留原有排队状态与等待证据。
 
 - **新需求登记中断旧候选回执（2026-11-11）**：Task `task-16065c1cdd3846c4a9e782099ce5fcc3` 的 `ready-and-wait` 正在观察批次 `75bb4514cee8497f9c13a6a9603fabc9`、Run `a1e0c45a81d34bce9dc40878df1cb736` 时，收到新需求并用同 ID `begin` 取得未认领文件的批次 `1bef5f6cf6254647bb6c8d6d72520abf`。原观察结束时仅输出 `This participant has a newer active batch. Its old result cannot verify new edits; use the batch ID from the latest begin.`，未返回已经归档的编译失败，须另读原回执；`repair` 又因空的新登记被拒绝。源码分别在 `build_manager.ps1` 和 `build_protocol.ps1` 确认两处校验。已用 `recover -ConfirmStopped` 撤回自己的空登记，并从原失败建立续修 `454c6e5ccd9f493e83a1032124afc88f`；未重交原 Run。待改进：原观察应返回与原批次绑定的只读结果并明确其不适用于新修订，空的新登记应提供明确的续修合入或撤回提示。
 
@@ -194,8 +221,22 @@
 - **反馈来源**：`fav-nav-bar` 事件1065（2026-11-04T11:36:20Z）。原产品成功后，候选 `b0578947517d459c8859dc0dc1018b19` 的补验Run `6834bb89369943c3b162a4027e8e47fd` 返回 `Candidate observed tools/environment changed; capture a new context`，未开始编译；反馈称回执没有列出精确变化字段。
 - **影响与边界**：需要额外读取记录判断环境变化，增加恢复成本；当前按反馈登记，尚未核实具体差异和触发输入。标准产品成功、中断与补验拒绝分别保留，不放松环境校验。
 - **下一步**：核对原观测记录，在有界回执中给出变化字段及旧/新摘要，保留完整记录路径；不为收录反馈重跑构建或打印全量环境。该诊断改进尚未实现。
+- **只读等待续证（2026-11-16）**：Task `dock-thumbnail-hover-delay` 通过 `scripts/build.bat wait` 观察前序批次 `cb8e98ab754e46d1bd8e7c029dd0a583` 修订 2、Run `0b81da26d37f4c9f8a538e380b977882`。观察进程沿用默认工具集，候选产品日志记录 `19.50.35740.0`。等待结束返回 `Candidate observed environment/tools changed.`，须另读原批次 JSON 才取得已归档的通过结果。后续可在保留环境复验的同时输出归档结果路径、观察方的核对状态及差异字段。本次复用原结果，未重交运行。
+- **应用全量续证（2026-11-17）**：Task `latest-release-msix-20261117` 先以 `run start -Action tests -Mode full` 获得 Run `ba6d5004972e40709c39950722ce42e5`，原检出 CMake 缓存指向已不存在的 Visual Studio 实例版本 `18.5.11723.231`，配置失败。随后 `run start -Action candidate -Snapshot d27bd211d61047b6a7ffc3c1c4eb4c9a -CandidateAction tests -Mode full` 的 Run `9f5cff79e08f4c1a8bbe1fd5716c8304` 报 `Candidate observed tools/environment changed; capture a new context.`，两次均未执行测试。只读对照定位到两个选择器 `CMAKE_GENERATOR` 和 `CMAKE_GENERATOR_TOOLSET`。按原候选缓存恢复 `Visual Studio 18 2026` 和 `version=14.52.37025` 后，完整上下文摘要匹配，同一快照的全量执行 Run 为 `95f8e9dcb5ea4c048eb308848e0d7548`。路径由原 Run 记录保留。后续诊断可直接给出不匹配字段名和已记录选择器的恢复依据，继续保留摘要校验。
 
 ### CF-015 模块计划无法声明临时定向验证
+
+- **托盘排序续证（2026-11-16）**：Task `tray-reorder-stability`、批次 `6dfe33bba00847aba10e134233919b4f` 修订 0。现有 CTest 没有托盘排序条目，计划沿用 `behavior_manifest` 核对交付文件，状态栏和溢出菜单用现有离屏预览覆盖模型与绘制，受保护进程的身份查询使用本机样本。模块计划仍不能直接表达这一组合，沿用 CF-015 的准入限制，未为反馈重复构建。
+
+- **工坊管理器续证（2026-11-15）**：Task `workshop-tag-shortcuts`、修复批次 `fa1f95839c044f99903102a5a345d718` 修订 2、Run `b8b86881051544b9a29db177ba726fcc`。`.log.product.log` 记录 Release 配置及生成，随后 `.log` 对同一候选目录配置测试，用时 6.53 秒，三项定向测试通过。标签同行调整只涉及独立管理器，复用此前检查结论，另做管理器定向编译和界面核对。配置复用及批次内单一生产目标声明仍待处理。
+
+- **组件搜索输入法候选续证（2026-11-15）**：Task `ime-search-candidate-position`、批次 `e9de509e81f74f608fe6ae5408402da5` 修订 0、Run `0c528b8495b642cbb3e8819324cd1d00`。现有 CTest 没有候选窗定位场景，模块计划选择 `behavior_manifest` 核对交付产物。`.log.product.log` 和 `.log` 对同一候选目录分别配置 Release 和测试，后者记录 CMake 用时 6.10 秒，并经部署测试的目标依赖再次进入宿主处理和资源复制步骤。构建、激活、部署契约通过，输入法仍待实机。后续核对配置能否复用及哪些宿主步骤已经有效，未追加构建或测试。
+
+- **桌面新建重命名续证（2026-11-15）**：Task `task-3ca60eff59cc451598d8ff08695e34b6`、批次 `b25dfb595ff245c28177e87a6d7fa28c` 修订 0、Run `c6a02c5ef3ec4fb1a9d0742f2a24deac`。`ready-and-wait` 的产品日志和测试日志在同一候选目录分别记录 Release 配置和测试配置，两次日志各记 2.4 秒。原生 Windows 新建菜单回调探针独立保留，正式批次的 4 项定向检查均通过。后续核对产品配置能否供测试阶段复用。本条仅记录实际执行，无追加构建。
+
+- **右侧时钟日历布局的续证（2026-11-13）**：Task `calendar-right-vertical` 在批次 `02eeaaccbf7a4b659193011deec3f3ed` 修订 0 经 `scripts/build.bat ready-and-wait` 执行 Run `5500c3fa9d524b258fbd749ca80cd2eb`。日历布局由现有 `scripts/preview.bat native -Component calendar-panel` 离屏入口检查，模块计划选择 `behavior_manifest` 核对交付产物。两份日志 `.log.product.log` 和 `.log` 分别记录产品和测试阶段对同一候选目录进行 CMake 配置，测试阶段配置耗时 5.09 秒。Release、部署契约及日历预览均通过。模块计划的临时验证准入和产品阶段配置复用仍待处理，未为反馈增加构建或测试。
+
+- **托盘悬浮的新证据**：2026-11-13，Task `tray-menu-hover-popup`、批次 `ca35a82e6c8c4897bbf6ee40d9aed819` 修订 0。核对 `cmake/testing/Tests.cmake` 未发现托盘悬浮回调或应用弹窗条目，`New-TaskPlan` 仍拒绝以 `module/none` 声明仅构建的模块计划。沿用 `behavior_manifest` 核对运行产物，原场景单独保留实机验收，未重复提交已知会拒绝的计划。模块计划准入限制仍待处理。
 
 - **日历日程间距的续证（2026-11-10）**：Task `statusbar-calendar-agenda-spacing-20261110` 通过 `scripts/build.bat ready-and-wait` 执行批次 `2a18c215bac54fd8808719e0d00aff72` 修订 0、Run `9e828f4c005c4e79986e3d9ccf5781db`。正式 CTest 未登记原生日历间距场景，计划选择 `behavior_manifest` 核对交付产物，日历间距和滚动由 `scripts/preview.bat native -Component calendar-panel` 验证。该批次的 `.log.product.log` 与 `.log` 分别记录 `Configuring CMake (Release preset)` 和 `Configuring tests`，指向同一候选编译目录，测试阶段配置耗时 5.96 秒。Release、部署契约和日历预览均通过。第二次配置能否复用产品阶段结果待核实，未为反馈再启动构建或测试。
 
@@ -279,6 +320,9 @@
 
 ### CF-021 协作提交无法直接保存空验收记录
 
+- **输入法候选续证（2026-11-15）**：Task `ime-search-candidate-position` 对候选 `b43b0526`（原批次 `e9de509e81f74f608fe6ae5408402da5`、Run `0c528b8495b642cbb3e8819324cd1d00`、验收 `1390831ccd334b0ab236583aa5f93b43`）登记用户复测未通过。用户在「添加组件」搜索框输入中文时，候选条上移后仍距搜索框下沿约 20 像素。用独立文档批次 `2339a0a4b2b746e49425b34d5316b5cc` 保存失败验收和本条协作记录，原候选编译及部署契约结果照存。协调提交缺少空 `verify` 入口，仍需要额外文档归档，无需重编或重跑正式测试即可保存此次验收。
+
+- **滚轮音量提示续证（2026-11-15）**：同 [CF-003](#cf-003-任务关闭后同会话无法继续) 的后继任务。协作提交仍要求具体差异路径，事后实测通过与本次反馈通过文档轻量批次 `f9b027a781ee4664a6aec14a2550b229` 保存。增加了文档认领与归档操作，复用原 Run 的产品和测试结果。
 - **发现时间与来源**：2026-11-05，CLI，Task `music-resource-attribution-20261105`；采样尝试 `cab65ec4`，最终产品Run `3f0feba1daae471b98535bab21146e90`、验收 `da8bbd8ab573452c82162d8d0db181cd`，热点提交 `7637193a`。归档批次 `f3feb142ca9d4c7fadeec31aadfd28cd`。
 - **现象与证据（源码确认，未执行已知失败命令）**：`.agents/rules/delivery.md` 要求无代码修改的后续验收创建独立 `verify`，允许空提交；`build_manager.ps1` 的 `commit` 没有空提交参数，`build_ownership.ps1::Invoke-OwnedCommit` 要求非空路径并调用 `git commit --only`，没有 `--allow-empty`。目标路径已提交且无差异时，入口不能直接记录所需空验收；不能把其他暂存内容纳入来满足提交。
 - **效率影响与状态**：P2，增加收尾调查及归档步骤，没有因此配置、编译或重跑通过测试；额外耗时/token未测量。本任务在独立verify提交中纳入本条真实反馈，并绑定原采样与用户验收，保留此前try历史，没有修改协作实现或绕过Git事务。
@@ -301,7 +345,13 @@
 
 - **来源**：2026-11-10，CLI，Task `calendar-ics-subscriptions-20261110`。对照批次 `6935a08f187f4e5ab54942c412c905be` 修订 2、Run `c77d7675a5e74747bdfd3ad852dc8080` 与续修批次 `b4e75fc6e1ac437ba0dbe344b5a46e23` 修订 4、Run `f5f1d056ef664e27ae2ed219cbcb4835`，入口均为 `scripts/build.bat ready-and-wait`。
 - **实测与影响**：本任务在两轮间只调整 `calendar_ics.cpp` 的两处 libical 调用。两轮产品日志均指向同一候选槽 `a32a06cfeb995ec8-batches`，后一轮记录了 `settings_ipc_backends.cpp`、`App.xaml.cpp` 和多份 WinUI 设置页源码的编译。原件为 `.build/collaboration/<批次>.log.product.log`。已观察到重编；其他冻结输入、生成文件和 MSBuild 依赖的触发链待核实，额外耗时未单独测量。
-- **下一步**：比较两次冻结输入和对应项目的 MSBuild 增量判据，确认可以保留的对象。原续修结果照常使用，反馈沿用日历空态批次，不为调查追加构建。
+- **Win+D 续修补证（2026-11-13）**：Task `task-64befa60faef4ee0a9686c204a93ac37`，批次 `b7ab8c14c7a441f5bf810fc12fe066dd` 修订 0、Run `748c845e73814f82aaacb12da4655dfa`，入口 `scripts/build.bat ready-and-wait`。同一候选槽的产品日志记录本轮未修改的 `app_background_menu.cpp`、`app_clipboard_interaction.cpp` 和 `app_icon_loader.cpp` 重新编译。源码确认本轮修改的 `floating_dock_rules.h` 由 `app/app.h` 包含，多个宿主目标复用同一宿主 PCH。该包含链会扩大此头文件修改的重编范围，未单独测量其成本。原 Run 已通过，未追加构建。
+- **图标交付修订补证（2026-11-15）**：Task `task-085eddd4e7e84de0b8f1dbda00e78fea`、批次 `c364ce3a23f44979b3dfe94f9f01b776` 修订 0、Run `c4ec5646568e428581fc02f513b2b1e7`，入口 `scripts/build.bat ready-and-wait`。图标队列头由 `app/app.h` 包含，产品日志记录 PCH 以及未改动的 `app_clipboard_interaction.cpp`、`app_hit_testing.cpp` 编译。完整产品阶段耗时 861.462 秒，包含配置、编译、链接和产物整理，尚未分离头文件的单项成本。测试配置另记 2.8 秒，关联 CF-015。Release 与两项定向测试通过。后续评估将图像交付与分类提交的非模板实现移出宿主 PCH 包含链。
+- **下一步**：比较日历续修两次冻结输入的 MSBuild 增量判据。Dock 层级策略下次调整时评估将其模板移到实际调用点使用的头文件，缩小后续修改的影响范围。
+
+- **弹窗过渡补证（2026-11-15）**：Task popup-new-item-animation，批次 52ec2edf1f404ddf9767db3f29d482f9 修订 0、Run 8cbc6a26035240dfaee1ecec50caeda5，入口 ready-and-wait。弹窗运行时过渡改动涉及 core/widget.h；产品日志记录了本批未修改的 app_hit_testing.cpp 编译。Release 产品构建阶段共 420.758 秒，包含配置、编译、链接与整理，两项定向行为测试通过。仅确认超出任务改动单元的重编，未拆分头文件、其他共享输入与单项目的成本。
+
+- **目录绘制续修补证（2026-11-16）**：Task `task-73694d317c60435baadfe2e7e2ff0863`，以同一入口比较批次 `eec01ffbe02343f2986f9501b6ca617f`、Run `a119d5f5cbe240e49ca0fc2f84d765ff` 与批次 `30ec8ae4f6534ed196c90298d533c9f0`、Run `d9d61e9dcab845c89eef858ff8048a1f`，两批修订均为 0，产品日志均指向 `a32a06cfeb995ec8-batches`。后一批任务差异仅含三个 `.cpp`，产品日志从 2 条 `app_*.cpp` 编译行增至 128 条，并重新探测 C++ 编译器 ABI。产品阶段总耗时分别为 83.508 秒和 865.153 秒，含配置、编译、链接和整理。两批 Release 和定向检查均通过。触发重新配置和扩大编译的原因待查，尚未将两批总耗时的差额归于单一原因。本条复用现有日志，无追加构建。
 
 ### CF-025 文件观察提前结束
 
@@ -321,3 +371,28 @@
 - **实测**：2026-11-12，Task `backup-status-render` 使用现有 Release 执行 `scripts/preview.bat settings -Page general -State general-notices -Appearance dark`，第一项报 `advanced-feature notice did not open`。原始回执见 `.codex-probes/backup-status-render/baseline-general-dark/result.txt`。
 - **源码确认与影响**：`PageCards` 首项新增共用模块提示后，原预览按序号取得启动归属提示，导致整组高级功能和启动归属的离线截图未生成。
 - **本轮处理**：续修批次 `2e5e4b1f63c14ed491b0d7334489e0cb` 修订 2 让每个样例只触发一类常规页提示，按页面内已打开且可见的提示取图。Run `e11c82a248d24bd08456cc14a09975dd` 的候选成功导出中文深色及德文浅色预览各 13 张，覆盖高级功能、展开的错误详情及启动归属。首轮失败回执保留。
+
+### CF-028 Steam 打包将两种程序集布局误判为桥接程序过期
+
+- **实测**：2026-11-12，Task `task-2b2217f910744f8c88a24073ce03b5da` 从已通过的 Run `f1d2e02206c04ed1af9eb7e676e1e0af` 打包，`steam-upload-dev` 在上传前报 `The Agent Skill Workshop CLI or Steam runtime is stale.`。原始日志为 `.codex-probes/issue-35-steam/upload-console.log`。
+- **源码确认与影响**：构建先将 Bridge 复制到 Skill，再为主目录 Bridge 写入私有程序集依赖。两份 Bridge 的 `configuration` 返回同一版本及应用身份，两份 Steam DLL 的哈希一致。主目录 Bridge 配同目录 DLL 在独立目录启动报 WinError 14001。完整 EXE 哈希相等的检查拦住可用候选，重复构建无法保证消除布局差异。
+- **处理与结果**：由同一候选 Bridge 生成两处打包副本，只在 Skill 副本移除私有程序集依赖，在打包时分别启动验证。用 `release.bat package-steam -ArtifactRun f1d2e02206c04ed1af9eb7e676e1e0af` 复用已保存 Release 候选成功生成 Steam ZIP，未重编宿主。
+
+### CF-029 语言资源原子替换失败后缺少重试指引
+
+- **实测**：2026-11-12，Task `task-8fea9da64f544f1c87c7b78d5944c644`，批次 `4e6ca21b417744518f859d8fc4941043` 修订 0。`scripts/build.bat resource apply` 对请求 `4e3f7ba01163b976c9f2e08763de5f7c` 写入 `lang/ja-JP.json` 时，临时文件原子替换报 `[WinError 5]`，当时尚未提交构建。
+- **源码确认与处理**：`reconcile_resource_write` 比对磁盘内容和键归属，确认未发布后允许沿用原请求。按原参数重试，回执为 `applied`，继续其余语言。
+- **影响与下一步**：首次错误缺少请求标识和恢复指引，批量应用脚本中断，需要读取事务回执、补续剩余条目。后续可在原子替换错误中打印同请求重试命令，保留现有端点校验。WinError 5 的底层来源待核实。
+
+### CF-030 链接中断后复用不完整的候选程序
+
+- **实测（2026-11-13）**：Task `tray-menu-hover-popup`，批次 `1d39d51bf35648e784acdb91b9203d8c`、Run `bf51917ebf3c41d8aadfca35dfadfd85` 在链接阶段中断。续修批次 `ca7b49ddd3dd42b7978a3833698a3969` 修订 2、Run `7c2558930f82411e8aee8fff1e7adb37` 复用了先前的 2097152 字节 `SnowDesktop.exe`，整理阶段报 `mt.exe: c101008c ... The binary is not a valid Windows image.`，未激活也未运行 CTest。
+- **处理与下一步**：在候选槽及编译锁内，把无效候选 EXE 移到本任务的忽略目录。续修批次 `eb37472cdf904edaa7da10e59e435e86`、Run `b56dd466039143cdb8ba2b89da328eef` 仍未链接，整理阶段报 `SnowDesktop build executable was not found`。随后在两把锁内归档该目标的 `link*.tlog`，保留对象文件，由批次 `603b065eb84e46539a32764c5b88228f` 重试。构建系统可在中断恢复时识别未完成的链接输出，同时使该产物和链接跟踪失效。本次未修改构建逻辑。
+
+### CF-031 共同续修采用早先等待进程的工具链
+
+- **实测（2026-11-16）**：Task `task-621263ef5e7742ee939c4464ed1932c0` 在 `ready-and-wait` 进程指定 `CMAKE_GENERATOR_TOOLSET=version=14.50.35717`。批次 `1f7ee821c03e4e1f95249baa0073689d` 修订 5 的 Run `58c7b61427ea40189904056036996f0c` 由已就绪的 `lua-clipboard` 等待进程提交。候选仍采用 `19.52.37029.0`，产品日志第 84–85 行重现 `shell_extension_menu.cpp` 的 `MSB6006`，其退出码为 `0xC00000FD`。
+- **源码确认与下一步**：`build_manager.ps1` 在 `repair` 时启动已就绪成员的等待进程，后续任何等待方都可能提交 Run。为本次续修在启动继承等待进程前指定工具链。后续可在冻结前记录与比对实际工具链和候选所需值，提示等待进程上下文差异。原回执保留，本条未增加构建。
+- **续修结果**：批次 `50b5b4d46a6644dd92c5a55a753acd49` 修订 7、Run `289c9d9fba8e4fea8e27776a35fc81cd` 在创建等待进程前传入两个 CMake 选择变量。产品日志第 11–12 行确认编译器为 `19.50.35740.0`，第 611–620 行记录 Shell 文件和静态库编译成功。Release 激活，同批 11 项定向检查通过。该结果证实本次恢复路径，协作器的提交前检查仍待完善。
+- **默认工具链再次失败（2026-11-16）**：Task `dock-single-preview-anchor-20261116`、批次 `27d647c2f4494e6baf4b8888c1db0380` 修订 0、Run `4e6e544084eb4594b04bc186c82d58b0`。产品日志第 11–12 行显示默认 `19.52.37029.0`，第 549 行记录 Dock 所在 `SnowDesktopHost_app` 编译成功，第 623 行记录 `SnowDesktopHost_shell` 的 `MSB6006` 和 `0xC00000FD`，定向测试未执行。失败原件保留，续修批次 `cb8e98ab754e46d1bd8e7c029dd0a583` 在登记时选择 `14.50.35717`，复用上条恢复路径。下一步仍是候选冻结前核对工具链，避免已知失败占用构建槽。
+- **触发输入续证（2026-11-16）**：Task `dock-thumbnail-hover-delay`。前述失败的本机转储记录 `c1xx.dll` 19.52.37029.0 调用栈反复进入相同帧后溢出。使用实际编译参数单独复现 `shell_extension_menu.cpp`；分别移除预编译头、依赖报告、优化和调试信息仍失败。二分定位 `AppendPackagedCommands` 后将递归 lambda 改为直接调用，语法检查和原 Release 参数的对象编译通过。临时证据留在该 Task 的忽略目录，正式候选验证独立存档。

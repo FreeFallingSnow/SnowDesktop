@@ -24,6 +24,7 @@
 #include "desktop/desktop_membership_recovery.h"
 #include "platform/user_object_recovery.h"
 #include "diagnostics/performance_trace.h"
+#include "ui/render/ui_animation_scheduler.h"
 
 namespace
 {
@@ -122,9 +123,11 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         std::wstring synchronizationMessage;
         if (ready->snapshot.CanSynchronize())
         {
-            const auto result =
-                widgetEngine_->ApplySteamWorkshopSubscriptions(
-                    ready->snapshot);
+            const auto result = [&] {
+                snowdesktop::performance::Scope applyTrace("shared.maintenance", "steam.apply");
+                return widgetEngine_->ApplySteamWorkshopSubscriptions(
+                    ready->snapshot, ready->catalog, ready->plan);
+            }();
             if (result.Changed())
             {
                 ReloadItems(false);
@@ -209,28 +212,30 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                 }
             }
         }
-        const auto reconciledPackages = WidgetEngine::ListWidgetPackages();
+        snowdesktop::widget::InstalledPackageCatalog reconciledPackages;
         const auto targetRemoved = [&](const auto& completion) {
             const auto& expectedId = completion.expectedUnsubscribedPublishedFileId;
-            return !expectedId.empty() &&
-                std::none_of(ready->snapshot.subscribedPublishedFileIds.begin(),
+            if (expectedId.empty() || std::any_of(ready->snapshot.subscribedPublishedFileIds.begin(),
                     ready->snapshot.subscribedPublishedFileIds.end(), [&](const auto& value) {
                         return snowdesktop::widget::SteamPublishedFileId(value) == expectedId;
-                    }) &&
-                std::none_of(reconciledPackages.begin(), reconciledPackages.end(),
-                    [&](const auto& package) {
-                        if (package.builtin || package.development) return false;
-                        return (package.source.providerId == "steam-workshop" &&
-                            snowdesktop::widget::SteamPublishedFileId(package.source.externalItemId) == expectedId) ||
-                            std::find(completion.expectedRemovedPackageIds.begin(),
-                                completion.expectedRemovedPackageIds.end(), package.manifest.id) !=
-                                    completion.expectedRemovedPackageIds.end();
-                    });
+                    })) return false;
+            if (!reconciledPackages)
+            {
+                snowdesktop::performance::Scope packagesTrace("shared.maintenance", "steam.unsubscribe_packages");
+                reconciledPackages = WidgetEngine::SnapshotWidgetPackageCatalog();
+            }
+            return std::none_of(reconciledPackages->begin(), reconciledPackages->end(),
+                [&](const auto& package) {
+                    if (package.builtin || package.development) return false;
+                    return (package.source.providerId == "steam-workshop" &&
+                        snowdesktop::widget::SteamPublishedFileId(package.source.externalItemId) == expectedId) ||
+                        std::find(completion.expectedRemovedPackageIds.begin(),
+                            completion.expectedRemovedPackageIds.end(), package.manifest.id) !=
+                                completion.expectedRemovedPackageIds.end();
+                });
         };
-        const bool hasReconciledUnsubscribe = std::any_of(
-            completions.begin(), completions.end(), targetRemoved);
-        if (ready->snapshot.CanSynchronize() && hasReconciledUnsubscribe &&
-            !hostReloaded)
+        if (ready->snapshot.CanSynchronize() && !hostReloaded &&
+            std::any_of(completions.begin(), completions.end(), targetRemoved))
         {
             // Run the same host reconciliation pass even if the managed
             // package was already absent. Completion means both the package
@@ -241,7 +246,10 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
             hostReloaded = true;
         }
         if (settingsWindow_)
+        {
+            snowdesktop::performance::Scope settingsTrace("shared.maintenance", "steam.settings_refresh");
             settingsWindow_->RefreshWidgetsPage();
+        }
         snowdesktop::widget::WriteSteamWorkshopDiagnostic(ready->queryId,
             "phase=poll.reconciled success=" + std::to_string(synchronizationSucceeded) +
             " hostReloaded=" + std::to_string(hostReloaded));
@@ -314,16 +322,24 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
             kSteamWorkshopSubscriptionFallbackPollIntervalMs)
         return;
     steamWorkshopSubscriptionLastQueryTick_ = now;
-    snowdesktop::IconLibraryRequest iconRequest;
-    iconRequest.action = "autoSyncSubscriptions";
-    (void)EditIconLibrary(iconRequest);
-    const std::string locale = Locale::Instance().GetEffectiveLanguage();
-    const auto installedPackages = widgetEngine_->ListWidgetPackages();
-    const auto subscriptionHistory =
-        WidgetEngine::GetSteamWorkshopSubscriptionHistory();
-    const auto libraryHistory =
-        WidgetEngine::GetSteamWorkshopLibrarySubscriptionHistory();
-    const auto packageStaging =
+    snowdesktop::performance::Scope prepareTrace("shared.maintenance", "steam.prepare");
+    {
+        snowdesktop::performance::Scope iconTrace("shared.maintenance", "steam.prepare.icons");
+        snowdesktop::IconLibraryRequest iconRequest;
+        iconRequest.action = "autoSyncSubscriptions";
+        (void)EditIconLibrary(iconRequest);
+    }
+    std::string locale = Locale::Instance().GetEffectiveLanguage();
+    auto installedPackages = [] {
+        snowdesktop::performance::Scope packagesTrace("shared.maintenance", "steam.prepare.packages");
+        return WidgetEngine::SnapshotWidgetPackageCatalog();
+    }();
+    auto [subscriptionHistory, libraryHistory] = [] {
+        snowdesktop::performance::Scope historyTrace("shared.maintenance", "steam.prepare.histories");
+        return std::pair(WidgetEngine::GetSteamWorkshopSubscriptionHistory(),
+            WidgetEngine::GetSteamWorkshopLibrarySubscriptionHistory());
+    }();
+    auto packageStaging =
         WidgetEngine::GetWidgetPackagePaths().staging;
     const auto state = steamWorkshopSubscriptionPollState_;
     const HWND notifyWindow = hwnd_;
@@ -340,16 +356,18 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         state->activeQueryId = queryId;
         state->queryInFlight.store(true);
     }
-    snowdesktop::widget::WriteSteamWorkshopDiagnostic(queryId,
-        "phase=poll.begin host=" SNOWDESKTOP_VERSION " registered=" +
-        std::to_string(installedPackages.size()));
-    std::thread([state, locale, notifyWindow, queryId,
-        installedPackages, subscriptionHistory, libraryHistory, packageStaging,
+    std::thread([state, notifyWindow, queryId, locale = std::move(locale),
+        installedPackages = std::move(installedPackages),
+        subscriptionHistory = std::move(subscriptionHistory),
+        libraryHistory = std::move(libraryHistory), packageStaging = std::move(packageStaging),
         confirmedUnsubscriptions = std::move(confirmedUnsubscriptions)]() mutable
     {
+        snowdesktop::performance::Scope queryTrace("shared.maintenance", "steam.query.worker");
         const auto trace = [queryId](std::string_view message) {
             snowdesktop::widget::WriteSteamWorkshopDiagnostic(queryId, message);
         };
+        trace("phase=poll.begin host=" SNOWDESKTOP_VERSION " registered=" +
+            std::to_string(installedPackages->size()));
         trace("phase=theme_probe.begin");
         // Background reconciliation consumes only Steam's local manifests and
         // completed downloads. It must never start a Steam API process.
@@ -379,13 +397,13 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         snapshot.confirmedUnsubscribedPublishedFileIds =
             std::move(confirmedUnsubscriptions);
         snowdesktop::widget::ResolveSteamWorkshopSubscriptionRemovals(
-            snapshot, subscriptionHistory, installedPackages, libraryHistory);
-        WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(snapshot,
-            installedPackages, packageStaging);
+            snapshot, subscriptionHistory, *installedPackages, libraryHistory);
+        auto plan = WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(snapshot,
+            *installedPackages, packageStaging);
         {
             std::lock_guard lock(state->mutex);
             state->ready = SteamWorkshopSubscriptionPollState::ReadyQuery{
-                queryId, std::move(snapshot)};
+                queryId, std::move(snapshot), std::move(installedPackages), std::move(plan)};
             if (state->activeQueryId == queryId)
                 state->activeQueryId = 0;
             state->queryInFlight.store(false);
@@ -601,16 +619,10 @@ void DesktopApp::OnTimer(WPARAM timerId)
             return;
         }
         ApplyPendingRenames();
-        if (shellReloadPending_)
-        {
-            RefreshShellItemsAsync();
-        }
         if (shellDockFolderPopupRefreshPending_)
-        {
-            shellDockFolderPopupRefreshPending_ = false;
-            if (!shellReloadPending_)
-                RequestShellRefresh();
-        }
+            RefreshDockFolderPopup();
+        if (shellReloadPending_)
+            RefreshShellItemsAsync();
     }
     else if (timerId == kRecycleBinPollTimerId)
     {
@@ -711,15 +723,24 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kWidgetRefreshTimerId)
     {
-        ObserveScreenTime();
-        UpdateDesktopIdleHide();
+        {
+            snowdesktop::performance::Scope trace("shared.maintenance", "screen_time.observe");
+            ObserveScreenTime();
+        }
+        {
+            snowdesktop::performance::Scope trace("shared.maintenance", "desktop.idle_hide");
+            UpdateDesktopIdleHide();
+        }
         // This periodic sample may restore hover after a missed mouse message,
         // but its reconcile mode still enforces the foreground-settle delay in
         // case the free-running timer lands inside the WindowFromPoint race.
         // The immediate foreground callback remains deactivation-only.
-        ReconcileDesktopHoverState(
-            snowdesktop::desktop_hover_rules::
-                ReconcileMode::AllowActivationAfterForegroundSettle);
+        {
+            snowdesktop::performance::Scope trace("shared.maintenance", "desktop.hover_reconcile");
+            ReconcileDesktopHoverState(
+                snowdesktop::desktop_hover_rules::
+                    ReconcileMode::AllowActivationAfterForegroundSettle);
+        }
         // Keep display hot-plug recovery independent from the hidden control
         // window's host-watch timer. Some display-driver paths leave that
         // timer alive but do not deliver its low-priority WM_TIMER promptly.
@@ -727,6 +748,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (quickNavigation_->open && quickNavigation_->searchType == QuickNavigationSearchType::Settings &&
             GetTickCount64() - quickNavigation_->settingsRefreshTick >= 1000)
         {
+            snowdesktop::performance::Scope trace("shared.maintenance", "navigation.settings_refresh");
             quickNavigation_->settingsRefreshTick = GetTickCount64();
             const auto previous = quickNavigation_->settingsResults;
             const auto selection = quickNavigation_->listSelection;
@@ -744,27 +766,56 @@ void DesktopApp::OnTimer(WPARAM timerId)
             TrimHiddenDesktopWidgetSurfaces();
         }
         if (uiAnimationScheduler_.DiagnosticsEnabled())
+        {
+            snowdesktop::performance::Scope trace("shared.maintenance", "diagnostics.publish");
             PublishHomeAboutStatus();
+        }
         PollSteamWorkshopSubscriptions();
         const DWORD now = GetTickCount();
         const DWORD foregroundTick =
             dockForegroundChangedTick_.load();
+        // Foreground feedback only changes the state of tracked windows.
+        // Membership changes arrive through their own notifications.
+        if (generalSettings_.dockEnabled && foregroundTick != dockRunningWindowsForegroundTick_)
+        {
+            snowdesktop::performance::Scope trace("shared.maintenance", "dock.foreground");
+            RefreshDockForegroundState();
+        }
         const DWORD windowStateTick =
             dockWindowListChangedTick_.load();
         const bool dockStateChanged =
-            foregroundTick != dockRunningWindowsForegroundTick_ ||
             windowStateTick != dockRunningWindowsStateTick_;
-        const bool fallbackRefreshDue =
-            dockRunningWindowsRefreshTick_ == 0 ||
-            now - dockRunningWindowsRefreshTick_ >= 10000;
+        constexpr DWORD fallbackDiscoveryIntervalMs = 10000;
+        constexpr DWORD maxFallbackDeferralMs = 3000;
+        constexpr ULONGLONG dockHoverQuietIntervalMs = 100;
+        const DWORD discoveryAge = now - dockRunningWindowsRefreshTick_;
+        const bool fallbackRefreshDue = dockRunningWindowsRefreshTick_ == 0 ||
+            discoveryAge >= fallbackDiscoveryIntervalMs;
         if (generalSettings_.dockEnabled &&
             (dockStateChanged || fallbackRefreshDue))
         {
-            snowdesktop::performance::Value("shared.maintenance", dockStateChanged
-                ? "dock.discovery.dirty" : "dock.discovery.fallback", {}, 1);
-            RefreshDockRunningWindows();
+            const bool canDeferFallback = !dockStateChanged &&
+                dockRunningWindowsRefreshTick_ != 0 &&
+                discoveryAge < fallbackDiscoveryIntervalMs + maxFallbackDeferralMs &&
+                floatingDockHoverTargetOwner_ && floatingDockLastPointerPresentTick_ != 0;
+            const auto pointerNow = canDeferFallback ? static_cast<ULONGLONG>(
+                snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()) : 0;
+            const bool recentlyPresentedDockHover = canDeferFallback &&
+                pointerNow >= floatingDockLastPointerPresentTick_ &&
+                pointerNow - floatingDockLastPointerPresentTick_ < dockHoverQuietIntervalMs;
+            if (recentlyPresentedDockHover)
+                snowdesktop::performance::Value("dock", "running.fallback_deferred", {}, 1);
+            else
+            {
+                snowdesktop::performance::Value("shared.maintenance", dockStateChanged
+                    ? "dock.discovery.dirty" : "dock.discovery.fallback", {}, 1);
+                RefreshDockRunningWindows();
+            }
         }
-        UpdateDockExternalMinimizeTargets();
+        {
+            snowdesktop::performance::Scope trace("shared.maintenance", "dock.minimize_targets");
+            UpdateDockExternalMinimizeTargets();
+        }
     }
     else if (timerId == kDockWindowPreviewHoverTimerId)
     {
@@ -801,7 +852,9 @@ void DesktopApp::OnTimer(WPARAM timerId)
         const bool windowStateChanged = windowStateTick !=
             observedWindowRevision_;
         const bool observeDesktopWindows = customDesktopVisible_ ||
-            generalSettings_.statusBar.enabled;
+            generalSettings_.statusBar.enabled ||
+            (generalSettings_.dockEnabled &&
+                (dockSettings_.appWindow.enabled || dockSettings_.maximizedWindow.enabled));
         const bool taskbarObserverActive = IsSystemTaskbarHookRequired(dockSettings_);
         const bool windowStateRefreshDue =
             windowStateChanged &&

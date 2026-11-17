@@ -33,6 +33,7 @@
 #include "steam/steam_app_identity.h"
 #include "widget/runtime/widget_engine.h"
 #include "widget/settings/widget_settings_service.h"
+#include "widget/authoring/widget_author_preview.h"
 #include "widget/packages/widget_package_file_export.h"
 #include "common/utils.h"
 
@@ -1055,6 +1056,19 @@ struct SettingsWindowHost::Impl
             std::move(title), std::move(message));
     }
 
+    void ShowCommitFeedback(const SettingsActionResult& result)
+    {
+        if (!result.Succeeded())
+        {
+            ShowActionError(result);
+            return;
+        }
+        if (result.message.empty() || !shell || !controller) return;
+        if (const auto snapshot = controller->Snapshot())
+            (void)shell->ShowInfoForGeneration(snapshot->generation,
+                shell_impl::SettingsShellInfoSeverity::Success, L"", result.message);
+    }
+
     [[nodiscard]] bool DispatchToOwner(std::function<void()> task)
     {
         if (!task || shuttingDown || !callbacks ||
@@ -1332,8 +1346,7 @@ struct SettingsWindowHost::Impl
         if (!controller || shuttingDown)
             return;
         const SettingsActionResult result = controller->FlushPending();
-        if (!result.Succeeded())
-            ShowActionError(result);
+        ShowCommitFeedback(result);
         // A successful preview/commit already publishes revisioned snapshots
         // for the affected presenters. Refreshing every localized label here
         // rewrites the active XAML tree on the DispatcherQueue turn following
@@ -1572,7 +1585,8 @@ struct SettingsWindowHost::Impl
                         if (FAILED(apartment))
                             throw std::runtime_error("export worker COM initialization failed");
                         const auto exported = snowdesktop::widget::detail::ExportDevelopmentPackageFile(
-                            projectRoot, output, packageId, version);
+                            projectRoot, output, packageId, version,
+                            snowdesktop::widget_authoring::CheckWidgetArchiveInstallation);
                         result.succeeded = exported.succeeded;
                         std::wstring detail = exported.succeeded ? output.wstring()
                             : Utf8ToWide(exported.report.Ok() ? exported.error : exported.report.ToJson());
@@ -2404,13 +2418,25 @@ struct SettingsWindowHost::Impl
             {
                 return SettingsActionResult::Busy(L"The settings page is no longer active.");
             }
+            if (request.action == SettingsHostActions::Action::RetrySystemTaskbarAutoHide)
+            {
+                auto result = state->owner->controller->FlushPending();
+                if (result.Succeeded() && result.message.empty())
+                    result = state->owner->controller->InvokeHostAction(request);
+                state->owner->ShowCommitFeedback(result);
+                return result;
+            }
             SettingsActionResult result =
                 state->owner->controller->InvokeHostAction(request);
             // The optional animation dialog follows an accepted layout commit,
             // not merely a queued draft or a failed host action.
             if (result.Succeeded() && request.action == SettingsHostActions::Action::ApplyDesktopStylePreset)
+            {
                 result = state->owner->controller->FlushPending();
-            state->owner->ShowActionError(result);
+                state->owner->ShowCommitFeedback(result);
+            }
+            else
+                state->owner->ShowActionError(result);
             return result;
         };
         dock.openTaskbarSettings = [weak](std::uint64_t generation) {
@@ -2460,7 +2486,12 @@ struct SettingsWindowHost::Impl
         else
         {
             const auto dispatcher = callbacks->dispatcher;
-            shell->SetRuntimeModulesQuery([dispatcher](auto completed) {
+            shell->SetRuntimeModulesQuery([dispatcher](RuntimeModulesQueryScope scope, auto completed) {
+                if (scope == RuntimeModulesQueryScope::Status)
+                {
+                    completed(runtime_modules::Inspect(false));
+                    return;
+                }
                 std::thread([dispatcher, completed = std::move(completed)]() mutable {
                     auto result = runtime_modules::Inspect();
                     dispatcher.TryEnqueue([completed = std::move(completed), result = std::move(result)]() mutable { completed(std::move(result)); });

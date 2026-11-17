@@ -10,6 +10,7 @@
 #include "dock/dock_window_pin.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
 #include "settings/personalization_initialization.h"
+#include "theme/theme_library_settings.h"
 extern "C" {
 #include <lauxlib.h>
 #include <lualib.h>
@@ -39,6 +40,55 @@ struct SettingsObserver final : snowdesktop::SettingsHostActions
     snowdesktop::SettingsActionResult Invoke(const Request&) override
     { return snowdesktop::SettingsActionResult::Success(); }
 };
+void ThemeAppearanceRoundTrip()
+{
+    using namespace snowdesktop;
+    const test::TemporaryDirectory temporary;
+    const auto libraryPath = temporary.path / L"SnowDesktop.themes.json";
+    const auto packagePath = temporary.path / L"appearance.snowtheme";
+
+    SettingsValues source;
+    source.personalization.glassBlurRadius = 27.0f;
+    source.personalization.widgetEdgeHighlightEnabled = true;
+    auto theme = themes::CaptureTarget("global", source);
+    theme.name = "Custom appearance";
+    theme.scopes = themes::All;
+    theme.quickPanel = "builtin/quickpanel/dark";
+    theme.popup = "builtin/popup/dark";
+
+    // Custom themes write all appearance fields, including disabled flags. The
+    // library must accept its own output when a new field is added to the writer.
+    std::string id, error;
+    themes::Library saved;
+    const bool committed = themes::Transact(libraryPath,
+        [&](themes::Library& library, std::string& detail) {
+            return themes::Save(library, theme, {}, false, id, detail, [] { return "custom-appearance"; }) &&
+                themes::Select(library, "global", id, themes::Kind::Global, themes::All, detail);
+        }, saved, error);
+    Require(committed, "save and select a custom global theme: " + error);
+
+    themes::Library loaded;
+    const bool reloaded = themes::Load(libraryPath, loaded, error);
+    Require(reloaded, "reload the saved theme library: " + error);
+    const auto selection = loaded.references.find("global");
+    Require(selection != loaded.references.end() && selection->second.id == id &&
+        selection->second.snapshot.contains(id), "the global selection and its snapshot survive reload");
+    SettingsValues applied;
+    const bool appliedTheme = themes::ApplyTarget(loaded, "global", id, applied, error);
+    Require(appliedTheme, "apply the reloaded global theme: " + error);
+    Require(applied.personalization.glassBlurRadius == 27.0f && applied.personalization.widgetEdgeHighlightEnabled,
+        "the reloaded theme applies its custom blur radius and edge highlight");
+
+    themes::Package exported, imported;
+    const bool exportedTheme = themes::Export(loaded, id, exported, error) &&
+        themes::WritePackage(packagePath, exported, error);
+    Require(exportedTheme, "export the saved global theme: " + error);
+    const bool readPackage = themes::ReadPackage(packagePath, imported, error);
+    Require(readPackage, "read the exported theme package: " + error);
+    Require(themes::EncodePackage(imported, error) == Read(packagePath),
+        "the exported theme package preserves its contents after decoding");
+}
+
 void Settings()
 {
     Profile profile;
@@ -156,6 +206,7 @@ void Settings()
         disk.general.doubleClickHideDesktop == external.doubleClickHideDesktop &&
         disk.general.contextMenuHidePageManagement == external.contextMenuHidePageManagement,
         "closing after external replacement cannot flush stale draft over replacement data");
+    ThemeAppearanceRoundTrip();
 }
 void Recovery()
 {

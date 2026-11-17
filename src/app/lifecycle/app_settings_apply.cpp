@@ -26,6 +26,7 @@
 #include "app/dock/persistent_dock_host.h"
 #include "dock/dock_settings.h"
 #include "system/tray/tray_service.h"
+#include "system/panel/system_panel.h"
 #include "app/dock/dock_platform_helpers.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "platform/single_instance.h"
@@ -1033,13 +1034,11 @@ public:
             // Preview animation and surface appearance only; other General fields
             // retain their commit side effects and old-value comparisons.
             const auto& general = snapshot.values.general;
+            const bool statusBarChanged = app_.generalSettings_.statusBar != general.statusBar;
             app_.generalSettings_.tooltipFontSize = general.tooltipFontSize;
             app_.generalSettings_.animationMode = general.animationMode;
-            if (app_.generalSettings_.statusBar != general.statusBar)
-            {
+            if (statusBarChanged)
                 app_.generalSettings_.statusBar = general.statusBar;
-                app_.SyncStatusBar();
-            }
             app_.generalSettings_.popupAnimationEffect = general.popupAnimationEffect;
             app_.generalSettings_.widgetHoverExpandEffect = general.widgetHoverExpandEffect;
             app_.generalSettings_.widgetHoverVisibilityEffect = general.widgetHoverVisibilityEffect;
@@ -1051,8 +1050,11 @@ public:
             app_.generalSettings_.collectionPopupAppearance = general.collectionPopupAppearance;
             app_.generalSettings_.globalQuickNavigationAppearance = general.globalQuickNavigationAppearance;
             app_.generalSettings_.globalCollectionPopupAppearance = general.globalCollectionPopupAppearance;
+            app_.generalSettings_.tooltipAppearanceOverride = general.tooltipAppearanceOverride;
+            app_.generalSettings_.barPanelAppearanceOverride = general.barPanelAppearanceOverride;
             app_.ApplyQuickNavigationAppearance();
             app_.ApplyCollectionPopupAppearance();
+            if (statusBarChanged) app_.SyncStatusBar();
             app_.ApplyAnimationPreferences();
             if (app_.widgetEngine_)
                 app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
@@ -1074,25 +1076,26 @@ public:
         }
         if (HasSettingsDomain(domains, SettingsDomain::Dock))
         {
-            // Auto-hide and alignment are committed through the Windows Shell
-            // request queue.  Keep their last committed mirrors intact while
-            // previewing the remaining Dock appearance and layout values so
-            // the commit path can detect a requested system-state change.
+            // Taskbar display mode and alignment take effect on commit. In
+            // particular, the suppression hook can enable native auto-hide,
+            // so preview must preserve suppression until location is ready.
             const bool committedTaskbarAutoHide =
                 app_.dockSettings_.systemTaskbarAutoHide;
             const int committedTaskbarAlignment =
                 app_.dockSettings_.systemTaskbarAlignment;
+            const bool committedTaskbarSuppression = app_.dockSettings_.suppressSystemTaskbar;
+            const bool committedTaskbarSuppressionAllMonitors = app_.dockSettings_.suppressSystemTaskbarAllMonitors;
             app_.dockSettings_ = snapshot.values.dock;
+            app_.dockSettings_.systemTaskbarAutoHide = committedTaskbarAutoHide;
+            app_.dockSettings_.systemTaskbarAlignment = committedTaskbarAlignment;
+            app_.dockSettings_.suppressSystemTaskbar = committedTaskbarSuppression;
+            app_.dockSettings_.suppressSystemTaskbarAllMonitors = committedTaskbarSuppressionAllMonitors;
             app_.ApplyPersistentDockHostAppearance();
             app_.SyncStatusBar();
             NormalizeDockSettings(app_.dockSettings_);
             app_.ApplyAnimationPreferences();
             if (app_.widgetEngine_)
                 app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
-            app_.dockSettings_.systemTaskbarAutoHide =
-                committedTaskbarAutoHide;
-            app_.dockSettings_.systemTaskbarAlignment =
-                committedTaskbarAlignment;
             app_.ApplyFloatingDockHotkey();
             app_.UpdateLayoutWorkArea();
             app_.LayoutItems();
@@ -1205,6 +1208,7 @@ public:
         NormalizeDockSettings(requestedDockSettings);
         const bool dockCommitted = HasSettingsDomain(domains, SettingsDomain::Dock);
         const bool generalCommitted = HasSettingsDomain(domains, SettingsDomain::General);
+        bool taskbarMovedToBottom = false;
         if (dockCommitted)
         {
             const bool autoHideChanged =
@@ -1213,11 +1217,26 @@ public:
             const bool alignmentChanged =
                 app_.dockSettings_.systemTaskbarAlignment !=
                     requestedDockSettings.systemTaskbarAlignment;
+            const bool suppressionChanged =
+                app_.dockSettings_.suppressSystemTaskbar != requestedDockSettings.suppressSystemTaskbar ||
+                app_.dockSettings_.suppressSystemTaskbarAllMonitors != requestedDockSettings.suppressSystemTaskbarAllMonitors;
+
+            if ((autoHideChanged || suppressionChanged) &&
+                (requestedDockSettings.systemTaskbarAutoHide || requestedDockSettings.suppressSystemTaskbar))
+            {
+                const auto location = MoveSystemTaskbarToBottomForAutoHide();
+                if (location == SystemTaskbarBottomResult::Failed)
+                {
+                    return snowdesktop::SettingsActionResult::Failure(
+                        _LW("settings.taskbar.position.moveToBottomFailed"), SettingsDomain::Dock);
+                }
+                taskbarMovedToBottom = location == SystemTaskbarBottomResult::Moved;
+            }
 
             // Queue system-owned changes before mutating the application
             // mirror.  A rejected request leaves the Dock domain pending so
             // SettingsController can surface the error and retry safely.
-            if (autoHideChanged &&
+            if ((autoHideChanged || (taskbarMovedToBottom && requestedDockSettings.systemTaskbarAutoHide)) &&
                 !RequestSystemTaskbarAutoHideEnabled(
                     requestedDockSettings.systemTaskbarAutoHide))
             {
@@ -1400,7 +1419,10 @@ public:
         }
         if (app_.hwnd_)
             InvalidateRect(app_.hwnd_, nullptr, TRUE);
-        return snowdesktop::SettingsActionResult::Success(domains);
+        auto result = snowdesktop::SettingsActionResult::Success(domains);
+        if (taskbarMovedToBottom)
+            result.message = _LW("settings.taskbar.position.movedToBottom");
+        return result;
     }
 
     snowdesktop::SettingsActionResult OnSettingsRouteChanged(
@@ -1486,6 +1508,21 @@ public:
         case Action::ApplyTaskbar:
             app_.RefreshSystemTaskbarAppearance(true);
             break;
+        case Action::RetrySystemTaskbarAutoHide:
+        {
+            if (!app_.dockSettings_.systemTaskbarAutoHide &&
+                !ShouldSuppressSystemTaskbar(app_.dockSettings_, app_.generalSettings_.dockEnabled))
+                break;
+            const auto location = MoveSystemTaskbarToBottomForAutoHide();
+            if (location == SystemTaskbarBottomResult::Failed)
+                return snowdesktop::SettingsActionResult::Failure(_LW("settings.taskbar.position.moveToBottomFailed"));
+            if (!RequestSystemTaskbarAutoHideEnabled(true))
+                return snowdesktop::SettingsActionResult::Failure(_LW("settings.taskbar.autoHide.queueFailed"));
+            auto result = snowdesktop::SettingsActionResult::Success();
+            if (location == SystemTaskbarBottomResult::Moved)
+                result.message = _LW("settings.taskbar.position.movedToBottom");
+            return result;
+        }
         case Action::ApplyDesktopLayout:
             app_.UpdateLayoutWorkArea();
             app_.LayoutItems();
@@ -1707,6 +1744,8 @@ private:
             return "app.settings.page_navigation_previous";
         case HotkeyTarget::PageNext:
             return "app.settings.page_navigation_next";
+        case HotkeyTarget::GridPreview:
+            return "settings.pages.gridPreview";
         case HotkeyTarget::None:
         default:
             return "app.settings.hotkey";
@@ -1776,9 +1815,15 @@ private:
                 app_.generalSettings_.pageNavigationNextModifiers,
                 app_.generalSettings_.pageNavigationNextVirtualKey))
             return { false, HotkeyTarget::PageNext };
+        if (conflictsWith(HotkeyTarget::GridPreview,
+                app_.generalSettings_.gridPreviewHotkeyEnabled,
+                app_.generalSettings_.gridPreviewHotkeyModifiers,
+                app_.generalSettings_.gridPreviewHotkeyVirtualKey))
+            return { false, HotkeyTarget::GridPreview };
 
         if ((target == HotkeyTarget::PagePrevious ||
-                target == HotkeyTarget::PageNext) &&
+                target == HotkeyTarget::PageNext ||
+                target == HotkeyTarget::GridPreview) &&
             snowdesktop::page_navigation_rules::
                 IsReservedDesktopSingleKey(
                     normalizedModifiers, virtualKey))
@@ -1844,6 +1889,9 @@ private:
         case HotkeyTarget::PagePrevious:
         case HotkeyTarget::PageNext:
             return { true, HotkeyTarget::None };
+        case HotkeyTarget::GridPreview:
+            return { normalizedModifiers != MOD_ALT || virtualKey != VK_F4,
+                HotkeyTarget::None };
         case HotkeyTarget::None:
             return {};
         }
@@ -2268,13 +2316,18 @@ void DesktopApp::ApplyCollectionPopupAppearance()
         generalSettings_.collectionPopupTheme, false, &generalSettings_.globalCollectionPopupAppearance);
     // Panel presets control the surface; menus keep the global style.
     collectionPopupAppearance_.contextMenuStyle = globalAppearance.contextMenuStyle;
-    if (snowdesktop::SetNativeTooltipPreferences(generalSettings_.tooltipFontSize, collectionPopupAppearance_))
+    const auto tooltip = snowdesktop::ResolvePopupRuleTheme(
+        generalSettings_.tooltipAppearanceOverride, collectionPopupAppearance_);
+    if (snowdesktop::SetNativeTooltipPreferences(generalSettings_.tooltipFontSize, tooltip))
     {
         InvalidateAllWidgetSlots();
         InvalidateDockContainers();
         InvalidateFloatingDockWindow(false);
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
     }
+    if (systemPanel_)
+        systemPanel_->SetAppearance(snowdesktop::ResolvePopupRuleTheme(
+            generalSettings_.barPanelAppearanceOverride, collectionPopupAppearance_));
     collectionPopupLightTheme_ =
         collectionPopupAppearance_.contentTheme == 1;
     collectionPopupGlassTheme_ =
@@ -2299,9 +2352,21 @@ PersonalizationSettings DesktopApp::ResolveSystemTaskbarAppearance(
     return snowdesktop::ResolveTaskbarAppearance(settings, CurrentPersonalization());
 }
 
-PersonalizationSettings DesktopApp::CurrentDockAppearance() const
+PersonalizationSettings DesktopApp::CurrentDockAppearance(HMONITOR monitor) const
 {
-    return ResolveDockAppearance(dockSettings_, CurrentPersonalization());
+    const auto& global = CurrentPersonalization();
+    if (monitor)
+    {
+        const auto observed = observedMonitorWindows_.find(monitor);
+        if (observed != observedMonitorWindows_.end())
+        {
+            if (dockSettings_.maximizedWindow.enabled && observed->second.MaximizedOrFullscreen())
+                return ResolveDockRuleAppearance(dockSettings_, dockSettings_.maximizedWindow, global);
+            if (dockSettings_.appWindow.enabled && observed->second.visible)
+                return ResolveDockRuleAppearance(dockSettings_, dockSettings_.appWindow, global);
+        }
+    }
+    return ResolveDockAppearance(dockSettings_, global);
 }
 
 void DesktopApp::LoadDockSettingsAndApply()
@@ -2328,13 +2393,14 @@ void DesktopApp::SyncSystemTaskbarSettingsFromWindows()
     if (!FindWindowW(L"Shell_TrayWnd", nullptr))
         return;
 
-    const bool autoHide = IsSystemTaskbarAutoHideEnabled();
+    // Keep the application's selected mode when Explorer rejects or loses
+    // auto-hide. The settings page reports the independently observed state.
+    const bool autoHide = dockSettings_.systemTaskbarAutoHide || IsSystemTaskbarAutoHideEnabled();
     const int alignment = IsSystemTaskbarAlignmentCentered() ? 1 : 0;
     bool dockDraftPending = false;
 
-    // Auto-hide and alignment belong to Windows, but the rest of Dock can have
-    // an unrelated draft. Reconcile only these two fields; the controller
-    // protects either field when the user has edited it in this session.
+    // Reflect external enables and alignment changes without overwriting an
+    // in-progress Dock edit or losing the application's auto-hide requirement.
     if (settingsController_)
     {
         const auto snapshot = settingsController_->Snapshot();

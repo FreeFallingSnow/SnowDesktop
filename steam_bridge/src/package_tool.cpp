@@ -8,6 +8,7 @@
 
 #include "package_tool.h"
 #include "bridge_json.h"
+#include "workshop_project.h"
 
 #include <algorithm>
 #include <array>
@@ -372,7 +373,29 @@ bool PackageTool::Inspect(const std::filesystem::path& source,
 
 bool PackageTool::Pack(const std::filesystem::path& source,
     const WidgetInspection& expected, PackagedWidget& package,
-    std::string& error) const
+    std::string& error, const std::filesystem::path& previousPackage) const
+{
+    if (!BuildArchive(source, package, error, previousPackage, false)) return false;
+    if (package.packageId == expected.packageId && package.version == expected.version)
+        return true;
+    error = "packed artifact does not match inspection";
+    package.Cleanup();
+    return false;
+}
+
+std::optional<WidgetPackageFingerprint> PackageTool::ProbePackage(
+    const std::filesystem::path& source) const
+{
+    PackagedWidget package;
+    std::string error;
+    if (!BuildArchive(source, package, error, {}, true)) return std::nullopt;
+    return WidgetPackageFingerprint{std::move(package.packageId),
+        std::move(package.version), std::move(package.sha256)};
+}
+
+bool PackageTool::BuildArchive(const std::filesystem::path& source,
+    PackagedWidget& package, std::string& error,
+    const std::filesystem::path& previousPackage, bool probe) const
 {
     package.Cleanup();
     std::error_code ec;
@@ -404,8 +427,15 @@ bool PackageTool::Pack(const std::filesystem::path& source,
     }
     package.packagePath = package.temporaryDirectory / L"package.snowwidget";
     std::string output;
-    if (!Run({ L"pack", source.wstring(), package.packagePath.wstring() },
-            output, error, 120000))
+    std::vector<std::wstring> arguments{
+        probe ? L"--manager-probe-package" : L"pack",
+        source.wstring(), package.packagePath.wstring() };
+    if (!previousPackage.empty())
+    {
+        arguments.emplace_back(L"--previous-package");
+        arguments.push_back(previousPackage.wstring());
+    }
+    if (!Run(arguments, output, error, probe ? 5000 : 150000))
     {
         package.Cleanup();
         return false;
@@ -421,8 +451,7 @@ bool PackageTool::Pack(const std::filesystem::path& source,
     auto id = RequiredString(root, "packageId", error);
     auto version = RequiredString(root, "version", error);
     auto sha256 = RequiredString(root, "sha256", error);
-    if (!id || !version || !sha256 || *id != expected.packageId ||
-        *version != expected.version || sha256->size() != 64 ||
+    if (!id || !version || !sha256 || sha256->size() != 64 ||
         !std::filesystem::is_regular_file(package.packagePath, ec) || ec)
     {
         if (error.empty()) error = "packed artifact does not match inspection";
@@ -433,5 +462,44 @@ bool PackageTool::Pack(const std::filesystem::path& source,
     package.version = *version;
     package.sha256 = *sha256;
     return true;
+}
+
+std::filesystem::path PackageTool::PublishedBaselinePath(std::string_view sha256) const
+{
+    if (sha256.size() != 64 || sha256.find_first_not_of("0123456789abcdef") != sha256.npos)
+        return {};
+    return stagingRoot_.parent_path().parent_path() / L"published-packages" /
+        (std::string(sha256) + ".snowwidget");
+}
+
+std::filesystem::path PackageTool::FindPublishedBaseline(const WorkshopProject& project,
+    std::string_view candidateVersion) const
+{
+    if (!project.publishedFileId || project.lastPublishedVersion.empty() ||
+        project.lastPublishedVersion == candidateVersion)
+        return {};
+    const auto path = PublishedBaselinePath(project.lastPublishedSha256);
+    return IsRegularNonReparseFile(path) ? path : std::filesystem::path{};
+}
+
+bool PackageTool::SavePublishedBaseline(const PackagedWidget& package, std::string& error) const
+{
+    const auto target = PublishedBaselinePath(package.sha256);
+    if (target.empty())
+    {
+        error = "cannot identify the published archive for future upgrade checks";
+        return false;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(target.parent_path(), ec);
+    if (!ec && IsRegularNonReparseFile(target)) return true;
+    const auto staged = package.temporaryDirectory / L"published.snowwidget";
+    if (!ec) std::filesystem::copy_file(package.packagePath, staged, ec);
+    if (!ec && MoveFileExW(staged.c_str(), target.c_str(),
+            MOVEFILE_WRITE_THROUGH))
+        return true;
+    if (IsRegularNonReparseFile(target)) return true;
+    error = "cannot keep the published archive for future upgrade checks";
+    return false;
 }
 }

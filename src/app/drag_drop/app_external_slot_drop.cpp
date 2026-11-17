@@ -9,8 +9,10 @@
 #include "drag_drop/drop_staging.h"
 #include "drag_drop/default_file_drop_action.h"
 #include "drag_drop/ole_drag_rules.h"
+#include "drag_drop/pending_drop_completion.h"
 #include "widgets/lua_logical_slot.h"
 
+#include <filesystem>
 #include <stdexcept>
 
 namespace
@@ -120,6 +122,57 @@ DesktopApp::CaptureExternalSlotDestination(POINT point, DWORD keyState)
     result.preview.targetWidget = nullptr;
     for (auto& landing : result.preview.landings) landing.widget = nullptr;
     return result;
+}
+
+bool DesktopApp::CommitExternalApplicationShortcut(const content::ApplicationSource& source,
+    DropPreviewList preview, FileOperationCompletion completion, bool synchronously)
+{
+    if (exitRequested_ || preview.landings.empty()) return false;
+    const std::filesystem::path directory = snowdesktop::desktop_source::Directory();
+    if (directory.empty()) return false;
+
+    const auto stem = SanitizeShortcutFileStem(source.name);
+    std::wstring path;
+    for (int index = 1; index <= 1000; ++index)
+    {
+        const auto suffix = index == 1 ? std::wstring{} : L" (" + std::to_wstring(index) + L")";
+        auto candidate = (directory / (stem + suffix + L".lnk")).wstring();
+        if (GetFileAttributesW(candidate.c_str()) == INVALID_FILE_ATTRIBUTES &&
+            pendingDesktopMaterializedPaths_.TryReserve(candidate))
+        {
+            path = std::move(candidate);
+            break;
+        }
+    }
+    if (path.empty()) return false;
+
+    DragSourceList sources;
+    DragSourceEntry entry;
+    entry.kind = DropSourceKind::ExternalFile;
+    entry.filePath = source.id;
+    entry.displayName = source.name;
+    sources.entries.push_back(std::move(entry));
+    preview.action = DropAction::Link;
+    auto landing = BuildPendingLandingCache(sources, preview, SnapshotDesktopKeys(), nullptr);
+    snowdesktop::ShellFileOperationRequest request;
+    request.shortcuts.push_back({source.id, path, {}, true, source.targetId});
+    request.result = std::make_shared<snowdesktop::ShellFileOperationResult>();
+    auto completed = [this, path, landing = std::move(landing), result = request.result,
+        completion = std::move(completion)](bool succeeded) mutable {
+        pendingDesktopMaterializedPaths_.Release({path});
+        snowdesktop::pending_drop::Complete(pendingLandingCaches_, std::move(landing), *result);
+        if (!result->outputs.empty()) RequestShellRefresh();
+        if (completion) completion(succeeded);
+    };
+    if (synchronously)
+    {
+        const bool succeeded = snowdesktop::ShellFileOperationWorker::Execute(request);
+        completed(succeeded);
+        return succeeded;
+    }
+    if (QueueShellFileOperation(std::move(request), std::move(completed))) return true;
+    pendingDesktopMaterializedPaths_.Release({path});
+    return false;
 }
 
 bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destination,
@@ -350,9 +403,30 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
         return content::Read(false, true, readers);
     };
     const auto committedEffect = std::make_shared<DWORD>(effect);
-    if (volumeDefault) callbacks.committedEffect = [committedEffect] { return *committedEffect; };
-    callbacks.commit = [this, destination, activationGroupId, resolveActivationGroup, insertionAnchor, insertAfterAnchor, result, committedEffect, volumeDefault, physicalDirectory](const content::Content& input,
+    const bool desktopApplicationDrop = destination.preview.targetKind == DropTargetKind::Desktop &&
+        !destination.preview.pinMaterializedItemsToDock && destination.luaWidgetId.empty() &&
+        !destination.fileDropTarget;
+    if (volumeDefault || desktopApplicationDrop)
+        callbacks.committedEffect = [committedEffect] { return *committedEffect; };
+    callbacks.commit = [this, destination, activationGroupId, resolveActivationGroup, insertionAnchor,
+        insertAfterAnchor, result, committedEffect, volumeDefault, physicalDirectory,
+        desktopApplicationDrop, allowedEffects](const content::Content& input,
         FileOperationCompletion finished, bool synchronously) {
+        if (desktopApplicationDrop && !input.owned && !input.copyOnly)
+        {
+            if (const auto application = content::ResolveApplicationSource(input.paths))
+            {
+                // The application stays in Start even when the source also
+                // advertises the file-move effect.
+                *committedEffect = (*committedEffect & DROPEFFECT_MOVE) != 0
+                    ? DROPEFFECT_NONE
+                    : snowdesktop::ole_drag_rules::ChooseDropEffect(0,
+                        allowedEffects & (DROPEFFECT_LINK | DROPEFFECT_COPY), DROPEFFECT_LINK);
+                return *committedEffect != DROPEFFECT_NONE &&
+                    CommitExternalApplicationShortcut(*application, destination.preview,
+                        std::move(finished), synchronously);
+            }
+        }
         // The tab's original owner is part of this explicit destination. A
         // replacement group or detached child cannot receive a pending drop.
         if (!activationGroupId.empty() && !resolveActivationGroup()) return false;

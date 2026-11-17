@@ -147,19 +147,27 @@ package pipeline:
 ```text
 workshop component-plan --source DIR --data-directory DIR [policy options]
 workshop component-publish --source DIR --data-directory DIR [same options]
-    (--confirm-create|--confirm-update)
+    --plan-sha256 HASH (--confirm-create|--confirm-update)
 ```
 
 `--data-directory` is mandatory so an Agent cannot silently create a second
 project store. Both commands use its `SteamWorkshopManager` child for project
 associations and staging. `component-plan` performs local inspection,
 validation, and packaging, but never initializes Steam or submits an item. Its
-single JSON result includes the action, content hash, localizations, preview,
-tags, visibility, and the exact required confirmation flag.
+single JSON result includes the action, target item, content hash, localizations,
+preview, tags, visibility, change note, required confirmation and `planSha256`.
+Check `configuration.componentPlanApprovalProtocolVersion = 1` before using
+the approval-bound workflow.
 
-`component-publish` rebuilds the plan and refuses to proceed unless the caller
-passes the matching confirmation. New items require `--confirm-create` and are
-public by default (`--visibility private|friends|public|unlisted` overrides this); bound items require `--confirm-update`. It emits
+`component-publish` requires the digest of the reviewed plan and the matching
+confirmation flag. It rebuilds the plan from the same inputs. A digest mismatch
+returns `stale_plan` before saving the project or connecting to Steam. Obtain
+approval for a fresh plan after such a mismatch. The digest covers the project
+and data directory, package, operation, target item, listing values, image
+hashes and other submission options. Temporary artifact paths and provisional
+new-project IDs do not affect it. New items require `--confirm-create` and
+default to public, with `--visibility private|friends|public|unlisted` available
+as an override. Bound items require `--confirm-update`. The command emits
 `component-plan` and `component-publish-progress` JSON Lines before the final
 result. A newly allocated PublishedFileId is persisted as soon as Steam returns
 it, including when upload or a later localization fails.
@@ -171,6 +179,10 @@ the corresponding project values, while Steam preview/tags preserve the
 remote values. Steam-managed sources are invalid for creation. When the packed
 SHA-256 is unchanged, listing, preview, tag, and visibility changes use a
 metadata-only update unless `--force-content` is specified.
+
+For a standalone tag update on an existing item, Workshop Manager provides
+**Read Steam tags** and **Publish tags**. Its tag-only action requires no
+component archive.
 
 ### Component preview gallery
 

@@ -1,7 +1,9 @@
 #include "tray_service.h"
 #include "tray_geometry_table.h"
+#include "tray_hover_popup.h"
 #include "platform/runtime_module_policy.h"
 #include "platform/deployment_context.h"
+#include "platform/hook_entry_deployment.h"
 #include "diagnostics/diagnostic_log.h"
 #include "tray_menu_placement.h"
 #include "tray_modern_bootstrap.h"
@@ -9,8 +11,13 @@
 #include "tray_reregistration.h"
 #include "taskbar_hook/taskbar_symbol_resolver.h"
 #include "taskbar_hook/tray_connection.h"
+#include "taskbar_hook/tray_menu_first_show.h"
 #include "platform/hook_registration_retry.h"
 #include "data/data_paths.h"
+#include <winternl.h>
+#include <atomic>
+#include <bit>
+#include <cwchar>
 #include <future>
 #include <thread>
 
@@ -26,23 +33,165 @@ std::string Utf8(const std::wstring& text)
     WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), size, nullptr, nullptr);
     return result;
 }
+std::wstring QueryProcessImageById(DWORD processId)
+{
+    // Some tray owners expose their executable through the PID query even
+    // when Windows declines to grant a process handle. This optional native
+    // information class returns a device path and may be unavailable.
+    constexpr auto processIdInformation = static_cast<SYSTEM_INFORMATION_CLASS>(88);
+    struct ProcessIdInformation { HANDLE processId; UNICODE_STRING imageName; };
+    using Query = NTSTATUS(NTAPI*)(SYSTEM_INFORMATION_CLASS, PVOID, ULONG, PULONG);
+    static const auto query = std::bit_cast<Query>(
+        GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQuerySystemInformation"));
+    if (!query) return {};
+
+    std::wstring buffer(32767, L'\0');
+    ProcessIdInformation request{ULongToHandle(processId),
+        {0, static_cast<USHORT>(buffer.size() * sizeof(wchar_t)), buffer.data()}};
+    if (query(processIdInformation, &request, sizeof(request), nullptr) < 0 ||
+        request.imageName.Buffer != buffer.data() ||
+        request.imageName.Length > buffer.size() * sizeof(wchar_t) ||
+        request.imageName.Length % sizeof(wchar_t) != 0)
+        return {};
+
+    const std::wstring_view devicePath(buffer.data(), request.imageName.Length / sizeof(wchar_t));
+    // Use the same Win32 path format as QueryFullProcessImageNameW so access
+    // changes do not create a second saved identity for the same icon.
+    const DWORD drives = GetLogicalDrives();
+    wchar_t drive[]{L'A', L':', L'\0'};
+    std::wstring path;
+    std::size_t prefixLength = 0;
+    for (unsigned i = 0; i < 26; ++i)
+    {
+        if (!(drives & (DWORD{1} << i))) continue;
+        drive[0] = static_cast<wchar_t>(L'A' + i);
+        wchar_t target[2048];
+        if (!QueryDosDeviceW(drive, target, static_cast<DWORD>(std::size(target)))) continue;
+        const auto length = std::wcslen(target);
+        if (length > prefixLength && devicePath.size() > length && devicePath[length] == L'\\' &&
+            CompareStringOrdinal(devicePath.data(), static_cast<int>(length), target, static_cast<int>(length), TRUE) == CSTR_EQUAL)
+        {
+            path.assign(drive);
+            path.append(devicePath.substr(length));
+            prefixLength = length;
+        }
+    }
+    return path;
+}
+
 void ResolveApplication(Icon& icon)
 {
     if (!icon.application.empty()) return;
-    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, icon.identity.process);
-    if (!process) return;
-    wchar_t path[32768]{}; DWORD count = static_cast<DWORD>(std::size(path));
-    if (QueryFullProcessImageNameW(process, 0, path, &count))
+    const auto pid = icon.identity.process;
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    DWORD error = process ? ERROR_SUCCESS : GetLastError();
+    if (process)
     {
-        icon.application.assign(path, count);
-        if (icon.persistentKey.empty())
+        wchar_t path[32768]{};
+        DWORD count = static_cast<DWORD>(std::size(path));
+        const BOOL resolved = QueryFullProcessImageNameW(process, 0, path, &count);
+        if (!resolved) error = GetLastError();
+        CloseHandle(process);
+        if (resolved) icon.application.assign(path, count);
+    }
+    if (error == ERROR_ACCESS_DENIED)
+    {
+        // The PID query does not hold a process handle. Confirm that the
+        // registered HWND still belongs to this process after resolving it.
+        auto path = QueryProcessImageById(pid);
+        DWORD owner = 0;
+        if (!path.empty() && GetWindowThreadProcessId(reinterpret_cast<HWND>(icon.identity.window), &owner) && owner == pid)
+            icon.application = std::move(path);
+    }
+    if (icon.application.empty() || !icon.persistentKey.empty()) return;
+    auto normalized = icon.application;
+    CharLowerBuffW(normalized.data(), static_cast<DWORD>(normalized.size()));
+    icon.persistentKey = "app:" + Utf8(normalized) + ":" + std::to_string(icon.identity.id);
+}
+
+bool ApplicationIs(const Icon& icon, const wchar_t* expected)
+{
+    const auto separator = icon.application.find_last_of(L"\\/");
+    const auto* name = icon.application.c_str() + (separator == std::wstring::npos ? 0 : separator + 1);
+    return _wcsicmp(name, expected) == 0;
+}
+
+bool CompatibilityEnabled(const wchar_t* disableFile)
+{
+    const auto path = GetDataFilePath(disableFile);
+    const auto attributes = path.empty() ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(path.c_str());
+    return attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+void ArmPopup32(HWND receiver, DWORD process, DWORD owner, DWORD serial)
+{
+    if (deployment::GetInjectableRuntimeFilePath(L"SnowDesktopDockMinimizeHook32.dll").empty()) return;
+    const auto library = hook_entry::CurrentImplementation(hook_entry::Payload::Dock32);
+    const auto helper = deployment::GetRuntimeFilePath(L"SnowDesktopDockMinimizeHost32.exe");
+    if (library.empty() || helper.empty()) return;
+    auto command = L"\"" + helper + L"\" " + first_show::kArmHelperSwitch + L" " +
+        std::to_wstring(owner) + L" " + std::to_wstring(serial) + L" " +
+        std::to_wstring(HandleToULong(receiver)) + L" " + std::to_wstring(process) +
+        L" \"" + library.wstring() + L"\"";
+    STARTUPINFOW startup{sizeof(startup)};
+    PROCESS_INFORMATION child{};
+    if (CreateProcessW(helper.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+        nullptr, nullptr, &startup, &child))
+    {
+        CloseHandle(child.hThread);
+        WaitForSingleObject(child.hProcess, 150);
+        CloseHandle(child.hProcess);
+    }
+}
+
+bool ArmPopup(HWND receiver, first_show::Request request)
+{
+    if (!request.process || request.process == GetCurrentProcessId()) return false;
+    const auto process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, request.process);
+    if (!process) return false;
+    USHORT processMachine = IMAGE_FILE_MACHINE_UNKNOWN, nativeMachine = IMAGE_FILE_MACHINE_UNKNOWN;
+    const bool architectureKnown = IsWow64Process2(process, &processMachine, &nativeMachine) != FALSE;
+    CloseHandle(process);
+    const USHORT machine = processMachine == IMAGE_FILE_MACHINE_UNKNOWN ? nativeMachine : processMachine;
+    if (!architectureKnown || (machine != IMAGE_FILE_MACHINE_I386 && machine != IMAGE_FILE_MACHINE_AMD64))
+        return false;
+    if (IsRectEmpty(&request.icon)) return false;
+    if (!PtInRect(&request.icon, request.anchor))
+        request.anchor = {request.icon.left + (request.icon.right - request.icon.left) / 2,
+            request.icon.top + (request.icon.bottom - request.icon.top) / 2};
+    MONITORINFO monitor{sizeof(monitor)};
+    if (!GetMonitorInfoW(MonitorFromPoint(request.anchor, MONITOR_DEFAULTTONEAREST), &monitor))
+        return false;
+    request.work = monitor.rcWork;
+    static std::atomic<DWORD> nextSerial{0};
+    const auto serial = ++nextSerial;
+    const auto owner = GetCurrentProcessId();
+    const auto requestName = first_show::RequestName(owner, serial);
+    const auto mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
+        0, sizeof(first_show::Request), requestName.c_str());
+    if (!mapping) return false;
+    const auto mappingStatus = GetLastError();
+    struct Close { HANDLE handle; ~Close() { CloseHandle(handle); } } close{mapping};
+    if (mappingStatus == ERROR_ALREADY_EXISTS) return false;
+    auto* view = static_cast<first_show::Request*>(MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, sizeof(request)));
+    if (!view) return false;
+    struct Unmap { void* view; ~Unmap() { UnmapViewOfFile(view); } } unmap{view};
+    request.receiver = reinterpret_cast<UINT_PTR>(receiver);
+    request.expires = GetTickCount64() + first_show::kLifetimeMs;
+    *view = request;
+    if (machine == IMAGE_FILE_MACHINE_I386)
+        ArmPopup32(receiver, request.process, owner, serial);
+    else
+    {
+        const auto path = deployment::GetTaskbarHookPath();
+        if (const auto module = LoadLibraryExW(path.c_str(), nullptr,
+            LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS))
         {
-            std::wstring normalized = icon.application;
-            CharLowerBuffW(normalized.data(), static_cast<DWORD>(normalized.size()));
-            icon.persistentKey = "app:" + Utf8(normalized) + ":" + std::to_string(icon.identity.id);
+            first_show::SendArm(module, receiver, request.process, owner, serial);
+            FreeLibrary(module);
         }
     }
-    CloseHandle(process);
+    return InterlockedCompareExchange(&view->armed, 0, 0) != 0;
 }
 struct Connection
 {
@@ -546,6 +695,80 @@ void Service::SetGeometries(std::span<const GeometryUpdate> updates)
 }
 void Service::ClearGeometries()
 { std::lock_guard guard(impl_->mutex); impl_->geometries.Clear(impl_->GeometryState()); }
+void Service::BeginHover(const std::string& key, HWND receiver, HWND bar, RECT bounds, RECT row, bool preferAbove,
+    HoverPopup& popup)
+{
+    if (IsRectEmpty(&bounds)) return;
+    Identity identity{};
+    const wchar_t* disableHover = nullptr;
+    auto surface = first_show::Surface::AppBarOnly;
+    {
+        std::lock_guard guard(impl_->mutex);
+        const auto found = std::find_if(impl_->snapshot.icons.begin(), impl_->snapshot.icons.end(),
+            [&](const auto& icon) { return icon.key == key; });
+        if (found == impl_->snapshot.icons.end() || (found->state & NIS_HIDDEN)) return;
+        identity = found->identity;
+        if (ApplicationIs(*found, L"QQ.exe"))
+        {
+            surface = first_show::Surface::ChromiumHover;
+            disableHover = L"tray-disable-qq";
+        }
+        else if (ApplicationIs(*found, L"wpscloudsvr.exe"))
+        {
+            surface = first_show::Surface::QtToolHover;
+            disableHover = L"tray-disable-wps";
+        }
+        else if (ApplicationIs(*found, L"douyin_tray.exe"))
+        {
+            surface = first_show::Surface::DouyinHover;
+            disableHover = L"tray-disable-douyin";
+        }
+    }
+    const auto target = reinterpret_cast<HWND>(identity.window);
+    DWORD process = 0;
+    if (!GetWindowThreadProcessId(target, &process) || process != identity.process) return;
+    const bool knownHover = disableHover != nullptr;
+    if (!knownHover)
+    {
+        wchar_t qtPrefix[80]{};
+        if (first_show::HasClass(target, first_show::kElectronTrayClass))
+        {
+            surface = first_show::Surface::ChromiumHover;
+            disableHover = L"tray-disable-chromium-hover";
+        }
+        else if (first_show::ReadQt5TrayPrefix(target, qtPrefix))
+        {
+            surface = first_show::Surface::QtToolHover;
+            disableHover = L"tray-disable-qt-hover";
+        }
+    }
+    if (disableHover && !CompatibilityEnabled(disableHover))
+        surface = first_show::Surface::AppBarOnly;
+    const POINT anchor{bounds.left + (bounds.right - bounds.left) / 2,
+        bounds.top + (bounds.bottom - bounds.top) / 2};
+    // Some apps display the popup while handling the first mouse callback.
+    bool armed = false;
+    const bool appbarEnabled = CompatibilityEnabled(L"tray-disable-appbar-position");
+    if ((appbarEnabled || surface != first_show::Surface::AppBarOnly) &&
+        runtime_modules::Allowed(runtime_modules::Module::Tray))
+    {
+        try
+        {
+            first_show::Request request;
+            request.anchor = anchor; request.icon = bounds; request.row = row;
+            request.gap = MulDiv(6, static_cast<int>(GetDpiForWindow(receiver)), USER_DEFAULT_SCREEN_DPI);
+            request.preferAbove = preferAbove; request.surface = surface; request.process = identity.process;
+            request.presenter = reinterpret_cast<UINT_PTR>(receiver);
+            if (appbarEnabled) request.bar = reinterpret_cast<UINT_PTR>(bar);
+            armed = ArmPopup(target, request);
+        }
+        catch (...) { /* Keep the original hover if optional preparation fails. */ }
+    }
+    popup.Watch(receiver, target, identity.process, bounds, row, preferAbove,
+        (armed && knownHover && surface != first_show::Surface::AppBarOnly) ||
+        !CompatibilityEnabled(L"tray-disable-hover-reposition"));
+    if (!Activate(key, Activation::Hover, anchor, {}, {}, identity)) popup.Reset();
+}
 bool Service::Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin origin,
     std::optional<RECT> invocationBounds, std::optional<Identity> expectedIdentity)
 {
@@ -612,9 +835,25 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
         DWORD originProcess = 0; GetWindowThreadProcessId(origin.target, &originProcess);
         if (originProcess == GetCurrentProcessId() && IsWindowVisible(origin.target))
             GetWindowRect(origin.target, &barBounds);
+        const bool context = action == Activation::RightDown || action == Activation::RightUp ||
+            action == Activation::ContextKeyboard;
         impl_->menuPlacement.Arm(target, anchor, geometry,
             action == Activation::LeftUp || action == Activation::RightUp || action == Activation::MiddleUp, barBounds,
-            action == Activation::RightDown || action == Activation::RightUp || action == Activation::ContextKeyboard);
+            context);
+        if (!CompatibilityEnabled(L"tray-disable-menu-reposition")) impl_->menuPlacement.CancelPlacement();
+        const bool answerAppbar = origin.barAtBottom.has_value() && CompatibilityEnabled(L"tray-disable-appbar-position");
+        if (answerAppbar)
+        {
+            try
+            {
+                first_show::Request request;
+                request.anchor = anchor; request.icon = geometry; request.process = pid;
+                request.bar = reinterpret_cast<UINT_PTR>(origin.target);
+                request.preferAbove = *origin.barAtBottom;
+                ArmPopup(target, request);
+            }
+            catch (...) { /* Keep dispatching the original gesture if optional preparation fails. */ }
+        }
     }
     bool accepted = true;
     DWORD error = ERROR_SUCCESS;
@@ -622,6 +861,18 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
     {
         if (!SendNotifyMessageW(target, icon.callback, callback.wp, callback.lp))
         { accepted = false; error = GetLastError(); }
+    }
+    if ((action == Activation::Hover || action == Activation::Leave) &&
+        ShouldWriteDiagnosticLog(DiagnosticLogModule::Tray, DiagnosticLogLevel::Debug) &&
+        ApplicationIs(icon, L"douyin_tray.exe"))
+    {
+        POINT cursor{};
+        GetCursorPos(&cursor);
+        wchar_t message[320]{};
+        swprintf_s(message, L"Douyin tray hover action=%ls tick=%lu pid=%lu version=%lu cursor=(%ld,%ld) icon=(%ld,%ld,%ld,%ld) accepted=%u",
+            action == Activation::Hover ? L"open" : L"close", GetTickCount(), pid, icon.version,
+            cursor.x, cursor.y, geometry.left, geometry.top, geometry.right, geometry.bottom, accepted ? 1u : 0u);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, message, DiagnosticLogLevel::Debug);
     }
     if (gesture && action != Activation::LeftDown && action != Activation::RightDown && action != Activation::MiddleDown)
     {

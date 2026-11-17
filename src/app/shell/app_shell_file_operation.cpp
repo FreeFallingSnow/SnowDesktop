@@ -534,6 +534,7 @@ void DesktopApp::RetryFolderReads()
 
 void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapshot)
 {
+    snowdesktop::performance::Scope trace("shell.refresh", "folder.snapshot.apply");
     // The common timer has fenced drags, menus, edits and file operations.
     // Only replace the affected folder models; leave desktop placement and
     // unrelated containers untouched.
@@ -562,19 +563,31 @@ void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapsh
         orderChanged |= oldOrder != widget.itemKeys;
         changed.insert(widget.id);
     }
+    std::vector<RECT> desktopDamage;
     for (auto& container : containers_)
     {
         auto* widget = dynamic_cast<WidgetContainer*>(container.get());
         if (!widget || !widget->GetWidgetData()) continue;
-        if (auto* search = dynamic_cast<ScrollingItemWidget*>(widget)) search->RefreshFolderSearch();
-        if (auto* mapping = dynamic_cast<FolderMapping*>(widget);
-            mapping && changed.contains(widget->GetWidgetData()->id))
+        const auto& data = *widget->GetWidgetData();
+        auto* search = dynamic_cast<ScrollingItemWidget*>(widget);
+        const bool searchActive = search && search->IsSearchActive();
+        if (search) search->RefreshFolderSearch();
+        auto* mapping = dynamic_cast<FolderMapping*>(widget);
+        const bool mappingChanged = mapping && changed.contains(data.id);
+        if (mappingChanged)
             mapping->InvalidateFilterCache();
-        if (auto* group = dynamic_cast<FileGroup*>(widget);
-            group && std::any_of(widget->GetWidgetData()->childWidgetIds.begin(),
-                widget->GetWidgetData()->childWidgetIds.end(),
-                [&](const auto& id) { return changed.contains(id); }))
+        auto* group = dynamic_cast<FileGroup*>(widget);
+        const bool groupChanged = group && std::any_of(data.childWidgetIds.begin(), data.childWidgetIds.end(),
+            [&](const auto& id) { return changed.contains(id); });
+        if (groupChanged)
             group->InvalidateHostedView();
+        if (searchActive || mappingChanged || groupChanged)
+        {
+            RECT dirty = GetStandaloneWidgetFrameRect(data);
+            if (IsRectEmpty(&dirty)) continue;
+            InflateRect(&dirty, 4, 4);
+            desktopDamage.push_back(dirty);
+        }
     }
     std::unordered_set<std::wstring> activePaths;
     for (const auto& widget : widgets_)
@@ -593,11 +606,18 @@ void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapsh
             RefreshDockFolderPopup(&folder->second);
     }
     if (orderChanged) SaveLayoutSlots();
-    RefreshOpenCollectionPopupGeometry();
-    InvalidateDragStaticScene();
+    // The matching Dock folder snapshot has already published its geometry.
+    if (!dockFolderPopupOpen_) RefreshOpenCollectionPopupGeometry();
+    InvalidateDragStaticScene(false);
     reloading_ = false;
-    InvalidateRect(hwnd_, nullptr, FALSE);
-    InvalidateFloatingPopupWindow(false);
+    if (hwnd_)
+        for (const auto& dirty : desktopDamage)
+            InvalidateRect(hwnd_, &dirty, FALSE);
+    // A Dock folder publishes only when its own snapshot changes. A second
+    // invalidation here would also repaint unchanged or unrelated results.
+    if (!dockFolderPopupOpen_ || !popupAnchoredToDock_ || !dockFolderPopupMappingWidgetId_.empty() ||
+        IsLuaPanelHostedByFloatingWindow() || IsLuaStackIndicatorVisible())
+        InvalidateFloatingPopupWindow(false);
     InvalidateQuickNavigationWindow();
     wchar_t timing[192]{};
     swprintf_s(timing, L"Folder refresh async: folders=%zu readMs=%llu metadataHits=%zu metadataQueries=%zu",
@@ -643,7 +663,7 @@ void DesktopApp::RefreshShellItemsAsync()
         const size_t metadataHits = snapshot->metadata.hits;
         const size_t metadataQueries = snapshot->metadata.queries;
         shellMetadataCache_ = std::move(snapshot->metadata);
-        const bool contentOnly = desktopItemsReady_ && !layoutReload_.Pending() &&
+        const bool contentOnly = desktopItemsReady_ && !layoutReload_.Pending() && !HasPendingDesktopNewItems() &&
             snowdesktop::shell_refresh::ApplyDesktopContentRefresh(items_, *snapshot,
                 [this](const DesktopItem& item) {
                     IconLoadTask task;
@@ -680,8 +700,6 @@ void DesktopApp::RefreshShellItemsAsync()
                 snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath));
             if (folder != snapshot->folders.end())
                 RefreshDockFolderPopup(&folder->second);
-            else
-                QueueFolderRead(dockFolderPopupWidget_.sourceFolderPath);
         }
         InvalidateFloatingPopupWindow(false);
         InvalidateQuickNavigationWindow();

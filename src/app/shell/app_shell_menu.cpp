@@ -1,10 +1,12 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app/navigation/quick_navigation_state.h"
+#include "app/layout/new_item_placement.h"
 #include "dock/dock_window_rules.h"
 #include "dock/dock_window_transition.h"
 #include "common/l10n.h"
 #include "diagnostics/diagnostic_log.h"
+#include "diagnostics/performance_trace.h"
 #include "common/utils.h"
 #include "diagnostics/crashlog.h"
 #include "app/dock/persistent_dock_host.h"
@@ -16,6 +18,7 @@
 #include "shell/shell_context_menu_invoke.h"
 #include "shell/shell_context_menu_site.h"
 #include "shell/shell_start_pin.h"
+#include "desktop/desktop_membership_recovery.h"
 #include "shell/shell_new_item_capture.h"
 #include "shell/shell_new_menu.h"
 #include "shell/shell_popup_menu_tracker.h"
@@ -184,17 +187,21 @@ void DesktopApp::AppendShellNewSubmenu(HMENU menu, const std::wstring& targetDir
 }
 
 HRESULT DesktopApp::InitializeShellNewMenu(snowdesktop::ShellNewMenu& menu,
-    const std::wstring& targetDir, std::wstring desktopFilesWidgetId)
+    const std::wstring& targetDir, const std::optional<NewItemTarget>& target)
 {
     const auto attachCapture = [&](IContextMenu* context) -> HRESULT
     {
-        if (desktopFilesWidgetId.empty()) return S_OK;
-        const size_t target = FindWidgetIndexById(desktopFilesWidgetId);
-        if (target >= widgets_.size() ||
-            widgets_[target].type != DesktopWidgetType::FileCategories) return E_INVALIDARG;
+        if (!target) return S_OK;
+        size_t insertIndex = 0;
+        if (target->surface == NewItemTarget::Surface::FileCategories)
+        {
+            const size_t index = FindWidgetIndexById(target->sourceId);
+            if (index >= widgets_.size() ||
+                widgets_[index].type != DesktopWidgetType::FileCategories) return E_INVALIDARG;
+            insertIndex = widgets_[index].itemKeys.size();
+        }
         auto capture = std::make_shared<snowdesktop::ShellNewItemCapture>(
-            targetDir, std::move(desktopFilesWidgetId), widgets_[target].itemKeys.size(),
-            hwnd_, kShellChangeMessage);
+            targetDir, hwnd_, kShellChangeMessage);
         const HRESULT hr = snowdesktop::AttachShellNewItemCapture(context, capture);
         if (FAILED(hr))
         {
@@ -202,22 +209,115 @@ HRESULT DesktopApp::InitializeShellNewMenu(snowdesktop::ShellNewMenu& menu,
             MessageBeep(MB_ICONWARNING);
             return hr;
         }
-        pendingNewItemCaptures_.push_back(std::move(capture));
+        pendingNewItemCaptures_.push_back({*target, std::move(capture), insertIndex});
         return S_OK;
     };
     return menu.Initialize(targetDir, attachCapture);
+}
+
+bool DesktopApp::HasPendingDesktopNewItems() const
+{
+    return std::any_of(pendingNewItemCaptures_.begin(), pendingNewItemCaptures_.end(), [](const auto& pending) {
+        return (pending.target.surface == NewItemTarget::Surface::Desktop ||
+            pending.target.surface == NewItemTarget::Surface::FileCategories) && pending.capture->HasPendingPaths();
+    });
+}
+
+std::unordered_set<std::wstring> DesktopApp::PendingDesktopNewItemPaths() const
+{
+    std::unordered_set<std::wstring> paths;
+    for (const auto& pending : pendingNewItemCaptures_)
+        if (pending.target.surface == NewItemTarget::Surface::Desktop)
+            pending.capture->ForEachUnplacedPath([&](const auto& path) { paths.insert(ToUpperInvariant(path)); });
+    return paths;
+}
+
+std::optional<DesktopApp::NewItemRename> DesktopApp::ApplyPendingNewItems(
+    std::unordered_set<std::wstring>* desktopSlots,
+    const std::unordered_set<std::wstring>* desktopPaths)
+{
+    using Surface = NewItemTarget::Surface;
+    using snowdesktop::pending_drop::MatchesExactPath;
+    std::optional<NewItemRename> rename;
+    bool membershipChanged = false;
+    std::erase_if(pendingNewItemCaptures_, [&](auto& pending) {
+        const auto& target = pending.target;
+        const bool desktopTarget = target.surface == Surface::Desktop || target.surface == Surface::FileCategories;
+        return pending.capture->Consume([&](const auto& path, bool needsPlacement, bool edit) {
+            if (desktopTarget != (desktopSlots != nullptr)) return false;
+            if (target.surface == Surface::FolderPopup || target.surface == Surface::FolderMapping)
+            {
+                const DesktopWidget* folder = nullptr;
+                if (target.surface == Surface::FolderPopup)
+                {
+                    if (dockFolderPopupOpen_ && target.sourceId == dockFolderPopupSourceId_)
+                    {
+                        if (edit && dockFolderPopupContainer_ && dockFolderPopupContainer_->PopupResizeTransition())
+                            return false;
+                        folder = &dockFolderPopupWidget_;
+                    }
+                }
+                else if (const size_t index = FindWidgetIndexById(target.sourceId);
+                    index < widgets_.size() && widgets_[index].type == DesktopWidgetType::FolderMapping)
+                    folder = &widgets_[index];
+                if (!folder) return true;
+                if (std::none_of(folder->folderEntries.begin(), folder->folderEntries.end(), [&](const auto& entry) {
+                        return MatchesExactPath(entry.fullPath, path);
+                    })) return false;
+            }
+            else if (needsPlacement && target.surface == Surface::FileCategories)
+            {
+                using snowdesktop::new_item_placement::Result;
+                const auto result = snowdesktop::new_item_placement::Apply(
+                    widgets_, items_, target.sourceId, path, pending.insertIndex, ToUpperInvariant);
+                if (result == Result::Pending) return false;
+                if (result == Result::Discarded) return true;
+                ++pending.insertIndex;
+                membershipChanged = true;
+            }
+            else if (needsPlacement)
+            {
+                if (!desktopPaths || !desktopPaths->contains(ToUpperInvariant(path))) return false;
+                const auto item = std::find_if(items_.begin(), items_.end(), [&](const auto& candidate) {
+                    return MatchesExactPath(candidate.parsingName, path);
+                });
+                if (item == items_.end()) return false;
+                if (IsItemInAnyWidget(*item))
+                {
+                    const std::vector<std::wstring> keys{ToUpperInvariant(item->layoutKey)};
+                    for (auto& widget : widgets_)
+                        if (widget.type == DesktopWidgetType::FileCategories)
+                            snowdesktop::desktop_membership_recovery::Forget(widget, keys);
+                    membershipChanged = true;
+                }
+                if (const auto* page = FindGridPage(gridPages_, target.cell.pageId))
+                    snowdesktop::new_item_placement::PlaceOnPage(*item, target.cell, *page, *desktopSlots);
+                else if (savedPageColumns_.contains(target.cell.pageId) && savedPageRows_.contains(target.cell.pageId))
+                {
+                    GridPage savedPage;
+                    savedPage.id = target.cell.pageId;
+                    savedPage.columns = savedPageColumns_.at(savedPage.id);
+                    savedPage.rows = savedPageRows_.at(savedPage.id);
+                    snowdesktop::new_item_placement::PlaceOnPage(*item, target.cell, savedPage, *desktopSlots);
+                }
+            }
+            if (edit) rename = NewItemRename{target, path};
+            return true;
+        });
+    });
+    if (membershipChanged) RefreshCollectedKeysCache();
+    return rename;
 }
 
 void DesktopApp::PrepareShellNewSubmenu(
     std::unique_ptr<snowdesktop::ShellNewMenu>& menu,
     const std::wstring& targetDir,
     std::vector<snowdesktop::modern_menu::Item>& children,
-    std::wstring desktopFilesWidgetId)
+    const std::optional<NewItemTarget>& target)
 {
     if (menu) return;
     menu = std::make_unique<snowdesktop::ShellNewMenu>();
-    if (FAILED(InitializeShellNewMenu(*menu, targetDir,
-            std::move(desktopFilesWidgetId))))
+    if (FAILED(InitializeShellNewMenu(*menu, targetDir, target)))
     {
         children = {snowdesktop::modern_menu::Item{}};
         children.front().label = _LW("settings.contextMenu.failed");
@@ -236,11 +336,10 @@ void DesktopApp::PrepareShellNewSubmenu(
 }
 
 void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir,
-    bool folderOnly, std::wstring desktopFilesWidgetId)
+    bool folderOnly, const std::optional<NewItemTarget>& target)
 {
     snowdesktop::ShellNewMenu newMenu;
-    if (FAILED(InitializeShellNewMenu(newMenu, targetDir,
-            std::move(desktopFilesWidgetId)))) return;
+    if (FAILED(InitializeShellNewMenu(newMenu, targetDir, target))) return;
 
     UINT cmd = 0;
     if (folderOnly)
@@ -275,7 +374,7 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
     if (newMenu.Contains(cmd))
         InvokeNewMenuCommand(newMenu.Context(), cmd, targetDir);
     RestoreDesktopWindowLayer();
-    RestoreInteractionInputFocus();
+    if (!renameController_.IsActive()) RestoreInteractionInputFocus();
 }
 
 /**
@@ -350,12 +449,25 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         }
     } layerUpdateScope{*this, host.hwnd, wasTopmost};
     const bool merged = host.container && host.container->IsMergedWithStatusBar();
+    const auto releaseFullscreenLayerHide = [&] {
+        if (!host.hiddenForFullscreenLayer) return;
+        host.hiddenForFullscreenLayer = false;
+        if (desktopStartupPresentationPending_ || !ShouldShowPersistentDockHost(host) ||
+            IsWindowVisible(host.hwnd)) return;
+        if (host.backdrop.IsAvailable())
+            host.backdrop.ShowPopupWindowPair(host.hwnd);
+        else
+            SetWindowPos(host.hwnd, nullptr, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    };
+    const bool desktopRestoreWasPending = host.desktopLayerRestorePending;
     host.desktopLayerRestorePending = false;
     host.desktopLayerRestoreRetryTick = GetTickCount64() +
         snowdesktop::floating_dock_rules::kDesktopLayerRestoreRetryMs;
     host.desktopLayerForegroundWindow = snowdesktop::private_pointer::ForegroundWindow();
     if (merged)
     {
+        host.hiddenForFullscreenLayer = false;
         // The visible merged strip is one topmost surface. Summon/hover policy
         // still owns its visibility; menu holds never move it between bands.
         host.mergedPresentation.topmost = true;
@@ -443,6 +555,9 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
 
     if (!promoted && !systemShowDesktopGuard)
     {
+        namespace perf = snowdesktop::performance;
+        perf::Scope layerCheck("dock", "desktop.layer.check");
+        perf::Value("dock", "desktop.layer.pending_before", {}, desktopRestoreWasPending);
         if (wasTopmost)
             snowdesktop::dock_input_diagnostics::RecordLayer(L"policy-lower", host.hwnd, host.promoted);
         // A desktop-band Dock is still a top-level no-activate window. Place
@@ -452,7 +567,9 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         const HWND desktopHost =
             desktopWindows_.host && IsWindow(desktopWindows_.host)
                 ? desktopWindows_.host : nullptr;
-        const auto isApplicationWindow = [](HWND window) {
+        const auto fullscreen = RecheckFullscreenSource(host.monitor);
+        const HWND fullscreenWindow = fullscreen ? fullscreen->window : nullptr;
+        const auto isTaskWindow = [](HWND window) {
             // Reject hidden/tool surfaces before the task-window query
             // reaches DWM; background windows cannot cover this Dock.
             return IsWindowVisible(window) && !IsIconic(window) &&
@@ -460,33 +577,140 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
                     GetWindowLongPtrW(window, GWL_EXSTYLE), GetWindow(window, GW_OWNER) != nullptr) &&
                 IsDockTaskWindow(window);
         };
+        const auto isApplicationWindow = [fullscreenWindow, &isTaskWindow](HWND window) {
+            return window == fullscreenWindow || isTaskWindow(window);
+        };
         const auto isDockWindow = [this](HWND window) {
             return IsPersistentDockHostWindow(window) || IsPersistentDockBackdropWindow(window);
         };
         const HWND desktopRoot = desktopHost ? GetAncestor(desktopHost, GA_ROOT) : nullptr;
-        const HWND nextWindow = GetWindow(host.hwnd, GW_HWNDNEXT);
         // The desktop-layer contract permits other non-application windows
         // between the Dock and the lowest application. Requiring an exact
         // predecessor in that case needlessly restacks the backdrop against
         // an external HWND and can hide it during the fallback path.
-        RECT backdropBounds{};
-        const bool pairIntact = !host.backdrop.IsAvailable() ||
-            (host.backdrop.IsBackdropWindow(nextWindow) &&
-                !snowdesktop::popup_window_pair_z_order::IsTopmost(nextWindow) &&
-                hasDockBounds && GetWindowRect(nextWindow, &backdropBounds) &&
-                EqualRect(&dockBounds, &backdropBounds));
-        const bool alreadyRestored = pairIntact &&
-            snowdesktop::floating_dock_rules::IsDesktopLayerRestored(
+        namespace layer = snowdesktop::floating_dock_rules;
+        namespace pair = snowdesktop::popup_window_pair_z_order;
+        const auto isPairIntact = [&] {
+            if (!host.backdrop.IsAvailable()) return true;
+            const HWND next = GetWindow(host.hwnd, GW_HWNDNEXT);
+            RECT backdropBounds{};
+            return host.backdrop.IsBackdropWindow(next) && !pair::IsTopmost(next) &&
+                hasDockBounds && GetWindowRect(next, &backdropBounds) &&
+                EqualRect(&dockBounds, &backdropBounds);
+        };
+        const auto belowFullscreen = [&](HWND window) {
+            if (!fullscreenWindow) return true;
+            if (!window || !IsWindow(window) || !IsWindow(fullscreenWindow)) return false;
+            const bool fullscreenTopmost = pair::IsTopmost(fullscreenWindow);
+            const bool windowTopmost = pair::IsTopmost(window);
+            return fullscreenTopmost != windowTopmost ? fullscreenTopmost :
+                layer::IsWindowAbove(fullscreenWindow, window);
+        };
+        const auto pairBelowFullscreen = [&] {
+            if (!fullscreenWindow) return true;
+            const HWND next = GetWindow(host.hwnd, GW_HWNDNEXT);
+            return belowFullscreen(host.hwnd) && (!host.backdrop.IsAvailable() ||
+                (host.backdrop.IsBackdropWindow(next) && belowFullscreen(next)));
+        };
+        const bool alreadyRestored = isPairIntact() && pairBelowFullscreen() &&
+            layer::IsDesktopLayerRestored(
                 host.hwnd, desktopRoot, isApplicationWindow, isDockWindow);
-        const bool restored = alreadyRestored || snowdesktop::floating_dock_rules::RestoreDesktopLayer(
-            host.hwnd, desktopHost, isApplicationWindow, isDockWindow,
-            [&host](HWND anchor) {
-                return host.backdrop.SetPopupWindowPairZOrder(host.hwnd, anchor, false);
-            }, GetAncestor(snowdesktop::private_pointer::ForegroundWindow(), GA_ROOT));
+        perf::Value("dock", "desktop.layer.already_restored", {}, alreadyRestored);
+        HWND lastAnchor = nullptr;
+        bool placementAccepted = false;
+        const auto placePair = [&](HWND anchor) {
+            perf::Scope placement("dock", "desktop.layer.place");
+            lastAnchor = anchor;
+            placementAccepted = host.backdrop.SetPopupWindowPairZOrder(host.hwnd, anchor, false);
+            perf::Value("dock", "desktop.layer.place.accepted", {}, placementAccepted);
+            return placementAccepted;
+        };
+        const HWND ordinaryFullscreen = fullscreenWindow && !pair::IsTopmost(fullscreenWindow)
+            ? fullscreenWindow : nullptr;
+        bool placed = alreadyRestored || layer::RestoreDesktopLayer(
+            host.hwnd, desktopHost, isApplicationWindow, isDockWindow, placePair,
+            ordinaryFullscreen ? ordinaryFullscreen : GetAncestor(host.desktopLayerForegroundWindow, GA_ROOT));
+        // The application scan may race a native reorder. Put the pair behind
+        // the actual fullscreen source, even if the desktop scan accepted it.
+        if (ordinaryFullscreen && !pairBelowFullscreen() && lastAnchor != ordinaryFullscreen)
+            placed = placePair(ordinaryFullscreen) && layer::IsDesktopLayerRestored(
+                host.hwnd, desktopRoot, isApplicationWindow, isDockWindow);
+        const HWND initialAnchor = lastAnchor;
+        const bool initialPlacementAccepted = placementAccepted;
+        HWND fallbackAnchor = nullptr;
+        if (ordinaryFullscreen && desktopRoot && !pairBelowFullscreen())
+        {
+            // An ordinary window between Explorer and the game is also a
+            // valid anchor. Keep the actual fullscreen window as the bound.
+            HWND candidate = GetWindow(desktopRoot, GW_HWNDPREV);
+            for (unsigned visited = 0; candidate && candidate != ordinaryFullscreen && visited < 4096;
+                 ++visited, candidate = GetWindow(candidate, GW_HWNDPREV))
+            {
+                if (candidate == lastAnchor || isDockWindow(candidate) || pair::IsTopmost(candidate) ||
+                    !IsWindowVisible(candidate) || IsIconic(candidate)) continue;
+                if (!layer::IsWindowAbove(ordinaryFullscreen, candidate)) break;
+                fallbackAnchor = candidate;
+                placed = placePair(candidate) && layer::IsDesktopLayerRestored(
+                    host.hwnd, desktopRoot, isApplicationWindow, isDockWindow);
+                break;
+            }
+        }
+        const bool pairIntact = !fullscreenWindow || isPairIntact();
+        const bool belowSource = pairIntact && pairBelowFullscreen();
+        const bool restored = placed && belowSource;
+        const bool wasHiddenForLayer = host.hiddenForFullscreenLayer;
+        if (fullscreenWindow && !belowSource)
+        {
+            host.hiddenForFullscreenLayer = true;
+            if (!wasHiddenForLayer || IsWindowVisible(host.hwnd))
+                host.backdrop.HidePopupWindowPair(host.hwnd);
+        }
+        else
+            releaseFullscreenLayerHide();
+        perf::Value("dock", "desktop.layer.restored", {}, restored);
         host.desktopLayerRestorePending = !restored;
         host.desktopLayerRestoreRetryTick = GetTickCount64() +
             snowdesktop::floating_dock_rules::kDesktopLayerRestoreRetryMs;
         host.desktopLayerForegroundWindow = snowdesktop::private_pointer::ForegroundWindow();
+        if (fullscreenWindow && snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Dock))
+        {
+            const ULONGLONG now = GetTickCount64();
+            if (fullscreenWindow != host.fullscreenLayerTraceSource ||
+                wasHiddenForLayer != host.hiddenForFullscreenLayer ||
+                (wasTopmost && !desktopRestoreWasPending) ||
+                (restored && desktopRestoreWasPending) ||
+                (!restored && now - host.fullscreenLayerTraceTick >= 5000))
+            {
+                host.fullscreenLayerTraceSource = fullscreenWindow;
+                host.fullscreenLayerTraceTick = now;
+                const HWND next = GetWindow(host.hwnd, GW_HWNDNEXT);
+                const HWND glass = host.backdrop.IsBackdropWindow(next) ? next : nullptr;
+                wchar_t message[640]{};
+                swprintf_s(message, L"Dock fullscreen layer monitor=%p source=%p sourcePid=%lu "
+                    L"sourceTopmost=%d sourceTask=%d foreground=%p dock=%p glassAdjacent=%p "
+                    L"anchor=%p attempted=%d accepted=%d dockTopmost=%d glassTopmost=%d "
+                    L"pairIntact=%d belowSource=%d restored=%d retry=%d "
+                    L"initialAnchor=%p initialAccepted=%d fallbackAnchor=%p hiddenForLayer=%d visible=%d",
+                    host.monitor, fullscreenWindow, fullscreen->process, pair::IsTopmost(fullscreenWindow),
+                    isTaskWindow(fullscreenWindow), host.desktopLayerForegroundWindow, host.hwnd, glass,
+                    lastAnchor, !alreadyRestored, placementAccepted, pair::IsTopmost(host.hwnd),
+                    pair::IsTopmost(glass), pairIntact, belowSource, restored, !restored,
+                    initialAnchor, initialPlacementAccepted, fallbackAnchor,
+                    host.hiddenForFullscreenLayer, IsWindowVisible(host.hwnd));
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message);
+            }
+        }
+        else
+        {
+            host.fullscreenLayerTraceSource = nullptr;
+            if (wasHiddenForLayer && snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Dock))
+            {
+                wchar_t message[224]{};
+                swprintf_s(message, L"Dock fullscreen layer released monitor=%p dock=%p visible=%d restored=%d",
+                    host.monitor, host.hwnd, IsWindowVisible(host.hwnd), restored);
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message);
+            }
+        }
         if (wasTopmost && restored)
             snowdesktop::dock_taskbar_diagnostics::Record(
                 L"dock-returned-to-desktop-band", host.hwnd);
@@ -503,6 +727,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         shouldBeTopmost
             ? HWND_TOPMOST : HWND_NOTOPMOST,
         shouldBeTopmost);
+    releaseFullscreenLayerHide();
     if (wasTopmost != shouldBeTopmost)
         snowdesktop::dock_taskbar_diagnostics::Record(
             systemShowDesktopGuard ? L"dock-show-desktop-band" : L"dock-normal-layer-policy",
@@ -527,6 +752,10 @@ bool DesktopApp::ShouldKeepFloatingPopupTopmostForShellMenu() const
 
 void DesktopApp::BeginShellPopupMenuLayer()
 {
+    dockTitleTooltip_.Hide();
+    navHotEdgeTooltip_.Hide();
+    luaWidgetTooltip_.Hide();
+    ResetPageNotify();
     // Flush the frame that opened the native menu before its tracking thread
     // takes pointer capture. The desktop pump remains live for the session.
     FlushPendingCompositionCommit();

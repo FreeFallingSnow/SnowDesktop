@@ -114,7 +114,7 @@ void MenuPlacementSession::Arm(DWORD process, POINT anchor, RECT workArea, DWORD
     // menu placement without excluding the overflowing tray panel itself.
     const auto barHeight = static_cast<std::int64_t>(barBounds.bottom) - barBounds.top;
     const auto workHeight = static_cast<std::int64_t>(workArea.bottom) - workArea.top;
-    if (barHeight > 0 && barHeight < workHeight / 4 &&
+    if (!contextGesture_ && barHeight > 0 && barHeight < workHeight / 4 &&
         barBounds.left <= anchor.x && barBounds.right > anchor.x)
     {
         if (barBounds.top <= workArea.top && barBounds.bottom > workArea.top)
@@ -152,14 +152,16 @@ std::optional<POINT> MenuPlacementSession::Observe(const MenuPopupObservation& p
     // binding or moving alternative menu shapes (no WS_POPUP / WS_THICKFRAME).
     const bool contextToolWindow = contextGesture_ && popup.notificationThread &&
         popup.thread == popup.notificationThread && (popup.extendedStyle & WS_EX_TOOLWINDOW);
-    const bool activeContextMenu = contextToolWindow &&
+    const bool activeContextMenu = contextGesture_ &&
+        (contextToolWindow || (popup.style & WS_POPUP)) &&
         popup.foregroundWindow == popup.window && popup.activeWindow == popup.window;
     if (!popup.visible || popup.notificationWindow || (!(popup.style & WS_POPUP) && !contextToolWindow) ||
         (popup.style & WS_CHILD) || ((popup.style & WS_THICKFRAME) && !contextToolWindow) ||
         (popup.style & WS_CAPTION) == WS_CAPTION ||
         (popup.style & (WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)) ||
         (popup.extendedStyle & (WS_EX_APPWINDOW | WS_EX_TRANSPARENT)) ||
-        (!popup.standardMenu && !popup.targetRelated && !popup.strongTargetRelated && !popup.parentMenu)) return {};
+        (!popup.standardMenu && !popup.targetRelated && !popup.strongTargetRelated &&
+            !popup.parentMenu && !activeContextMenu)) return {};
     if (popup.event == EVENT_OBJECT_SHOW && existing == windows_.end())
     {
         existing = std::find_if(windows_.begin(), windows_.end(), [](const auto& item) { return !item.popup.window; });
@@ -227,7 +229,11 @@ std::optional<POINT> MenuPlacementSession::Observe(const MenuPopupObservation& p
     std::int64_t desiredX = popup.bounds.left, desiredY = popup.bounds.top;
     const bool verticalOverflow = popup.bounds.top < workArea_.top || popup.bounds.bottom > workArea_.bottom;
     const bool haveIcon = iconBounds_.right > iconBounds_.left && iconBounds_.bottom > iconBounds_.top;
-    if (!existing->submenu && ((!nearAnchor && existing->anchorBound) || (haveIcon && verticalOverflow)))
+    // Some menus use the original Windows taskbar edge even when the icon
+    // is presented on another edge. Reanchor that root; a nearby context
+    // menu only needs its clipped edges corrected.
+    const bool detachedRoot = !nearAnchor && existing->anchorBound;
+    if (!existing->submenu && (detachedRoot || (!contextGesture_ && haveIcon && verticalOverflow)))
     {
         // Root menus that use the old taskbar edge must follow this gesture.
         // Preserve already reasonable near-anchor placement and never collapse
@@ -255,7 +261,7 @@ std::optional<POINT> MenuPlacementSession::Observe(const MenuPopupObservation& p
     // observed at that destination above acknowledge it without claiming that
     // SetWindowPos's return value proved the move.
     if (existing->pending && existing->pending->x == x && existing->pending->y == y) return {};
-    if (existing->corrections >= 3) return {};
+    if (existing->corrections >= (contextGesture_ ? 1u : 3u)) return {};
     ++existing->corrections;
     existing->pending = POINT{static_cast<LONG>(x), static_cast<LONG>(y)};
     return existing->pending;
@@ -447,7 +453,8 @@ struct MenuPlacementGuard::Impl
                     MONITORINFO monitor{sizeof(monitor)};
                     if (GetMonitorInfoW(MonitorFromRect(&next.bounds, MONITOR_DEFAULTTONEAREST), &monitor))
                     {
-                        session.Arm(process, next.anchor, monitor.rcWork, next.started, next.barBounds, next.bounds, next.contextGesture);
+                        session.Arm(process, next.anchor, next.contextGesture ? monitor.rcMonitor : monitor.rcWork,
+                            next.started, next.barBounds, next.bounds, next.contextGesture);
                         hook = SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_LOCATIONCHANGE, nullptr, Event,
                             process, 0, WINEVENT_OUTOFCONTEXT);
                         if (next.contextGesture)

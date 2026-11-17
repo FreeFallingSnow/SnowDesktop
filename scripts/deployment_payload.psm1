@@ -303,6 +303,41 @@ function Add-SnowDesktopPrivateAssemblyDependency {
     }
 }
 
+function Remove-SnowDesktopPrivateRuntimeDependency {
+    param(
+        [Parameter(Mandatory = $true)][string]$Executable,
+        [Parameter(Mandatory = $true)][string]$RuntimeDirectory
+    )
+
+    $mt = Find-SnowDesktopWindowsSdkTool -Name "mt.exe"
+    $manifestPath = [System.IO.Path]::GetTempFileName()
+    try {
+        & $mt "-inputresource:$Executable;#1" "-out:$manifestPath"
+        if ($LASTEXITCODE -ne 0) {
+            throw "mt.exe could not extract the manifest from $Executable (exit $LASTEXITCODE)."
+        }
+        $document = [System.Xml.XmlDocument]::new()
+        $document.Load($manifestPath)
+        $namespaces = [System.Xml.XmlNamespaceManager]::new($document.NameTable)
+        $namespaces.AddNamespace("asmv1", "urn:schemas-microsoft-com:asm.v1")
+        $dependencies = $document.SelectNodes(
+            "/asmv1:assembly/asmv1:dependency[asmv1:dependentAssembly/asmv1:assemblyIdentity[@name='$RuntimeDirectory']]",
+            $namespaces)
+        if ($dependencies.Count -eq 0) { return }
+        foreach ($dependency in $dependencies) {
+            [void]$dependency.ParentNode.RemoveChild($dependency)
+        }
+        Save-SnowDesktopXmlDocument -Document $document -Path $manifestPath
+        & $mt "-manifest" $manifestPath "-outputresource:$Executable;#1"
+        if ($LASTEXITCODE -ne 0) {
+            throw "mt.exe could not update the manifest for $Executable (exit $LASTEXITCODE)."
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $manifestPath -Force
+    }
+}
+
 function Enable-SnowDesktopPrivateRuntimeAssembly {
     param(
         [Parameter(Mandatory = $true)][string]$BuildOutput,
@@ -664,4 +699,5 @@ Export-ModuleMember -Function `
     Copy-SnowDesktopRepositoryLicenses, `
     Test-SnowDesktopExecutableRootResource, `
     Enable-SnowDesktopPrivateRuntimeAssembly, `
+    Remove-SnowDesktopPrivateRuntimeDependency, `
     Merge-SnowDesktopAppxFragments

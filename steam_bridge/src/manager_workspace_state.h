@@ -169,7 +169,6 @@ struct ManagerProjectDraft
     bool publishPublic = true;
     bool reusePackageText = true;
     bool updatePreview = true;
-    bool updateTags = true;
     bool tagsDirty = false;
     bool preferencesDirty = false;
     bool visibilityDirty = false;
@@ -211,12 +210,6 @@ struct ManagerProjectDraft
         preferencesDirty = true;
         return true;
     }
-    bool SetUpdateTags(bool value)
-    {
-        if (!Assign(updateTags, value)) return false;
-        preferencesDirty = true;
-        return true;
-    }
 
     void ApplyPreferences(WorkshopProject& project) const
     {
@@ -225,8 +218,6 @@ struct ManagerProjectDraft
             WorkshopTextSource::Package : project.publishedFileId ?
                 WorkshopTextSource::Steam : WorkshopTextSource::ManualEnglish;
         project.publishPreferences.previewSource = updatePreview ?
-            WorkshopAssetSource::Local : WorkshopAssetSource::Steam;
-        project.publishPreferences.tagsSource = updateTags ?
             WorkshopAssetSource::Local : WorkshopAssetSource::Steam;
         project.publishPreferences.manualEnglishTitle = manualEnglishTitle;
         project.publishPreferences.manualEnglishDescription = manualEnglishDescription;
@@ -265,7 +256,6 @@ public:
             draft.manualEnglishDescription = project.publishPreferences.manualEnglishDescription;
             draft.reusePackageText = project.publishPreferences.textSource == WorkshopTextSource::Package;
             draft.updatePreview = project.publishPreferences.previewSource == WorkshopAssetSource::Local;
-            draft.updateTags = project.publishPreferences.tagsSource == WorkshopAssetSource::Local;
         }
         return found->second;
     }

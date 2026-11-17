@@ -485,18 +485,11 @@ local function menu(_context, _model, request)
     local items = {
         {
             id = "launcher.configure",
-            label = l10n.tr("lua_widget.media_control.configure_launcher"),
+            label = l10n.tr("lua_widget.media_control.configure_launcher") .. "\t" ..
+                (launcher and launcher.title or l10n.tr("lua_widget.media_control.not_set")),
             icon = fluent.settings,
             iconFont = "fluent",
         },
-    }
-    items[#items + 1] = { type = "separator" }
-    items[#items + 1] = {
-        id = "launcher.current",
-        label = launcher and launcher.title or
-            l10n.tr("lua_widget.media_control.not_set"),
-        checked = true,
-        enabled = false,
     }
     if launcher then
         items[#items + 1] = { type = "separator" }

@@ -112,7 +112,9 @@ std::vector<std::wstring> ChordParts(
         parts.push_back(text.shift);
     if ((chord.modifiers & HotkeyRecorderRules::ModifierWindows) != 0)
         parts.push_back(text.windows);
-    if (!chord.Empty())
+    if (chord.virtualKey == VK_MENU)
+        parts.push_back(text.alt);
+    else if (!chord.Empty())
         parts.push_back(VirtualKeyName(chord.virtualKey));
     return parts;
 }
@@ -340,6 +342,7 @@ struct HotkeyRecorderState
     std::uint64_t committedRequestId = 0;
     bool enabled = true;
     bool localDesktopHotkey = false;
+    bool allowStandaloneAlt = false;
     bool alive = true;
     bool lastActionCleared = false;
     bool dialogOpen = false;
@@ -373,33 +376,34 @@ void UpdateVisuals(const std::shared_ptr<HotkeyRecorderState>& state)
         committed, state->text, state->root));
 
     std::wstring inlineStatus;
-    if (!state->enabled)
+    if (state->enabled)
     {
-        inlineStatus = state->text.disabled;
-    }
-    else if (state->committedAvailability == HotkeyAvailability::Checking)
-    {
-        inlineStatus = state->text.checking;
-    }
-    else if (state->committedAvailability == HotkeyAvailability::Conflict)
-    {
-        inlineStatus = L"⚠ " +
-            (state->committedConflictMessage.empty()
-                ? StatusWithDetails(
-                    state->text.inUseStatus, state->text.systemConflict)
-                : state->committedConflictMessage);
-    }
-    else if (!committed.Empty() && committed.modifiers == 0 &&
-        !state->localDesktopHotkey)
-    {
-        inlineStatus = L"⚠ " + StatusWithDetails(
-            state->text.noModifierStatus, state->text.noModifierWarning);
+        if (state->committedAvailability == HotkeyAvailability::Checking)
+        {
+            inlineStatus = state->text.checking;
+        }
+        else if (state->committedAvailability == HotkeyAvailability::Conflict)
+        {
+            inlineStatus = L"⚠ " +
+                (state->committedConflictMessage.empty()
+                    ? StatusWithDetails(
+                        state->text.inUseStatus, state->text.systemConflict)
+                    : state->committedConflictMessage);
+        }
+        else if (!committed.Empty() && committed.modifiers == 0 &&
+            !state->localDesktopHotkey)
+        {
+            inlineStatus = L"⚠ " + StatusWithDetails(
+                state->text.noModifierStatus, state->text.noModifierWarning);
+        }
     }
 
     state->status.Text(inlineStatus);
     state->status.Visibility(inlineStatus.empty()
             ? mux::Visibility::Collapsed
             : mux::Visibility::Visible);
+    muxc::ToolTipService::SetToolTip(state->status,
+        inlineStatus.empty() ? nullptr : winrt::box_value(inlineStatus));
 
     const HotkeyChord candidate = state->rules.Active()
         ? state->rules.Candidate() : committed;
@@ -657,6 +661,7 @@ HotkeyRecorder::HotkeyRecorder()
     : state_(std::make_shared<HotkeyRecorderState>())
 {
     state_->dispatcher = mud::DispatcherQueue::GetForCurrentThread();
+    state_->panel.Orientation(muxc::Orientation::Horizontal);
     state_->panel.Spacing(6.0);
     state_->button.HorizontalAlignment(mux::HorizontalAlignment::Right);
     state_->button.HorizontalContentAlignment(
@@ -665,12 +670,12 @@ HotkeyRecorder::HotkeyRecorder()
     state_->button.Padding({4.0, 4.0, 4.0, 4.0});
     state_->button.IsTabStop(true);
     state_->button.UseSystemFocusVisuals(true);
-    state_->status.TextWrapping(mux::TextWrapping::Wrap);
-    state_->status.IsHitTestVisible(false);
+    state_->status.MaxWidth(160.0);
+    state_->status.TextTrimming(mux::TextTrimming::CharacterEllipsis);
     state_->status.TextAlignment(mux::TextAlignment::Right);
-    state_->status.HorizontalAlignment(mux::HorizontalAlignment::Right);
-    state_->panel.Children().Append(state_->button);
+    state_->status.VerticalAlignment(mux::VerticalAlignment::Center);
     state_->panel.Children().Append(state_->status);
+    state_->panel.Children().Append(state_->button);
     state_->root.Content(state_->panel);
 
     try
@@ -764,7 +769,7 @@ HotkeyRecorder::HotkeyRecorder()
                 return;
             }
             const auto transition = state->rules.KeyDown(
-                virtualKey, SamplePhysicalModifiers());
+                virtualKey, SamplePhysicalModifiers(), state->allowStandaloneAlt);
             args.Handled(true);
             ApplyTransition(state, transition);
         });
@@ -948,6 +953,11 @@ void HotkeyRecorder::CancelCapture()
     ApplyTransition(state_, state_->rules.CancelCapture());
     if (state_->dialogOpen)
         state_->dialog.Hide();
+}
+
+void HotkeyRecorder::SetAllowStandaloneAlt(bool allow) noexcept
+{
+    state_->allowStandaloneAlt = allow;
 }
 
 void HotkeyRecorder::CaptureRegisteredHotkey(

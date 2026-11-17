@@ -727,7 +727,7 @@ LRESULT CALLBACK Procedure(HWND window,UINT message,WPARAM wp,LPARAM lp)
         const MenuState options{editable&&!state->password&&state->history.CanUndo(),editable&&!state->password&&state->history.CanRedo(),
             editable&&!state->password&&selected,!state->password&&selected,editable&&IsClipboardFormatAvailable(CF_UNICODETEXT),!state->Value().empty()};
         state->editingMenu=true;
-        const auto handler=menuHandler;const auto command=handler(window,point,options);
+        const auto command=ShowEditingMenu(window,point,options,MenuKind::Editor);
         state->editingMenu=false;if(!state->window)return 0;
         if(private_pointer::FocusWindow()!=window)
         {
@@ -744,7 +744,7 @@ LRESULT CALLBACK Procedure(HWND window,UINT message,WPARAM wp,LPARAM lp)
         case MenuCommand::Copy:Copy(*state);break;
         case MenuCommand::Paste:Paste(*state);break;
         case MenuCommand::SelectAll:SendMessageW(window,EM_SETSEL,0,-1);break;
-        case MenuCommand::None:break;
+        case MenuCommand::None:case MenuCommand::OpenComponentPanel:break;
         }return 0;
     }
     case WM_IME_STARTCOMPOSITION:if(!state->Mutable()||state->password)return 0;state->composing=true;state->composition.clear();state->duplicateResult.clear();state->ImePosition();return 0;
@@ -917,6 +917,11 @@ std::wstring DisplayText(HWND window)
     return text;
 }
 void SetMenuHandler(MenuHandler handler){menuHandler=std::move(handler);}
+MenuCommand ShowEditingMenu(HWND owner, POINT point, const MenuState& state, MenuKind kind)
+{
+    const auto handler = menuHandler;
+    return handler ? handler(owner, point, state, kind) : MenuCommand::None;
+}
 bool HasEditingMenu(HWND window){const auto state=Get(window);return state&&state->editingMenu;}
 void CompleteComposition(HWND window,bool cancel)
 {

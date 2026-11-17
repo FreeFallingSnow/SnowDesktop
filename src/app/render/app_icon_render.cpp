@@ -4,8 +4,10 @@
 #include "common/utils.h"
 #include "platform/demo_asset_paths.h"
 #include "data/data_paths.h"
+#include "diagnostics/performance_trace.h"
 #include "icons/icon_render_rules.h"
 #include "icons/icon_loading_placeholder.h"
+#include "ui/render/highlight_coverage.h"
 #include "platform/demo_mode_rules.h"
 #include "platform/demo_collection_rules.h"
 #include <commoncontrols.h>
@@ -475,6 +477,7 @@ void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
     }
     ctx->DrawBitmap(cached->Get(), ToD2DRect(rect), 1.0f,
         D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    snowdesktop::HighlightCoverage::RecordMask(ctx, cached->Get(), ToD2DRect(rect));
 }
 
 void DesktopApp::DrawPrivacyFaIcon(
@@ -730,6 +733,7 @@ void DesktopApp::QueueSystemIconBitmap(int index, int size, bool beautify,
             }
             // Placeholder icons are shared by all of these presentation hosts;
             // retain the complete refresh fallback for their consumers.
+            snowdesktop::performance::Scope trace("render", "shared-placeholder.delivery");
             InvalidateDragStaticScene();
             InvalidateRect(hwnd_, nullptr, FALSE);
             InvalidateDockRects();

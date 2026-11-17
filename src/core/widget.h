@@ -34,6 +34,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 #include <memory>
 #include "ui/render/scroll_content_clip.h"
@@ -42,7 +43,9 @@ struct DesktopWidget;
 struct CategorySettings;
 class DesktopApp;
 namespace snowdesktop::group_tab_drag_preview { struct Layout; }
+namespace snowdesktop::text_input { enum class MenuCommand : UINT; struct MenuState; }
 namespace snowdesktop::widget_runtime { struct WidgetSurfacePaint; }
+namespace snowdesktop::popup_resize_transition { class Transition; }
 class WidgetEngine;
 namespace snowdesktop { struct WidgetFolderSearchState; }
 struct GridPage;
@@ -423,6 +426,8 @@ public:
     void MoveCursorHome(bool extendSelection = false);
     void MoveCursorEnd(bool extendSelection = false);
     bool HandleSearchKey(WPARAM key);
+    snowdesktop::text_input::MenuState GetSearchMenuState() const;
+    void ExecuteSearchEditCommand(snowdesktop::text_input::MenuCommand command);
     void BeginSearchPointerSelection(
         POINT point, bool extendSelection);
     bool UpdateSearchPointerSelection(POINT point);
@@ -833,6 +838,12 @@ public:
     void InvalidateFilterCache();
     const CategorySettings& GetCategorySettingsForDisplay() const;
 
+    const auto& PopupResizeTransition() const { return popupResizeTransition_; }
+    void SetPopupResizeTransition(std::shared_ptr<snowdesktop::popup_resize_transition::Transition> transition)
+    {
+        popupResizeTransition_ = std::move(transition);
+    }
+
     struct DateLayoutSegment
     {
         bool isHeader = false;
@@ -852,6 +863,8 @@ public:
 private:
     void EnsureCategorySnapshot() const;
     std::wstring CachedActiveCategoryId() const;
+
+    std::shared_ptr<snowdesktop::popup_resize_transition::Transition> popupResizeTransition_;
 
     mutable std::vector<std::wstring> categorySnapshotPaths_;
     mutable std::unordered_map<std::wstring, std::vector<size_t>> entryIndicesByCategory_;

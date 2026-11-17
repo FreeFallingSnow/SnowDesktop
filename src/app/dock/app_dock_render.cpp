@@ -76,10 +76,11 @@ void DesktopApp::OnDockFolderIconLoaded(const std::wstring& iconCacheKey,
 }
 
 bool DesktopApp::DrawDockControlBackground(
-    ID2D1DeviceContext* ctx, RECT rect, int state, bool forceWhiteStyle, std::uintptr_t ownerKey)
+    ID2D1DeviceContext* ctx, RECT rect, int state, bool forceWhiteStyle, std::uintptr_t ownerKey,
+    HMONITOR dockMonitor)
 {
     if (!ctx || IsRectEmptyRect(rect) || drawingIconAppearanceSource_) return false;
-    const PersonalizationSettings appearance = CurrentDockAppearance();
+    const PersonalizationSettings appearance = CurrentDockAppearance(dockMonitor);
 
     const float luminance = appearance.widgetBgR * 0.2126f +
         appearance.widgetBgG * 0.7152f + appearance.widgetBgB * 0.0722f;
@@ -224,7 +225,7 @@ void DesktopApp::DrawDockAttentionDot(
 
 void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     const DockEntry& entry, RECT rect, int state, int requestedIconSize,
-    const DesktopWidget* widgetSource, snowdesktop::WidgetPreviewScene* previewScene)
+    const DesktopWidget* widgetSource, snowdesktop::WidgetPreviewScene* previewScene, HMONITOR dockMonitor)
 {
     if (!ctx) return;
     const int scaledSpacing = std::max(1, static_cast<int>(std::round(
@@ -239,7 +240,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         rect.top + (rect.bottom - rect.top + iconSize) / 2
     };
     const RECT indicatorIconRect = iconRect;
-    const bool lt = (CurrentDockAppearance().contentTheme == 1);
+    const bool lt = (CurrentDockAppearance(dockMonitor).contentTheme == 1);
 
     auto drawDesktopItem = [&](const DesktopItem& item, RECT target,
         const DesktopWidget* demoCollection = nullptr) {
@@ -250,7 +251,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         const bool separateRecyclePlate = recycleBin && !custom && !drawingIconAppearanceSource_ && !ResolveIconAppearance(item.layoutKey).enabled;
         if (separateRecyclePlate)
         {
-            DrawDockControlBackground(ctx, target, 0, !lt, reinterpret_cast<std::uintptr_t>(&entry));
+            DrawDockControlBackground(ctx, target, 0, !lt, reinterpret_cast<std::uintptr_t>(&entry), dockMonitor);
             const int shortSide = std::max(1, static_cast<int>(std::min(
                 target.right - target.left, target.bottom - target.top)));
             const int inset = std::max(1, static_cast<int>(std::round(shortSide * 0.16f)));
@@ -494,7 +495,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 CalculateLayout(iconRect);
         DrawDockControlBackground(
             ctx, collectionLayout.background,
-            0, !lt, reinterpret_cast<std::uintptr_t>(&widget));
+            0, !lt, reinterpret_cast<std::uintptr_t>(&widget), dockMonitor);
         struct PreviewItem { const DesktopWidget* owner; const std::wstring* key; const FolderEntry* folder; };
         std::vector<PreviewItem> previewItems;
         const auto resolveItem = [&](const std::wstring& key) -> DesktopItem* {
@@ -561,7 +562,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
 }
 
 void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
-    const DockRunningAppInfo& app, RECT rect, int state, int requestedIconSize)
+    const DockRunningAppInfo& app, RECT rect, int state, int requestedIconSize, HMONITOR dockMonitor)
 {
     if (!ctx) return;
     const float presence = app.presence.Amount();
@@ -578,7 +579,7 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         rect.left + (rect.right - rect.left + iconSize) / 2,
         rect.top + (rect.bottom - rect.top + iconSize) / 2
     };
-    const bool lt = (CurrentDockAppearance().contentTheme == 1);
+    const bool lt = (CurrentDockAppearance(dockMonitor).contentTheme == 1);
     if (generalSettings_.demoModeEnabled &&
         demoIdentityAssetsAvailable_)
     {

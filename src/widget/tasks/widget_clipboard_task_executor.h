@@ -24,6 +24,9 @@ struct WidgetClipboardTaskRequest
     std::string action;
     std::string format;
     std::string text;
+    std::shared_ptr<const WidgetRuntimeImagePixels> image;
+    std::filesystem::path imagePath;
+    std::vector<std::filesystem::path> files;
 };
 
 struct WidgetClipboardFileReference
@@ -100,6 +103,7 @@ public:
     std::size_t ActiveCount() const;
 
     static bool SupportsAction(std::string_view action) noexcept;
+    static bool SupportsFormat(std::string_view format) noexcept;
     static bool ValidateRequest(
         const WidgetClipboardTaskRequest& request) noexcept;
 

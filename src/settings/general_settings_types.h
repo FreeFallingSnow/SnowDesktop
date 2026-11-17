@@ -51,6 +51,9 @@ struct GeneralSettings
     UINT pageNavigationPreviousVirtualKey = VK_PRIOR;
     UINT pageNavigationNextModifiers = 0;
     UINT pageNavigationNextVirtualKey = VK_NEXT;
+    bool gridPreviewHotkeyEnabled = false;
+    UINT gridPreviewHotkeyModifiers = 0;
+    UINT gridPreviewHotkeyVirtualKey = VK_MENU;
     int quickNavTheme = 1;
     // 0=dark, 1=light, 2=dark acrylic, 3=light acrylic.
     // Dark preserves the legacy collection-popup appearance when absent.
@@ -61,6 +64,8 @@ struct GeneralSettings
     // snapshots. Missing fields preserve the legacy global-preset resolver.
     snowdesktop::SurfaceTheme globalQuickNavigationAppearance;
     snowdesktop::SurfaceTheme globalCollectionPopupAppearance;
+    snowdesktop::PopupAppearanceRule tooltipAppearanceOverride;
+    snowdesktop::PopupAppearanceRule barPanelAppearanceOverride;
     bool dockEnabled = kDefaultDockEnabled;
     snowdesktop::StatusBarSettings statusBar;
     bool widgetDeveloperToolsEnabled = false;

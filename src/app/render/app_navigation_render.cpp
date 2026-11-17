@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "app/app.h"
 #include "navigation/navigation_settings.h"
@@ -84,7 +85,7 @@ std::wstring DesktopApp::GetPageNavHotEdgeHintText(int side) const
 }
 
 RECT DesktopApp::GetPageNavHotEdgeHintBounds(
-    int side, POINT point) const
+    int side, POINT point, snowdesktop::NativeTooltipTextLayout* layout) const
 {
     const GridPage* page = GetPageNavigationGridPage();
     if (!page || (side != -1 && side != 1)) return {};
@@ -124,6 +125,7 @@ RECT DesktopApp::GetPageNavHotEdgeHintBounds(
         page->workArea.left,
         std::max(page->workArea.left,
             page->workArea.right - width));
+    if (layout) *layout = std::move(measured);
     return MakeRect(left, top, left + width, top + height);
 }
 
@@ -141,6 +143,7 @@ void DesktopApp::SetPageNavHotEdgeHover(int side)
     navHoverSide_ = side;
     navHotEdgeHover_ = side != 0;
     navHotEdgeHintVisible_ = false;
+    navHotEdgeTooltip_.Hide();
     if (side == 0) return;
 
     navHotEdgeHintToken_ =
@@ -155,15 +158,7 @@ void DesktopApp::SetPageNavHotEdgeHover(int side)
                     navHoverSide_ != side)
                     return;
                 navHotEdgeHintVisible_ = true;
-                RECT dirty = GetPageNavHotEdgeHintBounds(
-                    side, lastMousePoint_);
-                InflateRect(&dirty, 4, 4);
-                if (!PresentDesktopForegroundComposition(dirty) &&
-                    hwnd_ && IsWindow(hwnd_))
-                {
-                    InvalidateRect(hwnd_, &dirty, FALSE);
-                    PresentDesktopPointerUpdate();
-                }
+                SyncPageNavHotEdgeTooltip();
             });
 }
 
@@ -191,7 +186,6 @@ void DesktopApp::RefreshPageNavHotEdgeHoverAt(POINT point)
 void DesktopApp::DrawPageNavHotEdgeHint(
     ID2D1DeviceContext* ctx, const RECT* updateRect)
 {
-    auto tooltipPaint = navHotEdgeHintBackdrop_.BeginPaint([this](std::uintptr_t key) { ClearInlineTooltipBackdrop(key); });
     if (!ctx) return;
     const bool dragging =
         widgetAction_ == WidgetAction::Move ||
@@ -212,10 +206,6 @@ void DesktopApp::DrawPageNavHotEdgeHint(
 
     const GridPage* page = GetPageNavigationGridPage();
     if (!page) return;
-    const float scale = std::max(
-        1.0f, static_cast<float>(page->dpiX) /
-            static_cast<float>(USER_DEFAULT_SCREEN_DPI));
-
     RECT previousEdge{};
     RECT nextEdge{};
     GetNavHotEdgeRects(previousEdge, nextEdge);
@@ -238,24 +228,31 @@ void DesktopApp::DrawPageNavHotEdgeHint(
                 ToD2DRect(nextEdge), accentBrush.Get());
     }
 
-    const bool hoveredDirectionVisible = hovering &&
-        (navHoverSide_ < 0 ? rails.previous : rails.next);
-    if (!hoveredDirectionVisible ||
-        (!dragging && !navHotEdgeHintVisible_))
+}
+
+void DesktopApp::SyncPageNavHotEdgeTooltip()
+{
+    const bool dragging = widgetAction_ == WidgetAction::Move ||
+        dragSession_.IsActive() || dragDropController_.IsTransportActive();
+    const bool directionAvailable = navHoverSide_ < 0 ? pageOffset_ > 0 : pageOffset_ < MaxPageOffset();
+    POINT screen{};
+    if (!hwnd_ || desktopIconsHidden_ || !navHotEdgeHover_ || !directionAvailable ||
+        (!dragging && (!navHotEdgeHintVisible_ || !GetCursorPos(&screen) ||
+            !IsBaseDesktopHoverSurfaceWindow(snowdesktop::private_pointer::WindowAtPoint(screen)))) ||
+        HasActiveContextMenuSession() || IsPointOccludedByOpenPopup(lastMousePoint_))
+    {
+        navHotEdgeTooltip_.Hide();
         return;
-
-    const std::wstring message = GetPageNavHotEdgeHintText(navHoverSide_);
-
-    const RECT hint = GetPageNavHotEdgeHintBounds(
-        navHoverSide_, lastMousePoint_);
-    if (IsRectEmptyRect(hint)) return;
-    ComPtr<IDWriteTextFormat> format;
-    if (FAILED(snowdesktop::CreateNativeTooltipTextFormat(dwriteFactory_.Get(), &format, scale))) return;
+    }
     snowdesktop::NativeTooltipTextLayout measured;
-    snowdesktop::NativeTooltipLayoutOptions options;
-    options.scale = scale;
-    if (FAILED(snowdesktop::MeasureNativeTooltip(dwriteFactory_.Get(), format.Get(), {}, message,
-        static_cast<float>(hint.right - hint.left), static_cast<float>(hint.bottom - hint.top), measured, options)))
+    RECT hint = GetPageNavHotEdgeHintBounds(navHoverSide_, lastMousePoint_, &measured);
+    if (IsRectEmpty(&hint) || !dcompDevice_ || !dwriteFactory_)
+    {
+        navHotEdgeTooltip_.Hide();
         return;
-    tooltipPaint.Keep(DrawInlineTooltip(ctx, hint, measured, scale, navHotEdgeHintBackdrop_, updateRect));
+    }
+    const auto message = GetPageNavHotEdgeHintText(navHoverSide_);
+    OffsetRect(&hint, virtualLeft_, virtualTop_);
+    ConfigureFixedTooltip(navHotEdgeTooltip_, hwnd_);
+    navHotEdgeTooltip_.ShowAt(message, hint, measured, dragging);
 }

@@ -4,6 +4,7 @@
 #include "layout/collection_popup_layout.h"
 #include "diagnostics/diagnostic_log.h"
 #include "settings/animation_settings.h"
+#include "popup_resize_transition.h"
 #include "common/utils.h"
 #include "layout/popup_drag_rules.h"
 #include "app/dock/dock_tray_popup_state.h"
@@ -361,7 +362,10 @@ bool DesktopApp::HitTestCollectionPopupItem(const RECT& popup, size_t index, POI
             snowdesktop::collection_popup_layout::FanItemContains(
                 GetCollectionPopupFanItem(popup, index), point);
     const RECT item = GetCollectionPopupItemRect(popup, index);
-    const RECT content = GetCollectionPopupContentRect(popup);
+    RECT content = GetCollectionPopupContentRect(popup);
+    if (widget == &dockFolderPopupWidget_ && dockFolderPopupContainer_)
+        if (const auto& motion = dockFolderPopupContainer_->PopupResizeTransition())
+            content = motion->Content(content, popup);
     return PtInRect(&item, point) && PtInRect(&content, point);
 }
 
@@ -875,6 +879,9 @@ RECT DesktopApp::GetDockFolderPopupSortButtonRect(
 {
     if (const auto* widget = GetOpenPopupWidget(); widget && UsesCollectionPopupFan(*widget))
         return {};
+    RECT panel = popup;
+    if (dockFolderPopupOpen_ && dockFolderPopupContainer_)
+        if (const auto& motion = dockFolderPopupContainer_->PopupResizeTransition()) panel = motion->Panel(panel);
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     const auto headerBounds =
         snowdesktop::collection_popup_layout::
@@ -886,14 +893,14 @@ RECT DesktopApp::GetDockFolderPopupSortButtonRect(
             snowdesktop::collection_popup_layout::ScaleDimension(
                 72, metrics.scale),
             static_cast<int>(
-            popup.right - popup.left) / 3));
+            panel.right - panel.left) / 3));
     return MakeRect(
-        popup.right - snowdesktop::collection_popup_layout::
+        panel.right - snowdesktop::collection_popup_layout::
             ScaleDimension(16, metrics.scale) - width,
-        popup.top + headerBounds.sortButtonTop,
-        popup.right - snowdesktop::collection_popup_layout::
+        panel.top + headerBounds.sortButtonTop,
+        panel.right - snowdesktop::collection_popup_layout::
             ScaleDimension(16, metrics.scale),
-        popup.top + headerBounds.sortButtonBottom);
+        panel.top + headerBounds.sortButtonBottom);
 }
 
 int DesktopApp::GetCollectionPopupColumnCount(const RECT& popup) const
@@ -1146,6 +1153,8 @@ bool DesktopApp::IsPointInsideOpenPopup(POINT point) const
     const DesktopWidget* widget = GetOpenPopupWidget();
     if (!widget) return false;
     RECT popup = GetCollectionPopupRect(*widget);
+    if (widget == &dockFolderPopupWidget_ && dockFolderPopupContainer_)
+        if (const auto& motion = dockFolderPopupContainer_->PopupResizeTransition()) popup = motion->Panel(popup);
     return PtInRect(&popup, point) != FALSE;
 }
 
@@ -1156,6 +1165,8 @@ bool DesktopApp::IsPointOccludedByOpenPopup(POINT point) const
     const DesktopWidget* widget = GetOpenPopupWidget();
     if (!widget) return false;
     RECT popup = GetCollectionPopupRect(*widget);
+    if (widget == &dockFolderPopupWidget_ && dockFolderPopupContainer_)
+        if (const auto& motion = dockFolderPopupContainer_->PopupResizeTransition()) popup = motion->Panel(popup);
     return PtInRect(&popup, point) != FALSE;
 }
 
@@ -1185,7 +1196,7 @@ void DesktopApp::PrepareCollectionPopupAnimationCache()
     popupRect_ = GetCollectionPopupRect(*openWidget);
     popupAnimationCacheRect_ = popupRect_;
     InflateRect(&popupAnimationCacheRect_, 4, 4);
-    if (!DrawCollectionPopupAnimationCache())
+    if (!DrawCollectionPopupAnimationCache(&popupRect_))
         popupAnimationCacheRect_ = {};
     else
         (void)PrepareCompositionAnimationOverlay(
@@ -1193,7 +1204,7 @@ void DesktopApp::PrepareCollectionPopupAnimationCache()
             popupAnimationCacheRect_, UiCompositionAnimationHost::FloatingPopup);
 }
 
-bool DesktopApp::DrawCollectionPopupAnimationCache()
+bool DesktopApp::DrawCollectionPopupAnimationCache(const RECT* preparedRect)
 {
     if (!d2dDevice_ || !GetOpenPopupWidget() || IsRectEmptyRect(popupAnimationCacheRect_))
         return false;
@@ -1221,7 +1232,7 @@ bool DesktopApp::DrawCollectionPopupAnimationCache()
                         static_cast<float>(
                             -popupAnimationCacheRect_.top)));
                 DrawCollectionPopup(
-                    cacheContext, false);
+                    cacheContext, false, preparedRect);
             });
     snowdesktop::performance::Value("popup", "snapshot.bitmap_allocations", {},
         static_cast<double>(popupAnimationRenderCache_.BitmapAllocationCount()));

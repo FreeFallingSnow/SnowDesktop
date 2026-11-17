@@ -58,11 +58,18 @@ public:
             std::move(provider), std::move(apply), window, message);
     }
 
-    void Drain(const std::wstring& prefix = {})
+    void DrainImages(const std::wstring& prefix = {})
     {
         const auto budget = std::chrono::milliseconds(4);
-        first_.Drain(budget, prefix); fallback_.Drain(budget, prefix);
-        detail_.Drain(budget, prefix); shortcut_.Drain(budget, prefix);
+        first_.Drain(budget, prefix);
+        fallback_.Drain(budget, prefix);
+        detail_.Drain(budget, prefix);
+    }
+
+    void Drain(const std::wstring& prefix = {})
+    {
+        DrainImages(prefix);
+        shortcut_.Drain(std::chrono::milliseconds(4), prefix);
         for (unsigned count = 0; count < 32 && !pendingShortcuts_.empty(); ++count)
         {
             const auto pending = std::find_if(pendingShortcuts_.begin(), pendingShortcuts_.end(),

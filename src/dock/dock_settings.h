@@ -41,6 +41,8 @@ bool ShouldProtectAutoHideTaskbar(const DockSettings& settings,
     bool dockEnabled, bool autoHideEnabled) noexcept;
 
 PersonalizationSettings ResolveDockAppearance(const DockSettings& settings, const PersonalizationSettings& global);
+PersonalizationSettings ResolveDockRuleAppearance(const DockSettings& settings,
+    const DockAppearanceRule& rule, const PersonalizationSettings& global);
 
 void SelectDockAppearance(DockSettings& settings, bool followGlobal,
     int preset, const PersonalizationSettings& global);
@@ -48,7 +50,11 @@ void SelectDockAppearance(DockSettings& settings, bool followGlobal,
 void NormalizeDockSettings(DockSettings& settings);
 
 std::wstring GetDockSettingsPath();
+enum class SystemTaskbarBottomResult { Unchanged, Moved, Failed };
+SystemTaskbarBottomResult MoveSystemTaskbarToBottomForAutoHide();
 bool IsSystemTaskbarAutoHideEnabled();
+enum class SystemTaskbarAutoHideStatus { Effective, Disabled, RequiresBottom, NotEffective, Unavailable };
+SystemTaskbarAutoHideStatus GetSystemTaskbarAutoHideStatus();
 bool RequestSystemTaskbarAutoHideEnabled(bool enabled);
 bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed = false, DWORD deadline = 0);
 // Worker-only, bounded acknowledgement before sending the Start invocation.

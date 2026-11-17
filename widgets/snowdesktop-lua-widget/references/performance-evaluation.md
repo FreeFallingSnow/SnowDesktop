@@ -6,16 +6,18 @@ match the question; do not add tracing to every visual preview.
 
 ## Check the callable contract
 
+Resolve `$SnowWidget` using the [bundled tool setup](../SKILL.md#use-the-bundled-tools).
+
 Run the bundled CLI:
 
 ```powershell
-bin\snowwidget.exe capabilities
+& $SnowWidget capabilities
 ```
 
 Require `performanceProfile.schemaVersion == 1`. Keep Lua `apiVersion` at 2.
 The capability and the actual returned performance result establish support;
-a matching application version alone does not. A copied CLI can use
-`--host <SnowDesktop.exe>`, as with previews. An older host that returns only
+a matching application version alone does not. If needed, append
+`--host $HostExe` with the full path to the matching host. An older host that returns only
 ordinary preview results must fail performance evaluation, rather than produce
 a success claim.
 
@@ -27,9 +29,9 @@ development-workspace gate applies when editing package files; profiling reads
 the package and writes only the requested artifacts:
 
 ```powershell
-bin\snowwidget.exe profile <package-directory> <new-output-directory> `
+& $SnowWidget profile $Widget $OutputDirectory `
   --seconds 5 --warmup-seconds 1 --workload redraw --interval-ms 16 `
-  --scope-cpu --host <SnowDesktop.exe>
+  --scope-cpu
 ```
 
 The command uses the real isolated preview engine, Lua quota allocator,

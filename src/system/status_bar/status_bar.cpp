@@ -1,4 +1,5 @@
 #include "status_bar.h"
+#include "ui/render/highlight_coverage.h"
 #include "platform/foreground_fullscreen.h"
 #include "platform/window_observation.h"
 #include "platform/window_peek_policy.h"
@@ -13,10 +14,12 @@
 #include "status_bar_reveal.h"
 #include "widget/data/widget_system_data_provider.h"
 #include "app/render/desktop_backdrop_compositor.h"
+#include "desktop/display_color_mode.h"
 #include "theme/panel_gradient_renderer.h"
 #include "common/l10n.h"
 #include "system/tray/tray_service.h"
 #include "system/tray/tray_focus.h"
+#include "system/tray/tray_hover_popup.h"
 #include "system/tray/tray_order.h"
 #include "diagnostics/diagnostic_log.h"
 #include "diagnostics/performance_trace.h"
@@ -28,6 +31,7 @@
 #include "status_bar_tooltip.h"
 #include "system/controls/system_controls.h"
 #include "common/utils.h"
+#include "common/background_work.h"
 
 #include <appmodel.h>
 #include <dcomp.h>
@@ -55,7 +59,7 @@ using Microsoft::WRL::ComPtr;
 namespace
 {
 constexpr UINT kAppBar = WM_APP + 41, kPlace = WM_APP + 42, kFullscreen = WM_APP + 43, kForeground = WM_APP + 44,
-    kActivate = WM_APP + 45, kEnsurePresentation = WM_APP + 46;
+    kActivate = WM_APP + 45, kEnsurePresentation = WM_APP + 46, kAppNameReady = WM_APP + 47;
 constexpr UINT_PTR kClockTimer = 1, kTrayMenuTimer = 2, kPlacementTimer = 3, kInputMethodTimer = 4, kTrayScrollTimer = 5,
     kRevealTimer = 6;
 const char* StatusBarTimerPhase(WPARAM timer) noexcept
@@ -209,6 +213,15 @@ bool IsOpenAppWindow(const ApplicationWindow& app)
         process == app.process && IsOpenAppWindow(app.window, process);
 }
 
+ApplicationWindow ObserveForegroundApp()
+{
+    const HWND window = GetForegroundWindow();
+    DWORD process = 0;
+    if (window) GetWindowThreadProcessId(window, &process);
+    if (IsOpenAppWindow(window, process)) return {window, process, {}};
+    return {};
+}
+
 ApplicationWindow FindBackgroundApp(DWORD preferredProcess)
 {
     struct Search { DWORD preferredProcess; ApplicationWindow found; };
@@ -256,11 +269,13 @@ struct StatusBar::Impl
         int mergedDockHeight = 0;
         bool reserveSpace = true, positioned = false;
         RECT placedBounds{};
+        RECT glassPadding{};
         DWORD explorerPid = 0;
         bool placing = false, queued = false, fullscreen = false, failed = false, closing = false;
         // Only the bar's own hide may take the surface away. WM_WINDOWPOSCHANGING
         // uses this to tell an external Shell request apart.
         bool hidingWindow = false;
+        bool presentationCheckQueued = false;
         ULONGLONG showDesktopTraceTick = 0;
         bool fullscreenObserved = false; // fullscreen is the effective hide/input gate.
         bool checkingFullscreen = false;
@@ -280,6 +295,8 @@ struct StatusBar::Impl
         HRESULT lastPaintError = S_OK;
         status_bar_input_method::Snapshot lastInputMethod;
         std::string hoveredTray;
+        tray::HoverPopup trayHoverPopup;
+        bool trayHoverCovered = false;
         NativeTooltip tooltip;
         std::optional<std::size_t> tooltipControlPart;
         std::vector<StatusBarItem> items;
@@ -396,7 +413,16 @@ struct StatusBar::Impl
         HRESULT CommitWithTrace()
         {
             performance::Scope trace("shared.status_bar", "commit");
-            const auto result = owner.composition->Commit();
+            auto result = owner.composition->Commit();
+            if (SUCCEEDED(result) && !backdrop.CommitSrgbContent())
+            {
+                backdrop.RemoveSrgbContent(reinterpret_cast<std::uintptr_t>(this));
+                backdrop.RemoveSrgbContent(reinterpret_cast<std::uintptr_t>(this) + 1);
+                if (visual) (void)visual->SetContent(backgroundSurface.Get());
+                if (contentVisual) (void)contentVisual->SetContent(surface.Get());
+                result = owner.composition->Commit();
+                (void)backdrop.CommitSrgbContent();
+            }
             TraceValue(SUCCEEDED(result) ? "commit.success" : "commit.failure");
             return result;
         }
@@ -446,6 +472,8 @@ struct StatusBar::Impl
         void ClearHover()
         {
             tooltip.Hide();
+            trayHoverPopup.Reset();
+            trayHoverCovered = false;
             tooltipControlPart.reset();
             if (!hoveredTray.empty() && owner.tray)
             {
@@ -460,6 +488,8 @@ struct StatusBar::Impl
                 !interaction.hovered || *interaction.hovered >= items.size())
             { tooltip.Hide(); return; }
             const auto& item = items[*interaction.hovered];
+            if (item.icon && item.icon->key == hoveredTray && (trayHoverCovered || trayHoverPopup.Visible()))
+            { tooltip.Hide(); return; }
             auto body = item.icon ? (item.icon->tip.empty() ? item.icon->application : item.icon->tip) : item.tip;
             auto key = item.icon ? "tray/" + item.icon->key : "bar/" + item.key;
             RECT anchor = item.bounds;
@@ -485,6 +515,21 @@ struct StatusBar::Impl
             tooltip.SetTarget(std::move(key), std::move(body), anchor,
                 owner.settings.position == DockPosition::Bottom ? NativeTooltipPlacement::Above : NativeTooltipPlacement::Below,
                 immediate);
+        }
+        bool PointerOverTrayPopup() const
+        {
+            POINT point{};
+            return !hoveredTray.empty() && GetCursorPos(&point) && trayHoverPopup.Covers(WindowFromPoint(point));
+        }
+        void CheckTrayPopupLeave()
+        {
+            if (!trayHoverCovered || PointerOverTrayPopup()) return;
+            trayHoverCovered = false;
+            POINT point{};
+            if (interaction.hovered && *interaction.hovered < items.size() && GetCursorPos(&point) &&
+                WindowFromPoint(point) == hwnd && ScreenToClient(hwnd, &point) &&
+                PtInRect(&items[*interaction.hovered].bounds, point)) return;
+            ClearHover();
         }
         void Hide(bool notify = true)
         {
@@ -523,6 +568,21 @@ struct StatusBar::Impl
             return hwnd && IsWindow(hwnd) && !closing && !failed && positioned &&
                 owner.presentationEnabled && !fullscreen;
         }
+        bool IsPresentationTopmost() const
+        {
+            return (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+        }
+        bool NeedsIndependentPresentationRecovery() const
+        {
+            return !mergedDockHeight && !owner.settings.showOnlyWhenSummoned &&
+                !hidingWindow && WantsPresentation() &&
+                (!IsWindowVisible(hwnd) || IsIconic(hwnd) || !IsPresentationTopmost());
+        }
+        void QueuePresentationCheck()
+        {
+            if (!presentationCheckQueued)
+                presentationCheckQueued = PostMessageW(hwnd, kEnsurePresentation, 0, 0) != FALSE;
+        }
         void TraceSystemShowDesktop(const wchar_t* event, bool visible,
             bool topmost, bool iconic,
             DiagnosticLogLevel level = DiagnosticLogLevel::Info) const
@@ -557,8 +617,7 @@ struct StatusBar::Impl
             showDesktopTraceTick = now;
             TraceSystemShowDesktop(L"hide-refused",
                 IsWindowVisible(hwnd) != FALSE,
-                (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0,
-                IsIconic(hwnd) != FALSE);
+                IsPresentationTopmost(), IsIconic(hwnd) != FALSE);
         }
         // Rejoin the presented band after Explorer's transition: restore a
         // minimized window, repaint a discarded surface and re-promote the pair.
@@ -566,37 +625,35 @@ struct StatusBar::Impl
         {
             if (!WantsPresentation()) return;
             if (mergedDockHeight) return; // Dock owns the merged pair's band.
-            const bool visible = IsWindowVisible(hwnd) != FALSE;
-            const bool topmost =
-                (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
-            const bool iconic = IsIconic(hwnd) != FALSE;
+            const bool wasPresented = IsWindowVisible(hwnd) && IsPresentationTopmost() && !IsIconic(hwnd);
             const bool glass = appearance.glassEnabled && !HighContrast();
-            // The glass helper is a separate top-level HWND; Explorer can hide
-            // or cover it independently of the content window.
+            // Explorer can move or hide the glass helper independently.
             backdrop.SetPopupWindowPairZOrder(hwnd, HWND_TOPMOST, true);
-            if (visible && topmost && !iconic)
+            if (wasPresented)
             {
                 if (glass) backdrop.ShowPopupWindowPair(hwnd);
                 return;
             }
-            if (iconic) ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            if (IsIconic(hwnd)) ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             Paint(true);
-            if (paintDirty || !surface || !backgroundSurface)
+            const bool frameReady = !paintDirty && surface && backgroundSurface;
+            if (frameReady)
             {
-                const ULONGLONG now = GetTickCount64();
-                if (now - showDesktopTraceTick >= 1000)
-                {
-                    showDesktopTraceTick = now;
-                    TraceSystemShowDesktop(L"restore-pending", visible, topmost,
-                        iconic, DiagnosticLogLevel::Warning);
-                }
-                return;
+                backdrop.SetPopupWindowPairZOrder(hwnd, HWND_TOPMOST, true);
+                SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                if (glass) backdrop.ShowPopupWindowPair(hwnd);
             }
-            backdrop.SetPopupWindowPairZOrder(hwnd, HWND_TOPMOST, true);
-            SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-            if (glass) backdrop.ShowPopupWindowPair(hwnd);
-            TraceSystemShowDesktop(L"restored", visible, topmost, iconic);
+            const bool visible = IsWindowVisible(hwnd) != FALSE;
+            const bool topmost = IsPresentationTopmost();
+            const bool iconic = IsIconic(hwnd) != FALSE;
+            const bool restored = frameReady && visible && topmost && !iconic;
+            const ULONGLONG now = GetTickCount64();
+            if (!restored && now - showDesktopTraceTick < 5000) return;
+            showDesktopTraceTick = now;
+            TraceSystemShowDesktop(restored ? L"restored" : L"restore-pending",
+                visible, topmost, iconic,
+                restored ? DiagnosticLogLevel::Info : DiagnosticLogLevel::Warning);
         }
         void CheckFullscreen(std::optional<HWND> observed = {}, bool collect = true)
         {
@@ -705,6 +762,7 @@ struct StatusBar::Impl
             visual->SetOffsetY(frame.offsetY);
             backdrop.SetVisualOpacity(frame.opacity);
             backdrop.SetVisualTranslation(frame.offsetX, frame.offsetY);
+            backdrop.SetSrgbRootPose(frame.opacity, frame.offsetX, frame.offsetY);
         }
         bool PrepareDockPresentation(const StatusBarDockPresentation& frame)
         {
@@ -825,13 +883,35 @@ struct StatusBar::Impl
             {
                 if (!backdrop.IsAvailable()) backdrop.InitializePopup(hwnd, !fullscreen, false);
                 backdrop.Reattach(hwnd);
-                backdrop.BeginFrame(true);
-                backdrop.AddPanel({0, 0, rect.right - rect.left, rect.bottom - rect.top},
+                // Allocate room towards the monitor interior once per layout.
+                // The content HWND and AppBar reservation keep their original size.
+                RECT padding{};
+                if (mergedDockHeight)
+                {
+                    switch (edge)
+                    {
+                    case ABE_LEFT: padding.right = thickness; break;
+                    case ABE_RIGHT: padding.left = thickness; break;
+                    case ABE_TOP: padding.bottom = thickness; break;
+                    case ABE_BOTTOM: padding.top = thickness; break;
+                    }
+                }
+                if (backdrop.SetPopupWindowPadding(padding, {})) glassPadding = padding;
+                const RECT panel{glassPadding.left, glassPadding.top,
+                    rect.right - rect.left + glassPadding.left, rect.bottom - rect.top + glassPadding.top};
+                const bool staged = mergedDockHeight && backdrop.BeginStagedFrame();
+                if (!staged) backdrop.BeginFrame(true);
+                backdrop.AddPanel(panel,
                     0, appearance.glassBlurRadius * dpi / 96.f,
                     reinterpret_cast<std::uintptr_t>(this));
-                backdrop.EndFrame();
+                if (staged) (void)backdrop.ApplyStagedFrame();
+                else backdrop.EndFrame();
             }
-            else if (appearanceDirty && (!appearance.glassEnabled || HighContrast())) backdrop.Reset();
+            else if (appearanceDirty && (!appearance.glassEnabled || HighContrast()))
+            {
+                backdrop.Reset();
+                glassPadding = {};
+            }
             paintDirty = paintDirty || moved || appearanceDirty;
             backgroundDirty = backgroundDirty || moved || appearanceDirty;
             appearanceDirty = false;
@@ -1051,7 +1131,13 @@ struct StatusBar::Impl
                 focusFrame->factory == drawResources.factory && focusFrame->fontSelection == drawResources.fontSelection &&
                 focusFrame->fontRevision == drawResources.fontRevision && focusFrame->fontBuilds == drawResources.fontBuilds &&
                 focusFrame->scale == drawResources.scale && focusFrame->layoutReusable);
-            const bool partialCandidate = samePreparedFont && partialHoverUpdates && !paintDirty && !backgroundDirty && !appearanceDirty &&
+            const auto backgroundKey = reinterpret_cast<std::uintptr_t>(this);
+            const auto contentKey = backgroundKey + 1;
+            const bool srgbEligible = !HighContrast() &&
+                display_color::ModeForMonitor(monitor) == display_color::Mode::WideColor;
+            if (srgbEligible && !backdrop.HasSrgbContent(backgroundKey)) backgroundDirty = true;
+            const bool partialCandidate = !srgbEligible && !backdrop.HasSrgbContent(contentKey) &&
+                samePreparedFont && partialHoverUpdates && !paintDirty && !backgroundDirty && !appearanceDirty &&
                 surface && backgroundSurface && width == w && height == h &&
                 drawResources.FrameTextMatches(owner.text.Get(), TrayScale(), retainedTextGeneration) &&
                 retainedFrameValid && retainedPalette;
@@ -1134,6 +1220,7 @@ struct StatusBar::Impl
             }
             const auto& a = appearance;
             const bool hc = HighContrast();
+            bool stagedBackground = false;
             if (backgroundDirty)
             {
                 backgroundSurface.Reset();
@@ -1144,6 +1231,8 @@ struct StatusBar::Impl
                 const auto beginBackground = backgroundSurface->BeginDraw(nullptr, IID_PPV_ARGS(&background), &origin);
                 TraceValue(SUCCEEDED(beginBackground) ? "surface.begin.success" : "surface.begin.failure");
                 if (FAILED(beginBackground)) { paintError(beginBackground); return; }
+                HighlightCoverage coverage;
+                HighlightCoverage::Scope capture(background.Get(), coverage);
                 background->SetDpi(96, 96);
                 background->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(origin.x), static_cast<float>(origin.y)));
                 background->Clear(hc ? SystemColor(COLOR_WINDOW) : D2D1::ColorF(0, 0.f));
@@ -1157,11 +1246,12 @@ struct StatusBar::Impl
                     DrawStatusBarEdge(background.Get(), client, a, dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale),
                         owner.settings.position, adjacentClient);
                 }
+                stagedBackground = srgbEligible &&
+                    backdrop.StageSrgbContent(hwnd, backgroundKey, client, background.Get(), origin);
                 background.Reset();
                 const auto drawn = backgroundSurface->EndDraw();
                 TraceValue(SUCCEEDED(drawn) ? "surface.end.success" : "surface.end.failure");
                 if (FAILED(drawn)) { paintError(drawn); return; }
-                visual->SetContent(backgroundSurface.Get());
                 backgroundDirty = false;
             }
             if (scrollFrame && !focusFrame)
@@ -1200,6 +1290,9 @@ struct StatusBar::Impl
                 scrollFrame != nullptr || focusFrame != nullptr, &retainedFrameValid);
             DrawStatusBarDropIndicator(context.Get(), drawnInteraction.indicator, a, palette, dpi);
             if (!scrollFrame && !focusFrame) PublishTrayGeometry();
+            const bool stagedContent = srgbEligible && SUCCEEDED(contentResult) &&
+                (stagedBackground || backdrop.HasSrgbContent(backgroundKey)) &&
+                backdrop.StageSrgbContent(hwnd, contentKey, client, context.Get(), offset);
             context.Reset();
             const auto surfaceResult = surface->EndDraw();
             TraceValue(SUCCEEDED(surfaceResult) ? "surface.end.success" : "surface.end.failure");
@@ -1209,7 +1302,21 @@ struct StatusBar::Impl
             if (SUCCEEDED(result))
             {
                 if (ReplayTrayScrollPaint(prepareHidden, trayOnly, scrollFrame, presentation)) return;
-                contentVisual->SetContent(surface.Get());
+                const bool srgbPresented = stagedContent &&
+                    (!stagedBackground || backdrop.PublishSrgbContent(backgroundKey)) &&
+                    backdrop.PublishSrgbContent(contentKey);
+                if (srgbPresented)
+                {
+                    const std::array order{backgroundKey, contentKey};
+                    backdrop.SetSrgbContentOrder(order);
+                }
+                else
+                {
+                    backdrop.RemoveSrgbContent(backgroundKey);
+                    backdrop.RemoveSrgbContent(contentKey);
+                }
+                visual->SetContent(srgbPresented ? nullptr : backgroundSurface.Get());
+                contentVisual->SetContent(srgbPresented ? nullptr : surface.Get());
                 ApplyDockPose(mergedPresentation);
                 const auto commit = CommitWithTrace();
                 if (FAILED(commit)) paintError(commit);
@@ -1345,10 +1452,19 @@ struct StatusBar::Impl
             // Cancel the current tooltip before dispatch, then keep it hidden
             // throughout this gesture's discovery/retention session.
             tooltip.Hide();
+            if (action == tray::Activation::RightDown || action == tray::Activation::RightUp ||
+                action == tray::Activation::ContextKeyboard)
+            {
+                // A context menu can have the same window styles as a hover
+                // card. Let the menu session own its positioning.
+                trayHoverPopup.Reset();
+                trayHoverCovered = false;
+            }
             bool changed = ArmTrayMenu(key);
             bool accepted = false;
-            if (leftClick) accepted = owner.tray->Activate(key, tray::Activation::LeftDown, point, {hwnd, hwnd});
-            accepted = owner.tray->Activate(key, action, point, {hwnd, hwnd}, {}, expectedIdentity) || accepted;
+            const tray::FocusOrigin origin{hwnd, hwnd, owner.settings.position == DockPosition::Bottom};
+            if (leftClick) accepted = owner.tray->Activate(key, tray::Activation::LeftDown, point, origin);
+            accepted = owner.tray->Activate(key, action, point, origin, {}, expectedIdentity) || accepted;
             if (!accepted) changed = CancelTrayMenu() || changed;
             if (changed && owner.dockChanged) owner.dockChanged(false);
         }
@@ -1491,6 +1607,14 @@ struct StatusBar::Impl
                     message == WM_SYSKEYDOWN || message == WM_SYSKEYUP || message == WM_SYSCHAR)) return 0;
             if (message == tray::FocusReturnMessage())
             { self->ReturnTrayFocus(static_cast<std::uint64_t>(wp)); return 0; }
+            if (message == tray::HoverPopupChangedMessage())
+            {
+                const auto previousHover = self->interaction.hovered;
+                self->CheckTrayPopupLeave();
+                if (previousHover != self->interaction.hovered) self->PaintHover();
+                else self->SyncTooltip();
+                return 0;
+            }
             if (message == tray::ChangeMessage())
             {
                 if (self->owner.tray && self->owner.tray->AcknowledgeChange(window, static_cast<std::uint64_t>(wp)))
@@ -1550,8 +1674,9 @@ struct StatusBar::Impl
                 return 0;
             }
             case kEnsurePresentation:
-                if (self->owner.systemShowDesktopActive)
+                if (self->owner.systemShowDesktopActive || self->NeedsIndependentPresentationRecovery())
                     self->EnsureSystemShowDesktopPresentation();
+                self->presentationCheckQueued = false;
                 return 0;
             case kPlace: self->Place(); return 0;
             case kForeground:
@@ -1560,6 +1685,9 @@ struct StatusBar::Impl
                 if (self->UpdateAppearance()) self->QueuePlace();
                 else if (self->dataSnapshot.foregroundAppName != self->owner.displayedApp.name) self->Paint();
                 self->PollTrayMenu();
+                return 0;
+            case kAppNameReady:
+                self->owner.appNameWork.Drain();
                 return 0;
             case kFullscreen:
                 if (self->owner.fullscreenRequest.Consume(window)) self->owner.CheckFullscreenWindows(true);
@@ -1575,6 +1703,8 @@ struct StatusBar::Impl
                 performance::Scope timerTrace("timer.callback", StatusBarTimerPhase(wp), traceOwner);
                 if (wp == kClockTimer)
                 {
+                    self->CheckTrayPopupLeave();
+                    self->owner.appNameWork.Drain();
                     // One service consumer and one pending audio target across
                     // all bars: the first monitor must not drain another's result.
                     for (const auto& completion : self->owner.data->Controls()->DrainCompletions("statusBarVolume"))
@@ -1584,6 +1714,8 @@ struct StatusBar::Impl
                     }
                     self->owner.RefreshForegroundApp();
                     if (self->UpdateAppearance()) self->QueuePlace();
+                    else if (self->NeedsIndependentPresentationRecovery())
+                        self->QueuePresentationCheck();
                     else self->Paint();
                     self->PollTrayMenu();
                 }
@@ -1615,6 +1747,10 @@ struct StatusBar::Impl
             case WM_SETTINGCHANGE:
             case WM_THEMECHANGED: self->appearanceDirty = true; self->QueuePlace(); break;
             case WM_WINDOWPOSCHANGED:
+                // The minimize event can precede the actual native window change.
+                // Repair after the change, outside the window-position callback.
+                if (self->NeedsIndependentPresentationRecovery())
+                    self->QueuePresentationCheck();
                 if (!self->placing && lp &&
                     (reinterpret_cast<WINDOWPOS*>(lp)->flags & (SWP_NOMOVE | SWP_NOSIZE)) != (SWP_NOMOVE | SWP_NOSIZE))
                     self->appbar.Notify(ABM_WINDOWPOSCHANGED);
@@ -1623,9 +1759,10 @@ struct StatusBar::Impl
                 // ShowWindow(SW_HIDE) delivers this notification before the
                 // WM_WINDOWPOSCHANGING veto decides the hide. Repair after the
                 // request settles instead of inside its notification.
-                if (!wp && !self->hidingWindow && self->owner.systemShowDesktopActive &&
-                    self->WantsPresentation())
-                    PostMessageW(window, kEnsurePresentation, 0, 0);
+                if (!wp && !self->hidingWindow && !self->mergedDockHeight &&
+                    self->WantsPresentation() &&
+                    (self->owner.systemShowDesktopActive || !self->owner.settings.showOnlyWhenSummoned))
+                    self->QueuePresentationCheck();
                 break;
             case WM_WINDOWPOSCHANGING:
                 if (lp)
@@ -1705,12 +1842,15 @@ struct StatusBar::Impl
                     const auto key = std::exchange(self->pressedTray, {});
                     const bool dragging = std::exchange(self->trayDragging, false);
                     POINT screen{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)}; ClientToScreen(window, &screen);
+                    bool dropped = false;
                     self->UpdateInteraction([&] {
                         self->EndDragFeedback(); ReleaseCapture(); self->interaction.CancelPointer();
+                        // Present the indicator removal and local reorder together.
+                        if (dragging) dropped = self->owner.Drop(key, screen);
                     });
                     if (dragging)
                     {
-                        if (!self->owner.Drop(key, screen) && self->owner.dropOutside) self->owner.dropOutside(key, screen);
+                        if (!dropped && self->owner.dropOutside) self->owner.dropOutside(key, screen);
                     }
                     else if (self->owner.tray && std::any_of(self->items.begin(), self->items.end(), [&](const auto& item) {
                         return item.icon && item.icon->key == key && PtInRect(&item.bounds, {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
@@ -1792,11 +1932,21 @@ struct StatusBar::Impl
                 }
                 const auto previousHover = self->interaction.hovered;
                 self->interaction.hovered = hover;
+                self->trayHoverCovered = false;
                 if (hoveredKey != self->hoveredTray && self->owner.tray)
                 {
                     POINT screen = point; ClientToScreen(window, &screen);
+                    self->trayHoverPopup.Reset();
                     if (!self->hoveredTray.empty()) self->owner.tray->Activate(self->hoveredTray, tray::Activation::Leave, screen);
-                    if (!hoveredKey.empty()) self->owner.tray->Activate(hoveredKey, tray::Activation::Hover, screen);
+                    if (!hoveredKey.empty() && hover)
+                    {
+                        RECT bounds = self->items[*hover].bounds;
+                        MapWindowPoints(window, nullptr, reinterpret_cast<POINT*>(&bounds), 2);
+                        RECT row{};
+                        GetWindowRect(window, &row);
+                        self->owner.tray->BeginHover(hoveredKey, window, window, bounds, row,
+                            self->owner.settings.position == DockPosition::Bottom, self->trayHoverPopup);
+                    }
                     self->hoveredTray = std::move(hoveredKey);
                 }
                 TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, window, 0}; TrackMouseEvent(&tracking);
@@ -1862,6 +2012,12 @@ struct StatusBar::Impl
             case WM_MOUSELEAVE:
             {
                 if (!self->pressedTray.empty()) return 0;
+                if (self->PointerOverTrayPopup())
+                {
+                    self->trayHoverCovered = true;
+                    self->tooltip.Hide();
+                    return 0;
+                }
                 self->presentationPreparation.Run([&] {
                     self->EndDragFeedback();
                     self->trayDragging = false;
@@ -1909,28 +2065,18 @@ struct StatusBar::Impl
     StatusBarSettings settings;
     ApplicationWindow lastForegroundApp;
     ApplicationWindow displayedApp;
-    ULONGLONG nextBackgroundAppSearch = 0;
+    BackgroundWork appNameWork{1, 1};
+    ApplicationWindow lastAppNameRequest;
+    ULONGLONG nextAppNameRequest = 0;
+    bool appNamePending = false;
     void ClearForegroundApp()
     {
+        if (appNamePending) appNameWork.Cancel();
+        appNamePending = false;
         lastForegroundApp = {};
         displayedApp = {};
-        nextBackgroundAppSearch = 0;
-    }
-    void RefreshBackgroundApp()
-    {
-        if (IsOpenAppWindow(lastForegroundApp))
-        {
-            if (!displayedApp.Matches(lastForegroundApp.window, lastForegroundApp.process))
-                displayedApp = lastForegroundApp;
-            return;
-        }
-        if (IsOpenAppWindow(displayedApp)) return;
-        // Several bars share this observation. Throttle only the empty case
-        // so a window that was just minimized or closed is replaced promptly.
-        if (!displayedApp.window && GetTickCount64() < nextBackgroundAppSearch) return;
-        displayedApp = FindBackgroundApp(lastForegroundApp.process);
-        nextBackgroundAppSearch = GetTickCount64() + 1000;
-        if (!displayedApp.window) displayedApp.name = kStatusBarDesktopAppName;
+        lastAppNameRequest = {};
+        nextAppNameRequest = 0;
     }
     void RefreshForegroundApp()
     {
@@ -1939,26 +2085,53 @@ struct StatusBar::Impl
             ClearForegroundApp();
             return;
         }
-        const auto window = GetForegroundWindow();
-        DWORD process = 0;
-        if (window) GetWindowThreadProcessId(window, &process);
-        if (!IsOpenAppWindow(window, process))
+        const auto foreground = ObserveForegroundApp();
+        const bool lastOpen = IsOpenAppWindow(lastForegroundApp);
+        if (lastOpen && (!foreground.window ||
+                lastForegroundApp.Matches(foreground.window, foreground.process)))
         {
-            RefreshBackgroundApp();
+            displayedApp = lastForegroundApp;
             return;
         }
-        if (!lastForegroundApp.Matches(window, process))
-        {
-            auto name = ForegroundAppName(window, process);
-            if (name.empty())
-            {
-                RefreshBackgroundApp();
+        const bool displayedOpen = IsOpenAppWindow(displayedApp);
+        if (!foreground.window && displayedOpen) return;
+        if (!displayedOpen)
+            displayedApp = lastOpen ? lastForegroundApp : ApplicationWindow{nullptr, 0, kStatusBarDesktopAppName};
+        if (appNamePending || (lastAppNameRequest.Matches(foreground.window, foreground.process) &&
+                GetTickCount64() < nextAppNameRequest))
+            return;
+        const auto receiver = std::find_if(windows.begin(), windows.end(), [](const auto& entry) {
+            return entry.second && entry.second->hwnd && !entry.second->closing;
+        });
+        if (receiver == windows.end()) return;
+
+        // Shell properties and executable metadata can call into providers.
+        // Keep that work off the window thread and apply only current results.
+        const DWORD preferred = lastForegroundApp.process;
+        const bool hasFallback = lastOpen || displayedOpen;
+        appNamePending = appNameWork.Submit(L"app-name", [foreground, preferred, hasFallback] {
+            if (IsOpenAppWindow(foreground))
+                if (auto name = ForegroundAppName(foreground.window, foreground.process); !name.empty())
+                    return ApplicationWindow{foreground.window, foreground.process, std::move(name)};
+            return hasFallback ? ApplicationWindow{} : FindBackgroundApp(preferred);
+        }, [this, foreground](ApplicationWindow result) {
+            appNamePending = false;
+            const auto current = ObserveForegroundApp();
+            if (!settings.foregroundAppName || !current.Matches(foreground.window, foreground.process))
                 return;
-            }
-            lastForegroundApp = {window, process, std::move(name)};
+            if (!IsOpenAppWindow(result))
+                return;
+            if (current.Matches(result.window, result.process)) lastForegroundApp = result;
+            displayedApp = std::move(result);
+            for (const auto& [id, window] : windows)
+                if (window && !window->closing && window->hwnd)
+                    InvalidateRect(window->hwnd, nullptr, FALSE);
+        }, receiver->second->hwnd, kAppNameReady);
+        if (appNamePending)
+        {
+            lastAppNameRequest = foreground;
+            nextAppNameRequest = GetTickCount64() + 1000;
         }
-        if (!displayedApp.Matches(window, process) || displayedApp.name != lastForegroundApp.name)
-            displayedApp = lastForegroundApp;
     }
     PersonalizationSettings globalAppearance;
     PersonalizationSettings tooltipAppearance;
@@ -2048,9 +2221,23 @@ struct StatusBar::Impl
     bool Drop(std::string_view key,POINT point)
     {
         const auto target=FindDrop(key,point);
-        if(target&&tray::PlaceIcon(settings,tray->Current(),key,target->pinned,target->before))
-        {const auto value=settings;const auto callback=trayChanged;if(callback)callback(value);return true;}
-        return false;
+        if (!target) return false;
+        auto next = settings;
+        if (!tray::PlaceIcon(next, tray->Current(), key, target->pinned, target->before)) return false;
+        if (next != settings)
+        {
+            UpdateTrayPlacement(next);
+            const auto callback = trayChanged;
+            if (callback) callback(next);
+        }
+        return true;
+    }
+    void UpdateTrayPlacement(const StatusBarSettings& next)
+    {
+        settings.pinnedTrayItems = next.pinnedTrayItems;
+        settings.trayOrder = next.trayOrder;
+        for (const auto& [id, window] : windows)
+            if (window) window->Paint(false, true);
     }
     Impl(std::shared_ptr<widget_runtime::WidgetSystemDataProvider> source,
         Activate action, Hidden hide, Error report, DrawBackground draw, std::shared_ptr<tray::Service> shared)
@@ -2414,20 +2601,38 @@ std::optional<RECT> StatusBar::MergedStripBounds(HMONITOR monitor) const
     }
     return {};
 }
-bool StatusBar::HasMergedGlassBackdrop(HMONITOR monitor, const RECT& screenFrame) const
+bool StatusBar::HasMergedGlassBackdrop(HMONITOR monitor) const
 {
-    if (impl_->removingWindows || IsRectEmpty(&screenFrame) || HighContrast()) return false;
+    if (impl_->removingWindows || HighContrast()) return false;
     for (const auto& [id, window] : impl_->windows)
     {
         (void)id;
         if (!window || window->monitor != monitor || !window->mergedDockHeight ||
             window->failed || !window->positioned || !window->appearance.glassEnabled ||
             !window->backdrop.IsAvailable() || window->backdrop.PanelCount() == 0) continue;
-        const auto& strip = window->placedBounds;
-        return screenFrame.left >= strip.left && screenFrame.top >= strip.top &&
-            screenFrame.right <= strip.right && screenFrame.bottom <= strip.bottom;
+        return true;
     }
     return false;
+}
+
+void StatusBar::ApplyMergedDockIconGlass(HMONITOR monitor, ID2D1Device* drawDevice,
+    std::vector<PanelBackdropIcon>& screenIcons)
+{
+    if (impl_->removingWindows) return;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (!window || window->monitor != monitor || !window->mergedDockHeight ||
+            window->failed || !window->positioned || !window->backdrop.IsAvailable()) continue;
+        for (auto& icon : screenIcons)
+            icon.Offset(window->glassPadding.left - window->placedBounds.left,
+                window->glassPadding.top - window->placedBounds.top);
+        const auto key = reinterpret_cast<std::uintptr_t>(window.get());
+        if (!window->backdrop.SetPanelIconRegions(key, drawDevice, screenIcons, true))
+            (void)window->backdrop.SetPanelIconRegions(key, drawDevice, {}, true);
+        window->backdrop.CommitDeferredFrame();
+        return;
+    }
 }
 bool StatusBar::IsFullscreen(HMONITOR monitor) const
 {
@@ -2456,12 +2661,38 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
 {
     NormalizeStatusBarSettings(settings);
     auto& self = *impl_;
+    const auto& nextTooltip = tooltipAppearance ? *tooltipAppearance : global;
+    if (settings.enabled && !monitors.empty() && self.tray &&
+        self.composition.Get() == composition && self.text.Get() == text &&
+        self.globalAppearance == global && self.tooltipAppearance == nextTooltip &&
+        (settings.pinnedTrayItems != self.settings.pinnedTrayItems || settings.trayOrder != self.settings.trayOrder) &&
+        self.windows.size() == monitors.size() &&
+        std::all_of(monitors.begin(), monitors.end(), [&](const auto& monitor) {
+            const auto found = self.windows.find(monitor.id);
+            if (found == self.windows.end() || !found->second) return false;
+            const auto& window = *found->second;
+            return window.positioned && window.monitor == monitor.monitor &&
+                window.mergedDockHeight == monitor.mergedDockHeight &&
+                window.reserveSpace == ReserveIndependentStatusBarSpace(monitor.mergedDockHeight != 0,
+                    monitor.reserveSpace, settings.showOnlyWhenSummoned);
+        }))
+    {
+        auto comparable = self.settings;
+        comparable.pinnedTrayItems = settings.pinnedTrayItems;
+        comparable.trayOrder = settings.trayOrder;
+        if (comparable == settings)
+        {
+            // Ordering changes the content frame without invalidating the AppBar or its backdrop.
+            self.UpdateTrayPlacement(settings);
+            return;
+        }
+    }
     const bool changed = settings != self.settings || global != self.globalAppearance;
     const bool revealChanged = settings.showOnlyWhenSummoned != self.settings.showOnlyWhenSummoned ||
         settings.edgeRevealGesture != self.settings.edgeRevealGesture || settings.position != self.settings.position;
     self.settings = std::move(settings);
     self.globalAppearance = global;
-    self.tooltipAppearance = tooltipAppearance ? *tooltipAppearance : global;
+    self.tooltipAppearance = nextTooltip;
     self.drawTooltipBackground = std::move(drawTooltipBackground);
     if (self.composition.Get() != composition)
         ReleaseGraphicsResources();

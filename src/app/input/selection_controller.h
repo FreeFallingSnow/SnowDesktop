@@ -84,19 +84,23 @@ public:
         DesktopItems& desktopItems,
         DockEntries& dockEntries,
         RunningApps& runningApps,
-        Widgets& widgets)
+        Widgets& widgets,
+        const typename Widgets::value_type* localWidget = nullptr)
     {
         anchorScope_.clear();
         anchorKey_.clear();
         bool changed = ClearRange(desktopItems);
         changed = ClearRange(dockEntries) || changed;
         changed = ClearRange(runningApps) || changed;
+        bool localWidgetChanged = false;
         for (auto& widget : widgets)
         {
-            changed = ClearValue(widget) || changed;
+            const bool widgetChanged = ClearValue(widget);
+            if (&widget == localWidget) localWidgetChanged = widgetChanged;
+            else changed |= widgetChanged;
             changed = ClearRange(widget.folderEntries) || changed;
         }
-        AdvanceRevisionIf(changed);
+        AdvanceRevisionIf(changed || localWidgetChanged);
         return changed;
     }
 

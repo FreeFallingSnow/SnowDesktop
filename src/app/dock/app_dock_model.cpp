@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "widgets/lua_stack.h"
 #include "diagnostics/diagnostic_log.h"
+#include "diagnostics/performance_trace.h"
 #include "common/utils.h"
 #include "dock/dock_folder_rules.h"
 #include "desktop/desktop_item_reference_migration.h"
@@ -61,8 +62,13 @@ DesktopApp::ResolveDockFolderTarget(const DockEntry& entry, bool* targetPending,
     const auto key = (mapping ? L"M:" : L"I:") +
         ToUpperInvariant(snowdesktop::dock_refresh_cache::SourceKey(entry.reference, path));
     const auto cached = dockFolderTargetCache_.Read(key, stamp);
-    if (targetPending) *targetPending = snowdesktop::dock_folder_popup_read::TargetPending(
-        mapping, cached.fresh, cached.sameSourceVersion);
+    // A regular folder resolves to its own path. Its last-write stamp can
+    // change with the contents without invalidating that path. Shortcuts
+    // still require a target from the current version of the link file.
+    const bool knownDirectory = cached.value && cached.value->kind == FolderTargetKind::Directory;
+    const bool needsTarget = snowdesktop::dock_folder_popup_read::TargetPending(
+        mapping || knownDirectory, cached.fresh, cached.sameSourceVersion);
+    if (targetPending) *targetPending = needsTarget;
     if (cached.fresh) return cached.value.value_or(FolderTarget{});
     const bool wasFolder = cached.value && cached.value->kind != FolderTargetKind::None;
     auto* owner = const_cast<DesktopApp*>(this);
@@ -101,9 +107,16 @@ DesktopApp::ResolveDockFolderTarget(const DockEntry& entry, bool* targetPending,
         const bool isFolder = target.kind != FolderTargetKind::None;
         const auto targetPath = target.path;
         if (!owner->dockFolderTargetCache_.Publish(key, ticket, std::move(target))) return;
+        snowdesktop::performance::Scope trace("dock", "folder.target.delivery");
         if (wasFolder != isFolder) owner->NormalizeDockRecycleBinPosition();
         owner->InvalidateDockContainers();
-        owner->InvalidateDragStaticScene();
+        const bool hasDesktopDock = std::any_of(owner->containers_.begin(), owner->containers_.end(),
+            [owner](const auto& container) {
+                const auto* dock = dynamic_cast<const DockContainer*>(container.get());
+                return dock && !owner->IsDockHostedByPersistentHost(dock);
+            });
+        // Persistent Dock windows update their glass when they repaint below.
+        owner->InvalidateDragStaticScene(hasDesktopDock);
         owner->UpdateFloatingDockWindowBounds(false);
         owner->InvalidateDockRects();
         const auto sourceId = std::to_wstring(static_cast<int>(entry.type)) +
@@ -119,7 +132,7 @@ DesktopApp::ResolveDockFolderTarget(const DockEntry& entry, bool* targetPending,
         auto pending = *cached.value;
         // Retain section membership, but don't execute an obsolete shortcut
         // target after the source itself changed.
-        if (!cached.sameSourceVersion)
+        if (needsTarget)
         {
             pending.available = false;
             pending.path.clear();

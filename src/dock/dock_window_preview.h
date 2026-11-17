@@ -11,6 +11,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -40,10 +41,7 @@ bool IsPointInDockPreviewTransitionRegion(
 bool IsPointInDockPreviewEntryRegion(POINT point, POINT origin, const RECT& preview, int tolerance);
 
 
-/**
- * @brief 管理 Dock 预览的延迟悬停与点击后锁定状态。
- */
-
+namespace snowdesktop { class UiAnimationScheduler; }
 
 /**
  * @brief 以不抢焦点的独立弹窗显示一组实时 DWM 窗口缩略图。
@@ -62,9 +60,10 @@ public:
     DockWindowPreview& operator=(const DockWindowPreview&) = delete;
 
     bool Initialize(
-        HINSTANCE instance,
+        HINSTANCE instance, snowdesktop::UiAnimationScheduler& scheduler,
         ActivateCallback activateCallback,
-        CloseCallback closeCallback, std::function<void()> visibilityChanged = {});
+        CloseCallback closeCallback, std::function<void()> visibilityChanged,
+        std::function<bool(POINT)> pointerOnDock);
     void PrepareToolbars(const std::vector<DockWindowPreviewItem>& items);
     void Show(const std::vector<DockWindowPreviewItem>& items,
         RECT anchorScreen, DockPosition dockPosition, bool lightTheme,
@@ -81,6 +80,7 @@ public:
         };
     }
     void Hide();
+    void Dismiss();
     void RemoveWindow(HWND window);
     void UpdateItems(const std::vector<DockWindowPreviewItem>& items);
     // One-shot input provenance survives card reflow and final-card Hide.
@@ -88,10 +88,13 @@ public:
     void ObserveForwardedPointer(UINT message, DWORD time);
     bool RetainsCloseForeground(HWND foreground);
     void ReleaseCloseRetention() { closeRetentionUntil_ = 0; }
-    bool IsAwaitingPointerEntry() const { return IsVisible() && pointerSession_ == PointerSession::AwaitingEntry; }
+    bool IsAwaitingPointerEntry() const
+    { return !slideClosing_ && IsVisible() && pointerSession_ == PointerSession::AwaitingEntry; }
     void ScheduleHide();
+    void ScheduleDockHide();
     void KeepVisible();
     bool IsVisible() const;
+    bool IsClosing() const { return slideClosing_; }
     bool IsCleared() const;
     bool IsShowingWindow(HWND window) const;
     bool ContainsInteractionPoint(POINT screenPoint) const;
@@ -104,13 +107,13 @@ private:
     static constexpr UINT_PTR kPeekTimerId = 2;
     static constexpr UINT kPeekTimerIntervalMs = 50;
     static constexpr UINT kTransitionHideDelayMs = 120;
+    static constexpr ULONGLONG kDockHideDelayMs = 650;
     static constexpr UINT kPointerReconcileMessage = WM_APP + 1;
     static constexpr UINT kToolbarUpdateMessage = WM_APP + 2;
 
     static LRESULT CALLBACK WindowProc(
         HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 
-    bool EnsureWindow();
     bool EnsureWindows(size_t count);
     void Layout(RECT monitorWorkArea, UINT dpi, bool reuseThumbnails = false);
     void RegisterThumbnails();
@@ -124,6 +127,10 @@ private:
     void ClearToolbarTooltips();
     void UpdateToolbarTooltips();
     void InvalidatePopups();
+    void StartSlide(POINT destination = {});
+    void StopSlide();
+    void SetSlideClosing(bool closing);
+    void MoveSlideCards();
     POINT ToLayoutPoint(HWND window, POINT point) const;
     void OnMouseMove(HWND window, POINT point);
     void OnMouseLeave(HWND window);
@@ -137,7 +144,8 @@ private:
     void UpdatePeekTarget(HWND target);
     void OnPeekTimer();
     void CancelPeek(bool suppressUntilLeave = false);
-    void HideIfPointerOutside();
+    void ArmHideTimer(UINT delay = kTransitionHideDelayMs);
+    void HideIfPointerOutside(bool fromTimer);
     bool IsPointerInTransitionRegion(POINT screenPoint) const;
     bool IsPointerInEntryRegion(POINT screenPoint) const;
     int CardIndexAtPoint(POINT point) const;
@@ -165,6 +173,12 @@ private:
     bool peekUpdating_ = false;
     ULONGLONG peekCommitDeadline_ = 0;
     std::function<void()> visibilityChanged_;
+    std::function<bool(POINT)> pointerOnDock_;
+    snowdesktop::UiAnimationScheduler* scheduler_ = nullptr;
+    std::uint64_t slideToken_ = 0;
+    POINT slideOffset_{};
+    bool slideClosing_ = false;
+    RECT panelRect_{};
     std::vector<DockWindowPreviewItem> items_;
     std::unique_ptr<snowdesktop::thumbnail_toolbar::Client> toolbarClient_;
     std::vector<snowdesktop::thumbnail_toolbar::Snapshot> toolbars_;
@@ -210,4 +224,5 @@ private:
     POINT transitionOriginScreen_{};
     bool hasTransitionOrigin_ = false;
     bool hideTimerArmed_ = false;
+    ULONGLONG dockHideDue_ = 0;
 };

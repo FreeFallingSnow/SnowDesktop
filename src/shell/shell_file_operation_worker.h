@@ -38,6 +38,8 @@ struct ShellShortcutOperationStep
     // Atomically claim a previously selected path before saving. A collision
     // fails instead of overwriting a shortcut created by an earlier request.
     bool failIfDestinationExists = false;
+    // A Shell namespace target is carried as copied absolute PIDL bytes.
+    std::vector<BYTE> targetId{};
 };
 
 /** @brief One exact-path file copy that must not rename or overwrite. */

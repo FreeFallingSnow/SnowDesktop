@@ -7,6 +7,9 @@
 `executableSchemaVersions:[2]` / `executableApiVersions:[2]`。宿主、校验、预览和打包
 只接受 schema/API v2。
 
+PowerShell 中按 [工具路径设置](../SKILL.md#use-the-bundled-tools) 解析 `$SnowWidget`。
+下文的 `snowwidget` 命令均通过 `& $SnowWidget` 调用。
+
 编辑器类型定义位于 `library/snowdesktop-v2.lua`，其函数签名是本文档的配套
 机器可读契约。
 
@@ -43,10 +46,10 @@ Shell、系统数据、存储或其他副作用 API。命令输出文件数、�
 `--canvas-size 512 --padding 48`。宿主会保持组件原始宽高比，将透明层等比放入带内边距的
 正方形画布，再把它合成到按 center-cover 裁切的背景上；不会拉伸背景，也不会为了方图改变
 组件布局跨度。`--padding` 只在指定 `--canvas-size` 时有效，且必须为画布留下正尺寸内容区。
-未指定时使用中性的兼容背景。输出 PNG 始终包含背景、解析后的普通/毛玻璃/亚克力材质层和组件
-内容，像素完全不透明；组件自定义材质
-优先，`followPersonalization` 则回到所选宿主外观。应先用 `preview` 生成清单声明的最终预览图，
-再运行 `pack`；`pack` 只校验和归档现有预览文件，不会启动宿主或改写源码目录。
+未指定背景时使用中性的兼容背景。默认 PNG 完全不透明，包含背景、解析后的宿主材质和组件内容。
+`--content-only` 输出透明背景的组件前景，省略舞台与宿主表面合成，且不能与 `--background` 同用。
+组件自定义材质优先，`followPersonalization` 则回到所选宿主外观。打包、隔离安装和升级验证见
+[验证与打包](validation-and-packaging.md#deliver-an-installable-archive)。
 `--data-state` 可为 `ready/empty/loading/error/stale/permission-denied`，用于让全部预览数据订阅
 返回对应的确定性包络；`empty` 保留 `available=true` 但使用空/零值，`error` 返回
 `providerUnavailable`，拒权返回 `permissionDenied`；包络时间戳与 `time.now()` 共用固定预览
@@ -203,6 +206,7 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 - `module.package`：安全包内模块；`resource.package`：包内图片、字体和资源状态；
 - `resource.image.lazy`：`resource.image(name, {lazy=true})` 显式延后像素解码；
   句柄仍在加载阶段创建，首次绘制前 `resource.status` 可以返回 `pending`；
+- `resource.image.onDemand`：`resource.image(name, {onDemand=true})` 创建包内图片引用，绘制时后台读取并解码，停止使用后释放像素和图片额度；
 - `state.transient`：仅存活于当前实例 VM 的瞬态状态；`schedule.visibility`：计划的
   `whenHidden=pause|throttle|continue` 生命周期；
 - `slots.mutation.userGesture`：binding/collection 的选择、清除、移除、撤销与重做仍要求
@@ -1588,12 +1592,17 @@ scroll key 同样是实例内稳定的 1–128 字节 UTF-8 字符串；只接�
 
 ```lua
 local menuOpenImage = resource.image("menuOpen")
+local pinGlyph = utf8.char(0xF601)
 
 local function menu(_context, _model, request)
     if request.id ~= "item.menu" then return nil end
+    local pinTitle = l10n.tr("menu.pin")
+    local pinStatus = storage.get("pinned") and l10n.tr("menu.on") or l10n.tr("menu.off")
     return ui.menu({
         { id = "item.open", label = "Open", image = menuOpenImage },
-        { id = "item.pin", label = "Pin", checked = false },
+        { id = "item.pin", label = pinTitle .. "\t" .. pinStatus,
+            icon = pinGlyph, iconFont = "fluent",
+            keepOpen = widget.hasFeature("interaction.contextMenu.keepOpen") },
         { label = "Open with", children = {
             { id = "item.open.editor", label = "Editor" },
             { id = "item.open.browser", label = "Browser" },
@@ -1609,17 +1618,25 @@ end
 形成子菜单；动作 `id` 在整棵树中唯一，最多嵌套 3 层，整棵树（含父项和分隔线）最多 64 项。
 探测 `interaction.contextMenu.resourceImage` 后，普通项或子菜单父项可用 `image=resource.image(...)`
 显示已声明的包内图片；它与宿主字形 `icon` 互斥，不接受媒体封面、剪贴板图片等临时运行时句柄。
+普通菜单项的 `label` 可用 `标题 .. "\t" .. 状态` 在右侧对齐显示本地化状态。
+仅由无图标选项组成的子菜单可使用 `checked`。带图标的父入口属于上一级菜单。
 宿主从已解码的包资源缓存生成按菜单 DPI 限制尺寸的预乘 alpha 位图，菜单关闭后释放副本；禁用项
 降低整体图像不透明度。图片解码失败时 `resource.image(...)` 已在组件入口加载阶段报错，不在打开
 菜单时同步读取文件。
 回调必须同步、快速且不执行 I/O。用户选择叶子项后收到
 `event.kind == "action"`，其中 `id` 为菜单项 ID，`source == "contextMenu"`，并带
-原 region 的 `targetKey` 与 `value`。菜单打开后只要 region 集合产生新一代提交，
-旧菜单动作就会失效，避免重排或复用 key 后误操作。`request.scope` 为 `element` 或
+原 region 的 `targetKey` 与 `value`。动作投递时会核对原组件运行实例和目标。
+`request.scope` 为 `element` 或
 `component`；元素级菜单独立显示，组件级菜单才与 SnowDesktop 的设置、授权、诊断和
 移除入口合并。该 API 不要求 `ui.contextMenu` 权限；对应 feature 为
 `interaction.region`、`interaction.pointerActions` 和 `interaction.contextMenu`；嵌套菜单另需
 `interaction.contextMenu.submenu`，包内图片另需 `interaction.contextMenu.resourceImage`。
+
+探测 `interaction.contextMenu.keepOpen` 后，叶子项可设 `keepOpen = true`。
+宿主先同步投递这次动作，再用同一目标调用 `menu`，刷新文字、图标、启用和勾选状态。
+菜单项的 ID、顺序、分隔线和嵌套结构须保持稳定，已展开的子菜单可继续操作。
+原实例或绑定失效、回调失败、返回空菜单或结构变化时，本次菜单关闭。
+普通动作及旧宿主沿用点击后关闭的行为。用于打开设置、选择器等界面的操作保持默认行为。
 
 探测 `ui.semanticMetrics.rowUnit` 后，`ui.metrics()` 仅返回
 `layoutRowHeight`。它表示搜索框、普通输入、按钮或单行条目的可见内容高度，不包含组件
@@ -2157,7 +2174,8 @@ feature ID `task.start`、`task.media.control`、`task.audio.output.control`、`
 `task.notification.structured`、`task.notification.actions`、
 `task.calendar.write`、`task.network.request` 和
 `task.shell.openUri`、`task.system.openSettings`、`task.clipboard.text`、
-`task.clipboard.image`、`task.clipboard.fileReference`、
+`task.clipboard.html`、`task.clipboard.image`、`task.clipboard.image.write`、
+`task.clipboard.fileReference`、`task.clipboard.fileReference.write`、
 `task.filesystem.picker`、`task.filesystem.access`、`task.filesystem.binary`，以及 `task.desktop.search`、`task.everything.search`、
 `task.shell.item`、`task.desktop.refresh`。媒体动作要求 `media.action` 权限，而且只能在
 `click/doubleClick/pointerDown/pointerUp/wheel`、宿主按钮、菜单命令或由宿主明确
@@ -2381,46 +2399,58 @@ local settingsTask = task.start("system.openSettings", {
 确定性成功结果，不启动 Windows 设置。
 
 剪贴板任务都要求当前可信用户手势，并按读取与修改分别检查 `clipboard.read` 和
-`clipboard.write`。读取必须显式请求 `text`、`image` 或 `file-reference` format；写入
-仍只接受 `text`，且最多 262144 字节、无 NUL、有效 UTF-8；清空不接受参数：
+`clipboard.write`。每次读写指定一个 `format`，写入替换系统剪贴板当前内容。
+`clipboard.clear` 清空当前内容。
+
+| `format` | `clipboard.read` 的 `event.value` 字段 | `clipboard.write` 参数字段 | Feature |
+| --- | --- | --- | --- |
+| `text` | `text` | `text` | `task.clipboard.text` |
+| `html` | `html` | `html` | 读写均用 `task.clipboard.html` |
+| `image` | `image`、`width`、`height` | `image` | 读 `task.clipboard.image`，写 `task.clipboard.image.write` |
+| `file-reference` | `items` | `items` | 读 `task.clipboard.fileReference`，写 `task.clipboard.fileReference.write` |
+
+读取成功时 `event.value.format` 为请求的格式，写入或清空成功时 `event.value` 为
+`{ accepted = true }`。对可选格式用 `widget.hasFeature` 探测当前构建。依赖新格式的组件
+需等支持该 capability 的宿主发布后再分发。必需能力写入 manifest 的 `requiredFeatures`，
+`minHostVersion` 可设为首个支持该能力的发布版本，仍以 feature 区分同版本的早期构建。
 
 ```lua
-local readTask = task.start("clipboard.read", { format = "text" })
-local imageTask = task.start("clipboard.read", { format = "image" })
-local filesTask = task.start("clipboard.read", {
-    format = "file-reference",
-})
-local writeTask = task.start("clipboard.write", {
-    format = "text",
-    text = "SnowDesktop",
-})
-local clearTask = task.start("clipboard.clear")
-
--- readTask 成功：event.value = { format = "text", text = "..." }
--- imageTask 成功：event.value = {
---     format = "image", image = imageHandle, width = 256, height = 256,
--- }
--- filesTask 成功：event.value = {
---     format = "file-reference",
---     items = { { ref = itemRef, name = "photo.png", type = "file" } },
--- }
--- write/clear 成功：event.value = { accepted = true }
+-- 在用户点击“复制”时运行。旧版宿主可复制纯文本。
+local taskId, err
+if widget.hasFeature("task.clipboard.html") then
+    taskId, err = task.start("clipboard.write", {
+        format = "html", html = "<strong>SnowDesktop</strong>",
+    })
+else
+    taskId, err = task.start("clipboard.write", {
+        format = "text", text = "SnowDesktop",
+    })
+end
 ```
 
-任务在独立 worker 访问 Win32 剪贴板，同一实例最短间隔 100 ms；稳定错误包括
+`text` 和 `html` 均接受最多 262144 字节的有效 UTF-8，字符串内禁止 NUL。`html`
+读取 Windows `HTML Format` 中的片段，写入时由宿主生成剪贴板头，不附带纯文本表示。
+宿主将 HTML 作为字符串传递。
+
+图片读取支持 PNG 和 Windows 位图。输入块最多 64 MiB，源图每边最多 16384 像素且总计最多
+67108864 像素，返回等比缩放至每边不超过 512 像素的临时 `SnowImageResource`。该句柄可用于
+`draw.image` 或 `view.image.source`，在热重载、实例卸载或资源回收后失效。写入接受当前实例
+仍可用的图片句柄或 `resource.image` 返回的包内资源，包内图片按比例缩放至每边不超过 2048 像素。
+宿主以带 alpha 通道的 `CF_DIBV5` 发布图片。
+
+文件引用读取一次最多返回 32 项，每项为 `{ ref, name, type }`，其中 `type` 为 `file`
+或 `folder`。`ref` 可用于 `draw.icon`、`shell.openItem` 和 `shell.revealItem`。写入的 `items`
+为包含 1 至 32 个引用字符串的连续数组，可使用本实例从 `clipboard.read` 获得的当前 `ref`
+或可读的 `filesystem` 句柄，分别要求 `clipboard.read` 或 `filesystem.userSelected.read` 权限。
+剪贴板文件项采用 Explorer 兼容的 `CF_HDROP` 复制格式。引用隐藏实际路径，文件内容读取继续使用
+独立的 `filesystem` 授权。
+
+任务在后台访问 Win32 剪贴板，同一实例最短间隔 100 ms。可能返回的错误包括
 `rateLimited`、`clipboardBusy`、`formatUnavailable`、`clipboardTooLarge`、
 `clipboardReadFailed`、`clipboardWriteFailed`、`clipboardImageDecodeFailed`、
-`clipboardImageDimensionsInvalid`、`clipboardReferenceUnavailable`、
-`permissionRevoked` 和 `canceled`。预览按所请求 format 返回确定性 mock，不访问真实
-剪贴板。
-
-图片输入块上限为 64 MiB，源尺寸每边上限 16384；宿主解码并等比缩放到每边不超过
-512 像素，返回的临时 `SnowImageResource` 可直接用于 `draw.image` 或
-`view.image.source`。句柄绑定当前组件实例，在热重载、实例卸载或运行时资源限额回收
-后失效，不得持久化。文件引用一次最多返回 32 项，每项仅有 `{ref,name,type}`；`ref`
-可用于 `draw.icon`、`shell.openItem` 和 `shell.revealItem`，但不暴露路径、不允许读取
-文件内容，也不等同于 `filesystem` 授权。剪贴板历史仍未开放，组件不得用文本路径
-冒充文件引用。
+`clipboardImageDimensionsInvalid`、`clipboardImageUnavailable`、`clipboardReferenceUnavailable`、
+`invalidReference`、`handleAccessDenied`、`permissionRevoked` 和 `canceled`。预览从固定样例读取，
+写入和清空返回模拟结果，系统剪贴板保持原样。
 
 文件选择器只在当前可信用户手势中启动，并且只把用户实际选择的范围授予当前组件
 包与当前实例。`filesystem.pickOpen` 要求 `filesystem.userSelected.read`；
@@ -3400,7 +3430,7 @@ local sky = lazy and resource.image("sky", {lazy=true}) or resource.image("sky")
 `ready`，解码失败为带 `error="unavailable"` 的 `error`。句柄不会自行要求轮询或启动定时器，
 使用场景由绘制决定。损坏的像素数据可能在首次解码时才报错，不能把懒句柄的创建成功当作
 完整解码验证。第二参数仅接受可选布尔字段 `lazy`，无效选项报 `resource.image: invalidOptions`。
-默认调用的加载阶段报错语义保持不变。
+可用选项见下文。默认调用的加载阶段报错语义保持不变。
 
 支持 `resource.image.lazy` 的宿主还会在图片状态中返回布尔字段 `resident`，表示当前有可用的
 解码像素。已验证图片的像素被回收后仍为 `ready`，但 `resident=false`；再次绘制会请求恢复。
@@ -3410,7 +3440,31 @@ local sky = lazy and resource.image("sky", {lazy=true}) or resource.image("sky")
 该 feature 时必须使用原调用；不要仅根据版本号传入新选项。官方社区组件采用此能力时应先
 交付对应宿主，再发布组件，或像上例保留可运行的降级路径。
 
+### 按需读取包内图片
+
+`resource.image(name, {onDemand=true})` 在入口加载阶段创建一个清单资源引用。
+桌面宿主在首次通过 `draw.image`、`draw.imageFit` 或 `view.image` 绘制时，
+从当前包版本读取图片元数据，再按绘制分辨率异步读取和解码。等待期间图片为空，
+结果就绪后宿主请求重绘。独立预览在该次绘制内完成读取和解码。菜单图标仍使用默认图片句柄。
+
+引用创建时不保留压缩图片或预留像素额度。图片解码后按当前像素尺寸占用共享额度。
+最后一个绘制面停止请求该图片约两秒后，宿主释放解码像素、缓存位图和对应额度。
+下一次绘制会重新读取磁盘。静态缓存绘制面在继续展示期间保留图片需求。
+
+`resource.status(handle)` 在尚未绘制、等待额度、读取中或回收后返回
+`state="pending", resident=false`。读取或解码失败返回 `state="error"`。
+查询状态本身不会触发读取。开发目录中的素材变化应通过组件热重载重新绑定。
+同一资源名在一个组件实例内须使用同一种读取模式。两个选项都为 true 时返回 `invalidOptions`。
+
+该能力属于 API v2 增量扩展。组件可在 manifest 中声明 `resource.image.onDemand`，
+或者先通过 `widget.hasFeature("resource.image.onDemand")` 探测，并在旧宿主上选择可用的素材和加载方式。
+
 ## 添加预设（`widget.creationPresets`）
+
+显式默认尺寸、预览尺寸和有限边界的行列使用 1–8。省略 `minSize` 时使用 1 × 1。
+省略 `maxSize`，或在 schema 允许的最大尺寸轴上设为 `0`，表示不额外限制该轴。
+`previewData.variants` 最多提供四个可选起始尺寸。其 `storage` 仅用于预览，
+不会复制到新实例。
 
 默认尺寸与预设尺寸支持能力 `widget.size.aspectRatio`，API/schema 仍为 2。
 例如 `"defaultSize":{"rows":2,"aspectRatio":1}` 固定高 2 格，添加时按目标屏幕

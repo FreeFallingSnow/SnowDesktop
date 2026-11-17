@@ -16,4 +16,11 @@ struct SurfaceTheme
     friend bool operator==(const SurfaceTheme&, const SurfaceTheme&) = default;
 };
 
+struct PopupAppearanceRule
+{
+    bool enabled = false;
+    SurfaceTheme theme;
+    friend bool operator==(const PopupAppearanceRule&, const PopupAppearanceRule&) = default;
+};
+
 }

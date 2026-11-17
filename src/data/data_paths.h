@@ -49,3 +49,9 @@ void MigrateLegacyDataPaths();
 // Initialize once in the primary process, before opening any user stores.
 bool InitializeDebugProfile(std::string& error);
 std::wstring GetDataStateRootPath();
+
+namespace snowdesktop::data_paths
+{
+// Private helper process only. Set before any application data path is used.
+void SetIsolatedAuthoringDataRoot(std::wstring root);
+}

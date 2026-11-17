@@ -1,6 +1,6 @@
 #include "window_support_authorization.h"
 #include "window_support_pipe.h"
-#include "window_support_protocol.h"
+#include "window_support_poll.h"
 #include "window_support_security.h"
 #include "window_support_host_identity.h"
 #include "window_pointer_observer.h"
@@ -14,9 +14,11 @@
 #include <shellapi.h>
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cwchar>
 #include <fstream>
 #include <memory>
+#include <span>
 
 namespace snowdesktop::window_support
 {
@@ -69,7 +71,7 @@ bool PumpWait(HANDLE event, HANDLE owner, DWORD timeout)
         }
     }
 }
-bool Transfer(HANDLE connection, void* data, DWORD size, bool write, HANDLE owner)
+bool Transfer(HANDLE connection, void* data, DWORD size, bool write, HANDLE owner, DWORD* messageSize = nullptr)
 {
     Handle event{CreateEventW(nullptr, TRUE, FALSE, nullptr)};
     if (!event.value) return false;
@@ -93,7 +95,9 @@ bool Transfer(HANDLE connection, void* data, DWORD size, bool write, HANDLE owne
             error = result ? ERROR_SUCCESS : GetLastError();
         }
     }
-    if (error || bytes != size) { SetLastError(error ? error : ERROR_INVALID_DATA); return false; }
+    if (error || (!messageSize && bytes != size))
+    { SetLastError(error ? error : ERROR_INVALID_DATA); return false; }
+    if (messageSize) *messageSize = bytes;
     return true;
 }
 bool AcceptedHost(HANDLE connection, DWORD expectedProcess, Handle& owner)
@@ -245,7 +249,8 @@ int RunHelper()
     else if (error != ERROR_PIPE_CONNECTED && error != ERROR_SUCCESS) return static_cast<int>(error);
     protocol::Request request;
     if (!Transfer(connection.value, &request, sizeof(request), false, nullptr) ||
-        request.magic != protocol::Magic || !protocol::CompatibleVersion(request.version) || request.command != protocol::Command::Hello)
+        request.magic != protocol::Magic || request.command != protocol::Command::Hello ||
+        (!protocol::CompatibleVersion(request.version) && request.version != protocol::CompactPollVersion))
         return ERROR_INVALID_DATA;
     Handle host;
     if (!AcceptedHost(connection.value, request.hostProcess, host)) return ERROR_ACCESS_DENIED;
@@ -281,8 +286,17 @@ int RunHelper()
             nextAuthorizationCheck = GetTickCount64() + 1000;
         }
         auto response = engine.Execute(request);
-        if (!Transfer(connection.value, &response, sizeof(response), true, host.value) ||
-            !Transfer(connection.value, &request, sizeof(request), false, host.value)) break;
+        if (protocol::UsesCompactPoll(wireVersion, request.command) && response.pointerCount == 0)
+        {
+            protocol::PollResponse poll(response);
+            if (!Transfer(connection.value, &poll, sizeof(poll), true, host.value)) break;
+        }
+        else if (!Transfer(connection.value, &response, sizeof(response), true, host.value)) break;
+
+        std::array<std::byte, sizeof(protocol::Request)> bytes;
+        DWORD received = 0;
+        if (!Transfer(connection.value, bytes.data(), static_cast<DWORD>(bytes.size()), false, host.value, &received) ||
+            !protocol::DecodeRequest(std::span{bytes}.first(received), wireVersion, request)) break;
     }
     engine.pointer.Stop();
     engine.animation.Cancel(true);

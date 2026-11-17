@@ -1114,6 +1114,8 @@ local function menu(_context, model, request)
     local timeline = currentTimeline(model, session)
     local permission = controlAllowed(model)
     local modes=playbackOptions.state(session,permission)
+    local keepOpen = localPlayback.isLocal(model.localPlayback) and
+        widget.hasFeature("interaction.contextMenu.keepOpen")
     model.menuSessionId=session and session.id
     model.menuSource=model.localPlayback.source
     local function allowed(capability)
@@ -1129,21 +1131,15 @@ local function menu(_context, model, request)
             label = rate:gsub("_", ".") .. "×",
             enabled = allowed("canChangePlaybackRate"),
             checked = modes.rateValue==tonumber((rate:gsub("_", "."))),
+            keepOpen = keepOpen,
         }
     end
     local items = {
         {
             id = "launcher.configure",
-            label = l10n.tr("workshop.aurora_player.configure_launcher"),
+            label = l10n.tr("workshop.aurora_player.configure_launcher") .. "\t" ..
+                (launcher and launcher.title or l10n.tr("workshop.aurora_player.not_set")),
             icon = fluent.settings, iconFont = "fluent",
-        },
-        { type = "separator" },
-        {
-            id = "launcher.current",
-            label = launcher and launcher.title or
-                l10n.tr("workshop.aurora_player.not_set"),
-            checked = true,
-            enabled = false,
         },
     }
     local sourceItems=localPlayback.menuItems(model.localPlayback)
@@ -1194,12 +1190,14 @@ local function menu(_context, model, request)
                     label = l10n.tr(
                         "workshop.aurora_player.shuffle_on"),
                     enabled = allowed("canToggleShuffle"),
+                    keepOpen = keepOpen,
                 },
                 {
                     id = "media.shuffle.off",
                     label = l10n.tr(
                         "workshop.aurora_player.shuffle_off"),
                     enabled = allowed("canToggleShuffle"),
+                    keepOpen = keepOpen,
                 },
             },
         },
@@ -1212,18 +1210,21 @@ local function menu(_context, model, request)
                     label = l10n.tr(
                         "workshop.aurora_player.repeat_none"),
                     enabled = allowed("canChangeRepeatMode"),
+                    keepOpen = keepOpen,
                 },
                 {
                     id = "media.repeat.track",
                     label = l10n.tr(
                         "workshop.aurora_player.repeat_track"),
                     enabled = allowed("canChangeRepeatMode"),
+                    keepOpen = keepOpen,
                 },
                 {
                     id = "media.repeat.list",
                     label = l10n.tr(
                         "workshop.aurora_player.repeat_list"),
                     enabled = allowed("canChangeRepeatMode"),
+                    keepOpen = keepOpen,
                 },
             },
         },

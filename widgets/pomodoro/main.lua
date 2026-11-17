@@ -5,6 +5,7 @@ local DEFAULT_WORK_COLOR = 0xFF6347
 local DEFAULT_BREAK_COLOR = 0x4ECDC4
 
 local fluent = {
+    speaker = utf8.char(0xEB42), -- speaker_2_20_regular
     play = utf8.char(0xF605),
     pause = utf8.char(0xF8AE),
     stop = utf8.char(0xF72A),
@@ -669,7 +670,13 @@ local function menu(_context, _model, request)
         icon = fluent.reset,
         iconFont = "fluent",
     }
-    items[#items + 1] = { id = "pomodoro.sound", label = l10n.tr("lua_widget.pomodoro.sound"), checked = soundEnabled() }
+    items[#items + 1] = {
+        id = "pomodoro.sound",
+        label = l10n.tr("lua_widget.pomodoro.sound") .. "\t" ..
+            (soundEnabled() and l10n.tr("menu.status.on") or l10n.tr("menu.status.off")),
+        icon = fluent.speaker, iconFont = "fluent",
+        keepOpen = widget.hasFeature("interaction.contextMenu.keepOpen"),
+    }
     return ui.menu(items)
 end
 

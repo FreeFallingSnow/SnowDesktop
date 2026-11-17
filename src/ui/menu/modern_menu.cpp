@@ -2447,7 +2447,7 @@ private:
     void UpdateTextInputImePosition(HWND focusWindow)
     {
         Popup* popup = ActivePopup();
-        if (!popup || !focusWindow || !IsWindow(focusWindow))
+        if (!popup || !popup->hwnd || !focusWindow || !IsWindow(focusWindow))
             return;
         int index = -1;
         Item* input = FindFocusedTextInput(*popup, &index);
@@ -2497,12 +2497,12 @@ private:
             ReleaseDC(nullptr, dc);
         }
         POINT caret{
-            popup->panelScreenOrigin.x - shadowSize_ +
-                std::clamp(textLeft + advance - horizontalOffset,
-                    textLeft, std::max(textLeft, textRight - 1)),
-            popup->panelScreenOrigin.y - shadowSize_ + textBounds.bottom,
+            std::clamp(textLeft + advance - horizontalOffset,
+                textLeft, std::max(textLeft, textRight - 1)),
+            textBounds.top,
         };
-        ScreenToClient(focusWindow, &caret);
+        // A submenu draws the search field, but the root owns keyboard focus.
+        MapWindowPoints(popup->hwnd, focusWindow, &caret, 1);
         HIMC context = ImmGetContext(focusWindow);
         if (!context)
             return;
@@ -2512,9 +2512,12 @@ private:
         ImmSetCompositionWindow(context, &composition);
         CANDIDATEFORM candidate{};
         candidate.dwIndex = 0;
-        candidate.dwStyle = CFS_CANDIDATEPOS;
+        candidate.dwStyle = CFS_EXCLUDE;
         candidate.ptCurrentPos = caret;
-        candidate.ptCurrentPos.y += metrics_.rowHeight;
+        // Give the IME the input line's vertical extent so it can place
+        // candidates next to the line, including near a screen edge.
+        candidate.rcArea = {caret.x, caret.y, caret.x + 1,
+            caret.y + textBounds.bottom - textBounds.top};
         ImmSetCandidateWindow(context, &candidate);
         ImmReleaseContext(focusWindow, context);
     }

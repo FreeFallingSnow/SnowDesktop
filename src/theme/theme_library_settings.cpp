@@ -78,16 +78,29 @@ bool WidgetMatches(const widget_runtime::WidgetHostAppearanceState& state, const
         state.acrylicEnabled == patch.acrylicEnabled && state.contentTheme == patch.contentTheme && state.panelGradient == patch.panelGradient;
 }
 
+static PopupAppearanceRule GeneralSettings::* PopupRule(std::string_view target)
+{
+    return target == "popup/tooltip" ? &GeneralSettings::tooltipAppearanceOverride :
+        target == "popup/barPanel" ? &GeneralSettings::barPanelAppearanceOverride : nullptr;
+}
+
 Kind TargetKind(std::string_view target)
-{ return target == "icon" ? Kind::Icon : target == "quickPanel" ? Kind::QuickPanel : target == "popup" ? Kind::Popup : Kind::Global; }
+{ return target == "icon" ? Kind::Icon : target == "quickPanel" ? Kind::QuickPanel : target == "popup" || PopupRule(target) ? Kind::Popup : Kind::Global; }
 
 unsigned TargetScope(std::string_view target)
-{ return target == "dock" ? Dock : target == "statusBar" || target.starts_with("statusBar/") ? StatusBar : target == "taskbar" || target.starts_with("taskbar/") ? Taskbar : Components; }
+{ return target == "dock" || target.starts_with("dock/") ? Dock : target == "statusBar" || target.starts_with("statusBar/") ? StatusBar : target == "taskbar" || target.starts_with("taskbar/") ? Taskbar : Components; }
 
 StatusBarAppearanceRule StatusBarSettings::* StatusRule(std::string_view target)
 {
     return target == "statusBar/noWindow" ? &StatusBarSettings::noWindow :
+        target == "statusBar/appWindow" ? &StatusBarSettings::appWindow :
         target == "statusBar/maximizedWindow" ? &StatusBarSettings::maximizedWindow : nullptr;
+}
+
+static DockAppearanceRule DockSettings::* DockRule(std::string_view target)
+{
+    return target == "dock/maximizedWindow" ? &DockSettings::maximizedWindow :
+        target == "dock/appWindow" ? &DockSettings::appWindow : nullptr;
 }
 
 SystemTaskbarDynamicRule DockSettings::* TaskbarRule(std::string_view target)
@@ -107,14 +120,21 @@ Theme CaptureTarget(std::string_view target, const SettingsValues& values)
     }
     auto appearance = values.personalization;
     if (target == "dock") appearance = ResolveDockAppearance(values.dock, values.personalization);
+    if (const auto member = DockRule(target)) appearance = ResolveDockRuleAppearance(values.dock, values.dock.*member, values.personalization);
     if (target == "taskbar") appearance = ResolveTaskbarAppearance(values.dock, values.personalization);
     if (target == "statusBar") appearance = ResolveStatusBarAppearance(values.general.statusBar.theme, values.personalization);
     if (const auto member = StatusRule(target)) appearance = ResolveStatusBarAppearance((values.general.statusBar.*member).theme, values.personalization);
     if (const auto member = TaskbarRule(target)) appearance = ResolveTaskbarRuleAppearance(values.dock.*member, values.personalization);
     if (target == "quickPanel") appearance = ResolveSurfaceTheme(values.general.quickNavigationAppearance,
         values.personalization, values.general.quickNavTheme, true, &values.general.globalQuickNavigationAppearance);
-    if (target == "popup") appearance = ResolveSurfaceTheme(values.general.collectionPopupAppearance,
-        values.personalization, values.general.collectionPopupTheme, false, &values.general.globalCollectionPopupAppearance);
+    const auto popupRule = PopupRule(target);
+    if (target == "popup" || popupRule)
+    {
+        appearance = ResolveSurfaceTheme(values.general.collectionPopupAppearance, values.personalization,
+            values.general.collectionPopupTheme, false, &values.general.globalCollectionPopupAppearance);
+        if (popupRule)
+            appearance = ResolvePopupOverrideTheme((values.general.*popupRule).theme, appearance);
+    }
     auto theme = Capture(TargetKind(target), appearance, values.navigation);
     theme.scopes = TargetScope(target);
     return theme;
@@ -354,9 +374,16 @@ bool ApplyTarget(const Library& library, std::string_view target, std::string_vi
     else if (target == "quickPanel")
     { values.general.quickNavigationAppearance = snapshot; ApplyQuickPanel(values.navigation, *theme); }
     else if (target == "popup") values.general.collectionPopupAppearance = snapshot;
+    else if (const auto popupMember = PopupRule(target)) (values.general.*popupMember).theme = snapshot;
     else if (target == "statusBar") values.general.statusBar.theme = snapshot;
     else if (target == "dock")
     { ApplyAppearance(values.dock.customAppearance, theme->appearance); values.dock.appearancePreset = kAppearancePresetCustom; values.dock.followComponentAppearance = false; }
+    else if (const auto dockMember = DockRule(target))
+    {
+        auto& rule = values.dock.*dockMember;
+        ApplyAppearance(rule.appearance, theme->appearance);
+        rule.appearancePreset = kAppearancePresetCustom;
+    }
     else if (target == "taskbar")
     { ApplyAppearance(values.dock.systemTaskbarAppearance, theme->appearance); values.dock.systemTaskbarFollowPersonalization = false; values.dock.systemTaskbarContentTheme = theme->appearance.contentTheme; }
     else if (const auto statusMember = StatusRule(target)) (values.general.statusBar.*statusMember).theme = snapshot;
@@ -416,8 +443,10 @@ std::vector<std::string> ApplySavedUpdate(const Library& library, std::string_vi
     {
         const auto reference = library.references.find(std::string(target));
         if (reference == library.references.end() || reference->second.id.empty()) continue;
+        const auto popupRule = PopupRule(target);
         if ((target == "quickPanel" && values.general.quickNavigationAppearance.mode != 4) ||
-            (target == "popup" && values.general.collectionPopupAppearance.mode != 4)) continue;
+            (target == "popup" && values.general.collectionPopupAppearance.mode != 4) ||
+            (popupRule && (values.general.*popupRule).theme.mode != 4)) continue;
         const auto theme = Resolve(library.themes, reference->second.id);
         if (!theme) continue;
         if (theme->id == changedId && ApplyTarget(library, target, theme->id, values, error))
@@ -456,8 +485,10 @@ bool SwitchAppliedVersion(Library& library, std::string_view previous,
         if (found == library.references.end() || found->second.id != previous || previous.empty()) continue;
         // Following surfaces belong to the global binding below, even if an
         // old independent reference still happens to have identical values.
+        const auto popupRule = PopupRule(target);
         if ((target == "quickPanel" && values.general.quickNavigationAppearance.mode != 4) ||
-            (target == "popup" && values.general.collectionPopupAppearance.mode != 4)) continue;
+            (target == "popup" && values.general.collectionPopupAppearance.mode != 4) ||
+            (popupRule && (values.general.*popupRule).theme.mode != 4)) continue;
         const auto saved = Resolve(found->second.snapshot, previous);
         if (!saved || saved->kind != TargetKind(target) || nextTheme->kind != saved->kind) continue;
         if (nextTheme->kind == Kind::Global &&

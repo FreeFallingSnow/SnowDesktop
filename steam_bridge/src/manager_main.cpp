@@ -270,7 +270,8 @@ void DrawEllipsizedText(ImVec2 origin, float width, ImU32 color,
 
 bool TwoLineProjectSelectable(const std::string& id,
     const std::string& title, bool selected,
-    const std::string& metadata, const std::string& version = {})
+    const std::string& metadata, const std::string& version = {},
+    bool uploadPending = false)
 {
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const float width = std::max(1.0f, ImGui::GetContentRegionAvail().x);
@@ -288,8 +289,15 @@ bool TwoLineProjectSelectable(const std::string& id,
     ImGui::PopID();
     const ImVec2 textOrigin(origin.x + padding.x, origin.y + padding.y);
     const float textWidth = std::max(0.0f, width - padding.x * 2.0f);
-    DrawEllipsizedText(textOrigin, textWidth,
+    const float dotSpace = 14.0f * gDpiScale;
+    const bool showDot = uploadPending && textWidth >= dotSpace;
+    DrawEllipsizedText(textOrigin, textWidth - (showDot ? dotSpace : 0.0f),
         ImGui::GetColorU32(ImGuiCol_Text), title);
+    if (showDot)
+        ImGui::GetWindowDrawList()->AddCircleFilled(
+            ImVec2(textOrigin.x + textWidth - 4.0f * gDpiScale,
+                textOrigin.y + lineHeight * 0.5f),
+            3.5f * gDpiScale, ImGui::GetColorU32(ImGuiCol_Button));
     const ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
     const float versionWidth = version.empty() ? 0.0f :
         std::min(ImGui::CalcTextSize(version.c_str()).x, textWidth * 0.42f);
@@ -491,6 +499,23 @@ std::string JoinTags(const std::vector<std::string>& tags)
     return output;
 }
 
+struct LocalPackageWatch
+{
+    explicit LocalPackageWatch(const std::filesystem::path& path)
+        : handle(FindFirstChangeNotificationW(path.c_str(), TRUE,
+            FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
+            FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE)) {}
+    ~LocalPackageWatch()
+    {
+        if (handle != INVALID_HANDLE_VALUE) FindCloseChangeNotification(handle);
+    }
+    LocalPackageWatch(const LocalPackageWatch&) = delete;
+    LocalPackageWatch& operator=(const LocalPackageWatch&) = delete;
+
+    HANDLE handle;
+    std::optional<WidgetPackageFingerprint> fingerprint;
+};
+
 std::optional<std::uint64_t> ParseItemId(std::string_view text)
 {
     try
@@ -620,12 +645,18 @@ public:
         {
             RunWorker(stop);
         });
+        packageWatchWorker_ = std::jthread([this](std::stop_token stop)
+        {
+            WatchLocalPackages(stop);
+        });
     }
 
     ~WorkshopManagerApp()
     {
+        packageWatchWorker_.request_stop();
         worker_.request_stop();
         workChanged_.notify_all();
+        if (packageWatchWorker_.joinable()) packageWatchWorker_.join();
         if (worker_.joinable()) worker_.join();
         SaveDraftPreferencesUnlocked();
     }
@@ -684,22 +715,35 @@ public:
         ImGui::Spacing();
         bool hasTask;
         bool runningTask;
+        float messageHeight = 0.0f;
         {
             std::lock_guard lock(mutex_);
             hasTask = publishTask_.Snapshot().HasTask() &&
                 (!taskResultDismissed_ || publishTask_.Snapshot().Running());
             runningTask = publishTask_.Snapshot().Running();
+            if (footerFeedback_)
+            {
+                const auto& style = ImGui::GetStyle();
+                const float textWidth = std::max(1.0f, ImGui::GetContentRegionAvail().x -
+                    ButtonWidth("X") - 2.0f * (style.WindowPadding.x + style.CellPadding.x));
+                const auto textSize = ImGui::CalcTextSize(footerFeedback_->text.c_str(),
+                    nullptr, false, textWidth);
+                messageHeight = std::max(ImGui::GetFrameHeight(), textSize.y + style.FramePadding.y) +
+                    2.0f * (style.WindowPadding.y + style.CellPadding.y) + 2.0f * gDpiScale;
+            }
         }
+        const float messageSpace = messageHeight > 0.0f ?
+            messageHeight + ImGui::GetStyle().ItemSpacing.y : 0.0f;
         const float splitterHeight = hasTask ? 8.0f * gDpiScale : 0.0f;
         const float maximumFooterHeight = std::max(40.0f * gDpiScale,
-            ImGui::GetContentRegionAvail().y - 280.0f * gDpiScale - splitterHeight);
+            ImGui::GetContentRegionAvail().y - 280.0f * gDpiScale - splitterHeight - messageSpace);
         const float naturalHeight = std::max(runningTask ? 104.0f : 70.0f,
             taskPanelNaturalHeightDip_);
         const float footerHeight = hasTask ? std::clamp(
             (taskPanelUserSized_ ? taskPanelHeightDip_ : naturalHeight) * gDpiScale,
             40.0f * gDpiScale, maximumFooterHeight) : 0.0f;
         const float mainHeight = std::max(1.0f,
-            ImGui::GetContentRegionAvail().y - footerHeight - splitterHeight -
+            ImGui::GetContentRegionAvail().y - footerHeight - splitterHeight - messageSpace -
                 ImGui::GetStyle().ItemSpacing.y * (hasTask ? 2.0f : 0.0f));
         const float sidebarPadding = 8.0f * gDpiScale;
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
@@ -763,6 +807,20 @@ public:
         }
         ImGui::EndChild();
         }
+        if (messageHeight > 0.0f)
+        {
+            ImGui::BeginChild("manager-messages", ImVec2(0, messageHeight),
+                ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+            {
+                std::lock_guard lock(mutex_);
+                if (footerFeedback_ && RenderFeedbackUnlocked(*footerFeedback_))
+                {
+                    footerFeedback_.reset();
+                    RequestManagerFrame();
+                }
+            }
+            ImGui::EndChild();
+        }
         RenderImageViewer();
         ImGui::End();
     }
@@ -816,7 +874,7 @@ private:
         return found == store_.Projects().end() ? nullptr : &*found;
     }
 
-    const PublishedItem* FindWorkshopItemUnlocked(std::uint64_t id)
+    const PublishedItem* FindWorkshopItemUnlocked(std::uint64_t id) const
     {
         const auto& items = publishedPages_.Snapshot().items;
         const auto found = std::find_if(items.begin(), items.end(),
@@ -831,7 +889,7 @@ private:
         SetMessageUnlocked(success, std::move(value));
     }
 
-    enum class WorkKind { Local, TextPreview, Prepare, Publish, Published, Binding, PreviewUpdate };
+    enum class WorkKind { Local, TextPreview, Prepare, Publish, Published, Binding, PreviewUpdate, TagPublish };
     struct WorkTarget
     {
         WorkKind kind = WorkKind::Local;
@@ -862,9 +920,13 @@ private:
         }
         // Publication results already have a persistent task view.
         if (target.kind == WorkKind::Publish && success) return;
-        feedback_[{target.page, target.localId}] = {success, std::move(value),
-            success && outputFile.empty() && !retain ? std::chrono::steady_clock::now() + std::chrono::seconds(5) :
+        const bool inFooter = target.kind == WorkKind::TagPublish;
+        Feedback feedback{success, std::move(value),
+            success && outputFile.empty() && !retain && !inFooter ?
+                std::chrono::steady_clock::now() + std::chrono::seconds(5) :
                 std::chrono::steady_clock::time_point::max(), std::move(outputFile)};
+        if (inFooter) footerFeedback_ = std::move(feedback);
+        else feedback_[{target.page, target.localId}] = std::move(feedback);
         RequestManagerFrame();
     }
 
@@ -941,7 +1003,8 @@ private:
                         publishInProgress_.store(false);
                     }
                     if (kind == WorkKind::TextPreview) localizationPreviewLoading_ = false;
-                    if (kind == WorkKind::PreviewUpdate) publishInProgress_.store(false);
+                    if (kind == WorkKind::PreviewUpdate || kind == WorkKind::TagPublish)
+                        publishInProgress_.store(false);
                     SetMessageUnlocked(false, error.what());
                 }
                 busy_.store(false);
@@ -979,6 +1042,81 @@ private:
             previousAccount = status.steamId;
         }
         steam_.Shutdown();
+    }
+
+    void WatchLocalPackages(std::stop_token stop)
+    {
+        std::map<std::filesystem::path, LocalPackageWatch> watches;
+        std::mutex delayMutex;
+        std::condition_variable_any delay;
+        while (!stop.stop_requested())
+        {
+            const auto status = steam_.Status();
+            std::vector<std::filesystem::path> paths;
+            if (status.initialized && status.loggedOn)
+            {
+                std::lock_guard lock(mutex_);
+                for (const auto& project : store_.Projects())
+                    if (project.publishedFileId) paths.push_back(project.sourceDirectory);
+            }
+            std::erase_if(watches, [&](const auto& entry)
+            {
+                return entry.second.handle == INVALID_HANDLE_VALUE ||
+                    std::find(paths.begin(), paths.end(), entry.first) == paths.end();
+            });
+            std::map<std::filesystem::path, WidgetPackageFingerprint> fingerprints;
+            for (const auto& path : paths)
+            {
+                if (stop.stop_requested()) return;
+                auto [entry, newWatch] = watches.try_emplace(path, path);
+                auto& watch = entry->second;
+                if (watch.handle == INVALID_HANDLE_VALUE) continue;
+                const DWORD change = WaitForSingleObject(watch.handle, 0);
+                if (change == WAIT_FAILED || (change == WAIT_OBJECT_0 &&
+                        !FindNextChangeNotification(watch.handle)))
+                {
+                    watches.erase(entry);
+                    continue;
+                }
+                if (newWatch || change == WAIT_OBJECT_0)
+                    watch.fingerprint = packageTool_.ProbePackage(path);
+                if (watch.fingerprint) fingerprints.emplace(path, *watch.fingerprint);
+            }
+            {
+                std::lock_guard lock(mutex_);
+                if (fingerprints != localPackageFingerprints_)
+                {
+                    localPackageFingerprints_ = std::move(fingerprints);
+                    RequestManagerFrame();
+                }
+            }
+            std::unique_lock lock(delayMutex);
+            delay.wait_for(lock, stop, std::chrono::seconds(1), [] { return false; });
+        }
+    }
+
+    const char* LocalUploadStatusUnlocked(const WorkshopProject& project) const
+    {
+        if (!project.publishedFileId)
+            return T("本地草稿 · 尚未创建 Workshop 项目", "Local draft · no Workshop item yet");
+        const auto current = localPackageFingerprints_.find(project.sourceDirectory);
+        if (current == localPackageFingerprints_.end() ||
+            (!project.packageId.empty() && project.packageId != current->second.packageId))
+            return nullptr;
+        if (!project.lastPublishedSha256.empty())
+            return project.lastPublishedSha256 != current->second.sha256 ?
+                T("组件更新待上传", "Component update pending") : nullptr;
+
+        std::string version = project.lastPublishedVersion;
+        if (const auto* item = FindWorkshopItemUnlocked(*project.publishedFileId))
+        {
+            const auto remote = DescribeManagerWorkshopItem(item->metadata);
+            if (remote.kind == ManagerWorkshopItemKind::Widget && remote.Complete() &&
+                remote.identity == current->second.packageId)
+                version = remote.version;
+        }
+        return !version.empty() && version != current->second.version ?
+            T("组件更新待上传", "Component update pending") : nullptr;
     }
 
     void RenderHeader(HWND window)
@@ -1188,6 +1326,8 @@ private:
             }
             else
             {
+                const auto status = steam_.Status();
+                const bool connected = status.initialized && status.loggedOn;
                 for (const auto& project : store_.Projects())
                 {
                     const std::string name = WideToUtf8(project.sourceDirectory.filename().wstring());
@@ -1195,14 +1335,16 @@ private:
                     const std::string haystack = name + " " + project.packageId + " " + project.localId + " " + path;
                     if (search[0] && haystack.find(search) == std::string::npos) continue;
                     matched = true;
+                    const char* uploadStatus = connected ? LocalUploadStatusUnlocked(project) : nullptr;
                     if (TwoLineProjectSelectable(project.localId, name,
                             selectedLocalId_ == project.localId,
                             project.publishedFileId ? T("已绑定 Workshop", "Workshop bound") :
-                                T("未绑定", "Not bound"), project.lastPublishedVersion))
+                                T("未绑定", "Not bound"), project.lastPublishedVersion, uploadStatus != nullptr))
                         SelectLocalProjectUnlocked(project);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s%s%s", path.c_str(),
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s%s%s%s%s", path.c_str(),
                         project.publishedFileId ? T("已绑定 Workshop", "Workshop bound") : T("未绑定", "Not bound"),
-                        project.lastPublishedVersion.empty() ? "" : " · ", project.lastPublishedVersion.c_str());
+                        project.lastPublishedVersion.empty() ? "" : " · ", project.lastPublishedVersion.c_str(),
+                        uploadStatus ? "\n" : "", uploadStatus ? uploadStatus : "");
                     ImGui::Spacing();
                 }
             }
@@ -1415,6 +1557,42 @@ private:
         }
     }
 
+    bool RenderFeedbackUnlocked(const Feedback& feedback)
+    {
+        const auto outputFile = feedback.outputFile;
+        const char* openLabel = T("打开所在位置", "Open file location");
+        const float actionsWidth = ButtonWidth("X") + (outputFile.empty() ? 0.0f :
+            ButtonWidth(openLabel) + ImGui::GetStyle().ItemSpacing.x);
+        bool dismiss = false;
+        bool open = false;
+        if (ImGui::BeginTable("operation-feedback", 2, ImGuiTableFlags_SizingFixedFit |
+                ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoPadOuterX))
+        {
+            ImGui::TableSetupColumn("message", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("actions", ImGuiTableColumnFlags_WidthFixed, actionsWidth);
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::AlignTextToFramePadding();
+            ImGui::PushStyleColor(ImGuiCol_Text, feedback.success ?
+                ImVec4(0.18f, 0.58f, 0.32f, 1) : ImVec4(0.78f, 0.20f, 0.18f, 1));
+            ImGui::TextWrapped("%s", feedback.text.c_str());
+            ImGui::PopStyleColor();
+            ImGui::TableSetColumnIndex(1);
+            if (!outputFile.empty())
+            {
+                open = BlueButton(openLabel);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s",
+                    WideToUtf8(outputFile.wstring()).c_str());
+                ImGui::SameLine();
+            }
+            dismiss = BlueButton("X##dismiss-feedback");
+            ImGui::EndTable();
+        }
+        if (!dismiss && open && !OpenFileLocation(outputFile))
+            SetMessageUnlocked(false, T("无法打开所在位置。", "Could not open the file location."), outputFile);
+        return dismiss;
+    }
+
     void RenderOperationFeedbackUnlocked()
     {
         WorkTarget work;
@@ -1433,38 +1611,7 @@ private:
             { feedback_.erase(found); return; }
             ImGui::Spacing();
             ImGui::PushID(found->first.second.c_str());
-            const auto outputFile = found->second.outputFile;
-            const char* openLabel = T("打开所在位置", "Open file location");
-            const float actionsWidth = ButtonWidth("X") + (outputFile.empty() ? 0.0f :
-                ButtonWidth(openLabel) + ImGui::GetStyle().ItemSpacing.x);
-            bool dismiss = false;
-            bool open = false;
-            if (ImGui::BeginTable("operation-feedback", 2, ImGuiTableFlags_SizingFixedFit |
-                    ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoPadOuterX))
-            {
-                ImGui::TableSetupColumn("message", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("actions", ImGuiTableColumnFlags_WidthFixed, actionsWidth);
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::AlignTextToFramePadding();
-                ImGui::PushStyleColor(ImGuiCol_Text, found->second.success ?
-                    ImVec4(0.18f, 0.58f, 0.32f, 1) : ImVec4(0.78f, 0.20f, 0.18f, 1));
-                ImGui::TextWrapped("%s", found->second.text.c_str());
-                ImGui::PopStyleColor();
-                ImGui::TableSetColumnIndex(1);
-                if (!outputFile.empty())
-                {
-                    open = BlueButton(openLabel);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s",
-                        WideToUtf8(outputFile.wstring()).c_str());
-                    ImGui::SameLine();
-                }
-                dismiss = BlueButton("X##dismiss-feedback");
-                ImGui::EndTable();
-            }
-            if (dismiss) feedback_.erase(found);
-            else if (open && !OpenFileLocation(outputFile))
-                SetMessageUnlocked(false, T("无法打开所在位置。", "Could not open the file location."), outputFile);
+            if (RenderFeedbackUnlocked(found->second)) feedback_.erase(found);
             ImGui::PopID();
         };
         render({activePage_, {}});
@@ -1897,7 +2044,6 @@ private:
         auto& publishPublic_ = draft.publishPublic;
         auto& syncPackageLocalization_ = draft.reusePackageText;
         auto& updatePreview_ = draft.updatePreview;
-        auto& updateTags_ = draft.updateTags;
         const bool creating = !project.publishedFileId.has_value();
         if (localizationStateProjectId_ != project.localId ||
             localizationStateCreating_ != creating)
@@ -1935,18 +2081,25 @@ private:
             ImGui::BeginDisabled(busy_.load());
             ImGui::Spacing();
             RenderLocalPreviewManager(window, project);
-            std::array<char, 1024> tags{};
+            constexpr auto tagBufferSize = kMaxWorkshopTags * (kMaxWorkshopTagBytes + 2) + 1;
+            std::array<char, tagBufferSize> tags{};
             std::copy_n(tagsBuffer_.c_str(),
                 std::min(tagsBuffer_.size(), tags.size() - 1), tags.data());
             bool saveTags = false;
-            if (ImGui::BeginTable("tags-row", 3, ImGuiTableFlags_SizingFixedFit |
+            const auto connection = steam_.Status();
+            const bool connected = connection.initialized && connection.loggedOn;
+            const char* tagMenuLabel = creating ? T("添加标签", "Add tag") :
+                T("标签操作", "Tag actions");
+            const char* submitTagsLabel = creating ? T("保存标签", "Save tags") :
+                T("发布标签", "Publish tags");
+            if (ImGui::BeginTable("tags-row", 4, ImGuiTableFlags_SizingFixedFit |
                     ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoPadOuterX))
             {
                 ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableSetupColumn("input", ImGuiTableColumnFlags_WidthFixed,
                     std::min(SettingControlWidth(), ImGui::GetContentRegionAvail().x * 0.38f));
-                ImGui::TableSetupColumn("save", ImGuiTableColumnFlags_WidthFixed,
-                    ButtonWidth(T("保存标签", "Save tags")));
+                ImGui::TableSetupColumn("menu", ImGuiTableColumnFlags_WidthFixed, ButtonWidth(tagMenuLabel));
+                ImGui::TableSetupColumn("submit", ImGuiTableColumnFlags_WidthFixed, ButtonWidth(submitTagsLabel));
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::AlignTextToFramePadding();
@@ -1955,16 +2108,61 @@ private:
                 ImGui::SetNextItemWidth(-FLT_MIN);
                 if (ImGui::InputText("##project-tags", tags.data(), tags.size())) draft.EditTags(tags.data());
                 ImGui::TableSetColumnIndex(2);
-                saveTags = SecondaryButton(T("保存标签", "Save tags"));
+                if (SecondaryButton(tagMenuLabel))
+                    ImGui::OpenPopup("widget-tag-options");
+                if (ImGui::BeginPopup("widget-tag-options"))
+                {
+                    struct TagOption { const char* value; const char* label; };
+                    // Steam filtering uses the original values in its Widget group.
+                    const TagOption options[] = {
+                        {"Utilities", T("实用工具", "Utilities")},
+                        {"System Monitor", T("系统监控", "System Monitor")},
+                        {"Media", T("媒体", "Media")},
+                        {"Fun & Interaction", T("娱乐与互动", "Fun & Interaction")},
+                        {"Decoration", T("桌面装饰", "Decoration")},
+                        {"News & Feeds", T("新闻与订阅源", "News & Feeds")},
+                    };
+                    const auto currentTags = SplitTags(tagsBuffer_);
+                    const std::string prefix = currentTags.empty() ?
+                        std::string{} : JoinTags(currentTags) + ", ";
+                    for (const auto& option : options)
+                    {
+                        const bool added = std::find(currentTags.begin(),
+                            currentTags.end(), option.value) != currentTags.end();
+                        const bool fits = prefix.size() + std::string_view(option.value).size() < tags.size();
+                        const char* canonicalLabel = std::string_view(option.label) == option.value ?
+                            nullptr : option.value;
+                        if (ImGui::MenuItem(option.label, canonicalLabel, added, !added && fits))
+                            draft.EditTags(prefix + option.value);
+                    }
+                    if (!creating)
+                    {
+                        ImGui::Separator();
+                        if (ImGui::MenuItem(T("读取 Steam 标签", "Read Steam tags"),
+                                nullptr, false, connected))
+                            StartReadSteamTags(project, connection);
+                    }
+                    ImGui::EndPopup();
+                }
+                ImGui::TableSetColumnIndex(3);
+                if (creating) saveTags = SecondaryButton(submitTagsLabel);
+                else
+                {
+                    ImGui::BeginDisabled(!connected);
+                    if (BlueButton(submitTagsLabel)) StartPublishTags(project, connection, SplitTags(tagsBuffer_));
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", T("提交编辑框中的全部标签。留空会清除标签。",
+                            "Publish the entire tag list. An empty list clears the tags."));
+                    ImGui::EndDisabled();
+                }
                 ImGui::EndTable();
             }
             if (saveTags)
             {
-                InvalidatePreparedPublishUnlocked();
-                project.tags = SplitTags(tagsBuffer_);
                 std::string error;
-                if (!store_.Save(error)) SetMessageUnlocked(false, error);
-                else { draft.TagsSaved(); SetMessageUnlocked(true, T("标签已保存", "Tags saved")); }
+                if (SaveProjectTagsUnlocked(project, SplitTags(tagsBuffer_), error))
+                    SetMessageUnlocked(true, T("标签已保存", "Tags saved"));
+                else SetMessageUnlocked(false, error);
             }
             if (creating)
             {
@@ -2155,25 +2353,6 @@ private:
                     {
                         project.publishPreferences.previewSource = previous;
                         updatePreview_ = previous == WorkshopAssetSource::Local;
-                        SetMessageUnlocked(false, error);
-                    }
-                    else InvalidatePreparedPublishUnlocked();
-                }
-                BeginSettingRow(T("同时更新标签", "Also update tags"),
-                    ImGui::GetFrameHeight());
-                bool tagsValue = updateTags_;
-                if (ImGui::Checkbox("##update-tags", &tagsValue))
-                {
-                    draft.SetUpdateTags(tagsValue);
-                    const WorkshopAssetSource previous =
-                        project.publishPreferences.tagsSource;
-                    project.publishPreferences.tagsSource = updateTags_ ?
-                        WorkshopAssetSource::Local : WorkshopAssetSource::Steam;
-                    std::string error;
-                    if (!store_.Save(error))
-                    {
-                        project.publishPreferences.tagsSource = previous;
-                        updateTags_ = previous == WorkshopAssetSource::Local;
                         SetMessageUnlocked(false, error);
                     }
                     else InvalidatePreparedPublishUnlocked();
@@ -2399,6 +2578,113 @@ private:
         }, WorkKind::TextPreview);
     }
 
+    bool SaveProjectTagsUnlocked(WorkshopProject& project,
+        std::vector<std::string> tags, std::string& error)
+    {
+        auto previous = std::exchange(project.tags, std::move(tags));
+        if (!store_.Save(error))
+        {
+            project.tags = std::move(previous);
+            return false;
+        }
+        drafts_.ForProject(project, JoinTags(project.tags)).TagsSaved();
+        if (!project.publishedFileId) InvalidatePreparedPublishUnlocked();
+        return true;
+    }
+
+    std::optional<PublishedItem> FindSteamTagItem(const WorkshopProject& project,
+        const SteamStatus& connection, WorkshopItemQuery query)
+    {
+        CoreError error;
+        auto item = steam_.FindItem(project.publishedFileId.value_or(0), error, query);
+        if (!item)
+        {
+            if (!ShowSteamRecovery(error)) SetMessage(false, error.code + ": " + error.message);
+            return std::nullopt;
+        }
+        const auto current = steam_.Status();
+        if (!current.loggedOn || current.steamId != connection.steamId ||
+            item->ownerSteamId != ParseItemId(connection.steamId).value_or(0) ||
+            item->consumerAppId != connection.appId || item->banned)
+        {
+            SetMessage(false, T("只能管理当前 Steam 账号拥有的项目。",
+                "You can only manage items owned by the current Steam account."));
+            return std::nullopt;
+        }
+        const auto identity = DescribeManagerWorkshopItem(item->metadata);
+        if (identity.kind != ManagerWorkshopItemKind::Widget || !identity.Complete() ||
+            (!project.packageId.empty() && project.packageId != identity.identity))
+        {
+            SetMessage(false, T("没有匹配的本地组件", "No matching local component"));
+            return std::nullopt;
+        }
+        return item;
+    }
+
+    void StartReadSteamTags(const WorkshopProject& project, const SteamStatus& connection)
+    {
+        StartWork([this, project, connection]
+        {
+            const auto item = FindSteamTagItem(project, connection, WorkshopItemQuery::Tags);
+            if (!item) return;
+            std::lock_guard lock(mutex_);
+            const auto* current = FindProjectUnlocked(project.localId);
+            if (!current || current->publishedFileId != project.publishedFileId) return;
+            auto& draft = drafts_.ForProject(*current, JoinTags(current->tags));
+            draft.EditTags(JoinTags(item->tags));
+            SetMessageUnlocked(true, T("已读取 Steam 标签", "Steam tags loaded"));
+        }, WorkKind::Local, project.localId);
+    }
+
+    void StartPublishTags(const WorkshopProject& project, const SteamStatus& connection,
+        std::vector<std::string> tags)
+    {
+        const auto owner = ParseItemId(connection.steamId);
+        if (!project.publishedFileId || !connection.loggedOn || !owner) return;
+        publishInProgress_.store(true);
+        if (!StartWork([this, project, connection, owner = *owner, tags = std::move(tags)]() mutable
+        {
+            PublishRequest request;
+            request.publishedFileId = project.publishedFileId;
+            request.expectedOwnerSteamId = owner;
+            request.expectedPackageId = project.packageId;
+            if (request.expectedPackageId.empty())
+            {
+                const auto item = FindSteamTagItem(project, connection, WorkshopItemQuery::Identity);
+                if (!item) { publishInProgress_.store(false); return; }
+                request.expectedPackageId = DescribeManagerWorkshopItem(item->metadata).identity;
+            }
+            request.updateContent = false;
+            request.tags = std::move(tags);
+            request.timeout = std::chrono::minutes(5);
+            CoreError error;
+            const auto result = steam_.Publish(request, {}, error);
+            publishInProgress_.store(false);
+            if (!result)
+            {
+                if (!ShowSteamRecovery(error)) SetMessage(false, error.code + ": " + error.message);
+                return;
+            }
+            if (result->needsLegalAgreement)
+            {
+                SetMessage(false, T("请先在 Steam 接受创意工坊协议。",
+                    "Accept the Steam Workshop agreement in Steam first."));
+                return;
+            }
+            std::lock_guard lock(mutex_);
+            auto* current = FindProjectUnlocked(project.localId);
+            if (!current || current->publishedFileId != project.publishedFileId) return;
+            publishedRefreshRequested_.store(true);
+            std::string saveError;
+            if (SaveProjectTagsUnlocked(*current, std::move(*request.tags), saveError))
+                SetMessageUnlocked(true, T("标签已发布到 Steam", "Tags published to Steam"));
+            else
+                SetMessageUnlocked(false, T("标签已发布到 Steam，但本地保存失败：%s",
+                    "Tags published to Steam, but local saving failed: %s", saveError.c_str()));
+        }, WorkKind::TagPublish, project.localId)) publishInProgress_.store(false);
+        else footerFeedback_.reset();
+    }
+
     void StartPreparePublish(std::string localId)
     {
         preparedPublish_.reset();
@@ -2409,11 +2695,10 @@ private:
         const std::string description = draft.manualEnglishDescription;
         const bool syncPackageLocalization = draft.reusePackageText;
         const bool updatePreview = draft.updatePreview;
-        const bool updateTags = draft.updateTags;
         const bool publishPublic = draft.publishPublic;
         const std::uint64_t inputRevision = publishInputsRevision_;
         StartWork([this, localId = std::move(localId), title, description,
-                   syncPackageLocalization, updatePreview, updateTags,
+                   syncPackageLocalization, updatePreview,
                    inputRevision, publishPublic]
         {
             WorkshopProject snapshot;
@@ -2430,7 +2715,7 @@ private:
                     WorkshopTextSource::Steam);
             snapshot.publishPreferences.previewSource = updatePreview ?
                 WorkshopAssetSource::Local : WorkshopAssetSource::Steam;
-            snapshot.publishPreferences.tagsSource = updateTags ?
+            snapshot.publishPreferences.tagsSource = creating ?
                 WorkshopAssetSource::Local : WorkshopAssetSource::Steam;
             snapshot.publishPreferences.manualEnglishTitle = title;
             snapshot.publishPreferences.manualEnglishDescription =
@@ -2442,7 +2727,8 @@ private:
             if (!packageTool_.Inspect(snapshot.sourceDirectory,
                     inspection, error) ||
                 !packageTool_.Pack(snapshot.sourceDirectory,
-                    inspection, artifact, error))
+                    inspection, artifact, error,
+                    packageTool_.FindPublishedBaseline(snapshot, inspection.version)))
             {
                 SetMessage(false, error);
                 return;
@@ -2547,6 +2833,9 @@ private:
                         return saved;
                     }});
             std::string error;
+            std::string baselineError;
+            if (result.baseSubmitted && result.contentUploaded)
+                (void)packageTool_.SavePublishedBaseline(prepared.artifact, baselineError);
             {
                 std::lock_guard lock(mutex_);
                 publishTask_.Finish(result, published, coreError);
@@ -2574,6 +2863,7 @@ private:
                         return;
                     }
                 }
+                if (!baselineError.empty()) SetMessageUnlocked(false, baselineError);
             }
             if (!published)
             {
@@ -2656,6 +2946,12 @@ private:
             { SetMessageUnlocked(false, BindingIssueText(decision.issue)); return; }
             const WorkshopProject previous = *project;
             project->packageId = inspection.packageId;
+            if (project->publishedFileId != currentItem->publishedFileId)
+            {
+                project->lastPublishedVersion = DescribeManagerWorkshopItem(currentItem->metadata).version;
+                project->lastPublishedSha256.clear();
+                project->lastPublishedAt.clear();
+            }
             project->publishedFileId = currentItem->publishedFileId;
             if (!store_.Save(error))
             { *project = previous; SetMessageUnlocked(false, error); return; }
@@ -3057,6 +3353,8 @@ private:
     std::function<void()> pendingWork_;
     WorkTarget runningWork_;
     std::jthread worker_;
+    std::jthread packageWatchWorker_;
+    std::map<std::filesystem::path, WidgetPackageFingerprint> localPackageFingerprints_;
     std::atomic_bool connectionCheckRequested_ = false;
     std::atomic_bool publishedRefreshRequested_ = false;
     std::atomic_bool busy_ = false;
@@ -3091,6 +3389,7 @@ private:
     bool localizationPreviewLoading_ = false;
     SteamConnectionProblem steamConnectionProblem_ = SteamConnectionProblem::None;
     std::map<std::pair<int, std::string>, Feedback> feedback_;
+    std::optional<Feedback> footerFeedback_;
 };
 
 WorkshopManagerApp* gApp = nullptr;

@@ -3,11 +3,18 @@
 #include "taskbar_hook_protocol.h"
 #include "taskbar_menu_access.h"
 #include <shellapi.h>
+#include <cstdint>
 
 namespace snowdesktop::taskbar_hook::native
 {
 inline constexpr wchar_t kContextMenuProperty[] = L"SnowDesktop.Taskbar.ContextMenu.v1";
 inline constexpr wchar_t kMinimizeInputTickProperty[] = L"SnowDesktop.Taskbar.MinimizeInputTick.v1";
+inline constexpr wchar_t kAutoHideStateProperty[] = L"SnowDesktop.Taskbar.AutoHideState.v1";
+enum class AutoHideState : std::uintptr_t { Unknown, Ready, Unavailable };
+inline AutoHideState ReadAutoHideState(HWND window) noexcept
+{
+    return static_cast<AutoHideState>(reinterpret_cast<std::uintptr_t>(GetPropW(window, kAutoHideStateProperty)));
+}
 
 // Called on the owning window thread. The mapping must outlive the subclass.
 using AppBarMessage = UINT_PTR(WINAPI*)(DWORD, PAPPBARDATA);

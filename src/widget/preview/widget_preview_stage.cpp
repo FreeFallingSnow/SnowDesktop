@@ -1,8 +1,10 @@
 #include "widget_preview_stage.h"
+#include "ui/render/blur_sampling_bounds.h"
 #include "widget_wallpaper_pixels.h"
 #include "ui/render/acrylic_noise_asset.h"
 #include "ui/render/smooth_corner_geometry.h"
 #include "theme/flat_glass_rim.h"
+#include "ui/render/highlight_coverage.h"
 #include "widget/view/widget_composition_layer_rules.h"
 
 #include <d2d1effects.h>
@@ -473,9 +475,17 @@ bool DrawStage(ID2D1DeviceContext* context, const RECT& bounds,
     const int height = bounds.bottom - bounds.top;
     if (!context || width <= 0 || height <= 0)
         return false;
+    const int margin = style.glassEnabled ? static_cast<int>(blur_sampling::KernelMargin(style.blurRadius)) : 0;
+    WallpaperViewport samplingViewport = viewport;
+    if (samplingViewport.canvasWidth <= 0) samplingViewport.canvasWidth = width;
+    if (samplingViewport.canvasHeight <= 0) samplingViewport.canvasHeight = height;
+    samplingViewport.offsetX -= margin;
+    samplingViewport.offsetY -= margin;
+    const int samplingWidth = width + 2 * margin;
+    const int samplingHeight = height + 2 * margin;
     const Wallpaper wallpaper = source && !source->pixels.empty()
-        ? GenerateWallpaper(*source, width, height, viewport)
-        : GenerateWallpaper(width, height, style.lightTheme, viewport);
+        ? GenerateWallpaper(*source, samplingWidth, samplingHeight, samplingViewport)
+        : GenerateWallpaper(samplingWidth, samplingHeight, style.lightTheme, samplingViewport);
     if (wallpaper.pixels.empty()) return false;
 
     const D2D1_BITMAP_PROPERTIES1 bitmapProperties =
@@ -484,16 +494,19 @@ bool DrawStage(ID2D1DeviceContext* context, const RECT& bounds,
                 D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
     ComPtr<ID2D1Bitmap1> sourceBitmap;
     if (FAILED(context->CreateBitmap(
-            D2D1::SizeU(static_cast<UINT32>(width),
-                static_cast<UINT32>(height)),
+            D2D1::SizeU(static_cast<UINT32>(samplingWidth),
+                static_cast<UINT32>(samplingHeight)),
             wallpaper.pixels.data(),
-            static_cast<UINT32>(width * sizeof(std::uint32_t)),
+            static_cast<UINT32>(samplingWidth * sizeof(std::uint32_t)),
             &bitmapProperties, &sourceBitmap)) || !sourceBitmap)
         return false;
 
-    context->DrawBitmap(sourceBitmap.Get(), ToD2DRect(bounds), 1.0f,
-        D2D1_INTERPOLATION_MODE_LINEAR);
-    if (!style.glassEnabled || style.blurRadius <= 0.0f)
+    const auto displaySource = D2D1::RectF(static_cast<float>(margin), static_cast<float>(margin),
+        static_cast<float>(margin + width), static_cast<float>(margin + height));
+    const auto displayBounds = ToD2DRect(bounds);
+    context->DrawBitmap(sourceBitmap.Get(), &displayBounds, 1.0f,
+        D2D1_INTERPOLATION_MODE_LINEAR, &displaySource, nullptr);
+    if (margin <= 0)
         return true;
 
     ComPtr<ID2D1Effect> blur;
@@ -517,8 +530,7 @@ bool DrawStage(ID2D1DeviceContext* context, const RECT& bounds,
         ToD2DRect(bounds), clip.Get()), nullptr);
     context->DrawImage(blur.Get(), D2D1::Point2F(
         static_cast<float>(bounds.left), static_cast<float>(bounds.top)),
-        D2D1::RectF(0.0f, 0.0f, static_cast<float>(width),
-            static_cast<float>(height)), D2D1_INTERPOLATION_MODE_LINEAR,
+        displaySource, D2D1_INTERPOLATION_MODE_LINEAR,
         D2D1_COMPOSITE_MODE_SOURCE_OVER);
     context->PopLayer();
     return true;
@@ -894,6 +906,7 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     }
     context->FillOpacityMask(
         mask.Get(), reflectionBrush.Get(), &reflectionBounds, nullptr);
+    HighlightCoverage::RecordMask(context, mask.Get(), reflectionBounds);
     if (shadowMask && shadowBrush)
         context->FillOpacityMask(shadowMask.Get(), shadowBrush.Get(),
             &reflectionBounds, nullptr);

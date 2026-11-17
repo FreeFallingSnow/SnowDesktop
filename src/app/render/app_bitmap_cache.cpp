@@ -8,6 +8,7 @@
 #include "app/dock/persistent_dock_host.h"
 #include "desktop_backdrop_update_rules.h"
 #include "diagnostics/performance_trace.h"
+#include "ui/render/highlight_coverage.h"
 
 // HBITMAP analysis, icon beautification and Direct2D bitmap caching.
 
@@ -533,6 +534,15 @@ ComPtr<ID2D1Bitmap1> DesktopApp::UploadStyledIconPixels(
 
     iconGlassBackdrop_[bitmap.Get()] = prepared.needsGlassBackdrop;
     iconBitmapStyles_[bitmap.Get()] = prepared.style;
+    if (!prepared.highlightCoverage.empty())
+    {
+        ComPtr<ID2D1Bitmap1> mask;
+        const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
+            D2D1::PixelFormat(DXGI_FORMAT_A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        if (SUCCEEDED(d2dContext_->CreateBitmap(bitmap->GetPixelSize(),
+            prepared.highlightCoverage.data(), static_cast<UINT32>(buffer.width), &properties, &mask)))
+            snowdesktop::HighlightCoverage::SetBitmapMask(bitmap.Get(), mask.Get());
+    }
     return bitmap;
 }
 
@@ -624,10 +634,12 @@ void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
     const auto& style = styled == iconBitmapStyles_.end() ? iconBeautifySettings_ : styled->second;
     const bool translucentMaterial = glass != iconGlassBackdrop_.end() && glass->second &&
         style.enabled && style.glassEnabled;
-    if (translucentMaterial)
-        RegisterIconBackdrop(target, plan.bounds, opacity, ownerKey, &style);
-
+    if (translucentMaterial) RegisterIconBackdrop(target, plan.bounds, opacity, ownerKey, &style);
     snowdesktop::icon_bitmap_renderer::Draw(target, bitmap, plan, opacity, translucentMaterial);
+    if (opacity > 0.f)
+        snowdesktop::HighlightCoverage::RecordBitmap(target, bitmap,
+            D2D1::RectF(static_cast<float>(plan.bounds.left), static_cast<float>(plan.bounds.top),
+                static_cast<float>(plan.bounds.right), static_cast<float>(plan.bounds.bottom)));
 }
 
 void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
@@ -639,41 +651,39 @@ void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
     // transaction. Icons inherit that panel rather than adding a second blur.
     if (renderingFloatingPopup_ || quickNavigation_->compositionPaintInProgress) return;
     DesktopBackdropCompositor* compositor = &desktopBackdropCompositor_;
-    bool parentSuppliesGlass = desktopWidgetCompositionDrawInProgress_ &&
+    const bool parentSuppliesGlass = desktopWidgetCompositionDrawInProgress_ &&
         desktopWidgetBackdropRequestedDuringDraw_;
     auto contentClip = snowdesktop::ScopedIconBackdropClip::Current(target);
     if (desktopWidgetIconBackdropsDrawing_)
     {
-        // A successful child redraw will retire omitted icons, including every
-        // old independent layer when the component supplies its own material.
-        if (!parentSuppliesGlass && opacity > 0.0f)
+        if (opacity > 0.0f)
             desktopWidgetIconBackdropsDrawing_->Collect({frame,
                 appearance.shape, appearance.glassBlurRadius,
-                opacity, false, std::move(contentClip)});
+                opacity, parentSuppliesGlass, std::move(contentClip)});
         return;
     }
     if (renderingPersistentDockHost_)
     {
-        // Merged Dock chrome is painted by the status bar's separate target.
-        // Its backdrop is absent from this compositor's local panel list.
-        if (statusBar_ && renderingPersistentDockHost_->container &&
-            renderingPersistentDockHost_->container->IsMergedWithStatusBar())
+        auto& host = *renderingPersistentDockHost_;
+        if (host.collectingPanelIcons && host.collectingMergedGlass)
         {
-            RECT screenFrame = frame;
-            OffsetRect(&screenFrame, virtualLeft_, virtualTop_);
-            parentSuppliesGlass = parentSuppliesGlass || statusBar_->HasMergedGlassBackdrop(
-                renderingPersistentDockHost_->monitor, screenFrame);
+            if (opacity > 0.0f)
+            {
+                snowdesktop::PanelBackdropIcon icon{frame, appearance.shape,
+                    appearance.glassBlurRadius, std::move(contentClip)};
+                icon.Offset(virtualLeft_, virtualTop_);
+                host.mergedGlassIcons.push_back(std::move(icon));
+            }
+            return;
         }
-        compositor = &renderingPersistentDockHost_->backdrop;
-        frame = snowdesktop::floating_dock_rules::DesktopRectToWindowRect(
-            frame, renderingPersistentDockHost_->sourceRect);
-        if (contentClip)
-        {
-            contentClip->bounds = snowdesktop::floating_dock_rules::DesktopRectToWindowRect(
-                contentClip->bounds, renderingPersistentDockHost_->sourceRect);
-            contentClip->geometryOffset.x -= renderingPersistentDockHost_->sourceRect.left;
-            contentClip->geometryOffset.y -= renderingPersistentDockHost_->sourceRect.top;
-        }
+        compositor = &host.backdrop;
+        snowdesktop::PanelBackdropIcon icon{frame, appearance.shape,
+            appearance.glassBlurRadius, std::move(contentClip)};
+        icon.Offset(-host.sourceRect.left, -host.sourceRect.top);
+        if (host.collectingPanelIcons && opacity > 0.0f &&
+            compositor->CollectStagedPanelIcon(reinterpret_cast<std::uintptr_t>(host.container), icon)) return;
+        frame = icon.frame;
+        contentClip = std::move(icon.clip);
     }
     const auto key = ownerKey ? ownerKey | 1u : 0;
     snowdesktop::desktop_backdrop_update_rules::ReconcileIconPanel(*compositor,

@@ -453,34 +453,39 @@ inline bool DockWindowMatchesAppIdentity(
 {
     if (!window || !IsWindow(window)) return false;
     window = GetAncestor(window, GA_ROOT);
-    DWORD processId = 0;
-    GetWindowThreadProcessId(window, &processId);
-    const std::wstring executablePath = QueryDockWindowExecutablePath(window);
+    const std::wstring executablePath =
+        identity.kind == DockAppIdentityKind::Applications
+        ? std::wstring{}
+        : QueryDockWindowExecutablePath(window);
     const std::wstring appUserModelId =
         identity.kind == DockAppIdentityKind::Executable
         ? std::wstring{}
         : QueryDockWindowAppUserModelId(window);
-    std::vector<std::wstring> ancestorExecutablePaths;
-    if (identity.kind == DockAppIdentityKind::Executable &&
-        executablePath != identity.executablePath)
-    {
-        std::optional<DockProcessParentMap> localParents;
-        auto& snapshot = enumerationParents ? *enumerationParents : localParents;
-        const auto& parents = snowdesktop::dock_process_snapshot::Read(
-            snapshot, &QueryDockProcessParentMap);
-        ancestorExecutablePaths =
-            QueryDockProcessAncestorExecutablePaths(
-                processId, parents);
-    }
-    return snowdesktop::dock_app_identity_rules::
-        MatchesRunningApp(
+    namespace rules = snowdesktop::dock_app_identity_rules;
+    if (rules::MatchesRunningApp(
             identity.kind,
             identity.executablePath,
             identity.appUserModelId,
             identity.steamInstallDirectory,
             executablePath,
             appUserModelId,
-            ancestorExecutablePaths, identity.validatedPayloadPaths);
+            {}, identity.validatedPayloadPaths))
+        return true;
+
+    // A process outside the launcher's directory cannot match by ancestry.
+    // Avoid a system-wide process snapshot when checking those windows.
+    if (identity.kind != DockAppIdentityKind::Executable ||
+        !rules::IsInLauncherInstallDirectory(identity.executablePath, executablePath))
+        return false;
+    DWORD processId = 0;
+    GetWindowThreadProcessId(window, &processId);
+    std::optional<DockProcessParentMap> localParents;
+    auto& snapshot = enumerationParents ? *enumerationParents : localParents;
+    const auto& parents = snowdesktop::dock_process_snapshot::Read(
+        snapshot, &QueryDockProcessParentMap);
+    const auto ancestors = QueryDockProcessAncestorExecutablePaths(processId, parents);
+    return rules::MatchesExecutableProcessFamily(identity.executablePath, executablePath,
+        ancestors);
 }
 
 inline bool DockWindowsShareActivationGroup(HWND first, HWND second)
@@ -525,20 +530,9 @@ inline bool DockWindowsShareApplicationIdentity(
 
 inline bool IsDockTaskWindow(HWND window, bool includeCloaked = false)
 {
-    if (!window || GetAncestor(window, GA_ROOT) != window)
-        return false;
-    DWORD cloaked = 0;
-    const bool isCloaked = !includeCloaked &&
-        SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED,
-            &cloaked, sizeof(cloaked))) &&
-        snowdesktop::dock_source_cloak::TaskWindowCloakFlags(window, cloaked) != 0;
-    if (!snowdesktop::dock_window_rules::
-            IsTaskWindowPresentationEligible(
-                IsWindowVisible(window) != FALSE,
-                IsIconic(window) != FALSE,
-                isCloaked,
-                snowdesktop::dock_window_rules::
-                    IsTaskWindowExplicitlyExcluded(window)))
+    if (!window || !IsWindowVisible(window) ||
+        GetAncestor(window, GA_ROOT) != window ||
+        snowdesktop::dock_window_rules::IsTaskWindowExplicitlyExcluded(window))
         return false;
     wchar_t className[64]{};
     GetClassNameW(window, className, static_cast<int>(std::size(className)));
@@ -551,7 +545,15 @@ inline bool IsDockTaskWindow(HWND window, bool includeCloaked = false)
     if (!snowdesktop::dock_window_rules::IsTaskWindowStyleEligible(
             exStyle, GetWindow(window, GW_OWNER) != nullptr))
         return false;
-    return true;
+
+    // Only ask DWM about windows that can otherwise appear in the Dock.
+    DWORD cloaked = 0;
+    const bool isCloaked = !includeCloaked &&
+        SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED,
+            &cloaked, sizeof(cloaked))) &&
+        snowdesktop::dock_source_cloak::TaskWindowCloakFlags(window, cloaked) != 0;
+    return snowdesktop::dock_window_rules::
+        IsTaskWindowPresentationEligible(true, false, isCloaked);
 }
 
 inline bool IsDockTaskbarDocumentProxyCandidate(HWND window)

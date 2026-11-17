@@ -66,6 +66,10 @@ public:
         const std::string& contentKey, const std::wstring& path,
         PackageImageAcquireError* error = nullptr, bool lazy = false,
         ContentDigest digest = {});
+    bool AcquireOnDemand(const std::string& key, const std::wstring& path);
+    bool IsOnDemand(const std::string& key) const noexcept;
+    void RequestMetadata(const std::string& key, const std::string& owner,
+        bool synchronous);
     bool Release(const std::string& contentKey) noexcept;
     const PackageImageSource* Find(
         const std::string& contentKey) const noexcept;
@@ -103,6 +107,7 @@ private:
         PackageImageSource source;
         std::size_t references = 0;
         std::shared_ptr<const std::vector<std::uint8_t>> encoded;
+        std::wstring diskPath;
         PackageImageSize original;
         std::size_t reservedBytes = 0;
         std::uint64_t identity = 0;
@@ -126,6 +131,8 @@ private:
         PackageImageAcquireError* error);
     void CancelPrewarm() noexcept;
     void UpdateDemand(Entry& entry, Clock::time_point now);
+    snowdesktop::BackgroundWork& DecodeWorker();
+    void ScheduleMetadata(const std::string& key, Entry& entry, bool synchronous);
     void Schedule(const std::string& key, Entry& entry,
         Clock::time_point now, bool synchronous);
 
@@ -135,6 +142,7 @@ private:
     std::size_t reservedBytes_ = 0;
     std::size_t encodedBytes_ = 0;
     std::size_t pendingBytes_ = 0;
+    std::size_t pendingDiskBytes_ = 0;
     std::uint64_t nextIdentity_ = 0;
     std::unordered_map<std::string, Entry> sources_;
     // Speculative pixels never consume live resource quota or references.
@@ -144,6 +152,7 @@ private:
     std::shared_ptr<std::atomic_bool> prewarmCancelled_;
     bool prewarmPending_ = false;
     std::unique_ptr<snowdesktop::BackgroundWork> decodeWork_;
+    bool metadataPending_ = false;
     std::function<void()> onReady_;
     std::vector<std::string> changed_;
     // Failed digests have no resource handle whose release can retire them.

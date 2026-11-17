@@ -21,6 +21,7 @@ struct Prepared
     bool nativeControlSource = false;
     bool needsGlassBackdrop = false;
     icon_bitmap_pixels::Buffer buffer;
+    std::vector<std::uint8_t> highlightCoverage;
 };
 
 // Shared by worker prewarming and the synchronous cold-miss fallback. Keep the
@@ -42,7 +43,7 @@ inline bool Prepare(HBITMAP source, const IconBeautifySettings& style,
         out.needsGlassBackdrop = style.glassEnabled && !edgeFill;
         buffer.pixels = icon_beautify::Render(buffer.pixels, buffer.width, buffer.height,
             style, edgeFill, nativeControlSource ? icon_beautify::SourceKind::NativeControl :
-                icon_beautify::SourceKind::Image);
+                icon_beautify::SourceKind::Image, &out.highlightCoverage);
     }
     out.source = source;
     out.style = style;

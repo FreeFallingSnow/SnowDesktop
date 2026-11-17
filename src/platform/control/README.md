@@ -337,6 +337,10 @@ stored units (for example, opacity 0..1), not UI percentages. Collections are
 bounded, unknown keys and wrong types are rejected, and 64-bit model integers
 use decimal strings when needed to retain exact values. Target services may
 add their own schema, visibility, enablement and validation information.
+
+The Dock field `systemTaskbarAutoHide` retains the application's selected
+auto-hide setting if Windows fails to apply it. The Windows Taskbar settings
+page reports whether Explorer has applied the setting and provides a retry.
 `personalization.contextMenuStyle` keeps stable stored IDs independently of UI
 order: 0 is Win11 opaque following system light/dark (the legacy compatible-follow
 selection), 1/2 are Win11 light/dark, 3/4 are Win11 opaque light/dark, 5/6 are Win10

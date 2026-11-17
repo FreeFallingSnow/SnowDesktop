@@ -576,6 +576,10 @@ UINT DesktopApp::ShowModernMenu(
     snowdesktop::modern_menu::Options options;
     const bool powerUserMenu = snowdesktop::power_user_menu::IsRootMenu(rootMenu);
     const HMONITOR sourceMonitor = MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST);
+    dockTitleTooltip_.Hide();
+    navHotEdgeTooltip_.Hide();
+    luaWidgetTooltip_.Hide();
+    ResetPageNotify();
     options.owner = owner;
     options.anchor = screenPoint;
     options.dpi = menuIconDpi_;

@@ -540,7 +540,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     {
         if (host && host->active && host->container &&
             !desktopPassthroughActive_ && !HasActiveContextMenuSession() &&
-            host->hwnd && IsWindowVisible(host->hwnd) &&
+            host->hwnd && (IsWindowVisible(host->hwnd) || host->hiddenForFullscreenLayer) &&
             !host->container->IsMergedWithStatusBar() &&
             !systemShowDesktopLayerGuardActive_ &&
             layerNow >= host->desktopLayerRestoreRetryTick &&
@@ -676,15 +676,19 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
 
     if (dockStartMenu_ && dockStartMenu_->Active())
     {
-        const bool onDock = std::any_of(persistentDockHosts_.begin(), persistentDockHosts_.end(),
-            [&](const auto& host) {
-                return host && host->active && host->container && IsWindowVisible(host->hwnd) &&
-                    host->container->ContainsInteractivePoint(desktopPoint);
-            });
-        // Start activates its own external window after the opening press is
-        // released. That foreground change is not another click on the Dock.
+        // Start can cover the Dock and status bar. Check which window is hit
+        // before using their interactive geometry to dismiss the menu.
+        const HWND hit = physicalPointerPressed
+            ? snowdesktop::private_pointer::WindowAtPoint(cursor) : nullptr;
+        const auto* hitDock = hit ? FindPersistentDockHost(hit) : nullptr;
+        const bool onDock = hitDock && hitDock->active && hitDock->container &&
+            hitDock->container->ContainsInteractivePoint(desktopPoint);
+        const HMONITOR hitMonitor = hit && !onDock && statusBar_
+            ? MonitorFromPoint(cursor, MONITOR_DEFAULTTONULL) : nullptr;
+        const bool onStatusBar = hitMonitor && hit == statusBar_->InteractionWindow(hitMonitor) &&
+            statusBar_->ContainsPoint(cursor);
         dockStartMenu_->ObservePointer(buttonsDown != 0, physicalPointerPressed,
-            onDock || (statusBar_ && statusBar_->ContainsPoint(cursor)));
+            onDock || onStatusBar);
     }
 
     GUITHREADINFO dragGui{sizeof(dragGui)};

@@ -5,9 +5,10 @@
 #include "dock/floating_dock_rules.h"
 #include "navigation/quick_navigation_animation_rules.h"
 #include "system/status_bar/status_bar.h"
-#include "ui/render/inline_tooltip_backdrop.h"
 #include "ui/render/ui_animation_scheduler.h"
 #include "app/render/desktop_backdrop_compositor.h"
+
+#include <vector>
 
 // Each monitor owns its persistent window, input promotion and composition
 // resources. The combination root only stores owners/references to these hosts.
@@ -21,8 +22,6 @@ struct DesktopApp::PersistentDockHost
     RECT dockRect{};
     RECT animationVisualRect{};
     RECT popupRect{};
-    RECT tooltipRect{};
-    snowdesktop::InlineTooltipPaintDamage tooltipPaintDamage;
     RECT guideOcclusionRect{};
     bool active = false;
     snowdesktop::desktop_hover_rules::RetainedDockLeaveTracking retainedLeaveTracking;
@@ -61,12 +60,18 @@ struct DesktopApp::PersistentDockHost
     ComPtr<IDCompositionEffectGroup> mergedOpacity;
     bool compositionRenderRecoveryPending = false;
     bool compositionPaintInProgress = false;
+    bool collectingPanelIcons = false;
+    bool collectingMergedGlass = false;
+    std::vector<snowdesktop::PanelBackdropIcon> mergedGlassIcons;
     bool immediatePaintDeferred = false;
     bool windowRegionPending = false;
     bool backdropRecoveryPending = false;
     bool desktopLayerRestorePending = false;
     ULONGLONG desktopLayerRestoreRetryTick = 0;
     HWND desktopLayerForegroundWindow = nullptr;
+    bool hiddenForFullscreenLayer = false;
+    ULONGLONG fullscreenLayerTraceTick = 0;
+    HWND fullscreenLayerTraceSource = nullptr;
     std::uint64_t presentationRevision = 0;
     bool dropTargetRegistered = false;
     DesktopBackdropCompositor backdrop;

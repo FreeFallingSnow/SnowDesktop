@@ -3,7 +3,9 @@
 #include "dock_window_preview_layout.h"
 
 #include "ui/menu/menu_fluent_glyphs.h"
+#include "ui/render/ui_animation_scheduler.h"
 #include "diagnostics/performance_trace.h"
+#include "settings/animation_settings.h"
 #include <commctrl.h>
 
 #include <shellscalingapi.h>
@@ -22,15 +24,14 @@ const std::wstring& DockPreviewHoverController::SuppressedTarget() const
 { return suppressedTarget_; }
 
 bool DockPreviewHoverController::TimerArmed() const
-{ return timerArmed_; }
+{ return timerDueTick_ != 0; }
 
 bool DockPreviewHoverController::IsIdle() const
 {
     return currentTarget_.empty() &&
-        pendingTarget_.empty() &&
         shownTarget_.empty() &&
         suppressedTarget_.empty() &&
-        !timerArmed_;
+        !TimerArmed();
 }
 
 namespace
@@ -198,6 +199,42 @@ RECT ResolveDockWindowPreviewPanelPlacement(
         static_cast<int>(std::max<LONG>(
             workArea.top, workArea.bottom - panelHeight)));
     return { left, top, left + panelWidth, top + panelHeight };
+}
+
+POINT PreviewOffsetTowardDock(DockPosition position, UINT dpi)
+{
+    const LONG distance = ScaleForDpi(16, dpi);
+    switch (position)
+    {
+    case DockPosition::Top: return {0, -distance};
+    case DockPosition::Left: return {-distance, 0};
+    case DockPosition::Right: return {distance, 0};
+    default: return {0, distance};
+    }
+}
+
+POINT PreviewSlideOutOffset(const RECT& panel, POINT origin, DockPosition position, UINT dpi)
+{
+    const POINT offset = PreviewOffsetTowardDock(position, dpi);
+    // Leave the pointer on the Dock when the first frame is revealed.
+    return {
+        std::clamp(offset.x, -std::max(0L, panel.left - origin.x - 1), std::max(0L, origin.x - panel.right)),
+        std::clamp(offset.y, -std::max(0L, panel.top - origin.y - 1), std::max(0L, origin.y - panel.bottom))
+    };
+}
+
+POINT PreviewSwitchOffset(const RECT& previous, const RECT& next, DockPosition position)
+{
+    // Align along the Dock-facing edge when a switch changes the grid size.
+    const LONG dx = (previous.left + previous.right - next.left - next.right) / 2;
+    const LONG dy = (previous.top + previous.bottom - next.top - next.bottom) / 2;
+    switch (position)
+    {
+    case DockPosition::Top: return {dx, previous.top - next.top};
+    case DockPosition::Left: return {previous.left - next.left, dy};
+    case DockPosition::Right: return {previous.right - next.right, dy};
+    default: return {dx, previous.bottom - next.bottom};
+    }
 }
 
 } // namespace
@@ -597,59 +634,50 @@ DockPreviewHoverTransition DockPreviewHoverController::UpdateTarget(
     bool previewMatchesTarget)
 {
     DockPreviewHoverTransition transition;
-    if (targetToken != currentTarget_)
+    const bool targetChanged = targetToken != currentTarget_;
+    if (!previewVisible) shownTarget_.clear();
+    if (targetChanged)
     {
-        if (timerArmed_)
-            transition.cancelTimer = true;
-        timerArmed_ = false;
-        pendingTarget_.clear();
+        transition.cancelTimer = TimerArmed();
+        timerDueTick_ = 0;
         if (!suppressedTarget_.empty() &&
             targetToken != suppressedTarget_)
             suppressedTarget_.clear();
         currentTarget_ = targetToken;
     }
 
-    if (targetToken.empty())
-    {
-        transition.schedulePreviewHide = previewVisible;
+    if (targetToken.empty() || targetToken == suppressedTarget_)
         return transition;
-    }
-    if (previewVisible && previewMatchesTarget)
-    {
-        transition.keepPreviewVisible = true;
-        return transition;
-    }
-    if (previewVisible)
-        transition.schedulePreviewHide = true;
-    if (targetToken == suppressedTarget_)
-        return transition;
-    if (!timerArmed_)
-    {
-        pendingTarget_ = targetToken;
-        timerArmed_ = true;
-        transition.armTimer = true;
-    }
+    transition.keepPreviewVisible = previewVisible && previewMatchesTarget;
+    transition.armTimer = !transition.keepPreviewVisible && !TimerArmed() &&
+        (!previewVisible || targetChanged);
     return transition;
+}
+
+void DockPreviewHoverController::TrackTimer(ULONGLONG dueTick)
+{
+    timerDueTick_ = dueTick;
+}
+
+UINT DockPreviewHoverController::TimerDelayRemaining(ULONGLONG now) const
+{
+    return now < timerDueTick_ ? static_cast<UINT>(timerDueTick_ - now) : 0;
 }
 
 bool DockPreviewHoverController::ConsumeTimer(
     const std::wstring& observedTargetToken)
 {
-    const bool accepted = timerArmed_ &&
-        !pendingTarget_.empty() &&
-        pendingTarget_ == currentTarget_ &&
-        pendingTarget_ == observedTargetToken &&
-        pendingTarget_ != suppressedTarget_;
-    timerArmed_ = false;
-    pendingTarget_.clear();
+    const bool accepted = TimerArmed() &&
+        currentTarget_ == observedTargetToken &&
+        currentTarget_ != suppressedTarget_;
+    timerDueTick_ = 0;
     return accepted;
 }
 
 bool DockPreviewHoverController::SuppressForActivation()
 {
-    const bool cancelTimer = timerArmed_;
-    timerArmed_ = false;
-    pendingTarget_.clear();
+    const bool cancelTimer = TimerArmed();
+    timerDueTick_ = 0;
     suppressedTarget_ = !shownTarget_.empty()
         ? shownTarget_ : currentTarget_;
     shownTarget_.clear();
@@ -665,10 +693,9 @@ void DockPreviewHoverController::MarkPreviewShown(
 void DockPreviewHoverController::Reset()
 {
     currentTarget_.clear();
-    pendingTarget_.clear();
     shownTarget_.clear();
     suppressedTarget_.clear();
-    timerArmed_ = false;
+    timerDueTick_ = 0;
 }
 
 bool IsPointInDockPreviewEntryRegion(POINT point, POINT origin, const RECT& preview, int tolerance)
@@ -693,6 +720,7 @@ bool IsPointInDockPreviewEntryRegion(POINT point, POINT origin, const RECT& prev
 
 DockWindowPreview::~DockWindowPreview()
 {
+    StopSlide();
     toolbarClient_.reset();
     ClearToolbarTooltips();
     CancelPeek();
@@ -706,14 +734,17 @@ DockWindowPreview::~DockWindowPreview()
 }
 
 bool DockWindowPreview::Initialize(
-    HINSTANCE instance,
+    HINSTANCE instance, snowdesktop::UiAnimationScheduler& scheduler,
     ActivateCallback activateCallback,
-    CloseCallback closeCallback, std::function<void()> visibilityChanged)
+    CloseCallback closeCallback, std::function<void()> visibilityChanged,
+    std::function<bool(POINT)> pointerOnDock)
 {
     instance_ = instance;
+    scheduler_ = &scheduler;
     activateCallback_ = std::move(activateCallback);
     closeCallback_ = std::move(closeCallback);
     visibilityChanged_ = std::move(visibilityChanged);
+    pointerOnDock_ = std::move(pointerOnDock);
 
     WNDCLASSEXW windowClass{};
     windowClass.cbSize = sizeof(windowClass);
@@ -728,11 +759,6 @@ bool DockWindowPreview::Initialize(
     // a preview. The worker does not sample windows until hover prepares them.
     toolbarClient_ = std::make_unique<snowdesktop::thumbnail_toolbar::Client>();
     return true;
-}
-
-bool DockWindowPreview::EnsureWindow()
-{
-    return EnsureWindows(std::max<size_t>(1, windows_.size()));
 }
 
 bool DockWindowPreview::EnsureWindows(size_t count)
@@ -781,19 +807,25 @@ void DockWindowPreview::Show(
     HWND dockLayerOwner)
 {
     snowdesktop::performance::Scope trace("dock.preview", "show");
+    const bool wasVisible = IsVisible();
+    const bool newAnchor = dockPosition_ != dockPosition ||
+        !EqualRect(&anchorScreen_, &anchorScreen);
+    const bool startSlide = !wasVisible || newAnchor || slideClosing_;
+    const bool slideWithinMonitor = wasVisible && startSlide && dockPosition_ == dockPosition &&
+        MonitorFromRect(&anchorScreen_, MONITOR_DEFAULTTONEAREST) ==
+        MonitorFromRect(&anchorScreen, MONITOR_DEFAULTTONEAREST);
+    const RECT previousBounds = slideWithinMonitor ? GetBounds() : RECT{};
+    SetSlideClosing(false);
     ClearToolbarTooltips();
     pressedToolbar_.reset();
     hoveredToolbar_ = {-1, -1};
-    const bool sameGroup = IsVisible() && std::any_of(items.begin(), items.end(),
+    const bool sameGroup = wasVisible && std::any_of(items.begin(), items.end(),
         [this](const auto& item) { return IsShowingWindow(item.window); });
     if (!sameGroup) { pointerSession_ = PointerSession::AwaitingEntry; entryOriginKnown_ = false; }
     const HWND peekTarget = windowPeek_.Active() ? windowPeek_.Target() : peekCandidate_.window;
     if (!sameGroup || std::none_of(items.begin(), items.end(),
             [peekTarget](const auto& item) { return item.window == peekTarget; })) CancelPeek();
     peekSurfacesReady_ = false;
-    if (!EnsureWindow())
-        return;
-
     std::unordered_set<HWND> seen;
     items_.clear();
     items_.reserve(items.size());
@@ -828,7 +860,7 @@ void DockWindowPreview::Show(
     {
         transitionOriginScreen_ = pointer;
     }
-    KeepVisible();
+    if (startSlide || !sameGroup) KeepVisible();
 
     const DockWindowPreviewMonitorContext context =
         ResolveDockWindowPreviewMonitorContext(anchorCenter);
@@ -840,14 +872,21 @@ void DockWindowPreview::Show(
     }
     StartToolbarTracking();
     Layout(context.workArea, dpi_);
-    const RECT panelRect = ResolveDockWindowPreviewPanelPlacement(
+    panelRect_ = ResolveDockWindowPreviewPanelPlacement(
         anchorScreen_, dockPosition_, panelSize_,
         context.workArea, dpi_);
+    if (startSlide)
+    {
+        StopSlide();
+        if (snowdesktop::animation::RuntimeAnimationsEnabled())
+            slideOffset_ = slideWithinMonitor
+                ? PreviewSwitchOffset(previousBounds, panelRect_, dockPosition_)
+                : PreviewSlideOutOffset(panelRect_, transitionOriginScreen_, dockPosition_, dpi_);
+    }
 
     const BOOL darkMode = lightTheme_ ? FALSE : TRUE;
     const DWM_WINDOW_CORNER_PREFERENCE corner =
         DWMWCP_ROUNDSMALL;
-    const bool wasVisible = IsVisible();
     const bool useDockLayer =
         dockLayerOwner &&
         IsWindow(dockLayerOwner);
@@ -887,7 +926,8 @@ void DockWindowPreview::Show(
         const int width = card.right - card.left;
         const int height = card.bottom - card.top;
         SetWindowPos(window, zOrder.insertAfter,
-            panelRect.left + card.left, panelRect.top + card.top,
+            panelRect_.left + card.left + slideOffset_.x,
+            panelRect_.top + card.top + slideOffset_.y,
             width, height, zOrder.flags);
         HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1,
             ScaleForDpi(14, dpi_), ScaleForDpi(14, dpi_));
@@ -910,6 +950,7 @@ void DockWindowPreview::Show(
         RECT client{};
         if (GetClientRect(window, &client)) PaintToolbar(nullptr, index, client);
     }
+    if (startSlide) StartSlide();
     if (!wasVisible && IsVisible() && visibilityChanged_) visibilityChanged_();
     UpdateToolbarTooltips();
     RefreshPointerTracking(true);
@@ -917,11 +958,16 @@ void DockWindowPreview::Show(
 
 void DockWindowPreview::UpdateItems(const std::vector<DockWindowPreviewItem>& items)
 {
-    if (!IsVisible()) return;
+    if (slideClosing_ || !IsVisible()) return;
     std::vector<DockWindowPreviewItem> current;
     std::unordered_set<HWND> seen;
     for (const auto& item : items)
         if (item.window && IsWindow(item.window) && seen.insert(item.window).second) current.push_back(item);
+    if (current.empty())
+    {
+        Dismiss();
+        return;
+    }
     if (current.size() == items_.size() && std::equal(current.begin(), current.end(), items_.begin(),
             [](const auto& left, const auto& right) { return left.window == right.window && left.title == right.title; }))
         return;
@@ -1089,25 +1135,31 @@ void DockWindowPreview::UpdateAnchor(
         Layout(context.workArea, dpi_);
         RegisterThumbnails();
     }
-    const RECT panelRect = ResolveDockWindowPreviewPanelPlacement(
+    panelRect_ = ResolveDockWindowPreviewPanelPlacement(
         anchorScreen_, dockPosition_, panelSize_,
         context.workArea, dpi_);
+    const LONG left = panelRect_.left + slideOffset_.x;
+    const LONG top = panelRect_.top + slideOffset_.y;
     for (size_t index = 0; index < windows_.size(); ++index)
     {
         const RECT& card = cardRects_[index];
-        const RECT desired{panelRect.left + card.left, panelRect.top + card.top,
-            panelRect.left + card.right, panelRect.top + card.bottom};
+        const RECT desired{left + card.left, top + card.top,
+            left + card.right, top + card.bottom};
         RECT previous{};
         const bool known = GetWindowRect(windows_[index], &previous) != FALSE;
         if (known && EqualRect(&previous, &desired)) continue;
-        layoutChanged = true;
+        const bool sizeChanged = !known ||
+            previous.right - previous.left != card.right - card.left ||
+            previous.bottom - previous.top != card.bottom - card.top;
+        layoutChanged = layoutChanged || sizeChanged;
+        // Translate the existing card surfaces when the magnified anchor moves.
+        // A resize needs a new region and tooltip layout.
         SetWindowPos(windows_[index], nullptr,
-            panelRect.left + card.left, panelRect.top + card.top,
+            desired.left, desired.top,
             card.right - card.left, card.bottom - card.top,
             SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER |
-                SWP_NOSENDCHANGING | SWP_NOREDRAW);
-        if (!known || previous.right - previous.left != desired.right - desired.left ||
-            previous.bottom - previous.top != desired.bottom - desired.top)
+                SWP_NOSENDCHANGING | SWP_NOREDRAW | (sizeChanged ? 0 : SWP_NOSIZE));
+        if (sizeChanged)
         {
             HRGN region = CreateRoundRectRgn(0, 0,
                 card.right - card.left + 1, card.bottom - card.top + 1,
@@ -1116,8 +1168,83 @@ void DockWindowPreview::UpdateAnchor(
         }
     }
     if (layoutChanged) UpdateToolbarTooltips();
-    InvalidatePopups();
     RefreshPointerTracking(layoutChanged);
+}
+
+void DockWindowPreview::StartSlide(POINT destination)
+{
+    if (slideToken_) scheduler_->Cancel(std::exchange(slideToken_, 0));
+    if (slideOffset_.x == destination.x && slideOffset_.y == destination.y)
+    {
+        if (slideClosing_) Hide();
+        return;
+    }
+    const double started = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+    const double duration = 150.0 * snowdesktop::animation::RuntimeDurationScale();
+    const POINT origin = slideOffset_;
+    slideToken_ = scheduler_->StartAnimation(snowdesktop::UiAnimationSurface::Popup,
+        [this, started, duration, origin, destination](double now) {
+            const double progress = snowdesktop::animation::RuntimeAnimationsEnabled()
+                ? std::clamp((now - started) / duration, 0.0, 1.0) : 1.0;
+            const double remaining = 1.0 - progress;
+            // Run the opening curve backward when moving back toward the Dock.
+            const double eased = slideClosing_
+                ? 1.0 - progress * progress * progress
+                : remaining * remaining * remaining;
+            const POINT offset{
+                destination.x + std::lround((origin.x - destination.x) * eased),
+                destination.y + std::lround((origin.y - destination.y) * eased)
+            };
+            if (offset.x != slideOffset_.x || offset.y != slideOffset_.y)
+            {
+                slideOffset_ = offset;
+                MoveSlideCards();
+            }
+            if (offset.x != destination.x || offset.y != destination.y) return true;
+            slideToken_ = 0;
+            if (slideClosing_) Hide();
+            else RefreshPointerTracking();
+            return false;
+        });
+    if (!slideToken_)
+    {
+        if (slideClosing_)
+        {
+            Hide();
+            return;
+        }
+        slideOffset_ = {};
+        MoveSlideCards();
+    }
+}
+
+void DockWindowPreview::StopSlide()
+{
+    if (slideToken_) scheduler_->Cancel(std::exchange(slideToken_, 0));
+    slideOffset_ = {};
+}
+
+void DockWindowPreview::SetSlideClosing(bool closing)
+{
+    if (slideClosing_ == closing) return;
+    slideClosing_ = closing;
+    // The departing cards must not take hover or clicks from the Dock.
+    for (const HWND window : windows_)
+        if (window) EnableWindow(window, !closing);
+}
+
+void DockWindowPreview::MoveSlideCards()
+{
+    // Moving the native windows keeps DWM thumbnails and the owned toolbar
+    // overlays aligned with their interactive geometry.
+    constexpr UINT flags = SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER |
+        SWP_NOOWNERZORDER | SWP_NOSENDCHANGING;
+    for (size_t index = 0; index < windows_.size(); ++index)
+    {
+        const RECT& card = cardRects_[index];
+        SetWindowPos(windows_[index], nullptr, panelRect_.left + card.left + slideOffset_.x,
+            panelRect_.top + card.top + slideOffset_.y, 0, 0, flags);
+    }
 }
 
 void DockWindowPreview::RemoveWindow(HWND window)
@@ -1127,7 +1254,7 @@ void DockWindowPreview::RemoveWindow(HWND window)
     if (found == items_.end()) return;
     if (items_.size() == 1)
     {
-        Hide();
+        Dismiss();
         return;
     }
 
@@ -1177,6 +1304,8 @@ void DockWindowPreview::RemoveWindow(HWND window)
 
 void DockWindowPreview::Hide()
 {
+    StopSlide();
+    dockHideDue_ = 0;
     if (toolbarClient_) toolbarClient_->SetTargets({});
     ClearToolbarTooltips();
     pressedToolbar_.reset();
@@ -1185,7 +1314,10 @@ void DockWindowPreview::Hide()
     pointerSession_ = PointerSession::AwaitingEntry;
     entryOriginKnown_ = false;
     if (IsCleared())
+    {
+        SetSlideClosing(false);
         return;
+    }
     const bool wasVisible = IsVisible();
     if (!peekCommitting_) CancelPeek();
     peekOwner_ = nullptr;
@@ -1194,12 +1326,14 @@ void DockWindowPreview::Hide()
         KillTimer(hwnd_, kHideTimerId);
     for (const HWND window : windows_)
         if (window) ShowWindow(window, SW_HIDE);
+    SetSlideClosing(false);
     hideTimerArmed_ = false;
     UnregisterThumbnails();
     items_.clear();
     cardRects_.clear();
     thumbnailRects_.clear();
     panelSize_ = {};
+    panelRect_ = {};
     hoveredIndex_ = -1;
     hoveredCloseIndex_ = -1;
     hoveredPinIndex_ = -1;
@@ -1211,34 +1345,45 @@ void DockWindowPreview::Hide()
     if (wasVisible && visibilityChanged_) visibilityChanged_();
 }
 
+void DockWindowPreview::Dismiss()
+{
+    if (slideClosing_) return;
+    if (!IsVisible() || !snowdesktop::animation::RuntimeAnimationsEnabled())
+    {
+        Hide();
+        return;
+    }
+    KeepVisible(); // Cancel any pending hover dismissal before starting the slide.
+    SetSlideClosing(true);
+    if (!peekCommitting_) CancelPeek();
+    if (trackingWindow_)
+    {
+        TRACKMOUSEEVENT cancel{sizeof(cancel), TME_CANCEL | TME_LEAVE, trackingWindow_, 0};
+        TrackMouseEvent(&cancel);
+    }
+    trackingMouse_ = false;
+    trackingWindow_ = retainedLeaveWindow_ = nullptr;
+    retainedLeaveRearmed_ = false;
+    ClearToolbarTooltips();
+    pressedToolbar_.reset();
+    const POINT towardDock = PreviewOffsetTowardDock(dockPosition_, dpi_);
+    POINT openingOffset = PreviewSlideOutOffset(panelRect_, transitionOriginScreen_, dockPosition_, dpi_);
+    if (!openingOffset.x && !openingOffset.y) openingOffset = towardDock;
+    // During a rapid switch, retrace the reveal axis from the current card position.
+    StartSlide({towardDock.x ? openingOffset.x : slideOffset_.x,
+        towardDock.y ? openingOffset.y : slideOffset_.y});
+}
+
 void DockWindowPreview::ScheduleHide()
 {
-    if (!IsVisible())
-        return;
-    POINT pointer{};
-    GetCursorPos(&pointer);
-    if (IsAwaitingPointerEntry())
-    {
-        if (IsPointerInEntryRegion(pointer)) RefreshPointerTracking();
-        else Hide();
-        return;
-    }
-    const RECT preview = GetBounds();
-    if (RectContainsScreenPoint(anchorScreen_, pointer) ||
-        RectContainsScreenPoint(preview, pointer))
-    {
-        if (RectContainsScreenPoint(anchorScreen_, pointer)) KeepVisible();
-        else RefreshPointerTracking();
-        return;
-    }
-    if (IsPointerInTransitionRegion(pointer))
-    {
-        if (SetTimer(hwnd_, kHideTimerId,
-                kTransitionHideDelayMs, nullptr) != 0)
-            hideTimerArmed_ = true;
-        return;
-    }
-    Hide();
+    HideIfPointerOutside(false);
+}
+
+void DockWindowPreview::ScheduleDockHide()
+{
+    if (slideClosing_ || !IsVisible()) return;
+    if (!dockHideDue_) dockHideDue_ = GetTickCount64() + kDockHideDelayMs;
+    ScheduleHide();
 }
 
 void DockWindowPreview::KeepVisible()
@@ -1246,12 +1391,20 @@ void DockWindowPreview::KeepVisible()
     if (hwnd_)
         KillTimer(hwnd_, kHideTimerId);
     hideTimerArmed_ = false;
+    dockHideDue_ = 0;
     POINT pointer{};
     if (GetCursorPos(&pointer) &&
         RectContainsScreenPoint(anchorScreen_, pointer))
     {
         transitionOriginScreen_ = pointer;
         hasTransitionOrigin_ = true;
+    }
+    if (slideClosing_)
+    {
+        SetSlideClosing(false);
+        StartSlide();
+        UpdateToolbarTooltips();
+        PostMessageW(hwnd_, kToolbarUpdateMessage, 0, 0);
     }
 }
 
@@ -1307,7 +1460,7 @@ bool DockWindowPreview::IsShowingWindow(HWND window) const
 bool DockWindowPreview::ContainsInteractionPoint(
     POINT screenPoint) const
 {
-    if (!IsVisible())
+    if (slideClosing_ || !IsVisible())
         return false;
     const RECT preview = GetBounds();
     return RectContainsScreenPoint(anchorScreen_, screenPoint) ||
@@ -1602,7 +1755,7 @@ void DockWindowPreview::OnPeekTimer()
         }
         return;
     }
-    if (!IsVisible())
+    if (slideClosing_ || !IsVisible())
     {
         CancelPeek();
         return;
@@ -1682,8 +1835,7 @@ void DockWindowPreview::OnMouseMove(HWND window, POINT point)
     }
     if ((!trackingMouse_ || trackingWindow_ != window) && !retainedLeaveRearmed_)
         ArmPointerTracking(window, screen);
-    if (!trackingMouse_ && SetTimer(hwnd_, kHideTimerId, kTransitionHideDelayMs, nullptr))
-        hideTimerArmed_ = true;
+    if (!trackingMouse_) ArmHideTimer();
     const int hovered = CardIndexAtPoint(point);
     const int hoveredClose =
         CloseButtonIndexAtPoint(point);
@@ -1737,6 +1889,7 @@ void DockWindowPreview::ArmPointerTracking(HWND window, POINT screenPoint)
 
 void DockWindowPreview::RefreshPointerTracking(bool layoutChanged)
 {
+    if (slideClosing_) return;
     snowdesktop::performance::Scope trace("dock.input", "preview.reconcile");
     if (layoutChanged)
     {
@@ -1775,13 +1928,15 @@ void DockWindowPreview::RefreshPointerTracking(bool layoutChanged)
     }
     trackingMouse_ = false;
     trackingWindow_ = nullptr;
+    const bool hoverChanged = hoveredIndex_ >= 0 || hoveredCloseIndex_ >= 0 ||
+        hoveredPinIndex_ >= 0 || hoveredToolbar_.first >= 0;
     hoveredIndex_ = hoveredCloseIndex_ = hoveredPinIndex_ = -1;
+    hoveredToolbar_ = {-1, -1};
     UpdatePeekTarget(nullptr);
-    InvalidatePopups();
+    if (layoutChanged || hoverChanged) InvalidatePopups();
     // Relayout can move a card away from a stationary pointer without a new
     // native mouse message. Recheck the new geometry after the normal delay.
-    if (SetTimer(hwnd_, kHideTimerId, kTransitionHideDelayMs, nullptr) != 0)
-        hideTimerArmed_ = true;
+    ArmHideTimer();
 }
 
 void DockWindowPreview::RecordPointerInteraction(UINT message)
@@ -1835,7 +1990,7 @@ void DockWindowPreview::OnMouseLeave(HWND window)
             ArmPointerTracking(window, screen);
             retainedLeaveRearmed_ = true;
         }
-        if (SetTimer(hwnd_, kHideTimerId, kTransitionHideDelayMs, nullptr)) hideTimerArmed_ = true;
+        ArmHideTimer();
         return;
     }
     UpdatePeekTarget(nullptr);
@@ -1907,7 +2062,7 @@ void DockWindowPreview::OnLeftButtonUp(POINT point)
         peekCommitting_ = true;
         peekCommitDeadline_ = GetTickCount64() + 1500;
     }
-    Hide();
+    Dismiss();
     if (target && IsWindow(target))
     {
         if (commitPeek)
@@ -1939,47 +2094,69 @@ void DockWindowPreview::CloseWindowAtIndex(int index)
     closeForeground_ = foreground;
     closeSuccessor_ = nullptr;
     closeRetentionUntil_ = (foreground == target || process == GetCurrentProcessId()) ? GetTickCount64() + 2000 : 0;
-    if (items_.size() == 1) Hide();
+    if (items_.size() == 1) Dismiss();
     else KeepVisible();
     if (closeCallback_ && target && IsWindow(target)) closeCallback_(target);
 }
 
-void DockWindowPreview::HideIfPointerOutside()
+void DockWindowPreview::ArmHideTimer(UINT delay)
 {
+    if (!hideTimerArmed_ && hwnd_)
+        hideTimerArmed_ = SetTimer(hwnd_, kHideTimerId, delay, nullptr) != 0;
+}
+
+void DockWindowPreview::HideIfPointerOutside(bool fromTimer)
+{
+    if (slideClosing_ || !IsVisible()) return;
     POINT pointer{};
-    GetCursorPos(&pointer);
-    if (IsAwaitingPointerEntry())
+    if (!GetCursorPos(&pointer))
+    {
+        Dismiss();
+        return;
+    }
+    const bool onAnchor = RectContainsScreenPoint(anchorScreen_, pointer);
+    // The preview's native leave can arrive before the Dock receives its
+    // move. Give the Dock time to resolve a new target, using one deadline
+    // across successive gaps or icons without previews.
+    if ((!onAnchor || dockHideDue_) && pointerOnDock_ && pointerOnDock_(pointer))
+    {
+        const ULONGLONG now = GetTickCount64();
+        if (!dockHideDue_) dockHideDue_ = now + kDockHideDelayMs;
+        if (now >= dockHideDue_) Dismiss();
+        else ArmHideTimer(static_cast<UINT>(
+            std::min<ULONGLONG>(dockHideDue_ - now, kTransitionHideDelayMs)));
+        return;
+    }
+    dockHideDue_ = 0;
+    if (pointerSession_ == PointerSession::AwaitingEntry)
     {
         if (IsPointerInEntryRegion(pointer)) RefreshPointerTracking();
-        else Hide();
+        else Dismiss();
         return;
     }
     const RECT preview = GetBounds();
-    if (RectContainsScreenPoint(preview, pointer) && !PointerWindowAt(pointer))
+    if (fromTimer && RectContainsScreenPoint(preview, pointer) && !PointerWindowAt(pointer))
     {
         const bool coveredCard = std::any_of(windows_.begin(), windows_.end(), [pointer](HWND window) {
             RECT bounds{};
             return window && GetWindowRect(window, &bounds) && PtInRect(&bounds, pointer);
         });
-        if (coveredCard) Hide();
+        if (coveredCard) Dismiss();
         else RefreshPointerTracking(); // The gap belongs to the logical panel.
         return;
     }
-    if (RectContainsScreenPoint(anchorScreen_, pointer) ||
-        RectContainsScreenPoint(preview, pointer))
+    if (onAnchor || RectContainsScreenPoint(preview, pointer))
     {
-        if (RectContainsScreenPoint(anchorScreen_, pointer)) KeepVisible();
+        if (onAnchor) KeepVisible();
         else RefreshPointerTracking();
         return;
     }
     if (IsPointerInTransitionRegion(pointer))
     {
-        if (SetTimer(hwnd_, kHideTimerId,
-                kTransitionHideDelayMs, nullptr) != 0)
-            hideTimerArmed_ = true;
+        ArmHideTimer();
         return;
     }
-    Hide();
+    Dismiss();
 }
 
 bool DockWindowPreview::IsPointerInTransitionRegion(
@@ -2028,11 +2205,14 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
 
     if (!preview)
         return DefWindowProcW(window, message, wParam, lParam);
+    if (preview->slideClosing_ &&
+        ((message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) || message == WM_MOUSELEAVE))
+        return 0;
 
     switch (message)
     {
     case kToolbarUpdateMessage:
-        preview->RefreshToolbar();
+        if (!preview->slideClosing_) preview->RefreshToolbar();
         return 0;
     case kPointerReconcileMessage:
         preview->pointerReconcilePending_ = false;
@@ -2106,9 +2286,14 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
             preview->OnPeekTimer();
             return 0;
         }
-        if (wParam == kHideTimerId)
+        if (wParam == kHideTimerId && window == preview->hwnd_)
         {
-            preview->HideIfPointerOutside();
+            if (preview->hideTimerArmed_)
+            {
+                KillTimer(window, kHideTimerId);
+                preview->hideTimerArmed_ = false;
+                preview->HideIfPointerOutside(true);
+            }
             return 0;
         }
         break;

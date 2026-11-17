@@ -43,13 +43,13 @@ private:
     std::unordered_map<std::uintptr_t, ULONGLONG> sources_;
 };
 
-inline bool IsAutoHiddenTaskbar(const RECT& bar, const RECT& screen) noexcept
+inline bool IsAutoHiddenTaskbar(const RECT& bar, const RECT& screen, LONG edgeTolerance = 2) noexcept
 {
     if (bar.right <= bar.left || bar.bottom <= bar.top ||
         screen.right <= screen.left || screen.bottom <= screen.top) return false;
     if (bar.right - bar.left >= bar.bottom - bar.top)
-        return bar.top >= screen.bottom - 2 || bar.bottom <= screen.top + 2;
-    return bar.left >= screen.right - 2 || bar.right <= screen.left + 2;
+        return bar.top >= screen.bottom - edgeTolerance || bar.bottom <= screen.top + edgeTolerance;
+    return bar.left >= screen.right - edgeTolerance || bar.right <= screen.left + edgeTolerance;
 }
 
 inline bool IsTaskbarRevealEdge(const RECT& bar, const RECT& screen, POINT cursor) noexcept

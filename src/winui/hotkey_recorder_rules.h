@@ -119,7 +119,8 @@ public:
 
     [[nodiscard]] HotkeyRecorderTransition KeyDown(
         std::uint32_t virtualKey,
-        std::uint32_t physicalModifiers) noexcept
+        std::uint32_t physicalModifiers,
+        bool allowStandaloneAlt = false) noexcept
     {
         if (!active_)
             return {};
@@ -128,7 +129,14 @@ public:
         if (virtualKey == KeyEnter || virtualKey == KeyEscape ||
             virtualKey == KeyTab)
             return {};
-        if (IsModifierKey(virtualKey))
+        if (allowStandaloneAlt && (virtualKey == KeyAlt ||
+                virtualKey == KeyLeftAlt || virtualKey == KeyRightAlt) &&
+            (physicalModifiers & ~ModifierAlt) == 0)
+        {
+            virtualKey = KeyAlt;
+            physicalModifiers = 0;
+        }
+        else if (IsModifierKey(virtualKey))
             return {};
 
         HotkeyChord next{

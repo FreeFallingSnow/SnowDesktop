@@ -1,5 +1,6 @@
 #pragma once
 
+#include "desktop_backdrop_compositor.h"
 #include "desktop_backdrop_update_rules.h"
 #include "icons/icon_beautify.h"
 #include "ui/render/icon_backdrop_clip.h"
@@ -30,7 +31,8 @@ public:
     void DiscardDraw() { candidate_.clear(); }
 
     template<class Compositor>
-    void Publish(Compositor& compositor, float opacity = 1.0f)
+    void Publish(Compositor& compositor, float opacity = 1.0f,
+        std::uintptr_t panelKey = 0, ID2D1Device* drawDevice = nullptr)
     {
         while (panels_.size() > candidate_.size())
         {
@@ -42,19 +44,29 @@ public:
         for (std::size_t i = 0; i < candidate_.size(); ++i)
             panels_[i]->request = std::move(candidate_[i]);
         candidate_.clear();
-        Restore(compositor, opacity);
+        Restore(compositor, opacity, panelKey, drawDevice);
     }
 
     template<class Compositor>
-    void Restore(Compositor& compositor, float opacity = 1.0f) const
+    void Restore(Compositor& compositor, float opacity = 1.0f,
+        std::uintptr_t panelKey = 0, ID2D1Device* drawDevice = nullptr) const
     {
+        std::vector<PanelBackdropIcon> inherited;
         for (const auto& panel : panels_)
         {
             const auto& r = panel->request;
+            if (r.inheritedGlass && panelKey)
+            {
+                Remove(compositor, *panel);
+                inherited.push_back({r.frame, r.shape, r.blurRadius, r.clip});
+                continue;
+            }
             desktop_backdrop_update_rules::ReconcileIconPanel(compositor,
                 r.frame, r.shape, r.blurRadius, r.opacity * opacity, Key(*panel),
                 r.inheritedGlass, r.clip ? &*r.clip : nullptr);
         }
+        if (panelKey && !compositor.SetPanelIconRegions(panelKey, drawDevice, inherited, false))
+            (void)compositor.SetPanelIconRegions(panelKey, drawDevice, {}, false);
     }
 
     template<class Compositor>

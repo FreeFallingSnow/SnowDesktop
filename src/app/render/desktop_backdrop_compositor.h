@@ -13,11 +13,31 @@
 #include <cstdint>
 #include <future>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 
 struct ID2D1Device;
 namespace snowdesktop::popup_motion_curve { struct Timeline; }
+namespace snowdesktop
+{
+struct PanelBackdropIcon
+{
+    RECT frame{};
+    IconBeautifyShape shape{};
+    float blurRadius = 0;
+    std::optional<IconBackdropClip> clip;
+
+    void Offset(LONG x, LONG y)
+    {
+        OffsetRect(&frame, x, y);
+        if (!clip) return;
+        OffsetRect(&clip->bounds, x, y);
+        clip->geometryOffset.x += x;
+        clip->geometryOffset.y += y;
+    }
+};
+}
 
 /**
  * @brief 独立桌面玻璃合成窗口。
@@ -97,7 +117,7 @@ public:
         float normalizedStartSlope = 0.0f,
         const snowdesktop::popup_motion_curve::Timeline* springTimeline = nullptr,
         const snowdesktop::popup_motion_curve::Timeline* opacityTimeline = nullptr,
-        std::uintptr_t panelOwnerKey = 0);
+        std::uintptr_t panelOwnerKey = 0, std::uintptr_t contentKey = 0);
     /**
      * @brief 使用与 Dock 内容相同的分片规则变形一个玻璃面板；矩形均为宿主坐标。
      *        由 CommitVisualChanges 或 EndFrame 统一提交，稳定几何不逐帧分配资源。
@@ -119,8 +139,15 @@ public:
     // Applied Dock frames retain the host-sized HWND fence; Composition clips
     // own moving panel contours without prematurely clipping the old frame.
     bool BeginStagedFrame();
-    bool ApplyStagedFrame();
+    bool ApplyStagedFrame(ID2D1Device* drawDevice = nullptr);
     void DiscardStagedFrame();
+    // Dock's content pass contributes silhouettes to the already staged chrome.
+    bool CollectStagedPanelIcon(std::uintptr_t ownerKey, snowdesktop::PanelBackdropIcon icon);
+    // Apply regions to the existing rounded panel, sampling its backdrop once.
+    bool SetPanelIconRegions(std::uintptr_t ownerKey, ID2D1Device* drawDevice,
+        std::span<const snowdesktop::PanelBackdropIcon> icons, bool extendOutline);
+    // Extra popup allocation for shared Dock icons, with a fixed screen-space display clip.
+    bool SetPopupWindowPadding(const RECT& padding, const RECT& displayBounds);
     /**
      * @brief 注册或更新一个圆角玻璃面板。
      * @param ownerKey 非零时作为跨几何变化保持稳定的面板身份；零值保留
@@ -136,6 +163,19 @@ public:
     bool AddIconPanel(const RECT& frame, snowdesktop::IconBeautifyShape shape,
         float blurRadius, std::uintptr_t ownerKey,
         const snowdesktop::IconBackdropClip* contentClip = nullptr);
+    // The clip is local to a fixed sampling envelope and can animate independently.
+    bool AddClippedPanel(const RECT& envelope, ID2D1Geometry* clip,
+        float blurRadius, std::uintptr_t ownerKey);
+    bool StageSrgbContent(HWND window, std::uintptr_t key, const RECT& clientFrame,
+        ID2D1DeviceContext* context, POINT atlasOffset);
+    bool PublishSrgbContent(std::uintptr_t key, float opacity = 1.0f);
+    bool HasSrgbContent(std::uintptr_t key) const noexcept;
+    void RemoveSrgbContent(std::uintptr_t key);
+    void SetSrgbContentOrder(std::span<const std::uintptr_t> bottomToTop);
+    void SetSrgbContentOpacity(std::uintptr_t key, float opacity);
+    bool SetSrgbContentPose(std::uintptr_t key, POINT anchor, float scale, float opacity);
+    void SetSrgbRootPose(float opacity, float offsetX, float offsetY);
+    bool CommitSrgbContent();
     // Host-private large-icon silhouettes use the same geometry as the card.
     bool AddLargeIconPanel(const RECT& frame, int shape, float cornerRadius,
         float blurRadius, std::uintptr_t ownerKey, int flagDirection = 0);
@@ -153,6 +193,7 @@ public:
     bool StartPanelHeightAnimation(std::uintptr_t ownerKey,
         float collapsedHeight, float radius,
         const snowdesktop::popup_motion_curve::Timeline& timeline);
+    void SetSrgbContentRollClip(std::uintptr_t ownerKey, const RECT& bounds, float radius);
     /** @brief 移除玻璃面板并同步区域；非零 ownerKey 定位稳定身份，零值按矩形查找。 */
     bool RemovePanel(const RECT& frame, std::uintptr_t ownerKey = 0);
     /** @brief 在完整收集帧中保留一个由交接事务临时拥有的面板。 */

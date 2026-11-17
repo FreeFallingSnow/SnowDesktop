@@ -73,6 +73,7 @@ namespace snowdesktop::widget_runtime { struct WidgetMultiplayer; }
 #include "widget/storage/widget_storage_write_budget.h"
 #include "widget/storage/widget_secret_store.h"
 
+namespace snowdesktop { struct NativeTooltipTextLayout; }
 namespace snowdesktop::widget_menu { struct Entry; }
 
 namespace snowdesktop::widget_runtime
@@ -234,9 +235,11 @@ struct LuaWidgetMenuItem
     std::string imageResourceName; ///< 包内 image resource 名称
     bool enabled = true;       ///< 是否可用（灰显）
     bool checked = false;      ///< 是否显示选中标记
+    bool keepOpen = false;     ///< 选择后重新查询当前菜单
     bool separator = false;    ///< 是否为分隔线（为 true 时忽略其他字段）
     bool elementContext = false;
     std::string actionId;
+    std::string bindingId;
     std::string targetKey;
     std::string surface = "desktop";
     snowdesktop::widget_runtime::InteractionValue contextValue;
@@ -1025,9 +1028,10 @@ public:
     std::vector<LuaWidgetMenuItem> GetContextMenu(
         const std::wstring& widgetId, int x = -1, int y = -1,
         std::string_view surface = "desktop",
-        bool componentScopeOnly = false);
+        bool componentScopeOnly = false,
+        const LuaWidgetMenuItem* refreshTarget = nullptr);
 
-    void InvokeMenu(const std::wstring& widgetId,
+    bool InvokeMenu(const std::wstring& widgetId,
         const LuaWidgetMenuItem& menuItem);
 
     /**
@@ -1148,7 +1152,8 @@ public:
         GetSteamWorkshopSubscriptionHistory();
     static snowdesktop::widget::SteamLibrarySubscriptionHistory
         GetSteamWorkshopLibrarySubscriptionHistory();
-    static void PrepareSteamWorkshopSubscriptionArtifacts(
+    static snowdesktop::widget::InstalledPackageCatalog SnapshotWidgetPackageCatalog();
+    static snowdesktop::widget::SteamWorkshopSyncPlan PrepareSteamWorkshopSubscriptionArtifacts(
         snowdesktop::widget::SteamWorkshopSubscriptionSnapshot& snapshot,
         const std::vector<snowdesktop::widget::InstalledPackage>& installed,
         const std::filesystem::path& stagingRoot);
@@ -1158,8 +1163,9 @@ public:
         CachedSteamWorkshopInstallFailures();
     snowdesktop::widget::SteamWorkshopSyncResult
         ApplySteamWorkshopSubscriptions(
-            const snowdesktop::widget::SteamWorkshopSubscriptionSnapshot&
-                snapshot);
+            const snowdesktop::widget::SteamWorkshopSubscriptionSnapshot& snapshot,
+            const snowdesktop::widget::InstalledPackageCatalog& preparedCatalog,
+            const snowdesktop::widget::SteamWorkshopSyncPlan& preparedPlan);
     bool InstallAndVerifyWidgetPackageFromSource(
         const std::string& providerId, const std::string& externalItemId,
         const std::string& version, std::wstring& error,
@@ -1454,6 +1460,11 @@ public:
     void UpdateInteractionHover(const std::wstring& widgetId, int x, int y,
         std::string_view surface = "desktop");
     void ClearInteractionHover(std::string_view surface = {});
+    void EnableHostedInteractionTooltips() { hostedInteractionTooltips_ = true; }
+    bool UsesHostedInteractionTooltips() const { return hostedInteractionTooltips_; }
+    bool MeasureHoveredInteractionTooltip(const std::wstring& widgetId,
+        std::string_view surface, RECT frame, snowdesktop::NativeTooltipTextLayout& measured,
+        D2D1_RECT_F& bounds, std::wstring& name) const;
     std::string InteractionCursorAt(const std::wstring& widgetId,
         int x, int y, std::string_view surface = "desktop") const;
     bool RuntimeCanWriteWidgetStorage(
@@ -1803,6 +1814,7 @@ private:
      * @param widgetId 小部件实例 ID
      * @return 找到返回索引，否则返回 -1
      */
+    bool hostedInteractionTooltips_ = false;
     int FindWidget(const std::wstring& widgetId) const;
     void RecordWidgetHostFailure(const std::wstring& widgetId,
         const std::string& message, bool quotaExceeded = false,

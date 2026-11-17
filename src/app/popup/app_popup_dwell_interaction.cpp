@@ -1012,6 +1012,7 @@ ShowDockFolderPopupContextMenu(
     }
     HMENU sortMenu = nullptr;
     const std::wstring newItemDirectory = dockFolderPopupWidget_.sourceFolderPath;
+    const NewItemTarget newItemTarget{NewItemTarget::Surface::FolderPopup, {}, dockFolderPopupSourceId_};
     std::unique_ptr<snowdesktop::ShellNewMenu> shellNewMenu;
 
     if (itemMenu)
@@ -1197,7 +1198,7 @@ ShowDockFolderPopupContextMenu(
     const auto prepareNewSubmenu = [&](UINT submenuCommand,
         std::vector<snowdesktop::modern_menu::Item>& children) {
         if (submenuCommand == kContextNewMenu)
-            PrepareShellNewSubmenu(shellNewMenu, newItemDirectory, children);
+            PrepareShellNewSubmenu(shellNewMenu, newItemDirectory, children, newItemTarget);
     };
     if (!itemMenu) snowdesktop::background_menu_order::Mark(menu);
     const UINT command = ShowModernMenu(
@@ -1209,9 +1210,9 @@ ShowDockFolderPopupContextMenu(
     if (shellNewMenu && shellNewMenu->Contains(command))
     {
         InvokeNewMenuCommand(shellNewMenu->Context(), command, newItemDirectory);
-        RequestShellRefresh();
         RestoreDesktopWindowLayer();
-        RestoreInteractionInputFocus();
+        if (!renameController_.IsActive()) RestoreInteractionInputFocus();
+        RequestFolderRefresh({newItemDirectory});
         return;
     }
     if (!itemMenu && ExecuteDockFolderPopupDisplayCommand(command))
@@ -1293,7 +1294,7 @@ ShowDockFolderPopupContextMenu(
         break;
     case kContextCopyCommand:
         CopyCutSelectedFolderEntries(
-            false);
+            false, L"folder_popup_menu");
         break;
     case kContextDeleteCommand:
         DeleteSelectedFolderEntries(
@@ -1320,8 +1321,8 @@ ShowDockFolderPopupContextMenu(
                 sourceFolderPath);
         break;
     case kContextNewMenu:
-        ShowNewMenuAndInvoke(screenPoint, newItemDirectory);
-        RequestShellRefresh();
+        ShowNewMenuAndInvoke(screenPoint, newItemDirectory, false, newItemTarget);
+        RequestFolderRefresh({newItemDirectory});
         break;
     default:
         break;

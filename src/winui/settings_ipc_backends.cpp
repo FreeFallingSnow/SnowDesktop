@@ -331,7 +331,11 @@ struct BackendServer::Impl
             return options.ensureWidgetSettingsInstance && options.ensureWidgetSettingsInstance(id);
         });
         channel.BindDeferredRaw("options.runtimeModulesStatus", [](auto arguments, Channel::Completion reply) {
-            Reader(arguments).Finish();
+            if (!arguments.empty() && !Unpack<bool>(arguments))
+            {
+                reply(Pack(runtime_modules::Inspect(false)), {});
+                return;
+            }
             std::thread([reply = std::move(reply)]() mutable {
                 try { reply(Pack(runtime_modules::Inspect()), {}); }
                 catch (...) { reply({}, std::current_exception()); }
@@ -566,8 +570,9 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     auto menu = CreateContextMenuInspectionProxy(channel);
     options.contextMenu = std::move(menu.inspect);
     options.contextMenuClosed = std::move(menu.closed);
-    options.runtimeModulesStatus = [&channel](auto completed) {
-        channel.RequestAsync("options.runtimeModulesStatus", Pack(), [completed = std::move(completed)](Bytes bytes, std::exception_ptr error) {
+    options.runtimeModulesStatus = [&channel](RuntimeModulesQueryScope scope, auto completed) {
+        const auto arguments = scope == RuntimeModulesQueryScope::StatusAndResidency ? Pack() : Pack(false);
+        channel.RequestAsync("options.runtimeModulesStatus", arguments, [completed = std::move(completed)](Bytes bytes, std::exception_ptr error) {
             if (error) { completed({}); return; }
             try { completed(Unpack<runtime_modules::Snapshot>(bytes)); } catch (...) { completed({}); }
         });

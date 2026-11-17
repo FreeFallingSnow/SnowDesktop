@@ -272,6 +272,8 @@ struct InstalledPackage
     bool unregistered = false;
 };
 
+using InstalledPackageCatalog = std::shared_ptr<const std::vector<InstalledPackage>>;
+
 std::string PackagePermissionReviewFingerprint(const InstalledPackage& package);
 
 // Private host registry metadata, independent of the public package manifest.
@@ -364,6 +366,9 @@ public:
     bool RefreshCatalog(std::string& error);
     const PackagePaths& Paths() const { return paths_; }
     std::vector<InstalledPackage> ListPackages() const;
+    // Capture on the manager's owner thread. The published catalog can be
+    // retained and read independently while a later refresh replaces it.
+    InstalledPackageCatalog CatalogSnapshot() const { return packages_; }
     std::vector<InvalidPackage> ListInvalidPackages() const;
     bool ContainsPackage(const std::string& packageId) const;
     std::unordered_map<std::string, std::vector<std::string>>
@@ -485,7 +490,7 @@ private:
     std::shared_ptr<detail::CatalogRefresh> catalogueRefresh_;
     std::shared_ptr<const char> catalogueRevision_;
     WidgetPackageValidator validator_;
-    std::vector<InstalledPackage> packages_;
+    InstalledPackageCatalog packages_ = std::make_shared<const std::vector<InstalledPackage>>();
     std::vector<InvalidPackage> invalidPackages_;
     std::unordered_map<std::string, RegistryEntry> registry_;
     std::unordered_map<std::string, PermissionDecisionRecord>

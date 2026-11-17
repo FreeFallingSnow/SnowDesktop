@@ -30,6 +30,7 @@ public:
         PageNext,
         SoftwareDesktop,
         ForceRestart,
+        GridPreview,
     };
 
     enum class Action : std::uint8_t
@@ -71,6 +72,7 @@ public:
         SelectDebugEnvironment,
         RenameDebugEnvironment,
         ClearScreenTime,
+        RetrySystemTaskbarAutoHide,
     };
 
     struct Request

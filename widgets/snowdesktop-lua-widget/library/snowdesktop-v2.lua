@@ -2,7 +2,7 @@
 
 ---@alias SnowWidgetSizeClass 'small'|'medium'|'large'
 ---@alias SnowWidgetSurfaceKind 'desktop'|'panel'|'dialog'|'popover'|'preview'
----@alias SnowResourceState 'ready'|'error'
+---@alias SnowResourceState 'pending'|'ready'|'error'
 ---@alias SnowResourceLoadError 'loadPhaseRequired'|'invalidName'|'notDeclared'|'typeMismatch'|'hostUnavailable'|'unavailable'|'quotaExceeded'|'decodeFailed'|'deviceUnavailable'|'fontLoadFailed'|'invalidHandle'
 ---@alias SnowDateStyle 'none'|'short'|'long'
 ---@alias SnowTimeStyle 'none'|'short'|'long'
@@ -641,6 +641,7 @@
 ---@field type? 'separator'
 ---@field enabled? boolean
 ---@field checked? boolean
+---@field keepOpen? boolean Keep this action's menu open and refresh its rows after dispatch. Requires interaction.contextMenu.keepOpen and a stable menu structure.
 ---@field icon? string Optional host glyph.
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
 ---@field image? SnowImageResource Optional declared package image; mutually exclusive with icon and requires interaction.contextMenu.resourceImage.
@@ -919,6 +920,7 @@
 ---@field state SnowResourceState
 ---@field type 'image'|'font'|'audio'
 ---@field name string
+---@field resident? boolean Whether an image currently has decoded pixels.
 ---@field error? 'unavailable' Stable when state is error.
 
 ---@class SnowTextMetrics
@@ -1871,15 +1873,33 @@ function data.subscribe(topic, options) end
 ---@field accepted boolean Whether Windows accepted the settings URI, or true for the deterministic preview mock.
 
 ---@class SnowClipboardReadArguments
----@field format 'text'|'image'|'file-reference' Explicit bounded clipboard format to read.
+---@field format 'text'|'html'|'image'|'file-reference' Explicit clipboard format to read. HTML requires task.clipboard.html.
 
----@class SnowClipboardWriteArguments
----@field format 'text' The only clipboard format currently exposed by v2.
+---@class SnowClipboardTextWriteArguments
+---@field format 'text'
 ---@field text string Valid UTF-8 containing at most 262144 bytes and no NUL.
+
+---@class SnowClipboardHtmlWriteArguments
+---@field format 'html' Requires task.clipboard.html.
+---@field html string HTML fragment as valid UTF-8 containing at most 262144 bytes and no NUL.
+
+---@class SnowClipboardImageWriteArguments
+---@field format 'image' Requires task.clipboard.image.write.
+---@field image SnowImageResource Declared package image or live image handle owned by the instance.
+
+---@class SnowClipboardFileReferenceWriteArguments
+---@field format 'file-reference' Requires task.clipboard.fileReference.write.
+---@field items string[] One to 32 current clipboard item refs or readable filesystem handles owned by this instance.
+
+---@alias SnowClipboardWriteArguments SnowClipboardTextWriteArguments|SnowClipboardHtmlWriteArguments|SnowClipboardImageWriteArguments|SnowClipboardFileReferenceWriteArguments
 
 ---@class SnowClipboardTextReadTaskValue
 ---@field format 'text'
 ---@field text string Bounded UTF-8 clipboard text.
+
+---@class SnowClipboardHtmlReadTaskValue
+---@field format 'html'
+---@field html string Bounded UTF-8 HTML fragment from the Windows clipboard.
 
 ---@class SnowClipboardImageReadTaskValue
 ---@field format 'image'
@@ -1896,7 +1916,7 @@ function data.subscribe(topic, options) end
 ---@field format 'file-reference'
 ---@field items SnowClipboardFileReference[] At most 32 current clipboard file references.
 
----@alias SnowClipboardReadTaskValue SnowClipboardTextReadTaskValue|SnowClipboardImageReadTaskValue|SnowClipboardFileReferenceReadTaskValue
+---@alias SnowClipboardReadTaskValue SnowClipboardTextReadTaskValue|SnowClipboardHtmlReadTaskValue|SnowClipboardImageReadTaskValue|SnowClipboardFileReferenceReadTaskValue
 
 ---@class SnowFilesystemPickOpenArguments
 ---@field extensions? string[] Up to 16 safe extension names without wildcards, for example {'png', 'jpg'}.
@@ -2467,10 +2487,15 @@ resource = {}
 ---@return boolean
 function resource.exists(name) end
 
----Create a declared image handle synchronously during entry evaluation. Failure raises `resource.image: <SnowResourceLoadError>`.
+---@class SnowPackageImageOptions
+---@field lazy? boolean Keep a compressed snapshot and defer pixel decoding.
+---@field onDemand? boolean Read and decode from disk on first draw. Requires resource.image.onDemand. Mutually exclusive with lazy.
+
+---Create a declared image handle during entry evaluation. Failure raises `resource.image: <SnowResourceLoadError>`.
 ---@param name string
+---@param options? SnowPackageImageOptions
 ---@return SnowImageResource
-function resource.image(name) end
+function resource.image(name, options) end
 
 ---Create a declared package-private font handle synchronously during entry evaluation. Failure raises `resource.font: <SnowResourceLoadError>`.
 ---@param name string

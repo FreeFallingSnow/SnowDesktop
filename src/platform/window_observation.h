@@ -18,6 +18,8 @@ struct MonitorState
 {
     bool visible = false;
     bool maximized = false;
+    bool fullscreen = false;
+    [[nodiscard]] bool MaximizedOrFullscreen() const noexcept { return maximized || fullscreen; }
     // An empty optional is unknown. A null HWND is a known clear monitor.
     std::optional<HWND> fullscreenSource;
     RECT desktopCoverage{};
@@ -31,11 +33,12 @@ struct Snapshot
 };
 
 // Page and window bounds use physical screen coordinates.
-Snapshot Observe(std::span<const RECT> pages, HWND desktopRoot);
+Snapshot Observe(std::span<const RECT> pages, HWND desktopRoot, HWND coverageRoot);
 std::optional<WindowPlacement> ObservePlacement(HWND window) noexcept;
+bool IsBehindDesktop(HWND window, HWND desktopRoot, const RECT& monitor) noexcept;
 
 // Recheck the known source and foreground at an interaction boundary without
 // starting a second enumeration or applying a stale app's exception.
 std::optional<fullscreen::WindowSnapshot> RecheckFullscreenSource(
-    HMONITOR monitor, HWND knownSource);
+    HMONITOR monitor, HWND knownSource, HWND desktopRoot);
 }

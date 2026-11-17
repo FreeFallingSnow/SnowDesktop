@@ -7,6 +7,8 @@
 namespace snowdesktop::winui
 {
 
-using RuntimeModulesQuery = std::function<void(std::function<void(runtime_modules::Snapshot)>)>;
+enum class RuntimeModulesQueryScope { Status, StatusAndResidency };
+using RuntimeModulesQuery = std::function<void(
+    RuntimeModulesQueryScope, std::function<void(runtime_modules::Snapshot)>)>;
 
 } // namespace snowdesktop::winui

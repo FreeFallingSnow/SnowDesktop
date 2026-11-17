@@ -637,6 +637,18 @@ bool WidgetFilesystemTaskExecutor::ValidateRequest(
         request.expectedRevision.size() <= 64;
 }
 
+std::shared_ptr<const WidgetRuntimeImagePixels>
+WidgetFilesystemTaskExecutor::DecodeImageFile(
+    const std::filesystem::path& path, std::size_t maxDimension)
+{
+    if (!path.is_absolute() || maxDimension < 1 || maxDimension > 2048)
+        return {};
+    WidgetFilesystemTaskRequest request;
+    request.path = path;
+    request.maxDimension = maxDimension;
+    return RunImage(request, {}).image;
+}
+
 WidgetFilesystemTaskRunResult
 WidgetFilesystemTaskExecutor::RunSystemAction(
     const WidgetFilesystemTaskRequest& request, std::stop_token stopToken)

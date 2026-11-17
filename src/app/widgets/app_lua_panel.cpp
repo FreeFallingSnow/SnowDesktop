@@ -1,6 +1,7 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "diagnostics/diagnostic_log.h"
+#include "diagnostics/performance_trace.h"
 #include "widget/runtime/widget_engine.h"
 #include "settings/animation_settings.h"
 #include "layout/floating_popup_rules.h"
@@ -8,6 +9,18 @@
 #include <utility>
 
 // Lua widget panel lifecycle.
+
+namespace
+{
+void InvalidateLuaPanelDesktopFootprint(HWND desktop, RECT panel, RECT snapshot)
+{
+    if (!desktop || !IsWindow(desktop)) return;
+    RECT dirty{};
+    if (!UnionRect(&dirty, &panel, &snapshot)) return;
+    InflateRect(&dirty, 6, 6);
+    InvalidateRect(desktop, &dirty, FALSE);
+}
+}
 
 void DesktopApp::ReleaseLuaWidgetPanelCaptureIfOwned()
 {
@@ -100,6 +113,7 @@ void DesktopApp::OpenLuaWidgetPanel(
             FinalizeCloseLuaWidgetPanel();
         return;
     }
+    snowdesktop::performance::Scope trace("popup", "lua-panel.open");
     if (widgetEngine_)
         widgetEngine_->PrepareWidgetPanelFocus(request.widgetId);
     AdvanceFloatingPopupContentGeneration();
@@ -132,7 +146,7 @@ void DesktopApp::OpenLuaWidgetPanel(
     }
     else
         ResetLuaWidgetPanelAnimationCache();
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    InvalidateLuaPanelDesktopFootprint(hwnd_, luaWidgetPanelRect_, luaWidgetPanelAnimationCacheRect_);
     UpdateFloatingPopupWindowBounds(true);
     if (widgetEngine_)
     {
@@ -153,7 +167,10 @@ void DesktopApp::FinalizeCloseLuaWidgetPanel(
 {
     if (luaWidgetPanelFinalizing_)
         return;
+    snowdesktop::performance::Scope trace("popup", "lua-panel.close.finish");
     luaWidgetPanelFinalizing_ = true;
+    const RECT previousPanel = luaWidgetPanelRect_;
+    const RECT previousSnapshot = luaWidgetPanelAnimationCacheRect_;
     const std::wstring closingId =
         luaWidgetPanelRequest_.widgetId;
     const std::string closingSurface =
@@ -177,8 +194,7 @@ void DesktopApp::FinalizeCloseLuaWidgetPanel(
     ReleaseLuaWidgetPanelCaptureIfOwned();
     UpdateHostInputImePosition();
     UpdateFloatingPopupWindowBounds(true);
-    if (hwnd_ && IsWindow(hwnd_))
-        InvalidateRect(hwnd_, nullptr, FALSE);
+    InvalidateLuaPanelDesktopFootprint(hwnd_, previousPanel, previousSnapshot);
 
     if (!closingId.empty() && widgetEngine_)
     {
@@ -285,6 +301,6 @@ void DesktopApp::CloseLuaWidgetPanel(
         UpdateLuaWidgetPanelCompositionAnimation();
         EnsureUiAnimationFrame();
     }
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    InvalidateLuaPanelDesktopFootprint(hwnd_, luaWidgetPanelRect_, luaWidgetPanelAnimationCacheRect_);
     UpdateFloatingPopupWindowBounds(true);
 }

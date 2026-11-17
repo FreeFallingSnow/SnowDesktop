@@ -46,6 +46,7 @@ inline bool AreTaskbarThreadsConnected(std::span<const HWND> taskbars,
         if (!GetWindowThreadProcessId(window, &owner) || owner != processId) return false;
         const HANDLE module = GetPropW(window, kHookOwnerProperty);
         if (!module || (instance && module != instance) ||
+            reinterpret_cast<std::uintptr_t>(GetPropW(window, kHookResumeProtocolProperty)) != kSharedStateVersion ||
             reinterpret_cast<std::uintptr_t>(GetPropW(window, kHookHostProcessProperty)) != hostProcessId)
             return false;
         instance = module;
@@ -230,6 +231,7 @@ inline bool AreSuppressedTaskbarsControlled(const Snapshot& snapshot)
         hasTarget = true;
         const HWND window = reinterpret_cast<HWND>(target.taskbar);
         if (!IsWindow(window) || !GetPropW(window, native::kAttachedProperty)) return false;
+        if (native::ReadAutoHideState(window) != native::AutoHideState::Ready) return false;
         // A panel temporarily reveals a controlled taskbar without disconnecting.
         if (target.shellPanelVisible) continue;
         DWORD cloak = 0;

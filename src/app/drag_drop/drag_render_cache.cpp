@@ -1,4 +1,5 @@
 #include "app/render/drag_render_cache.h"
+#include "ui/render/highlight_coverage.h"
 #include <d2d1_1helper.h>
 
 // Cached off-screen surface used while rendering a drag preview.
@@ -59,7 +60,11 @@ bool DragRenderCache::Ensure(ID2D1Device* device, D2D1_SIZE_U pixelSize,
     context_->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
     context_->BeginDraw();
     context_->Clear(D2D1::ColorF(0, 0, 0, 0));
-    drawStatic(context_.Get());
+    snowdesktop::HighlightCoverage coverage;
+    {
+        snowdesktop::HighlightCoverage::Scope capture(context_.Get(), coverage);
+        drawStatic(context_.Get());
+    }
     const HRESULT hr = context_->EndDraw();
     context_->SetTarget(nullptr);
     if (FAILED(hr))
@@ -67,6 +72,7 @@ bool DragRenderCache::Ensure(ID2D1Device* device, D2D1_SIZE_U pixelSize,
         bitmap_.Reset();
         return false;
     }
+    coverage.AttachToSnapshot(device, bitmap_.Get());
 
     width_ = pixelSize.width;
     height_ = pixelSize.height;
@@ -79,8 +85,10 @@ void DragRenderCache::Draw(ID2D1DeviceContext* ctx) const
 {
     if (!ctx || !bitmap_ || !contentValid_) return;
     D2D1_SIZE_F sz = bitmap_->GetSize();
-    ctx->DrawBitmap(bitmap_.Get(), D2D1::RectF(0, 0, sz.width, sz.height),
+    const auto bounds = D2D1::RectF(0, 0, sz.width, sz.height);
+    ctx->DrawBitmap(bitmap_.Get(), bounds,
         1.0f, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+    snowdesktop::HighlightCoverage::RecordBitmap(ctx, bitmap_.Get(), bounds);
 }
 
 bool DragRenderCache::DrawAt(
@@ -91,14 +99,12 @@ bool DragRenderCache::DrawAt(
     if (!ctx || !bitmap_ || !contentValid_)
         return false;
     const D2D1_SIZE_F size = bitmap_->GetSize();
+    const auto bounds = D2D1::RectF(destination.x, destination.y,
+        destination.x + size.width, destination.y + size.height);
     ctx->DrawBitmap(
-        bitmap_.Get(),
-        D2D1::RectF(
-            destination.x,
-            destination.y,
-            destination.x + size.width,
-            destination.y + size.height),
+        bitmap_.Get(), bounds,
         1.0f,
         interpolation);
+    snowdesktop::HighlightCoverage::RecordBitmap(ctx, bitmap_.Get(), bounds);
     return true;
 }

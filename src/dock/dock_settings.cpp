@@ -93,6 +93,15 @@ PersonalizationSettings ResolveDockAppearance(const DockSettings& settings, cons
     return value;
 }
 
+PersonalizationSettings ResolveDockRuleAppearance(const DockSettings& settings,
+    const DockAppearanceRule& rule, const PersonalizationSettings& global)
+{
+    auto value = rule.appearancePreset == -1 ? global :
+        rule.appearancePreset == kAppearancePresetCustom ? rule.appearance : MakeAppearancePreset(rule.appearancePreset);
+    value.cornerRadius = settings.followComponentCornerRadius ? global.cornerRadius : settings.cornerRadius;
+    return value;
+}
+
 void SelectDockAppearance(DockSettings& settings, bool followGlobal,
     int preset, const PersonalizationSettings& global)
 {
@@ -300,6 +309,31 @@ bool ReadSystemTaskbarAutoHideEnabled()
     APPBARDATA data{};
     data.cbSize = sizeof(data);
     return (SHAppBarMessage(ABM_GETSTATE, &data) & ABS_AUTOHIDE) != 0;
+}
+
+// Native Windows 11 taskbar location, stored as an ABE_* value.
+constexpr wchar_t kTaskbarLocationKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced";
+constexpr wchar_t kTaskbarLocationValue[] = L"TaskbarLocation";
+
+std::optional<DWORD> ReadStoredTaskbarLocation()
+{
+    DWORD edge = 0;
+    DWORD size = sizeof(edge);
+    if (RegGetValueW(HKEY_CURRENT_USER, kTaskbarLocationKey, kTaskbarLocationValue,
+            RRF_RT_REG_DWORD, nullptr, &edge, &size) != ERROR_SUCCESS || edge > ABE_BOTTOM)
+        return std::nullopt;
+    return edge;
+}
+
+std::optional<UINT> ReadAppliedTaskbarEdge(HWND taskbar)
+{
+    APPBARDATA data{};
+    data.cbSize = sizeof(data);
+    data.hWnd = taskbar;
+    data.uEdge = UINT_MAX;
+    if (!SHAppBarMessage(ABM_GETTASKBARPOS, &data) || data.uEdge > ABE_BOTTOM)
+        return std::nullopt;
+    return data.uEdge;
 }
 
 bool ReadSystemTaskbarAlignmentCentered()
@@ -1164,6 +1198,47 @@ std::wstring GetDockSettingsPath()
     return GetDataFilePath(L"SnowDesktop.dock.json");
 }
 
+SystemTaskbarBottomResult MoveSystemTaskbarToBottomForAutoHide()
+{
+    using Result = SystemTaskbarBottomResult;
+    if (!IsWindows11OrGreater()) return Result::Unchanged;
+    constexpr UINT bottomEdge = ABE_BOTTOM;
+
+    // The value is absent on older shells and can be left behind by a rollback.
+    const auto location = ReadStoredTaskbarLocation();
+    if (!location || *location == bottomEdge) return Result::Unchanged;
+
+    const HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
+    if (!taskbar) return Result::Failed;
+    const auto edge = ReadAppliedTaskbarEdge(taskbar);
+    if (edge == bottomEdge) return Result::Unchanged;
+    if (!edge || *edge != *location) return Result::Failed;
+
+    const DWORD bottom = bottomEdge;
+    if (RegSetKeyValueW(HKEY_CURRENT_USER, kTaskbarLocationKey, kTaskbarLocationValue, REG_DWORD,
+            &bottom, sizeof(bottom)) != ERROR_SUCCESS)
+        return Result::Failed;
+
+    // The Windows Settings app uses this private Explorer message to apply
+    // TaskbarLocation live. Read the applied edge independently of its reply.
+    constexpr UINT traySettingMessage = 0x05CA;
+    constexpr WPARAM taskbarLocationSetting = 6;
+    DWORD_PTR ignored = 0;
+    if (!SendMessageTimeoutW(taskbar, traySettingMessage, taskbarLocationSetting,
+            bottomEdge, SMTO_ABORTIFHUNG | SMTO_BLOCK, 1500, &ignored) ||
+        ReadAppliedTaskbarEdge(taskbar) != bottomEdge)
+    {
+        if (ReadStoredTaskbarLocation() == bottomEdge)
+            RegSetKeyValueW(HKEY_CURRENT_USER, kTaskbarLocationKey, kTaskbarLocationValue, REG_DWORD,
+                &*location, sizeof(DWORD));
+        return Result::Failed;
+    }
+
+    // Explorer reloads the settings for secondary taskbars from this notification.
+    SendNotifyMessageW(taskbar, WM_SETTINGCHANGE, 0, reinterpret_cast<LPARAM>(L"TraySettings"));
+    return Result::Moved;
+}
+
 bool IsSystemTaskbarAutoHideEnabled()
 {
     if (const auto requested =
@@ -1181,6 +1256,35 @@ bool IsSystemTaskbarAutoHideEnabled()
         if (original >= 0) return original != FALSE;
     }
     return ReadSystemTaskbarAutoHideEnabled();
+}
+
+SystemTaskbarAutoHideStatus GetSystemTaskbarAutoHideStatus()
+{
+    using Status = SystemTaskbarAutoHideStatus;
+    const HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
+    if (!taskbar) return Status::Unavailable;
+    if (!ReadSystemTaskbarAutoHideEnabled())
+    {
+        if (IsWindows11OrGreater())
+        {
+            const auto location = ReadStoredTaskbarLocation();
+            if (location && *location != ABE_BOTTOM && ReadAppliedTaskbarEdge(taskbar) == *location)
+                return Status::RequiresBottom;
+        }
+        return Status::Disabled;
+    }
+    using namespace snowdesktop::taskbar_hook;
+    const HANDLE mapping = OpenFileMappingW(FILE_MAP_READ, FALSE, kSharedStateName);
+    if (!mapping) return Status::Effective;
+    const auto* state = static_cast<const SharedState*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(SharedState)));
+    Snapshot snapshot;
+    const bool blocked = ReadSharedSnapshot(state, snapshot) && snapshot.enabled && snapshot.suppressTaskbar &&
+        std::any_of(snapshot.targets, snapshot.targets + snapshot.targetCount, [](const auto& target) {
+            return target.suppressTaskbar && native::ReadAutoHideState(reinterpret_cast<HWND>(target.taskbar)) == native::AutoHideState::Unavailable;
+        });
+    if (state) UnmapViewOfFile(state);
+    CloseHandle(mapping);
+    return blocked ? Status::NotEffective : Status::Effective;
 }
 
 bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed, DWORD deadline)
@@ -1205,7 +1309,7 @@ bool RequestSystemTaskbarAutoHideEnabled(bool enabled)
         if (overridden) InterlockedExchange(&state->autoHideRestore, enabled ? TRUE : FALSE);
         if (state) UnmapViewOfFile(state);
         CloseHandle(mapping);
-        if (overridden) return true;
+        if (overridden && !enabled) return true;
     }
     return GetWindowsShellSettingsController().RequestAutoHide(enabled);
 }
@@ -1534,6 +1638,30 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.appearancePreset = NormalizeAppearancePresetId(static_cast<int>(value));
     if (const auto* appearance = gradientDocument.Find("customAppearance"))
         if (!snowdesktop::DecodePanelAppearance(*appearance, settings.customAppearance)) return false;
+    for (const auto& [key, rule] : {std::pair{"maximizedWindow", &settings.maximizedWindow},
+            std::pair{"appWindow", &settings.appWindow}})
+    {
+        *rule = {};
+        const auto* entry = gradientDocument.Find(key);
+        if (!entry) continue;
+        if (!entry->IsObject()) return false;
+        if (const auto* enabled = entry->Find("enabled"))
+        {
+            if (!enabled->IsBoolean()) return false;
+            rule->enabled = enabled->boolean;
+        }
+        if (const auto* preset = entry->Find("appearancePreset"))
+        {
+            if (!preset->IsNumber() || preset->number < -1 ||
+                preset->number > kAppearancePresetGlassTransparent ||
+                std::floor(preset->number) != preset->number) return false;
+            const int id = static_cast<int>(preset->number);
+            if (id != -1 && (NormalizeAppearancePresetId(id) != id || id == kAppearancePresetTaskbarTransparent)) return false;
+            rule->appearancePreset = id;
+        }
+        if (const auto* appearance = entry->Find("appearance"))
+            if (!snowdesktop::DecodePanelAppearance(*appearance, rule->appearance, true)) return false;
+    }
     settings.fullscreenPolicy = snowdesktop::dock_fullscreen::DecodePolicy(gradientDocument);
     if (!snowdesktop::dock_fullscreen::DecodeExceptions(gradientDocument, settings.fullscreenExceptions)) return false;
     if (!snowdesktop::dock_tray::DecodeRules(gradientDocument, settings.trayApplications)) return false;
@@ -1678,6 +1806,14 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"attentionDotOffset\": " << snowdesktop::dock_attention_dot::NormalizeOffset(settings.attentionDotOffset) << ",\n";
     file << "  \"dockAppearancePreset\": " << settings.appearancePreset << ",\n";
     file << "  \"customAppearance\": " << customAppearance << ",\n";
+    for (const auto& [key, rule] : {std::pair{"maximizedWindow", &settings.maximizedWindow},
+            std::pair{"appWindow", &settings.appWindow}})
+    {
+        const auto appearance = snowdesktop::EncodePanelAppearance(rule->appearance, true);
+        if (appearance.empty()) return false;
+        file << "  \"" << key << "\": {\"enabled\":" << (rule->enabled ? "true" : "false")
+             << ",\"appearancePreset\":" << rule->appearancePreset << ",\"appearance\":" << appearance << "},\n";
+    }
     file << "  \"dynamicTaskbarSchemaVersion\": 1\n";
     file << "}\n";
     return snowdesktop::atomic_file::WriteAll(path, file.str());

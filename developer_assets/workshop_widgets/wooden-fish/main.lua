@@ -425,8 +425,10 @@ end
 local function menu(_context, _model, request)
     if request.id ~= "wooden-fish.menu" then return nil end
     return ui.menu({
-        { id = "wooden-fish.sound", label = l10n.tr("lua_widget.wooden_fish.sound"), checked = soundEnabled(),
-            icon = utf8.char(0xEB42), iconFont = "fluent" }, -- speaker_2_20_regular
+        { id = "wooden-fish.sound", label = l10n.tr("lua_widget.wooden_fish.sound") .. "\t" ..
+            (soundEnabled() and l10n.tr("menu.status.on") or l10n.tr("menu.status.off")),
+            icon = utf8.char(0xEB42), iconFont = "fluent", -- speaker_2_20_regular
+            keepOpen = widget.hasFeature("interaction.contextMenu.keepOpen") },
         {
             id = "wooden-fish.reset",
             label = l10n.tr("lua_widget.wooden_fish.reset"),

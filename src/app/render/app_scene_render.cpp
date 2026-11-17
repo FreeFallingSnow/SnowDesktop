@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/input/grid_preview_shortcut.h"
 #include "dock/dock_window_transition.h"
 #include "layout/collection_popup_layout.h"
 #include "widget/runtime/widget_engine.h"
@@ -246,14 +247,56 @@ void DesktopApp::DrawDesktopForeground(
     bool hiddenMode,
     const RECT* updateRect)
 {
-    if (hiddenMode)
-        navHotEdgeHintBackdrop_.Clear([this](std::uintptr_t key) { ClearInlineTooltipBackdrop(key); });
     snowdesktop::performance::Scope performanceScope("dock", "desktop.foreground");
+    if (!hiddenMode && generalSettings_.gridPreviewHotkeyEnabled &&
+        snowdesktop::grid_preview_shortcut::IsActive(hwnd_))
+    {
+        using namespace snowdesktop::grid_occupancy;
+        Slots occupied;
+        for (const auto& item : items_)
+            if (!item.name.empty() && FindGridPage(gridPages_, item.gridCell.pageId) &&
+                !IsItemInAnyWidget(item))
+                Mark(occupied, item.gridCell, item.gridSpan);
+        for (const auto& widget : widgets_)
+            if (FindGridPage(gridPages_, widget.gridCell.pageId) &&
+                !IsGroupedWidget(widget) && !IsDockExclusiveWidgetId(widget.id))
+                Mark(occupied, widget.gridCell, widget.gridSpan);
+
+        ComPtr<ID2D1SolidColorBrush> fill;
+        ComPtr<ID2D1SolidColorBrush> border;
+        const bool brushesReady = SUCCEEDED(ctx->CreateSolidColorBrush(
+            D2D1::ColorF(0x000000, 0.16f), &fill)) &&
+            SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(0xffffff, 0.65f), &border));
+        for (const auto& page : gridPages_)
+        {
+            if (!brushesReady) break;
+            if (!snowdesktop::foreground_paint_region::Intersects(updateRect, page.workArea)) continue;
+            constexpr float kPreviewRadiusDip = 6.0f;
+            const float pageRadius = kPreviewRadiusDip * static_cast<float>(page.dpiX) /
+                USER_DEFAULT_SCREEN_DPI;
+            GridCell cell{page.id, 0, 0};
+            for (cell.column = 0; cell.column < page.columns; ++cell.column)
+            {
+                for (cell.row = 0; cell.row < page.rows; ++cell.row)
+                {
+                    if (Occupied(occupied, cell, {})) continue;
+                    RECT bounds = GetGridRect(gridPages_, cell);
+                    // Inset the strokes so adjacent cells remain distinguishable at zero gap.
+                    InflateRect(&bounds, -1, -1);
+                    if (IsRectEmpty(&bounds)) continue;
+                    if (!snowdesktop::foreground_paint_region::Intersects(updateRect, bounds, 1)) continue;
+                    const float radius = std::min(pageRadius, 0.25f *
+                        static_cast<float>(std::min(bounds.right - bounds.left, bounds.bottom - bounds.top)));
+                    const auto rounded = D2D1::RoundedRect(ToD2DRect(bounds), radius, radius);
+                    ctx->FillRoundedRectangle(rounded, fill.Get());
+                    ctx->DrawRoundedRectangle(rounded, border.Get());
+                }
+            }
+        }
+    }
     for (const auto& container : containers_)
     {
         auto* dock = dynamic_cast<DockContainer*>(container.get());
-        if (dock && hiddenMode && !dockSettings_.keepWhenDesktopHidden)
-            dock->ClearTitleTooltipBackdrop();
         if (!dock ||
             (hiddenMode && !dockSettings_.keepWhenDesktopHidden) ||
             IsDockHostedByPersistentHost(dock))
@@ -278,20 +321,15 @@ void DesktopApp::DrawDesktopForeground(
             if (IsRectEmpty(&focus) && !PtInRect(&pointerEnvelope, lastMousePoint_) &&
                 !snowdesktop::foreground_paint_region::Intersects(updateRect, visual, overdraw))
             {
-                // Tooltip discovery must run even outside the requested pixels:
-                // popup dismissal can expose text without another pointer message.
-                const RECT title = dock->GetHoveredTitleBounds(lastMousePoint_);
                 const RECT panel = dock->GetVisualPanelBounds(lastMousePoint_);
-                if (IsRectEmpty(&title) &&
-                    !snowdesktop::foreground_paint_region::Intersects(updateRect, panel, overdraw))
+                if (!snowdesktop::foreground_paint_region::Intersects(updateRect, panel, overdraw))
                 {
-                    dock->ClearTitleTooltipBackdrop();
                     // Reconcile the same stable owner/material as DrawChrome.
                     // AddPanel restores a missing target, while retaining only by
                     // rectangle could keep a retired Container's glass owner.
                     if (!dock->SharesStatusBarAppearance())
                     {
-                        const auto appearance = CurrentDockAppearance();
+                        const auto appearance = CurrentDockAppearance(dock->GetMonitor());
                         if (appearance.glassEnabled)
                             (void)desktopBackdropCompositor_.AddPanel(panel,
                                 dockSettings_.edgeAttached ? 0.0f : appearance.cornerRadius,
@@ -843,7 +881,6 @@ void DesktopApp::DrawDynamicOverlays(
         !renderingFloatingPopup_)
     {
         DrawPageNavHotEdgeHint(ctx, updateRect);
-        DrawPageNotify(ctx, true, updateRect);
     }
 }
 

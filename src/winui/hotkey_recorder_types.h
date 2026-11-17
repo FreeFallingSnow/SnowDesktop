@@ -19,7 +19,6 @@ struct HotkeyRecorderText
     std::wstring conflict = L"Shortcut conflicts with another command";
     std::wstring cleared = L"Shortcut cleared";
     std::wstring none = L"None";
-    std::wstring disabled = L"Disabled";
     std::wstring captureActive = L"Press a shortcut, then select Apply.";
     std::wstring notSetWarning = L"No shortcut is configured";
     std::wstring availableStatus = L"Available";

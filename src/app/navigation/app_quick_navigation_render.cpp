@@ -1,9 +1,11 @@
 #include "ui/render/app_font.h"
+#include "ui/render/highlight_coverage.h"
 #include "app/app.h"
 #include "navigation/quick_navigation_animation_rules.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "diagnostics/diagnostic_log.h"
+#include "diagnostics/performance_trace.h"
 #include "common/utils.h"
 #include "ui/input/text_input_window.h"
 #include "quick_navigation_helpers.h"
@@ -25,7 +27,9 @@ void DesktopApp::ClearQuickNavigationDeformation()
     if (quickNavigation_->dcompVisual)
     {
         quickNavigation_->dcompVisual->RemoveAllVisuals();
-        quickNavigation_->dcompVisual->SetContent(quickNavigation_->dcompSurface.Get());
+        const auto contentKey = reinterpret_cast<std::uintptr_t>(quickNavigation_->hwnd);
+        quickNavigation_->dcompVisual->SetContent(quickNavigation_->backdropCompositor.HasSrgbContent(contentKey)
+            ? nullptr : quickNavigation_->dcompSurface.Get());
         quickNavigation_->dcompVisual->SetTransform(quickNavigation_->dcompScaleTransform.Get());
     }
     quickNavigation_->genieStrips.clear();
@@ -473,6 +477,7 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
 
 void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
 {
+    snowdesktop::performance::Scope presentScope("navigation", "paint");
     PAINTSTRUCT ps{};
     HDC hdc = BeginPaint(hwnd, &ps);
     if (!hdc)
@@ -524,6 +529,8 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
 
     ComPtr<ID2D1DeviceContext> ctx;
     ctx.Attach(rawContext);
+    snowdesktop::HighlightCoverage highlightCoverage;
+    snowdesktop::HighlightCoverage::Scope captureHighlights(ctx.Get(), highlightCoverage);
     ctx->SetDpi(96.0f, 96.0f);
     ctx->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
     // 内容 surface 只按目标面板大小分配；顶层宿主可以覆盖完整动画路径。
@@ -569,16 +576,25 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             sourceContext->SetTransform(D2D1::Matrix3x2F::Translation(
                 -static_cast<float>(quickNavigation_->rect.left), -static_cast<float>(quickNavigation_->rect.top)));
             brushCacheContext_ = sourceContext.Get();
-            DrawQuickNavigationSurface(sourceContext.Get());
+            snowdesktop::HighlightCoverage sourceCoverage;
+            {
+                snowdesktop::HighlightCoverage::Scope captureSource(sourceContext.Get(), sourceCoverage);
+                DrawQuickNavigationSurface(sourceContext.Get());
+            }
             contentResult = sourceContext->EndDraw();
             sourceContext->SetTarget(nullptr);
             brushCache_.clear();
             brushCacheContext_ = ctx.Get();
             if (SUCCEEDED(contentResult))
-                ctx->DrawBitmap(quickNavigation_->attractionBitmap.Get(), D2D1::RectF(
+            {
+                const auto frame = D2D1::RectF(
                     static_cast<float>(quickNavigation_->rect.left), static_cast<float>(quickNavigation_->rect.top),
                     static_cast<float>(quickNavigation_->rect.left) + static_cast<float>(quickNavigation_->compWidth),
-                    static_cast<float>(quickNavigation_->rect.top) + static_cast<float>(quickNavigation_->compHeight)));
+                    static_cast<float>(quickNavigation_->rect.top) + static_cast<float>(quickNavigation_->compHeight));
+                sourceCoverage.AttachToSnapshot(d2dDevice_.Get(), quickNavigation_->attractionBitmap.Get());
+                ctx->DrawBitmap(quickNavigation_->attractionBitmap.Get(), frame);
+                snowdesktop::HighlightCoverage::RecordBitmap(ctx.Get(), quickNavigation_->attractionBitmap.Get(), frame);
+            }
         }
     }
     else
@@ -586,6 +602,17 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         quickNavigation_->attractionBitmap.Reset();
         DrawQuickNavigationSurface(ctx.Get());
     }
+    const auto srgbKey = reinterpret_cast<std::uintptr_t>(hwnd);
+    RECT srgbFrame = quickNavigation_->rect;
+    OffsetRect(&srgbFrame, -quickNavigation_->hostRect.left, -quickNavigation_->hostRect.top);
+    const bool deforming = quickNavigation_->animation.IsAnimating() &&
+        snowdesktop::quick_navigation_animation_rules::IsDeformationEffect(
+            quickNavigation_->animation.GetEffect());
+    const bool previouslySrgb = quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey);
+    const bool stagedSrgb = SUCCEEDED(contentResult) && quickNavigation_->glassTheme &&
+        quickNavigation_->backdropCompositor.IsAvailable() && !deforming &&
+        (!quickNavigation_->animationCompositorDriven || previouslySrgb) &&
+        quickNavigation_->backdropCompositor.StageSrgbContent(hwnd, srgbKey, srgbFrame, ctx.Get(), updateOffset);
     ctx->SetTransform(D2D1::Matrix3x2F::Identity());
     ctx.Reset();
     brushCache_.clear();
@@ -599,9 +626,16 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         EndPaint(hwnd, &ps);
         return;
     }
-    if (previousSurface != quickNavigation_->dcompSurface.Get())
+    // Preserve the native animation timeline during hover and caret repaints.
+    if (!quickNavigation_->animationCompositorDriven)
+        UpdateQuickNavigationBackdrop();
+    const bool srgbPresented = stagedSrgb && quickNavigation_->backdropCompositor.PublishSrgbContent(
+        srgbKey, quickNavigation_->animationCompositorDriven ? -1.f : 1.f);
+    if (!srgbPresented) quickNavigation_->backdropCompositor.RemoveSrgbContent(srgbKey);
+    if (srgbPresented || previouslySrgb || previousSurface != quickNavigation_->dcompSurface.Get())
     {
-        hr = quickNavigation_->dcompVisual->SetContent(quickNavigation_->dcompSurface.Get());
+        hr = quickNavigation_->dcompVisual->SetContent(
+            srgbPresented ? nullptr : quickNavigation_->dcompSurface.Get());
         if (FAILED(hr))
         {
             RecoverQuickNavCompositionFailure(L"Publish painted surface", hr);
@@ -609,11 +643,6 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             return;
         }
     }
-    // A caret/hover repaint must not replace the backdrop's running native
-    // opening/closing transform with the logical timeline's static pose.
-    // Positioning stops that timeline first whenever the geometry changes.
-    if (!quickNavigation_->animationCompositorDriven)
-        UpdateQuickNavigationBackdrop();
     ApplyQuickNavigationAnimationFrame();
     if (!CommitQuickNavigationCompositionFrame())
     {
@@ -628,6 +657,14 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         return;
     }
     quickNavigation_->backdropCompositor.CommitVisualChanges();
+    if (!quickNavigation_->backdropCompositor.CommitSrgbContent())
+    {
+        quickNavigation_->backdropCompositor.RemoveSrgbContent(srgbKey);
+        (void)quickNavigation_->dcompVisual->SetContent(quickNavigation_->dcompSurface.Get());
+        (void)CommitQuickNavigationCompositionFrame();
+        (void)FlushPendingQuickNavigationCompositionCommit();
+        (void)quickNavigation_->backdropCompositor.CommitSrgbContent();
+    }
     quickNavigation_->compositionRenderRecoveryPending = false;
 
     EndPaint(hwnd, &ps);
@@ -653,8 +690,8 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             nullptr);
         windowClipPushed = true;
     }
-    const float borderAlpha = quickNavigation_->animation.IsAnimating()
-        ? 0.0f : std::clamp(quickNavigation_->appearance.widgetBorderAlpha, 0.0f, 1.0f);
+    const float borderAlpha =
+        std::clamp(quickNavigation_->appearance.widgetBorderAlpha, 0.0f, 1.0f);
     auto background = quickNavigation_->appearance;
     background.widgetEdgeHighlightEnabled = false;
     background.acrylicEnabled = false;
@@ -854,7 +891,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             DrawD2DRoundedRectangle(ctx.Get(), tabRect,
                 static_cast<float>(QuickNavScale(navigationSettings_.layout.tabRadius)), fill, stroke);
 
-            std::wstring label = GetQuickNavTabLabel(tab);
+            std::wstring label = GetQuickNavTabLabel(tab, collectionIndices);
             RECT textRect = tabRect;
             textRect.left += QuickNavScale(8);
             textRect.right -= QuickNavScale(8);
@@ -940,7 +977,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                 ToD2DColor(t.tabDragFloatFill, 0.82f),
                 ToD2DColor(t.tabDragFloatStroke, 0.88f));
 
-            std::wstring label = GetQuickNavTabLabel(quickNavigation_->tabDragIndex);
+            std::wstring label = GetQuickNavTabLabel(quickNavigation_->tabDragIndex, collectionIndices);
             RECT textRect = tabRect;
             textRect.left += QuickNavScale(8);
             textRect.right -= QuickNavScale(8);

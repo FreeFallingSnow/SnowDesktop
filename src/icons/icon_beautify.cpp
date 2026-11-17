@@ -641,7 +641,8 @@ void ApplyTexture(std::vector<std::uint32_t>& output, int width, int height,
 }
 
 void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int height,
-    const IconBeautifySettings& settings, int rasterScale = 1)
+    const IconBeautifySettings& settings, int rasterScale = 1,
+    std::vector<std::uint8_t>* coverage = nullptr)
 {
     if (!settings.edgeHighlightEnabled || settings.edgeHighlightStrength <= 0.0f) return;
     const auto& outline = OutlineFor(settings.shape);
@@ -653,6 +654,7 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
     const float rimInset = depth * .5f;
     const float halo = rimInset + std::max(material.InnerSupport(depth, false), material.InnerSupport(depth, true));
     const auto& inner = CachedMask(settings.shape, width, height, halo);
+    if (coverage) coverage->assign(output.size(), 0);
     for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x)
     {
         const size_t index = static_cast<size_t>(y) * width + x;
@@ -681,13 +683,23 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
         const float light = material.Intensity(distance / rasterScale, depth / rasterScale, lighting);
         const int alpha = static_cast<int>(std::lround(light * settings.edgeHighlightStrength * mask[index]));
         output[index] = SourceOver(PackPremultiplied(255, 255, 255, alpha), output[index]);
+        int shadowAlpha = 0;
         if (material.settings.shadowStrength > 0.f)
         {
-            const int shadowAlpha = static_cast<int>(std::lround(
+            shadowAlpha = static_cast<int>(std::lround(
                 material.Occlusion(distance / rasterScale, depth / rasterScale, lighting) *
                 settings.edgeHighlightStrength * material.settings.shadowStrength * mask[index]));
             output[index] = SourceOver(
                 PackPremultiplied(4, 6, 9, shadowAlpha), output[index]);
+        }
+        if (coverage && alpha > 0)
+        {
+            // Use the reflection's share of the pixel so the correction fades
+            // with the reflected light through the inner edge of the rim.
+            const int outputAlpha = static_cast<int>(output[index] >> 24);
+            const int reflected = alpha * (255 - shadowAlpha);
+            (*coverage)[index] = static_cast<std::uint8_t>(
+                std::min(255, (reflected + outputAlpha / 2) / outputAlpha));
         }
     }
 }
@@ -1037,7 +1049,8 @@ std::vector<std::uint32_t> RenderEdgeReflection(int width, int height,
 
 static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>& source,
     int width, int height, const IconBeautifySettings& rawSettings,
-    std::optional<PlateFill> detectedEdgeFill, int rasterScale, SourceKind sourceKind)
+    std::optional<PlateFill> detectedEdgeFill, int rasterScale, SourceKind sourceKind,
+    std::vector<std::uint8_t>* coverage = nullptr)
 {
     if (width <= 0 || height <= 0 ||
         source.size() != static_cast<size_t>(width) * height)
@@ -1195,7 +1208,7 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
         }
         ApplyTexture(output, width, height, settings, rasterScale);
         ApplyOutline(output, width, height, settings, rasterScale);
-        ApplyEdgeReflection(output, width, height, settings, rasterScale);
+        ApplyEdgeReflection(output, width, height, settings, rasterScale, coverage);
         return output;
     }
 
@@ -1272,15 +1285,17 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
 
     ApplyTexture(output, width, height, settings, rasterScale);
     ApplyOutline(output, width, height, settings, rasterScale);
-    ApplyEdgeReflection(output, width, height, settings, rasterScale);
+    ApplyEdgeReflection(output, width, height, settings, rasterScale, coverage);
     return output;
 }
 
 std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
     int width, int height, const IconBeautifySettings& settings,
-    std::optional<PlateFill> detectedEdgeFill, SourceKind sourceKind)
+    std::optional<PlateFill> detectedEdgeFill, SourceKind sourceKind,
+    std::vector<std::uint8_t>* coverage)
 {
-    return RenderAtScale(source, width, height, settings, detectedEdgeFill, 1, sourceKind);
+    if (coverage) coverage->clear();
+    return RenderAtScale(source, width, height, settings, detectedEdgeFill, 1, sourceKind, coverage);
 }
 
 MaskCacheStatistics TryGetMaskCacheStatistics()

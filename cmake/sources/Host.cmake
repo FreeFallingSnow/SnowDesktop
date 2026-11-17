@@ -81,6 +81,8 @@ set(SNOWDESKTOP_SOURCES
     src/system/status_bar/status_bar_notification.cpp
     src/system/status_bar/status_bar_notification.h
     src/system/tray/tray_service.cpp
+    src/system/tray/tray_hover_popup.cpp
+    src/system/tray/tray_hover_popup.h
     src/system/tray/tray_menu_placement.cpp
     src/system/tray/tray_menu_placement.h
     src/ui/render/native_tooltip.cpp

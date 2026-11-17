@@ -10,6 +10,138 @@
 
 // Native rename editor creation.
 
+void DesktopApp::BeginNewItemRename(const std::optional<NewItemRename>& request)
+{
+    if (!request || renameController_.IsActive() || HasActiveContextMenuSession() ||
+        luaInlineEdit_ || quickNavigation_->open) return;
+    const HWND foreground = snowdesktop::private_pointer::ForegroundWindow();
+    if (foreground && foreground != floatingDockInputHwnd_ &&
+        !IsDesktopInteractionSurfaceWindow(foreground) &&
+        !IsShellDesktopForegroundWindow(foreground)) return;
+
+    using Surface = NewItemTarget::Surface;
+    const auto& target = request->target;
+    const auto folderIndex = [&](const DesktopWidget& folder) {
+        const auto found = std::find_if(folder.folderEntries.begin(), folder.folderEntries.end(),
+            [&](const auto& entry) { return _wcsicmp(entry.fullPath.c_str(), request->path.c_str()) == 0; });
+        return static_cast<size_t>(found - folder.folderEntries.begin());
+    };
+    const auto revealAll = [](ScrollingItemWidget& view) {
+        view.ClearSearchText();
+        view.SetSearchFocused(false);
+        view.GetWidgetData()->activeCategoryId = L"all";
+        view.InvalidateSlots();
+    };
+    if (target.surface == Surface::FolderPopup)
+    {
+        if (!dockFolderPopupOpen_ || dockFolderPopupSourceId_ != target.sourceId ||
+            !IsCollectionPopupInteractive()) return;
+        const size_t member = folderIndex(dockFolderPopupWidget_);
+        if (member >= dockFolderPopupWidget_.folderEntries.size()) return;
+        if (auto* mapping = dynamic_cast<FolderMapping*>(GetCategorizedPopupView()))
+        {
+            const auto& visible = mapping->GetVisibleEntryIndices();
+            if (std::find(visible.begin(), visible.end(), member) == visible.end())
+            {
+                revealAll(*mapping);
+                mapping->InvalidateFilterCache();
+                RefreshOpenCollectionPopupGeometry();
+            }
+        }
+        BeginRenameDockFolderPopupEntry(member);
+        return;
+    }
+
+    size_t itemIndex = items_.size();
+    if (target.surface != Surface::FolderMapping)
+    {
+        const auto item = std::find_if(items_.begin(), items_.end(), [&](const auto& candidate) {
+            return _wcsicmp(candidate.parsingName.c_str(), request->path.c_str()) == 0;
+        });
+        if (item == items_.end()) return;
+        itemIndex = static_cast<size_t>(item - items_.begin());
+        if (target.surface == Surface::Desktop &&
+            (IsItemInAnyWidget(*item) || IsRectEmptyRect(item->bounds))) return;
+    }
+
+    if (target.surface != Surface::Desktop)
+    {
+        const size_t sourceIndex = FindWidgetIndexById(target.sourceId);
+        const size_t ownerIndex = ResolveRenameVisibilityWidgetIndex(sourceIndex);
+        if (ownerIndex >= widgets_.size()) return;
+        auto& source = widgets_[sourceIndex];
+        auto& owner = widgets_[ownerIndex];
+        const bool inPopup = !dockFolderPopupOpen_ && popupWidgetIndex_ == ownerIndex &&
+            IsCollectionPopupInteractive();
+        ScrollingItemWidget* view = inPopup ? GetCategorizedPopupView() : nullptr;
+        if (!view)
+            for (const auto& container : containers_)
+                if (auto* candidate = dynamic_cast<ScrollingItemWidget*>(container.get());
+                    candidate && candidate->GetWidgetData() == &owner && !IsRectEmptyRect(owner.bounds))
+                {
+                    view = candidate;
+                    break;
+                }
+        if (!view) return;
+        auto* group = dynamic_cast<FileGroup*>(view);
+        if (group)
+        {
+            if (group->GetActiveSourceId() != source.id) return;
+            group->ClearSearchText();
+            group->SetSearchFocused(false);
+            view = group->GetActiveSourceContainer();
+            if (!view) return;
+        }
+        if (auto* mapping = dynamic_cast<FolderMapping*>(view))
+        {
+            const size_t member = folderIndex(source);
+            if (member >= source.folderEntries.size()) return;
+            const auto& filtered = mapping->GetVisibleEntryIndices();
+            if (std::find(filtered.begin(), filtered.end(), member) == filtered.end())
+            {
+                revealAll(*mapping);
+                mapping->InvalidateFilterCache();
+            }
+            const auto& visible = mapping->GetVisibleEntryIndices();
+            const auto position = std::find(visible.begin(), visible.end(), member);
+            if (position == visible.end()) return;
+            const int visibleIndex = static_cast<int>(position - visible.begin());
+            if (group) group->InvalidateHostedView();
+            ScrollWidgetToMember(ownerIndex, visibleIndex);
+            BeginRenameFolderEntry(sourceIndex, member);
+            return;
+        }
+        auto* categories = dynamic_cast<FileCategories*>(view);
+        if (!categories) return;
+        if (inPopup && !group) ShowAllCollectionPopupItems();
+        const auto key = ToUpperInvariant(items_[itemIndex].layoutKey);
+        const auto& filtered = categories->GetSearchResultKeys();
+        if (std::find(filtered.begin(), filtered.end(), key) == filtered.end()) revealAll(*categories);
+        const auto& keys = categories->GetSearchResultKeys();
+        const auto position = std::find(keys.begin(), keys.end(), key);
+        if (position == keys.end()) return;
+        const auto visibleIndex = static_cast<size_t>(position - keys.begin());
+        if (group) group->InvalidateHostedView();
+        if (inPopup && !group)
+        {
+            RefreshOpenCollectionPopupGeometry();
+            const auto itemRect = GetCollectionPopupItemRect(popupRect_, visibleIndex);
+            const auto content = GetCollectionPopupContentRect(popupRect_);
+            if (itemRect.top < content.top) popupScrollOffset_ -= content.top - itemRect.top;
+            else if (itemRect.bottom > content.bottom) popupScrollOffset_ += itemRect.bottom - content.bottom;
+            popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
+                GetCollectionPopupMaxScrollOffset(owner, popupRect_));
+        }
+        else
+            ScrollWidgetToMember(ownerIndex, static_cast<int>(visibleIndex));
+    }
+
+    SelectOnly(static_cast<int>(itemIndex));
+    if (dockFolderPopupOpen_)
+        for (auto& entry : dockFolderPopupWidget_.folderEntries) entry.selected = false;
+    BeginRenameSelected();
+}
+
 void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
 {
     if (renameController_.IsActive() ||
@@ -242,6 +374,11 @@ BeginRenameDockFolderPopupEntry(
                 folderEntries.size())
         return;
 
+    if (dockFolderPopupContainer_ && dockFolderPopupContainer_->PopupResizeTransition())
+    {
+        dockFolderPopupContainer_->SetPopupResizeTransition({});
+        RefreshDockFolderPopupGeometry();
+    }
     ShowAllCollectionPopupItems();
     // memberIndex addresses the source folder; geometry addresses the
     // filtered visible order. A hidden entry has no rename anchor.
@@ -300,6 +437,8 @@ BeginRenameDockFolderPopupEntry(
     const DWORD style = snowdesktop::rename_edit_layout::EditStyle(
         UsesCollectionPopupList(dockFolderPopupWidget_),
         !UsesCollectionPopupList(dockFolderPopupWidget_));
+    const HWND owner = IsCollectionPopupHostedByFloatingWindow() &&
+        floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_) ? floatingPopupHwnd_ : hwnd_;
     renameInputWindow_ = CreateWindowExW(
             WS_EX_TOOLWINDOW |
             WS_EX_TOPMOST |
@@ -312,7 +451,7 @@ BeginRenameDockFolderPopupEntry(
             screenRect.left,
         screenRect.bottom -
             screenRect.top,
-        hwnd_, nullptr, instance_, nullptr);
+        owner, nullptr, instance_, nullptr);
     if (!renameInputWindow_)
     {
         renameController_.Reset();
@@ -422,8 +561,17 @@ LRESULT CALLBACK DesktopApp::RenameEditSubclassProc(
     case WM_KEYDOWN:
         if (snowdesktop::text_input::IsComposing(hwnd))
             break;
-        if (wParam == VK_RETURN) { app->CommitRename(false); return 0; }
-        if (wParam == VK_ESCAPE) { app->CommitRename(true); return 0; }
+        if (wParam == VK_RETURN || wParam == VK_ESCAPE)
+        {
+            const bool returnFocusToPopupInput = app->IsCollectionPopupInteractive() &&
+                !app->renameController_.IsQuickNavigationPresentation();
+            app->CommitRename(wParam == VK_ESCAPE);
+            // The editor is an owned window. Destroying it can move focus
+            // to the popup host instead of the keyboard input proxy.
+            if (returnFocusToPopupInput && app->IsCollectionPopupInteractive())
+                app->RestoreInteractionInputFocus();
+            return 0;
+        }
         break;
     case WM_KILLFOCUS:
         if (snowdesktop::text_input::HasEditingMenu(hwnd))

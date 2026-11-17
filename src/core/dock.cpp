@@ -20,6 +20,7 @@
 #include "slot.h"
 #include "common/l10n.h"
 #include "layout/item_location.h"
+#include "ui/render/icon_backdrop_clip.h"
 #include "ui/render/smooth_corner_geometry.h"
 #include "ui/render/ui_animation_scheduler.h"
 
@@ -27,6 +28,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <shlwapi.h>
 
 namespace
@@ -150,7 +152,7 @@ void DockRunningItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
         const auto* dock = dynamic_cast<const DockContainer*>(container_);
         app_->DrawDockRunningApp(
             context, app_->dockUnpinnedRunningApps_[index], rect, state,
-            dock ? dock->GetElementIconSize(bounds_, rect) : 0);
+            dock ? dock->GetElementIconSize(bounds_, rect) : 0, dock ? dock->GetMonitor() : nullptr);
     }
 }
 
@@ -218,7 +220,7 @@ void DockFrequentItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
         app_->items_[itemIndex_].layoutKey, true };
     const auto* dock = dynamic_cast<const DockContainer*>(container_);
     app_->DrawDockEntry(context, entry, rect, state,
-        dock ? dock->GetElementIconSize(bounds_, rect) : 0);
+        dock ? dock->GetElementIconSize(bounds_, rect) : 0, nullptr, nullptr, dock ? dock->GetMonitor() : nullptr);
 }
 
 ComPtr<IDataObject> DockFrequentItem::CreateDataObject()
@@ -369,7 +371,7 @@ void DockEntryItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             }
         }
         app_->DrawDockEntry(context, *entry, rect, state,
-            dock ? dock->GetElementIconSize(bounds_, rect) : 0);
+            dock ? dock->GetElementIconSize(bounds_, rect) : 0, nullptr, nullptr, dock ? dock->GetMonitor() : nullptr);
     }
 }
 
@@ -385,6 +387,14 @@ ComPtr<IDataObject> DockEntryItem::CreateDataObject()
 
 DockContainer::DockContainer(DesktopApp* app, std::vector<DockEntry>* entries, RECT area)
     : app_(app), entries_(entries), area_(area) {}
+
+HMONITOR DockContainer::GetMonitor() const
+{
+    if (!app_) return nullptr;
+    RECT screen = area_;
+    OffsetRect(&screen, app_->virtualLeft_, app_->virtualTop_);
+    return MonitorFromRect(&screen, MONITOR_DEFAULTTONEAREST);
+}
 
 DockContainer::PresentationState DockContainer::CapturePresentationState() const
 {
@@ -417,6 +427,7 @@ void DockContainer::SetReservedArea(RECT area)
 
     area_ = area;
     InvalidateSlots();
+    hoveredTitleLayout_ = {};
     hoveredTitleBoundsCacheText_.clear();
     hoveredTitleBoundsCacheAnchor_ = {};
     hoveredTitleBoundsCache_ = {};
@@ -1423,9 +1434,7 @@ RECT DockContainer::GetVisualPanelBounds(POINT pointer) const
         panel = snowdesktop::dock_magnification::ClipPanelToWorkArea(panel, area_);
     if (app_->statusBar_ && !IsMergedWithStatusBar())
     {
-        RECT screen = area_;
-        OffsetRect(&screen, app_->virtualLeft_, app_->virtualTop_);
-        const auto monitor = MonitorFromRect(&screen, MONITOR_DEFAULTTONEAREST);
+        const auto monitor = GetMonitor();
         MONITORINFO info{sizeof(info)};
         if (GetMonitorInfoW(monitor, &info))
         {
@@ -1460,6 +1469,7 @@ RECT DockContainer::CalculateTitleTooltipBounds(const std::wstring& title,
     options.scale = scale; options.centered = true;
     if (FAILED(snowdesktop::MeasureNativeTooltip(app_->dwriteFactory_.Get(), measurementFormat, {}, title,
         300.f * scale, 96.f * scale, measured, options))) return {};
+    hoveredTitleLayout_ = measured;
     return PositionTitleTooltipBounds(hoveredBounds, static_cast<int>(std::ceil(measured.width)),
         static_cast<int>(std::ceil(measured.height)));
 }
@@ -1520,15 +1530,14 @@ RECT DockContainer::PositionTitleTooltipBounds(
     return tooltip;
 }
 
-RECT DockContainer::GetHoveredTitleBounds(
-    POINT pointer) const
+RECT DockContainer::GetHoveredTitleBounds(POINT pointer) const
 {
-    if (IsMagnificationSuppressed() || (app_ && (app_->dragSession_.IsActive() ||
-            app_->widgetAction_ == DesktopApp::WidgetAction::Move)) ||
-        (app_ && app_->dockTrayPopup_ && !app_->popupAnimation_.IsHidden()) ||
-        (app_ && ((app_->dockWindowPreview_ && app_->dockWindowPreview_->IsVisible()) ||
-            !app_->quickNavigation_->animation.IsHidden() ||
-            app_->quickNavigation_->open || app_->HasActiveContextMenuSession())))
+    if (!app_ || IsMagnificationSuppressed() || app_->IsPointOccludedByOpenPopup(pointer) ||
+        app_->dragSession_.IsActive() || app_->dragDropController_.IsTransportActive() ||
+        app_->widgetAction_ == DesktopApp::WidgetAction::Move ||
+        (app_->dockTrayPopup_ && !app_->popupAnimation_.IsHidden()) ||
+        !app_->quickNavigation_->animation.IsHidden() || app_->quickNavigation_->open ||
+        app_->HasActiveContextMenuSession())
         return RECT{};
 
     const auto* host = app_->FindPersistentDockHost(this);
@@ -1601,13 +1610,22 @@ RECT DockContainer::GetHoveredTitleBounds(
     if (title.empty() || IsRectEmpty(&baseBounds))
         return RECT{};
 
+    if (app_->dockWindowPreview_ && !app_->dockWindowPreview_->IsClosing() &&
+        app_->dockWindowPreview_->IsVisible() && !app_->dockWindowPreviewKey_.empty())
+    {
+        DockWindowPreviewTarget target;
+        if (app_->ResolveDockWindowPreviewTarget(pointer, target) &&
+            target.targetToken == app_->dockWindowPreviewKey_)
+            return RECT{};
+    }
+
     const RECT visualBounds =
         GetElementVisualRect(baseBounds, pointer);
 
     const int position = static_cast<int>(
         app_->dockSettings_.position);
     const bool lightTheme =
-        (app_->CurrentDockAppearance().contentTheme == 1);
+        (app_->CurrentDockAppearance(GetMonitor()).contentTheme == 1);
     const float tooltipFontSize = snowdesktop::NativeTooltipFontSize() * TitleTooltipScale();
     const bool cachedMeasurement =
         tooltipFontSize == hoveredTitleBoundsCacheFontSize_ &&
@@ -1649,10 +1667,24 @@ RECT DockContainer::GetHoveredTitleBounds(
         position;
     hoveredTitleBoundsCacheLightTheme_ =
         lightTheme;
+    hoveredTitleLayout_ = {};
     hoveredTitleBoundsCache_ =
         CalculateTitleTooltipBounds(
             title, visualBounds);
     return hoveredTitleBoundsCache_;
+}
+
+void DockContainer::ShowHoveredTitle(POINT pointer, HWND owner, snowdesktop::NativeTooltip& tooltip) const
+{
+    RECT bounds = GetHoveredTitleBounds(pointer);
+    if (IsRectEmpty(&bounds) || !hoveredTitleLayout_.layout)
+    {
+        tooltip.Hide();
+        return;
+    }
+    OffsetRect(&bounds, app_->virtualLeft_, app_->virtualTop_);
+    app_->ConfigureFixedTooltip(tooltip, owner);
+    tooltip.ShowAt(hoveredTitleBoundsCacheText_, bounds, hoveredTitleLayout_);
 }
 
 bool DockContainer::IsFocusedElementRect(
@@ -1791,9 +1823,6 @@ std::vector<RECT> DockContainer::GetOcclusionRects(POINT pointer) const
         if (!IsRectEmpty(&icon))
             result.push_back(icon);
     }
-    const RECT title = GetHoveredTitleBounds(pointer);
-    if (!IsRectEmpty(&title))
-        result.push_back(title);
     return result;
 }
 
@@ -2375,11 +2404,7 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 {
     if (!context || SharesStatusBarAppearance()) return;
     RECT bounds = GetVisualPanelBounds(mousePt);
-    PersonalizationSettings p = PersonalizationSettings::DarkPreset();
-    if (app_ && app_->renderingFloatingDock_)
-        p = app_->floatingDockPersonalization_;
-    else if (app_)
-        p = app_->CurrentDockAppearance();
+    const auto p = app_ ? app_->CurrentDockAppearance(GetMonitor()) : PersonalizationSettings::DarkPreset();
     const float panelRadius = IsEdgeAttached() ? 0.0f : p.cornerRadius;
     const D2D1_COLOR_F fill = D2D1::ColorF(
         p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
@@ -2452,18 +2477,8 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
             context, bounds, panelRadius, fill, &p);
 }
 
-void DockContainer::ClearTitleTooltipBackdrop()
-{
-    titleTooltipBackdrop_.Clear([this](std::uintptr_t key) {
-        if (app_) app_->ClearInlineTooltipBackdrop(key);
-    });
-}
-
 void DockContainer::DrawContents(ID2D1DeviceContext* context)
 {
-    auto tooltipPaint = titleTooltipBackdrop_.BeginPaint([this](std::uintptr_t key) {
-        if (app_) app_->ClearInlineTooltipBackdrop(key);
-    });
     if (!context) return;
     const auto& slots = GetSlots();
     const size_t count = entries_ ? entries_->size() : 0;
@@ -2473,8 +2488,8 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     const size_t folderEnd = folderBegin + folderCount;
     const bool hasRecycleBin = count > 0 && app_ &&
         app_->IsRecycleBinDockEntry(entries_->back());
-    const bool lt = app_->CurrentDockAppearance().contentTheme == 1;
-    std::wstring hoveredTitle;
+    const auto monitor = GetMonitor();
+    const bool lt = app_->CurrentDockAppearance(monitor).contentTheme == 1;
     const RECT magnificationFocus =
         ResolveMagnificationFocusRect(app_->lastMousePoint_);
     auto isFocused = [&](const RECT& rect) {
@@ -2488,7 +2503,6 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     const RECT windowsButton = GetWindowsButtonRect();
     if (!IsRectEmpty(&windowsButton))
     {
-        const bool hovered = isFocused(windowsButton);
         const RECT windowsVisual = visualRectFor(windowsButton);
         const int backgroundSize = GetElementIconSize(windowsButton, windowsVisual);
         RECT background{
@@ -2502,7 +2516,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                 (windowsVisual.bottom - windowsVisual.top + backgroundSize) / 2
         };
         auto* custom = app_->GetSmallCustomIcon(context, L"control:start", backgroundSize);
-        if (!custom) app_->DrawDockControlBackground(context, background, 0, !lt);
+        if (!custom) app_->DrawDockControlBackground(context, background, 0, !lt, 0, monitor);
 
         const float logoSize = std::max(1.0f, backgroundSize * 0.58f);
         const float paneGap = std::max(1.5f, logoSize * 0.09f);
@@ -2527,10 +2541,6 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                 logoLeft + paneSize + paneGap, logoTop + paneSize + paneGap,
                 logoLeft + logoSize, logoTop + logoSize), windowsBrush.Get());
         }
-        if (hovered && !IsMagnificationSuppressed())
-        {
-            hoveredTitle = _LW("app.dock.start_menu");
-        }
     }
 
     const RECT search = GetSearchRect();
@@ -2549,12 +2559,14 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         static_cast<float>(scrollVisualViewport.right),
         static_cast<float>(scrollVisualViewport.bottom));
     bool scrollClipPushed = false;
+    std::optional<snowdesktop::ScopedIconBackdropClip> scrollGlassClip;
     if (hasOverflow)
     {
         context->PushAxisAlignedClip(
             scrollVisualViewportF,
             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         scrollClipPushed = true;
+        scrollGlassClip.emplace(context, scrollVisualViewport);
     }
 
     const bool hasLeadingOverflow =
@@ -2651,10 +2663,6 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             return;
         const RECT visualBounds = visualRectFor(itemBounds);
         item->Draw(context, visualBounds, item->IsSelected() ? 2 : 0);
-        if (hovered && !IsMagnificationSuppressed())
-        {
-            hoveredTitle = item->GetTitle();
-        }
     };
     auto drawScrollablePass = [&](bool focusedPass) {
         for (size_t i = 0; i < fixedCount && i < slots.size(); ++i)
@@ -2786,6 +2794,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     drawBoundaries(true);
     if (overflowMaskPushed) context->PopLayer();
     if (scrollClipPushed) context->PopAxisAlignedClip();
+    scrollGlassClip.reset();
 
     {
         auto drawFixedFolderPass = [&](bool focusedPass) {
@@ -2798,7 +2807,6 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                 const bool hovered = isFocused(itemBounds);
                 if (hovered != focusedPass) continue;
                 item->Draw(context, visualRectFor(itemBounds), item->IsSelected() ? 2 : 0);
-                if (hovered && !IsMagnificationSuppressed()) hoveredTitle = item->GetTitle();
             }
         };
         drawFixedFolderPass(false);
@@ -2813,20 +2821,14 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         if (recycleBin)
         {
             const RECT recycleBounds = slots[count - 1]->GetBounds();
-            const bool hovered = isFocused(recycleBounds);
             const RECT recycleVisual = visualRectFor(recycleBounds);
             recycleBin->Draw(context, recycleVisual,
                 recycleBin->IsSelected() ? 2 : 0);
-            if (hovered && !IsMagnificationSuppressed())
-            {
-                hoveredTitle = recycleBin->GetTitle();
-            }
         }
     }
 
     if (!IsRectEmpty(&search))
     {
-        const bool searchHovered = isFocused(search);
         const RECT searchVisual = visualRectFor(search);
         const int backgroundSize = GetElementIconSize(search, searchVisual);
         const float searchScale = static_cast<float>(backgroundSize) / 52.0f;
@@ -2842,7 +2844,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         };
         auto* custom = app_->GetSmallCustomIcon(context, L"control:search", backgroundSize);
         if (!custom) app_->DrawDockControlBackground(
-            context, searchBackground, 0, !lt);
+            context, searchBackground, 0, !lt, 0, monitor);
 
         ComPtr<ID2D1SolidColorBrush> brush;
         context->CreateSolidColorBrush(
@@ -2876,26 +2878,6 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                     centerY + 13.5f * searchScale),
                 brush.Get(), searchStroke, roundedStroke.Get());
         }
-
-        if (searchHovered && !IsMagnificationSuppressed())
-        {
-            hoveredTitle = _LW("app.dock.quick_search");
-        }
-    }
-
-    if (!hoveredTitle.empty() && app_->dwriteFactory_)
-    {
-        const RECT bounds = GetHoveredTitleBounds(app_->lastMousePoint_);
-        if (IsRectEmpty(&bounds)) return;
-        const float scale = TitleTooltipScale();
-        ComPtr<IDWriteTextFormat> format;
-        if (FAILED(snowdesktop::CreateNativeTooltipTextFormat(app_->dwriteFactory_.Get(), &format, scale, false))) return;
-        snowdesktop::NativeTooltipTextLayout measured;
-        snowdesktop::NativeTooltipLayoutOptions options;
-        options.scale = scale; options.centered = true;
-        if (SUCCEEDED(snowdesktop::MeasureNativeTooltip(app_->dwriteFactory_.Get(), format.Get(), {}, hoveredTitle,
-            static_cast<float>(bounds.right - bounds.left), static_cast<float>(bounds.bottom - bounds.top), measured, options)))
-            tooltipPaint.Keep(app_->DrawInlineTooltip(context, bounds, measured, scale, titleTooltipBackdrop_));
     }
 }
 

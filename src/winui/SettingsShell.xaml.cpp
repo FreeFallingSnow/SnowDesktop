@@ -41,6 +41,27 @@ using snowdesktop::CanonicalizeSettingsRoute;
 using snowdesktop::SettingsPage;
 using snowdesktop::SettingsRoute;
 using snowdesktop::SettingsSearchEntryKind;
+using Module = snowdesktop::runtime_modules::Module;
+
+constexpr std::uint32_t ModuleBit(Module module) noexcept
+{
+    return 1u << static_cast<unsigned>(module);
+}
+
+constexpr std::uint32_t SettingsPageModules(SettingsPage page) noexcept
+{
+    switch (page)
+    {
+    case SettingsPage::Taskbar: return ModuleBit(Module::Taskbar) | ModuleBit(Module::WindowMinimize) | ModuleBit(Module::StartMenu);
+    case SettingsPage::DesktopStyle: return ModuleBit(Module::Taskbar);
+    case SettingsPage::Dock: return ModuleBit(Module::Taskbar) | ModuleBit(Module::Tray) | ModuleBit(Module::WindowMinimize) | ModuleBit(Module::StartMenu);
+    case SettingsPage::StatusBar: return ModuleBit(Module::Tray);
+    case SettingsPage::AnimationPerformance: return ModuleBit(Module::WindowMinimize);
+    case SettingsPage::ContextMenu: return ModuleBit(Module::StartMenu);
+    case SettingsPage::Widgets: return ModuleBit(Module::WallpaperPreview);
+    default: return 0;
+    }
+}
 
 [[nodiscard]] muxm::Brush CreateSystemWindowFallbackBrush()
 {
@@ -586,6 +607,10 @@ SettingsShell::SettingsShell()
     // while closed so the empty status/prerequisite rows reserve no space.
     snowdesktop::winui::presenter_controls::BindInfoBarVisibility(StatusInfoBar());
     snowdesktop::winui::presenter_controls::BindInfoBarVisibility(FocusPrerequisiteInfoBar());
+    moduleLoadNoticeTimer_.Interval(std::chrono::seconds(1));
+    moduleLoadNoticeTimer_.Tick([weak = get_weak()](const auto&, const auto&) {
+        if (const auto self = weak.get()) self->RefreshModuleLoadNotice();
+    });
     solidFallbackBackground_ = ShellRoot().Background();
     if (!solidFallbackBackground_)
         solidFallbackBackground_ = CreateSystemWindowFallbackBrush();
@@ -837,6 +862,7 @@ void SettingsShell::Close() noexcept
     try
     {
         UnhookEvents();
+        moduleLoadNoticeTimer_.Stop();
         if (generalPage_)
         {
             generalPage_->Deactivate();
@@ -1645,6 +1671,7 @@ void SettingsShell::SuspendInteraction() noexcept
     try
     {
         FocusPrerequisiteInfoBar().IsOpen(false);
+        moduleLoadNoticeTimer_.Stop();
         if (generalPage_)
             generalPage_->Deactivate();
         if (personalizationPage_)
@@ -2667,6 +2694,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     pageRoute.guideTopic.clear();
     if (!sessionActive_)
     {
+        moduleLoadNoticeTimer_.Stop();
+        moduleLoadNotice_ = nullptr;
         if (desktopPage_)
             desktopPage_->SetCategoryPageActive(false);
         PageCards().Children().Clear();
@@ -2798,6 +2827,16 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     });
     moduleNotice_.ActionButton(moduleManage);
     PageCards().Children().Append(moduleNotice_);
+    moduleLoadNotice_ = nullptr;
+    if (SettingsPageModules(pageRoute.page))
+    {
+        moduleLoadNotice_ = muxc::InfoBar{};
+        moduleLoadNotice_.Title(Localize("modules.failed"));
+        moduleLoadNotice_.Severity(muxc::InfoBarSeverity::Error);
+        moduleLoadNotice_.IsClosable(false);
+        snowdesktop::winui::presenter_controls::BindInfoBarVisibility(moduleLoadNotice_);
+        PageCards().Children().Append(moduleLoadNotice_);
+    }
     const auto addPlaceholder = [this](
                                     std::string focusId,
                                     std::string_view title,
@@ -2946,7 +2985,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             {
                 PageCards().Children().Append(statusBarPage_->AppearanceContent());
                 statusBarPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) {
-                    if (id == "statusBar.theme" || id == "statusBar.noWindow" || id == "statusBar.maximizedWindow")
+                    if (id == "statusBar.theme" || id == "statusBar.appWindow" || id == "statusBar.maximizedWindow")
                         RegisterFocusTarget(std::move(id), element);
                 });
                 statusBarPage_->Activate();
@@ -3148,6 +3187,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(dockPage_->DockContent());
             PageCards().Children().Append(dockPage_->DockAppearanceContent());
             RegisterFocusTarget("personalization.dockAppearance", personalizationPage_->FocusTarget("personalization.dockAppearance"));
+            for (const auto* id : {"dock.maximizedWindow", "dock.appWindow"})
+                RegisterFocusTarget(id, personalizationPage_->FocusTarget(id));
             personalizationPage_->Activate();
             animationPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) {
                 if (id == "animation.hover" || id == "animation.hoverScale" || id == "animation.launch" || id == "animation.window")
@@ -3390,8 +3431,57 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     }
     renderedPageRoute_ = std::move(pageRoute);
     ApplyModuleRestrictions();
+    if (moduleLoadNotice_ && runtimeModulesQuery_)
+    {
+        moduleLoadNoticeTimer_.Start();
+        RefreshModuleLoadNotice();
+    }
+    else
+        moduleLoadNoticeTimer_.Stop();
 }
 
+void SettingsShell::RefreshModuleLoadNotice()
+{
+    namespace modules = snowdesktop::runtime_modules;
+    using snowdesktop::winui::RuntimeModulesQueryScope;
+    if (closed_ || !moduleLoadNotice_ || !runtimeModulesQuery_ || moduleLoadNoticePending_)
+        return;
+
+    moduleLoadNoticePending_ = true;
+    try
+    {
+        runtimeModulesQuery_(RuntimeModulesQueryScope::Status,
+            [weak = get_weak(), notice = moduleLoadNotice_,
+             relevant = SettingsPageModules(navigation_.Route().page)](modules::Snapshot snapshot) {
+                const auto self = weak.get();
+                if (!self) return;
+                self->moduleLoadNoticePending_ = false;
+                if (self->closed_ || self->moduleLoadNotice_ != notice ||
+                    !self->moduleLoadNoticeTimer_.IsEnabled() || snapshot.modules.empty())
+                    return;
+
+                std::wstring message;
+                for (const auto& status : snapshot.modules)
+                {
+                    const auto index = static_cast<std::size_t>(status.module);
+                    if (index >= modules::kCount || !(relevant & ModuleBit(status.module)) ||
+                        !status.allowed || !self->runtimeModulePolicy_.Allows(status.module) ||
+                        status.error != ERROR_SYSTEM_INTEGRITY_POLICY_VIOLATION)
+                        continue;
+                    if (!message.empty()) message += L"\n";
+                    message += self->Localize("modules." + std::string(modules::kKeys[index]) + ".name");
+                }
+                if (!message.empty())
+                    message += L"\n" + self->Localize("modules.dllBlockedByPolicy");
+                if (std::wstring_view(notice.Message()) != message) notice.Message(message);
+                notice.IsOpen(!message.empty());
+            });
+    }
+    catch (...)
+    {
+        moduleLoadNoticePending_ = false;
+    }
+}
 
 void SettingsShell::RestoreModuleControls()
 {
@@ -3403,20 +3493,16 @@ void SettingsShell::ApplyModuleRestrictions()
 {
     if (!moduleNotice_) return;
     RestoreModuleControls();
-    using Module = snowdesktop::runtime_modules::Module;
-    const auto page = navigation_.Route().page;
+    const auto relevant = SettingsPageModules(navigation_.Route().page);
     std::wstring message;
-    const auto mention = [&](Module module, bool affected) {
-        if (runtimeModulePolicy_.Allows(module) || !affected) return;
+    for (std::size_t i = 0; i < snowdesktop::runtime_modules::kCount; ++i)
+    {
+        const auto module = static_cast<Module>(i);
+        if (!(relevant & ModuleBit(module)) || runtimeModulePolicy_.Allows(module)) continue;
         if (!message.empty()) message += L"\n";
-        const auto key = std::string(snowdesktop::runtime_modules::kKeys[static_cast<std::size_t>(module)]);
+        const auto key = std::string(snowdesktop::runtime_modules::kKeys[i]);
         message += Localize("modules." + key + ".name") + L" · " + Localize("modules." + key + ".impact");
-    };
-    mention(Module::Taskbar, page == SettingsPage::Taskbar || page == SettingsPage::DesktopStyle);
-    mention(Module::Tray, page == SettingsPage::Dock || page == SettingsPage::StatusBar);
-    mention(Module::WindowMinimize, page == SettingsPage::Dock || page == SettingsPage::AnimationPerformance || page == SettingsPage::Taskbar);
-    mention(Module::StartMenu, page == SettingsPage::Dock || page == SettingsPage::Taskbar || page == SettingsPage::ContextMenu);
-    mention(Module::WallpaperPreview, page == SettingsPage::Widgets);
+    }
     moduleNotice_.Title(Localize("modules.disabledNotice"));
     moduleNotice_.Message(message); moduleNotice_.IsOpen(!message.empty());
     const auto restrictControl = [this](const muxc::Control& control) {

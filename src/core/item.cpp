@@ -195,7 +195,8 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
     }
     // Loading describes pending work, not whether the last image is drawable.
     else if (auto custom = app_->GetSmallCustomIcon(context, item_->layoutKey, iconRect.right - iconRect.left))
-        app_->DrawIconBitmap(context, custom, iconRect, alpha, reinterpret_cast<std::uintptr_t>(item_));
+        app_->DrawIconBitmap(context, custom, iconRect, alpha,
+            reinterpret_cast<std::uintptr_t>(item_), true);
     else if (!item_->iconBitmap)
     {
         app_->DrawPlaceholderIcon(context, item_->sysIconIndex, iconRect, alpha);
@@ -206,7 +207,7 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
         if (bmp)
         {
             app_->DrawIconBitmap(context, bmp, iconRect, alpha,
-                reinterpret_cast<std::uintptr_t>(item_));
+                reinterpret_cast<std::uintptr_t>(item_), true);
         }
         else
         {

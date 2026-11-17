@@ -98,20 +98,8 @@ void DesktopApp::ApplyAnimationPreferences(bool systemChanged)
             uiAnimationScheduler_.Cancel(dockBounceAnimationFrameToken_);
         dockBounceAnimationFrameToken_ = 0;
     }
-    if (pageNotifyActive_ &&
-        (pageNotifyPolicyChanged || !motion::RuntimeAnimationsEnabled()))
-    {
-        if (pageNotifyFadeOutToken_)
-            uiAnimationScheduler_.Cancel(pageNotifyFadeOutToken_);
-        pageNotifyFadeOutToken_ = 0;
-        if (pageNotifyAnimationFrameToken_)
-            uiAnimationScheduler_.Cancel(pageNotifyAnimationFrameToken_);
-        pageNotifyAnimationFrameToken_ = 0;
-        pageNotifyActive_ = false;
-        pageNotifyUseAnimation_ = false;
-        pageNotifyText_.clear();
-        ResetPageNotifyTextCache();
-    }
+    if (pageNotifyActive_ && (pageNotifyPolicyChanged || !motion::RuntimeAnimationsEnabled()))
+        ResetPageNotify();
     InvalidateDockContainers();
     if (hwnd_ && IsWindow(hwnd_))
     {
@@ -359,94 +347,6 @@ void DesktopApp::EnsureUiAnimationFrame()
             });
     }
 
-    const DWORD pageElapsed = pageNotifyActive_
-        ? GetTickCount() - pageNotifyStartTick_
-        : 0;
-    const DWORD pageVisibleMs = kPageNotifyVisibleMs -
-        2 * kPageNotifyFadeMs + 2 * pageNotifyFadeMs_;
-    const bool pageFadeActive = pageNotifyActive_ &&
-        pageNotifyUseAnimation_ &&
-        snowdesktop::animation::RuntimeAnimationsEnabled() &&
-        !pageNotifyCompositorDriven_ &&
-        (pageElapsed < pageNotifyFadeMs_ ||
-         pageElapsed >= pageVisibleMs - pageNotifyFadeMs_);
-    if (!pageNotifyAnimationFrameToken_ && pageFadeActive)
-    {
-        pageNotifyAnimationFrameToken_ =
-            uiAnimationScheduler_.StartAnimation(
-                snowdesktop::UiAnimationSurface::Desktop,
-                [this](double) {
-                    if (!pageNotifyActive_ ||
-                        !pageNotifyUseAnimation_ ||
-                        !snowdesktop::animation::RuntimeAnimationsEnabled() ||
-                        pageNotifyCompositorDriven_)
-                    {
-                        pageNotifyAnimationFrameToken_ = 0;
-                        return false;
-                    }
-
-                    const DWORD elapsed =
-                        GetTickCount() - pageNotifyStartTick_;
-                    const DWORD visibleMs = kPageNotifyVisibleMs -
-                        2 * kPageNotifyFadeMs + 2 * pageNotifyFadeMs_;
-                    const RECT dirty = GetPageNotifyBounds();
-                    if (elapsed >= visibleMs)
-                    {
-                        pageNotifyActive_ = false;
-                        pageNotifyText_.clear();
-                        ResetPageNotifyTextCache();
-                        if (hwnd_ && IsWindow(hwnd_))
-                        {
-                            InvalidateRect(
-                                hwnd_, IsRectEmpty(&dirty)
-                                    ? nullptr : &dirty,
-                                FALSE);
-                        }
-                    }
-                    else if (hwnd_ && IsWindow(hwnd_))
-                    {
-                        float opacity = 1.0f;
-                        if (elapsed < pageNotifyFadeMs_)
-                        {
-                            opacity = static_cast<float>(elapsed) /
-                                static_cast<float>(pageNotifyFadeMs_);
-                        }
-                        else if (elapsed >=
-                            visibleMs - pageNotifyFadeMs_)
-                        {
-                            opacity = static_cast<float>(
-                                visibleMs - elapsed) /
-                                static_cast<float>(pageNotifyFadeMs_);
-                        }
-                        if (UpdatePageNotifyCompositionAnimation(
-                                opacity, false))
-                        {
-                            CommitCompositionAnimationFrame();
-                        }
-                        else
-                        {
-                            InvalidateRect(
-                                hwnd_, IsRectEmpty(&dirty)
-                                    ? nullptr : &dirty,
-                                FALSE);
-                        }
-                    }
-
-                    const DWORD currentElapsed = pageNotifyActive_
-                        ? GetTickCount() - pageNotifyStartTick_
-                        : 0;
-                    const bool keep = pageNotifyActive_ &&
-                        pageNotifyUseAnimation_ &&
-                        snowdesktop::animation::RuntimeAnimationsEnabled() &&
-                        !pageNotifyCompositorDriven_ &&
-                        (currentElapsed < pageNotifyFadeMs_ ||
-                         currentElapsed >= visibleMs - pageNotifyFadeMs_);
-                    if (!keep)
-                        pageNotifyAnimationFrameToken_ = 0;
-                    return keep;
-                });
-    }
-
     if (!pointerRecoveryFrameToken_ &&
         (desktopPointerPresentPending_ ||
          floatingDockPointerPresentPending_))
@@ -592,7 +492,14 @@ std::optional<float> DesktopApp::ResolveListTitleHover(const std::wstring& owner
                 const bool isPopup = listTitleHoverPopup_;
                 UpdateListTitleHover();
                 if (isPopup)
-                    InvalidateCollectionPopupAnimation(true);
+                {
+                    // A moving label only changes the popup's pixels. Its
+                    // desktop backing scene and input geometry stay valid.
+                    if (IsCollectionPopupHostedByFloatingWindow())
+                        InvalidateFloatingPopupWindow(true);
+                    else
+                        InvalidateCollectionPopupAnimation(false);
+                }
                 else if (QueueDesktopWidgetComposition(ownerId))
                     (void)PresentQueuedDesktopWidgetComposition();
                 return listTitleHoverFrameToken_ != 0;

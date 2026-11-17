@@ -1,8 +1,10 @@
 #include "screen_time_tracker.h"
 
+#include "common/background_work.h"
 #include "common/json_value.h"
 #include "common/utils.h"
 #include "data/atomic_file.h"
+#include "diagnostics/performance_trace.h"
 #include "dock/dock_process_discovery.h"
 #include "platform/foreground_fullscreen.h"
 
@@ -22,6 +24,7 @@
 #include <mutex>
 #include <optional>
 #include <unordered_map>
+#include <vector>
 
 namespace snowdesktop::screen_time
 {
@@ -258,23 +261,30 @@ DWORD ForegroundProcessId(HWND window)
 
 std::optional<Identity> ResolveForeground(HWND window, DWORD processId, HANDLE process)
 {
+    performance::Scope identityTrace("shared.maintenance", "screen_time.identity");
     std::wstring aumid;
     std::wstring displayName;
-    ComPtr<IPropertyStore> properties;
-    if (SUCCEEDED(SHGetPropertyStoreForWindow(window, IID_PPV_ARGS(&properties))))
+    if (window)
     {
-        PROPVARIANT id{};
-        if (SUCCEEDED(properties->GetValue(PKEY_AppUserModel_ID, &id)) &&
-            id.vt == VT_LPWSTR && id.pwszVal && *id.pwszVal)
+        performance::Scope trace("shared.maintenance", "screen_time.window_identity");
+        ComPtr<IPropertyStore> properties;
+        if (SUCCEEDED(SHGetPropertyStoreForWindow(window, IID_PPV_ARGS(&properties))))
         {
-            aumid = id.pwszVal;
-            displayName = RegisteredAppName(id.pwszVal);
+            PROPVARIANT id{};
+            if (SUCCEEDED(properties->GetValue(PKEY_AppUserModel_ID, &id)) &&
+                id.vt == VT_LPWSTR && id.pwszVal && *id.pwszVal &&
+                ForegroundProcessId(window) == processId)
+            {
+                aumid = id.pwszVal;
+                displayName = RegisteredAppName(id.pwszVal);
+            }
+            PropVariantClear(&id);
         }
-        PropVariantClear(&id);
     }
 
     if (aumid.empty())
     {
+        performance::Scope trace("shared.maintenance", "screen_time.process_identity");
         UINT32 length = 0;
         if (GetApplicationUserModelId(process, &length, nullptr) ==
             ERROR_INSUFFICIENT_BUFFER && length > 1)
@@ -293,6 +303,9 @@ std::optional<Identity> ResolveForeground(HWND window, DWORD processId, HANDLE p
             }
         }
     }
+    if (!aumid.empty() && !displayName.empty())
+        return Identity{"aumid:" + WideToUtf8(aumid), WideToUtf8(displayName)};
+
     wchar_t path[32768]{};
     DWORD pathLength = static_cast<DWORD>(std::size(path));
     const bool hasPath = QueryFullProcessImageNameW(
@@ -302,6 +315,7 @@ std::optional<Identity> ResolveForeground(HWND window, DWORD processId, HANDLE p
     std::wstring resolvedPath;
     if (hasPath)
     {
+        performance::Scope trace("shared.maintenance", "screen_time.launcher");
         resolvedPath = dock_process_discovery::ApplicationExecutablePath(
             processId, std::wstring(path, pathLength));
         if (resolvedPath.empty()) resolvedPath.assign(path, pathLength);
@@ -369,12 +383,14 @@ struct Tracker::State
         enabled = value;
         current.reset();
         last = clock_type::now();
-        Write();
+        WriteNow();
     }
 
     void Observe()
     {
         std::scoped_lock guard(mutex);
+        foregroundWork.Drain();
+        historyWork.Drain();
         const auto now = clock_type::now();
         if (now < last)
         {
@@ -389,13 +405,14 @@ struct Tracker::State
         const auto sliceEnd = last + elapsed;
         const bool count = enabled && !locked && displayOn && !suspended &&
             !InputIdle();
-        if (count && current && elapsed.count() > 0)
-            Add(last, sliceEnd, *current);
+        if (count && elapsed.count() > 0)
+            AddCurrentSlice(last, sliceEnd);
         last = now;
         if (count) UpdateForeground();
         else current.reset();
         const auto sinceWrite = std::chrono::steady_clock::now() - lastWrite;
-        if (dirty && sinceWrite >= std::chrono::seconds(60)) Write();
+        if (dirty && !historyWritePending && sinceWrite >= std::chrono::seconds(60))
+            QueueHistoryWrite();
     }
 
     void SetLocked(bool value)
@@ -426,20 +443,23 @@ struct Tracker::State
         suspended = value;
         current.reset();
         last = clock_type::now();
-        if (!suspended) Write();
+        if (!suspended) WriteNow();
     }
 
     void Flush()
     {
         std::scoped_lock guard(mutex);
-        if (dirty) Write();
+        foregroundWork.Drain();
+        historyWork.Drain();
+        if (dirty) WriteNow();
     }
 
     bool Clear(std::string* error)
     {
         std::scoped_lock guard(mutex);
         constexpr std::string_view emptyHistory = "{\"version\":1,\"apps\":{},\"days\":{}}\n";
-        if (!atomic_file::WriteAll(path, emptyHistory, {}, error)) return false;
+        if (!ReplaceHistory(emptyHistory, error)) return false;
+        foregroundWork.Cancel();
         names.clear();
         days.clear();
         current.reset();
@@ -482,36 +502,65 @@ struct Tracker::State
         return enabled;
     }
 
+    struct ForegroundSample
+    {
+        ForegroundProcess process;
+        std::chrono::steady_clock::time_point refreshAt;
+        bool resolving = true;
+        std::optional<Identity> identity;
+        std::vector<std::pair<clock_type::time_point, clock_type::time_point>> intervals;
+    };
+
     void UpdateForeground()
     {
         const HWND window = GetForegroundWindow();
         const DWORD pid = ForegroundProcessId(window);
-        struct ProcessHandle
-        {
-            HANDLE value;
-            ~ProcessHandle() { if (value) CloseHandle(value); }
-        } process{pid ? OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid) : nullptr};
-        if (!process.value)
+        std::unique_ptr<void, decltype(&CloseHandle)> process(
+            pid ? OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid) : nullptr,
+            CloseHandle);
+        if (!process)
         {
             current.reset();
             return;
         }
 
         FILETIME created{}, exited{}, kernel{}, user{};
-        const bool hasCreationTime = GetProcessTimes(process.value, &created, &exited, &kernel, &user) != FALSE;
+        const bool hasCreationTime = GetProcessTimes(process.get(), &created, &exited, &kernel, &user) != FALSE;
         const ForegroundProcess sample{window, pid,
             (static_cast<std::uint64_t>(created.dwHighDateTime) << 32) | created.dwLowDateTime};
         const auto now = std::chrono::steady_clock::now();
-        // Process creation time distinguishes reused PIDs. Periodically refresh
-        // Shell metadata that can change even while the same window has focus.
-        if (current && hasCreationTime && foreground == sample && now < refreshForegroundAt) return;
-        current = ResolveForeground(window, pid, process.value);
-        foreground = hasCreationTime ? sample : ForegroundProcess{};
-        refreshForegroundAt = now + std::chrono::seconds{30};
+        const bool sameProcess = current && hasCreationTime && current->process == sample;
+        // Shell metadata can change while the same window stays foreground.
+        if (sameProcess && (current->resolving ||
+                (current->identity && now < current->refreshAt))) return;
+
+        auto pending = std::make_shared<ForegroundSample>();
+        pending->process = hasCreationTime ? sample : ForegroundProcess{};
+        pending->refreshAt = now + std::chrono::seconds{30};
+        // Keep the sampled process object alive. If the window has gone away,
+        // use that process's own metadata without reading a reused window.
+        const bool queued = foregroundWork.Submit(std::to_wstring(++foregroundRequest),
+            [sample, process = std::shared_ptr<void>(std::move(process))] {
+                const HWND ownedWindow = ForegroundProcessId(sample.window) == sample.pid
+                    ? sample.window : nullptr;
+                return ResolveForeground(ownedWindow, sample.pid, process.get());
+            },
+            [this, pending](std::optional<Identity> identity) {
+                performance::Scope trace("shared.maintenance", "screen_time.identity_apply");
+                pending->resolving = false;
+                pending->identity = std::move(identity);
+                if (pending->identity)
+                    for (const auto& [start, end] : pending->intervals)
+                        Add(start, end, *pending->identity);
+                pending->intervals.clear();
+            }, nullptr, 0);
+        if (queued) current = std::move(pending);
+        else if (!sameProcess) current.reset();
     }
 
     void Settle(clock_type::time_point now)
     {
+        foregroundWork.Drain();
         if (now < last)
         {
             last = now;
@@ -523,9 +572,20 @@ struct Tracker::State
             elapsed = std::chrono::milliseconds(kMaximumSliceMs);
         const bool count = enabled && !locked && displayOn && !suspended &&
             !InputIdle();
-        if (count && current && elapsed.count() > 0)
-            Add(last, last + elapsed, *current);
+        if (count && elapsed.count() > 0)
+            AddCurrentSlice(last, last + elapsed);
         last = now;
+    }
+
+    void AddCurrentSlice(clock_type::time_point start, clock_type::time_point end)
+    {
+        if (!current) return;
+        if (current->identity)
+            Add(start, end, *current->identity);
+        else if (current->resolving && current->intervals.size() < 32)
+            // Keep the original sample times for backfill, bounded if a
+            // Shell provider stops responding.
+            current->intervals.emplace_back(start, end);
     }
 
     void Add(clock_type::time_point start, clock_type::time_point end,
@@ -553,11 +613,13 @@ struct Tracker::State
         day.hours[static_cast<std::size_t>(local.hour)] += whole;
         if (!app.name.empty()) names[app.key] = app.name;
         dirty = true;
+        ++historyRevision;
         Prune();
     }
 
     void Prune()
     {
+        performance::Scope trace("shared.maintenance", "screen_time.prune");
         const auto today = ToLocal(clock_type::now());
         std::tm cursor{};
         cursor.tm_year = today.year - 1900;
@@ -633,8 +695,9 @@ struct Tracker::State
         Prune();
     }
 
-    void Write()
+    std::string SerializeHistory()
     {
+        performance::Scope trace("shared.maintenance", "screen_time.history_serialize");
         Prune();
         std::string text;
         text += "{\n  \"version\": 1,\n  \"apps\": {\n";
@@ -670,7 +733,50 @@ struct Tracker::State
             text += "}}";
         }
         text += "\n  }\n}\n";
-        dirty = !atomic_file::WriteAll(path, text);
+        return text;
+    }
+
+    struct HistoryFile
+    {
+        std::mutex mutex;
+        std::uint64_t generation = 0;
+    };
+
+    void QueueHistoryWrite()
+    {
+        const auto revision = historyRevision;
+        historyWritePending = historyWork.Submit(L"history",
+            [file = historyFile, generation = historyFile->generation,
+                destination = path, text = SerializeHistory()] {
+                performance::Scope trace("shared.maintenance", "screen_time.history_write");
+                std::scoped_lock guard(file->mutex);
+                return generation == file->generation && atomic_file::WriteAll(destination, text);
+            },
+            [this, revision](bool written) {
+                historyWritePending = false;
+                if (written)
+                {
+                    if (historyRevision == revision) dirty = false;
+                    lastWrite = std::chrono::steady_clock::now();
+                }
+            }, nullptr, 0);
+    }
+
+    bool ReplaceHistory(std::string_view text, std::string* error = nullptr)
+    {
+        // A clear or final flush must win over an older periodic snapshot,
+        // whether the worker is already writing or has yet to enter the lock.
+        std::scoped_lock guard(historyFile->mutex);
+        ++historyFile->generation;
+        historyWork.Cancel();
+        historyWritePending = false;
+        performance::Scope trace("shared.maintenance", "screen_time.history_write");
+        return atomic_file::WriteAll(path, text, {}, error);
+    }
+
+    void WriteNow()
+    {
+        dirty = !ReplaceHistory(SerializeHistory());
         if (!dirty) lastWrite = std::chrono::steady_clock::now();
     }
 
@@ -683,11 +789,15 @@ struct Tracker::State
     bool dirty = false;
     clock_type::time_point last = clock_type::now();
     std::chrono::steady_clock::time_point lastWrite{};
-    std::chrono::steady_clock::time_point refreshForegroundAt{};
-    ForegroundProcess foreground;
-    std::optional<Identity> current;
+    std::uint64_t foregroundRequest = 0;
+    std::shared_ptr<ForegroundSample> current;
     std::map<std::string, std::string> names;
     std::map<std::string, DayData> days;
+    BackgroundWork foregroundWork{1, 8};
+    std::uint64_t historyRevision = 0;
+    bool historyWritePending = false;
+    std::shared_ptr<HistoryFile> historyFile = std::make_shared<HistoryFile>();
+    BackgroundWork historyWork{1, 1};
 };
 
 Tracker::Tracker(std::filesystem::path path)

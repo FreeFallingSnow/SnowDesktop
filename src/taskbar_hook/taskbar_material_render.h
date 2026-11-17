@@ -37,7 +37,8 @@ inline TaskbarMaterialEdge ResolveTaskbarMaterialEdge(HWND taskbar) noexcept
 // taskbar owns its geometry; only the global material's edge values are used.
 template<class Appearance>
 inline std::vector<std::uint8_t> MakeTaskbarEdgePixels(UINT width, UINT height,
-    float scale, const Appearance& style, TaskbarMaterialEdge edge)
+    float scale, const Appearance& style, TaskbarMaterialEdge edge,
+    std::vector<std::uint32_t>* reflectionCoverage = nullptr)
 {
     if (!width || !height || width > 16384 || height > 16384 ||
         static_cast<std::uint64_t>(width) * height > 16 * 1024 * 1024) return {};
@@ -71,11 +72,13 @@ inline std::vector<std::uint8_t> MakeTaskbarEdgePixels(UINT width, UINT height,
         }
     };
     std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * 4);
+    if (reflectionCoverage) reflectionCoverage->assign(pixels.size() / 4, 0);
     for (UINT y = 0; y < height; ++y) for (UINT x = 0; x < width; ++x)
     {
         const float distance = distanceAt(static_cast<float>(x) + .5f, static_cast<float>(y) + .5f);
         if (distance > support + .5f) continue;
         float alpha = 0.f;
+        bool reflects = false;
         std::array<float, 3> color{};
         for (const float sy : {.25f, .75f}) for (const float sx : {.25f, .75f})
         {
@@ -84,6 +87,7 @@ inline std::vector<std::uint8_t> MakeTaskbarEdgePixels(UINT width, UINT height,
             const float illumination = light.Lighting(px / static_cast<float>(width), py / static_cast<float>(height));
             const float outline = d <= borderWidth ? borderAlpha : 0.f;
             const float reflection = strength * light.Intensity(d, depth, illumination);
+            reflects = reflects || reflection > 0.f;
             const float shadow = strength * light.settings.shadowStrength * light.Occlusion(d, depth, illumination);
             const float combined = (outline + reflection * (1.f - outline)) * (1.f - shadow) + shadow;
             alpha += combined * .25f;
@@ -92,6 +96,7 @@ inline std::vector<std::uint8_t> MakeTaskbarEdgePixels(UINT width, UINT height,
                     (1.f - shadow) + std::array<float, 3>{.035f, .025f, .015f}[c] * shadow) * .25f;
         }
         const auto index = (static_cast<std::size_t>(y) * width + x) * 4;
+        if (reflects && reflectionCoverage) (*reflectionCoverage)[index / 4] = 0xff000000u;
         for (std::size_t c = 0; c < color.size(); ++c)
             pixels[index + c] = static_cast<std::uint8_t>(std::lround(std::clamp(color[c], 0.f, alpha) * 255.f));
         pixels[index + 3] = static_cast<std::uint8_t>(std::lround(std::clamp(alpha, 0.f, 1.f) * 255.f));
@@ -101,9 +106,10 @@ inline std::vector<std::uint8_t> MakeTaskbarEdgePixels(UINT width, UINT height,
 
 template<class Appearance>
 inline HRESULT DrawTaskbarEdges(ID2D1RenderTarget* target, UINT width, UINT height,
-    float scale, const Appearance& style, TaskbarMaterialEdge edge)
+    float scale, const Appearance& style, TaskbarMaterialEdge edge,
+    std::vector<std::uint32_t>* reflectionCoverage = nullptr)
 {
-    const auto pixels = MakeTaskbarEdgePixels(width, height, scale, style, edge);
+    const auto pixels = MakeTaskbarEdgePixels(width, height, scale, style, edge, reflectionCoverage);
     if (pixels.empty()) return E_INVALIDARG;
     Microsoft::WRL::ComPtr<ID2D1Bitmap> bitmap;
     const auto properties = D2D1::BitmapProperties(

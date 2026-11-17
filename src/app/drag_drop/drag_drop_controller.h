@@ -12,6 +12,7 @@ struct ExternalDragSummary
     int fileCount = 0;
     bool hasShortcut = false;
     bool foldersOnly = false;
+    bool applicationShortcut = false;
 };
 
 /**

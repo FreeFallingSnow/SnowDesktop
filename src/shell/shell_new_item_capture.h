@@ -18,23 +18,29 @@ namespace snowdesktop
 class ShellNewItemCapture
 {
 public:
-    ShellNewItemCapture(std::wstring directory, std::wstring widgetId,
-        size_t insertIndex, HWND notifyWindow = nullptr, UINT notifyMessage = 0)
+    ShellNewItemCapture(const std::wstring& directory, HWND notifyWindow, UINT notifyMessage)
         : directory_(NormalizePath(directory)),
-          widgetId_(std::move(widgetId)), insertIndex_(insertIndex),
           notifyWindow_(notifyWindow), notifyMessage_(notifyMessage) {}
 
-    void Record(const std::wstring& path)
+    void Record(const std::wstring& path, bool edit)
     {
         const auto normalized = NormalizePath(path);
         if (_wcsicmp(normalized.parent_path().c_str(), directory_.c_str()) != 0) return;
         {
             std::lock_guard lock(mutex_);
-            if (std::any_of(seen_.begin(), seen_.end(), [&](const auto& seen) {
-                    return _wcsicmp(seen.c_str(), normalized.c_str()) == 0;
-                })) return;
-            seen_.push_back(normalized.wstring());
-            pending_.push_back({normalized.wstring(), GetTickCount64()});
+            const auto output = std::find_if(outputs_.begin(), outputs_.end(), [&](const auto& entry) {
+                return _wcsicmp(entry.path.c_str(), normalized.c_str()) == 0;
+            });
+            if (output == outputs_.end())
+                outputs_.push_back({normalized.wstring(), GetTickCount64(), edit});
+            else
+            {
+                // Shell can select the output first, then ask to edit the same path.
+                if (!edit || output->edit) return;
+                output->edit = true;
+                output->reportedAt = GetTickCount64();
+                if (output->delivery == Delivery::Complete) output->delivery = Delivery::Rename;
+            }
         }
         Notify();
     }
@@ -45,6 +51,22 @@ public:
         Notify();
     }
 
+    bool HasPendingPaths()
+    {
+        std::lock_guard lock(mutex_);
+        return std::any_of(outputs_.begin(), outputs_.end(), [](const auto& item) {
+            return item.delivery != Delivery::Complete;
+        });
+    }
+
+    template<class Consumer>
+    void ForEachUnplacedPath(Consumer&& consumer)
+    {
+        std::lock_guard lock(mutex_);
+        for (const auto& item : outputs_)
+            if (item.delivery == Delivery::Placement) consumer(item.path);
+    }
+
     // Keep exact outputs across refreshes until enumeration catches up. A
     // deleted output expires; an unrelated file is never inferred from a diff.
     // The consumer runs on the host thread and must not invoke Shell callbacks.
@@ -52,11 +74,17 @@ public:
     bool Consume(Consumer&& consumer, ULONGLONG now = GetTickCount64())
     {
         std::lock_guard lock(mutex_);
-        std::erase_if(pending_, [&](const auto& item) {
-            if (now >= item.reportedAt && now - item.reportedAt > 30000) return true;
-            return consumer(widgetId_, item.path, insertIndex_);
-        });
-        return finished_ && pending_.empty();
+        bool pending = false;
+        for (auto& item : outputs_)
+        {
+            if (item.delivery == Delivery::Complete) continue;
+            const bool expired = now >= item.reportedAt && now - item.reportedAt > 30000;
+            if (expired || consumer(item.path, item.delivery == Delivery::Placement, item.edit))
+                item.delivery = Delivery::Complete;
+            else
+                pending = true;
+        }
+        return finished_ && !pending;
     }
 
 private:
@@ -78,15 +106,19 @@ private:
         if (notifyWindow_ && notifyMessage_)
             PostMessageW(notifyWindow_, notifyMessage_, 0, 0);
     }
-    struct Output { std::wstring path; ULONGLONG reportedAt; };
+    enum class Delivery { Placement, Rename, Complete };
+    struct Output
+    {
+        std::wstring path;
+        ULONGLONG reportedAt;
+        bool edit;
+        Delivery delivery = Delivery::Placement;
+    };
     std::filesystem::path directory_;
-    std::wstring widgetId_;
-    size_t insertIndex_;
     HWND notifyWindow_;
     UINT notifyMessage_;
     std::mutex mutex_;
-    std::vector<Output> pending_;
-    std::vector<std::wstring> seen_;
+    std::vector<Output> outputs_;
     bool finished_ = false;
 };
 
@@ -111,13 +143,13 @@ public:
         *flags = static_cast<NMCII_FLAGS>(NMCII_ITEMS | NMCII_FOLDERS);
         return S_OK;
     }
-    IFACEMETHODIMP SelectAndEditItem(PCIDLIST_ABSOLUTE item, NMCSAEI_FLAGS) override
+    IFACEMETHODIMP SelectAndEditItem(PCIDLIST_ABSOLUTE item, NMCSAEI_FLAGS flags) override
     {
         if (!item) return E_INVALIDARG;
         PWSTR path = nullptr;
         const HRESULT hr = SHGetNameFromIDList(item, SIGDN_FILESYSPATH, &path);
         if (FAILED(hr)) return hr;
-        try { capture_->Record(path); }
+        try { capture_->Record(path, (flags & NMCSAEI_EDIT) != 0); }
         catch (...) { CoTaskMemFree(path); return E_OUTOFMEMORY; }
         CoTaskMemFree(path);
         return S_OK;

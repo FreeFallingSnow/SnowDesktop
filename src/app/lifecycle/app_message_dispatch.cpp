@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/input/grid_preview_shortcut.h"
 #include "widget/view/widget_surface_renderer.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_rules.h"
@@ -377,10 +378,15 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         break;
     case WM_PAINT:
     {
+        // The desktop's non-redirection HWND can have an update region even
+        // when its GDI paint DC reports an empty rcPaint. Read the region
+        // before BeginPaint validates it so composition can honor the damage.
+        RECT update{};
+        const bool hasUpdate = GetUpdateRect(hwnd, &update, FALSE) != FALSE;
         PAINTSTRUCT ps{};
-        BeginPaint(hwnd_, &ps);
-        EndPaint(hwnd_, &ps);
-        OnPaint(&ps.rcPaint);
+        BeginPaint(hwnd, &ps);
+        EndPaint(hwnd, &ps);
+        OnPaint(hasUpdate ? &update : &ps.rcPaint);
         return 0;
     }
     case WM_ERASEBKGND:
@@ -412,6 +418,13 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             {
                 pendingCollectionPopupOpen_.reset();
                 CloseCollectionPopup();
+            }
+            if (!(wp & MK_CONTROL))
+            {
+                ClearSelection();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                InvalidatePersistentDockHosts();
+                InvalidateFloatingPopupWindow();
             }
             // The render child does not activate on clicks. Match the normal
             // press path so shell flyouts lose focus even while icons are hidden.
@@ -1489,6 +1502,21 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         PollSteamWorkshopSubscriptions(true);
         return 0;
     case WM_TIMER:
+        if (wp == snowdesktop::grid_preview_shortcut::TimerId)
+        {
+            namespace preview = snowdesktop::grid_preview_shortcut;
+            if (!preview::IsActive(hwnd)) return 0;
+            const HWND focus = snowdesktop::private_pointer::FocusWindow();
+            const HWND foreground = snowdesktop::private_pointer::ForegroundWindow();
+            if (!focus || (focus != hwnd_ && focus != inputHwnd_) ||
+                !IsKnownDesktopSurfaceWindow(foreground) ||
+                !customDesktopVisible_ || desktopIconsHidden_ || desktopPassthroughActive_ ||
+                renameController_.IsActive() || IsCollectionPopupInteractive() ||
+                !luaWidgetPanelRequest_.widgetId.empty() || HasActiveContextMenuSession() ||
+                !preview::MatchesHeldKeys(generalSettings_))
+                preview::SetActive(hwnd, false);
+            return 0;
+        }
         OnTimer(wp);
         return 0;
     case kTrayCallbackMessage:
@@ -1511,6 +1539,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         RequestExit();
         return 0;
     case WM_DESTROY:
+        snowdesktop::grid_preview_shortcut::SetActive(hwnd, false);
         FlushScreenTime();
         if (widgetAccessibilityProvider_)
             widgetAccessibilityProvider_->DetachWindow(hwnd);

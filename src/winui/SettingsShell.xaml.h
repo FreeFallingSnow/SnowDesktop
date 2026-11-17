@@ -259,9 +259,13 @@ private:
     bool advancedSettingsVisible_ = false;
     snowdesktop::runtime_modules::Policy runtimeModulePolicy_;
     winrt::Microsoft::UI::Xaml::Controls::InfoBar moduleNotice_{nullptr};
+    winrt::Microsoft::UI::Xaml::Controls::InfoBar moduleLoadNotice_{nullptr};
+    winrt::Microsoft::UI::Xaml::DispatcherTimer moduleLoadNoticeTimer_;
+    bool moduleLoadNoticePending_ = false;
     std::vector<std::pair<winrt::weak_ref<winrt::Microsoft::UI::Xaml::Controls::Control>, bool>> moduleRestrictedControls_;
     void RestoreModuleControls();
     void ApplyModuleRestrictions();
+    void RefreshModuleLoadNotice();
     void HookEvents();
     void UnhookEvents() noexcept;
     void NavigateBack();

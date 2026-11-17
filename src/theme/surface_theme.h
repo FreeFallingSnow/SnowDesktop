@@ -17,6 +17,13 @@ PersonalizationSettings ResolveSurfaceTheme(const SurfaceTheme& theme,
     const PersonalizationSettings& global, int legacySelection, bool quickNavigation,
     const SurfaceTheme* globalBinding = nullptr);
 
+PersonalizationSettings ResolvePopupRuleTheme(const PopupAppearanceRule& rule,
+    const PersonalizationSettings& shared);
+PersonalizationSettings ResolvePopupOverrideTheme(const SurfaceTheme& theme,
+    const PersonalizationSettings& shared);
+bool DecodePopupAppearanceRule(const JsonValue& input, PopupAppearanceRule& output);
+std::string EncodePopupAppearanceRule(const PopupAppearanceRule& rule);
+
 template<class Visit> void VisitPanelAppearanceFields(Visit visit)
 {
     visit("backgroundR", &PersonalizationSettings::widgetBgR, 0., 1.);

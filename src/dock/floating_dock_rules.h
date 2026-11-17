@@ -40,11 +40,14 @@ bool IsWindowAbove(HWND upper, HWND lower);
 
 template <typename IsApplicationWindow, typename IsDockWindow>
 HWND LowestDesktopLayerApplication(
-    HWND referenceWindow, IsApplicationWindow&& isApplicationWindow,
+    HWND referenceWindow, HWND desktopWindow, IsApplicationWindow&& isApplicationWindow,
     IsDockWindow&& isDockWindow, bool* scanComplete = nullptr)
 {
     if (scanComplete) *scanComplete = true;
-    HWND current = GetWindow(referenceWindow, GW_HWNDLAST);
+    // Show Desktop can leave application windows below Explorer. They
+    // cannot anchor a Dock that must remain above the desktop.
+    HWND current = desktopWindow ? GetWindow(desktopWindow, GW_HWNDPREV) :
+        GetWindow(referenceWindow, GW_HWNDLAST);
     for (unsigned visited = 0; current && visited < 4096; ++visited)
     {
         if (current != referenceWindow && !isDockWindow(current) &&
@@ -73,7 +76,7 @@ HWND DesktopLayerInsertAfter(
     const HWND referenceWindow = desktopWindow && IsWindow(desktopWindow)
         ? desktopWindow : contentWindow;
     if (HWND application = LowestDesktopLayerApplication(
-            referenceWindow, isApplicationWindow, isDockWindow))
+            referenceWindow, desktopWindow, isApplicationWindow, isDockWindow))
         return application;
 
     HWND anchor = desktopWindow && IsWindow(desktopWindow)
@@ -98,7 +101,7 @@ bool IsDesktopLayerRestored(
         return false;
     bool scanComplete = false;
     const HWND application = LowestDesktopLayerApplication(
-        contentWindow, isApplicationWindow, isDockWindow, &scanComplete);
+        contentWindow, desktopWindow, isApplicationWindow, isDockWindow, &scanComplete);
     return scanComplete && (!application || IsWindowAbove(application, contentWindow));
 }
 
@@ -128,6 +131,7 @@ bool RestoreDesktopLayer(
     if (foregroundFallback && IsWindow(foregroundFallback) &&
         foregroundFallback != contentWindow && !isDockWindow(foregroundFallback) &&
         (GetWindowLongPtrW(foregroundFallback, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0 &&
+        (!desktopWindow || IsWindowAbove(foregroundFallback, desktopWindow)) &&
         isApplicationWindow(foregroundFallback) && placePair(foregroundFallback))
         return IsDesktopLayerRestored(
             contentWindow, desktopWindow, isApplicationWindow, isDockWindow);

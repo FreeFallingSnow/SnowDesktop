@@ -28,7 +28,9 @@
 #include "ui/input/private_pointer.h"
 #include "app/features/app_control_runtime.h"
 #include "app/input/software_desktop_hotkey.h"
+#include "app/input/grid_preview_shortcut.h"
 #include "ui/menu/modern_menu.h"
+#include "ui/menu/menu_fluent_glyphs.h"
 #include "system/controls/system_control_prompt.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "startup_animation.h"
@@ -434,21 +436,58 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             FlushPendingCompositionCommit();
             FlushPendingQuickNavigationCompositionCommit();
         });
-    snowdesktop::text_input::SetMenuHandler([this](HWND window,POINT point,const snowdesktop::text_input::MenuState& state){
-        namespace menu=snowdesktop::modern_menu;
-        using Command=snowdesktop::text_input::MenuCommand;
-        std::vector<menu::Item> items;
-        const auto add=[&](Command command,const wchar_t* label,bool enabled){menu::Item item;item.command=static_cast<UINT>(command);item.label=label;item.enabled=enabled;items.push_back(std::move(item));};
-        add(Command::Undo,_LW("app.menu.undo"),state.undo);add(Command::Redo,_LW("app.menu.redo"),state.redo);
-        menu::Item separator;separator.separator=true;items.push_back(separator);
-        add(Command::Cut,_LW("app.menu.cut"),state.cut);add(Command::Copy,_LW("app.menu.copy"),state.copy);add(Command::Paste,_LW("app.menu.paste"),state.paste);
-        items.push_back(separator);add(Command::SelectAll,_LW("app.menu.select_all"),state.selectAll);
-        menu::Options options;options.owner=window;options.anchor=point;options.dpi=GetDpiForWindow(window);
-        options.zOrderOwner=(GetWindowLongPtrW(window,GWL_STYLE)&WS_CHILD)?GetParent(window):window;
-        options.topmost=(GetWindowLongPtrW(options.zOrderOwner,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0;
-        options.appearance=static_cast<menu::Appearance>(menuAppearanceStyle_);
-        return static_cast<Command>(menu::Show(items,options).command);
-    });
+    snowdesktop::text_input::SetMenuHandler(
+        [this](HWND window, POINT point, const snowdesktop::text_input::MenuState& state,
+            snowdesktop::text_input::MenuKind kind) {
+            using Command = snowdesktop::text_input::MenuCommand;
+            using Kind = snowdesktop::text_input::MenuKind;
+            namespace glyphs = snowdesktop::menu_fluent_glyphs;
+            HMENU menu = CreatePopupMenu();
+            if (!menu)
+                return Command::None;
+            PrepareMenuIconsForPoint(point);
+
+            const auto add = [&](UINT id, const wchar_t* label, bool enabled,
+                const wchar_t* glyph, bool quick = false) {
+                AppendMenuW(menu, MF_STRING | (enabled ? 0 : MF_GRAYED), id, label);
+                SetMenuItemIcon(menu, id, glyph, MenuIconFont::FluentRegular);
+                if (quick) SetMenuItemQuickAction(menu, id);
+            };
+            add(kContextCutCommand, _LW("app.menu.cut"), state.cut, L"\uF33A", true);
+            add(kContextCopyCommand, _LW("app.menu.copy"), state.copy, glyphs::kCopy, true);
+            add(kContextPasteCommand, _LW("app.menu.paste"), state.paste, L"\uF2D5", true);
+            add(kContextSelectAllCommand, _LW("app.menu.select_all"), state.selectAll,
+                glyphs::kSelectAll, true);
+            if (state.undo)
+                add(kFileUndoCommand, _LW("app.menu.undo"), true, L"\uF199", true);
+            if (state.redo)
+                add(kFileRedoCommand, _LW("app.menu.redo"), true, L"\uF16E", true);
+            if (kind != Kind::Editor)
+            {
+                AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+                add(kContextWidgetOpenComponentPanel, _LW("app.interact.open_component_panel"),
+                    true, glyphs::kChevronRight);
+            }
+
+            const HWND root = GetAncestor(window, GA_ROOT);
+            const bool topmostEditor = kind == Kind::Editor && root &&
+                (GetWindowLongPtrW(root, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+            const UINT command = ShowModernMenu(menu, point, window, false, false, nullptr,
+                {}, {}, {}, nullptr, {}, topmostEditor);
+            DestroyMenu(menu);
+            ClearMenuIcons();
+            switch (command)
+            {
+            case kContextCutCommand: return Command::Cut;
+            case kContextCopyCommand: return Command::Copy;
+            case kContextPasteCommand: return Command::Paste;
+            case kContextSelectAllCommand: return Command::SelectAll;
+            case kFileUndoCommand: return Command::Undo;
+            case kFileRedoCommand: return Command::Redo;
+            case kContextWidgetOpenComponentPanel: return Command::OpenComponentPanel;
+            default: return Command::None;
+            }
+        });
     struct InputMenuSession{~InputMenuSession(){snowdesktop::text_input::SetMenuHandler({});}} inputMenuSession;
 
     const ULONGLONG startupStarted = GetTickCount64();
@@ -669,7 +708,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // even when the child is hidden. The startup layer has its own UI thread.
     dockWindowPreview_ = std::make_unique<DockWindowPreview>();
     if (!dockWindowPreview_->Initialize(
-            instance_,
+            instance_, uiAnimationScheduler_,
             [this](HWND window) {
                 ActivateDockWindowFromPreviewAnimated(window);
             },
@@ -686,6 +725,13 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                         UpdateFloatingDockWindowBounds(*host, false, true);
                     }
                 InvalidateDockRects();
+            }, [this](POINT screen) {
+                const HWND hit = snowdesktop::private_pointer::WindowAtPoint(screen);
+                const HWND root = hit ? GetAncestor(hit, GA_ROOT) : nullptr;
+                return (IsBaseDesktopHoverSurfaceWindow(hit) ||
+                    IsPersistentDockHostWindow(hit) || IsPersistentDockHostWindow(root) ||
+                    IsPersistentDockBackdropWindow(hit) || IsPersistentDockBackdropWindow(root)) &&
+                    ScreenToClient(hwnd_, &screen) && GetDockContainerAtPoint(screen);
             }))
         dockWindowPreview_.reset();
     if (dockWindowPreview_)
@@ -1401,6 +1447,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     StartSteamEntitlementRegistration(true);
 
     widgetEngine_ = std::make_unique<WidgetEngine>();
+    widgetEngine_->EnableHostedInteractionTooltips();
     widgetEngine_->SetSystemDataProvider(systemDataProvider_);
     if (widgetEngine_->Init(d2dContext_.Get(), dwriteFactory_.Get()))
     {
@@ -1986,10 +2033,48 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             const bool systemPanelMessageHandled = !settingsMessageHandled && systemPanel_ && systemPanel_->PreTranslateMessage(&msg);
             if (!settingsMessageHandled && !systemPanelMessageHandled)
             {
-                TranslateMessage(&msg);
-                const double dispatchStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
-                DispatchMessageW(&msg);
-                LogSlowMessageLoopCall(snowdesktop::SlowCallPhase::Message, dispatchStarted, &msg);
+                bool gridPreviewHandled = false;
+                if ((msg.hwnd == inputHwnd_ || msg.hwnd == hwnd_) &&
+                    (msg.message == WM_KEYDOWN || msg.message == WM_SYSKEYDOWN ||
+                        msg.message == WM_KEYUP || msg.message == WM_SYSKEYUP) &&
+                    (generalSettings_.gridPreviewHotkeyEnabled ||
+                        snowdesktop::grid_preview_shortcut::IsActive(hwnd_)))
+                {
+                    namespace preview = snowdesktop::grid_preview_shortcut;
+                    const bool down = msg.message == WM_KEYDOWN || msg.message == WM_SYSKEYDOWN;
+                    const bool shortcutKey = msg.wParam == generalSettings_.gridPreviewHotkeyVirtualKey;
+                    const bool wasActive = preview::IsActive(hwnd_);
+                    if (wasActive && ((down && !shortcutKey) || (!down && shortcutKey) ||
+                            !preview::MatchesHeldKeys(generalSettings_)))
+                        preview::SetActive(hwnd_, false);
+
+                    const bool repeated = (static_cast<ULONG_PTR>(msg.lParam) & (ULONG_PTR{1} << 30)) != 0;
+                    if (down && shortcutKey && !repeated && customDesktopVisible_ &&
+                        !desktopIconsHidden_ && !desktopPassthroughActive_ &&
+                        !renameController_.IsActive() && !typeToSelectImeComposing_ &&
+                        !IsCollectionPopupInteractive() && luaWidgetPanelRequest_.widgetId.empty() &&
+                        !HasActiveContextMenuSession() && !keyboardNavInsideWidget_ &&
+                        !(widgetEngine_ && (widgetEngine_->HasHostViewKeyboardFocus() ||
+                            widgetEngine_->HasFocusedHostInput())) &&
+                        preview::MatchesHeldKeys(generalSettings_))
+                    {
+                        const bool searchFocused = std::any_of(containers_.begin(), containers_.end(),
+                            [](const auto& container) {
+                                const auto* searchable = dynamic_cast<const ScrollingItemWidget*>(container.get());
+                                return searchable && searchable->IsSearchFocused();
+                            });
+                        if (!searchFocused) preview::SetActive(hwnd_, true);
+                    }
+                    gridPreviewHandled = shortcutKey &&
+                        (preview::IsActive(hwnd_) || (!down && wasActive));
+                }
+                if (!gridPreviewHandled)
+                {
+                    TranslateMessage(&msg);
+                    const double dispatchStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+                    DispatchMessageW(&msg);
+                    LogSlowMessageLoopCall(snowdesktop::SlowCallPhase::Message, dispatchStarted, &msg);
+                }
             }
             if (exitRequested_) break;
             operationFeedback.Drain();

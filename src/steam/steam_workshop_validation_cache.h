@@ -3,19 +3,21 @@
 #include "widget/packages/widget_package.h"
 
 #include <windows.h>
+#include <winioctl.h>
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
 
 namespace snowdesktop::widget
 {
-// Background discovery may reuse validation of the exact bytes.
-// Metadata alone is insufficient: an archive can change without changing its
-// size or timestamp. The reader also prevents writers/replacement while the
-// digest and validator inspect it. Explicit online queries still validate fully.
+// Background discovery reuses validation when the same NTFS file still has
+// its validated change sequence. Size and timestamps alone cannot prove this.
+// Each inspection holds a short read lease that excludes writers/replacement.
 class SteamWorkshopValidationCache final
 {
 public:
@@ -62,19 +64,26 @@ public:
             information.nFileSizeLow > kMaxArchiveBytes)
             return std::forward<Validator>(validator)();
 
-        const std::string digest = WidgetPackageManager::Sha256File(archive);
-        if (digest.empty()) return std::forward<Validator>(validator)();
         const auto key = std::make_pair(archive.lexically_normal().native(),
             validationRoot.lexically_normal().native());
+        const auto stamp = ReadStamp(lease.value, information);
+        if (stamp)
         {
             std::lock_guard lock(mutex_);
             const auto found = entries_.find(key);
-            if (found != entries_.end() && found->second.digest == digest)
+            if (found != entries_.end() && found->second.stamp == stamp)
+                return Reuse(found->second);
+        }
+
+        const std::string digest = WidgetPackageManager::Sha256File(archive);
+        if (digest.empty()) return std::forward<Validator>(validator)();
+        {
+            std::lock_guard lock(mutex_);
+            const auto found = entries_.find(key);
+            if (found != entries_.end() && found->second.result.digest == digest)
             {
-                found->second.used = ++sequence_;
-                Result result = found->second.result;
-                result.reused = true;
-                return result;
+                found->second.stamp = stamp;
+                return Reuse(found->second);
             }
         }
 
@@ -86,8 +95,7 @@ public:
                 return issue.severity != ValidationSeverity::Error ||
                     (issue.code.starts_with("manifest.") && issue.code != "manifest.read");
             });
-        if (stable &&
-            WidgetPackageManager::Sha256File(archive) == digest)
+        if (stable && WidgetPackageManager::Sha256File(archive) == digest)
         {
             result.digest = digest;
             std::lock_guard lock(mutex_);
@@ -99,18 +107,70 @@ public:
                     });
                 entries_.erase(oldest);
             }
-            entries_[key] = Entry{digest, result, ++sequence_};
+            entries_[key] = Entry{stamp, result, ++sequence_};
         }
         return result;
     }
 
 private:
+    struct ArchiveStamp
+    {
+        DWORD volume;
+        DWORD indexHigh;
+        DWORD indexLow;
+        DWORD size;
+        LONGLONG creationTime;
+        LONGLONG writeTime;
+        LONGLONG changeTime;
+        USN sequence;
+
+        bool operator==(const ArchiveStamp&) const = default;
+    };
+
+    static std::optional<ArchiveStamp> ReadStamp(HANDLE file, const BY_HANDLE_FILE_INFORMATION& info)
+    {
+        FILE_BASIC_INFO basic{};
+        if (!GetFileInformationByHandleEx(file, FileBasicInfo, &basic, sizeof(basic)))
+            return std::nullopt;
+
+        // NTFS exposes its 64-bit file reference in a v2 record. Older
+        // systems accept the same request without an input buffer. Unknown
+        // record formats and an inactive/recreated journal fall back to hashing.
+        struct
+        {
+            USN_RECORD_V2 record;
+            WCHAR nameSpace[MAX_PATH];
+        } buffer{};
+        DWORD transferred = 0;
+        if (!DeviceIoControl(file, FSCTL_READ_FILE_USN_DATA, nullptr, 0,
+                &buffer, sizeof(buffer), &transferred, nullptr) ||
+            transferred < offsetof(USN_RECORD_V2, FileName) ||
+            buffer.record.MajorVersion != 2 || buffer.record.Usn <= 0)
+            return std::nullopt;
+
+        const auto reference = (static_cast<std::uint64_t>(info.nFileIndexHigh) << 32) | info.nFileIndexLow;
+        if (!reference || buffer.record.FileReferenceNumber != reference)
+            return std::nullopt;
+        return ArchiveStamp{info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow,
+            info.nFileSizeLow, basic.CreationTime.QuadPart, basic.LastWriteTime.QuadPart,
+            basic.ChangeTime.QuadPart, buffer.record.Usn};
+    }
+
     struct Entry
     {
-        std::string digest;
+        std::optional<ArchiveStamp> stamp;
         Result result;
         std::uint64_t used = 0;
     };
+
+    Result Reuse(Entry& entry)
+    {
+        entry.used = ++sequence_;
+        Result result = entry.result;
+        result.reused = true;
+        return result;
+    }
+
     const std::size_t capacity_;
     std::mutex mutex_;
     std::map<std::pair<std::wstring, std::wstring>, Entry> entries_;

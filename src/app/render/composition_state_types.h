@@ -32,6 +32,7 @@ struct UiCompositionAnimationOverlay
     UiCompositionAnimationHost host =
         UiCompositionAnimationHost::Desktop;
     bool active = false;
+    bool presentingHighlights = false;
 
     HRESULT SetPlacementOffset(POINT offset) const;
 };
@@ -42,6 +43,14 @@ struct PopupFanIconDrawing
     Microsoft::WRL::ComPtr<ID2D1Effect> shadow;
     Microsoft::WRL::ComPtr<ID2D1Image> shadowImage;
     D2D1_RECT_F shadowBounds{};
+};
+
+struct PopupFanBackdrop
+{
+    RECT viewport{};
+    Microsoft::WRL::ComPtr<ID2D1Geometry> silhouette;
+    D2D1_RECT_F bounds{};
+    float blurRadius = 0.f, opacity = 0.f;
 };
 
 struct WidgetMarqueeCompositionItem
@@ -110,6 +119,7 @@ struct DesktopWidgetCompositionItem
     }
     bool backdropRequested = false;
     bool backdropRegistered = false;
+    bool presentingSrgb = false;
     int backdropCornerRadius = 0;
     int backdropBlurRadius = 0;
     snowdesktop::WidgetIconBackdrops iconBackdrops;

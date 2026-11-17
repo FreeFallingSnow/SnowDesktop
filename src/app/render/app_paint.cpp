@@ -1,12 +1,15 @@
 #include "app/app.h"
+#include "app/render/desktop_highlight_tiles.h"
+#include "common/utils.h"
 #include "diagnostics/diagnostic_log.h"
 #include "app/render/desktop_backdrop_update_rules.h"
 #include "widget/view/widget_accessibility_provider.h"
 #include "diagnostics/performance_trace.h"
 #include "dock/dock_appbar.h"
-#include "desktop_backdrop_update_rules.h"
 
 // Desktop composition paint transaction.
+
+namespace highlight_tiles = snowdesktop::desktop_highlight_tiles;
 
 bool DesktopApp::OnPaint(const RECT* updateRect)
 {
@@ -66,6 +69,7 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
         IntersectRect(&clippedUpdate, updateRect, &clientRect) &&
         !IsRectEmpty(&clippedUpdate))
     {
+        highlight_tiles::IncludeRetainedTiles(clippedUpdate, clientRect, desktopSrgbTiles_);
         dcompUpdate = &clippedUpdate;
     }
 
@@ -86,6 +90,8 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
 
     ComPtr<ID2D1DeviceContext> context;
     context.Attach(rawContext);
+    snowdesktop::HighlightCoverage highlightCoverage;
+    snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), highlightCoverage);
     context->SetDpi(96.0f, 96.0f);
     context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
     const LONG updateLeft = dcompUpdate ? dcompUpdate->left : 0;
@@ -104,6 +110,8 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
         marqueeWidgetIndex_ >= widgets_.size();
     const bool forceCompleteGlassCollection =
         desktopBackdropFullCollectionPending_;
+    snowdesktop::performance::Value("desktop", "backdrop_full_requested_for_paint", {},
+        forceCompleteGlassCollection ? 1.0 : 0.0);
     const bool completeGlassCollection =
         snowdesktop::desktop_backdrop_update_rules::
             ShouldCollectAllPanels(
@@ -120,10 +128,12 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
             GetStandaloneWidgetFrameRect(
                 widgets_[mouseDownWidgetIndex_]));
     }
-    RenderFrame(
-        context.Get(),
-        forceCompleteGlassCollection ? nullptr : dcompUpdate,
-        desktopIconsHidden_);
+    RenderFrame(context.Get(), forceCompleteGlassCollection ? nullptr : dcompUpdate, desktopIconsHidden_);
+
+    const RECT dirty = dcompUpdate ? *dcompUpdate : clientRect;
+    const auto srgbCandidates = highlight_tiles::Stage(desktopBackdropCompositor_, hwnd_,
+        context.Get(), highlightCoverage, clientRect, dirty, updateOffset,
+        desktopSrgbTiles_, nextDesktopSrgbKey_);
 
     context->SetTransform(D2D1::Matrix3x2F::Identity());
     context.Reset();
@@ -131,6 +141,11 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
     if (FAILED(hr))
     {
         RecoverCompositionRenderFailure(L"Background EndDraw", hr);
+        return false;
+    }
+    if (!highlight_tiles::Publish(desktopBackdropCompositor_, dirty, srgbCandidates, desktopSrgbTiles_))
+    {
+        RecoverCompositionRenderFailure(L"Publish desktop highlight tile", E_FAIL);
         return false;
     }
 
@@ -205,12 +220,16 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
     }
     // The floating popup can commit the shared backdrop controller when its
     // bounds change. Submit the completed desktop pair before touching it.
-    if (desktopBackdropCompositor_.IsAvailable() && !FlushPendingCompositionCommit())
+    if (!FlushPendingCompositionCommit())
         return false;
     compositionRenderRecoveryPending_ = false;
     if (widgetAccessibilityProvider_)
         widgetAccessibilityProvider_->RefreshEvents();
     UpdateFloatingPopupWindowBounds(false);
+    SyncDockTitleTooltip();
+    SyncPageNavHotEdgeTooltip();
+    SyncLuaWidgetTooltip();
+    if (desktopIconsHidden_) ResetPageNotify();
     RecordShellHoverTrace(ShellHoverTraceEvent::PaintEnd);
     TraceDesktopPresentation(L"paint-queued", S_OK, updateRect);
     return true;

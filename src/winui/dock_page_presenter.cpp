@@ -473,6 +473,7 @@ struct DockPagePresenter::Impl
     ContinuousControl edgeHoverDelayMs;
 
     muxc::Button taskbarSettingsLink{nullptr};
+    muxc::Button taskbarAutoHideRetry{nullptr};
     muxc::Button restartExplorerButton{nullptr};
     muxc::ComboBox taskbarThemeCombo{nullptr};
     muxc::ComboBox taskbarContentThemeCombo{nullptr};
@@ -490,6 +491,7 @@ struct DockPagePresenter::Impl
     muxc::ToggleSwitch taskbarAcrylicToggle{nullptr};
     muxc::RadioButtons windowsSystemThemeChoices{nullptr};
     muxc::InfoBar taskbarRuntimeStatus{nullptr};
+    muxc::InfoBar taskbarAutoHideWarning{nullptr};
 
     SettingRow dockEnabledRow;
     SettingRow positionRow;
@@ -579,6 +581,7 @@ struct DockPagePresenter::Impl
     winrt::event_token showOnlyWhenSummonedToken{};
     winrt::event_token summonOnAppMinimizeToken{};
     winrt::event_token taskbarSettingsToken{};
+    winrt::event_token taskbarAutoHideRetryToken{};
     winrt::event_token restartExplorerToken{};
     winrt::event_token taskbarThemeToken{};
     winrt::event_token taskbarContentThemeToken{};
@@ -902,6 +905,16 @@ struct DockPagePresenter::Impl
         // keepWhenDesktopHidden is a post-migration field and intentionally
         // remains outside the 1:1 legacy surface.
 
+        taskbarAutoHideWarning = muxc::InfoBar{};
+        taskbarAutoHideWarning.Severity(muxc::InfoBarSeverity::Warning);
+        taskbarAutoHideWarning.IsClosable(false);
+        taskbarAutoHideWarning.IsOpen(false);
+        presenter_controls::BindInfoBarVisibility(taskbarAutoHideWarning);
+        taskbarAutoHideRetry = muxc::Button{};
+        taskbarAutoHideRetry.UseSystemFocusVisuals(true);
+        taskbarAutoHideRetry.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        taskbarAutoHideWarning.ActionButton(taskbarAutoHideRetry);
+        taskbarRoot.Children().Append(taskbarAutoHideWarning);
         InitializeCard(taskbarCard, cardStyle, taskbarRoot);
         taskbarSuppressRow.Initialize(taskbarMode);
         taskbarModeToken = taskbarMode.SelectionChanged([this](const auto&, const auto&) {
@@ -1673,6 +1686,14 @@ struct DockPagePresenter::Impl
                 if (!closed && active && hasSnapshot && actions.openTaskbarSettings)
                     actions.openTaskbarSettings(generation);
             });
+        taskbarAutoHideRetryToken = taskbarAutoHideRetry.Click(
+            [this](const auto&, const auto&) {
+                if (closed || !active || !hasSnapshot || !actions.invokeHost) return;
+                SettingsHostActions::Request request;
+                request.action = SettingsHostActions::Action::RetrySystemTaskbarAutoHide;
+                actions.invokeHost(generation, request);
+                if (!closed) RefreshTaskbarRuntimeStatus();
+            });
         restartExplorerToken = restartExplorerButton.Click(
             [this](const auto&, const auto&) {
                 ConfirmRestartExplorer();
@@ -2357,6 +2378,39 @@ struct DockPagePresenter::Impl
 
     void RefreshTaskbarRuntimeStatus()
     {
+        const int mode = taskbarMode.SelectedIndex();
+        const bool needsAutoHide = mode == 1 ||
+            (modulePolicy.Allows(runtime_modules::Module::Taskbar) &&
+                (mode == 3 || (mode == 2 && dockEnabledToggle.IsOn())));
+        if (taskbarAutoHideWarning && taskbarRoot.XamlRoot())
+        {
+            using Status = SystemTaskbarAutoHideStatus;
+            const auto status = needsAutoHide ? GetSystemTaskbarAutoHideStatus() : Status::Effective;
+            std::wstring message;
+            switch (status)
+            {
+            case Status::Disabled:
+                message = L("settings.taskbar.autoHide.disabled", L"Windows taskbar auto-hide is turned off.");
+                break;
+            case Status::RequiresBottom:
+                message = L("settings.taskbar.autoHide.requiresBottom",
+                    L"Windows requires the taskbar at the bottom for auto-hide. Enabling it will move the taskbar there.");
+                break;
+            case Status::NotEffective:
+                message = L("settings.taskbar.autoHide.notEffective",
+                    L"Windows auto-hide is on, but it hasn't taken effect for some taskbars.");
+                break;
+            case Status::Unavailable:
+                message = L("app.settings.taskbar_connecting", L"Connecting to the Explorer taskbar...");
+                break;
+            case Status::Effective:
+                break;
+            }
+            if (std::wstring_view(taskbarAutoHideWarning.Message()) != message)
+                taskbarAutoHideWarning.Message(message);
+            taskbarAutoHideRetry.IsEnabled(status != Status::Unavailable);
+            taskbarAutoHideWarning.IsOpen(status != Status::Effective);
+        }
         if (suppressionStatus)
         {
             const auto state = GetSystemTaskbarSuppressionRuntimeState();
@@ -2366,7 +2420,6 @@ struct DockPagePresenter::Impl
             suppressionStatus.Message(L(failed ? "settings.dock.suppressTaskbar.failed" : "app.settings.taskbar_connecting",
                 failed ? L"The taskbar could not be hidden. Turn this option off to restore it, then try again." : L"Connecting to the Explorer taskbar..."));
             suppressionStatus.Severity(failed ? muxc::InfoBarSeverity::Error : muxc::InfoBarSeverity::Informational);
-            const int mode = taskbarMode.SelectedIndex();
             suppressionStatus.IsOpen(modulePolicy.Allows(runtime_modules::Module::Taskbar) &&
                 (mode == 3 || (mode == 2 && dockEnabledToggle.IsOn())) && (failed || pending));
         }
@@ -2723,7 +2776,7 @@ struct DockPagePresenter::Impl
             return L("app.settings.taskbar_transparent", L"Transparent");
         default:
             return L("app.settings.taskbar_dynamic_theme",
-                L"Appearance when active");
+                L"Override theme");
         }
     }
 
@@ -2817,7 +2870,7 @@ struct DockPagePresenter::Impl
         muxa::AutomationProperties::SetName(control.appearanceDetails,
             ContextualText(context,
                 L("app.settings.taskbar_dynamic_theme",
-                    L"Appearance when active")));
+                    L"Override theme")));
         muxa::AutomationProperties::SetHelpText(
             control.appearanceDetails, help);
         RefreshDynamicRuleSummary(control);
@@ -3113,6 +3166,8 @@ struct DockPagePresenter::Impl
             L("settings.taskbar.systemSettings", L"Windows taskbar settings"));
         taskbarSettingsLink.Content(winrt::box_value(L(
             "settings.taskbar.systemSettings.open", L"Open settings")));
+        taskbarAutoHideRetry.Content(winrt::box_value(L(
+            "settings.taskbar.autoHide.retry", L"Enable hiding")));
         muxa::AutomationProperties::SetName(
             taskbarSettingsLink, taskbarSettingsRow.label.Text());
         muxa::AutomationProperties::SetHelpText(taskbarSettingsLink,
@@ -3196,7 +3251,7 @@ struct DockPagePresenter::Impl
             L"When Start, Search, Task View, or a system panel is open");
         RefreshDynamicRuleText(maximizedWindowRule,
             "app.settings.taskbar_dynamic_maximized_window",
-            L"When this display has a maximized app window");
+            L"When this display has a maximized or fullscreen app window");
         RefreshDynamicRuleText(visibleWindowRule,
             "app.settings.taskbar_dynamic_visible_window",
             L"When this display has an app window");
@@ -3215,7 +3270,7 @@ struct DockPagePresenter::Impl
         control.detailTitle.Text(context);
         control.enabledRow.SetText(context);
         control.themeRow.SetText(L(
-            "app.settings.taskbar_dynamic_theme", L"Appearance when active"));
+            "app.settings.taskbar_dynamic_theme", L"Override theme"));
         ReplaceTaskbarThemeItems(control.theme);
         control.contentThemeRow.SetText(L(
             "app.settings.taskbar_foreground_color",
@@ -3616,6 +3671,7 @@ struct DockPagePresenter::Impl
             showOnlyWhenSummonedToggle.Toggled(showOnlyWhenSummonedToken);
             summonOnAppMinimizeToggle.Toggled(summonOnAppMinimizeToken);
             taskbarSettingsLink.Click(taskbarSettingsToken);
+            taskbarAutoHideRetry.Click(taskbarAutoHideRetryToken);
             windowsSystemThemeChoices.SelectionChanged(
                 windowsSystemThemeToken);
             restartExplorerButton.Click(restartExplorerToken);
@@ -3754,7 +3810,7 @@ mux::UIElement DockPagePresenter::TaskbarContent() const
         impl_->SetCardText(impl_->taskbarAppearanceCard, "settings.taskbar.defaultAppearance", L"Default appearance");
         uint32_t index = 0;
         if (!impl_->taskbarRoot.Children().IndexOf(impl_->taskbarAppearanceCard.root, index))
-            impl_->taskbarRoot.Children().InsertAt(1, impl_->taskbarAppearanceCard.root);
+            impl_->taskbarRoot.Children().InsertAt(2, impl_->taskbarAppearanceCard.root);
     }
     return impl_ ? impl_->taskbarRoot : nullptr;
 }

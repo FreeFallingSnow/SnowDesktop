@@ -4,6 +4,7 @@
 #include "dock/dock_window_rules.h"
 #include "dock/dock_window_preview.h"
 #include "diagnostics/diagnostic_log.h"
+#include "diagnostics/performance_trace.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
 #include "app/dock/persistent_dock_host.h"
@@ -62,6 +63,7 @@ bool OpenMissingWidgetWorkshopPage(HWND owner,
 
 void DesktopApp::OnMouseLeave()
 {
+    snowdesktop::performance::Scope trace("input", "hover.mouse_leave");
     UpdateLuaStackIndicator(POINT{LONG_MIN, LONG_MIN});
     POINT popupPoint{};
     if (hwnd_ && IsWindow(hwnd_) && snowdesktop::private_pointer::CursorPosition(&popupPoint) &&
@@ -110,7 +112,12 @@ void DesktopApp::OnMouseLeave()
     POINT cursorScreen{};
     const bool cursorValid = snowdesktop::private_pointer::CursorPosition(&cursorScreen) != FALSE;
     if (dockWindowPreview_ && dockWindowPreview_->IsVisible())
+    {
+        if (dockWindowPreviewHover_.TimerArmed() &&
+            dockWindowPreviewHover_.UpdateTarget({}, true, false).cancelTimer)
+            KillTimer(hwnd_, kDockWindowPreviewHoverTimerId);
         dockWindowPreview_->ScheduleHide();
+    }
     else
         HideDockWindowPreview();
     SetPageNavHotEdgeHover(0);
@@ -190,6 +197,7 @@ void DesktopApp::OnMouseLeave()
 void DesktopApp::ReconcileDesktopHoverState(
     snowdesktop::desktop_hover_rules::ReconcileMode mode)
 {
+    snowdesktop::performance::Scope trace("input", "hover.reconcile");
     RecordShellHoverTrace(
         ShellHoverTraceEvent::ReconcileBegin);
     if (!hwnd_ || !IsWindow(hwnd_))
@@ -201,8 +209,9 @@ void DesktopApp::ReconcileDesktopHoverState(
         snowdesktop::desktop_hover_rules::HasForegroundSettled(
             foregroundTick != 0,
             GetTickCount() - foregroundTick);
-    if (foregroundTick != 0 &&
-        foregroundTick != desktopHoverForegroundObservedTick_)
+    const bool foregroundChanged = foregroundTick != 0 &&
+        foregroundTick != desktopHoverForegroundObservedTick_;
+    if (foregroundChanged)
     {
         // Foreground/minimize transitions can make Explorer restack the
         // desktop content child without its separate backdrop sibling. A
@@ -257,7 +266,7 @@ void DesktopApp::ReconcileDesktopHoverState(
                 ? snowdesktop::private_pointer::WindowAtPoint(dockScreenPoint) : nullptr;
         const bool pointerOnBaseDesktopSurface =
             IsBaseDesktopHoverSurfaceWindow(dockHitWindow);
-        bool pointerInDockLayer = false;
+        const PersistentDockHost* pointerDockHost = nullptr;
         for (const auto& host : persistentDockHosts_)
         {
             if (host && ShouldShowPersistentDockHost(*host) &&
@@ -265,9 +274,9 @@ void DesktopApp::ReconcileDesktopHoverState(
                     host->backdrop.IsBackdropWindow(dockHitWindow)) &&
                 snowdesktop::floating_dock_rules::IsPointInVisibleLayer(
                     cursorPoint, host->dockRect,
-                    host->popupRect, host->tooltipRect))
+                    host->popupRect, RECT{}))
             {
-                pointerInDockLayer = true;
+                pointerDockHost = host.get();
                 break;
             }
         }
@@ -276,7 +285,7 @@ void DesktopApp::ReconcileDesktopHoverState(
                 pointerOnBaseDesktopSurface,
                 IsPersistentDockHostWindow(dockHitWindow) ||
                     IsPersistentDockBackdropWindow(dockHitWindow),
-                pointerInDockLayer);
+                pointerDockHost != nullptr);
         const POINT activeCursorPoint = cursorPoint;
         const bool pointerPositionChanged =
             pointerOnActiveHoverSurface &&
@@ -320,15 +329,30 @@ void DesktopApp::ReconcileDesktopHoverState(
         }
         if (activateHover || refreshActiveHover)
         {
+            const bool sameDockHover = refreshActiveHover && pointerDockHost &&
+                pointerDockHost->container &&
+                floatingDockHoverTargetOwner_ == pointerDockHost->container &&
+                PtInRect(&pointerDockHost->dockRect, lastMousePoint_) &&
+                PtInRect(&pointerDockHost->dockRect, activeCursorPoint) &&
+                !dragDropController_.IsTransportActive() &&
+                !GetOpenPopupWidget() && !ShouldShowFloatingPopupWindow();
             lastMousePoint_ = activateHover
                 ? cursorPoint : activeCursorPoint;
             UpdateListTitleHover();
-            // A stale floating-Dock leave may have consumed tracking before
-            // the cursor reached its final desktop or Dock point. Keep the title
-            // HRGN synchronized with the repaired point before presenting so
-            // an old visual/input island cannot outlive the hover state.
-            UpdateFloatingDockWindowBounds(false);
-            PresentPassiveHoverVisualChange();
+            if (sameDockHover)
+            {
+                // Recover this sample through the normal rate-limited Dock path.
+                UpdateWidgetHoverExpansion(lastMousePoint_);
+                UpdateDockWindowPreview(lastMousePoint_);
+                PresentPointerInteractionFrame();
+            }
+            else
+            {
+                // On a surface handoff, synchronize both the old and new
+                // regions so stale visuals cannot outlive the hover state.
+                UpdateFloatingDockWindowBounds(false);
+                PresentPassiveHoverVisualChange();
+            }
             RecordShellHoverTrace(
                 activateHover
                     ? ShellHoverTraceEvent::ReconcileActivate
@@ -374,21 +398,27 @@ void DesktopApp::ReconcileDesktopHoverState(
     const bool previewVisible =
         dockWindowPreview_ &&
         dockWindowPreview_->IsVisible();
-    const bool foregroundAlreadyReconciled =
-        foregroundTick != 0 &&
-        desktopHoverForegroundObservedTick_ == foregroundTick;
-    if (foregroundAlreadyReconciled &&
-        pointerAlreadyCleared &&
-        navHoverSide_ == 0 &&
-        !previewVisible)
+    const bool hoverAlreadyCleared = pointerAlreadyCleared && navHoverSide_ == 0 && !previewVisible;
+    const bool foregroundAlreadyReconciled = foregroundTick != 0 && !foregroundChanged;
+    desktopHoverForegroundObservedTick_ = foregroundTick;
+
+    if (hoverAlreadyCleared && foregroundAlreadyReconciled)
+        return;
+
+    if (hoverAlreadyCleared && foregroundChanged &&
+        listTitleHoverOwner_.empty() && !dragDropController_.IsTransportActive() &&
+        !GetOpenPopupWidget() && luaWidgetPanelRequest_.widgetId.empty())
     {
+        // Window placement is repaired above. Reuse the cleared desktop
+        // frame while cancelling any pending Dock preview on a new handoff.
+        snowdesktop::performance::Scope skipped("input", "hover.reconcile.already_clear");
+        HideDockWindowPreview();
         return;
     }
 
-    desktopHoverForegroundObservedTick_ = foregroundTick;
     // Reconcile through the current preview generation. A foreground handoff
     // must not manufacture a leave before its first native pointer entry.
-    if (dockWindowPreview_ && dockWindowPreview_->IsVisible()) dockWindowPreview_->ScheduleHide();
+    if (previewVisible) dockWindowPreview_->ScheduleHide();
     else HideDockWindowPreview();
     OnMouseLeave();
     RecordShellHoverTrace(
@@ -1382,7 +1412,10 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
     {
         if (HandleDockClickRelease(upPoint))
             return;
+        const bool otherSelectionDamage = marqueeActive_ || dockPressedContainer_ ||
+            pendingCtrlToggleDesktopIndex_ < items_.size() || pendingCtrlToggleWidgetItem_;
         ClearDockPressedState();
+        RECT luaDamage{};
         if (mouseDownWidgetIndex_ < widgets_.size() &&
             IsLuaDesktopSurface(widgets_[mouseDownWidgetIndex_]) &&
             widgetEngine_)
@@ -1432,6 +1465,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             }
             else if (loaded)
             {
+                luaDamage = frame;
                 const bool pointerCaptured =
                     widgetEngine_->HasInteractionPointerCapture(
                         luaContent->id);
@@ -1487,7 +1521,13 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         ++expectedCaptureReleaseDepth_;
         snowdesktop::private_pointer::ReleasePointerCapture();
         --expectedCaptureReleaseDepth_;
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        if (otherSelectionDamage || IsRectEmpty(&luaDamage))
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        else
+        {
+            InflateRect(&luaDamage, 4, 4);
+            InvalidateRect(hwnd_, &luaDamage, FALSE);
+        }
         return;
     }
 

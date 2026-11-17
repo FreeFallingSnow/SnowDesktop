@@ -1798,41 +1798,56 @@ void CheckCalendarResponsive()
             "the final agenda event cannot be activated after scrolling");
         model.Refresh(300);Require(model.View().width<=width,"internal refresh forgot its monitor width budget");
     }
-    auto stackedSource=FixtureSource(state);
-    stackedSource.calendar.mutations.save=[](const auto&) -> calendar::MutationResult {
-        throw std::runtime_error("stacked layout check must not persist the draft");
-    };
-    SystemPanelModel stacked(std::move(stackedSource),{},StatusBarAction::Calendar,true);
-    stacked.Refresh(780,1920);CheckLayout(stacked.View());
-    const auto calendarTop=Node(stacked.View(),"calendar.month").bounds.top;
-    Require(stacked.View().width==384 && stacked.View().cards.size()==2&&
-        Node(stacked.View(),"calendar.selected").bounds.top<calendarTop&&
-        stacked.View().cards[0].bottom+8==stacked.View().cards[1].top&&
-        stacked.View().cards[0].bottom>=320,
-        "right-side clock did not place a taller agenda card above the month");
-    stacked.Scroll(stacked.MaximumScroll());
-    Require(Node(stacked.View(),"calendar.month").bounds.top==calendarTop &&
-        stacked.ScrollViewport().bottom<stacked.View().cards[1].top,
-        "scrolling the upper agenda moved the month or crossed into its card");
-    Require(stacked.Invoke("calendar.add") && stacked.SetCalendarInput("calendar.edit.title",L"Stacked draft"),
-        "stacked agenda could not open its editor");
-    stacked.Reveal("calendar.edit.save");CheckLayout(stacked.View());
-    Require(Node(stacked.View(),"calendar.month").bounds.top==calendarTop &&
-        VisibleCenter(stacked.View(),"calendar.edit.save").y<stacked.View().cards[0].bottom,
-        "stacked editor escaped its upper viewport or made save unreachable");
-    Require(stacked.Invoke("calendar.edit.start"),"stacked editor could not open its time picker");
-    stacked.Reveal("picker.confirm");
-    Require(Node(stacked.View(),"calendar.month").bounds.top==calendarTop &&
-        VisibleCenter(stacked.View(),"picker.confirm").y<stacked.View().cards[0].bottom,
-        "stacked time picker moved the month or clipped its confirm action");
-    Require(stacked.CalendarBack(),"stacked picker back failed");
-    const auto draft=stacked.CalendarInputFields();
-    Require(std::any_of(draft.begin(),draft.end(),[](const auto& field){return field.id=="calendar.edit.title"&&field.text==L"Stacked draft";}),
-        "stacked picker discarded the agenda draft");
-    Require(stacked.CalendarBack(),"stacked editor back failed");
-    stacked.Refresh(300,1920);stacked.Reveal("calendar.manage");
-    Require(stacked.MaximumScroll()>0 && VisibleCenter(stacked.View(),"calendar.manage").y<300,
-        "short display lost access to the stacked agenda controls");
+    for(const auto position:{DockPosition::Top,DockPosition::Bottom})
+    {
+        auto stackedSource=FixtureSource(state);
+        stackedSource.calendar.mutations.save=[](const auto&) -> calendar::MutationResult {
+            throw std::runtime_error("stacked layout check must not persist the draft");
+        };
+        StatusBarSettings settings;settings.position=position;
+        SystemPanelModel stacked(std::move(stackedSource),settings,StatusBarAction::Calendar,true);
+        stacked.Refresh(780,1920);CheckLayout(stacked.View());
+        const auto calendarTop=Node(stacked.View(),"calendar.month").bounds.top;
+        Require(stacked.View().width==384&&stacked.View().cards.size()==2,
+            "right-side clock did not use two stacked cards");
+        const bool bottomBar=position==DockPosition::Bottom;
+        const auto monthCard=stacked.View().cards[bottomBar?1:0];
+        const auto agendaCard=stacked.View().cards[bottomBar?0:1];
+        const auto inAgenda=[&](float y){return y>agendaCard.top&&y<agendaCard.bottom;};
+        Require(calendarTop>monthCard.top&&calendarTop<monthCard.bottom&&
+            inAgenda(Node(stacked.View(),"calendar.selected").bounds.top)&&
+            stacked.View().cards[0].bottom+8==stacked.View().cards[1].top&&
+            agendaCard.bottom-agendaCard.top>=320,
+            "stacked calendar did not put the month next to the status bar");
+        const auto dateBounds=Node(stacked.View(),"date:2026-09-27").bounds;
+        stacked.Scroll(stacked.MaximumScroll());
+        const float offset=stacked.ScrollOffset();
+        ui::Input input;input.Sync(stacked.View());Require(input.Focus("date:2026-09-27"),"stacked month lost keyboard focus");
+        stacked.HandleKey(input,VK_HOME,false);
+        stacked.Wheel({(dateBounds.left+dateBounds.right)/2,(dateBounds.top+dateBounds.bottom)/2},1);
+        Require(Node(stacked.View(),"calendar.month").bounds.top==calendarTop&&stacked.ScrollOffset()==offset&&
+            inAgenda(stacked.ScrollViewport().top)&&inAgenda(stacked.ScrollViewport().bottom),
+            "scrolling the stacked agenda moved the month or crossed into its card");
+        Require(stacked.Invoke("calendar.add")&&stacked.SetCalendarInput("calendar.edit.title",L"Stacked draft"),
+            "stacked agenda could not open its editor");
+        stacked.Reveal("calendar.edit.save");CheckLayout(stacked.View());
+        Require(Node(stacked.View(),"calendar.month").bounds.top==calendarTop&&
+            inAgenda(VisibleCenter(stacked.View(),"calendar.edit.save").y),
+            "stacked editor escaped its viewport or made save unreachable");
+        Require(stacked.Invoke("calendar.edit.start"),"stacked editor could not open its time picker");
+        stacked.Reveal("picker.confirm");
+        Require(Node(stacked.View(),"calendar.month").bounds.top==calendarTop&&
+            inAgenda(VisibleCenter(stacked.View(),"picker.confirm").y),
+            "stacked time picker moved the month or clipped its confirm action");
+        Require(stacked.CalendarBack(),"stacked picker back failed");
+        const auto draft=stacked.CalendarInputFields();
+        Require(std::any_of(draft.begin(),draft.end(),[](const auto& field){return field.id=="calendar.edit.title"&&field.text==L"Stacked draft";}),
+            "stacked picker discarded the agenda draft");
+        Require(stacked.CalendarBack(),"stacked editor back failed");
+        stacked.Refresh(300,1920);stacked.Reveal("calendar.manage");
+        Require(stacked.MaximumScroll()>0&&VisibleCenter(stacked.View(),"calendar.manage").y<300,
+            "short display lost access to the stacked agenda controls");
+    }
     state->agenda=false;model.Refresh(300,900);
     Require(model.MaximumScroll()==0&&!model.View().Find("scrollbar"),"a fixed month created scrolling for an empty short agenda");
     const auto& empty=Node(model.View(),"calendar.empty");const auto viewport=model.ScrollViewport();

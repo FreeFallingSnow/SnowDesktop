@@ -7,6 +7,7 @@
 #include "drag_drop/drag_hint_rules.h"
 #include "app/render/desktop_backdrop_compositor.h"
 #include "diagnostics/diagnostic_log.h"
+#include "platform/window_peek_policy.h"
 #include <dcomp.h>
 #include <d2d1_1.h>
 #include <shellscalingapi.h>
@@ -113,12 +114,16 @@ struct NativeTooltip::Impl
     ComPtr<IDCompositionTarget> target;
     ComPtr<IDCompositionVisual2> visual;
     ComPtr<IDCompositionSurface> surface;
+    ComPtr<IDCompositionEffectGroup> opacityEffect;
     DesktopBackdropCompositor backdrop;
     PersonalizationSettings appearance;
     DrawBackground drawBackground;
     NativeTooltipState state;
     NativeTooltipTextLayout measured;
-    RECT anchor{}, bounds{};
+    RECT anchor{}, bounds{}, fixedPanel{};
+    NativeTooltipTextLayout fixedLayout;
+    bool allowCapture = false;
+    float opacity = 1.0f;
     NativeTooltipPlacement placement = NativeTooltipPlacement::Below;
     UINT dpi = 96;
     UINT width = 0, height = 0;
@@ -150,6 +155,7 @@ struct NativeTooltip::Impl
             WS_EX_TRANSPARENT | WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOPMOST,
             cls.lpszClassName, L"", WS_POPUP, 0, 0, 1, 1, owner, nullptr, cls.hInstance, this);
         if (!window) return false;
+        ExcludeDesktopWindowFromPeek(window);
         nativeTooltipWindows.push_back(window);
         provider.Attach(new TooltipProvider(accessible));
         { std::lock_guard guard(accessible->mutex); accessible->window = window; }
@@ -157,7 +163,7 @@ struct NativeTooltip::Impl
     }
     void ReleaseGraphics()
     {
-        surface.Reset(); visual.Reset(); target.Reset();
+        surface.Reset(); opacityEffect.Reset(); visual.Reset(); target.Reset();
         width = height = 0; paintDirty = true;
         backdrop.Reset();
     }
@@ -177,7 +183,7 @@ struct NativeTooltip::Impl
         backdrop.Reset();
         hidingWindow = false;
     }
-    void Hide() { HideWindow(); state.Leave(); }
+    void Hide() { HideWindow(); state.Leave(); fixedPanel = {}; fixedLayout = {}; allowCapture = false; }
     void Close()
     {
         Hide();
@@ -226,6 +232,8 @@ struct NativeTooltip::Impl
         {
             if (FAILED(result = composition->CreateVisual(&visual))) return result;
             if (FAILED(result = target->SetRoot(visual.Get()))) return result;
+            if (FAILED(result = composition->CreateEffectGroup(&opacityEffect))) return result;
+            if (FAILED(result = visual->SetEffect(opacityEffect.Get()))) return result;
         }
         if (!surface || width != w || height != h)
         {
@@ -274,17 +282,20 @@ struct NativeTooltip::Impl
             // Background callbacks share application brushes and can alter the
             // context. Restore the tooltip text contract before drawing it.
             context->SetDpi(96, 96);
-            context->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale) * translation);
+            const float textScale = fixedLayout.layout ? 1.f : scale;
+            context->SetTransform(D2D1::Matrix3x2F::Scale(textScale, textScale) * translation);
             context->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
-            const float offset = static_cast<float>(inset) / scale;
+            const auto& layout = fixedLayout.layout ? fixedLayout : measured;
+            const float offset = static_cast<float>(inset) / textScale;
             DrawNativeTooltipText(context.Get(), D2D1::RectF(offset, offset,
-                offset + measured.width, offset + measured.height), measured, appearance);
+                offset + layout.width, offset + layout.height), layout, appearance);
         }
         context.Reset();
         const HRESULT ended = surface->EndDraw();
         if (FAILED(result)) return result;
         if (FAILED(ended)) return ended;
         if (FAILED(result = visual->SetContent(surface.Get()))) return result;
+        if (FAILED(result = opacityEffect->SetOpacity(opacity))) return result;
         return composition->Commit();
     }
     void Sync(bool show)
@@ -294,7 +305,7 @@ struct NativeTooltip::Impl
             (input.flags & (GUI_INMENUMODE | GUI_POPUPMENUMODE | GUI_SYSTEMMENUMODE));
         if (state.key.empty() || state.text.empty() || !owner || !IsWindowVisible(owner) || !composition || !text)
         { Hide(); return; }
-        if ((!dragFeedback && !menuFeedback && GetCapture()) || (!menuFeedback && inMenu)) { Hide(); return; }
+        if ((!dragFeedback && !menuFeedback && !allowCapture && GetCapture()) || (!menuFeedback && inMenu)) { Hide(); return; }
         if (!EnsureWindow()) return;
         MONITORINFO monitor{sizeof(monitor)};
         const auto handle = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
@@ -308,26 +319,35 @@ struct NativeTooltip::Impl
         const auto work = monitor.rcWork;
         const float maximumWidth = std::max(1.f, std::min(dragFeedback ? 520.f : 280.f, static_cast<float>(work.right - work.left) / scale - 8.f));
         const float maximumHeight = std::max(1.f, std::min(192.f, static_cast<float>(work.bottom - work.top) / scale - 8.f));
-        if (format && format->GetFontSize() != NativeTooltipFontSize())
-        { format.Reset(); measured = {}; contentDirty = true; }
-        if (!format)
+        RECT next = fixedPanel;
+        if (fixedLayout.layout)
         {
-            const auto result = CreateNativeTooltipTextFormat(text.Get(), &format);
-            if (FAILED(result)) { Error(result); return; }
-            format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+            const LONG inset = SurfaceInset();
+            InflateRect(&next, inset, inset);
         }
-        if (contentDirty || maximumWidth != measuredWidth || maximumHeight != measuredHeight || !measured.layout)
+        else
         {
-            const auto result = MeasureNativeTooltip(text.Get(), format.Get(), state.title, state.text,
-                maximumWidth, maximumHeight, measured);
-            if (FAILED(result)) { Error(result); return; }
-            measuredWidth = maximumWidth; measuredHeight = maximumHeight;
-            contentDirty = false; paintDirty = true;
+            if (format && format->GetFontSize() != NativeTooltipFontSize())
+            { format.Reset(); measured = {}; contentDirty = true; }
+            if (!format)
+            {
+                const auto result = CreateNativeTooltipTextFormat(text.Get(), &format);
+                if (FAILED(result)) { Error(result); return; }
+                format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+            }
+            if (contentDirty || maximumWidth != measuredWidth || maximumHeight != measuredHeight || !measured.layout)
+            {
+                const auto result = MeasureNativeTooltip(text.Get(), format.Get(), state.title, state.text,
+                    maximumWidth, maximumHeight, measured);
+                if (FAILED(result)) { Error(result); return; }
+                measuredWidth = maximumWidth; measuredHeight = maximumHeight;
+                contentDirty = false; paintDirty = true;
+            }
+            next = PlaceNativeTooltip(anchor,
+                {static_cast<LONG>(std::ceil(measured.width * scale)) + 2 * SurfaceInset(),
+                    static_cast<LONG>(std::ceil(measured.height * scale)) + 2 * SurfaceInset()},
+                work, placement, static_cast<LONG>(std::ceil(6 * scale)), static_cast<LONG>(std::ceil(4 * scale)));
         }
-        auto next = PlaceNativeTooltip(anchor,
-            {static_cast<LONG>(std::ceil(measured.width * scale)) + 2 * SurfaceInset(),
-                static_cast<LONG>(std::ceil(measured.height * scale)) + 2 * SurfaceInset()},
-            work, placement, static_cast<LONG>(std::ceil(6 * scale)), static_cast<LONG>(std::ceil(4 * scale)));
         if (dragFeedback)
         {
             const LONG w = next.right - next.left, h = next.bottom - next.top;
@@ -339,7 +359,9 @@ struct NativeTooltip::Impl
         const bool moved = !EqualRect(&next, &bounds);
         if (moved)
         {
-            bounds = next; paintDirty = true;
+            paintDirty = paintDirty || (next.right - next.left != bounds.right - bounds.left) ||
+                (next.bottom - next.top != bounds.bottom - bounds.top);
+            bounds = next;
             SetWindowPos(window, nullptr, bounds.left, bounds.top, bounds.right - bounds.left,
                 bounds.bottom - bounds.top, SWP_NOACTIVATE | SWP_NOZORDER);
         }
@@ -354,7 +376,9 @@ struct NativeTooltip::Impl
             backdrop.AddPanel(frame, NativeTooltipCornerRadius(appearance,
                 static_cast<float>(frame.right - frame.left), static_cast<float>(frame.bottom - frame.top), scale),
                 appearance.glassBlurRadius * scale, reinterpret_cast<std::uintptr_t>(this));
-            backdrop.EndFrame();
+            backdrop.EndFrame(false);
+            backdrop.SetVisualOpacity(opacity);
+            backdrop.CommitVisualChanges();
         }
         if (paintDirty || environmentChanged)
         {
@@ -363,7 +387,7 @@ struct NativeTooltip::Impl
             paintDirty = false; lastError = S_OK;
         }
         PublishName();
-        if (show || visible)
+        if ((show || visible) && (!visible || moved))
         {
             // A reused tooltip can already be paired in the TOPMOST band
             // behind a newer popup. Pair synchronization preserves that
@@ -455,23 +479,54 @@ void NativeTooltip::Configure(HWND owner, IDCompositionDesktopDevice* compositio
     if (self.appearance != appearance) self.paintDirty = true;
     self.owner = owner; self.composition = composition; self.text = text;
     self.appearance = appearance; self.drawBackground = std::move(drawBackground);
-    if (self.visible) self.Sync(true);
+    if (self.visible && !self.fixedLayout.layout) self.Sync(true);
 }
 void NativeTooltip::SetTarget(std::string key, std::wstring body, RECT screenAnchor,
     NativeTooltipPlacement placement, bool immediate, std::wstring title)
 {
     auto& self = *impl_;
     if (key.empty() || body.empty() || IsRectEmpty(&screenAnchor)) { self.Hide(); return; }
+    self.fixedPanel = {}; self.fixedLayout = {}; self.allowCapture = false;
     const bool contentChanged = self.state.text != body || self.state.title != title;
     const bool targetChanged = self.state.Enter(std::move(key), std::move(body), std::move(title), GetTickCount64(), kHoverDelay);
     if (targetChanged) self.HideWindow();
     self.contentDirty = self.contentDirty || contentChanged;
     self.anchor = screenAnchor; self.placement = placement;
+    if (!self.window && !self.dragFeedback)
+        if (const auto current = nativeTooltipAppearance.load()) self.appearance = *current;
     if (!self.EnsureWindow()) return;
     const auto now = GetTickCount64();
     if (immediate || self.visible || now >= self.state.readyAt) self.Sync(true);
     else if (targetChanged)
         SetTimer(self.window, kHoverTimer, static_cast<UINT>(std::max<std::uint64_t>(1, self.state.readyAt - now)), nullptr);
+}
+void NativeTooltip::ShowAt(std::wstring body, RECT screenBounds,
+    const NativeTooltipTextLayout& measured, bool allowCapture)
+{
+    auto& self = *impl_;
+    if (body.empty() || IsRectEmpty(&screenBounds) || !measured.layout)
+    { self.Hide(); return; }
+    self.contentDirty = true;
+    if (self.fixedLayout.layout.Get() != measured.layout.Get()) self.paintDirty = true;
+    self.state.Enter("fixed", std::move(body));
+    self.anchor = self.fixedPanel = screenBounds;
+    self.fixedLayout = measured;
+    self.allowCapture = allowCapture;
+    self.Sync(true);
+}
+bool NativeTooltip::SetOpacity(float opacity)
+{
+    auto& self = *impl_;
+    self.opacity = std::clamp(opacity, 0.f, 1.f);
+    if (!self.visible || !self.opacityEffect) return false;
+    if (FAILED(self.opacityEffect->SetOpacity(self.opacity)) ||
+        FAILED(self.composition->Commit())) return false;
+    if (self.backdrop.IsAvailable())
+    {
+        self.backdrop.SetVisualOpacity(self.opacity);
+        self.backdrop.CommitVisualChanges();
+    }
+    return true;
 }
 void NativeTooltip::Hide() { impl_->Hide(); }
 void NativeTooltip::Close() { impl_->Close(); }

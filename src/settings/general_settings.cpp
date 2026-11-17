@@ -142,6 +142,7 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         settings.desktopPassthroughHotkeyEnabled = val;
     if (ReadBoolField(text, "pageNavigationKeyboardEnabled", val))
         settings.pageNavigationKeyboardEnabled = val;
+    ReadBoolField(text, "gridPreviewHotkeyEnabled", settings.gridPreviewHotkeyEnabled);
     if (ReadBoolField(text, "widgetDeveloperToolsEnabled", val))
         settings.widgetDeveloperToolsEnabled = val;
     if (ReadBoolField(text, "contextMenuExpandQuickActions", val))
@@ -151,6 +152,12 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     if (ReadBoolField(text, "contextMenuHideMoreManagement", val))
         settings.contextMenuHideMoreManagement = val;
     int hotkeyValue = 0;
+    if (ReadIntField(text, "gridPreviewHotkeyModifiers", hotkeyValue))
+        settings.gridPreviewHotkeyModifiers = static_cast<UINT>(hotkeyValue) &
+            (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
+    if (ReadIntField(text, "gridPreviewHotkeyVirtualKey", hotkeyValue) &&
+        hotkeyValue >= 0 && hotkeyValue <= 0xff)
+        settings.gridPreviewHotkeyVirtualKey = static_cast<UINT>(hotkeyValue);
     if (ReadIntField(text, "forceRestartHotkeyModifiers", hotkeyValue))
         settings.forceRestartHotkeyModifiers = static_cast<UINT>(hotkeyValue) &
             (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
@@ -220,6 +227,8 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     settings.collectionPopupAppearance = {};
     settings.globalQuickNavigationAppearance = {};
     settings.globalCollectionPopupAppearance = {};
+    settings.tooltipAppearanceOverride = {};
+    settings.barPanelAppearanceOverride = {};
     settings.quickNavigationAppearance.mode = -2;
     settings.collectionPopupAppearance.mode = -2;
     JsonValue appearanceDocument;
@@ -232,6 +241,10 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         if (!snowdesktop::DecodeSurfaceTheme(*value, settings.globalQuickNavigationAppearance)) return false;
     if (const auto* value = appearanceDocument.Find("globalCollectionPopupAppearance"))
         if (!snowdesktop::DecodeSurfaceTheme(*value, settings.globalCollectionPopupAppearance)) return false;
+    if (const auto* value = appearanceDocument.Find("tooltipAppearanceOverride"))
+        if (!snowdesktop::DecodePopupAppearanceRule(*value, settings.tooltipAppearanceOverride)) return false;
+    if (const auto* value = appearanceDocument.Find("barPanelAppearanceOverride"))
+        if (!snowdesktop::DecodePopupAppearanceRule(*value, settings.barPanelAppearanceOverride)) return false;
     if (const auto* value = appearanceDocument.Find("statusBar"))
         if (!snowdesktop::DecodeStatusBarSettings(*value, settings.statusBar)) return false;
     if (const auto* font = appearanceDocument.Find("font"))
@@ -271,9 +284,11 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     const auto popupAppearance = snowdesktop::EncodeSurfaceTheme(settings.collectionPopupAppearance);
     const auto globalQuickAppearance = snowdesktop::EncodeSurfaceTheme(settings.globalQuickNavigationAppearance);
     const auto globalPopupAppearance = snowdesktop::EncodeSurfaceTheme(settings.globalCollectionPopupAppearance);
+    const auto tooltipOverride = snowdesktop::EncodePopupAppearanceRule(settings.tooltipAppearanceOverride);
+    const auto barPanelOverride = snowdesktop::EncodePopupAppearanceRule(settings.barPanelAppearanceOverride);
     const auto statusBar = snowdesktop::EncodeStatusBarSettings(settings.statusBar);
     if (quickAppearance.empty() || popupAppearance.empty() || globalQuickAppearance.empty() ||
-        globalPopupAppearance.empty() || statusBar.empty()) return false;
+        globalPopupAppearance.empty() || tooltipOverride.empty() || barPanelOverride.empty() || statusBar.empty()) return false;
     std::ostringstream file;
     auto calendar = settings.calendarDisplay;
     snowdesktop::calendar::Normalize(calendar);
@@ -305,6 +320,8 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "  \"collectionPopupAppearance\": " << popupAppearance << ",\n";
     file << "  \"globalQuickNavigationAppearance\": " << globalQuickAppearance << ",\n";
     file << "  \"globalCollectionPopupAppearance\": " << globalPopupAppearance << ",\n";
+    file << "  \"tooltipAppearanceOverride\": " << tooltipOverride << ",\n";
+    file << "  \"barPanelAppearanceOverride\": " << barPanelOverride << ",\n";
     file << "  \"animationMode\": " << snowdesktop::animation::NormalizeMode(settings.animationMode) << ",\n";
     file << "  \"popupAnimationEffect\": " << snowdesktop::animation::NormalizePopupEffect(settings.popupAnimationEffect) << ",\n";
     file << "  \"widgetHoverExpandEffect\": " << snowdesktop::animation::NormalizeWidgetHoverEffect(settings.widgetHoverExpandEffect) << ",\n";
@@ -353,6 +370,12 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
          << settings.pageNavigationNextModifiers << ",\n";
     file << "  \"pageNavigationNextVirtualKey\": "
          << settings.pageNavigationNextVirtualKey << ",\n";
+    file << "  \"gridPreviewHotkeyEnabled\": "
+         << (settings.gridPreviewHotkeyEnabled ? "true" : "false") << ",\n";
+    file << "  \"gridPreviewHotkeyModifiers\": "
+         << settings.gridPreviewHotkeyModifiers << ",\n";
+    file << "  \"gridPreviewHotkeyVirtualKey\": "
+         << settings.gridPreviewHotkeyVirtualKey << ",\n";
     file << "  \"quickNavTheme\": " << settings.quickNavTheme << ",\n";
     file << "  \"tooltipFontSize\": " << snowdesktop::NormalizeTooltipFontSize(settings.tooltipFontSize) << ",\n";
     file << "  \"collectionPopupTheme\": "

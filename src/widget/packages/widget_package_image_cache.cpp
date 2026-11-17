@@ -1,8 +1,10 @@
 #include "widget_package_image_cache.h"
 
 #include "common/background_work.h"
+#include "widget_package.h"
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <limits>
 #include <optional>
 #include <wincodec.h>
@@ -120,6 +122,72 @@ std::optional<SnapshotDecoder> OpenSnapshot(
         return std::nullopt;
     return value;
 }
+
+// Keep the package path stable until WIC finishes reading the opened file.
+// Every component is opened without following reparse points or sharing deletion.
+class OpenPackageImage
+{
+public:
+    explicit OpenPackageImage(const std::wstring& path)
+    {
+        const std::filesystem::path target(path);
+        auto current = target.root_path();
+        if (!target.is_absolute()) return;
+        for (const auto& part : target.relative_path())
+        {
+            current /= part;
+            const bool leaf = current == target;
+            const HANDLE handle = CreateFileW(current.c_str(),
+                leaf ? GENERIC_READ : FILE_READ_ATTRIBUTES,
+                leaf ? FILE_SHARE_READ : FILE_SHARE_READ | FILE_SHARE_WRITE,
+                nullptr, OPEN_EXISTING,
+                FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+            if (handle == INVALID_HANDLE_VALUE) return;
+            File owner(handle, CloseHandle);
+            BY_HANDLE_FILE_INFORMATION info{};
+            if (!GetFileInformationByHandle(handle, &info) ||
+                (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ||
+                leaf == ((info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0))
+                return;
+            if (leaf)
+            {
+                const auto size = (std::uint64_t{info.nFileSizeHigh} << 32) | info.nFileSizeLow;
+                if (!size || size > snowdesktop::widget::kMaxResourceBytes) return;
+                leaf_ = std::move(owner);
+                OpenDecoder(handle);
+            }
+            else
+                directories_.push_back(std::move(owner));
+        }
+    }
+
+    PackageImageSize Size() const
+    {
+        ComPtr<IWICBitmapFrameDecode> frame;
+        UINT width = 0, height = 0;
+        if (!decoder || FAILED(decoder->GetFrame(0, &frame)) ||
+            FAILED(frame->GetSize(&width, &height)))
+            return {};
+        return {width, height};
+    }
+
+private:
+    void OpenDecoder(HANDLE file)
+    {
+        if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+                CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))))
+            (void)factory->CreateDecoderFromFileHandle(
+                reinterpret_cast<ULONG_PTR>(file), nullptr, WICDecodeMetadataCacheOnDemand, &decoder);
+    }
+
+    using File = std::unique_ptr<void, decltype(&CloseHandle)>;
+    std::vector<File> directories_;
+    File leaf_{nullptr, CloseHandle};
+
+public:
+    ComPtr<IWICImagingFactory> factory;
+    ComPtr<IWICBitmapDecoder> decoder;
+};
 
 PackageImageSize ScaledSize(PackageImageSize original, std::uint32_t edge)
 {
@@ -295,8 +363,7 @@ const PackageImageSource* WidgetPackageImageCache::Acquire(
     }
 
     (void)PrewarmPending();
-    const std::size_t availableBytes = reservedBytes_ > maximumTotalBytes_
-        ? 0 : maximumTotalBytes_ - reservedBytes_;
+    const std::size_t availableBytes = maximumTotalBytes_ - reservedBytes_ - pendingDiskBytes_;
     std::optional<PackageImageSource> source;
     std::shared_ptr<const std::vector<std::uint8_t>> encoded;
     if (const auto warmed = prepared_.find(contentKey); warmed != prepared_.end())
@@ -388,6 +455,27 @@ const PackageImageSource* WidgetPackageImageCache::Acquire(
     return nullptr;
 }
 
+bool WidgetPackageImageCache::AcquireOnDemand(
+    const std::string& key, const std::wstring& path)
+{
+    if (key.empty() || path.empty()) return false;
+    auto [found, inserted] = sources_.try_emplace(key);
+    if (inserted)
+    {
+        found->second.diskPath = path;
+        found->second.identity = ++nextIdentity_;
+    }
+    if (found->second.diskPath != path) return false;
+    ++found->second.references;
+    return true;
+}
+
+bool WidgetPackageImageCache::IsOnDemand(const std::string& key) const noexcept
+{
+    const auto found = sources_.find(key);
+    return found != sources_.end() && !found->second.diskPath.empty();
+}
+
 bool WidgetPackageImageCache::Release(
     const std::string& contentKey) noexcept
 {
@@ -399,7 +487,7 @@ bool WidgetPackageImageCache::Release(
     const std::size_t released = found->second.source.pixels.size();
     bytes_ = released > bytes_ ? 0 : bytes_ - released;
     reservedBytes_ -= found->second.reservedBytes;
-    encodedBytes_ -= found->second.encoded->size();
+    if (found->second.encoded) encodedBytes_ -= found->second.encoded->size();
     sources_.erase(found);
     return true;
 }
@@ -472,6 +560,7 @@ bool WidgetPackageImageCache::Validate(const std::string& key,
     const auto found = sources_.find(key);
     if (found == sources_.end()) return false;
     auto& entry = found->second;
+    if (!entry.encoded) return false;
     if (entry.fullyValidated && !entry.source.pixels.empty()) return true;
     auto opened = OpenSnapshot(*entry.encoded);
     PackageImageAcquireError decodeError = PackageImageAcquireError::DecodeFailed;
@@ -541,6 +630,59 @@ void WidgetPackageImageCache::UpdateDemand(Entry& entry, Clock::time_point now)
     }
 }
 
+snowdesktop::BackgroundWork& WidgetPackageImageCache::DecodeWorker()
+{
+    if (!decodeWork_)
+    {
+        decodeWork_ = std::make_unique<snowdesktop::BackgroundWork>(1, 64);
+        decodeWork_->SetReadyCallback(onReady_);
+    }
+    return *decodeWork_;
+}
+
+void WidgetPackageImageCache::RequestMetadata(
+    const std::string& key, const std::string& owner, bool synchronous)
+{
+    const auto found = sources_.find(key);
+    if (owner.empty() || found == sources_.end() || found->second.diskPath.empty())
+        return;
+    auto& entry = found->second;
+    entry.demands.try_emplace(owner, 0);
+    ScheduleMetadata(key, entry, synchronous);
+}
+
+void WidgetPackageImageCache::ScheduleMetadata(
+    const std::string& key, Entry& entry, bool synchronous)
+{
+    if (entry.diskPath.empty() || entry.original.width || entry.demands.empty() ||
+        entry.pending || entry.decodeFailed || (!synchronous && metadataPending_))
+        return;
+    auto read = [path = entry.diskPath] { return OpenPackageImage(path).Size(); };
+    auto apply = [this, key, identity = entry.identity, synchronous](PackageImageSize size) {
+        if (!synchronous) metadataPending_ = false;
+        const auto found = sources_.find(key);
+        if (found == sources_.end() || found->second.identity != identity) return;
+        auto& current = found->second;
+        current.pending = false;
+        if (current.demands.empty()) return;
+        current.decodeFailed = !size.width || !size.height ||
+            size.height > maximumSingleBytes_ / 4 / size.width;
+        if (!current.decodeFailed) current.original = size;
+        changed_.push_back(key);
+    };
+    if (synchronous)
+    {
+        apply(read());
+        return;
+    }
+    const auto job = L"metadata:" + std::to_wstring(entry.identity);
+    if (DecodeWorker().Submit(job, std::move(read), std::move(apply), nullptr, 0))
+    {
+        metadataPending_ = true;
+        entry.pending = true;
+    }
+}
+
 const PackageImageSource* WidgetPackageImageCache::Request(
     const std::string& key, const std::string& owner, double rasterScale,
     Clock::time_point now, bool synchronous)
@@ -570,6 +712,12 @@ void WidgetPackageImageCache::Schedule(const std::string& key, Entry& entry,
         {
             bytes_ -= entry.source.pixels.size();
             std::vector<std::uint8_t>{}.swap(entry.source.pixels);
+            if (!entry.diskPath.empty())
+            {
+                reservedBytes_ -= entry.reservedBytes;
+                entry.reservedBytes = 0;
+                entry.ready = false;
+            }
             ++entry.revision;
             changed_.push_back(key);
         }
@@ -583,25 +731,39 @@ void WidgetPackageImageCache::Schedule(const std::string& key, Entry& entry,
         return;
     const auto size = ScaledSize(entry.original, edge);
     const std::size_t expected = std::size_t{size.width} * size.height * 4;
-    // Include the old live pixels and all queued replacement payloads. A full
-    // quota defers a replacement rather than dropping a still usable image.
-    // One replacement at a time bounds the temporary old/new overlap to one
-    // image, and lets a full cache shrink without first discarding its pixels.
-    if (pendingBytes_ || expected > maximumTotalBytes_ -
-            (bytes_ - entry.source.pixels.size()))
+    // Keep the previous bitmap available while a new resolution loads.
+    // Disk-backed entries are charged for the resident resolution and must
+    // have room for the replacement allocation alongside their old pixels.
+    const bool disk = !entry.diskPath.empty();
+    const std::size_t additional = disk && expected > entry.reservedBytes
+        ? expected - entry.reservedBytes : 0;
+    const auto replaced = disk ? 0 : entry.source.pixels.size();
+    if (pendingBytes_ || additional > maximumTotalBytes_ - reservedBytes_ ||
+        expected > maximumTotalBytes_ - (bytes_ - replaced))
         return;
     const auto encoded = entry.encoded;
     const auto identity = entry.identity;
     const auto maximum = maximumSingleBytes_;
-    auto work = [encoded, edge, maximum, expected] {
-        auto opened = OpenSnapshot(*encoded);
+    auto work = [encoded, path = entry.diskPath, original = entry.original,
+                    edge, maximum, expected] {
         PackageImageAcquireError error;
+        if (!path.empty())
+        {
+            const OpenPackageImage opened(path);
+            const auto actual = opened.Size();
+            if (actual.width != original.width || actual.height != original.height)
+                return std::optional<PackageImageSource>{};
+            return DecodePackageImage(opened.factory.Get(), opened.decoder.Get(),
+                maximum, expected, error, edge);
+        }
+        auto opened = OpenSnapshot(*encoded);
         return opened ? DecodePackageImage(opened->factory.Get(),
             opened->decoder.Get(), maximum, expected, error, edge) :
             std::optional<PackageImageSource>{};
     };
-    auto apply = [this, key, identity, edge, expected](auto decoded) {
+    auto apply = [this, key, identity, edge, expected, additional, disk](auto decoded) {
         pendingBytes_ -= std::min(pendingBytes_, expected);
+        pendingDiskBytes_ -= additional;
         const auto found = sources_.find(key);
         if (found == sources_.end() || found->second.identity != identity) return;
         auto& current = found->second;
@@ -617,6 +779,12 @@ void WidgetPackageImageCache::Schedule(const std::string& key, Entry& entry,
         }
         bytes_ -= current.source.pixels.size();
         bytes_ += decoded->pixels.size();
+        if (disk)
+        {
+            reservedBytes_ -= current.reservedBytes;
+            current.reservedBytes = decoded->pixels.size();
+            reservedBytes_ += current.reservedBytes;
+        }
         current.source = std::move(*decoded);
         current.ready = true;
         if (edge == std::max(current.original.width, current.original.height))
@@ -627,19 +795,16 @@ void WidgetPackageImageCache::Schedule(const std::string& key, Entry& entry,
     if (synchronous)
     {
         pendingBytes_ += expected;
+        pendingDiskBytes_ += additional;
         apply(work());
         return;
     }
-    if (!decodeWork_)
-    {
-        decodeWork_ = std::make_unique<snowdesktop::BackgroundWork>(1, 64);
-        decodeWork_->SetReadyCallback(onReady_);
-    }
     const std::wstring job = std::wstring(key.begin(), key.end()) +
         L":" + std::to_wstring(identity);
-    if (decodeWork_->Submit(job, std::move(work), std::move(apply), nullptr, 0))
+    if (DecodeWorker().Submit(job, std::move(work), std::move(apply), nullptr, 0))
     {
         pendingBytes_ += expected;
+        pendingDiskBytes_ += additional;
         entry.pending = true;
     }
 }
@@ -654,7 +819,10 @@ void WidgetPackageImageCache::Pump(Clock::time_point now)
     }
     if (decodeWork_) decodeWork_->Drain(std::chrono::milliseconds(1));
     for (auto& [key, entry] : sources_)
+    {
+        ScheduleMetadata(key, entry, false);
         Schedule(key, entry, now, false);
+    }
 }
 
 void WidgetPackageImageCache::SetReadyCallback(std::function<void()> callback)
@@ -681,6 +849,8 @@ void WidgetPackageImageCache::Clear() noexcept
     reservedBytes_ = 0;
     encodedBytes_ = 0;
     pendingBytes_ = 0;
+    pendingDiskBytes_ = 0;
+    metadataPending_ = false;
     changed_.clear();
 }
 }

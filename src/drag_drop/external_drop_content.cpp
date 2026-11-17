@@ -6,40 +6,45 @@
 #include <cstddef>
 #include <cstring>
 #include <iterator>
+#include <memory>
+#include <type_traits>
 
 namespace snowdesktop::external_drop_content
 {
 namespace
 {
-Paths ReadSelectionPaths(IDataObject* source)
+using ShellId = std::unique_ptr<std::remove_pointer_t<PIDLIST_ABSOLUTE>, decltype(&ILFree)>;
+
+template<typename Visitor>
+bool VisitSelectionIds(IDataObject* source, UINT maximum, const Visitor& visit)
 {
     // Request only CIDA metadata. The Shell convenience array converter may
     // fall back to CF_HDROP, which can render a delayed provider before Drop.
     const auto id = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_SHELLIDLIST));
     FORMATETC format{id, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
-    if (!id || source->QueryGetData(&format) != S_OK) return {};
+    if (!source || !id || source->QueryGetData(&format) != S_OK) return false;
     STGMEDIUM medium{};
-    if (FAILED(source->GetData(&format, &medium))) return {};
+    if (FAILED(source->GetData(&format, &medium))) return false;
     struct ReleaseMedium
     {
         STGMEDIUM& value;
         ~ReleaseMedium() { ReleaseStgMedium(&value); }
     } release{medium};
-    if (medium.tymed != TYMED_HGLOBAL || !medium.hGlobal) return {};
+    if (medium.tymed != TYMED_HGLOBAL || !medium.hGlobal) return false;
     const SIZE_T size = GlobalSize(medium.hGlobal);
     const auto* bytes = static_cast<const std::byte*>(GlobalLock(medium.hGlobal));
-    if (!bytes) return {};
+    if (!bytes) return false;
     struct Unlock
     {
         HGLOBAL value;
         ~Unlock() { GlobalUnlock(value); }
     } unlock{medium.hGlobal};
-    if (size < 2 * sizeof(UINT)) return {};
+    if (size < 2 * sizeof(UINT)) return false;
     UINT count = 0;
     std::memcpy(&count, bytes, sizeof(count));
-    if (!count || count > 128) return {};
+    if (!count || count > maximum) return false;
     const SIZE_T tableBytes = (static_cast<SIZE_T>(count) + 2) * sizeof(UINT);
-    if (tableBytes > size) return {};
+    if (tableBytes > size) return false;
     const auto pidl = [&](UINT index) -> PCUIDLIST_RELATIVE {
         UINT offset = 0;
         std::memcpy(&offset, bytes + (static_cast<SIZE_T>(index) + 1) * sizeof(UINT), sizeof(offset));
@@ -55,23 +60,84 @@ Paths ReadSelectionPaths(IDataObject* source)
         return nullptr;
     };
     const auto parent = reinterpret_cast<PCIDLIST_ABSOLUTE>(pidl(0));
-    if (!parent) return {};
-    Paths paths;
+    if (!parent) return false;
     for (UINT index = 1; index <= count; ++index)
     {
         const auto child = pidl(index);
-        if (!child) return {};
-        PIDLIST_ABSOLUTE absolute = ILCombine(parent, child);
-        if (!absolute) return {};
+        if (!child) return false;
+        const ShellId absolute(ILCombine(parent, child), ILFree);
+        if (!absolute || !visit(absolute.get())) return false;
+    }
+    return true;
+}
+
+Paths ReadSelectionPaths(IDataObject* source)
+{
+    Paths paths;
+    if (!VisitSelectionIds(source, 128, [&](PCIDLIST_ABSOLUTE absolute) {
         wchar_t path[32768]{};
         const BOOL filesystem = SHGetPathFromIDListEx(absolute, path,
             static_cast<DWORD>(std::size(path)), GPFIDL_DEFAULT);
-        ILFree(absolute);
-        if (!filesystem || !path[0]) return {};
+        if (!filesystem || !path[0]) return false;
         paths.emplace_back(path);
-    }
+        return true;
+    })) return {};
     return paths;
 }
+
+std::optional<ApplicationSource> DescribeApplication(PCIDLIST_ABSOLUTE target)
+{
+    PIDLIST_ABSOLUTE root = nullptr;
+    const HRESULT rootStatus = SHGetKnownFolderIDList(FOLDERID_AppsFolder, 0, nullptr, &root);
+    const ShellId appsFolder(root, ILFree);
+    if (FAILED(rootStatus) || !appsFolder || !ILIsParent(appsFolder.get(), target, TRUE))
+        return std::nullopt;
+
+    Microsoft::WRL::ComPtr<IShellItem> item;
+    if (FAILED(SHCreateItemFromIDList(target, IID_PPV_ARGS(&item)))) return std::nullopt;
+    const auto displayName = [&](SIGDN format) {
+        PWSTR raw = nullptr;
+        const HRESULT status = item->GetDisplayName(format, &raw);
+        const std::unique_ptr<wchar_t, decltype(&CoTaskMemFree)> text(raw, CoTaskMemFree);
+        return SUCCEEDED(status) && text ? std::wstring(text.get()) : std::wstring{};
+    };
+    ApplicationSource application;
+    application.id = displayName(SIGDN_DESKTOPABSOLUTEPARSING);
+    application.name = displayName(SIGDN_NORMALDISPLAY);
+    if (application.id.empty() || application.name.empty()) return std::nullopt;
+    const auto* bytes = reinterpret_cast<const BYTE*>(target);
+    application.targetId.assign(bytes, bytes + ILGetSize(target));
+    return application;
+}
+}
+
+std::optional<ApplicationSource> ReadApplicationSource(IDataObject* source)
+{
+    std::optional<ApplicationSource> result;
+    VisitSelectionIds(source, 1, [&](PCIDLIST_ABSOLUTE target) {
+        result = DescribeApplication(target);
+        return result.has_value();
+    });
+    return result;
+}
+
+std::optional<ApplicationSource> ResolveApplicationSource(const Paths& paths)
+{
+    if (paths.size() != 1) return std::nullopt;
+    const auto& id = paths.front();
+    if (id.empty() || id.size() >= MAX_PATH || id == L"." || id == L".." ||
+        id.find_first_of(L"\\/:*?\"<>|") != std::wstring::npos ||
+        GetFileAttributesW(id.c_str()) != INVALID_FILE_ATTRIBUTES)
+        return std::nullopt;
+
+    PIDLIST_ABSOLUTE raw = nullptr;
+    const auto parsingName = L"shell:AppsFolder\\" + id;
+    const HRESULT status = SHParseDisplayName(parsingName.c_str(), nullptr, &raw, 0, nullptr);
+    const ShellId target(raw, ILFree);
+    if (FAILED(status) || !target) return std::nullopt;
+    auto result = DescribeApplication(target.get());
+    if (!result || _wcsicmp(result->id.c_str(), id.c_str()) != 0) return std::nullopt;
+    return result;
 }
 
 ClipboardFileSource ProbeClipboardFileSource(IDataObject* source)

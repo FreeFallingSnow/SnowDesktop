@@ -89,6 +89,10 @@ struct State
     ID2D1DeviceContext* actionIconContext = nullptr;
     std::vector<int> tabWidths;
     int viewModeSlotWidth = 0;
+    std::vector<std::wstring> measuredTabLabels;
+    std::wstring measuredViewLabel;
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> measuredTabFormat;
+    float measuredTabDpiScale = 0.0f;
     bool open = false;
     // A native file/folder picker owns activation while it is open. The panel
     // must stay open across that temporary deactivation.
@@ -99,6 +103,7 @@ struct State
         animation;
     snowdesktop::UiScheduleToken
         animationCompletionToken = 0;
+    snowdesktop::UiScheduleToken idleReleaseToken = 0;
     bool animationCompositorDriven = false;
     QuickNavigationInvocationSource invocationSource =
         QuickNavigationInvocationSource::Pointer;

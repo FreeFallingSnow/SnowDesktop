@@ -4,6 +4,48 @@
 
 namespace snowdesktop::dock_minimize
 {
+namespace
+{
+HRESULT ForwardCloakRequest(HWND dispatcher, HWND source, const CloakRequest& request, DWORD timeout) noexcept
+{
+    const UINT message = CloakDispatchMessage();
+    if (!message) return HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);
+
+    // Publish the frozen lease before waking the source thread. A registered
+    // message keeps this control request separate from application WM_COPYDATA.
+    struct WithdrawRequest
+    {
+        HWND dispatcher;
+        ~WithdrawRequest()
+        {
+            RemovePropW(dispatcher, kForwardedRequest);
+            RemovePropW(dispatcher, kForwardedToken);
+            RemovePropW(dispatcher, kForwardedProcess);
+            RemovePropW(dispatcher, kForwardedOwner);
+            RemovePropW(dispatcher, kForwardedSource);
+        }
+    } withdraw{dispatcher};
+    SetLastError(0);
+    if (!SetPropW(dispatcher, kForwardedSource, source) ||
+        !SetPropW(dispatcher, kForwardedOwner, reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(request.owner))) ||
+        !SetPropW(dispatcher, kForwardedProcess, ULongToHandle(static_cast<DWORD>(request.process))) ||
+        !SetPropW(dispatcher, kForwardedToken, reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(request.token))) ||
+        !SetPropW(dispatcher, kForwardedRequest, ULongToHandle(static_cast<DWORD>(request.requestId))))
+    {
+        const DWORD error = GetLastError();
+        return HRESULT_FROM_WIN32(error ? error : ERROR_GEN_FAILURE);
+    }
+
+    DWORD_PTR ignored = 0;
+    SetLastError(0);
+    if (SendMessageTimeoutW(source, message, reinterpret_cast<WPARAM>(dispatcher),
+            static_cast<LPARAM>(request.requestId), SMTO_ABORTIFHUNG, timeout, &ignored))
+        return S_OK;
+    const DWORD error = GetLastError();
+    return HRESULT_FROM_WIN32(error ? error : ERROR_TIMEOUT);
+}
+}
+
 bool CloakDispatcher::Start(HMODULE module, HOOKPROC procedure, HookApi api)
 {
     if (thread_.joinable()) return window_ != nullptr;
@@ -46,6 +88,8 @@ LRESULT CALLBACK CloakDispatcher::WindowProc(HWND window, UINT message, WPARAM w
 }
 LRESULT CloakDispatcher::Apply(const CloakRequest& request) noexcept
 {
+    // A sent message can reenter this dispatcher while a request is in flight.
+    if (GetPropW(window_, kForwardedRequest)) return HRESULT_FROM_WIN32(ERROR_BUSY);
     const HWND source = reinterpret_cast<HWND>(static_cast<UINT_PTR>(request.source));
     const bool cloak = request.cloak != 0;
     if (GetPropW(source, kCloakDispatcherProperty) != window_) return E_ABORT;
@@ -70,15 +114,12 @@ LRESULT CloakDispatcher::Apply(const CloakRequest& request) noexcept
         else { ++statistics_.failures; retry_.Failed(error, GetTickCount64()); }
     }
     if (!hook) return HRESULT_FROM_WIN32(error);
-    DWORD_PTR ignored = 0;
-    SetLastError(0);
-    // Forward the caller's frozen lease; never substitute a newer ReadOwner.
     const DWORD timeout = cloak ? CloakSendBudget(owner.window, 120) : 120;
-    const bool sent = timeout && SendCloakRequest(source, request, timeout, ignored);
-    const DWORD sendError = timeout ? GetLastError() : ERROR_TIMEOUT;
+    const HRESULT sent = timeout ? ForwardCloakRequest(window_, source, request, timeout) :
+        HRESULT_FROM_WIN32(ERROR_TIMEOUT);
     api_.remove(hook);
     { std::lock_guard lock(mutex_); --activeHooks_; }
-    return sent ? S_OK : HRESULT_FROM_WIN32(sendError ? sendError : ERROR_TIMEOUT);
+    return sent;
 }
 hook_registration::Statistics CloakDispatcher::Statistics() const
 {

@@ -1,16 +1,36 @@
 #include "dock_minimize_protocol.h"
 #include "dock_window_source_cloak.h"
 
+#ifndef _WIN64
+#include "../taskbar_hook/tray_menu_first_show.h"
+
+extern "C" __declspec(dllexport) LRESULT CALLBACK SnowDesktopTrayHookProc(int code, WPARAM wp, LPARAM lp)
+{
+    if (code == HC_ACTION && lp)
+    {
+        const auto& message = *reinterpret_cast<const CWPSTRUCT*>(lp);
+        if (message.message == RegisterWindowMessageW(snowdesktop::tray::first_show::kArmMessage))
+        {
+            try { snowdesktop::tray::first_show::Arm(message); }
+            catch (...) { /* Keep the original tray gesture available. */ }
+        }
+    }
+    return CallNextHookEx(nullptr, code, wp, lp);
+}
+#endif
+
 extern "C" __declspec(dllexport) LRESULT CALLBACK SnowDesktopDockSourceCloakHook(
     int code, WPARAM wParam, LPARAM lParam)
 {
     if (code >= 0 && lParam)
     {
         const auto* message = reinterpret_cast<const CWPSTRUCT*>(lParam);
-        snowdesktop::dock_minimize::CloakRequest request;
-        if (message->message == WM_COPYDATA &&
-            snowdesktop::dock_minimize::ReadCloakRequest(
-                reinterpret_cast<const COPYDATASTRUCT*>(message->lParam), request))
+        namespace minimize = snowdesktop::dock_minimize;
+        const UINT command = minimize::CloakDispatchMessage();
+        minimize::CloakRequest request;
+        if (command && message->message == command &&
+            minimize::ReadForwardedCloakRequest(message->hwnd, reinterpret_cast<HWND>(message->wParam),
+                static_cast<DWORD>(message->lParam), request))
         {
             const HWND receiver = reinterpret_cast<HWND>(
                 GetPropW(message->hwnd, snowdesktop::dock_minimize::kTargetProperty));

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "component_workshop_publish.h"
+#include "widget/packages/widget_package.h"
 
 #include <algorithm>
 #include <charconv>
@@ -86,15 +87,25 @@ bool ExecuteComponentPublishPlan(const ComponentPublishPlan& plan,
     primary.syncAdditionalPreviews = plan.previewGallery.has_value();
     primary.additionalPreviews = galleryPaths;
     primary.managedPreviewPrefix = ComponentGalleryPrefix(plan.packageId);
-    if (plan.preparedPreviews)
+    const auto frozen = plan.preparedPreviews;
+    if (plan.updateContent || frozen)
     {
-        const auto frozen = plan.preparedPreviews;
-        primary.validateStagedArtifacts = [frozen](const auto&, const auto& preview) {
+        primary.validateStagedArtifacts = [frozen, expectedHash = plan.sha256,
+            uploadContent = plan.updateContent](const auto& package, const auto& preview) {
+            if (uploadContent)
+            {
+                const auto stagedHash = WorkshopFileSha256(package, widget::kMaxArchiveBytes);
+                if (stagedHash.empty() || stagedHash != expectedHash) return false;
+            }
+            if (!frozen) return true;
             std::vector<std::filesystem::path> images;
             if (frozen->gallery)
                 for (const auto& image : *frozen->gallery) images.push_back(image.path);
             return frozen->Matches(preview, images);
         };
+    }
+    if (frozen)
+    {
         primary.validateStagedPreviews = [frozen, preview = plan.preview](const auto& images) {
             return frozen->Matches(preview.value_or(std::filesystem::path{}), images);
         };

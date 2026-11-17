@@ -232,6 +232,9 @@ void DesktopApp::RecreateFanTitleTextFormat()
 
 void DesktopApp::ResetCompositionRenderCaches()
 {
+    for (const auto& tile : desktopSrgbTiles_)
+        desktopBackdropCompositor_.RemoveSrgbContent(tile.key);
+    desktopSrgbTiles_.clear();
     ResetDesktopWidgetComposition();
     ResetDesktopForegroundComposition();
     ResetDragPreviewCompositionResources();
@@ -248,7 +251,7 @@ void DesktopApp::ResetCompositionRenderCaches()
     popupFanIconRecorder_.Reset();
     popupFanTextLayouts_.clear();
     popupFanCachedTextFormat_.Reset();
-    ResetPageNotifyAnimationCache();
+    ResetPageNotify();
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     acrylicNoiseBrushCache_.clear();
@@ -538,7 +541,10 @@ void DesktopApp::ReleaseGraphicsDeviceResources()
     ResetCompositionRenderCaches();
     popupAnimationOverlay_ = {};
     luaWidgetPanelAnimationOverlay_ = {};
-    pageNotifyAnimationOverlay_ = {};
+    pageNotifyTooltip_.Close();
+    navHotEdgeTooltip_.Close();
+    dockTitleTooltip_.Close();
+    luaWidgetTooltip_.Close();
     const auto releaseRoot = [](auto& target, auto& visual) {
         if (target) (void)target->SetRoot(nullptr);
         visual.Reset();

@@ -6,14 +6,82 @@
 #include "layout/folder_sort_rules.h"
 #include "app/dock/dock_tray_popup_state.h"
 #include "popup_opacity_scope.h"
+#include "popup_resize_transition.h"
 #include "app/navigation/quick_navigation_theme.h"
 #include "layout/item_render_layer_rules.h"
 #include "layout/popup_scrollbar_layout.h"
 #include "categorized_popup_scope.h"
+#include "icons/icon_backdrop_geometry.h"
+#include "icons/icon_bitmap_renderer.h"
 #include "ui/render/app_font.h"
+#include "ui/render/blur_sampling_bounds.h"
 #include <d2d1effects.h>
 
 // Collection-popup rendering.
+
+namespace
+{
+ComPtr<ID2D1Geometry> CombineFanGeometry(ID2D1Factory& factory,
+    ID2D1Geometry& subject, ID2D1Geometry& mask, D2D1_COMBINE_MODE mode)
+{
+    ComPtr<ID2D1PathGeometry> path;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (FAILED(factory.CreatePathGeometry(&path)) || FAILED(path->Open(&sink))) return {};
+    const auto combined = subject.CombineWithGeometry(&mask, mode, nullptr, sink.Get());
+    const auto closed = sink->Close();
+    if (FAILED(combined) || FAILED(closed)) return {};
+    return path;
+}
+
+bool Overlap(const D2D1_RECT_F& a, const D2D1_RECT_F& b)
+{
+    return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+}
+
+void DesktopApp::PublishCollectionPopupFanBackdrops()
+{
+    auto& backdrop = collectionPopupBackdropCompositor_;
+    if (!backdrop.IsAvailable() || !d2dFactory_ ||
+        (popupFanBackdropCandidates_.empty() && popupFanBackdropCount_ == 0)) return;
+
+    // Where silhouettes overlap during unfolding, display the stronger
+    // sample once. Equal radii prefer the more visible icon.
+    auto& candidates = popupFanBackdropCandidates_;
+    std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) {
+        return a.blurRadius != b.blurRadius ? a.blurRadius > b.blurRadius : a.opacity > b.opacity;
+    });
+    backdrop.BeginFrame(false);
+    std::size_t published = 0;
+    for (auto next = candidates.begin(); next != candidates.end(); ++next)
+    {
+        auto clip = next->silhouette;
+        for (auto previous = candidates.begin(); clip && previous != next; ++previous)
+            if (Overlap(next->bounds, previous->bounds))
+                clip = CombineFanGeometry(*d2dFactory_.Get(), *clip.Get(),
+                    *previous->silhouette.Get(), D2D1_COMBINE_MODE_EXCLUDE);
+        D2D1_RECT_F visible{};
+        if (!clip || FAILED(clip->GetBounds(nullptr, &visible)) ||
+            visible.left >= visible.right || visible.top >= visible.bottom) continue;
+        // These small keys are local to the popup compositor. Its ordinary
+        // collection, Lua panel and stack indicator use object addresses.
+        const auto key = static_cast<std::uintptr_t>(published + 1);
+        if (!backdrop.AddClippedPanel(next->viewport, clip.Get(), next->blurRadius, key) ||
+            !backdrop.SetPanelOpacity(next->viewport, next->opacity, key))
+        {
+            (void)backdrop.RemovePanel({}, key);
+            continue;
+        }
+        popupFanBackdropViewport_ = next->viewport;
+        ++published;
+    }
+    for (auto i = published; i < popupFanBackdropCount_; ++i)
+        (void)backdrop.RemovePanel({}, static_cast<std::uintptr_t>(i + 1));
+    popupFanBackdropCount_ = published;
+    candidates.clear();
+    backdrop.EndFrame(false);
+    ApplyCollectionPopupBackdropAnimationFrame();
+}
 
 IDWriteTextFormat* DesktopApp::GetCollectionPopupTextFormat(float scale, bool title)
 {
@@ -45,10 +113,13 @@ IDWriteTextFormat* DesktopApp::GetCollectionPopupTextFormat(float scale, bool ti
 
 void DesktopApp::DrawCollectionPopup(
     ID2D1DeviceContext* ctx,
-    bool applyAnimation)
+    bool applyAnimation, const RECT* preparedRect)
 {
     const DesktopWidget* openWidget = GetOpenPopupWidget();
     if (!ctx || !openWidget) return;
+    const auto animation = popupAnimation_.GetVisual();
+    if (applyAnimation && (!animation.visible || popupAnimationOverlay_.active))
+        return;
 
     const DesktopWidget& widget = *openWidget;
     const bool fan = UsesCollectionPopupFan(widget);
@@ -61,18 +132,15 @@ void DesktopApp::DrawCollectionPopup(
         color.a *= std::clamp(alpha, 0.0f, 1.0f);
         return color;
     };
-    popupRect_ = GetCollectionPopupRect(widget);
+    popupRect_ = preparedRect ? *preparedRect : GetCollectionPopupRect(widget);
     auto* offsetView = GetCategorizedPopupView();
     if (!offsetView || !offsetView->IsSearchActive())
         popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
             GetCollectionPopupMaxScrollOffset(widget, popupRect_));
+    const auto motion = openWidget == &dockFolderPopupWidget_ && dockFolderPopupContainer_
+        ? dockFolderPopupContainer_->PopupResizeTransition() : nullptr;
+    const RECT presentedPanel = motion ? motion->Panel(popupRect_) : popupRect_;
 
-    const auto animation =
-        popupAnimation_.GetVisual();
-    if (applyAnimation && !animation.visible)
-        return;
-    if (applyAnimation && popupAnimationOverlay_.active)
-        return;
     PopupOpacityScope opacity(ctx, applyAnimation, animation.opacity);
 
     D2D1_MATRIX_3X2_F previousTransform{};
@@ -131,7 +199,7 @@ void DesktopApp::DrawCollectionPopup(
             collectionPopupAppearance_;
         popupBackgroundAppearance.widgetEdgeHighlightEnabled = false;
         DrawWidgetPanelBackground(
-            ctx, popupRect_, 18.0f * popupMetrics.scale,
+            ctx, presentedPanel, 18.0f * popupMetrics.scale,
             D2D1::ColorF(
                 collectionPopupAppearance_.widgetBgR,
                 collectionPopupAppearance_.widgetBgG,
@@ -153,8 +221,8 @@ void DesktopApp::DrawCollectionPopup(
             &popupBackgroundAppearance, false, 0, popupMetrics.scale);
 
         const RECT titleRect = snowdesktop::collection_popup_layout::
-            ResolveTitleRect(popupRect_, popupMetrics.scale,
-                dockFolderPopupOpen_ ? GetDockFolderPopupSortButtonRect(popupRect_).left -
+            ResolveTitleRect(presentedPanel, popupMetrics.scale,
+                dockFolderPopupOpen_ ? GetDockFolderPopupSortButtonRect(presentedPanel).left -
                     snowdesktop::collection_popup_layout::ScaleDimension(10, popupMetrics.scale)
                     : (std::numeric_limits<LONG>::max)());
         std::wstring title = ShouldUseDemoCollectionIdentity(&widget)
@@ -179,7 +247,7 @@ void DesktopApp::DrawCollectionPopup(
         {
             const RECT sortRect =
                 GetDockFolderPopupSortButtonRect(
-                    popupRect_);
+                    presentedPanel);
             const bool hovered =
                 popupAnimation_.IsInteractive() &&
                 PtInRect(
@@ -241,6 +309,7 @@ void DesktopApp::DrawCollectionPopup(
     }
 
     RECT content = GetCollectionPopupContentRect(popupRect_);
+    if (motion) content = motion->Content(content, popupRect_);
     if (auto* view = GetDateGroupedPopupView(popupRect_))
     {
         const RECT frame = view->GetLayoutFrameRect();
@@ -268,8 +337,8 @@ void DesktopApp::DrawCollectionPopup(
     }
     if (auto* view = GetCategorizedPopupView())
     {
-        const RECT controls = GetCollectionPopupControlsRect(popupRect_);
-        const RECT frame = GetCategorizedPopupFrame(popupRect_);
+        const RECT controls = GetCollectionPopupControlsRect(presentedPanel);
+        const RECT frame = GetCategorizedPopupFrame(presentedPanel);
         CategorizedPopupScope scope(view, frame);
         ctx->PushAxisAlignedClip(ToD2DRect(controls), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         view->DrawContent(ctx, frame);
@@ -318,8 +387,50 @@ void DesktopApp::DrawCollectionPopup(
     if (fan && !popupFanIconRecorder_ && d2dDevice_)
         (void)d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &popupFanIconRecorder_);
     const auto iconRecorder = popupFanIconRecorder_;
+    ComPtr<ID2D1RectangleGeometry> fanViewportClip;
+    const auto collectFanBackdrop = [&](ID2D1Bitmap* bitmap, const RECT& icon,
+        const D2D1_MATRIX_3X2_F& pose, float opacity) {
+        if (!applyAnimation || !renderingFloatingPopup_ || !collectionPopupBackdropCompositor_.IsAvailable() ||
+            !d2dFactory_ || !bitmap || opacity <= 0.001f)
+            return;
+        const auto eligible = iconGlassBackdrop_.find(bitmap);
+        if (eligible == iconGlassBackdrop_.end() || !eligible->second) return;
+        const auto styled = iconBitmapStyles_.find(bitmap);
+        const auto& style = styled == iconBitmapStyles_.end() ? iconBeautifySettings_ : styled->second;
+        if (!style.enabled || !style.glassEnabled) return;
+        const auto size = bitmap->GetPixelSize();
+        const RECT frame = snowdesktop::icon_bitmap_renderer::Prepare(
+            static_cast<int>(size.width), static_cast<int>(size.height), icon, true).bounds;
+        if (IsRectEmpty(&frame)) return;
+
+        ComPtr<ID2D1Geometry> iconShape;
+        if (FAILED(snowdesktop::CreateIconBackdropGeometry(d2dFactory_.Get(), style.shape,
+                frame, nullptr, iconShape))) return;
+        const auto localPose = D2D1::Matrix3x2F::Translation(static_cast<float>(frame.left),
+            static_cast<float>(frame.top)) * pose * D2D1::Matrix3x2F::Translation(
+                static_cast<float>(-content.left), static_cast<float>(-content.top));
+        ComPtr<ID2D1TransformedGeometry> transformed;
+        if (FAILED(d2dFactory_->CreateTransformedGeometry(iconShape.Get(), localPose, &transformed))) return;
+        const auto viewport = D2D1::RectF(0.f, 0.f, static_cast<float>(content.right - content.left),
+            static_cast<float>(content.bottom - content.top));
+        D2D1_RECT_F bounds{};
+        if (FAILED(transformed->GetBounds(nullptr, &bounds)) || !Overlap(viewport, bounds)) return;
+
+        ComPtr<ID2D1Geometry> silhouette = transformed;
+        if (bounds.left < viewport.left || bounds.top < viewport.top ||
+            bounds.right > viewport.right || bounds.bottom > viewport.bottom)
+        {
+            if (!fanViewportClip && FAILED(d2dFactory_->CreateRectangleGeometry(viewport, &fanViewportClip))) return;
+            silhouette = CombineFanGeometry(*d2dFactory_.Get(), *transformed.Get(),
+                *fanViewportClip.Get(), D2D1_COMBINE_MODE_INTERSECT);
+            if (!silhouette || FAILED(silhouette->GetBounds(nullptr, &bounds))) return;
+        }
+        const auto radius = std::clamp(style.glassBlurRadius, 0.f,
+            static_cast<float>(snowdesktop::blur_sampling::kMaximumBackdropDeviation));
+        popupFanBackdropCandidates_.push_back({content, std::move(silhouette), bounds, radius, opacity});
+    };
     const auto drawFanSlot = [&](size_t index, bool selected, bool cut, const auto& drawIcon,
-        std::wstring_view iconIdentity = {}) {
+        std::wstring_view iconIdentity = {}, ID2D1Bitmap* glassBitmap = nullptr) {
         namespace layout = snowdesktop::collection_popup_layout;
         const auto pose = GetCollectionPopupFanItem(popupRect_, index);
         const double slot = index == popupItemCount ? static_cast<double>(fanCapacity) :
@@ -338,11 +449,14 @@ void DesktopApp::DrawCollectionPopup(
         const float originY = popupHasAnchor_ ? static_cast<float>(popupAnchorPoint_.y) :
             static_cast<float>(CollectionPopupFanRootAbove() ? popupRect_.top : popupRect_.bottom);
         const auto unfolding = layout::FanUnfoldCenter({originX, originY}, pose.center, progress);
+        const auto iconPose = D2D1::Matrix3x2F::Rotation(pose.angle * progress, center) *
+            D2D1::Matrix3x2F::Translation(unfolding.x - center.x, unfolding.y - center.y);
+        const float iconOpacity = progress * visibility * (cut ? 0.5f : 1.0f);
         D2D1_MATRIX_3X2_F transform{};
         ctx->GetTransform(&transform);
-        ctx->SetTransform(D2D1::Matrix3x2F::Rotation(pose.angle * progress, center) *
-            D2D1::Matrix3x2F::Translation(unfolding.x - center.x, unfolding.y - center.y) * transform);
-        PopupOpacityScope slotOpacity(ctx, true, progress * visibility * (cut ? 0.5f : 1.0f));
+        ctx->SetTransform(iconPose * transform);
+        PopupOpacityScope slotOpacity(ctx, true, iconOpacity);
+        collectFanBackdrop(glassBitmap, pose.icon, iconPose, animation.opacity * iconOpacity);
 
         // Only the filename has a small backing. The arc and its gaps stay transparent.
         RECT shadow = pose.label;
@@ -449,7 +563,7 @@ void DesktopApp::DrawCollectionPopup(
                 DrawPlaceholderIcon(iconContext, item.sysIconIndex, iconRect, 1.0f);
             if (!demo && ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut))
                 DrawShortcutArrowOverlay(iconContext, iconRect, 1.0f);
-        }, iconIdentity);
+        }, iconIdentity, custom ? custom : bitmap);
     };
     for (size_t i = firstItem; i < endItem; ++i)
     {
@@ -664,12 +778,12 @@ void DesktopApp::DrawCollectionPopup(
     const int contentScroll = searchPopup && searchPopup->IsSearchActive()
         ? searchPopup->GetScrollOffset() : popupScrollOffset_;
     if (!fan) DrawScrollbarAt(
-        ctx, snowdesktop::popup_scrollbar_layout::Viewport(popupRect_, content), contentHeight, visibleHeight,
+        ctx, snowdesktop::popup_scrollbar_layout::Viewport(presentedPanel, content), contentHeight, visibleHeight,
         contentScroll, popupHovered,
         collectionPopupLightTheme_, popupMetrics.scale);
 
     if (!fan) (void)DrawWidgetPanelEdgeHighlight(
-        ctx, popupRect_, 18.0f * popupMetrics.scale,
+        ctx, presentedPanel, 18.0f * popupMetrics.scale,
         D2D1::ColorF(
             collectionPopupAppearance_.widgetBgR,
             collectionPopupAppearance_.widgetBgG,

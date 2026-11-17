@@ -200,6 +200,7 @@ struct GeneralPagePresenter::Impl
     SettingsCard languageCard;
     SettingsCard quickNavigationCard;
     SettingsCard pageNavigationCard;
+    SettingsCard gridPreviewCard;
     SettingsCard desktopPassthroughCard;
 
     muxc::ToggleSwitch autoStartToggle{nullptr};
@@ -243,6 +244,8 @@ struct GeneralPagePresenter::Impl
     HotkeyRecorder previousPageHotkey;
     muxc::TextBlock nextPageHotkeyLabel{nullptr};
     HotkeyRecorder nextPageHotkey;
+    muxc::ToggleSwitch gridPreviewToggle{nullptr};
+    HotkeyRecorder gridPreviewHotkey;
     muxc::ToggleSwitch desktopPassthroughToggle{nullptr};
     muxc::TextBlock desktopPassthroughHotkeyLabel{nullptr};
     HotkeyRecorder desktopPassthroughHotkey;
@@ -263,6 +266,8 @@ struct GeneralPagePresenter::Impl
     SettingRow pageNavigationToggleRow;
     HotkeySettingRow previousPageHotkeyRow;
     HotkeySettingRow nextPageHotkeyRow;
+    SettingRow gridPreviewToggleRow;
+    HotkeySettingRow gridPreviewHotkeyRow;
     SettingRow desktopPassthroughToggleRow;
     HotkeySettingRow desktopPassthroughHotkeyRow;
     SettingRow floatingDockToggleRow;
@@ -294,6 +299,7 @@ struct GeneralPagePresenter::Impl
     winrt::event_token languageSelectionToken{};
     winrt::event_token quickNavigationToken{};
     winrt::event_token pageNavigationToken{};
+    winrt::event_token gridPreviewToken{};
     winrt::event_token desktopPassthroughToken{};
     winrt::event_token floatingDockToken{};
 
@@ -725,6 +731,15 @@ struct GeneralPagePresenter::Impl
         pageNavigationCard.content.Children().Append(
             nextPageHotkeyRow.row.root);
 
+        InitializeCard(gridPreviewCard, cardStyle, pageNavigationRoot);
+        gridPreviewToggle = muxc::ToggleSwitch{};
+        gridPreviewToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        gridPreviewToggleRow.Initialize(gridPreviewToggle);
+        gridPreviewToggleRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        gridPreviewCard.content.Children().Append(gridPreviewToggleRow.root);
+        gridPreviewHotkeyRow.Initialize(gridPreviewHotkey);
+        gridPreviewCard.content.Children().Append(gridPreviewHotkeyRow.row.root);
+
         InitializeCard(desktopPassthroughCard, cardStyle, desktopRoot);
         desktopPassthroughToggle = muxc::ToggleSwitch{};
         desktopPassthroughToggle.HorizontalAlignment(
@@ -755,6 +770,7 @@ struct GeneralPagePresenter::Impl
         for (const auto& row : {softwareDesktopHotkeyRow.row.root,
                  quickNavigationHotkeyRow.row.root,
                  previousPageHotkeyRow.row.root, nextPageHotkeyRow.row.root,
+                 gridPreviewHotkeyRow.row.root,
                  desktopPassthroughHotkeyRow.row.root,
                  floatingDockHotkeyRow.row.root})
         {
@@ -762,10 +778,11 @@ struct GeneralPagePresenter::Impl
             presenter_controls::StyleSettingsSubrow(row, false, 16.0);
         }
         for (const auto* card : {&startupCard, &desktopBehaviorCard, &languageCard,
-                 &quickNavigationCard, &pageNavigationCard, &desktopPassthroughCard})
+                 &quickNavigationCard, &pageNavigationCard, &gridPreviewCard, &desktopPassthroughCard})
             presenter_controls::UpdateSettingsSubrows(card->content, 0.0);
         for (const auto& row : {softwareDesktopHotkeyRow.row.root, quickNavigationHotkeyRow.row.root,
-                 previousPageHotkeyRow.row.root, nextPageHotkeyRow.row.root, desktopPassthroughHotkeyRow.row.root})
+                 previousPageHotkeyRow.row.root, nextPageHotkeyRow.row.root,
+                 gridPreviewHotkeyRow.row.root, desktopPassthroughHotkeyRow.row.root})
             presenter_controls::StyleSettingsSubrow(row, false, 16.0);
         // Match the native disclosure's 68 DIP header, including the card border.
         autoStartRow.root.MinHeight(66.0);
@@ -921,6 +938,14 @@ struct GeneralPagePresenter::Impl
                     settings.desktopPassthroughHotkeyEnabled = enabled;
                 });
             });
+        gridPreviewToken = gridPreviewToggle.Toggled(
+            [this](const auto&, const auto&) {
+                UpdateDependentEnabledStates();
+                const bool enabled = gridPreviewToggle.IsOn();
+                CommitGeneral([enabled](GeneralSettings& settings) {
+                    settings.gridPreviewHotkeyEnabled = enabled;
+                });
+            });
         softwareDesktopHotkeyToken = softwareDesktopHotkeyToggle.Toggled(
             [this](const auto&, const auto&) {
                 UpdateDependentEnabledStates();
@@ -979,6 +1004,8 @@ struct GeneralPagePresenter::Impl
             Chord(MOD_CONTROL | MOD_ALT, VK_SPACE));
         previousPageHotkey.SetDefaultValue(Chord(0, VK_PRIOR));
         nextPageHotkey.SetDefaultValue(Chord(0, VK_NEXT));
+        gridPreviewHotkey.SetDefaultValue(Chord(0, VK_MENU));
+        gridPreviewHotkey.SetAllowStandaloneAlt(true);
         desktopPassthroughHotkey.SetDefaultValue(
             Chord(MOD_CONTROL | MOD_ALT, VK_OEM_3));
         floatingDockHotkey.SetDefaultValue(
@@ -1019,6 +1046,14 @@ struct GeneralPagePresenter::Impl
                         chord.virtualKey;
                 });
             });
+        BindHotkeyRecorder(gridPreviewHotkey,
+            SettingsHostActions::HotkeyTarget::GridPreview,
+            [this](HotkeyChord chord) {
+                CommitGeneral([chord](GeneralSettings& settings) {
+                    settings.gridPreviewHotkeyModifiers = chord.modifiers;
+                    settings.gridPreviewHotkeyVirtualKey = chord.virtualKey;
+                });
+            });
         BindHotkeyRecorder(floatingDockHotkey,
             SettingsHostActions::HotkeyTarget::FloatingDock,
             [this](HotkeyChord chord) {
@@ -1056,6 +1091,9 @@ struct GeneralPagePresenter::Impl
         nextPageHotkey.SetValue(Chord(
             settings.pageNavigationNextModifiers,
             settings.pageNavigationNextVirtualKey), generation);
+        gridPreviewToggle.IsOn(settings.gridPreviewHotkeyEnabled);
+        gridPreviewHotkey.SetValue(Chord(settings.gridPreviewHotkeyModifiers,
+            settings.gridPreviewHotkeyVirtualKey), generation);
         desktopPassthroughToggle.IsOn(
             settings.desktopPassthroughHotkeyEnabled);
         desktopPassthroughHotkey.SetValue(Chord(
@@ -1111,6 +1149,8 @@ struct GeneralPagePresenter::Impl
             nextPageHotkey, pageNavigationToggle.IsOn(), true);
         previousPageHotkeyRow.row.SetEnabled(pageNavigationToggle.IsOn());
         nextPageHotkeyRow.row.SetEnabled(pageNavigationToggle.IsOn());
+        SetRecorderEnabled(gridPreviewHotkey, gridPreviewToggle.IsOn(), true);
+        gridPreviewHotkeyRow.row.SetEnabled(gridPreviewToggle.IsOn());
         SetRecorderEnabled(desktopPassthroughHotkey,
             desktopPassthroughToggle.IsOn());
         desktopPassthroughHotkeyRow.row.SetEnabled(
@@ -1181,7 +1221,6 @@ struct GeneralPagePresenter::Impl
         text.conflict = L("app.settings.hotkey_status_conflict");
         text.cleared = L("app.settings.hotkey_not_set");
         text.none = L("app.settings.hotkey_not_set");
-        text.disabled = L("app.settings.hotkey_status_disabled");
         text.captureActive = L("app.settings.hotkey_capture_active");
         text.notSetWarning = L("app.settings.hotkey_not_set_warning");
         text.availableStatus = L("app.settings.hotkey_status_available");
@@ -1254,6 +1293,7 @@ struct GeneralPagePresenter::Impl
         SetCardText(quickNavigationCard, "app.settings.quick_navigation");
         SetCardText(pageNavigationCard,
             "settings.general.pageNavigation");
+        SetCardText(gridPreviewCard, "settings.pages.gridPreview");
         SetCardText(desktopPassthroughCard,
             "settings.desktop.passthrough");
 
@@ -1308,6 +1348,9 @@ struct GeneralPagePresenter::Impl
             L("app.settings.page_navigation_previous"));
         nextPageHotkeyRow.row.SetText(
             L("app.settings.page_navigation_next"));
+        gridPreviewToggleRow.SetText(L("settings.pages.gridPreview.enabled"),
+            L("settings.pages.gridPreview.description"));
+        gridPreviewHotkeyRow.row.SetText(L("app.settings.hotkey"));
         desktopPassthroughToggleRow.SetText(
             L("app.settings.desktop_passthrough_hotkey"),
             L("app.settings.desktop_passthrough_hotkey_hint"));
@@ -1326,6 +1369,8 @@ struct GeneralPagePresenter::Impl
             L("app.settings.page_navigation_previous")));
         nextPageHotkey.SetText(HotkeyText(
             L("app.settings.page_navigation_next")));
+        gridPreviewHotkey.SetText(HotkeyText(
+            L("settings.pages.gridPreview")));
         desktopPassthroughHotkey.SetText(HotkeyText(
             L("app.settings.desktop_passthrough_hotkey")));
         floatingDockHotkey.SetText(HotkeyText(
@@ -1344,6 +1389,8 @@ struct GeneralPagePresenter::Impl
             quickNavigationToggle, quickNavigationToggleRow.label.Text());
         muxa::AutomationProperties::SetName(
             pageNavigationToggle, pageNavigationToggleRow.label.Text());
+        muxa::AutomationProperties::SetName(
+            gridPreviewToggle, gridPreviewToggleRow.label.Text());
         muxa::AutomationProperties::SetName(
             desktopPassthroughToggle,
             desktopPassthroughToggleRow.label.Text());
@@ -1730,6 +1777,7 @@ struct GeneralPagePresenter::Impl
                      &softwareDesktopHotkey,
                      &previousPageHotkey,
                      &nextPageHotkey,
+                     &gridPreviewHotkey,
                      &desktopPassthroughHotkey,
                      &floatingDockHotkey})
             {
@@ -1773,6 +1821,7 @@ struct GeneralPagePresenter::Impl
             languageCombo.SelectionChanged(languageSelectionToken);
             quickNavigationToggle.Toggled(quickNavigationToken);
             pageNavigationToggle.Toggled(pageNavigationToken);
+            gridPreviewToggle.Toggled(gridPreviewToken);
             desktopPassthroughToggle.Toggled(desktopPassthroughToken);
             floatingDockToggle.Toggled(floatingDockToken);
         }
@@ -1784,6 +1833,7 @@ struct GeneralPagePresenter::Impl
         softwareDesktopHotkey.Close();
         previousPageHotkey.Close();
         nextPageHotkey.Close();
+        gridPreviewHotkey.Close();
         desktopPassthroughHotkey.Close();
         floatingDockHotkey.Close();
         actions = {};
@@ -1895,6 +1945,7 @@ void GeneralPagePresenter::RegisterFocusTargets(
         {"general.pageNavigation.previous"});
     registerAliases(impl_->nextPageHotkey.FocusTarget(),
         {"general.pageNavigation.next"});
+    registerAliases(impl_->gridPreviewToggle, {"pages.gridPreview"});
     registerAliases(impl_->desktopPassthroughToggle,
         {"desktop.passthrough", "general.desktopPassthrough",
             "general.desktopPassthrough.enabled"});
@@ -2033,6 +2084,7 @@ bool GeneralPagePresenter::IsHotkeyCaptureActive() const noexcept
         impl_->softwareDesktopHotkey.IsCapturing() ||
         impl_->previousPageHotkey.IsCapturing() ||
         impl_->nextPageHotkey.IsCapturing() ||
+        impl_->gridPreviewHotkey.IsCapturing() ||
         impl_->desktopPassthroughHotkey.IsCapturing() ||
         impl_->floatingDockHotkey.IsCapturing();
 }
@@ -2047,6 +2099,7 @@ void GeneralPagePresenter::CaptureRegisteredHotkey(
              &impl_->softwareDesktopHotkey,
              &impl_->previousPageHotkey,
              &impl_->nextPageHotkey,
+             &impl_->gridPreviewHotkey,
              &impl_->desktopPassthroughHotkey,
              &impl_->floatingDockHotkey})
     {

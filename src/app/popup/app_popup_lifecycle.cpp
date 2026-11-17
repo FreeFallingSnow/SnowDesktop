@@ -219,6 +219,7 @@ void DesktopApp::OpenDockFolderPopupAt(
     bool targetPending = false;
     const auto target = ResolveDockFolderTarget(entry, &targetPending);
     const bool reverseClosingAnimation = popupAnimation_.IsClosing() && sameSource;
+    const RECT previousBounds = popupRect_;
     ResetCollectionPopupAnimationCache();
     AdvanceFloatingPopupContentGeneration();
     dockFolderPopupOpen_ = true;
@@ -435,8 +436,7 @@ void DesktopApp::OpenDockFolderPopupAt(
             InvalidateFloatingDockWindow(*host, true);
         }
     }
-    InvalidateDragStaticScene();
-    InvalidateRect(hwnd_, nullptr, TRUE);
+    InvalidateCollectionPopupDesktopScene(previousBounds);
     UpdateFloatingPopupWindowBounds(true);
 }
 
@@ -444,33 +444,10 @@ void DesktopApp::StartCollectionPopupAnimation(
     bool reverseClosingAnimation)
 {
     snowdesktop::performance::Scope openingScope("popup", "animation.prepare");
-    std::vector<RECT> previousDockTitles;
-    if (hwnd_ && IsWindow(hwnd_))
-    {
-        for (const auto& container : containers_)
-        {
-            auto* dock = dynamic_cast<DockContainer*>(container.get());
-            if (!dock || IsDockHostedByPersistentHost(dock))
-                continue;
-            const RECT title = dock->GetHoveredTitleBounds(lastMousePoint_);
-            if (!IsRectEmpty(&title))
-                previousDockTitles.push_back(title);
-        }
-    }
     const auto refreshDockTitles = [&]() {
-        // Popup state suppresses Dock titles even when the pointer stays still.
-        // Refresh each host's title region as well as its rendered pixels.
-        for (const auto& host : persistentDockHosts_)
-            if (host && !IsRectEmpty(&host->tooltipRect))
-                UpdateFloatingDockWindowBounds(*host);
+        SyncDockTitleTooltip();
         InvalidateDockRects();
-        // Desktop-hosted Dock titles extend beyond the Dock body, so repaint
-        // their old bounds explicitly instead of waiting for WM_MOUSEMOVE.
-        for (const RECT& title : previousDockTitles)
-            if (!PresentDesktopForegroundComposition(title))
-                InvalidateRect(hwnd_, &title, FALSE);
     };
-
     const DesktopWidget* widget = GetOpenPopupWidget();
     popupAnimation_.Configure(
         snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
@@ -524,41 +501,34 @@ void DesktopApp::StartCollectionPopupAnimation(
 
 
 
+void DesktopApp::InvalidateCollectionPopupDesktopScene(RECT previousBounds)
+{
+    // A windowed popup owns its backdrop. The desktop only updates the
+    // popup footprint and any scene invalidation required by an active drag.
+    InvalidateDragStaticScene(!IsCollectionPopupHostedByFloatingWindow() ||
+        dragSession_.HasContext() || dragDropController_.IsExternalDragActive());
+    if (!hwnd_ || !IsWindow(hwnd_)) return;
+
+    RECT dirty{};
+    UnionRect(&dirty, &previousBounds, &popupRect_);
+    UnionRect(&dirty, &dirty, &popupAnimationCacheRect_);
+    if (IsRectEmptyRect(dirty)) return;
+    InflateRect(&dirty, 6, 6);
+    InvalidateRect(hwnd_, &dirty, FALSE);
+}
+
 void DesktopApp::InvalidateCollectionPopupAnimation(
     bool invalidateStaticScene)
 {
     if (invalidateStaticScene)
-        InvalidateDragStaticScene();
-    if (hwnd_ && IsWindow(hwnd_))
+        InvalidateCollectionPopupDesktopScene();
+    else if (hwnd_ && IsWindow(hwnd_) && !IsCollectionPopupHostedByFloatingWindow() &&
+        !(popupAnchoredToDock_ && persistentDockHostOwnsVisual_) &&
+        !IsRectEmptyRect(popupRect_))
     {
-        if (invalidateStaticScene)
-        {
-            RECT dirty = popupRect_;
-            if (!IsRectEmptyRect(popupAnimationCacheRect_))
-            {
-                if (IsRectEmptyRect(dirty))
-                    dirty = popupAnimationCacheRect_;
-                else
-                    UnionRect(
-                        &dirty, &dirty,
-                        &popupAnimationCacheRect_);
-            }
-            if (!IsRectEmptyRect(dirty))
-            {
-                InflateRect(&dirty, 6, 6);
-                InvalidateRect(hwnd_, &dirty, FALSE);
-            }
-        }
-        else if (!IsCollectionPopupHostedByFloatingWindow() &&
-                 !(popupAnchoredToDock_ &&
-                   persistentDockHostOwnsVisual_) &&
-                 !IsRectEmptyRect(popupRect_))
-        {
-            RECT dirty = popupRect_;
-            InflateRect(&dirty, 4, 4);
-            InvalidateRect(
-                hwnd_, &dirty, FALSE);
-        }
+        RECT dirty = popupRect_;
+        InflateRect(&dirty, 4, 4);
+        InvalidateRect(hwnd_, &dirty, FALSE);
     }
     // The popup owns an independent compact DComp surface. Animation frames
     // therefore never repaint either the desktop foreground or floating Dock.
@@ -568,6 +538,8 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
 
 void DesktopApp::FinalizeCloseCollectionPopup()
 {
+    const bool collectAllDesktopBackdrops = !IsCollectionPopupHostedByFloatingWindow() ||
+        dragSession_.HasContext() || dragDropController_.IsExternalDragActive();
     if (listTitleHoverPopup_) ClearListTitleHover();
     if (auto* view = GetCategorizedPopupView())
     {
@@ -631,7 +603,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     popupCategoryId_.clear();
     popupRect_ = {};
     InvalidateDockRects();
-    InvalidateDragStaticScene();
+    InvalidateDragStaticScene(collectAllDesktopBackdrops);
     if (hwnd_ && IsWindow(hwnd_) &&
         !IsRectEmptyRect(dirty))
     {
@@ -671,6 +643,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
 
 void DesktopApp::ClearDockFolderPopupEntries()
 {
+    if (dockFolderPopupContainer_) dockFolderPopupContainer_->SetPopupResizeTransition({});
     // FolderEntry releases its HBITMAP in the destructor, while the shared
     // D2D cache is keyed by that handle value. Remove both raw/beautified GPU
     // entries first so repeated popup lifecycles cannot retain stale bitmaps
@@ -723,7 +696,9 @@ void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
     PreserveDockFolderPopupDragSourceForTransition();
     if (clearSelection && !dragSession_.HasContext())
     {
-        ClearSelection();
+        // Clearing desktop selection can change retained surfaces outside the popup.
+        if (ClearSelection())
+            desktopBackdropFullCollectionPending_ = true;
         for (auto& entry :
              dockFolderPopupWidget_.folderEntries)
             entry.selected = false;
@@ -741,6 +716,7 @@ void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
     }
     UpdateFloatingPopupWindowBounds(false);
     PrepareCollectionPopupAnimationCache();
+    if (dockFolderPopupContainer_) dockFolderPopupContainer_->SetPopupResizeTransition({});
     if (popupAnimationOverlay_.active &&
         popupAnimationOverlay_.host ==
             UiCompositionAnimationHost::Desktop)

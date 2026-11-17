@@ -888,10 +888,16 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
             MarkGridArea(usedSlots, w.gridCell, w.gridSpan);
 
     // Mark items with valid existing positions as used; flag unslotted items
+    const auto pendingNewPaths = PendingDesktopNewItemPaths();
     std::unordered_set<std::wstring> placedKeys;
     for (auto& item : items_)
     {
         if (item.name.empty()) continue;
+        if (!pendingNewPaths.empty() && pendingNewPaths.contains(ToUpperInvariant(item.parsingName)))
+        {
+            item.gridCell = {};
+            continue;
+        }
         if (IsItemInAnyWidget(item)) continue;
 
         auto* page = item.gridCell.pageId.empty()
@@ -941,6 +947,8 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
             if (!item.largeIcon) item.gridSpan = {1, 1};
         }
     }
+
+    const auto newItemRename = ApplyPendingNewItems(&usedSlots, &pendingNewPaths);
 
     // Assign free cells to unslotted items
     std::vector<DesktopItem*> unslotted;
@@ -1108,6 +1116,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         ScheduleDataCleanup();
         ScheduleIconCustomizationCleanup();
     }
+    BeginNewItemRename(newItemRename);
 }
 
 void DesktopApp::EnqueueIconLoad(IconLoadTask task)
@@ -1298,15 +1307,28 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                         phase2.phase = IconLoadPhase::Phase2;
                         EnqueueIconLoad(std::move(phase2));
                     }
-                    InvalidateRect(hwnd_, nullptr, FALSE);
-                    if (quickNavigation_->open)
-                        InvalidateQuickNavigationWindow();
                     if (dockFolderPopup)
                     {
+                        snowdesktop::performance::Scope trace("popup", "folder.icon.delivery");
+                        // This transient entry belongs to the popup projection.
+                        // A bitmap replacement does not change desktop geometry.
                         InvalidateCollectionPopupContent();
-                        InvalidateDragStaticScene();
+                        InvalidateDragStaticScene(false);
                         InvalidateFloatingPopupWindow(false);
                     }
+                    else
+                    {
+                        const size_t groupIndex = FindFileGroupIndexForChild(widget.id);
+                        const auto& owner = groupIndex < widgets_.size() ? widgets_[groupIndex] : widget;
+                        RECT dirty = GetStandaloneWidgetFrameRect(owner);
+                        if (hwnd_ && !IsRectEmpty(&dirty))
+                        {
+                            InflateRect(&dirty, 4, 4);
+                            InvalidateRect(hwnd_, &dirty, FALSE);
+                        }
+                    }
+                    if (quickNavigation_->open)
+                        InvalidateQuickNavigationWindow();
                     return true;
                 }
             }

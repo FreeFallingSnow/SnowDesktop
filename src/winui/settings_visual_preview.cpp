@@ -1159,13 +1159,14 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     shell->SetPersonalizationPageActions(std::move(appearance));
     DockPageActions dock; dock.themeLibrary = themeLibrary; shell->SetDockPageActions(std::move(dock));
     const auto modulePreviewPolicy = std::make_shared<runtime_modules::Policy>();
-    shell->SetRuntimeModulesQuery([modulePreviewPolicy](auto completed) {
+    shell->SetRuntimeModulesQuery([modulePreviewPolicy](RuntimeModulesQueryScope scope, auto completed) {
         runtime_modules::Snapshot snapshot;
         for (std::size_t i = 0; i < runtime_modules::kCount; ++i)
         {
             runtime_modules::Status status; status.module = static_cast<runtime_modules::Module>(i);
             status.allowed = modulePreviewPolicy->allowed[i]; status.active = status.allowed && i == 0 ? 1u : 0u;
-            if (i < 2) status.targets.push_back({42, L"explorer.exe", true});
+            if (scope == RuntimeModulesQueryScope::StatusAndResidency && i < 2)
+                status.targets.push_back({42, L"explorer.exe", true});
             snapshot.modules.push_back(std::move(status));
         }
         completed(std::move(snapshot));
@@ -1525,7 +1526,8 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             taskbarRule.enabled = true;
             taskbarRule.themeMode = SystemTaskbarThemeMode::Custom;
             taskbarRule.appearance.backgroundPreset = kAppearancePresetCustom;
-            auto& statusRule = snapshot.values.general.statusBar.noWindow;
+            snapshot.values.dock.maximizedWindow.enabled = true;
+            auto& statusRule = snapshot.values.general.statusBar.appWindow;
             statusRule.enabled = true;
             statusRule.theme.mode = 4;
             statusRule.theme.customized = true;

@@ -91,6 +91,7 @@ namespace steam_presence { class Service; }
 namespace winui { struct LayoutRestorePayload; }
 }
 namespace snowdesktop::quick_navigation { struct State; }
+namespace snowdesktop::dock_process_discovery { struct Snapshot; }
 namespace snowdesktop::usage_guide { enum class Topic; }
 namespace snowdesktop { struct QuickNavigationEverythingSearchResult; }
 namespace snowdesktop::page_management { struct RemovalPlan; }
@@ -101,6 +102,7 @@ namespace snowdesktop::component_preview { struct Model; struct ApplySettings; s
 namespace snowdesktop::native_component_preview { struct Request; struct Result; }
 namespace snowdesktop::control_settings { struct NativeWidgetSettingsState; struct NativeWidgetSettingsPatch; }
 namespace snowdesktop::dock_drop_model { struct Services; }
+namespace snowdesktop::external_drop_content { struct ApplicationSource; }
 namespace snowdesktop::dock_desktop_return { struct Services; struct Landing; }
 namespace snowdesktop::large_icon_renderer { struct CardResources; }
 namespace snowdesktop::widget_runtime { struct PackageImageSource; class WidgetSystemDataProvider; }
@@ -213,6 +215,7 @@ namespace snowdesktop::demo_collection_rules { struct Category; }
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -548,19 +551,12 @@ private:
         const RECT* updateRect = nullptr);
     /** @brief 绘制全高翻页热边的悬停提示。 */
     void DrawPageNavHotEdgeHint(ID2D1DeviceContext* ctx, const RECT* updateRect = nullptr);
+    void SyncPageNavHotEdgeTooltip();
+    void SyncDockTitleTooltip();
+    void ConfigureFixedTooltip(snowdesktop::NativeTooltip& tooltip, HWND owner);
+    void SyncLuaWidgetTooltip();
+    void ResetPageNotify();
     std::wstring GetPageNavHotEdgeHintText(int side) const;
-    /** @brief 绘制换页通知覆盖层（左上角角标，类似电视台换台）。 @param ctx D2D 设备上下文 */
-    void DrawPageNotify(
-        ID2D1DeviceContext* ctx,
-        bool applyAnimation = true,
-        const RECT* updateRect = nullptr);
-    void PreparePageNotifyTextCache();
-    void ResetPageNotifyTextCache();
-    void PreparePageNotifyAnimationCache();
-    void ResetPageNotifyAnimationCache();
-    bool UpdatePageNotifyCompositionAnimation(
-        float opacity, bool commit = true);
-    RECT GetPageNotifyBounds() const;
     /** @brief 绘制隐藏状态提示（双击取消隐藏）。 */
     void DrawHiddenHintOverlay(ID2D1DeviceContext* ctx, const RECT* updateRect = nullptr);
     /** @brief 绘制添加组件操作提示。 */
@@ -602,13 +598,14 @@ private:
     /** @brief 获取末屏用于翻页导航的显示器页面。 */
     const GridPage* GetPageNavigationGridPage() const;
     /** @brief 获取指定热边提示的重绘范围。 */
-    RECT GetPageNavHotEdgeHintBounds(int side, POINT point) const;
+    RECT GetPageNavHotEdgeHintBounds(int side, POINT point,
+        snowdesktop::NativeTooltipTextLayout* layout = nullptr) const;
     /** @brief 更新翻页热边悬停方向并管理延迟文字提示。 */
     void SetPageNavHotEdgeHover(int side);
     /** @brief 按当前指针位置和翻页边界重新计算热边悬停。 */
     void RefreshPageNavHotEdgeHoverAt(POINT point);
     /** @brief 使拖拽静态场景缓存失效，下次拖拽时重建缓存。 */
-    void InvalidateDragStaticScene();
+    void InvalidateDragStaticScene(bool collectAllDesktopBackdrops = true);
     /** @brief 停止 Dock 驻留计时并清空当前驻留目标。 */
     void ResetDockHandoffDwell();
     /** @brief 停止无字紧凑集合的图标移交驻留计时。 */
@@ -1043,6 +1040,7 @@ private:
         POINT clientPoint, DockWindowPreviewTarget& target);
     void UpdateDockWindowPreview(POINT clientPoint);
     void OnDockWindowPreviewHoverTimer();
+    bool ShowDockWindowPreview(DockWindowPreviewTarget target, POINT clientPoint);
     void RefreshDockWindowPreviewItems();
     void HideDockWindowPreview();
     void DismissDockWindowPreviewUntilLeave();
@@ -1239,7 +1237,7 @@ private:
     /** Application-owned appearance mirror, independent of settings UI. */
     const PersonalizationSettings& CurrentPersonalization() const noexcept
     { return personalizationSettings_; }
-    PersonalizationSettings CurrentDockAppearance() const;
+    PersonalizationSettings CurrentDockAppearance(HMONITOR monitor = nullptr) const;
     /** @brief 切换桌面图标可见性（双击空白处隐藏/恢复）。 */
     void ToggleDesktopIconsVisibility(bool automatic = false);
     void UpdateDesktopIdleHide();
@@ -1290,8 +1288,9 @@ private:
     bool CreateQuickNavigationWindow();
     /** @brief 销毁快速导航窗口。 */
     void DestroyQuickNavigationWindow();
+    void DestroyQuickNavigationSearchEdit();
     /** @brief 计算并设置快速导航窗口的位置。 */
-    void PositionQuickNavigationWindow();
+    void PositionQuickNavigationWindow(bool present = true);
     /** @brief 在动画路径区域与最终面板区域之间切换原生窗口裁剪。 */
     void UpdateQuickNavigationWindowRegion(bool expanded);
     /** @brief 根据当前主题创建、同步或移除快捷导航原生毛玻璃层。 */
@@ -1454,7 +1453,7 @@ private:
     /** @brief 计算快捷导航标签页的宽度。 */
     int GetQuickNavigationTabWidth() const;
     /** @brief 获取指定标签页的显示名称。 */
-    std::wstring GetQuickNavTabLabel(size_t tab) const;
+    std::wstring GetQuickNavTabLabel(size_t tab, std::span<const size_t> collections) const;
     /** @brief 根据文字测量更新标签宽度缓存。 */
     void UpdateQuickNavTabWidths();
     /** @brief 根据拖拽位移计算目标标签索引（≥2）。 */
@@ -1592,9 +1591,11 @@ private:
     /**
      * @brief 复制或剪切选中的文件夹条目。
      * @param cut true 为剪切，false 为复制
+     * @param copySource 内置右键复制的诊断来源
      * @return 操作是否成功
      */
-    bool CopyCutSelectedFolderEntries(bool cut);
+    bool CopyCutSelectedFolderEntries(bool cut, const wchar_t* copySource = nullptr);
+    std::uint64_t PublishFileClipboard(IDataObject* data, const wchar_t* copySource);
     /** @brief 删除选中的文件夹条目。 @param permanentDelete true 时永久删除并显示确认。 @return 操作是否成功 */
     bool DeleteSelectedFolderEntries(bool permanentDelete = false);
     /**
@@ -1679,7 +1680,8 @@ private:
      */
     bool HitTestPopupForDrag(POINT client, Container*& targetContainer, Slot*& targetSlot, HitRegion& targetRegion);
     /** @brief 清除所有选中项。 */
-    void ClearSelection();
+    // The return value ignores the local widget's own selection outline.
+    bool ClearSelection(const DesktopWidget* localWidget = nullptr);
     void ClearSelectionForExternalWindow(HWND window);
     /**
      * @brief 判断指定的桌面项是否存在于任一部件中。
@@ -1700,7 +1702,7 @@ private:
     /** @brief 仅选择指定索引的桌面项。 @param index 桌面项索引 */
     void SelectOnly(int index);
     /** @brief 仅选中指定索引的部件。 @param index 部件索引 */
-    void SelectWidgetOnly(size_t index);
+    bool SelectWidgetOnly(size_t index);
     /** @brief 切换指定桌面项的选择状态。 @param index 桌面项索引 */
     void ToggleSelection(int index);
     std::vector<SelectionController::Target> GetDesktopSelectionTargets(
@@ -1739,7 +1741,7 @@ private:
      */
     void SortWidgetContents(size_t widgetIndex, int mode, bool ascending = true, bool persist = true);
     /** @brief 更新剪切状态高亮显示。 */
-    void UpdateCutState();
+    void UpdateCutState(std::uint64_t clipboardCopyId = 0);
 
     // ── Tray ────────────────────────────────────────────────
     /** @brief 添加托盘图标。 @param force 是否强制重新添加 */
@@ -1823,17 +1825,36 @@ private:
         std::optional<RECT> renameAnchor = std::nullopt,
         std::optional<size_t> dockMappingEntryIndex = std::nullopt,
         snowdesktop::shell_extensions::NativeMenuSelection selection = {});
+    struct NewItemTarget
+    {
+        enum class Surface { Desktop, FileCategories, FolderMapping, FolderPopup };
+        Surface surface;
+        GridCell cell;
+        std::wstring sourceId;
+    };
+    struct PendingNewItemCapture
+    {
+        NewItemTarget target;
+        std::shared_ptr<snowdesktop::ShellNewItemCapture> capture;
+        size_t insertIndex;
+    };
+    struct NewItemRename
+    {
+        NewItemTarget target;
+        std::wstring path;
+    };
+
     /** @brief 显示"新建"菜单并执行选择的命令。 @param screenPoint 屏幕坐标 @param targetDir 目标目录 */
     void ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir,
-        bool folderOnly = false, std::wstring desktopFilesWidgetId = {});
+        bool folderOnly = false, const std::optional<NewItemTarget>& target = std::nullopt);
     void AppendShellNewSubmenu(HMENU menu, const std::wstring& targetDir,
         bool enabled = true);
     HRESULT InitializeShellNewMenu(snowdesktop::ShellNewMenu& menu,
-        const std::wstring& targetDir, std::wstring desktopFilesWidgetId = {});
+        const std::wstring& targetDir, const std::optional<NewItemTarget>& target);
     void PrepareShellNewSubmenu(std::unique_ptr<snowdesktop::ShellNewMenu>& menu,
         const std::wstring& targetDir,
         std::vector<snowdesktop::modern_menu::Item>& children,
-        std::wstring desktopFilesWidgetId = {});
+        const std::optional<NewItemTarget>& target = std::nullopt);
     std::vector<snowdesktop::modern_menu::Item> BuildShellNewMenuItems(
         HMENU menu, IContextMenu* context);
     void InvokeNewMenuCommand(IContextMenu* context, UINT command,
@@ -2569,10 +2590,12 @@ private:
      * @brief 绘制集合弹出面板内容。
      * @param ctx D2D 上下文
      * @param applyAnimation 是否应用当前缩放动画
+     * @param preparedRect 已为当前快照计算好的面板位置
      */
     void DrawCollectionPopup(
         ID2D1DeviceContext* ctx,
-        bool applyAnimation = true);
+        bool applyAnimation = true, const RECT* preparedRect = nullptr);
+    void PublishCollectionPopupFanBackdrops();
     RECT GetLuaWidgetPanelRect() const;
     static constexpr float kLuaWidgetPanelCornerRadius = 18.0f;
     POINT GetLuaWidgetPanelAnimationAnchor(const RECT& panel) const;
@@ -2594,7 +2617,7 @@ private:
     void ForgetLuaWidgetPanelCapture(HWND hostWindow);
     /** @brief 在动画开始前将完整弹窗录制到 GPU 位图。 */
     void PrepareCollectionPopupAnimationCache();
-    bool DrawCollectionPopupAnimationCache();
+    bool DrawCollectionPopupAnimationCache(const RECT* preparedRect = nullptr);
     void RefreshCollectionPopupAnimationContent();
     /** @brief 撤下弹窗动画并使旧内容失效，保留有界的可复用存储。 */
     void ResetCollectionPopupAnimationCache();
@@ -2607,6 +2630,7 @@ private:
     bool UpdateCompositionAnimationOverlayContent(
         UiCompositionAnimationOverlay& overlay,
         const DragRenderCache& cache);
+    DesktopBackdropCompositor& AnimationHighlightCompositor(const UiCompositionAnimationOverlay& overlay);
     bool UpdateCompositionAnimationOverlay(
         UiCompositionAnimationOverlay& overlay,
         float scale, POINT anchor, float opacity,
@@ -2686,7 +2710,7 @@ private:
     bool StartLuaWidgetPanelCompositionAnimation();
     void DrawDockEntry(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT rect, int state,
         int requestedIconSize = 0, const DesktopWidget* widgetSource = nullptr,
-        snowdesktop::WidgetPreviewScene* previewScene = nullptr);
+        snowdesktop::WidgetPreviewScene* previewScene = nullptr, HMONITOR dockMonitor = nullptr);
     void OnDockFolderIconLoaded(const std::wstring& iconCacheKey,
         std::uint64_t ticket, HBITMAP source, bool refined);
     void RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
@@ -2695,11 +2719,12 @@ private:
         D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth, std::uintptr_t ownerKey = 0);
     void DrawPrivacyFaIcon(ID2D1DeviceContext* ctx, RECT rect, bool directory);
     bool DrawDockControlBackground(ID2D1DeviceContext* ctx, RECT rect, int state,
-        bool forceWhiteStyle = false, std::uintptr_t ownerKey = 0);
+        bool forceWhiteStyle = false, std::uintptr_t ownerKey = 0, HMONITOR dockMonitor = nullptr);
     void DrawDockSelectionIndicator(
         ID2D1DeviceContext* ctx, RECT iconRect, bool lightTheme);
     void DrawDockRunningApp(ID2D1DeviceContext* ctx,
-        const DockRunningAppInfo& app, RECT rect, int state, int requestedIconSize = 0);
+        const DockRunningAppInfo& app, RECT rect, int state, int requestedIconSize = 0,
+        HMONITOR dockMonitor = nullptr);
     void DrawDockAttentionDot(ID2D1DeviceContext* ctx, RECT iconRect, float opacity = 1.0f);
     /** @brief 将 RECT 转换为 D2D1_RECT_F。 @param r 输入矩形 @return D2D 矩形 */
     static D2D1_RECT_F ToD2DRect(const RECT& r);
@@ -3086,6 +3111,7 @@ private:
         bool reverseClosingAnimation = false);
     void InvalidateCollectionPopupAnimation(
         bool invalidateStaticScene = false);
+    void InvalidateCollectionPopupDesktopScene(RECT previousBounds = {});
     /**
      * @brief 判断坐标点是否位于当前打开的弹出面板内。
      * @param point 客户端坐标
@@ -3341,6 +3367,7 @@ private:
     snowdesktop::UiScheduleToken dockMagnificationAnimationFrameToken_ = 0;
     RECT dockAnimationDesktopDirty_{};
     snowdesktop::UiScheduleToken pageNotifyAnimationFrameToken_ = 0;
+    float pageNotifyOpacity_ = 0.f;
     snowdesktop::UiScheduleToken pointerRecoveryFrameToken_ = 0;
     snowdesktop::UiScheduleToken listTitleHoverFrameToken_ = 0;
     std::wstring listTitleHoverOwner_, listTitleHoverKey_;
@@ -3427,6 +3454,14 @@ private:
     float desktopWidgetBackdropBlurRadiusDuringDraw_ = 0.0f;
     /** @brief DWM 原生 backdrop 子窗口。 */
     DesktopBackdropCompositor desktopBackdropCompositor_;
+    struct DesktopSrgbTile
+    {
+        std::uintptr_t key = 0;
+        RECT frame{};
+    };
+    std::vector<DesktopSrgbTile> desktopSrgbTiles_;
+    std::vector<DesktopSrgbTile> foregroundSrgbTiles_;
+    std::uintptr_t nextDesktopSrgbKey_ = 1;
     /** @brief 拖拽静态场景变化后，下一帧必须完整核对原生毛玻璃面板。 */
     bool desktopBackdropFullCollectionPending_ = false;
     /** @brief 是否已经记录过本次合成目标的首个原生玻璃面板。 */
@@ -3442,17 +3477,14 @@ private:
     mutable std::unordered_map<std::wstring, ComPtr<IDWriteTextLayout>> popupFanTextLayouts_;
     ComPtr<ID2D1DeviceContext> popupFanIconRecorder_;
     std::unordered_map<std::wstring, PopupFanIconDrawing> popupFanIconDrawings_;
+    std::vector<PopupFanBackdrop> popupFanBackdropCandidates_;
+    std::size_t popupFanBackdropCount_ = 0;
+    RECT popupFanBackdropViewport_{};
     ComPtr<IDWriteTextFormat> listItemTextFormat_;
     ComPtr<IDWriteTextFormat> navTabTextFormat_;
     ComPtr<IDWriteTextFormat> fileCategoryTabTextFormat_;
     ComPtr<IDWriteTextFormat> faTextFormat_;
     ComPtr<IDWriteTextFormat> fluentIconTextFormat_;
-    ComPtr<IDWriteTextFormat> pageNotifyTextFormat_;
-    ComPtr<IDWriteTextLayout> pageNotifyTextLayout_;
-    DWRITE_TEXT_METRICS pageNotifyTextMetrics_{};
-    DragRenderCache pageNotifyAnimationRenderCache_;
-    RECT pageNotifyAnimationCacheRect_{};
-    UiCompositionAnimationOverlay pageNotifyAnimationOverlay_;
     ComPtr<ID2D1Bitmap1> privacyFileIconBitmap_;
     ComPtr<ID2D1Bitmap1> privacyFolderIconBitmap_;
     std::unordered_map<std::wstring, snowdesktop::ItemTextLayoutCacheEntry> itemTextLayoutCache_;
@@ -3702,6 +3734,11 @@ private:
     DWORD desktopHoverForegroundObservedTick_ = 0;
     DWORD dockRunningWindowsStateTick_ = 0;
     DWORD dockRunningWindowsRefreshTick_ = 0;
+    snowdesktop::UiScheduleToken dockDiscoveryRetryToken_ = 0;
+    double dockDiscoveryDeferUntil_ = 0.0;
+    bool dockProcessSnapshotPending_ = false;
+    double dockProcessSnapshotTime_ = 0.0;
+    std::shared_ptr<snowdesktop::dock_process_discovery::Snapshot> dockProcessSnapshot_;
     // Shell Show Desktop transition, consumed by the Dock layer policy and the
     // independent status bar presentation guard.
     bool systemShowDesktopLayerGuardActive_ = false;
@@ -3819,20 +3856,18 @@ private:
     int navHoverSide_ = 0;
     bool navHotEdgeHover_ = false;
     bool navHotEdgeHintVisible_ = false;
-    snowdesktop::InlineTooltipBackdrop navHotEdgeHintBackdrop_;
+    snowdesktop::NativeTooltip navHotEdgeTooltip_;
+    snowdesktop::NativeTooltip dockTitleTooltip_;
+    snowdesktop::NativeTooltip pageNotifyTooltip_;
+    snowdesktop::NativeTooltip luaWidgetTooltip_;
     snowdesktop::InlineTooltipBackdrop hiddenHintBackdrop_;
     snowdesktop::InlineTooltipBackdrop widgetAddedHintBackdrop_;
     snowdesktop::UiScheduleToken navHotEdgeHintToken_ = 0;
     DWORD navAutoFlipTick_ = 0;
     int navAutoFlipDir_ = 0;
     // ── 换页通知覆盖层（电视台换台式角标） ──
-    std::wstring pageNotifyText_;
-    DWORD pageNotifyStartTick_ = 0;
-    DWORD pageNotifyFadeMs_ = kPageNotifyFadeMs;
     snowdesktop::UiScheduleToken pageNotifyFadeOutToken_ = 0;
     bool pageNotifyActive_ = false;
-    bool pageNotifyUseAnimation_ = true;
-    bool pageNotifyCompositorDriven_ = false;
     POINT lastContextMenuScreenPoint_{};
     /** @} */
 
@@ -3960,9 +3995,9 @@ private:
     const void* floatingDockHoverTargetOwner_ = nullptr;
     size_t floatingDockHoverTargetIndex_ = 0;
     int floatingDockHoverTargetKind_ = 0;
-    PersonalizationSettings floatingDockPersonalization_ =
-        PersonalizationSettings::DarkPreset();
     ComPtr<IDCompositionTarget> dragPreviewDcompTarget_;
+    DesktopBackdropCompositor dragPreviewHighlights_;
+    HMONITOR dragPreviewMaterialMonitor_ = nullptr;
     ComPtr<IDCompositionVisual2> dragPreviewDcompVisual_;
     ComPtr<IDCompositionSurface> dragPreviewDcompSurface_;
     RECT dragPreviewContentBounds_{};
@@ -4248,6 +4283,9 @@ private:
         const std::vector<std::wstring>& paths, bool owned, bool copyOnly,
         FileOperationCompletion completion, bool synchronously,
         std::shared_ptr<snowdesktop::ShellFileOperationResult> result);
+    bool CommitExternalApplicationShortcut(
+        const snowdesktop::external_drop_content::ApplicationSource& source,
+        DropPreviewList preview, FileOperationCompletion completion, bool synchronously);
     HRESULT HandleOleQueryContinueDrag(
         BOOL escapePressed, DWORD keyState) override;
     HRESULT HandleOleGiveFeedback(DWORD effect) override;
@@ -4255,7 +4293,7 @@ private:
     /** @name 待处理放置缓存（源列表 -> 预览在外壳刷新后仍存活） */
     /** @{ */
     std::vector<PendingLandingCache> pendingLandingCaches_;
-    std::vector<std::shared_ptr<snowdesktop::ShellNewItemCapture>> pendingNewItemCaptures_;
+    std::vector<PendingNewItemCapture> pendingNewItemCaptures_;
     /** @} */
 
     /** @brief 将屏幕坐标转换为客户端坐标。 @param screen 屏幕坐标 @return 客户端坐标 */
@@ -4414,6 +4452,12 @@ private:
     static bool MatchPendingName(const std::wstring& itemName, const std::wstring& srcFileName);
     /** @brief 应用待处理的放置操作（外壳刷新后执行）。 */
     void ApplyPendingPlacement();
+    std::optional<NewItemRename> ApplyPendingNewItems(
+        std::unordered_set<std::wstring>* desktopSlots = nullptr,
+        const std::unordered_set<std::wstring>* desktopPaths = nullptr);
+    bool HasPendingDesktopNewItems() const;
+    std::unordered_set<std::wstring> PendingDesktopNewItemPaths() const;
+    void BeginNewItemRename(const std::optional<NewItemRename>& request);
     bool ApplyPendingPlacement(PendingLandingCache& cache,
         std::unordered_set<std::wstring>& claimed);
     bool ApplyPendingFolderPlacements(PendingLandingCache& cache,
