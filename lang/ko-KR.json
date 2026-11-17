@@ -2928,5 +2928,7 @@
   "workshop_manager.manage_owned_item": "현재 Steam 계정이 소유한 항목만 관리할 수 있습니다.",
   "workshop_manager.accept_workshop_agreement": "먼저 Steam에서 창작마당 이용 약관에 동의하세요.",
   "workshop_manager.tag_actions": "태그 작업",
-  "modules.dllBlockedByPolicy": "Windows 애플리케이션 제어 정책이 DLL 로드를 차단했습니다."
+  "modules.dllBlockedByPolicy": "Windows 애플리케이션 제어 정책이 DLL 로드를 차단했습니다.",
+  "app.interact.folder_preview": "위젯에서 폴더 미리 보기",
+  "app.interact.open_in_explorer": "파일 탐색기에서 열기"
 }

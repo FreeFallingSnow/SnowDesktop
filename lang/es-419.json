@@ -2928,5 +2928,7 @@
   "workshop_manager.manage_owned_item": "Solo puedes administrar los elementos de la cuenta de Steam actual.",
   "workshop_manager.accept_workshop_agreement": "Primero acepta el acuerdo de Steam Workshop en Steam.",
   "workshop_manager.tag_actions": "Acciones de etiquetas",
-  "modules.dllBlockedByPolicy": "Una directiva de control de aplicaciones de Windows bloqueó la carga de una DLL."
+  "modules.dllBlockedByPolicy": "Una directiva de control de aplicaciones de Windows bloqueó la carga de una DLL.",
+  "app.interact.folder_preview": "Vista previa de carpetas en el componente",
+  "app.interact.open_in_explorer": "Abrir en el Explorador de archivos"
 }

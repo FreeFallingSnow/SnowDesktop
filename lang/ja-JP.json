@@ -2928,5 +2928,7 @@
   "workshop_manager.manage_owned_item": "現在の Steam アカウントが所有するアイテムのみ管理できます。",
   "workshop_manager.accept_workshop_agreement": "先に Steam でワークショップ利用規約に同意してください。",
   "workshop_manager.tag_actions": "タグ操作",
-  "modules.dllBlockedByPolicy": "Windows のアプリケーション制御ポリシーにより、DLL の読み込みがブロックされました。"
+  "modules.dllBlockedByPolicy": "Windows のアプリケーション制御ポリシーにより、DLL の読み込みがブロックされました。",
+  "app.interact.folder_preview": "ウィジェット内でフォルダーをプレビュー",
+  "app.interact.open_in_explorer": "エクスプローラーで開く"
 }
