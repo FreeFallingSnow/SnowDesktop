@@ -257,7 +257,8 @@ bool DesktopApp::IsLuaStackIndicatorVisible() const
     if (luaStackIndicator_.stackId.empty() || IsRectEmpty(&luaStackIndicator_.bounds) ||
         !customDesktopVisible_ || desktopPassthroughActive_ || HasActiveContextMenuSession() ||
         widgetAction_ != WidgetAction::None || dragSession_.HasContext() ||
-        dragDropController_.IsTransportActive() || !luaWidgetPanelRequest_.widgetId.empty() || GetOpenPopupWidget()) return false;
+        dragDropController_.IsTransportActive() || !luaWidgetPanelRequest_.widgetId.empty() ||
+        IsCollectionPopupHostedByFloatingWindow()) return false;
     const size_t index = FindWidgetIndexById(luaStackIndicator_.stackId);
     return index < widgets_.size() && widgets_[index].type == DesktopWidgetType::LuaStack &&
         (!desktopIconsHidden_ || widgets_[index].keepWhenDesktopHidden) && !IsRectEmpty(&widgets_[index].bounds);
@@ -287,7 +288,7 @@ void DesktopApp::UpdateLuaStackIndicator(POINT point)
     if (widgetAction_ != WidgetAction::None || dragSession_.HasContext() ||
         dragDropController_.IsTransportActive() || !customDesktopVisible_ ||
         desktopPassthroughActive_ || HasActiveContextMenuSession() ||
-        !luaWidgetPanelRequest_.widgetId.empty() || GetOpenPopupWidget())
+        !luaWidgetPanelRequest_.widgetId.empty() || IsCollectionPopupHostedByFloatingWindow())
     {
         HideLuaStackIndicator();
         return;
@@ -346,7 +347,8 @@ void DesktopApp::UpdateLuaStackIndicator(POINT point)
     luaStackIndicator_.first = std::min(activeIndex > visible / 2 ? activeIndex - visible / 2 : 0, ids.size() - visible);
     if (newTarget) InvalidateLuaStackHoverVisibility(stack.id);
     if (newTarget || !EqualRect(&oldBounds, &luaStackIndicator_.bounds)) UpdateFloatingPopupWindowBounds(true);
-    else InvalidateFloatingPopupWindow(false);
+    else if (floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_))
+        InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
 }
 
 bool DesktopApp::HandleLuaStackIndicatorPointer(POINT point, bool pressed)

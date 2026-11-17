@@ -965,7 +965,7 @@ void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
     if (!collectionPopupBackdropCompositor_.IsAvailable())
         return;
 
-    const auto* collection = GetOpenPopupWidget();
+    const auto* collection = IsCollectionPopupHostedByFloatingWindow() ? GetOpenPopupWidget() : nullptr;
     bool visible = collectionPopupGlassTheme_ && IsLuaStackIndicatorVisible();
     const bool fan = collection && UsesCollectionPopupFan(*collection);
     if (fan)
@@ -1008,7 +1008,7 @@ void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
 void DesktopApp::UpdateCollectionPopupBackdrop()
 {
     snowdesktop::performance::Scope scope("popup", "backdrop.update");
-    const DesktopWidget* popup = GetOpenPopupWidget();
+    const auto* popup = IsCollectionPopupHostedByFloatingWindow() ? GetOpenPopupWidget() : nullptr;
     const bool fan = popup && UsesCollectionPopupFan(*popup);
     const bool collectionGlass = collectionPopupGlassTheme_ && popup && !fan;
     const bool luaGlass = collectionPopupGlassTheme_ && IsLuaPanelHostedByFloatingWindow();
@@ -1204,7 +1204,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     if (wasVisible)
         ApplyFloatingPopupLayerPolicy();
 
-    const DesktopWidget* collection = GetOpenPopupWidget();
+    const auto* collection = IsCollectionPopupHostedByFloatingWindow() ? GetOpenPopupWidget() : nullptr;
     const bool backdropRecovery = !collectionPopupBackdropCompositor_.IsAvailable() &&
         ((collection && (UsesCollectionPopupFan(*collection) || collectionPopupGlassTheme_)) ||
             (collectionPopupGlassTheme_ && IsLuaPanelHostedByFloatingWindow()));
@@ -1234,7 +1234,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             }
             else regionReady = false;
         };
-        const auto* popup = GetOpenPopupWidget();
+        const auto* popup = IsCollectionPopupHostedByFloatingWindow() ? GetOpenPopupWidget() : nullptr;
         appendRegion(floatingPopupCollectionRegion_, popup ?
             18.f * GetCollectionPopupLayoutMetrics(*popup).scale : 18.f);
         appendRegion(
