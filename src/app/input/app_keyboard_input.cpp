@@ -593,17 +593,13 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             (void)RemoveLuaStackMember(id, screen);
             break;
         }
-        cutPaths_.clear();
         std::vector<std::wstring> paths;
         for (const auto& item : items_)
         {
             if (!item.selected || !item.desktopIconClsid.empty()) continue;
             wchar_t path[MAX_PATH]{};
             if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
-            {
-                cutPaths_.erase(path);
                 paths.push_back(path);
-            }
         }
 
         if (!paths.empty())
@@ -656,15 +652,11 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         if (CopyCutSelectedFolderEntries(true))
             break;
 
-        cutPaths_.clear();
-
         std::vector<PCUITEMID_CHILD> pidls;
-        std::vector<size_t> selectedIndexes;
         for (size_t i = 0; i < items_.size(); ++i)
         {
             if (!items_[i].selected || !items_[i].desktopIconClsid.empty()) continue;
             pidls.push_back(reinterpret_cast<PCUITEMID_CHILD>(items_[i].childPidl.get()));
-            selectedIndexes.push_back(i);
         }
 
         if (!pidls.empty())
@@ -689,13 +681,6 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
                 OleSetClipboard(dataObj.Get());
                 OleFlushClipboard();
             }
-        }
-
-        for (size_t idx : selectedIndexes)
-        {
-            wchar_t path[MAX_PATH]{};
-            if (SHGetPathFromIDListW(items_[idx].absolutePidl.get(), path))
-                cutPaths_.insert(path);
         }
 
         UpdateCutState();

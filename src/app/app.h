@@ -1746,6 +1746,7 @@ private:
     void SortWidgetContents(size_t widgetIndex, int mode, bool ascending = true, bool persist = true);
     /** @brief 更新剪切状态高亮显示。 */
     void UpdateCutState(std::uint64_t clipboardCopyId = 0);
+    void ApplyFolderCutState(std::vector<FolderEntry>& entries);
 
     // ── Tray ────────────────────────────────────────────────
     /** @brief 添加托盘图标。 @param force 是否强制重新添加 */
@@ -4410,8 +4411,9 @@ private:
     HANDLE recycleBinWatcherStopEvent_ = nullptr;
     std::atomic<bool> recycleBinWatcherActive_{ false };
 
-    /** @brief 剪贴板剪切追踪的路径集合 */
-    std::unordered_set<std::wstring> cutPaths_;
+    // Paths from the last accepted clipboard read, independent of folder views.
+    std::optional<DWORD> clipboardCutSequence_;
+    std::unordered_set<std::wstring> clipboardCutPaths_;
 
     /** @name 重命名编辑控件 */
     /** @{ */

@@ -2898,24 +2898,25 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
     RECT iconRect = snowdesktop::ResolveListItemIconRect(
         nameCell, nameCell.left + Cu(4.0f), visualMetrics);
 
+    const float iconOpacity = details.isCut ? 0.4f : 1.0f;
     if (!demoIdentity.empty())
     {
         if (demoCollection)
             app_->DrawDemoCollectionIdentityIcon(
-                context, *demoCollection, demoIdentity, iconRect);
+                context, *demoCollection, demoIdentity, iconRect, iconOpacity);
         else
-            app_->DrawDemoIdentityIcon(context, demoIdentity, iconRect);
+            app_->DrawDemoIdentityIcon(context, demoIdentity, iconRect, iconOpacity);
     }
     else if (auto custom = app_->GetSmallCustomIcon(context, iconIdentity, iconRect.right - iconRect.left))
-        app_->DrawIconBitmap(context, custom, iconRect);
+        app_->DrawIconBitmap(context, custom, iconRect, iconOpacity);
     else if (ID2D1Bitmap* bmp = app_->GetTargetIconBitmap(context, iconBitmap, iconIdentity, iconIsMediaThumbnail))
     {
-        app_->DrawIconBitmap(context, bmp, iconRect, 1.0f,
+        app_->DrawIconBitmap(context, bmp, iconRect, iconOpacity,
             reinterpret_cast<std::uintptr_t>(iconBitmap));
     }
     else
     {
-        app_->DrawPlaceholderIcon(context, sysIconIndex, iconRect, 1.0f);
+        app_->DrawPlaceholderIcon(context, sysIconIndex, iconRect, iconOpacity);
     }
 
     const std::wstring title = demoIdentity.empty()

@@ -732,6 +732,7 @@ void DesktopApp::DrawCollectionPopup(
                         entry.lastWriteTime,
                         entry.fileSize,
                         entry.isDirectory,
+                        entry.isCut,
                     },
                     lightTheme, !IsRenamingItem(&entry), entry.fullPath, content);
                 continue;

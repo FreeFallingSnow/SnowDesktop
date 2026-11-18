@@ -287,7 +287,6 @@ bool DesktopApp::CopyCutSelectedFolderEntries(bool cut, const wchar_t* copySourc
     ComPtr<IDataObject> dataObj = CreateFileDropDataObject(paths);
     if (!dataObj) return false;
 
-    cutPaths_.clear();
     if (cut)
     {
         CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
@@ -301,9 +300,6 @@ bool DesktopApp::CopyCutSelectedFolderEntries(bool cut, const wchar_t* copySourc
             GlobalUnlock(med.hGlobal);
             dataObj->SetData(&fmt, &med, TRUE);
         }
-
-        for (const auto& path : paths)
-            cutPaths_.insert(path);
     }
 
     const auto clipboardCopyId = PublishFileClipboard(dataObj.Get(), copySource);
@@ -333,9 +329,6 @@ bool DesktopApp::DeleteSelectedFolderEntries(bool permanentDelete)
                 });
         }))
         popupDirectory = dockFolderPopupWidget_.sourceFolderPath;
-
-    for (const auto& path : paths)
-        cutPaths_.erase(path);
 
     std::vector<snowdesktop::ShellFileOperationStep> steps;
     steps.push_back({
@@ -443,7 +436,6 @@ bool DesktopApp::PasteClipboardToFolderPath(
             if (GetClipboardSequenceNumber() == clipboardSequence)
             {
                 EmptyClipboard();
-                cutPaths_.clear();
                 UpdateCutState();
                 InvalidateRect(hwnd_, nullptr, FALSE);
             }

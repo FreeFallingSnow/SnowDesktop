@@ -586,6 +586,7 @@ void DesktopApp::RestoreFolderPreviewHome(bool present)
     {
         auto& home = *session.folderHome;
         dockFolderPopupWidget_ = std::move(home.data);
+        ApplyFolderCutState(dockFolderPopupWidget_.folderEntries);
         dockFolderPopupContainer_ = std::move(home.view);
         dockFolderPopupSourceId_ = std::move(home.dockSourceId);
         dockFolderPopupMappingWidgetId_ = std::move(home.mappingId);
@@ -796,6 +797,7 @@ void DesktopApp::ActivateInlineFolderPreviewAtPoint(POINT point, bool duringDrag
     const auto ready = inactiveInlineFolderPreviews_.find(target->id);
     SwapInlineFolderPreview(ready->second);
     inactiveInlineFolderPreviews_.erase(ready);
+    ApplyFolderCutState(dockFolderPopupWidget_.folderEntries);
     folderPreview_->keyboardFocused = !duringDrag;
     for (const auto& container : containers_)
         if (const auto* host = dynamic_cast<const WidgetContainer*>(container.get());

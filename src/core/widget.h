@@ -338,6 +338,7 @@ struct ListItemDetails
     std::optional<FILETIME> modifiedTime;
     std::optional<std::uint64_t> fileSize;
     bool isDirectory = false;
+    bool isCut = false;
 };
 
 class ScrollingItemWidget : public WidgetContainer

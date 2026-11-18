@@ -142,6 +142,7 @@ void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
     for (const auto& oldEntry : previous)
         if (oldEntry.iconBitmap)
             EraseD2DIconCacheForBitmap(oldEntry.iconBitmap);
+    ApplyFolderCutState(widget.folderEntries);
     snowdesktop::folder_member_order::Refresh(widget, ToUpperInvariant);
 }
 

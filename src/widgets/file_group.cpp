@@ -2134,6 +2134,7 @@ void FileGroup::DrawContent(
                     details.modifiedTime = sourceEntry->lastWriteTime;
                     details.fileSize = sourceEntry->fileSize;
                     details.isDirectory = sourceEntry->isDirectory;
+                    details.isCut = sourceEntry->isCut;
                 }
             }
             if (privacyActive)
