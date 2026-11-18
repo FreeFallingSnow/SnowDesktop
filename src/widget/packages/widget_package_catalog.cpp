@@ -546,11 +546,12 @@ bool WidgetPackageManager::SetEnabled(const std::string& packageId,
     }
     else
     {
-        const bool hasDevelopment = std::any_of(packages_->begin(), packages_->end(),
+        const bool canChange = std::any_of(packages_->begin(), packages_->end(),
             [&](const auto& package) {
-                return package.development && package.manifest.id == packageId;
+                return package.manifest.id == packageId &&
+                    (package.development || (enabled && package.builtin && !package.enabled));
             });
-        if (!hasDevelopment)
+        if (!canChange)
         {
             error = "built-in packages cannot be disabled in the v1 registry";
             return false;
@@ -588,61 +589,25 @@ bool WidgetPackageManager::SetDevelopmentOverride(
         return false;
     }
 
-    const bool previous = registry_.developmentOverrides.contains(packageId);
+    auto candidate = *this;
     if (active)
-        registry_.developmentOverrides.insert(packageId);
+        candidate.registry_.developmentOverrides.insert(packageId);
     else
-        registry_.developmentOverrides.erase(packageId);
-    if (!registry_.Save(paths_.registry, error))
-    {
-        if (previous)
-            registry_.developmentOverrides.insert(packageId);
-        else
-            registry_.developmentOverrides.erase(packageId);
-        return false;
-    }
-    const auto rollbackOverride = [&](std::string originalError) {
-        if (previous)
-            registry_.developmentOverrides.insert(packageId);
-        else
-            registry_.developmentOverrides.erase(packageId);
-        std::string rollbackError;
-        const bool saved = registry_.Save(paths_.registry, rollbackError);
-        if (saved) Refresh(rollbackError);
-        error = std::move(originalError);
-        if (!rollbackError.empty())
-            error += "; development override rollback failed: " +
-                rollbackError;
-        return false;
-    };
+        candidate.registry_.developmentOverrides.erase(packageId);
 
-    if (!Refresh(error))
-        return rollbackOverride(error);
-
+    if (!candidate.Refresh(error, false)) return false;
     if (active)
     {
-        const auto resolved = ResolveSelected(packageId);
+        const auto resolved = candidate.ResolveSelected(packageId);
         if (!resolved || !resolved->development)
         {
-            return rollbackOverride(
-                "development package could not be activated");
-        }
-        const std::vector<std::string> declaredPermissions =
-            DeclaredPermissions(resolved->manifest);
-        const bool sensitive = !PermissionsRequiringConsent(
-            declaredPermissions).empty();
-        if (sensitive && resolved->permissionState ==
-                PermissionDecisionState::LegacyImplicit)
-        {
-            std::string permissionError;
-            if (!SetPermissionDecision(packageId,
-                    PermissionDecisionState::Pending, {}, {},
-                    permissionError))
-            {
-                return rollbackOverride(std::move(permissionError));
-            }
+            error = "development package could not be activated";
+            return false;
         }
     }
+    // The scan has already applied the development source's permission policy.
+    if (!candidate.registry_.Save(paths_.registry, error)) return false;
+    *this = std::move(candidate);
     return true;
 }
 

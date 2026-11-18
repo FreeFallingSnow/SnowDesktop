@@ -45,7 +45,9 @@ snowdesktop_add_runtime_module(SnowDesktopWidgetPackages
         src/widget/packages/widget_package_catalog.cpp
         src/widget/packages/widget_package_development.cpp
         src/widget/packages/widget_package_install.cpp
+        src/widget/packages/widget_package_lifecycle.cpp
         src/widget/packages/widget_package_manifest_fields.cpp
+        src/widget/packages/widget_package_permissions.cpp
         src/widget/packages/widget_package_read.cpp
         src/widget/packages/widget_package_registry.cpp
         src/widget/packages/widget_package_sources.cpp

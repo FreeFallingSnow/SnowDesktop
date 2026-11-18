@@ -375,4 +375,67 @@ bool WidgetPackageManager::ExportDirectory(
     artifact.sha256 = std::move(digest);
     return true;
 }
+
+ValidationReport WidgetPackageValidator::ValidateArchive(
+    const std::filesystem::path& archive) const
+{
+    ValidationReport report;
+    if (detail::PathContainsReparsePoint(archive))
+    {
+        report.Add(ValidationSeverity::Error, "archive.reparse", archive,
+            "package archive and its path cannot contain reparse points");
+        return report;
+    }
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(archive, ec);
+    if (ec || size > kMaxArchiveBytes)
+    {
+        report.Add(ValidationSeverity::Error, "archive.size", archive,
+            "archive is missing or exceeds 20 MiB");
+        return report;
+    }
+    if (Lower(archive.extension().string()) != ".snowwidget")
+        report.Add(ValidationSeverity::Error, "archive.extension", archive,
+            "package archive must use the .snowwidget extension");
+    // Full entry validation happens during secure extraction. This function
+    // deliberately never invokes the Windows shell ZIP handler.
+    return report;
+}
+
+ValidationReport WidgetPackageManager::ValidateArchive(
+    const std::filesystem::path& archive, PackageManifest* manifest,
+    bool* malformedArchive) const
+{
+    if (malformedArchive) *malformedArchive = false;
+    ValidationReport report = validator_.ValidateArchive(archive);
+    if (!report.Ok()) return report;
+    std::error_code ec;
+    if (paths_.staging.empty())
+    {
+        report.Add(ValidationSeverity::Error, "archive.staging", archive,
+            "the validation staging directory is not configured");
+        return report;
+    }
+    std::filesystem::create_directories(paths_.staging, ec);
+    if (ec || detail::HasReparsePoint(paths_.staging))
+    {
+        report.Add(ValidationSeverity::Error, "archive.staging", archive,
+            "cannot prepare the validation staging directory");
+        return report;
+    }
+    const auto staging = CreateStagingPath("validation");
+    std::string error;
+    report = {};
+    if (!ExtractArchive(archive, staging, report, error, malformedArchive))
+    {
+        report.Add(ValidationSeverity::Error, "archive.content", archive,
+            std::move(error));
+    }
+    else
+    {
+        report = validator_.ValidateDirectory(staging, manifest);
+    }
+    std::filesystem::remove_all(staging, ec);
+    return report;
+}
 }

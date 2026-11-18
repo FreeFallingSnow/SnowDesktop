@@ -423,4 +423,84 @@ bool WidgetPackageManager::Registry::Save(const std::filesystem::path& path,
     out << "  }\n}\n";
     return atomic_file::WriteAll(path, out.str(), {}, &error);
 }
+
+std::unordered_map<std::string, std::vector<std::string>>
+WidgetPackageManager::SteamSubscriptionHistory() const
+{
+    std::unordered_map<std::string, std::vector<std::string>> result;
+    for (const auto& [accountId, subscriptions] :
+        registry_.steamSubscriptionsByAccount)
+    {
+        auto& values = result[accountId];
+        values.assign(subscriptions.begin(), subscriptions.end());
+        std::sort(values.begin(), values.end());
+    }
+    return result;
+}
+
+bool WidgetPackageManager::UpdateSteamSubscriptionHistory(
+    const std::string& accountId,
+    const std::vector<std::string>& publishedFileIds, std::string& error,
+    const SteamLibrarySubscriptions* libraries)
+{
+    if (!DecimalIdentifier(accountId) ||
+        !std::all_of(publishedFileIds.begin(), publishedFileIds.end(),
+            DecimalIdentifier) ||
+        (libraries && !std::all_of(libraries->begin(), libraries->end(),
+            [](const auto& entry) {
+                return !entry.first.empty() && std::all_of(entry.second.begin(),
+                    entry.second.end(), DecimalIdentifier);
+            })))
+    {
+        error = "invalid Steam subscription history identity";
+        return false;
+    }
+
+    std::unordered_set<std::string> subscriptions(publishedFileIds.begin(), publishedFileIds.end());
+    SteamLibrarySubscriptions nextLibraries;
+    if (libraries)
+    {
+        nextLibraries = *libraries;
+        for (auto& [library, ids] : nextLibraries)
+        {
+            (void)library;
+            std::sort(ids.begin(), ids.end());
+            ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+        }
+    }
+
+    const auto previous = registry_.steamSubscriptionsByAccount.find(accountId);
+    const bool existed = previous != registry_.steamSubscriptionsByAccount.end();
+    const auto previousLibraries = registry_.steamLibrarySubscriptionsByAccount.find(accountId);
+    const bool librariesExisted = previousLibraries != registry_.steamLibrarySubscriptionsByAccount.end();
+    if (existed && previous->second == subscriptions &&
+        (!libraries || (librariesExisted && previousLibraries->second == nextLibraries)))
+        return true;
+
+    std::unordered_set<std::string> previousSubscriptions;
+    if (existed) previousSubscriptions = std::move(previous->second);
+    SteamLibrarySubscriptions savedLibraries;
+    if (libraries && librariesExisted) savedLibraries = std::move(previousLibraries->second);
+    registry_.steamSubscriptionsByAccount[accountId] = std::move(subscriptions);
+    if (libraries) registry_.steamLibrarySubscriptionsByAccount[accountId] = std::move(nextLibraries);
+    if (registry_.Save(paths_.registry, error)) return true;
+    if (libraries)
+    {
+        if (librariesExisted)
+            registry_.steamLibrarySubscriptionsByAccount[accountId] = std::move(savedLibraries);
+        else
+            registry_.steamLibrarySubscriptionsByAccount.erase(accountId);
+    }
+    if (existed)
+        registry_.steamSubscriptionsByAccount[accountId] =
+            std::move(previousSubscriptions);
+    else
+        registry_.steamSubscriptionsByAccount.erase(accountId);
+    return false;
+}
+
+SteamLibrarySubscriptionHistory WidgetPackageManager::SteamLibraryHistory() const
+{
+    return registry_.steamLibrarySubscriptionsByAccount;
+}
 }

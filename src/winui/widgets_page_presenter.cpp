@@ -552,7 +552,7 @@ struct WidgetsPagePresenter::Impl
         }
         if (package.canEnable && !package.enabled)
             return L("app.settings.widgets_disabled", L"Disabled");
-        if (showsVersionSelector)
+        if (showsVersionSelector || package.development)
             return {};
         if (package.canEnable)
             return L("app.settings.widgets_active", L"In use");

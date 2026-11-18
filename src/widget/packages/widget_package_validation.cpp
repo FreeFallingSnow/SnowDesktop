@@ -21,6 +21,7 @@
 #include <fstream>
 #include <limits>
 #include <set>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -1247,5 +1248,46 @@ ValidationReport WidgetPackageValidator::ValidateDirectory(
         manifest.nativeContentFingerprint = WidgetPermissionBroker::ScopeFingerprint(nativeContent, {});
     if (outputManifest) *outputManifest = std::move(manifest);
     return report;
+}
+
+bool ValidationReport::Ok() const
+{
+    return std::none_of(issues.begin(), issues.end(), [](const auto& issue) {
+        return issue.severity == ValidationSeverity::Error;
+    });
+}
+
+void ValidationReport::Add(ValidationSeverity severity, std::string code,
+    std::filesystem::path path, std::string message)
+{
+    issues.push_back({ severity, std::move(code), std::move(path),
+        std::move(message) });
+}
+
+std::string ValidationReport::ToJson() const
+{
+    std::ostringstream out;
+    out << "{\"ok\":" << (Ok() ? "true" : "false")
+        << ",\"fileCount\":" << fileCount
+        << ",\"totalBytes\":" << totalBytes << ",\"issues\":[";
+    for (std::size_t i = 0; i < issues.size(); ++i)
+    {
+        if (i) out << ',';
+        const char* severity = issues[i].severity == ValidationSeverity::Error
+            ? "error" : issues[i].severity == ValidationSeverity::Warning
+            ? "warning" : "info";
+        out << "{\"severity\":\"" << severity << "\",\"code\":\""
+            << detail::JsonEscape(issues[i].code) << "\",\"path\":\""
+            << detail::JsonEscape(PathUtf8(issues[i].path)) << "\",\"message\":\""
+            << detail::JsonEscape(issues[i].message) << "\"}";
+    }
+    out << "]}";
+    return out.str();
+}
+
+ValidationReport WidgetPackageManager::ValidateDirectory(
+    const std::filesystem::path& root, PackageManifest* manifest) const
+{
+    return validator_.ValidateDirectory(root, manifest);
 }
 }

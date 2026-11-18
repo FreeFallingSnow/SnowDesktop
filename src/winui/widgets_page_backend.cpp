@@ -1091,7 +1091,8 @@ struct WidgetsPageBackend::Impl final
             ? group.managed->enabled : display ? display->enabled : false;
         snapshot.active = display && display->active;
         snapshot.hasInstalledVersion = group.managed != nullptr;
-        snapshot.canEnable = snapshot.hasInstalledVersion || group.development != nullptr;
+        snapshot.canEnable = snapshot.hasInstalledVersion || group.development != nullptr ||
+            (display && display->builtin && !display->enabled);
         snapshot.canUninstall = group.managed != nullptr ||
             !group.invalidManaged.empty();
         // Adding a component creates a persisted desktop instance. Invalid
