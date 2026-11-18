@@ -99,6 +99,24 @@ void DesktopApp::ReportPerformedDropEffect(
     snowdesktop::ole_async_operation::SetPerformedDropEffectData(dataObject, effect);
 }
 
+bool DesktopApp::QueueFileDeletion(std::vector<std::wstring> paths, bool permanentDelete,
+    FILEOP_FLAGS extraRecycleFlags, std::wstring refreshFolder)
+{
+    if (paths.empty()) return false;
+
+    const auto flags = static_cast<FILEOP_FLAGS>(permanentDelete
+        ? FOF_WANTNUKEWARNING
+        : (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | extraRecycleFlags));
+    std::vector<snowdesktop::ShellFileOperationStep> steps;
+    steps.push_back({FO_DELETE, std::move(paths), {}, flags});
+    return QueueShellFileOperation(std::move(steps),
+        [this, refreshFolder = std::move(refreshFolder)](bool succeeded) {
+            if (!succeeded) return;
+            if (refreshFolder.empty()) RequestShellRefresh();
+            else RequestFolderRefresh({refreshFolder});
+        });
+}
+
 bool DesktopApp::QueueShellFileOperation(
     std::vector<snowdesktop::ShellFileOperationStep> steps,
     FileOperationCompletion completion)

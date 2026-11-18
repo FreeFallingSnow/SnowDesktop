@@ -49,46 +49,6 @@ bool DesktopApp::IsAdministratorRunnablePath(
             IsAdministratorRunnableExtension(normalizedExtension);
 }
 
-void DesktopApp::CopyPathsToClipboard(
-    const std::vector<std::wstring>& paths)
-{
-    std::wstring text;
-    for (const auto& path : paths)
-    {
-        if (path.empty())
-            continue;
-        if (!text.empty())
-            text += L"\r\n";
-        text += path;
-    }
-    if (text.empty() || !OpenClipboard(ShellDialogOwnerHwnd()))
-        return;
-
-    EmptyClipboard();
-    const SIZE_T byteCount =
-        (text.size() + 1) * sizeof(wchar_t);
-    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, byteCount);
-    if (!memory)
-    {
-        CloseClipboard();
-        return;
-    }
-
-    void* target = GlobalLock(memory);
-    if (!target)
-    {
-        GlobalFree(memory);
-        CloseClipboard();
-        return;
-    }
-    CopyMemory(target, text.c_str(), byteCount);
-    GlobalUnlock(memory);
-
-    if (!SetClipboardData(CF_UNICODETEXT, memory))
-        GlobalFree(memory);
-    CloseClipboard();
-}
-
 bool DesktopApp::RunPathAsAdministrator(
     const std::wstring& path)
 {
@@ -1129,31 +1089,7 @@ void DesktopApp::ShowItemContextMenu(
         {
             break;
         }
-        std::vector<std::wstring> deletePaths;
-        for (const auto& item : items_)
-        {
-            if (!item.selected || !item.desktopIconClsid.empty()) continue;
-            wchar_t path[MAX_PATH]{};
-            if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
-                deletePaths.push_back(path);
-        }
-        if (!deletePaths.empty())
-        {
-            std::vector<snowdesktop::ShellFileOperationStep> steps;
-            steps.push_back({
-                FO_DELETE,
-                std::move(deletePaths),
-                {},
-                static_cast<FILEOP_FLAGS>(
-                    FOF_ALLOWUNDO |
-                    FOF_NOCONFIRMATION) });
-            QueueShellFileOperation(
-                std::move(steps),
-                [this](bool succeeded) {
-                    if (succeeded)
-                        RequestShellRefresh();
-                });
-        }
+        QueueFileDeletion(GetSelectedDesktopFilePaths(), false);
         break;
     }
     case kContextMoreCommand:
@@ -1270,9 +1206,7 @@ void DesktopApp::ShowIsolatedShellMenu(snowdesktop::shell_extensions::Request re
                         RemoveDockMappingAt(*dockMappingEntryIndex);
                     return;
                 }
-                std::vector<snowdesktop::ShellFileOperationStep> steps;
-                steps.push_back({FO_DELETE, paths, {}, static_cast<FILEOP_FLAGS>(FOF_ALLOWUNDO | FOF_NOCONFIRMATION)});
-                QueueShellFileOperation(std::move(steps), [this](bool succeeded) { if (succeeded) RequestShellRefresh(); });
+                QueueFileDeletion(paths, false);
             }
             else if (result->invoked) RequestShellRefresh();
         });

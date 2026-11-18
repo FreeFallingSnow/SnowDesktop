@@ -611,33 +611,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             (void)RemoveLuaStackMember(id, screen);
             break;
         }
-        std::vector<std::wstring> paths;
-        for (const auto& item : items_)
-        {
-            if (!item.selected || !item.desktopIconClsid.empty()) continue;
-            wchar_t path[MAX_PATH]{};
-            if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
-                paths.push_back(path);
-        }
-
-        if (!paths.empty())
-        {
-            std::vector<snowdesktop::ShellFileOperationStep> steps;
-            steps.push_back({
-                FO_DELETE,
-                std::move(paths),
-                {},
-                static_cast<FILEOP_FLAGS>(shift
-                    ? FOF_WANTNUKEWARNING
-                    : (FOF_ALLOWUNDO |
-                       FOF_NOCONFIRMATION)) });
-            QueueShellFileOperation(
-                std::move(steps),
-                [this](bool succeeded) {
-                    if (succeeded)
-                        RequestShellRefresh();
-                });
-        }
+        QueueFileDeletion(GetSelectedDesktopFilePaths(), shift);
         break;
     }
     case 'C':
@@ -648,15 +622,8 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         if (shift)
         {
             auto paths = GetSelectedFolderEntryPaths();
-            if (paths.empty())
-                for (const auto& item : items_)
-                {
-                    if (!item.selected || !item.desktopIconClsid.empty()) continue;
-                    wchar_t path[MAX_PATH]{};
-                    if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
-                        paths.emplace_back(path);
-                }
-            if (!paths.empty()) CopyPathsToClipboard(paths);
+            if (paths.empty()) paths = GetSelectedDesktopFilePaths();
+            CopyPathsToClipboard(paths);
             break;
         }
         if (CopyCutSelectedFolderEntries(false))
@@ -679,39 +646,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         if (CopyCutSelectedFolderEntries(true))
             break;
 
-        std::vector<PCUITEMID_CHILD> pidls;
-        for (size_t i = 0; i < items_.size(); ++i)
-        {
-            if (!items_[i].selected || !items_[i].desktopIconClsid.empty()) continue;
-            pidls.push_back(reinterpret_cast<PCUITEMID_CHILD>(items_[i].childPidl.get()));
-        }
-
-        if (!pidls.empty())
-        {
-            ComPtr<IDataObject> dataObj;
-            if (SUCCEEDED(desktopFolder_->GetUIObjectOf(hwnd_, static_cast<UINT>(pidls.size()),
-                pidls.data(), IID_IDataObject, nullptr,
-                reinterpret_cast<void**>(dataObj.GetAddressOf()))) && dataObj)
-            {
-                CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
-                FORMATETC fmt{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
-                STGMEDIUM med{};
-                med.tymed = TYMED_HGLOBAL;
-                med.hGlobal = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD));
-                if (med.hGlobal)
-                {
-                    *static_cast<DWORD*>(GlobalLock(med.hGlobal)) = DROPEFFECT_MOVE;
-                    GlobalUnlock(med.hGlobal);
-                    dataObj->SetData(&fmt, &med, TRUE);
-                }
-
-                OleSetClipboard(dataObj.Get());
-                OleFlushClipboard();
-            }
-        }
-
-        UpdateCutState();
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        CopyCutSelectedDesktopFiles(true);
     }
     break;
     case 'V':

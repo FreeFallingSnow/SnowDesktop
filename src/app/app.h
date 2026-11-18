@@ -238,6 +238,8 @@ class WidgetSurfaceRenderer;
 
 namespace snowdesktop
 {
+struct IconLibraryRequest;
+struct IconLibrarySnapshot;
 class ShellContextMenuSite;
 class ShellNewMenu;
 class ShellNewItemCapture;
@@ -1601,7 +1603,10 @@ private:
      */
     bool CopyCutSelectedFolderEntries(bool cut, const wchar_t* copySource = nullptr);
     void CopyCutSelectedDesktopFiles(bool cut, const wchar_t* copySource = nullptr);
-    std::uint64_t PublishFileClipboard(IDataObject* data, const wchar_t* copySource);
+    std::uint64_t PublishFileClipboard(IDataObject* data, bool cut, const wchar_t* copySource);
+    std::vector<std::wstring> GetSelectedDesktopFilePaths() const;
+    void CopyPathsToClipboard(const std::vector<std::wstring>& paths);
+    static bool WriteClipboardText(HWND owner, const std::wstring& text);
     /** @brief 删除选中的文件夹条目。 @param permanentDelete true 时永久删除并显示确认。 @return 操作是否成功 */
     bool DeleteSelectedFolderEntries(bool permanentDelete = false);
     /**
@@ -1884,8 +1889,6 @@ private:
         LRESULT& result);
     bool IsAdministratorRunnablePath(
         const std::wstring& path) const;
-    void CopyPathsToClipboard(
-        const std::vector<std::wstring>& paths);
     bool RunPathAsAdministrator(
         const std::wstring& path);
     bool RunPathAsAdministratorAfterMenu(
@@ -2379,6 +2382,8 @@ private:
     bool QueueShellFileOperation(
         snowdesktop::ShellFileOperationRequest request,
         FileOperationCompletion completion);
+    bool QueueFileDeletion(std::vector<std::wstring> paths, bool permanentDelete,
+        FILEOP_FLAGS extraRecycleFlags = 0, std::wstring refreshFolder = {});
     static constexpr UINT kFileUndoCommand = 42990;
     static constexpr UINT kFileRedoCommand = 42991;
     bool CanApplyFileHistory(bool redo) const;
