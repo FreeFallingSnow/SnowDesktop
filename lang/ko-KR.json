@@ -2939,5 +2939,7 @@
   "app.folderPreview.createDesktopMapping": "바탕 화면에 폴더 매핑 만들기",
   "core.drag.move_into_folder": "‘{0}’(으)로 이동",
   "core.drag.copy_into_folder": "‘{0}’(으)로 복사",
-  "core.drag.link_in_folder": "‘{0}’에 바로 가기 만들기"
+  "core.drag.link_in_folder": "‘{0}’에 바로 가기 만들기",
+  "app.settings.widgets_installed_version": "설치 버전",
+  "app.settings.widgets_development_version": "개발 버전"
 }

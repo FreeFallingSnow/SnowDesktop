@@ -2939,5 +2939,7 @@
   "app.folderPreview.createDesktopMapping": "Créer un dossier mappé sur le Bureau",
   "core.drag.move_into_folder": "Déplacer vers « {0} »",
   "core.drag.copy_into_folder": "Copier dans « {0} »",
-  "core.drag.link_in_folder": "Créer des raccourcis dans « {0} »"
+  "core.drag.link_in_folder": "Créer des raccourcis dans « {0} »",
+  "app.settings.widgets_installed_version": "Version installée",
+  "app.settings.widgets_development_version": "Version de développement"
 }

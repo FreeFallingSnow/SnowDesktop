@@ -2939,5 +2939,7 @@
   "app.folderPreview.createDesktopMapping": "Crear una asignación de carpeta en el escritorio",
   "core.drag.move_into_folder": "Mover a «{0}»",
   "core.drag.copy_into_folder": "Copiar a «{0}»",
-  "core.drag.link_in_folder": "Crear accesos directos en «{0}»"
+  "core.drag.link_in_folder": "Crear accesos directos en «{0}»",
+  "app.settings.widgets_installed_version": "Versión instalada",
+  "app.settings.widgets_development_version": "Versión de desarrollo"
 }

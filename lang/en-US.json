@@ -2939,5 +2939,7 @@
   "app.folderPreview.createDesktopMapping": "Create desktop folder mapping",
   "core.drag.move_into_folder": "Move to “{0}”",
   "core.drag.copy_into_folder": "Copy to “{0}”",
-  "core.drag.link_in_folder": "Create shortcuts in “{0}”"
+  "core.drag.link_in_folder": "Create shortcuts in “{0}”",
+  "app.settings.widgets_installed_version": "Installed version",
+  "app.settings.widgets_development_version": "Development version"
 }

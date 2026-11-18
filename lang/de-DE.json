@@ -2939,5 +2939,7 @@
   "app.folderPreview.createDesktopMapping": "Ordnerzuordnung auf dem Desktop erstellen",
   "core.drag.move_into_folder": "Nach „{0}“ verschieben",
   "core.drag.copy_into_folder": "Nach „{0}“ kopieren",
-  "core.drag.link_in_folder": "Verknüpfungen in „{0}“ erstellen"
+  "core.drag.link_in_folder": "Verknüpfungen in „{0}“ erstellen",
+  "app.settings.widgets_installed_version": "Installierte Version",
+  "app.settings.widgets_development_version": "Entwicklungsversion"
 }

@@ -2939,5 +2939,7 @@
   "app.folderPreview.createDesktopMapping": "デスクトップにフォルダーのマッピングを作成",
   "core.drag.move_into_folder": "「{0}」に移動",
   "core.drag.copy_into_folder": "「{0}」にコピー",
-  "core.drag.link_in_folder": "「{0}」にショートカットを作成"
+  "core.drag.link_in_folder": "「{0}」にショートカットを作成",
+  "app.settings.widgets_installed_version": "インストール版",
+  "app.settings.widgets_development_version": "開発版"
 }

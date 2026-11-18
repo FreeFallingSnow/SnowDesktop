@@ -2939,5 +2939,7 @@
   "app.folderPreview.createDesktopMapping": "Criar mapeamento de pasta na área de trabalho",
   "core.drag.move_into_folder": "Mover para “{0}”",
   "core.drag.copy_into_folder": "Copiar para “{0}”",
-  "core.drag.link_in_folder": "Criar atalhos em “{0}”"
+  "core.drag.link_in_folder": "Criar atalhos em “{0}”",
+  "app.settings.widgets_installed_version": "Versão instalada",
+  "app.settings.widgets_development_version": "Versão de desenvolvimento"
 }

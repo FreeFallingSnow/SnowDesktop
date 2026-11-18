@@ -2939,5 +2939,7 @@
   "app.folderPreview.createDesktopMapping": "在桌面创建文件夹映射",
   "core.drag.move_into_folder": "移动到「{0}」",
   "core.drag.copy_into_folder": "复制到「{0}」",
-  "core.drag.link_in_folder": "在「{0}」中创建快捷方式"
+  "core.drag.link_in_folder": "在「{0}」中创建快捷方式",
+  "app.settings.widgets_installed_version": "已安装版",
+  "app.settings.widgets_development_version": "开发版"
 }
