@@ -90,10 +90,16 @@ struct Session
         inlineResizeHandle = host.GetResizeHandleRect();
         inlineTitleBar = host.GetMoveHandleRect();
         inlineTitle = host.GetTitleRect();
-        inlineRowTop = host.UsesTopTitleBar() ? inlineTitleBar.bottom : inlineBounds->top;
-        inlineContentBottom = host.UsesTopTitleBar() ? inlineBounds->bottom : inlineTitleBar.top;
+        const bool topTitleBar = host.UsesTopTitleBar();
+        inlineRowTop = topTitleBar ? inlineTitleBar.bottom : inlineBounds->top;
+        inlineContentBottom = topTitleBar ? inlineBounds->bottom : inlineTitleBar.top;
         if (!IsRectEmpty(&inlineResizeHandle))
+        {
+            // Let the top-title viewport and scrollbar use the space above the resize dot.
+            if (topTitleBar)
+                inlineResizeHandle.top += (inlineResizeHandle.bottom - inlineResizeHandle.top) / 3;
             inlineContentBottom = std::min(inlineContentBottom, inlineResizeHandle.top);
+        }
         inlineExplorerButton = {};
         for (const auto& control : host.GetControlRegions())
             if (control.hit == WidgetHit::OpenFolderBtn)
