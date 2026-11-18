@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 struct JsonValue;
@@ -13,6 +14,10 @@ struct ValidationReport;
 
 namespace detail
 {
+std::string Lower(std::string value);
+bool IsBcp47Tag(const std::string& locale);
+bool IsSha256(std::string_view value);
+
 bool ReadString(const JsonValue& object, const char* name, std::string& output);
 bool ReadInteger(const JsonValue& object, const char* name, int& output);
 std::vector<std::string> ReadStringArray(const JsonValue& object,

@@ -16,6 +16,50 @@
 
 namespace snowdesktop::widget::detail
 {
+std::string Lower(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(),
+        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return value;
+}
+
+bool IsBcp47Tag(const std::string& locale)
+{
+    if (locale.size() < 2 || locale.size() > 63) return false;
+    std::size_t begin = 0;
+    int part = 0;
+    while (begin < locale.size())
+    {
+        const auto end = locale.find('-', begin);
+        const auto value = locale.substr(begin,
+            end == std::string::npos ? locale.size() - begin : end - begin);
+        if (value.empty() || value.size() > 8) return false;
+        if (part == 0)
+        {
+            if (value.size() < 2 ||
+                !std::all_of(value.begin(), value.end(),
+                    [](unsigned char ch) { return std::isalpha(ch) != 0; }))
+                return false;
+        }
+        else if (!std::all_of(value.begin(), value.end(),
+            [](unsigned char ch) { return std::isalnum(ch) != 0; }))
+            return false;
+        ++part;
+        if (end == std::string::npos) break;
+        begin = end + 1;
+    }
+    return true;
+}
+
+bool IsSha256(std::string_view value)
+{
+    return value.size() == 64 &&
+        std::all_of(value.begin(), value.end(), [](unsigned char ch)
+        {
+            return std::isxdigit(ch) != 0;
+        });
+}
+
 bool ReadString(const JsonValue& object, const char* name, std::string& output)
 {
     const JsonValue* value = object.Find(name);
