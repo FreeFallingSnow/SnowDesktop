@@ -4,7 +4,7 @@
   "slug": "component-api-test",
   "apiVersion": 2,
   "dataVersion": 1,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "entry": "main.lua",
   "minHostVersion": "1.0.17.0",
   "author": "SnowDesktop",
@@ -48,6 +48,7 @@
     "view.theme.tokens",
     "view.transition.enter",
     "view.transition.exit",
+    "view.transition.layout",
     "view.transition.visual",
     "view.tree.core",
     "widget.context"

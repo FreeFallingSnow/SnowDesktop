@@ -805,11 +805,21 @@ private:
         bool entering = false;
     };
 
+    struct ExitAnchor
+    {
+        std::string key;
+        ViewRect contentFrame;
+        ViewResolvedTransform removedAncestorTransform;
+        std::optional<ViewRect> removedAncestorClip;
+        std::optional<std::size_t> placement;
+    };
+
     struct ExitEntry
     {
         ViewNode node;
         ViewResolvedTransform parentTransform;
         std::optional<ViewRect> parentClip;
+        std::optional<ExitAnchor> anchor;
         ViewTransitionPresentation start;
         ViewTransitionPresentation target;
         ViewTransition transition;
@@ -817,12 +827,28 @@ private:
         std::size_t nodeCount = 0;
     };
 
+    struct ExitPlacement
+    {
+        std::string key;
+        ViewRect frame;
+        ViewRect layoutFrame;
+        ViewRect contentFrame;
+        std::optional<ViewTransform> transform;
+        std::optional<ViewRect> clip;
+        std::optional<std::size_t> parent;
+    };
+
     static ViewTransitionPresentation CurrentPresentation(
         const Entry& entry, TimePoint now) noexcept;
+    ViewResolvedTransform CurrentTransform(const std::string& key,
+        const ViewRect& frame, const ViewRect& layoutFrame,
+        const std::optional<ViewTransform>& transform, TimePoint now) const;
+    void BindExitPlacements(const ViewNode& current);
     std::uint32_t ScaledDuration(std::uint32_t duration) const noexcept;
 
     std::unordered_map<std::string, Entry> entries_;
     std::vector<ExitEntry> exits_;
+    std::vector<ExitPlacement> exitPlacements_;
     std::uint64_t generation_ = 0;
     double durationScale_ = 1.0;
 };

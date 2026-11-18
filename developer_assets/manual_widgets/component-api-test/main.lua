@@ -47,6 +47,7 @@ local function sample(key, title, row, card)
         width = "fill",
         height = "fill",
         gap = row * 4 / 28,
+        transition = { durationMs = 450, easing = "easeInOut", properties = { "layout" } },
         children = {
             view.text({
                 key = key .. ".label",
@@ -85,7 +86,7 @@ local function buildView(_context, model)
             height = "fill",
             style = { background = 0x1F9E81, cornerRadius = radius },
             enterTransition = { durationMs = duration, easing = "easeOut", opacity = 0 },
-            exitTransition = { durationMs = duration, easing = "easeIn", opacity = 0 },
+            exitTransition = { durationMs = 1900, easing = "easeIn", opacity = 0 },
         })
     end
     local presenceSlot = view.box({
