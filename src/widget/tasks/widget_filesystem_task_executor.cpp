@@ -595,6 +595,19 @@ std::size_t WidgetFilesystemTaskExecutor::ActiveCount() const
     return state_->active.size();
 }
 
+bool IsFilesystemPickerTask(std::string_view taskName)
+{
+    return taskName == "filesystem.pickOpen" ||
+        taskName == "filesystem.pickSave" ||
+        taskName == "filesystem.pickFolder";
+}
+
+bool IsFilesystemHandleTask(std::string_view taskName)
+{
+    return WidgetFilesystemTaskExecutor::SupportsAction(taskName) ||
+        taskName == "filesystem.release";
+}
+
 bool WidgetFilesystemTaskExecutor::SupportsAction(
     std::string_view action) noexcept
 {
