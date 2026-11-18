@@ -410,6 +410,8 @@
 
 ### CF-025 文件观察提前结束
 
+- **同批待提交的宿主源清单（2026-11-18）**：Task `task-52a0430b03e04412805a1170dfe1fa6a` 在批次 `f1195bfc412947849d6ec0429042b1d1` 修订 1 认领 `cmake/sources/Host.cmake`，视图交互任务已就绪但尚待共同构建，清单仍有待提交改动。回执为 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`。本轮复用已登记的视图和绘制编译单元，原批次继续共同验证。保留其他任务的清单修改和提交归属。后续需让结构文件待提交状态与编辑屏障可共同表达。
+
 - **组件包总表续证（2026-11-18）**：Task `task-6d19c3ab79f94e3681f6115e6e070c7d` 的票据 `b8a18c9c8cb719807048e36450721b89` 对 `CODE_HEALTH.md` 返回 `eligible`，Git 仍有任务 2 的三行待提交修改。等待提交 `552cc495c` 后，新的视图任务仍持有文件，批次 `ecfd38b2c4194a50b3d275f7e63600a5` 的认领拒绝，已撤回本任务空登记。使用手册的 `watch wait --new` 取得新票据 `51ec61f169b7de697cc6904c472f492e`，在 `f1195bfc412947849d6ec0429042b1d1` 修订 0 认领成功。认领保护正常，未采用他人改动或追加构建。文件观察仍需同时反映归属和待提交状态。
 
 - **共享反馈文件续证（2026-11-18）**：Task `task-8cba4c000221462ebf59fb8874728771` 的票据 `32be340b67a87d15dd81ac4bf5eb08aa` 对 `scripts/COLLABORATION_FEEDBACK.md` 提前返回 `eligible`。Git 核对时仍有 `widget-add-authorization` 的差异。等待前序提交后，在 `15b07c6e915b4527b7516aace8f95f47` 修订 0 重新认领成功。下一步仍是让文件票据能反映未提交状态。
