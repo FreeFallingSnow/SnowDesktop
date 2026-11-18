@@ -193,6 +193,8 @@
 
 ### CF-012 观察等待默认超时导致模型轮询
 
+- **组件安装批次续证（2026-11-18）**：Task `task-6d19c3ab79f94e3681f6115e6e070c7d`、批次 `0209f167b8d547709f2480e28b595ccb` 修订 0。原 `ready-and-wait` 会话 25562 的回执 `6b44c0`、`c3b2a6` 两次报告同一个编辑者 `task-52a0430b03e04412805a1170dfe1fa6a`；`7a676d`、`c42091` 只报告 `Waiting for the collaboration state transaction.`。期间续接同一观察进程，未另查状态或提交构建。后续共同 Run `7c5575df6d844771abc5af4a8ace0132` 通过 Release 和四项定向测试。建议继续按业务阶段和短时事务分别去重。
+
 - **前台构建重复提示（2026-11-16）**：Task `dock-single-preview-anchor-20261116`、批次 `27d647c2f4494e6baf4b8888c1db0380` 修订 0、Run `4e6e544084eb4594b04bc186c82d58b0`。原 `ready-and-wait` 会话 54194 入队时显示 `resource reason not recorded`，执行时交替重复 `latest stage start compile` 与 `Waiting for the collaboration state transaction.`，见同一续接回执 `8a133f`。全程复用该观察进程。待按业务阶段和短时事务分别去重，保留实际变化。
 
 - **候选槽排队续证（2026-11-15）**：Task `ime-search-candidate-position`、批次 `e9de509e81f74f608fe6ae5408402da5` 修订 0、Run `0c528b8495b642cbb3e8819324cd1d00` 的 `.stderr.log` 重复记录 38 条 `Candidate slot is busy; existing materialization/executor retains its files.`。只读核对了前序 Run `c4ec5646568e428581fc02f513b2b1e7` 的执行阶段，继续原 `ready-and-wait` 会话并过滤重复等待提示，原 Run 后续通过。建议仅在排队原因或阶段改变时输出一条提示，保留原有排队状态与等待证据。
@@ -246,6 +248,8 @@
 - **应用全量续证（2026-11-17）**：Task `latest-release-msix-20261117` 先以 `run start -Action tests -Mode full` 获得 Run `ba6d5004972e40709c39950722ce42e5`，原检出 CMake 缓存指向已不存在的 Visual Studio 实例版本 `18.5.11723.231`，配置失败。随后 `run start -Action candidate -Snapshot d27bd211d61047b6a7ffc3c1c4eb4c9a -CandidateAction tests -Mode full` 的 Run `9f5cff79e08f4c1a8bbe1fd5716c8304` 报 `Candidate observed tools/environment changed; capture a new context.`，两次均未执行测试。只读对照定位到两个选择器 `CMAKE_GENERATOR` 和 `CMAKE_GENERATOR_TOOLSET`。按原候选缓存恢复 `Visual Studio 18 2026` 和 `version=14.52.37025` 后，完整上下文摘要匹配，同一快照的全量执行 Run 为 `95f8e9dcb5ea4c048eb308848e0d7548`。路径由原 Run 记录保留。后续诊断可直接给出不匹配字段名和已记录选择器的恢复依据，继续保留摘要校验。
 
 ### CF-015 模块计划无法声明临时定向验证
+
+- **组件安装事务对照（2026-11-18）**：Task `task-6d19c3ab79f94e3681f6115e6e070c7d`、批次 `0209f167b8d547709f2480e28b595ccb`、Run `7c5575df6d844771abc5af4a8ace0132`。两项正式测试覆盖设置宿主与真实 ZIP 安装。批次外的目录、来源和注册表失败对照只能在完成后通过 `run-checks.ps1 -WaitForLease` 申请执行权，会话 97616 先报告 `Waiting for the project execution lease for the installation probe.`，后续用旧、新归档包库取得 1,236 字节一致的报告。标准构建和正式测试均复用，无追加产品构建；临时定向验证仍待纳入批次计划。
 
 - **Lua 任务绑定续证（2026-11-18）**：Task `task-52a0430b03e04412805a1170dfe1fa6a` 在 Run `dd12405be44d473f8dc0f1de02c4f260` 通过后首次运行临时 Lua 探针，入口报告共享执行租约或事务占用。本地状态转空后复用候选对象，只链接并运行 18 项探针成功。计划仍无法绑定临时检查，保留首次拒绝和通过日志。
 
