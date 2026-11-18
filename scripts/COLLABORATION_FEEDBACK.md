@@ -410,6 +410,8 @@
 
 ### CF-025 文件观察提前结束
 
+- **绘制拆分总表续证（2026-11-18）**：Task `task-52a0430b03e04412805a1170dfe1fa6a` 的票据 `6784a610cb17099267937141b22be044` 对 `CODE_HEALTH.md` 返回 `eligible`，Git 仍有任务 10 待提交改动。继续等待任务 10 提交 `7cd41ab2f` 后，重新认领总表成功。未接手其他任务改动，复用原构建。
+
 - **同批待提交的宿主源清单（2026-11-18）**：Task `task-52a0430b03e04412805a1170dfe1fa6a` 在批次 `f1195bfc412947849d6ec0429042b1d1` 修订 1 认领 `cmake/sources/Host.cmake`，视图交互任务已就绪但尚待共同构建，清单仍有待提交改动。回执为 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`。本轮复用已登记的视图和绘制编译单元，原批次继续共同验证。保留其他任务的清单修改和提交归属。后续需让结构文件待提交状态与编辑屏障可共同表达。
 
 - **组件包总表续证（2026-11-18）**：Task `task-6d19c3ab79f94e3681f6115e6e070c7d` 的票据 `b8a18c9c8cb719807048e36450721b89` 对 `CODE_HEALTH.md` 返回 `eligible`，Git 仍有任务 2 的三行待提交修改。等待提交 `552cc495c` 后，新的视图任务仍持有文件，批次 `ecfd38b2c4194a50b3d275f7e63600a5` 的认领拒绝，已撤回本任务空登记。使用手册的 `watch wait --new` 取得新票据 `51ec61f169b7de697cc6904c472f492e`，在 `f1195bfc412947849d6ec0429042b1d1` 修订 0 认领成功。认领保护正常，未采用他人改动或追加构建。文件观察仍需同时反映归属和待提交状态。
@@ -488,3 +490,4 @@
 - **实测**：2026-11-18，Task `task-52a0430b03e04412805a1170dfe1fa6a` 在批次 `a036f2a9fe804d96880eb29a51112ea6` 修订 0 的 Run `866b5dc7e51647c48b1f2c738b036f31` 通过并激活。调用 `acceptance-start -CandidateRun` 返回 `Candidate requirements are missing or stale; do not infer manual acceptance.`，该成员的要求版本在 Task 与冻结计划均为 0。
 - **源码确认**：`Start-RunAcceptance` 校验 Run 请求的单个任务归属，请求记录为同行 `task-40977fc85edd4847b361a242933a430d`。`Start-TaskAcceptance` 按共同批次成员校验其计划、修订与保存产物身份。
 - **处理与下一步**：本轮用 `acceptance-start -Batch a036f2a9fe804d96880eb29a51112ea6 -Revision 0` 取得验收 `a3d21708dd10438aaaec822d365636d9`，复用原候选。建议遇到共同 Run 归属不匹配时，提示对应批次入口并保留现有成员和产物校验。
+- **并行激活续证**：原验收登记后，Run `f0c23e6c26774d29b6a8375942befe66` 替换了本地运行文件。本批六份输入的快照哈希一致，四项离屏预览复核相同。该 Run 的批次成员只有其原任务。本轮关闭旧验收区间，在任务证据中独立记录当前 EXE 指纹及待观察步骤。
