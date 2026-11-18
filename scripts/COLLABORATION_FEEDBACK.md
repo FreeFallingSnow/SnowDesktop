@@ -344,6 +344,8 @@
 - **效率影响与状态**：P2，增加收尾调查及归档步骤，没有因此配置、编译或重跑通过测试；额外耗时/token未测量。本任务在独立verify提交中纳入本条真实反馈，并绑定原采样与用户验收，保留此前try历史，没有修改协作实现或绕过Git事务。
 - **下一步**：为纯验收提供显式空提交入口，校验对应Task、原候选/文件身份、验收回执及暂存区隔离，继续持有协调器Git事务租约；没有真实文件修改时不为其创建产品候选或构建。当前为已确认、待实现，不声称入口已修复。
 
+- **弹窗几何验收续证（2026-11-18）**：Task `code-health-6` 在批次 `eea61f9e35ab457295876ce81e47efbc` 修订 0 回填总表。并行提交 `4b2a31a73` 已保存该文件中完整的第 6 项验收行，随后本任务的协作提交返回 `no changes added to commit`。保留并行提交历史，并在独立 `verify` 提交中用本条记录绑定验收 `45926ce23e3e43a8a51f17dc151b81d3`。沿用原候选和实测结果。
+
 ### CF-022 冻结前空白检查遗漏未跟踪的新文件
 
 - **来源**：2026-11-06，CLI，Task `task-63ff9aa5c5324bad9c8dd7ff4b445101`，批次 `08a35cc2146c4d2f9578b28b9968d079` 修订 0，Run `db432d2617b34e34aa2b10c52d93be69`。
@@ -376,6 +378,8 @@
 - **实测**：2026-11-10，Task `equal-width-dialog-buttons` 的 `watch wait --condition files` 票据 `60dbdd917961def6c363b541ea23f1ae` 返回 `eligible`。前序日历 Run `f829e893544f42b2848fc5c0ffd7cc13` 已冻结，`src/system/panel/system_panel_model.cpp` 仍有前序任务的待提交改动。Task 在批次 `781988dcbc324ac5a85d2030414f7234` 修订 0 执行 `claim`，收到 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`
 - **源码确认及处理**：`build_wait_tasks.py` 的 `files` 条件只核对当前窗口的编辑成员，未核对指定路径的 Git 状态。认领保护正常，本任务等待前序提交后再认领，未接手他人改动或为反馈重建。
 - **下一步**：支持等待目标路径进入可安全认领的状态，区分前序冻结未提交、无归属的脏路径和显式接手，保留 `claim` 的原子复核。
+
+- **验收回填续证（2026-11-18）**：Task `code-health-6` 的 `watch wait --condition files --files CODE_HEALTH.md` 票据 `c9b8e9ccfdf439c457f48fc5a48c4f3d` 在任务 3 的批次 `eeb100d8c50e4edf80b7a061bc44ce0c`、Run `47ceb61e103e4252b6ddce9637e73efc` 冻结后返回 `eligible`。该文件仍有任务 3 的未提交改动，任务 6 在批次 `9b0a6d2748dd4bf4a8599eb68735cc60` 修订 0 的认领被拒，原文为 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`。撤回自身空登记，在本地等待前序提交后重新认领成功。本次回填复用既有构建和实测证据。
 
 - **续证（2026-11-18）**：Task `code-health-20261118` 在剪贴板批次 `565e44309195466e9b02ff255cbe2c40` 已冻结期间，以 `watch wait --condition files --files src/app/app.h` 获得票据 `307f0fccdea4ecc3790b442b43fdafbc` 和 `eligible`。`git status` 与 `task-list.sourceChanges` 显示该路径仍有前序任务的未提交改动。没有重新认领或启动验证，得到用户授权后由文件所有者补齐声明，两项任务合用续修 Run `672af510c8b6475a85ffb8ed27dfbe08`。文件可安全认领的等待条件仍待处理。
 
