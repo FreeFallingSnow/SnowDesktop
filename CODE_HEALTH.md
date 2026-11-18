@@ -4,7 +4,7 @@
 
 **已经确定的交付**　完成任务 2、3、4 三个长文件的实际源码拆分。每个文件都要把下文列出的独立职责迁到有明确归属的生产实现，接回原入口，验证原有行为、对象生命周期和兼容性。项目还持续跟踪共用规则、依赖和状态所有权，例如任务 5 的 UTF-8 校验和任务 6 的弹窗几何。
 
-**现在从哪里开始**　先完成 **3 · 视图树**。整树校验已迁出，完成入口对照后分别迁出布局与交互区域收集。**4 · 组件包** 已交给独立聊天继续。**2 · 任务引擎** 的音频消息消费已通过桌面实测。当前迁出原生任务的中间事件、终态与完成缓存。
+**现在从哪里开始**　先完成 **3 · 视图树**。整树校验已迁出，完成入口对照后分别迁出布局与交互区域收集。**4 · 组件包** 的四项拆分已验证。**2 · 任务引擎** 的音频消息消费已通过桌面实测。当前迁出原生任务的中间事件、终态与完成缓存。
 
 ## 任务与状态
 
@@ -15,7 +15,7 @@
 | 已验证 | 1 | 大图标配置值与 JSON 编解码分离 | `9e3c5e81a` 实施，`b7663d8a5` 补齐头文件依赖。标准 Release、`behavior_recovery`、`behavior_settings-host` 和独立头文件语法检查通过。与 `501607ae3` 对照，5 组往返和 6 项拒绝结果共 11,799 字节一致。 | 2026-11-18 |
 | 进行中 | 2 | 完成任务引擎 [widget_engine.cpp](src/widget/runtime/widget_engine.cpp) 的职责拆分 | `code-health-2` 的 `8e80fe92b` 将音频任务完成、失效播放取消和事件暂存迁入[任务模块](src/widget/tasks/widget_audio_task_dispatch.cpp)。标准 Release、本地激活、`behavior_widget`、无 PCH 头检查和五组工作线程探针通过（Run `cbdb5b6737114bf89581afae51b16498`）。用户对「音乐控制」本地播放、快速切歌及媒体键实测回复「验证通过」。当前迁出原生任务的中间事件、终态及完成缓存，核对取消时晚到事件和错误诊断。后续还有 Lua 任务启动绑定和视图绘制。 | 2026-11-18 |
 | 待验证 | 3 | 完成视图树 [widget_view_tree.cpp](src/widget/view/widget_view_tree.cpp) 的职责拆分 | `65175a834` 迁出节点转场校验，22 项返回值和首条诊断共 2,109 字节一致。标准 Release、`behavior_widget-focus` 和用户在[组件 API 测试](developer_assets/manual_widgets/component-api-test/)的实测通过（`9fd1abac`）。`b0c271d3c` 将递归、预算、键集合和可访问性关系迁到[整树校验](src/widget/view/widget_view_validation.cpp)，标准 Release、`behavior_widget-focus` 和激活通过（Run `c164e4a479e344ee914b94684006e027`）。等普通执行权完成 17 项入口对照。接下来分别迁出布局与交互区域收集。 | 2026-11-18 |
-| 进行中 | 4 | 完成组件包 [widget_package.cpp](src/widget/packages/widget_package.cpp) 的职责拆分 | `86c5a693d` 迁出预览字段解析。标准 Release、`widget_author_tools` 和 `widget_package_file_export` 通过（Run `2a9e6535be694361ad7eca9c4e8fe7b7`）。13 份清单的返回值、预览字段及完整诊断共 97,028 字节一致。用户确认 1.0.1 开发组件的标准和宽版预览通过。`code-health-04-component-packages` 接着迁出清单读取与目录检查，随后分别处理注册表和本地发布。 | 2026-11-18 |
+| 已验证 | 4 | 完成组件包 [widget_package.cpp](src/widget/packages/widget_package.cpp) 的职责拆分 | `86c5a693d` 迁出[预览字段解析](src/widget/packages/widget_package_manifest_fields.cpp)，13 份清单共 97,028 字节一致，用户确认 1.0.1 的标准和宽版预览通过（`bfb0c0d1`）。`56082e932` 迁出[清单读取和目录检查](src/widget/packages/widget_package_validation.cpp)，11 组目录结果共 10,742 字节一致。`9c58e6537` 迁出[注册表读写](src/widget/packages/widget_package_registry.cpp)，旧数据、重读、写失败回滚及损坏隔离共 1,372 字节一致。`546a19c57` 迁出[本地发布](src/widget/packages/widget_local_catalog_publisher.cpp)，5 组发布结果、目录索引和包哈希共 5,797 字节一致。各批标准 Release 及定向检查通过。原文件从 5,134 行减至 2,781 行，包发现、版本与来源选择、安装和回滚继续由包管理器协调同一份候选状态。 | 2026-11-18 |
 | 已验证 | 5 | 归并存储事务、值编码和设置服务中等价的 UTF-8 字节校验 | `b119f7447` 将字节校验从 3 份归为 1 份。标准 Release、`widget_storage_transaction` 和 `behavior_settings-host` 通过（Run `341657452b4841f2a3ee2a8a4359453b`）。候选库与 `01f130136` 的旧实现对照 2,393,892 次判定一致，包含截断、代理项和嵌入 NUL。入口继续处理键长、NUL、保留键和业务错误。用户实测便签重启后保留中文和表情。组件设置搜索实机待确认。 | 2026-11-18 |
 | 已验证 | 6 | 归并[弹窗图标和文字](src/app/popup/app_popup_geometry.cpp)中共用的几何计算 | `code-health-6` 的 `9342e8e5e` 将列表名称列计算从两处归到一处，文字入口复用同次计算的图标矩形。扇形移除不可达的图标反查，保留文字匹配和按条目索引的拖放命中。标准 Release、`behavior_drag-popup` 通过（Run `341657452b4841f2a3ee2a8a4359453b`），11,520 组列表输入的图标与文字矩形四边一致。用户实测确认列表重命名框位置正确，扇形滚动后拖放命中正常（验收 `45926ce23e3e43a8a51f17dc151b81d3`）。 | 2026-11-18 |
 | 已验证 | 7 | snowwidget 三个契约导出器共用 JSON 字符串转义 | `cd63cbd24` 将同一转义规则从 3 份归并为 1 份。已定向链接 Release，`api-contract`、`system-contract`、`view-contract` 三条真实命令的输出与旧工具逐字节一致，共 363,891 字节。 | 2026-11-18 |
