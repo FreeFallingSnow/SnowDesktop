@@ -540,7 +540,8 @@ struct WidgetsPagePresenter::Impl
     }
 
     [[nodiscard]] std::wstring PackageStateText(
-        const InstalledWidgetPackageSnapshot& package) const
+        const InstalledWidgetPackageSnapshot& package,
+        bool showsVersionSelector) const
     {
         if (!package.valid)
         {
@@ -548,6 +549,11 @@ struct WidgetsPagePresenter::Impl
                 ? L("app.settings.widgets_workshop_install_failed",
                     L"Workshop install failed")
                 : L("app.settings.invalid", L"Invalid");
+        }
+        if (showsVersionSelector)
+        {
+            return package.enabled ? std::wstring{} :
+                L("app.settings.widgets_disabled", L"Disabled");
         }
         if (package.canUseDevelopmentOverride)
         {
@@ -2677,17 +2683,20 @@ struct WidgetsPagePresenter::Impl
         primaryActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
         primaryActions.Spacing(8.0);
 
+        const bool showsVersionSelector = developerOverridesVisible &&
+            package.canUseDevelopmentOverride && package.canEnable;
+        const std::wstring packageState = PackageStateText(
+            package, showsVersionSelector);
         presenter_controls::SettingRow summaryRow;
         summaryRow.Initialize(primaryActions, 0.0);
         summaryRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         summaryRow.SetText(PackageDisplayName(package), JoinMetadata(
-            {package.sourceName, PackageStateText(package)}));
+            {package.sourceName, packageState}));
         muxc::TextBlock name = summaryRow.label;
         name.FontWeight(
             winrt::Windows::UI::Text::FontWeights::SemiBold());
         name.TextWrapping(mux::TextWrapping::Wrap);
         muxc::TextBlock metadata = summaryRow.help;
-        const std::wstring packageState = PackageStateText(package);
         muxa::AutomationProperties::SetLiveSetting(metadata,
             muxa::Peers::AutomationLiveSetting::Polite);
         muxc::StackPanel body;
@@ -2706,13 +2715,18 @@ struct WidgetsPagePresenter::Impl
         muxc::Grid identity;
         identity.ColumnSpacing(12);
         muxc::ColumnDefinition identityName, identityState;
-        identityState.Width(mux::GridLengthHelper::Auto());
+        identityState.Width(showsVersionSelector
+            ? mux::GridLengthHelper::FromValueAndType(1.0, mux::GridUnitType::Star)
+            : mux::GridLengthHelper::Auto());
         identity.ColumnDefinitions().Append(identityName);
         identity.ColumnDefinitions().Append(identityState);
         summaryRow.text.Children().Clear();
         identity.Children().Append(name);
         metadata.VerticalAlignment(mux::VerticalAlignment::Center);
-        metadata.TextWrapping(mux::TextWrapping::NoWrap);
+        metadata.TextWrapping(showsVersionSelector
+            ? mux::TextWrapping::Wrap : mux::TextWrapping::NoWrap);
+        if (showsVersionSelector)
+            metadata.TextAlignment(mux::TextAlignment::Right);
         muxc::Grid::SetColumn(metadata, 1);
         identity.Children().Append(metadata);
         summaryRow.text.Children().Append(identity);
@@ -2867,12 +2881,12 @@ struct WidgetsPagePresenter::Impl
 
         muxc::ComboBox versionSelector{nullptr};
         muxc::Button developmentAction{nullptr};
-        if (developerOverridesVisible && package.canUseDevelopmentOverride &&
-            package.canEnable)
+        if (showsVersionSelector)
         {
             versionSelector = muxc::ComboBox{};
             versionSelector.MinWidth(144.0);
             versionSelector.MinHeight(32.0);
+            versionSelector.VerticalAlignment(mux::VerticalAlignment::Center);
             versionSelector.UseSystemFocusVisuals(true);
             versionSelector.Items().Append(winrt::box_value(L(
                 "app.settings.widgets_installed_version", L"Installed version")));
@@ -2905,13 +2919,8 @@ struct WidgetsPagePresenter::Impl
             revokers.emplace_back([selector = versionSelector, token] {
                 selector.SelectionChanged(token);
             });
-            presenter_controls::SettingRow versionRow;
-            versionRow.Initialize(versionSelector, 0.0);
-            versionRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-            const auto versionLabel = L("app.settings.version", L"Version");
-            versionRow.SetText(versionLabel);
-            SetAutomation(versionSelector, versionLabel);
-            summary.Children().Append(versionRow.root);
+            SetAutomation(versionSelector, L("app.settings.version", L"Version"));
+            primaryActions.Children().InsertAt(0, versionSelector);
         }
         else if (developerOverridesVisible && package.canUseDevelopmentOverride)
         {
@@ -3110,7 +3119,8 @@ struct WidgetsPagePresenter::Impl
         const PackageRowBinding& binding,
         const InstalledWidgetPackageSnapshot& package)
     {
-        const std::wstring packageState = PackageStateText(package);
+        const std::wstring packageState = PackageStateText(
+            package, static_cast<bool>(binding.versionSelector));
         const std::wstring displayName = PackageDisplayName(package);
         binding.name.Text(displayName);
         binding.metadata.Text(JoinMetadata(
