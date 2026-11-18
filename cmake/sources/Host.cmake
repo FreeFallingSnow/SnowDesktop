@@ -392,6 +392,7 @@ set(SNOWDESKTOP_SOURCES
     src/icons/shortcut_icon_resource.h
     src/icons/icon_load_diagnostics.h
     src/common/utils.cpp
+    src/common/utf8.cpp
     src/diagnostics/diagnostic_log.cpp
     src/platform/operation_feedback.cpp
     src/desktop/desktop_display_settings.h

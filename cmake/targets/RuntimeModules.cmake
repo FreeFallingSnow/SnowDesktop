@@ -29,6 +29,8 @@ snowdesktop_add_runtime_module(SnowDesktopRuntimePolicy
 
 snowdesktop_add_runtime_module(SnowDesktopAtomicFile
     SOURCES src/data/atomic_file.cpp)
+snowdesktop_add_runtime_module(SnowDesktopUtf8
+    SOURCES src/common/utf8.cpp)
 snowdesktop_add_runtime_module(SnowDesktopWidgetPermissions
     SOURCES src/widget/permissions/widget_permission_broker.cpp
         src/widget/permissions/widget_permission_state.cpp
@@ -52,7 +54,7 @@ snowdesktop_add_runtime_module(SnowDesktopWidgetStorage
     SOURCES src/widget/storage/widget_storage_transaction.cpp
         src/widget/storage/widget_storage_value.cpp
         src/widget/storage/widget_secret_store.cpp
-    LINK_LIBRARIES bcrypt crypt32)
+    LINK_LIBRARIES SnowDesktopUtf8 bcrypt crypt32)
 
 # Shared native services used by the host and module-level behavior scenarios.
 # Data paths, deployment and diagnostic logging currently form one dependency
