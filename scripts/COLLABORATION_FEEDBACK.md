@@ -251,6 +251,8 @@
 
 ### CF-015 模块计划无法声明临时定向验证
 
+- **组件刷新归档库续证（2026-11-18）**：Task `task-40977fc85edd4847b361a242933a430d` 的批次 `a036f2a9fe804d96880eb29a51112ea6`、Run `866b5dc7e51647c48b1f2c738b036f31` 通过后，`save-candidate.ps1` 因槽已复用拒绝全局摘要不符，原文为 `Reusable slot no longer matches the package source batch.`。读取两份不可变源码清单，差异仅为 `CODE_HEALTH.md` 和宿主 `src/app/input/app_pointer_release.cpp`。组件包库写入时间在原 Run 内，复制前后哈希和当前槽摘要相符，记录于 `.codex-probes/code-health-04-refresh/saved-candidate-binding.json`。随后取普通执行权完成 5,156 字节生产库对照。未重编产品，后续仍需让临时验证绑定候选库，减少槽复用后的人工比对。
+
 - **组件安装事务对照（2026-11-18）**：Task `task-6d19c3ab79f94e3681f6115e6e070c7d`、批次 `0209f167b8d547709f2480e28b595ccb`、Run `7c5575df6d844771abc5af4a8ace0132`。两项正式测试覆盖设置宿主与真实 ZIP 安装。批次外的目录、来源和注册表失败对照只能在完成后通过 `run-checks.ps1 -WaitForLease` 申请执行权，会话 97616 先报告 `Waiting for the project execution lease for the installation probe.`，后续用旧、新归档包库取得 1,236 字节一致的报告。标准构建和正式测试均复用，无追加产品构建；临时定向验证仍待纳入批次计划。
 
 - **Lua 任务绑定续证（2026-11-18）**：Task `task-52a0430b03e04412805a1170dfe1fa6a` 在 Run `dd12405be44d473f8dc0f1de02c4f260` 通过后首次运行临时 Lua 探针，入口报告共享执行租约或事务占用。本地状态转空后复用候选对象，只链接并运行 18 项探针成功。计划仍无法绑定临时检查，保留首次拒绝和通过日志。
