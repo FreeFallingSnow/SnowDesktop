@@ -1909,41 +1909,6 @@ static std::optional<std::wstring> ResolveCurrentPackageAsset(
     return ResolvePackageAssetWithinRoot(root, relativePath);
 }
 
-static std::optional<snowdesktop::widget::PackageResource>
-CurrentPackageResource(lua_State* state, const std::string& name,
-    const char* expectedType = nullptr)
-{
-    lua_getfield(state, LUA_REGISTRYINDEX, "__widget_resources");
-    if (!lua_istable(state, -1))
-    {
-        lua_pop(state, 1);
-        return std::nullopt;
-    }
-    lua_getfield(state, -1, name.c_str());
-    if (!lua_istable(state, -1))
-    {
-        lua_pop(state, 2);
-        return std::nullopt;
-    }
-
-    snowdesktop::widget::PackageResource resource;
-    auto readField = [&](const char* field, std::string& output) {
-        lua_getfield(state, -1, field);
-        size_t fieldLength = 0;
-        const char* value = lua_tolstring(state, -1, &fieldLength);
-        if (value) output.assign(value, fieldLength);
-        lua_pop(state, 1);
-    };
-    readField("type", resource.type);
-    readField("path", resource.path);
-    readField("license", resource.license);
-    lua_pop(state, 2);
-    if (resource.type.empty() || resource.path.empty() ||
-        (expectedType && resource.type != expectedType))
-        return std::nullopt;
-    return resource;
-}
-
 static std::string BoundStoragePrefix(lua_State* state)
 {
     return WidgetWideToUtf8(BoundWidgetId(state));
@@ -2439,88 +2404,10 @@ static void SetWidgetRectContext(D2DState* state, RECT bounds)
 }
 
 using snowdesktop::widget_runtime::LuaResourceType;
-using snowdesktop::widget_runtime::PackageImageAcquireError;
 using snowdesktop::widget_runtime::PushResourceHandle;
+using snowdesktop::widget_runtime::ResolveResourceHandleImageContentKey;
+using snowdesktop::widget_runtime::ResolveResourceHandlePath;
 using snowdesktop::widget_runtime::TestResourceHandle;
-
-static std::optional<std::wstring> ResolveResourceHandlePath(
-    lua_State* L, int index, LuaResourceType expected)
-{
-    const auto* handle = TestResourceHandle(L, index);
-    if (!handle || handle->type != expected) return std::nullopt;
-    const char* type = expected == LuaResourceType::Image ? "image" : expected == LuaResourceType::Audio ? "audio" : "font";
-    const auto resource = CurrentPackageResource(L, handle->name, type);
-    if (!resource) return std::nullopt;
-    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_resource_paths");
-    if (!lua_istable(L, -1))
-    {
-        lua_pop(L, 1);
-        return std::nullopt;
-    }
-    lua_getfield(L, -1, handle->name);
-    size_t length = 0;
-    const char* value = lua_tolstring(L, -1, &length);
-    const std::optional<std::wstring> path = value
-        ? std::optional<std::wstring>(Utf8ToWideLocal(
-            std::string(value, length)))
-        : std::nullopt;
-    lua_pop(L, 2);
-    return path;
-}
-
-static std::optional<std::wstring> CurrentPackageResourcePath(
-    lua_State* state, const std::string& name, const char* expectedType)
-{
-    if (!CurrentPackageResource(state, name, expectedType))
-        return std::nullopt;
-    lua_getfield(state, LUA_REGISTRYINDEX, "__widget_resource_paths");
-    if (!lua_istable(state, -1))
-    {
-        lua_pop(state, 1);
-        return std::nullopt;
-    }
-    lua_getfield(state, -1, name.c_str());
-    size_t length = 0;
-    const char* value = lua_tolstring(state, -1, &length);
-    const std::optional<std::wstring> path = value
-        ? std::optional<std::wstring>(Utf8ToWideLocal(
-            std::string(value, length)))
-        : std::nullopt;
-    lua_pop(state, 2);
-    return path;
-}
-
-static std::optional<std::string> CurrentPackageImageContentKey(
-    lua_State* state, const std::string& name)
-{
-    if (!CurrentPackageResource(state, name, "image"))
-        return std::nullopt;
-    lua_getfield(state, LUA_REGISTRYINDEX,
-        "__widget_resource_content_keys");
-    if (!lua_istable(state, -1))
-    {
-        lua_pop(state, 1);
-        return std::nullopt;
-    }
-    lua_getfield(state, -1, name.c_str());
-    size_t length = 0;
-    const char* value = lua_tolstring(state, -1, &length);
-    const std::optional<std::string> key = value
-        ? std::optional<std::string>(std::string(value, length))
-        : std::nullopt;
-    lua_pop(state, 2);
-    return key;
-}
-
-static std::optional<std::string> ResolveResourceHandleImageContentKey(
-    lua_State* state, int index)
-{
-    const auto* handle = TestResourceHandle(state, index);
-    if (!handle || handle->type != LuaResourceType::Image ||
-        snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(handle->name))
-        return std::nullopt;
-    return CurrentPackageImageContentKey(state, handle->name);
-}
 
 static int lua_GetTime(lua_State* L)
 {
@@ -8455,241 +8342,48 @@ static int lua_WidgetOpenPopover(lua_State* L)
     return 1;
 }
 
-static bool ResourceCreationAllowed(lua_State* L)
+static const snowdesktop::widget_runtime::LuaResourceHost kLuaResourceHost{
+    [](lua_State* state) -> snowdesktop::widget_runtime::WidgetPackageImageCache* {
+        auto* d2d = GetD2D(state);
+        return d2d ? &d2d->packageImageCache : nullptr;
+    },
+    [](lua_State* state, const std::string& key) {
+        auto* d2d = GetD2D(state);
+        return d2d && (!d2d->ctx || LoadImageBitmap(d2d, key));
+    },
+    Sha256File,
+    WidgetPrewarmContentDigest,
+    [](lua_State* state) {
+        const auto* d2d = GetD2D(state);
+        return d2d && d2d->dwrite;
+    },
+    [](lua_State* state, const std::wstring& path) {
+        return GetD2D(state)->PreloadPrivateFont(path);
+    },
+    [](lua_State* state, const std::wstring& path) {
+        return GetD2D(state)->HasPrivateFont(path);
+    },
+    [](lua_State* state, const char* token) {
+        const auto* d2d = GetD2D(state);
+        const auto entry = d2d->runtimeImages.find(token);
+        return entry != d2d->runtimeImages.end() &&
+            entry->second.ownerWidgetId == BoundWidgetId(state);
+    },
+};
+
+static int lua_ResourceImage(lua_State* state)
 {
-    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_loading");
-    const bool loading = lua_toboolean(L, -1) != 0;
-    lua_pop(L, 1);
-    return loading;
+    return snowdesktop::widget_runtime::LoadLuaPackageImage(state, kLuaResourceHost);
 }
 
-static int ResourceApiError(
-    lua_State* state, const char* functionName, const char* code)
+static int lua_ResourceFont(lua_State* state)
 {
-    return luaL_error(state, "%s: %s", functionName, code);
+    return snowdesktop::widget_runtime::LoadLuaPackageFont(state, kLuaResourceHost);
 }
 
-static int lua_ResourceExists(lua_State* L)
+static int lua_ResourceStatus(lua_State* state)
 {
-    size_t length = 0;
-    const char* name = luaL_checklstring(L, 1, &length);
-    const bool exists = length <= 64 &&
-        CurrentPackageResourcePath(
-            L, std::string(name, length), nullptr).has_value();
-    lua_pushboolean(L, exists ? 1 : 0);
-    return 1;
-}
-
-static int lua_ResourceAudio(lua_State* L)
-{
-    if (!ResourceCreationAllowed(L))
-        return ResourceApiError(L, "resource.audio", "loadPhaseRequired");
-    size_t length = 0;
-    const char* name = luaL_checklstring(L, 1, &length);
-    if (!length || length > 64 || std::string_view(name, length).find('\0') != std::string_view::npos)
-        return ResourceApiError(L, "resource.audio", "invalidName");
-    if (!CurrentPackageResourcePath(L, std::string(name, length), "audio"))
-        return ResourceApiError(L, "resource.audio", "notDeclared");
-    PushResourceHandle(L, LuaResourceType::Audio, std::string(name, length));
-    return 1;
-}
-
-// Expected rejections leave this C++ frame normally. The object-free Lua
-// callback raises the error afterwards, outside string/path/optional lifetimes.
-static __declspec(noinline) int AcquirePackageImageResource(lua_State* L,
-    const char* nameRaw, size_t length, bool lazy, bool onDemand, const char*& error)
-{
-    const auto reject = [&error](const char* code) { error = code; return 0; };
-    const std::string name(nameRaw, length);
-    const auto declaration = CurrentPackageResource(L, name);
-    if (!declaration)
-        return reject("notDeclared");
-    if (declaration->type != "image")
-        return reject("typeMismatch");
-    auto* state = GetD2D(L);
-    if (!state)
-        return reject("hostUnavailable");
-    const auto existingContentKey =
-        CurrentPackageImageContentKey(L, name);
-    if (existingContentKey)
-    {
-        if (onDemand != state->packageImageCache.IsOnDemand(*existingContentKey))
-            return reject("invalidOptions");
-        PackageImageAcquireError validationError = PackageImageAcquireError::None;
-        if (!lazy && !onDemand &&
-            !state->packageImageCache.Validate(*existingContentKey, &validationError))
-            return reject(validationError == PackageImageAcquireError::QuotaExceeded ? "quotaExceeded" : "decodeFailed");
-        if (!state->packageImageCache.Find(*existingContentKey) ||
-            (!lazy && !onDemand && state->ctx &&
-                !LoadImageBitmap(state, *existingContentKey)))
-            return reject("unavailable");
-        PushResourceHandle(L, LuaResourceType::Image, name);
-        return 1;
-    }
-    const auto path = CurrentPackageResourcePath(L, name, "image");
-    if (!path)
-        return reject("unavailable");
-    std::string contentKey;
-    if (onDemand)
-    {
-        // Namespace separately from content digests. Each Lua VM binds to
-        // its own asset generation, including during same-path hot reload.
-        contentKey = "disk:" + std::to_string(reinterpret_cast<std::uintptr_t>(L)) +
-            ":" + name;
-    }
-    else
-        contentKey = Sha256File(*path);
-    if (contentKey.empty())
-        return reject("unavailable");
-    PackageImageAcquireError acquireError = PackageImageAcquireError::None;
-    if (onDemand)
-    {
-        if (!state->packageImageCache.AcquireOnDemand(contentKey, *path))
-            return reject("unavailable");
-    }
-    else if (!state->packageImageCache.Acquire(
-            contentKey, *path, &acquireError, lazy, WidgetPrewarmContentDigest))
-    {
-        return reject(acquireError == PackageImageAcquireError::QuotaExceeded
-                ? "quotaExceeded" :
-            acquireError == PackageImageAcquireError::InvalidInput
-                ? "unavailable" : "decodeFailed");
-    }
-    lua_getfield(L, LUA_REGISTRYINDEX,
-        "__widget_resource_content_keys");
-    if (!lua_istable(L, -1))
-    {
-        lua_pop(L, 1);
-        (void)state->packageImageCache.Release(contentKey);
-        return reject("hostUnavailable");
-    }
-    lua_pushlstring(L, contentKey.data(), contentKey.size());
-    lua_setfield(L, -2, name.c_str());
-    lua_pop(L, 1);
-    if (!lazy && !onDemand && state->ctx && !LoadImageBitmap(state, contentKey))
-        return reject("deviceUnavailable");
-    PushResourceHandle(L, LuaResourceType::Image, name);
-    return 1;
-}
-
-static int lua_ResourceImage(lua_State* L)
-{
-    if (!ResourceCreationAllowed(L))
-        return ResourceApiError(L, "resource.image", "loadPhaseRequired");
-    bool lazy = false;
-    bool onDemand = false;
-    if (!lua_isnoneornil(L, 2))
-    {
-        if (!lua_istable(L, 2))
-            return ResourceApiError(L, "resource.image", "invalidOptions");
-        lua_pushnil(L);
-        while (lua_next(L, 2) != 0)
-        {
-            const char* key = lua_type(L, -2) == LUA_TSTRING ? lua_tostring(L, -2) : nullptr;
-            if (!key || !lua_isboolean(L, -1))
-                return ResourceApiError(L, "resource.image", "invalidOptions");
-            const std::string_view option(key);
-            if (option == "lazy") lazy = lua_toboolean(L, -1) != 0;
-            else if (option == "onDemand") onDemand = lua_toboolean(L, -1) != 0;
-            else return ResourceApiError(L, "resource.image", "invalidOptions");
-            lua_pop(L, 1);
-        }
-    }
-    if (lazy && onDemand)
-        return ResourceApiError(L, "resource.image", "invalidOptions");
-    size_t length = 0;
-    const char* nameRaw = luaL_checklstring(L, 1, &length);
-    if (length == 0 || length > 64)
-        return ResourceApiError(L, "resource.image", "invalidName");
-    const char* error = nullptr;
-    const int results = AcquirePackageImageResource(L, nameRaw, length, lazy, onDemand, error);
-    return error ? ResourceApiError(L, "resource.image", error) : results;
-}
-
-static int lua_ResourceFont(lua_State* L)
-{
-    if (!ResourceCreationAllowed(L))
-        return ResourceApiError(L, "resource.font", "loadPhaseRequired");
-    size_t length = 0;
-    const char* nameRaw = luaL_checklstring(L, 1, &length);
-    if (length == 0 || length > 64)
-        return ResourceApiError(L, "resource.font", "invalidName");
-    const std::string name(nameRaw, length);
-    const auto declaration = CurrentPackageResource(L, name);
-    if (!declaration)
-        return ResourceApiError(L, "resource.font", "notDeclared");
-    if (declaration->type != "font")
-        return ResourceApiError(L, "resource.font", "typeMismatch");
-    auto* state = GetD2D(L);
-    if (!state || !state->dwrite)
-        return ResourceApiError(L, "resource.font", "hostUnavailable");
-    const auto path = CurrentPackageResourcePath(L, name, "font");
-    if (!path)
-        return ResourceApiError(L, "resource.font", "unavailable");
-    if (!state->PreloadPrivateFont(*path))
-        return ResourceApiError(L, "resource.font", "fontLoadFailed");
-    PushResourceHandle(L, LuaResourceType::Font, name);
-    return 1;
-}
-
-static int lua_ResourceStatus(lua_State* L)
-{
-    const auto* handle = TestResourceHandle(L, 1);
-    if (!handle)
-        return ResourceApiError(L, "resource.status", "invalidHandle");
-    const char* type = handle->type == LuaResourceType::Image
-        ? "image" : handle->type == LuaResourceType::Audio ? "audio" : "font";
-    auto* state = GetD2D(L);
-    const bool runtimeImage = handle->type == LuaResourceType::Image &&
-        snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(handle->name);
-    const auto path = runtimeImage
-        ? std::optional<std::wstring>{}
-        : ResolveResourceHandlePath(L, 1, handle->type);
-    const auto imageContentKey = runtimeImage ||
-            handle->type != LuaResourceType::Image
-        ? std::optional<std::string>{}
-        : ResolveResourceHandleImageContentKey(L, 1);
-    bool ready = false;
-    bool pending = false;
-    bool resident = false;
-    if (runtimeImage && state)
-    {
-        const auto resource = state->runtimeImages.find(handle->name);
-        ready = resource != state->runtimeImages.end() &&
-            resource->second.ownerWidgetId == BoundWidgetId(L);
-        resident = ready;
-    }
-    else if (path && state)
-    {
-        if (handle->type == LuaResourceType::Image && imageContentKey &&
-            state->packageImageCache.Find(*imageContentKey))
-        {
-            ready = state->packageImageCache.Ready(*imageContentKey);
-            pending = !ready && !state->packageImageCache.DecodeFailed(*imageContentKey);
-            resident = !state->packageImageCache.Find(*imageContentKey)->pixels.empty();
-        }
-        else
-            ready = handle->type == LuaResourceType::Audio ||
-                (handle->type == LuaResourceType::Font && state->HasPrivateFont(*path));
-    }
-    lua_createtable(L, 0, 3);
-    lua_pushstring(L, ready ? "ready" : pending ? "pending" : "error");
-    lua_setfield(L, -2, "state");
-    lua_pushstring(L, type);
-    lua_setfield(L, -2, "type");
-    lua_pushstring(L, handle->name);
-    lua_setfield(L, -2, "name");
-    if (handle->type == LuaResourceType::Image)
-    {
-        lua_pushboolean(L, resident);
-        lua_setfield(L, -2, "resident");
-    }
-    if (!ready && !pending)
-    {
-        lua_pushliteral(L, "unavailable");
-        lua_setfield(L, -2, "error");
-    }
-    return 1;
+    return snowdesktop::widget_runtime::PushLuaResourceStatus(state, kLuaResourceHost);
 }
 
 static ComPtr<ID2D1Bitmap1> BitmapFromHBitmap(ID2D1DeviceContext* ctx, HBITMAP hbm)
@@ -29595,6 +29289,8 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     using snowdesktop::widget_runtime::lua_DrawCircle;
     using snowdesktop::widget_runtime::lua_DrawFa;
     using snowdesktop::widget_runtime::lua_DrawFluent;
+    using snowdesktop::widget_runtime::lua_ResourceExists;
+    using snowdesktop::widget_runtime::lua_ResourceAudio;
 
     static constexpr CatalogFunctionDescriptor functions[] = {
 #define SNOW_WIDGET_PUBLIC_FUNCTION(                                      \

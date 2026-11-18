@@ -576,6 +576,8 @@ set(SNOWDESKTOP_SOURCES
     src/widget/preview/widget_preview_context.cpp
     src/widget/preview/widget_preset_preview.h
     src/widget/data/widget_data_broker.cpp
+    src/widget/data/widget_resource_lua.cpp
+    src/widget/data/widget_resource_lua.h
     src/widget/data/widget_calendar_event_query.cpp
     src/widget/data/widget_calendar_event_query.h
     src/widget/api/widget_calendar_query_options.cpp
