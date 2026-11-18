@@ -38,6 +38,8 @@ bool DesktopApp::UsesCategorizedPopupControls(const DesktopWidget& widget) const
 
 ScrollingItemWidget* DesktopApp::GetCategorizedPopupView() const
 {
+    if (folderPreview_ && folderPreview_->searchOpen && dockFolderPopupOpen_)
+        return dockFolderPopupContainer_.get();
     if (auto* group = GetGroupPopupView())
     {
         const RECT frame = GetCategorizedPopupFrame(popupRect_);
@@ -69,7 +71,7 @@ FolderMapping* DesktopApp::GetHostedFolderMappingPopupView(const RECT& popup) co
         (folderPreview_->inlineBounds || dockFolderPopupWidget_.dateHeaders))
     {
         auto* view = dockFolderPopupContainer_.get();
-        const LONG top = GetFolderPreviewNavigationRow(popup).bounds.bottom;
+        const LONG top = GetFolderPreviewNavigationRow(popup).ContentTop();
         if (folderPreview_->inlineBounds)
         {
             const RECT frame{popup.left, top, popup.right, std::max(top, folderPreview_->inlineContentBottom)};
@@ -119,6 +121,7 @@ size_t DesktopApp::GetPopupFolderEntryIndex(const DesktopWidget& widget, size_t 
 
 RECT DesktopApp::GetCollectionPopupControlsRect(const RECT& popup) const
 {
+    if (folderPreview_) return {};
     auto* view = GetCategorizedPopupView();
     if (!view) return {};
     const RECT frame = GetCategorizedPopupFrame(popup);
@@ -815,7 +818,7 @@ RECT DesktopApp::GetCollectionPopupContentRect(const RECT& popup) const
         return popup;
     RECT content = snowdesktop::collection_popup_layout::ResolveBodyRect(popup, metrics);
     LONG top = content.top;
-    if (folderPreview_) top = GetFolderPreviewNavigationRow(popup).bounds.bottom + metrics.controlGap;
+    if (folderPreview_) top = GetFolderPreviewNavigationRow(popup).ContentTop() + metrics.controlGap;
     const RECT controls = GetCollectionPopupControlsRect(popup);
     if (!IsRectEmptyRect(controls)) top = std::max(top, controls.bottom);
     if (const DesktopWidget* widget = GetOpenPopupWidget();

@@ -330,6 +330,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 mouseDownHit_ = nullptr;
                 snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                 UpdateHostInputImePosition();
+                if (folderPreview_) RefreshDockFolderPopupGeometry();
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }

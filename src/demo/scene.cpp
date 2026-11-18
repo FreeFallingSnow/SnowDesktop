@@ -284,9 +284,19 @@ Frame EvaluateLayout(const Scene& scene, std::uint64_t milliseconds)
             Bounds(scene, next); live.motion = {live.surface.bounds, next, static_cast<std::uint64_t>(step.atMs), step.durationMs};
         }
         else if (step.action == "surface.view") live.surface.listMode = step.value == "list";
-        else if (step.action == "surface.search") live.surface.search = step.value;
+        else if (step.action == "surface.search")
+        {
+            if (live.surface.folderPreviewPath.empty()) live.surface.search = step.value;
+            else live.surface.folderPreviewSearch = step.value;
+        }
         else if (step.action == "surface.category") live.surface.category = step.value;
-        else if (step.action == "surface.folderPreview") live.surface.folderPreviewPath = step.value;
+        else if (step.action == "surface.folderPreview")
+        {
+            if (step.value.empty()) live.surface.folderPreviewSearch.reset();
+            else if (live.surface.folderPreviewSearch && live.surface.folderPreviewPath != step.value)
+                live.surface.folderPreviewSearch->clear();
+            live.surface.folderPreviewPath = step.value;
+        }
     }
     Frame frame;
     for (auto& live : surfaces)

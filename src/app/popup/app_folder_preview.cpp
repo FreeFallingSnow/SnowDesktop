@@ -8,6 +8,7 @@
 #include "layout/folder_preview_header_layout.h"
 #include "settings/animation_settings.h"
 #include "ui/menu/menu_fluent_glyphs.h"
+#include "widget/runtime/widget_engine.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "widgets/folder_member_order.h"
 #include "widgets/widget_folder_search.h"
@@ -452,6 +453,7 @@ void DesktopApp::ShowFolderPreviewDirectory(const std::wstring& path, bool fromF
     auto& view = dockFolderPopupWidget_;
     if (!keepTemporaryDisplay) view = {};
     snowdesktop::folder_preview::ConfigureDirectoryView(view);
+    view.showSearchBox = folderPreview_->searchOpen;
     view.scrollOffset = 0;
     view.type = DesktopWidgetType::FolderMapping;
     view.id = kDockFolderPopupWidgetId;
@@ -776,6 +778,7 @@ void DesktopApp::SuspendInlineFolderPreview()
     if (!folderPreview_ || !folderPreview_->inlineBounds) return;
     SaveFolderPreviewView();
     folderPreview_->keyboardFocused = false;
+    if (dockFolderPopupContainer_) dockFolderPopupContainer_->SetSearchFocused(false);
     folderReadWork_.Cancel(snowdesktop::folder_preview::kResolveWorkKey);
     PreserveDockFolderPopupDragSourceForTransition();
     ClearPopupMouseDownItem();
@@ -926,7 +929,9 @@ snowdesktop::folder_preview::NavigationRow DesktopApp::GetFolderPreviewNavigatio
         height = layout::ResolveControlRowHeight(GetCategorizedWidgetTabHeight(), scale);
     }
     row.bottom = std::min<LONG>(row.bottom, row.top + height);
-    return snowdesktop::folder_preview::ResolveNavigationRow(row, scale);
+    const LONG contentBottom = folderPreview_->inlineBounds
+        ? std::min(panel.bottom, folderPreview_->inlineContentBottom) : panel.bottom - metrics.bottomPadding;
+    return snowdesktop::folder_preview::ResolveNavigationRow(row, scale, folderPreview_->searchOpen, contentBottom);
 }
 
 std::vector<snowdesktop::folder_preview::Breadcrumb> DesktopApp::GetFolderPreviewBreadcrumbs(const RECT& popup) const
@@ -1122,6 +1127,32 @@ bool DesktopApp::HandleFolderPreviewBreadcrumbContextMenu(POINT point, bool show
     return true;
 }
 
+void DesktopApp::SetFolderPreviewSearchOpen(bool open)
+{
+    if (!folderPreview_ || !dockFolderPopupContainer_) return;
+    auto& view = *dockFolderPopupContainer_;
+    if (open)
+    {
+        if (widgetEngine_ && widgetEngine_->HasFocusedHostInput()) widgetEngine_->BlurHostInput(false);
+        for (auto& container : containers_)
+            if (auto* other = dynamic_cast<ScrollingItemWidget*>(container.get()))
+                other->SetSearchFocused(false);
+    }
+    else view.ClearSearchText();
+    if (folderPreview_->searchOpen != open)
+    {
+        folderPreview_->searchOpen = open;
+        dockFolderPopupWidget_.showSearchBox = open;
+        popupScrollOffset_ = 0;
+        view.InvalidateFilterCache();
+    }
+    view.SetSearchFocused(open);
+    if (open) FocusDesktopInputWindow();
+    typeToSelectSession_.Reset();
+    RefreshDockFolderPopupGeometry();
+    UpdateHostInputImePosition();
+}
+
 bool DesktopApp::HandleFolderPreviewHeaderPress(POINT point)
 {
     if (!folderPreview_ || !IsCollectionPopupInteractive()) return false;
@@ -1136,6 +1167,11 @@ bool DesktopApp::HandleFolderPreviewHeaderPress(POINT point)
     const auto* motion = GetCollectionPopupResizeTransition();
     const RECT panel = motion ? motion->Panel(popup) : popup;
     const auto row = GetFolderPreviewNavigationRow(panel);
+    if (PtInRect(&row.searchButton, point))
+    {
+        SetFolderPreviewSearchOpen(!folderPreview_->searchOpen);
+        return true;
+    }
     if (PtInRect(&row.back, point))
     {
         NavigateFolderPreviewBack();

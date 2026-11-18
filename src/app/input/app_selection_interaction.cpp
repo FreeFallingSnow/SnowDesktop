@@ -277,6 +277,11 @@ void DesktopApp::ClearInlineFolderPreviewSelectionOutside(POINT point)
 {
     if (!folderPreview_ || !folderPreview_->inlineBounds || PtInRect(&*folderPreview_->inlineBounds, point)) return;
     folderPreview_->keyboardFocused = false;
+    if (dockFolderPopupContainer_ && dockFolderPopupContainer_->IsSearchFocused())
+    {
+        dockFolderPopupContainer_->SetSearchFocused(false);
+        (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+    }
     bool changed = false;
     for (auto& entry : dockFolderPopupWidget_.folderEntries)
         changed |= std::exchange(entry.selected, false);
@@ -300,6 +305,12 @@ void DesktopApp::ClearSelectionForExternalWindow(HWND window)
 
     if (filePreview_.RetainsSelection(window)) return;
 
+    if (folderPreview_ && dockFolderPopupContainer_ && dockFolderPopupContainer_->IsSearchFocused())
+    {
+        folderPreview_->keyboardFocused = false;
+        dockFolderPopupContainer_->SetSearchFocused(false);
+        RefreshDockFolderPopupGeometry();
+    }
     const auto revision = selectionController_.Revision();
     const bool keyboardFocus = keyboardNavVisualFocus_;
     ClearSelection();

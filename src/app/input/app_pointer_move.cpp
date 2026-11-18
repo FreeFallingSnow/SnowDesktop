@@ -340,7 +340,9 @@ void DesktopApp::OnMouseMoveAt(
         }
         if (changed)
         {
-            queueCategorizedDesktopOwner(view);
+            if (folderPreview_ && folderPreview_->inlineBounds)
+                (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+            else queueCategorizedDesktopOwner(view);
             if (IsCollectionPopupHostedByFloatingWindow() &&
                 floatingPopupHwnd_ && IsWindow(floatingPopupHwnd_))
                 InvalidateFloatingPopupWindow(false);

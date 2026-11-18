@@ -204,6 +204,23 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     const bool popupKeyboardTarget = IsCollectionPopupKeyboardTarget();
     const bool previewKeyboardTarget = folderPreview_ && popupKeyboardTarget;
     const bool folderPopupKeyboardTarget = dockFolderPopupOpen_ && (!folderPreview_ || popupKeyboardTarget);
+    if (previewKeyboardTarget && key == VK_ESCAPE && repeated) return true;
+    if (previewKeyboardTarget && !dragSession_.HasContext() && !dragDropController_.IsTransportActive())
+    {
+        if (key == 'F' &&
+            (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) &&
+            !(snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) &&
+            !(snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000))
+        {
+            if (!repeated) SetFolderPreviewSearchOpen(true);
+            return true;
+        }
+        if (key == VK_ESCAPE && folderPreview_->searchOpen)
+        {
+            SetFolderPreviewSearchOpen(false);
+            return true;
+        }
+    }
 
     std::optional<CategorizedPopupScope> popupLayout;
     const bool popupNavigationKey = key == VK_RETURN || key == VK_ESCAPE || key == VK_UP ||
@@ -219,7 +236,8 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         {
             const bool handled = view->HandleSearchKey(key);
             popupScrollOffset_ = 0;
-            ResetCollectionPopupAnimationCache();
+            if (previewKeyboardTarget) RefreshDockFolderPopupGeometry();
+            else ResetCollectionPopupAnimationCache();
             InvalidateRect(hwnd_, nullptr, FALSE);
             if (handled || (key != VK_RETURN && key != VK_UP && key != VK_DOWN)) return handled;
         }

@@ -139,7 +139,7 @@ void DesktopApp::DrawCollectionPopup(
     };
     popupRect_ = preparedRect ? *preparedRect : GetCollectionPopupRect(widget);
     auto* offsetView = GetCategorizedPopupView();
-    if (!offsetView || !offsetView->IsSearchActive())
+    if (folderPreview_ || !offsetView || !offsetView->IsSearchActive())
         popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
             GetCollectionPopupMaxScrollOffset(widget, popupRect_));
     const auto* motion = GetCollectionPopupResizeTransition();
@@ -282,6 +282,25 @@ void DesktopApp::DrawCollectionPopup(
             auto* textFormat = GetCollectionPopupTextFormat(row.scale, false);
             drawNavigationButton(row.back, false);
             drawNavigationButton(row.home, true);
+            if (!IsRectEmpty(&row.searchButton))
+            {
+                const bool hovered = PtInRect(&row.searchButton, pointer) != FALSE;
+                const bool active = folderPreview_->searchOpen;
+                if (hovered || active) highlight(row.searchButton);
+                const auto center = D2D1::Point2F(
+                    (row.searchButton.left + row.searchButton.right) * 0.5f - row.scale,
+                    (row.searchButton.top + row.searchButton.bottom) * 0.5f - row.scale);
+                const float stroke = std::max(1.0f, 1.25f * row.scale);
+                ComPtr<ID2D1SolidColorBrush> brush;
+                if (SUCCEEDED(ctx->CreateSolidColorBrush(controlColor(hovered || active ? 1.0f : 0.82f), &brush)))
+                {
+                    ctx->DrawEllipse(D2D1::Ellipse(center, 3.8f * row.scale, 3.8f * row.scale), brush.Get(), stroke);
+                    ctx->DrawLine(D2D1::Point2F(center.x + 2.7f * row.scale, center.y + 2.7f * row.scale),
+                        D2D1::Point2F(center.x + 5.3f * row.scale, center.y + 5.3f * row.scale), brush.Get(), stroke);
+                }
+                if (!privatePreview && !IsRectEmpty(&row.searchBox) && dockFolderPopupContainer_)
+                    dockFolderPopupContainer_->DrawSearchBox(ctx);
+            }
             const LONG dividerInset = ScaleWidgetCu(8.0f, row.scale);
             if (!IsRectEmpty(&row.home) && !IsRectEmpty(&row.breadcrumb))
                 DrawD2DSeparator(ctx, {row.home.right, row.home.top + dividerInset,
@@ -911,7 +930,8 @@ void DesktopApp::DrawCollectionPopup(
         const std::wstring status = dockFolderPopupLoading_
             ? _LW("widget.folder_mapping.loading")
             : dockFolderPopupAvailable_
-                ? _LW("widget.folder_mapping.empty")
+                ? _LW(folderPreview_ && dockFolderPopupContainer_ && dockFolderPopupContainer_->IsSearchActive()
+                    ? "widget.categories.no_results" : "widget.folder_mapping.empty")
                 : _LW("widget.folder_mapping.unavailable");
         DrawD2DTextEllipsis(ctx, status, content,
             GetCollectionPopupTextFormat(popupMetrics.scale, false),
@@ -930,7 +950,7 @@ void DesktopApp::DrawCollectionPopup(
         PtInRect(&popupRect_, pointer);
     popupHovered = popupHovered || popupScrollbarDragging_;
     auto* searchPopup = GetCategorizedPopupView();
-    const int contentScroll = searchPopup && searchPopup->IsSearchActive()
+    const int contentScroll = !folderPreview_ && searchPopup && searchPopup->IsSearchActive()
         ? searchPopup->GetScrollOffset() : popupScrollOffset_;
     if (!fan) DrawScrollbarAt(
         ctx, snowdesktop::popup_scrollbar_layout::Viewport(presentedPanel, content), contentHeight, visibleHeight,

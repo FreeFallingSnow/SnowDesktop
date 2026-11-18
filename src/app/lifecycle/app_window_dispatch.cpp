@@ -302,6 +302,11 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         }
         return nullptr;
     };
+    const auto refreshPreviewSearch = [this](const ScrollingItemWidget* searchable, bool queryChanged) {
+        if (!folderPreview_ || !searchable || searchable != dockFolderPopupContainer_.get()) return;
+        if (queryChanged) popupScrollOffset_ = 0;
+        RefreshDockFolderPopupGeometry();
+    };
 
     switch (msg)
     {
@@ -374,6 +379,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
                         composition, cursor);
                 }
                 UpdateHostInputImePosition();
+                refreshPreviewSearch(searchable, false);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return 0;
             }
@@ -457,6 +463,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
                 ImmReleaseContext(hwnd, context);
             }
             UpdateHostInputImePosition();
+            refreshPreviewSearch(searchable, (lp & GCS_RESULTSTR) != 0);
             InvalidateRect(hwnd_, nullptr, FALSE);
             return 0;
         }
@@ -476,6 +483,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         {
             searchable->ClearSearchComposition();
             UpdateHostInputImePosition();
+            refreshPreviewSearch(searchable, false);
             InvalidateRect(hwnd_, nullptr, FALSE);
             return 0;
         }
@@ -582,7 +590,8 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
                 view->AppendSearchChar(ch);
                 typeToSelectSession_.Reset();
                 popupScrollOffset_ = 0;
-                ResetCollectionPopupAnimationCache();
+                if (folderPreview_) RefreshDockFolderPopupGeometry();
+                else ResetCollectionPopupAnimationCache();
                 UpdateHostInputImePosition();
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return 0;

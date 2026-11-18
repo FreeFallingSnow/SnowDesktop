@@ -932,8 +932,12 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         if (popupOccludesPoint)
         {
             popupScrollOffset_ = 0;
-            InvalidateCollectionPopupContent();
-            InvalidateFloatingPopupWindow();
+            if (folderPreview_) RefreshDockFolderPopupGeometry();
+            else
+            {
+                InvalidateCollectionPopupContent();
+                InvalidateFloatingPopupWindow();
+            }
         }
         UpdateHostInputImePosition();
         InvalidateRect(hwnd_, nullptr, FALSE);

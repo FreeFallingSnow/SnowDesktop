@@ -16,6 +16,7 @@
 #include "core/item.h"
 #include "common/types.h"
 #include "app/app.h"
+#include "layout/folder_preview_header_layout.h"
 #include "layout/collection_popup_layout.h"
 #include "common/utils.h"
 #include "collection_group_rules.h"
@@ -90,6 +91,12 @@ static size_t FolderEntryDateGroupRank(const FolderEntry& entry)
 
 RECT FolderMapping::GetSearchBoxRect() const
 {
+    if (app_ && app_->folderPreview_ && data_ == &app_->dockFolderPopupWidget_)
+    {
+        const RECT popup = app_->folderPreview_->inlineBounds.value_or(app_->popupRect_);
+        const auto* motion = app_->GetCollectionPopupResizeTransition();
+        return app_->GetFolderPreviewNavigationRow(motion ? motion->Panel(popup) : popup).searchBox;
+    }
     return GetCategorizedSearchBoxRect(
         data_ && app_ && data_->showSearchBox);
 }
@@ -939,7 +946,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
         !PtInRect(&data_->bounds, GetRenderPointer());
     const bool lt = UsesLightContentTheme();
 
-    DrawSearchBox(context);
+    if (!app_->folderPreview_ || data_ != &app_->dockFolderPopupWidget_) DrawSearchBox(context);
     DrawDetailsHeader(context, FolderMappingContentRect(this));
 
     if (data_->folderEntries.empty())

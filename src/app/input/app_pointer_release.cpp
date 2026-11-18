@@ -963,6 +963,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
         snowdesktop::private_pointer::ReleasePointerCapture();
+        if (folderPreview_) RefreshDockFolderPopupGeometry();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }

@@ -67,6 +67,7 @@ struct Session
     LONG inlineContentBottom = 0;
     float inlineScale = 1.0f;
     bool keyboardFocused = true;
+    bool searchOpen = false;
     bool inlineListMode = false;
     bool inlineDateHeaders = false;
     std::optional<FolderPopupHome> folderHome;

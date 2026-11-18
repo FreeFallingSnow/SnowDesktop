@@ -120,6 +120,8 @@ void ScrollingItemWidget::RefreshFolderSearch()
 void ScrollingItemWidget::EnsureFolderSearch() const
 {
     if (IsPreviewRendering()) return;
+    // The preview filters its currently enumerated directory.
+    if (app_ && app_->folderPreview_ && data_ == &app_->dockFolderPopupWidget_) return;
     if (!data_ || !app_ || !data_->showSearchBox || searchText_.empty() ||
         (data_->type != DesktopWidgetType::FileCategories &&
         data_->type != DesktopWidgetType::FolderMapping &&

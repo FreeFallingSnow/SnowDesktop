@@ -276,12 +276,16 @@ if (request.component == "demo-scene")
                                 folderPreview_.emplace();
                                 folderPreview_->hostWidgetId = widget.id;
                                 folderPreview_->pages.push_back({dockFolderPopupWidget_.sourceFolderPath});
+                                folderPreview_->searchOpen = surface.folderPreviewSearch.has_value();
+                                dockFolderPopupWidget_.showSearchBox = folderPreview_->searchOpen;
                                 if (!popup) folderPreview_->SetInlineGeometry(*view);
                             }
                             else if (!surface.dockAnchored) dockFolderPopupWidget_.gridSpan = {1, 1};
                             dockFolderPopupContainer_ = std::make_unique<FolderMapping>(&dockFolderPopupWidget_, this);
                             dockFolderPopupContainer_->SetRenderOptions(&options);
                             if (!directoryPreview) dockFolderPopupContainer_->SetSearchText(demo::Wide(surface.search));
+                            else if (surface.folderPreviewSearch)
+                                dockFolderPopupContainer_->SetSearchText(demo::Wide(*surface.folderPreviewSearch));
                             dockFolderPopupOpen_ = true;
                             dockFolderPopupAvailable_ = true;
                             popupWidgetIndex_ = static_cast<std::size_t>(-1);

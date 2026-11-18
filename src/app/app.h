@@ -2648,6 +2648,7 @@ private:
     bool TryFolderPreviewActivation(POINT point, WPARAM keyState, const std::wstring& menuPath, bool keyboard);
     void ClearInlineFolderPreviewSelectionOutside(POINT point);
     bool HandleFolderPreviewHeaderPress(POINT point);
+    void SetFolderPreviewSearchOpen(bool open);
     float GetFolderPreviewInsertionPad(const RECT& popup, size_t index, bool after) const;
     void SyncFolderPreviewSortToOtherViews();
     bool HandleFolderPreviewBreadcrumbContextMenu(POINT point, bool show);
