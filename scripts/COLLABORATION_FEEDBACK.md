@@ -120,6 +120,8 @@
 
 ### CF-010 等待结束回执过大
 
+- **源文件归属查询（2026-11-18）**：Task `code-health-8` 为确认正在回填的 `CODE_HEALTH.md` 归属运行 `scripts/build.bat task-list`，回执包含完整 Task 历史，工具输出被截断。源码确认该分支同时序列化完整任务数组与 `sourceChanges`。随后用 Git 确认前序任务已提交，再由批次 `751ee068e3fa46439d9f69e4b5d5c99b` 修订 0 的 `claim` 原子确认归属。可补按路径读取归属的窄回执，未重复查询或构建。
+
 - **单任务状态查询（2026-11-16）**：Task `task-c4672fc2024d4b49b86093109d956516` 用 `scripts/build.bat status task-c4672fc2024d4b49b86093109d956516` 核对批次 `225f0675906f49d89daa16aa7d9a955d` 的编辑修订，回执仍包含全局历史并被工具截断（chunk `ae2715`）。已从批次成员和目标 Task 字段恢复修订，继续原批次，未为反馈重复查询或构建。单任务状态查询仍需要默认窄回执，完整历史按需读取。
 
 - **工坊管理器定向编译终态（2026-11-15）**：Task `workshop-tag-shortcuts`、批次 `51db66e07c034a55bf500c67dcf7516b` 修订 0、Run `2dee1c34d3824199bf02e92a723e5810`。`run wait -Task workshop-tag-shortcuts -RunId 2dee1c34d3824199bf02e92a723e5810 -Seconds 60` 返回 `passed`，但同回执包含请求、runner 文件列表与全部阶段，工具记录 2029 行并截断（chunk `041dca`）。终态默认精简、完整历史另取的缺口仍存在。在后续调查中复用原记录，未重跑此请求。
@@ -234,6 +236,8 @@
 - **应用全量续证（2026-11-17）**：Task `latest-release-msix-20261117` 先以 `run start -Action tests -Mode full` 获得 Run `ba6d5004972e40709c39950722ce42e5`，原检出 CMake 缓存指向已不存在的 Visual Studio 实例版本 `18.5.11723.231`，配置失败。随后 `run start -Action candidate -Snapshot d27bd211d61047b6a7ffc3c1c4eb4c9a -CandidateAction tests -Mode full` 的 Run `9f5cff79e08f4c1a8bbe1fd5716c8304` 报 `Candidate observed tools/environment changed; capture a new context.`，两次均未执行测试。只读对照定位到两个选择器 `CMAKE_GENERATOR` 和 `CMAKE_GENERATOR_TOOLSET`。按原候选缓存恢复 `Visual Studio 18 2026` 和 `version=14.52.37025` 后，完整上下文摘要匹配，同一快照的全量执行 Run 为 `95f8e9dcb5ea4c048eb308848e0d7548`。路径由原 Run 记录保留。后续诊断可直接给出不匹配字段名和已记录选择器的恢复依据，继续保留摘要校验。
 
 ### CF-015 模块计划无法声明临时定向验证
+
+- **通知计划存储续证（2026-11-18）**：Task `code-health-8`、批次 `751ee068e3fa46439d9f69e4b5d5c99b` 修订 0、Run `7595dbbf19f64fbe8ef887806b089361`。当前 CTest 清单没有通知计划存储条目。标准 Release 和部署契约 `behavior_manifest` 通过，通知计划的读写和拒绝行为由临时生产入口对照验证。产品与测试日志分别记录向同一候选目录配置，测试阶段 CMake 耗时 6.97 秒。仍待支持模块计划按需声明临时验证及核对配置复用条件。未另开任务、重复提交或扩大到全量。
 
 - **桌面 WCG 图标选中底板续证（2026-11-17）**：Task `icon-selection-highlight-gaps`、批次 `3cda9c8e1702464ca0e0601fb236d031` 修订 0、Run `2db7d4c8173a434e93f80ae0f85802cd`。现有 CTest 无 WCG 外观场景，经 `scripts/build.bat ready-and-wait` 选 `behavior_manifest` 核对部署。产品日志第 14–15 行记录配置 3.1 秒、生成 3.0 秒，测试日志第 7–8 行对同一候选目录再次配置 3.1 秒、生成 2.7 秒。Release、激活及部署契约通过，WCG 外观待实机。继续核对产品与测试阶段共享配置的条件。
 
