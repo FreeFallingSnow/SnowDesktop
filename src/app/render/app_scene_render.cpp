@@ -564,7 +564,8 @@ void DesktopApp::DrawDynamicOverlays(
         // These popup views draw their feedback with their own content clip
         // and animation. A generic pass would blend the same indicator again.
         if (popupTarget &&
-            (wc == GetGroupPopupView() ||
+            ((folderPreview_ && targetSlot && dynamic_cast<const ExternalFileItem*>(targetSlot->GetItem())) ||
+                wc == GetGroupPopupView() ||
                 wc == GetHostedFolderMappingPopupView(GetCollectionPopupRect(*openPopupWidget))))
             return;
         const bool targetUsesPopupLayer =

@@ -3163,7 +3163,8 @@ private:
     snowdesktop::folder_preview::NavigationRow GetFolderPreviewNavigationRow(const RECT& panel) const;
     std::vector<snowdesktop::folder_preview::Breadcrumb> GetFolderPreviewBreadcrumbs(const RECT& popup) const;
     void OpenFolderPreviewPath(const std::wstring& path, bool fromFan = false);
-    DesktopWidget* GetFolderPreviewComponent(bool contentSource);
+    DesktopWidget* GetFolderPreviewComponent();
+    void CommitFolderPreviewDisplaySettings();
     void SortDockFolderPopupContents(int mode, bool ascending);
     void ShowDockFolderPopupSortMenu(POINT screenPoint);
     void ShowDockFolderPopupContextMenu(

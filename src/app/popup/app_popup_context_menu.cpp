@@ -59,7 +59,7 @@ void DesktopApp::AppendDockFolderPopupDisplayMenu(HMENU menu)
     append(kContextWidgetToggleDateGroup, _LW("app.interact.date_header"),
         widget.dateHeaders ? _LW("app.interact.shown") : _LW("app.interact.hidden"),
         snowdesktop::menu_fluent_glyphs::kDateHeader);
-    if (const auto* host = GetFolderPreviewComponent(false))
+    if (const auto* host = GetFolderPreviewComponent())
     {
         const auto state = [](bool enabled) { return _LW(enabled ? "app.interact.on" : "app.interact.off"); };
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -88,7 +88,7 @@ bool DesktopApp::ExecuteDockFolderPopupDisplayCommand(UINT command)
         LaunchPathWithShortcutPolicy(hwnd_, widget.sourceFolderPath);
         return true;
     }
-    if (auto* host = GetFolderPreviewComponent(false))
+    if (auto* host = GetFolderPreviewComponent())
     {
         const bool behavior = [&] {
             switch (command)
@@ -172,47 +172,58 @@ bool DesktopApp::ExecuteDockFolderPopupDisplayCommand(UINT command)
         if (!widget.showFileCategories) dockFolderPopupContainer_->EndCategoryTabDrag(false);
         dockFolderPopupContainer_->InvalidateFilterCache();
     }
-    if (folderPreview_ && !folderPreview_->IsTemporary())
-    {
-        const auto copyDisplay = [&](auto& target) {
-            target.listMode = widget.listMode;
-            target.listColumns = widget.listColumns;
-            target.dateHeaders = widget.dateHeaders;
-            target.detailShowModified = widget.detailShowModified;
-            target.detailShowType = widget.detailShowType;
-            target.detailShowSize = widget.detailShowSize;
-            target.detailModifiedPosition = widget.detailModifiedPosition;
-            target.detailTypePosition = widget.detailTypePosition;
-            target.detailSizePosition = widget.detailSizePosition;
-            if constexpr (requires { target.showDetails; }) target.showDetails = widget.showDetails;
-        };
-        if (auto* source = GetFolderPreviewComponent(true))
-        {
-            copyDisplay(*source);
-            for (auto& container : containers_)
-                if (auto* view = dynamic_cast<ScrollingItemWidget*>(container.get()); view && view->GetWidgetData() == source)
-                    view->InvalidateSlots();
-        }
-        if (folderPreview_->folderHome)
-        {
-            auto& home = *folderPreview_->folderHome;
-            copyDisplay(home.data);
-            if (home.mappingId.empty())
-                for (auto& entry : dockEntries_)
-                    if (IsFolderDockEntry(entry) && std::to_wstring(static_cast<int>(entry.type)) +
-                        L":" + ToUpperInvariant(entry.reference) == home.dockSourceId)
-                    {
-                        copyDisplay(entry);
-                        break;
-                    }
-        }
-        folderPreview_->inlineListMode = widget.listMode;
-        folderPreview_->inlineDateHeaders = widget.dateHeaders;
-        SaveFolderPreviewView();
-        SaveLayoutSlots();
-    }
-    else if (!folderPreview_) CommitDockFolderPopupStateToSource();
+    if (folderPreview_) CommitFolderPreviewDisplaySettings();
+    else CommitDockFolderPopupStateToSource();
     InvalidateCollectionPopupContent();
     RefreshDockFolderPopupGeometry();
     return true;
+}
+
+void DesktopApp::CommitFolderPreviewDisplaySettings()
+{
+    if (!folderPreview_ || folderPreview_->IsTemporary()) return;
+    const auto& widget = dockFolderPopupWidget_;
+    const auto copyDisplay = [&](auto& target) {
+        target.listMode = widget.listMode;
+        target.listColumns = widget.listColumns;
+        target.dateHeaders = widget.dateHeaders;
+        target.detailShowModified = widget.detailShowModified;
+        target.detailShowType = widget.detailShowType;
+        target.detailShowSize = widget.detailShowSize;
+        target.detailModifiedPosition = widget.detailModifiedPosition;
+        target.detailTypePosition = widget.detailTypePosition;
+        target.detailSizePosition = widget.detailSizePosition;
+        if constexpr (requires { target.showDetails; }) target.showDetails = widget.showDetails;
+    };
+    if (auto* owner = GetFolderPreviewComponent())
+    {
+        auto* settings = ResolveWidgetContentViewData(owner);
+        copyDisplay(*settings);
+        for (auto& container : containers_)
+        {
+            auto* view = dynamic_cast<ScrollingItemWidget*>(container.get());
+            if (!view || (view->GetWidgetData() != owner && view->GetWidgetData() != settings)) continue;
+            if (auto* group = dynamic_cast<FileGroup*>(view)) group->InvalidateHostedView();
+            else if (auto* mapping = dynamic_cast<FolderMapping*>(view)) mapping->InvalidateFilterCache();
+            else view->InvalidateSlots();
+        }
+    }
+    if (folderPreview_->folderHome)
+    {
+        auto& home = *folderPreview_->folderHome;
+        copyDisplay(home.data);
+        if (home.view) home.view->InvalidateFilterCache();
+        if (home.mappingId.empty())
+            for (auto& entry : dockEntries_)
+                if (IsFolderDockEntry(entry) && std::to_wstring(static_cast<int>(entry.type)) +
+                    L":" + ToUpperInvariant(entry.reference) == home.dockSourceId)
+                {
+                    copyDisplay(entry);
+                    break;
+                }
+    }
+    folderPreview_->inlineListMode = widget.listMode;
+    folderPreview_->inlineDateHeaders = widget.dateHeaders;
+    SaveFolderPreviewView();
+    SaveLayoutSlots();
 }

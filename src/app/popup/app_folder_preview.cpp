@@ -338,8 +338,9 @@ bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const 
                     session.SetInlineGeometry(*view);
                     break;
                 }
-                session.inlineListMode = widgets_[index].listMode;
-                session.inlineDateHeaders = widgets_[index].dateHeaders;
+                const auto* settings = ResolveWidgetContentViewData(&widgets_[hostIndex]);
+                session.inlineListMode = settings->listMode;
+                session.inlineDateHeaders = settings->dateHeaders;
             }
             if (const auto* popup = GetOpenPopupWidget())
             {
@@ -450,8 +451,8 @@ void DesktopApp::ShowFolderPreviewDirectory(const std::wstring& path, bool fromF
     view.itemKeys = std::move(sort.order);
     view.contentSortColumn = snowdesktop::list_detail_rules::FromLegacyFolderSortMode(sort.mode);
     view.contentSortAscending = sort.ascending;
-    const size_t source = FindWidgetIndexById(folderPreview_->sourceWidgetId);
-    const auto* sourceView = source < widgets_.size() ? &widgets_[source]
+    const auto* host = GetFolderPreviewComponent();
+    const auto* sourceView = host ? ResolveWidgetContentViewData(host)
         : folderPreview_->folderHome ? &folderPreview_->folderHome->data : nullptr;
     if (sourceView)
     {
@@ -466,14 +467,14 @@ void DesktopApp::ShowFolderPreviewDirectory(const std::wstring& path, bool fromF
         view.detailSizePosition = sourceView->detailSizePosition;
         view.dateHeaders = sourceView->dateHeaders;
     }
-    if (const auto* host = GetFolderPreviewComponent(false)) view.privacyMode = host->privacyMode;
+    if (host) view.privacyMode = host->privacyMode;
     if (folderPreview_->inlineBounds)
     {
-        const size_t host = FindWidgetIndexById(folderPreview_->hostWidgetId);
-        if (host < widgets_.size())
+        const size_t hostIndex = FindWidgetIndexById(folderPreview_->hostWidgetId);
+        if (hostIndex < widgets_.size())
         {
-            popupPageId_ = widgets_[host].gridCell.pageId;
-            view.gridSpan = widgets_[host].gridSpan;
+            popupPageId_ = widgets_[hostIndex].gridCell.pageId;
+            view.gridSpan = widgets_[hostIndex].gridSpan;
         }
         view.listMode = folderPreview_->inlineListMode;
         view.dateHeaders = folderPreview_->inlineDateHeaders;
@@ -859,11 +860,11 @@ const DesktopWidget* DesktopApp::GetInlineFolderPreviewData(const DesktopWidget&
         ? &dockFolderPopupWidget_ : nullptr;
 }
 
-DesktopWidget* DesktopApp::GetFolderPreviewComponent(bool contentSource)
+DesktopWidget* DesktopApp::GetFolderPreviewComponent()
 {
     if (!folderPreview_ || folderPreview_->IsTemporary()) return nullptr;
-    const auto& id = !contentSource && !folderPreview_->hostWidgetId.empty()
-        ? folderPreview_->hostWidgetId : folderPreview_->sourceWidgetId;
+    const auto& id = folderPreview_->hostWidgetId.empty()
+        ? folderPreview_->sourceWidgetId : folderPreview_->hostWidgetId;
     const size_t index = FindWidgetIndexById(id);
     return index < widgets_.size() ? &widgets_[index] : nullptr;
 }
@@ -986,7 +987,7 @@ std::vector<snowdesktop::folder_preview::Breadcrumb> DesktopApp::GetFolderPrevie
 
 UINT DesktopApp::TrackFolderPreviewPathMenu(HMENU menu, POINT screenPoint, bool textOnly)
 {
-    const auto* owner = GetFolderPreviewComponent(false);
+    const auto* owner = GetFolderPreviewComponent();
     const std::wstring hostId = owner ? owner->id : std::wstring{};
     const auto previousPin = interactionPinnedWidgetId_;
     if (!hostId.empty()) interactionPinnedWidgetId_ = hostId;
@@ -1182,15 +1183,11 @@ bool DesktopApp::HandleFolderPreviewHeaderPress(POINT point)
                 break;
             }
     }
-    if (hit != WidgetHit::DateHeaderToggleBtn && hit != WidgetHit::ListToggleBtn) return false;
     if (hit == WidgetHit::DateHeaderToggleBtn)
-        dockFolderPopupWidget_.dateHeaders = folderPreview_->inlineDateHeaders = !folderPreview_->inlineDateHeaders;
-    else
-        dockFolderPopupWidget_.listMode = folderPreview_->inlineListMode = !folderPreview_->inlineListMode;
-    if (dockFolderPopupContainer_) dockFolderPopupContainer_->InvalidateFilterCache();
-    popupScrollOffset_ = 0;
-    (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
-    return true;
+        return ExecuteDockFolderPopupDisplayCommand(kContextWidgetToggleDateGroup);
+    if (hit == WidgetHit::ListToggleBtn)
+        return ExecuteDockFolderPopupDisplayCommand(kContextWidgetToggleListMode);
+    return false;
 }
 
 const snowdesktop::popup_resize_transition::Transition* DesktopApp::GetCollectionPopupResizeTransition() const

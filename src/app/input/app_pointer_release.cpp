@@ -1080,7 +1080,9 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
         snowdesktop::private_pointer::ReleasePointerCapture();
-        if (dockFolderPopupResize)
+        if (dockFolderPopupResize && folderPreview_)
+            CommitFolderPreviewDisplaySettings();
+        else if (dockFolderPopupResize)
             CommitDockFolderPopupStateToSource();
         else
             RequestLayoutSave();

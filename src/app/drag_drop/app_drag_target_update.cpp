@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/folder_preview_header_layout.h"
 #include "common/utils.h"
 #include "core/drag_target_resolver.h"
 #include "layout/popup_drag_rules.h"
@@ -438,6 +439,37 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
     {
         const RECT popup = GetCollectionPopupRect(
             dockFolderPopupWidget_);
+        if (folderPreview_)
+        {
+            const auto* motion = GetCollectionPopupResizeTransition();
+            const RECT panel = motion ? motion->Panel(popup) : popup;
+            const auto navigation = GetFolderPreviewNavigationRow(panel);
+            if (PtInRect(&navigation.breadcrumb, client))
+            {
+                targetContainer = dockFolderPopupContainer_.get();
+                targetSlot = nullptr;
+                targetRegion = HitRegion::Blocked;
+                if (!dockFolderPopupAvailable_) return true;
+
+                const bool external = dragDropController_.IsExternalDragActive();
+                const auto sourcePaths = external ? externalFileDropPaths_ : dragSession_.SourceList().FilePaths();
+                if (!external && sourcePaths.empty()) return true;
+                for (const auto& crumb : GetFolderPreviewBreadcrumbs(panel))
+                {
+                    if (crumb.path.empty() || !PtInRect(&crumb.bounds, client)) continue;
+                    if (IsSelfContainedFolderDrop(sourcePaths, crumb.path)) return true;
+
+                    // Each ancestor has a distinct path length within this
+                    // view, including when overflow changes the visible list.
+                    targetSlot = popupDragTarget_.BindHandoff(targetContainer, crumb.bounds,
+                        crumb.path.size(), SlotFeedbackRole::Popup, &dockFolderPopupWidget_,
+                        [&] { return std::make_unique<ExternalFileItem>(crumb.path); });
+                    targetRegion = HitRegion::Handoff;
+                    return true;
+                }
+                return true;
+            }
+        }
         if (!PtInRect(&popup, client))
             return false;
 

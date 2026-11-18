@@ -144,7 +144,7 @@ void DesktopApp::DrawCollectionPopup(
             GetCollectionPopupMaxScrollOffset(widget, popupRect_));
     const auto* motion = GetCollectionPopupResizeTransition();
     const RECT presentedPanel = motion ? motion->Panel(popupRect_) : popupRect_;
-    if (auto* host = GetFolderPreviewComponent(false)) dockFolderPopupWidget_.privacyMode = host->privacyMode;
+    if (const auto* host = GetFolderPreviewComponent()) dockFolderPopupWidget_.privacyMode = host->privacyMode;
     const bool privatePreview = folderPreview_ && widget.privacyMode && !PtInRect(&presentedPanel, pointer) &&
         !dragSession_.IsActive() && !dragDropController_.IsExternalDragActive();
 
@@ -288,6 +288,11 @@ void DesktopApp::DrawCollectionPopup(
                     row.home.right + 1, row.home.bottom - dividerInset}, controlColor(0.16f));
             const auto crumbs = privatePreview ? std::vector<snowdesktop::folder_preview::Breadcrumb>{}
                 : GetFolderPreviewBreadcrumbs(presentedPanel);
+            const auto* dropSlot = dragSession_.IsActive() && dragSession_.TargetRegion() == HitRegion::Handoff &&
+                dragSession_.TargetContainer() == dockFolderPopupContainer_.get()
+                ? dragSession_.TargetSlot() : nullptr;
+            const auto* dropFolder = dropSlot ? dynamic_cast<const ExternalFileItem*>(dropSlot->GetItem()) : nullptr;
+            const std::wstring dropPath = dropFolder ? dropFolder->GetPath() : std::wstring{};
             for (size_t i = 0; i < crumbs.size(); ++i)
             {
                 const auto& crumb = crumbs[i];
@@ -301,7 +306,15 @@ void DesktopApp::DrawCollectionPopup(
                     label.left = chevron.right;
                 }
                 const bool hovered = PtInRect(&crumb.bounds, pointer) != FALSE;
-                if (hovered) highlight(label);
+                if (!dropPath.empty() && crumb.path == dropPath)
+                {
+                    RECT dropBounds = label;
+                    InflateRect(&dropBounds, -ScaleWidgetCu(2.0f, row.scale), -ScaleWidgetCu(3.0f, row.scale));
+                    if (!IsRectEmpty(&dropBounds))
+                        DrawD2DRoundedRectangle(ctx, dropBounds, static_cast<float>(ScaleWidgetCu(5.0f, row.scale)),
+                            D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.15f), D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.60f));
+                }
+                else if (hovered) highlight(label);
                 InflateRect(&label, -snowdesktop::collection_popup_layout::ScaleDimension(3, row.scale), 0);
                 DrawD2DTextEllipsis(ctx, crumb.label, label, textFormat,
                     controlColor(hovered || i + 1 == crumbs.size() ? 0.97f : 0.82f),

@@ -978,7 +978,9 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
     dockFolderPopupMarqueeInitialSelection_.clear();
     if (widgetEngine_)
         widgetEngine_->CancelInteractionPointerPress();
-    if (commitDockFolderPopupResize)
+    if (commitDockFolderPopupResize && folderPreview_)
+        CommitFolderPreviewDisplaySettings();
+    else if (commitDockFolderPopupResize)
         CommitDockFolderPopupStateToSource();
     else if (layoutNeedsSave)
         RequestLayoutSave();
