@@ -247,6 +247,8 @@
 
 ### CF-015 模块计划无法声明临时定向验证
 
+- **退出转场和布局对照（2026-11-18）**：Task `task-b840db32d64a46a59ee07001c0df18b1`、续修批次 `15b07c6e915b4527b7516aace8f95f47` 修订 1、Run `0f369eff55414328a42b9799252a1167`。临时驱动只链接已保存的前后生产对象，修正驱动的包含路径后 `run-checks.ps1` 首次重试被 `Shared output lease/transaction is busy` 拒绝。用同一前台脚本等普通执行权后，基线复现旧位置、候选八项通过。复用已构建的产品和两项正式测试；批次仍不能直接携带专用临时验证。
+
 - **组件来源归档库对照（2026-11-18）**：Task `task-8cba4c000221462ebf59fb8874728771` 的批次 `a4b6c57ee055415fbbf1a65a3140a398` 修订 0、Run `335ff4b95ddd4b91a1a98a6142c23027` 通过后，`run-checks.ps1 -Mode candidate -WaitForLease` 只需链接已保存的驱动和库，仍在其他任务编辑期间等待普通执行权。同一前台进程随后取得租约，一次链接通过，1,935 字节与基线一致。下一步是核对批次如何携带这种已声明的临时链接和执行。复用原构建和正式测试结果。
 
 - **原生分流临时验证（2026-11-18）**：Task `code-health-2` 的批次 `4a160c99953447c0a29e4c36b6833270` 修订 0、Run `2f4a8220a8364fb6a2d8f8a3e45c5c31` 完成构建后，独立头检查和探针首次进入执行权返回 `Shared output lease/transaction is busy; no configure, build, arrangement or process action started.`。在下一可用窗口沿用相同命令，直接链接候选对象并执行成功。批次仍不能携带此临时验证，保留首次拒绝与后续成功，未重编产品或重跑正式测试。
