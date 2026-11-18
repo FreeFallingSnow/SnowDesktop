@@ -75,6 +75,8 @@
 
 ### CF-003 任务关闭后同会话无法继续
 
+- **跨聊天接手验收（2026-11-18，源码确认）**：任务 `code-health-04-component-packages` 接手 `task-8500e8ba3ef941eab3637c9875217be3` 已冻结的批次 `d50470c64fd749f290cb0322b12d104b` 修订 0 和 Run `2a9e6535be694361ad7eca9c4e8fe7b7`。`Start-TaskAcceptance` 只接受原批次成员，`Start-RunAcceptance` 同样校验原请求 Task，无法用新负责人的登记绑定已激活候选。未调用已知会拒绝的命令。以 `bfb0c0d1` 绑定用户反馈和原运行身份。后继验收关联及无历史起点的补录仍待处理。
+
 - **视图转场实测补录（2026-11-18）**　用户对桌面「组件 API 测试」的颜色切换、移除和添加三步回复「没问题」。后继 Task `task-8500e8ba3ef941eab3637c9875217be3` 核对实际运行的 Run `7595dbbf19f64fbe8ef887806b089361`、本机 EXE 哈希和组件 `3ac44a679` 的部署文件。沿用 `verify` 提交记录反馈及文件身份，验收起点未知。原候选成员要求及后继补录缺口仍待处理。
 
 - **通知计划实测补录（2026-11-18）**：Task `code-health-8` 关闭后，用户对重启后预约通知投递场景回复「测试通过」。后继 Task `task-972b9eca9efe40778dc851dcdfce222c` 核对原批次 `751ee068e3fa46439d9f69e4b5d5c99b` 修订 0、Run `7595dbbf19f64fbe8ef887806b089361`，本地 EXE、保存候选与激活回执的 SHA-256 一致。源码仍要求原候选成员为活跃任务，因此用 `verify` 提交补录反馈，未执行已知会被拒绝的验收命令。后继关联及历史起点未知的验收补录入口仍待实现。
@@ -242,6 +244,8 @@
 - **应用全量续证（2026-11-17）**：Task `latest-release-msix-20261117` 先以 `run start -Action tests -Mode full` 获得 Run `ba6d5004972e40709c39950722ce42e5`，原检出 CMake 缓存指向已不存在的 Visual Studio 实例版本 `18.5.11723.231`，配置失败。随后 `run start -Action candidate -Snapshot d27bd211d61047b6a7ffc3c1c4eb4c9a -CandidateAction tests -Mode full` 的 Run `9f5cff79e08f4c1a8bbe1fd5716c8304` 报 `Candidate observed tools/environment changed; capture a new context.`，两次均未执行测试。只读对照定位到两个选择器 `CMAKE_GENERATOR` 和 `CMAKE_GENERATOR_TOOLSET`。按原候选缓存恢复 `Visual Studio 18 2026` 和 `version=14.52.37025` 后，完整上下文摘要匹配，同一快照的全量执行 Run 为 `95f8e9dcb5ea4c048eb308848e0d7548`。路径由原 Run 记录保留。后续诊断可直接给出不匹配字段名和已记录选择器的恢复依据，继续保留摘要校验。
 
 ### CF-015 模块计划无法声明临时定向验证
+
+- **共享构建后的临时链接（2026-11-18）**：Task `code-health-04-component-packages` 从批次 `79f36ec1e5384874a0596293f404c9cf` 修订 0、Run `cbdb5b6737114bf89581afae51b16498` 保存三个库，用于注册表生产入口的临时对照。首次 `run-registry-check.ps1 -Mode baseline` 拿普通 `Enter-BuildEntry` 租约时返回 `Shared output lease/transaction is busy`，尚未启动链接。已保留基线库，后续等执行窗口补验。批次计划仍无法携带任务专用的临时链接和执行，租约本身按预期生效。
 
 - **通知计划存储续证（2026-11-18）**：Task `code-health-8`、批次 `751ee068e3fa46439d9f69e4b5d5c99b` 修订 0、Run `7595dbbf19f64fbe8ef887806b089361`。当前 CTest 清单没有通知计划存储条目。标准 Release 和部署契约 `behavior_manifest` 通过，通知计划的读写和拒绝行为由临时生产入口对照验证。产品与测试日志分别记录向同一候选目录配置，测试阶段 CMake 耗时 6.97 秒。仍待支持模块计划按需声明临时验证及核对配置复用条件。未另开任务、重复提交或扩大到全量。
 
