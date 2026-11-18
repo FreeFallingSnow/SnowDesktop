@@ -20,6 +20,7 @@
 #include "widget_multiplayer.h"
 #include "widget_script_read_ahead.h"
 #include "widget/tasks/widget_audio_playback_lua.h"
+#include "widget/tasks/widget_audio_task_dispatch.h"
 #include "ui/render/smooth_corner_geometry.h"
 #include "ui/input/text_input_accessibility.h"
 namespace text_input = snowdesktop::text_input;
@@ -13147,18 +13148,9 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         }
     } dispatchScope{ applyingTaskBrokerActions_, taskWakePending_, taskWakeCallback_ };
     PumpWidgetMultiplayer();
-    std::vector<snowdesktop::widget_runtime::AudioPlaybackMessage> audioEvents;
-    if (audioPlayback_)
-        for (auto& message : audioPlayback_->Drain())
-        {
-            if (message.taskId)
-            {
-                const auto snapshot = taskBroker_->Snapshot(message.taskId);
-                if (!snapshot || snapshot->cancelRequested) { audioPlayback_->Cancel(message.taskId); continue; }
-                (void)taskBroker_->Complete(message.taskId, message.ok, message.state.error);
-            }
-            else audioEvents.push_back(std::move(message));
-        }
+    const auto audioEvents =
+        snowdesktop::widget_runtime::ConsumeAudioPlaybackMessages(
+            audioPlayback_.get(), *taskBroker_);
     if (nativeTaskExecutor_)
         for (auto& message : nativeTaskExecutor_->DrainMessages())
         {

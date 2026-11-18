@@ -588,6 +588,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/tasks/widget_media_task_executor.cpp
     src/widget/tasks/widget_audio_output_task_executor.cpp
     src/widget/tasks/widget_audio_playback.cpp
+    src/widget/tasks/widget_audio_task_dispatch.cpp
     src/widget/tasks/widget_system_control_tasks.cpp
     src/widget/tasks/widget_clipboard_task_executor.cpp
     src/widget/tasks/widget_filesystem_handle_store.cpp
