@@ -45,6 +45,7 @@ snowdesktop_add_runtime_module(SnowDesktopWidgetPackages
         src/widget/packages/widget_package_read.cpp
         src/widget/packages/widget_package_registry.cpp
         src/widget/packages/widget_package_validation.cpp
+        src/widget/packages/widget_local_catalog_publisher.cpp
         src/widget/runtime/widget_logical_slot.cpp
     LINK_LIBRARIES SnowDesktopAtomicFile SnowDesktopWidgetPermissions bcrypt ole32)
 snowdesktop_add_runtime_module(SnowDesktopWidgetApiRegistry
