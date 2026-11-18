@@ -17,14 +17,27 @@ SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".inc"}
 MAX_PAIR_FILES = 20
 
 
-def git(*args):
+def git(*args, input_text=None):
     return subprocess.check_output(
-        ["git", "-c", "core.quotePath=false", *args], encoding="utf-8"
+        ["git", "-c", "core.quotePath=false", *args], encoding="utf-8", input=input_text
     )
 
 
 def native(path):
     return path != GENERATED and posixpath.splitext(path)[1] in SUFFIXES
+
+
+def physical_line_counts(revision):
+    counts = {}
+    # Relative to an empty tree, numstat counts every physical line as an addition.
+    empty_tree = git("hash-object", "-t", "tree", "--stdin", input_text="").strip()
+    entries = git("diff", "--numstat", "-z", "--text", "--no-renames", "--no-ext-diff",
+                  "--no-textconv", empty_tree, revision, "--", *ROOTS, ":(exclude)" + GENERATED)
+    for entry in entries.rstrip("\0").split("\0"):
+        if entry:
+            added, _, path = entry.split("\t", 2)
+            counts[path] = int(added)
+    return counts
 
 
 def include_edges(revision, files):
@@ -103,12 +116,14 @@ def main():
     files = {p for p in git("ls-tree", "-r", "--name-only", revision, "--", *ROOTS).splitlines()
              if native(p)}
     includes, users = include_edges(revision, files)
+    line_counts = physical_line_counts(revision)
     history = git("log", "--no-merges", "--no-renames", "--format=@%H", "--name-only",
                   *sorted(set(tips.values())), "--not", mainline, "--", *ROOTS)
     touches, small, pairs, commits, broad = changes(history, files)
     write_csv(args.output / "files.csv", ["path", "directIn", "reachableIn", "directOut",
-              "touches", "smallCommitTouches"],
-              ((p, len(users[p]), reverse_reach(p, users), len(includes[p]), touches[p], small[p])
+              "touches", "smallCommitTouches", "physicalLines"],
+              ((p, len(users[p]), reverse_reach(p, users), len(includes[p]), touches[p], small[p],
+                line_counts.get(p, 0))
                for p in sorted(files)))
     write_csv(args.output / "includes.csv", ["consumer", "includes"],
               ((p, dep) for p in sorted(files) for dep in sorted(includes[p])))

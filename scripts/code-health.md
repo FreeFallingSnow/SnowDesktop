@@ -11,10 +11,12 @@ $out = Join-Path $PWD '.codex-probes/health-baseline-example'
 python scripts/code_health_inventory.py "$out/inventory"
 $inventory = Get-Content -Raw "$out/inventory/inventory.json" | ConvertFrom-Json
 Import-Csv "$out/inventory/files.csv" | Sort-Object { [int]$_.reachableIn } -Descending | Select-Object -First 15
+Import-Csv "$out/inventory/files.csv" | Sort-Object { [int]$_.physicalLines } -Descending | Select-Object -First 15 path,physicalLines,directIn,smallCommitTouches
 Import-Csv "$out/inventory/cochange.csv" | Select-Object -First 15
 ```
 
 - `files.csv` 记录当前路径的直接引用者、可反向到达的文件、直接引用数及开发提交数。`includes.csv` 可沿边检查实际依赖。范围包括 `src/`、`tools/snowwidget/` 和 `steam_bridge/src/` 的原生源码，排除生成的 acrylic 噪声数组。项目维护的上游改编代码须再按第三方声明甄别。新增源码根或生成文件时复核脚本内的范围。
+- `physicalLines` 统计提交快照中的物理行，含注释、空行和末尾无换行的最后一行。复查长文件时，对照函数跨度、调用方、资源或状态所有者，找出可以单独迁移并验证的职责。在[状态表](../CODE_HEALTH.md)中用文件路径和具体符号登记；一个大文件可以有几个独立单元，发现不同职责时分别更新。比较前后规模时用相同源码范围，留意代码移入头文件或 `.inc` 后的实际依赖。
 - 包含图只解析双引号字面量，依次查同目录和所属源码根。它包含未启用的条件分支，遗漏宏、SDK、生成头、PCH、其他目标包含目录及链接边。`reachableIn` 是文件数。判断消费者时，再核对当前 CMake 源清单和已有 File API 的 Release 配置、目标源及依赖；记录与当前版本不匹配的旧回复。
 - Git 取各开发分支可达提交的并集，剔除 `main` 可达提交和合并提交。计数单位是触及文件的提交。一次改动超过 20 个范围内原生文件时，仅保留频次，排除该次共改样本。`cochange.csv` 同时给出共改次数和两端各自的小提交数。复核重命名用 `git log --follow --no-merges --branches=release/* --not main -- <单个文件>`，再读代表性差异。早期只有发布压缩历史的时期缺少开发粒度。
 

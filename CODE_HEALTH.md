@@ -5,7 +5,9 @@
 | 状态 | 优化事项 | 任务或证据 | 下次从这里继续 | 更新日期 |
 | --- | --- | --- | --- | --- |
 | 下一项 | 大图标配置值与 JSON 编解码分离 | 基线 `501607ae3`；公共模型的两个字段按值保存配置 | 先让 [common/types.h](src/common/types.h) 只包含值类型定义，核对读写调用方、配置默认值与旧配置往返 | 2026-11-18 |
-| 候选 | 组件任务的完成与取消 | 已走查 [ApplyWidgetTaskBrokerActions](src/widget/runtime/widget_engine.cpp) 的重入保护和结果消费 | 先追踪一类音频完成消息的正常、取消路径与唤醒顺序 | 2026-11-18 |
+| 候选 | widget_engine.cpp · 任务完成与取消 | [WidgetEngine::ApplyWidgetTaskBrokerActions](src/widget/runtime/widget_engine.cpp) 在同一入口协调多类执行器、重入保护和结果消费。基线 `2f8326173` 文件共 36,725 行 | 从音频完成消息开始，验证正常完成、取消和延迟唤醒的顺序 | 2026-11-18 |
+| 候选 | widget_view_tree.cpp · 节点自身的校验规则 | [ValidateNode](src/widget/view/widget_view_tree.cpp) 同时处理整树预算、子节点递归和本节点属性。基线 `2f8326173` 文件共 6,322 行 | 先隔离过渡动画参数的校验，核对错误文本与首个报错的顺序，累计预算仍由遍历入口持有 | 2026-11-18 |
+| 候选 | widget_package.cpp · 清单预览字段解析 | [WidgetPackageValidator::ReadManifest](src/widget/packages/widget_package.cpp) 处理多组清单字段，同文件还负责目录校验和本地发布。基线 `2f8326173` 文件共 5,134 行 | 先限定为一组预览字段；比较旧清单的解析值及非法输入的诊断顺序，保留发布流程 | 2026-11-18 |
 | 候选 | 存储与设置重复校验 UTF-8 | 已定位事务、值编码、设置服务三处字节校验 | 对照三处边界输入，将键长、NUL 及错误信息留在原调用方 | 2026-11-18 |
 | 候选 | 弹窗图标与文字重复计算几何 | [图标和文本矩形](src/app/popup/app_popup_geometry.cpp) 分别推导名称列和扇形条目 | 接手前与当前弹窗改动对照，先选一种几何计算验证 | 2026-11-18 |
 | 已验证 | snowwidget 三个契约导出器共用字符串转义 | `cd63cbd24`；Release 定向链接，三条命令合计 363,891 字节与旧工具一致 | 已收尾 | 2026-11-18 |
