@@ -996,9 +996,11 @@ int lua_DrawImage(lua_State* L)
     float alpha = static_cast<float>(luaL_optnumber(L, 6, 1.0));
     auto* s = GetLuaDrawContext(L);
     if (!s || !s->services) return 0;
-    ID2D1Bitmap1* bmp = s->services->resolveImage(
-        L, 1, "draw.image", w, h, DrawImageFit::Fill, nullptr, false);
-    if (!s || !s->ctx || !bmp) return 0;
+    const auto image = s->services->resolveImage(
+        L, 1, w, h, DrawImageFit::Fill, nullptr, false);
+    if (image.error) return luaL_error(L, "draw.image: %s", image.error);
+    auto* bmp = image.bitmap;
+    if (!s->ctx || !bmp) return 0;
     D2D1_RECT_F dst = D2D1::RectF(x + s->widgetRect.left, y + s->widgetRect.top,
         x + s->widgetRect.left + w, y + s->widgetRect.top + h);
     const auto size = bmp->GetSize();
@@ -1009,67 +1011,70 @@ int lua_DrawImage(lua_State* L)
     return 0;
 }
 
-int lua_DrawImageFit(lua_State* state)
+namespace
 {
-    const float x = static_cast<float>(luaL_checknumber(state, 2));
-    const float y = static_cast<float>(luaL_checknumber(state, 3));
-    const float width = static_cast<float>(luaL_checknumber(state, 4));
-    const float height = static_cast<float>(luaL_checknumber(state, 5));
-    const char* fitRaw = luaL_optstring(state, 6, "contain");
-    const char* alignmentRaw = luaL_optstring(state, 7, "center");
-    const float alpha = LuaDrawAlpha(state, 8, "draw.imageFit");
-    const char* interpolationRaw = luaL_optstring(state, 9, "linear");
-    const float rotationDegrees = static_cast<float>(
-        luaL_optnumber(state, 10, 0.0));
-    const float originX = static_cast<float>(
-        luaL_optnumber(state, 11, 0.5));
-    const float originY = static_cast<float>(
-        luaL_optnumber(state, 12, 0.5));
-    const float cornerRadius = static_cast<float>(
-        luaL_optnumber(state, 13, 0.0));
+struct ImageFitOptions
+{
+    DrawRect bounds;
+    const char* fit;
+    const char* alignment;
+    float alpha;
+    const char* interpolation;
+    float rotationDegrees;
+    float originX;
+    float originY;
+    float cornerRadius;
+};
+
+// Return the diagnostic before the Lua entry raises it. This also keeps
+// Direct2D handles out of the frame that Lua can leave through a nonlocal jump.
+__declspec(noinline) const char* TryDrawImageFit(
+    lua_State* state, const ImageFitOptions& options)
+{
+    const float cornerRadius = options.cornerRadius;
     if (!std::isfinite(cornerRadius) || cornerRadius < 0.0f ||
         cornerRadius > 100000.0f)
-        luaL_error(state,
-            "draw.imageFit: cornerRadius must be finite and between 0 and 100000");
-    using Fit = snowdesktop::widget_runtime::DrawImageFit;
-    using Alignment = snowdesktop::widget_runtime::DrawImageAlignment;
+        return "cornerRadius must be finite and between 0 and 100000";
+
+    using Fit = DrawImageFit;
+    using Alignment = DrawImageAlignment;
     Fit fit = Fit::Contain;
-    const std::string fitName = fitRaw ? fitRaw : "";
+    const std::string_view fitName = options.fit;
     if (fitName == "fill") fit = Fit::Fill;
     else if (fitName == "cover") fit = Fit::Cover;
     else if (fitName == "none") fit = Fit::None;
-    else if (fitName != "contain")
-        return luaL_error(state, "draw.imageFit: unsupported fit");
+    else if (fitName != "contain") return "unsupported fit";
+
     Alignment alignment = Alignment::Center;
-    const std::string alignmentName = alignmentRaw ? alignmentRaw : "";
+    const std::string_view alignmentName = options.alignment;
     if (alignmentName == "start") alignment = Alignment::Start;
     else if (alignmentName == "end") alignment = Alignment::End;
-    else if (alignmentName != "center")
-        return luaL_error(state, "draw.imageFit: unsupported alignment");
-    const std::string interpolation = interpolationRaw
-        ? interpolationRaw : "";
-    if (interpolation != "linear" && interpolation != "nearest")
-        return luaL_error(state,
-            "draw.imageFit: interpolation must be linear or nearest");
-    std::string transformError;
-    if (!snowdesktop::widget_runtime::ValidateDrawImageTransform(
-            rotationDegrees, originX, originY, transformError))
-        return luaL_error(state, "draw.imageFit: %s",
-            transformError.c_str());
+    else if (alignmentName != "center") return "unsupported alignment";
+
+    const std::string_view interpolation = options.interpolation;
+    const bool nearest = interpolation == "nearest";
+    if (interpolation != "linear" && !nearest)
+        return "interpolation must be linear or nearest";
+
+    const float rotationDegrees = options.rotationDegrees;
+    const float originX = options.originX;
+    const float originY = options.originY;
+    if (const char* error = DrawImageTransformError(rotationDegrees, originX, originY))
+        return error;
+
     auto* d2d = GetLuaDrawContext(state);
-    if (!d2d || !d2d->services) return 0;
+    if (!d2d || !d2d->services) return nullptr;
     D2D1_SIZE_F originalSize{};
-    ID2D1Bitmap1* bitmap = d2d->services->resolveImage(
-        state, 1, "draw.imageFit", width, height, fit, &originalSize,
-        interpolation == "nearest");
-    if (!bitmap || !d2d->ctx) return 0;
+    const auto image = d2d->services->resolveImage(state, 1, options.bounds.width,
+        options.bounds.height, fit, &originalSize, nearest);
+    if (image.error) return image.error;
+    auto* bitmap = image.bitmap;
+    if (!bitmap || !d2d->ctx) return nullptr;
+
     const D2D1_SIZE_F sourceSize = bitmap->GetSize();
-    const auto placement = snowdesktop::widget_runtime::
-        ResolveDrawImagePlacement(originalSize.width, originalSize.height,
-            { x, y, width, height }, fit, alignment);
-    if (!placement.valid)
-        return luaL_error(state,
-            "draw.imageFit: dimensions must be positive and bounded");
+    const auto placement = ResolveDrawImagePlacement(
+        originalSize.width, originalSize.height, options.bounds, fit, alignment);
+    if (!placement.valid) return "dimensions must be positive and bounded";
     const D2D1_RECT_F destination = D2D1::RectF(
         d2d->widgetRect.left + placement.destination.x,
         d2d->widgetRect.top + placement.destination.y,
@@ -1093,8 +1098,7 @@ int lua_DrawImageFit(lua_State* state)
         if (!factory || FAILED(factory->CreateRoundedRectangleGeometry(
                 D2D1::RoundedRect(destination, clipRadius, clipRadius),
                 &roundedClip)) || !roundedClip)
-            return luaL_error(state,
-                "draw.imageFit: cannot create the rounded clip");
+            return "cannot create the rounded clip";
     }
     if (roundedClip)
         d2d->ctx->PushLayer(D2D1::LayerParameters(
@@ -1115,13 +1119,37 @@ int lua_DrawImageFit(lua_State* state)
             previousTransform);
     }
     const auto sampled = d2d->imageSamplingCache.Resolve(d2d->ctx, bitmap,
-        destination, source, interpolation == "nearest");
-    d2d->ctx->DrawBitmap(sampled.bitmap.Get(), destination, alpha,
+        destination, source, nearest);
+    d2d->ctx->DrawBitmap(sampled.bitmap.Get(), destination, options.alpha,
         sampled.interpolation, sampled.source);
     if (rotated)
         d2d->ctx->SetTransform(previousTransform);
     if (roundedClip)
         d2d->ctx->PopLayer();
+    return nullptr;
+}
+}
+
+int lua_DrawImageFit(lua_State* state)
+{
+    const ImageFitOptions options{
+        .bounds = {
+            static_cast<float>(luaL_checknumber(state, 2)),
+            static_cast<float>(luaL_checknumber(state, 3)),
+            static_cast<float>(luaL_checknumber(state, 4)),
+            static_cast<float>(luaL_checknumber(state, 5)),
+        },
+        .fit = luaL_optstring(state, 6, "contain"),
+        .alignment = luaL_optstring(state, 7, "center"),
+        .alpha = LuaDrawAlpha(state, 8, "draw.imageFit"),
+        .interpolation = luaL_optstring(state, 9, "linear"),
+        .rotationDegrees = static_cast<float>(luaL_optnumber(state, 10, 0.0)),
+        .originX = static_cast<float>(luaL_optnumber(state, 11, 0.5)),
+        .originY = static_cast<float>(luaL_optnumber(state, 12, 0.5)),
+        .cornerRadius = static_cast<float>(luaL_optnumber(state, 13, 0.0)),
+    };
+    if (const char* error = TryDrawImageFit(state, options))
+        return luaL_error(state, "draw.imageFit: %s", error);
     return 0;
 }
 

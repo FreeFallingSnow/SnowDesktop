@@ -8329,58 +8329,48 @@ static int lua_ViewScrollToIndex(lua_State* state)
         state, succeeded, offset, maximum, changed, error);
 }
 
-static ID2D1Bitmap1* ResolveDrawImageBitmap(lua_State* state,
-    D2DState* d2d, int index, const char* api,
+static snowdesktop::widget_runtime::LuaDrawImageResult ResolveDrawImageBitmap(
+    lua_State* state, int index,
     float width, float height,
     snowdesktop::widget_runtime::DrawImageFit fit,
-    D2D1_SIZE_F* originalSize = nullptr, bool originalPixels = false)
+    D2D1_SIZE_F* originalSize, bool originalPixels)
 {
-    if (!d2d || !d2d->engine) return nullptr;
+    auto* d2d = GetD2D(state);
+    if (!d2d || !d2d->engine) return {};
+
+    const auto* handle = TestResourceHandle(state, index);
+    if (!handle)
+        return {nullptr, "API v2 requires an image handle"};
+    if (handle->type != LuaResourceType::Image)
+        return {nullptr, "invalid image resource handle"};
+
     ID2D1Bitmap1* bitmap = nullptr;
-    if (const auto* handle = TestResourceHandle(state, index))
+    if (snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(handle->name))
+        bitmap = LoadRuntimeImageBitmap(
+            d2d, BoundWidgetId(state), handle->name);
+    else if (const auto contentKey = ResolveResourceHandleImageContentKey(state, index))
     {
-        if (handle->type != LuaResourceType::Image)
-            luaL_error(state, "%s: invalid image resource handle", api);
-        if (snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(
-                handle->name))
-            bitmap = LoadRuntimeImageBitmap(
-                d2d, BoundWidgetId(state), handle->name);
-        else
-        {
-            const auto contentKey =
-                ResolveResourceHandleImageContentKey(state, index);
-            if (contentKey)
-            {
-                snowdesktop::widget_runtime::PackageImageSize original;
-                bitmap = LoadImageBitmap(d2d, *contentKey, width, height, fit,
-                    originalPixels, &original);
-                if (originalSize)
-                    *originalSize = D2D1::SizeF(static_cast<float>(original.width),
-                        static_cast<float>(original.height));
-                if (!bitmap && d2d->packageImageCache.Find(*contentKey))
-                    return nullptr;
-            }
-        }
-        if (!bitmap)
-            luaL_error(state, "%s: invalid image resource handle", api);
-        if (originalSize && originalSize->width <= 0)
-            *originalSize = bitmap->GetSize();
+        snowdesktop::widget_runtime::PackageImageSize original;
+        bitmap = LoadImageBitmap(d2d, *contentKey, width, height, fit,
+            originalPixels, &original);
+        if (originalSize)
+            *originalSize = D2D1::SizeF(static_cast<float>(original.width),
+                static_cast<float>(original.height));
+        if (!bitmap && d2d->packageImageCache.Find(*contentKey))
+            return {};
     }
-    else
-        luaL_error(state, "%s: API v2 requires an image handle", api);
-    return bitmap;
+    if (!bitmap)
+        return {nullptr, "invalid image resource handle"};
+    if (originalSize && originalSize->width <= 0)
+        *originalSize = bitmap->GetSize();
+    return {bitmap, nullptr};
 }
 
 static const snowdesktop::widget_runtime::LuaDrawHostServices kLuaDrawHostServices{
     [](lua_State* state, int index) {
         return ResolveResourceHandlePath(state, index, LuaResourceType::Font);
     },
-    [](lua_State* state, int index, const char* api, float width, float height,
-        snowdesktop::widget_runtime::DrawImageFit fit, D2D1_SIZE_F* originalSize,
-        bool originalPixels) {
-        return ResolveDrawImageBitmap(state, GetD2D(state), index, api, width,
-            height, fit, originalSize, originalPixels);
-    },
+    ResolveDrawImageBitmap,
     [](lua_State* state, snowdesktop::widget_runtime::NativeMarqueeText&& marquee) {
         const auto* d2d = GetD2D(state);
         std::string error;

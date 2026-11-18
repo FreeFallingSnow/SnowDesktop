@@ -13,12 +13,18 @@ namespace snowdesktop::widget_runtime
 enum class DrawImageFit;
 struct NativeMarqueeText;
 
+struct LuaDrawImageResult
+{
+    ID2D1Bitmap1* bitmap = nullptr;
+    const char* error = nullptr;
+};
+
 // The host owns resource lookup and marquee submission. These operations keep
 // their original Lua instance context and return the same borrowed resources.
 struct LuaDrawHostServices
 {
     std::optional<std::wstring> (*resolveFont)(lua_State*, int);
-    ID2D1Bitmap1* (*resolveImage)(lua_State*, int, const char*, float, float,
+    LuaDrawImageResult (*resolveImage)(lua_State*, int, float, float,
         DrawImageFit, D2D1_SIZE_F*, bool);
     bool (*submitMarquee)(lua_State*, NativeMarqueeText&&);
 };

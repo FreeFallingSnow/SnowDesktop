@@ -134,24 +134,17 @@ DrawImagePlacement ResolveDrawImagePlacement(float sourceWidth,
     return result;
 }
 
-bool ValidateDrawImageTransform(float rotationDegrees, float originX,
-    float originY, std::string& error) noexcept
+const char* DrawImageTransformError(float rotationDegrees, float originX,
+    float originY) noexcept
 {
-    error.clear();
     if (!std::isfinite(rotationDegrees) ||
         rotationDegrees < -360.0f || rotationDegrees > 360.0f)
-    {
-        error = "image rotation must be from -360 through 360 degrees";
-        return false;
-    }
+        return "image rotation must be from -360 through 360 degrees";
     if (!std::isfinite(originX) || !std::isfinite(originY) ||
         originX < 0.0f || originX > 1.0f ||
         originY < 0.0f || originY > 1.0f)
-    {
-        error = "image transform origins must be normalized from 0 through 1";
-        return false;
-    }
-    return true;
+        return "image transform origins must be normalized from 0 through 1";
+    return nullptr;
 }
 
 bool ValidateDrawPath(const std::vector<DrawPathCommand>& commands,
