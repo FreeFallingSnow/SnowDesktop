@@ -4,14 +4,14 @@
   "slug": "component-api-test",
   "apiVersion": 2,
   "dataVersion": 1,
-  "version": "1.0.3",
+  "version": "1.0.4",
   "entry": "main.lua",
   "minHostVersion": "1.0.17.0",
   "author": "SnowDesktop",
   "license": "MIT",
   "name": "Widget API Test",
   "nameKey": "lua_widget.component_api_test.name",
-  "description": "Try view transitions and switch the layout between a row and a column.",
+  "description": "Try view transitions, switch layouts, and check hit testing.",
   "descriptionKey": "lua_widget.component_api_test.description",
   "preview": "preview.png",
   "defaultSize": { "columns": 4, "rows": 2 },
@@ -45,6 +45,8 @@
     "lifecycle.event",
     "lifecycle.model",
     "ui.semanticMetrics.rowUnit",
+    "view.layout.overflow",
+    "view.positioning.basic",
     "view.theme.tokens",
     "view.transition.enter",
     "view.transition.exit",
@@ -57,7 +59,7 @@
   "locales": {
     "zh-CN": {
       "lua_widget.component_api_test.name": "组件 API 测试",
-      "lua_widget.component_api_test.description": "观察视图转场，并在横排和竖排之间切换布局。",
+      "lua_widget.component_api_test.description": "观察视图转场、切换布局并验证点击命中。",
       "lua_widget.component_api_test.heading": "视图转场与布局",
       "lua_widget.component_api_test.preview_intro": "切换两种尺寸，观察色块颜色和右侧卡片是否显示。",
       "lua_widget.component_api_test.preview_standard": "标准",
@@ -69,11 +71,19 @@
       "lua_widget.component_api_test.update": "切换颜色",
       "lua_widget.component_api_test.enter": "添加卡片",
       "lua_widget.component_api_test.exit": "移除卡片",
-      "lua_widget.component_api_test.layout": "切换布局"
+      "lua_widget.component_api_test.layout": "切换布局",
+      "lua_widget.component_api_test.hit_open": "测命中",
+      "lua_widget.component_api_test.hit_back": "返回转场",
+      "lua_widget.component_api_test.hit_heading": "点击命中",
+      "lua_widget.component_api_test.hit_lower": "下层",
+      "lua_widget.component_api_test.hit_upper": "上层",
+      "lua_widget.component_api_test.hit_none": "无",
+      "lua_widget.component_api_test.hit_outside": "框外 · 点击此处",
+      "lua_widget.component_api_test.hit_result": "最近命中 %s　点击次数 %d"
     },
     "en-US": {
       "lua_widget.component_api_test.name": "Widget API Test",
-      "lua_widget.component_api_test.description": "Try view transitions and switch the layout between a row and a column.",
+      "lua_widget.component_api_test.description": "Try view transitions, switch layouts, and check hit testing.",
       "lua_widget.component_api_test.heading": "Transitions and layout",
       "lua_widget.component_api_test.preview_intro": "Compare the colors and card visibility in the two preview sizes.",
       "lua_widget.component_api_test.preview_standard": "Standard",
@@ -85,7 +95,15 @@
       "lua_widget.component_api_test.update": "Change color",
       "lua_widget.component_api_test.enter": "Add card",
       "lua_widget.component_api_test.exit": "Remove card",
-      "lua_widget.component_api_test.layout": "Switch layout"
+      "lua_widget.component_api_test.layout": "Switch layout",
+      "lua_widget.component_api_test.hit_open": "Test hits",
+      "lua_widget.component_api_test.hit_back": "Transitions",
+      "lua_widget.component_api_test.hit_heading": "Hit testing",
+      "lua_widget.component_api_test.hit_lower": "Lower",
+      "lua_widget.component_api_test.hit_upper": "Upper",
+      "lua_widget.component_api_test.hit_none": "None",
+      "lua_widget.component_api_test.hit_outside": "Click outside",
+      "lua_widget.component_api_test.hit_result": "Last hit %s     Clicks %d"
     }
   }
 }
