@@ -16404,7 +16404,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                     {
                         found->viewTransitions.SetDurationScale(
                             snowdesktop::animation::RuntimeDurationScale());
-                        found->viewTransitions.QueueExitTransitions(
+                        found->viewTransitions.CommitScene(
                             *found->viewTree, candidate,
                             snowdesktop::widget_runtime::
                                 ViewTransitionRuntime::Clock::now(),
@@ -17030,7 +17030,7 @@ bool WidgetEngine::RenderWidgetPanel(
                     {
                         current.panelViewTransitions.SetDurationScale(
                             snowdesktop::animation::RuntimeDurationScale());
-                        current.panelViewTransitions.QueueExitTransitions(
+                        current.panelViewTransitions.CommitScene(
                             *current.panelViewTree, candidate,
                             snowdesktop::widget_runtime::
                                 ViewTransitionRuntime::Clock::now(),

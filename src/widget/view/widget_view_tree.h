@@ -414,7 +414,6 @@ struct ViewTransitionPresentation
 {
     ViewStyle style;
     std::optional<ViewTransform> transform;
-    std::optional<ViewRect> layoutFrame;
 
     bool operator==(const ViewTransitionPresentation&) const = default;
 };
@@ -762,11 +761,21 @@ struct ViewExitTransitionFrame
     ViewTransitionPresentation presentation;
 };
 
+namespace detail
+{
+class ViewLayoutAnimation;
+}
+
 class ViewTransitionRuntime
 {
 public:
     using Clock = std::chrono::steady_clock;
     using TimePoint = Clock::time_point;
+
+    ViewTransitionRuntime();
+    ~ViewTransitionRuntime();
+    ViewTransitionRuntime(ViewTransitionRuntime&&) noexcept;
+    ViewTransitionRuntime& operator=(ViewTransitionRuntime&&) noexcept;
 
     void BeginFrame() noexcept;
     // Host presentation preferences; parsed Lua descriptors remain unchanged.
@@ -775,16 +784,17 @@ public:
     ViewTransitionPresentation ResolvePresentation(std::string_view key,
         const ViewStyle& targetStyle,
         const std::optional<ViewTransform>& targetTransform,
-        const std::optional<ViewRect>& targetLayoutFrame,
         const std::optional<ViewTransition>& transition,
         const std::optional<ViewPresenceTransition>& enterTransition,
         TimePoint now, bool reducedMotion);
     ViewStyle Resolve(std::string_view key, const ViewStyle& target,
         const std::optional<ViewTransition>& transition,
         TimePoint now, bool reducedMotion);
-    void QueueExitTransitions(const ViewNode& previous,
+    void CommitScene(const ViewNode& previous,
         const ViewNode& current, TimePoint now, bool reducedMotion);
-    std::vector<ViewExitTransitionFrame> ExitFrames(
+    const ViewNode& LayoutForPaint(const ViewNode& committed,
+        TimePoint now, bool reducedMotion);
+    std::vector<ViewExitTransitionFrame> ExitFrames(const ViewNode& painted,
         TimePoint now, bool reducedMotion);
     void EndFrame();
     bool Tick(TimePoint now) noexcept;
@@ -811,7 +821,6 @@ private:
         ViewRect contentFrame;
         ViewResolvedTransform removedAncestorTransform;
         std::optional<ViewRect> removedAncestorClip;
-        std::optional<std::size_t> placement;
     };
 
     struct ExitEntry
@@ -827,28 +836,15 @@ private:
         std::size_t nodeCount = 0;
     };
 
-    struct ExitPlacement
-    {
-        std::string key;
-        ViewRect frame;
-        ViewRect layoutFrame;
-        ViewRect contentFrame;
-        std::optional<ViewTransform> transform;
-        std::optional<ViewRect> clip;
-        std::optional<std::size_t> parent;
-    };
-
     static ViewTransitionPresentation CurrentPresentation(
         const Entry& entry, TimePoint now) noexcept;
-    ViewResolvedTransform CurrentTransform(const std::string& key,
-        const ViewRect& frame, const ViewRect& layoutFrame,
-        const std::optional<ViewTransform>& transform, TimePoint now) const;
-    void BindExitPlacements(const ViewNode& current);
+    ViewResolvedTransform CurrentTransform(
+        const ViewNode& node, TimePoint now) const;
     std::uint32_t ScaledDuration(std::uint32_t duration) const noexcept;
 
     std::unordered_map<std::string, Entry> entries_;
     std::vector<ExitEntry> exits_;
-    std::vector<ExitPlacement> exitPlacements_;
+    std::unique_ptr<detail::ViewLayoutAnimation> layoutAnimation_;
     std::uint64_t generation_ = 0;
     double durationScale_ = 1.0;
 };
@@ -952,11 +948,6 @@ ViewResolvedTransform ResolveViewTransformForKey(
 ViewResolvedTransform ResolveViewLocalTransform(
     const ViewNode& node) noexcept;
 ViewResolvedTransform ResolveViewLocalTransform(const ViewRect& frame,
-    const std::optional<ViewTransform>& transform) noexcept;
-ViewResolvedTransform ResolveViewPresentationTransform(
-    const ViewRect& renderedFrame,
-    const ViewRect& targetLayoutFrame,
-    const ViewRect& presentedLayoutFrame,
     const std::optional<ViewTransform>& transform) noexcept;
 std::optional<ViewRect> ResolveViewClipForKey(
     const ViewNode& root, std::string_view key,

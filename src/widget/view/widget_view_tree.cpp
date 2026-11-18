@@ -1,5 +1,6 @@
 #include "widget_view_tree.h"
 #include "widget_view_layout.h"
+#include "widget_view_layout_animation.h"
 #include "widget_view_node_rules.h"
 #include "widget_view_validation.h"
 #include "widget/api/widget_view_contract.h"
@@ -1281,25 +1282,6 @@ bool HasTransitionProperty(const ViewTransition& transition,
         transition.properties.end();
 }
 
-float ResolveTransitionProgress(ViewTransitionEasing easing,
-    float progress) noexcept
-{
-    progress = std::clamp(progress, 0.0f, 1.0f);
-    switch (easing)
-    {
-    case ViewTransitionEasing::EaseIn:
-        return progress * progress;
-    case ViewTransitionEasing::EaseOut:
-        return 1.0f - (1.0f - progress) * (1.0f - progress);
-    case ViewTransitionEasing::EaseInOut:
-        return progress < 0.5f
-            ? 2.0f * progress * progress
-            : 1.0f - 2.0f * (1.0f - progress) * (1.0f - progress);
-    default:
-        return progress;
-    }
-}
-
 std::uint32_t InterpolateTransitionColor(
     std::uint32_t start, std::uint32_t target, float progress) noexcept
 {
@@ -1339,11 +1321,7 @@ bool HasTransitionDifference(const ViewTransitionPresentation& start,
         (HasTransitionProperty(transition,
                 ViewTransitionProperty::Transform) &&
             start.transform.value_or(ViewTransform{}) !=
-                target.transform.value_or(ViewTransform{})) ||
-        (HasTransitionProperty(transition,
-                ViewTransitionProperty::Layout) &&
-            start.layoutFrame && target.layoutFrame &&
-            start.layoutFrame != target.layoutFrame);
+                target.transform.value_or(ViewTransform{}));
 }
 
 float InterpolateTransitionAngle(float start, float target,
@@ -1382,7 +1360,7 @@ ViewTransitionPresentation InterpolateTransitionPresentation(
     float progress) noexcept
 {
     ViewTransitionPresentation result = target;
-    progress = ResolveTransitionProgress(transition.easing, progress);
+    progress = detail::ResolveViewTransitionProgress(transition.easing, progress);
     const auto applyColor = [progress](const auto& from, const auto& to,
         auto& output) {
         if (from && to)
@@ -1414,22 +1392,6 @@ ViewTransitionPresentation InterpolateTransitionPresentation(
             start.transform.value_or(ViewTransform{}),
             target.transform.value_or(ViewTransform{}), progress);
     }
-    if (HasTransitionProperty(
-            transition, ViewTransitionProperty::Layout) &&
-        start.layoutFrame && target.layoutFrame)
-    {
-        const auto interpolate = [progress](float from, float to) {
-            return from + (to - from) * progress;
-        };
-        result.layoutFrame = ViewRect{
-            interpolate(start.layoutFrame->x, target.layoutFrame->x),
-            interpolate(start.layoutFrame->y, target.layoutFrame->y),
-            interpolate(start.layoutFrame->width,
-                target.layoutFrame->width),
-            interpolate(start.layoutFrame->height,
-                target.layoutFrame->height),
-        };
-    }
     return result;
 }
 }
@@ -1452,39 +1414,6 @@ ViewResolvedTransform ResolveViewLocalTransform(const ViewRect& frame,
     const std::optional<ViewTransform>& transform) noexcept
 {
     return LocalTransform(frame, transform);
-}
-
-ViewResolvedTransform ResolveViewPresentationTransform(
-    const ViewRect& renderedFrame,
-    const ViewRect& targetLayoutFrame,
-    const ViewRect& presentedLayoutFrame,
-    const std::optional<ViewTransform>& transform) noexcept
-{
-    constexpr float epsilon = 0.000001f;
-    if (renderedFrame.width <= epsilon || renderedFrame.height <= epsilon ||
-        targetLayoutFrame.width <= epsilon ||
-        targetLayoutFrame.height <= epsilon)
-        return LocalTransform(renderedFrame, transform);
-
-    const ViewRect presentedRenderedFrame{
-        renderedFrame.x +
-            (presentedLayoutFrame.x - targetLayoutFrame.x),
-        renderedFrame.y +
-            (presentedLayoutFrame.y - targetLayoutFrame.y),
-        presentedLayoutFrame.width,
-        presentedLayoutFrame.height,
-    };
-    const float scaleX = presentedRenderedFrame.width /
-        renderedFrame.width;
-    const float scaleY = presentedRenderedFrame.height /
-        renderedFrame.height;
-    const ViewResolvedTransform layout{
-        scaleX, 0.0f, 0.0f, scaleY,
-        presentedRenderedFrame.x - renderedFrame.x * scaleX,
-        presentedRenderedFrame.y - renderedFrame.y * scaleY,
-    };
-    return ComposeTransform(layout,
-        LocalTransform(presentedRenderedFrame, transform));
 }
 
 std::optional<ViewRect> ResolveViewClipForKey(
@@ -1665,6 +1594,12 @@ ViewStyle ResolveViewThemeStyle(const ViewStyle& style,
     return result;
 }
 
+ViewTransitionRuntime::ViewTransitionRuntime() = default;
+ViewTransitionRuntime::~ViewTransitionRuntime() = default;
+ViewTransitionRuntime::ViewTransitionRuntime(ViewTransitionRuntime&&) noexcept = default;
+ViewTransitionRuntime& ViewTransitionRuntime::operator=(
+    ViewTransitionRuntime&&) noexcept = default;
+
 void ViewTransitionRuntime::SetDurationScale(double scale) noexcept
 {
     const double normalized = std::isfinite(scale) ? std::clamp(scale, 0.1, 10.0) : 1.0;
@@ -1675,16 +1610,13 @@ void ViewTransitionRuntime::SetDurationScale(double scale) noexcept
 
 std::uint32_t ViewTransitionRuntime::ScaledDuration(std::uint32_t duration) const noexcept
 {
-    if (duration == 0) return 0;
-    return static_cast<std::uint32_t>(std::clamp(
-        std::round(static_cast<double>(duration) * durationScale_), 1.0,
-        static_cast<double>(std::numeric_limits<std::uint32_t>::max())));
+    return detail::ScaleViewTransitionDuration(duration, durationScale_);
 }
 
 void ViewTransitionRuntime::Settle() noexcept
 {
     exits_.clear();
-    exitPlacements_.clear();
+    layoutAnimation_.reset();
     for (auto& [key, entry] : entries_)
     {
         (void)key;
@@ -1724,28 +1656,24 @@ ViewTransitionPresentation ViewTransitionRuntime::CurrentPresentation(
 }
 
 ViewResolvedTransform ViewTransitionRuntime::CurrentTransform(
-    const std::string& key, const ViewRect& frame, const ViewRect& layoutFrame,
-    const std::optional<ViewTransform>& transform, TimePoint now) const
+    const ViewNode& node, TimePoint now) const
 {
-    const auto entry = entries_.find(key);
-    if (entry == entries_.end()) return LocalTransform(frame, transform);
-    const auto presentation = CurrentPresentation(entry->second, now);
-    return ResolveViewPresentationTransform(frame, layoutFrame,
-        presentation.layoutFrame.value_or(layoutFrame), presentation.transform);
+    const auto entry = entries_.find(node.key);
+    return entry == entries_.end() ? LocalTransform(node)
+        : LocalTransform(node.frame, CurrentPresentation(entry->second, now).transform);
 }
 
 ViewTransitionPresentation ViewTransitionRuntime::ResolvePresentation(
     std::string_view key, const ViewStyle& targetStyle,
     const std::optional<ViewTransform>& targetTransform,
-    const std::optional<ViewRect>& targetLayoutFrame,
     const std::optional<ViewTransition>& transition,
     const std::optional<ViewPresenceTransition>& enterTransition,
     TimePoint now, bool reducedMotion)
 {
-    const ViewTransitionPresentation target{
-        targetStyle, targetTransform, targetLayoutFrame };
+    const ViewTransitionPresentation target{ targetStyle, targetTransform };
     if (key.empty()) return target;
     ViewTransition configured = transition.value_or(ViewTransition{});
+    std::erase(configured.properties, ViewTransitionProperty::Layout);
     configured.durationMilliseconds = ScaledDuration(configured.durationMilliseconds);
     auto [position, inserted] = entries_.try_emplace(std::string(key));
     Entry& entry = position->second;
@@ -1843,14 +1771,20 @@ ViewStyle ViewTransitionRuntime::Resolve(std::string_view key,
     TimePoint now, bool reducedMotion)
 {
     return ResolvePresentation(key, target, std::nullopt,
-        std::nullopt, transition, std::nullopt,
-        now, reducedMotion).style;
+        transition, std::nullopt, now, reducedMotion).style;
 }
 
-void ViewTransitionRuntime::QueueExitTransitions(
+void ViewTransitionRuntime::CommitScene(
     const ViewNode& previous, const ViewNode& current,
     TimePoint now, bool reducedMotion)
 {
+    if (reducedMotion)
+    {
+        exits_.clear();
+        layoutAnimation_.reset();
+        return;
+    }
+
     std::unordered_set<std::string> currentKeys;
     const auto collectKeys = [&](const auto& self,
         const ViewNode& node) -> void {
@@ -1883,13 +1817,6 @@ void ViewTransitionRuntime::QueueExitTransitions(
         exit.nodeCount = countNodes(countNodes, exit.node);
         retainedNodes += exit.nodeCount;
     }
-    if (reducedMotion)
-    {
-        exits_.clear();
-        exitPlacements_.clear();
-        return;
-    }
-
     struct ExitParent
     {
         ViewResolvedTransform transform;
@@ -1913,8 +1840,7 @@ void ViewTransitionRuntime::QueueExitTransitions(
             descriptor.durationMilliseconds =
                 ScaledDuration(node.exitTransition->durationMilliseconds);
             descriptor.easing = node.exitTransition->easing;
-            ViewTransitionPresentation start{
-                node.style, node.transform, node.layoutTransitionFrame };
+            ViewTransitionPresentation start{ node.style, node.transform };
             if (const auto found = entries_.find(node.key);
                 found != entries_.end())
                 start = CurrentPresentation(found->second, now);
@@ -1954,7 +1880,7 @@ void ViewTransitionRuntime::QueueExitTransitions(
                     exit.anchor = ExitAnchor{ parent.anchor->key,
                         ViewNodeContentRect(*parent.anchor),
                         parent.removedAncestorTransform,
-                        parent.removedAncestorClip, std::nullopt };
+                        parent.removedAncestorClip };
                 }
                 exit.start = std::move(start);
                 exit.target = std::move(target);
@@ -1968,8 +1894,7 @@ void ViewTransitionRuntime::QueueExitTransitions(
             if (queued) return;
         }
 
-        const auto localTransform = CurrentTransform(node.key, node.frame,
-            node.layoutTransitionFrame, node.transform, now);
+        const auto localTransform = CurrentTransform(node, now);
         ExitParent childParent;
         childParent.transform =
             ComposeTransform(localTransform, parent.transform);
@@ -1991,89 +1916,96 @@ void ViewTransitionRuntime::QueueExitTransitions(
         for (const auto& child : node.children)
             self(self, child, childParent);
     };
-    collectExits(collectExits, previous, {});
-    BindExitPlacements(current);
+    const auto& previousPaint = layoutAnimation_
+        ? layoutAnimation_->LastPainted(previous) : previous;
+    collectExits(collectExits, previousPaint, {});
+
+    if (!layoutAnimation_ && detail::HasViewLayoutAnimation(current))
+        layoutAnimation_ = std::make_unique<detail::ViewLayoutAnimation>();
+    if (layoutAnimation_)
+    {
+        layoutAnimation_->Commit(previous, current, durationScale_);
+        if (!layoutAnimation_->HasActive()) layoutAnimation_.reset();
+    }
 }
 
-void ViewTransitionRuntime::BindExitPlacements(const ViewNode& current)
+const ViewNode& ViewTransitionRuntime::LayoutForPaint(
+    const ViewNode& committed, TimePoint now, bool reducedMotion)
 {
-    exitPlacements_.clear();
-    std::unordered_map<std::string_view, std::optional<std::size_t>> anchors;
-    for (const auto& exit : exits_)
-        if (exit.anchor) anchors.try_emplace(exit.anchor->key);
-    if (anchors.empty()) return;
-
-    // The committed scene can be moved after this call. Keep only the
-    // placement data on paths to retained anchors, in parent-first order.
-    const auto collect = [&](const auto& self, const ViewNode& node,
-        std::optional<std::size_t> parent) -> bool {
-        if (!node.visible || node.visibility == ViewVisibility::Hidden ||
-            node.frame.width <= 0.0f || node.frame.height <= 0.0f)
-            return false;
-        const std::size_t index = exitPlacements_.size();
-        exitPlacements_.push_back({ node.key, node.frame,
-            node.layoutTransitionFrame, ViewNodeContentRect(node),
-            node.transform, node.clipFrame, parent });
-        bool used = false;
-        if (const auto anchor = anchors.find(node.key); anchor != anchors.end())
-        {
-            anchor->second = index;
-            used = true;
-        }
-        for (const auto& child : node.children)
-            if (self(self, child, index)) used = true;
-        if (!used) exitPlacements_.pop_back();
-        return used;
-    };
-    collect(collect, current, std::nullopt);
-    for (auto& exit : exits_)
-        if (exit.anchor) exit.anchor->placement = anchors.at(exit.anchor->key);
+    if (!layoutAnimation_) return committed;
+    if (!reducedMotion)
+    {
+        const auto& painted = layoutAnimation_->Paint(committed, now);
+        if (layoutAnimation_->HasActive()) return painted;
+    }
+    layoutAnimation_.reset();
+    return committed;
 }
 
 std::vector<ViewExitTransitionFrame> ViewTransitionRuntime::ExitFrames(
-    TimePoint now, bool reducedMotion)
+    const ViewNode& painted, TimePoint now, bool reducedMotion)
 {
     std::vector<ViewExitTransitionFrame> frames;
     if (reducedMotion)
     {
         exits_.clear();
-        exitPlacements_.clear();
         return frames;
     }
+
     struct PaintPlacement
     {
+        const ViewNode* node = nullptr;
         ViewResolvedTransform transform;
         std::optional<ViewRect> clip;
     };
-    std::vector<PaintPlacement> placements;
-    placements.reserve(exitPlacements_.size());
-    for (const auto& placement : exitPlacements_)
+    std::unordered_map<std::string_view, PaintPlacement> anchors;
+    for (const auto& exit : exits_)
+        if (exit.anchor) anchors.try_emplace(exit.anchor->key);
+    if (!anchors.empty())
     {
-        const auto local = CurrentTransform(placement.key, placement.frame,
-            placement.layoutFrame, placement.transform, now);
-        const PaintPlacement parent =
-            placement.parent ? placements[*placement.parent] : PaintPlacement{};
-        const auto transform = ComposeTransform(local, parent.transform);
-        placements.push_back({ transform, IntersectExitClips(parent.clip,
-            TransformExitClip(placement.clip, transform)) });
+        const auto collect = [&](const auto& self, const ViewNode& node,
+            const PaintPlacement& parent) -> void {
+            if (!node.visible || node.visibility == ViewVisibility::Hidden ||
+                node.frame.width <= 0.0f || node.frame.height <= 0.0f)
+                return;
+            const auto transform = ComposeTransform(
+                CurrentTransform(node, now), parent.transform);
+            const PaintPlacement placement{ &node, transform,
+                IntersectExitClips(parent.clip,
+                    TransformExitClip(node.clipFrame, transform)) };
+            if (auto anchor = anchors.find(node.key); anchor != anchors.end())
+                anchor->second = placement;
+            for (const auto& child : node.children)
+                self(self, child, placement);
+        };
+        collect(collect, painted, {});
     }
 
     frames.reserve(exits_.size());
     for (auto& exit : exits_)
     {
-        if (exit.anchor && exit.anchor->placement)
+        if (exit.anchor)
         {
-            const auto index = *exit.anchor->placement;
-            const auto& start = exit.anchor->contentFrame;
-            const auto& target = exitPlacements_[index].contentFrame;
-            const auto& placement = placements[index];
-            const auto reanchor = ComposeTransform(
-                ResolveViewPresentationTransform(start, start, target, std::nullopt),
-                placement.transform);
-            exit.parentTransform = ComposeTransform(
-                exit.anchor->removedAncestorTransform, reanchor);
-            exit.parentClip = IntersectExitClips(placement.clip,
-                TransformExitClip(exit.anchor->removedAncestorClip, reanchor));
+            const auto& placement = anchors.at(exit.anchor->key);
+            if (placement.node)
+            {
+                const auto& start = exit.anchor->contentFrame;
+                const auto target = ViewNodeContentRect(*placement.node);
+                ViewResolvedTransform mapping;
+                constexpr float epsilon = 0.000001f;
+                if (start.width > epsilon && start.height > epsilon)
+                {
+                    mapping.m11 = target.width / start.width;
+                    mapping.m22 = target.height / start.height;
+                    mapping.dx = target.x - start.x * mapping.m11;
+                    mapping.dy = target.y - start.y * mapping.m22;
+                }
+                const auto reanchor = ComposeTransform(mapping, placement.transform);
+                exit.parentTransform = ComposeTransform(
+                    exit.anchor->removedAncestorTransform, reanchor);
+                exit.parentClip = IntersectExitClips(placement.clip,
+                    TransformExitClip(exit.anchor->removedAncestorClip, reanchor));
+            }
         }
         const auto elapsed = std::chrono::duration_cast<
             std::chrono::duration<float, std::milli>>(
@@ -2097,7 +2029,7 @@ void ViewTransitionRuntime::EndFrame()
 
 bool ViewTransitionRuntime::Tick(TimePoint now) noexcept
 {
-    bool hadActive = !exits_.empty();
+    bool hadActive = !exits_.empty() || layoutAnimation_ != nullptr;
     for (auto& [key, entry] : entries_)
     {
         (void)key;
@@ -2115,13 +2047,12 @@ bool ViewTransitionRuntime::Tick(TimePoint now) noexcept
         return now - exit.started >= std::chrono::milliseconds(
             exit.transition.durationMilliseconds);
     });
-    if (exits_.empty()) exitPlacements_.clear();
     return hadActive;
 }
 
 bool ViewTransitionRuntime::HasActive() const noexcept
 {
-    return !exits_.empty() ||
+    return !exits_.empty() || layoutAnimation_ != nullptr ||
         std::any_of(entries_.begin(), entries_.end(),
         [](const auto& item) { return item.second.active; });
 }
@@ -2130,7 +2061,7 @@ void ViewTransitionRuntime::Clear() noexcept
 {
     entries_.clear();
     exits_.clear();
-    exitPlacements_.clear();
+    layoutAnimation_.reset();
     generation_ = 0;
 }
 

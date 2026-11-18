@@ -1003,22 +1003,15 @@ class WidgetViewTransformScope
 public:
     WidgetViewTransformScope(WidgetDrawContext* state,
         const snowdesktop::widget_runtime::ViewNode& node)
-        : WidgetViewTransformScope(state, node, node.transform,
-            node.layoutTransitionFrame)
+        : WidgetViewTransformScope(state, node, node.transform)
     {
     }
 
     WidgetViewTransformScope(WidgetDrawContext* state,
         const snowdesktop::widget_runtime::ViewNode& node,
-        const std::optional<snowdesktop::widget_runtime::ViewTransform>&
-            transform,
-        const std::optional<snowdesktop::widget_runtime::ViewRect>&
-            presentedLayoutFrame)
+        const std::optional<snowdesktop::widget_runtime::ViewTransform>& transform)
         : WidgetViewTransformScope(state, snowdesktop::widget_runtime::
-            ResolveViewPresentationTransform(node.frame,
-                node.layoutTransitionFrame,
-                presentedLayoutFrame.value_or(
-                    node.layoutTransitionFrame), transform))
+            ResolveViewLocalTransform(node.frame, transform))
     {
     }
 
@@ -1216,32 +1209,21 @@ static void DrawWidgetViewNode(WidgetDrawContext* state, const WidgetViewHost& h
             style.opacity = 0.82f;
     }
     auto presentedTransform = node.transform;
-    std::optional<snowdesktop::widget_runtime::ViewRect>
-        presentedLayoutFrame = node.layoutTransitionFrame;
     if (forcedPresentation)
     {
         style = forcedPresentation->style;
         presentedTransform = forcedPresentation->transform;
-        presentedLayoutFrame = forcedPresentation->layoutFrame;
     }
     else if (transitions)
     {
         auto presentation = transitions->ResolvePresentation(node.key,
-            style, node.transform, node.layoutTransitionFrame,
+            style, node.transform,
             node.transition, node.enterTransition, now, reducedMotion);
         style = std::move(presentation.style);
         presentedTransform = std::move(presentation.transform);
-        presentedLayoutFrame = std::move(presentation.layoutFrame);
     }
-    WidgetViewTransformScope transformScope(
-        state, node, presentedTransform, presentedLayoutFrame);
-    const float layoutScaleY = node.layoutTransitionFrame.height > 0.000001f &&
-        presentedLayoutFrame
-        ? presentedLayoutFrame->height /
-            node.layoutTransitionFrame.height
-        : 1.0f;
+    WidgetViewTransformScope transformScope(state, node, presentedTransform);
     const float cumulativeScale = inheritedScale *
-        layoutScaleY *
         (presentedTransform
             ? presentedTransform->scale * presentedTransform->scaleY
             : 1.0f);
@@ -2075,11 +2057,12 @@ bool DrawWidgetViewTree(WidgetDrawContext* state, const WidgetViewHost& host,
     const auto palette = host.ThemePalette();
     const auto textCountsBefore = state->textLayoutCache.Statistics();
     transitions.SetDurationScale(snowdesktop::animation::RuntimeDurationScale());
+    const auto& painted = transitions.LayoutForPaint(tree, now, reducedMotion);
     transitions.BeginFrame();
-    DrawWidgetViewNode(state, host, tree, regions, focusedKey,
+    DrawWidgetViewNode(state, host, painted, regions, focusedKey,
         &transitions, now, reducedMotion, palette, 1.0f, nullptr, &gutterPaints);
     transitions.EndFrame();
-    for (const auto& exit : transitions.ExitFrames(now, reducedMotion))
+    for (const auto& exit : transitions.ExitFrames(painted, now, reducedMotion))
     {
         if (!exit.node) continue;
         bool pushedClip = false;
