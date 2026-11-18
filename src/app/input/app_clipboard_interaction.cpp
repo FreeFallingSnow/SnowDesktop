@@ -273,6 +273,44 @@ std::uint64_t DesktopApp::PublishFileClipboard(IDataObject* data, const wchar_t*
     return copyId;
 }
 
+void DesktopApp::CopyCutSelectedDesktopFiles(bool cut, const wchar_t* copySource)
+{
+    std::vector<PCUITEMID_CHILD> pidls;
+    for (const auto& item : items_)
+    {
+        if (item.selected && item.childPidl.get() && item.desktopIconClsid.empty())
+            pidls.push_back(reinterpret_cast<PCUITEMID_CHILD>(item.childPidl.get()));
+    }
+    if (pidls.empty()) return;
+
+    std::uint64_t clipboardCopyId = 0;
+    ComPtr<IDataObject> dataObj;
+    if (SUCCEEDED(desktopFolder_->GetUIObjectOf(hwnd_, static_cast<UINT>(pidls.size()),
+            pidls.data(), IID_IDataObject, nullptr,
+            reinterpret_cast<void**>(dataObj.GetAddressOf()))) && dataObj)
+    {
+        if (cut)
+        {
+            CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
+            FORMATETC fmt{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+            STGMEDIUM med{};
+            med.tymed = TYMED_HGLOBAL;
+            med.hGlobal = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD));
+            if (med.hGlobal)
+            {
+                *static_cast<DWORD*>(GlobalLock(med.hGlobal)) = DROPEFFECT_MOVE;
+                GlobalUnlock(med.hGlobal);
+                dataObj->SetData(&fmt, &med, TRUE);
+            }
+        }
+
+        clipboardCopyId = PublishFileClipboard(dataObj.Get(), copySource);
+    }
+
+    UpdateCutState(clipboardCopyId);
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
 /**
  * @brief 复制或剪切选中的文件夹条目到剪贴板
  * @param cut true 为剪切，false 为复制

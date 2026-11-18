@@ -1600,6 +1600,7 @@ private:
      * @return 操作是否成功
      */
     bool CopyCutSelectedFolderEntries(bool cut, const wchar_t* copySource = nullptr);
+    void CopyCutSelectedDesktopFiles(bool cut, const wchar_t* copySource = nullptr);
     std::uint64_t PublishFileClipboard(IDataObject* data, const wchar_t* copySource);
     /** @brief 删除选中的文件夹条目。 @param permanentDelete true 时永久删除并显示确认。 @return 操作是否成功 */
     bool DeleteSelectedFolderEntries(bool permanentDelete = false);

@@ -1093,48 +1093,11 @@ void DesktopApp::ShowItemContextMenu(
         inlineEditorStarted = renameController_.IsActive();
         break;
     case kContextCutCommand:
-    case kContextCopyCommand:
-    {
-        std::uint64_t clipboardCopyId = 0;
-
-        std::vector<PCUITEMID_CHILD> pidls;
-        for (size_t i = 0; i < items_.size(); ++i)
-        {
-            if (!items_[i].selected || !items_[i].desktopIconClsid.empty()) continue;
-            pidls.push_back(reinterpret_cast<PCUITEMID_CHILD>(items_[i].childPidl.get()));
-        }
-
-        if (!pidls.empty())
-        {
-            ComPtr<IDataObject> dataObj;
-            if (SUCCEEDED(desktopFolder_->GetUIObjectOf(hwnd_, static_cast<UINT>(pidls.size()),
-                pidls.data(), IID_IDataObject, nullptr,
-                reinterpret_cast<void**>(dataObj.GetAddressOf()))) && dataObj)
-            {
-                if (command == kContextCutCommand)
-                {
-                    CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
-                    FORMATETC fmt{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
-                    STGMEDIUM med{};
-                    med.tymed = TYMED_HGLOBAL;
-                    med.hGlobal = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD));
-                    if (med.hGlobal)
-                    {
-                        *static_cast<DWORD*>(GlobalLock(med.hGlobal)) = DROPEFFECT_MOVE;
-                        GlobalUnlock(med.hGlobal);
-                        dataObj->SetData(&fmt, &med, TRUE);
-                    }
-                }
-
-                clipboardCopyId = PublishFileClipboard(dataObj.Get(),
-                    command == kContextCopyCommand ? L"desktop_menu" : nullptr);
-            }
-        }
-
-        UpdateCutState(clipboardCopyId);
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        CopyCutSelectedDesktopFiles(true);
         break;
-    }
+    case kContextCopyCommand:
+        CopyCutSelectedDesktopFiles(false, L"desktop_menu");
+        break;
     case kContextDeleteCommand:
     {
         if (removalAction ==

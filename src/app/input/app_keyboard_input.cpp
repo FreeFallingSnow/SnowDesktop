@@ -641,6 +641,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         break;
     }
     case 'C':
+    {
         if (!ctrl) break;
         handled = true;
         restoreFloatingDockLayer = true;
@@ -660,8 +661,16 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         }
         if (CopyCutSelectedFolderEntries(false))
             break;
-        InvokeSelectedShellVerb("copy");
+        const bool hasNamespaceSelection = std::any_of(items_.begin(), items_.end(),
+            [](const auto& item) {
+                return item.selected && item.childPidl.get() && !item.desktopIconClsid.empty();
+            });
+        if (hasNamespaceSelection)
+            InvokeSelectedShellVerb("copy");
+        else
+            CopyCutSelectedDesktopFiles(false, L"desktop_keyboard");
         break;
+    }
     case 'X':
         if (!ctrl) break;
     {
