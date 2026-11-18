@@ -49,6 +49,7 @@ namespace snowdesktop::widget_runtime { struct WidgetMultiplayer; }
 #include "widget_lua_lifecycle.h"
 #include "widget/data/widget_data_broker.h"
 #include "widget/tasks/widget_task_broker.h"
+#include "widget/tasks/widget_native_task_dispatch.h"
 #include "widget/tasks/widget_native_task_executor.h"
 #include "widget/tasks/widget_location_task_executor.h"
 #include "widget/tasks/widget_notification_runtime.h"
@@ -1947,7 +1948,7 @@ private:
         notificationScheduleStore_;
     std::filesystem::path notificationSchedulePath_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetNativeTaskExecutor> nativeTaskExecutor_;
-    std::unordered_map<std::uint64_t, std::string> nativeTaskCompletions_;
+    snowdesktop::widget_runtime::WidgetNativeTaskDispatch nativeTaskDispatch_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetLocationTaskExecutor> locationTaskExecutor_;
     std::unordered_map<std::uint64_t, snowdesktop::widget_runtime::LocationResult> locationTaskCompletions_;
     std::unique_ptr<

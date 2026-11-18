@@ -581,6 +581,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/api/widget_calendar_query_options.cpp
     src/widget/api/widget_calendar_query_options.h
     src/widget/tasks/widget_task_broker.cpp
+    src/widget/tasks/widget_native_task_dispatch.cpp
     src/widget/tasks/widget_native_task_executor.cpp
     src/widget/tasks/widget_location_task_executor.cpp
     src/widget/tasks/widget_notification_runtime.cpp

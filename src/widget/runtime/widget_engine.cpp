@@ -13152,34 +13152,24 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         snowdesktop::widget_runtime::ConsumeAudioPlaybackMessages(
             audioPlayback_.get(), *taskBroker_);
     if (nativeTaskExecutor_)
-        for (auto& message : nativeTaskExecutor_->DrainMessages())
-        {
-            const auto snapshot = taskBroker_->Snapshot(message.id);
-            if (!snapshot) continue;
-            if (message.final)
-            {
-                if (message.ok && !snapshot->cancelRequested)
-                    nativeTaskCompletions_.insert_or_assign(message.id, std::move(message.json));
-                else if (!snapshot->cancelRequested && !message.diagnostic.empty())
-                    nativeTaskCompletions_.insert_or_assign(message.id, std::move(message.diagnostic));
-                (void)taskBroker_->Complete(message.id, message.ok, std::move(message.error));
-                continue;
-            }
-            if (snapshot->cancelRequested) continue;
-            auto owner = std::find_if(widgets_.begin(), widgets_.end(), [&](const auto& widget) {
-                return widget.runtimeToken == snapshot->ownerToken;
+        nativeTaskDispatch_.Consume(nativeTaskExecutor_->DrainMessages(), *taskBroker_,
+            [this](const snowdesktop::widget_runtime::NativeTaskEvent& event) {
+                auto owner = std::find_if(widgets_.begin(), widgets_.end(),
+                    [&](const auto& widget) { return widget.runtimeToken == event.ownerToken; });
+                if (owner == widgets_.end() ||
+                    !owner->permissions.contains("native.execute")) return;
+                JsonValue frame;
+                const auto* value = event.ReadValue(frame);
+                if (!value) return;
+                snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
+                    trustedGestureState_, false);
+                (void)InvokeLifecycleEvent(*owner, "native.event", [&](lua_State* state) {
+                    lua_pushinteger(state, static_cast<lua_Integer>(event.taskId));
+                    lua_setfield(state, -2, "taskId");
+                    PushSystemControlJson(state, *value);
+                    lua_setfield(state, -2, "value");
+                });
             });
-            if (owner == widgets_.end() || !owner->permissions.contains("native.execute")) continue;
-            JsonValue frame;
-            if (!ParseJson(message.json, frame) || !frame.Find("value")) continue;
-            snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(trustedGestureState_, false);
-            (void)InvokeLifecycleEvent(*owner, "native.event", [&](lua_State* state) {
-                lua_pushinteger(state, static_cast<lua_Integer>(message.id));
-                lua_setfield(state, -2, "taskId");
-                PushSystemControlJson(state, *frame.Find("value"));
-                lua_setfield(state, -2, "value");
-            });
-        }
     if (locationTaskExecutor_)
         for (auto& completion : locationTaskExecutor_->DrainCompletions())
         {
@@ -13377,7 +13367,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             }
             if (audioPlayback_) audioPlayback_->Cancel(action.id);
             if (nativeTaskExecutor_) (void)nativeTaskExecutor_->Cancel(action.id);
-            nativeTaskCompletions_.erase(action.id);
+            nativeTaskDispatch_.DiscardCompletion(action.id);
             if (locationTaskExecutor_) (void)locationTaskExecutor_->Cancel(action.id);
             locationTaskCompletions_.erase(action.id);
             if (action.name == "location.current") (void)taskBroker_->Complete(action.id, false);
@@ -15452,19 +15442,9 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             [&completion](const LuaWidget& candidate) {
                 return candidate.runtimeToken == completion.ownerToken;
             });
-        const auto nativeCompletion = nativeTaskCompletions_.find(completion.id);
-        JsonValue nativeFrame;
-        const bool nativeTask = completion.name == "native.request" || completion.name == "native.watch";
-        const bool nativeFrameParsed = nativeTask && nativeCompletion != nativeTaskCompletions_.end() &&
-            ParseJson(nativeCompletion->second, nativeFrame);
-        const bool nativeDiagnostic = nativeTask && !completion.ok && nativeFrameParsed;
-        if ((completion.name == "native.request" || completion.name == "native.watch") && completion.ok)
-        {
-            if (!nativeFrameParsed || !nativeFrame.Find("value") ||
-                widget == widgets_.end() || !widget->permissions.contains("native.execute"))
-            { completion.ok = false; completion.error = "taskResultUnavailable"; }
-        }
-        nativeTaskCompletions_.erase(completion.id);
+        const auto nativePayload = nativeTaskDispatch_.TakeCompletion(completion, [&] {
+            return widget != widgets_.end() && widget->permissions.contains("native.execute");
+        });
         const auto searchCompletion =
             appSearchCompletions_.find(completion.id);
         const auto itemSearchCompletion =
@@ -15809,7 +15789,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 networkResult, clipboardReadTask,
                 clipboardResult, filesystemPickerTask,
                 filesystemPickerResult, &filesystemPickerNames, filesystemDataTask,
-                filesystemTaskResult, &nativeFrame, nativeDiagnostic](lua_State* eventState) {
+                filesystemTaskResult, &nativePayload](lua_State* eventState) {
                 lua_pushinteger(eventState,
                     static_cast<lua_Integer>(completion.id));
                 lua_setfield(eventState, -2, "taskId");
@@ -15818,15 +15798,15 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 lua_setfield(eventState, -2, "task");
                 lua_pushboolean(eventState, completion.ok ? 1 : 0);
                 lua_setfield(eventState, -2, "ok");
-                if (nativeDiagnostic && nativeFrame.Find("reason"))
+                if (const auto* diagnostic = nativePayload.Diagnostic())
                 {
-                    PushSystemControlJson(eventState, nativeFrame);
+                    PushSystemControlJson(eventState, *diagnostic);
                     lua_setfield(eventState, -2, "diagnostic");
                 }
                 if (completion.ok)
                 {
-                    if (completion.name == "native.request" || completion.name == "native.watch")
-                        PushSystemControlJson(eventState, *nativeFrame.Find("value"));
+                    if (const auto* value = nativePayload.Value())
+                        PushSystemControlJson(eventState, *value);
                     else if (completion.name == "audio.play")
                     {
                         lua_createtable(eventState, 0, 1);
@@ -16221,7 +16201,7 @@ void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
     {
         (void)taskBroker_->Cancel(taskId, reason);
         if (nativeTaskExecutor_) (void)nativeTaskExecutor_->Cancel(taskId);
-        nativeTaskCompletions_.erase(taskId);
+        nativeTaskDispatch_.DiscardCompletion(taskId);
         if (locationTaskExecutor_) (void)locationTaskExecutor_->Cancel(taskId);
         locationTaskCompletions_.erase(taskId);
         if (systemControlTasks_) (void)systemControlTasks_->Cancel(taskId);
@@ -16452,7 +16432,7 @@ void WidgetEngine::Shutdown()
     widgetAudioAnalysisProvider_.reset();
     dataBroker_.reset();
     nativeTaskExecutor_.reset();
-    nativeTaskCompletions_.clear();
+    nativeTaskDispatch_.Clear();
     locationTaskExecutor_.reset();
     locationTaskCompletions_.clear();
     audioPlayback_.reset();
