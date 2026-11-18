@@ -4,7 +4,7 @@
 
 **已经确定的交付**　完成任务 2、3、4 三个长文件的实际源码拆分。每个文件都要把下文列出的独立职责迁到有明确归属的生产实现，接回原入口，验证原有行为、对象生命周期和兼容性。项目还持续跟踪共用规则、依赖和状态所有权，例如任务 5 的 UTF-8 校验和任务 6 的弹窗几何。
 
-**现在从哪里开始**　任务 3 的转场校验已完成首批验证。下一项是 **4 · 组件包** 的预览字段解析，再做 **2 · 任务引擎** 的音频分流。此后按剩余职责、影响和可验证性排定后续批次。
+**现在从哪里开始**　**4 · 组件包** 正在拆分预览字段解析。完成这一批后，开始 **2 · 任务引擎** 的音频分流，再按剩余职责、影响和可验证性排定后续批次。
 
 ## 任务与状态
 
@@ -14,8 +14,8 @@
 | --- | --- | --- | --- | --- |
 | 已验证 | 1 | 大图标配置值与 JSON 编解码分离 | `9e3c5e81a` 实施，`b7663d8a5` 补齐头文件依赖。标准 Release、`behavior_recovery`、`behavior_settings-host` 和独立头文件语法检查通过。与 `501607ae3` 对照，5 组往返和 6 项拒绝结果共 11,799 字节一致。 | 2026-11-18 |
 | 已计划 | 2 | 完成任务引擎 [widget_engine.cpp](src/widget/runtime/widget_engine.cpp) 的职责拆分 | 从 `ApplyWidgetTaskBrokerActions` 入手，固定音频消息消费和延迟 Lua 事件派发的先后顺序，再移出音频消费逻辑。 | 2026-11-18 |
-| 已计划 | 3 | 完成视图树 [widget_view_tree.cpp](src/widget/view/widget_view_tree.cpp) 的职责拆分 | `65175a834` 将三类节点转场描述校验移到[私有实现](src/widget/view/widget_view_transition_validation.cpp)，时长与缓动各由一处规则检查。与 `01f130136` 对照，生产入口 22 项返回值和首条诊断原文共 2,109 字节一致。新头独立语法检查、标准 Release、`behavior_widget-focus` 通过（Run `47ceb61e103e4252b6ddce9637e73efc`）。后续先迁出整树校验并核对预算、重复键与首条诊断，再分别迁出布局与交互区域收集。桌面组件的动画实机待观察。 | 2026-11-18 |
-| 下一项 | 4 | 完成组件包 [widget_package.cpp](src/widget/packages/widget_package.cpp) 的职责拆分 | 从 `ReadManifest` 移出 `previewGallery`、`previewData` 及其 variants 的解析。对照缺省、有效旧清单、部分错误和超限输入的字段值及完整诊断顺序。 | 2026-11-18 |
+| 已计划 | 3 | 完成视图树 [widget_view_tree.cpp](src/widget/view/widget_view_tree.cpp) 的职责拆分 | `65175a834` 将三类节点转场描述校验移到[私有实现](src/widget/view/widget_view_transition_validation.cpp)，时长与缓动各由一处规则检查。与 `01f130136` 对照，生产入口 22 项返回值和首条诊断原文共 2,109 字节一致。新头独立语法检查、标准 Release、`behavior_widget-focus` 通过（Run `47ceb61e103e4252b6ddce9637e73efc`）。用户对[组件 API 测试](developer_assets/manual_widgets/component-api-test/)的颜色渐变、淡出和淡入场景回复「没问题」（组件 `3ac44a679`，本机 Run `7595dbbf19f64fbe8ef887806b089361`）。后续先迁出整树校验并核对预算、重复键与首条诊断，再分别迁出布局与交互区域收集。 | 2026-11-18 |
+| 进行中 | 4 | 完成组件包 [widget_package.cpp](src/widget/packages/widget_package.cpp) 的职责拆分 | `task-8500e8ba3ef941eab3637c9875217be3` 从 `ReadManifest` 移出 `previewGallery`、`previewData` 及其 variants 的解析。对照缺省、有效旧清单、部分错误和超限输入的字段值及完整诊断顺序。 | 2026-11-18 |
 | 已验证 | 5 | 归并存储事务、值编码和设置服务中等价的 UTF-8 字节校验 | `b119f7447` 将字节校验从 3 份归为 1 份。标准 Release、`widget_storage_transaction` 和 `behavior_settings-host` 通过（Run `341657452b4841f2a3ee2a8a4359453b`）。候选库与 `01f130136` 的旧实现对照 2,393,892 次判定一致，包含截断、代理项和嵌入 NUL。入口继续处理键长、NUL、保留键和业务错误。用户实测便签重启后保留中文和表情。组件设置搜索实机待确认。 | 2026-11-18 |
 | 已验证 | 6 | 归并[弹窗图标和文字](src/app/popup/app_popup_geometry.cpp)中共用的几何计算 | `code-health-6` 的 `9342e8e5e` 将列表名称列计算从两处归到一处，文字入口复用同次计算的图标矩形。扇形移除不可达的图标反查，保留文字匹配和按条目索引的拖放命中。标准 Release、`behavior_drag-popup` 通过（Run `341657452b4841f2a3ee2a8a4359453b`），11,520 组列表输入的图标与文字矩形四边一致。用户实测确认列表重命名框位置正确，扇形滚动后拖放命中正常（验收 `45926ce23e3e43a8a51f17dc151b81d3`）。 | 2026-11-18 |
 | 已验证 | 7 | snowwidget 三个契约导出器共用 JSON 字符串转义 | `cd63cbd24` 将同一转义规则从 3 份归并为 1 份。已定向链接 Release，`api-contract`、`system-contract`、`view-contract` 三条真实命令的输出与旧工具逐字节一致，共 363,891 字节。 | 2026-11-18 |
