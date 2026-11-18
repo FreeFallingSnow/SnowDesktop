@@ -24,6 +24,7 @@ extern "C" {
 #include <cctype>
 #include <charconv>
 #include <cmath>
+#include <cstdarg>
 #include <cstdint>
 #include <iterator>
 #include <limits>
@@ -147,58 +148,52 @@ static const char* ReadClipboardTaskArguments(lua_State* state,
     return error;
 }
 
-__declspec(noinline) int LuaTaskStartWithDeferredSecretError(
-    lua_State* state, const LuaTaskStartHost& host)
+// Use luaL_error's formatting, then return through the parser's C++ scopes
+// before raising the error from the outer Lua binding.
+int PushTaskStartError(lua_State* state, const char* format, ...)
 {
-    if (lua_gettop(state) < 1 || lua_gettop(state) > 2)
-        return luaL_error(state,
-            "task.start: expected a task name and optional arguments");
-    size_t nameLength = 0;
-    const char* name = luaL_checklstring(state, 1, &nameLength);
-    if (nameLength == 0 || nameLength > 128)
-        return luaL_error(state,
-            "task.start: task name must contain 1 to 128 bytes");
-    const std::string taskName(name, nameLength);
+    std::va_list args;
+    va_start(args, format);
+    luaL_where(state, 1);
+    lua_pushvfstring(state, format, args);
+    va_end(args);
+    lua_concat(state, 2);
+    return -1;
+}
+
+__declspec(noinline) int StartTaskWithDeferredError(lua_State* state,
+    const LuaTaskStartHost& host, std::string_view name, bool hasArguments)
+{
+    const std::string taskName(name);
     std::unordered_map<std::string, std::string> arguments;
-    const bool hasArguments = !lua_isnoneornil(state, 2);
-    if (hasArguments)
-    {
-        luaL_checktype(state, 2, LUA_TTABLE);
-        if (lua_getmetatable(state, 2) != 0)
-        {
-            lua_pop(state, 1);
-            return luaL_error(state,
-                "task.start: arguments must be a plain table");
-        }
-    }
 
     if (taskName == "multiplayer.send")
     {
-        if (!hasArguments) return luaL_error(state, "task.start: multiplayer.send requires text");
+        if (!hasArguments) return PushTaskStartError(state, "task.start: multiplayer.send requires text");
         lua_pushnil(state);
         while (lua_next(state, 2) != 0)
         {
             if (lua_type(state, -2) != LUA_TSTRING || lua_type(state, -1) != LUA_TSTRING)
-                return luaL_error(state, "task.start: multiplayer.send requires text");
+                return PushTaskStartError(state, "task.start: multiplayer.send requires text");
             size_t keyLength = 0, length = 0;
             const char* key = lua_tolstring(state, -2, &keyLength);
             const char* text = lua_tolstring(state, -1, &length);
             if (std::string_view(key, keyLength) != "text" ||
                 !snowdesktop::steam_widget_multiplayer::IsUtf8Text({text, length}))
-                return luaL_error(state, "task.start: multiplayer.send requires 1 to 1024 UTF-8 bytes");
+                return PushTaskStartError(state, "task.start: multiplayer.send requires 1 to 1024 UTF-8 bytes");
             arguments.emplace("text", std::string(text, length));
             lua_pop(state, 1);
         }
-        if (arguments.empty()) return luaL_error(state, "task.start: multiplayer.send requires text");
+        if (arguments.empty()) return PushTaskStartError(state, "task.start: multiplayer.send requires text");
     }
     else if (taskName == "native.request" || taskName == "native.watch")
     {
-        if (!hasArguments) return luaL_error(state, "task.start: native task requires arguments");
+        if (!hasArguments) return PushTaskStartError(state, "task.start: native task requires arguments");
         lua_pushnil(state);
         while (lua_next(state, 2) != 0)
         {
             if (lua_type(state, -2) != LUA_TSTRING)
-                return luaL_error(state, "task.start: native task keys must be strings");
+                return PushTaskStartError(state, "task.start: native task keys must be strings");
             size_t length = 0;
             const char* key = lua_tolstring(state, -2, &length);
             const std::string field(key, length);
@@ -207,15 +202,15 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             else if ((field == "helper" || field == "operation" || field == "payload") && lua_type(state, -1) == LUA_TSTRING)
             {
                 const char* value = lua_tolstring(state, -1, &length);
-                if (length > 8192) return luaL_error(state, "task.start: native task value is too large");
+                if (length > 8192) return PushTaskStartError(state, "task.start: native task value is too large");
                 arguments[field] = std::string(value, length);
             }
-            else return luaL_error(state, "task.start: native task received an invalid argument");
+            else return PushTaskStartError(state, "task.start: native task received an invalid argument");
             lua_pop(state, 1);
         }
         snowdesktop::widget_runtime::NativeRequestOptions options;
         if (!snowdesktop::widget_runtime::ParseNativeRequestOptions(arguments, options))
-            return luaL_error(state, "task.start: invalid native task arguments");
+            return PushTaskStartError(state, "task.start: invalid native task arguments");
     }
     else if (taskName == "location.current")
     {
@@ -225,7 +220,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             while (lua_next(state, 2) != 0)
             {
                 if (lua_type(state, -2) != LUA_TSTRING || !lua_isinteger(state, -1))
-                    return luaL_error(state, "task.start: location.current requires integer options");
+                    return PushTaskStartError(state, "task.start: location.current requires integer options");
                 size_t length = 0;
                 const char* key = lua_tolstring(state, -2, &length);
                 arguments[std::string(key, length)] = std::to_string(lua_tointeger(state, -1));
@@ -234,7 +229,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         }
         snowdesktop::widget_runtime::LocationOptions options;
         if (!snowdesktop::widget_runtime::ParseLocationOptions(arguments, options))
-            return luaL_error(state, "task.start: invalid location.current options");
+            return PushTaskStartError(state, "task.start: invalid location.current options");
     }
     else if (snowdesktop::widget_runtime::IsSystemControlTask(taskName))
     {
@@ -245,9 +240,9 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             while (lua_next(state, 2) != 0)
             {
                 if (lua_type(state, -2) != LUA_TSTRING)
-                    return luaL_error(state, "task.start: system control keys must be strings");
+                    return PushTaskStartError(state, "task.start: system control keys must be strings");
                 size_t size = 0; const auto* keyText = lua_tolstring(state, -2, &size);
-                if (!size || size > 128) return luaL_error(state, "task.start: invalid system control key");
+                if (!size || size > 128) return PushTaskStartError(state, "task.start: invalid system control key");
                 const std::string key(keyText, size);
                 const auto kind = snowdesktop::widget_runtime::SystemControlArgumentType(key);
                 if (kind == SystemControlArgumentKind::Boolean && lua_type(state, -1) == LUA_TBOOLEAN)
@@ -255,32 +250,32 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 else if (kind == SystemControlArgumentKind::Number && lua_type(state, -1) == LUA_TNUMBER)
                 {
                     const auto value = lua_tonumber(state, -1);
-                    if (!std::isfinite(value)) return luaL_error(state, "task.start: expected a finite number");
+                    if (!std::isfinite(value)) return PushTaskStartError(state, "task.start: expected a finite number");
                     char encoded[128]{};
                     const auto formatted = std::to_chars(std::begin(encoded), std::end(encoded), value,
                         std::chars_format::general, std::numeric_limits<double>::max_digits10);
-                    if (formatted.ec != std::errc{}) return luaL_error(state, "task.start: number cannot be encoded");
+                    if (formatted.ec != std::errc{}) return PushTaskStartError(state, "task.start: number cannot be encoded");
                     arguments[key] = std::string(encoded, formatted.ptr);
                 }
                 else if (kind == SystemControlArgumentKind::Text && lua_type(state, -1) == LUA_TSTRING)
                 {
                     const auto* text = lua_tolstring(state, -1, &size);
-                    if (!size || size > 4096) return luaL_error(state, "task.start: system control text must contain 1 to 4096 bytes");
+                    if (!size || size > 4096) return PushTaskStartError(state, "task.start: system control text must contain 1 to 4096 bytes");
                     arguments[key] = std::string(text, size);
-                    if (!host.isValidUtf8(arguments[key])) return luaL_error(state, "task.start: expected UTF-8 text");
+                    if (!host.isValidUtf8(arguments[key])) return PushTaskStartError(state, "task.start: expected UTF-8 text");
                 }
-                else return luaL_error(state, "task.start: unknown system control argument or incorrect type");
+                else return PushTaskStartError(state, "task.start: unknown system control argument or incorrect type");
                 lua_pop(state, 1);
             }
         }
         snowdesktop::system_control::Request request;
         if (!snowdesktop::widget_runtime::MakeSystemControlRequest(taskName, arguments, request))
-            return luaL_error(state, "task.start: invalid system control arguments");
+            return PushTaskStartError(state, "task.start: invalid system control arguments");
     }
     else if (snowdesktop::widget_runtime::WidgetAudioPlayback::SupportsAction(taskName))
     {
         if (!snowdesktop::widget_runtime::ReadAudioPlaybackArguments(state, taskName, arguments))
-            return luaL_error(state, "task.start: invalid audio playback arguments");
+            return PushTaskStartError(state, "task.start: invalid audio playback arguments");
     }
     else if (snowdesktop::widget_runtime::WidgetMediaTaskExecutor::
             SupportsAction(taskName))
@@ -290,7 +285,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             taskName == "media.setShuffle" ||
             taskName == "media.setRepeat";
         if (requiresValue && !hasArguments)
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: %s requires an arguments table",
                 taskName.c_str());
         if (hasArguments)
@@ -301,7 +296,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 if (lua_type(state, -2) != LUA_TSTRING)
                 {
                     lua_pop(state, 2);
-                    return luaL_error(state,
+                    return PushTaskStartError(state,
                         "task.start: media argument keys must be strings");
                 }
                 size_t keyLength = 0;
@@ -317,7 +312,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 if (!allowed)
                 {
                     lua_pop(state, 2);
-                    return luaL_error(state,
+                    return PushTaskStartError(state,
                         "task.start: %s received an unknown argument",
                         taskName.c_str());
                 }
@@ -330,7 +325,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 if (lua_type(state, -1) != LUA_TSTRING)
                 {
                     lua_pop(state, 1);
-                    return luaL_error(state,
+                    return PushTaskStartError(state,
                         "task.start: media sessionId must be a string");
                 }
                 size_t length = 0;
@@ -341,7 +336,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                     sessionId.find('\0') != std::string::npos ||
                     !host.isValidUtf8(sessionId))
                 {
-                    return luaL_error(state,
+                    return PushTaskStartError(state,
                         "task.start: media sessionId must contain 1 to 128 bytes of valid UTF-8");
                 }
                 arguments.emplace("sessionId", std::move(sessionId));
@@ -358,7 +353,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (!lua_isinteger(state, -1))
             {
                 lua_pop(state, 1);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: media.seek positionMs must be an integer");
             }
             const lua_Integer position = lua_tointeger(state, -1);
@@ -367,7 +362,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                     static_cast<std::uint64_t>(
                         std::numeric_limits<std::int64_t>::max() / 10000))
             {
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: media.seek positionMs is out of range");
             }
             arguments.emplace("positionMs", std::to_string(position));
@@ -378,13 +373,13 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (lua_type(state, -1) != LUA_TNUMBER)
             {
                 lua_pop(state, 1);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: media.setRate rate must be a number");
             }
             const double rate = lua_tonumber(state, -1);
             lua_pop(state, 1);
             if (!std::isfinite(rate) || rate <= 0.0)
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: media.setRate rate must be finite and positive");
             std::array<char, 64> buffer{};
             const auto converted = std::to_chars(
@@ -392,7 +387,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 std::chars_format::general,
                 std::numeric_limits<double>::max_digits10);
             if (converted.ec != std::errc{})
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: media.setRate rate cannot be represented");
             arguments.emplace("rate", std::string(
                 buffer.data(), converted.ptr));
@@ -403,7 +398,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (!lua_isboolean(state, -1))
             {
                 lua_pop(state, 1);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: media.setShuffle shuffle must be a boolean");
             }
             const bool shuffle = lua_toboolean(state, -1) != 0;
@@ -416,7 +411,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (lua_type(state, -1) != LUA_TSTRING)
             {
                 lua_pop(state, 1);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: media.setRepeat mode must be a string");
             }
             size_t length = 0;
@@ -424,7 +419,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             std::string mode(value ? value : "", length);
             lua_pop(state, 1);
             if (mode != "none" && mode != "track" && mode != "list")
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: media.setRepeat mode must be none, track, or list");
             arguments.emplace("mode", std::move(mode));
         }
@@ -433,7 +428,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             SupportsAction(taskName))
     {
         if (!hasArguments)
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: %s requires an arguments table",
                 taskName.c_str());
         const std::string_view expectedKey =
@@ -444,7 +439,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (lua_type(state, -2) != LUA_TSTRING)
             {
                 lua_pop(state, 2);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: audio output argument keys must be strings");
             }
             size_t keyLength = 0;
@@ -456,7 +451,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 !(taskName == "audio.output.setVolume" && key == "coalesce"))
             {
                 lua_pop(state, 2);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: %s accepts only %s",
                     taskName.c_str(), expectedKey.data());
             }
@@ -469,7 +464,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (!lua_isnil(state, -1) && !lua_isboolean(state, -1))
             {
                 lua_pop(state, 1);
-                return luaL_error(state, "task.start: audio.output.setVolume coalesce must be boolean");
+                return PushTaskStartError(state, "task.start: audio.output.setVolume coalesce must be boolean");
             }
             if (lua_toboolean(state, -1)) arguments.emplace("coalesce", "1");
             lua_pop(state, 1);
@@ -477,13 +472,13 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (lua_type(state, -1) != LUA_TNUMBER)
             {
                 lua_pop(state, 1);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: audio.output.setVolume volume must be a number");
             }
             const double volume = lua_tonumber(state, -1);
             lua_pop(state, 1);
             if (!std::isfinite(volume))
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: audio.output.setVolume volume must be finite");
             std::array<char, 64> buffer{};
             const auto converted = std::to_chars(
@@ -491,7 +486,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 std::chars_format::general,
                 std::numeric_limits<double>::max_digits10);
             if (converted.ec != std::errc{})
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: audio.output.setVolume volume cannot be represented");
             arguments.emplace("volume", std::string(
                 buffer.data(), converted.ptr));
@@ -502,7 +497,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (!lua_isboolean(state, -1))
             {
                 lua_pop(state, 1);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: audio.output.setMute muted must be a boolean");
             }
             const bool muted = lua_toboolean(state, -1) != 0;
@@ -513,7 +508,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
     else if (taskName == "system.openSettings")
     {
         if (!hasArguments)
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: system.openSettings requires an arguments table");
         lua_pushnil(state);
         while (lua_next(state, 2) != 0)
@@ -522,7 +517,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 std::string_view(lua_tostring(state, -2)) != "page")
             {
                 lua_pop(state, 2);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: system.openSettings accepts only page");
             }
             lua_pop(state, 1);
@@ -531,7 +526,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         if (lua_type(state, -1) != LUA_TSTRING)
         {
             lua_pop(state, 1);
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: system.openSettings page must be a string");
         }
         size_t length = 0;
@@ -540,7 +535,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         lua_pop(state, 1);
         if (!snowdesktop::widget_runtime::SystemSettingsUri(page) &&
             !snowdesktop::widget_runtime::HostSettingsPage(page))
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: system.openSettings page is not supported");
         arguments.emplace("page", page);
     }
@@ -549,7 +544,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
     {
         if (const char* error = ReadClipboardTaskArguments(
                 state, taskName, hasArguments, arguments, host.isValidUtf8))
-            return luaL_error(state, "task.start: %s", error);
+            return PushTaskStartError(state, "task.start: %s", error);
     }
     else if (IsFilesystemPickerTask(taskName))
     {
@@ -561,7 +556,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 if (lua_type(state, -2) != LUA_TSTRING)
                 {
                     lua_pop(state, 2);
-                    return luaL_error(state,
+                    return PushTaskStartError(state,
                         "task.start: filesystem picker argument keys must be strings");
                 }
                 size_t keyLength = 0;
@@ -579,7 +574,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 if (!allowed)
                 {
                     lua_pop(state, 2);
-                    return luaL_error(state,
+                    return PushTaskStartError(state,
                         "task.start: %s received an unknown argument",
                         taskName.c_str());
                 }
@@ -591,7 +586,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         {
             lua_getfield(state, 2, "multiple");
             if (!lua_isnil(state, -1) && !lua_isboolean(state, -1))
-                return luaL_error(state, "task.start: multiple must be boolean");
+                return PushTaskStartError(state, "task.start: multiple must be boolean");
             arguments.emplace("multiple", lua_toboolean(state, -1) ? "true" : "false");
             lua_pop(state, 1);
         }
@@ -606,7 +601,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                     if (lua_type(state, -1) != LUA_TTABLE)
                     {
                         lua_pop(state, 1);
-                        return luaL_error(state,
+                        return PushTaskStartError(state,
                             "task.start: filesystem extensions must be an array");
                     }
                     const int extensionTable = lua_absindex(state, -1);
@@ -615,7 +610,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                     if (count > 16)
                     {
                         lua_pop(state, 1);
-                        return luaL_error(state,
+                        return PushTaskStartError(state,
                             "task.start: filesystem extensions accepts at most 16 entries");
                     }
                     lua_pushnil(state);
@@ -624,7 +619,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                         if (!lua_isinteger(state, -2))
                         {
                             lua_pop(state, 3);
-                            return luaL_error(state,
+                            return PushTaskStartError(state,
                                 "task.start: filesystem extensions must be an array");
                         }
                         const lua_Integer index = lua_tointeger(state, -2);
@@ -632,7 +627,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                             static_cast<std::size_t>(index) > count)
                         {
                             lua_pop(state, 3);
-                            return luaL_error(state,
+                            return PushTaskStartError(state,
                                 "task.start: filesystem extensions must be contiguous");
                         }
                         lua_pop(state, 1);
@@ -663,7 +658,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                         if (!valid)
                         {
                             lua_pop(state, 1);
-                            return luaL_error(state,
+                            return PushTaskStartError(state,
                                 "task.start: filesystem extensions must contain safe extension names");
                         }
                         std::transform(extension.begin(), extension.end(),
@@ -713,7 +708,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                         suggestedName.back() == ' ')
                     {
                         lua_pop(state, 1);
-                        return luaL_error(state,
+                        return PushTaskStartError(state,
                             "task.start: filesystem suggestedName is invalid");
                     }
                     arguments.emplace(
@@ -739,7 +734,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                             access != "readWrite"))
                     {
                         lua_pop(state, 1);
-                        return luaL_error(state,
+                        return PushTaskStartError(state,
                             "task.start: filesystem folder access must be read, write, or readWrite");
                     }
                 }
@@ -751,7 +746,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
     else if (IsFilesystemHandleTask(taskName))
     {
         if (!hasArguments)
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: %s requires an arguments table",
                 taskName.c_str());
         lua_pushnil(state);
@@ -760,7 +755,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (lua_type(state, -2) != LUA_TSTRING)
             {
                 lua_pop(state, 2);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: filesystem argument keys must be strings");
             }
             size_t keyLength = 0;
@@ -781,7 +776,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (!allowed)
             {
                 lua_pop(state, 2);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: %s received an unknown argument",
                     taskName.c_str());
             }
@@ -796,7 +791,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         lua_pop(state, 1);
         if (!handleValue || !snowdesktop::widget_runtime::
                 WidgetFilesystemHandleStore::IsOpaqueHandle(handle))
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: filesystem handle is invalid");
         arguments.emplace("handle", std::move(handle));
 
@@ -819,7 +814,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         {
             lua_Integer dimension = 2048;
             if (!readInteger("maxDimension", 2048, 1, 2048, dimension))
-                return luaL_error(state, "task.start: maxDimension must be 1 through 2048");
+                return PushTaskStartError(state, "task.start: maxDimension must be 1 through 2048");
             arguments.emplace("maxDimension", std::to_string(dimension));
             lua_getfield(state, 2, "name");
             if (!lua_isnil(state, -1))
@@ -829,7 +824,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                     lua_tolstring(state, -1, &length) : nullptr;
                 if (!value || !snowdesktop::widget_runtime::WidgetFilesystemTaskExecutor::
                         IsDirectChildName(std::string_view(value, length)))
-                    return luaL_error(state, "task.start: image name must be a direct child filename");
+                    return PushTaskStartError(state, "task.start: image name must be a direct child filename");
                 arguments.emplace("name", std::string(value, length));
             }
             lua_pop(state, 1);
@@ -838,7 +833,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         {
             lua_getfield(state, 2, "grantHandles");
             if (!lua_isnil(state, -1) && !lua_isboolean(state, -1))
-                return luaL_error(state, "task.start: grantHandles must be boolean");
+                return PushTaskStartError(state, "task.start: grantHandles must be boolean");
             arguments.emplace("grantHandles", lua_isnil(state, -1) ||
                 lua_toboolean(state, -1) ? "true" : "false");
             lua_pop(state, 1);
@@ -852,7 +847,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                     snowdesktop::widget_runtime::
                         WidgetFilesystemTaskExecutor::MaximumListLimit,
                     limit))
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: filesystem.list pagination is out of range");
             arguments.emplace("offset", std::to_string(offset));
             arguments.emplace("limit", std::to_string(limit));
@@ -873,7 +868,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                     (requested != "utf8" && requested != "binary"))
                 {
                     lua_pop(state, 1);
-                    return luaL_error(state,
+                    return PushTaskStartError(state,
                         "task.start: filesystem encoding must be utf8 or binary");
                 }
                 encoding.assign(requested.data(), requested.size());
@@ -888,7 +883,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                     snowdesktop::widget_runtime::
                         WidgetFilesystemTaskExecutor::MaximumTextBytes,
                     maxBytes))
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: filesystem.read maxBytes is out of range");
             arguments.emplace("maxBytes", std::to_string(maxBytes));
         }
@@ -901,7 +896,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             const bool hasRejectedPayload = !lua_isnil(state, -1);
             lua_pop(state, 1);
             if (hasRejectedPayload)
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: filesystem.write payload does not match encoding");
 
             lua_getfield(state, 2, payloadField);
@@ -915,7 +910,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 (encoding == "utf8" &&
                     (text.find('\0') != std::string::npos ||
                         (!text.empty() && !host.isValidUtf8(text)))))
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: filesystem.write payload is invalid or exceeds 1048576 bytes");
             arguments.emplace(payloadField, std::move(text));
 
@@ -931,7 +926,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                         .find('\0') != std::string_view::npos)
                 {
                     lua_pop(state, 1);
-                    return luaL_error(state,
+                    return PushTaskStartError(state,
                         "task.start: filesystem.write expectedRevision is invalid");
                 }
                 arguments.emplace("expectedRevision",
@@ -947,7 +942,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         const lua_Integer maximumOffset =
             taskName == "app.search" ? 10000 : 100;
         if (!hasArguments)
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: %s requires an arguments table",
                 searchName.c_str());
         lua_pushnil(state);
@@ -956,7 +951,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (lua_type(state, -2) != LUA_TSTRING)
             {
                 lua_pop(state, 2);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: %s argument keys must be strings",
                     searchName.c_str());
             }
@@ -966,7 +961,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (key != "query" && key != "limit" && key != "offset")
             {
                 lua_pop(state, 2);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: %s received an unknown argument",
                     searchName.c_str());
             }
@@ -977,7 +972,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         if (lua_type(state, -1) != LUA_TSTRING)
         {
             lua_pop(state, 1);
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: %s query must be a string",
                 searchName.c_str());
         }
@@ -988,7 +983,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         if (query.empty() || query.size() > 256 ||
             !host.isValidUtf8(query))
         {
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: %s query must contain 1 to 256 bytes of valid UTF-8",
                 searchName.c_str());
         }
@@ -1001,7 +996,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (!lua_isinteger(state, -1))
             {
                 lua_pop(state, 1);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: %s limit must be an integer",
                     searchName.c_str());
             }
@@ -1009,7 +1004,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         }
         lua_pop(state, 1);
         if (limit < 1 || limit > 100)
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: %s limit must be between 1 and 100",
                 searchName.c_str());
         arguments.emplace("limit", std::to_string(limit));
@@ -1021,7 +1016,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (!lua_isinteger(state, -1))
             {
                 lua_pop(state, 1);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: %s offset must be an integer",
                     searchName.c_str());
             }
@@ -1029,7 +1024,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         }
         lua_pop(state, 1);
         if (offset < 0 || offset > maximumOffset)
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: %s offset must be between 0 and %lld",
                 searchName.c_str(),
                 static_cast<long long>(maximumOffset));
@@ -1041,7 +1036,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
     {
         const std::string& actionName = taskName;
         if (!hasArguments)
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: %s requires an arguments table",
                 actionName.c_str());
         lua_pushnil(state);
@@ -1050,7 +1045,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (lua_type(state, -2) != LUA_TSTRING)
             {
                 lua_pop(state, 2);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: %s argument keys must be strings",
                     actionName.c_str());
             }
@@ -1059,7 +1054,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (std::string_view(keyValue ? keyValue : "", keyLength) != "ref")
             {
                 lua_pop(state, 2);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: %s received an unknown argument",
                     actionName.c_str());
             }
@@ -1069,7 +1064,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         if (lua_type(state, -1) != LUA_TSTRING)
         {
             lua_pop(state, 1);
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: %s ref must be a string",
                 actionName.c_str());
         }
@@ -1078,7 +1073,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         std::string reference(refValue ? refValue : "", refLength);
         lua_pop(state, 1);
         if (reference.empty() || reference.size() > 128)
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: %s ref must contain 1 to 128 bytes",
                 actionName.c_str());
         arguments.emplace("ref", std::move(reference));
@@ -1090,7 +1085,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         taskName == "notification.cancel")
     {
         if (!hasArguments)
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: %s requires an arguments table",
                 taskName.c_str());
         lua_pushnil(state);
@@ -1099,7 +1094,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (lua_type(state, -2) != LUA_TSTRING)
             {
                 lua_pop(state, 2);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: %s argument keys must be strings",
                     taskName.c_str());
             }
@@ -1123,7 +1118,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (!allowed)
             {
                 lua_pop(state, 2);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: %s received an unknown argument",
                     taskName.c_str());
             }
@@ -1159,11 +1154,11 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             std::string title;
             std::string message;
             if (!readText("title", 256, required, title))
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: %s title must contain 1 to 256 bytes of valid UTF-8",
                     taskName.c_str());
             if (!readText("message", 2048, required, message))
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: %s message must contain 1 to 2048 bytes of valid UTF-8",
                     taskName.c_str());
             if (!title.empty()) arguments.emplace("title", std::move(title));
@@ -1192,7 +1187,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                     if (!resolved)
                     {
                         lua_pop(state, 1);
-                        return luaL_error(state,
+                        return PushTaskStartError(state,
                             "task.start: %s image must be a package resource.image handle%s",
                             taskName.c_str(),
                             taskName == "notification.update"
@@ -1221,7 +1216,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                         progress < 0.0 || progress > 1.0)
                     {
                         lua_pop(state, 1);
-                        return luaL_error(state,
+                        return PushTaskStartError(state,
                             "task.start: %s progress must be between 0 and 1%s",
                             taskName.c_str(),
                             taskName == "notification.update"
@@ -1234,7 +1229,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                     if (encoded.ec != std::errc{})
                     {
                         lua_pop(state, 1);
-                        return luaL_error(state,
+                        return PushTaskStartError(state,
                             "task.start: notification progress cannot be represented");
                     }
                     arguments.emplace("progress",
@@ -1251,7 +1246,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 {
                     if (lua_istable(state, -1)) lua_pop(state, 1);
                     lua_pop(state, 1);
-                    return luaL_error(state,
+                    return PushTaskStartError(state,
                         "task.start: %s actions must be a plain array",
                         taskName.c_str());
                 }
@@ -1261,7 +1256,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 if (actionCount > 2)
                 {
                     lua_pop(state, 1);
-                    return luaL_error(state,
+                    return PushTaskStartError(state,
                         "task.start: notifications accept at most 2 actions");
                 }
                 std::unordered_set<std::string> actionIds;
@@ -1275,7 +1270,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                     {
                         if (lua_istable(state, -1)) lua_pop(state, 1);
                         lua_pop(state, 2);
-                        return luaL_error(state,
+                        return PushTaskStartError(state,
                             "task.start: notification actions must be plain tables");
                     }
                     const int actionTable = lua_absindex(state, -1);
@@ -1285,7 +1280,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                         if (lua_type(state, -2) != LUA_TSTRING)
                         {
                             lua_pop(state, 4);
-                            return luaL_error(state,
+                            return PushTaskStartError(state,
                                 "task.start: notification action keys must be strings");
                         }
                         size_t actionKeyLength = 0;
@@ -1297,7 +1292,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                         if (actionKey != "id" && actionKey != "label")
                         {
                             lua_pop(state, 4);
-                            return luaL_error(state,
+                            return PushTaskStartError(state,
                                 "task.start: notification action received an unknown field");
                         }
                         lua_pop(state, 1);
@@ -1326,7 +1321,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                         !actionIds.insert(actionId).second)
                     {
                         lua_pop(state, 2);
-                        return luaL_error(state,
+                        return PushTaskStartError(state,
                             "task.start: notification action id and label must be unique non-empty UTF-8 strings up to 64 bytes");
                     }
                     arguments.emplace(
@@ -1350,14 +1345,14 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                     if (!validIndex)
                     {
                         lua_pop(state, 2);
-                        return luaL_error(state,
+                        return PushTaskStartError(state,
                             "task.start: notification actions must be a contiguous array");
                     }
                 }
                 if (enumerated != actionCount)
                 {
                     lua_pop(state, 1);
-                    return luaL_error(state,
+                    return PushTaskStartError(state,
                         "task.start: notification actions must be a contiguous array");
                 }
                 arguments.emplace("actionCount",
@@ -1365,7 +1360,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             }
             lua_pop(state, 1);
             if (taskName == "notification.update" && arguments.empty())
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: notification.update requires a content field");
         }
         if (taskName == "notification.update" ||
@@ -1374,7 +1369,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         {
             std::string notificationId;
             if (!readText("notificationId", 128, true, notificationId))
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: %s notificationId must contain 1 to 128 bytes of valid UTF-8",
                     taskName.c_str());
             arguments.emplace("notificationId", std::move(notificationId));
@@ -1387,7 +1382,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 lua_tointegerx(state, -1, &isInteger);
             lua_pop(state, 1);
             if (!isInteger || atMs <= 0)
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: notification.schedule atMs must be a positive epoch millisecond integer");
             arguments.emplace("atMs", std::to_string(atMs));
         }
@@ -1400,7 +1395,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         constexpr std::size_t MaximumHeaderBytes = 32 * 1024;
         constexpr std::size_t MaximumBodyBytes = 64 * 1024;
         if (!hasArguments)
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: network.request requires an arguments table");
         lua_pushnil(state);
         while (lua_next(state, 2) != 0)
@@ -1408,7 +1403,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (lua_type(state, -2) != LUA_TSTRING)
             {
                 lua_pop(state, 2);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: network.request argument keys must be strings");
             }
             size_t keyLength = 0;
@@ -1421,7 +1416,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 key != "maxBytes" && key != "retryDirect")
             {
                 lua_pop(state, 2);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: network.request received an unknown argument");
             }
             lua_pop(state, 1);
@@ -1446,7 +1441,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         std::string url;
         if (!readRequiredUtf8("url", 2048, url))
         {
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: network.request url must contain 1 to 2048 bytes of valid UTF-8");
         }
         arguments.emplace("url", std::move(url));
@@ -1458,7 +1453,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (lua_type(state, -1) != LUA_TSTRING)
             {
                 lua_pop(state, 1);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: network.request method must be a string");
             }
             size_t length = 0;
@@ -1474,7 +1469,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             method != "POST" && method != "PUT" &&
             method != "PATCH" && method != "DELETE")
         {
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: network.request method is not supported");
         }
         arguments.emplace("method", method);
@@ -1605,7 +1600,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             {
                 if (lua_istable(state, -1)) lua_pop(state, 1);
                 lua_pop(state, 1);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: network.request headers must be a plain table");
             }
             const int headersTable = lua_absindex(state, -1);
@@ -1616,7 +1611,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                     headerCount >= MaximumHeaders)
                 {
                     lua_pop(state, 3);
-                    return luaL_error(state,
+                    return PushTaskStartError(state,
                         "task.start: network.request accepts at most 32 string-keyed headers");
                 }
                 size_t headerNameLength = 0;
@@ -1636,7 +1631,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                         normalizedHeaderName).second)
                 {
                     lua_pop(state, 3);
-                    return luaL_error(state,
+                    return PushTaskStartError(state,
                         "task.start: network.request header name is invalid");
                 }
                 const std::string fieldPrefix = "header." +
@@ -1650,7 +1645,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                         normalizedHeaderName == "x-api-key")
                     {
                         lua_pop(state, 3);
-                        return luaL_error(state,
+                        return PushTaskStartError(state,
                             "task.start: credential headers require a secret descriptor");
                     }
                     size_t valueLength = 0;
@@ -1664,7 +1659,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                         !host.isValidUtf8(headerValue))
                     {
                         lua_pop(state, 3);
-                        return luaL_error(state,
+                        return PushTaskStartError(state,
                             "task.start: network.request header values must be bounded single-line UTF-8 strings");
                     }
                     headerBytes += headerValue.size();
@@ -1691,13 +1686,13 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 else
                 {
                     lua_pop(state, 3);
-                    return luaL_error(state,
+                    return PushTaskStartError(state,
                         "task.start: network.request header values must be strings or secret descriptors");
                 }
                 if (headerBytes > MaximumHeaderBytes)
                 {
                     lua_pop(state, 3);
-                    return luaL_error(state,
+                    return PushTaskStartError(state,
                         "task.start: network.request headers exceed the 32 KiB limit");
                 }
                 ++headerCount;
@@ -1720,7 +1715,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (length > MaximumBodyBytes)
             {
                 lua_pop(state, 1);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: network.request body exceeds the 64 KiB limit");
             }
             arguments.emplace("body.kind", "raw");
@@ -1743,7 +1738,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         else
         {
             lua_pop(state, 1);
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: network.request body must be a string or secret descriptor");
         }
         lua_pop(state, 1);
@@ -1752,7 +1747,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         if (!lua_isnil(state, -1) && !lua_isboolean(state, -1))
         {
             lua_pop(state, 1);
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: network.request retryDirect must be a boolean");
         }
         const bool retryDirect = lua_toboolean(state, -1) != 0;
@@ -1761,7 +1756,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 arguments.at("body.kind") != "raw" ||
                 !arguments.at("body.value").empty()))
         {
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: network.request retryDirect requires a bodyless GET or HEAD");
         }
         arguments.emplace("retryDirect", retryDirect ? "true" : "false");
@@ -1794,7 +1789,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 HttpRequestOptions::MaximumResponseBytes,
                 maxBytes))
         {
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: network.request numeric options are out of range");
         }
         arguments.emplace("timeoutMs", std::to_string(timeoutMs));
@@ -1804,7 +1799,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
     else if (taskName == "shell.openUri")
     {
         if (!hasArguments)
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: shell.openUri requires an arguments table");
         lua_pushnil(state);
         while (lua_next(state, 2) != 0)
@@ -1813,7 +1808,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 std::string_view(lua_tostring(state, -2)) != "url")
             {
                 lua_pop(state, 2);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: shell.openUri accepts only url");
             }
             lua_pop(state, 1);
@@ -1822,7 +1817,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         if (lua_type(state, -1) != LUA_TSTRING)
         {
             lua_pop(state, 1);
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: shell.openUri url must be a string");
         }
         size_t urlLength = 0;
@@ -1833,7 +1828,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             url.find('\0') != std::string::npos ||
             !host.isValidUtf8(url))
         {
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: shell.openUri url must contain 1 to 2048 bytes of valid UTF-8");
         }
         arguments.emplace("url", std::move(url));
@@ -1846,7 +1841,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         taskName == "calendar.series.remove")
     {
         if (!hasArguments)
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: %s requires an arguments table",
                 taskName.c_str());
         const bool seriesTask = taskName.starts_with("calendar.series.");
@@ -1861,7 +1856,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (lua_type(state, -2) != LUA_TSTRING)
             {
                 lua_pop(state, 2);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: calendar argument keys must be strings");
             }
             size_t keyLength = 0;
@@ -1887,7 +1882,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (!allowed)
             {
                 lua_pop(state, 2);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: %s received an unknown argument",
                     taskName.c_str());
             }
@@ -1925,7 +1920,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         {
             std::string id;
             if (!readText("id", 128, false, id))
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: %s id must contain 1 to 128 bytes of valid UTF-8",
                     taskName.c_str());
             arguments.emplace("id", std::move(id));
@@ -1944,7 +1939,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                     !readText("endDate", 10, true, endDate) ||
                     (!endDate.empty() &&
                         !snowdesktop::calendar::CalendarService::GetDateInfo(endDate)))
-                    return luaL_error(state, "task.start: calendar series rule is invalid");
+                    return PushTaskStartError(state, "task.start: calendar series rule is invalid");
                 arguments.emplace("kind", kind);
                 arguments.emplace("startDate", startDate);
                 arguments.emplace("endDate", endDate);
@@ -1952,7 +1947,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 lua_Integer monthDay = 0;
                 if (!readInteger("interval", interval) || interval < 1 || interval > 99 ||
                     !readInteger("monthDay", monthDay) || monthDay < 0 || monthDay > 31)
-                    return luaL_error(state, "task.start: calendar series interval or monthDay is invalid");
+                    return PushTaskStartError(state, "task.start: calendar series interval or monthDay is invalid");
                 arguments.emplace("interval", std::to_string(interval));
                 arguments.emplace("monthDay", std::to_string(monthDay));
                 const auto readArray = [&](const char* field, bool dates,
@@ -1993,7 +1988,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 };
                 if (!readArray("dates", true, 366) ||
                     !readArray("weekdays", false, 7))
-                    return luaL_error(state, "task.start: calendar series dates or weekdays is invalid");
+                    return PushTaskStartError(state, "task.start: calendar series dates or weekdays is invalid");
             }
         }
         if (!remove)
@@ -2002,21 +1997,21 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             std::string date;
             std::string notes;
             if (!readText("title", 512, false, title))
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: calendar title must contain 1 to 512 bytes of valid UTF-8");
             if (!readText("date", 10, false, date) ||
                 !snowdesktop::calendar::CalendarService::GetDateInfo(date))
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: calendar date must be a valid YYYY-MM-DD date");
             if (!readText("notes", 8192, true, notes))
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: calendar notes must contain at most 8192 bytes of valid UTF-8");
 
             lua_getfield(state, 2, "allDay");
             if (!lua_isboolean(state, -1))
             {
                 lua_pop(state, 1);
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: calendar allDay must be a boolean");
             }
             const bool allDay = lua_toboolean(state, -1) != 0;
@@ -2031,7 +2026,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                 endMinutes < 0 || endMinutes > 1439 ||
                 (!allDay && endMinutes < startMinutes))
             {
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: calendar time range is invalid");
             }
             if (!readInteger("reminderMinutes", reminderMinutes) ||
@@ -2040,7 +2035,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                     reminderMinutes != 30 && reminderMinutes != 60 &&
                     reminderMinutes != 1440))
             {
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: calendar reminderMinutes is unsupported");
             }
 
@@ -2060,7 +2055,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
                     expectedRevision <= 0 ||
                     expectedRevision > std::numeric_limits<int>::max())
                 {
-                    return luaL_error(state,
+                    return PushTaskStartError(state,
                         "task.start: calendar expectedRevision must be a positive integer");
                 }
                 arguments.emplace("expectedRevision",
@@ -2073,7 +2068,7 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
             if (!readInteger("expectedRevision", expectedRevision) ||
                 expectedRevision <= 0 ||
                 expectedRevision > std::numeric_limits<int>::max())
-                return luaL_error(state,
+                return PushTaskStartError(state,
                     "task.start: calendar series expectedRevision must be a positive integer");
             arguments.emplace("expectedRevision", std::to_string(expectedRevision));
         }
@@ -2084,14 +2079,14 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
         if (lua_next(state, 2) != 0)
         {
             lua_pop(state, 2);
-            return luaL_error(state,
+            return PushTaskStartError(state,
                 "task.start: this task does not accept arguments");
         }
     }
 
     auto result = host.startTask(state, taskName, std::move(arguments));
     if (!result)
-        return luaL_error(state, "task.start: host is unavailable");
+        return PushTaskStartError(state, "task.start: host is unavailable");
     if (!*result)
     {
         lua_pushnil(state);
@@ -2106,9 +2101,28 @@ __declspec(noinline) int LuaTaskStartWithDeferredSecretError(
 
 int StartTaskFromLua(lua_State* state, const LuaTaskStartHost& host)
 {
-    const int result = LuaTaskStartWithDeferredSecretError(state, host);
-    // Lua uses longjmp in this build. Finish the secret descriptor parser's
-    // C++ string/container lifetimes before raising its validation error.
+    if (lua_gettop(state) < 1 || lua_gettop(state) > 2)
+        return luaL_error(state,
+            "task.start: expected a task name and optional arguments");
+    size_t nameLength = 0;
+    const char* name = luaL_checklstring(state, 1, &nameLength);
+    if (nameLength == 0 || nameLength > 128)
+        return luaL_error(state,
+            "task.start: task name must contain 1 to 128 bytes");
+    const bool hasArguments = !lua_isnoneornil(state, 2);
+    if (hasArguments)
+    {
+        luaL_checktype(state, 2, LUA_TTABLE);
+        if (lua_getmetatable(state, 2) != 0)
+        {
+            lua_pop(state, 1);
+            return luaL_error(state,
+                "task.start: arguments must be a plain table");
+        }
+    }
+
+    const int result = StartTaskWithDeferredError(
+        state, host, {name, nameLength}, hasArguments);
     return result < 0 ? lua_error(state) : result;
 }
 }
