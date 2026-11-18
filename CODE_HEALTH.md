@@ -4,7 +4,7 @@
 
 **已经确定的交付**　完成任务 2、3、4 三个长文件的实际源码拆分。每个文件都要把下文列出的独立职责迁到有明确归属的生产实现，接回原入口，验证原有行为、对象生命周期和兼容性。项目还持续跟踪共用规则、依赖和状态所有权，例如任务 5 的 UTF-8 校验和任务 6 的弹窗几何。
 
-**现在从哪里开始**　领取标为“下一项”的任务。当前是 **3 · 视图树**：从 `ValidateNode` 中移出 `transition`、`enterTransition`、`exitTransition` 的局部校验，保留递归、预算和键集合的所有者。通过后回填任务 3 的剩余工作，接着做 4 的预览解析，再做 2 的音频分流。此后按剩余职责、影响和可验证性排出下一项。
+**现在从哪里开始**　任务 3 的首批由 `code-health-03` 实施。转场描述校验已移出 `ValidateNode`，生产入口对照通过，正在验证宿主接线。通过后记录任务 3 的剩余工作，接着做 4 的预览解析，再做 2 的音频分流。
 
 ## 任务与状态
 
@@ -14,7 +14,7 @@
 | --- | --- | --- | --- | --- |
 | 已验证 | 1 | 大图标配置值与 JSON 编解码分离 | `9e3c5e81a` 实施，`b7663d8a5` 补齐头文件依赖。标准 Release、`behavior_recovery`、`behavior_settings-host` 和独立头文件语法检查通过。与 `501607ae3` 对照，5 组往返和 6 项拒绝结果共 11,799 字节一致。 | 2026-11-18 |
 | 已计划 | 2 | 完成任务引擎 [widget_engine.cpp](src/widget/runtime/widget_engine.cpp) 的职责拆分 | 从 `ApplyWidgetTaskBrokerActions` 入手，固定音频消息消费和延迟 Lua 事件派发的先后顺序，再移出音频消费逻辑。 | 2026-11-18 |
-| 下一项 | 3 | 完成视图树 [widget_view_tree.cpp](src/widget/view/widget_view_tree.cpp) 的职责拆分 | 将三类转场校验移到 `widget/view/` 私有实现。用同一组合法和多项同时非法的节点，对照原入口的返回值、首条错误和原文。 | 2026-11-18 |
+| 进行中 | 3 | 完成视图树 [widget_view_tree.cpp](src/widget/view/widget_view_tree.cpp) 的职责拆分 | `code-health-03` 将三类转场描述校验迁到 [私有实现](src/widget/view/widget_view_transition_validation.cpp)。与 `01f130136` 的生产入口对照，22 项返回值和首条诊断原文一致。待标准 Release 与视图宿主回归。 | 2026-11-18 |
 | 已计划 | 4 | 完成组件包 [widget_package.cpp](src/widget/packages/widget_package.cpp) 的职责拆分 | 从 `ReadManifest` 移出 `previewGallery`、`previewData` 及其 variants 的解析。对照缺省、有效旧清单、部分错误和超限输入的字段值及完整诊断顺序。 | 2026-11-18 |
 | 已验证 | 5 | 归并存储事务、值编码和设置服务中等价的 UTF-8 字节校验 | `b119f7447` 将字节校验从 3 份归为 1 份。标准 Release、`widget_storage_transaction` 和 `behavior_settings-host` 通过（Run `341657452b4841f2a3ee2a8a4359453b`）。候选库与 `01f130136` 的旧实现对照 2,393,892 次判定一致，包含截断、代理项和嵌入 NUL。入口继续处理键长、NUL、保留键和业务错误。 | 2026-11-18 |
 | 待验证 | 6 | 归并[弹窗图标和文字](src/app/popup/app_popup_geometry.cpp)中共用的几何计算 | `code-health-6` 的 `9342e8e5e` 将列表名称列计算从两处归到一处，文字入口直接复用同次计算的图标矩形。扇形图标反查因无可达调用而移除，文字匹配和按条目索引的拖放命中沿用原路径。共享批次 `27ef9727dade4e739c4d0e62f2770227` 的标准 Release 和 `behavior_drag-popup` 通过，11,520 组列表输入的图标与文字矩形四边一致。待在列表切换详情列后确认重命名框位置，并在扇形滚动后确认拖放命中。 | 2026-11-18 |

@@ -1,4 +1,5 @@
 #include "widget_view_tree.h"
+#include "widget_view_transition_validation.h"
 #include "widget/api/widget_view_contract.h"
 
 #include <algorithm>
@@ -2095,71 +2096,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
                     *style.cornerRadius, 0.0f, 4096.0f)) &&
             (!style.opacity || FiniteInRange(*style.opacity, 0.0f, 1.0f));
     };
-    if (node.transition)
-    {
-        if (node.transition->durationMilliseconds < 1 ||
-            node.transition->durationMilliseconds > 2000 ||
-            node.transition->properties.empty() ||
-            node.transition->properties.size() > 4)
-        {
-            error = "view transition must contain 1 to 4 properties and a duration from 1 to 2000ms";
-            return false;
-        }
-        std::array<bool, 6> seen{};
-        for (const auto property : node.transition->properties)
-        {
-            const auto index = static_cast<std::size_t>(property);
-            if (index >= seen.size() || seen[index])
-            {
-                error = "view transition properties must be supported and unique";
-                return false;
-            }
-            seen[index] = true;
-        }
-        switch (node.transition->easing)
-        {
-        case ViewTransitionEasing::Linear:
-        case ViewTransitionEasing::EaseIn:
-        case ViewTransitionEasing::EaseOut:
-        case ViewTransitionEasing::EaseInOut:
-            break;
-        default:
-            error = "view transition easing is unsupported";
-            return false;
-        }
-    }
-    const auto validatePresenceTransition = [&error](
-        const std::optional<ViewPresenceTransition>& presence,
-        std::string_view name) {
-        if (!presence) return true;
-        if (presence->durationMilliseconds < 1 ||
-            presence->durationMilliseconds > 2000 ||
-            (!presence->opacity && !presence->transform) ||
-            (presence->opacity &&
-                !FiniteInRange(*presence->opacity, 0.0f, 1.0f)))
-        {
-            error = "view " + std::string(name) +
-                " requires bounded opacity or transform and a duration from 1 to 2000ms";
-            return false;
-        }
-        switch (presence->easing)
-        {
-        case ViewTransitionEasing::Linear:
-        case ViewTransitionEasing::EaseIn:
-        case ViewTransitionEasing::EaseOut:
-        case ViewTransitionEasing::EaseInOut:
-            return true;
-        default:
-            error = "view " + std::string(name) +
-                " easing is unsupported";
-            return false;
-        }
-    };
-    if (!validatePresenceTransition(
-            node.enterTransition, "enterTransition") ||
-        !validatePresenceTransition(
-            node.exitTransition, "exitTransition"))
-        return false;
+    if (!ValidateViewNodeTransitions(node, error)) return false;
     if (node.maximumLines > 64)
     {
         error = "view maxLines must be between 0 and 64";
