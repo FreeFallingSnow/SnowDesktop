@@ -615,6 +615,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/api/widget_view_contract.cpp
     src/widget/view/widget_view_transition_validation.cpp
     src/widget/view/widget_view_tree.cpp
+    src/widget/view/widget_view_validation.cpp
     src/widget/view/widget_view_lua.cpp
     src/widget/view/widget_text_input_rules.cpp
     src/widget/storage/widget_storage_transaction.cpp
