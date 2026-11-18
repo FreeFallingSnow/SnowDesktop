@@ -2328,4 +2328,75 @@ void DrawWidgetSelectOverlays(WidgetDrawContext* state, const WidgetViewHost& ho
         DrawWidgetSelectOverlays(state, host, *child, regions, focusedKey,
             viewportHeight);
 }
+
+bool HasLocalRefresh(const snowdesktop::widget_runtime::ViewNode& node)
+{
+    return node.localRefresh ||
+        std::any_of(node.children.begin(), node.children.end(), HasLocalRefresh);
+}
+
+// The old tree has already supplied exit transitions and will be replaced.
+// Normalize only the supported values so the regular tree equality checks
+// every other property, including layout and SMTC-driven metadata.
+void CollectLocalRefresh(
+    snowdesktop::widget_runtime::ViewNode& previous,
+    const snowdesktop::widget_runtime::ViewNode& current,
+    const RECT& bounds, snowdesktop::widget_runtime::WidgetSurfacePaint& paint)
+{
+    using namespace snowdesktop::widget_runtime;
+    if (current.key != previous.key || current.type != previous.type ||
+        current.transform || current.transition ||
+        current.children.size() != previous.children.size())
+        return;
+    for (std::size_t i = 0; i < current.children.size(); ++i)
+        CollectLocalRefresh(previous.children[i], current.children[i], bounds, paint);
+    if (!current.localRefresh || !previous.localRefresh || current.shadow)
+        return;
+
+    ViewRect rect = current.frame;
+    float padding = 2.0f;
+    if (current.type == ViewNodeType::Spectrum && current.values != previous.values)
+    {
+        rect = ViewNodeContentRect(current);
+        const auto peak = [](const std::vector<float>& values, float minimum) {
+            return values.empty() ? minimum :
+                *std::max_element(values.begin(), values.end());
+        };
+        const float minimum = current.seriesMinimum.value_or(0.0f);
+        const float maximum = current.seriesMaximum.value_or(1.0f);
+        const float value = std::max(peak(previous.values, minimum),
+            peak(current.values, minimum));
+        const float barHeight = rect.height *
+            std::clamp((value - minimum) / (maximum - minimum), 0.0f, 1.0f);
+        rect.y += rect.height - barHeight;
+        rect.height = barHeight;
+        previous.values = current.values;
+    }
+    else if (current.type == ViewNodeType::Slider)
+    {
+        previous.accessibilityValue = current.accessibilityValue;
+        if (current.value == previous.value) return;
+        padding += 8.0f + 0.5f * std::max(
+            current.style.borderWidth.value_or(0.0f),
+            current.disabledStyle.borderWidth.value_or(0.0f));
+        previous.value = current.value;
+    }
+    else
+    {
+        if (current.type == ViewNodeType::Text && !current.textGlowRadius &&
+            current.text != previous.text)
+        {
+            previous.text = current.text;
+            paint.textChanged = true;
+        }
+        return;
+    }
+    const RECT changed{
+        bounds.left + static_cast<LONG>(std::floor(rect.x - padding)),
+        bounds.top + static_cast<LONG>(std::floor(rect.y - padding)),
+        bounds.left + static_cast<LONG>(std::ceil(rect.x + rect.width + padding)),
+        bounds.top + static_cast<LONG>(std::ceil(rect.y + rect.height + padding)),
+    };
+    UnionRect(&paint.damage, &paint.damage, &changed);
+}
 }

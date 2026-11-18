@@ -505,4 +505,79 @@ void DrawSimulatedPreviewIcon(WidgetDrawContext* state,
             rect, text, D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
 }
+
+void PopWidgetClips(WidgetDrawContext& draw) noexcept
+{
+    while (draw.widgetClipDepth > 0)
+    {
+        draw.ctx->PopAxisAlignedClip();
+        --draw.widgetClipDepth;
+    }
+}
+
+WidgetCommandCapture::~WidgetCommandCapture()
+{
+    if (draw_) Abort();
+}
+
+WidgetCommandCapture::BeginResult WidgetCommandCapture::Begin(
+    WidgetDrawContext& draw, std::vector<D2D1_RECT_F>& clipRects, ID2D1Device* device,
+    Microsoft::WRL::ComPtr<ID2D1DeviceContext>& recordingContext)
+{
+    if (!draw.ctx || !device) return BeginResult::NoDevice;
+    if (!recordingContext && FAILED(device->CreateDeviceContext(
+            D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &recordingContext)))
+        return BeginResult::NoRecordingContext;
+    if (!recordingContext ||
+        FAILED(recordingContext->CreateCommandList(&commands_)) || !commands_)
+        return BeginResult::NoCommandList;
+
+    display_ = draw.ctx;
+    recording_ = recordingContext;
+    float dpiX = 96.0f;
+    float dpiY = 96.0f;
+    display_->GetDpi(&dpiX, &dpiY);
+    recording_->SetDpi(dpiX, dpiY);
+    recording_->SetUnitMode(display_->GetUnitMode());
+    recording_->SetAntialiasMode(display_->GetAntialiasMode());
+    recording_->SetTextAntialiasMode(display_->GetTextAntialiasMode());
+    recording_->SetPrimitiveBlend(display_->GetPrimitiveBlend());
+    recording_->SetTransform(D2D1::Matrix3x2F::Identity());
+    recording_->SetTarget(commands_.Get());
+    recording_->BeginDraw();
+    draw.ctx = recording_.Get();
+    draw.widgetClipDepth = 0;
+    clipRects.clear();
+    clipRects_ = &clipRects;
+    draw_ = &draw;
+    return BeginResult::Started;
+}
+
+HRESULT WidgetCommandCapture::FinishDraw() noexcept
+{
+    if (!draw_) return E_UNEXPECTED;
+    PopWidgetClips(*draw_);
+    const HRESULT result = recording_->EndDraw();
+    recording_->SetTarget(nullptr);
+    draw_->ctx = display_;
+    clipRects_->clear();
+    draw_ = nullptr;
+    return result;
+}
+
+HRESULT WidgetCommandCapture::Close() noexcept
+{
+    return commands_ ? commands_->Close() : E_UNEXPECTED;
+}
+
+void WidgetCommandCapture::Abort() noexcept
+{
+    (void)FinishDraw();
+    (void)Close();
+}
+
+Microsoft::WRL::ComPtr<ID2D1CommandList> WidgetCommandCapture::TakeCommands() noexcept
+{
+    return std::move(commands_);
+}
 }

@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 struct IDWriteFontCollection1;
 
@@ -116,4 +117,34 @@ void DrawHostCompositionUnderline(WidgetDrawContext* state, IDWriteTextLayout* t
     float originY, int color);
 void DrawSimulatedPreviewIcon(WidgetDrawContext* state, const std::wstring& identity,
     const std::wstring& title, float x, float y, float size, float alpha);
+
+void PopWidgetClips(WidgetDrawContext& draw) noexcept;
+
+// Scope of one immediate-mode recording. The capture keeps the recording context
+// and command list alive until the display target is restored.
+class WidgetCommandCapture
+{
+public:
+    enum class BeginResult { Started, NoDevice, NoRecordingContext, NoCommandList };
+
+    WidgetCommandCapture() = default;
+    ~WidgetCommandCapture();
+    WidgetCommandCapture(const WidgetCommandCapture&) = delete;
+    WidgetCommandCapture& operator=(const WidgetCommandCapture&) = delete;
+
+    BeginResult Begin(WidgetDrawContext& draw, std::vector<D2D1_RECT_F>& clipRects,
+        ID2D1Device* device, Microsoft::WRL::ComPtr<ID2D1DeviceContext>& recordingContext);
+    HRESULT FinishDraw() noexcept;
+    HRESULT Close() noexcept;
+    void Abort() noexcept;
+    ID2D1CommandList* Commands() const noexcept { return commands_.Get(); }
+    Microsoft::WRL::ComPtr<ID2D1CommandList> TakeCommands() noexcept;
+
+private:
+    WidgetDrawContext* draw_ = nullptr;
+    std::vector<D2D1_RECT_F>* clipRects_ = nullptr;
+    ID2D1DeviceContext* display_ = nullptr;
+    Microsoft::WRL::ComPtr<ID2D1DeviceContext> recording_;
+    Microsoft::WRL::ComPtr<ID2D1CommandList> commands_;
+};
 }

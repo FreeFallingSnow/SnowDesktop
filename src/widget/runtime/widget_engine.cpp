@@ -15211,141 +15211,149 @@ bool WidgetEngine::MeasureHoveredInteractionTooltip(const std::wstring& widgetId
         regions, scale, measured, bounds, name);
 }
 
-static std::vector<LuaWidget::HostControl> BuildViewHostControls(
-    WidgetEngine& engine, D2DState* state,
-    const std::wstring& widgetId,
-    const std::vector<snowdesktop::widget_runtime::ViewScrollViewport>&
-        scrollViewports,
-    const std::vector<snowdesktop::widget_runtime::ViewInputControl>&
-        inputControls)
+static LuaWidget::HostControl BuildViewScrollHostControl(
+    const snowdesktop::widget_runtime::ViewScrollViewport& viewport, bool panel)
 {
-    std::vector<LuaWidget::HostControl> result;
-    result.reserve(scrollViewports.size() + inputControls.size());
-    for (const auto& viewport : scrollViewports)
+    LuaWidget::HostControl control;
+    control.type = LuaWidget::HostControl::Type::Scroll;
+    control.id = viewport.key;
+    control.rect = {
+        static_cast<LONG>(std::lround(viewport.frame.x)),
+        static_cast<LONG>(std::lround(viewport.frame.y)),
+        static_cast<LONG>(std::lround(
+            viewport.frame.x + viewport.frame.width)),
+        static_cast<LONG>(std::lround(
+            viewport.frame.y + viewport.frame.height)),
+    };
+    if (panel)
     {
-        LuaWidget::HostControl control;
-        control.type = LuaWidget::HostControl::Type::Scroll;
-        control.id = viewport.key;
         control.selectPopup = viewport.selectPopup;
         control.initialScrollOffset =
             static_cast<int>(std::lround(viewport.offset));
-        control.rect = {
-            static_cast<LONG>(std::lround(viewport.frame.x)),
-            static_cast<LONG>(std::lround(viewport.frame.y)),
-            static_cast<LONG>(std::lround(
-                viewport.frame.x + viewport.frame.width)),
-            static_cast<LONG>(std::lround(
-                viewport.frame.y + viewport.frame.height)),
-        };
-        if (viewport.scrollbarFrame)
-        {
-            const auto& track = *viewport.scrollbarFrame;
-            control.rect.right = static_cast<LONG>(std::lround(
-                track.x + track.width));
-            control.rect.bottom = static_cast<LONG>(std::lround(
-                track.y + track.height));
-        }
-        control.horizontal = viewport.orientation ==
-            snowdesktop::widget_runtime::ViewOrientation::Horizontal;
-        const int viewportExtent = std::max(1,
-            static_cast<int>(std::lround(viewport.viewportExtent)));
-        const int contentExtent = std::max(viewportExtent,
-            static_cast<int>(std::lround(viewport.contentExtent)));
-        control.viewportWidth = std::max(1,
-            static_cast<int>(std::lround(viewport.frame.width)));
-        control.contentWidth = control.viewportWidth;
-        control.viewportHeight = std::max(1,
-            static_cast<int>(std::lround(viewport.frame.height)));
-        control.contentHeight = control.viewportHeight;
-        if (control.horizontal)
-        {
-            control.viewportWidth = viewportExtent;
-            control.contentWidth = contentExtent;
-        }
-        else
-        {
-            control.viewportHeight = viewportExtent;
-            control.contentHeight = contentExtent;
-        }
-        result.push_back(std::move(control));
     }
-    for (const auto& input : inputControls)
+    if (panel && viewport.scrollbarFrame)
     {
-        LuaWidget::HostControl control;
-        control.type = LuaWidget::HostControl::Type::Input;
-        control.id = input.key;
-        control.rect = {
-            static_cast<LONG>(std::lround(input.frame.x)),
-            static_cast<LONG>(std::lround(input.frame.y)),
-            static_cast<LONG>(std::lround(
-                input.frame.x + input.frame.width)),
-            static_cast<LONG>(std::lround(
-                input.frame.y + input.frame.height)),
-        };
-        if (input.clip)
-        {
-            control.clipRect = RECT{
-                static_cast<LONG>(std::lround(input.clip->x)),
-                static_cast<LONG>(std::lround(input.clip->y)),
-                static_cast<LONG>(std::lround(
-                    input.clip->x + input.clip->width)),
-                static_cast<LONG>(std::lround(
-                    input.clip->y + input.clip->height)),
-            };
-        }
-        control.enabled = input.enabled;
-        control.focusable = input.focusable;
-        control.readOnly = input.readOnly;
-        control.controlled = true;
-        control.numeric = input.type ==
-            snowdesktop::widget_runtime::ViewNodeType::NumberInput;
-        control.controlledText = input.value;
-        control.placeholder = input.placeholder;
-        control.changeAction = input.changeAction;
-        control.selection = input.selection;
-        control.selectionChangeAction = input.selectionChangeAction;
-        control.focusAction = input.focusAction;
-        control.blurAction = input.blurAction;
-        control.submitAction = input.submitAction;
-        control.selectAll = input.selectAll;
-        control.liveUpdate = input.liveUpdate;
-        control.multiline = input.type ==
-            snowdesktop::widget_runtime::ViewNodeType::TextArea;
-        control.fontSize = input.fontSize;
-        control.padding = input.padding;
-        control.maximumUtf8Bytes = input.maximumUtf8Bytes == 0
-            ? snowdesktop::widget_runtime::ViewTreeLimits::MaximumTextBytes
-            : input.maximumUtf8Bytes;
-        control.minimum = input.minimum;
-        control.maximum = input.maximum;
-        control.step = input.step;
-        control.viewportHeight = std::max(1,
-            static_cast<int>(std::lround(input.frame.height)));
-        control.contentHeight = control.viewportHeight;
-        if (control.multiline)
-        {
-            const float innerWidth = std::max(1.0f,
-                input.frame.width - input.padding.left -
-                    input.padding.right - 8.0f);
-            std::wstring metricText = Utf8ToWideLocal(input.value);
-            size_t metricCursor = 0;
-            size_t metricAnchor = 0;
-            std::wstring metricComposition;
-            size_t metricCompositionCursor = 0;
-            (void)engine.RuntimeGetFocusedHostInput(widgetId,
-                input.key, metricText, metricCursor, metricAnchor,
-                metricComposition, metricCompositionCursor);
-            ComPtr<IDWriteTextLayout> layout =
-                CreateHostMultilineTextLayout(state,
-                    metricText, input.fontSize, innerWidth);
-            DWRITE_TEXT_METRICS metrics{};
-            if (layout) layout->GetMetrics(&metrics);
-            control.contentHeight = std::max(control.viewportHeight,
-                static_cast<int>(std::ceil(metrics.height +
-                    input.padding.top + input.padding.bottom)));
-        }
-        result.push_back(std::move(control));
+        const auto& track = *viewport.scrollbarFrame;
+        control.rect.right = static_cast<LONG>(std::lround(
+            track.x + track.width));
+        control.rect.bottom = static_cast<LONG>(std::lround(
+            track.y + track.height));
     }
+    control.horizontal = viewport.orientation ==
+        snowdesktop::widget_runtime::ViewOrientation::Horizontal;
+    const int viewportExtent = std::max(1,
+        static_cast<int>(std::lround(viewport.viewportExtent)));
+    const int contentExtent = std::max(viewportExtent,
+        static_cast<int>(std::lround(viewport.contentExtent)));
+    control.viewportWidth = std::max(1,
+        static_cast<int>(std::lround(viewport.frame.width)));
+    control.contentWidth = control.viewportWidth;
+    control.viewportHeight = std::max(1,
+        static_cast<int>(std::lround(viewport.frame.height)));
+    control.contentHeight = control.viewportHeight;
+    if (control.horizontal)
+    {
+        control.viewportWidth = viewportExtent;
+        control.contentWidth = contentExtent;
+    }
+    else
+    {
+        control.viewportHeight = viewportExtent;
+        control.contentHeight = contentExtent;
+    }
+    return control;
+}
+
+static LuaWidget::HostControl BuildViewInputHostControl(
+    WidgetEngine& engine, D2DState* state, const std::wstring& widgetId,
+    const snowdesktop::widget_runtime::ViewInputControl& input)
+{
+    LuaWidget::HostControl control;
+    control.type = LuaWidget::HostControl::Type::Input;
+    control.id = input.key;
+    control.rect = {
+        static_cast<LONG>(std::lround(input.frame.x)),
+        static_cast<LONG>(std::lround(input.frame.y)),
+        static_cast<LONG>(std::lround(
+            input.frame.x + input.frame.width)),
+        static_cast<LONG>(std::lround(
+            input.frame.y + input.frame.height)),
+    };
+    if (input.clip)
+    {
+        control.clipRect = RECT{
+            static_cast<LONG>(std::lround(input.clip->x)),
+            static_cast<LONG>(std::lround(input.clip->y)),
+            static_cast<LONG>(std::lround(
+                input.clip->x + input.clip->width)),
+            static_cast<LONG>(std::lround(
+                input.clip->y + input.clip->height)),
+        };
+    }
+    control.enabled = input.enabled;
+    control.focusable = input.focusable;
+    control.readOnly = input.readOnly;
+    control.controlled = true;
+    control.numeric = input.type ==
+        snowdesktop::widget_runtime::ViewNodeType::NumberInput;
+    control.controlledText = input.value;
+    control.placeholder = input.placeholder;
+    control.changeAction = input.changeAction;
+    control.selection = input.selection;
+    control.selectionChangeAction = input.selectionChangeAction;
+    control.focusAction = input.focusAction;
+    control.blurAction = input.blurAction;
+    control.submitAction = input.submitAction;
+    control.selectAll = input.selectAll;
+    control.liveUpdate = input.liveUpdate;
+    control.multiline = input.type ==
+        snowdesktop::widget_runtime::ViewNodeType::TextArea;
+    control.fontSize = input.fontSize;
+    control.padding = input.padding;
+    control.maximumUtf8Bytes = input.maximumUtf8Bytes == 0
+        ? snowdesktop::widget_runtime::ViewTreeLimits::MaximumTextBytes
+        : input.maximumUtf8Bytes;
+    control.minimum = input.minimum;
+    control.maximum = input.maximum;
+    control.step = input.step;
+    control.viewportHeight = std::max(1,
+        static_cast<int>(std::lround(input.frame.height)));
+    control.contentHeight = control.viewportHeight;
+    if (control.multiline)
+    {
+        const float innerWidth = std::max(1.0f,
+            input.frame.width - input.padding.left -
+                input.padding.right - 8.0f);
+        std::wstring metricText = Utf8ToWideLocal(input.value);
+        size_t metricCursor = 0;
+        size_t metricAnchor = 0;
+        std::wstring metricComposition;
+        size_t metricCompositionCursor = 0;
+        (void)engine.RuntimeGetFocusedHostInput(widgetId,
+            input.key, metricText, metricCursor, metricAnchor,
+            metricComposition, metricCompositionCursor);
+        ComPtr<IDWriteTextLayout> layout =
+            CreateHostMultilineTextLayout(state,
+                metricText, input.fontSize, innerWidth);
+        DWRITE_TEXT_METRICS metrics{};
+        if (layout) layout->GetMetrics(&metrics);
+        control.contentHeight = std::max(control.viewportHeight,
+            static_cast<int>(std::ceil(metrics.height +
+                input.padding.top + input.padding.bottom)));
+    }
+    return control;
+}
+
+static std::vector<LuaWidget::HostControl> BuildPanelViewHostControls(
+    WidgetEngine& engine, D2DState* state, const std::wstring& widgetId,
+    const snowdesktop::widget_runtime::WidgetViewFrame& frame)
+{
+    std::vector<LuaWidget::HostControl> result;
+    result.reserve(frame.scrollViewports.size() + frame.inputControls.size());
+    for (const auto& viewport : frame.scrollViewports)
+        result.push_back(BuildViewScrollHostControl(viewport, true));
+    for (const auto& input : frame.inputControls)
+        result.push_back(BuildViewInputHostControl(engine, state, widgetId, input));
     return result;
 }
 
@@ -15404,98 +15412,20 @@ static std::optional<RECT> NativeMarqueeDirtyRect(
 
 static bool BeginNativeMarqueeCapture(D2DState* state,
     LuaWidget::NativeMarqueeSurface& surface,
-    ID2D1DeviceContext*& displayContext,
-    ComPtr<ID2D1CommandList>& commands)
+    snowdesktop::widget_runtime::WidgetCommandCapture& capture)
 {
-    displayContext = state ? state->ctx : nullptr;
     surface.pendingMarquees.clear();
     surface.collecting = false;
     surface.requiresLuaRender = true;
-    if (!state || !displayContext) return false;
-
+    if (!state || !state->ctx) return false;
     EnsureBitmapCachesForCurrentDevice(state);
-    if (!state->bitmapDevice) return false;
-    if (!state->immediateCommandContext && FAILED(
-            state->bitmapDevice->CreateDeviceContext(
-                D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
-                &state->immediateCommandContext)))
+    using Result = snowdesktop::widget_runtime::WidgetCommandCapture::BeginResult;
+    if (capture.Begin(*state, state->immediateClipRects,
+            state->bitmapDevice.Get(), state->immediateCommandContext) != Result::Started)
         return false;
-    auto* recording = state->immediateCommandContext.Get();
-    if (!recording || FAILED(recording->CreateCommandList(&commands)) ||
-        !commands)
-        return false;
-
-    float dpiX = 96.0f;
-    float dpiY = 96.0f;
-    displayContext->GetDpi(&dpiX, &dpiY);
-    recording->SetDpi(dpiX, dpiY);
-    recording->SetUnitMode(displayContext->GetUnitMode());
-    recording->SetAntialiasMode(displayContext->GetAntialiasMode());
-    recording->SetTextAntialiasMode(
-        displayContext->GetTextAntialiasMode());
-    recording->SetPrimitiveBlend(displayContext->GetPrimitiveBlend());
-    recording->SetTransform(D2D1::Matrix3x2F::Identity());
-    recording->SetTarget(commands.Get());
-    recording->BeginDraw();
-    state->ctx = recording;
-    state->widgetClipDepth = 0;
-    state->immediateClipRects.clear();
     surface.collecting = true;
     surface.requiresLuaRender = false;
     return true;
-}
-
-static bool EndNativeMarqueeCapture(D2DState* state,
-    LuaWidget::NativeMarqueeSurface& surface,
-    ID2D1DeviceContext* displayContext,
-    ID2D1CommandList* commands)
-{
-    if (!state || !surface.collecting || !state->ctx ||
-        !displayContext || !commands)
-        return false;
-    while (state->widgetClipDepth > 0)
-    {
-        state->ctx->PopAxisAlignedClip();
-        --state->widgetClipDepth;
-    }
-    const HRESULT drawResult = state->ctx->EndDraw();
-    state->ctx->SetTarget(nullptr);
-    state->ctx = displayContext;
-    state->immediateClipRects.clear();
-    surface.collecting = false;
-    if (FAILED(drawResult) || FAILED(commands->Close()))
-    {
-        surface.pendingMarquees.clear();
-        surface.requiresLuaRender = true;
-        return false;
-    }
-    return true;
-}
-
-static void AbortNativeMarqueeCapture(D2DState* state,
-    LuaWidget::NativeMarqueeSurface& surface,
-    ID2D1DeviceContext* displayContext,
-    ID2D1CommandList* commands)
-{
-    if (surface.collecting && state && state->ctx)
-    {
-        while (state->widgetClipDepth > 0)
-        {
-            state->ctx->PopAxisAlignedClip();
-            --state->widgetClipDepth;
-        }
-        (void)state->ctx->EndDraw();
-        state->ctx->SetTarget(nullptr);
-    }
-    if (state)
-    {
-        state->ctx = displayContext;
-        state->immediateClipRects.clear();
-    }
-    if (commands) (void)commands->Close();
-    surface.pendingMarquees.clear();
-    surface.collecting = false;
-    surface.requiresLuaRender = true;
 }
 
 static void CommitNativeMarqueeCapture(D2DState* state,
@@ -15709,43 +15639,23 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
     }
 
     EnsureBitmapCachesForCurrentDevice(d2dState_);
-    if (!d2dState_->bitmapDevice)
+    snowdesktop::widget_runtime::WidgetCommandCapture capture;
+    using CaptureResult = snowdesktop::widget_runtime::WidgetCommandCapture::BeginResult;
+    switch (capture.Begin(*d2dState_, d2dState_->immediateClipRects,
+            d2dState_->bitmapDevice.Get(), d2dState_->immediateCommandContext))
     {
+    case CaptureResult::NoDevice:
         recordError("backgroundLayer cannot access the Direct2D device");
         return false;
-    }
-    if (!d2dState_->immediateCommandContext && FAILED(
-            d2dState_->bitmapDevice->CreateDeviceContext(
-                D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
-                &d2dState_->immediateCommandContext)))
-    {
+    case CaptureResult::NoRecordingContext:
         recordError("backgroundLayer cannot create a recording context");
         return false;
-    }
-    ID2D1DeviceContext* recording =
-        d2dState_->immediateCommandContext.Get();
-    ComPtr<ID2D1CommandList> commands;
-    if (!recording || FAILED(recording->CreateCommandList(&commands)) ||
-        !commands)
-    {
+    case CaptureResult::NoCommandList:
         recordError("backgroundLayer cannot create a command list");
         return false;
+    case CaptureResult::Started:
+        break;
     }
-
-    float dpiX = 96.0f;
-    float dpiY = 96.0f;
-    context->GetDpi(&dpiX, &dpiY);
-    recording->SetDpi(dpiX, dpiY);
-    recording->SetUnitMode(context->GetUnitMode());
-    recording->SetAntialiasMode(context->GetAntialiasMode());
-    recording->SetTextAntialiasMode(context->GetTextAntialiasMode());
-    recording->SetPrimitiveBlend(context->GetPrimitiveBlend());
-    recording->SetTransform(D2D1::Matrix3x2F::Identity());
-    recording->SetTarget(commands.Get());
-    recording->BeginDraw();
-    d2dState_->ctx = recording;
-    d2dState_->widgetClipDepth = 0;
-    d2dState_->immediateClipRects.clear();
     d2dState_->backgroundLayerActive = true;
 
     const int callResult = snowdesktop::lua_runtime::ProtectedCall(
@@ -15757,17 +15667,9 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
         callbackError = value ? value : "backgroundLayer render failed";
         lua_pop(state, 1);
     }
-    while (d2dState_->widgetClipDepth > 0)
-    {
-        recording->PopAxisAlignedClip();
-        --d2dState_->widgetClipDepth;
-    }
-    const HRESULT drawResult = recording->EndDraw();
-    recording->SetTarget(nullptr);
-    d2dState_->ctx = context;
+    const HRESULT drawResult = capture.FinishDraw();
     d2dState_->backgroundLayerActive = false;
-    d2dState_->immediateClipRects.clear();
-    const HRESULT closeResult = commands->Close();
+    const HRESULT closeResult = capture.Close();
     if (!callbackError.empty())
     {
         recordError("backgroundLayer.render: " + callbackError);
@@ -15780,7 +15682,7 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
     }
 
     const auto cachedBackground = d2dState_->backgroundCache.Resolve(widgetId,
-        context, commands.Get(), D2D1::RectF(static_cast<float>(bounds.left),
+        context, capture.Commands(), D2D1::RectF(static_cast<float>(bounds.left),
             static_cast<float>(bounds.top), static_cast<float>(bounds.right),
             static_cast<float>(bounds.bottom)), blurRadius, cornerRadius,
         [this](ID2D1Bitmap* bitmap) {
@@ -15821,11 +15723,11 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
     {
         D2D1_RECT_F ink{};
         paint->backgroundKnown =
-            SUCCEEDED(context->GetImageLocalBounds(commands.Get(), &ink)) &&
+            SUCCEEDED(context->GetImageLocalBounds(capture.Commands(), &ink)) &&
             (ink.left >= ink.right || ink.top >= ink.bottom);
     }
     ComPtr<ID2D1Image> output;
-    if (FAILED(commands.As(&output)) || !output)
+    if (FAILED(capture.Commands()->QueryInterface(IID_PPV_ARGS(&output))) || !output)
     {
         recordError("backgroundLayer cannot expose its command image");
         return false;
@@ -15839,7 +15741,7 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
             recordError("backgroundLayer cannot create the blur effect");
             return false;
         }
-        blur->SetInput(0, commands.Get());
+        blur->SetInput(0, capture.Commands());
         blur->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,
             blurRadius);
         blur->SetValue(D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION,
@@ -15872,77 +15774,6 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
     context->PopLayer();
     widget.backgroundLayerError.clear();
     return true;
-}
-
-static bool HasLocalRefresh(const snowdesktop::widget_runtime::ViewNode& node)
-{
-    return node.localRefresh ||
-        std::any_of(node.children.begin(), node.children.end(), HasLocalRefresh);
-}
-
-// The old tree has already supplied exit transitions and will be replaced.
-// Normalize only the supported values so the regular tree equality checks
-// every other property, including layout and SMTC-driven metadata.
-static void CollectLocalRefresh(
-    snowdesktop::widget_runtime::ViewNode& previous,
-    const snowdesktop::widget_runtime::ViewNode& current,
-    const RECT& bounds, snowdesktop::widget_runtime::WidgetSurfacePaint& paint)
-{
-    using namespace snowdesktop::widget_runtime;
-    if (current.key != previous.key || current.type != previous.type ||
-        current.transform || current.transition ||
-        current.children.size() != previous.children.size())
-        return;
-    for (std::size_t i = 0; i < current.children.size(); ++i)
-        CollectLocalRefresh(previous.children[i], current.children[i], bounds, paint);
-    if (!current.localRefresh || !previous.localRefresh || current.shadow)
-        return;
-
-    ViewRect rect = current.frame;
-    float padding = 2.0f;
-    if (current.type == ViewNodeType::Spectrum && current.values != previous.values)
-    {
-        rect = ViewNodeContentRect(current);
-        const auto peak = [](const std::vector<float>& values, float minimum) {
-            return values.empty() ? minimum :
-                *std::max_element(values.begin(), values.end());
-        };
-        const float minimum = current.seriesMinimum.value_or(0.0f);
-        const float maximum = current.seriesMaximum.value_or(1.0f);
-        const float value = std::max(peak(previous.values, minimum),
-            peak(current.values, minimum));
-        const float barHeight = rect.height *
-            std::clamp((value - minimum) / (maximum - minimum), 0.0f, 1.0f);
-        rect.y += rect.height - barHeight;
-        rect.height = barHeight;
-        previous.values = current.values;
-    }
-    else if (current.type == ViewNodeType::Slider)
-    {
-        previous.accessibilityValue = current.accessibilityValue;
-        if (current.value == previous.value) return;
-        padding += 8.0f + 0.5f * std::max(
-            current.style.borderWidth.value_or(0.0f),
-            current.disabledStyle.borderWidth.value_or(0.0f));
-        previous.value = current.value;
-    }
-    else
-    {
-        if (current.type == ViewNodeType::Text && !current.textGlowRadius &&
-            current.text != previous.text)
-        {
-            previous.text = current.text;
-            paint.textChanged = true;
-        }
-        return;
-    }
-    const RECT changed{
-        bounds.left + static_cast<LONG>(std::floor(rect.x - padding)),
-        bounds.top + static_cast<LONG>(std::floor(rect.y - padding)),
-        bounds.left + static_cast<LONG>(std::ceil(rect.x + rect.width + padding)),
-        bounds.top + static_cast<LONG>(std::ceil(rect.y + rect.height + padding)),
-    };
-    UnionRect(&paint.damage, &paint.damage, &changed);
 }
 
 void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath,
@@ -16035,11 +15866,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             found->interactionRegions,
             found->viewKeyboardFocusKey, true);
         DrawWidgetViewTooltip(d2dState_, found->interactionRegions);
-        while (d2dState_->widgetClipDepth > 0)
-        {
-            d2dState_->ctx->PopAxisAlignedClip();
-            --d2dState_->widgetClipDepth;
-        }
+        snowdesktop::widget_runtime::PopWidgetClips(*d2dState_);
         if (transitionActive || found->viewIndeterminateProgressActive)
             (void)ScheduleAnimationFrame(*found);
         return;
@@ -16123,83 +15950,27 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         }
         else
         {
-            snowdesktop::widget_runtime::ViewNode candidate;
-            std::vector<snowdesktop::widget_runtime::InteractionRegion>
-                regions;
-            std::vector<snowdesktop::widget_runtime::ViewScrollViewport>
-                scrollViewports;
-            std::vector<snowdesktop::widget_runtime::ViewInputControl>
-                inputControls;
-            if (!snowdesktop::widget_runtime::ParseLuaViewTree(
-                    state, -1, candidate, viewError))
-            {
+            snowdesktop::widget_runtime::WidgetViewFrame frame;
+            auto& candidate = frame.tree;
+            const auto& scrollViewports = frame.scrollViewports;
+            const auto& inputControls = frame.inputControls;
+            viewErrorCode = snowdesktop::widget_runtime::PrepareWidgetViewFrame(
+                state, -1, d2dState_, EngineWidgetViewHost(d2dState_),
+                found->logicalSlots, found->scrollOffsets,
+                [this, found](auto& tree, std::string& error) {
+                    return ValidateAndLayoutWidgetView(tree, *found, "desktop",
+                        CurrentLayoutContentWidth(d2dState_), CurrentLayoutContentHeight(d2dState_), error);
+                },
+                frame, viewError);
+            if (!viewErrorCode.empty())
                 viewError = "view(): " + viewError;
-                viewErrorCode = "view.parse";
-            }
-            else if (!ValidateAndLayoutWidgetView(candidate, *found,
-                    "desktop",
-                        CurrentLayoutContentWidth(d2dState_),
-                        CurrentLayoutContentHeight(d2dState_),
-                        viewError))
-            {
-                viewError = "view(): " + viewError;
-                viewErrorCode = "view.layout";
-            }
-            else if (!snowdesktop::widget_runtime::ValidateViewLogicalSlots(
-                    candidate, found->logicalSlots, viewError))
-            {
-                viewError = "view(): " + viewError;
-                viewErrorCode = "view.slots";
-            }
-            else if (!snowdesktop::widget_runtime::ApplyViewScrollOffsets(
-                    candidate,
-                    [found](std::string_view key, float)
-                        -> std::optional<float> {
-                        const auto position = found->scrollOffsets.find(
-                            std::string(key));
-                        return position == found->scrollOffsets.end()
-                            ? std::nullopt
-                            : std::optional<float>(
-                                static_cast<float>(position->second));
-                    }, scrollViewports, viewError))
-            {
-                viewError = "view(): " + viewError;
-                viewErrorCode = "view.scroll";
-            }
-            else if (!snowdesktop::widget_runtime::
-                    CollectViewInteractionRegions(candidate,
-                        regions, viewError))
-            {
-                viewError = "view(): " + viewError;
-                viewErrorCode = "view.interaction";
-            }
-            else if (!snowdesktop::widget_runtime::CollectStyledTextActionRegions(
-                    d2dState_, EngineWidgetViewHost(d2dState_), candidate, candidate, regions, std::nullopt,
-                    viewError))
-            {
-                viewError = "view(): " + viewError;
-                viewErrorCode = "view.styledText";
-            }
-            else if (!snowdesktop::widget_runtime::
-                    CollectViewInputControls(candidate,
-                        inputControls, viewError))
-            {
-                viewError = "view(): " + viewError;
-                viewErrorCode = "view.input";
-            }
             else
             {
-                accepted = true;
-                for (auto& region : regions)
+                accepted = frame.SubmitRegions(found->interactionRegions, viewError);
+                if (!accepted)
                 {
-                    if (!found->interactionRegions.Submit(
-                            std::move(region), viewError))
-                    {
-                        accepted = false;
-                        viewError = "view(): " + viewError;
-                        viewErrorCode = "view.interaction";
-                        break;
-                    }
+                    viewError = "view(): " + viewError;
+                    viewErrorCode = "view.interaction";
                 }
                 const auto desktopControlCount = std::count_if(
                     found->hostControls.begin(), found->hostControls.end(),
@@ -16251,136 +16022,11 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                 if (accepted)
                 {
                     for (const auto& viewport : scrollViewports)
-                    {
-                        LuaWidget::HostControl control;
-                        control.type = LuaWidget::HostControl::Type::Scroll;
-                        control.id = viewport.key;
-                        control.rect = {
-                            static_cast<LONG>(std::lround(viewport.frame.x)),
-                            static_cast<LONG>(std::lround(viewport.frame.y)),
-                            static_cast<LONG>(std::lround(viewport.frame.x +
-                                viewport.frame.width)),
-                            static_cast<LONG>(std::lround(viewport.frame.y +
-                                viewport.frame.height)),
-                        };
-                        control.horizontal = viewport.orientation ==
-                            snowdesktop::widget_runtime::
-                                ViewOrientation::Horizontal;
-                        const int viewportExtent = std::max(1,
-                            static_cast<int>(std::lround(
-                                viewport.viewportExtent)));
-                        const int contentExtent = std::max(viewportExtent,
-                            static_cast<int>(std::lround(
-                                viewport.contentExtent)));
-                        control.viewportWidth = std::max(1,
-                            static_cast<int>(std::lround(
-                                viewport.frame.width)));
-                        control.contentWidth = control.viewportWidth;
-                        control.viewportHeight = std::max(1,
-                            static_cast<int>(std::lround(
-                                viewport.frame.height)));
-                        control.contentHeight = control.viewportHeight;
-                        if (control.horizontal)
-                        {
-                            control.viewportWidth = viewportExtent;
-                            control.contentWidth = contentExtent;
-                        }
-                        else
-                        {
-                            control.viewportHeight = viewportExtent;
-                            control.contentHeight = contentExtent;
-                        }
                         RuntimeRegisterHostControl(widgetId,
-                            std::move(control));
-                    }
+                            BuildViewScrollHostControl(viewport, false));
                     for (const auto& input : inputControls)
-                    {
-                        LuaWidget::HostControl control;
-                        control.type = LuaWidget::HostControl::Type::Input;
-                        control.id = input.key;
-                        control.rect = {
-                            static_cast<LONG>(std::lround(input.frame.x)),
-                            static_cast<LONG>(std::lround(input.frame.y)),
-                            static_cast<LONG>(std::lround(input.frame.x +
-                                input.frame.width)),
-                            static_cast<LONG>(std::lround(input.frame.y +
-                                input.frame.height)),
-                        };
-                        if (input.clip)
-                        {
-                            control.clipRect = RECT{
-                                static_cast<LONG>(std::lround(input.clip->x)),
-                                static_cast<LONG>(std::lround(input.clip->y)),
-                                static_cast<LONG>(std::lround(input.clip->x +
-                                    input.clip->width)),
-                                static_cast<LONG>(std::lround(input.clip->y +
-                                    input.clip->height)),
-                            };
-                        }
-                        control.enabled = input.enabled;
-                        control.focusable = input.focusable;
-                        control.readOnly = input.readOnly;
-                        control.controlled = true;
-                        control.numeric = input.type ==
-                            snowdesktop::widget_runtime::
-                                ViewNodeType::NumberInput;
-                        control.controlledText = input.value;
-                        control.placeholder = input.placeholder;
-                        control.changeAction = input.changeAction;
-                        control.selection = input.selection;
-                        control.selectionChangeAction =
-                            input.selectionChangeAction;
-                        control.focusAction = input.focusAction;
-                        control.blurAction = input.blurAction;
-                        control.submitAction = input.submitAction;
-                        control.selectAll = input.selectAll;
-                        control.liveUpdate = input.liveUpdate;
-                        control.multiline = input.type ==
-                            snowdesktop::widget_runtime::
-                                ViewNodeType::TextArea;
-                        control.fontSize = input.fontSize;
-                        control.padding = input.padding;
-                        control.maximumUtf8Bytes = input.maximumUtf8Bytes == 0
-                            ? snowdesktop::widget_runtime::
-                                ViewTreeLimits::MaximumTextBytes
-                            : input.maximumUtf8Bytes;
-                        control.minimum = input.minimum;
-                        control.maximum = input.maximum;
-                        control.step = input.step;
-                        control.viewportHeight = std::max(1,
-                            static_cast<int>(std::lround(
-                                input.frame.height)));
-                        control.contentHeight = control.viewportHeight;
-                        if (control.multiline)
-                        {
-                            const float innerWidth = std::max(1.0f,
-                                input.frame.width - input.padding.left -
-                                    input.padding.right - 8.0f);
-                            std::wstring metricText =
-                                Utf8ToWideLocal(input.value);
-                            size_t metricCursor = 0;
-                            size_t metricAnchor = 0;
-                            std::wstring metricComposition;
-                            size_t metricCompositionCursor = 0;
-                            (void)RuntimeGetFocusedHostInput(widgetId,
-                                input.key, metricText, metricCursor,
-                                metricAnchor, metricComposition,
-                                metricCompositionCursor);
-                            ComPtr<IDWriteTextLayout> layout =
-                                CreateHostMultilineTextLayout(d2dState_,
-                                    metricText,
-                                    input.fontSize, innerWidth);
-                            DWRITE_TEXT_METRICS metrics{};
-                            if (layout) layout->GetMetrics(&metrics);
-                            control.contentHeight = std::max(
-                                control.viewportHeight,
-                                static_cast<int>(std::ceil(metrics.height +
-                                    input.padding.top +
-                                    input.padding.bottom)));
-                        }
                         RuntimeRegisterHostControl(widgetId,
-                            std::move(control));
-                    }
+                            BuildViewInputHostControl(*this, d2dState_, widgetId, input));
                 }
             }
             lua_pop(state, 1);
@@ -16511,11 +16157,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                 found->desktopPaintRevision = surfacePaint->revision;
             }
         }
-        while (d2dState_->widgetClipDepth > 0)
-        {
-            d2dState_->ctx->PopAxisAlignedClip();
-            --d2dState_->widgetClipDepth;
-        }
+        snowdesktop::widget_runtime::PopWidgetClips(*d2dState_);
         lua_pop(state, 1);
         return;
     }
@@ -16537,31 +16179,25 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             found->interactionRegions.AbortFrame();
             return;
         }
-        ID2D1DeviceContext* nativeMarqueeDisplayContext = nullptr;
-        ComPtr<ID2D1CommandList> nativeMarqueeCommands;
+        snowdesktop::widget_runtime::WidgetCommandCapture nativeMarqueeCapture;
         const bool capturingNativeMarquee =
             WidgetDeclaresNativeMarquee(*found) &&
             BeginNativeMarqueeCapture(d2dState_,
-                found->desktopMarquee, nativeMarqueeDisplayContext,
-                nativeMarqueeCommands);
+                found->desktopMarquee, nativeMarqueeCapture);
         if (snowdesktop::lua_runtime::ProtectedCall(
                 state, 2, 0) != LUA_OK)
         {
             const char* err = lua_tostring(state, -1);
             if (capturingNativeMarquee)
             {
-                AbortNativeMarqueeCapture(d2dState_,
-                    found->desktopMarquee,
-                    nativeMarqueeDisplayContext,
-                    nativeMarqueeCommands.Get());
+                nativeMarqueeCapture.Abort();
+                found->desktopMarquee.pendingMarquees.clear();
+                found->desktopMarquee.collecting = false;
+                found->desktopMarquee.requiresLuaRender = true;
             }
             RuntimeRecordError(widgetId, err ? err : "(render error)");
             lua_pop(state, 1);
-            while (d2dState_->widgetClipDepth > 0)
-            {
-                d2dState_->ctx->PopAxisAlignedClip();
-                --d2dState_->widgetClipDepth;
-            }
+            snowdesktop::widget_runtime::PopWidgetClips(*d2dState_);
 
             // draw conspicuous placeholder
             if (d2dState_ && d2dState_->ctx)
@@ -16610,11 +16246,12 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         }
         if (capturingNativeMarquee)
         {
-            if (!EndNativeMarqueeCapture(d2dState_,
-                    found->desktopMarquee,
-                    nativeMarqueeDisplayContext,
-                    nativeMarqueeCommands.Get()))
+            const HRESULT drawResult = nativeMarqueeCapture.FinishDraw();
+            found->desktopMarquee.collecting = false;
+            if (FAILED(drawResult) || FAILED(nativeMarqueeCapture.Close()))
             {
+                found->desktopMarquee.pendingMarquees.clear();
+                found->desktopMarquee.requiresLuaRender = true;
                 RuntimeRecordError(widgetId,
                     "draw.marqueeText: static draw cache could not be recorded");
                 found->interactionRegions.AbortFrame();
@@ -16624,7 +16261,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             }
             CommitNativeMarqueeCapture(d2dState_,
                 found->desktopMarquee,
-                std::move(nativeMarqueeCommands));
+                nativeMarqueeCapture.TakeCommands());
             const bool reducedMotion = found->preview ||
                 !widgetTimerRequestCallback_ ||
                 HostManagedAnimationsSuppressed();
@@ -16669,11 +16306,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         found->interactionRegions.AbortFrame();
         lua_pop(state, 1);
     }
-    while (d2dState_->widgetClipDepth > 0)
-    {
-        d2dState_->ctx->PopAxisAlignedClip();
-        --d2dState_->widgetClipDepth;
-    }
+    snowdesktop::widget_runtime::PopWidgetClips(*d2dState_);
     if (const int currentIndex = FindWidget(widgetId); currentIndex >= 0)
     {
         auto& current = widgets_[currentIndex];
@@ -16738,6 +16371,19 @@ bool WidgetEngine::RenderWidgetPanel(
     widget.panelActive = true;
     SetWidgetRectContext(d2dState_, bounds);
     ApplyWidgetHostVisibility(widget, true);
+    const auto drawPanelView = [this, &normalizedSurface, &contentClip](LuaWidget& current) {
+        const bool active = DrawWidgetViewTree(
+            d2dState_, *current.panelViewTree, current.panelInteractionRegions,
+            VisualViewFocusForSurface(current, normalizedSurface),
+            current.panelViewTransitions, current.preview || !widgetTimerRequestCallback_ ||
+                HostManagedAnimationsSuppressed(), &contentClip);
+        DrawWidgetSelectOverlays(d2dState_, *current.panelViewTree,
+            current.panelInteractionRegions,
+            VisualViewFocusForSurface(current, normalizedSurface),
+            current.panelViewTree->frame.height);
+        DrawWidgetViewTooltip(d2dState_, current.panelInteractionRegions);
+        return active;
+    };
     const bool transitionFrameRequested =
         std::exchange(widget.panelViewTransitionFramePending, false);
     if (transitionFrameRequested && panelWasActive &&
@@ -16746,27 +16392,11 @@ bool WidgetEngine::RenderWidgetPanel(
         widget.panelViewTree)
     {
         d2dState_->widgetClipDepth = 0;
-        const bool transitionActive = DrawWidgetViewTree(
-            d2dState_, *widget.panelViewTree,
-            widget.panelInteractionRegions,
-            VisualViewFocusForSurface(widget, normalizedSurface),
-            widget.panelViewTransitions,
-            widget.preview || !widgetTimerRequestCallback_ ||
-                HostManagedAnimationsSuppressed(), &contentClip);
-        DrawWidgetSelectOverlays(d2dState_, *widget.panelViewTree,
-            widget.panelInteractionRegions,
-            VisualViewFocusForSurface(widget, normalizedSurface),
-            widget.panelViewTree->frame.height);
-        DrawWidgetViewTooltip(
-            d2dState_, widget.panelInteractionRegions);
+        const bool transitionActive = drawPanelView(widget);
         DrawHostViewInteractionOverlays(widget,
             widget.panelInteractionRegions,
             widget.panelViewKeyboardFocusKey, false);
-        while (d2dState_->widgetClipDepth > 0)
-        {
-            d2dState_->ctx->PopAxisAlignedClip();
-            --d2dState_->widgetClipDepth;
-        }
+        snowdesktop::widget_runtime::PopWidgetClips(*d2dState_);
         if (transitionActive || widget.panelIndeterminateProgressActive)
             (void)ScheduleAnimationFrame(widget);
         return true;
@@ -16844,85 +16474,30 @@ bool WidgetEngine::RenderWidgetPanel(
     }
     else
     {
-        while (d2dState_->widgetClipDepth > 0)
-        {
-            d2dState_->ctx->PopAxisAlignedClip();
-            --d2dState_->widgetClipDepth;
-        }
+        snowdesktop::widget_runtime::PopWidgetClips(*d2dState_);
         const bool hasView = !lua_isnil(state, -1);
         std::string viewError;
         std::string_view viewErrorCode;
-        snowdesktop::widget_runtime::ViewNode candidate;
-        std::vector<snowdesktop::widget_runtime::InteractionRegion> regions;
-        std::vector<snowdesktop::widget_runtime::ViewScrollViewport>
-            scrollViewports;
-        std::vector<snowdesktop::widget_runtime::ViewInputControl>
-            inputControls;
-        if (hasView && !snowdesktop::widget_runtime::ParseLuaViewTree(
-                state, -1, candidate, viewError))
+        snowdesktop::widget_runtime::WidgetViewFrame frame;
+        auto& candidate = frame.tree;
+        auto& scrollViewports = frame.scrollViewports;
+        if (hasView)
         {
-            panelAccepted = false;
-            viewError = callbackName + "(): " + viewError;
-            viewErrorCode = "view.parse";
-        }
-        else if (hasView && !ValidateAndLayoutWidgetView(
-                candidate, widget, normalizedSurface,
-                    std::max(1.0f, d2dState_->widgetRect.right -
-                        d2dState_->widgetRect.left),
-                    std::max(1.0f, d2dState_->widgetRect.bottom -
-                        d2dState_->widgetRect.top), viewError))
-        {
-            panelAccepted = false;
-            viewError = callbackName + "(): " + viewError;
-            viewErrorCode = "view.layout";
-        }
-        else if (hasView && !snowdesktop::widget_runtime::
-                ValidateViewLogicalSlots(
-                    candidate, widget.logicalSlots, viewError))
-        {
-            panelAccepted = false;
-            viewError = callbackName + "(): " + viewError;
-            viewErrorCode = "view.slots";
-        }
-        else if (hasView && !snowdesktop::widget_runtime::
-                ApplyViewScrollOffsets(candidate,
-                    [&widget](std::string_view key, float)
-                        -> std::optional<float> {
-                        const auto position =
-                            widget.panelScrollOffsets.find(std::string(key));
-                        return position == widget.panelScrollOffsets.end()
-                            ? std::nullopt
-                            : std::optional<float>(
-                                static_cast<float>(position->second));
-                    }, scrollViewports, viewError))
-        {
-            panelAccepted = false;
-            viewError = callbackName + "(): " + viewError;
-            viewErrorCode = "view.scroll";
-        }
-        else if (hasView && !snowdesktop::widget_runtime::
-                CollectViewInteractionRegions(
-                    candidate, regions, viewError))
-        {
-            panelAccepted = false;
-            viewError = callbackName + "(): " + viewError;
-            viewErrorCode = "view.interaction";
-        }
-        else if (hasView && !snowdesktop::widget_runtime::CollectStyledTextActionRegions(
-                d2dState_, EngineWidgetViewHost(d2dState_), candidate, candidate, regions, std::nullopt,
-                viewError))
-        {
-            panelAccepted = false;
-            viewError = callbackName + "(): " + viewError;
-            viewErrorCode = "view.styledText";
-        }
-        else if (hasView && !snowdesktop::widget_runtime::
-                CollectViewInputControls(
-                    candidate, inputControls, viewError))
-        {
-            panelAccepted = false;
-            viewError = callbackName + "(): " + viewError;
-            viewErrorCode = "view.input";
+            viewErrorCode = snowdesktop::widget_runtime::PrepareWidgetViewFrame(
+                state, -1, d2dState_, EngineWidgetViewHost(d2dState_),
+                widget.logicalSlots, widget.panelScrollOffsets,
+                [this, &widget, &normalizedSurface](auto& tree, std::string& error) {
+                    return ValidateAndLayoutWidgetView(tree, widget, normalizedSurface,
+                        std::max(1.0f, d2dState_->widgetRect.right - d2dState_->widgetRect.left),
+                        std::max(1.0f, d2dState_->widgetRect.bottom - d2dState_->widgetRect.top),
+                        error);
+                },
+                frame, viewError);
+            if (!viewErrorCode.empty())
+            {
+                panelAccepted = false;
+                viewError = callbackName + "(): " + viewError;
+            }
         }
 
         std::vector<LuaWidget::HostControl> viewControls;
@@ -16935,8 +16510,7 @@ bool WidgetEngine::RenderWidgetPanel(
                         static_cast<float>(bounds.bottom - bounds.top)},
                     {0, 0, static_cast<float>(scrollbarBounds->right - bounds.left),
                         static_cast<float>(scrollbarBounds->bottom - bounds.top)});
-            viewControls = BuildViewHostControls(*this, d2dState_,
-                widgetId, scrollViewports, inputControls);
+            viewControls = BuildPanelViewHostControls(*this, d2dState_, widgetId, frame);
             const std::size_t existingCount =
                 static_cast<std::size_t>(std::count_if(
                     widget.hostControls.begin(), widget.hostControls.end(),
@@ -16975,19 +16549,12 @@ bool WidgetEngine::RenderWidgetPanel(
                     }
                 }
             }
-            if (panelAccepted)
+            if (panelAccepted &&
+                !frame.SubmitRegions(widget.panelInteractionRegions, viewError))
             {
-                for (auto& region : regions)
-                {
-                    if (!widget.panelInteractionRegions.Submit(
-                            std::move(region), viewError))
-                    {
-                        panelAccepted = false;
-                        viewError = callbackName + "(): " + viewError;
-                        viewErrorCode = "view.interaction";
-                        break;
-                    }
-                }
+                panelAccepted = false;
+                viewError = callbackName + "(): " + viewError;
+                viewErrorCode = "view.interaction";
             }
             if (panelAccepted)
             {
@@ -17092,21 +16659,7 @@ bool WidgetEngine::RenderWidgetPanel(
                 }
                 if (current.panelViewTree)
                 {
-                    const bool transitionActive = DrawWidgetViewTree(
-                        d2dState_, *current.panelViewTree,
-                        current.panelInteractionRegions,
-                        VisualViewFocusForSurface(
-                            current, normalizedSurface),
-                        current.panelViewTransitions,
-                        current.preview || !widgetTimerRequestCallback_ ||
-                            HostManagedAnimationsSuppressed(), &contentClip);
-                    DrawWidgetSelectOverlays(d2dState_,
-                        *current.panelViewTree,
-                        current.panelInteractionRegions,
-                        VisualViewFocusForSurface(current, normalizedSurface),
-                        current.panelViewTree->frame.height);
-                    DrawWidgetViewTooltip(d2dState_,
-                        current.panelInteractionRegions);
+                    const bool transitionActive = drawPanelView(current);
                     if (transitionActive ||
                         current.panelIndeterminateProgressActive)
                         (void)ScheduleAnimationFrame(current);
@@ -17137,21 +16690,7 @@ bool WidgetEngine::RenderWidgetPanel(
             auto& current = widgets_[currentIndex];
             if (current.panelViewTree)
             {
-                const bool transitionActive = DrawWidgetViewTree(
-                    d2dState_, *current.panelViewTree,
-                    current.panelInteractionRegions,
-                    VisualViewFocusForSurface(
-                        current, normalizedSurface),
-                    current.panelViewTransitions,
-                    current.preview || !widgetTimerRequestCallback_ ||
-                        HostManagedAnimationsSuppressed(), &contentClip);
-                DrawWidgetSelectOverlays(d2dState_,
-                    *current.panelViewTree,
-                    current.panelInteractionRegions,
-                    VisualViewFocusForSurface(current, normalizedSurface),
-                    current.panelViewTree->frame.height);
-                DrawWidgetViewTooltip(d2dState_,
-                    current.panelInteractionRegions);
+                const bool transitionActive = drawPanelView(current);
                 if (transitionActive ||
                     current.panelIndeterminateProgressActive)
                     (void)ScheduleAnimationFrame(current);
@@ -17161,11 +16700,7 @@ bool WidgetEngine::RenderWidgetPanel(
                 current.panelViewKeyboardFocusKey, false);
         }
     }
-    while (d2dState_->widgetClipDepth > 0)
-    {
-        d2dState_->ctx->PopAxisAlignedClip();
-        --d2dState_->widgetClipDepth;
-    }
+    snowdesktop::widget_runtime::PopWidgetClips(*d2dState_);
     lua_pop(state, 1);
     return panelAccepted;
 }

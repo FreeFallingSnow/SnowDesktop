@@ -24,6 +24,7 @@ struct ViewThemePalette;
 class ViewTransitionRuntime;
 class WidgetDrawContext;
 class WidgetInteractionRegions;
+struct WidgetSurfacePaint;
 
 class WidgetViewHost
 {
@@ -75,4 +76,8 @@ bool MeasureWidgetViewTooltip(IDWriteFactory* dwrite, const D2D1_RECT_F& widgetR
     NativeTooltipTextLayout& measured, D2D1_RECT_F& bounds, std::wstring& name);
 void DrawWidgetViewTooltip(WidgetDrawContext* state,
     const WidgetInteractionRegions& regions, float scale);
+
+bool HasLocalRefresh(const ViewNode& node);
+void CollectLocalRefresh(ViewNode& previous, const ViewNode& current,
+    const RECT& bounds, WidgetSurfacePaint& paint);
 }

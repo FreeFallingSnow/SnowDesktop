@@ -1,4 +1,5 @@
 #include "widget_view_lua.h"
+#include "widget_view_text.h"
 #include "widget/api/widget_view_contract.h"
 #include "widget/data/widget_resource_lua.h"
 #include "diagnostics/performance_trace.h"
@@ -10,6 +11,8 @@
 #include <initializer_list>
 #include <iterator>
 #include <limits>
+#include <optional>
+#include <utility>
 #include <unordered_set>
 
 extern "C" {
@@ -3649,4 +3652,43 @@ int LuaViewSlotItem(lua_State* state)
     return MakeNode(state, "slotItem");
 }
 int LuaViewSpacer(lua_State* state) { return MakeNode(state, "spacer"); }
+
+bool WidgetViewFrame::SubmitRegions(WidgetInteractionRegions& target, std::string& error)
+{
+    for (auto& region : regions)
+    {
+        if (!target.Submit(std::move(region), error))
+            return false;
+    }
+    return true;
+}
+
+std::string_view PrepareWidgetViewFrame(
+    lua_State* state, int index, WidgetDrawContext* draw, const WidgetViewHost& host,
+    const LogicalSlotModel& slots, const std::unordered_map<std::string, int>& offsets,
+    const WidgetViewFrameLayout& layout, WidgetViewFrame& frame, std::string& error)
+{
+    if (!ParseLuaViewTree(state, index, frame.tree, error))
+        return "view.parse";
+    if (!layout(frame.tree, error))
+        return "view.layout";
+    if (!ValidateViewLogicalSlots(frame.tree, slots, error))
+        return "view.slots";
+    const auto resolveOffset = [&offsets](std::string_view key, float)
+        -> std::optional<float> {
+        const auto position = offsets.find(std::string(key));
+        if (position == offsets.end()) return std::nullopt;
+        return static_cast<float>(position->second);
+    };
+    if (!ApplyViewScrollOffsets(frame.tree, resolveOffset, frame.scrollViewports, error))
+        return "view.scroll";
+    if (!CollectViewInteractionRegions(frame.tree, frame.regions, error))
+        return "view.interaction";
+    if (!CollectStyledTextActionRegions(
+            draw, host, frame.tree, frame.tree, frame.regions, std::nullopt, error))
+        return "view.styledText";
+    if (!CollectViewInputControls(frame.tree, frame.inputControls, error))
+        return "view.input";
+    return {};
+}
 }
