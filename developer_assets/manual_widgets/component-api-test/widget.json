@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 2,
+  "id": "8d07db02-cc2c-4508-aa74-a2baea00c7a4",
+  "slug": "component-api-test",
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "version": "1.0.0",
+  "entry": "main.lua",
+  "minHostVersion": "1.0.17.0",
+  "author": "SnowDesktop",
+  "license": "MIT",
+  "name": "Widget API Test",
+  "nameKey": "lua_widget.component_api_test.name",
+  "description": "Observe how the host animates view-node updates, insertions, and removals.",
+  "descriptionKey": "lua_widget.component_api_test.description",
+  "preview": "preview.png",
+  "defaultSize": { "columns": 4, "rows": 2 },
+  "minSize": { "columns": 4, "rows": 2 },
+  "requiredFeatures": [
+    "l10n.basic",
+    "lifecycle.event",
+    "lifecycle.model",
+    "ui.semanticMetrics.rowUnit",
+    "view.theme.tokens",
+    "view.transition.enter",
+    "view.transition.exit",
+    "view.transition.visual",
+    "view.tree.core",
+    "widget.context"
+  ],
+  "permissions": [],
+  "locales": {
+    "zh-CN": {
+      "lua_widget.component_api_test.name": "组件 API 测试",
+      "lua_widget.component_api_test.description": "观察视图节点更新、出现和消失时的宿主动效。",
+      "lua_widget.component_api_test.transitions": "视图转场",
+      "lua_widget.component_api_test.style_sample": "更新样式",
+      "lua_widget.component_api_test.presence_sample": "节点出现与消失",
+      "lua_widget.component_api_test.update": "切换颜色",
+      "lua_widget.component_api_test.enter": "添加卡片",
+      "lua_widget.component_api_test.exit": "移除卡片"
+    },
+    "en-US": {
+      "lua_widget.component_api_test.name": "Widget API Test",
+      "lua_widget.component_api_test.description": "Observe how the host animates view-node updates, insertions, and removals.",
+      "lua_widget.component_api_test.transitions": "View transitions",
+      "lua_widget.component_api_test.style_sample": "Style update",
+      "lua_widget.component_api_test.presence_sample": "Node entry and exit",
+      "lua_widget.component_api_test.update": "Change color",
+      "lua_widget.component_api_test.enter": "Add card",
+      "lua_widget.component_api_test.exit": "Remove card"
+    }
+  }
+}
