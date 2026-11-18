@@ -731,7 +731,10 @@ LONG WidgetContainer::GetScrollContentBottom() const
 RECT WidgetContainer::GetScrollbarViewportRect() const
 {
     RECT viewport = GetContentViewportRect();
-    if (popupFrameActive_)
+    const auto* preview = app_ && popupFrameActive_ && app_->folderPreview_ &&
+        this == app_->dockFolderPopupContainer_.get() && app_->folderPreview_->inlineTopTitleBar
+        ? &*app_->folderPreview_ : nullptr;
+    if (popupFrameActive_ && !preview)
     {
         RECT panel = hostedFrame_;
         if (app_ && !(app_->folderPreview_ && app_->folderPreview_->inlineBounds))
@@ -742,9 +745,12 @@ RECT WidgetContainer::GetScrollbarViewportRect() const
         }
         return snowdesktop::popup_scrollbar_layout::Viewport(panel, viewport);
     }
-    if (UsesTopTitleBar())
+    if (preview || UsesTopTitleBar())
+    {
+        const RECT resize = preview ? preview->inlineResizeHandle : GetResizeHandleRect();
         viewport.bottom = std::max<LONG>(viewport.top,
-            std::min(viewport.bottom, GetResizeHandleRect().top));
+            std::min(viewport.bottom, resize.top));
+    }
     return viewport;
 }
 
@@ -3334,8 +3340,10 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     {
         const RECT titleBar = GetMoveHandleRect();
         const RECT title = GetTitleRect();
+        const RECT resize = GetResizeHandleRect();
         if (!EqualRect(&frame, &*preview->inlineBounds) || !EqualRect(&titleBar, &preview->inlineTitleBar) ||
-            !EqualRect(&title, &preview->inlineTitle))
+            !EqualRect(&title, &preview->inlineTitle) || !EqualRect(&resize, &preview->inlineResizeHandle) ||
+            GetCellScale() != preview->inlineScale)
         {
             app_->folderPreview_->SetInlineGeometry(*this);
             app_->dockFolderPopupWidget_.bounds = frame;

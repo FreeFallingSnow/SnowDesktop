@@ -120,13 +120,16 @@ static RECT FolderMappingContentRect(FolderMapping* widget)
     if (!widget) return {};
     namespace popup = snowdesktop::collection_popup_layout;
     const bool hostedPopup = widget->IsPopupHosted() && !widget->IsInlinePreview();
+    const bool topTitleBar = widget->UsesTopTitleBar();
     RECT body = hostedPopup ? popup::ResolveHostedContentRect(widget->GetBodyRect(), widget->GetCellScale())
         : snowdesktop::storage_title_bar::InsetContent(
-        widget->GetBodyRect(), widget->UsesTopTitleBar(),
+        widget->GetBodyRect(), topTitleBar,
         widget->Cu(4.0f), widget->Cu(8.0f), widget->Cu(4.0f));
-    body.bottom = std::max<LONG>(body.top,
-        std::min<LONG>(body.bottom + widget->Cu(4.0f),
-            widget->GetScrollContentBottom()));
+    LONG contentBottom = widget->GetScrollContentBottom();
+    // The top-title inline frame already ends at the host's content boundary.
+    if (!(widget->IsInlinePreview() && topTitleBar))
+        contentBottom = std::min<LONG>(body.bottom + widget->Cu(4.0f), contentBottom);
+    body.bottom = std::max(body.top, contentBottom);
     if (IsRectEmptyRect(body)) return {};
     RECT tabs = FolderMappingTabsRect(widget);
     RECT search = widget->GetSearchBoxRect();

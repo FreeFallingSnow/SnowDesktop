@@ -66,6 +66,7 @@ struct Session
     LONG inlineRowTop = 0;
     LONG inlineContentBottom = 0;
     float inlineScale = 1.0f;
+    bool inlineTopTitleBar = false;
     bool keyboardFocused = true;
     bool searchOpen = false;
     bool inlineListMode = false;
@@ -90,15 +91,19 @@ struct Session
         inlineResizeHandle = host.GetResizeHandleRect();
         inlineTitleBar = host.GetMoveHandleRect();
         inlineTitle = host.GetTitleRect();
-        const bool topTitleBar = host.UsesTopTitleBar();
-        inlineRowTop = topTitleBar ? inlineTitleBar.bottom : inlineBounds->top;
-        inlineContentBottom = topTitleBar ? inlineBounds->bottom : inlineTitleBar.top;
-        if (!IsRectEmpty(&inlineResizeHandle))
+        inlineTopTitleBar = host.UsesTopTitleBar();
+        inlineRowTop = inlineTopTitleBar ? inlineTitleBar.bottom : inlineBounds->top;
+        if (inlineTopTitleBar)
         {
-            // Let the top-title viewport and scrollbar use the space above the resize dot.
-            if (topTitleBar)
-                inlineResizeHandle.top += (inlineResizeHandle.bottom - inlineResizeHandle.top) / 3;
-            inlineContentBottom = std::min(inlineContentBottom, inlineResizeHandle.top);
+            const RECT content = host.GetContentViewportRect();
+            const LONG bottom = content.right > content.left ? content.bottom : host.GetScrollContentBottom();
+            inlineContentBottom = std::clamp(bottom, inlineBounds->top, inlineBounds->bottom);
+        }
+        else
+        {
+            inlineContentBottom = inlineTitleBar.top;
+            if (!IsRectEmpty(&inlineResizeHandle))
+                inlineContentBottom = std::min(inlineContentBottom, inlineResizeHandle.top);
         }
         inlineExplorerButton = {};
         for (const auto& control : host.GetControlRegions())

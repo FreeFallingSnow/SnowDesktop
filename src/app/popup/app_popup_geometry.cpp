@@ -787,14 +787,19 @@ DesktopApp::GetCollectionPopupLayoutMetrics(
             kMinCellHeight,
             kCellWidth,
             kMinCellHeight,
-            1.0f, 1, GetCategorizedWidgetTabHeight());
+        1.0f, 1, GetCategorizedWidgetTabHeight());
 }
 
 snowdesktop::collection_popup_layout::Metrics
 DesktopApp::GetOpenCollectionPopupLayoutMetrics() const
 {
     if (const DesktopWidget* widget = GetOpenPopupWidget())
-        return GetCollectionPopupLayoutMetrics(*widget);
+    {
+        auto metrics = GetCollectionPopupLayoutMetrics(*widget);
+        if (folderPreview_ && folderPreview_->inlineTopTitleBar && widget == &dockFolderPopupWidget_)
+            metrics.scale = folderPreview_->inlineScale;
+        return metrics;
+    }
     return snowdesktop::collection_popup_layout::
         ResolveMetrics(
             kCellWidth,
@@ -837,12 +842,17 @@ RECT DesktopApp::GetCollectionPopupContentRect(const RECT& popup) const
     return dockTrayPopup_ ? snowdesktop::dock_tray::popup::Viewport(content, dockTrayPopup_->footerHeight) : content;
 }
 
-RECT DesktopApp::GetCollectionPopupScrollbarViewport(const RECT& popup) const
+std::pair<RECT, int> DesktopApp::GetCollectionPopupScrollbarLayout(const RECT& popup) const
 {
+    if (folderPreview_ && folderPreview_->inlineTopTitleBar)
+        if (const auto* view = GetHostedFolderMappingPopupView(popup))
+            return {view->GetScrollbarViewportRect(), view->GetVisibleContentHeight()};
+
     const RECT content = GetCollectionPopupContentRect(popup);
     const auto* motion = GetCollectionPopupResizeTransition();
-    return snowdesktop::popup_scrollbar_layout::Viewport(motion ? motion->Panel(popup) : popup,
+    const RECT viewport = snowdesktop::popup_scrollbar_layout::Viewport(motion ? motion->Panel(popup) : popup,
         motion ? motion->Content(content, popup) : content);
+    return {viewport, std::max<int>(1, viewport.bottom - viewport.top)};
 }
 
 RECT DesktopApp::GetCollectionPopupDetailsHeaderRect(

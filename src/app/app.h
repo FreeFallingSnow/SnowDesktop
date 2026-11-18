@@ -224,6 +224,7 @@ namespace snowdesktop::demo_collection_rules { struct Category; }
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
@@ -3279,7 +3280,7 @@ private:
             POINT point, const RECT& popup) const;
     /** @brief 获取集合弹出面板中内容区域的矩形。 @param popup 面板矩形 @return 内容矩形 */
     RECT GetCollectionPopupContentRect(const RECT& popup) const;
-    RECT GetCollectionPopupScrollbarViewport(const RECT& popup) const;
+    std::pair<RECT, int> GetCollectionPopupScrollbarLayout(const RECT& popup) const;
     /** @brief 获取集合弹出面板中的列数。 @param popup 面板矩形 @return 列数 */
     int GetCollectionPopupColumnCount(const RECT& popup) const;
     /** @brief 获取集合弹出面板中的行数。 @param widget 部件引用 @param popup 面板矩形 @return 行数 */

@@ -428,10 +428,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     return;
                 }
             }
-            const RECT viewport = GetCollectionPopupScrollbarViewport(popup);
+            const auto [viewport, visible] = GetCollectionPopupScrollbarLayout(popup);
             const float scrollbarScale = GetOpenCollectionPopupLayoutMetrics().scale;
-            const int visible = std::max<int>(
-                1, viewport.bottom - viewport.top);
             const int maximum = GetCollectionPopupMaxScrollOffset(
                 *popupWidget, popup);
             auto* searchPopup = GetCategorizedPopupView();

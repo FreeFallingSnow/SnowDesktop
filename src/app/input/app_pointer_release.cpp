@@ -1001,9 +1001,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         if (popupWidget && IsCollectionPopupInteractive())
         {
             const RECT popup = GetCollectionPopupRect(*popupWidget);
-            const RECT viewport = GetCollectionPopupScrollbarViewport(popup);
-            const int visible = std::max<int>(
-                1, viewport.bottom - viewport.top);
+            const auto [viewport, visible] = GetCollectionPopupScrollbarLayout(popup);
             const int maximum = GetCollectionPopupMaxScrollOffset(
                 *popupWidget, popup);
             const auto geometry = snowdesktop::widget_scroll_rules::

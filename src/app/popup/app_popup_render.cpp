@@ -128,8 +128,7 @@ void DesktopApp::DrawCollectionPopup(
     const bool inlinePreview = folderPreview_ && folderPreview_->inlineBounds;
     const POINT pointer = lastMousePoint_;
     const bool lightTheme = inlinePreview ? IsLightContentTheme() : collectionPopupLightTheme_;
-    const auto popupMetrics =
-        GetCollectionPopupLayoutMetrics(widget);
+    const auto popupMetrics = GetOpenCollectionPopupLayoutMetrics();
     const QuickNavTheme& popupTheme = lightTheme
         ? kQuickNavLight : kQuickNavDark;
     const auto popupTextColor = [&](float alpha) {
@@ -427,7 +426,8 @@ void DesktopApp::DrawCollectionPopup(
     const RECT targetContent = GetCollectionPopupContentRect(popupRect_);
     RECT content = targetContent;
     if (motion) content = motion->Content(content, popupRect_);
-    if (auto* view = GetHostedFolderMappingPopupView(popupRect_);
+    auto* hostedFolderView = GetHostedFolderMappingPopupView(popupRect_);
+    if (auto* view = hostedFolderView;
         view && (!folderPreview_ || (!dockFolderPopupLoading_ && dockFolderPopupAvailable_)))
     {
         if (!inlinePreview && motion) view = GetHostedFolderMappingPopupView(presentedPanel);
@@ -953,10 +953,14 @@ void DesktopApp::DrawCollectionPopup(
     auto* searchPopup = GetCategorizedPopupView();
     const int contentScroll = !folderPreview_ && searchPopup && searchPopup->IsSearchActive()
         ? searchPopup->GetScrollOffset() : popupScrollOffset_;
-    if (!fan) DrawScrollbarAt(
-        ctx, snowdesktop::popup_scrollbar_layout::Viewport(presentedPanel, content), contentHeight, visibleHeight,
-        contentScroll, popupHovered,
-        lightTheme, popupMetrics.scale);
+    if (!fan)
+    {
+        const RECT viewport = inlinePreview && folderPreview_->inlineTopTitleBar && hostedFolderView
+            ? hostedFolderView->GetScrollbarViewportRect()
+            : snowdesktop::popup_scrollbar_layout::Viewport(presentedPanel, content);
+        DrawScrollbarAt(ctx, viewport, contentHeight, visibleHeight, contentScroll, popupHovered,
+            lightTheme, popupMetrics.scale);
+    }
 
     if (!fan && !inlinePreview) (void)DrawWidgetPanelEdgeHighlight(
         ctx, presentedPanel, 18.0f * popupMetrics.scale,
