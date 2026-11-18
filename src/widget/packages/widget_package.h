@@ -487,6 +487,7 @@ private:
         SteamLibrarySubscriptionHistory steamLibrarySubscriptionsByAccount;
     };
 
+    struct CatalogScan;
     bool Refresh(std::string& error, bool persistDiscovery = true);
     bool ExtractArchive(const std::filesystem::path& archive,
         const std::filesystem::path& destination,
