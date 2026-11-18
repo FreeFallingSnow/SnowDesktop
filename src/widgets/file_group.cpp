@@ -303,9 +303,8 @@ public:
             source_->SetSearchText(group_->GetSearchText());
             searchTextChanged_ = true;
         }
-        source_->SetSearchFocused(
-            group_->IsSearchFocused());
         source_->SetSearchEditingState(
+            group_->IsSearchFocused(),
             group_->GetSearchCursorPosition(),
             group_->GetSearchSelectionAnchor(),
             group_->GetSearchCompositionText(),
@@ -346,8 +345,8 @@ public:
         sourceData_->scrollOffset = savedScrollOffset_;
         if (searchTextChanged_)
             source_->SetSearchText(savedSearchText_);
-        source_->SetSearchFocused(savedSearchFocused_);
         source_->SetSearchEditingState(
+            savedSearchFocused_,
             savedSearchCursor_,
             savedSearchSelectionAnchor_,
             savedSearchComposition_,

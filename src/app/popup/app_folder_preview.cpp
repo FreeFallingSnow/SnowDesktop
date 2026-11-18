@@ -417,6 +417,7 @@ void DesktopApp::ShowFolderPreviewDirectory(const std::wstring& path, bool fromF
 {
     const RECT previous = popupRect_;
     const bool keepTemporaryDisplay = folderPreview_->IsTemporary() && dockFolderPopupOpen_;
+    if (dockFolderPopupContainer_) dockFolderPopupContainer_->SetSearchFocused(false);
     CancelRenameClick();
     if (!dragSession_.HasContext() && !dragDropController_.IsTransportActive() &&
         !dragDropController_.IsExternalDragActive())
@@ -561,6 +562,7 @@ void DesktopApp::RestoreFolderPreviewHome(bool present)
         ? std::optional{GetPresentedCollectionPopupGeometry()} : std::nullopt;
     if (folderPreview_->inlineBounds)
         CancelInlineFolderPreviewIconLoads(folderPreview_->hostWidgetId);
+    if (dockFolderPopupContainer_) dockFolderPopupContainer_->SetSearchFocused(false);
     auto session = std::move(*folderPreview_);
     folderPreview_.reset();
     const RECT previous = popupRect_;
@@ -665,6 +667,8 @@ void DesktopApp::SaveFolderPreviewView()
 void DesktopApp::SuspendDockFolderPreviewHome(snowdesktop::folder_preview::Session& session)
 {
     if (!dockFolderPopupOpen_) return;
+    if (dockFolderPopupContainer_ && dockFolderPopupContainer_->IsSearchComposing())
+        dockFolderPopupContainer_->CancelSearchComposition();
     PreserveDockFolderPopupDragSourceForTransition();
     CancelDockFolderPopupIconLoads();
     session.folderHome.emplace(snowdesktop::folder_preview::FolderPopupHome{

@@ -342,7 +342,8 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         }
         if (auto* searchable = focusedSearchWidget())
         {
-            searchable->BeginSearchComposition();
+            typeToSelectImeComposing_ = false;
+            searchable->BeginSearchComposition(hwnd);
             UpdateHostInputImePosition();
             return 0;
         }
@@ -376,7 +377,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
                 else
                 {
                     searchable->SetSearchComposition(
-                        composition, cursor);
+                        hwnd, composition, cursor);
                 }
                 UpdateHostInputImePosition();
                 refreshPreviewSearch(searchable, false);
@@ -446,7 +447,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
                     else
                     {
                         searchable->SetSearchComposition(
-                            composition, cursor);
+                            hwnd, composition, cursor);
                     }
                 }
                 else if (lp == 0)

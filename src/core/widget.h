@@ -417,7 +417,9 @@ public:
         return searchCompositionCursor_;
     }
     void SetSearchCursorPosition(size_t position);
+    // Project a file group's editor state into its hosted source for layout and drawing.
     void SetSearchEditingState(
+        bool focused,
         size_t cursor,
         size_t selectionAnchor,
         const std::wstring& compositionText,
@@ -444,12 +446,13 @@ public:
         return searchPointerSelecting_;
     }
     void SetSearchComposition(
-        const std::wstring& text, size_t cursor);
+        HWND inputWindow, const std::wstring& text, size_t cursor);
     void CommitSearchComposition(
         const std::wstring& text);
     void ClearSearchComposition();
-    void BeginSearchComposition();
-    bool IsSearchComposing() const { return searchComposing_; }
+    void CancelSearchComposition();
+    void BeginSearchComposition(HWND inputWindow);
+    bool IsSearchComposing() const { return searchImeWindow_ != nullptr; }
     bool GetSearchCaretRect(RECT& rect) const;
     virtual RECT GetSearchBoxRect() const { return {}; }
     bool IsSearchActive() const { return !searchText_.empty(); }
@@ -546,7 +549,7 @@ protected:
     std::wstring searchText_;
     snowdesktop::text_input::History searchHistory_;
     wchar_t searchHighSurrogate_ = 0;
-    bool searchComposing_ = false;
+    HWND searchImeWindow_ = nullptr;
     std::wstring searchDuplicateImeResult_;
     size_t searchCursorPos_ = 0;
     size_t searchSelectionAnchor_ = 0;

@@ -355,6 +355,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         }
     }
 
+    if (dockFolderPopupContainer_) dockFolderPopupContainer_->SetSearchFocused(false);
     if (dockFolderPopupOpen_)
         CancelDockFolderPopupIconLoads();
     ResetDockTrayPopup();

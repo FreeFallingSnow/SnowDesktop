@@ -165,9 +165,10 @@ void DesktopApp::RebuildContainersAndItems()
 
     std::vector<ScrollingItemWidget::SearchPresentation> searchPresentations;
     for (const auto& container : containers_)
-        if (const auto* widget = dynamic_cast<const ScrollingItemWidget*>(container.get()))
+        if (auto* widget = dynamic_cast<ScrollingItemWidget*>(container.get()))
         {
             auto state = widget->CaptureSearchPresentation();
+            if (widget->IsSearchComposing()) widget->SetSearchFocused(false);
             if (!state.text.empty()) searchPresentations.push_back(std::move(state));
         }
     std::vector<DockContainer::PresentationState> dockPresentationStates;

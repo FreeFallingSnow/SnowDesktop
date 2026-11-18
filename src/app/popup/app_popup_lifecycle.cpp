@@ -556,12 +556,14 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     const bool collectAllDesktopBackdrops = !IsCollectionPopupHostedByFloatingWindow() ||
         dragSession_.HasContext() || dragDropController_.IsExternalDragActive();
     if (listTitleHoverPopup_) ClearListTitleHover();
-    if (auto* view = GetCategorizedPopupView())
+    auto* searchView = GetCategorizedPopupView();
+    if (!searchView) searchView = dockFolderPopupContainer_.get();
+    if (searchView)
     {
-        view->EndCategoryTabDrag(false);
-        view->EndSearchPointerSelection();
-        view->SetSearchFocused(false);
-        view->SetPopupFrame(nullptr);
+        searchView->EndCategoryTabDrag(false);
+        searchView->EndSearchPointerSelection();
+        searchView->SetSearchFocused(false);
+        searchView->SetPopupFrame(nullptr);
     }
     // A date-grouped folder can have projected its live view even when a
     // later menu action hides every categorized control before closing.

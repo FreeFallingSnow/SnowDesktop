@@ -35,6 +35,7 @@
 #include "layout/category_collection_rules.h"
 #include "desktop/desktop_category_item_rules.h"
 #include <d2d1_1.h>
+#include <imm.h>
 #include <wrl/client.h>
 #include "common/l10n.h"
 #include <algorithm>
@@ -1634,15 +1635,10 @@ void ScrollingItemWidget::DeleteSearchText(bool word)
 
 void ScrollingItemWidget::ClearSearchText()
 {
-    searchHistory_.Clear(); searchHighSurrogate_ = 0;
-    searchComposing_=false;searchDuplicateImeResult_.clear();
+    searchHistory_.Clear();
     searchText_.clear();
     searchCursorPos_ = 0;
-    searchSelectionAnchor_ = 0;
-    searchCompositionText_.clear();
-    searchCompositionCursor_ = 0;
-    searchFocused_ = false;
-    searchPointerSelecting_ = false;
+    SetSearchFocused(false);
     if (searchText_.empty()) folderSearch_.reset();
     InvalidateSlots();
 }
@@ -1657,11 +1653,11 @@ void ScrollingItemWidget::SetSearchFocused(bool focused)
     searchFocused_ = focused;
     if (!focused)
     {
-        searchComposing_=false;searchDuplicateImeResult_.clear();searchHighSurrogate_=0;
+        searchDuplicateImeResult_.clear();
+        searchHighSurrogate_ = 0;
         searchSelectionAnchor_ = searchCursorPos_;
-        searchCompositionText_.clear();
-        searchCompositionCursor_ = 0;
         EndSearchPointerSelection();
+        CancelSearchComposition();
     }
 }
 
@@ -1673,11 +1669,13 @@ void ScrollingItemWidget::SetSearchCursorPosition(
 }
 
 void ScrollingItemWidget::SetSearchEditingState(
+    bool focused,
     size_t cursor,
     size_t selectionAnchor,
     const std::wstring& compositionText,
     size_t compositionCursor)
 {
+    searchFocused_ = focused;
     searchCursorPos_ = std::min(cursor, searchText_.size());
     searchSelectionAnchor_ =
         std::min(selectionAnchor, searchText_.size());
@@ -1726,7 +1724,7 @@ void ScrollingItemWidget::MoveCursorEnd(bool extendSelection)
 
 snowdesktop::text_input::MenuState ScrollingItemWidget::GetSearchMenuState() const
 {
-    if (!searchFocused_ || searchComposing_) return {};
+    if (!searchFocused_ || IsSearchComposing()) return {};
     const bool selected = HasSearchSelection();
     return {searchHistory_.CanUndo(), searchHistory_.CanRedo(), selected, selected,
         IsClipboardFormatAvailable(CF_UNICODETEXT) != FALSE, !searchText_.empty()};
@@ -1735,7 +1733,7 @@ snowdesktop::text_input::MenuState ScrollingItemWidget::GetSearchMenuState() con
 void ScrollingItemWidget::ExecuteSearchEditCommand(snowdesktop::text_input::MenuCommand command)
 {
     using Command = snowdesktop::text_input::MenuCommand;
-    if (!searchFocused_ || searchComposing_) return;
+    if (!searchFocused_ || IsSearchComposing()) return;
     searchDuplicateImeResult_.clear();
     searchHighSurrogate_ = 0;
 
@@ -1841,7 +1839,7 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
 {
     if (!searchFocused_) return false;
     searchDuplicateImeResult_.clear();
-    if (searchComposing_) return true;
+    if (IsSearchComposing()) return true;
 
     const bool control =
         (snowdesktop::private_pointer::KeyState(VK_CONTROL) & 0x8000) != 0;
@@ -2002,10 +2000,10 @@ size_t ScrollingItemWidget::HitTestSearchTextPosition(
 void ScrollingItemWidget::BeginSearchPointerSelection(
     POINT point, bool extendSelection)
 {
-    const bool mayDrag = searchFocused_ && !searchComposing_ &&
+    const bool mayDrag = searchFocused_ && !IsSearchComposing() &&
         !extendSelection && HasSearchSelection() && !snowdesktop::private_pointer::Active();
     SetSearchFocused(true);
-    ClearSearchComposition();
+    CancelSearchComposition();
     std::optional<size_t> hitCharacter;
     const size_t position = HitTestSearchTextPosition(
         point, nullptr, mayDrag ? &hitCharacter : nullptr);
@@ -2050,7 +2048,7 @@ void ScrollingItemWidget::EndSearchPointerSelection()
 std::optional<snowdesktop::text_input::DragSelection> ScrollingItemWidget::TakeSearchTextDrag()
 {
     if (!searchPointerSelecting_ || !searchSelectionDragArmed_ ||
-        searchComposing_ || !HasSearchSelection())
+        IsSearchComposing() || !HasSearchSelection())
         return std::nullopt;
     EndSearchPointerSelection();
     return snowdesktop::text_input::DragSelection{
@@ -2062,7 +2060,7 @@ bool ScrollingItemWidget::GetSearchTextDropCaret(POINT point, RECT& caret,
 {
     caret = {};
     const RECT box = GetSearchBoxRect();
-    if (searchComposing_ || !PtInRect(&box, point)) return false;
+    if (IsSearchComposing() || !PtInRect(&box, point)) return false;
     const auto position = HitTestSearchTextPosition(point, &caret);
     return !IsRectEmpty(&caret) && (!move || move->CanMove(searchText_, position));
 }
@@ -2071,7 +2069,7 @@ bool ScrollingItemWidget::DropSearchText(POINT point, std::wstring_view text,
     const snowdesktop::text_input::DragSelection* move)
 {
     const RECT box = GetSearchBoxRect();
-    if (searchComposing_ || !PtInRect(&box, point)) return false;
+    if (IsSearchComposing() || !PtInRect(&box, point)) return false;
     const auto normalized = move ? std::wstring{} :
         snowdesktop::text_input::NormalizeTransfer(text, false);
     if (!move && normalized.empty()) return false;
@@ -2098,11 +2096,11 @@ bool ScrollingItemWidget::DropSearchText(POINT point, std::wstring_view text,
 }
 
 void ScrollingItemWidget::SetSearchComposition(
-    const std::wstring& text, size_t cursor)
+    HWND inputWindow, const std::wstring& text, size_t cursor)
 {
     if (!searchFocused_)
         return;
-    searchComposing_=true;
+    searchImeWindow_ = inputWindow;
     searchCompositionText_ = text;
     searchCompositionCursor_ =
         std::min(cursor, text.size());
@@ -2121,12 +2119,33 @@ void ScrollingItemWidget::CommitSearchComposition(
 
 void ScrollingItemWidget::ClearSearchComposition()
 {
-    searchComposing_=false;
+    searchImeWindow_ = nullptr;
     searchCompositionText_.clear();
     searchCompositionCursor_ = 0;
 }
-void ScrollingItemWidget::BeginSearchComposition()
-{searchComposing_=true;searchCompositionText_.clear();searchCompositionCursor_=0;searchDuplicateImeResult_.clear();}
+
+void ScrollingItemWidget::CancelSearchComposition()
+{
+    // The shared input proxy can keep Win32 focus after this editor blurs.
+    // Clear the local composition before notifying the IME, which can send messages back.
+    const HWND inputWindow = searchImeWindow_;
+    ClearSearchComposition();
+    if (!inputWindow) return;
+    if (const HIMC ime = ImmGetContext(inputWindow))
+    {
+        ImmNotifyIME(ime, NI_COMPOSITIONSTR, CPS_CANCEL, 0);
+        ImmNotifyIME(ime, NI_CLOSECANDIDATE, 0, 0);
+        ImmReleaseContext(inputWindow, ime);
+    }
+}
+
+void ScrollingItemWidget::BeginSearchComposition(HWND inputWindow)
+{
+    searchImeWindow_ = inputWindow;
+    searchCompositionText_.clear();
+    searchCompositionCursor_ = 0;
+    searchDuplicateImeResult_.clear();
+}
 
 bool ScrollingItemWidget::GetSearchCaretRect(
     RECT& rect) const
