@@ -124,6 +124,8 @@
 
 ### CF-010 等待结束回执过大
 
+- **Run 状态查询（2026-11-18）**：Task `code-health-2` 核对任务 4 的 Run `2a9e6535be694361ad7eca9c4e8fe7b7` 是否结束。`scripts/build.bat run status -RunId … -Compact` 返回 `A parameter cannot be found that matches parameter name 'Compact'`。默认查询确认通过，同时输出 5,451 行请求与阶段记录并被截断。后续使用精简批次回执或投影所需 Run 字段，未重交构建。Run 状态仍缺少精简选项。
+
 - **源文件归属查询（2026-11-18）**：Task `code-health-8` 为确认正在回填的 `CODE_HEALTH.md` 归属运行 `scripts/build.bat task-list`，回执包含完整 Task 历史，工具输出被截断。源码确认该分支同时序列化完整任务数组与 `sourceChanges`。随后用 Git 确认前序任务已提交，再由批次 `751ee068e3fa46439d9f69e4b5d5c99b` 修订 0 的 `claim` 原子确认归属。可补按路径读取归属的窄回执，未重复查询或构建。
 
 - **单任务状态查询（2026-11-16）**：Task `task-c4672fc2024d4b49b86093109d956516` 用 `scripts/build.bat status task-c4672fc2024d4b49b86093109d956516` 核对批次 `225f0675906f49d89daa16aa7d9a955d` 的编辑修订，回执仍包含全局历史并被工具截断（chunk `ae2715`）。已从批次成员和目标 Task 字段恢复修订，继续原批次，未为反馈重复查询或构建。单任务状态查询仍需要默认窄回执，完整历史按需读取。
