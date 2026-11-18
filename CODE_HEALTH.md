@@ -16,9 +16,10 @@
 | 已计划 | 2 | 完成任务引擎 [widget_engine.cpp](src/widget/runtime/widget_engine.cpp) 的职责拆分 | 从 `ApplyWidgetTaskBrokerActions` 入手，固定音频消息消费和延迟 Lua 事件派发的先后顺序，再移出音频消费逻辑。 | 2026-11-18 |
 | 下一项 | 3 | 完成视图树 [widget_view_tree.cpp](src/widget/view/widget_view_tree.cpp) 的职责拆分 | 将三类转场校验移到 `widget/view/` 私有实现。用同一组合法和多项同时非法的节点，对照原入口的返回值、首条错误和原文。 | 2026-11-18 |
 | 已计划 | 4 | 完成组件包 [widget_package.cpp](src/widget/packages/widget_package.cpp) 的职责拆分 | 从 `ReadManifest` 移出 `previewGallery`、`previewData` 及其 variants 的解析。对照缺省、有效旧清单、部分错误和超限输入的字段值及完整诊断顺序。 | 2026-11-18 |
-| 候选 | 5 | 归并存储事务、值编码和设置服务中等价的 UTF-8 字节校验 | 对照三处 `IsValidUtf8` 对截断、代理项及嵌入 NUL 的处理，核实各编译目标。键长、保留键及业务错误由各自入口负责。 | 2026-11-18 |
+| 进行中 | 5 | 归并存储事务、值编码和设置服务中等价的 UTF-8 字节校验 | `code-health-5` 已核对三处同一实现，准备由共用库提供字节校验。键长、NUL、保留键及业务错误由各自入口处理。 | 2026-11-18 |
 | 候选 | 6 | 归并[弹窗图标和文字](src/app/popup/app_popup_geometry.cpp)中共用的几何计算 | 两条路径分别推导名称列和扇形条目。结合当前弹窗改动选一种计算，对照图标与文字的实际矩形，再决定是否共用。 | 2026-11-18 |
 | 已验证 | 7 | snowwidget 三个契约导出器共用 JSON 字符串转义 | `cd63cbd24` 将同一转义规则从 3 份归并为 1 份。已定向链接 Release，`api-contract`、`system-contract`、`view-contract` 三条真实命令的输出与旧工具逐字节一致，共 363,891 字节。 | 2026-11-18 |
+| 候选 | 8 | 归并通知计划持久化与任务 5 的 UTF-8 字节校验 | [通知计划存储](src/widget/tasks/widget_notification_schedule_store.cpp)将 NUL 拒绝和 Unicode 标量校验写在同一循环。核对字段读写和构建目标后，将 NUL 处理留给通知计划，以合法多字节文本、嵌入 NUL 及非法字节对照持久化结果。 | 2026-11-18 |
 
 ## 三个长文件怎样才算拆完
 
