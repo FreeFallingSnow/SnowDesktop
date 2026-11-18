@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "dock/dock_tray_rules.h"
+#include "dock/floating_dock_rules.h"
 #include "app/app.h"
 #include "dock/dock_window_rules.h"
 #include "dock/dock_window_preview.h"
@@ -16,6 +17,7 @@
 #include "drag_drop/drag_input_rules.h"
 #include "steam/steam_app_identity.h"
 #include "widget/runtime/widget_visibility_rules.h"
+#include "widget/view/widget_composition_layer_rules.h"
 #include "widget/view/widget_scroll_rules.h"
 #include "layout/popup_scrollbar_layout.h"
 
@@ -175,15 +177,61 @@ void DesktopApp::OnMouseLeave()
             lastMousePoint_.x, lastMousePoint_.y, cursorScreen.x, cursorScreen.y,
             cursorValid ? 1 : 0);
         snowdesktop::dock_taskbar_diagnostics::Record(phase);
+        const POINT previousHover = lastMousePoint_;
         lastMousePoint_ = { LONG_MIN, LONG_MIN };
         ClearListTitleHover();
         if (widgetEngine_)
             widgetEngine_->ClearInteractionHover();
-        // The title is part of the floating HWND region. Shrink that input
-        // island before presenting the cleared frame so an invisible stale
-        // tooltip cannot continue intercepting mouse input.
-        UpdateFloatingDockWindowBounds(false);
-        PresentPassiveHoverVisualChange();
+        if (IsCollectionPopupHostedByFloatingWindow() && GetCollectionPopupResizeTransition() &&
+            !dragSession_.HasContext() && !dragDropController_.IsTransportActive())
+        {
+            snowdesktop::performance::Scope present("input", "hover.popup_resize.present");
+            // Shrinking the native popup region can deliver a leave during
+            // the tween. Repaint the old desktop hover footprint in the
+            // normal WM_PAINT pass and coalesce the popup with its next frame.
+            RECT dirty{};
+            const auto includeDamage = [&](RECT bounds, LONG padding) {
+                if (IsRectEmpty(&bounds)) return;
+                InflateRect(&bounds, padding, padding);
+                UnionRect(&dirty, &dirty, &bounds);
+            };
+            for (const auto& item : items_)
+                if (!item.largeIcon && PtInRect(&item.bounds, previousHover))
+                    includeDamage(item.bounds, 8);
+            for (const auto& widget : widgets_)
+            {
+                const RECT frame = GetStandaloneWidgetFrameRect(widget);
+                const RECT hoverFrame = GetDesktopWidgetHoverFrameRect(widget, frame);
+                if (PtInRect(&frame, previousHover) || PtInRect(&hoverFrame, previousHover))
+                    includeDamage(frame, snowdesktop::widget_composition_layer_rules::kWidgetSurfaceBorderOverdraw);
+            }
+
+            const auto* previousDock = GetDockContainerAtPoint(previousHover);
+            if (previousDock && !IsDockHostedByPersistentHost(previousDock))
+                includeDamage(snowdesktop::floating_dock_rules::ExpandHostForTitleLayer(
+                    previousDock->GetInteractiveBounds(), dockSettings_.position), 4);
+            UpdateWidgetHoverExpansion(lastMousePoint_);
+            UpdateLargeIconHover();
+            if (hwnd_ && !IsRectEmpty(&dirty))
+                InvalidateRect(hwnd_, &dirty, FALSE);
+            InvalidateFloatingPopupWindow(false);
+
+            const auto* presentedDock = std::exchange(floatingDockHoverTargetOwner_, nullptr);
+            floatingDockHoverTargetIndex_ = 0;
+            floatingDockHoverTargetKind_ = 0;
+            if (floatingDockHoverTailToken_)
+                uiAnimationScheduler_.Cancel(std::exchange(floatingDockHoverTailToken_, 0));
+            for (const auto& host : persistentDockHosts_)
+                if (host && host->container &&
+                    (host->container == previousDock || host->container == presentedDock))
+                    UpdateFloatingDockWindowBounds(*host, true);
+        }
+        else
+        {
+            // Shrink the title's input island before presenting the cleared frame.
+            UpdateFloatingDockWindowBounds(false);
+            PresentPassiveHoverVisualChange();
+        }
         RecordShellHoverTrace(
             ShellHoverTraceEvent::MouseLeaveEnd);
         return;
