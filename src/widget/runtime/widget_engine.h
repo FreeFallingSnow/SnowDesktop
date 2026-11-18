@@ -1878,6 +1878,8 @@ private:
     bool SaveNotificationSchedules();
     void RestoreNotificationSchedules(LuaWidget& widget);
     void RemoveNotificationSchedules(const std::wstring& widgetId);
+    void CancelDispatchedWidgetTask(std::uint64_t taskId, bool completeLocation);
+    void CancelWidgetTaskWork(std::uint64_t taskId, bool completeLocation);
     void ReleaseWidgetTasks(LuaWidget& widget,
         snowdesktop::widget_runtime::TaskBrokerCancelReason reason);
     void EnsureSystemSnapshotServiceStarted();

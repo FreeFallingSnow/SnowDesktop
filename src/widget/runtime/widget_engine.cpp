@@ -9368,33 +9368,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 continue;
             }
             if (audioPlayback_) audioPlayback_->Cancel(action.id);
-            if (nativeTaskExecutor_) (void)nativeTaskExecutor_->Cancel(action.id);
-            nativeTaskDispatch_.DiscardCompletion(action.id);
-            if (locationTaskExecutor_) (void)locationTaskExecutor_->Cancel(action.id);
-            locationTaskCompletions_.erase(action.id);
-            if (action.name == "location.current") (void)taskBroker_->Complete(action.id, false);
-            if (systemControlTasks_) (void)systemControlTasks_->Cancel(action.id);
-            if (mediaTaskExecutor_)
-                (void)mediaTaskExecutor_->Cancel(action.id);
-            if (audioOutputTaskExecutor_)
-                (void)audioOutputTaskExecutor_->Cancel(action.id);
-            if (clipboardTaskExecutor_)
-                (void)clipboardTaskExecutor_->Cancel(action.id);
-            if (filesystemTaskExecutor_)
-                (void)filesystemTaskExecutor_->Cancel(action.id);
-            if (appTaskExecutor_)
-                (void)appTaskExecutor_->Cancel(action.id);
-            if (desktopTaskExecutor_)
-                (void)desktopTaskExecutor_->Cancel(action.id);
-            if (externalItemTaskExecutor_)
-                (void)externalItemTaskExecutor_->Cancel(action.id);
-            appSearchCompletions_.erase(action.id);
-            itemSearchCompletions_.erase(action.id);
-            calendarMutationCompletions_.erase(action.id);
-            notificationTaskCompletions_.erase(action.id);
-            clipboardTaskCompletions_.erase(action.id);
-            filesystemPickerCompletions_.erase(action.id);
-            filesystemTaskCompletions_.erase(action.id);
+            CancelDispatchedWidgetTask(action.id, action.name == "location.current");
             if (const auto request = networkTaskRequests_.find(action.id);
                 request != networkTaskRequests_.end())
             {
@@ -12186,6 +12160,44 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
 
 }
 
+void WidgetEngine::CancelDispatchedWidgetTask(
+    std::uint64_t taskId, bool completeLocation)
+{
+    if (nativeTaskExecutor_) (void)nativeTaskExecutor_->Cancel(taskId);
+    nativeTaskDispatch_.DiscardCompletion(taskId);
+    CancelWidgetTaskWork(taskId, completeLocation);
+}
+
+void WidgetEngine::CancelWidgetTaskWork(
+    std::uint64_t taskId, bool completeLocation)
+{
+    if (locationTaskExecutor_) (void)locationTaskExecutor_->Cancel(taskId);
+    locationTaskCompletions_.erase(taskId);
+    if (completeLocation) (void)taskBroker_->Complete(taskId, false);
+    if (systemControlTasks_) (void)systemControlTasks_->Cancel(taskId);
+    if (mediaTaskExecutor_)
+        (void)mediaTaskExecutor_->Cancel(taskId);
+    if (audioOutputTaskExecutor_)
+        (void)audioOutputTaskExecutor_->Cancel(taskId);
+    if (clipboardTaskExecutor_)
+        (void)clipboardTaskExecutor_->Cancel(taskId);
+    if (filesystemTaskExecutor_)
+        (void)filesystemTaskExecutor_->Cancel(taskId);
+    if (appTaskExecutor_)
+        (void)appTaskExecutor_->Cancel(taskId);
+    if (desktopTaskExecutor_)
+        (void)desktopTaskExecutor_->Cancel(taskId);
+    if (externalItemTaskExecutor_)
+        (void)externalItemTaskExecutor_->Cancel(taskId);
+    appSearchCompletions_.erase(taskId);
+    itemSearchCompletions_.erase(taskId);
+    calendarMutationCompletions_.erase(taskId);
+    notificationTaskCompletions_.erase(taskId);
+    clipboardTaskCompletions_.erase(taskId);
+    filesystemPickerCompletions_.erase(taskId);
+    filesystemTaskCompletions_.erase(taskId);
+}
+
 void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
     snowdesktop::widget_runtime::TaskBrokerCancelReason reason)
 {
@@ -12202,33 +12214,8 @@ void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
     for (const std::uint64_t taskId : widget.taskIds)
     {
         (void)taskBroker_->Cancel(taskId, reason);
-        if (nativeTaskExecutor_) (void)nativeTaskExecutor_->Cancel(taskId);
-        nativeTaskDispatch_.DiscardCompletion(taskId);
-        if (locationTaskExecutor_) (void)locationTaskExecutor_->Cancel(taskId);
-        locationTaskCompletions_.erase(taskId);
-        if (systemControlTasks_) (void)systemControlTasks_->Cancel(taskId);
-        if (mediaTaskExecutor_)
-            (void)mediaTaskExecutor_->Cancel(taskId);
-        if (audioOutputTaskExecutor_)
-            (void)audioOutputTaskExecutor_->Cancel(taskId);
-        if (clipboardTaskExecutor_)
-            (void)clipboardTaskExecutor_->Cancel(taskId);
-        if (filesystemTaskExecutor_)
-            (void)filesystemTaskExecutor_->Cancel(taskId);
-        if (appTaskExecutor_)
-            (void)appTaskExecutor_->Cancel(taskId);
-        if (desktopTaskExecutor_)
-            (void)desktopTaskExecutor_->Cancel(taskId);
-        if (externalItemTaskExecutor_)
-            (void)externalItemTaskExecutor_->Cancel(taskId);
-        appSearchCompletions_.erase(taskId);
-        itemSearchCompletions_.erase(taskId);
-        calendarMutationCompletions_.erase(taskId);
-        notificationTaskCompletions_.erase(taskId);
+        CancelDispatchedWidgetTask(taskId, false);
         networkTaskCompletions_.erase(taskId);
-        clipboardTaskCompletions_.erase(taskId);
-        filesystemPickerCompletions_.erase(taskId);
-        filesystemTaskCompletions_.erase(taskId);
     }
     if (audioOutputTaskExecutor_)
         audioOutputTaskExecutor_->ForgetInstance(
@@ -20607,43 +20594,12 @@ bool WidgetEngine::RuntimeCancelTask(
     const auto snapshot = taskBroker_->Snapshot(taskId);
     if (!snapshot || snapshot->ownerToken != widget.runtimeToken)
         return false;
-    const bool canceled = taskBroker_->Cancel(taskId);
-    if (canceled && audioPlayback_) audioPlayback_->Cancel(taskId);
-    if (canceled && locationTaskExecutor_) (void)locationTaskExecutor_->Cancel(taskId);
-    if (canceled) locationTaskCompletions_.erase(taskId);
-    if (canceled && systemControlTasks_) (void)systemControlTasks_->Cancel(taskId);
-    if (canceled && mediaTaskExecutor_)
-        (void)mediaTaskExecutor_->Cancel(taskId);
-    if (canceled && audioOutputTaskExecutor_)
-        (void)audioOutputTaskExecutor_->Cancel(taskId);
-    if (canceled && clipboardTaskExecutor_)
-        (void)clipboardTaskExecutor_->Cancel(taskId);
-    if (canceled && filesystemTaskExecutor_)
-        (void)filesystemTaskExecutor_->Cancel(taskId);
-    if (canceled && appTaskExecutor_)
-        (void)appTaskExecutor_->Cancel(taskId);
-    if (canceled && desktopTaskExecutor_)
-        (void)desktopTaskExecutor_->Cancel(taskId);
-    if (canceled && externalItemTaskExecutor_)
-        (void)externalItemTaskExecutor_->Cancel(taskId);
-    if (canceled)
-        appSearchCompletions_.erase(taskId);
-    if (canceled)
-        itemSearchCompletions_.erase(taskId);
-    if (canceled)
-        calendarMutationCompletions_.erase(taskId);
-    if (canceled)
-        notificationTaskCompletions_.erase(taskId);
-    if (canceled)
-        networkTaskCompletions_.erase(taskId);
-    if (canceled)
-        clipboardTaskCompletions_.erase(taskId);
-    if (canceled)
-        filesystemPickerCompletions_.erase(taskId);
-    if (canceled)
-        filesystemTaskCompletions_.erase(taskId);
-    if (canceled && !widget.preview && taskWakeCallback_) taskWakeCallback_();
-    return canceled;
+    if (!taskBroker_->Cancel(taskId)) return false;
+    if (audioPlayback_) audioPlayback_->Cancel(taskId);
+    CancelWidgetTaskWork(taskId, false);
+    networkTaskCompletions_.erase(taskId);
+    if (!widget.preview && taskWakeCallback_) taskWakeCallback_();
+    return true;
 }
 
 bool WidgetEngine::RuntimeSetTimer(const std::wstring& widgetId,
