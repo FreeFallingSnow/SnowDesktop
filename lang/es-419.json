@@ -2936,5 +2936,8 @@
   "app.folderPreview.title": "Haz clic aquí para salir de la vista previa",
   "app.folderPreview.open": "Vista previa aquí",
   "app.folderPreview.copyAddress": "Copiar dirección",
-  "app.folderPreview.createDesktopMapping": "Crear una asignación de carpeta en el escritorio"
+  "app.folderPreview.createDesktopMapping": "Crear una asignación de carpeta en el escritorio",
+  "core.drag.move_into_folder": "Mover a «{0}»",
+  "core.drag.copy_into_folder": "Copiar a «{0}»",
+  "core.drag.link_in_folder": "Crear accesos directos en «{0}»"
 }

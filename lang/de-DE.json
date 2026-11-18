@@ -2936,5 +2936,8 @@
   "app.folderPreview.title": "Hier klicken, um die Vorschau zu beenden",
   "app.folderPreview.open": "Vorschau an Ort und Stelle",
   "app.folderPreview.copyAddress": "Adresse kopieren",
-  "app.folderPreview.createDesktopMapping": "Ordnerzuordnung auf dem Desktop erstellen"
+  "app.folderPreview.createDesktopMapping": "Ordnerzuordnung auf dem Desktop erstellen",
+  "core.drag.move_into_folder": "Nach „{0}“ verschieben",
+  "core.drag.copy_into_folder": "Nach „{0}“ kopieren",
+  "core.drag.link_in_folder": "Verknüpfungen in „{0}“ erstellen"
 }

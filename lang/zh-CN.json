@@ -2936,5 +2936,8 @@
   "app.folderPreview.title": "点此退出预览",
   "app.folderPreview.open": "原位预览",
   "app.folderPreview.copyAddress": "复制地址",
-  "app.folderPreview.createDesktopMapping": "在桌面创建文件夹映射"
+  "app.folderPreview.createDesktopMapping": "在桌面创建文件夹映射",
+  "core.drag.move_into_folder": "移动到「{0}」",
+  "core.drag.copy_into_folder": "复制到「{0}」",
+  "core.drag.link_in_folder": "在「{0}」中创建快捷方式"
 }

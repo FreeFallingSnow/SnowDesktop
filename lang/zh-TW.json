@@ -2936,5 +2936,8 @@
   "app.folderPreview.title": "點此結束預覽",
   "app.folderPreview.open": "就地預覽",
   "app.folderPreview.copyAddress": "複製位址",
-  "app.folderPreview.createDesktopMapping": "在桌面建立資料夾映射"
+  "app.folderPreview.createDesktopMapping": "在桌面建立資料夾映射",
+  "core.drag.move_into_folder": "移動到「{0}」",
+  "core.drag.copy_into_folder": "複製到「{0}」",
+  "core.drag.link_in_folder": "在「{0}」中建立捷徑"
 }

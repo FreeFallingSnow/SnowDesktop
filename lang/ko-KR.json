@@ -2936,5 +2936,8 @@
   "app.folderPreview.title": "여기를 클릭하여 미리 보기 종료",
   "app.folderPreview.open": "제자리에서 미리 보기",
   "app.folderPreview.copyAddress": "주소 복사",
-  "app.folderPreview.createDesktopMapping": "바탕 화면에 폴더 매핑 만들기"
+  "app.folderPreview.createDesktopMapping": "바탕 화면에 폴더 매핑 만들기",
+  "core.drag.move_into_folder": "‘{0}’(으)로 이동",
+  "core.drag.copy_into_folder": "‘{0}’(으)로 복사",
+  "core.drag.link_in_folder": "‘{0}’에 바로 가기 만들기"
 }

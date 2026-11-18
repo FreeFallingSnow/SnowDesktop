@@ -2936,5 +2936,8 @@
   "app.folderPreview.title": "Cliquer ici pour quitter l’aperçu",
   "app.folderPreview.open": "Afficher un aperçu sur place",
   "app.folderPreview.copyAddress": "Copier l’adresse",
-  "app.folderPreview.createDesktopMapping": "Créer un dossier mappé sur le Bureau"
+  "app.folderPreview.createDesktopMapping": "Créer un dossier mappé sur le Bureau",
+  "core.drag.move_into_folder": "Déplacer vers « {0} »",
+  "core.drag.copy_into_folder": "Copier dans « {0} »",
+  "core.drag.link_in_folder": "Créer des raccourcis dans « {0} »"
 }

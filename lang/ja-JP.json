@@ -2936,5 +2936,8 @@
   "app.folderPreview.title": "ここをクリックしてプレビューを終了",
   "app.folderPreview.open": "その場でプレビュー",
   "app.folderPreview.copyAddress": "アドレスをコピー",
-  "app.folderPreview.createDesktopMapping": "デスクトップにフォルダーのマッピングを作成"
+  "app.folderPreview.createDesktopMapping": "デスクトップにフォルダーのマッピングを作成",
+  "core.drag.move_into_folder": "「{0}」に移動",
+  "core.drag.copy_into_folder": "「{0}」にコピー",
+  "core.drag.link_in_folder": "「{0}」にショートカットを作成"
 }

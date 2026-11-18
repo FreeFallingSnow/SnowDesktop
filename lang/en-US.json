@@ -2936,5 +2936,8 @@
   "app.folderPreview.title": "Click here to exit preview",
   "app.folderPreview.open": "Preview in place",
   "app.folderPreview.copyAddress": "Copy address",
-  "app.folderPreview.createDesktopMapping": "Create desktop folder mapping"
+  "app.folderPreview.createDesktopMapping": "Create desktop folder mapping",
+  "core.drag.move_into_folder": "Move to “{0}”",
+  "core.drag.copy_into_folder": "Copy to “{0}”",
+  "core.drag.link_in_folder": "Create shortcuts in “{0}”"
 }
