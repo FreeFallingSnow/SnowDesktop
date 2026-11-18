@@ -4,6 +4,7 @@
 #include <bcrypt.h>
 
 #include <array>
+#include <cstdio>
 #include <cwchar>
 #include <fstream>
 #include <iomanip>
@@ -88,6 +89,17 @@ bool HasReparsePoint(const std::filesystem::path& path)
     const DWORD attributes = GetFileAttributesW(path.c_str());
     return attributes != INVALID_FILE_ATTRIBUTES &&
         (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+}
+
+std::string Timestamp()
+{
+    SYSTEMTIME time{};
+    GetLocalTime(&time);
+    char buffer[32]{};
+    std::snprintf(buffer, sizeof(buffer), "%04u%02u%02u-%02u%02u%02u-%03u",
+        time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute,
+        time.wSecond, time.wMilliseconds);
+    return buffer;
 }
 
 std::string HashPackageFile(

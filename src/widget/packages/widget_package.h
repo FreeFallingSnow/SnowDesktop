@@ -470,9 +470,24 @@ private:
         std::vector<std::string> grantedNetworkDomains;
     };
 
+    // Persisted package state, copied with the manager during staged changes.
+    struct Registry
+    {
+        bool Load(const PackagePaths& paths, const WidgetPackageValidator& validator,
+            std::string& error);
+        bool Save(const std::filesystem::path& path, std::string& error) const;
+
+        std::unordered_map<std::string, RegistryEntry> entries;
+        std::unordered_map<std::string, PermissionDecisionRecord>
+            permissionDecisions;
+        std::unordered_set<std::string> developmentOverrides;
+        std::unordered_set<std::string> knownDevelopmentIds;
+        std::unordered_map<std::string, std::unordered_set<std::string>>
+            steamSubscriptionsByAccount;
+        SteamLibrarySubscriptionHistory steamLibrarySubscriptionsByAccount;
+    };
+
     bool Refresh(std::string& error, bool persistDiscovery = true);
-    bool LoadRegistry(std::string& error);
-    bool SaveRegistry(std::string& error) const;
     bool ExtractArchive(const std::filesystem::path& archive,
         const std::filesystem::path& destination,
         ValidationReport& report, std::string& error,
@@ -492,14 +507,7 @@ private:
     WidgetPackageValidator validator_;
     InstalledPackageCatalog packages_ = std::make_shared<const std::vector<InstalledPackage>>();
     std::vector<InvalidPackage> invalidPackages_;
-    std::unordered_map<std::string, RegistryEntry> registry_;
-    std::unordered_map<std::string, PermissionDecisionRecord>
-        permissionDecisions_;
-    std::unordered_set<std::string> developmentOverrides_;
-    std::unordered_set<std::string> knownDevelopmentIds_;
-    std::unordered_map<std::string, std::unordered_set<std::string>>
-        steamSubscriptionsByAccount_;
-    SteamLibrarySubscriptionHistory steamLibrarySubscriptionsByAccount_;
+    Registry registry_;
 };
 
 class BuiltinPackageSource final : public IWidgetPackageSource

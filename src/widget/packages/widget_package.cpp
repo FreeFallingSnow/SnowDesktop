@@ -17,6 +17,7 @@
 #include <charconv>
 #include <chrono>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
@@ -31,9 +32,11 @@ namespace snowdesktop::widget
 {
 namespace
 {
+using detail::DecimalIdentifier;
 using detail::HasReparsePoint;
 using detail::IsBcp47Tag;
 using detail::IsSha256;
+using detail::JsonEscape;
 using detail::Lower;
 using detail::PathUtf8;
 using detail::ReadInteger;
@@ -41,52 +44,14 @@ using detail::ReadPackageFile;
 using detail::ReadString;
 using detail::ReadStringArray;
 using detail::StartsWithPath;
+using detail::Timestamp;
 using detail::Utf8ToWide;
 using detail::WideToUtf8;
-
-std::string JsonEscape(std::string_view value)
-{
-    std::string out;
-    out.reserve(value.size() + 8);
-    static constexpr char hex[] = "0123456789abcdef";
-    for (unsigned char ch : value)
-    {
-        switch (ch)
-        {
-        case '"': out += "\\\""; break;
-        case '\\': out += "\\\\"; break;
-        case '\b': out += "\\b"; break;
-        case '\f': out += "\\f"; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
-        default:
-            if (ch < 0x20)
-            {
-                out += "\\u00";
-                out.push_back(hex[(ch >> 4) & 0x0f]);
-                out.push_back(hex[ch & 0x0f]);
-            }
-            else out.push_back(static_cast<char>(ch));
-            break;
-        }
-    }
-    return out;
-}
 
 bool AtomicWrite(const std::filesystem::path& target, const std::string& data,
     std::string& error)
 {
     return atomic_file::WriteAll(target, data, {}, &error);
-}
-
-bool DecimalIdentifier(std::string_view value)
-{
-    return !value.empty() && std::all_of(value.begin(), value.end(),
-        [](unsigned char character)
-        {
-            return character >= '0' && character <= '9';
-        });
 }
 
 bool PathContainsReparsePoint(const std::filesystem::path& path)
@@ -293,17 +258,6 @@ std::string ManifestJson(const PackageManifest& manifest)
     appendArray(out, manifest.optionalFeatures);
     out << "\n}\n";
     return out.str();
-}
-
-std::string Timestamp()
-{
-    SYSTEMTIME time{};
-    GetLocalTime(&time);
-    char buffer[32]{};
-    std::snprintf(buffer, sizeof(buffer), "%04u%02u%02u-%02u%02u%02u-%03u",
-        time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute,
-        time.wSecond, time.wMilliseconds);
-    return buffer;
 }
 
 std::uint32_t Crc32(const unsigned char* data, std::size_t size)
@@ -1020,377 +974,9 @@ bool WidgetPackageManager::Initialize(std::string& error)
             return false;
         }
     }
-    if (!LoadRegistry(error)) return false;
+    if (!registry_.Load(paths_, validator_, error)) return false;
     if (!Refresh(error)) return false;
     return true;
-}
-
-bool WidgetPackageManager::LoadRegistry(std::string& error)
-{
-    registry_.clear();
-    permissionDecisions_.clear();
-    developmentOverrides_.clear();
-    knownDevelopmentIds_.clear();
-    steamSubscriptionsByAccount_.clear();
-    steamLibrarySubscriptionsByAccount_.clear();
-    std::error_code ec;
-    if (!std::filesystem::exists(paths_.registry, ec)) return true;
-    std::string text;
-    if (!ReadPackageFile(paths_.registry, text, 4 * 1024 * 1024))
-    {
-        error = "cannot read package registry";
-        return false;
-    }
-    JsonValue root;
-    std::string parseError;
-    if (!ParseJson(text, root, &parseError) || !root.IsObject())
-    {
-        const auto quarantine = paths_.quarantine /
-            (L"packages-" + Utf8ToWide(Timestamp()) + L".invalid.json");
-        std::filesystem::rename(paths_.registry, quarantine, ec);
-        // The registry is derived state. Quarantine it and rebuild from package
-        // directories so a damaged JSON file cannot hide built-in packages.
-        error.clear();
-        return true;
-    }
-    const JsonValue* entries = root.Find("packages");
-    if (entries && entries->IsArray())
-    {
-        for (const auto& value : entries->array)
-        {
-            if (!value.IsObject()) continue;
-            RegistryEntry entry;
-            ReadString(value, "packageId", entry.packageId);
-            ReadString(value, "activeVersion", entry.activeVersion);
-            ReadString(value, "providerId", entry.source.providerId);
-            ReadString(value, "externalItemId", entry.source.externalItemId);
-            if (const JsonValue* permissionState =
-                    value.Find("permissionState");
-                permissionState)
-            {
-                const auto parsed = permissionState->IsString()
-                    ? ParsePermissionDecisionState(permissionState->string)
-                    : std::nullopt;
-                entry.permissionState = parsed.value_or(
-                    PermissionDecisionState::Pending);
-            }
-            bool arraysValid = true;
-            entry.grantedPermissions =
-                ReadStringArray(value, "grantedPermissions", arraysValid);
-            entry.grantedNetworkDomains =
-                ReadStringArray(value, "grantedNetworkDomains", arraysValid);
-            if (const JsonValue* enabled = value.Find("enabled");
-                enabled && enabled->IsBoolean())
-                entry.enabled = enabled->boolean;
-            if (WidgetPackageValidator::IsUuid(entry.packageId) &&
-                WidgetPackageValidator::IsSemVer(entry.activeVersion))
-                registry_[entry.packageId] = std::move(entry);
-        }
-    }
-    if (const JsonValue* decisions = root.Find("permissionDecisions");
-        decisions && decisions->IsArray())
-    {
-        for (const auto& value : decisions->array)
-        {
-            if (!value.IsObject()) continue;
-            PermissionDecisionRecord record;
-            ReadString(value, "packageId", record.packageId);
-            ReadString(value, "providerId", record.source.providerId);
-            ReadString(value, "externalItemId",
-                record.source.externalItemId);
-            if (const JsonValue* state = value.Find("state"); state)
-            {
-                const auto parsed = state->IsString()
-                    ? ParsePermissionDecisionState(state->string)
-                    : std::nullopt;
-                record.state = parsed.value_or(
-                    PermissionDecisionState::Pending);
-            }
-            bool arraysValid = true;
-            record.requestedPermissions =
-                ReadStringArray(value, "requestedPermissions", arraysValid);
-            record.requestedOptionalPermissions =
-                ReadStringArray(value, "requestedOptionalPermissions",
-                    arraysValid);
-            record.requestedNetworkDomains =
-                ReadStringArray(value, "requestedNetworkDomains", arraysValid);
-            ReadString(value, "requestedScopeFingerprint",
-                record.requestedScopeFingerprint);
-            record.grantedPermissions =
-                ReadStringArray(value, "grantedPermissions", arraysValid);
-            record.grantedNetworkDomains =
-                ReadStringArray(value, "grantedNetworkDomains", arraysValid);
-            if (!WidgetPackageValidator::IsUuid(record.packageId) ||
-                record.source.providerId.empty() ||
-                record.source.externalItemId.empty())
-                continue;
-            const std::string key = record.packageId + "\n" +
-                record.source.providerId + "\n" +
-                record.source.externalItemId;
-            permissionDecisions_[key] = std::move(record);
-        }
-    }
-    if (const JsonValue* overrides = root.Find("developmentOverrides");
-        overrides && overrides->IsArray())
-    {
-        for (const auto& value : overrides->array)
-            if (value.IsString() &&
-                WidgetPackageValidator::IsUuid(value.string))
-                developmentOverrides_.insert(value.string);
-    }
-    if (const JsonValue* known = root.Find("knownDevelopmentIds"); known && known->IsArray())
-    {
-        for (const auto& value : known->array)
-            if (value.IsString() && WidgetPackageValidator::IsUuid(value.string))
-                knownDevelopmentIds_.insert(value.string);
-    }
-    else
-    {
-        // Older registries did not distinguish untouched candidates from a
-        // deliberate opt-out. Preserve every existing candidate's selection.
-        std::error_code scanError;
-        for (std::filesystem::directory_iterator it(paths_.development, scanError), end;
-            !scanError && it != end; it.increment(scanError))
-        {
-            if (!it->is_directory(scanError) || HasReparsePoint(it->path())) continue;
-            PackageManifest manifest;
-            if (validator_.ValidateDirectory(it->path(), &manifest).Ok())
-                knownDevelopmentIds_.insert(manifest.id);
-        }
-    }
-    if (const JsonValue* history = root.Find(
-            "steamSubscriptionsByAccount");
-        history && history->IsObject())
-    {
-        for (const auto& [accountId, value] : history->object)
-        {
-            if (!DecimalIdentifier(accountId) || !value.IsArray()) continue;
-            auto& subscriptions = steamSubscriptionsByAccount_[accountId];
-            for (const auto& item : value.array)
-                if (item.IsString() && DecimalIdentifier(item.string))
-                    subscriptions.insert(item.string);
-        }
-    }
-    if (const JsonValue* history = root.Find("steamLibrarySubscriptionsByAccount");
-        history && history->IsObject())
-    {
-        for (const auto& [accountId, libraries] : history->object)
-        {
-            if (!DecimalIdentifier(accountId) || !libraries.IsObject()) continue;
-            auto& account = steamLibrarySubscriptionsByAccount_[accountId];
-            for (const auto& [library, values] : libraries.object)
-            {
-                if (library.empty() || !values.IsArray()) continue;
-                auto& subscriptions = account[library];
-                for (const auto& value : values.array)
-                    if (value.IsString() && DecimalIdentifier(value.string))
-                        subscriptions.push_back(value.string);
-                std::sort(subscriptions.begin(), subscriptions.end());
-                subscriptions.erase(std::unique(subscriptions.begin(),
-                    subscriptions.end()), subscriptions.end());
-            }
-        }
-    }
-    return true;
-}
-
-bool WidgetPackageManager::SaveRegistry(std::string& error) const
-{
-    std::vector<const RegistryEntry*> entries;
-    entries.reserve(registry_.size());
-    for (const auto& [id, entry] : registry_) entries.push_back(&entry);
-    std::sort(entries.begin(), entries.end(),
-        [](const auto* a, const auto* b) { return a->packageId < b->packageId; });
-    std::ostringstream out;
-    out << "{\n  \"schemaVersion\": 1,\n  \"packages\": [";
-    for (std::size_t i = 0; i < entries.size(); ++i)
-    {
-        if (i) out << ',';
-        const auto& entry = *entries[i];
-        out << "\n    {\"packageId\":\"" << JsonEscape(entry.packageId)
-            << "\",\"activeVersion\":\"" << JsonEscape(entry.activeVersion)
-            << "\",\"providerId\":\"" << JsonEscape(entry.source.providerId)
-            << "\",\"externalItemId\":\""
-            << JsonEscape(entry.source.externalItemId)
-            << "\",\"permissionState\":\""
-            << PermissionDecisionStateName(entry.permissionState)
-            << "\",\"enabled\":" << (entry.enabled ? "true" : "false")
-            << ",\"grantedPermissions\":[";
-        for (std::size_t permission = 0;
-            permission < entry.grantedPermissions.size(); ++permission)
-        {
-            if (permission) out << ',';
-            out << '"' << JsonEscape(entry.grantedPermissions[permission]) << '"';
-        }
-        out << "],\"grantedNetworkDomains\":[";
-        for (std::size_t domain = 0;
-            domain < entry.grantedNetworkDomains.size(); ++domain)
-        {
-            if (domain) out << ',';
-            out << '"' << JsonEscape(entry.grantedNetworkDomains[domain]) << '"';
-        }
-        out << "]}";
-    }
-    if (!entries.empty()) out << '\n';
-    out << "  ],\n  \"developmentOverrides\": [";
-    std::vector<std::string> developmentOverrides(
-        developmentOverrides_.begin(), developmentOverrides_.end());
-    std::sort(developmentOverrides.begin(), developmentOverrides.end());
-    for (std::size_t i = 0; i < developmentOverrides.size(); ++i)
-    {
-        if (i) out << ',';
-        out << "\n    \"" << JsonEscape(developmentOverrides[i]) << '"';
-    }
-    if (!developmentOverrides.empty()) out << '\n';
-    out << "  ],\n  \"knownDevelopmentIds\": [";
-    std::vector<std::string> knownIds(knownDevelopmentIds_.begin(), knownDevelopmentIds_.end());
-    std::sort(knownIds.begin(), knownIds.end());
-    for (std::size_t i = 0; i < knownIds.size(); ++i)
-    {
-        if (i) out << ',';
-        out << '"' << JsonEscape(knownIds[i]) << '"';
-    }
-    out << "  ],\n  \"permissionDecisions\": [";
-    std::vector<const PermissionDecisionRecord*> decisions;
-    decisions.reserve(permissionDecisions_.size());
-    for (const auto& [key, decision] : permissionDecisions_)
-    {
-        (void)key;
-        decisions.push_back(&decision);
-    }
-    std::sort(decisions.begin(), decisions.end(),
-        [](const auto* a, const auto* b) {
-            return std::tie(a->packageId, a->source.providerId,
-                       a->source.externalItemId) <
-                std::tie(b->packageId, b->source.providerId,
-                       b->source.externalItemId);
-        });
-    for (std::size_t i = 0; i < decisions.size(); ++i)
-    {
-        if (i) out << ',';
-        const auto& decision = *decisions[i];
-        out << "\n    {\"packageId\":\""
-            << JsonEscape(decision.packageId)
-            << "\",\"providerId\":\""
-            << JsonEscape(decision.source.providerId)
-            << "\",\"externalItemId\":\""
-            << JsonEscape(decision.source.externalItemId)
-            << "\",\"state\":\""
-            << PermissionDecisionStateName(decision.state)
-            << "\",\"requestedScopeFingerprint\":\""
-            << JsonEscape(decision.requestedScopeFingerprint)
-            << "\",\"requestedPermissions\":[";
-        for (std::size_t permission = 0;
-            permission < decision.requestedPermissions.size(); ++permission)
-        {
-            if (permission) out << ',';
-            out << '"' << JsonEscape(
-                decision.requestedPermissions[permission]) << '"';
-        }
-        out << "],\"requestedOptionalPermissions\":[";
-        for (std::size_t permission = 0;
-            permission < decision.requestedOptionalPermissions.size();
-            ++permission)
-        {
-            if (permission) out << ',';
-            out << '"' << JsonEscape(
-                decision.requestedOptionalPermissions[permission]) << '"';
-        }
-        out << "],\"requestedNetworkDomains\":[";
-        for (std::size_t domain = 0;
-            domain < decision.requestedNetworkDomains.size(); ++domain)
-        {
-            if (domain) out << ',';
-            out << '"' << JsonEscape(
-                decision.requestedNetworkDomains[domain]) << '"';
-        }
-        out << "],\"grantedPermissions\":[";
-        for (std::size_t permission = 0;
-            permission < decision.grantedPermissions.size(); ++permission)
-        {
-            if (permission) out << ',';
-            out << '"' << JsonEscape(
-                decision.grantedPermissions[permission]) << '"';
-        }
-        out << "],\"grantedNetworkDomains\":[";
-        for (std::size_t domain = 0;
-            domain < decision.grantedNetworkDomains.size(); ++domain)
-        {
-            if (domain) out << ',';
-            out << '"' << JsonEscape(
-                decision.grantedNetworkDomains[domain]) << '"';
-        }
-        out << "]}";
-    }
-    if (!decisions.empty()) out << '\n';
-    out << "  ],\n  \"steamSubscriptionsByAccount\": {";
-    std::vector<std::string> accounts;
-    accounts.reserve(steamSubscriptionsByAccount_.size());
-    for (const auto& [accountId, subscriptions] :
-        steamSubscriptionsByAccount_)
-    {
-        (void)subscriptions;
-        accounts.push_back(accountId);
-    }
-    std::sort(accounts.begin(), accounts.end());
-    for (std::size_t account = 0; account < accounts.size(); ++account)
-    {
-        if (account) out << ',';
-        const auto& accountId = accounts[account];
-        std::vector<std::string> subscriptions(
-            steamSubscriptionsByAccount_.at(accountId).begin(),
-            steamSubscriptionsByAccount_.at(accountId).end());
-        std::sort(subscriptions.begin(), subscriptions.end());
-        out << "\n    \"" << JsonEscape(accountId) << "\":[";
-        for (std::size_t item = 0; item < subscriptions.size(); ++item)
-        {
-            if (item) out << ',';
-            out << '\"' << JsonEscape(subscriptions[item]) << '\"';
-        }
-        out << ']';
-    }
-    if (!accounts.empty()) out << '\n';
-    out << "  },\n  \"steamLibrarySubscriptionsByAccount\": {";
-    accounts.clear();
-    for (const auto& [accountId, libraries] : steamLibrarySubscriptionsByAccount_)
-    {
-        (void)libraries;
-        accounts.push_back(accountId);
-    }
-    std::sort(accounts.begin(), accounts.end());
-    for (std::size_t account = 0; account < accounts.size(); ++account)
-    {
-        if (account) out << ',';
-        const auto& accountId = accounts[account];
-        const auto& libraries = steamLibrarySubscriptionsByAccount_.at(accountId);
-        out << "\n    \"" << JsonEscape(accountId) << "\":{";
-        std::vector<std::string> keys;
-        for (const auto& [library, subscriptions] : libraries)
-        {
-            (void)subscriptions;
-            keys.push_back(library);
-        }
-        std::sort(keys.begin(), keys.end());
-        for (std::size_t library = 0; library < keys.size(); ++library)
-        {
-            if (library) out << ',';
-            out << '\"' << JsonEscape(keys[library]) << "\":[";
-            auto subscriptions = libraries.at(keys[library]);
-            std::sort(subscriptions.begin(), subscriptions.end());
-            subscriptions.erase(std::unique(subscriptions.begin(),
-                subscriptions.end()), subscriptions.end());
-            for (std::size_t item = 0; item < subscriptions.size(); ++item)
-            {
-                if (item) out << ',';
-                out << '\"' << JsonEscape(subscriptions[item]) << '\"';
-            }
-            out << ']';
-        }
-        out << '}';
-    }
-    if (!accounts.empty()) out << '\n';
-    out << "  }\n}\n";
-    return AtomicWrite(paths_.registry, out.str(), error);
 }
 
 bool WidgetPackageManager::RefreshCatalog(std::string& error)
@@ -1407,8 +993,8 @@ bool WidgetPackageManager::Refresh(std::string& error, bool persistDiscovery)
 {
     error.clear();
     catalogueRefresh_->Begin({paths_.builtin, paths_.installed, paths_.development});
-    const auto previousKnown = knownDevelopmentIds_;
-    const auto previousOverrides = developmentOverrides_;
+    const auto previousKnown = registry_.knownDevelopmentIds;
+    const auto previousOverrides = registry_.developmentOverrides;
     auto scanned = std::make_shared<std::vector<InstalledPackage>>();
     auto& packages = *scanned;
     invalidPackages_.clear();
@@ -1422,8 +1008,8 @@ bool WidgetPackageManager::Refresh(std::string& error, bool persistDiscovery)
         const std::string key = package.manifest.id + "\n" +
             package.source.providerId + "\n" +
             package.source.externalItemId;
-        const auto decision = permissionDecisions_.find(key);
-        if (decision == permissionDecisions_.end())
+        const auto decision = registry_.permissionDecisions.find(key);
+        if (decision == registry_.permissionDecisions.end())
             return ExplicitDecisionResult::NotFound;
         const std::set<std::string> requestedPermissions(
             decision->second.requestedPermissions.begin(),
@@ -1519,15 +1105,15 @@ bool WidgetPackageManager::Refresh(std::string& error, bool persistDiscovery)
                             builtin ? "builtin" : "local-directory",
                             PathUtf8(it->path().filename()) };
                         invalid.selected = builtin ||
-                            developmentOverrides_.contains(
+                            registry_.developmentOverrides.contains(
                                 invalid.manifest.id);
                         invalidPackages_.push_back(std::move(invalid));
                     }
                     ec.clear();
                     continue;
                 }
-                if (development && knownDevelopmentIds_.insert(manifest.id).second)
-                    developmentOverrides_.insert(manifest.id);
+                if (development && registry_.knownDevelopmentIds.insert(manifest.id).second)
+                    registry_.developmentOverrides.insert(manifest.id);
                 InstalledPackage package;
                 package.manifest = std::move(manifest);
                 package.root = it->path();
@@ -1545,7 +1131,7 @@ bool WidgetPackageManager::Refresh(std::string& error, bool persistDiscovery)
                 applyScopeMismatchBlock(
                     package, applyExplicitDecision(package));
                 package.active = builtin ||
-                    developmentOverrides_.contains(package.manifest.id);
+                    registry_.developmentOverrides.contains(package.manifest.id);
                 package.selected = package.active;
                 if ((development || !package.manifest.nativeHelpers.empty()) && package.permissionState == PermissionDecisionState::LegacyImplicit &&
                     !PermissionsRequiringConsent(DeclaredPermissions(package.manifest)).empty())
@@ -1574,11 +1160,11 @@ bool WidgetPackageManager::Refresh(std::string& error, bool persistDiscovery)
                     invalid.packageId = id;
                     invalid.root = versionIt->path();
                     invalid.report = report;
-                    const auto registryIt = registry_.find(id);
-                    invalid.source = registryIt != registry_.end()
+                    const auto registryIt = registry_.entries.find(id);
+                    invalid.source = registryIt != registry_.entries.end()
                         ? registryIt->second.source
                         : PackageSourceRef{ "local", id };
-                    invalid.selected = registryIt != registry_.end() &&
+                    invalid.selected = registryIt != registry_.entries.end() &&
                         registryIt->second.activeVersion ==
                             invalid.manifest.version;
                     if (report.Ok() && invalid.manifest.id != id)
@@ -1593,13 +1179,13 @@ bool WidgetPackageManager::Refresh(std::string& error, bool persistDiscovery)
                 InstalledPackage package;
                 package.manifest = std::move(manifest);
                 package.root = versionIt->path();
-                const auto registryIt = registry_.find(id);
-                package.active = registryIt != registry_.end() &&
+                const auto registryIt = registry_.entries.find(id);
+                package.active = registryIt != registry_.entries.end() &&
                     registryIt->second.activeVersion == package.manifest.version;
                 package.selected = package.active;
-                package.enabled = registryIt == registry_.end() ||
+                package.enabled = registryIt == registry_.entries.end() ||
                     registryIt->second.enabled;
-                if (registryIt != registry_.end())
+                if (registryIt != registry_.entries.end())
                 {
                     package.source = registryIt->second.source;
                     package.permissionState =
@@ -1642,10 +1228,11 @@ bool WidgetPackageManager::Refresh(std::string& error, bool persistDiscovery)
         packages_ = std::move(scanned);
         return false;
     }
-    if (persistDiscovery && knownDevelopmentIds_ != previousKnown && !SaveRegistry(error))
+    if (persistDiscovery && registry_.knownDevelopmentIds != previousKnown &&
+        !registry_.Save(paths_.registry, error))
     {
-        knownDevelopmentIds_ = previousKnown;
-        developmentOverrides_ = previousOverrides;
+        registry_.knownDevelopmentIds = previousKnown;
+        registry_.developmentOverrides = previousOverrides;
         packages.clear();
         packages_ = std::move(scanned);
         return false;
@@ -1696,7 +1283,7 @@ WidgetPackageManager::SteamSubscriptionHistory() const
 {
     std::unordered_map<std::string, std::vector<std::string>> result;
     for (const auto& [accountId, subscriptions] :
-        steamSubscriptionsByAccount_)
+        registry_.steamSubscriptionsByAccount)
     {
         auto& values = result[accountId];
         values.assign(subscriptions.begin(), subscriptions.end());
@@ -1736,10 +1323,10 @@ bool WidgetPackageManager::UpdateSteamSubscriptionHistory(
         }
     }
 
-    const auto previous = steamSubscriptionsByAccount_.find(accountId);
-    const bool existed = previous != steamSubscriptionsByAccount_.end();
-    const auto previousLibraries = steamLibrarySubscriptionsByAccount_.find(accountId);
-    const bool librariesExisted = previousLibraries != steamLibrarySubscriptionsByAccount_.end();
+    const auto previous = registry_.steamSubscriptionsByAccount.find(accountId);
+    const bool existed = previous != registry_.steamSubscriptionsByAccount.end();
+    const auto previousLibraries = registry_.steamLibrarySubscriptionsByAccount.find(accountId);
+    const bool librariesExisted = previousLibraries != registry_.steamLibrarySubscriptionsByAccount.end();
     if (existed && previous->second == subscriptions &&
         (!libraries || (librariesExisted && previousLibraries->second == nextLibraries)))
         return true;
@@ -1748,27 +1335,27 @@ bool WidgetPackageManager::UpdateSteamSubscriptionHistory(
     if (existed) previousSubscriptions = std::move(previous->second);
     SteamLibrarySubscriptions savedLibraries;
     if (libraries && librariesExisted) savedLibraries = std::move(previousLibraries->second);
-    steamSubscriptionsByAccount_[accountId] = std::move(subscriptions);
-    if (libraries) steamLibrarySubscriptionsByAccount_[accountId] = std::move(nextLibraries);
-    if (SaveRegistry(error)) return true;
+    registry_.steamSubscriptionsByAccount[accountId] = std::move(subscriptions);
+    if (libraries) registry_.steamLibrarySubscriptionsByAccount[accountId] = std::move(nextLibraries);
+    if (registry_.Save(paths_.registry, error)) return true;
     if (libraries)
     {
         if (librariesExisted)
-            steamLibrarySubscriptionsByAccount_[accountId] = std::move(savedLibraries);
+            registry_.steamLibrarySubscriptionsByAccount[accountId] = std::move(savedLibraries);
         else
-            steamLibrarySubscriptionsByAccount_.erase(accountId);
+            registry_.steamLibrarySubscriptionsByAccount.erase(accountId);
     }
     if (existed)
-        steamSubscriptionsByAccount_[accountId] =
+        registry_.steamSubscriptionsByAccount[accountId] =
             std::move(previousSubscriptions);
     else
-        steamSubscriptionsByAccount_.erase(accountId);
+        registry_.steamSubscriptionsByAccount.erase(accountId);
     return false;
 }
 
 SteamLibrarySubscriptionHistory WidgetPackageManager::SteamLibraryHistory() const
 {
-    return steamLibrarySubscriptionsByAccount_;
+    return registry_.steamLibrarySubscriptionsByAccount;
 }
 
 std::optional<InstalledPackage> WidgetPackageManager::Resolve(
@@ -1781,9 +1368,9 @@ std::optional<InstalledPackage> WidgetPackageManager::Resolve(
 const InstalledPackage* WidgetPackageManager::FindResolved(
     const std::string& packageId) const
 {
-    if (const auto registry = registry_.find(packageId);
-        registry != registry_.end() && !registry->second.enabled &&
-        !developmentOverrides_.contains(packageId))
+    if (const auto registry = registry_.entries.find(packageId);
+        registry != registry_.entries.end() && !registry->second.enabled &&
+        !registry_.developmentOverrides.contains(packageId))
         return nullptr;
     const InstalledPackage* builtinFallback = nullptr;
     for (const auto& package : *packages_)
@@ -1986,8 +1573,8 @@ bool WidgetPackageManager::CommitStagedPackage(
     bool allowPermissionExpansion, InstalledPackage& installed,
     std::string& error)
 {
-    const auto existing = registry_.find(manifest.id);
-    if (existing != registry_.end() &&
+    const auto existing = registry_.entries.find(manifest.id);
+    if (existing != registry_.entries.end() &&
         !(existing->second.source == sourceRef) &&
         !allowSourceChange)
     {
@@ -1996,14 +1583,14 @@ bool WidgetPackageManager::CommitStagedPackage(
             "; source changes require explicit confirmation";
         return false;
     }
-    if (existing != registry_.end() &&
+    if (existing != registry_.entries.end() &&
         !IsNewerSemVer(manifest.version, existing->second.activeVersion) &&
         manifest.version != existing->second.activeVersion)
     {
         error = "package updates cannot downgrade the active version; use rollback";
         return false;
     }
-    if (existing != registry_.end() && !allowPermissionExpansion)
+    if (existing != registry_.entries.end() && !allowPermissionExpansion)
     {
         std::vector<std::string> currentRequired;
         std::vector<std::string> currentDeclared;
@@ -2048,7 +1635,7 @@ bool WidgetPackageManager::CommitStagedPackage(
     std::filesystem::path unregisteredBackup;
     if (std::filesystem::exists(target, ec))
     {
-        if (existing != registry_.end())
+        if (existing != registry_.entries.end())
         {
             error = "this package version is already installed";
             return false;
@@ -2113,12 +1700,12 @@ bool WidgetPackageManager::CommitStagedPackage(
         entry.grantedPermissions = declaredPermissions;
         entry.grantedNetworkDomains = manifest.networkDomains;
     }
-    entry.enabled = existing == registry_.end() || existing->second.enabled;
+    entry.enabled = existing == registry_.entries.end() || existing->second.enabled;
     auto candidate = *this;
-    candidate.registry_[manifest.id] = entry;
+    candidate.registry_.entries[manifest.id] = entry;
     const bool refreshed = candidate.Refresh(error, false);
     const auto resolved = refreshed ? candidate.ResolveSelected(manifest.id) : std::nullopt;
-    if (!refreshed || !resolved || !candidate.SaveRegistry(error))
+    if (!refreshed || !resolved || !candidate.registry_.Save(candidate.paths_.registry, error))
     {
         if (error.empty()) error = "installed package could not be selected";
         const auto quarantine = paths_.quarantine /
@@ -2454,8 +2041,8 @@ bool WidgetPackageManager::ExportDirectory(
 bool WidgetPackageManager::SetEnabled(const std::string& packageId,
     bool enabled, std::string& error)
 {
-    auto found = registry_.find(packageId);
-    if (found == registry_.end())
+    auto found = registry_.entries.find(packageId);
+    if (found == registry_.entries.end())
     {
         const auto package = Resolve(packageId);
         if (!package || package->builtin)
@@ -2466,8 +2053,9 @@ bool WidgetPackageManager::SetEnabled(const std::string& packageId,
         return false;
     }
     auto candidate = *this;
-    candidate.registry_.at(packageId).enabled = enabled;
-    if (!candidate.Refresh(error, false) || !candidate.SaveRegistry(error)) return false;
+    candidate.registry_.entries.at(packageId).enabled = enabled;
+    if (!candidate.Refresh(error, false) ||
+        !candidate.registry_.Save(candidate.paths_.registry, error)) return false;
     *this = std::move(candidate);
     return true;
 }
@@ -2482,8 +2070,8 @@ bool WidgetPackageManager::SetPermissionDecision(
     std::optional<InstalledPackage> package = Resolve(packageId);
     if (!package)
     {
-        if (const auto registered = registry_.find(packageId);
-            registered != registry_.end())
+        if (const auto registered = registry_.entries.find(packageId);
+            registered != registry_.entries.end())
         {
             const auto managed = std::find_if(packages_->begin(),
                 packages_->end(), [&](const auto& candidate) {
@@ -2572,35 +2160,35 @@ bool WidgetPackageManager::SetPermissionDecision(
     record.grantedNetworkDomains = grantedNetworkDomains;
     const std::string key = packageId + "\n" +
         record.source.providerId + "\n" + record.source.externalItemId;
-    const auto previousDecision = permissionDecisions_.find(key);
+    const auto previousDecision = registry_.permissionDecisions.find(key);
     const std::optional<PermissionDecisionRecord> oldDecision =
-        previousDecision == permissionDecisions_.end()
+        previousDecision == registry_.permissionDecisions.end()
         ? std::nullopt
         : std::optional<PermissionDecisionRecord>(previousDecision->second);
-    const auto registry = registry_.find(packageId);
-    const bool updateRegistry = registry != registry_.end() &&
+    const auto registry = registry_.entries.find(packageId);
+    const bool updateRegistry = registry != registry_.entries.end() &&
         registry->second.source == package->source;
     const std::optional<RegistryEntry> oldRegistry = updateRegistry
         ? std::optional<RegistryEntry>(registry->second)
         : std::nullopt;
 
-    permissionDecisions_[key] = record;
+    registry_.permissionDecisions[key] = record;
     if (updateRegistry)
     {
         registry->second.permissionState = state;
         registry->second.grantedPermissions = grantedPermissions;
         registry->second.grantedNetworkDomains = grantedNetworkDomains;
     }
-    if (SaveRegistry(error) && Refresh(error)) return true;
+    if (registry_.Save(paths_.registry, error) && Refresh(error)) return true;
 
     const std::string originalError = error;
     if (oldDecision)
-        permissionDecisions_[key] = *oldDecision;
+        registry_.permissionDecisions[key] = *oldDecision;
     else
-        permissionDecisions_.erase(key);
-    if (oldRegistry) registry_[packageId] = *oldRegistry;
+        registry_.permissionDecisions.erase(key);
+    if (oldRegistry) registry_.entries[packageId] = *oldRegistry;
     std::string rollbackError;
-    SaveRegistry(rollbackError);
+    registry_.Save(paths_.registry, rollbackError);
     Refresh(rollbackError);
     error = originalError;
     return false;
@@ -2739,26 +2327,26 @@ bool WidgetPackageManager::SetDevelopmentOverride(
         return false;
     }
 
-    const bool previous = developmentOverrides_.contains(packageId);
+    const bool previous = registry_.developmentOverrides.contains(packageId);
     if (active)
-        developmentOverrides_.insert(packageId);
+        registry_.developmentOverrides.insert(packageId);
     else
-        developmentOverrides_.erase(packageId);
-    if (!SaveRegistry(error))
+        registry_.developmentOverrides.erase(packageId);
+    if (!registry_.Save(paths_.registry, error))
     {
         if (previous)
-            developmentOverrides_.insert(packageId);
+            registry_.developmentOverrides.insert(packageId);
         else
-            developmentOverrides_.erase(packageId);
+            registry_.developmentOverrides.erase(packageId);
         return false;
     }
     const auto rollbackOverride = [&](std::string originalError) {
         if (previous)
-            developmentOverrides_.insert(packageId);
+            registry_.developmentOverrides.insert(packageId);
         else
-            developmentOverrides_.erase(packageId);
+            registry_.developmentOverrides.erase(packageId);
         std::string rollbackError;
-        const bool saved = SaveRegistry(rollbackError);
+        const bool saved = registry_.Save(paths_.registry, rollbackError);
         if (saved) Refresh(rollbackError);
         error = std::move(originalError);
         if (!rollbackError.empty())
@@ -2800,8 +2388,8 @@ bool WidgetPackageManager::SetDevelopmentOverride(
 bool WidgetPackageManager::Rollback(const std::string& packageId,
     const std::string& version, std::string& error)
 {
-    auto registry = registry_.find(packageId);
-    if (registry == registry_.end())
+    auto registry = registry_.entries.find(packageId);
+    if (registry == registry_.entries.end())
     {
         error = "package has no installed version registry";
         return false;
@@ -2817,7 +2405,7 @@ bool WidgetPackageManager::Rollback(const std::string& packageId,
     }
     const auto previous = registry->second.activeVersion;
     registry->second.activeVersion = version;
-    if (!SaveRegistry(error))
+    if (!registry_.Save(paths_.registry, error))
     {
         registry->second.activeVersion = previous;
         return false;
@@ -2830,8 +2418,8 @@ bool WidgetPackageManager::QuarantineInactiveVersion(
 {
     const auto& id = package.manifest.id;
     const auto& version = package.manifest.version;
-    const auto registered = registry_.find(id);
-    if (registered == registry_.end() || registered->second.source != package.source ||
+    const auto registered = registry_.entries.find(id);
+    if (registered == registry_.entries.end() || registered->second.source != package.source ||
         registered->second.activeVersion == version ||
         !WidgetPackageValidator::IsUuid(id) || !WidgetPackageValidator::IsSemVer(version))
     {
@@ -2859,7 +2447,7 @@ bool WidgetPackageManager::QuarantineInactiveVersion(
 bool WidgetPackageManager::Uninstall(const std::string& packageId,
     std::string& error)
 {
-    if (!registry_.contains(packageId))
+    if (!registry_.entries.contains(packageId))
     {
         error = "package is not installed";
         return false;
@@ -2874,11 +2462,11 @@ bool WidgetPackageManager::Uninstall(const std::string& packageId,
         error = "cannot move package to quarantine: " + ec.message();
         return false;
     }
-    const RegistryEntry previous = registry_[packageId];
-    registry_.erase(packageId);
-    if (!SaveRegistry(error))
+    const RegistryEntry previous = registry_.entries[packageId];
+    registry_.entries.erase(packageId);
+    if (!registry_.Save(paths_.registry, error))
     {
-        registry_[packageId] = previous;
+        registry_.entries[packageId] = previous;
         std::filesystem::rename(quarantine, source, ec);
         return false;
     }

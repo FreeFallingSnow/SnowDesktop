@@ -15,6 +15,8 @@ bool StartsWithPath(const std::filesystem::path& child,
     const std::filesystem::path& root);
 bool HasReparsePoint(const std::filesystem::path& path);
 
+std::string Timestamp();
+
 // Internal IO policy. Settings review may read with compatible sharing when
 // its optional identity lock is unavailable. Other fingerprint callers retain
 // their original read-only sharing through WidgetPackageManager::Sha256File.

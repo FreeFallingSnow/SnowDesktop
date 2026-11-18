@@ -16,6 +16,45 @@
 
 namespace snowdesktop::widget::detail
 {
+std::string JsonEscape(std::string_view value)
+{
+    std::string out;
+    out.reserve(value.size() + 8);
+    static constexpr char hex[] = "0123456789abcdef";
+    for (unsigned char ch : value)
+    {
+        switch (ch)
+        {
+        case '"': out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\b': out += "\\b"; break;
+        case '\f': out += "\\f"; break;
+        case '\n': out += "\\n"; break;
+        case '\r': out += "\\r"; break;
+        case '\t': out += "\\t"; break;
+        default:
+            if (ch < 0x20)
+            {
+                out += "\\u00";
+                out.push_back(hex[(ch >> 4) & 0x0f]);
+                out.push_back(hex[ch & 0x0f]);
+            }
+            else out.push_back(static_cast<char>(ch));
+            break;
+        }
+    }
+    return out;
+}
+
+bool DecimalIdentifier(std::string_view value)
+{
+    return !value.empty() && std::all_of(value.begin(), value.end(),
+        [](unsigned char character)
+        {
+            return character >= '0' && character <= '9';
+        });
+}
+
 std::string Lower(std::string value)
 {
     std::transform(value.begin(), value.end(), value.begin(),

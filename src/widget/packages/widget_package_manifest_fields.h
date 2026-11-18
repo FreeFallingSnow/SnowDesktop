@@ -14,6 +14,8 @@ struct ValidationReport;
 
 namespace detail
 {
+std::string JsonEscape(std::string_view value);
+bool DecimalIdentifier(std::string_view value);
 std::string Lower(std::string value);
 bool IsBcp47Tag(const std::string& locale);
 bool IsSha256(std::string_view value);
