@@ -258,6 +258,8 @@
 - **影响与本次处理**：规则默认一次性验证不扩展正式测试工程，计划入口却要求模块选择正式条目。本次增加选择 `behavior_manifest` 检查产品部署契约，参数本身仍由临时探针检查；Run `2afc920a0b284917acbca709a3e597fa` 的标准产品构建、激活和该条目通过，临时探针随后通过。没有新增永久测试或全量测试，额外编译与等待成本未单独测量。记录位于 `.codex-probes/powerrename-background/`。
 - **下一步**：允许模块声明“产品构建加临时定向验证”及可审查的正式测试豁免理由，继续绑定源码、执行权、命令和结果，避免为满足计划准入选择间接条目或新增永久测试。当前只登记，未修改准入实现，也未为反馈重复构建。
 
+- **大图标头自足性续证（2026-11-18）**：Task `code-health-20261118` 在编辑期沿用已知准入限制，先走查，再由批次 `db1f743709e343fcab58855ace19e930` / Run `672af510c8b6475a85ffb8ed27dfbe08` 编译真实消费者。Release 及 5 项定向回归通过后，忽略目录的临时 `/Zs /W4 /WX` 检查经执行租约发现 `large_icon_edit_rules.h` 缺少 `<algorithm>`（C2039，日志 `.codex-probes/code-health-20261118/compiler-probe.log`）。本任务保存该编译通过的修订并补齐直接依赖。Run `150b85cd7d3b4b9c83315a17ea29d399` 的标准 Release、设置宿主回归以及随后的独立头复验均通过。后续若能在编辑期按独立输出授权同一前端检查，可在冻结前发现这类由 PCH 掩盖的遗漏。
+
 ### CF-016 候选回收与人工验收登记存在竞争
 
 - **定向修复与验证（2026-11-08）**：Task `collab-priority-fixes-20261108` 增加绑定冻结计划和产物清单的保留意图，验收开始时转为 24 小时的进行中保留。PowerShell 7 与 5.1 的隔离候选夹具走过实际验收和清理入口，覆盖登记前、登记后、其他参与者、到期、取消、运行文件修改和实际回收，回收保留原证据。升级前已冻结的运行器仍沿用其原清理策略。
@@ -370,6 +372,8 @@
 - **实测**：2026-11-10，Task `equal-width-dialog-buttons` 的 `watch wait --condition files` 票据 `60dbdd917961def6c363b541ea23f1ae` 返回 `eligible`。前序日历 Run `f829e893544f42b2848fc5c0ffd7cc13` 已冻结，`src/system/panel/system_panel_model.cpp` 仍有前序任务的待提交改动。Task 在批次 `781988dcbc324ac5a85d2030414f7234` 修订 0 执行 `claim`，收到 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`
 - **源码确认及处理**：`build_wait_tasks.py` 的 `files` 条件只核对当前窗口的编辑成员，未核对指定路径的 Git 状态。认领保护正常，本任务等待前序提交后再认领，未接手他人改动或为反馈重建。
 - **下一步**：支持等待目标路径进入可安全认领的状态，区分前序冻结未提交、无归属的脏路径和显式接手，保留 `claim` 的原子复核。
+
+- **续证（2026-11-18）**：Task `code-health-20261118` 在剪贴板批次 `565e44309195466e9b02ff255cbe2c40` 已冻结期间，以 `watch wait --condition files --files src/app/app.h` 获得票据 `307f0fccdea4ecc3790b442b43fdafbc` 和 `eligible`。`git status` 与 `task-list.sourceChanges` 显示该路径仍有前序任务的未提交改动。没有重新认领或启动验证，得到用户授权后由文件所有者补齐声明，两项任务合用续修 Run `672af510c8b6475a85ffb8ed27dfbe08`。文件可安全认领的等待条件仍待处理。
 
 ### CF-026 打包脚本变更阻止复验已保存候选
 
