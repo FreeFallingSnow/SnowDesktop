@@ -162,6 +162,8 @@
 
 ### CF-011 独立检查等待共享编辑屏障
 
+- **同行已就绪时文档仍进入共享构建（2026-11-18）**：Task `task-52a0430b03e04412805a1170dfe1fa6a` 在绘制拆分 Run `7c5575df6d844771abc5af4a8ace0132` 通过后，只认领 `CODE_HEALTH.md`，批次 `1505fb5e92a1467b9c5865ff51cf0635` 修订 0 声明 `docs/none -Independent`。冻结计划的两方输入与认领路径无交集，回执仍随布局转场 Run `a2512aaf58bc43c4bab491588fcca955` 发布，独立回执字段为空。本轮沿用原等待会话和两次既有构建结果。源码确认 `build_manager.ps1` 仅在仍有成员处于 editing 时尝试独立发布。下一步让已通过轻量检查且输入无交集的空计划也能独立闭合，保留原构建与测试计划。
+
 - **验证回填在登记时遇到独占租约（2026-11-18）**：Task `code-health-5` 已完成标准 Release 和原定回归，来源批次 `27ef9727dade4e739c4d0e62f2770227` 修订 0、Run `341657452b4841f2a3ee2a8a4359453b`。只为回填总表调用 `begin` 时返回 `A standalone shared-output entry owns build.lock. No editor registered; read status and retry after execution finishes.`；`status code-health-5 -Compact` 显示无活动批次或候选，无法由回执定位持有人。源码确认无编辑窗口时 `begin` 在声明计划前探测 `build.lock`。再次登记成功，文档用 `docs/none -Independent`，复用原验证。P2，文档归档阶段已能分离，后续可补只读的占用归属或等待入口。未追加构建或复现。
 
 - **非空计划冻结遇到共享租约（2026-11-15）**：Task `dock-liquid-glass-preset` 的批次 `158b9cbde5fb4b9ca6ceb0c948f73303` 修订 0 声明 `module/selected`，轻量检查通过，`ready-and-wait` 在冻结前返回 1，原文为 `Unexpected occupied build lease; inspect status without clearing registrations.`。只读状态确认本批次仍是就绪成员，无本批次 Run；执行租约归批次 `52ec2edf1f404ddf9767db3f29d482f9` 的 Run `8cbc6a26035240dfaee1ecec50caeda5`。源码确认非空计划在冻结时尝试 `build.lock`，租约已用时会结束前台等待。本次保留同批次，等待正常释放后继续，不清除登记或开启额外构建槽。下一步是在合法竞争时等待冻结租约并保留原观察进程。
