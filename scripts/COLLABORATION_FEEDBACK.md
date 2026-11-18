@@ -482,3 +482,9 @@
 
 - 2026-11-18，Task `code-health-03` 的批次 `eeb100d8c50e4edf80b7a061bc44ce0c` 修订 0、Run `47ceb61e103e4252b6ddce9637e73efc` 构建与定向回归通过，批次回执的首次激活错误为 `The target application is running without its control window; runtime was retained.`
 - 同一 Run 经 `scripts/build_activate.ps1 -ArtifactRun` 补切成功，已核对本机 EXE 与保存产物的 SHA-256。多执行一次激活，保留首次失败和恢复回执。原因待核实，后续可评估在控制窗口暂不可用时直接返回同一候选的补切指令。
+
+### CF-035 共同 Run 的验收入口未提示按批次绑定
+
+- **实测**：2026-11-18，Task `task-52a0430b03e04412805a1170dfe1fa6a` 在批次 `a036f2a9fe804d96880eb29a51112ea6` 修订 0 的 Run `866b5dc7e51647c48b1f2c738b036f31` 通过并激活。调用 `acceptance-start -CandidateRun` 返回 `Candidate requirements are missing or stale; do not infer manual acceptance.`，该成员的要求版本在 Task 与冻结计划均为 0。
+- **源码确认**：`Start-RunAcceptance` 校验 Run 请求的单个任务归属，请求记录为同行 `task-40977fc85edd4847b361a242933a430d`。`Start-TaskAcceptance` 按共同批次成员校验其计划、修订与保存产物身份。
+- **处理与下一步**：本轮用 `acceptance-start -Batch a036f2a9fe804d96880eb29a51112ea6 -Revision 0` 取得验收 `a3d21708dd10438aaaec822d365636d9`，复用原候选。建议遇到共同 Run 归属不匹配时，提示对应批次入口并保留现有成员和产物校验。
