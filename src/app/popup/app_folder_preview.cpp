@@ -1343,8 +1343,7 @@ void DesktopApp::StartFolderPreviewPopupResize(snowdesktop::popup_resize_transit
                 snowdesktop::animation::RuntimePopupEffect() != snowdesktop::animation::NoEffect &&
                 current->Advance(now);
             if (!keep) folderPreviewPopupResize_.reset();
-            UpdateFloatingPopupWindowBounds(!keep, false);
-            InvalidateFloatingPopupWindow(false);
+            RequestCollectionPopupResizePresentation(keep);
             return keep;
         });
     if (!token) folderPreviewPopupResize_.reset();

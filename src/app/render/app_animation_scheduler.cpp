@@ -524,6 +524,7 @@ void DesktopApp::CancelUiAnimationFrame()
         &listTitleHoverFrameToken_,
         &floatingDockHoverTailToken_,
         &desktopWidgetHoverTailToken_,
+        &desktopWidgetPopupResizeTailToken_,
     };
     for (snowdesktop::UiScheduleToken* track : tracks)
     {

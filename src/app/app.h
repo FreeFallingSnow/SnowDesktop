@@ -923,6 +923,7 @@ private:
     void ApplyCollectionPopupBackdropAnimationFrame();
     void InvalidateFloatingPopupWindow(
         bool immediatePresent = false);
+    void RequestCollectionPopupResizePresentation(bool animating);
     HRESULT EnsureFloatingPopupCompositionRoot();
     HRESULT CreateOrResizeFloatingPopupCompositionSurface();
     HRESULT PrepareFloatingStackIndicatorComposition(SIZE size);
@@ -2723,8 +2724,10 @@ private:
     void UpdateDesktopWidgetCoverage(std::vector<RECT> coverage);
     bool SyncDesktopWidgetOcclusion(const DesktopWidget& widget, const RECT& bounds);
     void PauseWidgetMarqueeComposition(const std::wstring& widgetId);
-    bool PresentQueuedDesktopWidgetComposition(bool passivePointerFrame = false);
-    bool FlushPendingDesktopWidgetComposition();
+    bool PresentQueuedDesktopWidgetComposition(bool passivePointerFrame = false,
+        bool yieldToPopupResize = true);
+    bool FlushPendingDesktopWidgetComposition(bool yieldToPopupResize = false);
+    bool DeferRetainedDesktopWidgetCompositionForPopupResize();
     bool StartDesktopWidgetHoverRoll(DesktopWidgetCompositionItem& item,
         const RECT& frame, LONG collapsedHeight, float radius,
         const snowdesktop::popup_motion_curve::Timeline& timeline);
@@ -3532,6 +3535,7 @@ private:
     bool desktopWidgetPointerBatchActive_ = false;
     ULONGLONG desktopWidgetLastPointerPresentTick_ = 0;
     snowdesktop::UiScheduleToken desktopWidgetHoverTailToken_ = 0;
+    snowdesktop::UiScheduleToken desktopWidgetPopupResizeTailToken_ = 0;
     snowdesktop::UiScheduleToken desktopWidgetHoverFadeFrameToken_ = 0;
     bool desktopWidgetHoverFadePending_ = false;
     bool hiddenWidgetSurfaceMaintenancePending_ = false;

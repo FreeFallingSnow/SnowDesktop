@@ -895,7 +895,7 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
     // that work; consume it only after the popup surface has left Draw state.
     // A widget-local retry must not prevent the popup frame from presenting.
     const bool deferredWidgetsFlushed =
-        FlushPendingDesktopWidgetComposition() &&
+        FlushPendingDesktopWidgetComposition(true) &&
         FlushPendingWidgetMarqueeComposition() &&
         SyncWidgetMarqueeCompositionVisibility();
     if (!deferredWidgetsFlushed && hwnd_ && IsWindow(hwnd_))
@@ -1397,6 +1397,21 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     }
     ApplyDragPreviewLayerPolicy();
     SyncPopupMouseLeaveTimer();
+}
+
+void DesktopApp::RequestCollectionPopupResizePresentation(bool animating)
+{
+    uiAnimationScheduler_.RequestFramePresentation(&floatingPopupHwnd_, [this, animating] {
+        if (!IsCollectionPopupHostedByFloatingWindow()) return;
+        snowdesktop::performance::Scope trace("popup", "resize.present");
+        UpdateFloatingPopupWindowBounds(!animating, false);
+        // A change of integer bounds dirties the popup in UpdateBounds. Paint
+        // this same pose before the scheduler returns to the message queue.
+        // UpdateWindow consumes a pending paint only when there is damage.
+        if (animating && floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_) &&
+            !floatingPopupCompositionPaintInProgress_)
+            UpdateWindow(floatingPopupHwnd_);
+    });
 }
 
 void DesktopApp::PresentFloatingPopupPointerFrame(

@@ -149,7 +149,7 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
         return false;
     }
 
-    if (!FlushPendingDesktopWidgetComposition() ||
+    if (!FlushPendingDesktopWidgetComposition(true) ||
         desktopWidgetCompositionFailurePending_)
     {
         desktopWidgetCompositionFailurePending_ = false;

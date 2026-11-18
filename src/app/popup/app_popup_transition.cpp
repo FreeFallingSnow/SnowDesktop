@@ -782,8 +782,7 @@ void DesktopApp::RefreshDockFolderPopup(
                         snowdesktop::animation::RuntimePopupEffect() != snowdesktop::animation::NoEffect &&
                         current->Advance(now);
                     if (!keep) dockFolderPopupContainer_->SetPopupResizeTransition({});
-                    UpdateFloatingPopupWindowBounds(!keep, false);
-                    InvalidateFloatingPopupWindow(false);
+                    RequestCollectionPopupResizePresentation(keep);
                     if (!keep && hwnd_)
                         PostMessageW(hwnd_, kBackgroundShellReadyMessage, 0, 0);
                     return keep;

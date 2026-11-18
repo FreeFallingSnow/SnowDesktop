@@ -11,6 +11,8 @@
 #include "widget/runtime/widget_engine.h"
 #include "ui/render/ui_presentation_scope.h"
 
+#include <algorithm>
+
 namespace
 {
 constexpr UINT kMaximumWidgetSurfaceDimension =
@@ -254,7 +256,50 @@ bool DesktopApp::QueueDesktopWidgetComposition(
         });
 }
 
-bool DesktopApp::PresentQueuedDesktopWidgetComposition(bool passivePointerFrame)
+bool DesktopApp::DeferRetainedDesktopWidgetCompositionForPopupResize()
+{
+    if ((!desktopWidgetPopupResizeTailToken_ &&
+            (!GetCollectionPopupResizeTransition() || !IsCollectionPopupHostedByFloatingWindow())) ||
+        desktopStartupPresentationPending_ || desktopWidgetCompositionFailurePending_ ||
+        graphicsDeviceRecovery_.Pending() || updatingDisplayTopology_ ||
+        exitRequested_ || pendingDesktopWidgetCompositions_.empty() || mouseDown_ ||
+        widgetAction_ != WidgetAction::None || middleButtonWidgetMove_ ||
+        marqueeActive_ || detailColumnResizeActive_ || popupScrollbarDragging_ ||
+        luaWidgetPanelMouseDown_ || renameController_.IsActive() ||
+        dragSession_.HasContext() || dragDropController_.IsTransportActive())
+        return false;
+
+    // Only retire queued work later when every owner can continue showing its
+    // last frame. First paints and recovery still complete on their own path.
+    if (!std::ranges::all_of(pendingDesktopWidgetCompositions_, [this](const auto& id) {
+            const auto found = desktopWidgetCompositionItems_.find(id);
+            return found != desktopWidgetCompositionItems_.end() &&
+                found->second.visible && found->second.contentVisible;
+        }))
+        return false;
+
+    if (!desktopWidgetPopupResizeTailToken_)
+    {
+        // This deadline is measured from the first deferral, including across
+        // retargets. Repeated navigation cannot indefinitely hold repaint work.
+        constexpr UINT maximumDeferralMs = 250;
+        desktopWidgetPopupResizeTailToken_ = uiAnimationScheduler_.ScheduleOnce(
+            maximumDeferralMs, [this](snowdesktop::UiScheduleToken token) {
+                if (desktopWidgetPopupResizeTailToken_ != token) return;
+                desktopWidgetPopupResizeTailToken_ = 0;
+                (void)uiAnimationScheduler_.RequestScheduledPresentation(
+                    &desktopWidgetPopupResizeTailToken_, [this] {
+                        return PresentQueuedDesktopWidgetComposition(false, false);
+                    });
+            });
+        if (desktopWidgetPopupResizeTailToken_)
+            snowdesktop::performance::Value("popup", "resize.desktop_widgets_deferred", {},
+                static_cast<double>(pendingDesktopWidgetCompositions_.size()));
+    }
+    return desktopWidgetPopupResizeTailToken_ != 0;
+}
+
+bool DesktopApp::PresentQueuedDesktopWidgetComposition(bool passivePointerFrame, bool yieldToPopupResize)
 {
     if (snowdesktop::widget_composition_layer_rules::
             ShouldDeferWidgetSurfaceDraw(
@@ -267,6 +312,8 @@ bool DesktopApp::PresentQueuedDesktopWidgetComposition(bool passivePointerFrame)
             InvalidateRect(hwnd_, nullptr, FALSE);
         return true;
     }
+    if (!passivePointerFrame && yieldToPopupResize && DeferRetainedDesktopWidgetCompositionForPopupResize())
+        return true;
     if (passivePointerFrame && !pendingDesktopWidgetCompositions_.empty())
     {
         const UINT delay = snowdesktop::widget_composition_layer_rules::
@@ -305,11 +352,18 @@ bool DesktopApp::PresentQueuedDesktopWidgetComposition(bool passivePointerFrame)
     return false;
 }
 
-bool DesktopApp::FlushPendingDesktopWidgetComposition()
+bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
 {
     if (graphicsDeviceRecovery_.Pending()) return false;
     if (desktopWidgetPointerBatchActive_) return true;
     if (desktopWidgetHoverTailToken_) return true;
+    if (yieldToPopupResize && DeferRetainedDesktopWidgetCompositionForPopupResize())
+        return true;
+    if (desktopWidgetPopupResizeTailToken_)
+    {
+        uiAnimationScheduler_.Cancel(desktopWidgetPopupResizeTailToken_);
+        desktopWidgetPopupResizeTailToken_ = 0;
+    }
     if (pendingDesktopWidgetCompositions_.empty())
     {
         if (desktopWidgetHoverFadePending_ && !compositionPaintInProgress_)
@@ -1446,6 +1500,9 @@ void DesktopApp::ResetDesktopWidgetComposition()
     if (desktopWidgetHoverTailToken_)
         uiAnimationScheduler_.Cancel(desktopWidgetHoverTailToken_);
     desktopWidgetHoverTailToken_ = 0;
+    if (desktopWidgetPopupResizeTailToken_)
+        uiAnimationScheduler_.Cancel(desktopWidgetPopupResizeTailToken_);
+    desktopWidgetPopupResizeTailToken_ = 0;
     if (desktopWidgetHoverFadeFrameToken_)
         uiAnimationScheduler_.Cancel(desktopWidgetHoverFadeFrameToken_);
     desktopWidgetHoverFadeFrameToken_ = 0;
