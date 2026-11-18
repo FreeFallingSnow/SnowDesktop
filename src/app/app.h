@@ -2968,7 +2968,7 @@ private:
     /** @brief 在指定屏幕位置创建文件夹映射部件。 @param screenPoint 屏幕坐标 */
     void AddFolderMappingWidgetAt(POINT screenPoint);
     /** @brief 在指定屏幕位置创建 Lua 脚本部件。 @param screenPoint 屏幕坐标 @param scriptFilename 脚本文件名 */
-    void AddLuaWidgetAt(POINT screenPoint, const std::wstring& scriptFilename);
+    bool AddLuaWidgetAt(POINT screenPoint, const std::wstring& packageId);
     DesktopWidget* ResolveLuaWidgetContent(DesktopWidget* widget) const;
     const DesktopWidget* ResolveLuaWidgetContent(const DesktopWidget* widget) const;
     const DesktopWidget& ResolveLuaWidgetFrameOwner(const DesktopWidget& widget) const;

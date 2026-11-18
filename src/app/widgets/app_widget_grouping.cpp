@@ -1725,34 +1725,16 @@ void DesktopApp::AddFolderMappingWidgetAt(POINT screenPoint)
 /**
  * @brief 在右键菜单位置添加 Lua 脚本组件。
  * @param screenPoint 屏幕坐标点。
- * @param scriptFilename 脚本文件名。
+ * @param packageId 组件包 ID。
+ * @return 是否已在桌面建立实例。
  */
-void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& packageId)
+bool DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& packageId)
 {
-    if (packageId.empty()) return;
+    if (packageId.empty()) return false;
     const auto package = WidgetEngine::GetWidgetPackage(packageId);
-    if (!package) return;
-    if (NeedsNativeHelperConsent(*package))
-    {
-        auto route = snowdesktop::SettingsRoute::ForPage(
-            snowdesktop::SettingsPage::Widgets, "widgets.permissions");
-        route.itemKey = packageId;
-        ShowSettingsWindow(std::move(route));
-        return;
-    }
-    const auto requiredConsentPermissions =
-        snowdesktop::widget::PermissionsRequiringConsent(
-            package->manifest.permissions);
-    const auto optionalConsentPermissions =
-        snowdesktop::widget::PermissionsRequiringConsent(
-            package->manifest.optionalPermissions);
-    const bool alreadyGranted = package->permissionState ==
-        snowdesktop::widget::PermissionDecisionState::Granted;
-    if (!alreadyGranted &&
-        (!requiredConsentPermissions.empty() ||
-            !optionalConsentPermissions.empty()))
-    {
-        if (pendingLuaWidgetConsent_) return;
+    if (!package) return false;
+
+    const auto createWidget = [&] {
         int defaultColumns = 1;
         int defaultRows = 1;
         WidgetEngine::GetWidgetDefaultSpan(
@@ -1763,10 +1745,23 @@ void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& packageId
         settings.packageId = packageId;
         settings.columns = defaultColumns;
         settings.rows = defaultRows;
-        const std::wstring createdId = ApplyWidgetPreviewSettings(screenPoint, settings);
-        if (createdId.empty()) return;
+        return ApplyWidgetPreviewSettings(screenPoint, settings);
+    };
+    const bool needsNativeConsent = NeedsNativeHelperConsent(*package);
+    const bool alreadyGranted = package->permissionState ==
+        snowdesktop::widget::PermissionDecisionState::Granted;
+    if (needsNativeConsent ||
+        (!alreadyGranted &&
+            (!snowdesktop::widget::PermissionsRequiringConsent(
+                 package->manifest.permissions).empty() ||
+             !snowdesktop::widget::PermissionsRequiringConsent(
+                 package->manifest.optionalPermissions).empty())))
+    {
+        if (!needsNativeConsent && pendingLuaWidgetConsent_) return false;
+        const std::wstring createdId = createWidget();
+        if (createdId.empty()) return false;
         BeginLuaWidgetConsent(screenPoint, packageId, createdId);
-        return;
+        return true;
     }
     if (!alreadyGranted)
     {
@@ -1792,18 +1787,10 @@ void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& packageId
                 _LW("app.widget_permission.title"),
                 _LFW("app.widget_permission.save_failed",
                     Utf8ToWide(error)));
-            return;
+            return false;
         }
     }
-    int defaultColumns = 1;
-    int defaultRows = 1;
-    WidgetEngine::GetWidgetDefaultSpan(packageId, defaultColumns, defaultRows);
-    snowdesktop::component_preview::ApplySettings settings;
-    settings.kind = snowdesktop::component_preview::ApplyKind::LuaScript;
-    settings.packageId = packageId;
-    settings.columns = defaultColumns;
-    settings.rows = defaultRows;
-    ApplyWidgetPreviewSettings(screenPoint, settings);
+    return !createWidget().empty();
 }
 
 void DesktopApp::BeginLuaWidgetConsent(POINT screenPoint,
@@ -1811,6 +1798,15 @@ void DesktopApp::BeginLuaWidgetConsent(POINT screenPoint,
     const std::wstring& targetWidgetId)
 {
     if (targetWidgetId.empty()) return;
+    const auto package = WidgetEngine::GetWidgetPackage(packageId);
+    if (package && NeedsNativeHelperConsent(*package))
+    {
+        auto route = snowdesktop::SettingsRoute::ForPage(
+            snowdesktop::SettingsPage::Widgets, "widgets.permissions");
+        route.itemKey = packageId;
+        ShowSettingsWindow(std::move(route));
+        return;
+    }
     if (pendingLuaWidgetConsent_)
     {
         const HWND dialogWindow =
@@ -1840,16 +1836,7 @@ void DesktopApp::BeginLuaWidgetConsent(POINT screenPoint,
         // explicit retry click cannot be swallowed indefinitely.
         pendingLuaWidgetConsent_.reset();
     }
-    const auto package = WidgetEngine::GetWidgetPackage(packageId);
     if (!package) return;
-    if (NeedsNativeHelperConsent(*package))
-    {
-        auto route = snowdesktop::SettingsRoute::ForPage(
-            snowdesktop::SettingsPage::Widgets, "widgets.permissions");
-        route.itemKey = packageId;
-        ShowSettingsWindow(std::move(route));
-        return;
-    }
     const auto requiredConsentPermissions =
         snowdesktop::widget::PermissionsRequiringConsent(
             package->manifest.permissions);

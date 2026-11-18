@@ -1275,9 +1275,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     };
     settingsHostOptions.widgetsPage.addPackageToDesktop = [this](
         std::wstring_view packageId) {
-        const std::size_t before = widgets_.size();
-        AddLuaWidgetAt(POINT{-32000, -32000}, std::wstring(packageId));
-        if (widgets_.size() == before)
+        if (!AddLuaWidgetAt(POINT{-32000, -32000}, std::wstring(packageId)))
         {
             return snowdesktop::winui::WidgetsPageHostOperationResult::
                 Failure(_LW("app.settings.widgets_add_to_desktop_failed"));

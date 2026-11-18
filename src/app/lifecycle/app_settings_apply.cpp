@@ -1547,9 +1547,7 @@ public:
             break;
         case Action::AddWidgetToDesktop:
         {
-            const size_t previousCount = app_.widgets_.size();
-            app_.AddLuaWidgetAt(POINT{ -32000, -32000 }, request.value);
-            if (app_.widgets_.size() == previousCount)
+            if (!app_.AddLuaWidgetAt(POINT{ -32000, -32000 }, request.value))
             {
                 return snowdesktop::SettingsActionResult::Failure(
                     L"The widget could not be added to the desktop.");
