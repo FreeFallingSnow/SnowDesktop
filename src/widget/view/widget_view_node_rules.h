@@ -108,6 +108,12 @@ inline bool IsCollectionContainer(ViewNodeType type) noexcept
         contract->childPolicy == ViewChildPolicy::Collection;
 }
 
+inline bool HasCollectionPlaceholder(const ViewNode& node) noexcept
+{
+    return IsCollectionContainer(node.type) &&
+        node.collectionContent != ViewCollectionContent::Items;
+}
+
 inline bool IsScrollContainer(ViewNodeType type) noexcept
 {
     return type == ViewNodeType::Scroll || IsVirtualCollection(type);

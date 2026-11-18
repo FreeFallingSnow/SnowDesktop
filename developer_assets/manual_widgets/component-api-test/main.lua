@@ -2,6 +2,7 @@ local function setup()
     return {
         alternateColor = storage.get("previewColor") == "orange",
         cardVisible = storage.get("previewCard") ~= "hidden",
+        columnLayout = storage.get("previewLayout") == "column",
     }
 end
 
@@ -14,6 +15,8 @@ local function event(_context, model, value)
         model.cardVisible = true
     elseif value.id == "transition.exit" then
         model.cardVisible = false
+    elseif value.id == "layout.toggle" then
+        model.columnLayout = not model.columnLayout
     else
         return
     end
@@ -28,7 +31,7 @@ local function command(id, label, row, enabled)
         height = row,
         fontSize = row * 12 / 28,
         textAlign = "center",
-        padding = { horizontal = row * 9 / 28, vertical = 0 },
+        padding = { horizontal = row * 3 / 28, vertical = 0 },
         enabled = enabled,
         action = { id = id },
         style = {
@@ -106,7 +109,7 @@ local function buildView(_context, model)
         children = {
             view.text({
                 key = "transition.heading",
-                text = l10n.tr("lua_widget.component_api_test.transitions"),
+                text = l10n.tr("lua_widget.component_api_test.heading"),
                 width = "fill",
                 height = row * 0.78,
                 fontSize = row * 14 / 28,
@@ -116,6 +119,7 @@ local function buildView(_context, model)
             }),
             view.row({
                 key = "transition.samples",
+                flexDirection = model.columnLayout and "column" or "row",
                 width = "fill",
                 height = "fill",
                 gap = gap,
@@ -136,6 +140,7 @@ local function buildView(_context, model)
                     command("transition.update", l10n.tr("lua_widget.component_api_test.update"), row, true),
                     command("transition.enter", l10n.tr("lua_widget.component_api_test.enter"), row, not model.cardVisible),
                     command("transition.exit", l10n.tr("lua_widget.component_api_test.exit"), row, model.cardVisible),
+                    command("layout.toggle", l10n.tr("lua_widget.component_api_test.layout"), row, true),
                 },
             }),
         },

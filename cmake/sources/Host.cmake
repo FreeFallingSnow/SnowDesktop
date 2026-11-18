@@ -614,6 +614,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/view/widget_accessibility_provider.cpp
     src/widget/view/widget_view_accessibility.cpp
     src/widget/api/widget_view_contract.cpp
+    src/widget/view/widget_view_layout.cpp
     src/widget/view/widget_view_transition_validation.cpp
     src/widget/view/widget_view_tree.cpp
     src/widget/view/widget_view_validation.cpp
