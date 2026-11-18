@@ -921,10 +921,7 @@ bool DesktopApp::TryDismissPopupForEscape()
         return true;
     case PopupEscapeAction::CloseCollectionPopup:
         if (folderPreview_)
-        {
-            NavigateFolderPreviewBack();
-            return true;
-        }
+            return NavigateFolderPreviewBack();
         pendingCollectionPopupOpen_.reset();
         CancelCollectionPopupDwell();
         CancelCollectionGroupTabDwell();

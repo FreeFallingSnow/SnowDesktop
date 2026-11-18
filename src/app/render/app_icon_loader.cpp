@@ -296,8 +296,12 @@ void DesktopApp::DrainBackgroundShellWork()
         // First pixels/refinement update only the current popup's presentation;
         // source containers and all ordinary model deliveries remain fenced.
         if (dockFolderPopupOpen_ && popupAnimation_.IsInteractive())
-            iconWork_.Drain(std::to_wstring(iconLoadSerial_) + L"\nF\n" +
-                kDockFolderPopupWidgetId + L"\n");
+        {
+            const auto prefix = folderPreview_ && folderPreview_->inlineBounds
+                ? InlineFolderPreviewIconRequestPrefix(iconLoadSerial_, folderPreview_->hostWidgetId)
+                : std::to_wstring(iconLoadSerial_) + L"\nF\n" + kDockFolderPopupWidgetId + L"\n";
+            iconWork_.Drain(prefix);
+        }
         return;
     }
     folderReadDelivery_.Drain(
@@ -363,6 +367,7 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
         result->requestKey = input->requestKey;
         result->layoutKey = input->layoutKey;
         result->widgetId = input->widgetId;
+        result->inlinePreviewHostId = input->inlinePreviewHostId;
         result->phase = input->phase;
         result->isDesktopItem = input->isDesktopItem;
         result->folderPath = input->folderPath;
@@ -717,6 +722,13 @@ void DesktopApp::CancelDockFolderPopupIconLoads()
     dockFolderPopupIconGeneration_ =
         snowdesktop::popup_icon_load_rules::NextGeneration(dockFolderPopupIconGeneration_);
     const auto prefix = std::to_wstring(iconLoadSerial_) + L"\nF\n" + kDockFolderPopupWidgetId + L"\n";
+    iconWork_.Cancel(prefix);
+    std::erase_if(iconLoaderPendingKeys_, [&](const auto& key) { return key.starts_with(prefix); });
+}
+
+void DesktopApp::CancelInlineFolderPreviewIconLoads(const std::wstring& hostId)
+{
+    const auto prefix = InlineFolderPreviewIconRequestPrefix(iconLoadSerial_, hostId);
     iconWork_.Cancel(prefix);
     std::erase_if(iconLoaderPendingKeys_, [&](const auto& key) { return key.starts_with(prefix); });
 }

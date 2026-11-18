@@ -18,10 +18,12 @@ struct Item
 struct Surface
 {
     std::string id, kind, title, search, category = "all";
+    std::string folderPreviewPath;
     RECT bounds{};
     std::vector<std::string> items, children;
     bool visible = true, listMode = false, showSearch = true, showCategories = true;
     bool scrollContainer = true, popup = false;
+    bool dockAnchored = false, fanPopup = false;
 };
 struct Step
 {

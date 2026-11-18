@@ -599,6 +599,8 @@ PendingFolderPlacement DesktopApp::BuildPendingFolderPlacement(
     const DragSourceList* sourceList) const
 {
     const bool popup = targetWidget.id == kDockFolderPopupWidgetId;
+    if (popup && folderPreview_ && targetWidget.folderSortMode != snowdesktop::folder_sort_rules::kManual)
+        return {};
     return snowdesktop::pending_drop::BuildFolder(targetWidget, insertIndex, sourceList,
         popup ? dockFolderPopupMappingWidgetId_ : targetWidget.id,
         popup ? dockFolderPopupSourceId_ : std::wstring{}, ToUpperInvariant, FileNameFromPath);
@@ -606,7 +608,8 @@ PendingFolderPlacement DesktopApp::BuildPendingFolderPlacement(
 
 void DesktopApp::ActivatePendingFolderPlacement(PendingFolderPlacement placement)
 {
-    if (placement.popupSourceId.starts_with(L"folder-preview:")) return;
+    if (placement.sourceFolderPath.empty() || placement.popupSourceId.starts_with(L"folder-preview:"))
+        return; // A Shell handoff without output paths cannot identify new preview members.
     PendingLandingCache cache;
     cache.folderPlacements.push_back(std::move(placement));
     snowdesktop::pending_drop::Publish(pendingLandingCaches_, std::move(cache));
@@ -641,7 +644,12 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
     services.pin = [this](const auto& paths, size_t index) { return AddMaterializedItemsToDock(paths, index); };
     services.savePins = [this] { RequestLayoutSave(); };
     services.forgetMovedKeys = [this](const auto& keys) { RemoveDesktopKeysFromWidgets(keys); };
-    services.refresh = [this] { RequestShellRefresh(); };
+    const auto previewDirectory = folderPreview_ && preview.targetWidget == &dockFolderPopupWidget_
+        ? dockFolderPopupWidget_.sourceFolderPath : std::wstring{};
+    services.refresh = [this, previewDirectory] {
+        if (!previewDirectory.empty()) RequestFolderRefresh({previewDirectory});
+        RequestShellRefresh();
+    };
     return snowdesktop::file_drop_execution::Execute(sourceList, preview, pendingLandingCaches_,
         std::move(services), std::move(completion), executeSynchronously, std::move(result));
 }

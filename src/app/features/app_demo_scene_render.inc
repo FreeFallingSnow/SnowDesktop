@@ -241,33 +241,82 @@ if (request.component == "demo-scene")
                     auto& widget = widgets_[indices.at(surface.id)]; widget.bounds = rect;
                     widget.listMode = surface.listMode; widget.activeCategoryId = demo::Wide(surface.category);
                     widget.gridSpan = {std::max(2, static_cast<int>((rect.right - rect.left) / kCellWidth)), std::max(2, static_cast<int>((rect.bottom - rect.top) / kMinCellHeight))};
-                    if (surface.kind == "popup" || surface.popup)
+                    widget.fanPopup = surface.fanPopup;
+                    auto* view = views.at(surface.id);
+                    const bool popup = surface.kind == "popup" || surface.popup;
+                    const bool directoryPreview = !surface.folderPreviewPath.empty();
+                    WidgetRenderOptions options; options.previewScene = fixture.get(); options.frame = rect; options.pointer = lastMousePoint_;
+                    options.dpi = 96; options.interactive = true; options.registerBackdrop = false;
+                    if (popup || directoryPreview)
                     {
-                        popupWidgetIndex_ = indices.at(surface.id); popupHasAnchor_ = popupAnchoredToDock_ = false;
+                        popupWidgetIndex_ = indices.at(surface.id);
+                        popupHasAnchor_ = popupAnchoredToDock_ = surface.dockAnchored;
+                        popupDockPosition_ = DockPosition::Bottom;
+                        popupAnchorPoint_ = {(rect.left + rect.right) / 2, rect.bottom};
+                        popupPageId_ = page.id;
+                        popupAnimation_.ShowImmediately();
+                        popupScrollOffset_ = 0;
                         // Mapping popups use the same dedicated snapshot/view as
                         // live mapping popups; their renderer reads that source.
-                        if (widget.type == DesktopWidgetType::FolderMapping)
+                        if (widget.type == DesktopWidgetType::FolderMapping || directoryPreview)
                         {
                             dockFolderPopupWidget_ = widget;
+                            if (directoryPreview)
+                            {
+                                dockFolderPopupWidget_.id = kDockFolderPopupWidgetId;
+                                dockFolderPopupWidget_.type = DesktopWidgetType::FolderMapping;
+                                dockFolderPopupWidget_.sourceFolderPath = demo::Wide(surface.folderPreviewPath);
+                                folder_preview::ConfigureDirectoryView(dockFolderPopupWidget_);
+                                dockFolderPopupWidget_.folderEntries.clear();
+                                for (const auto& item : surface.items)
+                                    if (const auto* entry = fixture->FindFolderEntry(L"__demo_item_" + demo::Wide(item)))
+                                        dockFolderPopupWidget_.folderEntries.push_back(*entry);
+                                folderPreview_.emplace();
+                                folderPreview_->hostWidgetId = widget.id;
+                                folderPreview_->pages.push_back({dockFolderPopupWidget_.sourceFolderPath});
+                                if (!popup) folderPreview_->SetInlineGeometry(*view);
+                            }
+                            else if (!surface.dockAnchored) dockFolderPopupWidget_.gridSpan = {1, 1};
                             dockFolderPopupContainer_ = std::make_unique<FolderMapping>(&dockFolderPopupWidget_, this);
+                            dockFolderPopupContainer_->SetRenderOptions(&options);
+                            if (!directoryPreview) dockFolderPopupContainer_->SetSearchText(demo::Wide(surface.search));
                             dockFolderPopupOpen_ = true;
+                            dockFolderPopupAvailable_ = true;
                             popupWidgetIndex_ = static_cast<std::size_t>(-1);
                         }
-                        collectionPopupAppearance_ = appearance; collectionPopupLightTheme_ = light; collectionPopupGlassTheme_ = appearance.glassEnabled;
-                        const auto native = GetCollectionPopupRect(*GetOpenPopupWidget()); const auto fitted = fitRect(native, rect);
-                        const float scale = static_cast<float>(fitted.right - fitted.left) / (native.right - native.left);
-                        material(fitted, 18.f * scale);
-                        const auto mapped = mapRect(native, fitted) * transform; lastMousePoint_ = pointerIn(mapped, frame.cursor);
-                        context->SetTransform(mapped); DrawCollectionPopup(context.Get(), false);
+                        if (popup)
+                        {
+                            if (!dockFolderPopupOpen_)
+                            {
+                                if (widget.type == DesktopWidgetType::FileCategories && !surface.dockAnchored)
+                                    widget.gridSpan = {1, 1};
+                                view->SetRenderOptions(&options);
+                                if (auto* scrolling = dynamic_cast<ScrollingItemWidget*>(view))
+                                    scrolling->SetSearchText(demo::Wide(surface.search));
+                            }
+                            collectionPopupAppearance_ = appearance; collectionPopupLightTheme_ = light; collectionPopupGlassTheme_ = appearance.glassEnabled;
+                            const auto native = GetCollectionPopupRect(*GetOpenPopupWidget()); const auto fitted = fitRect(native, rect);
+                            const float scale = static_cast<float>(fitted.right - fitted.left) / (native.right - native.left);
+                            if (!UsesCollectionPopupFan(*GetOpenPopupWidget())) material(fitted, 18.f * scale);
+                            const auto mapped = mapRect(native, fitted) * transform; lastMousePoint_ = pointerIn(mapped, frame.cursor);
+                            options.pointer = lastMousePoint_;
+                            context->SetTransform(mapped); DrawCollectionPopup(context.Get(), false);
+                            view->SetRenderOptions(nullptr);
+                        }
+                        else
+                        {
+                            material(rect, appearance.cornerRadius);
+                            view->DrawChrome(context.Get(), lastMousePoint_);
+                        }
                         popupWidgetIndex_ = static_cast<std::size_t>(-1);
                         dockFolderPopupOpen_ = false;
+                        dockFolderPopupAvailable_ = false;
                         dockFolderPopupContainer_.reset();
+                        folderPreview_.reset();
                     }
                     else
                     {
-                        WidgetRenderOptions options; options.previewScene = fixture.get(); options.frame = rect; options.pointer = lastMousePoint_;
-                        options.dpi = 96; options.interactive = true; options.registerBackdrop = false;
-                        auto* view = views.at(surface.id); view->SetRenderOptions(&options);
+                        view->SetRenderOptions(&options);
                         if (auto* scrolling = dynamic_cast<ScrollingItemWidget*>(view)) scrolling->SetSearchText(demo::Wide(surface.search));
                         material(rect, appearance.cornerRadius);
                         view->InvalidateSlots(); view->DrawPreview(context.Get(), rect, options); view->SetRenderOptions(nullptr);

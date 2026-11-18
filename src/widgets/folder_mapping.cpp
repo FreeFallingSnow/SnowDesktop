@@ -99,7 +99,7 @@ static RECT FolderMappingTabsRect(FolderMapping* widget)
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
     return widget
         ? widget->GetCategorizedTabsRect(
-            data && data->showFileCategories)
+            data && data->showFileCategories && !widget->IsSearchActive())
         : RECT{};
 }
 

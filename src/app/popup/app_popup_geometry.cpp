@@ -22,11 +22,12 @@ bool DesktopApp::UsesCategorizedPopupControls(const DesktopWidget& widget) const
 {
     if (IsGroupWidgetType(widget.type)) return true;
     const bool dockFolder = dockFolderPopupOpen_ && &widget == &dockFolderPopupWidget_;
+    const bool folderPreview = dockFolder && folderPreview_.has_value();
     const size_t sourceCount = widget.type == DesktopWidgetType::FolderMapping
         ? widget.folderEntries.size() : widget.itemKeys.size();
     return (popupAnchoredToDock_ || snowdesktop::single_cell_widget::IsSingleCell(widget)) &&
         (widget.type == DesktopWidgetType::FileCategories || widget.type == DesktopWidgetType::FolderMapping) &&
-        (widget.showSearchBox || widget.showFileCategories || widget.dateHeaders) &&
+        (widget.dateHeaders || (!folderPreview && (widget.showSearchBox || widget.showFileCategories))) &&
         // Match the known-file reservation used by the opening geometry. Use
         // the full source so filtering to no results keeps search accessible.
         snowdesktop::dock_folder_popup_read::HasCategorizedContent(

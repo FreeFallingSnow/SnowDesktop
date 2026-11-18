@@ -1126,6 +1126,12 @@ void DesktopApp::EnqueueIconLoad(IconLoadTask task)
     const bool dockFolderPopupTask =
         !task.isDesktopItem &&
         task.widgetId == kDockFolderPopupWidgetId;
+    if (dockFolderPopupTask && task.inlinePreviewHostId.empty() &&
+        folderPreview_ && folderPreview_->inlineBounds)
+    {
+        task.inlinePreviewHostId = folderPreview_->hostWidgetId;
+        task.popupGeneration = folderPreview_->inlineIconGeneration;
+    }
     if (task.requestedSize <= 0)
     {
         if (task.isDesktopItem)
@@ -1135,7 +1141,12 @@ void DesktopApp::EnqueueIconLoad(IconLoadTask task)
         else
         {
             std::wstring pageId;
-            if (task.widgetId == kDockFolderPopupWidgetId &&
+            if (!task.inlinePreviewHostId.empty())
+            {
+                const auto index = FindWidgetIndexById(task.inlinePreviewHostId);
+                if (index < widgets_.size()) pageId = widgets_[index].gridCell.pageId;
+            }
+            else if (dockFolderPopupTask &&
                 dockFolderPopupOpen_)
             {
                 pageId = popupPageId_;
@@ -1156,16 +1167,18 @@ void DesktopApp::EnqueueIconLoad(IconLoadTask task)
     }
     {
         std::lock_guard<std::mutex> lock(iconLoaderMutex_);
-        if (dockFolderPopupTask)
+        if (dockFolderPopupTask && task.inlinePreviewHostId.empty())
             task.popupGeneration =
                 dockFolderPopupIconGeneration_;
         if (task.requestKey.empty())
         {
             const std::wstring& identity = task.isDesktopItem
                 ? task.layoutKey : task.folderPath;
-            task.requestKey = std::to_wstring(task.serial) + L"\n" +
-                (task.isDesktopItem ? L"D\n" : L"F\n") +
-                task.widgetId + L"\n" +
+            const auto prefix = task.inlinePreviewHostId.empty()
+                ? std::to_wstring(task.serial) + L"\n" +
+                    (task.isDesktopItem ? L"D\n" : L"F\n") + task.widgetId + L"\n"
+                : InlineFolderPreviewIconRequestPrefix(task.serial, task.inlinePreviewHostId);
+            task.requestKey = prefix +
                 ToUpperInvariant(identity) + L"\n" +
                 (task.phase == IconLoadPhase::Phase1
                     ? L"1" : L"2") + L"\n" +
@@ -1215,7 +1228,8 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
         currentPopupGeneration =
             dockFolderPopupIconGeneration_;
     }
-    const bool dockFolderPopupResult =
+    const bool inlinePreviewResult = !result->inlinePreviewHostId.empty();
+    const bool dockFolderPopupResult = !inlinePreviewResult &&
         !result->isDesktopItem &&
         result->widgetId == kDockFolderPopupWidgetId;
     if (result->serial != iconLoadSerial_ ||
@@ -1303,13 +1317,26 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                         phase2.sourceStamp = snowdesktop::shell_icon_request::Stamp(entry);
                         phase2.serial = result->serial;
                         phase2.widgetId = widget.id;
+                        phase2.inlinePreviewHostId = result->inlinePreviewHostId;
+                        phase2.popupGeneration = result->popupGeneration;
                         phase2.folderPath = entry.fullPath;
                         phase2.sysIconIndex = entry.sysIconIndex;
                         phase2.isDesktopItem = false;
                         phase2.phase = IconLoadPhase::Phase2;
                         EnqueueIconLoad(std::move(phase2));
                     }
-                    if (dockFolderPopup)
+                    if (inlinePreviewResult)
+                    {
+                        InvalidateDragStaticScene(false);
+                        (void)QueueDesktopWidgetComposition(result->inlinePreviewHostId);
+                        const auto index = FindWidgetIndexById(result->inlinePreviewHostId);
+                        if (index < widgets_.size())
+                        {
+                            RECT dirty = GetStandaloneWidgetFrameRect(widgets_[index]);
+                            if (hwnd_ && !IsRectEmpty(&dirty)) InvalidateRect(hwnd_, &dirty, FALSE);
+                        }
+                    }
+                    else if (dockFolderPopup)
                     {
                         snowdesktop::performance::Scope trace("popup", "folder.icon.delivery");
                         // This transient entry belongs to the popup projection.
@@ -1337,15 +1364,21 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
             return false;
         };
 
-        bool popupMatched = false;
-        if (dockFolderPopupOpen_ &&
-            result->widgetId ==
-                kDockFolderPopupWidgetId)
+        if (inlinePreviewResult)
         {
-            popupMatched = applyFolderResult(
-                dockFolderPopupWidget_, true);
+            const auto& host = result->inlinePreviewHostId;
+            if (folderPreview_ && folderPreview_->inlineBounds &&
+                folderPreview_->hostWidgetId == host &&
+                folderPreview_->inlineIconGeneration == result->popupGeneration)
+                applyFolderResult(dockFolderPopupWidget_, true);
+            else if (auto found = inactiveInlineFolderPreviews_.find(host);
+                found != inactiveInlineFolderPreviews_.end() && found->second.session &&
+                found->second.session->inlineIconGeneration == result->popupGeneration)
+                applyFolderResult(found->second.model.data, true);
         }
-        if (!popupMatched)
+        else if (dockFolderPopupResult && dockFolderPopupOpen_)
+            applyFolderResult(dockFolderPopupWidget_, true);
+        else
         {
             for (auto& widget : widgets_)
             {
@@ -1356,7 +1389,7 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
         }
     }
 
-    if (matched && result->phase == IconLoadPhase::Shortcut)
+    if (matched && !inlinePreviewResult && result->phase == IconLoadPhase::Shortcut)
     {
         bool membershipChanged = false;
         if (result->isDesktopItem)

@@ -563,7 +563,7 @@ static RECT FileCategoryTabsRect(FileCategories* widget)
         ? widget->GetWidgetData() : nullptr;
     return widget
         ? widget->GetCategorizedTabsRect(
-            data && data->showFileCategories)
+            data && data->showFileCategories && !widget->IsSearchActive())
         : RECT{};
 }
 
@@ -591,10 +591,7 @@ static RECT FileCategoryContentRect(FileCategories* widget)
         snowdesktop::collection_group_rules::
             ResolveCategorizedContentTop(
                 body.top, body.bottom,
-                !(widget->GetWidgetData() &&
-                    widget->GetWidgetData()->showSearchBox &&
-                    widget->IsSearchActive()) &&
-                    !IsRectEmptyRect(tabs),
+                !IsRectEmptyRect(tabs),
                 tabs.bottom,
                 !IsRectEmptyRect(search), search.bottom,
                 widget->GetCategorizedTabRowOffset(),

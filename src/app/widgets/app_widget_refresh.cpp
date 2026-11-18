@@ -90,7 +90,8 @@ snowdesktop::shell_refresh::FolderSnapshot snowdesktop::shell_refresh::ReadFolde
 }
 
 void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
-    bool enqueueIconLoads, const snowdesktop::shell_refresh::FolderSnapshot* snapshot)
+    bool enqueueIconLoads, const snowdesktop::shell_refresh::FolderSnapshot* snapshot,
+    const snowdesktop::folder_preview::Session* inlinePreview)
 {
     if (snapshot && snowdesktop::shell_refresh::FolderKey(snapshot->path) !=
             snowdesktop::shell_refresh::FolderKey(widget.sourceFolderPath))
@@ -109,6 +110,9 @@ void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Widgets, L"Folder enumeration failed; retaining current entries", DiagnosticLogLevel::Warning);
         return;
     }
+    if ((inlinePreview || (folderPreview_ && &widget == &dockFolderPopupWidget_)) &&
+        widget.folderSortMode == snowdesktop::folder_sort_rules::kManual)
+        widget.itemKeys = folderPreviewSort_.Get(snowdesktop::shell_refresh::FolderKey(snapshot->path)).order;
     auto previous = std::exchange(widget.folderEntries, snapshot->entries);
     std::unordered_map<std::wstring, size_t> previousByPath;
     for (size_t i = 0; i < previous.size(); ++i)
@@ -128,6 +132,11 @@ void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
         task.sourceStamp = snowdesktop::shell_icon_request::Stamp(entry);
         task.serial = iconLoadSerial_;
         task.widgetId = widget.id;
+        if (inlinePreview)
+        {
+            task.inlinePreviewHostId = inlinePreview->hostWidgetId;
+            task.popupGeneration = inlinePreview->inlineIconGeneration;
+        }
         task.layoutKey = ToUpperInvariant(entry.fullPath);
         if (absolute != snapshot->absoluteIds.end())
             task.absolutePidl.reset(ILCloneFull(absolute->second.get()));

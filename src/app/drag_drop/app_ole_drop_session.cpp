@@ -272,6 +272,7 @@ std::optional<DWORD> DesktopApp::TryDropShellNamespaceFiles(
     const auto existing = SnapshotDesktopKeys();
     landing.tick = GetTickCount();
     landing.existingDesktopKeys = existing;
+    const bool previewDestination = mapped && destination->dockFolderPopup && folderPreview_;
     if (mapped)
     {
         const size_t index = FindWidgetIndexById(destination->widgetId);
@@ -281,8 +282,8 @@ std::optional<DWORD> DesktopApp::TryDropShellNamespaceFiles(
         if (!widget || widget->id != destination->widgetId ||
             widget->type != destination->widgetType || widget->sourceFolderPath != directory)
             return DROPEFFECT_NONE;
-        landing.folderPlacements.push_back(BuildPendingFolderPlacement(
-            *widget, destination->preview.insertIndex, &sources));
+        auto placement = BuildPendingFolderPlacement(*widget, destination->preview.insertIndex, &sources);
+        if (!placement.sourceFolderPath.empty()) landing.folderPlacements.push_back(std::move(placement));
     }
     else
     {
@@ -325,7 +326,11 @@ std::optional<DWORD> DesktopApp::TryDropShellNamespaceFiles(
         ReportPerformedDropEffect(dataObject, DROPEFFECT_NONE);
     if (FAILED(status))
         snowdesktop::operation_feedback::Report({"app.operation.fileFailed", directory, static_cast<DWORD>(status)});
-    if (!result->outputs.empty()) RequestShellRefresh();
+    if (!result->outputs.empty())
+    {
+        if (previewDestination) RequestFolderRefresh({directory});
+        RequestShellRefresh();
+    }
     RestoreDesktopWindowLayer();
     return SUCCEEDED(status) ? (effect == DROPEFFECT_MOVE ? DROPEFFECT_NONE : DROPEFFECT_COPY) : DROPEFFECT_NONE;
 }
@@ -1690,9 +1695,25 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                     dockFolderPopupWidget_,
                     popupInsertIndex,
                     &fileSources);
-            auto finished = [this,
+            const auto previewDirectory = folderPreview_ ? dockFolderPopupWidget_.sourceFolderPath : std::wstring{};
+            auto outputs = previewDirectory.empty() ? nullptr :
+                std::make_shared<snowdesktop::ShellFileOperationResult>();
+            auto finished = [this, outputs, previewDirectory,
                 folderPlacement = std::move(folderPlacement)](
                     bool succeeded) mutable {
+                if (outputs)
+                {
+                    if (outputs->outputs.empty()) return;
+                    if (!folderPlacement.sourceFolderPath.empty())
+                    {
+                        PendingLandingCache cache;
+                        cache.folderPlacements.push_back(std::move(folderPlacement));
+                        snowdesktop::pending_drop::Complete(pendingLandingCaches_, std::move(cache), *outputs);
+                    }
+                    RequestFolderRefresh({previewDirectory});
+                    RequestShellRefresh();
+                    return;
+                }
                 if (!succeeded)
                     return;
                 ActivatePendingFolderPlacement(
@@ -1715,7 +1736,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                 sourceSupportsAsync
                     ? std::move(asyncCompletion)
                     : std::move(finished),
-                !sourceSupportsAsync);
+                !sourceSupportsAsync, std::move(outputs));
             if (!handled)
             {
                 *effect = DROPEFFECT_NONE;

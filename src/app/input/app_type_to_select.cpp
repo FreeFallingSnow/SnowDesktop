@@ -36,7 +36,7 @@ bool DesktopApp::TryHandleTypeToSelectChar(wchar_t ch, bool repeated)
         return false;
     }
 
-    const bool popup = IsCollectionPopupInteractive();
+    const bool popup = IsCollectionPopupKeyboardTarget();
     const size_t widgetIndex = popup ? popupWidgetIndex_ : GetSelectionWidgetIndex();
     DesktopWidget* widget = popup ? GetOpenPopupWidget() :
         (widgetIndex < widgets_.size() ? &widgets_[widgetIndex] : nullptr);

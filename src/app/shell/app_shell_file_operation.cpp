@@ -559,8 +559,12 @@ void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapsh
     std::unordered_set<std::wstring> changed;
     bool orderChanged = false;
     for (const auto& [path, folder] : snapshot.folders)
+    {
         if (!folder.complete)
             WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, (L"Folder refresh failed; retaining current entries: " + path).c_str(), DiagnosticLogLevel::Warning);
+        else
+            ApplyPendingFolderPreviewPlacements(folder);
+    }
     for (auto& widget : widgets_)
     {
         if (widget.type != DesktopWidgetType::FolderMapping) continue;
@@ -674,6 +678,8 @@ void DesktopApp::RefreshShellItemsAsync()
             ApplyFolderRefresh(*snapshot);
             return;
         }
+        for (const auto& [path, folder] : snapshot->folders)
+            ApplyPendingFolderPreviewPlacements(folder);
         const ULONGLONG started = GetTickCount64();
         const size_t count = snapshot->desktopItems.size();
         const size_t metadataHits = snapshot->metadata.hits;

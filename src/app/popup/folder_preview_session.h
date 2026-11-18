@@ -7,6 +7,7 @@
 #include "app/popup/popup_resize_transition.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -21,6 +22,13 @@ inline constexpr wchar_t kResolveWorkKey[] = L"folder-preview:resolve";
 inline bool Supports(DesktopWidgetType type)
 {
     return type == DesktopWidgetType::FileCategories || type == DesktopWidgetType::FolderMapping;
+}
+
+inline void ConfigureDirectoryView(DesktopWidget& view)
+{
+    view.fanPopup = false;
+    view.showSearchBox = false;
+    view.showFileCategories = false;
 }
 
 struct FolderPopupHome
@@ -47,6 +55,7 @@ struct Session
     std::wstring viewKey;
     std::wstring sourceWidgetId;
     std::wstring hostWidgetId;
+    std::uint64_t inlineIconGeneration = 0;
     std::vector<ViewPage> pages;
     std::optional<RECT> inlineBounds;
     RECT inlineCollapseButton{};

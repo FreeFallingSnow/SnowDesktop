@@ -2636,6 +2636,7 @@ private:
         std::optional<RECT> inlineBounds;
         POINT anchor{};
         bool knownDirectory = false;
+        bool knownFile = false;
         bool directoryShortcut = false;
         bool inPopup = false;
         bool temporary = false;
@@ -2652,7 +2653,7 @@ private:
     bool HandleFolderPreviewBreadcrumbContextMenu(POINT point, bool show);
     UINT TrackFolderPreviewPathMenu(HMENU menu, POINT screenPoint, bool textOnly);
     void ShowFolderPreviewDirectory(const std::wstring& path, bool fromFan = false, bool present = true);
-    void NavigateFolderPreviewBack();
+    bool NavigateFolderPreviewBack();
     void DiscardFolderPreview();
     void SaveFolderPreviewView();
     void SuspendDockFolderPreviewHome(snowdesktop::folder_preview::Session& session);
@@ -2879,6 +2880,7 @@ private:
     void StopIconLoader();
     void BeginIconLoadGeneration();
     void CancelDockFolderPopupIconLoads();
+    void CancelInlineFolderPreviewIconLoads(const std::wstring& hostId);
     int GetShellIconBitmapSizeForPage(const std::wstring& pageId) const;
     int GetMaximumShellIconBitmapSize() const;
     void RefreshIconBitmapResolution();
@@ -3056,7 +3058,8 @@ private:
     void EnumerateFolderMappingEntries(
         DesktopWidget& widget,
         bool enqueueIconLoads = true,
-        const snowdesktop::shell_refresh::FolderSnapshot* snapshot = nullptr);
+        const snowdesktop::shell_refresh::FolderSnapshot* snapshot = nullptr,
+        const snowdesktop::folder_preview::Session* inlinePreview = nullptr);
     /** @brief 刷新文件夹映射部件的内容。 @param widgetIndex 部件索引 */
     void RefreshFolderMappingWidget(size_t widgetIndex);
     /**
@@ -4549,6 +4552,7 @@ private:
         DesktopWidget& targetWidget,
         const std::wstring& widgetId,
         const std::wstring& popupSourceId = L"");
+    void ApplyPendingFolderPreviewPlacements(const snowdesktop::shell_refresh::FolderSnapshot& snapshot);
     /** @} */
 
     /** @name 集合弹出面板 */

@@ -42,8 +42,9 @@ inline bool Execute(const DragSourceList& sources, const DropPreviewList& previe
         DragSourceList orderedSources;
         orderedSources.entries.reserve(order.size());
         for (const auto* entry : order) orderedSources.entries.push_back(*entry);
-        cache.folderPlacements.push_back(services.folderPlacement(*preview.targetWidget,
-            preview.insertIndex, order.empty() ? &sources : &orderedSources));
+        auto placement = services.folderPlacement(*preview.targetWidget,
+            preview.insertIndex, order.empty() ? &sources : &orderedSources);
+        if (!placement.sourceFolderPath.empty()) cache.folderPlacements.push_back(std::move(placement));
     }
 
     auto completed = std::make_shared<std::atomic_bool>(false);

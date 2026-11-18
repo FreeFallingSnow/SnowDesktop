@@ -6,6 +6,7 @@
 #include "icons/large_icon_renderer.h"
 #include "desktop_preview_source.h"
 #include "desktop_preview_cache.h"
+#include "widgets/folder_member_order.h"
 
 // Desktop drop-preview rendering, caching and deferred placement.
 
@@ -27,6 +28,46 @@ bool DesktopApp::ApplyPendingFolderPlacements(
     return snowdesktop::pending_drop::ApplyFolder(cache, targetWidget, widgetId, popupSourceId,
         MatchPendingName, ToUpperInvariant, PathsEqualInsensitive);
 }
+
+void DesktopApp::ApplyPendingFolderPreviewPlacements(
+    const snowdesktop::shell_refresh::FolderSnapshot& snapshot)
+{
+    if (!snapshot.complete || pendingLandingCaches_.empty()) return;
+    const auto key = snowdesktop::shell_refresh::FolderKey(snapshot.path);
+    const auto popupId = L"folder-preview:" + key;
+    const auto matches = [&](const PendingFolderPlacement& placement) {
+        return placement.popupSourceId == popupId;
+    };
+    if (std::none_of(pendingLandingCaches_.begin(), pendingLandingCaches_.end(),
+            [&](const auto& cache) {
+                return std::any_of(cache.folderPlacements.begin(), cache.folderPlacements.end(), matches);
+            })) return;
+
+    auto sort = folderPreviewSort_.Get(key);
+    if (sort.mode != snowdesktop::folder_sort_rules::kManual)
+    {
+        // The user may select a new sort rule while the operation is running.
+        for (auto& cache : pendingLandingCaches_)
+        {
+            std::erase_if(cache.folderPlacements, matches);
+            cache.active = !cache.entries.empty() || !cache.folderPlacements.empty();
+        }
+        std::erase_if(pendingLandingCaches_, [](const auto& cache) { return !cache.active; });
+        return;
+    }
+
+    DesktopWidget target;
+    target.sourceFolderPath = snapshot.path;
+    target.folderEntries = snapshot.entries;
+    target.folderSortMode = sort.mode;
+    target.folderSortAscending = sort.ascending;
+    target.itemKeys = std::move(sort.order);
+    snowdesktop::folder_member_order::Refresh(target, ToUpperInvariant);
+    if (ApplyPendingFolderPlacements(target, {}, popupId) &&
+        !folderPreviewSort_.Set(key, {sort.mode, sort.ascending, std::move(target.itemKeys)}))
+        MessageBeep(MB_ICONWARNING);
+}
+
 void DesktopApp::DrawDesktopDropPreviewList(ID2D1DeviceContext* ctx,
     const DropPreviewList& preview)
 {
