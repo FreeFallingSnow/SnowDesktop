@@ -4,7 +4,7 @@
   "slug": "component-api-test",
   "apiVersion": 2,
   "dataVersion": 1,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "entry": "main.lua",
   "minHostVersion": "1.0.17.0",
   "author": "SnowDesktop",
@@ -16,6 +16,30 @@
   "preview": "preview.png",
   "defaultSize": { "columns": 4, "rows": 2 },
   "minSize": { "columns": 4, "rows": 2 },
+  "previewData": {
+    "introduction": "Compare the colors and card visibility in the two preview sizes.",
+    "introductionKey": "lua_widget.component_api_test.preview_intro",
+    "variants": [
+      {
+        "id": "standard",
+        "title": "Standard",
+        "titleKey": "lua_widget.component_api_test.preview_standard",
+        "description": "Blue sample and green card",
+        "descriptionKey": "lua_widget.component_api_test.preview_standard_hint",
+        "size": { "columns": 4, "rows": 2 },
+        "storage": { "previewColor": "blue", "previewCard": "shown" }
+      },
+      {
+        "id": "wide",
+        "title": "Wide",
+        "titleKey": "lua_widget.component_api_test.preview_wide",
+        "description": "Orange sample and empty frame",
+        "descriptionKey": "lua_widget.component_api_test.preview_wide_hint",
+        "size": { "columns": 5, "rows": 2 },
+        "storage": { "previewColor": "orange", "previewCard": "hidden" }
+      }
+    ]
+  },
   "requiredFeatures": [
     "l10n.basic",
     "lifecycle.event",
@@ -34,6 +58,11 @@
       "lua_widget.component_api_test.name": "组件 API 测试",
       "lua_widget.component_api_test.description": "观察视图节点更新、出现和消失时的宿主动效。",
       "lua_widget.component_api_test.transitions": "视图转场",
+      "lua_widget.component_api_test.preview_intro": "切换两种尺寸，观察色块颜色和右侧卡片是否显示。",
+      "lua_widget.component_api_test.preview_standard": "标准",
+      "lua_widget.component_api_test.preview_standard_hint": "蓝色色块与绿色卡片",
+      "lua_widget.component_api_test.preview_wide": "宽版",
+      "lua_widget.component_api_test.preview_wide_hint": "橙色色块与空框",
       "lua_widget.component_api_test.style_sample": "更新样式",
       "lua_widget.component_api_test.presence_sample": "节点出现与消失",
       "lua_widget.component_api_test.update": "切换颜色",
@@ -44,6 +73,11 @@
       "lua_widget.component_api_test.name": "Widget API Test",
       "lua_widget.component_api_test.description": "Observe how the host animates view-node updates, insertions, and removals.",
       "lua_widget.component_api_test.transitions": "View transitions",
+      "lua_widget.component_api_test.preview_intro": "Compare the colors and card visibility in the two preview sizes.",
+      "lua_widget.component_api_test.preview_standard": "Standard",
+      "lua_widget.component_api_test.preview_standard_hint": "Blue sample and green card",
+      "lua_widget.component_api_test.preview_wide": "Wide",
+      "lua_widget.component_api_test.preview_wide_hint": "Orange sample and empty frame",
       "lua_widget.component_api_test.style_sample": "Style update",
       "lua_widget.component_api_test.presence_sample": "Node entry and exit",
       "lua_widget.component_api_test.update": "Change color",

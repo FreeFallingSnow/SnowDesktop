@@ -107,6 +107,7 @@ if (BUILD_TESTING)
             src/widget/api/widget_api_registry.cpp
             src/widget/runtime/widget_logical_slot.cpp
             src/widget/packages/widget_package.cpp
+            src/widget/packages/widget_package_manifest_fields.cpp
             src/data/atomic_file.cpp
             src/widget/permissions/widget_permission_broker.cpp
             src/widget/permissions/widget_permission_state.cpp

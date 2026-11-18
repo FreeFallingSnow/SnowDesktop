@@ -1,5 +1,8 @@
 local function setup()
-    return { alternateColor = false, cardVisible = true }
+    return {
+        alternateColor = storage.get("previewColor") == "orange",
+        cardVisible = storage.get("previewCard") ~= "hidden",
+    }
 end
 
 local function event(_context, model, value)
