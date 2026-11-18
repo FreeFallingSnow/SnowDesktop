@@ -114,6 +114,7 @@ set(SNOWDESKTOP_PERFETTO_PROBE_SOURCES
     src/widget/runtime/lua_runtime.cpp
     src/widget/runtime/widget_engine.cpp
     src/widget/view/widget_surface_renderer.cpp
+    src/widget/view/widget_view_renderer.cpp
     src/widget/view/widget_gpu_timing.cpp
     src/widgets/lua_script.cpp
     src/widget/runtime/widget_lua_lifecycle.cpp
