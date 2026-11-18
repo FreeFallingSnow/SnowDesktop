@@ -1741,9 +1741,13 @@ bool DesktopBackdropCompositor::InitializeInternal(
     bool popupTopmost,
     bool initiallyVisible)
 {
-    Reset();
+    // The helper HWND can be rebuilt while the same content HWND still shows
+    // its WinRT body. Detach that body only when changing content windows.
+    const bool validContent = contentWindow && IsWindow(contentWindow);
+    const bool preserveSrgbContent = validContent && impl_->srgbContentWindow == contentWindow;
+    impl_->Reset(preserveSrgbContent);
     impl_->lastError.clear();
-    if (!contentWindow || !IsWindow(contentWindow))
+    if (!validContent)
     {
         impl_->lastError = _LW("backdrop.content_invalid");
         return false;
@@ -1815,14 +1819,14 @@ bool DesktopBackdropCompositor::InitializeInternal(
         if (FAILED(hr))
         {
             impl_->SetError(_LW("backdrop.create_target"), hr);
-            impl_->Reset();
+            impl_->Reset(preserveSrgbContent);
             return false;
         }
     }
     catch (const winrt::hresult_error& error)
     {
         impl_->SetError(_LW("backdrop.get_interop"), error.code());
-        impl_->Reset();
+        impl_->Reset(preserveSrgbContent);
         return false;
     }
 
@@ -1848,7 +1852,7 @@ bool DesktopBackdropCompositor::InitializeInternal(
     catch (const winrt::hresult_error& error)
     {
         impl_->SetError(_LW("backdrop.set_root"), error.code());
-        impl_->Reset();
+        impl_->Reset(preserveSrgbContent);
         return false;
     }
 }

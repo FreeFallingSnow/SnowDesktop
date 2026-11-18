@@ -180,10 +180,14 @@ void DesktopApp::SetQuickNavigationTopmost(
  */
 void DesktopApp::UpdateQuickNavigationBackdrop()
 {
-    if (!quickNavigation_->glassTheme || !quickNavigation_->hwnd ||
-        !IsWindow(quickNavigation_->hwnd))
+    if (!quickNavigation_->hwnd || !IsWindow(quickNavigation_->hwnd))
     {
         quickNavigation_->backdropCompositor.Reset();
+        return;
+    }
+    if (!quickNavigation_->glassTheme)
+    {
+        quickNavigation_->backdropCompositor.ResetBackdrop();
         return;
     }
 
@@ -1566,18 +1570,15 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
 {
     const auto srgbKey = reinterpret_cast<std::uintptr_t>(quickNavigation_->hwnd);
     namespace rules = snowdesktop::quick_navigation_animation_rules;
+    using ContentPresentation = snowdesktop::quick_navigation::State::ContentPresentation;
     const auto effect = quickNavigation_->animation.GetEffect();
     bool deformationFrame = quickNavigation_->animation.IsAnimating() && rules::IsDeformationEffect(effect);
-    if (deformationFrame &&
-        quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey) &&
-        quickNavigation_->dcompVisual &&
-        SUCCEEDED(quickNavigation_->dcompVisual->SetContent(quickNavigation_->dcompSurface.Get())))
-    {
-        quickNavigation_->backdropCompositor.RemoveSrgbContent(srgbKey);
-        (void)quickNavigation_->backdropCompositor.CommitSrgbContent();
-    }
     if (quickNavigation_->animationCompositorDriven)
         return;
+    const bool replacingSrgb = deformationFrame &&
+        quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey);
+    if (replacingSrgb)
+        quickNavigation_->contentPresentation = ContentPresentation::Direct;
 
     auto visual =
         quickNavigation_->animation.GetVisual();
@@ -1604,7 +1605,7 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
         ClearQuickNavigationDeformation();
         quickNavigation_->backdropCompositor.SetVisualTransform(
             visual.scale, visual.opacity, anchorX, anchorY);
-        if (quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey))
+        if (!replacingSrgb && quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey))
             quickNavigation_->backdropCompositor.SetSrgbContentPose(srgbKey,
                 {quickNavigation_->animationAnchorPoint.x - quickNavigation_->hostRect.left,
                  quickNavigation_->animationAnchorPoint.y - quickNavigation_->hostRect.top},
@@ -1616,6 +1617,7 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
         quickNavigation_->animation.IsAnimating() ||
             !visual.visible);
 
+    bool replacementReady = deformationFrame;
     if (quickNavigation_->dcompVisual && !deformationFrame)
     {
         if (quickNavigation_->hwnd &&
@@ -1651,8 +1653,16 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
             }
             if (quickNavigation_->dcompDevice)
                 CommitQuickNavigationCompositionFrame();
+            if (replacingSrgb && quickNavigation_->dcompSurface)
+                replacementReady = SUCCEEDED(quickNavigation_->dcompVisual->SetContent(
+                    quickNavigation_->dcompSurface.Get()));
         }
     }
+
+    // The WinRT and DirectComposition trees submit independently. Keep the
+    // rest frame until the first warp (or the scale fallback) has committed.
+    if (replacingSrgb && replacementReady && FlushPendingQuickNavigationCompositionCommit())
+        quickNavigation_->RetireSrgbAfterDirectCommit();
 
     // Paint publishes content first, then the matching backdrop in one place.
     // Visibility-only frames have no pending pixel update.

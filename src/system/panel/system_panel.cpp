@@ -383,7 +383,7 @@ struct SystemPanel::Impl
                 if(!prepared)
                 {
                     ReportBackdropFailure(L"viewport");
-                    backdrop.Reset();
+                    backdrop.ResetBackdrop();
                 }
             }
             if(prepared)
@@ -401,7 +401,7 @@ struct SystemPanel::Impl
             if(showing)SyncTrayMenuLayer();
             backdrop.SetVisible(showing&&prepared);
         }
-        else if(!Glass())backdrop.Reset();
+        else if(!Glass())backdrop.ResetBackdrop();
         if(moved||shape||appearanceChanged)Pose();
         if(moved||shape||contentChanged)PublishGeometry();
         // A later overlay can split the pair without notifying our content.

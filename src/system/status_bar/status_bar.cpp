@@ -909,7 +909,7 @@ struct StatusBar::Impl
             }
             else if (appearanceDirty && (!appearance.glassEnabled || HighContrast()))
             {
-                backdrop.Reset();
+                backdrop.ResetBackdrop();
                 glassPadding = {};
             }
             paintDirty = paintDirty || moved || appearanceDirty;

@@ -19,6 +19,13 @@
 
 // Quick-navigation DirectWrite and DirectComposition rendering resources.
 
+void snowdesktop::quick_navigation::State::RetireSrgbAfterDirectCommit()
+{
+    contentPresentation = ContentPresentation::Direct;
+    if (dcompDevice && SUCCEEDED(dcompDevice->WaitForCommitCompletion()))
+        backdropCompositor.RemoveSrgbContent(reinterpret_cast<std::uintptr_t>(hwnd));
+}
+
 void DesktopApp::ClearQuickNavigationDeformation()
 {
     quickNavigation_->backdropCompositor.ClearGenieTransform();
@@ -27,9 +34,10 @@ void DesktopApp::ClearQuickNavigationDeformation()
     if (quickNavigation_->dcompVisual)
     {
         quickNavigation_->dcompVisual->RemoveAllVisuals();
-        const auto contentKey = reinterpret_cast<std::uintptr_t>(quickNavigation_->hwnd);
-        quickNavigation_->dcompVisual->SetContent(quickNavigation_->backdropCompositor.HasSrgbContent(contentKey)
-            ? nullptr : quickNavigation_->dcompSurface.Get());
+        using ContentPresentation = snowdesktop::quick_navigation::State::ContentPresentation;
+        quickNavigation_->dcompVisual->SetContent(
+            quickNavigation_->contentPresentation == ContentPresentation::Srgb
+                ? nullptr : quickNavigation_->dcompSurface.Get());
         quickNavigation_->dcompVisual->SetTransform(quickNavigation_->dcompScaleTransform.Get());
     }
     quickNavigation_->genieStrips.clear();
@@ -289,6 +297,8 @@ void DesktopApp::EnsureQuickNavTextFormats()
  */
 void DesktopApp::ResetQuickNavCompositionResources()
 {
+    quickNavigation_->contentPresentation =
+        snowdesktop::quick_navigation::State::ContentPresentation::Direct;
     ClearQuickNavigationDeformation();
     StopQuickNavigationAnimationTimeline();
     brushCache_.clear();
@@ -629,13 +639,16 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     // Preserve the native animation timeline during hover and caret repaints.
     if (!quickNavigation_->animationCompositorDriven)
         UpdateQuickNavigationBackdrop();
+    using ContentPresentation = snowdesktop::quick_navigation::State::ContentPresentation;
+    auto& presentation = quickNavigation_->contentPresentation;
     const bool srgbPresented = stagedSrgb && quickNavigation_->backdropCompositor.PublishSrgbContent(
         srgbKey, quickNavigation_->animationCompositorDriven ? -1.f : 1.f);
-    if (!srgbPresented) quickNavigation_->backdropCompositor.RemoveSrgbContent(srgbKey);
-    if (srgbPresented || previouslySrgb || previousSurface != quickNavigation_->dcompSurface.Get())
+    if (!srgbPresented) presentation = ContentPresentation::Direct;
+    if (!deforming && (srgbPresented || previouslySrgb ||
+        previousSurface != quickNavigation_->dcompSurface.Get()))
     {
         hr = quickNavigation_->dcompVisual->SetContent(
-            srgbPresented ? nullptr : quickNavigation_->dcompSurface.Get());
+            presentation == ContentPresentation::Srgb ? nullptr : quickNavigation_->dcompSurface.Get());
         if (FAILED(hr))
         {
             RecoverQuickNavCompositionFailure(L"Publish painted surface", hr);
@@ -656,14 +669,35 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         EndPaint(hwnd, &ps);
         return;
     }
-    quickNavigation_->backdropCompositor.CommitVisualChanges();
+    bool backdropSubmitted = false;
+    if (srgbPresented && presentation == ContentPresentation::Direct)
+    {
+        // Leave the ordinary surface attached until WinRT acknowledges the
+        // new body. Its callback is invalidated by a reversal or device reset.
+        presentation = ContentPresentation::PendingSrgb;
+        const WPARAM generation = ++quickNavigation_->srgbCommitGeneration;
+        backdropSubmitted = quickNavigation_->backdropCompositor.CommitVisualChangesAndNotify(
+            hwnd, snowdesktop::quick_navigation::kSrgbContentCommittedMessage, generation);
+        if (!backdropSubmitted)
+        {
+            presentation = ContentPresentation::Direct;
+            quickNavigation_->backdropCompositor.RemoveSrgbContent(srgbKey);
+        }
+    }
+    else if (!srgbPresented && !deforming && previouslySrgb)
+    {
+        quickNavigation_->RetireSrgbAfterDirectCommit();
+    }
+    if (!backdropSubmitted)
+        quickNavigation_->backdropCompositor.CommitVisualChanges();
     if (!quickNavigation_->backdropCompositor.CommitSrgbContent())
     {
-        quickNavigation_->backdropCompositor.RemoveSrgbContent(srgbKey);
-        (void)quickNavigation_->dcompVisual->SetContent(quickNavigation_->dcompSurface.Get());
-        (void)CommitQuickNavigationCompositionFrame();
-        (void)FlushPendingQuickNavigationCompositionCommit();
-        (void)quickNavigation_->backdropCompositor.CommitSrgbContent();
+        if (!deforming && SUCCEEDED(quickNavigation_->dcompVisual->SetContent(quickNavigation_->dcompSurface.Get())) &&
+            CommitQuickNavigationCompositionFrame() && FlushPendingQuickNavigationCompositionCommit())
+        {
+            quickNavigation_->RetireSrgbAfterDirectCommit();
+            (void)quickNavigation_->backdropCompositor.CommitSrgbContent();
+        }
     }
     quickNavigation_->compositionRenderRecoveryPending = false;
 
