@@ -235,7 +235,8 @@ RECT DesktopApp::GetCollectionPopupFanWorkArea(const DesktopWidget& widget) cons
 
 bool DesktopApp::UsesCollectionPopupFan(const DesktopWidget& widget) const
 {
-    if (IsGroupWidgetType(widget.type)) return false;
+    if ((folderPreview_ && &widget == &dockFolderPopupWidget_) ||
+        IsGroupWidgetType(widget.type)) return false;
     namespace layout = snowdesktop::collection_popup_layout;
     // The fan always previews the full source. Search/category preferences
     // apply to its Show all view and must not change the chosen presentation.
@@ -261,6 +262,7 @@ bool DesktopApp::UsesCollectionPopupFan(const DesktopWidget& widget) const
 
 bool DesktopApp::UsesCollectionPopupList(const DesktopWidget& widget) const
 {
+    if (folderPreview_ && &widget == &dockFolderPopupWidget_) return widget.listMode;
     if (IsGroupWidgetType(widget.type))
         return ResolveWidgetContentViewData(&widget)->listMode;
     namespace layout = snowdesktop::collection_popup_layout;

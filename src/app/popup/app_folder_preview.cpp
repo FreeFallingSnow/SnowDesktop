@@ -440,6 +440,7 @@ void DesktopApp::ShowFolderPreviewDirectory(const std::wstring& path, bool fromF
     auto sort = folderPreviewSort_.Get(key);
     auto& view = dockFolderPopupWidget_;
     if (!keepTemporaryDisplay) view = {};
+    view.fanPopup = false;
     view.scrollOffset = 0;
     view.type = DesktopWidgetType::FolderMapping;
     view.id = kDockFolderPopupWidgetId;
