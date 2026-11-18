@@ -608,6 +608,8 @@ set(SNOWDESKTOP_SOURCES
     src/widget/view/widget_surface_renderer.cpp
     src/widget/view/widget_draw_context.cpp
     src/widget/view/widget_draw_context.h
+    src/widget/view/widget_draw_lua.cpp
+    src/widget/view/widget_draw_lua.h
     src/widget/view/widget_view_renderer.cpp
     src/widget/view/widget_view_renderer.h
     src/widget/view/widget_view_text.cpp

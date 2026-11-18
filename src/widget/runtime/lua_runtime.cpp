@@ -20,6 +20,88 @@ void PrepareAllocationTraffic(LuaRuntimeQuota& quota, std::uint64_t generation)
     quota.allocationTraffic.baselineBytes = quota.allocationTraffic.peakBytes = quota.memoryBytes;
 }
 }
+bool LuaTableUsesOnlyFields(lua_State* state, int index,
+    std::span<const std::string_view> allowed,
+    std::string_view context, std::string& error)
+{
+    index = lua_absindex(state, index);
+    if (lua_getmetatable(state, index) != 0)
+    {
+        lua_pop(state, 1);
+        error = std::string(context) + " cannot have a metatable";
+        return false;
+    }
+    lua_pushnil(state);
+    while (lua_next(state, index) != 0)
+    {
+        if (lua_type(state, -2) != LUA_TSTRING)
+        {
+            lua_pop(state, 2);
+            error = std::string(context) + " keys must be strings";
+            return false;
+        }
+        std::size_t length = 0;
+        const char* key = lua_tolstring(state, -2, &length);
+        const std::string_view field(key ? key : "", length);
+        if (std::find(allowed.begin(), allowed.end(), field) ==
+            allowed.end())
+        {
+            lua_pop(state, 2);
+            error = std::string(context) + " has unsupported field '" +
+                std::string(field) + "'";
+            return false;
+        }
+        lua_pop(state, 1);
+    }
+    return true;
+}
+
+bool LuaTableUsesOnlyFields(lua_State* state, int index,
+    std::initializer_list<std::string_view> allowed,
+    std::string_view context, std::string& error)
+{
+    return LuaTableUsesOnlyFields(state, index,
+        std::span<const std::string_view>(allowed.begin(), allowed.size()),
+        context, error);
+}
+
+bool LuaTableIsContiguousArray(lua_State* state, int index,
+    std::string_view context, std::string& error)
+{
+    index = lua_absindex(state, index);
+    if (lua_getmetatable(state, index) != 0)
+    {
+        lua_pop(state, 1);
+        error = std::string(context) + " cannot have a metatable";
+        return false;
+    }
+    const std::size_t length = lua_rawlen(state, index);
+    std::size_t count = 0;
+    lua_pushnil(state);
+    while (lua_next(state, index) != 0)
+    {
+        ++count;
+        const bool valid = lua_isinteger(state, -2) &&
+            lua_tointeger(state, -2) > 0 &&
+            static_cast<std::size_t>(lua_tointeger(state, -2)) <= length;
+        lua_pop(state, 1);
+        if (!valid)
+        {
+            lua_pop(state, 1);
+            error = std::string(context) +
+                " must use contiguous integer keys";
+            return false;
+        }
+    }
+    if (count != length)
+    {
+        error = std::string(context) +
+            " must use contiguous integer keys";
+        return false;
+    }
+    return true;
+}
+
 void* QuotaAllocator(void* userData, void* pointer, std::size_t oldSize, std::size_t newSize)
 {
     auto* quota = static_cast<LuaRuntimeQuota*>(userData);
