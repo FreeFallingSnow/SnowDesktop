@@ -279,8 +279,7 @@ bool DesktopApp::RenderDesktopForegroundComposition(
 
         hr = desktopForegroundCompositionSurface_->EndDraw();
         if (FAILED(hr)) return false;
-        if (!highlight_tiles::Publish(desktopBackdropCompositor_, dirty, candidates, foregroundSrgbTiles_))
-            return false;
+        highlight_tiles::Publish(desktopBackdropCompositor_, dirty, candidates, foregroundSrgbTiles_);
         if (dcompUpdate)
         {
             const RECT required = desktopForegroundTooltipDamage_.IncludeCurrent(clippedUpdate, client);

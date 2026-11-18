@@ -143,11 +143,7 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
         RecoverCompositionRenderFailure(L"Background EndDraw", hr);
         return false;
     }
-    if (!highlight_tiles::Publish(desktopBackdropCompositor_, dirty, srgbCandidates, desktopSrgbTiles_))
-    {
-        RecoverCompositionRenderFailure(L"Publish desktop highlight tile", E_FAIL);
-        return false;
-    }
+    highlight_tiles::Publish(desktopBackdropCompositor_, dirty, srgbCandidates, desktopSrgbTiles_);
 
     if (!FlushPendingDesktopWidgetComposition(true) ||
         desktopWidgetCompositionFailurePending_)

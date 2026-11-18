@@ -546,7 +546,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         // Keep the host surface through stack switches and a new widget's
         // first visible interval, avoiding a second device at the handoff.
         const bool asynchronous = luaWidget && !keepComposition && widgetSurfaceRenderer_ && !item.renderFailed &&
-            !srgbEligible && sameSurface && hasPresentedFrame;
+            !srgbEligible && !desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey()) &&
+            sameSurface && hasPresentedFrame;
         if (asynchronous && !item.renderTarget)
         {
             item.renderTarget = widgetSurfaceRenderer_->CreateTarget(
@@ -753,9 +754,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
 
         const bool srgbPresented = showContent && stagedSrgb && desktopBackdropCompositor_.PublishSrgbContent(
             item.BackdropOwnerKey(), item.HoverOpacity());
-        if (!srgbPresented)
-            desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
-        hr = asynchronous ? S_OK : item.visual->SetContent(srgbPresented ? nullptr : item.surface.Get());
+        hr = asynchronous ? S_OK : desktopBackdropCompositor_.SetDirectContentForSrgb(
+            item.BackdropOwnerKey(), srgbPresented, dcompDevice_.Get(), item.visual.Get(), item.surface.Get());
         if (SUCCEEDED(hr))
             item.presentingSrgb = srgbPresented;
         if (SUCCEEDED(hr))
@@ -783,7 +783,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         if (!rollInstalled)
         {
             item.hoverRollOpening.reset();
-            if (srgbPresented)
+            if (desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey()))
                 desktopBackdropCompositor_.SetSrgbContentRollClip(item.BackdropOwnerKey(),
                     drawRollSnapshot ? visibleBounds : RECT{}, static_cast<float>(backdropCornerRadius));
             if (drawRollSnapshot)
@@ -869,9 +869,11 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         }
 
         auto& item = position->second;
-        desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
-        item.presentingSrgb = false;
-        CloseWidgetContentClip(item);
+        if (!desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey()))
+        {
+            item.presentingSrgb = false;
+            CloseWidgetContentClip(item);
+        }
         (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
         item.surface.Reset();
         item.width = 0;
@@ -1075,10 +1077,10 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
         const bool keepPresentedFrame = retainOnHeightChange && item.contentVisible &&
             item.surface && item.bounds.left == bounds.left &&
             item.bounds.top == bounds.top && item.bounds.right == bounds.right;
-        if (item.clip && !keepPresentedFrame)
+        const bool keepSrgbFrame = item.visible &&
+            desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey());
+        if (item.clip && !keepPresentedFrame && !keepSrgbFrame)
         {
-            desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
-            item.presentingSrgb = false;
             CloseWidgetContentClip(item);
         }
     }
@@ -1178,7 +1180,7 @@ void DesktopApp::KeepDesktopWidgetBackdropPanels()
                 pendingDesktopWidgetCompositions_.insert(id);
             }
         }
-        if (item.presentingSrgb)
+        if (desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey()))
             desktopBackdropCompositor_.SetSrgbContentOpacity(item.BackdropOwnerKey(), opacity);
         const HRESULT opacityResult = UpdateHoverOpacity(dcompDevice_.Get(), item, opacity);
         if (FAILED(opacityResult) &&

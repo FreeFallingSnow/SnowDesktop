@@ -18,6 +18,8 @@
 #include <string>
 
 struct ID2D1Device;
+struct IDCompositionDevice2;
+struct IDCompositionVisual;
 namespace snowdesktop::popup_motion_curve { struct Timeline; }
 namespace snowdesktop
 {
@@ -170,6 +172,15 @@ public:
         ID2D1DeviceContext* context, POINT atlasOffset);
     bool PublishSrgbContent(std::uintptr_t key, float opacity = 1.0f);
     bool HasSrgbContent(std::uintptr_t key) const noexcept;
+    // Keep the painted DirectComposition surface until WinRT accepts its
+    // replacement, or keep the old WinRT visual when returning to that surface.
+    HRESULT SetDirectContentForSrgb(std::uintptr_t key, bool srgbPublished,
+        IDCompositionDevice2* device, IDCompositionVisual* visual, IUnknown* surface);
+    // Clear a tile from the direct paint only after the compositor has its
+    // sRGB pixels. The first accepted tile invalidates its direct bounds.
+    bool CanClearDirectSrgbTile(std::uintptr_t key);
+    void RetireSrgbAfterDirectCommit(std::uintptr_t key);
+    void OnDirectContentCommitted(IDCompositionDevice2* device);
     void RemoveSrgbContent(std::uintptr_t key);
     void SetSrgbContentOrder(std::span<const std::uintptr_t> bottomToTop);
     void SetSrgbContentOpacity(std::uintptr_t key, float opacity);

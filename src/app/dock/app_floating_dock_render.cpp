@@ -235,8 +235,8 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     // the content switch atomically instead of exposing an empty surface.
     const bool srgbPresented = stagedSrgb && host.backdrop.PublishSrgbContent(
         srgbKey, host.presentationMerged ? host.mergedPresentation.opacity : 1.f);
-    if (!srgbPresented) host.backdrop.RemoveSrgbContent(srgbKey);
-    hr = host.dcompVisual->SetContent(srgbPresented ? nullptr : frameSurface.Get());
+    hr = host.backdrop.SetDirectContentForSrgb(srgbKey, srgbPresented, dcompDevice_.Get(),
+        host.dcompVisual.Get(), frameSurface.Get());
     if (FAILED(hr))
     {
         RecoverFloatingDockCompositionFailure(
@@ -276,6 +276,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     // do not leave content queued until the outer message pump returns.
     // These independent devices cannot guarantee one common DWM display frame.
     if (!FlushPendingCompositionCommit()) return false;
+    host.backdrop.OnDirectContentCommitted(dcompDevice_.Get());
     if (stagedBackdrop)
     {
         snowdesktop::performance::Scope backdropScope("dock", "floating.backdrop_apply", diagnosticOwner, revision);
@@ -290,11 +291,12 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     }
     if (!host.backdrop.CommitSrgbContent())
     {
-        host.backdrop.RemoveSrgbContent(srgbKey);
-        (void)host.dcompVisual->SetContent(frameSurface.Get());
-        (void)CommitCompositionAnimationFrame();
-        (void)FlushPendingCompositionCommit();
-        (void)host.backdrop.CommitSrgbContent();
+        const HRESULT fallback = host.backdrop.SetDirectContentForSrgb(
+            srgbKey, false, dcompDevice_.Get(), host.dcompVisual.Get(), frameSurface.Get());
+        if (FAILED(fallback) || !CommitCompositionAnimationFrame() ||
+            !FlushPendingCompositionCommit())
+            return false;
+        host.backdrop.OnDirectContentCommitted(dcompDevice_.Get());
     }
     if (host.collectingMergedGlass && statusBar_)
         statusBar_->ApplyMergedDockIconGlass(host.monitor, d2dDevice_.Get(), host.mergedGlassIcons);

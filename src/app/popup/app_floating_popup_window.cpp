@@ -829,8 +829,8 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
         if (SUCCEEDED(hr)) hr = visual.SetOffsetY(static_cast<float>(bounds.top));
         if (FAILED(hr)) return hr;
         const bool srgbPresented = stagedSrgb && collectionPopupBackdropCompositor_.PublishSrgbContent(key);
-        if (!srgbPresented) collectionPopupBackdropCompositor_.RemoveSrgbContent(key);
-        return visual.SetContent(srgbPresented ? nullptr : &surface);
+        return collectionPopupBackdropCompositor_.SetDirectContentForSrgb(
+            key, srgbPresented, dcompDevice_.Get(), &visual, &surface);
     };
 
     HRESULT hr = EnsureFloatingPopupCompositionRoot();
@@ -844,7 +844,7 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
     const RECT bounds = floatingPopupContentBounds_;
     if (IsRectEmpty(&bounds))
     {
-        collectionPopupBackdropCompositor_.RemoveSrgbContent(srgbKey);
+        collectionPopupBackdropCompositor_.RetireSrgbAfterDirectCommit(srgbKey);
         hr = floatingPopupDcompLiveVisual_->SetContent(nullptr);
     }
     else
@@ -867,7 +867,7 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
     const auto indicatorKey = reinterpret_cast<std::uintptr_t>(&luaStackIndicator_);
     if (IsRectEmpty(&floatingStackIndicatorRegion_))
     {
-        collectionPopupBackdropCompositor_.RemoveSrgbContent(indicatorKey);
+        collectionPopupBackdropCompositor_.RetireSrgbAfterDirectCommit(indicatorKey);
         if (floatingStackIndicatorVisual_)
             hr = floatingStackIndicatorVisual_->SetContent(nullptr);
     }
@@ -937,16 +937,16 @@ bool DesktopApp::PresentFloatingPopupComposition()
     if (!collectionPopupBackdropCompositor_.CommitSrgbContent())
     {
         const auto srgbKey = reinterpret_cast<std::uintptr_t>(floatingPopupHwnd_);
-        collectionPopupBackdropCompositor_.RemoveSrgbContent(srgbKey);
-        (void)floatingPopupDcompLiveVisual_->SetContent(
+        HRESULT fallback = collectionPopupBackdropCompositor_.SetDirectContentForSrgb(
+            srgbKey, false, dcompDevice_.Get(), floatingPopupDcompLiveVisual_.Get(),
             IsRectEmpty(&floatingPopupContentBounds_) ? nullptr : floatingPopupDcompSurface_.Get());
-        collectionPopupBackdropCompositor_.RemoveSrgbContent(
-            reinterpret_cast<std::uintptr_t>(&luaStackIndicator_));
-        if (floatingStackIndicatorVisual_ && !IsRectEmpty(&floatingStackIndicatorRegion_))
-            (void)floatingStackIndicatorVisual_->SetContent(floatingStackIndicatorSurface_.Get());
-        (void)CommitCompositionAnimationFrame();
-        (void)FlushPendingCompositionCommit();
-        (void)collectionPopupBackdropCompositor_.CommitSrgbContent();
+        if (SUCCEEDED(fallback) && floatingStackIndicatorVisual_)
+            fallback = collectionPopupBackdropCompositor_.SetDirectContentForSrgb(
+                reinterpret_cast<std::uintptr_t>(&luaStackIndicator_), false, dcompDevice_.Get(),
+                floatingStackIndicatorVisual_.Get(),
+                IsRectEmpty(&floatingStackIndicatorRegion_) ? nullptr : floatingStackIndicatorSurface_.Get());
+        if (FAILED(fallback) || !CommitCompositionAnimationFrame() || !FlushPendingCompositionCommit())
+            return false;
     }
     KillTimer(floatingPopupHwnd_, kPopupPresentationRetryTimerId);
     floatingPopupPresentationRetryCount_ = 0;

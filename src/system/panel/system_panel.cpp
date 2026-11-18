@@ -460,16 +460,19 @@ struct SystemPanel::Impl
             return;
         }
         const bool srgbPresented = stagedSrgb && backdrop.PublishSrgbContent(srgbKey);
-        if (!srgbPresented) backdrop.RemoveSrgbContent(srgbKey);
         backdrop.SetSrgbRootPose(1.f, 0.f, SlideOffset());
-        visual->SetContent(srgbPresented ? nullptr : surface.Get());
-        composition->Commit();
+        if (FAILED(backdrop.SetDirectContentForSrgb(
+                srgbKey, srgbPresented, composition.Get(), visual.Get(), surface.Get())) ||
+            FAILED(composition->Commit()))
+            return;
+        backdrop.OnDirectContentCommitted(composition.Get());
         if (!backdrop.CommitSrgbContent())
         {
-            backdrop.RemoveSrgbContent(srgbKey);
-            visual->SetContent(surface.Get());
-            composition->Commit();
-            (void)backdrop.CommitSrgbContent();
+            if (FAILED(backdrop.SetDirectContentForSrgb(
+                    srgbKey, false, composition.Get(), visual.Get(), surface.Get())) ||
+                FAILED(composition->Commit()))
+                return;
+            backdrop.OnDirectContentCommitted(composition.Get());
         }
         paintDirty = false;
     }

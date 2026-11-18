@@ -65,6 +65,8 @@ std::vector<Tile> Stage(DesktopBackdropCompositor& compositor, HWND window,
         if (!compositor.StageSrgbContent(window, key, frame, context, atlas)) continue;
         if (old == retained.end()) nextKey += 2;
         candidates.push_back({key, frame});
+        if (!compositor.CanClearDirectSrgbTile(key))
+            continue;
         context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(frame.left),
             static_cast<float>(frame.top), static_cast<float>(frame.right),
             static_cast<float>(frame.bottom)), D2D1_ANTIALIAS_MODE_ALIASED);
@@ -75,21 +77,24 @@ std::vector<Tile> Stage(DesktopBackdropCompositor& compositor, HWND window,
 }
 
 template<typename Tile>
-bool Publish(DesktopBackdropCompositor& compositor, const RECT& dirty,
+void Publish(DesktopBackdropCompositor& compositor, const RECT& dirty,
     const std::vector<Tile>& candidates, std::vector<Tile>& retained)
 {
     std::erase_if(retained, [&](const auto& old) {
         if (!Intersects(old.frame, dirty)) return false;
         if (std::none_of(candidates.begin(), candidates.end(),
             [&](const auto& next) { return next.key == old.key; }))
-            compositor.RemoveSrgbContent(old.key);
+            compositor.RetireSrgbAfterDirectCommit(old.key);
         return true;
     });
     for (const auto& tile : candidates)
     {
-        if (!compositor.PublishSrgbContent(tile.key)) return false;
-        retained.push_back(tile);
+        // A cutout may still be using the preceding WinRT pixels. Keep its
+        // record until the next direct paint fills it before retirement.
+        if (compositor.PublishSrgbContent(tile.key) || compositor.HasSrgbContent(tile.key))
+            retained.push_back(tile);
+        else
+            compositor.RetireSrgbAfterDirectCommit(tile.key);
     }
-    return true;
 }
 }

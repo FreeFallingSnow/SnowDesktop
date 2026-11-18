@@ -150,16 +150,18 @@ bool DesktopApp::UpdateCompositionAnimationOverlayContent(
     auto& material = AnimationHighlightCompositor(overlay);
     const auto materialKey = reinterpret_cast<std::uintptr_t>(&overlay);
     const HWND owner = overlay.host == UiCompositionAnimationHost::FloatingPopup ? floatingPopupHwnd_ : hwnd_;
+    // A new WinRT visual has no position on a running native timeline.
+    // Carry its existing channel until the next overlay starts.
     const bool staged = drawn && !coverage.Empty() &&
+        (!overlay.active || material.HasSrgbContent(materialKey)) &&
         material.StageSrgbContent(owner, materialKey, overlay.bounds, context.Get(), updateOffset);
     context.Reset();
     const HRESULT endDrawHr = overlay.surface->EndDraw();
     if (!drawn || FAILED(endDrawHr)) return false;
     overlay.presentingHighlights = staged &&
         material.PublishSrgbContent(materialKey, overlay.active ? -1.f : 0.f);
-    if (!overlay.presentingHighlights) material.RemoveSrgbContent(materialKey);
-    return SUCCEEDED(overlay.visual->SetContent(
-        overlay.presentingHighlights ? nullptr : overlay.surface.Get()));
+    return SUCCEEDED(material.SetDirectContentForSrgb(materialKey,
+        overlay.presentingHighlights, dcompDevice_.Get(), overlay.visual.Get(), overlay.surface.Get()));
 }
 
 HRESULT UiCompositionAnimationOverlay::SetPlacementOffset(POINT offset) const
@@ -202,6 +204,8 @@ bool DesktopApp::PrepareCompositionAnimationOverlay(
 
     if (overlay.visual && overlay.host != host)
     {
+        AnimationHighlightCompositor(overlay).RetireSrgbAfterDirectCommit(
+            reinterpret_cast<std::uintptr_t>(&overlay));
         IDCompositionVisual2* previousParent =
             overlay.host == UiCompositionAnimationHost::FloatingPopup
                 ? floatingPopupDcompVisual_.Get()
@@ -288,10 +292,11 @@ bool DesktopApp::UpdateCompositionAnimationOverlay(
         !overlay.effect || !overlay.scaleTransform ||
         !dcompDevice_)
         return false;
-    if (overlay.presentingHighlights)
-        return AnimationHighlightCompositor(overlay).SetSrgbContentPose(
-            reinterpret_cast<std::uintptr_t>(&overlay), anchor, scale, opacity) &&
-            (!commit || CommitCompositionAnimationFrame());
+    const auto materialKey = reinterpret_cast<std::uintptr_t>(&overlay);
+    auto& material = AnimationHighlightCompositor(overlay);
+    if (material.HasSrgbContent(materialKey) &&
+        !material.SetSrgbContentPose(materialKey, anchor, scale, opacity))
+        return false;
 
     const D2D1_POINT_2F localAnchor = D2D1::Point2F(
         static_cast<float>(anchor.x - overlay.bounds.left),
@@ -326,15 +331,14 @@ bool DesktopApp::AnimateCompositionAnimationOverlay(
         !overlay.effect || !overlay.scaleTransform ||
         !dcompDevice_ || durationMilliseconds == 0)
         return false;
-    if (overlay.presentingHighlights)
-    {
-        if (!AnimationHighlightCompositor(overlay).StartVisualTransformAnimation(
+    const auto materialKey = reinterpret_cast<std::uintptr_t>(&overlay);
+    auto& material = AnimationHighlightCompositor(overlay);
+    if (material.HasSrgbContent(materialKey) &&
+        !material.StartVisualTransformAnimation(
             fromScale, toScale, fromOpacity, toOpacity, static_cast<float>(anchor.x),
             static_cast<float>(anchor.y), durationMilliseconds, normalizedScaleStartSlope,
-            springTimeline, nullptr, 0, reinterpret_cast<std::uintptr_t>(&overlay))) return false;
-        return overlay.host == UiCompositionAnimationHost::FloatingPopup
-            ? RenderFloatingPopupCompositionFrame() : CommitCompositionAnimationFrame();
-    }
+            springTimeline, nullptr, 0, materialKey))
+        return false;
 
     const D2D1_POINT_2F localAnchor = D2D1::Point2F(
         static_cast<float>(anchor.x - overlay.bounds.left),
@@ -405,14 +409,18 @@ bool DesktopApp::FlushPendingCompositionCommit()
     if (SUCCEEDED(hr))
     {
         compositionCommitPending_ = false;
-        if (!collectionPopupBackdropCompositor_.CommitSrgbContent()) return false;
+        collectionPopupBackdropCompositor_.OnDirectContentCommitted(dcompDevice_.Get());
+        dragPreviewHighlights_.OnDirectContentCommitted(dcompDevice_.Get());
+        desktopBackdropCompositor_.OnDirectContentCommitted(dcompDevice_.Get());
+        (void)collectionPopupBackdropCompositor_.CommitSrgbContent();
         if (!dragPreviewHighlights_.CommitSrgbContent())
         {
-            dragPreviewHighlights_.Reset();
             if (dragPreviewDcompVisual_)
             {
-                (void)dragPreviewDcompVisual_->SetContent(dragPreviewDcompSurface_.Get());
-                (void)dcompDevice_->Commit();
+                (void)dragPreviewHighlights_.SetDirectContentForSrgb(1, false,
+                    dcompDevice_.Get(), dragPreviewDcompVisual_.Get(), dragPreviewDcompSurface_.Get());
+                if (SUCCEEDED(dcompDevice_->Commit()))
+                    dragPreviewHighlights_.OnDirectContentCommitted(dcompDevice_.Get());
             }
         }
         // Keep desktop glass adjacent to the content submission. In
@@ -424,18 +432,15 @@ bool DesktopApp::FlushPendingCompositionCommit()
             for (auto& [id, item] : desktopWidgetCompositionItems_)
             {
                 if (!item.presentingSrgb) continue;
-                desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
-                (void)item.visual->SetContent(item.surface.Get());
+                (void)desktopBackdropCompositor_.SetDirectContentForSrgb(item.BackdropOwnerKey(),
+                    false, dcompDevice_.Get(), item.visual.Get(), item.surface.Get());
                 item.presentingSrgb = false;
                 pendingDesktopWidgetCompositions_.insert(id);
             }
-            (void)dcompDevice_->Commit();
-            (void)desktopBackdropCompositor_.CommitSrgbContent();
-            if (!desktopSrgbTiles_.empty() || !foregroundSrgbTiles_.empty())
-            {
-                RecoverCompositionRenderFailure(L"Desktop sRGB content commit", E_FAIL);
-                return false;
-            }
+            if (SUCCEEDED(dcompDevice_->Commit()))
+                desktopBackdropCompositor_.OnDirectContentCommitted(dcompDevice_.Get());
+            if ((!desktopSrgbTiles_.empty() || !foregroundSrgbTiles_.empty()) && IsWindow(hwnd_))
+                InvalidateRect(hwnd_, nullptr, FALSE);
         }
     }
     TraceDesktopPresentation(L"composition-commit", hr);
@@ -752,12 +757,14 @@ void DesktopApp::PrepareCompositionAnimationOverlayRetirement(
 void DesktopApp::ResetCompositionAnimationOverlay(
     UiCompositionAnimationOverlay& overlay)
 {
-    if (overlay.presentingHighlights)
+    auto& material = AnimationHighlightCompositor(overlay);
+    const auto key = reinterpret_cast<std::uintptr_t>(&overlay);
+    if (material.HasSrgbContent(key))
     {
-        AnimationHighlightCompositor(overlay).RemoveSrgbContent(reinterpret_cast<std::uintptr_t>(&overlay));
-        overlay.presentingHighlights = false;
+        material.RetireSrgbAfterDirectCommit(key);
         (void)CommitCompositionAnimationFrame();
     }
+    overlay.presentingHighlights = false;
     if (overlay.effect)
         overlay.effect->SetOpacity(0.0f);
     if (overlay.visual)

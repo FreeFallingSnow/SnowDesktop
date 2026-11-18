@@ -414,14 +414,16 @@ struct StatusBar::Impl
         {
             performance::Scope trace("shared.status_bar", "commit");
             auto result = owner.composition->Commit();
+            if (SUCCEEDED(result)) backdrop.OnDirectContentCommitted(owner.composition.Get());
             if (SUCCEEDED(result) && !backdrop.CommitSrgbContent())
             {
-                backdrop.RemoveSrgbContent(reinterpret_cast<std::uintptr_t>(this));
-                backdrop.RemoveSrgbContent(reinterpret_cast<std::uintptr_t>(this) + 1);
-                if (visual) (void)visual->SetContent(backgroundSurface.Get());
-                if (contentVisual) (void)contentVisual->SetContent(surface.Get());
+                const auto contentKey = reinterpret_cast<std::uintptr_t>(this);
+                if (visual) (void)backdrop.SetDirectContentForSrgb(contentKey, false,
+                    owner.composition.Get(), visual.Get(), backgroundSurface.Get());
+                if (contentVisual) (void)backdrop.SetDirectContentForSrgb(contentKey + 1, false,
+                    owner.composition.Get(), contentVisual.Get(), surface.Get());
                 result = owner.composition->Commit();
-                (void)backdrop.CommitSrgbContent();
+                if (SUCCEEDED(result)) backdrop.OnDirectContentCommitted(owner.composition.Get());
             }
             TraceValue(SUCCEEDED(result) ? "commit.success" : "commit.failure");
             return result;
@@ -1310,13 +1312,12 @@ struct StatusBar::Impl
                     const std::array order{backgroundKey, contentKey};
                     backdrop.SetSrgbContentOrder(order);
                 }
-                else
-                {
-                    backdrop.RemoveSrgbContent(backgroundKey);
-                    backdrop.RemoveSrgbContent(contentKey);
-                }
-                visual->SetContent(srgbPresented ? nullptr : backgroundSurface.Get());
-                contentVisual->SetContent(srgbPresented ? nullptr : surface.Get());
+                auto attached = backdrop.SetDirectContentForSrgb(backgroundKey, srgbPresented,
+                    owner.composition.Get(), visual.Get(), backgroundSurface.Get());
+                if (SUCCEEDED(attached))
+                    attached = backdrop.SetDirectContentForSrgb(contentKey, srgbPresented,
+                        owner.composition.Get(), contentVisual.Get(), surface.Get());
+                if (FAILED(attached)) { paintError(attached); return; }
                 ApplyDockPose(mergedPresentation);
                 const auto commit = CommitWithTrace();
                 if (FAILED(commit)) paintError(commit);

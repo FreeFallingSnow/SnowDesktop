@@ -296,9 +296,9 @@ bool DesktopApp::RenderDragPreviewCompositionFrame(
     }
     const bool presentingHighlights = stagedHighlights &&
         dragPreviewHighlights_.PublishSrgbContent(materialKey);
-    if (!presentingHighlights) dragPreviewHighlights_.RemoveSrgbContent(materialKey);
-    if (FAILED(dragPreviewDcompVisual_->SetContent(
-        presentingHighlights ? nullptr : dragPreviewDcompSurface_.Get())))
+    if (FAILED(dragPreviewHighlights_.SetDirectContentForSrgb(
+        materialKey, presentingHighlights, dcompDevice_.Get(),
+        dragPreviewDcompVisual_.Get(), dragPreviewDcompSurface_.Get())))
     {
         ResetDragPreviewCompositionResources();
         return false;
@@ -629,8 +629,6 @@ bool DesktopApp::RenderTrayDragPreviewFrame()
     const auto& preview = *trayDragPreview_;
     const UINT extent = preview.iconSize + (std::max)(8u, preview.iconSize / 3u) + 4u;
     if (FAILED(CreateOrResizeDragPreviewCompositionSurface(extent, extent))) return false;
-    dragPreviewHighlights_.RemoveSrgbContent(1);
-    if (FAILED(dragPreviewDcompVisual_->SetContent(dragPreviewDcompSurface_.Get()))) return false;
     ComPtr<ID2D1DeviceContext> context;
     POINT offset{};
     if (FAILED(dragPreviewDcompSurface_->BeginDraw(nullptr, IID_PPV_ARGS(&context), &offset))) return false;
@@ -674,7 +672,10 @@ bool DesktopApp::RenderTrayDragPreviewFrame()
     }
     context.Reset();
     const auto end = dragPreviewDcompSurface_->EndDraw();
-    if (FAILED(result) || FAILED(end) || !CommitCompositionAnimationFrame())
+    if (FAILED(result) || FAILED(end) ||
+        FAILED(dragPreviewHighlights_.SetDirectContentForSrgb(1, false,
+            dcompDevice_.Get(), dragPreviewDcompVisual_.Get(), dragPreviewDcompSurface_.Get())) ||
+        !CommitCompositionAnimationFrame())
     { ResetDragPreviewCompositionResources(); return false; }
     trayDragPreview_->dirty = false;
     FlushPendingCompositionCommit();
