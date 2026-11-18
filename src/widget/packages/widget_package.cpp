@@ -589,8 +589,14 @@ bool WidgetPackageManager::Uninstall(const std::string& packageId,
     }
     const RegistryEntry previous = registry_.entries[packageId];
     registry_.entries.erase(packageId);
+    const bool retainedDisabled = !previous.enabled && std::any_of(
+        packages_->begin(), packages_->end(), [&](const auto& package) {
+            return package.development && package.manifest.id == packageId;
+        }) && registry_.disabledDevelopmentIds.insert(packageId).second;
     if (!registry_.Save(paths_.registry, error))
     {
+        if (retainedDisabled)
+            registry_.disabledDevelopmentIds.erase(packageId);
         registry_.entries[packageId] = previous;
         std::filesystem::rename(quarantine, source, ec);
         return false;

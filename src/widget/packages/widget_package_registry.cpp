@@ -27,6 +27,13 @@ using detail::ReadStringArray;
 using detail::Timestamp;
 using detail::Utf8ToWide;
 
+bool WidgetPackageManager::Registry::IsEnabled(const std::string& packageId) const
+{
+    const auto installed = entries.find(packageId);
+    return installed != entries.end() ? installed->second.enabled
+        : !disabledDevelopmentIds.contains(packageId);
+}
+
 bool WidgetPackageManager::Registry::Load(const PackagePaths& paths,
     const WidgetPackageValidator& validator, std::string& error)
 {
@@ -34,6 +41,7 @@ bool WidgetPackageManager::Registry::Load(const PackagePaths& paths,
     permissionDecisions.clear();
     developmentOverrides.clear();
     knownDevelopmentIds.clear();
+    disabledDevelopmentIds.clear();
     steamSubscriptionsByAccount.clear();
     steamLibrarySubscriptionsByAccount.clear();
     std::error_code ec;
@@ -161,6 +169,13 @@ bool WidgetPackageManager::Registry::Load(const PackagePaths& paths,
                 knownDevelopmentIds.insert(manifest.id);
         }
     }
+    if (const JsonValue* disabled = root.Find("disabledDevelopmentIds");
+        disabled && disabled->IsArray())
+    {
+        for (const auto& value : disabled->array)
+            if (value.IsString() && WidgetPackageValidator::IsUuid(value.string))
+                disabledDevelopmentIds.insert(value.string);
+    }
     if (const JsonValue* history = root.Find(
             "steamSubscriptionsByAccount");
         history && history->IsObject())
@@ -253,6 +268,18 @@ bool WidgetPackageManager::Registry::Save(const std::filesystem::path& path,
     {
         if (i) out << ',';
         out << '"' << JsonEscape(knownIds[i]) << '"';
+    }
+    if (!disabledDevelopmentIds.empty())
+    {
+        out << "  ],\n  \"disabledDevelopmentIds\": [";
+        std::vector<std::string> disabledIds(
+            disabledDevelopmentIds.begin(), disabledDevelopmentIds.end());
+        std::sort(disabledIds.begin(), disabledIds.end());
+        for (std::size_t i = 0; i < disabledIds.size(); ++i)
+        {
+            if (i) out << ',';
+            out << '"' << JsonEscape(disabledIds[i]) << '"';
+        }
     }
     out << "  ],\n  \"permissionDecisions\": [";
     std::vector<const PermissionDecisionRecord*> decisions;

@@ -476,12 +476,14 @@ private:
         bool Load(const PackagePaths& paths, const WidgetPackageValidator& validator,
             std::string& error);
         bool Save(const std::filesystem::path& path, std::string& error) const;
+        bool IsEnabled(const std::string& packageId) const;
 
         std::unordered_map<std::string, RegistryEntry> entries;
         std::unordered_map<std::string, PermissionDecisionRecord>
             permissionDecisions;
         std::unordered_set<std::string> developmentOverrides;
         std::unordered_set<std::string> knownDevelopmentIds;
+        std::unordered_set<std::string> disabledDevelopmentIds;
         std::unordered_map<std::string, std::unordered_set<std::string>>
             steamSubscriptionsByAccount;
         SteamLibrarySubscriptionHistory steamLibrarySubscriptionsByAccount;

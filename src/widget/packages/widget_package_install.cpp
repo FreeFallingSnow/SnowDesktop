@@ -275,8 +275,9 @@ bool WidgetPackageManager::CommitStagedPackage(
         entry.grantedPermissions = declaredPermissions;
         entry.grantedNetworkDomains = manifest.networkDomains;
     }
-    entry.enabled = existing == registry_.entries.end() || existing->second.enabled;
+    entry.enabled = registry_.IsEnabled(manifest.id);
     auto candidate = *this;
+    candidate.registry_.disabledDevelopmentIds.erase(manifest.id);
     candidate.registry_.entries[manifest.id] = entry;
     const bool refreshed = candidate.Refresh(error, false);
     const auto resolved = refreshed ? candidate.ResolveSelected(manifest.id) : std::nullopt;

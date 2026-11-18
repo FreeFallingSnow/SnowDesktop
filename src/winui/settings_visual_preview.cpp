@@ -1552,6 +1552,10 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         if (page == SettingsPage::Widgets || page == SettingsPage::DeveloperTools || page == SettingsPage::AgentOperations)
         {
             WidgetsPageSnapshot packages; packages.generation = 1; packages.revision = revision;
+            const bool developmentVersionPreview = focusId == "package-version-development";
+            const bool versionPreview = developmentVersionPreview ||
+                focusId == "package-version-installed";
+            packages.developerOverridesVisible = versionPreview;
             if (searching) packages.task.kind = WidgetsPageTaskKind::Searching;
             packages.workshopAvailable = true;
             packages.developerPublisherAvailable = true;
@@ -1586,7 +1590,41 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 if (index == 2 && focusId.starts_with("package-inline-layout"))
                     package.description.clear();
                 package.version = L"1.2.0"; package.author = L"SnowDesktop"; package.builtIn = index == 0;
-                package.enabled = index != 2; packages.installed.push_back(std::move(package));
+                package.enabled = index != 2;
+                package.hasInstalledVersion = !package.builtIn;
+                if (versionPreview && index == 0)
+                {
+                    package.name = english ? L"Gomoku" : L"五子棋"; // l10n-allow: isolated bilingual preview fixture.
+                    package.description = english
+                        ? L"Play locally, against the computer, or with a friend on Steam."
+                        : L"支持本地双人、三档人机和 Steam 对局。"; // l10n-allow: isolated bilingual preview fixture.
+                    package.builtIn = false;
+                    package.hasInstalledVersion = true;
+                    package.canUseDevelopmentOverride = true;
+                    package.development = developmentVersionPreview;
+                    package.developmentOverrideActive = developmentVersionPreview;
+                    package.sourceName = developmentVersionPreview
+                        ? _LW("app.settings.widgets_source_local")
+                        : _LW("app.settings.widgets_source_steam");
+                }
+                if (versionPreview && index == 1)
+                {
+                    package.development = true;
+                    package.hasInstalledVersion = false;
+                    package.canUninstall = false;
+                    package.enabled = !developmentVersionPreview;
+                    package.canAddToDesktop = package.enabled;
+                    package.sourceName = _LW("app.settings.widgets_source_local");
+                }
+                if (versionPreview && index == 2)
+                {
+                    package.builtIn = true;
+                    package.hasInstalledVersion = false;
+                    package.canEnable = false;
+                    package.canUninstall = false;
+                    package.enabled = true;
+                }
+                packages.installed.push_back(std::move(package));
                 WidgetRuntimeDiagnosticSnapshot diagnostic;
                 diagnostic.instanceId = L"widget-preview-" + std::to_wstring(index + 1);
                 diagnostic.packageId = L"d81cee29-8023-47d8-bfaf-f39d8d7fd5ac";

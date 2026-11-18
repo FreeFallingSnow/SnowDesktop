@@ -294,7 +294,6 @@ struct WidgetsPagePresenter::Impl
         muxc::Button enabledAction{nullptr};
         muxc::Button addAction{nullptr};
         muxc::ComboBox versionSelector{nullptr};
-        muxc::Button developmentAction{nullptr};
         std::vector<muxc::Button> advancedActions;
         std::vector<std::function<void()>> revokers;
         muxc::Expander details{nullptr};
@@ -353,6 +352,7 @@ struct WidgetsPagePresenter::Impl
     SettingsCard debugRuntimeCard;
 
     muxc::TextBox searchBox{nullptr};
+    muxc::ScrollViewer filterScroll{nullptr};
     muxc::StackPanel filterActions{nullptr};
     muxc::RadioButton allFilterButton{nullptr};
     muxc::RadioButton installedFilterButton{nullptr};
@@ -550,33 +550,12 @@ struct WidgetsPagePresenter::Impl
                     L"Workshop install failed")
                 : L("app.settings.invalid", L"Invalid");
         }
+        if (package.canEnable && !package.enabled)
+            return L("app.settings.widgets_disabled", L"Disabled");
         if (showsVersionSelector)
-        {
-            return package.enabled ? std::wstring{} :
-                L("app.settings.widgets_disabled", L"Disabled");
-        }
-        if (package.canUseDevelopmentOverride)
-        {
-            if (package.developmentOverrideActive)
-            {
-                return L("app.settings.widgets_development_active",
-                    L"Development version active");
-            }
-            if (package.canEnable)
-            {
-                return L("app.settings.widgets_development_using_installed",
-                    L"Currently using the installed version");
-            }
-            return L("app.settings.widgets_development_inactive",
-                L"Development version inactive");
-        }
+            return {};
         if (package.canEnable)
-        {
-            return L(package.enabled
-                    ? "app.settings.widgets_active"
-                    : "app.settings.widgets_disabled",
-                package.enabled ? L"In use" : L"Disabled");
-        }
+            return L("app.settings.widgets_active", L"In use");
         return L("app.settings.valid", L"Valid");
     }
 
@@ -808,7 +787,7 @@ struct WidgetsPagePresenter::Impl
             button.HorizontalAlignment(mux::HorizontalAlignment::Left);
             filterActions.Children().Append(button);
         }
-        muxc::ScrollViewer filterScroll;
+        filterScroll = muxc::ScrollViewer{};
         filterScroll.HorizontalScrollMode(muxc::ScrollMode::Enabled);
         filterScroll.HorizontalScrollBarVisibility(muxc::ScrollBarVisibility::Auto);
         filterScroll.VerticalScrollMode(muxc::ScrollMode::Disabled);
@@ -1421,7 +1400,7 @@ struct WidgetsPagePresenter::Impl
         const InstalledWidgetPackageSnapshot& package) noexcept
     {
         return !IsDisabledPackage(package) &&
-            (package.canEnable || package.canUninstall ||
+            (package.hasInstalledVersion || package.canUninstall ||
                 !package.workshopInstallFailures.empty());
     }
 
@@ -1540,57 +1519,46 @@ struct WidgetsPagePresenter::Impl
                 : mux::Visibility::Visible);
     }
 
-    [[nodiscard]] std::wstring FilterText(
-        std::string_view key,
-        std::wstring_view fallback,
-        std::size_t count) const
-    {
-        return L(key, fallback) + L" " + std::to_wstring(count);
-    }
-
     void RefreshFilterItems()
     {
         const bool wasUpdating = updatingControls;
         updatingControls = true;
-        const std::size_t installedCount = InstalledPackageCount();
         const auto disabledCount = static_cast<std::size_t>(std::count_if(
             packages.begin(), packages.end(), IsDisabledPackage));
-        const std::size_t includedCount = IncludedPackageCount();
-        const std::size_t developmentCount = DevelopmentPackageCount();
-        allFilterButton.Content(winrt::box_value(FilterText(
-            "app.settings.widgets_filter_all", L"All", PackageCount())));
-        installedFilterButton.Content(winrt::box_value(FilterText(
-            "app.settings.widgets_filter_installed", L"Installed",
-            installedCount)));
-        disabledFilterButton.Content(winrt::box_value(FilterText(
-            "app.settings.widgets_disabled", L"Disabled", disabledCount)));
-        includedFilterButton.Content(winrt::box_value(FilterText(
-            "app.settings.widgets_filter_builtin", L"Included",
-            includedCount)));
-        developmentFilterButton.Content(winrt::box_value(FilterText(
-            "app.settings.widgets_filter_development", L"Local development",
-            developmentCount)));
-        allFilterButton.IsChecked(filter == PackageFilter::All);
-        installedFilterButton.IsChecked(filter == PackageFilter::Installed);
-        disabledFilterButton.IsChecked(filter == PackageFilter::Disabled);
-        includedFilterButton.IsChecked(filter == PackageFilter::Included);
-        developmentFilterButton.IsChecked(
-            filter == PackageFilter::Development);
-        SetAutomation(allFilterButton,
-            FilterText("app.settings.widgets_filter_all", L"All",
-                PackageCount()));
-        SetAutomation(installedFilterButton,
-            FilterText("app.settings.widgets_filter_installed", L"Installed",
-                installedCount));
-        SetAutomation(disabledFilterButton,
-            FilterText("app.settings.widgets_disabled", L"Disabled",
-                disabledCount));
-        SetAutomation(includedFilterButton,
-            FilterText("app.settings.widgets_filter_builtin", L"Included",
-                includedCount));
-        SetAutomation(developmentFilterButton,
-            FilterText("app.settings.widgets_filter_development",
-                L"Local development", developmentCount));
+        const struct
+        {
+            muxc::RadioButton button;
+            PackageFilter value;
+            std::string_view key;
+            std::wstring_view fallback;
+            std::size_t count;
+        } items[] = {
+            {allFilterButton, PackageFilter::All,
+                "app.settings.widgets_filter_all", L"All", PackageCount()},
+            {installedFilterButton, PackageFilter::Installed,
+                "app.settings.widgets_filter_installed", L"Installed", InstalledPackageCount()},
+            {disabledFilterButton, PackageFilter::Disabled,
+                "app.settings.widgets_disabled", L"Disabled", disabledCount},
+            {includedFilterButton, PackageFilter::Included,
+                "app.settings.widgets_filter_builtin", L"Included", IncludedPackageCount()},
+            {developmentFilterButton, PackageFilter::Development,
+                "app.settings.widgets_filter_development", L"Local development", DevelopmentPackageCount()},
+        };
+        for (const auto& item : items)
+            if (item.value == filter && item.count == 0)
+            {
+                filter = PackageFilter::All;
+                break;
+            }
+        for (const auto& item : items)
+        {
+            const auto label = L(item.key, item.fallback) + L" " + std::to_wstring(item.count);
+            item.button.Content(winrt::box_value(label));
+            item.button.Visibility(item.count ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+            item.button.IsChecked(item.count != 0 && filter == item.value);
+            SetAutomation(item.button, label);
+        }
+        filterScroll.Visibility(packages.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         updatingControls = wasUpdating;
     }
 
@@ -2684,7 +2652,7 @@ struct WidgetsPagePresenter::Impl
         primaryActions.Spacing(8.0);
 
         const bool showsVersionSelector = developerOverridesVisible &&
-            package.canUseDevelopmentOverride && package.canEnable;
+            package.canUseDevelopmentOverride;
         const std::wstring packageState = PackageStateText(
             package, showsVersionSelector);
         presenter_controls::SettingRow summaryRow;
@@ -2880,7 +2848,6 @@ struct WidgetsPagePresenter::Impl
         }
 
         muxc::ComboBox versionSelector{nullptr};
-        muxc::Button developmentAction{nullptr};
         if (showsVersionSelector)
         {
             versionSelector = muxc::ComboBox{};
@@ -2888,8 +2855,9 @@ struct WidgetsPagePresenter::Impl
             versionSelector.MinHeight(32.0);
             versionSelector.VerticalAlignment(mux::VerticalAlignment::Center);
             versionSelector.UseSystemFocusVisuals(true);
-            versionSelector.Items().Append(winrt::box_value(L(
-                "app.settings.widgets_installed_version", L"Installed version")));
+            versionSelector.Items().Append(winrt::box_value(package.hasInstalledVersion
+                ? L("app.settings.widgets_installed_version", L"Installed version")
+                : L("app.settings.widgets_filter_builtin", L"Included")));
             versionSelector.Items().Append(winrt::box_value(L(
                 "app.settings.widgets_development_version", L"Development version")));
             versionSelector.SelectedIndex(package.developmentOverrideActive ? 1 : 0);
@@ -2922,45 +2890,6 @@ struct WidgetsPagePresenter::Impl
             SetAutomation(versionSelector, L("app.settings.version", L"Version"));
             primaryActions.Children().InsertAt(0, versionSelector);
         }
-        else if (developerOverridesVisible && package.canUseDevelopmentOverride)
-        {
-            developmentAction = MakeActionButton(L(
-                package.developmentOverrideActive
-                    ? "app.settings.widgets_development_deactivate"
-                    : "app.settings.widgets_development_activate",
-                package.developmentOverrideActive
-                    ? L"Deactivate Development Version"
-                    : L"Activate Development Version"));
-            HookClick(developmentAction,
-                [this, packageId = package.packageId](
-                    const winrt::Windows::Foundation::IInspectable&,
-                    const mux::RoutedEventArgs&) {
-                    if (updatingControls || closed || !active)
-                        return;
-                    const auto* current = FindPackage(packageId);
-                    if (!current || !current->canUseDevelopmentOverride)
-                        return;
-                    WidgetsPageRequest request;
-                    request.command =
-                        WidgetsPageCommand::SetDevelopmentOverride;
-                    request.packageId = packageId;
-                    request.enabled =
-                        !current->developmentOverrideActive;
-                    Emit(std::move(request));
-                },
-                revokers);
-            presenter_controls::SettingRow developmentRow;
-            developmentRow.Initialize(developmentAction, 300.0);
-            developmentRow.SetControlAlignment(
-                mux::HorizontalAlignment::Right);
-            developmentRow.SetText(L(
-                    "app.settings.widgets_development",
-                    L"Development version"),
-                L("settings.developer.overrides.description",
-                    L"Use the local development source."));
-            detailsBody.Children().Append(developmentRow.root);
-        }
-
         muxc::TextBlock sourceId{nullptr};
         muxc::Expander permissionSection{nullptr};
         mux::FrameworkElement permissionTarget{nullptr};
@@ -3026,7 +2955,7 @@ struct WidgetsPagePresenter::Impl
         packageRowBindings.push_back(PackageRowBinding{
             package.packageId, row, name, metadata, descriptionRow, descriptionRefresh,
             version, author, sourceId, enabledAction, addAction,
-            versionSelector, developmentAction,
+            versionSelector,
             std::move(advancedActions), std::move(revokers), details, permissionSection, permissionTarget});
     }
 
@@ -3123,8 +3052,10 @@ struct WidgetsPagePresenter::Impl
             package, static_cast<bool>(binding.versionSelector));
         const std::wstring displayName = PackageDisplayName(package);
         binding.name.Text(displayName);
-        binding.metadata.Text(JoinMetadata(
-            {package.sourceName, packageState}));
+        const auto metadata = JoinMetadata({package.sourceName, packageState});
+        binding.metadata.Text(metadata);
+        binding.metadata.Visibility(metadata.empty()
+            ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         PopulatePackageDescription(binding.descriptionRow, package, binding.descriptionRefresh);
         binding.version.Text(
             L("app.settings.version", L"Version") + L": " +
@@ -3168,18 +3099,6 @@ struct WidgetsPagePresenter::Impl
         if (binding.versionSelector)
             binding.versionSelector.SelectedIndex(
                 package.developmentOverrideActive ? 1 : 0);
-        if (binding.developmentAction)
-        {
-            const std::wstring label = L(
-                package.developmentOverrideActive
-                    ? "app.settings.widgets_development_deactivate"
-                    : "app.settings.widgets_development_activate",
-                package.developmentOverrideActive
-                    ? L"Deactivate Development Version"
-                    : L"Activate Development Version");
-            binding.developmentAction.Content(winrt::box_value(label));
-            SetAutomation(binding.developmentAction, label);
-        }
     }
 
     [[nodiscard]] bool TryPatchInstalledRows(

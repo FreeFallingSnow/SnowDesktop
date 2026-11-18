@@ -139,11 +139,12 @@ private:
             DeclaredPermissions(package.manifest);
         package.grantedNetworkDomains =
             package.manifest.networkDomains;
-        package.enabled = true;
         ApplyScopeMismatchBlock(package, ApplyExplicitDecision(package));
         package.active = builtin ||
             developmentOverrides.contains(package.manifest.id);
         package.selected = package.active;
+        package.enabled = registry.IsEnabled(package.manifest.id) &&
+            (builtin || package.active);
         if ((development || !package.manifest.nativeHelpers.empty()) &&
             package.permissionState == PermissionDecisionState::LegacyImplicit &&
             !PermissionsRequiringConsent(DeclaredPermissions(package.manifest)).empty())
@@ -198,8 +199,7 @@ private:
             package.active = registryIt != registry.entries.end() &&
                 registryIt->second.activeVersion == package.manifest.version;
             package.selected = package.active;
-            package.enabled = registryIt == registry.entries.end() ||
-                registryIt->second.enabled;
+            package.enabled = registry.IsEnabled(id);
             if (registryIt != registry.entries.end())
             {
                 package.source = registryIt->second.source;
@@ -411,9 +411,7 @@ std::optional<InstalledPackage> WidgetPackageManager::Resolve(
 const InstalledPackage* WidgetPackageManager::FindResolved(
     const std::string& packageId) const
 {
-    if (const auto registry = registry_.entries.find(packageId);
-        registry != registry_.entries.end() && !registry->second.enabled &&
-        !registry_.developmentOverrides.contains(packageId))
+    if (!registry_.IsEnabled(packageId))
         return nullptr;
     const InstalledPackage* builtinFallback = nullptr;
     for (const auto& package : *packages_)
@@ -540,19 +538,35 @@ bool WidgetPackageManager::RefreshChangedPermissionScope(
 bool WidgetPackageManager::SetEnabled(const std::string& packageId,
     bool enabled, std::string& error)
 {
-    auto found = registry_.entries.find(packageId);
-    if (found == registry_.entries.end())
+    auto candidate = *this;
+    if (const auto found = candidate.registry_.entries.find(packageId);
+        found != candidate.registry_.entries.end())
     {
-        const auto package = Resolve(packageId);
-        if (!package || package->builtin)
+        found->second.enabled = enabled;
+    }
+    else
+    {
+        const bool hasDevelopment = std::any_of(packages_->begin(), packages_->end(),
+            [&](const auto& package) {
+                return package.development && package.manifest.id == packageId;
+            });
+        if (!hasDevelopment)
         {
             error = "built-in packages cannot be disabled in the v1 registry";
             return false;
         }
-        return false;
+        if (enabled)
+        {
+            candidate.registry_.disabledDevelopmentIds.erase(packageId);
+            // Older standalone projects were disabled by clearing the override.
+            if (!ResolveSelected(packageId))
+                candidate.registry_.developmentOverrides.insert(packageId);
+        }
+        else
+        {
+            candidate.registry_.disabledDevelopmentIds.insert(packageId);
+        }
     }
-    auto candidate = *this;
-    candidate.registry_.entries.at(packageId).enabled = enabled;
     if (!candidate.Refresh(error, false) ||
         !candidate.registry_.Save(candidate.paths_.registry, error)) return false;
     *this = std::move(candidate);
@@ -607,7 +621,7 @@ bool WidgetPackageManager::SetDevelopmentOverride(
 
     if (active)
     {
-        const auto resolved = Resolve(packageId);
+        const auto resolved = ResolveSelected(packageId);
         if (!resolved || !resolved->development)
         {
             return rollbackOverride(
