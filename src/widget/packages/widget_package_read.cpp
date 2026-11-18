@@ -91,6 +91,22 @@ bool HasReparsePoint(const std::filesystem::path& path)
         (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
 }
 
+bool PathContainsReparsePoint(const std::filesystem::path& path)
+{
+    std::error_code ec;
+    const auto absolute = std::filesystem::absolute(path, ec);
+    if (ec) return false;
+    const auto normalized = absolute.lexically_normal();
+    auto current = normalized.root_path();
+    if (!current.empty() && HasReparsePoint(current)) return true;
+    for (const auto& component : normalized.relative_path())
+    {
+        current /= component;
+        if (HasReparsePoint(current)) return true;
+    }
+    return false;
+}
+
 std::string Timestamp()
 {
     SYSTEMTIME time{};

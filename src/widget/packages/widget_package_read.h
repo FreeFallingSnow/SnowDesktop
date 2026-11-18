@@ -14,6 +14,7 @@ bool ReadPackageFile(const std::filesystem::path& path, std::string& output,
 bool StartsWithPath(const std::filesystem::path& child,
     const std::filesystem::path& root);
 bool HasReparsePoint(const std::filesystem::path& path);
+bool PathContainsReparsePoint(const std::filesystem::path& path);
 
 std::string Timestamp();
 
