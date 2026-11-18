@@ -247,6 +247,8 @@
 
 ### CF-015 模块计划无法声明临时定向验证
 
+- **组件来源归档库对照（2026-11-18）**：Task `task-8cba4c000221462ebf59fb8874728771` 的批次 `a4b6c57ee055415fbbf1a65a3140a398` 修订 0、Run `335ff4b95ddd4b91a1a98a6142c23027` 通过后，`run-checks.ps1 -Mode candidate -WaitForLease` 只需链接已保存的驱动和库，仍在其他任务编辑期间等待普通执行权。同一前台进程随后取得租约，一次链接通过，1,935 字节与基线一致。下一步是核对批次如何携带这种已声明的临时链接和执行。复用原构建和正式测试结果。
+
 - **原生分流临时验证（2026-11-18）**：Task `code-health-2` 的批次 `4a160c99953447c0a29e4c36b6833270` 修订 0、Run `2f4a8220a8364fb6a2d8f8a3e45c5c31` 完成构建后，独立头检查和探针首次进入执行权返回 `Shared output lease/transaction is busy; no configure, build, arrangement or process action started.`。在下一可用窗口沿用相同命令，直接链接候选对象并执行成功。批次仍不能携带此临时验证，保留首次拒绝与后续成功，未重编产品或重跑正式测试。
 
 - **共享构建后的临时链接（2026-11-18）**：Task `code-health-04-component-packages` 从批次 `79f36ec1e5384874a0596293f404c9cf` 修订 0、Run `cbdb5b6737114bf89581afae51b16498` 保存三个库，用于注册表生产入口的临时对照。首次 `run-registry-check.ps1 -Mode baseline` 拿普通 `Enter-BuildEntry` 租约时返回 `Shared output lease/transaction is busy`，尚未启动链接。已保留基线库，后续等执行窗口补验。批次计划仍无法携带任务专用的临时链接和执行，租约本身按预期生效。
@@ -397,6 +399,8 @@
 - **空闲桌面补证（2026-11-17）**：Task `idle-desktop-visibility`，批次 `c2f3cda8ee704e2b8e14946249f7e1d7` 修订 0、Run `c3bb18646e63485a8b58f91e2e55e900`，入口 `ready-and-wait`。本任务改动四个文件，产品日志 `c2f3cda8ee704e2b8e14946249f7e1d7.log.product.log` 还记录未改动的 `settings_window_host.cpp` 编译。源码确认修改的 `desktop_idle_hide.h` 由 `app/app.h` 包含。产品 `build-targets` 阶段记录 671.979 秒（Run 的 `stages.*.jsonl`），设置目标的实际失效链和单独成本待核对。Release 和三项定向测试通过，直接复用原 Run 记录。
 
 ### CF-025 文件观察提前结束
+
+- **共享反馈文件续证（2026-11-18）**：Task `task-8cba4c000221462ebf59fb8874728771` 的票据 `32be340b67a87d15dd81ac4bf5eb08aa` 对 `scripts/COLLABORATION_FEEDBACK.md` 提前返回 `eligible`。Git 核对时仍有 `widget-add-authorization` 的差异。等待前序提交后，在 `15b07c6e915b4527b7516aace8f95f47` 修订 0 重新认领成功。下一步仍是让文件票据能反映未提交状态。
 
 - **原生任务接线续证（2026-11-18）**：Task `code-health-2` 用票据 `970a2ecb8a404fdc2a187258f3e6f275` 等 `cmake/sources/Host.cmake` 得到 `eligible`。视图树 Run `c164e4a479e344ee914b94684006e027` 已捕获该路径，Git 仍显示前序任务未提交。批次 `4a160c99953447c0a29e4c36b6833270` 修订 0 的 `claim -Add` 再次拒绝脏路径，未改变认领集合。等前序提交后接线，未接手文件或额外提交构建。文件票据仍需区分已冻结与已提交。
 
