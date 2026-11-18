@@ -1074,117 +1074,77 @@ bool DesktopApp::HitTestCollectionPopupHandoff(const RECT& popup, size_t index, 
     return PtInRect(&bounds, point) != FALSE;
 }
 
-RECT DesktopApp::GetCollectionPopupItemIconRect(
-    const RECT& itemRect) const
+namespace
 {
-    const DesktopWidget* widget = GetOpenPopupWidget();
-    const auto* contentView = ResolveWidgetContentViewData(widget);
-    if (widget && UsesCollectionPopupFan(*widget))
+struct PopupListItemGeometry
+{
+    RECT nameCell;
+    RECT icon;
+};
+
+PopupListItemGeometry ResolvePopupListItemGeometry(const RECT& itemRect,
+    const DesktopWidget& contentView, float scale, const snowdesktop::PageItemVisualMetrics& metrics)
+{
+    namespace details = snowdesktop::list_detail_rules;
+    RECT nameCell = itemRect;
+    if (details::HasMetadataColumns(
+            contentView.detailShowModified, contentView.detailShowType, contentView.detailShowSize))
     {
-        const RECT popup = GetCollectionPopupRect(*widget);
-        const auto range = snowdesktop::collection_popup_layout::FanVisibleRange(
-            GetCollectionPopupFanScrollOffset(popup), GetCollectionPopupFanVisibleCount(popup),
-            GetPopupItemCount(*widget));
-        for (size_t i = range.first; i < range.end; ++i)
-        {
-            const auto item = GetCollectionPopupFanItem(popup, i);
-            const RECT bounds = snowdesktop::collection_popup_layout::FanItemBounds(item);
-            if (EqualRect(&bounds, &itemRect))
-                return snowdesktop::collection_popup_layout::FanRotatedBounds(item.icon, item);
-        }
-        return {};
+        const auto columns = details::BuildColumns(
+            std::max(1, static_cast<int>(itemRect.right - itemRect.left)),
+            contentView.detailShowModified, contentView.detailShowType, contentView.detailShowSize,
+            contentView.detailModifiedPosition, contentView.detailTypePosition, contentView.detailSizePosition);
+        nameCell.right = std::min<LONG>(nameCell.right, nameCell.left + columns.nameWidth);
     }
+    const int iconLeft = nameCell.left + snowdesktop::collection_popup_layout::ScaleDimension(4, scale);
+    return {nameCell, snowdesktop::ResolveListItemIconRect(nameCell, iconLeft, metrics)};
+}
+}
+
+RECT DesktopApp::GetCollectionPopupItemIconRect(const RECT& itemRect) const
+{
+    // Fan handoff uses the indexed, rotated hit region in HitTestCollectionPopupHandoff.
+    const DesktopWidget* widget = GetOpenPopupWidget();
     if (!widget || !UsesCollectionPopupList(*widget))
         return GetItemIconRect(itemRect);
 
-    RECT nameCell = itemRect;
-    if (snowdesktop::collection_popup_layout::DetailsVisible(
-            UsesCollectionPopupList(*widget),
-            contentView->detailShowModified,
-            contentView->detailShowType,
-            contentView->detailShowSize))
-    {
-        const auto columns = snowdesktop::list_detail_rules::
-            BuildColumns(
-                std::max(1, static_cast<int>(
-                    itemRect.right - itemRect.left)),
-                contentView->detailShowModified,
-                contentView->detailShowType,
-                contentView->detailShowSize,
-                contentView->detailModifiedPosition,
-                contentView->detailTypePosition,
-                contentView->detailSizePosition);
-        nameCell.right = std::min<LONG>(
-            nameCell.right,
-            nameCell.left + columns.nameWidth);
-    }
-    const auto metrics = GetItemVisualMetrics(itemRect);
-    return snowdesktop::ResolveListItemIconRect(
-        nameCell,
-        nameCell.left + snowdesktop::collection_popup_layout::
-            ScaleDimension(
-                4,
-                GetOpenCollectionPopupLayoutMetrics().scale),
-        metrics);
+    return ResolvePopupListItemGeometry(itemRect, *ResolveWidgetContentViewData(widget),
+        GetOpenCollectionPopupLayoutMetrics().scale, GetItemVisualMetrics(itemRect)).icon;
 }
 
 RECT DesktopApp::GetCollectionPopupItemTextRect(
     const RECT& itemRect) const
 {
+    namespace layout = snowdesktop::collection_popup_layout;
     const DesktopWidget* widget = GetOpenPopupWidget();
-    const auto* contentView = ResolveWidgetContentViewData(widget);
     if (widget && UsesCollectionPopupFan(*widget))
     {
         const RECT popup = GetCollectionPopupRect(*widget);
-        const auto range = snowdesktop::collection_popup_layout::FanVisibleRange(
+        const auto range = layout::FanVisibleRange(
             GetCollectionPopupFanScrollOffset(popup), GetCollectionPopupFanVisibleCount(popup),
             GetPopupItemCount(*widget));
         for (size_t i = range.first; i < range.end; ++i)
         {
             const auto item = GetCollectionPopupFanItem(popup, i);
-            const RECT bounds = snowdesktop::collection_popup_layout::FanItemBounds(item);
+            const RECT bounds = layout::FanItemBounds(item);
             if (EqualRect(&bounds, &itemRect))
-                return snowdesktop::collection_popup_layout::FanRotatedBounds(item.label, item);
+                return layout::FanRotatedBounds(item.label, item);
         }
         return {};
     }
     if (!widget || !UsesCollectionPopupList(*widget))
         return GetItemTextRect(itemRect, true);
 
-    RECT nameCell = itemRect;
-    if (snowdesktop::collection_popup_layout::DetailsVisible(
-            UsesCollectionPopupList(*widget),
-            contentView->detailShowModified,
-            contentView->detailShowType,
-            contentView->detailShowSize))
-    {
-        const auto columns = snowdesktop::list_detail_rules::
-            BuildColumns(
-                std::max(1, static_cast<int>(
-                    itemRect.right - itemRect.left)),
-                contentView->detailShowModified,
-                contentView->detailShowType,
-                contentView->detailShowSize,
-                contentView->detailModifiedPosition,
-                contentView->detailTypePosition,
-                contentView->detailSizePosition);
-        nameCell.right = std::min<LONG>(
-            nameCell.right,
-            nameCell.left + columns.nameWidth);
-    }
-    const auto popupMetrics =
-        GetOpenCollectionPopupLayoutMetrics();
-    const RECT iconRect =
-        GetCollectionPopupItemIconRect(itemRect);
+    const float scale = GetOpenCollectionPopupLayoutMetrics().scale;
+    const auto geometry = ResolvePopupListItemGeometry(itemRect, *ResolveWidgetContentViewData(widget),
+        scale, GetItemVisualMetrics(itemRect));
+    const int horizontalInset = layout::ScaleDimension(6, scale);
+    const int verticalInset = layout::ScaleDimension(2, scale);
     return MakeRect(
-        iconRect.right + snowdesktop::collection_popup_layout::
-            ScaleDimension(6, popupMetrics.scale),
-        itemRect.top + snowdesktop::collection_popup_layout::
-            ScaleDimension(2, popupMetrics.scale),
-        nameCell.right - snowdesktop::collection_popup_layout::
-            ScaleDimension(6, popupMetrics.scale),
-        itemRect.bottom - snowdesktop::collection_popup_layout::
-            ScaleDimension(2, popupMetrics.scale));
+        geometry.icon.right + horizontalInset,
+        itemRect.top + verticalInset,
+        geometry.nameCell.right - horizontalInset,
+        itemRect.bottom - verticalInset);
 }
 
 bool DesktopApp::IsPointInsideOpenPopup(POINT point) const
