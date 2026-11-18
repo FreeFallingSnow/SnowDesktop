@@ -412,6 +412,8 @@
 
 ### CF-025 文件观察提前结束
 
+- **即时图片修复总表续证（2026-11-19）**：Task `task-52a0430b03e04412805a1170dfe1fa6a` 的票据 `a85ca53d88079df515e18d61d69b15a7` 对 `CODE_HEALTH.md` 返回 `eligible`，Git 仍有批次 `d4bfa2ee3f9644b19a087095b20b382a` 的任务 10 条目差异。保留前序任务改动，修复提交与验证继续使用 Run `6718d503f2d44f348d159b75ff49170c`。文件观察仍需覆盖待提交状态。
+
 - **绘制拆分总表续证（2026-11-18）**：Task `task-52a0430b03e04412805a1170dfe1fa6a` 的票据 `6784a610cb17099267937141b22be044` 对 `CODE_HEALTH.md` 返回 `eligible`，Git 仍有任务 10 待提交改动。继续等待任务 10 提交 `7cd41ab2f` 后，重新认领总表成功。未接手其他任务改动，复用原构建。
 
 - **同批待提交的宿主源清单（2026-11-18）**：Task `task-52a0430b03e04412805a1170dfe1fa6a` 在批次 `f1195bfc412947849d6ec0429042b1d1` 修订 1 认领 `cmake/sources/Host.cmake`，视图交互任务已就绪但尚待共同构建，清单仍有待提交改动。回执为 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`。本轮复用已登记的视图和绘制编译单元，原批次继续共同验证。保留其他任务的清单修改和提交归属。后续需让结构文件待提交状态与编辑屏障可共同表达。
