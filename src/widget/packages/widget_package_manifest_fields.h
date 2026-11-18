@@ -20,6 +20,9 @@ std::string Lower(std::string value);
 bool IsBcp47Tag(const std::string& locale);
 bool IsSha256(std::string_view value);
 
+// Inputs have already passed package version validation.
+bool IsNewerValidSemVer(std::string_view candidate, std::string_view current);
+
 bool ReadString(const JsonValue& object, const char* name, std::string& output);
 bool ReadInteger(const JsonValue& object, const char* name, int& output);
 std::vector<std::string> ReadStringArray(const JsonValue& object,

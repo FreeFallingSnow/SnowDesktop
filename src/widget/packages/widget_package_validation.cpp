@@ -44,6 +44,34 @@ using detail::ReadStringArray;
 using detail::StartsWithPath;
 using detail::Utf8ToWide;
 
+std::vector<std::string_view> SplitIdentifiers(std::string_view value)
+{
+    std::vector<std::string_view> parts;
+    std::size_t begin = 0;
+    while (begin <= value.size())
+    {
+        const auto end = value.find('.', begin);
+        parts.push_back(value.substr(begin,
+            end == std::string_view::npos ? value.size() - begin : end - begin));
+        if (end == std::string_view::npos) break;
+        begin = end + 1;
+    }
+    return parts;
+}
+
+int CompareNumericIdentifier(std::string_view left, std::string_view right)
+{
+    if (left.size() != right.size()) return left.size() < right.size() ? -1 : 1;
+    if (left == right) return 0;
+    return left < right ? -1 : 1;
+}
+
+bool IsNumericIdentifier(std::string_view value)
+{
+    return !value.empty() && std::all_of(value.begin(), value.end(),
+        [](unsigned char ch) { return std::isdigit(ch) != 0; });
+}
+
 bool IsResourceName(std::string_view value)
 {
     if (value.empty() || value.size() > 64 ||
@@ -437,6 +465,54 @@ bool WidgetPackageValidator::IsSemVer(std::string_view value)
         !validSuffix(plus + 1, value.size(), false))
         return false;
     return true;
+}
+
+bool detail::IsNewerValidSemVer(std::string_view candidate, std::string_view current)
+{
+    const auto candidatePlus = candidate.find('+');
+    const auto currentPlus = current.find('+');
+    candidate = candidate.substr(0, candidatePlus);
+    current = current.substr(0, currentPlus);
+
+    const auto candidateDash = candidate.find('-');
+    const auto currentDash = current.find('-');
+    const auto candidateCore = SplitIdentifiers(candidate.substr(0, candidateDash));
+    const auto currentCore = SplitIdentifiers(current.substr(0, currentDash));
+    for (std::size_t i = 0; i < 3; ++i)
+    {
+        const int comparison =
+            CompareNumericIdentifier(candidateCore[i], currentCore[i]);
+        if (comparison != 0) return comparison > 0;
+    }
+
+    const bool candidateHasPre = candidateDash != std::string_view::npos;
+    const bool currentHasPre = currentDash != std::string_view::npos;
+    if (candidateHasPre != currentHasPre) return !candidateHasPre;
+    if (!candidateHasPre) return false;
+
+    const auto candidatePre =
+        SplitIdentifiers(candidate.substr(candidateDash + 1));
+    const auto currentPre = SplitIdentifiers(current.substr(currentDash + 1));
+    const auto count = std::min(candidatePre.size(), currentPre.size());
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        if (candidatePre[i] == currentPre[i]) continue;
+        const bool candidateNumeric = IsNumericIdentifier(candidatePre[i]);
+        const bool currentNumeric = IsNumericIdentifier(currentPre[i]);
+        if (candidateNumeric != currentNumeric) return !candidateNumeric;
+        if (candidateNumeric)
+            return CompareNumericIdentifier(candidatePre[i], currentPre[i]) > 0;
+        return candidatePre[i] > currentPre[i];
+    }
+    return candidatePre.size() > currentPre.size();
+}
+
+bool WidgetPackageValidator::IsNewerSemVer(
+    std::string_view candidate, std::string_view current)
+{
+    if (!IsSemVer(candidate) || !IsSemVer(current))
+        return false;
+    return detail::IsNewerValidSemVer(candidate, current);
 }
 
 bool WidgetPackageValidator::IsSafeRelativePath(
