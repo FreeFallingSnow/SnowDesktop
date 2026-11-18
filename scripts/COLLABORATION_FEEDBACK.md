@@ -245,6 +245,8 @@
 
 ### CF-015 模块计划无法声明临时定向验证
 
+- **原生分流临时验证（2026-11-18）**：Task `code-health-2` 的批次 `4a160c99953447c0a29e4c36b6833270` 修订 0、Run `2f4a8220a8364fb6a2d8f8a3e45c5c31` 完成构建后，独立头检查和探针首次进入执行权返回 `Shared output lease/transaction is busy; no configure, build, arrangement or process action started.`。在下一可用窗口沿用相同命令，直接链接候选对象并执行成功。批次仍不能携带此临时验证，保留首次拒绝与后续成功，未重编产品或重跑正式测试。
+
 - **共享构建后的临时链接（2026-11-18）**：Task `code-health-04-component-packages` 从批次 `79f36ec1e5384874a0596293f404c9cf` 修订 0、Run `cbdb5b6737114bf89581afae51b16498` 保存三个库，用于注册表生产入口的临时对照。首次 `run-registry-check.ps1 -Mode baseline` 拿普通 `Enter-BuildEntry` 租约时返回 `Shared output lease/transaction is busy`，尚未启动链接。已保留基线库，后续等执行窗口补验。批次计划仍无法携带任务专用的临时链接和执行，租约本身按预期生效。
 
 - **通知计划存储续证（2026-11-18）**：Task `code-health-8`、批次 `751ee068e3fa46439d9f69e4b5d5c99b` 修订 0、Run `7595dbbf19f64fbe8ef887806b089361`。当前 CTest 清单没有通知计划存储条目。标准 Release 和部署契约 `behavior_manifest` 通过，通知计划的读写和拒绝行为由临时生产入口对照验证。产品与测试日志分别记录向同一候选目录配置，测试阶段 CMake 耗时 6.97 秒。仍待支持模块计划按需声明临时验证及核对配置复用条件。未另开任务、重复提交或扩大到全量。
