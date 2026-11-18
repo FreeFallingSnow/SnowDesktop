@@ -390,6 +390,8 @@
 
 ### CF-025 文件观察提前结束
 
+- **原生任务接线续证（2026-11-18）**：Task `code-health-2` 用票据 `970a2ecb8a404fdc2a187258f3e6f275` 等 `cmake/sources/Host.cmake` 得到 `eligible`。视图树 Run `c164e4a479e344ee914b94684006e027` 已捕获该路径，Git 仍显示前序任务未提交。批次 `4a160c99953447c0a29e4c36b6833270` 修订 0 的 `claim -Add` 再次拒绝脏路径，未改变认领集合。等前序提交后接线，未接手文件或额外提交构建。文件票据仍需区分已冻结与已提交。
+
 - **实测**：2026-11-10，Task `equal-width-dialog-buttons` 的 `watch wait --condition files` 票据 `60dbdd917961def6c363b541ea23f1ae` 返回 `eligible`。前序日历 Run `f829e893544f42b2848fc5c0ffd7cc13` 已冻结，`src/system/panel/system_panel_model.cpp` 仍有前序任务的待提交改动。Task 在批次 `781988dcbc324ac5a85d2030414f7234` 修订 0 执行 `claim`，收到 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`
 - **源码确认及处理**：`build_wait_tasks.py` 的 `files` 条件只核对当前窗口的编辑成员，未核对指定路径的 Git 状态。认领保护正常，本任务等待前序提交后再认领，未接手他人改动或为反馈重建。
 - **下一步**：支持等待目标路径进入可安全认领的状态，区分前序冻结未提交、无归属的脏路径和显式接手，保留 `claim` 的原子复核。
