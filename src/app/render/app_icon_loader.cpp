@@ -715,6 +715,13 @@ void DesktopApp::BeginIconLoadGeneration()
     ++iconLoadSerial_;
     iconWork_.Cancel();
     iconLoaderPendingKeys_.clear();
+    for (const auto& [host, preview] : inactiveInlineFolderPreviews_)
+    {
+        const auto& model = preview.model;
+        if (model.loading || std::any_of(model.data.folderEntries.begin(), model.data.folderEntries.end(),
+                [](const FolderEntry& entry) { return entry.iconState != IconState::FullQuality; }))
+            QueueFolderRead(model.data.sourceFolderPath);
+    }
 }
 
 void DesktopApp::CancelDockFolderPopupIconLoads()

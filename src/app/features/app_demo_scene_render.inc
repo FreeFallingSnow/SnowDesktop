@@ -67,6 +67,7 @@ if (request.component == "demo-scene")
                 if (widget.type == DesktopWidgetType::FolderMapping)
                     if (const auto* entry = fixture->FindFolderEntry(key)) widget.folderEntries.push_back(*entry);
             }
+            fixture->AddWidget(widget);
             indices.emplace(surface.id, widgets_.size()); widgets_.push_back(std::move(widget));
         }
         std::unordered_map<std::string, WidgetContainer*> views;
@@ -266,6 +267,7 @@ if (request.component == "demo-scene")
                                 dockFolderPopupWidget_.id = kDockFolderPopupWidgetId;
                                 dockFolderPopupWidget_.type = DesktopWidgetType::FolderMapping;
                                 dockFolderPopupWidget_.sourceFolderPath = demo::Wide(surface.folderPreviewPath);
+                                dockFolderPopupWidget_.title = _LW("app.folderPreview.title");
                                 folder_preview::ConfigureDirectoryView(dockFolderPopupWidget_);
                                 dockFolderPopupWidget_.folderEntries.clear();
                                 for (const auto& item : surface.items)
@@ -307,6 +309,10 @@ if (request.component == "demo-scene")
                         {
                             material(rect, appearance.cornerRadius);
                             view->DrawChrome(context.Get(), lastMousePoint_);
+                            // The native title/footer query may have cached
+                            // live category keys while the fixture was parked.
+                            if (auto* categories = dynamic_cast<FileCategories*>(view))
+                                categories->InvalidateCategoryCache();
                         }
                         popupWidgetIndex_ = static_cast<std::size_t>(-1);
                         dockFolderPopupOpen_ = false;
