@@ -1,4 +1,5 @@
 #pragma once
+#include "icons/icon_library.h"
 #include "icons/large_icon_settings.h"
 #include "settings_focus_feedback.h"
 #include <winrt/Microsoft.UI.Xaml.Controls.h>

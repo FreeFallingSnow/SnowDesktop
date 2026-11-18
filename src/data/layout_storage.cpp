@@ -3,6 +3,8 @@
 #include "data/atomic_file.h"
 #include "common/json_value.h"
 #include "icons/icon_appearance_codec.h"
+#include "icons/icon_library.h"
+#include "icons/large_icon_config_codec.h"
 #include <set>
 
 #include <windows.h>

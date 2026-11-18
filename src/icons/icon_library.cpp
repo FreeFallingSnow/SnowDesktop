@@ -2,7 +2,7 @@
 #include "icon_image_codec.h"
 #include "icon_pack_archive.h"
 #include "android_icon_pack.h"
-#include "large_icon_config.h"
+#include "large_icon_config_types.h"
 #include "data/atomic_file.h"
 #include "common/json_value.h"
 #include "ui/preview/preview_png_writer.h"

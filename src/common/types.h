@@ -11,7 +11,7 @@
 #include "constants.h"
 #include "layout/folder_sort_rules.h"
 #include "layout/list_detail_rules.h"
-#include "icons/large_icon_config.h"
+#include "icons/large_icon_config_types.h"
 #include "layout/category_collection_rules.h"
 
 #include <cstdint>

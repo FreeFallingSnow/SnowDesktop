@@ -8,6 +8,7 @@
 #include "layout/page_layout_settings.h"
 #include "icons/large_icon_settings.h"
 #include "icons/icon_appearance.h"
+#include "icons/icon_library.h"
 #include "settings_search_index.h"
 
 // Private same-executable wire schema. Keep field lists explicit: no

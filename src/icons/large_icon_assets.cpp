@@ -6,6 +6,7 @@
 #include "shell/shortcut_application_rules.h"
 #include "shortcut_icon_resource.h"
 #include "large_icon_config.h"
+#include "common/json_value.h"
 #include "large_icon_steam.h"
 #include "platform/http_runtime.h"
 #include "ui/preview/preview_png_writer.h"
@@ -18,12 +19,14 @@
 #include <cstring>
 #include <wincodec.h>
 #include <wrl/client.h>
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <fstream>
 #include <mutex>
+#include <sstream>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>

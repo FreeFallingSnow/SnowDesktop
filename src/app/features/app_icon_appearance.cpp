@@ -6,6 +6,7 @@
 #include "icons/large_icon_assets.h"
 #include "app/features/recycle_bin_poll_state.h"
 #include "icons/icon_appearance_codec.h"
+#include "icons/icon_library.h"
 #include "icons/icon_override_rules.h"
 #include "icons/icon_hbitmap_pixels.h"
 #include "theme/theme_library_settings.h"

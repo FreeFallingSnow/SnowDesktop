@@ -7,6 +7,7 @@
 #include "settings/settings_search_index.h"
 #include "dock/dock_window_preview.h"
 #include "common/l10n.h"
+#include "icons/icon_library.h"
 #include "ui/render/app_font.h"
 #include "diagnostics/diagnostic_log.h"
 #include "widget/runtime/widget_engine.h"

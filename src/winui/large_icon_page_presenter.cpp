@@ -8,6 +8,8 @@
 #include "appearance_sections.h"
 #include "panel_gradient_editor.h"
 #include "edge_light_editor.h"
+#include "icons/large_icon_config.h"
+#include "icons/large_icon_config_codec.h"
 #include "icons/large_icon_settings_rules.h"
 #include "icons/large_icon_preset_rules.h"
 #include "icons/large_icon_edit_rules.h"

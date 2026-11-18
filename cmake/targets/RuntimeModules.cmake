@@ -120,9 +120,12 @@ snowdesktop_add_runtime_module(SnowDesktopSettingsPersistence
     LINK_LIBRARIES SnowDesktopRuntimeEnvironment SnowDesktopNativeUtilities
         SnowDesktopLocalization SnowDesktopPerfetto SnowDesktopDockPolicy
         SnowDesktopSettingsPolicy SnowDesktopThemePolicy SnowDesktopThemeLibrary dwmapi)
+snowdesktop_add_runtime_module(SnowDesktopLargeIconConfig
+    SOURCES src/icons/large_icon_config_codec.cpp
+    LINK_LIBRARIES SnowDesktopThemePolicy)
 snowdesktop_add_runtime_module(SnowDesktopLayoutStorage
     SOURCES src/data/layout_storage.cpp
-    LINK_LIBRARIES SnowDesktopAtomicFile SnowDesktopDockPolicy)
+    LINK_LIBRARIES SnowDesktopAtomicFile SnowDesktopDockPolicy SnowDesktopLargeIconConfig)
 snowdesktop_add_runtime_module(SnowDesktopWidgetTasks
     SOURCES src/widget/tasks/widget_task_broker.cpp
     LINK_LIBRARIES SnowDesktopPerfetto)

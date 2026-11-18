@@ -1,6 +1,7 @@
 #pragma once
 #include "large_icon_config.h"
 #include <algorithm>
+#include <cmath>
 #include <functional>
 
 namespace snowdesktop::large_icon_render_rules

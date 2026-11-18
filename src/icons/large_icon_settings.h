@@ -1,7 +1,8 @@
 #pragma once
-#include "large_icon_config.h"
+#include "large_icon_config_types.h"
 #include <functional>
 #include <map>
+#include <optional>
 
 namespace snowdesktop
 {

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "icons/large_icon_config.h"
+#include "icons/large_icon_config_types.h"
 #include "icons/icon_appearance.h"
 #include "dock/dock_layout_settings.h"
 

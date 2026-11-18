@@ -1,4 +1,5 @@
 #pragma once
+#include "icon_library.h"
 #include "large_icon_render_rules.h"
 #include <array>
 

@@ -1,6 +1,8 @@
 #include "common/json_value.h"
 #include "control_icon_settings.h"
 #include "control_settings_values.h"
+#include "icons/large_icon_config.h"
+#include "icons/large_icon_config_codec.h"
 #include "icons/large_icon_edit_rules.h"
 #include <algorithm>
 

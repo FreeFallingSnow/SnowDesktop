@@ -4,6 +4,7 @@
 #include "dock/dock_window_transition.h"
 #include "dock/dock_settings.h"
 #include "common/l10n.h"
+#include "icons/icon_library.h"
 #include "diagnostics/diagnostic_log.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"

@@ -1,11 +1,13 @@
 #pragma once
-#include "large_icon_config.h"
+#include "large_icon_config_types.h"
 #include "theme/flat_glass_rim.h"
 #include "ui/render/highlight_coverage.h"
 #include "ui/render/smooth_corner_geometry.h"
 #include <d2d1.h>
 #include <d2d1helper.h>
 #include <wrl/client.h>
+#include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace snowdesktop::large_icon_shape
