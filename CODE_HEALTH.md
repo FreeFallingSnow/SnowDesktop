@@ -16,7 +16,7 @@
 | 已计划 | 2 | 完成任务引擎 [widget_engine.cpp](src/widget/runtime/widget_engine.cpp) 的职责拆分 | 从 `ApplyWidgetTaskBrokerActions` 入手，固定音频消息消费和延迟 Lua 事件派发的先后顺序，再移出音频消费逻辑。 | 2026-11-18 |
 | 下一项 | 3 | 完成视图树 [widget_view_tree.cpp](src/widget/view/widget_view_tree.cpp) 的职责拆分 | 将三类转场校验移到 `widget/view/` 私有实现。用同一组合法和多项同时非法的节点，对照原入口的返回值、首条错误和原文。 | 2026-11-18 |
 | 已计划 | 4 | 完成组件包 [widget_package.cpp](src/widget/packages/widget_package.cpp) 的职责拆分 | 从 `ReadManifest` 移出 `previewGallery`、`previewData` 及其 variants 的解析。对照缺省、有效旧清单、部分错误和超限输入的字段值及完整诊断顺序。 | 2026-11-18 |
-| 进行中 | 5 | 归并存储事务、值编码和设置服务中等价的 UTF-8 字节校验 | `code-health-5` 已核对三处同一实现，准备由共用库提供字节校验。键长、NUL、保留键及业务错误由各自入口处理。 | 2026-11-18 |
+| 已验证 | 5 | 归并存储事务、值编码和设置服务中等价的 UTF-8 字节校验 | `b119f7447` 将字节校验从 3 份归为 1 份。标准 Release、`widget_storage_transaction` 和 `behavior_settings-host` 通过（Run `341657452b4841f2a3ee2a8a4359453b`）。候选库与 `01f130136` 的旧实现对照 2,393,892 次判定一致，包含截断、代理项和嵌入 NUL。入口继续处理键长、NUL、保留键和业务错误。 | 2026-11-18 |
 | 待验证 | 6 | 归并[弹窗图标和文字](src/app/popup/app_popup_geometry.cpp)中共用的几何计算 | `code-health-6` 的 `9342e8e5e` 将列表名称列计算从两处归到一处，文字入口直接复用同次计算的图标矩形。扇形图标反查因无可达调用而移除，文字匹配和按条目索引的拖放命中沿用原路径。共享批次 `27ef9727dade4e739c4d0e62f2770227` 的标准 Release 和 `behavior_drag-popup` 通过，11,520 组列表输入的图标与文字矩形四边一致。待在列表切换详情列后确认重命名框位置，并在扇形滚动后确认拖放命中。 | 2026-11-18 |
 | 已验证 | 7 | snowwidget 三个契约导出器共用 JSON 字符串转义 | `cd63cbd24` 将同一转义规则从 3 份归并为 1 份。已定向链接 Release，`api-contract`、`system-contract`、`view-contract` 三条真实命令的输出与旧工具逐字节一致，共 363,891 字节。 | 2026-11-18 |
 | 候选 | 8 | 归并通知计划持久化与任务 5 的 UTF-8 字节校验 | [通知计划存储](src/widget/tasks/widget_notification_schedule_store.cpp)将 NUL 拒绝和 Unicode 标量校验写在同一循环。核对字段读写和构建目标后，将 NUL 处理留给通知计划，以合法多字节文本、嵌入 NUL 及非法字节对照持久化结果。 | 2026-11-18 |
