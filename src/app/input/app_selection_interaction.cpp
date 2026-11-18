@@ -277,12 +277,13 @@ void DesktopApp::ClearInlineFolderPreviewSelectionOutside(POINT point)
 {
     if (!folderPreview_ || !folderPreview_->inlineBounds || PtInRect(&*folderPreview_->inlineBounds, point)) return;
     folderPreview_->keyboardFocused = false;
+    bool changed = false;
     if (dockFolderPopupContainer_ && dockFolderPopupContainer_->IsSearchFocused())
     {
         dockFolderPopupContainer_->SetSearchFocused(false);
         (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+        changed = true;
     }
-    bool changed = false;
     for (auto& entry : dockFolderPopupWidget_.folderEntries)
         changed |= std::exchange(entry.selected, false);
     if (!changed) return;
@@ -303,9 +304,11 @@ void DesktopApp::ClearSelectionForExternalWindow(HWND window)
         dragSession_.HasContext() || dragDropController_.IsTransportActive())
         return;
 
-    if (filePreview_.RetainsSelection(window)) return;
+    if (filePreview_.RetainsSelection(window) || IsFolderPreviewSearchImeWindow(window)) return;
 
-    if (folderPreview_ && dockFolderPopupContainer_ && dockFolderPopupContainer_->IsSearchFocused())
+    const bool previewSearchBlurred =
+        folderPreview_ && dockFolderPopupContainer_ && dockFolderPopupContainer_->IsSearchFocused();
+    if (previewSearchBlurred)
     {
         folderPreview_->keyboardFocused = false;
         dockFolderPopupContainer_->SetSearchFocused(false);
@@ -321,7 +324,7 @@ void DesktopApp::ClearSelectionForExternalWindow(HWND window)
         entry.selected = false;
     }
     if (revision == selectionController_.Revision() &&
-        !keyboardFocus && !popupSelection)
+        !keyboardFocus && !popupSelection && !previewSearchBlurred)
         return;
 
     // Expanded selected titles and keyboard frames can extend beyond their

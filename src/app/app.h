@@ -2649,6 +2649,8 @@ private:
     void ClearInlineFolderPreviewSelectionOutside(POINT point);
     bool HandleFolderPreviewHeaderPress(POINT point);
     void SetFolderPreviewSearchOpen(bool open);
+    bool HasFocusedFolderPreviewSearch(const DesktopWidget* inlineOwner = nullptr) const;
+    bool IsFolderPreviewSearchImeWindow(HWND window) const;
     float GetFolderPreviewInsertionPad(const RECT& popup, size_t index, bool after) const;
     void SyncFolderPreviewSortToOtherViews();
     bool HandleFolderPreviewBreadcrumbContextMenu(POINT point, bool show);

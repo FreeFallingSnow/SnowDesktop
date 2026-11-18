@@ -438,6 +438,7 @@ std::uint64_t DesktopApp::HoverOnlyVisibleMask() const
             continue;
         const bool interactionRetained =
             popupWidgetIndex_ == widgetIndex ||
+            HasFocusedFolderPreviewSearch(&widget) ||
             (!interactionPinnedWidgetId_.empty() &&
                 interactionPinnedWidgetId_ == widget.id) ||
             snowdesktop::widget_visibility_rules::

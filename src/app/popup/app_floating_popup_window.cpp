@@ -287,6 +287,8 @@ void DesktopApp::HandleFloatingPopupExternalPointerDown(
     HWND targetWindow = snowdesktop::private_pointer::WindowAtPoint(screenPoint);
     if (!targetWindow && !pointOnHostedPopup)
         return;
+    if (!pointOnHostedPopup && IsFolderPreviewSearchImeWindow(targetWindow))
+        return;
     const DWORD currentProcessId = GetCurrentProcessId();
     const auto belongsToInternalSurface =
         [this, currentProcessId](HWND window) {

@@ -256,6 +256,7 @@ void DesktopApp::UpdateWidgetHoverExpansion(POINT point)
         bool retained = interactionPinnedWidgetId_ == widget.id ||
             popupWidgetIndex_ == index ||
             (mouseDown_ && mouseDownWidgetIndex_ == index) ||
+            HasFocusedFolderPreviewSearch(&widget) ||
             snowdesktop::widget_visibility_rules::ShouldRetainForKeyboardNavigation(
                 keyboardNavVisualFocus_, keyboardNavInsideWidget_,
                 keyboardNavWidgetIndex_, index);

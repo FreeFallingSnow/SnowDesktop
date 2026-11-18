@@ -298,7 +298,8 @@ void DesktopApp::DrawCollectionPopup(
                     ctx->DrawLine(D2D1::Point2F(center.x + 2.7f * row.scale, center.y + 2.7f * row.scale),
                         D2D1::Point2F(center.x + 5.3f * row.scale, center.y + 5.3f * row.scale), brush.Get(), stroke);
                 }
-                if (!privatePreview && !IsRectEmpty(&row.searchBox) && dockFolderPopupContainer_)
+                if ((!privatePreview || HasFocusedFolderPreviewSearch()) &&
+                    !IsRectEmpty(&row.searchBox) && dockFolderPopupContainer_)
                     dockFolderPopupContainer_->DrawSearchBox(ctx);
             }
             const LONG dividerInset = ScaleWidgetCu(8.0f, row.scale);

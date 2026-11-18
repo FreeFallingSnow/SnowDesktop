@@ -7,6 +7,7 @@
 #include "layout/collection_popup_layout.h"
 #include "layout/folder_preview_header_layout.h"
 #include "settings/animation_settings.h"
+#include "ui/input/private_pointer.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "widget/runtime/widget_engine.h"
 #include "widget/runtime/widget_item_layout.h"
@@ -16,6 +17,7 @@
 #include <array>
 #include <cmath>
 #include <filesystem>
+#include <imm.h>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
@@ -1127,6 +1129,36 @@ bool DesktopApp::HandleFolderPreviewBreadcrumbContextMenu(POINT point, bool show
     return true;
 }
 
+bool DesktopApp::HasFocusedFolderPreviewSearch(const DesktopWidget* inlineOwner) const
+{
+    return folderPreview_ && folderPreview_->keyboardFocused && folderPreview_->searchOpen &&
+        dockFolderPopupContainer_ && dockFolderPopupContainer_->IsSearchFocused() &&
+        (!inlineOwner || (folderPreview_->inlineBounds && folderPreview_->hostWidgetId == inlineOwner->id));
+}
+
+bool DesktopApp::IsFolderPreviewSearchImeWindow(HWND window) const
+{
+    if (!window || !HasFocusedFolderPreviewSearch()) return false;
+    const HWND root = GetAncestor(window, GA_ROOT);
+    if (!root) return false;
+    const auto belongsToIme = [root](HWND input) {
+        const HWND ime = input ? ImmGetDefaultIMEWnd(input) : nullptr;
+        if (!ime) return false;
+        for (HWND owner = root; owner; owner = GetWindow(owner, GW_OWNER))
+            if (owner == ime || IsChild(ime, owner)) return true;
+        return false;
+    };
+    if (belongsToIme(inputHwnd_) || belongsToIme(floatingDockInputHwnd_)) return true;
+
+    // An IME can use a separate native popup while composition and keyboard
+    // focus still belong to our editor.
+    const HWND focus = snowdesktop::private_pointer::FocusWindow();
+    return dockFolderPopupContainer_->IsSearchComposing() && focus &&
+        (focus == inputHwnd_ || focus == floatingDockInputHwnd_) &&
+        (GetWindowLongPtrW(root, GWL_STYLE) & WS_POPUP) &&
+        (GetWindowLongPtrW(root, GWL_EXSTYLE) & WS_EX_NOACTIVATE);
+}
+
 void DesktopApp::SetFolderPreviewSearchOpen(bool open)
 {
     if (!folderPreview_ || !dockFolderPopupContainer_) return;
@@ -1150,6 +1182,11 @@ void DesktopApp::SetFolderPreviewSearchOpen(bool open)
     if (open) FocusDesktopInputWindow();
     typeToSelectSession_.Reset();
     RefreshDockFolderPopupGeometry();
+    if (!open && folderPreview_ && folderPreview_->inlineBounds)
+    {
+        UpdateWidgetHoverExpansion(lastMousePoint_);
+        InvalidateRect(hwnd_, &*folderPreview_->inlineBounds, FALSE);
+    }
     UpdateHostInputImePosition();
 }
 
