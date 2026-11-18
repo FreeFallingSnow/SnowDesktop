@@ -4,7 +4,7 @@
 
 **已经确定的交付**　完成任务 2、3、4 三个长文件的实际源码拆分。每个文件都要把下文列出的独立职责迁到有明确归属的生产实现，接回原入口，验证原有行为、对象生命周期和兼容性。项目还持续跟踪共用规则、依赖和状态所有权，例如任务 5 的 UTF-8 校验和任务 6 的弹窗几何。
 
-**现在从哪里开始**　先完成 **3 · 视图树**。本批迁出整树校验，随后分别迁出布局与交互区域收集，各批完成后记录证据。**4 · 组件包** 已交给独立聊天继续。
+**现在从哪里开始**　先完成 **3 · 视图树**。本批迁出整树校验，随后分别迁出布局与交互区域收集，各批完成后记录证据。**4 · 组件包** 已交给独立聊天继续。**2 · 任务引擎** 的音频消息消费已迁出，待桌面音频实测。任务 2 的下一批迁出原生任务的中间事件、终态与完成缓存。
 
 ## 任务与状态
 
@@ -13,7 +13,7 @@
 | 状态 | 编号 | 交付目标 | 接手动作或验收记录 | 更新日期 |
 | --- | --- | --- | --- | --- |
 | 已验证 | 1 | 大图标配置值与 JSON 编解码分离 | `9e3c5e81a` 实施，`b7663d8a5` 补齐头文件依赖。标准 Release、`behavior_recovery`、`behavior_settings-host` 和独立头文件语法检查通过。与 `501607ae3` 对照，5 组往返和 6 项拒绝结果共 11,799 字节一致。 | 2026-11-18 |
-| 已计划 | 2 | 完成任务引擎 [widget_engine.cpp](src/widget/runtime/widget_engine.cpp) 的职责拆分 | 从 `ApplyWidgetTaskBrokerActions` 入手，固定音频消息消费和延迟 Lua 事件派发的先后顺序，再移出音频消费逻辑。 | 2026-11-18 |
+| 待验证 | 2 | 完成任务引擎 [widget_engine.cpp](src/widget/runtime/widget_engine.cpp) 的职责拆分 | `code-health-2` 的 `8e80fe92b` 将音频任务完成、失效播放取消和事件暂存迁入[任务模块](src/widget/tasks/widget_audio_task_dispatch.cpp)。引擎仍在其他 broker 调度前消费音频消息，在 `task.complete` 之后派发 Lua 音频事件。标准 Release、本地激活、`behavior_widget` 通过（Run `cbdb5b6737114bf89581afae51b16498`）。无 PCH 头检查和五组工作线程探针通过。待实测本地播放、快速切换、媒体键及宿主回调。下一批迁原生任务的中间事件、终态及完成缓存，核对取消时晚到事件和错误诊断。后续还有 Lua 任务启动绑定和视图绘制。 | 2026-11-18 |
 | 进行中 | 3 | 完成视图树 [widget_view_tree.cpp](src/widget/view/widget_view_tree.cpp) 的职责拆分 | `65175a834` 迁出节点转场校验，22 项返回值和首条诊断共 2,109 字节一致。新头检查、标准 Release、`behavior_widget-focus` 通过（Run `47ceb61e103e4252b6ddce9637e73efc`）。用户对[组件 API 测试](developer_assets/manual_widgets/component-api-test/)的颜色渐变、淡出、淡入回复「没问题」（`9fd1abac`）。`task-8500e8ba3ef941eab3637c9875217be3` 接着迁出整树校验并核对预算、重复键与首条诊断。布局和交互区域收集随后分别迁出。 | 2026-11-18 |
 | 进行中 | 4 | 完成组件包 [widget_package.cpp](src/widget/packages/widget_package.cpp) 的职责拆分 | `86c5a693d` 迁出预览字段解析。标准 Release、`widget_author_tools` 和 `widget_package_file_export` 通过（Run `2a9e6535be694361ad7eca9c4e8fe7b7`）。13 份清单的返回值、预览字段及完整诊断共 97,028 字节一致。用户确认 1.0.1 开发组件的标准和宽版预览通过。`code-health-04-component-packages` 接着迁出清单读取与目录检查，随后分别处理注册表和本地发布。 | 2026-11-18 |
 | 已验证 | 5 | 归并存储事务、值编码和设置服务中等价的 UTF-8 字节校验 | `b119f7447` 将字节校验从 3 份归为 1 份。标准 Release、`widget_storage_transaction` 和 `behavior_settings-host` 通过（Run `341657452b4841f2a3ee2a8a4359453b`）。候选库与 `01f130136` 的旧实现对照 2,393,892 次判定一致，包含截断、代理项和嵌入 NUL。入口继续处理键长、NUL、保留键和业务错误。用户实测便签重启后保留中文和表情。组件设置搜索实机待确认。 | 2026-11-18 |
