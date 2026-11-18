@@ -15,6 +15,7 @@ add_executable(snowwidget
     src/widget/authoring/widget_author_permissions.cpp
     src/widget/authoring/widget_author_test.cpp
     src/widget/api/widget_api_contract_json.cpp
+    src/widget/api/widget_contract_json_writer.cpp
     src/widget/api/widget_api_registry.cpp
     src/widget/runtime/widget_logical_slot.cpp
     src/widget/runtime/lua_runtime.cpp
