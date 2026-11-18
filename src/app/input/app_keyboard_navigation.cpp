@@ -36,12 +36,7 @@ void DesktopApp::RefreshDragHintFromKeyboard()
     }
 
     std::wstring hint = GetDockDragOutRemovalHint(dragSession_.CurrentPoint());
-    if (hint.empty() && dragSession_.TargetContainer() &&
-        dragSession_.TargetRegion() != HitRegion::None)
-    {
-        hint = dragSession_.TargetContainer()->GetDragHint(dragSession_.TargetSlot(),
-            dragSession_.TargetRegion(), dragSession_.Items(), dragSession_.Source(), mods);
-    }
+    if (hint.empty()) hint = GetCurrentDragTargetHint(mods);
 
     if (dragDropController_.IsTransportActive())
     {

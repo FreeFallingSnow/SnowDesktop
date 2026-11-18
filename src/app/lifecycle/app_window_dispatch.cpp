@@ -510,6 +510,12 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
     }
     case WM_SYSKEYDOWN:
     {
+        if ((wp == VK_MENU || wp == VK_CONTROL || wp == VK_SHIFT) &&
+            dragSession_.IsActive() && !dragDropController_.IsTransportActive())
+        {
+            RefreshDragHintFromKeyboard();
+            return 0;
+        }
         typeToSelectSuppressChar_ = TryHandleFilePreviewKey(wp,
             (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0);
         if (typeToSelectSuppressChar_) { typeToSelectSession_.Reset(); return 0; }
@@ -603,6 +609,12 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         RefreshDragHintFromKeyboard();
         return 0;
     case WM_SYSKEYUP:
+        if ((wp == VK_MENU || wp == VK_CONTROL || wp == VK_SHIFT) &&
+            dragSession_.IsActive() && !dragDropController_.IsTransportActive())
+        {
+            RefreshDragHintFromKeyboard();
+            return 0;
+        }
         if ((wp >= 'A' && wp <= 'Z') || (wp >= '0' && wp <= '9'))
             DispatchLuaWidgetViewKeyEvent(wp, false, false);
         break;

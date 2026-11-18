@@ -13,6 +13,7 @@ struct ExternalDragSummary
     bool hasShortcut = false;
     bool foldersOnly = false;
     bool applicationShortcut = false;
+    DWORD allowedEffects = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
 };
 
 /**

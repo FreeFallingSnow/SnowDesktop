@@ -68,31 +68,6 @@ bool OffersOwnedDropContent(IDataObject* source)
         offers(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"UniformResourceLocator")));
 }
 
-std::optional<std::wstring> ResolveHandoffPath(const std::wstring& path)
-{
-    const auto isShortcut = [](const std::wstring& candidate) {
-        const auto* extension = PathFindExtensionW(candidate.c_str());
-        return extension && _wcsicmp(extension, L".lnk") == 0;
-    };
-    if (!isShortcut(path)) return path;
-    std::wstring current = path;
-    std::unordered_set<std::wstring> visited;
-    for (int depth = 0; depth < 64 && isShortcut(current); ++depth)
-    {
-        if (!visited.insert(ToUpperInvariant(current)).second) return std::nullopt;
-        const auto next = snowdesktop::item_location::ResolveRevealPath(current);
-        if (next.empty() || PathsEqualInsensitive(next, current)) return std::nullopt;
-        current = next;
-    }
-    if (isShortcut(current)) return std::nullopt;
-    const auto attributes = GetFileAttributesW(current.c_str());
-    if (attributes == INVALID_FILE_ATTRIBUTES) return std::nullopt;
-    // Ordinary application shortcuts keep their Shell target behavior. A
-    // directory shortcut uses the same tracked file operation as that real
-    // directory, including the user's selected Copy/Move/Link operation.
-    return (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ? current : path;
-}
-
 std::wstring UserDesktopDirectory()
 {
     wchar_t desktopPath[MAX_PATH]{};
@@ -234,6 +209,30 @@ private:
     std::vector<std::wstring> paths_;
 };
 
+}
+
+std::optional<std::wstring> DesktopApp::ResolveFileHandoffPath(const std::wstring& path)
+{
+    const auto isShortcut = [](const std::wstring& candidate) {
+        const auto* extension = PathFindExtensionW(candidate.c_str());
+        return extension && _wcsicmp(extension, L".lnk") == 0;
+    };
+    if (!isShortcut(path)) return path;
+    std::wstring current = path;
+    std::unordered_set<std::wstring> visited;
+    for (int depth = 0; depth < 64 && isShortcut(current); ++depth)
+    {
+        if (!visited.insert(ToUpperInvariant(current)).second) return std::nullopt;
+        const auto next = snowdesktop::item_location::ResolveRevealPath(current);
+        if (next.empty() || PathsEqualInsensitive(next, current)) return std::nullopt;
+        current = next;
+    }
+    if (isShortcut(current)) return std::nullopt;
+    const auto attributes = GetFileAttributesW(current.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) return std::nullopt;
+    // Resolve directory shortcuts for the tracked file operation. Other
+    // shortcuts remain Shell handoff targets.
+    return (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ? current : path;
 }
 
 std::optional<DWORD> DesktopApp::TryDropShellNamespaceFiles(
@@ -412,6 +411,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
         return S_OK;
     };
     ExternalDragSummary externalSummary;
+    externalSummary.allowedEffects = *effect;
     externalSummary.applicationShortcut = content::ReadApplicationSource(dataObject).has_value();
     externalOwnedContent_ = !externalSummary.applicationShortcut && OffersOwnedDropContent(dataObject);
     if (!externalSummary.applicationShortcut && !OffersNativeFilePaths(dataObject) && !externalOwnedContent_)
@@ -575,7 +575,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
     *effect = targetEffect;
     std::wstring hint;
     if (*effect != DROPEFFECT_NONE && targetContainer && targetRegion != HitRegion::None)
-        hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
+        hint = GetCurrentDragTargetHint(mods, targetEffect);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
     PresentOleDragInteractionFrame();
     return S_OK;
@@ -722,7 +722,7 @@ HRESULT DesktopApp::HandleOleDragOver(
     *effect = targetEffect;
     std::wstring hint;
     if (*effect != DROPEFFECT_NONE && targetContainer && targetRegion != HitRegion::None)
-        hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
+        hint = GetCurrentDragTargetHint(mods, targetEffect);
     ShowDragHintWindowScreen({ point.x, point.y }, hint);
     PresentOleDragInteractionFrame();
     return S_OK;
@@ -1084,7 +1084,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                 !sourcePaths.empty() &&
                 sourcePaths.size() ==
                     dragSession_.SourceList().entries.size();
-            const auto resolvedTarget = ResolveHandoffPath(targetItem ? targetItem->GetPath() : L"");
+            const auto resolvedTarget = ResolveFileHandoffPath(targetItem ? targetItem->GetPath() : L"");
             if (!resolvedTarget)
             {
                 *effect = DROPEFFECT_NONE;
@@ -1408,7 +1408,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                     dockFolderPopupOpen_)
                     RefreshDockFolderPopup();
             };
-        const auto resolvedTarget = ResolveHandoffPath(targetItem ? targetItem->GetPath() : L"");
+        const auto resolvedTarget = ResolveFileHandoffPath(targetItem ? targetItem->GetPath() : L"");
         if (!resolvedTarget)
         {
             *effect = DROPEFFECT_NONE;

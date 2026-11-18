@@ -1530,9 +1530,7 @@ void DesktopApp::OnMouseMoveAt(
         if (const std::wstring removalHint = GetDockDragOutRemovalHint(current);
             !removalHint.empty())
             hint = removalHint;
-        else if (targetContainer && targetRegion != HitRegion::None)
-            hint = targetContainer->GetDragHint(targetSlot, targetRegion,
-                dragSession_.Items(), dragSession_.Source(), currentMods);
+        else hint = GetCurrentDragTargetHint(currentMods);
 
         if (!UpdateWidgetPairDragHint(current, currentMods))
             ShowDragHintWindow(current, hint);

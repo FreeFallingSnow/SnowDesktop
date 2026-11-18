@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "layout/collection_popup_layout.h"
 #include "layout/folder_preview_header_layout.h"
+#include "common/l10n.h"
 #include "common/utils.h"
 #include "core/drag_target_resolver.h"
 #include "layout/popup_drag_rules.h"
@@ -116,17 +117,77 @@ void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
 
     ResolveCurrentDragTargetAt(clientPoint);
 
-    std::wstring hint;
-    if (dragSession_.TargetContainer() &&
-        dragSession_.TargetRegion() != HitRegion::None)
-    {
-        hint = dragSession_.TargetContainer()->GetDragHint(
-            dragSession_.TargetSlot(), dragSession_.TargetRegion(),
-            dragSession_.Items(), dragSession_.Source(), mods);
-    }
     if (!UpdateWidgetPairDragHint(clientPoint, mods))
-        ShowDragHintWindow(clientPoint, hint);
+        ShowDragHintWindow(clientPoint, GetCurrentDragTargetHint(mods));
     InvalidateFloatingDockWindow(true);
+}
+
+std::wstring DesktopApp::GetCurrentDragTargetHint(
+    int mods, std::optional<DWORD> negotiatedEffect) const
+{
+    const auto* target = dragSession_.TargetContainer();
+    const auto region = dragSession_.TargetRegion();
+    if (!target || region == HitRegion::None || region == HitRegion::Blocked) return {};
+    auto* slot = dragSession_.TargetSlot();
+    if (region == HitRegion::Handoff)
+    {
+        const auto* item = slot ? slot->GetItem() : nullptr;
+        if (!item && dynamic_cast<const DesktopGrid*>(target))
+            item = HitTestIcon(dragSession_.CurrentPoint());
+        const DesktopItem* desktop = nullptr;
+        bool directory = false;
+        if (const auto* icon = dynamic_cast<const DesktopIcon*>(item))
+            desktop = icon->GetDesktopItem();
+        else if (const auto* frequent = dynamic_cast<const DockFrequentItem*>(item))
+        {
+            const auto index = frequent->GetItemIndex();
+            if (index < items_.size()) desktop = &items_[index];
+        }
+        else if (const auto* folderIcon = dynamic_cast<const FolderEntryIcon*>(item))
+        {
+            if (const auto* entry = folderIcon->GetFolderEntry())
+                directory = entry->isDirectory || entry->shortcutTarget.directory;
+        }
+        else if (const auto* dockItem = dynamic_cast<const DockEntryItem*>(item))
+        {
+            const auto index = dockItem->GetEntryIndex();
+            if (index < dockEntries_.size())
+                directory = ResolveDockFolderTarget(dockEntries_[index]).available;
+        }
+        else if (folderPreview_ && slot == popupDragTarget_.Get())
+            directory = dynamic_cast<const ExternalFileItem*>(item) != nullptr;
+
+        if (desktop && desktop->desktopIconClsid.empty())
+        {
+            // Filesystem enumeration records a timestamp for both types and
+            // a size only for files. Link metadata identifies directory links.
+            directory = desktop->shortcutTarget.directory ||
+                (desktop->modifiedTime.has_value() && !desktop->fileSize.has_value());
+        }
+        if (directory)
+        {
+            DWORD effect = negotiatedEffect.value_or(DROPEFFECT_NONE);
+            if (!negotiatedEffect)
+            {
+                const DWORD allowed = dragDropController_.IsExternalDragActive()
+                    ? dragDropController_.ExternalSummary().allowedEffects
+                    : DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
+                effect = dragDropController_.IsExternalDragActive() && externalOwnedContent_
+                    ? allowed & DROPEFFECT_COPY
+                    : ChooseDropEffect(static_cast<DWORD>(mods), allowed);
+            }
+            auto name = item->GetTitle();
+            if (name.empty()) name = item->GetPath();
+            switch (effect)
+            {
+            case DROPEFFECT_MOVE: return _LFW("core.drag.move_into_folder", name);
+            case DROPEFFECT_COPY: return _LFW("core.drag.copy_into_folder", name);
+            case DROPEFFECT_LINK: return _LFW("core.drag.link_in_folder", name);
+            default: return {};
+            }
+        }
+    }
+    return target->GetDragHint(slot, region, dragSession_.Items(), dragSession_.Source(), mods);
 }
 
 /**

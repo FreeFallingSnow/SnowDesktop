@@ -1719,7 +1719,9 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                 !sourcePaths.empty() &&
                 sourcePaths.size() ==
                     dragSession_.SourceList().entries.size();
-            const std::wstring targetPath = targetItem->GetPath();
+            std::wstring targetPath = targetItem->GetPath();
+            if (auto resolved = ResolveFileHandoffPath(targetPath))
+                targetPath = std::move(*resolved);
             const DWORD targetAttributes = targetPath.empty()
                 ? INVALID_FILE_ATTRIBUTES
                 : GetFileAttributesW(targetPath.c_str());

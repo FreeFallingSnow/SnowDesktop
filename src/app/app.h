@@ -3295,6 +3295,7 @@ private:
      * @param mods 修饰键状态
      */
     void RefreshDragTargetAt(POINT clientPoint, int mods);
+    std::wstring GetCurrentDragTargetHint(int mods, std::optional<DWORD> negotiatedEffect = std::nullopt) const;
     /**
      * @brief 仅按给定坐标更新拖拽 point 和 target，不触发导航、提示或呈现。
      * @note 用于 button-up/OLE Drop 的最终坐标重新命中。
@@ -4402,6 +4403,7 @@ private:
      * @return 选择的拖放效果
      */
     DWORD ChooseDropEffect(DWORD keyState, DWORD allowed) const;
+    static std::optional<std::wstring> ResolveFileHandoffPath(const std::wstring& path);
 
     /** @brief 回收站状态异步查询共享状态（防并发查询） */
     std::shared_ptr<RecycleBinPollState> recycleBinPollState_;
