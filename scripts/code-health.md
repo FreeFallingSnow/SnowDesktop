@@ -18,6 +18,17 @@ Import-Csv "$out/inventory/cochange.csv" | Select-Object -First 15
 - 包含图只解析双引号字面量，依次查同目录和所属源码根。它包含未启用的条件分支，遗漏宏、SDK、生成头、PCH、其他目标包含目录及链接边。`reachableIn` 是文件数。判断消费者时，再核对当前 CMake 源清单和已有 File API 的 Release 配置、目标源及依赖；记录与当前版本不匹配的旧回复。
 - Git 取各开发分支可达提交的并集，剔除 `main` 可达提交和合并提交。计数单位是触及文件的提交。一次改动超过 20 个范围内原生文件时，仅保留频次，排除该次共改样本。`cochange.csv` 同时给出共改次数和两端各自的小提交数。复核重命名用 `git log --follow --no-merges --branches=release/* --not main -- <单个文件>`，再读代表性差异。早期只有发布压缩历史的时期缺少开发粒度。
 
+对照版本标签可区分同一次开发中的多轮尝试和持续跨版本存在的结构。以下示例用文件名跟踪目录迁移，记录同名路径及文件内容的 Git 对象 ID。解释前核对每个标签下的路径，文件改名时补入旧名。标签代表 Git 源码快照，实际分发版本另查发布回执。
+
+```powershell
+$symbolFile = 'large_icon_config.h'
+git tag --list 'v*' --sort=version:refname | ForEach-Object {
+    $tag = $_
+    git ls-tree -r $tag -- src | Select-String -Pattern ("/" + [regex]::Escape($symbolFile) + '$') |
+        ForEach-Object { "$tag $($_.Line)" }
+}
+```
+
 在同一源码快照运行 [jscpd](https://github.com/kucherenko/jscpd) 和 [Lizard](https://github.com/terryyin/lizard)。以下命令使用任务私有工具目录；已有相同版本可直接使用。清单内工作树差异需要单独保存，与提交快照分别说明。
 
 ```powershell
@@ -32,14 +43,14 @@ tar -xf "$out/source.tar" -C $tree.FullName
 $pattern = '**/*.{h,cpp,hpp,cc,c,cxx,inc}'
 Push-Location $tree.FullName
 try {
-    & $cpd . --pattern $pattern --ignore '**/acrylic_noise_asset.h' --mode mild --min-lines 8 --min-tokens 80 --reporters json --output "$out/clones" --baseline "$out/fingerprints.json" --update-baseline --fail-on-empty
+    & $cpd . --pattern $pattern --ignore '**/acrylic_noise_asset.h' --mode mild --min-lines 8 --min-tokens 80 --max-size 4mb --reporters json --output "$out/clones" --baseline "$out/fingerprints.json" --update-baseline --fail-on-empty
     if ($LASTEXITCODE) { throw 'jscpd failed' }
     & $lizard -l cpp . -x '*/acrylic_noise_asset.h' --csv -o "$out/functions.csv"
     if ($LASTEXITCODE) { throw 'Lizard failed' }
 } finally { Pop-Location }
 ```
 
-记录 jscpd 的 `sources`、`clones`、`duplicatedTokens`，保留报告、指纹与参数；阈值以下的短文件及工具不识别的扩展名会影响分母。Lizard CSV 的第 2、7、8、10、11 列分别给出函数 CCN、路径、名称及起止行。对分派器要读真实分支、状态写入和取消路径，宏和本地 lambda 会影响估算。
+记录 jscpd 的 `sources`、`clones`、`duplicatedTokens`，保留报告、指纹与参数。单文件大小上限须覆盖所选源码：默认 1 MiB 会跳过 `widget_engine.cpp`。阈值以下的短文件及工具不识别的扩展名也会影响分母。Lizard CSV 的第 2、7、8、10、11 列分别给出函数 CCN、路径、名称及起止行。对分派器要读真实分支、状态写入和取消路径，宏和本地 lambda 会影响估算。
 
 ## 选择并验收一个单元
 
