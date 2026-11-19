@@ -1,18 +1,17 @@
 #pragma once
 
-#include "settings/settings_ipc_codec.h"
-#include "settings/settings_ipc_values.h"
-#include "home_about_page_model.h"
+#include "home_about_status.h"
+#include "settings_ipc_codec.h"
 
 // Shared by the settings process and codec regression tests. This status model
 // contains no XAML controls and does not require a running WinUI application.
 namespace snowdesktop::settings_ipc
 {
-template<> struct Fields<winui::DebugEnvironmentSummary>
+template<> struct Fields<settings::DebugEnvironmentSummary>
 {
     template<class Value> static auto Tie(Value& v) { return std::tie(v.id, v.name); }
 };
-template<> struct Fields<winui::HomeAboutStatusPatch>
+template<> struct Fields<settings::HomeAboutStatusPatch>
 {
     template<class Value> static auto Tie(Value& v)
     {

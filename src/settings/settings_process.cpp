@@ -1,4 +1,5 @@
 #include "settings_process.h"
+#include "settings_ipc_channel.h"
 
 #include <shellapi.h>
 #include <array>

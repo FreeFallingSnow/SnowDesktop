@@ -1,7 +1,6 @@
 #pragma once
 
 #include "settings/settings_domain.h"
-#include "number_box_update_rules.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.Peers.h>
@@ -283,41 +282,13 @@ inline void JoinSettingsSections(const muxc::StackPanel& panel)
     }
 }
 
-inline bool IsNumberBoxTextEditing(const muxc::NumberBox& number)
-{
-    const auto root = number.XamlRoot();
-    if (!root) return false;
-    auto focused = muxi::FocusManager::GetFocusedElement(root)
-        .try_as<mux::DependencyObject>();
-    if (!focused || !focused.try_as<muxc::TextBox>()) return false;
-    while (focused)
-    {
-        if (focused == number) return true;
-        focused = muxm::VisualTreeHelper::GetParent(focused);
-    }
-    return false;
-}
-
 // Local slider/spin/reset changes may replace the text, but redundant writes
 // must not format it or move the caret while the user is typing.
-inline void SetNumberBoxValue(const muxc::NumberBox& number, double value)
-{
-    if (number_box_update_rules::ShouldWriteValue(number.Value(), value))
-        number.Value(value);
-}
+void SetNumberBoxValue(const muxc::NumberBox& number, double value);
 
 // Host snapshots can arrive while the inner TextBox still contains an empty
 // draft, a sign, or a partial decimal. Let WinUI evaluate it on Enter/blur.
-inline void SyncNumberBoxValue(const muxc::NumberBox& number, double value)
-{
-    const double current = number.Value();
-    if (!number_box_update_rules::ShouldWriteValue(current, value)) return;
-    if (number_box_update_rules::ShouldWriteValue(
-        current, value, IsNumberBoxTextEditing(number)))
-    {
-        number.Value(value);
-    }
-}
+void SyncNumberBoxValue(const muxc::NumberBox& number, double value);
 
 /**
  * Applies the compact Fluent treatment used by low-risk restore-default
@@ -349,18 +320,11 @@ inline void ConfigureRestoreDefaultButton(
 }
 
 /** Remove persisted float noise before a value reaches Slider/NumberBox. */
-inline double QuantizeNumericValue(
+double QuantizeNumericValue(
     double value,
     double minimum,
     double maximum,
-    double step) noexcept
-{
-    value = std::clamp(value, minimum, maximum);
-    if (!std::isfinite(step) || step <= 0.0)
-        return value;
-    const double ticks = std::round((value - minimum) / step);
-    return std::clamp(minimum + ticks * step, minimum, maximum);
-}
+    double step) noexcept;
 
 /**
  * Keeps the native control responsive while limiting expensive host previews
@@ -432,6 +396,54 @@ struct CoalescedPreviewTimer
         }
         publish = {};
     }
+};
+
+// Binds an existing slider, numeric input and optional reset button on the UI STA.
+class ContinuousNumberBinding final
+{
+public:
+    struct Callbacks
+    {
+        std::function<bool()> canSynchronize;
+        std::function<bool()> canEmit;
+        std::function<void(SettingsUpdateMode, double)> update;
+    };
+
+    ContinuousNumberBinding() = default;
+    ~ContinuousNumberBinding();
+    ContinuousNumberBinding(const ContinuousNumberBinding&) = delete;
+    ContinuousNumberBinding& operator=(const ContinuousNumberBinding&) = delete;
+
+    void Bind(const muxc::Slider& slider, const muxc::NumberBox& number,
+        const muxc::Button& reset, double defaultValue, bool& synchronizingPair,
+        Callbacks callbacks);
+    void PatchValue(double value);
+    void Commit();
+    void Cancel() noexcept;
+    void Close() noexcept;
+
+private:
+    bool CanSynchronize() const;
+    void Preview(double value);
+
+    muxc::Slider slider_{nullptr};
+    muxc::NumberBox number_{nullptr};
+    muxc::Button reset_{nullptr};
+    mux::DispatcherTimer idleCommit_{nullptr};
+    CoalescedPreviewTimer<double> preview_;
+    Callbacks callbacks_;
+    bool* synchronizingPair_ = nullptr;
+    bool dirty_ = false;
+    winrt::event_token sliderChanged_{};
+    winrt::event_token numberChanged_{};
+    winrt::event_token sliderReleased_{};
+    winrt::event_token numberReleased_{};
+    winrt::event_token sliderLostFocus_{};
+    winrt::event_token numberLostFocus_{};
+    winrt::event_token sliderKeyDown_{};
+    winrt::event_token numberKeyDown_{};
+    winrt::event_token resetClicked_{};
+    winrt::event_token idleCommitTick_{};
 };
 
 /**

@@ -1392,7 +1392,7 @@ void SettingsShell::SetLargeIconSettingsAction(snowdesktop::LargeIconSettingsAct
 }
 
 bool SettingsShell::ApplyHomeAboutStatusPatch(
-    const snowdesktop::winui::HomeAboutStatusPatch& patch)
+    const snowdesktop::settings::HomeAboutStatusPatch& patch)
 {
     if (generalPage_) generalPage_->ApplyOnboardingStatus(patch);
     const bool applied = homeAboutPage_ && homeAboutPage_->ApplyStatusPatch(patch);

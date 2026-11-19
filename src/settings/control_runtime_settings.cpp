@@ -103,7 +103,7 @@ Value HandleRuntimeSettings(std::string_view method, const Value& params,
     if (target.kind != "runtime-services" || !target.id.empty()) throw Error("settings_target_not_found", "Unknown runtime settings target");
     const auto snapshot = context.controller.Snapshot();
     if (!snapshot) throw Error("settings_unavailable", "Settings controller is unavailable");
-    const auto status = context.homeAboutStatus ? context.homeAboutStatus(snapshot->generation, snapshot->revision) : winui::HomeAboutStatusPatch{};
+    const auto status = context.homeAboutStatus ? context.homeAboutStatus(snapshot->generation, snapshot->revision) : settings::HomeAboutStatusPatch{};
     const auto support = context.windowSupportStatus ? context.windowSupportStatus() : window_support::SupportStatus{};
     const auto advanced = context.advancedFeatureStatus ? context.advancedFeatureStatus() : winui::GeneralAdvancedFeatureStatus{};
     auto state = Object({{"animationDiagnosticsEnabled", Optional(status.animationDiagnosticsEnabled)},

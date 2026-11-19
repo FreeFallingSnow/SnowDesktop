@@ -2,7 +2,7 @@
 
 #include "general_page_actions.h"
 #include "settings_focus_feedback.h"
-#include "home_about_page_model.h"
+#include "settings/home_about_status.h"
 
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.h>
@@ -66,7 +66,7 @@ public:
             SettingsFocusPrerequisite* prerequisite = nullptr,
             bool reveal = true) const noexcept;
 
-    void ApplyOnboardingStatus(const HomeAboutStatusPatch& patch);
+    void ApplyOnboardingStatus(const settings::HomeAboutStatusPatch& patch);
     void Activate(std::string_view focusId = {}) noexcept;
     void Deactivate() noexcept;
     [[nodiscard]] bool IsHotkeyCaptureActive() const noexcept;

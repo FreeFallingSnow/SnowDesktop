@@ -2,6 +2,7 @@
 #include "screen_time_page_presenter.h"
 
 #include "data/data_paths.h"
+#include "settings/settings_controller_interface.h"
 #include "settings_presenter_controls.h"
 #include "system/screen_time/screen_time_tracker.h"
 
@@ -10,6 +11,7 @@
 #include <cstring>
 #include <map>
 #include <string>
+#include <utility>
 
 #include <winrt/Microsoft.UI.Dispatching.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
@@ -21,6 +23,28 @@
 
 namespace snowdesktop::winui
 {
+
+ScreenTimePageActions MakeScreenTimePageActions(
+    ScreenTimePageActions::CommitGeneral commitGeneral,
+    std::function<ISettingsController*()> currentController,
+    std::function<void(const SettingsActionResult&)> showResult)
+{
+    return {
+        std::move(commitGeneral),
+        [currentController = std::move(currentController), showResult = std::move(showResult)](
+            std::uint64_t generation) {
+            auto* controller = currentController();
+            if (!controller || !controller->IsGenerationCurrent(generation))
+                return false;
+            SettingsHostActions::Request request;
+            request.action = SettingsHostActions::Action::ClearScreenTime;
+            const auto result = controller->InvokeHostAction(request);
+            showResult(result);
+            return result.Succeeded();
+        }
+    };
+}
+
 namespace mux = winrt::Microsoft::UI::Xaml;
 namespace muxc = mux::Controls;
 namespace muxa = mux::Automation;

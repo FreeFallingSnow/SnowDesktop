@@ -1,7 +1,7 @@
 #pragma once
 
 #include "start_page_actions.h"
-#include "home_about_page_model.h"
+#include "settings/home_about_status.h"
 #include <winrt/Microsoft.UI.Xaml.h>
 #include <memory>
 
@@ -17,7 +17,7 @@ public:
     ~StartPagePresenter();
     void SetActions(StartPageActions actions);
     void ApplySnapshot(const SettingsSnapshot& snapshot);
-    void ApplyStatusPatch(const HomeAboutStatusPatch& patch);
+    void ApplyStatusPatch(const settings::HomeAboutStatusPatch& patch);
     void RefreshLocalizedText();
     void Activate(bool active);
     void SelectRoute(std::string_view id);

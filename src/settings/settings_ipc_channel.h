@@ -1,12 +1,12 @@
 #pragma once
 
-#include "settings_ipc_codec.h"
+#include "settings_ipc_wire.h"
 #include <windows.h>
 #include <exception>
 #include <functional>
 #include <memory>
+#include <string>
 #include <string_view>
-#include <utility>
 
 namespace snowdesktop::settings_ipc
 {
@@ -53,34 +53,6 @@ public:
         DWORD timeoutMs = 30000);
     void NotifyRaw(std::string_view name, Bytes arguments);
 
-    template<class R, class... A, class F> void Bind(std::string name, F function)
-    {
-        BindRaw(std::move(name), [function = std::move(function)](auto bytes) {
-            auto args = Unpack<std::tuple<std::decay_t<A>...>>(bytes);
-            if constexpr (std::is_void_v<R>)
-            {
-                std::apply(function, std::move(args));
-                return Bytes{};
-            }
-            else return Pack(std::apply(function, std::move(args)));
-        });
-    }
-    template<class R, class... A> R Call(std::string_view name, const A&... args)
-    {
-        auto reply = Request(name, Pack(args...));
-        if constexpr (!std::is_void_v<R>) return Unpack<R>(reply);
-        else Reader(reply).Finish();
-    }
-    template<class R, class... A> R CallWithTimeout(DWORD timeout, std::string_view name, const A&... args)
-    {
-        auto reply = Request(name, Pack(args...), timeout);
-        if constexpr (!std::is_void_v<R>) return Unpack<R>(reply);
-        else Reader(reply).Finish();
-    }
-    template<class... A> void Notify(std::string_view name, const A&... args)
-    {
-        NotifyRaw(name, Pack(args...));
-    }
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

@@ -1,4 +1,5 @@
 #include "settings_ipc_channel.h"
+#include "settings_ipc_codec.h"
 #include "platform/pending_window_message.h"
 
 #include <atomic>

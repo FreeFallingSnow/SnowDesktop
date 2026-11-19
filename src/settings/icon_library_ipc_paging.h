@@ -1,6 +1,6 @@
 #pragma once
 
-#include "settings_ipc_channel.h"
+#include "settings_ipc_typed.h"
 #include "settings_ipc_values.h"
 #include <iterator>
 #include <limits>
@@ -70,23 +70,23 @@ private:
 inline void BindIconLibraryPages(Channel& channel, IconLibraryAction action)
 {
     const auto pages = std::make_shared<IconLibraryPages>();
-    channel.Bind<IconLibraryPage, IconLibraryRequest>("iconLibrary.action", [pages, action = std::move(action)](auto request) {
+    TypedChannel{channel}.Bind<IconLibraryPage, IconLibraryRequest>("iconLibrary.action", [pages, action = std::move(action)](auto request) {
         return pages->Begin(action ? action(std::move(request)) : IconLibrarySnapshot{});
     });
-    channel.Bind<IconLibraryPage, std::uint64_t, std::uint32_t>("iconLibrary.page", [pages](auto token, auto offset) {
+    TypedChannel{channel}.Bind<IconLibraryPage, std::uint64_t, std::uint32_t>("iconLibrary.page", [pages](auto token, auto offset) {
         return pages->Read(token, offset);
     });
-    channel.Bind<void, std::uint64_t>("iconLibrary.release", [pages](auto token) { pages->Release(token); });
+    TypedChannel{channel}.Bind<void, std::uint64_t>("iconLibrary.release", [pages](auto token) { pages->Release(token); });
 }
 
 inline IconLibrarySnapshot CallIconLibraryPages(Channel& channel, const IconLibraryRequest& request)
 {
-    auto [token, total, offset, result] = channel.Call<IconLibraryPage>("iconLibrary.action", request);
+    auto [token, total, offset, result] = TypedChannel{channel}.Call<IconLibraryPage>("iconLibrary.action", request);
     struct Release
     {
         Channel& channel;
         std::uint64_t token;
-        ~Release() { try { channel.Notify("iconLibrary.release", token); } catch (...) {} }
+        ~Release() { try { TypedChannel{channel}.Notify("iconLibrary.release", token); } catch (...) {} }
     } release{channel, token};
     const auto records=[](const auto& snapshot){return snapshot.entries.size()+snapshot.groups.size();};
     if (!token || offset || records(result) > total)
@@ -94,7 +94,7 @@ inline IconLibrarySnapshot CallIconLibraryPages(Channel& channel, const IconLibr
     while (records(result) < total)
     {
         const auto next = static_cast<std::uint32_t>(records(result));
-        auto [pageToken, pageTotal, pageOffset, page] = channel.Call<IconLibraryPage>("iconLibrary.page", token, next);
+        auto [pageToken, pageTotal, pageOffset, page] = TypedChannel{channel}.Call<IconLibraryPage>("iconLibrary.page", token, next);
         if (pageToken != token || pageTotal != total || pageOffset != next || page.revision != result.revision ||
             !records(page) || records(page) > total - records(result))
             throw ProtocolError("inconsistent icon library page");

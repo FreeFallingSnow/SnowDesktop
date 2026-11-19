@@ -574,7 +574,7 @@ void DesktopApp::PublishHomeAboutStatus()
     (void)settingsWindow_->PublishHomeAboutStatus(BuildHomeAboutStatus(snapshot->generation));
 }
 
-snowdesktop::winui::HomeAboutStatusPatch DesktopApp::BuildHomeAboutStatus(std::uint64_t generation)
+snowdesktop::settings::HomeAboutStatusPatch DesktopApp::BuildHomeAboutStatus(std::uint64_t generation)
 {
     // Pushes and snapshot-triggered reads share one sequence. Controller
     // revisions cannot order session-only changes such as temporary layouts.
@@ -597,7 +597,7 @@ snowdesktop::winui::HomeAboutStatusPatch DesktopApp::BuildHomeAboutStatus(std::u
     patch.debugDataDirectory = selectedPaths.data.wstring();
     patch.debugDesktopDirectory = configuration.desktop.wstring();
     patch.debugEnvironmentId = configuration.selectedEnvironment;
-    patch.debugEnvironments = std::vector<snowdesktop::winui::DebugEnvironmentSummary>{};
+    patch.debugEnvironments = std::vector<snowdesktop::settings::DebugEnvironmentSummary>{};
     for (const auto& environment : configuration.environments)
     {
         patch.debugEnvironments->push_back({environment.id, environment.name});

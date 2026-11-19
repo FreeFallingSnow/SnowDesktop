@@ -12,7 +12,7 @@
 #include "steam/steam_room_status.h"
 #include "platform/window_support/window_capabilities.h"
 #include "ui/render/app_font_types.h"
-#include "home_about_page_model.h"
+#include "settings/home_about_status.h"
 #include "runtime_modules_query.h"
 #include "page_layout_page_actions.h"
 #include "calendar_page_actions.h"
@@ -38,7 +38,7 @@ struct SettingsWindowHostOptions
         std::vector<std::pair<std::string, std::wstring>>() >;
     using SearchInputProvider =
         std::function<SettingsSearchIndexInput()>;
-    using HomeAboutStatusProvider = std::function<HomeAboutStatusPatch(
+    using HomeAboutStatusProvider = std::function<settings::HomeAboutStatusPatch(
         std::uint64_t generation,
         std::uint64_t revision)>;
 

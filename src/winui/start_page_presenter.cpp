@@ -344,7 +344,7 @@ void StartPagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
     impl_->dockEnabled = snapshot.values.desktop.dockEnabled;
     impl_->generation = snapshot.generation; impl_->hasSnapshot = true; impl_->Render();
 }
-void StartPagePresenter::ApplyStatusPatch(const HomeAboutStatusPatch& patch)
+void StartPagePresenter::ApplyStatusPatch(const settings::HomeAboutStatusPatch& patch)
 {
     if (impl_->closed || !impl_->hasSnapshot || patch.generation != impl_->generation || (impl_->hasStatus && patch.revision <= impl_->revision)) return;
     if (patch.usageGuideExpanded)

@@ -252,7 +252,7 @@ Value Pages(std::string_view method, const Value& params, const Target& target, 
     throw Error("unsupported_action", "Unknown action for this page target");
 }
 
-Value DebugState(const winui::HomeAboutStatusPatch& status)
+Value DebugState(const settings::HomeAboutStatusPatch& status)
 {
     if (!status.debugEnvironments || !status.debugEnvironmentId || !status.debugProfileEnabled)
         throw Error("settings_unavailable", "Debug environment state is unavailable");
@@ -276,7 +276,7 @@ Value Debug(std::string_view method, const Value& params, const Target& target, 
     const auto revision = Revision(state);
     const bool single = target.kind == "debug-environment";
     const auto id = Wide(target.id);
-    const winui::DebugEnvironmentSummary* environment = nullptr;
+    const settings::DebugEnvironmentSummary* environment = nullptr;
     if (single)
     {
         const auto found = std::find_if(status.debugEnvironments->begin(), status.debugEnvironments->end(), [&](const auto& item) { return item.id == id; });

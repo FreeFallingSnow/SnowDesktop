@@ -145,7 +145,7 @@ struct HomeAboutPagePresenter::Impl
     muxc::ComboBox environmentPicker{nullptr};
     muxc::CommandBar environmentCommands{nullptr};
     muxc::AppBarButton createEnvironmentButton{nullptr}, renameEnvironmentButton{nullptr};
-    std::vector<DebugEnvironmentSummary> environments;
+    std::vector<settings::DebugEnvironmentSummary> environments;
     std::vector<std::pair<std::wstring, std::wstring>> renderedEnvironmentLabels;
     std::wstring environmentId;
     winrt::event_token environmentSelectionToken{}, createEnvironmentToken{}, renameEnvironmentToken{};
@@ -990,7 +990,7 @@ struct HomeAboutPagePresenter::Impl
     }
 
     [[nodiscard]] bool ApplyStatusPatch(
-        const HomeAboutStatusPatch& patch)
+        const settings::HomeAboutStatusPatch& patch)
     {
         if (closed || !hasSnapshot || patch.generation != generation ||
             (hasStatusRevision && patch.revision <= statusRevision))
@@ -1140,7 +1140,7 @@ void HomeAboutPagePresenter::ApplySnapshot(
 }
 
 bool HomeAboutPagePresenter::ApplyStatusPatch(
-    const HomeAboutStatusPatch& patch)
+    const settings::HomeAboutStatusPatch& patch)
 {
     return impl_ && impl_->ApplyStatusPatch(patch);
 }

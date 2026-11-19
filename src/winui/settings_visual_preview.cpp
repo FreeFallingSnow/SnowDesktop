@@ -1540,12 +1540,12 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         snapshot.route.focusId = controlsGallery ? std::string{} : focusId;
         appearanceFixture->globalSettings = snapshot.values.desktop.iconBeautify;
         if (!shell->ApplySnapshot(snapshot)) throw std::runtime_error("preview route refused: " + key);
-        HomeAboutStatusPatch status; status.generation = 1; status.revision = revision;
+        settings::HomeAboutStatusPatch status; status.generation = 1; status.revision = revision;
         status.usageGuideExpanded = expanded; status.installedWidgetCount = 3;
-        status.backupState = SettingsBackupState::Ready; status.backupCount = 3;
+        status.backupState = settings::SettingsBackupState::Ready; status.backupCount = 3;
         status.debugDataDirectory = L"C:\\Preview\\SnowDesktop";
         status.debugDesktopDirectory = L"C:\\Preview\\Desktop";
-        status.debugEnvironments = std::vector<DebugEnvironmentSummary>{{L"default", L""}, {L"env-preview", L"Screenshot Demo"}};
+        status.debugEnvironments = std::vector<settings::DebugEnvironmentSummary>{{L"default", L""}, {L"env-preview", L"Screenshot Demo"}};
         status.debugEnvironmentId = L"env-preview";
         status.debugEnvironmentName = L"Screenshot Demo";
         (void)shell->ApplyHomeAboutStatusPatch(status);

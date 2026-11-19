@@ -43,8 +43,6 @@ namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
 namespace muxi = winrt::Microsoft::UI::Xaml::Input;
 using presenter_controls::ColorFlyoutEditor;
-using presenter_controls::CoalescedPreviewTimer;
-using presenter_controls::QuantizeNumericValue;
 using presenter_controls::SettingRow;
 
 namespace
@@ -98,20 +96,7 @@ struct ContinuousControl
     ContinuousField field = ContinuousField::ThicknessScale;
     SystemTaskbarDynamicRule DockSettings::* ruleMember = nullptr;
     double defaultValue = std::numeric_limits<double>::quiet_NaN();
-    bool dirty = false;
-    CoalescedPreviewTimer<double> preview;
-    mux::DispatcherTimer idleCommitTimer{nullptr};
-
-    winrt::event_token sliderChanged{};
-    winrt::event_token numberChanged{};
-    winrt::event_token sliderReleased{};
-    winrt::event_token numberReleased{};
-    winrt::event_token sliderLostFocus{};
-    winrt::event_token numberLostFocus{};
-    winrt::event_token sliderKeyDown{};
-    winrt::event_token numberKeyDown{};
-    winrt::event_token resetToken{};
-    winrt::event_token idleCommitToken{};
+    presenter_controls::ContinuousNumberBinding binding;
 };
 
 enum class ColorField
@@ -209,11 +194,6 @@ void InitializeCard(
         presenter_controls::InitializeSettingsGroup(card.root, card.title, card.content, style);
     }
     page.Children().Append(card.root);
-}
-
-bool IsEnter(const muxi::KeyRoutedEventArgs& args) noexcept
-{
-    return args.Key() == winrt::Windows::System::VirtualKey::Enter;
 }
 
 std::uint8_t ToByte(float value) noexcept
@@ -1707,74 +1687,16 @@ struct DockPagePresenter::Impl
 
     void HookContinuousControl(ContinuousControl& control)
     {
-        control.idleCommitTimer = mux::DispatcherTimer{};
-        control.idleCommitTimer.Interval(std::chrono::milliseconds(650));
-        control.idleCommitToken = control.idleCommitTimer.Tick(
-            [this, &control](const auto&, const auto&) {
-                control.idleCommitTimer.Stop();
-                Commit(control);
+        control.binding.Bind(control.slider, control.number, control.reset,
+            control.defaultValue, synchronizingPair,
+            {
+                [this] { return !updatingControls && !closed; },
+                [this] { return CanEmitDock(); },
+                [this, &control](SettingsUpdateMode mode, double value) {
+                    EmitDock(mode, [field = control.field, member = control.ruleMember, value](
+                        DockSettings& settings) { WriteContinuous(settings, field, member, value); });
+                }
             });
-        control.preview.Initialize([this, &control](const double& value) {
-            PublishPreview(control, value);
-        });
-        control.sliderChanged = control.slider.ValueChanged(
-            [this, &control](const auto&, const auto&) {
-                if (updatingControls || synchronizingPair || closed)
-                    return;
-                const double value = control.slider.Value();
-                synchronizingPair = true;
-                presenter_controls::SetNumberBoxValue(control.number, value);
-                synchronizingPair = false;
-                Preview(control, value);
-            });
-        control.numberChanged = control.number.ValueChanged(
-            [this, &control](const auto&, const auto&) {
-                if (updatingControls || synchronizingPair || closed)
-                    return;
-                double value = control.number.Value();
-                if (std::isnan(value))
-                    value = control.slider.Value();
-                value = std::clamp(
-                    value, control.slider.Minimum(), control.slider.Maximum());
-                synchronizingPair = true;
-                control.slider.Value(value);
-                synchronizingPair = false;
-                Preview(control, value);
-            });
-        control.sliderReleased = control.slider.PointerReleased(
-            [this, &control](const auto&, const auto&) { Commit(control); });
-        control.numberReleased = control.number.PointerReleased(
-            [this, &control](const auto&, const auto&) { Commit(control); });
-        control.sliderLostFocus = control.slider.LostFocus(
-            [this, &control](const auto&, const auto&) { Commit(control); });
-        control.numberLostFocus = control.number.LostFocus(
-            [this, &control](const auto&, const auto&) { Commit(control); });
-        control.sliderKeyDown = control.slider.KeyDown(
-            [this, &control](const auto&, const muxi::KeyRoutedEventArgs& args) {
-                if (IsEnter(args)) Commit(control);
-            });
-        control.numberKeyDown = control.number.KeyDown(
-            [this, &control](const auto&, const muxi::KeyRoutedEventArgs& args) {
-                if (IsEnter(args)) Commit(control);
-            });
-        if (control.reset)
-        {
-            control.resetToken = control.reset.Click(
-                [this, &control](const auto&, const auto&) {
-                    if (!std::isfinite(control.defaultValue)) return;
-                    control.idleCommitTimer.Stop();
-                    control.preview.Cancel();
-                    control.dirty = false;
-                    const auto field = control.field;
-                    const auto member = control.ruleMember;
-                    const double value = control.defaultValue;
-                    EmitDock(SettingsUpdateMode::PreviewAndCommit,
-                        [field, member, value](DockSettings& settings) {
-                            WriteContinuous(
-                                settings, field, member, value);
-                        });
-                });
-        }
     }
 
     void HookDynamicRule(DynamicRuleControl& control)
@@ -1958,45 +1880,6 @@ struct DockPagePresenter::Impl
         }
     }
 
-    void Preview(ContinuousControl& control, double value)
-    {
-        if (!CanEmitDock())
-            return;
-        control.dirty = true;
-        control.idleCommitTimer.Stop();
-        control.idleCommitTimer.Start();
-        control.preview.Queue(value);
-    }
-
-    void PublishPreview(ContinuousControl& control, double value)
-    {
-        if (!control.dirty || !CanEmitDock())
-            return;
-        const ContinuousField field = control.field;
-        const auto member = control.ruleMember;
-        EmitDock(SettingsUpdateMode::Preview,
-            [field, member, value](DockSettings& settings) {
-                WriteContinuous(settings, field, member, value);
-            });
-    }
-
-    void Commit(ContinuousControl& control)
-    {
-        if (control.idleCommitTimer)
-            control.idleCommitTimer.Stop();
-        control.preview.Cancel();
-        if (!control.dirty || !CanEmitDock())
-            return;
-        control.dirty = false;
-        const ContinuousField field = control.field;
-        const auto member = control.ruleMember;
-        const double value = control.slider.Value();
-        EmitDock(SettingsUpdateMode::PreviewAndCommit,
-            [field, member, value](DockSettings& settings) {
-                WriteContinuous(settings, field, member, value);
-            });
-    }
-
     static void WriteColor(
         DockSettings& settings,
         ColorField field,
@@ -2092,12 +1975,7 @@ struct DockPagePresenter::Impl
         ContinuousControl& control,
         const DockSettings& settings)
     {
-        const double value = QuantizeNumericValue(
-            ReadContinuous(control, settings),
-            control.slider.Minimum(), control.slider.Maximum(),
-            control.slider.StepFrequency());
-        control.slider.Value(value);
-        presenter_controls::SyncNumberBoxValue(control.number, value);
+        control.binding.PatchValue(ReadContinuous(control, settings));
     }
 
     void PatchColor(
@@ -3342,11 +3220,7 @@ struct DockPagePresenter::Impl
         if (newGeneration)
         {
             for (ContinuousControl* control : AllContinuousControls())
-            {
-                if (control->idleCommitTimer)
-                    control->idleCommitTimer.Stop();
-                control->dirty = false;
-            }
+                control->binding.Cancel();
         }
         hasSnapshot = true;
         taskbarThemes->SyncSelection(MainTaskbarThemeMode(dock), snapshot.values);
@@ -3546,12 +3420,12 @@ struct DockPagePresenter::Impl
             taskbarGradient.editor->Flush();
             for (auto* rule : dynamicRules) rule->gradient.editor->Flush();
             for (ContinuousControl* control : continuousControls)
-                Commit(*control);
+                control->binding.Commit();
             for (DynamicRuleControl* rule : dynamicRules)
             {
-                Commit(rule->backgroundAlpha);
-                Commit(rule->borderAlpha);
-                Commit(rule->blurRadius);
+                rule->backgroundAlpha.binding.Commit();
+                rule->borderAlpha.binding.Commit();
+                rule->blurRadius.binding.Commit();
             }
         }
         catch (...)
@@ -3567,32 +3441,6 @@ struct DockPagePresenter::Impl
         {
             rule->backgroundColor.editor.Dismiss();
             rule->borderColor.editor.Dismiss();
-        }
-    }
-
-    void UnhookContinuousControl(ContinuousControl& control) noexcept
-    {
-        try
-        {
-            if (control.idleCommitTimer)
-            {
-                control.idleCommitTimer.Stop();
-                control.idleCommitTimer.Tick(control.idleCommitToken);
-            }
-            control.preview.Close();
-            control.slider.ValueChanged(control.sliderChanged);
-            control.number.ValueChanged(control.numberChanged);
-            control.slider.PointerReleased(control.sliderReleased);
-            control.number.PointerReleased(control.numberReleased);
-            control.slider.LostFocus(control.sliderLostFocus);
-            control.number.LostFocus(control.numberLostFocus);
-            control.slider.KeyDown(control.sliderKeyDown);
-            control.number.KeyDown(control.numberKeyDown);
-            if (control.reset)
-                control.reset.Click(control.resetToken);
-        }
-        catch (...)
-        {
         }
     }
 
@@ -3685,14 +3533,14 @@ struct DockPagePresenter::Impl
         {
         }
         for (ContinuousControl* control : continuousControls)
-            UnhookContinuousControl(*control);
+            control->binding.Close();
         for (ColorControl* control : colorControls)
             UnhookColorControl(*control);
         for (DynamicRuleControl* control : dynamicRules)
         {
-            UnhookContinuousControl(control->backgroundAlpha);
-            UnhookContinuousControl(control->borderAlpha);
-            UnhookContinuousControl(control->blurRadius);
+            control->backgroundAlpha.binding.Close();
+            control->borderAlpha.binding.Close();
+            control->blurRadius.binding.Close();
             UnhookColorControl(control->backgroundColor);
             UnhookColorControl(control->borderColor);
             UnhookDynamicRule(*control);

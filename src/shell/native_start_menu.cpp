@@ -3,6 +3,7 @@
 #include "start_menu_session.h"
 #include "start_menu_launcher.h"
 #include "settings/settings_process.h"
+#include "settings/settings_ipc_typed.h"
 #include "dock/dock_settings.h"
 #include "diagnostics/diagnostic_log.h"
 #include "platform/runtime_module_policy.h"
@@ -53,7 +54,7 @@ struct LauncherClient
     {
         if (healthy && process.Running())
         {
-            try { channel.Notify("start.exit"); } catch (...) {}
+            try { settings_ipc::TypedChannel{channel}.Notify("start.exit"); } catch (...) {}
             const auto deadline = GetTickCount64() + 250;
             while (process.Running() && GetTickCount64() < deadline) Sleep(5);
         }
@@ -73,7 +74,7 @@ struct LauncherClient
     {
         try
         {
-            const auto state = channel.CallWithTimeout<std::pair<LONG, bool>>(timeout, "start.state");
+            const auto state = settings_ipc::TypedChannel{channel}.CallWithTimeout<std::pair<LONG, bool>>(timeout, "start.state");
             visible = state.second;
             return state.first;
         }
@@ -81,12 +82,12 @@ struct LauncherClient
     }
     HRESULT Dismiss()
     {
-        try { return channel.CallWithTimeout<LONG>(500, "start.dismiss"); }
+        try { return settings_ipc::TypedChannel{channel}.CallWithTimeout<LONG>(500, "start.dismiss"); }
         catch (...) { healthy = false; return HRESULT_FROM_WIN32(ERROR_TIMEOUT); }
     }
     HRESULT Show()
     {
-        try { return channel.CallWithTimeout<LONG>(500, "start.show"); }
+        try { return settings_ipc::TypedChannel{channel}.CallWithTimeout<LONG>(500, "start.show"); }
         catch (...) { healthy = false; return HRESULT_FROM_WIN32(ERROR_TIMEOUT); }
     }
 };
@@ -115,17 +116,17 @@ std::optional<int> start_menu::TryRunLauncherHelper()
             }
             return ready;
         };
-        channel.Bind<std::pair<LONG, bool>>("start.state", [&] {
+        settings_ipc::TypedChannel{channel}.Bind<std::pair<LONG, bool>>("start.state", [&] {
             bool visible = false;
             HRESULT result = initialize();
             if (SUCCEEDED(result)) result = launcher.Visible(visible);
             return std::pair<LONG, bool>{result, visible};
         });
-        channel.Bind<LONG>("start.dismiss", [&] {
+        settings_ipc::TypedChannel{channel}.Bind<LONG>("start.dismiss", [&] {
             const HRESULT result = initialize();
             return FAILED(result) ? result : launcher.Dismiss();
         });
-        channel.Bind<LONG>("start.show", [&] {
+        settings_ipc::TypedChannel{channel}.Bind<LONG>("start.show", [&] {
             const HRESULT result = initialize();
             if (FAILED(result)) return result;
             DWORD shellProcess = 0;
@@ -133,7 +134,7 @@ std::optional<int> start_menu::TryRunLauncherHelper()
             if (shellProcess) AllowSetForegroundWindow(shellProcess);
             return launcher.Show();
         });
-        channel.Bind<void>("start.exit", [] { PostQuitMessage(0); });
+        settings_ipc::TypedChannel{channel}.Bind<void>("start.exit", [] { PostQuitMessage(0); });
         channel.SetDisconnected([] { PostQuitMessage(0); });
         MSG message{};
         while (GetTickCount64() - touched < 30000)

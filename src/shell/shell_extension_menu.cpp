@@ -11,6 +11,7 @@
 #include "ui/menu/menu_label.h"
 #include "ui/menu/native_menu_theme.h"
 #include "settings/settings_process.h"
+#include "settings/settings_ipc_typed.h"
 #include "shell_context_menu_invoke.h"
 #include "shell_context_menu_site.h"
 #include "shell_native_menu_projection.h"
@@ -1905,17 +1906,17 @@ bool Session::PrepareFirstMenuWorker(DWORD timeoutMs)
     worker->generation = MenuCacheGeneration();
     worker->started = GetTickCount64();
     worker->timeout = std::clamp<DWORD>(timeoutMs, 100, 8000);
-    worker->channel.Bind<void, std::string>("menu.progress", [p = worker.get()](std::string stage) {
+    settings_ipc::TypedChannel{worker->channel}.Bind<void, std::string>("menu.progress", [p = worker.get()](std::string stage) {
         p->stage = std::move(stage);
     });
-    worker->channel.Bind<void, bool>("menu.prepared", [p = worker.get()](bool ready) {
+    settings_ipc::TypedChannel{worker->channel}.Bind<void, bool>("menu.prepared", [p = worker.get()](bool ready) {
         p->preparationReady = ready; p->preparationFailed = !ready;
         MenuTrace("preparation", ready ? "ready" : "failed", double(GetTickCount64() - p->started));
     });
     try
     {
         worker->process->Start(worker->channel, L"--shell-menu-helper");
-        worker->channel.Notify("menu.prepare");
+        settings_ipc::TypedChannel{worker->channel}.Notify("menu.prepare");
         Impl::idle.push_back(std::move(worker));
         MenuTrace("preparation", "started");
         return true;
@@ -2001,22 +2002,22 @@ Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedW
         impl_->selectionContexts = 0;
         impl_->stage = "start helper";
         impl_->timeout = std::clamp<DWORD>(queryTimeoutMs, 100, 8000);
-        impl_->channel.Bind<void, std::string>("menu.progress", [p = impl_.get()](std::string stage) {
+        settings_ipc::TypedChannel{impl_->channel}.Bind<void, std::string>("menu.progress", [p = impl_.get()](std::string stage) {
             p->stage = std::move(stage);
         });
-        impl_->channel.Bind<void, unsigned>("menu.selection_contexts", [p = impl_.get()](unsigned contexts) {
+        settings_ipc::TypedChannel{impl_->channel}.Bind<void, unsigned>("menu.selection_contexts", [p = impl_.get()](unsigned contexts) {
             p->selectionContexts = contexts;
         });
-        impl_->channel.Bind<void, Reply>("menu.reply", [p = impl_.get()](Reply result) {
+        settings_ipc::TypedChannel{impl_->channel}.Bind<void, Reply>("menu.reply", [p = impl_.get()](Reply result) {
             if (!result.ok && result.error.empty()) result.error = "query failed at " + p->stage;
             p->reply = std::move(result);
         });
-        impl_->channel.Bind<void, Reply>("menu.roots", [p = impl_.get()](Reply result) { p->roots = std::move(result); });
-        impl_->channel.Bind<void>("menu.released", [p = impl_.get()] { p->RemoveRetiredSamples(); });
+        settings_ipc::TypedChannel{impl_->channel}.Bind<void, Reply>("menu.roots", [p = impl_.get()](Reply result) { p->roots = std::move(result); });
+        settings_ipc::TypedChannel{impl_->channel}.Bind<void>("menu.released", [p = impl_.get()] { p->RemoveRetiredSamples(); });
         auto query = ShellMenuRequest(request);
         PrepareSample(query, impl_->sampleDirectory);
         if (!impl_->process->Running()) impl_->process->Start(impl_->channel, L"--shell-menu-helper");
-        impl_->channel.Notify("menu.query", query);
+        settings_ipc::TypedChannel{impl_->channel}.Notify("menu.query", query);
         timing.Record(reused ? "reused" : "cold");
     }
     catch (...)
@@ -2050,7 +2051,7 @@ Session::~Session()
             {
                 // Start's dedicated system handler has the existing explicit
                 // release protocol. Ordinary vendor callbacks retain targets.
-                impl_->channel.Notify("menu.release");
+                settings_ipc::TypedChannel{impl_->channel}.Notify("menu.release");
                 impl_->born = GetTickCount64();
             }
             const auto pooled = std::count_if(Impl::idle.begin(), Impl::idle.end(), [=](const auto &worker) {
@@ -2112,7 +2113,7 @@ void Session::Invoke(UINT token, POINT position, HWND owner)
     {
         // This STA is the service worker, never the desktop UI thread. Observe
         // completion of these bounded state changes before retiring the cache.
-        const auto result = impl_->channel.CallWithTimeout<HRESULT>(12000, "menu.invoke-stateful",
+        const auto result = settings_ipc::TypedChannel{impl_->channel}.CallWithTimeout<HRESULT>(12000, "menu.invoke-stateful",
             token, position.x, position.y, invocationOwner.window, invocationOwner.process, invocationOwner.thread);
         timing.Record("completed");
         if (FAILED(result)) throw settings_ipc::ProtocolError("Shell state command failed: " +
@@ -2122,7 +2123,7 @@ void Session::Invoke(UINT token, POINT position, HWND owner)
     // code is dispatched afterwards, so this does not wait for a dialog.
     else
     {
-        impl_->channel.CallWithTimeout<void>(1000, "menu.invoke", token, position.x, position.y,
+        settings_ipc::TypedChannel{impl_->channel}.CallWithTimeout<void>(1000, "menu.invoke", token, position.x, position.y,
             invocationOwner.window, invocationOwner.process, invocationOwner.thread);
         timing.Record("acknowledged");
     }
@@ -2174,12 +2175,12 @@ bool NativeMenuSession::PrepareWorker(const Request& request)
         auto worker = std::make_unique<Impl>();
         worker->registryRevision = revision;
         worker->preparationOnly = true;
-        worker->channel.Bind<void, bool>("menu.native-prepared", [p = worker.get()](bool ready) {
+        settings_ipc::TypedChannel{worker->channel}.Bind<void, bool>("menu.native-prepared", [p = worker.get()](bool ready) {
             p->preparationReady = ready; p->preparationFailed = !ready;
             MenuTrace("native_preparation", ready ? "ready" : "failed", double(GetTickCount64() - p->started));
         });
         worker->process->Start(worker->channel, L"--shell-menu-helper");
-        worker->channel.Notify("menu.native-prepare", ShellMenuRequest(request));
+        settings_ipc::TypedChannel{worker->channel}.Notify("menu.native-prepare", ShellMenuRequest(request));
         Impl::idle = std::move(worker);
     }
     catch (...) { /* Optional preparation cannot prevent the custom menu. */ }
@@ -2223,11 +2224,11 @@ NativeMenuSession::NativeMenuSession(const Request& request, POINT point, HWND o
     impl_->result.reset();
     impl_->preparationOnly = false;
     impl_->timeout = std::clamp<DWORD>(timeoutMs, 100, 8000);
-    impl_->channel.Bind<void>("menu.native-showing", [p = impl_.get()] {
+    settings_ipc::TypedChannel{impl_->channel}.Bind<void>("menu.native-showing", [p = impl_.get()] {
         p->showing = true;
         MenuTrace("native_session.showing", "ready", double(GetTickCount64() - p->started));
     });
-    impl_->channel.Bind<void, NativeMenuResult>("menu.native-result", [p = impl_.get()](NativeMenuResult result) {
+    settings_ipc::TypedChannel{impl_->channel}.Bind<void, NativeMenuResult>("menu.native-result", [p = impl_.get()](NativeMenuResult result) {
         p->reusable = result.ok && !result.invoked && (result.verb.empty() || result.verb.starts_with("prepared:"));
         p->invoked = result.invoked; p->result = std::move(result);
     });
@@ -2235,7 +2236,7 @@ NativeMenuSession::NativeMenuSession(const Request& request, POINT point, HWND o
     if (!reused) impl_->process->Start(impl_->channel, L"--shell-menu-helper");
     AllowSetForegroundWindow(impl_->process->ProcessId());
     const auto origin = ShellInvocationOwner::Capture(owner);
-    impl_->channel.Notify("menu.native", ShellMenuRequest(request), selection, point.x, point.y, origin.window, origin.process, origin.thread,
+    settings_ipc::TypedChannel{impl_->channel}.Notify("menu.native", ShellMenuRequest(request), selection, point.x, point.y, origin.window, origin.process, origin.thread,
         reinterpret_cast<std::uint64_t>(GetForegroundWindow()));
     launch.Record(reused ? "reused" : "scheduled");
 }
@@ -2279,8 +2280,8 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
         settings_ipc::Channel channel;
         settings_ipc::OpenInheritedSettingsChannel(channel, L"--shell-menu-helper");
         Host host(std::move(startPin));
-        host.progress = [&](const auto &stage) { MenuTrace("helper.stage", stage); channel.Notify("menu.progress", stage); };
-        host.rootPreview = [&](Reply roots) { channel.Notify("menu.roots", std::move(roots)); };
+        host.progress = [&](const auto &stage) { MenuTrace("helper.stage", stage); settings_ipc::TypedChannel{channel}.Notify("menu.progress", stage); };
+        host.rootPreview = [&](Reply roots) { settings_ipc::TypedChannel{channel}.Notify("menu.roots", std::move(roots)); };
         bool preparationReceived = false;
         bool actualQueryReceived = false;
         bool invocationQueued = false;
@@ -2290,7 +2291,7 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
             if (!invocationQueued)
                 PostQuitMessage(0);
         });
-        channel.Bind<void, Request>("menu.native-prepare", [&](Request request) {
+        settings_ipc::TypedChannel{channel}.Bind<void, Request>("menu.native-prepare", [&](Request request) {
             if (actualQueryReceived || invocationQueued || preparationReceived) return;
             preparationReceived = true;
             channel.Post([&, request = std::move(request)] {
@@ -2298,10 +2299,10 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
                 try { host.NativePackages(); host.providers.Load(request); ready = true; }
                 catch (...) { /* The real request uses its supervised cold path. */ }
                 lastQuery = GetTickCount64();
-                channel.Notify("menu.native-prepared", ready);
+                settings_ipc::TypedChannel{channel}.Notify("menu.native-prepared", ready);
             });
         });
-        channel.Bind<void, Request, NativeMenuSelection, LONG, LONG, std::uint64_t, DWORD, DWORD, std::uint64_t>("menu.native",
+        settings_ipc::TypedChannel{channel}.Bind<void, Request, NativeMenuSelection, LONG, LONG, std::uint64_t, DWORD, DWORD, std::uint64_t>("menu.native",
             [&](Request request, NativeMenuSelection selection, LONG x, LONG y, std::uint64_t owner, DWORD ownerProcess, DWORD ownerThread, std::uint64_t foreground) {
             if (actualQueryReceived || invocationQueued) return;
             actualQueryReceived = invocationQueued = true;
@@ -2318,7 +2319,7 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
                     SetWindowLongPtrW(host.window, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(sourceOwner));
                     if (GetWindow(host.window, GW_OWNER) != sourceOwner)
                     {
-                        channel.Notify("menu.native-result", NativeMenuResult{false, false, {}, "cannot attach native menu owner"});
+                        settings_ipc::TypedChannel{channel}.Notify("menu.native-result", NativeMenuResult{false, false, {}, "cannot attach native menu owner"});
                         invokedAt = GetTickCount64();
                         return;
                     }
@@ -2348,7 +2349,7 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
                             result = {true, false, {}, {}};
                         else
                         {
-                            channel.Notify("menu.native-showing");
+                            settings_ipc::TypedChannel{channel}.Notify("menu.native-showing");
                             result = host.ShowNative({x, y}, token);
                         }
                     }
@@ -2371,18 +2372,18 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
                     lastQuery = GetTickCount64();
                 }
                 else invokedAt = GetTickCount64();
-                channel.Notify("menu.native-result", result);
+                settings_ipc::TypedChannel{channel}.Notify("menu.native-result", result);
                 if (token) host.Invoke(token, {x, y}, {owner, ownerProcess, ownerThread});
             });
         });
-        channel.Bind<void>("menu.prepare", [&] {
+        settings_ipc::TypedChannel{channel}.Bind<void>("menu.prepare", [&] {
             if (actualQueryReceived || invocationQueued || preparationReceived) return;
             preparationReceived = true;
             // Prepare only the supervised STA, channel and owner HWND. No
             // temporary TXT or target menu is queried before a real request.
-            channel.Notify("menu.prepared", true);
+            settings_ipc::TypedChannel{channel}.Notify("menu.prepared", true);
         });
-        channel.Bind<void, Request>("menu.query", [&](Request request) {
+        settings_ipc::TypedChannel{channel}.Bind<void, Request>("menu.query", [&](Request request) {
             if (invocationQueued) return;
             actualQueryReceived = true;
             lastQuery = GetTickCount64();
@@ -2400,16 +2401,16 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
                 }
                 // This separate notification leaves persisted Reply data intact.
                 // Network/reconnect waits stay within the helper's query deadline.
-                channel.Notify("menu.selection_contexts", contexts);
+                settings_ipc::TypedChannel{channel}.Notify("menu.selection_contexts", contexts);
             }
-            channel.Notify("menu.reply", std::move(reply));
+            settings_ipc::TypedChannel{channel}.Notify("menu.reply", std::move(reply));
         });
-        channel.Bind<void>("menu.release", [&] {
+        settings_ipc::TypedChannel{channel}.Bind<void>("menu.release", [&] {
             if (invocationQueued) return;
             host.ReleaseMenu();
-            channel.Notify("menu.released");
+            settings_ipc::TypedChannel{channel}.Notify("menu.released");
         });
-        channel.Bind<void, UINT, LONG, LONG, std::uint64_t, DWORD, DWORD>("menu.invoke",
+        settings_ipc::TypedChannel{channel}.Bind<void, UINT, LONG, LONG, std::uint64_t, DWORD, DWORD>("menu.invoke",
             [&](UINT token, LONG x, LONG y, std::uint64_t ownerWindow, DWORD ownerProcess, DWORD ownerThread) {
             if (invocationQueued)
                 return;
@@ -2421,7 +2422,7 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
                 invokedAt = GetTickCount64();
             });
         });
-        channel.Bind<HRESULT, UINT, LONG, LONG, std::uint64_t, DWORD, DWORD>("menu.invoke-stateful",
+        settings_ipc::TypedChannel{channel}.Bind<HRESULT, UINT, LONG, LONG, std::uint64_t, DWORD, DWORD>("menu.invoke-stateful",
             [&](UINT token, LONG x, LONG y, std::uint64_t ownerWindow, DWORD ownerProcess, DWORD ownerThread) {
             if (invocationQueued || (!invoke && !host.Stateful(token))) return E_INVALIDARG;
             invocationQueued = true;

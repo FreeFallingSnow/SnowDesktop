@@ -1,6 +1,7 @@
 #pragma once
 
 #include "home_about_page_actions.h"
+#include "settings/home_about_status.h"
 #include "settings/settings_route.h"
 #include "home_about_page_model.h"
 
@@ -51,7 +52,7 @@ public:
     void ApplySnapshot(const SettingsSnapshot& snapshot);
     /** Returns false for a stale generation or non-newer status patch. */
     [[nodiscard]] bool ApplyStatusPatch(
-        const HomeAboutStatusPatch& patch);
+        const settings::HomeAboutStatusPatch& patch);
     void RefreshLocalizedText();
 
     void Activate(SettingsPage page) noexcept;

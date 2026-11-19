@@ -2035,7 +2035,7 @@ mux::FrameworkElement GeneralPagePresenter::FocusTarget(std::string_view focusId
     return impl_->quickOptions ? impl_->quickOptions->FocusTarget(focusId, reveal) : nullptr;
 }
 
-void GeneralPagePresenter::ApplyOnboardingStatus(const HomeAboutStatusPatch& patch)
+void GeneralPagePresenter::ApplyOnboardingStatus(const settings::HomeAboutStatusPatch& patch)
 {
     if (impl_ && !impl_->closed) impl_->onboarding->ApplyStatusPatch(patch);
 }

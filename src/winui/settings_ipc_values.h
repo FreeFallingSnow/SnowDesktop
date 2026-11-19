@@ -1,7 +1,7 @@
 #pragma once
 
 #include "settings/settings_ipc_values.h"
-#include "home_about_ipc_values.h"
+#include "settings/home_about_ipc_values.h"
 #include "general_advanced_feature_ipc_values.h"
 #include "window_support_ipc_values.h"
 #include "settings_window_host_options.h"

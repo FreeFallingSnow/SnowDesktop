@@ -2,34 +2,27 @@
 
 // Private, same-executable protocol. Only explicitly described value types
 // cross the process boundary; pointers, handles and object padding never do.
+#include "settings_ipc_wire.h"
+
 #include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <filesystem>
 #include <map>
 #include <memory>
 #include <optional>
 #include <span>
-#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace snowdesktop::settings_ipc
 {
-inline constexpr std::size_t MaximumFrameBytes = 16 * 1024 * 1024;
 inline constexpr std::size_t MaximumElements = 65536;
-using Bytes = std::vector<std::byte>;
-
-class ProtocolError : public std::runtime_error
-{
-public:
-    using std::runtime_error::runtime_error;
-};
 
 template<class T> struct Fields;
 template<class T> struct IsVector : std::false_type {};
@@ -57,13 +50,7 @@ public:
     Bytes Take() { return std::move(bytes_); }
 
 private:
-    void Append(const void* data, std::size_t size)
-    {
-        if (size > MaximumFrameBytes - bytes_.size())
-            throw ProtocolError("settings IPC frame exceeds limit");
-        const auto first = static_cast<const std::byte*>(data);
-        bytes_.insert(bytes_.end(), first, first + size);
-    }
+    void Append(const void* data, std::size_t size);
     template<class T> void Write(const T& value)
     {
         if (++depth_ > 64) throw ProtocolError("settings IPC nesting limit");
@@ -115,29 +102,13 @@ private:
 class Reader
 {
 public:
-    explicit Reader(std::span<const std::byte> bytes) : bytes_(bytes)
-    {
-        if (bytes.size() > MaximumFrameBytes) throw ProtocolError("oversized frame");
-    }
+    explicit Reader(std::span<const std::byte> bytes);
     template<class... T> void operator()(T&... value) { (Read(value), ...); }
-    void Finish() const
-    {
-        if (position_ != bytes_.size()) throw ProtocolError("trailing IPC data");
-    }
+    void Finish() const;
 
 private:
-    void Extract(void* target, std::size_t size)
-    {
-        if (size > bytes_.size() - position_) throw ProtocolError("truncated IPC data");
-        if (size) std::memcpy(target, bytes_.data() + position_, size);
-        position_ += size;
-    }
-    void Allocate(std::size_t size)
-    {
-        if (size > MaximumFrameBytes * 4 - allocation_)
-            throw ProtocolError("settings IPC allocation limit");
-        allocation_ += size;
-    }
+    void Extract(void* target, std::size_t size);
+    void Allocate(std::size_t size);
     template<class T> void Read(T& value)
     {
         if (++depth_ > 64) throw ProtocolError("settings IPC nesting limit");
