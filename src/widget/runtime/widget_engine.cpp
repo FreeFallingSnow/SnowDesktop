@@ -19,6 +19,7 @@
 #include "widget_engine.h"
 #include "widget_multiplayer.h"
 #include "widget_script_read_ahead.h"
+#include "widget/tasks/widget_filesystem_task_dispatch.h"
 #include "widget/tasks/widget_filesystem_task_executor.h"
 #include "widget/tasks/widget_task_start_lua.h"
 #include "widget/tasks/widget_audio_task_dispatch.h"
@@ -9229,92 +9230,20 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         }
     }
     if (filesystemTaskExecutor_)
-    {
-        for (auto& completion :
-            filesystemTaskExecutor_->DrainCompletions())
-        {
-            const std::uint64_t id = completion.id;
-            bool ok = completion.ok;
-            std::string error = completion.error;
-            const auto snapshot = taskBroker_->Snapshot(id);
-            if (ok && (!snapshot || snapshot->cancelRequested))
-            {
-                ok = false;
-                error = "canceled";
-            }
-            auto owner = snapshot
-                ? std::find_if(widgets_.begin(), widgets_.end(),
-                    [&snapshot](const LuaWidget& candidate) {
-                        return candidate.runtimeToken ==
-                            snapshot->ownerToken;
-                    })
-                : widgets_.end();
-            if (ok && (owner == widgets_.end() ||
-                    !filesystemHandleStore_))
-            {
-                ok = false;
-                error = "instanceDisposed";
-            }
-            std::optional<snowdesktop::widget_runtime::
-                WidgetFilesystemHandleEntry> sourceEntry;
-            std::string sourceHandleValue;
-            if (ok)
-            {
-                sourceHandleValue = completion.metadata.handle;
-                sourceEntry = filesystemHandleStore_->Resolve(
-                    { snapshot->instanceId, owner->packageId },
-                    sourceHandleValue);
-                if (!sourceEntry)
-                {
-                    ok = false;
-                    error = "invalidReference";
-                }
-            }
-            if (ok && completion.action == "filesystem.image" &&
-                !snowdesktop::widget::WidgetPermissionBroker::AllowsPermission(
-                    owner->permissions, kFilesystemReadPermission))
-            {
-                ok = false;
-                error = "permissionRevoked";
-            }
-            if (ok && completion.action == "filesystem.list" && completion.grantHandles)
-            {
-                std::vector<std::string> createdHandles;
-                for (auto& item : completion.items)
-                {
-                    auto grant = filesystemHandleStore_->Grant(
-                        { snapshot->instanceId, owner->packageId },
-                        item.path, item.kind, sourceEntry->access);
-                    if (!grant)
-                    {
-                        for (const auto& handle : createdHandles)
-                        {
-                            std::string revokeError;
-                            (void)filesystemHandleStore_->Revoke(
-                                { snapshot->instanceId, owner->packageId },
-                                handle, revokeError);
-                        }
-                        ok = false;
-                        error = grant.error.empty()
-                            ? "handleGrantFailed" : grant.error;
-                        break;
-                    }
-                    item.handle = grant.entry->handle;
-                    if (grant.created)
-                        createdHandles.push_back(item.handle);
-                }
-            }
-            completion.ok = ok;
-            completion.error = error;
-            if (ok)
-                filesystemTaskCompletions_.insert_or_assign(
-                    id, std::move(completion));
-            else
-                filesystemTaskCompletions_.erase(id);
-            filesystemTaskHandles_.erase(id);
-            (void)taskBroker_->Complete(id, ok, std::move(error));
-        }
-    }
+        filesystemTaskDispatch_.Consume(filesystemTaskExecutor_->DrainCompletions(),
+            *taskBroker_, filesystemHandleStore_.get(),
+            [this](std::uint64_t ownerToken)
+                -> std::optional<snowdesktop::widget_runtime::FilesystemCompletionOwner> {
+                const auto owner = std::find_if(widgets_.begin(), widgets_.end(),
+                    [ownerToken](const LuaWidget& widget) {
+                        return widget.runtimeToken == ownerToken;
+                    });
+                if (owner == widgets_.end()) return std::nullopt;
+                return snowdesktop::widget_runtime::FilesystemCompletionOwner{
+                    owner->packageId,
+                    snowdesktop::widget::WidgetPermissionBroker::AllowsPermission(
+                        owner->permissions, kFilesystemReadPermission)};
+            });
     if (appTaskExecutor_)
     {
         for (auto& completion : appTaskExecutor_->DrainCompletions())
@@ -10974,17 +10903,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
 
             if (action.preview)
             {
-                snowdesktop::widget_runtime::WidgetFilesystemHandleEntry
-                    entry;
-                entry.handle = "filesystem:00000000000000000000000000000000";
-                entry.owner = { action.instanceId, owner->packageId };
-                entry.path = request.kind == LuaWidgetFilePickerKind::Folder
-                    ? std::filesystem::path(L"Preview Folder")
-                    : std::filesystem::path(L"Preview.txt");
-                entry.kind = kind;
-                entry.access = request.access;
-                filesystemPickerCompletions_.insert_or_assign(
-                    action.id, std::vector<snowdesktop::widget_runtime::WidgetFilesystemHandleEntry>{ std::move(entry) });
+                filesystemTaskDispatch_.StorePreviewSelection(action.id,
+                    { action.instanceId, owner->packageId }, kind, request.access);
                 (void)taskBroker_->Complete(action.id, true);
                 continue;
             }
@@ -11036,28 +10956,14 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 (void)taskBroker_->Complete(action.id, false, "tooManySelections");
                 continue;
             }
-            std::vector<snowdesktop::widget_runtime::WidgetFilesystemHandleEntry> entries;
-            std::vector<std::string> created;
-            std::string grantError;
-            for (const auto& path : selected.paths)
-            {
-                auto grant = filesystemHandleStore_->Grant(
-                    { action.instanceId, owner->packageId }, path, kind, request.access);
-                if (!grant) { grantError = grant.error.empty() ? "handleGrantFailed" : grant.error; break; }
-                if (grant.created) created.push_back(grant.entry->handle);
-                entries.push_back(std::move(*grant.entry));
-            }
+            std::string grantError = filesystemTaskDispatch_.GrantSelection(action.id,
+                *filesystemHandleStore_, { action.instanceId, owner->packageId },
+                selected.paths, kind, request.access);
             if (!grantError.empty())
             {
-                for (const auto& handle : created)
-                {
-                    std::string rollbackError;
-                    (void)filesystemHandleStore_->Revoke({ action.instanceId, owner->packageId }, handle, rollbackError);
-                }
-                (void)taskBroker_->Complete(action.id, false, grantError);
+                (void)taskBroker_->Complete(action.id, false, std::move(grantError));
                 continue;
             }
-            filesystemPickerCompletions_.insert_or_assign(action.id, std::move(entries));
             (void)taskBroker_->Complete(action.id, true);
             continue;
         }
@@ -11109,12 +11015,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                         action.id, false, "hostManagedReference");
                     continue;
                 }
-                const bool busy = std::any_of(
-                    filesystemTaskHandles_.begin(),
-                    filesystemTaskHandles_.end(),
-                    [&handle](const auto& active) {
-                        return active.second == handle->second;
-                    }) || std::any_of(
+                const bool busy = filesystemTaskDispatch_.HasActiveHandle(handle->second) ||
+                    std::any_of(
                         filesystemWatchBindings_.begin(),
                         filesystemWatchBindings_.end(),
                         [&handle](const auto& active) {
@@ -11203,61 +11105,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
 
             if (action.preview)
             {
-                snowdesktop::widget_runtime::WidgetFilesystemTaskCompletion
-                    completion;
-                completion.id = action.id;
-                completion.action = action.name;
-                completion.ok = true;
-                completion.metadata.handle = handle->second;
-                completion.metadata.name = action.name == "filesystem.list"
-                    ? "Preview Folder" : "Preview.txt";
-                completion.metadata.kind =
-                    action.name == "filesystem.list"
-                    ? snowdesktop::widget_runtime::
-                        WidgetFilesystemHandleKind::Folder
-                    : snowdesktop::widget_runtime::
-                        WidgetFilesystemHandleKind::File;
-                completion.metadata.size =
-                    action.name == "filesystem.read" ? 20 :
-                    request.text.size();
-                completion.metadata.modifiedMs = 1786752000000LL;
-                completion.metadata.revision =
-                    "r1-0000000000000001-0000000000000001-f";
-                if (action.name == "filesystem.image")
-                {
-                    auto pixels = std::make_shared<snowdesktop::widget_runtime::WidgetRuntimeImagePixels>();
-                    pixels->width = pixels->height = 1;
-                    pixels->stride = 4;
-                    pixels->bgraPremultiplied = { 160, 120, 80, 255 };
-                    completion.resourceToken = snowdesktop::widget_runtime::MakeWidgetRuntimeImageToken("filesystem", *pixels);
-                    completion.image = std::move(pixels);
-                }
-                if (action.name == "filesystem.read")
-                {
-                    completion.encoding = request.encoding;
-                    completion.text = request.encoding == "binary"
-                        ? std::string("\x00\x01\x7f\xff", 4)
-                        : "Preview file content";
-                    completion.metadata.size = completion.text.size();
-                }
-                if (action.name == "filesystem.list")
-                {
-                    snowdesktop::widget_runtime::WidgetFilesystemMetadata item;
-                    item.handle =
-                        "filesystem:11111111111111111111111111111111";
-                    if (!request.grantHandles) item.handle.clear();
-                    item.name = "Preview.txt";
-                    item.kind = snowdesktop::widget_runtime::
-                        WidgetFilesystemHandleKind::File;
-                    item.size = 20;
-                    item.modifiedMs = 1786752000000LL;
-                    item.revision =
-                        "r1-0000000000000001-0000000000000001-f";
-                    completion.items.push_back(std::move(item));
-                    completion.nextOffset = 1;
-                }
-                filesystemTaskCompletions_.insert_or_assign(
-                    action.id, std::move(completion));
+                filesystemTaskDispatch_.StorePreviewResult(action.id, request);
                 (void)taskBroker_->Complete(action.id, true);
                 continue;
             }
@@ -11272,8 +11120,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             auto start = filesystemTaskExecutor_->Start(
                 action.id, action.instanceId, std::move(request));
             if (start)
-                filesystemTaskHandles_.insert_or_assign(
-                    action.id, handle->second);
+                filesystemTaskDispatch_.TrackHandle(action.id, handle->second);
             else
                 (void)taskBroker_->Complete(action.id, false,
                     start.error.empty()
@@ -11443,10 +11290,6 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             networkTaskCompletions_.find(completion.id);
         const auto clipboardCompletion =
             clipboardTaskCompletions_.find(completion.id);
-        const auto filesystemPickerCompletion =
-            filesystemPickerCompletions_.find(completion.id);
-        const auto filesystemTaskCompletion =
-            filesystemTaskCompletions_.find(completion.id);
         if (widget == widgets_.end() ||
             widget->taskIds.erase(completion.id) == 0)
         {
@@ -11465,14 +11308,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 networkTaskCompletions_.erase(networkCompletion);
             if (clipboardCompletion != clipboardTaskCompletions_.end())
                 clipboardTaskCompletions_.erase(clipboardCompletion);
-            if (filesystemPickerCompletion !=
-                    filesystemPickerCompletions_.end())
-                filesystemPickerCompletions_.erase(
-                    filesystemPickerCompletion);
-            if (filesystemTaskCompletion !=
-                    filesystemTaskCompletions_.end())
-                filesystemTaskCompletions_.erase(
-                    filesystemTaskCompletion);
+            filesystemTaskDispatch_.DiscardCompletion(completion.id);
             continue;
         }
         if (completion.ok && completion.name == "app.search" &&
@@ -11526,23 +11362,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             completion.ok = false;
             completion.error = "taskResultUnavailable";
         }
-        const bool filesystemPickerTask =
-            IsFilesystemPickerTask(completion.name);
-        if (completion.ok && filesystemPickerTask &&
-            filesystemPickerCompletion == filesystemPickerCompletions_.end())
-        {
-            completion.ok = false;
-            completion.error = "taskResultUnavailable";
-        }
-        const bool filesystemDataTask =
-            snowdesktop::widget_runtime::WidgetFilesystemTaskExecutor::
-                SupportsAction(completion.name);
-        if (completion.ok && filesystemDataTask &&
-            filesystemTaskCompletion == filesystemTaskCompletions_.end())
-        {
-            completion.ok = false;
-            completion.error = "taskResultUnavailable";
-        }
+        auto filesystemPayload = filesystemTaskDispatch_.TakeCompletion(completion);
         const bool itemSearchTask =
             completion.name == "desktop.search" ||
             completion.name == "everything.search";
@@ -11734,47 +11554,21 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                     "clipboard", file.folder ? "folder" : "file" });
             }
         }
-        const std::vector<snowdesktop::widget_runtime::WidgetFilesystemHandleEntry>*
-            filesystemPickerResult =
-                filesystemPickerCompletion !=
-                    filesystemPickerCompletions_.end()
-                ? &filesystemPickerCompletion->second : nullptr;
-        const snowdesktop::widget_runtime::WidgetFilesystemTaskCompletion*
-            filesystemTaskResult =
-                filesystemTaskCompletion !=
-                    filesystemTaskCompletions_.end()
-                ? &filesystemTaskCompletion->second : nullptr;
-        std::string filesystemImageToken;
-        if (completion.ok && completion.name == "filesystem.image" && filesystemTaskResult)
-        {
-            filesystemImageToken = RegisterRuntimeImageSource(d2dState_, widget->widgetId,
-                filesystemTaskResult->resourceToken, filesystemTaskResult->image, "filesystem");
-            if (filesystemImageToken.empty())
-            {
-                completion.ok = false;
-                completion.error = "taskResultUnavailable";
-            }
-        }
-        std::vector<std::string> filesystemPickerNames;
-        if (completion.ok && filesystemPickerResult)
-        {
-            filesystemPickerNames.reserve(filesystemPickerResult->size());
-            for (const auto& entry : *filesystemPickerResult)
-                filesystemPickerNames.push_back(WidgetWideToUtf8(entry.path.filename().wstring()));
-        }
+        filesystemPayload.PrepareValue(completion, [this, &widget](const std::string& token,
+            const std::shared_ptr<const snowdesktop::widget_runtime::WidgetRuntimeImagePixels>& pixels) {
+            return RegisterRuntimeImageSource(d2dState_, widget->widgetId, token, pixels, "filesystem");
+        });
         snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
             trustedGestureState_, false);
         (void)InvokeLifecycleEvent(*widget, "task.complete",
             [&completion, &publicItems, &publicClipboardItems,
-                clipboardImageToken, filesystemImageToken,
+                clipboardImageToken,
                 nextOffset, hasMore,
                 catalogRevision, calendarTask, itemSearchTask,
                 calendarResult, notificationIdTask,
                 notificationCompletion, locationTask, locationResult, networkTask,
                 networkResult, clipboardReadTask,
-                clipboardResult, filesystemPickerTask,
-                filesystemPickerResult, &filesystemPickerNames, filesystemDataTask,
-                filesystemTaskResult, &nativePayload](lua_State* eventState) {
+                clipboardResult, &filesystemPayload, &nativePayload](lua_State* eventState) {
                 lua_pushinteger(eventState,
                     static_cast<lua_Integer>(completion.id));
                 lua_setfield(eventState, -2, "taskId");
@@ -11927,151 +11721,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                             lua_setfield(eventState, -2, "items");
                         }
                     }
-                    else if (filesystemPickerTask)
-                    {
-                        const auto pushSelection = [](lua_State* state,
-                            const snowdesktop::widget_runtime::WidgetFilesystemHandleEntry& entry,
-                            const std::string& name) {
-                            lua_createtable(state, 0, 4);
-                            lua_pushlstring(state, entry.handle.data(), entry.handle.size());
-                            lua_setfield(state, -2, "handle");
-                            const auto kind = snowdesktop::widget_runtime::WidgetFilesystemHandleStore::KindName(entry.kind);
-                            lua_pushlstring(state, kind.data(), kind.size());
-                            lua_setfield(state, -2, "kind");
-                            const auto access = snowdesktop::widget_runtime::WidgetFilesystemHandleStore::AccessName(entry.access);
-                            lua_pushlstring(state, access.data(), access.size());
-                            lua_setfield(state, -2, "access");
-                            lua_pushlstring(state, name.data(), name.size());
-                            lua_setfield(state, -2, "name");
-                        };
-                        // Preserve the legacy single selection fields; items is additive.
-                        pushSelection(eventState, filesystemPickerResult->front(), filesystemPickerNames.front());
-                        lua_createtable(eventState, static_cast<int>(filesystemPickerResult->size()), 0);
-                        for (std::size_t index = 0; index < filesystemPickerResult->size(); ++index)
-                        {
-                            pushSelection(eventState, (*filesystemPickerResult)[index], filesystemPickerNames[index]);
-                            lua_rawseti(eventState, -2, static_cast<lua_Integer>(index + 1));
-                        }
-                        lua_setfield(eventState, -2, "items");
-                    }
-                    else if (filesystemDataTask)
-                    {
-                        const auto pushMetadata = [](lua_State* state,
-                            const snowdesktop::widget_runtime::
-                                WidgetFilesystemMetadata& metadata) {
-                            lua_createtable(state, 0, 7);
-                            if (!metadata.handle.empty())
-                            {
-                                lua_pushlstring(state, metadata.handle.data(), metadata.handle.size());
-                                lua_setfield(state, -2, "handle");
-                            }
-                            const std::string_view kind =
-                                snowdesktop::widget_runtime::
-                                    WidgetFilesystemHandleStore::KindName(
-                                        metadata.kind);
-                            lua_pushlstring(state, kind.data(), kind.size());
-                            lua_setfield(state, -2, "kind");
-                            lua_pushlstring(state, metadata.name.data(),
-                                metadata.name.size());
-                            lua_setfield(state, -2, "name");
-                            if (metadata.kind == snowdesktop::widget_runtime::
-                                    WidgetFilesystemHandleKind::File)
-                            {
-                                lua_pushinteger(state,
-                                    static_cast<lua_Integer>(metadata.size));
-                                lua_setfield(state, -2, "size");
-                            }
-                            lua_pushinteger(state,
-                                static_cast<lua_Integer>(
-                                    metadata.modifiedMs));
-                            lua_setfield(state, -2, "modifiedMs");
-                            lua_pushboolean(state,
-                                metadata.readOnly ? 1 : 0);
-                            lua_setfield(state, -2, "readOnly");
-                            lua_pushlstring(state,
-                                metadata.revision.data(),
-                                metadata.revision.size());
-                            lua_setfield(state, -2, "revision");
-                        };
-                        if (completion.name == "filesystem.stat")
-                        {
-                            pushMetadata(eventState,
-                                filesystemTaskResult->metadata);
-                        }
-                        else if (completion.name == "filesystem.list")
-                        {
-                            lua_createtable(eventState, 0, 3);
-                            lua_createtable(eventState,
-                                static_cast<int>(
-                                    filesystemTaskResult->items.size()), 0);
-                            int index = 1;
-                            for (const auto& item :
-                                filesystemTaskResult->items)
-                            {
-                                pushMetadata(eventState, item);
-                                lua_rawseti(eventState, -2, index++);
-                            }
-                            lua_setfield(eventState, -2, "items");
-                            lua_pushinteger(eventState,
-                                static_cast<lua_Integer>(
-                                    filesystemTaskResult->nextOffset));
-                            lua_setfield(eventState, -2, "nextOffset");
-                            lua_pushboolean(eventState,
-                                filesystemTaskResult->hasMore ? 1 : 0);
-                            lua_setfield(eventState, -2, "hasMore");
-                        }
-                        else if (completion.name == "filesystem.image")
-                        {
-                            pushMetadata(eventState, filesystemTaskResult->metadata);
-                            snowdesktop::widget_runtime::PushResourceHandle(eventState,
-                                snowdesktop::widget_runtime::LuaResourceType::Image, filesystemImageToken);
-                            lua_setfield(eventState, -2, "image");
-                            lua_pushinteger(eventState, filesystemTaskResult->image->width);
-                            lua_setfield(eventState, -2, "width");
-                            lua_pushinteger(eventState, filesystemTaskResult->image->height);
-                            lua_setfield(eventState, -2, "height");
-                        }
-                        else if (completion.name == "filesystem.read")
-                        {
-                            lua_createtable(eventState, 0, 4);
-                            lua_pushlstring(eventState,
-                                filesystemTaskResult->encoding.data(),
-                                filesystemTaskResult->encoding.size());
-                            lua_setfield(eventState, -2, "encoding");
-                            lua_pushlstring(eventState,
-                                filesystemTaskResult->text.data(),
-                                filesystemTaskResult->text.size());
-                            lua_setfield(eventState, -2,
-                                filesystemTaskResult->encoding == "binary"
-                                    ? "data" : "text");
-                            lua_pushinteger(eventState,
-                                static_cast<lua_Integer>(
-                                    filesystemTaskResult->metadata.size));
-                            lua_setfield(eventState, -2, "size");
-                            lua_pushlstring(eventState,
-                                filesystemTaskResult->metadata.revision.data(),
-                                filesystemTaskResult->metadata.revision.size());
-                            lua_setfield(eventState, -2, "revision");
-                        }
-                        else
-                        {
-                            lua_createtable(eventState, 0, 4);
-                            lua_pushboolean(eventState, 1);
-                            lua_setfield(eventState, -2, "accepted");
-                            lua_pushinteger(eventState,
-                                static_cast<lua_Integer>(
-                                    filesystemTaskResult->metadata.size));
-                            lua_setfield(eventState, -2, "size");
-                            lua_pushinteger(eventState,
-                                static_cast<lua_Integer>(
-                                    filesystemTaskResult->metadata.modifiedMs));
-                            lua_setfield(eventState, -2, "modifiedMs");
-                            lua_pushlstring(eventState,
-                                filesystemTaskResult->metadata.revision.data(),
-                                filesystemTaskResult->metadata.revision.size());
-                            lua_setfield(eventState, -2, "revision");
-                        }
-                    }
+                    else if (filesystemPayload.HasValue())
+                        filesystemPayload.PushValue(eventState, completion.name);
                     else
                     {
                         lua_createtable(eventState, 0, 1);
@@ -12113,12 +11764,6 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             networkTaskCompletions_.erase(networkCompletion);
         if (clipboardCompletion != clipboardTaskCompletions_.end())
             clipboardTaskCompletions_.erase(clipboardCompletion);
-        if (filesystemPickerCompletion !=
-                filesystemPickerCompletions_.end())
-            filesystemPickerCompletions_.erase(filesystemPickerCompletion);
-        if (filesystemTaskCompletion !=
-                filesystemTaskCompletions_.end())
-            filesystemTaskCompletions_.erase(filesystemTaskCompletion);
     }
     for (const auto& message : audioEvents)
     {
@@ -12203,8 +11848,7 @@ void WidgetEngine::CancelWidgetTaskWork(
     calendarMutationCompletions_.erase(taskId);
     notificationTaskCompletions_.erase(taskId);
     clipboardTaskCompletions_.erase(taskId);
-    filesystemPickerCompletions_.erase(taskId);
-    filesystemTaskCompletions_.erase(taskId);
+    filesystemTaskDispatch_.DiscardCompletion(taskId);
 }
 
 void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
@@ -12449,9 +12093,7 @@ void WidgetEngine::Shutdown()
     notificationTaskCompletions_.clear();
     networkTaskCompletions_.clear();
     clipboardTaskCompletions_.clear();
-    filesystemPickerCompletions_.clear();
-    filesystemTaskCompletions_.clear();
-    filesystemTaskHandles_.clear();
+    filesystemTaskDispatch_.Clear();
     filesystemWatchBindings_.clear();
     networkTaskRequests_.clear();
     networkRequestTasks_.clear();

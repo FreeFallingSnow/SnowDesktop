@@ -597,6 +597,8 @@ set(SNOWDESKTOP_SOURCES
     src/widget/tasks/widget_clipboard_task_executor.cpp
     src/widget/tasks/widget_filesystem_handle_store.cpp
     src/widget/tasks/widget_filesystem_task_executor.cpp
+    src/widget/tasks/widget_filesystem_task_dispatch.cpp
+    src/widget/tasks/widget_filesystem_task_dispatch.h
     src/widget/tasks/widget_filesystem_watch_service.cpp
     src/widget/tasks/widget_filesystem_watch_origin.cpp
     src/widget/tasks/widget_filesystem_watch_origin.h

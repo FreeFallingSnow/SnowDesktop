@@ -60,7 +60,7 @@ namespace snowdesktop::widget_runtime { struct WidgetMultiplayer; }
 #include "widget/tasks/widget_system_control_tasks.h"
 #include "widget/tasks/widget_clipboard_task_executor.h"
 #include "widget/tasks/widget_filesystem_handle_store.h"
-#include "widget/tasks/widget_filesystem_task_executor.h"
+#include "widget/tasks/widget_filesystem_task_dispatch.h"
 #include "widget/tasks/widget_filesystem_watch_service.h"
 #include "widget/tasks/widget_app_task_executor.h"
 #include "widget/permissions/widget_trusted_gesture.h"
@@ -1999,14 +1999,7 @@ private:
     std::unordered_map<std::uint64_t,
         snowdesktop::widget_runtime::WidgetClipboardTaskCompletion>
         clipboardTaskCompletions_;
-    std::unordered_map<std::uint64_t,
-        std::vector<snowdesktop::widget_runtime::WidgetFilesystemHandleEntry>>
-        filesystemPickerCompletions_;
-    std::unordered_map<std::uint64_t,
-        snowdesktop::widget_runtime::WidgetFilesystemTaskCompletion>
-        filesystemTaskCompletions_;
-    std::unordered_map<std::uint64_t, std::string>
-        filesystemTaskHandles_;
+    snowdesktop::widget_runtime::WidgetFilesystemTaskDispatch filesystemTaskDispatch_;
     struct FilesystemWatchBinding
     {
         snowdesktop::widget_runtime::WidgetFilesystemHandleOwner owner;
