@@ -17,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 HEX = re.compile(r"^[a-f0-9]{32}$")
+HISTORICAL_CANDIDATE_SLOT = re.compile(r"[a-f0-9]{16}-[a-z0-9][a-z0-9-]{0,31}")
 SECRET = re.compile(r'''(?i)\b(password|passwd|token|secret|api[_-]?key|authorization|nonce)(["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)''')
 ASSETS = {"/app-icon.png": "app-icon.png", "/": "index.html", "/app.js": "app.js", "/style.css": "style.css"}
 MIME = {".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png"}
@@ -70,25 +71,67 @@ def candidate_common_git_directory(checkout):
     return git_dir
 
 
-def candidate_slots_root(checkout):
-    common = candidate_common_git_directory(checkout)
+def candidate_slots_root(checkout, common=None):
+    common = common if common is not None else candidate_common_git_directory(checkout)
     parent = common.parent if common.name == ".git" else checkout
     return plain_path(parent / ".build" / "candidate-slots")
 
 
-def candidate_workspace_directory(checkout):
-    slots = candidate_slots_root(checkout)
+def checked_candidate_workspace(path, slots):
     default = slots.parent / "build-workspace"
-    binding = read_json(slots.parent, "candidate-workspace.json")
-    if binding is None:
-        return plain_path(default)
-    if (not isinstance(binding, dict) or binding.get("schemaVersion") != 1
-            or Path(binding.get("commonGitDirectory", "")) != candidate_common_git_directory(checkout)):
-        raise ValueError("Invalid compiler workspace binding")
-    path = Path(binding.get("directory", ""))
-    if path != default and (path.parent != slots or not re.fullmatch(r"[a-f0-9]{16}-[a-z0-9][a-z0-9-]{0,31}", path.name)):
+    if path != default and (path.parent != slots or not HISTORICAL_CANDIDATE_SLOT.fullmatch(path.name)):
         raise ValueError("Compiler workspace escaped its fixed output scope")
     return plain_path(path)
+
+
+def verified_candidate_workspace(data, common, slots):
+    if data is None:
+        return plain_path(slots.parent / "build-workspace")
+    binding = json.loads(data.decode("utf-8-sig"))
+    if (not isinstance(binding, dict)
+            or type(binding.get("schemaVersion")) is not int or binding["schemaVersion"] != 1
+            or not isinstance(binding.get("commonGitDirectory"), str)
+            or Path(binding["commonGitDirectory"]) != common
+            or not isinstance(binding.get("directory"), str)):
+        raise ValueError("Invalid compiler workspace binding")
+    return checked_candidate_workspace(Path(binding["directory"]), slots)
+
+
+def candidate_workspace_directory(checkout):
+    common = candidate_common_git_directory(checkout)
+    slots = candidate_slots_root(checkout, common)
+    return verified_candidate_workspace(read_metadata(slots.parent, "candidate-workspace.json"), common, slots)
+
+
+def projected_candidate_workspace(checkout, context):
+    projection = context["pathProjection"]
+    common = candidate_common_git_directory(checkout)
+    if (not isinstance(projection, dict)
+            or type(projection.get("schemaVersion")) is not int or projection["schemaVersion"] != 1
+            or projection.get("slot") != context["slot"]
+            or Path(projection.get("checkoutRoot", "")) != checkout
+            or Path(projection.get("commonGitDirectory", "")) != common):
+        raise ValueError("Compiler workspace projection identity mismatch")
+    slots = candidate_slots_root(checkout, common)
+    directory = checked_candidate_workspace(Path(projection.get("directory", "")), slots)
+    if (Path(context.get("source", "")) != directory / "source"
+            or Path(context.get("output", "")) != directory / "output"):
+        raise ValueError("Compiler workspace projection output mismatch")
+    digest = projection.get("bindingSha256")
+    if digest is None:
+        if directory != slots.parent / "build-workspace":
+            raise ValueError("Compiler workspace binding proof is missing")
+    elif not re.fullmatch(r"[a-f0-9]{64}", str(digest)):
+        raise ValueError("Invalid compiler workspace binding proof")
+
+    binding = read_metadata(slots.parent, "candidate-workspace.json")
+    verified_directory = verified_candidate_workspace(binding, common, slots)
+    current = hashlib.sha256(binding).hexdigest() if binding is not None else None
+    if digest != current:
+        return verified_directory
+    if verified_directory != directory:
+        raise ValueError("Compiler workspace projection does not match its binding")
+    return directory
 
 
 def shared_open(path):
@@ -111,7 +154,7 @@ def shared_open(path):
         raise
     return os.fdopen(fd, "rb")
 
-def read_json(root, name):
+def read_metadata(root, name):
     # Windows File.Replace can briefly remove the destination or hold a
     # sharing lock while exchanging the old/new files. A missing live state
     # during that exchange is not evidence that its editors have disappeared.
@@ -122,7 +165,7 @@ def read_json(root, name):
                 data = stream.read(MAX_METADATA_BYTES + 1)
             if len(data) > MAX_METADATA_BYTES:
                 raise ValueError("Metadata exceeds 8 MiB")
-            return json.loads(data.decode("utf-8-sig"))
+            return data
         except OSError as error:
             missing = isinstance(error, FileNotFoundError) or error.errno in (2, 3)
             transient = missing and name == "state.json" or error.errno in (32, 33)
@@ -131,6 +174,11 @@ def read_json(root, name):
                     return None
                 raise
             time.sleep(.005 * (attempt + 1))
+
+def read_json(root, name):
+    data = read_metadata(root, name)
+    return json.loads(data.decode("utf-8-sig")) if data is not None else None
+
 
 def owner_state(owner):
     if not owner:
@@ -585,9 +633,10 @@ class Store:
             slot_name = request.get("candidateSlot", "default")
         slot = context.get("slot")
         if slot == "workspace":
-            directory = candidate_workspace_directory(checkout)
+            directory = (projected_candidate_workspace(checkout, context) if "pathProjection" in context
+                         else candidate_workspace_directory(checkout))
         else:
-            if (not re.fullmatch(r"[a-f0-9]{16}-[a-z0-9][a-z0-9-]{0,31}", str(slot))
+            if (not HISTORICAL_CANDIDATE_SLOT.fullmatch(str(slot))
                     or slot[17:] != slot_name):
                 raise ValueError("Candidate log slot mismatch")
             directory = safe_path(candidate_slots_root(checkout), slot)

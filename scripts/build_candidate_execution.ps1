@@ -80,8 +80,9 @@ function Enter-CandidateExecution([string]$Root,$Request,[switch]$RequireExistin
         $slot=Enter-CandidateSlot $snapshot $Request.candidateSlot
         $snapshot=Read-CandidateManifest $Root $Request.snapshot -VerifyObjects
         $expectedKey='workspace'
+        $pathProjection=Get-CandidatePathProjection $Root $snapshot.store $expectedKey
         if($snapshot.digest -ne $Request.snapshotManifestDigest -or $snapshot.manifest.context.binding.configuration -ne $Request.configuration -or
-            $slot.key -ne $expectedKey -or $slot.directory -ne (Get-CandidateWorkspaceDirectory $snapshot.store)){
+            $slot.key -ne $expectedKey -or $slot.directory -ne $pathProjection.directory){
             throw 'Candidate snapshot/configuration identity changed after slot acquisition.'
         }
         Assert-CandidateToolset $snapshot $Request.runnerRuntime
@@ -94,7 +95,8 @@ function Enter-CandidateExecution([string]$Root,$Request,[switch]$RequireExistin
         $buildLock=[IO.File]::Open((Join-Path $slot.output 'collaboration/build.lock'),'OpenOrCreate','ReadWrite','None')
         $entry=[pscustomobject]@{lease=$buildLock;oldToken=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN','Process')}
         $context=[pscustomobject]@{schemaVersion=1;runRoot=$Root;runId=$Request.id;nonce=$Request.nonce;snapshot=$snapshot.manifest.id;
-            manifest=$snapshot.path;manifestDigest=$snapshot.digest;source=$slot.source;output=$slot.output;slot=$slot.key;configuration=$Request.configuration}
+            manifest=$snapshot.path;manifestDigest=$snapshot.digest;source=$slot.source;output=$slot.output;slot=$slot.key;configuration=$Request.configuration;
+            pathProjection=$pathProjection}
         if((Get-Field $Request 'candidateBatch' $false)){Set-Field $context 'batchId' $Request.batch}
         $null=Start-EntryCredential $slot.source '' $context
         # The caller retains every captured source handle for the whole Run.

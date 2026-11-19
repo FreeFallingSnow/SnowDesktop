@@ -217,6 +217,8 @@ PDB 与导入库留在 Release/Debug 根目录，增量链接状态留在原中�
 scripts\build.bat run start -Task task-a -Action snapshot -SnapshotInputs generated/config.h
 scripts\build.bat run wait -Task task-a -RunId <runId> -Seconds 60
 scripts\build.bat candidate inspect -Snapshot <snapshotId>
+scripts\build.bat candidate paths
+scripts\build.bat candidate paths -ExecutionSlot <historicalSlotKey>
 scripts\build.bat candidate materialize -Task task-a -Snapshot <snapshotId>
 ```
 
@@ -237,6 +239,9 @@ scripts\build.bat candidate materialize -Task task-a -Snapshot <snapshotId>
 新检出默认使用 `.build/build-workspace/`；已有热目录可由 `.build/candidate-workspace.json` 的受限绑定继续使用，
 不搬动缓存。旧 `Slot`/`CandidateSlot` 参数仅兼容已保存调用，不能选择第二份缓存。工具链与快照上下文仍逐次校验，
 不同检出及配置在同一公共 Git 资源中串行使用这份目录；源码变化正常触发依赖重编，不能跨上下文冒用结果。
+`candidate paths` 通过相同的 Git 公共目录和绑定校验，只读返回检出目录、公共 Git 目录、槽键、编译目录和迁移绑定 SHA-256。
+`-ExecutionSlot` 可查询历史槽路径。无效绑定或槽键返回 2，错误写入标准错误流。
+新 Run 的 `candidateExecution.pathProjection` 保存同一结果，供看板核对日志路径。
 `materialize` 保留固定源码、输出目录，只复制变化的受管文件；未变化文件
 时间及输出缓存保持原样。变化文件使用实际准备时间，防止原工作区在旧候选编译期间完成的编辑携带更早
 时间戳、使后续候选错误跳过重编译。只删除上一个快照管理、且内容仍匹配的旧输入，不清理输出目录。活动工作目录

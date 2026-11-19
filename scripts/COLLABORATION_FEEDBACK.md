@@ -71,6 +71,13 @@
 
 - **Workshop Manager 参与者续证（2026-11-19）**：Task `architecture-remaining-tooling`，批次 `c512788a34ee4c24892cdf66bfd6d180`。`scripts/build.bat diagnose` 的写探针通过，持久执行器被父 Job 拒绝，首个启动证据为 `.build/collaboration/diagnose-0e38bba4790b4f518dfd432609df0caf/stdout.log.startup-1.json`。本参与者交接源码、计划和已知环境限制，由具备持久执行能力的统筹入口提交共同候选。
 
+- **同批参与者与执行结果（2026-11-19）**：下列 Task 的既有 `scripts/build.bat diagnose` 回执均记录写探针通过、父 Job 拒绝持久启动。已核对各目录中的 `stdout.log.startup-1.json` 均为 `scriptStarted:false`。统筹从通过启动诊断的调用上下文提交同一批次，Run `915ac4ab99264af2b44a4dd9ab694196` 完成标准 Release、激活和 14 项定向测试。受限调用上下文仍按原方式交接给具备持久启动能力的执行者。
+  - `architecture-remaining-settings` · `.build/collaboration/diagnose-21b87e5c1702440b8ca9b5dc663d1a8c/`
+  - `architecture-remaining-lua` · `.build/collaboration/diagnose-1eff6ddbfe2848c287dc18a7e087c4c8/`
+  - `architecture-remaining-drag-widgets` · `.build/collaboration/diagnose-b47707fb8ea94a448c3c5552099d7c1e/`
+  - `architecture-remaining-runtime-utilities` · `.build/collaboration/diagnose-43c1aa1acb1d42a18b45189ae8168080/`
+  - `architecture-remaining-render` · `.build/collaboration/diagnose-5bad187f4a87486ca2ad7e1f02d8f6cd/`
+
 ### CF-002 生成目录被沙箱拒写
 
 - **原始反馈**：`task-stage` 写 `.build/collaboration/state.lock` 及 `Set-Content .build/...` 被拒；给 `.build` 和协调目录增加当前用户 FullControl ACE 后，confined 调用仍失败，切到 full access 后成功。报告者称 ACL 诊断技能提示 `verify_original_confined_operation`，实际原操作仍未通过。
