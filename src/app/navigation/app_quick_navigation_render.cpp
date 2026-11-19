@@ -27,7 +27,7 @@ void snowdesktop::quick_navigation::State::RetireSrgbAfterDirectCommit()
 }
 
 bool snowdesktop::quick_navigation::State::PublishSrgbHighlightFrame(
-    ID2D1Device* device, quick_navigation_animation_rules::Effect effect, float collapsed, float opacity)
+    ID2D1Device* device, quick_navigation_animation_rules::Effect effect, float deformationAmount, float opacity)
 {
     namespace rules = quick_navigation_animation_rules;
     namespace genie = dock_genie;
@@ -45,7 +45,7 @@ bool snowdesktop::quick_navigation::State::PublishSrgbHighlightFrame(
     const double width = panel.right - panel.left;
     const double height = panel.bottom - panel.top;
     if (width <= 0 || height <= 0) return false;
-    const bool deformed = collapsed > 0.f && rules::IsDeformationEffect(effect);
+    const bool deformed = deformationAmount > 0.f && rules::IsDeformationEffect(effect);
     struct Strip
     {
         D2D1_RECT_F clip, source, destination;
@@ -59,16 +59,16 @@ bool snowdesktop::quick_navigation::State::PublishSrgbHighlightFrame(
             static_cast<float>(value.right), static_cast<float>(value.bottom));
     };
     if (deformed && effect == rules::Effect::Attraction)
-        mesh = dock_attraction::MeshFrame(panel, dock, collapsed);
+        mesh = dock_attraction::MeshFrame(panel, dock, deformationAmount);
     else if (deformed)
     {
         // Match the body's pixel partitions and source crops before projection.
         for (std::size_t index = 0; index < genie::StripCount; ++index)
         {
-            const auto clip = rules::GenieRasterBandClip(panel, dock, edge, collapsed, width, height,
+            const auto clip = rules::GenieRasterBandClip(panel, dock, edge, deformationAmount, width, height,
                 index, hostRect.left, hostRect.top, bounds.right, bounds.bottom);
             if (clip.right <= clip.left || clip.bottom <= clip.top) continue;
-            const auto projection = rules::GenieProjection(panel, dock, edge, collapsed, width, height,
+            const auto projection = rules::GenieProjection(panel, dock, edge, deformationAmount, width, height,
                 index, hostRect.left, hostRect.top);
             const auto crop = rules::GenieSourceBandClip(projection, clip, edge, width, height);
             if (crop.right <= crop.left || crop.bottom <= crop.top) continue;
