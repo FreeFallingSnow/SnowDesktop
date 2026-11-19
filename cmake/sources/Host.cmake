@@ -620,6 +620,8 @@ set(SNOWDESKTOP_SOURCES
     src/widget/view/widget_draw_context.h
     src/widget/view/widget_draw_lua.cpp
     src/widget/view/widget_draw_lua.h
+    src/widget/view/widget_control_lua.cpp
+    src/widget/view/widget_control_lua.h
     src/widget/view/widget_layout_lua.cpp
     src/widget/view/widget_layout_lua.h
     src/widget/view/widget_runtime_image_cache.cpp
@@ -702,6 +704,8 @@ set(SNOWDESKTOP_SOURCES
     src/widget/packages/widget_package.cpp
     src/widget/packages/widget_package_paths.cpp
     src/widget/packages/widget_package_paths.h
+    src/widget/packages/widget_package_host.cpp
+    src/widget/packages/widget_package_host.h
     src/widget/packages/widget_script_manifest.cpp
     src/widget/packages/widget_script_manifest.h
     src/steam/steam_workshop_cache.cpp

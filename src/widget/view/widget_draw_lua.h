@@ -36,6 +36,7 @@ struct LuaDrawContext : WidgetDrawContext
     std::vector<D2D1_RECT_F> immediateClipRects;
 };
 
+LuaDrawContext* GetLuaDrawContext(lua_State* state);
 void BindLuaDrawContext(lua_State* state, LuaDrawContext* context,
     const LuaDrawHostServices& services);
 

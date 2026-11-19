@@ -33,20 +33,20 @@ namespace
 {
 const char kLuaDrawContextKey = 0;
 
-LuaDrawContext* GetLuaDrawContext(lua_State* state)
-{
-    lua_rawgetp(state, LUA_REGISTRYINDEX, &kLuaDrawContextKey);
-    auto* context = static_cast<LuaDrawContext*>(lua_touserdata(state, -1));
-    lua_pop(state, 1);
-    return context;
-}
-
 std::optional<std::wstring> ResolveDrawFont(lua_State* state, int index)
 {
     const auto* context = GetLuaDrawContext(state);
     return context && context->services
         ? context->services->resolveFont(state, index) : std::nullopt;
 }
+}
+
+LuaDrawContext* GetLuaDrawContext(lua_State* state)
+{
+    lua_rawgetp(state, LUA_REGISTRYINDEX, &kLuaDrawContextKey);
+    auto* context = static_cast<LuaDrawContext*>(lua_touserdata(state, -1));
+    lua_pop(state, 1);
+    return context;
 }
 
 void BindLuaDrawContext(lua_State* state, LuaDrawContext* context,
