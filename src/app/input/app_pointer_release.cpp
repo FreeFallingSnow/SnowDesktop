@@ -63,6 +63,63 @@ bool OpenMissingWidgetWorkshopPage(HWND owner,
 }
 }
 
+bool DesktopApp::PresentHoverChangeDuringPopupResize(POINT previousHover)
+{
+    if (!IsCollectionPopupHostedByFloatingWindow() || !GetCollectionPopupResizeTransition() ||
+        dragSession_.HasContext() || dragDropController_.IsTransportActive())
+        return false;
+
+    snowdesktop::performance::Scope present("input", "hover.popup_resize.present");
+    const auto* previousDock = GetDockContainerAtPoint(previousHover);
+    const auto* currentDock = GetDockContainerAtPoint(lastMousePoint_);
+    const auto invalidateHover = [&](POINT point, const DockContainer* dock) {
+        if (!hwnd_ || (point.x == LONG_MIN && point.y == LONG_MIN)) return;
+        RECT dirty{};
+        const auto includeDamage = [&](RECT bounds, LONG padding) {
+            if (IsRectEmpty(&bounds)) return;
+            InflateRect(&bounds, padding, padding);
+            UnionRect(&dirty, &dirty, &bounds);
+        };
+        for (const auto& item : items_)
+            if (!item.largeIcon && PtInRect(&item.bounds, point))
+                includeDamage(item.bounds, 8);
+        for (const auto& widget : widgets_)
+        {
+            const RECT frame = GetStandaloneWidgetFrameRect(widget);
+            const RECT hoverFrame = GetDesktopWidgetHoverFrameRect(widget, frame);
+            if (PtInRect(&frame, point) || PtInRect(&hoverFrame, point))
+                includeDamage(frame, snowdesktop::widget_composition_layer_rules::kWidgetSurfaceBorderOverdraw);
+        }
+        if (dock && !IsDockHostedByPersistentHost(dock))
+            includeDamage(snowdesktop::floating_dock_rules::ExpandHostForTitleLayer(
+                dock->GetInteractiveBounds(), dockSettings_.position), 4);
+        if (!IsRectEmpty(&dirty)) InvalidateRect(hwnd_, &dirty, FALSE);
+    };
+    // Passive window handoffs and timer samples change the same two hover
+    // footprints. Leave their paint pending while the popup presents its frame.
+    invalidateHover(previousHover, previousDock);
+    if (lastMousePoint_.x != previousHover.x || lastMousePoint_.y != previousHover.y)
+        invalidateHover(lastMousePoint_, currentDock);
+    UpdateWidgetHoverExpansion(lastMousePoint_);
+    UpdateLargeIconHover();
+    InvalidateFloatingPopupWindow(false);
+
+    const auto* presentedDock = floatingDockHoverTargetOwner_;
+    if (!currentDock || currentDock != presentedDock)
+    {
+        floatingDockHoverTargetOwner_ = nullptr;
+        floatingDockHoverTargetIndex_ = 0;
+        floatingDockHoverTargetKind_ = 0;
+        if (floatingDockHoverTailToken_)
+            uiAnimationScheduler_.Cancel(std::exchange(floatingDockHoverTailToken_, 0));
+    }
+    for (const auto& host : persistentDockHosts_)
+        if (host && host->container && (host->container == previousDock ||
+                host->container == currentDock || host->container == presentedDock))
+            UpdateFloatingDockWindowBounds(*host, true);
+    return true;
+}
+
 void DesktopApp::OnMouseLeave()
 {
     snowdesktop::performance::Scope trace("input", "hover.mouse_leave");
@@ -182,51 +239,7 @@ void DesktopApp::OnMouseLeave()
         ClearListTitleHover();
         if (widgetEngine_)
             widgetEngine_->ClearInteractionHover();
-        if (IsCollectionPopupHostedByFloatingWindow() && GetCollectionPopupResizeTransition() &&
-            !dragSession_.HasContext() && !dragDropController_.IsTransportActive())
-        {
-            snowdesktop::performance::Scope present("input", "hover.popup_resize.present");
-            // Shrinking the native popup region can deliver a leave during
-            // the tween. Repaint the old desktop hover footprint in the
-            // normal WM_PAINT pass and coalesce the popup with its next frame.
-            RECT dirty{};
-            const auto includeDamage = [&](RECT bounds, LONG padding) {
-                if (IsRectEmpty(&bounds)) return;
-                InflateRect(&bounds, padding, padding);
-                UnionRect(&dirty, &dirty, &bounds);
-            };
-            for (const auto& item : items_)
-                if (!item.largeIcon && PtInRect(&item.bounds, previousHover))
-                    includeDamage(item.bounds, 8);
-            for (const auto& widget : widgets_)
-            {
-                const RECT frame = GetStandaloneWidgetFrameRect(widget);
-                const RECT hoverFrame = GetDesktopWidgetHoverFrameRect(widget, frame);
-                if (PtInRect(&frame, previousHover) || PtInRect(&hoverFrame, previousHover))
-                    includeDamage(frame, snowdesktop::widget_composition_layer_rules::kWidgetSurfaceBorderOverdraw);
-            }
-
-            const auto* previousDock = GetDockContainerAtPoint(previousHover);
-            if (previousDock && !IsDockHostedByPersistentHost(previousDock))
-                includeDamage(snowdesktop::floating_dock_rules::ExpandHostForTitleLayer(
-                    previousDock->GetInteractiveBounds(), dockSettings_.position), 4);
-            UpdateWidgetHoverExpansion(lastMousePoint_);
-            UpdateLargeIconHover();
-            if (hwnd_ && !IsRectEmpty(&dirty))
-                InvalidateRect(hwnd_, &dirty, FALSE);
-            InvalidateFloatingPopupWindow(false);
-
-            const auto* presentedDock = std::exchange(floatingDockHoverTargetOwner_, nullptr);
-            floatingDockHoverTargetIndex_ = 0;
-            floatingDockHoverTargetKind_ = 0;
-            if (floatingDockHoverTailToken_)
-                uiAnimationScheduler_.Cancel(std::exchange(floatingDockHoverTailToken_, 0));
-            for (const auto& host : persistentDockHosts_)
-                if (host && host->container &&
-                    (host->container == previousDock || host->container == presentedDock))
-                    UpdateFloatingDockWindowBounds(*host, true);
-        }
-        else
+        if (!PresentHoverChangeDuringPopupResize(previousHover))
         {
             // Shrink the title's input island before presenting the cleared frame.
             UpdateFloatingDockWindowBounds(false);
@@ -384,6 +397,7 @@ void DesktopApp::ReconcileDesktopHoverState(
                 PtInRect(&pointerDockHost->dockRect, activeCursorPoint) &&
                 !dragDropController_.IsTransportActive() &&
                 !ShouldShowFloatingPopupWindow();
+            const POINT previousHover = lastMousePoint_;
             lastMousePoint_ = activateHover
                 ? cursorPoint : activeCursorPoint;
             UpdateListTitleHover();
@@ -394,7 +408,7 @@ void DesktopApp::ReconcileDesktopHoverState(
                 UpdateDockWindowPreview(lastMousePoint_);
                 PresentPointerInteractionFrame();
             }
-            else
+            else if (!PresentHoverChangeDuringPopupResize(previousHover))
             {
                 // On a surface handoff, synchronize both the old and new
                 // regions so stale visuals cannot outlive the hover state.

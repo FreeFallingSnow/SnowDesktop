@@ -255,7 +255,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
             std::max<LONG>(1, client.bottom - client.top));
     }
     const bool deferredWidgetsFlushed =
-        FlushPendingDesktopWidgetComposition() &&
+        FlushPendingDesktopWidgetComposition(true) &&
         FlushPendingWidgetMarqueeComposition() &&
         SyncWidgetMarqueeCompositionVisibility();
     if (!deferredWidgetsFlushed && hwnd_ && IsWindow(hwnd_))

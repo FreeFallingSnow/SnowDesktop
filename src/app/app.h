@@ -639,6 +639,7 @@ private:
     void CommitDragVisualEndBeforeShellOperation();
     /** @brief 同步呈现被动悬浮可见性变化。 */
     void PresentPassiveHoverVisualChange();
+    bool PresentHoverChangeDuringPopupResize(POINT previousHover);
     enum class ShellHoverTraceEvent : std::uint8_t
     {
         MenuBegin,
