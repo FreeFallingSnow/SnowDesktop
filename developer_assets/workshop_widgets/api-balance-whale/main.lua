@@ -115,7 +115,8 @@ local function region(id,x,y,w,h,label,quiet)
         cursor="hand",focusable=true,tooltip=label,accessibility={role="button",label=label},
         events={click={id=id},keyDown={id="keyboard",value=id},contextMenu={id="menu",scope="component"}}})
     if not quiet and (interaction.isHovered(id) or interaction.isFocused(id)) then draw.rect(x,y,w,h,palette().primary,h*0.18,0.08) end
-    if interaction.isFocused(id) then draw.strokeRect(x,y,w,h,palette().blue,h*0.18,h*0.035,0.9) end
+    -- The host draws the keyboard focus cue for the whale's quiet region.
+    if not quiet and interaction.isFocused(id) then draw.strokeRect(x,y,w,h,palette().blue,h*0.18,h*0.035,0.9) end
 end
 local function card(x,y,w,h,colors,radius)
     draw.rect(x,y,w,h,colors.card,radius,0.48)
