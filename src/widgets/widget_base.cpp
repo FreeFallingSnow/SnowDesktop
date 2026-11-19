@@ -630,31 +630,36 @@ void WidgetContainer::DrawSingleCellContents(ID2D1DeviceContext* context, RECT b
         const auto ownerKey = entry.folder ? reinterpret_cast<std::uintptr_t>(entry.folder)
             : reinterpret_cast<std::uintptr_t>(entry.desktop);
         const bool directory = entry.folder && entry.folder->isDirectory;
-        if (privateContents)
-        {
-            app_->DrawPrivacyFaIcon(context, icon, directory);
-            continue;
-        }
-        const auto& identity = entry.folder ? entry.folder->fullPath : entry.desktop->layoutKey;
-        const HBITMAP bitmap = entry.folder ? entry.folder->iconBitmap : entry.desktop->iconBitmap;
-        const bool thumbnail = entry.folder ? entry.folder->iconIsMediaThumbnail : entry.desktop->iconIsMediaThumbnail;
-        const int sysIndex = entry.folder ? entry.folder->sysIconIndex : entry.desktop->sysIconIndex;
-        const bool demo = entry.desktop && app_->ShouldUseDemoCollectionIdentity(entry.owner);
-        if (demo)
-            app_->DrawDemoCollectionIdentityIcon(context, *entry.owner, identity, icon, 1.0f);
-        else if (auto* custom = app_->GetSmallCustomIcon(context, identity, edge))
-            app_->DrawIconBitmap(context, custom, icon, 1.0f, ownerKey);
-        else if (bitmap)
-        {
-            if (auto* image = app_->GetTargetIconBitmap(context, bitmap, identity, thumbnail))
-                app_->DrawIconBitmap(context, image, icon, 1.0f, ownerKey);
-            else app_->DrawPlaceholderIcon(context, sysIndex, icon, 1.0f);
-        }
-        else app_->DrawPlaceholderIcon(context, sysIndex, icon, 1.0f);
-        if (!demo && app_->ShouldDrawShortcutArrow(
-                entry.folder ? entry.folder->isShortcut : entry.desktop->isShortcut,
-                entry.folder ? entry.folder->isApplicationShortcut : entry.desktop->isApplicationShortcut))
-            app_->DrawShortcutArrowOverlay(context, icon, 1.0f);
+        const auto drawIcon = [&](ID2D1DeviceContext* drawing) {
+            if (privateContents)
+            {
+                app_->DrawPrivacyFaIcon(drawing, icon, directory);
+                return;
+            }
+            const auto& identity = entry.folder ? entry.folder->fullPath : entry.desktop->layoutKey;
+            const HBITMAP bitmap = entry.folder ? entry.folder->iconBitmap : entry.desktop->iconBitmap;
+            const bool thumbnail = entry.folder ? entry.folder->iconIsMediaThumbnail : entry.desktop->iconIsMediaThumbnail;
+            const int sysIndex = entry.folder ? entry.folder->sysIconIndex : entry.desktop->sysIconIndex;
+            const bool demo = entry.desktop && app_->ShouldUseDemoCollectionIdentity(entry.owner);
+            if (demo)
+                app_->DrawDemoCollectionIdentityIcon(drawing, *entry.owner, identity, icon, 1.0f);
+            else if (auto* custom = app_->GetSmallCustomIcon(drawing, identity, edge))
+                app_->DrawIconBitmap(drawing, custom, icon, 1.0f, ownerKey);
+            else if (bitmap)
+            {
+                if (auto* image = app_->GetTargetIconBitmap(drawing, bitmap, identity, thumbnail))
+                    app_->DrawIconBitmap(drawing, image, icon, 1.0f, ownerKey);
+                else app_->DrawPlaceholderIcon(drawing, sysIndex, icon, 1.0f);
+            }
+            else app_->DrawPlaceholderIcon(drawing, sysIndex, icon, 1.0f);
+            if (!demo && app_->ShouldDrawShortcutArrow(
+                    entry.folder ? entry.folder->isShortcut : entry.desktop->isShortcut,
+                    entry.folder ? entry.folder->isApplicationShortcut : entry.desktop->isApplicationShortcut))
+                app_->DrawShortcutArrowOverlay(drawing, icon, 1.0f);
+        };
+        if (IsPopupHosted() ? app_->iconShadows_.popup : app_->iconShadows_.exposedWidget)
+            app_->DrawIconShadow(context, icon, app_->GetItemLayoutScale(tile), drawIcon);
+        drawIcon(context);
     }
 }
 
@@ -2842,25 +2847,30 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
         nameCell, nameCell.left + Cu(4.0f), visualMetrics);
 
     const float iconOpacity = details.isCut ? 0.4f : 1.0f;
-    if (!demoIdentity.empty())
-    {
-        if (demoCollection)
-            app_->DrawDemoCollectionIdentityIcon(
-                context, *demoCollection, demoIdentity, iconRect, iconOpacity);
+    const auto drawIcon = [&](ID2D1DeviceContext* drawing) {
+        if (!demoIdentity.empty())
+        {
+            if (demoCollection)
+                app_->DrawDemoCollectionIdentityIcon(
+                    drawing, *demoCollection, demoIdentity, iconRect, iconOpacity);
+            else
+                app_->DrawDemoIdentityIcon(drawing, demoIdentity, iconRect, iconOpacity);
+        }
+        else if (auto custom = app_->GetSmallCustomIcon(drawing, iconIdentity, iconRect.right - iconRect.left))
+            app_->DrawIconBitmap(drawing, custom, iconRect, iconOpacity);
+        else if (ID2D1Bitmap* bmp = app_->GetTargetIconBitmap(drawing, iconBitmap, iconIdentity, iconIsMediaThumbnail))
+        {
+            app_->DrawIconBitmap(drawing, bmp, iconRect, iconOpacity,
+                reinterpret_cast<std::uintptr_t>(iconBitmap));
+        }
         else
-            app_->DrawDemoIdentityIcon(context, demoIdentity, iconRect, iconOpacity);
-    }
-    else if (auto custom = app_->GetSmallCustomIcon(context, iconIdentity, iconRect.right - iconRect.left))
-        app_->DrawIconBitmap(context, custom, iconRect, iconOpacity);
-    else if (ID2D1Bitmap* bmp = app_->GetTargetIconBitmap(context, iconBitmap, iconIdentity, iconIsMediaThumbnail))
-    {
-        app_->DrawIconBitmap(context, bmp, iconRect, iconOpacity,
-            reinterpret_cast<std::uintptr_t>(iconBitmap));
-    }
-    else
-    {
-        app_->DrawPlaceholderIcon(context, sysIconIndex, iconRect, iconOpacity);
-    }
+        {
+            app_->DrawPlaceholderIcon(drawing, sysIconIndex, iconRect, iconOpacity);
+        }
+    };
+    if (IsPopupHosted() ? app_->iconShadows_.popup : app_->iconShadows_.exposedWidget)
+        app_->DrawIconShadow(context, iconRect, GetCellScale(), drawIcon);
+    drawIcon(context);
 
     const std::wstring title = demoIdentity.empty()
         ? name
@@ -2942,6 +2952,16 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
     if (!app_ || !context || IsRectEmptyRect(rect)) return;
     (void)name;
 
+    const auto drawIcon = [&](RECT icon) {
+        if (IsPopupHosted() ? app_->iconShadows_.popup : app_->iconShadows_.exposedWidget)
+        {
+            app_->DrawIconShadow(context, icon, GetCellScale(), [&](auto* drawing) {
+                app_->DrawPrivacyFaIcon(drawing, icon, isDir);
+            });
+        }
+        app_->DrawPrivacyFaIcon(context, icon, isDir);
+    };
+
     const std::wstring label = isDir ? _LW("widget.base.folder_type") : _LW("widget.base.file_type");
     const int width = rect.right - rect.left;
     const int height = rect.bottom - rect.top;
@@ -2950,7 +2970,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
     {
         const RECT iconRect = snowdesktop::ResolveCenteredIconRect(
             rect, forcedIconSize);
-        app_->DrawPrivacyFaIcon(context, iconRect, isDir);
+        drawIcon(iconRect);
         if (showLabel)
             app_->DrawItemText(context, rect, label, false, 1.0f,
                 UsesLightContentTheme(), true, app_->ResolveItemTitleLines(data_, IsPopupHosted()));
@@ -2962,7 +2982,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         const auto visualMetrics = GetItemVisualMetrics();
         RECT iconRect = snowdesktop::ResolveListItemIconRect(
             rect, rect.left + Cu(4.0f), visualMetrics);
-        app_->DrawPrivacyFaIcon(context, iconRect, isDir);
+        drawIcon(iconRect);
         if (showLabel)
             DrawListItemTitle(
                 context, rect, iconRect, label,
@@ -2979,7 +2999,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         if (centerIconVertically)
             iconRect = snowdesktop::ResolveVerticallyCenteredIconRect(
                 rect, iconRect);
-        app_->DrawPrivacyFaIcon(context, iconRect, isDir);
+        drawIcon(iconRect);
         if (showLabel)
             app_->DrawItemText(context, rect, label, false, 1.0f,
                 UsesLightContentTheme(), true, app_->ResolveItemTitleLines(data_, IsPopupHosted()));
@@ -2994,7 +3014,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
             rect.top + (height - iconSize) / 2,
             rect.left + (width + iconSize) / 2,
             rect.top + (height + iconSize) / 2);
-        app_->DrawPrivacyFaIcon(context, iconRect, isDir);
+        drawIcon(iconRect);
         return;
     }
 
@@ -3006,7 +3026,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         (height - titleHeight - iconSize - Cu(2.0f)) / 2);
     RECT iconRect = MakeRect(rect.left + (width - iconSize) / 2,
         iconTop, rect.left + (width + iconSize) / 2, iconTop + iconSize);
-    app_->DrawPrivacyFaIcon(context, iconRect, isDir);
+    drawIcon(iconRect);
 
     RECT titleRect = MakeRect(rect.left + Cu(1.0f), iconRect.bottom + Cu(2.0f),
         rect.right - Cu(1.0f), rect.bottom);

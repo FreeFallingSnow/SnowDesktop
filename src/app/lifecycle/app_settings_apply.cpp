@@ -804,6 +804,7 @@ bool DesktopApp::SynchronizeReloadedLayoutSettings()
     desktop.shortcutArrowMode = shortcutArrowMode_;
     desktop.groupComponentBadges = groupComponentBadges_;
     desktop.beautifyFileThumbnails = beautifyFileThumbnails_;
+    desktop.iconShadows = iconShadows_;
     desktop.iconBeautify = iconBeautifySettings_;
     const bool generalSynchronized =
         settingsController_->SynchronizeGeneral(generalSettings_);
@@ -1429,6 +1430,7 @@ public:
                 desktop.itemFontWeight));
             app_.SetShortcutArrowMode(desktop.shortcutArrowMode);
             app_.SetGroupComponentBadges(desktop.groupComponentBadges);
+            app_.SetIconShadows(desktop.iconShadows);
             app_.SetIconBeautifySettings(
                 desktop.iconBeautify,
                 desktop.beautifyFileThumbnails,

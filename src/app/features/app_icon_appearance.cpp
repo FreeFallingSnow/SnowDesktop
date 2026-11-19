@@ -429,10 +429,15 @@ bool DesktopApp::DrawIndependentDockIcon(ID2D1DeviceContext* ctx, const DockEntr
         iconGlassBackdrop_.erase(cached.bitmap.Get()); iconBitmapStyles_.erase(cached.bitmap.Get());
         cached = {std::move(signature), std::move(uploaded)};
     }
-    DrawIconBitmap(ctx, cached.bitmap.Get(), target, 1.f, reinterpret_cast<std::uintptr_t>(&widgets_[owner]));
-    if (entry.type == DockEntryType::FolderMapping && ShouldDrawShortcutArrow(true, false)) DrawShortcutArrowOverlay(ctx, target, 1.f);
-    // Badges belong to the entry and stay outside the beautified source.
-    if (IsGroupDockEntryType(entry.type)) DrawDockGroupBadge(ctx, target);
+    const auto drawIcon = [&](ID2D1DeviceContext* drawing) {
+        DrawIconBitmap(drawing, cached.bitmap.Get(), target, 1.f, reinterpret_cast<std::uintptr_t>(&widgets_[owner]));
+        if (entry.type == DockEntryType::FolderMapping && ShouldDrawShortcutArrow(true, false)) DrawShortcutArrowOverlay(drawing, target, 1.f);
+        // Badges belong to the entry and stay outside the beautified source.
+        if (IsGroupDockEntryType(entry.type)) DrawDockGroupBadge(drawing, target);
+    };
+    if (iconShadows_.dock)
+        DrawIconShadow(ctx, target, GetItemLayoutScale(target), drawIcon);
+    drawIcon(ctx);
     if (state == 2) DrawDockSelectionIndicator(ctx, target, CurrentDockAppearance().contentTheme == 1);
     return true;
 }

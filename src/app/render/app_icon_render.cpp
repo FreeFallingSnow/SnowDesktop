@@ -15,6 +15,33 @@
 
 // Shell-icon decoration, privacy placeholders and quick-navigation icons.
 
+ID2D1DeviceContext* DesktopApp::GetIconShadowRecorder()
+{
+    if (!iconShadowRecorder_ && d2dDevice_)
+        (void)d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &iconShadowRecorder_);
+    return iconShadowRecorder_.Get();
+}
+
+void DesktopApp::DrawIconShadow(ID2D1RenderTarget* target, RECT bounds, float scale,
+    const std::function<void(ID2D1DeviceContext*)>& drawIcon)
+{
+    if (!target || drawingIconAppearanceSource_ || target == iconShadowRecorder_.Get() ||
+        IsRectEmpty(&bounds))
+        return;
+
+    ComPtr<ID2D1DeviceContext> context;
+    if (FAILED(target->QueryInterface(IID_PPV_ARGS(&context)))) return;
+    ComPtr<ID2D1Device> device;
+    context->GetDevice(&device);
+    if (device.Get() != d2dDevice_.Get()) return;
+
+    auto* recorder = GetIconShadowRecorder();
+    snowdesktop::icon_shadow::Drawing drawing;
+    if (recorder && snowdesktop::icon_shadow::Record(
+            context.Get(), recorder, bounds, scale, drawIcon, drawing))
+        snowdesktop::icon_shadow::Draw(context.Get(), drawing, bounds, scale);
+}
+
 bool DesktopApp::ShouldUseDemoIdentity(const DesktopItem& item) const
 {
     return snowdesktop::demo_mode_rules::ShouldMaskApplication(
@@ -628,6 +655,18 @@ void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
     DrawIconBitmap(ctx, cached->second.Get(), iconRect, alpha);
 }
 
+void DesktopApp::DrawQuickNavResultBitmap(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap, RECT bounds)
+{
+    if (!bitmap) return;
+    if (iconShadows_.quickNavigation)
+    {
+        DrawIconShadow(target, bounds, QuickNavScale(100) / 100.0f, [&](auto* drawing) {
+            DrawIconBitmap(drawing, bitmap, bounds);
+        });
+    }
+    DrawIconBitmap(target, bitmap, bounds);
+}
+
 void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT dstRect)
 {
     if (!ctx) return;
@@ -659,7 +698,7 @@ void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, R
         return;
     }
 
-    DrawIconBitmap(ctx, cached->second.Get(), dstRect);
+    DrawQuickNavResultBitmap(ctx, cached->second.Get(), dstRect);
 }
 
 void DesktopApp::DrawQuickNavAppIcon(
@@ -689,8 +728,7 @@ void DesktopApp::DrawQuickNavAppIcon(
         }
         if (cached != quickNavigation_->appIconCache.end())
         {
-            DrawIconBitmap(
-                ctx, cached->second.Get(), dstRect);
+            DrawQuickNavResultBitmap(ctx, cached->second.Get(), dstRect);
             return;
         }
     }

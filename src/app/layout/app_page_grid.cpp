@@ -1264,6 +1264,28 @@ void DesktopApp::SetIconBeautifyEnabled(bool enabled)
     SetIconBeautifySettings(settings, beautifyFileThumbnails_);
 }
 
+void DesktopApp::SetIconShadows(snowdesktop::IconShadowSettings settings)
+{
+    if (settings == iconShadows_) return;
+
+    const bool dockChanged = settings.dock != iconShadows_.dock;
+    const bool popupChanged = settings.fan != iconShadows_.fan || settings.popup != iconShadows_.popup;
+    const bool navigationChanged = settings.quickNavigation != iconShadows_.quickNavigation;
+    iconShadows_ = settings;
+    InvalidateDragStaticScene();
+    if (hwnd_)
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    if (popupChanged)
+    {
+        InvalidateCollectionPopupContent();
+        InvalidateFloatingPopupWindow(false);
+    }
+    if (dockChanged)
+        InvalidateDockRects(TRUE);
+    if (navigationChanged)
+        InvalidateQuickNavigationWindow();
+}
+
 void DesktopApp::SetIconBeautifySettings(
     const snowdesktop::IconBeautifySettings& rawSettings,
     bool beautifyFileThumbnails,

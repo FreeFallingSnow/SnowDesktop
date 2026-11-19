@@ -144,6 +144,8 @@
 
 ### CF-010 等待结束回执过大
 
+- **产品编译失败回执（2026-11-19）**：Task `task-d303abaaffbb4e0cafd904a0798290d0` 的批次 `f95ea11f31334d0281b6f1a887568d84`、Run `2fab5ae480d342bc8c1899901d9f6e61` 经 `ready-and-wait` 返回失败，精简回执的 `error` 为空。归档 JSON 顶层 `logPath` 指向不存在的批次测试日志，实际 C2039 诊断在 `productBuild.logPath` 所指的 `.log.product.log`。本任务按产品日志完成定向续修。后续可在产品失败终态返回实际失败阶段及可读日志路径。未为反馈另跑构建。
+
 - **批次观察终态（2026-11-19）**：Task `wcg-material-extraction` 为接入已冻结的共享源码，执行 `watch wait --condition result --batch c512788a34ee4c24892cdf66bfd6d180 --revision 0`。票据 `fd47e3c2d700235bc995382ae1bba953` 正确返回 Run `915ac4ab99264af2b44a4dd9ab694196` 通过，同时嵌入产品、测试和依赖观察原件，工具回执被截断（chunk `d622ae`）。从原回执确认终态后只核对目标 Git 路径并接续新批次，没有复查完整状态或重跑该候选。后续可让票据终态默认输出结果路径与计数。
 
 - **Steam 打包前确认既有 Run（2026-11-19）**：Task `steam-beta-release-20261119` 执行 `scripts/build.bat run status -RunId ff076e13380e49e2bab7930d6408530c`，确认 Run 为 `passed`，同一回执输出 runner 文件清单和逐项目 MSBuild 遥测并被工具截断。发布预检改从原 Run 回执读取状态、输入摘要和产品构建结果，沿用既有 Release 产物，未重查完整状态或重新编译。单 Run 状态仍缺少默认精简输出。

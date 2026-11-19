@@ -642,6 +642,24 @@ struct DesktopPagePresenter::Impl
     SettingRow beautifyModeRow;
     muxc::ToggleSwitch beautifyFileThumbnails{nullptr};
     SettingRow beautifyFileThumbnailsRow;
+    muxc::Expander iconShadowCard{nullptr};
+    struct ShadowOption
+    {
+        bool IconShadowSettings::* field;
+        const char* labelKey;
+        const wchar_t* fallback;
+        muxc::CheckBox check{nullptr};
+        SettingRow row;
+        winrt::event_token clicked{};
+    };
+    std::array<ShadowOption, 6> shadowOptions{{
+        {&IconShadowSettings::fan, "app.settings.icon_shadow_fan", L"Icons in fan view"},
+        {&IconShadowSettings::dock, "app.settings.icon_shadow_dock", L"Dock icons"},
+        {&IconShadowSettings::exposedWidget, "app.settings.icon_shadow_exposed_widget", L"Exposed widget icons"},
+        {&IconShadowSettings::desktop, "app.settings.icon_shadow_desktop", L"Desktop icons"},
+        {&IconShadowSettings::popup, "app.settings.icon_shadow_popup", L"Icons in pop-ups"},
+        {&IconShadowSettings::quickNavigation, "app.settings.icon_shadow_quick_navigation", L"Icons in Quick Navigation"},
+    }};
     std::unique_ptr<ColorEditor> backgroundStart;
     std::unique_ptr<NumericEditor> backgroundOpacity;
     std::shared_ptr<EdgeLightEditor> edgeLightEditor;
@@ -939,6 +957,19 @@ struct DesktopPagePresenter::Impl
         beautifyCard.content.Children().Append(beautifyAdvanced);
         beautifyCard.content.Children().Append(iconThemes->SaveContent());
         iconThemes->SetCustomContent({beautifyAdvanced});
+
+        iconShadowCard = muxc::Expander{};
+        iconShadowCard.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        muxc::StackPanel shadowRows;
+        for (auto& option : shadowOptions)
+        {
+            option.check = muxc::CheckBox{};
+            option.row.Initialize(option.check);
+            presenter_controls::StyleSettingsSubrow(option.row.root, &option == &shadowOptions.front(), 0);
+            shadowRows.Children().Append(option.row.root);
+        }
+        iconShadowCard.Content(shadowRows);
+        beautifyCard.content.Children().Append(iconShadowCard);
 
         backgroundStart = MakeBeautifyColor(
             [](IconBeautifySettings& settings,
@@ -1332,6 +1363,15 @@ struct DesktopPagePresenter::Impl
             UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
                 [enabled](DesktopDisplaySettings& settings) { settings.beautifyFileThumbnails = enabled; });
         });
+        for (auto& option : shadowOptions)
+        {
+            option.clicked = option.check.Click([this, field = option.field](const auto& sender, const auto&) {
+                const bool enabled = sender.template as<muxc::CheckBox>().IsChecked().Value();
+                UpdateDesktop(SettingsUpdateMode::Commit, [field, enabled](DesktopDisplaySettings& settings) {
+                    settings.iconShadows.*field = enabled;
+                });
+            });
+        }
         glassEnabledToken = glassEnabled.Toggled([this](auto const&, auto const&) {
             const bool v = glassEnabled.IsOn();
             UpdateBeautify(SettingsUpdateMode::PreviewAndCommit, [v](auto& settings) { settings.glassEnabled = v; });
@@ -1786,6 +1826,8 @@ struct DesktopPagePresenter::Impl
             std::clamp(settings.shortcutArrowMode, 0, 2));
         groupComponentBadges.IsOn(settings.groupComponentBadges);
         beautifyFileThumbnails.IsOn(settings.beautifyFileThumbnails);
+        for (const auto& option : shadowOptions)
+            option.check.IsChecked(settings.iconShadows.*(option.field));
 
         const IconBeautifySettings& value = settings.iconBeautify;
         beautifyEnabled = value.enabled;
@@ -2097,6 +2139,14 @@ struct DesktopPagePresenter::Impl
         iconThemes->LocalizeText();
         beautifyFileThumbnailsRow.SetText(L("app.settings.beautify_file_thumbnails", L"Beautify file thumbnails"));
         muxa::AutomationProperties::SetName(beautifyFileThumbnails, beautifyFileThumbnailsRow.label.Text());
+        const auto shadowTitle = L("app.settings.icon_shadows", L"Icon shadows");
+        iconShadowCard.Header(winrt::box_value(shadowTitle));
+        muxa::AutomationProperties::SetName(iconShadowCard, shadowTitle);
+        for (auto& option : shadowOptions)
+        {
+            option.row.SetText(L(option.labelKey, option.fallback));
+            muxa::AutomationProperties::SetName(option.check, option.row.label.Text());
+        }
         beautifyModeRow.SetText(
             L("iconStyle.strategy", L"Icon processing"));
         muxa::AutomationProperties::SetName(
@@ -2240,6 +2290,7 @@ struct DesktopPagePresenter::Impl
         if (id == "desktop.fontWeight") return itemFontWeight->number;
         if (id == "desktop.shortcutArrow") return shortcutArrow;
         if (id == "desktop.groupComponentBadges") return groupComponentBadges;
+        if (id == "desktop.iconShadows") return iconShadowCard;
         if (id == "desktop.categoryCounts") return showCategoryTabCounts;
         if (id == "desktop.collectPrograms") return collectPrograms;
         if (id == "desktop.iconBeautify" ||
@@ -2371,6 +2422,8 @@ struct DesktopPagePresenter::Impl
             beautifyPreset.SelectionChanged(beautifyPresetToken);
             beautifyMode.SelectionChanged(beautifyModeToken);
             beautifyFileThumbnails.Toggled(beautifyFileThumbnailsToken);
+            for (const auto& option : shadowOptions)
+                option.check.Click(option.clicked);
             backgroundSource.SelectionChanged(backgroundSourceToken);
             filterMode.SelectionChanged(filterModeToken);
             glassEnabled.Toggled(glassEnabledToken); edgeReflection.Toggled(edgeReflectionToken);

@@ -650,7 +650,8 @@ void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
 void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
     float opacity, std::uintptr_t ownerKey, const snowdesktop::IconBeautifySettings* style)
 {
-    if (drawingIconAppearanceSource_ || dragPreviewCompositionPaintInProgress_) return;
+    if (drawingIconAppearanceSource_ || dragPreviewCompositionPaintInProgress_ ||
+        target == iconShadowRecorder_.Get()) return;
     const auto& appearance = style ? *style : iconBeautifySettings_;
     // Popup/quick-navigation backdrops are collected by their own animation
     // transaction. Icons inherit that panel rather than adding a second blur.

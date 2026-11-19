@@ -804,6 +804,12 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.iconBeautifyEnabled, error) ||
         !ReadOptionalRootBoolean(root, "beautifyFileThumbnails",
             decoded.beautifyFileThumbnails, error) ||
+        !ReadOptionalRootBoolean(root, "iconShadowFan", decoded.iconShadowFan, error) ||
+        !ReadOptionalRootBoolean(root, "iconShadowDock", decoded.iconShadowDock, error) ||
+        !ReadOptionalRootBoolean(root, "iconShadowExposedWidget", decoded.iconShadowExposedWidget, error) ||
+        !ReadOptionalRootBoolean(root, "iconShadowDesktop", decoded.iconShadowDesktop, error) ||
+        !ReadOptionalRootBoolean(root, "iconShadowPopup", decoded.iconShadowPopup, error) ||
+        !ReadOptionalRootBoolean(root, "iconShadowQuickNavigation", decoded.iconShadowQuickNavigation, error) ||
         !ReadOptionalBoolean(root, "iconBeautifyGlassEnabled", "iconBeautifyGlassEnabled",
             decoded.iconBeautifyGlassEnabled, error) ||
         !ReadOptionalFloat(root, "iconBeautifyGlassBlurRadius", "iconBeautifyGlassBlurRadius",

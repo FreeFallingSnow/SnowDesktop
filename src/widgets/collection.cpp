@@ -357,36 +357,41 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
         ? std::wstring_view(item.parsingName)
         : std::wstring_view(item.layoutKey);
 
-    if (useDemoIdentity)
-    {
-        app_->DrawDemoCollectionIdentityIcon(
-            context, *data_, demoIdentity, iconRect, 1.0f);
-    }
-    else if (!item.iconBitmap)
-    {
-        app_->DrawPlaceholderIcon(context, item.sysIconIndex, iconRect, 1.0f);
-    }
-    else
-    {
-        auto* bmp = app_->GetTargetIconBitmap(context, item.iconBitmap,
-            item.layoutKey, item.iconIsMediaThumbnail);
-        if (bmp)
+    const auto drawIcon = [&](ID2D1DeviceContext* drawing) {
+        if (useDemoIdentity)
         {
-            app_->DrawIconBitmap(context, bmp, iconRect, 1.0f,
-                reinterpret_cast<std::uintptr_t>(&item));
+            app_->DrawDemoCollectionIdentityIcon(
+                drawing, *data_, demoIdentity, iconRect, 1.0f);
+        }
+        else if (!item.iconBitmap)
+        {
+            app_->DrawPlaceholderIcon(drawing, item.sysIconIndex, iconRect, 1.0f);
         }
         else
         {
-            app_->DrawPlaceholderIcon(context, item.sysIconIndex, iconRect, 1.0f);
+            auto* bmp = app_->GetTargetIconBitmap(drawing, item.iconBitmap,
+                item.layoutKey, item.iconIsMediaThumbnail);
+            if (bmp)
+            {
+                app_->DrawIconBitmap(drawing, bmp, iconRect, 1.0f,
+                    reinterpret_cast<std::uintptr_t>(&item));
+            }
+            else
+            {
+                app_->DrawPlaceholderIcon(drawing, item.sysIconIndex, iconRect, 1.0f);
+            }
         }
-    }
 
-    if (!useDemoIdentity &&
-        app_->ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
-        (item.iconBitmap || item.iconState != IconState::Loading))
-    {
-        app_->DrawShortcutArrowOverlay(context, iconRect, 1.0f);
-    }
+        if (!useDemoIdentity &&
+            app_->ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
+            (item.iconBitmap || item.iconState != IconState::Loading))
+        {
+            app_->DrawShortcutArrowOverlay(drawing, iconRect, 1.0f);
+        }
+    };
+    if (IsPopupHosted() ? app_->iconShadows_.popup : app_->iconShadows_.exposedWidget)
+        app_->DrawIconShadow(context, iconRect, app_->GetItemLayoutScale(rect), drawIcon);
+    drawIcon(context);
 }
 
 bool Collection::DrawTitlelessTooltip(ID2D1DeviceContext* context,

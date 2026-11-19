@@ -216,7 +216,7 @@ void DesktopApp::ResetCompositionRenderCaches()
     luaWidgetPanelAnimationOverlay_.surface.Reset();
     luaWidgetPanelAnimationOverlay_.surfaceWidth = luaWidgetPanelAnimationOverlay_.surfaceHeight = 0;
     popupFanIconDrawings_.clear();
-    popupFanIconRecorder_.Reset();
+    iconShadowRecorder_.Reset();
     popupFanTextLayouts_.clear();
     popupFanCachedTextFormat_.Reset();
     ResetPageNotify();

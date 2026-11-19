@@ -1547,8 +1547,14 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                     if (!IsLuaLogicalSlotPickerOpen() &&
                         generalSettings_.demoModeEnabled &&
                         demoIdentityAssetsAvailable_)
-                        DrawDemoIdentityIcon(ctx.Get(), entry.parsingName,
-                            iconRect);
+                    {
+                        const auto drawIcon = [&](auto* drawing) {
+                            DrawDemoIdentityIcon(drawing, entry.parsingName, iconRect);
+                        };
+                        if (iconShadows_.quickNavigation)
+                            DrawIconShadow(ctx.Get(), iconRect, QuickNavScale(100) / 100.0f, drawIcon);
+                        drawIcon(ctx.Get());
+                    }
                     else
                         DrawQuickNavAppIcon(
                             ctx.Get(), entry, iconRect);

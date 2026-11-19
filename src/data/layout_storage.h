@@ -169,6 +169,12 @@ struct Document
     std::optional<bool> groupComponentBadges;
     std::optional<bool> iconBeautifyEnabled;
     std::optional<bool> beautifyFileThumbnails;
+    std::optional<bool> iconShadowFan;
+    std::optional<bool> iconShadowDock;
+    std::optional<bool> iconShadowExposedWidget;
+    std::optional<bool> iconShadowDesktop;
+    std::optional<bool> iconShadowPopup;
+    std::optional<bool> iconShadowQuickNavigation;
     std::optional<int> iconBeautifyPreset;
     std::optional<bool> iconBeautifyGlassEnabled;
     std::optional<float> iconBeautifyGlassBlurRadius;

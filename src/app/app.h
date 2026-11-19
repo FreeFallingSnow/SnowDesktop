@@ -16,6 +16,8 @@
 #include "ui/render/d2d_drawing.h"
 #include "ui/render/font_weight_rules.h"
 #include "app/render/composition_state_types.h"
+#include "icons/icon_shadow.h"
+#include "icons/icon_shadow_settings.h"
 #include "app/render/demo_icon_load_types.h"
 #include "app/dock/dock_runtime_types.h"
 #include "app/lifecycle/auto_start_result.h"
@@ -2101,6 +2103,7 @@ private:
         size_t variantIndex, RECT iconRect, float opacity);
     /** @brief 设置是否开启全局图标美化。 */
     void SetIconBeautifyEnabled(bool enabled);
+    void SetIconShadows(snowdesktop::IconShadowSettings settings);
     void SetIconBeautifySettings(
         const snowdesktop::IconBeautifySettings& settings,
         bool beautifyFileThumbnails,
@@ -2857,6 +2860,9 @@ private:
     bool ApplyLargeIconLibraryAsset(const snowdesktop::LargeIconSettingsRequest& request, const std::string& id);
     bool ImportLargeIconLibraryAsset(const snowdesktop::LargeIconSettingsRequest& request);
     ID2D1Bitmap* GetDockCustomIcon(ID2D1RenderTarget* context, const std::string& id, int pixels, std::wstring_view identity = {});
+    ID2D1DeviceContext* GetIconShadowRecorder();
+    void DrawIconShadow(ID2D1RenderTarget* target, RECT bounds, float scale,
+        const std::function<void(ID2D1DeviceContext*)>& drawIcon);
     void DrawIconBitmap(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap,
         RECT destination, float opacity = 1.0f,
         std::uintptr_t ownerKey = 0, bool preserveAspectRatio = true);
@@ -2891,6 +2897,7 @@ private:
         const QuickNavigationAppEntry& entry, RECT dstRect);
     /** @brief 绘制快捷导航行内系统图标（EXTRALARGE 源，缩放填满 dstRect）。 */
     void DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT dstRect);
+    void DrawQuickNavResultBitmap(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap, RECT bounds);
 
     // ── Filtering ───────────────────────────────────────────
     /**
@@ -3549,8 +3556,8 @@ private:
     ComPtr<IDWriteTextFormat> fanTitleTextFormat_;
     mutable ComPtr<IDWriteTextFormat> popupFanCachedTextFormat_;
     mutable std::unordered_map<std::wstring, ComPtr<IDWriteTextLayout>> popupFanTextLayouts_;
-    ComPtr<ID2D1DeviceContext> popupFanIconRecorder_;
-    std::unordered_map<std::wstring, PopupFanIconDrawing> popupFanIconDrawings_;
+    ComPtr<ID2D1DeviceContext> iconShadowRecorder_;
+    std::unordered_map<std::wstring, snowdesktop::icon_shadow::Drawing> popupFanIconDrawings_;
     std::vector<PopupFanBackdrop> popupFanBackdropCandidates_;
     std::size_t popupFanBackdropCount_ = 0;
     RECT popupFanBackdropViewport_{};
@@ -3904,6 +3911,7 @@ private:
     int shortcutArrowMode_ = 0;
     bool groupComponentBadges_ = true;
     bool beautifyFileThumbnails_ = false;
+    snowdesktop::IconShadowSettings iconShadows_;
     snowdesktop::IconBeautifySettings iconBeautifySettings_{};
     std::wstring primaryMonitorId_;
     std::wstring firstPageMonitorId_;   // 持久化：锁定显示首屏的显示器

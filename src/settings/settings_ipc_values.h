@@ -118,11 +118,13 @@ SD_IPC_FIELDS(IconBeautifySettings,
     v.filterStrength, v.filterTintR, v.filterTintG, v.filterTintB,
     v.outlineEnabled, v.outlineWidth, v.outlineOpacity, v.outlineR,
     v.outlineG, v.outlineB, v.shadowStrength, v.backgroundSource, v.backgroundGradient, v.filterMode);
+SD_IPC_FIELDS(IconShadowSettings, v.fan, v.dock, v.exposedWidget, v.desktop, v.popup, v.quickNavigation);
 SD_IPC_FIELDS(DesktopDisplaySettings,
     v.dockEnabled, v.iconSpacingScale,
     v.scrollingIconSpacingYScale, v.listRowSpacingScale,
     v.itemIconSizeScale, v.itemFontSizeCu,
-    v.listItemFontSizeCu, v.fanTitleFontSizeCu, v.itemFontWeight, v.desktopTitleLines, v.largeFolderTitleLines, v.scrollingTitleLines, v.shortcutArrowMode, v.iconBeautify, v.titleEllipsis, v.groupComponentBadges, v.beautifyFileThumbnails);
+    v.listItemFontSizeCu, v.fanTitleFontSizeCu, v.itemFontWeight, v.desktopTitleLines, v.largeFolderTitleLines, v.scrollingTitleLines, v.shortcutArrowMode, v.iconBeautify, v.titleEllipsis, v.groupComponentBadges, v.beautifyFileThumbnails,
+    v.iconShadows);
 SD_IPC_FIELDS(SettingsRoute,
     v.page, v.widgetInstanceId, v.focusId, v.itemKey, v.guideTopic);
 SD_IPC_FIELDS(LargeIconSettingsRequest, v.key, v.session, v.revision, v.action, v.config, v.path, v.fields);

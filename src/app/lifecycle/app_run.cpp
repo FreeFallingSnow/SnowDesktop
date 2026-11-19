@@ -625,6 +625,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         desktopSettings.shortcutArrowMode = shortcutArrowMode_;
         desktopSettings.groupComponentBadges = groupComponentBadges_;
         desktopSettings.beautifyFileThumbnails = beautifyFileThumbnails_;
+        desktopSettings.iconShadows = iconShadows_;
         desktopSettings.iconBeautify = iconBeautifySettings_;
         (void)settingsController_->SynchronizeDesktop(
             std::move(desktopSettings));
@@ -1095,6 +1096,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         desktop.shortcutArrowMode = shortcutArrowMode_;
         desktop.groupComponentBadges = groupComponentBadges_;
         desktop.beautifyFileThumbnails = beautifyFileThumbnails_;
+        desktop.iconShadows = iconShadows_;
         desktop.iconBeautify = iconBeautifySettings_;
         (void)settingsController_->SynchronizeDesktop(std::move(desktop));
         SyncSystemTaskbarSettingsFromWindows();

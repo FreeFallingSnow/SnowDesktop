@@ -552,9 +552,7 @@ void DesktopApp::DrawCollectionPopup(
                 static_cast<size_t>((popupScrollOffset_ + visibleHeight + stride - 1) / stride) * columns);
         }
     }
-    if (fan && !popupFanIconRecorder_ && d2dDevice_)
-        (void)d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &popupFanIconRecorder_);
-    const auto iconRecorder = popupFanIconRecorder_;
+    auto* iconRecorder = fan && iconShadows_.fan ? GetIconShadowRecorder() : nullptr;
     ComPtr<ID2D1RectangleGeometry> fanViewportClip;
     const auto collectFanBackdrop = [&](ID2D1Bitmap* bitmap, const RECT& icon,
         const D2D1_MATRIX_3X2_F& pose, float opacity) {
@@ -654,37 +652,17 @@ void DesktopApp::DrawCollectionPopup(
                     popupFanIconDrawings_.clear();
                     cached = popupFanIconDrawings_.end();
                 }
-                PopupFanIconDrawing drawing;
-                if (SUCCEEDED(iconRecorder->CreateCommandList(&drawing.commands)) &&
-                    SUCCEEDED(ctx->CreateEffect(CLSID_D2D1Shadow, &drawing.shadow)))
-                {
-                    iconRecorder->SetDpi(96, 96);
-                    iconRecorder->SetTarget(drawing.commands.Get());
-                    iconRecorder->SetTransform(D2D1::Matrix3x2F::Identity());
-                    iconRecorder->BeginDraw();
-                    drawIcon(iconRecorder.Get(), RECT{0, 0,
-                        pose.icon.right - pose.icon.left, pose.icon.bottom - pose.icon.top});
-                    const HRESULT recorded = iconRecorder->EndDraw();
-                    iconRecorder->SetTarget(nullptr);
-                    if (SUCCEEDED(recorded) && SUCCEEDED(drawing.commands->Close()))
-                    {
-                        drawing.shadow->SetValue(D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, 2.5f * popupMetrics.scale);
-                        drawing.shadow->SetValue(D2D1_SHADOW_PROP_COLOR, D2D1_VECTOR_4F{0, 0, 0, 0.65f});
-                        drawing.shadow->SetValue(D2D1_SHADOW_PROP_OPTIMIZATION, D2D1_SHADOW_OPTIMIZATION_BALANCED);
-                        drawing.shadow->SetValue(D2D1_PROPERTY_CACHED, static_cast<BOOL>(TRUE));
-                        drawing.shadow->SetInput(0, drawing.commands.Get());
-                        drawing.shadow->GetOutput(&drawing.shadowImage);
-                        if (SUCCEEDED(ctx->GetImageLocalBounds(drawing.shadowImage.Get(), &drawing.shadowBounds)))
-                            cached = popupFanIconDrawings_.emplace(cacheKey, std::move(drawing)).first;
-                    }
-                }
+                snowdesktop::icon_shadow::Drawing drawing;
+                const RECT localIcon{0, 0, pose.icon.right - pose.icon.left,
+                    pose.icon.bottom - pose.icon.top};
+                if (snowdesktop::icon_shadow::Record(ctx, iconRecorder, localIcon, popupMetrics.scale,
+                        [&](auto* recorder) { drawIcon(recorder, localIcon); }, drawing, true))
+                    cached = popupFanIconDrawings_.emplace(cacheKey, std::move(drawing)).first;
             }
             if (cached != popupFanIconDrawings_.end())
             {
                 const auto& drawing = cached->second;
-                const auto shadowOffset = D2D1::Point2F(pose.icon.left + drawing.shadowBounds.left,
-                    pose.icon.top + drawing.shadowBounds.top + 3.0f * popupMetrics.scale);
-                ctx->DrawImage(drawing.shadowImage.Get(), &shadowOffset, &drawing.shadowBounds);
+                snowdesktop::icon_shadow::Draw(ctx, drawing, pose.icon, popupMetrics.scale);
                 const auto iconBounds = D2D1::RectF(0, 0, static_cast<float>(pose.icon.right - pose.icon.left),
                     static_cast<float>(pose.icon.bottom - pose.icon.top));
                 const auto iconOffset = D2D1::Point2F(static_cast<float>(pose.icon.left), static_cast<float>(pose.icon.top));

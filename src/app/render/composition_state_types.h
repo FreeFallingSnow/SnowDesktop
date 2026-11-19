@@ -37,14 +37,6 @@ struct UiCompositionAnimationOverlay
     HRESULT SetPlacementOffset(POINT offset) const;
 };
 
-struct PopupFanIconDrawing
-{
-    Microsoft::WRL::ComPtr<ID2D1CommandList> commands;
-    Microsoft::WRL::ComPtr<ID2D1Effect> shadow;
-    Microsoft::WRL::ComPtr<ID2D1Image> shadowImage;
-    D2D1_RECT_F shadowBounds{};
-};
-
 struct PopupFanBackdrop
 {
     RECT viewport{};
