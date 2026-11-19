@@ -20,6 +20,8 @@
 #include "widget/tasks/widget_audio_task_dispatch.h"
 #include "widget/tasks/widget_filesystem_task_dispatch.h"
 #include "widget/tasks/widget_task_start_lua.h"
+#include "widget/tasks/widget_native_task_executor.h"
+#include "widget/view/widget_render_host_context.h"
 
 #include <algorithm>
 #include <charconv>
@@ -2692,4 +2694,411 @@ int lua_HttpCancel(lua_State* L)
         host->RuntimeHttpCancel(BoundWidgetId(L), id));
     return 1;
 }
+}
+
+snowdesktop::widget_runtime::TaskStartResult
+WidgetEngine::RuntimeStartTask(
+    const std::wstring& widgetId, std::uint64_t ownerToken,
+    std::string name,
+    std::unordered_map<std::string, std::string> arguments)
+{
+    using snowdesktop::widget_runtime::TaskStartOptions;
+    if (name.starts_with("multiplayer.") && snowdesktop::widget_runtime::IsDryLoad())
+        return {0, "previewUnavailable"};
+    if ((name == "native.request" || name == "native.watch") && snowdesktop::widget_runtime::IsDryLoad())
+        return { 0, "previewUnavailable" };
+    if (!taskBroker_)
+        return { 0, "task broker is not initialized" };
+    const auto loaded = std::find_if(widgets_.begin(), widgets_.end(),
+        [&widgetId, ownerToken](const LuaWidget& candidate) {
+            return candidate.widgetId == widgetId &&
+                candidate.runtimeToken == ownerToken;
+        });
+    if (loaded == widgets_.end())
+        return { 0, "widget instance is not loaded" };
+
+    LuaWidget& widget = *loaded;
+    if (name == "filesystem.pickFolder")
+    {
+        const auto access = arguments.find("access");
+        if (access == arguments.end() ||
+            (access->second != "read" && access->second != "write" &&
+                access->second != "readWrite"))
+            return { 0, "invalidArguments" };
+        const bool needsRead = access->second != "write";
+        const bool needsWrite = access->second != "read";
+        if ((needsRead && !snowdesktop::widget::WidgetPermissionBroker::
+                AllowsPermission(widget.permissions,
+                    kFilesystemReadPermission)) ||
+            (needsWrite && !snowdesktop::widget::WidgetPermissionBroker::
+                AllowsPermission(widget.permissions,
+                    kFilesystemWritePermission)))
+            return { 0, "permissionDenied" };
+    }
+    else if (IsFilesystemHandleTask(name))
+    {
+        const auto handle = arguments.find("handle");
+        if (handle == arguments.end()) return { 0, "invalidArguments" };
+        const bool previewHandle = widget.preview &&
+            IsPreviewFilesystemHandle(handle->second);
+        std::optional<snowdesktop::widget_runtime::
+            WidgetFilesystemHandleEntry> entry;
+        if (!previewHandle)
+        {
+            if (!filesystemHandleStore_)
+                return { 0, "providerUnavailable" };
+            entry = filesystemHandleStore_->Resolve(
+                { WideToUtf8(widget.widgetId), widget.packageId },
+                handle->second);
+            if (!entry) return { 0, "invalidReference" };
+        }
+        if (entry)
+        {
+            const bool readable = entry->access ==
+                    snowdesktop::widget_runtime::
+                        WidgetFilesystemHandleAccess::Read ||
+                entry->access == snowdesktop::widget_runtime::
+                    WidgetFilesystemHandleAccess::ReadWrite;
+            const bool writable = entry->access ==
+                    snowdesktop::widget_runtime::
+                        WidgetFilesystemHandleAccess::Write ||
+                entry->access == snowdesktop::widget_runtime::
+                    WidgetFilesystemHandleAccess::ReadWrite;
+            if ((name == "filesystem.stat" ||
+                    name == "filesystem.list" ||
+                    name == "filesystem.read" ||
+                    name == "filesystem.image") && !readable)
+                return { 0, "handleAccessDenied" };
+            if (name == "filesystem.write" && !writable)
+                return { 0, "handleAccessDenied" };
+            if (name == "filesystem.list" && entry->kind !=
+                    snowdesktop::widget_runtime::
+                        WidgetFilesystemHandleKind::Folder)
+                return { 0, "notFolder" };
+            if (name == "filesystem.image")
+            {
+                const auto child = arguments.find("name");
+                const bool hasChild = child != arguments.end();
+                if (hasChild && !snowdesktop::widget_runtime::WidgetFilesystemTaskExecutor::IsDirectChildName(child->second))
+                    return { 0, "invalidArguments" };
+                const auto expected = hasChild ? snowdesktop::widget_runtime::WidgetFilesystemHandleKind::Folder :
+                    snowdesktop::widget_runtime::WidgetFilesystemHandleKind::File;
+                if (entry->kind != expected) return { 0, hasChild ? "notFolder" : "notFile" };
+            }
+            if ((name == "filesystem.read" ||
+                    name == "filesystem.write") && entry->kind !=
+                    snowdesktop::widget_runtime::
+                        WidgetFilesystemHandleKind::File)
+                return { 0, "notFile" };
+        }
+    }
+    TaskStartOptions options;
+    options.ownerToken = widget.runtimeToken;
+    const auto requiredPermission =
+        taskBroker_->RequiredPermission(name);
+    options.permissionGranted = requiredPermission &&
+        (requiredPermission->empty() ||
+            snowdesktop::widget::WidgetPermissionBroker::AllowsPermission(
+                widget.permissions, *requiredPermission));
+    options.trustedGesture = trustedGestureState_.Active();
+    options.preview = widget.preview;
+    options.arguments = std::move(arguments);
+    if (name == "audio.output.setVolume" && options.arguments.contains("coalesce") &&
+        options.arguments.at("coalesce") == "1" && options.permissionGranted &&
+        options.trustedGesture)
+    {
+        if (widget.taskIds.size() >= snowdesktop::widget_runtime::WidgetTaskBroker::MaximumTasks)
+            return { 0, "per-instance task limit exceeded" };
+        // Retire superseded tasks before quota checks. Keep unique task IDs,
+        // cancellation notifications, instance ownership and gesture checks.
+        for (const auto id : widget.taskIds)
+        {
+            const auto previous = taskBroker_->Snapshot(id);
+            if (previous && previous->ownerToken == ownerToken && previous->name == name)
+            {
+                (void)RuntimeCancelTask(widgetId, ownerToken, id);
+                (void)taskBroker_->Complete(id, false, "canceled");
+            }
+        }
+    }
+    auto result = taskBroker_->Start(
+        WideToUtf8(widgetId), name, options);
+    if (result)
+    {
+        snowdesktop::performance::Value("task.start", name, widgetId, 1, result.id);
+        widget.taskIds.insert(result.id);
+        if (!widget.preview && taskWakeCallback_) taskWakeCallback_();
+    }
+    return result;
+}
+
+bool WidgetEngine::RuntimeCancelTask(
+    const std::wstring& widgetId, std::uint64_t ownerToken,
+    std::uint64_t taskId)
+{
+    if (!taskBroker_ || taskId == 0) return false;
+    const auto loaded = std::find_if(widgets_.begin(), widgets_.end(),
+        [&widgetId, ownerToken](const LuaWidget& candidate) {
+            return candidate.widgetId == widgetId &&
+                candidate.runtimeToken == ownerToken;
+        });
+    if (loaded == widgets_.end()) return false;
+    LuaWidget& widget = *loaded;
+    if (!widget.taskIds.contains(taskId)) return false;
+    const auto snapshot = taskBroker_->Snapshot(taskId);
+    if (!snapshot || snapshot->ownerToken != widget.runtimeToken)
+        return false;
+    if (!taskBroker_->Cancel(taskId)) return false;
+    if (audioPlayback_) audioPlayback_->Cancel(taskId);
+    CancelWidgetTaskWork(taskId, false);
+    networkTaskDispatch_.DiscardCompletion(taskId);
+    if (!widget.preview && taskWakeCallback_) taskWakeCallback_();
+    return true;
+}
+
+int WidgetEngine::RuntimeHttpRequest(const std::wstring& widgetId, HttpRequestOptions options)
+{
+    if (snowdesktop::widget_runtime::IsDryLoad()) return 0;
+    int index = FindWidget(widgetId);
+    if (index < 0 || !httpService_) return 0;
+    options.widgetId = widgetId;
+    options.allowAnyHttpOrHttpsUrl = true;
+    options.timeoutMs = std::clamp(options.timeoutMs, 1000, 30000);
+    options.cacheSeconds = std::clamp(options.cacheSeconds, 0, 86400);
+    if (options.body.size() > 64 * 1024) return 0;
+    return httpService_->Submit(std::move(options));
+}
+
+bool WidgetEngine::RuntimeHttpCancel(const std::wstring& widgetId, int requestId)
+{
+    return httpService_ && httpService_->Cancel(widgetId, requestId);
+}
+
+void WidgetEngine::RuntimeNotify(const std::wstring& widgetId,
+    const std::wstring& title, const std::wstring& message)
+{
+    const std::string error = RuntimePostNotification(
+        widgetId, title, message);
+    if (!error.empty())
+        RuntimeRecordError(widgetId,
+            "Widget notification failed: " + error);
+}
+
+std::string WidgetEngine::RuntimePostNotification(
+    const std::wstring& widgetId, const std::wstring& title,
+    const std::wstring& message)
+{
+    if (snowdesktop::widget_runtime::IsDryLoad()) return {};
+    if (title.empty() || message.empty()) return "invalidArguments";
+    const std::string admissionError =
+        RuntimeAdmitNotification(widgetId);
+    if (!admissionError.empty()) return admissionError;
+    try
+    {
+        if (!notifyCallback_({ snowdesktop::widget_runtime::
+                WidgetNotificationHostOperation::Show,
+                {}, title, message }))
+            return "notificationFailed";
+    }
+    catch (...)
+    {
+        return "notificationFailed";
+    }
+    return {};
+}
+
+std::string WidgetEngine::RuntimeAdmitNotification(
+    const std::wstring& widgetId)
+{
+    if (snowdesktop::widget_runtime::IsDryLoad()) return {};
+    const int index = FindWidget(widgetId);
+    if (index < 0) return "instanceDisposed";
+    auto& widget = widgets_[index];
+    const auto now = std::chrono::steady_clock::now();
+    if (widget.notificationWindow.time_since_epoch().count() == 0 ||
+        now - widget.notificationWindow >= std::chrono::minutes(1))
+    {
+        widget.notificationWindow = now;
+        widget.notificationsInWindow = 0;
+    }
+    if (widget.notificationsInWindow >= 5)
+        return "quotaExceeded";
+    if (!notifyCallback_) return "providerUnavailable";
+    ++widget.notificationsInWindow;
+    return {};
+}
+
+void WidgetEngine::OnNotificationAction(
+    std::string_view notificationId, std::string_view actionId)
+{
+    if (!notificationCenter_) return;
+    const auto activation = notificationCenter_->Activate(
+        notificationId, actionId);
+    if (!activation.ok) return;
+    const auto owner = std::find_if(widgets_.begin(), widgets_.end(),
+        [&activation](const LuaWidget& widget) {
+            return widget.runtimeToken == activation.ownerToken &&
+                widget.valid && !widget.preview;
+        });
+    if (owner == widgets_.end()) return;
+
+    snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
+        trustedGestureState_, true);
+    (void)InvokeLifecycleEvent(*owner, "notification.action",
+        [&activation](lua_State* eventState) {
+            lua_pushlstring(eventState,
+                activation.notificationId.data(),
+                activation.notificationId.size());
+            lua_setfield(eventState, -2, "notificationId");
+            lua_pushlstring(eventState, activation.actionId.data(),
+                activation.actionId.size());
+            lua_setfield(eventState, -2, "actionId");
+        });
+    RuntimeInvalidateHost(owner->widgetId);
+}
+
+void WidgetEngine::SetTaskWakeCallback(TaskWakeCallback callback)
+{
+    taskWakeCallback_ = std::move(callback);
+    if (d2dState_) d2dState_->packageImageCache.SetReadyCallback(taskWakeCallback_);
+    if (audioPlayback_) audioPlayback_->SetWakeCallback(taskWakeCallback_);
+    if (nativeTaskExecutor_) nativeTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
+    if (locationTaskExecutor_) locationTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
+    if (filesystemTaskExecutor_)
+        filesystemTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
+}
+
+void WidgetEngine::OnTaskWake()
+{
+    DrainPackageImageChanges();
+    TickWidgetDataBroker();
+    ApplyWidgetTaskBrokerActions();
+}
+
+void WidgetEngine::TickWidgetNotifications()
+{
+    if (notificationCenter_ && notificationScheduleStore_)
+    {
+        const auto notificationNow = snowdesktop::widget_runtime::
+            WidgetNotificationCenter::Clock::now();
+        const std::int64_t notificationNowMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                notificationNow.time_since_epoch()).count();
+        std::vector<snowdesktop::widget_runtime::
+            WidgetPersistedNotificationSchedule> durableDue;
+        for (const auto& entry :
+            notificationScheduleStore_->Due(notificationNowMs))
+        {
+            const bool loaded = std::any_of(
+                widgets_.begin(), widgets_.end(),
+                [&entry](const LuaWidget& widget) {
+                    return widget.valid && !widget.preview &&
+                        WideToUtf8(widget.widgetId) ==
+                            entry.instanceId &&
+                        widget.packageId == entry.packageId;
+                });
+            if (loaded) durableDue.push_back(entry);
+        }
+        bool dispatchDue = !durableDue.empty();
+        if (dispatchDue)
+        {
+            for (const auto& entry : durableDue)
+            {
+                (void)notificationScheduleStore_->Remove(
+                    entry.instanceId, entry.notificationId);
+            }
+            if (!SaveNotificationSchedules())
+            {
+                std::string ignored;
+                for (const auto& entry : durableDue)
+                    (void)notificationScheduleStore_->Upsert(entry, ignored);
+                dispatchDue = false;
+            }
+        }
+        const auto deliveries = dispatchDue
+            ? notificationCenter_->DispatchDue(notificationNow,
+            [this](std::uint64_t ownerToken) {
+                const auto owner = std::find_if(
+                    widgets_.begin(), widgets_.end(),
+                    [ownerToken](const LuaWidget& widget) {
+                        return widget.runtimeToken == ownerToken &&
+                            widget.valid && !widget.preview;
+                    });
+                return owner == widgets_.end()
+                    ? std::string("instanceDisposed")
+                    : RuntimeAdmitNotification(owner->widgetId);
+            },
+            [this](const snowdesktop::widget_runtime::
+                WidgetNotificationHostRequest& request) {
+                return notifyCallback_ && notifyCallback_(request);
+            })
+            : std::vector<snowdesktop::widget_runtime::
+                WidgetNotificationDelivery>{};
+        for (const auto& delivery : deliveries)
+        {
+            const auto owner = std::find_if(
+                widgets_.begin(), widgets_.end(),
+                [&delivery](const LuaWidget& widget) {
+                    return widget.runtimeToken == delivery.ownerToken;
+                });
+            if (owner == widgets_.end() || !owner->valid) continue;
+            (void)InvokeLifecycleEvent(*owner, "notification.delivered",
+                [&delivery](lua_State* eventState) {
+                    lua_pushlstring(eventState, delivery.id.data(),
+                        delivery.id.size());
+                    lua_setfield(eventState, -2, "notificationId");
+                    lua_pushboolean(eventState, delivery.ok ? 1 : 0);
+                    lua_setfield(eventState, -2, "ok");
+                    if (!delivery.ok)
+                    {
+                        lua_pushlstring(eventState, delivery.error.data(),
+                            delivery.error.size());
+                        lua_setfield(eventState, -2, "error");
+                    }
+                });
+            RuntimeInvalidateHost(owner->widgetId);
+        }
+    }
+}
+
+void WidgetEngine::DrainWidgetHttpResponses()
+{
+    if (httpService_)
+    {
+        for (auto& response : httpService_->Drain())
+        {
+            if (networkTaskDispatch_.Consume(response, taskBroker_.get()))
+                continue;
+            int index = FindWidget(response.widgetId);
+            if (index < 0) continue;
+            auto& widget = widgets_[index];
+            lua_State* state = widget.state;
+            if (!state) continue;
+            const std::wstring widgetId = widget.widgetId;
+            WidgetExecutionContextGuard contextGuard(
+                d2dState_, widgetId);
+            snowdesktop::lua_runtime::StackGuard stackGuard(state);
+            SetWidgetRectContext(d2dState_, widget.lastBounds);
+            lua_rawgeti(state, LUA_REGISTRYINDEX, widget.ref);
+            if (lua_istable(state, -1))
+            {
+                lua_getfield(state, -1, "onHttpResponse");
+                if (lua_isfunction(state, -1))
+                {
+                    lua_pushinteger(state, response.id);
+                    snowdesktop::widget_runtime::PushHttpResponseValue(state, response);
+                    if (snowdesktop::lua_runtime::ProtectedCall(state, 2, 0) != LUA_OK)
+                    {
+                        const char* error = lua_tostring(state, -1);
+                        RuntimeRecordError(widgetId, error ? error : "(onHttpResponse error)");
+                        lua_pop(state, 1);
+                    }
+                    RuntimeInvalidateHost(widgetId);
+                }
+                else
+                    lua_pop(state, 1);
+            }
+            lua_pop(state, 1);
+        }
+    }
 }

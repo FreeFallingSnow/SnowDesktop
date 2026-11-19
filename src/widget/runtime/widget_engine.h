@@ -1646,6 +1646,7 @@ private:
         const snowdesktop::widget_runtime::LogicalSlotChange& change,
         std::string_view source);
     void RefreshLogicalSlotAvailability();
+    void RestoreLogicalSlotReferences(LuaWidget& widget);
     void DispatchInteractionAction(LuaWidget& widget,
         const std::string& targetKey, const char* eventName,
         int x, int y, int button, int delta, int clickCount = 0,
@@ -1675,13 +1676,23 @@ private:
         const snowdesktop::widget_runtime::InteractionHoverTransition& transition,
         int x, int y, std::string_view surface = "desktop");
     void DisposeWidgetLifecycle(LuaWidget& widget, const char* reason);
+    void InitializeWidgetStorage();
+    void PurgeOpaqueWidgetSettings(const LuaWidget& widget);
+    bool MigrateWidgetStorage(lua_State* state, const LuaWidget& pending,
+        const LuaRuntimeQuota& quota);
     void InitializeWidgetDataBroker();
+    void TickWidgetCalendar();
+    void TickWidgetDataBroker();
     void ApplyWidgetDataBrokerActions();
+    void DrainWidgetProviderChanges();
+    void DrainWidgetSnapshotChanges();
     void DrainAudioAnalysisChanges();
     void ReconcileFilesystemWatches();
     void DrainFilesystemWatchCompletions();
     void ReleaseWidgetDataSubscriptions(LuaWidget& widget);
     void InitializeWidgetTaskBroker();
+    void DrainWidgetHttpResponses();
+    void TickWidgetNotifications();
     void ApplyWidgetTaskBrokerActions();
     void PumpWidgetMultiplayer();
     void StartWidgetMultiplayerTask(const snowdesktop::widget_runtime::TaskBrokerAction& action,

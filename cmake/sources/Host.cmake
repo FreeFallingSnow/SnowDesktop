@@ -570,6 +570,7 @@ set(SNOWDESKTOP_SOURCES
     src/navigation/quick_navigation_search_async.cpp
     src/widget/runtime/lua_runtime.cpp
     src/widget/api/widget_api_registry.cpp
+    src/widget/api/widget_lua_api_host.cpp
     src/widget/packages/widget_package_image_cache.cpp
     src/widget/runtime/widget_l10n_format.cpp
     src/widget/runtime/widget_l10n_lua.cpp
@@ -638,6 +639,12 @@ set(SNOWDESKTOP_SOURCES
     src/widget/view/widget_host_input.cpp
     src/widget/view/widget_host_input_events.cpp
     src/widget/view/widget_host_scroll.cpp
+    src/widget/view/widget_surface_interaction.h
+    src/widget/view/widget_surface_interaction.cpp
+    src/widget/view/widget_appearance_host.cpp
+    src/widget/view/widget_pointer_host.cpp
+    src/widget/view/widget_resource_host.h
+    src/widget/view/widget_resource_host.cpp
     src/widget/view/widget_interaction_lua_value.cpp
     src/widget/view/widget_interaction_lua_value.h
     src/widget/view/widget_view_renderer.cpp
@@ -667,6 +674,8 @@ set(SNOWDESKTOP_SOURCES
     src/widget/storage/widget_storage_runtime.h
     src/widget/storage/widget_storage_lua.cpp
     src/widget/storage/widget_storage_lua.h
+    src/widget/storage/widget_storage_host.h
+    src/widget/storage/widget_storage_host.cpp
     src/widget/storage/widget_storage_write_budget.cpp
     src/widget/storage/widget_secret_store.cpp
     src/widget/settings/widget_settings_model.h
@@ -693,6 +702,13 @@ set(SNOWDESKTOP_SOURCES
     src/widget/runtime/widget_lua_binding_context.cpp
     src/widget/runtime/widget_lua_binding_context.h
     src/widget/runtime/widget_engine.cpp
+    src/widget/runtime/widget_logical_slot_host.cpp
+    src/widget/runtime/widget_calendar_host.cpp
+    src/widget/runtime/widget_desktop_host.h
+    src/widget/runtime/widget_desktop_host.cpp
+    src/widget/runtime/widget_timer_host.cpp
+    src/widget/runtime/widget_menu_host.cpp
+    src/widget/runtime/widget_diagnostics_host.cpp
     src/widget/runtime/widget_logical_slot_lua.cpp
     src/widget/runtime/widget_logical_slot_lua.h
     src/widget/runtime/widget_calendar_lua.cpp
@@ -708,6 +724,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/data/widget_data_subscription_lua.cpp
     src/widget/data/widget_data_subscription_lua.h
     src/widget/data/widget_data_snapshot.cpp
+    src/widget/data/widget_data_host.cpp
     src/widget/data/widget_data_snapshot.h
     src/widget/data/widget_system_control_data.cpp
     src/widget/runtime/widget_multiplayer.cpp
