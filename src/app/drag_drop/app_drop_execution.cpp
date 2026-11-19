@@ -576,8 +576,8 @@ bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
                 _LFW("app.grid.copy_suffix_num", std::to_wstring(index))) + ext;
     };
     services.shortcutName = _LW("widget.shortcut");
-    services.enqueue = [this](auto request, auto done) {
-        return QueueShellFileOperation(std::move(request), std::move(done));
+    services.dispatch = [this](auto request, auto done, bool sync) {
+        return DispatchMaterializedFileOperation(std::move(request), std::move(done), sync);
     };
     return snowdesktop::desktop_file_materialization::Materialize(sourceList, action,
         duplicateDesktopCopyNames, TrimTrailingPathSeparators(desktopPath),
@@ -599,8 +599,8 @@ bool DesktopApp::MaterializeFilesToFolder(const DragSourceList& sourceList,
     std::shared_ptr<snowdesktop::ShellFileOperationResult> result)
 {
     snowdesktop::desktop_file_materialization::Services services;
-    services.enqueue = [this](auto request, auto done) {
-        return QueueShellFileOperation(std::move(request), std::move(done));
+    services.dispatch = [this](auto request, auto done, bool sync) {
+        return DispatchMaterializedFileOperation(std::move(request), std::move(done), sync);
     };
     return snowdesktop::desktop_file_materialization::MaterializeFolder(sourceList, folderPath,
         action, services, std::move(completion), executeSynchronously, std::move(result));

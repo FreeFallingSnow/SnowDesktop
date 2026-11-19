@@ -805,6 +805,8 @@ void DesktopApp::EndDragSession()
     CancelCollectionPopupDwell();
     CancelCollectionGroupTabDwell();
     dragSession_.End();
+    if (!releasingFileSources_.empty())
+        FinishFileRemovalVisibility(std::exchange(releasingFileSources_, {}), {});
     for (const auto& request : pendingLandingCaches_)
         if (request.visualId) InvalidateFileDropVisual(request, true);
     ResetDockRunningDrag();

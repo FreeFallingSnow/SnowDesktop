@@ -20,6 +20,29 @@
 
 // Asynchronous path-based Shell file operations.
 
+namespace
+{
+// The Shell can cancel or skip individual members. Observe the source names
+// on the worker before posting completion, including for opaque IDropTarget
+// handoffs that do not return per-item receipts.
+struct ShellRemovalSources
+{
+    std::vector<std::wstring> paths;
+    std::vector<std::wstring> departed;
+
+    void ReadDepartures()
+    {
+        for (const auto& path : paths)
+        {
+            if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) continue;
+            const auto error = GetLastError();
+            if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
+                departed.push_back(path);
+        }
+    }
+};
+}
+
 bool DesktopApp::CanApplyFileHistory(bool redo) const
 {
     return shellFileOperationInFlight_ == 0 && pendingRenames_.empty() &&
@@ -127,6 +150,31 @@ bool DesktopApp::QueueShellFileOperation(
         std::move(request), std::move(completion));
 }
 
+bool DesktopApp::DispatchMaterializedFileOperation(snowdesktop::ShellFileOperationRequest request,
+    FileOperationCompletion completion, bool synchronously)
+{
+    if (!synchronously) return QueueShellFileOperation(std::move(request), std::move(completion));
+    std::vector<std::wstring> sources;
+    for (const auto& step : request.steps)
+        if (step.function == FO_MOVE) sources.insert(sources.end(), step.sources.begin(), step.sources.end());
+    if (!sources.empty())
+    {
+        if (!request.result) request.result = std::make_shared<snowdesktop::ShellFileOperationResult>();
+        BeginFileRemovalVisibility(sources);
+    }
+    const bool succeeded = snowdesktop::ShellFileOperationWorker::Execute(request);
+    if (!sources.empty())
+    {
+        std::vector<std::wstring> departed;
+        for (const auto& output : request.result->outputs)
+            if (!output.referencesSource && !output.destination.empty() && !PathsEqualInsensitive(output.source, output.destination))
+                departed.push_back(output.source);
+        FinishFileRemovalVisibility(sources, departed);
+    }
+    if (completion) completion(succeeded);
+    return succeeded;
+}
+
 bool DesktopApp::QueueShellFileOperation(
     snowdesktop::ShellFileOperationRequest request,
     FileOperationCompletion completion)
@@ -149,18 +197,21 @@ bool DesktopApp::QueueShellFileOperation(
 
     std::vector<std::wstring> removedPaths;
     std::vector<DockEntry> removalPins;
+    std::shared_ptr<ShellRemovalSources> removal;
     for (const auto& step : request.steps)
         if (step.function == FO_DELETE || step.function == FO_MOVE)
             removedPaths.insert(removedPaths.end(), step.sources.begin(), step.sources.end());
     if (!removedPaths.empty())
     {
+        removal = std::make_shared<ShellRemovalSources>();
+        removal->paths = std::move(removedPaths);
         for (size_t i = 0; i < dockEntries_.size(); ++i)
         {
             const auto& entry = dockEntries_[i];
             if (entry.type != DockEntryType::DesktopItem || IsRecycleBinDockEntry(entry)) continue;
             const auto itemIndex = FindItemIndexByKey(entry.reference);
             const auto& path = itemIndex < items_.size() ? items_[itemIndex].parsingName : entry.reference;
-            if (std::none_of(removedPaths.begin(), removedPaths.end(), [&](const auto& removed) {
+            if (std::none_of(removal->paths.begin(), removal->paths.end(), [&](const auto& removed) {
                     return _wcsicmp(path.c_str(), removed.c_str()) == 0;
                 })) continue;
             removalPins.push_back(entry);
@@ -169,12 +220,12 @@ bool DesktopApp::QueueShellFileOperation(
                     dock->PrepareEntryRemoval(i);
         }
         auto callback = std::move(result->callback);
-        result->callback = [this, removedPaths = std::move(removedPaths),
-            removalPins,
+        result->callback = [this, removal, removalPins,
             callback = std::move(callback)](bool succeeded) {
+            FinishFileRemovalVisibility(removal->paths, removal->departed);
             // A cancelled/failed operation must retain its original ownership.
             // Successful user deletions/moves must not become recoverable gaps.
-            if (succeeded) RemoveDesktopKeysFromWidgets(removedPaths);
+            if (succeeded) RemoveDesktopKeysFromWidgets(removal->departed);
             else
                 for (const auto& container : containers_)
                     if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
@@ -184,7 +235,8 @@ bool DesktopApp::QueueShellFileOperation(
     }
     const bool queued = shellFileOperationWorker_.Enqueue(
         std::move(request),
-        [completionWindow, result](bool succeeded) {
+        [completionWindow, result, removal](bool succeeded) {
+            if (removal) removal->ReadDepartures();
             result->succeeded = succeeded;
             if (!PostMessageW(
                     completionWindow,
@@ -205,8 +257,20 @@ bool DesktopApp::QueueShellFileOperation(
     ++shellFileOperationInFlight_;
     shellRefreshRevision_.Invalidate();
     readyShellRefresh_.reset();
+    if (removal) BeginFileRemovalVisibility(removal->paths);
     ApplyFloatingDockLayerPolicy();
     return true;
+}
+
+bool DesktopApp::IsRecycleDropTarget(Item* item) const
+{
+    if (const auto* icon = dynamic_cast<DesktopIcon*>(item))
+    {
+        const auto* model = icon->GetDesktopItem();
+        return model && _wcsicmp(model->desktopIconClsid.c_str(), kDesktopIconClsidRecycleBin) == 0;
+    }
+    const auto* pin = dynamic_cast<DockEntryItem*>(item);
+    return pin && pin->GetEntryIndex() < dockEntries_.size() && IsRecycleBinDockEntry(dockEntries_[pin->GetEntryIndex()]);
 }
 
 bool DesktopApp::QueueShellDrop(
@@ -215,7 +279,7 @@ bool DesktopApp::QueueShellDrop(
     DWORD keyState,
     POINTL screenPoint,
     DWORD allowedEffects,
-    FileOperationCompletion completion)
+    FileOperationCompletion completion, bool recycleTarget)
 {
     HWND completionWindow = controlHwnd_ && IsWindow(controlHwnd_)
         ? controlHwnd_ : hwnd_;
@@ -233,6 +297,16 @@ bool DesktopApp::QueueShellDrop(
     }
 
     snowdesktop::ShellDropRequest request;
+    std::shared_ptr<ShellRemovalSources> removal;
+    if (recycleTarget && ChooseDropEffect(keyState, allowedEffects) == DROPEFFECT_MOVE)
+    {
+        removal = std::make_shared<ShellRemovalSources>();
+        removal->paths = sourcePaths;
+        result->callback = [this, removal, done = std::move(result->callback)](bool succeeded) {
+            FinishFileRemovalVisibility(removal->paths, removal->departed);
+            if (done) done(succeeded);
+        };
+    }
     request.sources = std::move(sourcePaths);
     request.targetParsingName = std::move(targetParsingName);
     request.keyState = keyState;
@@ -240,7 +314,8 @@ bool DesktopApp::QueueShellDrop(
     request.allowedEffects = allowedEffects;
     const bool queued = shellFileOperationWorker_.Enqueue(
         std::move(request),
-        [completionWindow, result](bool succeeded) {
+        [completionWindow, result, removal](bool succeeded) {
+            if (removal) removal->ReadDepartures();
             result->succeeded = succeeded;
             if (!PostMessageW(
                     completionWindow,
@@ -258,6 +333,7 @@ bool DesktopApp::QueueShellDrop(
     ++shellFileOperationInFlight_;
     shellRefreshRevision_.Invalidate();
     readyShellRefresh_.reset();
+    if (removal) BeginFileRemovalVisibility(removal->paths);
     ApplyFloatingDockLayerPolicy();
     return true;
 }
@@ -643,6 +719,7 @@ void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapsh
             RefreshDockFolderPopup(&folder->second);
     }
     RefreshInactiveInlineFolderPreviews(snapshot);
+    ApplyFileRemovalRefresh(snapshot);
     if (orderChanged) SaveLayoutSlots();
     // The matching Dock folder snapshot has already published its geometry.
     if (!dockFolderPopupOpen_) RefreshOpenCollectionPopupGeometry();
@@ -720,6 +797,7 @@ void DesktopApp::RefreshShellItemsAsync()
                 });
         if (contentOnly)
         {
+            ApplyFileRemovalRefresh(*snapshot);
             // Nested changes do not alter desktop membership, but can change
             // recursive matches. Refresh queries without replacing their state.
             for (auto& container : containers_)

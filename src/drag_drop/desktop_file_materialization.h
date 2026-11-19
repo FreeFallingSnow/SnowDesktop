@@ -52,7 +52,7 @@ struct Services
     std::function<std::wstring(std::wstring)> normalize;
     std::function<std::wstring(const std::wstring&, const std::wstring&, int)> copyName;
     std::wstring shortcutName;
-    std::function<bool(ShellFileOperationRequest, Completion)> enqueue;
+    std::function<bool(ShellFileOperationRequest, Completion, bool)> dispatch;
 };
 
 // Desktop location, localized names and the UI queue are host services. Actual
@@ -186,33 +186,13 @@ inline bool Materialize(const DragSourceList& sourceList, DropAction action,
                 *materializedPathReservations);
             return false;
         }
-        if (executeSynchronously)
-        {
-            operated = snowdesktop::ShellFileOperationWorker::
-                Execute(request);
-            reservations.Release(
-                *materializedPathReservations);
-            if (completion)
-                completion(operated);
-        }
-        else
-        {
-            auto reservationCompletion = [&reservations,
-                materializedPathReservations,
-                completion = std::move(completion)](
-                    bool succeeded) mutable {
-                reservations.Release(
-                    *materializedPathReservations);
-                if (completion)
-                    completion(succeeded);
-            };
-            operated = services.enqueue(
-                std::move(request),
-                std::move(reservationCompletion));
-            if (!operated)
-                reservations.Release(
-                    *materializedPathReservations);
-        }
+        auto finished = [&reservations, materializedPathReservations,
+            completion = std::move(completion)](bool succeeded) {
+            reservations.Release(*materializedPathReservations);
+            if (completion) completion(succeeded);
+        };
+        operated = services.dispatch(std::move(request), std::move(finished), executeSynchronously);
+        if (!operated && !executeSynchronously) reservations.Release(*materializedPathReservations);
     }
     else if (action == DropAction::Copy)
     {
@@ -247,22 +227,10 @@ inline bool Materialize(const DragSourceList& sourceList, DropAction action,
                     FOF_NOERRORUI |
                     FOF_RENAMEONCOLLISION) });
         }
-        if (executeSynchronously)
-        {
-            snowdesktop::ShellFileOperationRequest request;
-            request.result = result;
-            request.steps = std::move(steps);
-            operated = snowdesktop::ShellFileOperationWorker::Execute(request);
-            if (completion)
-                completion(operated);
-        }
-        else
-        {
-            snowdesktop::ShellFileOperationRequest request;
-            request.steps = std::move(steps);
-            request.result = result;
-            operated = services.enqueue(std::move(request), std::move(completion));
-        }
+        ShellFileOperationRequest request;
+        request.result = std::move(result);
+        request.steps = std::move(steps);
+        operated = services.dispatch(std::move(request), std::move(completion), executeSynchronously);
     }
     else
     {
@@ -276,22 +244,10 @@ inline bool Materialize(const DragSourceList& sourceList, DropAction action,
                 FOF_NOCONFIRMMKDIR |
                 FOF_NOERRORUI |
                 FOF_RENAMEONCOLLISION) });
-        if (executeSynchronously)
-        {
-            snowdesktop::ShellFileOperationRequest request;
-            request.result = result;
-            request.steps = std::move(steps);
-            operated = snowdesktop::ShellFileOperationWorker::Execute(request);
-            if (completion)
-                completion(operated);
-        }
-        else
-        {
-            snowdesktop::ShellFileOperationRequest request;
-            request.steps = std::move(steps);
-            request.result = result;
-            operated = services.enqueue(std::move(request), std::move(completion));
-        }
+        ShellFileOperationRequest request;
+        request.result = std::move(result);
+        request.steps = std::move(steps);
+        operated = services.dispatch(std::move(request), std::move(completion), executeSynchronously);
     }
     return operated;
 }
@@ -305,9 +261,6 @@ inline bool MaterializeFolder(const DragSourceList& sources, const std::wstring&
         action == DropAction::Move ? DROPEFFECT_MOVE : DROPEFFECT_COPY;
     auto request = file_backed_drop::BuildRequest(paths, folder, effect, std::move(result));
     if (!request) return false;
-    if (!synchronously) return services.enqueue(std::move(*request), std::move(completion));
-    const bool succeeded = ShellFileOperationWorker::Execute(*request);
-    if (completion) completion(succeeded);
-    return succeeded;
+    return services.dispatch(std::move(*request), std::move(completion), synchronously);
 }
 }

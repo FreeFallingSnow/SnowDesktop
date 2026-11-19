@@ -2386,6 +2386,8 @@ private:
     bool QueueShellFileOperation(
         snowdesktop::ShellFileOperationRequest request,
         FileOperationCompletion completion);
+    bool DispatchMaterializedFileOperation(snowdesktop::ShellFileOperationRequest request,
+        FileOperationCompletion completion, bool synchronously);
     bool QueueFileDeletion(std::vector<std::wstring> paths, bool permanentDelete,
         FILEOP_FLAGS extraRecycleFlags = 0, std::wstring refreshFolder = {});
     static constexpr UINT kFileUndoCommand = 42990;
@@ -2402,7 +2404,8 @@ private:
         DWORD keyState,
         POINTL screenPoint,
         DWORD allowedEffects,
-        FileOperationCompletion completion);
+        FileOperationCompletion completion, bool recycleTarget = false);
+    bool IsRecycleDropTarget(Item* item) const;
     /** @brief 按 OLE 异步协议将原始数据对象 marshal 到 Shell STA。 */
     bool QueueAsyncShellDrop(
         IDataObject* dataObject,
@@ -4399,6 +4402,22 @@ private:
         const std::vector<std::wstring>& knownPaths = {});
     void CaptureFileDropAppearance(PendingLandingCache& cache, const DragSourceList& sources);
     bool IsPendingMovedFile(const std::wstring& path, const std::wstring& key = {}) const;
+    // The destination can publish before the source directory. Keep the
+    // original hidden until each model displaying it has received its own read.
+    struct FileRemovalVisibility
+    {
+        size_t requests = 0;
+        bool awaitingDesktop = false;
+        std::wstring awaitingFolder;
+    };
+    std::unordered_map<std::wstring, FileRemovalVisibility> fileRemovalVisibility_;
+    std::vector<std::wstring> releasingFileSources_;
+    void BeginFileRemovalVisibility(const std::vector<std::wstring>& paths);
+    void FinishFileRemovalVisibility(const std::vector<std::wstring>& paths,
+        const std::vector<std::wstring>& departed);
+    void ApplyFileRemovalRefresh(const snowdesktop::shell_refresh::Snapshot& snapshot);
+    void InvalidateFileRemovalViews();
+    void HoldReleasingFileSources(DropAction action);
     struct FileDropViewLayout
     {
         const DesktopWidget* model = nullptr;

@@ -98,8 +98,139 @@ void DesktopApp::CaptureFileDropAppearance(PendingLandingCache& cache, const Dra
     }
 }
 
+void DesktopApp::InvalidateFileRemovalViews()
+{
+    // A viewport can now need a different set of model slots. Keep the
+    // release target valid while a native/OLE drop still owns its bindings.
+    if (!dragSession_.HasContext())
+    {
+        for (const auto& container : containers_)
+            if (auto* view = dynamic_cast<WidgetContainer*>(container.get()))
+            {
+                view->InvalidateSlots();
+                if (auto* group = dynamic_cast<FileGroup*>(view))
+                    if (auto* source = group->GetActiveSourceContainer()) source->InvalidateSlots();
+            }
+        if (dockFolderPopupContainer_) dockFolderPopupContainer_->InvalidateSlots();
+    }
+    fileDropLayouts_.clear();
+    if (!hwnd_) return;
+    InvalidateDragStaticScene(false);
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    InvalidateCollectionPopupContent();
+    InvalidateFloatingPopupWindow(false);
+    InvalidateFloatingDockWindow(false);
+}
+
+void DesktopApp::BeginFileRemovalVisibility(const std::vector<std::wstring>& paths)
+{
+    bool changed = false;
+    for (const auto& path : paths)
+    {
+        auto [it, inserted] = fileRemovalVisibility_.try_emplace(ToUpperInvariant(path));
+        ++it->second.requests;
+        changed |= inserted;
+    }
+    if (changed) InvalidateFileRemovalViews();
+}
+
+void DesktopApp::HoldReleasingFileSources(DropAction action)
+{
+    if (action != DropAction::Move || !releasingFileSources_.empty() ||
+        dynamic_cast<DockContainer*>(dragSession_.Source())) return;
+    releasingFileSources_ = dragSession_.SourceList().FilePaths();
+    BeginFileRemovalVisibility(releasingFileSources_);
+}
+
+void DesktopApp::FinishFileRemovalVisibility(const std::vector<std::wstring>& paths,
+    const std::vector<std::wstring>& departed)
+{
+    if (paths.empty()) return;
+    std::unordered_set<std::wstring> folders;
+    bool desktop = false;
+    if (!departed.empty())
+    {
+        // Only reread source folders represented by a live directory view.
+        // Collection members share the desktop model, including on other pages.
+        std::unordered_set<std::wstring> displayedFolders;
+        const auto addFolder = [&](const DesktopWidget& model) {
+            if (model.type == DesktopWidgetType::FolderMapping && !model.sourceFolderPath.empty())
+                displayedFolders.insert(snowdesktop::shell_refresh::FolderKey(model.sourceFolderPath));
+        };
+        for (const auto& widget : widgets_) addFolder(widget);
+        if (dockFolderPopupOpen_) addFolder(dockFolderPopupWidget_);
+        for (const auto& preview : inactiveInlineFolderPreviews_) addFolder(preview.second.model.data);
+        std::unordered_set<std::wstring> departedKeys;
+        for (const auto& path : departed)
+        {
+            const auto key = ToUpperInvariant(path);
+            const auto it = fileRemovalVisibility_.find(key);
+            if (it == fileRemovalVisibility_.end()) continue;
+            departedKeys.insert(key);
+            auto& state = it->second;
+            if (FindItemIndexByKey(path) < items_.size())
+            {
+                state.awaitingDesktop = true;
+                desktop = true;
+            }
+            auto folder = snowdesktop::shell_refresh::FolderKey(std::filesystem::path(path).parent_path().wstring());
+            if (displayedFolders.contains(folder))
+            {
+                state.awaitingFolder = folder;
+                folders.insert(std::move(folder));
+            }
+        }
+        // Recursive search owns its previous result rows independently of the
+        // directory model while a new query is pending.
+        for (const auto& container : containers_)
+            if (const auto* view = dynamic_cast<ScrollingItemWidget*>(container.get()); view && view->folderSearch_)
+            {
+                auto& search = *view->folderSearch_;
+                if (std::erase_if(search.results, [&](const auto& row) { return departedKeys.contains(ToUpperInvariant(row.path)); }))
+                {
+                    search.modelIdentity.clear();
+                    search.refreshRequested = true;
+                }
+            }
+    }
+    for (const auto& path : paths)
+    {
+        const auto it = fileRemovalVisibility_.find(ToUpperInvariant(path));
+        if (it == fileRemovalVisibility_.end()) continue;
+        auto& state = it->second;
+        if (--state.requests == 0 && !state.awaitingDesktop && state.awaitingFolder.empty())
+            fileRemovalVisibility_.erase(it);
+    }
+    InvalidateFileRemovalViews();
+    if (desktop) RequestShellRefresh();
+    if (!folders.empty()) RequestFolderRefresh({folders.begin(), folders.end()});
+}
+
+void DesktopApp::ApplyFileRemovalRefresh(const snowdesktop::shell_refresh::Snapshot& snapshot)
+{
+    if (fileRemovalVisibility_.empty()) return;
+    const bool desktop = !snapshot.foldersOnly && snapshot.desktopComplete && !snapshot.desktopIncremental;
+    bool removed = false;
+    for (auto it = fileRemovalVisibility_.begin(); it != fileRemovalVisibility_.end();)
+    {
+        auto& state = it->second;
+        if (desktop) state.awaitingDesktop = false;
+        const auto folder = snapshot.folders.find(state.awaitingFolder);
+        if (folder != snapshot.folders.end() && folder->second.complete) state.awaitingFolder.clear();
+        if (!state.requests && !state.awaitingDesktop && state.awaitingFolder.empty())
+        {
+            it = fileRemovalVisibility_.erase(it);
+            removed = true;
+        }
+        else ++it;
+    }
+    if (removed) InvalidateFileRemovalViews();
+}
+
 bool DesktopApp::IsPendingMovedFile(const std::wstring& path, const std::wstring& key) const
 {
+    if (!fileRemovalVisibility_.empty() && (fileRemovalVisibility_.contains(ToUpperInvariant(path)) ||
+        (!key.empty() && key != path && fileRemovalVisibility_.contains(ToUpperInvariant(key))))) return true;
     for (const auto& pending : pendingLandingCaches_)
         if (!pending.movedSourceKeys.empty() &&
             (pending.movedSourceKeys.contains(ToUpperInvariant(path)) ||
@@ -110,7 +241,7 @@ bool DesktopApp::IsPendingMovedFile(const std::wstring& path, const std::wstring
 const Layout& DesktopApp::FileDropMemberLayout(const DesktopWidget& widget, const WidgetContainer* view) const
 {
     static const Layout empty;
-    if (pendingLandingCaches_.empty() || (view && view->IsPreviewRendering())) return empty;
+    if ((pendingLandingCaches_.empty() && fileRemovalVisibility_.empty()) || (view && view->IsPreviewRendering())) return empty;
     const auto* model = view ? view->GetContentViewData() : &widget;
     if (!model) return empty;
     const auto generation = view ? view->GetSlotGeneration() : dockFolderPopupContainer_ ? dockFolderPopupContainer_->GetSlotGeneration() : 0;
@@ -178,6 +309,7 @@ const Layout& DesktopApp::FileDropMemberLayout(const DesktopWidget& widget, cons
             [&](const auto& row) { return row.owner && row.owner->id == id; }));
     };
     std::unordered_set<std::wstring> removed;
+    for (const auto& [key, state] : fileRemovalVisibility_) removed.insert(key);
     for (const auto& request : pendingLandingCaches_)
     {
         removed.insert(request.movedSourceKeys.begin(), request.movedSourceKeys.end());

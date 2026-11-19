@@ -1038,8 +1038,9 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         bool commitVisualBeforeDrop =
             dragSession_.TargetRegion() == HitRegion::Handoff;
         bool dropHandlesLayout = false;
-        if (!commitVisualBeforeDrop &&
-            dragSession_.TargetContainer())
+        if (commitVisualBeforeDrop)
+            HoldReleasingFileSources(DropActionFromMods(dropPreviewMods));
+        else if (dragSession_.TargetContainer())
         {
             const auto& dropPreview = GetCachedDesktopDropPreview(true,
                 dragSession_.SourceList(),
@@ -1049,6 +1050,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                 dropPreviewMods,
                 clientPoint);
             commitVisualBeforeDrop = dropPreview.fileBacked;
+            if (commitVisualBeforeDrop) HoldReleasingFileSources(dropPreview.action);
             dropHandlesLayout = dropPreview.fileBacked || (snowdesktop::member_drop_layout::OnlyReordersMembers(
                 dragSession_.SourceList(), dropPreview) &&
                 !GetOpenPopupWidget() && !IsGroupedWidget(*dropPreview.targetWidget));
@@ -1182,7 +1184,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                              dockFolderPopupTarget) &&
                             dockFolderPopupOpen_)
                             RefreshDockFolderPopup();
-                    }))
+                    }, IsRecycleDropTarget(targetItem)))
             {
                 ClearSelection();
                 EndDragSession();
@@ -1430,14 +1432,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         Item* targetItem = dragSession_.TargetSlot() ? dragSession_.TargetSlot()->GetItem() : nullptr;
         if (!targetItem && dynamic_cast<DesktopGrid*>(dragSession_.TargetContainer()))
             targetItem = HitTestIcon(clientPoint);
-        auto* targetDesktopIcon =
-            dynamic_cast<DesktopIcon*>(targetItem);
-        DesktopItem* targetDesktopItem = targetDesktopIcon
-            ? targetDesktopIcon->GetDesktopItem() : nullptr;
-        const bool recycleBinTarget = targetDesktopItem &&
-            _wcsicmp(
-                targetDesktopItem->desktopIconClsid.c_str(),
-                kDesktopIconClsidRecycleBin) == 0;
+        const bool recycleBinTarget = IsRecycleDropTarget(targetItem);
         const bool dockFolderPopupTarget =
             IsOpenDockFolderPopupDropTarget(
                 dragSession_.TargetContainer(),
@@ -1461,7 +1456,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             : GetFileAttributesW(targetPath.c_str());
         if (recycleBinTarget && !dropPaths.empty())
         {
-            if ((*effect & DROPEFFECT_MOVE) == 0)
+            if (ChooseDropEffect(keyState, *effect) != DROPEFFECT_MOVE)
             {
                 *effect = DROPEFFECT_NONE;
                 EndDragSession();

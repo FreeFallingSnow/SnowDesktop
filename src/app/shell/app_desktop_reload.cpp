@@ -1080,6 +1080,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     RebuildContainersAndItems();
     if (snapshot) snapshot->rebuildMs = GetTickCount64() - stageStarted;
     reloading_ = false;
+    if (snapshot) ApplyFileRemovalRefresh(*snapshot);
     if (!snapshot)
         RefreshDockRunningWindows(false);
     stageStarted = GetTickCount64();

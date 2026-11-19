@@ -1690,7 +1690,9 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
     }
     commitVisualBeforeDrop =
         dragSession_.TargetRegion() == HitRegion::Handoff;
-    if (!commitVisualBeforeDrop)
+    if (commitVisualBeforeDrop)
+        HoldReleasingFileSources(DropActionFromMods(dropPreviewMods));
+    else
     {
         const auto& dropPreview = GetCachedDesktopDropPreview(true,
             dragSession_.SourceList(),
@@ -1700,6 +1702,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             dropPreviewMods,
             dragSession_.CurrentPoint());
         commitVisualBeforeDrop = dropPreview.fileBacked;
+        if (commitVisualBeforeDrop) HoldReleasingFileSources(dropPreview.action);
         // File-backed destinations refresh from the actual outputs on completion.
         dropHandlesLayout = dropPreview.fileBacked || (snowdesktop::member_drop_layout::OnlyReordersMembers(
             dragSession_.SourceList(), dropPreview) &&
@@ -1872,7 +1875,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                              dockFolderPopupSource) &&
                             dockFolderPopupOpen_)
                             RefreshDockFolderPopup();
-                    }))
+                    }, IsRecycleDropTarget(targetItem)))
             {
                 RequestLayoutSave();
                 ClearSelection();
