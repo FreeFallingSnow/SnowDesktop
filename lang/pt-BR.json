@@ -2938,5 +2938,6 @@
   "app.settings.widgets_installed_version": "Versão instalada",
   "app.settings.widgets_development_version": "Versão de desenvolvimento",
   "settings.personalization.wcgHighlightCompensation": "Compensação de realces WCG",
-  "settings.personalization.wcgHighlightCompensation.hint": "Corrige a mesclagem de realces translúcidos em telas com ampla gama de cores."
+  "settings.personalization.wcgHighlightCompensation.hint": "Corrige a mesclagem de realces translúcidos em telas com ampla gama de cores.",
+  "settings.personalization.displayEffects": "Efeitos de exibição"
 }

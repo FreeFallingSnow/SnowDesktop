@@ -2938,5 +2938,6 @@
   "app.settings.widgets_installed_version": "설치 버전",
   "app.settings.widgets_development_version": "개발 버전",
   "settings.personalization.wcgHighlightCompensation": "WCG 하이라이트 보정",
-  "settings.personalization.wcgHighlightCompensation.hint": "넓은 색 영역을 지원하는 디스플레이에서 반투명 하이라이트의 합성을 보정합니다."
+  "settings.personalization.wcgHighlightCompensation.hint": "넓은 색 영역을 지원하는 디스플레이에서 반투명 하이라이트의 합성을 보정합니다.",
+  "settings.personalization.displayEffects": "표시 효과"
 }

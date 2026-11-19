@@ -2938,5 +2938,6 @@
   "app.settings.widgets_installed_version": "インストール版",
   "app.settings.widgets_development_version": "開発版",
   "settings.personalization.wcgHighlightCompensation": "WCG ハイライト補正",
-  "settings.personalization.wcgHighlightCompensation.hint": "広色域ディスプレイで半透明のハイライトの合成を補正します。"
+  "settings.personalization.wcgHighlightCompensation.hint": "広色域ディスプレイで半透明のハイライトの合成を補正します。",
+  "settings.personalization.displayEffects": "表示効果"
 }

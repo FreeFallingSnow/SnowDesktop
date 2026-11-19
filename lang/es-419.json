@@ -2938,5 +2938,6 @@
   "app.settings.widgets_installed_version": "Versión instalada",
   "app.settings.widgets_development_version": "Versión de desarrollo",
   "settings.personalization.wcgHighlightCompensation": "Compensación de brillos WCG",
-  "settings.personalization.wcgHighlightCompensation.hint": "Corrige la mezcla de brillos translúcidos en pantallas con una gama cromática amplia."
+  "settings.personalization.wcgHighlightCompensation.hint": "Corrige la mezcla de brillos translúcidos en pantallas con una gama cromática amplia.",
+  "settings.personalization.displayEffects": "Efectos de pantalla"
 }

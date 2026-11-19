@@ -2938,5 +2938,6 @@
   "app.settings.widgets_installed_version": "已安裝版",
   "app.settings.widgets_development_version": "開發版",
   "settings.personalization.wcgHighlightCompensation": "WCG 高光補償",
-  "settings.personalization.wcgHighlightCompensation.hint": "校正廣色域顯示器上半透明高光的混合效果。"
+  "settings.personalization.wcgHighlightCompensation.hint": "校正廣色域顯示器上半透明高光的混合效果。",
+  "settings.personalization.displayEffects": "顯示效果"
 }
