@@ -143,7 +143,7 @@ bool ScrollingItemWidget::EndCategoryTabDrag(bool commit)
             InvalidateCategoryTabSource(this);
         }
         else if (categoryTabDragging_ && app_)
-            app_->SaveLayoutSlots();
+            app_->RequestLayoutSave();
     }
     pressedCategoryTab_.clear();
     pressedCategorySourceId_.clear();

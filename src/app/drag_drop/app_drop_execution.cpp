@@ -635,11 +635,13 @@ PendingFolderPlacement DesktopApp::BuildPendingFolderPlacement(
     const DragSourceList* sourceList) const
 {
     const bool popup = targetWidget.id == kDockFolderPopupWidgetId;
-    if (popup && folderPreview_ && targetWidget.folderSortMode != snowdesktop::folder_sort_rules::kManual)
-        return {};
-    return snowdesktop::pending_drop::BuildFolder(targetWidget, insertIndex, sourceList,
+    auto placement = snowdesktop::pending_drop::BuildFolder(targetWidget, insertIndex, sourceList,
         popup ? dockFolderPopupMappingWidgetId_ : targetWidget.id,
         popup ? dockFolderPopupSourceId_ : std::wstring{}, ToUpperInvariant, FileNameFromPath);
+    if (popup && folderPreview_)
+        placement.previewSortAtDrop = PendingFolderPlacement::PreviewSort{
+            targetWidget.folderSortMode, targetWidget.folderSortAscending};
+    return placement;
 }
 
 void DesktopApp::ActivatePendingFolderPlacement(PendingFolderPlacement placement)

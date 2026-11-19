@@ -2723,6 +2723,7 @@ private:
     bool HasDesktopWidgetComposition(
         const std::wstring& widgetId) const;
     bool DesktopWidgetHoverFadeEnabled() const;
+    bool SubmitDesktopWidgetFadeOut(DesktopWidgetCompositionItem& item);
     bool SyncDesktopWidgetPresentationVisibility(const DesktopWidget& widget,
         const RECT& bounds, bool visible, bool animate);
     void StartDesktopWidgetHoverFade(DesktopWidgetCompositionItem& item, bool visible);

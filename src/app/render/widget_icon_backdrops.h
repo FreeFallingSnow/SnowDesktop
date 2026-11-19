@@ -75,6 +75,15 @@ public:
         for (const auto& panel : panels_) Remove(compositor, *panel);
     }
 
+    bool StartFadeOut(DesktopBackdropCompositor& compositor, float fromOpacity,
+        UINT durationMilliseconds, float normalizedStartSlope) const
+    {
+        for (const auto& panel : panels_)
+            if (!compositor.StartOwnerFadeOut(Key(*panel), fromOpacity * panel->request.opacity,
+                    durationMilliseconds, normalizedStartSlope)) return false;
+        return true;
+    }
+
 private:
     struct Panel { Request request; };
     static std::uintptr_t Key(const Panel& panel)

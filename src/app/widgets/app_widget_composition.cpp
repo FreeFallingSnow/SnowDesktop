@@ -982,6 +982,7 @@ void DesktopApp::StartDesktopWidgetHoverFade(DesktopWidgetCompositionItem& item,
 {
     auto& fade = *item.hoverFade;
     fade.waitingForPixels = false;
+    fade.compositorFadingOut = false;
     fade.motion.Configure(true, snowdesktop::animation::RuntimeDurationScale());
     const auto tick = static_cast<std::uint64_t>(
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
@@ -1013,7 +1014,7 @@ bool DesktopApp::AdvanceDesktopWidgetHoverFades(double nowMilliseconds)
         else if (motion.IsInteractive()) motion.ShowImmediately();
         else motion.ResetHidden();
         active |= motion.IsAnimating();
-        changed = true;
+        changed |= !item.hoverFade->compositorFadingOut || !motion.IsAnimating();
         if (motion.IsHidden() && hwnd_)
         {
             // Let the scene retire the zero-opacity child and its retained pixels.
@@ -1208,6 +1209,8 @@ void DesktopApp::KeepDesktopWidgetBackdropPanels()
         }
         item.iconBackdrops.Restore(desktopBackdropCompositor_, opacity,
             item.backdropRegistered ? item.BackdropOwnerKey() : 0, d2dDevice_.Get());
+        if (item.hoverFade && item.hoverFade->motion.IsClosing())
+            item.hoverFade->compositorFadingOut = SubmitDesktopWidgetFadeOut(item);
     }
     desktopWidgetHoverFadePending_ = false;
 }

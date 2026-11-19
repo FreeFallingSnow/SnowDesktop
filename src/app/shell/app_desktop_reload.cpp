@@ -1398,10 +1398,8 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
         }
         if (membershipChanged)
         {
-            RefreshCollectedKeysCache();
             LayoutItems();
-            RebuildContainersAndItems();
-            SaveLayoutSlots();
+            RequestLayoutSave();
         }
         for (auto& container : containers_)
         {

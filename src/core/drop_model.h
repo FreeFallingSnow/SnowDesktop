@@ -493,6 +493,10 @@ struct PendingFolderPlacement
     std::vector<std::wstring> sourcePaths;
     // Tracked operations use actual outputs, including collision renames.
     std::vector<std::wstring> createdPaths;
+    // Directory previews may adopt manual order on the first positional drop.
+    // A sort selected while the file operation is pending takes precedence.
+    struct PreviewSort { int mode; bool ascending; };
+    std::optional<PreviewSort> previewSortAtDrop;
 };
 
 /**

@@ -76,6 +76,35 @@ HRESULT CreateSmoothStepAnimation(
 }
 }
 
+bool DesktopApp::SubmitDesktopWidgetFadeOut(DesktopWidgetCompositionItem& item)
+{
+    if (!dcompDevice_ || !item.visual) return false;
+    auto motion = item.hoverFade->motion;
+    motion.Advance(static_cast<std::uint64_t>(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
+    const auto sample = motion.GetVisual();
+    const auto duration = static_cast<UINT>(std::max(1.0, std::round(
+        sample.progress * motion.DurationMilliseconds(false))));
+    // Remaining segment of smoothstep(p), played from p down to zero. Both
+    // compositors use this slope when the pointer reverses an opening fade.
+    const float slope = 6.f * (1.f - sample.progress) / (3.f - 2.f * sample.progress);
+    ComPtr<IDCompositionAnimation> opacity;
+    HRESULT hr = CreateSmoothStepAnimation(dcompDevice_.Get(), sample.opacity, 0.f, duration, &opacity, slope);
+    if (SUCCEEDED(hr) && !item.opacityEffect)
+    {
+        ComPtr<IDCompositionEffectGroup> effect;
+        hr = dcompDevice_->CreateEffectGroup(&effect);
+        if (SUCCEEDED(hr)) hr = item.visual->SetEffect(effect.Get());
+        if (SUCCEEDED(hr)) item.opacityEffect = std::move(effect);
+    }
+    if (SUCCEEDED(hr)) hr = item.opacityEffect->SetOpacity(opacity.Get());
+    if (FAILED(hr)) return false;
+    // The next ordinary opacity write must replace the native track, even
+    // when re-entering the widget at the same previously submitted value.
+    item.submittedOpacity = -1.f;
+    return desktopBackdropCompositor_.StartOwnerFadeOut(item.BackdropOwnerKey(), sample.opacity, duration, slope) &&
+        item.iconBackdrops.StartFadeOut(desktopBackdropCompositor_, sample.opacity, duration, slope);
+}
+
 bool DesktopApp::StartDesktopWidgetHoverRoll(DesktopWidgetCompositionItem& item,
     const RECT& frame, LONG collapsedHeight, float radius,
     const snowdesktop::popup_motion_curve::Timeline& timeline)

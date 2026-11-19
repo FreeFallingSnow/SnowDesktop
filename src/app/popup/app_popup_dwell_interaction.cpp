@@ -191,7 +191,7 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
             popupScrollOffset_ = 0;
             ResetCollectionPopupAnimationCache();
         }
-        SaveLayoutSlots();
+        RequestLayoutSave();
         InvalidateRect(hwnd_, nullptr, FALSE);
         PresentDesktopPointerUpdate();
         InvalidateFloatingDockWindow(true);
@@ -931,7 +931,7 @@ bool DesktopApp::TryActivateCollectionGroupTab(
     cachedDropPreview_ = {};
     cachedDropPreviewPoint_ = {-1, -1};
     dragSession_.InvalidateStaticScene();
-    SaveLayoutSlots();
+    RequestLayoutSave();
     InvalidateRect(hwnd_, nullptr, FALSE);
 
     int mods = 0;

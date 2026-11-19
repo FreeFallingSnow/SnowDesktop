@@ -1035,7 +1035,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         if (keyState & MK_SHIFT)   dropPreviewMods |= MK_SHIFT;
         bool commitVisualBeforeDrop =
             dragSession_.TargetRegion() == HitRegion::Handoff;
-        bool memberOrderOnly = false;
+        bool dropHandlesLayout = false;
         if (!commitVisualBeforeDrop &&
             dragSession_.TargetContainer())
         {
@@ -1047,9 +1047,9 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                 dropPreviewMods,
                 clientPoint);
             commitVisualBeforeDrop = dropPreview.fileBacked;
-            memberOrderOnly = snowdesktop::member_drop_layout::OnlyReordersMembers(
+            dropHandlesLayout = dropPreview.fileBacked || (snowdesktop::member_drop_layout::OnlyReordersMembers(
                 dragSession_.SourceList(), dropPreview) &&
-                !GetOpenPopupWidget() && !IsGroupedWidget(*dropPreview.targetWidget);
+                !GetOpenPopupWidget() && !IsGroupedWidget(*dropPreview.targetWidget));
         }
         dragSession_.DeactivateForDrop();
         if (commitVisualBeforeDrop)
@@ -1300,7 +1300,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             }
             else
             {
-                if (!memberOrderOnly && !dockReorder && (!desktopTarget || layoutPassRevision_ == layoutBeforeDrop))
+                if (!dropHandlesLayout && !dockReorder && (!desktopTarget || layoutPassRevision_ == layoutBeforeDrop))
                 {
                     ApplyPageMapping();
                     LayoutItems();

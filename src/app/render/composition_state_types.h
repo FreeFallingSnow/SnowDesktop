@@ -101,6 +101,7 @@ struct DesktopWidgetCompositionItem
     {
         snowdesktop::popup_animation_rules::State motion;
         bool waitingForPixels = false;
+        bool compositorFadingOut = false;
     };
     std::optional<HoverFade> hoverFade;
     // Present only while the content and backdrop own matching native clips.

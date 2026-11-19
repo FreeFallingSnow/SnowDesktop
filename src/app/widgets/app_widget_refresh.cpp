@@ -6,6 +6,7 @@
 #include "widgets/folder_member_order.h"
 #include "app/shell/shell_icon_request.h"
 #include "layout/folder_mapping_rules.h"
+#include "layout/list_detail_rules.h"
 #include "widgets/file_category_auto_collect_rules.h"
 
 // Folder-mapping enumeration and automatic file-category collection.
@@ -110,9 +111,15 @@ void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Widgets, L"Folder enumeration failed; retaining current entries", DiagnosticLogLevel::Warning);
         return;
     }
-    if ((inlinePreview || (folderPreview_ && &widget == &dockFolderPopupWidget_)) &&
-        widget.folderSortMode == snowdesktop::folder_sort_rules::kManual)
-        widget.itemKeys = folderPreviewSort_.Get(snowdesktop::shell_refresh::FolderKey(snapshot->path)).order;
+    if (inlinePreview || (folderPreview_ && &widget == &dockFolderPopupWidget_))
+    {
+        auto sort = folderPreviewSort_.Get(snowdesktop::shell_refresh::FolderKey(snapshot->path));
+        widget.folderSortMode = sort.mode;
+        widget.contentSortColumn = snowdesktop::list_detail_rules::FromLegacyFolderSortMode(sort.mode);
+        widget.folderSortAscending = sort.ascending;
+        widget.contentSortAscending = sort.ascending;
+        widget.itemKeys = std::move(sort.order);
+    }
     auto previous = std::exchange(widget.folderEntries, snapshot->entries);
     std::unordered_map<std::wstring, size_t> previousByPath;
     for (size_t i = 0; i < previous.size(); ++i)

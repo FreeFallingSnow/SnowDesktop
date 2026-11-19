@@ -3623,6 +3623,44 @@ bool DesktopBackdropCompositor::SetPanelOpacity(
     }
 }
 
+bool DesktopBackdropCompositor::StartOwnerFadeOut(std::uintptr_t ownerKey,
+    float fromOpacity, UINT durationMilliseconds, float normalizedStartSlope)
+{
+    if (impl_->stagingFrame || !ownerKey || !durationMilliseconds) return false;
+    const auto panel = impl_->FindPanel({}, ownerKey);
+    const auto content = impl_->srgbContent.find(ownerKey);
+    const bool hasContent = content != impl_->srgbContent.end() && content->second.visual;
+    if (panel == impl_->panels.end() && !hasContent) return true;
+    if (panel != impl_->panels.end() && impl_->genieSource == panel->visual) return false;
+    try
+    {
+        auto animation = impl_->compositor.CreateScalarKeyFrameAnimation();
+        animation.Duration(wf::TimeSpan{static_cast<std::int64_t>(durationMilliseconds) * 10'000});
+        const auto easing = impl_->compositor.CreateCubicBezierEasingFunction(
+            {1.f / 3.f, normalizedStartSlope / 3.f}, {2.f / 3.f, 1.f});
+        animation.InsertKeyFrame(0.f, fromOpacity);
+        animation.InsertKeyFrame(1.f, 0.f, easing);
+        if (panel != impl_->panels.end())
+        {
+            panel->visual.Opacity(0.f);
+            panel->visual.StartAnimation(L"Opacity", animation);
+            panel->submittedOpacity.reset();
+        }
+        if (hasContent)
+        {
+            content->second.visual.Opacity(0.f);
+            content->second.visual.StartAnimation(L"Opacity", animation);
+            impl_->srgbContentCommitPending = true;
+        }
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.update_panel"), error.code());
+        return false;
+    }
+}
+
 bool DesktopBackdropCompositor::SetVisualOpacity(
     float opacity)
 {

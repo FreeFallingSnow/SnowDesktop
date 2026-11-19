@@ -46,14 +46,18 @@ void DesktopApp::ApplyPendingFolderPreviewPlacements(
     auto sort = folderPreviewSort_.Get(key);
     if (sort.mode != snowdesktop::folder_sort_rules::kManual)
     {
-        // The user may select a new sort rule while the operation is running.
+        // A position selected in the currently displayed order is valid even
+        // before the directory has its first manual sort preference.
         for (auto& cache : pendingLandingCaches_)
         {
-            std::erase_if(cache.folderPlacements, matches);
+            std::erase_if(cache.folderPlacements, [&](const PendingFolderPlacement& placement) {
+                if (!matches(placement)) return false;
+                const auto& atDrop = placement.previewSortAtDrop;
+                return !atDrop || atDrop->mode != sort.mode || atDrop->ascending != sort.ascending;
+            });
             cache.active = !cache.entries.empty() || !cache.folderPlacements.empty();
         }
         std::erase_if(pendingLandingCaches_, [](const auto& cache) { return !cache.active; });
-        return;
     }
 
     DesktopWidget target;
@@ -64,7 +68,7 @@ void DesktopApp::ApplyPendingFolderPreviewPlacements(
     target.itemKeys = std::move(sort.order);
     snowdesktop::folder_member_order::Refresh(target, ToUpperInvariant);
     if (ApplyPendingFolderPlacements(target, {}, popupId) &&
-        !folderPreviewSort_.Set(key, {sort.mode, sort.ascending, std::move(target.itemKeys)}))
+        !folderPreviewSort_.Set(key, {target.folderSortMode, target.folderSortAscending, std::move(target.itemKeys)}))
         MessageBeep(MB_ICONWARNING);
 }
 

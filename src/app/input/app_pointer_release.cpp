@@ -1061,7 +1061,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
     (void)wp;
     int dropPreviewMods = 0;
     bool commitVisualBeforeDrop = false;
-    bool memberOrderOnly = false;
+    bool dropHandlesLayout = false;
     HideDragHintWindow();
 
     if (popupScrollbarDragging_)
@@ -1700,9 +1700,10 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             dropPreviewMods,
             dragSession_.CurrentPoint());
         commitVisualBeforeDrop = dropPreview.fileBacked;
-        memberOrderOnly = snowdesktop::member_drop_layout::OnlyReordersMembers(
+        // File-backed destinations refresh from the actual outputs on completion.
+        dropHandlesLayout = dropPreview.fileBacked || (snowdesktop::member_drop_layout::OnlyReordersMembers(
             dragSession_.SourceList(), dropPreview) &&
-            !GetOpenPopupWidget() && !IsGroupedWidget(*dropPreview.targetWidget);
+            !GetOpenPopupWidget() && !IsGroupedWidget(*dropPreview.targetWidget));
     }
 
     // Shell/file-backed drop handlers may synchronously show a progress
@@ -1968,7 +1969,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         {
             // 内容变更可能使某些溢出页变空（后面有非空页时应立即清理顺延）
             // 先 ApplyPageMapping（可能重排 pageId），再由 LayoutItems 重建运行时对象
-            if (!memberOrderOnly && !dockReorder && !logicalSlot &&
+            if (!dropHandlesLayout && !dockReorder && !logicalSlot &&
                 (!desktopTarget || layoutPassRevision_ == layoutBeforeDrop))
             {
                 ApplyPageMapping();
