@@ -2939,5 +2939,12 @@
   "app.settings.widgets_development_version": "개발 버전",
   "settings.personalization.wcgHighlightCompensation": "WCG 하이라이트 보정",
   "settings.personalization.wcgHighlightCompensation.hint": "넓은 색 영역을 지원하는 디스플레이에서 반투명 하이라이트의 합성을 보정합니다.",
-  "settings.personalization.displayEffects": "표시 효과"
+  "settings.personalization.displayEffects": "표시 효과",
+  "app.settings.icon_shadows": "아이콘 그림자",
+  "app.settings.icon_shadow_fan": "부채꼴 보기의 아이콘",
+  "app.settings.icon_shadow_dock": "Dock 아이콘",
+  "app.settings.icon_shadow_exposed_widget": "위젯에 바로 표시되는 아이콘",
+  "app.settings.icon_shadow_desktop": "바탕 화면 아이콘",
+  "app.settings.icon_shadow_popup": "팝업의 아이콘",
+  "app.settings.icon_shadow_quick_navigation": "빠른 탐색의 아이콘"
 }

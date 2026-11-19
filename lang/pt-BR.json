@@ -2939,5 +2939,12 @@
   "app.settings.widgets_development_version": "Versão de desenvolvimento",
   "settings.personalization.wcgHighlightCompensation": "Compensação de realces WCG",
   "settings.personalization.wcgHighlightCompensation.hint": "Corrige a mesclagem de realces translúcidos em telas com ampla gama de cores.",
-  "settings.personalization.displayEffects": "Efeitos de exibição"
+  "settings.personalization.displayEffects": "Efeitos de exibição",
+  "app.settings.icon_shadows": "Sombras dos ícones",
+  "app.settings.icon_shadow_fan": "Ícones na visualização em leque",
+  "app.settings.icon_shadow_dock": "Ícones do Dock",
+  "app.settings.icon_shadow_exposed_widget": "Ícones visíveis nos widgets",
+  "app.settings.icon_shadow_desktop": "Ícones da área de trabalho",
+  "app.settings.icon_shadow_popup": "Ícones em janelas pop-up",
+  "app.settings.icon_shadow_quick_navigation": "Ícones na navegação rápida"
 }

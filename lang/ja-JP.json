@@ -2939,5 +2939,12 @@
   "app.settings.widgets_development_version": "開発版",
   "settings.personalization.wcgHighlightCompensation": "WCG ハイライト補正",
   "settings.personalization.wcgHighlightCompensation.hint": "広色域ディスプレイで半透明のハイライトの合成を補正します。",
-  "settings.personalization.displayEffects": "表示効果"
+  "settings.personalization.displayEffects": "表示効果",
+  "app.settings.icon_shadows": "アイコンの影",
+  "app.settings.icon_shadow_fan": "扇形表示のアイコン",
+  "app.settings.icon_shadow_dock": "Dock のアイコン",
+  "app.settings.icon_shadow_exposed_widget": "ウィジェットに直接表示されるアイコン",
+  "app.settings.icon_shadow_desktop": "デスクトップのアイコン",
+  "app.settings.icon_shadow_popup": "ポップアップ内のアイコン",
+  "app.settings.icon_shadow_quick_navigation": "クイックナビゲーションのアイコン"
 }

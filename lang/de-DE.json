@@ -2939,5 +2939,12 @@
   "app.settings.widgets_development_version": "Entwicklungsversion",
   "settings.personalization.wcgHighlightCompensation": "WCG-Glanzlichtkorrektur",
   "settings.personalization.wcgHighlightCompensation.hint": "Korrigiert die Überblendung halbtransparenter Glanzlichter auf Bildschirmen mit großem Farbraum.",
-  "settings.personalization.displayEffects": "Anzeigeeffekte"
+  "settings.personalization.displayEffects": "Anzeigeeffekte",
+  "app.settings.icon_shadows": "Symbolschatten",
+  "app.settings.icon_shadow_fan": "Symbole in der Fächeransicht",
+  "app.settings.icon_shadow_dock": "Dock-Symbole",
+  "app.settings.icon_shadow_exposed_widget": "Direkt sichtbare Widget-Symbole",
+  "app.settings.icon_shadow_desktop": "Desktopsymbole",
+  "app.settings.icon_shadow_popup": "Symbole in Pop-ups",
+  "app.settings.icon_shadow_quick_navigation": "Symbole in der Schnellnavigation"
 }

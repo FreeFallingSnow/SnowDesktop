@@ -2939,5 +2939,12 @@
   "app.settings.widgets_development_version": "Development version",
   "settings.personalization.wcgHighlightCompensation": "WCG highlight compensation",
   "settings.personalization.wcgHighlightCompensation.hint": "Corrects blending for translucent highlights on wide-gamut displays.",
-  "settings.personalization.displayEffects": "Display effects"
+  "settings.personalization.displayEffects": "Display effects",
+  "app.settings.icon_shadows": "Icon shadows",
+  "app.settings.icon_shadow_fan": "Icons in fan view",
+  "app.settings.icon_shadow_dock": "Dock icons",
+  "app.settings.icon_shadow_exposed_widget": "Exposed widget icons",
+  "app.settings.icon_shadow_desktop": "Desktop icons",
+  "app.settings.icon_shadow_popup": "Icons in pop-ups",
+  "app.settings.icon_shadow_quick_navigation": "Icons in Quick Navigation"
 }
