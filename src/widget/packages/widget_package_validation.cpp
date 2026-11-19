@@ -913,17 +913,9 @@ bool WidgetPackageValidator::ReadManifest(
             manifestPath, "a license identifier is recommended");
     for (auto& variant : manifest.previewVariants)
     {
-        if (variant.columns == 0 && variant.rows == 0 && !variant.aspectSize)
-            variant.aspectSize = manifest.defaultAspectSize;
-        if (variant.columns == 0) variant.columns = manifest.defaultColumns;
-        if (variant.rows == 0) variant.rows = manifest.defaultRows;
-        if (variant.aspectSize)
-        {
-            const auto span = ResolveWidgetSize({variant.columns, variant.rows, variant.aspectSize},
-                StandardWidgetSizeGridMetrics(), manifest.minColumns, manifest.minRows,
-                manifest.maxColumns, manifest.maxRows);
-            variant.columns = span.first; variant.rows = span.second;
-        }
+        snowdesktop::widget::ResolvePreviewVariantDefaults(variant,
+            {manifest.defaultColumns, manifest.defaultRows, manifest.defaultAspectSize},
+            manifest.minColumns, manifest.minRows, manifest.maxColumns, manifest.maxRows);
         if (variant.columns < manifest.minColumns ||
             variant.rows < manifest.minRows ||
             (manifest.maxColumns > 0 &&

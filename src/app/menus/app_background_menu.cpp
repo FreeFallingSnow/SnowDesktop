@@ -1388,9 +1388,8 @@ DesktopApp::BuildAddWidgetMenuPreview(
             root.type = DesktopWidgetType::LuaScript;
             root.packageId = packageId;
             root.title = model.title;
-            snowdesktop::widget::WidgetSizeDefinition size{
-                variant.columns, variant.rows, variant.aspectSize};
-            if (preset.size) size = *preset.size;
+            const auto size = snowdesktop::widget::SelectWidgetCreationSize(
+                {manifest.defaultColumns, manifest.defaultRows, manifest.defaultAspectSize}, &variant, &preset);
             const auto span = snowdesktop::widget::ResolveWidgetSize(size,
                 snowdesktop::widget::WidgetSizeMetricsForPage(previewPage, previewCell),
                 manifest.minColumns, manifest.minRows, manifest.maxColumns, manifest.maxRows);

@@ -3,7 +3,8 @@
 #include "common/constants.h"
 #include "common/json_value.h"
 #include "widget/api/widget_logical_slot_manifest.h"
-#include "widget/runtime/widget_l10n_lua.h"
+#include "widget_manifest_locale.h"
+#include "widget_package_manifest_fields.h"
 #include "widget/settings/widget_setting_rules.h"
 #include "widget/settings/widget_settings_declarations.h"
 
@@ -239,94 +240,9 @@ LuaWidgetManifest ReadWidgetScriptManifest(const std::wstring& fullPath,
     readString(root, "publisher", manifest.publisher);
     readString(root, "minHostVersion", manifest.minHostVersion);
     readString(root, "preview", manifest.preview);
-    if (const JsonValue* previewData = root.Find("previewData");
-        previewData && previewData->IsObject())
-    {
-        readString(*previewData, "introduction",
-            manifest.previewIntroduction);
-        readString(*previewData, "introductionKey",
-            manifest.previewIntroductionKey);
-        if (const JsonValue* storage = previewData->Find("storage");
-            storage && storage->IsObject())
-        {
-            for (const auto& [key, value] : storage->object)
-            {
-                if (!key.empty() &&
-                    (value.IsString() || value.IsNumber() || value.IsBoolean()))
-                    manifest.previewStorage[key] = valueString(value);
-            }
-        }
-        if (const JsonValue* storageKeys = previewData->Find("storageKeys");
-            storageKeys && storageKeys->IsObject())
-        {
-            for (const auto& [storageKey, localizationKey] :
-                storageKeys->object)
-            {
-                if (!storageKey.empty() && localizationKey.IsString() &&
-                    !localizationKey.string.empty() &&
-                    manifest.previewStorage.contains(storageKey))
-                    manifest.previewStorageKeys[storageKey] =
-                        localizationKey.string;
-            }
-        }
-        if (const JsonValue* variants = previewData->Find("variants");
-            variants && variants->IsArray())
-        {
-            for (const JsonValue& value : variants->array)
-            {
-                if (!value.IsObject() || manifest.previewVariants.size() >= 4)
-                    continue;
-                snowdesktop::widget::PreviewVariant variant;
-                readString(value, "id", variant.id);
-                readString(value, "title", variant.title);
-                readString(value, "titleKey", variant.titleKey);
-                readString(value, "description", variant.description);
-                readString(value, "descriptionKey", variant.descriptionKey);
-                if (const JsonValue* size = value.Find("size");
-                    size && size->IsObject())
-                {
-                    double number = 0;
-                    if (readNumber(*size, "columns", number) &&
-                        std::isfinite(number))
-                        variant.columns = std::clamp(
-                            static_cast<int>(number), 1, 8);
-                    if (readNumber(*size, "rows", number) &&
-                        std::isfinite(number))
-                        variant.rows = std::clamp(
-                            static_cast<int>(number), 1, 8);
-                    std::string sizeError;
-                    (void)snowdesktop::widget::ReadAspectGridSize(size,
-                        variant.columns, variant.rows, variant.aspectSize, sizeError);
-                }
-                if (const JsonValue* variantStorage = value.Find("storage");
-                    variantStorage && variantStorage->IsObject())
-                {
-                    for (const auto& [key, stored] : variantStorage->object)
-                    {
-                        if (!key.empty() && (stored.IsString() ||
-                            stored.IsNumber() || stored.IsBoolean()))
-                            variant.storage[key] = valueString(stored);
-                    }
-                }
-                if (const JsonValue* variantStorageKeys =
-                        value.Find("storageKeys");
-                    variantStorageKeys && variantStorageKeys->IsObject())
-                {
-                    for (const auto& [storageKey, localizationKey] :
-                        variantStorageKeys->object)
-                    {
-                        if (!storageKey.empty() &&
-                            localizationKey.IsString() &&
-                            !localizationKey.string.empty() &&
-                            variant.storage.contains(storageKey))
-                            variant.storageKeys[storageKey] =
-                                localizationKey.string;
-                    }
-                }
-                manifest.previewVariants.push_back(std::move(variant));
-            }
-        }
-    }
+    widget::detail::ReadRuntimePreviewFields(root,
+        {manifest.previewIntroduction, manifest.previewIntroductionKey,
+         manifest.previewStorage, manifest.previewStorageKeys, manifest.previewVariants});
     if (const auto* presets = root.Find("creationPresets"); presets && presets->IsArray())
     {
         for (const auto& item : presets->array)
@@ -615,18 +531,9 @@ LuaWidgetManifest ReadWidgetScriptManifest(const std::wstring& fullPath,
     }
     for (auto& variant : manifest.previewVariants)
     {
-        if (variant.columns <= 0 && variant.rows <= 0 && !variant.aspectSize)
-            variant.aspectSize = manifest.defaultAspectSize;
-        if (variant.columns <= 0) variant.columns = manifest.defaultColumns;
-        if (variant.rows <= 0) variant.rows = manifest.defaultRows;
-        if (variant.aspectSize)
-        {
-            const auto span = snowdesktop::widget::ResolveWidgetSize(
-                {variant.columns, variant.rows, variant.aspectSize},
-                snowdesktop::widget::StandardWidgetSizeGridMetrics(), manifest.minColumns,
-                manifest.minRows, manifest.maxColumns, manifest.maxRows);
-            variant.columns = span.first; variant.rows = span.second;
-        }
+        snowdesktop::widget::ResolvePreviewVariantDefaults(variant,
+            {manifest.defaultColumns, manifest.defaultRows, manifest.defaultAspectSize},
+            manifest.minColumns, manifest.minRows, manifest.maxColumns, manifest.maxRows);
         if (!variant.titleKey.empty())
             variant.title = TranslateManifest(
                 manifest.locales, variant.titleKey, variant.title);

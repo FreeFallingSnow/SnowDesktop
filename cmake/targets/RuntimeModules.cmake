@@ -104,6 +104,7 @@ snowdesktop_add_runtime_module(SnowDesktopAppFonts
     LINK_LIBRARIES dwrite gdi32 ole32)
 snowdesktop_add_runtime_module(SnowDesktopNativeUtilities
     SOURCES src/common/utils.cpp src/icons/shortcut_icon_resource.cpp
+        src/desktop/desktop_icon_settings.cpp
     LINK_LIBRARIES SnowDesktopRuntimeEnvironment SnowDesktopSettingsPolicy
         comctl32 d2d1 dwrite gdi32 ole32 shell32 shcore shlwapi windowscodecs xmllite)
 snowdesktop_add_runtime_module(SnowDesktopLocalization
@@ -138,7 +139,7 @@ snowdesktop_add_runtime_module(SnowDesktopLargeIconConfig
     SOURCES src/icons/large_icon_config_codec.cpp
     LINK_LIBRARIES SnowDesktopThemePolicy)
 snowdesktop_add_runtime_module(SnowDesktopLayoutStorage
-    SOURCES src/data/layout_storage.cpp
+    SOURCES src/data/layout_storage.cpp src/data/layout_backup_files.cpp
     LINK_LIBRARIES SnowDesktopAtomicFile SnowDesktopDockPolicy SnowDesktopLargeIconConfig)
 snowdesktop_add_runtime_module(SnowDesktopWidgetTasks
     SOURCES src/widget/tasks/widget_task_broker.cpp

@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 struct JsonValue;
@@ -10,6 +11,7 @@ struct JsonValue;
 namespace snowdesktop::widget
 {
 struct PackageManifest;
+struct PreviewVariant;
 struct ValidationReport;
 
 namespace detail
@@ -28,6 +30,19 @@ bool ReadInteger(const JsonValue& object, const char* name, int& output);
 std::vector<std::string> ReadStringArray(const JsonValue& object,
     const char* name, bool& valid);
 void ReadSize(const JsonValue& root, const char* name, int& columns, int& rows);
+
+struct PreviewManifestFields
+{
+    std::string& introduction;
+    std::string& introductionKey;
+    std::unordered_map<std::string, std::string>& storage;
+    std::unordered_map<std::string, std::string>& storageKeys;
+    std::vector<PreviewVariant>& variants;
+};
+
+// The runtime reads legacy manifests tolerantly. The package entry additionally
+// validates the same input and reports errors in source order.
+void ReadRuntimePreviewFields(const JsonValue& root, PreviewManifestFields output);
 
 void ReadPreviewManifestFields(const JsonValue& root,
     const std::filesystem::path& manifestPath, PackageManifest& manifest,

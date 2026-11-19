@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "desktop/desktop_icon_settings.h"
 #include "app/app.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"

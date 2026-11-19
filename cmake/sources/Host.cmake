@@ -325,6 +325,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/lifecycle/app_window_dispatch.cpp
     src/app/widgets/app_widget_context_menu.cpp
     src/app/widgets/app_widget_grouping.cpp
+    src/app/widgets/app_widget_consent.cpp
     src/app/widgets/app_widget_marquee_composition.cpp
     src/app/widgets/app_widget_composition.cpp
     src/app/widgets/app_widget_placement.cpp
@@ -345,6 +346,7 @@ set(SNOWDESKTOP_SOURCES
     src/dock/dock_thumbnail_toolbar.cpp
     src/dock/dock_window_preview_layout.h
     src/dock/dock_window_pin.cpp
+    src/dock/dock_usage_storage.cpp
     src/dock/dock_window_transition.cpp
     src/dock/dock_window_source_cloak.h
     src/core/item.cpp
@@ -392,6 +394,7 @@ set(SNOWDESKTOP_SOURCES
     src/icons/shortcut_icon_resource.h
     src/icons/icon_load_diagnostics.h
     src/common/utils.cpp
+    src/desktop/desktop_icon_settings.cpp
     src/common/utf8.cpp
     src/diagnostics/diagnostic_log.cpp
     src/platform/operation_feedback.cpp
@@ -558,6 +561,7 @@ set(SNOWDESKTOP_SOURCES
     src/common/l10n.cpp
     src/layout/item_location.cpp
     src/data/layout_storage.cpp
+    src/data/layout_backup_files.cpp
     src/ui/menu/menu_icon_render.cpp
     src/ui/menu/menu_builtin_icon.cpp
     src/ui/menu/modern_menu.cpp
@@ -736,6 +740,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/packages/widget_package_host.cpp
     src/widget/packages/widget_package_host.h
     src/widget/packages/widget_script_manifest.cpp
+    src/widget/packages/widget_manifest_locale.cpp
     src/widget/packages/widget_script_manifest.h
     src/steam/steam_workshop_cache.cpp
     src/steam/steam_workshop_diagnostics.h

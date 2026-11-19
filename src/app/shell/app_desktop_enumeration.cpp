@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "desktop/desktop_icon_settings.h"
 #include "diagnostics/diagnostic_log.h"
 #include "app/shell/icon_load_task.h"
 #include "common/utils.h"

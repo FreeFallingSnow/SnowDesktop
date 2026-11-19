@@ -100,6 +100,30 @@ struct CreationPreset
     std::optional<WidgetSizeDefinition> size;
 };
 
+inline WidgetSizeDefinition SelectWidgetCreationSize(const WidgetSizeDefinition& fallback,
+    const PreviewVariant* variant, const CreationPreset* preset)
+{
+    if (preset && preset->size) return *preset->size;
+    if (variant) return {variant->columns, variant->rows, variant->aspectSize};
+    return fallback;
+}
+
+inline void ResolvePreviewVariantDefaults(PreviewVariant& variant,
+    const WidgetSizeDefinition& defaults, int minColumns, int minRows, int maxColumns, int maxRows)
+{
+    if (variant.columns == 0 && variant.rows == 0 && !variant.aspectSize)
+        variant.aspectSize = defaults.aspect;
+    if (variant.columns == 0) variant.columns = defaults.columns;
+    if (variant.rows == 0) variant.rows = defaults.rows;
+    if (variant.aspectSize)
+    {
+        const auto span = ResolveWidgetSize({variant.columns, variant.rows, variant.aspectSize},
+            StandardWidgetSizeGridMetrics(), minColumns, minRows, maxColumns, maxRows);
+        variant.columns = span.first;
+        variant.rows = span.second;
+    }
+}
+
 struct NativeHelper
 {
     std::string id, path, sha256;
