@@ -249,6 +249,8 @@
 
 ### CF-013 共享资源的键级编辑与提交粒度不闭合
 
+- **广色域显示补偿文案续证（2026-11-19）** Task `wgc-shadow-layering` 在批次 `0a379e1719334cb19f1d00861a7f0aa5` 修订 0、Run `890dcb8903ee46f5b4153a6c1231c403` 排队期间，`commit -ResourceRequests` 返回 `[Errno 32] Wait worker lease is occupied`。原 Run 通过后沿用十份回执提交 `080f33588`，没有为提交重跑构建。错误仍未指出实际占用的租约。
+
 - **主体阴影译文提交续证（2026-11-19）**：Task `task-d303abaaffbb4e0cafd904a0798290d0` 的批次 `8d9a5bf434c4479f9b5c61287b47f69a`、Run `fa2ed75c266c42d5bd990b035e5c7df2` 通过后，源码已保存为 `c444aa55`。`commit -ResourceRequests` 两次经冻结回执、一次经后继登记返回 `[Errno 32] Wait worker lease is occupied`。`build_resource_commit.py` 对 `git.lock` 和 `state.lock` 共用同一错误信息，原十个请求仍保留。在后继批次 `3357e7e2e83645438919afc0ecf0e303` 的计划登记成功后，原请求通过键级事务保存为 `8ff632a5`。本次未为提交失败另跑构建。
 
 - **全局高光开关翻译提交（2026-11-19）**：Task `wcg-material-extraction` 的批次 `a7803f4dc2394a50832f7057081330f3` 修订 0、Run `5228547cd7684d9eaddc9ffd40a80297` 生成 Release 后，源码提交成功。原候选仍在测试时，`commit -ResourceRequests` 首次和同一请求重试均返回 `[Errno 32] Wait worker lease is occupied`（chunks `09a2b5`、`42a106`）。十份资源应用回执仍保留。源码上的事务会尝试取得状态锁与 Git 锁，当前错误未指明哪一个被占用。待原测试结束后沿用原十份回执提交，无需重跑构建。
@@ -446,6 +448,8 @@
 - **空闲桌面补证（2026-11-17）**：Task `idle-desktop-visibility`，批次 `c2f3cda8ee704e2b8e14946249f7e1d7` 修订 0、Run `c3bb18646e63485a8b58f91e2e55e900`，入口 `ready-and-wait`。本任务改动四个文件，产品日志 `c2f3cda8ee704e2b8e14946249f7e1d7.log.product.log` 还记录未改动的 `settings_window_host.cpp` 编译。源码确认修改的 `desktop_idle_hide.h` 由 `app/app.h` 包含。产品 `build-targets` 阶段记录 671.979 秒（Run 的 `stages.*.jsonl`），设置目标的实际失效链和单独成本待核对。Release 和三项定向测试通过，直接复用原 Run 记录。
 
 ### CF-025 文件观察提前结束
+
+- **Dock 渐隐裁剪续证（2026-11-19）** Task `wgc-shadow-layering` 的票据 `e26ac202cc4a260223ea486d6bb06177` 对 `src/core/dock.cpp` 和状态栏视图返回 `eligible`。Git 仍显示前序阴影任务的 Dock 改动未提交。按实际归属先修改状态栏，待 `9ff48b4f2` 保存前序改动后认领 Dock，在批次 `cf0af9d5f44b4dc6b28381a62a4aa308` 合并验证。文件观察仍需区分窗口可用和路径可安全认领。
 
 - **任务 4 实机验收收尾续证（2026-11-19）**：Task `task-40977fc85edd4847b361a242933a430d` 的票据 `0939f0570e30519dcdcb9f528b0e3ad1` 对 `CODE_HEALTH.md` 返回 `eligible`。Git 仍显示任务 14 未提交的启动登记。待原差异提交且文件可认领后补录任务 4 用户实测，无需重新构建。
 
