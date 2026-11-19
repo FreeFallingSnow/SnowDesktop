@@ -186,6 +186,9 @@ struct PersonalizationPagePresenter::Impl
     muxc::StackPanel widgetBehaviorRoot;
 
     SettingsCard themeCard;
+    SettingRow wcgHighlightCompensationRow;
+    muxc::ToggleSwitch wcgHighlightCompensation{nullptr};
+    winrt::event_token wcgHighlightCompensationToken{};
     SettingsCard pinBorderCard;
     SettingRow pinBorderEnabledRow;
     muxc::ToggleSwitch pinBorderEnabled{nullptr};
@@ -465,6 +468,11 @@ struct PersonalizationPagePresenter::Impl
 
         InitializeCard(themeCard, cardStyle, themeRoot);
         themeCard.content.Spacing(0);
+        wcgHighlightCompensation = muxc::ToggleSwitch{};
+        wcgHighlightCompensationRow.Initialize(wcgHighlightCompensation);
+        wcgHighlightCompensationRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        presenter_controls::StyleSettingsSubrow(wcgHighlightCompensationRow.root, true, 0);
+        themeCard.content.Children().Append(wcgHighlightCompensationRow.root);
         presetCombo = muxc::ComboBox{};
         presetCombo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         presetCombo.MaxWidth(520.0);
@@ -1255,6 +1263,12 @@ struct PersonalizationPagePresenter::Impl
 
     void HookEvents()
     {
+        wcgHighlightCompensationToken = wcgHighlightCompensation.Toggled([this](const auto&, const auto&) {
+            const bool enabled = wcgHighlightCompensation.IsOn();
+            EmitGeneral(SettingsUpdateMode::Commit, [enabled](auto& settings) {
+                settings.wcgHighlightCompensationEnabled = enabled;
+            });
+        });
         pinBorderEnabledToken = pinBorderEnabled.Toggled([this](const auto&, const auto&) {
             UpdateDependentStates();
             const bool enabled = pinBorderEnabled.IsOn();
@@ -1700,6 +1714,7 @@ struct PersonalizationPagePresenter::Impl
 
     void PatchGeneral(const GeneralSettings& settings)
     {
+        wcgHighlightCompensation.IsOn(settings.wcgHighlightCompensationEnabled);
         SyncTooltipFontSize(NormalizeTooltipFontSize(settings.tooltipFontSize));
         if (selectedFont != settings.font || fonts.empty())
         {
@@ -1869,6 +1884,11 @@ struct PersonalizationPagePresenter::Impl
         RefreshFonts();
         SetCardText(themeCard,
             "app.settings.global_theme", L"Global Theme");
+        wcgHighlightCompensationRow.SetText(
+            L("settings.personalization.wcgHighlightCompensation", L"WCG highlight compensation"),
+            L("settings.personalization.wcgHighlightCompensation.hint",
+                L"Corrects blending for translucent highlights on wide-gamut displays."));
+        muxa::AutomationProperties::SetName(wcgHighlightCompensation, wcgHighlightCompensationRow.label.Text());
         SetCardText(pinBorderCard, "settings.personalization.windowPinBorder", L"Pinned window border");
         pinBorderEnabledRow.SetText(L("settings.personalization.windowPinBorder.show", L"Show pinned window border"),
             L("settings.personalization.windowPinBorder.hint", L"Hiding the border keeps the window pinned."));
@@ -2278,6 +2298,7 @@ struct PersonalizationPagePresenter::Impl
         if (id == "personalization.theme" ||
             id == "personalization.globalTheme")
             return presetCombo;
+        if (id == "personalization.wcgHighlightCompensation") return wcgHighlightCompensation;
         if (id == "personalization.font") return fontPicker;
         if (id == "dock.attentionDotSize") return dockAttentionDotSize.slider;
         if (id == "dock.attentionDotOffset") return dockAttentionDotOffset.slider;
@@ -2446,6 +2467,7 @@ struct PersonalizationPagePresenter::Impl
             scene.combo.SelectionChanged(scene.selected);
         }
         quickAppearanceOptions->Close();
+        wcgHighlightCompensation.Toggled(wcgHighlightCompensationToken);
         tooltipFontSize.ValueChanged(tooltipFontSizeToken);
         tooltipFontSizeSlider.ValueChanged(tooltipFontSizeSliderToken);
         tooltipFontSizeReset.Click(tooltipFontSizeResetToken);

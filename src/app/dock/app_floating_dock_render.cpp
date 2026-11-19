@@ -130,8 +130,11 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     } surfaceDrawScope{frameSurface.Get()};
     ComPtr<ID2D1DeviceContext> context;
     context.Attach(rawContext);
+    RECT contentFrame{};
+    GetClientRect(host.hwnd, &contentFrame);
     snowdesktop::HighlightCoverage highlightCoverage;
-    snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), highlightCoverage);
+    snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), highlightCoverage,
+        DesktopBackdropCompositor::IsSrgbHighlightEligible(host.hwnd, contentFrame));
     context->SetDpi(96.0f, 96.0f);
     context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
     context->SetTransform(
@@ -209,11 +212,10 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     }
     renderingFloatingDock_ = false;
 
-    RECT contentFrame{};
-    GetClientRect(host.hwnd, &contentFrame);
     const auto srgbKey = reinterpret_cast<std::uintptr_t>(&host);
-    const bool stagedSrgb = host.backdrop.StageSrgbContent(
-        host.hwnd, srgbKey, contentFrame, context.Get(), updateOffset);
+    const bool srgbPresented = host.backdrop.PrepareSrgbMaterials(
+        host.hwnd, srgbKey, contentFrame, context.Get(), updateOffset,
+        host.presentationMerged ? host.mergedPresentation.opacity : 1.f);
     context->SetTransform(
         D2D1::Matrix3x2F::Identity());
     context.Reset();
@@ -230,8 +232,6 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     // SetContent only after the replacement surface contains a complete
     // frame. The following composition commit then publishes the pixels and
     // the content switch atomically instead of exposing an empty surface.
-    const bool srgbPresented = stagedSrgb && host.backdrop.PublishSrgbContent(
-        srgbKey, host.presentationMerged ? host.mergedPresentation.opacity : 1.f);
     hr = host.backdrop.SetDirectContentForSrgb(srgbKey, srgbPresented, dcompDevice_.Get(),
         host.dcompVisual.Get(), frameSurface.Get());
     if (FAILED(hr))

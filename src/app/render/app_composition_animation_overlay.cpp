@@ -134,8 +134,14 @@ bool DesktopApp::UpdateCompositionAnimationOverlayContent(
         return false;
     ComPtr<ID2D1DeviceContext> context;
     context.Attach(rawContext);
+    auto& material = AnimationHighlightCompositor(overlay);
+    const auto materialKey = reinterpret_cast<std::uintptr_t>(&overlay);
+    const HWND owner = overlay.host == UiCompositionAnimationHost::FloatingPopup ? floatingPopupHwnd_ : hwnd_;
+    // A newly created material visual cannot join a native timeline in flight.
+    const bool extractHighlights = (!overlay.active || material.HasSrgbContent(materialKey)) &&
+        DesktopBackdropCompositor::IsSrgbHighlightEligible(owner, overlay.bounds);
     snowdesktop::HighlightCoverage coverage;
-    snowdesktop::HighlightCoverage::Scope capture(context.Get(), coverage);
+    snowdesktop::HighlightCoverage::Scope capture(context.Get(), coverage, extractHighlights);
     bool drawn = false;
     if (context)
     {
@@ -147,19 +153,12 @@ bool DesktopApp::UpdateCompositionAnimationOverlayContent(
             D2D1::Point2F(static_cast<float>(updateOffset.x), static_cast<float>(updateOffset.y)),
             D2D1_INTERPOLATION_MODE_LINEAR);
     }
-    auto& material = AnimationHighlightCompositor(overlay);
-    const auto materialKey = reinterpret_cast<std::uintptr_t>(&overlay);
-    const HWND owner = overlay.host == UiCompositionAnimationHost::FloatingPopup ? floatingPopupHwnd_ : hwnd_;
-    // A new WinRT visual has no position on a running native timeline.
-    // Carry its existing channel until the next overlay starts.
-    const bool staged = drawn && !coverage.Empty() &&
-        (!overlay.active || material.HasSrgbContent(materialKey)) &&
-        material.StageSrgbContent(owner, materialKey, overlay.bounds, context.Get(), updateOffset);
+    const bool prepared = drawn && material.PrepareSrgbMaterials(
+        owner, materialKey, overlay.bounds, context.Get(), updateOffset, overlay.active ? -1.f : 0.f);
     context.Reset();
     const HRESULT endDrawHr = overlay.surface->EndDraw();
     if (!drawn || FAILED(endDrawHr)) return false;
-    overlay.presentingHighlights = staged &&
-        material.PublishSrgbContent(materialKey, overlay.active ? -1.f : 0.f);
+    overlay.presentingHighlights = prepared;
     return SUCCEEDED(material.SetDirectContentForSrgb(materialKey,
         overlay.presentingHighlights, dcompDevice_.Get(), overlay.visual.Get(), overlay.surface.Get()));
 }
@@ -551,13 +550,22 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
     quickNavigation_->animationFrameToken = 0;
     quickNavigation_->animationCompositorDriven = false;
 
+    const bool deforming = snowdesktop::quick_navigation_animation_rules::IsDeformationEffect(
+        quickNavigation_->animation.GetEffect());
+    if (deforming && quickNavigation_->backdropCompositor.HasSrgbContent(
+            reinterpret_cast<std::uintptr_t>(quickNavigation_->hwnd)))
+    {
+        // The deformation samples the direct composition surface. Put the
+        // ordinary edge in that same surface before starting the warp.
+        InvalidateQuickNavigationWindow(true);
+    }
+
     // Snap both compositor trees to the same logical frame before attaching
     // native animations. This also disconnects a previous animation during a
     // rapid open/close reversal and hides the native search edit until rest.
     ApplyQuickNavigationAnimationFrame();
     ApplyFloatingDockLayerPolicy();
-    if (snowdesktop::quick_navigation_animation_rules::IsDeformationEffect(
-            quickNavigation_->animation.GetEffect()))
+    if (deforming)
     {
         // Content and native glass share the scheduler's progress and warp;
         // a separate uniform compositor timeline would separate the layers.

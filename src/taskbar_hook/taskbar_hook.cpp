@@ -1290,8 +1290,9 @@ private:
         context->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x), static_cast<float>(offset.y)));
         context->Clear(D2D1::ColorF(0, 0));
         namespace display = snowdesktop::display_color;
-        const bool correctHighlights = display::ModeForMonitor(
-            MonitorFromWindow(control.edgeTaskbar, MONITOR_DEFAULTTONULL)) == display::Mode::WideColor;
+        const bool correctHighlights = (control.edgeStyle.style & kStyleDisableWcgCompensation) == 0 &&
+            display::ModeForMonitor(MonitorFromWindow(control.edgeTaskbar, MONITOR_DEFAULTTONULL)) ==
+                display::Mode::WideColor;
         std::vector<std::uint32_t> coverage;
         const HRESULT drawResult = DrawTaskbarEdges(context.get(), width, height, scale, control.edgeStyle,
             ResolveTaskbarMaterialEdge(control.edgeTaskbar), correctHighlights ? &coverage : nullptr);
@@ -1349,6 +1350,7 @@ private:
         control.edgeStyle.borderRed = snapshot.borderRed; control.edgeStyle.borderGreen = snapshot.borderGreen;
         control.edgeStyle.borderBlue = snapshot.borderBlue; control.edgeStyle.borderAlpha = snapshot.borderAlpha;
         control.edgeStyle.edge = snapshot.edge;
+        control.edgeStyle.style = snapshot.style;
         control.edgeTaskbar = taskbar;
         if (snapshot.borderAlpha <= 0 && (!snapshot.edge.highlightEnabled || snapshot.edge.highlightStrength <= 0))
         {

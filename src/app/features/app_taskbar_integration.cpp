@@ -530,7 +530,8 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     const bool suppressTaskbar = std::any_of(targets.begin(), targets.end(),
         [](const auto& target) { return target.suppressTaskbar; });
     ApplySystemTaskbarBackdrop(true,
-        dockSettings_.systemTaskbarBackdropEnabled, defaultAppearance, targets, appearanceRequired, suppressTaskbar);
+        dockSettings_.systemTaskbarBackdropEnabled, defaultAppearance, targets, appearanceRequired, suppressTaskbar,
+        generalSettings_.wcgHighlightCompensationEnabled);
     taskbarAppliedMonitorSceneRevision_ = monitorSceneRevision_;
     systemTaskbarBackdropRefreshTick_ = GetTickCount();
     return true;

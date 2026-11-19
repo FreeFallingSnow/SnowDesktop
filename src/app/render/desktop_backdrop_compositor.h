@@ -168,17 +168,17 @@ public:
     // The clip is local to a fixed sampling envelope and can animate independently.
     bool AddClippedPanel(const RECT& envelope, ID2D1Geometry* clip,
         float blurRadius, std::uintptr_t ownerKey);
+    static bool IsSrgbHighlightEligible(HWND window, const RECT& clientFrame);
     bool StageSrgbContent(HWND window, std::uintptr_t key, const RECT& clientFrame,
         ID2D1DeviceContext* context, POINT atlasOffset);
+    bool PrepareSrgbMaterials(HWND window, std::uintptr_t key, const RECT& clientFrame,
+        ID2D1DeviceContext* context, POINT atlasOffset, float opacity = 1.f);
     bool PublishSrgbContent(std::uintptr_t key, float opacity = 1.0f);
     bool HasSrgbContent(std::uintptr_t key) const noexcept;
-    // Keep the painted DirectComposition surface until WinRT accepts its
-    // replacement, or keep the old WinRT visual when returning to that surface.
+    // Keep the DirectComposition surface attached. Retire its old highlight
+    // visual after DirectComposition accepts the ordinary highlight replacement.
     HRESULT SetDirectContentForSrgb(std::uintptr_t key, bool srgbPublished,
         IDCompositionDevice2* device, IDCompositionVisual* visual, IUnknown* surface);
-    // Clear a tile from the direct paint only after the compositor has its
-    // sRGB pixels. The first accepted tile invalidates its direct bounds.
-    bool CanClearDirectSrgbTile(std::uintptr_t key);
     void RetireSrgbAfterDirectCommit(std::uintptr_t key);
     void OnDirectContentCommitted(IDCompositionDevice2* device);
     void RemoveSrgbContent(std::uintptr_t key);
@@ -220,17 +220,8 @@ public:
     // Submit a completed EndFrame(false) after the matching content commit.
     void CommitDeferredFrame();
     /**
-     * @brief 提交共享视觉事务，并在该批次真正完成后投递窗口消息。
-     *
-     * 用于跨 HWND 的视觉交接；接收方可在通知后安全回收旧目标，避免
-     * 合成提交尚未完成时提前隐藏旧玻璃层。
-     */
-    bool CommitVisualChangesAndNotify(
-        HWND notifyWindow, UINT message, WPARAM token);
-    /**
      * @brief 结束本帧面板集合并同步辅助窗口区域。
-     * @param requestCommit 是否立即执行合成提交；跨目标交接可延后到
-     *        两侧属性全部设置后，通过 CommitVisualChangesAndNotify 一次提交。
+     * @param requestCommit 是否立即执行合成提交。跨目标交接可在属性准备完成后一起提交。
      */
     void EndFrame(bool requestCommit = true);
     /** @brief 释放背景辅助窗口和面板，保留内容窗口的 sRGB 合成层。 */

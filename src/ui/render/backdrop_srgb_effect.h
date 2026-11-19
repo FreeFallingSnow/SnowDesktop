@@ -152,7 +152,25 @@ inline composition::CompositionEffectFactory CreateFactory(const composition::Co
     const auto outside = Composite(D2D1_COMPOSITE_MODE_DESTINATION_OUT, *ordinary, coverage);
     const auto inside = Composite(D2D1_COMPOSITE_MODE_DESTINATION_IN, *corrected, coverage);
     const auto output = Composite(D2D1_COMPOSITE_MODE_PLUS, *outside, *inside);
-    auto factory = compositor.CreateEffectFactory(*output);
+    // An 8-bit alpha distinguishes empty pixels from the light and shadow.
+    // Keep the sampled backdrop within the material's coverage.
+    using wf::PropertyValue;
+    std::vector<wf::IInspectable> supportProperties;
+    supportProperties.reserve(13);
+    for (int channel = 0; channel < 3; ++channel)
+    {
+        supportProperties.push_back(PropertyValue::CreateSingle(0.f));
+        supportProperties.push_back(PropertyValue::CreateSingle(1.f));
+        supportProperties.push_back(PropertyValue::CreateBoolean(true));
+    }
+    supportProperties.push_back(PropertyValue::CreateSingle(0.f));
+    supportProperties.push_back(PropertyValue::CreateSingle(255.f));
+    supportProperties.push_back(PropertyValue::CreateBoolean(false));
+    supportProperties.push_back(PropertyValue::CreateBoolean(true));
+    const auto support = winrt::make_self<Effect>(CLSID_D2D1LinearTransfer, std::move(supportProperties),
+        std::vector<graphics::IGraphicsEffectSource>{composition::CompositionEffectSourceParameter(L"material")});
+    const auto clipped = Composite(D2D1_COMPOSITE_MODE_DESTINATION_IN, *output, *support);
+    auto factory = compositor.CreateEffectFactory(*clipped);
     winrt::check_hresult(factory.ExtendedError());
     return factory;
 }

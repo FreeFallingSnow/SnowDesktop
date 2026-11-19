@@ -6,7 +6,6 @@
 #include "common/utils.h"
 #include "ui/input/text_input_window.h"
 #include "navigation/quick_navigation_rules.h"
-#include <winrt/Windows.Foundation.h>
 
 // Quick-navigation window and search-edit message dispatch.
 
@@ -144,31 +143,6 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
 
     switch (msg)
     {
-    case snowdesktop::quick_navigation::kSrgbContentCommittedMessage:
-    {
-        using ContentPresentation = snowdesktop::quick_navigation::State::ContentPresentation;
-        auto& presentation = quickNavigation_->contentPresentation;
-        if (hwnd != quickNavigation_->hwnd || wp != quickNavigation_->srgbCommitGeneration ||
-            presentation != ContentPresentation::PendingSrgb || graphicsDeviceRecovery_.Pending())
-            return 0;
-        const auto key = reinterpret_cast<std::uintptr_t>(hwnd);
-        if (lp == static_cast<LPARAM>(winrt::Windows::Foundation::AsyncStatus::Completed) &&
-            quickNavigation_->dcompVisual && quickNavigation_->dcompDevice &&
-            quickNavigation_->backdropCompositor.HasSrgbContent(key) &&
-            SUCCEEDED(quickNavigation_->dcompVisual->SetContent(nullptr)))
-        {
-            presentation = ContentPresentation::Srgb;
-            CommitQuickNavigationCompositionFrame();
-            FlushPendingQuickNavigationCompositionCommit();
-        }
-        else
-        {
-            presentation = ContentPresentation::Direct;
-            quickNavigation_->backdropCompositor.RemoveSrgbContent(key);
-            (void)quickNavigation_->backdropCompositor.CommitSrgbContent();
-        }
-        return 0;
-    }
     case WM_NCHITTEST:
         if (!quickNavigation_->open)
             return HTTRANSPARENT;

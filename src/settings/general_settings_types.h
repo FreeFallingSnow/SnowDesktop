@@ -41,6 +41,7 @@ struct GeneralSettings
     // Missing values stay enabled so an upgrade starts collecting. The
     // settings page can turn collection off without deleting history.
     bool screenTimeEnabled = true;
+    bool wcgHighlightCompensationEnabled = true;
     // The shortcut toggles temporary desktop/Dock passthrough; only this
     // shortcut preference is persisted, never the active passthrough state.
     bool desktopPassthroughHotkeyEnabled = false;

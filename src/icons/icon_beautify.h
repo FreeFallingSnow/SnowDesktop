@@ -185,6 +185,13 @@ enum class SourceKind { Image, NativeControl };
 // transparent padding so the chosen outline never inherits a thumbnail's ratio.
 bool PrepareCanvas(std::vector<std::uint32_t>& pixels, int& width, int& height, bool enabled);
 
+struct EdgeReflectionLayers
+{
+    std::vector<std::uint32_t> body;
+    std::vector<std::uint32_t> material;
+    std::vector<std::uint8_t> coverage;
+};
+
 std::vector<std::uint32_t> Render(
     const std::vector<std::uint32_t>& source,
     int width,
@@ -192,7 +199,7 @@ std::vector<std::uint32_t> Render(
     const IconBeautifySettings& settings,
     std::optional<PlateFill> detectedEdgeFill = std::nullopt,
     SourceKind sourceKind = SourceKind::Image,
-    std::vector<std::uint8_t>* highlightCoverage = nullptr);
+    EdgeReflectionLayers* layers = nullptr);
 
 /** Directional reflection without a fill or glyph, for vector control plates. */
 std::vector<std::uint32_t> RenderEdgeReflection(int width, int height,

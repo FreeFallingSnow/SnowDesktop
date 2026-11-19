@@ -1,12 +1,14 @@
 #pragma once
 
 #include <windows.h>
+#include <atomic>
 #include <string>
 #include <vector>
 
 namespace snowdesktop::display_color
 {
 enum class Mode { Sdr, WideColor, Hdr };
+inline std::atomic_bool highlightCompensationEnabled{true};
 
 // Query once per short interval rather than once per icon. Older systems and
 // failed/unsupported queries retain the ordinary SDR drawing path.
@@ -59,6 +61,12 @@ inline Mode ModeForMonitor(HMONITOR monitor)
     return Mode::Sdr;
 }
 
+inline bool UseHighlightCompensation(HMONITOR monitor)
+{
+    return highlightCompensationEnabled.load(std::memory_order_relaxed) &&
+        ModeForMonitor(monitor) == Mode::WideColor;
+}
+
 inline bool AnyWideColorMonitor()
 {
     bool found = false;
@@ -69,5 +77,19 @@ inline bool AnyWideColorMonitor()
             return FALSE;
         }, reinterpret_cast<LPARAM>(&found));
     return found;
+}
+
+inline bool UseHighlightCompensationOnDesktop()
+{
+    if (!highlightCompensationEnabled.load(std::memory_order_relaxed)) return false;
+    static thread_local ULONGLONG nextRefresh = 0;
+    static thread_local bool wideColor = false;
+    const auto now = GetTickCount64();
+    if (now >= nextRefresh)
+    {
+        wideColor = AnyWideColorMonitor();
+        nextRefresh = now + 1000;
+    }
+    return wideColor;
 }
 }

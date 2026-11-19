@@ -48,30 +48,38 @@ std::vector<Tile> Stage(DesktopBackdropCompositor& compositor, HWND window,
     }
 
     std::vector<Tile> candidates;
+    D2D1_MATRIX_3X2_F paintTransform{};
+    context->GetTransform(&paintTransform);
     for (const auto& frame : frames)
     {
         RECT visible{};
         IntersectRect(&visible, &frame, &dirty);
-        if (!EqualRect(&frame, &visible))
+        const bool complete = EqualRect(&frame, &visible) != FALSE;
+        if (!complete)
         {
             InvalidateRect(window, &frame, FALSE);
-            continue;
         }
         const auto old = std::find_if(retained.begin(), retained.end(),
             [&](const auto& tile) { return EqualRect(&tile.frame, &frame) != FALSE; });
         const auto key = old == retained.end() ? nextKey : old->key;
         const POINT atlas{updateOffset.x + frame.left - dirty.left,
             updateOffset.y + frame.top - dirty.top};
-        if (!compositor.StageSrgbContent(window, key, frame, context, atlas)) continue;
-        if (old == retained.end()) nextKey += 2;
-        candidates.push_back({key, frame});
-        if (!compositor.CanClearDirectSrgbTile(key))
+        if (complete && compositor.StageSrgbContent(window, key, frame, context, atlas) &&
+            compositor.PublishSrgbContent(key))
+        {
+            if (old == retained.end()) nextKey += 2;
+            candidates.push_back({key, frame});
             continue;
-        context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(frame.left),
-            static_cast<float>(frame.top), static_cast<float>(frame.right),
-            static_cast<float>(frame.bottom)), D2D1_ANTIALIAS_MODE_ALIASED);
-        context->Clear(D2D1::ColorF(0, 0.f));
+        }
+        context->SetTransform(D2D1::Matrix3x2F::Translation(
+            static_cast<float>(updateOffset.x - dirty.left),
+            static_cast<float>(updateOffset.y - dirty.top)));
+        context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(visible.left),
+            static_cast<float>(visible.top), static_cast<float>(visible.right),
+            static_cast<float>(visible.bottom)), D2D1_ANTIALIAS_MODE_ALIASED);
+        (void)coverage.Paint(context, {}, {}, HighlightCoverage::Pass::MaterialFallback);
         context->PopAxisAlignedClip();
+        context->SetTransform(paintTransform);
     }
     return candidates;
 }
@@ -87,14 +95,6 @@ void Publish(DesktopBackdropCompositor& compositor, const RECT& dirty,
             compositor.RetireSrgbAfterDirectCommit(old.key);
         return true;
     });
-    for (const auto& tile : candidates)
-    {
-        // A cutout may still be using the preceding WinRT pixels. Keep its
-        // record until the next direct paint fills it before retirement.
-        if (compositor.PublishSrgbContent(tile.key) || compositor.HasSrgbContent(tile.key))
-            retained.push_back(tile);
-        else
-            compositor.RetireSrgbAfterDirectCommit(tile.key);
-    }
+    retained.insert(retained.end(), candidates.begin(), candidates.end());
 }
 }

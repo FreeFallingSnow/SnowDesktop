@@ -20,6 +20,7 @@
 #include "data/data_paths.h"
 #include "diagnostics/crashlog.h"
 #include "desktop/desktop_source.h"
+#include "desktop/display_color_mode.h"
 #include "theme/taskbar_appearance.h"
 #include "settings/settings_window.h"
 #include "settings/settings_controller.h"
@@ -1256,6 +1257,9 @@ public:
 
         const bool dockEnabledChanged = generalCommitted &&
             app_.generalSettings_.dockEnabled != snapshot.values.general.dockEnabled;
+        const bool highlightCompensationChanged = generalCommitted &&
+            app_.generalSettings_.wcgHighlightCompensationEnabled !=
+                snapshot.values.general.wcgHighlightCompensationEnabled;
         const bool languageChanged = generalCommitted && std::strcmp(
             app_.generalSettings_.language, snapshot.values.general.language) != 0;
         // Publish both domain mirrors before any layout, surface or hotkey
@@ -1265,6 +1269,8 @@ public:
         if (generalCommitted)
         {
             app_.generalSettings_ = snapshot.values.general;
+            snowdesktop::display_color::highlightCompensationEnabled.store(
+                app_.generalSettings_.wcgHighlightCompensationEnabled);
             app_.ApplyScreenTimeEnabled();
         }
 
@@ -1354,7 +1360,17 @@ public:
             app_.ApplyCollectionPopupAppearance();
             if (languageChanged)
                 app_.ApplyLanguageChange();
-            if (dockCommitted)
+            if (highlightCompensationChanged)
+            {
+                if (!dockCommitted && !dockEnabledChanged) app_.InvalidateDragStaticScene();
+                app_.InvalidateAllWidgetSlots();
+                app_.InvalidateDockContainers();
+                app_.InvalidateFloatingDockWindow(false);
+                app_.InvalidateQuickNavigationWindow();
+                if (app_.hwnd_) InvalidateRect(app_.hwnd_, nullptr, FALSE);
+                app_.EnsureUiAnimationFrame();
+            }
+            if (dockCommitted || highlightCompensationChanged)
                 app_.RefreshSystemTaskbarAppearance(true);
         }
         if (HasSettingsDomain(domains, SettingsDomain::Category))
@@ -1934,6 +1950,8 @@ void DesktopApp::InitializeSettingsController()
         dockSettings_ = snapshot->values.dock;
         navigationSettings_ = snapshot->values.navigation;
         generalSettings_ = snapshot->values.general;
+        snowdesktop::display_color::highlightCompensationEnabled.store(
+            generalSettings_.wcgHighlightCompensationEnabled);
         snowdesktop::shell_extensions::SharedMenuService().Configure(generalSettings_.shellExtensions);
         ApplyAnimationPreferences();
         categorySettings_ = snapshot->values.category;
@@ -2254,6 +2272,8 @@ void DesktopApp::LoadGeneralSettingsAndApply()
     GeneralSettings settings;
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
     generalSettings_ = settings;
+    snowdesktop::display_color::highlightCompensationEnabled.store(
+        generalSettings_.wcgHighlightCompensationEnabled);
     ApplyRuntimeModulePolicy();
     snowdesktop::diagnostics::SetLogModules(settings.diagnosticLogModules);
     snowdesktop::app_fonts::Select(settings.font, std::filesystem::path(GetExecutableDirectoryPath()) / L"Assets", GetDataDirectoryPath());

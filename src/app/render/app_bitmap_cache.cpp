@@ -534,14 +534,23 @@ ComPtr<ID2D1Bitmap1> DesktopApp::UploadStyledIconPixels(
 
     iconGlassBackdrop_[bitmap.Get()] = prepared.needsGlassBackdrop;
     iconBitmapStyles_[bitmap.Get()] = prepared.style;
-    if (!prepared.highlightCoverage.empty())
+    if (!prepared.edgeReflection.body.empty())
     {
-        ComPtr<ID2D1Bitmap1> mask;
-        const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
+        const auto size = bitmap->GetPixelSize();
+        const auto pitch = static_cast<UINT32>(buffer.width * sizeof(std::uint32_t));
+        const auto coverageProperties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
             D2D1::PixelFormat(DXGI_FORMAT_A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-        if (SUCCEEDED(d2dContext_->CreateBitmap(bitmap->GetPixelSize(),
-            prepared.highlightCoverage.data(), static_cast<UINT32>(buffer.width), &properties, &mask)))
-            snowdesktop::HighlightCoverage::SetBitmapMask(bitmap.Get(), mask.Get());
+        ComPtr<ID2D1Bitmap1> body, material, coverage;
+        if (SUCCEEDED(d2dContext_->CreateBitmap(size, prepared.edgeReflection.body.data(),
+                pitch, &props, &body)) &&
+            SUCCEEDED(d2dContext_->CreateBitmap(size, prepared.edgeReflection.material.data(),
+                pitch, &props, &material)) &&
+            SUCCEEDED(d2dContext_->CreateBitmap(size, prepared.edgeReflection.coverage.data(),
+                static_cast<UINT32>(buffer.width), &coverageProperties, &coverage)))
+        {
+            snowdesktop::HighlightCoverage::SetBitmapMaterial(bitmap.Get(), body.Get(),
+                material.Get(), coverage.Get());
+        }
     }
     return bitmap;
 }
@@ -636,10 +645,6 @@ void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
         style.enabled && style.glassEnabled;
     if (translucentMaterial) RegisterIconBackdrop(target, plan.bounds, opacity, ownerKey, &style);
     snowdesktop::icon_bitmap_renderer::Draw(target, bitmap, plan, opacity, translucentMaterial);
-    if (opacity > 0.f)
-        snowdesktop::HighlightCoverage::RecordBitmap(target, bitmap,
-            D2D1::RectF(static_cast<float>(plan.bounds.left), static_cast<float>(plan.bounds.top),
-                static_cast<float>(plan.bounds.right), static_cast<float>(plan.bounds.bottom)));
 }
 
 void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,

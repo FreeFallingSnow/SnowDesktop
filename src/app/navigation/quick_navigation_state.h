@@ -28,8 +28,6 @@
 
 namespace snowdesktop::quick_navigation
 {
-inline constexpr UINT kSrgbContentCommittedMessage = WM_APP + 93;
-
 // One navigation session owns its presentation, input, indexing and result
 // caches. It shares no DesktopApp layout and contains no application pointer.
 struct State
@@ -67,10 +65,6 @@ struct State
     Microsoft::WRL::ComPtr<IDCompositionEffectGroup> dcompEffect;
     Microsoft::WRL::ComPtr<IDCompositionScaleTransform> dcompScaleTransform;
     Microsoft::WRL::ComPtr<IDCompositionSurface> dcompSurface;
-    enum class ContentPresentation { Direct, PendingSrgb, Srgb };
-    ContentPresentation contentPresentation = ContentPresentation::Direct;
-    WPARAM srgbCommitGeneration = 0;
-
     // Called after submitting a painted and attached replacement on dcompDevice.
     void RetireSrgbAfterDirectCommit();
 

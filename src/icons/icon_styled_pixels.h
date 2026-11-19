@@ -21,7 +21,21 @@ struct Prepared
     bool nativeControlSource = false;
     bool needsGlassBackdrop = false;
     icon_bitmap_pixels::Buffer buffer;
-    std::vector<std::uint8_t> highlightCoverage;
+    icon_beautify::EdgeReflectionLayers edgeReflection;
+
+    size_t PayloadBytes() const
+    {
+        return (buffer.pixels.size() + edgeReflection.body.size() +
+            edgeReflection.material.size()) * sizeof(std::uint32_t) +
+            edgeReflection.coverage.size();
+    }
+
+    size_t CapacityBytes() const
+    {
+        return (buffer.pixels.capacity() + edgeReflection.body.capacity() +
+            edgeReflection.material.capacity()) * sizeof(std::uint32_t) +
+            edgeReflection.coverage.capacity();
+    }
 };
 
 // Shared by worker prewarming and the synchronous cold-miss fallback. Keep the
@@ -43,7 +57,7 @@ inline bool Prepare(HBITMAP source, const IconBeautifySettings& style,
         out.needsGlassBackdrop = style.glassEnabled && !edgeFill;
         buffer.pixels = icon_beautify::Render(buffer.pixels, buffer.width, buffer.height,
             style, edgeFill, nativeControlSource ? icon_beautify::SourceKind::NativeControl :
-                icon_beautify::SourceKind::Image, &out.highlightCoverage);
+                icon_beautify::SourceKind::Image, &out.edgeReflection);
     }
     out.source = source;
     out.style = style;
@@ -106,38 +120,38 @@ public:
     void Put(std::shared_ptr<const Prepared> prepared)
     {
         if (!prepared || !prepared->source || prepared->buffer.pixels.empty()) return;
-        const auto count = prepared->buffer.pixels.size();
+        const auto count = prepared->PayloadBytes();
         Erase(prepared->source);
-        if (count > kMaximumPixels) return;
-        if (pixels_ > kMaximumPixels - count) Clear();
+        if (count > kMaximumBytes) return;
+        if (bytes_ > kMaximumBytes - count) Clear();
         const auto source = prepared->source;
         entries_.emplace(source, std::move(prepared));
-        pixels_ += count;
+        bytes_ += count;
     }
     std::shared_ptr<const Prepared> Take(HBITMAP source)
     {
         const auto found = entries_.find(source);
         if (found == entries_.end()) return {};
         auto result = std::move(found->second);
-        pixels_ -= result->buffer.pixels.size();
+        bytes_ -= result->PayloadBytes();
         entries_.erase(found);
         return result;
     }
     void Erase(HBITMAP source) { (void)Take(source); }
-    void Clear() { entries_.clear(); pixels_ = 0; }
+    void Clear() { entries_.clear(); bytes_ = 0; }
     size_t Size() const { return entries_.size(); }
-    size_t Bytes() const { return pixels_ * sizeof(std::uint32_t); }
+    size_t Bytes() const { return bytes_; }
     size_t CapacityBytes() const
     {
         size_t bytes = 0;
         for (const auto& [source, prepared] : entries_)
-        { (void)source; bytes += prepared->buffer.pixels.capacity() * sizeof(std::uint32_t); }
+        { (void)source; bytes += prepared->CapacityBytes(); }
         return bytes;
     }
 private:
-    static constexpr size_t kMaximumPixels = 4u * 1024u * 1024u; // 16 MiB of pixel payload.
+    static constexpr size_t kMaximumBytes = 16u * 1024u * 1024u;
     std::shared_ptr<PreparationWork> preparation_ = std::make_shared<PreparationWork>();
-    size_t pixels_ = 0;
+    size_t bytes_ = 0;
     std::unordered_map<HBITMAP, std::shared_ptr<const Prepared>> entries_;
 };
 }

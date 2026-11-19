@@ -12,8 +12,8 @@
 
 namespace snowdesktop
 {
-// Records only coverage of authored highlighter draws. Replays the same
-// transforms into a second app-owned surface for the compositor effect.
+// Records authored highlight geometry and optionally its own colored pixels.
+// Replays the original transforms and clips for composition.
 class HighlightCoverage
 {
     struct Draw
@@ -25,14 +25,23 @@ class HighlightCoverage
         std::optional<IconBackdropClip> clip;
         std::shared_ptr<const ScrollContentOpacityMask> scrollOpacity;
         float stroke = 0.f;
+        std::optional<D2D1_COLOR_F> materialColor;
+        bool compensated = true;
+        Microsoft::WRL::ComPtr<ID2D1Bitmap> materialBitmap;
+        float materialOpacity = 1.f;
+        D2D1_INTERPOLATION_MODE interpolation = D2D1_INTERPOLATION_MODE_LINEAR;
+
+        bool IsMaterial() const noexcept { return materialColor || materialBitmap; }
     };
 
 public:
     class Scope
     {
     public:
-        explicit Scope(ID2D1RenderTarget* target, HighlightCoverage& coverage)
-            : target_(target), coverage_(coverage), previous_(current_)
+        explicit Scope(ID2D1RenderTarget* target, HighlightCoverage& coverage,
+            bool separateMaterials = false)
+            : target_(target), coverage_(coverage), previous_(current_),
+              separateMaterials_(separateMaterials)
         { current_ = this; }
         ~Scope() { current_ = previous_; }
         Scope(const Scope&) = delete;
@@ -43,6 +52,7 @@ public:
         ID2D1RenderTarget* target_;
         HighlightCoverage& coverage_;
         Scope* previous_;
+        bool separateMaterials_;
         inline static thread_local Scope* current_ = nullptr;
     };
 
@@ -52,72 +62,105 @@ public:
         return scope ? &scope->coverage_ : nullptr;
     }
 
-    static void RecordMask(ID2D1RenderTarget* target, ID2D1Bitmap* mask, const D2D1_RECT_F& bounds)
+    static bool ExtractSolidMask(ID2D1RenderTarget* target, ID2D1Bitmap* mask,
+        const D2D1_RECT_F& bounds, const D2D1_COLOR_F& color, bool compensate = true)
     {
         auto* scope = Find(target);
-        if (!scope || !mask) return;
+        if (!scope || !scope->separateMaterials_ || !mask) return false;
         Draw draw;
         draw.mask = mask;
         draw.destination = bounds;
+        draw.materialColor = color;
+        draw.compensated = compensate;
         Append(*scope, std::move(draw));
+        return true;
     }
 
-    static void RecordStroke(ID2D1RenderTarget* target, ID2D1Geometry* outline, float width)
+    static bool ExtractBitmap(ID2D1RenderTarget* target, ID2D1Bitmap* material,
+        const D2D1_RECT_F& bounds, float opacity = 1.f, ID2D1Bitmap* coverage = nullptr,
+        D2D1_INTERPOLATION_MODE interpolation = D2D1_INTERPOLATION_MODE_LINEAR)
     {
         auto* scope = Find(target);
-        if (!scope || !outline || width <= 0.f) return;
+        if (!scope || !scope->separateMaterials_ || !material) return false;
+        Draw draw;
+        draw.mask = coverage ? coverage : material;
+        draw.destination = bounds;
+        draw.materialBitmap = material;
+        draw.materialOpacity = opacity;
+        draw.interpolation = interpolation;
+        Append(*scope, std::move(draw));
+        return true;
+    }
+
+    static bool ExtractStroke(ID2D1RenderTarget* target, ID2D1Geometry* outline,
+        float width, const D2D1_COLOR_F& color)
+    {
+        auto* scope = Find(target);
+        if (!scope || !scope->separateMaterials_ || !outline || width <= 0.f) return false;
         Draw draw;
         draw.geometry = outline;
         draw.stroke = width;
+        draw.materialColor = color;
         Append(*scope, std::move(draw));
+        return true;
     }
 
-    static void RecordLine(ID2D1RenderTarget* target, D2D1_POINT_2F from, D2D1_POINT_2F to, float width)
+    static bool ExtractLine(ID2D1RenderTarget* target, D2D1_POINT_2F from,
+        D2D1_POINT_2F to, float width, const D2D1_COLOR_F& color)
     {
         auto* scope = Find(target);
-        if (!scope || width <= 0.f) return;
+        if (!scope || !scope->separateMaterials_ || width <= 0.f) return false;
         Draw draw;
         draw.destination = {from.x, from.y, to.x, to.y};
         draw.stroke = width;
+        draw.materialColor = color;
         Append(*scope, std::move(draw));
+        return true;
     }
 
-    // The companion A8 bitmap shares the asset's lifetime and travels with
-    // the original through static caches, snapshot draws and cloned visuals.
-    static void SetBitmapMask(ID2D1Bitmap1* bitmap, ID2D1Bitmap1* mask)
+    static void SetBitmapMaterial(ID2D1Bitmap1* bitmap, ID2D1Bitmap1* body,
+        ID2D1Bitmap1* material, ID2D1Bitmap1* coverage)
     {
         Microsoft::WRL::ComPtr<IDXGISurface> surface;
-        if (bitmap && SUCCEEDED(bitmap->GetSurface(&surface)))
-            (void)surface->SetPrivateDataInterface(kCoverageKey, mask);
+        if (!body || !material || !coverage || !bitmap || FAILED(bitmap->GetSurface(&surface))) return;
+        (void)surface->SetPrivateDataInterface(kBodyKey, body);
+        (void)surface->SetPrivateDataInterface(kMaterialKey, material);
+        (void)surface->SetPrivateDataInterface(kMaterialCoverageKey, coverage);
     }
 
-    static void RecordBitmap(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap,
-        const D2D1_RECT_F& bounds)
+    static Microsoft::WRL::ComPtr<ID2D1Bitmap1> ExtractBitmapMaterial(ID2D1RenderTarget* target,
+        ID2D1Bitmap* bitmap, const D2D1_RECT_F& bounds, float opacity,
+        D2D1_INTERPOLATION_MODE interpolation)
     {
-        if (!Find(target) || !bitmap) return;
+        const auto* scope = Find(target);
+        if (!scope || !scope->separateMaterials_ || !bitmap || opacity <= 0.f) return {};
         Microsoft::WRL::ComPtr<ID2D1Bitmap1> native;
         Microsoft::WRL::ComPtr<IDXGISurface> surface;
         if (FAILED(bitmap->QueryInterface(IID_PPV_ARGS(&native))) ||
-            FAILED(native->GetSurface(&surface))) return;
-        Microsoft::WRL::ComPtr<IUnknown> value;
-        UINT size = sizeof(IUnknown*);
-        if (FAILED(surface->GetPrivateData(kCoverageKey, &size, value.GetAddressOf()))) return;
-        Microsoft::WRL::ComPtr<ID2D1Bitmap1> mask;
-        if (value && SUCCEEDED(value.As(&mask))) RecordMask(target, mask.Get(), bounds);
+            FAILED(native->GetSurface(&surface))) return {};
+        auto read = [&surface](const GUID& key) {
+            Microsoft::WRL::ComPtr<IUnknown> value;
+            Microsoft::WRL::ComPtr<ID2D1Bitmap1> result;
+            UINT size = sizeof(IUnknown*);
+            if (SUCCEEDED(surface->GetPrivateData(key, &size, value.GetAddressOf())) && value)
+                (void)value.As(&result);
+            return result;
+        };
+        auto body = read(kBodyKey);
+        if (!body) return {};
+        auto material = read(kMaterialKey);
+        auto coverage = read(kMaterialCoverageKey);
+        if (!coverage || !ExtractBitmap(target, material.Get(), bounds, opacity, coverage.Get(), interpolation))
+            return {};
+        return body;
     }
 
     bool Empty() const noexcept { return draws_.empty(); }
 
-    // Keep a translucent background together when a highlight tile moves
-    // some of its pixels into the compositor. This does not add mask coverage.
-    static void RecordMaterialBounds(ID2D1RenderTarget* target, const D2D1_RECT_F& bounds)
+    bool HasExtractedMaterials() const noexcept
     {
-        if (auto* scope = Find(target))
-        {
-            D2D1::Matrix3x2F transform;
-            target->GetTransform(&transform);
-            scope->coverage_.materialBounds_.push_back(PixelBounds(TransformBounds(bounds, transform)));
-        }
+        return std::any_of(draws_.begin(), draws_.end(),
+            [](const Draw& value) { return value.IsMaterial(); });
     }
 
     std::vector<RECT> Bounds(POINT offset) const
@@ -149,49 +192,40 @@ public:
             OffsetRect(&pixels, offset.x, offset.y);
             result.push_back(pixels);
         }
-        const auto highlightCount = result.size();
-        for (auto material : materialBounds_)
-        {
-            OffsetRect(&material, offset.x, offset.y);
-            const bool intersectsHighlight = std::any_of(result.begin(), result.begin() + highlightCount,
-                [&](const RECT& highlight) {
-                    RECT overlap{};
-                    return IntersectRect(&overlap, &material, &highlight) != FALSE;
-                });
-            if (intersectsHighlight) result.push_back(material);
-        }
         return result;
     }
 
-    void AttachToSnapshot(ID2D1Device* device, ID2D1Bitmap1* snapshot) const
+    enum class Pass { Coverage, Materials, MaterialFallback };
+
+    bool RenderMaterialSnapshot(ID2D1Device* device, D2D1_SIZE_U size,
+        ID2D1Bitmap1** materials, ID2D1Bitmap1** coverage) const
     {
-        Microsoft::WRL::ComPtr<ID2D1Bitmap1> mask;
-        if (!Empty())
-        {
-            Microsoft::WRL::ComPtr<ID2D1DeviceContext> context;
+        if (!HasExtractedMaterials()) return true;
+        Microsoft::WRL::ComPtr<ID2D1DeviceContext> context;
+        if (FAILED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context))) return false;
+        const auto render = [&](DXGI_FORMAT format, Pass pass, ID2D1Bitmap1** bitmap) {
             const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
-                D2D1::PixelFormat(DXGI_FORMAT_A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-            if (SUCCEEDED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context)) &&
-                SUCCEEDED(context->CreateBitmap(snapshot->GetPixelSize(),
-                    nullptr, 0, &properties, &mask)))
-            {
-                context->SetTarget(mask.Get());
-                context->BeginDraw();
-                const auto draw = Paint(context.Get(), {}, {});
-                const auto end = context->EndDraw();
-                context->SetTarget(nullptr);
-                if (FAILED(draw) || FAILED(end)) mask.Reset();
-            }
-        }
-        SetBitmapMask(snapshot, mask.Get());
+                D2D1::PixelFormat(format, D2D1_ALPHA_MODE_PREMULTIPLIED));
+            if (FAILED(context->CreateBitmap(size, nullptr, 0, &properties, bitmap))) return false;
+            context->SetTarget(*bitmap);
+            context->BeginDraw();
+            const auto drawn = Paint(context.Get(), {}, {}, pass);
+            const auto end = context->EndDraw();
+            context->SetTarget(nullptr);
+            return SUCCEEDED(drawn) && SUCCEEDED(end);
+        };
+        return render(DXGI_FORMAT_B8G8R8A8_UNORM, Pass::Materials, materials) &&
+            render(DXGI_FORMAT_A8_UNORM, Pass::Coverage, coverage);
     }
 
-    HRESULT Paint(ID2D1DeviceContext* target, POINT sourceOrigin, POINT outputOrigin) const
+    HRESULT Paint(ID2D1DeviceContext* target, POINT sourceOrigin, POINT outputOrigin,
+        Pass pass = Pass::Coverage) const
     {
         target->SetDpi(96.f, 96.f);
         target->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
         target->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
-        target->Clear(D2D1::ColorF(0, 0.f));
+        if (pass != Pass::MaterialFallback)
+            target->Clear(D2D1::ColorF(0, 0.f));
         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
         const HRESULT hr = target->CreateSolidColorBrush(D2D1::ColorF(0xffffff), &brush);
         if (FAILED(hr)) return hr;
@@ -204,6 +238,13 @@ public:
         std::size_t fadeLayers = 0;
         for (const auto& draw : draws_)
         {
+            if (pass == Pass::Coverage)
+            {
+                if (!draw.compensated) continue;
+                brush->SetOpacity(draw.materialOpacity);
+            }
+            else if (draw.materialColor)
+                brush->SetColor(*draw.materialColor);
             if (activeFade != draw.scrollOpacity.get())
             {
                 while (fadeLayers > 0)
@@ -240,7 +281,12 @@ public:
                     ++layers;
                 }
             }
-            if (draw.mask)
+            if (draw.materialBitmap && (pass == Pass::Materials || pass == Pass::MaterialFallback))
+            {
+                target->DrawBitmap(draw.materialBitmap.Get(), &draw.destination,
+                    draw.materialOpacity, draw.interpolation, nullptr, nullptr);
+            }
+            else if (draw.mask)
             {
                 target->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
                 target->FillOpacityMask(draw.mask.Get(), brush.Get(), &draw.destination, nullptr);
@@ -277,8 +323,12 @@ private:
             static_cast<LONG>(std::ceil(bounds.right)), static_cast<LONG>(std::ceil(bounds.bottom))};
     }
 
-    inline static constexpr GUID kCoverageKey{
-        0x49c3bafd, 0x8b1e, 0x47bd, {0x8e, 0xd1, 0xb4, 0x37, 0x40, 0x18, 0x89, 0xad}};
+    inline static constexpr GUID kBodyKey{
+        0x4fe938ee, 0x0615, 0x49ac, {0x96, 0x01, 0xa0, 0x84, 0x39, 0x39, 0x47, 0xc0}};
+    inline static constexpr GUID kMaterialKey{
+        0x6b55bee6, 0x274b, 0x4327, {0xa0, 0xbb, 0x31, 0x84, 0xef, 0x81, 0x8e, 0x02}};
+    inline static constexpr GUID kMaterialCoverageKey{
+        0xc488eb67, 0x3f69, 0x455e, {0x83, 0x87, 0xe0, 0x22, 0x39, 0x61, 0xc0, 0xe8}};
     static Scope* Find(ID2D1RenderTarget* target)
     {
         for (auto* scope = Scope::current_; scope; scope = scope->previous_)
@@ -296,6 +346,5 @@ private:
     }
 
     std::vector<Draw> draws_;
-    std::vector<RECT> materialBounds_;
 };
 }

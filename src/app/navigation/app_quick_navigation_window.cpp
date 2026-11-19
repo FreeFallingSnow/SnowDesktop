@@ -1570,15 +1570,12 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
 {
     const auto srgbKey = reinterpret_cast<std::uintptr_t>(quickNavigation_->hwnd);
     namespace rules = snowdesktop::quick_navigation_animation_rules;
-    using ContentPresentation = snowdesktop::quick_navigation::State::ContentPresentation;
     const auto effect = quickNavigation_->animation.GetEffect();
     bool deformationFrame = quickNavigation_->animation.IsAnimating() && rules::IsDeformationEffect(effect);
     if (quickNavigation_->animationCompositorDriven)
         return;
     const bool replacingSrgb = deformationFrame &&
         quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey);
-    if (replacingSrgb)
-        quickNavigation_->contentPresentation = ContentPresentation::Direct;
 
     auto visual =
         quickNavigation_->animation.GetVisual();
@@ -1659,8 +1656,7 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
         }
     }
 
-    // The WinRT and DirectComposition trees submit independently. Keep the
-    // rest frame until the first warp (or the scale fallback) has committed.
+    // Keep the compensated edge until the ordinary edge joins the first warp.
     if (replacingSrgb && replacementReady && FlushPendingQuickNavigationCompositionCommit())
         quickNavigation_->RetireSrgbAfterDirectCommit();
 

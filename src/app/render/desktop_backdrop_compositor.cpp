@@ -648,15 +648,6 @@ struct DesktopBackdropCompositor::Impl
     wuc::ContainerVisual root{nullptr};
     std::unordered_map<int, wuc::CompositionEffectFactory> blurFactories;
     wuc::CompositionEffectFactory highlightMaterialFactory{nullptr};
-    struct SrgbPresentation
-    {
-        enum class State { Prepared, Waiting, Ready };
-        State state = State::Prepared;
-        winrt::com_ptr<IDCompositionDevice2> directDevice;
-        winrt::com_ptr<IDCompositionVisual> directVisual;
-        HWND repaintWindow = nullptr;
-        RECT repaintRect{};
-    };
     struct SrgbRetirement { bool waiting = false; };
     struct SrgbContent
     {
@@ -671,7 +662,6 @@ struct DesktopBackdropCompositor::Impl
         RECT stagedFrame{};
         bool staged = false;
         wuc::SpriteVisual visual{nullptr};
-        std::shared_ptr<SrgbPresentation> presentation;
         std::shared_ptr<SrgbRetirement> retirement;
     };
     HWND srgbContentWindow = nullptr;
@@ -682,7 +672,6 @@ struct DesktopBackdropCompositor::Impl
     bool srgbContentOrderDirty = false;
     bool srgbContentCommitPending = false;
     bool srgbPublicationFailed = false;
-    bool srgbPresentationPending = false;
     bool srgbRetirementPending = false;
     std::shared_ptr<int> srgbLifetime = std::make_shared<int>(0);
     std::map<std::vector<int>, wuc::CompositionEffectFactory> regionalFactories;
@@ -1163,79 +1152,6 @@ struct DesktopBackdropCompositor::Impl
         SyncPanelWindowRegion();
     }
 
-    void NotifySrgbPresentations()
-    {
-        if (!srgbPresentationPending)
-            return;
-        const auto queue = ws::DispatcherQueue::GetForCurrentThread();
-        if (!queue)
-            return;
-
-        using State = SrgbPresentation::State;
-        std::vector<std::weak_ptr<SrgbPresentation>> pending;
-        for (auto& [key, frame] : srgbContent)
-        {
-            if (frame.visual && frame.active.surface && frame.presentation &&
-                frame.presentation->state == State::Prepared)
-                pending.push_back(frame.presentation);
-        }
-        srgbPresentationPending = false;
-        if (pending.empty())
-            return;
-
-        try
-        {
-            const auto completion = compositorController.EnsurePreviousCommitCompletedAsync();
-            for (const auto& item : pending)
-                if (const auto frame = item.lock()) frame->state = State::Waiting;
-
-            completion.Completed([queue, pending](
-                const wf::IAsyncAction&, wf::AsyncStatus status) noexcept {
-                try
-                {
-                    queue.TryEnqueue([pending, status] {
-                        std::map<IDCompositionDevice2*, std::vector<std::shared_ptr<SrgbPresentation>>> direct;
-                        for (const auto& item : pending)
-                        {
-                            const auto frame = item.lock();
-                            if (!frame || frame->state != State::Waiting)
-                                continue;
-                            frame->state = State::Prepared;
-                            if (status != wf::AsyncStatus::Completed)
-                                continue;
-                            if (frame->directVisual)
-                            {
-                                if (SUCCEEDED(frame->directVisual->SetContent(nullptr)))
-                                    direct[frame->directDevice.get()].push_back(frame);
-                            }
-                            else
-                            {
-                                frame->state = State::Ready;
-                                if (IsWindow(frame->repaintWindow))
-                                    InvalidateRect(frame->repaintWindow, &frame->repaintRect, FALSE);
-                            }
-                        }
-                        for (const auto& [device, frames] : direct)
-                            if (SUCCEEDED(device->Commit()))
-                                for (const auto& frame : frames)
-                                {
-                                    frame->state = State::Ready;
-                                    frame->directVisual = nullptr;
-                                    frame->directDevice = nullptr;
-                                }
-                    });
-                }
-                catch (...) { /* The ordinary content remains the fallback. */ }
-            });
-        }
-        catch (...)
-        {
-            for (const auto& item : pending)
-                if (const auto frame = item.lock()) frame->state = State::Prepared;
-            srgbPresentationPending = true;
-        }
-    }
-
     using PendingRetirement = std::pair<std::uintptr_t, std::weak_ptr<SrgbRetirement>>;
     static winrt::fire_and_forget WaitForDirectContent(
         DesktopBackdropCompositor* owner, std::weak_ptr<int> lifetime,
@@ -1292,46 +1208,11 @@ struct DesktopBackdropCompositor::Impl
             srgbContentCommitPending = false;
             if (srgbContent.empty())
                 srgbPublicationFailed = false;
-            NotifySrgbPresentations();
             return true;
         }
         catch (const winrt::hresult_error& error)
         {
             SetError(_LW("backdrop.update_panel"), error.code());
-            return false;
-        }
-    }
-
-    bool RequestCommitAndNotify(
-        HWND notifyWindow, UINT message,
-        WPARAM token) noexcept
-    {
-        if (!available || !compositorController ||
-            !notifyWindow || !IsWindow(notifyWindow))
-            return false;
-        try
-        {
-            if (!RequestCommit())
-                return false;
-            wf::IAsyncAction pendingCommit =
-                compositorController.EnsurePreviousCommitCompletedAsync();
-            pendingCommit.Completed(
-                [notifyWindow, message, token](
-                    const wf::IAsyncAction&,
-                    wf::AsyncStatus status) noexcept {
-                    if (IsWindow(notifyWindow))
-                    {
-                        PostMessageW(
-                            notifyWindow, message, token,
-                            static_cast<LPARAM>(status));
-                    }
-                });
-            return true;
-        }
-        catch (const winrt::hresult_error&)
-        {
-            // The caller retains the old target when a completion fence is
-            // unavailable, instead of destroying glass before it is ready.
             return false;
         }
     }
@@ -1432,7 +1313,6 @@ struct DesktopBackdropCompositor::Impl
         srgbContentOrderDirty = false;
         srgbContentCommitPending = false;
         srgbPublicationFailed = false;
-        srgbPresentationPending = false;
         srgbRetirementPending = false;
         srgbContentRoot = nullptr;
         srgbContentTarget = nullptr;
@@ -1482,44 +1362,22 @@ struct DesktopBackdropCompositor::Impl
         return buffer;
     }
 
-    static void PaintSrgbCoverage(const SrgbContent::Buffer& buffer,
-        const snowdesktop::HighlightCoverage* coverage, POINT sourceOrigin)
+    static void PaintSrgbCapture(const wuc::CompositionDrawingSurface& surface,
+        const snowdesktop::HighlightCoverage* coverage, POINT sourceOrigin,
+        snowdesktop::HighlightCoverage::Pass pass)
     {
-        auto interop = buffer.coverage.as<awuci::ICompositionDrawingSurfaceInterop>();
+        auto interop = surface.as<awuci::ICompositionDrawingSurfaceInterop>();
         winrt::com_ptr<ID2D1DeviceContext> context;
         POINT origin{};
         winrt::check_hresult(interop->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
             context.put_void(), &origin));
         HRESULT painted = S_OK;
         if (coverage && !coverage->Empty())
-            painted = coverage->Paint(context.get(), sourceOrigin, origin);
+            painted = coverage->Paint(context.get(), sourceOrigin, origin, pass);
         else context->Clear(D2D1::ColorF(0, 0.f));
         const auto finished = interop->EndDraw();
         winrt::check_hresult(painted);
         winrt::check_hresult(finished);
-    }
-
-    static void CopySrgbContent(const SrgbContent::Buffer& buffer,
-        ID2D1Bitmap1* source, const D2D1_RECT_U& sourceRect)
-    {
-        auto interop = buffer.surface.as<awuci::ICompositionDrawingSurfaceInterop>();
-        winrt::com_ptr<ID2D1DeviceContext> context;
-        POINT offset{};
-        winrt::check_hresult(interop->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
-            context.put_void(), &offset));
-        winrt::com_ptr<ID2D1Image> image;
-        winrt::com_ptr<ID2D1Bitmap1> bitmap;
-        context->GetTarget(image.put());
-        HRESULT result = image ? image->QueryInterface(__uuidof(ID2D1Bitmap1), bitmap.put_void()) : E_FAIL;
-        if (SUCCEEDED(result))
-        {
-            const auto destination = D2D1::Point2U(static_cast<UINT32>(offset.x),
-                static_cast<UINT32>(offset.y));
-            result = bitmap->CopyFromBitmap(&destination, source, &sourceRect);
-        }
-        const HRESULT end = interop->EndDraw();
-        winrt::check_hresult(result);
-        winrt::check_hresult(end);
     }
 
     void SetRegionalBlurBrush(ID2D1Device* device, const snowdesktop::panel_blur::Geometry& geometry,
@@ -3207,19 +3065,28 @@ bool DesktopBackdropCompositor::AddLargeIconPanel(const RECT& frame,
     }
 }
 
+bool DesktopBackdropCompositor::IsSrgbHighlightEligible(HWND window, const RECT& clientFrame)
+{
+    if (!window || IsRectEmpty(&clientFrame)) return false;
+    POINT center{clientFrame.left + (clientFrame.right - clientFrame.left) / 2,
+        clientFrame.top + (clientFrame.bottom - clientFrame.top) / 2};
+    namespace display = snowdesktop::display_color;
+    return ClientToScreen(window, &center) &&
+        display::UseHighlightCompensation(MonitorFromPoint(center, MONITOR_DEFAULTTONULL));
+}
+
 bool DesktopBackdropCompositor::StageSrgbContent(HWND window, std::uintptr_t key,
     const RECT& clientFrame, ID2D1DeviceContext* context, POINT atlasOffset)
 {
     if (const auto existing = impl_->srgbContent.find(key); existing != impl_->srgbContent.end())
         existing->second.staged = false;
-    if ((impl_->srgbPublicationFailed && !impl_->srgbContent.empty()) || !window || !key || !context ||
-        IsRectEmpty(&clientFrame) || atlasOffset.x < 0 || atlasOffset.y < 0)
+    if ((impl_->srgbPublicationFailed && !impl_->srgbContent.empty()) || !key || !context ||
+        atlasOffset.x < 0 || atlasOffset.y < 0 || !IsSrgbHighlightEligible(window, clientFrame))
         return false;
     const SIZE size{clientFrame.right - clientFrame.left, clientFrame.bottom - clientFrame.top};
-    POINT center{clientFrame.left + size.cx / 2, clientFrame.top + size.cy / 2};
-    namespace display = snowdesktop::display_color;
-    if (!ClientToScreen(window, &center) ||
-        display::ModeForMonitor(MonitorFromPoint(center, MONITOR_DEFAULTTONULL)) != display::Mode::WideColor)
+    using Coverage = snowdesktop::HighlightCoverage;
+    const auto* coverage = Coverage::Current(context);
+    if (!coverage || !coverage->HasExtractedMaterials())
         return false;
 
     try
@@ -3231,27 +3098,12 @@ bool DesktopBackdropCompositor::StageSrgbContent(HWND window, std::uintptr_t key
         if (!device) return false;
         impl_->EnsureMaskGraphicsDevice(device.get());
 
-        winrt::com_ptr<ID2D1Image> target;
-        context->GetTarget(target.put());
-        if (!target) return false;
-        const auto source = target.try_as<ID2D1Bitmap1>();
-        if (!source || source->GetPixelFormat().format != DXGI_FORMAT_B8G8R8A8_UNORM)
-            return false;
-        const auto atlas = source->GetPixelSize();
-        const auto left = static_cast<UINT32>(atlasOffset.x), top = static_cast<UINT32>(atlasOffset.y);
-        const auto width = static_cast<UINT32>(size.cx), height = static_cast<UINT32>(size.cy);
-        if (left > atlas.width || top > atlas.height ||
-            width > atlas.width - left || height > atlas.height - top)
-            return false;
-        winrt::check_hresult(context->Flush());
-
         auto& frame = impl_->srgbContent[key];
         auto& candidate = frame.candidate;
         if (!candidate.surface || candidate.size.cx != size.cx || candidate.size.cy != size.cy)
             candidate = impl_->CreateSrgbContentBuffer(size);
-        Impl::CopySrgbContent(candidate, source.get(),
-            D2D1::RectU(left, top, left + width, top + height));
-        Impl::PaintSrgbCoverage(candidate, snowdesktop::HighlightCoverage::Current(context), atlasOffset);
+        Impl::PaintSrgbCapture(candidate.surface, coverage, atlasOffset, Coverage::Pass::Materials);
+        Impl::PaintSrgbCapture(candidate.coverage, coverage, atlasOffset, Coverage::Pass::Coverage);
         frame.stagedFrame = clientFrame;
         frame.staged = true;
         return true;
@@ -3261,6 +3113,20 @@ bool DesktopBackdropCompositor::StageSrgbContent(HWND window, std::uintptr_t key
         impl_->lastError = FormatHresult(L"backdrop.srgb_content_copy", error.code());
         return false;
     }
+}
+
+bool DesktopBackdropCompositor::PrepareSrgbMaterials(HWND window, std::uintptr_t key,
+    const RECT& clientFrame, ID2D1DeviceContext* context, POINT atlasOffset, float opacity)
+{
+    using Coverage = snowdesktop::HighlightCoverage;
+    const auto* coverage = Coverage::Current(context);
+    if (!coverage || !coverage->HasExtractedMaterials()) return false;
+    if (StageSrgbContent(window, key, clientFrame, context, atlasOffset) &&
+        PublishSrgbContent(key, opacity))
+        return true;
+
+    (void)coverage->Paint(context, {}, {}, Coverage::Pass::MaterialFallback);
+    return false;
 }
 
 bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opacity)
@@ -3320,44 +3186,7 @@ HRESULT DesktopBackdropCompositor::SetDirectContentForSrgb(std::uintptr_t key,
         return hr;
     }
 
-    auto& frame = entry->second;
-    if (!frame.presentation)
-        frame.presentation = std::make_shared<Impl::SrgbPresentation>();
-    auto& presentation = *frame.presentation;
-    using State = Impl::SrgbPresentation::State;
-    if (presentation.state == State::Ready)
-        return visual->SetContent(nullptr);
-
-    const auto hr = visual->SetContent(surface);
-    if (SUCCEEDED(hr))
-    {
-        presentation.directDevice.copy_from(device);
-        presentation.directVisual.copy_from(visual);
-        if (presentation.state == State::Prepared)
-            impl_->srgbPresentationPending = true;
-    }
-    return hr;
-}
-
-bool DesktopBackdropCompositor::CanClearDirectSrgbTile(std::uintptr_t key)
-{
-    const auto entry = impl_->srgbContent.find(key);
-    if (entry == impl_->srgbContent.end())
-        return false;
-    auto& frame = entry->second;
-    if (!frame.presentation)
-        frame.presentation = std::make_shared<Impl::SrgbPresentation>();
-    auto& presentation = *frame.presentation;
-    using State = Impl::SrgbPresentation::State;
-    if (presentation.state == State::Ready)
-        return true;
-    if (presentation.state == State::Prepared)
-    {
-        presentation.repaintWindow = impl_->srgbContentWindow;
-        presentation.repaintRect = frame.stagedFrame;
-        impl_->srgbPresentationPending = true;
-    }
-    return false;
+    return visual->SetContent(surface);
 }
 
 void DesktopBackdropCompositor::RetireSrgbAfterDirectCommit(std::uintptr_t key)
@@ -3366,7 +3195,6 @@ void DesktopBackdropCompositor::RetireSrgbAfterDirectCommit(std::uintptr_t key)
     if (found == impl_->srgbContent.end())
         return;
     auto& frame = found->second;
-    frame.presentation.reset();
     if (!frame.retirement)
     {
         frame.retirement = std::make_shared<Impl::SrgbRetirement>();
@@ -3469,7 +3297,6 @@ bool DesktopBackdropCompositor::CommitSrgbContent()
         impl_->srgbContentCommitPending = false;
         if (impl_->srgbContent.empty())
             impl_->srgbPublicationFailed = false;
-        impl_->NotifySrgbPresentations();
         return true;
     }
     catch (const winrt::hresult_error& error)
@@ -3846,19 +3673,6 @@ void DesktopBackdropCompositor::CommitDeferredFrame()
         // desktop body and the matching glass before changing its region.
         impl_->transformedRegionDirty = !impl_->SyncPanelWindowRegion();
     }
-}
-
-bool DesktopBackdropCompositor::
-CommitVisualChangesAndNotify(
-    HWND notifyWindow, UINT message, WPARAM token)
-{
-    if (impl_ && impl_->transformedRegionDirty)
-    {
-        if (!impl_->SyncPanelWindowRegion()) return false;
-        impl_->transformedRegionDirty = false;
-    }
-    return impl_ && impl_->RequestCommitAndNotify(
-        notifyWindow, message, token);
 }
 
 void DesktopBackdropCompositor::EndFrame(

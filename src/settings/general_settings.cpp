@@ -138,6 +138,8 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     ReadBoolField(text, "desktopIdleHidePauseWithWindows", settings.desktopIdleHidePauseWithWindows);
     settings.screenTimeEnabled = true;
     ReadBoolField(text, "screenTimeEnabled", settings.screenTimeEnabled);
+    settings.wcgHighlightCompensationEnabled = true;
+    ReadBoolField(text, "wcgHighlightCompensationEnabled", settings.wcgHighlightCompensationEnabled);
     if (ReadBoolField(text, "desktopPassthroughHotkeyEnabled", val))
         settings.desktopPassthroughHotkeyEnabled = val;
     if (ReadBoolField(text, "pageNavigationKeyboardEnabled", val))
@@ -352,6 +354,8 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "  \"desktopIdleHideDelaySeconds\": " << snowdesktop::desktop_idle_hide::NormalizeDelay(settings.desktopIdleHideDelaySeconds) << ",\n";
     file << "  \"desktopIdleHidePauseWithWindows\": " << (settings.desktopIdleHidePauseWithWindows ? "true" : "false") << ",\n";
     file << "  \"screenTimeEnabled\": " << (settings.screenTimeEnabled ? "true" : "false") << ",\n";
+    file << "  \"wcgHighlightCompensationEnabled\": "
+         << (settings.wcgHighlightCompensationEnabled ? "true" : "false") << ",\n";
     file << "  \"desktopPassthroughHotkeyEnabled\": "
          << (settings.desktopPassthroughHotkeyEnabled ? "true" : "false")
          << ",\n";

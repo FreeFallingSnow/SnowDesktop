@@ -152,8 +152,9 @@ inline void DrawMaterialOutline(ID2D1RenderTarget* target, int shape, RECT bound
             const float lighting = material.Lighting((mid.x - frame.left) / w, (mid.y - frame.top) / h);
             brush->SetColor(D2D1::ColorF(0xffffff, std::clamp(strength * lighting, 0.f, 1.f)));
             const float width = material.BorderWidth(edgeWidth, lighting) * 2;
-            target->DrawLine(from, to, brush.Get(), width);
-            if (lighting > 0.f) HighlightCoverage::RecordLine(target, from, to, width);
+            if (lighting > 0.f && !HighlightCoverage::ExtractLine(
+                    target, from, to, width, brush->GetColor()))
+                target->DrawLine(from, to, brush.Get(), width);
         }
     }
 }

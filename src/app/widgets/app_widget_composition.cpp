@@ -530,19 +530,14 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         namespace display = snowdesktop::display_color;
         const bool keepComposition = widgetData->type == DesktopWidgetType::LuaStack ||
             widgetData->keepInitialComposition;
-        // The independent native text scroller remains a child of the original surface.
-        // Keep a visible new widget or stack on its direct surface. Promoting
-        // it to the separate sRGB tree can expose glass between commits.
         const bool srgbEligible =
-            (!keepComposition || !item.contentVisible || item.presentingSrgb) &&
-            !widgetMarqueeCompositionItems_.contains(widgetId) && ClientToScreen(hwnd_, &center) &&
-            display::ModeForMonitor(MonitorFromPoint(center, MONITOR_DEFAULTTONULL)) == display::Mode::WideColor;
+            ClientToScreen(hwnd_, &center) &&
+            display::UseHighlightCompensation(MonitorFromPoint(center, MONITOR_DEFAULTTONULL));
         // Draw a new or restored frame before its glass and marquees are
         // committed. Keep the existing frame visible during a worker handoff.
         const bool sameSurface = item.width == width && item.height == height &&
             item.renderedContentId == contentId;
-        const bool hasPresentedFrame = item.renderedVisualAttached ||
-            (item.surface && !item.presentingSrgb);
+        const bool hasPresentedFrame = item.renderedVisualAttached || item.surface;
         // Keep the host surface through stack switches and a new widget's
         // first visible interval, avoiding a second device at the handoff.
         const bool asynchronous = luaWidget && !keepComposition && widgetSurfaceRenderer_ && !item.renderFailed &&
@@ -600,7 +595,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         ComPtr<ID2D1DeviceContext> context;
         context.Attach(rawContext);
         snowdesktop::HighlightCoverage highlightCoverage;
-        snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), highlightCoverage);
+        snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), highlightCoverage,
+            srgbEligible && !asynchronous);
         context->SetDpi(96.0f, 96.0f);
         context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
         if (!asynchronous)
@@ -678,17 +674,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
                 desktopWidgetBackdropBlurRadiusDuringDraw_)), 0, 48);
         desktopWidgetBackdropRequestedDuringDraw_ = false;
 
-        bool stagedSrgb = false;
-        if (srgbEligible && !asynchronous)
-        {
-            // A new marquee may still be queued. Keep the body on the
-            // widget visual that owns the text children in this frame too.
-            const auto pendingMarquee = pendingWidgetMarqueeCompositions_.find(contentId);
-            if (pendingMarquee == pendingWidgetMarqueeCompositions_.end() ||
-                pendingMarquee->second.marquees.empty())
-                stagedSrgb = desktopBackdropCompositor_.StageSrgbContent(hwnd_, item.BackdropOwnerKey(),
-                    contentFrame, context.Get(), updateOffset);
-        }
+        const bool preparedMaterials = desktopBackdropCompositor_.PrepareSrgbMaterials(
+            hwnd_, item.BackdropOwnerKey(), contentFrame, context.Get(), updateOffset, item.HoverOpacity());
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
         HRESULT endDrawHr = asynchronous
@@ -751,8 +738,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
             item.backdropRegistered = false;
         }
 
-        const bool srgbPresented = showContent && stagedSrgb && desktopBackdropCompositor_.PublishSrgbContent(
-            item.BackdropOwnerKey(), item.HoverOpacity());
+        const bool srgbPresented = showContent && preparedMaterials;
         hr = asynchronous ? S_OK : desktopBackdropCompositor_.SetDirectContentForSrgb(
             item.BackdropOwnerKey(), srgbPresented, dcompDevice_.Get(), item.visual.Get(), item.surface.Get());
         if (SUCCEEDED(hr))

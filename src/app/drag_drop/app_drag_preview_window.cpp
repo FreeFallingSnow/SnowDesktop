@@ -204,8 +204,11 @@ bool DesktopApp::RenderDragPreviewCompositionFrame(
 
     ComPtr<ID2D1DeviceContext> context;
     context.Attach(rawContext);
+    constexpr std::uintptr_t materialKey = 1;
+    const RECT client{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
     snowdesktop::HighlightCoverage coverage;
-    snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), coverage);
+    snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), coverage,
+        DesktopBackdropCompositor::IsSrgbHighlightEligible(dragPreviewHwnd_, client));
     context->SetDpi(96.0f, 96.0f);
     context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
     context->SetTransform(D2D1::Matrix3x2F::Translation(
@@ -278,9 +281,7 @@ bool DesktopApp::RenderDragPreviewCompositionFrame(
         }
         else item->Draw(context.Get(), destination, 3);
     }
-    constexpr std::uintptr_t materialKey = 1;
-    const RECT client{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
-    const bool stagedHighlights = !coverage.Empty() && dragPreviewHighlights_.StageSrgbContent(
+    const bool presentingHighlights = dragPreviewHighlights_.PrepareSrgbMaterials(
         dragPreviewHwnd_, materialKey, client, context.Get(), updateOffset);
     context->SetTransform(D2D1::Matrix3x2F::Identity());
     context.Reset();
@@ -292,8 +293,6 @@ bool DesktopApp::RenderDragPreviewCompositionFrame(
         ResetDragPreviewCompositionResources();
         return false;
     }
-    const bool presentingHighlights = stagedHighlights &&
-        dragPreviewHighlights_.PublishSrgbContent(materialKey);
     if (FAILED(dragPreviewHighlights_.SetDirectContentForSrgb(
         materialKey, presentingHighlights, dcompDevice_.Get(),
         dragPreviewDcompVisual_.Get(), dragPreviewDcompSurface_.Get())))

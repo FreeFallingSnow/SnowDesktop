@@ -110,9 +110,10 @@ void DrawEdgeGlow(ID2D1RenderTarget* target, const LargeIconConfig& c, const Vie
         brush->SetOpacity(static_cast<float>(c.glowStrength) * view.hover * view.opacity * std::exp(-3.f * i / (steps - 1)));
         const auto outline = large_icon_shape::Geometry(factory.Get(), c.shape, inner, innerRadius, c.flagDirection);
         if (!outline) continue;
-        target->DrawGeometry(outline.Get(), brush.Get(), stroke);
-        if (brush->GetOpacity() > 0.f)
-            HighlightCoverage::RecordStroke(target, outline.Get(), stroke);
+        auto color = brush->GetColor();
+        color.a *= brush->GetOpacity();
+        if (color.a > 0.f && !HighlightCoverage::ExtractStroke(target, outline.Get(), stroke, color))
+            target->DrawGeometry(outline.Get(), brush.Get(), stroke);
     }
 }
 }

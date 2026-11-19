@@ -904,12 +904,19 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
         reflectionBounds = D2D1::RectF(outerRect.left - padding,
             outerRect.top - padding, outerRect.right + padding, outerRect.bottom + padding);
     }
-    context->FillOpacityMask(
-        mask.Get(), reflectionBrush.Get(), &reflectionBounds, nullptr);
-    HighlightCoverage::RecordMask(context, mask.Get(), reflectionBounds);
-    if (shadowMask && shadowBrush)
-        context->FillOpacityMask(shadowMask.Get(), shadowBrush.Get(),
-            &reflectionBounds, nullptr);
+    if (HighlightCoverage::ExtractSolidMask(context, mask.Get(), reflectionBounds, reflected))
+    {
+        if (shadowMask && shadowBrush)
+            (void)HighlightCoverage::ExtractSolidMask(context, shadowMask.Get(),
+                reflectionBounds, shadowBrush->GetColor(), false);
+    }
+    else
+    {
+        context->FillOpacityMask(mask.Get(), reflectionBrush.Get(), &reflectionBounds, nullptr);
+        if (shadowMask && shadowBrush)
+            context->FillOpacityMask(shadowMask.Get(), shadowBrush.Get(),
+                &reflectionBounds, nullptr);
+    }
     context->SetAntialiasMode(previousAntialias);
     context->SetPrimitiveBlend(previousBlend);
     return true;

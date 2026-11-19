@@ -2993,6 +2993,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             registerPersonalizationFocus({
                 "personalization.theme",
                 "personalization.globalTheme",
+                "personalization.wcgHighlightCompensation",
                 "personalization.dockAppearance",
                 "personalization.quickNavigationTheme",
                 "personalization.backgroundColor",

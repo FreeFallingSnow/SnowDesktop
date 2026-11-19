@@ -475,9 +475,12 @@ void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
                 &properties, &bitmap))) return;
         cached = iconReflectionCache_.Insert(key, std::move(bitmap));
     }
-    ctx->DrawBitmap(cached->Get(), ToD2DRect(rect), 1.0f,
-        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-    snowdesktop::HighlightCoverage::RecordMask(ctx, cached->Get(), ToD2DRect(rect));
+    const auto destination = ToD2DRect(rect);
+    if (!snowdesktop::HighlightCoverage::ExtractBitmap(ctx, cached->Get(), destination))
+    {
+        ctx->DrawBitmap(cached->Get(), destination, 1.0f,
+            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    }
 }
 
 void DesktopApp::DrawPrivacyFaIcon(

@@ -1,7 +1,6 @@
 #include "item_title_renderer.h"
 
 #include "ui/render/app_font.h"
-#include "ui/render/highlight_coverage.h"
 #include "ui/render/rgba_color.h"
 #include "layout/item_title_layout.h"
 #include "app/app.h"
@@ -32,13 +31,7 @@ void DesktopApp::DrawItemSelectionBackground(ID2D1RenderTarget* context,
     if (IsRectEmptyRect(frame)) return;
     constexpr float strokeWidth = 1.0f;
     DrawD2DRoundedRectangle(context, frame, 6.0f * GetItemLayoutScale(bounds), fill, border, strokeWidth);
-    if (selected && opacity > 0.0f)
-    {
-        constexpr float outset = strokeWidth * 0.5f;
-        const auto rect = ToD2DRect(frame);
-        snowdesktop::HighlightCoverage::RecordMaterialBounds(context,
-            D2D1::RectF(rect.left - outset, rect.top - outset, rect.right + outset, rect.bottom + outset));
-    }
+
 }
 
 void snowdesktop::ItemTitleRenderer::RecreateGridFormat(

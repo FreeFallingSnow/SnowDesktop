@@ -424,8 +424,12 @@ struct SystemPanel::Impl
         if(!model||!current||!visual||closing||width<=0||height<=0)return;
         if(!surface&&FAILED(composition->CreateSurface(width,height,DXGI_FORMAT_B8G8R8A8_UNORM,DXGI_ALPHA_MODE_PREMULTIPLIED,&surface)))return;
         ComPtr<ID2D1DeviceContext> dc;POINT offset{};if(FAILED(surface->BeginDraw(nullptr,IID_PPV_ARGS(&dc),&offset)))return;
+        const auto srgbKey = reinterpret_cast<std::uintptr_t>(this);
+        const RECT client{0, 0, width, height};
+        const bool extractHighlights = Glass() && !HighContrast() &&
+            DesktopBackdropCompositor::IsSrgbHighlightEligible(window, client);
         HighlightCoverage coverage;
-        HighlightCoverage::Scope capture(dc.Get(), coverage);
+        HighlightCoverage::Scope capture(dc.Get(), coverage, extractHighlights);
         dc->SetDpi(96,96);dc->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);dc->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x),static_cast<float>(offset.y)));dc->Clear(D2D1::ColorF(0,0.f));
         for(const auto& card:cards)
         {
@@ -448,10 +452,8 @@ struct SystemPanel::Impl
                 else dc->DrawRoundedRectangle(D2D1::RoundedRect(*dropIndicator,4,4),line.Get(),2);
             }
         }
-        const auto srgbKey = reinterpret_cast<std::uintptr_t>(this);
-        const RECT client{0, 0, width, height};
-        const bool stagedSrgb = SUCCEEDED(result) && Glass() && !HighContrast() &&
-            backdrop.StageSrgbContent(window, srgbKey, client, dc.Get(), offset);
+        const bool srgbPresented = SUCCEEDED(result) &&
+            backdrop.PrepareSrgbMaterials(window, srgbKey, client, dc.Get(), offset);
         dc.Reset();
         const auto end = surface->EndDraw();
         if (FAILED(result) || FAILED(end))
@@ -459,7 +461,6 @@ struct SystemPanel::Impl
             surface.Reset();
             return;
         }
-        const bool srgbPresented = stagedSrgb && backdrop.PublishSrgbContent(srgbKey);
         backdrop.SetSrgbRootPose(1.f, 0.f, SlideOffset());
         if (FAILED(backdrop.SetDirectContentForSrgb(
                 srgbKey, srgbPresented, composition.Get(), visual.Get(), surface.Get())) ||

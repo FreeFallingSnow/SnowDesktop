@@ -1,4 +1,5 @@
 #include "app/render/drag_render_cache.h"
+#include "desktop/display_color_mode.h"
 #include "ui/render/highlight_coverage.h"
 #include <d2d1_1helper.h>
 
@@ -7,9 +8,12 @@
 void DragRenderCache::Reset()
 {
     bitmap_.Reset();
+    highlightMaterials_.Reset();
+    highlightCoverage_.Reset();
     width_ = 0;
     height_ = 0;
     revision_ = 0;
+    separatedHighlights_ = false;
     if (context_)
         context_->SetTarget(nullptr);
     context_.Reset();
@@ -21,7 +25,8 @@ void DragRenderCache::Invalidate()
 {
     contentValid_ = false;
     // One retained allocation per cache; never retain an oversized desktop.
-    if (static_cast<std::uint64_t>(width_) * height_ * 4 > 16 * 1024 * 1024)
+    const auto bytesPerPixel = highlightMaterials_ ? 9 : 4;
+    if (static_cast<std::uint64_t>(width_) * height_ * bytesPerPixel > 16 * 1024 * 1024)
         Reset();
 }
 
@@ -32,8 +37,9 @@ bool DragRenderCache::Ensure(ID2D1Device* device, D2D1_SIZE_U pixelSize,
         return false;
 
     if (device_.Get() != device) Reset();
+    const bool separateHighlights = snowdesktop::display_color::UseHighlightCompensationOnDesktop();
     if (contentValid_ && bitmap_ && width_ == pixelSize.width && height_ == pixelSize.height &&
-        revision_ == revision)
+        revision_ == revision && separatedHighlights_ == separateHighlights)
         return true;
 
     if (!context_)
@@ -45,6 +51,8 @@ bool DragRenderCache::Ensure(ID2D1Device* device, D2D1_SIZE_U pixelSize,
     }
 
     contentValid_ = false;
+    highlightMaterials_.Reset();
+    highlightCoverage_.Reset();
     if (!bitmap_ || width_ != pixelSize.width || height_ != pixelSize.height)
     {
         bitmap_.Reset();
@@ -62,7 +70,7 @@ bool DragRenderCache::Ensure(ID2D1Device* device, D2D1_SIZE_U pixelSize,
     context_->Clear(D2D1::ColorF(0, 0, 0, 0));
     snowdesktop::HighlightCoverage coverage;
     {
-        snowdesktop::HighlightCoverage::Scope capture(context_.Get(), coverage);
+        snowdesktop::HighlightCoverage::Scope capture(context_.Get(), coverage, separateHighlights);
         drawStatic(context_.Get());
     }
     const HRESULT hr = context_->EndDraw();
@@ -72,23 +80,36 @@ bool DragRenderCache::Ensure(ID2D1Device* device, D2D1_SIZE_U pixelSize,
         bitmap_.Reset();
         return false;
     }
-    coverage.AttachToSnapshot(device, bitmap_.Get());
+    if (!coverage.RenderMaterialSnapshot(device, pixelSize,
+            highlightMaterials_.GetAddressOf(), highlightCoverage_.GetAddressOf()))
+    {
+        highlightMaterials_.Reset();
+        highlightCoverage_.Reset();
+        context_->SetTarget(bitmap_.Get());
+        context_->BeginDraw();
+        context_->SetTransform(D2D1::Matrix3x2F::Identity());
+        context_->Clear(D2D1::ColorF(0, 0, 0, 0));
+        drawStatic(context_.Get());
+        const auto fallback = context_->EndDraw();
+        context_->SetTarget(nullptr);
+        if (FAILED(fallback))
+        {
+            bitmap_.Reset();
+            return false;
+        }
+    }
 
     width_ = pixelSize.width;
     height_ = pixelSize.height;
     revision_ = revision;
+    separatedHighlights_ = separateHighlights;
     contentValid_ = true;
     return true;
 }
 
 void DragRenderCache::Draw(ID2D1DeviceContext* ctx) const
 {
-    if (!ctx || !bitmap_ || !contentValid_) return;
-    D2D1_SIZE_F sz = bitmap_->GetSize();
-    const auto bounds = D2D1::RectF(0, 0, sz.width, sz.height);
-    ctx->DrawBitmap(bitmap_.Get(), bounds,
-        1.0f, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
-    snowdesktop::HighlightCoverage::RecordBitmap(ctx, bitmap_.Get(), bounds);
+    (void)DrawAt(ctx, {}, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
 }
 
 bool DragRenderCache::DrawAt(
@@ -105,6 +126,8 @@ bool DragRenderCache::DrawAt(
         bitmap_.Get(), bounds,
         1.0f,
         interpolation);
-    snowdesktop::HighlightCoverage::RecordBitmap(ctx, bitmap_.Get(), bounds);
+    if (highlightMaterials_ && !snowdesktop::HighlightCoverage::ExtractBitmap(
+            ctx, highlightMaterials_.Get(), bounds, 1.f, highlightCoverage_.Get(), interpolation))
+        ctx->DrawBitmap(highlightMaterials_.Get(), bounds, 1.f, interpolation);
     return true;
 }

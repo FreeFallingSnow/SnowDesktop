@@ -802,7 +802,8 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
         }
 
         snowdesktop::HighlightCoverage coverage;
-        snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), coverage);
+        snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), coverage,
+            collectionPopupBackdropCompositor_.IsSrgbHighlightEligible(floatingPopupHwnd_, bounds));
         context->SetDpi(96.0f, 96.0f);
         context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
         context->SetTransform(D2D1::Matrix3x2F::Translation(
@@ -813,7 +814,7 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
 
         drawing_.Reset();
         draw(context.Get());
-        const bool stagedSrgb = collectionPopupBackdropCompositor_.StageSrgbContent(
+        const bool srgbPresented = collectionPopupBackdropCompositor_.PrepareSrgbMaterials(
             floatingPopupHwnd_, key, bounds, context.Get(), offset);
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
@@ -824,9 +825,8 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
         if (SUCCEEDED(hr)) hr = visual.SetOffsetX(static_cast<float>(bounds.left));
         if (SUCCEEDED(hr)) hr = visual.SetOffsetY(static_cast<float>(bounds.top));
         if (FAILED(hr)) return hr;
-        const bool srgbPresented = stagedSrgb && collectionPopupBackdropCompositor_.PublishSrgbContent(key);
-        return collectionPopupBackdropCompositor_.SetDirectContentForSrgb(
-            key, srgbPresented, dcompDevice_.Get(), &visual, &surface);
+        if (!srgbPresented) collectionPopupBackdropCompositor_.RetireSrgbAfterDirectCommit(key);
+        return visual.SetContent(&surface);
     };
 
     HRESULT hr = EnsureFloatingPopupCompositionRoot();

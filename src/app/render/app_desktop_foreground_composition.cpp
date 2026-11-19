@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "app/render/desktop_highlight_tiles.h"
+#include "desktop/display_color_mode.h"
 #include "diagnostics/diagnostic_log.h"
 
 #include <array>
@@ -249,7 +250,8 @@ bool DesktopApp::RenderDesktopForegroundComposition(
         ComPtr<ID2D1DeviceContext> context;
         context.Attach(rawContext);
         snowdesktop::HighlightCoverage coverage;
-        snowdesktop::HighlightCoverage::Scope capture(context.Get(), coverage);
+        snowdesktop::HighlightCoverage::Scope capture(context.Get(), coverage,
+            snowdesktop::display_color::UseHighlightCompensationOnDesktop());
         context->SetDpi(96.0f, 96.0f);
         context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
         const LONG updateLeft = dcompUpdate ? dcompUpdate->left : 0;
