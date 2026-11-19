@@ -51,6 +51,7 @@ namespace snowdesktop::widget_runtime { struct WidgetMultiplayer; }
 #include "widget/data/widget_data_broker.h"
 #include "widget/data/widget_data_snapshot.h"
 #include "widget/tasks/widget_task_broker.h"
+#include "widget/tasks/widget_task_result_store.h"
 #include "widget/tasks/widget_native_task_dispatch.h"
 #include "widget/tasks/widget_native_task_executor.h"
 #include "widget/tasks/widget_location_task_executor.h"
@@ -1688,6 +1689,11 @@ private:
     bool SaveNotificationSchedules();
     void RestoreNotificationSchedules(LuaWidget& widget);
     void RemoveNotificationSchedules(const std::wstring& widgetId);
+    std::string RegisterTaskImage(const std::wstring& widgetId, std::string_view token,
+        std::shared_ptr<const snowdesktop::widget_runtime::WidgetRuntimeImagePixels> pixels,
+        std::string source);
+    std::shared_ptr<const snowdesktop::widget_runtime::WidgetRuntimeImagePixels>
+        ResolveTaskImage(const std::wstring& widgetId, const std::string& token) const;
     void CancelDispatchedWidgetTask(std::uint64_t taskId, bool completeLocation);
     void CancelWidgetTaskWork(std::uint64_t taskId, bool completeLocation);
     void ReleaseWidgetTasks(LuaWidget& widget,
@@ -1762,7 +1768,6 @@ private:
     std::unique_ptr<snowdesktop::widget_runtime::WidgetNativeTaskExecutor> nativeTaskExecutor_;
     snowdesktop::widget_runtime::WidgetNativeTaskDispatch nativeTaskDispatch_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetLocationTaskExecutor> locationTaskExecutor_;
-    std::unordered_map<std::uint64_t, snowdesktop::widget_runtime::LocationResult> locationTaskCompletions_;
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetMediaTaskExecutor>
         mediaTaskExecutor_;
@@ -1793,17 +1798,7 @@ private:
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetExternalSearchTaskExecutor>
         externalItemTaskExecutor_;
-    std::unordered_map<std::uint64_t,
-        snowdesktop::widget_runtime::WidgetAppSearchCompletion>
-        appSearchCompletions_;
-    std::unordered_map<std::uint64_t,
-        snowdesktop::widget_runtime::WidgetAppSearchCompletion>
-        itemSearchCompletions_;
-    std::unordered_map<std::uint64_t,
-        snowdesktop::calendar::MutationResult>
-        calendarMutationCompletions_;
-    std::unordered_map<std::uint64_t, std::string>
-        notificationTaskCompletions_;
+    snowdesktop::widget_runtime::WidgetTaskResultStore taskResults_;
     snowdesktop::widget_runtime::WidgetNetworkTaskDispatch networkTaskDispatch_;
     snowdesktop::widget_runtime::WidgetClipboardTaskDispatch clipboardTaskDispatch_;
     snowdesktop::widget_runtime::WidgetFilesystemTaskDispatch filesystemTaskDispatch_;

@@ -10,6 +10,11 @@ struct lua_State;
 
 namespace snowdesktop::widget_runtime
 {
+int lua_TaskStart(lua_State* state);
+int lua_TaskCancel(lua_State* state);
+int lua_HttpRequest(lua_State* state);
+int lua_HttpCancel(lua_State* state);
+
 struct LuaTaskStartHost
 {
     using Arguments = std::unordered_map<std::string, std::string>;

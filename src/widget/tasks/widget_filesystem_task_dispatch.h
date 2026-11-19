@@ -16,6 +16,12 @@ struct lua_State;
 
 namespace snowdesktop::widget_runtime
 {
+inline constexpr char kFilesystemReadPermission[] =
+    "filesystem.userSelected.read";
+inline constexpr char kFilesystemWritePermission[] =
+    "filesystem.userSelected.write";
+bool IsPreviewFilesystemHandle(std::string_view handle);
+
 struct TaskCompletion;
 class WidgetTaskBroker;
 

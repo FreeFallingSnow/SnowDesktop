@@ -9,6 +9,12 @@
 
 namespace snowdesktop::widget_runtime
 {
+bool IsPreviewFilesystemHandle(std::string_view handle)
+{
+    return handle == "filesystem:00000000000000000000000000000000" ||
+        handle == "filesystem:11111111111111111111111111111111";
+}
+
 namespace
 {
 void RevokeNewGrants(WidgetFilesystemHandleStore& store,
