@@ -622,6 +622,8 @@ set(SNOWDESKTOP_SOURCES
     src/widget/view/widget_draw_lua.h
     src/widget/view/widget_layout_lua.cpp
     src/widget/view/widget_layout_lua.h
+    src/widget/view/widget_runtime_image_cache.cpp
+    src/widget/view/widget_runtime_image_cache.h
     src/widget/view/widget_interaction_lua_value.cpp
     src/widget/view/widget_interaction_lua_value.h
     src/widget/view/widget_view_renderer.cpp
@@ -685,16 +687,21 @@ set(SNOWDESKTOP_SOURCES
     src/widget/runtime/widget_schedule_lua.h
     src/widget/runtime/widget_time_lua.cpp
     src/widget/runtime/widget_time_lua.h
+    src/widget/runtime/widget_module_lua.cpp
+    src/widget/runtime/widget_module_lua.h
     src/widget/data/widget_system_lua.cpp
     src/widget/data/widget_system_lua.h
     src/widget/data/widget_data_subscription_lua.cpp
     src/widget/data/widget_data_subscription_lua.h
+    src/widget/data/widget_data_snapshot.cpp
+    src/widget/data/widget_data_snapshot.h
     src/widget/data/widget_system_control_data.cpp
     src/widget/runtime/widget_multiplayer.cpp
     src/widget/permissions/widget_permission_broker.cpp
     src/widget/permissions/widget_permission_state.cpp
     src/widget/packages/widget_package.cpp
     src/widget/packages/widget_package_paths.cpp
+    src/widget/packages/widget_package_paths.h
     src/widget/packages/widget_script_manifest.cpp
     src/widget/packages/widget_script_manifest.h
     src/steam/steam_workshop_cache.cpp

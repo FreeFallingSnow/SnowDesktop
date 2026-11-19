@@ -49,6 +49,7 @@ namespace snowdesktop::widget_runtime { struct WidgetMultiplayer; }
 #include "widget_invalidation_batch.h"
 #include "widget_lua_lifecycle.h"
 #include "widget/data/widget_data_broker.h"
+#include "widget/data/widget_data_snapshot.h"
 #include "widget/tasks/widget_task_broker.h"
 #include "widget/tasks/widget_native_task_dispatch.h"
 #include "widget/tasks/widget_native_task_executor.h"
@@ -209,16 +210,6 @@ struct LuaWidgetFilePickerResult
     std::vector<std::filesystem::path> paths;
 };
 
-enum class LuaWidgetPreviewDataState
-{
-    Ready,
-    Empty,
-    Loading,
-    Error,
-    Stale,
-    PermissionDenied,
-};
-
 struct LuaWidgetSurfaceContext
 {
     UINT dpiX = USER_DEFAULT_SCREEN_DPI;
@@ -253,74 +244,6 @@ struct LuaWidgetContextState
     bool preview = false;
     bool focused = false;
     bool selected = false;
-};
-
-struct LuaWidgetDataSnapshot
-{
-    struct FilesystemWatchEvent
-    {
-        std::string kind;
-        std::string name;
-        std::string oldName;
-        std::string handle;
-        std::string itemKind;
-    };
-
-    std::string topic;
-    bool available = false;
-    bool stale = true;
-    bool warmingUp = false;
-    std::int64_t timestampMs = 0;
-    std::string error;
-    snowdesktop::widget_runtime::WidgetCpuDataSnapshot cpu;
-    snowdesktop::widget_runtime::WidgetMemoryDataSnapshot memory;
-    snowdesktop::widget_runtime::WidgetProcessSummaryDataSnapshot
-        processSummary;
-    snowdesktop::widget_runtime::WidgetPowerDataSnapshot power;
-    snowdesktop::widget_runtime::WidgetScreenTimeDataSnapshot screenTime;
-    snowdesktop::widget_runtime::WidgetNetworkStatusDataSnapshot
-        networkStatus;
-    snowdesktop::widget_runtime::WidgetNetworkTrafficDataSnapshot
-        networkTraffic;
-    snowdesktop::widget_runtime::WidgetGpuDataSnapshot gpu;
-    snowdesktop::widget_runtime::WidgetStorageVolumesDataSnapshot
-        storageVolumes;
-    snowdesktop::widget_runtime::WidgetStorageIoDataSnapshot storageIo;
-    snowdesktop::widget_runtime::WidgetDisplayTopologyDataSnapshot
-        displayTopology;
-    snowdesktop::widget_runtime::WidgetDisplayDataSnapshot displayCurrent;
-    snowdesktop::widget_runtime::WidgetAudioOutputDefaultDataSnapshot
-        audioOutputDefault;
-    snowdesktop::widget_runtime::WidgetAudioOutputVolumeDataSnapshot
-        audioOutputVolume;
-    JsonValue systemControl;
-    snowdesktop::widget_runtime::WidgetAudioAnalysisDataSnapshot
-        audioAnalysis;
-    snowdesktop::widget_runtime::WidgetMediaSessionsDataSnapshot
-        mediaSessions;
-    snowdesktop::widget_runtime::WidgetMediaCurrentDataSnapshot
-        mediaCurrent;
-    snowdesktop::widget_runtime::WidgetMediaTimelineDataSnapshot
-        mediaTimeline;
-    snowdesktop::widget_runtime::WidgetMediaArtworkDataSnapshot
-        mediaArtwork;
-    std::vector<LuaDesktopItemInfo> desktopItems;
-    std::uint64_t desktopRevision = 0;
-    std::string desktopChangeReason;
-    std::vector<snowdesktop::calendar::CalendarEvent> calendarEvents;
-    std::string calendarSelectedDate;
-    std::string calendarRangeStart;
-    std::string calendarRangeEnd;
-    std::uint64_t calendarRevision = 0;
-    bool calendarTruncated = false;
-    std::optional<std::uint64_t> calendarTotal;
-    bool calendarHasMore = false;
-    std::uint64_t calendarNextOffset = 0;
-    std::string appIndexState;
-    std::uint64_t appIndexRevision = 0;
-    std::vector<FilesystemWatchEvent> filesystemWatchEvents;
-    std::uint64_t filesystemWatchRevision = 0;
-    bool filesystemWatchOverflow = false;
 };
 
 struct LuaApplicationCatalogSnapshot

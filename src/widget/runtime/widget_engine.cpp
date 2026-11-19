@@ -18,6 +18,7 @@
 
 #include "widget_engine.h"
 #include "widget_lua_binding_context.h"
+#include "widget_module_lua.h"
 #include "widget/runtime/widget_logical_slot_lua.h"
 #include "widget/runtime/widget_calendar_lua.h"
 #include "widget/runtime/widget_schedule_lua.h"
@@ -61,6 +62,7 @@ namespace text_input = snowdesktop::text_input;
 #include "navigation/name_pinyin.h"
 #include "navigation/search_match.h"
 #include "widget/packages/widget_package.h"
+#include "widget/packages/widget_package_paths.h"
 #include "steam/steam_workshop_source.h"
 #include "steam/steam_workshop_diagnostics.h"
 #include "steam/steam_entitlement.h"
@@ -79,6 +81,7 @@ namespace text_input = snowdesktop::text_input;
 #include "widget/view/widget_view_renderer.h"
 #include "widget/view/widget_view_text.h"
 #include "widget/view/widget_background_cache.h"
+#include "widget/view/widget_runtime_image_cache.h"
 #include "widget/view/widget_view_lua.h"
 #include "widget/view/widget_view_tree.h"
 #include "widget/view/widget_surface_renderer.h"
@@ -104,6 +107,7 @@ namespace text_input = snowdesktop::text_input;
 #include "widgets/widget_chrome_rules.h"
 
 using snowdesktop::lua_runtime::DeferLuaError;
+using snowdesktop::widget::ResolvePackageAssetWithinRoot;
 using snowdesktop::widget_runtime::BoundWidgetId;
 using snowdesktop::widget_runtime::BoundWidgetRuntimeToken;
 using snowdesktop::widget_runtime::RequirePermission;
@@ -635,14 +639,6 @@ private:
     std::vector<Result> completed_;
 };
 
-struct RuntimeImageResource
-{
-    std::shared_ptr<const snowdesktop::widget_runtime::
-        WidgetRuntimeImagePixels> pixels;
-    std::wstring ownerWidgetId;
-    std::string source;
-};
-
 struct D2DState : snowdesktop::widget_runtime::WidgetLayoutContext
 {
     WidgetEngine* engine = nullptr;
@@ -659,23 +655,11 @@ struct D2DState : snowdesktop::widget_runtime::WidgetLayoutContext
     std::unordered_map<std::string, ComPtr<ID2D1Bitmap1>> imageCache;
     std::unordered_map<std::string, std::uint64_t> imageCacheRevisions;
     snowdesktop::widget_runtime::WidgetPackageImageCache packageImageCache;
-    std::unordered_map<std::string, RuntimeImageResource> runtimeImages;
-    std::unordered_map<std::string, ComPtr<ID2D1Bitmap1>>
-        runtimeImageBitmaps;
+    snowdesktop::widget_runtime::WidgetRuntimeImageCache runtimeImageCache{imageSamplingCache};
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> shellIconCache;
     std::unordered_set<std::wstring> shellIconFailures;
     std::unique_ptr<AsyncShellIconLoader> shellIconLoader;
 };
-
-static void EraseRuntimeImageBitmap(D2DState* state, const std::string& key)
-{
-    if (const auto found = state->runtimeImageBitmaps.find(key);
-        found != state->runtimeImageBitmaps.end())
-    {
-        state->imageSamplingCache.Remove(found->second.Get());
-        state->runtimeImageBitmaps.erase(found);
-    }
-}
 
 static void ClearShellIconBitmaps(D2DState* state)
 {
@@ -684,124 +668,28 @@ static void ClearShellIconBitmaps(D2DState* state)
     state->shellIconCache.clear();
 }
 
-static std::string BindRuntimeImageToken(
-    std::string_view token, std::wstring_view widgetId)
-{
-    if (!snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(token) ||
-        widgetId.empty())
-        return {};
-    constexpr std::uint64_t offset = 14695981039346656037ull;
-    constexpr std::uint64_t prime = 1099511628211ull;
-    std::uint64_t hash = offset;
-    for (const wchar_t character : widgetId)
-    {
-        hash ^= static_cast<std::uint16_t>(character);
-        hash *= prime;
-    }
-    std::string result(token);
-    result.push_back(':');
-    result.append(std::to_string(hash));
-    return result.size() <= 64 ? result : std::string{};
-}
-
 static std::string RegisterRuntimeImageSource(D2DState* state,
     const std::wstring& widgetId, std::string_view token,
-    std::shared_ptr<const snowdesktop::widget_runtime::
-        WidgetRuntimeImagePixels> pixels,
+    std::shared_ptr<const snowdesktop::widget_runtime::WidgetRuntimeImagePixels> pixels,
     std::string source, bool preserveExisting = false)
 {
-    const std::string boundToken = BindRuntimeImageToken(token, widgetId);
-    if (!state || boundToken.empty() || !pixels ||
-        !snowdesktop::widget_runtime::IsValidWidgetRuntimeImage(*pixels) ||
-        source.empty())
-        return {};
-    constexpr std::size_t maximumBytes = 64 * 1024 * 1024;
-    std::size_t bytes = pixels->bgraPremultiplied.size();
-    for (const auto& [key, resource] : state->runtimeImages)
-        if (key != boundToken && resource.pixels) bytes += resource.pixels->bgraPremultiplied.size();
-    if (preserveExisting && (bytes > maximumBytes ||
-        (!state->runtimeImages.contains(boundToken) &&
-            (state->runtimeImages.size() >= 128 ||
-             std::count_if(state->runtimeImages.begin(), state->runtimeImages.end(),
-                 [&widgetId](const auto& entry) {
-                     return entry.second.ownerWidgetId == widgetId;
-                 }) >= 16))))
-        return {};
-    while (bytes > maximumBytes && !state->runtimeImages.empty())
-    {
-        auto victim = std::find_if(state->runtimeImages.begin(), state->runtimeImages.end(),
-            [&boundToken](const auto& item) { return item.first != boundToken; });
-        if (victim == state->runtimeImages.end()) break;
-        if (victim->second.pixels) bytes -= victim->second.pixels->bgraPremultiplied.size();
-        EraseRuntimeImageBitmap(state, victim->first);
-        state->runtimeImages.erase(victim);
-    }
-    const std::size_t ownerCount = static_cast<std::size_t>(std::count_if(
-        state->runtimeImages.begin(), state->runtimeImages.end(),
-        [&widgetId](const auto& item) {
-            return item.second.ownerWidgetId == widgetId;
-        }));
-    if (!preserveExisting &&
-        ((!state->runtimeImages.contains(boundToken) && ownerCount >= 16) ||
-         state->runtimeImages.size() >= 128))
-    {
-        std::vector<std::string> removed;
-        for (const auto& [key, resource] : state->runtimeImages)
-        {
-            if (resource.ownerWidgetId == widgetId) removed.push_back(key);
-        }
-        for (const auto& key : removed)
-        {
-            state->runtimeImages.erase(key);
-            EraseRuntimeImageBitmap(state, key);
-        }
-    }
-    if (!state->runtimeImages.contains(boundToken) &&
-        state->runtimeImages.size() >= 128)
-    {
-        const std::string evicted = state->runtimeImages.begin()->first;
-        state->runtimeImages.erase(evicted);
-        EraseRuntimeImageBitmap(state, evicted);
-    }
-    state->runtimeImages.insert_or_assign(
-        boundToken, RuntimeImageResource{
-            std::move(pixels), widgetId, std::move(source) });
-    return boundToken;
+    return state ? state->runtimeImageCache.Register(widgetId, token,
+        std::move(pixels), std::move(source), preserveExisting) : std::string{};
 }
 
-static void ClearRuntimeImagesForWidget(
-    D2DState* state, const std::wstring& widgetId)
+static void ClearRuntimeImagesForWidget(D2DState* state, const std::wstring& widgetId)
 {
     if (!state || widgetId.empty()) return;
     state->backgroundCache.Erase(widgetId);
     state->textLayoutCache.Erase(widgetId);
-    std::vector<std::string> removed;
-    for (const auto& [key, resource] : state->runtimeImages)
-    {
-        if (resource.ownerWidgetId == widgetId) removed.push_back(key);
-    }
-    for (const auto& key : removed)
-    {
-        state->runtimeImages.erase(key);
-        EraseRuntimeImageBitmap(state, key);
-    }
+    state->runtimeImageCache.RemoveWidget(widgetId);
 }
 
-static void ClearRuntimeImagesForSource(
-    D2DState* state, std::string_view source)
+static void ClearRuntimeImagesForSource(D2DState* state, std::string_view source)
 {
     if (!state || source.empty()) return;
     state->backgroundCache.Clear();
-    std::vector<std::string> removed;
-    for (const auto& [key, resource] : state->runtimeImages)
-    {
-        if (resource.source == source) removed.push_back(key);
-    }
-    for (const auto& key : removed)
-    {
-        state->runtimeImages.erase(key);
-        EraseRuntimeImageBitmap(state, key);
-    }
+    state->runtimeImageCache.RemoveSource(source);
 }
 
 static D2DState* GetD2D(lua_State* L)
@@ -810,24 +698,6 @@ static D2DState* GetD2D(lua_State* L)
     auto* s = static_cast<D2DState*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
     return s;
-}
-
-static std::optional<std::wstring> ResolvePackageAssetWithinRoot(
-    const std::filesystem::path& packageRoot,
-    const std::wstring& relativePath);
-
-static std::optional<std::wstring> ResolveCurrentPackageAsset(
-    lua_State* state, const std::wstring& relativePath)
-{
-    lua_getfield(state, LUA_REGISTRYINDEX, "__widget_package_root");
-    size_t length = 0;
-    const char* rootRaw = lua_tolstring(state, -1, &length);
-    const std::filesystem::path root = rootRaw
-        ? Utf8ToWideLocal(std::string(rootRaw, length))
-        : std::wstring{};
-    lua_pop(state, 1);
-    if (root.empty()) return std::nullopt;
-    return ResolvePackageAssetWithinRoot(root, relativePath);
 }
 
 static std::string BoundStoragePrefix(lua_State* state)
@@ -3809,165 +3679,6 @@ static int lua_WidgetInfo(lua_State* L)
     return 1;
 }
 
-static char kModuleLoadingMarker = 0;
-
-static void ClearModuleCacheEntry(lua_State* L, int cache,
-    const std::string& key)
-{
-    lua_pushnil(L);
-    lua_setfield(L, cache, key.c_str());
-}
-
-// Return ordinary validation/load errors before raising them in Lua. Lua uses
-// longjmp on this build, so a rejection must not unwind the C++ file/path/string
-// locals below. Keep the worker out of the object-free Lua callback's frame.
-static __declspec(noinline) int LoadRequiredWidgetModule(lua_State* L,
-    const char* pathRaw, size_t pathLength, const char*& error)
-{
-    const std::wstring relativePath = Utf8ToWideLocal(
-        std::string(pathRaw, pathLength));
-    if (relativePath.empty() ||
-        _wcsicmp(std::filesystem::path(relativePath).extension().c_str(),
-            L".lua") != 0)
-    {
-        error = "module.require: path must name a .lua file";
-        return 0;
-    }
-    const auto fullPath = ResolveCurrentPackageAsset(L, relativePath);
-    if (!fullPath)
-    {
-        error = "module.require: path is outside the component package";
-        return 0;
-    }
-
-    std::error_code fileError;
-    const auto fileSize = std::filesystem::file_size(*fullPath, fileError);
-    if (fileError || fileSize > snowdesktop::widget::kMaxEntryLuaBytes)
-    {
-        error = "module.require: module is missing or exceeds the 1 MiB limit";
-        return 0;
-    }
-    const std::string cacheKey = WidgetWideToUtf8(*fullPath);
-    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_module_cache");
-    if (!lua_istable(L, -1))
-    {
-        lua_pop(L, 1);
-        lua_newtable(L);
-        lua_pushvalue(L, -1);
-        lua_setfield(L, LUA_REGISTRYINDEX, "__widget_module_cache");
-    }
-    const int cache = lua_absindex(L, -1);
-    lua_getfield(L, cache, cacheKey.c_str());
-    if (lua_touserdata(L, -1) == &kModuleLoadingMarker)
-    {
-        error = "module.require: circular dependency detected";
-        return 0;
-    }
-    if (!lua_isnil(L, -1))
-    {
-        lua_remove(L, cache);
-        return 1;
-    }
-    lua_pop(L, 1);
-
-    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_module_count");
-    const lua_Integer moduleCount = lua_tointeger(L, -1);
-    lua_pop(L, 1);
-    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_module_bytes");
-    const lua_Integer moduleBytes = lua_tointeger(L, -1);
-    lua_pop(L, 1);
-    if (moduleCount >= 64 || moduleBytes < 0 ||
-        moduleBytes > 4 * 1024 * 1024 ||
-        fileSize > 4ull * 1024ull * 1024ull -
-            static_cast<std::uint64_t>(moduleBytes))
-    {
-        error = "module.require: per-instance module count or byte quota exceeded";
-        return 0;
-    }
-
-    lua_pushlightuserdata(L, &kModuleLoadingMarker);
-    lua_setfield(L, cache, cacheKey.c_str());
-    std::ifstream file(*fullPath, std::ios::binary);
-    std::string source(static_cast<std::size_t>(fileSize), '\0');
-    if (!file || (fileSize > 0 &&
-        !file.read(source.data(), static_cast<std::streamsize>(fileSize))))
-    {
-        ClearModuleCacheEntry(L, cache, cacheKey);
-        error = "module.require: module could not be read";
-        return 0;
-    }
-    const std::string chunkName = "@module/" +
-        WidgetWideToUtf8(std::filesystem::path(relativePath).
-            lexically_normal().generic_wstring());
-    if (luaL_loadbufferx(L, source.data(), source.size(),
-            chunkName.c_str(), "t") != LUA_OK)
-    {
-        ClearModuleCacheEntry(L, cache, cacheKey);
-        return 0;
-    }
-    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_environment");
-    if (!lua_istable(L, -1) || lua_setupvalue(L, -2, 1) == nullptr)
-    {
-        if (lua_isnil(L, -1)) lua_pop(L, 1);
-        ClearModuleCacheEntry(L, cache, cacheKey);
-        error = "module.require: sandbox environment is unavailable";
-        return 0;
-    }
-    // Reserve this module before its code can load children. Failed parents
-    // release only their own reservation; successful cached children remain.
-    lua_pushinteger(L, moduleCount + 1);
-    lua_setfield(L, LUA_REGISTRYINDEX, "__widget_module_count");
-    lua_pushinteger(L, moduleBytes + static_cast<lua_Integer>(fileSize));
-    lua_setfield(L, LUA_REGISTRYINDEX, "__widget_module_bytes");
-    if (snowdesktop::lua_runtime::ProtectedCall(L, 0, 1) != LUA_OK)
-    {
-        lua_getfield(L, LUA_REGISTRYINDEX, "__widget_module_count");
-        const lua_Integer currentCount = lua_tointeger(L, -1);
-        lua_pop(L, 1);
-        lua_getfield(L, LUA_REGISTRYINDEX, "__widget_module_bytes");
-        const lua_Integer currentBytes = lua_tointeger(L, -1);
-        lua_pop(L, 1);
-        lua_pushinteger(L, currentCount - 1);
-        lua_setfield(L, LUA_REGISTRYINDEX, "__widget_module_count");
-        lua_pushinteger(L, currentBytes - static_cast<lua_Integer>(fileSize));
-        lua_setfield(L, LUA_REGISTRYINDEX, "__widget_module_bytes");
-        ClearModuleCacheEntry(L, cache, cacheKey);
-        return 0;
-    }
-    if (lua_isnil(L, -1))
-    {
-        lua_pop(L, 1);
-        lua_pushboolean(L, 1);
-    }
-    lua_pushvalue(L, -1);
-    lua_setfield(L, cache, cacheKey.c_str());
-    lua_remove(L, cache);
-    return 1;
-}
-
-static int lua_ModuleRequire(lua_State* L)
-{
-    size_t pathLength = 0;
-    const char* pathRaw = luaL_checklstring(L, 1, &pathLength);
-    if (pathLength == 0 || pathLength > 512)
-        return luaL_error(L, "module.require: path length is invalid");
-
-    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_loading");
-    const bool loading = lua_toboolean(L, -1) != 0;
-    lua_pop(L, 1);
-    if (!loading)
-    {
-        return luaL_error(L,
-            "module.require: modules can only be loaded while the entry script is loading");
-    }
-
-    const char* error = nullptr;
-    const int results = LoadRequiredWidgetModule(L, pathRaw, pathLength, error);
-    if (results != 0) return results;
-    if (error) return luaL_error(L, "%s", error);
-    return lua_error(L);
-}
-
 static int lua_WidgetHasPermission(lua_State* L)
 {
     const char* permission = luaL_checkstring(L, 1);
@@ -4242,7 +3953,7 @@ static void EnsureBitmapCachesForCurrentDevice(D2DState* state)
     state->immediateCommandContext.Reset();
     state->imageCache.clear();
     state->imageCacheRevisions.clear();
-    state->runtimeImageBitmaps.clear();
+    state->runtimeImageCache.ClearBitmaps();
     ClearShellIconBitmaps(state);
     state->shellIconFailures.clear();
 }
@@ -4416,35 +4127,14 @@ static void ReleasePackageImageResources(D2DState* state, lua_State* luaState)
         }, state, 0, error);
 }
 
-static ID2D1Bitmap1* LoadRuntimeImageBitmap(
-    D2DState* state, const std::wstring& widgetId,
-    std::string_view token)
+static ID2D1Bitmap1* LoadRuntimeImageBitmap(D2DState* state,
+    const std::wstring& widgetId, std::string_view token)
 {
     if (!state || !state->ctx || widgetId.empty() ||
         !snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(token))
         return nullptr;
     EnsureBitmapCachesForCurrentDevice(state);
-    const std::string key(token);
-    const auto source = state->runtimeImages.find(key);
-    if (source == state->runtimeImages.end() || !source->second.pixels ||
-        source->second.ownerWidgetId != widgetId)
-        return nullptr;
-    if (const auto cached = state->runtimeImageBitmaps.find(key);
-        cached != state->runtimeImageBitmaps.end()) return cached->second.Get();
-    const auto& pixels = *source->second.pixels;
-    D2D1_BITMAP_PROPERTIES1 properties = D2D1::BitmapProperties1(
-        D2D1_BITMAP_OPTIONS_NONE,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
-            D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
-    ComPtr<ID2D1Bitmap1> bitmap;
-    if (FAILED(state->ctx->CreateBitmap(
-            D2D1::SizeU(pixels.width, pixels.height),
-            pixels.bgraPremultiplied.data(), pixels.stride,
-            &properties, &bitmap)) || !bitmap)
-        return nullptr;
-    ID2D1Bitmap1* result = bitmap.Get();
-    state->runtimeImageBitmaps.emplace(key, std::move(bitmap));
-    return result;
+    return state->runtimeImageCache.LoadBitmap(state->ctx, widgetId, token);
 }
 
 static int lua_ViewVirtualRange(lua_State* state)
@@ -4954,9 +4644,7 @@ static const snowdesktop::widget_runtime::LuaResourceHost kLuaResourceHost{
     },
     [](lua_State* state, const char* token) {
         const auto* d2d = GetD2D(state);
-        const auto entry = d2d->runtimeImages.find(token);
-        return entry != d2d->runtimeImages.end() &&
-            entry->second.ownerWidgetId == BoundWidgetId(state);
+        return d2d && d2d->runtimeImageCache.GetPixels(BoundWidgetId(state), token) != nullptr;
     },
 };
 
@@ -7065,10 +6753,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                     {
                         if (d2dState_)
                         {
-                            const auto source = d2dState_->runtimeImages.find(name);
-                            if (source != d2dState_->runtimeImages.end() &&
-                                source->second.ownerWidgetId == owner->widgetId)
-                                request.image = source->second.pixels;
+                            request.image = d2dState_->runtimeImageCache.GetPixels(owner->widgetId, name);
                         }
                     }
                     else if (const auto path = RuntimeResolvePackageResource(
@@ -8144,7 +7829,7 @@ void WidgetEngine::ResetGraphicsResources(ID2D1DeviceContext* context)
     d2dState_->ResetBrushes();
     d2dState_->imageCache.clear();
     d2dState_->imageCacheRevisions.clear();
-    d2dState_->runtimeImageBitmaps.clear();
+    d2dState_->runtimeImageCache.ClearBitmaps();
     ClearShellIconBitmaps(d2dState_);
     d2dState_->shellIconFailures.clear();
     for (auto& widget : widgets_)
@@ -10001,7 +9686,7 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
                     return static_cast<ID2D1Bitmap*>(item.second.Get()) == bitmap;
                 });
             };
-            return contains(d2dState_->imageCache) || contains(d2dState_->runtimeImageBitmaps) ||
+            return contains(d2dState_->imageCache) || d2dState_->runtimeImageCache.ContainsBitmap(bitmap) ||
                 d2dState_->imageSamplingCache.Contains(bitmap);
         });
     using CacheOutcome = snowdesktop::widget_runtime::WidgetBackgroundCache::Outcome;
@@ -12940,10 +12625,6 @@ WidgetEngine::RuntimeGetDataSnapshot(
 
     LuaWidgetDataSnapshot result;
     result.topic = binding->topic;
-    const auto timestampNow = binding->options.preview
-        ? snowdesktop::widget_runtime::PreviewWallClockMilliseconds
-        : std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
     if (binding->options.preview)
     {
         LuaWidgetPreviewDataState previewState =
@@ -12952,390 +12633,10 @@ WidgetEngine::RuntimeGetDataSnapshot(
             Utf8ToWideLocal(binding->instanceId));
         if (previewWidgetIndex >= 0)
             previewState = widgets_[previewWidgetIndex].previewDataState;
-        if (previewState == LuaWidgetPreviewDataState::PermissionDenied)
-        {
-            result.error = "permissionDenied";
-            return result;
-        }
-        if (previewState == LuaWidgetPreviewDataState::Loading)
-        {
-            result.warmingUp = true;
-            return result;
-        }
-        if (previewState == LuaWidgetPreviewDataState::Error)
-        {
-            result.error = "providerUnavailable";
-            return result;
-        }
-        result.available = true;
-        result.stale = false;
-        result.timestampMs = timestampNow;
-        if (snowdesktop::widget_runtime::IsSystemControlDataTopic(result.topic))
-            result.systemControl = snowdesktop::widget_runtime::PreviewSystemControlData(
-                result.topic, previewState == LuaWidgetPreviewDataState::Empty);
-        if (previewState == LuaWidgetPreviewDataState::Empty &&
-            result.topic != "calendar.events")
-        {
-            if (result.topic == "audio.input.volume") result.available = false;
-            return result;
-        }
-        if (result.topic == "system.cpu")
-        {
-            result.cpu.available = true;
-            result.cpu.warmingUp = false;
-            result.cpu.usagePercent = 42.0;
-            result.cpu.logicalProcessors = 12;
-            result.cpu.name = _L("app.widget_preview.api.cpu");
-            result.cpu.timestampMs = timestampNow;
-        }
-        else if (result.topic == "system.memory")
-        {
-            result.memory.available = true;
-            result.memory.totalBytes = 16ull * 1024 * 1024 * 1024;
-            result.memory.usedBytes = 9ull * 1024 * 1024 * 1024;
-            result.memory.freeBytes = 7ull * 1024 * 1024 * 1024;
-            result.memory.commitLimitBytes = 32ull * 1024 * 1024 * 1024;
-            result.memory.commitUsedBytes = 13ull * 1024 * 1024 * 1024;
-            result.memory.commitAvailableBytes =
-                19ull * 1024 * 1024 * 1024;
-            result.memory.usagePercent = 56.25;
-            result.memory.timestampMs = timestampNow;
-        }
-        else if (result.topic == "process.summary")
-        {
-            result.processSummary.available = true;
-            result.processSummary.warmingUp = false;
-            result.processSummary.processes = {
-                { "process-preview-editor", "Editor.exe", 18.5,
-                    640ull * 1024 * 1024, 512ull * 1024 * 1024 },
-                { "process-preview-player", "Player.exe", 7.25,
-                    384ull * 1024 * 1024, 320ull * 1024 * 1024 },
-            };
-            result.processSummary.observedCount = 24;
-            result.processSummary.truncated = true;
-            result.processSummary.timestampMs = timestampNow;
-        }
-        else if (result.topic == "system.power")
-        {
-            result.power.available = true;
-            result.power.acPower = false;
-            result.power.charging = false;
-            result.power.saver = false;
-            result.power.batteryPercent = 73.0;
-            result.power.estimatedRemainingSeconds = 10800;
-            result.power.timestampMs = timestampNow;
-        }
-        else if (result.topic == "system.screenTime")
-        {
-            result.screenTime.available = true;
-            result.screenTime.enabled = true;
-            result.screenTime.totalSeconds = 5400;
-            result.screenTime.hours[9] = 1800;
-            result.screenTime.hours[10] = 3600;
-            wchar_t windows[MAX_PATH]{};
-            const UINT windowsLength = GetWindowsDirectoryW(windows, ARRAYSIZE(windows));
-            const auto directory = windowsLength && windowsLength < ARRAYSIZE(windows)
-                ? WidgetWideToUtf8(std::wstring(windows, windowsLength)) : std::string{};
-            result.screenTime.apps.push_back(snowdesktop::widget_runtime::MakeScreenTimeAppSnapshot("File Explorer", 3600,
-                directory.empty() ? std::string{} : "path:" + directory + "\\explorer.exe"));
-            result.screenTime.apps.push_back(snowdesktop::widget_runtime::MakeScreenTimeAppSnapshot("Notepad", 1800,
-                directory.empty() ? std::string{} : "path:" + directory + "\\System32\\notepad.exe"));
-            result.screenTime.timestampMs = timestampNow;
-        }
-        else if (result.topic == "system.network.status")
-        {
-            result.networkStatus.available = true;
-            result.networkStatus.connectivity = "internet";
-            result.networkStatus.transport = "wifi";
-            result.networkStatus.costKnown = true;
-            result.networkStatus.timestampMs = timestampNow;
-        }
-        else if (result.topic == "system.network.traffic")
-        {
-            result.networkTraffic.available = true;
-            result.networkTraffic.connected = true;
-            result.networkTraffic.warmingUp = false;
-            result.networkTraffic.receivedBytes = 987654321;
-            result.networkTraffic.sentBytes = 123456789;
-            result.networkTraffic.downloadBytesPerSecond = 245760;
-            result.networkTraffic.uploadBytesPerSecond = 32768;
-            result.networkTraffic.timestampMs = timestampNow;
-        }
-        else if (result.topic == "system.gpu")
-        {
-            result.gpu.available = true;
-            result.gpu.warmingUp = false;
-            result.gpu.timestampMs = timestampNow;
-            result.gpu.adapters = {
-                { "adapter-1", _L("app.widget_preview.api.gpu"), 38.0,
-                    8ull * 1024 * 1024 * 1024,
-                    3ull * 1024 * 1024 * 1024,
-                    8ull * 1024 * 1024 * 1024,
-                    1ull * 1024 * 1024 * 1024 }
-            };
-            auto& adapter = result.gpu.adapters.front();
-            adapter.usageAvailable = true;
-            adapter.dedicatedUsageAvailable = true;
-            adapter.sharedUsageAvailable = true;
-            adapter.engines = { { 0, 0, "3D", 38.0, 38.0, 2 }, { 0, 1, "Copy", 4.0, 4.0, 1 } };
-        }
-        else if (result.topic == "system.storage.volumes")
-        {
-            result.storageVolumes.available = true;
-            result.storageVolumes.timestampMs = timestampNow;
-            result.storageVolumes.volumes = {
-                { "volume-preview-system", "System", "C:\\", "fixed",
-                    512ull * 1024 * 1024 * 1024,
-                    214ull * 1024 * 1024 * 1024, true, false, false },
-                { "volume-preview-removable", "Portable", "E:\\",
-                    "removable", 64ull * 1024 * 1024 * 1024,
-                    48ull * 1024 * 1024 * 1024, true, true, false }
-            };
-        }
-        else if (result.topic == "system.storage.io")
-        {
-            result.storageIo.available = true;
-            result.storageIo.warmingUp = false;
-            result.storageIo.readBytesPerSecond = 18ull * 1024 * 1024;
-            result.storageIo.writeBytesPerSecond = 4ull * 1024 * 1024;
-            result.storageIo.busyPercent = 27.5;
-            result.storageIo.timestampMs = timestampNow;
-        }
-        else if (result.topic == "system.display.topology")
-        {
-            result.displayTopology.available = true;
-            result.displayTopology.timestampMs = timestampNow;
-            result.displayTopology.displays = {
-                { "display-preview-primary", "Preview Display", true,
-                    { 0.0, 0.0, 1280.0, 720.0 },
-                    { 0.0, 0.0, 1280.0, 680.0 },
-                    { 0, 0, 1920, 1080 }, { 0, 0, 1920, 1020 },
-                    144, 144, 1.5, 60.0, "landscape",
-                    true, true, false }
-            };
-        }
-        else if (result.topic == "system.display.current")
-        {
-            result.displayCurrent = {
-                "display-preview-primary", "Preview Display", true,
-                { 0.0, 0.0, 1280.0, 720.0 },
-                { 0.0, 0.0, 1280.0, 680.0 },
-                { 0, 0, 1920, 1080 }, { 0, 0, 1920, 1020 },
-                144, 144, 1.5, 60.0, "landscape",
-                true, true, false };
-        }
-        else if (result.topic == "audio.output.default")
-        {
-            result.audioOutputDefault.available = true;
-            result.audioOutputDefault.id = "audio-output-preview";
-            result.audioOutputDefault.name = "Preview Speakers";
-            result.audioOutputDefault.state = "active";
-            result.audioOutputDefault.timestampMs = timestampNow;
-        }
-        else if (result.topic == "audio.output.volume")
-        {
-            result.audioOutputVolume.available = true;
-            result.audioOutputVolume.endpointId = "audio-output-preview";
-            result.audioOutputVolume.volume = 0.68;
-            result.audioOutputVolume.muted = false;
-            result.audioOutputVolume.timestampMs = timestampNow;
-        }
-        else if (result.topic == "audio.output.analysis")
-        {
-            result.audioAnalysis.available = true;
-            result.audioAnalysis.warmingUp = false;
-            result.audioAnalysis.silent = false;
-            result.audioAnalysis.endpointId = "audio-output-preview";
-            result.audioAnalysis.sampleRate = 48000;
-            result.audioAnalysis.channels = 2;
-            result.audioAnalysis.rms = 0.42;
-            result.audioAnalysis.peak = 0.78;
-            result.audioAnalysis.timestampMs = timestampNow;
-            result.audioAnalysis.waveform.resize(
-                snowdesktop::widget_runtime::
-                    WidgetAudioAnalysisProvider::MaximumWaveformPoints);
-            for (std::size_t index = 0;
-                index < result.audioAnalysis.waveform.size(); ++index)
-            {
-                result.audioAnalysis.waveform[index] =
-                    0.62 * std::sin(
-                        static_cast<double>(index) * 0.22);
-            }
-            result.audioAnalysis.spectrum.resize(
-                snowdesktop::widget_runtime::
-                    WidgetAudioAnalysisProvider::MaximumSpectrumBins);
-            for (std::size_t index = 0;
-                index < result.audioAnalysis.spectrum.size(); ++index)
-            {
-                result.audioAnalysis.spectrum[index] =
-                    std::exp(-static_cast<double>(index) / 14.0);
-            }
-        }
-        else if (result.topic == "media.sessions" ||
-            result.topic == "media.current" ||
-            result.topic == "media.timeline")
-        {
-            snowdesktop::widget_runtime::WidgetMediaSessionDataSnapshot
-                session;
-            session.id = "media-session-preview";
-            session.sourceName = "SnowDesktop";
-            session.title = _L("app.widget_preview.api.media_title");
-            session.artist = _L("app.widget_preview.api.media_artist");
-            session.album = _L("app.widget_preview.api.media_album");
-            session.playbackStatus = "playing";
-            session.current = true;
-            session.shuffle = false;
-            session.repeatMode = "list";
-            session.playbackRate = 1.25;
-            session.controls = { true, true, true, true, true, true,
-                true, true, true, true };
-            session.timeline.available = true;
-            session.timeline.sessionId = session.id;
-            session.timeline.positionMs = 62000;
-            session.timeline.durationMs = 215000;
-            session.timeline.minimumSeekMs = 0;
-            session.timeline.maximumSeekMs = 215000;
-            session.timeline.updatedAtMs = timestampNow;
-            session.timeline.timestampMs = timestampNow;
-            session.timeline.playbackRate = session.playbackRate;
-            if (result.topic == "media.sessions")
-            {
-                result.mediaSessions.available = true;
-                result.mediaSessions.currentSessionId = session.id;
-                result.mediaSessions.sessions = { session };
-                result.mediaSessions.timestampMs = timestampNow;
-            }
-            else if (result.topic == "media.current")
-            {
-                result.mediaCurrent.available = true;
-                result.mediaCurrent.session = session;
-                result.mediaCurrent.timestampMs = timestampNow;
-            }
-            else
-            {
-                result.mediaTimeline = session.timeline;
-            }
-        }
-        else if (result.topic == "media.artwork")
-        {
-            auto pixels = std::make_shared<snowdesktop::widget_runtime::
-                WidgetRuntimeImagePixels>();
-            pixels->width = 64;
-            pixels->height = 64;
-            pixels->stride = pixels->width * 4;
-            pixels->bgraPremultiplied.resize(
-                pixels->stride * pixels->height);
-            for (std::uint32_t y = 0; y < pixels->height; ++y)
-            {
-                for (std::uint32_t x = 0; x < pixels->width; ++x)
-                {
-                    const std::size_t offset =
-                        static_cast<std::size_t>(y * pixels->stride + x * 4);
-                    pixels->bgraPremultiplied[offset] =
-                        static_cast<std::uint8_t>(96 + x * 2);
-                    pixels->bgraPremultiplied[offset + 1] =
-                        static_cast<std::uint8_t>(64 + y * 2);
-                    pixels->bgraPremultiplied[offset + 2] = 224;
-                    pixels->bgraPremultiplied[offset + 3] = 255;
-                }
-            }
-            result.mediaArtwork.available = true;
-            result.mediaArtwork.sessionId = "media-session-preview";
-            result.mediaArtwork.resourceToken = "@media:preview";
-            result.mediaArtwork.pixels = std::move(pixels);
-            result.mediaArtwork.timestampMs = timestampNow;
-            result.mediaArtwork.revision = 1;
-        }
-        else if (result.topic == "desktop.items" ||
-            result.topic == "desktop.selection")
-        {
-            result.desktopItems = result.topic == "desktop.items"
-                ? RuntimeDesktopItems() : RuntimeDesktopSelection();
-            const std::size_t maximum = result.topic == "desktop.items"
-                ? 2048u : 512u;
-            if (result.desktopItems.size() > maximum)
-                result.desktopItems.resize(maximum);
-            result.desktopRevision = 1;
-        }
-        else if (result.topic == "desktop.changes")
-        {
-            result.desktopRevision = 1;
-            result.desktopChangeReason = "preview";
-        }
-        else if (result.topic == "calendar.events")
-        {
-            result.calendarRangeStart = binding->options.rangeStart.empty()
-                ? "2026-06-01" : binding->options.rangeStart;
-            result.calendarRangeEnd = binding->options.rangeEnd.empty()
-                ? "2026-10-03" : binding->options.rangeEnd;
-            const std::vector<snowdesktop::calendar::CalendarEvent> samples = {
-                { "preview-1", 1,
-                    _L("app.widget_preview.api.calendar_review"),
-                    "2026-08-02", false, 600, 660,
-                    _L("app.widget_preview.api.calendar_review_notes"),
-                    15, {} },
-                { "preview-2", 1,
-                    _L("app.widget_preview.api.calendar_publish"),
-                    "2026-08-03",
-                    true, 0, 0, {}, -1, {} },
-            };
-            for (const auto& event : samples)
-            {
-                if (previewState != LuaWidgetPreviewDataState::Empty &&
-                    ((!binding->options.eventId.empty() &&
-                        event.id == binding->options.eventId) ||
-                    (binding->options.eventId.empty() &&
-                        event.date >= result.calendarRangeStart &&
-                        event.date <= result.calendarRangeEnd)))
-                {
-                    result.calendarEvents.push_back(event);
-                }
-            }
-            if (!binding->options.eventId.empty())
-            {
-                result.calendarRangeStart.clear();
-                result.calendarRangeEnd.clear();
-            }
-            result.calendarRevision = 1;
-            if (binding->options.calendarQuery)
-            {
-                auto page = snowdesktop::widget_runtime::QueryCalendarEvents(
-                    result.calendarEvents, *binding->options.calendarQuery);
-                result.calendarEvents = std::move(page.events);
-                result.calendarTotal = page.total;
-                result.calendarHasMore = page.hasMore;
-                result.calendarNextOffset = page.nextOffset;
-                result.calendarTruncated = page.total > result.calendarEvents.size();
-            }
-        }
-        else if (result.topic == "calendar.selectedDate")
-        {
-            result.calendarSelectedDate = "2026-08-02";
-            result.calendarRevision = 1;
-        }
-        else if (result.topic == "app.indexStatus")
-        {
-            result.appIndexState = "ready";
-            result.appIndexRevision = 1;
-        }
-        else if (result.topic == "filesystem.watch")
-        {
-            result.filesystemWatchEvents.push_back({
-                "added", "Preview.txt", {},
-                "filesystem:11111111111111111111111111111111",
-                "file" });
-            result.filesystemWatchRevision = 1;
-            result.filesystemWatchOverflow = false;
-        }
-        if (previewState == LuaWidgetPreviewDataState::Stale)
-        {
-            result.stale = true;
-            result.timestampMs = timestampNow -
-                binding->options.requestedInterval.count() *
-                    snowdesktop::widget_runtime::
-                        DataSnapshotStaleIntervalCount - 1;
-        }
-        return result;
+        return snowdesktop::widget_runtime::BuildPreviewDataSnapshot(*binding, previewState,
+            [this](bool selection) {
+                return selection ? RuntimeDesktopSelection() : RuntimeDesktopItems();
+            });
     }
     if (!binding->options.permissionGranted)
     {
@@ -13366,400 +12667,133 @@ WidgetEngine::RuntimeGetDataSnapshot(
         return result;
     }
 
-    const auto setFreshness = [&](std::int64_t timestamp) {
-        result.timestampMs = timestamp;
-        result.stale = snowdesktop::widget_runtime::IsDataSnapshotStale(
-            timestampNow, timestamp, binding->options.requestedInterval);
-    };
-    if (result.topic == "system.cpu")
+    const auto timestampNow = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    if (!snowdesktop::widget_runtime::PopulatePlatformDataSnapshot(
+            result, *binding, *widgetSystemDataProvider_, widgetAudioAnalysisProvider_.get(),
+            includeGpuDetails, timestampNow, [this, &binding]()
+                -> std::optional<snowdesktop::widget_runtime::WidgetDisplayPixelRectDataSnapshot> {
+                const int index = FindWidget(Utf8ToWideLocal(binding->instanceId));
+                if (index < 0) return std::nullopt;
+                const RECT monitor = widgets_[index].surfaceContext.monitorBounds;
+                return snowdesktop::widget_runtime::WidgetDisplayPixelRectDataSnapshot{
+                    monitor.left, monitor.top, monitor.right - monitor.left, monitor.bottom - monitor.top };
+            }))
     {
-        const auto snapshot = widgetSystemDataProvider_->Cpu();
-        if (snapshot)
+        const auto setFreshness = [&](std::int64_t timestamp) {
+            result.timestampMs = timestamp;
+            result.stale = snowdesktop::widget_runtime::IsDataSnapshotStale(
+                timestampNow, timestamp, binding->options.requestedInterval);
+        };
+        if (result.topic == "desktop.items" ||
+            result.topic == "desktop.selection")
         {
-            result.cpu = *snapshot;
-            result.available = snapshot->available;
-            result.warmingUp = snapshot->warmingUp;
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-        }
-        else
-        {
-            result.warmingUp = true;
-        }
-    }
-    else if (result.topic == "system.memory")
-    {
-        const auto snapshot = widgetSystemDataProvider_->Memory();
-        if (snapshot)
-        {
-            result.memory = *snapshot;
-            result.available = snapshot->available;
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-        }
-    }
-    else if (result.topic == "process.summary")
-    {
-        const auto snapshot = widgetSystemDataProvider_->ProcessSummary();
-        if (snapshot)
-        {
-            result.processSummary = *snapshot;
-            result.available = snapshot->available;
-            result.warmingUp = snapshot->warmingUp;
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-        }
-        else
-        {
-            result.warmingUp = true;
-        }
-    }
-    else if (result.topic == "system.power")
-    {
-        const auto snapshot = widgetSystemDataProvider_->Power();
-        if (snapshot)
-        {
-            result.power = *snapshot;
-            result.available = snapshot->available;
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-        }
-    }
-    else if (result.topic == "system.screenTime")
-    {
-        const auto snapshot = widgetSystemDataProvider_->ScreenTime();
-        if (snapshot)
-        {
-            result.screenTime = *snapshot;
-            result.available = snapshot->available;
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-        }
-    }
-    else if (result.topic == "system.network.status")
-    {
-        const auto snapshot = widgetSystemDataProvider_->NetworkStatus();
-        if (snapshot)
-        {
-            result.networkStatus = *snapshot;
-            result.available = snapshot->available;
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-        }
-    }
-    else if (result.topic == "system.network.traffic")
-    {
-        const auto snapshot = widgetSystemDataProvider_->NetworkTraffic();
-        if (snapshot)
-        {
-            result.networkTraffic = *snapshot;
-            result.available = snapshot->available;
-            result.warmingUp = snapshot->warmingUp;
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-        }
-        else
-        {
-            result.warmingUp = true;
-        }
-    }
-    else if (result.topic == "system.gpu")
-    {
-        const auto snapshot = widgetSystemDataProvider_->Gpu(includeGpuDetails);
-        if (snapshot)
-        {
-            result.gpu = *snapshot;
-            result.available = snapshot->available;
-            result.warmingUp = snapshot->warmingUp;
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-        }
-        else
-        {
-            result.warmingUp = true;
-        }
-    }
-    else if (result.topic == "system.storage.volumes")
-    {
-        const auto snapshot =
-            widgetSystemDataProvider_->StorageVolumes();
-        if (snapshot)
-        {
-            result.storageVolumes = *snapshot;
-            result.available = snapshot->available;
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-        }
-    }
-    else if (result.topic == "system.storage.io")
-    {
-        const auto snapshot = widgetSystemDataProvider_->StorageIo();
-        if (snapshot)
-        {
-            result.storageIo = *snapshot;
-            result.available = snapshot->available;
-            result.warmingUp = snapshot->warmingUp;
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-        }
-        else
-        {
-            result.warmingUp = true;
-        }
-    }
-    else if (result.topic == "system.display.topology")
-    {
-        const auto snapshot =
-            widgetSystemDataProvider_->DisplayTopology();
-        if (snapshot)
-        {
-            result.displayTopology = *snapshot;
-            result.available = snapshot->available;
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-        }
-    }
-    else if (result.topic == "system.display.current")
-    {
-        const auto snapshot = widgetSystemDataProvider_->DisplayCurrent();
-        if (snapshot)
-        {
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-            const int widgetIndex = FindWidget(
-                Utf8ToWideLocal(binding->instanceId));
-            if (snapshot->available && widgetIndex >= 0)
-            {
-                const RECT monitor =
-                    widgets_[widgetIndex].surfaceContext.monitorBounds;
-                const auto display = snowdesktop::widget_runtime::
-                    MatchDisplayByPixelBounds(*snapshot,
-                        { monitor.left, monitor.top,
-                            monitor.right - monitor.left,
-                            monitor.bottom - monitor.top });
-                if (display)
-                {
-                    result.displayCurrent = *display;
-                    result.available = true;
-                }
-                else
-                {
-                    result.error = "currentDisplayUnavailable";
-                }
-            }
-        }
-    }
-    else if (result.topic == "audio.output.default")
-    {
-        const auto snapshot =
-            widgetSystemDataProvider_->AudioOutputDefault();
-        if (snapshot)
-        {
-            result.audioOutputDefault = *snapshot;
-            result.available = snapshot->available;
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-        }
-    }
-    else if (result.topic == "audio.output.volume")
-    {
-        const auto snapshot =
-            widgetSystemDataProvider_->AudioOutputVolume();
-        if (snapshot)
-        {
-            result.audioOutputVolume = *snapshot;
-            result.available = snapshot->available;
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-        }
-    }
-    else if (snowdesktop::widget_runtime::IsSystemControlDataTopic(result.topic))
-    {
-        const auto snapshot = widgetSystemDataProvider_->Controls()->Current(result.topic);
-        if (snapshot)
-        {
-            result.systemControl = snapshot->value;
-            result.available = snapshot->available;
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-            if (result.topic == "audio.input.volume" && result.available)
-            {
-                result.systemControl.object["minimum"] = snowdesktop::system_control::json::Number(0);
-                result.systemControl.object["maximum"] = snowdesktop::system_control::json::Number(1);
-            }
-        }
-        else result.warmingUp = true;
-    }
-    else if (result.topic == "audio.output.analysis")
-    {
-        const auto snapshot = widgetAudioAnalysisProvider_
-            ? widgetAudioAnalysisProvider_->Snapshot()
-            : std::nullopt;
-        if (snapshot)
-        {
-            result.audioAnalysis = *snapshot;
-            result.available = snapshot->available;
-            result.warmingUp = snapshot->warmingUp;
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-        }
-        else
-        {
-            result.warmingUp = true;
-        }
-    }
-    else if (result.topic == "media.sessions")
-    {
-        const auto snapshot = widgetSystemDataProvider_->MediaSessions();
-        if (snapshot)
-        {
-            result.mediaSessions = *snapshot;
-            result.available = snapshot->available;
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-        }
-    }
-    else if (result.topic == "media.current")
-    {
-        const auto snapshot = widgetSystemDataProvider_->MediaCurrent();
-        if (snapshot)
-        {
-            result.mediaCurrent = *snapshot;
-            result.available = snapshot->available;
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-        }
-    }
-    else if (result.topic == "media.timeline")
-    {
-        const auto snapshot = widgetSystemDataProvider_->MediaTimeline();
-        if (snapshot)
-        {
-            result.mediaTimeline = *snapshot;
-            result.available = snapshot->available;
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-        }
-    }
-    else if (result.topic == "media.artwork")
-    {
-        const auto snapshot = widgetSystemDataProvider_->MediaArtwork();
-        if (snapshot)
-        {
-            result.mediaArtwork = *snapshot;
-            result.available = snapshot->available;
-            result.error = snapshot->error;
-            setFreshness(snapshot->timestampMs);
-        }
-    }
-    else if (result.topic == "desktop.items" ||
-        result.topic == "desktop.selection")
-    {
-        result.desktopItems = result.topic == "desktop.items"
-            ? RuntimeDesktopItems() : RuntimeDesktopSelection();
-        const std::size_t maximum = result.topic == "desktop.items"
-            ? 2048u : 512u;
-        if (result.desktopItems.size() > maximum)
-            result.desktopItems.resize(maximum);
-        result.desktopRevision = desktopDataRevision_;
-        result.available = true;
-        setFreshness(timestampNow);
-    }
-    else if (result.topic == "desktop.changes")
-    {
-        result.desktopRevision = desktopDataRevision_;
-        result.desktopChangeReason = desktopDataChangeReason_;
-        result.available = true;
-        result.timestampMs = desktopDataTimestampMs_;
-        result.stale = false;
-    }
-    else if (result.topic == "calendar.events")
-    {
-        result.calendarRangeStart = binding->options.rangeStart;
-        result.calendarRangeEnd = binding->options.rangeEnd;
-        if (!calendarService_ || !calendarServiceLoaded_)
-        {
-            result.error = "providerUnavailable";
-        }
-        else if (!binding->options.eventId.empty())
-        {
-            const auto event = calendarService_->EventById(binding->options.eventId, true);
-            if (event) result.calendarEvents.push_back(*event);
-            result.calendarRevision = calendarEventsRevision_;
+            result.desktopItems = result.topic == "desktop.items"
+                ? RuntimeDesktopItems() : RuntimeDesktopSelection();
+            const std::size_t maximum = result.topic == "desktop.items"
+                ? 2048u : 512u;
+            if (result.desktopItems.size() > maximum)
+                result.desktopItems.resize(maximum);
+            result.desktopRevision = desktopDataRevision_;
             result.available = true;
             setFreshness(timestampNow);
         }
-        else
+        else if (result.topic == "desktop.changes")
         {
-            if (result.calendarRangeStart.empty())
+            result.desktopRevision = desktopDataRevision_;
+            result.desktopChangeReason = desktopDataChangeReason_;
+            result.available = true;
+            result.timestampMs = desktopDataTimestampMs_;
+            result.stale = false;
+        }
+        else if (result.topic == "calendar.events")
+        {
+            result.calendarRangeStart = binding->options.rangeStart;
+            result.calendarRangeEnd = binding->options.rangeEnd;
+            if (!calendarService_ || !calendarServiceLoaded_)
             {
-                const std::string selected = RuntimeCalendarSelectedDate();
-                const auto start = snowdesktop::calendar::CalendarService::
-                    AddDays(selected, -62);
-                const auto end = snowdesktop::calendar::CalendarService::
-                    AddDays(selected, 62);
-                if (start && end)
-                {
-                    result.calendarRangeStart = *start;
-                    result.calendarRangeEnd = *end;
-                }
+                result.error = "providerUnavailable";
             }
-            if (result.calendarRangeStart.empty() ||
-                result.calendarRangeEnd.empty())
+            else if (!binding->options.eventId.empty())
             {
-                result.error = "calendarRangeUnavailable";
-            }
-            else
-            {
-                result.calendarEvents = RuntimeCalendarEvents(
-                    result.calendarRangeStart, result.calendarRangeEnd, true);
-                constexpr std::size_t MaximumEvents = 512;
-                if (binding->options.calendarQuery)
-                {
-                    auto page = snowdesktop::widget_runtime::QueryCalendarEvents(
-                        result.calendarEvents, *binding->options.calendarQuery);
-                    result.calendarEvents = std::move(page.events);
-                    result.calendarTotal = page.total;
-                    result.calendarHasMore = page.hasMore;
-                    result.calendarNextOffset = page.nextOffset;
-                    result.calendarTruncated = page.total > result.calendarEvents.size();
-                }
-                else
-                {
-                    result.calendarTruncated =
-                        result.calendarEvents.size() > MaximumEvents;
-                    if (result.calendarTruncated)
-                        result.calendarEvents.resize(MaximumEvents);
-                }
+                const auto event = calendarService_->EventById(binding->options.eventId, true);
+                if (event) result.calendarEvents.push_back(*event);
                 result.calendarRevision = calendarEventsRevision_;
                 result.available = true;
                 setFreshness(timestampNow);
             }
+            else
+            {
+                if (result.calendarRangeStart.empty())
+                {
+                    const std::string selected = RuntimeCalendarSelectedDate();
+                    const auto start = snowdesktop::calendar::CalendarService::
+                        AddDays(selected, -62);
+                    const auto end = snowdesktop::calendar::CalendarService::
+                        AddDays(selected, 62);
+                    if (start && end)
+                    {
+                        result.calendarRangeStart = *start;
+                        result.calendarRangeEnd = *end;
+                    }
+                }
+                if (result.calendarRangeStart.empty() ||
+                    result.calendarRangeEnd.empty())
+                {
+                    result.error = "calendarRangeUnavailable";
+                }
+                else
+                {
+                    result.calendarEvents = RuntimeCalendarEvents(
+                        result.calendarRangeStart, result.calendarRangeEnd, true);
+                    constexpr std::size_t MaximumEvents = 512;
+                    if (binding->options.calendarQuery)
+                    {
+                        auto page = snowdesktop::widget_runtime::QueryCalendarEvents(
+                            result.calendarEvents, *binding->options.calendarQuery);
+                        result.calendarEvents = std::move(page.events);
+                        result.calendarTotal = page.total;
+                        result.calendarHasMore = page.hasMore;
+                        result.calendarNextOffset = page.nextOffset;
+                        result.calendarTruncated = page.total > result.calendarEvents.size();
+                    }
+                    else
+                    {
+                        result.calendarTruncated =
+                            result.calendarEvents.size() > MaximumEvents;
+                        if (result.calendarTruncated)
+                            result.calendarEvents.resize(MaximumEvents);
+                    }
+                    result.calendarRevision = calendarEventsRevision_;
+                    result.available = true;
+                    setFreshness(timestampNow);
+                }
+            }
         }
-    }
-    else if (result.topic == "calendar.selectedDate")
-    {
-        result.calendarSelectedDate = RuntimeCalendarSelectedDate();
-        result.calendarRevision = calendarSelectionRevision_;
-        result.available = !result.calendarSelectedDate.empty();
-        if (!result.available)
-            result.error = "notPresent";
-        setFreshness(timestampNow);
-    }
-    else if (result.topic == "app.indexStatus")
-    {
-        result.appIndexState = applicationIndexStatusProvider_
-            ? applicationIndexStatusProvider_() : "unavailable";
-        if (result.appIndexState != "ready" &&
-            result.appIndexState != "indexing" &&
-            result.appIndexState != "unavailable")
-            result.appIndexState = "unavailable";
-        result.appIndexRevision = appIndexRevision_;
-        result.available = applicationIndexStatusProvider_ != nullptr &&
-            result.appIndexState != "unavailable";
-        if (!result.available)
-            result.error = "providerUnavailable";
-        setFreshness(timestampNow);
+        else if (result.topic == "calendar.selectedDate")
+        {
+            result.calendarSelectedDate = RuntimeCalendarSelectedDate();
+            result.calendarRevision = calendarSelectionRevision_;
+            result.available = !result.calendarSelectedDate.empty();
+            if (!result.available)
+                result.error = "notPresent";
+            setFreshness(timestampNow);
+        }
+        else if (result.topic == "app.indexStatus")
+        {
+            result.appIndexState = applicationIndexStatusProvider_
+                ? applicationIndexStatusProvider_() : "unavailable";
+            if (result.appIndexState != "ready" &&
+                result.appIndexState != "indexing" &&
+                result.appIndexState != "unavailable")
+                result.appIndexState = "unavailable";
+            result.appIndexRevision = appIndexRevision_;
+            result.available = applicationIndexStatusProvider_ != nullptr &&
+                result.appIndexState != "unavailable";
+            if (!result.available)
+                result.error = "providerUnavailable";
+            setFreshness(timestampNow);
+        }
     }
     if (result.topic == "audio.output.analysis")
     {
@@ -21228,17 +20262,11 @@ void WidgetEngine::RecordPerformanceResources() const noexcept
     try
     {
         using snowdesktop::performance::Value;
-        using Pixels = snowdesktop::widget_runtime::WidgetRuntimeImagePixels;
         snowdesktop::performance::Scope scope("profiler", "sample.widget.resources");
-        struct Usage
-        {
-            std::size_t sources = 0, pixelBytes = 0, bitmapBytes = 0;
-            std::unordered_set<const Pixels*> pixels;
-        };
-        std::map<std::wstring_view, Usage> owners;
+        auto imageUsage = d2dState_->runtimeImageCache.Measure();
         for (const auto& widget : widgets_)
         {
-            owners.try_emplace(widget.widgetId);
+            imageUsage.owners.try_emplace(widget.widgetId);
             if (widget.quota)
             {
                 Value("widget.memory", "lua_bytes", widget.widgetId, static_cast<double>(widget.quota->memoryBytes));
@@ -21250,18 +20278,6 @@ void WidgetEngine::RecordPerformanceResources() const noexcept
             Value("widget.state", "animation_requests", widget.widgetId, static_cast<double>(widget.animationFrames.Size()));
             Value("widget.package", widget.packageId, widget.widgetId, 1);
         }
-        std::unordered_set<const Pixels*> uniquePixels;
-        std::size_t pixelBytes = 0;
-        for (const auto& [key, resource] : d2dState_->runtimeImages)
-        {
-            auto& owner = owners[resource.ownerWidgetId];
-            ++owner.sources;
-            if (!resource.pixels) continue;
-            const auto* pixels = resource.pixels.get();
-            const auto bytes = pixels->bgraPremultiplied.size();
-            if (owner.pixels.insert(pixels).second) owner.pixelBytes += bytes;
-            if (uniquePixels.insert(pixels).second) pixelBytes += bytes;
-        }
         const auto bitmapBytes = [](ID2D1Bitmap* bitmap) -> std::size_t {
             if (!bitmap) return 0;
             const auto size = bitmap->GetPixelSize();
@@ -21272,13 +20288,7 @@ void WidgetEngine::RecordPerformanceResources() const noexcept
             for (const auto& [key, bitmap] : cache) bytes += bitmapBytes(bitmap.Get());
             return bytes;
         };
-        for (const auto& [key, bitmap] : d2dState_->runtimeImageBitmaps)
-        {
-            const auto source = d2dState_->runtimeImages.find(key);
-            if (source != d2dState_->runtimeImages.end())
-                owners[source->second.ownerWidgetId].bitmapBytes += bitmapBytes(bitmap.Get());
-        }
-        for (const auto& [id, usage] : owners)
+        for (const auto& [id, usage] : imageUsage.owners)
         {
             Value("widget.memory", "runtime_image_sources", id, static_cast<double>(usage.sources));
             Value("widget.memory", "runtime_image_referenced_bytes", id, static_cast<double>(usage.pixelBytes));
@@ -21289,8 +20299,8 @@ void WidgetEngine::RecordPerformanceResources() const noexcept
         };
         // Source pixels can be shared across owners. Report their deduplicated
         // total separately; owner rows are references, not exclusive ownership.
-        shared("runtime_image_unique_bytes", pixelBytes);
-        shared("runtime_bitmap_bgra_bytes_estimate", cacheBytes(d2dState_->runtimeImageBitmaps));
+        shared("runtime_image_unique_bytes", imageUsage.uniquePixelBytes);
+        shared("runtime_bitmap_bgra_bytes_estimate", imageUsage.bitmapBytes);
         shared("package_image_decoded_bytes", d2dState_->packageImageCache.Bytes());
         shared("package_image_encoded_bytes", d2dState_->packageImageCache.EncodedBytes());
         shared("package_image_sources", d2dState_->packageImageCache.Size());
@@ -21486,49 +20496,6 @@ void WidgetEngine::RuntimeCloseWidgetPanel(
 {
     if (!snowdesktop::widget_runtime::IsDryLoad() && closeWidgetPanelCallback_)
         closeWidgetPanelCallback_(widgetId);
-}
-
-static std::optional<std::wstring> ResolvePackageAssetWithinRoot(
-    const std::filesystem::path& packageRoot,
-    const std::wstring& relativePath)
-{
-    if (!snowdesktop::widget::WidgetPackageValidator::IsSafeRelativePath(
-        std::filesystem::path(relativePath)))
-        return std::nullopt;
-    if (packageRoot.empty())
-        return std::nullopt;
-    std::error_code error;
-    const auto root = std::filesystem::weakly_canonical(
-        packageRoot, error);
-    if (error) return std::nullopt;
-    const DWORD rootAttributes = GetFileAttributesW(root.c_str());
-    if (rootAttributes == INVALID_FILE_ATTRIBUTES ||
-        (rootAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
-        return std::nullopt;
-    const auto target = std::filesystem::weakly_canonical(
-        root / relativePath, error);
-    if (error) return std::nullopt;
-    auto rootIt = root.begin();
-    auto targetIt = target.begin();
-    for (; rootIt != root.end(); ++rootIt, ++targetIt)
-    {
-        if (targetIt == target.end() ||
-            _wcsicmp(rootIt->c_str(), targetIt->c_str()) != 0)
-            return std::nullopt;
-    }
-    for (auto current = root; current != target; )
-    {
-        // Check each path component that already exists. Missing assets simply
-        // fail at the image decoder without escaping the package.
-        const auto relative = std::filesystem::relative(target, current, error);
-        if (error || relative.empty()) break;
-        current /= *relative.begin();
-        const DWORD attributes = GetFileAttributesW(current.c_str());
-        if (attributes != INVALID_FILE_ATTRIBUTES &&
-            (attributes & FILE_ATTRIBUTE_REPARSE_POINT))
-            return std::nullopt;
-    }
-    return target.wstring();
 }
 
 std::optional<std::wstring> WidgetEngine::RuntimeResolvePackageAsset(
@@ -22870,6 +21837,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     using snowdesktop::widget_runtime::lua_SlotsCanRedo;
     using snowdesktop::widget_runtime::lua_SlotsUndo;
     using snowdesktop::widget_runtime::lua_SlotsRedo;
+    using snowdesktop::widget_runtime::lua_ModuleRequire;
     static constexpr CatalogFunctionDescriptor functions[] = {
 #define SNOW_WIDGET_PUBLIC_FUNCTION(                                      \
     library, name, callback, sinceApi, permission, untilApi)              \
@@ -22889,26 +21857,14 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
                 token, pixels, source, preserveExisting);
         },
         +[](lua_State* state, const snowdesktop::widget_runtime::WidgetScreenTimeDataSnapshot& screenTime) {
-        auto* d2d = GetD2D(state);
-        const auto owner = BoundWidgetId(state);
-        if (d2d && !owner.empty())
-        {
-            const auto& apps = screenTime.apps;
-            for (auto entry = d2d->runtimeImages.begin(); entry != d2d->runtimeImages.end();)
-            {
-                if (entry->second.source == "screen-time" &&
-                    entry->second.ownerWidgetId == owner &&
-                    std::none_of(apps.begin(), apps.end(), [&](const auto& app) {
-                        return !app.iconToken.empty() &&
-                            BindRuntimeImageToken(app.iconToken, owner) == entry->first;
-                    }))
-                {
-                    EraseRuntimeImageBitmap(d2d, entry->first);
-                    entry = d2d->runtimeImages.erase(entry);
-                }
-                else ++entry;
-            }
-        }
+            auto* d2d = GetD2D(state);
+            const auto owner = BoundWidgetId(state);
+            if (!d2d || owner.empty()) return;
+            std::vector<std::string_view> tokens;
+            tokens.reserve(screenTime.apps.size());
+            for (const auto& app : screenTime.apps)
+                tokens.push_back(app.iconToken);
+            d2d->runtimeImageCache.Retain(owner, "screen-time", tokens);
         },
     };
     snowdesktop::widget_runtime::BindWidgetDataLuaImages(L, dataImages);
