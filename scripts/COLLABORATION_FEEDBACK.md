@@ -180,6 +180,8 @@
 
 ### CF-011 独立检查等待共享编辑屏障
 
+- **工具检查晚于产品同行就绪（2026-11-19）**：Task `task-28099fa5e95f43ada8803915dff41370` 在批次 `a7803f4dc2394a50832f7057081330f3` 修订 0 申报 `tool/none -Independent`。候选路径 CLI 与看板日志夹具已通过，另一成员已 `finished`，因此 `ready-and-wait` 按已有行为进入 Run `5228547cd7684d9eaddc9ffd40a80297` 的共享等待。冻结计划只执行另一成员的产品构建和测试，工具计划未添加构建或 CTest。新 Run 的 `pathProjection` 已经由新版看板用真实记录核对。工具按冻结检查点提交为 `32c7b9b5`。后续仍可让已通过自身检查的空计划独立归档，同时保留产品成员的同一 Run。
+
 - **同行已就绪时文档仍进入共享构建（2026-11-18）**：Task `task-52a0430b03e04412805a1170dfe1fa6a` 在绘制拆分 Run `7c5575df6d844771abc5af4a8ace0132` 通过后，只认领 `CODE_HEALTH.md`，批次 `1505fb5e92a1467b9c5865ff51cf0635` 修订 0 声明 `docs/none -Independent`。冻结计划的两方输入与认领路径无交集，回执仍随布局转场 Run `a2512aaf58bc43c4bab491588fcca955` 发布，独立回执字段为空。本轮沿用原等待会话和两次既有构建结果。源码确认 `build_manager.ps1` 仅在仍有成员处于 editing 时尝试独立发布。下一步让已通过轻量检查且输入无交集的空计划也能独立闭合，保留原构建与测试计划。
 
 - **验证回填在登记时遇到独占租约（2026-11-18）**：Task `code-health-5` 已完成标准 Release 和原定回归，来源批次 `27ef9727dade4e739c4d0e62f2770227` 修订 0、Run `341657452b4841f2a3ee2a8a4359453b`。只为回填总表调用 `begin` 时返回 `A standalone shared-output entry owns build.lock. No editor registered; read status and retry after execution finishes.`；`status code-health-5 -Compact` 显示无活动批次或候选，无法由回执定位持有人。源码确认无编辑窗口时 `begin` 在声明计划前探测 `build.lock`。再次登记成功，文档用 `docs/none -Independent`，复用原验证。P2，文档归档阶段已能分离，后续可补只读的占用归属或等待入口。未追加构建或复现。
