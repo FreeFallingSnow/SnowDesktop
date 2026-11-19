@@ -84,11 +84,10 @@ snowdesktop_add_runtime_module(SnowDesktopDataPaths
 snowdesktop_add_runtime_module(SnowDesktopRuntimeEnvironment
     SOURCES src/diagnostics/diagnostic_log.cpp
         src/platform/deployment_context.cpp src/platform/hook_entry_deployment.cpp
-    LINK_LIBRARIES SnowDesktopDataPaths SnowDesktopAtomicFile SnowDesktopJson
+    LINK_LIBRARIES SnowDesktopApplicationVersion SnowDesktopDataPaths SnowDesktopAtomicFile SnowDesktopJson
         SnowDesktopSteamRuntimeIdentity SnowDesktopRuntimePolicy
         advapi32 bcrypt ole32 runtimeobject shell32 shlwapi windowsapp)
 target_compile_definitions(SnowDesktopRuntimeEnvironment PRIVATE
-    SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
     SNOWDESKTOP_STORE_ID="${SNOWDESKTOP_STORE_ID}"
     SNOWDESKTOP_PACKAGE_FAMILY_NAME="${SNOWDESKTOP_PACKAGE_FAMILY_NAME}")
 # Match the host's C++/WinRT projection package, without WinUI, XAML or its

@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "platform/application_version.h"
 #include "general_page_presenter.h"
 #include "hotkey_recorder.h"
 #include "settings/settings_controller_interface.h"
@@ -495,13 +496,13 @@ struct SettingsWindowHost::Impl
     std::map<std::string, std::filesystem::path> themeBackgrounds;
 
     std::filesystem::path ThemeBridge() const { return std::filesystem::path(GetExecutableDirectoryPath()) / L"SnowDesktopSteamBridge.exe"; }
-    bool ThemeSharingAvailable() const { return themes::workshop::Available(ThemeBridge(), SNOWDESKTOP_VERSION); }
+    bool ThemeSharingAvailable() const { return themes::workshop::Available(ThemeBridge(), snowdesktop::ApplicationVersion()); }
     void CompleteThemeTask(const std::shared_ptr<ThemeTask>& task, bool success, std::string error)
     {
         if (themeTask != task) return;
         ThemeLibraryResult result;
         result.succeeded = success;
-        result.workshopAvailable = themes::workshop::Availability(ThemeBridge(), SNOWDESKTOP_VERSION, result.sharingAvailable);
+        result.workshopAvailable = themes::workshop::Availability(ThemeBridge(), snowdesktop::ApplicationVersion(), result.sharingAvailable);
         std::string ignored;
         if (!themes::Load(themes::LibraryPath(), result.library, ignored))
         { result.succeeded = false; if (error.empty()) error = ignored; }
@@ -2817,7 +2818,7 @@ struct SettingsWindowHost::Impl
     ThemeLibraryResult ThemeOperation(std::uint64_t generation, const ThemeLibraryRequest& request)
     {
         ThemeLibraryResult result;
-        result.workshopAvailable = themes::workshop::Availability(ThemeBridge(), SNOWDESKTOP_VERSION, result.sharingAvailable);
+        result.workshopAvailable = themes::workshop::Availability(ThemeBridge(), snowdesktop::ApplicationVersion(), result.sharingAvailable);
         if (!controller || !controller->IsGenerationCurrent(generation)) return result;
         const auto current = controller->Snapshot();
         if (!current || current->externalReplacementPending) return result;

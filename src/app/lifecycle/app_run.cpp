@@ -1,4 +1,5 @@
 #include "platform/force_restart_hotkey.h"
+#include "platform/application_version.h"
 #include "diagnostics/debug_profile.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "settings/settings_search_catalog.h"
@@ -500,7 +501,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     };
 
     MigrateLegacyDataPaths();
-    const std::wstring startupIdentity = L"Run start version=" + Utf8ToWide(SNOWDESKTOP_VERSION) +
+    const std::wstring startupIdentity = L"Run start version=" + Utf8ToWide(snowdesktop::ApplicationVersion()) +
         L" pid=" + std::to_wstring(GetCurrentProcessId()) +
         L" logModules=" + std::to_wstring(snowdesktop::diagnostics::enabledLogModules.load(std::memory_order_relaxed));
     WriteDiagnosticLogEntry(startupIdentity.c_str());

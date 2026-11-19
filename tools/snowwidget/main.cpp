@@ -1,4 +1,5 @@
 #include "widget/packages/widget_package_manager.h"
+#include "platform/application_version.h"
 #include "widget/packages/widget_package_publisher.h"
 #include "widget/packages/widget_package_validation.h"
 #include "widget/authoring/widget_author_lint.h"
@@ -649,14 +650,14 @@ int wmain(int argc, wchar_t** argv)
     }
     if (argc == 2 && std::wstring_view(argv[1]) == L"--version")
     {
-        std::cout << SNOWDESKTOP_VERSION << '\n';
+        std::cout << snowdesktop::ApplicationVersion() << '\n';
         return 0;
     }
     if (argc == 2 && std::wstring_view(argv[1]) == L"capabilities")
     {
         std::cout
             << "{\"ok\":true,\"protocolVersion\":2,\"version\":"
-            << JsonEscape(SNOWDESKTOP_VERSION)
+            << JsonEscape(snowdesktop::ApplicationVersion())
             << ",\"format\":\"snowdesktop-widget\","
                "\"authoringSkill\":{\"id\":\"snowdesktop-lua-widget\","
                "\"revision\":"
@@ -701,7 +702,7 @@ int wmain(int argc, wchar_t** argv)
         return 0;
     }
     if (argc >= 2 && std::wstring_view(argv[1]) == L"gpu-diagnostics")
-        return snowdesktop::gpu_diagnostics::Run(argc, argv, SNOWDESKTOP_VERSION);
+        return snowdesktop::gpu_diagnostics::Run(argc, argv, snowdesktop::ApplicationVersion());
     if (argc < 3)
     {
         PrintUsage();

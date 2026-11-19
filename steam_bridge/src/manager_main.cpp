@@ -5,6 +5,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include "platform/application_version.h"
 #include <shellapi.h>
 #include <shobjidl.h>
 #include <shlobj.h>
@@ -1131,7 +1132,7 @@ private:
         }
         ImGui::AlignTextToFramePadding();
         ImGui::TextWrapped("%s   v%s", T("SnowDesktop 创意工坊创作者管理器",
-            "SnowDesktop Workshop Creator Manager"), SNOWDESKTOP_VERSION);
+            "SnowDesktop Workshop Creator Manager"), snowdesktop::ApplicationVersion());
         if (headerTable) ImGui::TableSetColumnIndex(1);
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(connected ?

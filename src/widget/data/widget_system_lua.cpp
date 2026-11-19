@@ -1,4 +1,5 @@
 #include "widget_system_lua.h"
+#include "platform/application_version.h"
 
 #include "common/utils.h"
 #include "platform/deployment_context.h"
@@ -211,7 +212,7 @@ int lua_SystemInfoV2(lua_State* L)
     lua_setfield(L, -2, "processArchitecture");
     lua_pushstring(L, NativeArchitectureName());
     lua_setfield(L, -2, "nativeArchitecture");
-    lua_pushliteral(L, SNOWDESKTOP_VERSION);
+    lua_pushstring(L, snowdesktop::ApplicationVersion());
     lua_setfield(L, -2, "hostVersion");
     lua_pushinteger(L, snowdesktop::widget::kHostApiVersion);
     lua_setfield(L, -2, "apiVersion");

@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "platform/application_version.h"
 #include "app/app.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_transition.h"
@@ -367,7 +368,8 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         const auto trace = [queryId](std::string_view message) {
             snowdesktop::widget::WriteSteamWorkshopDiagnostic(queryId, message);
         };
-        trace("phase=poll.begin host=" SNOWDESKTOP_VERSION " registered=" +
+        trace(std::string("phase=poll.begin host=") + snowdesktop::ApplicationVersion() +
+            " registered=" +
             std::to_string(installedPackages->size()));
         trace("phase=theme_probe.begin");
         // Background reconciliation consumes only Steam's local manifests and

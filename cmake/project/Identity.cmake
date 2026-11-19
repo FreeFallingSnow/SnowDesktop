@@ -1,6 +1,9 @@
 include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.VersionResources.cmake")
 
-file(READ "${CMAKE_SOURCE_DIR}/version.json" VERSION_JSON)
+set(SNOWDESKTOP_VERSION_FILE "${CMAKE_SOURCE_DIR}/version.json")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${SNOWDESKTOP_VERSION_FILE}")
+file(READ "${SNOWDESKTOP_VERSION_FILE}" VERSION_JSON)
 string(JSON SNOWDESKTOP_VERSION GET "${VERSION_JSON}" "version")
 
 file(READ
@@ -72,6 +75,22 @@ endif()
 set(SNOWDESKTOP_VERSION_RESOURCE_DIR
     "${CMAKE_BINARY_DIR}/generated/version")
 file(MAKE_DIRECTORY "${SNOWDESKTOP_VERSION_RESOURCE_DIR}")
+
+# Keep the changing version value in one translation unit, outside the
+# compile definitions and precompiled headers of its consumers.
+set(SNOWDESKTOP_VERSION_SOURCE
+    "${SNOWDESKTOP_VERSION_RESOURCE_DIR}/application_version.cpp")
+configure_file("${CMAKE_SOURCE_DIR}/src/platform/application_version.cpp.in"
+    "${SNOWDESKTOP_VERSION_SOURCE}" @ONLY)
+add_library(SnowDesktopApplicationVersion STATIC "${SNOWDESKTOP_VERSION_SOURCE}")
+target_include_directories(SnowDesktopApplicationVersion PRIVATE "${CMAKE_SOURCE_DIR}/src")
+target_compile_features(SnowDesktopApplicationVersion PRIVATE cxx_std_20)
+if(MSVC)
+    set_property(TARGET SnowDesktopApplicationVersion PROPERTY MSVC_RUNTIME_LIBRARY
+        "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopApplicationVersion PRIVATE /W4 /permissive- /utf-8
+        $<$<CONFIG:Release>:/Z7>)
+endif()
 
 set(SNOWDESKTOP_FILE_DESCRIPTION "SnowDesktop")
 set(SNOWDESKTOP_ORIGINAL_FILENAME "SnowDesktop.exe")

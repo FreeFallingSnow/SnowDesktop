@@ -1,0 +1,14 @@
+#include "platform/application_version.h"
+
+namespace snowdesktop
+{
+const char* ApplicationVersion() noexcept
+{
+    return "@SNOWDESKTOP_VERSION@";
+}
+
+const wchar_t* ApplicationVersionWide() noexcept
+{
+    return L"@SNOWDESKTOP_VERSION@";
+}
+}

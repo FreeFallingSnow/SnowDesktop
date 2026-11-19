@@ -1,4 +1,5 @@
 #include "widget_package_host.h"
+#include "platform/application_version.h"
 #include "widget_package_manager.h"
 #include "widget_package_sources.h"
 
@@ -482,7 +483,7 @@ bool WidgetEngine::IsSteamWorkshopBridgeAvailable()
         std::filesystem::path(GetExecutableDirectoryPath()) /
         L"SnowDesktopSteamBridge.exe";
     static const bool compatible = snowdesktop::steam_entitlement::
-        IsSteamBridgeExecutableCompatible(bridge, SNOWDESKTOP_VERSION);
+        IsSteamBridgeExecutableCompatible(bridge, snowdesktop::ApplicationVersion());
     return compatible;
 }
 
@@ -512,7 +513,8 @@ WidgetEngine::QuerySteamWorkshopSubscriptions(
     const auto trace = [diagnosticQueryId](std::string_view message) {
         snowdesktop::widget::WriteSteamWorkshopDiagnostic(diagnosticQueryId, message);
     };
-    trace("phase=query.begin host=" SNOWDESKTOP_VERSION " locale=" + locale +
+    trace(std::string("phase=query.begin host=") + snowdesktop::ApplicationVersion() +
+        " locale=" + locale +
         " exe=" + WideToUtf8(GetExecutableDirectoryPath()) +
         " data=" + WideToUtf8(GetDataDirectoryPath()));
     snowdesktop::widget::SteamWorkshopSubscriptionSnapshot snapshot;

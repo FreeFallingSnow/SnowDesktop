@@ -5,6 +5,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include "platform/application_version.h"
 #include <shellapi.h>
 
 #include <algorithm>
@@ -157,7 +158,7 @@ int PrintError(int exitCode, std::string_view code, std::string_view message,
 void PrintUsage()
 {
     std::cout
-        << "SnowDesktop Steam Bridge " << SNOWDESKTOP_VERSION << '\n'
+        << "SnowDesktop Steam Bridge " << snowdesktop::ApplicationVersion() << '\n'
         << "MIT-licensed SnowDesktop/Steam process boundary\n\n"
         << "Usage:\n"
         << "  SnowDesktopSteamBridge.exe --version\n"
@@ -207,7 +208,7 @@ int PrintConfiguration()
 {
     std::cout << "{\"ok\":true,\"protocolVersion\":1,"
                  "\"version\":";
-    WriteJsonString(std::cout, SNOWDESKTOP_VERSION);
+    WriteJsonString(std::cout, snowdesktop::ApplicationVersion());
     std::cout << ",\"expectedAppId\":" <<
         snowdesktop::steam_bridge::kSteamAppId
               << ",\"windowsDepotId\":" <<
@@ -1731,7 +1732,7 @@ int wmain(int argc, wchar_t* argv[])
     }
     if (command == L"--version")
     {
-        std::cout << SNOWDESKTOP_VERSION << '\n';
+        std::cout << snowdesktop::ApplicationVersion() << '\n';
         return 0;
     }
     if (command == L"configuration" && argc == 2)

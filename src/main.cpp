@@ -12,6 +12,7 @@
  */
 
 #include "app/app.h"
+#include "platform/application_version.h"
 #include "common/utils.h"
 #include "diagnostics/diagnostic_log.h"
 #include "platform/auto_start_elevation.h"
@@ -45,14 +46,8 @@
 #include <cstdint>
 #include <vector>
 
-#define SNOWDESKTOP_WIDEN_INNER(value) L##value
-#define SNOWDESKTOP_WIDEN(value) SNOWDESKTOP_WIDEN_INNER(value)
-
 namespace
 {
-constexpr wchar_t kCurrentVersion[] =
-    SNOWDESKTOP_WIDEN(SNOWDESKTOP_VERSION);
-
 using ExistingInstanceResolution = snowdesktop::single_instance::StartupResolution;
 
 enum class VersionConflictChoice
@@ -557,7 +552,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     snowdesktop::single_instance::Guard singleInstance;
     const auto requestedInstance =
         snowdesktop::single_instance::DescribeCurrentInstance(
-            kCurrentVersion);
+            snowdesktop::ApplicationVersionWide());
     snowdesktop::single_instance::InstanceInfo switchTarget;
     bool switchHandoff = false;
     const auto acquisition = snowdesktop::single_instance::AcquireForStartup(singleInstance,

@@ -1,4 +1,5 @@
 #include "widget/runtime/widget_engine.h"
+#include "platform/application_version.h"
 #include "widget/runtime/widget_lua_binding_context.h"
 #include "widget/view/widget_render_host_context.h"
 #include "widget/view/widget_surface_host.h"
@@ -390,7 +391,7 @@ std::vector<snowdesktop::widget_menu::Entry> WidgetEngine::ListAvailableMenuEntr
                 Utf8ToWide(manifest.description),
                 Utf8ToWide(manifest.publisher),
                 snowdesktop::widget::MeetsWidgetMinimumHostVersion(
-                    SNOWDESKTOP_VERSION, manifest.minHostVersion),
+                    snowdesktop::ApplicationVersion(), manifest.minHostVersion),
                 manifest.hasManifest};
         });
 }

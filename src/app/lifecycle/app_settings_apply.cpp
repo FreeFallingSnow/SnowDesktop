@@ -1,4 +1,5 @@
 #include "platform/force_restart_hotkey.h"
+#include "platform/application_version.h"
 #include "dock/dock_fullscreen_applications.h"
 #include "dock/dock_fullscreen_policy.h"
 #include "shell/shell_extension_service.h"
@@ -580,7 +581,7 @@ snowdesktop::settings::HomeAboutStatusPatch DesktopApp::BuildHomeAboutStatus(std
     // Pushes and snapshot-triggered reads share one sequence. Controller
     // revisions cannot order session-only changes such as temporary layouts.
     auto patch = homeAboutStatusSequence_.Next(generation);
-    patch.applicationVersion = Utf8ToWide(SNOWDESKTOP_VERSION);
+    patch.applicationVersion = Utf8ToWide(snowdesktop::ApplicationVersion());
     patch.installedWidgetCount = widgets_.size();
     patch.usageGuideExpanded = usageGuideExpanded_;
     patch.packaged = snowdesktop::deployment::IsPackaged();

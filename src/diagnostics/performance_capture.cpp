@@ -1,4 +1,5 @@
 #include "performance_capture.h"
+#include "platform/application_version.h"
 #include "performance_trace.h"
 #include "performance_trace_control.h"
 #include "performance_control_pipe.h"
@@ -30,10 +31,6 @@
 #include <stdexcept>
 #include <thread>
 #include <vector>
-
-#ifndef SNOWDESKTOP_VERSION
-#define SNOWDESKTOP_VERSION "test"
-#endif
 
 namespace snowdesktop::performance
 {
@@ -309,7 +306,7 @@ std::string Manifest(const Record& record, bool complete)
     out << "{\"schemaVersion\":2,\"probeSchemaVersion\":4,\"format\":\"perfetto\",\"sdkVersion\":\"v58.2\",\"sessionId\":" << Quote(record.snapshot.session)
         << ",\"generation\":" << record.snapshot.generation << ",\"requestId\":" << Quote(record.snapshot.requestId)
         << ",\"state\":" << Quote(complete ? "completed" : "failed") << ",\"completion\":" << (complete ? "true" : "false")
-        << ",\"errorCode\":" << Quote(record.snapshot.error) << ",\"hostVersion\":" << Quote(SNOWDESKTOP_VERSION)
+        << ",\"errorCode\":" << Quote(record.snapshot.error) << ",\"hostVersion\":" << Quote(snowdesktop::ApplicationVersion())
         << ",\"managedStorage\":" << (record.managedRoot.empty() ? "false" : "true")
         << ",\"finalWidgetSampleConfirmed\":" << (record.finalWidgetSample ? "true" : "false")
         << ",\"processId\":" << GetCurrentProcessId() << ",\"processRole\":" << Quote(ProcessRole(record.options.processRole)) << ",\"sourceCommit\":null,\"executableSha256\":"

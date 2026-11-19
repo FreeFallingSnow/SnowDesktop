@@ -4,6 +4,7 @@
  */
 
 #include "deployment_context.h"
+#include "platform/application_version.h"
 #include "injectable_runtime_cache.h"
 #include "hook_entry_deployment.h"
 #include "data/data_paths.h"
@@ -43,7 +44,6 @@ constexpr wchar_t kRuntimeDirectory[] = L"SnowDesktop.Runtime";
 constexpr wchar_t kTaskbarHookFilename[] = L"SnowDesktopTaskbarHook.dll";
 std::mutex injectableDeploymentMutex;
 constexpr wchar_t kRuntimeHookOwnerLockFilename[] = L".owner.lock";
-constexpr wchar_t kVersion[] = SNOWDESKTOP_WIDEN(SNOWDESKTOP_VERSION);
 constexpr wchar_t kStoreId[] = SNOWDESKTOP_WIDEN(SNOWDESKTOP_STORE_ID);
 constexpr wchar_t kPackageFamilyName[] =
     SNOWDESKTOP_WIDEN(SNOWDESKTOP_PACKAGE_FAMILY_NAME);
@@ -661,7 +661,7 @@ public:
         CleanupLegacyRuntimeRootsOnce(data);
         CleanupStaleRuntimeDirectories(copiesRoot_);
 
-        path_ = copiesRoot_ / (std::wstring(kVersion) + L"-" +
+        path_ = copiesRoot_ / (std::wstring(snowdesktop::ApplicationVersionWide()) + L"-" +
             std::to_wstring(GetCurrentProcessId()) + L"-" +
             std::to_wstring(GetTickCount64()));
         std::filesystem::create_directories(path_, error);

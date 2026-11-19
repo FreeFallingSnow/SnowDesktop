@@ -29,9 +29,9 @@ add_executable(snowwidget
 target_compile_features(snowwidget PRIVATE cxx_std_20)
 snowdesktop_add_executable_version_resource(snowwidget "SnowDesktop widget authoring tool")
 target_include_directories(snowwidget PRIVATE src)
-target_link_libraries(snowwidget PRIVATE SnowDesktopLua SnowDesktopPerfetto bcrypt ole32 pdh dxgi)
+target_link_libraries(snowwidget PRIVATE
+    SnowDesktopApplicationVersion SnowDesktopLua SnowDesktopPerfetto bcrypt ole32 pdh dxgi)
 target_compile_definitions(snowwidget PRIVATE
-    SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
     SNOWDESKTOP_WIDGET_SKILL_REVISION=${SNOWDESKTOP_WIDGET_SKILL_REVISION})
 if (MSVC)
     set_property(TARGET snowwidget PROPERTY

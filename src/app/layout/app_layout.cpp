@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "platform/application_version.h"
 #include "widgets/lua_stack.h"
 #include "diagnostics/debug_profile.h"
 #include "app/navigation/quick_navigation_state.h"
@@ -979,7 +980,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure, bool background)
             for (;;)
             {
                 const auto backup = snowdesktop::EnsureLargeIconUpgradeBackup(
-                    state, data, SNOWDESKTOP_VERSION, generation);
+                    state, data, snowdesktop::ApplicationVersion(), generation);
                 if (backup.ok)
                 {
                     largeIconUpgradeBackups_.insert(key);

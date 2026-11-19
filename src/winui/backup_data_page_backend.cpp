@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "platform/application_version.h"
 #include "settings/settings_controller_interface.h"
 
 #include "backup_data_page_backend.h"
@@ -129,15 +130,6 @@ std::wstring FormatFileTime(const std::filesystem::path& path)
     swprintf_s(buffer, L"%04u-%02u-%02u %02u:%02u",
         time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute);
     return buffer;
-}
-
-std::string DefaultHostVersion()
-{
-#ifdef SNOWDESKTOP_VERSION
-    return SNOWDESKTOP_VERSION;
-#else
-    return "unknown";
-#endif
 }
 
 BackendPaths ResolvePaths(const BackupDataPageBackendOptions& options)
@@ -837,7 +829,7 @@ struct BackupDataPageBackend::State final
           paths(ResolvePaths(options))
     {
         if (options.hostVersion.empty())
-            options.hostVersion = DefaultHostVersion();
+            options.hostVersion = snowdesktop::ApplicationVersion();
         if (options.sourceType.empty())
         {
             options.sourceType = snowdesktop::deployment::IsPackaged()

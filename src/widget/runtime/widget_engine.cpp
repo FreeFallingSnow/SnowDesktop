@@ -3,6 +3,7 @@
  * @brief Coordinates widget VM lifetimes and platform services.
  */
 #include "widget_engine.h"
+#include "platform/application_version.h"
 
 #include "common/l10n.h"
 #include "common/utils.h"
@@ -753,7 +754,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         return false;
     }
     if (!snowdesktop::widget::MeetsWidgetMinimumHostVersion(
-            SNOWDESKTOP_VERSION, pending.manifest.minHostVersion))
+            snowdesktop::ApplicationVersion(), pending.manifest.minHostVersion))
     {
         markDeterministicFailure();
         RuntimeRecordError(widgetId, "Widget requires SnowDesktop " +
