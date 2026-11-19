@@ -462,11 +462,16 @@ void DesktopApp::StartCollectionPopupAnimation(
         InvalidateDockRects();
     };
     const DesktopWidget* widget = GetOpenPopupWidget();
-    popupAnimation_.Configure(
-        fromFan || snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
-        snowdesktop::animation::RuntimeDurationScale() *
-            (fromFan ? 0.7 : (widget && UsesCollectionPopupFan(*widget) ? 2.4 : 1.0)),
-        !(widget && UsesCollectionPopupFan(*widget)));
+    // Reversing an expanded panel keeps the effect chosen when it began closing.
+    if (!(reverseClosingAnimation && popupFanShowAll_))
+    {
+        const bool fan = widget && UsesCollectionPopupFan(*widget);
+        popupAnimation_.Configure(
+            fromFan || snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
+            snowdesktop::animation::RuntimeDurationScale() *
+                (fromFan ? 0.7 : (fan ? 2.4 : 1.0)),
+            !fan);
+    }
     if (!reverseClosingAnimation)
     {
         popupAnimation_.ResetHidden();
@@ -733,7 +738,8 @@ void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
     marqueeDockFolderPopup_ = false;
     dockFolderPopupMarqueeInitialSelection_.clear();
 
-    if (snowdesktop::animation::RuntimePopupEffect() == 0)
+    const auto effect = snowdesktop::animation::RuntimePopupEffect();
+    if (effect == 0)
     {
         FinalizeCloseCollectionPopup();
         return;
@@ -748,9 +754,19 @@ void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
         ClearDesktopBehindCompositionAnimation(
             popupAnimationCacheRect_);
     }
-    popupAnimation_.Close(static_cast<std::uint64_t>(
-        snowdesktop::UiAnimationScheduler::
-            MonotonicMilliseconds()));
+    const auto now = static_cast<std::uint64_t>(
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
+    if (popupFanShowAll_)
+    {
+        // The short fan-to-panel fade is only for the view change. A close
+        // during that fade keeps its current opacity and full panel size.
+        popupAnimation_.Advance(now);
+        const bool fadingIn = popupAnimation_.IsAnimating() &&
+            popupAnimation_.GetVisual().opacity < 1.0f;
+        popupAnimation_.Configure(fadingIn || effect == snowdesktop::animation::Fade,
+            snowdesktop::animation::RuntimeDurationScale(), true);
+    }
+    popupAnimation_.Close(now);
     if (popupAnimation_.IsHidden())
     {
         FinalizeCloseCollectionPopup();
