@@ -2946,5 +2946,6 @@
   "app.settings.icon_shadow_exposed_widget": "ウィジェットに直接表示されるアイコン",
   "app.settings.icon_shadow_desktop": "デスクトップのアイコン",
   "app.settings.icon_shadow_popup": "ポップアップ内のアイコン",
-  "app.settings.icon_shadow_quick_navigation": "クイックナビゲーションのアイコン"
+  "app.settings.icon_shadow_quick_navigation": "クイックナビゲーションのアイコン",
+  "app.settings.icon_shadow_subject": "装飾アイコン本体の影"
 }

@@ -2946,5 +2946,6 @@
   "app.settings.icon_shadow_exposed_widget": "组件外露图标",
   "app.settings.icon_shadow_desktop": "桌面图标",
   "app.settings.icon_shadow_popup": "弹窗中的图标",
-  "app.settings.icon_shadow_quick_navigation": "快捷导航中的图标"
+  "app.settings.icon_shadow_quick_navigation": "快捷导航中的图标",
+  "app.settings.icon_shadow_subject": "美化主体阴影"
 }

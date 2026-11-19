@@ -2946,5 +2946,6 @@
   "app.settings.icon_shadow_exposed_widget": "元件直接顯示的圖示",
   "app.settings.icon_shadow_desktop": "桌面圖示",
   "app.settings.icon_shadow_popup": "彈出視窗中的圖示",
-  "app.settings.icon_shadow_quick_navigation": "快速導覽中的圖示"
+  "app.settings.icon_shadow_quick_navigation": "快速導覽中的圖示",
+  "app.settings.icon_shadow_subject": "美化主體陰影"
 }

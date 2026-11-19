@@ -2946,5 +2946,6 @@
   "app.settings.icon_shadow_exposed_widget": "Íconos visibles en los widgets",
   "app.settings.icon_shadow_desktop": "Íconos del escritorio",
   "app.settings.icon_shadow_popup": "Íconos en ventanas emergentes",
-  "app.settings.icon_shadow_quick_navigation": "Íconos en la navegación rápida"
+  "app.settings.icon_shadow_quick_navigation": "Íconos en la navegación rápida",
+  "app.settings.icon_shadow_subject": "Sombra de la figura del ícono embellecido"
 }

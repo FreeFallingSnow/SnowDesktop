@@ -2946,5 +2946,6 @@
   "app.settings.icon_shadow_exposed_widget": "Direkt sichtbare Widget-Symbole",
   "app.settings.icon_shadow_desktop": "Desktopsymbole",
   "app.settings.icon_shadow_popup": "Symbole in Pop-ups",
-  "app.settings.icon_shadow_quick_navigation": "Symbole in der Schnellnavigation"
+  "app.settings.icon_shadow_quick_navigation": "Symbole in der Schnellnavigation",
+  "app.settings.icon_shadow_subject": "Schatten des verschönerten Symbolmotivs"
 }

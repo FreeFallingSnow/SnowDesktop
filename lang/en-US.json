@@ -2946,5 +2946,6 @@
   "app.settings.icon_shadow_exposed_widget": "Exposed widget icons",
   "app.settings.icon_shadow_desktop": "Desktop icons",
   "app.settings.icon_shadow_popup": "Icons in pop-ups",
-  "app.settings.icon_shadow_quick_navigation": "Icons in Quick Navigation"
+  "app.settings.icon_shadow_quick_navigation": "Icons in Quick Navigation",
+  "app.settings.icon_shadow_subject": "Beautified icon subject shadow"
 }
