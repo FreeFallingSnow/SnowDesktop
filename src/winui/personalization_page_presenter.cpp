@@ -1890,9 +1890,9 @@ struct PersonalizationPagePresenter::Impl
         SetCardText(themeCard,
             "app.settings.global_theme", L"Global Theme");
         wcgHighlightCompensationRow.SetText(
-            L("settings.personalization.wcgHighlightCompensation", L"WCG highlight compensation"),
+            L("settings.personalization.wcgHighlightCompensation", L"Wide-gamut display compensation"),
             L("settings.personalization.wcgHighlightCompensation.hint",
-                L"Corrects blending for translucent highlights on wide-gamut displays."));
+                L"Reduces the washed-out appearance of translucent effects on wide-gamut displays."));
         muxa::AutomationProperties::SetName(wcgHighlightCompensation, wcgHighlightCompensationRow.label.Text());
         SetCardText(pinBorderCard, "settings.personalization.windowPinBorder", L"Pinned window border");
         pinBorderEnabledRow.SetText(L("settings.personalization.windowPinBorder.show", L"Show pinned window border"),

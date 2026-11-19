@@ -181,7 +181,11 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
     ComPtr<ID2D1Layer> layer;
     if (!clip || (FAILED(target->QueryInterface(IID_PPV_ARGS(&context))) &&
         FAILED(target->CreateLayer(nullptr, &layer)))) return;
-    const auto push = [&] { target->PushLayer(D2D1::LayerParameters(frame, clip.Get()), layer.Get()); };
+    std::optional<ScopedIconBackdropClip> highlightClip;
+    const auto push = [&] {
+        target->PushLayer(D2D1::LayerParameters(frame, clip.Get()), layer.Get());
+        highlightClip.emplace(target, view.frame, clip.Get());
+    };
     // Arbitrary silhouettes mask the material as well as the image. Preserve
     // the original rounded panel path and its edge treatment for old layouts.
     if (c.shape >= 2) push();
@@ -256,6 +260,7 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
     }
     DrawEdgeGlow(target, c, view, frame, radius);
     target->PopLayer();
+    highlightClip.reset();
     if (view.selected)
     {
         ComPtr<ID2D1SolidColorBrush> brush;

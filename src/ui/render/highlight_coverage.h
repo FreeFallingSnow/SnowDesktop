@@ -23,7 +23,7 @@ class HighlightCoverage
         D2D1_RECT_F destination{};
         D2D1_MATRIX_3X2_F transform{};
         std::optional<IconBackdropClip> clip;
-        std::shared_ptr<const ScrollContentOpacityMask> scrollOpacity;
+        std::shared_ptr<const ContentOpacityLayer> opacityLayer;
         float stroke = 0.f;
         std::optional<D2D1_COLOR_F> materialColor;
         bool compensated = true;
@@ -32,6 +32,13 @@ class HighlightCoverage
         D2D1_INTERPOLATION_MODE interpolation = D2D1_INTERPOLATION_MODE_LINEAR;
 
         bool IsMaterial() const noexcept { return materialColor || materialBitmap; }
+    };
+
+    struct VisibilityClip
+    {
+        Microsoft::WRL::ComPtr<ID2D1Geometry> geometry;
+        D2D1_MATRIX_3X2_F transform;
+        std::size_t drawCount;
     };
 
 public:
@@ -60,6 +67,36 @@ public:
     {
         const auto* scope = Find(target);
         return scope ? &scope->coverage_ : nullptr;
+    }
+
+    // An opaque foreground covers earlier highlights, including on fallback replay.
+    static void OccludePrevious(ID2D1RenderTarget* target, ID2D1Geometry* opaque,
+        const RECT& opaqueClip, const RECT& frame)
+    {
+        auto* scope = Find(target);
+        if (!scope || scope->coverage_.Empty() || !opaque || IsRectEmpty(&opaqueClip) || IsRectEmpty(&frame)) return;
+
+        Microsoft::WRL::ComPtr<ID2D1Factory> factory;
+        target->GetFactory(&factory);
+        const auto rectangle = [&](const RECT& rect) {
+            Microsoft::WRL::ComPtr<ID2D1RectangleGeometry> result;
+            (void)factory->CreateRectangleGeometry(D2D1::RectF(
+                static_cast<float>(rect.left), static_cast<float>(rect.top),
+                static_cast<float>(rect.right), static_cast<float>(rect.bottom)), &result);
+            return result;
+        };
+        const auto clip = rectangle(opaqueClip);
+        const auto bounds = rectangle(frame);
+        if (!clip || !bounds) return;
+        const auto covered = Combine(*factory.Get(), *opaque, *clip.Get(), D2D1_COMBINE_MODE_INTERSECT);
+        if (!covered) return;
+        auto visible = Combine(*factory.Get(), *bounds.Get(), *covered.Get(), D2D1_COMBINE_MODE_EXCLUDE);
+        if (!visible) return;
+
+        D2D1_MATRIX_3X2_F transform{};
+        target->GetTransform(&transform);
+        auto& coverage = scope->coverage_;
+        coverage.visibilityClips_.push_back({std::move(visible), transform, coverage.draws_.size()});
     }
 
     static bool ExtractSolidMask(ID2D1RenderTarget* target, ID2D1Bitmap* mask,
@@ -233,11 +270,61 @@ public:
         const auto offset = D2D1::Matrix3x2F::Translation(
             static_cast<float>(outputOrigin.x - sourceOrigin.x),
             static_cast<float>(outputOrigin.y - sourceOrigin.y));
-        std::unordered_map<const ScrollContentOpacityMask*, ScrollContentFadeCache> fadeBrushes;
-        const ScrollContentOpacityMask* activeFade = nullptr;
-        std::size_t fadeLayers = 0;
-        for (const auto& draw : draws_)
+        struct ActiveOpacityLayer { const ContentOpacityLayer* layer; bool pushed; };
+        std::unordered_map<const ContentOpacityLayer*, ScrollContentFadeCache> fadeBrushes;
+        std::vector<ActiveOpacityLayer> activeOpacity;
+        std::vector<const ContentOpacityLayer*> requiredOpacity;
+        const auto setOpacityLayers = [&](const ContentOpacityLayer* innerLayer) {
+            if ((activeOpacity.empty() ? nullptr : activeOpacity.back().layer) == innerLayer) return;
+            requiredOpacity.clear();
+            for (auto* layer = innerLayer; layer; layer = layer->parent.get())
+                requiredOpacity.push_back(layer);
+            std::reverse(requiredOpacity.begin(), requiredOpacity.end());
+
+            // Keep the shared outer groups so their opacity is applied once
+            // to the combined draws, even when an inner fade changes.
+            std::size_t shared = 0;
+            while (shared < activeOpacity.size() && shared < requiredOpacity.size() &&
+                activeOpacity[shared].layer == requiredOpacity[shared])
+                ++shared;
+            while (activeOpacity.size() > shared)
+            {
+                if (activeOpacity.back().pushed) target->PopLayer();
+                activeOpacity.pop_back();
+            }
+            for (std::size_t index = shared; index < requiredOpacity.size(); ++index)
+            {
+                const auto* layer = requiredOpacity[index];
+                auto* opacityBrush = layer->brush.Get();
+                if (const auto& fade = layer->scrollFade)
+                {
+                    auto& cache = fadeBrushes.try_emplace(layer).first->second;
+                    opacityBrush = cache.Resolve(target, layer->bounds, fade->leading, fade->trailing, fade->axis);
+                }
+                const bool push = !layer->scrollFade || opacityBrush;
+                activeOpacity.push_back({layer, push});
+                if (!push) continue;
+                target->SetTransform(*D2D1::Matrix3x2F::ReinterpretBaseType(&layer->transform) * offset);
+                target->PushLayer(D2D1::LayerParameters1(layer->bounds, nullptr,
+                    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::Matrix3x2F::Identity(), layer->opacity, opacityBrush), nullptr);
+            }
+        };
+        // Each clip covers a prefix of draws. Push the longest prefix first.
+        for (auto clip = visibilityClips_.rbegin(); clip != visibilityClips_.rend(); ++clip)
         {
+            target->SetTransform(*D2D1::Matrix3x2F::ReinterpretBaseType(&clip->transform) * offset);
+            target->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), clip->geometry.Get()), nullptr);
+        }
+        auto nextClip = visibilityClips_.begin();
+        for (std::size_t index = 0; index < draws_.size(); ++index)
+        {
+            while (nextClip != visibilityClips_.end() && nextClip->drawCount == index)
+            {
+                setOpacityLayers(nullptr);
+                target->PopLayer();
+                ++nextClip;
+            }
+            const auto& draw = draws_[index];
             if (pass == Pass::Coverage)
             {
                 if (!draw.compensated) continue;
@@ -245,25 +332,7 @@ public:
             }
             else if (draw.materialColor)
                 brush->SetColor(*draw.materialColor);
-            if (activeFade != draw.scrollOpacity.get())
-            {
-                while (fadeLayers > 0)
-                {
-                    target->PopLayer();
-                    --fadeLayers;
-                }
-                activeFade = draw.scrollOpacity.get();
-                for (auto* fade = activeFade; fade; fade = fade->parent.get())
-                {
-                    auto& cache = fadeBrushes.try_emplace(fade).first->second;
-                    auto* opacity = cache.Resolve(target, fade->bounds, fade->leading, fade->trailing, fade->axis);
-                    if (!opacity) continue;
-                    target->SetTransform(*D2D1::Matrix3x2F::ReinterpretBaseType(&fade->transform) * offset);
-                    target->PushLayer(D2D1::LayerParameters1(fade->bounds, nullptr,
-                        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::Matrix3x2F::Identity(), 1.0f, opacity), nullptr);
-                    ++fadeLayers;
-                }
-            }
+            setOpacityLayers(draw.opacityLayer.get());
             target->SetTransform(*D2D1::Matrix3x2F::ReinterpretBaseType(&draw.transform) * offset);
             std::size_t layers = 0;
             if (draw.clip)
@@ -301,12 +370,25 @@ public:
             for (std::size_t i = 0; i < layers; ++i) target->PopLayer();
             if (draw.clip) target->PopAxisAlignedClip();
         }
-        for (std::size_t i = 0; i < fadeLayers; ++i) target->PopLayer();
+        setOpacityLayers(nullptr);
+        for (; nextClip != visibilityClips_.end(); ++nextClip) target->PopLayer();
         target->SetTransform(D2D1::Matrix3x2F::Identity());
         return S_OK;
     }
 
 private:
+    static Microsoft::WRL::ComPtr<ID2D1PathGeometry> Combine(ID2D1Factory& factory,
+        ID2D1Geometry& subject, ID2D1Geometry& mask, D2D1_COMBINE_MODE mode)
+    {
+        Microsoft::WRL::ComPtr<ID2D1PathGeometry> path;
+        Microsoft::WRL::ComPtr<ID2D1GeometrySink> sink;
+        if (FAILED(factory.CreatePathGeometry(&path)) || FAILED(path->Open(&sink))) return {};
+        const HRESULT combined = subject.CombineWithGeometry(&mask, mode, nullptr, sink.Get());
+        const HRESULT closed = sink->Close();
+        if (FAILED(combined) || FAILED(closed)) return {};
+        return path;
+    }
+
     static D2D1_RECT_F TransformBounds(const D2D1_RECT_F& bounds, const D2D1::Matrix3x2F& transform)
     {
         const auto lt = transform.TransformPoint({bounds.left, bounds.top});
@@ -341,10 +423,11 @@ private:
         scope.target_->GetTransform(&draw.transform);
         draw.clip = ScopedIconBackdropClip::Current(scope.target_);
         if (draw.clip && IsRectEmpty(&draw.clip->bounds)) return;
-        draw.scrollOpacity = ScrollContentClip::CurrentOpacityMask(scope.target_);
+        draw.opacityLayer = ScopedContentOpacityLayer::Current(scope.target_);
         scope.coverage_.draws_.push_back(std::move(draw));
     }
 
     std::vector<Draw> draws_;
+    std::vector<VisibilityClip> visibilityClips_;
 };
 }

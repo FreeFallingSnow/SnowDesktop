@@ -18,6 +18,8 @@
 #include "platform/operation_feedback.h"
 #include "shell/shell_launch_process.h"
 #include "ui/menu/menu_fluent_glyphs.h"
+#include "ui/render/highlight_coverage.h"
+#include "ui/render/smooth_corner_geometry.h"
 #include <wincodec.h>
 #include <shobjidl.h>
 
@@ -869,12 +871,16 @@ void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
     {
         RECT popup = GetQuickNavigationListRowRect(0); popup.bottom = GetQuickNavigationListRowRect(count - 1).bottom;
         InflateRect(&popup, QuickNavScale(4), QuickNavScale(4));
-        // The menu overlays already-painted items on the same surface. An
-        // opaque backing keeps their icons and labels out of the menu rows.
+        const float radius = static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius));
         auto popupFill = ToD2DColor(theme.searchBg);
         popupFill.a = 1.f;
-        DrawD2DRoundedRectangle(context, popup, static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-            popupFill, ToD2DColor(theme.searchBorder, .45f));
+        const auto* highlights = snowdesktop::HighlightCoverage::Current(context);
+        if (highlights && highlights->HasExtractedMaterials())
+        {
+            const auto outline = snowdesktop::smooth_corners::Geometry(d2dFactory_.Get(), ToD2DRect(popup), radius);
+            snowdesktop::HighlightCoverage::OccludePrevious(context, outline.Get(), content, quickNavigation_->rect);
+        }
+        DrawD2DRoundedRectangle(context, popup, radius, popupFill, ToD2DColor(theme.searchBorder, .45f));
     }
     for (size_t i = 0; i < count; ++i)
     {
