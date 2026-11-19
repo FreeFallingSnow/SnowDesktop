@@ -27,14 +27,14 @@ struct Prepared
     {
         return (buffer.pixels.size() + edgeReflection.body.size() +
             edgeReflection.material.size()) * sizeof(std::uint32_t) +
-            edgeReflection.coverage.size();
+            edgeReflection.coverage.size() + edgeReflection.subjectShadow.size();
     }
 
     size_t CapacityBytes() const
     {
         return (buffer.pixels.capacity() + edgeReflection.body.capacity() +
             edgeReflection.material.capacity()) * sizeof(std::uint32_t) +
-            edgeReflection.coverage.capacity();
+            edgeReflection.coverage.capacity() + edgeReflection.subjectShadow.capacity();
     }
 };
 

@@ -1242,6 +1242,7 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
     const int destLeft = (width - destW) / 2;
     const int destTop = (height - destH) / 2;
 
+    if (layers) layers->subjectShadow.assign(output.size(), 0);
     constexpr std::array<std::tuple<int, int, int>, 7> passes{{
         {0,1,120},{-1,1,63},{1,1,63},{0,2,51},{-1,0,40},{1,0,40},{0,-1,29}
     }};
@@ -1262,8 +1263,15 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
                 const int py = oy + dy * rasterScale;
                 if (px < 0 || py < 0 || px >= width || py >= height) continue;
                 const size_t index = static_cast<size_t>(py) * width + px;
+                const int coverage = PixelA(sampled) * mask[index];
+                if (layers)
+                {
+                    const int alpha = (coverage * baseOpacity + 255 * 255 / 2) / (255 * 255);
+                    auto& exposed = layers->subjectShadow[index];
+                    exposed = static_cast<std::uint8_t>(alpha + (exposed * (255 - alpha) + 127) / 255);
+                }
                 const int opacity = static_cast<int>(std::round(baseOpacity * settings.shadowStrength));
-                const int alpha = (PixelA(sampled) * mask[index] * opacity +
+                const int alpha = (coverage * opacity +
                     255 * 255 / 2) / (255 * 255);
                 if (alpha > 0)
                     output[index] = SourceOver(PackPremultiplied(48, 58, 72, alpha), output[index]);
@@ -1284,8 +1292,17 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
                 SampleBilinear(source, width, height, sx, sy), settings),
                 mask[index]);
             output[index] = SourceOver(sampled, output[index]);
+            if (layers)
+            {
+                // Mask only the exposed plate, leaving the foreground mark untouched.
+                auto& exposed = layers->subjectShadow[index];
+                exposed = static_cast<std::uint8_t>((exposed * (255 - PixelA(sampled)) + 127) / 255);
+            }
         }
 
+    if (layers && std::none_of(layers->subjectShadow.begin(), layers->subjectShadow.end(),
+            [](std::uint8_t alpha) { return alpha != 0; }))
+        layers->subjectShadow.clear();
     ApplyTexture(output, width, height, settings, rasterScale);
     ApplyOutline(output, width, height, settings, rasterScale);
     ApplyEdgeReflection(output, width, height, settings, rasterScale, layers);

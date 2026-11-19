@@ -1133,6 +1133,7 @@ public:
                 snapshot.values.desktop.fanTitleFontSizeCu);
             app_.PreviewItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(
                 snapshot.values.desktop.itemFontWeight));
+            app_.SetIconShadows(snapshot.values.desktop.iconShadows);
             app_.SetIconBeautifySettings(
                 snapshot.values.desktop.iconBeautify,
                 snapshot.values.desktop.beautifyFileThumbnails,

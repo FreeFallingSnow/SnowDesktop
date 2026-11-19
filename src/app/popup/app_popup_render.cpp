@@ -552,7 +552,9 @@ void DesktopApp::DrawCollectionPopup(
                 static_cast<size_t>((popupScrollOffset_ + visibleHeight + stride - 1) / stride) * columns);
         }
     }
-    auto* iconRecorder = fan && iconShadows_.fan ? GetIconShadowRecorder() : nullptr;
+    const int fanStrength = iconShadows_.fan ? iconShadows_.fanStrength : 0;
+    const bool subjectWins = iconShadows_.SubjectStrength(fanStrength) > 0;
+    auto* iconRecorder = fan && fanStrength > 0 && !subjectWins ? GetIconShadowRecorder() : nullptr;
     ComPtr<ID2D1RectangleGeometry> fanViewportClip;
     const auto collectFanBackdrop = [&](ID2D1Bitmap* bitmap, const RECT& icon,
         const D2D1_MATRIX_3X2_F& pose, float opacity) {
@@ -641,7 +643,9 @@ void DesktopApp::DrawCollectionPopup(
         bool iconDrawn = false;
         if (iconRecorder)
         {
+            const bool compensate = NeedsIconShadowCompensation(pose.icon);
             const auto cacheKey = std::to_wstring(index) + L":" + std::to_wstring(popupMetrics.scale) +
+                L":" + std::to_wstring(iconShadows_.fanStrength) + (compensate ? L":wcg" : L":sdr") +
                 L":" + std::to_wstring(iconAppearanceRevision_) + L":" + std::to_wstring(iconCustomizationRevision_) +
                 L":" + std::wstring(iconIdentity);
             auto cached = popupFanIconDrawings_.find(cacheKey);
@@ -655,8 +659,10 @@ void DesktopApp::DrawCollectionPopup(
                 snowdesktop::icon_shadow::Drawing drawing;
                 const RECT localIcon{0, 0, pose.icon.right - pose.icon.left,
                     pose.icon.bottom - pose.icon.top};
-                if (snowdesktop::icon_shadow::Record(ctx, iconRecorder, localIcon, popupMetrics.scale,
-                        [&](auto* recorder) { drawIcon(recorder, localIcon); }, drawing, true))
+                const snowdesktop::icon_shadow::Style shadowStyle{
+                    popupMetrics.scale, iconShadows_.fanStrength / 100.0f, compensate, true};
+                if (snowdesktop::icon_shadow::Record(ctx, iconRecorder, localIcon, shadowStyle,
+                        [&](auto* recorder) { drawIcon(recorder, localIcon); }, drawing))
                     cached = popupFanIconDrawings_.emplace(cacheKey, std::move(drawing)).first;
             }
             if (cached != popupFanIconDrawings_.end())
@@ -670,7 +676,11 @@ void DesktopApp::DrawCollectionPopup(
                 iconDrawn = true;
             }
         }
-        if (!iconDrawn) drawIcon(ctx, pose.icon);
+        if (!iconDrawn)
+        {
+            DrawIconWithShadows(ctx, pose.icon, popupMetrics.scale, fanStrength,
+                [&](auto* drawing) { drawIcon(drawing, pose.icon); });
+        }
         const RECT textRect = layout::FanLabelTextRect(pose.label, popupMetrics.scale);
         const auto text = GetCollectionPopupFanLabel(index);
         auto* labelLayout = GetCollectionPopupFanTextLayout(text,

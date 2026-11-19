@@ -175,6 +175,14 @@ struct Document
     std::optional<bool> iconShadowDesktop;
     std::optional<bool> iconShadowPopup;
     std::optional<bool> iconShadowQuickNavigation;
+    std::optional<bool> iconShadowSubject;
+    std::optional<int> iconShadowFanStrength;
+    std::optional<int> iconShadowDockStrength;
+    std::optional<int> iconShadowExposedWidgetStrength;
+    std::optional<int> iconShadowDesktopStrength;
+    std::optional<int> iconShadowPopupStrength;
+    std::optional<int> iconShadowQuickNavigationStrength;
+    std::optional<int> iconShadowSubjectStrength;
     std::optional<int> iconBeautifyPreset;
     std::optional<bool> iconBeautifyGlassEnabled;
     std::optional<float> iconBeautifyGlassBlurRadius;

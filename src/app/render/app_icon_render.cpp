@@ -6,6 +6,7 @@
 #include "data/data_paths.h"
 #include "diagnostics/performance_trace.h"
 #include "icons/icon_render_rules.h"
+#include "desktop/display_color_mode.h"
 #include "icons/icon_loading_placeholder.h"
 #include "ui/render/highlight_coverage.h"
 #include "platform/demo_mode_rules.h"
@@ -22,10 +23,19 @@ ID2D1DeviceContext* DesktopApp::GetIconShadowRecorder()
     return iconShadowRecorder_.Get();
 }
 
-void DesktopApp::DrawIconShadow(ID2D1RenderTarget* target, RECT bounds, float scale,
-    const std::function<void(ID2D1DeviceContext*)>& drawIcon)
+bool DesktopApp::NeedsIconShadowCompensation(RECT bounds) const
 {
-    if (!target || drawingIconAppearanceSource_ || target == iconShadowRecorder_.Get() ||
+    const POINT screenPoint{
+        virtualLeft_ + bounds.left + (bounds.right - bounds.left) / 2,
+        virtualTop_ + bounds.top + (bounds.bottom - bounds.top) / 2};
+    return snowdesktop::display_color::UseHighlightCompensation(
+        MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST));
+}
+
+void DesktopApp::DrawIconShadow(ID2D1RenderTarget* target, RECT bounds, float scale, int strength,
+    int subjectStrength, const std::function<void(ID2D1DeviceContext*)>& drawIcon)
+{
+    if (!target || strength <= 0 || drawingIconAppearanceSource_ || target == iconShadowRecorder_.Get() ||
         IsRectEmpty(&bounds))
         return;
 
@@ -37,8 +47,11 @@ void DesktopApp::DrawIconShadow(ID2D1RenderTarget* target, RECT bounds, float sc
 
     auto* recorder = GetIconShadowRecorder();
     snowdesktop::icon_shadow::Drawing drawing;
+    const snowdesktop::icon_shadow::Style style{
+        scale, strength / 100.0f, NeedsIconShadowCompensation(bounds)};
+    snowdesktop::icon_shadow::SubjectScope probe(recorder, subjectStrength, true);
     if (recorder && snowdesktop::icon_shadow::Record(
-            context.Get(), recorder, bounds, scale, drawIcon, drawing))
+            context.Get(), recorder, bounds, style, drawIcon, drawing) && !probe.Used())
         snowdesktop::icon_shadow::Draw(context.Get(), drawing, bounds, scale);
 }
 
@@ -658,13 +671,10 @@ void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
 void DesktopApp::DrawQuickNavResultBitmap(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap, RECT bounds)
 {
     if (!bitmap) return;
-    if (iconShadows_.quickNavigation)
-    {
-        DrawIconShadow(target, bounds, QuickNavScale(100) / 100.0f, [&](auto* drawing) {
+    DrawIconWithShadows(target, bounds, QuickNavScale(100) / 100.0f,
+        iconShadows_.NavigationStrength(), [&](auto* drawing) {
             DrawIconBitmap(drawing, bitmap, bounds);
         });
-    }
-    DrawIconBitmap(target, bitmap, bounds);
 }
 
 void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT dstRect)

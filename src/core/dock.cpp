@@ -2543,9 +2543,8 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                     logoLeft + logoSize, logoTop + logoSize), windowsBrush.Get());
             }
         };
-        if (app_->iconShadows_.dock)
-            app_->DrawIconShadow(context, background, app_->GetItemLayoutScale(background), drawIcon);
-        drawIcon(context);
+        app_->DrawIconWithShadows(context, background, app_->GetItemLayoutScale(background),
+            app_->iconShadows_.DockStrength(), drawIcon);
     }
 
     const RECT search = GetSearchRect();
@@ -2885,9 +2884,8 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                     brush.Get(), searchStroke, roundedStroke.Get());
             }
         };
-        if (app_->iconShadows_.dock)
-            app_->DrawIconShadow(context, searchBackground, app_->GetItemLayoutScale(searchBackground), drawIcon);
-        drawIcon(context);
+        app_->DrawIconWithShadows(context, searchBackground, app_->GetItemLayoutScale(searchBackground),
+            app_->iconShadows_.DockStrength(), drawIcon);
     }
 }
 

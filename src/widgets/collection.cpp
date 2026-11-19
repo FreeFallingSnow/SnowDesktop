@@ -389,9 +389,8 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
             app_->DrawShortcutArrowOverlay(drawing, iconRect, 1.0f);
         }
     };
-    if (IsPopupHosted() ? app_->iconShadows_.popup : app_->iconShadows_.exposedWidget)
-        app_->DrawIconShadow(context, iconRect, app_->GetItemLayoutScale(rect), drawIcon);
-    drawIcon(context);
+    app_->DrawIconWithShadows(context, iconRect, app_->GetItemLayoutScale(rect),
+        IsPopupHosted() ? app_->iconShadows_.PopupStrength() : app_->iconShadows_.WidgetStrength(), drawIcon);
 }
 
 bool Collection::DrawTitlelessTooltip(ID2D1DeviceContext* context,

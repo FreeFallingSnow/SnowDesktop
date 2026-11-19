@@ -552,6 +552,16 @@ ComPtr<ID2D1Bitmap1> DesktopApp::UploadStyledIconPixels(
                 material.Get(), coverage.Get());
         }
     }
+    const auto& subject = prepared.edgeReflection.subjectShadow;
+    if (!subject.empty())
+    {
+        const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
+            D2D1::PixelFormat(DXGI_FORMAT_A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        ComPtr<ID2D1Bitmap1> mask;
+        if (SUCCEEDED(d2dContext_->CreateBitmap(bitmap->GetPixelSize(), subject.data(),
+                static_cast<UINT32>(buffer.width), &properties, &mask)))
+            snowdesktop::icon_shadow::AttachSubjectMask(bitmap.Get(), mask.Get());
+    }
     return bitmap;
 }
 
@@ -645,6 +655,7 @@ void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
         style.enabled && style.glassEnabled;
     if (translucentMaterial) RegisterIconBackdrop(target, plan.bounds, opacity, ownerKey, &style);
     snowdesktop::icon_bitmap_renderer::Draw(target, bitmap, plan, opacity, translucentMaterial);
+    snowdesktop::icon_shadow::SubjectScope::Draw(target, bitmap, ToD2DRect(plan.bounds), opacity);
 }
 
 void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,

@@ -225,10 +225,13 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
     const bool shadow = inPopup ? app_->iconShadows_.popup
         : widget ? app_->iconShadows_.exposedWidget
                  : (app_->iconShadows_.desktop && dynamic_cast<DesktopGrid*>(container_));
-    if (quickNavLayout ? app_->iconShadows_.quickNavigation : shadow)
-        app_->DrawIconShadow(context, iconRect,
-            quickNavLayout ? app_->QuickNavScale(100) / 100.0f : app_->GetItemLayoutScale(rect), drawIcon);
-    drawIcon(context);
+    const bool enabled = quickNavLayout ? app_->iconShadows_.quickNavigation : shadow;
+    const int strength = quickNavLayout ? app_->iconShadows_.quickNavigationStrength
+        : inPopup ? app_->iconShadows_.popupStrength
+                  : widget ? app_->iconShadows_.exposedWidgetStrength : app_->iconShadows_.desktopStrength;
+    app_->DrawIconWithShadows(context, iconRect,
+        quickNavLayout ? app_->QuickNavScale(100) / 100.0f : app_->GetItemLayoutScale(rect),
+        enabled ? strength : 0, drawIcon);
 
     if (!dragged && drawText)
         DrawTitle(context, rect, selected, alpha, lightTheme, demoCollection);
@@ -417,10 +420,13 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
     };
     const bool shadow = widget &&
         (widget->IsPopupHosted() ? app_->iconShadows_.popup : app_->iconShadows_.exposedWidget);
-    if (quickNavLayout ? app_->iconShadows_.quickNavigation : shadow)
-        app_->DrawIconShadow(context, iconRect,
-            quickNavLayout ? app_->QuickNavScale(100) / 100.0f : app_->GetItemLayoutScale(rect), drawIcon);
-    drawIcon(context);
+    const bool enabled = quickNavLayout ? app_->iconShadows_.quickNavigation : shadow;
+    const int strength = quickNavLayout ? app_->iconShadows_.quickNavigationStrength
+        : widget && widget->IsPopupHosted() ? app_->iconShadows_.popupStrength
+                                           : app_->iconShadows_.exposedWidgetStrength;
+    app_->DrawIconWithShadows(context, iconRect,
+        quickNavLayout ? app_->QuickNavScale(100) / 100.0f : app_->GetItemLayoutScale(rect),
+        enabled ? strength : 0, drawIcon);
 
     if (!dragged && drawText)
         DrawTitle(context, rect, selected, opacity, lightTheme);

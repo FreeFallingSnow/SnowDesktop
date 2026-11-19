@@ -118,7 +118,9 @@ SD_IPC_FIELDS(IconBeautifySettings,
     v.filterStrength, v.filterTintR, v.filterTintG, v.filterTintB,
     v.outlineEnabled, v.outlineWidth, v.outlineOpacity, v.outlineR,
     v.outlineG, v.outlineB, v.shadowStrength, v.backgroundSource, v.backgroundGradient, v.filterMode);
-SD_IPC_FIELDS(IconShadowSettings, v.fan, v.dock, v.exposedWidget, v.desktop, v.popup, v.quickNavigation);
+SD_IPC_FIELDS(IconShadowSettings, v.fan, v.dock, v.exposedWidget, v.desktop, v.popup, v.quickNavigation, v.subject,
+    v.fanStrength, v.dockStrength, v.exposedWidgetStrength, v.desktopStrength, v.popupStrength, v.quickNavigationStrength,
+    v.subjectStrength);
 SD_IPC_FIELDS(DesktopDisplaySettings,
     v.dockEnabled, v.iconSpacingScale,
     v.scrollingIconSpacingYScale, v.listRowSpacingScale,

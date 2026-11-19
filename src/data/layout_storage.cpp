@@ -810,6 +810,21 @@ bool DecodeDocument(const JsonValue& root, Document& document,
         !ReadOptionalRootBoolean(root, "iconShadowDesktop", decoded.iconShadowDesktop, error) ||
         !ReadOptionalRootBoolean(root, "iconShadowPopup", decoded.iconShadowPopup, error) ||
         !ReadOptionalRootBoolean(root, "iconShadowQuickNavigation", decoded.iconShadowQuickNavigation, error) ||
+        !ReadOptionalRootBoolean(root, "iconShadowSubject", decoded.iconShadowSubject, error) ||
+        !ReadOptionalInteger(root, "iconShadowFanStrength", "iconShadowFanStrength",
+            decoded.iconShadowFanStrength, error) ||
+        !ReadOptionalInteger(root, "iconShadowDockStrength", "iconShadowDockStrength",
+            decoded.iconShadowDockStrength, error) ||
+        !ReadOptionalInteger(root, "iconShadowExposedWidgetStrength", "iconShadowExposedWidgetStrength",
+            decoded.iconShadowExposedWidgetStrength, error) ||
+        !ReadOptionalInteger(root, "iconShadowDesktopStrength", "iconShadowDesktopStrength",
+            decoded.iconShadowDesktopStrength, error) ||
+        !ReadOptionalInteger(root, "iconShadowPopupStrength", "iconShadowPopupStrength",
+            decoded.iconShadowPopupStrength, error) ||
+        !ReadOptionalInteger(root, "iconShadowQuickNavigationStrength", "iconShadowQuickNavigationStrength",
+            decoded.iconShadowQuickNavigationStrength, error) ||
+        !ReadOptionalInteger(root, "iconShadowSubjectStrength", "iconShadowSubjectStrength",
+            decoded.iconShadowSubjectStrength, error) ||
         !ReadOptionalBoolean(root, "iconBeautifyGlassEnabled", "iconBeautifyGlassEnabled",
             decoded.iconBeautifyGlassEnabled, error) ||
         !ReadOptionalFloat(root, "iconBeautifyGlassBlurRadius", "iconBeautifyGlassBlurRadius",

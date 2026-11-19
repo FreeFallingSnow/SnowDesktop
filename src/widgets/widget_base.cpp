@@ -657,9 +657,8 @@ void WidgetContainer::DrawSingleCellContents(ID2D1DeviceContext* context, RECT b
                     entry.folder ? entry.folder->isApplicationShortcut : entry.desktop->isApplicationShortcut))
                 app_->DrawShortcutArrowOverlay(drawing, icon, 1.0f);
         };
-        if (IsPopupHosted() ? app_->iconShadows_.popup : app_->iconShadows_.exposedWidget)
-            app_->DrawIconShadow(context, icon, app_->GetItemLayoutScale(tile), drawIcon);
-        drawIcon(context);
+        app_->DrawIconWithShadows(context, icon, app_->GetItemLayoutScale(tile),
+            IsPopupHosted() ? app_->iconShadows_.PopupStrength() : app_->iconShadows_.WidgetStrength(), drawIcon);
     }
 }
 
@@ -2868,9 +2867,8 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
             app_->DrawPlaceholderIcon(drawing, sysIconIndex, iconRect, iconOpacity);
         }
     };
-    if (IsPopupHosted() ? app_->iconShadows_.popup : app_->iconShadows_.exposedWidget)
-        app_->DrawIconShadow(context, iconRect, GetCellScale(), drawIcon);
-    drawIcon(context);
+    app_->DrawIconWithShadows(context, iconRect, GetCellScale(),
+        IsPopupHosted() ? app_->iconShadows_.PopupStrength() : app_->iconShadows_.WidgetStrength(), drawIcon);
 
     const std::wstring title = demoIdentity.empty()
         ? name
@@ -2953,13 +2951,9 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
     (void)name;
 
     const auto drawIcon = [&](RECT icon) {
-        if (IsPopupHosted() ? app_->iconShadows_.popup : app_->iconShadows_.exposedWidget)
-        {
-            app_->DrawIconShadow(context, icon, GetCellScale(), [&](auto* drawing) {
-                app_->DrawPrivacyFaIcon(drawing, icon, isDir);
-            });
-        }
-        app_->DrawPrivacyFaIcon(context, icon, isDir);
+        app_->DrawIconWithShadows(context, icon, GetCellScale(),
+            IsPopupHosted() ? app_->iconShadows_.PopupStrength() : app_->iconShadows_.WidgetStrength(),
+            [&](auto* drawing) { app_->DrawPrivacyFaIcon(drawing, icon, isDir); });
     };
 
     const std::wstring label = isDir ? _LW("widget.base.folder_type") : _LW("widget.base.file_type");

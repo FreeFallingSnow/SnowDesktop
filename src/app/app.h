@@ -2861,8 +2861,18 @@ private:
     bool ImportLargeIconLibraryAsset(const snowdesktop::LargeIconSettingsRequest& request);
     ID2D1Bitmap* GetDockCustomIcon(ID2D1RenderTarget* context, const std::string& id, int pixels, std::wstring_view identity = {});
     ID2D1DeviceContext* GetIconShadowRecorder();
-    void DrawIconShadow(ID2D1RenderTarget* target, RECT bounds, float scale,
-        const std::function<void(ID2D1DeviceContext*)>& drawIcon);
+    bool NeedsIconShadowCompensation(RECT bounds) const;
+    void DrawIconShadow(ID2D1RenderTarget* target, RECT bounds, float scale, int strength,
+        int subjectStrength, const std::function<void(ID2D1DeviceContext*)>& drawIcon);
+    template<class Target, class DrawIcon>
+    void DrawIconWithShadows(Target* target, RECT bounds, float scale, int strength, const DrawIcon& drawIcon)
+    {
+        const int subject = drawingIconAppearanceSource_ ? 0 : iconShadows_.SubjectStrength(strength);
+        if (strength > 0)
+            DrawIconShadow(target, bounds, scale, strength, subject, drawIcon);
+        snowdesktop::icon_shadow::SubjectScope subjectScope(target, subject);
+        drawIcon(target);
+    }
     void DrawIconBitmap(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap,
         RECT destination, float opacity = 1.0f,
         std::uintptr_t ownerKey = 0, bool preserveAspectRatio = true);

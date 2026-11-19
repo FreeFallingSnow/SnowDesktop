@@ -241,7 +241,16 @@ void DesktopApp::LoadLayoutSlots()
         document.iconShadowDesktop.value_or(shadowDefaults.desktop),
         document.iconShadowPopup.value_or(shadowDefaults.popup),
         document.iconShadowQuickNavigation.value_or(shadowDefaults.quickNavigation),
+        document.iconShadowSubject.value_or(shadowDefaults.subject),
+        document.iconShadowFanStrength.value_or(shadowDefaults.fanStrength),
+        document.iconShadowDockStrength.value_or(shadowDefaults.dockStrength),
+        document.iconShadowExposedWidgetStrength.value_or(shadowDefaults.exposedWidgetStrength),
+        document.iconShadowDesktopStrength.value_or(shadowDefaults.desktopStrength),
+        document.iconShadowPopupStrength.value_or(shadowDefaults.popupStrength),
+        document.iconShadowQuickNavigationStrength.value_or(shadowDefaults.quickNavigationStrength),
+        document.iconShadowSubjectStrength.value_or(shadowDefaults.subjectStrength),
     };
+    iconShadows_.Normalize();
 
     // Missing beautification fields are the compatibility path for old layouts.
     iconBeautifySettings_ = document.iconBeautifyPreset
@@ -1126,6 +1135,14 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure, bool background)
          << ",\n  \"iconShadowDesktop\": " << (iconShadows_.desktop ? "true" : "false")
          << ",\n  \"iconShadowPopup\": " << (iconShadows_.popup ? "true" : "false")
          << ",\n  \"iconShadowQuickNavigation\": " << (iconShadows_.quickNavigation ? "true" : "false")
+         << ",\n  \"iconShadowSubject\": " << (iconShadows_.subject ? "true" : "false")
+         << ",\n  \"iconShadowFanStrength\": " << iconShadows_.fanStrength
+         << ",\n  \"iconShadowDockStrength\": " << iconShadows_.dockStrength
+         << ",\n  \"iconShadowExposedWidgetStrength\": " << iconShadows_.exposedWidgetStrength
+         << ",\n  \"iconShadowDesktopStrength\": " << iconShadows_.desktopStrength
+         << ",\n  \"iconShadowPopupStrength\": " << iconShadows_.popupStrength
+         << ",\n  \"iconShadowQuickNavigationStrength\": " << iconShadows_.quickNavigationStrength
+         << ",\n  \"iconShadowSubjectStrength\": " << iconShadows_.subjectStrength
          << ",\n  \"iconBeautifyPreset\": " << static_cast<int>(iconBeautifySettings_.preset)
          << ",\n  \"iconBeautifyGlassEnabled\": " << (iconBeautifySettings_.glassEnabled ? "true" : "false")
          << ",\n  \"iconBeautifyGlassBlurRadius\": " << iconBeautifySettings_.glassBlurRadius

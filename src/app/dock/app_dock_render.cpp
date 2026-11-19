@@ -244,9 +244,10 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     const bool lt = (CurrentDockAppearance(dockMonitor).contentTheme == 1);
 
     const auto drawDockIcon = [&](RECT bounds, const auto& drawIcon) {
-        if (iconShadows_.dock && !previewScene)
-            DrawIconShadow(ctx, bounds, GetItemLayoutScale(bounds), drawIcon);
-        drawIcon(ctx);
+        if (previewScene)
+            drawIcon(ctx);
+        else
+            DrawIconWithShadows(ctx, bounds, GetItemLayoutScale(bounds), iconShadows_.DockStrength(), drawIcon);
     };
     auto drawDesktopItem = [&](ID2D1DeviceContext* drawing, const DesktopItem& item, RECT target,
         const DesktopWidget* demoCollection = nullptr) {
@@ -611,9 +612,7 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         else
             DrawPlaceholderIcon(drawing, -1, iconRect, presence, true);
     };
-    if (iconShadows_.dock)
-        DrawIconShadow(ctx, iconRect, GetItemLayoutScale(iconRect), drawIcon);
-    drawIcon(ctx);
+    DrawIconWithShadows(ctx, iconRect, GetItemLayoutScale(iconRect), iconShadows_.DockStrength(), drawIcon);
     if (dockWindowAttention_.HasAny(app.window, app.trackedWindows))
         DrawDockAttentionDot(ctx, iconRect, presence);
     if (state == 2)

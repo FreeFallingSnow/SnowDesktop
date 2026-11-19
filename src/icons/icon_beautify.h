@@ -190,6 +190,7 @@ struct EdgeReflectionLayers
     std::vector<std::uint32_t> body;
     std::vector<std::uint32_t> material;
     std::vector<std::uint8_t> coverage;
+    std::vector<std::uint8_t> subjectShadow;
 };
 
 std::vector<std::uint32_t> Render(

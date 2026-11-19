@@ -1266,11 +1266,18 @@ void DesktopApp::SetIconBeautifyEnabled(bool enabled)
 
 void DesktopApp::SetIconShadows(snowdesktop::IconShadowSettings settings)
 {
+    settings.Normalize();
     if (settings == iconShadows_) return;
 
-    const bool dockChanged = settings.dock != iconShadows_.dock;
-    const bool popupChanged = settings.fan != iconShadows_.fan || settings.popup != iconShadows_.popup;
-    const bool navigationChanged = settings.quickNavigation != iconShadows_.quickNavigation;
+    const bool subjectChanged = settings.subject != iconShadows_.subject ||
+        settings.subjectStrength != iconShadows_.subjectStrength;
+    const bool dockChanged = subjectChanged || settings.dock != iconShadows_.dock ||
+        settings.dockStrength != iconShadows_.dockStrength;
+    const bool popupChanged = subjectChanged || settings.fan != iconShadows_.fan ||
+        settings.fanStrength != iconShadows_.fanStrength || settings.popup != iconShadows_.popup ||
+        settings.popupStrength != iconShadows_.popupStrength;
+    const bool navigationChanged = subjectChanged || settings.quickNavigation != iconShadows_.quickNavigation ||
+        settings.quickNavigationStrength != iconShadows_.quickNavigationStrength;
     iconShadows_ = settings;
     InvalidateDragStaticScene();
     if (hwnd_)

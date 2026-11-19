@@ -1551,9 +1551,8 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                         const auto drawIcon = [&](auto* drawing) {
                             DrawDemoIdentityIcon(drawing, entry.parsingName, iconRect);
                         };
-                        if (iconShadows_.quickNavigation)
-                            DrawIconShadow(ctx.Get(), iconRect, QuickNavScale(100) / 100.0f, drawIcon);
-                        drawIcon(ctx.Get());
+                        DrawIconWithShadows(ctx.Get(), iconRect, QuickNavScale(100) / 100.0f,
+                            iconShadows_.NavigationStrength(), drawIcon);
                     }
                     else
                         DrawQuickNavAppIcon(

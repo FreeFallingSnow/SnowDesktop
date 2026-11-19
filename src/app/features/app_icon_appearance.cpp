@@ -435,9 +435,7 @@ bool DesktopApp::DrawIndependentDockIcon(ID2D1DeviceContext* ctx, const DockEntr
         // Badges belong to the entry and stay outside the beautified source.
         if (IsGroupDockEntryType(entry.type)) DrawDockGroupBadge(drawing, target);
     };
-    if (iconShadows_.dock)
-        DrawIconShadow(ctx, target, GetItemLayoutScale(target), drawIcon);
-    drawIcon(ctx);
+    DrawIconWithShadows(ctx, target, GetItemLayoutScale(target), iconShadows_.DockStrength(), drawIcon);
     if (state == 2) DrawDockSelectionIndicator(ctx, target, CurrentDockAppearance().contentTheme == 1);
     return true;
 }
