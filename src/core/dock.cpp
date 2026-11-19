@@ -21,6 +21,7 @@
 #include "common/l10n.h"
 #include "layout/item_location.h"
 #include "ui/render/icon_backdrop_clip.h"
+#include "ui/render/scroll_content_clip.h"
 #include "ui/render/smooth_corner_geometry.h"
 #include "ui/render/ui_animation_scheduler.h"
 
@@ -2582,7 +2583,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     const bool hasTrailingOverflow =
         hasOverflow && scrollOffset_ < maxScrollOffset;
     ComPtr<ID2D1LinearGradientBrush> overflowMask;
-    bool overflowMaskPushed = false;
+    std::optional<snowdesktop::ScopedContentOpacityLayer> overflowMaskLayer;
     if (hasLeadingOverflow || hasTrailingOverflow)
     {
         const int viewportExtent = std::max(0, IsVertical()
@@ -2648,12 +2649,8 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                         stopCollection.Get(), &overflowMask)) &&
                     overflowMask)
                 {
-                    context->PushLayer(D2D1::LayerParameters(
-                        scrollVisualViewportF, nullptr,
-                        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
-                        D2D1::Matrix3x2F::Identity(), 1.0f,
-                        overflowMask.Get()), nullptr);
-                    overflowMaskPushed = true;
+                    overflowMaskLayer.emplace(
+                        context, scrollVisualViewportF, 1.0f, overflowMask.Get());
                 }
             }
         }
@@ -2800,7 +2797,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         }
     };
     drawBoundaries(true);
-    if (overflowMaskPushed) context->PopLayer();
+    overflowMaskLayer.reset();
     if (scrollClipPushed) context->PopAxisAlignedClip();
     scrollGlassClip.reset();
 

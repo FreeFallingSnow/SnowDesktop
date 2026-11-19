@@ -1,4 +1,5 @@
 #include "ui/render/app_font.h"
+#include "ui/render/icon_backdrop_clip.h"
 #include "status_bar_view.h"
 #include "diagnostics/performance_trace.h"
 #include "status_bar_glyphs.h"
@@ -1251,6 +1252,7 @@ void DrawStatusBarEdge(ID2D1DeviceContext* context, RECT frame, const Personaliz
             position == DockPosition::Right ? HighlightEdge::Left : HighlightEdge::Bottom;
         for (const auto& segment : segments)
         {
+            const ScopedIconBackdropClip highlightClip(context, segment);
             context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(segment.left), static_cast<float>(segment.top),
                 static_cast<float>(segment.right), static_cast<float>(segment.bottom)), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
             (void)widget_preview::DrawEdgeHighlight(context, frame, 0,
