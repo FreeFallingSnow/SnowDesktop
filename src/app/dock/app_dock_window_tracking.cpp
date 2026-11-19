@@ -5,6 +5,7 @@
 #include "platform/runtime_module_policy.h"
 #include "diagnostics/diagnostic_log.h"
 #include "common/utils.h"
+#include "icons/shell_icon_bitmap.h"
 #include "icons/icon_render_rules.h"
 #include "app/dock/persistent_dock_host.h"
 #include "dock/dock_settings.h"

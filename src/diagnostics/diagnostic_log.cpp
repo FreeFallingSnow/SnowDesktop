@@ -15,7 +15,7 @@ try
     std::scoped_lock lock(logMutex);
 
     constexpr LONGLONG kMaximumLogBytes = 1024 * 1024;
-    std::wstring filename = GetDataFilePath(L"SnowDesktop.log");
+    std::wstring filename = snowdesktop::data_paths::GetDiagnosticLogPath();
     const auto fallback = [&]() {
         wchar_t temporary[MAX_PATH + 1]{};
         const DWORD count = GetTempPathW(MAX_PATH, temporary);

@@ -8,7 +8,7 @@
 #include "desktop/desktop_source.h"
 #include "data_path_policy.h"
 #include "executable_path.h"
-#include "platform/deployment_context.h"
+#include "platform/deployment_identity.h"
 #include "portable_data_migration.h"
 
 #include <windows.h>
@@ -121,6 +121,7 @@ std::wstring GetExecutableDirectoryPath()
 
 namespace
 {
+constexpr wchar_t kDiagnosticLogFilename[] = L"SnowDesktop.log";
 std::wstring isolatedAuthoringDataRoot;
 
 snowdesktop::data_paths::RuntimeDataPathPolicy ResolveActivePolicy(
@@ -182,11 +183,10 @@ std::wstring GetDataDirectoryPath()
     return dataDir;
 }
 
-std::wstring GetDataFilePath(const wchar_t* filename)
+namespace
 {
-    if (!LooksLikeBareName(filename))
-        return filename ? std::wstring(filename) : std::wstring();
-
+std::wstring PrepareDataFilePath(const wchar_t* filename)
+{
     const std::filesystem::path packageLocalState =
         snowdesktop::deployment::GetPackageLocalStatePath();
     const auto& context =
@@ -202,6 +202,19 @@ std::wstring GetDataFilePath(const wchar_t* filename)
         MigratePathIfNeeded(legacyPath, currentPath);
     }
     return currentPath;
+}
+}
+
+std::wstring GetDataFilePath(const wchar_t* filename)
+{
+    if (!LooksLikeBareName(filename))
+        return filename ? std::wstring(filename) : std::wstring();
+    return PrepareDataFilePath(filename);
+}
+
+std::wstring snowdesktop::data_paths::GetDiagnosticLogPath()
+{
+    return PrepareDataFilePath(kDiagnosticLogFilename);
 }
 
 std::wstring GetDataSubdirectoryPath(const wchar_t* dirname)
@@ -255,7 +268,7 @@ void MigrateLegacyDataPaths()
         L"SnowDesktop.dock.json",
         L"SnowDesktop.dock-usage.json",
         L"SnowDesktop.widget-notifications.json",
-        L"SnowDesktop.log",
+        kDiagnosticLogFilename,
         L"SnowDesktop_crash.log",
     };
 

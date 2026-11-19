@@ -1,6 +1,7 @@
 #include "widget_render_host_context.h"
 
 #include "common/utils.h"
+#include "icons/shell_icon_bitmap.h"
 #include "widget/runtime/widget_engine.h"
 
 #include <shlobj.h>

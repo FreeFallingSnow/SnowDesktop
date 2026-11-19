@@ -2,6 +2,7 @@
 #include "dock/dock_window_rules.h"
 #include "diagnostics/diagnostic_log.h"
 #include "common/utils.h"
+#include "icons/shell_icon_bitmap.h"
 #include "dock/dock_collection_icon_rules.h"
 #include "widget/preview/widget_preview_scene.h"
 #include "app/lifecycle/startup_diagnostics.h"

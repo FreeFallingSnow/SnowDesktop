@@ -6,6 +6,7 @@
 #include "settings/general_settings.h"
 #include "app/shell/icon_load_task.h"
 #include "common/utils.h"
+#include "icons/shell_icon_bitmap.h"
 #include "icons/icon_render_rules.h"
 #include "layout/category_collection_rules.h"
 #include "settings/settings_controller.h"

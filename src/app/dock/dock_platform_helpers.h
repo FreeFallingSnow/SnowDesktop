@@ -9,6 +9,7 @@
 #include "dock/dock_process_discovery.h"
 #include "dock/dock_window_rules.h"
 #include "dock/dock_window_source_cloak.h"
+#include "icons/shell_icon_bitmap.h"
 #include "platform/window_support/window_support_runtime.h"
 
 
