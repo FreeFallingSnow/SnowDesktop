@@ -7,7 +7,6 @@
 #include "diagnostics/performance_trace.h"
 #include "icons/icon_render_rules.h"
 #include "icons/icon_loading_placeholder.h"
-#include "ui/render/highlight_coverage.h"
 #include "platform/demo_mode_rules.h"
 #include "platform/demo_collection_rules.h"
 #include <commoncontrols.h>
@@ -47,7 +46,6 @@ void DesktopApp::DrawIconShadow(ID2D1RenderTarget* target, RECT bounds, float sc
         if (const auto* cached = bitmapIconShadows_.Find(key))
         {
             shadow::Draw(context.Get(), *cached, bounds, scale);
-            snowdesktop::HighlightCoverage::MarkIconShadow(target);
             return;
         }
     }
@@ -62,7 +60,6 @@ void DesktopApp::DrawIconShadow(ID2D1RenderTarget* target, RECT bounds, float sc
         return;
 
     shadow::Draw(context.Get(), drawing, bounds, scale);
-    snowdesktop::HighlightCoverage::MarkIconShadow(target);
     if (cacheable)
     {
         drawing.sourceBitmap = source.bitmap;
@@ -525,7 +522,6 @@ void DesktopApp::DrawDockControlSubjectShadow(ID2D1DeviceContext* target, RECT b
     target->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), plate.Get()), nullptr);
     snowdesktop::icon_shadow::Draw(target, drawing, bounds, style.scale);
     target->PopLayer();
-    snowdesktop::HighlightCoverage::MarkIconShadow(target);
 }
 
 void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
@@ -565,11 +561,7 @@ void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
         cached = iconReflectionCache_.Insert(key, std::move(bitmap));
     }
     const auto destination = ToD2DRect(rect);
-    if (!snowdesktop::HighlightCoverage::ExtractBitmap(ctx, cached->Get(), destination))
-    {
-        ctx->DrawBitmap(cached->Get(), destination, 1.0f,
-            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-    }
+    ctx->DrawBitmap(cached->Get(), destination, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 
 void DesktopApp::DrawPrivacyFaIcon(

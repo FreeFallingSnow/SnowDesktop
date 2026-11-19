@@ -8,7 +8,6 @@
 #include "app/dock/persistent_dock_host.h"
 #include "desktop_backdrop_update_rules.h"
 #include "diagnostics/performance_trace.h"
-#include "ui/render/highlight_coverage.h"
 
 // HBITMAP analysis, icon beautification and Direct2D bitmap caching.
 
@@ -534,25 +533,7 @@ ComPtr<ID2D1Bitmap1> DesktopApp::UploadStyledIconPixels(
 
     iconGlassBackdrop_[bitmap.Get()] = prepared.needsGlassBackdrop;
     iconBitmapStyles_[bitmap.Get()] = prepared.style;
-    if (!prepared.edgeReflection.body.empty())
-    {
-        const auto size = bitmap->GetPixelSize();
-        const auto pitch = static_cast<UINT32>(buffer.width * sizeof(std::uint32_t));
-        const auto coverageProperties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
-            D2D1::PixelFormat(DXGI_FORMAT_A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-        ComPtr<ID2D1Bitmap1> body, material, coverage;
-        if (SUCCEEDED(d2dContext_->CreateBitmap(size, prepared.edgeReflection.body.data(),
-                pitch, &props, &body)) &&
-            SUCCEEDED(d2dContext_->CreateBitmap(size, prepared.edgeReflection.material.data(),
-                pitch, &props, &material)) &&
-            SUCCEEDED(d2dContext_->CreateBitmap(size, prepared.edgeReflection.coverage.data(),
-                static_cast<UINT32>(buffer.width), &coverageProperties, &coverage)))
-        {
-            snowdesktop::HighlightCoverage::SetBitmapMaterial(bitmap.Get(), body.Get(),
-                material.Get(), coverage.Get());
-        }
-    }
-    const auto& subject = prepared.edgeReflection.subjectShadow;
+    const auto& subject = prepared.subjectShadow;
     if (!subject.empty())
     {
         const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
@@ -656,8 +637,7 @@ void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
         style.enabled && style.glassEnabled;
     if (translucentMaterial) RegisterIconBackdrop(target, plan.bounds, opacity, ownerKey, &style);
     snowdesktop::icon_bitmap_renderer::Draw(target, bitmap, plan, opacity, translucentMaterial);
-    if (snowdesktop::icon_shadow::SubjectScope::Draw(target, bitmap, ToD2DRect(plan.bounds), opacity))
-        snowdesktop::HighlightCoverage::MarkIconShadow(target);
+    (void)snowdesktop::icon_shadow::SubjectScope::Draw(target, bitmap, ToD2DRect(plan.bounds), opacity);
 }
 
 void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,

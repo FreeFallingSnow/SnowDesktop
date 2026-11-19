@@ -1,7 +1,6 @@
 #pragma once
 #include "large_icon_config_types.h"
 #include "theme/flat_glass_rim.h"
-#include "ui/render/highlight_coverage.h"
 #include "ui/render/smooth_corner_geometry.h"
 #include <d2d1.h>
 #include <d2d1helper.h>
@@ -152,8 +151,7 @@ inline void DrawMaterialOutline(ID2D1RenderTarget* target, int shape, RECT bound
             const float lighting = material.Lighting((mid.x - frame.left) / w, (mid.y - frame.top) / h);
             brush->SetColor(D2D1::ColorF(0xffffff, std::clamp(strength * lighting, 0.f, 1.f)));
             const float width = material.BorderWidth(edgeWidth, lighting) * 2;
-            if (lighting > 0.f && !HighlightCoverage::ExtractLine(
-                    target, from, to, width, brush->GetColor()))
+            if (lighting > 0.f)
                 target->DrawLine(from, to, brush.Get(), width);
         }
     }

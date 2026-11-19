@@ -1165,6 +1165,28 @@ void DrawStatusBarDropIndicator(ID2D1DeviceContext* context, const std::optional
     }
 }
 
+HRESULT DrawStatusBarContentRegion(ID2D1DeviceContext* context, POINT offset, IDWriteFactory* text,
+    std::vector<StatusBarItem>& items, const RECT& region, UINT width, UINT height, float scale,
+    const PersonalizationSettings& appearance, const StatusBarPalette& palette,
+    std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused,
+    bool mergedDock, StatusBarTrayScroll& trayScroll, const std::optional<RECT>& indicator, UINT dpi,
+    StatusBarDrawResources* resources, bool* frameReusable, bool keepPreparedText)
+{
+    context->SetDpi(96, 96);
+    context->SetTransform(D2D1::Matrix3x2F::Translation(
+        static_cast<float>(offset.x - region.left), static_cast<float>(offset.y - region.top)));
+    context->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
+    context->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+    context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(region.left), static_cast<float>(region.top),
+        static_cast<float>(region.right), static_cast<float>(region.bottom)), D2D1_ANTIALIAS_MODE_ALIASED);
+    context->Clear(D2D1::ColorF(0, 0.f));
+    const auto result = DrawStatusBarContent(context, text, items, width, height, scale,
+        appearance, palette, hovered, keyboardFocusVisible, focused, mergedDock, false, &trayScroll, true, &region, resources, keepPreparedText, frameReusable);
+    DrawStatusBarDropIndicator(context, indicator, appearance, palette, dpi);
+    context->PopAxisAlignedClip();
+    return result;
+}
+
 HRESULT DrawStatusBarContentUpdate(IDCompositionSurface* surface, IDWriteFactory* text,
     std::vector<StatusBarItem>& items, RECT region, UINT width, UINT height, float scale,
     const PersonalizationSettings& appearance, const StatusBarPalette& palette,
@@ -1179,18 +1201,10 @@ HRESULT DrawStatusBarContentUpdate(IDCompositionSurface* surface, IDWriteFactory
     performance::Value("shared.status_bar", SUCCEEDED(begin)
         ? "surface.begin.success" : "surface.begin.failure", {}, 1);
     if (FAILED(begin)) return begin;
-    context->SetDpi(96, 96);
-    context->SetTransform(D2D1::Matrix3x2F::Translation(
-        static_cast<float>(offset.x - region.left), static_cast<float>(offset.y - region.top)));
-    context->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
-    context->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
-    context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(region.left), static_cast<float>(region.top),
-        static_cast<float>(region.right), static_cast<float>(region.bottom)), D2D1_ANTIALIAS_MODE_ALIASED);
-    context->Clear(D2D1::ColorF(0, 0.f));
-    const auto result = DrawStatusBarContent(context.Get(), text, items, width, height, scale,
-        appearance, palette, hovered, keyboardFocusVisible, focused, mergedDock, false, &trayScroll, true, &region, resources, keepPreparedText, frameReusable);
-    DrawStatusBarDropIndicator(context.Get(), indicator, appearance, palette, dpi);
-    context->PopAxisAlignedClip(); context.Reset();
+    const auto result = DrawStatusBarContentRegion(context.Get(), offset, text, items, region, width, height,
+        scale, appearance, palette, hovered, keyboardFocusVisible, focused, mergedDock, trayScroll,
+        indicator, dpi, resources, frameReusable, keepPreparedText);
+    context.Reset();
     const auto ended = surface->EndDraw();
     performance::Value("shared.status_bar", SUCCEEDED(ended)
         ? "surface.end.success" : "surface.end.failure", {}, 1);

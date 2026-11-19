@@ -631,7 +631,7 @@ public:
     bool Apply(bool hookEnabled, bool defaultEnabled,
         const PersonalizationSettings& appearance,
         const std::vector<SystemTaskbarTargetAppearance>& targets, bool appearanceEnabled,
-        bool suppressTaskbar, bool wcgHighlightCompensationEnabled)
+        bool suppressTaskbar)
     {
         snowdesktop::performance::Scope trace("shared.taskbar", "controller.apply");
         hookEnabled = hookEnabled && snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar);
@@ -690,8 +690,6 @@ public:
             ? snowdesktop::taskbar_hook::kStyleGlassBackdrop : 0;
         if (appearance.glassEnabled && appearance.acrylicEnabled)
             state_->style |= snowdesktop::taskbar_hook::kStyleAcrylicBackdrop;
-        if (!wcgHighlightCompensationEnabled)
-            state_->style |= snowdesktop::taskbar_hook::kStyleDisableWcgCompensation;
         state_->contentTheme = appearance.contentTheme;
         state_->systemUsesLightTheme = IsWindowsSystemLightThemeEnabled()
             ? TRUE : FALSE;
@@ -729,8 +727,6 @@ public:
             destination.suppressTaskbar = source.suppressTaskbar ? TRUE : FALSE;
             destination.style = source.appearance.glassEnabled
                 ? snowdesktop::taskbar_hook::kStyleGlassBackdrop : 0;
-            if (!wcgHighlightCompensationEnabled)
-                destination.style |= snowdesktop::taskbar_hook::kStyleDisableWcgCompensation;
             if (source.appearance.glassEnabled &&
                 source.appearance.acrylicEnabled)
             {
@@ -1456,10 +1452,10 @@ LONG DrainSystemTaskbarAutoHideTrace(
 bool ApplySystemTaskbarBackdrop(bool hookEnabled, bool defaultEnabled,
     const PersonalizationSettings& appearance,
     const std::vector<SystemTaskbarTargetAppearance>& targets, bool appearanceEnabled,
-    bool suppressTaskbar, bool wcgHighlightCompensationEnabled)
+    bool suppressTaskbar)
 {
     return GetTaskbarBackdropController().Apply(hookEnabled, defaultEnabled,
-        appearance, targets, appearanceEnabled, suppressTaskbar, wcgHighlightCompensationEnabled);
+        appearance, targets, appearanceEnabled, suppressTaskbar);
 }
 
 bool LoadDockSettings(const wchar_t* path, DockSettings& settings)

@@ -1,5 +1,4 @@
 #include "system_panel.h"
-#include "ui/render/highlight_coverage.h"
 #include "system_panel_model.h"
 #include "system/controls/system_quick_controls.h"
 #include "system/calendar/system_calendar_editor.h"
@@ -426,11 +425,8 @@ struct SystemPanel::Impl
         ComPtr<ID2D1DeviceContext> dc;POINT offset{};if(FAILED(surface->BeginDraw(nullptr,IID_PPV_ARGS(&dc),&offset)))return;
         const auto srgbKey = reinterpret_cast<std::uintptr_t>(this);
         const RECT client{0, 0, width, height};
-        const bool extractHighlights = Glass() && !HighContrast() &&
-            DesktopBackdropCompositor::IsSrgbHighlightEligible(window, client);
-        HighlightCoverage coverage;
-        HighlightCoverage::Scope capture(dc.Get(), coverage, extractHighlights);
         dc->SetDpi(96,96);dc->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);dc->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x),static_cast<float>(offset.y)));dc->Clear(D2D1::ColorF(0,0.f));
+        DesktopBackdropCompositor::SrgbSceneRecording scene(dc.Get());
         for(const auto& card:cards)
         {
             if(HighContrast()){ComPtr<ID2D1SolidColorBrush> b;dc->CreateSolidColorBrush(SystemColor(COLOR_WINDOW),&b);const auto shape=popup_round_geometry::Resolve(card,current->appearance.cornerRadius*scale);smooth_corners::Fill(dc.Get(),shape.rect,shape.radiusX,b.Get());}
@@ -452,11 +448,12 @@ struct SystemPanel::Impl
                 else dc->DrawRoundedRectangle(D2D1::RoundedRect(*dropIndicator,4,4),line.Get(),2);
             }
         }
-        const bool srgbPresented = SUCCEEDED(result) &&
-            backdrop.PrepareSrgbMaterials(window, srgbKey, client, dc.Get(), offset);
+        const auto recorded = scene.Finish();
+        const bool srgbPresented = SUCCEEDED(result) && SUCCEEDED(recorded) &&
+            backdrop.PublishSrgbScene(window, srgbKey, client, dc.Get(), offset, scene.Scene());
         dc.Reset();
         const auto end = surface->EndDraw();
-        if (FAILED(result) || FAILED(end))
+        if (!srgbPresented || FAILED(end))
         {
             surface.Reset();
             return;
@@ -467,14 +464,7 @@ struct SystemPanel::Impl
             FAILED(composition->Commit()))
             return;
         backdrop.OnDirectContentCommitted(composition.Get());
-        if (!backdrop.CommitSrgbContent())
-        {
-            if (FAILED(backdrop.SetDirectContentForSrgb(
-                    srgbKey, false, composition.Get(), visual.Get(), surface.Get())) ||
-                FAILED(composition->Commit()))
-                return;
-            backdrop.OnDirectContentCommitted(composition.Get());
-        }
+        if (!backdrop.CommitSrgbContent()) return;
         paintDirty = false;
     }
     void Pose()

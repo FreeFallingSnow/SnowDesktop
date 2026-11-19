@@ -22,20 +22,16 @@ struct Prepared
     bool subjectMaskRequested = false;
     bool needsGlassBackdrop = false;
     icon_bitmap_pixels::Buffer buffer;
-    icon_beautify::EdgeReflectionLayers edgeReflection;
+    std::vector<std::uint8_t> subjectShadow;
 
     size_t PayloadBytes() const
     {
-        return (buffer.pixels.size() + edgeReflection.body.size() +
-            edgeReflection.material.size()) * sizeof(std::uint32_t) +
-            edgeReflection.coverage.size() + edgeReflection.subjectShadow.size();
+        return buffer.pixels.size() * sizeof(std::uint32_t) + subjectShadow.size();
     }
 
     size_t CapacityBytes() const
     {
-        return (buffer.pixels.capacity() + edgeReflection.body.capacity() +
-            edgeReflection.material.capacity()) * sizeof(std::uint32_t) +
-            edgeReflection.coverage.capacity() + edgeReflection.subjectShadow.capacity();
+        return buffer.pixels.capacity() * sizeof(std::uint32_t) + subjectShadow.capacity();
     }
 };
 
@@ -58,7 +54,7 @@ inline bool Prepare(HBITMAP source, const IconBeautifySettings& style,
         out.needsGlassBackdrop = style.glassEnabled && !edgeFill;
         buffer.pixels = icon_beautify::Render(buffer.pixels, buffer.width, buffer.height,
             style, edgeFill, nativeControlSource ? icon_beautify::SourceKind::NativeControl :
-                icon_beautify::SourceKind::Image, &out.edgeReflection, prepareSubjectShadow);
+                icon_beautify::SourceKind::Image, prepareSubjectShadow ? &out.subjectShadow : nullptr);
     }
     out.source = source;
     out.style = style;

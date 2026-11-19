@@ -1,6 +1,5 @@
 #include "app/app.h"
 #include "app/render/desktop_highlight_tiles.h"
-#include "desktop/display_color_mode.h"
 #include "diagnostics/diagnostic_log.h"
 
 #include <array>
@@ -230,7 +229,7 @@ bool DesktopApp::RenderDesktopForegroundComposition(
         !IsRectEmpty(&clippedUpdate))
     {
         clippedUpdate = desktopForegroundTooltipDamage_.IncludePrevious(clippedUpdate, client);
-        highlight_tiles::IncludeRetainedTiles(clippedUpdate, client, foregroundSrgbTiles_);
+        highlight_tiles::IncludeSceneTiles(clippedUpdate, client);
         dcompUpdate = &clippedUpdate;
     }
 
@@ -249,9 +248,6 @@ bool DesktopApp::RenderDesktopForegroundComposition(
 
         ComPtr<ID2D1DeviceContext> context;
         context.Attach(rawContext);
-        snowdesktop::HighlightCoverage coverage;
-        snowdesktop::HighlightCoverage::Scope capture(context.Get(), coverage,
-            snowdesktop::display_color::UseHighlightCompensationOnDesktop());
         context->SetDpi(96.0f, 96.0f);
         context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
         const LONG updateLeft = dcompUpdate ? dcompUpdate->left : 0;
@@ -260,6 +256,7 @@ bool DesktopApp::RenderDesktopForegroundComposition(
             static_cast<float>(updateOffset.x - updateLeft),
             static_cast<float>(updateOffset.y - updateTop)));
         context->Clear(D2D1::ColorF(0, 0, 0, 0));
+        DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get());
 
         drawing_.Reset();
         struct TooltipDrawScope
@@ -271,14 +268,16 @@ bool DesktopApp::RenderDesktopForegroundComposition(
         { TooltipDrawScope tooltipDraw(desktopForegroundTooltipDamage_);
           DrawDesktopForeground(context.Get(), hiddenMode, dcompUpdate); }
         const RECT dirty = dcompUpdate ? *dcompUpdate : client;
-        const auto candidates = highlight_tiles::Stage(desktopBackdropCompositor_, hwnd_,
-            context.Get(), coverage, client, dirty, updateOffset, foregroundSrgbTiles_, nextDesktopSrgbKey_);
+        std::vector<DesktopSrgbTile> candidates;
+        const auto recorded = scene.Finish();
+        const bool prepared = SUCCEEDED(recorded) && highlight_tiles::Stage(desktopBackdropCompositor_, hwnd_,
+            context.Get(), scene.Scene(), dirty, updateOffset, foregroundSrgbTiles_, nextDesktopSrgbKey_, candidates);
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
         drawing_.Reset();
 
         hr = desktopForegroundCompositionSurface_->EndDraw();
-        if (FAILED(hr)) return false;
+        if (!prepared || FAILED(hr)) return false;
         highlight_tiles::Publish(desktopBackdropCompositor_, dirty, candidates, foregroundSrgbTiles_);
         if (dcompUpdate)
         {
@@ -286,7 +285,7 @@ bool DesktopApp::RenderDesktopForegroundComposition(
             if (!EqualRect(&required, &clippedUpdate))
             {
                 clippedUpdate = required;
-                highlight_tiles::IncludeRetainedTiles(clippedUpdate, client, foregroundSrgbTiles_);
+                highlight_tiles::IncludeSceneTiles(clippedUpdate, client);
                 // If geometry changes again during repair, finish with one
                 // bounded full draw rather than exposing glass without text.
                 if (pass > 0) dcompUpdate = nullptr;

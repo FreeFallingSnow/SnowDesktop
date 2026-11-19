@@ -1577,13 +1577,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             if (!invalidated && customDesktopVisible_)
                 InvalidateRect(hwnd_, nullptr, FALSE);
         });
-        widgetEngine_->SetNativeMarqueeSyncCallback([this](
-                const std::wstring& widgetId,
-                const std::vector<snowdesktop::widget_runtime::NativeMarqueeText>& marquees,
-                bool reducedMotion) {
-            return QueueWidgetMarqueeComposition(
-                widgetId, marquees, reducedMotion);
-        });
         widgetEngine_->SetDesktopOpenCallback([this](const std::wstring& path) {
             return LuaOpenPath(path);
         });

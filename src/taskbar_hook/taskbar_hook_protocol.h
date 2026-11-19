@@ -52,7 +52,6 @@ inline constexpr LPARAM kStartMenuBeginCommand = 0x5344534d; // "SDSM"
 
 inline constexpr LONG kStyleGlassBackdrop = 1 << 0;
 inline constexpr LONG kStyleAcrylicBackdrop = 1 << 1;
-inline constexpr LONG kStyleDisableWcgCompensation = 1 << 2;
 
 // Fixed-size values only: this structure crosses the Explorer process boundary.
 struct Gradient

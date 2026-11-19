@@ -64,19 +64,12 @@ struct State
     Microsoft::WRL::ComPtr<IDCompositionVisual2> dcompVisual;
     Microsoft::WRL::ComPtr<IDCompositionEffectGroup> dcompEffect;
     Microsoft::WRL::ComPtr<IDCompositionScaleTransform> dcompScaleTransform;
-    Microsoft::WRL::ComPtr<IDCompositionSurface> dcompSurface;
-    // Called after submitting a painted and attached replacement on dcompDevice.
-    void RetireSrgbAfterDirectCommit();
-    bool PublishSrgbHighlightFrame(ID2D1Device* device, snowdesktop::quick_navigation_animation_rules::Effect effect,
+    bool PublishPrecomposedFrame(ID2D1Device* device, snowdesktop::quick_navigation_animation_rules::Effect effect,
         float collapsed, float opacity);
-    std::array<Microsoft::WRL::ComPtr<ID2D1Bitmap1>, 2> srgbHighlights;
-    bool srgbHighlightFrameDeformed = false;
-
-    std::vector<Microsoft::WRL::ComPtr<IDCompositionVisual2>> genieStrips;
-    Microsoft::WRL::ComPtr<ID2D1Bitmap1> attractionBitmap;
-    Microsoft::WRL::ComPtr<IDCompositionSurface> attractionSurface;
-    SIZE attractionSurfaceSize{};
-    int genieStripEdge = -1;
+    Microsoft::WRL::ComPtr<ID2D1DeviceContext> sceneContext;
+    Microsoft::WRL::ComPtr<ID2D1Bitmap1> sceneBitmap;
+    bool sceneDirty = false;
+    bool sceneFrameDeformed = false;
     UINT compWidth = 0;
     UINT compHeight = 0;
     bool compositionRenderRecoveryPending = false;

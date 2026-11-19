@@ -3094,7 +3094,6 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             if (desktopPage_) personalizationPage_->SetLayoutSpacingContent(desktopPage_->LayoutSpacingContent());
             PageCards().Children().Append(personalizationPage_->TypographyContent());
             registerPersonalizationFocus({"personalization.font", "personalization.tooltipFontSize",
-                "personalization.wcgHighlightCompensation",
                 "desktop.categoryLayout", "desktop.tabHeight", "personalization.tabHeight", "personalization.luaWidgetRowHeight",
                 "personalization.cornerRadius", "personalization.barHeight"});
             personalizationPage_->Activate();

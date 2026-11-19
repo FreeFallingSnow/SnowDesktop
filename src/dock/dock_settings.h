@@ -77,7 +77,6 @@ LONG DrainSystemTaskbarAutoHideTrace(
 bool ApplySystemTaskbarBackdrop(bool hookEnabled, bool defaultEnabled,
     const PersonalizationSettings& defaultAppearance,
     const std::vector<SystemTaskbarTargetAppearance>& targets = {},
-    bool appearanceEnabled = true, bool suppressTaskbar = false,
-    bool wcgHighlightCompensationEnabled = true);
+    bool appearanceEnabled = true, bool suppressTaskbar = false);
 bool LoadDockSettings(const wchar_t* path, DockSettings& settings);
 bool SaveDockSettings(const wchar_t* path, const DockSettings& settings);

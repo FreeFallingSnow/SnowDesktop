@@ -18,7 +18,6 @@
 #include "platform/operation_feedback.h"
 #include "shell/shell_launch_process.h"
 #include "ui/menu/menu_fluent_glyphs.h"
-#include "ui/render/highlight_coverage.h"
 #include "ui/render/smooth_corner_geometry.h"
 #include <wincodec.h>
 #include <shobjidl.h>
@@ -874,12 +873,6 @@ void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
         const float radius = static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius));
         auto popupFill = ToD2DColor(theme.searchBg);
         popupFill.a = 1.f;
-        const auto* highlights = snowdesktop::HighlightCoverage::Current(context);
-        if (highlights && highlights->HasExtractedMaterials())
-        {
-            const auto outline = snowdesktop::smooth_corners::Geometry(d2dFactory_.Get(), ToD2DRect(popup), radius);
-            snowdesktop::HighlightCoverage::OccludePrevious(context, outline.Get(), content, quickNavigation_->rect);
-        }
         DrawD2DRoundedRectangle(context, popup, radius, popupFill, ToD2DColor(theme.searchBorder, .45f));
     }
     for (size_t i = 0; i < count; ++i)

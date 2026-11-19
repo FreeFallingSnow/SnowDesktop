@@ -8,8 +8,6 @@
 #include "system/panel/system_panel.h"
 #include "app/dock/persistent_dock_host.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
-#include "desktop/display_color_mode.h"
-#include "desktop_composition_effect.h"
 #include "platform/window_support/window_support_runtime.h"
 #include <d3d11_4.h>
 
@@ -292,16 +290,6 @@ HRESULT DesktopApp::CreateOrResizeCompositionSurface()
             wsprintfW(buf, L"SetContent FAILED hr=0x%08X", static_cast<unsigned>(hr));
             WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, buf, DiagnosticLogLevel::Warning);
             return hr;
-        }
-        if (snowdesktop::display_color::AnyWideColorMonitor())
-        {
-            const HRESULT effectResult = snowdesktop::desktop_composition_effect::ApplyIdentity(
-                dcompDevice_.Get(), dcompVisual_.Get());
-            wchar_t message[128]{};
-            swprintf_s(message, L"Desktop WCG intermediate effect hr=0x%08X",
-                static_cast<unsigned>(effectResult));
-            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message,
-                FAILED(effectResult) ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
         }
         hr = dcompDevice_->Commit();
         if (FAILED(hr))

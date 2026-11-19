@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
+#include "app/render/desktop_backdrop_compositor.h"
 #include "modern_menu.h"
 #include "menu_control_snapshot.h"
 #include "ui/input/text_input_state.h"
@@ -115,6 +116,7 @@ thread_local MenuController* gControlController = nullptr;
 
 struct Popup
 {
+    DesktopBackdropCompositor content;
     MenuController* controller = nullptr;
     std::vector<Item>* items = nullptr;
     HWND hwnd = nullptr;
@@ -696,10 +698,10 @@ public:
         return DefWindowProcW(hwnd, message, wParam, lParam);
     }
 
-    void Render(Popup& popup)
+    bool Render(Popup& popup)
     {
         if (!popup.hwnd || popup.windowWidth <= 0 || popup.windowHeight <= 0)
-            return;
+            return false;
 
         BITMAPINFO bitmapInfo{};
         bitmapInfo.bmiHeader.biSize = sizeof(bitmapInfo.bmiHeader);
@@ -717,7 +719,7 @@ public:
         {
             if (memoryDc) DeleteDC(memoryDc);
             if (bitmap) DeleteObject(bitmap);
-            return;
+            return false;
         }
         HGDIOBJ oldBitmap = SelectObject(memoryDc, bitmap);
         auto* pixels = static_cast<std::uint32_t*>(rawPixels);
@@ -872,21 +874,17 @@ public:
         };
         SIZE size{ popup.windowWidth, popup.windowHeight };
         const bool wasVisible = IsWindowVisible(popup.hwnd) != FALSE;
-        POINT source{};
-        BLENDFUNCTION blend{
-            AC_SRC_OVER, 0, 255, AC_SRC_ALPHA,
-        };
-        const BOOL presented = UpdateLayeredWindow(
-            popup.hwnd, nullptr,
-            &destination, &size,
-            memoryDc, &source, 0,
-            &blend, ULW_ALPHA);
+        const BOOL placed = SetWindowPos(popup.hwnd, nullptr, destination.x, destination.y,
+            size.cx, size.cy, SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER);
+        const bool presented = placed && popup.content.PresentPremultipliedPixels(
+            popup.hwnd, size, pixels);
         if (presented && !wasVisible)
             ShowWindow(popup.hwnd, SW_SHOWNOACTIVATE);
 
         SelectObject(memoryDc, oldBitmap);
         DeleteDC(memoryDc);
         DeleteObject(bitmap);
+        return presented;
     }
 
     HWND CompanionWindow() const
@@ -1109,6 +1107,11 @@ private:
         if (!popup->hwnd)
             return false;
 
+        if (!SetLayeredWindowAttributes(popup->hwnd, 0, 255, LWA_ALPHA))
+        {
+            DestroyWindow(popup->hwnd);
+            return false;
+        }
         ApplyBlurClipRegion(*popup);
         ApplyWindowAppearance(popup->hwnd);
 
@@ -1124,8 +1127,9 @@ private:
                 break;
             }
         }
-        Render(*rawPopup);
-        return true;
+        if (Render(*rawPopup)) return true;
+        CloseFromDepth(depth);
+        return false;
     }
 
     bool UsesQuickActionStrip(const Popup& popup, const Item& item) const

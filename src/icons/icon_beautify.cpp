@@ -642,8 +642,7 @@ void ApplyTexture(std::vector<std::uint32_t>& output, int width, int height,
 }
 
 void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int height,
-    const IconBeautifySettings& settings, int rasterScale = 1,
-    EdgeReflectionLayers* layers = nullptr)
+    const IconBeautifySettings& settings, int rasterScale = 1)
 {
     if (!settings.edgeHighlightEnabled || settings.edgeHighlightStrength <= 0.0f) return;
     const auto& outline = OutlineFor(settings.shape);
@@ -655,12 +654,6 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
     const float rimInset = depth * .5f;
     const float halo = rimInset + std::max(material.InnerSupport(depth, false), material.InnerSupport(depth, true));
     const auto& inner = CachedMask(settings.shape, width, height, halo);
-    if (layers)
-    {
-        layers->body = output;
-        layers->material.resize(output.size());
-        layers->coverage.resize(output.size());
-    }
     for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x)
     {
         const size_t index = static_cast<size_t>(y) * width + x;
@@ -699,12 +692,6 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
         }
         const auto shadow = PackPremultiplied(4, 6, 9, shadowAlpha);
         output[index] = SourceOver(shadow, output[index]);
-        if (layers)
-        {
-            layers->material[index] = SourceOver(shadow, reflection);
-            layers->coverage[index] = static_cast<std::uint8_t>(
-                (alpha * (255 - shadowAlpha) + 127) / 255);
-        }
     }
 }
 
@@ -1102,7 +1089,7 @@ static std::vector<std::uint8_t> BuildSubjectShadow(const std::vector<std::uint8
 static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>& source,
     int width, int height, const IconBeautifySettings& rawSettings,
     std::optional<PlateFill> detectedEdgeFill, int rasterScale, SourceKind sourceKind,
-    EdgeReflectionLayers* layers = nullptr, bool prepareSubjectShadow = false)
+    std::vector<std::uint8_t>* subjectShadow = nullptr)
 {
     if (width <= 0 || height <= 0 ||
         source.size() != static_cast<size_t>(width) * height)
@@ -1260,7 +1247,7 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
         }
         ApplyTexture(output, width, height, settings, rasterScale);
         ApplyOutline(output, width, height, settings, rasterScale);
-        ApplyEdgeReflection(output, width, height, settings, rasterScale, layers);
+        ApplyEdgeReflection(output, width, height, settings, rasterScale);
         return output;
     }
 
@@ -1292,7 +1279,7 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
     const int destTop = (height - destH) / 2;
 
     std::vector<std::uint8_t> subjectAlpha;
-    if (layers && prepareSubjectShadow) subjectAlpha.resize(output.size());
+    if (subjectShadow) subjectAlpha.resize(output.size());
     constexpr std::array<std::tuple<int, int, int>, 7> passes{{
         {0,1,120},{-1,1,63},{1,1,63},{0,2,51},{-1,0,40},{1,0,40},{0,-1,29}
     }};
@@ -1341,20 +1328,20 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
         }
 
     if (!subjectAlpha.empty())
-        layers->subjectShadow = BuildSubjectShadow(subjectAlpha, mask, width, height);
+        *subjectShadow = BuildSubjectShadow(subjectAlpha, mask, width, height);
     ApplyTexture(output, width, height, settings, rasterScale);
     ApplyOutline(output, width, height, settings, rasterScale);
-    ApplyEdgeReflection(output, width, height, settings, rasterScale, layers);
+    ApplyEdgeReflection(output, width, height, settings, rasterScale);
     return output;
 }
 
 std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
     int width, int height, const IconBeautifySettings& settings,
     std::optional<PlateFill> detectedEdgeFill, SourceKind sourceKind,
-    EdgeReflectionLayers* layers, bool prepareSubjectShadow)
+    std::vector<std::uint8_t>* subjectShadow)
 {
-    if (layers) *layers = {};
-    return RenderAtScale(source, width, height, settings, detectedEdgeFill, 1, sourceKind, layers, prepareSubjectShadow);
+    if (subjectShadow) subjectShadow->clear();
+    return RenderAtScale(source, width, height, settings, detectedEdgeFill, 1, sourceKind, subjectShadow);
 }
 
 MaskCacheStatistics TryGetMaskCacheStatistics()

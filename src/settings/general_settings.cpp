@@ -138,14 +138,6 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     ReadBoolField(text, "desktopIdleHidePauseWithWindows", settings.desktopIdleHidePauseWithWindows);
     settings.screenTimeEnabled = true;
     ReadBoolField(text, "screenTimeEnabled", settings.screenTimeEnabled);
-    using snowdesktop::display_color::Compensation;
-    bool legacyHighlightCompensation = true;
-    ReadBoolField(text, "wcgHighlightCompensationEnabled", legacyHighlightCompensation);
-    const auto legacyCompensation = legacyHighlightCompensation ? Compensation::Highlights : Compensation::Off;
-    int displayCompensation = static_cast<int>(legacyCompensation);
-    ReadIntField(text, "wcgCompensation", displayCompensation);
-    settings.wcgCompensation = snowdesktop::display_color::CompensationFromInt(
-        displayCompensation, legacyCompensation);
     if (ReadBoolField(text, "desktopPassthroughHotkeyEnabled", val))
         settings.desktopPassthroughHotkeyEnabled = val;
     if (ReadBoolField(text, "pageNavigationKeyboardEnabled", val))
@@ -360,11 +352,6 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "  \"desktopIdleHideDelaySeconds\": " << snowdesktop::desktop_idle_hide::NormalizeDelay(settings.desktopIdleHideDelaySeconds) << ",\n";
     file << "  \"desktopIdleHidePauseWithWindows\": " << (settings.desktopIdleHidePauseWithWindows ? "true" : "false") << ",\n";
     file << "  \"screenTimeEnabled\": " << (settings.screenTimeEnabled ? "true" : "false") << ",\n";
-    file << "  \"wcgCompensation\": " << static_cast<int>(settings.wcgCompensation) << ",\n";
-    // Older releases can still use the highlight setting when reading this file.
-    file << "  \"wcgHighlightCompensationEnabled\": "
-         << (settings.wcgCompensation != snowdesktop::display_color::Compensation::Off ? "true" : "false")
-         << ",\n";
     file << "  \"desktopPassthroughHotkeyEnabled\": "
          << (settings.desktopPassthroughHotkeyEnabled ? "true" : "false")
          << ",\n";

@@ -1,5 +1,4 @@
 #include "status_bar.h"
-#include "ui/render/highlight_coverage.h"
 #include "platform/foreground_fullscreen.h"
 #include "platform/window_observation.h"
 #include "platform/window_peek_policy.h"
@@ -14,7 +13,6 @@
 #include "status_bar_reveal.h"
 #include "widget/data/widget_system_data_provider.h"
 #include "app/render/desktop_backdrop_compositor.h"
-#include "desktop/display_color_mode.h"
 #include "theme/panel_gradient_renderer.h"
 #include "common/l10n.h"
 #include "system/tray/tray_service.h"
@@ -285,7 +283,6 @@ struct StatusBar::Impl
         DWORD dockFullscreenProcess = 0;
         bool appearanceDirty = true, paintDirty = true, painting = false;
         bool backgroundDirty = true;
-        bool backgroundHighlightCompensation = false;
         bool partialHoverUpdates = true;
         bool retainedFrameValid = false;
         std::optional<StatusBarPalette> retainedPalette;
@@ -418,8 +415,8 @@ struct StatusBar::Impl
             if (SUCCEEDED(result)) backdrop.OnDirectContentCommitted(owner.composition.Get());
             if (SUCCEEDED(result) && !backdrop.CommitSrgbContent())
             {
-                backdrop.RemoveSrgbContent(reinterpret_cast<std::uintptr_t>(this));
                 backgroundDirty = true;
+                result = E_FAIL;
             }
             TraceValue(SUCCEEDED(result) ? "commit.success" : "commit.failure");
             return result;
@@ -1121,8 +1118,6 @@ struct StatusBar::Impl
                 focusFrame->fontRevision == drawResources.fontRevision && focusFrame->fontBuilds == drawResources.fontBuilds &&
                 focusFrame->scale == drawResources.scale && focusFrame->layoutReusable);
             const auto backgroundKey = reinterpret_cast<std::uintptr_t>(this);
-            const bool srgbEligible = !HighContrast() && display_color::UseHighlightCompensation(monitor);
-            if (srgbEligible != backgroundHighlightCompensation) backgroundDirty = true;
             const bool partialCandidate = samePreparedFont &&
                 partialHoverUpdates && !paintDirty && !backgroundDirty && !appearanceDirty &&
                 surface && backgroundSurface && width == w && height == h &&
@@ -1166,10 +1161,7 @@ struct StatusBar::Impl
                 }
                 painting = true;
                 const auto drawnInteraction = InteractionVisual();
-                const auto result = DrawStatusBarContentUpdates(surface.Get(), owner.text.Get(), items, damage, w, h,
-                    TrayScale(), appearance, *updatePalette, drawnInteraction.hovered,
-                    drawnInteraction.focused.has_value(), drawnInteraction.focused.value_or(0),
-                    mergedDockHeight > 0, trayScroll, drawnInteraction.indicator, dpi, &drawResources, &retainedFrameValid);
+                const auto result = PaintSceneUpdates(damage, *updatePalette, drawnInteraction);
                 TraceValue(SUCCEEDED(result) ? "draw.partial.success" : "draw.partial.failure");
                 painting = false;
                 if (SUCCEEDED(result) && ReplayTrayScrollPaint(prepareHidden, trayOnly, scrollFrame, presentation)) return;
@@ -1207,7 +1199,6 @@ struct StatusBar::Impl
             }
             const auto& a = appearance;
             const bool hc = HighContrast();
-            bool srgbBackground = backdrop.HasSrgbContent(backgroundKey);
             if (backgroundDirty)
             {
                 backgroundSurface.Reset();
@@ -1218,11 +1209,11 @@ struct StatusBar::Impl
                 const auto beginBackground = backgroundSurface->BeginDraw(nullptr, IID_PPV_ARGS(&background), &origin);
                 TraceValue(SUCCEEDED(beginBackground) ? "surface.begin.success" : "surface.begin.failure");
                 if (FAILED(beginBackground)) { paintError(beginBackground); return; }
-                HighlightCoverage coverage;
-                HighlightCoverage::Scope capture(background.Get(), coverage, srgbEligible);
                 background->SetDpi(96, 96);
                 background->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(origin.x), static_cast<float>(origin.y)));
-                background->Clear(hc ? SystemColor(COLOR_WINDOW) : D2D1::ColorF(0, 0.f));
+                background->Clear(D2D1::ColorF(0, 0.f));
+                DesktopBackdropCompositor::SrgbSceneRecording scene(background.Get());
+                if (hc) background->Clear(SystemColor(COLOR_WINDOW));
                 if (!hc && owner.drawBackground) owner.drawBackground(background.Get(), client, a, dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale));
                 if (!hc)
                 {
@@ -1233,13 +1224,13 @@ struct StatusBar::Impl
                     DrawStatusBarEdge(background.Get(), client, a, dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale),
                         owner.settings.position, adjacentClient);
                 }
-                srgbBackground = backdrop.PrepareSrgbMaterials(
-                    hwnd, backgroundKey, client, background.Get(), origin);
+                const auto recorded = scene.Finish();
+                const bool prepared = SUCCEEDED(recorded) && backdrop.PublishSrgbScene(
+                    hwnd, backgroundKey, client, background.Get(), origin, scene.Scene());
                 background.Reset();
                 const auto drawn = backgroundSurface->EndDraw();
                 TraceValue(SUCCEEDED(drawn) ? "surface.end.success" : "surface.end.failure");
-                if (FAILED(drawn)) { paintError(drawn); return; }
-                backgroundHighlightCompensation = srgbEligible;
+                if (!prepared || FAILED(drawn)) { paintError(FAILED(drawn) ? drawn : E_FAIL); return; }
                 backgroundDirty = false;
             }
             if (scrollFrame && !focusFrame)
@@ -1266,6 +1257,7 @@ struct StatusBar::Impl
             context->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
             context->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
             context->Clear(D2D1::ColorF(0, 0.f));
+            DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get());
             const StatusBarPalette palette{hc, SystemColor(COLOR_WINDOW), SystemColor(COLOR_WINDOWTEXT),
                 SystemColor(COLOR_HIGHLIGHT), SystemColor(COLOR_HIGHLIGHTTEXT)};
             const auto drawnInteraction = InteractionVisual();
@@ -1278,17 +1270,21 @@ struct StatusBar::Impl
                 scrollFrame != nullptr || focusFrame != nullptr, &retainedFrameValid);
             DrawStatusBarDropIndicator(context.Get(), drawnInteraction.indicator, a, palette, dpi);
             if (!scrollFrame && !focusFrame) PublishTrayGeometry();
+            const auto recorded = scene.Finish();
+            const bool prepared = SUCCEEDED(contentResult) && SUCCEEDED(recorded) && backdrop.PublishSrgbScene(
+                hwnd, SceneContentKey(), client, context.Get(), offset, scene.Scene());
             context.Reset();
             const auto surfaceResult = surface->EndDraw();
             TraceValue(SUCCEEDED(surfaceResult) ? "surface.end.success" : "surface.end.failure");
-            const auto result = FAILED(contentResult) ? contentResult : surfaceResult;
+            const auto result = FAILED(contentResult) ? contentResult : !prepared ? E_FAIL : surfaceResult;
             TraceValue(SUCCEEDED(result) ? "draw.full.success" : "draw.full.failure");
             painting = false;
             if (SUCCEEDED(result))
             {
                 if (ReplayTrayScrollPaint(prepareHidden, trayOnly, scrollFrame, presentation)) return;
-                auto attached = backdrop.SetDirectContentForSrgb(backgroundKey, srgbBackground,
-                    owner.composition.Get(), visual.Get(), backgroundSurface.Get());
+                const std::array sceneOrder{backgroundKey, SceneContentKey()};
+                backdrop.SetSrgbContentOrder(sceneOrder);
+                auto attached = visual->SetContent(backgroundSurface.Get());
                 if (SUCCEEDED(attached))
                     attached = contentVisual->SetContent(surface.Get());
                 if (FAILED(attached)) { paintError(attached); return; }
@@ -1307,6 +1303,28 @@ struct StatusBar::Impl
                 }
             }
             else paintError(result);
+        }
+        std::uintptr_t SceneContentKey() const noexcept
+        {
+            return reinterpret_cast<std::uintptr_t>(std::addressof(contentVisual));
+        }
+
+        HRESULT PaintSceneUpdates(std::span<const RECT> damage, const StatusBarPalette& palette,
+            const StatusBarInteractionVisualState& drawnInteraction)
+        {
+            for (const auto& region : damage)
+            {
+                const auto result = backdrop.UpdateSrgbScene(SceneContentKey(), region,
+                    [&](ID2D1DeviceContext* context, POINT offset) {
+                        return DrawStatusBarContentRegion(context, offset, owner.text.Get(), items, region,
+                            width, height, TrayScale(), appearance, palette, drawnInteraction.hovered,
+                            drawnInteraction.focused.has_value(), drawnInteraction.focused.value_or(0),
+                            mergedDockHeight > 0, trayScroll, drawnInteraction.indicator, dpi,
+                            &drawResources, &retainedFrameValid, true);
+                    });
+                if (FAILED(result)) return result;
+            }
+            return S_OK;
         }
         void PaintHover()
         {
@@ -1334,10 +1352,7 @@ struct StatusBar::Impl
                 performance::Value("status_bar", "hover.update_pixels", {}, static_cast<double>(pixels));
             }
             painting = true;
-            const auto result = DrawStatusBarContentUpdates(surface.Get(), owner.text.Get(), items, damage,
-                width, height, dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale), appearance, palette,
-                drawnInteraction.hovered, drawnInteraction.focused.has_value(), drawnInteraction.focused.value_or(0),
-                mergedDockHeight > 0, trayScroll, drawnInteraction.indicator, dpi, &drawResources, &retainedFrameValid);
+            const auto result = PaintSceneUpdates(damage, palette, drawnInteraction);
             TraceValue(SUCCEEDED(result) ? "draw.partial.success" : "draw.partial.failure");
             painting = false;
             // A backend rejecting incremental draws retains the existing full

@@ -1584,7 +1584,7 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
         quickNavigation_->hostRect.top);
 
     const float collapsed = 1.0f - rules::EaseInOutSmooth(visual.progress);
-    if (deformationFrame && !(effect == rules::Effect::Attraction
+    if (deformationFrame && quickNavigation_->sceneBitmap && !(effect == rules::Effect::Attraction
             ? ApplyQuickNavigationAttractionFrame(collapsed, visual.opacity)
             : ApplyQuickNavigationGenieFrame(collapsed, visual.opacity)))
     {
@@ -1594,17 +1594,10 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
         deformationFrame = false;
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Navigation, L"QuickNav deformation unavailable; using scale for this session", DiagnosticLogLevel::Warning);
     }
-    if (!quickNavigation_->compositionPaintInProgress && quickNavigation_->srgbHighlights[0] &&
-        (deformationFrame || quickNavigation_->srgbHighlightFrameDeformed) &&
-        !quickNavigation_->PublishSrgbHighlightFrame(d2dDevice_.Get(),
-            deformationFrame ? effect : rules::Effect::None,
-            deformationFrame ? collapsed : 0.f, visual.opacity))
-    {
-        quickNavigation_->srgbHighlights = {};
-        quickNavigation_->srgbHighlightFrameDeformed = false;
-        quickNavigation_->backdropCompositor.RemoveSrgbContent(srgbKey);
+    if (!deformationFrame && quickNavigation_->sceneBitmap &&
+        (quickNavigation_->sceneDirty || quickNavigation_->sceneFrameDeformed) &&
+        !quickNavigation_->PublishPrecomposedFrame(d2dDevice_.Get(), rules::Effect::None, 0.f, visual.opacity))
         InvalidateQuickNavigationWindow();
-    }
     if (!deformationFrame)
     {
         ClearQuickNavigationDeformation();
@@ -1709,7 +1702,7 @@ void DesktopApp::FinalizeCloseQuickNavigation()
         QuickNavigationInvocationSource::Pointer;
     quickNavigationDockHost_ = nullptr;
     quickNavigation_->slotPickerRequest = {};
-    if (!postCloseAction && !exitRequested_ && quickNavigation_->hwnd && quickNavigation_->dcompSurface)
+    if (!postCloseAction && !exitRequested_ && quickNavigation_->hwnd && quickNavigation_->sceneBitmap)
     {
         // Retain the hidden composition host for a quick reopen. Search and
         // IME state, capture and hit geometry belong only to the old session.

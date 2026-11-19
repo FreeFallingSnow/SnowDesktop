@@ -71,89 +71,12 @@ struct Effect : winrt::implements<Effect,
     winrt::hstring name;
 };
 
-inline winrt::com_ptr<Effect> SignMask(const graphics::IGraphicsEffectSource& input)
-{
-    using wf::PropertyValue;
-    std::vector<wf::IInspectable> properties;
-    properties.reserve(13);
-    for (int channel = 0; channel < 3; ++channel)
-    {
-        properties.push_back(PropertyValue::CreateSingle(.5f));
-        properties.push_back(PropertyValue::CreateSingle(4096.f));
-        properties.push_back(PropertyValue::CreateBoolean(false));
-    }
-    properties.push_back(PropertyValue::CreateSingle(1.f));
-    properties.push_back(PropertyValue::CreateSingle(0.f));
-    properties.push_back(PropertyValue::CreateBoolean(false));
-    properties.push_back(PropertyValue::CreateBoolean(true));
-    return winrt::make_self<Effect>(CLSID_D2D1LinearTransfer, std::move(properties),
-        std::vector{input});
-}
-
-inline winrt::com_ptr<Effect> Gamma(const graphics::IGraphicsEffectSource& input, float exponent)
-{
-    using wf::PropertyValue;
-    std::vector<wf::IInspectable> properties;
-    properties.reserve(17);
-    for (int channel = 0; channel < 3; ++channel)
-    {
-        properties.push_back(PropertyValue::CreateSingle(1.f));
-        properties.push_back(PropertyValue::CreateSingle(exponent));
-        properties.push_back(PropertyValue::CreateSingle(0.f));
-        properties.push_back(PropertyValue::CreateBoolean(false));
-    }
-    properties.push_back(PropertyValue::CreateSingle(1.f));
-    properties.push_back(PropertyValue::CreateSingle(1.f));
-    properties.push_back(PropertyValue::CreateSingle(0.f));
-    properties.push_back(PropertyValue::CreateBoolean(true));
-    properties.push_back(PropertyValue::CreateBoolean(false));
-    return winrt::make_self<Effect>(CLSID_D2D1GammaTransfer, std::move(properties),
-        std::vector{input});
-}
-
-// The 2.4 power coordinate gives the same source-over result as the sRGB
-// power segment: its outer affine scale and offset cancel in the blend.
-// Use a signed extension for scRGB and approximate the tiny linear toe.
-// The sign mask has alpha one, so 2 * gamma * mask - gamma retains input alpha.
-template<typename MakeInput>
-winrt::com_ptr<Effect> Transfer(MakeInput&& makeInput, bool encode)
-{
-    const auto magnitude = Gamma(makeInput(), encode ? 1.f / 2.4f : 2.4f);
-    const auto sign = SignMask(makeInput());
-    const float coefficients[]{2.f, -1.f, 0.f, 0.f};
-    std::vector<wf::IInspectable> properties{wf::PropertyValue::CreateSingleArray(coefficients),
-        wf::PropertyValue::CreateBoolean(false)};
-    return winrt::make_self<Effect>(CLSID_D2D1ArithmeticComposite, std::move(properties),
-        std::vector<graphics::IGraphicsEffectSource>{*magnitude, *sign});
-}
-
 inline winrt::com_ptr<Effect> Composite(D2D1_COMPOSITE_MODE mode,
     const graphics::IGraphicsEffectSource& background, const graphics::IGraphicsEffectSource& foreground)
 {
     return winrt::make_self<Effect>(CLSID_D2D1Composite,
         std::vector<wf::IInspectable>{wf::PropertyValue::CreateUInt32(mode)},
         std::vector{background, foreground});
-}
-
-inline winrt::com_ptr<Effect> AlphaSupport(const graphics::IGraphicsEffectSource& input)
-{
-    // An 8-bit alpha distinguishes empty pixels from the light and shadow.
-    // Keep the sampled backdrop within the material's coverage.
-    using wf::PropertyValue;
-    std::vector<wf::IInspectable> supportProperties;
-    supportProperties.reserve(13);
-    for (int channel = 0; channel < 3; ++channel)
-    {
-        supportProperties.push_back(PropertyValue::CreateSingle(0.f));
-        supportProperties.push_back(PropertyValue::CreateSingle(1.f));
-        supportProperties.push_back(PropertyValue::CreateBoolean(true));
-    }
-    supportProperties.push_back(PropertyValue::CreateSingle(0.f));
-    supportProperties.push_back(PropertyValue::CreateSingle(255.f));
-    supportProperties.push_back(PropertyValue::CreateBoolean(false));
-    supportProperties.push_back(PropertyValue::CreateBoolean(true));
-    return winrt::make_self<Effect>(CLSID_D2D1LinearTransfer, std::move(supportProperties),
-        std::vector<graphics::IGraphicsEffectSource>{input});
 }
 
 inline composition::CompositionEffectFactory CreateSceneFactory(const composition::Compositor& compositor)
@@ -171,30 +94,6 @@ inline composition::CompositionEffectFactory CreateSceneFactory(const compositio
         std::vector<graphics::IGraphicsEffectSource>{composition::CompositionEffectSourceParameter(L"scene")});
     const auto output = Composite(D2D1_COMPOSITE_MODE_DESTINATION_IN, *mixed, *support);
     auto factory = compositor.CreateEffectFactory(*output);
-    winrt::check_hresult(factory.ExtendedError());
-    return factory;
-}
-
-inline composition::CompositionEffectFactory CreateFactory(const composition::Compositor& compositor)
-{
-    const auto makeMixed = []() -> graphics::IGraphicsEffectSource {
-        const auto backdrop = Transfer([] {
-            return composition::CompositionEffectSourceParameter(L"backdrop");
-        }, true);
-        const auto material = Gamma(composition::CompositionEffectSourceParameter(L"material"), 1.f / 2.4f);
-        return *Composite(D2D1_COMPOSITE_MODE_SOURCE_OVER, *backdrop, *material);
-    };
-    const auto corrected = Transfer(makeMixed, false);
-    const auto coverage = composition::CompositionEffectSourceParameter(L"coverage");
-    const auto ordinary = Composite(D2D1_COMPOSITE_MODE_SOURCE_OVER,
-        composition::CompositionEffectSourceParameter(L"backdrop"),
-        composition::CompositionEffectSourceParameter(L"material"));
-    const auto outside = Composite(D2D1_COMPOSITE_MODE_DESTINATION_OUT, *ordinary, coverage);
-    const auto inside = Composite(D2D1_COMPOSITE_MODE_DESTINATION_IN, *corrected, coverage);
-    const auto output = Composite(D2D1_COMPOSITE_MODE_PLUS, *outside, *inside);
-    const auto support = AlphaSupport(composition::CompositionEffectSourceParameter(L"material"));
-    const auto clipped = Composite(D2D1_COMPOSITE_MODE_DESTINATION_IN, *output, *support);
-    auto factory = compositor.CreateEffectFactory(*clipped);
     winrt::check_hresult(factory.ExtendedError());
     return factory;
 }

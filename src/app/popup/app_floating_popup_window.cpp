@@ -2,7 +2,6 @@
 
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
-#include "ui/render/highlight_coverage.h"
 #include "popup_resize_transition.h"
 #include "diagnostics/diagnostic_log.h"
 #include "common/utils.h"
@@ -787,7 +786,7 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
     // Coalesce arriving folder/icons before BeginDraw on the host surface.
     // The animated child keeps its native timeline while only its pixels change.
     RefreshCollectionPopupAnimationContent();
-    // Each surface keeps its own desktop position and display color mode.
+    // Each surface keeps its own position in the shared precomposed visual tree.
     const auto paintSurface = [&](IDCompositionSurface& surface, IDCompositionVisual2& visual,
         const RECT& bounds, std::uintptr_t key, const auto& draw) -> HRESULT {
         ComPtr<ID2D1DeviceContext> context;
@@ -801,9 +800,6 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
             return E_UNEXPECTED;
         }
 
-        snowdesktop::HighlightCoverage coverage;
-        snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), coverage,
-            collectionPopupBackdropCompositor_.IsSrgbHighlightEligible(floatingPopupHwnd_, bounds));
         context->SetDpi(96.0f, 96.0f);
         context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
         context->SetTransform(D2D1::Matrix3x2F::Translation(
@@ -812,10 +808,12 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
         context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         context->Clear(D2D1::ColorF(0, 0, 0, 0));
 
+        DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get());
         drawing_.Reset();
         draw(context.Get());
-        const bool srgbPresented = collectionPopupBackdropCompositor_.PrepareSrgbMaterials(
-            floatingPopupHwnd_, key, bounds, context.Get(), offset);
+        const HRESULT recorded = scene.Finish();
+        const bool srgbPresented = SUCCEEDED(recorded) && collectionPopupBackdropCompositor_.PublishSrgbScene(
+            floatingPopupHwnd_, key, bounds, context.Get(), offset, scene.Scene());
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
         drawing_.Reset();
@@ -825,7 +823,7 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
         if (SUCCEEDED(hr)) hr = visual.SetOffsetX(static_cast<float>(bounds.left));
         if (SUCCEEDED(hr)) hr = visual.SetOffsetY(static_cast<float>(bounds.top));
         if (FAILED(hr)) return hr;
-        if (!srgbPresented) collectionPopupBackdropCompositor_.RetireSrgbAfterDirectCommit(key);
+        if (!srgbPresented) return FAILED(recorded) ? recorded : E_FAIL;
         return visual.SetContent(&surface);
     };
 
@@ -932,17 +930,8 @@ bool DesktopApp::PresentFloatingPopupComposition()
     }
     if (!collectionPopupBackdropCompositor_.CommitSrgbContent())
     {
-        const auto srgbKey = reinterpret_cast<std::uintptr_t>(floatingPopupHwnd_);
-        HRESULT fallback = collectionPopupBackdropCompositor_.SetDirectContentForSrgb(
-            srgbKey, false, dcompDevice_.Get(), floatingPopupDcompLiveVisual_.Get(),
-            IsRectEmpty(&floatingPopupContentBounds_) ? nullptr : floatingPopupSurfaces_.Content());
-        if (SUCCEEDED(fallback) && floatingStackIndicatorVisual_)
-            fallback = collectionPopupBackdropCompositor_.SetDirectContentForSrgb(
-                reinterpret_cast<std::uintptr_t>(&luaStackIndicator_), false, dcompDevice_.Get(),
-                floatingStackIndicatorVisual_.Get(),
-                IsRectEmpty(&floatingStackIndicatorRegion_) ? nullptr : floatingPopupSurfaces_.Indicator());
-        if (FAILED(fallback) || !CommitCompositionAnimationFrame() || !FlushPendingCompositionCommit())
-            return false;
+        RecoverFloatingPopupCompositionFailure(L"Precomposed content", E_FAIL);
+        return false;
     }
     KillTimer(floatingPopupHwnd_, kPopupPresentationRetryTimerId);
     floatingPopupPresentationRetryCount_ = 0;

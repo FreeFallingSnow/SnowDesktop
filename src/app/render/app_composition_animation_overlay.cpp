@@ -1,5 +1,4 @@
 #include "app/app.h"
-#include "ui/render/highlight_coverage.h"
 #include "navigation/quick_navigation_animation_rules.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "diagnostics/diagnostic_log.h"
@@ -161,35 +160,33 @@ bool DesktopApp::UpdateCompositionAnimationOverlayContent(
         reinterpret_cast<void**>(&rawContext), &updateOffset);
     if (FAILED(hr))
         return false;
+    if (!rawContext)
+    {
+        (void)overlay.surface->EndDraw();
+        return false;
+    }
     ComPtr<ID2D1DeviceContext> context;
     context.Attach(rawContext);
     auto& material = AnimationHighlightCompositor(overlay);
     const auto materialKey = reinterpret_cast<std::uintptr_t>(&overlay);
     const HWND owner = overlay.host == UiCompositionAnimationHost::FloatingPopup ? floatingPopupHwnd_ : hwnd_;
-    // A newly created material visual cannot join a native timeline in flight.
-    const bool extractHighlights = (!overlay.active || material.HasSrgbContent(materialKey)) &&
-        DesktopBackdropCompositor::IsSrgbHighlightEligible(owner, overlay.bounds);
-    snowdesktop::HighlightCoverage coverage;
-    snowdesktop::HighlightCoverage::Scope capture(context.Get(), coverage, extractHighlights);
-    bool drawn = false;
-    if (context)
-    {
-        context->SetDpi(96.0f, 96.0f);
-        context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
-        context->SetTransform(D2D1::Matrix3x2F::Identity());
-        context->Clear(D2D1::ColorF(0, 0, 0, 0));
-        drawn = cache.DrawAt(context.Get(),
-            D2D1::Point2F(static_cast<float>(updateOffset.x), static_cast<float>(updateOffset.y)),
-            D2D1_INTERPOLATION_MODE_LINEAR);
-    }
-    const bool prepared = drawn && material.PrepareSrgbMaterials(
-        owner, materialKey, overlay.bounds, context.Get(), updateOffset, overlay.active ? -1.f : 0.f);
+    context->SetDpi(96.0f, 96.0f);
+    context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+    context->SetTransform(D2D1::Matrix3x2F::Identity());
+    context->Clear(D2D1::ColorF(0, 0, 0, 0));
+    DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get());
+    const bool drawn = cache.DrawAt(context.Get(),
+        D2D1::Point2F(static_cast<float>(updateOffset.x), static_cast<float>(updateOffset.y)),
+        D2D1_INTERPOLATION_MODE_LINEAR);
+    const auto recorded = scene.Finish();
+    const bool prepared = drawn && SUCCEEDED(recorded) && material.PublishSrgbScene(
+        owner, materialKey, overlay.bounds, context.Get(), updateOffset, scene.Scene(), overlay.active ? -1.f : 0.f);
     context.Reset();
     const HRESULT endDrawHr = overlay.surface->EndDraw();
-    if (!drawn || FAILED(endDrawHr)) return false;
-    overlay.presentingHighlights = prepared;
+    if (!prepared || FAILED(endDrawHr)) return false;
+    overlay.presentingHighlights = true;
     return SUCCEEDED(material.SetDirectContentForSrgb(materialKey,
-        overlay.presentingHighlights, dcompDevice_.Get(), overlay.visual.Get(), overlay.surface.Get()));
+        true, dcompDevice_.Get(), overlay.visual.Get(), overlay.surface.Get()));
 }
 
 HRESULT UiCompositionAnimationOverlay::SetPlacementOffset(POINT offset) const
@@ -441,35 +438,12 @@ bool DesktopApp::FlushPendingCompositionCommit()
         dragPreviewHighlights_.OnDirectContentCommitted(dcompDevice_.Get());
         desktopBackdropCompositor_.OnDirectContentCommitted(dcompDevice_.Get());
         (void)collectionPopupBackdropCompositor_.CommitSrgbContent();
-        if (!dragPreviewHighlights_.CommitSrgbContent())
-        {
-            if (dragPreviewDcompVisual_)
-            {
-                (void)dragPreviewHighlights_.SetDirectContentForSrgb(1, false,
-                    dcompDevice_.Get(), dragPreviewDcompVisual_.Get(), dragPreviewDcompSurface_.Get());
-                if (SUCCEEDED(dcompDevice_->Commit()))
-                    dragPreviewHighlights_.OnDirectContentCommitted(dcompDevice_.Get());
-            }
-        }
-        // Keep desktop glass adjacent to the content submission. In
-        // particular, a roll frame must not publish its new glass while
-        // the corresponding child surface is still queued on this device.
+        if (!dragPreviewHighlights_.CommitSrgbContent() && dragPreviewHwnd_)
+            InvalidateRect(dragPreviewHwnd_, nullptr, FALSE);
+        // Finish the glass update before the scene samples the live background.
         desktopBackdropCompositor_.CommitDeferredFrame();
-        if (!desktopBackdropCompositor_.CommitSrgbContent())
-        {
-            for (auto& [id, item] : desktopWidgetCompositionItems_)
-            {
-                if (!item.presentingSrgb) continue;
-                (void)desktopBackdropCompositor_.SetDirectContentForSrgb(item.BackdropOwnerKey(),
-                    false, dcompDevice_.Get(), item.visual.Get(), item.surface.Get());
-                item.presentingSrgb = false;
-                pendingDesktopWidgetCompositions_.insert(id);
-            }
-            if (SUCCEEDED(dcompDevice_->Commit()))
-                desktopBackdropCompositor_.OnDirectContentCommitted(dcompDevice_.Get());
-            if ((!desktopSrgbTiles_.empty() || !foregroundSrgbTiles_.empty()) && IsWindow(hwnd_))
-                InvalidateRect(hwnd_, nullptr, FALSE);
-        }
+        if (!desktopBackdropCompositor_.CommitSrgbContent() && IsWindow(hwnd_))
+            InvalidateRect(hwnd_, nullptr, FALSE);
     }
     TraceDesktopPresentation(L"composition-commit", hr);
     RecordShellHoverTrace(
@@ -579,137 +553,10 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
     quickNavigation_->animationFrameToken = 0;
     quickNavigation_->animationCompositorDriven = false;
 
-    const bool deforming = snowdesktop::quick_navigation_animation_rules::IsDeformationEffect(
-        quickNavigation_->animation.GetEffect());
-    const bool hasCompensatedHighlights = quickNavigation_->backdropCompositor.HasSrgbContent(
-        reinterpret_cast<std::uintptr_t>(quickNavigation_->hwnd));
-
-    // Snap both compositor trees to the same logical frame before attaching
-    // native animations. This also disconnects a previous animation during a
-    // rapid open/close reversal and hides the native search edit until rest.
+    // Drive the precomposed content and live backdrop from the same scheduler pose.
     ApplyQuickNavigationAnimationFrame();
     ApplyFloatingDockLayerPolicy();
-    if (deforming || hasCompensatedHighlights)
-    {
-        // Content, glass and compensated highlights use one scheduler pose.
-        // Separate native timelines can start or settle on different frames.
-        return false;
-    }
-    if (!quickNavigation_->dcompDevice || !quickNavigation_->dcompVisual ||
-        !quickNavigation_->dcompEffect || !quickNavigation_->dcompScaleTransform)
-    {
-        return false;
-    }
-
-    const auto visual = quickNavigation_->animation.GetVisual();
-    const bool opening = quickNavigation_->animation.IsOpening();
-    const float targetScale = opening
-        ? 1.0f
-        : quickNavigation_->animation.HiddenScale();
-    const float targetOpacity = opening ? 1.0f : 0.0f;
-    const bool responsive = quickNavigation_->animation.UsesResponsiveMotion();
-    const auto revealTimeline = responsive ? quickNavigation_->animation.RemainingTimeline()
-        : snowdesktop::popup_motion_curve::Timeline{};
-    const auto scaleTimeline = responsive ? quickNavigation_->animation.RemainingScaleTimeline()
-        : snowdesktop::popup_motion_curve::Timeline{};
-    const float normalizedStartSlope =
-        snowdesktop::quick_navigation_animation_rules::
-            SegmentNormalizedStartSlope(
-                visual.progress, opening);
-    const float remaining = opening
-        ? 1.0f - visual.progress : visual.progress;
-    const UINT duration = responsive ? std::max<UINT>(1, static_cast<UINT>(std::ceil(revealTimeline.durationMilliseconds))) : std::max<UINT>(
-        1, static_cast<UINT>(std::lround(
-            remaining * static_cast<float>(quickNavigation_->animation.DurationMilliseconds(opening)))));
-
-    Microsoft::WRL::ComPtr<IDCompositionAnimation> scaleAnimation;
-    Microsoft::WRL::ComPtr<IDCompositionAnimation> opacityAnimation;
-    HRESULT hr = responsive ? CreatePopupSpringAnimation(quickNavigation_->dcompDevice.Get(), scaleTimeline, &scaleAnimation) : CreateSmoothStepAnimation(
-        quickNavigation_->dcompDevice.Get(), visual.scale, targetScale,
-        duration, &scaleAnimation, normalizedStartSlope);
-    if (SUCCEEDED(hr))
-    {
-        hr = responsive ? CreatePopupSpringAnimation(quickNavigation_->dcompDevice.Get(), revealTimeline, &opacityAnimation) : CreateSmoothStepAnimation(
-            quickNavigation_->dcompDevice.Get(), visual.opacity, targetOpacity,
-            duration, &opacityAnimation, normalizedStartSlope);
-    }
-    if (SUCCEEDED(hr))
-    {
-        hr = quickNavigation_->dcompScaleTransform->SetScaleX(
-            scaleAnimation.Get());
-    }
-    if (SUCCEEDED(hr))
-    {
-        hr = quickNavigation_->dcompScaleTransform->SetScaleY(
-            scaleAnimation.Get());
-    }
-    if (SUCCEEDED(hr))
-        hr = quickNavigation_->dcompEffect->SetOpacity(opacityAnimation.Get());
-    if (FAILED(hr) || !CommitQuickNavigationCompositionFrame())
-    {
-        ApplyQuickNavigationAnimationFrame();
-        return false;
-    }
-
-    // Prepare content before starting the glass timeline, then submit both
-    // channels together at this call site. Deferring the DComp half until the
-    // message returns lets unrelated UI work separate the two start times.
-    if (quickNavigation_->glassTheme && quickNavigation_->backdropCompositor.IsAvailable() &&
-        !quickNavigation_->backdropCompositor.StartVisualTransformAnimation(
-            visual.scale, targetScale, visual.opacity, targetOpacity,
-            static_cast<float>(quickNavigation_->animationAnchorPoint.x -
-                quickNavigation_->hostRect.left),
-            static_cast<float>(quickNavigation_->animationAnchorPoint.y -
-                quickNavigation_->hostRect.top), duration, normalizedStartSlope,
-            responsive ? &scaleTimeline : nullptr, responsive ? &revealTimeline : nullptr))
-    {
-        ApplyQuickNavigationAnimationFrame();
-        return false;
-    }
-    if (!FlushPendingQuickNavigationCompositionCommit() ||
-        !quickNavigation_->backdropCompositor.CommitSrgbContent())
-    {
-        ApplyQuickNavigationAnimationFrame();
-        return false;
-    }
-
-    quickNavigation_->animationCompositorDriven = true;
-    quickNavigation_->animationCompletionToken =
-        uiAnimationScheduler_.ScheduleOnce(
-            duration + 2,
-            [this](snowdesktop::UiScheduleToken token) {
-                if (quickNavigation_->animationCompletionToken != token)
-                    return;
-                quickNavigation_->animationCompletionToken = 0;
-                quickNavigation_->animationCompositorDriven = false;
-                quickNavigation_->animation.Advance(
-                    static_cast<std::uint64_t>(
-                        snowdesktop::UiAnimationScheduler::
-                            MonotonicMilliseconds()));
-                if (!quickNavigation_->animation.IsAnimating() &&
-                    quickNavigation_->animation.IsHidden())
-                {
-                    FinalizeCloseQuickNavigation();
-                    return;
-                }
-                if (quickNavigation_->animation.IsAnimating())
-                {
-                    if (StartQuickNavigationCompositionAnimation())
-                        return;
-                    ApplyQuickNavigationAnimationFrame();
-                    EnsureUiAnimationFrame();
-                    return;
-                }
-                ApplyQuickNavigationAnimationFrame();
-                ApplyFloatingDockLayerPolicy();
-            });
-    if (!quickNavigation_->animationCompletionToken)
-    {
-        quickNavigation_->animationCompositorDriven = false;
-        ApplyQuickNavigationAnimationFrame();
-        return false;
-    }
-    return true;
+    return false;
 }
 
 void DesktopApp::FlushNativeMenuPresentation()

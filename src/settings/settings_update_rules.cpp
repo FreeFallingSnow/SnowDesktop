@@ -52,7 +52,6 @@ bool IsGeneralShortcutOnlyCommit(
         before.desktopIdleHideDelaySeconds == after.desktopIdleHideDelaySeconds &&
         before.desktopIdleHidePauseWithWindows == after.desktopIdleHidePauseWithWindows &&
         before.screenTimeEnabled == after.screenTimeEnabled &&
-        before.wcgCompensation == after.wcgCompensation &&
         before.contextMenuExpandQuickActions == after.contextMenuExpandQuickActions &&
         before.contextMenuHidePageManagement == after.contextMenuHidePageManagement &&
         before.contextMenuHideMoreManagement == after.contextMenuHideMoreManagement &&
@@ -103,7 +102,6 @@ bool IsGeneralLoggingOnlyCommit(const GeneralSettings& before,
         before.desktopIdleHideDelaySeconds == after.desktopIdleHideDelaySeconds &&
         before.desktopIdleHidePauseWithWindows == after.desktopIdleHidePauseWithWindows &&
         before.screenTimeEnabled == after.screenTimeEnabled &&
-        before.wcgCompensation == after.wcgCompensation &&
         before.desktopPassthroughHotkeyEnabled == after.desktopPassthroughHotkeyEnabled &&
         before.desktopPassthroughHotkeyModifiers == after.desktopPassthroughHotkeyModifiers &&
         before.desktopPassthroughHotkeyVirtualKey == after.desktopPassthroughHotkeyVirtualKey &&

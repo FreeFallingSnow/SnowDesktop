@@ -1,10 +1,8 @@
 #include "app/app.h"
-#include "ui/render/highlight_coverage.h"
 #include "diagnostics/diagnostic_log.h"
 #include "common/utils.h"
 #include "app/render/desktop_backdrop_update_rules.h"
 #include "diagnostics/performance_trace.h"
-#include "desktop/display_color_mode.h"
 #include "settings/animation_settings.h"
 #include "widget/view/widget_surface_retention.h"
 #include "widget/view/widget_surface_renderer.h"
@@ -525,34 +523,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         const bool boundsChanged = !SameRect(oldBounds, bounds);
         const RECT contentFrame{surfaceLeft, surfaceTop,
             surfaceLeft + static_cast<LONG>(width), surfaceTop + static_cast<LONG>(height)};
-        using snowdesktop::display_color::Compensation;
-        const bool keepComposition = widgetData->type == DesktopWidgetType::LuaStack ||
-            widgetData->keepInitialComposition;
-        const auto compensation = DesktopBackdropCompositor::SrgbCompensationForFrame(hwnd_, contentFrame);
-        const bool srgbEligible = compensation != Compensation::Off;
-        // Draw a new or restored frame before its glass and marquees are
-        // committed. Keep the existing frame visible during a worker handoff.
-        const bool sameSurface = item.width == width && item.height == height &&
-            item.renderedContentId == contentId;
-        const bool hasPresentedFrame = item.renderedVisualAttached || item.surface;
-        // Keep the host surface through stack switches and a new widget's
-        // first visible interval, avoiding a second device at the handoff.
-        const bool asynchronous = luaWidget && !keepComposition && widgetSurfaceRenderer_ && !item.renderFailed &&
-            !srgbEligible && !desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey()) &&
-            sameSurface && hasPresentedFrame;
-        if (asynchronous && !item.renderTarget)
-        {
-            item.renderTarget = widgetSurfaceRenderer_->CreateTarget(
-                widgetId, width, height, &item.renderedVisual, contentId);
-            if (!item.renderTarget)
-            {
-                item.renderFailed = true;
-                surfaceFailures.push_back({widgetId, L"Create worker visual", E_FAIL, true});
-                continue;
-            }
-        }
-
-        if (!asynchronous && (!item.surface || item.width != width || item.height != height))
+        if (!item.surface || item.width != width || item.height != height)
         {
             ComPtr<IDCompositionSurface> surface;
             HRESULT hr = dcompDevice_->CreateSurface(
@@ -575,12 +546,9 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         }
 
         ID2D1DeviceContext* rawContext = nullptr;
-        ComPtr<ID2D1CommandList> commands;
         POINT updateOffset{};
-        HRESULT hr = asynchronous
-            ? widgetSurfaceRenderer_->BeginRecording(&rawContext, &commands)
-            : item.surface->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
-                reinterpret_cast<void**>(&rawContext), &updateOffset);
+        HRESULT hr = item.surface->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
+            reinterpret_cast<void**>(&rawContext), &updateOffset);
         if (FAILED(hr) || !rawContext)
         {
             surfaceFailures.push_back({
@@ -593,21 +561,11 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         context.Attach(rawContext);
         context->SetDpi(96.0f, 96.0f);
         context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
-        if (!asynchronous)
-        {
-            context->SetTransform(D2D1::Matrix3x2F::Translation(
-                static_cast<float>(updateOffset.x - surfaceLeft),
-                static_cast<float>(updateOffset.y - surfaceTop)));
-            context->Clear(D2D1::ColorF(0, 0, 0, 0));
-        }
-
-        DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get(), !asynchronous && widgetContainer &&
-            compensation == Compensation::HighlightsAndShadows &&
-            iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled &&
-            (iconShadows_.exposedWidget || iconShadows_.subject));
-        snowdesktop::HighlightCoverage highlightCoverage;
-        snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), highlightCoverage,
-            srgbEligible && !asynchronous, scene.Started());
+        context->SetTransform(D2D1::Matrix3x2F::Translation(
+            static_cast<float>(updateOffset.x - surfaceLeft),
+            static_cast<float>(updateOffset.y - surfaceTop)));
+        context->Clear(D2D1::ColorF(0, 0, 0, 0));
+        DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get());
 
         desktopWidgetCompositionDrawInProgress_ = true;
         item.iconBackdrops.BeginDraw();
@@ -615,8 +573,6 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         desktopWidgetBackdropRequestedDuringDraw_ = false;
         desktopWidgetBackdropCornerRadiusDuringDraw_ = 0.0f;
         desktopWidgetBackdropBlurRadiusDuringDraw_ = 0.0f;
-        snowdesktop::widget_runtime::WidgetImageSpin imageSpin;
-        snowdesktop::widget_runtime::WidgetSurfacePaint surfacePaint;
         const POINT interactionPoint = lastMousePoint_;
         if (SuppressDesktopWidgetDragTargets() ||
             (IsCollectionPopupHostedByFloatingWindow() && IsPointOccludedByOpenPopup(lastMousePoint_)))
@@ -635,27 +591,9 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         {
             snowdesktop::performance::Scope contentScope(
                 "widget.composition", "content.record", contentId);
-            // The child draw captures its base material request; the owning
-            // surface registers the native panel after EndDraw succeeds.
-            struct SurfaceOutputScope
-            {
-                WidgetEngine* engine;
-                ~SurfaceOutputScope()
-                {
-                    if (!engine) return;
-                    engine->SetDesktopImageSpinOutput(nullptr);
-                    engine->SetDesktopSurfacePaintOutput(nullptr);
-                }
-            } output{asynchronous ? widgetEngine_.get() : nullptr};
-            if (output.engine)
-            {
-                output.engine->SetDesktopImageSpinOutput(&imageSpin);
-                output.engine->SetDesktopSurfacePaintOutput(&surfacePaint);
-            }
             luaWidget->DrawCompositionSurface(
                 context.Get(), widgetData->bounds,
-                widgetData->selected ? 2 : 0, true,
-                output.engine ? &surfacePaint : nullptr);
+                widgetData->selected ? 2 : 0, true, nullptr);
         }
         else
         {
@@ -677,25 +615,17 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         desktopWidgetBackdropRequestedDuringDraw_ = false;
 
         const HRESULT sceneResult = scene.Finish();
-        const bool preparedMaterials = SUCCEEDED(sceneResult) && desktopBackdropCompositor_.PrepareSrgbMaterials(
-            hwnd_, item.BackdropOwnerKey(), contentFrame, context.Get(), updateOffset, item.HoverOpacity(), scene.Scene());
+        const bool preparedScene = SUCCEEDED(sceneResult) && desktopBackdropCompositor_.PublishSrgbScene(
+            hwnd_, item.BackdropOwnerKey(), contentFrame, context.Get(), updateOffset, scene.Scene(),
+            item.visible ? item.HoverOpacity() : 0.f);
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
-        HRESULT endDrawHr = asynchronous
-            ? widgetSurfaceRenderer_->EndRecording(commands.Get()) : item.surface->EndDraw();
+        HRESULT endDrawHr = item.surface->EndDraw();
         if (FAILED(sceneResult)) endDrawHr = sceneResult;
-        if (asynchronous && SUCCEEDED(endDrawHr))
-        {
-            const RECT surfaceBounds{surfaceLeft, surfaceTop,
-                surfaceLeft + static_cast<LONG>(width), surfaceTop + static_cast<LONG>(height)};
-            if (!widgetSurfaceRenderer_->Submit(item.renderTarget, commands.Get(),
-                    surfaceBounds, std::move(imageSpin), std::move(surfacePaint)))
-                endDrawHr = E_FAIL;
-        }
+        if (!preparedScene && SUCCEEDED(endDrawHr)) endDrawHr = E_FAIL;
         drawing_.Reset();
         if (FAILED(endDrawHr))
         {
-            if (asynchronous) item.renderFailed = true;
             item.iconBackdrops.DiscardDraw();
             surfaceFailures.push_back({
                 widgetId, L"EndDraw", endDrawHr, true });
@@ -704,7 +634,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
 
         // Keep the outgoing worker visual attached until the synchronous
         // replacement has finished drawing and can be committed with it.
-        if (!asynchronous && item.renderTarget)
+        if (item.renderTarget)
         {
             const HRESULT retired = RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
             if (FAILED(retired))
@@ -742,8 +672,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
             item.backdropRegistered = false;
         }
 
-        const bool srgbPresented = showContent && preparedMaterials;
-        hr = asynchronous ? S_OK : desktopBackdropCompositor_.SetDirectContentForSrgb(
+        const bool srgbPresented = showContent;
+        hr = desktopBackdropCompositor_.SetDirectContentForSrgb(
             item.BackdropOwnerKey(), srgbPresented, dcompDevice_.Get(), item.visual.Get(), item.surface.Get());
         if (SUCCEEDED(hr))
             item.presentingSrgb = srgbPresented;
@@ -809,7 +739,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         else
         {
             item.contentVisible = showContent;
-            if (luaWidget && !asynchronous)
+            if (luaWidget)
                 item.renderedContentId = contentId;
             if (showContent && item.hoverFade && item.hoverFade->waitingForPixels)
                 StartDesktopWidgetHoverFade(item, true);

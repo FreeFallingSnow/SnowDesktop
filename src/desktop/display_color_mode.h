@@ -1,10 +1,8 @@
 #pragma once
 
-#include "desktop/display_color_preferences.h"
 
 #include <windows.h>
 #include <algorithm>
-#include <atomic>
 #include <string>
 #include <utility>
 #include <vector>
@@ -12,7 +10,6 @@
 namespace snowdesktop::display_color
 {
 enum class Mode { Unknown, Sdr, WideColor, Hdr };
-inline std::atomic<Compensation> compensation{Compensation::Highlights};
 
 struct Configuration
 {
@@ -122,60 +119,5 @@ inline const std::vector<Configuration>& Configurations()
         snapshot.entries = ReadConfigurations();
     }
     return snapshot.entries;
-}
-
-inline bool NeedsCompensation(const Configuration& config) noexcept
-{
-    return config.mode == Mode::WideColor && config.bitsPerChannel == 10 &&
-        config.acmKnown && config.acmEnabled;
-}
-
-inline Compensation EffectiveCompensation(
-    const std::vector<Configuration>& configs, const wchar_t* source, Compensation requested)
-{
-    if (requested == Compensation::Off || !source || !*source) return Compensation::Off;
-    bool eligible = false;
-    for (const auto& config : configs)
-    {
-        if (_wcsicmp(config.sourceName.c_str(), source) != 0) continue;
-        // Clone targets share an image. Keep the ordinary drawing path if any
-        // of the displays receiving that image is outside the affected mode.
-        if (!NeedsCompensation(config)) return Compensation::Off;
-        eligible = true;
-    }
-    return eligible ? requested : Compensation::Off;
-}
-
-inline Compensation CompensationForMonitor(HMONITOR monitor)
-{
-    const auto requested = compensation.load(std::memory_order_relaxed);
-    if (requested == Compensation::Off || !monitor) return Compensation::Off;
-    MONITORINFOEXW info{};
-    info.cbSize = sizeof(info);
-    if (!GetMonitorInfoW(monitor, &info)) return Compensation::Off;
-    return EffectiveCompensation(Configurations(), info.szDevice, requested);
-}
-
-inline bool UseHighlightCompensation(HMONITOR monitor)
-{
-    return CompensationForMonitor(monitor) != Compensation::Off;
-}
-
-inline bool AnyWideColorMonitor()
-{
-    const auto& configs = Configurations();
-    return std::any_of(configs.begin(), configs.end(), [](const Configuration& config) {
-        return config.mode == Mode::WideColor;
-    });
-}
-
-inline bool UseHighlightCompensationOnDesktop()
-{
-    const auto requested = compensation.load(std::memory_order_relaxed);
-    if (requested == Compensation::Off) return false;
-    const auto& configs = Configurations();
-    return std::any_of(configs.begin(), configs.end(), [&](const Configuration& config) {
-        return EffectiveCompensation(configs, config.sourceName.c_str(), requested) != Compensation::Off;
-    });
 }
 } // namespace snowdesktop::display_color

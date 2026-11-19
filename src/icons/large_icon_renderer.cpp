@@ -1,4 +1,5 @@
 #include "ui/render/app_font.h"
+#include "ui/render/icon_backdrop_clip.h"
 #include "large_icon_renderer.h"
 #include "theme/panel_gradient_renderer.h"
 #include "large_icon_title_measure.h"
@@ -112,8 +113,7 @@ void DrawEdgeGlow(ID2D1RenderTarget* target, const LargeIconConfig& c, const Vie
         if (!outline) continue;
         auto highlightColor = brush->GetColor();
         highlightColor.a *= brush->GetOpacity();
-        if (highlightColor.a > 0.f &&
-            !HighlightCoverage::ExtractStroke(target, outline.Get(), stroke, highlightColor))
+        if (highlightColor.a > 0.f)
             target->DrawGeometry(outline.Get(), brush.Get(), stroke);
     }
 }

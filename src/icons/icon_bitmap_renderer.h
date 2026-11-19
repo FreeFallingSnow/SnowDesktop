@@ -1,6 +1,5 @@
 #pragma once
 
-#include "ui/render/highlight_coverage.h"
 
 #include "icon_render_rules.h"
 
@@ -52,9 +51,7 @@ inline void Draw(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap,
         const auto interpolation = !plan.preserveAspectRatio ? D2D1_INTERPOLATION_MODE_LINEAR
             : translucentMaterial ? D2D1_INTERPOLATION_MODE_MULTI_SAMPLE_LINEAR
                                   : D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC;
-        const auto body = HighlightCoverage::ExtractBitmapMaterial(target, bitmap,
-            destination, opacity, interpolation);
-        context->DrawBitmap(body ? body.Get() : bitmap, &destination, opacity,
+        context->DrawBitmap(bitmap, &destination, opacity,
             interpolation, nullptr, nullptr);
     }
     else

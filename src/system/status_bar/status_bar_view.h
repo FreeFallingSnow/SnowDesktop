@@ -141,6 +141,11 @@ RECT StatusBarTrayScrollDamage(const std::vector<StatusBarItem>&, std::optional<
     RECT viewport, const std::optional<RECT>& before, const std::optional<RECT>& after, UINT width, UINT height);
 void DrawStatusBarDropIndicator(ID2D1DeviceContext*, const std::optional<RECT>&,
     const PersonalizationSettings&, const StatusBarPalette&, UINT dpi);
+HRESULT DrawStatusBarContentRegion(ID2D1DeviceContext*, POINT, IDWriteFactory*, std::vector<StatusBarItem>&,
+    const RECT&, UINT width, UINT height, float scale, const PersonalizationSettings&, const StatusBarPalette&,
+    std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused, bool mergedDock,
+    StatusBarTrayScroll&, const std::optional<RECT>& indicator, UINT dpi, StatusBarDrawResources*,
+    bool* frameReusable, bool keepPreparedText);
 HRESULT DrawStatusBarContentUpdate(IDCompositionSurface*, IDWriteFactory*, std::vector<StatusBarItem>&,
     RECT damage, UINT width, UINT height, float scale, const PersonalizationSettings&, const StatusBarPalette&,
     std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused, bool mergedDock,

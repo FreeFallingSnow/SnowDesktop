@@ -47,12 +47,9 @@ public:
 
 private:
     Microsoft::WRL::ComPtr<ID2D1Bitmap1> bitmap_;      /**< 缓存的静态场景位图 */
-    Microsoft::WRL::ComPtr<ID2D1Bitmap1> highlightMaterials_;
-    Microsoft::WRL::ComPtr<ID2D1Bitmap1> highlightCoverage_;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> context_; /**< 离屏渲染设备上下文 */
     Microsoft::WRL::ComPtr<ID2D1Device> device_;
     bool contentValid_ = false;
-    bool separatedHighlights_ = false;
     std::uint64_t bitmapAllocationCount_ = 0;
     UINT width_ = 0;                   /**< 缓存位图宽度 */
     UINT height_ = 0;                  /**< 缓存位图高度 */

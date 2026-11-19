@@ -82,7 +82,6 @@ private:
 class ScrollContentFadeCache
 {
     friend class ScrollContentClip;
-    friend class HighlightCoverage;
 
     ID2D1LinearGradientBrush* Resolve(ID2D1DeviceContext* context,
         const D2D1_RECT_F& viewport, float leading, float trailing,

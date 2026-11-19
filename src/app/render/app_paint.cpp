@@ -6,7 +6,6 @@
 #include "widget/view/widget_accessibility_provider.h"
 #include "diagnostics/performance_trace.h"
 #include "dock/dock_appbar.h"
-#include "desktop/display_color_mode.h"
 
 // Desktop composition paint transaction.
 
@@ -70,7 +69,7 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
         IntersectRect(&clippedUpdate, updateRect, &clientRect) &&
         !IsRectEmpty(&clippedUpdate))
     {
-        highlight_tiles::IncludeRetainedTiles(clippedUpdate, clientRect, desktopSrgbTiles_);
+        highlight_tiles::IncludeSceneTiles(clippedUpdate, clientRect);
         dcompUpdate = &clippedUpdate;
     }
 
@@ -91,9 +90,6 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
 
     ComPtr<ID2D1DeviceContext> context;
     context.Attach(rawContext);
-    snowdesktop::HighlightCoverage highlightCoverage;
-    snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), highlightCoverage,
-        snowdesktop::display_color::UseHighlightCompensationOnDesktop());
     context->SetDpi(96.0f, 96.0f);
     context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
     const LONG updateLeft = dcompUpdate ? dcompUpdate->left : 0;
@@ -102,6 +98,7 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
         static_cast<float>(updateOffset.x - updateLeft),
         static_cast<float>(updateOffset.y - updateTop)));
     context->Clear(D2D1::ColorF(0, 0, 0, 0));
+    DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get());
 
     const bool widgetPreviewActive =
         widgetAction_ == WidgetAction::Move ||
@@ -133,16 +130,16 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
     RenderFrame(context.Get(), forceCompleteGlassCollection ? nullptr : dcompUpdate, desktopIconsHidden_);
 
     const RECT dirty = dcompUpdate ? *dcompUpdate : clientRect;
-    const auto srgbCandidates = highlight_tiles::Stage(desktopBackdropCompositor_, hwnd_,
-        context.Get(), highlightCoverage, clientRect, dirty, updateOffset,
-        desktopSrgbTiles_, nextDesktopSrgbKey_);
-
+    std::vector<DesktopSrgbTile> srgbCandidates;
+    const auto recorded = scene.Finish();
+    const bool prepared = SUCCEEDED(recorded) && highlight_tiles::Stage(desktopBackdropCompositor_, hwnd_,
+        context.Get(), scene.Scene(), dirty, updateOffset, desktopSrgbTiles_, nextDesktopSrgbKey_, srgbCandidates);
     context->SetTransform(D2D1::Matrix3x2F::Identity());
     context.Reset();
     hr = paintSurface->EndDraw();
-    if (FAILED(hr))
+    if (!prepared || FAILED(hr))
     {
-        RecoverCompositionRenderFailure(L"Background EndDraw", hr);
+        RecoverCompositionRenderFailure(L"Background scene", FAILED(hr) ? hr : E_FAIL);
         return false;
     }
     highlight_tiles::Publish(desktopBackdropCompositor_, dirty, srgbCandidates, desktopSrgbTiles_);
