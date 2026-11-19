@@ -674,8 +674,22 @@ set(SNOWDESKTOP_SOURCES
     src/widget/runtime/widget_runtime_scheduler.cpp
     src/widget/runtime/widget_timer_dispatch.h
     src/widget/runtime/widget_calendar_provider.h
-    src/widget/runtime/widget_data_subscribe_lua.inc
+    src/widget/runtime/widget_lua_binding_context.cpp
+    src/widget/runtime/widget_lua_binding_context.h
     src/widget/runtime/widget_engine.cpp
+    src/widget/runtime/widget_logical_slot_lua.cpp
+    src/widget/runtime/widget_logical_slot_lua.h
+    src/widget/runtime/widget_calendar_lua.cpp
+    src/widget/runtime/widget_calendar_lua.h
+    src/widget/runtime/widget_schedule_lua.cpp
+    src/widget/runtime/widget_schedule_lua.h
+    src/widget/runtime/widget_time_lua.cpp
+    src/widget/runtime/widget_time_lua.h
+    src/widget/data/widget_system_lua.cpp
+    src/widget/data/widget_system_lua.h
+    src/widget/data/widget_data_subscription_lua.cpp
+    src/widget/data/widget_data_subscription_lua.h
+    src/widget/data/widget_system_control_data.cpp
     src/widget/runtime/widget_multiplayer.cpp
     src/widget/permissions/widget_permission_broker.cpp
     src/widget/permissions/widget_permission_state.cpp
