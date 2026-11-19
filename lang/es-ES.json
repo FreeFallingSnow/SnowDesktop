@@ -2936,5 +2936,7 @@
   "core.drag.copy_into_folder": "Copiar a «{0}»",
   "core.drag.link_in_folder": "Crear accesos directos en «{0}»",
   "app.settings.widgets_installed_version": "Versión instalada",
-  "app.settings.widgets_development_version": "Versión de desarrollo"
+  "app.settings.widgets_development_version": "Versión de desarrollo",
+  "settings.personalization.wcgHighlightCompensation": "Compensación de brillos WCG",
+  "settings.personalization.wcgHighlightCompensation.hint": "Corrige la mezcla de brillos translúcidos en pantallas con una amplia gama cromática."
 }

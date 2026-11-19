@@ -2936,5 +2936,7 @@
   "core.drag.copy_into_folder": "Nach „{0}“ kopieren",
   "core.drag.link_in_folder": "Verknüpfungen in „{0}“ erstellen",
   "app.settings.widgets_installed_version": "Installierte Version",
-  "app.settings.widgets_development_version": "Entwicklungsversion"
+  "app.settings.widgets_development_version": "Entwicklungsversion",
+  "settings.personalization.wcgHighlightCompensation": "WCG-Glanzlichtkorrektur",
+  "settings.personalization.wcgHighlightCompensation.hint": "Korrigiert die Überblendung halbtransparenter Glanzlichter auf Bildschirmen mit großem Farbraum."
 }

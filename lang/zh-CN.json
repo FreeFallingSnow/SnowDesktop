@@ -2936,5 +2936,7 @@
   "core.drag.copy_into_folder": "复制到「{0}」",
   "core.drag.link_in_folder": "在「{0}」中创建快捷方式",
   "app.settings.widgets_installed_version": "已安装版",
-  "app.settings.widgets_development_version": "开发版"
+  "app.settings.widgets_development_version": "开发版",
+  "settings.personalization.wcgHighlightCompensation": "WCG 高光补偿",
+  "settings.personalization.wcgHighlightCompensation.hint": "校正广色域显示器上半透明高光的混合效果。"
 }

@@ -2936,5 +2936,7 @@
   "core.drag.copy_into_folder": "Copier dans « {0} »",
   "core.drag.link_in_folder": "Créer des raccourcis dans « {0} »",
   "app.settings.widgets_installed_version": "Version installée",
-  "app.settings.widgets_development_version": "Version de développement"
+  "app.settings.widgets_development_version": "Version de développement",
+  "settings.personalization.wcgHighlightCompensation": "Compensation des reflets WCG",
+  "settings.personalization.wcgHighlightCompensation.hint": "Corrige le mélange des reflets translucides sur les écrans à large gamme de couleurs."
 }

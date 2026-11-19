@@ -2936,5 +2936,7 @@
   "core.drag.copy_into_folder": "Copy to “{0}”",
   "core.drag.link_in_folder": "Create shortcuts in “{0}”",
   "app.settings.widgets_installed_version": "Installed version",
-  "app.settings.widgets_development_version": "Development version"
+  "app.settings.widgets_development_version": "Development version",
+  "settings.personalization.wcgHighlightCompensation": "WCG highlight compensation",
+  "settings.personalization.wcgHighlightCompensation.hint": "Corrects blending for translucent highlights on wide-gamut displays."
 }

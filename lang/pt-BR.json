@@ -2936,5 +2936,7 @@
   "core.drag.copy_into_folder": "Copiar para “{0}”",
   "core.drag.link_in_folder": "Criar atalhos em “{0}”",
   "app.settings.widgets_installed_version": "Versão instalada",
-  "app.settings.widgets_development_version": "Versão de desenvolvimento"
+  "app.settings.widgets_development_version": "Versão de desenvolvimento",
+  "settings.personalization.wcgHighlightCompensation": "Compensação de realces WCG",
+  "settings.personalization.wcgHighlightCompensation.hint": "Corrige a mesclagem de realces translúcidos em telas com ampla gama de cores."
 }

@@ -2936,5 +2936,7 @@
   "core.drag.copy_into_folder": "「{0}」にコピー",
   "core.drag.link_in_folder": "「{0}」にショートカットを作成",
   "app.settings.widgets_installed_version": "インストール版",
-  "app.settings.widgets_development_version": "開発版"
+  "app.settings.widgets_development_version": "開発版",
+  "settings.personalization.wcgHighlightCompensation": "WCG ハイライト補正",
+  "settings.personalization.wcgHighlightCompensation.hint": "広色域ディスプレイで半透明のハイライトの合成を補正します。"
 }
