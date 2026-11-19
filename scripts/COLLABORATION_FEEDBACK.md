@@ -69,6 +69,8 @@
 
 - **Codex 共同候选续证（2026-11-19）**：`architecture-first-six-coordination` 批次 `ae006c2d60d146e0b697fc0ab11f5eca` 修订 0 返回 `Persistent batch submission failed: `，Run ID 为空，输入核对未启动。相同调用环境的 `scripts/build.bat diagnose` 回报父 Job 拒绝持久执行器，证据在 `.build/collaboration/diagnose-e43a3412233f457c87745ed41aa2cf5f/`。保留原批次，外层执行环境诊断通过后沿用共享续修与原测试范围。
 
+- **Workshop Manager 参与者续证（2026-11-19）**：Task `architecture-remaining-tooling`，批次 `c512788a34ee4c24892cdf66bfd6d180`。`scripts/build.bat diagnose` 的写探针通过，持久执行器被父 Job 拒绝，首个启动证据为 `.build/collaboration/diagnose-0e38bba4790b4f518dfd432609df0caf/stdout.log.startup-1.json`。本参与者交接源码、计划和已知环境限制，由具备持久执行能力的统筹入口提交共同候选。
+
 ### CF-002 生成目录被沙箱拒写
 
 - **原始反馈**：`task-stage` 写 `.build/collaboration/state.lock` 及 `Set-Content .build/...` 被拒；给 `.build` 和协调目录增加当前用户 FullControl ACE 后，confined 调用仍失败，切到 full access 后成功。报告者称 ACL 诊断技能提示 `verify_original_confined_operation`，实际原操作仍未通过。

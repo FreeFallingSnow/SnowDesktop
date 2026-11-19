@@ -20,8 +20,8 @@
 #include "component_workshop_publish.h"
 #include "manager_frame_scheduler.h"
 #include "manager_localization.h"
+#include "manager_publish_preparation.h"
 #include "manager_publish_task.h"
-#include "manager_prepared_preview.h"
 #include "manager_package_export.h"
 #include "manager_workspace_state.h"
 #include "manager_workshop_item.h"
@@ -572,17 +572,6 @@ struct ManagerArguments
     std::string language;
 };
 
-struct PreparedManagerPublish
-{
-    std::string localId;
-    WorkshopProject snapshot;
-    WidgetInspection inspection;
-    PackagedWidget artifact;
-    ComponentPublishPlan plan;
-    // Released before artifact so its directory is empty when the package owner cleans up.
-    std::shared_ptr<ManagerPreparedPreview> frozenPreview;
-};
-
 class WorkshopManagerApp
 {
 public:
@@ -595,6 +584,7 @@ public:
           currentLanguage_(std::move(arguments.language)),
           store_(managerRoot_),
           packageTool_({}, managerRoot_ / L"staging" / L"packages"),
+          publishPreparation_(packageTool_),
           previewCache_(managerRoot_ / L"preview-cache",
               [] { RequestManagerFrame(); }),
           steam_(managerRoot_ / L"staging" / L"uploads")
@@ -693,7 +683,7 @@ public:
         std::string error;
         if (store_.AddDirectory(path, project, error) && store_.Save(error))
         {
-            InvalidatePreparedPublishUnlocked();
+            publishPreparation_.Invalidate();
             SelectLocalProjectUnlocked(*project);
             activePage_ = 0;
             requestedPage_ = 0;
@@ -942,12 +932,6 @@ private:
         return true;
     }
 
-    void InvalidatePreparedPublishUnlocked()
-    {
-        ++publishInputsRevision_;
-        preparedPublish_.reset();
-    }
-
     template<typename Work>
     bool StartWork(Work&& work, WorkKind kind = WorkKind::Local,
         std::string localId = {})
@@ -1027,7 +1011,7 @@ private:
                     remotePreviewDrafts_.clear();
                     bindingTargetId_.clear();
                     feedback_.erase({1, {}});
-                    InvalidatePreparedPublishUnlocked();
+                    publishPreparation_.Invalidate();
                 }
                 previousRevision = status.connectionRevision;
                 RequestManagerFrame();
@@ -1413,7 +1397,7 @@ private:
     {
         if (selectedLocalId_ == project.localId) return;
         SaveDraftPreferencesUnlocked();
-        InvalidatePreparedPublishUnlocked();
+        publishPreparation_.Invalidate();
         selectedLocalId_ = project.localId;
         localizationStateProjectId_.clear();
         RequestManagerFrame();
@@ -1776,7 +1760,7 @@ private:
         std::string error;
         if (!store_.Save(error))
         { project = std::move(previous); SetMessageUnlocked(false, error); return false; }
-        InvalidatePreparedPublishUnlocked();
+        publishPreparation_.Invalidate();
         SetMessageUnlocked(true, previous.primaryPreview != project.primaryPreview ?
             T("已保存主预览", "Primary preview saved") : T("已保存预览图片设置", "Preview image settings saved"));
         return true;
@@ -2019,7 +2003,7 @@ private:
                 std::string error;
                 if (store_.Remove(id, error))
                 {
-                    InvalidatePreparedPublishUnlocked();
+                    publishPreparation_.Invalidate();
                     selectedLocalId_.clear();
                     drafts_.Erase(id);
                     if (!store_.Projects().empty()) selectedLocalId_ = store_.Projects().front().localId;
@@ -2169,7 +2153,7 @@ private:
                 BeginSettingRow(T("公开发布", "Publish publicly"), ImGui::GetFrameHeight());
                 bool value = publishPublic_;
                 if (ImGui::Checkbox("##publish-publicly", &value))
-                { draft.SetPublishPublic(value); InvalidatePreparedPublishUnlocked(); }
+                { draft.SetPublishPublic(value); publishPreparation_.Invalidate(); }
             }
             BeginSettingRow(T(
                 "复用组件包内的标题和说明",
@@ -2196,7 +2180,7 @@ private:
                 else if (syncPackageLocalization_)
                     localizationPreviewProjectId_.clear();
                 if (project.publishPreferences.textSource != previous)
-                    InvalidatePreparedPublishUnlocked();
+                    publishPreparation_.Invalidate();
             }
             if (syncPackageLocalization_)
             {
@@ -2305,7 +2289,7 @@ private:
                 {
                     draft.EditTitle(title.data());
                     draft.ApplyPreferences(project);
-                    InvalidatePreparedPublishUnlocked();
+                    publishPreparation_.Invalidate();
                 }
                 if (ImGui::IsItemDeactivatedAfterEdit())
                 {
@@ -2326,7 +2310,7 @@ private:
                 {
                     draft.EditDescription(description.data());
                     draft.ApplyPreferences(project);
-                    InvalidatePreparedPublishUnlocked();
+                    publishPreparation_.Invalidate();
                 }
                 if (ImGui::IsItemDeactivatedAfterEdit())
                 {
@@ -2355,7 +2339,7 @@ private:
                         updatePreview_ = previous == WorkshopAssetSource::Local;
                         SetMessageUnlocked(false, error);
                     }
-                    else InvalidatePreparedPublishUnlocked();
+                    else publishPreparation_.Invalidate();
                 }
             }
             ImGui::EndDisabled();
@@ -2369,12 +2353,10 @@ private:
             const bool missingManualTitle = creating &&
                 !syncPackageLocalization_ && titleBuffer_.empty();
             ImGui::Spacing();
-            PreparedManagerPublish* prepared = preparedPublish_ &&
-                preparedPublish_->localId == project.localId ?
-                &*preparedPublish_ : nullptr;
-            if (prepared)
+            const auto* preparedPlan = publishPreparation_.PlanFor(project.localId);
+            if (preparedPlan)
             {
-                const ComponentPublishPlan& plan = prepared->plan;
+                const ComponentPublishPlan& plan = *preparedPlan;
                 const char* action = T("创建项目", "Create item");
                 if (plan.action == ComponentPublishAction::UpdateContent)
                     action = T("更新组件内容", "Update component content");
@@ -2467,15 +2449,15 @@ private:
                         T("（无标签）", "(no tags)") : plannedTags.c_str());
                 }
             }
-            const bool hasPreparedPlan = prepared != nullptr;
+            const bool hasPreparedPlan = preparedPlan != nullptr;
             const ComponentPublishAction preparedAction = hasPreparedPlan ?
-                prepared->plan.action : ComponentPublishAction::Create;
+                preparedPlan->action : ComponentPublishAction::Create;
             ImGui::BeginDisabled(busy_.load() || submitStarted_.load() ||
                 missingManualTitle);
             if (SecondaryButton(hasPreparedPlan ?
                     T("重新准备计划", "Prepare again") :
                     T("准备发布计划", "Prepare publish plan")))
-                StartPreparePublish(project.localId);
+                StartPreparePublish(project);
             if (hasPreparedPlan)
             {
                 const char* confirm = T("确认创建项目", "Confirm creation");
@@ -2542,7 +2524,7 @@ private:
             std::lock_guard lock(mutex_);
             if (auto* project = FindProjectUnlocked(localId))
             {
-                InvalidatePreparedPublishUnlocked();
+                publishPreparation_.Invalidate();
                 project->packageId = inspection.packageId;
                 if (!store_.Save(error)) SetMessageUnlocked(false, error, exported);
                 else SetMessageUnlocked(true, std::move(success), exported, true);
@@ -2588,7 +2570,7 @@ private:
             return false;
         }
         drafts_.ForProject(project, JoinTags(project.tags)).TagsSaved();
-        if (!project.publishedFileId) InvalidatePreparedPublishUnlocked();
+        if (!project.publishedFileId) publishPreparation_.Invalidate();
         return true;
     }
 
@@ -2685,121 +2667,57 @@ private:
         else footerFeedback_.reset();
     }
 
-    void StartPreparePublish(std::string localId)
+    void StartPreparePublish(const WorkshopProject& project)
     {
-        preparedPublish_.reset();
-        auto* current = FindProjectUnlocked(localId);
-        if (!current) return;
-        auto& draft = drafts_.ForProject(*current, JoinTags(current->tags));
-        const std::string title = draft.manualEnglishTitle;
-        const std::string description = draft.manualEnglishDescription;
-        const bool syncPackageLocalization = draft.reusePackageText;
-        const bool updatePreview = draft.updatePreview;
-        const bool publishPublic = draft.publishPublic;
-        const std::uint64_t inputRevision = publishInputsRevision_;
-        StartWork([this, localId = std::move(localId), title, description,
-                   syncPackageLocalization, updatePreview,
-                   inputRevision, publishPublic]
+        const auto& draft = drafts_.ForProject(project, JoinTags(project.tags));
+        StartWork([this, request = publishPreparation_.Begin(project, draft)]() mutable
         {
-            WorkshopProject snapshot;
-            {
-                std::lock_guard lock(mutex_);
-                const auto* project = FindProjectUnlocked(localId);
-                if (!project) return;
-                snapshot = *project;
-            }
-            const bool creating = !snapshot.publishedFileId.has_value();
-            snapshot.publishPreferences.textSource =
-                syncPackageLocalization ? WorkshopTextSource::Package :
-                (creating ? WorkshopTextSource::ManualEnglish :
-                    WorkshopTextSource::Steam);
-            snapshot.publishPreferences.previewSource = updatePreview ?
-                WorkshopAssetSource::Local : WorkshopAssetSource::Steam;
-            snapshot.publishPreferences.tagsSource = creating ?
-                WorkshopAssetSource::Local : WorkshopAssetSource::Steam;
-            snapshot.publishPreferences.manualEnglishTitle = title;
-            snapshot.publishPreferences.manualEnglishDescription =
-                description;
-
-            WidgetInspection inspection;
-            PackagedWidget artifact;
             std::string error;
-            if (!packageTool_.Inspect(snapshot.sourceDirectory,
-                    inspection, error) ||
-                !packageTool_.Pack(snapshot.sourceDirectory,
-                    inspection, artifact, error,
-                    packageTool_.FindPublishedBaseline(snapshot, inspection.version)))
-            {
-                SetMessage(false, error);
-                return;
-            }
-            ComponentPublishPlan plan;
-            ComponentPublishOptions options;
-            if (creating) options.visibility = publishPublic ? 0 : 2;
-            if (!BuildComponentPublishPlan(snapshot, inspection, artifact,
-                    options, plan, error))
+            auto result = publishPreparation_.Prepare(std::move(request), error);
+            if (!result)
             {
                 SetMessage(false, error);
                 return;
             }
 
-            std::shared_ptr<ManagerPreparedPreview> frozenPreview;
-            if (plan.preview && !plan.preparedPreviews)
-            {
-                frozenPreview = FreezeManagerPreview(*plan.preview, artifact.temporaryDirectory, error);
-                if (!frozenPreview) { SetMessage(false, error); return; }
-                plan.preview = frozenPreview->Path();
-            }
             std::lock_guard lock(mutex_);
-            if (publishInputsRevision_ != inputRevision ||
-                selectedLocalId_ != localId)
+            switch (publishPreparation_.Complete(std::move(result), selectedLocalId_, store_, error))
             {
+            case ManagerPublishPreparation::Completion::Stale:
                 SetMessageUnlocked(false, T(
                     "发布设置已变化，请重新准备计划",
                     "Publishing settings changed; prepare the plan again"));
-                return;
-            }
-            auto* project = FindProjectUnlocked(localId);
-            if (!project) return;
-            project->packageId = inspection.packageId;
-            project->publishPreferences = snapshot.publishPreferences;
-            if (!store_.Save(error))
-            {
+                break;
+            case ManagerPublishPreparation::Completion::SaveFailed:
                 SetMessageUnlocked(false, error);
-                return;
+                break;
+            case ManagerPublishPreparation::Completion::Ready:
+                RequestManagerFrame();
+                break;
+            case ManagerPublishPreparation::Completion::MissingProject:
+                break;
             }
-            PreparedManagerPublish prepared;
-            prepared.localId = localId;
-            prepared.snapshot = std::move(snapshot);
-            prepared.inspection = std::move(inspection);
-            prepared.artifact = std::move(artifact);
-            prepared.plan = std::move(plan);
-            prepared.frozenPreview = std::move(frozenPreview);
-            preparedPublish_ = std::move(prepared);
-            RequestManagerFrame();
-        }, WorkKind::Prepare);
+        }, WorkKind::Prepare, project.localId);
     }
 
-    void StartPreparedPublishUnlocked(std::string localId)
+    void StartPreparedPublishUnlocked(std::string projectId)
     {
-        if (busy_.load() || !preparedPublish_ || preparedPublish_->localId != localId)
-            return;
-        PreparedManagerPublish prepared =
-            std::move(*preparedPublish_);
-        preparedPublish_.reset();
-        publishTask_.Begin(localId, WideToUtf8(
-            prepared.snapshot.sourceDirectory.filename().wstring()));
+        if (busy_.load()) return;
+        auto prepared = publishPreparation_.Take(projectId);
+        if (!prepared) return;
+        publishTask_.Begin(projectId, WideToUtf8(
+            prepared->project.sourceDirectory.filename().wstring()));
         publishInProgress_.store(true);
         taskResultDismissed_ = false;
         taskDetailsOpen_ = false;
         closeBlocked_ = false;
-        StartWork([this, localId = std::move(localId),
-                   prepared = std::move(prepared)]() mutable
+        StartWork([this, prepared = std::move(prepared)]
         {
+            const auto& localId = prepared->project.localId;
             ComponentPublishResult result;
             CoreError coreError;
             const bool published = ExecuteComponentPublishPlan(
-                prepared.plan, steam_,
+                prepared->plan, steam_,
                 [this, &localId](const ComponentPublishProgress& progress)
                 {
                     const PublishProgress& value = progress.steam;
@@ -2835,7 +2753,7 @@ private:
             std::string error;
             std::string baselineError;
             if (result.baseSubmitted && result.contentUploaded)
-                (void)packageTool_.SavePublishedBaseline(prepared.artifact, baselineError);
+                (void)packageTool_.SavePublishedBaseline(prepared->artifact, baselineError);
             {
                 std::lock_guard lock(mutex_);
                 publishTask_.Finish(result, published, coreError);
@@ -2849,11 +2767,11 @@ private:
                             result.publishedFileId;
                     if (result.baseSubmitted)
                     {
-                        project->packageId = prepared.plan.packageId;
+                        project->packageId = prepared->plan.packageId;
                         project->lastPublishedVersion =
-                            prepared.plan.version;
+                            prepared->plan.version;
                         project->lastPublishedSha256 =
-                            prepared.plan.sha256;
+                            prepared->plan.sha256;
                         project->lastPublishedAt = NowIso8601();
                     }
                     if (!store_.Save(error))
@@ -2883,9 +2801,9 @@ private:
             std::lock_guard lock(mutex_);
             if (localizationStateProjectId_ == localId) localizationStateCreating_ = false;
             steamConnectionProblem_ = SteamConnectionProblem::None;
-            ++publishInputsRevision_;
+            publishPreparation_.Invalidate();
             RequestManagerFrame();
-        }, WorkKind::Publish);
+        }, WorkKind::Publish, std::move(projectId));
     }
 
     const char* BindingIssueText(ManagerWorkshopBindingIssue issue) const
@@ -2955,7 +2873,7 @@ private:
             project->publishedFileId = currentItem->publishedFileId;
             if (!store_.Save(error))
             { *project = previous; SetMessageUnlocked(false, error); return; }
-            if (project->localId == selectedLocalId_) InvalidatePreparedPublishUnlocked();
+            if (project->localId == selectedLocalId_) publishPreparation_.Invalidate();
             SetMessageUnlocked(true, T("Workshop 项目已绑定", "Workshop item bound"));
         }, WorkKind::Binding, targetId);
     }
@@ -3345,6 +3263,7 @@ private:
     std::uint64_t observedConnectionRevision_ = 0;
     ProjectStore store_;
     PackageTool packageTool_;
+    ManagerPublishPreparation publishPreparation_;
     PreviewCache previewCache_;
     SteamWorkshopCore steam_;
     mutable std::mutex mutex_;
@@ -3379,8 +3298,6 @@ private:
     std::string bindingTargetId_;
     char localSearch_[256]{};
     char publishedSearch_[256]{};
-    std::optional<PreparedManagerPublish> preparedPublish_;
-    std::uint64_t publishInputsRevision_ = 0;
     std::string localizationStateProjectId_;
     std::string localizationPreviewProjectId_;
     std::vector<SteamWorkshopLocalization> localizationPreview_;
