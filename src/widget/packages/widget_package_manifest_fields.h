@@ -1,6 +1,9 @@
 #pragma once
 
+#include "widget_size_types.h"
+
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -30,6 +33,10 @@ bool ReadInteger(const JsonValue& object, const char* name, int& output);
 std::vector<std::string> ReadStringArray(const JsonValue& object,
     const char* name, bool& valid);
 void ReadSize(const JsonValue& root, const char* name, int& columns, int& rows);
+bool ReadAspectGridSize(const JsonValue* value, int& columns, int& rows,
+    std::optional<AspectGridSize>& aspect, std::string& error);
+void ResolvePreviewVariantDefaults(PreviewVariant& variant,
+    const WidgetSizeDefinition& defaults, int minColumns, int minRows, int maxColumns, int maxRows);
 
 struct PreviewManifestFields
 {

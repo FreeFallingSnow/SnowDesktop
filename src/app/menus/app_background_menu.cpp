@@ -8,6 +8,8 @@
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
 #include "desktop/desktop_source.h"
+#include "widget/packages/widget_package.h"
+#include "widget/packages/widget_size_rules.h"
 #include "widget/preview/widget_preview_scene.h"
 #include "widget/preview/widget_preset_preview.h"
 #include "app/widgets/widget_grid_size.h"

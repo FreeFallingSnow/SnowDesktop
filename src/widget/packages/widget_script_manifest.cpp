@@ -260,7 +260,7 @@ LuaWidgetManifest ReadWidgetScriptManifest(const std::wstring& fullPath,
                 if (const auto* r = size->Find("rows"); r && r->IsNumber() && std::isfinite(r->number))
                     definition.rows = static_cast<int>(std::clamp(r->number, 1.0, 8.0));
                 std::string sizeError;
-                (void)snowdesktop::widget::ReadAspectGridSize(size, definition.columns,
+                (void)snowdesktop::widget::detail::ReadAspectGridSize(size, definition.columns,
                     definition.rows, definition.aspect, sizeError);
                 preset.size = definition;
             }
@@ -499,7 +499,7 @@ LuaWidgetManifest ReadWidgetScriptManifest(const std::wstring& fullPath,
     readSize("defaultSize", manifest.defaultColumns, manifest.defaultRows, 1, 8);
     {
         std::string sizeError;
-        (void)snowdesktop::widget::ReadAspectGridSize(root.Find("defaultSize"),
+        (void)snowdesktop::widget::detail::ReadAspectGridSize(root.Find("defaultSize"),
             manifest.defaultColumns, manifest.defaultRows, manifest.defaultAspectSize, sizeError);
     }
     readSize("minSize", manifest.minColumns, manifest.minRows, 1, 1);
@@ -531,7 +531,7 @@ LuaWidgetManifest ReadWidgetScriptManifest(const std::wstring& fullPath,
     }
     for (auto& variant : manifest.previewVariants)
     {
-        snowdesktop::widget::ResolvePreviewVariantDefaults(variant,
+        snowdesktop::widget::detail::ResolvePreviewVariantDefaults(variant,
             {manifest.defaultColumns, manifest.defaultRows, manifest.defaultAspectSize},
             manifest.minColumns, manifest.minRows, manifest.maxColumns, manifest.maxRows);
         if (!variant.titleKey.empty())

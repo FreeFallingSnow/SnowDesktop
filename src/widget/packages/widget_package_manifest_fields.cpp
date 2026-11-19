@@ -1,5 +1,6 @@
 #include "widget_package_manifest_fields.h"
 #include "widget_package.h"
+#include "widget_package_validation_report.h"
 #include "widget_size_rules.h"
 
 #include "common/json_value.h"
@@ -148,6 +149,50 @@ void ReadSize(const JsonValue& root, const char* name, int& columns, int& rows)
     if (!value || !value->IsObject()) return;
     ReadInteger(*value, "columns", columns);
     ReadInteger(*value, "rows", rows);
+}
+
+// The caller retains its existing handling of fixed grid sizes.
+bool ReadAspectGridSize(const JsonValue* value, int& columns, int& rows,
+    std::optional<AspectGridSize>& aspect, std::string& error)
+{
+    aspect.reset();
+    if (!value || !value->IsObject()) return true;
+    const auto* ratio = value->Find("aspectRatio");
+    if (!ratio) return true;
+    const auto* c = value->Find("columns");
+    const auto* r = value->Find("rows");
+    const auto* fixed = r ? r : c;
+    if (!ratio->IsNumber() || !std::isfinite(ratio->number) || ratio->number <= 0 ||
+        (c != nullptr) == (r != nullptr) || !fixed || !fixed->IsNumber() ||
+        !std::isfinite(fixed->number) || fixed->number != std::floor(fixed->number) ||
+        fixed->number < 1 || fixed->number > 8)
+    {
+        error = "aspectRatio must be a positive finite width/height ratio with exactly one integer rows or columns from 1 to 8";
+        return false;
+    }
+    aspect = AspectGridSize{ratio->number, r != nullptr};
+    if (r) rows = static_cast<int>(r->number);
+    else columns = static_cast<int>(c->number);
+    const auto resolved = ResolveWidgetSize({columns, rows, aspect}, StandardWidgetSizeGridMetrics());
+    columns = resolved.first;
+    rows = resolved.second;
+    return true;
+}
+
+void ResolvePreviewVariantDefaults(PreviewVariant& variant,
+    const WidgetSizeDefinition& defaults, int minColumns, int minRows, int maxColumns, int maxRows)
+{
+    if (variant.columns == 0 && variant.rows == 0 && !variant.aspectSize)
+        variant.aspectSize = defaults.aspect;
+    if (variant.columns == 0) variant.columns = defaults.columns;
+    if (variant.rows == 0) variant.rows = defaults.rows;
+    if (variant.aspectSize)
+    {
+        const auto span = ResolveWidgetSize({variant.columns, variant.rows, variant.aspectSize},
+            StandardWidgetSizeGridMetrics(), minColumns, minRows, maxColumns, maxRows);
+        variant.columns = span.first;
+        variant.rows = span.second;
+    }
 }
 
 namespace

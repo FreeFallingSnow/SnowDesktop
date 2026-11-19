@@ -7,6 +7,8 @@
 #include "common/utils.h"
 #include "widget_package_source_capture.h"
 #include "widget_grid_size.h"
+#include "widget/packages/widget_package.h"
+#include "widget/packages/widget_size_rules.h"
 #include "widget/preview/widget_preset_preview.h"
 #include "desktop/folder_mapping_visibility_rules.h"
 #include "widgets/collection_group_rules.h"

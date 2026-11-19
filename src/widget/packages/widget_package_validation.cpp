@@ -1,8 +1,10 @@
-#include "widget_package.h"
+#include "widget_package_validation.h"
 #include "widget_audio_format.h"
+#include "widget_package.h"
+#include "widget_package_limits.h"
+#include "widget_package_manager.h"
 #include "widget_package_manifest_fields.h"
 #include "widget_package_read.h"
-#include "widget_size_rules.h"
 
 #include "common/json_value.h"
 #include "widget/api/widget_logical_slot_manifest.h"
@@ -37,6 +39,7 @@ using detail::IsBcp47Tag;
 using detail::IsSha256;
 using detail::Lower;
 using detail::PathUtf8;
+using detail::ReadAspectGridSize;
 using detail::ReadInteger;
 using detail::ReadPackageFile;
 using detail::ReadSize;
@@ -913,7 +916,7 @@ bool WidgetPackageValidator::ReadManifest(
             manifestPath, "a license identifier is recommended");
     for (auto& variant : manifest.previewVariants)
     {
-        snowdesktop::widget::ResolvePreviewVariantDefaults(variant,
+        detail::ResolvePreviewVariantDefaults(variant,
             {manifest.defaultColumns, manifest.defaultRows, manifest.defaultAspectSize},
             manifest.minColumns, manifest.minRows, manifest.maxColumns, manifest.maxRows);
         if (variant.columns < manifest.minColumns ||
