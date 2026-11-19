@@ -9,10 +9,10 @@
 #include <shlobj.h>
 
 #include "constants.h"
-#include "layout/folder_sort_rules.h"
-#include "layout/list_detail_rules.h"
 #include "icons/large_icon_config_types.h"
-#include "layout/category_collection_rules.h"
+#include "layout/category_collection_types.h"
+#include "layout/folder_sort_types.h"
+#include "layout/list_detail_types.h"
 
 #include <cstdint>
 #include <optional>

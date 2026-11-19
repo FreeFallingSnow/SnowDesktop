@@ -6,6 +6,7 @@
  */
 
 #include "category_settings.h"
+#include "layout/category_collection_rules.h"
 #include "data/data_paths.h"
 #include "common/l10n.h"
 #include "common/utils.h"

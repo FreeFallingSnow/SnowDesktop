@@ -3,6 +3,7 @@
 #include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/list_detail_rules.h"
 #include "diagnostics/diagnostic_log.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"

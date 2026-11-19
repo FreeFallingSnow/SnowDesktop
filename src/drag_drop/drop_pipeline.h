@@ -4,6 +4,7 @@
 #include "empty_group_drop_rules.h"
 #include "file_source_eligibility.h"
 #include "desktop/desktop_category_item_rules.h"
+#include "layout/category_collection_rules.h"
 #include "shell/shortcut_category_target.h"
 #include "shell/shell_file_operation_worker.h"
 #include <functional>

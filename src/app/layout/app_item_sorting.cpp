@@ -2,6 +2,7 @@
 #include "grid_geometry.h"
 #include "common/utils.h"
 #include "layout/folder_sort_rules.h"
+#include "layout/list_detail_rules.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "diagnostics/diagnostic_log.h"
 #include "layout/desktop_item_sort_rules.h"

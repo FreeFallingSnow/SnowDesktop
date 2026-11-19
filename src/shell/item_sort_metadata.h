@@ -1,7 +1,7 @@
 #pragma once
 
 #include "shortcut_category_target.h"
-#include "layout/folder_sort_rules.h"
+#include "layout/folder_sort_types.h"
 
 namespace snowdesktop::item_sort_metadata
 {

@@ -5,6 +5,7 @@
 #include "common/l10n.h"
 #include "common/utils.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/list_detail_rules.h"
 #include "layout/folder_preview_header_layout.h"
 #include "settings/animation_settings.h"
 #include "ui/input/private_pointer.h"

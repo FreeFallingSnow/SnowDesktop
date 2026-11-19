@@ -15,6 +15,7 @@
 #include "core/slot.h"
 #include "core/item.h"
 #include "common/types.h"
+#include "layout/list_detail_rules.h"
 #include "app/app.h"
 #include "common/utils.h"
 #include "layout/item_layout_rules.h"

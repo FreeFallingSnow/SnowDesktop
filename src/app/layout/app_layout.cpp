@@ -15,6 +15,7 @@
 #include "desktop/folder_mapping_visibility_rules.h"
 #include "desktop/desktop_membership_recovery.h"
 #include "layout/layout_scroll_save_rules.h"
+#include "layout/list_detail_rules.h"
 #include "interactive_layout_save.h"
 #include "icons/large_icon_backup.h"
 #include "icons/icon_appearance_codec.h"

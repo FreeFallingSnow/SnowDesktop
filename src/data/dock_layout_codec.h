@@ -2,6 +2,8 @@
 
 #include "common/types.h"
 #include "data/layout_storage.h"
+#include "layout/folder_sort_rules.h"
+#include "layout/list_detail_rules.h"
 #include <algorithm>
 #include <ostream>
 

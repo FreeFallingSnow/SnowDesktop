@@ -21,7 +21,7 @@
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "layout/item_render_layer_rules.h"
 #include "widget/runtime/widget_item_layout.h"
-#include "layout/category_collection_rules.h"
+#include "layout/list_detail_rules.h"
 #include "layout/file_date_category.h"
 #include "desktop/desktop_category_item_rules.h"
 #include "storage_title_bar_layout.h"

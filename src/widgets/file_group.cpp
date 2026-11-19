@@ -23,6 +23,7 @@
 #include "widget/runtime/widget_item_layout.h"
 #include "storage_title_bar_layout.h"
 #include "layout/folder_sort_rules.h"
+#include "layout/list_detail_rules.h"
 #include "shell/item_sort_metadata.h"
 
 #include <algorithm>

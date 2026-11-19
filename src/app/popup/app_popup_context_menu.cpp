@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "common/l10n.h"
+#include "layout/list_detail_rules.h"
 #include "settings/animation_settings.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "widgets/storage_title_bar_layout.h"

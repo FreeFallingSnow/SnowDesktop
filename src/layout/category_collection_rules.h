@@ -1,5 +1,7 @@
 #pragma once
 
+#include "category_collection_types.h"
+
 #include <algorithm>
 #include <cwctype>
 #include <string>
@@ -8,14 +10,6 @@
 
 namespace snowdesktop::category_collection_rules
 {
-struct ShortcutTarget
-{
-    bool classified = false;
-    bool directory = false;
-    bool application = false;
-    std::wstring extension;
-};
-
 inline std::wstring NormalizeExtensionToken(std::wstring token)
 {
     while (!token.empty() && token.front() == L'*') token.erase(token.begin());

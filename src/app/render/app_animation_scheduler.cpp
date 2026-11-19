@@ -2,6 +2,7 @@
 #include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_transition.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/list_detail_rules.h"
 #include "platform/runtime_module_policy.h"
 #include "widget/runtime/widget_engine.h"
 #include "settings/general_settings.h"

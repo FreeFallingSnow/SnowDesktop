@@ -9,6 +9,7 @@
 #include "common/types.h"
 #include "app/app.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/list_detail_rules.h"
 #include "common/utils.h"
 #include "core/drop_model.h"
 #include "drag_drop/desktop_widget_icon_drop_rules.h"

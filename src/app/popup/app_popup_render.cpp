@@ -6,6 +6,7 @@
 #include "settings/animation_settings.h"
 #include "common/utils.h"
 #include "layout/folder_sort_rules.h"
+#include "layout/list_detail_rules.h"
 #include "app/dock/dock_tray_popup_state.h"
 #include "popup_opacity_scope.h"
 #include "popup_resize_transition.h"

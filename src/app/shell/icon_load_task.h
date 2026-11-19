@@ -3,6 +3,7 @@
 #include "shell_icon_request.h"
 #include "common/types.h"
 #include "icons/icon_styled_pixels.h"
+#include "layout/category_collection_types.h"
 
 #include <windows.h>
 #include <cstdint>

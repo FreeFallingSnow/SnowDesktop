@@ -18,6 +18,7 @@
 #include "app/app.h"
 #include "layout/folder_preview_header_layout.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/list_detail_rules.h"
 #include "common/utils.h"
 #include "collection_group_rules.h"
 #include "ui/menu/menu_fluent_glyphs.h"

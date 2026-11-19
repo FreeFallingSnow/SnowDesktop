@@ -12,6 +12,7 @@
 #include "shell/item_sort_metadata.h"
 #include "settings/animation_settings.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/list_detail_rules.h"
 #include "popup_resize_transition.h"
 #include <cmath>
 #include <string_view>

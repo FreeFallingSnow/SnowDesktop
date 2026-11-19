@@ -6,6 +6,7 @@
 #include "navigation/search_match.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/list_detail_rules.h"
 #include "layout/item_render_layer_rules.h"
 #include "ui/render/file_search_result_row.h"
 #include <unordered_set>

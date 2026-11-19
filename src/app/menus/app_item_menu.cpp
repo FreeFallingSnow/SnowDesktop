@@ -9,6 +9,7 @@
 #include "shell/shell_item_visibility.h"
 #include "desktop/desktop_item_reference_migration.h"
 #include "icons/large_icon_assets.h"
+#include "layout/list_detail_rules.h"
 #include "steam/steam_entitlement.h"
 #include "app/input/widget_search_context_menu.h"
 #include "icons/large_icon_steam.h"

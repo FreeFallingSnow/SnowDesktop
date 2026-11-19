@@ -1,5 +1,7 @@
 #pragma once
 
+#include "folder_sort_types.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <cwchar>
@@ -10,12 +12,6 @@
 
 namespace snowdesktop::folder_sort_rules
 {
-
-constexpr int kManual = -1;
-constexpr int kName = 0;
-constexpr int kType = 1;
-constexpr int kModified = 2;
-constexpr int kSize = 3;
 
 inline int NormalizeMode(int mode)
 {

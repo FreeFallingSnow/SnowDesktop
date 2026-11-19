@@ -25,6 +25,7 @@
 #include "slot.h"
 #include "layout/item_visual_metrics.h"
 #include "layout/layout_spacing_rules.h"
+#include "layout/list_detail_types.h"
 #include <d2d1_1.h>
 #include <dwrite.h>
 #include <wrl/client.h>

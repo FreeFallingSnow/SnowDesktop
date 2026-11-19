@@ -4,7 +4,7 @@
 #include "common/utils.h"
 #include "data/atomic_file.h"
 #include "data/data_paths.h"
-#include "layout/folder_sort_rules.h"
+#include "layout/folder_sort_types.h"
 
 #include <sstream>
 

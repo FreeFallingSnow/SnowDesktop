@@ -10,6 +10,7 @@
 #include "app/menus/background_menu_order.h"
 #include "platform/demo_collection_rules.h"
 #include "layout/collection_titleless_rules.h"
+#include "layout/list_detail_rules.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/right_click_contract.h"
 #include "widget/packages/widget_removal.h"
