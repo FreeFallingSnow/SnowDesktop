@@ -249,6 +249,8 @@
 
 ### CF-013 共享资源的键级编辑与提交粒度不闭合
 
+- **主体阴影译文提交续证（2026-11-19）**：Task `task-d303abaaffbb4e0cafd904a0798290d0` 的批次 `8d9a5bf434c4479f9b5c61287b47f69a`、Run `fa2ed75c266c42d5bd990b035e5c7df2` 通过后，源码已保存为 `c444aa55`。`commit -ResourceRequests` 两次经冻结回执、一次经后继登记返回 `[Errno 32] Wait worker lease is occupied`。`build_resource_commit.py` 对 `git.lock` 和 `state.lock` 共用同一错误信息，原十个请求仍保留。在后继批次 `3357e7e2e83645438919afc0ecf0e303` 的计划登记成功后，原请求通过键级事务保存为 `8ff632a5`。本次未为提交失败另跑构建。
+
 - **全局高光开关翻译提交（2026-11-19）**：Task `wcg-material-extraction` 的批次 `a7803f4dc2394a50832f7057081330f3` 修订 0、Run `5228547cd7684d9eaddc9ffd40a80297` 生成 Release 后，源码提交成功。原候选仍在测试时，`commit -ResourceRequests` 首次和同一请求重试均返回 `[Errno 32] Wait worker lease is occupied`（chunks `09a2b5`、`42a106`）。十份资源应用回执仍保留。源码上的事务会尝试取得状态锁与 Git 锁，当前错误未指明哪一个被占用。待原测试结束后沿用原十份回执提交，无需重跑构建。
 
 - **预览退出标题提交续证（2026-11-17）**：Task `folder-preview-in-place` 的批次 `d4bce4f63c1044efafa91f6e6673d544` 修订 0、Run `313b42a7ba6d491aab7c8315665a54a8` 通过后，源码提交成功，紧接的 `commit -ResourceRequests` 返回 `[Errno 32] Wait worker lease is occupied`。同一批资源请求重试成功并生成 `3940e1bc1`，额外产生一次 CLI 调用，未重跑构建或测试。等待结束回执与观察者租约释放的顺序仍待核对。
