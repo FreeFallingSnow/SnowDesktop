@@ -240,15 +240,20 @@ void DesktopGrid::OnItemsDropped(const std::vector<Item*>& sourceItems, Containe
         }
         if (folderMappingsOnly)
         {
+            // LayoutItems replaces this DesktopGrid after the batch.
+            auto* app = app_;
             const GridCell target =
-                app_->CellFromPointForDrag(
-                    app_->dragSession_.
-                        CurrentPoint());
-            for (const auto& id :
-                mappingIds)
-                app_->
-                    ReleaseWidgetFromFileGroup(
-                        id, target);
+                app->CellFromPointForDrag(app->dragSession_.CurrentPoint());
+            bool changed = false;
+            for (const auto& id : mappingIds)
+                if (app->ReleaseWidgetFromFileGroup(id, target)) changed = true;
+            if (changed)
+            {
+                app->EnsureNavTabOrder();
+                app->LayoutItems();
+                app->RequestLayoutSave();
+                InvalidateRect(app->hwnd_, nullptr, TRUE);
+            }
             return;
         }
     }

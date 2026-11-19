@@ -1045,18 +1045,13 @@ bool DesktopApp::ReleaseWidgetFromFileGroup(
     const std::wstring& childId, GridCell preferredCell)
 {
     using namespace snowdesktop::widget_group_drop;
-    if (!Release(widgets_, childId, DesktopWidgetType::FileGroup,
+    return Release(widgets_, childId, DesktopWidgetType::FileGroup,
         [&](size_t childIndex, size_t) -> std::optional<ReleasePlacement> {
             std::unordered_set<std::wstring> usedSlots;
             GridSpan span{};
             const auto cell = FindFileGroupReleaseLanding(childIndex, preferredCell, usedSlots, &span);
             return cell ? std::make_optional(ReleasePlacement{*cell, span}) : std::nullopt;
-        })) return false;
-    EnsureNavTabOrder();
-    LayoutItems();
-    RequestLayoutSave();
-    InvalidateRect(hwnd_, nullptr, TRUE);
-    return true;
+        });
 }
 std::optional<GridCell> DesktopApp::FindFileGroupReleaseLanding(
     size_t childIndex, GridCell preferredCell,
@@ -1149,7 +1144,7 @@ bool DesktopApp::ReleaseCollectionFromGroup(
     const std::wstring& collectionId, GridCell preferredCell)
 {
     using namespace snowdesktop::widget_group_drop;
-    if (!Release(widgets_, collectionId, DesktopWidgetType::CollectionGroup,
+    return Release(widgets_, collectionId, DesktopWidgetType::CollectionGroup,
         [&](size_t childIndex, size_t groupIndex) {
             std::unordered_set<std::wstring> usedSlots;
             for (size_t index = 0; index < widgets_.size(); ++index)
@@ -1165,12 +1160,7 @@ bool DesktopApp::ReleaseCollectionFromGroup(
                 }, [&](auto span, auto& slots, auto& cell, const auto& page, int start) {
                     return TryFindFreeCell(span, slots, cell, page, start);
                 });
-        })) return false;
-    EnsureNavTabOrder();
-    LayoutItems();
-    RequestLayoutSave();
-    InvalidateRect(hwnd_, nullptr, TRUE);
-    return true;
+        });
 }
 
 void DesktopApp::ReleaseCollectionGroupChildren(size_t groupIndex)

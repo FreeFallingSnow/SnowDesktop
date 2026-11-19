@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/layout/interactive_layout_save.h"
 #include "common/l10n.h"
 #include "diagnostics/diagnostic_log.h"
 #include "settings/settings_snapshot.h"
@@ -172,10 +173,18 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
         if (sourceList.hasCollectionGroupEntries ||
             sourceList.hasFileGroupEntries)
         {
-            return snowdesktop::widget_group_drop::ReleasePlan(sourceList, preview,
+            const bool changed = snowdesktop::widget_group_drop::ReleasePlan(sourceList, preview,
                 [this](const auto& id, GridCell cell, bool collection) {
                     return collection ? ReleaseCollectionFromGroup(id, cell) : ReleaseWidgetFromFileGroup(id, cell);
                 });
+            if (changed)
+            {
+                EnsureNavTabOrder();
+                LayoutItems();
+                RequestLayoutSave();
+                InvalidateRect(hwnd_, nullptr, TRUE);
+            }
+            return changed;
         }
         snowdesktop::internal_desktop_drop::Services services;
         services.removeKeys = [this](const auto& keys) { RemoveDesktopKeysFromWidgets(keys); };
@@ -406,9 +415,11 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
             if (indices.empty())
                 indices = targetWidget->GetSelectedMemberIndices();
             targetWidget->ReorderMembers(indices, preview.insertIndex);
-            if (targetWidget ==
-                dockFolderPopupContainer_.get())
+            if (targetWidget == dockFolderPopupContainer_.get())
+            {
+                snowdesktop::InteractiveLayoutSave save(this);
                 CommitDockFolderPopupStateToSource();
+            }
             targetWidget->InvalidateSlots();
             if (reorderActiveCollection)
                 if (auto* group = dynamic_cast<CollectionGroup*>(sourceList.origin))
@@ -527,9 +538,11 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
         if (indices.empty())
             indices = targetWidget->GetSelectedMemberIndices();
         targetWidget->ReorderMembers(indices, preview.insertIndex);
-        if (targetWidget ==
-            dockFolderPopupContainer_.get())
+        if (targetWidget == dockFolderPopupContainer_.get())
+        {
+            snowdesktop::InteractiveLayoutSave save(this);
             CommitDockFolderPopupStateToSource();
+        }
         return true;
     }
 

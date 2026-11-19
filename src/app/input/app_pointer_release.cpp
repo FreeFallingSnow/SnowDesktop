@@ -1155,7 +1155,10 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         if (dockFolderPopupResize && folderPreview_)
             CommitFolderPreviewDisplaySettings();
         else if (dockFolderPopupResize)
+        {
+            snowdesktop::InteractiveLayoutSave save(this);
             CommitDockFolderPopupStateToSource();
+        }
         else
             RequestLayoutSave();
         if (popupResize)
@@ -1931,6 +1934,11 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         Container* targetContainer = dragSession_.TargetContainer();
         bool needsReload = targetContainer->NeedsShellReloadAfterDrop();
         const bool desktopTarget = dynamic_cast<DesktopGrid*>(targetContainer) != nullptr;
+        const bool dockReorder = dynamic_cast<DockContainer*>(targetContainer) &&
+            dynamic_cast<DockContainer*>(dragSession_.Source()) &&
+            dragSession_.TargetRegion() != HitRegion::Handoff;
+        const bool logicalSlot = targetContainer->GetSlotSurfaceKind() ==
+            snowdesktop::slot_contract::SlotSurfaceKind::LuaLogicalSlot;
         const auto layoutBeforeDrop = layoutPassRevision_;
         const bool dockFolderPopupTarget =
             IsOpenDockFolderPopupDropTarget(
@@ -1945,9 +1953,9 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         targetContainer->OnItemsDropped(dragSession_.Items(), dragSession_.Source(),
             dragSession_.TargetSlot(), dragSession_.TargetRegion(), mods);
 
-        RequestLayoutSave();
+        if (!logicalSlot) RequestLayoutSave();
         ClearSelection();
-        EndDragSession();
+        if (dragSession_.HasContext()) EndDragSession();
         if (dockFolderPopupTarget ||
             dockFolderPopupSource)
             RefreshDockFolderPopup();
@@ -1960,7 +1968,8 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         {
             // 内容变更可能使某些溢出页变空（后面有非空页时应立即清理顺延）
             // 先 ApplyPageMapping（可能重排 pageId），再由 LayoutItems 重建运行时对象
-            if (!memberOrderOnly && (!desktopTarget || layoutPassRevision_ == layoutBeforeDrop))
+            if (!memberOrderOnly && !dockReorder && !logicalSlot &&
+                (!desktopTarget || layoutPassRevision_ == layoutBeforeDrop))
             {
                 ApplyPageMapping();
                 LayoutItems();

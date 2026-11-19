@@ -495,7 +495,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                         quickNavigation_->activeWidgetIndex = ci[srcIdx];
                         quickNavigation_->scrollOffset = 0;
                         quickNavigation_->initialJumpOpen = false;
-                        SaveLayoutSlots();
+                        RequestLayoutSave();
                     }
                 }
             }

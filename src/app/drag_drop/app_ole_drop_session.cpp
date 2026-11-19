@@ -1282,6 +1282,9 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             Container* targetContainer = dragSession_.TargetContainer();
             bool needsReload = targetContainer->NeedsShellReloadAfterDrop();
             const bool desktopTarget = dynamic_cast<DesktopGrid*>(targetContainer) != nullptr;
+            const bool dockReorder = dynamic_cast<DockContainer*>(targetContainer) &&
+                dynamic_cast<DockContainer*>(dragSession_.Source()) &&
+                dragSession_.TargetRegion() != HitRegion::Handoff;
             const auto layoutBeforeDrop = layoutPassRevision_;
             targetContainer->OnItemsDropped(dragSession_.Items(), dragSession_.Source(),
                 dragSession_.TargetSlot(), dragSession_.TargetRegion(),
@@ -1289,7 +1292,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
 
             RequestLayoutSave();
             ClearSelection();
-            EndDragSession();
+            if (dragSession_.HasContext()) EndDragSession();
             if (needsReload)
             {
                 RebuildContainersAndItems();
@@ -1297,7 +1300,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             }
             else
             {
-                if (!memberOrderOnly && (!desktopTarget || layoutPassRevision_ == layoutBeforeDrop))
+                if (!memberOrderOnly && !dockReorder && (!desktopTarget || layoutPassRevision_ == layoutBeforeDrop))
                 {
                     ApplyPageMapping();
                     LayoutItems();
@@ -2768,7 +2771,9 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                 RefreshDockFolderPopup();
             RequestLayoutSave();
             EndDragSession();
-            RebuildContainersAndItems();
+            // File-operation completion refreshes the Shell model and places
+            // the actual outputs. The tree still describes the old files here.
+            if (!preview.fileBacked) RebuildContainersAndItems();
             InvalidateRect(hwnd_, nullptr, FALSE);
             *effect = !sourceSupportsAsync &&
                     preview.action == DropAction::Move

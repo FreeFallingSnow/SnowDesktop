@@ -303,10 +303,7 @@ void DesktopApp::MoveDockItemsToDesktop(
                     dock->PrepareEntryRemoval(landing.entryIndex);
     if (!snowdesktop::dock_desktop_return::Apply(dockEntries_, widgets_, items_, landings, DockDesktopReturnServices())) return;
     NormalizeDockRecycleBinPosition();
-    RefreshCollectedKeysCache();
-    RebuildContainersAndItems();
     LayoutItems();
-    InvalidateDragStaticScene();
 }
 
 void DesktopApp::RestoreDockEntriesToDesktop()
