@@ -1261,8 +1261,7 @@ public:
         const bool dockEnabledChanged = generalCommitted &&
             app_.generalSettings_.dockEnabled != snapshot.values.general.dockEnabled;
         const bool highlightCompensationChanged = generalCommitted &&
-            app_.generalSettings_.wcgHighlightCompensationEnabled !=
-                snapshot.values.general.wcgHighlightCompensationEnabled;
+            app_.generalSettings_.wcgCompensation != snapshot.values.general.wcgCompensation;
         const bool languageChanged = generalCommitted && std::strcmp(
             app_.generalSettings_.language, snapshot.values.general.language) != 0;
         // Publish both domain mirrors before any layout, surface or hotkey
@@ -1272,8 +1271,7 @@ public:
         if (generalCommitted)
         {
             app_.generalSettings_ = snapshot.values.general;
-            snowdesktop::display_color::highlightCompensationEnabled.store(
-                app_.generalSettings_.wcgHighlightCompensationEnabled);
+            snowdesktop::display_color::compensation.store(app_.generalSettings_.wcgCompensation);
             app_.ApplyScreenTimeEnabled();
         }
 
@@ -1954,8 +1952,7 @@ void DesktopApp::InitializeSettingsController()
         dockSettings_ = snapshot->values.dock;
         navigationSettings_ = snapshot->values.navigation;
         generalSettings_ = snapshot->values.general;
-        snowdesktop::display_color::highlightCompensationEnabled.store(
-            generalSettings_.wcgHighlightCompensationEnabled);
+        snowdesktop::display_color::compensation.store(generalSettings_.wcgCompensation);
         snowdesktop::shell_extensions::SharedMenuService().Configure(generalSettings_.shellExtensions);
         ApplyAnimationPreferences();
         categorySettings_ = snapshot->values.category;
@@ -2276,8 +2273,7 @@ void DesktopApp::LoadGeneralSettingsAndApply()
     GeneralSettings settings;
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
     generalSettings_ = settings;
-    snowdesktop::display_color::highlightCompensationEnabled.store(
-        generalSettings_.wcgHighlightCompensationEnabled);
+    snowdesktop::display_color::compensation.store(generalSettings_.wcgCompensation);
     ApplyRuntimeModulePolicy();
     snowdesktop::diagnostics::SetLogModules(settings.diagnosticLogModules);
     snowdesktop::app_fonts::Select(settings.font, std::filesystem::path(GetExecutableDirectoryPath()) / L"Assets", GetDataDirectoryPath());

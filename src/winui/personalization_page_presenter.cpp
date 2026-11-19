@@ -4,6 +4,7 @@
 #include "theme/surface_theme.h"
 #include "ui/render/native_tooltip_settings.h"
 #include "settings/settings_snapshot.h"
+#include "desktop/display_color_mode.h"
 #include "ui/render/app_font.h"
 
 #include "personalization_page_presenter.h"
@@ -186,9 +187,13 @@ struct PersonalizationPagePresenter::Impl
     muxc::StackPanel widgetBehaviorRoot;
 
     SettingsCard themeCard;
-    SettingRow wcgHighlightCompensationRow;
-    muxc::ToggleSwitch wcgHighlightCompensation{nullptr};
-    winrt::event_token wcgHighlightCompensationToken{};
+    SettingRow wcgHighlightCompensationRow, wcgWorkaroundRow;
+    muxc::ComboBox wcgHighlightCompensation{nullptr};
+    muxc::StackPanel wcgDisplays{nullptr};
+    mux::DispatcherTimer wcgStatusTimer{nullptr};
+    winrt::event_token wcgHighlightCompensationToken{}, wcgStatusTick{}, wcgDisplaysLoaded{}, wcgDisplaysUnloaded{};
+    std::vector<display_color::Configuration> wcgDisplaySnapshot;
+    int wcgStatusSelection = -1;
     SettingsCard pinBorderCard;
     SettingRow pinBorderEnabledRow;
     muxc::ToggleSwitch pinBorderEnabled{nullptr};
@@ -830,11 +835,16 @@ struct PersonalizationPagePresenter::Impl
         fontCard.content.Children().Append(fontError);
         fontCard.content.Children().Append(tooltipFontSizeRow.root);
         InitializeCard(displayEffectsCard, cardStyle, widgetLayoutRoot);
-        wcgHighlightCompensation = muxc::ToggleSwitch{};
+        wcgHighlightCompensation = muxc::ComboBox{};
         wcgHighlightCompensationRow.Initialize(wcgHighlightCompensation);
         wcgHighlightCompensationRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         presenter_controls::StyleSettingsSubrow(wcgHighlightCompensationRow.root, true, 0);
         displayEffectsCard.content.Children().Append(wcgHighlightCompensationRow.root);
+        wcgDisplays = muxc::StackPanel{};
+        displayEffectsCard.content.Children().Append(wcgDisplays);
+        wcgWorkaroundRow.Initialize(nullptr, 0);
+        presenter_controls::StyleSettingsSubrow(wcgWorkaroundRow.root, false, 0);
+        displayEffectsCard.content.Children().Append(wcgWorkaroundRow.root);
 
         managementRoot.Spacing(12);
         themeTransfers = std::make_unique<ThemeLibraryControls>(localize, "global", true, nullptr, 0, -1, cardStyle);
@@ -1265,14 +1275,84 @@ struct PersonalizationPagePresenter::Impl
         PatchInheritedCustom();
     }
 
+    [[nodiscard]] std::wstring CompensationLabel(display_color::Compensation mode) const
+    {
+        using display_color::Compensation;
+        switch (mode)
+        {
+        case Compensation::Highlights:
+            return L("settings.personalization.wcg.highlights", L"Highlights only");
+        case Compensation::HighlightsAndShadows:
+            return L("settings.personalization.wcg.composite", L"Highlights and shadow pre-compositing");
+        default:
+            return L("app.interact.off", L"Off");
+        }
+    }
+
+    void RefreshWcgDisplays(bool force = false)
+    {
+        const auto& configs = display_color::Configurations();
+        const int selection = wcgHighlightCompensation.SelectedIndex();
+        if (!force && configs == wcgDisplaySnapshot && selection == wcgStatusSelection) return;
+        wcgDisplaySnapshot = configs;
+        wcgStatusSelection = selection;
+        const auto requested = display_color::CompensationFromInt(selection);
+        wcgDisplays.Children().Clear();
+        const auto unknown = L("settings.personalization.wcg.unknown", L"Unavailable");
+        if (configs.empty())
+        {
+            SettingRow row;
+            row.Initialize(nullptr, 0);
+            presenter_controls::StyleSettingsSubrow(row.root, false, 0);
+            row.SetText(unknown);
+            wcgDisplays.Children().Append(row.root);
+            return;
+        }
+        for (const auto& config : configs)
+        {
+            using display_color::Mode;
+            const auto signal = config.mode == Mode::WideColor ? L"WCG" : config.mode == Mode::Hdr ? L"HDR"
+                : config.mode == Mode::Sdr ? L"SDR" : unknown;
+            const auto depth = config.bitsPerChannel ? std::to_wstring(config.bitsPerChannel) + L" bpc" : unknown;
+            const auto acm = config.acmKnown ? (config.acmEnabled ? L("app.interact.on", L"On")
+                : L("app.interact.off", L"Off")) : unknown;
+            const auto effective = display_color::EffectiveCompensation(configs, config.sourceName.c_str(), requested);
+            const auto monitor = config.sourceName.starts_with(L"\\.\\") ? config.sourceName.substr(4) : config.sourceName;
+            const auto name = config.displayName.empty() ? monitor : config.displayName + L" (" + monitor + L")";
+            muxc::TextBlock mode;
+            mode.Text(CompensationLabel(effective));
+            mode.TextWrapping(mux::TextWrapping::Wrap);
+            mode.TextAlignment(mux::TextAlignment::Right);
+            SettingRow row;
+            row.Initialize(mode);
+            row.SetControlAlignment(mux::HorizontalAlignment::Right);
+            presenter_controls::StyleSettingsSubrow(row.root, false, 0);
+            row.SetText(name, signal + L" · " + depth + L" · ACM " + acm);
+            muxa::AutomationProperties::SetName(mode,
+                std::wstring(wcgHighlightCompensationRow.label.Text().c_str()) + L" · " + mode.Text().c_str());
+            wcgDisplays.Children().Append(row.root);
+        }
+    }
+
     void HookEvents()
     {
-        wcgHighlightCompensationToken = wcgHighlightCompensation.Toggled([this](const auto&, const auto&) {
-            const bool enabled = wcgHighlightCompensation.IsOn();
-            EmitGeneral(SettingsUpdateMode::Commit, [enabled](auto& settings) {
-                settings.wcgHighlightCompensationEnabled = enabled;
+        wcgHighlightCompensationToken = wcgHighlightCompensation.SelectionChanged([this](const auto&, const auto&) {
+            const int index = wcgHighlightCompensation.SelectedIndex();
+            if (index < 0 || updatingControls) return;
+            const auto mode = display_color::CompensationFromInt(index);
+            EmitGeneral(SettingsUpdateMode::Commit, [mode](auto& settings) {
+                settings.wcgCompensation = mode;
             });
+            RefreshWcgDisplays();
         });
+        wcgStatusTimer = mux::DispatcherTimer{};
+        wcgStatusTimer.Interval(std::chrono::seconds(2));
+        wcgStatusTick = wcgStatusTimer.Tick([this](const auto&, const auto&) { RefreshWcgDisplays(); });
+        wcgDisplaysLoaded = wcgDisplays.Loaded([this](const auto&, const auto&) {
+            RefreshWcgDisplays();
+            wcgStatusTimer.Start();
+        });
+        wcgDisplaysUnloaded = wcgDisplays.Unloaded([this](const auto&, const auto&) { wcgStatusTimer.Stop(); });
         pinBorderEnabledToken = pinBorderEnabled.Toggled([this](const auto&, const auto&) {
             UpdateDependentStates();
             const bool enabled = pinBorderEnabled.IsOn();
@@ -1718,7 +1798,8 @@ struct PersonalizationPagePresenter::Impl
 
     void PatchGeneral(const GeneralSettings& settings)
     {
-        wcgHighlightCompensation.IsOn(settings.wcgHighlightCompensationEnabled);
+        wcgHighlightCompensation.SelectedIndex(static_cast<int>(settings.wcgCompensation));
+        RefreshWcgDisplays();
         SyncTooltipFontSize(NormalizeTooltipFontSize(settings.tooltipFontSize));
         if (selectedFont != settings.font || fonts.empty())
         {
@@ -1892,8 +1973,18 @@ struct PersonalizationPagePresenter::Impl
         wcgHighlightCompensationRow.SetText(
             L("settings.personalization.wcgHighlightCompensation", L"Wide-gamut display compensation"),
             L("settings.personalization.wcgHighlightCompensation.hint",
-                L"Reduces the washed-out appearance of translucent effects on wide-gamut displays."));
+                L"Applies to SDR wide-gamut displays with 10-bit output and Windows automatic color management (ACM) enabled. Translucent highlights and shadow edges may look washed out with this combination. Shadow pre-compositing applies to frosted-glass Dock icons and widgets with shadows."));
+        ReplaceComboItems(wcgHighlightCompensation, {
+            {"app.interact.off", L"Off"},
+            {"settings.personalization.wcg.highlights", L"Highlights only"},
+            {"settings.personalization.wcg.composite", L"Highlights and shadow pre-compositing"},
+        });
         muxa::AutomationProperties::SetName(wcgHighlightCompensation, wcgHighlightCompensationRow.label.Text());
+        muxa::AutomationProperties::SetHelpText(wcgHighlightCompensation, wcgHighlightCompensationRow.help.Text());
+        wcgWorkaroundRow.SetText(L("settings.personalization.wcg.workaroundTitle", L"Windows workaround"),
+            L("settings.personalization.wcg.workaround",
+                L"If the fringe persists, go to Windows Settings > System > Display > Color profile, select the affected display, and turn off Automatically manage color for apps."));
+        RefreshWcgDisplays(true);
         SetCardText(pinBorderCard, "settings.personalization.windowPinBorder", L"Pinned window border");
         pinBorderEnabledRow.SetText(L("settings.personalization.windowPinBorder.show", L"Show pinned window border"),
             L("settings.personalization.windowPinBorder.hint", L"Hiding the border keeps the window pinned."));
@@ -2472,7 +2563,11 @@ struct PersonalizationPagePresenter::Impl
             scene.combo.SelectionChanged(scene.selected);
         }
         quickAppearanceOptions->Close();
-        wcgHighlightCompensation.Toggled(wcgHighlightCompensationToken);
+        wcgHighlightCompensation.SelectionChanged(wcgHighlightCompensationToken);
+        wcgStatusTimer.Stop();
+        wcgStatusTimer.Tick(wcgStatusTick);
+        wcgDisplays.Loaded(wcgDisplaysLoaded);
+        wcgDisplays.Unloaded(wcgDisplaysUnloaded);
         tooltipFontSize.ValueChanged(tooltipFontSizeToken);
         tooltipFontSizeSlider.ValueChanged(tooltipFontSizeSliderToken);
         tooltipFontSizeReset.Click(tooltipFontSizeResetToken);

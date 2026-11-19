@@ -46,9 +46,9 @@ public:
     {
     public:
         explicit Scope(ID2D1RenderTarget* target, HighlightCoverage& coverage,
-            bool separateMaterials = false)
+            bool separateMaterials = false, bool trackShadows = false)
             : target_(target), coverage_(coverage), previous_(current_),
-              separateMaterials_(separateMaterials)
+              separateMaterials_(separateMaterials), trackShadows_(trackShadows)
         { current_ = this; }
         ~Scope() { current_ = previous_; }
         Scope(const Scope&) = delete;
@@ -60,6 +60,7 @@ public:
         HighlightCoverage& coverage_;
         Scope* previous_;
         bool separateMaterials_;
+        bool trackShadows_;
         inline static thread_local Scope* current_ = nullptr;
     };
 
@@ -68,6 +69,14 @@ public:
         const auto* scope = Find(target);
         return scope ? &scope->coverage_ : nullptr;
     }
+
+    static void MarkIconShadow(ID2D1RenderTarget* target) noexcept
+    {
+        if (auto* scope = Find(target); scope && scope->trackShadows_)
+            scope->coverage_.containsIconShadow_ = true;
+    }
+
+    bool ContainsIconShadow() const noexcept { return containsIconShadow_; }
 
     // An opaque foreground covers earlier highlights, including on fallback replay.
     static void OccludePrevious(ID2D1RenderTarget* target, ID2D1Geometry* opaque,
@@ -427,6 +436,7 @@ private:
         scope.coverage_.draws_.push_back(std::move(draw));
     }
 
+    bool containsIconShadow_ = false;
     std::vector<Draw> draws_;
     std::vector<VisibilityClip> visibilityClips_;
 };

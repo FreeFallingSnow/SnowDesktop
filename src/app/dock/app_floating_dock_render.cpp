@@ -132,9 +132,8 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     context.Attach(rawContext);
     RECT contentFrame{};
     GetClientRect(host.hwnd, &contentFrame);
-    snowdesktop::HighlightCoverage highlightCoverage;
-    snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), highlightCoverage,
-        DesktopBackdropCompositor::IsSrgbHighlightEligible(host.hwnd, contentFrame));
+    using snowdesktop::display_color::Compensation;
+    const auto compensation = DesktopBackdropCompositor::SrgbCompensationForFrame(host.hwnd, contentFrame);
     context->SetDpi(96.0f, 96.0f);
     context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
     context->SetTransform(
@@ -149,6 +148,13 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     context->Clear(
         D2D1::ColorF(0, 0, 0, 0));
+    DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get(),
+        compensation == Compensation::HighlightsAndShadows &&
+        iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled &&
+        (iconShadows_.dock || iconShadows_.subject));
+    snowdesktop::HighlightCoverage highlightCoverage;
+    snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), highlightCoverage,
+        compensation != Compensation::Off, scene.Started());
 
     drawing_.Reset();
     renderingFloatingDock_ = true;
@@ -203,6 +209,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     }
     catch (...)
     {
+        (void)scene.Finish();
         context.Reset();
         drawing_.Reset();
         const HRESULT finish = surfaceDrawScope.Finish();
@@ -212,16 +219,18 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     }
     renderingFloatingDock_ = false;
 
+    const HRESULT sceneResult = scene.Finish();
     const auto srgbKey = reinterpret_cast<std::uintptr_t>(&host);
-    const bool srgbPresented = host.backdrop.PrepareSrgbMaterials(
+    const bool srgbPresented = SUCCEEDED(sceneResult) && host.backdrop.PrepareSrgbMaterials(
         host.hwnd, srgbKey, contentFrame, context.Get(), updateOffset,
-        host.presentationMerged ? host.mergedPresentation.opacity : 1.f);
+        host.presentationMerged ? host.mergedPresentation.opacity : 1.f, scene.Scene());
     context->SetTransform(
         D2D1::Matrix3x2F::Identity());
     context.Reset();
     drawing_.Reset();
 
     hr = snowdesktop::startup_diagnostics::Call(L"Dock.EndDraw", [&] { return surfaceDrawScope.Finish(); });
+    if (FAILED(sceneResult)) hr = sceneResult;
     if (FAILED(hr))
     {
         RecoverFloatingDockCompositionFailure(

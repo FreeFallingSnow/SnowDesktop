@@ -59,24 +59,25 @@ public:
         return scope->probe_ ? 0 : scope->strength_;
     }
 
-    static void Draw(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap,
+    static bool Draw(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap,
         const D2D1_RECT_F& destination, float opacity)
     {
         auto* scope = current_;
-        if (!scope || scope->target_ != target || opacity <= 0.0f) return;
+        if (!scope || scope->target_ != target || opacity <= 0.0f) return false;
         const auto mask = FindSubjectMask(bitmap);
-        if (!mask) return;
+        if (!mask) return false;
         const int strength = Claim(target);
-        if (strength <= 0) return;
+        if (strength <= 0) return false;
 
         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
         const float alpha = opacity * IconShadowOpacity(strength);
-        if (FAILED(target->CreateSolidColorBrush(D2D1::ColorF(0, alpha), &brush))) return;
+        if (FAILED(target->CreateSolidColorBrush(D2D1::ColorF(0, alpha), &brush))) return false;
         const auto antialias = target->GetAntialiasMode();
         target->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
         target->FillOpacityMask(mask.Get(), brush.Get(), D2D1_OPACITY_MASK_CONTENT_GRAPHICS,
             &destination, nullptr);
         target->SetAntialiasMode(antialias);
+        return true;
     }
 
 private:

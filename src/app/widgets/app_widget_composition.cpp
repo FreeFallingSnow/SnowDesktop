@@ -525,14 +525,11 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         const bool boundsChanged = !SameRect(oldBounds, bounds);
         const RECT contentFrame{surfaceLeft, surfaceTop,
             surfaceLeft + static_cast<LONG>(width), surfaceTop + static_cast<LONG>(height)};
-        POINT center{bounds.left + (bounds.right - bounds.left) / 2,
-            bounds.top + (bounds.bottom - bounds.top) / 2};
-        namespace display = snowdesktop::display_color;
+        using snowdesktop::display_color::Compensation;
         const bool keepComposition = widgetData->type == DesktopWidgetType::LuaStack ||
             widgetData->keepInitialComposition;
-        const bool srgbEligible =
-            ClientToScreen(hwnd_, &center) &&
-            display::UseHighlightCompensation(MonitorFromPoint(center, MONITOR_DEFAULTTONULL));
+        const auto compensation = DesktopBackdropCompositor::SrgbCompensationForFrame(hwnd_, contentFrame);
+        const bool srgbEligible = compensation != Compensation::Off;
         // Draw a new or restored frame before its glass and marquees are
         // committed. Keep the existing frame visible during a worker handoff.
         const bool sameSurface = item.width == width && item.height == height &&
@@ -594,9 +591,6 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
 
         ComPtr<ID2D1DeviceContext> context;
         context.Attach(rawContext);
-        snowdesktop::HighlightCoverage highlightCoverage;
-        snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), highlightCoverage,
-            srgbEligible && !asynchronous);
         context->SetDpi(96.0f, 96.0f);
         context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
         if (!asynchronous)
@@ -606,6 +600,14 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
                 static_cast<float>(updateOffset.y - surfaceTop)));
             context->Clear(D2D1::ColorF(0, 0, 0, 0));
         }
+
+        DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get(), !asynchronous && widgetContainer &&
+            compensation == Compensation::HighlightsAndShadows &&
+            iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled &&
+            (iconShadows_.exposedWidget || iconShadows_.subject));
+        snowdesktop::HighlightCoverage highlightCoverage;
+        snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), highlightCoverage,
+            srgbEligible && !asynchronous, scene.Started());
 
         desktopWidgetCompositionDrawInProgress_ = true;
         item.iconBackdrops.BeginDraw();
@@ -674,12 +676,14 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
                 desktopWidgetBackdropBlurRadiusDuringDraw_)), 0, 48);
         desktopWidgetBackdropRequestedDuringDraw_ = false;
 
-        const bool preparedMaterials = desktopBackdropCompositor_.PrepareSrgbMaterials(
-            hwnd_, item.BackdropOwnerKey(), contentFrame, context.Get(), updateOffset, item.HoverOpacity());
+        const HRESULT sceneResult = scene.Finish();
+        const bool preparedMaterials = SUCCEEDED(sceneResult) && desktopBackdropCompositor_.PrepareSrgbMaterials(
+            hwnd_, item.BackdropOwnerKey(), contentFrame, context.Get(), updateOffset, item.HoverOpacity(), scene.Scene());
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
         HRESULT endDrawHr = asynchronous
             ? widgetSurfaceRenderer_->EndRecording(commands.Get()) : item.surface->EndDraw();
+        if (FAILED(sceneResult)) endDrawHr = sceneResult;
         if (asynchronous && SUCCEEDED(endDrawHr))
         {
             const RECT surfaceBounds{surfaceLeft, surfaceTop,

@@ -656,7 +656,8 @@ void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
         style.enabled && style.glassEnabled;
     if (translucentMaterial) RegisterIconBackdrop(target, plan.bounds, opacity, ownerKey, &style);
     snowdesktop::icon_bitmap_renderer::Draw(target, bitmap, plan, opacity, translucentMaterial);
-    snowdesktop::icon_shadow::SubjectScope::Draw(target, bitmap, ToD2DRect(plan.bounds), opacity);
+    if (snowdesktop::icon_shadow::SubjectScope::Draw(target, bitmap, ToD2DRect(plan.bounds), opacity))
+        snowdesktop::HighlightCoverage::MarkIconShadow(target);
 }
 
 void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,

@@ -135,6 +135,46 @@ inline winrt::com_ptr<Effect> Composite(D2D1_COMPOSITE_MODE mode,
         std::vector{background, foreground});
 }
 
+inline winrt::com_ptr<Effect> AlphaSupport(const graphics::IGraphicsEffectSource& input)
+{
+    // An 8-bit alpha distinguishes empty pixels from the light and shadow.
+    // Keep the sampled backdrop within the material's coverage.
+    using wf::PropertyValue;
+    std::vector<wf::IInspectable> supportProperties;
+    supportProperties.reserve(13);
+    for (int channel = 0; channel < 3; ++channel)
+    {
+        supportProperties.push_back(PropertyValue::CreateSingle(0.f));
+        supportProperties.push_back(PropertyValue::CreateSingle(1.f));
+        supportProperties.push_back(PropertyValue::CreateBoolean(true));
+    }
+    supportProperties.push_back(PropertyValue::CreateSingle(0.f));
+    supportProperties.push_back(PropertyValue::CreateSingle(255.f));
+    supportProperties.push_back(PropertyValue::CreateBoolean(false));
+    supportProperties.push_back(PropertyValue::CreateBoolean(true));
+    return winrt::make_self<Effect>(CLSID_D2D1LinearTransfer, std::move(supportProperties),
+        std::vector<graphics::IGraphicsEffectSource>{input});
+}
+
+inline composition::CompositionEffectFactory CreateSceneFactory(const composition::Compositor& compositor)
+{
+    const auto scene = composition::CompositionEffectSourceParameter(L"scene");
+    const auto mixed = Composite(D2D1_COMPOSITE_MODE_SOURCE_OVER,
+        composition::CompositionEffectSourceParameter(L"backdrop"), scene);
+    // The scene is an 8-bit premultiplied surface. Replace the background
+    // only where an actual content pixel reached the scene surface.
+    const float mask[]{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0, 0, 0, 0};
+    const auto support = winrt::make_self<Effect>(CLSID_D2D1ColorMatrix,
+        std::vector<wf::IInspectable>{wf::PropertyValue::CreateSingleArray(mask),
+            wf::PropertyValue::CreateUInt32(D2D1_COLORMATRIX_ALPHA_MODE_PREMULTIPLIED),
+            wf::PropertyValue::CreateBoolean(true)},
+        std::vector<graphics::IGraphicsEffectSource>{composition::CompositionEffectSourceParameter(L"scene")});
+    const auto output = Composite(D2D1_COMPOSITE_MODE_DESTINATION_IN, *mixed, *support);
+    auto factory = compositor.CreateEffectFactory(*output);
+    winrt::check_hresult(factory.ExtendedError());
+    return factory;
+}
+
 inline composition::CompositionEffectFactory CreateFactory(const composition::Compositor& compositor)
 {
     const auto makeMixed = []() -> graphics::IGraphicsEffectSource {
@@ -152,23 +192,7 @@ inline composition::CompositionEffectFactory CreateFactory(const composition::Co
     const auto outside = Composite(D2D1_COMPOSITE_MODE_DESTINATION_OUT, *ordinary, coverage);
     const auto inside = Composite(D2D1_COMPOSITE_MODE_DESTINATION_IN, *corrected, coverage);
     const auto output = Composite(D2D1_COMPOSITE_MODE_PLUS, *outside, *inside);
-    // An 8-bit alpha distinguishes empty pixels from the light and shadow.
-    // Keep the sampled backdrop within the material's coverage.
-    using wf::PropertyValue;
-    std::vector<wf::IInspectable> supportProperties;
-    supportProperties.reserve(13);
-    for (int channel = 0; channel < 3; ++channel)
-    {
-        supportProperties.push_back(PropertyValue::CreateSingle(0.f));
-        supportProperties.push_back(PropertyValue::CreateSingle(1.f));
-        supportProperties.push_back(PropertyValue::CreateBoolean(true));
-    }
-    supportProperties.push_back(PropertyValue::CreateSingle(0.f));
-    supportProperties.push_back(PropertyValue::CreateSingle(255.f));
-    supportProperties.push_back(PropertyValue::CreateBoolean(false));
-    supportProperties.push_back(PropertyValue::CreateBoolean(true));
-    const auto support = winrt::make_self<Effect>(CLSID_D2D1LinearTransfer, std::move(supportProperties),
-        std::vector<graphics::IGraphicsEffectSource>{composition::CompositionEffectSourceParameter(L"material")});
+    const auto support = AlphaSupport(composition::CompositionEffectSourceParameter(L"material"));
     const auto clipped = Composite(D2D1_COMPOSITE_MODE_DESTINATION_IN, *output, *support);
     auto factory = compositor.CreateEffectFactory(*clipped);
     winrt::check_hresult(factory.ExtendedError());

@@ -531,7 +531,7 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
         [](const auto& target) { return target.suppressTaskbar; });
     ApplySystemTaskbarBackdrop(true,
         dockSettings_.systemTaskbarBackdropEnabled, defaultAppearance, targets, appearanceRequired, suppressTaskbar,
-        generalSettings_.wcgHighlightCompensationEnabled);
+        generalSettings_.wcgCompensation != snowdesktop::display_color::Compensation::Off);
     taskbarAppliedMonitorSceneRevision_ = monitorSceneRevision_;
     systemTaskbarBackdropRefreshTick_ = GetTickCount();
     return true;

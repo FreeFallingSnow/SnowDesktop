@@ -6,6 +6,8 @@
 
 #include <windows.h>
 #include <d2d1_1.h>
+#include <wrl/client.h>
+#include "desktop/display_color_preferences.h"
 #include "icons/icon_beautify.h"
 #include "ui/render/icon_backdrop_clip.h"
 
@@ -169,16 +171,39 @@ public:
     // The clip is local to a fixed sampling envelope and can animate independently.
     bool AddClippedPanel(const RECT& envelope, ID2D1Geometry* clip,
         float blurRadius, std::uintptr_t ownerKey);
+    static snowdesktop::display_color::Compensation SrgbCompensationForFrame(
+        HWND window, const RECT& clientFrame);
     static bool IsSrgbHighlightEligible(HWND window, const RECT& clientFrame);
+
+    class SrgbSceneRecording
+    {
+    public:
+        SrgbSceneRecording(ID2D1DeviceContext* context, bool enabled);
+        ~SrgbSceneRecording();
+        SrgbSceneRecording(const SrgbSceneRecording&) = delete;
+        SrgbSceneRecording& operator=(const SrgbSceneRecording&) = delete;
+
+        bool Started() const noexcept { return context_ != nullptr; }
+        HRESULT Finish();
+        ID2D1CommandList* Scene() const noexcept { return scene_.Get(); }
+
+    private:
+        ID2D1DeviceContext* context_ = nullptr;
+        Microsoft::WRL::ComPtr<ID2D1Image> target_;
+        Microsoft::WRL::ComPtr<ID2D1CommandList> scene_;
+    };
+
     bool StageSrgbContent(HWND window, std::uintptr_t key, const RECT& clientFrame,
-        ID2D1DeviceContext* context, POINT atlasOffset);
+        ID2D1DeviceContext* context, POINT atlasOffset, ID2D1CommandList* scene = nullptr);
     // Draw the material and coverage through the same geometry before sampling
     // the backdrop. Coordinates refer to the frame's local pixel space.
     using SrgbMaterialDraw = std::function<HRESULT(ID2D1DeviceContext*, POINT, bool coverage)>;
+    using SrgbSceneDraw = std::function<HRESULT(ID2D1DeviceContext*, POINT)>;
     bool StageSrgbMaterialFrame(HWND window, std::uintptr_t key, const RECT& clientFrame,
-        ID2D1Device* device, const SrgbMaterialDraw& draw);
+        ID2D1Device* device, const SrgbMaterialDraw& draw, const SrgbSceneDraw& drawScene = {});
     bool PrepareSrgbMaterials(HWND window, std::uintptr_t key, const RECT& clientFrame,
-        ID2D1DeviceContext* context, POINT atlasOffset, float opacity = 1.f);
+        ID2D1DeviceContext* context, POINT atlasOffset, float opacity = 1.f,
+        ID2D1CommandList* scene = nullptr);
     bool PublishSrgbContent(std::uintptr_t key, float opacity = 1.0f);
     bool HasSrgbContent(std::uintptr_t key) const noexcept;
     // Keep the DirectComposition surface attached. Retire its old highlight

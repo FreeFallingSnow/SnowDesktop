@@ -1291,8 +1291,7 @@ private:
         context->Clear(D2D1::ColorF(0, 0));
         namespace display = snowdesktop::display_color;
         const bool correctHighlights = (control.edgeStyle.style & kStyleDisableWcgCompensation) == 0 &&
-            display::ModeForMonitor(MonitorFromWindow(control.edgeTaskbar, MONITOR_DEFAULTTONULL)) ==
-                display::Mode::WideColor;
+            display::UseHighlightCompensation(MonitorFromWindow(control.edgeTaskbar, MONITOR_DEFAULTTONULL));
         std::vector<std::uint32_t> coverage;
         const HRESULT drawResult = DrawTaskbarEdges(context.get(), width, height, scale, control.edgeStyle,
             ResolveTaskbarMaterialEdge(control.edgeTaskbar), correctHighlights ? &coverage : nullptr);

@@ -47,6 +47,7 @@ void DesktopApp::DrawIconShadow(ID2D1RenderTarget* target, RECT bounds, float sc
         if (const auto* cached = bitmapIconShadows_.Find(key))
         {
             shadow::Draw(context.Get(), *cached, bounds, scale);
+            snowdesktop::HighlightCoverage::MarkIconShadow(target);
             return;
         }
     }
@@ -61,6 +62,7 @@ void DesktopApp::DrawIconShadow(ID2D1RenderTarget* target, RECT bounds, float sc
         return;
 
     shadow::Draw(context.Get(), drawing, bounds, scale);
+    snowdesktop::HighlightCoverage::MarkIconShadow(target);
     if (cacheable)
     {
         drawing.sourceBitmap = source.bitmap;
@@ -523,6 +525,7 @@ void DesktopApp::DrawDockControlSubjectShadow(ID2D1DeviceContext* target, RECT b
     target->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), plate.Get()), nullptr);
     snowdesktop::icon_shadow::Draw(target, drawing, bounds, style.scale);
     target->PopLayer();
+    snowdesktop::HighlightCoverage::MarkIconShadow(target);
 }
 
 void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,

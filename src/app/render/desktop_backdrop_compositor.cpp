@@ -648,6 +648,7 @@ struct DesktopBackdropCompositor::Impl
     wuc::ContainerVisual root{nullptr};
     std::unordered_map<int, wuc::CompositionEffectFactory> blurFactories;
     wuc::CompositionEffectFactory highlightMaterialFactory{nullptr};
+    wuc::CompositionEffectFactory precomposedSceneFactory{nullptr};
     struct SrgbRetirement { bool waiting = false; };
     struct SrgbContent
     {
@@ -655,13 +656,16 @@ struct DesktopBackdropCompositor::Impl
         {
             wuc::CompositionDrawingSurface surface{nullptr};
             wuc::CompositionDrawingSurface coverage{nullptr};
+            wuc::CompositionDrawingSurface scene{nullptr};
             wuc::CompositionEffectBrush effect{nullptr};
+            wuc::CompositionEffectBrush sceneEffect{nullptr};
             SIZE size{};
         };
         Buffer active, candidate;
         RECT stagedFrame{};
         bool staged = false;
         wuc::SpriteVisual visual{nullptr};
+        wuc::SpriteVisual materialVisual{nullptr};
         std::shared_ptr<SrgbRetirement> retirement;
     };
     HWND srgbContentWindow = nullptr;
@@ -1334,7 +1338,7 @@ struct DesktopBackdropCompositor::Impl
         srgbContentRoot = std::move(frameRoot);
     }
 
-    SrgbContent::Buffer CreateSrgbContentBuffer(SIZE size)
+    SrgbContent::Buffer CreateSrgbContentBuffer(SIZE size, bool withScene)
     {
         SrgbContent::Buffer buffer;
         buffer.size = size;
@@ -1343,34 +1347,42 @@ struct DesktopBackdropCompositor::Impl
             wgx::DirectXPixelFormat::B8G8R8A8UIntNormalized, wgx::DirectXAlphaMode::Premultiplied);
         buffer.coverage = maskGraphicsDevice.CreateDrawingSurface(extent,
             wgx::DirectXPixelFormat::B8G8R8A8UIntNormalized, wgx::DirectXAlphaMode::Premultiplied);
-        const auto source = compositor.CreateSurfaceBrush(buffer.surface);
-        source.Stretch(wuc::CompositionStretch::None);
-        source.HorizontalAlignmentRatio(0.f);
-        source.VerticalAlignmentRatio(0.f);
-        source.BitmapInterpolationMode(wuc::CompositionBitmapInterpolationMode::NearestNeighbor);
-        const auto mask = compositor.CreateSurfaceBrush(buffer.coverage);
-        mask.Stretch(wuc::CompositionStretch::None);
-        mask.HorizontalAlignmentRatio(0.f);
-        mask.VerticalAlignmentRatio(0.f);
-        mask.BitmapInterpolationMode(wuc::CompositionBitmapInterpolationMode::NearestNeighbor);
+        const auto makeBrush = [&](const wuc::CompositionDrawingSurface& surface) {
+            auto brush = compositor.CreateSurfaceBrush(surface);
+            brush.Stretch(wuc::CompositionStretch::None);
+            brush.HorizontalAlignmentRatio(0.f);
+            brush.VerticalAlignmentRatio(0.f);
+            brush.BitmapInterpolationMode(wuc::CompositionBitmapInterpolationMode::NearestNeighbor);
+            return brush;
+        };
         if (!highlightMaterialFactory)
             highlightMaterialFactory = snowdesktop::backdrop_srgb::CreateFactory(compositor);
         buffer.effect = highlightMaterialFactory.CreateBrush();
         buffer.effect.SetSourceParameter(L"backdrop", compositor.CreateBackdropBrush());
-        buffer.effect.SetSourceParameter(L"material", source);
-        buffer.effect.SetSourceParameter(L"coverage", mask);
+        buffer.effect.SetSourceParameter(L"material", makeBrush(buffer.surface));
+        buffer.effect.SetSourceParameter(L"coverage", makeBrush(buffer.coverage));
+        if (withScene)
+        {
+            buffer.scene = maskGraphicsDevice.CreateDrawingSurface(extent,
+                wgx::DirectXPixelFormat::B8G8R8A8UIntNormalized, wgx::DirectXAlphaMode::Premultiplied);
+            if (!precomposedSceneFactory)
+                precomposedSceneFactory = snowdesktop::backdrop_srgb::CreateSceneFactory(compositor);
+            buffer.sceneEffect = precomposedSceneFactory.CreateBrush();
+            buffer.sceneEffect.SetSourceParameter(L"backdrop", compositor.CreateBackdropBrush());
+            buffer.sceneEffect.SetSourceParameter(L"scene", makeBrush(buffer.scene));
+        }
         return buffer;
     }
 
     static void PaintSrgbSurface(const wuc::CompositionDrawingSurface& surface,
-        const SrgbMaterialDraw& draw, bool coverage)
+        const SrgbSceneDraw& draw)
     {
         auto interop = surface.as<awuci::ICompositionDrawingSurfaceInterop>();
         winrt::com_ptr<ID2D1DeviceContext> context;
         POINT origin{};
         winrt::check_hresult(interop->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
             context.put_void(), &origin));
-        const HRESULT painted = context ? draw(context.get(), origin, coverage) : E_POINTER;
+        const HRESULT painted = context ? draw(context.get(), origin) : E_POINTER;
         const auto finished = interop->EndDraw();
         winrt::check_hresult(painted);
         winrt::check_hresult(finished);
@@ -1482,7 +1494,10 @@ struct DesktopBackdropCompositor::Impl
         panelOwners.clear();
         blurFactories.clear();
         if (!preserveSrgbContent)
+        {
             highlightMaterialFactory = nullptr;
+            precomposedSceneFactory = nullptr;
+        }
         regionalFactories.clear();
         if (!preserveSrgbContent)
         {
@@ -3061,36 +3076,108 @@ bool DesktopBackdropCompositor::AddLargeIconPanel(const RECT& frame,
     }
 }
 
+namespace
+{
+void ReplayScene(ID2D1DeviceContext* target, ID2D1CommandList* scene,
+    const RECT& frame, POINT sourceOrigin, POINT destinationOrigin)
+{
+    const auto source = D2D1::RectF(static_cast<float>(sourceOrigin.x), static_cast<float>(sourceOrigin.y),
+        static_cast<float>(sourceOrigin.x + frame.right - frame.left),
+        static_cast<float>(sourceOrigin.y + frame.bottom - frame.top));
+    const auto destination = D2D1::Point2F(static_cast<float>(destinationOrigin.x),
+        static_cast<float>(destinationOrigin.y));
+    target->SetTransform(D2D1::Matrix3x2F::Identity());
+    target->DrawImage(scene, &destination, &source, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+}
+}
+
+DesktopBackdropCompositor::SrgbSceneRecording::SrgbSceneRecording(
+    ID2D1DeviceContext* context, bool enabled)
+{
+    if (!enabled || FAILED(context->CreateCommandList(&scene_))) return;
+    context->GetTarget(&target_);
+    if (!target_)
+    {
+        scene_.Reset();
+        return;
+    }
+    context_ = context;
+    context_->SetTarget(scene_.Get());
+}
+
+DesktopBackdropCompositor::SrgbSceneRecording::~SrgbSceneRecording()
+{
+    if (context_) context_->SetTarget(target_.Get());
+}
+
+HRESULT DesktopBackdropCompositor::SrgbSceneRecording::Finish()
+{
+    if (!context_) return S_OK;
+    auto* context = std::exchange(context_, nullptr);
+    context->SetTarget(target_.Get());
+    const HRESULT result = context->Flush(nullptr, nullptr);
+    return FAILED(result) ? result : scene_->Close();
+}
+
+snowdesktop::display_color::Compensation DesktopBackdropCompositor::SrgbCompensationForFrame(
+    HWND window, const RECT& clientFrame)
+{
+    namespace display = snowdesktop::display_color;
+    using display::Compensation;
+    const auto selected = display::compensation.load(std::memory_order_relaxed);
+    if (selected == Compensation::Off || !window || IsRectEmpty(&clientFrame))
+        return Compensation::Off;
+    POINT top{clientFrame.left, clientFrame.top};
+    POINT bottom{clientFrame.right, clientFrame.bottom};
+    if (!ClientToScreen(window, &top) || !ClientToScreen(window, &bottom))
+        return Compensation::Off;
+    const RECT screen{top.x, top.y, bottom.x, bottom.y};
+    bool found = false;
+    const auto eligible = EnumDisplayMonitors(nullptr, &screen,
+        [](HMONITOR monitor, HDC, LPRECT, LPARAM data) -> BOOL {
+            if (!display::UseHighlightCompensation(monitor)) return FALSE;
+            *reinterpret_cast<bool*>(data) = true;
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&found));
+    return eligible && found ? selected : Compensation::Off;
+}
+
 bool DesktopBackdropCompositor::IsSrgbHighlightEligible(HWND window, const RECT& clientFrame)
 {
-    if (!window || IsRectEmpty(&clientFrame)) return false;
-    POINT center{clientFrame.left + (clientFrame.right - clientFrame.left) / 2,
-        clientFrame.top + (clientFrame.bottom - clientFrame.top) / 2};
-    namespace display = snowdesktop::display_color;
-    return ClientToScreen(window, &center) &&
-        display::UseHighlightCompensation(MonitorFromPoint(center, MONITOR_DEFAULTTONULL));
+    return SrgbCompensationForFrame(window, clientFrame) != snowdesktop::display_color::Compensation::Off;
 }
 
 bool DesktopBackdropCompositor::StageSrgbContent(HWND window, std::uintptr_t key,
-    const RECT& clientFrame, ID2D1DeviceContext* context, POINT atlasOffset)
+    const RECT& clientFrame, ID2D1DeviceContext* context, POINT atlasOffset, ID2D1CommandList* scene)
 {
     if (!context || atlasOffset.x < 0 || atlasOffset.y < 0 || !IsSrgbHighlightEligible(window, clientFrame))
         return false;
     using Coverage = snowdesktop::HighlightCoverage;
     const auto* coverage = Coverage::Current(context);
-    if (!coverage || !coverage->HasExtractedMaterials())
+    if (!coverage || (!scene && !coverage->HasExtractedMaterials()))
         return false;
     winrt::com_ptr<ID2D1Device> device;
     context->GetDevice(device.put());
+    SrgbSceneDraw drawScene;
+    if (scene)
+    {
+        drawScene = [&](ID2D1DeviceContext* target, POINT origin) -> HRESULT {
+            target->SetDpi(96.f, 96.f);
+            target->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+            target->Clear(D2D1::ColorF(0, 0.f));
+            ReplayScene(target, scene, clientFrame, atlasOffset, origin);
+            return S_OK;
+        };
+    }
     return StageSrgbMaterialFrame(window, key, clientFrame, device.get(),
         [&](ID2D1DeviceContext* target, POINT origin, bool mask) {
             return coverage->Paint(target, atlasOffset, origin,
                 mask ? Coverage::Pass::Coverage : Coverage::Pass::Materials);
-        });
+        }, drawScene);
 }
 
 bool DesktopBackdropCompositor::StageSrgbMaterialFrame(HWND window, std::uintptr_t key,
-    const RECT& clientFrame, ID2D1Device* device, const SrgbMaterialDraw& draw)
+    const RECT& clientFrame, ID2D1Device* device, const SrgbMaterialDraw& draw, const SrgbSceneDraw& drawScene)
 {
     if (const auto existing = impl_->srgbContent.find(key); existing != impl_->srgbContent.end())
         existing->second.staged = false;
@@ -3107,10 +3194,17 @@ bool DesktopBackdropCompositor::StageSrgbMaterialFrame(HWND window, std::uintptr
 
         auto& frame = impl_->srgbContent[key];
         auto& candidate = frame.candidate;
-        if (!candidate.surface || candidate.size.cx != size.cx || candidate.size.cy != size.cy)
-            candidate = impl_->CreateSrgbContentBuffer(size);
-        Impl::PaintSrgbSurface(candidate.surface, draw, false);
-        Impl::PaintSrgbSurface(candidate.coverage, draw, true);
+        const bool withScene = static_cast<bool>(drawScene);
+        if (!candidate.surface || candidate.size.cx != size.cx || candidate.size.cy != size.cy ||
+            static_cast<bool>(candidate.scene) != withScene)
+            candidate = impl_->CreateSrgbContentBuffer(size, withScene);
+        Impl::PaintSrgbSurface(candidate.surface, [&](auto* target, POINT origin) {
+            return draw(target, origin, false);
+        });
+        Impl::PaintSrgbSurface(candidate.coverage, [&](auto* target, POINT origin) {
+            return draw(target, origin, true);
+        });
+        if (withScene) Impl::PaintSrgbSurface(candidate.scene, drawScene);
         frame.stagedFrame = clientFrame;
         frame.staged = true;
         return true;
@@ -3123,15 +3217,21 @@ bool DesktopBackdropCompositor::StageSrgbMaterialFrame(HWND window, std::uintptr
 }
 
 bool DesktopBackdropCompositor::PrepareSrgbMaterials(HWND window, std::uintptr_t key,
-    const RECT& clientFrame, ID2D1DeviceContext* context, POINT atlasOffset, float opacity)
+    const RECT& clientFrame, ID2D1DeviceContext* context, POINT atlasOffset, float opacity,
+    ID2D1CommandList* scene)
 {
     using Coverage = snowdesktop::HighlightCoverage;
     const auto* coverage = Coverage::Current(context);
-    if (!coverage || !coverage->HasExtractedMaterials()) return false;
-    if (StageSrgbContent(window, key, clientFrame, context, atlasOffset) &&
+    const bool precompose = scene && coverage && coverage->ContainsIconShadow();
+    if (scene && !precompose)
+        ReplayScene(context, scene, clientFrame, atlasOffset, atlasOffset);
+    if (!precompose && (!coverage || !coverage->HasExtractedMaterials())) return false;
+    if (StageSrgbContent(window, key, clientFrame, context, atlasOffset, precompose ? scene : nullptr) &&
         PublishSrgbContent(key, opacity))
         return true;
 
+    if (precompose)
+        ReplayScene(context, scene, clientFrame, atlasOffset, atlasOffset);
     (void)coverage->Paint(context, {}, {}, Coverage::Pass::MaterialFallback);
     return false;
 }
@@ -3156,7 +3256,29 @@ bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opa
         frame.visual.Size({static_cast<float>(frame.candidate.size.cx),
             static_cast<float>(frame.candidate.size.cy)});
         if (opacity >= 0.f) frame.visual.Opacity(std::clamp(opacity, 0.f, 1.f));
-        frame.visual.Brush(frame.candidate.effect);
+        if (frame.candidate.sceneEffect)
+        {
+            // Keep both passes in one visual so opacity, motion and clips
+            // apply to the precomposed shadow and its corrected highlights.
+            if (!frame.materialVisual)
+            {
+                auto material = impl_->compositor.CreateSpriteVisual();
+                frame.visual.Children().InsertAtTop(material);
+                frame.materialVisual = std::move(material);
+            }
+            frame.visual.Brush(frame.candidate.sceneEffect);
+            frame.materialVisual.Size(frame.visual.Size());
+            frame.materialVisual.Brush(frame.candidate.effect);
+        }
+        else
+        {
+            if (frame.materialVisual)
+            {
+                frame.visual.Children().Remove(frame.materialVisual);
+                frame.materialVisual = nullptr;
+            }
+            frame.visual.Brush(frame.candidate.effect);
+        }
         std::swap(frame.active, frame.candidate);
         frame.staged = false;
         frame.retirement.reset();

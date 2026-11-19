@@ -102,7 +102,7 @@ SD_IPC_FIELDS(GeneralSettings,
     v.globalCollectionPopupAppearance, v.tooltipAppearanceOverride, v.barPanelAppearanceOverride, v.shellExtensions, v.statusBar,
     v.contextMenuExpandQuickActions, v.contextMenuHidePageManagement, v.contextMenuHideMoreManagement, v.tooltipFontSize,
     v.gridPreviewHotkeyEnabled, v.gridPreviewHotkeyModifiers, v.gridPreviewHotkeyVirtualKey,
-    v.wcgHighlightCompensationEnabled);
+    v.wcgCompensation);
 SD_IPC_FIELDS(CategoryRule,
     v.id, v.customLabel, v.extensions, v.enabled);
 SD_IPC_FIELDS(CategorySettings,
