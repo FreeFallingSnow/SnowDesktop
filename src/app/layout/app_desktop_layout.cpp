@@ -1,6 +1,8 @@
 #include "app/app.h"
 #include "widgets/lua_stack.h"
 #include "widget/runtime/widget_engine.h"
+#include "widget/runtime/widget_instance_manifest.h"
+#include "layout/widget_displacement.h"
 #include "common/utils.h"
 #include "app/dock/persistent_dock_host.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
@@ -95,7 +97,11 @@ void DesktopApp::LayoutItems()
             // Preserve unsupported Lua sizes as placeholders, including members
             // just detached from a stack. Placement already reserved this span.
             if (!IsLuaDesktopSurface(widget) || snowdesktop::lua_stack::Supports(widget, widget.gridSpan))
-                widget.gridSpan = ClampWidgetGridSpan(widget, widget.gridSpan, page->columns, page->rows);
+            {
+                // Stack limits were resolved above for this layout pass.
+                widget.gridSpan = snowdesktop::widget_displacement::ClampSpan(
+                    widget, widget.gridSpan, page->columns, page->rows);
+            }
             widget.gridCell.column  = std::clamp(widget.gridCell.column,  0, std::max(0, page->columns - widget.gridSpan.columns));
             widget.gridCell.row     = std::clamp(widget.gridCell.row,     0, std::max(0, page->rows    - widget.gridSpan.rows));
             widget.cellScale = GetGridPageCuScale(*page);
@@ -242,10 +248,10 @@ void DesktopApp::RebuildContainersAndItems()
             if (w.type == DesktopWidgetType::LuaScript && widgetEngine_ &&
                 widgetEngine_->EnsureWidgetLoaded(w.id, w.packageId))
             {
-                const LuaWidgetManifest manifest =
-                    WidgetEngine::GetWidgetManifest(w.packageId);
+                const auto* manifest = snowdesktop::widget_runtime::LoadedManifest(widgetEngine_.get(), w.id);
+                if (!manifest) continue;
                 for (const auto& [slotId, declaration] :
-                    manifest.logicalSlots)
+                    manifest->logicalSlots)
                 {
                     (void)declaration;
                     const std::wstring widgetId = w.id;

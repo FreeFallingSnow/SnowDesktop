@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "member_drop_layout.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
 #include "desktop/desktop_source.h"
@@ -837,6 +838,11 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
 {
     if (!effect) return E_POINTER;
     CancelPendingExternalOleDragLeave();
+    if (dragSession_.IsActive())
+    {
+        dragSession_.SetVisualVisible(false);
+        HideDragPreviewWindow();
+    }
     ClearWidgetTextDropPreview();
     HideDragHintWindow();
     SetPageNavHotEdgeHover(0);
@@ -1029,10 +1035,11 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         if (keyState & MK_SHIFT)   dropPreviewMods |= MK_SHIFT;
         bool commitVisualBeforeDrop =
             dragSession_.TargetRegion() == HitRegion::Handoff;
+        bool memberOrderOnly = false;
         if (!commitVisualBeforeDrop &&
             dragSession_.TargetContainer())
         {
-            const DropPreviewList dropPreview = BuildDropPreviewList(
+            const auto& dropPreview = GetCachedDesktopDropPreview(true,
                 dragSession_.SourceList(),
                 dragSession_.TargetContainer(),
                 dragSession_.TargetSlot(),
@@ -1040,6 +1047,9 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                 dropPreviewMods,
                 clientPoint);
             commitVisualBeforeDrop = dropPreview.fileBacked;
+            memberOrderOnly = snowdesktop::member_drop_layout::OnlyReordersMembers(
+                dragSession_.SourceList(), dropPreview) &&
+                !GetOpenPopupWidget() && !IsGroupedWidget(*dropPreview.targetWidget);
         }
         dragSession_.DeactivateForDrop();
         if (commitVisualBeforeDrop)
@@ -1287,7 +1297,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             }
             else
             {
-                if (!desktopTarget || layoutPassRevision_ == layoutBeforeDrop)
+                if (!memberOrderOnly && (!desktopTarget || layoutPassRevision_ == layoutBeforeDrop))
                 {
                     ApplyPageMapping();
                     LayoutItems();
@@ -1297,7 +1307,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
         *effect = DROPEFFECT_MOVE;
-        EndDragSession();
+        if (dragSession_.HasContext()) EndDragSession();
         return S_OK;
     }
 

@@ -18,6 +18,7 @@
 #include "common/l10n.h"
 #include "common/utils.h"
 #include "widget/runtime/widget_engine.h"
+#include "widget/runtime/widget_instance_manifest.h"
 #include "widget/preview/widget_preview_scene.h"
 #include "diagnostics/performance_trace.h"
 #include <optional>
@@ -447,19 +448,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         // The loaded VM already owns the manifest for this exact generation.
         // Resolving the package path and reparsing widget.json on each frame
         // performs synchronous filesystem work on the desktop input thread.
-        const LuaWidgetManifest* loadedManifest = nullptr;
-        if (engine)
-        {
-            const auto& loaded = engine->GetWidgets();
-            for (auto position = loaded.rbegin(); position != loaded.rend(); ++position)
-            {
-                if (position->widgetId == data_->id)
-                {
-                    loadedManifest = &position->manifest;
-                    break;
-                }
-            }
-        }
+        const auto* loadedManifest = snowdesktop::widget_runtime::LoadedManifest(engine, data_->id);
         std::optional<LuaWidgetManifest> unloadedManifest;
         if (!loadedManifest)
         {

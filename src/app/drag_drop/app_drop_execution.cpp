@@ -417,34 +417,57 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
         }
 
         WidgetContainer* originWidget = dynamic_cast<WidgetContainer*>(sourceList.origin);
-        DesktopWidget* originData = originWidget ? originWidget->GetWidgetData() : nullptr;
-        size_t inserted = 0;
+        std::vector<std::wstring> accepted;
+        accepted.reserve(preview.landings.size());
         for (const auto& landing : preview.landings)
         {
-            auto it = std::find_if(sourceList.entries.begin(), sourceList.entries.end(),
-                [&](const DragSourceEntry& entry) { return entry.sourceIndex == landing.sourceIndex; });
-            if (it == sourceList.entries.end() || it->desktopKey.empty()) continue;
-            std::wstring key = ToUpperInvariant(it->desktopKey);
-            if (!targetWidget->AllowsDesktopKey(key)) continue;
-
-            if (preview.action == DropAction::Move)
+            const DragSourceEntry* entry = nullptr;
+            if (landing.sourceIndex < sourceList.entries.size() &&
+                sourceList.entries[landing.sourceIndex].sourceIndex == landing.sourceIndex)
+                entry = &sourceList.entries[landing.sourceIndex];
+            else
             {
-                if (originData)
-                    RemoveDesktopKeysFromWidgets({key});
-                else
-                    RemoveDesktopKeysFromWidgets({key});
+                const auto found = std::ranges::find(sourceList.entries, landing.sourceIndex,
+                    &DragSourceEntry::sourceIndex);
+                if (found != sourceList.entries.end()) entry = &*found;
             }
-
-            auto exists = std::find_if(preview.targetWidget->itemKeys.begin(),
-                preview.targetWidget->itemKeys.end(),
-                [&](const std::wstring& existing) { return ToUpperInvariant(existing) == key; });
-            if (exists == preview.targetWidget->itemKeys.end())
+            if (!entry || entry->desktopKey.empty()) continue;
+            auto key = ToUpperInvariant(entry->desktopKey);
+            if (!targetWidget->AllowsDesktopKey(key)) continue;
+            accepted.push_back(std::move(key));
+        }
+        auto& targetKeys = preview.targetWidget->itemKeys;
+        const bool moving = preview.action == DropAction::Move;
+        // Existing target members must retain the sequential removal/insertion
+        // semantics. Ordinary cross-collection moves can revoke ownership once.
+        const std::unordered_set<std::wstring> movingKeys(accepted.begin(), accepted.end());
+        const bool bulkMove = moving && movingKeys.size() == accepted.size() &&
+            std::ranges::none_of(targetKeys, [&](const auto& key) {
+                return movingKeys.contains(ToUpperInvariant(key));
+            });
+        if (bulkMove)
+        {
+            RemoveDesktopKeysFromWidgets(accepted);
+            const size_t insertAt = std::min(preview.insertIndex, targetKeys.size());
+            targetKeys.insert(targetKeys.begin() + static_cast<std::ptrdiff_t>(insertAt),
+                accepted.begin(), accepted.end());
+        }
+        else
+        {
+            size_t inserted = 0;
+            for (const auto& key : accepted)
             {
-                size_t insertAt = std::min(preview.insertIndex + inserted, preview.targetWidget->itemKeys.size());
-                preview.targetWidget->itemKeys.insert(
-                    preview.targetWidget->itemKeys.begin() + static_cast<std::ptrdiff_t>(insertAt), key);
+                if (moving) RemoveDesktopKeysFromWidgets({key});
+                if (std::ranges::any_of(targetKeys, [&](const auto& existing) {
+                        return ToUpperInvariant(existing) == key;
+                    })) continue;
+                const size_t insertAt = std::min(preview.insertIndex + inserted, targetKeys.size());
+                targetKeys.insert(targetKeys.begin() + static_cast<std::ptrdiff_t>(insertAt), key);
                 ++inserted;
             }
+        }
+        for (const auto& key : accepted)
+        {
             size_t itemIndex = FindItemIndexByKey(key);
             if (itemIndex != static_cast<size_t>(-1))
                 items_[itemIndex].gridCell = preview.targetWidget->gridCell;

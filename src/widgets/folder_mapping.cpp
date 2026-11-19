@@ -811,7 +811,7 @@ void FolderMapping::ReorderMembers(const std::vector<size_t>& indices, size_t in
 {
     if (UsesFolderSearch()) return;
     if (!data_ || !snowdesktop::folder_member_order::Reorder(*data_, indices, insertBefore)) return;
-    InvalidateSlots();
+    InvalidateFilterCache();
 }
 
 size_t FolderMapping::GetDropInsertIndex(

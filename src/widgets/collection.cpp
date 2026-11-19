@@ -26,6 +26,7 @@
 #include "widget/runtime/widget_item_layout.h"
 #include "storage_title_bar_layout.h"
 #include "single_cell_widget_rules.h"
+#include "collection_group_rules.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -910,19 +911,8 @@ std::vector<size_t> Collection::GetSelectedMemberIndices() const
 void Collection::ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore)
 {
     if (!data_) return;
-    std::vector<std::wstring> moving;
-    for (auto it = indices.rbegin(); it != indices.rend(); ++it)
-    {
-        if (*it >= data_->itemKeys.size()) continue;
-        moving.push_back(data_->itemKeys[*it]);
-        data_->itemKeys.erase(data_->itemKeys.begin() + static_cast<std::ptrdiff_t>(*it));
-    }
-    size_t adjusted = insertBefore;
-    for (auto idx : indices)
-        if (idx < insertBefore) --adjusted;
-    if (adjusted > data_->itemKeys.size()) adjusted = data_->itemKeys.size();
-    for (auto it = moving.rbegin(); it != moving.rend(); ++it)
-        data_->itemKeys.insert(data_->itemKeys.begin() + static_cast<std::ptrdiff_t>(adjusted++), *it);
+    data_->itemKeys = snowdesktop::collection_group_rules::ReorderItems(
+        data_->itemKeys, indices, insertBefore);
     data_->contentSortColumn =
         snowdesktop::list_detail_rules::Column::None;
     if (app_)

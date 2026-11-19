@@ -1114,7 +1114,7 @@ void CollectionGroup::OnItemsDropped(
     for (const auto& container : app->containers_)
         if (auto* current = dynamic_cast<CollectionGroup*>(container.get()); current && current->GetWidgetData() == &group)
             current->InvalidateFilterCache();
-    app->SaveLayoutSlots();
+    app->RequestLayoutSave();
     InvalidateRect(app->hwnd_, nullptr, FALSE);
 }
 

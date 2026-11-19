@@ -1579,8 +1579,19 @@ bool WidgetEngine::RuntimeNotifySettingsChanged(
 
 LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
 {
-    const auto path = PathIsRelativeW(filename.c_str()) ? ResolveWidgetPath(filename) : filename;
+    const bool byPackageId = PathIsRelativeW(filename.c_str()) != FALSE;
+    const auto path = byPackageId ? ResolveWidgetPath(filename) : filename;
     if (path.empty()) return {};
+    if (byPackageId && !snowdesktop::widget_runtime::IsDryLoad())
+    {
+        // ResolveWidgetPath has already validated this package's entry. A
+        // layout query by ID need not resolve every other installed entry to
+        // rediscover its root. Preserve legacy lookup for missing entries.
+        const auto* package = GetWidgetPackageManager().FindResolved(WideToUtf8(filename));
+        std::error_code error;
+        if (package && package->active && std::filesystem::exists(path, error))
+            return snowdesktop::widget_runtime::ReadWidgetScriptManifest(path, package->root);
+    }
     const auto package = ResolveWidgetEntryPackage(path);
     return snowdesktop::widget_runtime::ReadWidgetScriptManifest(path,
         package ? package->root : std::filesystem::path{});

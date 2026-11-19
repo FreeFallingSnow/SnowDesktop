@@ -2032,7 +2032,7 @@ void FileGroup::OnItemsDropped(
     for (const auto& container : app->containers_)
         if (auto* current = dynamic_cast<FileGroup*>(container.get()); current && current->GetWidgetData() == &group)
             current->InvalidateHostedView();
-    app->SaveLayoutSlots();
+    app->RequestLayoutSave();
     InvalidateRect(app->hwnd_, nullptr, FALSE);
 }
 

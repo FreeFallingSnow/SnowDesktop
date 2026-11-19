@@ -2,6 +2,7 @@
 #include "dock/dock_tray_rules.h"
 #include "dock/floating_dock_rules.h"
 #include "app/app.h"
+#include "app/drag_drop/member_drop_layout.h"
 #include "dock/dock_window_rules.h"
 #include "dock/dock_window_preview.h"
 #include "diagnostics/diagnostic_log.h"
@@ -1050,9 +1051,17 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         if (HandleLargeIconPointerUp()) return;
     }
     if (middleButtonWidgetMove_) return;
+    if (dragSession_.IsActive())
+    {
+        // Retain the source and final hit-test context through commit. Only
+        // the floating ghost ends here, before any synchronous drop work.
+        dragSession_.SetVisualVisible(false);
+        HideDragPreviewWindow();
+    }
     (void)wp;
     int dropPreviewMods = 0;
     bool commitVisualBeforeDrop = false;
+    bool memberOrderOnly = false;
     HideDragHintWindow();
 
     if (popupScrollbarDragging_)
@@ -1680,7 +1689,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         dragSession_.TargetRegion() == HitRegion::Handoff;
     if (!commitVisualBeforeDrop)
     {
-        const DropPreviewList dropPreview = BuildDropPreviewList(
+        const auto& dropPreview = GetCachedDesktopDropPreview(true,
             dragSession_.SourceList(),
             dragSession_.TargetContainer(),
             dragSession_.TargetSlot(),
@@ -1688,6 +1697,9 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             dropPreviewMods,
             dragSession_.CurrentPoint());
         commitVisualBeforeDrop = dropPreview.fileBacked;
+        memberOrderOnly = snowdesktop::member_drop_layout::OnlyReordersMembers(
+            dragSession_.SourceList(), dropPreview) &&
+            !GetOpenPopupWidget() && !IsGroupedWidget(*dropPreview.targetWidget);
     }
 
     // Shell/file-backed drop handlers may synchronously show a progress
@@ -1948,7 +1960,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         {
             // 内容变更可能使某些溢出页变空（后面有非空页时应立即清理顺延）
             // 先 ApplyPageMapping（可能重排 pageId），再由 LayoutItems 重建运行时对象
-            if (!desktopTarget || layoutPassRevision_ == layoutBeforeDrop)
+            if (!memberOrderOnly && (!desktopTarget || layoutPassRevision_ == layoutBeforeDrop))
             {
                 ApplyPageMapping();
                 LayoutItems();
@@ -1958,7 +1970,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
     }
 
 cleanup:
-    EndDragSession();
+    if (dragSession_.HasContext()) EndDragSession();
     ClearPopupMouseDownItem();
     dockFolderPopupDragItems_.clear();
     dockFolderPopupMarqueeInitialSelection_.clear();

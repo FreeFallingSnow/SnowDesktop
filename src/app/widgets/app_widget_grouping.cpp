@@ -4,6 +4,7 @@
 #include "common/l10n.h"
 #include "ui/preview/component_preview.h"
 #include "widget/runtime/widget_engine.h"
+#include "widget/runtime/widget_instance_manifest.h"
 #include "common/utils.h"
 #include "widget_package_source_capture.h"
 #include "widget_grid_size.h"
@@ -102,12 +103,15 @@ void DesktopApp::ConfigureWidgetGridLimits(DesktopWidget& widget) const
         {
             const size_t child = FindWidgetIndexById(id);
             if (child >= widgets_.size()) { available = false; continue; }
-            const auto manifest = WidgetEngine::GetWidgetManifest(widgets_[child].packageId);
-            if (!manifest.hasManifest) { available = false; continue; }
-            widget.minGridSpan.columns = std::max(widget.minGridSpan.columns, manifest.minColumns);
-            widget.minGridSpan.rows = std::max(widget.minGridSpan.rows, manifest.minRows);
-            if (manifest.maxColumns) maxC = std::min(maxC, manifest.maxColumns);
-            if (manifest.maxRows) maxR = std::min(maxR, manifest.maxRows);
+            const auto& member = widgets_[child];
+            const auto* manifest = snowdesktop::widget_runtime::LoadedManifest(widgetEngine_.get(), id);
+            std::optional<LuaWidgetManifest> unloaded;
+            if (!manifest) manifest = &unloaded.emplace(WidgetEngine::GetWidgetManifest(member.packageId));
+            if (!manifest->hasManifest) { available = false; continue; }
+            widget.minGridSpan.columns = std::max(widget.minGridSpan.columns, manifest->minColumns);
+            widget.minGridSpan.rows = std::max(widget.minGridSpan.rows, manifest->minRows);
+            if (manifest->maxColumns) maxC = std::min(maxC, manifest->maxColumns);
+            if (manifest->maxRows) maxR = std::min(maxR, manifest->maxRows);
         }
         if (!available || maxC < widget.minGridSpan.columns || maxR < widget.minGridSpan.rows)
             widget.minGridSpan = widget.maxGridSpan = widget.gridSpan;
