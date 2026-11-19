@@ -1,3 +1,5 @@
+#include "item_title_renderer.h"
+
 #include "ui/render/app_font.h"
 #include "ui/render/highlight_coverage.h"
 #include "ui/render/rgba_color.h"
@@ -39,14 +41,96 @@ void DesktopApp::DrawItemSelectionBackground(ID2D1RenderTarget* context,
     }
 }
 
-void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
+void snowdesktop::ItemTitleRenderer::RecreateGridFormat(
+    IDWriteFactory* factory, float fontSize, DWRITE_FONT_WEIGHT weight)
+{
+    if (!factory) return;
+    gridLayouts_.clear();
+    gridShadows_.clear();
+    app_fonts::CreateTextFormat(factory, L"Segoe UI", weight,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &gridFormat_);
+    if (!gridFormat_) return;
+    gridFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    gridFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    gridFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+    gridFormat_->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
+        fontSize * 7.0f / 6.0f, fontSize * 5.0f / 6.0f);
+}
+
+void snowdesktop::ItemTitleRenderer::RecreateListFormat(
+    IDWriteFactory* factory, float fontSize, DWRITE_FONT_WEIGHT weight)
+{
+    if (!factory) return;
+    listLayouts_.clear();
+    listShadows_.clear();
+    listFormat_.Reset();
+    app_fonts::CreateTextFormat(factory, L"Segoe UI", weight,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &listFormat_);
+    if (!listFormat_) return;
+    listFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    listFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    listFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    listFormat_->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
+        fontSize * 7.0f / 6.0f, fontSize * 5.0f / 6.0f);
+}
+
+void snowdesktop::ItemTitleRenderer::InvalidateTitles()
+{
+    gridLayouts_.clear();
+    listLayouts_.clear();
+    gridShadows_.clear();
+    listShadows_.clear();
+}
+
+void snowdesktop::ItemTitleRenderer::ReleaseDeviceResources()
+{
+    gridShadows_.clear();
+    listShadows_.clear();
+    effectContext_.Reset();
+}
+
+snowdesktop::ItemTitleRenderer::LayoutCacheUsage
+snowdesktop::ItemTitleRenderer::GetLayoutCacheUsage(bool componentList) const
+{
+    LayoutCacheUsage usage;
+    if (componentList)
+    {
+        usage.entries = listLayouts_.size();
+        for (const auto& [key, layout] : listLayouts_)
+        {
+            (void)layout;
+            usage.inputBytes += key.size() * sizeof(wchar_t);
+        }
+    }
+    else
+    {
+        usage.entries = gridLayouts_.size();
+        for (const auto& [key, entry] : gridLayouts_)
+            usage.inputBytes += key.size() * sizeof(wchar_t) + entry.fullWidth.RetainedTextBytes();
+    }
+    return usage;
+}
+
+void snowdesktop::ItemTitleRenderer::VisitShadowBitmaps(bool componentList,
+    const std::function<void(ID2D1Bitmap*)>& visit) const
+{
+    const auto& shadows = componentList ? listShadows_ : gridShadows_;
+    for (const auto& [key, bitmap] : shadows)
+    {
+        (void)key;
+        visit(bitmap.Get());
+    }
+}
+
+void snowdesktop::ItemTitleRenderer::DrawStyledLayout(ID2D1RenderTarget* context,
+    D2DDrawing& drawing, ID2D1Device* device,
     IDWriteTextLayout* layout, const std::wstring& shadowKey,
     D2D1_POINT_2F origin, D2D1_SIZE_F layoutSize,
     float layoutScale, float opacity, bool lightTheme,
-    bool componentList, bool componentPanel)
+    bool lightPanelShadow, bool componentList)
 {
     if (!context || !layout || shadowKey.empty()) return;
-    auto textBrush = drawing_.GetSolidBrush(context,
+    auto textBrush = drawing.GetSolidBrush(context,
         lightTheme ? D2D1::ColorF(0.10f, 0.12f, 0.16f, opacity)
                    : D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity));
 
@@ -55,30 +139,28 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
     const float shadowScale = std::max(0.5f, layoutScale);
     // The selected panel style keeps one moderate soft shadow plus a close
     // offset shadow. Desktop labels retain their stronger, repeated soft layer.
-    const bool lightPanelShadow = !lightTheme &&
-        (componentPanel || componentList) && CurrentPersonalization().glassEnabled;
     ComPtr<ID2D1DeviceContext> deviceContext;
     const bool supportsEffects =
         SUCCEEDED(context->QueryInterface(IID_PPV_ARGS(&deviceContext))) && deviceContext;
 
-    if (supportsEffects && !itemTextEffectContext_ && d2dDevice_)
+    if (supportsEffects && !effectContext_ && device)
     {
-        d2dDevice_->CreateDeviceContext(
-            D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &itemTextEffectContext_);
-        if (itemTextEffectContext_)
+        device->CreateDeviceContext(
+            D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &effectContext_);
+        if (effectContext_)
         {
-            itemTextEffectContext_->SetDpi(96.0f, 96.0f);
-            itemTextEffectContext_->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+            effectContext_->SetDpi(96.0f, 96.0f);
+            effectContext_->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
         }
     }
 
     // Cache by layout AND shadow style: an identical title can appear on both
     // the desktop and a glass panel during the same frame.
-    if (supportsEffects && itemTextEffectContext_ && !lightTheme)
+    if (supportsEffects && effectContext_ && !lightTheme)
     {
         auto& shadowCache = componentList
-            ? componentListTextShadowCache_
-            : itemTextShadowCache_;
+            ? listShadows_
+            : gridShadows_;
         const std::wstring cacheKey = lightPanelShadow
             ? L"glass-panel\x1f" + shadowKey : shadowKey;
         auto shadowIt = shadowCache.find(cacheKey);
@@ -97,22 +179,22 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
                 D2D1_BITMAP_OPTIONS_TARGET,
                 D2D1::PixelFormat(
                     DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-            if (SUCCEEDED(itemTextEffectContext_->CreateCommandList(&shadowMask)) &&
+            if (SUCCEEDED(effectContext_->CreateCommandList(&shadowMask)) &&
                 shadowMask &&
-                SUCCEEDED(itemTextEffectContext_->CreateBitmap(
+                SUCCEEDED(effectContext_->CreateBitmap(
                     D2D1::SizeU(shadowWidth, shadowHeight), nullptr, 0,
                     &shadowBitmapProperties, &shadowBitmap)) &&
                 shadowBitmap)
             {
-                itemTextEffectContext_->SetTarget(shadowMask.Get());
-                itemTextEffectContext_->SetTransform(D2D1::Matrix3x2F::Identity());
-                itemTextEffectContext_->BeginDraw();
+                effectContext_->SetTarget(shadowMask.Get());
+                effectContext_->SetTransform(D2D1::Matrix3x2F::Identity());
+                effectContext_->BeginDraw();
 
                 ComPtr<ID2D1SolidColorBrush> maskBrush;
-                if (SUCCEEDED(itemTextEffectContext_->CreateSolidColorBrush(
+                if (SUCCEEDED(effectContext_->CreateSolidColorBrush(
                     D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f), &maskBrush)) && maskBrush)
                 {
-                    itemTextEffectContext_->DrawTextLayout(
+                    effectContext_->DrawTextLayout(
                         D2D1::Point2F(
                             static_cast<float>(shadowPadding),
                             static_cast<float>(shadowPadding)),
@@ -120,18 +202,18 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
                         D2D1_DRAW_TEXT_OPTIONS_CLIP);
                 }
 
-                HRESULT maskHr = itemTextEffectContext_->EndDraw();
-                itemTextEffectContext_->SetTarget(nullptr);
+                HRESULT maskHr = effectContext_->EndDraw();
+                effectContext_->SetTarget(nullptr);
                 if (SUCCEEDED(maskHr) && SUCCEEDED(shadowMask->Close()))
                 {
                     ComPtr<ID2D1Effect> softShadow;
                     ComPtr<ID2D1Effect> offsetShadow;
                     ComPtr<ID2D1Effect> offsetTransform;
-                    if (SUCCEEDED(itemTextEffectContext_->CreateEffect(
+                    if (SUCCEEDED(effectContext_->CreateEffect(
                             CLSID_D2D1Shadow, &softShadow)) && softShadow &&
-                        SUCCEEDED(itemTextEffectContext_->CreateEffect(
+                        SUCCEEDED(effectContext_->CreateEffect(
                             CLSID_D2D1Shadow, &offsetShadow)) && offsetShadow &&
-                        SUCCEEDED(itemTextEffectContext_->CreateEffect(
+                        SUCCEEDED(effectContext_->CreateEffect(
                             CLSID_D2D12DAffineTransform, &offsetTransform)) &&
                         offsetTransform)
                     {
@@ -172,19 +254,19 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
                             D2D1_2DAFFINETRANSFORM_PROP_INTERPOLATION_MODE,
                             D2D1_2DAFFINETRANSFORM_INTERPOLATION_MODE_LINEAR);
 
-                        itemTextEffectContext_->SetTarget(shadowBitmap.Get());
-                        itemTextEffectContext_->BeginDraw();
-                        itemTextEffectContext_->Clear(
+                        effectContext_->SetTarget(shadowBitmap.Get());
+                        effectContext_->BeginDraw();
+                        effectContext_->Clear(
                             D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
                         if (softShadow)
                         {
-                            itemTextEffectContext_->DrawImage(softShadow.Get());
+                            effectContext_->DrawImage(softShadow.Get());
                             if (!lightPanelShadow)
-                                itemTextEffectContext_->DrawImage(softShadow.Get());
+                                effectContext_->DrawImage(softShadow.Get());
                         }
-                        itemTextEffectContext_->DrawImage(offsetTransform.Get());
-                        HRESULT shadowHr = itemTextEffectContext_->EndDraw();
-                        itemTextEffectContext_->SetTarget(nullptr);
+                        effectContext_->DrawImage(offsetTransform.Get());
+                        HRESULT shadowHr = effectContext_->EndDraw();
+                        effectContext_->SetTarget(nullptr);
                         if (SUCCEEDED(shadowHr))
                         {
                             shadowIt = shadowCache.emplace(
@@ -212,7 +294,7 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
     }
     else
     {
-        auto shadowBrush = drawing_.GetSolidBrush(context, lightTheme
+        auto shadowBrush = drawing.GetSolidBrush(context, lightTheme
             ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f * opacity)
             : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.80f * opacity));
         if (shadowBrush)
@@ -238,25 +320,47 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     const std::wstring& text, bool selected, float opacity, bool lightTheme,
     bool componentPanel, int titleLines)
 {
-    if (!dwriteFactory_ || !itemTextFormat_ || text.empty()) return;
-
     titleLines = titleLines > 0 ? std::clamp(titleLines, 1, 2) : desktopTitleLines_;
     const int componentTitleLines = componentPanel ? titleLines : 0;
-    RECT textRect = GetItemTextRect(bounds, selected, componentTitleLines);
-    float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
-    float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
+    const auto metrics = GetItemVisualMetrics(bounds, componentTitleLines);
+    itemTitleRenderer_.DrawGrid(context, drawing_, d2dDevice_.Get(), dwriteFactory_.Get(),
+        GetItemTextRect(bounds, selected, componentTitleLines), text,
+        {metrics.fontSize, metrics.fontScale, metrics.titleHeight, titleLines, opacity,
+            selected, lightTheme, componentPanel, titleEllipsis_},
+        itemFontWeight_, componentPanel && CurrentPersonalization().glassEnabled);
+}
 
-    const auto visualMetrics = GetItemVisualMetrics(bounds, componentTitleLines);
-    const float fontScale = visualMetrics.fontScale;
-    const float fontSize = visualMetrics.fontSize;
+void DesktopApp::DrawComponentListTitle(ID2D1DeviceContext* context, RECT textRect,
+    const std::wstring& text, float scale, float fontSize, bool lightTheme,
+    const snowdesktop::ItemTitleRenderer::ScrollOffset& scrollOffset)
+{
+    itemTitleRenderer_.DrawList(context, drawing_, d2dDevice_.Get(), dwriteFactory_.Get(),
+        textRect, text, scale, fontSize, itemFontWeight_, lightTheme,
+        CurrentPersonalization().glassEnabled, scrollOffset);
+}
+
+void snowdesktop::ItemTitleRenderer::DrawGrid(ID2D1RenderTarget* context, D2DDrawing& drawing,
+    ID2D1Device* device, IDWriteFactory* factory, RECT textRect,
+    const std::wstring& text, const GridStyle& style, DWRITE_FONT_WEIGHT weight, bool glassEnabled)
+{
+    if (!context || !factory || !gridFormat_ || text.empty()) return;
+
+    const bool selected = style.selected;
+    const bool componentPanel = style.componentPanel;
+    const bool lightTheme = style.lightTheme;
+    const int titleLines = style.lines;
+    const float fontSize = style.fontSize;
+    const float fontScale = style.fontScale;
     const float lineHeight = fontSize * 7.0f / 6.0f;
+    const float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
+    float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
     if (!selected)
     {
         th = static_cast<float>(snowdesktop::item_layout_rules::TextHeightForLineCount(lineHeight, titleLines));
         textRect.bottom = textRect.top + static_cast<LONG>(th);
     }
     const auto fontWeight = static_cast<DWRITE_FONT_WEIGHT>(
-        snowdesktop::font_weight_rules::RenderedWeight(itemFontWeight_, lightTheme));
+        font_weight_rules::RenderedWeight(weight, lightTheme));
     auto createConfiguredLayout =
         [&](const std::wstring& layoutText,
             float maxWidth,
@@ -264,11 +368,11 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
             ComPtr<IDWriteTextLayout>& result) {
         result.Reset();
         if (FAILED(
-                dwriteFactory_->CreateTextLayout(
+                factory->CreateTextLayout(
                     layoutText.c_str(),
                     static_cast<UINT32>(
                         layoutText.size()),
-                    itemTextFormat_.Get(),
+                    gridFormat_.Get(),
                     maxWidth, maxHeight,
                     &result)) ||
             !result)
@@ -299,9 +403,9 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
         std::to_wstring(scaleKey) + L"@" +
         std::to_wstring(lightTheme ? 1 : 0) + L"@" +
         std::to_wstring(selected ? 1 : 0) + L"@" + std::to_wstring(titleLines) + L"@" +
-        std::to_wstring(titleEllipsis_ ? 1 : 0);
-    auto layoutIt = itemTextLayoutCache_.find(layoutKey);
-    if (layoutIt == itemTextLayoutCache_.end())
+        std::to_wstring(style.ellipsis ? 1 : 0);
+    auto layoutIt = gridLayouts_.find(layoutKey);
+    if (layoutIt == gridLayouts_.end())
     {
         snowdesktop::ItemTextLayoutCacheEntry cached;
         std::wstring visibleText = text;
@@ -351,16 +455,16 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
         if (!selected)
         {
             ComPtr<IDWriteTextFormat> ellipsisFormat;
-            snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, L"Segoe UI", fontWeight,
+            snowdesktop::app_fonts::CreateTextFormat(factory, L"Segoe UI", fontWeight,
                 DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &ellipsisFormat);
-            snowdesktop::TrimItemTitle(dwriteFactory_.Get(), layout.Get(), ellipsisFormat.Get(), titleLines, lineHeight, titleEllipsis_);
+            snowdesktop::TrimItemTitle(factory, layout.Get(), ellipsisFormat.Get(), titleLines, lineHeight, style.ellipsis);
         }
         DWRITE_TEXT_METRICS metrics{};
         layout->GetMetrics(&metrics);
         bool isSingleLine = (metrics.lineCount == 1);
         if (!isSingleLine)
-            isSingleLine = cached.fullWidth.FitsSingleLine(dwriteFactory_.Get(),
-                itemTextFormat_.Get(), text, fontSize, fontWeight, tw).fitsSingleLine;
+            isSingleLine = cached.fullWidth.FitsSingleLine(factory,
+                gridFormat_.Get(), text, fontSize, fontWeight, tw).fitsSingleLine;
         if (isSingleLine)
         {
             // Use the same exact centering band in both states. The expanded
@@ -371,12 +475,12 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
             layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         }
         cached.layout = std::move(layout);
-        layoutIt = itemTextLayoutCache_.emplace(std::move(layoutKey), std::move(cached)).first;
+        layoutIt = gridLayouts_.emplace(std::move(layoutKey), std::move(cached)).first;
     }
 
     float ty = static_cast<float>(textRect.top);
     if (componentPanel && !selected && titleLines == 1)
-        ty += std::max(0.0f, (static_cast<float>(visualMetrics.titleHeight) - th) / 2.0f);
+        ty += std::max(0.0f, (static_cast<float>(style.titleHeight) - th) / 2.0f);
     DWRITE_TEXT_METRICS metrics{};
     layoutIt->second.layout->GetMetrics(&metrics);
     if (selected)
@@ -396,8 +500,8 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     // The full-width measurement only positions an expanded selected title.
     // Collapsed titles already have their cached layout and do not use it.
     if (selected && !isSingleLine)
-        isSingleLine = layoutIt->second.fullWidth.FitsSingleLine(dwriteFactory_.Get(),
-            itemTextFormat_.Get(), text, fontSize, fontWeight, tw).fitsSingleLine;
+        isSingleLine = layoutIt->second.fullWidth.FitsSingleLine(factory,
+            gridFormat_.Get(), text, fontSize, fontWeight, tw).fitsSingleLine;
     if (isSingleLine && selected)
     {
         if (metrics.lineCount == 1)
@@ -407,23 +511,106 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
                 const float collapsedClipHeight = static_cast<float>(
                     snowdesktop::item_layout_rules::TextHeightForLineCount(lineHeight, titleLines));
                 ty += std::max(0.0f,
-                    (static_cast<float>(visualMetrics.titleHeight) - collapsedClipHeight) * 0.5f);
+                    (static_cast<float>(style.titleHeight) - collapsedClipHeight) * 0.5f);
             }
         }
         else
         {
             // Preserve the existing wide-measurement fallback for titles
             // that contain explicit newlines or barely exceed one line.
-            RECT cr = GetItemTextRect(bounds, false, componentTitleLines);
-            float collapsedH = static_cast<float>(cr.bottom - cr.top);
-            ty = cr.top + (collapsedH - th) * 0.5f;
+            ty = textRect.top + (static_cast<float>(style.titleHeight) - th) * 0.5f;
         }
     }
 
-    DrawStyledItemTextLayout(
-        context, layoutIt->second.layout.Get(), layoutIt->first,
+    DrawStyledLayout(
+        context, drawing, device, layoutIt->second.layout.Get(), layoutIt->first,
         D2D1::Point2F(static_cast<float>(textRect.left), ty),
-        D2D1::SizeF(tw, th), fontScale, opacity, lightTheme, false, componentPanel);
+        D2D1::SizeF(tw, th), fontScale, style.opacity, lightTheme, !lightTheme && componentPanel && glassEnabled, false);
+}
+
+void snowdesktop::ItemTitleRenderer::DrawList(ID2D1DeviceContext* context, D2DDrawing& drawing,
+    ID2D1Device* device, IDWriteFactory* factory, RECT textRect, const std::wstring& title,
+    float layoutScale, float fontSize, DWRITE_FONT_WEIGHT weight, bool lightTheme,
+    bool glassEnabled, const ScrollOffset& scrollOffset)
+{
+    if (!context || !factory || !listFormat_ || title.empty() || textRect.right <= textRect.left)
+        return;
+
+    const float width = static_cast<float>(textRect.right - textRect.left);
+    const float height = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
+    const auto fontWeight = static_cast<DWRITE_FONT_WEIGHT>(
+        font_weight_rules::RenderedWeight(weight, lightTheme));
+    const bool lightPanelShadow = !lightTheme && glassEnabled;
+    const std::wstring layoutKey = L"list\x1f" + title + L"\x1f" +
+        std::to_wstring(width) + L"x" + std::to_wstring(height) + L"@" +
+        std::to_wstring(layoutScale) + L"@" + std::to_wstring(fontSize) + L"@" + std::to_wstring(fontWeight);
+    // Both presentations use immutable layouts with the same explicit font.
+    const auto getLayout = [&](bool scrolling) -> ComPtr<IDWriteTextLayout> {
+        const std::wstring key = scrolling ? layoutKey + L"\x1fscroll" : layoutKey;
+        if (const auto found = listLayouts_.find(key); found != listLayouts_.end()) return found->second;
+        ComPtr<IDWriteTextLayout> layout;
+        if (FAILED(factory->CreateTextLayout(title.c_str(), static_cast<UINT32>(title.size()),
+                listFormat_.Get(), width, height, &layout)) || !layout) return {};
+        const DWRITE_TEXT_RANGE range{0, static_cast<UINT32>(title.size())};
+        layout->SetFontSize(fontSize, range);
+        snowdesktop::app_fonts::SetWeight(layout.Get(), fontWeight, range);
+        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
+            fontSize * 7.0f / 6.0f, fontSize * 5.0f / 6.0f);
+        DWRITE_TRIMMING trimming{};
+        if (scrolling)
+        {
+            layout->SetTrimming(&trimming, nullptr);
+            DWRITE_TEXT_METRICS metrics{};
+            if (FAILED(layout->GetMetrics(&metrics))) return {};
+            layout->SetMaxWidth(std::max(width, std::ceil(metrics.widthIncludingTrailingWhitespace)));
+        }
+        else
+        {
+            trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
+            ComPtr<IDWriteInlineObject> ellipsis;
+            ComPtr<IDWriteTextFormat> format;
+            snowdesktop::app_fonts::CreateTextFormat(factory, L"Segoe UI", fontWeight,
+                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &format);
+            if (SUCCEEDED(factory->CreateEllipsisTrimmingSign(
+                    format ? format.Get() : listFormat_.Get(), &ellipsis)) && ellipsis)
+                layout->SetTrimming(&trimming, ellipsis.Get());
+        }
+        listLayouts_.emplace(key, layout);
+        return layout;
+    };
+    if (scrollOffset)
+    {
+        if (const auto layout = getLayout(true))
+        {
+            DWRITE_TEXT_METRICS metrics{};
+            if (SUCCEEDED(layout->GetMetrics(&metrics)))
+            {
+                const float naturalWidth = metrics.widthIncludingTrailingWhitespace;
+                if (const auto offset = scrollOffset(naturalWidth, width))
+                {
+                    // Keep the caller's viewport clip; only this title moves.
+                    context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(textRect.left), static_cast<float>(textRect.top),
+                        static_cast<float>(textRect.right), static_cast<float>(textRect.bottom)), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                    const std::wstring shadowKey = layoutKey + L"\x1fscroll";
+                    const float cycle = naturalWidth + std::max(1.0f, 24.0f * layoutScale);
+                    for (const float shift : {0.0f, cycle})
+                        DrawStyledLayout(context, drawing, device, layout.Get(), shadowKey,
+                            D2D1::Point2F(textRect.left - *offset + shift, static_cast<float>(textRect.top)),
+                            D2D1::SizeF(layout->GetMaxWidth(), height), layoutScale, 1.0f,
+                            lightTheme, lightPanelShadow, true);
+                    context->PopAxisAlignedClip();
+                    return;
+                }
+            }
+        }
+    }
+    if (const auto layout = getLayout(false))
+        DrawStyledLayout(context, drawing, device, layout.Get(), layoutKey,
+            D2D1::Point2F(static_cast<float>(textRect.left), static_cast<float>(textRect.top)),
+            D2D1::SizeF(width, height), layoutScale, 1.0f, lightTheme, lightPanelShadow, true);
 }
 
 void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,

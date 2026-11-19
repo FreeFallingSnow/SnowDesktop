@@ -327,7 +327,7 @@ void DesktopApp::DrawLuaWidgetPanel(
             luaWidgetPanelRect_.top + 49);
         DrawD2DTextEllipsis(
             ctx, luaWidgetPanelRequest_.title,
-            titleRect, itemTextFormat_.Get(),
+            titleRect, itemTitleRenderer_.GridFormat(),
             foreground,
             DWRITE_TEXT_ALIGNMENT_LEADING,
             DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -350,7 +350,7 @@ void DesktopApp::DrawLuaWidgetPanel(
         }
         DrawD2DTextEllipsis(
             ctx, L"×", closeRect,
-            itemTextFormat_.Get(), foreground,
+            itemTitleRenderer_.GridFormat(), foreground,
             DWRITE_TEXT_ALIGNMENT_CENTER,
             DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
             false);

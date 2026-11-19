@@ -23,10 +23,11 @@ std::string HresultText(HRESULT result)
 
 bool Save(const std::filesystem::path& output,
     int width, int height, std::span<const std::uint32_t> pixels,
-    std::string& error)
+    std::string& error, Filter filter)
 {
+    const auto pixelCount = static_cast<std::uint64_t>(width) * height;
     if (width <= 0 || height <= 0 ||
-        pixels.size() != static_cast<std::size_t>(width) * height)
+        pixels.size() != pixelCount)
     {
         error = "preview pixels do not match the requested PNG size";
         return false;
@@ -68,13 +69,18 @@ bool Save(const std::filesystem::path& output,
             stream.Get(), WICBitmapEncoderNoCache);
     ComPtr<IWICBitmapFrameEncode> frame;
     ComPtr<IPropertyBag2> options;
+    const bool adaptive = filter == Filter::Adaptive;
     if (SUCCEEDED(result))
-        result = encoder->CreateNewFrame(&frame, &options);
-    if (SUCCEEDED(result))
+        result = encoder->CreateNewFrame(&frame, adaptive ? options.GetAddressOf() : nullptr);
+    if (SUCCEEDED(result) && adaptive)
     {
-        PROPBAG2 property{}; property.pstrName = const_cast<wchar_t*>(L"FilterOption");
-        VARIANT value{}; value.vt = VT_UI1; value.bVal = WICPngFilterAdaptive;
-        result = options->Write(1, &property, &value);
+        wchar_t name[] = L"FilterOption";
+        PROPBAG2 property{};
+        property.pstrName = name;
+        VARIANT value{};
+        value.vt = VT_UI1;
+        value.bVal = WICPngFilterAdaptive;
+        result = options ? options->Write(1, &property, &value) : E_UNEXPECTED;
     }
     if (SUCCEEDED(result)) result = frame->Initialize(options.Get());
     if (SUCCEEDED(result))
@@ -83,16 +89,15 @@ bool Save(const std::filesystem::path& output,
     WICPixelFormatGUID pixelFormat = GUID_WICPixelFormat32bppPBGRA;
     if (SUCCEEDED(result)) result = frame->SetPixelFormat(&pixelFormat);
     ComPtr<IWICBitmap> bitmap;
-    const UINT stride = static_cast<UINT>(width * sizeof(std::uint32_t));
-    const std::uint64_t byteCount = static_cast<std::uint64_t>(stride) *
-        static_cast<unsigned>(height);
+    const std::uint64_t stride = static_cast<std::uint64_t>(width) * sizeof(std::uint32_t);
+    const std::uint64_t byteCount = pixelCount * sizeof(std::uint32_t);
     if (byteCount > (std::numeric_limits<UINT>::max)())
         result = E_INVALIDARG;
     if (SUCCEEDED(result))
     {
         result = factory->CreateBitmapFromMemory(
             static_cast<UINT>(width), static_cast<UINT>(height),
-            GUID_WICPixelFormat32bppPBGRA, stride,
+            GUID_WICPixelFormat32bppPBGRA, static_cast<UINT>(stride),
             static_cast<UINT>(byteCount),
             reinterpret_cast<BYTE*>(const_cast<std::uint32_t*>(
                 pixels.data())), &bitmap);

@@ -390,10 +390,7 @@ void DesktopApp::LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot
     for (size_t i = 0; i < previous.size(); ++i)
         previousByKey.emplace(ToUpperInvariant(previous[i].layoutKey), i);
     itemIndexByKeyCache_.clear();
-    itemTextLayoutCache_.clear();
-    itemTextShadowCache_.clear();
-    componentListTextLayoutCache_.clear();
-    componentListTextShadowCache_.clear();
+    itemTitleRenderer_.InvalidateTitles();
     for (auto& item : items_)
     {
         const auto found = previousByKey.find(ToUpperInvariant(item.layoutKey));

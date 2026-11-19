@@ -624,7 +624,7 @@ DesktopApp::ExportNativeComponentPreviews(
             const std::filesystem::path outputPath =
                 request.outputDirectory / variant.filename;
             if (!preview_png::Save(outputPath, canvas.width, canvas.height,
-                    canvas.pixels, result.error))
+                    canvas.pixels, result.error, preview_png::Filter::Adaptive))
             {
                 result.stage = "png." + std::string(definition.id) +
                     "." + variant.id;

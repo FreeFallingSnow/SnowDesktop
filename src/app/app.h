@@ -30,7 +30,8 @@
 #include "data/layout_save_queue.h"
 #include "ui/render/scroll_content_clip.h"
 #include "app/render/widget_icon_backdrops.h"
-#include "app/render/item_text_layout_cache.h"
+#include "app/render/item_title_renderer.h"
+#include "app/popup/floating_popup_composition.h"
 #include "platform/operation_feedback.h"
 #include "ui/render/graphics_device_recovery.h"
 #include "common/background_work.h"
@@ -62,7 +63,7 @@
 #include "settings/settings_route.h"
 #include "settings/settings_host_actions.h"
 #include "settings/settings_action_result.h"
-#include "winui/home_about_page_model.h"
+#include "settings/home_about_status.h"
 #include "platform/usage_guide_panel.h"
 #include "icons/large_icon_settings.h"
 #include "icons/website_icon.h"
@@ -924,7 +925,6 @@ private:
         bool immediatePresent = false);
     void RequestCollectionPopupResizePresentation(bool animating);
     HRESULT EnsureFloatingPopupCompositionRoot();
-    HRESULT CreateOrResizeFloatingPopupCompositionSurface();
     HRESULT PrepareFloatingStackIndicatorComposition(SIZE size);
     bool RenderFloatingPopupCompositionFrame();
     bool PresentFloatingPopupComposition();
@@ -1175,7 +1175,7 @@ private:
         bool enabled);
     snowdesktop::SettingsActionResult OpenStoreUpdates();
     void PublishHomeAboutStatus();
-    snowdesktop::winui::HomeAboutStatusPatch BuildHomeAboutStatus(std::uint64_t generation);
+    snowdesktop::settings::HomeAboutStatusPatch BuildHomeAboutStatus(std::uint64_t generation);
     [[nodiscard]] std::wstring BuildAnimationDiagnosticsStatus() const;
     /** @brief 尝试完成一个已经登记的设置窗口打开请求。 */
     void TryShowPendingSettingsWindow();
@@ -2553,23 +2553,9 @@ private:
      */
     void DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
         const std::wstring& text, bool selected, bool lightTheme);
-    /**
-     * @brief 使用桌面图标标题样式绘制已排版的文字。
-     * @param ctx D2D 上下文
-     * @param layout DirectWrite 文本布局
-     * @param shadowKey 阴影缓存键
-     * @param origin 文本左上角
-     * @param layoutSize 文本布局尺寸
-     * @param layoutScale 布局缩放
-     * @param opacity 整体透明度
-     * @param componentPanel 网格标题位于组件面板内；列表标题由 componentList 标识
-     */
-    void DrawStyledItemTextLayout(ID2D1RenderTarget* ctx,
-        IDWriteTextLayout* layout, const std::wstring& shadowKey,
-        D2D1_POINT_2F origin, D2D1_SIZE_F layoutSize,
-        float layoutScale, float opacity = 1.0f,
-        bool lightTheme = false, bool componentList = false,
-        bool componentPanel = false);
+    void DrawComponentListTitle(ID2D1DeviceContext* context, RECT textRect,
+        const std::wstring& text, float scale, float fontSize, bool lightTheme,
+        const snowdesktop::ItemTitleRenderer::ScrollOffset& scrollOffset);
     /**
      * @brief 使用指定格式绘制 D2D 文字。
      * @param ctx D2D 上下文
@@ -3492,8 +3478,6 @@ private:
     IDWriteFactory* GetDWriteFactory() const { return dwriteFactory_.Get(); }
     ComPtr<ID2D1Device> d2dDevice_;
     ComPtr<ID2D1DeviceContext> d2dContext_;
-    /** @brief 用于录制标题阴影蒙版的独立 D2D 上下文。 */
-    ComPtr<ID2D1DeviceContext> itemTextEffectContext_;
     /** @brief 共享的 Direct2D 基础绘制与纯色画刷。 */
     snowdesktop::D2DDrawing drawing_;
     /** @brief 每个 D2D 上下文各自缓存深/浅两种平铺亚克力噪点画刷。 */
@@ -3557,12 +3541,11 @@ private:
     /** @brief 是否已经记录过本次合成目标的首个原生玻璃面板。 */
     bool nativeGlassPanelReadyLogged_ = false;
     ComPtr<IDWriteFactory> dwriteFactory_;
-    ComPtr<IDWriteTextFormat> itemTextFormat_;
+    snowdesktop::ItemTitleRenderer itemTitleRenderer_;
     ComPtr<IDWriteTextFormat> collectionPopupTitleTextFormat_;
     ComPtr<IDWriteTextFormat> collectionPopupControlTextFormat_;
     snowdesktop::ScrollContentFadeCache collectionPopupScrollFadeCache_;
     std::uint64_t collectionPopupFontRevision_ = 0;
-    ComPtr<IDWriteTextFormat> componentListTextFormat_;
     ComPtr<IDWriteTextFormat> fanTitleTextFormat_;
     mutable ComPtr<IDWriteTextFormat> popupFanCachedTextFormat_;
     mutable std::unordered_map<std::wstring, ComPtr<IDWriteTextLayout>> popupFanTextLayouts_;
@@ -3578,12 +3561,6 @@ private:
     ComPtr<IDWriteTextFormat> fluentIconTextFormat_;
     ComPtr<ID2D1Bitmap1> privacyFileIconBitmap_;
     ComPtr<ID2D1Bitmap1> privacyFolderIconBitmap_;
-    std::unordered_map<std::wstring, snowdesktop::ItemTextLayoutCacheEntry> itemTextLayoutCache_;
-    std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> itemTextShadowCache_;
-    std::unordered_map<std::wstring, ComPtr<IDWriteTextLayout>>
-        componentListTextLayoutCache_;
-    std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>>
-        componentListTextShadowCache_;
     HANDLE faFontHandle_ = nullptr;
     HANDLE fluentIconFontHandle_ = nullptr;
     UINT menuIconDpi_ = USER_DEFAULT_SCREEN_DPI;
@@ -3685,7 +3662,7 @@ private:
     std::optional<LargeIconGesture> largeIconGesture_;
     std::unique_ptr<snowdesktop::steam_entitlement::Service>
         steamEntitlementService_;
-    snowdesktop::winui::HomeAboutStatusSequence homeAboutStatusSequence_;
+    snowdesktop::settings::HomeAboutStatusSequence homeAboutStatusSequence_;
     std::unique_ptr<snowdesktop::WidgetAccessibilityProviderHost>
         widgetAccessibilityProvider_;
     struct PendingLuaWidgetConsent
@@ -4112,19 +4089,14 @@ private:
     ComPtr<IDCompositionTarget> floatingPopupDcompTarget_;
     ComPtr<IDCompositionVisual2> floatingPopupDcompVisual_;
     ComPtr<IDCompositionVisual2> floatingPopupDcompLiveVisual_;
-    ComPtr<IDCompositionSurface> floatingPopupDcompSurface_;
+    snowdesktop::FloatingPopupCompositionSurfaces floatingPopupSurfaces_;
     ComPtr<IDCompositionVisual2> floatingStackIndicatorVisual_;
-    ComPtr<IDCompositionSurface> floatingStackIndicatorSurface_;
-    SIZE floatingStackIndicatorSurfaceSize_{};
     // Desktop coordinates. The HWND itself stays at the virtual desktop origin.
     RECT floatingPopupContentBounds_{};
     RECT floatingPopupCollectionRegion_{};
     RECT floatingPopupLuaPanelRegion_{};
     RECT floatingStackIndicatorRegion_{};
-    UINT floatingPopupCompWidth_ = 0;
-    UINT floatingPopupCompHeight_ = 0;
     bool floatingPopupModalRegion_ = false;
-    bool floatingPopupCompositionRenderRecoveryPending_ = false;
     bool floatingPopupCompositionPaintInProgress_ = false;
     unsigned floatingPopupPresentationRetryCount_ = 0;
     bool floatingPopupDropTargetRegistered_ = false;

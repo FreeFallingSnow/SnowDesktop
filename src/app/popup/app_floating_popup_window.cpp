@@ -1,3 +1,5 @@
+#include "floating_popup_composition.h"
+
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "ui/render/highlight_coverage.h"
@@ -19,6 +21,7 @@
 #include <bit>
 #include <dwmapi.h>
 #include <sstream>
+#include <utility>
 
 namespace
 {
@@ -412,18 +415,19 @@ bool DesktopApp::WarmFloatingPopupResources()
     if (collectionPopupGlassTheme_)
         (void)collectionPopupBackdropCompositor_.PrepareBlurFactoryInBackground(collectionPopupBlurRadius_);
     if (!CreateFloatingPopupWindow() ||
-        FAILED(CreateOrResizeFloatingPopupCompositionSurface()))
+        FAILED(EnsureFloatingPopupCompositionRoot()) ||
+        FAILED(floatingPopupSurfaces_.PrepareContent(dcompDevice_.Get(), floatingPopupContentBounds_)))
         return false;
     // A fresh DComp surface has no valid content until EndDraw. Initialize its
     // tiny hidden target without touching popup models, input regions or hooks.
     ComPtr<ID2D1DeviceContext> context;
     POINT offset{};
-    const HRESULT draw = floatingPopupDcompSurface_->BeginDraw(nullptr,
+    const HRESULT draw = floatingPopupSurfaces_.Content()->BeginDraw(nullptr,
         __uuidof(ID2D1DeviceContext), reinterpret_cast<void**>(context.GetAddressOf()), &offset);
     if (FAILED(draw)) return false;
     context->Clear(D2D1::ColorF(0, 0, 0, 0));
     context.Reset();
-    if (FAILED(floatingPopupDcompSurface_->EndDraw())) return false;
+    if (FAILED(floatingPopupSurfaces_.Content()->EndDraw())) return false;
 
     return CommitCompositionAnimationFrame() && FlushPendingCompositionCommit();
 }
@@ -600,14 +604,10 @@ void DesktopApp::ResetFloatingPopupCompositionResources()
     collectionPopupBackdropCompositor_.HidePopupWindowPair(floatingPopupHwnd_);
     if (floatingPopupDcompLiveVisual_)
         floatingPopupDcompLiveVisual_->SetContent(nullptr);
-    floatingPopupDcompSurface_.Reset();
-    floatingPopupCompWidth_ = 0;
-    floatingPopupCompHeight_ = 0;
     if (floatingStackIndicatorVisual_ && floatingPopupDcompVisual_)
         (void)floatingPopupDcompVisual_->RemoveVisual(floatingStackIndicatorVisual_.Get());
     floatingStackIndicatorVisual_.Reset();
-    floatingStackIndicatorSurface_.Reset();
-    floatingStackIndicatorSurfaceSize_ = {};
+    floatingPopupSurfaces_.Release();
     collectionPopupBackdropCompositor_.RemoveSrgbContent(
         reinterpret_cast<std::uintptr_t>(&luaStackIndicator_));
 }
@@ -652,14 +652,8 @@ void DesktopApp::RecoverFloatingPopupCompositionFailure(
         static_cast<unsigned>(hr));
     WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message, DiagnosticLogLevel::Warning);
     ResetFloatingPopupCompositionResources();
-    if (!floatingPopupCompositionRenderRecoveryPending_ &&
-        floatingPopupHwnd_ &&
-        IsWindow(floatingPopupHwnd_))
-    {
-        floatingPopupCompositionRenderRecoveryPending_ = true;
-        InvalidateRect(
-            floatingPopupHwnd_, nullptr, FALSE);
-    }
+    if (floatingPopupHwnd_ && IsWindow(floatingPopupHwnd_) && floatingPopupSurfaces_.BeginLocalRecovery())
+        InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
 }
 
 void DesktopApp::DestroyFloatingPopupWindow()
@@ -682,7 +676,7 @@ void DesktopApp::DestroyFloatingPopupWindow()
     floatingPopupLuaPanelRegion_ = {};
     floatingStackIndicatorRegion_ = {};
     floatingPopupModalRegion_ = false;
-    floatingPopupCompositionRenderRecoveryPending_ = false;
+    floatingPopupSurfaces_.EndLocalRecovery();
     if (floatingPopupHwnd_ && IsWindow(floatingPopupHwnd_))
         DestroyWindow(floatingPopupHwnd_);
     floatingPopupHwnd_ = nullptr;
@@ -717,31 +711,46 @@ HRESULT DesktopApp::EnsureFloatingPopupCompositionRoot()
     return S_OK;
 }
 
-HRESULT DesktopApp::CreateOrResizeFloatingPopupCompositionSurface()
+HRESULT snowdesktop::FloatingPopupCompositionSurfaces::Layer::Prepare(
+    IDCompositionDevice2* device, UINT newWidth, UINT newHeight)
 {
-    HRESULT hr = EnsureFloatingPopupCompositionRoot();
-    if (FAILED(hr))
-        return hr;
-    const auto& bounds = floatingPopupContentBounds_;
-    const UINT width = static_cast<UINT>(std::max<LONG>(1, bounds.right - bounds.left));
-    const UINT height = static_cast<UINT>(std::max<LONG>(1, bounds.bottom - bounds.top));
-    if (floatingPopupDcompSurface_ &&
-        floatingPopupCompWidth_ == width &&
-        floatingPopupCompHeight_ == height)
+    if (surface && width == newWidth && height == newHeight)
         return S_OK;
 
-    ComPtr<IDCompositionSurface> surface;
-    hr = dcompDevice_->CreateSurface(
-        width, height,
-        DXGI_FORMAT_B8G8R8A8_UNORM,
-        DXGI_ALPHA_MODE_PREMULTIPLIED,
-        &surface);
-    if (FAILED(hr) || !surface)
+    Microsoft::WRL::ComPtr<IDCompositionSurface> replacement;
+    const HRESULT hr = device->CreateSurface(newWidth, newHeight, DXGI_FORMAT_B8G8R8A8_UNORM,
+        DXGI_ALPHA_MODE_PREMULTIPLIED, &replacement);
+    if (FAILED(hr) || !replacement)
         return FAILED(hr) ? hr : E_FAIL;
-    floatingPopupDcompSurface_ = std::move(surface);
-    floatingPopupCompWidth_ = width;
-    floatingPopupCompHeight_ = height;
+    surface = std::move(replacement);
+    width = newWidth;
+    height = newHeight;
     return S_OK;
+}
+
+HRESULT snowdesktop::FloatingPopupCompositionSurfaces::PrepareContent(
+    IDCompositionDevice2* device, const RECT& bounds)
+{
+    return content_.Prepare(device,
+        static_cast<UINT>(std::max<LONG>(1, bounds.right - bounds.left)),
+        static_cast<UINT>(std::max<LONG>(1, bounds.bottom - bounds.top)));
+}
+
+HRESULT snowdesktop::FloatingPopupCompositionSurfaces::PrepareIndicator(
+    IDCompositionDevice2* device, SIZE size)
+{
+    return indicator_.Prepare(device, static_cast<UINT>(size.cx), static_cast<UINT>(size.cy));
+}
+
+void snowdesktop::FloatingPopupCompositionSurfaces::Release()
+{
+    content_ = {};
+    indicator_ = {};
+}
+
+bool snowdesktop::FloatingPopupCompositionSurfaces::BeginLocalRecovery()
+{
+    return !std::exchange(recovering_, true);
 }
 
 HRESULT DesktopApp::PrepareFloatingStackIndicatorComposition(SIZE size)
@@ -756,18 +765,7 @@ HRESULT DesktopApp::PrepareFloatingStackIndicatorComposition(SIZE size)
         if (FAILED(hr)) return hr;
         floatingStackIndicatorVisual_ = std::move(visual);
     }
-    if (floatingStackIndicatorSurface_ && floatingStackIndicatorSurfaceSize_.cx == size.cx &&
-        floatingStackIndicatorSurfaceSize_.cy == size.cy)
-        return S_OK;
-
-    ComPtr<IDCompositionSurface> surface;
-    const HRESULT hr = dcompDevice_->CreateSurface(
-        static_cast<UINT>(size.cx), static_cast<UINT>(size.cy),
-        DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &surface);
-    if (FAILED(hr)) return hr;
-    floatingStackIndicatorSurface_ = std::move(surface);
-    floatingStackIndicatorSurfaceSize_ = size;
-    return S_OK;
+    return floatingPopupSurfaces_.PrepareIndicator(dcompDevice_.Get(), size);
 }
 
 bool DesktopApp::RenderFloatingPopupCompositionFrame()
@@ -847,9 +845,9 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
     }
     else
     {
-        hr = CreateOrResizeFloatingPopupCompositionSurface();
+        hr = floatingPopupSurfaces_.PrepareContent(dcompDevice_.Get(), bounds);
         if (SUCCEEDED(hr))
-            hr = paintSurface(*floatingPopupDcompSurface_.Get(), *floatingPopupDcompLiveVisual_.Get(), bounds, srgbKey,
+            hr = paintSurface(*floatingPopupSurfaces_.Content(), *floatingPopupDcompLiveVisual_.Get(), bounds, srgbKey,
                 [this](ID2D1DeviceContext* context) {
                     renderingFloatingPopup_ = true;
                     DrawDynamicOverlays(context, false);
@@ -875,7 +873,7 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
         hr = PrepareFloatingStackIndicatorComposition(
             SIZE{indicator.right - indicator.left, indicator.bottom - indicator.top});
         if (SUCCEEDED(hr))
-            hr = paintSurface(*floatingStackIndicatorSurface_.Get(), *floatingStackIndicatorVisual_.Get(),
+            hr = paintSurface(*floatingPopupSurfaces_.Indicator(), *floatingStackIndicatorVisual_.Get(),
                 indicator, indicatorKey, [this](ID2D1DeviceContext* context) { DrawLuaStackIndicator(context); });
     }
     if (FAILED(hr))
@@ -904,7 +902,7 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
             L"Queue Commit", E_FAIL);
         return false;
     }
-    floatingPopupCompositionRenderRecoveryPending_ = false;
+    floatingPopupSurfaces_.EndLocalRecovery();
     return true;
 }
 
@@ -937,12 +935,12 @@ bool DesktopApp::PresentFloatingPopupComposition()
         const auto srgbKey = reinterpret_cast<std::uintptr_t>(floatingPopupHwnd_);
         HRESULT fallback = collectionPopupBackdropCompositor_.SetDirectContentForSrgb(
             srgbKey, false, dcompDevice_.Get(), floatingPopupDcompLiveVisual_.Get(),
-            IsRectEmpty(&floatingPopupContentBounds_) ? nullptr : floatingPopupDcompSurface_.Get());
+            IsRectEmpty(&floatingPopupContentBounds_) ? nullptr : floatingPopupSurfaces_.Content());
         if (SUCCEEDED(fallback) && floatingStackIndicatorVisual_)
             fallback = collectionPopupBackdropCompositor_.SetDirectContentForSrgb(
                 reinterpret_cast<std::uintptr_t>(&luaStackIndicator_), false, dcompDevice_.Get(),
                 floatingStackIndicatorVisual_.Get(),
-                IsRectEmpty(&floatingStackIndicatorRegion_) ? nullptr : floatingStackIndicatorSurface_.Get());
+                IsRectEmpty(&floatingStackIndicatorRegion_) ? nullptr : floatingPopupSurfaces_.Indicator());
         if (FAILED(fallback) || !CommitCompositionAnimationFrame() || !FlushPendingCompositionCommit())
             return false;
     }
@@ -1277,7 +1275,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
                 (IsLuaPanelHostedByFloatingWindow() || !IsRectEmpty(&nextStackRegion))));
     const bool refreshContent = refreshStableContent || !wasVisible ||
         boundsChanged || regionChanged || backdropRecovery ||
-        !floatingPopupDcompSurface_ || !floatingPopupDcompVisual_ ||
+        !floatingPopupSurfaces_.Content() || !floatingPopupDcompVisual_ ||
         graphicsDeviceRecovery_.Pending();
     // When the HWND is already visible for another popup, expose a new
     // indicator backdrop only after the indicator's own pixels are ready.

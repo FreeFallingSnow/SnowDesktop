@@ -174,45 +174,13 @@ bool DesktopApp::InitGraphics()
 
 void DesktopApp::RecreateItemTextFormat()
 {
-    if (!dwriteFactory_) return;
-    itemTextLayoutCache_.clear();
-    itemTextShadowCache_.clear();
-    float fontSize = itemFontSizeCu_;
-    float lineHeight = fontSize * 7.0f / 6.0f;
-    float baseline = fontSize * 5.0f / 6.0f;
-    snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, L"Segoe UI", itemFontWeight_,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &itemTextFormat_);
-    if (itemTextFormat_)
-    {
-        itemTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        itemTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-        itemTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
-        itemTextFormat_->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
-            lineHeight, baseline);
-    }
+    itemTitleRenderer_.RecreateGridFormat(dwriteFactory_.Get(), itemFontSizeCu_, itemFontWeight_);
 }
 
 void DesktopApp::RecreateComponentListTextFormat()
 {
-    if (!dwriteFactory_) return;
-    componentListTextLayoutCache_.clear();
-    componentListTextShadowCache_.clear();
-    componentListTextFormat_.Reset();
-    const float lineHeight = listItemFontSizeCu_ * 7.0f / 6.0f;
-    const float baseline = listItemFontSizeCu_ * 5.0f / 6.0f;
-    snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, L"Segoe UI", itemFontWeight_,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        listItemFontSizeCu_, L"", &componentListTextFormat_);
-    if (!componentListTextFormat_) return;
-    componentListTextFormat_->SetTextAlignment(
-        DWRITE_TEXT_ALIGNMENT_LEADING);
-    componentListTextFormat_->SetParagraphAlignment(
-        DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    componentListTextFormat_->SetWordWrapping(
-        DWRITE_WORD_WRAPPING_NO_WRAP);
-    componentListTextFormat_->SetLineSpacing(
-        DWRITE_LINE_SPACING_METHOD_UNIFORM,
-        lineHeight, baseline);
+    itemTitleRenderer_.RecreateListFormat(
+        dwriteFactory_.Get(), listItemFontSizeCu_, itemFontWeight_);
 }
 
 void DesktopApp::RecreateFanTitleTextFormat()
@@ -271,9 +239,7 @@ void DesktopApp::ResetCompositionRenderCaches()
     quickNavigation_->actionIconContext = nullptr;
     shortcutArrowBitmap_.Reset();
     shortcutArrowBitmapSize_ = {};
-    itemTextShadowCache_.clear();
-    componentListTextShadowCache_.clear();
-    itemTextEffectContext_.Reset();
+    itemTitleRenderer_.ReleaseDeviceResources();
 }
 
 void DesktopApp::RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT hr)
@@ -564,7 +530,7 @@ void DesktopApp::ReleaseGraphicsDeviceResources()
     ResetFloatingPopupCompositionResources();
     floatingPopupDcompLiveVisual_.Reset();
     releaseRoot(floatingPopupDcompTarget_, floatingPopupDcompVisual_);
-    floatingPopupCompositionRenderRecoveryPending_ = false;
+    floatingPopupSurfaces_.EndLocalRecovery();
     releaseRoot(dragPreviewDcompTarget_, dragPreviewDcompVisual_);
     ResetQuickNavCompositionResources();
     releaseRoot(quickNavigation_->dcompTarget, quickNavigation_->dcompVisual);

@@ -816,8 +816,8 @@ void DesktopApp::RecordIconTextResources() const
     mapBitmaps("placeholder", placeholderIconCache_);
     mapBitmaps("quick_nav_system", quickNavigation_->sysIconCache);
     mapBitmaps("quick_nav_app", quickNavigation_->appIconCache);
-    mapBitmaps("grid_text_shadow", itemTextShadowCache_);
-    mapBitmaps("list_text_shadow", componentListTextShadowCache_);
+    bitmaps("grid_text_shadow", [&](auto add) { itemTitleRenderer_.VisitShadowBitmaps(false, add); });
+    bitmaps("list_text_shadow", [&](auto add) { itemTitleRenderer_.VisitShadowBitmaps(true, add); });
     bitmaps("dock_appearance", [&](auto add) {
         for (const auto& [key, image] : dockAppearanceImages_) { (void)key; add(image.bitmap.Get()); }
     });
@@ -841,17 +841,15 @@ void DesktopApp::RecordIconTextResources() const
     value("native.icon.memory", "glass_metadata_entries", iconGlassBackdrop_.size());
     value("native.icon.memory", "fan_command_entries", popupFanIconDrawings_.size());
 
-    size_t gridInput = 0, listInput = 0, fanInput = 0;
-    for (const auto& [key, entry] : itemTextLayoutCache_)
-        gridInput += key.size() * sizeof(wchar_t) + entry.fullWidth.RetainedTextBytes();
-    for (const auto& [key, layout] : componentListTextLayoutCache_)
-    { (void)layout; listInput += key.size() * sizeof(wchar_t); }
+    size_t fanInput = 0;
     for (const auto& [key, layout] : popupFanTextLayouts_)
     { (void)layout; fanInput += key.size() * sizeof(wchar_t); }
-    value("native.text.memory", "grid_layout_entries", itemTextLayoutCache_.size());
-    value("native.text.memory", "grid_layout_input_bytes", gridInput);
-    value("native.text.memory", "list_layout_entries", componentListTextLayoutCache_.size());
-    value("native.text.memory", "list_layout_input_bytes", listInput);
+    const auto grid = itemTitleRenderer_.GetLayoutCacheUsage(false);
+    const auto list = itemTitleRenderer_.GetLayoutCacheUsage(true);
+    value("native.text.memory", "grid_layout_entries", grid.entries);
+    value("native.text.memory", "grid_layout_input_bytes", grid.inputBytes);
+    value("native.text.memory", "list_layout_entries", list.entries);
+    value("native.text.memory", "list_layout_input_bytes", list.inputBytes);
     value("native.text.memory", "fan_layout_entries", popupFanTextLayouts_.size());
     value("native.text.memory", "fan_layout_input_bytes", fanInput);
     const auto masks = snowdesktop::icon_beautify::TryGetMaskCacheStatistics();
