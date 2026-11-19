@@ -21,6 +21,7 @@
 #include "widget/storage/widget_storage_runtime.h"
 #include "widget/view/widget_draw_geometry.h"
 #include "widget/view/widget_interaction_lua_value.h"
+#include "widget/view/widget_interaction_region.h"
 #include "widget/view/widget_render_host_context.h"
 #include "widget/view/widget_scroll_rules.h"
 #include "widget/view/widget_surface_host.h"
@@ -33,7 +34,10 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <optional>
+#include <span>
 #include <utility>
+#include <vector>
 
 namespace text_input = snowdesktop::text_input;
 using snowdesktop::widget_runtime::ActiveStorage;
@@ -1199,6 +1203,45 @@ bool WidgetEngine::HasHostViewKeyboardFocus() const
     });
 }
 
+namespace
+{
+std::optional<std::size_t> FindNextHostViewFocus(
+    const snowdesktop::widget_runtime::WidgetInteractionRegions& regions,
+    std::span<const std::string> focusKeys, std::size_t current, WPARAM key)
+{
+    using namespace snowdesktop::widget_runtime;
+    LogicalSlotFocusDirection direction;
+    switch (key)
+    {
+    case VK_LEFT: direction = LogicalSlotFocusDirection::Left; break;
+    case VK_RIGHT: direction = LogicalSlotFocusDirection::Right; break;
+    case VK_UP: direction = LogicalSlotFocusDirection::Up; break;
+    case VK_DOWN: direction = LogicalSlotFocusDirection::Down; break;
+    default: return std::nullopt;
+    }
+
+    std::vector<LogicalSlotFocusRect> bounds;
+    bounds.reserve(focusKeys.size());
+    for (const auto& candidateKey : focusKeys)
+    {
+        const auto* candidate = regions.Find(candidateKey);
+        if (!candidate) return std::nullopt;
+        const auto& shape = candidate->shape;
+        const bool circle = shape.type == InteractionShapeType::Circle;
+        const float left = circle ? shape.x - shape.radius : shape.x;
+        const float top = circle ? shape.y - shape.radius : shape.y;
+        const float right = shape.x + (circle ? shape.radius : shape.width);
+        const float bottom = shape.y + (circle ? shape.radius : shape.height);
+        bounds.push_back({
+            static_cast<int>(std::floor(left)),
+            static_cast<int>(std::floor(top)),
+            static_cast<int>(std::ceil(right)),
+            static_cast<int>(std::ceil(bottom)) });
+    }
+    return FindLogicalSlotSpatialFocus(bounds, current, direction);
+}
+}
+
 bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
     WPARAM key, bool ctrl, bool shift, bool alt,
     std::string_view surface, bool repeated)
@@ -1443,46 +1486,8 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
                 }
                 return true;
             }
-            std::vector<snowdesktop::widget_runtime::LogicalSlotFocusRect>
-                bounds;
-            bounds.reserve(focusKeys.size());
-            for (const auto& candidateKey : focusKeys)
-            {
-                const auto* candidate = regions.Find(candidateKey);
-                if (!candidate) return true;
-                const auto& shape = candidate->shape;
-                float left = shape.type == snowdesktop::widget_runtime::
-                        InteractionShapeType::Circle
-                    ? shape.x - shape.radius : shape.x;
-                float top = shape.type == snowdesktop::widget_runtime::
-                        InteractionShapeType::Circle
-                    ? shape.y - shape.radius : shape.y;
-                float right = shape.type == snowdesktop::widget_runtime::
-                        InteractionShapeType::Circle
-                    ? shape.x + shape.radius : shape.x + shape.width;
-                float bottom = shape.type == snowdesktop::widget_runtime::
-                        InteractionShapeType::Circle
-                    ? shape.y + shape.radius : shape.y + shape.height;
-                bounds.push_back({
-                    static_cast<int>(std::floor(left)),
-                    static_cast<int>(std::floor(top)),
-                    static_cast<int>(std::ceil(right)),
-                    static_cast<int>(std::ceil(bottom)) });
-            }
-            const auto direction = key == VK_LEFT
-                ? snowdesktop::widget_runtime::
-                    LogicalSlotFocusDirection::Left
-                : key == VK_RIGHT
-                    ? snowdesktop::widget_runtime::
-                        LogicalSlotFocusDirection::Right
-                    : key == VK_UP
-                        ? snowdesktop::widget_runtime::
-                            LogicalSlotFocusDirection::Up
-                        : snowdesktop::widget_runtime::
-                            LogicalSlotFocusDirection::Down;
-            const auto next = snowdesktop::widget_runtime::
-                FindLogicalSlotSpatialFocus(
-                    bounds, *focusedIndex, direction);
+            const auto next = FindNextHostViewFocus(
+                regions, focusKeys, *focusedIndex, key);
             if (next) focusTarget(focusKeys[*next]);
             return true;
         }
@@ -1681,41 +1686,8 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
             }
             return true;
         }
-        std::vector<snowdesktop::widget_runtime::LogicalSlotFocusRect> bounds;
-        bounds.reserve(focusKeys.size());
-        for (const auto& candidateKey : focusKeys)
-        {
-            const auto* candidate =
-                widget.interactionRegions.Find(candidateKey);
-            if (!candidate) return true;
-            const auto& shape = candidate->shape;
-            float left = shape.type == snowdesktop::widget_runtime::
-                    InteractionShapeType::Circle
-                ? shape.x - shape.radius : shape.x;
-            float top = shape.type == snowdesktop::widget_runtime::
-                    InteractionShapeType::Circle
-                ? shape.y - shape.radius : shape.y;
-            float right = shape.type == snowdesktop::widget_runtime::
-                    InteractionShapeType::Circle
-                ? shape.x + shape.radius : shape.x + shape.width;
-            float bottom = shape.type == snowdesktop::widget_runtime::
-                    InteractionShapeType::Circle
-                ? shape.y + shape.radius : shape.y + shape.height;
-            bounds.push_back({
-                static_cast<int>(std::floor(left)),
-                static_cast<int>(std::floor(top)),
-                static_cast<int>(std::ceil(right)),
-                static_cast<int>(std::ceil(bottom)) });
-        }
-        const auto direction = key == VK_LEFT
-            ? snowdesktop::widget_runtime::LogicalSlotFocusDirection::Left
-            : key == VK_RIGHT
-                ? snowdesktop::widget_runtime::LogicalSlotFocusDirection::Right
-                : key == VK_UP
-                    ? snowdesktop::widget_runtime::LogicalSlotFocusDirection::Up
-                    : snowdesktop::widget_runtime::LogicalSlotFocusDirection::Down;
-        const auto next = snowdesktop::widget_runtime::
-            FindLogicalSlotSpatialFocus(bounds, *focusedIndex, direction);
+        const auto next = FindNextHostViewFocus(
+            widget.interactionRegions, focusKeys, *focusedIndex, key);
         if (next)
             focusTarget(focusKeys[*next]);
         return true;

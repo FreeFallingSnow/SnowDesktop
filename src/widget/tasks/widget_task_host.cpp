@@ -468,7 +468,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 (void)taskBroker_->Complete(action.id, false);
                 continue;
             }
-            if (audioPlayback_) audioPlayback_->Cancel(action.id);
+            snowdesktop::widget_runtime::CancelAudioPlaybackTask(
+                audioPlayback_.get(), action.name, action.id);
             CancelDispatchedWidgetTask(action.id, action.name == "location.current");
             networkTaskDispatch_.Cancel(action, httpService_.get());
             continue;
@@ -2381,11 +2382,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                     if (const auto* value = nativePayload.Value())
                         PushSystemControlJson(eventState, *value);
                     else if (completion.name == "audio.play")
-                    {
-                        lua_createtable(eventState, 0, 1);
-                        const std::string playbackId = "audio-" + std::to_string(completion.id);
-                        lua_pushstring(eventState, playbackId.c_str()); lua_setfield(eventState, -2, "playbackId");
-                    }
+                        snowdesktop::widget_runtime::PushAudioPlaybackTaskValue(
+                            eventState, completion.id);
                     else if (completion.name == "app.search" || itemSearchTask)
                     {
                         lua_createtable(eventState, 0, 4);
@@ -2484,48 +2482,21 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
     }
     for (const auto& message : audioEvents)
     {
-            auto owner = std::find_if(widgets_.begin(), widgets_.end(), [&](const auto& candidate) {
+        auto owner = std::find_if(widgets_.begin(), widgets_.end(),
+            [&message](const auto& candidate) {
                 return candidate.runtimeToken == message.owner;
             });
-            if (owner == widgets_.end() || !owner->permissions.contains("audio.playback")) continue;
-            snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(trustedGestureState_, false);
-            (void)InvokeLifecycleEvent(*owner, message.command.command.empty() ? "audio.state" : "audio.command", [&](lua_State* state) {
-                lua_pushstring(state, message.playbackId.c_str()); lua_setfield(state, -2, "playbackId");
-                lua_pushstring(state, message.state.status.c_str()); lua_setfield(state, -2, "status");
-                lua_pushstring(state, message.state.error.c_str()); lua_setfield(state, -2, "error");
-                lua_pushinteger(state, message.state.positionMs); lua_setfield(state, -2, "positionMs");
-                lua_pushinteger(state, message.state.durationMs); lua_setfield(state, -2, "durationMs");
-                lua_pushnumber(state, message.state.volume); lua_setfield(state, -2, "volume");
-                lua_pushboolean(state, message.state.loop); lua_setfield(state, -2, "loop");
-                lua_pushboolean(state, message.state.canSeek); lua_setfield(state, -2, "canSeek");
-                lua_pushnumber(state, message.state.playbackRate); lua_setfield(state, -2, "playbackRate");
-                lua_pushboolean(state, message.state.shuffle); lua_setfield(state, -2, "shuffle");
-                lua_pushstring(state, message.state.repeatMode.c_str()); lua_setfield(state, -2, "repeatMode");
-                lua_pushboolean(state, message.state.systemMediaControls); lua_setfield(state, -2, "systemMediaControls");
-                lua_pushstring(state, message.state.title.c_str()); lua_setfield(state, -2, "title");
-                lua_pushstring(state, message.state.artist.c_str()); lua_setfield(state, -2, "artist");
-                lua_pushstring(state, message.state.album.c_str()); lua_setfield(state, -2, "album");
-                if (message.state.artwork)
-                {
-                    const auto token = RegisterTaskImage(owner->widgetId,
-                        message.state.artworkToken, message.state.artwork, "audio");
-                    if (!token.empty())
-                    {
-                        snowdesktop::widget_runtime::PushResourceHandle(state,
-                            snowdesktop::widget_runtime::LuaResourceType::Image, token);
-                        lua_setfield(state, -2, "artwork");
-                    }
-                }
-                if (!message.command.command.empty())
-                {
-                    lua_pushstring(state, message.command.command.c_str()); lua_setfield(state, -2, "command");
-                    if (message.command.command == "setPlaybackRate")
-                    { lua_pushnumber(state, message.command.value); lua_setfield(state, -2, "playbackRate"); }
-                    if (message.command.command == "setShuffle")
-                    { lua_pushboolean(state, message.command.value != 0); lua_setfield(state, -2, "shuffle"); }
-                    if (message.command.command == "setRepeatMode")
-                    { lua_pushstring(state, message.command.repeatMode.c_str()); lua_setfield(state, -2, "repeatMode"); }
-                }
+        if (owner == widgets_.end() || !owner->permissions.contains("audio.playback"))
+            continue;
+        snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
+            trustedGestureState_, false);
+        (void)InvokeLifecycleEvent(*owner,
+            message.command.command.empty() ? "audio.state" : "audio.command",
+            [this, &owner, &message](lua_State* state) {
+                snowdesktop::widget_runtime::PushAudioPlaybackEvent(state, message,
+                    [this, &owner](const std::string& token, const auto& pixels) {
+                        return RegisterTaskImage(owner->widgetId, token, pixels, "audio");
+                    });
             });
     }
 
@@ -2853,7 +2824,8 @@ bool WidgetEngine::RuntimeCancelTask(
     if (!snapshot || snapshot->ownerToken != widget.runtimeToken)
         return false;
     if (!taskBroker_->Cancel(taskId)) return false;
-    if (audioPlayback_) audioPlayback_->Cancel(taskId);
+    snowdesktop::widget_runtime::CancelAudioPlaybackTask(
+        audioPlayback_.get(), snapshot->name, taskId);
     CancelWidgetTaskWork(taskId, false);
     networkTaskDispatch_.DiscardCompletion(taskId);
     if (!widget.preview && taskWakeCallback_) taskWakeCallback_();
