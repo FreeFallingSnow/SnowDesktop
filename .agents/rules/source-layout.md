@@ -48,7 +48,6 @@
 
 - 添加功能时，沿生产调用找到负责该规则、状态或资源的模块。新增逻辑与原实现共同维护同一约束时，就地扩展。组合入口负责模块接线、调用顺序和生命周期协调。
 - 走查时关注职责有没有越界。例如，新代码实现了另一模块已有的业务规则、开始写入另一模块持有的状态，或给纯解析逻辑引入文件系统依赖。遇到这些情况，把相应逻辑放回负责它的模块；确有独立职责且缺少合适实现时，再在所属模块建立私有实现。
-- 已有职责混杂且迁移超出本批范围时，在[代码健康任务总表](../../CODE_HEALTH.md)记录具体符号、调用方和下一项可独立验证的迁移。按下节的状态归属和实际生产依赖验收拆分。
 
 例如，为组件包的 `previewData.variants` 增加字段时，清单 JSON 的解析与格式诊断归 `widget_package_manifest_fields.cpp` 的 `ReadPreviewVariants`。若该字段需要核实资源文件存在，磁盘检查归 `WidgetPackageValidator::ValidateDirectory`。`widget_package.cpp` 继续承担已有入口职责。[预览字段解析](../../src/widget/packages/widget_package_manifest_fields.cpp) · [目录验证](../../src/widget/packages/widget_package_validation.cpp)
 
