@@ -2937,9 +2937,6 @@
   "core.drag.link_in_folder": "Créer des raccourcis dans « {0} »",
   "app.settings.widgets_installed_version": "Version installée",
   "app.settings.widgets_development_version": "Version de développement",
-  "settings.personalization.wcgHighlightCompensation": "Compensation pour écran à large gamut",
-  "settings.personalization.wcgHighlightCompensation.hint": "S’applique aux écrans SDR en mode WCG avec une sortie 10 bits et la gestion automatique des couleurs (ACM) de Windows activée. Cette combinaison peut délaver les reflets translucides et les bords des ombres. La précomposition des ombres s’applique aux icônes du Dock et aux widgets en verre dépoli qui projettent une ombre.",
-  "settings.personalization.displayEffects": "Effets d’affichage",
   "app.settings.icon_shadows": "Ombres des icônes",
   "app.settings.icon_shadow_fan": "Icônes en vue en éventail",
   "app.settings.icon_shadow_dock": "Icônes du Dock",
@@ -2947,10 +2944,5 @@
   "app.settings.icon_shadow_desktop": "Icônes du bureau",
   "app.settings.icon_shadow_popup": "Icônes dans les fenêtres contextuelles",
   "app.settings.icon_shadow_quick_navigation": "Icônes dans la navigation rapide",
-  "app.settings.icon_shadow_subject": "Ombre du motif de l’icône embellie",
-  "settings.personalization.wcg.highlights": "Reflets uniquement",
-  "settings.personalization.wcg.composite": "Reflets et précomposition des ombres",
-  "settings.personalization.wcg.unknown": "Indisponible",
-  "settings.personalization.wcg.workaroundTitle": "Solution de contournement dans Windows",
-  "settings.personalization.wcg.workaround": "Si le halo persiste, ouvrez Paramètres Windows > Système > Écran > Profil de couleurs, sélectionnez l’écran concerné et désactivez « Gérer automatiquement les couleurs des applications »."
+  "app.settings.icon_shadow_subject": "Ombre du motif de l’icône embellie"
 }

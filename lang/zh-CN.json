@@ -2937,9 +2937,6 @@
   "core.drag.link_in_folder": "在「{0}」中创建快捷方式",
   "app.settings.widgets_installed_version": "已安装版",
   "app.settings.widgets_development_version": "开发版",
-  "settings.personalization.wcgHighlightCompensation": "广色域显示补偿",
-  "settings.personalization.wcgHighlightCompensation.hint": "适用于处于 WCG 模式的 SDR 显示器，且使用 10 位输出并开启 Windows 自动颜色管理（ACM）。此时半透明高光和阴影边缘可能泛白。阴影预合成适用于启用阴影的毛玻璃 Dock 和桌面组件。",
-  "settings.personalization.displayEffects": "显示效果",
   "app.settings.icon_shadows": "图标阴影",
   "app.settings.icon_shadow_fan": "扇形展开中的图标",
   "app.settings.icon_shadow_dock": "Dock 图标",
@@ -2947,10 +2944,5 @@
   "app.settings.icon_shadow_desktop": "桌面图标",
   "app.settings.icon_shadow_popup": "弹窗中的图标",
   "app.settings.icon_shadow_quick_navigation": "快捷导航中的图标",
-  "app.settings.icon_shadow_subject": "美化主体阴影",
-  "settings.personalization.wcg.highlights": "仅高光补偿",
-  "settings.personalization.wcg.composite": "高光和阴影预合成",
-  "settings.personalization.wcg.unknown": "无法读取",
-  "settings.personalization.wcg.workaroundTitle": "Windows 规避办法",
-  "settings.personalization.wcg.workaround": "若仍有白边，打开 Windows 设置 → 系统 → 屏幕 → 颜色配置文件，选择受影响的显示器，关闭「自动管理应用的颜色」。"
+  "app.settings.icon_shadow_subject": "美化主体阴影"
 }

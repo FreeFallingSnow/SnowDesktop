@@ -2937,9 +2937,6 @@
   "core.drag.link_in_folder": "Criar atalhos em “{0}”",
   "app.settings.widgets_installed_version": "Versão instalada",
   "app.settings.widgets_development_version": "Versão de desenvolvimento",
-  "settings.personalization.wcgHighlightCompensation": "Compensação para telas de ampla gama de cores",
-  "settings.personalization.wcgHighlightCompensation.hint": "Aplica-se a telas SDR em modo WCG com saída de 10 bits e o gerenciamento automático de cores (ACM) do Windows ativado. Nessa combinação, realces translúcidos e bordas de sombras podem ficar esbranquiçados. A pré-composição de sombras se aplica aos ícones do Dock e aos widgets com vidro fosco e sombra.",
-  "settings.personalization.displayEffects": "Efeitos de exibição",
   "app.settings.icon_shadows": "Sombras dos ícones",
   "app.settings.icon_shadow_fan": "Ícones na visualização em leque",
   "app.settings.icon_shadow_dock": "Ícones do Dock",
@@ -2947,10 +2944,5 @@
   "app.settings.icon_shadow_desktop": "Ícones da área de trabalho",
   "app.settings.icon_shadow_popup": "Ícones em janelas pop-up",
   "app.settings.icon_shadow_quick_navigation": "Ícones na navegação rápida",
-  "app.settings.icon_shadow_subject": "Sombra da figura do ícone estilizado",
-  "settings.personalization.wcg.highlights": "Somente realces",
-  "settings.personalization.wcg.composite": "Realces e pré-composição de sombras",
-  "settings.personalization.wcg.unknown": "Indisponível",
-  "settings.personalization.wcg.workaroundTitle": "Solução alternativa no Windows",
-  "settings.personalization.wcg.workaround": "Se o halo persistir, abra Configurações do Windows > Sistema > Tela > Perfil de cor, selecione a tela afetada e desative Gerenciar automaticamente as cores dos aplicativos."
+  "app.settings.icon_shadow_subject": "Sombra da figura do ícone estilizado"
 }

@@ -2937,9 +2937,6 @@
   "core.drag.link_in_folder": "Verknüpfungen in „{0}“ erstellen",
   "app.settings.widgets_installed_version": "Installierte Version",
   "app.settings.widgets_development_version": "Entwicklungsversion",
-  "settings.personalization.wcgHighlightCompensation": "Korrektur für große Farbräume",
-  "settings.personalization.wcgHighlightCompensation.hint": "Gilt für SDR-Displays im WCG-Modus mit 10-Bit-Ausgabe und aktivierter automatischer Farbverwaltung (ACM) in Windows. Dabei können durchscheinende Glanzlichter und Schattenränder ausgewaschen wirken. Die Schatten-Vorkomposition gilt für Glas-Dock-Symbole und Widgets mit Schatten.",
-  "settings.personalization.displayEffects": "Anzeigeeffekte",
   "app.settings.icon_shadows": "Symbolschatten",
   "app.settings.icon_shadow_fan": "Symbole in der Fächeransicht",
   "app.settings.icon_shadow_dock": "Dock-Symbole",
@@ -2947,10 +2944,5 @@
   "app.settings.icon_shadow_desktop": "Desktopsymbole",
   "app.settings.icon_shadow_popup": "Symbole in Pop-ups",
   "app.settings.icon_shadow_quick_navigation": "Symbole in der Schnellnavigation",
-  "app.settings.icon_shadow_subject": "Schatten des verschönerten Symbolmotivs",
-  "settings.personalization.wcg.highlights": "Nur Glanzlichter",
-  "settings.personalization.wcg.composite": "Glanzlichter und Schatten-Vorkomposition",
-  "settings.personalization.wcg.unknown": "Nicht verfügbar",
-  "settings.personalization.wcg.workaroundTitle": "Abhilfe in Windows",
-  "settings.personalization.wcg.workaround": "Falls der helle Rand bestehen bleibt, öffnen Sie Windows-Einstellungen > System > Bildschirm > Farbprofil, wählen Sie den betroffenen Bildschirm und deaktivieren Sie „Farbe für Apps automatisch verwalten“."
+  "app.settings.icon_shadow_subject": "Schatten des verschönerten Symbolmotivs"
 }

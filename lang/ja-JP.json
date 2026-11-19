@@ -2937,9 +2937,6 @@
   "core.drag.link_in_folder": "「{0}」にショートカットを作成",
   "app.settings.widgets_installed_version": "インストール版",
   "app.settings.widgets_development_version": "開発版",
-  "settings.personalization.wcgHighlightCompensation": "広色域ディスプレイ補正",
-  "settings.personalization.wcgHighlightCompensation.hint": "10 ビット出力の SDR ディスプレイが WCG モードで動作し、Windows の自動カラー管理（ACM）が有効な場合に適用されます。この組み合わせでは、半透明のハイライトや影の縁が白っぽく見える場合があります。影の事前合成は、すりガラス効果と影を使う Dock アイコンおよびウィジェットに適用されます。",
-  "settings.personalization.displayEffects": "表示効果",
   "app.settings.icon_shadows": "アイコンの影",
   "app.settings.icon_shadow_fan": "扇形表示のアイコン",
   "app.settings.icon_shadow_dock": "Dock のアイコン",
@@ -2947,10 +2944,5 @@
   "app.settings.icon_shadow_desktop": "デスクトップのアイコン",
   "app.settings.icon_shadow_popup": "ポップアップ内のアイコン",
   "app.settings.icon_shadow_quick_navigation": "クイックナビゲーションのアイコン",
-  "app.settings.icon_shadow_subject": "装飾アイコン本体の影",
-  "settings.personalization.wcg.highlights": "ハイライトのみ",
-  "settings.personalization.wcg.composite": "ハイライトと影の事前合成",
-  "settings.personalization.wcg.unknown": "取得できません",
-  "settings.personalization.wcg.workaroundTitle": "Windows での回避策",
-  "settings.personalization.wcg.workaround": "白い縁が残る場合は、Windows の「設定」→「システム」→「ディスプレイ」→「カラー プロファイル」で対象のディスプレイを選び、「アプリの色を自動的に管理する」をオフにします。"
+  "app.settings.icon_shadow_subject": "装飾アイコン本体の影"
 }
