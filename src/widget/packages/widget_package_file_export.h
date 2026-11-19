@@ -1,6 +1,6 @@
 #pragma once
 
-#include "widget_package.h"
+#include "widget_package_manager.h"
 #include <windows.h>
 #include <filesystem>
 #include <functional>

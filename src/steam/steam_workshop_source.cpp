@@ -9,6 +9,8 @@
 #include "steam_child_environment.h"
 #include "steam_workshop_cache.h"
 #include "steam_workshop_validation_cache.h"
+#include "widget/packages/widget_package_manager.h"
+#include "widget/packages/widget_package_validation.h"
 #include "shell/shell_extension_diagnostics.h"
 
 #include <windows.h>

@@ -9,6 +9,8 @@
 #include "theme/panel_gradient_renderer.h"
 #include "widget/runtime/widget_engine.h"
 #include "widget/packages/widget_package.h"
+#include "widget/packages/widget_package_manager.h"
+#include "widget/packages/widget_package_validation.h"
 #include "widget/preview/widget_preview_stage.h"
 
 #include <d2d1_1.h>

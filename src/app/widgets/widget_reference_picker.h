@@ -1,7 +1,7 @@
 #pragma once
 
 #include "widget/settings/widget_settings_service.h"
-#include "widget/runtime/widget_logical_slot.h"
+#include "widget/runtime/widget_logical_slot_values.h"
 
 #include <cstdint>
 #include <optional>

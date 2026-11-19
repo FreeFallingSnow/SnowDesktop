@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "component_workshop_publish.h"
-#include "widget/packages/widget_package.h"
+#include "widget/packages/widget_package_limits.h"
 
 #include <algorithm>
 #include <charconv>

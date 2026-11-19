@@ -2,7 +2,7 @@
 
 #include "common/utils.h"
 #include "lua_runtime.h"
-#include "widget/packages/widget_package.h"
+#include "widget/packages/widget_package_limits.h"
 #include "widget/packages/widget_package_paths.h"
 
 #include <filesystem>

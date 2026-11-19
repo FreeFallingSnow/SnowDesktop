@@ -1,7 +1,7 @@
 #pragma once
 
 #include "widget/packages/widget_package.h"
-#include "widget/runtime/widget_logical_slot.h"
+#include "widget/api/widget_logical_slot_declarations.h"
 
 #include <filesystem>
 #include <optional>

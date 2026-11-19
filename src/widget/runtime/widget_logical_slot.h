@@ -1,7 +1,10 @@
 #pragma once
 
+#include "widget_logical_slot_values.h"
+#include "widget/api/widget_logical_slot_declarations.h"
+
 #include <cstddef>
-#include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -11,71 +14,6 @@
 
 namespace snowdesktop::widget_runtime
 {
-enum class LogicalSlotKind
-{
-    Binding,
-    Collection,
-};
-
-struct LogicalSlotDeclaration
-{
-    LogicalSlotKind kind = LogicalSlotKind::Binding;
-    std::vector<std::string> accepts;
-    std::string operation = "reference";
-    std::string replacePolicy = "allow";
-    bool allowClear = true;
-    std::size_t capacity = 1;
-
-    bool operator==(const LogicalSlotDeclaration&) const = default;
-};
-
-using LogicalSlotDeclarations =
-    std::map<std::string, LogicalSlotDeclaration, std::less<>>;
-
-struct LogicalSlotManifestError
-{
-    std::string code;
-    std::string message;
-};
-
-std::string SerializeLogicalSlotDeclarations(
-    const LogicalSlotDeclarations& declarations);
-const char* LogicalSlotKindName(LogicalSlotKind kind) noexcept;
-
-struct LogicalSlotItem
-{
-    std::string id;
-    std::string reference;
-    std::string kind;
-    std::string title;
-    std::string source;
-    std::string type;
-    std::string target;
-    bool available = true;
-
-    bool operator==(const LogicalSlotItem&) const = default;
-};
-
-struct LogicalSlotSnapshot
-{
-    std::string id;
-    LogicalSlotKind kind = LogicalSlotKind::Binding;
-    std::uint64_t revision = 0;
-    std::size_t capacity = 1;
-    std::vector<LogicalSlotItem> items;
-};
-
-struct LogicalSlotChange
-{
-    std::string slotId;
-    LogicalSlotKind kind = LogicalSlotKind::Binding;
-    std::uint64_t revision = 0;
-    std::string operation;
-    std::vector<std::string> itemIds;
-    std::string relatedSlotId;
-    std::uint64_t relatedRevision = 0;
-};
-
 class LogicalSlotModel
 {
 public:

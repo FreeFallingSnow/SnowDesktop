@@ -1,6 +1,6 @@
 #include "behavior_fixture.h"
 #include "common/json_value.h"
-#include "widget/packages/widget_package.h"
+#include "widget/packages/widget_package_manager.h"
 #include <algorithm>
 #include <iostream>
 #include <set>

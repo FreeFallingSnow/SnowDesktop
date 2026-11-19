@@ -1,7 +1,7 @@
 #include "widget_author_test.h"
 
 #include "widget/runtime/lua_runtime.h"
-#include "widget/packages/widget_package.h"
+#include "widget/packages/widget_package_limits.h"
 
 #include <windows.h>
 

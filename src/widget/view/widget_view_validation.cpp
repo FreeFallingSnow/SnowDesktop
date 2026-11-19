@@ -2,6 +2,7 @@
 #include "widget_view_node_rules.h"
 #include "widget_view_transition_validation.h"
 #include "widget_view_tree.h"
+#include "widget/api/widget_logical_slot_declarations.h"
 #include "widget/api/widget_view_contract.h"
 
 #include <algorithm>

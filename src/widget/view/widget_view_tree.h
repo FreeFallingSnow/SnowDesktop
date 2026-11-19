@@ -1,7 +1,7 @@
 #pragma once
 
 #include "widget_interaction_region.h"
-#include "widget/runtime/widget_logical_slot.h"
+#include "widget/api/widget_logical_slot_declarations.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -20,6 +20,8 @@
 
 namespace snowdesktop::widget_runtime
 {
+class LogicalSlotModel;
+
 enum class ViewNodeType
 {
     Box,

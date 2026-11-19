@@ -1,6 +1,6 @@
 #pragma once
 
-#include "widget_logical_slot.h"
+#include "widget/api/widget_logical_slot_declarations.h"
 #include "widget/view/widget_interaction_types.h"
 
 #include <windows.h>

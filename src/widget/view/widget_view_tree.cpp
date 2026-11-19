@@ -5,6 +5,7 @@
 #include "widget_view_node_rules.h"
 #include "widget_view_validation.h"
 #include "widget/api/widget_view_contract.h"
+#include "widget/runtime/widget_logical_slot.h"
 
 #include <algorithm>
 #include <array>

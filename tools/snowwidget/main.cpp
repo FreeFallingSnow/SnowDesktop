@@ -1,4 +1,6 @@
-#include "widget/packages/widget_package.h"
+#include "widget/packages/widget_package_manager.h"
+#include "widget/packages/widget_package_publisher.h"
+#include "widget/packages/widget_package_validation.h"
 #include "widget/authoring/widget_author_lint.h"
 #include "widget/authoring/widget_author_permissions.h"
 #include "widget/authoring/widget_author_test.h"

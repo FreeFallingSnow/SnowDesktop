@@ -1,6 +1,8 @@
 #include "widget_native_task_executor.h"
 #include "diagnostics/performance_trace.h"
 #include "widget/packages/widget_package.h"
+#include "widget/packages/widget_package_manager.h"
+#include "widget/packages/widget_package_validation.h"
 #include "common/json_value.h"
 
 #include <windows.h>

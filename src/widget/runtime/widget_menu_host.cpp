@@ -8,6 +8,7 @@
 #include "common/l10n.h"
 #include "widget/runtime/widget_menu_catalogue.h"
 #include "widget/packages/widget_package_host.h"
+#include "widget/packages/widget_package_manager.h"
 #include "widget/data/widget_resource_lua.h"
 #include "widget/api/widget_api_registry.h"
 #include "widget/view/widget_interaction_lua_value.h"

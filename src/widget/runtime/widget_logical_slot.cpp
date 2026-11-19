@@ -1,3 +1,5 @@
+#include "widget_logical_slot.h"
+#include "common/json_value.h"
 #include "widget/api/widget_logical_slot_manifest.h"
 
 #include <algorithm>

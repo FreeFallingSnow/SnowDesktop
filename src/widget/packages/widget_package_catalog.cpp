@@ -1,4 +1,4 @@
-#include "widget_package.h"
+#include "widget_package_manager.h"
 #include "widget_catalog_refresh.h"
 #include "widget_package_read.h"
 

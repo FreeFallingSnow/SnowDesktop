@@ -11,6 +11,7 @@
 #include "widget/view/widget_draw_lua.h"
 #include "widget/view/widget_draw_context.h"
 #include "widget/packages/widget_package_host.h"
+#include "widget/packages/widget_package_manager.h"
 #include "widget/packages/widget_package_paths.h"
 #include "widget/data/widget_resource_lua.h"
 #include "widget/permissions/widget_permission_broker.h"

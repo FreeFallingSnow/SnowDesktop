@@ -1,6 +1,7 @@
 #include "../src/winui/widget_package_review.h"
 #include "test_temporary_directory.h"
 #include "steam/workshop_validation_cache_tests.h"
+#include "widget/packages/widget_package_manager.h"
 
 #include <fstream>
 #include <cstdlib>

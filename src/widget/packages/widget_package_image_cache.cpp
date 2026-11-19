@@ -1,7 +1,7 @@
 #include "widget_package_image_cache.h"
 
 #include "common/background_work.h"
-#include "widget_package.h"
+#include "widget_package_limits.h"
 #include <algorithm>
 #include <cmath>
 #include <filesystem>

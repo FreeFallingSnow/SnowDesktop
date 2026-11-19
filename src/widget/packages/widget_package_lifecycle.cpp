@@ -1,4 +1,5 @@
-#include "widget_package.h"
+#include "widget_package_manager.h"
+#include "widget_package_limits.h"
 #include "widget_package_read.h"
 
 #include <algorithm>

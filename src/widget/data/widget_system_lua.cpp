@@ -2,6 +2,7 @@
 
 #include "common/utils.h"
 #include "platform/deployment_context.h"
+#include "widget/packages/widget_package.h"
 #include "widget/preview/widget_preview_context.h"
 #include "widget/runtime/widget_lua_binding_context.h"
 #include "widget/runtime/widget_engine.h"

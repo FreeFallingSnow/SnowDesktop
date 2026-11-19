@@ -1,6 +1,7 @@
 #include "widget_logical_slot_lua.h"
 
 #include "widget_lua_binding_context.h"
+#include "widget_logical_slot.h"
 #include "widget_engine.h"
 
 #include <algorithm>

@@ -1,6 +1,5 @@
 #include "widget_package_paths.h"
-
-#include "widget_package.h"
+#include "widget_package_validation.h"
 
 #include "data/data_paths.h"
 

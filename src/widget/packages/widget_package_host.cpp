@@ -1,4 +1,6 @@
 #include "widget_package_host.h"
+#include "widget_package_manager.h"
+#include "widget_package_sources.h"
 
 #include "common/utils.h"
 #include "data/data_paths.h"

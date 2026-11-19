@@ -1,5 +1,8 @@
 #include "widget/authoring/widget_author_permissions.h"
 #include "widget/packages/widget_package.h"
+#include "widget/packages/widget_package_manager.h"
+#include "widget/packages/widget_package_validation.h"
+#include "widget/packages/widget_size_rules.h"
 #include "widget/packages/widget_catalog_refresh.h"
 #include "widget/packages/widget_package_file_export.h"
 #include "widget/api/widget_api_registry.h"

@@ -2,6 +2,7 @@
 #include "widget/runtime/widget_lua_binding_context.h"
 #include "widget/view/widget_render_host_context.h"
 #include "widget/api/widget_api_registry.h"
+#include "widget/packages/widget_package.h"
 #include "widget/data/widget_data_subscription_lua.h"
 #include "widget/data/widget_resource_lua.h"
 #include "widget/data/widget_system_lua.h"

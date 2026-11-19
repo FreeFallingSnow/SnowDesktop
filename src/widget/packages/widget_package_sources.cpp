@@ -1,4 +1,5 @@
-#include "widget_package.h"
+#include "widget_package_sources.h"
+#include "widget_package_manager.h"
 #include "widget_package_manifest_fields.h"
 #include "widget_package_read.h"
 

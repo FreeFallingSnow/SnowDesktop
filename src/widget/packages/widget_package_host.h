@@ -1,11 +1,13 @@
 #pragma once
 
-#include "widget/packages/widget_package.h"
+#include "widget_package_catalog_snapshot.h"
 
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
+
+namespace snowdesktop::widget { class WidgetPackageManager; }
 
 namespace snowdesktop::widget_runtime
 {
