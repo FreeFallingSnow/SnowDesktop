@@ -19,6 +19,7 @@
 #include "widget_engine.h"
 #include "widget_multiplayer.h"
 #include "widget_script_read_ahead.h"
+#include "widget/tasks/widget_clipboard_task_dispatch.h"
 #include "widget/tasks/widget_filesystem_task_dispatch.h"
 #include "widget/tasks/widget_filesystem_task_executor.h"
 #include "widget/tasks/widget_task_start_lua.h"
@@ -2854,45 +2855,36 @@ static bool IsPreviewFilesystemHandle(std::string_view handle)
         handle == "filesystem:11111111111111111111111111111111";
 }
 
-static const char* ResolveClipboardWriteFiles(const LuaWidget& owner,
+static const char* ResolveClipboardWriteFile(const LuaWidget& owner,
     const snowdesktop::widget_runtime::TaskBrokerAction& action,
     const snowdesktop::widget_runtime::WidgetFilesystemHandleStore* handleStore,
-    std::vector<std::filesystem::path>& files)
+    const std::string& reference, std::filesystem::path& path)
 {
     using snowdesktop::widget::WidgetPermissionBroker;
-    using snowdesktop::widget_runtime::WidgetClipboardTaskExecutor;
     using snowdesktop::widget_runtime::WidgetFilesystemHandleAccess;
-    for (std::size_t index = 1; index <= WidgetClipboardTaskExecutor::MaximumFileReferences; ++index)
+    if (reference.starts_with("item:"))
     {
-        const auto item = action.arguments.find("item" + std::to_string(index));
-        if (item == action.arguments.end()) break;
-        const auto& reference = item->second;
-        if (reference.starts_with("item:"))
-        {
-            if (!WidgetPermissionBroker::AllowsPermission(owner.permissions, kClipboardReadPermission))
-                return "permissionDenied";
-            const auto found = owner.itemReferences.find(reference);
-            if (found == owner.itemReferences.end() || found->second.sourceTask != "clipboard.read")
-                return "invalidReference";
-            files.emplace_back(Utf8ToWideLocal(found->second.target));
-        }
-        else
-        {
-            if (!WidgetPermissionBroker::AllowsPermission(owner.permissions, kFilesystemReadPermission))
-                return "permissionDenied";
-            if (action.preview && IsPreviewFilesystemHandle(reference))
-            {
-                files.emplace_back(L"C:\\Preview\\Preview.txt");
-                continue;
-            }
-            const auto entry = handleStore ? handleStore->Resolve(
-                { action.instanceId, owner.packageId }, reference) : std::nullopt;
-            if (!entry) return "invalidReference";
-            if (entry->access == WidgetFilesystemHandleAccess::Write)
-                return "handleAccessDenied";
-            files.push_back(entry->path);
-        }
+        if (!WidgetPermissionBroker::AllowsPermission(owner.permissions, kClipboardReadPermission))
+            return "permissionDenied";
+        const auto found = owner.itemReferences.find(reference);
+        if (found == owner.itemReferences.end() || found->second.sourceTask != "clipboard.read")
+            return "invalidReference";
+        path = Utf8ToWideLocal(found->second.target);
+        return nullptr;
     }
+    if (!WidgetPermissionBroker::AllowsPermission(owner.permissions, kFilesystemReadPermission))
+        return "permissionDenied";
+    if (action.preview && IsPreviewFilesystemHandle(reference))
+    {
+        path = L"C:\\Preview\\Preview.txt";
+        return nullptr;
+    }
+    const auto entry = handleStore ? handleStore->Resolve(
+        { action.instanceId, owner.packageId }, reference) : std::nullopt;
+    if (!entry) return "invalidReference";
+    if (entry->access == WidgetFilesystemHandleAccess::Write)
+        return "handleAccessDenied";
+    path = entry->path;
     return nullptr;
 }
 
@@ -9214,21 +9206,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         }
     }
     if (clipboardTaskExecutor_)
-    {
-        for (auto& completion :
-            clipboardTaskExecutor_->DrainCompletions())
-        {
-            const std::uint64_t id = completion.id;
-            const bool ok = completion.ok;
-            std::string error = completion.error;
-            if (ok && completion.action == "clipboard.read")
-                clipboardTaskCompletions_.insert_or_assign(
-                    id, std::move(completion));
-            else
-                clipboardTaskCompletions_.erase(id);
-            (void)taskBroker_->Complete(id, ok, std::move(error));
-        }
-    }
+        clipboardTaskDispatch_.Consume(clipboardTaskExecutor_->DrainCompletions(), *taskBroker_);
     if (filesystemTaskExecutor_)
         filesystemTaskDispatch_.Consume(filesystemTaskExecutor_->DrainCompletions(),
             *taskBroker_, filesystemHandleStore_.get(),
@@ -10688,128 +10666,40 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         if (snowdesktop::widget_runtime::WidgetClipboardTaskExecutor::
                 SupportsAction(action.name))
         {
-            snowdesktop::widget_runtime::WidgetClipboardTaskRequest
-                clipboardRequest;
-            clipboardRequest.action = action.name;
-            if (const auto format = action.arguments.find("format");
-                format != action.arguments.end())
-                clipboardRequest.format = format->second;
-            if (action.name == "clipboard.write")
-            {
-                if (clipboardRequest.format == "text" || clipboardRequest.format == "html")
-                {
-                    const auto value = action.arguments.find(clipboardRequest.format);
-                    if (value == action.arguments.end())
+            using namespace snowdesktop::widget_runtime;
+            WidgetClipboardTaskRequest clipboardRequest;
+            const ClipboardWriteSources sources{
+                [this, &owner](const std::string& name, WidgetClipboardTaskRequest& request) {
+                    if (IsWidgetRuntimeImageToken(name))
                     {
-                        (void)taskBroker_->Complete(action.id, false, "invalidArguments");
-                        continue;
-                    }
-                    clipboardRequest.text = value->second;
-                }
-                else if (clipboardRequest.format == "image")
-                {
-                    if (const auto image = action.arguments.find("image");
-                        image != action.arguments.end())
-                    {
-                        if (snowdesktop::widget_runtime::IsWidgetRuntimeImageToken(image->second))
+                        if (d2dState_)
                         {
-                            if (d2dState_)
-                            {
-                                const auto source = d2dState_->runtimeImages.find(image->second);
-                                if (source != d2dState_->runtimeImages.end() &&
-                                    source->second.ownerWidgetId == owner->widgetId)
-                                    clipboardRequest.image = source->second.pixels;
-                            }
-                        }
-                        else if (const auto path = RuntimeResolvePackageResource(
-                                owner->widgetId, image->second, "image"))
-                        {
-                            clipboardRequest.imagePath = *path;
+                            const auto source = d2dState_->runtimeImages.find(name);
+                            if (source != d2dState_->runtimeImages.end() &&
+                                source->second.ownerWidgetId == owner->widgetId)
+                                request.image = source->second.pixels;
                         }
                     }
-                    if (!clipboardRequest.image && clipboardRequest.imagePath.empty())
+                    else if (const auto path = RuntimeResolvePackageResource(
+                            owner->widgetId, name, "image"))
                     {
-                        (void)taskBroker_->Complete(action.id, false, "clipboardImageUnavailable");
-                        continue;
+                        request.imagePath = *path;
                     }
-                }
-                else if (clipboardRequest.format == "file-reference")
-                {
-                    if (const char* error = ResolveClipboardWriteFiles(*owner,
-                            action, filesystemHandleStore_.get(), clipboardRequest.files))
-                    {
-                        (void)taskBroker_->Complete(action.id, false, error);
-                        continue;
-                    }
-                }
-            }
-            if (!snowdesktop::widget_runtime::WidgetClipboardTaskExecutor::
-                    ValidateRequest(clipboardRequest))
+                },
+                [this, &owner, &action](const std::string& reference, std::filesystem::path& path) {
+                    return ResolveClipboardWriteFile(*owner, action,
+                        filesystemHandleStore_.get(), reference, path);
+                },
+            };
+            if (const char* error = PrepareClipboardTaskRequest(action, sources, clipboardRequest))
             {
-                (void)taskBroker_->Complete(
-                    action.id, false, "invalidArguments");
+                (void)taskBroker_->Complete(action.id, false, error);
                 continue;
             }
             if (action.preview)
             {
                 if (action.name == "clipboard.read")
-                {
-                    snowdesktop::widget_runtime::
-                        WidgetClipboardTaskCompletion completion;
-                    completion.id = action.id;
-                    completion.action = action.name;
-                    completion.ok = true;
-                    completion.format = clipboardRequest.format;
-                    if (completion.format == "text")
-                    {
-                        completion.text = "Preview clipboard";
-                    }
-                    else if (completion.format == "html")
-                    {
-                        completion.text = "<strong>Preview clipboard</strong>";
-                    }
-                    else if (completion.format == "image")
-                    {
-                        auto pixels = std::make_shared<snowdesktop::
-                            widget_runtime::WidgetRuntimeImagePixels>();
-                        pixels->width = 64;
-                        pixels->height = 64;
-                        pixels->stride = pixels->width * 4;
-                        pixels->bgraPremultiplied.resize(
-                            pixels->stride * pixels->height);
-                        for (std::uint32_t y = 0; y < pixels->height; ++y)
-                        {
-                            for (std::uint32_t x = 0; x < pixels->width; ++x)
-                            {
-                                const std::size_t offset =
-                                    static_cast<std::size_t>(
-                                        y * pixels->stride + x * 4);
-                                pixels->bgraPremultiplied[offset] =
-                                    static_cast<std::uint8_t>(48 + x * 3);
-                                pixels->bgraPremultiplied[offset + 1] =
-                                    static_cast<std::uint8_t>(80 + y * 2);
-                                pixels->bgraPremultiplied[offset + 2] = 210;
-                                pixels->bgraPremultiplied[offset + 3] = 255;
-                            }
-                        }
-                        completion.resourceToken = snowdesktop::widget_runtime::
-                            MakeWidgetRuntimeImageToken(
-                                "clipboard", *pixels);
-                        completion.image = std::move(pixels);
-                    }
-                    else
-                    {
-                        completion.files.push_back({
-                            std::filesystem::path(
-                                L"C:\\Users\\Maya\\Documents\\Preview.txt"),
-                            false });
-                        completion.files.push_back({
-                            std::filesystem::path(
-                                L"C:\\Users\\Maya\\Pictures"), true });
-                    }
-                    clipboardTaskCompletions_.insert_or_assign(
-                        action.id, std::move(completion));
-                }
+                    clipboardTaskDispatch_.StorePreviewRead(action.id, clipboardRequest.format);
                 (void)taskBroker_->Complete(action.id, true);
                 continue;
             }
@@ -11288,8 +11178,6 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         const auto locationCompletion = locationTaskCompletions_.find(completion.id);
         const auto networkCompletion =
             networkTaskCompletions_.find(completion.id);
-        const auto clipboardCompletion =
-            clipboardTaskCompletions_.find(completion.id);
         if (widget == widgets_.end() ||
             widget->taskIds.erase(completion.id) == 0)
         {
@@ -11306,8 +11194,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                     notificationCompletion);
             if (networkCompletion != networkTaskCompletions_.end())
                 networkTaskCompletions_.erase(networkCompletion);
-            if (clipboardCompletion != clipboardTaskCompletions_.end())
-                clipboardTaskCompletions_.erase(clipboardCompletion);
+            clipboardTaskDispatch_.DiscardCompletion(completion.id);
             filesystemTaskDispatch_.DiscardCompletion(completion.id);
             continue;
         }
@@ -11354,14 +11241,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             completion.ok = false;
             completion.error = "taskResultUnavailable";
         }
-        const bool clipboardReadTask =
-            completion.name == "clipboard.read";
-        if (completion.ok && clipboardReadTask &&
-            clipboardCompletion == clipboardTaskCompletions_.end())
-        {
-            completion.ok = false;
-            completion.error = "taskResultUnavailable";
-        }
+        auto clipboardPayload = clipboardTaskDispatch_.TakeCompletion(completion);
         auto filesystemPayload = filesystemTaskDispatch_.TakeCompletion(completion);
         const bool itemSearchTask =
             completion.name == "desktop.search" ||
@@ -11381,7 +11261,6 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             std::string type;
         };
         std::vector<PublicAppSearchItem> publicItems;
-        std::vector<PublicAppSearchItem> publicClipboardItems;
         std::size_t nextOffset = 0;
         bool hasMore = false;
         std::uint64_t catalogRevision = 0;
@@ -11489,70 +11368,29 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         const HttpResponse* networkResult =
             networkCompletion != networkTaskCompletions_.end()
             ? &networkCompletion->second : nullptr;
-        const snowdesktop::widget_runtime::WidgetClipboardTaskCompletion*
-            clipboardResult =
-                clipboardCompletion != clipboardTaskCompletions_.end()
-                ? &clipboardCompletion->second : nullptr;
-        std::string clipboardImageToken;
-        if (completion.ok && clipboardResult &&
-            clipboardResult->format == "image")
+        if (clipboardPayload.HasValue())
         {
-            clipboardImageToken = RegisterRuntimeImageSource(
-                d2dState_, widget->widgetId,
-                clipboardResult->resourceToken,
-                clipboardResult->image, "clipboard");
-            if (clipboardImageToken.empty())
-            {
-                completion.ok = false;
-                completion.error = "taskResultUnavailable";
-            }
-        }
-        if (completion.ok && clipboardResult &&
-            clipboardResult->format == "file-reference")
-        {
-            constexpr std::size_t MaximumReferences = 4096;
-            std::erase_if(widget->itemReferences, [](const auto& entry) {
-                return entry.second.sourceTask == "clipboard.read";
-            });
-            if (widget->itemReferences.size() +
-                    clipboardResult->files.size() > MaximumReferences)
-            {
-                widget->itemReferences.clear();
-            }
-            publicClipboardItems.reserve(clipboardResult->files.size());
-            for (const auto& file : clipboardResult->files)
-            {
-                const std::string target = WidgetWideToUtf8(
-                    file.path.wstring());
-                std::wstring displayName = file.path.filename().wstring();
-                if (displayName.empty())
-                    displayName = file.path.root_name().wstring();
-                const std::string name = WidgetWideToUtf8(displayName);
-                const std::string reference = snowdesktop::widget_runtime::
-                    MakeWidgetItemReference(
-                        "clipboard.read:" +
-                            std::to_string(widget->runtimeToken),
-                        target);
-                if (target.empty() || name.empty() || reference.empty())
-                {
-                    completion.ok = false;
-                    completion.error = "taskResultUnavailable";
-                    publicClipboardItems.clear();
-                    std::erase_if(widget->itemReferences,
-                        [](const auto& entry) {
-                            return entry.second.sourceTask ==
-                                "clipboard.read";
-                        });
-                    break;
-                }
-                widget->itemReferences.insert_or_assign(reference,
-                    LuaWidget::ItemReference{ target, "clipboard.read",
-                        completion.id, name, "clipboard",
-                        file.folder ? "folder" : "file",
-                        "filesystem.reference", false });
-                publicClipboardItems.push_back({ reference, name,
-                    "clipboard", file.folder ? "folder" : "file" });
-            }
+            clipboardPayload.PrepareValue(completion,
+                [this, &widget](const std::string& token,
+                    const std::shared_ptr<const snowdesktop::widget_runtime::WidgetRuntimeImagePixels>& pixels) {
+                    return RegisterRuntimeImageSource(d2dState_, widget->widgetId, token, pixels, "clipboard");
+                },
+                [&widget, &completion](std::size_t count,
+                    std::span<const snowdesktop::widget_runtime::ClipboardFileItem> files) {
+                    constexpr std::size_t MaximumReferences = 4096;
+                    std::erase_if(widget->itemReferences, [](const auto& entry) {
+                        return entry.second.sourceTask == "clipboard.read";
+                    });
+                    if (widget->itemReferences.size() + count > MaximumReferences)
+                        widget->itemReferences.clear();
+                    for (const auto& file : files)
+                    {
+                        widget->itemReferences.insert_or_assign(file.reference,
+                            LuaWidget::ItemReference{file.target, "clipboard.read",
+                                completion.id, file.name, "clipboard",
+                                file.folder ? "folder" : "file", "filesystem.reference", false});
+                    }
+                });
         }
         filesystemPayload.PrepareValue(completion, [this, &widget](const std::string& token,
             const std::shared_ptr<const snowdesktop::widget_runtime::WidgetRuntimeImagePixels>& pixels) {
@@ -11561,14 +11399,12 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
             trustedGestureState_, false);
         (void)InvokeLifecycleEvent(*widget, "task.complete",
-            [&completion, &publicItems, &publicClipboardItems,
-                clipboardImageToken,
+            [&completion, &publicItems, &clipboardPayload,
                 nextOffset, hasMore,
                 catalogRevision, calendarTask, itemSearchTask,
                 calendarResult, notificationIdTask,
                 notificationCompletion, locationTask, locationResult, networkTask,
-                networkResult, clipboardReadTask,
-                clipboardResult, &filesystemPayload, &nativePayload](lua_State* eventState) {
+                networkResult, &filesystemPayload, &nativePayload](lua_State* eventState) {
                 lua_pushinteger(eventState,
                     static_cast<lua_Integer>(completion.id));
                 lua_setfield(eventState, -2, "taskId");
@@ -11670,57 +11506,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                             networkResult->fromCache ? 1 : 0);
                         lua_setfield(eventState, -2, "fromCache");
                     }
-                    else if (clipboardReadTask)
-                    {
-                        lua_createtable(eventState, 0, 5);
-                        lua_pushlstring(eventState,
-                            clipboardResult->format.data(),
-                            clipboardResult->format.size());
-                        lua_setfield(eventState, -2, "format");
-                        if (clipboardResult->format == "text" || clipboardResult->format == "html")
-                        {
-                            lua_pushlstring(eventState,
-                                clipboardResult->text.data(),
-                                clipboardResult->text.size());
-                            lua_setfield(eventState, -2, clipboardResult->format.c_str());
-                        }
-                        else if (clipboardResult->format == "image")
-                        {
-                            PushResourceHandle(eventState,
-                                LuaResourceType::Image,
-                                clipboardImageToken);
-                            lua_setfield(eventState, -2, "image");
-                            lua_pushinteger(eventState,
-                                clipboardResult->image->width);
-                            lua_setfield(eventState, -2, "width");
-                            lua_pushinteger(eventState,
-                                clipboardResult->image->height);
-                            lua_setfield(eventState, -2, "height");
-                        }
-                        else
-                        {
-                            lua_createtable(eventState,
-                                static_cast<int>(
-                                    publicClipboardItems.size()), 0);
-                            int index = 1;
-                            for (const auto& item : publicClipboardItems)
-                            {
-                                lua_createtable(eventState, 0, 3);
-                                lua_pushlstring(eventState,
-                                    item.reference.data(),
-                                    item.reference.size());
-                                lua_setfield(eventState, -2, "ref");
-                                lua_pushlstring(eventState,
-                                    item.title.data(), item.title.size());
-                                lua_setfield(eventState, -2, "name");
-                                lua_pushlstring(eventState,
-                                    item.type.data(), item.type.size());
-                                lua_setfield(eventState, -2, "type");
-                                lua_rawseti(eventState, -2, index++);
-                            }
-                            lua_setfield(eventState, -2, "items");
-                        }
-                    }
+                    else if (clipboardPayload.HasValue())
+                        clipboardPayload.PushValue(eventState);
                     else if (filesystemPayload.HasValue())
                         filesystemPayload.PushValue(eventState, completion.name);
                     else
@@ -11762,8 +11549,6 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         locationTaskCompletions_.erase(completion.id);
         if (networkCompletion != networkTaskCompletions_.end())
             networkTaskCompletions_.erase(networkCompletion);
-        if (clipboardCompletion != clipboardTaskCompletions_.end())
-            clipboardTaskCompletions_.erase(clipboardCompletion);
     }
     for (const auto& message : audioEvents)
     {
@@ -11847,7 +11632,7 @@ void WidgetEngine::CancelWidgetTaskWork(
     itemSearchCompletions_.erase(taskId);
     calendarMutationCompletions_.erase(taskId);
     notificationTaskCompletions_.erase(taskId);
-    clipboardTaskCompletions_.erase(taskId);
+    clipboardTaskDispatch_.DiscardCompletion(taskId);
     filesystemTaskDispatch_.DiscardCompletion(taskId);
 }
 
@@ -12092,7 +11877,7 @@ void WidgetEngine::Shutdown()
     calendarMutationCompletions_.clear();
     notificationTaskCompletions_.clear();
     networkTaskCompletions_.clear();
-    clipboardTaskCompletions_.clear();
+    clipboardTaskDispatch_.Clear();
     filesystemTaskDispatch_.Clear();
     filesystemWatchBindings_.clear();
     networkTaskRequests_.clear();

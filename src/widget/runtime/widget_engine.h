@@ -58,7 +58,7 @@ namespace snowdesktop::widget_runtime { struct WidgetMultiplayer; }
 #include "widget/tasks/widget_audio_output_task_executor.h"
 #include "widget/tasks/widget_audio_playback.h"
 #include "widget/tasks/widget_system_control_tasks.h"
-#include "widget/tasks/widget_clipboard_task_executor.h"
+#include "widget/tasks/widget_clipboard_task_dispatch.h"
 #include "widget/tasks/widget_filesystem_handle_store.h"
 #include "widget/tasks/widget_filesystem_task_dispatch.h"
 #include "widget/tasks/widget_filesystem_watch_service.h"
@@ -1996,9 +1996,7 @@ private:
         notificationTaskCompletions_;
     std::unordered_map<std::uint64_t, HttpResponse>
         networkTaskCompletions_;
-    std::unordered_map<std::uint64_t,
-        snowdesktop::widget_runtime::WidgetClipboardTaskCompletion>
-        clipboardTaskCompletions_;
+    snowdesktop::widget_runtime::WidgetClipboardTaskDispatch clipboardTaskDispatch_;
     snowdesktop::widget_runtime::WidgetFilesystemTaskDispatch filesystemTaskDispatch_;
     struct FilesystemWatchBinding
     {
