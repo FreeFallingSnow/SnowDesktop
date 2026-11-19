@@ -51,7 +51,11 @@ Container* Slot::GetParent() const { return parent_; }
  * @brief 获取插槽的边界矩形
  * @return RECT 边界矩形（像素坐标）
  */
-RECT Slot::GetBounds() const { return bounds_; }
+RECT Slot::GetBounds() const
+{
+    return lifetime_ == SlotLifetime::ContainerCache && feedbackIdentity_.role == SlotFeedbackRole::None
+        ? parent_->PresentedSlotBounds(index_, bounds_) : bounds_;
+}
 
 /**
  * @brief 获取插槽中存放的项目指针
@@ -103,23 +107,24 @@ bool Slot::IsEmpty() const { return item_ == nullptr; }
  */
 RECT Slot::GetIconRect() const
 {
-    const int cellW = bounds_.right - bounds_.left;
-    const int cellH = bounds_.bottom - bounds_.top;
+    const RECT bounds = GetBounds();
+    const int cellW = bounds.right - bounds.left;
+    const int cellH = bounds.bottom - bounds.top;
     if (cellH < 50)
     {
         const int iconSz = std::min(32, cellH - 4);
         return RECT{
-            bounds_.left + 4,
-            bounds_.top + (cellH - iconSz) / 2,
-            bounds_.left + 4 + iconSz,
-            bounds_.top + (cellH + iconSz) / 2
+            bounds.left + 4,
+            bounds.top + (cellH - iconSz) / 2,
+            bounds.left + 4 + iconSz,
+            bounds.top + (cellH + iconSz) / 2
         };
     }
     const int maxIconW = std::max(16, cellW - 8);
     const int maxIconH = std::max(16, cellH - kTextHeight - 8);
     const int iconSz = std::min(maxIconW, maxIconH);
-    const int iconX = bounds_.left + (cellW - iconSz) / 2;
-    const int iconY = bounds_.top + 2;
+    const int iconX = bounds.left + (cellW - iconSz) / 2;
+    const int iconY = bounds.top + 2;
     return RECT{ iconX, iconY, iconX + iconSz, iconY + iconSz };
 }
 
@@ -137,7 +142,8 @@ RECT Slot::GetIconRect() const
  */
 HitRegion Slot::HitTest(POINT pt) const
 {
-    if (!PtInRect(&bounds_, pt)) return HitRegion::None;
+    const RECT bounds = GetBounds();
+    if (!PtInRect(&bounds, pt)) return HitRegion::None;
 
     if (IsEmpty()) return HitRegion::Empty;
 
@@ -148,13 +154,13 @@ HitRegion Slot::HitTest(POINT pt) const
     if (PtInRect(&handoffRect, pt)) return HitRegion::Handoff;
 
     // Sort: which half of the slot?
-    const int cellW = bounds_.right - bounds_.left;
-    const int cellH = bounds_.bottom - bounds_.top;
+    const int cellW = bounds.right - bounds.left;
+    const int cellH = bounds.bottom - bounds.top;
 
     BarStyle style = parent_ ? parent_->GetInsertionStyle() : BarStyle::HBar;
     if (style == BarStyle::VBar)
-        return (pt.x < bounds_.left + cellW / 2) ? HitRegion::SortBefore : HitRegion::SortAfter;
-    return (pt.y < bounds_.top + cellH / 2) ? HitRegion::SortBefore : HitRegion::SortAfter;
+        return (pt.x < bounds.left + cellW / 2) ? HitRegion::SortBefore : HitRegion::SortAfter;
+    return (pt.y < bounds.top + cellH / 2) ? HitRegion::SortBefore : HitRegion::SortAfter;
 }
 
 /**
@@ -230,6 +236,7 @@ void Slot::DrawDropIndicator(ID2D1DeviceContext* ctx, HitRegion region, float it
 void Slot::DrawDropIndicatorWithStyle(ID2D1DeviceContext* ctx,
     HitRegion region, BarStyle insertionStyle, float itemPad) const
 {
+    const RECT bounds = GetBounds();
     if (!ctx || region == HitRegion::None ||
         region == HitRegion::Handoff || region == HitRegion::Blocked)
         return;
@@ -243,7 +250,7 @@ void Slot::DrawDropIndicatorWithStyle(ID2D1DeviceContext* ctx,
 
     if (region == HitRegion::Empty)
     {
-        RECT r = bounds_;
+        RECT r = bounds;
         InflateRect(&r, -4, -4);
         D2D1_RECT_F rf = D2D1::RectF(
             static_cast<float>(r.left), static_cast<float>(r.top),
@@ -262,26 +269,26 @@ void Slot::DrawDropIndicatorWithStyle(ID2D1DeviceContext* ctx,
     {
         float x;
         if (region == HitRegion::SortBefore)
-            x = static_cast<float>(bounds_.left) - itemPad - lineWidth / 2.0f;
+            x = static_cast<float>(bounds.left) - itemPad - lineWidth / 2.0f;
         else
-            x = static_cast<float>(bounds_.right) + itemPad - lineWidth / 2.0f;
+            x = static_cast<float>(bounds.right) + itemPad - lineWidth / 2.0f;
 
         D2D1_RECT_F rf = D2D1::RectF(
-            x, static_cast<float>(bounds_.top) + 2.0f,
-            x + lineWidth, static_cast<float>(bounds_.bottom) - 2.0f);
+            x, static_cast<float>(bounds.top) + 2.0f,
+            x + lineWidth, static_cast<float>(bounds.bottom) - 2.0f);
         ctx->FillRectangle(rf, brush.Get());
     }
     else // HBar
     {
         float y;
         if (region == HitRegion::SortBefore)
-            y = static_cast<float>(bounds_.top) - itemPad - lineWidth / 2.0f;
+            y = static_cast<float>(bounds.top) - itemPad - lineWidth / 2.0f;
         else
-            y = static_cast<float>(bounds_.bottom) + itemPad - lineWidth / 2.0f;
+            y = static_cast<float>(bounds.bottom) + itemPad - lineWidth / 2.0f;
 
         D2D1_RECT_F rf = D2D1::RectF(
-            static_cast<float>(bounds_.left) + 4.0f, y,
-            static_cast<float>(bounds_.right) - 4.0f, y + lineWidth);
+            static_cast<float>(bounds.left) + 4.0f, y,
+            static_cast<float>(bounds.right) - 4.0f, y + lineWidth);
         ctx->FillRectangle(rf, brush.Get());
     }
 }

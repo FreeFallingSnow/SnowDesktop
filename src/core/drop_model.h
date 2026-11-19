@@ -18,6 +18,7 @@
 
 #include "slot_contract.h"
 #include "common/types.h"
+#include "common/utils.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -520,6 +521,35 @@ struct PendingFolderPlacement
  */
 struct PendingLandingCache
 {
+    struct FileVisual
+    {
+        size_t sourceIndex = 0;
+        std::wstring sourcePath;
+        std::wstring desktopKey;
+        std::shared_ptr<FolderEntry> appearance;
+        RECT sourceBounds{};
+    };
+    std::vector<FileVisual> files;
+    std::unordered_set<std::wstring> movedSourceKeys;
+    void UpdateMovedSourceKeys()
+    {
+        movedSourceKeys.clear();
+        if (!movingFiles) return;
+        for (const auto& source : files)
+        {
+            if (!source.sourcePath.empty()) movedSourceKeys.insert(ToUpperInvariant(source.sourcePath));
+            if (!source.desktopKey.empty()) movedSourceKeys.insert(ToUpperInvariant(source.desktopKey));
+        }
+    }
+    const FileVisual* FindFile(size_t sourceIndex) const
+    {
+        if (sourceIndex < files.size() && files[sourceIndex].sourceIndex == sourceIndex) return &files[sourceIndex];
+        const auto file = std::find_if(files.begin(), files.end(),
+            [sourceIndex](const auto& source) { return source.sourceIndex == sourceIndex; });
+        return file == files.end() ? nullptr : &*file;
+    }
+    std::wstring originWidgetId;
+    bool movingFiles = false;
     // A visible file request has two phases: waiting for Shell, then waiting
     // for its exact outputs to appear in the refreshed model.
     std::uint64_t visualId = 0;
@@ -537,6 +567,10 @@ struct PendingLandingCache
      */
     void Clear()
     {
+        files.clear();
+        movedSourceKeys.clear();
+        originWidgetId.clear();
+        movingFiles = false;
         visualId = 0;
         waitingForFiles = false;
         dockMonitor = nullptr;

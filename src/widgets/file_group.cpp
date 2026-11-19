@@ -1120,7 +1120,7 @@ std::vector<std::unique_ptr<Slot>> FileGroup::BuildSlots()
     {
         if (!sourceSlot) continue;
         auto slot = std::make_unique<Slot>(
-            source, sourceSlot->GetBounds(),
+            source, sourceSlot->GetModelBounds(),
             sourceSlot->GetIndex());
         if (auto clone = CloneHostedItem(
                 sourceSlot->GetItem(), this, app_))

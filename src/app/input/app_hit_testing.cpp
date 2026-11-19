@@ -88,6 +88,7 @@ DesktopIcon* DesktopApp::HitTestIcon(POINT pt) const
         if (!icon) continue;
         DesktopItem* di = icon->GetDesktopItem();
         if (!di || IsRectEmptyRect(di->bounds)) continue;
+        if (IsPendingMovedFile(di->parsingName, di->layoutKey)) continue;
         if (desktopIconsHidden_ && !IsRetainedLargeIcon(*di)) continue;
         RECT selRect = di->largeIcon ? GetLargeIconFrameRect(*di)
             : GetItemSelectionRect(di->bounds, di->selected);

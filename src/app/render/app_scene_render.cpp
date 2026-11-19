@@ -77,6 +77,7 @@ void DesktopApp::DrawStaticBackground(
             if (!icon) continue;
             DesktopItem* di = icon->GetDesktopItem();
             if (!di || IsRectEmptyRect(di->bounds)) continue;
+            if (IsPendingMovedFile(di->parsingName, di->layoutKey)) continue;
             if (hiddenMode && !IsRetainedLargeIcon(*di)) continue;
             if (di->largeIcon && !IsLargeIconVisible(*di, lastMousePoint_, hiddenMode)) continue;
             if (dragSession_.IsActive() && !dragSession_.Items().empty() &&
@@ -837,6 +838,7 @@ void DesktopApp::DrawDynamicOverlays(
                 if (!icon) continue;
                 DesktopItem* item = icon->GetDesktopItem();
                 if (!item || !item->selected || IsRectEmptyRect(item->bounds)) continue;
+                if (IsPendingMovedFile(item->parsingName, item->layoutKey)) continue;
                 icon->Draw(ctx, item->bounds, 2);
             }
             // Component entrances have retained child surfaces. Their live

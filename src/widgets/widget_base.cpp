@@ -550,6 +550,20 @@ bool WidgetContainer::IsCollapsed() const
         data_ && app_ && app_->IsWidgetCollapsed(*data_);
 }
 
+RECT WidgetContainer::PresentedSlotBounds(size_t index, RECT bounds) const
+{
+    if (!data_ || !app_ || app_->pendingLandingCaches_.empty()) return bounds;
+    const auto position = app_->FileDropMemberLayout(*data_, this).Member(index);
+    if (!position) return {};
+    return *position == index ? bounds : GetMemberLayoutRect(*position);
+}
+
+const snowdesktop::file_drop_presentation::Layout& WidgetContainer::PendingFileLayout() const
+{
+    static const snowdesktop::file_drop_presentation::Layout empty;
+    return app_ && data_ ? app_->FileDropMemberLayout(*data_, this) : empty;
+}
+
 bool WidgetContainer::IsSingleCellPresentation() const
 {
     return data_ && snowdesktop::single_cell_widget::IsDesktopSingleCell(*data_) &&
@@ -594,7 +608,7 @@ void WidgetContainer::DrawSingleCellContents(ID2D1DeviceContext* context, RECT b
             {
                 if (entries.size() == 4) break;
                 const auto* icon = scene ? scene->FindFolderEntry(entry.fullPath) : &entry;
-                if (icon) entries.push_back({&source, nullptr, icon});
+                if (icon && (scene || !app_->IsPendingMovedFile(entry.fullPath))) entries.push_back({&source, nullptr, icon});
             }
         }
         else for (const auto& key : source.itemKeys)
@@ -603,7 +617,7 @@ void WidgetContainer::DrawSingleCellContents(ID2D1DeviceContext* context, RECT b
             const auto index = scene ? static_cast<size_t>(-1) : app_->FindItemIndexByKey(key);
             const auto* item = scene ? scene->FindDesktopItem(key)
                 : (index < app_->items_.size() ? &app_->items_[index] : nullptr);
-            if (item) entries.push_back({&source, item, nullptr});
+            if (item && (scene || !app_->IsPendingMovedFile(item->parsingName, key))) entries.push_back({&source, item, nullptr});
         }
     };
     if (IsGroupWidgetType(data_->type))

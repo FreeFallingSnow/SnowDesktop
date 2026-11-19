@@ -771,7 +771,7 @@ static int FileCategoryContentHeight(FileCategories* widget, size_t itemCount)
             return static_cast<int>(segs.back().y + segs.back().height);
     }
     return snowdesktop::widget_item_layout::ContentHeight(
-        FileCategoryLocalLayout(widget), itemCount);
+        FileCategoryLocalLayout(widget), widget->PendingFileLayout().Count(itemCount));
 }
 
 /**
@@ -947,8 +947,9 @@ std::vector<std::unique_ptr<Slot>> FileCategories::BuildSlots()
         return slots;
     }
 
-    const auto range = snowdesktop::widget_item_layout::VisibleRange(
-        FileCategoryLocalLayout(this), keys.size(), scroll, visibleHeight);
+    const auto& pending = PendingFileLayout();
+    const auto range = pending.ModelRange(snowdesktop::widget_item_layout::VisibleRange(
+        FileCategoryLocalLayout(this), pending.Count(keys.size()), scroll, visibleHeight), keys.size());
     const size_t firstIndex = range.first;
     const size_t lastIndex = range.second;
 

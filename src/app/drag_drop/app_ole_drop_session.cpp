@@ -327,7 +327,8 @@ std::optional<DWORD> DesktopApp::TryDropShellNamespaceFiles(
         preview.action = effect == DROPEFFECT_MOVE ? DropAction::Move : DropAction::Copy;
         landing = BuildPendingLandingCache(sources, preview, existing);
     }
-    const auto ticket = BeginFileDropVisual(std::move(landing), true);
+    const auto ticket = BeginFileDropVisual(std::move(landing), true, &sources,
+        effect == DROPEFFECT_MOVE ? DropAction::Move : DropAction::Copy);
     auto result = std::make_shared<snowdesktop::ShellFileOperationResult>();
     // Keep Drop on the source STA until Shell has finished. A marshaled pointer
     // alone cannot extend a synchronous drag producer past DoDragDrop's return.

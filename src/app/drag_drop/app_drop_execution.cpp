@@ -627,6 +627,8 @@ void DesktopApp::StorePendingLandingCache(const DragSourceList& sourceList,
 {
     auto cache = BuildPendingLandingCache(sourceList, preview, existingKeys, createdPathsBySource);
     cache.visualId = ++nextFileDropVisual_;
+    CaptureFileDropAppearance(cache, sourceList);
+    fileDropLayouts_.clear();
     snowdesktop::pending_drop::Publish(pendingLandingCaches_, std::move(cache));
 }
 
@@ -668,14 +670,15 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
 {
     snowdesktop::file_drop_execution::Services services;
     services.beginPlacement = [this, dockTarget = preview.pinMaterializedItemsToDock,
-        monitor = preview.dockMonitor, index = preview.dockInsertIndex](PendingLandingCache cache) {
+        monitor = preview.dockMonitor, index = preview.dockInsertIndex](PendingLandingCache cache,
+            const DragSourceList& sources, DropAction action) {
         if (dockTarget)
         {
             auto* dock = GetDockContainer();
             cache.dockMonitor = monitor ? monitor : (dock ? dock->GetMonitor() : nullptr);
             cache.dockInsertIndex = index;
         }
-        return BeginFileDropVisual(std::move(cache), true);
+        return BeginFileDropVisual(std::move(cache), true, &sources, action);
     };
     services.takePlacement = [this](std::uint64_t id) { return TakeFileDropVisual(id); };
     services.snapshotDesktopKeys = [this] { return SnapshotDesktopKeys(); };
@@ -698,6 +701,7 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
     const auto previewDirectory = folderPreview_ && preview.targetWidget == &dockFolderPopupWidget_
         ? dockFolderPopupWidget_.sourceFolderPath : std::wstring{};
     services.refresh = [this, previewDirectory] {
+        fileDropLayouts_.clear();
         if (!previewDirectory.empty()) RequestFolderRefresh({previewDirectory});
         RequestShellRefresh();
     };

@@ -805,6 +805,8 @@ void DesktopApp::EndDragSession()
     CancelCollectionPopupDwell();
     CancelCollectionGroupTabDwell();
     dragSession_.End();
+    for (const auto& request : pendingLandingCaches_)
+        if (request.visualId) InvalidateFileDropVisual(request, true);
     ResetDockRunningDrag();
     dragIconsOnly_ = false;
     ClearPopupDragTarget();

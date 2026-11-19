@@ -100,6 +100,7 @@ public:
      * @return 边界矩形（RECT 结构，屏幕像素坐标）
      */
     RECT GetBounds() const;
+    RECT GetModelBounds() const { return bounds_; }
 
     /**
      * @brief 获取当前槽位持有的 Item

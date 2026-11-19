@@ -11,7 +11,8 @@
 // Desktop drop-preview rendering, caching and deferred placement.
 
 std::uint64_t DesktopApp::BeginFileDropRead(const DropPreviewList& preview, bool present,
-    const std::wstring& widgetId, const std::wstring& folderPath, bool popup)
+    const std::wstring& widgetId, const std::wstring& folderPath, bool popup,
+    const std::vector<std::wstring>& knownPaths)
 {
     PendingLandingCache cache;
     if (preview.pinMaterializedItemsToDock)
@@ -26,14 +27,30 @@ std::uint64_t DesktopApp::BeginFileDropRead(const DropPreviewList& preview, bool
         folder.popupSourceId = popup ? dockFolderPopupSourceId_ : std::wstring{};
         folder.sourceFolderPath = folderPath;
         folder.insertIndex = preview.insertIndex;
+        folder.sourcePaths = knownPaths;
         cache.folderPlacements.push_back(std::move(folder));
     }
     else
     {
-        for (const auto& landing : preview.landings)
+        auto landings = preview.landings;
+        if (knownPaths.size() > landings.size() && !landings.empty())
+        {
+            if (landings.front().kind == DropLandingKind::DesktopCell)
+                landings = BuildExternalDesktopPreviewList(landings.front().cell, knownPaths.size()).landings;
+            else if (landings.front().kind == DropLandingKind::WidgetIndex)
+                while (landings.size() < knownPaths.size())
+                {
+                    auto next = landings.back();
+                    ++next.sourceIndex;
+                    ++next.insertIndex;
+                    landings.push_back(std::move(next));
+                }
+        }
+        for (const auto& landing : landings)
         {
             PendingLandingEntry entry;
             entry.kind = landing.kind;
+            entry.sourceIndex = landing.sourceIndex;
             entry.cell = landing.cell;
             entry.span = landing.span;
             entry.plannedPageSize = landing.plannedPageSize;
@@ -42,19 +59,33 @@ std::uint64_t DesktopApp::BeginFileDropRead(const DropPreviewList& preview, bool
             cache.entries.push_back(std::move(entry));
         }
     }
-    return BeginFileDropVisual(std::move(cache), present);
+    DragSourceList sources;
+    for (const auto& path : knownPaths)
+    {
+        DragSourceEntry entry;
+        entry.sourceIndex = sources.entries.size();
+        entry.filePath = path;
+        entry.displayName = FileNameFromPath(path);
+        sources.entries.push_back(std::move(entry));
+    }
+    return BeginFileDropVisual(std::move(cache), present, &sources, preview.action);
 }
 
-std::uint64_t DesktopApp::BeginFileDropVisual(PendingLandingCache cache, bool present)
+std::uint64_t DesktopApp::BeginFileDropVisual(PendingLandingCache cache, bool present,
+    const DragSourceList* sources, DropAction action)
 {
     if (cache.entries.empty() && cache.folderPlacements.empty() && !cache.dockMonitor) return 0;
     const auto id = ++nextFileDropVisual_;
     const bool dock = cache.dockMonitor != nullptr;
     cache.visualId = id;
+    cache.movingFiles = action == DropAction::Move;
+    if (sources) CaptureFileDropAppearance(cache, *sources);
+    cache.UpdateMovedSourceKeys();
     cache.waitingForFiles = true;
     cache.active = true;
     pendingLandingCaches_.push_back(std::move(cache));
-    InvalidateFileDropVisual(pendingLandingCaches_.back());
+    fileDropLayouts_.clear();
+    InvalidateFileDropVisual(pendingLandingCaches_.back(), true);
     if (present && hwnd_)
     {
         PresentDesktopPointerUpdate();
@@ -73,12 +104,13 @@ PendingLandingCache DesktopApp::TakeFileDropVisual(std::uint64_t id)
     if (found == pendingLandingCaches_.end()) return {};
     auto cache = std::move(*found);
     pendingLandingCaches_.erase(found);
+    fileDropLayouts_.clear();
     cache.waitingForFiles = false;
-    InvalidateFileDropVisual(cache);
+    InvalidateFileDropVisual(cache, true);
     return cache;
 }
 
-void DesktopApp::InvalidateFileDropVisual(const PendingLandingCache& cache)
+void DesktopApp::InvalidateFileDropVisual(const PendingLandingCache& cache, bool layoutChanged)
 {
     if (!hwnd_) return;
     if (cache.dockMonitor)
@@ -86,14 +118,29 @@ void DesktopApp::InvalidateFileDropVisual(const PendingLandingCache& cache)
         for (const auto& container : containers_)
             if (auto* dock = dynamic_cast<DockContainer*>(container.get()); dock && dock->GetMonitor() == cache.dockMonitor)
             {
+                if (layoutChanged) dock->InvalidateSlots();
                 const RECT bounds = dock->GetAnimationVisualBounds();
                 InvalidateRect(hwnd_, &bounds, FALSE);
                 if (auto* host = FindPersistentDockHost(dock)) InvalidateFloatingDockWindow(*host, false);
             }
-        return;
     }
     RECT dirty{};
     std::unordered_set<std::wstring> owners;
+    bool popup = false;
+    if (cache.movingFiles)
+    {
+        owners.insert(cache.originWidgetId);
+        std::unordered_set<std::wstring> folders;
+        for (const auto& file : cache.files)
+        {
+            UnionRect(&dirty, &dirty, &file.sourceBounds);
+            folders.insert(snowdesktop::shell_refresh::FolderKey(std::filesystem::path(file.sourcePath).parent_path().wstring()));
+        }
+        for (const auto& widget : widgets_)
+            if (widget.type == DesktopWidgetType::FolderMapping && folders.contains(snowdesktop::shell_refresh::FolderKey(widget.sourceFolderPath)))
+                owners.insert(widget.id);
+        popup = dockFolderPopupOpen_ && folders.contains(snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath));
+    }
     for (const auto& entry : cache.entries)
     {
         if (entry.kind == DropLandingKind::DesktopCell)
@@ -103,7 +150,6 @@ void DesktopApp::InvalidateFileDropVisual(const PendingLandingCache& cache)
         }
         else owners.insert(entry.widgetId);
     }
-    bool popup = false;
     for (const auto& folder : cache.folderPlacements)
     {
         owners.insert(folder.widgetId);
@@ -120,6 +166,20 @@ void DesktopApp::InvalidateFileDropVisual(const PendingLandingCache& cache)
         popup |= GetOpenPopupWidget() == &widget;
         UnionRect(&dirty, &dirty, &widget.bounds);
     }
+    if (layoutChanged && !dragSession_.HasContext())
+    {
+        for (const auto& container : containers_)
+        {
+            auto* view = dynamic_cast<WidgetContainer*>(container.get());
+            if (!view || !view->GetWidgetData()) continue;
+            const auto* content = view->GetContentViewData();
+            if (!owners.contains(view->GetWidgetData()->id) && !(content && owners.contains(content->id))) continue;
+            if (auto* group = dynamic_cast<FileGroup*>(view))
+                if (auto* source = group->GetActiveSourceContainer()) source->InvalidateSlots();
+            view->InvalidateSlots();
+        }
+        if (popup && dockFolderPopupContainer_) dockFolderPopupContainer_->InvalidateSlots();
+    }
     if (popup)
     {
         UnionRect(&dirty, &dirty, &popupRect_);
@@ -133,67 +193,47 @@ void DesktopApp::DrawFileDropPlaceholders(ID2D1DeviceContext* context, const Des
     WidgetContainer* view, const RECT* popup)
 {
     if (pendingLandingCaches_.empty()) return;
-    const RECT viewport = popup ? GetCollectionPopupContentRect(*popup) : view ? view->GetContentViewportRect() : RECT{};
-    std::wstring owner = widget ? widget->id : std::wstring{};
-    if (auto* group = dynamic_cast<CollectionGroup*>(view)) owner = group->GetActiveCollectionId();
-    if (auto* group = dynamic_cast<FileGroup*>(view)) owner = group->GetActiveSourceId();
-    const bool popupFolder = widget && widget->id == kDockFolderPopupWidgetId;
-    const auto child = widget && owner != widget->id ? FindWidgetIndexById(owner) : widgets_.size();
-    const auto* destination = child < widgets_.size() ? &widgets_[child] : widget;
-    bool iconDrawn = false;
-    auto draw = [&](RECT cell) {
-        RECT visible{};
-        if (IsRectEmpty(&cell) || (widget && !IntersectRect(&visible, &viewport, &cell))) return;
-        InflateRect(&cell, -1, -1);
-        if (IsRectEmpty(&cell)) return;
-        DrawD2DRoundedRectangle(context, cell, 5.f, D2D1::ColorF(0.30f, 0.60f, 1.f, 0.30f),
-            D2D1::ColorF(0.58f, 0.80f, 1.f, 0.78f), 1.5f);
-        const LONG size = std::min(cell.right - cell.left, cell.bottom - cell.top) / 2;
-        const LONG x = (cell.right - cell.left > 3 * (cell.bottom - cell.top)) ? cell.left + size / 2 :
-            (cell.left + cell.right - size) / 2;
-        const LONG y = (cell.top + cell.bottom - size) / 2;
-        DrawPlaceholderIcon(context, -1, {x, y, x + size, y + size}, 0.62f, false);
-    };
-    auto member = [&](size_t index) {
-        if (popup) draw(GetCollectionPopupItemRect(*popup, index));
-        else if (view && view->IsSingleCellPresentation())
-        {
-            if (!std::exchange(iconDrawn, true)) draw(view->GetBodyRect());
-        }
-        else if (view) draw(view->GetMemberLayoutRect(index));
-    };
-    if (widget) context->PushAxisAlignedClip(ToD2DRect(viewport), D2D1_ANTIALIAS_MODE_ALIASED);
-    for (const auto& cache : pendingLandingCaches_)
+    if (!widget)
     {
-        if (!cache.visualId || cache.dockMonitor) continue;
-        for (const auto& entry : cache.entries)
+        for (const auto& request : pendingLandingCaches_)
         {
-            if (!widget && entry.kind == DropLandingKind::DesktopCell) draw(GetGridRect(gridPages_, entry.cell, entry.span));
-            if (widget && entry.kind == DropLandingKind::WidgetIndex && entry.widgetId == owner) member(entry.insertIndex);
-        }
-        if (!widget) continue;
-        for (const auto& folder : cache.folderPlacements)
-        {
-            if (!PathsEqualInsensitive(destination->sourceFolderPath, folder.sourceFolderPath)) continue;
-            if (popupFolder ? (folder.popupSourceId.empty() || folder.popupSourceId != dockFolderPopupSourceId_) :
-                (folder.widgetId.empty() || folder.widgetId != owner)) continue;
-            size_t start = folder.insertIndex;
-            if (auto* mapping = dynamic_cast<FolderMapping*>(view))
+            if (!request.visualId || request.dockMonitor) continue;
+            for (const auto& entry : request.entries)
             {
-                const auto& visible = mapping->GetVisibleEntryIndices();
-                const auto it = std::find(visible.begin(), visible.end(), start);
-                start = static_cast<size_t>(std::distance(visible.begin(), it));
+                if (entry.kind != DropLandingKind::DesktopCell) continue;
+                const auto* file = request.FindFile(entry.sourceIndex);
+                DrawPendingFile(context, GetGridRect(gridPages_, entry.cell, entry.span),
+                    file ? file->appearance.get() : nullptr);
             }
-            const auto count = folder.createdPaths.empty() ? std::max<size_t>(1, folder.sourcePaths.size()) : folder.createdPaths.size();
-            for (size_t i = 0; i < count; ++i) member(start + i);
         }
+        return;
     }
-    if (widget) context->PopAxisAlignedClip();
+
+    const auto& layout = FileDropMemberLayout(*widget, popup ? nullptr : view);
+    if (layout.gaps.empty()) return;
+    const RECT viewport = popup ? GetCollectionPopupContentRect(*popup) : view->GetContentViewportRect();
+    const bool light = popup ? collectionPopupLightTheme_ : view->UsesLightContentTheme();
+    const bool list = popup ? UsesCollectionPopupList(*widget) :
+        view->GetContentViewData() && view->GetContentViewData()->listMode;
+    const bool privateView = widget->privacyMode && !PtInRect(&viewport, lastMousePoint_);
+    context->PushAxisAlignedClip(ToD2DRect(viewport), D2D1_ANTIALIAS_MODE_ALIASED);
+    for (const auto& gap : layout.gaps)
+    {
+        const bool single = !popup && view->IsSingleCellPresentation();
+        const RECT rect = popup ? FileDropPopupCell(*popup, gap.position) :
+            single ? view->GetBodyRect() : view->GetMemberLayoutRect(gap.position);
+        RECT visible{};
+        if (IntersectRect(&visible, &rect, &viewport))
+            DrawPendingFile(context, rect, privateView ? nullptr : gap.file.get(), view, list, light);
+        if (single) break;
+    }
+    context->PopAxisAlignedClip();
 }
 
 bool DesktopApp::ApplyPendingFolderPlacements(DesktopWidget& targetWidget,
     const std::wstring& widgetId, const std::wstring& popupSourceId)
 {
+    fileDropLayouts_.clear();
     bool changed = false;
     for (auto& cache : pendingLandingCaches_)
         changed = ApplyPendingFolderPlacements(cache, targetWidget, widgetId, popupSourceId) || changed;
@@ -214,6 +254,7 @@ void DesktopApp::ApplyPendingFolderPreviewPlacements(
     const snowdesktop::shell_refresh::FolderSnapshot& snapshot)
 {
     if (!snapshot.complete || pendingLandingCaches_.empty()) return;
+    fileDropLayouts_.clear();
     const auto key = snowdesktop::shell_refresh::FolderKey(snapshot.path);
     const auto popupId = L"folder-preview:" + key;
     const auto matches = [&](const PendingFolderPlacement& placement) {
@@ -320,6 +361,7 @@ const DropPreviewList& DesktopApp::GetCachedDesktopDropPreview(
  */
 void DesktopApp::ApplyPendingPlacement()
 {
+    fileDropLayouts_.clear();
     bool changed = false;
     std::unordered_set<std::wstring> claimed;
     for (auto& cache : pendingLandingCaches_)

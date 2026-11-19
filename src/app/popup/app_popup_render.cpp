@@ -528,10 +528,12 @@ void DesktopApp::DrawCollectionPopup(
     else scrollClip.emplace(ctx, collectionPopupScrollFadeCache_, content, popupScrollOffset_,
         GetCollectionPopupContentHeight(widget, popupRect_, targetContent), static_cast<float>(ScaleWidgetCu(16.0f, popupMetrics.scale)));
     const size_t popupItemCount = GetPopupItemCount(widget);
+    const auto& pending = FileDropMemberLayout(widget, nullptr);
+    const auto displayCount = pending.Count(popupItemCount);
     const size_t fanCapacity = GetCollectionPopupFanVisibleCount(popupRect_);
     const double fanOffset = fan ? GetCollectionPopupFanScrollOffset(popupRect_) : 0;
     const auto fanRange = snowdesktop::collection_popup_layout::FanVisibleRange(
-        fanOffset, fanCapacity, popupItemCount);
+        fanOffset, fanCapacity, displayCount);
     size_t firstItem = fan ? fanRange.first : 0;
     size_t endItem = fan ? fanRange.end : popupItemCount;
     if (!fan)
@@ -543,17 +545,18 @@ void DesktopApp::DrawCollectionPopup(
                 snowdesktop::collection_popup_layout::ResolveListRowHeight(popupMetrics, listItemFontSizeCu_),
                 GetListSpacing(), snowdesktop::list_detail_rules::ListColumns(widget));
             std::tie(firstItem, endItem) = snowdesktop::widget_item_layout::VisibleRange(
-                layout, popupItemCount, popupScrollOffset_, visibleHeight);
+                layout, displayCount, popupScrollOffset_, visibleHeight);
         }
         else
         {
             const int columns = GetCollectionPopupColumnCount(popupRect_);
             const int stride = std::max(1, popupMetrics.cellHeight + popupMetrics.gapY);
-            firstItem = std::min(popupItemCount, static_cast<size_t>(popupScrollOffset_ / stride) * columns);
-            endItem = std::min(popupItemCount,
+            firstItem = std::min(displayCount, static_cast<size_t>(popupScrollOffset_ / stride) * columns);
+            endItem = std::min(displayCount,
                 static_cast<size_t>((popupScrollOffset_ + visibleHeight + stride - 1) / stride) * columns);
         }
     }
+    std::tie(firstItem, endItem) = pending.ModelRange({firstItem, endItem}, popupItemCount);
     const int fanStrength = iconShadows_.fan ? iconShadows_.fanStrength : 0;
     const bool subjectWins = iconShadows_.SubjectStrength(fanStrength) > 0;
     auto* iconRecorder = fan && fanStrength > 0 && !subjectWins ? GetIconShadowRecorder() : nullptr;
@@ -600,12 +603,14 @@ void DesktopApp::DrawCollectionPopup(
         popupFanBackdropCandidates_.push_back({content, std::move(silhouette), bounds, radius, opacity});
     };
     const auto drawFanSlot = [&](size_t index, bool selected, bool cut, const auto& drawIcon,
-        std::wstring_view iconIdentity = {}, ID2D1Bitmap* glassBitmap = nullptr) {
+        std::wstring_view iconIdentity = {}, ID2D1Bitmap* glassBitmap = nullptr, const FolderEntry* pendingFile = nullptr) {
         namespace layout = snowdesktop::collection_popup_layout;
-        const auto pose = GetCollectionPopupFanItem(popupRect_, index);
-        const double slot = index == popupItemCount ? static_cast<double>(fanCapacity) :
-            static_cast<double>(index) - fanOffset;
-        const float visibility = index == popupItemCount ? 1.0f : layout::FanItemOpacity(slot, fanCapacity);
+        const auto pose = GetCollectionPopupFanItem(popupRect_, index, pendingFile);
+        const bool action = !pendingFile && index == popupItemCount;
+        const auto position = pendingFile ? std::optional{index} : pending.Member(index);
+        if (!position && !action) return;
+        const double slot = action ? static_cast<double>(fanCapacity) : static_cast<double>(*position) - fanOffset;
+        const float visibility = action ? 1.0f : layout::FanItemOpacity(slot, fanCapacity);
         if (visibility <= 0.001f) return;
         const bool hovered = popupItemCount > 0 && popupAnimation_.IsInteractive() &&
             layout::FanItemContains(pose, lastMousePoint_);
@@ -683,7 +688,7 @@ void DesktopApp::DrawCollectionPopup(
                 [&](auto* drawing) { drawIcon(drawing, pose.icon); });
         }
         const RECT textRect = layout::FanLabelTextRect(pose.label, popupMetrics.scale);
-        const auto text = GetCollectionPopupFanLabel(index);
+        const auto text = pendingFile ? pendingFile->DisplayName() : GetCollectionPopupFanLabel(index);
         auto* labelLayout = GetCollectionPopupFanTextLayout(text,
             static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left)),
             static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top)), true);
@@ -692,13 +697,13 @@ void DesktopApp::DrawCollectionPopup(
             DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, true, labelLayout);
         ctx->SetTransform(transform);
     };
-    const auto drawFanItem = [&](size_t index, const auto& item, const DesktopItem* desktopItem) {
+    const auto drawFanItem = [&](size_t index, const auto& item, const DesktopItem* desktopItem, const FolderEntry* pendingFile = nullptr) {
         const bool demo = desktopItem && ShouldUseDemoCollectionIdentity(&widget);
         const std::wstring_view identity = [&]() -> std::wstring_view {
             if constexpr (requires { item.layoutKey; }) return item.layoutKey;
             else return item.fullPath;
         }();
-        const auto pose = GetCollectionPopupFanItem(popupRect_, index);
+        const auto pose = GetCollectionPopupFanItem(popupRect_, index, pendingFile);
         auto* custom = demo ? nullptr : GetSmallCustomIcon(ctx, identity, pose.icon.right - pose.icon.left);
         auto* bitmap = demo || custom ? nullptr : GetTargetIconBitmap(ctx, item.iconBitmap, identity, item.iconIsMediaThumbnail);
         // Resolve asynchronous/custom icon state before consulting the recorded
@@ -720,7 +725,7 @@ void DesktopApp::DrawCollectionPopup(
                 DrawPlaceholderIcon(iconContext, item.sysIconIndex, iconRect, 1.0f);
             if (!demo && ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut))
                 DrawShortcutArrowOverlay(iconContext, iconRect, 1.0f);
-        }, iconIdentity, custom ? custom : bitmap);
+        }, iconIdentity, custom ? custom : bitmap, pendingFile);
     };
     for (size_t i = firstItem; i < endItem; ++i)
     {
@@ -881,7 +886,17 @@ void DesktopApp::DrawCollectionPopup(
                     ? &widget : nullptr);
         }
     }
-    if (fan && popupItemCount == 0)
+    if (fan)
+    {
+        FolderEntry unavailable;
+        unavailable.isCut = true;
+        for (const auto& gap : pending.gaps)
+        {
+            const auto* file = gap.file && !privatePreview ? gap.file.get() : &unavailable;
+            drawFanItem(gap.position, *file, nullptr, file);
+        }
+    }
+    if (fan && displayCount == 0)
     {
         // A noninteractive status label shares the fan pose instead of flashing
         // a rectangular panel or exposing a Show all action for a pending read.
@@ -911,13 +926,13 @@ void DesktopApp::DrawCollectionPopup(
             }
         });
     }
-    DrawFileDropPlaceholders(ctx, &widget, nullptr, &popupRect_);
+    if (!fan) DrawFileDropPlaceholders(ctx, &widget, &popupListRenderer, &popupRect_);
     drawPreviewMarquee();
     if (fan) ctx->PopAxisAlignedClip();
     else scrollClip.reset();
 
     if (!fan && widget.type == DesktopWidgetType::FolderMapping &&
-        popupItemCount == 0)
+        displayCount == 0)
     {
         const std::wstring status = dockFolderPopupLoading_
             ? _LW("widget.folder_mapping.loading")

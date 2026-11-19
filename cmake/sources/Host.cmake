@@ -144,6 +144,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/drag_drop/app_external_slot_drop.cpp
     src/app/drag_drop/app_drop_preview.cpp
     src/app/drag_drop/app_drop_render.cpp
+    src/app/drag_drop/app_file_drop_presentation.cpp
     src/app/dock/app_floating_dock_interaction.cpp
     src/app/dock/app_floating_dock_lifecycle.cpp
     src/app/dock/app_floating_dock_render.cpp

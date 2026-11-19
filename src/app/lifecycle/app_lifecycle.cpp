@@ -138,6 +138,8 @@ DesktopApp::~DesktopApp()
     dockUnpinnedRunningApps_.clear();
     items_oo_.clear();
     containers_.clear();
+    fileDropLayouts_.clear();
+    pendingLandingCaches_.clear();
     ClearMenuIcons();
     if (faFontHandle_)
     {

@@ -731,6 +731,26 @@ bool DockContainer::HasCapacity(size_t additional) const
     return entries_ && additional <= Capacity() - entries_->size();
 }
 
+size_t DockContainer::PendingFileCount(bool folders) const
+{
+    if (!app_ || app_->pendingLandingCaches_.empty()) return 0;
+    size_t count = 0;
+    const auto monitor = GetMonitor();
+    for (const auto& request : app_->pendingLandingCaches_)
+        if (request.dockMonitor && request.dockMonitor == monitor && request.waitingForFiles)
+        {
+            if (request.files.empty() && !folders) ++count;
+            for (const auto& file : request.files)
+                if (file.appearance->isDirectory == folders) ++count;
+        }
+    return count;
+}
+
+float DockContainer::AdditionalSlotUnits(bool folders) const
+{
+    return EntryRemovalUnits(folders) + static_cast<float>(PendingFileCount(folders));
+}
+
 size_t DockContainer::EmptyRunningDragFixedSlots() const
 {
     return app_ && app_->dockRunningDrag_ && SortableEntryCount() == 0 ? 1 : 0;
@@ -753,9 +773,9 @@ RECT DockContainer::GetBounds() const
     const bool showSearchButton = app_ && app_->dockSettings_.showQuickSearchButton;
     const bool hasRecycleBin = count > 0 && app_ && app_->IsRecycleBinDockEntry(entries_->back());
     const auto axis = snowdesktop::dock_entry_removal::LayoutDockAxis(
-        showWindowsButton, static_cast<float>(fixedCount) + EntryRemovalUnits(false),
+        showWindowsButton, static_cast<float>(fixedCount) + AdditionalSlotUnits(false),
         runningUnits, static_cast<float>(frequentCount),
-        static_cast<float>(FolderEntryCount() + EmptyRunningDragFileSlots()) + EntryRemovalUnits(true) +
+        static_cast<float>(FolderEntryCount() + EmptyRunningDragFileSlots()) + AdditionalSlotUnits(true) +
             static_cast<float>(showSearchButton) + static_cast<float>(hasRecycleBin));
     const bool vertical = IsVertical();
     const int iconSize = ItemIconSize();
@@ -1875,8 +1895,8 @@ RECT DockContainer::GetScrollViewport(const RECT& bounds) const
     const float runningUnits = RunningSlotUnits();
     const size_t frequentCount = app_
         ? app_->GetFrequentDockItemIndices().size() : 0;
-    const float fixedUnits = static_cast<float>(SortableEntryCount() + EmptyRunningDragFixedSlots()) + EntryRemovalUnits(false);
-    const float folderUnits = static_cast<float>(FolderEntryCount() + EmptyRunningDragFileSlots()) + EntryRemovalUnits(true);
+    const float fixedUnits = static_cast<float>(SortableEntryCount() + EmptyRunningDragFixedSlots()) + AdditionalSlotUnits(false);
+    const float folderUnits = static_cast<float>(FolderEntryCount() + EmptyRunningDragFileSlots()) + AdditionalSlotUnits(true);
     const size_t searchSlots = app_ && app_->dockSettings_.showQuickSearchButton ? 1 : 0;
     const float controls = static_cast<float>(searchSlots) + static_cast<float>(hasRecycleBin);
     const float firstUnits = fixedUnits > 0 ? fixedUnits : runningUnits > 0 ? runningUnits :
@@ -1910,7 +1930,7 @@ int DockContainer::GetMaxScrollOffset(const RECT& bounds) const
     const size_t fixedCount = SortableEntryCount() + EmptyRunningDragFixedSlots();
     const size_t frequentCount = app_
         ? app_->GetFrequentDockItemIndices().size() : 0;
-    const auto axis = snowdesktop::dock_entry_removal::LayoutAxis({static_cast<float>(fixedCount) + EntryRemovalUnits(false),
+    const auto axis = snowdesktop::dock_entry_removal::LayoutAxis({static_cast<float>(fixedCount) + AdditionalSlotUnits(false),
         RunningSlotUnits(), static_cast<float>(frequentCount), 0.0f});
     const long long contentExtent = snowdesktop::dock_running_animation::AxisLength(axis.units, ItemPitch()) +
         snowdesktop::dock_running_animation::AxisLength(axis.gaps, ScaledSeparatorGap());
@@ -1982,8 +2002,8 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
     const bool showWindowsButton = app_ && ShowDockWindowsButton(app_->dockSettings_);
     const bool showSearchButton = app_ && app_->dockSettings_.showQuickSearchButton;
     const size_t trailingControls = static_cast<size_t>(showSearchButton) + static_cast<size_t>(hasRecycleBin);
-    const float fixedUnits = static_cast<float>(fixedCount + EmptyRunningDragFixedSlots()) + EntryRemovalUnits(false);
-    const float folderUnits = static_cast<float>(folderCount + EmptyRunningDragFileSlots()) + EntryRemovalUnits(true);
+    const float fixedUnits = static_cast<float>(fixedCount + EmptyRunningDragFixedSlots()) + AdditionalSlotUnits(false);
+    const float folderUnits = static_cast<float>(folderCount + EmptyRunningDragFileSlots()) + AdditionalSlotUnits(true);
     const auto axis = removal::LayoutDockAxis(showWindowsButton,
         fixedUnits, RunningSlotUnits(), static_cast<float>(frequentCount),
         folderUnits + static_cast<float>(trailingControls));
@@ -2006,20 +2026,46 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
         return RECT{bounds.right - halfGap - start, bounds.top, bounds.right - halfGap - end, bounds.bottom};
     };
     std::vector<RECT> entryCells(count);
+    pendingFileCells_.clear();
     const auto keys = EntryRemovalKeys();
     for (const auto group : {removal::Group::Fixed, removal::Group::Folder})
     {
         const bool folder = group == removal::Group::Folder;
         const auto cells = entryRemovals_->Layout(keys, folder ? folderBegin : 0,
             folder ? folderCount : fixedCount, group);
+        std::vector<std::pair<size_t, std::shared_ptr<FolderEntry>>> incoming;
+        const size_t first = folder ? folderBegin : 0;
+        const size_t end = first + (folder ? folderCount : fixedCount);
+        if (app_ && !app_->pendingLandingCaches_.empty())
+            for (const auto& request : app_->pendingLandingCaches_)
+                if (request.waitingForFiles && request.dockMonitor && request.dockMonitor == GetMonitor())
+                {
+                    const auto boundary = std::clamp(request.dockInsertIndex, first, end);
+                    if (request.files.empty() && !folder) incoming.emplace_back(boundary, nullptr);
+                    for (const auto& file : request.files)
+                        if (file.appearance->isDirectory == folder) incoming.emplace_back(boundary, file.appearance);
+                }
+        std::stable_sort(incoming.begin(), incoming.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        const auto cellAt = [&](float begin, float amount) {
+            return folder ? trailingCell(folderUnits + static_cast<float>(trailingControls) - begin, amount)
+                          : makeCell(1, begin, amount);
+        };
+        size_t inserted = 0;
+        float tail = 0;
         for (const auto& cell : cells)
         {
-            const RECT rect = folder
-                ? trailingCell(folderUnits + static_cast<float>(trailingControls) - cell.begin, cell.amount)
-                : makeCell(1, cell.begin, cell.amount);
+            while (cell.modelIndex != removal::kNoIndex && inserted < incoming.size() && incoming[inserted].first <= cell.modelIndex)
+            {
+                pendingFileCells_.emplace_back(cellAt(cell.begin + static_cast<float>(inserted), 1.f), incoming[inserted].second);
+                ++inserted;
+            }
+            tail = cell.begin + cell.amount;
+            const RECT rect = cellAt(cell.begin + static_cast<float>(inserted), cell.amount);
             if (cell.modelIndex != removal::kNoIndex) entryCells[cell.modelIndex] = rect;
             else entryRemovalCells_.emplace_back(cell.removalIndex, rect);
         }
+        for (; inserted < incoming.size(); ++inserted)
+            pendingFileCells_.emplace_back(cellAt(tail + static_cast<float>(inserted), 1.f), incoming[inserted].second);
     }
     if (hasRecycleBin) entryCells.back() = trailingCell(1.0f);
     slots.reserve(count + runningCount + frequentCount + 1);
@@ -2755,10 +2801,10 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     };
     include(groups[0], windowsButton);
     groups[0].units = IsRectEmpty(&windowsButton) ? 0.0f : 1.0f;
-    groups[1].units = static_cast<float>(fixedCount) + EntryRemovalUnits(false);
+    groups[1].units = static_cast<float>(fixedCount) + AdditionalSlotUnits(false);
     groups[2].units = RunningSlotUnits();
     groups[3].units = static_cast<float>(frequentItems_.size());
-    groups[4].units = static_cast<float>(folderCount) + EntryRemovalUnits(true) +
+    groups[4].units = static_cast<float>(folderCount) + AdditionalSlotUnits(true) +
         static_cast<float>(!IsRectEmpty(&search)) + static_cast<float>(hasRecycleBin);
     for (size_t i = 0; i < fixedCount && i < slots.size(); ++i)
         if (slots[i]) include(groups[1], slots[i]->GetBounds());
@@ -2892,19 +2938,8 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         app_->DrawIconWithShadows(context, searchBackground, iconScale,
             app_->iconShadows_.DockStrength(), drawIcon);
     }
-    for (const auto& cache : app_->pendingLandingCaches_)
-        if (cache.waitingForFiles && cache.dockMonitor && cache.dockMonitor == monitor)
-        {
-            RECT cell = GetWindowsButtonRect();
-            if (!slots.empty())
-            {
-                const auto index = std::min(cache.dockInsertIndex, slots.size() - 1);
-                if (slots[index]) cell = slots[index]->GetBounds();
-            }
-            if (IsRectEmpty(&cell)) cell = GetBounds();
-            cell = visualRectFor(cell);
-            app_->DrawPlaceholderIcon(context, -1, app_->GetItemIconRect(cell), 0.60f, false);
-        }
+    for (const auto& [cell, file] : pendingFileCells_)
+        app_->DrawPendingFile(context, visualRectFor(cell), file.get(), nullptr, false, lt);
 }
 
 std::vector<Item*> DockContainer::GetSelectedItems() const

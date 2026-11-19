@@ -491,12 +491,15 @@ void FolderMapping::EnsureDateLayout() const
         return;
     }
 
-    const auto& visibleEntries = GetVisibleEntryIndices();
+    const auto& members = GetVisibleEntryIndices();
+    const auto& pending = PendingFileLayout();
     const auto itemLayout = FolderMappingLocalLayout(
         const_cast<FolderMapping*>(this));
     const int currentItemHeight = itemLayout.vertical.cell +
         itemLayout.vertical.gap;
-    if (dateLayoutSource_ == visibleEntries &&
+    if (dateLayoutSource_ == members && dateLayoutHidden_ == pending.hidden &&
+        std::equal(dateLayoutBoundaries_.begin(), dateLayoutBoundaries_.end(), pending.gaps.begin(), pending.gaps.end(),
+            [](size_t index, const auto& gap) { return index == gap.boundary; }) &&
         dateLayoutListMode_ == data_->listMode &&
         dateLayoutItemHeight_ == currentItemHeight &&
         itemLayout.horizontal.count == dateLayoutColumns_ &&
@@ -504,7 +507,21 @@ void FolderMapping::EnsureDateLayout() const
         return;
 
     dateLayoutCache_.clear();
-    dateLayoutSource_ = visibleEntries;
+    dateLayoutSource_ = members;
+    dateLayoutHidden_ = pending.hidden;
+    dateLayoutBoundaries_.clear();
+    for (const auto& gap : pending.gaps) dateLayoutBoundaries_.push_back(gap.boundary);
+    std::vector<size_t> projected;
+    const bool shifted = !pending.hidden.empty() || !pending.gaps.empty();
+    if (shifted)
+    {
+        projected.resize(pending.Count(members.size()), data_->folderEntries.size());
+        for (size_t i = 0; i < members.size(); ++i)
+            if (const auto position = pending.Member(i)) projected[*position] = members[i];
+        for (const auto& gap : pending.gaps)
+            if (!members.empty()) projected[gap.position] = members[std::min(gap.boundary, members.size() - 1)];
+    }
+    const auto& visibleEntries = shifted ? projected : members;
     dateLayoutListMode_ = data_->listMode;
     dateLayoutItemHeight_ = currentItemHeight;
     dateLayoutColumns_ = itemLayout.horizontal.count;
@@ -573,7 +590,7 @@ static int FolderMappingContentHeight(FolderMapping* widget, size_t itemCount)
             : static_cast<int>(segments.back().y + segments.back().height);
     }
     return snowdesktop::widget_item_layout::ContentHeight(
-        FolderMappingLocalLayout(widget), itemCount);
+        FolderMappingLocalLayout(widget), widget->PendingFileLayout().Count(itemCount));
 }
 
 /**
@@ -621,7 +638,7 @@ static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex)
                 break;
             }
         }
-        if (!itemSegment && linearIndex == widget->GetVisibleEntryIndices().size())
+        if (!itemSegment && linearIndex >= widget->PendingFileLayout().Count(widget->GetVisibleEntryIndices().size()))
         {
             for (auto it = segments.rbegin(); it != segments.rend(); ++it)
             {
@@ -720,15 +737,14 @@ std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
             const auto localRange = snowdesktop::widget_item_layout::
                 VisibleRange(localLayout, segment.itemCount,
                     scroll - static_cast<int>(segment.y), visibleHeight);
-            const size_t firstInSegment = localRange.first;
-            const size_t lastInSegment = localRange.second;
-            for (size_t localIndex = firstInSegment;
-                localIndex < lastInSegment; ++localIndex)
-            {
-                visibleSlotIndices.push_back(
-                    segment.firstItemIndex + localIndex);
-            }
+            const auto range = PendingFileLayout().ModelRange(
+                {segment.firstItemIndex + localRange.first, segment.firstItemIndex + localRange.second},
+                visibleEntries.size());
+            for (size_t index = range.first; index < range.second; ++index)
+                visibleSlotIndices.push_back(index);
         }
+        std::sort(visibleSlotIndices.begin(), visibleSlotIndices.end());
+        visibleSlotIndices.erase(std::unique(visibleSlotIndices.begin(), visibleSlotIndices.end()), visibleSlotIndices.end());
 
         if (IncludeTrailingEmptySlot() && total > 0)
         {
@@ -741,8 +757,9 @@ std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
     }
     else if (total > 0)
     {
-        const auto range = snowdesktop::widget_item_layout::VisibleRange(
-            localLayout, total, scroll, visibleHeight);
+        const auto& pending = PendingFileLayout();
+        const auto range = pending.ModelRange(snowdesktop::widget_item_layout::VisibleRange(
+            localLayout, pending.Count(total), scroll, visibleHeight), total);
         const size_t firstIndex = range.first;
         const size_t lastIndex = range.second;
         visibleSlotIndices.reserve(lastIndex - firstIndex);
@@ -955,6 +972,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
 
     if (data_->folderEntries.empty())
     {
+        if (!PendingFileLayout().gaps.empty()) return;
         RECT empty = GetBodyRect();
         InflateRect(&empty, -Cu(12.0f), -Cu(12.0f));
         if (!preview && app_->initialShellReadPending_)
@@ -1018,6 +1036,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
     const auto& visibleEntries = GetVisibleEntryIndices();
     if (visibleEntries.empty())
     {
+        if (!PendingFileLayout().gaps.empty()) return;
         RECT empty = FolderMappingContentRect(this);
         IDWriteTextFormat* centered = GetCuTextFormat(13.0f, false, true);
         IDWriteTextFormat* lightCentered = lt

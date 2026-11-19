@@ -64,6 +64,7 @@ public:
 
     // Build and cache slots. Returns stable references valid until InvalidateSlots.
     const std::vector<std::unique_ptr<Slot>>& GetSlots();
+    virtual RECT PresentedSlotBounds(size_t, RECT modelBounds) const { return modelBounds; }
     void InvalidateSlots()
     {
         slotsValid_ = false;

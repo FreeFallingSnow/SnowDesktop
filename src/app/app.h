@@ -59,6 +59,7 @@
 #include "app/widgets/widget_pair_drag_source.h"
 #include "app/widgets/widget_group_transition.h"
 #include "core/drop_model.h"
+#include "drag_drop/file_drop_presentation.h"
 #include "core/drag_session.h"
 #include "core/owned_transient_drag_target.h"
 #include "settings/settings_window_open_rules.h"
@@ -3155,7 +3156,7 @@ private:
     IDWriteTextLayout* GetCollectionPopupFanTextLayout(const std::wstring& text,
         float width, float height, bool ellipsis) const;
     snowdesktop::collection_popup_layout::FanItem GetCollectionPopupFanItem(
-        const RECT& popup, size_t index) const;
+        const RECT& popup, size_t index, const FolderEntry* pendingFile = nullptr) const;
     bool HitTestCollectionPopupItem(const RECT& popup, size_t index, POINT point) const;
     void ShowAllCollectionPopupItems();
     double GetCollectionPopupFanScrollOffset(const RECT& popup) const;
@@ -4391,11 +4392,29 @@ private:
     /** @{ */
     std::vector<PendingLandingCache> pendingLandingCaches_;
     std::uint64_t nextFileDropVisual_ = 0;
-    std::uint64_t BeginFileDropVisual(PendingLandingCache cache, bool present);
+    std::uint64_t BeginFileDropVisual(PendingLandingCache cache, bool present,
+        const DragSourceList* sources = nullptr, DropAction action = DropAction::Copy);
     std::uint64_t BeginFileDropRead(const DropPreviewList& preview, bool present,
-        const std::wstring& widgetId = {}, const std::wstring& folderPath = {}, bool popup = false);
+        const std::wstring& widgetId = {}, const std::wstring& folderPath = {}, bool popup = false,
+        const std::vector<std::wstring>& knownPaths = {});
+    void CaptureFileDropAppearance(PendingLandingCache& cache, const DragSourceList& sources);
+    bool IsPendingMovedFile(const std::wstring& path, const std::wstring& key = {}) const;
+    struct FileDropViewLayout
+    {
+        const DesktopWidget* model = nullptr;
+        std::uint64_t generation = 0;
+        size_t memberCount = 0;
+        std::wstring folderPath;
+        snowdesktop::file_drop_presentation::Layout layout;
+    };
+    mutable std::unordered_map<const WidgetContainer*, FileDropViewLayout> fileDropLayouts_;
+    const snowdesktop::file_drop_presentation::Layout& FileDropMemberLayout(
+        const DesktopWidget& widget, const WidgetContainer* view) const;
+    RECT FileDropPopupCell(const RECT& popup, size_t position) const;
+    void DrawPendingFile(ID2D1DeviceContext* context, const RECT& cell, FolderEntry* file,
+        WidgetContainer* view = nullptr, bool listMode = false, bool light = false);
     PendingLandingCache TakeFileDropVisual(std::uint64_t id);
-    void InvalidateFileDropVisual(const PendingLandingCache& cache);
+    void InvalidateFileDropVisual(const PendingLandingCache& cache, bool layoutChanged = false);
     void DrawFileDropPlaceholders(ID2D1DeviceContext* context, const DesktopWidget* widget = nullptr,
         WidgetContainer* view = nullptr, const RECT* popup = nullptr);
     std::vector<PendingNewItemCapture> pendingNewItemCaptures_;

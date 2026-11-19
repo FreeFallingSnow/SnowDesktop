@@ -159,7 +159,7 @@ static int CollectionScrollContentHeight(Collection* widget, size_t itemCount)
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
     if (!data || !data->scrollContainerMode) return 0;
     return snowdesktop::widget_item_layout::ContentHeight(
-        CollectionLocalLayout(widget), itemCount);
+        CollectionLocalLayout(widget), widget->PendingFileLayout().Count(itemCount));
 }
 
 /**
@@ -203,9 +203,10 @@ static std::pair<size_t, size_t> CollectionVisibleIndexRange(
     const int scroll = std::clamp(
         data->scrollOffset, 0, CollectionScrollMaxOffset(widget));
 
-    return snowdesktop::widget_item_layout::VisibleRange(
-        CollectionLocalLayout(widget), itemCount,
-        scroll, visibleHeight);
+    const auto& pending = widget->PendingFileLayout();
+    return pending.ModelRange(snowdesktop::widget_item_layout::VisibleRange(
+        CollectionLocalLayout(widget), pending.Count(itemCount),
+        scroll, visibleHeight), itemCount);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1289,6 +1290,7 @@ int Collection::GetItemHeight() const
 
 RECT Collection::GetMemberLayoutRect(size_t index) const
 {
+    if (data_ && !data_->scrollContainerMode) return GetCollectionSlotRect(this, index, GetBodyRect());
     return CollectionItemRect(
         const_cast<Collection*>(this), index);
 }

@@ -280,7 +280,7 @@ size_t DesktopApp::GetCollectionPopupFanVisibleCount(const RECT& popup) const
     const auto* widget = GetOpenPopupWidget();
     return widget ? snowdesktop::collection_popup_layout::FanVisibleItemCount(
         GetCollectionPopupLayoutMetrics(*widget), popup.bottom - popup.top,
-        GetPopupItemCount(*widget)) : 0;
+        FileDropMemberLayout(*widget, nullptr).Count(GetPopupItemCount(*widget))) : 0;
 }
 
 std::wstring DesktopApp::GetCollectionPopupFanLabel(size_t index) const
@@ -332,19 +332,21 @@ IDWriteTextLayout* DesktopApp::GetCollectionPopupFanTextLayout(const std::wstrin
 }
 
 snowdesktop::collection_popup_layout::FanItem
-DesktopApp::GetCollectionPopupFanItem(const RECT& popup, size_t index) const
+DesktopApp::GetCollectionPopupFanItem(const RECT& popup, size_t index, const FolderEntry* pendingFile) const
 {
     namespace layout = snowdesktop::collection_popup_layout;
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     const bool mirrored = popupHasAnchor_ &&
         popupAnchorPoint_.x < (popup.left + popup.right) / 2;
     const auto* widget = GetOpenPopupWidget();
-    const double position = widget && index >= GetPopupItemCount(*widget)
+    const auto displayIndex = widget && !pendingFile ? FileDropMemberLayout(*widget, nullptr).Member(index) : std::optional{index};
+    if (!displayIndex) return {};
+    const double position = !pendingFile && widget && index >= GetPopupItemCount(*widget)
         ? static_cast<double>(GetCollectionPopupFanVisibleCount(popup))
-        : static_cast<double>(index) - GetCollectionPopupFanScrollOffset(popup);
+        : static_cast<double>(*displayIndex) - GetCollectionPopupFanScrollOffset(popup);
     auto result = layout::ResolveFanItem(metrics, popup, position,
         CollectionPopupFanRootAbove(), mirrored);
-    const std::wstring text = GetCollectionPopupFanLabel(index);
+    const std::wstring text = pendingFile ? pendingFile->DisplayName() : GetCollectionPopupFanLabel(index);
     if (auto* textLayout = GetCollectionPopupFanTextLayout(text, 10000.0f, 1000.0f, false))
     {
         textLayout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
@@ -377,15 +379,16 @@ double DesktopApp::GetCollectionPopupFanScrollOffset(const RECT& popup) const
     const auto* widget = GetOpenPopupWidget();
     return widget ? std::clamp(popupFanScroll_.position, 0.0,
         snowdesktop::collection_popup_layout::FanMaximumScroll(
-            GetPopupItemCount(*widget), GetCollectionPopupFanVisibleCount(popup))) : 0.0;
+            FileDropMemberLayout(*widget, nullptr).Count(GetPopupItemCount(*widget)), GetCollectionPopupFanVisibleCount(popup))) : 0.0;
 }
 
 bool DesktopApp::IsCollectionPopupFanItemVisible(const RECT& popup, size_t index) const
 {
     const auto* widget = GetOpenPopupWidget();
-    return widget && index < GetPopupItemCount(*widget) &&
-        snowdesktop::collection_popup_layout::FanItemOpacity(
-            static_cast<double>(index) - GetCollectionPopupFanScrollOffset(popup),
+    if (!widget || index >= GetPopupItemCount(*widget)) return false;
+    const auto position = FileDropMemberLayout(*widget, nullptr).Member(index);
+    return position && snowdesktop::collection_popup_layout::FanItemOpacity(
+            static_cast<double>(*position) - GetCollectionPopupFanScrollOffset(popup),
             GetCollectionPopupFanVisibleCount(popup)) > 0.001f;
 }
 
@@ -954,7 +957,7 @@ int DesktopApp::GetCollectionPopupRowCount(const DesktopWidget& widget, const RE
 {
     const int columns = GetCollectionPopupColumnCount(popup);
     const int itemCount = std::max(
-        1, static_cast<int>(GetPopupItemCount(widget)));
+        1, static_cast<int>(FileDropMemberLayout(widget, nullptr).Count(GetPopupItemCount(widget))));
     return (itemCount + columns - 1) / columns;
 }
 
@@ -972,7 +975,7 @@ int DesktopApp::GetCollectionPopupMaxScrollOffset(const DesktopWidget& widget, c
 
 int DesktopApp::GetCollectionPopupContentHeight(const DesktopWidget& widget, const RECT& popup, const RECT& content) const
 {
-    const size_t count = GetPopupItemCount(widget);
+    const size_t count = FileDropMemberLayout(widget, nullptr).Count(GetPopupItemCount(widget));
     if (count == 0 || UsesCollectionPopupFan(widget)) return 0;
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     if (UsesCollectionPopupList(widget))
@@ -993,6 +996,25 @@ int DesktopApp::GetCollectionPopupContentHeight(const DesktopWidget& widget, con
 
 RECT DesktopApp::GetCollectionPopupItemRect(const RECT& popup, size_t linearIndex) const
 {
+    if (const DesktopWidget* widget = GetOpenPopupWidget(); widget && UsesCollectionPopupFan(*widget))
+    {
+        if (!IsCollectionPopupFanItemVisible(popup, linearIndex)) return {};
+        return snowdesktop::collection_popup_layout::FanItemBounds(
+            GetCollectionPopupFanItem(popup, linearIndex));
+    }
+    if (!pendingLandingCaches_.empty())
+        if (const auto* widget = GetOpenPopupWidget())
+        {
+            const auto* view = GetHostedFolderMappingPopupView(popup);
+            const auto index = FileDropMemberLayout(*widget, view).Member(linearIndex);
+            if (!index) return {};
+            linearIndex = *index;
+        }
+    return FileDropPopupCell(popup, linearIndex);
+}
+
+RECT DesktopApp::FileDropPopupCell(const RECT& popup, size_t linearIndex) const
+{
     if (auto* view = GetHostedFolderMappingPopupView(popup)) return view->GetMemberLayoutRect(linearIndex);
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     const RECT content = GetCollectionPopupContentRect(popup);
@@ -1006,12 +1028,6 @@ RECT DesktopApp::GetCollectionPopupItemRect(const RECT& popup, size_t linearInde
         }
         return snowdesktop::dock_tray::popup::Row(content, dockTrayPopup_->rowHeights,
             linearIndex, popupScrollOffset_, dockTrayPopup_->rowGap);
-    }
-    if (const DesktopWidget* widget = GetOpenPopupWidget(); widget && UsesCollectionPopupFan(*widget))
-    {
-        if (!IsCollectionPopupFanItemVisible(popup, linearIndex)) return {};
-        return snowdesktop::collection_popup_layout::FanItemBounds(
-            GetCollectionPopupFanItem(popup, linearIndex));
     }
     const auto presentItem = [&](RECT item) {
         if (const auto* motion = GetCollectionPopupResizeTransition())

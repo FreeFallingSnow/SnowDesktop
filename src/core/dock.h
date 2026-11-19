@@ -209,6 +209,9 @@ private:
         snowdesktop::dock_folder_rules::InsertRange range, bool folderSource) const;
     int ItemIconSize() const;
     int ItemPitch() const;
+    size_t PendingFileCount(bool folders) const;
+    float AdditionalSlotUnits(bool folders) const;
+    std::vector<std::pair<RECT, std::shared_ptr<FolderEntry>>> pendingFileCells_;
     int ScaledSpacing() const;
     int ScaledSeparatorGap() const;
     float RunningSlotUnits() const;

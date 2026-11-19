@@ -158,7 +158,7 @@ bool DesktopApp::CommitExternalApplicationShortcut(const content::ApplicationSou
     snowdesktop::ShellFileOperationRequest request;
     request.shortcuts.push_back({source.id, path, {}, true, source.targetId});
     request.result = std::make_shared<snowdesktop::ShellFileOperationResult>();
-    const auto ticket = BeginFileDropVisual(std::move(landing), synchronously);
+    const auto ticket = BeginFileDropVisual(std::move(landing), synchronously, &sources, DropAction::Link);
     auto completed = [this, path, ticket, result = request.result,
         completion = std::move(completion)](bool succeeded) mutable {
         pendingDesktopMaterializedPaths_.Release({path});
@@ -411,9 +411,14 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
         !destination.fileDropTarget;
     if (volumeDefault || desktopApplicationDrop)
         callbacks.committedEffect = [committedEffect] { return *committedEffect; };
-    const auto readVisual = (asynchronousSource || knownPaths.empty()) && !destination.fileDropTarget && destination.luaWidgetId.empty()
-        ? BeginFileDropRead(destination.preview, true, destination.widgetId,
-            destination.folderPath, destination.dockFolderPopup) : 0;
+    std::uint64_t readVisual = 0;
+    if ((asynchronousSource || knownPaths.empty()) && !destination.fileDropTarget && destination.luaWidgetId.empty())
+    {
+        auto readPreview = destination.preview;
+        readPreview.action = DropActionFromMods(static_cast<int>(snowdesktop::ole_drag_rules::ModifiersForDropEffect(effect)));
+        readVisual = BeginFileDropRead(readPreview, true, destination.widgetId,
+            destination.folderPath, destination.dockFolderPopup, knownPaths);
+    }
     callbacks.commit = [this, readVisual, destination, activationGroupId, resolveActivationGroup, insertionAnchor,
         insertAfterAnchor, result, committedEffect, volumeDefault, physicalDirectory,
         desktopApplicationDrop, allowedEffects](const content::Content& input,

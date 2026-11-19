@@ -23,7 +23,7 @@ struct Services
     std::function<void()> savePins;
     std::function<void(const std::vector<std::wstring>&)> forgetMovedKeys;
     std::function<void()> refresh;
-    std::function<std::uint64_t(PendingLandingCache)> beginPlacement;
+    std::function<std::uint64_t(PendingLandingCache, const DragSourceList&, DropAction)> beginPlacement;
     std::function<PendingLandingCache(std::uint64_t)> takePlacement;
 };
 
@@ -50,7 +50,7 @@ inline bool Execute(const DragSourceList& sources, const DropPreviewList& previe
         if (!placement.sourceFolderPath.empty()) cache.folderPlacements.push_back(std::move(placement));
     }
 
-    const auto ticket = services.beginPlacement(std::move(cache));
+    const auto ticket = services.beginPlacement(std::move(cache), sources, preview.action);
     auto completed = std::make_shared<std::atomic_bool>(false);
     auto committed = std::make_shared<bool>(false);
     auto operationCompletion = [&placements, services, result, completed, committed, ticket,

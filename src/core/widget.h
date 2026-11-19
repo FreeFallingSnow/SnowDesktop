@@ -18,6 +18,7 @@
  */
 
 #pragma once
+#include "drag_drop/file_drop_presentation.h"
 #include "ui/input/text_input_state.h"
 #include "ui/render/inline_tooltip_backdrop.h"
 #include "item.h"
@@ -206,6 +207,8 @@ public:
     // Forward Container pure virtuals to Widget implementations
     std::wstring GetTitle() const override { return Widget::GetTitle(); }
     RECT GetBounds() const override { return Widget::GetBounds(); }
+    RECT PresentedSlotBounds(size_t index, RECT modelBounds) const override;
+    const snowdesktop::file_drop_presentation::Layout& PendingFileLayout() const;
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
 
     // ── Chrome geometry ──────────────────────────────────
@@ -884,6 +887,8 @@ private:
     mutable bool categorySnapshotValid_ = false;
     mutable std::vector<DateLayoutSegment> dateLayoutCache_;
     mutable std::vector<size_t> dateLayoutSource_;
+    mutable std::vector<size_t> dateLayoutHidden_;
+    mutable std::vector<size_t> dateLayoutBoundaries_;
     mutable bool dateLayoutListMode_ = false;
     mutable int dateLayoutItemHeight_ = 0;
     mutable int dateLayoutColumns_ = 0;

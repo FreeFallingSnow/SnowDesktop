@@ -273,7 +273,7 @@ int CollectionGroupContentHeight(
         widget ? widget->GetWidgetData() : nullptr;
     if (!data) return 0;
     return snowdesktop::widget_item_layout::ContentHeight(
-        CollectionGroupLocalLayout(widget), itemCount);
+        CollectionGroupLocalLayout(widget), widget->PendingFileLayout().Count(itemCount));
 }
 
 RECT CollectionGroupListToggleRect(CollectionGroup* widget)
@@ -694,9 +694,10 @@ CollectionGroup::BuildSlots()
     const int visibleHeight =
         std::max<int>(1, content.bottom - content.top);
     const int scroll = GetScrollOffset();
-    const auto range = snowdesktop::widget_item_layout::VisibleRange(
-        CollectionGroupLocalLayout(this), count,
-        scroll, visibleHeight);
+    const auto& pending = PendingFileLayout();
+    const auto range = pending.ModelRange(snowdesktop::widget_item_layout::VisibleRange(
+        CollectionGroupLocalLayout(this), pending.Count(count),
+        scroll, visibleHeight), count);
     const size_t firstIndex = range.first;
     const size_t lastIndex = range.second;
 
