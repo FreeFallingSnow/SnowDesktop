@@ -629,6 +629,15 @@ set(SNOWDESKTOP_SOURCES
     src/widget/view/widget_layout_lua.h
     src/widget/view/widget_runtime_image_cache.cpp
     src/widget/view/widget_runtime_image_cache.h
+    src/widget/view/widget_render_host_context.cpp
+    src/widget/view/widget_render_host_context.h
+    src/widget/view/widget_surface_host.cpp
+    src/widget/view/widget_surface_host.h
+    src/widget/view/widget_host_input_support.h
+    src/widget/view/widget_host_input_state.h
+    src/widget/view/widget_host_input.cpp
+    src/widget/view/widget_host_input_events.cpp
+    src/widget/view/widget_host_scroll.cpp
     src/widget/view/widget_interaction_lua_value.cpp
     src/widget/view/widget_interaction_lua_value.h
     src/widget/view/widget_view_renderer.cpp

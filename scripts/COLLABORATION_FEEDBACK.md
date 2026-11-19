@@ -394,6 +394,8 @@
 - **实测与源码**：冻结前 `git diff --check` 未报告未跟踪的五子棋 `main.lua`。标准 Release 和五项测试通过后，协作提交对认领的新文件执行 `git add --intent-to-add`，随后拒绝提交并报告 `main.lua:226: new blank line at EOF`。原错误已留在任务目录。`Invoke-LightCheck` 的空白检查也调用 `git diff --check`，后续的未跟踪文件枚举仅用于脚本及 JSON 语法检查。
 - **影响与下一步**：先保存已通过构建的宿主改动，再在用户要求调整卡片位置的新编辑修订去掉尾部空行。未为空白单独重编。可在冻结前对认领的未跟踪文本补只读空白检查，使检查覆盖与提交一致。当前未修改检查器。
 
+- **渲染上下文续证（2026-11-19）**：Task `task-d0e3e98f9309441b8698f53290775176`，批次 `99d0c35bf0cf45edac560a2809bc7824` 修订 0，Run `acefe323ca3a4ba0a873cdf37e93c515` 的标准 Release、四项测试及两份组件预览像素对照通过。冻结后提交才报告 `src/widget/view/widget_render_host_context.cpp:151: new blank line at EOF`。后续批次 `a4b515724bec494d9fe2bb594f27042c` 合并宿主输入改动，修正该空行并在冻结前直接检查认领的新文件。未为空白单独编译。
+
 ### CF-023 DSH 插件精确版本限制阻止宿主升级
 
 - **来源**：2026-11-10，用户反馈，Task `dsh-plugin-compat`，批次 `d054afdc50304618ae146a73f22c1571` 修订 0。DSH `0.2.2-rc.1` 的桌面插件页显示协作插件异常。

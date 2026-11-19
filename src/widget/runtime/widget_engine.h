@@ -75,6 +75,7 @@ namespace snowdesktop::widget_runtime { struct WidgetMultiplayer; }
 #include "widget/view/widget_view_accessibility.h"
 #include "widget/view/widget_accessibility_snapshot.h"
 #include "widget/view/widget_text_input_rules.h"
+#include "widget/view/widget_host_input_state.h"
 #include "widget/storage/widget_storage_write_budget.h"
 #include "widget/storage/widget_secret_store.h"
 
@@ -1564,6 +1565,11 @@ private:
         std::wstring& error, std::uint64_t diagnosticQueryId = 0,
         const snowdesktop::widget::InstalledPackage* workshopCandidate = nullptr,
         bool* deterministicFailure = nullptr);
+    bool HasFocusedHostInputFor(const std::wstring& widgetId) const noexcept;
+    void ResetFocusedHostInput();
+    void ResetHostInputForWidget(const std::wstring& widgetId);
+    void CancelHostInputPointerState(std::string_view surface);
+    void CloseHostInputPanel(const std::wstring& widgetId);
     size_t HitTestHostInputPosition(const LuaWidget::HostControl& control,
         const std::wstring& widgetId, int x, int y) const;
     struct HostInputDropCaret
@@ -1850,64 +1856,12 @@ private:
     std::atomic<bool> mediaSnapshotChanged_{ false };
     std::unique_ptr<AsyncHttpService> httpService_;
     bool previewOnly_ = false;
-    struct FocusedHostInput
-    {
-        snowdesktop::text_input::History history;
-        bool active = false;
-        std::wstring widgetId;
-        std::string id;
-        std::string surface = "desktop";
-        std::string storageKey;
-        snowdesktop::widget_runtime::InteractionAction changeAction;
-        snowdesktop::widget_runtime::InteractionAction focusAction;
-        snowdesktop::widget_runtime::InteractionAction blurAction;
-        snowdesktop::widget_runtime::InteractionAction submitAction;
-        std::wstring text;
-        std::wstring originalText;
-        std::wstring modelText;
-        std::optional<std::wstring> deferredModelText;
-        size_t cursor = 0;
-        size_t selectionAnchor = 0;
-        std::optional<snowdesktop::widget_runtime::ViewTextSelection>
-            controlledSelection;
-        snowdesktop::widget_runtime::InteractionAction
-            selectionChangeAction;
-        size_t pointerSelectionStartCursor = 0;
-        size_t pointerSelectionStartAnchor = 0;
-        std::wstring compositionText;
-        std::wstring duplicateImeResult;
-        bool composing = false;
-        bool deferredSelection = false;
-        size_t compositionCursor = 0;
-        wchar_t pendingHighSurrogate = 0;
-        bool pointerSelecting = false;
-        bool selectionDragArmed = false;
-        bool controlled = false;
-        bool readOnly = false;
-        bool numeric = false;
-        bool liveUpdate = true;
-        bool multiline = false;
-        snowdesktop::widget_runtime::HostInputCaretVisibilityRequest
-            caretVisibility;
-        float minimum = 0.0f;
-        float maximum = 1.0f;
-        float step = 0.01f;
-        std::size_t maximumUtf8Bytes = 0;
-    };
+    using FocusedHostInput = snowdesktop::widget_runtime::WidgetFocusedHostInput;
     FocusedHostInput focusedHostInput_;
     std::wstring hostInputDropWidgetId_;
     std::string hostInputDropSurface_;
     std::optional<HostInputDropCaret> hostInputDropCaret_;
-    struct HostScrollbarDrag
-    {
-        bool active = false;
-        std::wstring widgetId;
-        std::string id;
-        std::string surface = "desktop";
-        bool horizontal = false;
-        int pointerStart = 0;
-        int offsetStart = 0;
-    };
+    using HostScrollbarDrag = snowdesktop::widget_runtime::WidgetHostScrollbarDrag;
     HostScrollbarDrag hostScrollbarDrag_;
     struct PressedViewKeyTarget
     {
