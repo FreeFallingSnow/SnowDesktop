@@ -44,6 +44,16 @@
 - `widget_author_test.cpp` 等实现产品 `snowwidget test`、lint、预览功能的文件属于 `widget/authoring/`；验证这些功能的回归测试属于 `tests/`，按文件实际职责归档。
 - 需要新增职责模块时，先更新本节归属规则并明确边界，再创建目录；不为单个未分类文件随意增加 `misc/`、`helpers/`、`temp/` 等收容目录。
 
+### 文件增长与职责评审
+
+- **动手前找所有者。** 向已有 C++ 源文件或头文件添加功能时，先沿生产调用找到负责该规则、数据或资源的模块。同一职责就地扩展。若新逻辑有独立的修改原因、状态生命周期或已经拆出的实现，优先写进对应模块，组合入口只保留必要的调用和顺序控制。这个判断适用于任何文件大小。
+- **用行数提醒评审。** 本次新建或净增长的自有源码，改后达到 1,000 物理行（含空行和注释）时，逐项核对新增的函数、状态和依赖是否属于该文件。这沿用代码健康基线的分档，也适用于原本就超过千行的文件。用 Git 差异查看增量，按需用 `rg -c "^" -- <文件>` 查看工作区现有行数。生成输出和第三方原件按各自归属处理。
+- **根据差异作决定。** 触发走查后，新增代码与现有实现共同维护同一约束时，用一句话写明共址理由即可。独立职责优先复用现有模块；需要新文件时，用该职责命名并放在所属模块。若发现旧职责混杂、迁移超出本批范围，在[代码健康任务总表](../../CODE_HEALTH.md)登记具体符号、调用方及下一个可验证的拆分单元。本次新增逻辑仍按已确认的所有者放置。拆分效果按下节的状态所有者和生产依赖验收。
+
+例如，为组件包的 `previewData.variants` 增加字段时，清单 JSON 的解析与格式诊断归 `widget_package_manifest_fields.cpp` 的 `ReadPreviewVariants`。若该字段需要核实资源文件存在，磁盘检查归 `WidgetPackageValidator::ValidateDirectory`。`widget_package.cpp` 继续承担已有入口职责。[预览字段解析](../../src/widget/packages/widget_package_manifest_fields.cpp) · [目录验证](../../src/widget/packages/widget_package_validation.cpp)
+
+走查时判断改动是否放在合适的组件中，并结合相邻代码检查引入的复杂度。这一做法参考 [Google 的代码评审指南](https://google.github.io/eng-practices/review/reviewer/looking-for.html#design)。
+
 ### 类职责、公共头与依赖边界
 
 跨模块审计可按[代码健康分析方法](../../scripts/code-health.md)复用跨版本历史和依赖基线，结合实际调用与状态所有者选择下一批重构。
