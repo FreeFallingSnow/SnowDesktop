@@ -572,6 +572,8 @@ set(SNOWDESKTOP_SOURCES
     src/widget/api/widget_api_registry.cpp
     src/widget/packages/widget_package_image_cache.cpp
     src/widget/runtime/widget_l10n_format.cpp
+    src/widget/runtime/widget_l10n_lua.cpp
+    src/widget/runtime/widget_l10n_lua.h
     src/widget/runtime/widget_time.cpp
     src/widget/preview/widget_preview_context.cpp
     src/widget/preview/widget_preset_preview.h
@@ -597,6 +599,8 @@ set(SNOWDESKTOP_SOURCES
     src/widget/tasks/widget_clipboard_task_executor.cpp
     src/widget/tasks/widget_clipboard_task_dispatch.cpp
     src/widget/tasks/widget_clipboard_task_dispatch.h
+    src/widget/tasks/widget_network_task_dispatch.cpp
+    src/widget/tasks/widget_network_task_dispatch.h
     src/widget/tasks/widget_filesystem_handle_store.cpp
     src/widget/tasks/widget_filesystem_task_executor.cpp
     src/widget/tasks/widget_filesystem_task_dispatch.cpp
@@ -616,6 +620,8 @@ set(SNOWDESKTOP_SOURCES
     src/widget/view/widget_draw_context.h
     src/widget/view/widget_draw_lua.cpp
     src/widget/view/widget_draw_lua.h
+    src/widget/view/widget_layout_lua.cpp
+    src/widget/view/widget_layout_lua.h
     src/widget/view/widget_view_renderer.cpp
     src/widget/view/widget_view_renderer.h
     src/widget/view/widget_view_text.cpp

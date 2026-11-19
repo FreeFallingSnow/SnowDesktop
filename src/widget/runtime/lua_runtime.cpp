@@ -20,6 +20,31 @@ void PrepareAllocationTraffic(LuaRuntimeQuota& quota, std::uint64_t generation)
     quota.allocationTraffic.baselineBytes = quota.allocationTraffic.peakBytes = quota.memoryBytes;
 }
 }
+bool PushProtectedLuaString(lua_State* state, std::string_view text)
+{
+    if (!lua_checkstack(state, 2))
+    {
+        // This helper is only called inside Lua C entry points. Clearing
+        // their arguments frees the minimum C frame slots without allocating.
+        lua_settop(state, 0);
+        lua_pushnil(state);
+        return false;
+    }
+    lua_pushcfunction(state, +[](lua_State* inner) {
+        const auto* value = static_cast<std::string_view*>(lua_touserdata(inner, 1));
+        lua_pushlstring(inner, value->data(), value->size());
+        return 1;
+    });
+    lua_pushlightuserdata(state, &text);
+    return lua_pcall(state, 1, 1, 0) == LUA_OK;
+}
+
+int DeferLuaError(lua_State* state, std::string_view message)
+{
+    (void)PushProtectedLuaString(state, message);
+    return -1;
+}
+
 bool LuaTableUsesOnlyFields(lua_State* state, int index,
     std::span<const std::string_view> allowed,
     std::string_view context, std::string& error)

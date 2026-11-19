@@ -31,6 +31,11 @@ struct LuaRuntimeQuota
 
 namespace snowdesktop::lua_runtime
 {
+// Pushes a value or an error object while keeping allocating Lua operations protected.
+bool PushProtectedLuaString(lua_State* state, std::string_view text);
+// Returns -1 for a C callback that will raise the staged error after native cleanup.
+int DeferLuaError(lua_State* state, std::string_view message);
+
 bool LuaTableUsesOnlyFields(lua_State* state, int index,
     std::span<const std::string_view> allowed,
     std::string_view context, std::string& error);

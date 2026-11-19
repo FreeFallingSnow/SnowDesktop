@@ -59,6 +59,7 @@ namespace snowdesktop::widget_runtime { struct WidgetMultiplayer; }
 #include "widget/tasks/widget_audio_playback.h"
 #include "widget/tasks/widget_system_control_tasks.h"
 #include "widget/tasks/widget_clipboard_task_dispatch.h"
+#include "widget/tasks/widget_network_task_dispatch.h"
 #include "widget/tasks/widget_filesystem_handle_store.h"
 #include "widget/tasks/widget_filesystem_task_dispatch.h"
 #include "widget/tasks/widget_filesystem_watch_service.h"
@@ -1994,8 +1995,7 @@ private:
         calendarMutationCompletions_;
     std::unordered_map<std::uint64_t, std::string>
         notificationTaskCompletions_;
-    std::unordered_map<std::uint64_t, HttpResponse>
-        networkTaskCompletions_;
+    snowdesktop::widget_runtime::WidgetNetworkTaskDispatch networkTaskDispatch_;
     snowdesktop::widget_runtime::WidgetClipboardTaskDispatch clipboardTaskDispatch_;
     snowdesktop::widget_runtime::WidgetFilesystemTaskDispatch filesystemTaskDispatch_;
     struct FilesystemWatchBinding
@@ -2017,8 +2017,6 @@ private:
     };
     std::unordered_map<std::uint64_t, FilesystemWatchBinding>
         filesystemWatchBindings_;
-    std::unordered_map<std::uint64_t, int> networkTaskRequests_;
-    std::unordered_map<int, std::uint64_t> networkRequestTasks_;
     snowdesktop::widget_runtime::WidgetTrustedGestureState
         trustedGestureState_;
     const snowdesktop::widget_runtime::HostInputSubmitFocusScope*

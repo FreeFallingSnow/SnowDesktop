@@ -52,7 +52,6 @@ namespace text_input = snowdesktop::text_input;
 #include "system/system_snapshot.h"
 #include "common/constants.h"
 #include "common/utils.h"
-#include "ui/render/font_cu_rules.h"
 #include "navigation/name_pinyin.h"
 #include "navigation/search_match.h"
 #include "widget/packages/widget_package.h"
@@ -60,7 +59,7 @@ namespace text_input = snowdesktop::text_input;
 #include "steam/steam_workshop_diagnostics.h"
 #include "steam/steam_entitlement.h"
 #include "widget/api/widget_api_registry.h"
-#include "widget_l10n_format.h"
+#include "widget_l10n_lua.h"
 #include "widget_time.h"
 #include "widget/permissions/widget_permission_broker.h"
 #include "widget_file_drop_delivery.h"
@@ -69,6 +68,7 @@ namespace text_input = snowdesktop::text_input;
 #include "widget/view/widget_draw_geometry.h"
 #include "widget/view/widget_draw_context.h"
 #include "widget/view/widget_draw_lua.h"
+#include "widget/view/widget_layout_lua.h"
 #include "widget/view/widget_view_renderer.h"
 #include "widget/view/widget_view_text.h"
 #include "widget/view/widget_background_cache.h"
@@ -95,7 +95,12 @@ namespace text_input = snowdesktop::text_input;
 #include "data/atomic_file.h"
 #include "widgets/widget_chrome_rules.h"
 
+using snowdesktop::lua_runtime::DeferLuaError;
 using snowdesktop::lua_runtime::LuaTableIsContiguousArray;
+using snowdesktop::widget_l10n::PushWidgetL10nAPI;
+using snowdesktop::widget_l10n::TranslateManifest;
+using snowdesktop::widget_runtime::CurrentLayoutContentHeight;
+using snowdesktop::widget_runtime::CurrentLayoutContentWidth;
 using snowdesktop::lua_runtime::LuaTableUsesOnlyFields;
 using snowdesktop::widget_runtime::ApplyViewTextLocaleAndDirection;
 using snowdesktop::widget_runtime::BuildHostInputDisplayText;
@@ -696,20 +701,14 @@ struct RuntimeImageResource
     std::string source;
 };
 
-struct D2DState : snowdesktop::widget_runtime::LuaDrawContext
+struct D2DState : snowdesktop::widget_runtime::WidgetLayoutContext
 {
     WidgetEngine* engine = nullptr;
     std::string storagePrefix;
     std::string_view desktopPopupOpenerKey;
     bool openingFocusAllowed = false;
-    int gridColumns = 1;
-    int gridRows = 1;
-    int gridGapY = 8;
-    int barHeight = 24;
     float semanticCuScale = 1.0f;
     snowdesktop::widget_runtime::SemanticUiMetricTokens semanticUiMetrics;
-    float layoutContentWidth = 0.0f;
-    float layoutContentHeight = 0.0f;
     std::uint64_t nextDesktopPaintRevision = 0;
     ComPtr<ID2D1Device> bitmapDevice;
     ComPtr<ID2D1DeviceContext> immediateCommandContext;
@@ -741,46 +740,6 @@ static void ClearShellIconBitmaps(D2DState* state)
     for (const auto& [path, bitmap] : state->shellIconCache)
         state->imageSamplingCache.Remove(bitmap.Get());
     state->shellIconCache.clear();
-}
-
-static float CurrentLayoutContentWidth(const D2DState* state) noexcept
-{
-    if (!state) return 400.0f;
-    if (state->layoutContentWidth > 0.0f)
-        return state->layoutContentWidth;
-    return std::max(1.0f,
-        state->widgetRect.right - state->widgetRect.left);
-}
-
-static float CurrentLayoutContentHeight(const D2DState* state) noexcept
-{
-    if (!state) return 300.0f;
-    if (state->layoutContentHeight > 0.0f)
-        return state->layoutContentHeight;
-    return std::max(1.0f,
-        state->widgetRect.bottom - state->widgetRect.top);
-}
-
-static int ReadPositiveRegistryInteger(
-    lua_State* state, const char* key, int fallback = 1)
-{
-    lua_getfield(state, LUA_REGISTRYINDEX, key);
-    const int result = lua_isinteger(state, -1)
-        ? std::max(1, static_cast<int>(lua_tointeger(state, -1)))
-        : std::max(1, fallback);
-    lua_pop(state, 1);
-    return result;
-}
-
-static bool ReadRegistryBoolean(
-    lua_State* state, const char* key, bool fallback)
-{
-    lua_getfield(state, LUA_REGISTRYINDEX, key);
-    const bool result = lua_isboolean(state, -1)
-        ? lua_toboolean(state, -1) != 0
-        : fallback;
-    lua_pop(state, 1);
-    return result;
 }
 
 static std::string BindRuntimeImageToken(
@@ -2725,48 +2684,6 @@ static std::unordered_map<std::string, std::string> JsonReadValueMap(
     }
     return result;
 }
-
-static const std::unordered_map<std::string, std::string>*
-SelectManifestLocale(const LuaWidgetManifest& manifest)
-{
-    const std::string language = Locale::Instance().GetEffectiveLanguage();
-    std::vector<std::string> available;
-    available.reserve(manifest.locales.size());
-    for (const auto& [code, catalog] : manifest.locales)
-    {
-        (void)catalog;
-        available.push_back(code);
-    }
-    const std::string selected =
-        snowdesktop::localization::ResolveBestLanguage(available, language);
-    auto catalog = manifest.locales.find(selected);
-    if (catalog != manifest.locales.end()) return &catalog->second;
-    catalog = manifest.locales.find("en-US");
-    if (catalog != manifest.locales.end())
-        return &catalog->second;
-    return manifest.locales.empty() ? nullptr : &manifest.locales.begin()->second;
-}
-
-static std::string TranslateManifest(const LuaWidgetManifest& manifest,
-    const std::string& key, const std::string& fallback = {})
-{
-    if (const auto* catalog = SelectManifestLocale(manifest))
-    {
-        auto value = catalog->find(key);
-        if (value != catalog->end())
-            return value->second;
-    }
-    auto english = manifest.locales.find("en-US");
-    if (english != manifest.locales.end())
-    {
-        auto value = english->second.find(key);
-        if (value != english->second.end())
-            return value->second;
-    }
-    return fallback.empty() ? key : fallback;
-}
-
-static void PushWidgetL10nAPI(lua_State* L, const LuaWidgetManifest& manifest);
 
 static bool IsHostStructureSettingKey(const std::string& key)
 {
@@ -6385,7 +6302,6 @@ static void PushContextRect(lua_State* L, const RECT& rect,
     lua_setfield(L, -2, "height");
 }
 
-static int DeferLuaError(lua_State* state, std::string_view message);
 
 static int LuaWidgetContextWithDeferredError(lua_State* caller)
 {
@@ -9285,17 +9201,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             }
             if (audioPlayback_) audioPlayback_->Cancel(action.id);
             CancelDispatchedWidgetTask(action.id, action.name == "location.current");
-            if (const auto request = networkTaskRequests_.find(action.id);
-                request != networkTaskRequests_.end())
-            {
-                if (httpService_)
-                    (void)httpService_->Cancel(
-                        action.instanceId.empty()
-                            ? std::wstring{}
-                            : Utf8ToWideLocal(action.instanceId),
-                        request->second);
-            }
-            networkTaskCompletions_.erase(action.id);
+            networkTaskDispatch_.Cancel(action, httpService_.get());
             continue;
         }
         const auto snapshot = taskBroker_->Snapshot(action.id);
@@ -9686,195 +9592,9 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
 
         if (action.name == "network.request")
         {
-            if (action.preview)
-            {
-                HttpResponse response;
-                response.status = 200;
-                response.body =
-                    "<?xml version=\"1.0\"?><rss><channel>"
-                    "<title>Preview feed</title></channel></rss>";
-                networkTaskCompletions_.insert_or_assign(
-                    action.id, std::move(response));
-                (void)taskBroker_->Complete(action.id, true);
-                continue;
-            }
-            const auto url = action.arguments.find("url");
-            const auto method = action.arguments.find("method");
-            const auto headerCountValue =
-                action.arguments.find("headerCount");
-            const auto timeout = action.arguments.find("timeoutMs");
-            const auto cache = action.arguments.find("cacheSeconds");
-            const auto maximum = action.arguments.find("maxBytes");
-            const auto parseInteger = [](const std::string& text,
-                int& output) {
-                const char* begin = text.data();
-                const char* end = begin + text.size();
-                const auto parsed = std::from_chars(begin, end, output);
-                return parsed.ec == std::errc{} && parsed.ptr == end;
-            };
-            int timeoutMs = 0;
-            int cacheSeconds = 0;
-            int maximumBytes = 0;
-            int headerCount = 0;
-            if (!httpService_ || url == action.arguments.end() ||
-                method == action.arguments.end() ||
-                headerCountValue == action.arguments.end() ||
-                timeout == action.arguments.end() ||
-                cache == action.arguments.end() ||
-                maximum == action.arguments.end() ||
-                !parseInteger(headerCountValue->second, headerCount) ||
-                !parseInteger(timeout->second, timeoutMs) ||
-                !parseInteger(cache->second, cacheSeconds) ||
-                !parseInteger(maximum->second, maximumBytes))
-            {
-                (void)taskBroker_->Complete(
-                    action.id, false, "invalidArguments");
-                continue;
-            }
-            if (headerCount < 0 || headerCount > 32)
-            {
-                (void)taskBroker_->Complete(
-                    action.id, false, "invalidArguments");
-                continue;
-            }
-
-            const auto argument = [&](const std::string& key)
-                -> const std::string* {
-                const auto found = action.arguments.find(key);
-                return found == action.arguments.end()
-                    ? nullptr : &found->second;
-            };
-            const auto wipe = [](std::string& value) {
-                if (!value.empty())
-                    SecureZeroMemory(value.data(), value.size());
-                value.clear();
-            };
-            const auto composeValue = [&](const std::string& prefix,
-                std::size_t maximumBytes, bool header,
-                std::string& output) {
-                const std::string* kind = argument(prefix + "kind");
-                if (!kind) return false;
-                if (*kind == "raw")
-                {
-                    const std::string* value = argument(prefix + "value");
-                    if (!value || value->size() > maximumBytes)
-                        return false;
-                    output = *value;
-                }
-                else if (*kind == "secret")
-                {
-                    const std::string* reference = argument(prefix + "ref");
-                    const std::string* valuePrefix =
-                        argument(prefix + "prefix");
-                    const std::string* valueSuffix =
-                        argument(prefix + "suffix");
-                    if (!secretStore_ || !reference || !valuePrefix ||
-                        !valueSuffix ||
-                        valuePrefix->size() > maximumBytes ||
-                        valueSuffix->size() >
-                            maximumBytes - valuePrefix->size())
-                        return false;
-                    std::string secret;
-                    std::string error;
-                    if (!secretStore_->Resolve(owner->packageId,
-                            action.instanceId, *reference, secret, error) ||
-                        secret.size() > maximumBytes - valuePrefix->size() -
-                            valueSuffix->size())
-                    {
-                        wipe(secret);
-                        return false;
-                    }
-                    output.reserve(valuePrefix->size() + secret.size() +
-                        valueSuffix->size());
-                    output = *valuePrefix;
-                    output += secret;
-                    output += *valueSuffix;
-                    wipe(secret);
-                }
-                else
-                    return false;
-                if (header &&
-                    (output.find_first_of("\r\n\0", 0, 3) !=
-                            std::string::npos ||
-                        !IsValidUtf8Local(output)))
-                {
-                    wipe(output);
-                    return false;
-                }
-                return true;
-            };
-
-            std::string headersUtf8;
-            bool requestArgumentsValid = true;
-            for (int headerIndex = 0; headerIndex < headerCount;
-                ++headerIndex)
-            {
-                const std::string prefix = "header." +
-                    std::to_string(headerIndex) + ".";
-                const std::string* name = argument(prefix + "name");
-                std::string value;
-                if (!name || !composeValue(prefix, 16 * 1024, true,
-                        value) ||
-                    headersUtf8.size() > 32 * 1024 - name->size() - 4 ||
-                    value.size() > 32 * 1024 - headersUtf8.size() -
-                        name->size() - 4)
-                {
-                    wipe(value);
-                    requestArgumentsValid = false;
-                    break;
-                }
-                headersUtf8 += *name;
-                headersUtf8 += ": ";
-                headersUtf8 += value;
-                headersUtf8 += "\r\n";
-                wipe(value);
-            }
-            std::string body;
-            if (requestArgumentsValid &&
-                !composeValue("body.", 64 * 1024, false, body))
-                requestArgumentsValid = false;
-            if (!requestArgumentsValid)
-            {
-                wipe(headersUtf8);
-                wipe(body);
-                const bool usesSecret =
-                    action.arguments.contains("usesSecret");
-                (void)taskBroker_->Complete(action.id, false,
-                    usesSecret ? "secretUnavailable" :
-                        "invalidArguments");
-                continue;
-            }
-            HttpRequestOptions options;
-            options.widgetId = owner->widgetId;
-            options.url = Utf8ToWideLocal(url->second);
-            options.method = Utf8ToWideLocal(method->second);
-            options.headers = Utf8ToWideLocal(headersUtf8);
-            options.body = std::move(body);
-            options.timeoutMs = timeoutMs;
-            options.cacheSeconds =
-                method->second == "GET" && options.body.empty() &&
-                    !action.arguments.contains("usesSecret")
-                ? cacheSeconds : 0;
-            options.maximumResponseBytes =
-                static_cast<std::uint32_t>(maximumBytes);
-            options.allowedDomains = owner->manifest.networkDomains;
-            options.allowAnyHttpOrHttpsUrl = false;
-            options.allowHttpAndLocalTargets = true;
-            options.sameOriginRedirectsOnly =
-                action.arguments.contains("usesSecret");
-            const auto retry = action.arguments.find("retryDirect");
-            options.retryDirect = retry != action.arguments.end() &&
-                retry->second == "true";
-            wipe(headersUtf8);
-            const int requestId = httpService_->Submit(std::move(options));
-            if (requestId <= 0)
-            {
-                (void)taskBroker_->Complete(
-                    action.id, false, "requestRejected");
-                continue;
-            }
-            networkTaskRequests_.insert_or_assign(action.id, requestId);
-            networkRequestTasks_.insert_or_assign(requestId, action.id);
+            networkTaskDispatch_.Start(action, owner->widgetId,
+                owner->packageId, owner->manifest.networkDomains,
+                secretStore_.get(), httpService_.get(), *taskBroker_);
             continue;
         }
 
@@ -11176,8 +10896,6 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         const auto notificationCompletion =
             notificationTaskCompletions_.find(completion.id);
         const auto locationCompletion = locationTaskCompletions_.find(completion.id);
-        const auto networkCompletion =
-            networkTaskCompletions_.find(completion.id);
         if (widget == widgets_.end() ||
             widget->taskIds.erase(completion.id) == 0)
         {
@@ -11192,8 +10910,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                     notificationTaskCompletions_.end())
                 notificationTaskCompletions_.erase(
                     notificationCompletion);
-            if (networkCompletion != networkTaskCompletions_.end())
-                networkTaskCompletions_.erase(networkCompletion);
+            networkTaskDispatch_.DiscardCompletion(completion.id);
             clipboardTaskDispatch_.DiscardCompletion(completion.id);
             filesystemTaskDispatch_.DiscardCompletion(completion.id);
             continue;
@@ -11231,12 +10948,6 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             completion.name == "notification.schedule";
         if (completion.ok && notificationIdTask &&
             notificationCompletion == notificationTaskCompletions_.end())
-        {
-            completion.ok = false;
-            completion.error = "taskResultUnavailable";
-        }
-        if (completion.ok && networkTask &&
-            networkCompletion == networkTaskCompletions_.end())
         {
             completion.ok = false;
             completion.error = "taskResultUnavailable";
@@ -11365,9 +11076,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         const snowdesktop::calendar::MutationResult* calendarResult =
             calendarCompletion != calendarMutationCompletions_.end()
             ? &calendarCompletion->second : nullptr;
-        const HttpResponse* networkResult =
-            networkCompletion != networkTaskCompletions_.end()
-            ? &networkCompletion->second : nullptr;
+        const auto networkResult = networkTaskDispatch_.TakeCompletion(completion);
         if (clipboardPayload.HasValue())
         {
             clipboardPayload.PrepareValue(completion,
@@ -11404,7 +11113,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 catalogRevision, calendarTask, itemSearchTask,
                 calendarResult, notificationIdTask,
                 notificationCompletion, locationTask, locationResult, networkTask,
-                networkResult, &filesystemPayload, &nativePayload](lua_State* eventState) {
+                &networkResult, &filesystemPayload, &nativePayload](lua_State* eventState) {
                 lua_pushinteger(eventState,
                     static_cast<lua_Integer>(completion.id));
                 lua_setfield(eventState, -2, "taskId");
@@ -11494,18 +11203,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                         lua_setfield(eventState, -2, "source");
                     }
                     else if (networkTask)
-                    {
-                        lua_createtable(eventState, 0, 3);
-                        lua_pushinteger(eventState, networkResult->status);
-                        lua_setfield(eventState, -2, "status");
-                        lua_pushlstring(eventState,
-                            networkResult->body.data(),
-                            networkResult->body.size());
-                        lua_setfield(eventState, -2, "body");
-                        lua_pushboolean(eventState,
-                            networkResult->fromCache ? 1 : 0);
-                        lua_setfield(eventState, -2, "fromCache");
-                    }
+                        snowdesktop::widget_runtime::PushNetworkTaskValue(eventState, *networkResult);
                     else if (clipboardPayload.HasValue())
                         clipboardPayload.PushValue(eventState);
                     else if (filesystemPayload.HasValue())
@@ -11531,10 +11229,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                         lua_setfield(eventState, -2, "currentRevision");
                     }
                     if (networkTask && networkResult)
-                    {
-                        lua_pushinteger(eventState, networkResult->status);
-                        lua_setfield(eventState, -2, "status");
-                    }
+                        snowdesktop::widget_runtime::PushNetworkTaskStatus(eventState, *networkResult);
                 }
             });
         if (searchCompletion != appSearchCompletions_.end())
@@ -11547,8 +11242,6 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 notificationTaskCompletions_.end())
             notificationTaskCompletions_.erase(notificationCompletion);
         locationTaskCompletions_.erase(completion.id);
-        if (networkCompletion != networkTaskCompletions_.end())
-            networkTaskCompletions_.erase(networkCompletion);
     }
     for (const auto& message : audioEvents)
     {
@@ -11653,7 +11346,7 @@ void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
     {
         (void)taskBroker_->Cancel(taskId, reason);
         CancelDispatchedWidgetTask(taskId, false);
-        networkTaskCompletions_.erase(taskId);
+        networkTaskDispatch_.DiscardCompletion(taskId);
     }
     if (audioOutputTaskExecutor_)
         audioOutputTaskExecutor_->ForgetInstance(
@@ -11876,12 +11569,10 @@ void WidgetEngine::Shutdown()
     itemSearchCompletions_.clear();
     calendarMutationCompletions_.clear();
     notificationTaskCompletions_.clear();
-    networkTaskCompletions_.clear();
+    networkTaskDispatch_.Clear();
     clipboardTaskDispatch_.Clear();
     filesystemTaskDispatch_.Clear();
     filesystemWatchBindings_.clear();
-    networkTaskRequests_.clear();
-    networkRequestTasks_.clear();
     taskBroker_.reset();
     notificationCenter_.reset();
     notificationScheduleStore_.reset();
@@ -12220,7 +11911,7 @@ void WidgetEngine::PushSafeEnvironment(lua_State* L, const LuaWidget& widget)
         PushReadOnlyGlobal(L, libraryName.c_str());
         lua_setfield(L, -2, libraryName.c_str());
     }
-    PushWidgetL10nAPI(L, widget.manifest);
+    PushWidgetL10nAPI(L, widget.manifest.locales);
     PushReadOnlyProxyForTopTable(L);
     lua_setfield(L, -2, "l10n");
 
@@ -12526,6 +12217,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     lua_pushlightuserdata(state, d2dState_);
     lua_setfield(state, LUA_REGISTRYINDEX, "__d2d_ptr");
     snowdesktop::widget_runtime::BindLuaDrawContext(state, d2dState_, kLuaDrawHostServices);
+    snowdesktop::widget_runtime::BindWidgetLayoutContext(state, d2dState_);
     lua_pushlightuserdata(state, quota.get());
     lua_setfield(state, LUA_REGISTRYINDEX, "__quota_ptr");
     lua_pushlightuserdata(state, storageWriteBudget.get());
@@ -14947,35 +14639,8 @@ void WidgetEngine::TickRuntime()
     {
         for (auto& response : httpService_->Drain())
         {
-            if (const auto task = networkRequestTasks_.find(response.id);
-                task != networkRequestTasks_.end())
-            {
-                const std::uint64_t taskId = task->second;
-                networkRequestTasks_.erase(task);
-                networkTaskRequests_.erase(taskId);
-                const bool ok = response.error.empty() &&
-                    response.status >= 200 && response.status < 300;
-                std::string error;
-                if (!ok)
-                {
-                    if (response.error == "Cancelled")
-                        error = "canceled";
-                    else if (response.error == "Response too large")
-                        error = "responseTooLarge";
-                    else if (!response.error.empty())
-                        error = response.error.find("Redirect") !=
-                            std::string::npos
-                            ? "redirectRejected" : "networkError";
-                    else
-                        error = "httpStatus";
-                }
-                networkTaskCompletions_.insert_or_assign(
-                    taskId, response);
-                if (taskBroker_)
-                    (void)taskBroker_->Complete(
-                        taskId, ok, std::move(error));
+            if (networkTaskDispatch_.Consume(response, taskBroker_.get()))
                 continue;
-            }
             int index = FindWidget(response.widgetId);
             if (index < 0) continue;
             auto& widget = widgets_[index];
@@ -14993,14 +14658,7 @@ void WidgetEngine::TickRuntime()
                 if (lua_isfunction(state, -1))
                 {
                     lua_pushinteger(state, response.id);
-                    lua_createtable(state, 0, 5);
-                    lua_pushinteger(state, response.status); lua_setfield(state, -2, "status");
-                    lua_pushlstring(state, response.body.data(), response.body.size()); lua_setfield(state, -2, "body");
-                    lua_pushstring(state, response.error.c_str()); lua_setfield(state, -2, "error");
-                    lua_pushboolean(state, response.fromCache); lua_setfield(state, -2, "fromCache");
-                    lua_pushboolean(state, response.error.empty() &&
-                        response.status >= 200 && response.status < 300);
-                    lua_setfield(state, -2, "ok");
+                    snowdesktop::widget_runtime::PushHttpResponseValue(state, response);
                     if (snowdesktop::lua_runtime::ProtectedCall(state, 2, 0) != LUA_OK)
                     {
                         const char* error = lua_tostring(state, -1);
@@ -20033,7 +19691,7 @@ bool WidgetEngine::RuntimeCancelTask(
     if (!taskBroker_->Cancel(taskId)) return false;
     if (audioPlayback_) audioPlayback_->Cancel(taskId);
     CancelWidgetTaskWork(taskId, false);
-    networkTaskCompletions_.erase(taskId);
+    networkTaskDispatch_.DiscardCompletion(taskId);
     if (!widget.preview && taskWakeCallback_) taskWakeCallback_();
     return true;
 }
@@ -25416,10 +25074,10 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
         }
     }
     if (!manifest.nameKey.empty())
-        manifest.name = TranslateManifest(manifest, manifest.nameKey, manifest.name);
+        manifest.name = TranslateManifest(manifest.locales, manifest.nameKey, manifest.name);
     if (!manifest.descriptionKey.empty())
         manifest.description =
-            TranslateManifest(manifest, manifest.descriptionKey, manifest.description);
+            TranslateManifest(manifest.locales, manifest.descriptionKey, manifest.description);
     readString(root, "publisher", manifest.publisher);
     readString(root, "minHostVersion", manifest.minHostVersion);
     readString(root, "preview", manifest.preview);
@@ -25785,7 +25443,7 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
         manifest.defaultRows = std::min(manifest.defaultRows, manifest.maxRows);
     if (!manifest.previewIntroductionKey.empty())
     {
-        manifest.previewIntroduction = TranslateManifest(manifest,
+        manifest.previewIntroduction = TranslateManifest(manifest.locales,
             manifest.previewIntroductionKey,
             manifest.previewIntroduction);
     }
@@ -25795,7 +25453,7 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
         if (auto value = manifest.previewStorage.find(storageKey);
             value != manifest.previewStorage.end())
             value->second = TranslateManifest(
-                manifest, localizationKey, value->second);
+                manifest.locales, localizationKey, value->second);
     }
     for (auto& variant : manifest.previewVariants)
     {
@@ -25813,22 +25471,22 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
         }
         if (!variant.titleKey.empty())
             variant.title = TranslateManifest(
-                manifest, variant.titleKey, variant.title);
+                manifest.locales, variant.titleKey, variant.title);
         if (!variant.descriptionKey.empty())
             variant.description = TranslateManifest(
-                manifest, variant.descriptionKey, variant.description);
+                manifest.locales, variant.descriptionKey, variant.description);
         for (const auto& [storageKey, localizationKey] : variant.storageKeys)
         {
             if (auto value = variant.storage.find(storageKey);
                 value != variant.storage.end())
                 value->second = TranslateManifest(
-                    manifest, localizationKey, value->second);
+                    manifest.locales, localizationKey, value->second);
         }
     }
 
     for (auto& preset : manifest.creationPresets)
         if (!preset.titleKey.empty()) preset.title = TranslateManifest(
-            manifest, preset.titleKey, preset.title);
+            manifest.locales, preset.titleKey, preset.title);
 
     if (manifest.permissions.empty())
         manifest.permissions = {};
@@ -27983,353 +27641,6 @@ static int lua_StorageKeys(lua_State* L)
     return 1;
 }
 
-static int lua_LayoutWidth(lua_State* L)
-{
-    auto* s = GetD2D(L);
-    lua_pushnumber(L, s ? s->widgetRect.right - s->widgetRect.left : 400);
-    return 1;
-}
-
-static int lua_LayoutHeight(lua_State* L)
-{
-    auto* s = GetD2D(L);
-    lua_pushnumber(L, s ? s->widgetRect.bottom - s->widgetRect.top : 300);
-    return 1;
-}
-
-static int lua_LayoutColumns(lua_State* L)
-{
-    auto* s = GetD2D(L);
-    lua_pushinteger(L, s ? s->gridColumns : 1);
-    return 1;
-}
-
-static int lua_LayoutRows(lua_State* L)
-{
-    auto* s = GetD2D(L);
-    lua_pushinteger(L, s ? s->gridRows : 1);
-    return 1;
-}
-
-static int lua_LayoutSizeClass(lua_State* L)
-{
-    auto* s = GetD2D(L);
-    int area = s ? s->gridColumns * s->gridRows : 1;
-    lua_pushstring(L, area <= 2 ? "small" : (area <= 6 ? "medium" : "large"));
-    return 1;
-}
-
-static int lua_LayoutCellWidth(lua_State* L)
-{
-    auto* s = GetD2D(L);
-    lua_pushinteger(L, s ? std::max(4, s->gridCellW) : 92);
-    return 1;
-}
-
-static int lua_LayoutCellHeight(lua_State* L)
-{
-    auto* s = GetD2D(L);
-    lua_pushinteger(L, s ? std::max(4, s->gridCellH) : 116);
-    return 1;
-}
-
-static int lua_LayoutCellScale(lua_State* L)
-{
-    auto* s = GetD2D(L);
-    const int cellWidth = s ? std::max(4, s->gridCellW) : kCellWidth;
-    const int cellHeight = s ? std::max(4, s->gridCellH) : kMinCellHeight;
-    lua_pushnumber(L, CalculateWidgetCellScale(cellWidth, cellHeight));
-    return 1;
-}
-
-static int lua_LayoutCu(lua_State* L)
-{
-    const float value = static_cast<float>(luaL_checknumber(L, 1));
-    auto* s = GetD2D(L);
-    const int cellWidth = s ? std::max(4, s->gridCellW) : kCellWidth;
-    const int cellHeight = s ? std::max(4, s->gridCellH) : kMinCellHeight;
-    lua_pushinteger(L, static_cast<lua_Integer>(std::round(value * CalculateWidgetCellScale(cellWidth, cellHeight))));
-    return 1;
-}
-
-static int lua_LayoutFontCu(lua_State* L)
-{
-    const float value = static_cast<float>(luaL_checknumber(L, 1));
-    auto* s = GetD2D(L);
-    const int cellWidth = s ? std::max(4, s->gridCellW) : kCellWidth;
-    const int cellHeight = s ? std::max(4, s->gridCellH) : kMinCellHeight;
-    lua_pushnumber(L, snowdesktop::font_cu_rules::Scale(
-        value, CalculateWidgetCellScale(cellWidth, cellHeight)));
-    return 1;
-}
-
-static int lua_LayoutCellGap(lua_State* L)
-{
-    auto* s = GetD2D(L);
-    lua_pushinteger(L, s ? std::max(0, s->gridGapY) : 8);
-    return 1;
-}
-
-static int lua_LayoutBarHeight(lua_State* L)
-{
-    auto* s = GetD2D(L);
-    lua_pushinteger(L, s ? std::max(16, s->barHeight) : 24);
-    return 1;
-}
-
-static bool PushProtectedLuaString(lua_State* state, std::string_view text)
-{
-    if (!lua_checkstack(state, 2))
-    {
-        // This helper is only called inside Lua C entry points. Clearing
-        // their arguments frees the minimum C frame slots without allocating.
-        lua_settop(state, 0);
-        lua_pushnil(state);
-        return false;
-    }
-    lua_pushcfunction(state, +[](lua_State* inner) {
-        const auto* value = static_cast<std::string_view*>(lua_touserdata(inner, 1));
-        lua_pushlstring(inner, value->data(), value->size());
-        return 1;
-    });
-    lua_pushlightuserdata(state, &text);
-    return lua_pcall(state, 1, 1, 0) == LUA_OK;
-}
-
-static int DeferLuaError(lua_State* state, std::string_view message)
-{
-    (void)PushProtectedLuaString(state, message);
-    return -1;
-}
-
-static int LuaL10nTrWithDeferredError(lua_State* L)
-{
-    constexpr std::size_t maximumBytes = 64 * 1024;
-    constexpr int maximumArguments = 64;
-    const int argumentCount = lua_gettop(L) - 1;
-    std::size_t keyLength = 0;
-    (void)luaL_checklstring(L, 1, &keyLength);
-    if (keyLength > maximumBytes || argumentCount > maximumArguments)
-        return luaL_error(L, "l10n.tr: template or argument quota exceeded");
-    if (!lua_checkstack(L, argumentCount + 4))
-        return luaL_error(L, "l10n.tr: not enough Lua stack space");
-    lua_pushvalue(L, 1);
-    lua_rawget(L, lua_upvalueindex(1));
-    if (lua_type(L, -1) != LUA_TSTRING) { lua_pop(L, 1); lua_pushvalue(L, 1); }
-    std::size_t templateLength = 0;
-    const char* templateBytes = lua_tolstring(L, -1, &templateLength);
-    if (templateLength > maximumBytes)
-        return luaL_error(L, "l10n.tr: template quota exceeded");
-    const std::string_view pattern(templateBytes, templateLength);
-    std::array<std::string_view, maximumArguments> values{};
-    std::size_t argumentBytes = 0;
-    // Convert before constructing owning C++ values. __tostring and Lua
-    // allocation errors may longjmp; converted strings stay pinned on-stack.
-    for (int index = 0; index < argumentCount; ++index)
-    {
-        std::size_t length = 0;
-        const char* value = luaL_tolstring(L, index + 2, &length);
-        if (length > maximumBytes - argumentBytes)
-            return luaL_error(L, "l10n.tr: argument byte quota exceeded");
-        argumentBytes += length;
-        values[static_cast<std::size_t>(index)] = {value, length};
-    }
-    try
-    {
-        std::string result;
-        result.reserve(pattern.size());
-        for (std::size_t position = 0; position < pattern.size();)
-        {
-            std::string_view next = pattern.substr(position, 1);
-            std::size_t consumed = 1;
-            if (pattern[position] == '{')
-            {
-                std::size_t end = position + 1;
-                unsigned index = 0;
-                while (end < pattern.size() && end - position <= 2 &&
-                    pattern[end] >= '0' && pattern[end] <= '9')
-                    index = index * 10 + static_cast<unsigned>(pattern[end++] - '0');
-                if (end > position + 1 && end < pattern.size() && pattern[end] == '}' &&
-                    (end == position + 2 || pattern[position + 1] != '0') &&
-                    index < static_cast<unsigned>(argumentCount))
-                {
-                    next = values[index];
-                    consumed = end - position + 1;
-                }
-            }
-            if (next.size() > maximumBytes - result.size())
-                return DeferLuaError(L, "l10n.tr: output exceeds 65536 bytes");
-            result.append(next);
-            position += consumed;
-        }
-        return PushProtectedLuaString(L, result) ? 1 : -1;
-    }
-    catch (const std::exception&)
-    {
-        return DeferLuaError(L, "l10n.tr: native formatting allocation failed");
-    }
-}
-
-static int lua_L10nTr(lua_State* L)
-{
-    const int result = LuaL10nTrWithDeferredError(L);
-    return result < 0 ? lua_error(L) : result;
-}
-
-static int lua_L10nLanguage(lua_State* L)
-{
-    const std::string language = Locale::Instance().GetEffectiveLanguage();
-    lua_pushlstring(L, language.data(), language.size());
-    return 1;
-}
-
-static int lua_LayoutContentWidth(lua_State* L)
-{
-    lua_pushnumber(L, CurrentLayoutContentWidth(GetD2D(L)));
-    return 1;
-}
-
-static int lua_LayoutContentHeight(lua_State* L)
-{
-    lua_pushnumber(L, CurrentLayoutContentHeight(GetD2D(L)));
-    return 1;
-}
-
-static int PushRelativeLayoutUnit(
-    lua_State* L, float extent, const char* functionName)
-{
-    const double percent = luaL_checknumber(L, 1);
-    if (!std::isfinite(percent) || percent < 0.0 || percent > 100.0)
-    {
-        return luaL_error(L,
-            "%s: percent must be finite and between 0 and 100",
-            functionName);
-    }
-    lua_pushnumber(L,
-        static_cast<double>(extent) * percent / 100.0);
-    return 1;
-}
-
-static int lua_LayoutVw(lua_State* L)
-{
-    return PushRelativeLayoutUnit(
-        L, CurrentLayoutContentWidth(GetD2D(L)), "layout.vw");
-}
-
-static int lua_LayoutVh(lua_State* L)
-{
-    return PushRelativeLayoutUnit(
-        L, CurrentLayoutContentHeight(GetD2D(L)), "layout.vh");
-}
-
-static int lua_LayoutVmin(lua_State* L)
-{
-    auto* state = GetD2D(L);
-    return PushRelativeLayoutUnit(L, std::min(
-        CurrentLayoutContentWidth(state),
-        CurrentLayoutContentHeight(state)), "layout.vmin");
-}
-
-static int lua_LayoutVmax(lua_State* L)
-{
-    auto* state = GetD2D(L);
-    return PushRelativeLayoutUnit(L, std::max(
-        CurrentLayoutContentWidth(state),
-        CurrentLayoutContentHeight(state)), "layout.vmax");
-}
-
-static double CheckReferencePixelValue(
-    lua_State* state, const char* functionName)
-{
-    const double value = luaL_checknumber(state, 1);
-    if (!std::isfinite(value) || std::abs(value) > 1000000.0)
-    {
-        luaL_error(state,
-            "%s: value must be finite and between -1000000 and 1000000",
-            functionName);
-        return 0.0;
-    }
-    return value;
-}
-
-static float ReferenceAxisContentHeight(lua_State* state, D2DState* d2d)
-{
-    const float fullHeight = snowdesktop::widget_runtime::
-        ReferenceSpanHeight(ReadPositiveRegistryInteger(
-            state, "__widget_default_rows"));
-    if (!d2d || std::strcmp(d2d->surfaceKind, "desktop") != 0)
-        return fullHeight;
-    const bool showTitle = ReadRegistryBoolean(
-        state, "__widget_show_title", false);
-    const bool bottomBarHover = ReadRegistryBoolean(
-        state, "__widget_bottom_bar_hover", true);
-    const int reservedBarHeight = snowdesktop::widget_chrome_rules::
-        ReservedBottomBarHeight(showTitle, bottomBarHover,
-            std::max(0, d2d->barHeight));
-    return std::max(1.0f,
-        fullHeight - static_cast<float>(reservedBarHeight));
-}
-
-static float CurrentAxisContentHeight(lua_State* state, D2DState* d2d)
-{
-    if (!d2d || std::strcmp(d2d->surfaceKind, "desktop") != 0)
-        return CurrentLayoutContentHeight(d2d);
-    const bool showTitle = ReadRegistryBoolean(
-        state, "__widget_show_title", false);
-    const bool bottomBarHover = ReadRegistryBoolean(
-        state, "__widget_bottom_bar_hover", true);
-    const int scaledBarHeight = static_cast<int>(std::round(
-        static_cast<float>(d2d->barHeight) *
-        CalculateWidgetCellScale(
-            std::max(4, d2d->gridCellW),
-            std::max(4, d2d->gridCellH))));
-    const int reservedBarHeight = snowdesktop::widget_chrome_rules::
-        ReservedBottomBarHeight(
-            showTitle, bottomBarHover, scaledBarHeight);
-    return std::max(1.0f,
-        d2d->widgetRect.bottom - d2d->widgetRect.top -
-            static_cast<float>(reservedBarHeight));
-}
-
-static int lua_LayoutRpx(lua_State* L)
-{
-    const double value = CheckReferencePixelValue(L, "layout.rpx");
-    auto* state = GetD2D(L);
-    const float scaled = snowdesktop::widget_runtime::ScaleReferencePixel(
-        static_cast<float>(value),
-        CurrentLayoutContentWidth(state),
-        CurrentLayoutContentHeight(state),
-        snowdesktop::widget_runtime::ReferenceSpanWidth(
-            ReadPositiveRegistryInteger(L, "__widget_default_columns")),
-        ReferenceAxisContentHeight(L, state));
-    lua_pushnumber(L, scaled);
-    return 1;
-}
-
-static int lua_LayoutRpxX(lua_State* L)
-{
-    const double value = CheckReferencePixelValue(L, "layout.rpxX");
-    auto* state = GetD2D(L);
-    const float scaled = snowdesktop::widget_runtime::ScaleReferenceAxis(
-        static_cast<float>(value), CurrentLayoutContentWidth(state),
-        snowdesktop::widget_runtime::ReferenceSpanWidth(
-            ReadPositiveRegistryInteger(
-                L, "__widget_default_columns")));
-    lua_pushnumber(L, scaled);
-    return 1;
-}
-
-static int lua_LayoutRpxY(lua_State* L)
-{
-    const double value = CheckReferencePixelValue(L, "layout.rpxY");
-    auto* state = GetD2D(L);
-    const float scaled = snowdesktop::widget_runtime::ScaleReferenceAxis(
-        static_cast<float>(value), CurrentAxisContentHeight(L, state),
-        ReferenceAxisContentHeight(L, state));
-    lua_pushnumber(L, scaled);
-    return 1;
-}
-
 static int LuaStorageTransactionWithDeferredError(lua_State* state)
 {
     if (lua_gettop(state) != 1 || !lua_isfunction(state, 1))
@@ -28395,271 +27706,6 @@ static int lua_StorageTransaction(lua_State* state)
     return result < 0 ? lua_error(state) : result;
 }
 
-static int LuaL10nOptions(lua_State* L, int index)
-{
-    if (lua_isnoneornil(L, index)) return 0;
-    luaL_checktype(L, index, LUA_TTABLE);
-    return lua_absindex(L, index);
-}
-
-static std::string LuaL10nLocale(lua_State* L, int options)
-{
-    std::string locale = Locale::Instance().GetEffectiveLanguage();
-    if (!options) return locale;
-    lua_getfield(L, options, "locale");
-    if (!lua_isnil(L, -1))
-    {
-        size_t length = 0;
-        const char* value = luaL_checklstring(L, -1, &length);
-        if (length == 0 || length >= LOCALE_NAME_MAX_LENGTH)
-            luaL_error(L, "l10n: 'locale' must be a valid locale name");
-        locale.assign(value, length);
-    }
-    lua_pop(L, 1);
-    return locale;
-}
-
-static int LuaL10nIntegerOption(lua_State* L, int options,
-    const char* name, int defaultValue, int minimum, int maximum)
-{
-    if (!options) return defaultValue;
-    lua_getfield(L, options, name);
-    if (lua_isnil(L, -1))
-    {
-        lua_pop(L, 1);
-        return defaultValue;
-    }
-    int isNumber = 0;
-    const lua_Integer raw = lua_tointegerx(L, -1, &isNumber);
-    if (!isNumber || raw < minimum || raw > maximum)
-    {
-        return luaL_error(L,
-            "l10n: option '%s' must be an integer from %d to %d",
-            name, minimum, maximum);
-    }
-    lua_pop(L, 1);
-    return static_cast<int>(raw);
-}
-
-static bool LuaL10nBooleanOption(lua_State* L, int options,
-    const char* name, bool defaultValue)
-{
-    if (!options) return defaultValue;
-    lua_getfield(L, options, name);
-    if (lua_isnil(L, -1))
-    {
-        lua_pop(L, 1);
-        return defaultValue;
-    }
-    if (!lua_isboolean(L, -1))
-        luaL_error(L, "l10n: option '%s' must be a boolean", name);
-    const bool result = lua_toboolean(L, -1) != 0;
-    lua_pop(L, 1);
-    return result;
-}
-
-static std::string LuaL10nStringOption(lua_State* L, int options,
-    const char* name, const char* defaultValue)
-{
-    if (!options) return defaultValue;
-    lua_getfield(L, options, name);
-    if (lua_isnil(L, -1))
-    {
-        lua_pop(L, 1);
-        return defaultValue;
-    }
-    size_t length = 0;
-    const char* value = luaL_checklstring(L, -1, &length);
-    if (length == 0 || length > 32)
-        luaL_error(L, "l10n: option '%s' has an invalid length", name);
-    std::string result(value, length);
-    lua_pop(L, 1);
-    return result;
-}
-
-static int lua_L10nFormatNumber(lua_State* L)
-{
-    const double value = luaL_checknumber(L, 1);
-    const int options = LuaL10nOptions(L, 2);
-    snowdesktop::widget_l10n::NumberOptions format;
-    format.minimumFractionDigits = LuaL10nIntegerOption(L, options,
-        "minimumFractionDigits", 0, 0, 6);
-    format.maximumFractionDigits = LuaL10nIntegerOption(L, options,
-        "maximumFractionDigits", 2, 0, 6);
-    if (format.minimumFractionDigits > format.maximumFractionDigits)
-    {
-        return luaL_error(L,
-            "l10n.formatNumber: minimumFractionDigits exceeds maximumFractionDigits");
-    }
-    format.grouping = LuaL10nBooleanOption(
-        L, options, "grouping", true);
-    const std::string result = snowdesktop::widget_l10n::FormatNumber(
-        value, LuaL10nLocale(L, options), format);
-    if (result.empty())
-        return luaL_error(L, "l10n.formatNumber: value must be finite");
-    lua_pushlstring(L, result.data(), result.size());
-    return 1;
-}
-
-static int lua_L10nFormatBytes(lua_State* L)
-{
-    const double value = luaL_checknumber(L, 1);
-    const int options = LuaL10nOptions(L, 2);
-    const int base = LuaL10nIntegerOption(L, options,
-        "base", 1024, 1000, 1024);
-    if (base != 1000 && base != 1024)
-        return luaL_error(L, "l10n.formatBytes: base must be 1000 or 1024");
-    const int digits = LuaL10nIntegerOption(L, options,
-        "maximumFractionDigits", 1, 0, 3);
-    const std::string result = snowdesktop::widget_l10n::FormatBytes(
-        value, LuaL10nLocale(L, options), base, digits);
-    if (result.empty())
-    {
-        return luaL_error(L,
-            "l10n.formatBytes: value must be finite and non-negative");
-    }
-    lua_pushlstring(L, result.data(), result.size());
-    return 1;
-}
-
-static int lua_L10nFormatDuration(lua_State* L)
-{
-    const lua_Integer value = luaL_checkinteger(L, 1);
-    if (value < 0)
-    {
-        return luaL_error(L,
-            "l10n.formatDuration: milliseconds must be non-negative");
-    }
-    const int options = LuaL10nOptions(L, 2);
-    std::string style = "short";
-    if (options)
-    {
-        lua_getfield(L, options, "style");
-        if (!lua_isnil(L, -1))
-        {
-            size_t length = 0;
-            const char* styleValue = luaL_checklstring(L, -1, &length);
-            style.assign(styleValue, length);
-        }
-        lua_pop(L, 1);
-    }
-    if (style != "short" && style != "clock")
-    {
-        return luaL_error(L,
-            "l10n.formatDuration: style must be 'short' or 'clock'");
-    }
-    const std::string result = snowdesktop::widget_l10n::FormatDuration(
-        static_cast<std::int64_t>(value), LuaL10nLocale(L, options), style);
-    lua_pushlstring(L, result.data(), result.size());
-    return 1;
-}
-
-static int lua_L10nFormatRelativeTime(lua_State* L)
-{
-    const auto delta = static_cast<std::int64_t>(luaL_checkinteger(L, 1));
-    const int options = LuaL10nOptions(L, 2);
-    const std::string unit = LuaL10nStringOption(
-        L, options, "unit", "auto");
-    const std::string numeric = LuaL10nStringOption(
-        L, options, "numeric", "auto");
-    const std::string result = snowdesktop::widget_l10n::FormatRelativeTime(
-        delta, LuaL10nLocale(L, options), unit, numeric);
-    if (result.empty())
-    {
-        return luaL_error(L,
-            "l10n.formatRelativeTime: unit or numeric option is invalid");
-    }
-    lua_pushlstring(L, result.data(), result.size());
-    return 1;
-}
-
-static int lua_L10nFormatList(lua_State* L)
-{
-    luaL_checktype(L, 1, LUA_TTABLE);
-    const int valuesTable = lua_absindex(L, 1);
-    const size_t count = lua_rawlen(L, valuesTable);
-    if (count > 64)
-        return luaL_error(L, "l10n.formatList: at most 64 values are allowed");
-    size_t totalBytes = 0;
-    for (size_t index = 1; index <= count; ++index)
-    {
-        lua_rawgeti(L, valuesTable, static_cast<lua_Integer>(index));
-        if (lua_type(L, -1) != LUA_TSTRING)
-        {
-            return luaL_error(L,
-                "l10n.formatList: value %llu must be a string",
-                static_cast<unsigned long long>(index));
-        }
-        size_t length = 0;
-        lua_tolstring(L, -1, &length);
-        lua_pop(L, 1);
-        if (length > 65536 - totalBytes)
-        {
-            return luaL_error(L,
-                "l10n.formatList: values exceed the 64 KiB limit");
-        }
-        totalBytes += length;
-    }
-
-    const int options = LuaL10nOptions(L, 2);
-    const std::string locale = LuaL10nLocale(L, options);
-    std::vector<std::string> values;
-    values.reserve(count);
-    for (size_t index = 1; index <= count; ++index)
-    {
-        lua_rawgeti(L, valuesTable, static_cast<lua_Integer>(index));
-        size_t length = 0;
-        const char* value = lua_tolstring(L, -1, &length);
-        values.emplace_back(value, length);
-        lua_pop(L, 1);
-    }
-    const std::string result = snowdesktop::widget_l10n::FormatList(
-        values, locale);
-    lua_pushlstring(L, result.data(), result.size());
-    return 1;
-}
-
-static void PushWidgetL10nAPI(lua_State* L, const LuaWidgetManifest& manifest)
-{
-    lua_newtable(L);
-
-    lua_newtable(L);
-    auto pushCatalog = [L](
-        const std::unordered_map<std::string, std::string>& catalog) {
-        for (const auto& [key, value] : catalog)
-        {
-            lua_pushlstring(L, value.data(), value.size());
-            lua_setfield(L, -2, key.c_str());
-        }
-    };
-    auto english = manifest.locales.find("en-US");
-    if (english != manifest.locales.end())
-        pushCatalog(english->second);
-
-    const auto* selected = SelectManifestLocale(manifest);
-    if (selected && (english == manifest.locales.end() ||
-        selected != &english->second))
-    {
-        pushCatalog(*selected);
-    }
-    lua_pushcclosure(L, lua_L10nTr, 1);
-    lua_setfield(L, -2, "tr");
-
-    lua_pushcfunction(L, lua_L10nLanguage);
-    lua_setfield(L, -2, "language");
-
-    lua_pushcfunction(L, lua_L10nFormatNumber);
-    lua_setfield(L, -2, "formatNumber");
-    lua_pushcfunction(L, lua_L10nFormatBytes);
-    lua_setfield(L, -2, "formatBytes");
-    lua_pushcfunction(L, lua_L10nFormatDuration);
-    lua_setfield(L, -2, "formatDuration");
-    lua_pushcfunction(L, lua_L10nFormatRelativeTime);
-    lua_setfield(L, -2, "formatRelativeTime");
-    lua_pushcfunction(L, lua_L10nFormatList);
-    lua_setfield(L, -2, "formatList");
-}
-
 void WidgetEngine::RegisterDrawAPI(lua_State* L)
 {
     using snowdesktop::widget_api::CatalogFunctionDescriptor;
@@ -28685,6 +27731,27 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     using snowdesktop::widget_runtime::lua_ResourceExists;
     using snowdesktop::widget_runtime::lua_ResourceAudio;
 
+    using snowdesktop::widget_runtime::lua_LayoutWidth;
+    using snowdesktop::widget_runtime::lua_LayoutHeight;
+    using snowdesktop::widget_runtime::lua_LayoutColumns;
+    using snowdesktop::widget_runtime::lua_LayoutRows;
+    using snowdesktop::widget_runtime::lua_LayoutSizeClass;
+    using snowdesktop::widget_runtime::lua_LayoutCellWidth;
+    using snowdesktop::widget_runtime::lua_LayoutCellHeight;
+    using snowdesktop::widget_runtime::lua_LayoutCellScale;
+    using snowdesktop::widget_runtime::lua_LayoutCu;
+    using snowdesktop::widget_runtime::lua_LayoutFontCu;
+    using snowdesktop::widget_runtime::lua_LayoutCellGap;
+    using snowdesktop::widget_runtime::lua_LayoutBarHeight;
+    using snowdesktop::widget_runtime::lua_LayoutContentWidth;
+    using snowdesktop::widget_runtime::lua_LayoutContentHeight;
+    using snowdesktop::widget_runtime::lua_LayoutVw;
+    using snowdesktop::widget_runtime::lua_LayoutVh;
+    using snowdesktop::widget_runtime::lua_LayoutVmin;
+    using snowdesktop::widget_runtime::lua_LayoutVmax;
+    using snowdesktop::widget_runtime::lua_LayoutRpx;
+    using snowdesktop::widget_runtime::lua_LayoutRpxX;
+    using snowdesktop::widget_runtime::lua_LayoutRpxY;
     static constexpr CatalogFunctionDescriptor functions[] = {
 #define SNOW_WIDGET_PUBLIC_FUNCTION(                                      \
     library, name, callback, sinceApi, permission, untilApi)              \
