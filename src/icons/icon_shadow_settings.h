@@ -1,10 +1,32 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 
 namespace snowdesktop
 {
-inline constexpr int kDefaultIconShadowStrength = 65;
+inline constexpr int kMinIconShadowStrength = 20;
+inline constexpr int kDefaultIconShadowStrength = 100;
+inline constexpr int kMaxIconShadowStrength = 200;
+inline constexpr float kOriginalIconShadowOpacity = 0.65f;
+inline constexpr float kIconShadowBlur = 2.5f;
+inline constexpr float kIconShadowOffset = 3.0f;
+
+inline float IconShadowOpacity(int strength) noexcept
+{
+    if (strength == kDefaultIconShadowStrength) return kOriginalIconShadowOpacity;
+    if (strength <= 0) return 0.0f;
+    // Relative strength compounds the original shadow without clipping at 100% alpha.
+    return 1.0f - std::pow(1.0f - kOriginalIconShadowOpacity, strength / 100.0f);
+}
+
+inline int RelativeIconShadowStrength(int oldOpacity) noexcept
+{
+    if (oldOpacity >= 100) return kMaxIconShadowStrength;
+    if (oldOpacity <= 0) return kMinIconShadowStrength;
+    return static_cast<int>(std::lround(100.0f * std::log1p(-oldOpacity / 100.0f) /
+        std::log1p(-kOriginalIconShadowOpacity)));
+}
 
 struct IconShadowSettings
 {
@@ -26,13 +48,13 @@ struct IconShadowSettings
 
     void Normalize() noexcept
     {
-        fanStrength = std::clamp(fanStrength, 0, 100);
-        dockStrength = std::clamp(dockStrength, 0, 100);
-        exposedWidgetStrength = std::clamp(exposedWidgetStrength, 0, 100);
-        desktopStrength = std::clamp(desktopStrength, 0, 100);
-        popupStrength = std::clamp(popupStrength, 0, 100);
-        quickNavigationStrength = std::clamp(quickNavigationStrength, 0, 100);
-        subjectStrength = std::clamp(subjectStrength, 0, 100);
+        fanStrength = std::clamp(fanStrength, kMinIconShadowStrength, kMaxIconShadowStrength);
+        dockStrength = std::clamp(dockStrength, kMinIconShadowStrength, kMaxIconShadowStrength);
+        exposedWidgetStrength = std::clamp(exposedWidgetStrength, kMinIconShadowStrength, kMaxIconShadowStrength);
+        desktopStrength = std::clamp(desktopStrength, kMinIconShadowStrength, kMaxIconShadowStrength);
+        popupStrength = std::clamp(popupStrength, kMinIconShadowStrength, kMaxIconShadowStrength);
+        quickNavigationStrength = std::clamp(quickNavigationStrength, kMinIconShadowStrength, kMaxIconShadowStrength);
+        subjectStrength = std::clamp(subjectStrength, kMinIconShadowStrength, kMaxIconShadowStrength);
     }
 
     int DockStrength() const noexcept { return dock ? dockStrength : 0; }

@@ -985,8 +985,8 @@ struct DesktopPagePresenter::Impl
             option.check.Content(option.label);
 
             option.slider = muxc::Slider{};
-            option.slider.Minimum(0);
-            option.slider.Maximum(100);
+            option.slider.Minimum(kMinIconShadowStrength);
+            option.slider.Maximum(kMaxIconShadowStrength);
             option.slider.StepFrequency(1);
             option.slider.SmallChange(1);
             option.slider.LargeChange(10);

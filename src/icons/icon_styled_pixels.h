@@ -19,6 +19,7 @@ struct Prepared
     IconBeautifySettings style;
     bool managedAlpha = false;
     bool nativeControlSource = false;
+    bool subjectMaskRequested = false;
     bool needsGlassBackdrop = false;
     icon_bitmap_pixels::Buffer buffer;
     icon_beautify::EdgeReflectionLayers edgeReflection;
@@ -41,7 +42,7 @@ struct Prepared
 // Shared by worker prewarming and the synchronous cold-miss fallback. Keep the
 // read direction, alpha policy and processing order identical in both paths.
 inline bool Prepare(HBITMAP source, const IconBeautifySettings& style,
-    bool managedAlpha, bool nativeControlSource, Prepared& out)
+    bool managedAlpha, bool nativeControlSource, Prepared& out, bool prepareSubjectShadow = false)
 {
     out = {};
     auto& buffer = out.buffer;
@@ -57,12 +58,13 @@ inline bool Prepare(HBITMAP source, const IconBeautifySettings& style,
         out.needsGlassBackdrop = style.glassEnabled && !edgeFill;
         buffer.pixels = icon_beautify::Render(buffer.pixels, buffer.width, buffer.height,
             style, edgeFill, nativeControlSource ? icon_beautify::SourceKind::NativeControl :
-                icon_beautify::SourceKind::Image, &out.edgeReflection);
+                icon_beautify::SourceKind::Image, &out.edgeReflection, prepareSubjectShadow);
     }
     out.source = source;
     out.style = style;
     out.managedAlpha = managedAlpha;
     out.nativeControlSource = nativeControlSource;
+    out.subjectMaskRequested = prepareSubjectShadow;
     return true;
 }
 

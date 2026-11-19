@@ -643,9 +643,8 @@ void DesktopApp::DrawCollectionPopup(
         bool iconDrawn = false;
         if (iconRecorder)
         {
-            const bool compensate = NeedsIconShadowCompensation(pose.icon);
             const auto cacheKey = std::to_wstring(index) + L":" + std::to_wstring(popupMetrics.scale) +
-                L":" + std::to_wstring(iconShadows_.fanStrength) + (compensate ? L":wcg" : L":sdr") +
+                L":" + std::to_wstring(iconShadows_.fanStrength) +
                 L":" + std::to_wstring(iconAppearanceRevision_) + L":" + std::to_wstring(iconCustomizationRevision_) +
                 L":" + std::wstring(iconIdentity);
             auto cached = popupFanIconDrawings_.find(cacheKey);
@@ -660,7 +659,7 @@ void DesktopApp::DrawCollectionPopup(
                 const RECT localIcon{0, 0, pose.icon.right - pose.icon.left,
                     pose.icon.bottom - pose.icon.top};
                 const snowdesktop::icon_shadow::Style shadowStyle{
-                    popupMetrics.scale, iconShadows_.fanStrength / 100.0f, compensate, true};
+                    popupMetrics.scale, snowdesktop::IconShadowOpacity(fanStrength), true};
                 if (snowdesktop::icon_shadow::Record(ctx, iconRecorder, localIcon, shadowStyle,
                         [&](auto* recorder) { drawIcon(recorder, localIcon); }, drawing))
                     cached = popupFanIconDrawings_.emplace(cacheKey, std::move(drawing)).first;

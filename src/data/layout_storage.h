@@ -176,6 +176,7 @@ struct Document
     std::optional<bool> iconShadowPopup;
     std::optional<bool> iconShadowQuickNavigation;
     std::optional<bool> iconShadowSubject;
+    std::optional<bool> iconShadowStrengthsAreRelative;
     std::optional<int> iconShadowFanStrength;
     std::optional<int> iconShadowDockStrength;
     std::optional<int> iconShadowExposedWidgetStrength;

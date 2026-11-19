@@ -507,7 +507,7 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateStyledD2DBitmap(HBITMAP hbm,
         return nullptr;
 
     snowdesktop::icon_styled_pixels::Prepared prepared;
-    if (!snowdesktop::icon_styled_pixels::Prepare(hbm, style, managedAlpha, nativeControlSource, prepared))
+    if (!snowdesktop::icon_styled_pixels::Prepare(hbm, style, managedAlpha, nativeControlSource, prepared, iconShadows_.subject))
         return nullptr;
     return UploadStyledIconPixels(prepared);
 }
@@ -571,7 +571,8 @@ void DesktopApp::WarmStyledIconBitmap(HBITMAP bitmap,
     bool managedAlpha, bool nativeControlSource)
 {
     if (!bitmap || !prepared || prepared->source != bitmap ||
-        prepared->managedAlpha != managedAlpha || prepared->nativeControlSource != nativeControlSource)
+        prepared->managedAlpha != managedAlpha || prepared->nativeControlSource != nativeControlSource ||
+        prepared->subjectMaskRequested != iconShadows_.subject)
         return;
     try
     {
@@ -710,6 +711,7 @@ void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
 
 void DesktopApp::ClearStyledIconCache()
 {
+    bitmapIconShadows_.Clear();
     preparedIconPixels_.Clear();
     for (const auto& [key, bitmap] : styledIconCache_)
     { (void)key; iconGlassBackdrop_.erase(bitmap.Get()); iconBitmapStyles_.erase(bitmap.Get()); }
@@ -728,6 +730,7 @@ ID2D1Bitmap* DesktopApp::GetStyledD2DBitmap(ID2D1RenderTarget* context, HBITMAP 
     const auto prepared = preparedIconPixels_.Take(bitmap);
     const bool preparedMatches = prepared && prepared->source == bitmap &&
         prepared->managedAlpha == managedAlpha && prepared->nativeControlSource == nativeControlSource &&
+        prepared->subjectMaskRequested == iconShadows_.subject &&
         iconStyleCache_.Get(snowdesktop::icon_beautify::Normalize(prepared->style)) == token;
     auto uploaded = preparedMatches ? UploadStyledIconPixels(*prepared) :
         CreateStyledD2DBitmap(bitmap, style, managedAlpha, nativeControlSource);

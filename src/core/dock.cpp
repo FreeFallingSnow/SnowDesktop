@@ -2516,34 +2516,38 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                 (windowsVisual.bottom - windowsVisual.top + backgroundSize) / 2
         };
         auto* custom = app_->GetSmallCustomIcon(context, L"control:start", backgroundSize);
+        const float iconScale = app_->GetItemLayoutScale(background);
         const auto drawIcon = [&](ID2D1DeviceContext* drawing) {
-            if (!custom) app_->DrawDockControlBackground(drawing, background, 0, !lt, 0, monitor);
-
+            if (custom)
+            {
+                app_->DrawIconBitmap(drawing, custom, background);
+                return;
+            }
+            app_->DrawDockControlBackground(drawing, background, 0, !lt, 0, monitor);
             const float logoSize = std::max(1.0f, backgroundSize * 0.58f);
             const float paneGap = std::max(1.5f, logoSize * 0.09f);
             const float paneSize = (logoSize - paneGap) * 0.5f;
             const float logoLeft = (background.left + background.right - logoSize) * 0.5f;
             const float logoTop = (background.top + background.bottom - logoSize) * 0.5f;
-            ComPtr<ID2D1SolidColorBrush> windowsBrush;
-            drawing->CreateSolidColorBrush(
-                D2D1::ColorF(0.0f, 0.47f, 0.84f, 0.94f),
-                &windowsBrush);
-            if (custom)
-                app_->DrawIconBitmap(drawing, custom, background);
-            else if (windowsBrush)
-            {
-                drawing->FillRectangle(D2D1::RectF(logoLeft, logoTop,
+            const auto drawSubject = [&](ID2D1DeviceContext* subject) {
+                ComPtr<ID2D1SolidColorBrush> windowsBrush;
+                if (FAILED(subject->CreateSolidColorBrush(
+                        D2D1::ColorF(0.0f, 0.47f, 0.84f, 0.94f), &windowsBrush)))
+                    return;
+                subject->FillRectangle(D2D1::RectF(logoLeft, logoTop,
                     logoLeft + paneSize, logoTop + paneSize), windowsBrush.Get());
-                drawing->FillRectangle(D2D1::RectF(logoLeft + paneSize + paneGap, logoTop,
+                subject->FillRectangle(D2D1::RectF(logoLeft + paneSize + paneGap, logoTop,
                     logoLeft + logoSize, logoTop + paneSize), windowsBrush.Get());
-                drawing->FillRectangle(D2D1::RectF(logoLeft, logoTop + paneSize + paneGap,
+                subject->FillRectangle(D2D1::RectF(logoLeft, logoTop + paneSize + paneGap,
                     logoLeft + paneSize, logoTop + logoSize), windowsBrush.Get());
-                drawing->FillRectangle(D2D1::RectF(
+                subject->FillRectangle(D2D1::RectF(
                     logoLeft + paneSize + paneGap, logoTop + paneSize + paneGap,
                     logoLeft + logoSize, logoTop + logoSize), windowsBrush.Get());
-            }
+            };
+            app_->DrawDockControlSubjectShadow(drawing, background, iconScale, drawSubject);
+            drawSubject(drawing);
         };
-        app_->DrawIconWithShadows(context, background, app_->GetItemLayoutScale(background),
+        app_->DrawIconWithShadows(context, background, iconScale,
             app_->iconShadows_.DockStrength(), drawIcon);
     }
 
@@ -2847,21 +2851,23 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                 (searchVisual.bottom - searchVisual.top + backgroundSize) / 2
         };
         auto* custom = app_->GetSmallCustomIcon(context, L"control:search", backgroundSize);
+        const float iconScale = app_->GetItemLayoutScale(searchBackground);
         const auto drawIcon = [&](ID2D1DeviceContext* drawing) {
-            if (!custom) app_->DrawDockControlBackground(
-                drawing, searchBackground, 0, !lt, 0, monitor);
-
-            ComPtr<ID2D1SolidColorBrush> brush;
-            drawing->CreateSolidColorBrush(
-                lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)
-                   : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.92f), &brush);
             if (custom)
-                app_->DrawIconBitmap(drawing, custom, searchBackground);
-            else if (brush)
             {
+                app_->DrawIconBitmap(drawing, custom, searchBackground);
+                return;
+            }
+            app_->DrawDockControlBackground(drawing, searchBackground, 0, !lt, 0, monitor);
+            const auto drawSubject = [&](ID2D1DeviceContext* subject) {
+                ComPtr<ID2D1SolidColorBrush> brush;
+                if (FAILED(subject->CreateSolidColorBrush(
+                        lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)
+                           : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.92f), &brush)))
+                    return;
                 ComPtr<ID2D1Factory> factory;
                 ComPtr<ID2D1StrokeStyle> roundedStroke;
-                drawing->GetFactory(&factory);
+                subject->GetFactory(&factory);
                 if (factory)
                 {
                     const D2D1_STROKE_STYLE_PROPERTIES properties = D2D1::StrokeStyleProperties(
@@ -2874,17 +2880,19 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                 const float centerY = (searchBackground.top + searchBackground.bottom) / 2.0f -
                     2.7f * searchScale;
                 const float searchStroke = std::max(1.5f, 2.35f * searchScale);
-                drawing->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(centerX, centerY),
+                subject->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(centerX, centerY),
                     9.2f * searchScale, 9.2f * searchScale),
                     brush.Get(), searchStroke, roundedStroke.Get());
-                drawing->DrawLine(D2D1::Point2F(centerX + 6.6f * searchScale,
+                subject->DrawLine(D2D1::Point2F(centerX + 6.6f * searchScale,
                         centerY + 6.6f * searchScale),
                     D2D1::Point2F(centerX + 13.5f * searchScale,
                         centerY + 13.5f * searchScale),
                     brush.Get(), searchStroke, roundedStroke.Get());
-            }
+            };
+            app_->DrawDockControlSubjectShadow(drawing, searchBackground, iconScale, drawSubject);
+            drawSubject(drawing);
         };
-        app_->DrawIconWithShadows(context, searchBackground, app_->GetItemLayoutScale(searchBackground),
+        app_->DrawIconWithShadows(context, searchBackground, iconScale,
             app_->iconShadows_.DockStrength(), drawIcon);
     }
 }

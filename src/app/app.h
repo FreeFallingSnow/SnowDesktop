@@ -2861,16 +2861,24 @@ private:
     bool ImportLargeIconLibraryAsset(const snowdesktop::LargeIconSettingsRequest& request);
     ID2D1Bitmap* GetDockCustomIcon(ID2D1RenderTarget* context, const std::string& id, int pixels, std::wstring_view identity = {});
     ID2D1DeviceContext* GetIconShadowRecorder();
-    bool NeedsIconShadowCompensation(RECT bounds) const;
+    void DrawDockControlSubjectShadow(ID2D1DeviceContext* target, RECT bounds, float scale,
+        const std::function<void(ID2D1DeviceContext*)>& drawSubject);
     void DrawIconShadow(ID2D1RenderTarget* target, RECT bounds, float scale, int strength,
-        int subjectStrength, const std::function<void(ID2D1DeviceContext*)>& drawIcon);
+        int subjectStrength, const std::function<void(ID2D1DeviceContext*)>& drawIcon,
+        snowdesktop::icon_shadow::BitmapSource source);
     template<class Target, class DrawIcon>
-    void DrawIconWithShadows(Target* target, RECT bounds, float scale, int strength, const DrawIcon& drawIcon)
+    void DrawIconWithShadows(Target* target, RECT bounds, float scale, int strength,
+        const DrawIcon& drawIcon, snowdesktop::icon_shadow::BitmapSource source = {})
     {
         const int subject = drawingIconAppearanceSource_ ? 0 : iconShadows_.SubjectStrength(strength);
         if (strength > 0)
-            DrawIconShadow(target, bounds, scale, strength, subject, drawIcon);
-        snowdesktop::icon_shadow::SubjectScope subjectScope(target, subject);
+            DrawIconShadow(target, bounds, scale, strength, subject, drawIcon, source);
+        if (subject > 0)
+        {
+            snowdesktop::icon_shadow::SubjectScope subjectScope(target, subject);
+            drawIcon(target);
+            return;
+        }
         drawIcon(target);
     }
     void DrawIconBitmap(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap,
@@ -3567,6 +3575,8 @@ private:
     mutable ComPtr<IDWriteTextFormat> popupFanCachedTextFormat_;
     mutable std::unordered_map<std::wstring, ComPtr<IDWriteTextLayout>> popupFanTextLayouts_;
     ComPtr<ID2D1DeviceContext> iconShadowRecorder_;
+    snowdesktop::BoundedLruCache<snowdesktop::icon_shadow::BitmapKey, snowdesktop::icon_shadow::Drawing>
+        bitmapIconShadows_{96};
     std::unordered_map<std::wstring, snowdesktop::icon_shadow::Drawing> popupFanIconDrawings_;
     std::vector<PopupFanBackdrop> popupFanBackdropCandidates_;
     std::size_t popupFanBackdropCount_ = 0;

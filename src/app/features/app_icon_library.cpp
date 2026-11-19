@@ -353,7 +353,7 @@ ID2D1Bitmap* DesktopApp::GetDockCustomIcon(ID2D1RenderTarget* context, const std
         const auto path = snowdesktop::IconAssetPath(GetDataSubdirectoryPath(L"icon-library"), id);
         const auto weak = std::weak_ptr<IconLibraryHostState>(iconLibraryState_);
         const auto style = snowdesktop::icon_beautify::Normalize(ResolveIconAppearance(identity));
-        const bool queued = state.images.Submit(Utf8ToWide(key), [path, edge, style, preparation = preparedIconPixels_.Preparation()] {
+        const bool queued = state.images.Submit(Utf8ToWide(key), [path, edge, style, subject = iconShadows_.subject, preparation = preparedIconPixels_.Preparation()] {
             auto result = std::make_shared<snowdesktop::BackgroundBitmap>(); snowdesktop::icon_image::Image image; std::string error;
             if (snowdesktop::icon_image::Decode(path, edge, image, error) && snowdesktop::icon_image::PadSquare(image))
             { result->bitmap = snowdesktop::icon_image::CreateBitmap(image); result->size = {image.width, image.height}; }
@@ -364,7 +364,7 @@ ID2D1Bitmap* DesktopApp::GetDockCustomIcon(ID2D1RenderTarget* context, const std
                 {
                     preparation->Run([&] {
                         auto prepared = std::make_shared<snowdesktop::icon_styled_pixels::Prepared>();
-                        if (snowdesktop::icon_styled_pixels::Prepare(result->bitmap, style, true, false, *prepared))
+                        if (snowdesktop::icon_styled_pixels::Prepare(result->bitmap, style, true, false, *prepared, subject))
                             pixels = std::move(prepared);
                     });
                 }

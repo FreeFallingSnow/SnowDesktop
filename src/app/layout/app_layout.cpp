@@ -234,6 +234,11 @@ void DesktopApp::LoadLayoutSlots()
     groupComponentBadges_ = document.groupComponentBadges.value_or(true);
     beautifyFileThumbnails_ = document.beautifyFileThumbnails.value_or(false);
     const snowdesktop::IconShadowSettings shadowDefaults;
+    const auto shadowStrength = [&](std::optional<int> value) {
+        if (!value) return snowdesktop::kDefaultIconShadowStrength;
+        return document.iconShadowStrengthsAreRelative.value_or(false)
+            ? *value : snowdesktop::RelativeIconShadowStrength(*value);
+    };
     iconShadows_ = {
         document.iconShadowFan.value_or(shadowDefaults.fan),
         document.iconShadowDock.value_or(shadowDefaults.dock),
@@ -242,13 +247,13 @@ void DesktopApp::LoadLayoutSlots()
         document.iconShadowPopup.value_or(shadowDefaults.popup),
         document.iconShadowQuickNavigation.value_or(shadowDefaults.quickNavigation),
         document.iconShadowSubject.value_or(shadowDefaults.subject),
-        document.iconShadowFanStrength.value_or(shadowDefaults.fanStrength),
-        document.iconShadowDockStrength.value_or(shadowDefaults.dockStrength),
-        document.iconShadowExposedWidgetStrength.value_or(shadowDefaults.exposedWidgetStrength),
-        document.iconShadowDesktopStrength.value_or(shadowDefaults.desktopStrength),
-        document.iconShadowPopupStrength.value_or(shadowDefaults.popupStrength),
-        document.iconShadowQuickNavigationStrength.value_or(shadowDefaults.quickNavigationStrength),
-        document.iconShadowSubjectStrength.value_or(shadowDefaults.subjectStrength),
+        shadowStrength(document.iconShadowFanStrength),
+        shadowStrength(document.iconShadowDockStrength),
+        shadowStrength(document.iconShadowExposedWidgetStrength),
+        shadowStrength(document.iconShadowDesktopStrength),
+        shadowStrength(document.iconShadowPopupStrength),
+        shadowStrength(document.iconShadowQuickNavigationStrength),
+        shadowStrength(document.iconShadowSubjectStrength),
     };
     iconShadows_.Normalize();
 
@@ -1136,6 +1141,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure, bool background)
          << ",\n  \"iconShadowPopup\": " << (iconShadows_.popup ? "true" : "false")
          << ",\n  \"iconShadowQuickNavigation\": " << (iconShadows_.quickNavigation ? "true" : "false")
          << ",\n  \"iconShadowSubject\": " << (iconShadows_.subject ? "true" : "false")
+         << ",\n  \"iconShadowStrengthsAreRelative\": true"
          << ",\n  \"iconShadowFanStrength\": " << iconShadows_.fanStrength
          << ",\n  \"iconShadowDockStrength\": " << iconShadows_.dockStrength
          << ",\n  \"iconShadowExposedWidgetStrength\": " << iconShadows_.exposedWidgetStrength

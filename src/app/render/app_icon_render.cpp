@@ -6,7 +6,6 @@
 #include "data/data_paths.h"
 #include "diagnostics/performance_trace.h"
 #include "icons/icon_render_rules.h"
-#include "desktop/display_color_mode.h"
 #include "icons/icon_loading_placeholder.h"
 #include "ui/render/highlight_coverage.h"
 #include "platform/demo_mode_rules.h"
@@ -23,17 +22,9 @@ ID2D1DeviceContext* DesktopApp::GetIconShadowRecorder()
     return iconShadowRecorder_.Get();
 }
 
-bool DesktopApp::NeedsIconShadowCompensation(RECT bounds) const
-{
-    const POINT screenPoint{
-        virtualLeft_ + bounds.left + (bounds.right - bounds.left) / 2,
-        virtualTop_ + bounds.top + (bounds.bottom - bounds.top) / 2};
-    return snowdesktop::display_color::UseHighlightCompensation(
-        MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST));
-}
-
 void DesktopApp::DrawIconShadow(ID2D1RenderTarget* target, RECT bounds, float scale, int strength,
-    int subjectStrength, const std::function<void(ID2D1DeviceContext*)>& drawIcon)
+    int subjectStrength, const std::function<void(ID2D1DeviceContext*)>& drawIcon,
+    snowdesktop::icon_shadow::BitmapSource source)
 {
     if (!target || strength <= 0 || drawingIconAppearanceSource_ || target == iconShadowRecorder_.Get() ||
         IsRectEmpty(&bounds))
@@ -45,14 +36,36 @@ void DesktopApp::DrawIconShadow(ID2D1RenderTarget* target, RECT bounds, float sc
     context->GetDevice(&device);
     if (device.Get() != d2dDevice_.Get()) return;
 
+    namespace shadow = snowdesktop::icon_shadow;
+    if (source.bitmap && subjectStrength > 0 && shadow::FindSubjectMask(source.bitmap))
+        return;
+
+    const shadow::BitmapKey key{source, bounds.right - bounds.left, bounds.bottom - bounds.top, scale, strength};
+    const bool cacheable = source.bitmap && source.opacity == 1.0f && key.width <= 192 && key.height <= 192;
+    if (cacheable)
+    {
+        if (const auto* cached = bitmapIconShadows_.Find(key))
+        {
+            shadow::Draw(context.Get(), *cached, bounds, scale);
+            return;
+        }
+    }
+
     auto* recorder = GetIconShadowRecorder();
-    snowdesktop::icon_shadow::Drawing drawing;
-    const snowdesktop::icon_shadow::Style style{
-        scale, strength / 100.0f, NeedsIconShadowCompensation(bounds)};
-    snowdesktop::icon_shadow::SubjectScope probe(recorder, subjectStrength, true);
-    if (recorder && snowdesktop::icon_shadow::Record(
-            context.Get(), recorder, bounds, style, drawIcon, drawing) && !probe.Used())
-        snowdesktop::icon_shadow::Draw(context.Get(), drawing, bounds, scale);
+    if (!recorder) return;
+
+    shadow::Drawing drawing;
+    const shadow::Style style{scale, snowdesktop::IconShadowOpacity(strength), cacheable};
+    shadow::SubjectScope probe(recorder, source.bitmap ? 0 : subjectStrength, true);
+    if (!shadow::Record(context.Get(), recorder, bounds, style, drawIcon, drawing) || probe.Used())
+        return;
+
+    shadow::Draw(context.Get(), drawing, bounds, scale);
+    if (cacheable)
+    {
+        drawing.sourceBitmap = source.bitmap;
+        bitmapIconShadows_.Insert(key, std::move(drawing));
+    }
 }
 
 bool DesktopApp::ShouldUseDemoIdentity(const DesktopItem& item) const
@@ -451,19 +464,21 @@ void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT iconRect,
     ctx->DrawBitmap(arrowBitmap, dst, alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 
-void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
-    D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth, std::uintptr_t ownerKey)
+namespace
 {
-    if (!ctx || IsRectEmptyRect(rect)) return;
+ComPtr<ID2D1PathGeometry> CreateIconPlateGeometry(
+    ID2D1RenderTarget* ctx, RECT rect, snowdesktop::IconBeautifyShape shape)
+{
+    if (!ctx || IsRectEmptyRect(rect)) return {};
     ComPtr<ID2D1Factory> factory;
     ctx->GetFactory(&factory);
-    if (!factory) return;
+    if (!factory) return {};
 
     ComPtr<ID2D1PathGeometry> geometry;
     ComPtr<ID2D1GeometrySink> sink;
     if (FAILED(factory->CreatePathGeometry(&geometry)) || !geometry ||
         FAILED(geometry->Open(&sink)) || !sink)
-        return;
+        return {};
 
     const float left = static_cast<float>(rect.left);
     const float top = static_cast<float>(rect.top);
@@ -471,12 +486,9 @@ void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
     const float bottom = static_cast<float>(rect.bottom);
     const float width = right - left;
     const float height = bottom - top;
-    const auto shape = iconBeautifySettings_.enabled
-        ? iconBeautifySettings_.shape
-        : snowdesktop::IconBeautifyShape::LegacyRounded;
     const auto& outline = snowdesktop::icon_beautify::ShapeOutline(shape);
     if (outline.empty())
-        return;
+        return {};
     const auto toPoint = [&](const snowdesktop::icon_beautify::ShapePoint& point) {
         return D2D1::Point2F(
             left + point.x * width,
@@ -486,7 +498,41 @@ void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
     for (size_t index = 1; index < outline.size(); ++index)
         sink->AddLine(toPoint(outline[index]));
     sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-    if (FAILED(sink->Close())) return;
+    if (FAILED(sink->Close())) return {};
+    return geometry;
+}
+} // namespace
+
+void DesktopApp::DrawDockControlSubjectShadow(ID2D1DeviceContext* target, RECT bounds, float scale,
+    const std::function<void(ID2D1DeviceContext*)>& drawSubject)
+{
+    const int strength = snowdesktop::icon_shadow::SubjectScope::Claim(target);
+    if (strength <= 0) return;
+    auto* recorder = GetIconShadowRecorder();
+    if (!recorder || recorder == target) return;
+    const auto shape = iconBeautifySettings_.enabled
+        ? iconBeautifySettings_.shape : snowdesktop::IconBeautifyShape::LegacyRounded;
+    const auto plate = CreateIconPlateGeometry(target, bounds, shape);
+    if (!plate) return;
+
+    snowdesktop::icon_shadow::Drawing drawing;
+    // This shadow is composited with the plate before the window is presented.
+    const snowdesktop::icon_shadow::Style style{scale, snowdesktop::IconShadowOpacity(strength)};
+    if (!snowdesktop::icon_shadow::Record(target, recorder, bounds, style, drawSubject, drawing))
+        return;
+    target->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), plate.Get()), nullptr);
+    snowdesktop::icon_shadow::Draw(target, drawing, bounds, style.scale);
+    target->PopLayer();
+}
+
+void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
+    D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth, std::uintptr_t ownerKey)
+{
+    const auto shape = iconBeautifySettings_.enabled
+        ? iconBeautifySettings_.shape
+        : snowdesktop::IconBeautifyShape::LegacyRounded;
+    const auto geometry = CreateIconPlateGeometry(ctx, rect, shape);
+    if (!geometry) return;
 
     ComPtr<ID2D1SolidColorBrush> fillBrush;
     ComPtr<ID2D1SolidColorBrush> borderBrush;
@@ -674,7 +720,7 @@ void DesktopApp::DrawQuickNavResultBitmap(ID2D1RenderTarget* target, ID2D1Bitmap
     DrawIconWithShadows(target, bounds, QuickNavScale(100) / 100.0f,
         iconShadows_.NavigationStrength(), [&](auto* drawing) {
             DrawIconBitmap(drawing, bitmap, bounds);
-        });
+        }, {bitmap});
 }
 
 void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT dstRect)

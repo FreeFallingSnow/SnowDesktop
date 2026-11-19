@@ -1269,7 +1269,8 @@ void DesktopApp::SetIconShadows(snowdesktop::IconShadowSettings settings)
     settings.Normalize();
     if (settings == iconShadows_) return;
 
-    const bool subjectChanged = settings.subject != iconShadows_.subject ||
+    const bool subjectAvailabilityChanged = settings.subject != iconShadows_.subject;
+    const bool subjectChanged = subjectAvailabilityChanged ||
         settings.subjectStrength != iconShadows_.subjectStrength;
     const bool dockChanged = subjectChanged || settings.dock != iconShadows_.dock ||
         settings.dockStrength != iconShadows_.dockStrength;
@@ -1279,6 +1280,15 @@ void DesktopApp::SetIconShadows(snowdesktop::IconShadowSettings settings)
     const bool navigationChanged = subjectChanged || settings.quickNavigation != iconShadows_.quickNavigation ||
         settings.quickNavigationStrength != iconShadows_.quickNavigationStrength;
     iconShadows_ = settings;
+    if (subjectAvailabilityChanged)
+    {
+        ClearStyledIconCache();
+        d2dIconCache_.clear();
+        iconGlassBackdrop_.clear();
+        iconBitmapStyles_.clear();
+        quickNavigation_->sysIconCache.clear();
+        quickNavigation_->appIconCache.clear();
+    }
     InvalidateDragStaticScene();
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, TRUE);

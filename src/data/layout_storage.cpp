@@ -811,6 +811,7 @@ bool DecodeDocument(const JsonValue& root, Document& document,
         !ReadOptionalRootBoolean(root, "iconShadowPopup", decoded.iconShadowPopup, error) ||
         !ReadOptionalRootBoolean(root, "iconShadowQuickNavigation", decoded.iconShadowQuickNavigation, error) ||
         !ReadOptionalRootBoolean(root, "iconShadowSubject", decoded.iconShadowSubject, error) ||
+        !ReadOptionalRootBoolean(root, "iconShadowStrengthsAreRelative", decoded.iconShadowStrengthsAreRelative, error) ||
         !ReadOptionalInteger(root, "iconShadowFanStrength", "iconShadowFanStrength",
             decoded.iconShadowFanStrength, error) ||
         !ReadOptionalInteger(root, "iconShadowDockStrength", "iconShadowDockStrength",

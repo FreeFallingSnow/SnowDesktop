@@ -249,16 +249,15 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         else
             DrawIconWithShadows(ctx, bounds, GetItemLayoutScale(bounds), iconShadows_.DockStrength(), drawIcon);
     };
-    auto drawDesktopItem = [&](ID2D1DeviceContext* drawing, const DesktopItem& item, RECT target,
-        const DesktopWidget* demoCollection = nullptr) {
+    auto drawDesktopItem = [&](ID2D1DeviceContext* destination, const DesktopItem& item, RECT target,
+        const DesktopWidget* demoCollection, bool applyShadow) {
         RECT bitmapTarget = target;
         const bool recycleBin = _wcsicmp(item.desktopIconClsid.c_str(),
             kDesktopIconClsidRecycleBin) == 0;
-        auto* custom = GetSmallCustomIcon(drawing, item.layoutKey, target.right - target.left);
-        const bool separateRecyclePlate = recycleBin && !custom && !drawingIconAppearanceSource_ && !ResolveIconAppearance(item.layoutKey).enabled;
+        auto* bitmap = GetSmallCustomIcon(destination, item.layoutKey, target.right - target.left);
+        const bool separateRecyclePlate = recycleBin && !bitmap && !drawingIconAppearanceSource_ && !ResolveIconAppearance(item.layoutKey).enabled;
         if (separateRecyclePlate)
         {
-            DrawDockControlBackground(drawing, target, 0, !lt, reinterpret_cast<std::uintptr_t>(&entry), dockMonitor);
             const int shortSide = std::max(1, static_cast<int>(std::min(
                 target.right - target.left, target.bottom - target.top)));
             const int inset = std::max(1, static_cast<int>(std::round(shortSide * 0.16f)));
@@ -271,29 +270,37 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         const std::wstring_view demoIdentity = item.layoutKey.empty()
             ? std::wstring_view(item.parsingName)
             : std::wstring_view(item.layoutKey);
-        if (useDemoIdentity)
-        {
-            if (demoCollection)
-                DrawDemoCollectionIdentityIcon(
-                    drawing, *demoCollection, demoIdentity,
-                    bitmapTarget, alpha);
-            else
-                DrawDemoIdentityIcon(
-                    drawing, demoIdentity, bitmapTarget, alpha);
-        }
-        else if (custom)
-            DrawIconBitmap(drawing, custom, bitmapTarget, alpha, reinterpret_cast<std::uintptr_t>(&item));
-        else if (!item.iconBitmap)
-            DrawPlaceholderIcon(drawing, item.sysIconIndex, bitmapTarget, alpha, !separateRecyclePlate);
-        else if (ID2D1Bitmap* bitmap = GetTargetIconBitmap(drawing, item.iconBitmap, item.layoutKey, item.iconIsMediaThumbnail))
-            DrawIconBitmap(drawing, bitmap, bitmapTarget, alpha,
-                reinterpret_cast<std::uintptr_t>(&item));
-        else
-            DrawPlaceholderIcon(drawing, item.sysIconIndex, bitmapTarget, alpha, !separateRecyclePlate);
-        if (!useDemoIdentity &&
+        if (!useDemoIdentity && !bitmap && item.iconBitmap)
+            bitmap = GetTargetIconBitmap(destination, item.iconBitmap, item.layoutKey, item.iconIsMediaThumbnail);
+        const bool shortcut = !useDemoIdentity &&
             ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
-            (item.iconBitmap || item.iconState != IconState::Loading))
-            DrawShortcutArrowOverlay(drawing, bitmapTarget, alpha);
+            (item.iconBitmap || item.iconState != IconState::Loading);
+        const auto drawIcon = [&](ID2D1DeviceContext* drawing) {
+            if (separateRecyclePlate)
+                DrawDockControlBackground(drawing, target, 0, !lt,
+                    reinterpret_cast<std::uintptr_t>(&entry), dockMonitor);
+            if (useDemoIdentity)
+            {
+                if (demoCollection)
+                    DrawDemoCollectionIdentityIcon(drawing, *demoCollection, demoIdentity, bitmapTarget, alpha);
+                else
+                    DrawDemoIdentityIcon(drawing, demoIdentity, bitmapTarget, alpha);
+            }
+            else if (bitmap)
+                DrawIconBitmap(drawing, bitmap, bitmapTarget, alpha, reinterpret_cast<std::uintptr_t>(&item));
+            else
+                DrawPlaceholderIcon(drawing, item.sysIconIndex, bitmapTarget, alpha, !separateRecyclePlate);
+            if (shortcut)
+                DrawShortcutArrowOverlay(drawing, bitmapTarget, alpha);
+        };
+        if (applyShadow && !previewScene)
+        {
+            const auto source = useDemoIdentity || separateRecyclePlate ? nullptr : bitmap;
+            DrawIconWithShadows(destination, target, GetItemLayoutScale(target),
+                iconShadows_.DockStrength(), drawIcon, {source, alpha, shortcut});
+        }
+        else
+            drawIcon(destination);
     };
 
     if (entry.type == DockEntryType::DesktopItem)
@@ -345,9 +352,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                     launchOffsetY) *
                 previousTransform);
         }
-        drawDockIcon(iconRect, [&](auto* drawing) {
-            drawDesktopItem(drawing, items_[index], iconRect);
-        });
+        drawDesktopItem(ctx, items_[index], iconRect, nullptr, true);
         const auto running = dockRunningWindows_.find(DockItemWindowKey(items_[index]));
         if (running != dockRunningWindows_.end() && dockWindowAttention_.HasAny(
                 running->second.window, running->second.trackedWindows))
@@ -557,7 +562,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                             collectionLayout,
                             col, row);
                 if (item)
-                    drawDesktopItem(drawing, *item, cell, preview.owner);
+                    drawDesktopItem(drawing, *item, cell, preview.owner, false);
                 else if (auto previewIcon = preview.folder ? GetSmallCustomIcon(drawing, preview.folder->fullPath, cell.right - cell.left) : nullptr)
                     DrawIconBitmap(drawing, previewIcon, cell);
                 else if (preview.folder && preview.folder->iconBitmap)
@@ -597,22 +602,24 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         rect.top + (rect.bottom - rect.top + iconSize) / 2
     };
     const bool lt = (CurrentDockAppearance(dockMonitor).contentTheme == 1);
+    const bool useDemoIdentity = generalSettings_.demoModeEnabled && demoIdentityAssetsAvailable_;
+    auto* bitmap = useDemoIdentity ? nullptr : GetOrCreateD2DBitmap(app.iconBitmap);
     const auto drawIcon = [&](ID2D1DeviceContext* drawing) {
-        if (generalSettings_.demoModeEnabled &&
-            demoIdentityAssetsAvailable_)
+        if (useDemoIdentity)
         {
             const std::wstring_view identity = app.identityKey.empty()
                 ? std::wstring_view(app.executablePath)
                 : std::wstring_view(app.identityKey);
             DrawDemoIdentityIcon(drawing, identity, iconRect);
         }
-        else if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(app.iconBitmap))
+        else if (bitmap)
             DrawIconBitmap(drawing, bitmap, iconRect,
                 presence, reinterpret_cast<std::uintptr_t>(&app));
         else
             DrawPlaceholderIcon(drawing, -1, iconRect, presence, true);
     };
-    DrawIconWithShadows(ctx, iconRect, GetItemLayoutScale(iconRect), iconShadows_.DockStrength(), drawIcon);
+    DrawIconWithShadows(ctx, iconRect, GetItemLayoutScale(iconRect), iconShadows_.DockStrength(),
+        drawIcon, {bitmap, presence});
     if (dockWindowAttention_.HasAny(app.window, app.trackedWindows))
         DrawDockAttentionDot(ctx, iconRect, presence);
     if (state == 2)
