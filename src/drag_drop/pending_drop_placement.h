@@ -33,7 +33,7 @@ inline bool ApplyFolder(PendingLandingCache& cache, DesktopWidget& targetWidget,
     const std::wstring& widgetId, const std::wstring& popupSourceId,
     MatchName matchName, NormalizeKey normalizeKey, PathsEqual pathsEqual)
 {
-    if (!cache.active ||
+    if (!cache.active || cache.waitingForFiles ||
         cache.folderPlacements.empty())
         return false;
     bool changed = false;
@@ -150,7 +150,7 @@ inline bool ApplyEntries(PendingLandingCache& cache, std::vector<DesktopWidget>&
     NormalizeKey normalizeKey, MatchesLegacyName matchesLegacyName, AllowsKey allowsKey,
     PlaceDesktop placeDesktop, KeyCommitted keyCommitted)
 {
-    if (!cache.active) return false;
+    if (!cache.active || cache.waitingForFiles) return false;
     bool changed = false;
     for (const auto& landing : cache.entries)
     {

@@ -744,7 +744,10 @@ void DesktopApp::DrawDynamicOverlays(
     // Blue insertion bars and green handoff boxes for the desktop, widgets and
     // Dock are part of the background interaction layer.
     if (!renderingFloatingPopup_)
+    {
+        if (!renderingFloatingDock_ && !hiddenMode) DrawFileDropPlaceholders(ctx);
         drawDropPreviewLayer(false);
+    }
 
     const bool collectionHostedByFloatingPopup =
         IsCollectionPopupHostedByFloatingWindow();

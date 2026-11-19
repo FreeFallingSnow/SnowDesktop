@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -439,6 +440,7 @@ struct DropPreviewList
     // desktop-item snapshot.
     bool pinMaterializedItemsToDock = false;
     size_t dockInsertIndex = 0;
+    HMONITOR dockMonitor = nullptr;
     std::vector<DropLanding> landings;
 
     bool Empty() const { return landings.empty(); }
@@ -465,6 +467,7 @@ struct PendingLandingEntry
     std::wstring sourceName;
     std::wstring createdPath;
     GridCell cell;
+    GridSpan span{1, 1};
     size_t insertIndex = 0;
     DesktopWidget* widget = nullptr;
     std::wstring widgetId;
@@ -517,6 +520,12 @@ struct PendingFolderPlacement
  */
 struct PendingLandingCache
 {
+    // A visible file request has two phases: waiting for Shell, then waiting
+    // for its exact outputs to appear in the refreshed model.
+    std::uint64_t visualId = 0;
+    bool waitingForFiles = false;
+    HMONITOR dockMonitor = nullptr;
+    size_t dockInsertIndex = 0;
     std::vector<PendingLandingEntry> entries;
     std::vector<PendingFolderPlacement> folderPlacements;
     std::unordered_set<std::wstring> existingDesktopKeys;
@@ -528,6 +537,10 @@ struct PendingLandingCache
      */
     void Clear()
     {
+        visualId = 0;
+        waitingForFiles = false;
+        dockMonitor = nullptr;
+        dockInsertIndex = 0;
         entries.clear();
         folderPlacements.clear();
         existingDesktopKeys.clear();

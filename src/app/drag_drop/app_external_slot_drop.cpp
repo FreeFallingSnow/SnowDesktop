@@ -102,6 +102,7 @@ DesktopApp::CaptureExternalSlotDestination(POINT point, DWORD keyState)
         result.preview.fileBacked = true;
         result.preview.pinMaterializedItemsToDock = true;
         result.preview.dockInsertIndex = dock->GetExternalDropInsertIndex(slot, region);
+        result.preview.dockMonitor = dock->GetMonitor();
     }
     else
     {
@@ -157,10 +158,11 @@ bool DesktopApp::CommitExternalApplicationShortcut(const content::ApplicationSou
     snowdesktop::ShellFileOperationRequest request;
     request.shortcuts.push_back({source.id, path, {}, true, source.targetId});
     request.result = std::make_shared<snowdesktop::ShellFileOperationResult>();
-    auto completed = [this, path, landing = std::move(landing), result = request.result,
+    const auto ticket = BeginFileDropVisual(std::move(landing), synchronously);
+    auto completed = [this, path, ticket, result = request.result,
         completion = std::move(completion)](bool succeeded) mutable {
         pendingDesktopMaterializedPaths_.Release({path});
-        snowdesktop::pending_drop::Complete(pendingLandingCaches_, std::move(landing), *result);
+        snowdesktop::pending_drop::Complete(pendingLandingCaches_, TakeFileDropVisual(ticket), *result);
         if (!result->outputs.empty()) RequestShellRefresh();
         if (completion) completion(succeeded);
     };
@@ -171,6 +173,7 @@ bool DesktopApp::CommitExternalApplicationShortcut(const content::ApplicationSou
         return succeeded;
     }
     if (QueueShellFileOperation(std::move(request), std::move(completed))) return true;
+    TakeFileDropVisual(ticket);
     pendingDesktopMaterializedPaths_.Release({path});
     return false;
 }
@@ -408,10 +411,15 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
         !destination.fileDropTarget;
     if (volumeDefault || desktopApplicationDrop)
         callbacks.committedEffect = [committedEffect] { return *committedEffect; };
-    callbacks.commit = [this, destination, activationGroupId, resolveActivationGroup, insertionAnchor,
+    const auto readVisual = (asynchronousSource || knownPaths.empty()) && !destination.fileDropTarget && destination.luaWidgetId.empty()
+        ? BeginFileDropRead(destination.preview, true, destination.widgetId,
+            destination.folderPath, destination.dockFolderPopup) : 0;
+    callbacks.commit = [this, readVisual, destination, activationGroupId, resolveActivationGroup, insertionAnchor,
         insertAfterAnchor, result, committedEffect, volumeDefault, physicalDirectory,
         desktopApplicationDrop, allowedEffects](const content::Content& input,
         FileOperationCompletion finished, bool synchronously) {
+        // Expand the provisional read indicator into the exact source batch.
+        TakeFileDropVisual(readVisual);
         if (desktopApplicationDrop && !input.owned && !input.copyOnly)
         {
             if (const auto application = content::ResolveApplicationSource(input.paths))
@@ -479,12 +487,15 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
         return CommitExternalSlotPaths(resolved, input.paths, input.owned,
             input.copyOnly, std::move(completed), synchronously, result);
     };
-    callbacks.completed = [](bool succeeded) {
+    callbacks.completed = [this, readVisual](bool succeeded) {
+        TakeFileDropVisual(readVisual);
         if (!succeeded)
             WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Layout, L"External file drop failed during content reading or destination commit", DiagnosticLogLevel::Warning);
     };
     const HWND window = controlHwnd_ && IsWindow(controlHwnd_) ? controlHwnd_ : hwnd_;
-    return snowdesktop::external_slot_transfer::Transfer(dataObject, effect,
+    const auto performed = snowdesktop::external_slot_transfer::Transfer(dataObject, effect,
         asynchronousSource, knownPaths, std::move(value), externalSlotReadWorker_,
         stop, window, kShellFileOperationCompletedMessage, std::move(callbacks));
+    if (performed == DROPEFFECT_NONE) TakeFileDropVisual(readVisual);
+    return performed;
 }

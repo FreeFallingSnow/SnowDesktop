@@ -436,6 +436,7 @@ void DesktopApp::DrawCollectionPopup(
         const snowdesktop::ScopedIconBackdropClip highlightClip(ctx, frame);
         ctx->PushAxisAlignedClip(ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         view->DrawContent(ctx, frame);
+        DrawFileDropPlaceholders(ctx, &widget, view);
         if (dragSession_.TargetContainer() == view)
         {
             auto* slot = dragSession_.TargetSlot();
@@ -468,6 +469,7 @@ void DesktopApp::DrawCollectionPopup(
         const snowdesktop::ScopedIconBackdropClip highlightClip(ctx, frame);
         ctx->PushAxisAlignedClip(ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         group->DrawContent(ctx, frame);
+        DrawFileDropPlaceholders(ctx, &widget, group);
         if (dragSession_.TargetContainer() == group)
             group->DrawDropPreview(ctx, dragSession_.TargetSlot(), dragSession_.TargetRegion());
         ctx->PopAxisAlignedClip();
@@ -909,6 +911,7 @@ void DesktopApp::DrawCollectionPopup(
             }
         });
     }
+    DrawFileDropPlaceholders(ctx, &widget, nullptr, &popupRect_);
     drawPreviewMarquee();
     if (fan) ctx->PopAxisAlignedClip();
     else scrollClip.reset();

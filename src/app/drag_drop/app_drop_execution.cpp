@@ -625,8 +625,9 @@ void DesktopApp::StorePendingLandingCache(const DragSourceList& sourceList,
     const DropPreviewList& preview, const std::unordered_set<std::wstring>& existingKeys,
     const std::unordered_map<size_t, std::wstring>* createdPathsBySource)
 {
-    snowdesktop::pending_drop::Publish(pendingLandingCaches_,
-        BuildPendingLandingCache(sourceList, preview, existingKeys, createdPathsBySource));
+    auto cache = BuildPendingLandingCache(sourceList, preview, existingKeys, createdPathsBySource);
+    cache.visualId = ++nextFileDropVisual_;
+    snowdesktop::pending_drop::Publish(pendingLandingCaches_, std::move(cache));
 }
 
 PendingFolderPlacement DesktopApp::BuildPendingFolderPlacement(
@@ -649,6 +650,7 @@ void DesktopApp::ActivatePendingFolderPlacement(PendingFolderPlacement placement
     if (placement.sourceFolderPath.empty() || placement.popupSourceId.starts_with(L"folder-preview:"))
         return; // A Shell handoff without output paths cannot identify new preview members.
     PendingLandingCache cache;
+    cache.visualId = ++nextFileDropVisual_;
     cache.folderPlacements.push_back(std::move(placement));
     snowdesktop::pending_drop::Publish(pendingLandingCaches_, std::move(cache));
 }
@@ -665,6 +667,17 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
     std::shared_ptr<snowdesktop::ShellFileOperationResult> result)
 {
     snowdesktop::file_drop_execution::Services services;
+    services.beginPlacement = [this, dockTarget = preview.pinMaterializedItemsToDock,
+        monitor = preview.dockMonitor, index = preview.dockInsertIndex](PendingLandingCache cache) {
+        if (dockTarget)
+        {
+            auto* dock = GetDockContainer();
+            cache.dockMonitor = monitor ? monitor : (dock ? dock->GetMonitor() : nullptr);
+            cache.dockInsertIndex = index;
+        }
+        return BeginFileDropVisual(std::move(cache), true);
+    };
+    services.takePlacement = [this](std::uint64_t id) { return TakeFileDropVisual(id); };
     services.snapshotDesktopKeys = [this] { return SnapshotDesktopKeys(); };
     services.folderPlacement = [this](const auto& widget, size_t index, const DragSourceList* sources) {
         return BuildPendingFolderPlacement(widget, index, sources);

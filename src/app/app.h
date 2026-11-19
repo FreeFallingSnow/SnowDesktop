@@ -3979,6 +3979,7 @@ private:
         std::vector<UrlDropReplacementShortcut> replacementShortcuts;
         std::vector<std::wstring> remainingUrls;
         std::wstring shortcutFallbackUrl;
+        std::uint64_t visualId = 0;
     };
     snowdesktop::ShellLaunchWorker shellLaunchWorker_;
     snowdesktop::file_preview::Service filePreview_;
@@ -4389,6 +4390,14 @@ private:
     /** @name 待处理放置缓存（源列表 -> 预览在外壳刷新后仍存活） */
     /** @{ */
     std::vector<PendingLandingCache> pendingLandingCaches_;
+    std::uint64_t nextFileDropVisual_ = 0;
+    std::uint64_t BeginFileDropVisual(PendingLandingCache cache, bool present);
+    std::uint64_t BeginFileDropRead(const DropPreviewList& preview, bool present,
+        const std::wstring& widgetId = {}, const std::wstring& folderPath = {}, bool popup = false);
+    PendingLandingCache TakeFileDropVisual(std::uint64_t id);
+    void InvalidateFileDropVisual(const PendingLandingCache& cache);
+    void DrawFileDropPlaceholders(ID2D1DeviceContext* context, const DesktopWidget* widget = nullptr,
+        WidgetContainer* view = nullptr, const RECT* popup = nullptr);
     std::vector<PendingNewItemCapture> pendingNewItemCaptures_;
     /** @} */
 

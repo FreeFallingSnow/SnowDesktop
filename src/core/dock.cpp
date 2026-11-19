@@ -2892,6 +2892,19 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         app_->DrawIconWithShadows(context, searchBackground, iconScale,
             app_->iconShadows_.DockStrength(), drawIcon);
     }
+    for (const auto& cache : app_->pendingLandingCaches_)
+        if (cache.waitingForFiles && cache.dockMonitor && cache.dockMonitor == monitor)
+        {
+            RECT cell = GetWindowsButtonRect();
+            if (!slots.empty())
+            {
+                const auto index = std::min(cache.dockInsertIndex, slots.size() - 1);
+                if (slots[index]) cell = slots[index]->GetBounds();
+            }
+            if (IsRectEmpty(&cell)) cell = GetBounds();
+            cell = visualRectFor(cell);
+            app_->DrawPlaceholderIcon(context, -1, app_->GetItemIconRect(cell), 0.60f, false);
+        }
 }
 
 std::vector<Item*> DockContainer::GetSelectedItems() const

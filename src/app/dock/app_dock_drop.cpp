@@ -96,6 +96,7 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
                 mods, dragSession_.CurrentPoint());
         preview.action = DropAction::Link;
         preview.pinMaterializedItemsToDock = true;
+        preview.dockMonitor = targetDock->GetMonitor();
         preview.dockInsertIndex = insertIndex;
         ExecuteDropPipeline(sourceList, preview);
         return;

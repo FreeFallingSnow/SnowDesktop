@@ -3355,6 +3355,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
             app_->DrawCollectionPopup(context, false, &*preview->inlineBounds);
         else if (IsSingleCellPresentation()) DrawSingleCellContents(context, body);
         else DrawContent(context, body);
+        if (!showingFolderPreview && !IsPreviewRendering())
+            app_->DrawFileDropPlaceholders(context, data_, this);
 
         if (clipGeo) context->PopLayer();
     }

@@ -327,6 +327,7 @@ std::optional<DWORD> DesktopApp::TryDropShellNamespaceFiles(
         preview.action = effect == DROPEFFECT_MOVE ? DropAction::Move : DropAction::Copy;
         landing = BuildPendingLandingCache(sources, preview, existing);
     }
+    const auto ticket = BeginFileDropVisual(std::move(landing), true);
     auto result = std::make_shared<snowdesktop::ShellFileOperationResult>();
     // Keep Drop on the source STA until Shell has finished. A marshaled pointer
     // alone cannot extend a synchronous drag producer past DoDragDrop's return.
@@ -342,7 +343,7 @@ std::optional<DWORD> DesktopApp::TryDropShellNamespaceFiles(
     --shellFileOperationInFlight_;
     // Preserve actual successful outputs even when the user cancelled a later
     // item; never invent paths by diffing a directory shared with other copies.
-    snowdesktop::pending_drop::Complete(pendingLandingCaches_, std::move(landing), *result);
+    snowdesktop::pending_drop::Complete(pendingLandingCaches_, TakeFileDropVisual(ticket), *result);
     if (effect == DROPEFFECT_MOVE)
         ReportPerformedDropEffect(dataObject, DROPEFFECT_NONE);
     if (FAILED(status))
@@ -1656,22 +1657,23 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             BuildPendingFolderPlacement(
                 dockFolderPopupWidget_,
                 popupInsertIndex);
+        auto queuePopupDrop = [&] {
+            PendingLandingCache cache;
+            cache.folderPlacements.push_back(popupPlacement);
+            const auto ticket = BeginFileDropVisual(std::move(cache), false);
+            const bool queued = QueueAsyncShellDrop(dataObject, popupPlacement.sourceFolderPath, keyState, point, *effect,
+                [this, ticket](bool succeeded) {
+                    auto placement = TakeFileDropVisual(ticket);
+                    if (!succeeded || placement.folderPlacements.empty()) return;
+                    ActivatePendingFolderPlacement(std::move(placement.folderPlacements.front()));
+                    if (dockFolderPopupOpen_) RefreshDockFolderPopup();
+                });
+            if (!queued) TakeFileDropVisual(ticket);
+            return queued;
+        };
         if (dropPaths.empty() && !fileUrlReference &&
             !dockFolderPopupWidget_.sourceFolderPath.empty() &&
-            QueueAsyncShellDrop(
-                dataObject,
-                dockFolderPopupWidget_.sourceFolderPath,
-                keyState,
-                point,
-                *effect,
-                [this, popupPlacement](bool succeeded) mutable {
-                    if (!succeeded)
-                        return;
-                    ActivatePendingFolderPlacement(
-                        std::move(popupPlacement));
-                    if (dockFolderPopupOpen_)
-                        RefreshDockFolderPopup();
-                }))
+            queuePopupDrop())
         {
             *effect = ChooseDropEffect(keyState, *effect);
             EndDragSession();
@@ -1723,53 +1725,17 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                 entry.displayName = FileNameFromPath(path);
                 fileSources.entries.push_back(std::move(entry));
             }
-            PendingFolderPlacement folderPlacement =
-                BuildPendingFolderPlacement(
-                    dockFolderPopupWidget_,
-                    popupInsertIndex,
-                    &fileSources);
-            const auto previewDirectory = folderPreview_ ? dockFolderPopupWidget_.sourceFolderPath : std::wstring{};
-            auto outputs = previewDirectory.empty() ? nullptr :
-                std::make_shared<snowdesktop::ShellFileOperationResult>();
-            auto finished = [this, outputs, previewDirectory,
-                folderPlacement = std::move(folderPlacement)](
-                    bool succeeded) mutable {
-                if (outputs)
-                {
-                    if (outputs->outputs.empty()) return;
-                    if (!folderPlacement.sourceFolderPath.empty())
-                    {
-                        PendingLandingCache cache;
-                        cache.folderPlacements.push_back(std::move(folderPlacement));
-                        snowdesktop::pending_drop::Complete(pendingLandingCaches_, std::move(cache), *outputs);
-                    }
-                    RequestFolderRefresh({previewDirectory});
-                    RequestShellRefresh();
-                    return;
-                }
-                if (!succeeded)
-                    return;
-                ActivatePendingFolderPlacement(
-                    std::move(folderPlacement));
-                RequestShellRefresh();
-            };
+            DropPreviewList preview;
+            preview.targetKind = DropTargetKind::FolderMapping;
+            preview.targetWidget = &dockFolderPopupWidget_;
+            preview.insertIndex = popupInsertIndex;
+            preview.fileBacked = true;
+            preview.action = action;
             FileOperationCompletion asyncCompletion;
-            const bool sourceSupportsAsync =
-                PrepareOleAsyncFileOperation(
-                    dataObject,
-                    action == DropAction::Move
-                        ? DROPEFFECT_NONE : selectedEffect,
-                    finished, asyncCompletion);
-            if (!sourceSupportsAsync)
-                DwmFlush();
-            const bool handled = MaterializeFilesToFolder(
-                fileSources,
-                dockFolderPopupWidget_.sourceFolderPath,
-                action,
-                sourceSupportsAsync
-                    ? std::move(asyncCompletion)
-                    : std::move(finished),
-                !sourceSupportsAsync, std::move(outputs));
+            const bool sourceSupportsAsync = PrepareOleAsyncFileOperation(dataObject,
+                action == DropAction::Move ? DROPEFFECT_NONE : selectedEffect, {}, asyncCompletion);
+            const bool handled = ExecuteFileBackedDropPlan(fileSources, preview,
+                std::move(asyncCompletion), !sourceSupportsAsync);
             if (!handled)
             {
                 *effect = DROPEFFECT_NONE;
@@ -1784,20 +1750,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         }
         if (!dropPaths.empty() &&
             !dockFolderPopupWidget_.sourceFolderPath.empty() &&
-            QueueAsyncShellDrop(
-                dataObject,
-                dockFolderPopupWidget_.sourceFolderPath,
-                keyState,
-                point,
-                *effect,
-                [this, popupPlacement](bool succeeded) mutable {
-                    if (!succeeded)
-                        return;
-                    ActivatePendingFolderPlacement(
-                        std::move(popupPlacement));
-                    if (dockFolderPopupOpen_)
-                        RefreshDockFolderPopup();
-                }))
+            queuePopupDrop())
         {
             *effect = ChooseDropEffect(keyState, *effect);
             EndDragSession();
@@ -2118,12 +2071,14 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                     return handledByPreflight;
                 };
 
+            const auto readVisual = BeginFileDropRead(BuildExternalDesktopPreviewList(delayedFileTargetCell, 1), false);
             auto completed = [
-                this, desktopDirectory,
+                this, readVisual, desktopDirectory,
                 previousDirectoryPaths,
                 existingDesktopKeys, delayedFileTargetCell,
                 bareDesktopUrl, bareDesktopUrls,
                 preflightState](bool succeeded) mutable {
+                TakeFileDropVisual(readVisual);
                 const DropReferenceSnapshot workerSnapshot =
                     preflightState->Snapshot();
                 const auto descriptors =
@@ -2526,6 +2481,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                 EndDragSession();
                 return S_OK;
             }
+            TakeFileDropVisual(readVisual);
         }
     }
 

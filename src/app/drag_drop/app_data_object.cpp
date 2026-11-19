@@ -404,7 +404,7 @@ std::vector<DropLanding> DesktopApp::BuildDesktopLandings(
         return snowdesktop::page_mapping::GenerateId(ids);
     };
     return snowdesktop::desktop_landings::Build(sourceList, std::move(targetCell), internalMove, *page,
-        widgets_, items_, savedPageColumns_, savedPageRows_, services);
+        widgets_, items_, savedPageColumns_, savedPageRows_, services, pendingLandingCaches_);
 }
 
 /**
