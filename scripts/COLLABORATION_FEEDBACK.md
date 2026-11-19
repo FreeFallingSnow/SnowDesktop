@@ -417,6 +417,8 @@
 
 ### CF-025 文件观察提前结束
 
+- **任务 4 实机验收收尾续证（2026-11-19）**：Task `task-40977fc85edd4847b361a242933a430d` 的票据 `0939f0570e30519dcdcb9f528b0e3ad1` 对 `CODE_HEALTH.md` 返回 `eligible`。Git 仍显示任务 14 未提交的启动登记。待原差异提交且文件可认领后补录任务 4 用户实测，无需重新构建。
+
 - **组件历史保留总表续证（2026-11-19）**：Task `code-health-04-retain-two-versions` 在批次 `10342c557b8b418b9e5c319fb36c5465`、Run `160e3f59103f467d9b146a087970e686` 通过并提交代码后，票据 `6464e453a167aa3f455943ac65435fab` 对 `CODE_HEALTH.md` 返回 `eligible`。随即核对仍有任务 13 的未提交差异，保留其归属。扩展等待仍无法落盘总表，原验证见 `.codex-probes/code-health-04-retain-versions/verification.md`；待前序提交后补录，无需重新构建。
 
 - **文件系统任务分流续证（2026-11-19）**：Task `code-health-13-fs-completion` 的票据 `6f988485f3fee716a5c07e8a586612f7` 对引擎实现、头和宿主源码清单返回 `eligible`。Git 仍显示 `widget_engine.cpp` 有任务 `code-health-04-retain-two-versions` 的待提交差异，前序候选 Run `160e3f59103f467d9b146a087970e686` 仍在构建。先完成隔离基线和模块草稿，等前序提交后认领。文件观察仍需覆盖待提交状态。
