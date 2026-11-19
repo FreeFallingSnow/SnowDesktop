@@ -552,23 +552,18 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
 
     const bool deforming = snowdesktop::quick_navigation_animation_rules::IsDeformationEffect(
         quickNavigation_->animation.GetEffect());
-    if (deforming && quickNavigation_->backdropCompositor.HasSrgbContent(
-            reinterpret_cast<std::uintptr_t>(quickNavigation_->hwnd)))
-    {
-        // The deformation samples the direct composition surface. Put the
-        // ordinary edge in that same surface before starting the warp.
-        InvalidateQuickNavigationWindow(true);
-    }
+    const bool hasCompensatedHighlights = quickNavigation_->backdropCompositor.HasSrgbContent(
+        reinterpret_cast<std::uintptr_t>(quickNavigation_->hwnd));
 
     // Snap both compositor trees to the same logical frame before attaching
     // native animations. This also disconnects a previous animation during a
     // rapid open/close reversal and hides the native search edit until rest.
     ApplyQuickNavigationAnimationFrame();
     ApplyFloatingDockLayerPolicy();
-    if (deforming)
+    if (deforming || hasCompensatedHighlights)
     {
-        // Content and native glass share the scheduler's progress and warp;
-        // a separate uniform compositor timeline would separate the layers.
+        // Content, glass and compensated highlights use one scheduler pose.
+        // Separate native timelines can start or settle on different frames.
         return false;
     }
     if (!quickNavigation_->dcompDevice || !quickNavigation_->dcompVisual ||
@@ -630,18 +625,6 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
     // Prepare content before starting the glass timeline, then submit both
     // channels together at this call site. Deferring the DComp half until the
     // message returns lets unrelated UI work separate the two start times.
-    const auto contentKey = reinterpret_cast<std::uintptr_t>(quickNavigation_->hwnd);
-    if (quickNavigation_->backdropCompositor.HasSrgbContent(contentKey) &&
-        !quickNavigation_->backdropCompositor.StartVisualTransformAnimation(
-            visual.scale, targetScale, visual.opacity, targetOpacity,
-            static_cast<float>(quickNavigation_->animationAnchorPoint.x - quickNavigation_->hostRect.left),
-            static_cast<float>(quickNavigation_->animationAnchorPoint.y - quickNavigation_->hostRect.top),
-            duration, normalizedStartSlope, responsive ? &scaleTimeline : nullptr,
-            responsive ? &revealTimeline : nullptr, 0, contentKey))
-    {
-        ApplyQuickNavigationAnimationFrame();
-        return false;
-    }
     if (quickNavigation_->glassTheme && quickNavigation_->backdropCompositor.IsAvailable() &&
         !quickNavigation_->backdropCompositor.StartVisualTransformAnimation(
             visual.scale, targetScale, visual.opacity, targetOpacity,

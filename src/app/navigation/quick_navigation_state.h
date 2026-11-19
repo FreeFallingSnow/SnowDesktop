@@ -67,6 +67,10 @@ struct State
     Microsoft::WRL::ComPtr<IDCompositionSurface> dcompSurface;
     // Called after submitting a painted and attached replacement on dcompDevice.
     void RetireSrgbAfterDirectCommit();
+    bool PublishSrgbHighlightFrame(ID2D1Device* device, snowdesktop::quick_navigation_animation_rules::Effect effect,
+        float collapsed, float opacity);
+    std::array<Microsoft::WRL::ComPtr<ID2D1Bitmap1>, 2> srgbHighlights;
+    bool srgbHighlightFrameDeformed = false;
 
     std::vector<Microsoft::WRL::ComPtr<IDCompositionVisual2>> genieStrips;
     Microsoft::WRL::ComPtr<ID2D1Bitmap1> attractionBitmap;

@@ -1574,9 +1574,6 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
     bool deformationFrame = quickNavigation_->animation.IsAnimating() && rules::IsDeformationEffect(effect);
     if (quickNavigation_->animationCompositorDriven)
         return;
-    const bool replacingSrgb = deformationFrame &&
-        quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey);
-
     auto visual =
         quickNavigation_->animation.GetVisual();
     const float anchorX = static_cast<float>(
@@ -1597,12 +1594,23 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
         deformationFrame = false;
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Navigation, L"QuickNav deformation unavailable; using scale for this session", DiagnosticLogLevel::Warning);
     }
+    if (!quickNavigation_->compositionPaintInProgress && quickNavigation_->srgbHighlights[0] &&
+        (deformationFrame || quickNavigation_->srgbHighlightFrameDeformed) &&
+        !quickNavigation_->PublishSrgbHighlightFrame(d2dDevice_.Get(),
+            deformationFrame ? effect : rules::Effect::None,
+            deformationFrame ? collapsed : 0.f, visual.opacity))
+    {
+        quickNavigation_->srgbHighlights = {};
+        quickNavigation_->srgbHighlightFrameDeformed = false;
+        quickNavigation_->backdropCompositor.RemoveSrgbContent(srgbKey);
+        InvalidateQuickNavigationWindow();
+    }
     if (!deformationFrame)
     {
         ClearQuickNavigationDeformation();
         quickNavigation_->backdropCompositor.SetVisualTransform(
             visual.scale, visual.opacity, anchorX, anchorY);
-        if (!replacingSrgb && quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey))
+        if (quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey))
             quickNavigation_->backdropCompositor.SetSrgbContentPose(srgbKey,
                 {quickNavigation_->animationAnchorPoint.x - quickNavigation_->hostRect.left,
                  quickNavigation_->animationAnchorPoint.y - quickNavigation_->hostRect.top},
@@ -1614,7 +1622,6 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
         quickNavigation_->animation.IsAnimating() ||
             !visual.visible);
 
-    bool replacementReady = deformationFrame;
     if (quickNavigation_->dcompVisual && !deformationFrame)
     {
         if (quickNavigation_->hwnd &&
@@ -1650,20 +1657,16 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
             }
             if (quickNavigation_->dcompDevice)
                 CommitQuickNavigationCompositionFrame();
-            if (replacingSrgb && quickNavigation_->dcompSurface)
-                replacementReady = SUCCEEDED(quickNavigation_->dcompVisual->SetContent(
-                    quickNavigation_->dcompSurface.Get()));
         }
     }
-
-    // Keep the compensated edge until the ordinary edge joins the first warp.
-    if (replacingSrgb && replacementReady && FlushPendingQuickNavigationCompositionCommit())
-        quickNavigation_->RetireSrgbAfterDirectCommit();
 
     // Paint publishes content first, then the matching backdrop in one place.
     // Visibility-only frames have no pending pixel update.
     if (!quickNavigation_->compositionPaintInProgress)
     {
+        if (quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey) &&
+            !FlushPendingQuickNavigationCompositionCommit())
+            return;
         quickNavigation_->backdropCompositor.CommitVisualChanges();
         (void)quickNavigation_->backdropCompositor.CommitSrgbContent();
     }

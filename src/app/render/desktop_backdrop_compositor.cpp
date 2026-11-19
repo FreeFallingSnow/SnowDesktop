@@ -1362,19 +1362,15 @@ struct DesktopBackdropCompositor::Impl
         return buffer;
     }
 
-    static void PaintSrgbCapture(const wuc::CompositionDrawingSurface& surface,
-        const snowdesktop::HighlightCoverage* coverage, POINT sourceOrigin,
-        snowdesktop::HighlightCoverage::Pass pass)
+    static void PaintSrgbSurface(const wuc::CompositionDrawingSurface& surface,
+        const SrgbMaterialDraw& draw, bool coverage)
     {
         auto interop = surface.as<awuci::ICompositionDrawingSurfaceInterop>();
         winrt::com_ptr<ID2D1DeviceContext> context;
         POINT origin{};
         winrt::check_hresult(interop->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
             context.put_void(), &origin));
-        HRESULT painted = S_OK;
-        if (coverage && !coverage->Empty())
-            painted = coverage->Paint(context.get(), sourceOrigin, origin, pass);
-        else context->Clear(D2D1::ColorF(0, 0.f));
+        const HRESULT painted = context ? draw(context.get(), origin, coverage) : E_POINTER;
         const auto finished = interop->EndDraw();
         winrt::check_hresult(painted);
         winrt::check_hresult(finished);
@@ -3078,32 +3074,43 @@ bool DesktopBackdropCompositor::IsSrgbHighlightEligible(HWND window, const RECT&
 bool DesktopBackdropCompositor::StageSrgbContent(HWND window, std::uintptr_t key,
     const RECT& clientFrame, ID2D1DeviceContext* context, POINT atlasOffset)
 {
-    if (const auto existing = impl_->srgbContent.find(key); existing != impl_->srgbContent.end())
-        existing->second.staged = false;
-    if ((impl_->srgbPublicationFailed && !impl_->srgbContent.empty()) || !key || !context ||
-        atlasOffset.x < 0 || atlasOffset.y < 0 || !IsSrgbHighlightEligible(window, clientFrame))
+    if (!context || atlasOffset.x < 0 || atlasOffset.y < 0 || !IsSrgbHighlightEligible(window, clientFrame))
         return false;
-    const SIZE size{clientFrame.right - clientFrame.left, clientFrame.bottom - clientFrame.top};
     using Coverage = snowdesktop::HighlightCoverage;
     const auto* coverage = Coverage::Current(context);
     if (!coverage || !coverage->HasExtractedMaterials())
         return false;
+    winrt::com_ptr<ID2D1Device> device;
+    context->GetDevice(device.put());
+    return StageSrgbMaterialFrame(window, key, clientFrame, device.get(),
+        [&](ID2D1DeviceContext* target, POINT origin, bool mask) {
+            return coverage->Paint(target, atlasOffset, origin,
+                mask ? Coverage::Pass::Coverage : Coverage::Pass::Materials);
+        });
+}
+
+bool DesktopBackdropCompositor::StageSrgbMaterialFrame(HWND window, std::uintptr_t key,
+    const RECT& clientFrame, ID2D1Device* device, const SrgbMaterialDraw& draw)
+{
+    if (const auto existing = impl_->srgbContent.find(key); existing != impl_->srgbContent.end())
+        existing->second.staged = false;
+    if ((impl_->srgbPublicationFailed && !impl_->srgbContent.empty()) || !window || !key ||
+        !device || !draw || IsRectEmpty(&clientFrame))
+        return false;
+    const SIZE size{clientFrame.right - clientFrame.left, clientFrame.bottom - clientFrame.top};
 
     try
     {
         if (!impl_->compositor && !impl_->EnsureDispatcherQueue()) return false;
         impl_->EnsureSrgbContentTarget(window);
-        winrt::com_ptr<ID2D1Device> device;
-        context->GetDevice(device.put());
-        if (!device) return false;
-        impl_->EnsureMaskGraphicsDevice(device.get());
+        impl_->EnsureMaskGraphicsDevice(device);
 
         auto& frame = impl_->srgbContent[key];
         auto& candidate = frame.candidate;
         if (!candidate.surface || candidate.size.cx != size.cx || candidate.size.cy != size.cy)
             candidate = impl_->CreateSrgbContentBuffer(size);
-        Impl::PaintSrgbCapture(candidate.surface, coverage, atlasOffset, Coverage::Pass::Materials);
-        Impl::PaintSrgbCapture(candidate.coverage, coverage, atlasOffset, Coverage::Pass::Coverage);
+        Impl::PaintSrgbSurface(candidate.surface, draw, false);
+        Impl::PaintSrgbSurface(candidate.coverage, draw, true);
         frame.stagedFrame = clientFrame;
         frame.staged = true;
         return true;

@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <future>
 #include <memory>
 #include <optional>
@@ -171,6 +172,11 @@ public:
     static bool IsSrgbHighlightEligible(HWND window, const RECT& clientFrame);
     bool StageSrgbContent(HWND window, std::uintptr_t key, const RECT& clientFrame,
         ID2D1DeviceContext* context, POINT atlasOffset);
+    // Draw the material and coverage through the same geometry before sampling
+    // the backdrop. Coordinates refer to the frame's local pixel space.
+    using SrgbMaterialDraw = std::function<HRESULT(ID2D1DeviceContext*, POINT, bool coverage)>;
+    bool StageSrgbMaterialFrame(HWND window, std::uintptr_t key, const RECT& clientFrame,
+        ID2D1Device* device, const SrgbMaterialDraw& draw);
     bool PrepareSrgbMaterials(HWND window, std::uintptr_t key, const RECT& clientFrame,
         ID2D1DeviceContext* context, POINT atlasOffset, float opacity = 1.f);
     bool PublishSrgbContent(std::uintptr_t key, float opacity = 1.0f);

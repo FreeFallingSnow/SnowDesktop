@@ -26,6 +26,103 @@ void snowdesktop::quick_navigation::State::RetireSrgbAfterDirectCommit()
         backdropCompositor.RemoveSrgbContent(reinterpret_cast<std::uintptr_t>(hwnd));
 }
 
+bool snowdesktop::quick_navigation::State::PublishSrgbHighlightFrame(
+    ID2D1Device* device, quick_navigation_animation_rules::Effect effect, float collapsed, float opacity)
+{
+    namespace rules = quick_navigation_animation_rules;
+    namespace genie = dock_genie;
+    if (!srgbHighlights[0] || !srgbHighlights[1]) return false;
+    RECT bounds{};
+    if (!GetClientRect(hwnd, &bounds) || IsRectEmpty(&bounds)) return false;
+    const auto key = reinterpret_cast<std::uintptr_t>(hwnd);
+    const auto asRect = [](const RECT& r) {
+        return genie::Rect{static_cast<double>(r.left), static_cast<double>(r.top),
+            static_cast<double>(r.right), static_cast<double>(r.bottom)};
+    };
+    const auto panel = asRect(rect);
+    const auto dock = asRect(animationDockRect);
+    const auto edge = static_cast<genie::Edge>(animationDockEdge);
+    const double width = panel.right - panel.left;
+    const double height = panel.bottom - panel.top;
+    if (width <= 0 || height <= 0) return false;
+    const bool deformed = collapsed > 0.f && rules::IsDeformationEffect(effect);
+    struct Strip
+    {
+        D2D1_RECT_F clip, source, destination;
+        rules::GenieStripProjection projection;
+    };
+    std::array<Strip, genie::StripCount> strips;
+    std::size_t stripCount = 0;
+    std::optional<dock_attraction::Frame> mesh;
+    const auto toRectangle = [](const genie::Rect& value) {
+        return D2D1::RectF(static_cast<float>(value.left), static_cast<float>(value.top),
+            static_cast<float>(value.right), static_cast<float>(value.bottom));
+    };
+    if (deformed && effect == rules::Effect::Attraction)
+        mesh = dock_attraction::MeshFrame(panel, dock, collapsed);
+    else if (deformed)
+    {
+        // Match the body's pixel partitions and source crops before projection.
+        for (std::size_t index = 0; index < genie::StripCount; ++index)
+        {
+            const auto clip = rules::GenieRasterBandClip(panel, dock, edge, collapsed, width, height,
+                index, hostRect.left, hostRect.top, bounds.right, bounds.bottom);
+            if (clip.right <= clip.left || clip.bottom <= clip.top) continue;
+            const auto projection = rules::GenieProjection(panel, dock, edge, collapsed, width, height,
+                index, hostRect.left, hostRect.top);
+            const auto crop = rules::GenieSourceBandClip(projection, clip, edge, width, height);
+            if (crop.right <= crop.left || crop.bottom <= crop.top) continue;
+            const auto source = toRectangle(crop);
+            strips[stripCount++] = {toRectangle(clip), source,
+                D2D1::RectF(source.left - projection.sourceX, source.top - projection.sourceY,
+                    source.right - projection.sourceX, source.bottom - projection.sourceY), projection};
+        }
+    }
+    if (!backdropCompositor.StageSrgbMaterialFrame(hwnd, key, bounds, device,
+            [&](ID2D1DeviceContext* target, POINT origin, bool coverage) {
+                auto* bitmap = srgbHighlights[coverage ? 1 : 0].Get();
+                const float atlasX = static_cast<float>(origin.x), atlasY = static_cast<float>(origin.y);
+                target->SetDpi(96.f, 96.f);
+                target->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+                target->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
+                target->SetTransform(D2D1::Matrix3x2F::Translation(atlasX, atlasY));
+                target->Clear(D2D1::ColorF(0, 0.f));
+                if (!deformed)
+                {
+                    const auto destination = D2D1::RectF(
+                        static_cast<float>(rect.left - hostRect.left), static_cast<float>(rect.top - hostRect.top),
+                        static_cast<float>(rect.right - hostRect.left), static_cast<float>(rect.bottom - hostRect.top));
+                    target->DrawBitmap(bitmap, &destination, 1.f,
+                        D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR, nullptr, nullptr);
+                    return S_OK;
+                }
+                if (mesh)
+                    return rules::DrawAttractionMesh(target, bitmap, *mesh, hostRect.left, hostRect.top, width, height);
+
+                target->SetTransform(D2D1::Matrix3x2F::Identity());
+                for (const auto& strip : std::span(strips.data(), stripCount))
+                {
+                    const auto& p = strip.projection;
+                    // Translate the projected position into the surface atlas.
+                    const D2D1_MATRIX_4X4_F transform{
+                        p.m11 + atlasX * p.m14, p.m12 + atlasY * p.m14, 0.f, p.m14,
+                        p.m21 + atlasX * p.m24, p.m22 + atlasY * p.m24, 0.f, p.m24,
+                        0.f, 0.f, 1.f, 0.f,
+                        p.m41 + atlasX * p.m44, p.m42 + atlasY * p.m44, 0.f, p.m44};
+                    target->PushAxisAlignedClip(D2D1::RectF(strip.clip.left + atlasX, strip.clip.top + atlasY,
+                        strip.clip.right + atlasX, strip.clip.bottom + atlasY),
+                        D2D1_ANTIALIAS_MODE_ALIASED);
+                    target->DrawBitmap(bitmap, &strip.destination, 1.f, D2D1_INTERPOLATION_MODE_LINEAR,
+                        &strip.source, &transform);
+                    target->PopAxisAlignedClip();
+                }
+                return S_OK;
+            }) || !backdropCompositor.PublishSrgbContent(key, opacity))
+        return false;
+    srgbHighlightFrameDeformed = deformed;
+    return backdropCompositor.SetSrgbContentPose(key, {}, 1.f, opacity);
+}
+
 void DesktopApp::ClearQuickNavigationDeformation()
 {
     quickNavigation_->backdropCompositor.ClearGenieTransform();
@@ -302,6 +399,8 @@ void DesktopApp::ResetQuickNavCompositionResources()
     if (quickNavigation_->dcompVisual)
         quickNavigation_->dcompVisual->SetContent(nullptr);
     quickNavigation_->dcompSurface.Reset();
+    quickNavigation_->srgbHighlights = {};
+    quickNavigation_->srgbHighlightFrameDeformed = false;
     quickNavigation_->attractionBitmap.Reset();
     quickNavigation_->compWidth = 0;
     quickNavigation_->compHeight = 0;
@@ -511,6 +610,10 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         quickNavigation_->compositionPaintInProgress
     };
 
+    // Initialize the backdrop before deciding how to draw the first hidden
+    // frame. Otherwise a cold open starts with an ordinary rim.
+    if (!quickNavigation_->animationCompositorDriven)
+        UpdateQuickNavigationBackdrop();
 
     IDCompositionSurface* previousSurface = quickNavigation_->dcompSurface.Get();
     HRESULT hr = CreateOrResizeQuickNavCompositionSurface();
@@ -537,15 +640,37 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     RECT srgbFrame = quickNavigation_->rect;
     OffsetRect(&srgbFrame, -quickNavigation_->hostRect.left, -quickNavigation_->hostRect.top);
     const auto animationEffect = quickNavigation_->animation.GetEffect();
-    const bool deforming = quickNavigation_->animation.IsAnimating() &&
-        snowdesktop::quick_navigation_animation_rules::IsDeformationEffect(animationEffect);
+    namespace rules = snowdesktop::quick_navigation_animation_rules;
+    const bool deformationEffect = rules::IsDeformationEffect(animationEffect);
+    const bool deforming = deformationEffect && quickNavigation_->animation.IsAnimating();
     const bool previouslySrgb = quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey);
     const bool extractHighlights = quickNavigation_->glassTheme &&
-        quickNavigation_->backdropCompositor.IsAvailable() && !deforming &&
+        quickNavigation_->backdropCompositor.IsAvailable() &&
         (!quickNavigation_->animationCompositorDriven || previouslySrgb) &&
         DesktopBackdropCompositor::IsSrgbHighlightEligible(hwnd, srgbFrame);
     snowdesktop::HighlightCoverage highlightCoverage;
     snowdesktop::HighlightCoverage::Scope captureHighlights(ctx.Get(), highlightCoverage, extractHighlights);
+    const auto publishHighlights = [&](ID2D1DeviceContext* target, POINT sourceOrigin) {
+        quickNavigation_->srgbHighlights = {};
+        quickNavigation_->srgbHighlightFrameDeformed = false;
+        if (!deformationEffect)
+            return quickNavigation_->backdropCompositor.PrepareSrgbMaterials(
+                hwnd, srgbKey, srgbFrame, target, sourceOrigin,
+                quickNavigation_->animationCompositorDriven ? -1.f : 1.f);
+        if (!highlightCoverage.HasExtractedMaterials()) return false;
+        auto& highlights = quickNavigation_->srgbHighlights;
+        const auto pose = quickNavigation_->animation.GetVisual();
+        const float collapsed = deforming ? 1.f - rules::EaseInOutSmooth(pose.progress) : 0.f;
+        if (highlightCoverage.RenderMaterialSnapshot(d2dDevice_.Get(),
+                D2D1::SizeU(quickNavigation_->compWidth, quickNavigation_->compHeight),
+                highlights[0].GetAddressOf(), highlights[1].GetAddressOf(), sourceOrigin) &&
+            quickNavigation_->PublishSrgbHighlightFrame(d2dDevice_.Get(), animationEffect, collapsed, pose.opacity))
+            return true;
+        highlights = {};
+        quickNavigation_->srgbHighlightFrameDeformed = false;
+        (void)highlightCoverage.Paint(target, {}, {}, snowdesktop::HighlightCoverage::Pass::MaterialFallback);
+        return false;
+    };
     ctx->SetDpi(96.0f, 96.0f);
     ctx->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
     // 内容 surface 只按目标面板大小分配；顶层宿主可以覆盖完整动画路径。
@@ -563,11 +688,11 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     drawing_.Reset();
 
     HRESULT contentResult = S_OK;
-    if (!extractHighlights &&
-        animationEffect == snowdesktop::quick_navigation_animation_rules::Effect::Attraction)
+    bool srgbPresented = false;
+    if (animationEffect == rules::Effect::Attraction)
     {
-        // Keep one ordinary image of the panel. The animated mesh samples this
-        // bitmap directly; it never samples separately clipped DComp children.
+        // The mesh samples panel content and highlight materials at the same
+        // source coordinates, including the first and last visible frames.
         ComPtr<ID2D1DeviceContext> sourceContext;
         contentResult = d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &sourceContext);
         const auto bitmapSize = quickNavigation_->attractionBitmap ? quickNavigation_->attractionBitmap->GetPixelSize() : D2D1_SIZE_U{};
@@ -589,7 +714,11 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             sourceContext->Clear(D2D1::ColorF(0, 0.f));
             sourceContext->SetTransform(D2D1::Matrix3x2F::Translation(
                 -static_cast<float>(quickNavigation_->rect.left), -static_cast<float>(quickNavigation_->rect.top)));
-            DrawQuickNavigationSurface(sourceContext.Get());
+            {
+                snowdesktop::HighlightCoverage::Scope captureSource(sourceContext.Get(), highlightCoverage, extractHighlights);
+                DrawQuickNavigationSurface(sourceContext.Get());
+                srgbPresented = publishHighlights(sourceContext.Get(), {});
+            }
             contentResult = sourceContext->EndDraw();
             sourceContext->SetTarget(nullptr);
             drawing_.Reset();
@@ -607,11 +736,8 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     {
         quickNavigation_->attractionBitmap.Reset();
         DrawQuickNavigationSurface(ctx.Get());
+        srgbPresented = publishHighlights(ctx.Get(), updateOffset);
     }
-    const bool srgbPresented = SUCCEEDED(contentResult) &&
-        quickNavigation_->backdropCompositor.PrepareSrgbMaterials(
-            hwnd, srgbKey, srgbFrame, ctx.Get(), updateOffset,
-            quickNavigation_->animationCompositorDriven ? -1.f : 1.f);
     ctx->SetTransform(D2D1::Matrix3x2F::Identity());
     ctx.Reset();
     drawing_.Reset();
@@ -624,9 +750,6 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         EndPaint(hwnd, &ps);
         return;
     }
-    // Preserve the native animation timeline during hover and caret repaints.
-    if (!quickNavigation_->animationCompositorDriven)
-        UpdateQuickNavigationBackdrop();
     if (!deforming && previousSurface != quickNavigation_->dcompSurface.Get())
     {
         hr = quickNavigation_->dcompVisual->SetContent(quickNavigation_->dcompSurface.Get());
@@ -650,7 +773,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         EndPaint(hwnd, &ps);
         return;
     }
-    if (!srgbPresented && !deforming && previouslySrgb)
+    if (!srgbPresented && previouslySrgb)
     {
         quickNavigation_->RetireSrgbAfterDirectCommit();
     }

@@ -199,6 +199,7 @@ struct PersonalizationPagePresenter::Impl
     std::unique_ptr<ThemeLibraryControls> globalThemes, quickThemes, popupThemes, dockThemes, themeTransfers;
     muxc::StackPanel managementRoot;
     SettingsCard fontCard;
+    SettingsCard displayEffectsCard;
     SettingRow fontRow;
     SettingRow tooltipFontSizeRow;
     muxc::NumberBox tooltipFontSize;
@@ -468,11 +469,6 @@ struct PersonalizationPagePresenter::Impl
 
         InitializeCard(themeCard, cardStyle, themeRoot);
         themeCard.content.Spacing(0);
-        wcgHighlightCompensation = muxc::ToggleSwitch{};
-        wcgHighlightCompensationRow.Initialize(wcgHighlightCompensation);
-        wcgHighlightCompensationRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        presenter_controls::StyleSettingsSubrow(wcgHighlightCompensationRow.root, true, 0);
-        themeCard.content.Children().Append(wcgHighlightCompensationRow.root);
         presetCombo = muxc::ComboBox{};
         presetCombo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         presetCombo.MaxWidth(520.0);
@@ -833,6 +829,13 @@ struct PersonalizationPagePresenter::Impl
         fontError.Visibility(mux::Visibility::Collapsed);
         fontCard.content.Children().Append(fontError);
         fontCard.content.Children().Append(tooltipFontSizeRow.root);
+        InitializeCard(displayEffectsCard, cardStyle, widgetLayoutRoot);
+        wcgHighlightCompensation = muxc::ToggleSwitch{};
+        wcgHighlightCompensationRow.Initialize(wcgHighlightCompensation);
+        wcgHighlightCompensationRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        presenter_controls::StyleSettingsSubrow(wcgHighlightCompensationRow.root, true, 0);
+        displayEffectsCard.content.Children().Append(wcgHighlightCompensationRow.root);
+
         managementRoot.Spacing(12);
         themeTransfers = std::make_unique<ThemeLibraryControls>(localize, "global", true, nullptr, 0, -1, cardStyle);
         managementRoot.Children().Append(themeTransfers->Content());
@@ -874,6 +877,7 @@ struct PersonalizationPagePresenter::Impl
         layoutCard.content.Children().Append(
             luaWidgetContentRowHeight.row.root);
         presenter_controls::UpdateSettingsSubrows(layoutCard.content, 0.0);
+
         widgetTransformCursors = muxc::ToggleSwitch{};
         widgetTransformCursors.HorizontalAlignment(mux::HorizontalAlignment::Right);
         widgetTransformCursorsRow.Initialize(widgetTransformCursors);
@@ -1865,6 +1869,7 @@ struct PersonalizationPagePresenter::Impl
         updatingControls = true;
 
         SetCardText(fontCard, "font.interfaceText", L"Interface text");
+        SetCardText(displayEffectsCard, "settings.personalization.displayEffects", L"Display effects");
         fontRow.SetText(L("font.family", L"Font"), L("font.hint"));
         tooltipFontSizeRow.SetText(L("font.tooltipSize", L"Tooltip font size"), L("font.tooltipSizeHint"));
         const auto tooltipFontSizeLabel = L("font.tooltipSize", L"Tooltip font size");

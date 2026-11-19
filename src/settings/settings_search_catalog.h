@@ -268,7 +268,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AppearanceTheme, "personalization.theme",
         "settings.personalization.theme",
         "settings.personalization.theme.description"},
-    {SettingsPage::AppearanceTheme, "personalization.wcgHighlightCompensation",
+    {SettingsPage::AppearanceDesktopIcons, "personalization.wcgHighlightCompensation",
         "settings.personalization.wcgHighlightCompensation",
         "settings.personalization.wcgHighlightCompensation.hint"},
     {SettingsPage::AppearanceDesktopIcons, "personalization.windowPinBorder.show",

@@ -198,7 +198,7 @@ public:
     enum class Pass { Coverage, Materials, MaterialFallback };
 
     bool RenderMaterialSnapshot(ID2D1Device* device, D2D1_SIZE_U size,
-        ID2D1Bitmap1** materials, ID2D1Bitmap1** coverage) const
+        ID2D1Bitmap1** materials, ID2D1Bitmap1** coverage, POINT origin = {}) const
     {
         if (!HasExtractedMaterials()) return true;
         Microsoft::WRL::ComPtr<ID2D1DeviceContext> context;
@@ -209,7 +209,7 @@ public:
             if (FAILED(context->CreateBitmap(size, nullptr, 0, &properties, bitmap))) return false;
             context->SetTarget(*bitmap);
             context->BeginDraw();
-            const auto drawn = Paint(context.Get(), {}, {}, pass);
+            const auto drawn = Paint(context.Get(), origin, {}, pass);
             const auto end = context->EndDraw();
             context->SetTarget(nullptr);
             return SUCCEEDED(drawn) && SUCCEEDED(end);
