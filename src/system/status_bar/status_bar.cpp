@@ -677,8 +677,10 @@ struct StatusBar::Impl
                 if (changed && owner.dockChanged) owner.dockChanged(false);
                 return;
             }
+            // Fullscreen visibility follows the Dock reveal and interaction lifetime.
+            if (fullscreenObserved) revealState.Dismiss();
             const bool next = HideIndependentStatusBar(fullscreenState.ShouldHide(dock.interacting),
-                owner.settings.showOnlyWhenSummoned, revealState.Revealed(), dock.interacting);
+                !fullscreenObserved && owner.settings.showOnlyWhenSummoned, revealState.Revealed(), dock.interacting);
             const HWND source = fullscreenState.Source();
             const bool changed = next != fullscreen;
             fullscreen = next;
@@ -706,7 +708,7 @@ struct StatusBar::Impl
         }
         void PollReveal()
         {
-            if (mergedDockHeight || !owner.settings.showOnlyWhenSummoned) return;
+            if (mergedDockHeight || fullscreenObserved || !owner.settings.showOnlyWhenSummoned) return;
             if (!owner.presentationEnabled || closing || failed || !positioned)
             { revealState.Reset(); return; }
             MONITORINFO info{sizeof(info)};
@@ -714,20 +716,9 @@ struct StatusBar::Impl
             if (!GetMonitorInfoW(monitor, &info) || !GetCursorPos(&pointer)) return;
             const bool interacting = (owner.interactionSessionProvider && owner.interactionSessionProvider(monitor)) ||
                 GetCapture() == hwnd || GetFocus() == hwnd;
-            if (!revealState.Update(pointer, info.rcMonitor, placedBounds, owner.settings.position,
-                GetTickCount(), dpi, owner.settings.edgeRevealGesture, interacting)) return;
-            if (revealState.Revealed())
-            {
-                // Refresh the source before applying an explicit reveal, even
-                // when the fullscreen event has not reached this bar yet.
+            if (revealState.Update(pointer, info.rcMonitor, placedBounds, owner.settings.position,
+                GetTickCount(), dpi, owner.settings.edgeRevealGesture, interacting))
                 CheckFullscreen();
-                fullscreenState.BeginDockReveal(true);
-                dockFullscreenProcess = 0;
-                if (const HWND source = fullscreenState.DockSource())
-                    GetWindowThreadProcessId(source, &dockFullscreenProcess);
-            }
-            else fullscreenState.DismissReveal();
-            CheckFullscreen();
         }
         bool OwnsPointer(POINT clientPoint) const
         {
@@ -2473,8 +2464,6 @@ void StatusBar::PrepareDockReveal(HMONITOR monitor)
         if (!window || window->monitor != monitor) continue;
         window->CheckFullscreen();
         window->fullscreenState.BeginDockReveal(!window->mergedDockHeight);
-        if (!window->mergedDockHeight && window->fullscreenState.Revealed() && impl_->settings.showOnlyWhenSummoned)
-            window->revealState.Reveal();
         window->dockFullscreenProcess = 0;
         if (const HWND source = window->fullscreenState.DockSource())
             GetWindowThreadProcessId(source, &window->dockFullscreenProcess);
