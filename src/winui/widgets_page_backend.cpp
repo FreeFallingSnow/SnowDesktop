@@ -1205,6 +1205,9 @@ struct WidgetsPageBackend::Impl final
                         }))
                 {
                     snapshot.restorableVersions.push_back({version});
+                    if (snapshot.restorableVersions.size() ==
+                        snowdesktop::widget::kMaxRestorablePackageVersions)
+                        break;
                 }
             }
         }

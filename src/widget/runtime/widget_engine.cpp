@@ -36,6 +36,7 @@ namespace text_input = snowdesktop::text_input;
 #include "widget/view/widget_time_picker_lua.h"
 #include "widget/view/widget_duration_picker_lua.h"
 #include "settings/animation_settings.h"
+#include "diagnostics/diagnostic_log.h"
 #include "diagnostics/performance_trace.h"
 #include "widget/api/widget_logical_slot_manifest.h"
 #include "layout/logical_slot_keyboard_rules.h"
@@ -310,6 +311,14 @@ static std::vector<std::string> JsonReadStringArray(const std::string& text, con
         if (!value.empty()) result.push_back(value);
     }
     return result;
+}
+
+static void TrimWidgetPackageHistory(snowdesktop::widget::WidgetPackageManager& manager,
+    std::string_view packageId = {})
+{
+    std::string error;
+    if (!manager.TrimInstalledVersions(error, packageId))
+        WriteDiagnosticLogEntry(Utf8ToWideLocal(error).c_str(), DiagnosticLogLevel::Warning);
 }
 
 static snowdesktop::widget::WidgetPackageManager& GetWidgetPackageManager()
@@ -12248,7 +12257,7 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
 
     // Warm the validated package catalogue and this UI thread's menu metadata
     // before loading layouts, so the first Add Widget popup only probes changes.
-    (void)GetWidgetPackageManager();
+    TrimWidgetPackageHistory(GetWidgetPackageManager());
     (void)ListAvailableMenuEntries();
     PrewarmWidgetPackageResources(d2dState_);
 
@@ -26539,23 +26548,24 @@ bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
     {
         g_storage = std::move(migratedStorage);
         SaveStorageFile();
+        TrimWidgetPackageHistory(GetWidgetPackageManager(), packageId);
         error.clear();
         trace("phase=verify.end result=ok");
         return true;
     }
 
+    const bool rejectedManaged = !selected->builtin && !selected->development;
     const bool recovered = RecoverWidgetPackage(packageId, previousVersion,
-        verifyingWorkshopCandidate ? std::string_view(workshopCandidate->manifest.version) :
-            std::string_view{});
+        rejectedManaged ? std::string_view(selected->manifest.version) : std::string_view{});
     trace("phase=verify.recovery recovered=" + std::to_string(recovered) +
         " retained=" + std::to_string(GetWidgetPackageManager().ContainsPackage(packageId)));
     for (const auto& widgetId : updatedInstances)
         (void)ReloadWidget(widgetId);
-    if (verifyingWorkshopCandidate && recovered)
+    if (rejectedManaged && recovered)
     {
         // A retained failed version otherwise satisfies the next sync plan.
         std::string quarantineError;
-        if (!GetWidgetPackageManager().QuarantineInactiveVersion(*workshopCandidate, quarantineError))
+        if (!GetWidgetPackageManager().QuarantineInactiveVersion(*selected, quarantineError))
             trace("phase=verify.quarantine result=failed error=" + quarantineError);
     }
     if (failure.empty()) failure = "Component load or storage migration failed.";

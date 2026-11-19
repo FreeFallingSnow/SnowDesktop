@@ -31,6 +31,7 @@ inline constexpr std::uint64_t kMaxPreviewBytes = 2ull * 1024ull * 1024ull;
 inline constexpr std::uint64_t kMaxResourceBytes = 8ull * 1024ull * 1024ull;
 inline constexpr std::size_t kMaxPackageFiles = 512;
 inline constexpr std::size_t kMaxPackageResources = 32;
+inline constexpr std::size_t kMaxRestorablePackageVersions = 2;
 
 enum class ValidationSeverity
 {
@@ -437,6 +438,8 @@ public:
         std::string& error);
     bool Rollback(const std::string& packageId, const std::string& version,
         std::string& error);
+    // Call after startup discovery or after the installed version has passed verification.
+    bool TrimInstalledVersions(std::string& error, std::string_view packageId = {});
     bool QuarantineInactiveVersion(const InstalledPackage& package,
         std::string& error);
     bool Uninstall(const std::string& packageId, std::string& error);
