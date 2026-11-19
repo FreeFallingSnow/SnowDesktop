@@ -259,8 +259,7 @@ bool DesktopApp::RenderDesktopForegroundComposition(
             static_cast<float>(updateOffset.y - updateTop)));
         context->Clear(D2D1::ColorF(0, 0, 0, 0));
 
-        brushCache_.clear();
-        brushCacheContext_ = context.Get();
+        drawing_.Reset();
         struct TooltipDrawScope
         {
             snowdesktop::InlineTooltipPaintDamage& damage;
@@ -274,8 +273,7 @@ bool DesktopApp::RenderDesktopForegroundComposition(
             context.Get(), coverage, client, dirty, updateOffset, foregroundSrgbTiles_, nextDesktopSrgbKey_);
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
-        brushCache_.clear();
-        brushCacheContext_ = nullptr;
+        drawing_.Reset();
 
         hr = desktopForegroundCompositionSurface_->EndDraw();
         if (FAILED(hr)) return false;

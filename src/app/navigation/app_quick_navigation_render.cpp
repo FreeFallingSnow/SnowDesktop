@@ -1,6 +1,7 @@
 #include "ui/render/app_font.h"
 #include "ui/render/highlight_coverage.h"
 #include "app/app.h"
+#include "ui/render/rgba_color.h"
 #include "navigation/quick_navigation_animation_rules.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
@@ -301,8 +302,7 @@ void DesktopApp::ResetQuickNavCompositionResources()
         snowdesktop::quick_navigation::State::ContentPresentation::Direct;
     ClearQuickNavigationDeformation();
     StopQuickNavigationAnimationTimeline();
-    brushCache_.clear();
-    brushCacheContext_ = nullptr;
+    drawing_.Reset();
     quickNavigation_->sysIconCache.clear();
     quickNavigation_->appIconCache.clear();
     if (quickNavigation_->dcompVisual)
@@ -555,8 +555,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     // 文本抗锯齿沿用 DComp 默认（与桌面一致），避免在 alpha 表面上强制 ClearType 产生彩色毛边。
     ctx->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
 
-    brushCache_.clear();
-    brushCacheContext_ = ctx.Get();
+    drawing_.Reset();
 
     HRESULT contentResult = S_OK;
     if (quickNavigation_->animation.GetEffect() ==
@@ -585,7 +584,6 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             sourceContext->Clear(D2D1::ColorF(0, 0.f));
             sourceContext->SetTransform(D2D1::Matrix3x2F::Translation(
                 -static_cast<float>(quickNavigation_->rect.left), -static_cast<float>(quickNavigation_->rect.top)));
-            brushCacheContext_ = sourceContext.Get();
             snowdesktop::HighlightCoverage sourceCoverage;
             {
                 snowdesktop::HighlightCoverage::Scope captureSource(sourceContext.Get(), sourceCoverage);
@@ -593,8 +591,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             }
             contentResult = sourceContext->EndDraw();
             sourceContext->SetTarget(nullptr);
-            brushCache_.clear();
-            brushCacheContext_ = ctx.Get();
+            drawing_.Reset();
             if (SUCCEEDED(contentResult))
             {
                 const auto frame = D2D1::RectF(
@@ -625,8 +622,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         quickNavigation_->backdropCompositor.StageSrgbContent(hwnd, srgbKey, srgbFrame, ctx.Get(), updateOffset);
     ctx->SetTransform(D2D1::Matrix3x2F::Identity());
     ctx.Reset();
-    brushCache_.clear();
-    brushCacheContext_ = nullptr;
+    drawing_.Reset();
 
     hr = quickNavigation_->dcompSurface->EndDraw();
     if (SUCCEEDED(hr)) hr = contentResult;

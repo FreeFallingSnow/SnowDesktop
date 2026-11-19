@@ -701,8 +701,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
                     surfaceBounds, std::move(imageSpin), std::move(surfacePaint)))
                 endDrawHr = E_FAIL;
         }
-        brushCache_.clear();
-        brushCacheContext_ = nullptr;
+        drawing_.Reset();
         if (FAILED(endDrawHr))
         {
             if (asynchronous) item.renderFailed = true;

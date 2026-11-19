@@ -892,11 +892,7 @@ void DesktopApp::RenderFrame(
     const RECT* updateRect,
     bool hiddenMode)
 {
-    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
-    {
-        brushCache_.clear();
-        brushCacheContext_ = ctx;
-    }
+    drawing_.PrepareTarget(ctx);
     // The root surface is the stable desktop background. Widgets and all
     // foreground interaction content are owned by higher DComp layers.
     DrawStaticBackground(ctx, updateRect, hiddenMode);

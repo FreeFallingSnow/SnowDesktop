@@ -2,6 +2,7 @@
 #include "app/app.h"
 #include "common/l10n.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/list_detail_rules.h"
 #include "layout/folder_preview_header_layout.h"
 #include "diagnostics/diagnostic_log.h"
 #include "settings/animation_settings.h"
@@ -1238,8 +1239,7 @@ bool DesktopApp::DrawCollectionPopupAnimationCache(const RECT* preparedRect)
         static_cast<double>(popupAnimationRenderCache_.BitmapAllocationCount()));
     // The off-screen draw switches the shared brush cache to its context.
     // Restore lazy creation for the next desktop/floating-Dock frame.
-    brushCache_.clear();
-    brushCacheContext_ = nullptr;
+    drawing_.Reset();
     return ready;
 }
 

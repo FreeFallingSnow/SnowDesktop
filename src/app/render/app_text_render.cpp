@@ -1,5 +1,6 @@
 #include "ui/render/app_font.h"
 #include "ui/render/highlight_coverage.h"
+#include "ui/render/rgba_color.h"
 #include "layout/item_title_layout.h"
 #include "app/app.h"
 #include "app/navigation/quick_navigation_state.h"
@@ -45,28 +46,9 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
     bool componentList, bool componentPanel)
 {
     if (!context || !layout || shadowKey.empty()) return;
-    if (context != brushCacheContext_ || brushCache_.size() >= 512)
-    {
-        brushCache_.clear();
-        brushCacheContext_ = context;
-    }
-
-    auto getBrush = [&](const D2D1_COLOR_F& color) -> ID2D1SolidColorBrush* {
-        const std::uint64_t key = D2DColorBrushKey(color);
-        auto it = brushCache_.find(key);
-        if (it == brushCache_.end())
-        {
-            ComPtr<ID2D1SolidColorBrush> brush;
-            if (FAILED(context->CreateSolidColorBrush(color, &brush)) || !brush)
-                return nullptr;
-            it = brushCache_.emplace(key, std::move(brush)).first;
-        }
-        return it->second.Get();
-    };
-    ID2D1SolidColorBrush* textBrush =
-        getBrush(lightTheme
-            ? D2D1::ColorF(0.10f, 0.12f, 0.16f, opacity)
-            : D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity));
+    auto textBrush = drawing_.GetSolidBrush(context,
+        lightTheme ? D2D1::ColorF(0.10f, 0.12f, 0.16f, opacity)
+                   : D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity));
 
     const float tw = std::max(1.0f, layoutSize.width);
     const float th = std::max(1.0f, layoutSize.height);
@@ -230,26 +212,25 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
     }
     else
     {
-        ID2D1SolidColorBrush* shadowBrush =
-            getBrush(lightTheme
-                ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f * opacity)
-                : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.80f * opacity));
+        auto shadowBrush = drawing_.GetSolidBrush(context, lightTheme
+            ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f * opacity)
+            : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.80f * opacity));
         if (shadowBrush)
         {
             context->DrawTextLayout(
                 D2D1::Point2F(
                     origin.x + (lightPanelShadow ? 0.75f : 1.0f) * layoutScale,
                     origin.y + (lightPanelShadow ? 0.75f : 1.0f) * layoutScale),
-                layout, shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                layout, shadowBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
             if (!lightPanelShadow)
                 context->DrawTextLayout(
                     D2D1::Point2F(origin.x, origin.y + layoutScale),
-                    layout, shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                    layout, shadowBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
         }
     }
 
     if (textBrush)
-        context->DrawTextLayout(origin, layout, textBrush,
+        context->DrawTextLayout(origin, layout, textBrush.Get(),
             D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
@@ -486,27 +467,9 @@ void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
     if (SUCCEEDED(layout->GetMetrics(&metrics)) && metrics.lineCount == 1)
         layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
-    {
-        brushCache_.clear();
-        brushCacheContext_ = ctx;
-    }
-    auto getBrush = [&](const D2D1_COLOR_F& color) -> ID2D1SolidColorBrush* {
-        const std::uint64_t key = D2DColorBrushKey(color);
-        auto it = brushCache_.find(key);
-        if (it == brushCache_.end())
-        {
-            ComPtr<ID2D1SolidColorBrush> brush;
-            if (FAILED(ctx->CreateSolidColorBrush(color, &brush)) || !brush)
-                return nullptr;
-            it = brushCache_.emplace(key, std::move(brush)).first;
-        }
-        return it->second.Get();
-    };
-
     const QuickNavTheme theme = ResolveQuickNavTheme(lightTheme, navigationSettings_);
     const auto textColor = selected ? theme.selectedText : theme.itemText;
-    ID2D1SolidColorBrush* textBrush = getBrush(ToD2DColor(textColor));
+    auto textBrush = drawing_.GetSolidBrush(ctx, ToD2DColor(textColor));
     if (!textBrush)
         return;
 
@@ -515,58 +478,22 @@ void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
         static_cast<float>(textRect.top));
     if (!lightTheme)
     {
-        if (ID2D1SolidColorBrush* shadowBrush =
-            getBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.38f * textColor.alpha)))
+        if (auto shadowBrush = drawing_.GetSolidBrush(ctx,
+            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.38f * textColor.alpha)))
         {
             ctx->DrawTextLayout(
                 D2D1::Point2F(origin.x + 1.0f, origin.y + 1.0f),
-                layout.Get(), shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                layout.Get(), shadowBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
         }
     }
-    ctx->DrawTextLayout(origin, layout.Get(), textBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    ctx->DrawTextLayout(origin, layout.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
 void DesktopApp::DrawD2DText(ID2D1RenderTarget* ctx, const std::wstring& text,
     RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color,
     DWRITE_WORD_WRAPPING wordWrapping)
 {
-    if (!ctx || !format || text.empty() || IsRectEmptyRect(rect)) return;
-    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
-    {
-        brushCache_.clear();
-        brushCacheContext_ = ctx;
-    }
-    const std::uint64_t key = D2DColorBrushKey(color);
-    auto it = brushCache_.find(key);
-    if (it == brushCache_.end())
-    {
-        ComPtr<ID2D1SolidColorBrush> brush;
-        if (FAILED(ctx->CreateSolidColorBrush(color, &brush)) || !brush) return;
-        it = brushCache_.emplace(key, std::move(brush)).first;
-    }
-    if (wordWrapping != DWRITE_WORD_WRAPPING_NO_WRAP && dwriteFactory_)
-    {
-        const float width = static_cast<float>(
-            std::max<LONG>(1, rect.right - rect.left));
-        const float height = static_cast<float>(
-            std::max<LONG>(1, rect.bottom - rect.top));
-        ComPtr<IDWriteTextLayout> layout;
-        if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
-                text.c_str(), static_cast<UINT32>(text.size()),
-                format, width, height, &layout)) && layout)
-        {
-            layout->SetWordWrapping(wordWrapping);
-            ctx->DrawTextLayout(
-                D2D1::Point2F(
-                    static_cast<float>(rect.left),
-                    static_cast<float>(rect.top)),
-                layout.Get(), it->second.Get(),
-                D2D1_DRAW_TEXT_OPTIONS_CLIP);
-            return;
-        }
-    }
-    ctx->DrawTextW(text.c_str(), static_cast<UINT32>(text.size()), format,
-        ToD2DRect(rect), it->second.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    drawing_.DrawBasicText(ctx, dwriteFactory_.Get(), text, rect, format, color, wordWrapping);
 }
 
 void DesktopApp::DrawD2DTextEllipsis(ID2D1RenderTarget* ctx, const std::wstring& text,
@@ -574,45 +501,6 @@ void DesktopApp::DrawD2DTextEllipsis(ID2D1RenderTarget* ctx, const std::wstring&
     DWRITE_TEXT_ALIGNMENT hAlign, DWRITE_PARAGRAPH_ALIGNMENT vAlign, bool ellipsis,
     IDWriteTextLayout* cachedLayout)
 {
-    if (!ctx || !format || text.empty() || IsRectEmptyRect(rect) || !dwriteFactory_) return;
-    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
-    {
-        brushCache_.clear();
-        brushCacheContext_ = ctx;
-    }
-    const std::uint64_t key = D2DColorBrushKey(color);
-    auto it = brushCache_.find(key);
-    if (it == brushCache_.end())
-    {
-        ComPtr<ID2D1SolidColorBrush> brush;
-        if (FAILED(ctx->CreateSolidColorBrush(color, &brush)) || !brush) return;
-        it = brushCache_.emplace(key, std::move(brush)).first;
-    }
-    if (it == brushCache_.end() || !it->second) return;
-
-    if (cachedLayout)
-    {
-        ctx->DrawTextLayout(D2D1::Point2F(static_cast<float>(rect.left), static_cast<float>(rect.top)),
-            cachedLayout, it->second.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
-        return;
-    }
-
-    const float w = static_cast<float>(std::max<LONG>(1, rect.right - rect.left));
-    const float h = static_cast<float>(std::max<LONG>(1, rect.bottom - rect.top));
-    ComPtr<IDWriteTextLayout> layout;
-    if (FAILED(dwriteFactory_->CreateTextLayout(text.c_str(),
-        static_cast<UINT32>(text.size()), format, w, h, &layout)) || !layout)
-        return;
-    layout->SetTextAlignment(hAlign);
-    layout->SetParagraphAlignment(vAlign);
-    if (ellipsis)
-    {
-        DWRITE_TRIMMING trimming{ DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0 };
-        ComPtr<IDWriteInlineObject> sign;
-        if (SUCCEEDED(dwriteFactory_->CreateEllipsisTrimmingSign(format, &sign)) && sign)
-            layout->SetTrimming(&trimming, sign.Get());
-    }
-    ctx->DrawTextLayout(
-        D2D1::Point2F(static_cast<float>(rect.left), static_cast<float>(rect.top)),
-        layout.Get(), it->second.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    drawing_.DrawTextEllipsis(ctx, dwriteFactory_.Get(), text, rect, format, color,
+        hAlign, vAlign, ellipsis, cachedLayout);
 }

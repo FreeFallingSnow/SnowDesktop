@@ -251,8 +251,7 @@ void DesktopApp::PrepareLuaWidgetPanelAnimationCache()
             luaWidgetPanelAnimationCacheRect_,
             UiCompositionAnimationHost::FloatingPopup);
     }
-    brushCache_.clear();
-    brushCacheContext_ = nullptr;
+    drawing_.Reset();
 }
 
 void DesktopApp::DrawLuaWidgetPanel(

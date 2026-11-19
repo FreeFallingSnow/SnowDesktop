@@ -13,6 +13,7 @@
  */
 #pragma once
 #include "system/screen_time/screen_time_tracker.h"
+#include "ui/render/d2d_drawing.h"
 #include "ui/render/font_weight_rules.h"
 #include "app/render/composition_state_types.h"
 #include "app/render/demo_icon_load_types.h"
@@ -153,9 +154,11 @@ namespace snowdesktop::demo_collection_rules { struct Category; }
 #include "shell/shell_file_operation_completion.h"
 #include "ui/input/low_level_mouse_hook.h"
 #include "widget/runtime/widget_host_requests.h"
+#include "widget/runtime/widget_logical_slot_values.h"
 #include "widget/view/widget_native_marquee.h"
-#include "widget/packages/widget_package.h"
+#include "widget/packages/widget_package_source_types.h"
 #include "layout/item_location.h"
+#include "layout/list_detail_types.h"
 #include "common/types.h"
 #include "common/constants.h"
 #include "app/render/desktop_backdrop_compositor.h"
@@ -246,11 +249,6 @@ class ShellNewItemCapture;
 
 } // namespace snowdesktop
 
-// Shared render helpers used by both the remaining inline render code and the
-// extracted rendering translation units. Keep their declarations independent
-// of DesktopApp so pure color conversion/brush-key logic stays reusable.
-std::uint64_t D2DColorBrushKey(const D2D1_COLOR_F& color);
-D2D1_COLOR_F ToD2DColor(COLORREF color, float alpha = 1.0f);
 std::wstring DockItemWindowKey(const DesktopItem& item);
 
 struct IconLoadTask;
@@ -3496,9 +3494,8 @@ private:
     ComPtr<ID2D1DeviceContext> d2dContext_;
     /** @brief 用于录制标题阴影蒙版的独立 D2D 上下文。 */
     ComPtr<ID2D1DeviceContext> itemTextEffectContext_;
-    /** @brief 画笔缓存：颜色值到画刷的映射，按 ctx 失效，跨帧复用 */
-    std::unordered_map<std::uint64_t, ComPtr<ID2D1SolidColorBrush>> brushCache_;
-    ID2D1RenderTarget* brushCacheContext_ = nullptr;
+    /** @brief 共享的 Direct2D 基础绘制与纯色画刷。 */
+    snowdesktop::D2DDrawing drawing_;
     /** @brief 每个 D2D 上下文各自缓存深/浅两种平铺亚克力噪点画刷。 */
     std::unordered_map<std::uintptr_t, ComPtr<ID2D1BitmapBrush1>>
         acrylicNoiseBrushCache_;

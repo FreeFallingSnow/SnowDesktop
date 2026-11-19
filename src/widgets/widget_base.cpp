@@ -16,6 +16,7 @@
  */
 #include "core/widget.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/list_detail_rules.h"
 #include "widget/view/widget_clip_geometry.h"
 #include "common/types.h"
 #include "common/constants.h"
@@ -2308,24 +2309,6 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
         !layout)
         return;
 
-    auto getBrush =
-        [&](const D2D1_COLOR_F& color)
-            -> ID2D1SolidColorBrush* {
-        const auto key = D2DColorBrushKey(color);
-        auto found = app_->brushCache_.find(key);
-        if (found == app_->brushCache_.end())
-        {
-            ComPtr<ID2D1SolidColorBrush> brush;
-            if (FAILED(context->CreateSolidColorBrush(
-                    color, &brush)) ||
-                !brush)
-                return nullptr;
-            found = app_->brushCache_.emplace(
-                key, std::move(brush)).first;
-        }
-        return found->second.Get();
-    };
-
     context->PushAxisAlignedClip(
         D2D1::RectF(
             static_cast<float>(textRect.left),
@@ -2355,8 +2338,8 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
                     start, length, 0.0f, 0.0f,
                     metrics.data(), count, &count)))
             {
-                ID2D1SolidColorBrush* selectionBrush =
-                    getBrush(D2D1::ColorF(
+                auto selectionBrush =
+                    app_->drawing_.GetSolidBrush(context, D2D1::ColorF(
                         stateColor.r,
                         stateColor.g,
                         stateColor.b,
@@ -2374,22 +2357,22 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
                                     hit.width,
                                 textRect.top + hit.top +
                                     hit.height),
-                            selectionBrush);
+                            selectionBrush.Get());
                     }
                 }
             }
         }
     }
 
-    if (ID2D1SolidColorBrush* textBrush =
-            getBrush(showingPlaceholder
+    if (auto textBrush =
+            app_->drawing_.GetSolidBrush(context, showingPlaceholder
                 ? placeholder : foreground))
     {
         context->DrawTextLayout(
             D2D1::Point2F(
                 static_cast<float>(textRect.left),
                 static_cast<float>(textRect.top)),
-            layout.Get(), textBrush,
+            layout.Get(), textBrush.Get(),
             D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
 
@@ -2410,8 +2393,8 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
                     0.0f, 0.0f,
                     metrics.data(), count, &count)))
             {
-                ID2D1SolidColorBrush* underlineBrush =
-                    getBrush(foreground);
+                auto underlineBrush =
+                    app_->drawing_.GetSolidBrush(context, foreground);
                 if (underlineBrush)
                 {
                     for (UINT32 i = 0; i < count; ++i)
@@ -2428,7 +2411,7 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
                                 textRect.left + hit.left +
                                     std::max(1.5f, hit.width),
                                 y + 1.5f),
-                            underlineBrush);
+                            underlineBrush.Get());
                     }
                 }
             }
@@ -2460,8 +2443,8 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
                 hitPosition, trailing,
                 &caretX, &caretY, &metrics)))
         {
-            ID2D1SolidColorBrush* caretBrush =
-                getBrush(foreground);
+            auto caretBrush =
+                app_->drawing_.GetSolidBrush(context, foreground);
             if (caretBrush)
             {
                 context->FillRectangle(
@@ -2476,7 +2459,7 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
                             std::max(
                                 metrics.height,
                                 FontCu(15.0f))),
-                    caretBrush);
+                    caretBrush.Get());
             }
         }
     }
@@ -2486,10 +2469,10 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
             static_cast<float>(caret->top));
         const auto to = D2D1::Point2F(static_cast<float>(caret->left),
             static_cast<float>(caret->bottom));
-        if (auto* halo = getBrush(D2D1::ColorF(0x0B1220, 0.72f)))
-            context->DrawLine(from, to, halo, 4.0f);
-        if (auto* accent = getBrush(D2D1::ColorF(0x72C7FF)))
-            context->DrawLine(from, to, accent, 2.0f);
+        if (auto halo = app_->drawing_.GetSolidBrush(context, D2D1::ColorF(0x0B1220, 0.72f)))
+            context->DrawLine(from, to, halo.Get(), 4.0f);
+        if (auto accent = app_->drawing_.GetSolidBrush(context, D2D1::ColorF(0x72C7FF)))
+            context->DrawLine(from, to, accent.Get(), 2.0f);
     }
     context->PopAxisAlignedClip();
 }
@@ -3401,18 +3384,6 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     float strokeW = selected
         ? std::max(1.6f, configuredStroke) : configuredStroke;
 
-    auto getBrush = [&](const D2D1_COLOR_F& c) -> ID2D1SolidColorBrush* {
-        const auto key = D2DColorBrushKey(c);
-        auto it = app_->brushCache_.find(key);
-        if (it == app_->brushCache_.end())
-        {
-            ComPtr<ID2D1SolidColorBrush> b;
-            if (FAILED(context->CreateSolidColorBrush(c, &b)) || !b) return nullptr;
-            it = app_->brushCache_.emplace(key, std::move(b)).first;
-        }
-        return it->second.Get();
-    };
-
     // ── 1. Background (defer the outline until after content) ──
     PersonalizationSettings backgroundAppearance = borderAppearance;
     backgroundAppearance.widgetEdgeHighlightEnabled = false;
@@ -3546,18 +3517,19 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                             layout->SetTrimming(&trimming, ellipsis.Get());
                         if (!lightTheme && !UsesTopTitleBar())
                         {
-                            if (auto* shadowBrush = getBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)))
+                            if (auto shadowBrush = app_->drawing_.GetSolidBrush(
+                                context, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)))
                                 context->DrawTextLayout(
                                     D2D1::Point2F((float)titleRect.left + Cu(1.0f), (float)titleRect.top + Cu(1.0f)),
-                                    layout.Get(), shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                                    layout.Get(), shadowBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
                         }
 
-                        if (auto* textBrush = getBrush(lightTheme
+                        if (auto textBrush = app_->drawing_.GetSolidBrush(context, lightTheme
                             ? D2D1::ColorF(0.11f, 0.13f, 0.17f, 0.82f)
                             : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f)))
                             context->DrawTextLayout(
                                 D2D1::Point2F((float)titleRect.left, (float)titleRect.top),
-                                layout.Get(), textBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                                layout.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
                     }
                 }
             }
@@ -3583,10 +3555,10 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                 ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.50f)
                 : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f);
 
-            if (auto* b = getBrush(dotFill))
-                context->FillRoundedRectangle(pill, b);
-            if (auto* b = getBrush(dotStroke))
-                context->DrawRoundedRectangle(pill, b, 1.0f);
+            if (auto b = app_->drawing_.GetSolidBrush(context, dotFill))
+                context->FillRoundedRectangle(pill, b.Get());
+            if (auto b = app_->drawing_.GetSolidBrush(context, dotStroke))
+                context->DrawRoundedRectangle(pill, b.Get(), 1.0f);
         }
 
         if (UsesTopTitleBar())

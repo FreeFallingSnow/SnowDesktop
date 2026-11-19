@@ -313,7 +313,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                         D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
                         D2D1::ColorF(appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB, appearance.widgetBorderAlpha),
                         false, appearance.widgetBorderWidth * scale, &appearance, false, 0, scale);
-                    brushCache_.clear(); brushCacheContext_ = nullptr;
+                    drawing_.Reset();
                 });
         systemPanel_->SetCalendarMenuHandler([this](POINT screen, HWND owner, snowdesktop::CalendarMenuKind kind) -> UINT {
             if (exitRequested_) return 0;
@@ -1222,7 +1222,7 @@ void DesktopApp::SyncStatusBar()
                 DrawWidgetPanelBackground(context, frame, 0,
                     D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
                     D2D1::ColorF(0, 0.f), false, 0, &fillAppearance, false, 0, scale);
-                brushCache_.clear(); brushCacheContext_ = nullptr;
+                drawing_.Reset();
              }, dockTrayService_);
         statusBar_->SetPointerPressed([this] {
             HandleStatusBarPointerPressed();
@@ -1354,7 +1354,7 @@ void DesktopApp::SyncStatusBar()
                 D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
                 D2D1::ColorF(appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB, appearance.widgetBorderAlpha),
                 false, appearance.widgetBorderWidth * scale, &appearance, false, 0, scale);
-            brushCache_.clear(); brushCacheContext_ = nullptr;
+            drawing_.Reset();
         });
     // Re-apply the host-owned Show Desktop guard to bars created or replaced
     // by this configuration pass.

@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "ui/render/rgba_color.h"
 #include "settings/settings_search_index.h"
 #include "common/constants.h"
 #include "app/navigation/quick_navigation_state.h"

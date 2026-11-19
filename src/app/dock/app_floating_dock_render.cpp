@@ -147,8 +147,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     context->Clear(
         D2D1::ColorF(0, 0, 0, 0));
 
-    brushCache_.clear();
-    brushCacheContext_ = context.Get();
+    drawing_.Reset();
     renderingFloatingDock_ = true;
     try
     {
@@ -202,8 +201,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     catch (...)
     {
         context.Reset();
-        brushCache_.clear();
-        brushCacheContext_ = nullptr;
+        drawing_.Reset();
         const HRESULT finish = surfaceDrawScope.Finish();
         RecoverFloatingDockCompositionFailure(host, L"Draw candidate",
             FAILED(finish) ? finish : E_FAIL, preserveExistingFrame && replacingSurface);
@@ -219,8 +217,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     context->SetTransform(
         D2D1::Matrix3x2F::Identity());
     context.Reset();
-    brushCache_.clear();
-    brushCacheContext_ = nullptr;
+    drawing_.Reset();
 
     hr = snowdesktop::startup_diagnostics::Call(L"Dock.EndDraw", [&] { return surfaceDrawScope.Finish(); });
     if (FAILED(hr))

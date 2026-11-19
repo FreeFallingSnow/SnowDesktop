@@ -215,8 +215,7 @@ bool DesktopApp::RenderDragPreviewCompositionFrame(
         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     context->Clear(D2D1::ColorF(0, 0, 0, 0));
 
-    brushCache_.clear();
-    brushCacheContext_ = context.Get();
+    drawing_.Reset();
     const auto& dragItems = dragSession_.Items();
     const std::size_t previewItemCount = std::min(
         dragPreviewItemIndices_.size(),
@@ -285,8 +284,7 @@ bool DesktopApp::RenderDragPreviewCompositionFrame(
         dragPreviewHwnd_, materialKey, client, context.Get(), updateOffset);
     context->SetTransform(D2D1::Matrix3x2F::Identity());
     context.Reset();
-    brushCache_.clear();
-    brushCacheContext_ = nullptr;
+    drawing_.Reset();
 
     hr = dragPreviewDcompSurface_->EndDraw();
     if (FAILED(hr))

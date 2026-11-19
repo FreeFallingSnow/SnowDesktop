@@ -340,8 +340,7 @@ void DesktopApp::ResetDesktopWindowResources()
     luaWidgetTooltip_.Close();
     popupAnimationOverlay_ = {};
     luaWidgetPanelAnimationOverlay_ = {};
-    brushCache_.clear();
-    brushCacheContext_ = nullptr;
+    drawing_.Reset();
     placeholderIconCache_.clear();
     dockFolderBitmapCache_.Retain([](const auto&) { return false; });
     ResetDesktopWidgetComposition();

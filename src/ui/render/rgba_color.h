@@ -47,8 +47,13 @@ inline std::string EncodeRgbaColor(unsigned red, unsigned green, unsigned blue, 
     return value;
 }
 }
+inline D2D1_COLOR_F ToD2DColor(COLORREF color, float alpha = 1.f)
+{
+    return {GetRValue(color) / 255.f, GetGValue(color) / 255.f,
+        GetBValue(color) / 255.f, alpha};
+}
+
 inline D2D1_COLOR_F ToD2DColor(snowdesktop::RgbaColor color, float opacity = 1.f)
 {
-    return {GetRValue(color.rgb) / 255.f, GetGValue(color.rgb) / 255.f,
-        GetBValue(color.rgb) / 255.f, color.alpha * opacity};
+    return ToD2DColor(color.rgb, color.alpha * opacity);
 }

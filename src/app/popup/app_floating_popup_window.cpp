@@ -813,15 +813,13 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
         context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         context->Clear(D2D1::ColorF(0, 0, 0, 0));
 
-        brushCache_.clear();
-        brushCacheContext_ = context.Get();
+        drawing_.Reset();
         draw(context.Get());
         const bool stagedSrgb = collectionPopupBackdropCompositor_.StageSrgbContent(
             floatingPopupHwnd_, key, bounds, context.Get(), offset);
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
-        brushCache_.clear();
-        brushCacheContext_ = nullptr;
+        drawing_.Reset();
 
         // Publish the painted surface and offset together, after EndDraw.
         hr = surface.EndDraw();

@@ -252,8 +252,7 @@ void DesktopApp::ResetCompositionRenderCaches()
     popupFanTextLayouts_.clear();
     popupFanCachedTextFormat_.Reset();
     ResetPageNotify();
-    brushCache_.clear();
-    brushCacheContext_ = nullptr;
+    drawing_.Reset();
     acrylicNoiseBrushCache_.clear();
     privacyFileIconBitmap_.Reset();
     privacyFolderIconBitmap_.Reset();

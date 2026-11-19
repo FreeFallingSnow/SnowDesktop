@@ -705,8 +705,7 @@ void DesktopApp::ResetFloatingDockCompositionResources(
 {
     ResetMergedDockPresentation(host);
     host.frameReady = false;
-    brushCache_.clear();
-    brushCacheContext_ = nullptr;
+    drawing_.Reset();
     if (host.dcompVisual)
         host.dcompVisual->SetContent(nullptr);
     host.dcompSurface.Reset();

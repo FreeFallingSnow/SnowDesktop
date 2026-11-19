@@ -83,7 +83,7 @@ if (request.component == "demo-scene")
             DesktopApp* app; WidgetPreviewScene* fixture;
             ~FixtureCleanup()
             {
-                app->containers_.clear(); app->brushCache_.clear(); app->brushCacheContext_ = nullptr;
+                app->containers_.clear(); app->drawing_.Reset();
                 for (const auto& sample : fixture->Items())
                 {
                     if (const auto* item = fixture->FindDesktopItem(sample.key)) app->EraseD2DIconCacheForBitmap(item->iconBitmap);
@@ -186,7 +186,7 @@ if (request.component == "demo-scene")
                 context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
             else
                 context->DrawBitmap(background.Get());
-            brushCache_.clear(); brushCacheContext_ = context.Get();
+            drawing_.Reset();
             for (const auto& presentation : frame.surfaces)
             {
                 if (!presentation.visible || presentation.scale <= 0) continue;
@@ -335,7 +335,7 @@ if (request.component == "demo-scene")
                 context->SetTransform(D2D1::Matrix3x2F::Identity());
                 if (fading) context->PopLayer();
             }
-            require(context->EndDraw()); context->SetTarget(nullptr); brushCache_.clear(); brushCacheContext_ = nullptr;
+            require(context->EndDraw()); context->SetTarget(nullptr); drawing_.Reset();
             require(readback->CopyFromBitmap(nullptr, target.Get(), nullptr));
             D2D1_MAPPED_RECT mapped{}; require(readback->Map(D2D1_MAP_OPTIONS_READ, &mapped));
             for (int y = 0; y < scene.height; ++y) std::memcpy(pixels.data() + static_cast<std::size_t>(y) * scene.width,
