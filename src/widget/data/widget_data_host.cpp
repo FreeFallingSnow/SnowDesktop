@@ -8,6 +8,7 @@
 #include "widget/tasks/widget_filesystem_task_dispatch.h"
 #include "system/system_snapshot.h"
 #include "widget/tasks/widget_filesystem_watch_origin.h"
+#include "widget/tasks/widget_filesystem_watch_service.h"
 #include "widget/api/widget_calendar_query_options.h"
 #include "widget/api/widget_api_registry.h"
 #include "widget/data/widget_data_snapshot.h"

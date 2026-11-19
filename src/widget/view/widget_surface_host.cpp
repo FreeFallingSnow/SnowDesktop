@@ -9,6 +9,7 @@
 #include "ui/render/native_tooltip_content.h"
 #include "widget/api/widget_api_registry.h"
 #include "widget/preview/widget_preview_context.h"
+#include "widget/runtime/widget_engine.h"
 #include "widget/runtime/widget_host_control_projection.h"
 #include "widget/runtime/widget_lua_binding_context.h"
 #include "widget/view/widget_draw_geometry.h"

@@ -16,6 +16,7 @@
 #include "widget/api/widget_api_registry.h"
 #include "widget/permissions/widget_permission_broker.h"
 #include "widget/preview/widget_preview_context.h"
+#include "widget/runtime/widget_engine.h"
 #include "widget/runtime/widget_host_control_projection.h"
 #include "widget/storage/widget_storage_runtime.h"
 #include "widget/view/widget_draw_geometry.h"

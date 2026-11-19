@@ -17,10 +17,14 @@
 #include "widget/runtime/widget_lua_binding_context.h"
 #include "widget/runtime/widget_runtime_image.h"
 #include "widget/settings/widget_system_settings.h"
+#include "widget/tasks/widget_audio_output_task_executor.h"
+#include "widget/tasks/widget_audio_playback.h"
 #include "widget/tasks/widget_audio_task_dispatch.h"
 #include "widget/tasks/widget_filesystem_task_dispatch.h"
-#include "widget/tasks/widget_task_start_lua.h"
+#include "widget/tasks/widget_location_task_executor.h"
+#include "widget/tasks/widget_media_task_executor.h"
 #include "widget/tasks/widget_native_task_executor.h"
+#include "widget/tasks/widget_task_start_lua.h"
 #include "widget/view/widget_render_host_context.h"
 
 #include <algorithm>

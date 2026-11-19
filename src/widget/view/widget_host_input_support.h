@@ -1,6 +1,9 @@
 #pragma once
 
-#include "widget/runtime/widget_engine.h"
+#include "widget/runtime/widget_instance.h"
+
+#include <string>
+#include <string_view>
 
 bool HasDeclarativeViewForSurface(
     const LuaWidget& widget, std::string_view surface) noexcept;

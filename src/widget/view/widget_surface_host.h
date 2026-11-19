@@ -1,8 +1,18 @@
 #pragma once
 
-#include "widget/runtime/widget_engine.h"
+#include "widget/runtime/widget_instance.h"
 #include "widget_draw_geometry.h"
 #include "widget_view_renderer.h"
+
+#include <chrono>
+#include <cstddef>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
+
+struct D2DState;
 
 bool IsPanelSurface(std::string_view surface) noexcept;
 
@@ -48,7 +58,8 @@ ID2D1Bitmap1* LoadRuntimeImageBitmap(D2DState* state,
 
 void DrainShellIconResults(D2DState* state);
 
-ComPtr<ID2D1Bitmap1> BitmapFromHBitmap(ID2D1DeviceContext* ctx, HBITMAP hbm);
+Microsoft::WRL::ComPtr<ID2D1Bitmap1> BitmapFromHBitmap(
+    ID2D1DeviceContext* ctx, HBITMAP hbm);
 
 std::unordered_map<std::string, LuaWidget::VariableVirtualState>&
 VariableVirtualStatesForSurface(

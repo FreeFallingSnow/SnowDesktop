@@ -4,6 +4,16 @@
 #include <string>
 #include <unordered_map>
 
+enum class LuaWidgetPreviewDataState
+{
+    Ready,
+    Empty,
+    Loading,
+    Error,
+    Stale,
+    PermissionDenied,
+};
+
 namespace snowdesktop::widget_runtime
 {
 using StorageMap = std::unordered_map<std::string, std::string>;

@@ -2,6 +2,7 @@
 
 #include "common/json_value.h"
 #include "system/calendar/calendar_service.h"
+#include "widget/preview/widget_preview_context.h"
 #include "widget/runtime/widget_host_requests.h"
 #include "widget_audio_analysis_provider.h"
 #include "widget_system_data_provider.h"
@@ -11,16 +12,6 @@
 #include <optional>
 #include <string>
 #include <vector>
-
-enum class LuaWidgetPreviewDataState
-{
-    Ready,
-    Empty,
-    Loading,
-    Error,
-    Stale,
-    PermissionDenied,
-};
 
 struct LuaWidgetDataSnapshot
 {
