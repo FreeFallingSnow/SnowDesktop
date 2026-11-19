@@ -72,16 +72,20 @@ snowdesktop_add_runtime_module(SnowDesktopWidgetStorage
     LINK_LIBRARIES SnowDesktopJson SnowDesktopUtf8 bcrypt crypt32)
 
 # Shared native services used by the host and module-level behavior scenarios.
-# Data paths, deployment and diagnostic logging currently form one dependency
-# cycle; keep that runtime environment together, separate from app composition.
+# Data paths use deployment identity. Deployment actions and diagnostic logging
+# consume data paths and retain the higher-level platform dependencies.
 snowdesktop_add_runtime_module(SnowDesktopSteamRuntimeIdentity
     SOURCES src/steam/steam_runtime_context.cpp
     LINK_LIBRARIES SnowDesktopJson)
-snowdesktop_add_runtime_module(SnowDesktopRuntimeEnvironment
+snowdesktop_add_runtime_module(SnowDesktopDataPaths
     SOURCES src/data/data_paths.cpp src/data/portable_data_migration.cpp
-        src/diagnostics/debug_profile.cpp src/diagnostics/diagnostic_log.cpp
+        src/diagnostics/debug_profile.cpp src/platform/deployment_identity.cpp
+    LINK_LIBRARIES SnowDesktopAtomicFile SnowDesktopJson SnowDesktopSteamRuntimeIdentity shell32 ole32)
+snowdesktop_add_runtime_module(SnowDesktopRuntimeEnvironment
+    SOURCES src/diagnostics/diagnostic_log.cpp
         src/platform/deployment_context.cpp src/platform/hook_entry_deployment.cpp
-    LINK_LIBRARIES SnowDesktopAtomicFile SnowDesktopJson SnowDesktopSteamRuntimeIdentity SnowDesktopRuntimePolicy
+    LINK_LIBRARIES SnowDesktopDataPaths SnowDesktopAtomicFile SnowDesktopJson
+        SnowDesktopSteamRuntimeIdentity SnowDesktopRuntimePolicy
         advapi32 bcrypt ole32 runtimeobject shell32 shlwapi windowsapp)
 target_compile_definitions(SnowDesktopRuntimeEnvironment PRIVATE
     SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
@@ -107,7 +111,7 @@ snowdesktop_add_runtime_module(SnowDesktopAppFonts
     SOURCES src/ui/render/app_font.cpp
     LINK_LIBRARIES dwrite gdi32 ole32)
 snowdesktop_add_runtime_module(SnowDesktopNativeUtilities
-    SOURCES src/common/utils.cpp src/icons/shortcut_icon_resource.cpp
+    SOURCES src/common/utils.cpp src/icons/shell_icon_bitmap.cpp src/icons/shortcut_icon_resource.cpp
         src/desktop/desktop_icon_settings.cpp
     LINK_LIBRARIES SnowDesktopRuntimeEnvironment SnowDesktopSettingsPolicy
         comctl32 d2d1 dwrite gdi32 ole32 shell32 shcore shlwapi windowscodecs xmllite)
@@ -154,7 +158,7 @@ snowdesktop_add_runtime_module(SnowDesktopDockWindowPin
     LINK_LIBRARIES SnowDesktopWindowSupport SnowDesktopThemePolicy d2d1 dwmapi)
 if(MSVC)
     target_compile_options(SnowDesktopRuntimeEnvironment PRIVATE /bigobj)
-    foreach(module IN ITEMS SnowDesktopSteamRuntimeIdentity SnowDesktopRuntimeEnvironment
+    foreach(module IN ITEMS SnowDesktopSteamRuntimeIdentity SnowDesktopDataPaths SnowDesktopRuntimeEnvironment
             SnowDesktopNativeUtilities SnowDesktopLocalization SnowDesktopSettingsPersistence
             SnowDesktopLayoutStorage SnowDesktopWidgetTasks SnowDesktopDockWindowPin
             SnowDesktopDockPolicy SnowDesktopFullscreen SnowDesktopSettingsPolicy SnowDesktopAppFonts

@@ -352,7 +352,9 @@ set(SNOWDESKTOP_SOURCES
     src/dock/dock_window_transition.cpp
     src/dock/dock_window_source_cloak.h
     src/core/item.cpp
+    src/core/drag_session.cpp
     src/core/drag_target_resolver.cpp
+    src/core/drop_model.cpp
     src/core/dock.cpp
     src/core/dock_entry_removal.cpp
     src/core/slot.cpp
@@ -383,6 +385,8 @@ set(SNOWDESKTOP_SOURCES
     src/platform/force_restart_hotkey.h
     src/diagnostics/debug_profile.cpp
     src/platform/deployment_context.cpp
+    src/platform/deployment_identity.cpp
+    src/platform/deployment_identity.h
     src/platform/hook_entry_deployment.cpp
     src/platform/hook_entry_deployment.h
     src/platform/hook_entry_protocol.h
@@ -392,6 +396,8 @@ set(SNOWDESKTOP_SOURCES
     src/dock/dock_cloak_dispatcher.h
     src/platform/shell_overlay_window.h
     src/platform/window_peek_policy.h
+    src/icons/shell_icon_bitmap.cpp
+    src/icons/shell_icon_bitmap.h
     src/icons/shortcut_icon_resource.cpp
     src/icons/shortcut_icon_resource.h
     src/icons/icon_load_diagnostics.h
@@ -407,10 +413,15 @@ set(SNOWDESKTOP_SOURCES
     src/settings/settings_route.h
     src/settings/settings_search_index.cpp
     src/settings/settings_search_index.h
+    src/settings/home_about_ipc_values.h
+    src/settings/home_about_status.h
     src/settings/personalization_initialization.h
     src/settings/settings_store_native.cpp
     src/settings/settings_window.cpp
     src/settings/settings_ipc_channel.cpp
+    src/settings/settings_ipc_codec.cpp
+    src/settings/settings_ipc_typed.h
+    src/settings/settings_ipc_wire.h
     src/settings/icon_library_ipc_paging.h
     src/settings/settings_ipc_services.cpp
     src/settings/settings_ipc_widget_service.cpp
@@ -489,6 +500,7 @@ set(SNOWDESKTOP_SOURCES
     src/winui/settings_shell_navigation.cpp
     src/winui/settings_shell_navigation.h
     src/winui/settings_focus_feedback.h
+    src/winui/settings_presenter_controls.cpp
     src/winui/settings_visual_preview.cpp
     src/winui/settings_visual_preview.h
     src/winui/settings_window_host.cpp
