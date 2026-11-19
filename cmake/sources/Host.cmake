@@ -622,6 +622,8 @@ set(SNOWDESKTOP_SOURCES
     src/widget/view/widget_draw_lua.h
     src/widget/view/widget_layout_lua.cpp
     src/widget/view/widget_layout_lua.h
+    src/widget/view/widget_interaction_lua_value.cpp
+    src/widget/view/widget_interaction_lua_value.h
     src/widget/view/widget_view_renderer.cpp
     src/widget/view/widget_view_renderer.h
     src/widget/view/widget_view_text.cpp
@@ -645,6 +647,10 @@ set(SNOWDESKTOP_SOURCES
     src/widget/view/widget_text_input_rules.cpp
     src/widget/storage/widget_storage_transaction.cpp
     src/widget/storage/widget_storage_value.cpp
+    src/widget/storage/widget_storage_runtime.cpp
+    src/widget/storage/widget_storage_runtime.h
+    src/widget/storage/widget_storage_lua.cpp
+    src/widget/storage/widget_storage_lua.h
     src/widget/storage/widget_storage_write_budget.cpp
     src/widget/storage/widget_secret_store.cpp
     src/widget/settings/widget_settings_model.h
@@ -653,6 +659,8 @@ set(SNOWDESKTOP_SOURCES
     src/widget/settings/widget_engine_settings_backend.cpp
     src/widget/settings/widget_engine_settings_backend.h
     src/widget/settings/widget_setting_rules.cpp
+    src/widget/settings/widget_settings_declarations.cpp
+    src/widget/settings/widget_settings_declarations.h
     src/widget/runtime/widget_logical_slot.cpp
     src/widget/runtime/widget_lua_lifecycle.cpp
     src/widget/runtime/widget_runtime_diagnostics.cpp
@@ -673,6 +681,8 @@ set(SNOWDESKTOP_SOURCES
     src/widget/permissions/widget_permission_state.cpp
     src/widget/packages/widget_package.cpp
     src/widget/packages/widget_package_paths.cpp
+    src/widget/packages/widget_script_manifest.cpp
+    src/widget/packages/widget_script_manifest.h
     src/steam/steam_workshop_cache.cpp
     src/steam/steam_workshop_diagnostics.h
     src/steam/steam_workshop_source.cpp

@@ -40,7 +40,6 @@ namespace text_input = snowdesktop::text_input;
 #include "settings/animation_settings.h"
 #include "diagnostics/diagnostic_log.h"
 #include "diagnostics/performance_trace.h"
-#include "widget/api/widget_logical_slot_manifest.h"
 #include "layout/logical_slot_keyboard_rules.h"
 #include "layout/logical_slot_picker_rules.h"
 #include "layout/logical_slot_pointer_rules.h"
@@ -65,6 +64,7 @@ namespace text_input = snowdesktop::text_input;
 #include "widget_file_drop_delivery.h"
 #include "widget/preview/widget_preview_context.h"
 #include "widget/view/widget_interaction_region.h"
+#include "widget/view/widget_interaction_lua_value.h"
 #include "widget/view/widget_draw_geometry.h"
 #include "widget/view/widget_draw_context.h"
 #include "widget/view/widget_draw_lua.h"
@@ -79,8 +79,8 @@ namespace text_input = snowdesktop::text_input;
 #include "widget/packages/widget_package_image_cache.h"
 #include "widget/view/widget_text_input_rules.h"
 #include "widget/storage/widget_storage_transaction.h"
-#include "widget/storage/widget_settings_preview.h"
-#include "widget/storage/widget_storage_persistence.h"
+#include "widget/storage/widget_storage_runtime.h"
+#include "widget/storage/widget_storage_lua.h"
 #include "widget/tasks/widget_filesystem_watch_origin.h"
 #include "widget_host_control_projection.h"
 #include "widget_timer_dispatch.h"
@@ -90,6 +90,7 @@ namespace text_input = snowdesktop::text_input;
 #include "widget/storage/widget_storage_write_budget.h"
 #include "widget/storage/widget_secret_store.h"
 #include "widget/settings/widget_setting_rules.h"
+#include "widget/settings/widget_settings_declarations.h"
 #include "widget/settings/widget_system_settings.h"
 #include "widget/view/widget_ui_metrics.h"
 #include "data/atomic_file.h"
@@ -98,9 +99,26 @@ namespace text_input = snowdesktop::text_input;
 using snowdesktop::lua_runtime::DeferLuaError;
 using snowdesktop::lua_runtime::LuaTableIsContiguousArray;
 using snowdesktop::widget_l10n::PushWidgetL10nAPI;
-using snowdesktop::widget_l10n::TranslateManifest;
+using snowdesktop::widget_runtime::IsRemovedPanelEffectSettingKey;
+using snowdesktop::widget_runtime::LuaReadStorageField;
+using snowdesktop::widget_runtime::ReadLuaDeclaredSettings;
+using snowdesktop::widget_runtime::IsEntityReferenceSettingType;
+using snowdesktop::widget_runtime::IsFilesystemHandleSettingType;
+using snowdesktop::widget_runtime::FilesystemSettingAccess;
+using snowdesktop::widget_runtime::FilesystemSettingMetadataKey;
+using snowdesktop::widget_runtime::EntityReferenceSettingTypeFilter;
+using snowdesktop::widget_runtime::ValidateWidgetSettings;
 using snowdesktop::widget_runtime::CurrentLayoutContentHeight;
 using snowdesktop::widget_runtime::CurrentLayoutContentWidth;
+using snowdesktop::widget_runtime::ActiveStorage;
+using snowdesktop::widget_runtime::LoadStorageFile;
+using snowdesktop::widget_runtime::MutablePersistentStorage;
+using snowdesktop::widget_runtime::PersistentStorage;
+using snowdesktop::widget_runtime::ReadStorage;
+using snowdesktop::widget_runtime::SaveStorageFile;
+using snowdesktop::widget_runtime::StorageWriteWithinQuota;
+using snowdesktop::widget_runtime::PushInteractionValue;
+using snowdesktop::widget_runtime::ReadInteractionValue;
 using snowdesktop::lua_runtime::LuaTableUsesOnlyFields;
 using snowdesktop::widget_runtime::ApplyViewTextLocaleAndDirection;
 using snowdesktop::widget_runtime::BuildHostInputDisplayText;
@@ -503,30 +521,8 @@ ResolveWidgetEntryPackage(const std::filesystem::path& path)
         ? manager.ResolveSelectedEntryPath(path) : manager.ResolveEntryPath(path);
 }
 
-static std::wstring ManifestPathForScriptFile(const std::wstring& fullScriptPath)
-{
-    if (const auto package = ResolveWidgetEntryPackage(fullScriptPath))
-        return (package->root / L"widget.json").wstring();
-    const std::filesystem::path packageManifest =
-        std::filesystem::path(fullScriptPath).parent_path() / L"widget.json";
-    std::error_code error;
-    if (std::filesystem::is_regular_file(packageManifest, error))
-        return packageManifest.wstring();
-    std::wstring path = fullScriptPath;
-    const wchar_t* ext = PathFindExtensionW(path.c_str());
-    if (ext && _wcsicmp(ext, L".lua") == 0)
-        path.resize(static_cast<size_t>(ext - path.c_str()));
-    path += L".widget.json";
-    return path;
-}
-
 // ── Storage (shared localStorage for Lua widgets) ────────────────
-static std::unordered_map<std::string, std::string> g_storage;
-static snowdesktop::widget_runtime::WidgetSettingsPreviewLayers g_settingsPreviews;
-static std::wstring g_storagePath;
 static snowdesktop::widget_runtime::DiagnosticsLog g_widgetDiagnostics;
-static bool StorageWriteWithinQuota(const std::string& prefix,
-    const std::string& key, const std::string& value);
 
 static std::filesystem::path WidgetSecretStorePath()
 {
@@ -535,78 +531,20 @@ static std::filesystem::path WidgetSecretStorePath()
         L"SnowDesktop.widget-secrets.bin";
 }
 
-static bool IsRemovedPanelEffectSettingKey(const std::string& key)
-{
-    const size_t separator = key.rfind('.');
-    const std::string setting = separator == std::string::npos
-        ? key : key.substr(separator + 1);
-    return setting == "shadowAlpha" || setting == "shadowBlur" ||
-        setting == "shadowOffsetY" || setting == "highlightAlpha" ||
-        setting == "noiseAlpha";
-}
-
-static std::unordered_map<std::string, std::string>& ActiveStorage()
-{
-    g_settingsPreviews.InvalidateReads();
-    return snowdesktop::widget_runtime::ActiveStorage(g_storage);
-}
-
-static const snowdesktop::widget_runtime::StorageMap& ReadStorage()
-{
-    if (const auto overlay = snowdesktop::widget_runtime::CurrentStorageOverlay())
-        return *overlay;
-    return g_settingsPreviews.Read(g_storage);
-}
-
 using snowdesktop::widget_runtime::DryLoadScope;
 using snowdesktop::widget_runtime::PreviewExecutionScope;
 using snowdesktop::widget_runtime::StorageOverlayScope;
 
-static bool SaveStorageFile();
-
-static void LoadStorageFile()
-{
-    g_settingsPreviews.Clear();
-    g_storage.clear();
-    if (g_storagePath.empty()) return;
-
-    std::error_code ec;
-    const bool storageExists =
-        std::filesystem::is_regular_file(g_storagePath, ec);
-    if (storageExists && !snowdesktop::widget_runtime::storage_persistence::ReadStorageMap(
-            g_storagePath, g_storage, IsRemovedPanelEffectSettingKey))
-    {
-        SYSTEMTIME now{};
-        GetLocalTime(&now);
-        wchar_t suffix[64]{};
-        swprintf_s(suffix, L".corrupt-%04u%02u%02u-%02u%02u%02u.json",
-            now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute,
-            now.wSecond);
-        const std::wstring quarantine = g_storagePath + suffix;
-        MoveFileExW(g_storagePath.c_str(), quarantine.c_str(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
-    }
-
-}
-
-static bool SaveStorageFile()
-{
-    g_settingsPreviews.InvalidateReads();
-    if (g_storagePath.empty()) return false;
-    return snowdesktop::widget_runtime::storage_persistence::SaveStorageMap(g_storagePath, g_storage);
-}
-
 std::unordered_map<std::string, std::string>&
 WidgetEngine::WidgetSettingsPersistentStorageForBackend() noexcept
 {
-    g_settingsPreviews.InvalidateReads();
-    return g_storage;
+    return snowdesktop::widget_runtime::MutablePersistentStorage();
 }
 
 const std::unordered_map<std::string, std::string>&
 WidgetEngine::WidgetSettingsPersistentStorageForBackend() const noexcept
 {
-    return g_storage;
+    return snowdesktop::widget_runtime::PersistentStorage();
 }
 
 bool WidgetEngine::PersistWidgetSettingsStorageForBackend()
@@ -625,24 +563,17 @@ bool WidgetEngine::StageWidgetSettingsPreviewForBackend(const void* owner,
     const snowdesktop::widget_runtime::StorageMap& previous,
     const snowdesktop::widget_runtime::StorageMap& candidate)
 {
-    return g_settingsPreviews.Update(owner, prefix, previous, candidate);
+    return snowdesktop::widget_runtime::StageStoragePreview(owner, prefix, previous, candidate);
 }
 
 bool WidgetEngine::CommitWidgetSettingsPreviewForBackend(const void* owner)
 {
-    return g_settingsPreviews.Commit(owner, g_storage,
-        [] { return SaveStorageFile(); },
-        [](const auto& candidate, const std::string& prefix) {
-            snowdesktop::widget_runtime::WidgetStorageTransaction transaction(
-                candidate, prefix.substr(0, prefix.size() - 1));
-            std::string error;
-            return transaction.ValidateCommit(error);
-        });
+    return snowdesktop::widget_runtime::CommitStoragePreview(owner);
 }
 
 void WidgetEngine::RemoveWidgetSettingsPreviewForBackend(const void* owner) noexcept
 {
-    g_settingsPreviews.Remove(owner);
+    snowdesktop::widget_runtime::RemoveStoragePreview(owner);
 }
 
 static bool EndsWithLastError(const std::string& key)
@@ -862,431 +793,6 @@ static void ClearRuntimeImagesForSource(
     }
 }
 
-static bool IsHostStructureSettingKey(const std::string& key);
-static bool IsHostAppearanceSettingKey(const std::string& key);
-
-static std::string LuaValueToStorageString(lua_State* L, int index)
-{
-    index = lua_absindex(L, index);
-    if (lua_isboolean(L, index))
-        return lua_toboolean(L, index) ? "1" : "0";
-    if (lua_isinteger(L, index))
-        return std::to_string(static_cast<long long>(lua_tointeger(L, index)));
-    if (lua_isnumber(L, index))
-    {
-        std::ostringstream ss;
-        ss << lua_tonumber(L, index);
-        return ss.str();
-    }
-    if (lua_isstring(L, index))
-        return lua_tostring(L, index);
-    return {};
-}
-
-static std::string LuaReadStorageField(lua_State* L, int tableIndex, const char* key)
-{
-    tableIndex = lua_absindex(L, tableIndex);
-    lua_getfield(L, tableIndex, key);
-    std::string value = LuaValueToStorageString(L, -1);
-    lua_pop(L, 1);
-    return value;
-}
-
-static bool LuaReadBoolField(lua_State* L, int tableIndex, const char* key, bool defaultValue = false)
-{
-    tableIndex = lua_absindex(L, tableIndex);
-    lua_getfield(L, tableIndex, key);
-    bool value = lua_isnil(L, -1) ? defaultValue : (lua_toboolean(L, -1) != 0);
-    lua_pop(L, 1);
-    return value;
-}
-
-static std::vector<std::string> ReadLuaStringArray(
-    lua_State* L, int tableIndex)
-{
-    std::vector<std::string> values;
-    tableIndex = lua_absindex(L, tableIndex);
-    for (int index = 1; index <= 65; ++index)
-    {
-        lua_rawgeti(L, tableIndex, index);
-        if (lua_isnil(L, -1))
-        {
-            lua_pop(L, 1);
-            break;
-        }
-        values.push_back(LuaValueToStorageString(L, -1));
-        lua_pop(L, 1);
-    }
-    return values;
-}
-
-static std::optional<LuaWidgetManifest::SettingCondition>
-ReadLuaSettingConditionField(lua_State* L, int tableIndex,
-    const char* field)
-{
-    tableIndex = lua_absindex(L, tableIndex);
-    lua_getfield(L, tableIndex, field);
-    if (lua_isnil(L, -1))
-    {
-        lua_pop(L, 1);
-        return std::nullopt;
-    }
-    LuaWidgetManifest::SettingCondition condition;
-    if (!lua_istable(L, -1))
-    {
-        condition.operation = "__invalid";
-        lua_pop(L, 1);
-        return condition;
-    }
-    const int conditionTable = lua_absindex(L, -1);
-    condition.key = LuaReadStorageField(L, conditionTable, "key");
-    condition.operation =
-        LuaReadStorageField(L, conditionTable, "operator");
-    lua_getfield(L, conditionTable, "value");
-    if (lua_istable(L, -1))
-    {
-        const int valuesTable = lua_absindex(L, -1);
-        for (int index = 1; index <= 65; ++index)
-        {
-            lua_rawgeti(L, valuesTable, index);
-            if (lua_isnil(L, -1))
-            {
-                lua_pop(L, 1);
-                break;
-            }
-            if (!lua_isboolean(L, -1) && !lua_isnumber(L, -1) &&
-                !lua_isstring(L, -1))
-                condition.operation = "__invalid";
-            condition.values.push_back(
-                LuaValueToStorageString(L, -1));
-            lua_pop(L, 1);
-        }
-    }
-    else if (!lua_isnil(L, -1))
-    {
-        if (!lua_isboolean(L, -1) && !lua_isnumber(L, -1) &&
-            !lua_isstring(L, -1))
-            condition.operation = "__invalid";
-        condition.values.push_back(LuaValueToStorageString(L, -1));
-    }
-    lua_pop(L, 2);
-    return condition;
-}
-
-static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableIndex)
-{
-    tableIndex = lua_absindex(L, tableIndex);
-    LuaWidgetManifest::Setting setting;
-    setting.key = LuaReadStorageField(L, tableIndex, "key");
-    setting.label = LuaReadStorageField(L, tableIndex, "label");
-    setting.description =
-        LuaReadStorageField(L, tableIndex, "description");
-    setting.group = LuaReadStorageField(L, tableIndex, "group");
-    setting.validationMessage =
-        LuaReadStorageField(L, tableIndex, "validationMessage");
-    setting.dependsOn =
-        LuaReadStorageField(L, tableIndex, "dependsOn");
-    setting.type = LuaReadStorageField(L, tableIndex, "type");
-    if (setting.type == "duration")
-    {
-        const auto unit = LuaReadStorageField(L, tableIndex, "unit");
-        if (!unit.empty()) setting.durationUnit = unit;
-        const int scale = snowdesktop::widget_runtime::DurationSettingUnitSeconds(setting.durationUnit);
-        setting.maxValue = scale ? snowdesktop::widget_runtime::kMaximumSettingDurationSeconds / scale : 0;
-        setting.stepValue = 1;
-    }
-    setting.defaultValue = LuaReadStorageField(L, tableIndex, "default");
-    setting.searchKey = LuaReadStorageField(L, tableIndex, "searchKey");
-    setting.binding = LuaReadStorageField(L, tableIndex, "binding");
-    setting.access = LuaReadStorageField(L, tableIndex, "access");
-    setting.emptyLabel = LuaReadStorageField(L, tableIndex, "emptyLabel");
-    setting.noResultsLabel =
-        LuaReadStorageField(L, tableIndex, "noResultsLabel");
-
-    lua_getfield(L, tableIndex, "min");
-    if (lua_isnumber(L, -1)) setting.minValue = lua_tonumber(L, -1);
-    lua_pop(L, 1);
-    lua_getfield(L, tableIndex, "max");
-    if (lua_isnumber(L, -1)) setting.maxValue = lua_tonumber(L, -1);
-    lua_pop(L, 1);
-    lua_getfield(L, tableIndex, "step");
-    if (lua_isnumber(L, -1)) setting.stepValue = lua_tonumber(L, -1);
-    lua_pop(L, 1);
-    if (setting.type == "duration" && setting.defaultValue.empty())
-        setting.defaultValue = std::to_string(setting.minValue);
-    if (setting.type == "duration")
-        for (const char* property : {"min", "max", "step"})
-        {
-            lua_getfield(L, tableIndex, property);
-            if (!lua_isnil(L, -1) && lua_type(L, -1) != LUA_TNUMBER)
-                setting.stepValue = std::numeric_limits<double>::quiet_NaN();
-            lua_pop(L, 1);
-        }
-    lua_getfield(L, tableIndex, "minLength");
-    if (!lua_isnil(L, -1))
-    {
-        const lua_Integer value = lua_isinteger(L, -1)
-            ? lua_tointeger(L, -1)
-            : static_cast<lua_Integer>(-2);
-        setting.minLength = value >= (std::numeric_limits<int>::min)() &&
-            value <= (std::numeric_limits<int>::max)()
-            ? static_cast<int>(value) : -2;
-    }
-    lua_pop(L, 1);
-    lua_getfield(L, tableIndex, "maxLength");
-    if (!lua_isnil(L, -1))
-    {
-        const lua_Integer value = lua_isinteger(L, -1)
-            ? lua_tointeger(L, -1)
-            : static_cast<lua_Integer>(-2);
-        setting.maxLength = value >= (std::numeric_limits<int>::min)() &&
-            value <= (std::numeric_limits<int>::max)()
-            ? static_cast<int>(value) : -2;
-    }
-    lua_pop(L, 1);
-    lua_getfield(L, tableIndex, "required");
-    if (lua_isboolean(L, -1))
-        setting.required = lua_toboolean(L, -1) != 0;
-    else if (!lua_isnil(L, -1))
-        setting.minLength = -2;
-    lua_pop(L, 1);
-    setting.showWhen = ReadLuaSettingConditionField(
-        L, tableIndex, "showWhen");
-    setting.enabledWhen = ReadLuaSettingConditionField(
-        L, tableIndex, "enabledWhen");
-
-    if (setting.type == "multiSelect")
-    {
-        lua_getfield(L, tableIndex, "default");
-        if (lua_istable(L, -1))
-            setting.defaultValues = ReadLuaStringArray(L, -1);
-        lua_pop(L, 1);
-        setting.defaultValue.clear();
-    }
-
-    lua_getfield(L, tableIndex, "options");
-    if (lua_istable(L, -1))
-        setting.options = ReadLuaStringArray(L, -1);
-    lua_pop(L, 1);
-
-    lua_getfield(L, tableIndex, "optionLabels");
-    if (lua_istable(L, -1))
-        setting.optionLabels = ReadLuaStringArray(L, -1);
-    lua_pop(L, 1);
-
-    lua_getfield(L, tableIndex, "extensions");
-    if (lua_istable(L, -1))
-        setting.extensions = ReadLuaStringArray(L, -1);
-    lua_pop(L, 1);
-
-    if (setting.label.empty()) setting.label = setting.key;
-    if (setting.type.empty()) setting.type = "text";
-    if (setting.access.empty()) setting.access = "read";
-    if (setting.type == "password")
-    {
-        // Secret defaults would put plaintext in the package or Lua source.
-        setting.defaultValue.clear();
-        setting.defaultValues.clear();
-        setting.options.clear();
-        setting.optionLabels.clear();
-        setting.extensions.clear();
-    }
-    else if (setting.type == "appReference" ||
-        setting.type == "desktopItemReference" ||
-        setting.type == "fileReference" ||
-        setting.type == "folderReference")
-    {
-        // Host-owned references never enter ordinary setting storage.
-        setting.defaultValue.clear();
-        setting.defaultValues.clear();
-        setting.searchKey.clear();
-        setting.options.clear();
-        setting.optionLabels.clear();
-        setting.extensions.clear();
-    }
-    else if (setting.type == "fileHandle" ||
-        setting.type == "folderHandle")
-    {
-        // Handles are host-owned grants and never ordinary setting values.
-        setting.defaultValue.clear();
-        setting.defaultValues.clear();
-        setting.searchKey.clear();
-        setting.binding.clear();
-        setting.options.clear();
-        setting.optionLabels.clear();
-    }
-    return setting;
-}
-
-static LuaWidgetManifest::SettingGroup ReadLuaSettingGroupTable(
-    lua_State* L, int tableIndex)
-{
-    tableIndex = lua_absindex(L, tableIndex);
-    LuaWidgetManifest::SettingGroup group;
-    group.id = LuaReadStorageField(L, tableIndex, "id");
-    group.label = LuaReadStorageField(L, tableIndex, "label");
-    group.description =
-        LuaReadStorageField(L, tableIndex, "description");
-    group.collapsible = LuaReadBoolField(
-        L, tableIndex, "collapsible");
-    group.defaultExpanded = LuaReadBoolField(
-        L, tableIndex, "defaultExpanded", true);
-    if (group.label.empty()) group.label = group.id;
-    return group;
-}
-
-static void ReadLuaSettingGroupsArray(lua_State* L, int arrayIndex,
-    std::vector<LuaWidgetManifest::SettingGroup>& out)
-{
-    arrayIndex = lua_absindex(L, arrayIndex);
-    for (int index = 1;; ++index)
-    {
-        lua_rawgeti(L, arrayIndex, index);
-        if (lua_isnil(L, -1))
-        {
-            lua_pop(L, 1);
-            break;
-        }
-        if (lua_istable(L, -1))
-        {
-            auto group = ReadLuaSettingGroupTable(L, -1);
-            out.push_back(std::move(group));
-        }
-        lua_pop(L, 1);
-    }
-}
-
-static void ReadLuaSettingsArray(lua_State* L, int arrayIndex,
-    std::vector<LuaWidgetManifest::Setting>& out)
-{
-    arrayIndex = lua_absindex(L, arrayIndex);
-    for (int i = 1;; ++i)
-    {
-        lua_rawgeti(L, arrayIndex, i);
-        if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
-        if (lua_istable(L, -1))
-        {
-            LuaWidgetManifest::Setting setting = ReadLuaSettingTable(L, -1);
-            if (!setting.key.empty() &&
-                !IsHostStructureSettingKey(setting.key) &&
-                !IsHostAppearanceSettingKey(setting.key))
-                out.push_back(std::move(setting));
-        }
-        lua_pop(L, 1);
-    }
-}
-
-static void ReadLuaPresetValues(lua_State* L, int tableIndex,
-    LuaWidgetManifest::SettingPreset& preset)
-{
-    tableIndex = lua_absindex(L, tableIndex);
-    lua_pushnil(L);
-    while (lua_next(L, tableIndex) != 0)
-    {
-        if (lua_type(L, -2) == LUA_TSTRING)
-        {
-            std::string key = lua_tostring(L, -2);
-            if (!IsHostStructureSettingKey(key))
-            {
-                if (lua_istable(L, -1))
-                    preset.arrayValues[key] =
-                        ReadLuaStringArray(L, -1);
-                else
-                {
-                    std::string value = LuaValueToStorageString(L, -1);
-                    if (!value.empty())
-                        preset.values[key] = std::move(value);
-                }
-            }
-        }
-        lua_pop(L, 1);
-    }
-}
-
-static LuaWidgetManifest::SettingPreset ReadLuaPresetTable(lua_State* L, int tableIndex)
-{
-    tableIndex = lua_absindex(L, tableIndex);
-    LuaWidgetManifest::SettingPreset preset;
-    preset.id = LuaReadStorageField(L, tableIndex, "id");
-    preset.label = LuaReadStorageField(L, tableIndex, "label");
-    if (preset.label.empty())
-        preset.label = LuaReadStorageField(L, tableIndex, "name");
-    preset.isDefault = LuaReadBoolField(L, tableIndex, "default") ||
-        LuaReadBoolField(L, tableIndex, "isDefault");
-
-    lua_getfield(L, tableIndex, "values");
-    if (lua_istable(L, -1))
-        ReadLuaPresetValues(L, -1, preset);
-    lua_pop(L, 1);
-
-    if (preset.id.empty()) preset.id = preset.label;
-    if (preset.label.empty()) preset.label = preset.id;
-    return preset;
-}
-
-static void ReadLuaPresetsArray(lua_State* L, int arrayIndex,
-    std::vector<LuaWidgetManifest::SettingPreset>& out)
-{
-    arrayIndex = lua_absindex(L, arrayIndex);
-    for (int i = 1;; ++i)
-    {
-        lua_rawgeti(L, arrayIndex, i);
-        if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
-        if (lua_istable(L, -1))
-        {
-            LuaWidgetManifest::SettingPreset preset = ReadLuaPresetTable(L, -1);
-            if (!preset.id.empty() && !preset.label.empty() &&
-                (!preset.values.empty() || !preset.arrayValues.empty()))
-                out.push_back(std::move(preset));
-        }
-        lua_pop(L, 1);
-    }
-}
-
-static void ReadLuaDeclaredSettings(lua_State* L, int widgetTableIndex,
-    std::vector<LuaWidgetManifest::Setting>& settings,
-    std::vector<LuaWidgetManifest::SettingGroup>& groups,
-    std::vector<LuaWidgetManifest::SettingPreset>& presets)
-{
-    widgetTableIndex = lua_absindex(L, widgetTableIndex);
-    lua_getfield(L, widgetTableIndex, "settings");
-    if (lua_istable(L, -1))
-    {
-        int settingsTable = lua_absindex(L, -1);
-        lua_getfield(L, settingsTable, "fields");
-        if (lua_istable(L, -1))
-        {
-            ReadLuaSettingsArray(L, -1, settings);
-            lua_pop(L, 1);
-        }
-        else
-        {
-            lua_pop(L, 1);
-            lua_rawgeti(L, settingsTable, 1);
-            bool directArray = lua_istable(L, -1);
-            lua_pop(L, 1);
-            if (directArray)
-                ReadLuaSettingsArray(L, settingsTable, settings);
-        }
-
-        lua_getfield(L, settingsTable, "groups");
-        if (lua_istable(L, -1))
-            ReadLuaSettingGroupsArray(L, -1, groups);
-        lua_pop(L, 1);
-
-        lua_getfield(L, settingsTable, "presets");
-        if (lua_istable(L, -1))
-            ReadLuaPresetsArray(L, -1, presets);
-        lua_pop(L, 1);
-    }
-    lua_pop(L, 1);
-
-    lua_getfield(L, widgetTableIndex, "presets");
-    if (lua_istable(L, -1))
-        ReadLuaPresetsArray(L, -1, presets);
-    lua_pop(L, 1);
-}
-
 static D2DState* GetD2D(lua_State* L)
 {
     lua_getfield(L, LUA_REGISTRYINDEX, "__d2d_ptr");
@@ -1302,554 +808,6 @@ static std::wstring BoundWidgetId(lua_State* state)
     const std::wstring result = Utf8ToWideLocal(value ? value : "");
     lua_pop(state, 1);
     return result;
-}
-
-static bool IsEntityReferenceSettingType(std::string_view type) noexcept
-{
-    return type == "appReference" || type == "desktopItemReference" ||
-        type == "fileReference" || type == "folderReference";
-}
-
-static bool IsFilesystemHandleSettingType(std::string_view type) noexcept
-{
-    return type == "fileHandle" || type == "folderHandle";
-}
-
-static std::optional<snowdesktop::widget_runtime::
-    WidgetFilesystemHandleAccess> FilesystemSettingAccess(
-        std::string_view access) noexcept
-{
-    using Access = snowdesktop::widget_runtime::
-        WidgetFilesystemHandleAccess;
-    if (access == "read") return Access::Read;
-    if (access == "write") return Access::Write;
-    if (access == "readWrite") return Access::ReadWrite;
-    return std::nullopt;
-}
-
-static std::string FilesystemSettingMetadataKey(std::string_view key)
-{
-    return "__host.settingHandle." + std::string(key);
-}
-
-static std::string_view EntityReferenceSettingKind(
-    std::string_view type) noexcept
-{
-    if (type == "appReference") return "app.reference";
-    if (type == "desktopItemReference") return "desktop.item";
-    if (type == "fileReference" || type == "folderReference")
-        return "filesystem.reference";
-    return {};
-}
-
-static std::string_view EntityReferenceSettingTypeFilter(
-    std::string_view type) noexcept
-{
-    if (type == "fileReference") return "file";
-    if (type == "folderReference") return "folder";
-    return {};
-}
-
-static bool ValidateEntityReferenceSettings(
-    const std::vector<LuaWidgetManifest::Setting>& manifestSettings,
-    const std::vector<LuaWidgetManifest::Setting>& scriptSettings,
-    const snowdesktop::widget_runtime::LogicalSlotDeclarations& slots,
-    std::string& error)
-{
-    error.clear();
-    std::unordered_map<std::string, std::string> bindingOwners;
-    const auto validate = [&](const auto& settings) {
-        for (const auto& setting : settings)
-        {
-            if (!IsEntityReferenceSettingType(setting.type)) continue;
-            if (setting.binding.empty())
-            {
-                error = setting.type + " setting '" + setting.key +
-                    "' requires a binding";
-                return false;
-            }
-            const std::string_view expectedKind =
-                EntityReferenceSettingKind(setting.type);
-            if (const auto [owner, inserted] = bindingOwners.emplace(
-                    setting.binding, setting.key); !inserted)
-            {
-                error = "entity reference binding '" + setting.binding +
-                    "' is already used by setting '" + owner->second + "'";
-                return false;
-            }
-            const auto declaration = slots.find(setting.binding);
-            if (declaration == slots.end() ||
-                declaration->second.kind !=
-                    snowdesktop::widget_runtime::LogicalSlotKind::Binding ||
-                declaration->second.operation != "reference" ||
-                declaration->second.replacePolicy != "allow" ||
-                declaration->second.accepts.size() != 1 ||
-                std::find(declaration->second.accepts.begin(),
-                    declaration->second.accepts.end(), expectedKind) ==
-                    declaration->second.accepts.end())
-            {
-                error = setting.type + " setting '" + setting.key +
-                    "' must target a replaceable " +
-                    std::string(expectedKind) + " binding slot";
-                return false;
-            }
-        }
-        return true;
-    };
-    return validate(manifestSettings) && validate(scriptSettings);
-}
-
-static bool ValidateSettingPresentation(
-    const std::vector<LuaWidgetManifest::Setting>& manifestSettings,
-    const std::vector<LuaWidgetManifest::Setting>& scriptSettings,
-    const std::vector<LuaWidgetManifest::SettingGroup>& manifestGroups,
-    const std::vector<LuaWidgetManifest::SettingGroup>& scriptGroups,
-    std::string& error)
-{
-    error.clear();
-    if (manifestGroups.size() + scriptGroups.size() > 32)
-    {
-        error = "settings accept at most 32 groups";
-        return false;
-    }
-    std::unordered_set<std::string> groupIds;
-    const auto validateGroups = [&](const auto& groups) {
-        for (const auto& group : groups)
-        {
-            const bool safeId = snowdesktop::widget_runtime::
-                IsValidSettingGroupId(group.id);
-            if (!safeId || group.label.empty() ||
-                group.label.size() > 512 ||
-                group.description.size() > 4096)
-            {
-                error = "setting group declarations are invalid";
-                return false;
-            }
-            if (!groupIds.emplace(group.id).second)
-            {
-                error = "setting group '" + group.id +
-                    "' is declared more than once";
-                return false;
-            }
-        }
-        return true;
-    };
-    if (!validateGroups(manifestGroups) || !validateGroups(scriptGroups))
-        return false;
-
-    std::unordered_set<std::string> settingKeys;
-    const auto validateSettings = [&](const auto& settings) {
-        for (const auto& setting : settings)
-        {
-            if (!settingKeys.emplace(setting.key).second)
-            {
-                error = "setting key '" + setting.key +
-                    "' is declared more than once";
-                return false;
-            }
-            if (setting.description.size() > 2048)
-            {
-                error = "setting '" + setting.key +
-                    "' description exceeds 2048 bytes";
-                return false;
-            }
-            if (!setting.group.empty() && !groupIds.contains(setting.group))
-            {
-                error = "setting '" + setting.key +
-                    "' references undeclared group '" + setting.group + "'";
-                return false;
-            }
-        }
-        return true;
-    };
-    return validateSettings(manifestSettings) &&
-        validateSettings(scriptSettings);
-}
-
-static bool ValidateSettingConditionsAndConstraints(
-    const std::vector<LuaWidgetManifest::Setting>& manifestSettings,
-    const std::vector<LuaWidgetManifest::Setting>& scriptSettings,
-    std::string& error)
-{
-    error.clear();
-    if (manifestSettings.size() + scriptSettings.size() > 256)
-    {
-        error = "settings accept at most 256 fields";
-        return false;
-    }
-    std::unordered_map<std::string, const LuaWidgetManifest::Setting*>
-        declarations;
-    for (const auto& setting : manifestSettings)
-        declarations.emplace(setting.key, &setting);
-    for (const auto& setting : scriptSettings)
-        declarations.emplace(setting.key, &setting);
-
-    std::unordered_map<std::string, std::vector<std::string>> edges;
-    const auto validateCondition = [&](const LuaWidgetManifest::Setting& owner,
-        const LuaWidgetManifest::SettingCondition& condition) {
-        if (condition.key.empty() || condition.key == owner.key ||
-            !snowdesktop::widget_runtime::IsValidSettingCondition(
-                condition.operation, condition.values.size()))
-        {
-            error = "setting '" + owner.key +
-                "' has an invalid condition";
-            return false;
-        }
-        const auto source = declarations.find(condition.key);
-        if (source == declarations.end())
-        {
-            error = "setting '" + owner.key +
-                "' condition references undeclared setting '" +
-                condition.key + "'";
-            return false;
-        }
-        const auto& sourceSetting = *source->second;
-        const bool existenceOnly = condition.operation == "set" ||
-            condition.operation == "unset" ||
-            condition.operation == "truthy" ||
-            condition.operation == "falsy";
-        if (!existenceOnly &&
-            (sourceSetting.type == "password" ||
-                IsFilesystemHandleSettingType(sourceSetting.type) ||
-                IsEntityReferenceSettingType(sourceSetting.type)))
-        {
-            error = "setting '" + owner.key +
-                "' may only test presence/truthiness of host-managed setting '" +
-                condition.key + "'";
-            return false;
-        }
-        const bool contains = condition.operation == "contains" ||
-            condition.operation == "notContains";
-        if (contains != (sourceSetting.type == "multiSelect"))
-        {
-            if (contains || (!existenceOnly &&
-                    sourceSetting.type == "multiSelect"))
-            {
-                error = "setting '" + owner.key +
-                    "' uses an incompatible condition for '" +
-                    condition.key + "'";
-                return false;
-            }
-        }
-        if ((sourceSetting.type == "select" ||
-                sourceSetting.type == "multiSelect") && !existenceOnly)
-        {
-            for (const auto& expected : condition.values)
-            {
-                if (std::find(sourceSetting.options.begin(),
-                        sourceSetting.options.end(), expected) ==
-                    sourceSetting.options.end())
-                {
-                    error = "setting '" + owner.key +
-                        "' condition uses an undeclared option from '" +
-                        condition.key + "'";
-                    return false;
-                }
-            }
-        }
-        if (sourceSetting.type == "bool" && !existenceOnly)
-        {
-            for (const auto& expected : condition.values)
-            {
-                if (expected != "0" && expected != "1")
-                {
-                    error = "setting '" + owner.key +
-                        "' boolean condition values must be booleans";
-                    return false;
-                }
-            }
-        }
-        if ((sourceSetting.type == "range" || sourceSetting.type == "duration") && !existenceOnly)
-        {
-            for (const auto& expected : condition.values)
-            {
-                double number = 0.0;
-                if (!snowdesktop::widget_runtime::ParseFiniteSettingNumber(
-                        expected, number) || number < sourceSetting.minValue ||
-                    number > sourceSetting.maxValue ||
-                    (sourceSetting.type == "duration" &&
-                        !snowdesktop::widget_runtime::IsValidDurationSettingValue(number,
-                            sourceSetting.durationUnit, sourceSetting.minValue, sourceSetting.maxValue, sourceSetting.stepValue)))
-                {
-                    error = "setting '" + owner.key +
-                        "' numeric condition is outside the source bounds";
-                    return false;
-                }
-            }
-        }
-        edges[owner.key].push_back(condition.key);
-        return true;
-    };
-
-    for (const auto& [key, settingPtr] : declarations)
-    {
-        (void)key;
-        const auto& setting = *settingPtr;
-        const bool hasConstraints = setting.required ||
-            setting.minLength != -1 || setting.maxLength != -1;
-        const bool textType = setting.type == "text" ||
-            setting.type == "url" || setting.type == "date" ||
-            setting.type == "time";
-        if (setting.minLength < -1 || setting.maxLength < -1 ||
-            setting.minLength > 2048 || setting.maxLength > 2048 ||
-            (setting.minLength >= 0 && setting.maxLength >= 0 &&
-                setting.minLength > setting.maxLength) ||
-            ((!textType) &&
-                (setting.minLength != -1 || setting.maxLength != -1)) ||
-            setting.validationMessage.size() > 2048 ||
-            (hasConstraints && setting.validationMessage.empty()))
-        {
-            error = "setting '" + setting.key +
-                "' has invalid validation constraints";
-            return false;
-        }
-        if (!setting.dependsOn.empty() && setting.enabledWhen)
-        {
-            error = "setting '" + setting.key +
-                "' cannot declare both dependsOn and enabledWhen";
-            return false;
-        }
-        if (setting.showWhen &&
-            !validateCondition(setting, *setting.showWhen)) return false;
-        if (setting.enabledWhen &&
-            !validateCondition(setting, *setting.enabledWhen)) return false;
-        if (!setting.dependsOn.empty())
-        {
-            LuaWidgetManifest::SettingCondition dependency;
-            dependency.key = setting.dependsOn;
-            dependency.operation = "truthy";
-            if (!validateCondition(setting, dependency)) return false;
-        }
-    }
-
-    std::unordered_map<std::string, int> state;
-    const std::function<bool(const std::string&)> visit =
-        [&](const std::string& key) {
-            int& current = state[key];
-            if (current == 2) return true;
-            if (current == 1)
-            {
-                error = "setting conditions contain a dependency cycle at '" +
-                    key + "'";
-                return false;
-            }
-            current = 1;
-            if (const auto found = edges.find(key); found != edges.end())
-                for (const auto& dependency : found->second)
-                    if (!visit(dependency)) return false;
-            current = 2;
-            return true;
-        };
-    for (const auto& [key, _] : declarations)
-        if (!visit(key)) return false;
-    return true;
-}
-
-static bool ValidateOrdinaryDeclarativeSettings(
-    const std::vector<LuaWidgetManifest::Setting>& manifestSettings,
-    const std::vector<LuaWidgetManifest::Setting>& scriptSettings,
-    const std::vector<LuaWidgetManifest::SettingPreset>& manifestPresets,
-    const std::vector<LuaWidgetManifest::SettingPreset>& scriptPresets,
-    std::string& error)
-{
-    using snowdesktop::widget_runtime::IsValidDateSettingValue;
-    using snowdesktop::widget_runtime::IsValidMultiSelectSettingValue;
-    using snowdesktop::widget_runtime::IsValidTimeSettingValue;
-    using snowdesktop::widget_runtime::IsValidUrlSettingValue;
-    using snowdesktop::widget_runtime::ParseFiniteSettingNumber;
-
-    error.clear();
-    std::unordered_map<std::string, const LuaWidgetManifest::Setting*>
-        typedSettings;
-    const auto validateSettings = [&](const auto& settings) {
-        for (const auto& setting : settings)
-        {
-            const bool typed = setting.type == "url" ||
-                setting.type == "date" || setting.type == "time" ||
-                setting.type == "range" || setting.type == "duration" || setting.type == "multiSelect" ||
-                IsFilesystemHandleSettingType(setting.type);
-            if (!typed) continue;
-            if (!typedSettings.emplace(setting.key, &setting).second)
-            {
-                error = "typed setting key '" + setting.key +
-                    "' is declared more than once";
-                return false;
-            }
-            if (setting.type != "multiSelect" &&
-                !setting.defaultValues.empty())
-            {
-                error = setting.type + " setting '" + setting.key +
-                    "' does not accept an array default";
-                return false;
-            }
-            if (IsFilesystemHandleSettingType(setting.type))
-            {
-                std::vector<std::string> normalizedExtensions;
-                if (!snowdesktop::widget_runtime::
-                        IsValidFilesystemSettingAccess(setting.access) ||
-                    (setting.type == "folderHandle" &&
-                        !setting.extensions.empty()) ||
-                    (setting.type == "fileHandle" &&
-                        !snowdesktop::widget_runtime::
-                            NormalizeFilesystemSettingExtensions(
-                                setting.extensions,
-                                normalizedExtensions)))
-                {
-                    error = setting.type + " setting '" + setting.key +
-                        "' has invalid access or extensions";
-                    return false;
-                }
-                continue;
-            }
-            if (setting.type == "url" &&
-                !IsValidUrlSettingValue(setting.defaultValue))
-            {
-                error = "url setting '" + setting.key +
-                    "' has an invalid HTTP(S) default";
-                return false;
-            }
-            if (setting.type == "date" &&
-                !IsValidDateSettingValue(setting.defaultValue))
-            {
-                error = "date setting '" + setting.key +
-                    "' must use YYYY-MM-DD";
-                return false;
-            }
-            if (setting.type == "time" &&
-                !IsValidTimeSettingValue(setting.defaultValue))
-            {
-                error = "time setting '" + setting.key +
-                    "' must use HH:MM";
-                return false;
-            }
-            if (setting.type == "range")
-            {
-                if (!std::isfinite(setting.minValue) ||
-                    !std::isfinite(setting.maxValue) ||
-                    !std::isfinite(setting.stepValue) ||
-                    setting.minValue > setting.maxValue ||
-                    setting.stepValue <= 0.0)
-                {
-                    error = "range setting '" + setting.key +
-                        "' requires finite min <= max and step > 0";
-                    return false;
-                }
-                if (!setting.defaultValue.empty())
-                {
-                    double value = 0.0;
-                    if (!ParseFiniteSettingNumber(
-                            setting.defaultValue, value) ||
-                        value < setting.minValue || value > setting.maxValue)
-                    {
-                        error = "range setting '" + setting.key +
-                            "' has an out-of-range default";
-                        return false;
-                    }
-                }
-            }
-            if (setting.type == "duration")
-            {
-                double number = 0;
-                if (!ParseFiniteSettingNumber(setting.defaultValue, number) ||
-                    !snowdesktop::widget_runtime::IsValidDurationSettingValue(number,
-                        setting.durationUnit, setting.minValue, setting.maxValue, setting.stepValue))
-                {
-                    error = "duration setting '" + setting.key + "' requires an integer default, valid unit, bounds and whole-unit step";
-                    return false;
-                }
-            }
-            if (setting.type == "multiSelect" &&
-                (!setting.defaultValue.empty() ||
-                    !IsValidMultiSelectSettingValue(
-                    setting.options, setting.defaultValues) ||
-                    (!setting.optionLabels.empty() &&
-                        setting.optionLabels.size() !=
-                            setting.options.size())))
-            {
-                error = "multiSelect setting '" + setting.key +
-                    "' requires 1-64 unique options, matching labels, and valid defaults";
-                return false;
-            }
-        }
-        return true;
-    };
-    if (!validateSettings(manifestSettings) ||
-        !validateSettings(scriptSettings))
-        return false;
-
-    const auto validatePresets = [&](const auto& presets) {
-        for (const auto& preset : presets)
-        {
-            for (const auto& [key, value] : preset.values)
-            {
-                const auto declared = typedSettings.find(key);
-                if (declared == typedSettings.end()) continue;
-                const auto& setting = *declared->second;
-                if (IsFilesystemHandleSettingType(setting.type))
-                {
-                    error = "preset '" + preset.id +
-                        "' cannot assign host-managed setting '" + key + "'";
-                    return false;
-                }
-                if (setting.type == "multiSelect")
-                {
-                    error = "preset '" + preset.id +
-                        "' must use an array for multiSelect setting '" + key + "'";
-                    return false;
-                }
-                if ((setting.type == "url" &&
-                        !IsValidUrlSettingValue(value)) ||
-                    (setting.type == "date" &&
-                        !IsValidDateSettingValue(value)) ||
-                    (setting.type == "time" &&
-                        !IsValidTimeSettingValue(value)))
-                {
-                    error = "preset '" + preset.id +
-                        "' has an invalid value for setting '" + key + "'";
-                    return false;
-                }
-                if (setting.type == "duration")
-                {
-                    double number = 0;
-                    if (!ParseFiniteSettingNumber(value, number) ||
-                        !snowdesktop::widget_runtime::IsValidDurationSettingValue(number,
-                            setting.durationUnit, setting.minValue, setting.maxValue, setting.stepValue))
-                    {
-                        error = "preset '" + preset.id + "' has an invalid duration for setting '" + key + "'";
-                        return false;
-                    }
-                }
-                if (setting.type == "range")
-                {
-                    double number = 0.0;
-                    if (!ParseFiniteSettingNumber(value, number) ||
-                        number < setting.minValue ||
-                        number > setting.maxValue)
-                    {
-                        error = "preset '" + preset.id +
-                            "' has an out-of-range value for setting '" + key + "'";
-                        return false;
-                    }
-                }
-            }
-            for (const auto& [key, values] : preset.arrayValues)
-            {
-                const auto declared = typedSettings.find(key);
-                if (declared == typedSettings.end() ||
-                    declared->second->type != "multiSelect" ||
-                    !IsValidMultiSelectSettingValue(
-                        declared->second->options, values))
-                {
-                    error = "preset '" + preset.id +
-                        "' has an invalid array value for setting '" + key + "'";
-                    return false;
-                }
-            }
-        }
-        return true;
-    };
-    return validatePresets(manifestPresets) &&
-        validatePresets(scriptPresets);
 }
 
 static std::uint64_t BoundWidgetRuntimeToken(lua_State* state)
@@ -1883,6 +841,49 @@ static std::string BoundStoragePrefix(lua_State* state)
 {
     return WidgetWideToUtf8(BoundWidgetId(state));
 }
+
+static const snowdesktop::widget_runtime::WidgetStorageLuaHost kStorageLuaHostServices{
+    BoundStoragePrefix,
+    +[](lua_State* state) {
+        auto* d2d = GetD2D(state);
+        return !d2d || !d2d->engine ||
+            d2d->engine->RuntimeCanWriteWidgetStorage(BoundWidgetId(state));
+    },
+    +[](lua_State* state, const std::string& key, std::string& value) {
+        auto* d2d = GetD2D(state);
+        return d2d && d2d->engine &&
+            d2d->engine->RuntimeGetSecretReference(BoundWidgetId(state), key, value);
+    },
+    +[](lua_State* state, const std::string& key, std::string& value) {
+        auto* d2d = GetD2D(state);
+        return d2d && d2d->engine &&
+            d2d->engine->RuntimeGetFilesystemSettingHandle(BoundWidgetId(state), key, value);
+    },
+    +[](lua_State* state, const std::string& key) {
+        auto* d2d = GetD2D(state);
+        return d2d && d2d->engine &&
+            d2d->engine->RuntimeIsEntityReferenceSetting(BoundWidgetId(state), key);
+    },
+    +[](lua_State* state, const std::string& key, snowdesktop::widget_runtime::InteractionValue& value) {
+        auto* d2d = GetD2D(state);
+        return d2d && d2d->engine &&
+            d2d->engine->RuntimeGetTypedSettingDefault(BoundWidgetId(state), key, value);
+    },
+    +[](lua_State* state, const std::string& key) {
+        auto* d2d = GetD2D(state);
+        return d2d && d2d->engine
+            ? d2d->engine->RuntimeGetStorageValue(BoundWidgetId(state), key) : std::string{};
+    },
+    +[](lua_State* state) {
+        auto* d2d = GetD2D(state);
+        if (!d2d || !d2d->engine) return std::vector<std::string>{};
+        const auto widgetId = BoundWidgetId(state);
+        auto keys = d2d->engine->RuntimeSecretStorageKeys(widgetId);
+        const auto filesystemKeys = d2d->engine->RuntimeFilesystemSettingKeys(widgetId);
+        keys.insert(keys.end(), filesystemKeys.begin(), filesystemKeys.end());
+        return keys;
+    },
+};
 
 static void SetWidgetExecutionContext(D2DState* state, const std::wstring& widgetId)
 {
@@ -2410,51 +1411,6 @@ static int lua_Notify(lua_State* L)
     return 0;
 }
 
-static std::string Sha256File(const std::wstring& path)
-{
-    std::ifstream file(path, std::ios::binary);
-    if (!file) return {};
-    BCRYPT_ALG_HANDLE algorithm = nullptr;
-    BCRYPT_HASH_HANDLE hash = nullptr;
-    DWORD objectSize = 0, resultSize = 0;
-    std::vector<unsigned char> object;
-    std::vector<unsigned char> digest(32);
-    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0)
-        return {};
-    if (BCryptGetProperty(algorithm, BCRYPT_OBJECT_LENGTH,
-        reinterpret_cast<PUCHAR>(&objectSize), sizeof(objectSize), &resultSize, 0) < 0)
-    {
-        BCryptCloseAlgorithmProvider(algorithm, 0);
-        return {};
-    }
-    object.resize(objectSize);
-    if (BCryptCreateHash(algorithm, &hash, object.data(), objectSize, nullptr, 0, 0) < 0)
-    {
-        BCryptCloseAlgorithmProvider(algorithm, 0);
-        return {};
-    }
-    char buffer[8192];
-    while (file)
-    {
-        file.read(buffer, sizeof(buffer));
-        auto count = file.gcount();
-        if (count > 0)
-            BCryptHashData(hash, reinterpret_cast<PUCHAR>(buffer), static_cast<ULONG>(count), 0);
-    }
-    BCryptFinishHash(hash, digest.data(), static_cast<ULONG>(digest.size()), 0);
-    BCryptDestroyHash(hash);
-    BCryptCloseAlgorithmProvider(algorithm, 0);
-    static constexpr char hex[] = "0123456789abcdef";
-    std::string result;
-    result.reserve(64);
-    for (unsigned char byte : digest)
-    {
-        result.push_back(hex[byte >> 4]);
-        result.push_back(hex[byte & 0x0F]);
-    }
-    return result;
-}
-
 static std::string WidgetPrewarmContentDigest(
     std::span<const std::uint8_t> bytes)
 {
@@ -2685,23 +1641,6 @@ static std::unordered_map<std::string, std::string> JsonReadValueMap(
     return result;
 }
 
-static bool IsHostStructureSettingKey(const std::string& key)
-{
-    return key == "cornerRadius" || key == "barHeight";
-}
-
-static bool IsHostAppearanceSettingKey(const std::string& key)
-{
-    return key == "bg" || key == "border" || key == "alpha" ||
-        key == "borderAlpha" || key == "borderStyle" ||
-        key == "borderWidth" || key == "edgeHighlightEnabled" ||
-        key == "edgeHighlightWidth" || key == "edgeHighlightStrength" ||
-        key == "gradientEndA" ||
-        IsRemovedPanelEffectSettingKey(key) || key == "glassEnabled" ||
-        key == "glassBlurRadius" || key == "acrylicEnabled" ||
-        key == "followPersonalization" || key == "__edgeLight";
-}
-
 static std::string FindDeclaredDefaultValue(const LuaWidget& widget, const std::string& key)
 {
     auto readPresetValue = [&key](const std::vector<LuaWidgetManifest::SettingPreset>& presets) {
@@ -2805,172 +1744,6 @@ static const char* ResolveClipboardWriteFile(const LuaWidget& owner,
     return nullptr;
 }
 
-static bool ReadInteractionValue(lua_State* state, int index,
-    snowdesktop::widget_runtime::InteractionValue& output,
-    std::size_t depth, std::size_t& nodes, std::size_t& stringBytes,
-    std::unordered_set<const void*>& ancestors, std::string& error)
-{
-    using Value = snowdesktop::widget_runtime::InteractionValue;
-    index = lua_absindex(state, index);
-    if (++nodes > 256 || depth > 8)
-    {
-        error = "interaction action value exceeds its size or depth limit";
-        return false;
-    }
-    switch (lua_type(state, index))
-    {
-    case LUA_TNIL:
-        output.type = Value::Type::Null;
-        return true;
-    case LUA_TBOOLEAN:
-        output.type = Value::Type::Boolean;
-        output.boolean = lua_toboolean(state, index) != 0;
-        return true;
-    case LUA_TNUMBER:
-        if (lua_isinteger(state, index))
-        {
-            output.type = Value::Type::Integer;
-            output.integer = static_cast<long long>(lua_tointeger(state, index));
-        }
-        else
-        {
-            output.type = Value::Type::Number;
-            output.number = static_cast<double>(lua_tonumber(state, index));
-            if (!std::isfinite(output.number))
-            {
-                error = "interaction action numbers must be finite";
-                return false;
-            }
-        }
-        return true;
-    case LUA_TSTRING:
-    {
-        std::size_t length = 0;
-        const char* value = lua_tolstring(state, index, &length);
-        if (length > 16 * 1024 || stringBytes > 16 * 1024 - length)
-        {
-            error = "interaction action strings exceed 16 KiB";
-            return false;
-        }
-        stringBytes += length;
-        output.type = Value::Type::String;
-        output.string.assign(value ? value : "", length);
-        return true;
-    }
-    case LUA_TTABLE:
-        break;
-    default:
-        error = "interaction action values must be serializable";
-        return false;
-    }
-
-    if (lua_getmetatable(state, index) != 0)
-    {
-        lua_pop(state, 1);
-        error = "interaction action tables cannot have metatables";
-        return false;
-    }
-    const void* identity = lua_topointer(state, index);
-    if (!ancestors.insert(identity).second)
-    {
-        error = "interaction action values cannot be cyclic";
-        return false;
-    }
-
-    bool integerKeys = false;
-    bool stringKeys = false;
-    std::size_t count = 0;
-    std::size_t maximumIndex = 0;
-    lua_pushnil(state);
-    while (lua_next(state, index) != 0)
-    {
-        ++count;
-        if (lua_isinteger(state, -2))
-        {
-            const lua_Integer key = lua_tointeger(state, -2);
-            if (key <= 0 || key > 256)
-            {
-                lua_pop(state, 2);
-                ancestors.erase(identity);
-                error = "interaction action array keys must be contiguous";
-                return false;
-            }
-            integerKeys = true;
-            maximumIndex = std::max(maximumIndex,
-                static_cast<std::size_t>(key));
-        }
-        else if (lua_type(state, -2) == LUA_TSTRING)
-            stringKeys = true;
-        else
-        {
-            lua_pop(state, 2);
-            ancestors.erase(identity);
-            error = "interaction action object keys must be strings";
-            return false;
-        }
-        lua_pop(state, 1);
-
-    }
-    if ((integerKeys && stringKeys) ||
-        (integerKeys && maximumIndex != count))
-    {
-        ancestors.erase(identity);
-        error = "interaction action tables must be arrays or objects";
-        return false;
-    }
-
-    if (integerKeys)
-    {
-        output.type = Value::Type::Array;
-        output.array.resize(count);
-        for (std::size_t item = 0; item < count; ++item)
-        {
-            lua_rawgeti(state, index, static_cast<lua_Integer>(item + 1));
-            if (!ReadInteractionValue(state, -1, output.array[item],
-                    depth + 1, nodes, stringBytes, ancestors, error))
-            {
-                lua_pop(state, 1);
-                ancestors.erase(identity);
-                return false;
-            }
-            lua_pop(state, 1);
-        }
-    }
-    else
-    {
-        output.type = Value::Type::Object;
-        lua_pushnil(state);
-        while (lua_next(state, index) != 0)
-        {
-            std::size_t keyLength = 0;
-            const char* key = lua_tolstring(state, -2, &keyLength);
-            if (!key || keyLength == 0 || keyLength > 128 ||
-                stringBytes > 16 * 1024 - keyLength)
-            {
-                lua_pop(state, 2);
-                ancestors.erase(identity);
-                error = "interaction action object key is invalid";
-                return false;
-            }
-            stringBytes += keyLength;
-            Value child;
-            if (!ReadInteractionValue(state, -1, child, depth + 1,
-                    nodes, stringBytes, ancestors, error))
-            {
-                lua_pop(state, 2);
-                ancestors.erase(identity);
-                return false;
-            }
-            output.object.emplace(std::string(key, keyLength),
-                std::move(child));
-            lua_pop(state, 1);
-        }
-    }
-    ancestors.erase(identity);
-    return true;
-}
-
-// Values originate from bounded host providers or validated helper messages.
 static void PushSystemControlJson(lua_State* state, const JsonValue& value)
 {
     luaL_checkstack(state, 3, "JSON value exceeds Lua stack capacity");
@@ -2994,46 +1767,6 @@ static void PushSystemControlJson(lua_State* state, const JsonValue& value)
         for (const auto& [key, child] : value.object)
         {
             PushSystemControlJson(state, child);
-            lua_setfield(state, -2, key.c_str());
-        }
-        break;
-    }
-}
-
-static void PushInteractionValue(lua_State* state,
-    const snowdesktop::widget_runtime::InteractionValue& value)
-{
-    using Type = snowdesktop::widget_runtime::InteractionValue::Type;
-    switch (value.type)
-    {
-    case Type::Null:
-        lua_pushnil(state);
-        break;
-    case Type::Boolean:
-        lua_pushboolean(state, value.boolean ? 1 : 0);
-        break;
-    case Type::Integer:
-        lua_pushinteger(state, static_cast<lua_Integer>(value.integer));
-        break;
-    case Type::Number:
-        lua_pushnumber(state, static_cast<lua_Number>(value.number));
-        break;
-    case Type::String:
-        lua_pushlstring(state, value.string.data(), value.string.size());
-        break;
-    case Type::Array:
-        lua_createtable(state, static_cast<int>(value.array.size()), 0);
-        for (std::size_t index = 0; index < value.array.size(); ++index)
-        {
-            PushInteractionValue(state, value.array[index]);
-            lua_rawseti(state, -2, static_cast<lua_Integer>(index + 1));
-        }
-        break;
-    case Type::Object:
-        lua_createtable(state, 0, static_cast<int>(value.object.size()));
-        for (const auto& [key, child] : value.object)
-        {
-            PushInteractionValue(state, child);
             lua_setfield(state, -2, key.c_str());
         }
         break;
@@ -8269,7 +7002,7 @@ static const snowdesktop::widget_runtime::LuaResourceHost kLuaResourceHost{
         auto* d2d = GetD2D(state);
         return d2d && (!d2d->ctx || LoadImageBitmap(d2d, key));
     },
-    Sha256File,
+    snowdesktop::widget_runtime::HashWidgetFile,
     WidgetPrewarmContentDigest,
     [](lua_State* state) {
         const auto* d2d = GetD2D(state);
@@ -11384,8 +10117,7 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
     PrewarmWidgetPackageResources(d2dState_);
 
     // Init storage path
-    g_storagePath = GetDataFilePath(L"SnowDesktop.storage.json");
-    LoadStorageFile();
+    snowdesktop::widget_runtime::OpenStorageFile(GetDataFilePath(L"SnowDesktop.storage.json"));
     secretStore_ = std::make_unique<
         snowdesktop::widget_runtime::WidgetSecretStore>(
             WidgetSecretStorePath());
@@ -12218,6 +10950,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     lua_setfield(state, LUA_REGISTRYINDEX, "__d2d_ptr");
     snowdesktop::widget_runtime::BindLuaDrawContext(state, d2dState_, kLuaDrawHostServices);
     snowdesktop::widget_runtime::BindWidgetLayoutContext(state, d2dState_);
+    snowdesktop::widget_runtime::BindWidgetStorageContext(state,
+        d2dState_ ? &kStorageLuaHostServices : nullptr);
     lua_pushlightuserdata(state, quota.get());
     lua_setfield(state, LUA_REGISTRYINDEX, "__quota_ptr");
     lua_pushlightuserdata(state, storageWriteBudget.get());
@@ -12417,37 +11151,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     ReadLuaDeclaredSettings(state, -1, scriptSettings,
         scriptSettingGroups, scriptPresets);
     std::string settingsError;
-    if (!ValidateEntityReferenceSettings(pending.manifest.settings,
-            scriptSettings, pending.manifest.logicalSlots, settingsError))
-    {
-        RuntimeRecordError(widgetId, settingsError);
-        RecordWidgetHostFailure(widgetId, settingsError, false);
-        lua_pop(state, 1);
-        return false;
-    }
-    if (!ValidateSettingPresentation(
-            pending.manifest.settings, scriptSettings,
-            pending.manifest.settingGroups, scriptSettingGroups,
-            settingsError))
-    {
-        RuntimeRecordError(widgetId, settingsError);
-        RecordWidgetHostFailure(widgetId, settingsError, false);
-        lua_pop(state, 1);
-        return false;
-    }
-    if (!ValidateSettingConditionsAndConstraints(
-            pending.manifest.settings, scriptSettings,
-            settingsError))
-    {
-        RuntimeRecordError(widgetId, settingsError);
-        RecordWidgetHostFailure(widgetId, settingsError, false);
-        lua_pop(state, 1);
-        return false;
-    }
-    if (!ValidateOrdinaryDeclarativeSettings(
-            pending.manifest.settings, scriptSettings,
-            pending.manifest.presets, scriptPresets,
-            settingsError))
+    if (!ValidateWidgetSettings(pending.manifest, scriptSettings,
+            scriptSettingGroups, scriptPresets, settingsError))
     {
         RuntimeRecordError(widgetId, settingsError);
         RecordWidgetHostFailure(widgetId, settingsError, false);
@@ -12514,7 +11219,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
             *parentOverlay = std::move(migratedStorage);
         else
         {
-            g_storage = std::move(migratedStorage);
+            MutablePersistentStorage() = std::move(migratedStorage);
             SaveStorageFile();
         }
     }
@@ -12614,10 +11319,10 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
                     !IsEntityReferenceSettingType(setting.type))
                     continue;
                 removedPlaintextOpaqueSetting =
-                    g_storage.erase(storagePrefix + setting.key) > 0 ||
+                    MutablePersistentStorage().erase(storagePrefix + setting.key) > 0 ||
                     removedPlaintextOpaqueSetting;
                 removedPlaintextOpaqueSetting =
-                    g_storage.erase(storagePrefix +
+                    MutablePersistentStorage().erase(storagePrefix +
                         snowdesktop::widget_runtime::
                             TypedStorageMetadataKey(setting.key)) > 0 ||
                     removedPlaintextOpaqueSetting;
@@ -15924,7 +14629,7 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
 std::vector<WidgetErrorEntry> WidgetEngine::GetWidgetErrors() const
 {
     std::vector<WidgetErrorEntry> result;
-    for (const auto& kv : g_storage)
+    for (const auto& kv : PersistentStorage())
     {
         if (!EndsWithLastError(kv.first))
             continue;
@@ -15943,10 +14648,11 @@ std::string WidgetEngine::GetSystemSnapshotError() const
 
 void WidgetEngine::ClearWidgetErrors()
 {
-    for (auto it = g_storage.begin(); it != g_storage.end(); )
+    auto& storage = MutablePersistentStorage();
+    for (auto it = storage.begin(); it != storage.end(); )
     {
         if (EndsWithLastError(it->first))
-            it = g_storage.erase(it);
+            it = storage.erase(it);
         else
             ++it;
     }
@@ -17143,7 +15849,7 @@ void WidgetEngine::RuntimeRecordError(const std::wstring& widgetId, const std::s
     if (!previewOnly_ && !snowdesktop::widget_runtime::IsDryLoad() &&
         (index < 0 || !widgets_[index].preview))
     {
-        g_storage[idUtf8 + ".lastError"] = message;
+        MutablePersistentStorage()[idUtf8 + ".lastError"] = message;
         SaveStorageFile();
     }
     if (index >= 0)
@@ -19366,8 +18072,7 @@ void WidgetEngine::ReloadStorage()
 
 void WidgetEngine::SetInitializationExperimentStoragePath(const std::wstring& path)
 {
-    g_storagePath = path;
-    LoadStorageFile();
+    snowdesktop::widget_runtime::OpenStorageFile(path);
 }
 
 void WidgetEngine::RuntimeBeginInlineTextEdit(const LuaInlineTextEditRequest& request)
@@ -24567,8 +23272,8 @@ std::vector<WidgetDiagnosticEntry> WidgetEngine::GetWidgetDiagnostics() const
             entry.auxiliarySurface = widget.panelSurface;
         }
         std::string errorKey = WidgetWideToUtf8(widget.widgetId) + ".lastError";
-        auto errIt = g_storage.find(errorKey);
-        if (errIt != g_storage.end())
+        auto errIt = PersistentStorage().find(errorKey);
+        if (errIt != PersistentStorage().end())
             entry.lastError = errIt->second;
         std::string logKey = WidgetWideToUtf8(widget.widgetId);
         entry.logs = g_widgetDiagnostics.EntriesFor(logKey);
@@ -24937,568 +23642,11 @@ WidgetEngine::RuntimeFindPackageImageSource(
 
 LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
 {
-    LuaWidgetManifest manifest;
-    std::wstring fullPath = filename;
-    if (PathIsRelativeW(fullPath.c_str()))
-        fullPath = ResolveWidgetPath(filename);
-    if (fullPath.empty())
-        return manifest;
-
-    std::wstring manifestPath = ManifestPathForScriptFile(fullPath);
-    std::string text = ReadTextFile(manifestPath);
-    if (text.empty())
-        return manifest;
-
-    JsonValue root;
-    if (!ParseJson(text, root) || !root.IsObject())
-        return manifest;
-    manifest.hasManifest = true;
-
-    auto readString = [](const JsonValue& object, const char* field,
-        std::string& output) {
-        const JsonValue* value = object.Find(field);
-        if (!value || !value->IsString())
-            return false;
-        output = value->string;
-        return true;
-    };
-    auto valueString = [](const JsonValue& value) -> std::string {
-        if (value.IsString()) return value.string;
-        if (value.IsBoolean()) return value.boolean ? "1" : "0";
-        if (value.IsNumber())
-        {
-            std::ostringstream stream;
-            stream << value.number;
-            return stream.str();
-        }
-        return {};
-    };
-    auto readStringArray = [](const JsonValue& object, const char* field) {
-        std::vector<std::string> result;
-        const JsonValue* values = object.Find(field);
-        if (!values || !values->IsArray())
-            return result;
-        for (const JsonValue& value : values->array)
-            if (value.IsString())
-                result.push_back(value.string);
-        return result;
-    };
-    auto readNumber = [](const JsonValue& object, const char* field,
-        double& output) {
-        const JsonValue* value = object.Find(field);
-        if (!value || !value->IsNumber())
-            return false;
-        output = value->number;
-        return true;
-    };
-    auto readBool = [](const JsonValue& object, const char* field,
-        bool& output) {
-        const JsonValue* value = object.Find(field);
-        if (!value || !value->IsBoolean())
-            return false;
-        output = value->boolean;
-        return true;
-    };
-    auto readSettingCondition = [&](const JsonValue& object,
-        const char* field) ->
-        std::optional<LuaWidgetManifest::SettingCondition> {
-        const JsonValue* value = object.Find(field);
-        if (!value) return std::nullopt;
-        LuaWidgetManifest::SettingCondition condition;
-        if (!value->IsObject())
-        {
-            condition.operation = "__invalid";
-            return condition;
-        }
-        readString(*value, "key", condition.key);
-        readString(*value, "operator", condition.operation);
-        if (const JsonValue* expected = value->Find("value"))
-        {
-            if (expected->IsArray())
-            {
-                for (const auto& item : expected->array)
-                {
-                    if (!item.IsString() && !item.IsNumber() &&
-                        !item.IsBoolean())
-                        condition.operation = "__invalid";
-                    condition.values.push_back(valueString(item));
-                }
-            }
-            else
-            {
-                if (!expected->IsString() && !expected->IsNumber() &&
-                    !expected->IsBoolean())
-                    condition.operation = "__invalid";
-                condition.values.push_back(valueString(*expected));
-            }
-        }
-        return condition;
-    };
-
-    readString(root, "id", manifest.packageId);
-    readString(root, "slug", manifest.slug);
-    double packageNumber = 0;
-    if (readNumber(root, "schemaVersion", packageNumber))
-        manifest.schemaVersion = static_cast<int>(packageNumber);
-    if (readNumber(root, "apiVersion", packageNumber))
-        manifest.apiVersion = static_cast<int>(packageNumber);
-    if (readNumber(root, "dataVersion", packageNumber))
-        manifest.dataVersion = static_cast<int>(packageNumber);
-    readBool(root, "confirmRemoval", manifest.confirmRemoval);
-    readString(root, "name", manifest.name);
-    readString(root, "nameKey", manifest.nameKey);
-    readString(root, "version", manifest.version);
-    readString(root, "description", manifest.description);
-    readString(root, "descriptionKey", manifest.descriptionKey);
-    manifest.titleKeys = readStringArray(root, "titleKeys");
-    if (const JsonValue* locales = root.Find("locales");
-        locales && locales->IsObject())
-    {
-        for (const auto& [language, values] : locales->object)
-        {
-            if (!values.IsObject())
-                continue;
-            std::unordered_map<std::string, std::string> catalog;
-            bool valid = true;
-            for (const auto& [key, value] : values.object)
-            {
-                if (!value.IsString())
-                {
-                    valid = false;
-                    break;
-                }
-                catalog.emplace(key, value.string);
-            }
-            if (valid && !catalog.empty())
-                manifest.locales.emplace(language, std::move(catalog));
-        }
-    }
-    if (!manifest.nameKey.empty())
-        manifest.name = TranslateManifest(manifest.locales, manifest.nameKey, manifest.name);
-    if (!manifest.descriptionKey.empty())
-        manifest.description =
-            TranslateManifest(manifest.locales, manifest.descriptionKey, manifest.description);
-    readString(root, "publisher", manifest.publisher);
-    readString(root, "minHostVersion", manifest.minHostVersion);
-    readString(root, "preview", manifest.preview);
-    if (const JsonValue* previewData = root.Find("previewData");
-        previewData && previewData->IsObject())
-    {
-        readString(*previewData, "introduction",
-            manifest.previewIntroduction);
-        readString(*previewData, "introductionKey",
-            manifest.previewIntroductionKey);
-        if (const JsonValue* storage = previewData->Find("storage");
-            storage && storage->IsObject())
-        {
-            for (const auto& [key, value] : storage->object)
-            {
-                if (!key.empty() &&
-                    (value.IsString() || value.IsNumber() || value.IsBoolean()))
-                    manifest.previewStorage[key] = valueString(value);
-            }
-        }
-        if (const JsonValue* storageKeys = previewData->Find("storageKeys");
-            storageKeys && storageKeys->IsObject())
-        {
-            for (const auto& [storageKey, localizationKey] :
-                storageKeys->object)
-            {
-                if (!storageKey.empty() && localizationKey.IsString() &&
-                    !localizationKey.string.empty() &&
-                    manifest.previewStorage.contains(storageKey))
-                    manifest.previewStorageKeys[storageKey] =
-                        localizationKey.string;
-            }
-        }
-        if (const JsonValue* variants = previewData->Find("variants");
-            variants && variants->IsArray())
-        {
-            for (const JsonValue& value : variants->array)
-            {
-                if (!value.IsObject() || manifest.previewVariants.size() >= 4)
-                    continue;
-                snowdesktop::widget::PreviewVariant variant;
-                readString(value, "id", variant.id);
-                readString(value, "title", variant.title);
-                readString(value, "titleKey", variant.titleKey);
-                readString(value, "description", variant.description);
-                readString(value, "descriptionKey", variant.descriptionKey);
-                if (const JsonValue* size = value.Find("size");
-                    size && size->IsObject())
-                {
-                    double number = 0;
-                    if (readNumber(*size, "columns", number) &&
-                        std::isfinite(number))
-                        variant.columns = std::clamp(
-                            static_cast<int>(number), 1, 8);
-                    if (readNumber(*size, "rows", number) &&
-                        std::isfinite(number))
-                        variant.rows = std::clamp(
-                            static_cast<int>(number), 1, 8);
-                    std::string sizeError;
-                    (void)snowdesktop::widget::ReadAspectGridSize(size,
-                        variant.columns, variant.rows, variant.aspectSize, sizeError);
-                }
-                if (const JsonValue* variantStorage = value.Find("storage");
-                    variantStorage && variantStorage->IsObject())
-                {
-                    for (const auto& [key, stored] : variantStorage->object)
-                    {
-                        if (!key.empty() && (stored.IsString() ||
-                            stored.IsNumber() || stored.IsBoolean()))
-                            variant.storage[key] = valueString(stored);
-                    }
-                }
-                if (const JsonValue* variantStorageKeys =
-                        value.Find("storageKeys");
-                    variantStorageKeys && variantStorageKeys->IsObject())
-                {
-                    for (const auto& [storageKey, localizationKey] :
-                        variantStorageKeys->object)
-                    {
-                        if (!storageKey.empty() &&
-                            localizationKey.IsString() &&
-                            !localizationKey.string.empty() &&
-                            variant.storage.contains(storageKey))
-                            variant.storageKeys[storageKey] =
-                                localizationKey.string;
-                    }
-                }
-                manifest.previewVariants.push_back(std::move(variant));
-            }
-        }
-    }
-    if (const auto* presets = root.Find("creationPresets"); presets && presets->IsArray())
-    {
-        for (const auto& item : presets->array)
-        {
-            if (!item.IsObject() || manifest.creationPresets.size() >= 32) continue;
-            snowdesktop::widget::CreationPreset preset;
-            readString(item, "id", preset.id);
-            readString(item, "title", preset.title);
-            readString(item, "titleKey", preset.titleKey);
-            if (const auto* size = item.Find("size"); size && size->IsObject())
-            {
-                snowdesktop::widget::WidgetSizeDefinition definition;
-                if (const auto* c = size->Find("columns"); c && c->IsNumber() && std::isfinite(c->number))
-                    definition.columns = static_cast<int>(std::clamp(c->number, 1.0, 8.0));
-                if (const auto* r = size->Find("rows"); r && r->IsNumber() && std::isfinite(r->number))
-                    definition.rows = static_cast<int>(std::clamp(r->number, 1.0, 8.0));
-                std::string sizeError;
-                (void)snowdesktop::widget::ReadAspectGridSize(size, definition.columns,
-                    definition.rows, definition.aspect, sizeError);
-                preset.size = definition;
-            }
-            if (const auto* values = item.Find("values"); values && values->IsObject())
-                for (const auto& [key, value] : values->object)
-                    if (value.IsString()) preset.values[key] = value.string;
-            manifest.creationPresets.push_back(std::move(preset));
-        }
-    }
-    readString(root, "entry", manifest.entry);
-    readString(root, "signature", manifest.signature);
-    manifest.permissions = readStringArray(root, "permissions");
-    manifest.optionalPermissions =
-        readStringArray(root, "optionalPermissions");
-    manifest.networkDomains = readStringArray(root, "networkDomains");
-    manifest.requiredFeatures = readStringArray(root, "requiredFeatures");
-    manifest.optionalFeatures = readStringArray(root, "optionalFeatures");
-    {
-        std::vector<snowdesktop::widget_runtime::
-            LogicalSlotManifestError> slotErrors;
-        (void)snowdesktop::widget_runtime::ParseLogicalSlotDeclarations(
-            root.Find("slots"), manifest.logicalSlots, slotErrors);
-    }
-    if (const JsonValue* resources = root.Find("resources");
-        resources && resources->IsObject())
-    {
-        for (const auto& [name, value] : resources->object)
-        {
-            if (!value.IsObject() || name.empty()) continue;
-            snowdesktop::widget::PackageResource resource;
-            readString(value, "type", resource.type);
-            readString(value, "path", resource.path);
-            readString(value, "license", resource.license);
-            if ((resource.type == "image" || resource.type == "font" || resource.type == "audio") &&
-                !resource.path.empty())
-                manifest.resources.emplace(name, std::move(resource));
-        }
-    }
-    double refreshMs = 0;
-    if (readNumber(root, "refreshIntervalMs", refreshMs) &&
-        std::isfinite(refreshMs) && refreshMs > 0)
-    {
-        const double clamped = std::clamp(refreshMs,
-            static_cast<double>(kWidgetRefreshMinIntervalMs),
-            static_cast<double>(kWidgetRefreshMaxIntervalMs));
-        manifest.refreshIntervalMs = static_cast<int>(clamped);
-    }
-    if (const JsonValue* settings = root.Find("settings");
-        settings && settings->IsArray())
-    {
-        for (const JsonValue& object : settings->array)
-        {
-            if (!object.IsObject())
-                continue;
-            LuaWidgetManifest::Setting setting;
-            readString(object, "key", setting.key);
-            readString(object, "label", setting.label);
-            readString(object, "description", setting.description);
-            readString(object, "group", setting.group);
-            readString(object, "validationMessage",
-                setting.validationMessage);
-            readString(object, "dependsOn", setting.dependsOn);
-            readString(object, "type", setting.type);
-            if (setting.type == "duration")
-            {
-                readString(object, "unit", setting.durationUnit);
-                if (const auto unit = object.Find("unit"); unit && !unit->IsString()) setting.durationUnit = "__invalid";
-                const int scale = snowdesktop::widget_runtime::DurationSettingUnitSeconds(setting.durationUnit);
-                setting.maxValue = scale ? snowdesktop::widget_runtime::kMaximumSettingDurationSeconds / scale : 0;
-                setting.stepValue = 1;
-            }
-            readString(object, "searchKey", setting.searchKey);
-            readString(object, "binding", setting.binding);
-            readString(object, "access", setting.access);
-            readString(object, "emptyLabel", setting.emptyLabel);
-            readString(object, "noResultsLabel",
-                setting.noResultsLabel);
-            if (const JsonValue* defaultValue = object.Find("default"))
-            {
-                if (defaultValue->IsArray())
-                {
-                    for (const JsonValue& value : defaultValue->array)
-                    {
-                        const std::string item = valueString(value);
-                        setting.defaultValues.push_back(item);
-                    }
-                }
-                else
-                    setting.defaultValue = valueString(*defaultValue);
-            }
-            readNumber(object, "min", setting.minValue);
-            readNumber(object, "max", setting.maxValue);
-            readNumber(object, "step", setting.stepValue);
-            if (setting.type == "duration" && setting.defaultValue.empty())
-                setting.defaultValue = std::to_string(setting.minValue);
-            if (setting.type == "duration")
-                for (const char* property : {"min", "max", "step"})
-                    if (const auto number = object.Find(property); number && !number->IsNumber())
-                        setting.stepValue = std::numeric_limits<double>::quiet_NaN();
-            if (const JsonValue* minimum = object.Find("minLength"))
-            {
-                setting.minLength = minimum->IsNumber() &&
-                    std::isfinite(minimum->number) &&
-                    std::floor(minimum->number) == minimum->number &&
-                    minimum->number >= (std::numeric_limits<int>::min)() &&
-                    minimum->number <= (std::numeric_limits<int>::max)()
-                    ? static_cast<int>(minimum->number) : -2;
-            }
-            if (const JsonValue* maximum = object.Find("maxLength"))
-            {
-                setting.maxLength = maximum->IsNumber() &&
-                    std::isfinite(maximum->number) &&
-                    std::floor(maximum->number) == maximum->number &&
-                    maximum->number >= (std::numeric_limits<int>::min)() &&
-                    maximum->number <= (std::numeric_limits<int>::max)()
-                    ? static_cast<int>(maximum->number) : -2;
-            }
-            if (const JsonValue* required = object.Find("required"))
-            {
-                if (required->IsBoolean()) setting.required = required->boolean;
-                else setting.minLength = -2;
-            }
-            setting.showWhen = readSettingCondition(object, "showWhen");
-            setting.enabledWhen =
-                readSettingCondition(object, "enabledWhen");
-            setting.options = readStringArray(object, "options");
-            setting.optionLabels =
-                readStringArray(object, "optionLabels");
-            setting.extensions =
-                readStringArray(object, "extensions");
-            if (!setting.key.empty() && !setting.label.empty())
-            {
-                if (setting.type.empty()) setting.type = "text";
-                if (setting.type == "password")
-                {
-                    setting.defaultValue.clear();
-                    setting.defaultValues.clear();
-                    setting.options.clear();
-                    setting.optionLabels.clear();
-                }
-                else if (IsEntityReferenceSettingType(setting.type))
-                {
-                    setting.defaultValue.clear();
-                    setting.defaultValues.clear();
-                    setting.searchKey.clear();
-                    setting.options.clear();
-                    setting.optionLabels.clear();
-                }
-                else if (IsFilesystemHandleSettingType(setting.type))
-                {
-                    setting.defaultValue.clear();
-                    setting.defaultValues.clear();
-                    setting.searchKey.clear();
-                    setting.binding.clear();
-                    setting.options.clear();
-                    setting.optionLabels.clear();
-                }
-                if (!IsHostStructureSettingKey(setting.key) &&
-                    !IsHostAppearanceSettingKey(setting.key))
-                    manifest.settings.push_back(std::move(setting));
-            }
-        }
-    }
-    if (const JsonValue* groups = root.Find("settingGroups");
-        groups && groups->IsArray())
-    {
-        for (const JsonValue& object : groups->array)
-        {
-            if (!object.IsObject()) continue;
-            LuaWidgetManifest::SettingGroup group;
-            readString(object, "id", group.id);
-            readString(object, "label", group.label);
-            readString(object, "description", group.description);
-            readBool(object, "collapsible", group.collapsible);
-            readBool(object, "defaultExpanded", group.defaultExpanded);
-            if (group.label.empty()) group.label = group.id;
-            manifest.settingGroups.push_back(std::move(group));
-        }
-    }
-    if (const JsonValue* presets = root.Find("presets");
-        presets && presets->IsArray())
-    {
-        for (const JsonValue& object : presets->array)
-        {
-            if (!object.IsObject())
-                continue;
-            LuaWidgetManifest::SettingPreset preset;
-            readString(object, "id", preset.id);
-            readString(object, "label", preset.label);
-            if (preset.label.empty())
-                readString(object, "name", preset.label);
-            readBool(object, "default", preset.isDefault);
-            if (const JsonValue* values = object.Find("values");
-                values && values->IsObject())
-            {
-                for (const auto& [key, value] : values->object)
-                {
-                    if (!IsHostStructureSettingKey(key))
-                    {
-                        if (value.IsArray())
-                        {
-                            auto& array = preset.arrayValues[key];
-                            for (const JsonValue& item : value.array)
-                                array.push_back(valueString(item));
-                        }
-                        else
-                            preset.values[key] = valueString(value);
-                    }
-                }
-            }
-            if (!preset.id.empty() && !preset.label.empty() &&
-                (!preset.values.empty() || !preset.arrayValues.empty()))
-                manifest.presets.push_back(std::move(preset));
-        }
-    }
-    auto readSize = [&](const char* field, int& columns, int& rows,
-        int minimum, int maximum) {
-        const JsonValue* size = root.Find(field);
-        if (!size || !size->IsObject())
-            return;
-        auto normalize = [&](double value) {
-            if (!std::isfinite(value))
-                return minimum;
-            const double upper = maximum > minimum
-                ? static_cast<double>(maximum)
-                : static_cast<double>((std::numeric_limits<int>::max)());
-            return static_cast<int>(std::clamp(
-                value, static_cast<double>(minimum), upper));
-        };
-        double value = 0;
-        if (readNumber(*size, "columns", value))
-            columns = normalize(value);
-        if (readNumber(*size, "rows", value))
-            rows = normalize(value);
-    };
-    readSize("defaultSize", manifest.defaultColumns, manifest.defaultRows, 1, 8);
-    {
-        std::string sizeError;
-        (void)snowdesktop::widget::ReadAspectGridSize(root.Find("defaultSize"),
-            manifest.defaultColumns, manifest.defaultRows, manifest.defaultAspectSize, sizeError);
-    }
-    readSize("minSize", manifest.minColumns, manifest.minRows, 1, 1);
-    readSize("maxSize", manifest.maxColumns, manifest.maxRows, 0, 0);
-
-    if (manifest.maxColumns > 0)
-        manifest.maxColumns = std::max(manifest.maxColumns, manifest.minColumns);
-    if (manifest.maxRows > 0)
-        manifest.maxRows = std::max(manifest.maxRows, manifest.minRows);
-    manifest.defaultColumns = std::max(manifest.defaultColumns, manifest.minColumns);
-    manifest.defaultRows = std::max(manifest.defaultRows, manifest.minRows);
-    if (manifest.maxColumns > 0)
-        manifest.defaultColumns = std::min(manifest.defaultColumns, manifest.maxColumns);
-    if (manifest.maxRows > 0)
-        manifest.defaultRows = std::min(manifest.defaultRows, manifest.maxRows);
-    if (!manifest.previewIntroductionKey.empty())
-    {
-        manifest.previewIntroduction = TranslateManifest(manifest.locales,
-            manifest.previewIntroductionKey,
-            manifest.previewIntroduction);
-    }
-    for (const auto& [storageKey, localizationKey] :
-        manifest.previewStorageKeys)
-    {
-        if (auto value = manifest.previewStorage.find(storageKey);
-            value != manifest.previewStorage.end())
-            value->second = TranslateManifest(
-                manifest.locales, localizationKey, value->second);
-    }
-    for (auto& variant : manifest.previewVariants)
-    {
-        if (variant.columns <= 0 && variant.rows <= 0 && !variant.aspectSize)
-            variant.aspectSize = manifest.defaultAspectSize;
-        if (variant.columns <= 0) variant.columns = manifest.defaultColumns;
-        if (variant.rows <= 0) variant.rows = manifest.defaultRows;
-        if (variant.aspectSize)
-        {
-            const auto span = snowdesktop::widget::ResolveWidgetSize(
-                {variant.columns, variant.rows, variant.aspectSize},
-                snowdesktop::widget::StandardWidgetSizeGridMetrics(), manifest.minColumns,
-                manifest.minRows, manifest.maxColumns, manifest.maxRows);
-            variant.columns = span.first; variant.rows = span.second;
-        }
-        if (!variant.titleKey.empty())
-            variant.title = TranslateManifest(
-                manifest.locales, variant.titleKey, variant.title);
-        if (!variant.descriptionKey.empty())
-            variant.description = TranslateManifest(
-                manifest.locales, variant.descriptionKey, variant.description);
-        for (const auto& [storageKey, localizationKey] : variant.storageKeys)
-        {
-            if (auto value = variant.storage.find(storageKey);
-                value != variant.storage.end())
-                value->second = TranslateManifest(
-                    manifest.locales, localizationKey, value->second);
-        }
-    }
-
-    for (auto& preset : manifest.creationPresets)
-        if (!preset.titleKey.empty()) preset.title = TranslateManifest(
-            manifest.locales, preset.titleKey, preset.title);
-
-    if (manifest.permissions.empty())
-        manifest.permissions = {};
-    if (!manifest.signature.empty())
-    {
-        std::string expected = manifest.signature;
-        if (expected.starts_with("sha256:")) expected.erase(0, 7);
-        std::transform(expected.begin(), expected.end(), expected.begin(),
-            [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-        manifest.signatureValid = expected == Sha256File(fullPath);
-    }
-    return manifest;
+    const auto path = PathIsRelativeW(filename.c_str()) ? ResolveWidgetPath(filename) : filename;
+    if (path.empty()) return {};
+    const auto package = ResolveWidgetEntryPackage(path);
+    return snowdesktop::widget_runtime::ReadWidgetScriptManifest(path,
+        package ? package->root : std::filesystem::path{});
 }
 
 bool WidgetEngine::InstallWidgetPackage(const std::wstring& manifestPath,
@@ -25580,7 +23728,7 @@ bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
         if (selected->enabled && widget.packageId == packageId)
             liveInstances.push_back(widget.widgetId);
 
-    std::unordered_map<std::string, std::string> migratedStorage = g_storage;
+    std::unordered_map<std::string, std::string> migratedStorage = PersistentStorage();
     std::vector<std::wstring> updatedInstances;
     bool ok = true;
     std::string failure;
@@ -25631,7 +23779,7 @@ bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
     }
     if (ok)
     {
-        g_storage = std::move(migratedStorage);
+        MutablePersistentStorage() = std::move(migratedStorage);
         SaveStorageFile();
         TrimWidgetPackageHistory(GetWidgetPackageManager(), packageId);
         error.clear();
@@ -27053,657 +25201,6 @@ static int lua_SlotsRedo(lua_State* state)
     return 1;
 }
 
-constexpr char kStorageTransactionMetatable[] =
-    "SnowDesktop.StorageTransaction";
-char kActiveStorageTransactionRegistryKey = 0;
-
-struct LuaStorageTransactionHandle
-{
-    snowdesktop::widget_runtime::WidgetStorageTransaction* transaction =
-        nullptr;
-};
-
-static LuaStorageTransactionHandle* ActiveLuaStorageTransactionHandle(lua_State* state)
-{
-    lua_rawgetp(state, LUA_REGISTRYINDEX,
-        &kActiveStorageTransactionRegistryKey);
-    auto* handle = static_cast<LuaStorageTransactionHandle*>(lua_touserdata(state, -1));
-    lua_pop(state, 1);
-    return handle;
-}
-
-static snowdesktop::widget_runtime::WidgetStorageTransaction*
-ActiveLuaStorageTransaction(lua_State* state)
-{
-    const auto* handle = ActiveLuaStorageTransactionHandle(state);
-    return handle ? handle->transaction : nullptr;
-}
-
-static void ClearActiveLuaStorageTransaction(lua_State* state)
-{
-    auto* handle = ActiveLuaStorageTransactionHandle(state);
-    if (!handle) return;
-    handle->transaction = nullptr;
-    lua_pushnil(state);
-    lua_rawsetp(state, LUA_REGISTRYINDEX,
-        &kActiveStorageTransactionRegistryKey);
-}
-
-static std::string ReadExactStorageString(lua_State* state, int index,
-    const char* api, const char* field)
-{
-    if (lua_type(state, index) != LUA_TSTRING)
-    {
-        luaL_error(state, "%s: %s must be a string", api, field);
-        return {};
-    }
-    std::size_t length = 0;
-    const char* value = lua_tolstring(state, index, &length);
-    return std::string(value ? value : "", length);
-}
-
-static bool ReadTypedStorageValue(lua_State* state, int index,
-    std::string& encoded, bool& typed, std::string& error)
-{
-    typed = false;
-    error.clear();
-    if (lua_type(state, index) == LUA_TSTRING)
-    {
-        encoded = ReadExactStorageString(
-            state, index, "storage.set", "value");
-        return true;
-    }
-    snowdesktop::widget_runtime::InteractionValue value;
-    std::size_t nodes = 0;
-    std::size_t stringBytes = 0;
-    std::unordered_set<const void*> ancestors;
-    if (!ReadInteractionValue(state, index, value, 0,
-            nodes, stringBytes, ancestors, error))
-        return false;
-    typed = true;
-    return snowdesktop::widget_runtime::EncodeTypedStorageValue(
-        value, encoded, error);
-}
-
-static int PushStoredStorageValue(lua_State* state,
-    std::string_view encoded, bool typed, const char* api)
-{
-    if (!typed)
-    {
-        lua_pushlstring(state, encoded.data(), encoded.size());
-        return 1;
-    }
-    snowdesktop::widget_runtime::InteractionValue value;
-    std::string error;
-    if (!snowdesktop::widget_runtime::DecodeTypedStorageValue(
-            encoded, value, error))
-    {
-        return luaL_error(state, "%s: persisted typed value is invalid: %s",
-            api, error.c_str());
-    }
-    PushInteractionValue(state, value);
-    return 1;
-}
-
-static LuaStorageTransactionHandle* CheckStorageTransactionHandle(
-    lua_State* state)
-{
-    auto* handle = static_cast<LuaStorageTransactionHandle*>(
-        luaL_checkudata(state, 1, kStorageTransactionMetatable));
-    if (!handle || !handle->transaction ||
-        ActiveLuaStorageTransactionHandle(state) != handle)
-    {
-        luaL_error(state, "storage transaction is closed");
-        return nullptr;
-    }
-    return handle;
-}
-
-static bool IsReservedStorageTransactionKey(const std::string& key)
-{
-    return IsRemovedPanelEffectSettingKey(key) ||
-        key == "__host" || key.starts_with("__host.");
-}
-
-static bool BoundSecretSetting(lua_State* state, const std::string& key,
-    std::string* reference = nullptr)
-{
-    auto* d2d = GetD2D(state);
-    std::string value;
-    const bool secret = d2d && d2d->engine &&
-        d2d->engine->RuntimeGetSecretReference(
-            BoundWidgetId(state), key, value);
-    if (secret && reference) *reference = std::move(value);
-    return secret;
-}
-
-static bool BoundFilesystemHandleSetting(lua_State* state,
-    const std::string& key, std::string* handle = nullptr)
-{
-    auto* d2d = GetD2D(state);
-    std::string value;
-    const bool declared = d2d && d2d->engine &&
-        d2d->engine->RuntimeGetFilesystemSettingHandle(
-            BoundWidgetId(state), key, value);
-    if (declared && handle) *handle = std::move(value);
-    return declared;
-}
-
-static bool BoundEntityReferenceSetting(lua_State* state,
-    const std::string& key)
-{
-    auto* d2d = GetD2D(state);
-    return d2d && d2d->engine &&
-        d2d->engine->RuntimeIsEntityReferenceSetting(
-            BoundWidgetId(state), key);
-}
-
-static int RejectHostManagedSettingWrite(lua_State* state,
-    const std::string& key, const char* api)
-{
-    if (BoundSecretSetting(state, key))
-        return luaL_error(state,
-            "%s: password settings are host-managed and read-only to Lua",
-            api);
-    if (BoundFilesystemHandleSetting(state, key))
-        return luaL_error(state,
-            "%s: filesystem handle settings are host-managed and read-only to Lua",
-            api);
-    if (BoundEntityReferenceSetting(state, key))
-        return luaL_error(state,
-            "%s: entity reference settings are host-managed and read-only to Lua",
-            api);
-    return 0;
-}
-
-static int lua_StorageTransactionGet(lua_State* state)
-{
-    auto* handle = CheckStorageTransactionHandle(state);
-    const std::string key = ReadExactStorageString(
-        state, 2, "storage.transaction", "key");
-    if (IsReservedStorageTransactionKey(key))
-        return luaL_error(state, "storage.transaction: key is reserved");
-    std::string secretReference;
-    if (BoundSecretSetting(state, key, &secretReference))
-    {
-        if (secretReference.empty()) lua_pushnil(state);
-        else lua_pushlstring(state, secretReference.data(),
-            secretReference.size());
-        return 1;
-    }
-    std::string filesystemHandle;
-    if (BoundFilesystemHandleSetting(state, key, &filesystemHandle))
-    {
-        if (filesystemHandle.empty()) lua_pushnil(state);
-        else lua_pushlstring(state, filesystemHandle.data(),
-            filesystemHandle.size());
-        return 1;
-    }
-    if (BoundEntityReferenceSetting(state, key))
-    {
-        lua_pushnil(state);
-        return 1;
-    }
-    std::string error;
-    const auto value = handle->transaction->Get(key, error);
-    if (!error.empty())
-        return luaL_error(state, "storage.transaction: %s", error.c_str());
-    if (!value)
-    {
-        lua_pushnil(state);
-        return 1;
-    }
-    const auto marker = handle->transaction->GetHostMetadata(
-        snowdesktop::widget_runtime::TypedStorageMetadataKey(key), error);
-    if (!error.empty())
-        return luaL_error(state, "storage.transaction: %s", error.c_str());
-    return PushStoredStorageValue(state, *value,
-        marker == snowdesktop::widget_runtime::TypedStorageMarker,
-        "storage.transaction");
-}
-
-static int lua_StorageTransactionSet(lua_State* state)
-{
-    auto* handle = CheckStorageTransactionHandle(state);
-    std::string key = ReadExactStorageString(
-        state, 2, "storage.transaction", "key");
-    std::string value;
-    bool typed = false;
-    std::string valueError;
-    if (!ReadTypedStorageValue(
-            state, 3, value, typed, valueError))
-    {
-        return luaL_error(state,
-            "storage.transaction: value must be bounded JSON-like data: %s",
-            valueError.c_str());
-    }
-    if (IsReservedStorageTransactionKey(key))
-        return luaL_error(state, "storage.transaction: key is reserved");
-    if (const int rejected = RejectHostManagedSettingWrite(
-            state, key, "storage.transaction"))
-        return rejected;
-    bool valueChanged = false;
-    std::string error;
-    if (!handle->transaction->Set(
-            key, std::move(value), valueChanged, error))
-        return luaL_error(state, "storage.transaction: %s", error.c_str());
-    const std::string metadataKey =
-        snowdesktop::widget_runtime::TypedStorageMetadataKey(key);
-    bool metadataChanged = false;
-    const bool metadataOk = typed
-        ? handle->transaction->SetHostMetadata(metadataKey,
-            std::string(snowdesktop::widget_runtime::TypedStorageMarker),
-            metadataChanged, error)
-        : handle->transaction->RemoveHostMetadata(metadataKey,
-            metadataChanged, error);
-    if (!metadataOk)
-        return luaL_error(state, "storage.transaction: %s", error.c_str());
-    lua_pushboolean(state,
-        valueChanged || metadataChanged ? 1 : 0);
-    return 1;
-}
-
-static int lua_StorageTransactionRemove(lua_State* state)
-{
-    auto* handle = CheckStorageTransactionHandle(state);
-    const std::string key = ReadExactStorageString(
-        state, 2, "storage.transaction", "key");
-    if (IsReservedStorageTransactionKey(key))
-        return luaL_error(state, "storage.transaction: key is reserved");
-    if (const int rejected = RejectHostManagedSettingWrite(
-            state, key, "storage.transaction"))
-        return rejected;
-    bool valueChanged = false;
-    std::string error;
-    if (!handle->transaction->Remove(key, valueChanged, error))
-        return luaL_error(state, "storage.transaction: %s", error.c_str());
-    bool metadataChanged = false;
-    if (!handle->transaction->RemoveHostMetadata(
-            snowdesktop::widget_runtime::TypedStorageMetadataKey(key),
-            metadataChanged, error))
-        return luaL_error(state, "storage.transaction: %s", error.c_str());
-    lua_pushboolean(state,
-        valueChanged || metadataChanged ? 1 : 0);
-    return 1;
-}
-
-static void PushStorageTransactionHandle(lua_State* state,
-    snowdesktop::widget_runtime::WidgetStorageTransaction* transaction)
-{
-    auto* handle = static_cast<LuaStorageTransactionHandle*>(
-        lua_newuserdatauv(state, sizeof(LuaStorageTransactionHandle), 0));
-    handle->transaction = transaction;
-    luaL_getmetatable(state, kStorageTransactionMetatable);
-    if (lua_isnil(state, -1))
-    {
-        lua_pop(state, 1);
-        lua_createtable(state, 0, 2);
-        lua_newtable(state);
-        lua_pushcfunction(state, lua_StorageTransactionGet);
-        lua_setfield(state, -2, "get");
-        lua_pushcfunction(state, lua_StorageTransactionSet);
-        lua_setfield(state, -2, "set");
-        lua_pushcfunction(state, lua_StorageTransactionRemove);
-        lua_setfield(state, -2, "remove");
-        lua_setfield(state, -2, "__index");
-        lua_pushboolean(state, 0);
-        lua_setfield(state, -2, "__metatable");
-        // Publish only a complete metatable. An allocation failure above must
-        // not leave a half-initialized handle type for the next transaction.
-        lua_pushvalue(state, -1);
-        lua_setfield(state, LUA_REGISTRYINDEX, kStorageTransactionMetatable);
-    }
-    lua_setmetatable(state, -2);
-}
-
-static int RejectStorageAccessInsideTransaction(lua_State* state,
-    const char* api)
-{
-    if (ActiveLuaStorageTransaction(state))
-    {
-        return luaL_error(state,
-            "%s cannot be used inside storage.transaction; use tx instead",
-            api);
-    }
-    return 0;
-}
-
-static int RejectStorageWriteDuringRender(lua_State* state,
-    const char* api)
-{
-    auto* d2d = GetD2D(state);
-    if (d2d && d2d->engine &&
-        !d2d->engine->RuntimeCanWriteWidgetStorage(
-            BoundWidgetId(state)))
-    {
-        return luaL_error(state,
-            "%s cannot write persistent storage during render", api);
-    }
-    return 0;
-}
-
-static int RejectStorageWriteFrequency(lua_State* state, const char* api)
-{
-    if (snowdesktop::widget_runtime::HasStorageOverlay()) return 0;
-    lua_getfield(state, LUA_REGISTRYINDEX, "__widget_preview");
-    const bool preview = lua_toboolean(state, -1) != 0;
-    lua_pop(state, 1);
-    if (preview) return 0;
-
-    lua_getfield(state, LUA_REGISTRYINDEX,
-        "__storage_write_budget_ptr");
-    auto* budget = static_cast<
-        snowdesktop::widget_runtime::WidgetStorageWriteBudget*>(
-            lua_touserdata(state, -1));
-    lua_pop(state, 1);
-    if (!budget) return 0;
-    const auto decision = budget->Consume(
-        snowdesktop::widget_runtime::WidgetStorageWriteBudget::Clock::now());
-    if (decision.allowed) return 0;
-    return luaL_error(state,
-        "%s: persistent storage write frequency quota exceeded; retry after %llu ms",
-        api, static_cast<unsigned long long>(decision.retryAfter.count()));
-}
-}
-
-static int lua_StorageGet(lua_State* L)
-{
-    if (const int rejected = RejectStorageAccessInsideTransaction(
-            L, "storage.get"))
-        return rejected;
-    const std::string key = ReadExactStorageString(
-        L, 1, "storage.get", "key");
-    if (IsReservedStorageTransactionKey(key))
-        return luaL_error(L, "storage.get: key is reserved");
-    auto* s = GetD2D(L);
-    if (!s) { lua_pushnil(L); return 1; }
-    std::string secretReference;
-    if (BoundSecretSetting(L, key, &secretReference))
-    {
-        if (secretReference.empty()) lua_pushnil(L);
-        else lua_pushlstring(L, secretReference.data(),
-            secretReference.size());
-        return 1;
-    }
-    std::string filesystemHandle;
-    if (BoundFilesystemHandleSetting(L, key, &filesystemHandle))
-    {
-        if (filesystemHandle.empty()) lua_pushnil(L);
-        else lua_pushlstring(L, filesystemHandle.data(),
-            filesystemHandle.size());
-        return 1;
-    }
-    if (BoundEntityReferenceSetting(L, key))
-    {
-        lua_pushnil(L);
-        return 1;
-    }
-    const std::string prefix = BoundStoragePrefix(L);
-    const auto& storage = ReadStorage();
-    const auto value = storage.find(prefix + "." + key);
-    if (value != storage.end())
-    {
-        const auto marker = storage.find(prefix + "." +
-            snowdesktop::widget_runtime::TypedStorageMetadataKey(key));
-        return PushStoredStorageValue(L, value->second,
-            marker != storage.end() &&
-                marker->second == snowdesktop::widget_runtime::
-                    TypedStorageMarker,
-            "storage.get");
-    }
-    if (s->engine)
-    {
-        snowdesktop::widget_runtime::InteractionValue typedDefault;
-        if (s->engine->RuntimeGetTypedSettingDefault(
-                BoundWidgetId(L), key, typedDefault))
-        {
-            PushInteractionValue(L, typedDefault);
-            return 1;
-        }
-        std::string defaultValue =
-            s->engine->RuntimeGetStorageValue(BoundWidgetId(L), key);
-        if (!defaultValue.empty())
-            lua_pushstring(L, defaultValue.c_str());
-        else
-            lua_pushnil(L);
-    }
-    else
-        lua_pushnil(L);
-    return 1;
-}
-
-static bool StorageWriteWithinQuota(const std::string& prefix,
-    const std::string& key, const std::string& value)
-{
-    constexpr std::size_t kMaxStorageKeys = 256;
-    constexpr std::size_t kMaxStorageKeyBytes = 128;
-    constexpr std::size_t kMaxStorageValueBytes = 64 * 1024;
-    constexpr std::size_t kMaxStorageBytes = 1024 * 1024;
-    if (key.empty() || key.size() > kMaxStorageKeyBytes ||
-        value.size() > kMaxStorageValueBytes)
-        return false;
-    const std::string fullKey = prefix + "." + key;
-    std::size_t count = 0;
-    std::size_t bytes = 0;
-    for (const auto& [storedKey, storedValue] : ActiveStorage())
-    {
-        if (!storedKey.starts_with(prefix + ".")) continue;
-        if (storedKey.starts_with(prefix + ".__host.")) continue;
-        if (storedKey == fullKey) continue;
-        ++count;
-        bytes += storedKey.size() + storedValue.size();
-    }
-    return count < kMaxStorageKeys &&
-        bytes + fullKey.size() + value.size() <= kMaxStorageBytes;
-}
-
-static int lua_StorageSet(lua_State* L)
-{
-    if (const int rejected = RejectStorageAccessInsideTransaction(
-            L, "storage.set"))
-        return rejected;
-    if (const int rejected = RejectStorageWriteDuringRender(
-            L, "storage.set"))
-        return rejected;
-    std::string key = ReadExactStorageString(
-        L, 1, "storage.set", "key");
-    std::string value;
-    bool typed = false;
-    std::string valueError;
-    if (!ReadTypedStorageValue(L, 2, value, typed, valueError))
-    {
-        return luaL_error(L,
-            "storage.set: value must be bounded JSON-like data: %s",
-            valueError.c_str());
-    }
-    auto* s = GetD2D(L);
-    if (!s) return 0;
-    if (IsReservedStorageTransactionKey(key))
-        return luaL_error(L, "storage.set: key is reserved");
-    if (const int rejected = RejectHostManagedSettingWrite(
-            L, key, "storage.set"))
-        return rejected;
-    const std::string prefix = BoundStoragePrefix(L);
-    auto& storage = ActiveStorage();
-    snowdesktop::widget_runtime::WidgetStorageTransaction transaction(
-        storage, prefix);
-    bool changed = false;
-    std::string error;
-    if (!transaction.Set(key, std::move(value), changed, error))
-        return luaL_error(L, "storage.set: %s", error.c_str());
-    const std::string metadataKey =
-        snowdesktop::widget_runtime::TypedStorageMetadataKey(key);
-    bool metadataChanged = false;
-    const bool metadataOk = typed
-        ? transaction.SetHostMetadata(metadataKey,
-            std::string(snowdesktop::widget_runtime::TypedStorageMarker),
-            metadataChanged, error)
-        : transaction.RemoveHostMetadata(metadataKey,
-            metadataChanged, error);
-    if (!metadataOk || !transaction.ValidateCommit(error))
-        return luaL_error(L, "storage.set: %s", error.c_str());
-    if (!transaction.Changed()) return 0;
-    if (const int rejected = RejectStorageWriteFrequency(L, "storage.set"))
-        return rejected;
-    auto candidate = transaction.TakeCandidate();
-    storage.swap(candidate);
-    if (!snowdesktop::widget_runtime::HasStorageOverlay() &&
-        !SaveStorageFile())
-    {
-        storage.swap(candidate);
-        return luaL_error(L, "storage.set: failed to persist storage");
-    }
-    return 0;
-}
-
-static int lua_StorageRemove(lua_State* L)
-{
-    if (const int rejected = RejectStorageAccessInsideTransaction(
-            L, "storage.remove"))
-        return rejected;
-    if (const int rejected = RejectStorageWriteDuringRender(
-            L, "storage.remove"))
-        return rejected;
-    const std::string key = ReadExactStorageString(
-        L, 1, "storage.remove", "key");
-    auto* s = GetD2D(L);
-    if (!s) return 0;
-    if (IsReservedStorageTransactionKey(key))
-        return luaL_error(L, "storage.remove: key is reserved");
-    if (const int rejected = RejectHostManagedSettingWrite(
-            L, key, "storage.remove"))
-        return rejected;
-    const std::string prefix = BoundStoragePrefix(L);
-    auto& storage = ActiveStorage();
-    snowdesktop::widget_runtime::WidgetStorageTransaction transaction(
-        storage, prefix);
-    bool changed = false;
-    std::string error;
-    if (!transaction.Remove(key, changed, error))
-        return luaL_error(L, "storage.remove: %s", error.c_str());
-    bool metadataChanged = false;
-    if (!transaction.RemoveHostMetadata(
-            snowdesktop::widget_runtime::TypedStorageMetadataKey(key),
-            metadataChanged, error) || !transaction.ValidateCommit(error))
-        return luaL_error(L, "storage.remove: %s", error.c_str());
-    if (!transaction.Changed()) return 0;
-    if (const int rejected = RejectStorageWriteFrequency(
-            L, "storage.remove"))
-        return rejected;
-    auto candidate = transaction.TakeCandidate();
-    storage.swap(candidate);
-    if (!snowdesktop::widget_runtime::HasStorageOverlay() &&
-        !SaveStorageFile())
-    {
-        storage.swap(candidate);
-        return luaL_error(L, "storage.remove: failed to persist storage");
-    }
-    return 0;
-}
-
-static int lua_StorageKeys(lua_State* L)
-{
-    if (const int rejected = RejectStorageAccessInsideTransaction(
-            L, "storage.keys"))
-        return rejected;
-    auto* s = GetD2D(L);
-    std::string prefix = s ? BoundStoragePrefix(L) + "." : "";
-    lua_newtable(L);
-    int idx = 1;
-    for (const auto& kv : ReadStorage())
-    {
-        if (!prefix.empty() && kv.first.compare(0, prefix.size(), prefix) != 0)
-            continue;
-        std::string key = prefix.empty() ? kv.first : kv.first.substr(prefix.size());
-        if (IsReservedStorageTransactionKey(key)) continue;
-        if (BoundSecretSetting(L, key) ||
-            BoundFilesystemHandleSetting(L, key) ||
-            BoundEntityReferenceSetting(L, key))
-            continue;
-        lua_pushstring(L, key.c_str());
-        lua_rawseti(L, -2, idx++);
-    }
-    if (s && s->engine)
-    {
-        for (const auto& key : s->engine->RuntimeSecretStorageKeys(
-                BoundWidgetId(L)))
-        {
-            lua_pushlstring(L, key.data(), key.size());
-            lua_rawseti(L, -2, idx++);
-        }
-        for (const auto& key :
-            s->engine->RuntimeFilesystemSettingKeys(BoundWidgetId(L)))
-        {
-            lua_pushlstring(L, key.data(), key.size());
-            lua_rawseti(L, -2, idx++);
-        }
-    }
-    return 1;
-}
-
-static int LuaStorageTransactionWithDeferredError(lua_State* state)
-{
-    if (lua_gettop(state) != 1 || !lua_isfunction(state, 1))
-        return luaL_error(state,
-            "storage.transaction: expected one callback function");
-    if (ActiveLuaStorageTransaction(state))
-        return luaL_error(state,
-            "storage.transaction: nested transactions are not supported");
-    if (const int rejected = RejectStorageWriteDuringRender(
-            state, "storage.transaction"))
-        return rejected;
-
-    auto& activeStorage = ActiveStorage();
-    snowdesktop::widget_runtime::WidgetStorageTransaction transaction(
-        activeStorage, BoundStoragePrefix(state));
-    std::string error;
-    const bool callbackSucceeded = snowdesktop::lua_runtime::ProtectedHostCall(state,
-        +[](lua_State* inner) {
-            auto* active = static_cast<snowdesktop::widget_runtime::WidgetStorageTransaction*>(
-                lua_touserdata(inner, 1));
-            lua_pushvalue(inner, 2);
-            PushStorageTransactionHandle(inner, active);
-            // Root the actual userdata, not the stack transaction address.
-            // Its identity cannot be reused while an old handle is retained.
-            lua_pushvalue(inner, -1);
-            lua_rawsetp(inner, LUA_REGISTRYINDEX, &kActiveStorageTransactionRegistryKey);
-            lua_call(inner, 1, 0);
-            return 0;
-        }, &transaction, 0, error, 1);
-    ClearActiveLuaStorageTransaction(state);
-    if (!callbackSucceeded) return DeferLuaError(state, error);
-
-    if (!transaction.ValidateCommit(error))
-        return DeferLuaError(state, "storage.transaction: " + error);
-    const bool changed = transaction.Changed();
-    if (!changed)
-    {
-        lua_pushboolean(state, 0);
-        return 1;
-    }
-    if (!snowdesktop::lua_runtime::ProtectedHostCall(state,
-            +[](lua_State* inner) {
-                return RejectStorageWriteFrequency(inner, "storage.transaction");
-            }, nullptr, 0, error))
-        return DeferLuaError(state, error);
-
-    auto candidate = transaction.TakeCandidate();
-    activeStorage.swap(candidate);
-    if (!snowdesktop::widget_runtime::HasStorageOverlay() &&
-        !SaveStorageFile())
-    {
-        activeStorage.swap(candidate);
-        return DeferLuaError(state,
-            "storage.transaction: failed to persist storage");
-    }
-    lua_pushboolean(state, 1);
-    return 1;
-}
-
-static int lua_StorageTransaction(lua_State* state)
-{
-    const int result = LuaStorageTransactionWithDeferredError(state);
-    return result < 0 ? lua_error(state) : result;
 }
 
 void WidgetEngine::RegisterDrawAPI(lua_State* L)
@@ -27752,6 +25249,11 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     using snowdesktop::widget_runtime::lua_LayoutRpx;
     using snowdesktop::widget_runtime::lua_LayoutRpxX;
     using snowdesktop::widget_runtime::lua_LayoutRpxY;
+    using snowdesktop::widget_runtime::lua_StorageGet;
+    using snowdesktop::widget_runtime::lua_StorageSet;
+    using snowdesktop::widget_runtime::lua_StorageRemove;
+    using snowdesktop::widget_runtime::lua_StorageKeys;
+    using snowdesktop::widget_runtime::lua_StorageTransaction;
     static constexpr CatalogFunctionDescriptor functions[] = {
 #define SNOW_WIDGET_PUBLIC_FUNCTION(                                      \
     library, name, callback, sinceApi, permission, untilApi)              \
