@@ -130,6 +130,8 @@
 
 ### CF-010 等待结束回执过大
 
+- **Steam 打包前确认既有 Run（2026-11-19）**：Task `steam-beta-release-20261119` 执行 `scripts/build.bat run status -RunId ff076e13380e49e2bab7930d6408530c`，确认 Run 为 `passed`，同一回执输出 runner 文件清单和逐项目 MSBuild 遥测并被工具截断。发布预检改从原 Run 回执读取状态、输入摘要和产品构建结果，沿用既有 Release 产物，未重查完整状态或重新编译。单 Run 状态仍缺少默认精简输出。
+
 - **Run 状态查询（2026-11-18）**：Task `code-health-2` 核对任务 4 的 Run `2a9e6535be694361ad7eca9c4e8fe7b7` 是否结束。`scripts/build.bat run status -RunId … -Compact` 返回 `A parameter cannot be found that matches parameter name 'Compact'`。默认查询确认通过，同时输出 5,451 行请求与阶段记录并被截断。后续使用精简批次回执或投影所需 Run 字段，未重交构建。Run 状态仍缺少精简选项。
 
 - **源文件归属查询（2026-11-18）**：Task `code-health-8` 为确认正在回填的 `CODE_HEALTH.md` 归属运行 `scripts/build.bat task-list`，回执包含完整 Task 历史，工具输出被截断。源码确认该分支同时序列化完整任务数组与 `sourceChanges`。随后用 Git 确认前序任务已提交，再由批次 `751ee068e3fa46439d9f69e4b5d5c99b` 修订 0 的 `claim` 原子确认归属。可补按路径读取归属的窄回执，未重复查询或构建。
