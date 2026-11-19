@@ -57,6 +57,7 @@
 | [CF-032](#cf-032-已激活候选缺少显式回退入口) | P1 | 用户要求恢复上一轮运行文件时需要重新构建 | 备份与源码已核对，回退入口待处理 |
 | [CF-033](#cf-033-候选重编已知失败的共享源码) | P2 | 后提交候选包含同一未修正的依赖错误 | 已确认，合批续修 |
 | [CF-034](#cf-034-首次激活时宿主控制窗口不可用) | P2 | 构建通过后，运行中的宿主暂时无法通过控制窗口正常退出 | 单次实测，复用原候选补切成功 |
+| [CF-036](#cf-036-codex-跨对话等待返回通用错误) | P2 | 统筹对话无法通过 Codex 应用等待多个已登记对话 | 已确认，使用工作区交接与批次等待 |
 
 
 ### CF-001 持久执行器被父 Job 拒绝
@@ -66,12 +67,16 @@
 - **源码确认**：`build_entry.ps1` 使用 `CREATE_BREAKAWAY_FROM_JOB`，访问拒绝时保留失败；此路径不自动退化。父 Job 是否允许脱离由调用环境决定，见 [Microsoft 进程创建标志](https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags)。
 - **处理方向**：通用环境诊断和恢复回执；由支持的适配器 Host 显式调用标准后台 `ready`，或在允许脱离的外部终端继续。默认持久执行、租约、日志与 Job 归属保留。DSH Host 本身若同样受限，仍须调整宿主执行环境；不得把提示完善算作该环境已修复。
 
+- **Codex 共同候选续证（2026-11-19）**：`architecture-first-six-coordination` 批次 `ae006c2d60d146e0b697fc0ab11f5eca` 修订 0 返回 `Persistent batch submission failed: `，Run ID 为空，输入核对未启动。相同调用环境的 `scripts/build.bat diagnose` 回报父 Job 拒绝持久执行器，证据在 `.build/collaboration/diagnose-e43a3412233f457c87745ed41aa2cf5f/`。保留原批次，外层执行环境诊断通过后沿用共享续修与原测试范围。
+
 ### CF-002 生成目录被沙箱拒写
 
 - **原始反馈**：`task-stage` 写 `.build/collaboration/state.lock` 及 `Set-Content .build/...` 被拒；给 `.build` 和协调目录增加当前用户 FullControl ACE 后，confined 调用仍失败，切到 full access 后成功。报告者称 ACL 诊断技能提示 `verify_original_confined_operation`，实际原操作仍未通过。
 - **影响**：协调登记中断，多次权限探测无效，并留下需回滚的权限修改。
 - **证据边界**：原始 ACL、沙箱策略和回滚脚本路径待补；该报告支持继续区分 ACL 与沙箱层，不能仅凭拒绝访问推定 ACL 根因。
 - **处理方向**：诊断在原调用上下文验证唯一临时文件写入，明确 Host 与工具沙箱权限不能互相证明；拒绝时提示检查 writable roots、使用已获授权的完整权限上下文或外部终端。仓库工具不自动修改 ACL；DSH 的沙箱放行仍属宿主职责。
+
+- **共同候选写入拒绝续证（2026-11-19）**：`architecture-six-06-widget-package` 的原 `ready-and-wait` 前台 stderr 报 `.git/snowdesktop-execution/budget.lock` Access denied。首批 `ae006c2d60d146e0b697fc0ab11f5eca` 修订 0 保存为失败，`runId=null`，精简与完整批次回执的 `Persistent batch submission failed: ` 均缺底层错误。用户批准的受管外层环境重试后成功创建 Run `0ea248e67599439989fe983266b2fcd6`。受管只读 `.git` 和单独的持久进程启动诊断分别见本条与 CF-001，无需改 ACL。后续应在提交失败的归档回执保留 stderr 上下文。
 
 ### CF-003 任务关闭后同会话无法继续
 
@@ -487,6 +492,8 @@
 - **默认工具链再次失败（2026-11-16）**：Task `dock-single-preview-anchor-20261116`、批次 `27d647c2f4494e6baf4b8888c1db0380` 修订 0、Run `4e6e544084eb4594b04bc186c82d58b0`。产品日志第 11–12 行显示默认 `19.52.37029.0`，第 549 行记录 Dock 所在 `SnowDesktopHost_app` 编译成功，第 623 行记录 `SnowDesktopHost_shell` 的 `MSB6006` 和 `0xC00000FD`，定向测试未执行。失败原件保留，续修批次 `cb8e98ab754e46d1bd8e7c029dd0a583` 在登记时选择 `14.50.35717`，复用上条恢复路径。下一步仍是候选冻结前核对工具链，避免已知失败占用构建槽。
 - **触发输入续证（2026-11-16）**：Task `dock-thumbnail-hover-delay`。前述失败的本机转储记录 `c1xx.dll` 19.52.37029.0 调用栈反复进入相同帧后溢出。使用实际编译参数单独复现 `shell_extension_menu.cpp`；分别移除预编译头、依赖报告、优化和调试信息仍失败。二分定位 `AppendPackagedCommands` 后将递归 lambda 改为直接调用，语法检查和原 Release 参数的对象编译通过。临时证据留在该 Task 的忽略目录，正式候选验证独立存档。
 
+- **受限等待方取得提交权（2026-11-19，实测）**：续修批次 `3a8d4d895033434698dc0cf85d35bf79` 中 `architecture-six-01-layout` 修订 3 通过前置检查并在受限前台等待。统筹随后在获批环境进入屏障，01 的前台取得提交权，stderr 报 `.git/snowdesktop-execution/budget.lock` Access denied。共同回执保存 `runId=null`、`inputCheck=not-run`。同一修正继续用继承成员的续修，获批入口填最后一项就绪，其他对话用只读 `wait`。这是提交者权限的具体证据，与前述工具链失配同属提交方环境选择。
+
 ### CF-032 已激活候选缺少显式回退入口
 
 - **实测（2026-11-17）**：Task `task-e4a0d0c3ebf74ea0b6237b4e496324bd`，批次 `19bee344d45b4a8486a37c34505d841a` 修订 0、Run `3d9da96df836442bb0e9d321020d59a3` 激活后出现用户报告的泛白，用户授权恢复上一轮 Run `2db7d4c8173a434e93f80ae0f85802cd` 的效果。上一轮保存的运行目录已不可用。新 Run 激活回执中的备份 `SnowDesktop.exe` 仍在，SHA-256 与上一轮激活回执一致。
@@ -510,3 +517,8 @@
 - **源码确认**：`Start-RunAcceptance` 校验 Run 请求的单个任务归属，请求记录为同行 `task-40977fc85edd4847b361a242933a430d`。`Start-TaskAcceptance` 按共同批次成员校验其计划、修订与保存产物身份。
 - **处理与下一步**：本轮用 `acceptance-start -Batch a036f2a9fe804d96880eb29a51112ea6 -Revision 0` 取得验收 `a3d21708dd10438aaaec822d365636d9`，复用原候选。建议遇到共同 Run 归属不匹配时，提示对应批次入口并保留现有成员和产物校验。
 - **并行激活续证**：原验收登记后，Run `f0c23e6c26774d29b6a8375942befe66` 替换了本地运行文件。本批六份输入的快照哈希一致，四项离屏预览复核相同。该 Run 的批次成员只有其原任务。本轮关闭旧验收区间，在任务证据中独立记录当前 EXE 指纹及待观察步骤。
+
+### CF-036 Codex 跨对话等待返回通用错误
+
+- **实测**：2026-11-19，Task `architecture-first-six-coordination`，批次 `ae006c2d60d146e0b697fc0ab11f5eca` 修订 0。六个 `create_thread` 均返回本地主机和对话 ID，协调器确认六个实现任务入批。用这些 ID 调用 `codex_app/wait_threads` 获取即时快照（0 ms）和有界等待（50,000 ms），两次均返回 `Mcp error: -32000: Codex app tool request failed`。同批单个 `read_thread` 和定向发送成功。
+- **影响与处理**：统筹用工作区交接记录、协调器状态和原批次前台等待继续，增加了读取步骤。问题涉及 Codex 原生对话等待。本轮沿用一个共同候选，未为定位该错误新增构建。后续应由该入口返回失败阶段，便于区分不支持多目标、连接和单个对话身份问题。根因待核实。

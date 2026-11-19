@@ -31,6 +31,8 @@ snowdesktop_add_runtime_module(SnowDesktopAtomicFile
     SOURCES src/data/atomic_file.cpp)
 snowdesktop_add_runtime_module(SnowDesktopUtf8
     SOURCES src/common/utf8.cpp)
+snowdesktop_add_runtime_module(SnowDesktopJson
+    SOURCES src/common/json_value.cpp)
 snowdesktop_add_runtime_module(SnowDesktopWidgetPermissions
     SOURCES src/widget/permissions/widget_permission_broker.cpp
         src/widget/permissions/widget_permission_state.cpp
@@ -53,8 +55,9 @@ snowdesktop_add_runtime_module(SnowDesktopWidgetPackages
         src/widget/packages/widget_package_sources.cpp
         src/widget/packages/widget_package_validation.cpp
         src/widget/packages/widget_local_catalog_publisher.cpp
+        src/widget/packages/widget_size_rules.cpp
         src/widget/runtime/widget_logical_slot.cpp
-    LINK_LIBRARIES SnowDesktopAtomicFile SnowDesktopWidgetPermissions bcrypt ole32)
+    LINK_LIBRARIES SnowDesktopAtomicFile SnowDesktopJson SnowDesktopWidgetPermissions bcrypt ole32)
 snowdesktop_add_runtime_module(SnowDesktopWidgetApiRegistry
     SOURCES src/widget/api/widget_api_registry.cpp
     LINK_LIBRARIES SnowDesktopLua)
@@ -66,18 +69,19 @@ snowdesktop_add_runtime_module(SnowDesktopWidgetStorage
     SOURCES src/widget/storage/widget_storage_transaction.cpp
         src/widget/storage/widget_storage_value.cpp
         src/widget/storage/widget_secret_store.cpp
-    LINK_LIBRARIES SnowDesktopUtf8 bcrypt crypt32)
+    LINK_LIBRARIES SnowDesktopJson SnowDesktopUtf8 bcrypt crypt32)
 
 # Shared native services used by the host and module-level behavior scenarios.
 # Data paths, deployment and diagnostic logging currently form one dependency
 # cycle; keep that runtime environment together, separate from app composition.
 snowdesktop_add_runtime_module(SnowDesktopSteamRuntimeIdentity
-    SOURCES src/steam/steam_runtime_context.cpp)
+    SOURCES src/steam/steam_runtime_context.cpp
+    LINK_LIBRARIES SnowDesktopJson)
 snowdesktop_add_runtime_module(SnowDesktopRuntimeEnvironment
     SOURCES src/data/data_paths.cpp src/data/portable_data_migration.cpp
         src/diagnostics/debug_profile.cpp src/diagnostics/diagnostic_log.cpp
         src/platform/deployment_context.cpp src/platform/hook_entry_deployment.cpp
-    LINK_LIBRARIES SnowDesktopAtomicFile SnowDesktopSteamRuntimeIdentity SnowDesktopRuntimePolicy
+    LINK_LIBRARIES SnowDesktopAtomicFile SnowDesktopJson SnowDesktopSteamRuntimeIdentity SnowDesktopRuntimePolicy
         advapi32 bcrypt ole32 runtimeobject shell32 shlwapi windowsapp)
 target_compile_definitions(SnowDesktopRuntimeEnvironment PRIVATE
     SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
@@ -98,7 +102,7 @@ snowdesktop_add_runtime_module(SnowDesktopSettingsPolicy
     LINK_LIBRARIES SnowDesktopRuntimePolicy user32)
 snowdesktop_add_runtime_module(SnowDesktopThemeLibrary
     SOURCES src/theme/theme_library.cpp
-    LINK_LIBRARIES SnowDesktopThemePolicy SnowDesktopSettingsPolicy ole32)
+    LINK_LIBRARIES SnowDesktopJson SnowDesktopThemePolicy SnowDesktopSettingsPolicy ole32)
 snowdesktop_add_runtime_module(SnowDesktopAppFonts
     SOURCES src/ui/render/app_font.cpp
     LINK_LIBRARIES dwrite gdi32 ole32)
@@ -108,7 +112,8 @@ snowdesktop_add_runtime_module(SnowDesktopNativeUtilities
     LINK_LIBRARIES SnowDesktopRuntimeEnvironment SnowDesktopSettingsPolicy
         comctl32 d2d1 dwrite gdi32 ole32 shell32 shcore shlwapi windowscodecs xmllite)
 snowdesktop_add_runtime_module(SnowDesktopLocalization
-    SOURCES src/common/l10n.cpp)
+    SOURCES src/common/l10n.cpp
+    LINK_LIBRARIES SnowDesktopJson)
 # Runtime policy implementations stay out of the widely shared settings types.
 snowdesktop_add_runtime_module(SnowDesktopDockPolicy
     SOURCES src/dock/dock_fullscreen_policy.cpp src/dock/dock_tray_rules.cpp
@@ -132,7 +137,7 @@ snowdesktop_add_runtime_module(SnowDesktopSettingsPersistence
         src/theme/personalization_path.cpp
         src/theme/theme_library_settings.cpp
         src/ui/render/native_tooltip_preferences.cpp
-    LINK_LIBRARIES SnowDesktopRuntimeEnvironment SnowDesktopNativeUtilities
+    LINK_LIBRARIES SnowDesktopJson SnowDesktopRuntimeEnvironment SnowDesktopNativeUtilities
         SnowDesktopLocalization SnowDesktopPerfetto SnowDesktopDockPolicy
         SnowDesktopSettingsPolicy SnowDesktopThemePolicy SnowDesktopThemeLibrary dwmapi)
 snowdesktop_add_runtime_module(SnowDesktopLargeIconConfig
@@ -140,7 +145,7 @@ snowdesktop_add_runtime_module(SnowDesktopLargeIconConfig
     LINK_LIBRARIES SnowDesktopThemePolicy)
 snowdesktop_add_runtime_module(SnowDesktopLayoutStorage
     SOURCES src/data/layout_storage.cpp src/data/layout_backup_files.cpp
-    LINK_LIBRARIES SnowDesktopAtomicFile SnowDesktopDockPolicy SnowDesktopLargeIconConfig)
+    LINK_LIBRARIES SnowDesktopAtomicFile SnowDesktopDockPolicy SnowDesktopJson SnowDesktopLargeIconConfig)
 snowdesktop_add_runtime_module(SnowDesktopWidgetTasks
     SOURCES src/widget/tasks/widget_task_broker.cpp
     LINK_LIBRARIES SnowDesktopPerfetto)
@@ -186,6 +191,10 @@ endfunction()
 snowdesktop_use_runtime_modules(SnowDesktop)
 snowdesktop_use_runtime_modules(snowwidget)
 snowdesktop_use_runtime_modules(SnowDesktopLauncher)
+
+target_link_libraries(SnowDesktop PRIVATE SnowDesktopJson)
+target_link_libraries(snowwidget PRIVATE SnowDesktopJson)
+target_link_libraries(SnowDesktopLauncher PRIVATE SnowDesktopJson)
 
 # These independent owners consume runtime animation/module policy without
 # selecting its source inventory, so declare the link edge explicitly.

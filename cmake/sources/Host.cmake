@@ -92,6 +92,8 @@ set(SNOWDESKTOP_SOURCES
     src/ui/render/native_tooltip_preferences.h
     src/ui/render/native_tooltip_state.h
     src/ui/render/native_control_geometry.h
+    src/ui/render/d2d_drawing.cpp
+    src/ui/render/d2d_drawing.h
     src/ui/render/file_search_result_row.h
     src/ui/render/smooth_corner_geometry.h
     src/system/tray/tray_model.cpp
@@ -560,6 +562,9 @@ set(SNOWDESKTOP_SOURCES
     src/widget/preview/widget_preview_scene_model.cpp
     src/common/l10n.cpp
     src/layout/item_location.cpp
+    src/layout/category_collection_types.h
+    src/layout/folder_sort_types.h
+    src/layout/list_detail_types.h
     src/data/layout_storage.cpp
     src/data/layout_backup_files.cpp
     src/ui/menu/menu_icon_render.cpp
@@ -640,6 +645,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/view/widget_surface_host.h
     src/widget/view/widget_host_input_support.h
     src/widget/view/widget_host_input_state.h
+    src/widget/view/widget_surface_context.h
     src/widget/view/widget_host_input.cpp
     src/widget/view/widget_host_input_events.cpp
     src/widget/view/widget_host_scroll.cpp
@@ -706,6 +712,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/runtime/widget_lua_binding_context.cpp
     src/widget/runtime/widget_lua_binding_context.h
     src/widget/runtime/widget_engine.cpp
+    src/widget/runtime/widget_instance.h
     src/widget/runtime/widget_logical_slot_host.cpp
     src/widget/runtime/widget_calendar_host.cpp
     src/widget/runtime/widget_desktop_host.h
@@ -735,6 +742,8 @@ set(SNOWDESKTOP_SOURCES
     src/widget/permissions/widget_permission_broker.cpp
     src/widget/permissions/widget_permission_state.cpp
     src/widget/packages/widget_package.cpp
+    src/widget/packages/widget_size_rules.cpp
+    src/widget/packages/widget_size_types.h
     src/widget/packages/widget_package_paths.cpp
     src/widget/packages/widget_package_paths.h
     src/widget/packages/widget_package_host.cpp
