@@ -2938,7 +2938,7 @@
   "app.settings.widgets_installed_version": "설치 버전",
   "app.settings.widgets_development_version": "개발 버전",
   "settings.personalization.wcgHighlightCompensation": "광색역 디스플레이 보정",
-  "settings.personalization.wcgHighlightCompensation.hint": "광색역 디스플레이에서 반투명 효과가 뿌옇게 보이는 현상을 줄입니다.",
+  "settings.personalization.wcgHighlightCompensation.hint": "10비트 출력의 SDR 디스플레이가 WCG 모드이고 Windows 자동 색 관리(ACM)가 켜져 있을 때 적용됩니다. 이 조합에서는 반투명 하이라이트와 그림자 가장자리가 하얗게 보일 수 있습니다. 그림자 사전 합성은 서리 유리 효과와 그림자를 사용하는 Dock 아이콘과 위젯에 적용됩니다.",
   "settings.personalization.displayEffects": "표시 효과",
   "app.settings.icon_shadows": "아이콘 그림자",
   "app.settings.icon_shadow_fan": "부채꼴 보기의 아이콘",
@@ -2947,5 +2947,10 @@
   "app.settings.icon_shadow_desktop": "바탕 화면 아이콘",
   "app.settings.icon_shadow_popup": "팝업의 아이콘",
   "app.settings.icon_shadow_quick_navigation": "빠른 탐색의 아이콘",
-  "app.settings.icon_shadow_subject": "꾸민 아이콘 본체의 그림자"
+  "app.settings.icon_shadow_subject": "꾸민 아이콘 본체의 그림자",
+  "settings.personalization.wcg.highlights": "하이라이트만 보정",
+  "settings.personalization.wcg.composite": "하이라이트 및 그림자 사전 합성",
+  "settings.personalization.wcg.unknown": "확인할 수 없음",
+  "settings.personalization.wcg.workaroundTitle": "Windows에서 해결하는 방법",
+  "settings.personalization.wcg.workaround": "흰 테두리가 남으면 Windows 설정 → 시스템 → 디스플레이 → 색 프로필에서 해당 디스플레이를 선택하고 ‘앱 색 자동 관리’를 끄세요."
 }

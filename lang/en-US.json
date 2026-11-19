@@ -2938,7 +2938,7 @@
   "app.settings.widgets_installed_version": "Installed version",
   "app.settings.widgets_development_version": "Development version",
   "settings.personalization.wcgHighlightCompensation": "Wide-gamut display compensation",
-  "settings.personalization.wcgHighlightCompensation.hint": "Reduces the washed-out appearance of translucent effects on wide-gamut displays.",
+  "settings.personalization.wcgHighlightCompensation.hint": "Applies to SDR displays in WCG mode with 10-bit output and Windows automatic color management (ACM) enabled. Translucent highlights and shadow edges may look washed out with this combination. Shadow pre-compositing applies to frosted-glass Dock icons and widgets with shadows.",
   "settings.personalization.displayEffects": "Display effects",
   "app.settings.icon_shadows": "Icon shadows",
   "app.settings.icon_shadow_fan": "Icons in fan view",
@@ -2947,5 +2947,10 @@
   "app.settings.icon_shadow_desktop": "Desktop icons",
   "app.settings.icon_shadow_popup": "Icons in pop-ups",
   "app.settings.icon_shadow_quick_navigation": "Icons in Quick Navigation",
-  "app.settings.icon_shadow_subject": "Beautified icon subject shadow"
+  "app.settings.icon_shadow_subject": "Beautified icon subject shadow",
+  "settings.personalization.wcg.highlights": "Highlights only",
+  "settings.personalization.wcg.composite": "Highlights and shadow pre-compositing",
+  "settings.personalization.wcg.unknown": "Unavailable",
+  "settings.personalization.wcg.workaroundTitle": "Windows workaround",
+  "settings.personalization.wcg.workaround": "If the fringe persists, go to Windows Settings > System > Display > Color profile, select the affected display, and turn off Automatically manage color for apps."
 }

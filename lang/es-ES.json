@@ -2938,7 +2938,7 @@
   "app.settings.widgets_installed_version": "Versión instalada",
   "app.settings.widgets_development_version": "Versión de desarrollo",
   "settings.personalization.wcgHighlightCompensation": "Compensación de pantalla de gama amplia",
-  "settings.personalization.wcgHighlightCompensation.hint": "Reduce el aspecto blanquecino de los efectos translúcidos en pantallas de gama cromática amplia.",
+  "settings.personalization.wcgHighlightCompensation.hint": "Se aplica a pantallas SDR en modo WCG con salida de 10 bits y la administración automática del color (ACM) de Windows activada. Con esta combinación, los reflejos translúcidos y los bordes de las sombras pueden verse blanquecinos. La precomposición de sombras se aplica a los iconos del Dock y los widgets con cristal esmerilado y sombra.",
   "settings.personalization.displayEffects": "Efectos de pantalla",
   "app.settings.icon_shadows": "Sombras de los iconos",
   "app.settings.icon_shadow_fan": "Iconos en vista de abanico",
@@ -2947,5 +2947,10 @@
   "app.settings.icon_shadow_desktop": "Iconos del escritorio",
   "app.settings.icon_shadow_popup": "Iconos en ventanas emergentes",
   "app.settings.icon_shadow_quick_navigation": "Iconos en la navegación rápida",
-  "app.settings.icon_shadow_subject": "Sombra de la figura del icono embellecido"
+  "app.settings.icon_shadow_subject": "Sombra de la figura del icono embellecido",
+  "settings.personalization.wcg.highlights": "Solo reflejos",
+  "settings.personalization.wcg.composite": "Reflejos y precomposición de sombras",
+  "settings.personalization.wcg.unknown": "No disponible",
+  "settings.personalization.wcg.workaroundTitle": "Solución alternativa en Windows",
+  "settings.personalization.wcg.workaround": "Si el halo persiste, abre Configuración de Windows > Sistema > Pantalla > Perfil de color, selecciona la pantalla afectada y desactiva «Administrar automáticamente el color de las aplicaciones»."
 }

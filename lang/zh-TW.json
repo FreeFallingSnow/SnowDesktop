@@ -2938,7 +2938,7 @@
   "app.settings.widgets_installed_version": "已安裝版",
   "app.settings.widgets_development_version": "開發版",
   "settings.personalization.wcgHighlightCompensation": "廣色域顯示補償",
-  "settings.personalization.wcgHighlightCompensation.hint": "減輕廣色域顯示器上半透明效果的泛白現象。",
+  "settings.personalization.wcgHighlightCompensation.hint": "適用於處於 WCG 模式的 SDR 顯示器，且使用 10 位元輸出並開啟 Windows 自動色彩管理（ACM）。此時半透明高光與陰影邊緣可能泛白。陰影預合成適用於已啟用陰影的毛玻璃 Dock 和桌面元件。",
   "settings.personalization.displayEffects": "顯示效果",
   "app.settings.icon_shadows": "圖示陰影",
   "app.settings.icon_shadow_fan": "扇形展開中的圖示",
@@ -2947,5 +2947,10 @@
   "app.settings.icon_shadow_desktop": "桌面圖示",
   "app.settings.icon_shadow_popup": "彈出視窗中的圖示",
   "app.settings.icon_shadow_quick_navigation": "快速導覽中的圖示",
-  "app.settings.icon_shadow_subject": "美化主體陰影"
+  "app.settings.icon_shadow_subject": "美化主體陰影",
+  "settings.personalization.wcg.highlights": "僅高光補償",
+  "settings.personalization.wcg.composite": "高光與陰影預合成",
+  "settings.personalization.wcg.unknown": "無法讀取",
+  "settings.personalization.wcg.workaroundTitle": "Windows 因應措施",
+  "settings.personalization.wcg.workaround": "若仍有白邊，請開啟 Windows 設定 → 系統 → 顯示器 → 色彩設定檔，選取受影響的顯示器，關閉「自動管理應用程式的色彩」。"
 }
