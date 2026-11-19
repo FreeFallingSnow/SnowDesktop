@@ -15,6 +15,7 @@
  * - CreateWidget：组件工厂函数，根据 DesktopWidgetType 创建对应的具体组件实例。
  */
 #include "core/widget.h"
+#include "guide_widget.h"
 #include "layout/collection_popup_layout.h"
 #include "layout/list_detail_rules.h"
 #include "widget/view/widget_clip_geometry.h"
@@ -2632,7 +2633,7 @@ void ScrollingItemWidget::DrawDetailsHeader(
     IDWriteTextFormat* format = GetCuTextFormatWeight(
         GetCategorizedTabFontSize(),
         DWRITE_FONT_WEIGHT_SEMI_BOLD, false);
-    if (!format) format = app_->componentListTextFormat_.Get();
+    if (!format) format = app_->itemTitleRenderer_.ListFormat();
     const D2D1_COLOR_F color = light
         ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)
         : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f);
@@ -2771,92 +2772,26 @@ void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
     RECT cell, RECT iconRect, const std::wstring& title,
     bool lightTheme, RECT hoverRect, std::wstring_view identity) const
 {
-    if (!app_ || !context || !app_->dwriteFactory_ || !app_->componentListTextFormat_ || title.empty()) return;
+    if (!app_ || !context || title.empty()) return;
     const RECT textRect = MakeRect(iconRect.right + Cu(6.0f), cell.top + Cu(2.0f),
         cell.right - Cu(6.0f), cell.bottom - Cu(2.0f));
-    if (textRect.right <= textRect.left) return;
-    const float width = static_cast<float>(textRect.right - textRect.left);
-    const float height = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
-    const float layoutScale = GetCellScale();
-    const float fontSize = FontCu(app_->listItemFontSizeCu_);
-    const auto fontWeight = static_cast<DWRITE_FONT_WEIGHT>(
-        snowdesktop::font_weight_rules::RenderedWeight(app_->itemFontWeight_, lightTheme));
-    const std::wstring layoutKey = L"list\x1f" + title + L"\x1f" +
-        std::to_wstring(width) + L"x" + std::to_wstring(height) + L"@" +
-        std::to_wstring(layoutScale) + L"@" + std::to_wstring(fontSize) + L"@" + std::to_wstring(fontWeight);
-    // Both presentations use immutable layouts with the same explicit font.
-    const auto getLayout = [&](bool scrolling) -> ComPtr<IDWriteTextLayout> {
-        const std::wstring key = scrolling ? layoutKey + L"\x1fscroll" : layoutKey;
-        auto& cache = app_->componentListTextLayoutCache_;
-        if (const auto found = cache.find(key); found != cache.end()) return found->second;
-        ComPtr<IDWriteTextLayout> layout;
-        if (FAILED(app_->dwriteFactory_->CreateTextLayout(title.c_str(), static_cast<UINT32>(title.size()),
-                app_->componentListTextFormat_.Get(), width, height, &layout)) || !layout) return {};
-        const DWRITE_TEXT_RANGE range{0, static_cast<UINT32>(title.size())};
-        layout->SetFontSize(fontSize, range);
-        snowdesktop::app_fonts::SetWeight(layout.Get(), fontWeight, range);
-        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-        layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
-            fontSize * 7.0f / 6.0f, fontSize * 5.0f / 6.0f);
-        DWRITE_TRIMMING trimming{};
-        if (scrolling)
-        {
-            layout->SetTrimming(&trimming, nullptr);
-            DWRITE_TEXT_METRICS metrics{};
-            if (FAILED(layout->GetMetrics(&metrics))) return {};
-            layout->SetMaxWidth(std::max(width, std::ceil(metrics.widthIncludingTrailingWhitespace)));
-        }
-        else
-        {
-            trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
-            ComPtr<IDWriteInlineObject> ellipsis;
-            ComPtr<IDWriteTextFormat> format;
-            snowdesktop::app_fonts::CreateTextFormat(app_->dwriteFactory_, L"Segoe UI", fontWeight,
-                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &format);
-            if (SUCCEEDED(app_->dwriteFactory_->CreateEllipsisTrimmingSign(
-                    format ? format.Get() : app_->componentListTextFormat_.Get(), &ellipsis)) && ellipsis)
-                layout->SetTrimming(&trimming, ellipsis.Get());
-        }
-        cache.emplace(key, layout);
-        return layout;
-    };
+    const float scale = GetCellScale();
+    snowdesktop::ItemTitleRenderer::ScrollOffset scrollOffset;
     if (!IsPreviewRendering() && data_ && PtInRect(&hoverRect, app_->lastMousePoint_))
     {
-        if (const auto layout = getLayout(true))
-        {
-            DWRITE_TEXT_METRICS metrics{};
-            if (SUCCEEDED(layout->GetMetrics(&metrics)))
-            {
-                std::wstring owner = data_->id;
-                const size_t groupIndex = app_->FindFileGroupIndexForChild(owner);
-                if (groupIndex < app_->widgets_.size()) owner = app_->widgets_[groupIndex].id;
-                const std::wstring key = (identity.empty()
-                    ? std::to_wstring(hoverRect.left) + L"," + std::to_wstring(hoverRect.top)
-                    : std::wstring(identity)) + L"\x1f" + title;
-                if (const auto offset = app_->ResolveListTitleHover(owner, key, hoverRect,
-                        IsPopupHosted(), metrics.widthIncludingTrailingWhitespace, width, layoutScale))
-                {
-                    // Keep the caller's viewport clip; only this title moves.
-                    context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(textRect.left), static_cast<float>(textRect.top),
-                        static_cast<float>(textRect.right), static_cast<float>(textRect.bottom)), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-                    const std::wstring shadowKey = layoutKey + L"\x1fscroll";
-                    const float cycle = metrics.widthIncludingTrailingWhitespace + std::max(1.0f, 24.0f * layoutScale);
-                    for (const float shift : {0.0f, cycle})
-                        app_->DrawStyledItemTextLayout(context, layout.Get(), shadowKey,
-                            D2D1::Point2F(textRect.left - *offset + shift, static_cast<float>(textRect.top)),
-                            D2D1::SizeF(layout->GetMaxWidth(), height), layoutScale, 1.0f, lightTheme, true);
-                    context->PopAxisAlignedClip();
-                    return;
-                }
-            }
-        }
+        scrollOffset = [&](float naturalWidth, float viewportWidth) {
+            std::wstring owner = data_->id;
+            const size_t groupIndex = app_->FindFileGroupIndexForChild(owner);
+            if (groupIndex < app_->widgets_.size()) owner = app_->widgets_[groupIndex].id;
+            const std::wstring key = (identity.empty()
+                ? std::to_wstring(hoverRect.left) + L"," + std::to_wstring(hoverRect.top)
+                : std::wstring(identity)) + L"\x1f" + title;
+            return app_->ResolveListTitleHover(owner, key, hoverRect,
+                IsPopupHosted(), naturalWidth, viewportWidth, scale);
+        };
     }
-    if (const auto layout = getLayout(false))
-        app_->DrawStyledItemTextLayout(context, layout.Get(), layoutKey,
-            D2D1::Point2F(static_cast<float>(textRect.left), static_cast<float>(textRect.top)),
-            D2D1::SizeF(width, height), layoutScale, 1.0f, lightTheme, true);
+    app_->DrawComponentListTitle(context, textRect, title, scale, FontCu(app_->listItemFontSizeCu_),
+        lightTheme, scrollOffset);
 }
 
 /**
@@ -2962,7 +2897,7 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
         app_->listItemFontSizeCu_, static_cast<DWRITE_FONT_WEIGHT>(
             snowdesktop::font_weight_rules::RenderedWeight(
                 app_->itemFontWeight_, light)), false);
-    if (!format) format = app_->componentListTextFormat_.Get();
+    if (!format) format = app_->itemTitleRenderer_.ListFormat();
     const D2D1_COLOR_F color = light
         ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.66f)
         : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.66f);

@@ -19,6 +19,7 @@
 #include "widget/runtime/widget_visibility_rules.h"
 #include "widget/view/widget_composition_layer_rules.h"
 #include "widget/view/widget_scroll_rules.h"
+#include "widgets/guide_widget.h"
 #include "layout/popup_scrollbar_layout.h"
 
 #include <utility>

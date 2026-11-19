@@ -3,7 +3,7 @@
  * @brief GuideWidget —— 新页面欢迎卡片的实现
  */
 
-#include "core/widget.h"
+#include "guide_widget.h"
 #include "app/app.h"
 #include "common/utils.h"
 #include "common/l10n.h"

@@ -151,6 +151,26 @@ bool IsInternetShortcutDescriptor(
         SanitizeSuggestedFileName(descriptor.suggestedFileName));
 }
 
+struct BareDesktopVirtualFilePlacement
+{
+    std::vector<snowdesktop::virtual_file_drop::VirtualFileDescriptor> descriptors;
+    bool stageFiles = false;
+};
+
+BareDesktopVirtualFilePlacement ReadBareDesktopVirtualFilePlacement(
+    IDataObject* dataObject, bool canCopyDrop)
+{
+    BareDesktopVirtualFilePlacement placement;
+    placement.descriptors = snowdesktop::virtual_file_drop::ReadDescriptors(dataObject);
+    const bool hasFilePayload = std::any_of(
+        placement.descriptors.begin(), placement.descriptors.end(),
+        [](const auto& descriptor) {
+            return !IsInternetShortcutDescriptor(descriptor);
+        });
+    placement.stageFiles = hasFilePayload && canCopyDrop;
+    return placement;
+}
+
 std::wstring ReadInternetShortcutTarget(const std::wstring& path)
 {
     const wchar_t* extension = PathFindExtensionW(path.c_str());
@@ -1873,29 +1893,21 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             : std::vector<std::wstring>{};
     const std::wstring bareDesktopUrl = bareDesktopUrls.empty()
         ? std::wstring{} : bareDesktopUrls.front();
-    const auto delayedFileDescriptors =
+    const auto virtualFilePlacement =
         dropPaths.empty() && dataObject && bareDesktopTarget &&
             !sourceUsesAsyncMode
-        ? snowdesktop::virtual_file_drop::ReadDescriptors(dataObject)
-        : std::vector<snowdesktop::virtual_file_drop::
-            VirtualFileDescriptor>{};
-    const bool preferVirtualFilePayload = std::any_of(
-        delayedFileDescriptors.begin(), delayedFileDescriptors.end(),
-        [](const auto& descriptor) {
-            return !IsInternetShortcutDescriptor(descriptor);
-        });
+        ? ReadBareDesktopVirtualFilePlacement(dataObject, canCopyDrop)
+        : BareDesktopVirtualFilePlacement{};
     const bool offersImageData =
         dropPaths.empty() && dataObject && bareDesktopTarget &&
         canCopyDrop && !sourceUsesAsyncMode &&
         snowdesktop::drop_image_data::OffersImageData(dataObject);
-    if (dropPaths.empty() && dataObject && bareDesktopTarget &&
-        canCopyDrop && preferVirtualFilePayload &&
-        !sourceUsesAsyncMode)
+    if (virtualFilePlacement.stageFiles)
     {
         bool allVirtualFilesMaterialized = false;
         auto stagedVirtualPaths =
             TryMaterializeVirtualFilesFromDataObject(
-            dataObject, delayedFileDescriptors,
+            dataObject, virtualFilePlacement.descriptors,
             &allVirtualFilesMaterialized);
         if (!allVirtualFilesMaterialized)
         {
@@ -2512,7 +2524,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         : ((*effect & DROPEFFECT_LINK) != 0
             ? DROPEFFECT_LINK : DROPEFFECT_NONE);
     if (dropPaths.empty() && dataObject && bareDesktopTarget &&
-        delayedFileDescriptors.size() <= 1 &&
+        virtualFilePlacement.descriptors.size() <= 1 &&
         urlDropEffect != DROPEFFECT_NONE)
     {
         if (!bareDesktopUrl.empty())
@@ -2547,7 +2559,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
     if (dropPaths.empty() && dataObject && canCopyDrop &&
         !sourceUsesAsyncMode &&
         (!bareDesktopTarget || bareDesktopUrl.empty()) &&
-        (!bareDesktopTarget || delayedFileDescriptors.size() <= 1))
+        (!bareDesktopTarget || virtualFilePlacement.descriptors.size() <= 1))
     {
         dropPaths = localFileUrlPaths;
         if (dropPaths.empty())
