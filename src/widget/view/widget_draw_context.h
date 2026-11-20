@@ -50,6 +50,9 @@ public:
     IDWriteTextFormat* TextFormat(float size, DWRITE_FONT_WEIGHT weight,
         bool centered, DWRITE_WORD_WRAPPING wrapping, bool fontAwesome,
         bool verticallyCentered, bool fluent, const std::wstring* privateFontPath);
+    bool DrawCenteredGlyph(std::uint32_t codepoint, bool fluent,
+        float cx, float cy, float size, ID2D1Brush& brush,
+        D2D1_RECT_F* paintedBounds = nullptr);
     bool PreloadPrivateFont(const std::wstring& path);
     bool HasPrivateFont(const std::wstring& path) const;
     void ResetBrushes();
@@ -65,6 +68,12 @@ public:
     Counts ResourceCounts() const noexcept;
 
 private:
+    struct GlyphOutline
+    {
+        Microsoft::WRL::ComPtr<ID2D1PathGeometry> geometry;
+        D2D1_RECT_F ink{};
+    };
+
     struct PrivateFontResource
     {
         Microsoft::WRL::ComPtr<IDWriteFontCollection1> collection;
@@ -77,7 +86,14 @@ private:
     std::unordered_map<std::uint64_t, Microsoft::WRL::ComPtr<IDWriteTextFormat>> textFormats_;
     std::unordered_map<std::wstring, PrivateFontResource> privateFonts_;
     std::unordered_map<std::wstring, Microsoft::WRL::ComPtr<IDWriteTextFormat>> privateTextFormats_;
+    Microsoft::WRL::ComPtr<ID2D1Factory> glyphFactory_;
+    Microsoft::WRL::ComPtr<IDWriteFontFace> fluentFace_;
+    Microsoft::WRL::ComPtr<IDWriteFontFace> fontAwesomeFace_;
+    std::unordered_map<std::uint32_t, GlyphOutline> glyphOutlines_;
 };
+
+// Icon strings contain exactly one Unicode scalar.
+std::uint32_t DecodeIconGlyph(std::string_view glyph) noexcept;
 
 std::string_view CurrentWidgetSurface(const WidgetDrawContext* state) noexcept;
 ID2D1SolidColorBrush* GetCachedBrush(WidgetDrawContext* state, int color, float alpha = 1.0f);

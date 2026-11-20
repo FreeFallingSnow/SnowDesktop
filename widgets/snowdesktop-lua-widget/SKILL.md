@@ -114,6 +114,15 @@ package. Exclude DLLs, scripts used as helpers and undeclared executables.
 For an authorized native helper, follow the API reference's **Native EXE
 helpers** contract for hashes, permissions, user consent and the fixed protocol.
 
+### Font icon alignment
+
+Use the host's glyph outline to center icons. On immediate surfaces, use
+`draw.glyph(glyph, centerX, centerY, size, color, iconFont)`. For
+`view.icon` and `view.iconButton`, enable `glyphInkCentered = true`.
+Remove glyph-specific coordinate and padding adjustments from that path.
+For older hosts, declare and probe `draw.glyph` or `view.icon.glyphInk`
+as appropriate and keep any legacy corrections in the fallback branch.
+
 ## Verify the requested outcome
 
 Use [validation and packaging](references/validation-and-packaging.md) to

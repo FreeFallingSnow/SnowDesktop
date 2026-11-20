@@ -4356,13 +4356,15 @@ private:
     bool HandleWidgetTextDragHover(POINT point, DWORD keyState, DWORD& effect);
     std::optional<bool> DeliverWidgetTextDrop(POINT point, IDataObject* source,
         bool copyAllowed);
-    bool TryStartWidgetTextDrag(POINT point, WPARAM keys);
+    bool TryStartWidgetContentDrag(POINT point, WPARAM keys);
     void RunWidgetTextDrag(WidgetTextDragSource dragSource);
+    void RunWidgetImageDrag(IDataObject* data);
     bool DeliverLuaFileDrop(POINT point, const std::vector<std::wstring>& paths);
     bool externalLuaFileDropAvailable_ = false;
     bool externalOwnedContent_ = false;
     bool externalWidgetTextAvailable_ = false;
     std::optional<WidgetTextDragSource> widgetTextDragSource_;
+    bool widgetImageDragActive_ = false;
     bool widgetTextDropMovesSelection_ = false;
     struct NativeSearchTextDropPreview
     {

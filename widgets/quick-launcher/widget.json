@@ -255,6 +255,7 @@
     "app.launch"
   ],
   "requiredFeatures": [
+    "draw.glyph",
     "control.focus",
     "control.textInput",
     "data.desktop.changes",

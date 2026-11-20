@@ -357,6 +357,7 @@
 ---@field spinSpeed? number Clockwise degrees per second (0–360) for a circular desktop image on a separate composition layer. Zero pauses the rotation. Probe view.imageSpin first.
 ---@field alt? string Required by image and referenceIcon nodes; use an empty string for decorative visuals.
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
+---@field glyphInkCentered? boolean Center the visible outline for icon and iconButton. Requires view.icon.glyphInk.
 ---@field shape? 'rectangle'|'roundedRectangle'|'circle'|'ellipse'
 ---@field orientation? 'horizontal'|'vertical' Divider, radioGroup/slider, scroll, eager list, or virtualList axis; scroll and lists default to vertical.
 ---@field value? number|string Numeric progress/slider/numberInput value, or controlled textInput/textArea/searchBox string.
@@ -567,6 +568,7 @@
 ---@field key string Stable key, 1..128 UTF-8 bytes.
 ---@field shape SnowInteractionShape
 ---@field cursor? 'default'|'hand'|'text'|'crosshair'
+---@field dragImage? SnowImageResource Live runtime image for a native copy drag from this region. Requires interaction.dragImage.
 ---@field tooltip? string|SnowTooltipDescriptor Bounded host tooltip; descriptor form additionally requires interaction.tooltip.rich.
 ---@field capturePointer? boolean Keep primary-pointer move/up routed to this stable key until release or host cancellation; requires interaction.pointerCapture plus pointerMove or pointerUp.
 ---@field events? SnowInteractionEvents
@@ -1733,10 +1735,11 @@ function animation.cancelFrame(id) end
 ---@field width? integer Thumbnail width, up to 32 pixels.
 ---@field height? integer Thumbnail height, up to 32 pixels.
 ---@field image? SnowImageResource Session image, available with data.clipboard.changes.image and subject to runtime cache limits.
----@field imageWidth? integer Width of image, up to 512 pixels.
----@field imageHeight? integer Height of image, up to 512 pixels.
+---@field imageWidth? integer Width of the retained image in pixels.
+---@field imageHeight? integer Height of the retained image in pixels.
 ---@field imageId? string Content identity for equality in the current session. Requires clipboard.imageIdentity.
 ---@field names? string[] At most 32 file or folder display names.
+---@field pathRefs? string[] Opaque file path references matching names, for clipboard.write with file-paths. Requires clipboard.filePaths and clipboard.read.
 ---@field error? string Capture error for empty events.
 
 ---@class SnowClipboardChangesDataValue Empty. Read status from the envelope and content from data.change events.
@@ -1908,7 +1911,11 @@ function data.subscribe(topic, options) end
 ---@field format 'file-reference' Requires task.clipboard.fileReference.write.
 ---@field items string[] One to 32 current clipboard item refs or readable filesystem handles owned by this instance.
 
----@alias SnowClipboardWriteArguments SnowClipboardTextWriteArguments|SnowClipboardHtmlWriteArguments|SnowClipboardImageWriteArguments|SnowClipboardFileReferenceWriteArguments
+---@class SnowClipboardFilePathsWriteArguments
+---@field format 'file-paths' Requires clipboard.filePaths.
+---@field items string[] One to 32 current clipboard file path references owned by this instance.
+
+---@alias SnowClipboardWriteArguments SnowClipboardTextWriteArguments|SnowClipboardHtmlWriteArguments|SnowClipboardImageWriteArguments|SnowClipboardFileReferenceWriteArguments|SnowClipboardFilePathsWriteArguments
 
 ---@class SnowClipboardTextReadTaskValue
 ---@field format 'text'
@@ -1921,8 +1928,8 @@ function data.subscribe(topic, options) end
 ---@class SnowClipboardImageReadTaskValue
 ---@field format 'image'
 ---@field image SnowImageResource Temporary instance-scoped image handle for draw.image or view.image.source; do not persist it.
----@field width integer Decoded width after host scaling, from 1 through 512.
----@field height integer Decoded height after host scaling, from 1 through 512.
+---@field width integer Width of the decoded image in pixels.
+---@field height integer Height of the decoded image in pixels.
 ---@field imageId? string Matches clipboard.changes for the same decoded image. Requires clipboard.imageIdentity.
 
 ---@class SnowClipboardFileReference
@@ -2692,6 +2699,16 @@ function draw.fa(glyph, x, y, size, color) end
 ---@param size? number
 ---@param color? integer
 function draw.fluent(glyph, x, y, size, color) end
+
+---@param glyph string One Unicode scalar in the selected icon font.
+---@param centerX number
+---@param centerY number
+---@param size number
+---@param color? integer
+---@param iconFont? 'fluent'|'fluent-regular'|'fa'
+---@param alpha? number
+---@return boolean drawn
+function draw.glyph(glyph, centerX, centerY, size, color, iconFont, alpha) end
 
 ---Draw the Shell icon for an opaque ref returned by app.search,
 ---desktop.search, or everything.search. Requires desktop.read.

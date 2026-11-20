@@ -674,9 +674,8 @@ local function render(context, model)
                     cardY + cardH / 2, deleteSize * 0.85,
                     palette.delete, 0.09)
             end
-            draw.fluent(fluent.delete, deleteX,
-                cardY + (cardH - deleteSize) / 2,
-                deleteSize, palette.delete)
+            draw.glyph(fluent.delete, deleteX + deleteSize / 2, cardY + cardH / 2,
+                deleteSize, palette.delete, "fluent")
             registerRegion(deleteKey, {
                 type = "rect", x = deleteX - metrics.spacingXs,
                 y = cardY + (cardH - baseCardH) / 2,

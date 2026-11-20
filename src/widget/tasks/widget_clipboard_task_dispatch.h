@@ -14,6 +14,7 @@
 #include <vector>
 
 struct lua_State;
+struct LuaWidget;
 
 namespace snowdesktop::widget_runtime
 {
@@ -37,6 +38,8 @@ struct ClipboardFileItem
     std::string name;
     bool folder = false;
 };
+
+std::string RememberClipboardPath(LuaWidget& widget, std::string path);
 
 class ClipboardTaskPayload
 {

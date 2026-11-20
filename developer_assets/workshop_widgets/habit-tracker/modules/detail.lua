@@ -1,4 +1,5 @@
 local history = module.require("modules/history.lua")
+local CENTER_GLYPH = widget.hasFeature("view.icon.glyphInk")
 local previousMonth = utf8.char(0xF104) -- angle-left
 local nextMonth = utf8.char(0xF105) -- angle-right
 local previousYear = utf8.char(0xF100) -- angles-left
@@ -81,6 +82,7 @@ local function calendarView(context, model, m, weekdays)
     local function nav(key, column, glyph, delta, accessible)
         local button = view.iconButton({
             key = key, glyph = glyph, iconFont = "fa",
+            glyphInkCentered = CENTER_GLYPH or nil,
             width = m.navWidth, height = m.row, flexShrink = 0,
             fontSize = math.min(m.row * 17 / 28, m.navWidth * 0.55),
             enabled = history.shiftMonth(detail.date, delta, model.today) ~= nil,

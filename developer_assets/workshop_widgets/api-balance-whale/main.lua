@@ -2,6 +2,16 @@ local providers=module.require("modules/providers.lua")
 local client=module.require("modules/client.lua")
 local json=module.require("modules/json.lua")
 local whale=resource.image("whale")
+local CENTER_GLYPH = widget.hasFeature("draw.glyph")
+
+local function drawFa(glyph, cx, cy, size, color)
+    if CENTER_GLYPH then
+        draw.glyph(glyph, cx, cy, size, color, "fa")
+    else
+        draw.fa(glyph, cx - size / 2, cy - size / 2, size, color)
+    end
+end
+
 local fluent={
     refresh=utf8.char(0xF13D), -- arrow_clockwise_20_regular
     companion=utf8.char(0xF479), -- heart_20_regular
@@ -242,7 +252,7 @@ local function render(_context,m)
     fitted(ox+pad,headerY,name,row*0.63,colors.primary,titleWidth,true,row)
     local function headerAction(id,x,glyph,label)
         region(id,x,headerY,row,row,label)
-        draw.fa(glyph,x+row*0.24,headerY+row*0.24,row*0.52,colors.secondary)
+        drawFa(glyph, x + row / 2, headerY + row / 2, row * 0.52, colors.secondary)
     end
     headerAction("refresh",ox+w-pad-row*2.12,"",c.refresh)
     headerAction("settings",ox+w-pad-row,"",c.settings)
@@ -304,10 +314,11 @@ local function render(_context,m)
     draw.rect(ox+pad,footerY,buttonWidth,row*0.94,colors.blue,row*0.28,0.09)
     region(actionId,ox+pad,footerY,buttonWidth,row*0.94,action)
     fitted(ox+pad+row*0.32,footerY,action,row*0.41,colors.blue,buttonWidth-row*1.05,false,row*0.94)
-    draw.fa(whaleMode and "" or "",ox+pad+buttonWidth-row*0.49,footerY+row*0.32,row*0.28,colors.blue)
+    drawFa(whaleMode and "" or "", ox + pad + buttonWidth - row * 0.35,
+        footerY + row * 0.47, row * 0.28, colors.blue)
     local consoleX=ox+w-pad-row
     region("console",consoleX,footerY,row,row*0.94,c.console)
-    draw.fa("",consoleX+row*0.29,footerY+row*0.28,row*0.38,colors.secondary)
+    drawFa("", consoleX + row / 2, footerY + row * 0.47, row * 0.38, colors.secondary)
     if hasNotice then
         local noticeY=footerY-noticeHeight-row*0.10
         local notice=status(m,c)

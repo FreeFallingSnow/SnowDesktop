@@ -2,10 +2,12 @@
 
 #include "common/utils.h"
 #include "widget/data/widget_resource_lua.h"
+#include "widget/runtime/widget_instance.h"
 #include "widget_app_task_executor.h"
 #include "widget_task_broker.h"
 
 #include <string_view>
+#include <algorithm>
 #include <utility>
 
 namespace snowdesktop::widget_runtime
@@ -24,6 +26,20 @@ void SetString(lua_State* state, const char* key, std::string_view value)
     lua_setfield(state, -2, key);
 }
 } // namespace
+
+std::string RememberClipboardPath(LuaWidget& widget, std::string path)
+{
+    if (path.empty()) return {};
+    const auto reference = MakeWidgetItemReference(
+        "clipboard.read:" + std::to_string(widget.runtimeToken), path);
+    if (reference.empty()) return {};
+    auto& paths = widget.clipboardPathReferences;
+    std::erase_if(paths, [&](const auto& item) { return item.first == reference; });
+    constexpr std::size_t kMaximumPaths = 512;
+    if (paths.size() == kMaximumPaths) paths.erase(paths.begin());
+    paths.emplace_back(reference, std::move(path));
+    return reference;
+}
 
 const char* PrepareClipboardTaskRequest(const TaskBrokerAction& action,
     const ClipboardWriteSources& sources, WidgetClipboardTaskRequest& request)
@@ -46,7 +62,7 @@ const char* PrepareClipboardTaskRequest(const TaskBrokerAction& action,
                 sources.resolveImage(image->second, request);
             if (!request.image && request.imagePath.empty()) return "clipboardImageUnavailable";
         }
-        else if (request.format == "file-reference")
+        else if (request.format == "file-reference" || request.format == "file-paths")
         {
             for (std::size_t index = 1; index <= WidgetClipboardTaskExecutor::MaximumFileReferences; ++index)
             {

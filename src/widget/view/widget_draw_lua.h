@@ -58,4 +58,5 @@ int lua_DrawLine(lua_State* state);
 int lua_DrawCircle(lua_State* state);
 int lua_DrawFa(lua_State* state);
 int lua_DrawFluent(lua_State* state);
+int lua_DrawGlyph(lua_State* state);
 }

@@ -297,6 +297,24 @@ bool WidgetEngine::HasInteractionPointerCapture(
             HasPointerCapture();
 }
 
+std::shared_ptr<const snowdesktop::widget_runtime::WidgetRuntimeImagePixels>
+WidgetEngine::TakeInteractionImageDrag(const std::wstring& widgetId, std::string_view surface)
+{
+    if (snowdesktop::private_pointer::Active()) return {};
+    const int index = FindWidget(widgetId);
+    if (index < 0 || !widgets_[index].valid || widgets_[index].preview) return {};
+    auto& regions = InteractionRegionsForSurface(widgets_[index], surface);
+    const auto token = regions.PressedDragImage();
+    if (token.empty()) return {};
+    auto image = ResolveTaskImage(widgetId, std::string(token));
+    if (image)
+    {
+        regions.CancelPointerPress();
+        RuntimeInvalidateHost(widgetId);
+    }
+    return image;
+}
+
 void WidgetEngine::CancelInteractionPointerPress(std::string_view surface)
 {
     CancelHostInputPointerState(surface);

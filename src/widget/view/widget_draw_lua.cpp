@@ -1273,4 +1273,27 @@ int lua_DrawFluent(lua_State* L)
 {
     return LuaDrawFontGlyph(L, true);
 }
+
+int lua_DrawGlyph(lua_State* state)
+{
+    std::size_t length = 0;
+    const char* glyph = luaL_checklstring(state, 1, &length);
+    const auto codepoint = DecodeIconGlyph(std::string_view(glyph, length));
+    const float cx = static_cast<float>(luaL_checknumber(state, 2));
+    const float cy = static_cast<float>(luaL_checknumber(state, 3));
+    const float size = static_cast<float>(luaL_checknumber(state, 4));
+    const int color = static_cast<int>(luaL_optinteger(state, 5, 0xFFFFFF));
+    const std::string_view font = luaL_optstring(state, 6, "fluent");
+    const float alpha = static_cast<float>(luaL_optnumber(state, 7, 1.0));
+    const bool fluent = font == "fluent" || font == "fluent-regular";
+    if (!codepoint || !std::isfinite(cx) || !std::isfinite(cy) ||
+        !std::isfinite(size) || size <= 0.0f || size > 4096.0f ||
+        !std::isfinite(alpha) || (!fluent && font != "fa"))
+        return luaL_error(state, "draw.glyph: expected one icon scalar, finite geometry, and a bundled icon font");
+    auto* draw = GetLuaDrawContext(state);
+    auto* brush = draw ? GetCachedBrush(draw, color, alpha) : nullptr;
+    lua_pushboolean(state, brush && draw->DrawCenteredGlyph(codepoint, fluent,
+        draw->widgetRect.left + cx, draw->widgetRect.top + cy, size, *brush));
+    return 1;
+}
 }

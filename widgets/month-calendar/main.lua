@@ -311,11 +311,8 @@ local function drawHeaderIconButton(id, glyph, label, colors, shape, metrics)
             colors.text, metrics.controlRadius,
             pressed and 0.16 or 0.10)
     end
-    draw.fluent(glyph,
-        shape.x + (shape.width - metrics.iconSize) / 2,
-        shape.y + (shape.height - metrics.iconSize) / 2 +
-            metrics.spacingXs * 0.5,
-        metrics.iconSize, colors.text)
+    draw.glyph(glyph, shape.x + shape.width / 2, shape.y + shape.height / 2,
+        metrics.iconSize, colors.text, "fluent")
     submitButton(id, label, shape, metrics)
 end
 

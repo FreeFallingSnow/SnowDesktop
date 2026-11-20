@@ -1566,6 +1566,12 @@ role 推导焦点；显式 `focusable=false` 会退出焦点，key 观察目标�
 版本使用相同负载和按下/释放配对，`interaction.isFocused(key)` 可用于绘制焦点状态；这些事件
 不能取消宿主激活、组件槽位快捷键或字符/IME 输入。
 
+`interaction.dragImage` 允许即时绘制区域声明 `dragImage = imageHandle`。接受当前实例仍有效的
+运行时 `SnowImageResource`，例如剪贴板读取或订阅返回的句柄。用户在区域内按下左键并越过
+系统拖拽阈值后，宿主将该图片作为 OLE 复制数据提供给目标程序，支持 DIBV5 位图和虚拟
+`Image.png` 文件。开始拖拽会消费本次点击。宿主在启动时检查区域和图片句柄，预览和脚本
+事件无法发起系统拖拽。Lua 不接收拖拽目标、文件路径或拖拽结果。
+
 即时绘制滚动区域使用 `interaction.scroll(spec)`，不要调用 v1
 `ui.scrollArea`：
 
@@ -2435,8 +2441,9 @@ end
 读取 Windows `HTML Format` 中的片段，写入时由宿主生成剪贴板头，不附带纯文本表示。
 宿主将 HTML 作为字符串传递。
 
-图片读取支持 PNG 和 Windows 位图。输入块最多 64 MiB，源图每边最多 16384 像素且总计最多
-67108864 像素，返回等比缩放至每边不超过 512 像素的临时 `SnowImageResource`。该句柄可用于
+图片读取支持 PNG 和 Windows 位图。支持 `clipboard.image.originalSize` 的宿主按原图尺寸解码，
+可处理 Windows 图像接口和当前内存能够承载的图片。较早宿主输出最长边 512 像素。
+返回临时 `SnowImageResource`。该句柄可用于
 `draw.image` 或 `view.image.source`，在热重载、实例卸载或资源回收后失效。写入接受当前实例
 仍可用的图片句柄或 `resource.image` 返回的包内资源，包内图片按比例缩放至每边不超过 2048 像素。
 宿主以带 alpha 通道的 `CF_DIBV5` 发布图片。
@@ -2447,6 +2454,11 @@ end
 或可读的 `filesystem` 句柄，分别要求 `clipboard.read` 或 `filesystem.userSelected.read` 权限。
 剪贴板文件项采用 Explorer 兼容的 `CF_HDROP` 复制格式。引用隐藏实际路径，文件内容读取继续使用
 独立的 `filesystem` 授权。
+
+支持 `clipboard.filePaths` 时，用 `task.start("clipboard.write", { format = "file-paths", items = refs })`
+把 1 至 32 项完整地址写为 `CF_UNICODETEXT`，每行一个地址。接受当前实例手动读取的
+`items[i].ref` 或订阅事件的 `pathRefs`。操作需要可信用户手势及 `clipboard.read` 和
+`clipboard.write` 授权。引用仅在当前实例内有效，并随宿主回收而过期。
 
 任务在后台访问 Win32 剪贴板，同一实例最短间隔 100 ms。可能返回的错误包括
 `rateLimited`、`clipboardBusy`、`formatUnavailable`、`clipboardTooLarge`、
@@ -2466,7 +2478,7 @@ end
 | --- | --- |
 | `text` | `text`，最多 262144 字节的 UTF-8 |
 | `image` | `rgb`，按行排列的 RGB 二进制字符串，以及 `width`、`height`，最长边 32 像素。支持 `data.clipboard.changes.image` 时可额外返回图片资源 |
-| `file-names` | `names`，最多 32 个文件或文件夹展示名 |
+| `file-names` | `names`，最多 32 个文件或文件夹展示名。支持 `clipboard.filePaths` 且获准 `clipboard.read` 时，可附带按相同顺序排列的 `pathRefs` |
 | `empty` | 无历史内容，读取失败时带 `error` |
 
 一次变更优先投递图片，其次是文件展示名，最后是文本。宿主识别
@@ -2475,15 +2487,16 @@ end
 `empty`。可信手势中的 `clipboard.read` 仍可获取当前图片句柄和文件引用。
 
 支持 `data.clipboard.changes.image` 的宿主可在图片变更中附带实例绑定的
-`image` 句柄及 `imageWidth`、`imageHeight`。图像等比缩放至每边不超过 512 像素。
-每实例最多保留最近 8 个不同的后台图像资源，并受共享运行时图片缓存额度约束。
-额度不足时事件仍返回缩略图。资源被淘汰、组件重载或卸载后句柄失效，可用
+`image` 句柄及 `imageWidth`、`imageHeight`。支持 `clipboard.image.originalSize` 时保留
+原始分辨率。每实例最多保留最近 8 个不同的后台图像资源。剪贴板像素缓存会优先保留最新
+资源，可以单独容纳一张超过常规缓存额度的原图。事件仍同时返回独立缩略图。
+资源被淘汰、组件重载或卸载后句柄失效，可用
 `resource.status(image).state` 检查。用户点击时，可以将仍可用的句柄作为
 `task.start("clipboard.write", { format = "image", image = image })` 的参数，
 写入需要 `clipboard.write` 授权。较早构建继续投递原有的缩略图字段。
 
 `clipboard.imageIdentity` 让订阅事件和手动读取图片的任务结果同时提供
-`imageId`。同一个宿主解码并缩放后的图片像素与尺寸相同，ID 就相同。
+`imageId`。同一个宿主解码出的图片像素与尺寸相同，ID 就相同。
 订阅缺少可写图片句柄时仍提供 ID，组件可用它合并重复记录。该字段为不透明字符串，
 仅用于本次会话中判断图片内容是否相同。
 
@@ -2957,6 +2970,10 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 媒体参数表只接受上述动作对应字段；其他任务同样拒绝未知字段、错误类型和越界数值。已移除的
 `media.playPause/next/previous` 不会注册进 VM，不能绕过任务的手势门禁。
 
+`view.icon` 和 `view.iconButton` 在支持 `view.icon.glyphInk` 的宿主上可以声明
+`glyphInkCentered = true`。宿主把字体轮廓的可见边界居中到节点的内容区。
+该模式下 `glyph` 使用单个 Unicode 字符。迁移时删除专为字形留白添加的单侧 padding 或偏移。
+
 ### `draw`
 
 即时绘制坐标以组件左上角为 `(0, 0)`：
@@ -2982,7 +2999,10 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 - `draw.shadow(x, y, width, height, color?, blur?, radius?, offsetX?, offsetY?, alpha?)`
 - `draw.sparkline(values, x, y, width, height, color?, thickness?, min?, max?, alpha?)`
 - `draw.pushClip(x, y, width, height)`、`draw.popClip()`
-- `draw.fa(...)`、`draw.fluent(...)`
+- `draw.glyph(glyph, centerX, centerY, size, color?, iconFont?, alpha?) -> boolean`
+  使用字体的轮廓边界对齐到指定中心，绘制成功时返回 `true`。支持 `draw.glyph`
+  feature，`glyph` 为单个 Unicode 字符，`iconFont` 可为 `"fluent"`（默认）、
+  `"fluent-regular"` 或 `"fa"`。旧宿主可用 `draw.fluent` 或 `draw.fa` 降级。
 - `draw.image(imageHandle, x, y, width, height, alpha?)`
 - `draw.imageFit(imageHandle, x, y, width, height, fit?, alignment?, alpha?, interpolation?, rotationDegrees?, originX?, originY?, cornerRadius?)`
 - `draw.icon(ref, x, y, size?, alpha?)`：要求 `desktop.read`，只接受当前实例由

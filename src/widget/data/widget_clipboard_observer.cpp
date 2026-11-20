@@ -1,7 +1,9 @@
 #include "widget_clipboard_observer.h"
+#include "widget/runtime/widget_runtime_image.h"
 
 #include <objbase.h>
 
+#include <algorithm>
 #include <chrono>
 #include <utility>
 
@@ -145,6 +147,20 @@ void WidgetClipboardObserver::Run(std::stop_token stop)
             const std::lock_guard lock(mutex_);
             if (session_ != request.session) continue;
             change->revision = request.revision;
+            if (change->image)
+            {
+                constexpr std::size_t kQueuedImageBudget = 64 * 1024 * 1024;
+                const auto incomingBytes = change->image->bgraPremultiplied.size();
+                std::size_t queuedBytes = 0;
+                for (const auto& completed : completed_)
+                    if (completed.image) queuedBytes += completed.image->bgraPremultiplied.size();
+                while (queuedBytes > std::max(kQueuedImageBudget, incomingBytes) - incomingBytes)
+                {
+                    if (completed_.front().image)
+                        queuedBytes -= completed_.front().image->bgraPremultiplied.size();
+                    completed_.pop_front();
+                }
+            }
             if (completed_.size() == kMaxCompletedChanges) completed_.pop_front();
             completed_.push_back(std::move(*change));
             wake = wake_;

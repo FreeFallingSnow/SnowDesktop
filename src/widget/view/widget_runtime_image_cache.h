@@ -53,6 +53,8 @@ public:
 
 private:
     void EraseBitmap(const std::string& key);
+    void MakeRoomForClipboardImage(const std::wstring& widgetId,
+        const WidgetRuntimeImagePixels& incoming);
 
     struct RuntimeImageResource
     {
@@ -60,9 +62,11 @@ private:
             WidgetRuntimeImagePixels> pixels;
         std::wstring ownerWidgetId;
         std::string source;
+        std::uint64_t clipboardRevision = 0;
     };
 
     WidgetImageSamplingCache& sampling_;
+    std::uint64_t clipboardRevision_ = 0;
     std::unordered_map<std::string, RuntimeImageResource> images_;
     std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID2D1Bitmap1>> bitmaps_;
 };

@@ -2552,9 +2552,9 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         return false;
     }
     if (!iconNode && (fields.Present("glyph") ||
-            fields.Present("iconFont")))
+            fields.Present("iconFont") || fields.Present("glyphInkCentered")))
     {
-        error = "only icon nodes accept 'glyph' and 'iconFont'";
+        error = "only icon nodes accept glyph properties";
         return false;
     }
     if (node.type != ViewNodeType::Shape &&
@@ -3070,6 +3070,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.overflowText, error) ||
         !ReadShapeKindField(state, index, node.shapeKind, error) ||
         !ReadIconFontField(state, index, node.iconFont, error) ||
+        !ReadBoolField(state, index, "glyphInkCentered", node.glyphInkCentered, error) ||
         !readStyle("style", node.style) ||
         !readStyle("hoverStyle", node.hoverStyle) ||
         !readStyle("pressedStyle", node.pressedStyle) ||

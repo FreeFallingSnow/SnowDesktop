@@ -33,6 +33,7 @@ extern "C" {
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 /**
@@ -230,6 +231,7 @@ struct LuaWidget
     std::unordered_map<std::string, ApplicationReference>
         applicationReferences;
     std::unordered_map<std::string, ItemReference> itemReferences;
+    std::vector<std::pair<std::string, std::string>> clipboardPathReferences;
     snowdesktop::widget_runtime::LogicalSlotModel logicalSlots;
     snowdesktop::widget_runtime::LogicalSlotHistory logicalSlotHistory;
     std::optional<LogicalSlotPointerDrag> logicalSlotPointerDrag;

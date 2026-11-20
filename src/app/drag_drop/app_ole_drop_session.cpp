@@ -2404,7 +2404,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
 HRESULT DesktopApp::HandleOleQueryContinueDrag(
     BOOL escapePressed, DWORD keyState)
 {
-    if (widgetTextDragSource_)
+    if (widgetTextDragSource_ || widgetImageDragActive_)
         return escapePressed ? DRAGDROP_S_CANCEL :
             (keyState & MK_LBUTTON) ? S_OK : DRAGDROP_S_DROP;
     if (escapePressed && TryDismissPopupForEscape())

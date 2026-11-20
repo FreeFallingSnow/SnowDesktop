@@ -6,6 +6,7 @@
 #include "common/l10n.h"
 #include "diagnostics/performance_trace.h"
 #include "widget/tasks/widget_filesystem_task_dispatch.h"
+#include "widget/tasks/widget_clipboard_task_dispatch.h"
 #include "system/system_snapshot.h"
 #include "widget/tasks/widget_filesystem_watch_origin.h"
 #include "widget/tasks/widget_filesystem_watch_service.h"
@@ -329,6 +330,29 @@ void WidgetEngine::DrainClipboardChanges()
                             lua_rawseti(state, -2, nameIndex++);
                         }
                         lua_setfield(state, -2, "names");
+                    }
+                    if (!change.filePaths.empty() && RuntimeHasPermission(widgetId, "clipboard.read"))
+                    {
+                        std::vector<std::string> references;
+                        references.reserve(change.filePaths.size());
+                        for (const auto& path : change.filePaths)
+                        {
+                            auto reference = snowdesktop::widget_runtime::RememberClipboardPath(
+                                widgets_[index], path);
+                            if (reference.empty()) break;
+                            references.push_back(std::move(reference));
+                        }
+                        if (references.size() == change.filePaths.size())
+                        {
+                            lua_createtable(state, static_cast<int>(references.size()), 0);
+                            lua_Integer referenceIndex = 1;
+                            for (const auto& reference : references)
+                            {
+                                lua_pushlstring(state, reference.data(), reference.size());
+                                lua_rawseti(state, -2, referenceIndex++);
+                            }
+                            lua_setfield(state, -2, "pathRefs");
+                        }
                     }
                     if (!change.error.empty())
                     {

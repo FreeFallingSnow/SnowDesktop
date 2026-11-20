@@ -49,7 +49,7 @@ constexpr char kNotificationPostPermission[] = "notification.post";
 static const char* ResolveClipboardWriteFile(const LuaWidget& owner,
     const snowdesktop::widget_runtime::TaskBrokerAction& action,
     const snowdesktop::widget_runtime::WidgetFilesystemHandleStore* handleStore,
-    const std::string& reference, std::filesystem::path& path)
+    const std::string& reference, std::filesystem::path& path, bool pathsOnly)
 {
     using snowdesktop::widget::WidgetPermissionBroker;
     using snowdesktop::widget_runtime::WidgetFilesystemHandleAccess;
@@ -57,12 +57,22 @@ static const char* ResolveClipboardWriteFile(const LuaWidget& owner,
     {
         if (!WidgetPermissionBroker::AllowsPermission(owner.permissions, "clipboard.read"))
             return "permissionDenied";
+        if (pathsOnly)
+        {
+            const auto& paths = owner.clipboardPathReferences;
+            const auto found = std::find_if(paths.begin(), paths.end(),
+                [&](const auto& item) { return item.first == reference; });
+            if (found == paths.end()) return "invalidReference";
+            path = Utf8ToWide(found->second);
+            return nullptr;
+        }
         const auto found = owner.itemReferences.find(reference);
         if (found == owner.itemReferences.end() || found->second.sourceTask != "clipboard.read")
             return "invalidReference";
         path = Utf8ToWide(found->second.target);
         return nullptr;
     }
+    if (pathsOnly) return "invalidReference";
     if (!WidgetPermissionBroker::AllowsPermission(owner.permissions, kFilesystemReadPermission))
         return "permissionDenied";
     if (action.preview && IsPreviewFilesystemHandle(reference))
@@ -1670,9 +1680,10 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                         request.imagePath = *path;
                     }
                 },
-                [this, &owner, &action](const std::string& reference, std::filesystem::path& path) {
+                [this, &owner, &action, &clipboardRequest](const std::string& reference, std::filesystem::path& path) {
                     return ResolveClipboardWriteFile(*owner, action,
-                        filesystemHandleStore_.get(), reference, path);
+                        filesystemHandleStore_.get(), reference, path,
+                        clipboardRequest.format == "file-paths");
                 },
             };
             if (const char* error = PrepareClipboardTaskRequest(action, sources, clipboardRequest))
@@ -2344,6 +2355,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                         widget->itemReferences.clear();
                     for (const auto& file : files)
                     {
+                        (void)snowdesktop::widget_runtime::RememberClipboardPath(*widget, file.target);
                         widget->itemReferences.insert_or_assign(file.reference,
                             LuaWidget::ItemReference{file.target, "clipboard.read",
                                 completion.id, file.name, "clipboard",

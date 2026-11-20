@@ -2,6 +2,7 @@
 
 #include "widget/runtime/widget_engine.h"
 #include "widget/runtime/widget_lua_binding_context.h"
+#include "widget/data/widget_resource_lua.h"
 #include "widget/view/widget_render_host_context.h"
 #include "widget/view/widget_surface_host.h"
 #include "widget/view/widget_host_input_support.h"
@@ -110,6 +111,16 @@ int lua_InteractionRegion(lua_State* state)
     lua_getfield(state, descriptor, "cursor");
     if (!lua_isnil(state, -1))
         region.cursor = luaL_checkstring(state, -1);
+    lua_pop(state, 1);
+    lua_getfield(state, descriptor, "dragImage");
+    if (!lua_isnil(state, -1))
+    {
+        const auto* image = TestResourceHandle(state, -1);
+        if (!image || image->type != LuaResourceType::Image ||
+            !IsWidgetRuntimeImageToken(image->name))
+            return luaL_error(state, "interaction.region: dragImage must be a runtime image handle");
+        region.dragImage = image->name;
+    }
     lua_pop(state, 1);
     lua_getfield(state, descriptor, "tooltip");
     if (!lua_isnil(state, -1))

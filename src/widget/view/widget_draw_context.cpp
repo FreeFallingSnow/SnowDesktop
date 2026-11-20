@@ -19,6 +19,92 @@ using Microsoft::WRL::ComPtr;
 WidgetDrawContext::WidgetDrawContext() = default;
 WidgetDrawContext::~WidgetDrawContext() = default;
 
+std::uint32_t DecodeIconGlyph(std::string_view glyph) noexcept
+{
+    if (glyph.empty() || glyph.size() > 4) return 0;
+    wchar_t utf16[2]{};
+    const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+        glyph.data(), static_cast<int>(glyph.size()), utf16, 2);
+    if (count == 1) return utf16[0];
+    if (count != 2 || utf16[0] < 0xD800 || utf16[0] > 0xDBFF ||
+        utf16[1] < 0xDC00 || utf16[1] > 0xDFFF)
+        return 0;
+    return 0x10000u + (std::uint32_t(utf16[0] - 0xD800) << 10) +
+        std::uint32_t(utf16[1] - 0xDC00);
+}
+
+bool WidgetDrawContext::DrawCenteredGlyph(std::uint32_t codepoint,
+    bool fluent, float cx, float cy, float size, ID2D1Brush& brush,
+    D2D1_RECT_F* paintedBounds)
+{
+    if (!ctx || !dwrite || codepoint == 0 || size <= 0.0f) return false;
+    ComPtr<ID2D1Factory> factory;
+    ctx->GetFactory(&factory);
+    if (!factory) return false;
+    if (factory.Get() != glyphFactory_.Get())
+    {
+        glyphOutlines_.clear();
+        glyphFactory_ = factory;
+    }
+    const auto key = codepoint | (fluent ? 0x200000u : 0u);
+    if (glyphOutlines_.size() >= 512 && !glyphOutlines_.contains(key))
+        glyphOutlines_.clear();
+    const auto [entry, inserted] = glyphOutlines_.try_emplace(key);
+    auto& outline = entry->second;
+    if (inserted)
+    {
+        auto& face = fluent ? fluentFace_ : fontAwesomeFace_;
+        if (!face)
+        {
+            auto* format = TextFormat(20.0f, DWRITE_FONT_WEIGHT_NORMAL,
+                false, DWRITE_WORD_WRAPPING_NO_WRAP, !fluent, false, fluent, nullptr);
+            if (!format) return false;
+            std::wstring name(format->GetFontFamilyNameLength() + 1, L'\0');
+            ComPtr<IDWriteFontCollection> collection;
+            ComPtr<IDWriteFontFamily> family;
+            ComPtr<IDWriteFont> font;
+            UINT32 familyIndex = 0;
+            BOOL found = FALSE;
+            if (FAILED(format->GetFontFamilyName(name.data(), static_cast<UINT32>(name.size()))) ||
+                FAILED(format->GetFontCollection(&collection)) || !collection ||
+                FAILED(collection->FindFamilyName(name.c_str(), &familyIndex, &found)) || !found ||
+                FAILED(collection->GetFontFamily(familyIndex, &family)) ||
+                FAILED(family->GetFirstMatchingFont(format->GetFontWeight(),
+                    format->GetFontStretch(), format->GetFontStyle(), &font)) ||
+                FAILED(font->CreateFontFace(&face)))
+                return false;
+        }
+        UINT16 glyph = 0;
+        ComPtr<ID2D1PathGeometry> geometry;
+        ComPtr<ID2D1GeometrySink> sink;
+        D2D1_RECT_F ink{};
+        if (FAILED(face->GetGlyphIndices(&codepoint, 1, &glyph)) || glyph == 0 ||
+            FAILED(factory->CreatePathGeometry(&geometry)) || FAILED(geometry->Open(&sink)) ||
+            FAILED(face->GetGlyphRunOutline(1.0f, &glyph, nullptr, nullptr, 1,
+                FALSE, FALSE, sink.Get())) || FAILED(sink->Close()) ||
+            FAILED(geometry->GetBounds(nullptr, &ink)) ||
+            ink.right <= ink.left || ink.bottom <= ink.top)
+            return false;
+        outline.geometry = std::move(geometry);
+        outline.ink = ink;
+    }
+    if (!outline.geometry) return false;
+    const auto& ink = outline.ink;
+    const float halfWidth = (ink.right - ink.left) * size * 0.5f;
+    const float halfHeight = (ink.bottom - ink.top) * size * 0.5f;
+    const float x = cx - halfWidth;
+    const float y = cy - halfHeight;
+    D2D1_MATRIX_3X2_F transform{};
+    ctx->GetTransform(&transform);
+    ctx->SetTransform(D2D1::Matrix3x2F::Scale(size, size) *
+        D2D1::Matrix3x2F::Translation(x - ink.left * size, y - ink.top * size) * transform);
+    ctx->FillGeometry(outline.geometry.Get(), &brush);
+    ctx->SetTransform(transform);
+    if (paintedBounds)
+        *paintedBounds = D2D1::RectF(x, y, cx + halfWidth, cy + halfHeight);
+    return true;
+}
+
 WidgetDrawContext::PrivateFontResource* WidgetDrawContext::LoadPrivateFont(
     const std::wstring& path)
 {

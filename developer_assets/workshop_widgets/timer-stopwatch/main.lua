@@ -1,4 +1,5 @@
 local logic = module.require("modules/timer.lua")
+local CENTER_GLYPH = widget.hasFeature("view.icon.glyphInk")
 local function copy()
     return { name=l10n.tr("timer.name"), countdown=l10n.tr("timer.countdown"), stopwatch=l10n.tr("timer.stopwatch"),
         custom=l10n.tr("timer.custom"), start=l10n.tr("timer.start"), pause=l10n.tr("timer.pause"), resume=l10n.tr("timer.resume"),
@@ -43,7 +44,12 @@ local function desktop(_,m)
     local function icon(id,glyph,label,size,primary,headerIcon)
         return (primary and view.iconButton or view.icon)({key=id,glyph=utf8.char(glyph),iconFont="fa",width=size,height=size,
             fontSize=size*0.43,flexShrink=0,textAlign="center",verticalAlign="center",
-            padding={left=glyph==0xF04B and size*0.05 or 0,top=headerIcon and size*0.08 or 0},events={click={id=id}},accessibility={label=label},
+            glyphInkCentered=CENTER_GLYPH or nil,
+            padding=not CENTER_GLYPH and {
+                left=glyph==0xF04B and size*0.05 or 0,
+                top=headerIcon and size*0.08 or 0,
+            } or nil,
+            events={click={id=id}},accessibility={label=label},
             style={background=primary and accent or nil,
                 foreground=primary and 0xFFFFFF or "textPrimary",cornerRadius=size/2},
             hoverStyle={opacity=0.82},pressedStyle={opacity=0.65}})

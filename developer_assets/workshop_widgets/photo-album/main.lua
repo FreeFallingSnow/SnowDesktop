@@ -1,5 +1,6 @@
 local album = module.require("modules/album.lua")
 local sample = resource.image("sample")
+local CENTER_GLYPH = widget.hasFeature("view.icon.glyphInk")
 local fluent={
     fill=utf8.char(0xE42B), -- crop_20_regular
     remove=utf8.char(0xF369), -- dismiss_20_regular
@@ -45,7 +46,13 @@ local function button(key, label, row, active, icon)
         style={foreground="textPrimary",cornerRadius=row*0.20},
         action={id=key},accessibility={label=label},tooltip=label}
     if key=="previous" or key=="next" then options.events={doubleClick={id=key}} end
-    if icon then options.label=nil;options.glyph=utf8.char(glyphs[icon]);options.iconFont="fa";return view.iconButton(options) end
+    if icon then
+        options.label = nil
+        options.glyph = utf8.char(glyphs[icon])
+        options.iconFont = "fa"
+        options.glyphInkCentered = CENTER_GLYPH or nil
+        return view.iconButton(options)
+    end
     options.padding={horizontal=row*0.32}
     return view.button(options)
 end

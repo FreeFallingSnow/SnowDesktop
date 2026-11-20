@@ -129,6 +129,19 @@ void DesktopApp::RunWidgetTextDrag(WidgetTextDragSource dragSource)
         PresentOleDragInteractionFrame();
 }
 
+void DesktopApp::RunWidgetImageDrag(IDataObject* data)
+{
+    auto* adapter = EnsureOleDragDropAdapter();
+    if (!adapter) return;
+    ComPtr<IDropSource> source(static_cast<IDropSource*>(adapter));
+    widgetImageDragActive_ = true;
+    DWORD effect = DROPEFFECT_NONE;
+    DoDragDrop(data, source.Get(), DROPEFFECT_COPY, &effect);
+    widgetImageDragActive_ = false;
+    if (dragDropController_.IsExternalDragActive())
+        HandleExternalOleDragLeave(false);
+}
+
 POINT DesktopApp::GetDragTargetPoint(POINT current) const
 {
     return snowdesktop::desktop_request::TargetPoint(dragSession_,

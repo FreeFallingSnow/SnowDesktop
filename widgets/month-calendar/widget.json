@@ -363,6 +363,7 @@
     "calendar.read"
   ],
   "requiredFeatures": [
+    "draw.glyph",
     "calendar.dateMath",
     "calendar.selection",
     "data.calendar.events",

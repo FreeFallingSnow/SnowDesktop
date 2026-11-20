@@ -244,7 +244,7 @@ constexpr ViewPropertyEffect PropertyEffects(std::string_view name,
             "checked", "indeterminate", "selected", "sticky", "visible",
             "visibility", "enabled", "focusable", "cursor",
             "showScrollbar", "textAlign", "verticalAlign", "textWrap",
-            "maxLines", "overflowText" }))
+            "maxLines", "overflowText", "glyphInkCentered" }))
         add(ViewPropertyEffect::Paint);
     if (IsNamed(name, { "value", "min", "max", "step", "selectedValue",
             "expanded", "selectAll", "liveUpdate", "readOnly", "required",
@@ -332,6 +332,7 @@ constexpr auto kProperties = std::to_array<ViewPropertyContract>({
     Property("label", ViewPropertyValueKind::String),
     Property("glyph", ViewPropertyValueKind::String),
     EnumProperty("iconFont", ViewPropertyEnumSet::IconFont),
+    Property("glyphInkCentered", ViewPropertyValueKind::Boolean),
     Property("source", ViewPropertyValueKind::Resource),
     RangedProperty("spinSpeed", ViewPropertyValueKind::Number, 0.0, 360.0),
     Property("font", ViewPropertyValueKind::Resource),
@@ -905,7 +906,7 @@ bool ViewNodeAllowsProperty(
     if (property == "glowRadius") return type == ViewNodeType::Text;
     if (property == "spans") return type == ViewNodeType::StyledText;
     if (property == "label") return IsLabelNode(type);
-    if (property == "glyph" || property == "iconFont")
+    if (property == "glyph" || property == "iconFont" || property == "glyphInkCentered")
         return type == ViewNodeType::Icon || type == ViewNodeType::IconButton;
     if (property == "source" || property == "spinSpeed")
         return type == ViewNodeType::Image;

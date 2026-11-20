@@ -1,15 +1,20 @@
 #include "drop_image_data.h"
+#include "widget/runtime/widget_runtime_image.h"
 
 #include <windows.h>
 #include <objidl.h>
+#include <shlobj.h>
 #include <wincodec.h>
 #include <wrl/client.h>
+#include <wrl/implements.h>
 
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace snowdesktop::drop_image_data
@@ -536,28 +541,33 @@ DecodedImage TryBitmap(IDataObject* dataObject,
     return MaterializeBitmap(factory, bitmap.Get(), limits);
 }
 
+bool EncodePngToStream(IWICImagingFactory* factory, IWICBitmapSource* source,
+    IStream* output)
+{
+    ComPtr<IWICStream> stream;
+    ComPtr<IWICBitmapEncoder> encoder;
+    ComPtr<IWICBitmapFrameEncode> frame;
+    return
+        SUCCEEDED(factory->CreateStream(&stream)) && stream &&
+        SUCCEEDED(stream->InitializeFromIStream(output)) &&
+        SUCCEEDED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr,
+            &encoder)) && encoder &&
+        SUCCEEDED(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache)) &&
+        SUCCEEDED(encoder->CreateNewFrame(&frame, nullptr)) && frame &&
+        SUCCEEDED(frame->Initialize(nullptr)) &&
+        SUCCEEDED(frame->WriteSource(source, nullptr)) &&
+        SUCCEEDED(frame->Commit()) && SUCCEEDED(encoder->Commit()) &&
+        SUCCEEDED(output->Commit(STGC_DEFAULT));
+}
+
 bool EncodePng(IWICImagingFactory* factory, IWICBitmapSource* source,
     const std::filesystem::path& destination,
     std::size_t maximumBytes)
 {
-    if (!factory || !source || destination.empty() || maximumBytes == 0)
-        return false;
-
     ComPtr<IStream> memoryStream;
-    ComPtr<IWICStream> stream;
-    ComPtr<IWICBitmapEncoder> encoder;
-    ComPtr<IWICBitmapFrameEncode> frame;
-    if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &memoryStream)) ||
-        !memoryStream || FAILED(factory->CreateStream(&stream)) || !stream ||
-        FAILED(stream->InitializeFromIStream(memoryStream.Get())) ||
-        FAILED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr,
-            &encoder)) || !encoder ||
-        FAILED(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache)) ||
-        FAILED(encoder->CreateNewFrame(&frame, nullptr)) || !frame ||
-        FAILED(frame->Initialize(nullptr)) ||
-        FAILED(frame->WriteSource(source, nullptr)) ||
-        FAILED(frame->Commit()) || FAILED(encoder->Commit()) ||
-        FAILED(memoryStream->Commit(STGC_DEFAULT)))
+    if (!factory || !source || destination.empty() || maximumBytes == 0 ||
+        FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &memoryStream)) ||
+        !EncodePngToStream(factory, source, memoryStream.Get()))
         return false;
 
     STATSTG statistics{};
@@ -626,6 +636,180 @@ bool EncodePng(IWICImagingFactory* factory, IWICBitmapSource* source,
     GlobalUnlock(global);
     return written;
 }
+
+class ImageDragDataObject final : public Microsoft::WRL::RuntimeClass<
+    Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, IDataObject>
+{
+public:
+    explicit ImageDragDataObject(
+        std::shared_ptr<const widget_runtime::WidgetRuntimeImagePixels> image)
+        : image_(std::move(image)),
+          descriptor_(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_FILEDESCRIPTORW))),
+          contents_(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_FILECONTENTS)))
+    {}
+
+    HRESULT STDMETHODCALLTYPE GetData(FORMATETC* format, STGMEDIUM* medium) override
+    {
+        if (!medium) return E_POINTER;
+        *medium = {};
+        const HRESULT supported = QueryGetData(format);
+        if (FAILED(supported)) return supported;
+        if (format->cfFormat == contents_)
+        {
+            ComPtr<IWICImagingFactory> factory;
+            ComPtr<IWICBitmap> bitmap;
+            ComPtr<IStream> png;
+            if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+                    CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
+                FAILED(factory->CreateBitmapFromMemory(image_->width, image_->height,
+                    GUID_WICPixelFormat32bppPBGRA, image_->stride,
+                    static_cast<UINT>(image_->bgraPremultiplied.size()),
+                    const_cast<BYTE*>(image_->bgraPremultiplied.data()), &bitmap)) ||
+                FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &png)) ||
+                !EncodePngToStream(factory.Get(), bitmap.Get(), png.Get()) ||
+                FAILED(png->Seek({}, STREAM_SEEK_SET, nullptr)))
+                return E_FAIL;
+            medium->tymed = TYMED_ISTREAM;
+            medium->pstm = png.Detach();
+            return S_OK;
+        }
+        HGLOBAL memory = nullptr;
+        if (format->cfFormat == CF_DIBV5)
+            memory = CreateDibV5(*image_);
+        else
+        {
+            memory = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, sizeof(FILEGROUPDESCRIPTORW));
+            if (!memory) return E_OUTOFMEMORY;
+            auto* group = static_cast<FILEGROUPDESCRIPTORW*>(GlobalLock(memory));
+            if (!group)
+            {
+                GlobalFree(memory);
+                return E_OUTOFMEMORY;
+            }
+            group->cItems = 1;
+            auto& file = group->fgd[0];
+            file.dwFlags = FD_ATTRIBUTES | FD_PROGRESSUI;
+            file.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
+            constexpr wchar_t name[] = L"Image.png";
+            std::copy(std::begin(name), std::end(name), file.cFileName);
+            GlobalUnlock(memory);
+        }
+        if (!memory) return E_OUTOFMEMORY;
+        medium->tymed = TYMED_HGLOBAL;
+        medium->hGlobal = memory;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE QueryGetData(FORMATETC* format) override
+    {
+        if (!format) return E_POINTER;
+        if (format->dwAspect != DVASPECT_CONTENT) return DV_E_DVASPECT;
+        if (descriptor_ && contents_ && format->cfFormat == contents_)
+        {
+            if (format->lindex != 0) return DV_E_LINDEX;
+            return (format->tymed & TYMED_ISTREAM) ? S_OK : DV_E_TYMED;
+        }
+        if (format->cfFormat != CF_DIBV5 &&
+            !(descriptor_ && contents_ && format->cfFormat == descriptor_))
+            return DV_E_FORMATETC;
+        if (format->lindex != -1) return DV_E_LINDEX;
+        return (format->tymed & TYMED_HGLOBAL) ? S_OK : DV_E_TYMED;
+    }
+
+    HRESULT STDMETHODCALLTYPE EnumFormatEtc(DWORD direction, IEnumFORMATETC** formats) override
+    {
+        if (!formats) return E_POINTER;
+        *formats = nullptr;
+        if (direction != DATADIR_GET) return E_NOTIMPL;
+        FORMATETC offered[]{
+            {CF_DIBV5, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL},
+            {descriptor_, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL},
+            {contents_, nullptr, DVASPECT_CONTENT, 0, TYMED_ISTREAM},
+        };
+        return SHCreateStdEnumFmtEtc(descriptor_ && contents_ ? 3 : 1, offered, formats);
+    }
+
+    HRESULT STDMETHODCALLTYPE GetCanonicalFormatEtc(FORMATETC* in, FORMATETC* out) override
+    {
+        if (!in || !out) return E_POINTER;
+        *out = *in;
+        out->ptd = nullptr;
+        return DATA_S_SAMEFORMATETC;
+    }
+
+    HRESULT STDMETHODCALLTYPE GetDataHere(FORMATETC*, STGMEDIUM*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE SetData(FORMATETC*, STGMEDIUM*, BOOL) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE DAdvise(FORMATETC*, DWORD, IAdviseSink*, DWORD*) override
+    { return OLE_E_ADVISENOTSUPPORTED; }
+    HRESULT STDMETHODCALLTYPE DUnadvise(DWORD) override { return OLE_E_ADVISENOTSUPPORTED; }
+    HRESULT STDMETHODCALLTYPE EnumDAdvise(IEnumSTATDATA**) override
+    { return OLE_E_ADVISENOTSUPPORTED; }
+
+private:
+    std::shared_ptr<const widget_runtime::WidgetRuntimeImagePixels> image_;
+    CLIPFORMAT descriptor_;
+    CLIPFORMAT contents_;
+};
+}
+
+HGLOBAL CreateDibV5(const widget_runtime::WidgetRuntimeImagePixels& image) noexcept
+{
+    if (!widget_runtime::IsValidWidgetRuntimeImage(
+            image, widget_runtime::kMaximumRuntimeImageDimension))
+        return nullptr;
+
+    BITMAPV5HEADER header{};
+    header.bV5Size = sizeof(header);
+    header.bV5Width = static_cast<LONG>(image.width);
+    header.bV5Height = -static_cast<LONG>(image.height);
+    header.bV5Planes = 1;
+    header.bV5BitCount = 32;
+    header.bV5Compression = BI_BITFIELDS;
+    header.bV5SizeImage = static_cast<DWORD>(image.bgraPremultiplied.size());
+    header.bV5RedMask = 0x00ff0000;
+    header.bV5GreenMask = 0x0000ff00;
+    header.bV5BlueMask = 0x000000ff;
+    header.bV5AlphaMask = 0xff000000;
+    header.bV5CSType = LCS_sRGB;
+    header.bV5Intent = LCS_GM_IMAGES;
+    const HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, sizeof(header) + header.bV5SizeImage);
+    if (!memory) return nullptr;
+    auto* target = static_cast<std::uint8_t*>(GlobalLock(memory));
+    if (!target)
+    {
+        GlobalFree(memory);
+        return nullptr;
+    }
+    std::memcpy(target, &header, sizeof(header));
+    auto* pixels = target + sizeof(header);
+    std::memcpy(pixels, image.bgraPremultiplied.data(), header.bV5SizeImage);
+    // DIBV5 uses straight alpha. Convert in-place in the transfer medium.
+    for (std::size_t offset = 0; offset < header.bV5SizeImage; offset += 4)
+    {
+        const unsigned int alpha = pixels[offset + 3];
+        if (alpha == 0 || alpha == 255) continue;
+        for (std::size_t channel = 0; channel < 3; ++channel)
+        {
+            auto& value = pixels[offset + channel];
+            value = static_cast<std::uint8_t>(std::min(255u,
+                (value * 255u + alpha / 2u) / alpha));
+        }
+    }
+    GlobalUnlock(memory);
+    return memory;
+}
+
+HRESULT CreateDragDataObject(
+    std::shared_ptr<const widget_runtime::WidgetRuntimeImagePixels> image,
+    IDataObject** result) noexcept
+{
+    if (!result) return E_POINTER;
+    *result = nullptr;
+    if (!image || !widget_runtime::IsValidWidgetRuntimeImage(
+            *image, widget_runtime::kMaximumRuntimeImageDimension))
+        return E_INVALIDARG;
+    const auto object = Microsoft::WRL::Make<ImageDragDataObject>(std::move(image));
+    return object ? object.CopyTo(result) : E_OUTOFMEMORY;
 }
 
 bool OffersImageData(IDataObject* dataObject) noexcept

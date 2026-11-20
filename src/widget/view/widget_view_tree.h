@@ -583,6 +583,7 @@ struct ViewNode
     ViewOrientation orientation = ViewOrientation::Horizontal;
     ViewShapeKind shapeKind = ViewShapeKind::Rectangle;
     ViewIconFont iconFont = ViewIconFont::FontAwesome;
+    bool glyphInkCentered = false;
     float fontSize = 15.0f;
     std::size_t fontWeight = 0;
     ViewFontStyle fontStyle = ViewFontStyle::Normal;

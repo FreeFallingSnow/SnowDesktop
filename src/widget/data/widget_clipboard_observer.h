@@ -31,6 +31,7 @@ struct WidgetClipboardChange
     std::shared_ptr<const WidgetRuntimeImagePixels> image;
     std::string imageToken;
     std::vector<std::string> names;
+    std::vector<std::string> filePaths;
     std::string error;
 };
 

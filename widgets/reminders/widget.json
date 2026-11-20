@@ -361,6 +361,7 @@
   "permissions": [],
   "optionalPermissions": [],
   "requiredFeatures": [
+    "draw.glyph",
     "control.focus",
     "control.blur",
     "control.inputEvents",

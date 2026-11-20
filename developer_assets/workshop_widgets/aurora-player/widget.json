@@ -965,6 +965,7 @@
     "widget.size.aspectRatio"
   ],
   "optionalFeatures": [
+    "view.icon.glyphInk",
     "interaction.contextMenu.keepOpen",
     "audio.playback.events",
     "audio.playback.formats.extended",

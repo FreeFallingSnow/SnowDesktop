@@ -159,8 +159,7 @@ local function drawButton(model, id, taskName, glyph, label,
     local alpha = enabled and (pressed and 0.22 or (hovered and 0.16 or 0.10)) or 0.04
     local foreground = enabled and palette.btnText or palette.btnDisabled
     draw.rect(x, y, size, size, palette.btnBg, size * 0.22, alpha)
-    draw.fa(glyph, x + size * 0.12, y + size * 0.12,
-        size * 0.76, foreground)
+    draw.glyph(glyph, x + size / 2, y + size / 2, size * 0.76, foreground, "fa")
     if not enabled then return end
 
     interaction.region({
@@ -190,9 +189,8 @@ end
 local function drawArtworkPlaceholder(x, y, size, palette)
     local radius = size * 0.10
     draw.rect(x, y, size, size, palette.btnBg, radius, 0.07)
-    draw.fa(fontAwesome.music,
-        x + size * 0.29, y + size * 0.29,
-        size * 0.42, palette.btnDisabled)
+    draw.glyph(fontAwesome.music, x + size / 2, y + size / 2,
+        size * 0.42, palette.btnDisabled, "fa")
     draw.strokeRect(x, y, size, size,
         palette.btnText, radius, size * 0.012, 0.14)
 end

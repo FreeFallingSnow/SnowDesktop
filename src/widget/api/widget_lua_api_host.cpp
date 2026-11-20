@@ -136,6 +136,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     using snowdesktop::widget_runtime::lua_DrawCircle;
     using snowdesktop::widget_runtime::lua_DrawFa;
     using snowdesktop::widget_runtime::lua_DrawFluent;
+    using snowdesktop::widget_runtime::lua_DrawGlyph;
     using snowdesktop::widget_runtime::lua_ResourceExists;
     using snowdesktop::widget_runtime::lua_ResourceAudio;
 

@@ -590,6 +590,8 @@ public:
         const std::vector<std::wstring>& paths);
     bool HasInteractionPointerCapture(const std::wstring& widgetId,
         std::string_view surface = "desktop") const;
+    std::shared_ptr<const snowdesktop::widget_runtime::WidgetRuntimeImagePixels>
+        TakeInteractionImageDrag(const std::wstring& widgetId, std::string_view surface);
     void CancelInteractionPointerPress(std::string_view surface = {});
 
     /**

@@ -1844,7 +1844,31 @@ static void DrawWidgetViewNode(WidgetDrawContext* state, const WidgetViewHost& h
             state->ctx->PopLayer();
     }
 
-    if ((node.type == ViewNodeType::Text ||
+    bool drewGlyph = false;
+    if (iconNode && node.glyphInkCentered)
+    {
+        const auto content = snowdesktop::widget_runtime::ViewNodeContentRect(node);
+        auto* brush = GetCachedBrush(state,
+            static_cast<int>(style.foreground.value_or(0xFFFFFF)), opacity);
+        D2D1_RECT_F bounds{};
+        drewGlyph = brush && state->DrawCenteredGlyph(
+            snowdesktop::widget_runtime::DecodeIconGlyph(node.text),
+            node.iconFont == ViewIconFont::Fluent,
+            state->widgetRect.left + content.x + content.width * 0.5f,
+            state->widgetRect.top + content.y + content.height * 0.5f,
+            node.fontSize, *brush, &bounds);
+        if (auto* paint = state->desktopSurfacePaint;
+            drewGlyph && paint && paint->revision != 0 && node.localRefresh)
+        {
+            constexpr float padding = 2.0f;
+            const RECT ink{static_cast<LONG>(std::floor(bounds.left - padding)),
+                static_cast<LONG>(std::floor(bounds.top - padding)),
+                static_cast<LONG>(std::ceil(bounds.right + padding)),
+                static_cast<LONG>(std::ceil(bounds.bottom + padding))};
+            UnionRect(&paint->textBounds, &paint->textBounds, &ink);
+        }
+    }
+    if (!drewGlyph && (node.type == ViewNodeType::Text ||
             node.type == ViewNodeType::Badge ||
             node.type == ViewNodeType::Button ||
             node.type == ViewNodeType::Link || checkControlNode ||

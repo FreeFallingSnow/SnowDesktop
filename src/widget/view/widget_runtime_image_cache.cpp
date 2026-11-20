@@ -9,6 +9,7 @@
 namespace snowdesktop::widget_runtime
 {
 using Microsoft::WRL::ComPtr;
+constexpr std::size_t kRuntimeImageBudget = 64 * 1024 * 1024;
 
 static std::string BindRuntimeImageToken(
     std::string_view token, std::wstring_view widgetId)
@@ -40,62 +41,125 @@ void WidgetRuntimeImageCache::EraseBitmap(const std::string& key)
     }
 }
 
+void WidgetRuntimeImageCache::MakeRoomForClipboardImage(
+    const std::wstring& widgetId, const WidgetRuntimeImagePixels& incoming)
+{
+    // A large original can use the clipboard cache by itself. Keep other
+    // runtime images in their existing, independent cache budget.
+    const auto incomingBytes = incoming.bgraPremultiplied.size();
+    const auto budget = std::max(kRuntimeImageBudget, incomingBytes);
+    for (;;)
+    {
+        std::size_t bytes = incomingBytes;
+        std::size_t count = 0;
+        std::size_t ownerCount = 0;
+        std::unordered_set<const WidgetRuntimeImagePixels*> counted{&incoming};
+        auto oldest = images_.end();
+        auto oldestOwned = images_.end();
+        for (auto candidate = images_.begin(); candidate != images_.end(); ++candidate)
+        {
+            const auto& image = candidate->second;
+            if (!image.clipboardRevision) continue;
+            if (counted.insert(image.pixels.get()).second)
+                bytes += image.pixels->bgraPremultiplied.size();
+            ++count;
+            if (oldest == images_.end() ||
+                image.clipboardRevision < oldest->second.clipboardRevision)
+                oldest = candidate;
+            if (image.ownerWidgetId == widgetId)
+            {
+                ++ownerCount;
+                if (oldestOwned == images_.end() ||
+                    image.clipboardRevision < oldestOwned->second.clipboardRevision)
+                    oldestOwned = candidate;
+            }
+        }
+        if (bytes <= budget && count < 128 && ownerCount < 16) return;
+        const auto victim = ownerCount >= 16 ? oldestOwned : oldest;
+        EraseBitmap(victim->first);
+        images_.erase(victim);
+    }
+}
+
 std::string WidgetRuntimeImageCache::Register(const std::wstring& widgetId,
     std::string_view token, std::shared_ptr<const WidgetRuntimeImagePixels> pixels,
     std::string source, bool preserveExisting)
 {
     const std::string boundToken = BindRuntimeImageToken(token, widgetId);
+    const bool clipboard = token.starts_with("@clipboard:");
     if (boundToken.empty() || !pixels ||
-        !snowdesktop::widget_runtime::IsValidWidgetRuntimeImage(*pixels) ||
+        !IsValidWidgetRuntimeImage(*pixels, clipboard ? kMaximumRuntimeImageDimension : 2048) ||
         source.empty())
         return {};
-    constexpr std::size_t maximumBytes = 64 * 1024 * 1024;
+    if (clipboard)
+    {
+        if (const auto existing = images_.find(boundToken); existing != images_.end())
+        {
+            existing->second.clipboardRevision = ++clipboardRevision_;
+            return boundToken;
+        }
+        MakeRoomForClipboardImage(widgetId, *pixels);
+        images_.emplace(boundToken, RuntimeImageResource{
+            std::move(pixels), widgetId, std::move(source), ++clipboardRevision_ });
+        return boundToken;
+    }
     std::size_t bytes = pixels->bgraPremultiplied.size();
+    std::size_t imageCount = 0;
     for (const auto& [key, resource] : images_)
-        if (key != boundToken && resource.pixels) bytes += resource.pixels->bgraPremultiplied.size();
-    if (preserveExisting && (bytes > maximumBytes ||
+        if (!resource.clipboardRevision)
+        {
+            ++imageCount;
+            if (key != boundToken && resource.pixels) bytes += resource.pixels->bgraPremultiplied.size();
+        }
+    if (preserveExisting && (bytes > kRuntimeImageBudget ||
         (!images_.contains(boundToken) &&
-            (images_.size() >= 128 ||
+            (imageCount >= 128 ||
              std::count_if(images_.begin(), images_.end(),
                  [&widgetId](const auto& entry) {
-                     return entry.second.ownerWidgetId == widgetId;
+                     return !entry.second.clipboardRevision && entry.second.ownerWidgetId == widgetId;
                  }) >= 16))))
         return {};
-    while (bytes > maximumBytes && !images_.empty())
+    while (bytes > kRuntimeImageBudget)
     {
         auto victim = std::find_if(images_.begin(), images_.end(),
-            [&boundToken](const auto& item) { return item.first != boundToken; });
+            [&boundToken](const auto& item) {
+                return !item.second.clipboardRevision && item.first != boundToken;
+            });
         if (victim == images_.end()) break;
         if (victim->second.pixels) bytes -= victim->second.pixels->bgraPremultiplied.size();
         EraseBitmap(victim->first);
         images_.erase(victim);
+        --imageCount;
     }
     const std::size_t ownerCount = static_cast<std::size_t>(std::count_if(
         images_.begin(), images_.end(),
         [&widgetId](const auto& item) {
-            return item.second.ownerWidgetId == widgetId;
+            return !item.second.clipboardRevision && item.second.ownerWidgetId == widgetId;
         }));
     if (!preserveExisting &&
         ((!images_.contains(boundToken) && ownerCount >= 16) ||
-         images_.size() >= 128))
+         imageCount >= 128))
     {
         std::vector<std::string> removed;
         for (const auto& [key, resource] : images_)
         {
-            if (resource.ownerWidgetId == widgetId) removed.push_back(key);
+            if (!resource.clipboardRevision && resource.ownerWidgetId == widgetId)
+                removed.push_back(key);
         }
         for (const auto& key : removed)
         {
             images_.erase(key);
             EraseBitmap(key);
+            --imageCount;
         }
     }
     if (!images_.contains(boundToken) &&
-        images_.size() >= 128)
+        imageCount >= 128)
     {
-        const std::string evicted = images_.begin()->first;
-        images_.erase(evicted);
-        EraseBitmap(evicted);
+        const auto victim = std::find_if(images_.begin(), images_.end(),
+            [](const auto& item) { return !item.second.clipboardRevision; });
+        EraseBitmap(victim->first);
+        images_.erase(victim);
     }
     images_.insert_or_assign(
         boundToken, RuntimeImageResource{
@@ -116,14 +180,37 @@ ID2D1Bitmap1* WidgetRuntimeImageCache::LoadBitmap(ID2D1DeviceContext* context,
     if (const auto cached = bitmaps_.find(key);
         cached != bitmaps_.end()) return cached->second.Get();
     const auto& pixels = *source->second.pixels;
+    auto width = pixels.width;
+    auto height = pixels.height;
+    auto stride = pixels.stride;
+    const auto* data = pixels.bgraPremultiplied.data();
+    std::vector<std::uint8_t> preview;
+    const auto maximum = std::min<UINT32>(2048, context->GetMaximumBitmapSize());
+    if (source->second.clipboardRevision && maximum &&
+        std::max(width, height) > maximum)
+    {
+        const auto longEdge = std::max(width, height);
+        width = std::max(1u, static_cast<UINT32>(std::uint64_t(width) * maximum / longEdge));
+        height = std::max(1u, static_cast<UINT32>(std::uint64_t(height) * maximum / longEdge));
+        stride = width * 4;
+        preview.resize(static_cast<std::size_t>(stride) * height);
+        for (UINT32 y = 0; y < height; ++y)
+        {
+            const auto* row = data + std::uint64_t(y) * pixels.height / height * pixels.stride;
+            auto* destination = preview.data() + static_cast<std::size_t>(y) * stride;
+            for (UINT32 x = 0; x < width; ++x)
+                std::copy_n(row + std::uint64_t(x) * pixels.width / width * 4,
+                    4, destination + x * 4);
+        }
+        data = preview.data();
+    }
     D2D1_BITMAP_PROPERTIES1 properties = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_NONE,
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
             D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
     ComPtr<ID2D1Bitmap1> bitmap;
     if (FAILED(context->CreateBitmap(
-            D2D1::SizeU(pixels.width, pixels.height),
-            pixels.bgraPremultiplied.data(), pixels.stride,
+            D2D1::SizeU(width, height), data, stride,
             &properties, &bitmap)) || !bitmap)
         return nullptr;
     ID2D1Bitmap1* result = bitmap.Get();

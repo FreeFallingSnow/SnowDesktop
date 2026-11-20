@@ -402,8 +402,8 @@ local function render(context, model)
                 local iconX = contentInset + metrics.spacingSm
                 local iconY = y + math.max(0, (itemHeight - iconSize) / 2)
                 if item.preview then
-                    draw.fluent(fluent.open, iconX, iconY, iconSize,
-                        colors.text)
+                    draw.glyph(fluent.open, iconX + iconSize / 2, iconY + iconSize / 2,
+                        iconSize, colors.text, "fluent")
                 else
                     draw.icon(item.ref, iconX, iconY, iconSize,
                         (selected or hovered) and 1.0 or 0.86)

@@ -62,11 +62,11 @@ static const char* ReadClipboardTaskArguments(lua_State* state,
                 format.assign(value, length);
         }
         lua_pop(state, 1);
-        if (!WidgetClipboardTaskExecutor::SupportsFormat(format))
-            return "clipboard format must be text, html, image, or file-reference";
+        if (!WidgetClipboardTaskExecutor::SupportsFormat(format, write))
+            return "unsupported clipboard format";
         arguments.emplace("format", format);
         if (write)
-            payload = format == "file-reference" ? "items" :
+            payload = (format == "file-reference" || format == "file-paths") ? "items" :
                 format == "text" ? "text" : format == "html" ? "html" : "image";
     }
 
@@ -96,7 +96,7 @@ static const char* ReadClipboardTaskArguments(lua_State* state,
         else
             arguments.emplace("image", handle->name);
     }
-    else if (format == "file-reference")
+    else if (format == "file-reference" || format == "file-paths")
     {
         const auto count = lua_istable(state, -1) ? lua_rawlen(state, -1) : 0;
         error = "clipboard.write items must be a dense array of 1 to 32 opaque file references or handles";
@@ -113,8 +113,9 @@ static const char* ReadClipboardTaskArguments(lua_State* state,
                 const std::string_view reference(raw ? raw : "", length);
                 const bool valid = index > 0 && static_cast<std::size_t>(index) <= count &&
                     ((reference.starts_with("item:") && reference.size() == 37) ||
-                        snowdesktop::widget_runtime::WidgetFilesystemHandleStore::
-                            IsOpaqueHandle(reference));
+                        (format == "file-reference" &&
+                            snowdesktop::widget_runtime::WidgetFilesystemHandleStore::
+                                IsOpaqueHandle(reference)));
                 if (!valid)
                 {
                     lua_pop(state, 3);

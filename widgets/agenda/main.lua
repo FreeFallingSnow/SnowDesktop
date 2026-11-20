@@ -349,11 +349,8 @@ local function drawHeaderButton(key, glyph, label, shape, colors, enabled,
             colors.accent, metrics.controlRadius,
             pressed and 0.16 or 0.10)
     end
-    draw.fluent(glyph,
-        shape.x + (shape.width - metrics.iconSize) / 2,
-        shape.y + (shape.height - metrics.iconSize) / 2 +
-            metrics.spacingXs * 0.5,
-        metrics.iconSize, colors.accent, enabled and 1.0 or 0.28)
+    draw.glyph(glyph, shape.x + shape.width / 2, shape.y + shape.height / 2,
+        metrics.iconSize, colors.accent, "fluent", enabled and 1.0 or 0.28)
     registerRegion(key, { type = "roundedRect", x = shape.x, y = shape.y,
         width = shape.width, height = shape.height,
         radius = metrics.controlRadius },

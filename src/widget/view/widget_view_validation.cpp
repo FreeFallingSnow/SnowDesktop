@@ -1298,6 +1298,11 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
             " nodes require a glyph";
         return false;
     }
+    if (node.glyphInkCentered && !IsSingleUtf8Scalar(node.text))
+    {
+        error = "glyphInkCentered requires one Unicode scalar";
+        return false;
+    }
     if (node.type == ViewNodeType::IconButton &&
         !accessibleNameDeclared)
     {
