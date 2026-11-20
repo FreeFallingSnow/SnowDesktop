@@ -286,6 +286,8 @@
 
 ### CF-015 模块计划无法声明临时定向验证
 
+- **三行回收槽位（2026-11-20）**：Task `member-paint-transition`、批次 `7f9eee9647c244b188a59da0fe040c2c`、Run `fe8059e4248144b9906e6183f129ec99` 的 Release 与七项正式测试已通过。临时槽位命中和 WARP 绘制探针随后等候项目执行租约，见 `.codex-probes/member-paint-transition/build-check.ps1`；当时原检出进入另一编辑批次 `ae5ad257764749bc92f85bea31043c3a`。原反馈的绑定与调度缺口仍在；未因等待重建该候选。
+
 - **拖拽落位回执（2026-11-20）**　Task `object-drop-refactor` 的批次 `ee60f4ec424844d49647a821c8c8b9b7`、Run `9fb8a9e442f843b5b13140e7cf158f03` 完成 Release 激活及 10 项定向测试。批次外的 `.codex-probes/object-drop-refactor/build-check.ps1` 首次在编译前收到 `Shared output busy: batch b1a733fa04d6491280d13c55e4ec35e9 / editing`。探针需要链接已验证的宿主对象来检查自身 OLE 回执和分组落点，等待期间两个集成批次先后复用编译槽。取得执行权后，核对 Run `dfc45d351d544a51814850d071891989` 的测试程序哈希、后续槽的源码差异及对象时间，复用其宿主对象完成了四种 OLE 回执、分组标签落位、源图标绘制及部分回收的定向验证。后续仍需让模块计划绑定一次性验证和指定 Run 的对象。
 
 - **组件刷新归档库续证（2026-11-18）**：Task `task-40977fc85edd4847b361a242933a430d` 的批次 `a036f2a9fe804d96880eb29a51112ea6`、Run `866b5dc7e51647c48b1f2c738b036f31` 通过后，`save-candidate.ps1` 因槽已复用拒绝全局摘要不符，原文为 `Reusable slot no longer matches the package source batch.`。读取两份不可变源码清单，差异仅为 `CODE_HEALTH.md` 和宿主 `src/app/input/app_pointer_release.cpp`。组件包库写入时间在原 Run 内，复制前后哈希和当前槽摘要相符，记录于 `.codex-probes/code-health-04-refresh/saved-candidate-binding.json`。随后取普通执行权完成 5,156 字节生产库对照。未重编产品，后续仍需让临时验证绑定候选库，减少槽复用后的人工比对。

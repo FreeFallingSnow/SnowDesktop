@@ -869,8 +869,13 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
             if (item.backdropRegistered)
                 desktopBackdropCompositor_.SetPanelAnimationFence(item.BackdropOwnerKey(), hoverSamplingEnvelope);
             if (showContent)
+            {
+                const float fileIconBlur = dynamic_cast<ScrollingItemWidget*>(widgetContainer) &&
+                    iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled
+                    ? iconBeautifySettings_.glassBlurRadius : 0.f;
                 item.iconBackdrops.Publish(desktopBackdropCompositor_, item.HoverOpacity(),
-                    item.backdropRegistered ? item.BackdropOwnerKey() : 0, d2dDevice_.Get());
+                    item.backdropRegistered ? item.BackdropOwnerKey() : 0, d2dDevice_.Get(), fileIconBlur);
+            }
             else
                 item.iconBackdrops.DiscardDraw();
         }

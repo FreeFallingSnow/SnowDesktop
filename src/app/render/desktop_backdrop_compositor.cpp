@@ -466,6 +466,7 @@ struct DesktopBackdropCompositor::Impl
             float corners = 0.0f;
             int blurRadius = 0;
             bool extendOutline = false;
+            int configuredIconRadius = 0;
             wuc::CompositionEffectBrush brush{nullptr};
             wuc::CompositionPathGeometry clip{nullptr};
             std::map<int, wuc::CompositionDrawingSurface> masks;
@@ -1276,8 +1277,12 @@ struct DesktopBackdropCompositor::Impl
         context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         context->Clear(D2D1::ColorF(0, 0.0f));
         winrt::com_ptr<ID2D1SolidColorBrush> ink;
-        const HRESULT draw = context->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), ink.put());
-        if (SUCCEEDED(draw)) context->FillGeometry(geometry, ink.get());
+        HRESULT draw = S_OK;
+        if (geometry)
+        {
+            draw = context->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), ink.put());
+            if (SUCCEEDED(draw)) context->FillGeometry(geometry, ink.get());
+        }
         const HRESULT finish = interop->EndDraw();
         winrt::check_hresult(draw);
         winrt::check_hresult(finish);
@@ -2538,7 +2543,7 @@ bool DesktopBackdropCompositor::AddPanel(
 
 bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
     ID2D1Device* drawDevice, std::span<const snowdesktop::PanelBackdropIcon> icons,
-    bool extendOutline)
+    bool extendOutline, float configuredIconBlur)
 {
     if (!impl_->available || impl_->stagingFrame || !ownerKey) return false;
     const auto panel = impl_->FindPanel({}, ownerKey);
@@ -2559,7 +2564,9 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
         return blur::RadiusKey(icon.blurRadius) > panel->blurRadius ||
             (extendOutline && !blur::Covered(panel->frame, panel->cornerRadius, icon.frame));
     };
-    if (!drawDevice || (IsRectEmpty(&samplingFrame) &&
+    const int configuredRadius = blur::RadiusKey(configuredIconBlur);
+    const bool reserveIconMask = configuredRadius > panel->blurRadius;
+    if (!drawDevice || (!reserveIconMask && IsRectEmpty(&samplingFrame) &&
         std::none_of(icons.begin(), icons.end(), needsRegion)))
     {
         if (panel->iconRegionsApplied)
@@ -2604,7 +2611,7 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
             !EqualRect(&cached.samplingFrame, &samplingFrame) ||
             !EqualRect(&cached.animationEnvelope, &animationEnvelope) ||
             cached.corners != panel->cornerRadius || cached.blurRadius != panel->blurRadius ||
-            cached.extendOutline != extendOutline ||
+            cached.extendOutline != extendOutline || cached.configuredIconRadius != configuredRadius ||
             !std::equal(cached.icons.begin(), cached.icons.end(), icons.begin(), icons.end(), blur::SameIcon);
         if (!changed && panel->iconRegionsApplied) return true;
         if (changed)
@@ -2617,11 +2624,15 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
             next.corners = panel->cornerRadius;
             next.blurRadius = panel->blurRadius;
             next.extendOutline = extendOutline;
+            next.configuredIconRadius = configuredRadius;
             winrt::com_ptr<ID2D1Factory> factory;
             drawDevice->GetFactory(factory.put());
             blur::Geometry geometry;
             winrt::check_hresult(blur::Build(*factory.get(), next.base, next.corners,
                 next.blurRadius, icons, extendOutline, samplingFrame, geometry));
+            // An empty tab uses the same sample origin, kernel padding and
+            // effect as a populated tab. Only the stronger-radius mask clears.
+            if (reserveIconMask) geometry.strongerMasks.try_emplace(configuredRadius);
             next.allocation = geometry.allocation;
             next.visibleBounds = geometry.visibleBounds;
             const int maximumRadius = geometry.strongerMasks.empty() ? next.blurRadius :

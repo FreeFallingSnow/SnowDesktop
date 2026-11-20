@@ -32,8 +32,9 @@ public:
 
     template<class Compositor>
     void Publish(Compositor& compositor, float opacity = 1.0f,
-        std::uintptr_t panelKey = 0, ID2D1Device* drawDevice = nullptr)
+        std::uintptr_t panelKey = 0, ID2D1Device* drawDevice = nullptr, float configuredIconBlur = 0.f)
     {
+        configuredIconBlur_ = configuredIconBlur;
         while (panels_.size() > candidate_.size())
         {
             Remove(compositor, *panels_.back());
@@ -65,7 +66,7 @@ public:
                 r.frame, r.shape, r.blurRadius, r.opacity * opacity, Key(*panel),
                 r.inheritedGlass, r.clip ? &*r.clip : nullptr);
         }
-        if (panelKey && !compositor.SetPanelIconRegions(panelKey, drawDevice, inherited, false))
+        if (panelKey && !compositor.SetPanelIconRegions(panelKey, drawDevice, inherited, false, configuredIconBlur_))
             (void)compositor.SetPanelIconRegions(panelKey, drawDevice, {}, false);
     }
 
@@ -98,6 +99,7 @@ private:
 
     std::vector<std::unique_ptr<Panel>> panels_;
     std::vector<Request> candidate_;
+    float configuredIconBlur_ = 0.f;
 };
 
 } // namespace snowdesktop
