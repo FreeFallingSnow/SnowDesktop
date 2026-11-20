@@ -15,7 +15,7 @@ namespace snowdesktop::native_ui
 // Host-internal controls. No XAML, device service, HWND ownership or Lua API.
 // A renderer and input controller consume the same immutable hit rectangles.
 // A read-only list item supports focus and a context menu without a primary action.
-enum class Role { Text, Button, Toggle, Slider, ListItem, Icon, Card, Separator, Chart, Image, Scrollbar, ReadOnlyListItem };
+enum class Role { Text, Button, Toggle, CheckBox, Slider, ListItem, Icon, Card, Separator, Chart, Image, Scrollbar, ReadOnlyListItem };
 struct Image
 {
     unsigned width = 0, height = 0, stride = 0;

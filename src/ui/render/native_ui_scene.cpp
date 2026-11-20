@@ -23,7 +23,7 @@ bool HasClip(D2D1_RECT_F r) { return r.right > r.left && r.bottom > r.top; }
 bool Overlaps(D2D1_RECT_F a,D2D1_RECT_F b)
 {return a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top;}
 bool ControlRole(Role role)
-{return role==Role::Button||role==Role::Toggle||role==Role::Slider||role==Role::ListItem||role==Role::Icon;}
+{return role==Role::Button||role==Role::Toggle||role==Role::CheckBox||role==Role::Slider||role==Role::ListItem||role==Role::Icon;}
 }
 bool Node::Interactive() const
 { return enabled && !id.empty() && ControlRole(role); }
@@ -121,7 +121,7 @@ void Input::Sync(const Scene& scene)
             r.controlStart=n.bounds.left+10;r.controlLength=(std::max)(1.f,n.bounds.right-n.bounds.left-20);
             r.capturePointer=true;r.events["change"].id=r.key;
         }
-        else if(n.role==Role::Toggle)
+        else if(n.role==Role::Toggle||n.role==Role::CheckBox)
         {
             r.controlKind=widget_runtime::InteractionControlKind::Toggle;r.accessibilityRole="switch";
             r.checked=n.selected;r.events["change"].id=r.key;
@@ -297,8 +297,9 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
         const bool down = groupedCard ? pressedNode&&pressedNode->hoverGroup==n.hoverGroup :
             n.id==pressed&&n.CanOpenContextMenu();
         const bool sharedRow=n.role==Role::ListItem&&!n.hoverGroup.empty();
+        const bool checkBox = n.role == Role::CheckBox;
         const bool fill = n.role == Role::Button || n.role == Role::Toggle || n.role == Role::Card || n.selected || ((hot || down)&&!sharedRow);
-        if (fill && !n.switchStyle)
+        if (fill && !n.switchStyle && !checkBox)
         {
             color(n.accent || (n.role == Role::Toggle && n.selected) ? p.accent : hot || down ? p.hover : p.control, n.enabled);
             const float radius = n.role == Role::Card ? 10.f : 7.f;
@@ -320,6 +321,18 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
         if (n.role == Role::Separator) { color(p.stroke); dc->DrawLine({r.left, r.top}, {r.right, r.top}, brush.Get(), 1); }
         else if (n.role == Role::Scrollbar)
         {color(p.secondary);dc->FillRoundedRectangle(D2D1::RoundedRect(r,2,2),brush.Get());}
+        else if (checkBox)
+        {
+            constexpr float halfSide = 9.f;
+            const float x = (r.left + r.right) / 2;
+            const float y = (r.top + r.bottom) / 2;
+            const auto box = D2D1::RoundedRect({x - halfSide, y - halfSide, x + halfSide, y + halfSide}, 4, 4);
+            color(hot || down ? p.hover : p.control, n.enabled);
+            dc->FillRoundedRectangle(box, brush.Get());
+            color(p.secondary, n.enabled);
+            dc->DrawRoundedRectangle(box, brush.Get(), 1);
+            if (n.selected) text(L"\uE73E", r, 12, ink, false, true, true);
+        }
         else if (n.role == Role::Toggle && n.switchStyle)
         {
             const float width=(std::min)(40.f,r.right-r.left-4),height=20;
@@ -458,7 +471,7 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
             dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F((r.left+r.right)/2,r.bottom-4),1.5f,1.5f),brush.Get());
         }
         if (!n.id.empty() && n.id == focused && n.CanOpenContextMenu())
-        { color(p.accent); auto focus=r; focus.left+=2;focus.top+=2;focus.right-=2;focus.bottom-=2; dc->DrawRoundedRectangle(D2D1::RoundedRect(focus,5,5),brush.Get(),2); }
+        { color(checkBox ? p.text : p.accent); auto focus=r; focus.left+=2;focus.top+=2;focus.right-=2;focus.bottom-=2; dc->DrawRoundedRectangle(D2D1::RoundedRect(focus,5,5),brush.Get(),2); }
         if (HasClip(n.clip)) dc->PopAxisAlignedClip();
     }
     return S_OK;
