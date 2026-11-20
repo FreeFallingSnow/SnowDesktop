@@ -38,11 +38,14 @@ void DesktopApp::ToggleWidgetCollapsed(size_t widgetIndex)
 
 void DesktopApp::EnterWidget()
 {
-    int foundIdx = -1;
-    for (size_t i = 0; i < widgets_.size(); ++i)
-    {
-        if (widgets_[i].selected) { foundIdx = static_cast<int>(i); break; }
-    }
+    const bool enteringPopup = IsCollectionPopupKeyboardTarget() &&
+        !dockFolderPopupOpen_ && popupWidgetIndex_ < widgets_.size();
+    int foundIdx = enteringPopup ? static_cast<int>(popupWidgetIndex_) : -1;
+    if (!enteringPopup)
+        for (size_t i = 0; i < widgets_.size(); ++i)
+        {
+            if (widgets_[i].selected) { foundIdx = static_cast<int>(i); break; }
+        }
     if (foundIdx < 0) return;
 
     const auto& widget = widgets_[static_cast<size_t>(foundIdx)];
@@ -82,10 +85,10 @@ void DesktopApp::EnterWidget()
     if (!dockFolderPopupOpen_ && popupWidgetIndex_ == static_cast<size_t>(foundIdx))
         if (auto* view = GetCategorizedPopupView())
             popupLayout.emplace(view, GetCategorizedPopupFrame(GetCollectionPopupRect(widget)));
-    const bool compactPopup = snowdesktop::single_cell_widget::IsSingleCell(widget) &&
-        popupWidgetIndex_ == static_cast<size_t>(foundIdx);
+    const bool popupOpen = popupWidgetIndex_ == static_cast<size_t>(foundIdx) &&
+        IsCollectionPopupKeyboardTarget();
 
-    if (IsWidgetCollapsed(widget))
+    if (!popupOpen && IsWidgetCollapsed(widget))
         ToggleWidgetCollapsed(static_cast<size_t>(foundIdx));
 
     ClearSelection();
@@ -98,8 +101,17 @@ void DesktopApp::EnterWidget()
     keyboardNavCollectionGroupTabs_ = false;
     keyboardNavFileGroupCategoryTabs_ = false;
 
-    if (snowdesktop::single_cell_widget::IsSingleCell(widget) &&
-        widget.type == DesktopWidgetType::FileCategories)
+    if (popupOpen)
+        if (auto* group = GetGroupPopupView())
+            if (auto* first = group->GetMemberItem(0))
+            {
+                first->SetSelected(true);
+                ScrollWidgetToMember(static_cast<size_t>(foundIdx), 0);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
+
+    if (popupOpen && widget.type == DesktopWidgetType::FileCategories)
     {
         keyboardNavMemberIndex_ = -1;
         const auto keys = GetPopupItemKeys(widget);
@@ -153,8 +165,8 @@ void DesktopApp::EnterWidget()
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
-            keyboardNavInsideWidget_ = compactPopup;
-            keyboardNavWidgetIndex_ = compactPopup ? static_cast<size_t>(foundIdx) : static_cast<size_t>(-1);
+            keyboardNavInsideWidget_ = popupOpen;
+            keyboardNavWidgetIndex_ = popupOpen ? static_cast<size_t>(foundIdx) : static_cast<size_t>(-1);
             keyboardNavMemberIndex_ = -1;
             keyboardNavCollectionGroupTabs_ = false;
             keyboardNavFileGroupCategoryTabs_ = false;
@@ -190,8 +202,8 @@ void DesktopApp::EnterWidget()
         {
             if (group->GetSlotCount() == 0)
             {
-                keyboardNavInsideWidget_ = compactPopup;
-                keyboardNavWidgetIndex_ = compactPopup ? static_cast<size_t>(foundIdx) : static_cast<size_t>(-1);
+                keyboardNavInsideWidget_ = popupOpen;
+                keyboardNavWidgetIndex_ = popupOpen ? static_cast<size_t>(foundIdx) : static_cast<size_t>(-1);
                 keyboardNavMemberIndex_ = -1;
                 widgets_[static_cast<size_t>(
                     foundIdx)].selected = true;
@@ -202,8 +214,8 @@ void DesktopApp::EnterWidget()
             Item* item = group->GetMemberItem(0);
             if (!item)
             {
-                keyboardNavInsideWidget_ = compactPopup;
-                keyboardNavWidgetIndex_ = compactPopup ? static_cast<size_t>(foundIdx) : static_cast<size_t>(-1);
+                keyboardNavInsideWidget_ = popupOpen;
+                keyboardNavWidgetIndex_ = popupOpen ? static_cast<size_t>(foundIdx) : static_cast<size_t>(-1);
                 keyboardNavMemberIndex_ = -1;
                 widgets_[static_cast<size_t>(
                     foundIdx)].selected = true;
@@ -218,8 +230,8 @@ void DesktopApp::EnterWidget()
         }
         else if (!group || sourceIds.empty())
         {
-            keyboardNavInsideWidget_ = compactPopup;
-            keyboardNavWidgetIndex_ = compactPopup ? static_cast<size_t>(foundIdx) : static_cast<size_t>(-1);
+            keyboardNavInsideWidget_ = popupOpen;
+            keyboardNavWidgetIndex_ = popupOpen ? static_cast<size_t>(foundIdx) : static_cast<size_t>(-1);
             keyboardNavMemberIndex_ = -1;
             keyboardNavCollectionGroupTabs_ = false;
             keyboardNavFileGroupCategoryTabs_ = false;
@@ -268,8 +280,8 @@ void DesktopApp::EnterWidget()
         }
         if (!group)
         {
-            keyboardNavInsideWidget_ = compactPopup;
-            keyboardNavWidgetIndex_ = compactPopup ? static_cast<size_t>(foundIdx) : static_cast<size_t>(-1);
+            keyboardNavInsideWidget_ = popupOpen;
+            keyboardNavWidgetIndex_ = popupOpen ? static_cast<size_t>(foundIdx) : static_cast<size_t>(-1);
             keyboardNavMemberIndex_ = -1;
             keyboardNavCollectionGroupTabs_ = false;
             keyboardNavFileGroupCategoryTabs_ = false;
@@ -281,8 +293,8 @@ void DesktopApp::EnterWidget()
             group->GetVisibleCollectionIds();
         if (childIds.empty())
         {
-            keyboardNavInsideWidget_ = compactPopup;
-            keyboardNavWidgetIndex_ = compactPopup ? static_cast<size_t>(foundIdx) : static_cast<size_t>(-1);
+            keyboardNavInsideWidget_ = popupOpen;
+            keyboardNavWidgetIndex_ = popupOpen ? static_cast<size_t>(foundIdx) : static_cast<size_t>(-1);
             keyboardNavMemberIndex_ = -1;
             keyboardNavCollectionGroupTabs_ = false;
             keyboardNavFileGroupCategoryTabs_ = false;
@@ -312,11 +324,15 @@ void DesktopApp::EnterWidget()
     }
     else
     {
+        keyboardNavMemberIndex_ = -1;
         if (!widget.itemKeys.empty())
         {
             size_t itemIdx = FindItemIndexByKey(widget.itemKeys[0]);
             if (itemIdx != static_cast<size_t>(-1))
+            {
                 items_[itemIdx].selected = true;
+                keyboardNavMemberIndex_ = 0;
+            }
         }
     }
 

@@ -118,6 +118,10 @@ void DesktopApp::DrawStaticBackground(
         !dragSession_.HasContext() && !dragDropController_.IsExternalDragActive() &&
         widgetAction_ == WidgetAction::None;
     const bool stackIndicatorVisible = IsLuaStackIndicatorVisible();
+    const size_t luaPopupIndex = luaWidgetPanelRequest_.widgetId.empty()
+        ? widgets_.size() : FindWidgetIndexById(luaWidgetPanelRequest_.widgetId);
+    const auto* luaPopupOwner = luaPopupIndex < widgets_.size()
+        ? &ResolveLuaWidgetFrameOwner(widgets_[luaPopupIndex]) : nullptr;
     for (size_t widgetIndex = 0;
          widgetIndex < widgets_.size();
          ++widgetIndex)
@@ -132,7 +136,11 @@ void DesktopApp::DrawStaticBackground(
         // artifact at the desktop origin.
         const RECT widgetFrame =
             GetStandaloneWidgetFrameRect(widgetData);
-        const bool popupOpen = popupWidgetIndex_ < widgets_.size() && widgetIndex == popupWidgetIndex_;
+        const bool popupOpen = widgetIndex == popupWidgetIndex_ ||
+            (dockFolderPopupOpen_ && !dockFolderPopupMappingWidgetId_.empty() &&
+                widgetData.id == dockFolderPopupMappingWidgetId_ &&
+                IsCollectionPopupHostedByFloatingWindow()) ||
+            &widgetData == luaPopupOwner;
         const bool interactionPinned =
             !interactionPinnedWidgetId_.empty() &&
             widgetData.id == interactionPinnedWidgetId_;

@@ -1418,7 +1418,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     // 确保选中的成员项可见
     ScrollWidgetToMember(keyboardNavWidgetIndex_, nextIdx);
 
-    // Collection 大文件夹模式：超界自动弹窗 / 退回内联区域自动关闭
+    // Collection 大文件夹模式：超出外露区域时进入弹窗。
     if (widget.type == DesktopWidgetType::Collection && !widget.scrollContainerMode)
     {
         int cols = std::max(1, widget.gridSpan.columns);
@@ -1465,15 +1465,9 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
                     popupAnchor);
             }
         }
-        else if (popupWidgetIndex_ == keyboardNavWidgetIndex_ &&
-            (cols > 1 || rows > 1))   // 紧凑模式保持弹窗常开
-        {
-            // 退回内联区域时保留刚导航选中的成员项，但仍播放关闭动画。
-            CloseCollectionPopup(false);
-        }
     }
 
-    // 弹窗滚动跟随（若弹窗仍打开）
+    // 弹窗滚动跟随键盘选中的项目。
     if (popupWidgetIndex_ == keyboardNavWidgetIndex_ &&
         popupWidgetIndex_ < widgets_.size() && !GetGroupPopupView())
     {

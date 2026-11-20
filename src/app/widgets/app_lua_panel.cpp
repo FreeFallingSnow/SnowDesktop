@@ -12,11 +12,12 @@
 
 namespace
 {
-void InvalidateLuaPanelDesktopFootprint(HWND desktop, RECT panel, RECT snapshot)
+void InvalidateLuaPanelDesktopFootprint(HWND desktop, RECT panel, RECT snapshot, RECT source = {})
 {
     if (!desktop || !IsWindow(desktop)) return;
     RECT dirty{};
-    if (!UnionRect(&dirty, &panel, &snapshot)) return;
+    UnionRect(&dirty, &panel, &snapshot);
+    if (!UnionRect(&dirty, &dirty, &source)) return;
     InflateRect(&dirty, 6, 6);
     InvalidateRect(desktop, &dirty, FALSE);
 }
@@ -146,7 +147,10 @@ void DesktopApp::OpenLuaWidgetPanel(
     }
     else
         ResetLuaWidgetPanelAnimationCache();
-    InvalidateLuaPanelDesktopFootprint(hwnd_, luaWidgetPanelRect_, luaWidgetPanelAnimationCacheRect_);
+    const size_t sourceIndex = FindWidgetIndexById(request.widgetId);
+    const RECT sourceFrame = sourceIndex < widgets_.size()
+        ? GetStandaloneWidgetFrameRect(widgets_[sourceIndex]) : RECT{};
+    InvalidateLuaPanelDesktopFootprint(hwnd_, luaWidgetPanelRect_, luaWidgetPanelAnimationCacheRect_, sourceFrame);
     UpdateFloatingPopupWindowBounds(true);
     if (widgetEngine_)
     {
@@ -173,6 +177,9 @@ void DesktopApp::FinalizeCloseLuaWidgetPanel(
     const RECT previousSnapshot = luaWidgetPanelAnimationCacheRect_;
     const std::wstring closingId =
         luaWidgetPanelRequest_.widgetId;
+    const size_t sourceIndex = FindWidgetIndexById(closingId);
+    const RECT sourceFrame = sourceIndex < widgets_.size()
+        ? GetStandaloneWidgetFrameRect(widgets_[sourceIndex]) : RECT{};
     const std::string closingSurface =
         luaWidgetPanelRequest_.surface;
     if (luaPanelAnimationFrameToken_)
@@ -194,7 +201,7 @@ void DesktopApp::FinalizeCloseLuaWidgetPanel(
     ReleaseLuaWidgetPanelCaptureIfOwned();
     UpdateHostInputImePosition();
     UpdateFloatingPopupWindowBounds(true);
-    InvalidateLuaPanelDesktopFootprint(hwnd_, previousPanel, previousSnapshot);
+    InvalidateLuaPanelDesktopFootprint(hwnd_, previousPanel, previousSnapshot, sourceFrame);
 
     if (!closingId.empty() && widgetEngine_)
     {

@@ -223,8 +223,9 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     }
 
     std::optional<CategorizedPopupScope> popupLayout;
-    const bool popupNavigationKey = key == VK_RETURN || key == VK_ESCAPE || key == VK_UP ||
-        key == VK_DOWN || key == VK_LEFT || key == VK_RIGHT || key == VK_HOME || key == VK_END || key == VK_TAB;
+    const bool popupArrowKey = key == VK_UP || key == VK_DOWN || key == VK_LEFT || key == VK_RIGHT;
+    const bool popupNavigationKey = key == VK_RETURN || key == VK_ESCAPE || popupArrowKey ||
+        key == VK_HOME || key == VK_END || key == VK_TAB;
     if (popupNavigationKey && !dockFolderPopupOpen_ && IsCollectionPopupInteractive())
         if (const auto* popup = GetOpenPopupWidget())
             if (auto* view = GetCategorizedPopupView())
@@ -281,20 +282,23 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     // Keyboard selection follows the whole fan's order and scrolls its window
     // as needed; the final action still opens the complete grid.
     if (auto* popup = GetOpenPopupWidget(); !ctrl && !alt &&
-        IsCollectionPopupInteractive() && popup && UsesCollectionPopupFan(*popup) &&
+        popupKeyboardTarget && popup && UsesCollectionPopupFan(*popup) &&
         GetPopupItemCount(*popup) > 0)
     {
         const int count = static_cast<int>(GetPopupItemCount(*popup));
+        const auto& keys = GetPopupItemKeysView(*popup);
         int current = popupFanActionFocused_ ? count : -1;
         for (int i = 0; current < 0 && i < count; ++i)
         {
             if (dockFolderPopupOpen_)
             {
-                if (popup->folderEntries[i].selected) current = i;
+                if (popup->folderEntries[GetPopupFolderEntryIndex(
+                        *popup, static_cast<size_t>(i))].selected)
+                    current = i;
             }
             else
             {
-                const auto item = FindItemIndexByKey(popup->itemKeys[i]);
+                const auto item = FindItemIndexByKey(keys[i]);
                 if (item < items_.size() && items_[item].selected) current = i;
             }
         }
@@ -304,26 +308,27 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
                 ShowAllCollectionPopupItems();
             else if (dockFolderPopupOpen_)
             {
-                const auto path = popup->folderEntries[current].fullPath;
+                const auto path = popup->folderEntries[GetPopupFolderEntryIndex(
+                    *popup, static_cast<size_t>(current))].fullPath;
                 if (LaunchPathWithShortcutPolicy(hwnd_, path)) CloseCollectionPopup();
             }
             else
             {
-                const auto item = FindItemIndexByKey(popup->itemKeys[current]);
-                if (item < items_.size() && LaunchDesktopItem(item)) CloseCollectionPopup();
+                const auto item = FindItemIndexByKey(keys[current]);
+                const bool keepPopup = popup->type == DesktopWidgetType::Collection;
+                if (item < items_.size() && LaunchDesktopItem(item) && !keepPopup) CloseCollectionPopup();
             }
             return true;
         }
-        if (key == VK_UP || key == VK_DOWN || key == VK_LEFT || key == VK_RIGHT ||
-            key == VK_HOME || key == VK_END || key == VK_TAB)
+        if (popupArrowKey || key == VK_HOME || key == VK_END || key == VK_TAB ||
+            (key == VK_RETURN && current < 0))
         {
             int next = current;
             const bool forward = key == VK_RIGHT || (key == VK_TAB && !shift) ||
                 (key == VK_DOWN && CollectionPopupFanRootAbove()) ||
                 (key == VK_UP && !CollectionPopupFanRootAbove());
-            if (key == VK_HOME) next = 0;
+            if (current < 0 || key == VK_HOME) next = 0;
             else if (key == VK_END) next = count;
-            else if (current < 0) next = static_cast<int>(std::ceil(GetCollectionPopupFanScrollOffset(popupRect_)));
             else if (key == VK_TAB) next = (current + (forward ? 1 : count)) % (count + 1);
             else next = std::clamp(current + (forward ? 1 : -1), 0, count);
             ClearSelection();
@@ -333,13 +338,23 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             if (next < count)
             {
                 EnsureCollectionPopupFanItemVisible(static_cast<size_t>(next));
-                if (dockFolderPopupOpen_) popup->folderEntries[next].selected = true;
+                if (dockFolderPopupOpen_)
+                    popup->folderEntries[GetPopupFolderEntryIndex(
+                        *popup, static_cast<size_t>(next))].selected = true;
                 else
                 {
-                    const auto item = FindItemIndexByKey(popup->itemKeys[next]);
+                    const auto item = FindItemIndexByKey(keys[next]);
                     if (item < items_.size()) items_[item].selected = true;
                 }
             }
+            if (!dockFolderPopupOpen_ && popupWidgetIndex_ < widgets_.size())
+            {
+                keyboardNavInsideWidget_ = true;
+                keyboardNavWidgetIndex_ = popupWidgetIndex_;
+                keyboardNavMemberIndex_ = next < count ? next : -1;
+                keyboardNavVisualFocus_ = true;
+            }
+            InvalidateFloatingPopupWindow(false);
             InvalidateRect(hwnd_, nullptr, FALSE);
             return true;
         }
@@ -358,13 +373,15 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     }
     if (!luaWidgetPanelRequest_.widgetId.empty() &&
         (luaWidgetPanelRequest_.modal ||
+            (luaWidgetPanelAnimation_.IsInteractive() && popupNavigationKey) ||
             (widgetEngine_ && widgetEngine_->HasHostViewKeyboardFocus())) &&
         key != VK_ESCAPE)
         return true;
 
     if (dockFolderPopupOpen_ && popupKeyboardTarget && !ctrl && !alt &&
-        (key == VK_UP || key == VK_DOWN || key == VK_LEFT || key == VK_RIGHT ||
-            key == VK_HOME || key == VK_END))
+        (popupArrowKey || key == VK_HOME || key == VK_END ||
+            (key == VK_RETURN && std::none_of(dockFolderPopupWidget_.folderEntries.begin(),
+                dockFolderPopupWidget_.folderEntries.end(), [](const auto& entry) { return entry.selected; }))))
     {
         const int count = static_cast<int>(GetPopupItemCount(dockFolderPopupWidget_));
         if (count == 0) return true;
@@ -401,6 +418,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             GetCollectionPopupMaxScrollOffset(dockFolderPopupWidget_, popupRect_));
         ResetCollectionPopupAnimationCache();
         UpdateHostInputImePosition();
+        InvalidateFloatingPopupWindow(false);
         InvalidateRect(hwnd_, nullptr, FALSE);
         return true;
     }
@@ -508,6 +526,17 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     if (insertPaste) { ctrl = true; shift = false; }
     // Alt/Win combinations belong to the system or focused component.
     if (win || (alt && key != VK_RETURN)) return false;
+    if (!ctrl && !alt && popupKeyboardTarget && !dockFolderPopupOpen_ &&
+        popupWidgetIndex_ < widgets_.size() && (popupArrowKey || key == VK_RETURN) &&
+        (!keyboardNavInsideWidget_ || keyboardNavWidgetIndex_ != popupWidgetIndex_ ||
+            (keyboardNavMemberIndex_ < 0 && !keyboardNavSearchBox_)))
+    {
+        popupLayout.reset();
+        popupScrollOffset_ = 0;
+        EnterWidget();
+        InvalidateFloatingPopupWindow(false);
+        return true;
+    }
     switch (key)
     {
     case 'Z':
@@ -826,7 +855,10 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         else if (popupKeyboardTarget)
         {
             if (keyboardNavInsideWidget_ && keyboardNavWidgetIndex_ < widgets_.size() &&
-                snowdesktop::single_cell_widget::IsSingleCell(widgets_[keyboardNavWidgetIndex_]))
+                (keyboardNavWidgetIndex_ == popupWidgetIndex_ ||
+                    (dockFolderPopupOpen_ &&
+                        widgets_[keyboardNavWidgetIndex_].id == dockFolderPopupMappingWidgetId_ &&
+                        snowdesktop::single_cell_widget::IsSingleCell(widgets_[keyboardNavWidgetIndex_]))))
             {
                 ExitWidget();
                 if (IsCollectionPopupInteractive()) CloseCollectionPopup(false);
@@ -847,7 +879,10 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     case VK_RIGHT:
         handled = true;
         if (keyboardNavInsideWidget_)
+        {
             NavigateWidgetMembers(key);
+            if (popupKeyboardTarget) InvalidateFloatingPopupWindow(false);
+        }
         else
             NavigateDesktopGrid(key);
         break;

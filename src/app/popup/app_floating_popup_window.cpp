@@ -1666,7 +1666,11 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         const bool previewEnter = wp == VK_RETURN && IsCollectionPopupKeyboardTarget();
         const bool previewFind = folderPreview_ && wp == 'F' && IsCollectionPopupKeyboardTarget() &&
             (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000);
-        if ((wp == VK_DELETE || historyShortcut || previewEnter || previewFind) && !dockTrayPopup_ && IsCollectionPopupInteractive() &&
+        const bool popupNavigation = wp == VK_UP || wp == VK_DOWN || wp == VK_LEFT ||
+            wp == VK_RIGHT || wp == VK_HOME || wp == VK_END || wp == VK_TAB || wp == VK_ESCAPE;
+        if ((wp == VK_DELETE || historyShortcut || previewEnter || previewFind ||
+                (popupNavigation && IsCollectionPopupKeyboardTarget())) &&
+            !dockTrayPopup_ && IsCollectionPopupInteractive() &&
             (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 29)) == 0)
         {
             const snowdesktop::private_pointer::ForwardScope forward(hwnd, WM_KEYDOWN);

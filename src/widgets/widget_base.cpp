@@ -3391,8 +3391,14 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     }
 
     const bool selected = data_->selected;
-    const bool drawFocusOutline = selected && !IsPreviewRendering() &&
-        app_->keyboardNavVisualFocus_ && !app_->keyboardNavInsideWidget_;
+    const bool ownsPopup = !app_->popupAnimation_.IsHidden() &&
+        app_->IsCollectionPopupHostedByFloatingWindow() &&
+        (app_->GetOpenPopupWidget() == data_ ||
+            (app_->dockFolderPopupOpen_ && app_->dockFolderPopupMappingWidgetId_ == data_->id));
+    const bool retainSelectionOutline = data_->showOnHoverOnly ||
+        (app_->keyboardNavVisualFocus_ && !app_->keyboardNavInsideWidget_);
+    const bool drawFocusOutline = !IsPreviewRendering() &&
+        (ownsPopup || (selected && retainSelectionOutline));
     const bool hovered = IsPreviewInteractive() &&
         PtInRect(&frame, mousePt) != FALSE;
     const bool fixedGuideAppearance =

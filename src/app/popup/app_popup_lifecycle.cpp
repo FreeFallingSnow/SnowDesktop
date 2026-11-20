@@ -531,6 +531,16 @@ void DesktopApp::InvalidateCollectionPopupDesktopScene(RECT previousBounds)
     RECT dirty{};
     UnionRect(&dirty, &previousBounds, &popupRect_);
     UnionRect(&dirty, &dirty, &popupAnimationCacheRect_);
+    if (IsCollectionPopupHostedByFloatingWindow())
+    {
+        const size_t sourceIndex = dockFolderPopupOpen_
+            ? FindWidgetIndexById(dockFolderPopupMappingWidgetId_) : popupWidgetIndex_;
+        if (sourceIndex < widgets_.size())
+        {
+            const RECT sourceFrame = GetStandaloneWidgetFrameRect(widgets_[sourceIndex]);
+            UnionRect(&dirty, &dirty, &sourceFrame);
+        }
+    }
     if (IsRectEmptyRect(dirty)) return;
     InflateRect(&dirty, 6, 6);
     InvalidateRect(hwnd_, &dirty, FALSE);
@@ -558,6 +568,10 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
 void DesktopApp::FinalizeCloseCollectionPopup()
 {
     PublishCollectionPopupIconBackdrops({});
+    const size_t sourceIndex = dockFolderPopupOpen_
+        ? FindWidgetIndexById(dockFolderPopupMappingWidgetId_) : popupWidgetIndex_;
+    const RECT sourceFrame = IsCollectionPopupHostedByFloatingWindow() && sourceIndex < widgets_.size()
+        ? GetStandaloneWidgetFrameRect(widgets_[sourceIndex]) : RECT{};
     const RECT previewBounds = folderPreview_ ? popupRect_ : RECT{};
     const bool temporaryPreview = folderPreview_ && folderPreview_->IsTemporary();
     DiscardFolderPreview();
@@ -586,6 +600,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     pendingCollectionPopupOpen_.reset();
     RECT dirty{};
     UnionRect(&dirty, &popupRect_, &previewBounds);
+    UnionRect(&dirty, &dirty, &sourceFrame);
     if (!IsRectEmptyRect(popupAnimationCacheRect_))
     {
         if (IsRectEmptyRect(dirty))
