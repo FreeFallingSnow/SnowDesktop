@@ -2190,6 +2190,7 @@ bool MeasureWidgetViewTooltip(IDWriteFactory* dwrite, const D2D1_RECT_F& widgetR
     const std::wstring body = Utf8ToWide(region->tooltip);
     snowdesktop::NativeTooltipLayoutOptions options;
     options.scale = scale;
+    options.centerTextInkVertically = true;
     if (FAILED(snowdesktop::MeasureNativeTooltip(dwrite,
         format.Get(), title, body, maximumWidth, maximumHeight, measured, options))) return false;
     const float width = measured.width, height = measured.height;
