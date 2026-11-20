@@ -812,8 +812,7 @@ std::optional<WidgetClipboardChange> ReadWidgetClipboardChange(DWORD sequence)
         change.format = "image";
         BuildClipboardObservationThumbnail(change, *image.image);
         change.image = std::move(image.image);
-        // Keep one-shot read handles independent of the observation cache.
-        change.imageToken = std::move(image.resourceToken) + ":obs";
+        change.imageToken = std::move(image.resourceToken);
         return change;
     }
 

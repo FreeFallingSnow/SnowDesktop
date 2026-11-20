@@ -2482,6 +2482,11 @@ end
 `task.start("clipboard.write", { format = "image", image = image })` 的参数，
 写入需要 `clipboard.write` 授权。较早构建继续投递原有的缩略图字段。
 
+`clipboard.imageIdentity` 让订阅事件和手动读取图片的任务结果同时提供
+`imageId`。同一个宿主解码并缩放后的图片像素与尺寸相同，ID 就相同。
+订阅缺少可写图片句柄时仍提供 ID，组件可用它合并重复记录。该字段为不透明字符串，
+仅用于本次会话中判断图片内容是否相同。
+
 订阅从后续变更开始，组件失焦或暂时隐藏时继续运行。该主题由 Windows 通知驱动，
 忽略采样间隔与隐藏策略。快速覆盖或队列饱和时，中间变更可能被跳过。
 `handle:value()` 提供 `available`、`warmingUp` 和 `error` 状态，内容只随事件投递。

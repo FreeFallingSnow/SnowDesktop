@@ -114,6 +114,7 @@ void ClipboardTaskPayload::PushValue(lua_State* state) const
         lua_setfield(state, -2, "width");
         lua_pushinteger(state, result.image->height);
         lua_setfield(state, -2, "height");
+        SetString(state, "imageId", result.resourceToken);
     }
     else
     {

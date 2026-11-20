@@ -225,23 +225,25 @@ std::string WidgetEngine::RegisterClipboardObservationImage(
     const snowdesktop::widget_runtime::WidgetClipboardChange& change)
 {
     if (!d2dState_ || !change.image || change.imageToken.empty()) return {};
+    // Keep one-shot read handles independent of the observation cache.
+    const auto sourceToken = change.imageToken + ":obs";
     constexpr std::size_t kMaxRetainedImages = 8;
     auto& recent = clipboardObservationImages_[widgetId];
     auto& cache = d2dState_->runtimeImageCache;
     if (recent.size() == kMaxRetainedImages &&
-        std::find(recent.begin(), recent.end(), change.imageToken) == recent.end())
+        std::find(recent.begin(), recent.end(), sourceToken) == recent.end())
     {
         recent.erase(recent.begin());
         std::array<std::string_view, kMaxRetainedImages - 1> keep;
         std::copy(recent.begin(), recent.end(), keep.begin());
         cache.Retain(widgetId, kClipboardObservationImageSource, keep);
     }
-    auto token = cache.Register(widgetId, change.imageToken, change.image,
+    auto token = cache.Register(widgetId, sourceToken, change.image,
         kClipboardObservationImageSource, true);
     if (!token.empty())
     {
-        std::erase(recent, change.imageToken);
-        recent.push_back(change.imageToken);
+        std::erase(recent, sourceToken);
+        recent.push_back(sourceToken);
     }
     return token;
 }
@@ -304,6 +306,8 @@ void WidgetEngine::DrainClipboardChanges()
                         lua_setfield(state, -2, "width");
                         lua_pushinteger(state, change.height);
                         lua_setfield(state, -2, "height");
+                        lua_pushlstring(state, change.imageToken.data(), change.imageToken.size());
+                        lua_setfield(state, -2, "imageId");
                     }
                     if (!imageToken.empty())
                     {

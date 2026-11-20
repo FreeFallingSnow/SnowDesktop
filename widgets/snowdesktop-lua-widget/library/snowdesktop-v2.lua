@@ -1735,6 +1735,7 @@ function animation.cancelFrame(id) end
 ---@field image? SnowImageResource Session image, available with data.clipboard.changes.image and subject to runtime cache limits.
 ---@field imageWidth? integer Width of image, up to 512 pixels.
 ---@field imageHeight? integer Height of image, up to 512 pixels.
+---@field imageId? string Content identity for equality in the current session. Requires clipboard.imageIdentity.
 ---@field names? string[] At most 32 file or folder display names.
 ---@field error? string Capture error for empty events.
 
@@ -1922,6 +1923,7 @@ function data.subscribe(topic, options) end
 ---@field image SnowImageResource Temporary instance-scoped image handle for draw.image or view.image.source; do not persist it.
 ---@field width integer Decoded width after host scaling, from 1 through 512.
 ---@field height integer Decoded height after host scaling, from 1 through 512.
+---@field imageId? string Matches clipboard.changes for the same decoded image. Requires clipboard.imageIdentity.
 
 ---@class SnowClipboardFileReference
 ---@field ref string Opaque instance-scoped item reference accepted by draw.icon and shell.openItem/revealItem; never a path or file-content grant.
