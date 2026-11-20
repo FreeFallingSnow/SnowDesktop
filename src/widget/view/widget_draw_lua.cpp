@@ -505,11 +505,18 @@ static DrawMarqueeError TryDrawMarqueeText(
     if (!format) return DrawMarqueeError::Format;
 
     const std::wstring wideText = Utf8ToWide(text);
-    ComPtr<IDWriteTextLayout> layout;
-    if (wideText.empty() || FAILED(d2d->dwrite->CreateTextLayout(
-            wideText.data(), static_cast<UINT32>(wideText.size()), format,
-            100'000.0f, std::max(height, size * 1.5f), &layout)) || !layout)
-        return DrawMarqueeError::Layout;
+    if (wideText.empty()) return DrawMarqueeError::Layout;
+    const WidgetTextLayoutCache::Options options{
+        .width = 100'000.0f, .height = std::max(height, size * 1.5f)};
+    auto layout = d2d->textLayoutCache.Resolve(d2d->currentWidgetId, "desktop.marquee", key,
+        format, options, wideText, {}, [&]() {
+            ComPtr<IDWriteTextLayout> created;
+            if (FAILED(d2d->dwrite->CreateTextLayout(wideText.data(), static_cast<UINT32>(wideText.size()),
+                    format, options.width, options.height, &created)))
+                return ComPtr<IDWriteTextLayout>{};
+            return created;
+        });
+    if (!layout) return DrawMarqueeError::Layout;
     DWRITE_TEXT_METRICS metrics{};
     if (FAILED(layout->GetMetrics(&metrics)))
         return DrawMarqueeError::Measure;

@@ -1316,6 +1316,7 @@ void WidgetEngine::SetWidgetDesktopOccluded(const std::wstring& widgetId, bool o
     widget.desktopOccluded = occluded;
     widget.desktopOcclusionResumePending = !occluded && widget.desktopVisible;
     if (!occluded) return;
+    PauseNativeMarqueeClock(widget.desktopMarquee);
     widget.viewTransitions.Clear();
     widget.viewTransitionFramePending = false;
     if (widget.panelActive) return;

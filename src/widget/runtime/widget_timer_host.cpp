@@ -439,6 +439,7 @@ void WidgetEngine::ApplyHostAnimationPreferences()
 
 void WidgetEngine::ClearNativeMarqueeComposition(LuaWidget& widget)
 {
+    PauseNativeMarqueeClock(widget.desktopMarquee);
     widget.desktopMarquee.compositionManaged = false;
     if (!widget.preview && nativeMarqueeSyncCallback_)
         (void)nativeMarqueeSyncCallback_(widget.widgetId, {}, true);

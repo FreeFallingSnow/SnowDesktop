@@ -192,7 +192,7 @@ public:
     using SrgbSceneDraw = std::function<HRESULT(ID2D1DeviceContext*, POINT)>;
     struct SrgbMarqueeScene;
     using PreparedMarquees = std::shared_ptr<SrgbMarqueeScene>;
-    PreparedMarquees PrepareSrgbMarquees(HWND window, ID2D1Device* device,
+    PreparedMarquees PrepareSrgbMarquees(HWND window, std::uintptr_t key, ID2D1Device* device,
         const RECT& clientFrame, const RECT& allowed,
         std::span<const snowdesktop::widget_runtime::NativeMarqueeText> marquees);
     bool PauseSrgbMarquees(std::uintptr_t key);

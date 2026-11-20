@@ -457,10 +457,27 @@ SharedBackdropCompositionContext& SharedBackdropContext()
 
 struct DesktopBackdropCompositor::SrgbMarqueeScene
 {
+    RECT frame{};
+    RECT allowed{};
+    std::vector<snowdesktop::widget_runtime::NativeMarqueeText> labels;
     wuc::SpriteVisual body{nullptr};
     wuc::CompositionSurfaceBrush flattened{nullptr};
     std::vector<wuc::AnimationController> animations;
     bool paused = false;
+
+    bool Matches(const RECT& bounds, const RECT& clipBounds,
+        std::span<const snowdesktop::widget_runtime::NativeMarqueeText> next) const
+    {
+        return EqualRect(&frame, &bounds) && EqualRect(&allowed, &clipBounds) &&
+            std::ranges::equal(labels, next, [](const auto& a, const auto& b) {
+                return a.key == b.key && a.layout.Get() == b.layout.Get() &&
+                    a.viewport.left == b.viewport.left && a.viewport.top == b.viewport.top &&
+                    a.viewport.right == b.viewport.right && a.viewport.bottom == b.viewport.bottom &&
+                    a.originX == b.originX && a.originY == b.originY &&
+                    a.textWidth == b.textWidth && a.speed == b.speed && a.gap == b.gap &&
+                    a.color == b.color && a.alpha == b.alpha && a.scrolling == b.scrolling;
+            });
+    }
 };
 
 struct DesktopBackdropCompositor::Impl
@@ -3184,11 +3201,21 @@ bool DesktopBackdropCompositor::StageSrgbSceneFrame(HWND window, std::uintptr_t 
 }
 
 DesktopBackdropCompositor::PreparedMarquees DesktopBackdropCompositor::PrepareSrgbMarquees(
-    HWND window, ID2D1Device* device, const RECT& clientFrame, const RECT& allowed,
+    HWND window, std::uintptr_t key, ID2D1Device* device, const RECT& clientFrame, const RECT& allowed,
     std::span<const snowdesktop::widget_runtime::NativeMarqueeText> marquees)
 {
-    if (!window || !device || marquees.empty() || IsRectEmpty(&clientFrame) || IsRectEmpty(&allowed))
+    if (!window || !key || !device || marquees.empty() || IsRectEmpty(&clientFrame) || IsRectEmpty(&allowed))
         return {};
+    if (window == impl_->srgbContentWindow && device == impl_->maskDrawDevice.get())
+    {
+        const auto existing = impl_->srgbContent.find(key);
+        if (existing != impl_->srgbContent.end() && existing->second.marquees &&
+            existing->second.marquees->Matches(clientFrame, allowed, marquees))
+        {
+            snowdesktop::performance::Value("composition.srgb", "marquee_scene_reused", {}, 1);
+            return existing->second.marquees;
+        }
+    }
     snowdesktop::performance::Scope trace("composition.srgb", "prepare_marquee");
     const auto reject = [](std::string_view reason) {
         snowdesktop::performance::Value("composition.srgb", reason, {}, 1);
@@ -3300,6 +3327,9 @@ DesktopBackdropCompositor::PreparedMarquees DesktopBackdropCompositor::PrepareSr
         flattened.BitmapInterpolationMode(wuc::CompositionBitmapInterpolationMode::NearestNeighbor);
         result->body = std::move(body);
         result->flattened = std::move(flattened);
+        result->frame = clientFrame;
+        result->allowed = allowed;
+        result->labels.assign(marquees.begin(), marquees.end());
         return result;
     }
     catch (const winrt::hresult_error& error)
@@ -3451,8 +3481,16 @@ bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opa
         if (frame.active.surface) frame.sceneBrush.Surface(frame.candidate.surface);
         if (marquees)
         {
-            marquees->body.Brush(frame.sceneBrush);
-            frame.sceneEffect.SetSourceParameter(L"scene", marquees->flattened);
+            if (frame.marquees != marquees)
+            {
+                marquees->body.Brush(frame.sceneBrush);
+                frame.sceneEffect.SetSourceParameter(L"scene", marquees->flattened);
+            }
+            if (marquees->paused)
+            {
+                for (const auto& animation : marquees->animations) animation.Resume();
+                marquees->paused = false;
+            }
         }
         else if (frame.marquees)
         {

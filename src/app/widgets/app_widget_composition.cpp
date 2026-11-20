@@ -752,7 +752,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
                         }
                     }
                     marquees = desktopBackdropCompositor_.PrepareSrgbMarquees(
-                        hwnd_, d2dDevice_.Get(), contentFrame, paint.nativeMarqueeBounds, labels);
+                        hwnd_, sceneKey, d2dDevice_.Get(), contentFrame, paint.nativeMarqueeBounds, labels);
                     return static_cast<bool>(marquees);
                 });
             }

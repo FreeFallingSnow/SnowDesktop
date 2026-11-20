@@ -133,6 +133,7 @@ std::optional<RECT> NativeMarqueeDirtyRect(
 bool AdvanceNativeMarqueeSurface(
     LuaWidget::NativeMarqueeSurface& surface,
     std::chrono::steady_clock::time_point now);
+void PauseNativeMarqueeClock(LuaWidget::NativeMarqueeSurface& surface);
 
 snowdesktop::widget_runtime::ViewThemePalette BuildWidgetViewThemePalette(D2DState* state,
     const std::wstring& widgetId);

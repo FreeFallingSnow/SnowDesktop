@@ -1175,15 +1175,25 @@ static void StepNativeMarqueeOffsets(LuaWidget::NativeMarqueeSurface& surface,
 {
     const float elapsed = surface.lastAdvance.time_since_epoch().count() == 0
         ? 0.0f : std::chrono::duration<float, std::milli>(now - surface.lastAdvance).count();
+    // The compositor runs between host refreshes. Only the software tick
+    // limits catch-up after the UI thread stalls.
+    const float delta = surface.compositionManaged ? elapsed : std::min(elapsed, 100.0f);
     for (auto& marquee : surface.marquees)
     {
         if (!marquee.scrolling) continue;
         marquee.offset = snowdesktop::widget_runtime::AdvanceDrawMarqueeOffset(
-            marquee.offset, elapsed, marquee.speed /
+            marquee.offset, delta, marquee.speed /
                 static_cast<float>(snowdesktop::animation::RuntimeDurationScale()),
             marquee.textWidth + marquee.gap);
     }
     surface.lastAdvance = now;
+}
+
+void PauseNativeMarqueeClock(LuaWidget::NativeMarqueeSurface& surface)
+{
+    if (surface.compositionManaged)
+        StepNativeMarqueeOffsets(surface, std::chrono::steady_clock::now());
+    surface.lastAdvance = {};
 }
 
 static void CommitNativeMarqueeCapture(D2DState* state,

@@ -383,10 +383,9 @@ float AdvanceDrawMarqueeOffset(float offset, float deltaMilliseconds,
         !std::isfinite(speed) || !std::isfinite(cycle) ||
         deltaMilliseconds <= 0.0f || speed <= 0.0f || cycle <= 0.0f)
         return std::isfinite(offset) && offset >= 0.0f ? offset : 0.0f;
-    const float boundedDelta = std::min(deltaMilliseconds, 100.0f);
-    const float advanced = std::fmod(
-        std::max(0.0f, offset) + speed * boundedDelta / 1000.0f,
-        cycle);
-    return advanced >= 0.0f ? advanced : advanced + cycle;
+    const double advanced = std::fmod(
+        std::max(0.0f, offset) + static_cast<double>(speed) * deltaMilliseconds / 1000.0,
+        static_cast<double>(cycle));
+    return static_cast<float>(advanced);
 }
 }
