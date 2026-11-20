@@ -2243,7 +2243,7 @@
   "settings.general.advancedFeatures.infoTitle": "Unlock and offline access information",
   "settings.general.advancedFeatures.largeIcons": "Large software icons",
   "settings.general.advancedFeatures.largeIconsDescription": "Personalize software icons, freely adjust their size, and display Steam games as posters.",
-  "settings.general.advancedFeatures.largeIconsUsage": "To use: right-click a software icon → Convert to large icon",
+  "settings.general.advancedFeatures.largeIconsUsage": "To use: right-click a software icon → Icon personalization → Convert to large icon",
   "settings.general.advancedFeatures.offlineInfo": "Starting SnowDesktop while Steam is online automatically updates the offline record after successful verification.",
   "settings.general.advancedFeatures.retry": "Retry unlocking",
   "settings.general.advancedFeatures.steamUpdateRequired": "Steam needs a client or interface update. Update and restart Steam, then retry unlocking.",

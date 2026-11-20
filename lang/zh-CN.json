@@ -2243,7 +2243,7 @@
   "settings.general.advancedFeatures.infoTitle": "解锁与离线使用说明",
   "settings.general.advancedFeatures.largeIcons": "软件大图标",
   "settings.general.advancedFeatures.largeIconsDescription": "个性化软件图标外观，自由调整尺寸，支持 Steam 游戏海报展示。",
-  "settings.general.advancedFeatures.largeIconsUsage": "使用方式：右键软件图标 → 转为大图标",
+  "settings.general.advancedFeatures.largeIconsUsage": "使用方式：右键软件图标 → 图标个性化 → 转为大图标",
   "settings.general.advancedFeatures.offlineInfo": "Steam 在线时启动 SnowDesktop，验证成功后会自动更新离线验证记录。",
   "settings.general.advancedFeatures.retry": "重试解锁",
   "settings.general.advancedFeatures.steamUpdateRequired": "Steam 客户端或接口需要更新。请更新并重启 Steam，然后重试解锁。",

@@ -2243,7 +2243,7 @@
   "settings.general.advancedFeatures.infoTitle": "잠금 해제 및 오프라인 사용 안내",
   "settings.general.advancedFeatures.largeIcons": "소프트웨어 큰 아이콘",
   "settings.general.advancedFeatures.largeIconsDescription": "소프트웨어 아이콘의 모양을 꾸미고 크기를 자유롭게 조절하며, Steam 게임을 포스터로 표시할 수 있습니다.",
-  "settings.general.advancedFeatures.largeIconsUsage": "사용 방법: 소프트웨어 아이콘을 마우스 오른쪽 버튼으로 클릭 → 큰 아이콘으로 변환",
+  "settings.general.advancedFeatures.largeIconsUsage": "사용 방법: 소프트웨어 아이콘을 마우스 오른쪽 버튼으로 클릭 → 아이콘 개인 설정 → 큰 아이콘으로 변환",
   "settings.general.advancedFeatures.offlineInfo": "Steam이 온라인일 때 SnowDesktop을 실행하여 인증에 성공하면 오프라인 인증 기록이 자동으로 갱신됩니다.",
   "settings.general.advancedFeatures.retry": "잠금 해제 다시 시도",
   "settings.general.advancedFeatures.steamUpdateRequired": "Steam 클라이언트 또는 인터페이스를 업데이트해야 합니다. Steam을 업데이트하고 다시 시작한 후 잠금 해제를 다시 시도하세요.",

@@ -2243,7 +2243,7 @@
   "settings.general.advancedFeatures.infoTitle": "解除とオフライン利用について",
   "settings.general.advancedFeatures.largeIcons": "ソフトウェアの大きなアイコン",
   "settings.general.advancedFeatures.largeIconsDescription": "ソフトウェアアイコンの外観やサイズを自由にカスタマイズでき、Steam ゲームをポスターとして表示できます。",
-  "settings.general.advancedFeatures.largeIconsUsage": "使い方：ソフトウェアアイコンを右クリック → 大きいアイコンに変換",
+  "settings.general.advancedFeatures.largeIconsUsage": "使い方：ソフトウェアアイコンを右クリック → アイコンのカスタマイズ → 大きいアイコンに変換",
   "settings.general.advancedFeatures.offlineInfo": "Steam がオンラインの状態で SnowDesktop を起動し、認証に成功すると、オフライン認証記録が自動更新されます。",
   "settings.general.advancedFeatures.retry": "解除を再試行",
   "settings.general.advancedFeatures.steamUpdateRequired": "Steam クライアントまたはインターフェースの更新が必要です。Steam を更新して再起動し、解除を再試行してください。",

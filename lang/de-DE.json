@@ -2243,7 +2243,7 @@
   "settings.general.advancedFeatures.infoTitle": "Informationen zum Freischalten und zur Offline-Nutzung",
   "settings.general.advancedFeatures.largeIcons": "Große Programmsymbole",
   "settings.general.advancedFeatures.largeIconsDescription": "Gestalte Programmsymbole individuell, passe ihre Größe frei an und zeige Steam-Spiele als Poster an.",
-  "settings.general.advancedFeatures.largeIconsUsage": "Verwendung: Rechtsklick auf ein Programmsymbol → In großes Symbol umwandeln",
+  "settings.general.advancedFeatures.largeIconsUsage": "Verwendung: Rechtsklick auf ein Programmsymbol → Symbol anpassen → In großes Symbol umwandeln",
   "settings.general.advancedFeatures.offlineInfo": "Wenn du SnowDesktop startest, während Steam online ist, wird der Offline-Nachweis nach erfolgreicher Prüfung automatisch aktualisiert.",
   "settings.general.advancedFeatures.retry": "Freischalten erneut versuchen",
   "settings.general.advancedFeatures.steamUpdateRequired": "Der Steam-Client oder seine Schnittstellen müssen aktualisiert werden. Aktualisiere Steam, starte es neu und versuche das Freischalten erneut.",

@@ -2243,7 +2243,7 @@
   "settings.general.advancedFeatures.infoTitle": "Informações sobre desbloqueio e uso offline",
   "settings.general.advancedFeatures.largeIcons": "Ícones grandes de programas",
   "settings.general.advancedFeatures.largeIconsDescription": "Personalize a aparência dos ícones de programas, ajuste livremente o tamanho e exiba jogos do Steam como pôsteres.",
-  "settings.general.advancedFeatures.largeIconsUsage": "Como usar: clique com o botão direito em um ícone de programa → Converter em ícone grande",
+  "settings.general.advancedFeatures.largeIconsUsage": "Como usar: clique com o botão direito em um ícone de programa → Personalizar ícone → Converter em ícone grande",
   "settings.general.advancedFeatures.offlineInfo": "Ao iniciar o SnowDesktop enquanto o Steam estiver online, o registro offline será atualizado automaticamente após a verificação.",
   "settings.general.advancedFeatures.retry": "Tentar desbloquear novamente",
   "settings.general.advancedFeatures.steamUpdateRequired": "O cliente ou as interfaces do Steam precisam de uma atualização. Atualize e reinicie o Steam e tente desbloquear novamente.",
