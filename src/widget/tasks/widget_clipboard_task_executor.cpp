@@ -517,6 +517,47 @@ std::vector<std::string> ReadClipboardDisplayNames()
     return names;
 }
 
+void BuildClipboardObservationThumbnail(WidgetClipboardChange& change,
+    const WidgetRuntimeImagePixels& pixels)
+{
+    constexpr std::uint32_t kMaxDimension = 32;
+    const double scale = std::min(1.0,
+        static_cast<double>(kMaxDimension) / std::max(pixels.width, pixels.height));
+    change.width = std::max(1u, static_cast<std::uint32_t>(std::lround(pixels.width * scale)));
+    change.height = std::max(1u, static_cast<std::uint32_t>(std::lround(pixels.height * scale)));
+    change.rgb.reserve(static_cast<std::size_t>(change.width) * change.height * 3);
+
+    for (std::uint32_t y = 0; y < change.height; ++y)
+    {
+        const auto top = y * pixels.height / change.height;
+        const auto bottom = (y + 1) * pixels.height / change.height;
+        for (std::uint32_t x = 0; x < change.width; ++x)
+        {
+            const auto left = x * pixels.width / change.width;
+            const auto right = (x + 1) * pixels.width / change.width;
+            std::uint32_t red = 0;
+            std::uint32_t green = 0;
+            std::uint32_t blue = 0;
+            for (auto sy = top; sy < bottom; ++sy)
+            {
+                const auto* row = pixels.bgraPremultiplied.data() +
+                    static_cast<std::size_t>(sy) * pixels.stride;
+                for (auto sx = left; sx < right; ++sx)
+                {
+                    const auto* pixel = row + sx * 4;
+                    red += pixel[2];
+                    green += pixel[1];
+                    blue += pixel[0];
+                }
+            }
+            const auto area = (right - left) * (bottom - top);
+            change.rgb.push_back(static_cast<char>(red / area));
+            change.rgb.push_back(static_cast<char>(green / area));
+            change.rgb.push_back(static_cast<char>(blue / area));
+        }
+    }
+}
+
 WidgetClipboardTaskRunResult PublishClipboardData(UINT format,
     std::span<const std::byte> data, std::span<const std::byte> header = {})
 {
@@ -760,27 +801,19 @@ std::optional<WidgetClipboardChange> ReadWidgetClipboardChange(DWORD sequence)
     if (GetClipboardSequenceNumber() != sequence) return std::nullopt;
     if (IsClipboardObservationExcluded()) return change;
 
-    constexpr UINT kThumbnailMaxDimension = 32;
-    auto image = ReadImageLocked(kThumbnailMaxDimension);
+    auto image = ReadImageLocked(Executor::MaximumImageOutputDimension);
     if (image.ok)
     {
-        const auto& pixels = *image.image;
-        change.format = "image";
-        change.width = pixels.width;
-        change.height = pixels.height;
-        change.rgb.reserve(static_cast<std::size_t>(change.width) * change.height * 3);
-        for (std::uint32_t y = 0; y < pixels.height; ++y)
+        if (!clipboard.Close())
         {
-            const auto* row = pixels.bgraPremultiplied.data() +
-                static_cast<std::size_t>(y) * pixels.stride;
-            for (std::uint32_t x = 0; x < pixels.width; ++x)
-            {
-                const auto* pixel = row + x * 4;
-                change.rgb.push_back(static_cast<char>(pixel[2]));
-                change.rgb.push_back(static_cast<char>(pixel[1]));
-                change.rgb.push_back(static_cast<char>(pixel[0]));
-            }
+            change.error = "clipboardReadFailed";
+            return change;
         }
+        change.format = "image";
+        BuildClipboardObservationThumbnail(change, *image.image);
+        change.image = std::move(image.image);
+        // Keep one-shot read handles independent of the observation cache.
+        change.imageToken = std::move(image.resourceToken) + ":obs";
         return change;
     }
 

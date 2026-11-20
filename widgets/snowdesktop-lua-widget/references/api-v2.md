@@ -2465,14 +2465,22 @@ end
 | `event.clipboard.format` | 字段 |
 | --- | --- |
 | `text` | `text`，最多 262144 字节的 UTF-8 |
-| `image` | `rgb`，按行排列的 RGB 二进制字符串，以及 `width`、`height`，最长边 32 像素 |
+| `image` | `rgb`，按行排列的 RGB 二进制字符串，以及 `width`、`height`，最长边 32 像素。支持 `data.clipboard.changes.image` 时可额外返回图片资源 |
 | `file-names` | `names`，最多 32 个文件或文件夹展示名 |
 | `empty` | 无历史内容，读取失败时带 `error` |
 
 一次变更优先投递图片，其次是文件展示名，最后是文本。宿主识别
 `Clipboard Viewer Ignore`、`ExcludeClipboardContentFromMonitorProcessing`、
 `CanIncludeInClipboardHistory=0` 和 `CanUploadToCloudClipboard=0`，命中时投递
-`empty`。图片句柄与文件引用可在可信手势中通过 `clipboard.read` 取得。
+`empty`。可信手势中的 `clipboard.read` 仍可获取当前图片句柄和文件引用。
+
+支持 `data.clipboard.changes.image` 的宿主可在图片变更中附带实例绑定的
+`image` 句柄及 `imageWidth`、`imageHeight`。图像等比缩放至每边不超过 512 像素。
+每实例最多保留最近 8 个不同的后台图像资源，并受共享运行时图片缓存额度约束。
+额度不足时事件仍返回缩略图。资源被淘汰、组件重载或卸载后句柄失效，可用
+`resource.status(image).state` 检查。用户点击时，可以将仍可用的句柄作为
+`task.start("clipboard.write", { format = "image", image = image })` 的参数，
+写入需要 `clipboard.write` 授权。较早构建继续投递原有的缩略图字段。
 
 订阅从后续变更开始，组件失焦或暂时隐藏时继续运行。该主题由 Windows 通知驱动，
 忽略采样间隔与隐藏策略。快速覆盖或队列饱和时，中间变更可能被跳过。

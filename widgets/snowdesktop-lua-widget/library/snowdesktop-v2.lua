@@ -1732,6 +1732,9 @@ function animation.cancelFrame(id) end
 ---@field rgb? string Packed RGB bytes in row order.
 ---@field width? integer Thumbnail width, up to 32 pixels.
 ---@field height? integer Thumbnail height, up to 32 pixels.
+---@field image? SnowImageResource Session image, available with data.clipboard.changes.image and subject to runtime cache limits.
+---@field imageWidth? integer Width of image, up to 512 pixels.
+---@field imageHeight? integer Height of image, up to 512 pixels.
 ---@field names? string[] At most 32 file or folder display names.
 ---@field error? string Capture error for empty events.
 

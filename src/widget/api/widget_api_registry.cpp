@@ -62,6 +62,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "data.calendar.selectedDate",
     "data.desktop.changes",
     "data.clipboard.changes",
+    "data.clipboard.changes.image",
     "data.desktop.items",
     "data.desktop.selection",
     "data.filesystem.watch",

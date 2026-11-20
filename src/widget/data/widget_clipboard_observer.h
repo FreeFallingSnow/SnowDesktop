@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -14,6 +15,8 @@
 
 namespace snowdesktop::widget_runtime
 {
+struct WidgetRuntimeImagePixels;
+
 inline constexpr char kClipboardChangesTopic[] = "clipboard.changes";
 inline constexpr char kClipboardObservePermission[] = "clipboard.observe";
 
@@ -25,6 +28,8 @@ struct WidgetClipboardChange
     std::string rgb;
     std::uint32_t width = 0;
     std::uint32_t height = 0;
+    std::shared_ptr<const WidgetRuntimeImagePixels> image;
+    std::string imageToken;
     std::vector<std::string> names;
     std::string error;
 };

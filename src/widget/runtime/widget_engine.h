@@ -1444,6 +1444,8 @@ private:
     void DrainWidgetSnapshotChanges();
     void DrainAudioAnalysisChanges();
     void DrainClipboardChanges();
+    std::string RegisterClipboardObservationImage(const std::wstring& widgetId,
+        const snowdesktop::widget_runtime::WidgetClipboardChange& change);
     void ReconcileFilesystemWatches();
     void DrainFilesystemWatchCompletions();
     void ReleaseWidgetDataSubscriptions(LuaWidget& widget);
@@ -1533,6 +1535,7 @@ private:
         dataBroker_;
     snowdesktop::widget_runtime::WidgetClipboardObserver clipboardObserver_;
     std::unordered_map<std::uint64_t, std::uint64_t> clipboardSubscriptionRevisions_;
+    std::unordered_map<std::wstring, std::vector<std::string>> clipboardObservationImages_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetTaskBroker>
         taskBroker_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetNotificationCenter>

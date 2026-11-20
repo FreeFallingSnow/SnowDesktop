@@ -12,16 +12,20 @@
 #include "widget/api/widget_calendar_query_options.h"
 #include "widget/api/widget_api_registry.h"
 #include "widget/data/widget_clipboard_observer.h"
+#include "widget/data/widget_resource_lua.h"
 #include "widget/data/widget_data_snapshot.h"
 #include "widget/data/widget_system_control_data.h"
 
 #include <algorithm>
+#include <array>
 #include <iterator>
 #include <utility>
 
 using snowdesktop::widget_runtime::IsPreviewFilesystemHandle;
 using snowdesktop::widget_runtime::kClipboardChangesTopic;
 using snowdesktop::widget_runtime::kClipboardObservePermission;
+
+constexpr char kClipboardObservationImageSource[] = "clipboard.observe";
 using snowdesktop::widget_runtime::kFilesystemReadPermission;
 
 static void ClearRuntimeImagesForSource(D2DState* state, std::string_view source)
@@ -216,6 +220,32 @@ void WidgetEngine::ApplyWidgetDataBrokerActions()
     ReconcileFilesystemWatches();
 }
 
+std::string WidgetEngine::RegisterClipboardObservationImage(
+    const std::wstring& widgetId,
+    const snowdesktop::widget_runtime::WidgetClipboardChange& change)
+{
+    if (!d2dState_ || !change.image || change.imageToken.empty()) return {};
+    constexpr std::size_t kMaxRetainedImages = 8;
+    auto& recent = clipboardObservationImages_[widgetId];
+    auto& cache = d2dState_->runtimeImageCache;
+    if (recent.size() == kMaxRetainedImages &&
+        std::find(recent.begin(), recent.end(), change.imageToken) == recent.end())
+    {
+        recent.erase(recent.begin());
+        std::array<std::string_view, kMaxRetainedImages - 1> keep;
+        std::copy(recent.begin(), recent.end(), keep.begin());
+        cache.Retain(widgetId, kClipboardObservationImageSource, keep);
+    }
+    auto token = cache.Register(widgetId, change.imageToken, change.image,
+        kClipboardObservationImageSource, true);
+    if (!token.empty())
+    {
+        std::erase(recent, change.imageToken);
+        recent.push_back(change.imageToken);
+    }
+    return token;
+}
+
 void WidgetEngine::DrainClipboardChanges()
 {
     if (!dataBroker_) return;
@@ -245,6 +275,9 @@ void WidgetEngine::DrainClipboardChanges()
                 continue;
             }
             if (state != WidgetHostStateKind::Ready) continue;
+            const auto imageToken = RegisterClipboardObservationImage(widgetId, change);
+            snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
+                trustedGestureState_, false);
             (void)InvokeLifecycleEvent(widgets_[index], "data.change",
                 [&](lua_State* state) {
                     lua_pushliteral(state, "clipboard.changes");
@@ -271,6 +304,16 @@ void WidgetEngine::DrainClipboardChanges()
                         lua_setfield(state, -2, "width");
                         lua_pushinteger(state, change.height);
                         lua_setfield(state, -2, "height");
+                    }
+                    if (!imageToken.empty())
+                    {
+                        using namespace snowdesktop::widget_runtime;
+                        PushResourceHandle(state, LuaResourceType::Image, imageToken);
+                        lua_setfield(state, -2, "image");
+                        lua_pushinteger(state, change.image->width);
+                        lua_setfield(state, -2, "imageWidth");
+                        lua_pushinteger(state, change.image->height);
+                        lua_setfield(state, -2, "imageHeight");
                     }
                     if (!change.names.empty())
                     {
@@ -484,6 +527,9 @@ void WidgetEngine::DrainFilesystemWatchCompletions()
 
 void WidgetEngine::ReleaseWidgetDataSubscriptions(LuaWidget& widget)
 {
+    if (clipboardObservationImages_.erase(widget.widgetId) != 0 && d2dState_)
+        d2dState_->runtimeImageCache.Retain(widget.widgetId,
+            kClipboardObservationImageSource, {});
     if (!dataBroker_)
     {
         for (const auto& [subscriptionId, _] : widget.dataSubscriptions)
