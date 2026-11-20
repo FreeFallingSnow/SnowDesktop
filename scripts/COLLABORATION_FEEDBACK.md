@@ -467,6 +467,8 @@
 
 ### CF-025 文件观察提前结束
 
+- **Dock 层级修复续证（2026-11-20）**：Task `dock-reserve-stay-awake` 的 `watch wait --condition files` 票据 `68703a138607be8614812c5feae02916` 对 `src/app/shell/app_shell_menu.cpp` 返回 `eligible`，Git 仍显示前序 DSH 任务的未提交修改，批次 `c425238ece434a098799197476e18115`、Run `8defbaff90b44d84a3f2aafef62cc329` 当时仍在构建。沿原 Run 等待结果，用户授权接手后复用原验证回执提交 `eb4e3fa5`，再认领本次续修路径。文件票据仍需反映未提交的前序改动。
+
 - **Dock 渐隐裁剪续证（2026-11-19）** Task `wgc-shadow-layering` 的票据 `e26ac202cc4a260223ea486d6bb06177` 对 `src/core/dock.cpp` 和状态栏视图返回 `eligible`。Git 仍显示前序阴影任务的 Dock 改动未提交。按实际归属先修改状态栏，待 `9ff48b4f2` 保存前序改动后认领 Dock，在批次 `cf0af9d5f44b4dc6b28381a62a4aa308` 合并验证。文件观察仍需区分窗口可用和路径可安全认领。
 
 - **任务 4 实机验收收尾续证（2026-11-19）**：Task `task-40977fc85edd4847b361a242933a430d` 的票据 `0939f0570e30519dcdcb9f528b0e3ad1` 对 `CODE_HEALTH.md` 返回 `eligible`。Git 仍显示任务 14 未提交的启动登记。待原差异提交且文件可认领后补录任务 4 用户实测，无需重新构建。
