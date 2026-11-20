@@ -2946,5 +2946,7 @@
   "app.settings.icon_shadow_quick_navigation": "Icônes dans la navigation rapide",
   "app.settings.icon_shadow_subject": "Ombre du motif de l’icône embellie",
   "app.settings.widgets_permission_clipboard_observe": "Lire le contenu du presse-papiers en arrière-plan",
-  "settings.agentOperations.introTitle": "Organisez votre bureau avec l’IA"
+  "settings.agentOperations.introTitle": "Organisez votre bureau avec l’IA",
+  "settings.agentOperations.access": "Autoriser l’accès des agents",
+  "settings.agentOperations.access.description": "Autorisez les assistants IA locaux à lire des informations ou à modifier SnowDesktop via son interface de contrôle."
 }

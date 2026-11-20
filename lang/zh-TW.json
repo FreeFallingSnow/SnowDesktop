@@ -2946,5 +2946,7 @@
   "app.settings.icon_shadow_quick_navigation": "快速導覽中的圖示",
   "app.settings.icon_shadow_subject": "美化主體陰影",
   "app.settings.widgets_permission_clipboard_observe": "在背景讀取剪貼簿內容",
-  "settings.agentOperations.introTitle": "讓 AI 幫您整理桌面"
+  "settings.agentOperations.introTitle": "讓 AI 幫您整理桌面",
+  "settings.agentOperations.access": "允許 Agent 存取",
+  "settings.agentOperations.access.description": "允許本機 AI 助理透過控制介面讀取資訊或變更 SnowDesktop。"
 }

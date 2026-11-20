@@ -2946,5 +2946,7 @@
   "app.settings.icon_shadow_quick_navigation": "クイックナビゲーションのアイコン",
   "app.settings.icon_shadow_subject": "装飾アイコン本体の影",
   "app.settings.widgets_permission_clipboard_observe": "バックグラウンドでクリップボードの内容を読み取る",
-  "settings.agentOperations.introTitle": "AI でデスクトップを整理"
+  "settings.agentOperations.introTitle": "AI でデスクトップを整理",
+  "settings.agentOperations.access": "Agent のアクセスを許可",
+  "settings.agentOperations.access.description": "ローカルの AI アシスタントが制御インターフェイスを通じて SnowDesktop の情報を読み取ったり、変更を加えたりできます。"
 }

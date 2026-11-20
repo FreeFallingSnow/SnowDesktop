@@ -2946,5 +2946,7 @@
   "app.settings.icon_shadow_quick_navigation": "Symbole in der Schnellnavigation",
   "app.settings.icon_shadow_subject": "Schatten des verschönerten Symbolmotivs",
   "app.settings.widgets_permission_clipboard_observe": "Zwischenablageinhalte im Hintergrund lesen",
-  "settings.agentOperations.introTitle": "Den Desktop mit KI organisieren"
+  "settings.agentOperations.introTitle": "Den Desktop mit KI organisieren",
+  "settings.agentOperations.access": "Agentenzugriff zulassen",
+  "settings.agentOperations.access.description": "Lokale KI-Assistenten können über die Steuerschnittstelle Informationen aus SnowDesktop lesen oder Änderungen vornehmen."
 }
