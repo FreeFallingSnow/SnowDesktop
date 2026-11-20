@@ -1,6 +1,8 @@
 #include "tray_hover_popup.h"
 #include <algorithm>
 #include <dwmapi.h>
+#include <iterator>
+#include <string_view>
 #include <unordered_map>
 
 namespace snowdesktop::tray
@@ -98,6 +100,33 @@ bool HoverPopup::Covers(HWND window) const
     return std::any_of(shown_.begin(), shown_.end(), [&](const Popup& popup) {
         return popup.window == root && popup.positionRequested && IsCandidate(root);
     });
+}
+
+bool HoverPopup::IsActivatingPreview(HWND window) const
+{
+    if (!hook_ || !window || window == target_ || !IsWindowVisible(window) || IsIconic(window)) return false;
+    DWORD process = 0, targetProcess = 0;
+    const auto thread = GetWindowThreadProcessId(window, &process);
+    if (!thread || process != process_ || GetWindowThreadProcessId(target_, &targetProcess) != thread ||
+        targetProcess != process_) return false;
+
+    const auto style = GetWindowLongPtrW(window, GWL_STYLE);
+    const auto extended = GetWindowLongPtrW(window, GWL_EXSTYLE);
+    if ((style & (WS_CHILD | WS_THICKFRAME)) || (style & WS_CAPTION) == WS_CAPTION ||
+        !(extended & WS_EX_TOOLWINDOW) || (extended & (WS_EX_APPWINDOW | WS_EX_TRANSPARENT))) return false;
+    RECT bounds{}, intersection{};
+    if (!GetWindowRect(window, &bounds) || !IntersectRect(&intersection, &bounds, &vicinity_)) return false;
+
+    // The Weixin tray receiver and its activating preview use the same
+    // versioned Qt class prefix. The right-click menu uses PopupSaveBits.
+    wchar_t receiverClass[96]{}, previewClass[96]{};
+    GetClassNameW(target_, receiverClass, static_cast<int>(std::size(receiverClass)));
+    GetClassNameW(window, previewClass, static_cast<int>(std::size(previewClass)));
+    constexpr std::wstring_view traySuffix = L"WxTrayIconMessageWindowClass";
+    std::wstring_view prefix(receiverClass), preview(previewClass);
+    if (!prefix.starts_with(L"Qt5") || !prefix.ends_with(traySuffix)) return false;
+    prefix.remove_suffix(traySuffix.size());
+    return preview.starts_with(prefix) && preview.substr(prefix.size()) == L"QWindowToolSaveBits";
 }
 
 void HoverPopup::AvoidRow(Popup& popup, const RECT& bounds) const

@@ -44,6 +44,7 @@ constexpr UINT kFormInputChanged=WM_APP+212;
 constexpr UINT kPointerChanged=WM_APP+213;
 constexpr UINT kPowerMenu=WM_APP+214;
 constexpr UINT_PTR kTrayMenuTimer=2;
+constexpr UINT_PTR kTrayPreviewFocusTimer=3;
 bool HighContrast(){HIGHCONTRASTW h{sizeof(h)};SystemParametersInfoW(SPI_GETHIGHCONTRAST,sizeof(h),&h,0);return(h.dwFlags&HCF_HIGHCONTRASTON)!=0;}
 D2D1_COLOR_F SystemColor(int index){const auto c=GetSysColor(index);return D2D1::ColorF(GetRValue(c)/255.f,GetGValue(c)/255.f,GetBValue(c)/255.f);}
 struct PanelLifetime { bool alive=true; };
@@ -128,6 +129,7 @@ struct SystemPanel::Impl
     bool pointerRefreshPending=false;
     NativePointerHoverState pointerHover;
     tray::HoverPopup trayHoverPopup;
+    HWND activatingTrayPreview = nullptr;
     bool scrollbarDragging=false;int scrollbarPointerStart=0,scrollbarOffsetStart=0;
     std::optional<tray::Identity> middleTrayPress,lastMiddleTray;
     bool trayPreview=false;std::optional<D2D1_RECT_F> dropIndicator;
@@ -223,7 +225,7 @@ struct SystemPanel::Impl
     void Tip(const ui::Node* node)
     {
         if(!node||!current||!model||!showing||closing||modal||slide.IsAnimating()||context.process||!pointerHover.Enabled()||
-            (node->id.starts_with("tray:") && trayHoverPopup.Visible()))
+            (node->id.starts_with("tray:") && (activatingTrayPreview || trayHoverPopup.Visible())))
         {tooltip.Hide();return;}
         tooltip.SetTarget(node->id,node->tooltip,ScreenBounds(*node),current->settings.position==DockPosition::Bottom?NativeTooltipPlacement::Above:NativeTooltipPlacement::Below);
     }
@@ -269,6 +271,34 @@ struct SystemPanel::Impl
         POINT point{};if(GetCursorPos(&point))pointerHover.Observe(point);
         pointerHover.Suppress();ClearPointerHover();
     }
+    bool RetainTrayPreview(HWND next)
+    {
+        if (!trayHoverPopup.IsActivatingPreview(next) ||
+            !SetTimer(window, kTrayPreviewFocusTimer, 50, nullptr)) return false;
+        activatingTrayPreview = next;
+        tooltip.Hide();
+        return true;
+    }
+    void ClearTrayPreviewFocus()
+    {
+        activatingTrayPreview = nullptr;
+        KillTimer(window, kTrayPreviewFocusTimer);
+    }
+    void ObserveTrayPreviewFocus()
+    {
+        if (!activatingTrayPreview) return;
+        const HWND foreground = GetForegroundWindow();
+        if (!foreground || foreground == activatingTrayPreview) return;
+        const bool previewClosed = !IsWindowVisible(activatingTrayPreview);
+        ClearTrayPreviewFocus();
+        if (foreground == window) return;
+        POINT pointer{};
+        // A hover preview can hide as the pointer returns to the tray. Restore
+        // panel focus only for that return, after the preview has released it.
+        if (previewClosed && GetCursorPos(&pointer) && WindowFromPoint(pointer) == window &&
+            SetForegroundWindow(window)) return;
+        Animate(false);
+    }
     void RefreshPointer(bool repaint=true)
     {
         const ui::Node* node=nullptr;POINT screen{};
@@ -278,7 +308,8 @@ struct SystemPanel::Impl
         if(showing&&!closing&&!modal&&!slide.IsAnimating()&&!context.process&&pointerHover.Enabled()&&model&&input.Pressed().empty()&&!scrollbarDragging&&located)
         {
             const auto pointerWindow=WindowFromPoint(screen);
-            covered = trayHoverPopup.Covers(pointerWindow);
+            covered = (activatingTrayPreview && GetAncestor(pointerWindow, GA_ROOT) == activatingTrayPreview) ||
+                trayHoverPopup.Covers(pointerWindow);
             if (covered) node = model->View().Find(hovered);
             else if(pointerWindow==window||(calendarInputs&&calendarInputs->Contains(pointerWindow)))
             {
@@ -655,7 +686,7 @@ struct SystemPanel::Impl
         if(!opening&&(closing||transition.Releasing()))return;
         // Mark the close before notifications, capture release or menu
         // dismissal can dispatch another status-bar click.
-        if(!opening){closing=true;ClearPointerHover();}
+        if(!opening){closing=true;ClearTrayPreviewFocus();ClearPointerHover();}
         if(!opening)ReportTrayState(nullptr);
         if(!opening&&model){model->CancelControlInput();if(calendarInputs)calendarInputs->Sync(InputFields(),current->appearance,static_cast<UINT>(std::lround(scale*96)));}
         if(!opening){KillTimer(window,kTrayMenuTimer);EndDragFeedback();dropIndicator.reset();middleTrayPress.reset();lastMiddleTray.reset();if(GetCapture()==window)ReleaseCapture();}
@@ -682,6 +713,7 @@ struct SystemPanel::Impl
     {
         auto release=transition.BeginRelease();if(!release)return;
         showing=false;closing=true;
+        ClearTrayPreviewFocus();
         ClearPointerHover();
         // Detach the old model/request before callbacks. Reentrant requests
         // stay queued until this guard ends and cannot be cleared below.
@@ -1078,8 +1110,17 @@ struct SystemPanel::Impl
                 self->transition.ShouldCancelOnDeactivation(self->current->owner,reinterpret_cast<HWND>(lp))&&
                 (!self->afterClose||self->afterCloseOwner!=reinterpret_cast<HWND>(lp)))
             {self->transition.Cancel();self->afterClose={};++self->closeGeneration;}
-            if(m==WM_ACTIVATE&&LOWORD(wp)==WA_INACTIVE&&!self->modal&&self->showing&&!self->closing)
-            {if(!self->RetainTrayMenu(reinterpret_cast<HWND>(lp)))self->Animate(false);}
+            if (m == WM_ACTIVATE && self->showing && !self->closing)
+            {
+                if (LOWORD(wp) != WA_INACTIVE)
+                    self->ClearTrayPreviewFocus();
+                else if (!self->modal)
+                {
+                    const HWND next = lp ? reinterpret_cast<HWND>(lp) : GetForegroundWindow();
+                    if (!self->RetainTrayMenu(reinterpret_cast<HWND>(lp)) && !self->RetainTrayPreview(next))
+                        self->Animate(false);
+                }
+            }
             if(m==tray::ChangeMessage())
             {
                 if(self->current&&self->current->tray&&self->current->tray->AcknowledgeChange(w,static_cast<std::uint64_t>(wp))&&
@@ -1088,6 +1129,11 @@ struct SystemPanel::Impl
                 return 0;
             }
             if(!self->model||self->closing||self->modal)return DefWindowProcW(w,m,wp,lp);
+            if (m == WM_TIMER && wp == kTrayPreviewFocusTimer)
+            {
+                self->ObserveTrayPreviewFocus();
+                return 0;
+            }
             if(m==WM_THEMECHANGED||m==WM_SETTINGCHANGE){self->paintDirty=true;self->Arrange();self->Paint();return 0;}
             if(m==WM_TIMER&&(wp==1||wp==kTrayMenuTimer))
             {
