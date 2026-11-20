@@ -1,5 +1,6 @@
 #include "widget_clipboard_task_executor.h"
 #include "diagnostics/performance_trace.h"
+#include "widget/data/widget_clipboard_observer.h"
 #include "widget_filesystem_task_executor.h"
 
 #include <windows.h>
@@ -98,10 +99,8 @@ std::string WideToUtf8(std::wstring_view value)
     return result;
 }
 
-WidgetClipboardTaskRunResult ReadText()
+WidgetClipboardTaskRunResult ReadTextLocked()
 {
-    ClipboardScope clipboard;
-    if (!clipboard) return { false, {}, {}, "clipboardBusy" };
     if (!IsClipboardFormatAvailable(CF_UNICODETEXT))
         return { false, {}, {}, "formatUnavailable" };
     const HANDLE handle = GetClipboardData(CF_UNICODETEXT);
@@ -129,6 +128,13 @@ WidgetClipboardTaskRunResult ReadText()
     if (!wide.empty() && text.empty())
         return { false, {}, {}, "clipboardTooLarge" };
     return { true, "text", std::move(text), {} };
+}
+
+WidgetClipboardTaskRunResult ReadText()
+{
+    ClipboardScope clipboard;
+    if (!clipboard) return { false, {}, {}, "clipboardBusy" };
+    return ReadTextLocked();
 }
 
 std::optional<std::string_view> ExtractHtmlFragment(std::string_view data)
@@ -193,7 +199,7 @@ WidgetClipboardTaskRunResult ReadHtml()
 }
 
 WidgetClipboardTaskRunResult DecodeClipboardImage(
-    IWICImagingFactory* factory, IWICBitmapSource* input)
+    IWICImagingFactory* factory, IWICBitmapSource* input, UINT maxDimension)
 {
     using Microsoft::WRL::ComPtr;
 
@@ -209,8 +215,7 @@ WidgetClipboardTaskRunResult DecodeClipboardImage(
         return { false, {}, {}, "clipboardImageDimensionsInvalid" };
 
     const double scale = std::min(1.0,
-        static_cast<double>(WidgetClipboardTaskExecutor::
-            MaximumImageOutputDimension) /
+        static_cast<double>(maxDimension) /
             static_cast<double>(std::max(sourceWidth, sourceHeight)));
     const UINT width = std::max<UINT>(1,
         static_cast<UINT>(std::lround(sourceWidth * scale)));
@@ -257,7 +262,7 @@ WidgetClipboardTaskRunResult DecodeClipboardImage(
 }
 
 WidgetClipboardTaskRunResult DecodeClipboardBitmap(
-    HBITMAP bitmap, bool preserveAlpha)
+    HBITMAP bitmap, bool preserveAlpha, UINT maxDimension)
 {
     using Microsoft::WRL::ComPtr;
     if (!bitmap) return { false, {}, {}, "clipboardReadFailed" };
@@ -268,10 +273,10 @@ WidgetClipboardTaskRunResult DecodeClipboardBitmap(
         FAILED(factory->CreateBitmapFromHBITMAP(bitmap, nullptr,
             preserveAlpha ? WICBitmapUseAlpha : WICBitmapIgnoreAlpha, &source)))
         return { false, {}, {}, "clipboardImageDecodeFailed" };
-    return DecodeClipboardImage(factory.Get(), source.Get());
+    return DecodeClipboardImage(factory.Get(), source.Get(), maxDimension);
 }
 
-WidgetClipboardTaskRunResult ReadClipboardPng(UINT format)
+WidgetClipboardTaskRunResult ReadClipboardPng(UINT format, UINT maxDimension)
 {
     using Microsoft::WRL::ComPtr;
     const HANDLE memory = GetClipboardData(format);
@@ -298,7 +303,7 @@ WidgetClipboardTaskRunResult ReadClipboardPng(UINT format)
         FAILED(decoder->Initialize(stream.Get(), WICDecodeMetadataCacheOnDemand)) ||
         FAILED(decoder->GetFrame(0, &frame)))
         return { false, {}, {}, "clipboardImageDecodeFailed" };
-    return DecodeClipboardImage(factory.Get(), frame.Get());
+    return DecodeClipboardImage(factory.Get(), frame.Get(), maxDimension);
 }
 
 std::optional<std::pair<HBITMAP, bool>> BitmapFromClipboardDib(
@@ -390,16 +395,14 @@ std::optional<std::pair<HBITMAP, bool>> BitmapFromClipboardDib(
     return std::pair<HBITMAP, bool>{ bitmap, preserveAlpha };
 }
 
-WidgetClipboardTaskRunResult ReadImage()
+WidgetClipboardTaskRunResult ReadImageLocked(UINT maxDimension)
 {
-    ClipboardScope clipboard;
-    if (!clipboard) return { false, {}, {}, "clipboardBusy" };
     WidgetClipboardTaskRunResult result{ false, {}, {}, "formatUnavailable" };
     for (const wchar_t* name : { L"PNG", L"image/png" })
     {
         const UINT format = RegisterClipboardFormatW(name);
         if (!format || !IsClipboardFormatAvailable(format)) continue;
-        result = ReadClipboardPng(format);
+        result = ReadClipboardPng(format, maxDimension);
         if (result.ok) return result;
     }
     for (const UINT format : { CF_DIBV5, CF_DIB })
@@ -412,16 +415,34 @@ WidgetClipboardTaskRunResult ReadImage()
                 result.error = "clipboardImageDecodeFailed";
             continue;
         }
-        result = DecodeClipboardBitmap(bitmap->first, bitmap->second);
+        result = DecodeClipboardBitmap(bitmap->first, bitmap->second, maxDimension);
         DeleteObject(bitmap->first);
         if (result.ok) return result;
     }
     if (IsClipboardFormatAvailable(CF_BITMAP))
     {
         return DecodeClipboardBitmap(
-            static_cast<HBITMAP>(GetClipboardData(CF_BITMAP)), false);
+            static_cast<HBITMAP>(GetClipboardData(CF_BITMAP)), false, maxDimension);
     }
     return result;
+}
+
+WidgetClipboardTaskRunResult ReadImage()
+{
+    ClipboardScope clipboard;
+    if (!clipboard) return { false, {}, {}, "clipboardBusy" };
+    return ReadImageLocked(Executor::MaximumImageOutputDimension);
+}
+
+std::wstring ReadClipboardDropPath(HDROP drop, UINT index)
+{
+    const UINT length = DragQueryFileW(drop, index, nullptr, 0);
+    if (length == 0 || length > MaximumFilePathLength) return {};
+    std::wstring path(static_cast<std::size_t>(length) + 1, L'\0');
+    if (DragQueryFileW(drop, index, path.data(), length + 1) != length)
+        return {};
+    path.resize(length);
+    return path;
 }
 
 WidgetClipboardTaskRunResult ReadFileReferences()
@@ -443,13 +464,8 @@ WidgetClipboardTaskRunResult ReadFileReferences()
     result.files.reserve(count);
     for (UINT index = 0; index < count; ++index)
     {
-        const UINT length = DragQueryFileW(drop, index, nullptr, 0);
-        if (length == 0 || length >= 32767)
-            return { false, {}, {}, "clipboardReadFailed" };
-        std::wstring path(static_cast<std::size_t>(length) + 1, L'\0');
-        if (DragQueryFileW(drop, index, path.data(), length + 1) != length)
-            return { false, {}, {}, "clipboardReadFailed" };
-        path.resize(length);
+        std::wstring path = ReadClipboardDropPath(drop, index);
+        if (path.empty()) return { false, {}, {}, "clipboardReadFailed" };
         const DWORD attributes = GetFileAttributesW(path.c_str());
         if (attributes == INVALID_FILE_ATTRIBUTES)
             return { false, {}, {}, "clipboardReferenceUnavailable" };
@@ -457,6 +473,48 @@ WidgetClipboardTaskRunResult ReadFileReferences()
             (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 });
     }
     return result;
+}
+
+bool IsClipboardObservationExcluded()
+{
+    static const UINT exclude = RegisterClipboardFormatW(
+        L"ExcludeClipboardContentFromMonitorProcessing");
+    static const UINT viewerIgnore = RegisterClipboardFormatW(L"Clipboard Viewer Ignore");
+    static const UINT history = RegisterClipboardFormatW(L"CanIncludeInClipboardHistory");
+    static const UINT cloud = RegisterClipboardFormatW(L"CanUploadToCloudClipboard");
+    if (!exclude || !viewerIgnore || !history || !cloud) return true;
+    if (IsClipboardFormatAvailable(exclude) || IsClipboardFormatAvailable(viewerIgnore))
+        return true;
+    for (const UINT format : { history, cloud })
+    {
+        if (!IsClipboardFormatAvailable(format)) continue;
+        const HANDLE data = GetClipboardData(format);
+        if (!data || GlobalSize(data) < sizeof(DWORD)) return true;
+        const auto* value = static_cast<const DWORD*>(GlobalLock(data));
+        if (!value) return true;
+        const bool disabled = *value == 0;
+        GlobalUnlock(data);
+        if (disabled) return true;
+    }
+    return false;
+}
+
+std::vector<std::string> ReadClipboardDisplayNames()
+{
+    if (!IsClipboardFormatAvailable(CF_HDROP)) return {};
+    const auto drop = static_cast<HDROP>(GetClipboardData(CF_HDROP));
+    if (!drop) return {};
+    const UINT count = std::min(DragQueryFileW(drop, 0xffffffffu, nullptr, 0),
+        static_cast<UINT>(Executor::MaximumFileReferences));
+    std::vector<std::string> names;
+    for (UINT index = 0; index < count; ++index)
+    {
+        auto path = std::filesystem::path(ReadClipboardDropPath(drop, index));
+        if (!path.has_filename()) path = path.parent_path();
+        auto name = WideToUtf8(path.filename().native());
+        if (!name.empty()) names.push_back(std::move(name));
+    }
+    return names;
 }
 
 WidgetClipboardTaskRunResult PublishClipboardData(UINT format,
@@ -688,6 +746,67 @@ bool WidgetClipboardTaskExecutor::SupportsAction(
 {
     return action == "clipboard.read" ||
         action == "clipboard.write" || action == "clipboard.clear";
+}
+
+std::optional<WidgetClipboardChange> ReadWidgetClipboardChange(DWORD sequence)
+{
+    WidgetClipboardChange change;
+    ClipboardScope clipboard;
+    if (!clipboard)
+    {
+        change.error = "clipboardBusy";
+        return change;
+    }
+    if (GetClipboardSequenceNumber() != sequence) return std::nullopt;
+    if (IsClipboardObservationExcluded()) return change;
+
+    constexpr UINT kThumbnailMaxDimension = 32;
+    auto image = ReadImageLocked(kThumbnailMaxDimension);
+    if (image.ok)
+    {
+        const auto& pixels = *image.image;
+        change.format = "image";
+        change.width = pixels.width;
+        change.height = pixels.height;
+        change.rgb.reserve(static_cast<std::size_t>(change.width) * change.height * 3);
+        for (std::uint32_t y = 0; y < pixels.height; ++y)
+        {
+            const auto* row = pixels.bgraPremultiplied.data() +
+                static_cast<std::size_t>(y) * pixels.stride;
+            for (std::uint32_t x = 0; x < pixels.width; ++x)
+            {
+                const auto* pixel = row + x * 4;
+                change.rgb.push_back(static_cast<char>(pixel[2]));
+                change.rgb.push_back(static_cast<char>(pixel[1]));
+                change.rgb.push_back(static_cast<char>(pixel[0]));
+            }
+        }
+        return change;
+    }
+
+    change.names = ReadClipboardDisplayNames();
+    if (!change.names.empty())
+    {
+        change.format = "file-names";
+        return change;
+    }
+    // A file drop may also advertise its full paths as plain text.
+    if (IsClipboardFormatAvailable(CF_HDROP)) return change;
+    auto text = ReadTextLocked();
+    if (text.ok && !text.text.empty())
+    {
+        change.format = "text";
+        change.text = std::move(text.text);
+    }
+    else if (!text.ok && text.error != "formatUnavailable")
+    {
+        change.error = std::move(text.error);
+    }
+    else if (image.error != "formatUnavailable")
+    {
+        change.error = std::move(image.error);
+    }
+    return change;
 }
 
 bool WidgetClipboardTaskExecutor::SupportsFormat(std::string_view format) noexcept

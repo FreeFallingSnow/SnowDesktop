@@ -752,6 +752,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/data/widget_data_subscription_lua.h
     src/widget/data/widget_data_snapshot.cpp
     src/widget/data/widget_data_host.cpp
+    src/widget/data/widget_clipboard_observer.cpp
     src/widget/data/widget_data_snapshot.h
     src/widget/data/widget_system_control_data.cpp
     src/widget/runtime/widget_multiplayer.cpp

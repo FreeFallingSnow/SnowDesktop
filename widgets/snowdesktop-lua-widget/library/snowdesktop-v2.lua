@@ -733,6 +733,7 @@
 ---@field reason? string
 ---@field topic? string Updated data subscription topic for data.change.
 ---@field revision? integer Monotonic provider revision for data.change.
+---@field clipboard? SnowClipboardChangeValue Content for the clipboard.changes topic.
 ---@field slotId? string Manifest logical-slot ID for slot.changed.
 ---@field slotKind? 'binding'|'collection' Logical slot model kind for slot.changed.
 ---@field operation? 'bound'|'replaced'|'added'|'removed'|'moved'|'transferred'|'cleared'|'availability'|'undone'|'redone' Logical slot transaction for slot.changed.
@@ -1725,6 +1726,17 @@ function animation.cancelFrame(id) end
 ---@field revision integer
 ---@field overflow boolean True when changes were lost and the caller should run filesystem.list again.
 
+---@class SnowClipboardChangeValue
+---@field format 'text'|'image'|'file-names'|'empty'
+---@field text? string UTF-8 text up to 262144 bytes.
+---@field rgb? string Packed RGB bytes in row order.
+---@field width? integer Thumbnail width, up to 32 pixels.
+---@field height? integer Thumbnail height, up to 32 pixels.
+---@field names? string[] At most 32 file or folder display names.
+---@field error? string Capture error for empty events.
+
+---@class SnowClipboardChangesDataValue Empty. Read status from the envelope and content from data.change events.
+
 ---@class SnowDataSnapshot<T>
 ---@field available boolean
 ---@field value? T
@@ -1783,6 +1795,7 @@ data = {}
 ---@overload fun(topic: 'calendar.selectedDate', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowCalendarSelectedDateDataValue>
 ---@overload fun(topic: 'app.indexStatus', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAppIndexStatusDataValue>
 ---@overload fun(topic: 'filesystem.watch', options: SnowFilesystemWatchSubscribeOptions): SnowDataSubscription<SnowFilesystemWatchDataValue>
+---@overload fun(topic: 'clipboard.changes', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowClipboardChangesDataValue>
 ---@param topic string
 ---@param options? SnowDataSubscribeOptions
 ---@return SnowDataSubscription<table>

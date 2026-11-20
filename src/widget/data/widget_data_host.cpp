@@ -11,6 +11,7 @@
 #include "widget/tasks/widget_filesystem_watch_service.h"
 #include "widget/api/widget_calendar_query_options.h"
 #include "widget/api/widget_api_registry.h"
+#include "widget/data/widget_clipboard_observer.h"
 #include "widget/data/widget_data_snapshot.h"
 #include "widget/data/widget_system_control_data.h"
 
@@ -19,6 +20,8 @@
 #include <utility>
 
 using snowdesktop::widget_runtime::IsPreviewFilesystemHandle;
+using snowdesktop::widget_runtime::kClipboardChangesTopic;
+using snowdesktop::widget_runtime::kClipboardObservePermission;
 using snowdesktop::widget_runtime::kFilesystemReadPermission;
 
 static void ClearRuntimeImagesForSource(D2DState* state, std::string_view source)
@@ -128,6 +131,20 @@ void WidgetEngine::ApplyWidgetDataBrokerActions()
     };
     for (const auto& action : dataBroker_->DrainActions())
     {
+        if (action.topic == kClipboardChangesTopic)
+        {
+            if (action.type == DataBrokerActionType::Start)
+            {
+                const bool started = clipboardObserver_.Start(taskWakeCallback_);
+                (void)dataBroker_->MarkStarted(action.topic, started,
+                    started ? "" : "clipboardListenerUnavailable");
+            }
+            else if (action.type == DataBrokerActionType::Stop)
+            {
+                clipboardObserver_.Stop();
+            }
+            continue;
+        }
         const bool audioAnalysis =
             action.topic == "audio.output.analysis";
         const bool hostEventData =
@@ -197,6 +214,84 @@ void WidgetEngine::ApplyWidgetDataBrokerActions()
         }
     }
     ReconcileFilesystemWatches();
+}
+
+void WidgetEngine::DrainClipboardChanges()
+{
+    if (!dataBroker_) return;
+    const auto changes = clipboardObserver_.Drain();
+    if (changes.empty()) return;
+    const auto subscribers = dataBroker_->SubscriptionSnapshots(kClipboardChangesTopic);
+    for (const auto& change : changes)
+    {
+        for (const auto& subscriber : subscribers)
+        {
+            const auto revision = clipboardSubscriptionRevisions_.find(subscriber.id);
+            if (revision == clipboardSubscriptionRevisions_.end() ||
+                revision->second >= change.revision || !subscriber.eligible)
+                continue;
+            const std::wstring widgetId = Utf8ToWide(subscriber.instanceId);
+            const int index = FindWidget(widgetId);
+            if (index < 0 || !widgets_[index].valid ||
+                !RuntimeHasPermission(widgetId, kClipboardObservePermission))
+                continue;
+            const auto state = GetWidgetHostState(widgetId,
+                Utf8ToWide(widgets_[index].packageId)).kind;
+            using snowdesktop::widget_runtime::WidgetHostStateKind;
+            if (state == WidgetHostStateKind::PermissionPending ||
+                state == WidgetHostStateKind::PermissionDenied)
+            {
+                UnloadWidget(widgetId);
+                continue;
+            }
+            if (state != WidgetHostStateKind::Ready) continue;
+            (void)InvokeLifecycleEvent(widgets_[index], "data.change",
+                [&](lua_State* state) {
+                    lua_pushliteral(state, "clipboard.changes");
+                    lua_setfield(state, -2, "topic");
+                    lua_pushinteger(state, static_cast<lua_Integer>(subscriber.id));
+                    lua_setfield(state, -2, "subscriptionId");
+                    lua_pushinteger(state, static_cast<lua_Integer>(change.revision));
+                    lua_setfield(state, -2, "revision");
+
+                    lua_createtable(state, 0, 4);
+                    lua_pushstring(state,
+                        change.format.empty() ? "empty" : change.format.c_str());
+                    lua_setfield(state, -2, "format");
+                    if (!change.text.empty())
+                    {
+                        lua_pushlstring(state, change.text.data(), change.text.size());
+                        lua_setfield(state, -2, "text");
+                    }
+                    if (!change.rgb.empty())
+                    {
+                        lua_pushlstring(state, change.rgb.data(), change.rgb.size());
+                        lua_setfield(state, -2, "rgb");
+                        lua_pushinteger(state, change.width);
+                        lua_setfield(state, -2, "width");
+                        lua_pushinteger(state, change.height);
+                        lua_setfield(state, -2, "height");
+                    }
+                    if (!change.names.empty())
+                    {
+                        lua_createtable(state, static_cast<int>(change.names.size()), 0);
+                        lua_Integer nameIndex = 1;
+                        for (const auto& name : change.names)
+                        {
+                            lua_pushlstring(state, name.data(), name.size());
+                            lua_rawseti(state, -2, nameIndex++);
+                        }
+                        lua_setfield(state, -2, "names");
+                    }
+                    if (!change.error.empty())
+                    {
+                        lua_pushstring(state, change.error.c_str());
+                        lua_setfield(state, -2, "error");
+                    }
+                    lua_setfield(state, -2, "clipboard");
+                });
+        }
+    }
 }
 
 void WidgetEngine::DrainAudioAnalysisChanges()
@@ -393,6 +488,7 @@ void WidgetEngine::ReleaseWidgetDataSubscriptions(LuaWidget& widget)
     {
         for (const auto& [subscriptionId, _] : widget.dataSubscriptions)
         {
+            clipboardSubscriptionRevisions_.erase(subscriptionId);
             if (filesystemWatchService_)
                 (void)filesystemWatchService_->Stop(subscriptionId);
             filesystemWatchBindings_.erase(subscriptionId);
@@ -403,6 +499,7 @@ void WidgetEngine::ReleaseWidgetDataSubscriptions(LuaWidget& widget)
     const auto now = snowdesktop::widget_runtime::WidgetDataBroker::Clock::now();
     for (const auto& [subscriptionId, _] : widget.dataSubscriptions)
     {
+        clipboardSubscriptionRevisions_.erase(subscriptionId);
         if (filesystemWatchService_)
             (void)filesystemWatchService_->Stop(subscriptionId);
         filesystemWatchBindings_.erase(subscriptionId);
@@ -469,8 +566,10 @@ WidgetEngine::RuntimeSubscribeData(
     }
 
     DataSubscriptionOptions options;
-    options.requestedInterval = maxAge;
-    options.whenHidden = whenHidden;
+    const bool clipboardChanges = topic == kClipboardChangesTopic;
+    options.requestedInterval = clipboardChanges ? std::chrono::milliseconds(1) : maxAge;
+    options.whenHidden = clipboardChanges
+        ? snowdesktop::widget_runtime::DataHiddenPolicy::Continue : whenHidden;
     options.visible = widget.hostVisible;
     const auto requiredPermission =
         dataBroker_->RequiredPermission(topic);
@@ -493,6 +592,8 @@ WidgetEngine::RuntimeSubscribeData(
         snowdesktop::widget_runtime::WidgetDataBroker::Clock::now());
     if (result)
     {
+        if (clipboardChanges)
+            clipboardSubscriptionRevisions_.emplace(result.id, clipboardObserver_.Revision());
         widget.dataSubscriptions.emplace(result.id, std::move(topic));
         if (filesystemWatch)
             filesystemWatchBindings_.emplace(
@@ -516,6 +617,7 @@ bool WidgetEngine::RuntimeUnsubscribeData(
         }
     }
     if (!owned) return false;
+    clipboardSubscriptionRevisions_.erase(subscriptionId);
     if (filesystemWatchService_)
         (void)filesystemWatchService_->Stop(subscriptionId);
     filesystemWatchBindings_.erase(subscriptionId);
@@ -570,6 +672,29 @@ WidgetEngine::RuntimeGetDataSnapshot(
 
     LuaWidgetDataSnapshot result;
     result.topic = binding->topic;
+    if (result.topic == kClipboardChangesTopic)
+    {
+        if (binding->options.preview)
+        {
+            result.error = "previewUnavailable";
+            return result;
+        }
+        if (!binding->options.permissionGranted)
+        {
+            result.error = "permissionDenied";
+            return result;
+        }
+        const auto provider = dataBroker_->Snapshot(result.topic);
+        if (provider)
+        {
+            using snowdesktop::widget_runtime::DataProviderState;
+            result.available = provider->state == DataProviderState::Active;
+            result.warmingUp = provider->state == DataProviderState::Starting;
+            result.stale = false;
+            result.error = provider->lastError;
+        }
+        return result;
+    }
     if (binding->options.preview)
     {
         LuaWidgetPreviewDataState previewState =
@@ -880,6 +1005,7 @@ void WidgetEngine::TickWidgetDataBroker()
         ApplyWidgetDataBrokerActions();
     }
     DrainFilesystemWatchCompletions();
+    DrainClipboardChanges();
 }
 
 void WidgetEngine::DrainWidgetProviderChanges()

@@ -51,6 +51,7 @@ namespace snowdesktop::widget_runtime { struct WidgetMultiplayer; }
 #include "widget_runtime_scheduler.h"
 #include "widget_invalidation_batch.h"
 #include "widget/data/widget_data_broker.h"
+#include "widget/data/widget_clipboard_observer.h"
 #include "widget/data/widget_data_snapshot.h"
 #include "widget/tasks/widget_task_broker.h"
 #include "widget/tasks/widget_task_result_store.h"
@@ -1442,6 +1443,7 @@ private:
     void DrainWidgetProviderChanges();
     void DrainWidgetSnapshotChanges();
     void DrainAudioAnalysisChanges();
+    void DrainClipboardChanges();
     void ReconcileFilesystemWatches();
     void DrainFilesystemWatchCompletions();
     void ReleaseWidgetDataSubscriptions(LuaWidget& widget);
@@ -1529,6 +1531,8 @@ private:
     std::unique_ptr<SystemSnapshotService> systemSnapshotService_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetDataBroker>
         dataBroker_;
+    snowdesktop::widget_runtime::WidgetClipboardObserver clipboardObserver_;
+    std::unordered_map<std::uint64_t, std::uint64_t> clipboardSubscriptionRevisions_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetTaskBroker>
         taskBroker_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetNotificationCenter>

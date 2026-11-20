@@ -61,6 +61,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "data.calendar.events.query",
     "data.calendar.selectedDate",
     "data.desktop.changes",
+    "data.clipboard.changes",
     "data.desktop.items",
     "data.desktop.selection",
     "data.filesystem.watch",
@@ -368,7 +369,7 @@ kSystemFunctionContracts = {{
         kFormatRelativeTimeParameters, "string" },
     { "l10n.formatList", "l10n.format", kFormatListParameters, "string" },
 }};
-constexpr std::array<SystemDataTopicContract, 32>
+constexpr std::array<SystemDataTopicContract, 33>
 kSystemDataTopicContracts = {{
     { "audio.devices", "data.audio.devices", "audio.devices.read",
         1000, 10000, 2000, false, false, "SnowDataSubscribeOptions",
@@ -455,6 +456,9 @@ kSystemDataTopicContracts = {{
     { "desktop.changes", "data.desktop.changes", "desktop.read",
         100, 1000, 0, false, true, "SnowDataSubscribeOptions",
         "SnowDesktopChangesDataValue" },
+    { "clipboard.changes", "data.clipboard.changes", "clipboard.observe",
+        1, 1, 0, false, true, "SnowDataSubscribeOptions",
+        "SnowClipboardChangesDataValue" },
     { "app.indexStatus", "data.app.indexStatus", "app.discovery",
         100, 1000, 0, false, true, "SnowDataSubscribeOptions",
         "SnowAppIndexStatusDataValue" },

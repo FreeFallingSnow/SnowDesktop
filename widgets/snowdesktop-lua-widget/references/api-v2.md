@@ -162,7 +162,8 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 探测 `view.pointer.events` 后，声明式节点还可显式观察高频 `pointerMove` 和 `wheel`；
 宿主滚动消费 wheel 时仍先更新滚动偏移并投递对应节点动作，动作不能取消滚动。
 事件驱动的数据 topic 发生变更时，持有对应订阅的组件收到 `data.change`，其中包含
-`topic/revision`；组件可在该事件中重建依赖日期范围等参数的订阅。
+`topic/revision`；组件可在该事件中重建依赖日期范围等参数的订阅。剪贴板订阅通过
+`event.clipboard` 投递该次变更的内容。
 声明 `settings.changeEvent` 后，宿主设置界面改变普通值、宿主外观、密码、文件系统句柄或
 实体引用时会发送 `settings.changed`。`keys` 是经过排序和去重的完整受影响设置键数组；
 `preview=true` 表示设置页正在应用尚未提交的实时预览，直接写入以及预览提交或取消后的
@@ -1802,7 +1803,7 @@ ID 必须是 1–128 字节有效 UTF-8；同名请求在同一帧内合并，�
 `audio.output.default`、`audio.output.volume`、`audio.output.analysis`、
 `media.sessions`、`media.current`、`media.timeline`、`media.artwork`、`desktop.items`、
 `desktop.selection`、`desktop.changes`、`calendar.events` 和
-`calendar.selectedDate`、`app.indexStatus`，以及 `filesystem.watch`。在 `setup` 或模块
+`calendar.selectedDate`、`app.indexStatus`，以及 `filesystem.watch`、`clipboard.changes`。在 `setup` 或模块
 入口创建订阅，不要在每次 `render` 中重复订阅。
 
 `system.screenTime` 受 `system.screenTime.read` 保护，返回今日的 `enabled`、
@@ -2453,6 +2454,34 @@ end
 `clipboardImageDimensionsInvalid`、`clipboardImageUnavailable`、`clipboardReferenceUnavailable`、
 `invalidReference`、`handleAccessDenied`、`permissionRevoked` 和 `canceled`。预览从固定样例读取，
 写入和清空返回模拟结果，系统剪贴板保持原样。
+
+#### 剪贴板变更订阅
+
+`data.subscribe("clipboard.changes")` 使用 `data.clipboard.changes` feature，
+要求用户独立授权 `clipboard.observe`。组件在 `setup` 创建订阅，在 `data.change`
+事件中检查 `event.topic == "clipboard.changes"` 并读取 `event.clipboard`。
+事件同时提供 `subscriptionId` 与单调递增的 `revision`。
+
+| `event.clipboard.format` | 字段 |
+| --- | --- |
+| `text` | `text`，最多 262144 字节的 UTF-8 |
+| `image` | `rgb`，按行排列的 RGB 二进制字符串，以及 `width`、`height`，最长边 32 像素 |
+| `file-names` | `names`，最多 32 个文件或文件夹展示名 |
+| `empty` | 无历史内容，读取失败时带 `error` |
+
+一次变更优先投递图片，其次是文件展示名，最后是文本。宿主识别
+`Clipboard Viewer Ignore`、`ExcludeClipboardContentFromMonitorProcessing`、
+`CanIncludeInClipboardHistory=0` 和 `CanUploadToCloudClipboard=0`，命中时投递
+`empty`。图片句柄与文件引用可在可信手势中通过 `clipboard.read` 取得。
+
+订阅从后续变更开始，组件失焦或暂时隐藏时继续运行。该主题由 Windows 通知驱动，
+忽略采样间隔与隐藏策略。快速覆盖或队列饱和时，中间变更可能被跳过。
+`handle:value()` 提供 `available`、`warmingUp` 和 `error` 状态，内容只随事件投递。
+最后一个获准订阅释放时注销监听。退订、撤权、禁用及组件卸载都会停止交付。
+预览返回 `previewUnavailable`。
+
+宿主须先发布此 feature，再发布声明 `clipboard.observe` 的组件。使用
+`requiredFeatures` 区分同版本的早期宿主构建，API 版本沿用 2。
 
 文件选择器只在当前可信用户手势中启动，并且只把用户实际选择的范围授予当前组件
 包与当前实例。`filesystem.pickOpen` 要求 `filesystem.userSelected.read`；

@@ -556,7 +556,17 @@ void WidgetEngine::DisposeWidgetLifecycle(
 bool WidgetEngine::EnsureWidgetLoaded(const std::wstring& widgetId, const std::wstring& packageId)
 {
     if (const int index = FindWidget(widgetId); index >= 0)
+    {
+        using snowdesktop::widget_runtime::WidgetHostStateKind;
+        const auto state = GetWidgetHostState(widgetId, packageId).kind;
+        if (state == WidgetHostStateKind::PermissionPending ||
+            state == WidgetHostStateKind::PermissionDenied)
+        {
+            UnloadWidget(widgetId);
+            return false;
+        }
         return widgets_[index].valid;
+    }
     if (const auto failure = widgetHostFailures_.find(widgetId);
         failure != widgetHostFailures_.end())
     {
