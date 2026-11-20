@@ -2747,7 +2747,7 @@
   "settings.debug.profile.nameHint": "请输入不重复的名称，长度为1至60个字符。新环境使用空白设置和布局。",
   "settings.agentOperations.title": "Agent 操作",
   "settings.agentOperations.skill": "SnowDesktop 操作 Skill",
-  "settings.agentOperations.description": "安装下方的 SnowDesktop 操作 Skill 后，您可以请 AI 助手重新摆放桌面组件，或按您的习惯调整 Dock 和状态栏设置。",
+  "settings.agentOperations.description": "安装下方的 SnowDesktop 操作 Skill 后，您可以请 AI 助手用组件收纳桌面内容、调节视觉效果，并按您的使用习惯调整设置。",
   "settings.contextMenu.expandAllExtensions": "展开全部扩展项目",
   "settings.contextMenu.expandAllExtensions.description": "显示当前对象读取到的全部扩展菜单项目，并停用下方的显示设置；关闭后恢复原设置。",
   "app.settings.context_menu_opaque_follow_system": "Win11风格-不透明-深浅跟随",
