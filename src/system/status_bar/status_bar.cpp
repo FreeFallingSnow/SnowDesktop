@@ -61,7 +61,7 @@ namespace
 constexpr UINT kAppBar = WM_APP + 41, kPlace = WM_APP + 42, kFullscreen = WM_APP + 43, kForeground = WM_APP + 44,
     kActivate = WM_APP + 45, kEnsurePresentation = WM_APP + 46, kAppNameReady = WM_APP + 47;
 constexpr UINT_PTR kClockTimer = 1, kTrayMenuTimer = 2, kPlacementTimer = 3, kInputMethodTimer = 4, kTrayScrollTimer = 5,
-    kRevealTimer = 6, kIndependentSlideTimer = 7;
+    kRevealTimer = 6, kIndependentSlideTimer = 7, kMetricDragTimer = 8;
 const char* StatusBarTimerPhase(WPARAM timer) noexcept
 {
     switch (timer)
@@ -73,6 +73,7 @@ const char* StatusBarTimerPhase(WPARAM timer) noexcept
     case kTrayScrollTimer: return "status_bar.tray_scroll";
     case kRevealTimer: return "status_bar.reveal";
     case kIndependentSlideTimer: return "status_bar.independent_slide";
+    case kMetricDragTimer: return "status_bar.metric_drag";
     default: return "status_bar.other";
     }
 }
@@ -316,6 +317,7 @@ struct StatusBar::Impl
             POINT start;
             std::vector<StatusBarMetricSlot> slots;
             std::optional<std::vector<std::string>> previewOrder;
+            LONG lastPreviewX = 0;
             bool dragging = false;
         };
         std::optional<MetricPress> metricPress;
@@ -439,6 +441,7 @@ struct StatusBar::Impl
         ~Window()
         {
             closing = true;
+            CancelMetricPress();
             StopTrayScroll();
             CancelTrayMenu();
             // Owner ends cross-window feedback before erasing this map entry.
@@ -546,6 +549,7 @@ struct StatusBar::Impl
         {
             activation.Cancel();
             CancelTrayMenu();
+            CancelMetricPress();
             EndDragFeedback(); dropIndicator.reset();
             pressedTray.clear(); trayDragging = false;
             middleTrayPress.reset(); lastMiddleTray.reset();
@@ -1710,26 +1714,42 @@ struct StatusBar::Impl
             const auto hit = HitTestStatusBarItems(items, point);
             if (!owner.metricOrderChanged || !hit || !IsStatusBarMetric(items[*hit].action)) return;
             SetCapture(hwnd);
-            if (GetCapture() == hwnd) metricPress = MetricPress{items[*hit].key, point, {}, {}};
+            if (GetCapture() != hwnd) return;
+            metricPress = MetricPress{items[*hit].key, point, {}, {}};
+            // A no-activate window may stop receiving mouse messages outside
+            // the bar even while it owns capture.
+            SetTimer(hwnd, kMetricDragTimer, 16, nullptr);
         }
-        void MoveMetricPress(POINT point)
+        void CancelMetricPress()
+        {
+            if (!metricPress) return;
+            KillTimer(hwnd, kMetricDragTimer);
+            metricPress.reset();
+        }
+        bool StartMetricDrag(POINT point)
+        {
+            auto& press = *metricPress;
+            if (press.dragging) return true;
+            const LONG threshold = MulDiv(8, static_cast<int>(dpi), 96);
+            if (std::abs(point.x - press.start.x) < threshold && std::abs(point.y - press.start.y) < threshold) return false;
+            press.dragging = true;
+            for (const auto& item : items)
+                if (IsStatusBarMetric(item.action) && !IsRectEmpty(&item.bounds))
+                    press.slots.push_back({item.key, item.bounds.left + (item.bounds.right - item.bounds.left) / 2});
+            ClearHover();
+            interaction.CancelPointer();
+            keyboardFocusVisible = false;
+            return true;
+        }
+        void MoveMetricPress(POINT point, bool showCursor)
         {
             auto& press = *metricPress;
             const bool starting = !press.dragging;
-            if (starting)
-            {
-                const LONG threshold = MulDiv(8, static_cast<int>(dpi), 96);
-                if (std::abs(point.x - press.start.x) < threshold && std::abs(point.y - press.start.y) < threshold) return;
-                press.dragging = true;
-                for (const auto& item : items)
-                    if (IsStatusBarMetric(item.action) && !IsRectEmpty(&item.bounds))
-                        press.slots.push_back({item.key, item.bounds});
-                ClearHover();
-                interaction.CancelPointer();
-                keyboardFocusVisible = false;
-            }
-            SetCursor(LoadCursorW(nullptr, IDC_SIZEALL));
-            auto preview = PreviewStatusBarMetricOrder(owner.settings.metricOrder, press.slots, press.key, point);
+            if (!StartMetricDrag(point)) return;
+            if (showCursor) SetCursor(LoadCursorW(nullptr, IDC_SIZEALL));
+            if (!starting && press.lastPreviewX == point.x) return;
+            press.lastPreviewX = point.x;
+            auto preview = PreviewStatusBarMetricOrder(owner.settings.metricOrder, press.slots, press.key, point.x);
             if (preview != press.previewOrder)
             {
                 press.previewOrder = std::move(preview);
@@ -1739,10 +1759,12 @@ struct StatusBar::Impl
         }
         void FinishMetricPress(POINT point)
         {
-            const auto press = std::exchange(metricPress, {});
-            auto order = press->dragging ? PreviewStatusBarMetricOrder(owner.settings.metricOrder,
-                press->slots, press->key, point) : std::nullopt;
-            const bool clicked = !press->dragging && interaction.Release(items, point, false).accepted;
+            const bool dragging = StartMetricDrag(point);
+            const auto press = std::move(*metricPress);
+            CancelMetricPress();
+            auto order = dragging ? PreviewStatusBarMetricOrder(owner.settings.metricOrder,
+                press.slots, press.key, point.x) : std::nullopt;
+            const bool clicked = !dragging && interaction.Release(items, point, false).accepted;
             UpdateInteraction([&] {
                 keyboardFocusVisible = false;
                 if (GetCapture() == hwnd) ReleaseCapture();
@@ -1751,8 +1773,26 @@ struct StatusBar::Impl
             if (clicked)
             {
                 const auto hit = HitTestStatusBarItems(items, point);
-                if (hit && items[*hit].key == press->key) ActivateItem(hit);
+                if (hit && items[*hit].key == press.key) ActivateItem(hit);
             }
+        }
+        void TickMetricDrag()
+        {
+            if (!metricPress) return;
+            if (!InputAvailable() || GetCapture() != hwnd)
+            {
+                UpdateInteraction([&] {
+                    CancelMetricPress();
+                    interaction.CancelPointer();
+                    if (GetCapture() == hwnd) ReleaseCapture();
+                });
+                return;
+            }
+            POINT point{};
+            if (!GetCursorPos(&point) || !ScreenToClient(hwnd, &point)) return;
+            const int primaryButton = GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON;
+            if (GetAsyncKeyState(primaryButton) < 0) MoveMetricPress(point, false);
+            else FinishMetricPress(point);
         }
         bool TrayMouse(UINT message, POINT point)
         {
@@ -1983,6 +2023,7 @@ struct StatusBar::Impl
                 else if (wp == kPlacementTimer) self->Place();
                 else if (wp == kRevealTimer) self->PollReveal();
                 else if (wp == kIndependentSlideTimer) self->TickIndependentSlide();
+                else if (wp == kMetricDragTimer) self->TickMetricDrag();
                 return 0;
             }
             case WM_DPICHANGED:
@@ -2146,12 +2187,8 @@ struct StatusBar::Impl
                 const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
                 if (self->metricPress)
                 {
-                    if (wp & MK_LBUTTON) self->MoveMetricPress(point);
-                    else self->UpdateInteraction([&] {
-                        self->metricPress.reset();
-                        self->interaction.CancelPointer();
-                        if (GetCapture() == window) ReleaseCapture();
-                    });
+                    if (wp & MK_LBUTTON) self->MoveMetricPress(point, true);
+                    else self->FinishMetricPress(point);
                     return 0;
                 }
                 if (!self->pressedTray.empty())
@@ -2298,7 +2335,7 @@ struct StatusBar::Impl
             case WM_CAPTURECHANGED:
                 self->UpdateInteraction([&] {
                     self->EndDragFeedback();
-                    self->metricPress.reset();
+                    self->CancelMetricPress();
                     self->middleTrayPress.reset(); self->lastMiddleTray.reset();
                     self->pressedTray.clear(); self->trayDragging = false;
                     if (message == WM_CANCELMODE && GetCapture() == window) ReleaseCapture();

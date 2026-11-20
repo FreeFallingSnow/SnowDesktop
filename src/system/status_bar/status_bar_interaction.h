@@ -12,20 +12,16 @@ inline bool IsStatusBarMetric(StatusBarAction action)
 struct StatusBarMetricSlot
 {
     std::string key;
-    RECT bounds;
+    LONG midpoint;
 };
 inline std::optional<std::vector<std::string>> PreviewStatusBarMetricOrder(
     const std::vector<std::string>& savedOrder, const std::vector<StatusBarMetricSlot>& slots,
-    const std::string& source, POINT point)
+    const std::string& source, LONG x)
 {
-    if (slots.size() < 2 || std::none_of(slots.begin(), slots.end(), [&](const auto& slot) {
-        return PtInRect(&slot.bounds, point) != FALSE;
-    })) return {};
+    if (slots.size() < 2) return {};
     // Use the initial cell midpoints for the whole gesture. With live
     // bounds, a reorder or a wider traffic cell could move its own target.
-    const auto before = std::find_if(slots.begin(), slots.end(), [&](const auto& slot) {
-        return point.x < slot.bounds.left + (slot.bounds.right - slot.bounds.left) / 2;
-    });
+    const auto before = std::find_if(slots.begin(), slots.end(), [&](const auto& slot) { return x < slot.midpoint; });
     if ((before != slots.end() && before->key == source) ||
         (before != slots.begin() && std::prev(before)->key == source)) return {};
     const bool append = before == slots.end();

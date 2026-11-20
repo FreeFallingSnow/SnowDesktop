@@ -186,6 +186,8 @@
 
 ### CF-011 独立检查等待共享编辑屏障
 
+- **宿主预检包含仍在编辑的同行路径（2026-11-20）**：Task `statusbar-metric-reorder`、批次 `291917aceadd426ebfb021a72d04440b` 修订 0 的 `ready-and-wait` 在轻量检查 `900c47332e4b4569b09ba6697fecd33d` 报 `widgets/snowdesktop-lua-widget/library/snowdesktop-v2.lua:3015: new blank line at EOF.`。本任务两处认领路径的 `git diff --check` 已通过，同批 Lua 文件仍在编辑。首次失败未启动 Run，保留原批次等待路径修正。后续可评估就绪时先检查各自认领路径，再在共同冻结时检查完整差异。
+
 - **宿主局部改动错过共同批次（2026-11-19）**：Task `statusbar-fullscreen-reveal` 的 `begin` 返回 `Waiting for batch 7cf8d6d16e3240e29b6bee9d8896ee3f: editing phase; editing peers version-compile-scope.`。源码与状态确认，先就绪的成员封闭了批次，状态栏路径与已有成员声明的写入范围分离，仍须等 Run `6f3c12a43971472391d0240801254b26` 捕获后才能进入批次 `5094c9fa1bef4af39f4017281d863dc3`。沿用原等待进程，另行编译的成本未测。P2，后续可评估在冻结前允许依赖范围明确、写入无冲突的新成员加入。同任务的 `scripts/test.bat list` 因检出缺少启用 `BUILD_TESTING` 的生成清单返回 1，改查 CMake 声明确认 `foreground_fullscreen`，未为查询配置。可评估缺少清单时提供声明级查询。
 
 - 2026-11-20，任务 `foreground-motion-20261120`、批次 `77a4edee2bfc4cd8a696772aee395136` 的 `scripts/test.bat list` 同样返回 1，提示 `The checkout has no generated test inventory with BUILD_TESTING enabled.`。已从 `cmake/testing/Tests.cmake` 核对宿主调度与交互用例名，未为枚举单独配置；上项声明级查询仍可减少这次人工查阅。
