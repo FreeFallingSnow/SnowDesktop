@@ -284,6 +284,8 @@
 
 ### CF-015 模块计划无法声明临时定向验证
 
+- **拖拽落位回执（2026-11-20）**　Task `object-drop-refactor` 的批次 `ee60f4ec424844d49647a821c8c8b9b7`、Run `9fb8a9e442f843b5b13140e7cf158f03` 完成 Release 激活及 10 项定向测试。批次外的 `.codex-probes/object-drop-refactor/build-check.ps1` 首次在编译前收到 `Shared output busy: batch b1a733fa04d6491280d13c55e4ec35e9 / editing`。探针需要链接已验证的宿主对象来检查自身 OLE 回执和分组落点，已改用前台等待执行权。后续仍需让模块计划绑定一次性验证和指定 Run 的对象。
+
 - **组件刷新归档库续证（2026-11-18）**：Task `task-40977fc85edd4847b361a242933a430d` 的批次 `a036f2a9fe804d96880eb29a51112ea6`、Run `866b5dc7e51647c48b1f2c738b036f31` 通过后，`save-candidate.ps1` 因槽已复用拒绝全局摘要不符，原文为 `Reusable slot no longer matches the package source batch.`。读取两份不可变源码清单，差异仅为 `CODE_HEALTH.md` 和宿主 `src/app/input/app_pointer_release.cpp`。组件包库写入时间在原 Run 内，复制前后哈希和当前槽摘要相符，记录于 `.codex-probes/code-health-04-refresh/saved-candidate-binding.json`。随后取普通执行权完成 5,156 字节生产库对照。未重编产品，后续仍需让临时验证绑定候选库，减少槽复用后的人工比对。
 - **组件启停归档库续证（2026-11-19）**：同一 Task 的批次 `677ef827c6134a67967da157f8c292d0`、Run `0d9e0fb525f948568eaf454e794c9ced` 的标准 Release 和激活通过，本地化测试另有失败回执。批次结束时槽已切到其他候选，临时链接所需的三个库须重新核对两份不可变源码清单、组件包库写入时间和复制前后哈希，证据见 `.codex-probes/code-health-04-refresh/saved-enablement-binding.json`。已保存基线库，复用该产品构建，后续仍需允许临时验证绑定指定的构建产物。
 - **续修中的定向前端检查（2026-11-19）**：同一 Task 的续修批次 `89f6725f38da4e7089d5ad6b0e8523e1` 修订 2，尝试通过普通项目执行权运行无产物的 MSVC `/Zs` 检查。源码核对 `Enter-BuildEntry` 会拒绝任何活动编辑批次，独立等待本批退役无法在冻结前完成，`check` 仅接收内置轻量检查。已停止该等待，合并到本批正式编译检查。后续可考虑让批次声明无共享写入的临时前端命令，并明确其执行权和结束条件。
