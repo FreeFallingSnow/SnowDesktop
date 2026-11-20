@@ -144,6 +144,8 @@
 
 ### CF-010 等待结束回执过大
 
+- **构建与测试的验证字段（2026-11-20）**：Task `large-icon-help-path`、批次 `c4a3cb381983459c9fdbff318af30b72` 修订 0、Run `95d055f943c04757b323f8426ce2450e`。精简回执显示本地化契约测试通过。为核对 Release 和激活，Agent 随后投影批次结果中的整个 `coverage`，内嵌执行上下文使输出截断。仅读取 `productBuild.exitCode`、`activation.status` 和 `coverage.completed` 后确认构建、激活及一次测试通过。该测试的依赖报告仍含 `source-report-not-in-generated-project`，本轮未尝试复用测试证据。
+
 - **产品编译失败回执（2026-11-19）**：Task `task-d303abaaffbb4e0cafd904a0798290d0` 的批次 `f95ea11f31334d0281b6f1a887568d84`、Run `2fab5ae480d342bc8c1899901d9f6e61` 经 `ready-and-wait` 返回失败，精简回执的 `error` 为空。归档 JSON 顶层 `logPath` 指向不存在的批次测试日志，实际 C2039 诊断在 `productBuild.logPath` 所指的 `.log.product.log`。本任务按产品日志完成定向续修。后续可在产品失败终态返回实际失败阶段及可读日志路径。未为反馈另跑构建。
 
 - **批次观察终态（2026-11-19）**：Task `wcg-material-extraction` 为接入已冻结的共享源码，执行 `watch wait --condition result --batch c512788a34ee4c24892cdf66bfd6d180 --revision 0`。票据 `fd47e3c2d700235bc995382ae1bba953` 正确返回 Run `915ac4ab99264af2b44a4dd9ab694196` 通过，同时嵌入产品、测试和依赖观察原件，工具回执被截断（chunk `d622ae`）。从原回执确认终态后只核对目标 Git 路径并接续新批次，没有复查完整状态或重跑该候选。后续可让票据终态默认输出结果路径与计数。
@@ -224,6 +226,8 @@
 
 ### CF-012 观察等待默认超时导致模型轮询
 
+- **大图标文案候选排队（2026-11-20）**：Task `large-icon-help-path` 的批次 `c4a3cb381983459c9fdbff318af30b72` 修订 0、Run `95d055f943c04757b323f8426ce2450e`。原 `ready-and-wait` 会话 38238 在同一排队阶段多次报告 `Candidate slot is busy; existing materialization/executor retains its files.` 和 `Waiting for the collaboration state transaction.`。继续原会话后进入执行，Release 和本地化契约测试通过。重复提示仍可按排队原因及阶段去重。
+
 - **组件局部刷新候选续证（2026-11-20）**：Task `task-edbf89c2988e40f28ac1cdb235b8c253`、批次 `b1a733fa04d6491280d13c55e4ec35e9` 修订 0、Run `dfc45d351d544a51814850d071891989`。原 `ready-and-wait` 会话 32512 入队报 `queued; waiting for resource reason not recorded`。继续原观察，Release 和四项定向检查通过。待核对队列原因字段的发布时点。
 
 - **组件安装批次续证（2026-11-18）**：Task `task-6d19c3ab79f94e3681f6115e6e070c7d`、批次 `0209f167b8d547709f2480e28b595ccb` 修订 0。原 `ready-and-wait` 会话 25562 的回执 `6b44c0`、`c3b2a6` 两次报告同一个编辑者 `task-52a0430b03e04412805a1170dfe1fa6a`；`7a676d`、`c42091` 只报告 `Waiting for the collaboration state transaction.`。期间续接同一观察进程，未另查状态或提交构建。后续共同 Run `7c5575df6d844771abc5af4a8ace0132` 通过 Release 和四项定向测试。建议继续按业务阶段和短时事务分别去重。
@@ -252,6 +256,8 @@
 - **证据与边界**：已核对本机DSH的 `dsh-tool-call-timeout-policy`：未声明工具 `timeoutMs` 时不设置该层截止。进程内持续观察不调用模型；传输yield续接同一session。测试内部故障兜底仍有界。默认/0、事件到达、显式超时、取消与编辑权不变已通过既有通用/适配器驱动，实际SDK也验证工具注册后没有外层截止。真实用户Host的长期连接及重载仍需安装环境回验。
 
 ### CF-013 共享资源的键级编辑与提交粒度不闭合
+
+- **大图标使用路径译文续证（2026-11-20）**：Task `large-icon-help-path` 的批次 `c4a3cb381983459c9fdbff318af30b72` 修订 0、Run `95d055f943c04757b323f8426ce2450e` 通过后，首次 `commit -ResourceRequests` 退出码为 2，返回 `[Errno 32] Wait worker lease is occupied`（`0d19da`）。内置英文提示经路径提交保存为 `ff96b6f4` 后，原十个请求重试成功，保存为 `c8982e7a`。本轮沿用原构建结果，具体占用的租约仍未识别。
 
 - **广色域显示补偿文案续证（2026-11-19）** Task `wgc-shadow-layering` 在批次 `0a379e1719334cb19f1d00861a7f0aa5` 修订 0、Run `890dcb8903ee46f5b4153a6c1231c403` 排队期间，`commit -ResourceRequests` 返回 `[Errno 32] Wait worker lease is occupied`。原 Run 通过后沿用十份回执提交 `080f33588`，没有为提交重跑构建。错误仍未指出实际占用的租约。
 
