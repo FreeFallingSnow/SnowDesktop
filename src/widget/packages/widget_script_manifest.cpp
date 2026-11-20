@@ -319,6 +319,7 @@ LuaWidgetManifest ReadWidgetScriptManifest(const std::wstring& fullPath,
             readString(object, "key", setting.key);
             readString(object, "label", setting.label);
             readString(object, "description", setting.description);
+            readString(object, "agentDescription", setting.agentDescription);
             readString(object, "group", setting.group);
             readString(object, "validationMessage",
                 setting.validationMessage);

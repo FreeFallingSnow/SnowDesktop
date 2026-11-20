@@ -86,7 +86,7 @@ SD_IPC_FIELDS(runtime_modules::Status, v.module, v.allowed, v.active, v.error, v
 SD_IPC_FIELDS(runtime_modules::Snapshot, v.policyRevision, v.modules);
 SD_IPC_FIELDS(runtime_modules::Policy, v.allowed);
 SD_IPC_FIELDS(GeneralSettings,
-    v.showAdvancedSettings, v.steamShowRunningStatus, v.steamRoomVisible, v.runtimeModules,
+    v.showAdvancedSettings, v.agentOperationsEnabled, v.steamShowRunningStatus, v.steamRoomVisible, v.runtimeModules,
     v.diagnosticLogModules, v.autoStartEnabled, v.softwareDesktopEnabled, v.demoModeEnabled, v.doubleClickHideDesktop,
     v.desktopIdleHideEnabled, v.desktopIdleHideDelaySeconds, v.desktopIdleHidePauseWithWindows,
     v.screenTimeEnabled,
@@ -196,7 +196,7 @@ SD_IPC_FIELDS(widget_runtime::WidgetSettingCondition,
 SD_IPC_FIELDS(widget_runtime::WidgetSettingOption,
     v.value, v.label);
 SD_IPC_FIELDS(widget_runtime::WidgetSettingFieldSchema,
-    v.key, v.label, v.description, v.group,
+    v.key, v.label, v.description, v.agentDescription, v.group,
     v.validationMessage, v.rawType, v.searchKey, v.binding,
     v.access, v.emptyLabel, v.noResultsLabel, v.minimum,
     v.maximum, v.step, v.minimumLength, v.maximumLength,

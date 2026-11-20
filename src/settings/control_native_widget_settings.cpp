@@ -11,23 +11,60 @@ namespace snowdesktop::control_settings
 namespace
 {
 using namespace control;
-struct BooleanField { const char* name; bool NativeWidgetConfiguration::*member; };
+struct BooleanField
+{
+    const char* name;
+    bool NativeWidgetConfiguration::*member;
+    const char* description;
+};
 constexpr BooleanField kBooleans[]{
-    {"showTitle", &NativeWidgetConfiguration::showTitle}, {"bottomBarHover", &NativeWidgetConfiguration::bottomBarHover},
-    {"showOnHoverOnly", &NativeWidgetConfiguration::showOnHoverOnly}, {"keepWhenDesktopHidden", &NativeWidgetConfiguration::keepWhenDesktopHidden},
-    {"privacyMode", &NativeWidgetConfiguration::privacyMode}, {"singleCellIconMode", &NativeWidgetConfiguration::singleCellIconMode},
-    {"scrollContainerMode", &NativeWidgetConfiguration::scrollContainerMode}, {"largeFolderTitleless", &NativeWidgetConfiguration::largeFolderTitleless},
-    {"titleBarCollapsed", &NativeWidgetConfiguration::titleBarCollapsed}, {"titleBarExpandOnHover", &NativeWidgetConfiguration::titleBarExpandOnHover},
-    {"showSearchBox", &NativeWidgetConfiguration::showSearchBox}, {"listMode", &NativeWidgetConfiguration::listMode},
-    {"detailShowModified", &NativeWidgetConfiguration::detailShowModified}, {"detailShowType", &NativeWidgetConfiguration::detailShowType},
-    {"detailShowSize", &NativeWidgetConfiguration::detailShowSize}, {"dateHeaders", &NativeWidgetConfiguration::dateHeaders},
-    {"showFileCategories", &NativeWidgetConfiguration::showFileCategories}, {"fanPopup", &NativeWidgetConfiguration::fanPopup},
-    {"sortAscending", &NativeWidgetConfiguration::sortAscending}, {"autoCollect", &NativeWidgetConfiguration::autoCollect}};
-struct PositionField { const char* name; float NativeWidgetConfiguration::*member; };
+    {"showTitle", &NativeWidgetConfiguration::showTitle, "Shows the component title where its presentation uses the saved title visibility. Top title bar layouts may draw their own title chrome."},
+    {"bottomBarHover", &NativeWidgetConfiguration::bottomBarHover, "Shows the native bottom action bar on hover where the component uses that presentation."},
+    {"showOnHoverOnly", &NativeWidgetConfiguration::showOnHoverOnly, "Conceals the component until the pointer enters its hover area. Global hover visibility animation preferences affect the transition."},
+    {"keepWhenDesktopHidden", &NativeWidgetConfiguration::keepWhenDesktopHidden, "Keeps this component eligible for display when SnowDesktop hides desktop icons."},
+    {"privacyMode", &NativeWidgetConfiguration::privacyMode, "Uses the component's privacy presentation to conceal its contents until revealed. Use normal membership operations to change what it contains."},
+    {"singleCellIconMode", &NativeWidgetConfiguration::singleCellIconMode, "Uses the compact icon presentation for an eligible one-cell desktop component. Availability depends on the current span and page."},
+    {"scrollContainerMode", &NativeWidgetConfiguration::scrollContainerMode, "Changes an expanded collection from a fixed grid of slots into a scrollable viewport. The layout is rebuilt and the scroll position resets. listMode chooses list versus grid within the scrolling viewport."},
+    {"largeFolderTitleless", &NativeWidgetConfiguration::largeFolderTitleless, "Hides member titles in a non-scrolling expanded collection and uses the tighter titleless grid. Available only for a collection larger than one cell with scrollContainerMode off."},
+    {"titleBarCollapsed", &NativeWidgetConfiguration::titleBarCollapsed, "Collapses an eligible top title bar to its compact presentation. Applying this resets any current hover expansion."},
+    {"titleBarExpandOnHover", &NativeWidgetConfiguration::titleBarExpandOnHover, "Allows the collapsed top title bar to expand on hover. The option is available when the component uses top title chrome."},
+    {"showSearchBox", &NativeWidgetConfiguration::showSearchBox, "Shows the component's search control and enables set-search on a live scrolling presentation. Turning this off clears the live search query."},
+    {"listMode", &NativeWidgetConfiguration::listMode, "Uses list rows instead of icons in the applicable scrolling content view. A group edits its active child. Changing the view resets scrolling."},
+    {"detailShowModified", &NativeWidgetConfiguration::detailShowModified, "Shows modification time in the single-column detailed list. Enabling it uses one list column and may normalize saved metadata dividers."},
+    {"detailShowType", &NativeWidgetConfiguration::detailShowType, "Shows file type in the single-column detailed list. Enabling it uses one list column and may normalize saved metadata dividers."},
+    {"detailShowSize", &NativeWidgetConfiguration::detailShowSize, "Shows file size in the single-column detailed list. Enabling it uses one list column and may normalize saved metadata dividers."},
+    {"dateHeaders", &NativeWidgetConfiguration::dateHeaders, "Groups visible entries under date headings in supported file views. Filtering by search can change how those headings appear."},
+    {"showFileCategories", &NativeWidgetConfiguration::showFileCategories, "Shows the file category controls in a supported file view. In a group, the effective content settings apply to its active source."},
+    {"fanPopup", &NativeWidgetConfiguration::fanPopup, "Shows the contents as a fan when opening an eligible Dock collection or folder mapping. The owner must be on the Dock."},
+    {"sortAscending", &NativeWidgetConfiguration::sortAscending, "Sorts the effective content owner in ascending order for the selected sortColumn. Folder mappings use their own folder sort state."},
+    {"autoCollect", &NativeWidgetConfiguration::autoCollect, "Automatically collects eligible desktop items into the effective File Categories source. Category ownership is enforced across competing components, and applying this can change collection membership immediately."}};
+struct PositionField
+{
+    const char* name;
+    float NativeWidgetConfiguration::*member;
+    const char* description;
+};
 constexpr PositionField kPositions[]{
-    {"detailModifiedPosition", &NativeWidgetConfiguration::detailModifiedPosition},
-    {"detailTypePosition", &NativeWidgetConfiguration::detailTypePosition},
-    {"detailSizePosition", &NativeWidgetConfiguration::detailSizePosition}};
+    {"detailModifiedPosition", &NativeWidgetConfiguration::detailModifiedPosition, "Positions the modification-time divider as a fraction of the detailed row width. Visible dividers must retain order and minimum separation."},
+    {"detailTypePosition", &NativeWidgetConfiguration::detailTypePosition, "Positions the file-type divider as a fraction of the detailed row width. Visible dividers must retain order and minimum separation."},
+    {"detailSizePosition", &NativeWidgetConfiguration::detailSizePosition, "Positions the size divider as a fraction of the detailed row width. Visible dividers must retain order and minimum separation."}};
+
+const char* GuidanceFor(std::string_view key)
+{
+    for (const auto& field : kBooleans)
+        if (key == field.name) return field.description;
+    for (const auto& field : kPositions)
+        if (key == field.name) return field.description;
+    if (key == "title") return "Sets the displayed title on the component owner. Reset it to restore the generated source or type title.";
+    if (key == "demoIconCategory") return "Selects fixture content for an eligible collection in demo mode when demo identity assets are available.";
+    if (key == "listColumns") return "Sets the number of parallel list columns in the active content view. A value above one disables metadata columns.";
+    if (key == "sortColumn") return "Sorts the effective content by the selected file attribute. This can reorder collection entries, while folder mappings update their own folder sorting.";
+    if (key == "autoCollectCategoryIds") return "Chooses which configured category IDs this File Categories source can collect. Changing the selection can immediately move eligible desktop items and affects category ownership across sources.";
+    if (key == "activeCategoryId") return "Selects the visible category or group child. For groups, set it in a separate request, then read the new revision and effective child before editing child settings.";
+    if (key == "contentCategoryId") return "Selects a category inside the active file-group source. Use the current contentCategoryIds and read the active child first.";
+    if (key == "categoryTabOrder") return "Orders the category tabs of the effective source using the advertised categoryTabIds. Applying this resets tab scrolling.";
+    return nullptr;
+}
 bool Contains(const std::vector<std::string>& values, std::string_view value)
 { return std::find(values.begin(), values.end(), value) != values.end(); }
 Value Strings(const std::vector<std::string>& strings)
@@ -95,8 +132,8 @@ Value Read(const Target& target, const NativeWidgetSettingsState& state, bool ca
         if (key.starts_with("detail") && key.ends_with("Position"))
         { field.object.emplace("minimum", Number(0.05)); field.object.emplace("maximum", Number(0.95)); field.object.emplace("minimumVisibleGap", Number(0.04)); }
         if (key == "sortColumn") field.object.emplace("enum", Strings({"none", "name", "modified", "type", "size"}));
-        if (key == "showTitle") field.object.emplace("description", String("Persisted native title visibility; top-title-bar layout may provide its own title chrome"));
-        if (key == "bottomBarHover") field.object.emplace("description", String("Show the native bottom action bar on hover where that presentation is used"));
+        if (const auto* description = GuidanceFor(key))
+            field.object.emplace("description", String(description));
         if (key == "title") field.object.emplace("resetDescription", String("Clears the custom title and restores the native type/source title"));
         fields.object.emplace(key, std::move(field));
     }

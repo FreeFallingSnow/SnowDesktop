@@ -65,6 +65,7 @@ the component directory.
 | Data topics, tasks and typed arguments | `& $SnowWidget system-contract` |
 | Signatures for the editor | [LuaLS declarations](library/snowdesktop-v2.lua) |
 | Behavior, callbacks and feature flags | Search the matching heading in the [API v2 reference](references/api-v2.md) |
+| Describe component settings and actions for AI | [Agent operations](references/agent-operations.md) |
 
 ## Author the package
 

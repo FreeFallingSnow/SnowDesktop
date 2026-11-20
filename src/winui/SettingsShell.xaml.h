@@ -258,6 +258,7 @@ private:
     snowdesktop::winui::RuntimeModulesQuery runtimeModulesQuery_;
     std::unique_ptr<snowdesktop::winui::RuntimeModulesPagePresenter> runtimeModulesPage_;
     bool advancedSettingsVisible_ = false;
+    bool agentOperationsEnabled_ = false;
     snowdesktop::runtime_modules::Policy runtimeModulePolicy_;
     winrt::Microsoft::UI::Xaml::Controls::InfoBar moduleNotice_{nullptr};
     winrt::Microsoft::UI::Xaml::Controls::InfoBar moduleLoadNotice_{nullptr};

@@ -26,13 +26,34 @@ local settings = {
         }
     },
     fields = {
-        { key = "showWeekday", label = l10n.tr("lua_widget.digital_clock.show_weekday"), type = "bool", default = true },
-        { key = "showDate", label = l10n.tr("lua_widget.digital_clock.show_date"), type = "bool", default = true },
-        { key = "showSeconds", label = l10n.tr("lua_widget.digital_clock.show_seconds"), type = "bool", default = true },
-        { key = "use12Hour", label = l10n.tr("lua_widget.digital_clock.use_12_hour"), type = "bool", default = false },
-        { key = "textColor", label = l10n.tr("lua_widget.common.text_color"), type = "color", default = 0xFFFFFF },
-        { key = "textOpacity", label = l10n.tr("lua_widget.digital_clock.text_opacity"), type = "float", default = 1.0, min = 0.0, max = 1.0 },
-        { key = "scale", label = l10n.tr("lua_widget.common.scale"), type = "float", default = 1.0, min = 0.5, max = 3.0 },
+        { key = "showWeekday",
+            agentDescription = "Includes the weekday in the secondary line under the time.",
+            label = l10n.tr("lua_widget.digital_clock.show_weekday"), type = "bool", default = true
+        },
+        { key = "showDate",
+            agentDescription = "Includes the date in the secondary line under the time.",
+            label = l10n.tr("lua_widget.digital_clock.show_date"), type = "bool", default = true
+        },
+        { key = "showSeconds",
+            agentDescription = "Includes seconds in the primary time display.",
+            label = l10n.tr("lua_widget.digital_clock.show_seconds"), type = "bool", default = true
+        },
+        { key = "use12Hour",
+            agentDescription = "Formats the main time with a 12-hour clock instead of the 24-hour display.",
+            label = l10n.tr("lua_widget.digital_clock.use_12_hour"), type = "bool", default = false
+        },
+        { key = "textColor",
+            agentDescription = "Sets the text color of the time and secondary line. When following personalization the component uses contrasting foreground colors from the active theme.",
+            label = l10n.tr("lua_widget.common.text_color"), type = "color", default = 0xFFFFFF
+        },
+        { key = "textOpacity",
+            agentDescription = "Sets the opacity of the displayed time and secondary text from 0 to 1.",
+            label = l10n.tr("lua_widget.digital_clock.text_opacity"), type = "float", default = 1.0, min = 0.0, max = 1.0
+        },
+        { key = "scale",
+            agentDescription = "Multiplies the text layout scale after fitting the clock to its width and height. Changing the component span changes the baseline.",
+            label = l10n.tr("lua_widget.common.scale"), type = "float", default = 1.0, min = 0.5, max = 3.0
+        },
     }
 }
 

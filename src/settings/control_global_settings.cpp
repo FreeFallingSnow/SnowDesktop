@@ -112,6 +112,7 @@ void Enrich(Value& schema, const std::string& path)
         Range(schema, "tooltipFontSize", kMinimumTooltipFontSize, kMaximumTooltipFontSize);
         Range(schema, "desktopIdleHideDelaySeconds", 1, desktop_idle_hide::kMaxDelaySeconds);
         ReadOnly(schema, "autoStartEnabled", "Windows-owned projection; use set-auto-start action");
+        ReadOnly(schema, "agentOperationsEnabled", "Only the SnowDesktop Settings > Agent Operations page can change local agent access");
         if (auto* font = Child(schema, "font")) font->object["restartRequired"] = Boolean(true);
         if (auto* language = Child(schema, "language")) language->object["maxLength"] = Number(84);
     }

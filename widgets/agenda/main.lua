@@ -46,6 +46,7 @@ local settings = {
     fields = {
         {
             key = "rangeDays",
+            agentDescription = "Selects how many days of events to query, including the starting date. It affects which event groups appear.",
             label = l10n.tr("lua_widget.agenda.range"),
             type = "select",
             default = "7",
@@ -59,6 +60,7 @@ local settings = {
         },
         {
             key = "fontScale",
+            agentDescription = "Scales the agenda's rendered text and its measured row layout relative to the component metrics.",
             label = l10n.tr("lua_widget.common.font_scale"),
             type = "int",
             default = 100,

@@ -11,6 +11,7 @@
 #include "diagnostics/performance_trace.h"
 #include "system/system_snapshot.h"
 #include "widget/api/widget_api_registry.h"
+#include "widget/data/widget_system_control_data.h"
 #include "widget/packages/widget_package_host.h"
 #include "widget/packages/widget_package_manager.h"
 #include "widget/packages/widget_package_paths.h"
@@ -30,6 +31,7 @@
 #include "widget/tasks/widget_media_task_executor.h"
 #include "widget/tasks/widget_native_task_executor.h"
 #include "widget/view/widget_host_input_support.h"
+#include "widget/view/widget_interaction_lua_value.h"
 #include "widget/view/widget_layout_lua.h"
 #include "widget/view/widget_render_host_context.h"
 #include "widget/view/widget_resource_host.h"
@@ -527,6 +529,60 @@ bool WidgetEngine::InvokeLifecycleEvent(LuaWidget& widget,
     if ((succeeded && invoked) || stateChanged)
         RuntimeInvalidateHost(widget.widgetId);
     return succeeded && invoked;
+}
+
+std::optional<snowdesktop::widget_runtime::AgentActions>
+WidgetEngine::ReadWidgetAgentActions(const std::wstring& widgetId)
+{
+    using namespace snowdesktop::widget_runtime;
+    const int index = FindWidget(widgetId);
+    if (index < 0)
+        return std::nullopt;
+    const auto& widget = widgets_[index];
+    if (!widget.state || !widget.valid || widget.preview)
+        return std::nullopt;
+
+    snowdesktop::lua_runtime::StackGuard stack(widget.state);
+    std::string error;
+    int reference = widget.ref;
+    if (!snowdesktop::lua_runtime::ProtectedHostCall(widget.state, +[](lua_State* state) {
+            lua_rawgeti(state, LUA_REGISTRYINDEX, *static_cast<int*>(lua_touserdata(state, 1)));
+            lua_pushliteral(state, "agentActions");
+            lua_rawget(state, -2);
+            return 1;
+        }, &reference, 1, error))
+        return std::nullopt;
+
+    InteractionValue declaration;
+    std::size_t nodes = 0, stringBytes = 0;
+    std::unordered_set<const void*> ancestors;
+    AgentActions actions;
+    if (!ReadInteractionValue(widget.state, -1, declaration, 0, nodes, stringBytes, ancestors, error) ||
+        !ReadAgentActions(declaration, actions))
+    {
+        RuntimeRecordError(widgetId, error.empty() ? "Invalid widget agentActions declaration" : error);
+        return std::nullopt;
+    }
+    return actions;
+}
+
+bool WidgetEngine::InvokeWidgetAgentAction(const std::wstring& widgetId,
+    std::string_view action, const JsonValue& arguments)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0)
+        return false;
+    snowdesktop::widget_runtime::WidgetTrustedGestureScope gesture(trustedGestureState_, false);
+    return InvokeLifecycleEvent(widgets_[index], "agent.action", [&](lua_State* state) {
+        lua_pushlstring(state, action.data(), action.size());
+        lua_setfield(state, -2, "id");
+        lua_pushliteral(state, "agent");
+        lua_setfield(state, -2, "source");
+        lua_pushboolean(state, false);
+        lua_setfield(state, -2, "trustedGesture");
+        snowdesktop::widget_runtime::PushSystemControlJson(state, arguments);
+        lua_setfield(state, -2, "arguments");
+    });
 }
 
 void WidgetEngine::DisposeWidgetLifecycle(

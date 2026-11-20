@@ -122,8 +122,10 @@ Value HandleRuntimeSettings(std::string_view method, const Value& params,
         if (method == "settings.catalog")
         {
             result.object.emplace("fields", Object({
-                {"animationDiagnosticsEnabled", Object({{"type", String("boolean")}, {"default", Boolean(false)}, {"available", Boolean(status.animationDiagnosticsEnabled.has_value())}})},
-                {"usageGuideExpanded", Object({{"type", String("boolean")}, {"default", Boolean(true)}, {"available", Boolean(status.usageGuideExpanded.has_value())}})}}));
+                {"animationDiagnosticsEnabled", Object({{"type", String("boolean")}, {"default", Boolean(false)}, {"available", Boolean(status.animationDiagnosticsEnabled.has_value())},
+                    {"description", String("Enables the host's detailed animation diagnostics when that service is available.")}})},
+                {"usageGuideExpanded", Object({{"type", String("boolean")}, {"default", Boolean(true)}, {"available", Boolean(status.usageGuideExpanded.has_value())},
+                    {"description", String("Expands or collapses the usage guide section. This does not start a lesson.")}})}}));
             result.object.emplace("maximumChanges", Number(1));
             result.object.emplace("readOnly", Names({"temporaryInitializationEnabled", "windowSupport", "advancedFeatures", "generation", "settingsRevision", "animationDiagnosticsStatus"}));
             auto actions = Array();

@@ -33,12 +33,14 @@ local settings = {
     fields = {
         {
             key = "showArtwork",
+            agentDescription = "Displays available artwork from the current media session. The compact and wide layouts reserve artwork space differently.",
             label = l10n.tr("lua_widget.media_control.show_artwork"),
             type = "bool",
             default = true,
         },
         {
             key = "launcherReference",
+            agentDescription = "Binds the player that can be opened from the inactive media card. Set it through the application reference picker.",
             label = l10n.tr("lua_widget.media_control.select_launcher"),
             type = "appReference",
             binding = "idlePlayer",

@@ -4,6 +4,7 @@
 #include "dock/dock_fullscreen_policy.h"
 #include "shell/shell_extension_service.h"
 #include "app/app.h"
+#include "app/features/app_control_runtime.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "platform/usage_guide.h"
 #include "navigation/navigation_settings.h"
@@ -1267,7 +1268,11 @@ public:
         if (dockCommitted) app_.dockSettings_ = requestedDockSettings;
         if (generalCommitted)
         {
+            const bool revokeAgentAccess = app_.generalSettings_.agentOperationsEnabled &&
+                !snapshot.values.general.agentOperationsEnabled;
             app_.generalSettings_ = snapshot.values.general;
+            if (revokeAgentAccess && app_.applicationControlRuntime_)
+                app_.applicationControlRuntime_->RevokeAccess();
             app_.ApplyScreenTimeEnabled();
         }
 
@@ -2257,7 +2262,11 @@ void DesktopApp::LoadGeneralSettingsAndApply()
     const bool demoModeEnabled = generalSettings_.demoModeEnabled;
     GeneralSettings settings;
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
+    const bool revokeAgentAccess = generalSettings_.agentOperationsEnabled &&
+        !settings.agentOperationsEnabled;
     generalSettings_ = settings;
+    if (revokeAgentAccess && applicationControlRuntime_)
+        applicationControlRuntime_->RevokeAccess();
     ApplyRuntimeModulePolicy();
     snowdesktop::diagnostics::SetLogModules(settings.diagnosticLogModules);
     snowdesktop::app_fonts::Select(settings.font, std::filesystem::path(GetExecutableDirectoryPath()) / L"Assets", GetDataDirectoryPath());

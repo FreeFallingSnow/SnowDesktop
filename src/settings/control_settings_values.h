@@ -3,7 +3,7 @@
 #include <cmath>
 #include <algorithm>
 #include "control_settings.h"
-#include "settings_ipc_values.h"
+#include "control_settings_guidance.h"
 #include <charconv>
 #include <limits>
 
@@ -297,6 +297,13 @@ template<class T> Value Describe(const T& defaults)
     {
         type("object"); auto properties = Object();
         Members(defaults, [&](const std::string& key, const auto& field) { properties.object.emplace(key, Describe(field)); });
+        if constexpr (!guidance::Fields<T>.empty())
+        {
+            static_assert(guidance::CoversFields<T>(),
+                "Document each bound settings field and keep the guidance table in binding order");
+            for (const auto& [key, description] : guidance::Fields<T>)
+                properties.object.at(std::string(key)).object.emplace("description", String(std::string(description)));
+        }
         result.object.emplace("properties", std::move(properties)); result.object.emplace("additionalProperties", Boolean(false));
     }
     return result;

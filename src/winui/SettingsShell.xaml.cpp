@@ -719,6 +719,15 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
                     L"SettingsShellFontAwesomeGlyphTemplate"))
                     .as<mux::DataTemplate>());
         widgetsPage_->SetActions(widgetsPageActions_);
+        widgetsPage_->SetAgentAccessAction([weak = get_weak()](bool enabled) {
+            if (const auto shell = weak.get(); shell && !shell->closed_ &&
+                shell->generalPageActions_.commitGeneral)
+            {
+                shell->generalPageActions_.commitGeneral(shell->navigation_.Generation(),
+                    [enabled](GeneralSettings& general) { general.agentOperationsEnabled = enabled; });
+            }
+        });
+        widgetsPage_->ApplyAgentAccess(agentOperationsEnabled_);
     };
     const auto ensureBackup = [&]() {
         if (backupDataPage_)
@@ -1748,8 +1757,11 @@ bool SettingsShell::ApplySnapshot(
         if (replacement && routeRequested_) routeRequested_(*replacement);
         if (runtimeModulesPage_) runtimeModulesPage_->ApplySnapshot(snapshot);
         desktopStyleDockEnabled_ = snapshot.values.general.dockEnabled;
+        agentOperationsEnabled_ = snapshot.values.general.agentOperationsEnabled;
         if (sessionActive_)
             EnsurePresentersForPage(navigation_.Route().page);
+        if (widgetsPage_)
+            widgetsPage_->ApplyAgentAccess(agentOperationsEnabled_);
         if (runtimeModulesPage_) runtimeModulesPage_->ApplySnapshot(snapshot);
         if (generalPage_)
             generalPage_->ApplySnapshot(snapshot);
@@ -3335,6 +3347,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(widgetsPage_->AgentOperationsContent());
             widgetsPage_->Activate(navigation_.Generation());
             RegisterFocusTarget("agentOperations.skill", widgetsPage_->AgentOperationsFocusTarget());
+            RegisterFocusTarget("agentOperations.access", widgetsPage_->AgentAccessFocusTarget());
         }
         break;
     case SettingsPage::DeveloperTools:

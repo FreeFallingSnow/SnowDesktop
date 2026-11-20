@@ -17,6 +17,7 @@ local settings = {
     fields = {
         {
             key = "faceTheme",
+            agentDescription = "Chooses the analog clock face, ring and hand palette. It changes the artwork drawn inside the panel.",
             label = l10n.tr("lua_widget.analog_clock.face_theme"),
             type = "select",
             default = "light",
@@ -26,8 +27,14 @@ local settings = {
                 l10n.tr("lua_widget.analog_clock.theme_dark"),
             },
         },
-        { key = "showSecondHand", label = l10n.tr("lua_widget.analog_clock.show_second_hand"), type = "bool", default = true },
-        { key = "showNumbers", label = l10n.tr("lua_widget.analog_clock.show_numbers"), type = "bool", default = true },
+        { key = "showSecondHand",
+            agentDescription = "Draws the red seconds hand and red center accent. The hour and minute hands stay visible.",
+            label = l10n.tr("lua_widget.analog_clock.show_second_hand"), type = "bool", default = true
+        },
+        { key = "showNumbers",
+            agentDescription = "Draws the hour numerals around the clock face.",
+            label = l10n.tr("lua_widget.analog_clock.show_numbers"), type = "bool", default = true
+        },
     }
 }
 

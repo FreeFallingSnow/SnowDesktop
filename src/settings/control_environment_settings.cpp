@@ -137,9 +137,12 @@ Value Pages(std::string_view method, const Value& params, const Target& target, 
         Fields(params, {"target"});
         auto output = Envelope(target, page ? Page(*page) : state, revision);
         output.object.emplace("fields", page ? Object({
-            {"name", Object({{"type", String("string")}, {"maximumLength", Number(64)}, {"resetValue", String("")}})},
-            {"columns", Object({{"type", String("integer")}, {"minimum", Number(1)}, {"maximum", Number(50)}})},
-            {"rows", Object({{"type", String("integer")}, {"minimum", Number(1)}, {"maximum", Number(50)}})}}) : Object());
+            {"name", Object({{"type", String("string")}, {"maximumLength", Number(64)}, {"resetValue", String("")},
+                {"description", String("Rename the existing page without changing its identity or layout. An empty name restores the generated label. Rename and grid adjustments are separate transactions.")}})},
+            {"columns", Object({{"type", String("integer")}, {"minimum", Number(1)}, {"maximum", Number(50)},
+                {"description", String("Divide the page work area into this many columns. More columns can narrow the icon pitch and reduce the final icon size, even with the same desktop.itemIconSizeScale. Analyze together with rows via analyze-grid before changing dimensions; displaced items or resized components require confirmation.")}})},
+            {"rows", Object({{"type", String("integer")}, {"minimum", Number(1)}, {"maximum", Number(50)},
+                {"description", String("Divide the page work area into this many rows. More rows can reduce the pitch and leave less height for the icon after the title allowance. Analyze together with columns via analyze-grid before changing dimensions; displaced items or resized components require confirmation.")}})}}) : Object());
         output.object.emplace("actions", page ? Strings({"analyze-grid", "set-grid", "analyze-removal", "remove"}) : Strings({"add", "reorder"}));
         output.object.emplace("readOnly", page ? Strings({"id", "itemCount", "widgetCount", "guideCount", "role", "monitorOrdinal", "visible", "activeOnLastMonitor"}) : Strings({"pages", "monitorCount", "editable", "hostRevision"}));
         return output;
@@ -301,6 +304,7 @@ Value Debug(std::string_view method, const Value& params, const Target& target, 
         {
             output.object.emplace("fields", single ? Object({{"name", Object({{"type", String("string")},
                 {"maximumLength", Number(static_cast<double>(debug_profile::MaximumEnvironmentNameLength))},
+                {"description", String("Renames the selected debug environment. Its persistent identity and directories are preserved.")},
                 {"editable", Boolean(id == *status.debugEnvironmentId)}})}}) : Object());
             output.object.emplace("actions", single ? (id == *status.debugEnvironmentId ?
                 Strings({"set-enabled", "set-desktop", "clear"}) : Array()) : Strings({"create", "select"}));

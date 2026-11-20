@@ -160,6 +160,8 @@ static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableInd
     setting.label = LuaReadStorageField(L, tableIndex, "label");
     setting.description =
         LuaReadStorageField(L, tableIndex, "description");
+    setting.agentDescription =
+        LuaReadStorageField(L, tableIndex, "agentDescription");
     setting.group = LuaReadStorageField(L, tableIndex, "group");
     setting.validationMessage =
         LuaReadStorageField(L, tableIndex, "validationMessage");
@@ -612,6 +614,12 @@ static bool ValidateSettingPresentation(
             {
                 error = "setting '" + setting.key +
                     "' description exceeds 2048 bytes";
+                return false;
+            }
+            if (setting.agentDescription.size() > 2048)
+            {
+                error = "setting '" + setting.key +
+                    "' agentDescription exceeds 2048 bytes";
                 return false;
             }
             if (!setting.group.empty() && !groupIds.contains(setting.group))

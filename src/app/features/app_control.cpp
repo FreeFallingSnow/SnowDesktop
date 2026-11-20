@@ -12,6 +12,7 @@
 #include "ui/menu/modern_menu.h"
 #include "demo/builtin_scenes.h"
 #include "desktop/desktop_source.h"
+#include "widget/runtime/widget_engine.h"
 
 namespace
 {
@@ -98,7 +99,7 @@ void DesktopApp::InitializeApplicationControl()
     applicationControlRuntime_ = std::make_unique<snowdesktop::app_control::Runtime>();
     if (!applicationControl_.Start([this](std::string_view method, const snowdesktop::control::Value& params) {
         return HandleApplicationControl(method, params);
-    }))
+    }, {}, 5000, [this] { return generalSettings_.agentOperationsEnabled; }))
     {
         const auto message = L"Application control IPC unavailable, error=" + std::to_wstring(applicationControl_.LastError());
         WriteDiagnosticLogEntry(message.c_str());
@@ -260,11 +261,57 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
         return Object({{"widget", WidgetValue(widgets_[index], IsGroupedWidget(widgets_[index]))},
             {"layoutRevision", ApplicationControlLayout().object.at("layoutRevision")}});
     }
+    if (method == "widgets.agentActions")
+    {
+        Fields(params, {"id"});
+        const auto index = widgetIndex();
+        const auto& widget = widgets_[index];
+        if (widget.type != DesktopWidgetType::LuaScript || !widgetEngine_)
+            throw Error("widget_actions_unavailable", "The target must be a loaded Lua component");
+        const auto definitions = widgetEngine_->ReadWidgetAgentActions(widget.id);
+        if (!definitions)
+            throw Error("widget_actions_unavailable", "The component is not loaded or its action declaration is invalid");
+        auto actions = Object();
+        for (const auto& [id, definition] : *definitions)
+        {
+            auto arguments = Object();
+            for (const auto& [name, argument] : definition.arguments)
+                arguments.object.emplace(name, Object({{"type", String(argument.type)},
+                    {"description", String(argument.description)}, {"required", Boolean(argument.required)}}));
+            actions.object.emplace(id, Object({{"description", String(definition.description)},
+                {"arguments", std::move(arguments)}}));
+        }
+        return Object({{"id", String(Text(params, "id"))}, {"actions", std::move(actions)}});
+    }
     // Do not enter UI actions from a nested modal loop or interrupt a live drag.
     if (applicationControlRuntime_->privatePointer.Current().enabled || mouseDown_ || dragSession_.IsActive() || widgetAction_ != WidgetAction::None || HasActiveContextMenuSession())
         throw Error("busy", "A pointer operation or context menu is active");
     if (desktopStartupPresentationPending_)
         throw Error("not_ready", "The first desktop frame is not ready");
+    if (method == "widgets.invokeAgentAction")
+    {
+        Fields(params, {"id", "action", "arguments"});
+        const auto index = widgetIndex();
+        const auto widgetId = widgets_[index].id;
+        if (widgets_[index].type != DesktopWidgetType::LuaScript || !widgetEngine_)
+            throw Error("widget_actions_unavailable", "The target must be a loaded Lua component");
+        const auto definitions = widgetEngine_->ReadWidgetAgentActions(widgetId);
+        if (!definitions)
+            throw Error("widget_actions_unavailable", "The component is not loaded or its action declaration is invalid");
+        const auto action = Text(params, "action");
+        const auto definition = definitions->find(action);
+        if (definition == definitions->end())
+            throw Error("widget_action_not_found", "The component did not declare this agent action");
+        const auto empty = Object();
+        const auto* supplied = params.Find("arguments");
+        const auto& arguments = supplied ? *supplied : empty;
+        if (!snowdesktop::widget_runtime::ValidateAgentArguments(definition->second, arguments))
+            throw Error("invalid_params", "Arguments must match the declared widget agent action", -32602);
+        if (!widgetEngine_->InvokeWidgetAgentAction(widgetId, action, arguments))
+            throw Error("widget_action_failed", "The component did not successfully handle the agent action");
+        return Object({{"id", String(Text(params, "id"))}, {"action", String(action)},
+            {"status", String("delivered")}});
+    }
     if (method == "widgets.place")
     {
         Fields(params, {"id", "pageId", "column", "row", "columns", "rows", "ifLayoutRevision"});

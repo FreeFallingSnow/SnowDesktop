@@ -31,11 +31,17 @@ local fluent = {
 
 local settings = {
     fields = {
-        { key = "query", label = l10n.tr("lua_widget.quick_launcher.query"),
+        { key = "query",
+            agentDescription = "Sets the search text used to find matching desktop items and applications. A changed query refreshes the results.",
+            label = l10n.tr("lua_widget.quick_launcher.query"),
             type = "text", default = "" },
-        { key = "fontScale", label = l10n.tr("lua_widget.common.font_scale"),
+        { key = "fontScale",
+            agentDescription = "Scales the search field and result text using the component layout metrics.",
+            label = l10n.tr("lua_widget.common.font_scale"),
             type = "int", default = 100, min = 70, max = 160 },
-        { key = "textColor", label = l10n.tr("lua_widget.common.text_color"),
+        { key = "textColor",
+            agentDescription = "Sets the text color used by the launcher. Following personalization can substitute the theme foreground.",
+            label = l10n.tr("lua_widget.common.text_color"),
             type = "color", default = 0xFFFFFF },
     },
 }

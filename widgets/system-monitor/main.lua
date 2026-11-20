@@ -30,15 +30,42 @@ local style = {
 
 local settings = {
     fields = {
-        { key = "show_cpu", label = l10n.tr("lua_widget.system_monitor.show_cpu"), type = "bool", default = monitorSources.defaults.cpu },
-        { key = "show_memory", label = l10n.tr("lua_widget.system_monitor.show_memory"), type = "bool", default = monitorSources.defaults.memory },
-        { key = "show_gpu", label = l10n.tr("lua_widget.system_monitor.show_gpu"), type = "bool", default = monitorSources.defaults.gpu },
-        { key = "show_vram", label = l10n.tr("lua_widget.system_monitor.show_vram"), type = "bool", default = monitorSources.defaults.vram },
-        { key = "show_network", label = l10n.tr("lua_widget.system_monitor.show_network"), type = "bool", default = monitorSources.defaults.network },
-        { key = "show_battery", label = l10n.tr("lua_widget.system_monitor.show_battery"), type = "bool", default = monitorSources.defaults.battery },
-        { key = "show_storage", label = l10n.tr("lua_widget.system_monitor.show_storage"), type = "bool", default = monitorSources.defaults.storage },
-        { key = "show_disk_io", label = l10n.tr("lua_widget.system_monitor.show_disk_io"), type = "bool", default = monitorSources.defaults.disk_io },
-        { key = "show_uptime", label = l10n.tr("lua_widget.system_monitor.show_uptime"), type = "bool", default = monitorSources.defaults.uptime },
+        { key = "show_cpu",
+            agentDescription = "Includes the processor card in the monitor's packed card layout.",
+            label = l10n.tr("lua_widget.system_monitor.show_cpu"), type = "bool", default = monitorSources.defaults.cpu
+        },
+        { key = "show_memory",
+            agentDescription = "Includes the physical memory card in the packed card layout.",
+            label = l10n.tr("lua_widget.system_monitor.show_memory"), type = "bool", default = monitorSources.defaults.memory
+        },
+        { key = "show_gpu",
+            agentDescription = "Includes the graphics utilization card in the packed card layout.",
+            label = l10n.tr("lua_widget.system_monitor.show_gpu"), type = "bool", default = monitorSources.defaults.gpu
+        },
+        { key = "show_vram",
+            agentDescription = "Includes the graphics memory card in the packed card layout.",
+            label = l10n.tr("lua_widget.system_monitor.show_vram"), type = "bool", default = monitorSources.defaults.vram
+        },
+        { key = "show_network",
+            agentDescription = "Includes the download and upload rate card in the packed card layout.",
+            label = l10n.tr("lua_widget.system_monitor.show_network"), type = "bool", default = monitorSources.defaults.network
+        },
+        { key = "show_battery",
+            agentDescription = "Includes the battery status card where data is available.",
+            label = l10n.tr("lua_widget.system_monitor.show_battery"), type = "bool", default = monitorSources.defaults.battery
+        },
+        { key = "show_storage",
+            agentDescription = "Includes the storage capacity card in the packed card layout.",
+            label = l10n.tr("lua_widget.system_monitor.show_storage"), type = "bool", default = monitorSources.defaults.storage
+        },
+        { key = "show_disk_io",
+            agentDescription = "Includes the disk throughput card in the packed card layout.",
+            label = l10n.tr("lua_widget.system_monitor.show_disk_io"), type = "bool", default = monitorSources.defaults.disk_io
+        },
+        { key = "show_uptime",
+            agentDescription = "Includes the system uptime card in the packed card layout.",
+            label = l10n.tr("lua_widget.system_monitor.show_uptime"), type = "bool", default = monitorSources.defaults.uptime
+        },
     },
 }
 
@@ -57,13 +84,16 @@ for _, field in ipairs(settings.fields) do
     sizeFields[#sizeFields + 1] = field
     sizeFields[#sizeFields + 1] = {
         key = "size_" .. id,
+        agentDescription = "Sets the preferred grid span of this metric card. The component packs visible cards into the current viewport and scrolls when they exceed it.",
         label = l10n.tr("lua_widget.system_monitor.card_size", cardTitles[id]),
         type = "select", default = "1x1", options = cardLayout.sizes,
     }
 end
 settings.fields = sizeFields
 table.insert(settings.fields, 1, {
-    key = "main_font_scale", label = l10n.tr("lua_widget.system_monitor.main_font_scale"),
+    key = "main_font_scale",
+    agentDescription = "Scales the main numeric readings inside the cards. The card packing sizes are controlled separately.",
+    label = l10n.tr("lua_widget.system_monitor.main_font_scale"),
     type = "int", default = 100, min = 70, max = 150,
 })
 

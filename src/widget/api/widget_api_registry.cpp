@@ -21,6 +21,8 @@ namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
 constexpr auto kHostFeatures = std::to_array<std::string_view>({
+    "agent.actions",
+    "agent.settingDescriptions",
     "resource.audio",
     "task.audio.playback",
     "audio.playback.events",

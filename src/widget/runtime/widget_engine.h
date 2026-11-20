@@ -24,6 +24,7 @@ namespace snowdesktop::widget_runtime { struct WidgetMultiplayer; }
 #include "steam/steam_room_status.h"
 #include "ui/input/text_input_state.h"
 #include "widget_host_requests.h"
+#include "widget_agent_actions.h"
 #include "widget/view/widget_native_marquee.h"
 
 #include <windows.h>
@@ -445,6 +446,8 @@ public:
      * @return 加载成功或已存在返回 true，否则返回 false
      */
     bool EnsureWidgetLoaded(const std::wstring& widgetId, const std::wstring& scriptPath);
+    std::optional<snowdesktop::widget_runtime::AgentActions> ReadWidgetAgentActions(const std::wstring& widgetId);
+    bool InvokeWidgetAgentAction(const std::wstring& widgetId, std::string_view action, const JsonValue& arguments);
     /** Load an isolated, side-effect-free instance for the component picker. */
     bool EnsureWidgetPreviewLoaded(const std::wstring& widgetId,
         const std::wstring& packageId,

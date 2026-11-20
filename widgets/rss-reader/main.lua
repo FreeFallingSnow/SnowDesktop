@@ -34,15 +34,20 @@ end
 
 local settings = {
     fields = {
-        { key = "url", label = l10n.tr("lua_widget.rss_reader.url"),
+        { key = "url",
+            agentDescription = "Selects the feed address requested by the component. The network permission for that address controls whether it can load.",
+            label = l10n.tr("lua_widget.rss_reader.url"),
             type = "text", default = DEFAULT_URL },
         { key = "interval",
+            agentDescription = "Sets the interval between automatic refresh requests in seconds. It is applied by the component's timer.",
             label = l10n.tr("lua_widget.rss_reader.refresh_interval"),
             type = "duration", default = 1800, min = 60, max = 3600 },
         { key = "maxItems",
+            agentDescription = "Limits how many entries are kept when a fetched feed is parsed.",
             label = l10n.tr("lua_widget.rss_reader.max_items"),
             type = "int", default = 30, min = 10, max = 100 },
         { key = "rowScale",
+            agentDescription = "Sets the feed row size as a percentage of the host metrics. It scales text, padding and measured row height.",
             label = l10n.tr("lua_widget.rss_reader.article_row_scale"),
             type = "int", default = 100, min = 70, max = 160 },
     },

@@ -123,6 +123,8 @@ Value Describe()
     add("desktop.getLayout", false, "{}");
     add("widgets.list", false, "{}");
     add("widgets.get", false, "{id:string}");
+    add("widgets.agentActions", false, "{id:string}");
+    add("widgets.invokeAgentAction", true, "{id:string,action:string,arguments?:object}");
     add("widgets.place", true, "{id:string,pageId:string,column:integer,row:integer,columns:integer,rows:integer,ifLayoutRevision:string}");
     add("widgets.open", true, "{id:string}");
     add("widgets.close", true, "{}");
@@ -133,15 +135,25 @@ Value Describe()
     add("dock.hide", true, "{}");
     return Object({{"protocolVersion", Number(ProtocolVersion)}, {"methods", std::move(methods)},
         {"maximumFrameBytes", Number(static_cast<double>(MaximumFrameBytes))},
+        {"guidance", Object({
+            {"language", String("en")},
+            {"overview", String("SnowDesktop organizes desktop items in pages, grids and storage components. It also provides visual personalization, a Dock, a status bar and Quick Navigation.")},
+            {"organize", String("Read desktop.getLayout and settings.catalog first. Use widgets.place for an existing component's position or span, and the page target for grid dimensions. File Categories can collect matching desktop items when their native-widget catalog advertises collect-now.")},
+            {"appearance", String("Use the personalization target for common surface defaults, desktop for ordinary icon and title presentation, and the individual component or icon target for its own overrides. An independent theme may take precedence over global settings.")},
+            {"settings", String("Call settings.catalog without a target to discover domains and live component instances. Query a concrete target to read its fields, action availability and revision. Use settings.update for writable fields and settings.action for named operations. Refresh the revision before each edit and respect confirmation, restart and availability requirements.")},
+            {"components", String("Use native-widget for built-in storage component view and content settings and widget for Lua-authored settings and host appearance. Discover a loaded Lua instance's optional English action declarations with widgets.agentActions. A delivered action ran the component event callback; verify the outcome separately.")},
+        })},
         {"capabilities", Object({{"elements", Number(1)}, {"privatePointer", Number(1)}, {"privateKeyboard", Number(1)},
             {"demoCursor", Number(1)}, {"monitorCapture", Number(1)}, {"menus", Number(1)},
             {"settingsAutomation", Number(1)}, {"previewRender", Number(1)}, {"monitorRecording", Number(1)},
             {"nativeWidgetControls", Number(1)}, {"demoElementTargets", Number(1)},
             {"nativePopupControls", Number(1)}, {"menuControlValues", Number(1)}, {"settingsPrivateInput", Number(0)},
-            {"directSettings", Number(1)}, {"settingsSchema", Number(1)}, {"nativeWidgetSettings", Number(1)}})}});
+            {"directSettings", Number(1)}, {"settingsSchema", Number(1)}, {"nativeWidgetSettings", Number(1)},
+            {"settingsGuidance", Number(1)}, {"widgetAgentActions", Number(1)}})}});
 }
 
-std::string Dispatch(std::string_view request, const Handler& handler) noexcept
+std::string Dispatch(std::string_view request, const Handler& handler,
+    const AccessCheck& accessCheck) noexcept
 {
     Value id;
     try
@@ -160,7 +172,10 @@ std::string Dispatch(std::string_view request, const Handler& handler) noexcept
         Fields(root, {"jsonrpc", "id", "method", "params"});
         if (Text(root, "jsonrpc") != "2.0") throw Error("invalid_request", "jsonrpc must be 2.0", -32600);
         const auto method = Text(root, "method");
-        const auto description = Describe();
+        if (accessCheck && !accessCheck())
+            throw Error("agent_operations_disabled",
+                "Ask the user to enable Allow agent access in SnowDesktop Settings > Agent Operations.");
+        static const auto description = Describe();
         bool known = false;
         for (const auto& entry : description.Find("methods")->array)
             if (entry.Find("name")->string == method) known = true;

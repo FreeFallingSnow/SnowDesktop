@@ -29,6 +29,7 @@ inline WidgetSettingSourceField ConvertSetting(
     schema.key = source.key;
     schema.label = source.label;
     schema.description = source.description;
+    schema.agentDescription = source.agentDescription;
     schema.group = source.group;
     schema.validationMessage = source.validationMessage;
     schema.rawType = source.type.empty() ? "text" : source.type;

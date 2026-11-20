@@ -87,7 +87,11 @@ Value HandleFontSettings(std::string_view method, const Value& params,
         if (method == "settings.catalog")
         {
             result.object.emplace("fields", Object({{"selection", Object({{"type", String("object")},
-                {"properties", Object({{"package", Object({{"type", String("string")}})}, {"family", Object({{"type", String("string")}})}})},
+                {"description", String("Saves the requested application font. The applied font changes after restart.")},
+                {"properties", Object({{"package", Object({{"type", String("string")},
+                    {"description", String("Selects the installed font package from the advertised choices.")}})},
+                    {"family", Object({{"type", String("string")},
+                        {"description", String("Selects the font family within the selected package.")}})}})},
                 {"default", Selection({})}, {"optionsSource", String("values.choices; paginate with offset/limit")}})}}));
             result.object.emplace("readOnly", Names({"applied", "restartRequired", "choices", "choiceCount"}));
             result.object.emplace("actions", Names({"import", "restart"}));

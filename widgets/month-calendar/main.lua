@@ -32,6 +32,7 @@ local settings = {
     fields = {
         {
             key = "weekStart",
+            agentDescription = "Chooses the first weekday for the calendar columns. Locale uses the locale's rule. The Monday and Sunday choices apply directly to grid placement.",
             label = l10n.tr("lua_widget.month_calendar.week_start"),
             type = "select",
             default = "locale",
@@ -44,12 +45,14 @@ local settings = {
         },
         {
             key = "showAdjacent",
+            agentDescription = "Shows dates outside the current month in the full month grid. The mini layout draws its own compact week.",
             label = l10n.tr("lua_widget.month_calendar.show_adjacent"),
             type = "bool",
             default = true,
         },
         {
             key = "fontScale",
+            agentDescription = "Scales calendar text relative to the panel's layout metrics.",
             label = l10n.tr("lua_widget.common.font_scale"),
             type = "int",
             default = 100,

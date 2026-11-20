@@ -326,6 +326,10 @@ struct WidgetsPagePresenter::Impl
     muxc::StackPanel controlRoot{nullptr};
     muxc::TextBlock controlIntroTitle{nullptr};
     muxc::TextBlock controlIntroDescription{nullptr};
+    presenter_controls::SettingRow agentAccessRow;
+    muxc::ToggleSwitch agentAccessToggle{nullptr};
+    std::function<void(bool)> agentAccessChanged;
+    winrt::event_token agentAccessToken{};
     SettingsCard controlSkillCard;
     presenter_controls::SettingRow controlSkillActionsRow;
     muxc::Button controlSkillApplyButton{nullptr};
@@ -830,6 +834,17 @@ struct WidgetsPagePresenter::Impl
         presenter_controls::InitializeSettingsGroup(
             controlIntroCard, nullptr, controlIntroContent, cardStyle, true);
         controlRoot.Children().Append(controlIntroCard);
+
+        muxc::Border agentAccessCard;
+        muxc::StackPanel agentAccessRows;
+        agentAccessToggle = muxc::ToggleSwitch{};
+        agentAccessRow.Initialize(agentAccessToggle);
+        agentAccessRows.Children().Append(agentAccessRow.root);
+        presenter_controls::UpdateSettingsSubrows(agentAccessRows);
+        presenter_controls::InitializeSettingsGroup(
+            agentAccessCard, nullptr, agentAccessRows, cardStyle);
+        controlRoot.Children().Append(agentAccessCard);
+
         InitializeCard(controlSkillCard, cardStyle, controlRoot);
         controlSkillApplyButton = muxc::Button{};
         controlSkillApplyButton.UseSystemFocusVisuals(true);
@@ -1052,6 +1067,11 @@ struct WidgetsPagePresenter::Impl
 
     void HookStaticEvents()
     {
+        agentAccessToken = agentAccessToggle.Toggled(
+            [this](const auto&, const auto&) {
+                if (!updatingControls && !closed && active && agentAccessChanged)
+                    agentAccessChanged(agentAccessToggle.IsOn());
+            });
         searchChangedToken = searchBox.TextChanged(
             [this](const auto&, const auto&) { SearchFromInput(); });
         searchCompositionStartedToken = searchBox.TextCompositionStarted(
@@ -3437,6 +3457,11 @@ struct WidgetsPagePresenter::Impl
             L"Organize your desktop with AI"));
         controlIntroDescription.Text(L("settings.agentOperations.description",
             L"Install the SnowDesktop Control Skill below, then ask your AI assistant to use widgets to organize desktop items, fine-tune visual effects, and adjust settings to fit the way you work."));
+        agentAccessRow.SetText(
+            L("settings.agentOperations.access", L"Allow agent access"),
+            L("settings.agentOperations.access.description",
+                L"Let local AI assistants read or change SnowDesktop through its control interface."));
+        SetAutomation(agentAccessToggle, agentAccessRow.label.Text(), agentAccessRow.help.Text());
         controlSkillCard.title.Text(L("settings.agentOperations.skill", L"SnowDesktop Control Skill"));
         controlSkillCard.description.Text(L"");
         controlSkillCard.description.Visibility(mux::Visibility::Collapsed);
@@ -3752,6 +3777,7 @@ struct WidgetsPagePresenter::Impl
             selfDevelopButton.Click(selfDevelopToken);
             cancelTaskButton.Click(cancelTaskToken);
             developerRefreshButton.Click(developerRefreshToken);
+            agentAccessToggle.Toggled(agentAccessToken);
             controlSkillApplyButton.Click(controlSkillApplyToken);
             controlSkillRefreshButton.Click(controlSkillRefreshToken);
             agentSkillApplyButton.Click(agentSkillApplyToken);
@@ -3832,6 +3858,24 @@ mux::FrameworkElement WidgetsPagePresenter::AgentOperationsFocusTarget() const n
 {
     if (!impl_) return nullptr;
     return impl_->firstControlSkillTarget ? impl_->firstControlSkillTarget : impl_->controlSkillApplyButton;
+}
+
+void WidgetsPagePresenter::SetAgentAccessAction(std::function<void(bool)> change)
+{
+    impl_->agentAccessChanged = std::move(change);
+}
+
+void WidgetsPagePresenter::ApplyAgentAccess(bool enabled)
+{
+    const bool wasUpdating = impl_->updatingControls;
+    impl_->updatingControls = true;
+    impl_->agentAccessToggle.IsOn(enabled);
+    impl_->updatingControls = wasUpdating;
+}
+
+mux::FrameworkElement WidgetsPagePresenter::AgentAccessFocusTarget() const noexcept
+{
+    return impl_ ? impl_->agentAccessToggle : nullptr;
 }
 
 mux::UIElement WidgetsPagePresenter::DebugContent() const noexcept

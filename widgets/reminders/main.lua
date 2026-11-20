@@ -39,12 +39,14 @@ local settings = {
     fields = {
         {
             key = "showCompleted",
+            agentDescription = "Includes completed reminders when the component builds its list.",
             label = l10n.tr("lua_widget.reminders.show_completed"),
             type = "bool",
             default = true,
         },
         {
             key = "fontScale",
+            agentDescription = "Scales the text and text-related layout metrics of reminder rows.",
             label = l10n.tr("lua_widget.common.font_scale"),
             type = "int",
             default = 100,

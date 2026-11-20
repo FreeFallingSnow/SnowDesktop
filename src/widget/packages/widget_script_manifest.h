@@ -29,6 +29,7 @@ struct LuaWidgetManifest
         std::string key;
         std::string label;
         std::string description;
+        std::string agentDescription;
         std::string group;
         std::string validationMessage;
         std::string dependsOn;

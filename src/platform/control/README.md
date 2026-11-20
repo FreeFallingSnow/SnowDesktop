@@ -282,6 +282,36 @@ This adapter is pending and must be validated on the actual XAML island.
 The advertised capability value is `settingsPrivateInput:0`; clients must not
 infer input support from the presence of `settingsAutomation:1`.
 
+### Agent guidance and access
+
+Enable **Settings > Agent Operations > Allow agent access** on the local
+SnowDesktop installation before connecting. The setting defaults to off for
+new and existing profiles without an explicit choice. While off, the local
+endpoint returns JSON-RPC error `-32000` with
+`error.data.code: "agent_operations_disabled"` and instructions to enable it
+locally. This response also applies to `api.describe`. A client cannot turn
+access on through the endpoint. Turning it off ends private input and cancels
+active capture and fixed-data export work. Operations already completed keep
+their results.
+
+With access enabled, `api.describe` advertises `settingsGuidance:1` and returns
+an English `guidance` object describing feature areas and discovery paths.
+`settings.catalog` returns English `description` annotations alongside the
+settings they describe, including nested controller fields, native storage view
+fields, Lua host appearance arguments and Lua internal settings that declare an
+`agentDescription`. Descriptions supplement the field constraints and the
+target's current availability. A missing annotation means no behavioral
+description is supplied for that field.
+
+Maintain descriptions with the setting's real behavior. Trace the controller
+or component binding through validation, save and final effect. Describe stored
+units, meaningful enum values, dependencies, overrides, availability and side
+effects when they change how to operate the setting. The controller catalog
+projects descriptions from `control_settings_guidance.h` and checks the field
+bindings of documented types at compile time. Native field catalogs own
+descriptions for specialized targets. First-party components maintain English
+descriptions in the same Lua declaration as the field.
+
 ### Direct settings access
 
 Capabilities `directSettings:1` and `settingsSchema:1` add semantic settings
@@ -484,6 +514,8 @@ is independent of the Lua component `apiVersion`.
 | `desktop.getLayout` | `{}` | Active page geometry, widgets and `layoutRevision` |
 | `widgets.list` | `{}` | Same layout snapshot, including widget IDs and placement |
 | `widgets.get` | `{id}` | One widget and the current layout revision |
+| `widgets.agentActions` | `{id}` | English descriptions and argument types of actions declared by the loaded Lua instance |
+| `widgets.invokeAgentAction` | `{id,action,arguments?}` | Validate the named action and arguments, then deliver an untrusted `agent.action` event to that instance |
 | `widgets.place` | `{id,pageId,column,row,columns,rows,ifLayoutRevision}` | Move/resize using the existing placement and displacement rules |
 | `widgets.open` | `{id}` | Request a standalone native storage widget's popup |
 | `widgets.close` | `{}` | Request closing the current storage popup |
@@ -492,6 +524,14 @@ is independent of the Lua component `apiVersion`.
 | `settings.open` | `{page?}` or `{widgetId}` | Open an allowed settings page or an existing widget's settings |
 | `dock.show` | `{}` | Request revealing the floating Dock using existing policy |
 | `dock.hide` | `{}` | Close floating Dock presentations; does not disable the persistent Dock |
+
+`widgetAgentActions:1` advertises the Lua discovery and invocation methods.
+The instance must already be loaded in the live desktop. Invocation validates
+the declaration again and delivers the event on the widget runtime's owning
+thread under its existing execution limits. A `delivered` reply acknowledges
+successful callback execution. The callback may finish its work
+asynchronously. Existing package permissions and trusted-gesture checks remain
+in effect.
 
 Settings `page` values are `general`, `desktop`, `widgets`, `backup-and-data`,
 `about`, `dock`, `taskbar`, `quick-navigation`, `theme-manager`, `status-bar`,

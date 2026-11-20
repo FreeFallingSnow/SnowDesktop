@@ -201,6 +201,8 @@ Value HandleWidgetSettings(std::string_view method, const Value& params,
                     {"readOnly", Boolean(!field.enabled)}, {"resettable", Boolean(field.schema.Channel() == WidgetSettingValueChannel::Ordinary)}});
                 if (field.schema.Channel() == WidgetSettingValueChannel::Ordinary)
                     item.object.emplace("default", Natural(field.defaultValue));
+                if (!field.schema.agentDescription.empty())
+                    item.object.emplace("description", String(field.schema.agentDescription));
                 fields.array.push_back(std::move(item));
             }
             for (const auto& preset : snapshot->presets)

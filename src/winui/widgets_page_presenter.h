@@ -33,6 +33,8 @@ public:
     WidgetsPagePresenter& operator=(WidgetsPagePresenter&&) = delete;
 
     void SetActions(WidgetsPageActions actions);
+    void SetAgentAccessAction(std::function<void(bool)> change);
+    void ApplyAgentAccess(bool enabled);
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         Content() const noexcept;
@@ -42,6 +44,8 @@ public:
         AgentOperationsContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         AgentOperationsFocusTarget() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
+        AgentAccessFocusTarget() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         DebugContent() const noexcept;
 

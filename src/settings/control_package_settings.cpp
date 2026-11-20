@@ -118,15 +118,18 @@ Value HandlePackageSettings(std::string_view method, const Value& params,
             auto fields = Object(), actions = Array();
             if (package)
             {
-                fields.object.emplace("enabled", Object({{"type", String("boolean")}, {"readOnly", Boolean(!package->canEnable)}}));
-                fields.object.emplace("developmentOverrideActive", Object({{"type", String("boolean")}, {"readOnly", Boolean(!package->canUseDevelopmentOverride || !current->developerOverridesVisible)}}));
+                fields.object.emplace("enabled", Object({{"type", String("boolean")}, {"readOnly", Boolean(!package->canEnable)},
+                    {"description", String("Enables or disables the component package. Existing instances depend on package availability.")}}));
+                fields.object.emplace("developmentOverrideActive", Object({{"type", String("boolean")}, {"readOnly", Boolean(!package->canUseDevelopmentOverride || !current->developerOverridesVisible)},
+                    {"description", String("Uses the available development source instead of the installed package for this identity. Requires the development override controls to be available.")}}));
                 actions.array.push_back(Object({{"name", String("permissions")}, {"requiresRevision", Boolean(true)},
                     {"arguments", Object({{"decision", String("grant|deny")}, {"permissions", Array()}, {"networkDomains", Array()},
                         {"nativeAcknowledged", Boolean(false)}, {"confirmed", Boolean(false)}})}}));
             }
             else if (target.kind == "agent-skills")
             {
-                fields.object.emplace("selectedMask", Object({{"type", String("integer")}, {"minimum", Number(0)}, {"maximum", Number(63)}}));
+                fields.object.emplace("selectedMask", Object({{"type", String("integer")}, {"minimum", Number(0)}, {"maximum", Number(63)},
+                    {"description", String("Selects installation targets for the development Skill. apply-selection installs or removes the selected user Skill files.")}}));
                 for (const auto* name : {"refresh", "apply-selection"}) actions.array.push_back(Object({{"name", String(name)}, {"effect", String(name == std::string_view("apply-selection") ? "installs selected user skill files" : "refreshes installed skill state")}}));
             }
             else actions.array.push_back(Object({{"name", String("refresh")}}));
