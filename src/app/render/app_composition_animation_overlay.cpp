@@ -540,21 +540,11 @@ bool DesktopApp::FlushPendingQuickNavigationCompositionCommit()
 bool DesktopApp::StartQuickNavigationCompositionAnimation()
 {
     if (!quickNavigation_->animation.IsAnimating())
+    {
+        ApplyQuickNavigationAnimationFrame();
         return false;
-
-    if (quickNavigation_->animationCompletionToken)
-    {
-        uiAnimationScheduler_.Cancel(
-            quickNavigation_->animationCompletionToken);
     }
-    quickNavigation_->animationCompletionToken = 0;
-    if (quickNavigation_->animationFrameToken)
-    {
-        uiAnimationScheduler_.Cancel(
-            quickNavigation_->animationFrameToken);
-    }
-    quickNavigation_->animationFrameToken = 0;
-    quickNavigation_->animationCompositorDriven = false;
+    StopQuickNavigationAnimationTimeline();
 
     // Drive the precomposed content and live backdrop from the same scheduler pose.
     ApplyQuickNavigationAnimationFrame();

@@ -443,18 +443,26 @@ struct NativeAnimationTest
         if (scenario.route == Route::NavDock || scenario.route == Route::NavPointer)
         {
             const bool fromDock = scenario.route == Route::NavDock;
+            const auto expected = snowdesktop::quick_navigation_animation_rules::ResolveEffect(
+                true, fromDock, motion::RuntimeWindowEffect(), motion::RuntimePopupEffect());
+            const auto usesExpectedEffect = [&] {
+                return app.quickNavigation_->animation.GetEffect() == expected &&
+                    !app.quickNavigation_->deformationFailed;
+            };
             POINT point = fromDock ? DockPoint(true) : Center(client);
             point.x += app.virtualLeft_;
             point.y += app.virtualTop_;
             const bool open = step("open", [&] {
                 app.OpenQuickNavigation(fromDock ? Source::DockSearch : Source::Pointer, point);
                 return app.quickNavigation_->open && app.quickNavigation_->animation.IsAnimating() &&
-                    (!fromDock || app.quickNavigationDockHost_);
-            }, [&] { return app.quickNavigation_->open && !app.quickNavigation_->animation.IsAnimating(); });
+                    (!fromDock || app.quickNavigationDockHost_) && usesExpectedEffect();
+            }, [&] { return app.quickNavigation_->open && !app.quickNavigation_->animation.IsAnimating() &&
+                usesExpectedEffect(); });
             return step("close", [&] {
                 app.CloseQuickNavigation(false);
-                return app.quickNavigation_->animation.IsAnimating();
-            }, [&] { return !app.quickNavigation_->open && !app.quickNavigation_->animation.IsAnimating(); }) && open;
+                return app.quickNavigation_->animation.IsAnimating() && usesExpectedEffect();
+            }, [&] { return !app.quickNavigation_->open && !app.quickNavigation_->animation.IsAnimating() &&
+                usesExpectedEffect(); }) && open;
         }
         if (scenario.route == Route::Fade || scenario.route == Route::Roll)
         {

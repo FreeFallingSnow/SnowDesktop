@@ -852,6 +852,33 @@ void DesktopApp::PositionQuickNavigationWindow(bool present)
         EnsureUiAnimationFrame();
 }
 
+RECT snowdesktop::quick_navigation::State::WindowFence(bool expanded) const
+{
+    RECT animationPath{};
+    if (expanded)
+    {
+        animationPath = MakeRect(animationAnchorPoint.x - 1, animationAnchorPoint.y - 1,
+            animationAnchorPoint.x + 2, animationAnchorPoint.y + 2);
+        animationPath = QuickNavigationRetainedAllocation(animationPath, animationDockRect);
+        if (animation.GetEffect() == quick_navigation_animation_rules::Effect::Attraction)
+        {
+            const auto asRect = [](const RECT& r) {
+                return dock_attraction::Rect{static_cast<double>(r.left),
+                    static_cast<double>(r.top), static_cast<double>(r.right), static_cast<double>(r.bottom)};
+            };
+            const auto bounds = dock_attraction::Bounds(asRect(rect), asRect(animationDockRect));
+            const RECT envelope{static_cast<LONG>(std::floor(bounds.left)),
+                static_cast<LONG>(std::floor(bounds.top)), static_cast<LONG>(std::ceil(bounds.right)),
+                static_cast<LONG>(std::ceil(bounds.bottom))};
+            animationPath = QuickNavigationRetainedAllocation(animationPath, envelope);
+        }
+    }
+    RECT fence = QuickNavigationWindowFence(rect, animationPath, hostRect, expanded);
+    ++fence.right;
+    ++fence.bottom;
+    return fence;
+}
+
 void DesktopApp::UpdateQuickNavigationWindowRegion(
     bool expanded)
 {
@@ -859,42 +886,18 @@ void DesktopApp::UpdateQuickNavigationWindowRegion(
     if (!quickNavigation_->hwnd ||
         !IsWindow(quickNavigation_->hwnd))
         return;
-    RECT animationPath{};
-    if (expanded)
-    {
-        animationPath = MakeRect(quickNavigation_->animationAnchorPoint.x - 1,
-            quickNavigation_->animationAnchorPoint.y - 1,
-            quickNavigation_->animationAnchorPoint.x + 2,
-            quickNavigation_->animationAnchorPoint.y + 2);
-        animationPath = QuickNavigationRetainedAllocation(animationPath, quickNavigation_->animationDockRect);
-        if (quickNavigation_->animation.GetEffect() ==
-            snowdesktop::quick_navigation_animation_rules::Effect::Attraction)
-        {
-            const auto rect = [](const RECT& r) {
-                return snowdesktop::dock_attraction::Rect{static_cast<double>(r.left),
-                    static_cast<double>(r.top), static_cast<double>(r.right), static_cast<double>(r.bottom)};
-            };
-            const auto bounds = snowdesktop::dock_attraction::Bounds(
-                rect(quickNavigation_->rect), rect(quickNavigation_->animationDockRect));
-            const RECT envelope{static_cast<LONG>(std::floor(bounds.left)),
-                static_cast<LONG>(std::floor(bounds.top)), static_cast<LONG>(std::ceil(bounds.right)),
-                static_cast<LONG>(std::ceil(bounds.bottom))};
-            animationPath = QuickNavigationRetainedAllocation(animationPath, envelope);
-        }
-    }
 
     // Even while opening/closing, the input fence covers only the visible
     // animation path, not the monitor-sized native coordinate reservation.
-    const RECT panelRegionRect = QuickNavigationWindowFence(quickNavigation_->rect,
-        animationPath, quickNavigation_->hostRect, expanded);
+    const RECT panelRegionRect = quickNavigation_->WindowFence(expanded);
     // Keep the native region rectangular. The DComp surface owns the rounded
     // alpha edge; applying a binary Win32 rounded region here clips away its
     // partial-coverage pixels and leaves visibly jagged corners at rest.
     if (HRGN panelRegion = CreateRectRgn(
             panelRegionRect.left,
             panelRegionRect.top,
-            panelRegionRect.right + 1,
-            panelRegionRect.bottom + 1))
+            panelRegionRect.right,
+            panelRegionRect.bottom))
     {
         HRGN previousRegion = CreateRectRgn(0, 0, 0, 0);
         const bool unchanged = previousRegion &&
@@ -1297,18 +1300,14 @@ void DesktopApp::OpenQuickNavigation(
                     snowdesktop::UiAnimationScheduler::
                         MonotonicMilliseconds()));
             if (!StartQuickNavigationCompositionAnimation())
-            {
-                ApplyQuickNavigationAnimationFrame();
                 EnsureUiAnimationFrame();
-            }
         }
         else
         {
             quickNavigation_->animation.
                 ShowImmediately();
-        }
-        if (!quickNavigation_->animationCompositorDriven)
             ApplyQuickNavigationAnimationFrame();
+        }
         if (quickNavigation_->searchEdit &&
             IsWindow(quickNavigation_->searchEdit))
         {
@@ -1398,18 +1397,14 @@ void DesktopApp::OpenQuickNavigation(
                 snowdesktop::UiAnimationScheduler::
                     MonotonicMilliseconds()));
         if (!StartQuickNavigationCompositionAnimation())
-        {
-            ApplyQuickNavigationAnimationFrame();
             EnsureUiAnimationFrame();
-        }
     }
     else
     {
         quickNavigation_->animation.
             ShowImmediately();
-    }
-    if (!quickNavigation_->animationCompositorDriven)
         ApplyQuickNavigationAnimationFrame();
+    }
     if (quickNavigation_->searchEdit && IsWindow(quickNavigation_->searchEdit))
     {
         (void)FocusKeyboardWindow(
@@ -1547,7 +1542,6 @@ void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
     }
     if (!StartQuickNavigationCompositionAnimation())
     {
-        ApplyQuickNavigationAnimationFrame();
         EnsureUiAnimationFrame();
         InvalidateQuickNavigationWindow();
     }

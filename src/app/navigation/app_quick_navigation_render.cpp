@@ -72,7 +72,20 @@ bool snowdesktop::quick_navigation::State::PublishPrecomposedFrame(
                     source.right - projection.sourceX, source.bottom - projection.sourceY), projection};
         }
     }
-    if (!deformed)
+    if (deformed)
+    {
+        // The native HWND retains monitor coordinates. Rasterize only the
+        // fixed envelope visible through its expanded region for both effects.
+        const RECT fence = WindowFence(true);
+        const double clientPixels = static_cast<double>(bounds.right) * bounds.bottom;
+        if (!IntersectRect(&bounds, &bounds, &fence))
+            return false;
+        const double pixels = static_cast<double>(bounds.right - bounds.left) *
+            (bounds.bottom - bounds.top);
+        performance::Value("navigation.render", "deformation_surface_pixels", L"", pixels);
+        performance::Value("navigation.render", "deformation_client_pixels", L"", clientPixels);
+    }
+    else
     {
         bounds = rect;
         OffsetRect(&bounds, -hostRect.left, -hostRect.top);
@@ -81,10 +94,17 @@ bool snowdesktop::quick_navigation::State::PublishPrecomposedFrame(
             [&](ID2D1DeviceContext* target, POINT origin) {
                 performance::Scope draw("navigation.render", "precompose.draw");
                 auto* bitmap = sceneBitmap.Get();
-                const float atlasX = static_cast<float>(origin.x), atlasY = static_cast<float>(origin.y);
+                const float atlasX = static_cast<float>(origin.x - (deformed ? bounds.left : 0));
+                const float atlasY = static_cast<float>(origin.y - (deformed ? bounds.top : 0));
                 target->SetDpi(96.f, 96.f);
                 target->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
                 target->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
+                target->SetTransform(D2D1::Matrix3x2F::Identity());
+                target->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(origin.x),
+                    static_cast<float>(origin.y),
+                    static_cast<float>(origin.x + bounds.right - bounds.left),
+                    static_cast<float>(origin.y + bounds.bottom - bounds.top)),
+                    D2D1_ANTIALIAS_MODE_ALIASED);
                 target->SetTransform(D2D1::Matrix3x2F::Translation(atlasX, atlasY));
                 target->Clear(D2D1::ColorF(0, 0.f));
                 if (!deformed)
@@ -92,10 +112,16 @@ bool snowdesktop::quick_navigation::State::PublishPrecomposedFrame(
                     const auto area = D2D1::RectF(0.f, 0.f, static_cast<float>(width), static_cast<float>(height));
                     target->DrawBitmap(bitmap, &area, 1.f,
                         D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR, &area, nullptr);
+                    target->PopAxisAlignedClip();
                     return S_OK;
                 }
                 if (mesh)
-                    return rules::DrawAttractionMesh(target, bitmap, *mesh, hostRect.left, hostRect.top, width, height);
+                {
+                    const auto hr = rules::DrawAttractionMesh(target, bitmap, *mesh,
+                        hostRect.left, hostRect.top, width, height);
+                    target->PopAxisAlignedClip();
+                    return hr;
+                }
 
                 target->SetTransform(D2D1::Matrix3x2F::Identity());
                 for (const auto& strip : std::span(strips.data(), stripCount))
@@ -114,6 +140,7 @@ bool snowdesktop::quick_navigation::State::PublishPrecomposedFrame(
                         &strip.source, &transform);
                     target->PopAxisAlignedClip();
                 }
+                target->PopAxisAlignedClip();
                 return S_OK;
             }) || !backdropCompositor.PublishSrgbContent(key, opacity))
         return false;

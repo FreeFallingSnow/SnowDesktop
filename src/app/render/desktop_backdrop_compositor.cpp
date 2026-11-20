@@ -1201,7 +1201,10 @@ struct DesktopBackdropCompositor::Impl
             // RequestCommitAsync only schedules a cycle: a drop can present
             // the resized content and then save layout while glass is still
             // waiting for the UI dispatcher. Do not wait for GPU completion.
-            compositorController.Commit();
+            {
+                snowdesktop::performance::Scope trace("composition.srgb", "commit");
+                compositorController.Commit();
+            }
             frameCommitPending = false;
             // The glass and sRGB visuals share this compositor and were
             // submitted together by this commit.

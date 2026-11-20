@@ -125,6 +125,7 @@ struct State
     RECT rect{};
     /** @brief 快速导航合成宿主范围，覆盖目标面板与当前会话动画锚点。 */
     RECT hostRect{};
+    RECT WindowFence(bool expanded) const;
     bool windowRegionExpanded = false;
     std::wstring searchText;
     std::wstring effectiveSearchText;
