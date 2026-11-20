@@ -31,6 +31,7 @@ void NormalizeStatusBarSettings(StatusBarSettings& value)
     };
     normalizeOrder(value.leftOrder, defaults.leftOrder);
     normalizeOrder(value.rightOrder, defaults.rightOrder);
+    normalizeOrder(value.metricOrder, defaults.metricOrder);
     // Quick controls are opted into through the control-center visibility
     // editor. Never append a supported-but-missing control: new controls stay
     // hidden instead of appearing in every existing layout.
@@ -144,6 +145,7 @@ bool DecodeStatusBarSettings(const JsonValue& input, StatusBarSettings& output)
     readList("hiddenQuickControls", value.hiddenQuickControls);
     readList("leftOrder", value.leftOrder);
     readList("rightOrder", value.rightOrder);
+    readList("metricOrder", value.metricOrder);
     NormalizeStatusBarSettings(value);
     if (valid) output = std::move(value);
     return valid;
@@ -200,6 +202,7 @@ std::string EncodeStatusBarSettings(StatusBarSettings value)
     writeList("hiddenQuickControls", value.hiddenQuickControls);
     writeList("leftOrder", value.leftOrder);
     writeList("rightOrder", value.rightOrder);
+    writeList("metricOrder", value.metricOrder);
     text << '}';
     return text.str();
 }

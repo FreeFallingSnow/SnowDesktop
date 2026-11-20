@@ -78,7 +78,7 @@ SD_IPC_FIELDS(StatusBarSettings,
     v.legacyShellUi, v.maximizedWindow, v.legacyVisibleWindow, v.noWindow, v.inputMethod,
     v.quickControlOrder, v.hiddenQuickControls, v.clockShowSeconds, v.timeNotificationRightAligned, v.batteryPercentage, v.showDesktop,
     v.controlCenterSingleIcon, v.notifications, v.showOnlyWhenSummoned, v.edgeRevealGesture,
-    v.foregroundAppName, v.foregroundAppNameCentered, v.appWindow);
+    v.foregroundAppName, v.foregroundAppNameCentered, v.appWindow, v.metricOrder);
 SD_IPC_FIELDS(app_fonts::Selection, v.package, v.family);
 SD_IPC_FIELDS(PopupAppearanceRule, v.enabled, v.theme);
 SD_IPC_FIELDS(runtime_modules::Target, v.process, v.name, v.explorer);

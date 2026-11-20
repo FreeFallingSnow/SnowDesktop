@@ -36,6 +36,7 @@ struct StatusBarItem
     std::optional<status_bar_input_method::ProfileIcon> inputIcon;
     RECT contentBounds{}; // Full scrolled tray cell; bounds is its visible hit target.
     std::wstring batteryPercentageText;
+    bool reserveTrafficWidth = false;
 };
 
 inline constexpr wchar_t kStatusBarDesktopAppName[] = L"SnowDesktop";

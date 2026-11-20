@@ -48,6 +48,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <iterator>
 #include <map>
 #include <sstream>
 #include <string_view>
@@ -310,6 +311,13 @@ struct StatusBar::Impl
         bool keyboardFocusVisible = false;
         StatusBarInteractionVisualState paintedInteraction;
         StatusBarPresentationPreparation presentationPreparation;
+        struct MetricPress
+        {
+            std::string key;
+            POINT start;
+            std::optional<POINT> dragPoint;
+        };
+        std::optional<MetricPress> metricPress;
         std::string pressedTray;
         std::optional<tray::Identity> middleTrayPress, lastMiddleTray;
         std::string trayMenuKey;
@@ -1129,9 +1137,21 @@ struct StatusBar::Impl
             });
             if (!updates.empty()) owner.tray->SetGeometries(updates);
         }
+        std::optional<StatusBarMetricDrop> MetricDrop(std::string_view source, POINT point) const
+        {
+            const auto inset = MulDiv(5, static_cast<int>(dpi), 96);
+            const auto stroke = std::max(2, MulDiv(2, static_cast<int>(dpi), 96));
+            return ResolveStatusBarMetricDrop(items, source, point, inset, stroke);
+        }
+        std::optional<RECT> CurrentDropIndicator() const
+        {
+            if (metricPress && metricPress->dragPoint)
+                if (const auto drop = MetricDrop(metricPress->key, *metricPress->dragPoint)) return drop->indicator;
+            return dropIndicator;
+        }
         StatusBarInteractionVisualState InteractionVisual() const
         {
-            return StatusBarInteractionVisual(interaction, keyboardFocusVisible, GetFocus() == hwnd, dropIndicator);
+            return StatusBarInteractionVisual(interaction, keyboardFocusVisible, GetFocus() == hwnd, CurrentDropIndicator());
         }
         bool ReusableInteractionFrame(const RECT& client, const StatusBarPalette& palette) const
         {
@@ -1452,7 +1472,7 @@ struct StatusBar::Impl
             DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get());
             const StatusBarPalette palette{hc, SystemColor(COLOR_WINDOW), SystemColor(COLOR_WINDOWTEXT),
                 SystemColor(COLOR_HIGHLIGHT), SystemColor(COLOR_HIGHLIGHTTEXT)};
-            const auto drawnInteraction = InteractionVisual();
+            auto drawnInteraction = InteractionVisual();
             if (focusFrame) retainedFrameValid = focusFrame->layoutReusable;
             const auto contentResult = DrawStatusBarContent(context.Get(), owner.text.Get(), items, w, h,
                 dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale), a, palette, drawnInteraction.hovered,
@@ -1460,6 +1480,7 @@ struct StatusBar::Impl
                 mergedDockHeight > 0, owner.settings.timeNotificationRightAligned, &trayScroll,
                 dockQuickSearch, scrollFrame || focusFrame ? &client : nullptr, &drawResources,
                 scrollFrame != nullptr || focusFrame != nullptr, &retainedFrameValid);
+            drawnInteraction.indicator = CurrentDropIndicator();
             DrawStatusBarDropIndicator(context.Get(), drawnInteraction.indicator, a, palette, dpi);
             if (!scrollFrame && !focusFrame) PublishTrayGeometry();
             const auto recorded = scene.Finish();
@@ -1693,6 +1714,44 @@ struct StatusBar::Impl
             });
             auto onActivated = owner.activate;
             onActivated(invocation->action, hwnd, anchor);
+        }
+        void BeginMetricPress(POINT point)
+        {
+            const auto hit = HitTestStatusBarItems(items, point);
+            if (!owner.metricOrderChanged || !hit || !IsStatusBarMetric(items[*hit].action)) return;
+            SetCapture(hwnd);
+            if (GetCapture() == hwnd) metricPress = MetricPress{items[*hit].key, point, {}};
+        }
+        void MoveMetricPress(POINT point)
+        {
+            const LONG threshold = MulDiv(8, static_cast<int>(dpi), 96);
+            if (!metricPress->dragPoint)
+            {
+                const auto start = metricPress->start;
+                if (std::abs(point.x - start.x) < threshold && std::abs(point.y - start.y) < threshold) return;
+                ClearHover();
+                interaction.CancelPointer();
+                keyboardFocusVisible = false;
+            }
+            metricPress->dragPoint = point;
+            SetCursor(LoadCursorW(nullptr, IDC_SIZEALL));
+            PaintHover();
+        }
+        void FinishMetricPress(POINT point)
+        {
+            const auto press = std::exchange(metricPress, {});
+            const auto drop = press->dragPoint ? MetricDrop(press->key, point) : std::nullopt;
+            const bool clicked = !press->dragPoint && interaction.Release(items, point, false).accepted;
+            UpdateInteraction([&] {
+                keyboardFocusVisible = false;
+                if (GetCapture() == hwnd) ReleaseCapture();
+            });
+            if (drop) owner.MoveMetric(press->key, *drop);
+            else if (clicked)
+            {
+                const auto hit = HitTestStatusBarItems(items, point);
+                if (hit && items[*hit].key == press->key) ActivateItem(hit);
+            }
         }
         bool TrayMouse(UINT message, POINT point)
         {
@@ -1997,6 +2056,7 @@ struct StatusBar::Impl
             case WM_LBUTTONDBLCLK:
             case WM_RBUTTONDOWN:
             {
+                if (message == WM_RBUTTONDOWN && self->metricPress) return 0;
                 if (std::exchange(self->middleTrayPress, {}) && GetCapture() == window) ReleaseCapture();
                 self->lastMiddleTray.reset();
                 const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
@@ -2010,13 +2070,14 @@ struct StatusBar::Impl
                 }
                 const UINT trayMessage = message == WM_LBUTTONDBLCLK && !doubleClick ? WM_LBUTTONDOWN : message;
                 if (self->TrayMouse(trayMessage, point)) return 0;
+                if (message != WM_RBUTTONDOWN) self->BeginMetricPress(point);
                 if (self->CancelTrayMenu() && self->owner.dockChanged) self->owner.dockChanged(false);
                 break;
             }
             case WM_MBUTTONDOWN:
             case WM_MBUTTONUP:
             case WM_MBUTTONDBLCLK:
-                self->TrayMiddleMouse(message, {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
+                if (!self->metricPress) self->TrayMiddleMouse(message, {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
                 return 0;
             case WM_RBUTTONUP:
             {
@@ -2027,6 +2088,11 @@ struct StatusBar::Impl
             }
             case WM_LBUTTONUP:
             {
+                if (self->metricPress)
+                {
+                    self->FinishMetricPress({GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
+                    return 0;
+                }
                 if (!self->pressedTray.empty())
                 {
                     const auto key = std::exchange(self->pressedTray, {});
@@ -2077,6 +2143,16 @@ struct StatusBar::Impl
             case WM_MOUSEMOVE:
             {
                 const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+                if (self->metricPress)
+                {
+                    if (wp & MK_LBUTTON) self->MoveMetricPress(point);
+                    else self->UpdateInteraction([&] {
+                        self->metricPress.reset();
+                        self->interaction.CancelPointer();
+                        if (GetCapture() == window) ReleaseCapture();
+                    });
+                    return 0;
+                }
                 if (!self->pressedTray.empty())
                 {
                     POINT screen = point; ClientToScreen(window, &screen);
@@ -2201,7 +2277,7 @@ struct StatusBar::Impl
             }
             case WM_MOUSELEAVE:
             {
-                if (!self->pressedTray.empty()) return 0;
+                if (self->metricPress || !self->pressedTray.empty()) return 0;
                 if (self->PointerOverTrayPopup())
                 {
                     self->trayHoverCovered = true;
@@ -2221,6 +2297,7 @@ struct StatusBar::Impl
             case WM_CAPTURECHANGED:
                 self->UpdateInteraction([&] {
                     self->EndDragFeedback();
+                    self->metricPress.reset();
                     self->middleTrayPress.reset(); self->lastMiddleTray.reset();
                     self->pressedTray.clear(); self->trayDragging = false;
                     if (message == WM_CANCELMODE && GetCapture() == window) ReleaseCapture();
@@ -2240,6 +2317,7 @@ struct StatusBar::Impl
     Error error;
     DrawBackground drawBackground;
     DrawBackground drawTooltipBackground;
+    std::function<void(std::vector<std::string>)> metricOrderChanged;
     std::function<void(const StatusBarSettings&)> trayChanged;
     std::function<bool(std::string_view, POINT)> dropOutside;
     TrayDragFeedback dragFeedback;
@@ -2416,16 +2494,27 @@ struct StatusBar::Impl
         if (!tray::PlaceIcon(next, tray->Current(), key, target->pinned, target->before)) return false;
         if (next != settings)
         {
-            UpdateTrayPlacement(next);
+            UpdateItemPlacement(next);
             const auto callback = trayChanged;
             if (callback) callback(next);
         }
         return true;
     }
-    void UpdateTrayPlacement(const StatusBarSettings& next)
+    void MoveMetric(const std::string& key, const StatusBarMetricDrop& drop)
+    {
+        auto order = settings.metricOrder;
+        if (!std::erase(order, key)) return;
+        const auto anchor = std::find(order.begin(), order.end(), drop.anchor);
+        if (anchor == order.end()) return;
+        order.insert(drop.after ? std::next(anchor) : anchor, key);
+        const auto changed = metricOrderChanged;
+        if (changed && order != settings.metricOrder) changed(std::move(order));
+    }
+    void UpdateItemPlacement(const StatusBarSettings& next)
     {
         settings.pinnedTrayItems = next.pinnedTrayItems;
         settings.trayOrder = next.trayOrder;
+        settings.metricOrder = next.metricOrder;
         for (const auto& [id, window] : windows)
             if (window) window->Paint(false, true);
     }
@@ -2489,6 +2578,8 @@ void StatusBar::SetSharedTray(std::shared_ptr<tray::Service> service) { impl_->s
 void StatusBar::SetTrayDragHandlers(std::function<void(const StatusBarSettings&)> changed,
     std::function<bool(std::string_view, POINT)> dropOutside)
 { impl_->trayChanged = std::move(changed); impl_->dropOutside = std::move(dropOutside); }
+void StatusBar::SetMetricOrderChanged(std::function<void(std::vector<std::string>)> changed)
+{ impl_->metricOrderChanged = std::move(changed); }
 bool StatusBar::DropTrayIcon(std::string_view key, POINT screen) { return impl_->Drop(key, screen); }
 bool StatusBar::PreviewTrayDrop(std::string_view key, POINT screen) { return impl_->PreviewDrop(key,screen); }
 void StatusBar::SetTrayDragFeedback(TrayDragFeedback feedback) { impl_->dragFeedback=std::move(feedback); }
@@ -2868,7 +2959,8 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
     if (settings.enabled && !monitors.empty() && self.tray &&
         self.composition.Get() == composition && self.text.Get() == text &&
         self.globalAppearance == global && self.tooltipAppearance == nextTooltip &&
-        (settings.pinnedTrayItems != self.settings.pinnedTrayItems || settings.trayOrder != self.settings.trayOrder) &&
+        (settings.pinnedTrayItems != self.settings.pinnedTrayItems || settings.trayOrder != self.settings.trayOrder ||
+            settings.metricOrder != self.settings.metricOrder) &&
         self.windows.size() == monitors.size() &&
         std::all_of(monitors.begin(), monitors.end(), [&](const auto& monitor) {
             const auto found = self.windows.find(monitor.id);
@@ -2883,10 +2975,11 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
         auto comparable = self.settings;
         comparable.pinnedTrayItems = settings.pinnedTrayItems;
         comparable.trayOrder = settings.trayOrder;
+        comparable.metricOrder = settings.metricOrder;
         if (comparable == settings)
         {
             // Ordering changes the content frame without invalidating the AppBar or its backdrop.
-            self.UpdateTrayPlacement(settings);
+            self.UpdateItemPlacement(settings);
             return;
         }
     }

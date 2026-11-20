@@ -1239,6 +1239,15 @@ void DesktopApp::SyncStatusBar()
         }, [this](std::string_view key, POINT screen) {
             return systemPanel_ && systemPanel_->DropTrayIcon(key, screen);
         });
+        statusBar_->SetMetricOrderChanged([this](auto order) {
+            if (!settingsController_) return;
+            auto settings = settingsController_->Snapshot()->values.general;
+            settings.statusBar.metricOrder = std::move(order);
+            settingsController_->UpdateGeneral(std::move(settings), snowdesktop::SettingsUpdateMode::PreviewAndCommit);
+            uiAnimationScheduler_.ScheduleOnce(0, [this](auto) {
+                if (settingsController_) (void)settingsController_->FlushPending();
+            });
+        });
         statusBar_->SetDockChanged([this](bool geometry) {
             if (exitRequested_) return;
             if (geometry) ScheduleDisplayTopologyRefresh();

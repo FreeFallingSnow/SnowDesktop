@@ -3,6 +3,45 @@
 
 namespace snowdesktop
 {
+inline bool IsStatusBarMetric(StatusBarAction action)
+{
+    using Action = StatusBarAction;
+    return action == Action::Cpu || action == Action::Memory || action == Action::Gpu || action == Action::Traffic;
+}
+struct StatusBarMetricDrop
+{
+    std::string anchor;
+    bool after;
+    RECT indicator;
+};
+inline std::optional<StatusBarMetricDrop> ResolveStatusBarMetricDrop(
+    const std::vector<StatusBarItem>& items, std::string_view source, POINT point, LONG inset, LONG stroke)
+{
+    const StatusBarItem* before = nullptr;
+    const StatusBarItem* previous = nullptr;
+    const StatusBarItem* last = nullptr;
+    bool overMetric = false, sourceVisible = false;
+    for (const auto& item : items)
+    {
+        if (!IsStatusBarMetric(item.action) || IsRectEmpty(&item.bounds)) continue;
+        overMetric |= PtInRect(&item.bounds, point) != FALSE;
+        sourceVisible |= item.key == source;
+        if (!before && point.x < item.bounds.left + (item.bounds.right - item.bounds.left) / 2)
+        {
+            before = &item;
+            previous = last;
+        }
+        last = &item;
+    }
+    if (!overMetric || !sourceVisible || !last) return {};
+    if (!before) previous = last;
+    if ((before && before->key == source) || (previous && previous->key == source)) return {};
+    const auto& anchor = before ? *before : *last;
+    const LONG x = (before ? anchor.bounds.left : anchor.bounds.right) - stroke / 2;
+    return StatusBarMetricDrop{anchor.key, !before,
+        {x, anchor.bounds.top + inset, x + stroke, anchor.bounds.bottom - inset}};
+}
+
 struct StatusBarTrayDrop
 {
     bool pinned = true;

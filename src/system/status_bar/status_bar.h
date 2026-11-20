@@ -127,6 +127,7 @@ public:
     void SetSharedTray(std::shared_ptr<tray::Service> service);
     void SetTrayDragHandlers(std::function<void(const StatusBarSettings&)> changed,
         std::function<bool(std::string_view, POINT)> dropOutside);
+    void SetMetricOrderChanged(std::function<void(std::vector<std::string>)> changed);
     bool DropTrayIcon(std::string_view key, POINT screen);
     bool PreviewTrayDrop(std::string_view key, POINT screen);
     void SetTrayDragFeedback(TrayDragFeedback feedback);

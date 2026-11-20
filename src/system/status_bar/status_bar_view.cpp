@@ -17,6 +17,7 @@
 #include <wrl/client.h>
 #include <cmath>
 #include <cstddef>
+#include <iterator>
 #include <utility>
 
 namespace snowdesktop
@@ -262,6 +263,7 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
         add("notifications", L"", StatusBarAction::Notifications, notificationGlyph);
         items.back().tip = _LW(notificationTip);
     }
+    const auto metricStart = items.size();
     if (s.cpu)
     {
         const auto value = snapshot.cpu;
@@ -295,6 +297,13 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
             L"↓ " + StatusBarRate(value->downloadBytesPerSecond) +
              L" ↑ " + StatusBarRate(value->uploadBytesPerSecond) : L"↓ — ↑ —", StatusBarAction::Traffic, L"", true);
     }
+    const auto firstMetric = items.begin() + static_cast<std::ptrdiff_t>(metricStart);
+    const auto metricRank = [&](const StatusBarItem& item) {
+        return std::find(s.metricOrder.begin(), s.metricOrder.end(), item.key) - s.metricOrder.begin();
+    };
+    std::stable_sort(firstMetric, items.end(), [&](const auto& a, const auto& b) { return metricRank(a) < metricRank(b); });
+    const auto traffic = std::find_if(firstMetric, items.end(), [](const auto& item) { return item.action == StatusBarAction::Traffic; });
+    if (traffic != items.end()) traffic->reserveTrafficWidth = std::next(traffic) != items.end();
     {
         if (!snapshot.tray.empty())
         {
@@ -377,13 +386,14 @@ bool SameStatusBarItemPixels(const StatusBarItem& a, const StatusBarItem& b)
     return a.text == b.text && a.glyph == b.glyph && a.controlGlyphs == b.controlGlyphs &&
         a.batteryTone == b.batteryTone && a.batteryLevel == b.batteryLevel && a.batteryPluggedIn == b.batteryPluggedIn &&
         a.flipGlyph == b.flipGlyph && a.inputIcon == b.inputIcon &&
-        a.batteryPercentageText == b.batteryPercentageText;
+        a.batteryPercentageText == b.batteryPercentageText && a.reserveTrafficWidth == b.reserveTrafficWidth;
 }
 std::wstring StatusBarReservedText(const StatusBarItem& item, bool mergedDock)
 {
     if (item.key == "cpu") return L"CPU 100%";
     if (item.key == "memory") return L"RAM 100%";
     if (item.key == "gpu") return L"GPU 100%";
+    if (item.reserveTrafficWidth) return L"↓ 888.8 MiB/s  ↑ 888.8 MiB/s";
     auto reserved = item.key == "clock" ? StatusBarClockDisplay(item.text, StatusBarUsesTwoLineClock(mergedDock)) : item.text;
     if (item.key == "clock") for (auto& c : reserved) if (c >= L'0' && c <= L'9') c = L'8';
     return reserved;
