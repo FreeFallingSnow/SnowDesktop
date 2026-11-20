@@ -2709,7 +2709,7 @@ private:
     bool SyncWidgetMarqueeCompositionVisibility();
     void ResetWidgetMarqueeComposition();
     bool QueueDesktopWidgetComposition(
-        const std::wstring& widgetId);
+        const std::wstring& widgetId, std::optional<RECT> damage = std::nullopt);
     void UpdateDesktopWidgetCoverage(std::vector<RECT> coverage);
     bool SyncDesktopWidgetOcclusion(const DesktopWidget& widget, const RECT& bounds);
     void PauseWidgetMarqueeComposition(const std::wstring& widgetId);
@@ -3521,7 +3521,7 @@ private:
     bool widgetSurfaceRendererUnavailable_ = false;
     std::unordered_map<std::wstring, DesktopWidgetCompositionItem>
         desktopWidgetCompositionItems_;
-    std::unordered_set<std::wstring>
+    std::unordered_map<std::wstring, std::optional<RECT>>
         pendingDesktopWidgetCompositions_;
     std::vector<RECT> desktopWidgetCoverage_;
     std::vector<std::wstring> desktopWidgetCompositionZOrder_;

@@ -1518,6 +1518,27 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
     return true;
 }
 
+bool WidgetEngine::CanReplayDesktopMarqueeFrame(const std::wstring& widgetId,
+    const RECT& bounds, int columns, int rows, ID2D1Device* device) const
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0) return false;
+    const auto& widget = widgets_[index];
+    const auto& marquee = widget.desktopMarquee;
+    if (!widget.valid || !widget.state || widget.preview || !widget.desktopVisible || !widget.hostVisible ||
+        widget.desktopOccluded || widget.desktopOcclusionResumePending ||
+        widget.viewTransitionFramePending || widget.hasBackgroundLayer ||
+        widget.lastColumns != columns || widget.lastRows != rows ||
+        !EqualRect(&widget.lastBounds, &bounds) || !marquee.framePending || marquee.compositionManaged ||
+        marquee.requiresLuaRender || !marquee.staticCommands ||
+        !device || marquee.commandDevice.Get() != device)
+        return false;
+
+    WIN32_FILE_ATTRIBUTE_DATA attributes{};
+    return GetFileAttributesExW(widget.filePath.c_str(), GetFileExInfoStandard, &attributes) &&
+        CompareFileTime(&attributes.ftLastWriteTime, &widget.lastModified) == 0;
+}
+
 void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath,
     ID2D1DeviceContext* context, RECT bounds, int columns, int rows)
 {

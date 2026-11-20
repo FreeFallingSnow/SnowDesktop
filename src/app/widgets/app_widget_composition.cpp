@@ -139,12 +139,12 @@ bool DesktopApp::SyncDesktopWidgetOcclusion(const DesktopWidget& widget, const R
         PauseWidgetMarqueeComposition(widget.id);
     }
     else if (item.visible)
-        pendingDesktopWidgetCompositions_.insert(widget.id);
+        pendingDesktopWidgetCompositions_.insert_or_assign(widget.id, std::nullopt);
     return covered;
 }
 
 bool DesktopApp::QueueDesktopWidgetComposition(
-    const std::wstring& widgetId)
+    const std::wstring& widgetId, std::optional<RECT> damage)
 {
     if (graphicsDeviceRecovery_.Pending()) return false;
     snowdesktop::performance::Scope performanceScope(
@@ -160,7 +160,8 @@ bool DesktopApp::QueueDesktopWidgetComposition(
     {
         const auto& owner = ResolveLuaWidgetFrameOwner(widgets_[memberIndex]);
         if (owner.id != widgetId)
-            return ResolveLuaWidgetContent(&owner) == &widgets_[memberIndex] ? QueueDesktopWidgetComposition(owner.id) : true;
+            return ResolveLuaWidgetContent(&owner) == &widgets_[memberIndex]
+                ? QueueDesktopWidgetComposition(owner.id, damage) : true;
     }
     if (widgetId.empty() || !dcompDevice_ || !dcompVisual_ || !hwnd_)
         return fail();
@@ -243,7 +244,15 @@ bool DesktopApp::QueueDesktopWidgetComposition(
         item.visible = true;
     }
 
-    pendingDesktopWidgetCompositions_.insert(widgetId);
+    // A full update supersedes queued marquee ticks for the same surface.
+    auto [update, queued] = pendingDesktopWidgetCompositions_.try_emplace(widgetId, damage);
+    if (!queued)
+    {
+        if (!damage)
+            update->second.reset();
+        else if (update->second)
+            UnionRect(&*update->second, &*update->second, &*damage);
+    }
     const snowdesktop::UiImmediatePresentationScope immediatePresentation(
         desktopWidgetPointerBatchActive_);
     // Every timed widget update adds its ID before the scheduler presents the
@@ -269,8 +278,8 @@ bool DesktopApp::DeferRetainedDesktopWidgetCompositionForPopupResize()
 
     // Only retire queued work later when every owner can continue showing its
     // last frame. First paints and recovery still complete on their own path.
-    if (!std::ranges::all_of(pendingDesktopWidgetCompositions_, [this](const auto& id) {
-            const auto found = desktopWidgetCompositionItems_.find(id);
+    if (!std::ranges::all_of(pendingDesktopWidgetCompositions_, [this](const auto& update) {
+            const auto found = desktopWidgetCompositionItems_.find(update.first);
             return found != desktopWidgetCompositionItems_.end() &&
                 found->second.visible && found->second.contentVisible;
         }))
@@ -414,7 +423,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
 
     bool structuralOk = true;
     std::vector<DesktopWidgetSurfaceFailure> surfaceFailures;
-    for (const auto& widgetId : pending)
+    for (const auto& [widgetId, damage] : pending)
     {
         auto composition = desktopWidgetCompositionItems_.find(widgetId);
         if (composition == desktopWidgetCompositionItems_.end())
@@ -523,6 +532,59 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         const bool boundsChanged = !SameRect(oldBounds, bounds);
         const RECT contentFrame{surfaceLeft, surfaceTop,
             surfaceLeft + static_cast<LONG>(width), surfaceTop + static_cast<LONG>(height)};
+        const POINT interactionPoint = lastMousePoint_;
+        const POINT paintPointer = SuppressDesktopWidgetDragTargets() ||
+            (IsCollectionPopupHostedByFloatingWindow() && IsPointOccludedByOpenPopup(interactionPoint))
+            ? POINT{LONG_MIN, LONG_MIN} : interactionPoint;
+        RECT dirty{};
+        if (damage && luaWidget && widgetEngine_ && item.surface && item.contentVisible &&
+            item.presentingSrgb && !item.marqueeDamageUnavailable && !boundsChanged &&
+            item.width == width && item.height == height && item.renderedContentId == contentId &&
+            IntersectRect(&dirty, &*damage, &contentFrame) &&
+            desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey()) &&
+            widgetEngine_->CanReplayDesktopMarqueeFrame(contentId, bounds,
+                widgetData->gridSpan.columns, widgetData->gridSpan.rows, d2dDevice_.Get()))
+        {
+            snowdesktop::performance::Scope updateScope("widget.composition", "marquee.damage", contentId);
+            RECT surfaceDamage = dirty;
+            OffsetRect(&surfaceDamage, -surfaceLeft, -surfaceTop);
+            const HRESULT updated = desktopBackdropCompositor_.UpdateSrgbScene(
+                item.BackdropOwnerKey(), surfaceDamage,
+                [&](ID2D1DeviceContext* context, POINT offset) {
+                    context->SetDpi(96.0f, 96.0f);
+                    context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+                    context->SetTransform(D2D1::Matrix3x2F::Translation(
+                        static_cast<float>(offset.x - dirty.left),
+                        static_cast<float>(offset.y - dirty.top)));
+                    context->PushAxisAlignedClip(ToD2DRect(dirty), D2D1_ANTIALIAS_MODE_ALIASED);
+                    context->Clear(D2D1::ColorF(0, 0, 0, 0));
+                    desktopWidgetCompositionDrawInProgress_ = true;
+                    lastMousePoint_ = paintPointer;
+                    // Replay the existing draw order while the surface clips
+                    // writes to the damaged part. Its backdrop remains attached.
+                    luaWidget->DrawCompositionSurface(
+                        context, widgetData->bounds, widgetData->selected ? 2 : 0, false, nullptr);
+                    lastMousePoint_ = interactionPoint;
+                    desktopWidgetCompositionDrawInProgress_ = false;
+                    context->PopAxisAlignedClip();
+                    context->SetTransform(D2D1::Matrix3x2F::Identity());
+                    drawing_.Reset();
+                    return S_OK;
+                });
+            if (SUCCEEDED(updated))
+            {
+                snowdesktop::performance::Value("widget.composition", "marquee_damage_pixels", contentId,
+                    static_cast<double>(dirty.right - dirty.left) * (dirty.bottom - dirty.top));
+                continue;
+            }
+            if (updated != E_INVALIDARG)
+            {
+                surfaceFailures.push_back({widgetId, L"Update marquee region", updated, true});
+                continue;
+            }
+            // Retain the full path for a surface that rejects regional draws.
+            item.marqueeDamageUnavailable = true;
+        }
         if (!item.surface || item.width != width || item.height != height)
         {
             ComPtr<IDCompositionSurface> surface;
@@ -541,6 +603,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
             item.surface = std::move(surface);
             item.width = width;
             item.height = height;
+            item.marqueeDamageUnavailable = false;
             snowdesktop::performance::Value(
                 "widget.composition", "surface_created", widgetId, 1);
         }
@@ -573,12 +636,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         desktopWidgetBackdropRequestedDuringDraw_ = false;
         desktopWidgetBackdropCornerRadiusDuringDraw_ = 0.0f;
         desktopWidgetBackdropBlurRadiusDuringDraw_ = 0.0f;
-        const POINT interactionPoint = lastMousePoint_;
-        if (SuppressDesktopWidgetDragTargets() ||
-            (IsCollectionPopupHostedByFloatingWindow() && IsPointOccludedByOpenPopup(lastMousePoint_)))
-        {
-            lastMousePoint_ = { LONG_MIN, LONG_MIN };
-        }
+        lastMousePoint_ = paintPointer;
         if (drawRollSnapshot)
         {
             widgetContainer->DrawHoverRollSnapshot(context.Get(), lastMousePoint_);
@@ -797,7 +855,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         item.surface.Reset();
         item.width = 0;
         item.height = 0;
-        pendingDesktopWidgetCompositions_.insert(failure.widgetId);
+        pendingDesktopWidgetCompositions_.insert_or_assign(failure.widgetId, std::nullopt);
         if (hwnd_ && IsWindow(hwnd_))
         {
             RECT dirty = item.bounds;
@@ -854,7 +912,7 @@ void DesktopApp::DrainDesktopWidgetSurfaceResults()
                 result.owner + L" hr=" + std::to_wstring(hr);
             WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering,
                 message.c_str(), DiagnosticLogLevel::Warning);
-            if (item.visible) pendingDesktopWidgetCompositions_.insert(result.owner);
+            if (item.visible) pendingDesktopWidgetCompositions_.insert_or_assign(result.owner, std::nullopt);
             changed = true;
         }
     }
@@ -986,7 +1044,7 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
         (!item.visible || !EqualRect(&item.bounds, &bounds));
     if (refreshBeforeShow)
     {
-        pendingDesktopWidgetCompositions_.insert(widgetId);
+        pendingDesktopWidgetCompositions_.insert_or_assign(widgetId, std::nullopt);
         if (desktopWidgetHoverTailToken_)
         {
             uiAnimationScheduler_.Cancel(desktopWidgetHoverTailToken_);
@@ -1012,7 +1070,7 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
     {
         // Ownership survives eviction. Rebuild even when this widget lies
         // outside the current dirty rectangle; hidden data may have changed.
-        pendingDesktopWidgetCompositions_.insert(widgetId);
+        pendingDesktopWidgetCompositions_.insert_or_assign(widgetId, std::nullopt);
         if (widgetSurfaceRenderer_)
             widgetSurfaceRenderer_->SetPaused(item.renderTarget, item.occluded);
     }
@@ -1097,7 +1155,7 @@ void DesktopApp::KeepDesktopWidgetBackdropPanels()
             {
                 desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
                 item.presentingSrgb = false;
-                pendingDesktopWidgetCompositions_.insert(id);
+                pendingDesktopWidgetCompositions_.insert_or_assign(id, std::nullopt);
             }
         }
         if (desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey()))
@@ -1117,7 +1175,7 @@ void DesktopApp::KeepDesktopWidgetBackdropPanels()
             // draw. Restoring only its full static geometry would flash.
             if (!item.backdropRegistered && item.visible)
             {
-                pendingDesktopWidgetCompositions_.insert(id);
+                pendingDesktopWidgetCompositions_.insert_or_assign(id, std::nullopt);
                 if (hwnd_) InvalidateRect(hwnd_, &item.bounds, FALSE);
             }
         }

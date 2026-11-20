@@ -115,6 +115,7 @@ struct DesktopWidgetCompositionItem
     bool backdropRequested = false;
     bool backdropRegistered = false;
     bool presentingSrgb = false;
+    bool marqueeDamageUnavailable = false;
     int backdropCornerRadius = 0;
     int backdropBlurRadius = 0;
     snowdesktop::WidgetIconBackdrops iconBackdrops;

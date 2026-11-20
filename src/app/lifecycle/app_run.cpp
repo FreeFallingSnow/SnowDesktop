@@ -1558,7 +1558,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     }
                     if (!IsRectEmpty(&dirty))
                     {
-                        if (QueueDesktopWidgetComposition(widgetId))
+                        if (QueueDesktopWidgetComposition(widgetId,
+                                requestedDirty ? std::optional<RECT>{dirty} : std::nullopt))
                         {
                             invalidated = true;
                         }

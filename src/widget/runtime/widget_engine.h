@@ -498,6 +498,8 @@ public:
      * @param context Direct2D 设备上下文
      * @param bounds 小部件在桌面栅格中的边界矩形
      */
+    bool CanReplayDesktopMarqueeFrame(const std::wstring& widgetId,
+        const RECT& bounds, int columns, int rows, ID2D1Device* device) const;
     void RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath,
         ID2D1DeviceContext* context, RECT bounds, int columns = 1, int rows = 1);
     /** Render the optional decorative layer above the host material tint. */
