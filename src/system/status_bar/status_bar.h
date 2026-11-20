@@ -89,8 +89,8 @@ public:
     // Coalesce a UI continuation on its live bar HWND. The callback is run
     // from window dispatch, never inside the shared animation scheduler.
     bool PostActivation(HWND owner, std::function<void()> callback);
-    // UI-thread summon boundary: sample before any Dock window/focus changes.
-    void PrepareDockReveal(HMONITOR monitor);
+    // Called after the Dock's frame is ready and before it takes input focus.
+    void PrepareDockReveal(HMONITOR monitor, HWND fullscreenSource);
     // Independent edge/fullscreen reveals dismiss from their own interaction.
     bool HasTemporaryReveal(HMONITOR monitor) const;
     void DismissTemporaryReveal(HMONITOR monitor);
@@ -98,7 +98,7 @@ public:
     // Session queries must not evaluate Dock geometry (which queries visibility).
     void SetInteractionSessionProvider(std::function<bool(HMONITOR)> provider);
     void SetMergedAppearanceProvider(std::function<PersonalizationSettings(HMONITOR)> provider);
-    void RefreshDockState(HMONITOR monitor);
+    void RefreshDockState(HMONITOR monitor, bool dockDismissed = false);
     // Prepare the first complete strip frame without revealing either HWND.
     bool PrepareMergedDockPresentation(HMONITOR monitor, const StatusBarDockPresentation& frame);
     void ApplyMergedDockPresentation(HMONITOR monitor, const StatusBarDockPresentation& frame);

@@ -109,6 +109,8 @@ public:
     bool Observe(std::optional<HWND> source, bool dockPromoted,
         bool foregroundOwned, bool retainedSourceEligible)
     {
+        if (revealed_ && source && *source && *source != Source())
+            revealed_ = false;
         if ((!dockPromoted && !revealed_) || !foregroundOwned || !retainedSourceEligible)
             dockSource_ = nullptr;
         if (source) source_ = *source;

@@ -10,6 +10,8 @@
 #include "platform/foreground_fullscreen.h"
 #include "app/popup/popup_window_pair_z_order.h"
 
+#include <optional>
+
 namespace
 {
 struct ImmediateDockPaintDeferral
@@ -246,7 +248,6 @@ void DesktopApp::ShowFloatingDock(
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, L"Floating Dock reveal suppressed: target monitor fullscreen");
         return;
     }
-    if (statusBar_) statusBar_->PrepareDockReveal(targetMonitor);
     HideDockWindowPreview();
 
     const bool hostWasVisible =
@@ -335,6 +336,7 @@ void DesktopApp::ShowFloatingDock(
         return;
     }
     // Rendering/host synchronization can pump work; recheck before promotion.
+    const auto statusBarFullscreen = statusBar_ ? RecheckFullscreenSource(targetMonitor) : std::nullopt;
     if (FullscreenBlocksDockReveal(source, targetMonitor))
     {
         floatingDockHost_->promoted = false;
@@ -351,6 +353,8 @@ void DesktopApp::ShowFloatingDock(
         UpdatePersistentDockHostVisibility(*floatingDockHost_);
         return;
     }
+    if (statusBar_)
+        statusBar_->PrepareDockReveal(targetMonitor, statusBarFullscreen ? statusBarFullscreen->window : nullptr);
     UpdatePersistentDockHostVisibility(
         *floatingDockHost_);
     RefreshFloatingDockPromotionInput(*floatingDockHost_);
@@ -542,7 +546,7 @@ void DesktopApp::CloseFloatingDock(
     // still before restoring keyboard focus below.
     {
         ImmediateDockPaintDeferral defer(host.immediatePaintDeferred);
-        if (statusBar_) statusBar_->RefreshDockState(host.monitor);
+        if (statusBar_) statusBar_->RefreshDockState(host.monitor, true);
         UpdatePersistentDockHostVisibility(host);
     }
     InvalidateFloatingDockWindow(host, true);
@@ -613,7 +617,7 @@ void DesktopApp::CloseAllFloatingDocks(
             continue;
         {
             ImmediateDockPaintDeferral defer(host->immediatePaintDeferred);
-            if (statusBar_) statusBar_->RefreshDockState(host->monitor);
+            if (statusBar_) statusBar_->RefreshDockState(host->monitor, true);
             UpdatePersistentDockHostVisibility(*host);
         }
         InvalidateFloatingDockWindow(*host, true);

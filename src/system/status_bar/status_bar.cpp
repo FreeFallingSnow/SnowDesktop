@@ -27,6 +27,8 @@
 #include "status_bar_notification.h"
 #include "ui/render/native_tooltip.h"
 #include "status_bar_tooltip.h"
+#include "settings/animation_settings.h"
+#include "ui/render/composition_motion_curve.h"
 #include "system/controls/system_controls.h"
 #include "common/utils.h"
 #include "common/background_work.h"
@@ -59,7 +61,7 @@ namespace
 constexpr UINT kAppBar = WM_APP + 41, kPlace = WM_APP + 42, kFullscreen = WM_APP + 43, kForeground = WM_APP + 44,
     kActivate = WM_APP + 45, kEnsurePresentation = WM_APP + 46, kAppNameReady = WM_APP + 47;
 constexpr UINT_PTR kClockTimer = 1, kTrayMenuTimer = 2, kPlacementTimer = 3, kInputMethodTimer = 4, kTrayScrollTimer = 5,
-    kRevealTimer = 6;
+    kRevealTimer = 6, kIndependentSlideTimer = 7;
 const char* StatusBarTimerPhase(WPARAM timer) noexcept
 {
     switch (timer)
@@ -70,6 +72,7 @@ const char* StatusBarTimerPhase(WPARAM timer) noexcept
     case kInputMethodTimer: return "status_bar.input_method";
     case kTrayScrollTimer: return "status_bar.tray_scroll";
     case kRevealTimer: return "status_bar.reveal";
+    case kIndependentSlideTimer: return "status_bar.independent_slide";
     default: return "status_bar.other";
     }
 }
@@ -280,6 +283,9 @@ struct StatusBar::Impl
         bool lastDockInteraction = false, lastDockPromoted = false;
         StatusBarFullscreenState fullscreenState;
         StatusBarRevealState revealState;
+        quick_navigation_animation_rules::State independentSlide;
+        bool independentSlideAttached = false;
+        HWND slideFullscreenSource = nullptr;
         DWORD dockFullscreenProcess = 0;
         bool appearanceDirty = true, paintDirty = true, painting = false;
         bool backgroundDirty = true;
@@ -436,6 +442,7 @@ struct StatusBar::Impl
                     if (request == &owner.fullscreenRequest) QueueFullscreen(receiver);
             if (owner.hidden) owner.hidden(monitor);
             if (hwnd) { KillTimer(hwnd, kClockTimer); KillTimer(hwnd, kPlacementTimer); }
+            if (hwnd) KillTimer(hwnd, kIndependentSlideTimer);
             tooltip.Close();
             appbar.Remove();
             backdrop.Reset();
@@ -554,6 +561,9 @@ struct StatusBar::Impl
                 SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_HIDEWINDOW);
             }
+            slideFullscreenSource = nullptr;
+            independentSlide.ResetHidden();
+            RestoreIndependentSlidePose();
             if (notify && owner.hidden) owner.hidden(monitor);
         }
         // Policy-owned presentation: true while this bar should be shown, even
@@ -676,9 +686,12 @@ struct StatusBar::Impl
             }
             // Fullscreen visibility follows the Dock reveal and interaction lifetime.
             if (fullscreenObserved) revealState.Dismiss();
-            const bool next = HideIndependentStatusBar(fullscreenState.ShouldHide(dock.interacting),
-                !fullscreenObserved && owner.settings.showOnlyWhenSummoned, revealState.Revealed(), dock.interacting);
             const HWND source = fullscreenState.Source();
+            const bool replacedDockFullscreen = slideFullscreenSource && source && slideFullscreenSource != source;
+            const bool interacting = dock.interacting && !replacedDockFullscreen;
+            const bool summonOnly = !fullscreenObserved && owner.settings.showOnlyWhenSummoned;
+            const bool next = HideIndependentStatusBar(fullscreenState.ShouldHide(interacting),
+                summonOnly, revealState.Revealed(), interacting);
             const bool changed = next != fullscreen;
             fullscreen = next;
             if (changed)
@@ -689,9 +702,27 @@ struct StatusBar::Impl
             }
             const bool shown = IsWindowVisible(hwnd) != FALSE;
             const bool topmost = (GetWindowLongPtrW(hwnd,GWL_EXSTYLE)&WS_EX_TOPMOST) != 0;
+            if (fullscreenObserved && fullscreenState.Revealed())
+                slideFullscreenSource = source;
+            else if (slideFullscreenSource != source)
+                slideFullscreenSource = nullptr;
+            if (owner.presentationEnabled && positioned && !failed &&
+                (slideFullscreenSource || summonOnly))
+            {
+                UpdateIndependentSlide(!fullscreen);
+                return;
+            }
+            if (independentSlide.IsInteractive() || independentSlide.IsAnimating() || independentSlideAttached)
+            {
+                independentSlide.ResetHidden();
+                if (!fullscreen && owner.presentationEnabled) RestoreIndependentSlidePose();
+            }
             // Shell/Dock restacks can reveal a popup without a new fullscreen
             // transition. Reconcile physical visibility as well as state.
-            if (fullscreen || !owner.presentationEnabled) { if (changed || shown || topmost) Hide(); }
+            if (fullscreen || !owner.presentationEnabled)
+            {
+                if (changed || shown || topmost || independentSlideAttached) Hide();
+            }
             else if (positioned && !failed && (changed || !shown || !topmost ||
                 IsIconic(hwnd)))
             {
@@ -733,7 +764,7 @@ struct StatusBar::Impl
         bool InputAvailable() const
         {
             return owner.presentationEnabled && !closing && !fullscreen && !failed && IsWindowVisible(hwnd) &&
-                (!mergedDockHeight || mergedPresentation.inputEnabled);
+                (mergedDockHeight ? mergedPresentation.inputEnabled : !independentSlide.IsAnimating());
         }
         void ApplyDockPose(const StatusBarDockPresentation& frame)
         {
@@ -801,16 +832,21 @@ struct StatusBar::Impl
             backdrop.SetVisible(appearance.glassEnabled && !HighContrast());
             backdrop.CommitVisualChanges();
         }
+        bool AttachBarSlide(IDCompositionAnimation* offset, const popup_motion_curve::Timeline& progress,
+            float x, float y)
+        {
+            if (!offset || !visual || closing || failed || !positioned)
+                return false;
+            const auto result = x != 0.f ? visual->SetOffsetX(offset) : visual->SetOffsetY(offset);
+            return SUCCEEDED(result) && backdrop.StartRootTranslationAnimation(progress, x, y, -x, -y,
+                appearance.glassEnabled && !HighContrast() && backdrop.IsAvailable()) &&
+                backdrop.CommitSrgbContent();
+        }
         bool StartDockSlide(IDCompositionAnimation* offset, const popup_motion_curve::Timeline& progress)
         {
             if (!offset || !visual || closing || failed || !positioned || !mergedPresentation.visible)
                 return false;
-            const float x = mergedPresentation.hiddenOffsetX, y = mergedPresentation.hiddenOffsetY;
-            const auto result = x != 0.f ? visual->SetOffsetX(offset) : visual->SetOffsetY(offset);
-            if (FAILED(result)) return false;
-            const bool started = backdrop.StartRootTranslationAnimation(progress, x, y, -x, -y,
-                appearance.glassEnabled && !HighContrast() && backdrop.IsAvailable());
-            if (started && backdrop.CommitSrgbContent())
+            if (AttachBarSlide(offset, progress, mergedPresentation.hiddenOffsetX, mergedPresentation.hiddenOffsetY))
             {
                 backdrop.CommitVisualChanges();
                 mergedPresentation.compositorSlide = true;
@@ -821,6 +857,103 @@ struct StatusBar::Impl
             backdrop.CommitVisualChanges();
             (void)backdrop.CommitSrgbContent();
             return false;
+        }
+        void RestoreIndependentSlidePose()
+        {
+            if (!std::exchange(independentSlideAttached, false)) return;
+            KillTimer(hwnd, kIndependentSlideTimer);
+            backdrop.StopRootTranslationAnimation(0.f, 0.f);
+            backdrop.SetVisualTranslation(0.f, 0.f);
+            backdrop.SetSrgbRootPose(1.f, 0.f, 0.f);
+            if (visual) { visual->SetOffsetX(0.f); visual->SetOffsetY(0.f); }
+            backdrop.CommitVisualChanges();
+            if (owner.composition) (void)CommitWithTrace();
+        }
+        void FinishIndependentSlide()
+        {
+            if (!independentSlide.IsInteractive())
+            {
+                Hide();
+                return;
+            }
+            independentSlide.ShowImmediately();
+            RestoreIndependentSlidePose();
+            if (!IsWindowVisible(hwnd) || !IsPresentationTopmost()) Show();
+        }
+        bool ArmIndependentSlideTimer(double remainingMilliseconds)
+        {
+            return SetTimer(hwnd, kIndependentSlideTimer,
+                static_cast<UINT>(std::ceil(remainingMilliseconds)), nullptr) != 0;
+        }
+        void TickIndependentSlide()
+        {
+            if (!independentSlide.IsAnimating()) return;
+            independentSlide.Advance(GetTickCount64());
+            if (!independentSlide.IsAnimating() ||
+                !ArmIndependentSlideTimer(independentSlide.RemainingTimeline().durationMilliseconds))
+                FinishIndependentSlide();
+        }
+        void UpdateIndependentSlide(bool show)
+        {
+            if (!independentSlide.IsAnimating() && !independentSlide.IsInteractive() &&
+                IsWindowVisible(hwnd) && !IsIconic(hwnd))
+                independentSlide.ShowImmediately();
+            if (independentSlide.IsInteractive() == show)
+            {
+                if (!independentSlide.IsAnimating() && show &&
+                    (!IsWindowVisible(hwnd) || !IsPresentationTopmost())) Show();
+                return;
+            }
+            const auto now = GetTickCount64();
+            independentSlide.Configure(animation::RuntimeAnimationsEnabled()
+                ? quick_navigation_animation_rules::Effect::Fade : quick_navigation_animation_rules::Effect::None,
+                std::min(1.0, animation::RuntimeDurationScale()), false, true);
+            if (show) independentSlide.Open(now);
+            else independentSlide.Close(now);
+            if (!independentSlide.IsAnimating() || (!show && !IsWindowVisible(hwnd)))
+            {
+                FinishIndependentSlide();
+                return;
+            }
+
+            auto frame = MergedDockPresentationFrame(independentSlide);
+            // Keep the HWND and AppBar reservation fixed. The complete
+            // precomposed strip slides through its own window's bounds.
+            PositionDockRevealFrame(frame, owner.settings.position, placedBounds, placedBounds);
+            if (show && !IsWindowVisible(hwnd))
+            {
+                Paint(true);
+                if (paintDirty || !surface || !backgroundSurface || !visual || !owner.composition)
+                {
+                    independentSlide.ResetHidden();
+                    return;
+                }
+                independentSlideAttached = true;
+                visual->SetOffsetX(frame.offsetX);
+                visual->SetOffsetY(frame.offsetY);
+                backdrop.SetVisualTranslation(frame.offsetX, frame.offsetY);
+                backdrop.SetSrgbRootPose(1.f, frame.offsetX, frame.offsetY);
+                backdrop.CommitVisualChanges();
+                if (FAILED(CommitWithTrace())) { FinishIndependentSlide(); return; }
+                Show();
+            }
+            if (!show && GetCapture() == hwnd) ReleaseCapture();
+            independentSlideAttached = true;
+            const auto progress = independentSlide.RemainingTimeline();
+            ComPtr<IDCompositionAnimation> offset;
+            const float distance = frame.hiddenOffsetX != 0.f ? frame.hiddenOffsetX : frame.hiddenOffsetY;
+            if (owner.composition && distance != 0.f &&
+                SUCCEEDED(CreateCompositionMotionAnimation(owner.composition.Get(), progress, &offset, distance, -distance)) &&
+                AttachBarSlide(offset.Get(), progress, frame.hiddenOffsetX, frame.hiddenOffsetY))
+            {
+                backdrop.CommitVisualChanges();
+                if (SUCCEEDED(CommitWithTrace()) && ArmIndependentSlideTimer(progress.durationMilliseconds))
+                {
+                    independentSlide.ResumeAt(GetTickCount64());
+                    return;
+                }
+            }
+            FinishIndependentSlide();
         }
         void Show()
         {
@@ -884,6 +1017,8 @@ struct StatusBar::Impl
             RECT previous{};
             GetWindowRect(hwnd, &previous);
             const bool moved = !EqualRect(&rect, &previous);
+            if ((moved || appearanceDirty) && independentSlide.IsAnimating())
+                FinishIndependentSlide();
             if (moved)
             {
                 EndDragFeedback();pressedTray.clear();trayDragging=false;if(GetCapture()==hwnd)ReleaseCapture();
@@ -937,7 +1072,7 @@ struct StatusBar::Impl
             // itself is visible must reveal its new helper after checking the
             // current fullscreen state, not the state before this placement.
             if (mergedDockHeight) ApplyDockPresentation(mergedPresentation);
-            else
+            else if (!independentSlide.IsAnimating())
             {
                 backdrop.SetPopupTopmost(!fullscreen);
                 backdrop.SetVisible(owner.presentationEnabled && !fullscreen && appearance.glassEnabled && !HighContrast());
@@ -1787,6 +1922,7 @@ struct StatusBar::Impl
                 else if (wp == kTrayMenuTimer) self->PollTrayMenu();
                 else if (wp == kPlacementTimer) self->Place();
                 else if (wp == kRevealTimer) self->PollReveal();
+                else if (wp == kIndependentSlideTimer) self->TickIndependentSlide();
                 return 0;
             }
             case WM_DPICHANGED:
@@ -1821,7 +1957,8 @@ struct StatusBar::Impl
                 if (lp)
                 {
                     auto& position = *reinterpret_cast<WINDOWPOS*>(lp);
-                    ConstrainHiddenStatusBarPosition(!self->owner.presentationEnabled || self->fullscreen, position);
+                    ConstrainHiddenStatusBarPosition(!self->owner.presentationEnabled ||
+                        (self->fullscreen && !self->independentSlide.IsClosing()), position);
                     self->RejectExternalHide(position);
                     // Shell can raise a registered AppBar when another window
                     // gains focus without activating the bar itself. Its opaque
@@ -2374,13 +2511,15 @@ void StatusBar::SetInteractionSessionProvider(std::function<bool(HMONITOR)> prov
 { impl_->interactionSessionProvider = std::move(provider); }
 void StatusBar::SetMergedAppearanceProvider(std::function<PersonalizationSettings(HMONITOR)> provider)
 { impl_->mergedAppearanceProvider = std::move(provider); }
-void StatusBar::RefreshDockState(HMONITOR monitor)
+void StatusBar::RefreshDockState(HMONITOR monitor, bool dockDismissed)
 {
     if (impl_->removingWindows) return;
     for (const auto& [id, window] : impl_->windows)
     {
         (void)id;
-        if (window && window->monitor == monitor) window->CheckFullscreen();
+        if (!window || window->monitor != monitor) continue;
+        if (dockDismissed && !window->mergedDockHeight) window->fullscreenState.DismissReveal();
+        window->CheckFullscreen();
     }
 }
 void StatusBar::ApplyMergedDockPresentation(HMONITOR monitor, const StatusBarDockPresentation& frame)
@@ -2547,20 +2686,20 @@ RECT StatusBar::MergedSizingWorkArea(HMONITOR monitor, RECT area) const
     }
     return area;
 }
-void StatusBar::PrepareDockReveal(HMONITOR monitor)
+void StatusBar::PrepareDockReveal(HMONITOR monitor, HWND fullscreenSource)
 {
     for (const auto& [id, window] : impl_->windows)
     {
         (void)id;
         if (!window || window->monitor != monitor) continue;
-        window->CheckFullscreen();
+        window->CheckFullscreen(fullscreenSource, false);
         window->fullscreenState.BeginDockReveal(!window->mergedDockHeight);
         window->dockFullscreenProcess = 0;
         if (const HWND source = window->fullscreenState.DockSource())
             GetWindowThreadProcessId(source, &window->dockFullscreenProcess);
         // The independent bar can now accept the whole down/up/open sequence,
         // even if Dock's own hover or launch session ends in the meantime.
-        if (!window->mergedDockHeight) window->CheckFullscreen();
+        if (!window->mergedDockHeight) window->CheckFullscreen(fullscreenSource, false);
     }
 }
 bool StatusBar::HasTemporaryReveal(HMONITOR monitor) const

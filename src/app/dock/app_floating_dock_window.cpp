@@ -604,7 +604,12 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
         }
     } promotionInput{*this, host.hwnd};
     const bool merged = host.container && host.container->IsMergedWithStatusBar();
-    if (host.mergedPresentationActive && host.presentationMerged != merged)
+    if (host.occludedFloatingPresentation && (merged || dockSettings_.showOnlyWhenSummoned))
+    {
+        host.occludedFloatingPresentation = false;
+        ResetMergedDockPresentation(host);
+    }
+    else if (host.mergedPresentationActive && host.presentationMerged != merged)
         ResetMergedDockPresentation(host);
     // An occluded floating session ends here once its collapse finished, so
     // the hidden pair returns to the ordinary desktop presentation in this
@@ -744,7 +749,12 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
             uiAnimationScheduler_.Cancel(host.mergedAnimationToken);
             host.mergedAnimationToken = 0;
         }
-        return;
+        if (!host.occludedFloatingPresentation || host.mergedAnimation.IsInteractive() ||
+            host.mergedAnimation.IsAnimating())
+            return;
+        // A synchronous collapse has no timer to return the window pair to
+        // its regular desktop presentation. Do so before leaving this pass.
+        host.occludedFloatingPresentation = false;
     }
     if (host.mergedPresentationActive) ResetMergedDockPresentation(host);
     const bool shouldShow =
