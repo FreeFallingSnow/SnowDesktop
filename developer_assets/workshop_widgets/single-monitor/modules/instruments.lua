@@ -1,4 +1,10 @@
 local M = {}
+local INK_TEXT = widget.hasFeature("draw.text.inkAlignment")
+local TEXT_ANCHORS = {
+    start = { x = "start", y = "center" },
+    center = { x = "center", y = "center" },
+    ["end"] = { x = "end", y = "center" },
+}
 
 function M.palette()
     local dark = widget.theme().contentTheme == 1
@@ -43,14 +49,23 @@ end
 
 local function text(x, y, width, height, value, size, color, bold, align, wrap)
     local metric = measure(value, size, bold, wrap and width or nil)
-    local ink = bounds(metric)
-    local left = align == "center" and (width - ink.width) / 2 or
-        (align == "end" and width - ink.width or 0)
-    local ox, oy = x + left - ink.left, y + (height - ink.height) / 2 - ink.top
+    local ox, oy = x, y + height / 2
+    local anchors
+    if INK_TEXT then
+        anchors = TEXT_ANCHORS[align or "start"]
+        if align == "center" then ox = ox + width / 2 end
+        if align == "end" then ox = ox + width end
+    else
+        local ink = bounds(metric)
+        local left = align == "center" and (width - ink.width) / 2 or
+            (align == "end" and width - ink.width or 0)
+        ox, oy = ox + left - ink.left, oy - ink.height / 2 - ink.top
+    end
     -- Measurement and drawing share one line box; leave rounding room without
     -- invoking DirectWrite's end ellipsis on values that already fit.
     draw.text(ox, oy, value, size, color, wrap and width or math.max(width, metric.width + size * 0.12),
-        bold, not wrap, math.max(metric.height + size * 0.15, height + size * 0.15))
+        bold, not wrap, math.max(metric.height + size * 0.15, height + size * 0.15),
+        nil, nil, anchors)
 end
 
 local function label(x, y, width, height, value, size, color, align, bold, wrap)
@@ -168,11 +183,15 @@ function M.render(mode, reading, values, now, c, format)
     if reading.stale then source=source=="" and c.stale or source.." · "..c.stale end
     if source~="" then
         local sourceSize=titleFont
-        local metric=measure(source,sourceSize,true)
-        local ink=bounds(metric)
-        local sourceY=pad+(titleH-ink.height)/2-ink.top-math.max(0,(titleH-metric.height)/2)
+        local sourceY=pad
+        if not INK_TEXT then
+            local metric=measure(source,sourceSize,true)
+            local ink=bounds(metric)
+            sourceY=pad+(titleH-ink.height)/2-ink.top-math.max(0,(titleH-metric.height)/2)
+        end
         draw.marqueeText({key="monitor.source",x=x,y=sourceY,width=selectorX-x-t*0.045,height=titleH,
-            text=source,size=sourceSize,bold=true,color=p.text,speed=t*0.12,gap=t*0.10})
+            text=source,size=sourceSize,bold=true,color=p.text,speed=t*0.12,gap=t*0.10,
+            inkCentered=INK_TEXT or nil})
     end
     local headerBottom=pad+titleH+t*0.065
     if interaction.isHovered("monitor.selector") then

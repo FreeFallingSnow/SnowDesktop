@@ -369,6 +369,7 @@
     "widget.size.aspectRatio"
   ],
   "optionalFeatures": [
+    "view.text.inkAlignment",
     "data.calendar.events.query"
   ],
   "resources": {},

@@ -1,5 +1,6 @@
 local logic=module.require("modules/countdown.lua")
 local navigation=module.require("modules/navigation.lua")
+local INK_TEXT=widget.hasFeature("view.text.inkAlignment")
 local function copyText()
     return {
         name=l10n.tr("countdown.name"),empty=l10n.tr("countdown.empty"),deleted=l10n.tr("countdown.deleted"),
@@ -75,6 +76,7 @@ local function desktop(context,m)
             local number=text("event.days",value,unit*0.38,false)
             number.fontSize=delta==0 and unit*0.16 or math.min(unit*0.34,(w-pad*2)/math.max(1,#value)*1.3)
             number.bold=true;number.textAlign="center";number.overflowText="clip"
+            if INK_TEXT then number.textInkAligned=true end
             local state=delta>0 and c.remaining or c.elapsed
             local date=text("event.date",item.date,unit*0.14,false);date.fontSize=title.fontSize;date.textAlign="center"
             local sideHeight=math.max(0,(h-pad*2-unit*0.38)/2)
@@ -100,7 +102,7 @@ local function desktop(context,m)
                 -- Reserve the full font line before centering; large digits otherwise overflow below it.
                 number.height=math.max(number.height,number.fontSize*1.5)
                 -- Segoe UI numerals sit slightly below the center of their line box.
-                number.padding={bottom=number.fontSize*0.10}
+                if not INK_TEXT then number.padding={bottom=number.fontSize*0.10} end
                 -- Segoe UI numeral ink is about 0.7em high; place label centers 20% above its bottom.
                 local labelOffset=number.fontSize*0.70*0.30
                 -- A centered child's top margin moves its center by half that margin without squeezing the text.
@@ -113,7 +115,7 @@ local function desktop(context,m)
                 children={heading,countRow,footer}
             else children={heading,number,footer} end
             -- Balance the visible glyph, whose baseline sits below the text line center.
-            local opticalOffset=number.fontSize*(delta==0 and 0.10 or 0.22)
+            local opticalOffset=INK_TEXT and 0 or number.fontSize*(delta==0 and 0.10 or 0.22)
             heading.height=math.max(0,sideHeight-opticalOffset)
             footer.height=sideHeight+opticalOffset
         end

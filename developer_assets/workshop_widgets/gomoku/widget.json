@@ -605,6 +605,7 @@
     "time.basic"
   ],
   "optionalFeatures": [
+    "draw.text.inkAlignment",
     "animation.frame",
     "draw.textInkMetrics",
     "multiplayer.room.settings",

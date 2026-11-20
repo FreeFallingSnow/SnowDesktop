@@ -255,6 +255,7 @@
   },
   "permissions": [],
   "requiredFeatures": [
+    "draw.text.inkAlignment",
     "lifecycle.model",
     "schedule.basic",
     "schedule.visibility",

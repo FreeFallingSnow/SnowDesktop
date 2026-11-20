@@ -3063,6 +3063,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadTextAlignmentField(state, index, node.textAlign, error) ||
         !ReadTextVerticalAlignmentField(state, index,
             node.verticalAlign, error) ||
+        !ReadBoolField(state, index, "textInkAligned", node.textInkAligned, error) ||
         !ReadTextWrapField(state, index, node.textWrap, error) ||
         !ReadNonNegativeSizeField(state, index, "maxLines",
             node.maximumLines, false, error) ||

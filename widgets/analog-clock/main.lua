@@ -142,13 +142,14 @@ local function render()
             local a = hour * math.pi / 6 - math.pi / 2
             local label = tostring(hour)
             local metrics = draw.measureText(label, numberFont, 0, true)
-            local radialExtent = math.abs(math.cos(a)) * metrics.width / 2 +
-                math.abs(math.sin(a)) * metrics.height / 2
+            local ink = metrics.ink or metrics
+            local radialExtent = math.abs(math.cos(a)) * ink.width / 2 +
+                math.abs(math.sin(a)) * ink.height / 2
             local safeRadius = r - hourTickLen - radialExtent - numberGap
             local numberRadius = math.min(preferredRadius, safeRadius)
             local tx, ty = point(a, numberRadius)
-            draw.text(tx - metrics.width / 2, ty - metrics.height / 2,
-                label, numberFont, colors.number, 0, true, true)
+            draw.text(tx, ty, label, numberFont, colors.number, 0, true, true,
+                nil, nil, nil, { x = "center", y = "center" })
         end
     end
 

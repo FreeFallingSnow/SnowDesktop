@@ -114,7 +114,19 @@ package. Exclude DLLs, scripts used as helpers and undeclared executables.
 For an authorized native helper, follow the API reference's **Native EXE
 helpers** contract for hashes, permissions, user consent and the fixed protocol.
 
-### Font icon alignment
+### Text and font icon alignment
+
+For a label centered in a badge, button or icon row, align its visible text
+instead of subtracting half the font size or line height. On immediate
+surfaces pass { x = "center", y = "center" } as the last draw.text argument,
+and use the center as its coordinates. Omit the axis you do not need.
+For view.text, view.badge, view.button and view.link, set
+textInkAligned = true and choose textAlign and verticalAlign.
+Use the features draw.text.inkAlignment and view.text.inkAlignment
+respectively. Move any existing glyph offsets into the legacy fallback and
+keep measurement for sizing, text fit and layout.
+When aligning scrolling labels, pass inkCentered = true to draw.marqueeText
+with draw.text.inkAlignment and position the viewport at its intended origin.
 
 Use the host's glyph outline to center icons. On immediate surfaces, use
 `draw.glyph(glyph, centerX, centerY, size, color, iconFont)`. For

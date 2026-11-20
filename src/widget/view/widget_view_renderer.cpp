@@ -1983,6 +1983,32 @@ static void DrawWidgetViewNode(WidgetDrawContext* state, const WidgetViewHost& h
                 D2D1_POINT_2F origin = D2D1::Point2F(
                     textLeft, state->widgetRect.top + content.y +
                         verticalOffset);
+                D2D1_RECT_F inkBounds{};
+                if (node.textInkAligned &&
+                    GetTextLayoutInkBounds(*layout.Get(), inkBounds) &&
+                    inkBounds.right > inkBounds.left &&
+                    inkBounds.bottom > inkBounds.top)
+                {
+                    if (inkBounds.right - inkBounds.left <= textWidth)
+                    {
+                        if (node.textAlign == ViewTextAlignment::Center)
+                            origin.x += (textWidth - inkBounds.left - inkBounds.right) * 0.5f;
+                        else
+                        {
+                            const bool rtl = layout->GetReadingDirection() ==
+                                DWRITE_READING_DIRECTION_RIGHT_TO_LEFT;
+                            const bool rightAligned = (node.textAlign == ViewTextAlignment::End) != rtl;
+                            origin.x += rightAligned
+                                ? textWidth - inkBounds.right : -inkBounds.left;
+                        }
+                    }
+                    if (inkBounds.bottom - inkBounds.top <= textHeight)
+                    {
+                        const float gap = textHeight - (inkBounds.bottom - inkBounds.top);
+                        const float offset = ViewTextVerticalOffset(node, gap, 0.0f);
+                        origin.y += offset - verticalOffset - inkBounds.top;
+                    }
+                }
                 if (iconNode)
                 {
                     DWRITE_OVERHANG_METRICS overhang{};

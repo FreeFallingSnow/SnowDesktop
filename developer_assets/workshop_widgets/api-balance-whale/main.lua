@@ -80,13 +80,18 @@ local function palette()
         blue=darkText and 0x2865C9 or 0x92BEFF,green=darkText and 0x197352 or 0x8DDBB5,
         orange=darkText and 0xA55319 or 0xFFC18B}
 end
+local CENTER_TEXT = widget.hasFeature("draw.text.inkAlignment") and {y="center"} or nil
+
 local function text(x,y,value,size,color,width,bold,height)
     local measured=draw.measureText(tostring(value),size,0,bold or false)
-    local ink=measured.ink
     local boxHeight=height or size*1.6
-    local originY=y+(boxHeight-ink.height)*0.5-ink.top
-    -- Keep the visible ink center and leave room for fractional line metrics.
-    draw.text(x,originY,tostring(value),size,color,width,bold or false,true,measured.height+size*0.25)
+    local originY=y+boxHeight*0.5
+    if not CENTER_TEXT then
+        local ink=measured.ink
+        originY=originY-ink.height*0.5-ink.top
+    end
+    draw.text(x,originY,tostring(value),size,color,width,bold or false,true,
+        measured.height+size*0.25,nil,nil,CENTER_TEXT)
 end
 local function fitted(x,y,value,size,color,width,bold,height)
     local measured=draw.measureText(tostring(value),size,0,bold or false)

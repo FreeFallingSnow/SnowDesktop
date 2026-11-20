@@ -276,11 +276,9 @@ end
 
 local function centeredText(text, x, y, width, height,
     size, color, bold, alpha)
-    local measured = draw.measureText(text, size, 0, bold)
-    draw.text(x + math.max(0, (width - measured.width) / 2),
-        y + math.max(0, (height - measured.height) / 2),
+    draw.text(x + width / 2, y + height / 2,
         text, size, color, math.max(1, width), bold, true, 0,
-        alpha or 1.0)
+        alpha or 1.0, nil, { x = "center", y = "center" })
 end
 
 local function submitButton(id, label, shape, metrics)

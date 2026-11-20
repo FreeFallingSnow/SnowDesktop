@@ -293,6 +293,16 @@ ID2D1SolidColorBrush* GetCachedBrush(WidgetDrawContext* state, int color, float 
     return state ? state->Brush(color, alpha) : nullptr;
 }
 
+bool GetTextLayoutInkBounds(IDWriteTextLayout& layout, D2D1_RECT_F& bounds) noexcept
+{
+    DWRITE_OVERHANG_METRICS overhang{};
+    if (FAILED(layout.GetOverhangMetrics(&overhang))) return false;
+    bounds = { -overhang.left, -overhang.top,
+        layout.GetMaxWidth() + overhang.right,
+        layout.GetMaxHeight() + overhang.bottom };
+    return true;
+}
+
 IDWriteTextFormat* GetCachedTextFormat(WidgetDrawContext* state, float size,
     DWRITE_FONT_WEIGHT weight, bool centered, DWRITE_WORD_WRAPPING wrapping,
     bool fontAwesome, bool verticallyCentered, bool fluent, const std::wstring* privateFontPath)

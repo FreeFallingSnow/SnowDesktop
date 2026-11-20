@@ -409,15 +409,11 @@ local function render(context, model)
                         (selected or hovered) and 1.0 or 0.86)
                 end
                 local textX = iconX + iconSize + metrics.spacingSm
-                local textMetrics = draw.measureText(
-                    item.title, fontSize, 0, false)
-                local textY = y + math.max(0,
-                    (itemHeight - textMetrics.height) / 2)
-                draw.text(textX, textY, item.title,
+                draw.text(textX, y + itemHeight / 2, item.title,
                     fontSize, colors.text,
                     math.max(unit,
                         width - contentInset - textX - metrics.spacingXs),
-                    false, true)
+                    false, true, nil, nil, nil, { y = "center" })
             end
         end
     end

@@ -454,6 +454,7 @@
 ---@field showScrollbar? boolean Scroll or virtual-collection host scrollbar visibility; defaults to true.
 ---@field textAlign? 'start'|'center'|'end'
 ---@field verticalAlign? 'start'|'center'|'end' Text block alignment inside the node; defaults to center.
+---@field textInkAligned? boolean Use visible text bounds for textAlign and verticalAlign on text, badge, button and link. Requires view.text.inkAlignment.
 ---@field textWrap? SnowViewTextWrap Defaults to noWrap, except styledText defaults to wrap.
 ---@field maxLines? integer Maximum rendered lines from 0/unlimited through 64.
 ---@field overflowText? SnowViewTextOverflow Defaults to ellipsis, except styledText defaults to clip.
@@ -938,6 +939,7 @@
 ---@field height number Nonnegative visible glyph height in logical drawing units; raster hinting may change final pixel bounds slightly.
 
 ---@class SnowMarqueeTextOptions
+---@field inkCentered? boolean Vertically center visible text in the viewport. Requires draw.text.inkAlignment.
 ---@field key string Stable 1..128-byte key used to preserve the native scroll phase across data refreshes.
 ---@field x number Viewport x in desktop render coordinates.
 ---@field y number Viewport y in desktop render coordinates.
@@ -2550,7 +2552,12 @@ draw = {}
 ---@param maxHeight? number
 ---@param alpha? number
 ---@param font? SnowFontResource
-function draw.text(x, y, text, size, color, maxWidth, bold, singleLine, maxHeight, alpha, font) end
+---@param inkAlignment? SnowDrawTextInkAlignment
+function draw.text(x, y, text, size, color, maxWidth, bold, singleLine, maxHeight, alpha, font, inkAlignment) end
+
+---@class SnowDrawTextInkAlignment Requires draw.text.inkAlignment.
+---@field x? 'start'|'center'|'end' Anchor x to the visual left edge, midpoint or right edge.
+---@field y? 'start'|'center'|'end' Anchor y to the visual top edge, midpoint or bottom edge.
 
 ---Draw single-line overflow text with a host-native continuous marquee. Requires draw.marqueeText and a declared required/optional feature. The host caches the remaining immediate drawing and advances visible desktop frames without re-entering Lua.
 ---@param options SnowMarqueeTextOptions

@@ -569,6 +569,7 @@ struct ViewNode
     ViewJustification justifyContent = ViewJustification::Start;
     ViewTextAlignment textAlign = ViewTextAlignment::Start;
     ViewAlignment verticalAlign = ViewAlignment::Center;
+    bool textInkAligned = false;
     ViewTextWrap textWrap = ViewTextWrap::NoWrap;
     ViewTextOverflow overflowText = ViewTextOverflow::Ellipsis;
     std::size_t maximumLines = 0;

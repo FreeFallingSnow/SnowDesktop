@@ -334,10 +334,9 @@ local function registerRegion(key, shape, eventsValue, label, enabled, viewport)
 end
 
 local function centeredText(text, x, y, width, height, size, color, bold, alpha)
-    local measured = draw.measureText(text, size, 0, bold)
-    draw.text(x + math.max(0, (width - measured.width) / 2),
-        y + math.max(0, (height - measured.height) / 2), text, size,
-        color, math.max(1, width), bold, true, 0, alpha or 1.0)
+    draw.text(x + width / 2, y + height / 2, text, size,
+        color, math.max(1, width), bold, true, 0, alpha or 1.0, nil,
+        { x = "center", y = "center" })
 end
 
 local function drawHeaderButton(key, glyph, label, shape, colors, enabled,
@@ -366,7 +365,7 @@ local function drawHeaderTextButton(key, label, shape, colors, enabled,
     draw.rect(shape.x, shape.y, shape.width, shape.height,
         colors.accent, metrics.controlRadius,
         pressed and 0.16 or (hovered and 0.10 or 0.055))
-    centeredText(label, shape.x - metrics.strokeWidth * 0.5,
+    centeredText(label, shape.x,
         shape.y, shape.width, shape.height,
         fontSize, colors.accent, true,
         enabled and 0.92 or 0.28)

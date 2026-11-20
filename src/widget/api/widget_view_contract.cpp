@@ -244,7 +244,7 @@ constexpr ViewPropertyEffect PropertyEffects(std::string_view name,
             "checked", "indeterminate", "selected", "sticky", "visible",
             "visibility", "enabled", "focusable", "cursor",
             "showScrollbar", "textAlign", "verticalAlign", "textWrap",
-            "maxLines", "overflowText", "glyphInkCentered" }))
+            "maxLines", "overflowText", "glyphInkCentered", "textInkAligned" }))
         add(ViewPropertyEffect::Paint);
     if (IsNamed(name, { "value", "min", "max", "step", "selectedValue",
             "expanded", "selectAll", "liveUpdate", "readOnly", "required",
@@ -483,6 +483,7 @@ constexpr auto kProperties = std::to_array<ViewPropertyContract>({
     EnumProperty("justifyContent", ViewPropertyEnumSet::Justification),
     EnumProperty("textAlign", ViewPropertyEnumSet::TextAlignment),
     EnumProperty("verticalAlign", ViewPropertyEnumSet::VerticalAlignment),
+    Property("textInkAligned", ViewPropertyValueKind::Boolean),
     EnumProperty("textWrap", ViewPropertyEnumSet::TextWrap),
     RangedProperty("maxLines", ViewPropertyValueKind::Integer,
         0.0, 64.0),
@@ -895,6 +896,9 @@ bool ViewNodeAllowsProperty(
     if (property == "fontSize") return IsTypographyNode(type);
     if (property == "bold") return IsBoldTypographyNode(type);
     if (property == "textAlign") return IsTextAlignmentNode(type);
+    if (property == "textInkAligned")
+        return IsType(type, { ViewNodeType::Text, ViewNodeType::Badge,
+            ViewNodeType::Button, ViewNodeType::Link });
     if (property == "fontWeight" || property == "fontStyle" ||
         property == "lineHeight" || property == "letterSpacing" ||
         property == "verticalAlign" || property == "textWrap" ||

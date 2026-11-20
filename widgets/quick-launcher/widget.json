@@ -255,6 +255,7 @@
     "app.launch"
   ],
   "requiredFeatures": [
+    "draw.text.inkAlignment",
     "draw.glyph",
     "control.focus",
     "control.textInput",

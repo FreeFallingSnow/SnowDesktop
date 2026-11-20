@@ -123,6 +123,7 @@
   },
   "permissions": [],
   "requiredFeatures": [
+    "draw.text.inkAlignment",
     "draw.immediate",
     "lifecycle.model",
     "schedule.basic",

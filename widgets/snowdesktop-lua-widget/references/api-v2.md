@@ -2977,21 +2977,38 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 `glyphInkCentered = true`。宿主把字体轮廓的可见边界居中到节点的内容区。
 该模式下 `glyph` 使用单个 Unicode 字符。迁移时删除专为字形留白添加的单侧 padding 或偏移。
 
+支持 `view.text.inkAlignment` 的宿主允许 `view.text`、`view.badge`、`view.button`
+和 `view.link` 设置 `textInkAligned = true`。宿主用当前文本布局的可见边界执行
+`textAlign` 和 `verticalAlign`，水平起止随阅读方向变化。该选项只调整绘制原点，
+节点尺寸、换行、截断和命中区域仍由原有布局规则决定。可见范围超过内容区时，该轴按
+常规排版处理。未设置此选项的节点继续按行框排版。
+
 ### `draw`
 
 即时绘制坐标以组件左上角为 `(0, 0)`：
 
 - `draw.text(x, y, text, size?, color?, maxWidth?, bold?, singleLine?,
-  maxHeight?, alpha?, font?)`
+  maxHeight?, alpha?, font?, inkAlignment?)`
+
+  支持 `draw.text.inkAlignment` 时，可在最后传入 `{ x = "center", y = "center" }`
+  使 `(x, y)` 成为字形可见区域的中心。每轴可取 `"start"`、`"center"` 或 `"end"`，
+  横向分别表示左缘、中点和右缘，纵向分别表示上缘、中点和下缘。省略某一轴时，
+  该坐标仍表示常规绘制原点。宿主按实际参与绘制的布局计算边界，包含换行与省略号的结果。
+  无可见字形时沿用原点。组件可用 `widget.hasFeature("draw.text.inkAlignment")`
+  检测支持情况，旧宿主使用原有调用。
+
 - `draw.marqueeText({key, x, y, width, height, text, size?, color?, bold?,
-  speed?, gap?, alpha?, font?}) -> scrolling`
+  speed?, gap?, alpha?, font?, inkCentered?}) -> scrolling`
+
+  支持 `draw.text.inkAlignment` 时设置 `inkCentered = true` 可将可见文字在原滚动视区内垂直居中。
 - `draw.measureText(text, size?, maxWidth?, bold?, font?)`
 
   返回原有 `width`、`height` 行框度量。支持 `draw.textInkMetrics` 的宿主在
   渲染时还返回可选 `ink={left,top,width,height}`：相对于同参数 `draw.text`
   原点的可见字形边界，单位与绘制坐标一致。`left`、`top` 可为负，宽高非负；
   空串及纯空白的边界为零，无法测量时省略 `ink`。字体留白使行框中心不一定等于
-  字形中心；需要对齐字形顶部或中心时使用 `ink`。像素微调可能带来少量栅格差异。
+  字形中心。使用字形大小参与布局计算时读取 `ink`，绘制对齐优先使用
+  `draw.text` 的可选字形锚点。像素微调可能带来少量栅格差异。
   此增量不改变调用参数或原有宽高字段；依赖它的组件应声明
   `draw.textInkMetrics`，同版本早期构建也可能缺少该 feature。
 

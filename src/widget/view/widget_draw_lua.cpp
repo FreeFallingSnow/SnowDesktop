@@ -33,6 +33,37 @@ namespace
 {
 const char kLuaDrawContextKey = 0;
 
+enum class TextInkAnchor { Origin, Start, Center, End };
+
+TextInkAnchor ReadTextInkAnchor(lua_State* state, const char* axis)
+{
+    static const char* const names[] = { "start", "center", "end", nullptr };
+    lua_pushstring(state, axis);
+    lua_rawget(state, 12);
+    const auto anchor = lua_isnil(state, -1) ? TextInkAnchor::Origin
+        : static_cast<TextInkAnchor>(1 + luaL_checkoption(state, -1, nullptr, names));
+    lua_pop(state, 1);
+    return anchor;
+}
+
+bool HasOnlyTextInkAnchorFields(lua_State* state)
+{
+    std::string error;
+    return LuaTableUsesOnlyFields(state, 12, { "x", "y" },
+        "draw.text.inkAlignment", error);
+}
+
+float TextInkAnchorOffset(TextInkAnchor anchor, float start, float end)
+{
+    switch (anchor)
+    {
+    case TextInkAnchor::Start: return start;
+    case TextInkAnchor::Center: return (start + end) * 0.5f;
+    case TextInkAnchor::End: return end;
+    default: return 0.0f;
+    }
+}
+
 std::optional<std::wstring> ResolveDrawFont(lua_State* state, int index)
 {
     const auto* context = GetLuaDrawContext(state);
@@ -70,6 +101,19 @@ int lua_DrawText(lua_State* L)
     float requestedHeight = static_cast<float>(luaL_optnumber(L, 9, 0));
     float alpha = static_cast<float>(luaL_optnumber(L, 10, 1.0));
 
+    TextInkAnchor inkX = TextInkAnchor::Origin;
+    TextInkAnchor inkY = TextInkAnchor::Origin;
+    if (!lua_isnoneornil(L, 12))
+    {
+        luaL_checktype(L, 12, LUA_TTABLE);
+        if (!HasOnlyTextInkAnchorFields(L))
+            return luaL_argerror(L, 12, "expected only x and y ink anchors");
+        inkX = ReadTextInkAnchor(L, "x");
+        inkY = ReadTextInkAnchor(L, "y");
+    }
+    const bool alignInk = inkX != TextInkAnchor::Origin ||
+        inkY != TextInkAnchor::Origin;
+
     std::optional<std::wstring> privateFontPath;
     if (!lua_isnoneornil(L, 11))
     {
@@ -100,15 +144,15 @@ int lua_DrawText(lua_State* L)
     float bx = x + s->widgetRect.left;
     float by = y + s->widgetRect.top;
 
-    if (maxWidth > 0)
+    if (maxWidth > 0 || alignInk)
     {
         ComPtr<IDWriteTextLayout> layout;
-        const float maxHeight = requestedHeight > 0
-            ? requestedHeight
-            : (singleLine ? std::max(size * 1.35f, size + 4.0f) : 5000.0f);
+        const float maxHeight = maxWidth <= 0 ? 200.0f :
+            (requestedHeight > 0 ? requestedHeight :
+                (singleLine ? std::max(size * 1.35f, size + 4.0f) : 5000.0f));
         s->dwrite->CreateTextLayout(wtext.c_str(), static_cast<UINT32>(wtext.size() - 1),
-            format, maxWidth, maxHeight, &layout);
-        if (layout && (singleLine || requestedHeight > 0))
+            format, maxWidth > 0 ? maxWidth : 800.0f, maxHeight, &layout);
+        if (layout && maxWidth > 0 && (singleLine || requestedHeight > 0))
         {
             ComPtr<IDWriteInlineObject> ellipsis;
             if (SUCCEEDED(s->dwrite->CreateEllipsisTrimmingSign(format, &ellipsis)) && ellipsis)
@@ -119,7 +163,16 @@ int lua_DrawText(lua_State* L)
             }
         }
         if (layout)
+        {
+            D2D1_RECT_F ink{};
+            if (alignInk && GetTextLayoutInkBounds(*layout.Get(), ink) &&
+                ink.right > ink.left && ink.bottom > ink.top)
+            {
+                bx -= TextInkAnchorOffset(inkX, ink.left, ink.right);
+                by -= TextInkAnchorOffset(inkY, ink.top, ink.bottom);
+            }
             s->ctx->DrawTextLayout(D2D1::Point2F(bx, by), layout.Get(), brush);
+        }
     }
     else
     {
@@ -191,18 +244,11 @@ int lua_MeasureText(lua_State* L)
 
     DWRITE_TEXT_METRICS metrics{};
     layout->GetMetrics(&metrics);
-    DWRITE_OVERHANG_METRICS overhang{};
-    if (SUCCEEDED(layout->GetOverhangMetrics(&overhang)))
+    D2D1_RECT_F ink{};
+    if (GetTextLayoutInkBounds(*layout.Get(), ink))
     {
-        // Visible bounds are separate from the unchanged line metrics.
-        // Negative overhang denotes unused space inside the whole layout box.
-        D2D1_RECT_F ink{};
-        if (metrics.width > 0.0f)
-            ink = { -overhang.left, -overhang.top,
-                layout->GetMaxWidth() + overhang.right,
-                layout->GetMaxHeight() + overhang.bottom };
         return pushSize(metrics.widthIncludingTrailingWhitespace,
-            metrics.height, ink);
+            metrics.height, metrics.width > 0.0f ? ink : D2D1_RECT_F{});
     }
     return pushSize(metrics.widthIncludingTrailingWhitespace, metrics.height);
 }
@@ -328,6 +374,7 @@ enum class DrawMarqueeError
     Color,
     Alpha,
     Bold,
+    InkCentered,
     Font,
     Host,
     Format,
@@ -356,6 +403,8 @@ static const char* DrawMarqueeErrorMessage(DrawMarqueeError error) noexcept
         return "alpha must be between 0 and 1";
     case DrawMarqueeError::Bold:
         return "bold must be a boolean";
+    case DrawMarqueeError::InkCentered:
+        return "inkCentered must be a boolean";
     case DrawMarqueeError::Font:
         return "font must be a valid package font resource handle";
     case DrawMarqueeError::Host:
@@ -384,7 +433,7 @@ static DrawMarqueeError TryDrawMarqueeText(
     std::string validationError;
     if (!LuaTableUsesOnlyFields(state, descriptor,
             { "key", "x", "y", "width", "height", "text", "size",
-                "color", "bold", "speed", "gap", "alpha", "font" },
+                "color", "bold", "speed", "gap", "alpha", "font", "inkCentered" },
             "draw.marqueeText", validationError))
         return DrawMarqueeError::Options;
 
@@ -481,6 +530,14 @@ static DrawMarqueeError TryDrawMarqueeText(
     }
     const bool bold = lua_toboolean(state, -1) != 0;
     lua_pop(state, 1);
+    lua_getfield(state, descriptor, "inkCentered");
+    if (!lua_isnil(state, -1) && !lua_isboolean(state, -1))
+    {
+        lua_pop(state, 1);
+        return DrawMarqueeError::InkCentered;
+    }
+    const bool inkCentered = lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
 
     std::optional<std::wstring> privateFontPath;
     lua_getfield(state, descriptor, "font");
@@ -537,10 +594,15 @@ static DrawMarqueeError TryDrawMarqueeText(
         marquee.viewport.bottom = std::min(
             marquee.viewport.bottom, clip.bottom);
     }
-    marquee.layout = std::move(layout);
     marquee.originX = x + d2d->widgetRect.left;
     marquee.originY = y + d2d->widgetRect.top + std::max(
         0.0f, (height - metrics.height) * 0.5f);
+    D2D1_RECT_F ink{};
+    if (inkCentered && GetTextLayoutInkBounds(*layout.Get(), ink) &&
+        ink.bottom > ink.top && ink.bottom - ink.top <= height)
+        marquee.originY = y + d2d->widgetRect.top +
+            (height - ink.top - ink.bottom) * 0.5f;
+    marquee.layout = std::move(layout);
     marquee.textWidth = metrics.widthIncludingTrailingWhitespace;
     marquee.textHeight = metrics.height;
     marquee.speed = speed;

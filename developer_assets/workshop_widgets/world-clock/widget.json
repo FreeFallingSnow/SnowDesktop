@@ -794,6 +794,7 @@
     "widget.size.aspectRatio"
   ],
   "optionalFeatures": [
+    "draw.text.inkAlignment",
     "draw.textInkMetrics"
   ],
   "resources": {},

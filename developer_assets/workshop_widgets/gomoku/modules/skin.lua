@@ -58,20 +58,34 @@ function skin.background()
     end
 end
 
+local INK_TEXT = widget.hasFeature("draw.text.inkAlignment")
+local CENTER_TEXT = { x = "center", y = "center" }
+local CENTER_TEXT_X = { x = "center" }
+local CENTER_TEXT_Y = { y = "center" }
+
 local function text(value, x, y, width, size, color, bold, centered, lineHeight, alpha)
     local measured = draw.measureText(value, size, 4096, bold)
     if measured.width > width then
         size = math.max(size * 0.64, size * width / measured.width)
         measured = draw.measureText(value, size, 4096, bold)
     end
-    local offset = centered and math.max(0, (width - measured.width) / 2) or 0
-    if lineHeight then
-        local ink = measured.ink
-        local height, top = measured.height, 0
-        if ink and ink.height > 0 then height, top = ink.height, ink.top end
-        y = y + (lineHeight - height) / 2 - top
+    local alignment
+    if INK_TEXT then
+        if centered then x = x + width / 2 end
+        if lineHeight then y = y + lineHeight / 2 end
+        alignment = centered and (lineHeight and CENTER_TEXT or CENTER_TEXT_X)
+            or (lineHeight and CENTER_TEXT_Y or nil)
+    else
+        local offset = centered and math.max(0, (width - measured.width) / 2) or 0
+        x, width = x + offset, width - offset
+        if lineHeight then
+            local ink = measured.ink
+            local height, top = measured.height, 0
+            if ink and ink.height > 0 then height, top = ink.height, ink.top end
+            y = y + (lineHeight - height) / 2 - top
+        end
     end
-    draw.text(x + offset, y, value, size, color, width - offset, bold, true, nil, alpha)
+    draw.text(x, y, value, size, color, width, bold, true, nil, alpha, nil, alignment)
     return math.min(width, measured.width)
 end
 

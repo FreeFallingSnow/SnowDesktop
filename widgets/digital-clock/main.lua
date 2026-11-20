@@ -181,8 +181,8 @@ local function render()
     for i = 1, #lines do
         local line = lines[i]
         local drawMaxW = line.metrics.width * 1.02
-        draw.text((w - line.metrics.width) * 0.5, y, line.text,
-            line.size, textColor, drawMaxW, true, false, 0, textOpacity)
+        draw.text(w * 0.5, y, line.text, line.size, textColor,
+            drawMaxW, true, false, 0, textOpacity, nil, { x = "center" })
         if i == 1 and #lines > 1 then
             y = y + line.metrics.height + secondaryGap
         else

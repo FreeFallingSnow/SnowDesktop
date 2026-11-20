@@ -97,6 +97,7 @@ std::uint32_t DecodeIconGlyph(std::string_view glyph) noexcept;
 
 std::string_view CurrentWidgetSurface(const WidgetDrawContext* state) noexcept;
 ID2D1SolidColorBrush* GetCachedBrush(WidgetDrawContext* state, int color, float alpha = 1.0f);
+bool GetTextLayoutInkBounds(IDWriteTextLayout& layout, D2D1_RECT_F& bounds) noexcept;
 IDWriteTextFormat* GetCachedTextFormat(WidgetDrawContext* state, float size,
     DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL,
     bool centered = false,

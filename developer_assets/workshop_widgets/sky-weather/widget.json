@@ -745,6 +745,7 @@
     "widget.size.aspectRatio"
   ],
   "optionalFeatures": [
+    "draw.text.inkAlignment",
     "task.network.retryDirect",
     "resource.image.lazy"
   ],

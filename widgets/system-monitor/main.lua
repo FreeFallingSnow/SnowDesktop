@@ -285,10 +285,9 @@ local function drawMarqueeText(key, x, y, text, fontSize, color,
 end
 
 local function centeredText(x, y, width, height, text, size, color, bold)
-    local font, metrics = fitFontSize(text, size, layout.fontCu(9), width, bold, height)
-    draw.text(x + math.max(0, (width - metrics.width) / 2),
-        y + math.max(0, (height - metrics.height) / 2), text, font,
-        color, width, bold, true, height)
+    local font = fitFontSize(text, size, layout.fontCu(9), width, bold, height)
+    draw.text(x + width / 2, y + height / 2, text, font,
+        color, width, bold, true, height, nil, nil, { x = "center", y = "center" })
 end
 
 local function gauge(x, y, width, height, info, palette)
@@ -340,8 +339,8 @@ local function wrappedText(x, y, width, height, text, palette, key)
             text, size, palette.cardSub, width)
         return
     end
-    draw.text(x, y + math.max(0, (height - metrics.height) / 2),
-        text, size, palette.cardSub, width, false, false, height)
+    draw.text(x, y + height / 2, text, size, palette.cardSub,
+        width, false, false, height, nil, nil, { y = "center" })
 end
 
 local function capacityText(x, y, width, height, info, palette, horizontal)
@@ -513,10 +512,11 @@ local function drawCard(x, y, width, height, info, palette, columns, rows)
         for index, line in ipairs(info.lines) do
             local font, metrics = fitted[index].font, fitted[index].metrics
             local lineX = x + inset + (sideBySide and (index - 1) * (slotWidth + lineGap) or 0)
-            local lineY = sideBySide and (bodyTop + math.max(0, (bodyHeight - metrics.height) / 2)) or nextY
+            local lineY = sideBySide and (bodyTop + bodyHeight / 2) or nextY
             draw.text(lineX, lineY,
                 line.text, font, line.color or palette.cardText,
-                slotWidth, false, true, metrics.height)
+                slotWidth, false, true, metrics.height, nil, nil,
+                sideBySide and { y = "center" } or nil)
             nextY = nextY + metrics.height + lineGap
         end
     else
@@ -532,13 +532,11 @@ local function drawCard(x, y, width, height, info, palette, columns, rows)
                     mainFont(15), palette.cardText, true)
             end
         else
-            local metrics = nil
-            valueFont, metrics = fitFontSize(info.value, valueFont,
+            valueFont = fitFontSize(info.value, valueFont,
                 layout.fontCu(10), contentWidth, true, bodyHeight)
-            draw.text(x + math.max(inset, (width - metrics.width) / 2),
-                bodyTop + math.max(0, (bodyHeight - metrics.height) / 2),
+            draw.text(x + width / 2, bodyTop + bodyHeight / 2,
                 info.value, valueFont, palette.cardText, contentWidth, true,
-                true, bodyHeight)
+                true, bodyHeight, nil, nil, { x = "center", y = "center" })
         end
     end
 
