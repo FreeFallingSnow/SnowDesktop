@@ -191,10 +191,13 @@ public:
     bool StageSrgbSceneFrame(HWND window, std::uintptr_t key, const RECT& clientFrame,
         ID2D1Device* device, const SrgbSceneDraw& draw);
     bool StageSrgbScene(HWND window, std::uintptr_t key, const RECT& clientFrame,
-        ID2D1DeviceContext* context, POINT atlasOffset, ID2D1CommandList* scene);
+        ID2D1DeviceContext* context, POINT atlasOffset, ID2D1CommandList* scene,
+        const RECT* paintRect = nullptr);
     bool PublishSrgbScene(HWND window, std::uintptr_t key, const RECT& clientFrame,
         ID2D1DeviceContext* context, POINT atlasOffset, ID2D1CommandList* scene, float opacity = 1.f);
     HRESULT UpdateSrgbScene(std::uintptr_t key, const RECT& damage, const SrgbSceneDraw& draw);
+    HRESULT UpdateSrgbScene(std::uintptr_t key, const RECT& damage,
+        ID2D1CommandList* scene, POINT atlasOffset);
     bool PresentPremultipliedPixels(HWND window, SIZE size, const std::uint32_t* pixels);
     bool PublishSrgbContent(std::uintptr_t key, float opacity = 1.0f);
     bool HasSrgbContent(std::uintptr_t key) const noexcept;

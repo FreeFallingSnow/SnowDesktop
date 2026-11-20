@@ -220,6 +220,11 @@ bool DesktopApp::RenderDesktopForegroundComposition(
 
     RECT client{};
     GetClientRect(hwnd_, &client);
+    const auto retiresHere = [](const UiCompositionAnimationOverlay& overlay) {
+        return overlay.host == UiCompositionAnimationHost::Desktop && overlay.srgbRetirementBounds;
+    };
+    const bool retireCollection = retiresHere(popupAnimationOverlay_);
+    const bool retireLuaPanel = retiresHere(luaWidgetPanelAnimationOverlay_);
     RECT clippedUpdate{};
     const RECT* dcompUpdate = nullptr;
     // A replacement surface has no retained pixels. Its first draw must
@@ -229,7 +234,13 @@ bool DesktopApp::RenderDesktopForegroundComposition(
         !IsRectEmpty(&clippedUpdate))
     {
         clippedUpdate = desktopForegroundTooltipDamage_.IncludePrevious(clippedUpdate, client);
-        highlight_tiles::IncludeSceneTiles(clippedUpdate, client);
+        for (const auto* overlay : {&popupAnimationOverlay_, &luaWidgetPanelAnimationOverlay_})
+        {
+            RECT snapshot{};
+            if (overlay->host == UiCompositionAnimationHost::Desktop && overlay->srgbRetirementBounds &&
+                IntersectRect(&snapshot, &*overlay->srgbRetirementBounds, &client))
+                UnionRect(&clippedUpdate, &clippedUpdate, &snapshot);
+        }
         dcompUpdate = &clippedUpdate;
     }
 
@@ -271,21 +282,22 @@ bool DesktopApp::RenderDesktopForegroundComposition(
         std::vector<DesktopSrgbTile> candidates;
         const auto recorded = scene.Finish();
         const bool prepared = SUCCEEDED(recorded) && highlight_tiles::Stage(desktopBackdropCompositor_, hwnd_,
-            context.Get(), scene.Scene(), dirty, updateOffset, foregroundSrgbTiles_, nextDesktopSrgbKey_, candidates);
+            context.Get(), scene.Scene(), client, dirty, updateOffset,
+            foregroundSrgbTiles_, nextDesktopSrgbKey_, candidates);
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
         drawing_.Reset();
 
         hr = desktopForegroundCompositionSurface_->EndDraw();
         if (!prepared || FAILED(hr)) return false;
-        highlight_tiles::Publish(desktopBackdropCompositor_, dirty, candidates, foregroundSrgbTiles_);
+        highlight_tiles::Publish(desktopBackdropCompositor_, dirty,
+            EqualRect(&dirty, &client) != FALSE, candidates, foregroundSrgbTiles_);
         if (dcompUpdate)
         {
             const RECT required = desktopForegroundTooltipDamage_.IncludeCurrent(clippedUpdate, client);
             if (!EqualRect(&required, &clippedUpdate))
             {
                 clippedUpdate = required;
-                highlight_tiles::IncludeSceneTiles(clippedUpdate, client);
                 // If geometry changes again during repair, finish with one
                 // bounded full draw rather than exposing glass without text.
                 if (pass > 0) dcompUpdate = nullptr;
@@ -293,6 +305,12 @@ bool DesktopApp::RenderDesktopForegroundComposition(
             }
         }
         desktopForegroundTooltipDamage_.AcceptDraw();
+        if (retireCollection)
+            popupAnimationOverlay_.FinishSrgbRetirement(
+                desktopBackdropCompositor_, UiCompositionAnimationHost::Desktop);
+        if (retireLuaPanel)
+            luaWidgetPanelAnimationOverlay_.FinishSrgbRetirement(
+                desktopBackdropCompositor_, UiCompositionAnimationHost::Desktop);
         if (!SyncDesktopWidgetCompositionZOrder()) return false;
         // Another transaction may change interaction pixels on this same
         // allocation. Only an actual pointer frame can retain its footprint.

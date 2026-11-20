@@ -782,6 +782,8 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
         bool& active;
         ~PaintScope() { active = false; }
     } paintScope{ floatingPopupCompositionPaintInProgress_ };
+    const bool retireCollection = popupAnimationOverlay_.srgbRetirementBounds.has_value();
+    const bool retireLuaPanel = luaWidgetPanelAnimationOverlay_.srgbRetirementBounds.has_value();
 
     // Coalesce arriving folder/icons before BeginDraw on the host surface.
     // The animated child keeps its native timeline while only its pixels change.
@@ -812,7 +814,7 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
         drawing_.Reset();
         draw(context.Get());
         const HRESULT recorded = scene.Finish();
-        const bool srgbPresented = SUCCEEDED(recorded) && collectionPopupBackdropCompositor_.PublishSrgbScene(
+        const bool srgbPrepared = SUCCEEDED(recorded) && collectionPopupBackdropCompositor_.StageSrgbScene(
             floatingPopupHwnd_, key, bounds, context.Get(), offset, scene.Scene());
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
@@ -823,7 +825,7 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
         if (SUCCEEDED(hr)) hr = visual.SetOffsetX(static_cast<float>(bounds.left));
         if (SUCCEEDED(hr)) hr = visual.SetOffsetY(static_cast<float>(bounds.top));
         if (FAILED(hr)) return hr;
-        if (!srgbPresented) return FAILED(recorded) ? recorded : E_FAIL;
+        if (!srgbPrepared) return FAILED(recorded) ? recorded : E_FAIL;
         return visual.SetContent(&surface);
     };
 
@@ -838,7 +840,6 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
     const RECT bounds = floatingPopupContentBounds_;
     if (IsRectEmpty(&bounds))
     {
-        collectionPopupBackdropCompositor_.RetireSrgbAfterDirectCommit(srgbKey);
         hr = floatingPopupDcompLiveVisual_->SetContent(nullptr);
     }
     else
@@ -859,9 +860,9 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
     }
 
     const auto indicatorKey = reinterpret_cast<std::uintptr_t>(&luaStackIndicator_);
-    if (IsRectEmpty(&floatingStackIndicatorRegion_))
+    const bool showIndicator = !IsRectEmpty(&floatingStackIndicatorRegion_);
+    if (!showIndicator)
     {
-        collectionPopupBackdropCompositor_.RetireSrgbAfterDirectCommit(indicatorKey);
         if (floatingStackIndicatorVisual_)
             hr = floatingStackIndicatorVisual_->SetContent(nullptr);
     }
@@ -879,10 +880,30 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
         RecoverFloatingPopupCompositionFailure(L"Paint stack indicator", hr);
         return false;
     }
+
+    // The live scene and snapshots share one compositor. Publish only after
+    // both draws finish, then detach outgoing sprites before its next commit.
+    auto& backdrop = collectionPopupBackdropCompositor_;
+    if ((showIndicator && !backdrop.PublishSrgbContent(indicatorKey)) ||
+        (!IsRectEmpty(&bounds) && !backdrop.PublishSrgbContent(srgbKey)))
+    {
+        RecoverFloatingPopupCompositionFailure(L"Publish floating popup", E_FAIL);
+        return false;
+    }
+    if (!showIndicator) backdrop.RemoveSrgbContent(indicatorKey);
+    if (IsRectEmpty(&bounds)) backdrop.RemoveSrgbContent(srgbKey);
+    if (retireCollection)
+        popupAnimationOverlay_.FinishSrgbRetirement(backdrop, UiCompositionAnimationHost::FloatingPopup);
+    if (retireLuaPanel)
+        luaWidgetPanelAnimationOverlay_.FinishSrgbRetirement(backdrop, UiCompositionAnimationHost::FloatingPopup);
+
     const std::array order{indicatorKey, srgbKey, reinterpret_cast<std::uintptr_t>(&popupAnimationOverlay_),
         reinterpret_cast<std::uintptr_t>(&luaWidgetPanelAnimationOverlay_)};
-    collectionPopupBackdropCompositor_.SetSrgbContentOrder(order);
+    backdrop.SetSrgbContentOrder(order);
+    if (std::exchange(floatingPopupBackdropUpdatePending_, false))
+        UpdateCollectionPopupBackdrop(false);
     PublishCollectionPopupFanBackdrops();
+    ApplyCollectionPopupBackdropAnimationFrame(false);
 
     // A panel callback or a re-entrant provider wake may request a desktop
     // widget update while this popup surface owns BeginDraw. The queue defers
@@ -1015,9 +1036,9 @@ void DesktopApp::ApplyFloatingPopupLayerPolicy()
         CaptureMenuHostZOrder(floatingPopupHwnd_));
 }
 
-void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
+void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame(bool submit)
 {
-    if (!collectionPopupBackdropCompositor_.IsAvailable())
+    if (floatingPopupBackdropUpdatePending_ || !collectionPopupBackdropCompositor_.IsAvailable())
         return;
 
     const auto* collection = IsCollectionPopupHostedByFloatingWindow() ? GetOpenPopupWidget() : nullptr;
@@ -1057,10 +1078,10 @@ void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
         visible && floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_));
     // Explicitly submit the same logical frame as the content. Relying on
     // WUC's implicit commit cycle can leave the glass behind a busy UI thread.
-    collectionPopupBackdropCompositor_.CommitVisualChanges();
+    if (submit) collectionPopupBackdropCompositor_.CommitVisualChanges();
 }
 
-void DesktopApp::UpdateCollectionPopupBackdrop()
+void DesktopApp::UpdateCollectionPopupBackdrop(bool submit)
 {
     snowdesktop::performance::Scope scope("popup", "backdrop.update");
     const auto* popup = IsCollectionPopupHostedByFloatingWindow() ? GetOpenPopupWidget() : nullptr;
@@ -1076,8 +1097,13 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
     }
     if (!collectionPopupGlassTheme_ && !fan)
     {
-        // The sRGB layer can own the full popup frame between paints.
-        collectionPopupBackdropCompositor_.ResetBackdrop();
+        if (submit)
+            collectionPopupBackdropCompositor_.ResetBackdrop();
+        else
+        {
+            collectionPopupBackdropCompositor_.BeginFrame(true);
+            collectionPopupBackdropCompositor_.EndFrame(false);
+        }
         popupFanBackdropCount_ = 0;
         return;
     }
@@ -1152,7 +1178,7 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
     }
     // Include geometry and the current pose in one backdrop transaction.
     collectionPopupBackdropCompositor_.EndFrame(false);
-    ApplyCollectionPopupBackdropAnimationFrame();
+    if (submit) ApplyCollectionPopupBackdropAnimationFrame();
 }
 
 void DesktopApp::UpdateFloatingPopupWindowBounds(
@@ -1168,6 +1194,11 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
         StopFloatingPopupOutsideClickMonitor();
         collectionPopupBackdropCompositor_.HidePopupWindowPair(
             floatingPopupHwnd_);
+        popupAnimationOverlay_.FinishSrgbRetirement(
+            collectionPopupBackdropCompositor_, UiCompositionAnimationHost::FloatingPopup);
+        luaWidgetPanelAnimationOverlay_.FinishSrgbRetirement(
+            collectionPopupBackdropCompositor_, UiCompositionAnimationHost::FloatingPopup);
+        floatingPopupBackdropUpdatePending_ = false;
         floatingPopupContentBounds_ = {};
         floatingPopupCollectionRegion_ = {};
         floatingPopupLuaPanelRegion_ = {};
@@ -1266,12 +1297,15 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
         boundsChanged || regionChanged || backdropRecovery ||
         !floatingPopupSurfaces_.Content() || !floatingPopupDcompVisual_ ||
         graphicsDeviceRecovery_.Pending();
-    // When the HWND is already visible for another popup, expose a new
-    // indicator backdrop only after the indicator's own pixels are ready.
-    const bool deferNewIndicatorBackdrop = wasVisible && immediatePresent &&
-        stackRegionChanged && !IsRectEmpty(&nextStackRegion);
-    if (refreshContent && !deferNewIndicatorBackdrop)
-        UpdateCollectionPopupBackdrop();
+    if (refreshContent)
+    {
+        // An existing helper keeps its current glass until the new body and
+        // silhouettes are painted, including the fan-to-panel change.
+        if (collectionPopupBackdropCompositor_.IsAvailable())
+            floatingPopupBackdropUpdatePending_ = true;
+        else
+            UpdateCollectionPopupBackdrop();
+    }
 
     if (!wasVisible || boundsChanged || regionChanged)
     {
@@ -1319,8 +1353,6 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     const bool rendered = immediatePresent
         ? PresentFloatingPopupComposition()
         : false;
-    if (rendered && deferNewIndicatorBackdrop)
-        UpdateCollectionPopupBackdrop();
     if (!rendered && refreshContent)
     {
         InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);

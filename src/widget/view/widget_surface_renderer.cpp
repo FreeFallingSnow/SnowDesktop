@@ -498,6 +498,25 @@ WidgetSurfaceRenderer::Target WidgetSurfaceRenderer::CreateTarget(
     return target;
 }
 
+std::optional<RECT> WidgetSurfacePaint::DamageFrom(const WidgetSurfacePaint& previous) const
+{
+    if (baseRevision == 0 || baseRevision != previous.revision ||
+        !appearance || appearance != previous.appearance ||
+        !backgroundKnown || !previous.backgroundKnown ||
+        authoredBackground != previous.authoredBackground ||
+        background != previous.background || backgroundOpacity != previous.backgroundOpacity ||
+        images != previous.images)
+        return std::nullopt;
+
+    RECT result = damage;
+    if (textChanged)
+    {
+        UnionRect(&result, &result, &previous.textBounds);
+        UnionRect(&result, &result, &textBounds);
+    }
+    return result;
+}
+
 bool WidgetSurfaceRenderer::Submit(const Target& target,
     ID2D1CommandList* commands, const RECT& bounds, WidgetImageSpin imageSpin,
     WidgetSurfacePaint paint)
@@ -515,21 +534,12 @@ bool WidgetSurfaceRenderer::Submit(const Target& target,
         const auto& previous = target->submittedPaint;
         Impl::Frame frame{target, commands, bounds, std::move(imageSpin),
             paint.revision};
-        if (paint.baseRevision != 0 && paint.baseRevision == previous.revision &&
-            EqualRect(&bounds, &target->submittedBounds) &&
-            paint.appearance && paint.appearance == previous.appearance &&
-            paint.backgroundKnown && previous.backgroundKnown &&
-            paint.authoredBackground == previous.authoredBackground &&
-            paint.background == previous.background &&
-            paint.backgroundOpacity == previous.backgroundOpacity &&
-            paint.images == previous.images)
+        if (EqualRect(&bounds, &target->submittedBounds))
         {
-            frame.baseRevision = paint.baseRevision;
-            frame.damage = paint.damage;
-            if (paint.textChanged)
+            if (const auto damage = paint.DamageFrom(previous))
             {
-                UnionRect(&frame.damage, &frame.damage, &previous.textBounds);
-                UnionRect(&frame.damage, &frame.damage, &paint.textBounds);
+                frame.baseRevision = paint.baseRevision;
+                frame.damage = *damage;
             }
         }
         target->submittedPaint = paint.revision != 0 && paint.appearance

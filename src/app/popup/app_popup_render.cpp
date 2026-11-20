@@ -83,7 +83,6 @@ void DesktopApp::PublishCollectionPopupFanBackdrops()
     popupFanBackdropCount_ = published;
     candidates.clear();
     backdrop.EndFrame(false);
-    ApplyCollectionPopupBackdropAnimationFrame();
 }
 
 IDWriteTextFormat* DesktopApp::GetCollectionPopupTextFormat(float scale, bool title)

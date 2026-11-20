@@ -3110,7 +3110,8 @@ HRESULT DesktopBackdropCompositor::SrgbSceneRecording::Finish()
 }
 
 bool DesktopBackdropCompositor::StageSrgbScene(HWND window, std::uintptr_t key,
-    const RECT& clientFrame, ID2D1DeviceContext* context, POINT atlasOffset, ID2D1CommandList* scene)
+    const RECT& clientFrame, ID2D1DeviceContext* context, POINT atlasOffset, ID2D1CommandList* scene,
+    const RECT* paintRect)
 {
     if (!context || !scene || atlasOffset.x < 0 || atlasOffset.y < 0) return false;
     winrt::com_ptr<ID2D1Device> device;
@@ -3120,7 +3121,10 @@ bool DesktopBackdropCompositor::StageSrgbScene(HWND window, std::uintptr_t key,
             target->SetDpi(96.f, 96.f);
             target->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
             target->Clear(D2D1::ColorF(0, 0.f));
-            ReplayScene(target, scene, clientFrame, atlasOffset, origin);
+            const RECT& source = paintRect ? *paintRect : clientFrame;
+            const POINT destination{origin.x + source.left - clientFrame.left,
+                origin.y + source.top - clientFrame.top};
+            ReplayScene(target, scene, source, atlasOffset, destination);
             return S_OK;
         });
 }
@@ -3181,6 +3185,23 @@ HRESULT DesktopBackdropCompositor::UpdateSrgbScene(std::uintptr_t key, const REC
         impl_->lastError = FormatHresult(L"backdrop.srgb_content_update", error.code());
         return error.code();
     }
+}
+
+HRESULT DesktopBackdropCompositor::UpdateSrgbScene(std::uintptr_t key, const RECT& damage,
+    ID2D1CommandList* scene, POINT atlasOffset)
+{
+    return UpdateSrgbScene(key, damage, [&](ID2D1DeviceContext* target, POINT origin) {
+        target->SetDpi(96.f, 96.f);
+        target->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+        target->SetTransform(D2D1::Matrix3x2F::Identity());
+        target->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(origin.x),
+            static_cast<float>(origin.y), static_cast<float>(origin.x + damage.right - damage.left),
+            static_cast<float>(origin.y + damage.bottom - damage.top)), D2D1_ANTIALIAS_MODE_ALIASED);
+        target->Clear(D2D1::ColorF(0, 0.f));
+        ReplayScene(target, scene, damage, atlasOffset, origin);
+        target->PopAxisAlignedClip();
+        return S_OK;
+    });
 }
 
 bool DesktopBackdropCompositor::PresentPremultipliedPixels(HWND window, SIZE size, const std::uint32_t* pixels)

@@ -921,9 +921,9 @@ private:
         bool dragPreviewAlreadySynced);
     void ApplyFloatingPopupLayerPolicy();
     /** @brief 创建、同步或移除集合弹窗窗口下方的原生毛玻璃层。 */
-    void UpdateCollectionPopupBackdrop();
+    void UpdateCollectionPopupBackdrop(bool submit = true);
     /** @brief 将集合弹窗当前开关动画变换同步到原生毛玻璃层。 */
-    void ApplyCollectionPopupBackdropAnimationFrame();
+    void ApplyCollectionPopupBackdropAnimationFrame(bool submit = true);
     void InvalidateFloatingPopupWindow(
         bool immediatePresent = false);
     void RequestCollectionPopupResizePresentation(bool animating);
@@ -4125,6 +4125,7 @@ private:
     RECT floatingStackIndicatorRegion_{};
     bool floatingPopupModalRegion_ = false;
     bool floatingPopupCompositionPaintInProgress_ = false;
+    bool floatingPopupBackdropUpdatePending_ = false;
     unsigned floatingPopupPresentationRetryCount_ = 0;
     bool floatingPopupDropTargetRegistered_ = false;
     snowdesktop::LowLevelMouseHook floatingPopupMouseHook_;

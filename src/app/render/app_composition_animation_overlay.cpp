@@ -203,6 +203,7 @@ bool DesktopApp::PrepareCompositionAnimationOverlay(
     const RECT& bounds,
     UiCompositionAnimationHost host)
 {
+    overlay.FinishSrgbRetirement(AnimationHighlightCompositor(overlay), overlay.host);
     ResetCompositionAnimationOverlay(overlay);
     if (!dcompDevice_ || IsRectEmpty(&bounds))
         return false;
@@ -358,13 +359,6 @@ bool DesktopApp::AnimateCompositionAnimationOverlay(
         return false;
     const auto materialKey = reinterpret_cast<std::uintptr_t>(&overlay);
     auto& material = AnimationHighlightCompositor(overlay);
-    if (material.HasSrgbContent(materialKey) &&
-        !material.StartVisualTransformAnimation(
-            fromScale, toScale, fromOpacity, toOpacity, static_cast<float>(anchor.x),
-            static_cast<float>(anchor.y), durationMilliseconds, normalizedScaleStartSlope,
-            springTimeline, nullptr, 0, materialKey))
-        return false;
-
     const D2D1_POINT_2F localAnchor = D2D1::Point2F(
         static_cast<float>(anchor.x - overlay.bounds.left),
         static_cast<float>(anchor.y - overlay.bounds.top));
@@ -395,9 +389,13 @@ bool DesktopApp::AnimateCompositionAnimationOverlay(
         hr = overlay.effect->SetOpacity(opacityAnimation.Get());
     if (FAILED(hr))
         return false;
-    // The snapshot takes over from the live popup in the same DComp batch.
-    // Paint the live surface with the active snapshot excluded before its
-    // native timeline becomes visible.
+    if (material.HasSrgbContent(materialKey) &&
+        !material.StartVisualTransformAnimation(
+            fromScale, toScale, fromOpacity, toOpacity, static_cast<float>(anchor.x),
+            static_cast<float>(anchor.y), durationMilliseconds, normalizedScaleStartSlope,
+            springTimeline, nullptr, 0, materialKey))
+        return false;
+    // Replace the live popup body when the snapshot begins its native track.
     return overlay.host == UiCompositionAnimationHost::FloatingPopup
         ? RenderFloatingPopupCompositionFrame() : CommitCompositionAnimationFrame();
 }
@@ -437,13 +435,18 @@ bool DesktopApp::FlushPendingCompositionCommit()
         collectionPopupBackdropCompositor_.OnDirectContentCommitted(dcompDevice_.Get());
         dragPreviewHighlights_.OnDirectContentCommitted(dcompDevice_.Get());
         desktopBackdropCompositor_.OnDirectContentCommitted(dcompDevice_.Get());
+        collectionPopupBackdropCompositor_.CommitDeferredFrame();
         (void)collectionPopupBackdropCompositor_.CommitSrgbContent();
         if (!dragPreviewHighlights_.CommitSrgbContent() && dragPreviewHwnd_)
             InvalidateRect(dragPreviewHwnd_, nullptr, FALSE);
         // Finish the glass update before the scene samples the live background.
         desktopBackdropCompositor_.CommitDeferredFrame();
         if (!desktopBackdropCompositor_.CommitSrgbContent() && IsWindow(hwnd_))
+        {
+            for (auto& [id, item] : desktopWidgetCompositionItems_)
+                item.precomposedPaint = {};
             InvalidateRect(hwnd_, nullptr, FALSE);
+        }
     }
     TraceDesktopPresentation(L"composition-commit", hr);
     RecordShellHoverTrace(
@@ -595,13 +598,11 @@ void DesktopApp::PrepareCompositionAnimationOverlayRetirement(
         return;
 
     overlay.active = false;
-    if (overlay.host ==
-        UiCompositionAnimationHost::FloatingPopup)
+    overlay.srgbRetirementBounds = overlay.bounds;
+    if (overlay.host == UiCompositionAnimationHost::FloatingPopup)
     {
-        // Paint the final live popup surface while the snapshot child visual
-        // is still attached. Its caller removes the snapshot in the same
-        // pending DComp transaction, so the shared topmost host never exposes
-        // an empty frame between the two content owners.
+        // The live renderer removes the snapshot when its replacement is
+        // ready. If this paint is deferred, the snapshot remains visible.
         if (!RenderFloatingPopupCompositionFrame() &&
             floatingPopupHwnd_ &&
             IsWindow(floatingPopupHwnd_))
@@ -612,13 +613,19 @@ void DesktopApp::PrepareCompositionAnimationOverlayRetirement(
         return;
     }
 
-    // The normal desktop renderer skips popup content while its snapshot
-    // overlay is active. Release only that logical suppression first, then
-    // paint the final static frame while the snapshot is still attached to
-    // the DComp tree. ResetCompositionAnimationOverlay can subsequently
-    // retire the snapshot in the same pending DComp transaction, so DWM
-    // never observes an empty frame between the two content owners.
-    ClearDesktopBehindCompositionAnimation(bounds);
+    RECT dirty{};
+    UnionRect(&dirty, &bounds, &*overlay.srgbRetirementBounds);
+    if (hwnd_) InvalidateRect(hwnd_, &dirty, FALSE);
+    ClearDesktopBehindCompositionAnimation(dirty);
+}
+
+void UiCompositionAnimationOverlay::FinishSrgbRetirement(
+    DesktopBackdropCompositor& compositor, UiCompositionAnimationHost paintHost)
+{
+    if (host != paintHost || !srgbRetirementBounds)
+        return;
+    compositor.RemoveSrgbContent(reinterpret_cast<std::uintptr_t>(this));
+    srgbRetirementBounds.reset();
 }
 
 void DesktopApp::ResetCompositionAnimationOverlay(
@@ -626,9 +633,9 @@ void DesktopApp::ResetCompositionAnimationOverlay(
 {
     auto& material = AnimationHighlightCompositor(overlay);
     const auto key = reinterpret_cast<std::uintptr_t>(&overlay);
-    if (material.HasSrgbContent(key))
+    if (!overlay.srgbRetirementBounds && material.HasSrgbContent(key))
     {
-        material.RetireSrgbAfterDirectCommit(key);
+        material.RemoveSrgbContent(key);
         (void)CommitCompositionAnimationFrame();
     }
     overlay.presentingHighlights = false;
@@ -659,7 +666,9 @@ bool DesktopApp::UpdateCollectionPopupCompositionAnimation(
 {
     if (!popupAnimationOverlay_.active)
     {
-        ApplyCollectionPopupBackdropAnimationFrame();
+        const auto* collection = GetOpenPopupWidget();
+        if (!collection || !UsesCollectionPopupFan(*collection))
+            ApplyCollectionPopupBackdropAnimationFrame();
         return false;
     }
     const auto visual = popupAnimation_.GetVisual();
@@ -794,7 +803,6 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
                     FinalizeCloseCollectionPopup();
                     return;
                 }
-                ApplyCollectionPopupBackdropAnimationFrame();
                 if (popupAnimation_.IsAnimating())
                 {
                     if (StartCollectionPopupCompositionAnimation())
@@ -911,7 +919,6 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
                     FinalizeCloseLuaWidgetPanel();
                     return;
                 }
-                ApplyCollectionPopupBackdropAnimationFrame();
                 const RECT dirty =
                     luaWidgetPanelAnimationCacheRect_;
                 PrepareCompositionAnimationOverlayRetirement(

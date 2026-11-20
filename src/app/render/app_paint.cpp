@@ -52,7 +52,15 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
         ~PaintScope() { active = false; }
     } paintScope{ compositionPaintInProgress_ };
 
-    HRESULT hr = CreateOrResizeCompositionSurface();
+    bool surfaceRecreated = false;
+    HRESULT hr;
+    {
+        const auto previousSurface = dcompSurface_;
+        const auto previousForeground = desktopForegroundCompositionSurface_;
+        hr = CreateOrResizeCompositionSurface();
+        surfaceRecreated = previousSurface.Get() != dcompSurface_.Get() ||
+            previousForeground.Get() != desktopForegroundCompositionSurface_.Get();
+    }
     if (FAILED(hr))
     {
         RecoverCompositionRenderFailure(
@@ -65,11 +73,10 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
     GetClientRect(hwnd_, &clientRect);
     RECT clippedUpdate{};
     const RECT* dcompUpdate = nullptr;
-    if (updateRect &&
+    if (!surfaceRecreated && updateRect &&
         IntersectRect(&clippedUpdate, updateRect, &clientRect) &&
         !IsRectEmpty(&clippedUpdate))
     {
-        highlight_tiles::IncludeSceneTiles(clippedUpdate, clientRect);
         dcompUpdate = &clippedUpdate;
     }
 
@@ -133,7 +140,8 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
     std::vector<DesktopSrgbTile> srgbCandidates;
     const auto recorded = scene.Finish();
     const bool prepared = SUCCEEDED(recorded) && highlight_tiles::Stage(desktopBackdropCompositor_, hwnd_,
-        context.Get(), scene.Scene(), dirty, updateOffset, desktopSrgbTiles_, nextDesktopSrgbKey_, srgbCandidates);
+        context.Get(), scene.Scene(), clientRect, dirty, updateOffset,
+        desktopSrgbTiles_, nextDesktopSrgbKey_, srgbCandidates);
     context->SetTransform(D2D1::Matrix3x2F::Identity());
     context.Reset();
     hr = paintSurface->EndDraw();
@@ -142,7 +150,8 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
         RecoverCompositionRenderFailure(L"Background scene", FAILED(hr) ? hr : E_FAIL);
         return false;
     }
-    highlight_tiles::Publish(desktopBackdropCompositor_, dirty, srgbCandidates, desktopSrgbTiles_);
+    highlight_tiles::Publish(desktopBackdropCompositor_, dirty,
+        EqualRect(&dirty, &clientRect) != FALSE, srgbCandidates, desktopSrgbTiles_);
 
     if (!FlushPendingDesktopWidgetComposition(true) ||
         desktopWidgetCompositionFailurePending_)

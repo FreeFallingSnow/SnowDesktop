@@ -604,32 +604,59 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
             item.width = width;
             item.height = height;
             item.marqueeDamageUnavailable = false;
+            item.precomposedPaint = {};
             snowdesktop::performance::Value(
                 "widget.composition", "surface_created", widgetId, 1);
         }
 
-        ID2D1DeviceContext* rawContext = nullptr;
-        POINT updateOffset{};
-        HRESULT hr = item.surface->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
-            reinterpret_cast<void**>(&rawContext), &updateOffset);
-        if (FAILED(hr) || !rawContext)
+        const auto sceneKey = item.BackdropOwnerKey();
+        const bool hasLocalBase = luaWidget && !boundsChanged && item.contentVisible &&
+            item.presentingSrgb && item.renderedContentId == contentId && item.precomposedPaint.revision != 0 &&
+            desktopBackdropCompositor_.HasSrgbContent(sceneKey);
+        ComPtr<ID2D1DeviceContext> context;
+        ComPtr<ID2D1CommandList> commands;
+        // This visual already has a transparent DComp surface. Record a Lua
+        // refresh without opening and clearing that whole scratch allocation.
+        if (hasLocalBase)
         {
-            surfaceFailures.push_back({
-                widgetId, L"BeginDraw",
-                FAILED(hr) ? hr : E_FAIL, true });
-            continue;
+            if (!item.precomposedRecorder)
+                (void)d2dDevice_->CreateDeviceContext(
+                    D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &item.precomposedRecorder);
+            if (item.precomposedRecorder && SUCCEEDED(item.precomposedRecorder->CreateCommandList(&commands)))
+                context = item.precomposedRecorder;
         }
 
-        ComPtr<ID2D1DeviceContext> context;
-        context.Attach(rawContext);
+        POINT updateOffset{};
+        HRESULT hr = S_OK;
+        if (commands)
+        {
+            context->SetTarget(commands.Get());
+            context->BeginDraw();
+        }
+        else
+        {
+            hr = item.surface->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
+                reinterpret_cast<void**>(context.ReleaseAndGetAddressOf()), &updateOffset);
+            if (FAILED(hr) || !context)
+            {
+                surfaceFailures.push_back({
+                    widgetId, L"BeginDraw", FAILED(hr) ? hr : E_FAIL, true });
+                continue;
+            }
+        }
         context->SetDpi(96.0f, 96.0f);
         context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
         context->SetTransform(D2D1::Matrix3x2F::Translation(
             static_cast<float>(updateOffset.x - surfaceLeft),
             static_cast<float>(updateOffset.y - surfaceTop)));
-        context->Clear(D2D1::ColorF(0, 0, 0, 0));
-        DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get());
+        std::optional<DesktopBackdropCompositor::SrgbSceneRecording> scene;
+        if (!commands)
+        {
+            context->Clear(D2D1::ColorF(0, 0, 0, 0));
+            scene.emplace(context.Get());
+        }
 
+        snowdesktop::widget_runtime::WidgetSurfacePaint paint;
         desktopWidgetCompositionDrawInProgress_ = true;
         item.iconBackdrops.BeginDraw();
         desktopWidgetIconBackdropsDrawing_ = &item.iconBackdrops;
@@ -649,9 +676,15 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         {
             snowdesktop::performance::Scope contentScope(
                 "widget.composition", "content.record", contentId);
+            struct PaintOutput
+            {
+                WidgetEngine* engine;
+                ~PaintOutput() { if (engine) engine->SetDesktopSurfacePaintOutput(nullptr); }
+            } output{widgetEngine_.get()};
+            if (output.engine) output.engine->SetDesktopSurfacePaintOutput(&paint);
             luaWidget->DrawCompositionSurface(
                 context.Get(), widgetData->bounds,
-                widgetData->selected ? 2 : 0, true, nullptr);
+                widgetData->selected ? 2 : 0, true, output.engine ? &paint : nullptr);
         }
         else
         {
@@ -672,13 +705,41 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
                 desktopWidgetBackdropBlurRadiusDuringDraw_)), 0, 48);
         desktopWidgetBackdropRequestedDuringDraw_ = false;
 
-        const HRESULT sceneResult = scene.Finish();
-        const bool preparedScene = SUCCEEDED(sceneResult) && desktopBackdropCompositor_.PublishSrgbScene(
-            hwnd_, item.BackdropOwnerKey(), contentFrame, context.Get(), updateOffset, scene.Scene(),
-            item.visible ? item.HoverOpacity() : 0.f);
+        HRESULT sceneResult;
+        if (commands)
+        {
+            sceneResult = context->EndDraw();
+            context->SetTarget(nullptr);
+            if (SUCCEEDED(sceneResult)) sceneResult = commands->Close();
+        }
+        else
+        {
+            sceneResult = scene->Finish();
+        }
+        auto* recorded = commands ? commands.Get() : scene->Scene();
+        bool preparedScene = false;
+        if (SUCCEEDED(sceneResult))
+        {
+            const auto localDamage = hasLocalBase ? paint.DamageFrom(item.precomposedPaint) : std::nullopt;
+            RECT patch{};
+            if (localDamage && IntersectRect(&patch, &*localDamage, &contentFrame) &&
+                !SameRect(patch, contentFrame))
+            {
+                OffsetRect(&patch, -surfaceLeft, -surfaceTop);
+                const POINT origin{updateOffset.x + patch.left, updateOffset.y + patch.top};
+                preparedScene = SUCCEEDED(desktopBackdropCompositor_.UpdateSrgbScene(sceneKey, patch, recorded, origin));
+                if (preparedScene)
+                    snowdesktop::performance::Value("widget.composition", "local_refresh_damage_pixels", contentId,
+                        static_cast<double>(patch.right - patch.left) * (patch.bottom - patch.top));
+            }
+            if (!preparedScene)
+                preparedScene = desktopBackdropCompositor_.PublishSrgbScene(
+                    hwnd_, sceneKey, contentFrame, context.Get(), updateOffset, recorded,
+                    item.visible ? item.HoverOpacity() : 0.f);
+        }
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
-        HRESULT endDrawHr = item.surface->EndDraw();
+        HRESULT endDrawHr = commands ? S_OK : item.surface->EndDraw();
         if (FAILED(sceneResult)) endDrawHr = sceneResult;
         if (!preparedScene && SUCCEEDED(endDrawHr)) endDrawHr = E_FAIL;
         drawing_.Reset();
@@ -798,7 +859,11 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         {
             item.contentVisible = showContent;
             if (luaWidget)
+            {
                 item.renderedContentId = contentId;
+                item.precomposedPaint = paint.revision != 0 && paint.appearance
+                    ? std::move(paint) : snowdesktop::widget_runtime::WidgetSurfacePaint{};
+            }
             if (showContent && item.hoverFade && item.hoverFade->waitingForPixels)
                 StartDesktopWidgetHoverFade(item, true);
             if (item.backdropRegistered)
@@ -853,6 +918,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         }
         (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
         item.surface.Reset();
+        item.precomposedRecorder.Reset();
+        item.precomposedPaint = {};
         item.width = 0;
         item.height = 0;
         pendingDesktopWidgetCompositions_.insert_or_assign(failure.widgetId, std::nullopt);

@@ -4,6 +4,7 @@
 #include "layout/popup_animation_rules.h"
 #include "widget/view/widget_composition_layer_rules.h"
 #include "widget/view/widget_native_marquee.h"
+#include "widget/view/widget_surface_renderer.h"
 #include <d2d1_1.h>
 #include <dcomp.h>
 #include <dwrite.h>
@@ -19,6 +20,7 @@ using UiCompositionAnimationHost =
     snowdesktop::widget_composition_layer_rules::CompositionHost;
 
 namespace snowdesktop::widget_runtime { struct WidgetSurfaceTarget; }
+class DesktopBackdropCompositor;
 
 struct UiCompositionAnimationOverlay
 {
@@ -33,8 +35,10 @@ struct UiCompositionAnimationOverlay
         UiCompositionAnimationHost::Desktop;
     bool active = false;
     bool presentingHighlights = false;
+    std::optional<RECT> srgbRetirementBounds;
 
     HRESULT SetPlacementOffset(POINT offset) const;
+    void FinishSrgbRetirement(DesktopBackdropCompositor& compositor, UiCompositionAnimationHost paintHost);
 };
 
 struct PopupFanBackdrop
@@ -87,6 +91,8 @@ struct DesktopWidgetCompositionItem
     std::shared_ptr<snowdesktop::widget_runtime::WidgetSurfaceTarget> renderTarget;
     Microsoft::WRL::ComPtr<IDCompositionVisual2> renderedVisual;
     std::wstring renderedContentId;
+    snowdesktop::widget_runtime::WidgetSurfacePaint precomposedPaint;
+    Microsoft::WRL::ComPtr<ID2D1DeviceContext> precomposedRecorder;
     bool renderedVisualAttached = false;
     bool renderFailed = false;
     bool occluded = false;
