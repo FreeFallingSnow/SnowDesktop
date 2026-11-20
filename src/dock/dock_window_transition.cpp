@@ -1029,9 +1029,10 @@ bool DockWindowTransition::Start(
         return false;
     }
 
-    // The fresh attraction restore is fully transparent until the real
-    // window has restored underneath it. Bind only at that geometry.
-    const bool deferImage = effect_ == 4 && direction_ == DockWindowTransitionDirection::Restore;
+    // Fresh Genie and Attraction restores start fully transparent. Bind the
+    // shared image once the cloaked source has settled at its restored size.
+    const bool deferImage = (effect_ == 3 || effect_ == 4) &&
+        direction_ == DockWindowTransitionDirection::Restore;
     const auto& imageApi = snowdesktop::dock_thumbnail::WindowImageApi();
     if (deferImage && (!imageApi.create || !imageApi.querySize))
         imageResult_ = E_NOTIMPL;
