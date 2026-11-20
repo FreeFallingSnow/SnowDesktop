@@ -870,28 +870,6 @@ static RECT FileCategoryDateToggleRect(FileCategories* widget)
 }
 
 /**
- * @brief 根据可见槽位索引计算在 data->itemKeys 中的实际插入位置。
- * @param app DesktopApp 实例指针。
- * @param data 桌面组件数据。
- * @param visibleIndex 在激活分类可见列表中的索引。
- * @return data->itemKeys 中对应的插入位置索引。
- */
-static size_t InsertIndexForVisibleSlot(FileCategories* widget, size_t visibleIndex)
-{
-    DesktopApp* app = widget ? widget->GetApp() : nullptr;
-    DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
-    if (!app || !data) return 0;
-    const auto& visibleKeys = widget->GetSearchResultKeys();
-    if (visibleIndex < visibleKeys.size())
-    {
-        std::wstring anchor = ToUpperInvariant(visibleKeys[visibleIndex]);
-        for (size_t i = 0; i < data->itemKeys.size(); ++i)
-            if (ToUpperInvariant(data->itemKeys[i]) == anchor) return i;
-    }
-    return data->itemKeys.size();
-}
-
-/**
  * @brief 构建当前激活分类下所有可见项目的 Slot 列表。
  *        每个 Slot 对应一个可视区域内的桌面项目。
  * @return 唯一指针向量，包含所有可见项目对应的 Slot。
@@ -1148,24 +1126,6 @@ int FileCategories::GetVisibleContentHeight() const
 }
 
 /**
- * @brief 处理项目拖放事件，执行拖放管道操作。
- * @param sourceItems 被拖拽的源项目列表。
- * @param origin 来源容器。
- * @param targetSlot 目标槽位（可为空）。
- * @param region 拖放命中区域。
- * @param mods 按键修饰符。
- */
-void FileCategories::OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
-    Slot* targetSlot, HitRegion region, int mods)
-{
-    if (!app_ || !data_) return;
-    DragSourceList sourceList = app_->BuildDragSourceList(sourceItems, origin);
-    DropPreviewList preview = app_->BuildDropPreviewList(sourceList, this, targetSlot, region, mods,
-        app_->dragSession_.CurrentPoint());
-    app_->ExecuteDropPipeline(sourceList, preview);
-}
-
-/**
  * @brief 获取拖放操作的插入索引。
  * @param targetSlot 目标槽位，为空时追加到末尾。
  * @param region 命中区域，SortAfter 表示插入到目标之后。
@@ -1184,10 +1144,7 @@ size_t FileCategories::GetDropInsertIndex(Slot* targetSlot, HitRegion region) co
             }
         return data_->itemKeys.size();
     }
-    size_t visibleInsert = targetSlot ? targetSlot->GetIndex() : GetSlotCount();
-    if (targetSlot && region == HitRegion::SortAfter)
-        ++visibleInsert;
-    return InsertIndexForVisibleSlot(const_cast<FileCategories*>(this), visibleInsert);
+    return WidgetContainer::GetDropInsertIndex(targetSlot, region);
 }
 
 /**

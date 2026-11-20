@@ -32,10 +32,10 @@ snowdesktop::dock_drop_model::Services DesktopApp::DockDropServices()
 }
 
 
-void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
-    Container* origin, DockContainer* targetDock, size_t insertIndex, int mods)
+DropReceipt DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
+    Container* origin, DockContainer* targetDock, size_t insertIndex, int mods, DWORD allowed)
 {
-    if (!targetDock || sourceItems.empty()) return;
+    if (!targetDock || sourceItems.empty()) return {};
     if ((mods & (MK_CONTROL | MK_ALT)) != 0)
     {
         std::vector<Item*> files;
@@ -47,13 +47,14 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         }
         if (files.size() != sourceItems.size())
         {
-            if (!files.empty()) CommitDockDrop(files, origin, targetDock, insertIndex, mods);
-            return;
+            if (!files.empty()) return CommitDockDrop(files, origin, targetDock, insertIndex, mods, allowed);
+            return {};
         }
     }
 
     if (dynamic_cast<DockContainer*>(origin))
     {
+        if (!(allowed & DROPEFFECT_MOVE)) return {};
         std::vector<size_t> indices;
         for (Item* item : sourceItems)
             if (auto* dockItem = dynamic_cast<DockEntryItem*>(item))
@@ -67,10 +68,10 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         if (result != snowdesktop::dock_drop_model::ReorderResult::Changed)
         {
             if (result == snowdesktop::dock_drop_model::ReorderResult::MixedSections) MessageBeep(MB_ICONWARNING);
-            return;
+            return {};
         }
         InvalidateDockContainers();
-        return;
+        return {DropAction::Move};
     }
 
     const bool folderEntriesOnly =
@@ -82,24 +83,16 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
             });
     if (folderEntriesOnly)
     {
+        if (!(allowed & DROPEFFECT_LINK)) return {};
         if (!targetDock->HasCapacity(sourceItems.size()))
         {
             MessageBeep(MB_ICONWARNING);
-            return;
+            return {};
         }
         DragSourceList sourceList =
             BuildDragSourceList(sourceItems, origin);
-        DropPreviewList preview =
-            BuildDropPreviewList(
-                sourceList, GetDesktopGrid(),
-                nullptr, HitRegion::Empty,
-                mods, dragSession_.CurrentPoint());
-        preview.action = DropAction::Link;
-        preview.pinMaterializedItemsToDock = true;
-        preview.dockMonitor = targetDock->GetMonitor();
-        preview.dockInsertIndex = insertIndex;
-        ExecuteDropPipeline(sourceList, preview);
-        return;
+        const auto preview = targetDock->FilePinPreview(sourceList, insertIndex, dragSession_.CurrentPoint());
+        return DropReceipt::Submitted(ExecuteDropPipeline(sourceList, preview), DropAction::Link);
     }
 
     const bool keepSource = (mods & MK_CONTROL) != 0;
@@ -122,7 +115,7 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         else if (auto* collectionEntry = dynamic_cast<CollectionGroupEntryItem*>(source))
         {
             const size_t child = FindWidgetIndexById(collectionEntry->GetCollectionId());
-            if (child >= widgets_.size() || widgets_[child].type != DesktopWidgetType::Collection) return;
+            if (child >= widgets_.size() || widgets_[child].type != DesktopWidgetType::Collection) return {};
             additions.push_back({ DockEntryType::Collection, widgets_[child].id, false });
         }
         else if (auto* groupEntry =
@@ -140,22 +133,25 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
                     widgets_[widgetIndex].id,
                     false });
             }
-            else return;
+            else return {};
         }
-        else return;
+        else return {};
     }
-    if (additions.empty()) return;
+    const auto action = keepSource && std::all_of(additions.begin(), additions.end(),
+        [](const auto& entry) { return entry.keepOnDesktop; }) ? DropAction::Copy : DropAction::Move;
+    if (additions.empty() || !(allowed & DropEffectFromAction(action))) return {};
 
     auto services = DockDropServices();
     services.capacity = [targetDock](size_t count) { return targetDock->HasCapacity(count); };
     if (!snowdesktop::dock_drop_model::Pin({dockEntries_, widgets_}, additions, insertIndex, services))
     {
         MessageBeep(MB_ICONWARNING);
-        return;
+        return {};
     }
     RefreshCollectedKeysCache();
     InvalidateDockContainers();
     InvalidateDragStaticScene();
+    return {action};
 }
 
 bool DesktopApp::AddMaterializedItemsToDock(
@@ -222,53 +218,43 @@ bool DesktopApp::FindDockReturnCell(
     return true;
 }
 
-bool DesktopApp::DropItemsIntoDockCollection(
-    const std::vector<Item*>& sourceItems, Container* origin,
-    DockEntryItem* targetItem, int mods)
+DropReceipt DesktopApp::DropItemsIntoDockCollection(const ItemDrop& drop, DockEntryItem* targetItem)
 {
-    if (!targetItem || !IsLogicalDockEntryType(targetItem->GetEntryType()))
-        return false;
-    size_t widgetIndex = FindWidgetIndexById(targetItem->GetReference());
-    if (widgetIndex < widgets_.size() && IsGroupWidgetType(widgets_[widgetIndex].type))
+    if (!targetItem || !IsLogicalDockEntryType(targetItem->GetEntryType())) return {};
+    const size_t index = FindWidgetIndexById(targetItem->GetReference());
+    if (index >= widgets_.size()) return {};
+    auto& model = widgets_[index];
+    const auto& sources = drop.sources;
+    const auto& sourceItems = drop.items;
+    const auto point = drop.point;
+    const auto mods = drop.modifiers;
+    const auto allowed = drop.allowedEffects;
+    auto commit = [&](WidgetContainer& target) {
+        auto preview = BuildDropPreviewList(sources, &target, nullptr, HitRegion::SortAfter, mods, point);
+        // A Dock group entry represents the entire group, independent of the desktop tab geometry.
+        preview.groupInsertIndex = model.childWidgetIds.size();
+        return target.OnItemsDropped({sourceItems, sources, preview, nullptr, HitRegion::SortAfter, mods, point, allowed});
+    };
+    if (IsGroupWidgetType(model.type))
     {
-        const DragSourceList sourceList = BuildDragSourceList(sourceItems, origin);
-        if (sourceList.HasDesktopWidgetIcons())
-        {
-            for (const auto& container : containers_)
-                if (auto* group = dynamic_cast<WidgetContainer*>(container.get());
-                    group && group->GetWidgetData() == &widgets_[widgetIndex])
-                    return DropDesktopWidgetIconsIntoGroup(group, sourceList, nullptr, HitRegion::Empty, mods);
-            return false;
-        }
-        const auto payload = sourceList.SlotPayloadKind();
-        if (payload == snowdesktop::slot_contract::DragPayloadKind::CollectionWidget ||
-            payload == snowdesktop::slot_contract::DragPayloadKind::CollectionGroupLabel ||
-            sourceList.UsesFileGroupSourceInsertion())
-            return MoveWidgetSourcesToGroup(sourceItems, widgetIndex, widgets_[widgetIndex].childWidgetIds.size());
+        if (!sources.HasDesktopWidgetIcons() && (sources.UsesFileGroupSourceInsertion() ||
+            sources.SlotPayloadKind() == snowdesktop::slot_contract::DragPayloadKind::CollectionWidget ||
+            sources.hasCollectionGroupEntries))
+            return DropReceipt::Submitted((allowed & DROPEFFECT_MOVE) &&
+                MoveWidgetSourcesToGroup(sourceItems, index, model.childWidgetIds.size()), DropAction::Move);
         for (const auto& container : containers_)
-        {
-            auto* group = dynamic_cast<WidgetContainer*>(container.get());
-            if (!group || group->GetWidgetData() != &widgets_[widgetIndex]) continue;
-            const auto preview = BuildDropPreviewList(sourceList, group, nullptr,
-                HitRegion::Empty, mods, dragSession_.CurrentPoint());
-            return ExecuteDropPipeline(sourceList, preview);
-        }
-        return false;
+            if (auto* group = dynamic_cast<WidgetContainer*>(container.get()); group && group->GetWidgetData() == &model)
+                return commit(*group);
+        return {};
     }
-    if (widgetIndex >= widgets_.size() ||
-        (widgets_[widgetIndex].type != DesktopWidgetType::Collection &&
-         widgets_[widgetIndex].type != DesktopWidgetType::FileCategories))
-        return false;
-
-    std::unique_ptr<WidgetContainer> collection;
-    if (widgets_[widgetIndex].type == DesktopWidgetType::FileCategories)
-        collection = std::make_unique<FileCategories>(&widgets_[widgetIndex], this);
-    else
-        collection = std::make_unique<Collection>(&widgets_[widgetIndex], this);
-    DragSourceList sourceList = BuildDragSourceList(sourceItems, origin);
-    DropPreviewList preview = BuildDropPreviewList(sourceList, collection.get(),
-        nullptr, HitRegion::SortAfter, mods, dragSession_.CurrentPoint());
-    return ExecuteDropPipeline(sourceList, preview);
+    if (model.type == DesktopWidgetType::FileCategories)
+    {
+        FileCategories view(&model, this);
+        return commit(view);
+    }
+    if (model.type != DesktopWidgetType::Collection) return {};
+    Collection view(&model, this);
+    return commit(view);
 }
 
 snowdesktop::dock_desktop_return::Services DesktopApp::DockDesktopReturnServices() const
@@ -291,7 +277,7 @@ std::vector<snowdesktop::dock_desktop_return::Landing> DesktopApp::PlanDockDeskt
         std::move(indices), std::move(target), DockDesktopReturnServices());
 }
 
-void DesktopApp::MoveDockItemsToDesktop(
+bool DesktopApp::MoveDockItemsToDesktop(
     const std::vector<Item*>& sourceItems, GridCell targetCell)
 {
     const auto landings = PlanDockDesktopReturn(sourceItems, std::move(targetCell));
@@ -302,9 +288,10 @@ void DesktopApp::MoveDockItemsToDesktop(
             for (const auto& container : containers_)
                 if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
                     dock->PrepareEntryRemoval(landing.entryIndex);
-    if (!snowdesktop::dock_desktop_return::Apply(dockEntries_, widgets_, items_, landings, DockDesktopReturnServices())) return;
+    if (!snowdesktop::dock_desktop_return::Apply(dockEntries_, widgets_, items_, landings, DockDesktopReturnServices())) return false;
     NormalizeDockRecycleBinPosition();
     LayoutItems();
+    return true;
 }
 
 void DesktopApp::RestoreDockEntriesToDesktop()

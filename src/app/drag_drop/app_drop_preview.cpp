@@ -454,8 +454,23 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
         targetWidget->GetWidgetData()->type == DesktopWidgetType::FileGroup;
     if (target && sourceList.HasDesktopWidgetIcons() &&
         (containers_.empty() || target != containers_.front().get() || (mods & (MK_CONTROL | MK_ALT)) != 0))
-        return BuildDropPreviewList(sourceList.WithoutDesktopWidgetIcons(),
+    {
+        preview = BuildDropPreviewList(sourceList.WithoutDesktopWidgetIcons(),
             target, targetSlot, region, mods, dropPoint);
+        if (targetWidget && targetWidget->GetWidgetData() && IsGroupWidgetType(targetWidget->GetWidgetData()->type))
+            preview.groupInsertIndex = targetWidget->GroupDropInsertIndex(targetSlot, region, dropPoint);
+        return preview;
+    }
+    if (targetWidget && targetWidget->GetWidgetData() && IsGroupWidgetType(targetWidget->GetWidgetData()->type) &&
+        (sourceList.hasWidgets || sourceList.hasCollectionGroupEntries || sourceList.hasFileGroupEntries || fileGroupSourceInsertion))
+        preview.groupInsertIndex = targetWidget->GroupDropInsertIndex(targetSlot, region, dropPoint);
+    if (auto* dock = dynamic_cast<DockContainer*>(target); dock && region != HitRegion::Handoff && region != HitRegion::Blocked)
+    {
+        const auto index = dock->GetDropInsertIndex(targetSlot, region);
+        preview = dock->FilePinPreview(sourceList, index, dropPoint);
+        preview.dockInsertIndex = index;
+        return preview;
+    }
     if (sourceList.Empty() || !target ||
         (sourceList.hasWidgets && !sourceList.HasDesktopWidgetIcons() && !fileGroupSourceInsertion) ||
         region == HitRegion::Handoff || region == HitRegion::Blocked)
@@ -636,22 +651,7 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
             preview.targetKind = DropTargetKind::KeyedWidget;
             preview.action = DropAction::Move;
             preview.fileBacked = false;
-            preview.insertIndex =
-                widget->GetDropInsertIndex(targetSlot, region);
-            const bool emptyGroupTabPoint =
-                (dynamic_cast<CollectionGroup*>(widget) &&
-                    dynamic_cast<CollectionGroup*>(widget)->
-                        CategoryIdAtPoint(dropPoint).empty()) ||
-                (dynamic_cast<FileGroup*>(widget) &&
-                    dynamic_cast<FileGroup*>(widget)->
-                        SourceIdAtPoint(dropPoint).empty());
-            const bool tabInsertion = targetSlot &&
-                (targetSlot->GetFeedbackIdentity().role == SlotFeedbackRole::CollectionGroupTab ||
-                 targetSlot->GetFeedbackIdentity().role == SlotFeedbackRole::FileGroupSourceTab) &&
-                (region == HitRegion::SortBefore || region == HitRegion::SortAfter);
-            if (emptyGroupTabPoint && !tabInsertion)
-                preview.insertIndex =
-                    preview.targetWidget->childWidgetIds.size();
+            preview.insertIndex = preview.groupInsertIndex;
             for (const auto& entry : sourceList.entries)
             {
                 const bool matchingEntry =
@@ -674,57 +674,13 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
             }
             return preview;
         }
-        if (preview.targetWidget &&
-            preview.targetWidget->type ==
-                DesktopWidgetType::CollectionGroup)
-        {
-            auto* group =
-                dynamic_cast<CollectionGroup*>(widget);
-            std::wstring activeId = group
-                ? group->CategoryIdAtPoint(dropPoint)
-                : L"";
-            if (activeId.empty() && group)
-                activeId = group->GetActiveCollectionId();
-            const size_t activeIndex =
-                FindWidgetIndexById(activeId);
-            if (activeIndex >= widgets_.size() ||
-                widgets_[activeIndex].type !=
-                    DesktopWidgetType::Collection)
-            {
-                if (!snowdesktop::empty_group_drop_rules::IsEmptyGroup(*preview.targetWidget, widgets_))
-                    return preview;
-            }
-            // 集合组只是当前集合的可视代理。普通图标拖放仍落到
-            // 激活标签对应的 Collection 数据中。
-            else preview.targetWidget = const_cast<DesktopWidget*>(
-                &widgets_[activeIndex]);
-        }
-        if (preview.targetWidget &&
-            preview.targetWidget->type ==
-                DesktopWidgetType::FileGroup)
-        {
-            auto* group = dynamic_cast<FileGroup*>(widget);
-            std::wstring activeId = group ? group->SourceIdAtPoint(dropPoint) : L"";
-            if (activeId.empty() && group && group->IsGroupSearchActive() && targetSlot)
-                if (auto* source = group->GetSourceContainerForItem(targetSlot->GetItem()))
-                    if (auto* data = source->GetWidgetData()) activeId = data->id;
-            if (activeId.empty()) activeId = group
-                ? group->GetActiveSourceId() : preview.targetWidget->activeCategoryId;
-            const size_t activeIndex =
-                FindWidgetIndexById(activeId);
-            if (activeIndex >= widgets_.size() ||
-                (widgets_[activeIndex].type !=
-                    DesktopWidgetType::FileCategories &&
-                 widgets_[activeIndex].type !=
-                    DesktopWidgetType::FolderMapping))
-            {
-                if (!snowdesktop::empty_group_drop_rules::IsEmptyGroup(*preview.targetWidget, widgets_))
-                    return preview;
-            }
-            else preview.targetWidget =
-                const_cast<DesktopWidget*>(
-                    &widgets_[activeIndex]);
-        }
+        auto destination = widget->ResolveMemberDestination(targetSlot, region, dropPoint);
+        if (!destination.model || (IsGroupWidgetType(destination.model->type) &&
+            !snowdesktop::empty_group_drop_rules::IsEmptyGroup(*destination.model, widgets_))) return preview;
+        preview.targetContainer = destination.view;
+        preview.targetWidget = destination.model;
+        preview.insertIndex = destination.index;
+        preview.activateChildId = std::move(destination.activateChildId);
         preview.targetKind = preview.targetWidget &&
             preview.targetWidget->type == DesktopWidgetType::FolderMapping
                 ? DropTargetKind::FolderMapping
@@ -751,31 +707,15 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
             preview.action = DropAction::Copy;
             preview.consumeDockSource = true;
         }
-        Container* resolvedTarget = target;
-        if (auto* group = dynamic_cast<FileGroup*>(widget))
-            if (preview.targetWidget)
-                if (auto* source = group->GetSourceContainerById(preview.targetWidget->id))
-                    resolvedTarget = source;
         if (preview.targetWidget &&
             preview.targetWidget->dateHeaders &&
-            !sourceList.hasSearchResults && sourceList.origin == resolvedTarget &&
+            !sourceList.hasSearchResults && sourceList.origin == preview.targetContainer &&
             preview.action == DropAction::Move)
             return preview;
         preview.fileBacked = !(
-            !sourceList.hasSearchResults && sourceList.origin == resolvedTarget &&
+            !sourceList.hasSearchResults && sourceList.origin == preview.targetContainer &&
             preview.action == DropAction::Move) &&
             IsDropFileBacked(sourceList, preview.targetKind, preview.action);
-        preview.insertIndex = widget->GetDropInsertIndex(targetSlot, region);
-        if (auto* group = dynamic_cast<FileGroup*>(widget);
-            group && !group->SourceIdAtPoint(dropPoint).empty() && preview.targetWidget)
-            preview.insertIndex = preview.targetWidget->type == DesktopWidgetType::FolderMapping
-                ? preview.targetWidget->folderEntries.size() : preview.targetWidget->itemKeys.size();
-        if (auto* group =
-                dynamic_cast<CollectionGroup*>(widget);
-            group && !group->CategoryIdAtPoint(dropPoint).empty() &&
-            preview.targetWidget)
-            preview.insertIndex =
-                preview.targetWidget->itemKeys.size();
         for (const auto* entry : snowdesktop::desktop_icon_drop_order::WidgetInsertionSources(
                 sourceList, savedPageIds_))
         {

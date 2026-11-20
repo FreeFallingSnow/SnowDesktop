@@ -2439,12 +2439,30 @@ void DockContainer::DrawPartitionInsertionPreview(ID2D1DeviceContext* context, s
     DrawDockInsertionIndicator(context, base, visual, axis, IsVertical(), ItemIconSize());
 }
 
-void DockContainer::OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
-    Slot* targetSlot, HitRegion region, int mods)
+DropPreviewList DockContainer::FilePinPreview(const DragSourceList& sources, size_t insertIndex, POINT point) const
 {
-    if (!app_ || region == HitRegion::Blocked) return;
-    app_->CommitDockDrop(sourceItems, origin, this,
-        InsertIndexFor(targetSlot, region), mods);
+    DropPreviewList preview;
+    if (!app_ || sources.Empty() || !std::all_of(sources.entries.begin(), sources.entries.end(),
+            [](const auto& entry) { return dynamic_cast<FolderEntryIcon*>(entry.item) != nullptr; })) return preview;
+    preview = app_->BuildDropPreviewList(sources, app_->GetDesktopGrid(), nullptr, HitRegion::Empty, MK_ALT, point);
+    preview.action = DropAction::Link;
+    preview.pinMaterializedItemsToDock = true;
+    preview.dockMonitor = GetMonitor();
+    preview.dockInsertIndex = insertIndex;
+    return preview;
+}
+
+DropReceipt DockContainer::OnItemsDropped(const ItemDrop& drop)
+{
+    if (!app_ || drop.region == HitRegion::Blocked) return {};
+    if (drop.preview.pinMaterializedItemsToDock)
+    {
+        if (!drop.Allows(DropAction::Link)) return {};
+        if (!HasCapacity(drop.items.size())) { MessageBeep(MB_ICONWARNING); return {}; }
+        return DropReceipt::Submitted(app_->ExecuteDropPipeline(drop.sources, drop.preview), DropAction::Link);
+    }
+    return app_->CommitDockDrop(drop.items, drop.sources.origin, this,
+        drop.preview.dockInsertIndex, drop.modifiers, drop.allowedEffects);
 }
 
 void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)

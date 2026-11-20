@@ -187,25 +187,23 @@ HitRegion DesktopGrid::HitTestAtPoint(POINT pt, Slot*& outSlot)
  *          - 常规模式：通过 BuildDragSourceList / BuildDropPreviewList /
  *            ExecuteDropPipeline 三步完成拖放管道处理
  */
-void DesktopGrid::OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
-    Slot* targetSlot, HitRegion region, int mods)
+DropReceipt DesktopGrid::OnItemsDropped(const ItemDrop& drop)
 {
-    if (!app_) return;
-
+    if (!app_) return {};
+    const auto& sourceItems = drop.items;
+    auto* origin = drop.sources.origin;
     if (dynamic_cast<DockContainer*>(origin))
     {
-        const auto sourceList = app_->BuildDragSourceList(sourceItems, origin);
-        snowdesktop::desktop_drop_dispatch::Dock(true, sourceList, mods,
+        DropAction action = DropAction::Move;
+        const auto submitted = snowdesktop::desktop_drop_dispatch::Dock(true, drop.sources, drop.modifiers,
             [&] {
-                const auto target = app_->ResolveDesktopRequestCell(sourceList, app_->dragSession_.CurrentPoint());
-                app_->MoveDockItemsToDesktop(sourceItems, target);
-                return true;
-            }, [&](const auto& sources, int modifiers) {
-                const auto preview = app_->BuildDropPreviewList(sources, this, targetSlot, region, modifiers,
-                    app_->dragSession_.CurrentPoint());
-                return app_->ExecuteDropPipeline(sources, preview);
+                return drop.Allows(action) && app_->MoveDockItemsToDesktop(sourceItems,
+                    app_->ResolveDesktopRequestCell(drop.sources, drop.point));
+            }, [&](const auto& sources, int) {
+                action = drop.preview.action;
+                return drop.Allows(action) && app_->ExecuteDropPipeline(sources, drop.preview);
             });
-        return;
+        return DropReceipt::Submitted(submitted.value_or(false), action);
     }
 
     if (dynamic_cast<FileGroup*>(origin))
@@ -240,10 +238,11 @@ void DesktopGrid::OnItemsDropped(const std::vector<Item*>& sourceItems, Containe
         }
         if (folderMappingsOnly)
         {
+            if (!drop.Allows(DropAction::Move)) return {};
             // LayoutItems replaces this DesktopGrid after the batch.
             auto* app = app_;
             const GridCell target =
-                app->CellFromPointForDrag(app->dragSession_.CurrentPoint());
+                app->CellFromPointForDrag(drop.point);
             bool changed = false;
             for (const auto& id : mappingIds)
                 if (app->ReleaseWidgetFromFileGroup(id, target)) changed = true;
@@ -254,26 +253,11 @@ void DesktopGrid::OnItemsDropped(const std::vector<Item*>& sourceItems, Containe
                 app->RequestLayoutSave();
                 InvalidateRect(app->hwnd_, nullptr, TRUE);
             }
-            return;
+            return DropReceipt::Submitted(changed, DropAction::Move);
         }
     }
 
-    // Handoff: delegate to shell via DropSelectedItemsOnTarget
-    if (region == HitRegion::Handoff)
-    {
-        int hit = app_->HitTestItem(app_->dragSession_.CurrentPoint());
-        if (hit >= 0 && !(*items_)[hit].selected)
-            app_->DropSelectedItemsOnTarget(hit);
-        app_->RequestLayoutSave();
-        app_->ClearSelection();
-        app_->ReloadItems();
-        return;
-    }
-
-    DragSourceList sourceList = app_->BuildDragSourceList(sourceItems, origin);
-    DropPreviewList preview = app_->BuildDropPreviewList(sourceList, this, targetSlot, region, mods,
-        app_->dragSession_.CurrentPoint());
-    app_->ExecuteDropPipeline(sourceList, preview);
+    return DropReceipt::Submitted(drop.Allows(drop.preview.action) && app_->ExecuteDropPipeline(drop.sources, drop.preview), drop.preview.action);
 }
 
 /**

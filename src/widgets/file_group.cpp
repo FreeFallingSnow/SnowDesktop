@@ -1864,176 +1864,31 @@ std::wstring FileGroup::GetDragHint(
         : L"";
 }
 
-void FileGroup::OnItemsDropped(
-    const std::vector<Item*>& sourceItems,
-    Container* origin, Slot* targetSlot,
-    HitRegion region, int mods)
+WidgetMemberDestination FileGroup::ResolveMemberDestination(Slot* slot, HitRegion region, POINT point)
 {
-    if (!app_ || !data_ || sourceItems.empty()) return;
-    const auto sourceListForMembership = app_->BuildDragSourceList(sourceItems, origin);
-    if (sourceListForMembership.HasDesktopWidgetIcons())
-    {
-        app_->DropDesktopWidgetIconsIntoGroup(this, sourceListForMembership, targetSlot, region, mods);
-        return;
-    }
-    const bool allFileSources =
-        std::all_of(
-            sourceItems.begin(),
-            sourceItems.end(),
-            [&](Item* item) {
-                std::wstring id;
-                if (auto* dockItem =
-                        dynamic_cast<
-                            DockEntryItem*>(item))
-                {
-                    if (dockItem->GetEntryType() != DockEntryType::FolderMapping &&
-                        dockItem->GetEntryType() != DockEntryType::DesktopFiles)
-                        return false;
-                    id = dockItem->GetReference();
-                }
-                else if (auto* groupEntry =
-                             dynamic_cast<
-                                 FileGroupEntryItem*>(
-                                 item))
-                {
-                    id =
-                        groupEntry->
-                            GetChildWidgetId();
-                }
-                else
-                {
-                    return false;
-                }
-                const size_t childIndex =
-                    app_->FindWidgetIndexById(id);
-                return childIndex <
-                        app_->widgets_.size() &&
-                    (app_->widgets_[childIndex].type == DesktopWidgetType::FolderMapping ||
-                     app_->widgets_[childIndex].type == DesktopWidgetType::FileCategories);
-            });
-    if (allFileSources)
-    {
-        size_t insertIndex =
-            GetDropInsertIndex(
-                targetSlot, region);
-        if (!snowdesktop::group_tab_drag_preview::IsTabInsertion(targetSlot, region) && SourceIdAtPoint(
-                app_->dragSession_.
-                    CurrentPoint()).empty())
-            insertIndex =
-                data_->childWidgetIds.size();
-        const size_t groupIndex =
-            app_->FindWidgetIndexById(
-                data_->id);
-        app_->MoveFileSourcesToFileGroup(
-            sourceItems, groupIndex,
-            insertIndex);
-        return;
-    }
+    auto tab = SourceIdAtPoint(point);
+    auto* source = tab.empty() ? GetActiveSourceContainer() : GetSourceContainerById(tab);
+    if (tab.empty() && IsGroupSearchActive() && slot)
+        if (auto* hit = GetSourceContainerForItem(slot->GetItem())) source = hit;
+    if (!source) return {this, data_, 0, {}};
+    if (tab.empty() && IsGroupSearchActive())
+        return {source, source->GetWidgetData(), GetDropInsertIndex(slot, region), {}};
+    HostedFileSourceScope hosted(this, source);
+    if (!hosted) return {this, nullptr, 0, {}};
+    const auto index = tab.empty() ? source->GetDropInsertIndex(slot, region)
+                                  : source->GetDropInsertIndex(nullptr, HitRegion::SortAfter);
+    return {source, source->GetWidgetData(), index, std::move(tab)};
+}
 
-    const bool allSources = std::all_of(
-        sourceItems.begin(), sourceItems.end(),
-        [](Item* item) {
-            return dynamic_cast<FileGroupEntryItem*>(item) != nullptr;
-        });
-    if (allSources)
-    {
-        const DragSourceList& session =
-            app_->dragSession_.SourceList();
-        DragSourceList sourceList =
-            snowdesktop::collection_group_rules::
-                SelectDragSource(
-                    !session.Empty(),
-                    app_->dragSession_.Source() ==
-                        origin) ==
-                snowdesktop::collection_group_rules::
-                    DragSourceSelection::Captured
-            ? session
-            : app_->BuildDragSourceList(sourceItems, origin);
-        DropPreviewList preview =
-            app_->BuildDropPreviewList(
-                sourceList, this, targetSlot, region,
-                mods, app_->dragSession_.CurrentPoint());
-        if (SourceIdAtPoint(
-                app_->dragSession_.CurrentPoint()).empty())
-        {
-            preview.insertIndex = data_->childWidgetIds.size();
-            for (size_t i = 0; i < preview.landings.size(); ++i)
-                preview.landings[i].insertIndex =
-                    preview.insertIndex + i;
-        }
-        // ExecuteDropPipeline may call LayoutItems(), which rebuilds the
-        // runtime container tree and destroys this FileGroup.  Treat the
-        // pipeline call as terminal and never access this afterwards.
-        app_->ExecuteDropPipeline(sourceList, preview);
-        return;
-    }
-
-    const std::wstring targetSourceId = SourceIdAtPoint(app_->dragSession_.CurrentPoint());
-    auto* source = targetSourceId.empty() ? GetActiveSourceContainer() : GetSourceContainerById(targetSourceId);
-    if (targetSourceId.empty() && IsGroupSearchActive() && targetSlot)
-        if (auto* hitSource = GetSourceContainerForItem(targetSlot->GetItem())) source = hitSource;
-    if (!source)
-    {
-        const auto& session = app_->dragSession_.SourceList();
-        DragSourceList sources = !session.Empty() && app_->dragSession_.Source() == origin
-            ? session : app_->BuildDragSourceList(sourceItems, origin);
-        const auto preview = app_->BuildDropPreviewList(sources, this, targetSlot, region,
-            mods, app_->dragSession_.CurrentPoint());
-        // Conversion and execution may replace this empty group's runtime view.
-        app_->ExecuteDropPipeline(sources, preview);
-        return;
-    }
-    DesktopApp* app = app_;
-    const std::wstring groupId = data_->id;
-    DragSourceList sourceList;
-    DropPreviewList preview;
-    {
-        // Restore the hosted child before executing the drop.  The pipeline
-        // may rebuild all runtime containers, so the scope must not outlive
-        // the call boundary.
-        HostedFileSourceScope hosted(this, source);
-        if (!hosted) return;
-        const DragSourceList& session =
-            app->dragSession_.SourceList();
-        sourceList =
-            snowdesktop::collection_group_rules::
-                SelectDragSource(
-                    !session.Empty(),
-                    app->dragSession_.Source() ==
-                        origin) ==
-                snowdesktop::collection_group_rules::
-                    DragSourceSelection::Captured
-            ? session
-            : app->BuildDragSourceList(
-                sourceItems, origin);
-        preview =
-            app->BuildDropPreviewList(
-                sourceList, source,
-                !targetSourceId.empty() ? nullptr : targetSlot,
-                targetSourceId.empty() ? region : HitRegion::SortAfter, mods,
-                app->dragSession_.CurrentPoint());
-        if (targetSourceId.empty() && IsGroupSearchActive())
-        {
-            preview.insertIndex = GetDropInsertIndex(targetSlot, region);
-            for (size_t i = 0; i < preview.landings.size(); ++i)
-                preview.landings[i].insertIndex = preview.insertIndex + i;
-        }
-    }
-    const bool activate = !targetSourceId.empty() && !preview.Empty() && preview.targetWidget &&
-        preview.targetWidget->id == targetSourceId;
-    // Executing can invalidate source, this group and every runtime view.
-    if (!app->ExecuteDropPipeline(sourceList, preview) || !activate) return;
-    const size_t groupIndex = app->FindWidgetIndexById(groupId);
-    if (groupIndex >= app->widgets_.size()) return;
-    auto& group = app->widgets_[groupIndex];
-    if (group.type != DesktopWidgetType::FileGroup ||
-        std::find(group.childWidgetIds.begin(), group.childWidgetIds.end(), targetSourceId) == group.childWidgetIds.end()) return;
-    group.activeCategoryId = targetSourceId;
-    for (const auto& container : app->containers_)
-        if (auto* current = dynamic_cast<FileGroup*>(container.get()); current && current->GetWidgetData() == &group)
-            current->InvalidateHostedView();
-    app->RequestLayoutSave();
-    InvalidateRect(app->hwnd_, nullptr, FALSE);
+DropReceipt FileGroup::OnItemsDropped(const ItemDrop& drop)
+{
+    if (!app_ || !data_ || drop.items.empty()) return {};
+    if (drop.sources.HasDesktopWidgetIcons())
+        return app_->DropDesktopWidgetIconsIntoGroup(this, drop);
+    if (drop.sources.UsesFileGroupSourceInsertion())
+        return DropReceipt::Submitted(drop.Allows(DropAction::Move) && app_->MoveWidgetSourcesToGroup(drop.items,
+            app_->FindWidgetIndexById(data_->id), drop.preview.groupInsertIndex), DropAction::Move);
+    return WidgetContainer::OnItemsDropped(drop);
 }
 
 void FileGroup::DrawContent(

@@ -251,63 +251,14 @@ const Layout& DesktopApp::FileDropMemberLayout(const DesktopWidget& widget, cons
         cached.folderPath == model->sourceFolderPath) return cached.layout;
     cached = {model, generation, count, model->sourceFolderPath, {}};
     auto& layout = cached.layout;
-    const WidgetContainer* content = view;
-    if (const auto* group = dynamic_cast<const FileGroup*>(view)) content = group->GetActiveSourceContainer();
-    // A search can mix members of several folders with recursive Shell hits.
-    // Keep their view indices independent from the backing folder's indices.
-    struct SearchMember { const DesktopWidget* owner; size_t index; std::wstring key; };
-    std::vector<SearchMember> searchMembers;
-    const auto* scrolling = dynamic_cast<const ScrollingItemWidget*>(view);
-    const auto* groupView = dynamic_cast<const FileGroup*>(view);
-    const auto search = scrolling ? scrolling->folderSearch_.get() : nullptr;
-    const bool recursive = search && (search->available || search->pending);
-    const bool combined = groupView && groupView->IsGroupSearchActive();
-    const auto appendSearchMember = [&](const auto& ownerId, size_t member, const auto& key, const FolderEntry* hit) {
-        const size_t index = FindWidgetIndexById(ownerId);
-        const auto* owner = index < widgets_.size() ? &widgets_[index] : nullptr;
-        if (!key.empty() && owner)
-            member = std::find(owner->itemKeys.begin(), owner->itemKeys.end(), key) - owner->itemKeys.begin();
-        searchMembers.push_back({owner, member, hit ? hit->fullPath :
-            key.empty() && owner && member < owner->folderEntries.size() ? owner->folderEntries[member].fullPath : key});
-    };
-    if (recursive)
-        for (const auto& row : search->rows) appendSearchMember(row.sourceId, row.folderIndex, row.desktopKey, row.recursive.get());
-    else if (combined)
-        for (const auto& row : groupView->GetGroupSearchResults())
-            appendSearchMember(row.sourceId, row.folderEntryIndex, row.desktopKey, nullptr);
-    const auto* mapping = dynamic_cast<const FolderMapping*>(content);
-    if (!view && folderPreview_ && &widget == GetOpenPopupWidget())
-        mapping = dynamic_cast<const FolderMapping*>(GetCategorizedPopupView());
-    const auto* categories = dynamic_cast<const FileCategories*>(content);
-    const auto* collections = dynamic_cast<const CollectionGroup*>(view);
-    const bool folder = model->type == DesktopWidgetType::FolderMapping;
-    const auto* visible = mapping ? &mapping->GetVisibleEntryIndices() : nullptr;
-    const auto& keys = collections ? collections->GetVisibleItemKeys() : categories ? categories->GetSearchResultKeys() :
-        !view && !folder ? GetPopupItemKeysView(widget) : model->itemKeys;
-    const bool searching = recursive || combined;
-    const size_t length = searching ? searchMembers.size() : folder ? (visible ? visible->size() : count) : keys.size();
-    const auto boundary = [&](size_t raw, const std::wstring& owner) -> size_t {
-        if (searching)
-        {
-            size_t end = length;
-            for (size_t i = 0; i < length; ++i)
-                if (searchMembers[i].owner && searchMembers[i].owner->id == owner)
-                {
-                    if (searchMembers[i].index >= raw) return i;
-                    end = i + 1;
-                }
-            return end;
-        }
-        if (raw >= count) return length;
-        if (visible) return std::find(visible->begin(), visible->end(), raw) - visible->begin();
-        if (!folder && &keys != &model->itemKeys)
-            return std::find(keys.begin(), keys.end(), model->itemKeys[raw]) - keys.begin();
-        return raw;
-    };
-    const auto seesOwner = [&](const std::wstring& id) {
-        return id == model->id || (searching && std::any_of(searchMembers.begin(), searchMembers.end(),
-            [&](const auto& row) { return row.owner && row.owner->id == id; }));
-    };
+    auto members = [&] {
+        if (view) return view->VisibleDropMembers(*model);
+        if (folderPreview_ && &widget == GetOpenPopupWidget())
+            if (const auto* popup = GetCategorizedPopupView()) return popup->VisibleDropMembers(*model);
+        WidgetContainer::DropMembers popup(*model);
+        if (model->type != DesktopWidgetType::FolderMapping) popup.keys = &GetPopupItemKeysView(widget);
+        return popup;
+    }();
     std::unordered_set<std::wstring> removed;
     for (const auto& [key, state] : fileRemovalVisibility_) removed.insert(key);
     for (const auto& request : pendingLandingCaches_)
@@ -315,24 +266,24 @@ const Layout& DesktopApp::FileDropMemberLayout(const DesktopWidget& widget, cons
         removed.insert(request.movedSourceKeys.begin(), request.movedSourceKeys.end());
         if (!request.visualId || request.dockMonitor) continue;
         for (const auto& entry : request.entries)
-            if (entry.kind == DropLandingKind::WidgetIndex && seesOwner(entry.widgetId))
+            if (entry.kind == DropLandingKind::WidgetIndex && members.ContainsOwner(entry.widgetId))
             {
                 const auto* file = request.FindFile(entry.sourceIndex);
                 // All members of one batch share the insertion boundary.
-                layout.gaps.push_back({boundary(request.entries.front().insertIndex, entry.widgetId),
+                layout.gaps.push_back({members.VisibleBoundary(request.entries.front().insertIndex, entry.widgetId),
                     file ? file->appearance : nullptr});
                 if (!entry.createdPath.empty()) removed.insert(ToUpperInvariant(entry.createdPath));
             }
         for (const auto& group : request.folderPlacements)
         {
-            if (searching)
+            if (members.search)
             {
-                if (!seesOwner(group.widgetId)) continue;
+                if (!members.ContainsOwner(group.widgetId)) continue;
             }
-            else if (!folder || !PathsEqualInsensitive(group.sourceFolderPath, model->sourceFolderPath) ||
+            else if (model->type != DesktopWidgetType::FolderMapping || !PathsEqualInsensitive(group.sourceFolderPath, model->sourceFolderPath) ||
                 (model->id == kDockFolderPopupWidgetId ? group.popupSourceId != dockFolderPopupSourceId_ :
                     group.widgetId != model->id)) continue;
-            const auto start = boundary(group.insertIndex, group.widgetId);
+            const auto start = members.VisibleBoundary(group.insertIndex, group.widgetId);
             if (request.files.empty()) layout.gaps.push_back({start, nullptr});
             else if (group.sourcePaths.empty())
                 for (const auto& file : request.files) layout.gaps.push_back({start, file.appearance});
@@ -348,9 +299,9 @@ const Layout& DesktopApp::FileDropMemberLayout(const DesktopWidget& widget, cons
         }
     }
     if (!removed.empty())
-        for (size_t i = 0; i < length; ++i)
+        for (size_t i = 0; i < members.Count(); ++i)
         {
-            const auto& key = searching ? searchMembers[i].key : folder ? model->folderEntries[visible ? (*visible)[i] : i].fullPath : keys[i];
+            const auto& key = members.KeyAt(i);
             if (removed.contains(ToUpperInvariant(key))) layout.hidden.push_back(i);
         }
     layout.Arrange();

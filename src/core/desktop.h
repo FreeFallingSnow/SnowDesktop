@@ -67,8 +67,7 @@ public:
      *
      * 当用户将图标拖放到桌面网格区域时调用，负责完成项的移动或复制逻辑。
      */
-    void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
-        Slot* targetSlot, HitRegion region, int mods) override;
+    DropReceipt OnItemsDropped(const ItemDrop& drop) override;
     /**
      * @brief 绘制桌面装饰层（Chrome）
      * @param context D2D 设备上下文指针

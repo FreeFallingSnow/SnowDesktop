@@ -257,39 +257,6 @@ ComPtr<IDataObject> DesktopApp::CreateDataObjectForItems(
 }
 
 /**
- * @brief 将选中项目拖拽放置到目标桌面项上（调用 Shell IDropTarget 接口）。
- * @param targetIndex 目标桌面项的索引。
- */
-void DesktopApp::DropSelectedItemsOnTarget(int targetIndex)
-{
-    if (targetIndex < 0 || static_cast<size_t>(targetIndex) >= items_.size()) return;
-    auto& targetItem = items_[targetIndex];
-
-    ComPtr<IDataObject> dataObj = CreateSelectedDataObject();
-    if (!dataObj) return;
-
-    PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(targetItem.childPidl.get());
-    ComPtr<IDropTarget> dropTarget;
-    HRESULT hr = desktopFolder_->GetUIObjectOf(
-        hwnd_, 1, &child, IID_IDropTarget, nullptr,
-        reinterpret_cast<void**>(dropTarget.GetAddressOf()));
-    if (FAILED(hr) || !dropTarget) return;
-
-    POINT screenPt = dragSession_.CurrentPoint();
-    ClientToScreen(hwnd_, &screenPt);
-    POINTL screenPtL{ screenPt.x, screenPt.y };
-
-    DWORD effect = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
-    hr = dropTarget->DragEnter(dataObj.Get(), MK_LBUTTON, screenPtL, &effect);
-    if (SUCCEEDED(hr))
-        hr = dropTarget->DragOver(MK_LBUTTON, screenPtL, &effect);
-    if (SUCCEEDED(hr))
-        hr = dropTarget->Drop(dataObj.Get(), MK_LBUTTON, screenPtL, &effect);
-    else
-        dropTarget->DragLeave();
-}
-
-/**
  * @brief 根据布局键查找项目索引。
  * @param key 项目布局键。
  * @return 项目索引，未找到返回 -1。

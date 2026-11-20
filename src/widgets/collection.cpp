@@ -1208,43 +1208,6 @@ std::wstring Collection::GetDragHint(Slot* slot, HitRegion region,
         slot, region, sourceItems, origin, mods);
 }
 
-/**
- * @brief 处理项被拖放到集合中的事件
- *
- * 将拖拽源项列表通过 app 构建拖拽源列表（DragSourceList）和放置预览列表（DropPreviewList），
- * 最终由 ExecuteDropPipeline 完成实际的跨容器放置操作。
- * @param sourceItems  被拖拽的源项指针列表
- * @param origin       拖拽来源容器
- * @param targetSlot   拖放目标槽位（可为 nullptr，表示拖放到末尾）
- * @param region       拖放区域（SortBefore / SortAfter）
- * @param mods         键盘修饰键状态
- */
-void Collection::OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
-    Slot* targetSlot, HitRegion region, int mods)
-{
-    if (!app_ || !data_) return;
-    DragSourceList sourceList = app_->BuildDragSourceList(sourceItems, origin);
-    DropPreviewList preview = app_->BuildDropPreviewList(sourceList, this, targetSlot, region, mods,
-        app_->dragSession_.CurrentPoint());
-    app_->ExecuteDropPipeline(sourceList, preview);
-}
-
-/**
- * @brief 计算拖放操作的目标插入索引
- *
- * 根据目标槽位和放置区域确定项应插入到 data_->itemKeys 中的位置。
- * @param targetSlot  拖放目标槽位，为 nullptr 时表示插入到末尾
- * @param region      放置区域（SortAfter 表示插入到目标之后）
- * @return 插入位置的索引（范围在 0 到集合总项数之间）
- */
-size_t Collection::GetDropInsertIndex(Slot* targetSlot, HitRegion region) const
-{
-    size_t insertAt = targetSlot ? targetSlot->GetIndex() : (data_ ? data_->itemKeys.size() : 0);
-    if (targetSlot && region == HitRegion::SortAfter)
-        ++insertAt;
-    return data_ ? std::min(insertAt, data_->itemKeys.size()) : insertAt;
-}
-
 // ═══════════════════════════════════════════════════════════════
 /// @name 滚动容器方法
 /// Collection 在 scrollContainerMode 下的滚动、尺寸、布局方法。

@@ -195,22 +195,6 @@ std::wstring Slot::GetDropHint(HitRegion region, const std::vector<Item*>& sourc
 }
 
 /**
- * @brief 执行拖放操作
- *
- * 将拖放事件委托给父容器处理。父容器负责实际的插入、排序或"交给"逻辑。
- *
- * @param region      命中区域类型，决定操作语义
- * @param sourceItems 被拖拽的项目列表
- * @param origin      拖拽操作的来源容器
- * @param mods        键盘修饰键状态（如 Ctrl、Shift 等）
- */
-void Slot::ExecuteDrop(HitRegion region, const std::vector<Item*>& sourceItems, Container* origin, int mods)
-{
-    if (parent_)
-        parent_->OnItemsDropped(sourceItems, origin, this, region, mods);
-}
-
-/**
  * @brief 绘制拖放指示器（蓝色高亮条/框）
  *
  * 根据命中区域类型在插槽上绘制视觉反馈：

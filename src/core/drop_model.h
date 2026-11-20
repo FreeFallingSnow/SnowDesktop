@@ -32,6 +32,8 @@
 #include <oleidl.h>
 
 class Container;
+class Slot;
+enum class HitRegion;
 class Item;
 
 /**
@@ -442,10 +444,49 @@ struct DropPreviewList
     bool pinMaterializedItemsToDock = false;
     size_t dockInsertIndex = 0;
     HMONITOR dockMonitor = nullptr;
+    size_t groupInsertIndex = 0;
+    std::wstring activateChildId;
     std::vector<DropLanding> landings;
 
     bool Empty() const { return landings.empty(); }
 };
+
+inline DWORD DropEffectFromAction(DropAction action)
+{
+    if (action == DropAction::Copy) return DROPEFFECT_COPY;
+    if (action == DropAction::Link) return DROPEFFECT_LINK;
+    return DROPEFFECT_MOVE;
+}
+
+struct ItemDrop
+{
+    const std::vector<Item*>& items;
+    const DragSourceList& sources;
+    const DropPreviewList& preview;
+    Slot* slot;
+    HitRegion region;
+    int modifiers;
+    POINT point;
+    DWORD allowedEffects;
+
+    bool Allows(DropAction action) const { return (allowedEffects & DropEffectFromAction(action)) != 0; }
+};
+
+struct DropReceipt
+{
+    std::optional<DropAction> action;
+
+    static DropReceipt Submitted(bool accepted, DropAction action)
+    {
+        return accepted ? DropReceipt{action} : DropReceipt{};
+    }
+
+    DWORD Effect() const
+    {
+        return action ? DropEffectFromAction(*action) : DROPEFFECT_NONE;
+    }
+};
+
 
 /**
  * @struct PendingLandingEntry

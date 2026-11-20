@@ -30,7 +30,7 @@ public:
     int GetMaxScrollOffset() const override { return 0; }
     HitRegion HitTestDrag(POINT /*pt*/, Slot*& outSlot) override { outSlot = nullptr; return HitRegion::None; }
     std::wstring GetDragHint(Slot*, HitRegion, const std::vector<Item*>&, Container*, int) const override { return L""; }
-    void OnItemsDropped(const std::vector<Item*>&, Container*, Slot*, HitRegion, int) override {}
+    DropReceipt OnItemsDropped(const ItemDrop&) override { return {}; }
     std::vector<Item*> GetSelectedItems() const override { return {}; }
     void ToggleDetails() { detailsExpanded_ = !detailsExpanded_; }
     // Shared drawing, hit testing and internal automation geometry.

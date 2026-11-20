@@ -902,32 +902,14 @@ bool DesktopApp::AddWidgetToFileGroup(
     return true;
 }
 
-bool DesktopApp::MoveFileSourcesToFileGroup(
-    const std::vector<Item*>& sourceItems,
-    size_t groupIndex, size_t insertIndex)
+DropReceipt DesktopApp::DropDesktopWidgetIconsIntoGroup(WidgetContainer* group, const ItemDrop& drop)
 {
-    return groupIndex < widgets_.size() && widgets_[groupIndex].type == DesktopWidgetType::FileGroup &&
-        MoveWidgetSourcesToGroup(sourceItems, groupIndex, insertIndex);
-}
-
-bool DesktopApp::DropDesktopWidgetIconsIntoGroup(WidgetContainer* group,
-    const DragSourceList& source, Slot* targetSlot, HitRegion region, int mods)
-{
-    if (!group || !group->GetWidgetData() || !IsGroupWidgetType(group->GetWidgetData()->type)) return false;
-    const auto* target = group->GetWidgetData();
-    const std::wstring groupId = target->id;
-    const auto groupType = target->type;
-    size_t insertIndex = group->GetDropInsertIndex(targetSlot, region);
-    const bool overTab = groupType == DesktopWidgetType::CollectionGroup
-        ? !static_cast<CollectionGroup*>(group)->CategoryIdAtPoint(dragSession_.CurrentPoint()).empty()
-        : !static_cast<FileGroup*>(group)->SourceIdAtPoint(dragSession_.CurrentPoint()).empty();
-    const bool tabInsertion = targetSlot &&
-        (targetSlot->GetFeedbackIdentity().role == SlotFeedbackRole::CollectionGroupTab ||
-         targetSlot->GetFeedbackIdentity().role == SlotFeedbackRole::FileGroupSourceTab) &&
-        (region == HitRegion::SortBefore || region == HitRegion::SortAfter);
-    if (!overTab && !tabInsertion) insertIndex = target->childWidgetIds.size();
-    const auto eligible = snowdesktop::desktop_widget_icon_drop::Filter(source,
-        snowdesktop::slot_contract::SurfaceForWidgetType(groupType), mods);
+    if (!group || !group->GetWidgetData() || !IsGroupWidgetType(group->GetWidgetData()->type)) return {};
+    const std::wstring groupId = group->GetWidgetData()->id;
+    const auto groupType = group->GetWidgetData()->type;
+    const auto insertIndex = drop.preview.groupInsertIndex;
+    const auto eligible = snowdesktop::desktop_widget_icon_drop::Filter(drop.sources,
+        snowdesktop::slot_contract::SurfaceForWidgetType(groupType), drop.modifiers);
     std::vector<std::wstring> movingIds;
     for (const auto& entry : eligible.entries)
     {
@@ -939,28 +921,35 @@ bool DesktopApp::DropDesktopWidgetIconsIntoGroup(WidgetContainer* group,
         if (std::find(movingIds.begin(), movingIds.end(), entry.widgetId) == movingIds.end())
             movingIds.push_back(entry.widgetId);
     }
-    const auto files = source.WithoutDesktopWidgetIcons();
-    const auto filePreview = BuildDropPreviewList(files, group,
-        nullptr, HitRegion::Empty, mods, dragSession_.CurrentPoint());
-    if (movingIds.empty()) return !files.Empty() && ExecuteDropPipeline(files, filePreview);
+    const auto files = drop.sources.WithoutDesktopWidgetIcons();
+    const auto& filePreview = drop.preview;
+    if ((!movingIds.empty() && !drop.Allows(DropAction::Move)) ||
+        (!files.Empty() && !drop.Allows(filePreview.action))) return {};
+    if (movingIds.empty())
+        return DropReceipt::Submitted(!files.Empty() && ExecuteDropPipeline(files, filePreview), filePreview.action);
 
     // File submission can rebuild containers or create an empty group's first
     // source. Retain IDs only across that boundary; never reuse Item/Slot pointers.
     EndDragSession();
-    if (!files.Empty() && !filePreview.Empty() && !ExecuteDropPipeline(files, filePreview)) return false;
+    DropReceipt submittedFiles;
+    if (!files.Empty() && !filePreview.Empty())
+    {
+        submittedFiles = DropReceipt::Submitted(ExecuteDropPipeline(files, filePreview), filePreview.action);
+        if (!submittedFiles.action) return {};
+    }
     const size_t targetIndex = FindWidgetIndexById(groupId);
-    if (targetIndex >= widgets_.size() || widgets_[targetIndex].type != groupType) return false;
+    if (targetIndex >= widgets_.size() || widgets_[targetIndex].type != groupType) return submittedFiles;
     std::vector<std::unique_ptr<Widget>> wrappers;
     std::vector<Item*> members;
     for (const auto& id : movingIds)
     {
         const size_t index = FindWidgetIndexById(id);
         if (index >= widgets_.size() || IsGroupedWidget(widgets_[index]) ||
-            !snowdesktop::single_cell_widget::IsIconMode(widgets_[index])) return false;
+            !snowdesktop::single_cell_widget::IsIconMode(widgets_[index])) return submittedFiles;
         wrappers.push_back(std::make_unique<Widget>(&widgets_[index], this));
         members.push_back(wrappers.back().get());
     }
-    return MoveWidgetSourcesToGroup(members, targetIndex, insertIndex);
+    return MoveWidgetSourcesToGroup(members, targetIndex, insertIndex) ? DropReceipt{DropAction::Move} : submittedFiles;
 }
 
 bool DesktopApp::MoveWidgetSourcesToGroup(

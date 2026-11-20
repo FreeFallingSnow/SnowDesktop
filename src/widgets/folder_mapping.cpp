@@ -846,13 +846,7 @@ size_t FolderMapping::GetDropInsertIndex(
         }
         return data_->folderEntries.size();
     }
-    const auto& visibleEntries = GetVisibleEntryIndices();
-    size_t visibleInsert = targetSlot ? targetSlot->GetIndex() : visibleEntries.size();
-    if (targetSlot && region == HitRegion::SortAfter)
-        ++visibleInsert;
-    if (visibleInsert < visibleEntries.size())
-        return visibleEntries[visibleInsert];
-    return data_ ? data_->folderEntries.size() : 0;
+    return WidgetContainer::GetDropInsertIndex(targetSlot, region);
 }
 
 /**
@@ -922,27 +916,6 @@ int FolderMapping::GetVisibleContentHeight() const
 {
     RECT content = FolderMappingContentRect(const_cast<FolderMapping*>(this));
     return std::max(1, (int)(content.bottom - content.top));
-}
-
-/**
- * @brief 处理外部条目拖放到本组件时的回调
- * @param sourceItems 拖拽源条目列表
- * @param origin      源容器
- * @param targetSlot  目标槽位
- * @param region      命中区域
- * @param mods        键盘修饰键状态
- *
- * 通过 App 的拖放管道（BuildDragSourceList -> BuildDropPreviewList ->
- * ExecuteDropPipeline）执行完整的拖放处理流程。
- */
-void FolderMapping::OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
-    Slot* targetSlot, HitRegion region, int mods)
-{
-    if (!app_ || !data_) return;
-    DragSourceList sourceList = app_->BuildDragSourceList(sourceItems, origin);
-    DropPreviewList preview = app_->BuildDropPreviewList(sourceList, this, targetSlot, region, mods,
-        app_->dragSession_.CurrentPoint());
-    app_->ExecuteDropPipeline(sourceList, preview);
 }
 
 /**

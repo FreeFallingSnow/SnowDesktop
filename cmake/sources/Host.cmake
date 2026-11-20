@@ -141,6 +141,7 @@ set(SNOWDESKTOP_SOURCES
     src/data/data_cleanup.cpp
     src/icons/website_icon.cpp
     src/app/drag_drop/app_drop_execution.cpp
+    src/app/drag_drop/app_internal_drop_release.cpp
     src/app/drag_drop/app_external_slot_drop.cpp
     src/app/drag_drop/app_drop_preview.cpp
     src/app/drag_drop/app_drop_render.cpp
@@ -770,6 +771,7 @@ set(SNOWDESKTOP_SOURCES
     src/steam/steam_workshop_sync.cpp
     src/system/system_snapshot.cpp
     src/platform/http_runtime.cpp
+    src/widgets/widget_drop_members.cpp
     src/widgets/widget_folder_search.cpp
     src/widgets/widget_base.cpp
     src/widgets/collection.cpp

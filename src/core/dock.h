@@ -12,6 +12,9 @@
 #include <memory>
 #include <vector>
 
+struct DragSourceList;
+struct DropPreviewList;
+
 class DesktopApp;
 namespace snowdesktop { class NativeTooltip; }
 
@@ -111,8 +114,7 @@ public:
             SlotSurfaceKind::Dock;
     }
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
-    void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
-        Slot* targetSlot, HitRegion region, int mods) override;
+    DropReceipt OnItemsDropped(const ItemDrop& drop) override;
     void DrawChrome(ID2D1DeviceContext* context, POINT mousePt) override;
     void DrawContents(ID2D1DeviceContext* context) override;
     RECT GetBounds() const override;
@@ -170,6 +172,7 @@ public:
     };
     PresentationState CapturePresentationState() const;
     bool RestorePresentationState(const PresentationState& state);
+    DropPreviewList FilePinPreview(const DragSourceList& sources, size_t insertIndex, POINT point) const;
     size_t GetDropInsertIndex(Slot* slot, HitRegion region) const
     { return InsertIndexFor(slot, region); }
     // A delayed external producer has not supplied its item types yet. Keep

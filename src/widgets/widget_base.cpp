@@ -25,6 +25,7 @@
 #include "app/app.h"
 #include "ui/input/text_input_window.h"
 #include "collection_group_rules.h"
+#include "group_tab_drag_preview.h"
 #include "widget_chrome_rules.h"
 #include "single_cell_widget_rules.h"
 #include "layout/popup_scrollbar_layout.h"
@@ -1178,18 +1179,55 @@ void WidgetContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRe
     slot->DrawDropIndicator(ctx, region, itemPad);
 }
 
+DropReceipt WidgetContainer::OnItemsDropped(const ItemDrop& drop)
+{
+    if (!app_ || !data_ || !drop.Allows(drop.preview.action)) return {};
+    DesktopApp* app = app_;
+    const auto& childId = drop.preview.activateChildId;
+    const auto groupId = childId.empty() ? std::wstring{} : data_->id;
+    const auto receipt = DropReceipt::Submitted(app->ExecuteDropPipeline(drop.sources, drop.preview), drop.preview.action);
+    if (!receipt.action || childId.empty()) return receipt;
+
+    // Submission may rebuild every container. Resolve the group again by ID.
+    const auto index = app->FindWidgetIndexById(groupId);
+    if (index >= app->widgets_.size()) return receipt;
+    auto& group = app->widgets_[index];
+    if (std::find(group.childWidgetIds.begin(), group.childWidgetIds.end(), childId) == group.childWidgetIds.end())
+        return receipt;
+    group.activeCategoryId = childId;
+    for (const auto& container : app->containers_)
+        if (auto* view = dynamic_cast<WidgetContainer*>(container.get()); view && view->GetWidgetData() == &group)
+            view->InvalidateActiveDropChild();
+    app->RequestLayoutSave();
+    InvalidateRect(app->hwnd_, nullptr, FALSE);
+    return receipt;
+}
+
+WidgetMemberDestination WidgetContainer::ResolveMemberDestination(Slot* slot, HitRegion region, POINT)
+{
+    return {this, data_, GetDropInsertIndex(slot, region), {}};
+}
+
+size_t WidgetContainer::GroupDropInsertIndex(Slot* slot, HitRegion region, POINT point) const
+{
+    if (DropTabAt(point).empty() && !snowdesktop::group_tab_drag_preview::IsTabInsertion(slot, region))
+        return data_ ? data_->childWidgetIds.size() : 0;
+    return GetDropInsertIndex(slot, region);
+}
+
 /**
  * @brief 计算拖放插入索引位置
  * @param targetSlot 目标插槽
  * @param region 命中区域（决定插入前/后）
  * @return 插入位置的索引
  */
-size_t WidgetContainer::GetDropInsertIndex(Slot* targetSlot, HitRegion region) const
+size_t WidgetContainer::GetDropInsertIndex(Slot* slot, HitRegion region) const
 {
-    size_t insertAt = targetSlot ? targetSlot->GetIndex() : GetSlotCount();
-    if (targetSlot && region == HitRegion::SortAfter)
-        ++insertAt;
-    return std::min(insertAt, GetSlotCount());
+    const auto* model = GetContentViewData();
+    if (!model) return 0;
+    const auto members = FilteredDropMembers(*model);
+    if (!slot) return members.ModelCount();
+    return members.ModelBoundary(slot->GetIndex() + (region == HitRegion::SortAfter ? 1u : 0u));
 }
 
 // ── ScrollingItemWidget shared helpers ─────────────────────────

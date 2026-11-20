@@ -23,6 +23,8 @@
 
 class Item;
 class Slot;
+struct ItemDrop;
+struct DropReceipt;
 enum class HitRegion;
 
 /** 拖放插入指示条的样式 */
@@ -80,15 +82,8 @@ public:
     /** @brief 构建插槽列表。由 GetSlots() 在缓存失效时调用，派生类必须实现 */
     virtual std::vector<std::unique_ptr<Slot>> BuildSlots() = 0;
 
-    /** @brief 处理 Item 被拖放至本容器
-     *  @param sourceItems  待放置的源 Item 列表
-     *  @param origin       源容器指针
-     *  @param targetSlot   目标插槽（可能为空，表示追加到末尾）
-     *  @param region       拖放命中的区域（如插入到目标前/后/内部）
-     *  @param mods         键盘修饰键状态
-     */
-    virtual void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
-        Slot* targetSlot, HitRegion region, int mods) = 0;
+    // The receipt describes admission. File completion is reported by the Shell worker.
+    virtual DropReceipt OnItemsDropped(const ItemDrop& drop) = 0;
 
     /** @brief 绘制容器的装饰层（如背景、边框、插入指示条）
      *  @param context  D2D 设备上下文

@@ -940,12 +940,12 @@ private:
     int GetDockPageItemIconSize(const GridPage& page) const;
     int GetDockPageEdgeMargin(const GridPage& page, bool vertical) const;
     snowdesktop::dock_drop_model::Services DockDropServices();
-    void CommitDockDrop(const std::vector<Item*>& sourceItems, Container* origin,
-        DockContainer* targetDock, size_t insertIndex, int mods);
+    DropReceipt CommitDockDrop(const std::vector<Item*>& sourceItems, Container* origin,
+        DockContainer* targetDock, size_t insertIndex, int mods, DWORD allowed = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK);
     snowdesktop::dock_desktop_return::Services DockDesktopReturnServices() const;
     std::vector<snowdesktop::dock_desktop_return::Landing> PlanDockDesktopReturn(
         const std::vector<Item*>& sourceItems, GridCell target) const;
-    void MoveDockItemsToDesktop(const std::vector<Item*>& sourceItems, GridCell targetCell);
+    bool MoveDockItemsToDesktop(const std::vector<Item*>& sourceItems, GridCell targetCell);
     void RestoreDockEntriesToDesktop();
     bool AddMaterializedItemsToDock(
         const std::vector<std::wstring>& createdPaths,
@@ -1115,8 +1115,7 @@ private:
     bool FindDockReturnCell(std::unordered_set<std::wstring>& usedSlots,
         const std::wstring& preferredPageId, int startSlot, GridSpan span,
         GridCell& result);
-    bool DropItemsIntoDockCollection(const std::vector<Item*>& sourceItems,
-        Container* origin, DockEntryItem* targetItem, int mods);
+    DropReceipt DropItemsIntoDockCollection(const ItemDrop& drop, DockEntryItem* targetItem);
     bool IsDockExclusiveItemKey(const std::wstring& key) const;
     bool IsDockExclusiveWidgetId(const std::wstring& id) const;
     snowdesktop::item_location::FolderTarget ResolveDockFolderTarget(
@@ -2267,8 +2266,6 @@ private:
      * @return COM 数据对象
      */
     ComPtr<IDataObject> CreateDataObjectForItems(const std::vector<Item*>& sourceItems) const;
-    /** @brief 将选中项放置到目标桌面项上。 @param targetIndex 目标桌面项索引 */
-    void DropSelectedItemsOnTarget(int targetIndex);
     /**
      * @brief 根据键值查找桌面项的索引。
      * @param key 桌面项键值
@@ -3061,11 +3058,7 @@ private:
         size_t insertIndex = static_cast<size_t>(-1));
     bool MoveWidgetSourcesToGroup(
         const std::vector<Item*>& sourceItems, size_t groupIndex, size_t insertIndex);
-    bool DropDesktopWidgetIconsIntoGroup(WidgetContainer* group,
-        const DragSourceList& source, Slot* targetSlot, HitRegion region, int mods);
-    bool MoveFileSourcesToFileGroup(
-        const std::vector<Item*>& sourceItems,
-        size_t groupIndex, size_t insertIndex);
+    DropReceipt DropDesktopWidgetIconsIntoGroup(WidgetContainer* group, const ItemDrop& drop);
     bool ReleaseWidgetFromFileGroup(const std::wstring& childId,
         GridCell preferredCell);
     /** @brief 计算从文件组释放子组件到桌面的落点（与 ReleaseWidgetFromFileGroup 完全一致）。
@@ -4459,6 +4452,8 @@ private:
     bool TryGetNativeDragResumePointFromCursor(POINT& point) const;
     /** @brief 判断两个窗口是否位于同一窗口树中。 @param parent 父窗口 @param window 子窗口 @return 是则返回 true */
     static bool IsSameWindowTree(HWND parent, HWND window);
+    DWORD CommitInternalDragRelease(POINT clientPoint, DWORD keyState, DWORD allowedEffects);
+    DWORD CommitItemHandoff(Item* targetItem, const ItemDrop& drop, DWORD keyState, bool refreshPopup);
     /**
      * @brief 根据键盘状态和允许的效果选择拖放效果。
      * @param keyState 键盘修饰键状态

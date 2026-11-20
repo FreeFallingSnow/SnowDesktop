@@ -172,19 +172,6 @@ public:
      */
     std::wstring GetDropHint(HitRegion region, const std::vector<Item*>& sourceItems) const;
 
-    /**
-     * @brief 执行拖放操作
-     * @param region      命中区域类型，决定执行何种操作
-     * @param sourceItems 正在被拖拽的源 Item 列表
-     * @param origin      拖拽来源 Container
-     * @param mods        键盘修饰键状态（Ctrl/Shift 等）
-     *
-     * 根据 HitRegion 类型实际执行插入排序或移交操作：
-     *   - SortBefore：将源项插入到当前槽位之前
-     *   - SortAfter ：将源项插入到当前槽位之后
-     *   - Handoff   ：将源项移交给当前槽位的 Item 处理
-     */
-    void ExecuteDrop(HitRegion region, const std::vector<Item*>& sourceItems, Container* origin, int mods);
 
     /**
      * @brief 绘制拖放指示器
