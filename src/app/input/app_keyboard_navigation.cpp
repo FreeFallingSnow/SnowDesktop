@@ -4,6 +4,7 @@
 #include "diagnostics/crashlog.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "app/layout/grid_geometry.h"
+#include "app/navigation/quick_navigation_state.h"
 #include <algorithm>
 #include <cstdlib>
 #include <tuple>
@@ -337,10 +338,28 @@ bool DesktopApp::ActivateDesktopSurfaceKeyboardFocus(bool repeated)
         if (!focused) continue;
         if (repeated) return true;
 
-        const POINT point{(focused->bounds.left + focused->bounds.right) / 2,
-            (focused->bounds.top + focused->bounds.bottom) / 2};
         RECT anchor = dock->GetElementVisualRect(focused->bounds, lastMousePoint_);
+        const POINT point{(anchor.left + anchor.right) / 2, (anchor.top + anchor.bottom) / 2};
         OffsetRect(&anchor, virtualLeft_, virtualTop_);
+        const auto restore = [this, monitor = dock->GetMonitor(), key = focused->key] {
+            if (exitRequested_ || desktopPassthroughActive_) return;
+            for (const auto& candidate : containers_)
+            {
+                auto* source = dynamic_cast<DockContainer*>(candidate.get());
+                if (!source || source->GetMonitor() != monitor) continue;
+                const auto targets = source->KeyboardTargets();
+                const auto match = std::find_if(targets.begin(), targets.end(), [&](const auto& target) {
+                    return target.key == key;
+                });
+                if (match == targets.end()) continue;
+                ClearSelection();
+                source->SetKeyboardFocus(*match);
+                if (auto* host = FindPersistentDockHost(source)) InvalidateFloatingDockWindow(*host);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                RestoreInteractionInputFocus();
+                return;
+            }
+        };
         if (auto* host = FindPersistentDockHost(dock)) SelectPersistentDockHost(host);
         using Kind = DockContainer::KeyboardTarget::Kind;
         switch (focused->kind)
@@ -351,6 +370,7 @@ bool DesktopApp::ActivateDesktopSurfaceKeyboardFocus(bool repeated)
         case Kind::Search:
             OpenQuickNavigation(QuickNavigationInvocationSource::DockSearch,
                 POINT{point.x + virtualLeft_, point.y + virtualTop_});
+            if (quickNavigation_->open) quickNavigation_->keyboardFocusReturn = restore;
             break;
         case Kind::Running:
             if (focused->index < dockUnpinnedRunningApps_.size())
@@ -379,6 +399,7 @@ bool DesktopApp::ActivateDesktopSurfaceKeyboardFocus(bool repeated)
             }
             break;
         }
+        if (IsCollectionPopupInteractive()) collectionPopupKeyboardReturn_ = restore;
         return true;
     }
     return false;

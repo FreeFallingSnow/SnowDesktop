@@ -1294,7 +1294,7 @@ private:
             QuickNavigationInvocationSource::Pointer,
         std::optional<POINT> invocationScreenPoint = std::nullopt);
     /** @brief 关闭快速导航面板。 */
-    void CloseQuickNavigation(bool restoreDesktopFocus = true);
+    void CloseQuickNavigation(bool restoreDesktopFocus = true, bool returnKeyboardFocus = false);
     /** @brief 关闭动画完成后执行动作。 */
     void CloseQuickNavigationThen(
         std::function<void()> action);
@@ -1968,7 +1968,8 @@ private:
         UINT textInputCancelCommand = 0,
         std::function<void(UINT,
             std::vector<snowdesktop::modern_menu::Item>&)> onPrepareSubmenu = {},
-        bool compactTextRoot = false);
+        bool compactTextRoot = false,
+        snowdesktop::modern_menu::ExitReason* exitReason = nullptr);
     void ConfigureModernMenuEventPump(
         snowdesktop::modern_menu::Options& options);
     BOOL InvokeShellMenuCommand(IContextMenu* menu,
@@ -3226,7 +3227,7 @@ private:
             std::nullopt);
     /** @brief 关闭集合弹出面板。 */
     void CloseCollectionPopup(
-        bool clearSelection = true);
+        bool clearSelection = true, bool returnKeyboardFocus = false);
     /** Start closing while retaining a passive hover request for revalidation. */
     void BeginCollectionPopupClose(bool clearSelection);
     void FinalizeCloseCollectionPopup();
@@ -4648,6 +4649,7 @@ private:
     size_t popupWidgetIndex_ = static_cast<size_t>(-1);
     snowdesktop::popup_animation_rules::State
         popupAnimation_;
+    std::function<void()> collectionPopupKeyboardReturn_;
     DragRenderCache popupAnimationRenderCache_;
     snowdesktop::CollectionPopupIconMaterials collectionPopupIconMaterials_;
     RECT popupAnimationCacheRect_{};

@@ -567,6 +567,7 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
 
 void DesktopApp::FinalizeCloseCollectionPopup()
 {
+    collectionPopupKeyboardReturn_ = {};
     PublishCollectionPopupIconBackdrops({});
     const size_t sourceIndex = dockFolderPopupOpen_
         ? FindWidgetIndexById(dockFolderPopupMappingWidgetId_) : popupWidgetIndex_;
@@ -701,10 +702,13 @@ void DesktopApp::ClearDockFolderPopupEntries()
 }
 
 void DesktopApp::CloseCollectionPopup(
-    bool clearSelection)
+    bool clearSelection, bool returnKeyboardFocus)
 {
+    auto restore = std::exchange(collectionPopupKeyboardReturn_, {});
+    if (returnKeyboardFocus) pendingCollectionPopupOpen_.reset();
     CancelPopupHover(true);
     BeginCollectionPopupClose(clearSelection);
+    if (returnKeyboardFocus && restore) restore();
 }
 
 void DesktopApp::ContinueCollectionPopupSwitch()
@@ -731,6 +735,7 @@ void DesktopApp::ContinueCollectionPopupSwitch()
 void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
 {
     if (!IsCollectionPopupHostedByFloatingWindow()) return;
+    collectionPopupKeyboardReturn_ = {};
     CancelRenameClick();
     folderReadWork_.Cancel(snowdesktop::folder_preview::kResolveWorkKey);
     if (popupAnimation_.IsClosing())

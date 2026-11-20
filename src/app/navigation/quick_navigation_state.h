@@ -108,6 +108,7 @@ struct State
     QuickNavigationInvocationSource invocationSource =
         QuickNavigationInvocationSource::Pointer;
     std::function<void()> postCloseAction;
+    std::function<void()> keyboardFocusReturn;
     RECT renameItemRect{};
     size_t activeWidgetIndex = static_cast<size_t>(-1);
     int scrollOffset = 0;

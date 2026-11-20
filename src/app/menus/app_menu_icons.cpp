@@ -553,8 +553,10 @@ UINT DesktopApp::ShowModernMenu(
     UINT textInputSubmitCommand, UINT textInputCancelCommand,
     std::function<void(UINT,
         std::vector<snowdesktop::modern_menu::Item>&)> onPrepareSubmenu,
-    bool compactTextRoot)
+    bool compactTextRoot,
+    snowdesktop::modern_menu::ExitReason* exitReason)
 {
+    if (exitReason) *exitReason = snowdesktop::modern_menu::ExitReason::None;
     if (!rootMenu)
         return 0;
 
@@ -772,6 +774,7 @@ UINT DesktopApp::ShowModernMenu(
     }
     const snowdesktop::modern_menu::Result result =
         snowdesktop::modern_menu::Show(items, options);
+    if (exitReason) *exitReason = result.reason;
     if (result.command == kContextManageMenuCommand)
     {
         if (shellRequest) snowdesktop::shell_extensions::SharedMenuService().Manage(*shellRequest);

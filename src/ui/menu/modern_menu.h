@@ -197,6 +197,7 @@ enum class ExitReason
     None,
     Command,
     Cancelled,
+    Escape,
     ExternalActivation,
     Replaced,
 };

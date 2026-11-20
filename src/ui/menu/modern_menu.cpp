@@ -489,7 +489,8 @@ public:
             externalActivation_ = true;
         result_.reason = superseded_ ? ExitReason::Replaced :
             externalActivation_ ? ExitReason::ExternalActivation :
-            result_.command ? ExitReason::Command : ExitReason::Cancelled;
+            result_.command ? ExitReason::Command :
+            cancelledByEscape_ ? ExitReason::Escape : ExitReason::Cancelled;
         if (superseded_ || externalActivation_)
         {
             // Existing hosts only consume command. They must also see a
@@ -1864,6 +1865,7 @@ private:
             }
             else
             {
+                cancelledByEscape_ = true;
                 Cancel();
             }
             break;
@@ -3283,6 +3285,7 @@ private:
     bool closing_ = false;
     bool superseded_ = false;
     bool externalActivation_ = false;
+    bool cancelledByEscape_ = false;
     bool hasTracedZOrderSnapshot_ = false;
     OwnedPopupZOrderSnapshot tracedZOrderSnapshot_{};
     Result result_{};

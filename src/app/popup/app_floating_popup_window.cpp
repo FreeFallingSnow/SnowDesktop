@@ -1663,14 +1663,14 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         // the active popup. Keep file commands in the common input handler.
         const bool historyShortcut = folderPreview_ && IsCollectionPopupKeyboardTarget() && (wp == 'Z' || wp == 'Y') &&
             (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000);
-        const bool previewEnter = wp == VK_RETURN && IsCollectionPopupKeyboardTarget();
         const bool previewFind = folderPreview_ && wp == 'F' && IsCollectionPopupKeyboardTarget() &&
             (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000);
         const bool popupNavigation = wp == VK_UP || wp == VK_DOWN || wp == VK_LEFT ||
-            wp == VK_RIGHT || wp == VK_HOME || wp == VK_END || wp == VK_TAB || wp == VK_ESCAPE;
-        if ((wp == VK_DELETE || historyShortcut || previewEnter || previewFind ||
+            wp == VK_RIGHT || wp == VK_HOME || wp == VK_END || wp == VK_TAB ||
+            wp == VK_RETURN || wp == VK_ESCAPE;
+        if (((!dockTrayPopup_ && (wp == VK_DELETE || historyShortcut || previewFind)) ||
                 (popupNavigation && IsCollectionPopupKeyboardTarget())) &&
-            !dockTrayPopup_ && IsCollectionPopupInteractive() &&
+            IsCollectionPopupInteractive() &&
             (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 29)) == 0)
         {
             const snowdesktop::private_pointer::ForwardScope forward(hwnd, WM_KEYDOWN);

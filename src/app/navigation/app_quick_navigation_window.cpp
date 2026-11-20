@@ -1440,7 +1440,7 @@ void DesktopApp::OpenQuickNavigation(
 /**
  * @brief 关闭快捷导航面板
  */
-void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
+void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus, bool returnKeyboardFocus)
 {
     snowdesktop::performance::Scope trace("navigation", "close.request");
     quickNavigation_->externalDialogActive = false;
@@ -1451,6 +1451,7 @@ void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
         ReleaseCapturePreservingPointerState();
     CancelQuickNavigationTabHover();
     if (!quickNavigation_->open) return;
+    auto restore = std::exchange(quickNavigation_->keyboardFocusReturn, {});
     if (!quickNavigation_->postCloseAction)
         quickNavigation_->slotPickerRequest = {};
     if (renameController_.
@@ -1530,6 +1531,8 @@ void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
         snowdesktop::performance::Scope focusTrace("navigation", "close.restore_focus");
         FocusDesktopInputWindow();
     }
+    if (returnKeyboardFocus && restore && !quickNavigation_->postCloseAction)
+        restore();
 
     if (!quickNavigation_->hwnd ||
         !IsWindow(quickNavigation_->hwnd))
@@ -1691,6 +1694,7 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
 
 void DesktopApp::FinalizeCloseQuickNavigation()
 {
+    quickNavigation_->keyboardFocusReturn = {};
     std::function<void()> postCloseAction =
         std::move(quickNavigation_->postCloseAction);
     quickNavigation_->postCloseAction = {};

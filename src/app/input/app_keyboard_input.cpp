@@ -156,6 +156,7 @@ void DesktopApp::DispatchLuaWidgetViewKeyEvent(
 
 bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
 {
+    if (key == VK_ESCAPE && repeated) return true;
     if (key == VK_ESCAPE && nativeMenuSession_)
     {
         DismissActiveContextMenuForPopupTransition();
@@ -265,7 +266,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     {
         if (key == VK_ESCAPE)
         {
-            CloseQuickNavigation();
+            CloseQuickNavigation(true, true);
             return true;
         }
     }
@@ -527,7 +528,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     // Alt/Win combinations belong to the system or focused component.
     if (win || (alt && key != VK_RETURN)) return false;
     if (!ctrl && !alt && (key == VK_RETURN || key == VK_SPACE) &&
-        !quickNavigation_->open && !IsCollectionPopupInteractive() &&
+        !quickNavigation_->open && !IsCollectionPopupHostedByFloatingWindow() &&
         luaWidgetPanelRequest_.widgetId.empty() && (!systemPanel_ || !systemPanel_->IsOpen()) &&
         ActivateDesktopSurfaceKeyboardFocus(repeated))
         return true;
@@ -859,6 +860,11 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             NavigateFolderPreviewBack();
         else if (popupKeyboardTarget)
         {
+            if (collectionPopupKeyboardReturn_)
+            {
+                CloseCollectionPopup(true, true);
+                return true;
+            }
             if (keyboardNavInsideWidget_ && keyboardNavWidgetIndex_ < widgets_.size() &&
                 (keyboardNavWidgetIndex_ == popupWidgetIndex_ ||
                     (dockFolderPopupOpen_ &&

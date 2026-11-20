@@ -76,6 +76,7 @@ struct SystemPanel::Impl
     {
         StatusBarAction action;HWND owner;RECT anchor;PersonalizationSettings appearance;StatusBarSettings settings;std::shared_ptr<tray::Service> tray;std::shared_ptr<wr::WidgetSystemDataProvider> data;std::string confirmPower;bool clockAtRight=false;
         SystemPanelInputMethodActions inputMethod;
+        std::function<void()> keyboardFocusReturn;
         bool SameTarget(const Request& other) const
         {return action==other.action&&owner==other.owner&&confirmPower==other.confirmPower;}
         HMONITOR Monitor() const {return MonitorFromRect(&anchor,MONITOR_DEFAULTTONEAREST);}
@@ -426,12 +427,17 @@ struct SystemPanel::Impl
         const auto previous=std::exchange(expandedTrayMonitor,expanded);const auto notify=trayStateChanged;
         if(notify){if(previous)notify(previous,false);if(expanded)notify(expanded,true);}
     }
-    bool ApplyDismissRequest()
+    bool ApplyDismissRequest(bool keyboardDismiss = false)
     {
         if(!model||!model->TakeDismissRequest())return false;
         // A selected shortcut already owns this close and its continuation.
         // Acknowledge the model's dismissal without cancelling that command.
         if(closing&&afterClose)return true;
+        if (keyboardDismiss && showing && !closing)
+        {
+            CloseOnEscape();
+            return true;
+        }
         transition.Cancel();afterClose={};++closeGeneration;
         if(showing&&!closing)Animate(false);
         return true;
@@ -702,6 +708,13 @@ struct SystemPanel::Impl
         Pose();
         animationToken=scheduler->StartAnimation(UiAnimationSurface::Popup,[this](double time){slide.Advance(static_cast<std::uint64_t>(time));Pose();if(slide.IsAnimating())return true;animationToken=0;if(slide.IsHidden())FinishClose();else if(accessibility)accessibility->RefreshEvents();return false;});
     }
+    void CloseOnEscape()
+    {
+        transition.Cancel();
+        afterClose = current ? std::move(current->keyboardFocusReturn) : std::function<void()>{};
+        afterCloseOwner = current ? current->owner : nullptr;
+        Animate(false);
+    }
     void CancelPrompt(){if(calendarMenu)modern_menu::DismissActive();}
     void PostPendingOpen()
     {
@@ -846,7 +859,7 @@ struct SystemPanel::Impl
         // Enter in an input moves to the safe cancel action. Authorizing a
         // connection or destructive command requires its explicit button.
         else if(key==VK_RETURN){input.Focus("control.cancel",true);model->Reveal("control.cancel");}
-        if(ApplyDismissRequest()||!Arrange())return;if(!calendarInputs||!calendarInputs->Focus(input.Focused(),true))SetFocus(window);
+        if(ApplyDismissRequest(key==VK_ESCAPE)||!Arrange())return;if(!calendarInputs||!calendarInputs->Focus(input.Focused(),true))SetFocus(window);
         Paint();if(accessibility)accessibility->RefreshEvents();
     }
     void FocusControlPage(bool keyboard)
@@ -1213,7 +1226,24 @@ struct SystemPanel::Impl
             if(m==WM_KEYDOWN)
             {
                 self->StopPointerHover();
-                if(wp==VK_ESCAPE){if(self->model->ControlBack()){if(self->ApplyDismissRequest()||!self->Arrange())return 0;SetFocus(w);self->Paint();}else if(self->model->CalendarBack()){if(!self->Arrange())return 0;self->FocusCalendarPage(true);self->Paint();}else{self->transition.Cancel();self->Animate(false);}return 0;}
+                if (wp == VK_ESCAPE)
+                {
+                    if (lp & (LPARAM{1} << 30)) return 0;
+                    if (self->model->ControlBack())
+                    {
+                        if (self->ApplyDismissRequest(true) || !self->Arrange()) return 0;
+                        SetFocus(w);
+                        self->Paint();
+                    }
+                    else if (self->model->CalendarBack())
+                    {
+                        if (!self->Arrange()) return 0;
+                        self->FocusCalendarPage(true);
+                        self->Paint();
+                    }
+                    else self->CloseOnEscape();
+                    return 0;
+                }
                 self->input.Cancel();self->scrollbarDragging=false;if(GetCapture()==w)ReleaseCapture();
                 const auto previousFocus=self->input.Focused();
                 const auto result=self->model->HandleKey(self->input,static_cast<unsigned>(wp),(GetKeyState(VK_SHIFT)&0x8000)!=0);if(!self->Arrange())return 0;POINT p{};
@@ -1228,10 +1258,10 @@ struct SystemPanel::Impl
 SystemPanel::SystemPanel(SettingsChanged c,SystemCalendarActions d,std::function<bool(std::string_view,POINT)> drop,UiAnimationScheduler* timer,IDCompositionDesktopDevice* graphics,IDWriteFactory* text,Background background)
     :impl_(std::make_unique<Impl>(std::move(c),std::move(d),std::move(drop),timer,graphics,text,std::move(background))){}
 SystemPanel::~SystemPanel()=default;
-void SystemPanel::Show(StatusBarAction a,HWND owner,RECT anchor,const PersonalizationSettings& appearance,const StatusBarSettings& settings,std::shared_ptr<tray::Service> tray,std::shared_ptr<wr::WidgetSystemDataProvider> data,bool clockAtRight)
-{impl_->Queue({a,owner,anchor,appearance,settings,std::move(tray),std::move(data),{},clockAtRight});}
-void SystemPanel::ShowInputMethod(SystemPanelInputMethodActions actions,HWND owner,RECT anchor,const PersonalizationSettings& appearance,const StatusBarSettings& settings,std::shared_ptr<wr::WidgetSystemDataProvider> data)
-{impl_->Queue({StatusBarAction::InputMethodPanel,owner,anchor,appearance,settings,{},std::move(data),{},false,std::move(actions)});}
+void SystemPanel::Show(StatusBarAction a,HWND owner,RECT anchor,const PersonalizationSettings& appearance,const StatusBarSettings& settings,std::shared_ptr<tray::Service> tray,std::shared_ptr<wr::WidgetSystemDataProvider> data,bool clockAtRight,std::function<void()> keyboardFocusReturn)
+{impl_->Queue({a,owner,anchor,appearance,settings,std::move(tray),std::move(data),{},clockAtRight,{},std::move(keyboardFocusReturn)});}
+void SystemPanel::ShowInputMethod(SystemPanelInputMethodActions actions,HWND owner,RECT anchor,const PersonalizationSettings& appearance,const StatusBarSettings& settings,std::shared_ptr<wr::WidgetSystemDataProvider> data,std::function<void()> keyboardFocusReturn)
+{impl_->Queue({StatusBarAction::InputMethodPanel,owner,anchor,appearance,settings,{},std::move(data),{},false,std::move(actions),std::move(keyboardFocusReturn)});}
 void SystemPanel::ShowPowerConfirmation(std::string task,HWND owner,RECT anchor,const PersonalizationSettings& appearance,const StatusBarSettings& settings,std::shared_ptr<wr::WidgetSystemDataProvider> data)
 {
     if(task!="system.power.sleep"&&task!="host.power.hibernate"&&task!="system.power.restart"&&task!="system.power.shutdown")return;

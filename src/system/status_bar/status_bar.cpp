@@ -2795,8 +2795,7 @@ std::vector<StatusBarKeyboardTarget> StatusBar::KeyboardTargets(bool horizontal)
     {
         (void)id;
         if (!window || !window->InputAvailable()) continue;
-        const auto focused = window->desktopKeyboardFocus && window->keyboardFocusVisible
-            ? window->interaction.focused : std::nullopt;
+        const auto focused = window->InteractionVisual().focused;
         for (std::size_t i = 0; i < window->items.size(); ++i)
         {
             const auto& item = window->items[i];

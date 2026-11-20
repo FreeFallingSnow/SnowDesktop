@@ -75,6 +75,7 @@ catch (...) { /* Diagnostics must not change activation or release behavior. */ 
 struct DesktopApp::StatusBarActivationHold
 {
     std::function<void()> release;
+    std::function<void()> keyboardFocusReturn;
     double shortcutStartedMilliseconds = -1;
     snowdesktop::StatusBarAction shortcutAction = snowdesktop::StatusBarAction::None;
     std::uint64_t shortcutGeneration = 0;
@@ -194,6 +195,21 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     hold->shortcutStartedMilliseconds = shortcutStarted;
     hold->shortcutAction = action;
     hold->shortcutGeneration = generation;
+    const auto keyboardTargets = statusBar_->KeyboardTargets(false);
+    const auto keyboardSource = std::find_if(keyboardTargets.begin(), keyboardTargets.end(),
+        [owner](const auto& target) { return target.window == owner && target.focused; });
+    if (keyboardSource != keyboardTargets.end())
+    {
+        hold->keyboardFocusReturn = [this, lifetime, generation, source = *keyboardSource,
+            monitor = statusBarActivationMonitor_] {
+            const auto state = lifetime.lock();
+            if (!state || *state != generation || exitRequested_ || desktopPassthroughActive_ ||
+                !statusBar_ || statusBar_->InteractionWindow(monitor) != source.window)
+                return;
+            ClearSelection();
+            if (statusBar_->FocusFromDesktop(source)) RestoreInteractionInputFocus();
+        };
+    }
     hold->release = [this, lifetime, generation] {
         const auto state = lifetime.lock();
         if (state && *state == generation) statusBarActivationMonitor_ = nullptr;
@@ -541,7 +557,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 };
                 systemPanel_->ShowInputMethod(std::move(actions), owner, anchor,
                     snowdesktop::ResolvePopupRuleTheme(generalSettings_.barPanelAppearanceOverride, collectionPopupAppearance_),
-                    generalSettings_.statusBar, systemDataProvider_);
+                    generalSettings_.statusBar, systemDataProvider_, hold->keyboardFocusReturn);
                 TraceStatusBarShellActivation(snowdesktop::StatusBarAction::InputMethodPanel, generation,
                     L"finished", hold->shortcutStartedMilliseconds, L"panel-requested");
                 statusBarActivationMonitor_ = nullptr;
@@ -992,13 +1008,20 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         statusBarMenuMonitor_ = monitor;
         statusBarMenuOwner_ = owner;
         statusBarMenuAction_ = action;
-        const UINT command = ShowModernMenu(menu, {anchor.left, anchor.bottom}, owner);
+        auto reason = snowdesktop::modern_menu::ExitReason::None;
+        const UINT command = ShowModernMenu(menu, {anchor.left, anchor.bottom}, owner,
+            false, false, nullptr, {}, {}, {}, nullptr, {}, false, 0, 0, {}, false, &reason);
         statusBarMenuMonitor_ = nullptr;
         statusBarMenuOwner_ = nullptr;
         statusBarMenuAction_ = Action::None;
         DestroyMenu(menu);
         ClearMenuIcons();
         if (!current()) return;
+        if (reason == snowdesktop::modern_menu::ExitReason::Escape && hold->keyboardFocusReturn)
+        {
+            hold->keyboardFocusReturn();
+            return;
+        }
         if (snowdesktop::power_user_menu::Execute(command, ShellLaunchOwnerHwnd(owner))) return;
         if (settingsController_)
         {
@@ -1064,7 +1087,9 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         else
         {
             statusBarQuickNavigationMonitor_ = monitor;
-            OpenQuickNavigation(QuickNavigationInvocationSource::StatusBar);
+            const POINT point{(anchor.left + anchor.right) / 2, (anchor.top + anchor.bottom) / 2};
+            OpenQuickNavigation(QuickNavigationInvocationSource::StatusBar, point);
+            if (quickNavigation_->open) quickNavigation_->keyboardFocusReturn = hold->keyboardFocusReturn;
         }
     }
     else if (action == Action::Settings)
@@ -1080,7 +1105,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         systemPanel_->Show(action, owner, anchor,
             snowdesktop::ResolvePopupRuleTheme(generalSettings_.barPanelAppearanceOverride, collectionPopupAppearance_), settings,
             action == Action::Tray ? EnsureDockTrayService() : statusBar_->Tray(),
-            systemDataProvider_, clockAtRight);
+            systemDataProvider_, clockAtRight, hold->keyboardFocusReturn);
     }
 }
 

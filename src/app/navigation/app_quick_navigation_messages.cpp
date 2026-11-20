@@ -541,6 +541,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
     case WM_KEYDOWN:
         CancelQuickNavigationTabHover();
         if (snowdesktop::text_input::IsComposing(quickNavigation_->searchEdit) || !quickNavigation_->searchCompositionText.empty()) break;
+        if (wp == VK_ESCAPE && (lp & (LPARAM{1} << 30))) return 0;
         if (HandleQuickNavigationSearchKey(wp)) return 0;
         if (HandleQuickNavigationKeyboardInput(wp))
             return 0;
@@ -563,7 +564,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                 InvalidateQuickNavigationWindow();
                 return 0;
             }
-            CloseQuickNavigation();
+            CloseQuickNavigation(true, true);
             return 0;
         }
         break;
@@ -704,6 +705,7 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
         }
     }
 
+    if (message == WM_KEYDOWN && wParam == VK_ESCAPE && (lParam & (LPARAM{1} << 30))) return 0;
     if (message == WM_KEYDOWN && !snowdesktop::text_input::IsComposing(hwnd) &&
         app->quickNavigation_->searchCompositionText.empty() && app->HandleQuickNavigationSearchKey(wParam)) return 0;
 
@@ -714,7 +716,7 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
             HandleQuickNavigationInitialJumpKeyboardInput(
                 wParam))
             return 0;
-        app->CloseQuickNavigation();
+        app->CloseQuickNavigation(true, true);
         return 0;
     }
     if (message == WM_KEYDOWN && !snowdesktop::text_input::IsComposing(hwnd) &&
