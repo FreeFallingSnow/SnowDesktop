@@ -836,22 +836,54 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
         return false;
     }
     popupFanBackdropCandidates_.clear();
+    auto& backdrop = collectionPopupBackdropCompositor_;
     const auto srgbKey = reinterpret_cast<std::uintptr_t>(floatingPopupHwnd_);
     const RECT bounds = floatingPopupContentBounds_;
+    const auto paintOverlays = [this](ID2D1DeviceContext* context) {
+        renderingFloatingPopup_ = true;
+        DrawDynamicOverlays(context, false);
+        renderingFloatingPopup_ = false;
+    };
     if (IsRectEmpty(&bounds))
     {
         hr = floatingPopupDcompLiveVisual_->SetContent(nullptr);
     }
     else
     {
-        hr = floatingPopupSurfaces_.PrepareContent(dcompDevice_.Get(), bounds);
-        if (SUCCEEDED(hr))
-            hr = paintSurface(*floatingPopupSurfaces_.Content(), *floatingPopupDcompLiveVisual_.Get(), bounds, srgbKey,
-                [this](ID2D1DeviceContext* context) {
-                    renderingFloatingPopup_ = true;
-                    DrawDynamicOverlays(context, false);
-                    renderingFloatingPopup_ = false;
+        const auto* collection = GetOpenPopupWidget();
+        bool stagedFan = false;
+        // The fan has no snapshot overlay. While its host is visible, reuse the
+        // transparent DComp layer and draw the moving scene on its sRGB buffer.
+        // The surrounding frame still publishes the matching glass with it.
+        if (collection && UsesCollectionPopupFan(*collection) && popupAnimation_.IsAnimating() &&
+            IsWindowVisible(floatingPopupHwnd_) && backdrop.HasSrgbContent(srgbKey) &&
+            floatingPopupSurfaces_.Content() && !retireCollection && !retireLuaPanel &&
+            !popupAnimationOverlay_.active && !IsLuaPanelHostedByFloatingWindow())
+        {
+            snowdesktop::performance::Scope trace("popup", "paint.fan_scene");
+            stagedFan = backdrop.StageSrgbSceneFrame(floatingPopupHwnd_, srgbKey, bounds, d2dDevice_.Get(),
+                [&](ID2D1DeviceContext* context, POINT offset) {
+                    context->SetDpi(96.0f, 96.0f);
+                    context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+                    context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                    context->SetTransform(D2D1::Matrix3x2F::Translation(
+                        static_cast<float>(offset.x - bounds.left), static_cast<float>(offset.y - bounds.top)));
+                    context->Clear(D2D1::ColorF(0, 0, 0, 0));
+                    drawing_.Reset();
+                    paintOverlays(context);
+                    context->SetTransform(D2D1::Matrix3x2F::Identity());
+                    drawing_.Reset();
+                    return S_OK;
                 });
+        }
+        if (!stagedFan)
+        {
+            popupFanBackdropCandidates_.clear();
+            hr = floatingPopupSurfaces_.PrepareContent(dcompDevice_.Get(), bounds);
+            if (SUCCEEDED(hr))
+                hr = paintSurface(*floatingPopupSurfaces_.Content(), *floatingPopupDcompLiveVisual_.Get(),
+                    bounds, srgbKey, paintOverlays);
+        }
     }
     if (FAILED(hr))
     {
@@ -883,7 +915,6 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
 
     // The live scene and snapshots share one compositor. Publish only after
     // both draws finish, then detach outgoing sprites before its next commit.
-    auto& backdrop = collectionPopupBackdropCompositor_;
     if ((showIndicator && !backdrop.PublishSrgbContent(indicatorKey)) ||
         (!IsRectEmpty(&bounds) && !backdrop.PublishSrgbContent(srgbKey)))
     {
