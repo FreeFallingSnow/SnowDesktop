@@ -626,11 +626,12 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                 mouseDown_,
                                 dragSession_.IsActive(),
                                 widgetInteractionActive);
+                    const POINT previousHover = lastMousePoint_;
                     lastMousePoint_ = cursorClient;
                     if (snowdesktop::desktop_hover_rules::
                             ShouldPresentRetainedMouseLeave(
                                 passiveHover,
-                                pointerPositionChanged))
+                                pointerPositionChanged) && !PresentCollectionPopupHoverChange(previousHover, false))
                         PresentPassiveHoverVisualChange();
                 }
                 return 0;

@@ -787,7 +787,7 @@ void DesktopApp::ClearPopupDragTarget()
 /**
  * @brief 结束当前拖拽会话，重置拖拽渲染缓存
  */
-void DesktopApp::EndDragSession()
+void DesktopApp::EndDragSession(bool publishDragResult)
 {
     ResetPointerInteractionDamage();
     externalFileDropPaths_.clear();
@@ -826,6 +826,7 @@ void DesktopApp::EndDragSession()
     cachedDropPreviewTarget_ = nullptr;
     cachedDropPreviewSlot_ = nullptr;
     RestoreDesktopAfterDockDrag();
+    if (!publishDragResult) return;
     // Publish the committed Dock geometry/pixels after all source wrappers
     // have been released, including drops outside every Dock host window.
     if (generalSettings_.dockEnabled)

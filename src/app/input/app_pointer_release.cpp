@@ -64,15 +64,65 @@ bool OpenMissingWidgetWorkshopPage(HWND owner,
 }
 }
 
-bool DesktopApp::PresentHoverChangeDuringPopupResize(POINT previousHover)
+bool DesktopApp::PresentCollectionPopupHoverChange(POINT previousHover, bool allowResize)
 {
-    if (!IsCollectionPopupHostedByFloatingWindow() || !GetCollectionPopupResizeTransition() ||
-        dragSession_.HasContext() || dragDropController_.IsTransportActive())
+    if (dragSession_.HasContext() || dragDropController_.IsTransportActive())
         return false;
 
-    snowdesktop::performance::Scope present("input", "hover.popup_resize.present");
+    const bool floatingCollection = IsCollectionPopupHostedByFloatingWindow();
+    const bool resizing = allowResize && floatingCollection && GetCollectionPopupResizeTransition();
     const auto* previousDock = GetDockContainerAtPoint(previousHover);
     const auto* currentDock = GetDockContainerAtPoint(lastMousePoint_);
+    if (!resizing)
+    {
+        if (mouseDown_ || widgetAction_ != WidgetAction::None || marqueeActive_ || middleButtonWidgetMove_ ||
+            detailColumnResizeActive_ || luaWidgetPanelMouseDown_ || snowdesktop::private_pointer::Capture() ||
+            desktopBackdropFullCollectionPending_ || HasActiveContextMenuSession() || IsLuaStackIndicatorVisible() ||
+            (floatingCollection && (!popupAnchoredToDock_ || !collectionPopupDockHost_ || !collectionPopupDockHost_->active)) ||
+            (!floatingCollection && (folderPreview_ || ShouldShowFloatingPopupWindow())))
+            return false;
+
+        if (!floatingCollection && !previousDock && !currentDock) return false;
+        const auto collectionSurface = [&](POINT point, const DockContainer* dock) {
+            if (floatingCollection && IsPointOccludedByOpenPopup(point)) return true;
+            if (!dock || !IsDockHostedByPersistentHost(dock)) return false;
+            if (floatingCollection) return dock == collectionPopupDockHost_->container;
+            // The close completion has released the popup owner. Only a known
+            // collection entrance can identify the returning Dock hover here.
+            const auto* entry = dock->EntryAtPoint(point);
+            if (!entry || entry->GetEntryIndex() >= dockEntries_.size()) return false;
+            return IsLogicalDockEntryType(entry->GetEntryType()) || IsFolderDockEntry(dockEntries_[entry->GetEntryIndex()]);
+        };
+        const bool previousOwned = collectionSurface(previousHover, previousDock);
+        const bool currentOwned = collectionSurface(lastMousePoint_, currentDock);
+        const auto cleared = [](POINT point) { return point.x == LONG_MIN && point.y == LONG_MIN; };
+        // Another input HWND can send its leave after the previous one has
+        // already cleared the shared desktop hover for this Dock popup.
+        if (!previousOwned && !currentOwned &&
+            !(floatingCollection && cleared(previousHover) && cleared(lastMousePoint_)))
+            return false;
+        const auto emptyDesktop = [&](POINT point, const DockContainer* dock) {
+            if (cleared(point)) return true;
+            RECT left{}, right{};
+            GetNavHotEdgeRects(left, right);
+            return !dock && !IsPointInUsageGuide(point) && !PtInRect(&left, point) && !PtInRect(&right, point) &&
+                !HitTestIcon(point) && !IsPointOverWidgetChrome(point);
+        };
+        if ((!previousOwned && !emptyDesktop(previousHover, previousDock)) ||
+            (!currentOwned && !emptyDesktop(lastMousePoint_, currentDock)))
+            return false;
+        // Hover-only frames can extend beyond their present hit target. Keep
+        // the visibility transaction when such a frame is entered or left.
+        for (const auto& widget : widgets_)
+        {
+            if (!widget.showOnHoverOnly) continue;
+            const RECT frame = GetDesktopWidgetHoverFrameRect(widget, GetStandaloneWidgetFrameRect(widget));
+            if ((PtInRect(&frame, previousHover) != FALSE) != (PtInRect(&frame, lastMousePoint_) != FALSE))
+                return false;
+        }
+    }
+
+    snowdesktop::performance::Scope present("input", resizing ? "hover.popup_resize.present" : "hover.dock_popup.present");
     const auto invalidateHover = [&](POINT point, const DockContainer* dock) {
         if (!hwnd_ || (point.x == LONG_MIN && point.y == LONG_MIN)) return;
         RECT dirty{};
@@ -103,7 +153,7 @@ bool DesktopApp::PresentHoverChangeDuringPopupResize(POINT previousHover)
         invalidateHover(lastMousePoint_, currentDock);
     UpdateWidgetHoverExpansion(lastMousePoint_);
     UpdateLargeIconHover();
-    InvalidateFloatingPopupWindow(false);
+    if (floatingCollection) InvalidateFloatingPopupWindow(false);
 
     const auto* presentedDock = floatingDockHoverTargetOwner_;
     if (!currentDock || currentDock != presentedDock)
@@ -118,6 +168,17 @@ bool DesktopApp::PresentHoverChangeDuringPopupResize(POINT previousHover)
         if (host && host->container && (host->container == previousDock ||
                 host->container == currentDock || host->container == presentedDock))
             UpdateFloatingDockWindowBounds(*host, true);
+    if (!resizing)
+    {
+        RECT client{};
+        if (GetClientRect(hwnd_, &client))
+        {
+            const RECT tooltip = desktopForegroundTooltipDamage_.IncludePrevious({}, client);
+            if (!IsRectEmpty(&tooltip)) InvalidateRect(hwnd_, &tooltip, FALSE);
+        }
+        SyncDockTitleTooltip();
+        SyncLuaWidgetTooltip();
+    }
     return true;
 }
 
@@ -180,6 +241,8 @@ void DesktopApp::OnMouseLeave()
     }
     else
         HideDockWindowPreview();
+    const bool clearedDesktopHover = navHoverSide_ != 0 || navHotEdgeHover_ ||
+        (!listTitleHoverPopup_ && !listTitleHoverOwner_.empty());
     SetPageNavHotEdgeHover(0);
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
@@ -240,7 +303,8 @@ void DesktopApp::OnMouseLeave()
         ClearListTitleHover();
         if (widgetEngine_)
             widgetEngine_->ClearInteractionHover();
-        if (!PresentHoverChangeDuringPopupResize(previousHover))
+        if ((clearedDesktopHover && !GetCollectionPopupResizeTransition()) ||
+            !PresentCollectionPopupHoverChange(previousHover))
         {
             // Shrink the title's input island before presenting the cleared frame.
             UpdateFloatingDockWindowBounds(false);
@@ -409,7 +473,7 @@ void DesktopApp::ReconcileDesktopHoverState(
                 UpdateDockWindowPreview(lastMousePoint_);
                 PresentPointerInteractionFrame();
             }
-            else if (!PresentHoverChangeDuringPopupResize(previousHover))
+            else if (!PresentCollectionPopupHoverChange(previousHover))
             {
                 // On a surface handoff, synchronize both the old and new
                 // regions so stale visuals cannot outlive the hover state.
@@ -799,10 +863,11 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
 
     // 在激活外部应用前完整结束本次桌面交互，避免鼠标捕获、选择高亮或
     // 拖拽预览跨到新前台窗口后仍残留。
-    EndDragSession();
+    const bool popupEntryOnDockHost = (IsLogicalDockEntryType(entryType) || folderEntry) &&
+        IsDockHostedByPersistentHost(dock);
+    EndDragSession(!popupEntryOnDockHost);
     HideDragHintWindow();
-    if (!waitForDoubleClick)
-        ClearSelection();
+    const bool selectionCleared = !waitForDoubleClick && ClearSelection();
     mouseDown_ = false;
     mouseDownHit_ = nullptr;
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
@@ -816,12 +881,13 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
     snowdesktop::private_pointer::ReleasePointerCapture();
-    InvalidateDragStaticScene();
-    const bool popupEntryOnFloatingDock =
-        (IsLogicalDockEntryType(entryType) ||
-         folderEntry) &&
-        IsDockContainerEffectivelyFloating(dock);
-    if (hwnd_ && !popupEntryOnFloatingDock)
+    InvalidateDragStaticScene(!popupEntryOnDockHost || selectionCleared);
+    if (popupEntryOnDockHost && selectionCleared)
+    {
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        InvalidateFloatingDockWindow(false);
+    }
+    else if (hwnd_ && !popupEntryOnDockHost)
     {
         if (IsDockContainerEffectivelyFloating(dock))
             InvalidateFloatingDockWindow(true);

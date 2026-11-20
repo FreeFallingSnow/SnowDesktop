@@ -623,7 +623,7 @@ private:
     /** @brief 驻留结束后按当前拖拽传输路径刷新目标。 */
     void RefreshDwellDragTarget(POINT clientPoint);
     /** @brief 结束当前拖拽会话，清理拖拽状态。 */
-    void EndDragSession();
+    void EndDragSession(bool publishDragResult = true);
     /** @brief 解除弹窗拖拽目标引用，再释放其有界成员缓存。 */
     void ClearPopupDragTarget();
     /** @brief 清除 Dock 按下态，避免拖拽越界后退化为点击。 */
@@ -644,7 +644,7 @@ private:
     void CommitDragVisualEndBeforeShellOperation();
     /** @brief 同步呈现被动悬浮可见性变化。 */
     void PresentPassiveHoverVisualChange();
-    bool PresentHoverChangeDuringPopupResize(POINT previousHover);
+    bool PresentCollectionPopupHoverChange(POINT previousHover, bool allowResize = true);
     enum class ShellHoverTraceEvent : std::uint8_t
     {
         MenuBegin,

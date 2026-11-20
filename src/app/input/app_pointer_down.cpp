@@ -776,7 +776,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             }
             if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
             {
-                if (!ctrl) ClearSelection();
+                const bool selectionCleared = !ctrl && ClearSelection();
+                bool popupEntryOnDockHost = false;
                 dockPressedEntry_ = dockItem->GetEntryIndex();
                 // Popup toggles and single-click launches are actions, so do
                 // not flash a selection indicator while the button is held.
@@ -784,10 +785,9 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 if (dockPressedEntry_ < dockEntries_.size())
                 {
                     const DockEntry& entry = dockEntries_[dockPressedEntry_];
-                    if (ctrl ||
-                        (!dockSettings_.singleClickLaunchItems &&
-                            !IsLogicalDockEntryType(entry.type) &&
-                            !IsFolderDockEntry(entry)))
+                    const bool popupEntry = IsLogicalDockEntryType(entry.type) || IsFolderDockEntry(entry);
+                    popupEntryOnDockHost = popupEntry && IsDockHostedByPersistentHost(dock);
+                    if (ctrl || (!dockSettings_.singleClickLaunchItems && !popupEntry))
                         dockItem->SetSelected(true);
                 }
                 if (dockPressedEntry_ < dockEntries_.size() &&
@@ -822,7 +822,13 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 }
                 mouseDownHit_ = dockItem;
                 snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
-                InvalidateRect(hwnd_, nullptr, FALSE);
+                // The Dock HWND presents its press. Desktop pixels only change if
+                // the press also removed a selection or keyboard focus elsewhere.
+                if (!popupEntryOnDockHost || selectionCleared || hadKeyboardVisualFocus ||
+                    (collectionPopupClosedByPointerDown && desktopBackdropFullCollectionPending_))
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                if (popupEntryOnDockHost && (selectionCleared || ctrl))
+                    InvalidateFloatingDockWindow(false);
                 return;
             }
             if (DockRunningItem* runningItem = dock->RunningItemAtPoint(pt))
