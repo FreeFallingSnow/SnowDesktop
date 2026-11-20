@@ -167,6 +167,25 @@ public:
     }
 
     [[nodiscard]] bool IsAnimating() const { return animating_; }
+    [[nodiscard]] ResizeRect Target() const { return target_; }
+    [[nodiscard]] ResizeRect Sample(std::uint64_t now) const
+    {
+        const auto elapsed = static_cast<double>(now >= started_ ? now - started_ : 0);
+        if (!animating_ || elapsed >= durationMs_) return target_;
+        const auto at = [&](std::size_t index) {
+            return static_cast<int>(std::lround(popup_motion_curve::Evaluate(tracks_[index], elapsed / 1000.0).position));
+        };
+        return {at(0), at(1), at(2), at(3)};
+    }
+    [[nodiscard]] std::array<popup_motion_curve::Timeline, 4> RemainingTracks(std::uint64_t now) const
+    {
+        std::array<popup_motion_curve::Timeline, 4> result;
+        const auto elapsed = static_cast<double>(now >= started_ ? now - started_ : 0);
+        for (std::size_t i = 0; i < result.size(); ++i)
+            result[i] = popup_motion_curve::Remainder(tracks_[i], elapsed);
+        return result;
+    }
+    void DelayBy(std::uint64_t elapsed) { started_ += elapsed; }
     [[nodiscard]] std::array<double, 4> Velocity() const
     { return {motion_[0].velocity, motion_[1].velocity, motion_[2].velocity, motion_[3].velocity}; }
     void Stop() { animating_ = false; for (auto& value : motion_) value.velocity = 0.0; }
@@ -261,6 +280,8 @@ public:
         Configure(fade ? Effect::Fade : Effect::Scale, durationScale);
     }
     [[nodiscard]] Effect GetEffect() const { return effect_; }
+    // Preserve the sampled pose when attaching a prepared compositor timeline.
+    void ResumeAt(std::uint64_t now) { lastTick_ = now; }
     [[nodiscard]] bool UsesResponsiveMotion() const { return responsive_; }
     [[nodiscard]] double Velocity() const { return motion_.velocity; }
     [[nodiscard]] popup_motion_curve::Timeline RemainingTimeline() const

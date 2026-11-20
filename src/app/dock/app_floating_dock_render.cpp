@@ -29,6 +29,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     host.compositionPaintInProgress = true;
     struct FloatingPaintScope final
     {
+        DesktopApp& app;
         bool& active;
         PersistentDockHost*& renderingHost;
         PersistentDockHost* previousHost;
@@ -39,8 +40,10 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
             active = false;
             renderingHost = previousHost;
             renderingFloating = previousFloating;
+            app.ScheduleDeferredDesktopWidgetPresentation();
         }
     } paintScope{
+        *this,
         host.compositionPaintInProgress,
         renderingPersistentDockHost_,
         renderingPersistentDockHost_,
@@ -252,12 +255,6 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         host.compHeight = static_cast<UINT>(
             std::max<LONG>(1, client.bottom - client.top));
     }
-    const bool deferredWidgetsFlushed =
-        FlushPendingDesktopWidgetComposition(true) &&
-        FlushPendingWidgetMarqueeComposition() &&
-        SyncWidgetMarqueeCompositionVisibility();
-    if (!deferredWidgetsFlushed && hwnd_ && IsWindow(hwnd_))
-        InvalidateRect(hwnd_, nullptr, FALSE);
     if (!CommitCompositionAnimationFrame())
     {
         RecoverFloatingDockCompositionFailure(

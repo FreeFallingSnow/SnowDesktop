@@ -53,6 +53,8 @@ struct DesktopApp::PersistentDockHost
     snowdesktop::quick_navigation_animation_rules::State mergedAnimation;
     snowdesktop::UiScheduleToken mergedAnimationToken = 0;
     snowdesktop::StatusBarDockPresentation mergedPresentation;
+    bool StartCompositionSlide(const snowdesktop::popup_motion_curve::Timeline& progress,
+        snowdesktop::StatusBar* mergedBar);
     // Shared visibility timeline for merged bars and summon-only Docks.
     bool mergedPresentationActive = false, updatingMergedPresentation = false;
     bool presentationMerged = false;

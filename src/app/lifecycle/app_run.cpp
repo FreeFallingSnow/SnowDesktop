@@ -1699,7 +1699,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                                 widgetId,
                                 static_cast<UINT_PTR>(dueToken));
                         }
-                    });
+                    }, snowdesktop::UiAnimationScheduler::IntervalOwner::Widget);
             if (!token)
                 return 0;
             const UINT_PTR timerId =

@@ -105,6 +105,15 @@ struct State
         animationCompletionToken = 0;
     snowdesktop::UiScheduleToken idleReleaseToken = 0;
     bool animationCompositorDriven = false;
+    bool resizeCompositorDriven = false;
+    bool resizeHostFallback = false;
+    bool preparingResize = false;
+    RECT DisplayedResizeRect(std::uint64_t now) const
+    {
+        if (!resizeCompositorDriven) return rect;
+        const auto sample = animation.Resize().Sample(now);
+        return {sample.left, sample.top, sample.right, sample.bottom};
+    }
     QuickNavigationInvocationSource invocationSource =
         QuickNavigationInvocationSource::Pointer;
     std::function<void()> postCloseAction;

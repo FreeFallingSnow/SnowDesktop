@@ -1287,6 +1287,8 @@ private:
     void ApplyQuickNavigationAnimationFrame();
     void ConfigureQuickNavigationAnimation();
     void StopQuickNavigationAnimationTimeline();
+    bool StartQuickNavigationResizeTimeline(std::uint64_t sampledAt);
+    bool PaintQuickNavigationResizeLayer(ID2D1DeviceContext* context, POINT origin, bool chrome);
     void ClearQuickNavigationDeformation();
     bool ApplyQuickNavigationGenieFrame(float collapsed, float opacity);
     bool ApplyQuickNavigationAttractionFrame(float collapsed, float opacity);
@@ -1320,7 +1322,9 @@ private:
     void EnsureQuickNavTextFormats();
     /** @brief 绘制快捷导航窗口内容。 @param hwnd 窗口句柄 */
     void PaintQuickNavigationWindow(HWND hwnd);
-    void DrawQuickNavigationSurface(ID2D1DeviceContext* context);
+    enum class QuickNavigationPaintPart { All, Chrome, Content };
+    void DrawQuickNavigationSurface(ID2D1DeviceContext* context,
+        QuickNavigationPaintPart part = QuickNavigationPaintPart::All);
     snowdesktop::native_component_preview::Result ExportThemeSurfacePreview(
         const snowdesktop::native_component_preview::Request& request);
     snowdesktop::native_component_preview::Result ExportQuickNavigationPreviews(
@@ -1363,6 +1367,7 @@ private:
     void EnsureQuickNavigationSearchEdit();
     /** @brief 更新快速导航搜索编辑框的位置和大小。 */
     void UpdateQuickNavigationSearchEditRect();
+    void SetQuickNavigationSearchEditPose(const RECT& panel);
     /** @brief 刷新快速导航搜索文本内容。 */
     void RefreshQuickNavigationSearchText();
     std::wstring GetQuickNavigationEffectiveSearchText() const;
@@ -2719,6 +2724,7 @@ private:
     bool FlushPendingDesktopWidgetComposition(bool yieldToPopupResize = false,
         bool* srgbDamageOnly = nullptr);
     bool DeferRetainedDesktopWidgetCompositionForPopupResize();
+    void ScheduleDeferredDesktopWidgetPresentation();
     bool StartDesktopWidgetHoverRoll(DesktopWidgetCompositionItem& item,
         const RECT& frame, LONG collapsedHeight, float radius,
         const snowdesktop::popup_motion_curve::Timeline& timeline);
@@ -3542,6 +3548,7 @@ private:
     bool desktopWidgetPointerBatchActive_ = false;
     ULONGLONG desktopWidgetLastPointerPresentTick_ = 0;
     snowdesktop::UiScheduleToken desktopWidgetHoverTailToken_ = 0;
+    snowdesktop::UiScheduleToken deferredDesktopWidgetPresentationToken_ = 0;
     snowdesktop::UiScheduleToken desktopWidgetPopupResizeTailToken_ = 0;
     snowdesktop::UiScheduleToken desktopWidgetHoverFadeFrameToken_ = 0;
     bool desktopWidgetHoverFadePending_ = false;

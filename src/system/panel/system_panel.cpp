@@ -13,6 +13,7 @@
 #include "settings/animation_settings.h"
 #include "common/l10n.h"
 #include "diagnostics/diagnostic_log.h"
+#include "diagnostics/performance_trace.h"
 #include "system/tray/tray_hover_popup.h"
 #include "ui/render/native_tooltip.h"
 #include "ui/render/native_tooltip_preferences.h"
@@ -27,6 +28,7 @@
 #include <cstddef>
 #include <cwchar>
 #include <iterator>
+#include <type_traits>
 #include <utility>
 #include <powrprof.h>
 
@@ -45,6 +47,19 @@ constexpr UINT_PTR kTrayMenuTimer=2;
 bool HighContrast(){HIGHCONTRASTW h{sizeof(h)};SystemParametersInfoW(SPI_GETHIGHCONTRAST,sizeof(h),&h,0);return(h.dwFlags&HCF_HIGHCONTRASTON)!=0;}
 D2D1_COLOR_F SystemColor(int index){const auto c=GetSysColor(index);return D2D1::ColorF(GetRValue(c)/255.f,GetGValue(c)/255.f,GetBValue(c)/255.f);}
 struct PanelLifetime { bool alive=true; };
+struct DeleteRegion
+{
+    void operator()(HRGN region) const { DeleteObject(region); }
+};
+using OwnedRegion = std::unique_ptr<std::remove_pointer_t<HRGN>, DeleteRegion>;
+
+bool ApplyWindowFence(HWND window, OwnedRegion region, HRGN viewport)
+{
+    if (!region || !viewport || CombineRgn(region.get(), region.get(), viewport, RGN_AND) == ERROR ||
+        !SetWindowRgn(window, region.get(), FALSE)) return false;
+    (void)region.release(); // User32 now owns it.
+    return true;
+}
 std::string PanelUtf8(std::wstring_view value)
 {
     if(value.empty())return {};
@@ -71,6 +86,31 @@ struct SystemPanel::Impl
     std::function<UINT(POINT,HWND,CalendarMenuKind)> calendarMenuHandler;
     std::function<UINT(POINT,HWND,const std::vector<std::wstring>&,std::size_t)> calendarChoiceMenuHandler;
     UiAnimationScheduler* scheduler=nullptr;UiScheduleToken animationToken=0;quick_navigation_animation_rules::State slide;
+    struct ComposedSlide
+    {
+        popup_motion_curve::Timeline progress;
+        std::uint64_t started;
+        float travel;
+        OwnedRegion wholePixelFence, fractionalPixelFence, viewport;
+        std::optional<std::pair<int, bool>> appliedFence;
+
+        bool TrackWindowFence(HWND window, float y)
+        {
+            const auto top = static_cast<int>(std::floor(y));
+            const bool fractional = y != static_cast<float>(top);
+            const auto next = std::pair{top, fractional};
+            if (appliedFence == next) return true;
+            OwnedRegion moved(CreateRectRgn(0, 0, 0, 0));
+            auto base = fractional ? fractionalPixelFence.get() : wholePixelFence.get();
+            if (!moved || CombineRgn(moved.get(), base, nullptr, RGN_COPY) == ERROR ||
+                OffsetRgn(moved.get(), 0, top) == ERROR ||
+                !ApplyWindowFence(window, std::move(moved), viewport.get())) return false;
+            appliedFence = next;
+            return true;
+        }
+    };
+    std::optional<ComposedSlide> composedSlide;
+    bool arrangeAfterSlide = false;
     ComPtr<IDCompositionDesktopDevice> composition;ComPtr<IDWriteFactory> text;ComPtr<IDCompositionTarget> target;ComPtr<IDCompositionVisual2> visual;ComPtr<IDCompositionSurface> surface;
     DesktopBackdropCompositor backdrop;HWND window=nullptr;NativeTooltip tooltip;HMONITOR monitor=nullptr;std::optional<Request> current;
     SystemPanelTransition<Request> transition;
@@ -133,8 +173,25 @@ struct SystemPanel::Impl
         const auto message=L"Native system panel backdrop failed at "+detail;
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message.c_str(),DiagnosticLogLevel::Warning);
     }
-    float SlideOffset()const
-    {return current?(current->settings.position==DockPosition::Bottom?1.f:-1.f)*(1-slide.GetVisual().opacity)*height:0;}
+    float HiddenSlideOffset() const
+    {
+        return current && current->settings.position == DockPosition::Bottom
+            ? static_cast<float>(height) : -static_cast<float>(height);
+    }
+    float SlideOffset() const
+    {
+        if (!current) return 0.f;
+        if (composedSlide)
+        {
+            // Hit testing can run between host callbacks while the compositor
+            // moves the cards. Sample only when a consumer asks for geometry.
+            const double elapsed = UiAnimationScheduler::MonotonicMilliseconds() -
+                static_cast<double>(composedSlide->started);
+            const auto sample = popup_motion_curve::Evaluate(composedSlide->progress, elapsed / 1000.0);
+            return composedSlide->travel * (1.f - static_cast<float>(sample.position));
+        }
+        return HiddenSlideOffset() * (1.f - slide.GetVisual().opacity);
+    }
     bool ContainsClientPoint(POINT point)const
     {
         if(!current)return false;
@@ -328,7 +385,7 @@ struct SystemPanel::Impl
         // HideNow clears these rectangles. Reopening the same layout need not
         // move or reshape the HWND, so Arrange alone may not publish them.
         PublishGeometry();
-        Paint();Animate(true);backdrop.SetPopupWindowPairZOrder(window,HWND_TOPMOST,true);if(Glass())backdrop.ShowPopupWindowPair(window);ShowWindow(window,SW_SHOW);SetForegroundWindow(window);SetFocus(window);if(!r.confirmPower.empty())FocusControlPage(false);SetTimer(window,1,500,nullptr);
+        Paint();Animate(true);backdrop.SetPopupWindowPairZOrder(window,HWND_TOPMOST,true);if(Glass()||composedSlide)backdrop.ShowPopupWindowPair(window);ShowWindow(window,SW_SHOW);SetForegroundWindow(window);SetFocus(window);if(!r.confirmPower.empty())FocusControlPage(false);SetTimer(window,1,500,nullptr);
         if(r.action==StatusBarAction::Tray&&r.tray)r.tray->SubscribeChanges(window);
         ReportTrayState(showing&&!closing&&current&&current->action==StatusBarAction::Tray&&IsWindowVisible(window)?monitor:nullptr);
     }
@@ -351,6 +408,11 @@ struct SystemPanel::Impl
     bool Arrange()
     {
         if(!model||!current||closing)return false;if(ApplyDismissRequest())return false;
+        if (composedSlide)
+        {
+            arrangeAfterSlide = true;
+            return true;
+        }
         MONITORINFO info{sizeof(info)};if(!GetMonitorInfoW(monitor,&info))return false;
         const auto previousScene=model->View();model->Refresh((info.rcWork.bottom-info.rcWork.top)/scale-12,(info.rcWork.right-info.rcWork.left)/scale-12);
         // A completed standalone confirmation closes over its existing surface.
@@ -400,7 +462,7 @@ struct SystemPanel::Impl
             if(showing)SyncTrayMenuLayer();
             backdrop.SetVisible(showing&&prepared);
         }
-        else if(!Glass())backdrop.ResetBackdrop();
+        else if(!Glass()&&backdrop.PanelCount()!=0)backdrop.ResetBackdrop();
         if(moved||shape||appearanceChanged)Pose();
         if(moved||shape||contentChanged)PublishGeometry();
         // A later overlay can split the pair without notifying our content.
@@ -421,6 +483,7 @@ struct SystemPanel::Impl
     void Paint()
     {
         if(!model||!current||!visual||closing||width<=0||height<=0)return;
+        if (composedSlide) { paintDirty = true; return; }
         if(!surface&&FAILED(composition->CreateSurface(width,height,DXGI_FORMAT_B8G8R8A8_UNORM,DXGI_ALPHA_MODE_PREMULTIPLIED,&surface)))return;
         ComPtr<ID2D1DeviceContext> dc;POINT offset{};if(FAILED(surface->BeginDraw(nullptr,IID_PPV_ARGS(&dc),&offset)))return;
         const auto srgbKey = reinterpret_cast<std::uintptr_t>(this);
@@ -467,16 +530,125 @@ struct SystemPanel::Impl
         if (!backdrop.CommitSrgbContent()) return;
         paintDirty = false;
     }
+    OwnedRegion MakeWindowFence(float y) const
+    {
+        OwnedRegion result(CreateRectRgn(0, 0, 0, 0));
+        if (!result) return {};
+        for (const auto& card : cards)
+        {
+            OwnedRegion part(popup_round_geometry::CreateWindowFence(card,
+                current->appearance.cornerRadius * scale, y, static_cast<float>(flat_glass_rim::kPanelOverdraw)));
+            if (!part || CombineRgn(result.get(), result.get(), part.get(), RGN_OR) == ERROR) return {};
+        }
+        return result;
+    }
+
     void Pose()
     {
+        if (composedSlide) return;
         if(!visual||!current||!window)return;const float y=SlideOffset();
-        visual->SetOffsetY(y);HRGN region=CreateRectRgn(0,0,0,0);const int dyTop=static_cast<int>(std::floor(y)),dyBottom=static_cast<int>(std::ceil(y));
-        for(std::size_t i=0;i<cards.size();++i){const auto& c=cards[i];HRGN part=popup_round_geometry::CreateWindowFence(c,current->appearance.cornerRadius*scale,y,static_cast<float>(flat_glass_rim::kPanelOverdraw));CombineRgn(region,region,part,RGN_OR);DeleteObject(part);if(Glass()){RECT projected=c;projected.top+=dyTop;projected.bottom+=dyBottom;backdrop.SetPanelTransform(reinterpret_cast<std::uintptr_t>(this)+i,D2D1::Matrix4x4F::Translation(0,y,0),projected);}}
-        const auto clip=CreateRectRgn(0,0,width,height);CombineRgn(region,region,clip,RGN_AND);DeleteObject(clip);if(!SetWindowRgn(window,region,FALSE))DeleteObject(region);
+        visual->SetOffsetY(y);
+        const int dyTop = static_cast<int>(std::floor(y)), dyBottom = static_cast<int>(std::ceil(y));
+        if (Glass())
+        {
+            for (std::size_t i = 0; i < cards.size(); ++i)
+            {
+                RECT projected = cards[i];
+                projected.top += dyTop;
+                projected.bottom += dyBottom;
+                backdrop.SetPanelTransform(reinterpret_cast<std::uintptr_t>(this) + i,
+                    D2D1::Matrix4x4F::Translation(0, y, 0), projected);
+            }
+        }
+        const OwnedRegion clip(CreateRectRgn(0, 0, width, height));
+        ApplyWindowFence(window, MakeWindowFence(y), clip.get());
         if(calendarInputs)calendarInputs->Pose(y,showing&&!closing&&!modal&&!slide.IsAnimating());
         composition->Commit();if(Glass())backdrop.CommitVisualChanges();
         backdrop.SetSrgbRootPose(1.f, 0.f, y);
         (void)backdrop.CommitSrgbContent();
+    }
+    void RestoreSlideOutput()
+    {
+        if (!backdrop.StopRootTranslationAnimation(0.f, 0.f))
+        {
+            backdrop.Reset();
+            paintDirty = backdropDirty = arrangeAfterSlide = true;
+            if (window) InvalidateRect(window, nullptr, FALSE);
+        }
+        if (visual) visual->SetContent(surface.Get());
+    }
+    void StopComposedSlide()
+    {
+        if (composedSlide)
+        {
+            composedSlide.reset();
+            RestoreSlideOutput();
+        }
+    }
+
+    bool StartComposedSlide()
+    {
+        if (!surface || !slide.IsAnimating() ||
+            !backdrop.HasSrgbContent(reinterpret_cast<std::uintptr_t>(this)))
+            return false;
+        ComposedSlide motion{slide.RemainingTimeline(), 0, HiddenSlideOffset(),
+            MakeWindowFence(0.f), MakeWindowFence(.5f), OwnedRegion(CreateRectRgn(0, 0, width, height)), {}};
+        if (!motion.wholePixelFence || !motion.fractionalPixelFence || !motion.viewport) return false;
+        const auto& progress = motion.progress;
+        const float travel = motion.travel;
+        // The same click-through popup presents the scene with glass enabled or
+        // disabled. Only the original input window tracks the moving contour.
+        const bool glass = Glass();
+        if (!backdrop.IsAvailable() && (glass || !backdrop.InitializePopup(window, true, false)))
+            return false;
+        RECT viewport{};
+        if (!GetWindowRect(window, &viewport) || !backdrop.SetPopupWindowPadding({}, viewport)) return false;
+        if (!motion.TrackWindowFence(window, travel * (1.f - slide.GetVisual().opacity))) return false;
+        if (glass)
+        {
+            for (std::size_t i = 0; i < cards.size(); ++i)
+                if (!backdrop.SetPanelTransform(reinterpret_cast<std::uintptr_t>(this) + i,
+                        D2D1::Matrix4x4F(), cards[i]))
+                    return false;
+        }
+        // Paint clears this DirectComposition surface before recording the
+        // actual scene. Detach it explicitly while its sRGB scene travels.
+        if (FAILED(visual->SetContent(nullptr)) || FAILED(composition->Commit()) ||
+            !backdrop.StartRootTranslationAnimation(progress, 0.f, travel, 0.f, -travel, glass, true))
+        {
+            RestoreSlideOutput();
+            return false;
+        }
+
+        motion.started = static_cast<std::uint64_t>(UiAnimationScheduler::MonotonicMilliseconds());
+        slide.ResumeAt(motion.started);
+        composedSlide = std::move(motion);
+        animationToken = scheduler->StartAnimation(UiAnimationSurface::Popup, [this](double) {
+            if (!composedSlide) return false;
+            const auto now = UiAnimationScheduler::MonotonicMilliseconds();
+            const double elapsed = now - static_cast<double>(composedSlide->started);
+            if (elapsed < composedSlide->progress.durationMilliseconds)
+            {
+                const auto sample = popup_motion_curve::Evaluate(composedSlide->progress, elapsed / 1000.0);
+                composedSlide->TrackWindowFence(window, composedSlide->travel * (1.f - static_cast<float>(sample.position)));
+                return true;
+            }
+            animationToken = 0;
+            if (closing) { FinishClose(); return false; }
+            composedSlide->TrackWindowFence(window, 0.f);
+            slide.ShowImmediately();
+            StopComposedSlide();
+            Pose();
+            if (std::exchange(arrangeAfterSlide, false) && !Arrange()) return false;
+            if (paintDirty) Paint();
+            if (accessibility) accessibility->RefreshEvents();
+            return false;
+        });
+        if (!animationToken) return false;
+        // Disabling a focused editor may dispatch a synchronous focus/paint
+        // message. Publish ownership of both the visuals and the completion first.
+        if (calendarInputs) calendarInputs->Pose(travel * (1.f - slide.GetVisual().opacity), false);
+        return true;
     }
     void Animate(bool opening)
     {
@@ -489,9 +661,14 @@ struct SystemPanel::Impl
         if(!opening){KillTimer(window,kTrayMenuTimer);EndDragFeedback();dropIndicator.reset();middleTrayPress.reset();lastMiddleTray.reset();if(GetCapture()==window)ReleaseCapture();}
         if(!opening&&modal){if(model)model->Close();CancelPrompt();}
         if(scheduler)scheduler->Cancel(animationToken);animationToken=0;
-        if(!scheduler||animation::RuntimePopupEffect()==animation::NoEffect){if(opening){slide.ShowImmediately();Pose();}else FinishClose();return;}
+        if(!scheduler||animation::RuntimePopupEffect()==animation::NoEffect){if(opening){slide.ShowImmediately();StopComposedSlide();Pose();}else FinishClose();return;}
         slide.Configure(quick_navigation_animation_rules::Effect::Fade,animation::RuntimeDurationScale(),false,true);const auto now=static_cast<std::uint64_t>(UiAnimationScheduler::MonotonicMilliseconds());
-        if(opening){slide.ResetHidden();slide.Open(now);}else{input.Cancel();slide.Close(now);}Pose();
+        if(opening){slide.ResetHidden();slide.Open(now);}else{input.Cancel();slide.Close(now);}
+        const bool composed = StartComposedSlide();
+        performance::Value("system.panel", "slide.composed", {}, composed ? 1 : 0);
+        if (composed) return;
+        StopComposedSlide();
+        Pose();
         animationToken=scheduler->StartAnimation(UiAnimationSurface::Popup,[this](double time){slide.Advance(static_cast<std::uint64_t>(time));Pose();if(slide.IsAnimating())return true;animationToken=0;if(slide.IsHidden())FinishClose();else if(accessibility)accessibility->RefreshEvents();return false;});
     }
     void CancelPrompt(){if(calendarMenu)modern_menu::DismissActive();}
@@ -516,6 +693,8 @@ struct SystemPanel::Impl
         if(scheduler)scheduler->Cancel(animationToken);animationToken=0;input.Cancel();scrollbarDragging=false;if(GetCapture()==window)ReleaseCapture();
         if(calendarInputs)calendarInputs->Clear();if(oldModel)oldModel->Close();CancelPrompt();
         if(window){KillTimer(window,1);KillTimer(window,kTrayMenuTimer);backdrop.HidePopupWindowPair(window);backdrop.SetPopupTopmost(false);ShowWindow(window,SW_HIDE);}
+        StopComposedSlide();
+        arrangeAfterSlide = false;
         if(oldRequest&&oldRequest->tray&&oldModel){oldRequest->tray->CancelFocusReturn(oldRequest->owner);for(const auto& n:oldModel->View().nodes)if(n.id.starts_with("tray:"))oldRequest->tray->SetGeometry(n.id.substr(5),{});}
         oldModel.reset();oldRequest.reset();context.Reset();slide.ResetHidden();closing=false;if(accessibility)accessibility->RefreshEvents();
     }
@@ -860,7 +1039,7 @@ struct SystemPanel::Impl
         try
         {
             if(m==WM_WINDOWPOSCHANGED&&lp)
-                MaintainSystemPanelBackdropPlacement(self->backdrop,w,self->showing&&self->Glass());
+                MaintainSystemPanelBackdropPlacement(self->backdrop,w,self->showing&&(self->Glass()||self->composedSlide));
             if(m==kPointerChanged){self->pointerRefreshPending=false;self->RefreshPointer();return 0;}
             if (m == tray::HoverPopupChangedMessage())
             {

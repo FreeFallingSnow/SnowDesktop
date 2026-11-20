@@ -780,9 +780,13 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
     floatingPopupCompositionPaintInProgress_ = true;
     struct PaintScope final
     {
-        bool& active;
-        ~PaintScope() { active = false; }
-    } paintScope{ floatingPopupCompositionPaintInProgress_ };
+        DesktopApp& app;
+        ~PaintScope()
+        {
+            app.floatingPopupCompositionPaintInProgress_ = false;
+            app.ScheduleDeferredDesktopWidgetPresentation();
+        }
+    } paintScope{ *this };
     const bool retireCollection = popupAnimationOverlay_.srgbRetirementBounds.has_value();
     const bool retireLuaPanel = luaWidgetPanelAnimationOverlay_.srgbRetirementBounds.has_value();
 
@@ -942,16 +946,6 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
     PublishCollectionPopupFanBackdrops();
     ApplyCollectionPopupBackdropAnimationFrame(false);
 
-    // A panel callback or a re-entrant provider wake may request a desktop
-    // widget update while this popup surface owns BeginDraw. The queue defers
-    // that work; consume it only after the popup surface has left Draw state.
-    // A widget-local retry must not prevent the popup frame from presenting.
-    const bool deferredWidgetsFlushed =
-        FlushPendingDesktopWidgetComposition(true) &&
-        FlushPendingWidgetMarqueeComposition() &&
-        SyncWidgetMarqueeCompositionVisibility();
-    if (!deferredWidgetsFlushed && hwnd_ && IsWindow(hwnd_))
-        InvalidateRect(hwnd_, nullptr, FALSE);
     if (!CommitCompositionAnimationFrame())
     {
         RecoverFloatingPopupCompositionFailure(

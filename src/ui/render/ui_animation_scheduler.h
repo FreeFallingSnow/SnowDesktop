@@ -57,6 +57,7 @@ class UiAnimationScheduler
 public:
     using FrameCallback = std::function<bool(double nowMilliseconds)>;
     using TimerCallback = std::function<void(UiScheduleToken)>;
+    enum class IntervalOwner { Host, Widget };
 
     // Shell verbs may run a nested message loop that does not wait on our
     // timer handle. Keep deadlines moving only for the duration of that call.
@@ -93,7 +94,7 @@ public:
         UiAnimationSurface surface, FrameCallback callback,
         std::source_location source = std::source_location::current());
     UiScheduleToken ScheduleInterval(
-        UINT intervalMilliseconds, TimerCallback callback);
+        UINT intervalMilliseconds, TimerCallback callback, IntervalOwner owner = IntervalOwner::Host);
     UiScheduleToken ScheduleOnce(
         UINT delayMilliseconds, TimerCallback callback);
     // One-shot component frames share a presentation boundary and yield UI
@@ -143,6 +144,7 @@ private:
         bool repeating = false;
         TimerCallback callback;
         bool componentFrame = false;
+        IntervalOwner intervalOwner = IntervalOwner::Host;
     };
 
     static constexpr std::size_t kMetricSampleCapacity = 240;
@@ -170,6 +172,7 @@ private:
     double recoveryStartMilliseconds_ = 0.0;
     double lastPresentationMilliseconds_ = 0.0;
     double nextComponentFrameMilliseconds_ = 0.0;
+    bool yieldedComponentWork_ = false;
     bool softwareRendering_ = false;
     bool diagnosticsEnabled_ = false;
     bool dispatching_ = false;

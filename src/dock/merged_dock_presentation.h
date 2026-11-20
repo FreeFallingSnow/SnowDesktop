@@ -27,6 +27,8 @@ struct StatusBarDockPresentation
     float opacity = 0;
     float hiddenFraction = 1;
     float offsetX = 0, offsetY = 0;
+    float hiddenOffsetX = 0, hiddenOffsetY = 0;
+    bool compositorSlide = false;
 };
 
 inline StatusBarDockPresentation MergedDockPresentationFrame(
@@ -44,14 +46,15 @@ inline StatusBarDockPresentation MergedDockPresentationFrame(
 inline void PositionDockRevealFrame(StatusBarDockPresentation& frame,
     DockPosition edge, const RECT& bounds, const RECT& screen)
 {
-    const float hidden = frame.hiddenFraction;
-    frame.offsetX = frame.offsetY = 0;
+    frame.hiddenOffsetX = frame.hiddenOffsetY = 0;
     switch (edge)
     {
-    case DockPosition::Left: frame.offsetX = -hidden * static_cast<float>(std::max<LONG>(0, bounds.right - screen.left)); break;
-    case DockPosition::Right: frame.offsetX = hidden * static_cast<float>(std::max<LONG>(0, screen.right - bounds.left)); break;
-    case DockPosition::Top: frame.offsetY = -hidden * static_cast<float>(std::max<LONG>(0, bounds.bottom - screen.top)); break;
-    case DockPosition::Bottom: frame.offsetY = hidden * static_cast<float>(std::max<LONG>(0, screen.bottom - bounds.top)); break;
+    case DockPosition::Left: frame.hiddenOffsetX = -static_cast<float>(std::max<LONG>(0, bounds.right - screen.left)); break;
+    case DockPosition::Right: frame.hiddenOffsetX = static_cast<float>(std::max<LONG>(0, screen.right - bounds.left)); break;
+    case DockPosition::Top: frame.hiddenOffsetY = -static_cast<float>(std::max<LONG>(0, bounds.bottom - screen.top)); break;
+    case DockPosition::Bottom: frame.hiddenOffsetY = static_cast<float>(std::max<LONG>(0, screen.bottom - bounds.top)); break;
     }
+    frame.offsetX = frame.hiddenOffsetX * frame.hiddenFraction;
+    frame.offsetY = frame.hiddenOffsetY * frame.hiddenFraction;
 }
 }

@@ -142,11 +142,11 @@ bool snowdesktop::quick_navigation::State::PublishPrecomposedFrame(
                 }
                 target->PopAxisAlignedClip();
                 return S_OK;
-            }) || !backdropCompositor.PublishSrgbContent(key, opacity))
+            }) || !backdropCompositor.PublishSrgbContent(key, animationCompositorDriven ? -1.f : opacity))
         return false;
     sceneDirty = false;
     sceneFrameDeformed = deformed;
-    return backdropCompositor.SetSrgbContentPose(key, {}, 1.f, opacity);
+    return animationCompositorDriven || backdropCompositor.SetSrgbContentPose(key, {}, 1.f, opacity);
 }
 
 void DesktopApp::ClearQuickNavigationDeformation()
@@ -478,6 +478,23 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         quickNavigation_->compositionPaintInProgress
     };
 
+    if (quickNavigation_->resizeCompositorDriven)
+    {
+        const auto key = reinterpret_cast<std::uintptr_t>(hwnd);
+        if (quickNavigation_->backdropCompositor.UpdatePopupResizeContents(key,
+                [this](ID2D1DeviceContext* dc, POINT offset) {
+                    return PaintQuickNavigationResizeLayer(dc, offset, false) ? S_OK : E_FAIL;
+                }))
+        {
+            EndPaint(hwnd, &ps);
+            return;
+        }
+        StopQuickNavigationAnimationTimeline();
+        quickNavigation_->resizeHostFallback = true;
+        PositionQuickNavigationWindow(false);
+        EnsureUiAnimationFrame();
+    }
+
     // Initialize the backdrop before deciding how to draw the first hidden
     // frame. Otherwise a cold open starts with an ordinary rim.
     if (!quickNavigation_->animationCompositorDriven)
@@ -532,7 +549,24 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     EndPaint(hwnd, &ps);
 }
 
-void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
+bool DesktopApp::PaintQuickNavigationResizeLayer(ID2D1DeviceContext* context, POINT origin, bool chrome)
+{
+    if (!context) return false;
+    const RECT layout = quickNavigation_->rect;
+    context->SetDpi(96.f, 96.f);
+    context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+    context->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
+    context->SetTransform(D2D1::Matrix3x2F::Translation(
+        static_cast<float>(origin.x - layout.left), static_cast<float>(origin.y - layout.top)));
+    context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    context->Clear(D2D1::ColorF(0u, 0.f));
+    drawing_.Reset();
+    DrawQuickNavigationSurface(context, chrome ? QuickNavigationPaintPart::Chrome : QuickNavigationPaintPart::Content);
+    drawing_.Reset();
+    return true;
+}
+
+void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context, QuickNavigationPaintPart part)
 {
     ComPtr<ID2D1DeviceContext> ctx = context;
     const QuickNavTheme t = ResolveQuickNavTheme(quickNavigation_->lightTheme, navigationSettings_, quickNavigation_->glassTheme);
@@ -553,57 +587,65 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             nullptr);
         windowClipPushed = true;
     }
-    const float borderAlpha =
-        std::clamp(quickNavigation_->appearance.widgetBorderAlpha, 0.0f, 1.0f);
-    auto background = quickNavigation_->appearance;
-    background.widgetEdgeHighlightEnabled = false;
-    background.acrylicEnabled = false;
-    DrawWidgetPanelBackground(ctx.Get(), overlay, windowCornerRadius,
-        D2D1::ColorF(background.widgetBgR, background.widgetBgG, background.widgetBgB, background.widgetAlpha),
-        D2D1::ColorF(0, 0, 0, 0), false, background.widgetBorderWidth,
-        &background, false, 0, static_cast<float>(QuickNavScale(100)) / 100.0f);
-    if (quickNavigation_->appearance.glassEnabled && quickNavigation_->appearance.acrylicEnabled)
+    if (part != QuickNavigationPaintPart::Content)
     {
-        POINT screenOrigin{};
-        if (!quickNavigation_->preview) ClientToScreen(quickNavigation_->hwnd, &screenOrigin);
-        DrawAcrylicNoise(ctx.Get(), overlay, windowCornerRadius,
-            quickNavigation_->appearance.contentTheme == 1, screenOrigin);
-    }
-    const RECT searchRect = GetQuickNavigationSearchRect(overlay);
-    DrawD2DFilledRectangle(ctx.Get(), searchRect,
-        ToD2DColor(t.searchBg), D2D1::ColorF(0,0,0,0.f));
-    if (overlay.bottom > searchRect.bottom)
-        DrawD2DSeparator(ctx.Get(), MakeRect(searchRect.left, searchRect.bottom - QuickNavScale(1), searchRect.right, searchRect.bottom),
-            ToD2DColor(t.searchBorder));
-    const float windowBorderStrokeWidth = std::clamp(quickNavigation_->appearance.widgetBorderWidth, kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
-    const float windowBorderInset =
-        windowBorderStrokeWidth * 0.5f;
-    const D2D1_RECT_F windowBorderRect =
-        D2D1::RectF(
-            static_cast<float>(overlay.left) +
-                windowBorderInset,
-            static_cast<float>(overlay.top) +
-                windowBorderInset,
-            static_cast<float>(overlay.right) -
-                windowBorderInset,
-            static_cast<float>(overlay.bottom) -
-                windowBorderInset);
-    DrawD2DRoundedRectangle(ctx.Get(),
-        windowBorderRect,
-        std::max(
-            0.0f,
-            windowCornerRadius - windowBorderInset),
-        D2D1::ColorF(0, 0, 0, 0),
-        D2D1::ColorF(quickNavigation_->appearance.widgetBorderR,
-            quickNavigation_->appearance.widgetBorderG,
-            quickNavigation_->appearance.widgetBorderB, borderAlpha),
-        windowBorderStrokeWidth);
-    {
-        (void)DrawWidgetPanelEdgeHighlight(ctx.Get(), overlay, windowCornerRadius,
+        const float borderAlpha =
+            std::clamp(quickNavigation_->appearance.widgetBorderAlpha, 0.0f, 1.0f);
+        auto background = quickNavigation_->appearance;
+        background.widgetEdgeHighlightEnabled = false;
+        background.acrylicEnabled = false;
+        DrawWidgetPanelBackground(ctx.Get(), overlay, windowCornerRadius,
             D2D1::ColorF(background.widgetBgR, background.widgetBgG, background.widgetBgB, background.widgetAlpha),
-            &quickNavigation_->appearance, static_cast<float>(QuickNavScale(100)) / 100.0f);
-    }
+            D2D1::ColorF(0, 0, 0, 0), false, background.widgetBorderWidth,
+            &background, false, 0, static_cast<float>(QuickNavScale(100)) / 100.0f);
+        if (quickNavigation_->appearance.glassEnabled && quickNavigation_->appearance.acrylicEnabled)
+        {
+            POINT screenOrigin{};
+            if (!quickNavigation_->preview) ClientToScreen(quickNavigation_->hwnd, &screenOrigin);
+            DrawAcrylicNoise(ctx.Get(), overlay, windowCornerRadius,
+                quickNavigation_->appearance.contentTheme == 1, screenOrigin);
+        }
+        const RECT searchRect = GetQuickNavigationSearchRect(overlay);
+        DrawD2DFilledRectangle(ctx.Get(), searchRect,
+            ToD2DColor(t.searchBg), D2D1::ColorF(0,0,0,0.f));
+        if (overlay.bottom > searchRect.bottom)
+            DrawD2DSeparator(ctx.Get(), MakeRect(searchRect.left, searchRect.bottom - QuickNavScale(1), searchRect.right, searchRect.bottom),
+                ToD2DColor(t.searchBorder));
+        const float windowBorderStrokeWidth = std::clamp(quickNavigation_->appearance.widgetBorderWidth, kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+        const float windowBorderInset =
+            windowBorderStrokeWidth * 0.5f;
+        const D2D1_RECT_F windowBorderRect =
+            D2D1::RectF(
+                static_cast<float>(overlay.left) +
+                    windowBorderInset,
+                static_cast<float>(overlay.top) +
+                    windowBorderInset,
+                static_cast<float>(overlay.right) -
+                    windowBorderInset,
+                static_cast<float>(overlay.bottom) -
+                    windowBorderInset);
+        DrawD2DRoundedRectangle(ctx.Get(),
+            windowBorderRect,
+            std::max(
+                0.0f,
+                windowCornerRadius - windowBorderInset),
+            D2D1::ColorF(0, 0, 0, 0),
+            D2D1::ColorF(quickNavigation_->appearance.widgetBorderR,
+                quickNavigation_->appearance.widgetBorderG,
+                quickNavigation_->appearance.widgetBorderB, borderAlpha),
+            windowBorderStrokeWidth);
+        {
+            (void)DrawWidgetPanelEdgeHighlight(ctx.Get(), overlay, windowCornerRadius,
+                D2D1::ColorF(background.widgetBgR, background.widgetBgG, background.widgetBgB, background.widgetAlpha),
+                &quickNavigation_->appearance, static_cast<float>(QuickNavScale(100)) / 100.0f);
+        }
 
+    }
+    if (part == QuickNavigationPaintPart::Chrome)
+    {
+        if (windowClipPushed) ctx->PopLayer();
+        return;
+    }
     const bool searching = !GetQuickNavigationEffectiveSearchText().empty();
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
     QuickNavigationContentModel contentModel =

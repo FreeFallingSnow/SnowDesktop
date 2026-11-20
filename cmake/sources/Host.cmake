@@ -520,6 +520,7 @@ set(SNOWDESKTOP_SOURCES
     src/winui/xaml_type_info_bridge.cpp
     src/winui/xaml_type_info_impl_bridge.cpp
     src/ui/render/ui_animation_scheduler.cpp
+    src/ui/render/composition_motion_curve.cpp
     src/theme/personalization.cpp
     src/theme/personalization_path.cpp
     src/theme/theme_library_settings.cpp

@@ -10,6 +10,7 @@
 #include <optional>
 
 struct IDCompositionDesktopDevice;
+struct IDCompositionAnimation;
 struct IDWriteFactory;
 struct ID2D1DeviceContext;
 struct ID2D1Device;
@@ -101,6 +102,8 @@ public:
     // Prepare the first complete strip frame without revealing either HWND.
     bool PrepareMergedDockPresentation(HMONITOR monitor, const StatusBarDockPresentation& frame);
     void ApplyMergedDockPresentation(HMONITOR monitor, const StatusBarDockPresentation& frame);
+    bool StartMergedDockSlide(HMONITOR monitor, IDCompositionAnimation* offset,
+        const popup_motion_curve::Timeline& progress);
     bool IsInteractionAvailable(HMONITOR monitor) const;
     HWND InteractionWindow(HMONITOR monitor) const;
     HWND MergedPresentationBottomWindow(HMONITOR monitor) const;

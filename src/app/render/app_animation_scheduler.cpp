@@ -75,6 +75,14 @@ void DesktopApp::ApplyAnimationPreferences(bool systemChanged)
     }
     if (windowChanged)
     {
+        if (quickNavigation_->resizeCompositorDriven && !motion::RuntimeAnimationsEnabled())
+        {
+            StopQuickNavigationAnimationTimeline();
+            quickNavigation_->animation.Resize().Advance(static_cast<std::uint64_t>(
+                snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()), false);
+            PositionQuickNavigationWindow(false);
+            InvalidateQuickNavigationWindow(true);
+        }
         if (quickNavigation_->animation.IsAnimating())
         {
             StopQuickNavigationAnimationTimeline();
@@ -238,7 +246,7 @@ void DesktopApp::EnsureUiAnimationFrame()
     if (!quickNavigation_->animationFrameToken &&
         ((quickNavigation_->animation.IsAnimating() &&
             !quickNavigation_->animationCompositorDriven) ||
-            quickNavigation_->animation.Resize().IsAnimating()))
+            (quickNavigation_->animation.Resize().IsAnimating() && !quickNavigation_->resizeCompositorDriven)))
     {
         quickNavigation_->animationFrameToken =
             uiAnimationScheduler_.StartAnimation(
@@ -266,7 +274,7 @@ void DesktopApp::EnsureUiAnimationFrame()
                     }
                     const bool keep =
                         quickNavigation_->animation.IsAnimating() ||
-                        quickNavigation_->animation.Resize().IsAnimating();
+                        (quickNavigation_->animation.Resize().IsAnimating() && !quickNavigation_->resizeCompositorDriven);
                     if (!keep)
                     {
                         quickNavigation_->animationFrameToken = 0;

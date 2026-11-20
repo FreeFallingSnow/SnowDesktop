@@ -267,6 +267,28 @@ bool DesktopApp::QueueDesktopWidgetComposition(
         });
 }
 
+void DesktopApp::ScheduleDeferredDesktopWidgetPresentation()
+{
+    if (deferredDesktopWidgetPresentationToken_ ||
+        (pendingDesktopWidgetCompositions_.empty() && pendingWidgetMarqueeCompositions_.empty() &&
+         !desktopWidgetHoverFadePending_))
+        return;
+
+    // A provider can enqueue work while the popup or Dock owns BeginDraw.
+    // Its last complete desktop frame stays visible until its own presentation.
+    deferredDesktopWidgetPresentationToken_ = uiAnimationScheduler_.ScheduleAnimationFrame(
+        1, [this](snowdesktop::UiScheduleToken token) {
+            if (deferredDesktopWidgetPresentationToken_ != token) return;
+            deferredDesktopWidgetPresentationToken_ = 0;
+            if (pendingDesktopWidgetCompositions_.empty() && pendingWidgetMarqueeCompositions_.empty() &&
+                !desktopWidgetHoverFadePending_) return;
+            (void)uiAnimationScheduler_.RequestScheduledPresentation(
+                &pendingDesktopWidgetCompositions_, [this] { return PresentQueuedDesktopWidgetComposition(); });
+        });
+    if (!deferredDesktopWidgetPresentationToken_ && hwnd_)
+        InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
 bool DesktopApp::DeferRetainedDesktopWidgetCompositionForPopupResize()
 {
     if ((!desktopWidgetPopupResizeTailToken_ &&
@@ -1633,6 +1655,8 @@ void DesktopApp::ResetDesktopWidgetComposition()
     // Join before resetting devices, command resources or the parent tree.
     widgetSurfaceRenderer_.reset();
     widgetSurfaceRendererUnavailable_ = false;
+    uiAnimationScheduler_.Cancel(deferredDesktopWidgetPresentationToken_);
+    deferredDesktopWidgetPresentationToken_ = 0;
     if (desktopWidgetHoverTailToken_)
         uiAnimationScheduler_.Cancel(desktopWidgetHoverTailToken_);
     desktopWidgetHoverTailToken_ = 0;

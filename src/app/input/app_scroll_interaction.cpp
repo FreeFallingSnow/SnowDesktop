@@ -94,8 +94,10 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
 
     if (quickNavigation_->open)
     {
-        RECT overlay = quickNavigation_->rect;
-        if (PtInRect(&overlay, pt))
+        const RECT overlay = quickNavigation_->rect;
+        const RECT displayed = quickNavigation_->DisplayedResizeRect(static_cast<std::uint64_t>(
+            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
+        if (PtInRect(&displayed, pt))
         {
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
             if (quickNavigation_->initialJumpOpen)
@@ -103,13 +105,13 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                 InvalidateQuickNavigationWindow(true);
                 return;
             }
-            RECT tabs = GetQuickNavigationTabsRect(overlay);
+            RECT tabs = GetQuickNavigationTabsRect(displayed);
             if (GetQuickNavigationEffectiveSearchText().empty() &&
                 PtInRect(&tabs, pt))
             {
                 if (pt.x >=
                     GetQuickNavigationTabsStart(
-                        overlay))
+                        displayed))
                 {
                     int maxTabScroll =
                         GetQuickNavigationMaxTabScrollOffset(

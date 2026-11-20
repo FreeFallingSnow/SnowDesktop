@@ -685,6 +685,12 @@ struct DesktopBackdropCompositor::Impl
             SIZE size{};
         };
         Buffer active, candidate;
+        struct ResizeScene
+        {
+            Buffer contents, spare;
+            wuc::CompositionSurfaceBrush brush{nullptr};
+        };
+        std::unique_ptr<ResizeScene> resize;
         wuc::CompositionSurfaceBrush sceneBrush{nullptr};
         wuc::CompositionEffectBrush sceneEffect{nullptr};
         PreparedMarquees marquees;
@@ -696,6 +702,8 @@ struct DesktopBackdropCompositor::Impl
     HWND srgbContentWindow = nullptr;
     wucd::DesktopWindowTarget srgbContentTarget{nullptr};
     wuc::ContainerVisual srgbContentRoot{nullptr};
+    bool srgbRootOnPopup = false;
+    bool popupPresentationViewport = false;
     std::unordered_map<std::uintptr_t, SrgbContent> srgbContent;
     std::vector<std::uintptr_t> srgbContentOrder;
     bool srgbContentOrderDirty = false;
@@ -760,6 +768,7 @@ struct DesktopBackdropCompositor::Impl
     wuc::CompositionRoundedRectangleGeometry popupDisplayClip{nullptr};
     bool visible = true;
     bool animationPathRegionExpanded = false;
+    bool rootTranslationOwnsGlass = false;
     bool stableWindowRegion = false;
     RECT occlusionRect{};
     bool panelRegionSnapshotValid = false;
@@ -1011,6 +1020,9 @@ struct DesktopBackdropCompositor::Impl
         if (!available || !backdropWindow ||
             !IsWindow(backdropWindow))
             return false;
+        // While the root moves, the visual clips own each card contour. Keep
+        // the whole viewport available while still subtracting any guide HWND.
+        const bool fenceAllocation = stableWindowRegion || rootTranslationOwnsGlass || popupPresentationViewport;
 
         // The owned HWND fence depends on the final collection, not on the
         // individual setters used while collecting it. In particular, a card
@@ -1022,14 +1034,14 @@ struct DesktopBackdropCompositor::Impl
         const UINT windowDpi = GetDpiForWindow(backdropWindow);
         const bool windowGeometryKnown = GetWindowRect(backdropWindow, &windowFrame) && windowDpi != 0;
         const SIZE windowSize{windowFrame.right - windowFrame.left, windowFrame.bottom - windowFrame.top};
-        if (stableWindowRegion && !windowGeometryKnown) return false;
+        if (fenceAllocation && !windowGeometryKnown) return false;
         bool inputsMatch = panelRegionSnapshotValid && !animationPathRegionExpanded &&
-            synchronizedStableWindowRegion == stableWindowRegion &&
+            synchronizedStableWindowRegion == fenceAllocation &&
             windowGeometryKnown && synchronizedPanelCount == panels.size() &&
             EqualRect(&synchronizedOcclusionRect, &occlusionRect) &&
             synchronizedWindowSize.cx == windowSize.cx && synchronizedWindowSize.cy == windowSize.cy &&
             synchronizedWindowDpi == windowDpi;
-        if (inputsMatch && !stableWindowRegion)
+        if (inputsMatch && !fenceAllocation)
         {
             for (const auto& panel : panels)
             {
@@ -1059,7 +1071,7 @@ struct DesktopBackdropCompositor::Impl
                 panel.regionFenceSynchronized = true;
             }
             synchronizedPanelCount = panels.size();
-            synchronizedStableWindowRegion = stableWindowRegion;
+            synchronizedStableWindowRegion = fenceAllocation;
             synchronizedOcclusionRect = occlusionRect;
             synchronizedWindowSize = windowSize;
             synchronizedWindowDpi = windowDpi;
@@ -1071,12 +1083,12 @@ struct DesktopBackdropCompositor::Impl
         // fence can cut away the still-displayed old glass. Keep this HWND
         // fence stable and let the visual clips move with their own pixels.
         // An empty collection still retires all glass synchronously.
-        HRGN panelRegion = stableWindowRegion && !panels.empty()
+        HRGN panelRegion = fenceAllocation && (!panels.empty() || popupPresentationViewport)
             ? CreateRectRgn(0, 0, windowSize.cx, windowSize.cy)
             : CreateRectRgn(0, 0, 0, 0);
         if (!panelRegion)
             return false;
-        if (!stableWindowRegion)
+        if (!fenceAllocation)
         {
             for (const PanelVisual& panel : panels)
             {
@@ -1341,8 +1353,47 @@ struct DesktopBackdropCompositor::Impl
         }
     }
 
+    // The popup helper is immediately below the input HWND. Its placement root
+    // already aligns client coordinates and applies the stationary viewport.
+    // Move the existing scene above glass, retaining the brush, live backdrop
+    // input, and pixel order. Both target changes belong to this controller.
+    void SetSrgbRootOnPopup(bool onPopup)
+    {
+        if (srgbRootOnPopup == onPopup)
+        {
+            // Recover a target detached before an unsuccessful insertion.
+            if (!onPopup && popupPresentationViewport && srgbContentTarget &&
+                srgbContentRoot && !srgbContentTarget.Root())
+            {
+                srgbContentTarget.Root(srgbContentRoot);
+                srgbContentCommitPending = true;
+            }
+            return;
+        }
+        auto children = placementRoot.Children();
+        if (onPopup)
+        {
+            srgbContentTarget.Root(nullptr);
+            try { children.InsertAtTop(srgbContentRoot); }
+            catch (...) { srgbContentTarget.Root(srgbContentRoot); throw; }
+        }
+        else
+        {
+            children.Remove(srgbContentRoot);
+            try { srgbContentTarget.Root(srgbContentRoot); }
+            catch (...) { children.InsertAtTop(srgbContentRoot); throw; }
+        }
+        srgbRootOnPopup = onPopup;
+        srgbContentCommitPending = true;
+    }
+
     void ResetSrgbContent()
     {
+        if (srgbRootOnPopup)
+        {
+            placementRoot.Children().Remove(srgbContentRoot);
+            srgbRootOnPopup = false;
+        }
         if (srgbContentTarget) srgbContentTarget.Root(nullptr);
         srgbContent.clear();
         srgbContentOrder.clear();
@@ -1533,6 +1584,11 @@ struct DesktopBackdropCompositor::Impl
         blurFactoriesDirty = false;
         try
         {
+            if (preserveSrgbContent && srgbRootOnPopup)
+            {
+                try { SetSrgbRootOnPopup(false); }
+                catch (...) { ResetSrgbContent(); }
+            }
             if (!preserveSrgbContent)
                 ResetSrgbContent();
             if (target)
@@ -1567,6 +1623,9 @@ struct DesktopBackdropCompositor::Impl
         visible = true;
         animationPathRegionExpanded = false;
         stableWindowRegion = false;
+        rootTranslationOwnsGlass = false;
+        srgbRootOnPopup = false;
+        popupPresentationViewport = false;
     }
 };
 
@@ -3654,6 +3713,176 @@ bool DesktopBackdropCompositor::CommitSrgbContent()
     }
 }
 
+bool DesktopBackdropCompositor::StartPopupResize(std::uintptr_t key, std::uintptr_t panelKey,
+    const RECT& envelope, SIZE layout, float radius, float headerHeight, float trailingButtonsWidth,
+    std::span<const snowdesktop::popup_motion_curve::Timeline, 4> edges, POINT desktopOrigin,
+    const SrgbSceneDraw& drawChrome, const SrgbSceneDraw& drawContents)
+{
+    const auto it = impl_->srgbContent.find(key);
+    const auto panel = panelKey ? impl_->FindPanel({}, panelKey) : impl_->panels.end();
+    if (it == impl_->srgbContent.end() || !it->second.visual || !it->second.sceneEffect ||
+        (panelKey && (panel == impl_->panels.end() || !EqualRect(&panel->frame, &envelope))) ||
+        layout.cx <= 0 || layout.cy <= 0 || IsRectEmpty(&envelope) || edges[0].durationMilliseconds <= 0)
+        return false;
+    auto& frame = it->second;
+    try
+    {
+        auto& compositor = impl_->compositor;
+        const wfn::float2 layoutSize{static_cast<float>(layout.cx), static_cast<float>(layout.cy)};
+        const wfn::float2 extent{static_cast<float>(envelope.right - envelope.left),
+            static_cast<float>(envelope.bottom - envelope.top)};
+        auto source = std::make_unique<Impl::SrgbContent::ResizeScene>();
+        const auto chrome = impl_->CreateSrgbContentBuffer(layout);
+        source->contents = impl_->CreateSrgbContentBuffer(layout);
+        Impl::PaintSrgbSurface(chrome.surface, drawChrome);
+        Impl::PaintSrgbSurface(source->contents.surface, drawContents);
+
+        auto makeBrush = [&](const auto& surface) {
+            auto brush = compositor.CreateSurfaceBrush(surface);
+            brush.Stretch(wuc::CompositionStretch::None);
+            brush.HorizontalAlignmentRatio(0.f);
+            brush.VerticalAlignmentRatio(0.f);
+            return brush;
+        };
+        source->brush = makeBrush(source->contents.surface);
+        const auto motion = compositor.CreatePropertySet();
+        const wchar_t* names[]{L"Left", L"Top", L"Right", L"Bottom"};
+        for (std::size_t i = 0; i < edges.size(); ++i)
+        {
+            const auto& track = edges[i];
+            const float origin = static_cast<float>(i % 2 == 0 ? desktopOrigin.x : desktopOrigin.y);
+            motion.InsertScalar(names[i], static_cast<float>(track.target) - origin);
+            if (track.segments.empty()) continue;
+            auto curve = compositor.CreateScalarKeyFrameAnimation();
+            curve.Duration(wf::TimeSpan{std::llround(track.durationMilliseconds * 10000.0)});
+            curve.InsertKeyFrame(0.f, static_cast<float>(track.segments.front().constant) - origin);
+            for (const auto& segment : track.segments)
+            {
+                const auto ease = compositor.CreateCubicBezierEasingFunction(
+                    {1.f / 3.f, static_cast<float>(segment.StartControl())},
+                    {2.f / 3.f, static_cast<float>(segment.EndControl())});
+                const float position = std::clamp(static_cast<float>((segment.startSeconds + segment.durationSeconds) *
+                    1000.0 / track.durationMilliseconds), 0.f, 1.f);
+                curve.InsertKeyFrame(position, static_cast<float>(segment.EvaluateLocal(segment.durationSeconds).position) - origin, ease);
+            }
+            motion.StartAnimation(names[i], curve);
+        }
+        motion.InsertScalar(L"LayoutWidth", layoutSize.x);
+        const auto bind = [&](const auto& object, const wchar_t* property, const wchar_t* expression) {
+            auto track = compositor.CreateExpressionAnimation(expression);
+            track.SetReferenceParameter(L"m", motion);
+            object.StartAnimation(property, track);
+        };
+        auto root = compositor.CreateContainerVisual();
+        root.Size(extent);
+        auto moving = compositor.CreateContainerVisual();
+        bind(moving, L"Offset", L"Vector3(m.Left,m.Top,0)");
+        root.Children().InsertAtTop(moving);
+        auto background = compositor.CreateSpriteVisual();
+        auto nine = compositor.CreateNineGridBrush();
+        auto chromeBrush = compositor.CreateSurfaceBrush(chrome.surface);
+        chromeBrush.Stretch(wuc::CompositionStretch::Fill);
+        nine.Source(chromeBrush);
+        const float limit = std::min(layoutSize.x, layoutSize.y) * .5f;
+        const float rim = std::min(limit, std::ceil(snowdesktop::smooth_corners::Corner(radius, limit).extent) + 2.f);
+        nine.LeftInset(rim);
+        nine.RightInset(rim);
+        nine.BottomInset(rim);
+        nine.TopInset(std::min(std::max(rim, headerHeight), layoutSize.y - rim));
+        background.Brush(nine);
+        bind(background, L"Size", L"Vector2(m.Right-m.Left,m.Bottom-m.Top)");
+        moving.Children().InsertAtTop(background);
+
+        // Text, caret, icons and list rows keep their original pixel scale.
+        // Only the right toolbar follows the right edge. Clip the input before it.
+        const auto part = [&](float top, float left, float bottom, float right) {
+            auto visual = compositor.CreateSpriteVisual();
+            visual.Size(layoutSize);
+            visual.Brush(source->brush);
+            visual.Clip(compositor.CreateInsetClip(left, top, right, bottom));
+            moving.Children().InsertAtTop(visual);
+            return visual;
+        };
+        const float footerInset = std::max(0.f, layoutSize.y - headerHeight);
+        const float toolbar = std::clamp(trailingButtonsWidth, 0.f, layoutSize.x);
+        motion.InsertScalar(L"Toolbar", toolbar);
+        part(headerHeight, 0.f, 0.f, 0.f);
+        auto header = part(0.f, 0.f, footerInset, toolbar);
+        bind(header.Clip(), L"RightInset", L"Max(m.Toolbar,m.LayoutWidth-(m.Right-m.Left)+m.Toolbar)");
+        auto buttons = part(0.f, layoutSize.x - toolbar, footerInset, 0.f);
+        bind(buttons, L"Offset.X", L"m.Right-m.Left-m.LayoutWidth");
+
+        auto shape = compositor.CreateRoundedRectangleGeometry();
+        shape.CornerRadius({radius, radius});
+        bind(shape, L"Offset", L"Vector2(m.Left,m.Top)");
+        bind(shape, L"Size", L"Vector2(m.Right-m.Left,m.Bottom-m.Top)");
+        auto surface = compositor.CreateVisualSurface();
+        surface.SourceVisual(root);
+        surface.SourceSize(extent);
+        frame.resize = std::move(source);
+        frame.sceneEffect.SetSourceParameter(L"scene", makeBrush(surface));
+        frame.visual.Offset({static_cast<float>(envelope.left), static_cast<float>(envelope.top), 0.f});
+        frame.visual.Size(extent);
+        frame.visual.Clip(compositor.CreateGeometricClip(shape));
+        if (panelKey) panel->SetClip(shape);
+        impl_->srgbContentCommitPending = true;
+        return CommitSrgbContent();
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.popup_resize", error.code());
+        StopPopupResize(key, panelKey);
+        return false;
+    }
+}
+
+bool DesktopBackdropCompositor::UpdatePopupResizeContents(std::uintptr_t key, const SrgbSceneDraw& drawContents)
+{
+    const auto it = impl_->srgbContent.find(key);
+    if (it == impl_->srgbContent.end() || !it->second.resize) return false;
+    auto& source = *it->second.resize;
+    try
+    {
+        if (!source.spare.surface) source.spare = impl_->CreateSrgbContentBuffer(source.contents.size);
+        Impl::PaintSrgbSurface(source.spare.surface, drawContents);
+        source.brush.Surface(source.spare.surface);
+        std::swap(source.spare, source.contents);
+        impl_->srgbContentCommitPending = true;
+        return CommitSrgbContent();
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.popup_resize_content", error.code());
+        return false;
+    }
+}
+
+void DesktopBackdropCompositor::StopPopupResize(std::uintptr_t key, std::uintptr_t panelKey)
+{
+    const auto it = impl_->srgbContent.find(key);
+    if (it == impl_->srgbContent.end() || !it->second.resize) return;
+    auto& frame = it->second;
+    try
+    {
+        frame.sceneEffect.SetSourceParameter(L"scene", frame.sceneBrush);
+        frame.visual.Clip(nullptr);
+        frame.visual.Offset({static_cast<float>(frame.stagedFrame.left), static_cast<float>(frame.stagedFrame.top), 0.f});
+        frame.visual.Size({static_cast<float>(frame.active.size.cx), static_cast<float>(frame.active.size.cy)});
+        const auto panel = impl_->FindPanel({}, panelKey);
+        if (panelKey && panel != impl_->panels.end())
+        {
+            if (panel->smoothCorners) panel->SetClip(panel->smoothGeometry);
+            else panel->SetClip(panel->geometry);
+        }
+        impl_->srgbContentCommitPending = true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.popup_resize_stop", error.code());
+    }
+    frame.resize.reset();
+}
+
 bool DesktopBackdropCompositor::SetSrgbContentPose(std::uintptr_t key, POINT anchor,
     float scale, float opacity)
 {
@@ -4031,6 +4260,102 @@ void DesktopBackdropCompositor::SetVisualTranslation(float x, float y)
     catch (const winrt::hresult_error& error)
     {
         impl_->SetError(_LW("backdrop.update_panel"), error.code());
+    }
+}
+
+bool DesktopBackdropCompositor::StartRootTranslationAnimation(
+    const snowdesktop::popup_motion_curve::Timeline& progress,
+    float baseX, float baseY, float factorX, float factorY, bool includeGlass, bool presentOnBackdrop)
+{
+    if (progress.segments.empty() || progress.durationMilliseconds <= 0.0 ||
+        ((includeGlass || presentOnBackdrop) && (!impl_->available || !impl_->root)) ||
+        (presentOnBackdrop && (!impl_->popupMode || !impl_->srgbContentTarget || !impl_->srgbContentRoot)))
+        return false;
+    if (!includeGlass && !impl_->srgbContentRoot) return true;
+
+    const auto offset = [&](double position) {
+        return wfn::float3{static_cast<float>(baseX + factorX * position),
+            static_cast<float>(baseY + factorY * position), 0.f};
+    };
+    try
+    {
+        auto animation = impl_->compositor.CreateVector3KeyFrameAnimation();
+        animation.Duration(wf::TimeSpan{std::llround(progress.durationMilliseconds * 10'000.0)});
+        animation.InsertKeyFrame(0.f, offset(progress.segments.front().constant));
+        for (const auto& segment : progress.segments)
+        {
+            const float fraction = std::clamp(static_cast<float>(
+                (segment.startSeconds + segment.durationSeconds) * 1000.0 / progress.durationMilliseconds), 0.f, 1.f);
+            const auto easing = impl_->compositor.CreateCubicBezierEasingFunction(
+                {1.f / 3.f, static_cast<float>(segment.StartControl())},
+                {2.f / 3.f, static_cast<float>(segment.EndControl())});
+            animation.InsertKeyFrame(fraction, offset(segment.EvaluateLocal(segment.durationSeconds).position), easing);
+        }
+
+        // Both roots belong to the same controller. Publish their curves together,
+        // including the conservative helper region needed until the motion ends.
+        if (presentOnBackdrop)
+        {
+            // Keep the allocation through the return handoff. Shrinking an
+            // HWND region synchronously could trim the compositor's last frame.
+            if (!std::exchange(impl_->popupPresentationViewport, true))
+                impl_->panelRegionSnapshotValid = false;
+            if (!impl_->SyncPanelWindowRegion()) return false;
+            if (IsWindowVisible(impl_->contentWindow)) impl_->visible = true;
+            if (!impl_->SyncWindowPlacement()) return false;
+            impl_->SetSrgbRootOnPopup(true);
+        }
+        if (includeGlass)
+        {
+            impl_->rootTranslationOwnsGlass = true;
+            if (!impl_->SyncPanelWindowRegion()) return false;
+            impl_->root.Offset(offset(progress.target));
+            impl_->root.StartAnimation(L"Offset", animation);
+        }
+        if (impl_->srgbContentRoot)
+        {
+            impl_->srgbContentRoot.Offset(offset(progress.target));
+            impl_->srgbContentRoot.StartAnimation(L"Offset", animation);
+            impl_->srgbContentCommitPending = true;
+        }
+        return includeGlass ? impl_->RequestCommit() : CommitSrgbContent();
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.start_root_translation", error.code());
+        return false;
+    }
+}
+
+bool DesktopBackdropCompositor::StopRootTranslationAnimation(float x, float y)
+{
+    const bool hadGlass = std::exchange(impl_->rootTranslationOwnsGlass, false);
+    try
+    {
+        const wfn::float3 offset{x, y, 0.f};
+        impl_->SetSrgbRootOnPopup(false);
+        if (impl_->srgbContentRoot)
+        {
+            impl_->srgbContentRoot.StopAnimation(L"Offset");
+            impl_->srgbContentRoot.Offset(offset);
+            impl_->srgbContentCommitPending = true;
+        }
+        if (hadGlass && impl_->available && impl_->root)
+        {
+            impl_->root.StopAnimation(L"Offset");
+            impl_->root.Offset(offset);
+            if (std::abs(x) > 0.001f || std::abs(y) > 0.001f)
+                impl_->SetAnimationPathRegionExpanded(true);
+            else
+                impl_->transformedRegionDirty = !impl_->SyncPanelWindowRegion();
+            return impl_->RequestCommit();
+        }
+        return CommitSrgbContent();
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.stop_root_translation", error.code());
+        return false;
     }
 }
 

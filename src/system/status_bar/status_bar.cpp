@@ -737,7 +737,7 @@ struct StatusBar::Impl
         }
         void ApplyDockPose(const StatusBarDockPresentation& frame)
         {
-            if (!mergedDockHeight || !visual || !owner.composition) return;
+            if (!mergedDockHeight || !visual || !owner.composition || frame.compositorSlide) return;
             if (!mergedOpacity) owner.composition->CreateEffectGroup(&mergedOpacity);
             if (mergedOpacity)
             {
@@ -770,6 +770,15 @@ struct StatusBar::Impl
         void ApplyDockPresentation(const StatusBarDockPresentation& frame)
         {
             if (!mergedDockHeight || closing) return;
+            if (mergedPresentation.compositorSlide && !frame.compositorSlide)
+            {
+                backdrop.StopRootTranslationAnimation(frame.offsetX, frame.offsetY);
+                if (visual)
+                {
+                    visual->SetOffsetX(frame.offsetX);
+                    visual->SetOffsetY(frame.offsetY);
+                }
+            }
             if (mergedPresentation.inputEnabled && !frame.inputEnabled)
             {
                 CancelTrayMenu();
@@ -791,6 +800,27 @@ struct StatusBar::Impl
             backdrop.SetPopupWindowPairZOrder(hwnd, frame.insertAfter, frame.topmost);
             backdrop.SetVisible(appearance.glassEnabled && !HighContrast());
             backdrop.CommitVisualChanges();
+        }
+        bool StartDockSlide(IDCompositionAnimation* offset, const popup_motion_curve::Timeline& progress)
+        {
+            if (!offset || !visual || closing || failed || !positioned || !mergedPresentation.visible)
+                return false;
+            const float x = mergedPresentation.hiddenOffsetX, y = mergedPresentation.hiddenOffsetY;
+            const auto result = x != 0.f ? visual->SetOffsetX(offset) : visual->SetOffsetY(offset);
+            if (FAILED(result)) return false;
+            const bool started = backdrop.StartRootTranslationAnimation(progress, x, y, -x, -y,
+                appearance.glassEnabled && !HighContrast() && backdrop.IsAvailable());
+            if (started && backdrop.CommitSrgbContent())
+            {
+                backdrop.CommitVisualChanges();
+                mergedPresentation.compositorSlide = true;
+                return true;
+            }
+            backdrop.StopRootTranslationAnimation(mergedPresentation.offsetX, mergedPresentation.offsetY);
+            ApplyDockPose(mergedPresentation);
+            backdrop.CommitVisualChanges();
+            (void)backdrop.CommitSrgbContent();
+            return false;
         }
         void Show()
         {
@@ -2307,6 +2337,7 @@ void StatusBar::ReleaseGraphicsResources()
         window->drawResources.Reset();
         window->partialHoverUpdates = true;
         window->contentVisual.Reset(); window->visual.Reset(); window->mergedOpacity.Reset(); window->target.Reset();
+        window->mergedPresentation.compositorSlide = false;
         window->appearanceDirty = window->backgroundDirty = window->paintDirty = true;
     }
     self.composition.Reset(); self.text.Reset();
@@ -2360,6 +2391,18 @@ void StatusBar::ApplyMergedDockPresentation(HMONITOR monitor, const StatusBarDoc
         (void)id;
         if (window && window->monitor == monitor) window->ApplyDockPresentation(frame);
     }
+}
+bool StatusBar::StartMergedDockSlide(HMONITOR monitor, IDCompositionAnimation* offset,
+    const popup_motion_curve::Timeline& progress)
+{
+    if (impl_->removingWindows) return false;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (window && window->monitor == monitor && window->mergedDockHeight)
+            return window->StartDockSlide(offset, progress);
+    }
+    return false;
 }
 bool StatusBar::PrepareMergedDockPresentation(HMONITOR monitor, const StatusBarDockPresentation& frame)
 {
@@ -2810,6 +2853,8 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
         else KillTimer(window->hwnd, kRevealTimer);
         if (mergedModeChanged)
         {
+            if (window->mergedPresentation.compositorSlide)
+                window->backdrop.StopRootTranslationAnimation(0.f, 0.f);
             window->fullscreenState.DismissReveal();
             window->mergedPresentation = {};
             if (monitor.mergedDockHeight) { window->fullscreen = true; window->Hide(false); }

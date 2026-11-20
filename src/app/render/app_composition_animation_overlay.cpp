@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "ui/render/composition_motion_curve.h"
 #include "navigation/quick_navigation_animation_rules.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "diagnostics/diagnostic_log.h"
@@ -10,29 +11,6 @@
 
 namespace
 {
-HRESULT CreatePopupSpringAnimation(IDCompositionDesktopDevice* device,
-    const snowdesktop::popup_motion_curve::Timeline& timeline,
-    IDCompositionAnimation** animation, float origin = 0.0f, float extent = 1.0f)
-{
-    if (!device || !animation || timeline.segments.empty()) return E_INVALIDARG;
-    *animation = nullptr;
-    Microsoft::WRL::ComPtr<IDCompositionAnimation> result;
-    HRESULT hr = device->CreateAnimation(&result);
-    for (const auto& segment : timeline.segments)
-    {
-        if (FAILED(hr)) break;
-        hr = result->AddCubic(segment.startSeconds,
-            static_cast<float>(origin + extent * segment.constant),
-            static_cast<float>(extent * segment.linear),
-            static_cast<float>(extent * segment.quadratic),
-            static_cast<float>(extent * segment.cubic));
-    }
-    if (SUCCEEDED(hr)) hr = result->End(timeline.durationMilliseconds / 1000.0,
-        static_cast<float>(origin + extent * timeline.target));
-    if (SUCCEEDED(hr)) *animation = result.Detach();
-    return hr;
-}
-
 HRESULT CreateSmoothStepAnimation(
     IDCompositionDesktopDevice* device,
     float from, float to,
@@ -117,7 +95,7 @@ bool DesktopApp::StartDesktopWidgetHoverRoll(DesktopWidgetCompositionItem& item,
     radius = std::min({radius, width * 0.5f, closed * 0.5f});
 
     ComPtr<IDCompositionAnimation> bottom;
-    HRESULT hr = CreatePopupSpringAnimation(dcompDevice_.Get(), timeline,
+    HRESULT hr = snowdesktop::CreateCompositionMotionAnimation(dcompDevice_.Get(), timeline,
         &bottom, inset + closed, travel);
     ComPtr<IDCompositionRectangleClip> clip;
     if (SUCCEEDED(hr)) hr = dcompDevice_->CreateRectangleClip(&clip);
@@ -365,7 +343,7 @@ bool DesktopApp::AnimateCompositionAnimationOverlay(
     Microsoft::WRL::ComPtr<IDCompositionAnimation> scaleAnimation;
     Microsoft::WRL::ComPtr<IDCompositionAnimation> opacityAnimation;
     HRESULT hr = springTimeline
-        ? CreatePopupSpringAnimation(dcompDevice_.Get(), *springTimeline, &scaleAnimation)
+        ? snowdesktop::CreateCompositionMotionAnimation(dcompDevice_.Get(), *springTimeline, &scaleAnimation)
         : CreateSmoothStepAnimation(dcompDevice_.Get(), fromScale, toScale,
             durationMilliseconds, &scaleAnimation, normalizedScaleStartSlope);
     if (SUCCEEDED(hr))
@@ -539,16 +517,76 @@ bool DesktopApp::FlushPendingQuickNavigationCompositionCommit()
 
 bool DesktopApp::StartQuickNavigationCompositionAnimation()
 {
-    if (!quickNavigation_->animation.IsAnimating())
+    namespace rules = snowdesktop::quick_navigation_animation_rules;
+    auto& nav = *quickNavigation_;
+    StopQuickNavigationAnimationTimeline();
+    nav.animation.Advance(static_cast<std::uint64_t>(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
+    ApplyQuickNavigationAnimationFrame();
+    ApplyFloatingDockLayerPolicy();
+    const auto effect = nav.animation.GetEffect();
+    const auto key = reinterpret_cast<std::uintptr_t>(nav.hwnd);
+    if (!nav.animation.IsAnimating())
+    {
+        if (!nav.open && nav.animation.IsHidden()) FinalizeCloseQuickNavigation();
+        return true;
+    }
+    if (nav.animation.Resize().IsAnimating() ||
+        rules::IsDeformationEffect(effect) || !nav.backdropCompositor.HasSrgbContent(key))
+        return false;
+
+    const auto visual = nav.animation.GetVisual();
+    const bool opening = nav.animation.IsOpening();
+    const bool responsive = nav.animation.UsesResponsiveMotion();
+    const auto opacityCurve = responsive ? nav.animation.RemainingTimeline() : snowdesktop::popup_motion_curve::Timeline{};
+    const auto scaleCurve = responsive && effect == rules::Effect::Scale
+        ? nav.animation.RemainingScaleTimeline() : snowdesktop::popup_motion_curve::Timeline{};
+    const float remaining = opening ? 1.f - visual.progress : visual.progress;
+    const auto duration = static_cast<UINT>(std::max(1.0, std::ceil(responsive
+        ? opacityCurve.durationMilliseconds : remaining * nav.animation.DurationMilliseconds(opening))));
+    const auto start = [&](std::uintptr_t contentKey) {
+        return nav.backdropCompositor.StartVisualTransformAnimation(
+            visual.scale, opening ? 1.f : nav.animation.HiddenScale(), visual.opacity, opening ? 1.f : 0.f,
+            static_cast<float>(nav.animationAnchorPoint.x - nav.hostRect.left),
+            static_cast<float>(nav.animationAnchorPoint.y - nav.hostRect.top), duration,
+            rules::SegmentNormalizedStartSlope(visual.progress, opening),
+            scaleCurve.segments.empty() ? nullptr : &scaleCurve,
+            responsive ? &opacityCurve : nullptr, 0, contentKey);
+    };
+    // The published sRGB scene and the glass belong to the same WUC compositor.
+    // Stage the scene first; starting the glass root can request a commit.
+    if (!start(key) || (nav.glassTheme && nav.backdropCompositor.IsAvailable() && !start(0)) ||
+        !nav.backdropCompositor.CommitSrgbContent())
     {
         ApplyQuickNavigationAnimationFrame();
         return false;
     }
-    StopQuickNavigationAnimationTimeline();
-
-    // Drive the precomposed content and live backdrop from the same scheduler pose.
+    nav.animationCompositorDriven = true;
+    nav.animation.ResumeAt(static_cast<std::uint64_t>(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
+    nav.animationCompletionToken = uiAnimationScheduler_.ScheduleOnce(duration + 2,
+        [this](snowdesktop::UiScheduleToken token) {
+            auto& state = *quickNavigation_;
+            if (token != state.animationCompletionToken) return;
+            state.animationCompletionToken = 0;
+            state.animationCompositorDriven = false;
+            state.animation.Advance(static_cast<std::uint64_t>(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
+            if (state.animation.IsAnimating())
+            {
+                if (!StartQuickNavigationCompositionAnimation()) EnsureUiAnimationFrame();
+            }
+            else if (state.animation.IsHidden()) FinalizeCloseQuickNavigation();
+            else
+            {
+                ApplyQuickNavigationAnimationFrame();
+                ApplyFloatingDockLayerPolicy();
+            }
+        });
+    if (nav.animationCompletionToken)
+    {
+        snowdesktop::performance::Value("navigation.render", "native_open_close_duration_ms", {}, duration);
+        return true;
+    }
+    nav.animationCompositorDriven = false;
     ApplyQuickNavigationAnimationFrame();
-    ApplyFloatingDockLayerPolicy();
     return false;
 }
 

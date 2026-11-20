@@ -105,6 +105,7 @@ set(SNOWDESKTOP_PERFETTO_PROBE_SOURCES
     src/dock/dock_settings.cpp
     src/shell/shell_extension_catalogue.cpp
     src/shell/shell_extension_service.cpp
+    src/system/panel/system_panel.cpp
     src/system/status_bar/status_bar.cpp
     src/system/status_bar/status_bar_input_method.cpp
     src/system/status_bar/status_bar_view.cpp
