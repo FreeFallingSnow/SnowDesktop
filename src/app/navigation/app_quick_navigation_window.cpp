@@ -30,14 +30,6 @@ unsigned NavigationPointerButtons()
 
 void DesktopApp::StopQuickNavigationAnimationTimeline()
 {
-    if (quickNavigation_->resizeCompositorDriven)
-    {
-        quickNavigation_->rect = quickNavigation_->DisplayedResizeRect(static_cast<std::uint64_t>(
-            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
-        quickNavigation_->backdropCompositor.StopPopupResize(reinterpret_cast<std::uintptr_t>(quickNavigation_->hwnd),
-            kQuickNavigationBackdropPanelOwner);
-        quickNavigation_->resizeCompositorDriven = false;
-    }
     if (quickNavigation_->animationCompletionToken)
         uiAnimationScheduler_.Cancel(quickNavigation_->animationCompletionToken);
     if (quickNavigation_->animationFrameToken)
@@ -188,22 +180,15 @@ void DesktopApp::SetQuickNavigationTopmost(
  */
 void DesktopApp::UpdateQuickNavigationBackdrop()
 {
-    // A settings change can rebuild the glass while a retained scene is visible.
-    // Resume ordinary rendering until the changed material and content agree.
-    if (quickNavigation_->resizeCompositorDriven || quickNavigation_->animationCompositorDriven)
+    // A settings change can rebuild the glass while the opening or closing curve is playing.
+    if (quickNavigation_->animationCompositorDriven)
     {
         quickNavigation_->animation.Advance(static_cast<std::uint64_t>(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
-        const bool resizing = quickNavigation_->resizeCompositorDriven;
         StopQuickNavigationAnimationTimeline();
-        if (!resizing && !quickNavigation_->open && quickNavigation_->animation.IsHidden())
+        if (!quickNavigation_->open && quickNavigation_->animation.IsHidden())
         {
             FinalizeCloseQuickNavigation();
             return;
-        }
-        if (resizing)
-        {
-            quickNavigation_->resizeHostFallback = true;
-            PositionQuickNavigationWindow(false);
         }
         EnsureUiAnimationFrame();
         InvalidateQuickNavigationWindow();
@@ -249,12 +234,6 @@ void DesktopApp::UpdateQuickNavigationBackdrop()
         quickNavigation_->rect.bottom -
             quickNavigation_->hostRect.top
     };
-    if (quickNavigation_->preparingResize)
-    {
-        const auto bounds = quickNavigation_->animation.Resize().Envelope();
-        clientRect = {bounds.left, bounds.top, bounds.right, bounds.bottom};
-        OffsetRect(&clientRect, -quickNavigation_->hostRect.left, -quickNavigation_->hostRect.top);
-    }
     if (IsRectEmptyRect(clientRect))
         return;
     const float cornerRadius = static_cast<float>(QuickNavScale(navigationSettings_.layout.cornerRadius));
@@ -273,7 +252,7 @@ void DesktopApp::UpdateQuickNavigationBackdrop()
         visual.scale, visual.opacity,
         anchorX, anchorY);
     quickNavigation_->backdropCompositor.SetVisible(visual.visible);
-    if (!quickNavigation_->compositionPaintInProgress && !quickNavigation_->preparingResize)
+    if (!quickNavigation_->compositionPaintInProgress)
         quickNavigation_->backdropCompositor.CommitVisualChanges();
 }
 
@@ -338,13 +317,7 @@ void DesktopApp::UpdateQuickNavigationSearchEditRect()
         }
     }
     snowdesktop::text_input::SetCaretHeight(quickNavigation_->searchEdit, static_cast<float>(QuickNavScale(navigationSettings_.layout.searchFontSize + 2)));
-    SetQuickNavigationSearchEditPose(quickNavigation_->DisplayedResizeRect(
-        static_cast<std::uint64_t>(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds())));
-}
-
-void DesktopApp::SetQuickNavigationSearchEditPose(const RECT& panel)
-{
-    RECT frame = GetQuickNavigationInputRect(panel);
+    RECT frame = GetQuickNavigationInputRect(quickNavigation_->rect);
     OffsetRect(&frame, -quickNavigation_->hostRect.left, -quickNavigation_->hostRect.top);
     snowdesktop::text_input::SetEmbeddedPose(quickNavigation_->searchEdit, frame, frame,
         true, true);
@@ -782,19 +755,13 @@ void DesktopApp::PositionQuickNavigationWindow(bool present)
     auto& resize = quickNavigation_->animation.Resize();
     const auto now = static_cast<std::uint64_t>(
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
-    if (!resize.IsAnimating()) quickNavigation_->resizeHostFallback = false;
-    if (quickNavigation_->resizeCompositorDriven)
-    {
-        const auto target = resize.Target();
-        const RECT runningTarget{target.left, target.top, target.right, target.bottom};
-        if (EqualRect(&runningTarget, &nextRect) && snowdesktop::animation::RuntimeAnimationsEnabled()) return;
-        StopQuickNavigationAnimationTimeline();
-    }
+    // The selected Dock effect persists after its opening animation finishes.
+    const bool deforming = quickNavigation_->animation.IsAnimating() &&
+        snowdesktop::quick_navigation_animation_rules::IsDeformationEffect(
+            quickNavigation_->animation.GetEffect());
     if (!resize.IsAnimating() && quickNavigation_->open && quickNavigation_->collapsed &&
         quickNavigation_->fixedTop && quickNavigation_->animation.IsInteractive() &&
-        !snowdesktop::quick_navigation_animation_rules::IsDeformationEffect(
-            quickNavigation_->animation.GetEffect()) &&
-        !IsRectEmpty(&quickNavigation_->rect) &&
+        !deforming && !IsRectEmpty(&quickNavigation_->rect) &&
         quickNavigation_->rect.left == nextRect.left && quickNavigation_->rect.top == nextRect.top &&
         quickNavigation_->rect.right == nextRect.right && quickNavigation_->rect.bottom != nextRect.bottom)
     {
@@ -803,18 +770,11 @@ void DesktopApp::PositionQuickNavigationWindow(bool present)
             {nextRect.left, nextRect.top, nextRect.right, nextRect.bottom}, now,
             snowdesktop::animation::RuntimeAnimationsEnabled(), snowdesktop::animation::RuntimeDurationScale());
     }
-    bool tryNativeResize = false;
     if (resize.IsAnimating())
     {
         resize.Retarget({nextRect.left, nextRect.top, nextRect.right, nextRect.bottom}, now);
         const auto frame = resize.Advance(now, snowdesktop::animation::RuntimeAnimationsEnabled());
-        tryNativeResize = present && resize.IsAnimating() && !quickNavigation_->resizeHostFallback &&
-            !quickNavigation_->animation.IsAnimating() && quickNavigation_->open &&
-            !quickNavigation_->preview && !quickNavigation_->compositionPaintInProgress &&
-            !quickNavigation_->tabDragging && !quickNavigation_->scrollbarDragging &&
-            !renameController_.IsActive() && !dragSession_.HasContext() &&
-            !snowdesktop::text_input::IsComposing(quickNavigation_->searchEdit);
-        if (!tryNativeResize) nextRect = {frame.left, frame.top, frame.right, frame.bottom};
+        nextRect = {frame.left, frame.top, frame.right, frame.bottom};
     }
     const bool geometryChanged = !EqualRect(&quickNavigation_->rect, &nextRect);
     if (geometryChanged && quickNavigation_->animationCompositorDriven)
@@ -896,21 +856,6 @@ void DesktopApp::PositionQuickNavigationWindow(bool present)
     EnsureQuickNavigationSearchEdit();
     UpdateQuickNavigationSearchEditRect();
     if (!present) return;
-    if (tryNativeResize)
-    {
-        quickNavigation_->preparingResize = true;
-        UpdateQuickNavigationWindowRegion(true);
-        const bool installed = StartQuickNavigationResizeTimeline(now);
-        quickNavigation_->preparingResize = false;
-        if (installed)
-        {
-            UpdateQuickNavigationSearchEditRect();
-            return;
-        }
-        quickNavigation_->resizeHostFallback = true;
-        PositionQuickNavigationWindow();
-        return;
-    }
     if (geometryChanged || hostChanged)
     {
         // Paint the pixels before publishing the new pose and backdrop.
@@ -922,61 +867,8 @@ void DesktopApp::PositionQuickNavigationWindow(bool present)
         EnsureUiAnimationFrame();
 }
 
-bool DesktopApp::StartQuickNavigationResizeTimeline(std::uint64_t sampledAt)
-{
-    auto& nav = *quickNavigation_;
-    auto& resize = nav.animation.Resize();
-    const auto key = reinterpret_cast<std::uintptr_t>(nav.hwnd);
-    if (!nav.backdropCompositor.HasSrgbContent(key)) return false;
-    UpdateQuickNavigationBackdrop();
-    const auto frame = resize.Envelope();
-    RECT envelope{frame.left, frame.top, frame.right, frame.bottom};
-    OffsetRect(&envelope, -nav.hostRect.left, -nav.hostRect.top);
-    const SIZE layout{nav.rect.right - nav.rect.left, nav.rect.bottom - nav.rect.top};
-    const auto tracks = resize.RemainingTracks(sampledAt);
-    const auto panel = nav.glassTheme && nav.backdropCompositor.IsAvailable() ? kQuickNavigationBackdropPanelOwner : 0;
-    const auto search = GetQuickNavigationSearchRect(nav.rect);
-    const float buttons = static_cast<float>(nav.rect.right - GetQuickNavigationToolbarRect(nav.rect, 1).left);
-    if (!nav.backdropCompositor.StartPopupResize(key, panel, envelope, layout,
-            static_cast<float>(QuickNavScale(navigationSettings_.layout.cornerRadius)),
-            static_cast<float>(search.bottom - search.top), buttons, tracks, {frame.left, frame.top},
-            [this](ID2D1DeviceContext* dc, POINT offset) { return PaintQuickNavigationResizeLayer(dc, offset, true) ? S_OK : E_FAIL; },
-            [this](ID2D1DeviceContext* dc, POINT offset) { return PaintQuickNavigationResizeLayer(dc, offset, false) ? S_OK : E_FAIL; }))
-    {
-        nav.backdropCompositor.StopPopupResize(key, panel);
-        return false;
-    }
-    snowdesktop::performance::Value("navigation.render", "native_resize_duration_ms", {}, tracks[0].durationMilliseconds);
-    const auto installedAt = static_cast<std::uint64_t>(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
-    resize.DelayBy(installedAt - sampledAt);
-    nav.resizeCompositorDriven = true;
-    nav.animationCompletionToken = uiAnimationScheduler_.ScheduleOnce(
-        static_cast<UINT>(std::ceil(tracks[0].durationMilliseconds)) + 2,
-        [this](snowdesktop::UiScheduleToken token) {
-            auto& state = *quickNavigation_;
-            if (state.animationCompletionToken != token || !state.resizeCompositorDriven) return;
-            StopQuickNavigationAnimationTimeline();
-            state.animation.Resize().Advance(static_cast<std::uint64_t>(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()), false);
-            PositionQuickNavigationWindow(false);
-            UpdateQuickNavigationWindowRegion(false);
-            if (UseQuickNavigationList() && state.listSelection >= 0)
-                EnsureQuickNavigationKeyboardTargetVisible(GetQuickNavigationListRowRect(static_cast<size_t>(state.listSelection)));
-            InvalidateQuickNavigationWindow(true);
-        });
-    if (nav.animationCompletionToken) return true;
-    StopQuickNavigationAnimationTimeline();
-    return false;
-}
-
 RECT snowdesktop::quick_navigation::State::WindowFence(bool expanded) const
 {
-    if (preparingResize || resizeCompositorDriven)
-    {
-        const auto bounds = animation.Resize().Envelope();
-        RECT fence{bounds.left, bounds.top, bounds.right + 1, bounds.bottom + 1};
-        OffsetRect(&fence, -hostRect.left, -hostRect.top);
-        return fence;
-    }
     RECT animationPath{};
     if (expanded)
     {
@@ -1565,15 +1457,9 @@ void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
             IsQuickNavigationPresentation() &&
         renameInputWindow_ && IsWindow(renameInputWindow_))
         CommitRename(false);
-    const bool resizing = quickNavigation_->resizeCompositorDriven;
     quickNavigation_->animation.Advance(static_cast<std::uint64_t>(
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
     StopQuickNavigationAnimationTimeline();
-    if (resizing)
-    {
-        quickNavigation_->animation.Resize().Stop();
-        InvalidateQuickNavigationWindow(true);
-    }
     ConfigureQuickNavigationAnimation();
     bool animationAnchorChanged = false;
     const bool dockAnchorValid = quickNavigationDockHost_ &&

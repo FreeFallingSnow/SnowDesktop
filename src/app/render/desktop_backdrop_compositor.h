@@ -190,13 +190,6 @@ public:
     };
 
     using SrgbSceneDraw = std::function<HRESULT(ID2D1DeviceContext*, POINT)>;
-    // The popup frame, its glass and its unscaled contents share the four edge tracks.
-    bool StartPopupResize(std::uintptr_t key, std::uintptr_t panelKey, const RECT& envelope,
-        SIZE layout, float radius, float headerHeight, float trailingButtonsWidth,
-        std::span<const snowdesktop::popup_motion_curve::Timeline, 4> edges, POINT desktopOrigin,
-        const SrgbSceneDraw& drawChrome, const SrgbSceneDraw& drawContents);
-    bool UpdatePopupResizeContents(std::uintptr_t key, const SrgbSceneDraw& drawContents);
-    void StopPopupResize(std::uintptr_t key, std::uintptr_t panelKey);
     struct SrgbMarqueeScene;
     using PreparedMarquees = std::shared_ptr<SrgbMarqueeScene>;
     PreparedMarquees PrepareSrgbMarquees(HWND window, std::uintptr_t key, ID2D1Device* device,

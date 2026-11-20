@@ -478,23 +478,6 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         quickNavigation_->compositionPaintInProgress
     };
 
-    if (quickNavigation_->resizeCompositorDriven)
-    {
-        const auto key = reinterpret_cast<std::uintptr_t>(hwnd);
-        if (quickNavigation_->backdropCompositor.UpdatePopupResizeContents(key,
-                [this](ID2D1DeviceContext* dc, POINT offset) {
-                    return PaintQuickNavigationResizeLayer(dc, offset, false) ? S_OK : E_FAIL;
-                }))
-        {
-            EndPaint(hwnd, &ps);
-            return;
-        }
-        StopQuickNavigationAnimationTimeline();
-        quickNavigation_->resizeHostFallback = true;
-        PositionQuickNavigationWindow(false);
-        EnsureUiAnimationFrame();
-    }
-
     // Initialize the backdrop before deciding how to draw the first hidden
     // frame. Otherwise a cold open starts with an ordinary rim.
     if (!quickNavigation_->animationCompositorDriven)
@@ -547,23 +530,6 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     quickNavigation_->compositionRenderRecoveryPending = false;
 
     EndPaint(hwnd, &ps);
-}
-
-bool DesktopApp::PaintQuickNavigationResizeLayer(ID2D1DeviceContext* context, POINT origin, bool chrome)
-{
-    if (!context) return false;
-    const RECT layout = quickNavigation_->rect;
-    context->SetDpi(96.f, 96.f);
-    context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
-    context->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
-    context->SetTransform(D2D1::Matrix3x2F::Translation(
-        static_cast<float>(origin.x - layout.left), static_cast<float>(origin.y - layout.top)));
-    context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    context->Clear(D2D1::ColorF(0u, 0.f));
-    drawing_.Reset();
-    DrawQuickNavigationSurface(context, chrome ? QuickNavigationPaintPart::Chrome : QuickNavigationPaintPart::Content);
-    drawing_.Reset();
-    return true;
 }
 
 void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context, QuickNavigationPaintPart part)

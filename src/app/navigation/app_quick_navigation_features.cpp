@@ -422,7 +422,6 @@ void DesktopApp::ToggleQuickNavigationCollapsed()
     const RECT target = GetQuickNavigationRect();
     quickNavigation_->anchorTop = target.top;
     quickNavigation_->fixedTop = true;
-    quickNavigation_->resizeHostFallback = false;
     quickNavigation_->animation.Resize().Start(
         {quickNavigation_->rect.left, quickNavigation_->rect.top,
             quickNavigation_->rect.right, quickNavigation_->rect.bottom},

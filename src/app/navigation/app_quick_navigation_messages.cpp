@@ -136,21 +136,6 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             msg, wp, lp, shellMenuResult))
         return shellMenuResult;
 
-    const auto displayed = quickNavigation_->DisplayedResizeRect(static_cast<std::uint64_t>(
-        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
-    const auto layoutPoint = [&](POINT point) {
-        if (!quickNavigation_->resizeCompositorDriven) return point;
-        const auto& layout = quickNavigation_->rect;
-        const auto search = GetQuickNavigationSearchRect(displayed);
-        const bool trailing = point.y >= search.top && point.y < search.bottom &&
-            point.x >= GetQuickNavigationToolbarRect(displayed, 1).left;
-        point.x += trailing ? layout.right - displayed.right : layout.left - displayed.left;
-        point.y += layout.top - displayed.top;
-        return point;
-    };
-    if (quickNavigation_->resizeCompositorDriven && (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP ||
-        msg == WM_MOUSEMOVE || msg == WM_RBUTTONDOWN || msg == WM_CONTEXTMENU))
-        SetQuickNavigationSearchEditPose(displayed);
     if (!quickNavigation_->animation.IsAnimating() &&
         snowdesktop::text_input::RoutePointer(quickNavigation_->searchEdit, msg, wp,
             {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)}))
@@ -172,20 +157,6 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                 GET_X_LPARAM(lp) - virtualLeft_,
                 GET_Y_LPARAM(lp) - virtualTop_
             };
-            if (quickNavigation_->resizeCompositorDriven)
-            {
-                if (PtInRect(&displayed, point)) return HTCLIENT;
-                // HTTRANSPARENT alone only retries windows on this thread.
-                // Restore the real animated HWND fence if the pointer reaches
-                // the transparent sweep, so another process can receive it.
-                StopQuickNavigationAnimationTimeline();
-                quickNavigation_->resizeHostFallback = true;
-                PositionQuickNavigationWindow(false);
-                UpdateQuickNavigationWindowRegion(false);
-                InvalidateQuickNavigationWindow(true);
-                EnsureUiAnimationFrame();
-                return HTTRANSPARENT;
-            }
             if (quickNavigation_->animationCompositorDriven)
                 quickNavigation_->animation.Advance(static_cast<std::uint64_t>(
                     snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
@@ -260,7 +231,6 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             pt.x + quickNavigation_->hostRect.left,
             pt.y + quickNavigation_->hostRect.top
         };
-        appPoint = layoutPoint(appPoint);
         if (DismissQuickNavigationMenuAtPoint(appPoint)) return 0;
 
         {
@@ -357,7 +327,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         };
         POINT screenPoint{ pt.x, pt.y };
         ClientToScreen(hwnd, &screenPoint);
-        if (HandleQuickNavigationRightClick(layoutPoint(appPoint), screenPoint))
+        if (HandleQuickNavigationRightClick(appPoint, screenPoint))
             return 0;
         break;
     }
@@ -386,7 +356,6 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                 quickNavigation_->hostRect.left;
             clientPoint.y +=
                 quickNavigation_->hostRect.top;
-            clientPoint = layoutPoint(clientPoint);
         }
         if (HandleQuickNavigationRightClick(clientPoint, screenPoint))
             return 0;
@@ -399,7 +368,6 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             pt.x + quickNavigation_->hostRect.left,
             pt.y + quickNavigation_->hostRect.top
         };
-        appPoint = layoutPoint(appPoint);
         POINT previousMouse =
             quickNavigation_->lastMousePoint;
         quickNavigation_->lastMousePoint = appPoint;
@@ -692,8 +660,7 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
             GET_X_LPARAM(lParam) - app->virtualLeft_,
             GET_Y_LPARAM(lParam) - app->virtualTop_
         };
-        const RECT targetEdit = app->GetQuickNavigationInputRect(app->quickNavigation_->DisplayedResizeRect(
-            static_cast<std::uint64_t>(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds())));
+        const RECT targetEdit = app->GetQuickNavigationInputRect(app->quickNavigation_->rect);
         RECT animatedEdit{};
         GetWindowRect(hwnd, &animatedEdit);
         OffsetRect(
@@ -773,12 +740,6 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
     }
     if (message == WM_IME_STARTCOMPOSITION)
     {
-        if (app->quickNavigation_->resizeCompositorDriven)
-        {
-            app->StopQuickNavigationAnimationTimeline();
-            app->quickNavigation_->resizeHostFallback = true;
-            app->PositionQuickNavigationWindow();
-        }
         const auto result=DefSubclassProc(hwnd,message,wParam,lParam);
         app->ClearQuickNavigationSearchCompositionText();
         return result;
