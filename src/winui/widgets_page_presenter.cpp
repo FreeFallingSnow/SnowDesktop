@@ -3436,7 +3436,7 @@ struct WidgetsPagePresenter::Impl
         controlIntroTitle.Text(L("settings.agentOperations.introTitle",
             L"Organize your desktop with AI"));
         controlIntroDescription.Text(L("settings.agentOperations.description",
-            L"Install the SnowDesktop Control Skill below, then ask your AI assistant to rearrange desktop widgets or adjust the Dock and status bar to suit the way you work."));
+            L"Install the SnowDesktop Control Skill below, then ask your AI assistant to use widgets to organize desktop items, fine-tune visual effects, and adjust settings to fit the way you work."));
         controlSkillCard.title.Text(L("settings.agentOperations.skill", L"SnowDesktop Control Skill"));
         controlSkillCard.description.Text(L"");
         controlSkillCard.description.Visibility(mux::Visibility::Collapsed);
