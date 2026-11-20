@@ -222,6 +222,8 @@
 
 ### CF-012 观察等待默认超时导致模型轮询
 
+- **组件局部刷新候选续证（2026-11-20）**：Task `task-edbf89c2988e40f28ac1cdb235b8c253`、批次 `b1a733fa04d6491280d13c55e4ec35e9` 修订 0、Run `dfc45d351d544a51814850d071891989`。原 `ready-and-wait` 会话 32512 入队报 `queued; waiting for resource reason not recorded`。继续原观察，Release 和四项定向检查通过。待核对队列原因字段的发布时点。
+
 - **组件安装批次续证（2026-11-18）**：Task `task-6d19c3ab79f94e3681f6115e6e070c7d`、批次 `0209f167b8d547709f2480e28b595ccb` 修订 0。原 `ready-and-wait` 会话 25562 的回执 `6b44c0`、`c3b2a6` 两次报告同一个编辑者 `task-52a0430b03e04412805a1170dfe1fa6a`；`7a676d`、`c42091` 只报告 `Waiting for the collaboration state transaction.`。期间续接同一观察进程，未另查状态或提交构建。后续共同 Run `7c5575df6d844771abc5af4a8ace0132` 通过 Release 和四项定向测试。建议继续按业务阶段和短时事务分别去重。
 
 - **前台构建重复提示（2026-11-16）**：Task `dock-single-preview-anchor-20261116`、批次 `27d647c2f4494e6baf4b8888c1db0380` 修订 0、Run `4e6e544084eb4594b04bc186c82d58b0`。原 `ready-and-wait` 会话 54194 入队时显示 `resource reason not recorded`，执行时交替重复 `latest stage start compile` 与 `Waiting for the collaboration state transaction.`，见同一续接回执 `8a133f`。全程复用该观察进程。待按业务阶段和短时事务分别去重，保留实际变化。
@@ -436,6 +438,8 @@
 - **用户反馈**：更新后回复“没问题了”。具体的 Host 回执和面板加载版本以 DSH 当次显示为准。
 
 ### CF-024 同一候选槽的局部续修重编多个宿主模块
+
+- **组件局部刷新候选续证（2026-11-20）**：Task `task-edbf89c2988e40f28ac1cdb235b8c253`、批次 `b1a733fa04d6491280d13c55e4ec35e9` 修订 0、Run `dfc45d351d544a51814850d071891989`。改动涉及 `app/app.h` 和其包含的 `composition_state_types.h`。产品日志 `b1a733fa04d6491280d13c55e4ec35e9.log.product.log` 记录重新生成 `SnowDesktopHostPch.lib`，随后编译本任务未修改的 `app_clipboard_interaction.cpp` 和 `app_menu_icons.cpp`。源码确认这些编译单元共用宿主 PCH，额外成本未单独测量。沿用原 Run，后续评估将局部绘制状态与组合根头的依赖收窄。
 
 - **来源**：2026-11-10，CLI，Task `calendar-ics-subscriptions-20261110`。对照批次 `6935a08f187f4e5ab54942c412c905be` 修订 2、Run `c77d7675a5e74747bdfd3ad852dc8080` 与续修批次 `b4e75fc6e1ac437ba0dbe344b5a46e23` 修订 4、Run `f5f1d056ef664e27ae2ed219cbcb4835`，入口均为 `scripts/build.bat ready-and-wait`。
 - **实测与影响**：本任务在两轮间只调整 `calendar_ics.cpp` 的两处 libical 调用。两轮产品日志均指向同一候选槽 `a32a06cfeb995ec8-batches`，后一轮记录了 `settings_ipc_backends.cpp`、`App.xaml.cpp` 和多份 WinUI 设置页源码的编译。原件为 `.build/collaboration/<批次>.log.product.log`。已观察到重编；其他冻结输入、生成文件和 MSBuild 依赖的触发链待核实，额外耗时未单独测量。
