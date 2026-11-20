@@ -226,7 +226,8 @@ std::pair<std::wstring, std::wstring> NetworkVisual(const StatusBarSnapshot& sna
     return {kUnknown, _LW("statusBar.networkUnknown")};
 }
 }
-std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const StatusBarSnapshot& snapshot)
+std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const StatusBarSnapshot& snapshot,
+    std::span<const std::string> previewMetricOrder)
 {
     std::vector<StatusBarItem> items;
     using namespace status_bar_glyphs;
@@ -298,8 +299,9 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
              L" ↑ " + StatusBarRate(value->uploadBytesPerSecond) : L"↓ — ↑ —", StatusBarAction::Traffic, L"", true);
     }
     const auto firstMetric = items.begin() + static_cast<std::ptrdiff_t>(metricStart);
+    const auto metricOrder = previewMetricOrder.empty() ? std::span<const std::string>(s.metricOrder) : previewMetricOrder;
     const auto metricRank = [&](const StatusBarItem& item) {
-        return std::find(s.metricOrder.begin(), s.metricOrder.end(), item.key) - s.metricOrder.begin();
+        return std::find(metricOrder.begin(), metricOrder.end(), item.key) - metricOrder.begin();
     };
     std::stable_sort(firstMetric, items.end(), [&](const auto& a, const auto& b) { return metricRank(a) < metricRank(b); });
     const auto traffic = std::find_if(firstMetric, items.end(), [](const auto& item) { return item.action == StatusBarAction::Traffic; });

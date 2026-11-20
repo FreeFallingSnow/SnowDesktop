@@ -1,5 +1,6 @@
 #pragma once
 #include "status_bar_view.h"
+#include <iterator>
 
 namespace snowdesktop
 {
@@ -8,38 +9,33 @@ inline bool IsStatusBarMetric(StatusBarAction action)
     using Action = StatusBarAction;
     return action == Action::Cpu || action == Action::Memory || action == Action::Gpu || action == Action::Traffic;
 }
-struct StatusBarMetricDrop
+struct StatusBarMetricSlot
 {
-    std::string anchor;
-    bool after;
-    RECT indicator;
+    std::string key;
+    RECT bounds;
 };
-inline std::optional<StatusBarMetricDrop> ResolveStatusBarMetricDrop(
-    const std::vector<StatusBarItem>& items, std::string_view source, POINT point, LONG inset, LONG stroke)
+inline std::optional<std::vector<std::string>> PreviewStatusBarMetricOrder(
+    const std::vector<std::string>& savedOrder, const std::vector<StatusBarMetricSlot>& slots,
+    const std::string& source, POINT point)
 {
-    const StatusBarItem* before = nullptr;
-    const StatusBarItem* previous = nullptr;
-    const StatusBarItem* last = nullptr;
-    bool overMetric = false, sourceVisible = false;
-    for (const auto& item : items)
-    {
-        if (!IsStatusBarMetric(item.action) || IsRectEmpty(&item.bounds)) continue;
-        overMetric |= PtInRect(&item.bounds, point) != FALSE;
-        sourceVisible |= item.key == source;
-        if (!before && point.x < item.bounds.left + (item.bounds.right - item.bounds.left) / 2)
-        {
-            before = &item;
-            previous = last;
-        }
-        last = &item;
-    }
-    if (!overMetric || !sourceVisible || !last) return {};
-    if (!before) previous = last;
-    if ((before && before->key == source) || (previous && previous->key == source)) return {};
-    const auto& anchor = before ? *before : *last;
-    const LONG x = (before ? anchor.bounds.left : anchor.bounds.right) - stroke / 2;
-    return StatusBarMetricDrop{anchor.key, !before,
-        {x, anchor.bounds.top + inset, x + stroke, anchor.bounds.bottom - inset}};
+    if (slots.size() < 2 || std::none_of(slots.begin(), slots.end(), [&](const auto& slot) {
+        return PtInRect(&slot.bounds, point) != FALSE;
+    })) return {};
+    // Use the initial cell midpoints for the whole gesture. With live
+    // bounds, a reorder or a wider traffic cell could move its own target.
+    const auto before = std::find_if(slots.begin(), slots.end(), [&](const auto& slot) {
+        return point.x < slot.bounds.left + (slot.bounds.right - slot.bounds.left) / 2;
+    });
+    if ((before != slots.end() && before->key == source) ||
+        (before != slots.begin() && std::prev(before)->key == source)) return {};
+    const bool append = before == slots.end();
+    const auto& targetKey = append ? slots.back().key : before->key;
+    auto order = savedOrder;
+    if (!std::erase(order, source)) return {};
+    const auto target = std::find(order.begin(), order.end(), targetKey);
+    if (target == order.end()) return {};
+    order.insert(append ? std::next(target) : target, source);
+    return order;
 }
 
 struct StatusBarTrayDrop

@@ -65,7 +65,8 @@ struct StatusBarPalette
     bool highContrast = false;
     D2D1_COLOR_F background{}, foreground{}, highlight{}, highlightText{};
 };
-std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings&, const StatusBarSnapshot&);
+std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings&, const StatusBarSnapshot&,
+    std::span<const std::string> previewMetricOrder = {});
 bool SameStatusBarContent(const std::vector<StatusBarItem>&, const std::vector<StatusBarItem>&);
 bool SameStatusBarPalette(const StatusBarPalette&, const StatusBarPalette&);
 // Reuse only a complete, reliable layout with identical extent inputs. A

@@ -294,6 +294,8 @@
 
 ### CF-015 模块计划无法声明临时定向验证
 
+- **状态栏排序配置续证（2026-11-20）**：Task `statusbar-metric-reorder`、批次 `81a988b0c92145f38e0b889aff7a0d00` 修订 0、Run `ee1a5ae299294e158f9377dd01b1490b`。产品日志记录 Release 配置 2.9 秒、生成 3.4 秒，测试日志对同一候选目录另记配置 3.1 秒、生成 2.9 秒。定向选择 `behavior_settings`，通过 Release、激活和设置存储回归。产品与测试阶段配置能否复用仍待核对，未为记录另行构建或测试。
+
 - **三行回收槽位（2026-11-20）**：Task `member-paint-transition`、批次 `7f9eee9647c244b188a59da0fe040c2c`、Run `fe8059e4248144b9906e6183f129ec99` 的 Release 与七项正式测试已通过。临时槽位命中和 WARP 绘制探针随后等候项目执行租约，见 `.codex-probes/member-paint-transition/build-check.ps1`；当时原检出进入另一编辑批次 `ae5ad257764749bc92f85bea31043c3a`。原反馈的绑定与调度缺口仍在；未因等待重建该候选。
 
 - **拖拽落位回执（2026-11-20）**　Task `object-drop-refactor` 的批次 `ee60f4ec424844d49647a821c8c8b9b7`、Run `9fb8a9e442f843b5b13140e7cf158f03` 完成 Release 激活及 10 项定向测试。批次外的 `.codex-probes/object-drop-refactor/build-check.ps1` 首次在编译前收到 `Shared output busy: batch b1a733fa04d6491280d13c55e4ec35e9 / editing`。探针需要链接已验证的宿主对象来检查自身 OLE 回执和分组落点，等待期间两个集成批次先后复用编译槽。取得执行权后，核对 Run `dfc45d351d544a51814850d071891989` 的测试程序哈希、后续槽的源码差异及对象时间，复用其宿主对象完成了四种 OLE 回执、分组标签落位、源图标绘制及部分回收的定向验证。后续仍需让模块计划绑定一次性验证和指定 Run 的对象。

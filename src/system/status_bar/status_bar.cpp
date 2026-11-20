@@ -48,7 +48,6 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <iterator>
 #include <map>
 #include <sstream>
 #include <string_view>
@@ -315,7 +314,9 @@ struct StatusBar::Impl
         {
             std::string key;
             POINT start;
-            std::optional<POINT> dragPoint;
+            std::vector<StatusBarMetricSlot> slots;
+            std::optional<std::vector<std::string>> previewOrder;
+            bool dragging = false;
         };
         std::optional<MetricPress> metricPress;
         std::string pressedTray;
@@ -1119,7 +1120,9 @@ struct StatusBar::Impl
             snapshot.trayExpanded = trayExpanded;
             if (owner.inputMethod) snapshot.inputMethod = owner.inputMethod->Current();
             snapshot.foregroundAppName = owner.displayedApp.name;
-            items = BuildStatusBarItems(owner.settings, snapshot);
+            const auto preview = metricPress && metricPress->previewOrder ?
+                std::span<const std::string>(*metricPress->previewOrder) : std::span<const std::string>{};
+            items = BuildStatusBarItems(owner.settings, snapshot, preview);
         }
 
         bool ReplayTrayScrollPaint(bool prepareHidden, bool trayOnly, TrayScrollFrame* frame, TrayScrollPaintScope& scope)
@@ -1137,21 +1140,9 @@ struct StatusBar::Impl
             });
             if (!updates.empty()) owner.tray->SetGeometries(updates);
         }
-        std::optional<StatusBarMetricDrop> MetricDrop(std::string_view source, POINT point) const
-        {
-            const auto inset = MulDiv(5, static_cast<int>(dpi), 96);
-            const auto stroke = std::max(2, MulDiv(2, static_cast<int>(dpi), 96));
-            return ResolveStatusBarMetricDrop(items, source, point, inset, stroke);
-        }
-        std::optional<RECT> CurrentDropIndicator() const
-        {
-            if (metricPress && metricPress->dragPoint)
-                if (const auto drop = MetricDrop(metricPress->key, *metricPress->dragPoint)) return drop->indicator;
-            return dropIndicator;
-        }
         StatusBarInteractionVisualState InteractionVisual() const
         {
-            return StatusBarInteractionVisual(interaction, keyboardFocusVisible, GetFocus() == hwnd, CurrentDropIndicator());
+            return StatusBarInteractionVisual(interaction, keyboardFocusVisible, GetFocus() == hwnd, dropIndicator);
         }
         bool ReusableInteractionFrame(const RECT& client, const StatusBarPalette& palette) const
         {
@@ -1320,7 +1311,7 @@ struct StatusBar::Impl
             std::optional<RECT> previousTrayViewport;
             if (!reusableContent && retainedResources && trayOnly && !scrollFrame && !focusFrame)
             {
-                // Tray registration changes can move cells without changing
+                // Placement and tray changes can move cells without changing
                 // the surface, colors, or font snapshot used to draw them.
                 auto arrangedScroll = trayScroll;
                 bool arranged = false;
@@ -1472,7 +1463,7 @@ struct StatusBar::Impl
             DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get());
             const StatusBarPalette palette{hc, SystemColor(COLOR_WINDOW), SystemColor(COLOR_WINDOWTEXT),
                 SystemColor(COLOR_HIGHLIGHT), SystemColor(COLOR_HIGHLIGHTTEXT)};
-            auto drawnInteraction = InteractionVisual();
+            const auto drawnInteraction = InteractionVisual();
             if (focusFrame) retainedFrameValid = focusFrame->layoutReusable;
             const auto contentResult = DrawStatusBarContent(context.Get(), owner.text.Get(), items, w, h,
                 dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale), a, palette, drawnInteraction.hovered,
@@ -1480,7 +1471,6 @@ struct StatusBar::Impl
                 mergedDockHeight > 0, owner.settings.timeNotificationRightAligned, &trayScroll,
                 dockQuickSearch, scrollFrame || focusFrame ? &client : nullptr, &drawResources,
                 scrollFrame != nullptr || focusFrame != nullptr, &retainedFrameValid);
-            drawnInteraction.indicator = CurrentDropIndicator();
             DrawStatusBarDropIndicator(context.Get(), drawnInteraction.indicator, a, palette, dpi);
             if (!scrollFrame && !focusFrame) PublishTrayGeometry();
             const auto recorded = scene.Finish();
@@ -1720,34 +1710,45 @@ struct StatusBar::Impl
             const auto hit = HitTestStatusBarItems(items, point);
             if (!owner.metricOrderChanged || !hit || !IsStatusBarMetric(items[*hit].action)) return;
             SetCapture(hwnd);
-            if (GetCapture() == hwnd) metricPress = MetricPress{items[*hit].key, point, {}};
+            if (GetCapture() == hwnd) metricPress = MetricPress{items[*hit].key, point, {}, {}};
         }
         void MoveMetricPress(POINT point)
         {
-            const LONG threshold = MulDiv(8, static_cast<int>(dpi), 96);
-            if (!metricPress->dragPoint)
+            auto& press = *metricPress;
+            const bool starting = !press.dragging;
+            if (starting)
             {
-                const auto start = metricPress->start;
-                if (std::abs(point.x - start.x) < threshold && std::abs(point.y - start.y) < threshold) return;
+                const LONG threshold = MulDiv(8, static_cast<int>(dpi), 96);
+                if (std::abs(point.x - press.start.x) < threshold && std::abs(point.y - press.start.y) < threshold) return;
+                press.dragging = true;
+                for (const auto& item : items)
+                    if (IsStatusBarMetric(item.action) && !IsRectEmpty(&item.bounds))
+                        press.slots.push_back({item.key, item.bounds});
                 ClearHover();
                 interaction.CancelPointer();
                 keyboardFocusVisible = false;
             }
-            metricPress->dragPoint = point;
             SetCursor(LoadCursorW(nullptr, IDC_SIZEALL));
-            PaintHover();
+            auto preview = PreviewStatusBarMetricOrder(owner.settings.metricOrder, press.slots, press.key, point);
+            if (preview != press.previewOrder)
+            {
+                press.previewOrder = std::move(preview);
+                Paint(false, true);
+            }
+            else if (starting) PaintHover();
         }
         void FinishMetricPress(POINT point)
         {
             const auto press = std::exchange(metricPress, {});
-            const auto drop = press->dragPoint ? MetricDrop(press->key, point) : std::nullopt;
-            const bool clicked = !press->dragPoint && interaction.Release(items, point, false).accepted;
+            auto order = press->dragging ? PreviewStatusBarMetricOrder(owner.settings.metricOrder,
+                press->slots, press->key, point) : std::nullopt;
+            const bool clicked = !press->dragging && interaction.Release(items, point, false).accepted;
             UpdateInteraction([&] {
                 keyboardFocusVisible = false;
                 if (GetCapture() == hwnd) ReleaseCapture();
+                if (order) owner.CommitMetricOrder(std::move(*order));
             });
-            if (drop) owner.MoveMetric(press->key, *drop);
-            else if (clicked)
+            if (clicked)
             {
                 const auto hit = HitTestStatusBarItems(items, point);
                 if (hit && items[*hit].key == press->key) ActivateItem(hit);
@@ -2500,15 +2501,14 @@ struct StatusBar::Impl
         }
         return true;
     }
-    void MoveMetric(const std::string& key, const StatusBarMetricDrop& drop)
+        void CommitMetricOrder(std::vector<std::string> order)
     {
-        auto order = settings.metricOrder;
-        if (!std::erase(order, key)) return;
-        const auto anchor = std::find(order.begin(), order.end(), drop.anchor);
-        if (anchor == order.end()) return;
-        order.insert(drop.after ? std::next(anchor) : anchor, key);
         const auto changed = metricOrderChanged;
-        if (changed && order != settings.metricOrder) changed(std::move(order));
+            if (!changed || order == settings.metricOrder) return;
+            auto next = settings;
+            next.metricOrder = std::move(order);
+            UpdateItemPlacement(next);
+            changed(std::move(next.metricOrder));
     }
     void UpdateItemPlacement(const StatusBarSettings& next)
     {
