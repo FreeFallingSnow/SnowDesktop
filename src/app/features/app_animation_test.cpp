@@ -7,6 +7,7 @@
 #include "core/dock.h"
 #include "core/slot.h"
 #include "data/data_paths.h"
+#include "diagnostics/diagnostic_log.h"
 #include "diagnostics/performance_capture.h"
 #include "dock/dock_window_transition.h"
 #include "platform/control/control_protocol.h"
@@ -317,12 +318,12 @@ struct NativeAnimationTest
         std::ofstream output(package / L"main.lua", std::ios::binary);
         output << R"lua(return widget.define({
     view = function()
-        return view.text({ text = "Animation fixture" })
+        return view.text({ key = "desktop.text", text = "Animation fixture", height = 32 })
     end,
     panel = function()
-        return view.column({ padding = 16, children = {
-            view.text({ text = "Fixed animation fixture", height = 32 }),
-            view.text({ text = "Lua panel content", height = 32 })
+        return view.column({ key = "panel.root", width = "fill", children = {
+            view.text({ key = "panel.title", text = "Fixed animation fixture", height = 32 }),
+            view.text({ key = "panel.body", text = "Lua panel content", height = 32 })
         } })
     end
 }))lua";
@@ -487,8 +488,12 @@ struct NativeAnimationTest
                 app.OpenLuaWidgetPanel(request);
                 return app.luaWidgetPanelAnimation_.IsAnimating();
             }, [&] {
-                return app.luaWidgetPanelAnimation_.IsInteractive() && !app.luaWidgetPanelAnimation_.IsAnimating() &&
-                    !app.widgetEngine_->GetWidgetRuntimeFailure(L"fixture-lua");
+                if (const auto error = app.widgetEngine_->GetWidgetRuntimeFailure(L"fixture-lua"))
+                {
+                    WriteDiagnosticLogEntry(Utf8ToWide(error->detail).c_str(), DiagnosticLogLevel::Warning);
+                    return false;
+                }
+                return app.luaWidgetPanelAnimation_.IsInteractive() && !app.luaWidgetPanelAnimation_.IsAnimating();
             });
             return step("close", [&] {
                 app.CloseLuaWidgetPanel();
