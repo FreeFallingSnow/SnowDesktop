@@ -855,6 +855,7 @@ void DesktopApp::PositionQuickNavigationWindow(bool present)
 void DesktopApp::UpdateQuickNavigationWindowRegion(
     bool expanded)
 {
+    snowdesktop::performance::Scope trace("navigation.render", "window_region");
     if (!quickNavigation_->hwnd ||
         !IsWindow(quickNavigation_->hwnd))
         return;
@@ -1657,6 +1658,7 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
     // Visibility-only frames have no pending pixel update.
     if (!quickNavigation_->compositionPaintInProgress)
     {
+        snowdesktop::performance::Scope trace("navigation.render", "commit");
         if (quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey) &&
             !FlushPendingQuickNavigationCompositionCommit())
             return;

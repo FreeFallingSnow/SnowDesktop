@@ -2716,7 +2716,8 @@ private:
     void PauseWidgetMarqueeComposition(const std::wstring& widgetId);
     bool PresentQueuedDesktopWidgetComposition(bool passivePointerFrame = false,
         bool yieldToPopupResize = true);
-    bool FlushPendingDesktopWidgetComposition(bool yieldToPopupResize = false);
+    bool FlushPendingDesktopWidgetComposition(bool yieldToPopupResize = false,
+        bool* srgbDamageOnly = nullptr);
     bool DeferRetainedDesktopWidgetCompositionForPopupResize();
     bool StartDesktopWidgetHoverRoll(DesktopWidgetCompositionItem& item,
         const RECT& frame, LONG collapsedHeight, float radius,

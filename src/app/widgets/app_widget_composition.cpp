@@ -343,15 +343,27 @@ bool DesktopApp::PresentQueuedDesktopWidgetComposition(bool passivePointerFrame,
         uiAnimationScheduler_.Cancel(desktopWidgetHoverTailToken_);
         desktopWidgetHoverTailToken_ = 0;
     }
-    if (FlushPendingDesktopWidgetComposition() &&
-        FlushPendingWidgetMarqueeComposition() &&
-        SyncWidgetMarqueeCompositionVisibility() &&
-        CommitCompositionAnimationFrame() &&
-        FlushPendingCompositionCommit())
+    bool srgbDamageOnly = false;
+    if (FlushPendingDesktopWidgetComposition(false, &srgbDamageOnly))
     {
-        // Lua tooltips live outside the widget surface and need to follow local commits too.
-        SyncLuaWidgetTooltip();
-        return true;
+        bool presented;
+        if (srgbDamageOnly)
+        {
+            snowdesktop::performance::Scope trace("widget.composition", "marquee.commit_srgb");
+            presented = desktopBackdropCompositor_.CommitSrgbContent();
+        }
+        else
+        {
+            presented = FlushPendingWidgetMarqueeComposition() &&
+                SyncWidgetMarqueeCompositionVisibility() &&
+                CommitCompositionAnimationFrame() && FlushPendingCompositionCommit();
+        }
+        if (presented)
+        {
+            // Lua tooltips live outside the widget surface and need to follow local commits too.
+            SyncLuaWidgetTooltip();
+            return true;
+        }
     }
     desktopWidgetCompositionFailurePending_ = true;
     if (hwnd_ && IsWindow(hwnd_))
@@ -359,8 +371,9 @@ bool DesktopApp::PresentQueuedDesktopWidgetComposition(bool passivePointerFrame,
     return false;
 }
 
-bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
+bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, bool* srgbDamageOnly)
 {
+    if (srgbDamageOnly) *srgbDamageOnly = false;
     if (graphicsDeviceRecovery_.Pending()) return false;
     if (desktopWidgetPointerBatchActive_) return true;
     if (desktopWidgetHoverTailToken_) return true;
@@ -415,11 +428,24 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         static_cast<double>(pending.size()));
     pendingDesktopWidgetCompositions_.clear();
     const bool ownsPaintScope = !compositionPaintInProgress_;
-    if (ownsPaintScope)
-    {
-        compositionPaintInProgress_ = true;
-        desktopBackdropCompositor_.BeginFrame(false);
-    }
+    const auto hasSharedWork = [&] {
+        return compositionCommitPending_ || desktopWidgetHoverFadePending_ ||
+            desktopWidgetCompositionFailurePending_ || !pendingWidgetMarqueeCompositions_.empty() ||
+            !widgetMarqueeCompositionItems_.empty();
+    };
+    bool regionalOnly = srgbDamageOnly && ownsPaintScope && !hasSharedWork() &&
+        std::ranges::all_of(pending, [](const auto& request) { return request.second.has_value(); });
+    bool collectingBackdrops = false;
+    const auto requireSharedFrame = [&] {
+        regionalOnly = false;
+        if (ownsPaintScope && !collectingBackdrops)
+        {
+            desktopBackdropCompositor_.BeginFrame(false);
+            collectingBackdrops = true;
+        }
+    };
+    if (ownsPaintScope) compositionPaintInProgress_ = true;
+    if (!regionalOnly) requireSharedFrame();
 
     bool structuralOk = true;
     std::vector<DesktopWidgetSurfaceFailure> surfaceFailures;
@@ -585,6 +611,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
             // Retain the full path for a surface that rejects regional draws.
             item.marqueeDamageUnavailable = true;
         }
+        requireSharedFrame();
         if (!item.surface || item.width != width || item.height != height)
         {
             ComPtr<IDCompositionSurface> surface;
@@ -881,7 +908,12 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
         }
     }
 
-    if (!SyncDesktopWidgetCompositionZOrder())
+    // The retained surface update leaves visual order, glass and native
+    // children untouched. A nested request or a failure returns to the
+    // ordinary frame before it can change those resources.
+    if (regionalOnly && (hasSharedWork() || !surfaceFailures.empty() || !pendingDesktopWidgetCompositions_.empty()))
+        requireSharedFrame();
+    if (!regionalOnly && !SyncDesktopWidgetCompositionZOrder())
     {
         desktopWidgetCompositionFailurePending_ = true;
         structuralOk = false;
@@ -935,12 +967,13 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize)
             InvalidateRect(hwnd_, &dirty, FALSE);
         }
     }
-    if (ownsPaintScope)
+    if (collectingBackdrops)
     {
         KeepDesktopWidgetBackdropPanels();
         desktopBackdropCompositor_.EndFrame(false);
-        compositionPaintInProgress_ = false;
     }
+    if (ownsPaintScope) compositionPaintInProgress_ = false;
+    if (srgbDamageOnly) *srgbDamageOnly = regionalOnly;
     if (!structuralOk && hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, FALSE);
     return structuralOk;

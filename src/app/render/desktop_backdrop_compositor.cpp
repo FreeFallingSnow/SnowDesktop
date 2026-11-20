@@ -1354,8 +1354,11 @@ struct DesktopBackdropCompositor::Impl
         auto interop = surface.as<awuci::ICompositionDrawingSurfaceInterop>();
         winrt::com_ptr<ID2D1DeviceContext> context;
         POINT origin{};
-        winrt::check_hresult(interop->BeginDraw(damage, __uuidof(ID2D1DeviceContext),
-            context.put_void(), &origin));
+        {
+            snowdesktop::performance::Scope trace("composition.srgb", "begin_draw");
+            winrt::check_hresult(interop->BeginDraw(damage, __uuidof(ID2D1DeviceContext),
+                context.put_void(), &origin));
+        }
         HRESULT painted;
         try
         {
@@ -1366,7 +1369,11 @@ struct DesktopBackdropCompositor::Impl
             (void)interop->EndDraw();
             throw;
         }
-        const auto finished = interop->EndDraw();
+        HRESULT finished;
+        {
+            snowdesktop::performance::Scope trace("composition.srgb", "end_draw");
+            finished = interop->EndDraw();
+        }
         winrt::check_hresult(painted);
         winrt::check_hresult(finished);
     }
@@ -3145,7 +3152,10 @@ bool DesktopBackdropCompositor::StageSrgbSceneFrame(HWND window, std::uintptr_t 
         auto& frame = impl_->srgbContent[key];
         auto& candidate = frame.candidate;
         if (!candidate.surface || candidate.size.cx != size.cx || candidate.size.cy != size.cy)
+        {
+            snowdesktop::performance::Scope trace("composition.srgb", "create_buffer");
             candidate = impl_->CreateSrgbContentBuffer(size);
+        }
         Impl::PaintSrgbSurface(candidate.surface, draw);
         frame.stagedFrame = clientFrame;
         frame.staged = true;

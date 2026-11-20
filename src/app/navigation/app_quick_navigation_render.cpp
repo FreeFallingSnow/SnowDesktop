@@ -22,6 +22,7 @@
 bool snowdesktop::quick_navigation::State::PublishPrecomposedFrame(
     ID2D1Device* device, quick_navigation_animation_rules::Effect effect, float deformationAmount, float opacity)
 {
+    performance::Scope trace("navigation.render", "precompose");
     namespace rules = quick_navigation_animation_rules;
     namespace genie = dock_genie;
     if (!sceneBitmap) return false;
@@ -78,6 +79,7 @@ bool snowdesktop::quick_navigation::State::PublishPrecomposedFrame(
     }
     if (!backdropCompositor.StageSrgbSceneFrame(hwnd, key, bounds, device,
             [&](ID2D1DeviceContext* target, POINT origin) {
+                performance::Scope draw("navigation.render", "precompose.draw");
                 auto* bitmap = sceneBitmap.Get();
                 const float atlasX = static_cast<float>(origin.x), atlasY = static_cast<float>(origin.y);
                 target->SetDpi(96.f, 96.f);
@@ -135,6 +137,7 @@ bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
     RECT panel = nav.rect, dock = nav.animationDockRect;
     OffsetRect(&panel, -nav.hostRect.left, -nav.hostRect.top);
     OffsetRect(&dock, -nav.hostRect.left, -nav.hostRect.top);
+    snowdesktop::performance::Scope trace("navigation.render", "genie.backdrop");
     return nav.backdropCompositor.SetGenieTransform(panel, dock, nav.animationDockEdge, collapsed, opacity);
 }
 
@@ -148,6 +151,7 @@ bool DesktopApp::ApplyQuickNavigationAttractionFrame(float collapsed, float opac
     RECT panel = nav.rect, dock = nav.animationDockRect;
     OffsetRect(&panel, -nav.hostRect.left, -nav.hostRect.top);
     OffsetRect(&dock, -nav.hostRect.left, -nav.hostRect.top);
+    snowdesktop::performance::Scope trace("navigation.render", "attraction.backdrop");
     return nav.backdropCompositor.SetAttractionTransform(panel, dock, collapsed, opacity);
 }
 
