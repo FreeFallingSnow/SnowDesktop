@@ -51,7 +51,7 @@ inline constexpr auto Fields<SettingsValues> = std::to_array<Description>({
 template<>
 inline constexpr auto Fields<DesktopDisplaySettings> = std::to_array<Description>({
     {"dockEnabled", "Mirrors the shared Dock enable switch. Change general.dockEnabled to control the Dock."},
-    {"iconSpacingScale", "Multiplies the nominal horizontal and vertical desktop grid gaps. The grid solver clamps the gaps to fit the work area and preserve room for an icon and its title. At fixed page dimensions the icon baseline is calculated at default spacing."},
+    {"iconSpacingScale", "Changes the shared desktop layout spacing, including gaps around components and gaps in fixed collection previews. The grid solver clamps the gaps to preserve room for an icon and its title. At fixed page dimensions the icon baseline uses default spacing. To give the icon rows more breathing room in a fixed large-folder collection, use largeFolderTitleLines for one-line captions."},
     {"scrollingIconSpacingYScale", "Changes vertical separation in scrolling icon grids. The viewport uses icon and title height as its row-content baseline, then adds spacing."},
     {"listRowSpacingScale", "Changes row spacing in the applicable scrolling list views. List icon size and caption font are controlled separately by desktop.itemIconSizeScale and desktop.listItemFontSizeCu."},
     {"itemIconSizeScale", "Multiplies the ordinary icon edge length, with 1 meaning the page baseline. The baseline uses page columns, rows and the visual work area, reserves space for the collapsed title at desktop.itemFontSizeCu, and uses default grid gaps. The scaled icon is capped to fit the pitch. List rows use a separate compact icon baseline with the same multiplier."},
@@ -60,7 +60,7 @@ inline constexpr auto Fields<DesktopDisplaySettings> = std::to_array<Description
     {"fanTitleFontSizeCu", "Sets the component-unit font size for titles shown by the fan presentation. Desktop-grid and list captions use their own font settings."},
     {"itemFontWeight", "Sets the DirectWrite font weight of item captions in the desktop and component renderers. It changes the glyph weight independently of caption point size and icon size."},
     {"desktopTitleLines", "Chooses one or two lines for ordinary desktop item captions. The page icon baseline is calculated independently of this line-count choice."},
-    {"largeFolderTitleLines", "Chooses one or two lines for captions in expanded large-folder components where the grid shows item titles."},
+    {"largeFolderTitleLines", "Chooses one or two lines for item captions in fixed large-folder collection grids with titles visible. One line shortens the title area and distributes the freed height between rows and at both outer edges, including above the first row. Icon size, row centers and grid capacity stay the same. Scrolling icon grids use scrollingTitleLines."},
     {"scrollingTitleLines", "Chooses one or two lines in scrolling icon-grid captions. List mode uses its own row text layout."},
     {"shortcutArrowMode", "Controls the shortcut overlay on shell items that are links. 0 shows it on non-application shortcuts, 1 hides it on all shortcuts, and 2 shows it on all shortcuts."},
     {"iconBeautify", "Global treatment for ordinary icons. Individual icon appearance can inherit or override it, and file thumbnails have a separate participation switch."},

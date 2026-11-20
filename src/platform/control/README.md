@@ -502,6 +502,10 @@ objects; unknown fields are rejected. JSON-RPC replies contain either `result`
 or `error`; domain failures carry a stable string at `error.data.code`.
 
 `api.describe` returns `protocolVersion`, frame limits and supported operations.
+A method entry may specify `resultSchema`, a key in the discovery response's
+`resultSchemas` object. Read the schema's English `description` annotations
+for field meaning, units and scope. Keep descriptions in sync when changing
+these results or adding a new publicly described field.
 This registry is the discovery source for later adapters. After the first public release, v1 changes may add
 methods or optional result fields; existing meanings remain stable. Incompatible
 changes require a new protocol major version and endpoint name. This API version
@@ -511,7 +515,7 @@ is independent of the Lua component `apiVersion`.
 | --- | --- | --- |
 | `api.describe` | `{}` | Protocol and method discovery |
 | `app.getState` | `{}` | Host PID, locale, desktop visibility, popup/navigation state and animation flags |
-| `desktop.getLayout` | `{}` | Active page geometry, widgets and `layoutRevision` |
+| `desktop.getLayout` | `{}` | Desktop grid page geometry, widget instances and `layoutRevision` |
 | `widgets.list` | `{}` | Same layout snapshot, including widget IDs and placement |
 | `widgets.get` | `{id}` | One widget and the current layout revision |
 | `widgets.agentActions` | `{id}` | English descriptions and argument types of actions declared by the loaded Lua instance |
@@ -532,6 +536,12 @@ thread under its existing execution limits. A `delivered` reply acknowledges
 successful callback execution. The callback may finish its work
 asynchronously. Existing package permissions and trusted-gesture checks remain
 in effect.
+
+Layout widget `memberCount` is the length of `memberIds`, the list of child
+widget instances. Count rows with `type: "lua"` for Lua instances, including
+those belonging to a stack. Collection contents such as files and shortcuts
+have no total count in the layout response. Visible UI item rows can cover
+only a portion of a collection.
 
 Settings `page` values are `general`, `desktop`, `widgets`, `backup-and-data`,
 `about`, `dock`, `taskbar`, `quick-navigation`, `theme-manager`, `status-bar`,

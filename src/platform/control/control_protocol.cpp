@@ -88,12 +88,93 @@ int Integer(const Value& params, std::string_view key, int minimum, int maximum)
     return static_cast<int>(field->number);
 }
 
+namespace
+{
+Value ResultField(const char* type, const char* description)
+{
+    return Object({{"type", String(type)}, {"description", String(description)}});
+}
+
+Value ResultObject(const char* description,
+    std::initializer_list<std::pair<std::string, Value>> properties)
+{
+    auto result = ResultField("object", description);
+    result.object.emplace("properties", Object(properties));
+    return result;
+}
+
+Value ResultArray(const char* description, Value items)
+{
+    auto result = ResultField("array", description);
+    result.object.emplace("items", std::move(items));
+    return result;
+}
+
+Value DesktopLayoutResultSchema()
+{
+    const auto bounds = ResultObject(
+        "Host layout rectangle in physical pixels relative to the virtual desktop origin. Use ui.snapshot for screen coordinates and visibility.", {
+        {"left", ResultField("integer", "X coordinate of the left edge.")},
+        {"top", ResultField("integer", "Y coordinate of the top edge.")},
+        {"right", ResultField("integer", "X coordinate of the exclusive right edge.")},
+        {"bottom", ResultField("integer", "Y coordinate of the exclusive bottom edge.")},
+    });
+    const auto page = ResultObject("Grid geometry for a desktop page or layout surface.", {
+        {"id", ResultField("string", "Page ID referenced by widget.pageId.")},
+        {"monitorId", ResultField("string", "Host display identity for the page.")},
+        {"bounds", bounds},
+        {"columns", ResultField("integer", "Number of grid columns on this page.")},
+        {"rows", ResultField("integer", "Number of grid rows on this page.")},
+        {"dpiX", ResultField("integer", "Horizontal display DPI used for layout scaling.")},
+        {"dpiY", ResultField("integer", "Vertical display DPI used for layout scaling.")},
+    });
+    const auto widget = ResultObject("Placement and group membership for one widget instance.", {
+        {"id", ResultField("string", "Widget instance ID. Pass this to widgets.get or widget-targeted settings queries.")},
+        {"type", ResultField("string", "Instance type, such as collection, lua, or luaStack. Count type lua for Lua instances. A luaStack is the container of its child instances.")},
+        {"title", ResultField("string", "Current display title. Titles can be shared by different widget instances.")},
+        {"pageId", ResultField("string", "Stored placement page. __snowdesktop_dock__ is the Dock surface.")},
+        {"column", ResultField("integer", "Stored zero-based starting column for the widget's grid placement.")},
+        {"row", ResultField("integer", "Stored zero-based starting row for the widget's grid placement.")},
+        {"columns", ResultField("integer", "Horizontal grid span in cells.")},
+        {"rows", ResultField("integer", "Vertical grid span in cells.")},
+        {"grouped", ResultField("boolean", "True when the widget is a child of another widget. For grouped widgets, the parent owns the visible placement.")},
+        {"bounds", bounds},
+        {"activeMemberId", ResultField("string", "Selected child widget ID for a Lua stack. Other widget types return an empty string.")},
+        {"memberCount", ResultField("integer", "Number of child widget IDs, equal to the length of memberIds. A collection can hold files or shortcuts and still return zero. This result has no total collection item count.")},
+        {"memberIds", ResultArray("Child widget instance IDs in stored order. Collection files and shortcuts are outside this list.",
+            ResultField("string", "ID of one child widget instance."))},
+    });
+    const auto revision = ResultField("string", "Opaque layout identity including placement state. Use the latest value as ifLayoutRevision before moving or resizing a widget.");
+    const auto layout = ResultObject("Current desktop grid geometry and widget placements.", {
+        {"layoutRevision", revision},
+        {"pages", ResultArray("Grid pages in the host layout.", page)},
+        {"widgets", ResultArray("Widget instances, including group children and Dock widgets.", widget)},
+    });
+    return Object({
+        {"layout", layout},
+        {"widget", ResultObject("One widget and its layout identity.", {
+            {"widget", widget},
+            {"layoutRevision", revision},
+        })},
+        {"placement", ResultObject("Result of applying an in-memory widget placement.", {
+            {"status", ResultField("string", "Applied means the requested placement was accepted by the host.")},
+            {"persistence", ResultField("string", "Queued means saving was scheduled after application in memory.")},
+            {"layout", layout},
+        })},
+    });
+}
+}
+
 Value Describe()
 {
     Value methods = Array();
-    const auto add = [&](const char* name, bool mutation, const char* parameters) {
-        methods.array.push_back(Object({{"name", String(name)}, {"mutates", Boolean(mutation)},
-            {"parameters", String(parameters)}}));
+    const auto add = [&](const char* name, bool mutation, const char* parameters,
+                         const char* resultSchema = nullptr) {
+        auto method = Object({{"name", String(name)}, {"mutates", Boolean(mutation)},
+            {"parameters", String(parameters)}});
+        if (resultSchema)
+            method.object.emplace("resultSchema", String(resultSchema));
+        methods.array.push_back(std::move(method));
     };
     add("api.describe", false, "{}");
     add("app.getState", false, "{}");
@@ -120,12 +201,12 @@ Value Describe()
     add("capture.record", true, "{monitorId?:string,includeSystemCursor?:boolean,durationMs:integer,fps:integer}");
     add("capture.state", false, "{id:string}");
     add("capture.cancel", true, "{id:string}");
-    add("desktop.getLayout", false, "{}");
-    add("widgets.list", false, "{}");
-    add("widgets.get", false, "{id:string}");
+    add("desktop.getLayout", false, "{}", "layout");
+    add("widgets.list", false, "{}", "layout");
+    add("widgets.get", false, "{id:string}", "widget");
     add("widgets.agentActions", false, "{id:string}");
     add("widgets.invokeAgentAction", true, "{id:string,action:string,arguments?:object}");
-    add("widgets.place", true, "{id:string,pageId:string,column:integer,row:integer,columns:integer,rows:integer,ifLayoutRevision:string}");
+    add("widgets.place", true, "{id:string,pageId:string,column:integer,row:integer,columns:integer,rows:integer,ifLayoutRevision:string}", "placement");
     add("widgets.open", true, "{id:string}");
     add("widgets.close", true, "{}");
     add("navigation.open", true, "{}");
@@ -134,6 +215,7 @@ Value Describe()
     add("dock.show", true, "{}");
     add("dock.hide", true, "{}");
     return Object({{"protocolVersion", Number(ProtocolVersion)}, {"methods", std::move(methods)},
+        {"resultSchemas", DesktopLayoutResultSchema()},
         {"maximumFrameBytes", Number(static_cast<double>(MaximumFrameBytes))},
         {"guidance", Object({
             {"language", String("en")},
