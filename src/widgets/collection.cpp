@@ -28,6 +28,7 @@
 #include "single_cell_widget_rules.h"
 #include "collection_group_rules.h"
 #include <algorithm>
+#include <array>
 #include <shlobj.h>
 #include <shlwapi.h>
 #include "common/l10n.h"
@@ -251,9 +252,12 @@ GetCollectionPresentation(
     const DesktopWidget* widget = collection
         ? collection->GetWidgetData() : nullptr;
     if (!widget) return {};
+    const size_t itemCount = collection->IsLargeFolderMode()
+        ? collection->PendingFileLayout().Count(widget->itemKeys.size())
+        : widget->itemKeys.size();
     return snowdesktop::widget_item_layout::
         ResolveCollectionPresentation(
-            widget->itemKeys.size(),
+            itemCount,
             GetCollectionPhysicalCapacity(collection),
             snowdesktop::widget_item_layout::
                 IsCompactCollectionSpan(
@@ -432,7 +436,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         if (app_) app_->ClearInlineTooltipBackdrop(key);
     });
     if (!data_ || !app_) return;
-    if (data_->itemKeys.empty())
+    const bool fixedLargeFolder = IsLargeFolderMode();
+    if (data_->itemKeys.empty() && (!fixedLargeFolder || PendingFileLayout().gaps.empty()))
     {
         if (data_->scrollContainerMode)
             DrawDetailsHeader(context, GetContentViewportRect());
@@ -475,7 +480,10 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
     const int titlelessIconSize = titlelessLargeFolder
         ? CollectionDenseLayout(this).iconSize : 0;
     auto& slots = GetSlots();
-    const size_t displayItemCount = CollectionItemCount(this);
+    const snowdesktop::file_drop_presentation::Layout emptyLayout;
+    const auto& pending = fixedLargeFolder ? PendingFileLayout() : emptyLayout;
+    const size_t modelCount = data_->itemKeys.size();
+    const size_t displayItemCount = pending.Count(modelCount);
     const auto presentation = GetCollectionPresentation(
         this, app_->CanCurrentDragUseCollectionPopup());
     const size_t inlineCapacity =
@@ -498,13 +506,14 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 hoveredTooltipTitle, hoveredTooltipAnchor));
     };
 
-    for (size_t i = 0; i < inlineCapacity && i < slots.size(); ++i)
+    for (const auto& slot : slots)
     {
-        if (i >= data_->itemKeys.size()) break;
-        if (!slots[i]) continue;
-        auto* icon = dynamic_cast<DesktopIcon*>(slots[i]->GetItem());
+        if (!slot) continue;
+        const auto position = pending.Member(slot->GetIndex());
+        if (!position || *position >= inlineCapacity) continue;
+        auto* icon = dynamic_cast<DesktopIcon*>(slot->GetItem());
         DesktopItem* item = icon ? icon->GetDesktopItem() : nullptr;
-        RECT slotRect = slots[i]->GetBounds();
+        RECT slotRect = slot->GetBounds();
         if (IsRectEmptyRect(slotRect)) continue;
         if (!item)
         {
@@ -590,18 +599,25 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         RECT allRect = GetCollectionSlotRect(this, allSlot, body);
         if (!IsRectEmptyRect(allRect))
         {
-            bool hasRemainingIcon = !preview && app_->initialShellReadPending_ &&
-                inlineCapacity < displayItemCount;
-            for (size_t j = 0; j < 4; ++j)
+            // Ordinary slots and the mosaic share the projected positions
+            // while files are being materialized or removed.
+            std::array<DesktopItem*, 4> icons{};
+            std::array<const snowdesktop::file_drop_presentation::Gap*, 4> gaps{};
+            const size_t mosaicEnd = inlineCapacity + icons.size();
+            const auto [first, last] = pending.ModelRange({inlineCapacity, mosaicEnd}, modelCount);
+            for (size_t index = first; index < last; ++index)
             {
-                size_t keyIdx = inlineCapacity + j;
-                if (keyIdx < displayItemCount &&
-                    resolveItem(data_->itemKeys[keyIdx]) != nullptr)
-                {
-                    hasRemainingIcon = true;
-                    break;
-                }
+                const auto position = pending.Member(index);
+                if (position && *position >= inlineCapacity && *position < mosaicEnd)
+                    icons[*position - inlineCapacity] = resolveItem(data_->itemKeys[index]);
             }
+            for (const auto& gap : pending.gaps)
+                if (gap.position >= inlineCapacity && gap.position < mosaicEnd)
+                    gaps[gap.position - inlineCapacity] = &gap;
+            const bool hasRemainingIcon =
+                (!preview && app_->initialShellReadPending_ && inlineCapacity < displayItemCount) ||
+                std::any_of(icons.begin(), icons.end(), [](const auto* icon) { return icon != nullptr; }) ||
+                std::any_of(gaps.begin(), gaps.end(), [](const auto* gap) { return gap != nullptr; });
             if (!hasRemainingIcon && !PtInRect(&allRect, GetRenderPointer()))
             {
                 finishTitleLayers();
@@ -613,36 +629,40 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 mosaicRect =
                     snowdesktop::ResolveCenteredIconRect(
                         allRect, titlelessIconSize);
-            for (int j = 0; j < 4; ++j)
+            for (size_t j = 0; j < icons.size(); ++j)
             {
-                RECT tile = GetCollectionCompactSlotRect(this,
-                    static_cast<size_t>(j), mosaicRect, 0);
+                RECT tile = GetCollectionCompactSlotRect(this, j, mosaicRect, 0);
 
-                size_t keyIdx = inlineCapacity + (size_t)j;
-                if (keyIdx < displayItemCount)
+                if (const auto* gap = gaps[j])
                 {
-                    if (DesktopItem* item =
-                            resolveItem(data_->itemKeys[keyIdx]))
-                    {
-                        const DesktopItem& di = *item;
-                        if (privacyActive)
-                            DrawPrivacyPlaceholder(context, tile,
-                                di.name, false, false);
-                        else
-                            DrawThumbnail(context, di, tile, di.selected);
-                    }
-                    else if (!preview && app_->initialShellReadPending_)
+                    const auto* file = privacyActive ? nullptr : gap->file.get();
+                    const RECT iconRect = GetThumbnailIconRect(tile);
+                    auto* bitmap = file && file->iconBitmap
+                        ? app_->GetTargetIconBitmap(context, file->iconBitmap, file->fullPath,
+                            file->iconIsMediaThumbnail) : nullptr;
+                    if (bitmap)
+                        app_->DrawIconBitmap(context, bitmap, iconRect, 0.7f);
+                    else
+                        app_->DrawPlaceholderIcon(context, file ? file->sysIconIndex : -1, iconRect, 0.4f, false);
+                }
+                else if (const auto* item = icons[j])
+                {
+                    if (privacyActive)
+                        DrawPrivacyPlaceholder(context, tile, item->name, false, false);
+                    else
+                        DrawThumbnail(context, *item, tile, item->selected);
+                }
+                else if (inlineCapacity + j < displayItemCount)
+                {
+                    if (!preview && app_->initialShellReadPending_)
                         app_->DrawPlaceholderIcon(context, -1, GetThumbnailIconRect(tile), 1.0f);
                 }
-                else
+                else if (!hasRemainingIcon)
                 {
-                    if (!hasRemainingIcon)
-                    {
-                        InflateRect(&tile, -Cu(2.0f), -Cu(2.0f));
-                        app_->DrawD2DRoundedRectangle(context, tile, static_cast<float>(Cu(3.0f)),
-                            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.24f),
-                            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.32f));
-                    }
+                    InflateRect(&tile, -Cu(2.0f), -Cu(2.0f));
+                    app_->DrawD2DRoundedRectangle(context, tile, static_cast<float>(Cu(3.0f)),
+                        lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.24f),
+                        lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.32f));
                 }
             }
 
@@ -713,10 +733,7 @@ std::vector<std::unique_ptr<Slot>> Collection::BuildSlots()
     }
 
     // ── Original: large folder mode ─────────────────────────
-    const auto presentation =
-        GetCollectionPresentation(this, false);
-    const size_t visible =
-        presentation.materializedItemCount;
+    const size_t visible = GetSlotCount();
     RECT body = GetBodyRect();
     for (size_t idx = 0; idx < visible; ++idx)
     {
@@ -747,8 +764,10 @@ size_t Collection::GetSlotCount() const
         return CollectionItemCount(
             const_cast<Collection*>(this));
 
-    return GetCollectionPresentation(
-        this, false).materializedItemCount;
+    const auto visible = GetCollectionPresentation(this, false).materializedItemCount;
+    return IsLargeFolderMode()
+        ? PendingFileLayout().ModelRange({0, visible}, data_->itemKeys.size()).second
+        : visible;
 }
 
 /**
@@ -764,9 +783,7 @@ Item* Collection::GetSlotItem(size_t idx) const
     if (!data_ || !app_ ||
         idx >= CollectionItemCount(const_cast<Collection*>(this)))
         return nullptr;
-    if (!data_->scrollContainerMode &&
-        idx >= GetCollectionPresentation(
-            this, false).materializedItemCount)
+    if (!data_->scrollContainerMode && idx >= GetSlotCount())
         return nullptr;
     if (auto* scene = GetPreviewScene())
     {
@@ -1188,9 +1205,32 @@ int Collection::GetItemHeight() const
 
 RECT Collection::GetMemberLayoutRect(size_t index) const
 {
-    if (data_ && !data_->scrollContainerMode) return GetCollectionSlotRect(this, index, GetBodyRect());
+    if (data_ && !data_->scrollContainerMode)
+    {
+        if (app_ && IsLargeFolderMode())
+        {
+            const auto presentation = GetCollectionPresentation(this, app_->CanCurrentDragUseCollectionPopup());
+            if (index >= GetCollectionPhysicalCapacity(this) ||
+                (presentation.showAllButton && index >= presentation.allButtonSlot)) return {};
+        }
+        return GetCollectionSlotRect(this, index, GetBodyRect());
+    }
     return CollectionItemRect(
         const_cast<Collection*>(this), index);
+}
+
+RECT Collection::PresentedSlotBounds(size_t index, RECT modelBounds) const
+{
+    if (IsLargeFolderMode())
+    {
+        const auto& pending = PendingFileLayout();
+        if (!pending.gaps.empty() || !pending.hidden.empty())
+        {
+            const auto position = pending.Member(index);
+            return position ? GetMemberLayoutRect(*position) : RECT{};
+        }
+    }
+    return WidgetContainer::PresentedSlotBounds(index, modelBounds);
 }
 
 int Collection::GetItemWidth() const
@@ -1249,13 +1289,15 @@ void Collection::ApplyMarqueeSelection(const RECT& contentRect)
     const bool scrolling = data_->scrollContainerMode;
     const size_t interactiveCount = scrolling ? data_->itemKeys.size()
         : GetCollectionPresentation(this, false).interactiveItemCount;
+    const auto& pending = PendingFileLayout();
     const int scroll = scrolling ? GetScrollOffset() : 0;
     for (size_t i = 0; i < data_->itemKeys.size(); ++i)
     {
         RECT itemRect{};
-        if (i < interactiveCount)
-            itemRect = scrolling ? CollectionItemRect(this, i)
-                : GetCollectionSlotRect(this, i, GetBodyRect());
+        const auto position = IsLargeFolderMode() ? pending.Member(i) : i;
+        if (position && *position < interactiveCount)
+            itemRect = scrolling ? CollectionItemRect(this, *position)
+                : GetCollectionSlotRect(this, *position, GetBodyRect());
         OffsetRect(&itemRect, 0, scroll);
         size_t itemIdx = app_->FindItemIndexByKey(data_->itemKeys[i]);
         if (itemIdx != static_cast<size_t>(-1))

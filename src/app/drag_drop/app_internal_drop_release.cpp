@@ -3,11 +3,12 @@
 
 DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allowed)
 {
+    const int mods = keys & (MK_CONTROL | MK_SHIFT | MK_ALT);
+    dragSession_.UpdateActionFromMods(mods);
     ResolveCurrentDragTargetAt(point);
     auto* target = dragSession_.TargetContainer();
     auto* slot = dragSession_.TargetSlot();
     const auto region = dragSession_.TargetRegion();
-    const int mods = keys & (MK_CONTROL | MK_SHIFT | MK_ALT);
     const bool removeDockPin = !GetDockDragOutRemovalHint(point).empty();
     const bool canDrop = target && region != HitRegion::None && region != HitRegion::Blocked;
     const bool handoff = canDrop && region == HitRegion::Handoff;

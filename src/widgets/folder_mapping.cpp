@@ -211,6 +211,26 @@ std::wstring FolderMapping::CachedActiveCategoryId() const
     return visibleCategoryIds_.empty() ? L"" : visibleCategoryIds_.front();
 }
 
+bool FolderMapping::RevealAllForMemberDrop(const DragSourceList& sources, bool fileBacked)
+{
+    if (!data_ || !app_ || !data_->showFileCategories || IsSearchActive()) return false;
+    const auto category = CachedActiveCategoryId();
+    if (category.empty() || category == L"all") return false;
+
+    // The only in-memory move into a mapping comes from the same folder.
+    if (!fileBacked && std::all_of(sources.entries.begin(), sources.entries.end(), [&](const auto& entry) {
+        return entry.memberIndex < data_->folderEntries.size() &&
+            FolderEntryCategoryId(data_->folderEntries[entry.memberIndex], app_->GetCategorySettings()) == category;
+    })) return false;
+
+    data_->activeCategoryId = L"all";
+    data_->scrollOffset = 0;
+    InvalidateSlots();
+    EnsureCategoryTabVisible(
+        std::find(visibleCategoryIds_.begin(), visibleCategoryIds_.end(), L"all") - visibleCategoryIds_.begin());
+    return true;
+}
+
 const std::vector<size_t>& FolderMapping::GetVisibleEntryIndices() const
 {
     static const std::vector<size_t> empty;

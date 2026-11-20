@@ -1430,11 +1430,6 @@ void DesktopApp::OnMouseMoveAt(
 
         const bool suppressDesktopWidgetTargets =
             SuppressDesktopWidgetDragTargets();
-        const bool groupedEntryDrag =
-            dragSession_.SourceList().
-                hasCollectionGroupEntries ||
-            dragSession_.SourceList().
-                hasFileGroupEntries;
         if (suppressDesktopWidgetTargets)
         {
             SetPageNavHotEdgeHover(0);
@@ -1444,32 +1439,8 @@ void DesktopApp::OnMouseMoveAt(
         else if (!UpdateDragPageNavigation(current))
             return;
 
-        // OO hit testing: iterate all containers in reverse (topmost first)
-        Container* targetContainer = nullptr;
-        Slot* targetSlot = nullptr;
-        HitRegion targetRegion = HitRegion::None;
-        const bool popupHit =
-            !suppressDesktopWidgetTargets &&
-            (!groupedEntryDrag || GetGroupPopupView()) &&
-            HitTestPopupForDrag(current, targetContainer, targetSlot, targetRegion);
-        if (!popupHit)
-        {
-            const DragTargetResolution resolved =
-                dragDropController_.ResolveInternalTarget(
-                    containers_, current,
-                    [&](const Container& candidate) {
-                        if (desktopIconsHidden_ &&
-                            !IsRetainedContainer(&candidate))
-                            return false;
-                        return !suppressDesktopWidgetTargets ||
-                            (!dynamic_cast<const DesktopGrid*>(&candidate) &&
-                             !dynamic_cast<const WidgetContainer*>(&candidate));
-                    });
-            targetContainer = resolved.container;
-            targetSlot = resolved.slot;
-            targetRegion = resolved.region;
-        }
-        dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
+        ResolveCurrentDragTargetAt(current);
+        auto* targetContainer = dragSession_.TargetContainer();
 
         if (dynamic_cast<DesktopGrid*>(dragSession_.Source()) &&
             dynamic_cast<DesktopGrid*>(targetContainer))

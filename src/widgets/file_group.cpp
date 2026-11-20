@@ -1879,6 +1879,16 @@ WidgetMemberDestination FileGroup::ResolveMemberDestination(Slot* slot, HitRegio
     return {source, source->GetWidgetData(), index, std::move(tab)};
 }
 
+bool FileGroup::RevealAllForMemberDrop(const DragSourceList& sources, bool fileBacked)
+{
+    if (IsGroupSearchActive()) return false;
+    auto* source = GetActiveSourceContainer();
+    HostedFileSourceScope hosted(this, source);
+    if (!hosted || !source->RevealAllForMemberDrop(sources, fileBacked)) return false;
+    InvalidateSlots();
+    return true;
+}
+
 DropReceipt FileGroup::OnItemsDropped(const ItemDrop& drop)
 {
     if (!app_ || !data_ || drop.items.empty()) return {};

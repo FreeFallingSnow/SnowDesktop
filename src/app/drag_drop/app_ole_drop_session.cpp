@@ -542,24 +542,9 @@ HRESULT DesktopApp::HandleOleDragEnter(
         return S_OK;
     }
 
-    // OO hit-test for external drop：优先检查集合弹窗
-    Container* targetContainer = nullptr;
-    Slot* targetSlot = nullptr;
-    HitRegion targetRegion = HitRegion::None;
-    if (!HitTestPopupForDrag(client, targetContainer, targetSlot, targetRegion))
-    {
-        const DragTargetResolution resolved =
-            dragDropController_.ResolveExternalTarget(
-                containers_, client,
-                [&](const Container& candidate) {
-                    return !desktopIconsHidden_ ||
-                        IsRetainedContainer(&candidate);
-                });
-        targetContainer = resolved.container;
-        targetSlot = resolved.slot;
-        targetRegion = resolved.region;
-    }
-    dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
+    ResolveCurrentDragTargetAt(client);
+    auto* targetContainer = dragSession_.TargetContainer();
+    const auto targetRegion = dragSession_.TargetRegion();
 
     int mods = 0;
     if (keyState & MK_CONTROL) mods |= MK_CONTROL;
@@ -689,24 +674,9 @@ HRESULT DesktopApp::HandleOleDragOver(
         return S_OK;
     }
 
-    // OO hit-test for external drop：优先检查集合弹窗
-    Container* targetContainer = nullptr;
-    Slot* targetSlot = nullptr;
-    HitRegion targetRegion = HitRegion::None;
-    if (!HitTestPopupForDrag(client, targetContainer, targetSlot, targetRegion))
-    {
-        const DragTargetResolution resolved =
-            dragDropController_.ResolveExternalTarget(
-                containers_, client,
-                [&](const Container& candidate) {
-                    return !desktopIconsHidden_ ||
-                        IsRetainedContainer(&candidate);
-                });
-        targetContainer = resolved.container;
-        targetSlot = resolved.slot;
-        targetRegion = resolved.region;
-    }
-    dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
+    ResolveCurrentDragTargetAt(client);
+    auto* targetContainer = dragSession_.TargetContainer();
+    const auto targetRegion = dragSession_.TargetRegion();
 
     int mods = 0;
     if (keyState & MK_CONTROL) mods |= MK_CONTROL;

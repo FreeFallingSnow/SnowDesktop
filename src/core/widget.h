@@ -556,6 +556,7 @@ public:
         return categorizedTabRowOffset_;
     }
     virtual std::wstring CategoryIdAtPoint(POINT pt) const { (void)pt; return L""; }
+    virtual bool RevealAllForMemberDrop(const DragSourceList&, bool) { return false; }
     std::vector<std::wstring> GetCategoryTabOrder() const;
     bool BeginCategoryTabDrag(POINT point);
     bool UpdateCategoryTabDrag(POINT point, bool* orderChanged = nullptr);
@@ -681,6 +682,7 @@ public:
     RECT GetAllButtonRect() const;
     RECT GetTitleCellRect() const;
     bool HidesBottomBarTitle() const override;
+    RECT PresentedSlotBounds(size_t index, RECT modelBounds) const override;
 
 private:
     RECT GetThumbnailIconRect(RECT rect) const;
@@ -737,6 +739,7 @@ public:
     bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) override;
     void EnsureCategoryTabVisible(size_t index) override;
     std::wstring GetCategoryDisplayLabel(const std::wstring& categoryId) const;
+    bool RevealAllForMemberDrop(const DragSourceList& sources, bool fileBacked) override;
     void InvalidateCategoryCache();
     std::vector<Item*> GetSelectedItems() const override;
     bool NeedsShellReloadAfterDrop() const override { return false; }
@@ -861,6 +864,7 @@ public:
     bool IsInlinePreview() const { return inlinePreview_; }
     RECT GetSearchBoxRect() const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
+    bool RevealAllForMemberDrop(const DragSourceList& sources, bool fileBacked) override;
     bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) override;
     void EnsureCategoryTabVisible(size_t index) override;
     const std::vector<size_t>& GetVisibleEntryIndices() const;
@@ -1122,6 +1126,7 @@ public:
     std::vector<Item*> GetHostedSelectedItemsForSource(
         const std::wstring& childId) const;
     std::vector<std::wstring> GetHostedVisibleCategoryIds() const;
+    bool RevealAllForMemberDrop(const DragSourceList& sources, bool fileBacked) override;
     std::vector<std::wstring> GetHostedVisibleItemKeys() const;
     std::vector<size_t> GetHostedVisibleFolderIndices() const;
     bool IsGroupSearchActive() const;

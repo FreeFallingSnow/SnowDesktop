@@ -328,6 +328,27 @@ std::wstring FileCategories::CachedActiveCategoryId() const
     return visible.empty() ? L"" : visible.front();
 }
 
+bool FileCategories::RevealAllForMemberDrop(const DragSourceList& sources, bool fileBacked)
+{
+    if (!data_ || !app_ || !data_->showFileCategories || IsSearchActive()) return false;
+    const auto category = CachedActiveCategoryId();
+    if (category.empty() || category == L"all") return false;
+
+    if (!fileBacked && std::all_of(sources.entries.begin(), sources.entries.end(), [&](const auto& entry) {
+        if (entry.desktopWidgetIcon) return true;
+        const auto index = app_->FindItemIndexByKey(entry.desktopKey);
+        const auto& items = app_->GetDesktopItems();
+        return index < items.size() && FileCategoryIdForItem(items[index], app_->GetCategorySettings()) == category;
+    })) return false;
+
+    data_->activeCategoryId = L"all";
+    data_->scrollOffset = 0;
+    InvalidateSlots();
+    const auto& categories = CachedVisibleCategoryIds();
+    EnsureCategoryTabVisible(std::find(categories.begin(), categories.end(), L"all") - categories.begin());
+    return true;
+}
+
 /**
  * @brief 构建当前激活分类的布局段表（LayoutSegment），缓存到 layoutCache_。
  *

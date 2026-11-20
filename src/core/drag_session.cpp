@@ -51,6 +51,7 @@ void DragSession::Begin(Container* source, std::vector<Item*> items,
     visualBoundsOffset_ = {};
     action_ = DropAction::Move;
     targetContainer_ = nullptr;
+    placementAfterViewChange_ = nullptr;
     targetSlot_ = nullptr;
     targetSlotGeneration_ = 0;
     targetSlotGenerationTracked_ = false;
@@ -73,6 +74,8 @@ bool DragSession::UpdateActionFromMods(int mods, DropAction defaultAction)
 bool DragSession::UpdateTarget(Container* targetContainer, Slot* targetSlot,
     HitRegion targetRegion)
 {
+    if (placementAfterViewChange_ != targetContainer)
+        placementAfterViewChange_ = nullptr;
     const bool nextGenerationTracked =
         targetContainer && targetSlot &&
         !targetSlot->IsTransientDragTarget();
@@ -181,6 +184,7 @@ void DragSession::DetachRuntimeBindings()
     for (auto& entry : sourceList_.entries)
         entry.item = nullptr;
     targetContainer_ = nullptr;
+    placementAfterViewChange_ = nullptr;
     targetSlot_ = nullptr;
     targetSlotGeneration_ = 0;
     targetSlotGenerationTracked_ = false;
@@ -222,6 +226,7 @@ void DragSession::End()
     visualVisible_ = false;
     hasContext_ = false;
     source_ = nullptr;
+    placementAfterViewChange_ = nullptr;
     items_.clear();
     visualItemBounds_.clear();
     sourceList_ = {};

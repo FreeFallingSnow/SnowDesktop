@@ -147,7 +147,21 @@ public:
      */
     void UpdatePoint(POINT current)
     {
+        if (placementAfterViewChange_ && !PtInRect(&placementAfterViewChangeBounds_, current))
+            placementAfterViewChange_ = nullptr;
         currentPoint_ = current;
+    }
+
+    // Preserve placement over an icon exposed by the view change until the
+    // pointer leaves that cell.
+    void KeepPlacementAfterViewChange(Container* target, RECT bounds)
+    {
+        placementAfterViewChange_ = target;
+        placementAfterViewChangeBounds_ = bounds;
+    }
+    bool KeepsPlacementAfterViewChange(const Container* target) const
+    {
+        return target && placementAfterViewChange_ == target;
     }
 
     /**
@@ -339,6 +353,8 @@ private:
     POINT visualBoundsOffset_{};             /**< 将主视觉热点吸附到指针的快照平移量 */
     DropAction action_ = DropAction::Move;   /**< 当前拖拽动作类型，默认为 Move */
     Container* targetContainer_ = nullptr;   /**< 目标容器指针 */
+    Container* placementAfterViewChange_ = nullptr;
+    RECT placementAfterViewChangeBounds_{};
     Slot* targetSlot_ = nullptr;             /**< 目标插槽指针 */
     std::uint64_t targetSlotGeneration_ = 0; /**< 目标插槽所属缓存代次 */
     bool targetSlotGenerationTracked_ = false; /**< 是否由 Container 缓存代次约束 */
