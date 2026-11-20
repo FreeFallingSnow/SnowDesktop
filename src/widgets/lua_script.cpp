@@ -477,10 +477,11 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             ? std::clamp(effectSettings.widgetEdgeHighlightWidth,
                 kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) : 0.0f;
         const LONG edge = static_cast<LONG>(std::ceil(std::max(panelStroke, rim))) + Cu(2.0f);
-        InflateRect(&allowed, -edge, -(static_cast<LONG>(panelRadius) + edge));
+        InflateRect(&allowed, -edge, -edge);
         if (data_->showTitle && !data_->bottomBarHover)
             allowed.bottom = std::min(allowed.bottom, frame.bottom - Cu(36.0f));
         surfacePaint->nativeMarqueeBounds = allowed;
+        surfacePaint->nativeMarqueeRadius = panelRadius;
     }
     auto* contentClip = panelRadius > 0.0f
         ? GetCachedClipGeometry(app_->GetD2DFactory(), frame, panelRadius) : nullptr;

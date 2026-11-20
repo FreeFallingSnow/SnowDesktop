@@ -45,6 +45,7 @@ struct WidgetSurfacePaint
     std::vector<Microsoft::WRL::ComPtr<ID2D1Bitmap1>> images;
     std::optional<PersonalizationSettings> appearance;
     RECT nativeMarqueeBounds{};
+    float nativeMarqueeRadius = 0.f;
 
     std::optional<RECT> DamageFrom(const WidgetSurfacePaint& previous) const;
 };

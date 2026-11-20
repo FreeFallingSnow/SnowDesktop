@@ -3190,6 +3190,10 @@ DesktopBackdropCompositor::PreparedMarquees DesktopBackdropCompositor::PrepareSr
     if (!window || !device || marquees.empty() || IsRectEmpty(&clientFrame) || IsRectEmpty(&allowed))
         return {};
     snowdesktop::performance::Scope trace("composition.srgb", "prepare_marquee");
+    const auto reject = [](std::string_view reason) {
+        snowdesktop::performance::Value("composition.srgb", reason, {}, 1);
+        return PreparedMarquees{};
+    };
     try
     {
         if (!impl_->compositor && !impl_->EnsureDispatcherQueue()) return {};
@@ -3208,27 +3212,31 @@ DesktopBackdropCompositor::PreparedMarquees DesktopBackdropCompositor::PrepareSr
         {
             const auto& box = marquee.viewport;
             const float cycle = marquee.textWidth + marquee.gap;
-            if (!marquee.scrolling || !marquee.layout || !std::isfinite(cycle) || cycle <= 0 ||
+            if (!marquee.layout || !std::isfinite(cycle) || cycle <= 0 ||
                 !std::isfinite(marquee.speed) || marquee.speed <= 0 ||
-                !std::isfinite(marquee.offset) || !std::isfinite(marquee.originY) || !std::isfinite(marquee.alpha) ||
-                !(box.left >= allowed.left && box.right <= allowed.right &&
-                    box.top >= allowed.top && box.bottom <= allowed.bottom &&
-                    box.right > box.left && box.bottom > box.top) ||
-                marquee.originX != box.left)
-                return {};
+                !std::isfinite(marquee.offset) || !std::isfinite(marquee.originX) ||
+                !std::isfinite(marquee.originY) || !std::isfinite(marquee.alpha))
+                return reject("marquee_invalid_descriptor");
+            if (!(box.left >= allowed.left && box.right <= allowed.right &&
+                box.top >= allowed.top && box.bottom <= allowed.bottom &&
+                box.right > box.left && box.bottom > box.top))
+                return reject("marquee_outside_body");
 
             DWRITE_OVERHANG_METRICS ink{};
             winrt::check_hresult(marquee.layout->GetOverhangMetrics(&ink));
             const float guard = std::ceil(std::max(2.0f, ink.left + 1.0f));
-            const float width = std::ceil(guard + 3.0f * cycle + std::max(2.0f, ink.right + 1.0f));
+            const int copies = marquee.scrolling ? 3 : 1;
+            const float width = std::ceil(guard + (copies - 1) * cycle + marquee.textWidth +
+                std::max(2.0f, ink.right + 1.0f));
             const float top = std::floor(box.top);
             const float height = std::ceil(box.bottom - top);
             if (!(width > 0 && width <= D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION &&
                 height > 0 && height <= D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION))
-                return {};
+                return reject("marquee_texture_bounds");
             const auto duration = std::chrono::duration<double>(cycle / marquee.speed);
-            if (duration < std::chrono::milliseconds(1) || duration > std::chrono::hours(24))
-                return {};
+            if (marquee.scrolling &&
+                (duration < std::chrono::milliseconds(1) || duration > std::chrono::hours(24)))
+                return reject("marquee_duration_bounds");
 
             const auto strip = impl_->CreateSrgbContentBuffer({static_cast<LONG>(width), static_cast<LONG>(height)});
             Impl::PaintSrgbSurface(strip.surface, [&](ID2D1DeviceContext* target, POINT origin) {
@@ -3242,7 +3250,7 @@ DesktopBackdropCompositor::PreparedMarquees DesktopBackdropCompositor::PrepareSr
                 winrt::com_ptr<ID2D1SolidColorBrush> inkBrush;
                 const auto hr = target->CreateSolidColorBrush(color, inkBrush.put());
                 if (FAILED(hr)) return hr;
-                for (int repeat = 0; repeat != 3; ++repeat)
+                for (int repeat = 0; repeat != copies; ++repeat)
                     target->DrawTextLayout({origin.x + guard + repeat * cycle, origin.y + marquee.originY - top},
                         marquee.layout.Get(), inkBrush.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
                 return S_OK;
@@ -3261,17 +3269,21 @@ DesktopBackdropCompositor::PreparedMarquees DesktopBackdropCompositor::PrepareSr
             glyphs.Size({width, height});
             // Start at the saved phase. Three copies let a full revolution
             // wrap from that phase without a host update or an exposed gap.
-            const float start = -guard - std::fmod(std::max(0.0f, marquee.offset), cycle);
+            const float phase = marquee.scrolling ? std::fmod(std::max(0.0f, marquee.offset), cycle) : 0.f;
+            const float start = marquee.originX - box.left - guard - phase;
             glyphs.Offset({start, top - box.top, 0.f});
-            auto slide = compositor.CreateScalarKeyFrameAnimation();
-            slide.Duration(std::chrono::duration_cast<wf::TimeSpan>(duration));
-            slide.IterationBehavior(wuc::AnimationIterationBehavior::Forever);
-            slide.InsertKeyFrame(0.f, start);
-            slide.InsertKeyFrame(1.f, start - cycle, compositor.CreateLinearEasingFunction());
-            glyphs.StartAnimation(L"Offset.X", slide);
-            auto animation = glyphs.TryGetAnimationController(L"Offset.X");
-            if (!animation) return {};
-            result->animations.push_back(std::move(animation));
+            if (marquee.scrolling)
+            {
+                auto slide = compositor.CreateScalarKeyFrameAnimation();
+                slide.Duration(std::chrono::duration_cast<wf::TimeSpan>(duration));
+                slide.IterationBehavior(wuc::AnimationIterationBehavior::Forever);
+                slide.InsertKeyFrame(0.f, start);
+                slide.InsertKeyFrame(1.f, start - cycle, compositor.CreateLinearEasingFunction());
+                glyphs.StartAnimation(L"Offset.X", slide);
+                auto animation = glyphs.TryGetAnimationController(L"Offset.X");
+                if (!animation) return reject("marquee_controller_unavailable");
+                result->animations.push_back(std::move(animation));
+            }
             clipped.Children().InsertAtTop(glyphs);
             root.Children().InsertAtTop(clipped);
         }
@@ -3293,6 +3305,8 @@ DesktopBackdropCompositor::PreparedMarquees DesktopBackdropCompositor::PrepareSr
     catch (const winrt::hresult_error& error)
     {
         impl_->lastError = FormatHresult(L"backdrop.srgb_marquee", error.code());
+        snowdesktop::performance::Value("composition.srgb", "marquee_prepare_hresult", {},
+            static_cast<double>(error.code().value));
         return {};
     }
 }

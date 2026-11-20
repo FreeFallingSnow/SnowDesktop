@@ -8,8 +8,10 @@
 #include "widget/view/widget_surface_renderer.h"
 #include "widget/runtime/widget_engine.h"
 #include "ui/render/ui_presentation_scope.h"
+#include "ui/render/smooth_corner_geometry.h"
 
 #include <algorithm>
+#include <array>
 
 namespace
 {
@@ -724,6 +726,31 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
                     if (reducedMotion || owner != contentId || IsRectEmpty(&paint.nativeMarqueeBounds) ||
                         !output.engine->GetScrollControls(contentId).empty())
                         return false;
+                    if (labels.empty() || std::none_of(labels.begin(), labels.end(),
+                            [](const auto& label) { return label.scrolling; }))
+                        return false;
+                    if (paint.nativeMarqueeRadius > 0.f)
+                    {
+                        const auto clip = snowdesktop::smooth_corners::Geometry(GetD2DFactory(),
+                            ToD2DRect(paint.nativeMarqueeBounds), paint.nativeMarqueeRadius);
+                        if (!clip) return false;
+                        for (const auto& label : labels)
+                        {
+                            const auto& r = label.viewport;
+                            const std::array corners{D2D1::Point2F(r.left, r.top), D2D1::Point2F(r.right, r.top),
+                                D2D1::Point2F(r.left, r.bottom), D2D1::Point2F(r.right, r.bottom)};
+                            for (const auto point : corners)
+                            {
+                                BOOL contains = FALSE;
+                                if (FAILED(clip->FillContainsPoint(point, nullptr, &contains)) || !contains)
+                                {
+                                    snowdesktop::performance::Value(
+                                        "widget.composition", "marquee_clip_rejected", contentId, 1);
+                                    return false;
+                                }
+                            }
+                        }
+                    }
                     marquees = desktopBackdropCompositor_.PrepareSrgbMarquees(
                         hwnd_, d2dDevice_.Get(), contentFrame, paint.nativeMarqueeBounds, labels);
                     return static_cast<bool>(marquees);
