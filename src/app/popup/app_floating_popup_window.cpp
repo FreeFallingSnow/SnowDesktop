@@ -11,6 +11,7 @@
 #include "drag_drop/drag_input_rules.h"
 #include "popup_window_pair_z_order.h"
 #include "layout/popup_round_geometry.h"
+#include "ui/render/d2d_drawing.h"
 #include "theme/flat_glass_rim.h"
 #include "platform/shell_overlay_window.h"
 #include "diagnostics/performance_trace.h"
@@ -866,11 +867,16 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
                     context->SetDpi(96.0f, 96.0f);
                     context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
                     context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                    context->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
                     context->SetTransform(D2D1::Matrix3x2F::Translation(
-                        static_cast<float>(offset.x - bounds.left), static_cast<float>(offset.y - bounds.top)));
+                        static_cast<float>(offset.x - bounds.left),
+                        static_cast<float>(offset.y - bounds.top)));
+                    // Match the source rectangle of the command-list replay.
+                    context->PushAxisAlignedClip(snowdesktop::ToD2DRect(bounds), D2D1_ANTIALIAS_MODE_ALIASED);
                     context->Clear(D2D1::ColorF(0, 0, 0, 0));
                     drawing_.Reset();
                     paintOverlays(context);
+                    context->PopAxisAlignedClip();
                     context->SetTransform(D2D1::Matrix3x2F::Identity());
                     drawing_.Reset();
                     return S_OK;
