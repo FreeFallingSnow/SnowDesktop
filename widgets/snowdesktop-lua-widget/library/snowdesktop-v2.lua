@@ -452,6 +452,7 @@
 ---@field sticky? boolean ListItem-only opt-in that pins headers inside the nearest vertical scroll while their eager list remains visible. Requires view.collection.stickyHeaders.
 ---@field busy? boolean Common host-observable busy state; collection loadingContent becomes active when supplied.
 ---@field showScrollbar? boolean Scroll or virtual-collection host scrollbar visibility; defaults to true.
+---@field edgeFade? number Fade length for scroll and virtual collections, 0..4096. Requires view.scroll.edgeFade.
 ---@field textAlign? 'start'|'center'|'end'
 ---@field verticalAlign? 'start'|'center'|'end' Text block alignment inside the node; defaults to center.
 ---@field textInkAligned? boolean Use visible text bounds for textAlign and verticalAlign on text, badge, button and link. Requires view.text.inkAlignment.
@@ -2619,7 +2620,12 @@ function draw.strokeRect(x, y, width, height, color, radius, thickness, alpha) e
 ---@param y number
 ---@param width number
 ---@param height number
-function draw.pushClip(x, y, width, height) end
+---@param options? SnowDrawClipOptions
+function draw.pushClip(x, y, width, height, options) end
+
+---@class SnowDrawClipOptions Requires draw.clip.edgeFade.
+---@field scroll SnowInteractionScrollState The current state returned by interaction.scroll.
+---@field fadeLength number Maximum edge fade length in drawing units, 0..4096.
 
 function draw.popClip() end
 

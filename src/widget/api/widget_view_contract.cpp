@@ -244,7 +244,8 @@ constexpr ViewPropertyEffect PropertyEffects(std::string_view name,
             "checked", "indeterminate", "selected", "sticky", "visible",
             "visibility", "enabled", "focusable", "cursor",
             "showScrollbar", "textAlign", "verticalAlign", "textWrap",
-            "maxLines", "overflowText", "glyphInkCentered", "textInkAligned" }))
+            "maxLines", "overflowText", "glyphInkCentered", "textInkAligned",
+            "edgeFade" }))
         add(ViewPropertyEffect::Paint);
     if (IsNamed(name, { "value", "min", "max", "step", "selectedValue",
             "expanded", "selectAll", "liveUpdate", "readOnly", "required",
@@ -479,6 +480,7 @@ constexpr auto kProperties = std::to_array<ViewPropertyContract>({
     Property("acceleratorText", ViewPropertyValueKind::String),
     EnumProperty("alignItems", ViewPropertyEnumSet::Alignment),
     Property("showScrollbar", ViewPropertyValueKind::Boolean),
+    RangedProperty("edgeFade", ViewPropertyValueKind::Number, 0.0, 4096.0),
     EnumProperty("alignSelf", ViewPropertyEnumSet::SelfAlignment),
     EnumProperty("justifyContent", ViewPropertyEnumSet::Justification),
     EnumProperty("textAlign", ViewPropertyEnumSet::TextAlignment),
@@ -1018,7 +1020,7 @@ bool ViewNodeAllowsProperty(
     if (property == "sticky") return type == ViewNodeType::ListItem;
     if (property == "checkedStyle")
         return IsCheck(type) || type == ViewNodeType::RadioGroup;
-    if (property == "showScrollbar")
+    if (property == "showScrollbar" || property == "edgeFade")
         return type == ViewNodeType::Scroll || IsVirtual(type);
     if (property == "accessKey" || property == "acceleratorText")
         return IsActionNode(type) &&

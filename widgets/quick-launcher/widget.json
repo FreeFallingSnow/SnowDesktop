@@ -277,6 +277,7 @@
     "ui.semanticMetrics.rowUnit"
   ],
   "optionalFeatures": [
+    "draw.clip.edgeFade",
     "data.app.indexStatus",
     "task.app.launch",
     "task.app.search",

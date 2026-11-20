@@ -364,5 +364,5 @@
     "time.basic",
     "ui.semanticMetrics.rowUnit"
   ],
-  "optionalFeatures": ["task.network.headers", "task.network.largeResponse", "task.network.retryDirect"]
+  "optionalFeatures": ["draw.clip.edgeFade", "task.network.headers", "task.network.largeResponse", "task.network.retryDirect"]
 }

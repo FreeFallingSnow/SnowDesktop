@@ -289,6 +289,35 @@ int lua_DrawPushClip(lua_State* L)
     float y = static_cast<float>(luaL_checknumber(L, 2));
     float width = std::max(0.0f, static_cast<float>(luaL_checknumber(L, 3)));
     float height = std::max(0.0f, static_cast<float>(luaL_checknumber(L, 4)));
+    float fadeLength = 0.0f;
+    float offset = 0.0f;
+    float maximum = 0.0f;
+    bool horizontal = false;
+    if (!lua_isnoneornil(L, 5))
+    {
+        luaL_checktype(L, 5, LUA_TTABLE);
+        lua_getfield(L, 5, "fadeLength");
+        fadeLength = static_cast<float>(luaL_optnumber(L, -1, 0.0));
+        lua_pop(L, 1);
+        if (!std::isfinite(fadeLength) || fadeLength < 0.0f || fadeLength > 4096.0f)
+            return luaL_argerror(L, 5, "fadeLength must be between 0 and 4096");
+        if (fadeLength > 0.0f)
+        {
+            lua_getfield(L, 5, "scroll");
+            if (!lua_istable(L, -1))
+                return luaL_argerror(L, 5, "fadeLength requires an interaction.scroll result");
+            lua_getfield(L, -1, "offset");
+            offset = static_cast<float>(luaL_checkinteger(L, -1));
+            lua_pop(L, 1);
+            lua_getfield(L, -1, "maximum");
+            maximum = static_cast<float>(luaL_checkinteger(L, -1));
+            lua_pop(L, 1);
+            lua_getfield(L, -1, "orientation");
+            horizontal = std::string_view(luaL_optstring(L, -1, "vertical")) == "horizontal";
+            lua_pop(L, 2);
+            offset = std::clamp(offset, 0.0f, std::max(0.0f, maximum));
+        }
+    }
     auto* s = GetLuaDrawContext(L);
     if (!s || !s->ctx) return 0;
     D2D1_RECT_F clip = D2D1::RectF(
@@ -304,10 +333,9 @@ int lua_DrawPushClip(lua_State* L)
         clip.right = std::min(clip.right, parent.right);
         clip.bottom = std::min(clip.bottom, parent.bottom);
     }
-    s->ctx->PushAxisAlignedClip(clip,
-        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     s->immediateClipRects.push_back(clip);
-    ++s->widgetClipDepth;
+    s->PushContentClip(clip, s->backgroundLayerActive ? 0.0f : fadeLength,
+        offset, maximum, horizontal);
     return 0;
 }
 
@@ -315,10 +343,9 @@ int lua_DrawPopClip(lua_State* L)
 {
     auto* s = GetLuaDrawContext(L);
     if (!s || !s->ctx || s->widgetClipDepth <= 0) return 0;
-    s->ctx->PopAxisAlignedClip();
+    s->PopContentClip();
     if (!s->immediateClipRects.empty())
         s->immediateClipRects.pop_back();
-    --s->widgetClipDepth;
     return 0;
 }
 

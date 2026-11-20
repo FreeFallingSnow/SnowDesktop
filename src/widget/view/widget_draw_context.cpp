@@ -2,6 +2,7 @@
 
 #include "common/utils.h"
 #include "ui/render/app_font.h"
+#include "ui/render/scroll_content_clip.h"
 
 #include <dwrite_3.h>
 
@@ -602,13 +603,51 @@ void DrawSimulatedPreviewIcon(WidgetDrawContext* state,
     }
 }
 
+void WidgetDrawContext::PushContentClip(const D2D1_RECT_F& bounds,
+    float fadeLength, float offset, float maximum, bool horizontal)
+{
+    ctx->PushAxisAlignedClip(bounds, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    ++widgetClipDepth;
+    if (fadeLength <= 0.0f || maximum <= 0.0f ||
+        bounds.right <= bounds.left || bounds.bottom <= bounds.top)
+        return;
+
+    const auto axis = horizontal ? ScrollContentAxis::Horizontal :
+        ScrollContentAxis::Vertical;
+    const float extent = horizontal ? bounds.right - bounds.left :
+        bounds.bottom - bounds.top;
+    const auto fade = ResolveScrollContentFade(extent, offset, maximum, fadeLength, axis);
+    const auto layerIndex = fadedClipDepths_.size();
+    // A nested layer must not move the brush used by its parent.
+    if (layerIndex >= clipFadeCaches_.size())
+        clipFadeCaches_.push_back(std::make_unique<ScrollContentFadeCache>());
+    auto* brush = clipFadeCaches_[layerIndex]->Resolve(
+        ctx, bounds, fade.leading, fade.trailing, axis);
+    if (brush)
+    {
+        fadedClipDepths_.push_back(widgetClipDepth);
+        ctx->PushLayer(D2D1::LayerParameters1(bounds, nullptr,
+            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::Matrix3x2F::Identity(),
+            1.0f, brush), nullptr);
+    }
+}
+
+void WidgetDrawContext::PopContentClip() noexcept
+{
+    if (!fadedClipDepths_.empty() && fadedClipDepths_.back() == widgetClipDepth)
+    {
+        ctx->PopLayer();
+        fadedClipDepths_.pop_back();
+    }
+    ctx->PopAxisAlignedClip();
+    --widgetClipDepth;
+}
+
 void PopWidgetClips(WidgetDrawContext& draw) noexcept
 {
     while (draw.widgetClipDepth > 0)
-    {
-        draw.ctx->PopAxisAlignedClip();
-        --draw.widgetClipDepth;
-    }
+        draw.PopContentClip();
+    draw.immediateClipRects.clear();
 }
 
 WidgetCommandCapture::~WidgetCommandCapture()

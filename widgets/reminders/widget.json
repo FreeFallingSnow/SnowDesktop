@@ -383,5 +383,5 @@
     "ui.semanticMetrics.rowUnit",
     "widget.confirmRemoval"
   ],
-  "optionalFeatures": ["interaction.contextMenu.keepOpen"]
+  "optionalFeatures": ["draw.clip.edgeFade", "interaction.contextMenu.keepOpen"]
 }

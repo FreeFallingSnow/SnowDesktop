@@ -619,6 +619,7 @@ struct ViewNode
     std::string validationMessage;
     std::size_t maximumUtf8Bytes = 0;
     bool showScrollbar = true;
+    float edgeFade = 0.0f;
     std::string selectedValue;
     std::vector<ViewChoiceOption> options;
     int calendarYear = 0;

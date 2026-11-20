@@ -3,6 +3,9 @@ local draft = module.require("modules/editor_draft.lua")
 local draftKeys = draft.keys
 local descriptor
 
+local EDGE_FADE = widget.hasFeature("draw.clip.edgeFade")
+local VIEW_EDGE_FADE = widget.hasFeature("view.scroll.edgeFade")
+
 local function componentMetrics()
     local row = ui.metrics().layoutRowHeight
     local scale = row / 28
@@ -493,18 +496,20 @@ local function render(context, model)
         mainFont + smallFont + metrics.spacingSm)
     local rowGap = metrics.spacingXs
     local rowHeight = cardHeight + rowGap
+    local contentHeight = #items * rowHeight - rowGap
     local scrollViewport = { type = "rect", x = pad, y = listTop,
         width = width - pad, height = viewportHeight }
     local scroll = interaction.scroll({
         key = "agenda.scroll",
         shape = scrollViewport,
-        contentHeight = math.ceil(#items * rowHeight - rowGap),
+        contentHeight = contentHeight > viewportHeight and math.ceil(contentHeight) or 0,
     })
     local first = math.max(1, math.floor(scroll.offset / rowHeight) + 1)
     local last = math.min(#items,
         math.ceil((scroll.offset + viewportHeight) / rowHeight))
     local selectedId = storage.get(SELECTED_ID)
-    draw.pushClip(pad, listTop, width - pad * 2, viewportHeight)
+    draw.pushClip(pad, listTop, width - pad * 2, viewportHeight,
+        EDGE_FADE and { scroll = scroll, fadeLength = metrics.layoutRowHeight * 0.5 } or nil)
     for index = first, last do
         local item = items[index]
         local subscribed = isSubscription(item.id)
@@ -749,7 +754,8 @@ local function panel(context, model)
     end
     local page=details and "details" or model.timePicker and "time"
         or model.datePicker and "date" or "editor"
-    return view.scroll({key="agenda.panel.scroll."..page,width="fill",height="fill",children={
+    return view.scroll({key="agenda.panel.scroll."..page,width="fill",height="fill",
+        edgeFade=VIEW_EDGE_FADE and row * 0.5 or nil,children={
         view.column({key="agenda.form",width="fill",height="auto",padding=row*0.2,gap=row*0.25,children=children})}})
 end
 

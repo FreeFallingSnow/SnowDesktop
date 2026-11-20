@@ -10,12 +10,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
 
 struct IDWriteFontCollection1;
+namespace snowdesktop { class ScrollContentFadeCache; }
 
 namespace snowdesktop::widget_runtime
 {
@@ -35,6 +37,7 @@ public:
     int gridCellH = 116;
     DWRITE_FONT_WEIGHT itemFontWeight = DWRITE_FONT_WEIGHT_SEMI_BOLD;
     int widgetClipDepth = 0;
+    std::vector<D2D1_RECT_F> immediateClipRects;
     WidgetImageSpin* desktopImageSpin = nullptr;
     WidgetSurfacePaint* desktopSurfacePaint = nullptr;
     WidgetImageSamplingCache imageSamplingCache;
@@ -57,6 +60,9 @@ public:
     bool HasPrivateFont(const std::wstring& path) const;
     void ResetBrushes();
     void ClearPrivateTextFormats();
+    void PushContentClip(const D2D1_RECT_F& bounds, float fadeLength = 0.0f,
+        float offset = 0.0f, float maximum = 0.0f, bool horizontal = false);
+    void PopContentClip() noexcept;
 
     struct Counts
     {
@@ -68,6 +74,8 @@ public:
     Counts ResourceCounts() const noexcept;
 
 private:
+    std::vector<int> fadedClipDepths_;
+    std::vector<std::unique_ptr<ScrollContentFadeCache>> clipFadeCaches_;
     struct GlyphOutline
     {
         Microsoft::WRL::ComPtr<ID2D1PathGeometry> geometry;

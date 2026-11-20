@@ -4,7 +4,6 @@
 
 #include <optional>
 #include <string>
-#include <vector>
 
 struct lua_State;
 
@@ -33,7 +32,6 @@ struct LuaDrawContext : WidgetDrawContext
 {
     const LuaDrawHostServices* services = nullptr;
     bool backgroundLayerActive = false;
-    std::vector<D2D1_RECT_F> immediateClipRects;
 };
 
 LuaDrawContext* GetLuaDrawContext(lua_State* state);

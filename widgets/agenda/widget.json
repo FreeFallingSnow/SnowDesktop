@@ -824,6 +824,7 @@
     "ui.timePicker"
   ],
   "optionalFeatures": [
+    "draw.clip.edgeFade", "view.scroll.edgeFade",
     "calendar.series",
     "task.calendar.series",
     "ui.datePicker.multiple"

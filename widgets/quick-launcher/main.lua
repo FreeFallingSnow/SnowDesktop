@@ -3,6 +3,8 @@ local descriptor
 local desktopChanges
 local appIndexStatus
 
+local EDGE_FADE = widget.hasFeature("draw.clip.edgeFade")
+
 local function componentMetrics()
     local row = ui.metrics().layoutRowHeight
     local scale = row / 28
@@ -353,12 +355,13 @@ local function render(context, model)
         width = width - contentInset, height = viewportHeight }
     local scroll = interaction.scroll({
         key = "quick-results", shape = scrollViewport,
-        contentHeight = math.ceil(contentHeight),
+        contentHeight = contentHeight > viewportHeight and math.ceil(contentHeight) or 0,
     })
     local iconSize = math.max(fontSize + metrics.spacingXs,
         metrics.spacingLg)
     draw.pushClip(contentInset, listTop,
-        width - contentInset * 2, viewportHeight)
+        width - contentInset * 2, viewportHeight,
+        EDGE_FADE and { scroll = scroll, fadeLength = itemHeight * 0.5 } or nil)
     for index, row in ipairs(model.rows) do
         local rowHeight = row.kind == "header" and headerHeight or itemStride
         local y = listTop + offsets[index] - scroll.offset

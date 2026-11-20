@@ -1600,6 +1600,16 @@ scroll key 同样是实例内稳定的 1–128 字节 UTF-8 字符串；只接�
 返回实际偏移。滚动不需要 `ui.input` 权限，基础 feature 为 `interaction.scroll`，横向扩展为
 `interaction.scroll.orientation`。
 
+支持 `draw.clip.edgeFade` 时，可为上面的 `draw.pushClip` 传入第五个参数
+`{ scroll = scroll, fadeLength = ui.metrics().layoutRowHeight * 0.5 }`。传入已经更新偏移的
+`interaction.scroll` 返回值。宿主按滚动方向对可见区域内的即时绘制内容应用透明度遮罩，
+渐隐长度受端外剩余内容和四分之一可视区限制。无溢出时内容保持完整可见。
+宿主滚动条和其它独立绘制的叠层沿用自身样式。背景绘制回调使用普通裁剪。
+
+声明式 `view.scroll`、`view.virtualList` 和 `view.virtualGrid` 可在探测
+`view.scroll.edgeFade` 后通过 `edgeFade` 指定渐隐长度。两类距离都以当前绘制坐标为单位，
+范围为 0–4096，默认 0。渐隐只作用于内容的绘制，滚动范围和交互命中由原有布局决定。
+
 右键命中带 `contextMenu` 绑定的 region 后，宿主同步调用 descriptor 的 `menu`：
 
 ```lua
@@ -3018,7 +3028,7 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 - `draw.gradientRect(x, y, width, height, startColor?, endColor?, direction?, radius?, alpha?)`
 - `draw.shadow(x, y, width, height, color?, blur?, radius?, offsetX?, offsetY?, alpha?)`
 - `draw.sparkline(values, x, y, width, height, color?, thickness?, min?, max?, alpha?)`
-- `draw.pushClip(x, y, width, height)`、`draw.popClip()`
+- `draw.pushClip(x, y, width, height, options?)`、`draw.popClip()`
 - `draw.glyph(glyph, centerX, centerY, size, color?, iconFont?, alpha?) -> boolean`
   使用字体的轮廓边界对齐到指定中心，绘制成功时返回 `true`。支持 `draw.glyph`
   feature，`glyph` 为单个 Unicode 字符，`iconFont` 可为 `"fluent"`（默认）、

@@ -3038,6 +3038,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.validationMessage, false, error) ||
         !ReadBoolField(state, index, "showScrollbar",
             node.showScrollbar, error) ||
+        !ReadFloatField(state, index, "edgeFade", node.edgeFade, error) ||
         !ReadBoolField(state, index, "showAdjacentDates",
             node.showAdjacentDates, error) ||
         !ReadBoolField(state, index, "visible", node.visible, error) ||

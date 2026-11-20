@@ -135,6 +135,17 @@ Remove glyph-specific coordinate and padding adjustments from that path.
 For older hosts, declare and probe `draw.glyph` or `view.icon.glyphInk`
 as appropriate and keep any legacy corrections in the fallback branch.
 
+### Scrolling edge fades
+
+When a scrolling list should soften clipped rows, explicitly enable its
+edge fade. On an immediate surface, probe `draw.clip.edgeFade` and pass
+`{ scroll = scroll, fadeLength = row * 0.5 }` to `draw.pushClip`. Use the
+result of `interaction.scroll` after any offset adjustment. Pair the clip
+with `draw.popClip()` before painting fixed controls. On a declarative
+scroll container, probe `view.scroll.edgeFade` and set
+`edgeFade = row * 0.5`. The host fades only edges with more content.
+Check the start, middle, end, and a list that fits.
+
 ## Verify the requested outcome
 
 Use [validation and packaging](references/validation-and-packaging.md) to

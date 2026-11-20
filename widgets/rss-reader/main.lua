@@ -1,6 +1,8 @@
 -- rss-reader/main.lua - API v2 bounded network task and virtual feed list
 local descriptor
 
+local EDGE_FADE = widget.hasFeature("draw.clip.edgeFade")
+
 local function componentMetrics()
     local row = ui.metrics().layoutRowHeight
     local scale = row / 28
@@ -383,16 +385,22 @@ local function render(context, model)
     local itemGap = math.max(unit,
         metrics.spacingXs * math.min(cfg.rowScale, 1.25))
     local rowHeight = itemHeight + itemGap
+    local contentHeight = #model.articles * rowHeight - itemGap
     local scroll = interaction.scroll({
         key = "rss.scroll", shape = scrollViewport,
-        contentHeight = math.ceil(#model.articles * rowHeight - itemGap),
+        contentHeight = contentHeight > viewportHeight and math.ceil(contentHeight) or 0,
     })
     local first = math.max(1, math.floor(scroll.offset / rowHeight) + 1)
     local last = math.min(#model.articles,
         math.ceil((scroll.offset + viewportHeight) / rowHeight))
     local textX = pad
     local textWidth = math.max(unit, width - pad * 2)
-    draw.pushClip(viewport.x, listTop, viewport.width, viewportHeight)
+    local fadeLength = metrics.layoutRowHeight * 0.5
+    local fadeLimit = math.min(fadeLength, viewportHeight * 0.25)
+    local fadeTop = math.min(fadeLimit, scroll.offset)
+    local fadeBottom = math.min(fadeLimit, scroll.maximum - scroll.offset)
+    draw.pushClip(viewport.x, listTop, viewport.width, viewportHeight,
+        EDGE_FADE and { scroll = scroll, fadeLength = fadeLength } or nil)
     for index = first, last do
         local article = model.articles[index]
         local y = listTop + (index - 1) * rowHeight - scroll.offset
@@ -411,7 +419,11 @@ local function render(context, model)
             contextMenu = { id = "rss.menu", value = article.link },
         }, article.title, article.link ~= "", scrollViewport)
         local titleY = y + rowPadding
-        if hovered then
+        -- The native marquee paints separately, so draw edge titles in the mask.
+        if hovered and (not EDGE_FADE or (
+            (fadeTop == 0 or titleY >= listTop + fadeTop) and
+            (fadeBottom == 0 or titleY + bodyMetrics.height <= listTop + viewportHeight - fadeBottom)
+        )) then
             draw.marqueeText({
                 key = key .. ".title",
                 x = textX,

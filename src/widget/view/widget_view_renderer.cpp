@@ -2054,20 +2054,20 @@ static void DrawWidgetViewNode(WidgetDrawContext* state, const WidgetViewHost& h
     if (node.clipFrame)
     {
         const auto& clip = *node.clipFrame;
-        state->ctx->PushAxisAlignedClip(D2D1::RectF(
+        state->PushContentClip(D2D1::RectF(
             state->widgetRect.left + clip.x,
             state->widgetRect.top + clip.y,
             state->widgetRect.left + clip.x + clip.width,
             state->widgetRect.top + clip.y + clip.height),
-            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        ++state->widgetClipDepth;
+            node.edgeFade, node.scrollOffset,
+            node.scrollContentExtent - node.scrollViewportExtent,
+            node.orientation == ViewOrientation::Horizontal);
         for (const auto* child : snowdesktop::widget_runtime::
                 ViewChildrenInPaintOrder(node))
             DrawWidgetViewNode(
                 state, host, *child, regions, focusedKey, transitions,
                 now, reducedMotion, palette, cumulativeScale, nullptr, gutterPaints);
-        state->ctx->PopAxisAlignedClip();
-        --state->widgetClipDepth;
+        state->PopContentClip();
 
         if (node.scrollbarFrame && gutterPaints)
             gutterPaints->push_back({&node, style, opacity});

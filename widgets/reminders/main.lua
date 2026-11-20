@@ -4,6 +4,8 @@ local taskLayout = module.require("modules/task_layout.lua")
 local taskPriority = module.require("modules/task_priority.lua")
 local taskOrder = module.require("modules/task_order.lua")
 
+local EDGE_FADE = widget.hasFeature("draw.clip.edgeFade")
+
 local function componentMetrics()
     local row = ui.metrics().layoutRowHeight
     local scale = row / 28
@@ -552,7 +554,7 @@ local function render(context, model)
     local scroll = interaction.scroll({
         key = "tasks.scroll",
         shape = viewportShape,
-        contentHeight = math.ceil(contentHeight),
+        contentHeight = contentHeight > viewportH and math.ceil(contentHeight) or 0,
     })
     if model.drag and model.drag.active and model.scrollStep then
         scroll.offset = interaction.setScrollOffset("tasks.scroll",
@@ -566,7 +568,8 @@ local function render(context, model)
     local first, last = taskLayout.visibleRange(rows, scroll.offset, viewportH)
     local selectedId = model.selectedId
 
-    draw.pushClip(0, listTop, w, viewportH)
+    draw.pushClip(0, listTop, w, viewportH,
+        EDGE_FADE and { scroll = scroll, fadeLength = metrics.layoutRowHeight * 0.5 } or nil)
     for index = first, last do
         local row = rows[index]
         local task = row.task

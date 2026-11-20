@@ -22,6 +22,14 @@ struct ScrollContentFade
     ScrollContentAxis axis;
 };
 
+inline ScrollContentFade ResolveScrollContentFade(float extent, float offset,
+    float maximum, float fadeLength, ScrollContentAxis axis)
+{
+    const float length = (std::min)(fadeLength, extent * 0.25f);
+    return {std::clamp(offset, 0.0f, length),
+        std::clamp(maximum - offset, 0.0f, length), axis};
+}
+
 struct ContentOpacityLayer
 {
     D2D1_RECT_F bounds;
@@ -81,7 +89,7 @@ private:
 // distances are unchanged. A new D2D device must never reuse the old brush.
 class ScrollContentFadeCache
 {
-    friend class ScrollContentClip;
+public:
 
     ID2D1LinearGradientBrush* Resolve(ID2D1DeviceContext* context,
         const D2D1_RECT_F& viewport, float leading, float trailing,
@@ -131,6 +139,7 @@ class ScrollContentFadeCache
         return brush_.Get();
     }
 
+private:
     Microsoft::WRL::ComPtr<ID2D1Device> device_;
     Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> brush_;
     float extent_ = 0.0f;
@@ -163,14 +172,12 @@ public:
         // Keep the middle half clear even in a very small viewport. Grow the
         // fade with the hidden distance so the first scroll pixel cannot dim
         // a whole row. Trailing scroll padding is not hidden content.
-        const float length = (std::min)(fadeLength, extent * 0.25f);
         const float offset = static_cast<float>((std::max)(0, scrollOffset));
-        const float leading = (std::min)(length, offset);
-        const float trailing = std::clamp(
-            static_cast<float>(contentExtent) - extent - offset, 0.0f, length);
-        auto* brush = cache.Resolve(context_, bounds, leading, trailing, axis);
+        const auto fade = ResolveScrollContentFade(extent, offset,
+            static_cast<float>(contentExtent) - extent, fadeLength, axis);
+        auto* brush = cache.Resolve(context_, bounds, fade.leading, fade.trailing, axis);
         if (!brush) return;
-        opacityLayer_.emplace(context_, bounds, 1.0f, brush, ScrollContentFade{leading, trailing, axis});
+        opacityLayer_.emplace(context_, bounds, 1.0f, brush, fade);
     }
 
     ~ScrollContentClip()
