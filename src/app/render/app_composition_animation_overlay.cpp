@@ -9,6 +9,8 @@
 #include "app/menus/native_menu_presentation_rules.h"
 #include "widget/view/widget_composition_layer_rules.h"
 
+#include <utility>
+
 namespace
 {
 HRESULT CreateSmoothStepAnimation(
@@ -771,6 +773,10 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
         anchor.y = std::clamp(
             popupAnchorPoint_.y, popupRect_.top, popupRect_.bottom);
     }
+    // The hidden host can predate the snapshot's first complete icon mask.
+    // Stage that material before the compositor receives either timeline.
+    if (std::exchange(floatingPopupBackdropUpdatePending_, false))
+        UpdateCollectionPopupBackdrop(false);
     if (!AnimateCompositionAnimationOverlay(
             popupAnimationOverlay_,
             visual.scale,
@@ -782,7 +788,7 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
         return false;
     }
     const auto* collection = GetOpenPopupWidget();
-    if (collectionPopupGlassTheme_ && collection && !UsesCollectionPopupFan(*collection) &&
+    if (collection && NeedsCollectionPopupMaterialPanel(*collection) &&
         !collectionPopupBackdropCompositor_.StartVisualTransformAnimation(
             visual.scale, opening ? 1.0f : popupAnimation_.HiddenScale(),
             visual.opacity, popupAnimation_.EndpointOpacity(opening),

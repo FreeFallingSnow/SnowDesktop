@@ -16,6 +16,7 @@
 #include "ui/render/d2d_drawing.h"
 #include "ui/render/font_weight_rules.h"
 #include "app/render/composition_state_types.h"
+#include "app/popup/collection_popup_icon_materials.h"
 #include "icons/icon_shadow.h"
 #include "icons/icon_shadow_settings.h"
 #include "app/render/demo_icon_load_types.h"
@@ -551,7 +552,8 @@ private:
     void DrawDynamicOverlays(
         ID2D1DeviceContext* ctx,
         bool hiddenMode = false,
-        const RECT* updateRect = nullptr);
+        const RECT* updateRect = nullptr,
+        snowdesktop::CollectionPopupIconMaterials::PaintResult* popupIcons = nullptr);
     /** @brief 绘制位于所有组件之上的桌面前景内容。 */
     void DrawDesktopForeground(
         ID2D1DeviceContext* ctx,
@@ -2603,7 +2605,10 @@ private:
      */
     void DrawCollectionPopup(
         ID2D1DeviceContext* ctx,
-        bool applyAnimation = true, const RECT* preparedRect = nullptr);
+        bool applyAnimation = true, const RECT* preparedRect = nullptr,
+        snowdesktop::CollectionPopupIconMaterials::PaintResult* popupIcons = nullptr);
+    std::span<const snowdesktop::PanelBackdropIcon> CollectionPopupIconBackdrops() const;
+    void PublishCollectionPopupIconBackdrops(snowdesktop::CollectionPopupIconMaterials::Icons icons);
     void PublishCollectionPopupFanBackdrops();
     RECT GetLuaWidgetPanelRect() const;
     static constexpr float kLuaWidgetPanelCornerRadius = 18.0f;
@@ -3153,6 +3158,7 @@ private:
     RECT GetCategorizedPopupFrame(const RECT& popup) const;
     bool UsesCollectionPopupFan(const DesktopWidget& widget) const;
     bool UsesCollectionPopupList(const DesktopWidget& widget) const;
+    bool NeedsCollectionPopupMaterialPanel(const DesktopWidget& widget) const;
     bool CollectionPopupFanRootAbove() const;
     RECT GetCollectionPopupFanWorkArea(const DesktopWidget& widget) const;
     size_t GetCollectionPopupFanVisibleCount(const RECT& popup) const;
@@ -4626,6 +4632,7 @@ private:
     snowdesktop::popup_animation_rules::State
         popupAnimation_;
     DragRenderCache popupAnimationRenderCache_;
+    snowdesktop::CollectionPopupIconMaterials collectionPopupIconMaterials_;
     RECT popupAnimationCacheRect_{};
     UiCompositionAnimationOverlay popupAnimationOverlay_;
     snowdesktop::UiScheduleToken

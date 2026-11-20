@@ -362,7 +362,8 @@ void DesktopApp::DrawDesktopForeground(
 void DesktopApp::DrawDynamicOverlays(
     ID2D1DeviceContext* ctx,
     bool hiddenMode,
-    const RECT* updateRect)
+    const RECT* updateRect,
+    snowdesktop::CollectionPopupIconMaterials::PaintResult* popupIcons)
 {
     snowdesktop::performance::Scope performanceScope("desktop", "overlays");
     auto beginPopupAnimationTransform =
@@ -776,7 +777,7 @@ void DesktopApp::DrawDynamicOverlays(
         if (suppressPopupHover)
             lastMousePoint_ = {
                 LONG_MIN, LONG_MIN };
-        DrawCollectionPopup(ctx);
+        DrawCollectionPopup(ctx, true, nullptr, popupIcons);
         if (suppressPopupHover)
             lastMousePoint_ =
                 interactionPoint;

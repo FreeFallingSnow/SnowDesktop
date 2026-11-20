@@ -1,5 +1,8 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/render/panel_blur_geometry.h"
+#include <algorithm>
+#include <utility>
 #include "common/l10n.h"
 #include "layout/collection_popup_layout.h"
 #include "layout/list_detail_rules.h"
@@ -1186,6 +1189,20 @@ bool DesktopApp::IsPointOccludedByOpenPopup(POINT point) const
     return PtInRect(&popup, point) != FALSE;
 }
 
+std::span<const snowdesktop::PanelBackdropIcon> DesktopApp::CollectionPopupIconBackdrops() const
+{
+    return collectionPopupIconMaterials_.presented;
+}
+
+void DesktopApp::PublishCollectionPopupIconBackdrops(snowdesktop::CollectionPopupIconMaterials::Icons icons)
+{
+    auto& presented = collectionPopupIconMaterials_.presented;
+    if (std::equal(presented.begin(), presented.end(), icons.begin(), icons.end(), snowdesktop::panel_blur::SameIcon))
+        return;
+    presented = std::move(icons);
+    floatingPopupBackdropUpdatePending_ = true;
+}
+
 void DesktopApp::ResetCollectionPopupAnimationCache()
 {
     folderPreviewPopupResize_.reset();
@@ -1199,6 +1216,7 @@ void DesktopApp::ResetCollectionPopupAnimationCache()
     ResetCompositionAnimationOverlay(
         popupAnimationOverlay_);
     popupAnimationRenderCache_.Invalidate();
+    collectionPopupIconMaterials_.bitmap.clear();
     popupAnimationCacheRect_ = {};
 }
 
@@ -1215,10 +1233,10 @@ void DesktopApp::PrepareCollectionPopupAnimationCache()
     InflateRect(&popupAnimationCacheRect_, 4, 4);
     if (!DrawCollectionPopupAnimationCache(&popupRect_))
         popupAnimationCacheRect_ = {};
-    else
-        (void)PrepareCompositionAnimationOverlay(
+    else if (PrepareCompositionAnimationOverlay(
             popupAnimationOverlay_, popupAnimationRenderCache_,
-            popupAnimationCacheRect_, UiCompositionAnimationHost::FloatingPopup);
+            popupAnimationCacheRect_, UiCompositionAnimationHost::FloatingPopup))
+        PublishCollectionPopupIconBackdrops(collectionPopupIconMaterials_.bitmap);
 }
 
 bool DesktopApp::DrawCollectionPopupAnimationCache(const RECT* preparedRect)
@@ -1236,6 +1254,7 @@ bool DesktopApp::DrawCollectionPopupAnimationCache(const RECT* preparedRect)
             popupAnimationCacheRect_.bottom -
                 popupAnimationCacheRect_.top));
 
+    snowdesktop::CollectionPopupIconMaterials::PaintResult icons;
     const bool ready =
         popupAnimationRenderCache_.Ensure(
             d2dDevice_.Get(),
@@ -1249,8 +1268,9 @@ bool DesktopApp::DrawCollectionPopupAnimationCache(const RECT* preparedRect)
                         static_cast<float>(
                             -popupAnimationCacheRect_.top)));
                 DrawCollectionPopup(
-                    cacheContext, false, preparedRect);
+                    cacheContext, false, preparedRect, &icons);
             });
+    if (ready && icons) collectionPopupIconMaterials_.bitmap = std::move(*icons);
     snowdesktop::performance::Value("popup", "snapshot.bitmap_allocations", {},
         static_cast<double>(popupAnimationRenderCache_.BitmapAllocationCount()));
     // The off-screen draw switches the shared brush cache to its context.
@@ -1270,7 +1290,13 @@ void DesktopApp::RefreshCollectionPopupAnimationContent()
     // normal completion handoff, without switching to UI-driven animation.
     const bool updated = DrawCollectionPopupAnimationCache() &&
         UpdateCompositionAnimationOverlayContent(popupAnimationOverlay_, popupAnimationRenderCache_);
-    if (updated) CommitCompositionAnimationFrame();
+    if (updated)
+    {
+        PublishCollectionPopupIconBackdrops(collectionPopupIconMaterials_.bitmap);
+        if (std::exchange(floatingPopupBackdropUpdatePending_, false))
+            UpdateCollectionPopupBackdrop(false);
+        CommitCompositionAnimationFrame();
+    }
     wchar_t message[240]{};
     swprintf_s(message,
         L"Popup animation content: driver=compositor updated=%d elapsedMs=%.2f revision=%llu",

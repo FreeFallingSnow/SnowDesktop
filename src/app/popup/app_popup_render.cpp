@@ -115,7 +115,8 @@ IDWriteTextFormat* DesktopApp::GetCollectionPopupTextFormat(float scale, bool ti
 
 void DesktopApp::DrawCollectionPopup(
     ID2D1DeviceContext* ctx,
-    bool applyAnimation, const RECT* preparedRect)
+    bool applyAnimation, const RECT* preparedRect,
+    snowdesktop::CollectionPopupIconMaterials::PaintResult* popupIcons)
 {
     const DesktopWidget* openWidget = GetOpenPopupWidget();
     if (!ctx || !openWidget) return;
@@ -126,6 +127,13 @@ void DesktopApp::DrawCollectionPopup(
     const DesktopWidget& widget = *openWidget;
     const bool fan = UsesCollectionPopupFan(widget);
     const bool inlinePreview = folderPreview_ && folderPreview_->inlineBounds;
+    std::optional<snowdesktop::CollectionPopupIconMaterials::DrawScope> popupIconScope;
+    if (!applyAnimation || renderingFloatingPopup_)
+    {
+        auto* icons = popupIcons ? &popupIcons->emplace() : nullptr;
+        const bool collectGrid = !fan && !inlinePreview && !UsesCollectionPopupList(widget);
+        popupIconScope.emplace(ctx, collectGrid ? icons : nullptr);
+    }
     const POINT pointer = lastMousePoint_;
     const bool lightTheme = inlinePreview ? IsLightContentTheme() : collectionPopupLightTheme_;
     const auto popupMetrics = GetOpenCollectionPopupLayoutMetrics();
@@ -193,6 +201,7 @@ void DesktopApp::DrawCollectionPopup(
                         popupAnimationCacheRect_.top)),
                 D2D1_INTERPOLATION_MODE_LINEAR))
         {
+            if (popupIcons) *popupIcons = collectionPopupIconMaterials_.bitmap;
             ctx->SetTransform(previousTransform);
             return;
         }

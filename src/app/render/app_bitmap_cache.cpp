@@ -646,6 +646,7 @@ void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
     if (drawingIconAppearanceSource_ || dragPreviewCompositionPaintInProgress_ ||
         target == iconShadowRecorder_.Get()) return;
     const auto& appearance = style ? *style : iconBeautifySettings_;
+    if (snowdesktop::CollectionPopupIconMaterials::DrawScope::Collect(target, frame, opacity, appearance)) return;
     // Popup/quick-navigation backdrops are collected by their own animation
     // transaction. Icons inherit that panel rather than adding a second blur.
     if (renderingFloatingPopup_ || quickNavigation_->compositionPaintInProgress) return;

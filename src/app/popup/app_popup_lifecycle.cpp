@@ -475,6 +475,7 @@ void DesktopApp::StartCollectionPopupAnimation(
     if (!reverseClosingAnimation)
     {
         popupAnimation_.ResetHidden();
+        PublishCollectionPopupIconBackdrops({});
         popupFanIconDrawings_.clear();
     }
     if (!(snowdesktop::animation::RuntimePopupEffect() != 0))
@@ -556,6 +557,7 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
 
 void DesktopApp::FinalizeCloseCollectionPopup()
 {
+    PublishCollectionPopupIconBackdrops({});
     const RECT previewBounds = folderPreview_ ? popupRect_ : RECT{};
     const bool temporaryPreview = folderPreview_ && folderPreview_->IsTemporary();
     DiscardFolderPreview();

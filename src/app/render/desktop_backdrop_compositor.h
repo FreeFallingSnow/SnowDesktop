@@ -151,7 +151,7 @@ public:
     // Apply regions to the existing rounded panel, sampling its backdrop once.
     bool SetPanelIconRegions(std::uintptr_t ownerKey, ID2D1Device* drawDevice,
         std::span<const snowdesktop::PanelBackdropIcon> icons, bool extendOutline,
-        float configuredIconBlur = 0.0f);
+        float configuredIconBlur = 0.0f, bool iconsOnly = false);
     // Extra popup allocation for shared Dock icons, with a fixed screen-space display clip.
     bool SetPopupWindowPadding(const RECT& padding, const RECT& displayBounds);
     /**
