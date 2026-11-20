@@ -452,7 +452,11 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     const auto releaseFullscreenLayerHide = [&] {
         if (!host.hiddenForFullscreenLayer) return;
         host.hiddenForFullscreenLayer = false;
-        if (desktopStartupPresentationPending_ || !ShouldShowPersistentDockHost(host) ||
+        // An occluded session owns its reveal: the animated presentation
+        // frame shows the pair, so this instant reveal must stay out of
+        // its way until the session ends.
+        if (desktopStartupPresentationPending_ || host.occludedFloatingPresentation ||
+            !ShouldShowPersistentDockHost(host) ||
             IsWindowVisible(host.hwnd)) return;
         if (host.backdrop.IsAvailable())
             host.backdrop.ShowPopupWindowPair(host.hwnd);

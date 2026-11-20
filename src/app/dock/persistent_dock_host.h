@@ -58,6 +58,10 @@ struct DesktopApp::PersistentDockHost
     // Shared visibility timeline for merged bars and summon-only Docks.
     bool mergedPresentationActive = false, updatingMergedPresentation = false;
     bool presentationMerged = false;
+    // An occluded floating session reuses that shared reveal/collapse
+    // timeline: the reveal recognition retired the hidden desktop pair, and
+    // the dismissal recognition re-checks the cover before collapsing.
+    bool occludedFloatingPresentation = false;
     bool mergedInteractionHeld = false, mergedCloseAfterInteraction = false;
     ComPtr<IDCompositionEffectGroup> mergedOpacity;
     bool compositionRenderRecoveryPending = false;

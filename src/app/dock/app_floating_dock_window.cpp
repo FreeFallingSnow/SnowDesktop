@@ -6,6 +6,8 @@
 #include "diagnostics/diagnostic_log.h"
 #include "settings/animation_settings.h"
 #include "app/dock/persistent_dock_host.h"
+#include "app/dock/dock_platform_helpers.h"
+#include "app/dock/dock_taskbar_diagnostics.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "app/popup/popup_window_pair_z_order.h"
 #include "diagnostics/performance_trace.h"
@@ -141,6 +143,94 @@ bool DesktopApp::ShouldShowPersistentDockHost(
             desktopIconsHidden_,
             dockSettings_.keepWhenDesktopHidden,
             desktopPassthroughActive_);
+}
+
+bool DesktopApp::IsPersistentDockDesktopBandOccluded(
+    const PersistentDockHost& host) const
+{
+    if (!host.active || !host.hwnd || !IsWindow(host.hwnd) ||
+        !host.monitor || IsRectEmpty(&host.dockRect))
+        return false;
+    // A fullscreen source on this monitor always covers the desktop band.
+    if (RecheckFullscreenSource(host.monitor))
+        return true;
+    RECT dockScreen = host.dockRect;
+    if (hwnd_ && IsWindow(hwnd_))
+        MapWindowPoints(
+            hwnd_, nullptr,
+            reinterpret_cast<POINT*>(&dockScreen), 2);
+    else
+        OffsetRect(&dockScreen, virtualLeft_, virtualTop_);
+    // The desktop-band pair sits below ordinary applications, so any
+    // maximized application on this monitor that does not avoid the Dock
+    // covers it completely. Recognized at summon/dismissal moments only,
+    // with the cheap zoom test ahead of the per-window task queries.
+    struct OcclusionScan
+    {
+        HMONITOR monitor = nullptr;
+        const RECT* dockScreen = nullptr;
+        bool occluded = false;
+    } scan{host.monitor, &dockScreen};
+    EnumWindows([](HWND window, LPARAM parameter) -> BOOL
+    {
+        auto& scan = *reinterpret_cast<OcclusionScan*>(parameter);
+        if (IsZoomed(window) &&
+            MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST) == scan.monitor)
+        {
+            RECT bounds{};
+            if (GetWindowRect(window, &bounds) && IsDockTaskWindow(window) &&
+                snowdesktop::floating_dock_rules::
+                    MaximizedWindowCoversDock(bounds, *scan.dockScreen))
+            {
+                scan.occluded = true;
+                return FALSE;
+            }
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&scan));
+    return scan.occluded;
+}
+
+bool DesktopApp::EnterOccludedFloatingPresentation(
+    PersistentDockHost& host,
+    snowdesktop::floating_dock_rules::OccludedFloatingTransition transition)
+{
+    // Merged bars keep their own presentation; summon-only Docks already use
+    // this reveal timeline for every transition.
+    if (!host.active || !host.hwnd || !IsWindow(host.hwnd)) return false;
+    if (host.container && host.container->IsMergedWithStatusBar()) return false;
+    if (dockSettings_.showOnlyWhenSummoned) return false;
+    // A dismissal only re-decides for something that is actually floating.
+    if (transition ==
+            snowdesktop::floating_dock_rules::OccludedFloatingTransition::Dismissal &&
+        !IsPersistentDockHostEffectivelyFloating(host))
+        return false;
+    if (!IsPersistentDockDesktopBandOccluded(host))
+    {
+        // The covering window is already gone at this recognition moment:
+        // end an active session so the ordinary instant path takes over.
+        if (host.occludedFloatingPresentation)
+        {
+            host.occludedFloatingPresentation = false;
+            ResetMergedDockPresentation(host);
+        }
+        return false;
+    }
+    const bool startedSession = !std::exchange(
+        host.occludedFloatingPresentation, true);
+    if (startedSession)
+    {
+        snowdesktop::dock_taskbar_diagnostics::Record(
+            transition ==
+                    snowdesktop::floating_dock_rules::OccludedFloatingTransition::Reveal
+                ? L"dock-occluded-reveal"
+                : L"dock-occluded-dismissal",
+            host.hwnd);
+    }
+    // The reveal entry only marks the session: UpdatePersistentDockHostVisibility
+    // retires the still-occluded desktop pair inside its own reentrancy guard,
+    // before the promoted reveal frame is committed and shown.
+    return true;
 }
 
 bool DesktopApp::IsDockContainerInteractionVisible(
@@ -500,7 +590,20 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
     const bool merged = host.container && host.container->IsMergedWithStatusBar();
     if (host.mergedPresentationActive && host.presentationMerged != merged)
         ResetMergedDockPresentation(host);
-    if (merged || dockSettings_.showOnlyWhenSummoned)
+    // An occluded floating session ends here once its collapse finished, so
+    // the hidden pair returns to the ordinary desktop presentation in this
+    // pass. The still-visible dismissal entry is excluded on purpose: its
+    // collapse animation has not started yet.
+    if (host.occludedFloatingPresentation && !merged &&
+        !dockSettings_.showOnlyWhenSummoned &&
+        !IsPersistentDockHostEffectivelyFloating(host) &&
+        !host.mergedAnimation.IsAnimating() && !IsWindowVisible(host.hwnd))
+    {
+        host.occludedFloatingPresentation = false;
+        ResetMergedDockPresentation(host);
+    }
+    if (merged || dockSettings_.showOnlyWhenSummoned ||
+        host.occludedFloatingPresentation)
     {
         host.updatingMergedPresentation = true;
         struct UpdateScope { bool& active; ~UpdateScope() { active = false; } } scope{host.updatingMergedPresentation};
@@ -513,9 +616,28 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
             host.backdrop.HidePopupWindowPair(host.hwnd);
             return;
         }
+        // The occluded session's reveal retires the still-occluded desktop
+        // pair inside this reentrancy-guarded scope, before activation
+        // samples the visibility pose. A dismissal keeps the live pair so
+        // its collapse animates from the visible pose; a session already
+        // presenting never re-hides its revealed frame.
+        if (host.occludedFloatingPresentation && !merged &&
+            !dockSettings_.showOnlyWhenSummoned &&
+            IsPersistentDockHostEffectivelyFloating(host) &&
+            !host.mergedPresentation.visible && IsWindowVisible(host.hwnd))
+        {
+            host.backdrop.HidePopupWindowPair(host.hwnd);
+        }
         if (!host.mergedPresentationActive)
         {
-            host.mergedAnimation.ResetHidden();
+            // An occluded session entered at dismissal starts from the live
+            // visible pose so its collapse animates away; every other
+            // activation starts hidden for the reveal.
+            if (host.occludedFloatingPresentation && !merged &&
+                !dockSettings_.showOnlyWhenSummoned && IsWindowVisible(host.hwnd))
+                host.mergedAnimation.ShowImmediately();
+            else
+                host.mergedAnimation.ResetHidden();
             host.presentationMerged = merged;
             host.mergedPresentationActive = true;
         }
@@ -523,12 +645,13 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
         namespace animation = snowdesktop::quick_navigation_animation_rules;
         // Reuse the short progress timeline, translating the complete strip at
         // full opacity. Animation never changes AppBar/work-area geometry.
-        const bool shouldShow = ShouldShowPersistentDockHost(host);
-        const bool immediateDrag = shouldShow && (dragSession_.IsActive() ||
-            (widgetAction_ == WidgetAction::Move && mouseDownWidgetIndex_ < widgets_.size()) ||
-            dragDropController_.IsTransportActive() || floatingDockExternalPointerDrag_.Active());
+        // The edge reveal/collapse timeline also covers drag-to-edge passive
+        // reveals: a drag no longer forces an instant presentation.
+        const bool shouldShow = host.occludedFloatingPresentation
+            ? IsPersistentDockHostEffectivelyFloating(host)
+            : ShouldShowPersistentDockHost(host);
         const bool wasAnimating = host.mergedAnimation.IsAnimating();
-        host.mergedAnimation.Configure(motion::RuntimeAnimationsEnabled() && !immediateDrag
+        host.mergedAnimation.Configure(motion::RuntimeAnimationsEnabled()
             ? animation::Effect::Fade : animation::Effect::None, std::min(1.0, motion::RuntimeDurationScale()), false, true);
         const bool changed = shouldShow != host.mergedAnimation.IsInteractive();
         if (changed || (wasAnimating && !host.mergedAnimation.IsAnimating()))
@@ -576,6 +699,14 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
                     ApplyFloatingDockLayerPolicy(*current);
                     UpdateFloatingDockWindowBounds(*current, false, true);
                     InvalidateFloatingDockWindow(*current, true);
+                    if (current->occludedFloatingPresentation &&
+                        !IsPersistentDockHostEffectivelyFloating(*current))
+                    {
+                        // The occluded session's collapse finished; restore
+                        // the ordinary desktop presentation in the same
+                        // turn instead of waiting for the next refresh.
+                        UpdatePersistentDockHostVisibility(*current);
+                    }
                 }
                 return running;
             };
@@ -909,7 +1040,8 @@ CalculateFloatingDockStableSourceRect(
                             static_cast<int>(std::ceil(96.f * tooltipScale))),
                 visualEdgeWidth);
 
-    if (dockSettings_.showOnlyWhenSummoned || host.container->IsMergedWithStatusBar())
+    if (dockSettings_.showOnlyWhenSummoned || host.occludedFloatingPresentation ||
+        host.container->IsMergedWithStatusBar())
     {
         MONITORINFO monitor{sizeof(monitor)};
         if (GetMonitorInfoW(host.monitor, &monitor))

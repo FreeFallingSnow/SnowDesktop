@@ -238,6 +238,23 @@ bool ShouldSummonForDockSurface(
     bool sourceBelongsToDock,
     bool floatingDockVisible);
 
+// Both ends of a floating session decide on their own recognition moment:
+// a reveal uses the edge animation when the desktop band is occluded when
+// the summon is recognized, and a dismissal re-checks that state instead of
+// replaying the reveal's decision.
+enum class OccludedFloatingTransition
+{
+    Reveal,
+    Dismissal,
+};
+
+// The desktop-band Dock counts as fully occluded when the covering window is
+// a maximized application whose frame contains the Dock's resting bounds.
+// Reserved screen space keeps maximized windows clear and leaves the Dock
+// visible; fullscreen sources are recognized by the host layer instead.
+bool MaximizedWindowCoversDock(
+    const RECT& window, const RECT& dockScreen);
+
 // The evidence belongs to the Shell transition, not to one consumer: the Dock
 // layer policy and an independently presented status bar both consume it.
 bool ShouldStartSystemShowDesktopLayerGuard(

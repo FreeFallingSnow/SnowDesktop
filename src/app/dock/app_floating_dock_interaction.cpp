@@ -256,6 +256,7 @@ void DesktopApp::ShowFloatingDock(
     // Host promotes only its content/backdrop pair and leaves other promoted
     // monitors untouched.
     bool revealFramePrepared = false;
+    bool occludedReveal = false;
     {
         // Layout, status-bar refresh and renderer callbacks can all revisit
         // visibility/layer policy. Keep the existing native band until the
@@ -269,6 +270,13 @@ void DesktopApp::ShowFloatingDock(
             ~RevealPreparation() { pending = previous; }
         } preparation(floatingDockHost_->revealPending);
         ImmediateDockPaintDeferral defer(floatingDockHost_->immediatePaintDeferred);
+        // Recognize the summon against the live desktop band: while a
+        // covering window hides the Dock completely, mark the occluded
+        // session here; the visibility pass retires that invisible pair and
+        // reveals through the session's edge animation below.
+        occludedReveal = EnterOccludedFloatingPresentation(
+            *floatingDockHost_,
+            snowdesktop::floating_dock_rules::OccludedFloatingTransition::Reveal);
         floatingDockHost_->promoted = true;
         floatingDockHost_->promotionInputVisible = false;
         floatingDockHost_->windowActionPromotion.Retain();
@@ -276,7 +284,7 @@ void DesktopApp::ShowFloatingDock(
         floatingDockHost_->passivelyRevealed = false;
         floatingDockHost_->passiveRevealTick = 0;
         floatingDockHost_->passiveLeaveStartTick = 0;
-        if (!hostWasVisible)
+        if (!hostWasVisible || occludedReveal)
         {
             POINT cursorDesktop{};
             if (snowdesktop::private_pointer::CursorPosition(&cursorDesktop))
@@ -306,6 +314,13 @@ void DesktopApp::ShowFloatingDock(
         // A recovery paint remains queued without exposing the old frame in a
         // newly promoted window.
         floatingDockHost_->promoted = hostWasPromoted;
+        if (occludedReveal && !hostWasPromoted &&
+            !floatingDockHost_->mergedPresentationActive)
+        {
+            // The summon aborted before its first frame; keep the ordinary
+            // desktop presentation instead of collapsing from a live pose.
+            floatingDockHost_->occludedFloatingPresentation = false;
+        }
         RefreshFloatingDockVisibilityState();
         if (statusBar_) statusBar_->RefreshDockState(floatingDockHost_->monitor);
         UpdatePersistentDockHostVisibility(*floatingDockHost_);
@@ -323,6 +338,12 @@ void DesktopApp::ShowFloatingDock(
     if (FullscreenBlocksDockReveal(source, targetMonitor))
     {
         floatingDockHost_->promoted = false;
+        if (occludedReveal && !hostWasPromoted &&
+            !floatingDockHost_->mergedPresentationActive)
+        {
+            // Same abort handling as the failed frame above.
+            floatingDockHost_->occludedFloatingPresentation = false;
+        }
         if (statusBar_) statusBar_->DismissTemporaryReveal(targetMonitor);
         CancelStatusBarActivation(targetMonitor, false);
         RefreshFloatingDockVisibilityState();
@@ -497,6 +518,12 @@ void DesktopApp::CloseFloatingDock(
         floatingDockHoverHandoffRect_ = {};
     }
 
+    // Recognize the dismissal against the live desktop band: while a covering
+    // window still hides the return target, collapse through the occluded
+    // session's edge animation instead of the instant demotion.
+    EnterOccludedFloatingPresentation(
+        host,
+        snowdesktop::floating_dock_rules::OccludedFloatingTransition::Dismissal);
     host.promoted = false;
     host.promotionInputFocusPendingUntil = 0;
     host.promotionInputRequestInputTime.reset();
@@ -562,6 +589,9 @@ void DesktopApp::CloseAllFloatingDocks(
     {
         if (host)
         {
+            EnterOccludedFloatingPresentation(
+                *host,
+                snowdesktop::floating_dock_rules::OccludedFloatingTransition::Dismissal);
             host->promoted = false;
             host->promotionInputFocusPendingUntil = 0;
             host->promotionInputRequestInputTime.reset();

@@ -791,6 +791,19 @@ private:
         const PersistentDockHost& host) const;
     bool ShouldShowPersistentDockHost(
         const PersistentDockHost& host) const;
+    /** @brief 判断该屏桌面带 Dock 当前是否被全屏源或覆盖式最大化应用完全遮挡。 */
+    bool IsPersistentDockDesktopBandOccluded(
+        const PersistentDockHost& host) const;
+    /**
+     * @brief 在识别到唤起或取消唤起的时刻按当时的遮挡状态决定动画会话。
+     *
+     * Reveal：被遮挡时先隐藏被遮挡的桌面带窗口对，再走边缘唤出动画；
+     * Dismissal：仍被遮挡时保持会话走收起动画，遮挡已消失则立即退出会话，
+     * 按普通方式回落，不回放唤起时的决定。
+     */
+    bool EnterOccludedFloatingPresentation(
+        PersistentDockHost& host,
+        snowdesktop::floating_dock_rules::OccludedFloatingTransition transition);
     bool IsDockContainerInteractionVisible(
         const DockContainer* container) const;
     bool IsDockContainerPromoted(

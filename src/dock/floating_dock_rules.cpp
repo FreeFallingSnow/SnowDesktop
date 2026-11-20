@@ -168,6 +168,16 @@ bool ShouldSummonForDockSurface(
     return sourceBelongsToDock && !floatingDockVisible;
 }
 
+bool MaximizedWindowCoversDock(
+    const RECT& window, const RECT& dockScreen)
+{
+    if (IsRectEmpty(&dockScreen) || IsRectEmpty(&window))
+        return false;
+    return window.left <= dockScreen.left && window.top <= dockScreen.top &&
+        window.right >= dockScreen.right &&
+        window.bottom >= dockScreen.bottom;
+}
+
 bool ShouldStartSystemShowDesktopLayerGuard(
     bool protectedSurfaceActive,
     bool shellDesktopForeground,

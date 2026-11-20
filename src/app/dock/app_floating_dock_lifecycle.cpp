@@ -375,6 +375,12 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
         {
         case snowdesktop::floating_dock_rules::
                 PassiveDragRevealAction::Reveal:
+            // The drag-to-edge recognition uses the same occluded-session
+            // arbitration as an explicit summon, so the edge reveal animation
+            // also covers this entry.
+            EnterOccludedFloatingPresentation(
+                host,
+                snowdesktop::floating_dock_rules::OccludedFloatingTransition::Reveal);
             host.passivelyRevealed = true;
             host.passiveRevealTick = now;
             host.passiveLeaveStartTick = 0;
@@ -391,6 +397,11 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
             break;
         case snowdesktop::floating_dock_rules::
                 PassiveDragRevealAction::Hide:
+            // Re-check the desktop band at the dismissal recognition: keep
+            // the animated collapse while the covering window persists.
+            EnterOccludedFloatingPresentation(
+                host,
+                snowdesktop::floating_dock_rules::OccludedFloatingTransition::Dismissal);
             host.passivelyRevealed = false;
             host.passiveRevealTick = 0;
             host.passiveLeaveStartTick = 0;
