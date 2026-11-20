@@ -2944,5 +2944,6 @@
   "app.settings.icon_shadow_desktop": "Ícones da área de trabalho",
   "app.settings.icon_shadow_popup": "Ícones em janelas pop-up",
   "app.settings.icon_shadow_quick_navigation": "Ícones na navegação rápida",
-  "app.settings.icon_shadow_subject": "Sombra da figura do ícone estilizado"
+  "app.settings.icon_shadow_subject": "Sombra da figura do ícone estilizado",
+  "app.settings.widgets_permission_clipboard_observe": "Ler o conteúdo da área de transferência em segundo plano"
 }

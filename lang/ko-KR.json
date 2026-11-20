@@ -2944,5 +2944,6 @@
   "app.settings.icon_shadow_desktop": "바탕 화면 아이콘",
   "app.settings.icon_shadow_popup": "팝업의 아이콘",
   "app.settings.icon_shadow_quick_navigation": "빠른 탐색의 아이콘",
-  "app.settings.icon_shadow_subject": "꾸민 아이콘 본체의 그림자"
+  "app.settings.icon_shadow_subject": "꾸민 아이콘 본체의 그림자",
+  "app.settings.widgets_permission_clipboard_observe": "백그라운드에서 클립보드 내용 읽기"
 }

@@ -2944,5 +2944,6 @@
   "app.settings.icon_shadow_desktop": "Icônes du bureau",
   "app.settings.icon_shadow_popup": "Icônes dans les fenêtres contextuelles",
   "app.settings.icon_shadow_quick_navigation": "Icônes dans la navigation rapide",
-  "app.settings.icon_shadow_subject": "Ombre du motif de l’icône embellie"
+  "app.settings.icon_shadow_subject": "Ombre du motif de l’icône embellie",
+  "app.settings.widgets_permission_clipboard_observe": "Lire le contenu du presse-papiers en arrière-plan"
 }
