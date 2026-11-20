@@ -66,7 +66,6 @@ bool SettingsShellPageVisibility::Allows(SettingsPage page) const noexcept
     switch (page)
     {
     case SettingsPage::RuntimeModules:
-    case SettingsPage::AgentOperations:
         return advancedSettings;
     case SettingsPage::DeveloperTools:
         return developerTools;
@@ -80,6 +79,7 @@ bool SettingsShellPageVisibility::Allows(SettingsPage page) const noexcept
     case SettingsPage::Widgets:
     case SettingsPage::WidgetSettings:
     case SettingsPage::BackupAndData:
+    case SettingsPage::AgentOperations:
     case SettingsPage::About:
     case SettingsPage::Dock:
     case SettingsPage::Taskbar:
@@ -152,7 +152,7 @@ bool SettingsShellNavigationState::ApplyControllerUpdate(
     std::uint64_t revision,
     std::uint64_t generation)
 {
-    const SettingsRoute canonicalRoute = (route.page == SettingsPage::RuntimeModules || route.page == SettingsPage::AgentOperations) && !visibility_.advancedSettings
+    const SettingsRoute canonicalRoute = route.page == SettingsPage::RuntimeModules && !visibility_.advancedSettings
         ? SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings")
         : CanonicalizeSettingsRoute(route);
     if (!IsRouteAvailable(canonicalRoute))
@@ -203,7 +203,7 @@ std::optional<SettingsRoute> SettingsShellNavigationState::PeekBack() const
 
 bool SettingsShellNavigationState::Navigate(const SettingsRoute& route)
 {
-    const SettingsRoute canonicalRoute = (route.page == SettingsPage::RuntimeModules || route.page == SettingsPage::AgentOperations) && !visibility_.advancedSettings
+    const SettingsRoute canonicalRoute = route.page == SettingsPage::RuntimeModules && !visibility_.advancedSettings
         ? SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings")
         : CanonicalizeSettingsRoute(route);
     if (!IsRouteAvailable(canonicalRoute) || Route() == canonicalRoute)
@@ -241,7 +241,7 @@ std::optional<SettingsRoute> SettingsShellNavigationState::SetVisibility(
         SettingsPage fallbackPage = SettingsPage::General;
         if (active.page == SettingsPage::DeveloperTools)
             fallbackPage = SettingsPage::Widgets;
-        else if ((active.page == SettingsPage::RuntimeModules || active.page == SettingsPage::AgentOperations))
+        else if (active.page == SettingsPage::RuntimeModules)
         {
             history_.assign(1, SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings"));
             historyIndex_ = 0;

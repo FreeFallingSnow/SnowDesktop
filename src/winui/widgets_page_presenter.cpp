@@ -324,6 +324,8 @@ struct WidgetsPagePresenter::Impl
     muxc::StackPanel root{nullptr};
     muxc::InfoBar feedbackBar{nullptr};
     muxc::StackPanel controlRoot{nullptr};
+    muxc::TextBlock controlIntroTitle{nullptr};
+    muxc::TextBlock controlIntroDescription{nullptr};
     SettingsCard controlSkillCard;
     presenter_controls::SettingRow controlSkillActionsRow;
     muxc::Button controlSkillApplyButton{nullptr};
@@ -814,6 +816,20 @@ struct WidgetsPagePresenter::Impl
         controlRoot = muxc::StackPanel{};
         controlRoot.Spacing(24.0);
         controlRoot.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        muxc::Border controlIntroCard;
+        muxc::StackPanel controlIntroContent;
+        controlIntroContent.Spacing(4.0);
+        controlIntroTitle = muxc::TextBlock{};
+        controlIntroTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        controlIntroTitle.TextWrapping(mux::TextWrapping::Wrap);
+        muxa::AutomationProperties::SetHeadingLevel(controlIntroTitle,
+            muxa::Peers::AutomationHeadingLevel::Level2);
+        controlIntroDescription = MakeSecondaryText(L"");
+        controlIntroContent.Children().Append(controlIntroTitle);
+        controlIntroContent.Children().Append(controlIntroDescription);
+        presenter_controls::InitializeSettingsGroup(
+            controlIntroCard, nullptr, controlIntroContent, cardStyle, true);
+        controlRoot.Children().Append(controlIntroCard);
         InitializeCard(controlSkillCard, cardStyle, controlRoot);
         controlSkillApplyButton = muxc::Button{};
         controlSkillApplyButton.UseSystemFocusVisuals(true);
@@ -2087,11 +2103,13 @@ struct WidgetsPagePresenter::Impl
             selected.UseSystemFocusVisuals(true);
             const std::wstring label = AgentSkillTargetLabel(skill.kind);
             selected.Content(winrt::box_value(label));
-            const std::wstring installedVersion = skill.installedRevision == 0
-                ? L"—" : std::to_wstring(skill.installedRevision);
-            const std::wstring version = FormatValues(L(
-                "app.settings.widgets_skill_installed_version",
-                L"Installed version %s"), {installedVersion});
+            std::wstring version;
+            if (skill.installed && skill.installedRevision != 0)
+            {
+                version = FormatValues(L(
+                    "app.settings.widgets_skill_installed_version",
+                    L"Installed version %s"), {std::to_wstring(skill.installedRevision)});
+            }
             const std::wstring stateAndPath = JoinMetadata(
                 {AgentSkillStateLabel(skill.state), version,
                  skill.targetPath});
@@ -3415,7 +3433,11 @@ struct WidgetsPagePresenter::Impl
         const bool previousUpdating = updatingControls;
         updatingControls = true;
 
-        controlSkillCard.title.Text(L("app.settings.widgets_agent_skill", L"Agent Skill"));
+        controlIntroTitle.Text(L("settings.agentOperations.introTitle",
+            L"Organize your desktop with AI"));
+        controlIntroDescription.Text(L("settings.agentOperations.description",
+            L"Install the SnowDesktop Control Skill below, then ask your AI assistant to rearrange desktop widgets or adjust the Dock and status bar to suit the way you work."));
+        controlSkillCard.title.Text(L("settings.agentOperations.skill", L"SnowDesktop Control Skill"));
         controlSkillCard.description.Text(L"");
         controlSkillCard.description.Visibility(mux::Visibility::Collapsed);
         controlSkillApplyButton.Content(winrt::box_value(L("app.settings.widgets_skill_sync_all", L"Apply Selection")));

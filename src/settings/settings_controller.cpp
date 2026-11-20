@@ -200,7 +200,7 @@ SettingsActionResult SettingsController::Open(SettingsRoute route)
             return result;
     }
 
-    if ((route.page == SettingsPage::RuntimeModules || route.page == SettingsPage::AgentOperations) && !state_->values_.general.showAdvancedSettings)
+    if (route.page == SettingsPage::RuntimeModules && !state_->values_.general.showAdvancedSettings)
         route = SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings");
     const bool openingSession = !state_->sessionActive_;
     state_->sessionActive_ = true;
@@ -335,7 +335,7 @@ void SettingsController::UpdateGeneral(
     settings.diagnosticLogModules = diagnostics::NormalizeLogModules(settings.diagnosticLogModules);
     diagnostics::SetLogModules(settings.diagnosticLogModules);
     state_->values_.general = std::move(settings);
-    if (!state_->values_.general.showAdvancedSettings && (state_->route_.page == SettingsPage::RuntimeModules || state_->route_.page == SettingsPage::AgentOperations))
+    if (!state_->values_.general.showAdvancedSettings && state_->route_.page == SettingsPage::RuntimeModules)
         state_->route_ = SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings");
     MarkChanged(SettingsDomain::General, mode);
 }

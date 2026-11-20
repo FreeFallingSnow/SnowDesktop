@@ -2445,7 +2445,7 @@ void SettingsShell::RenderNavigationSelection(bool revealCurrent)
     const auto selected = NavigationItemForPage(selectedPage);
     if (revealCurrent)
     {
-        if (selectedPage == SettingsPage::RuntimeModules || selectedPage == SettingsPage::AgentOperations) AdvancedSettingsItem().IsExpanded(true);
+        if (selectedPage == SettingsPage::RuntimeModules) AdvancedSettingsItem().IsExpanded(true);
         switch (snowdesktop::SettingsPageCategory(selectedPage))
         {
         case snowdesktop::SettingsCategory::DesktopOrganization: DesktopOrganizationItem().IsExpanded(true); break;

@@ -1481,7 +1481,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         rendered = true;
         SettingsSnapshot snapshot; snapshot.revision = ++revision; snapshot.generation = 1;
         snapshot.initialized = snapshot.sessionActive = true;
-        snapshot.values.general.showAdvancedSettings = expanded || page == SettingsPage::RuntimeModules || page == SettingsPage::AgentOperations;
+        snapshot.values.general.showAdvancedSettings = expanded || page == SettingsPage::RuntimeModules;
         snapshot.values.general.steamRoomVisible = focusId == "general.steamRoom";
         snapshot.values.general.runtimeModules.allowed.fill(!disabled);
         *modulePreviewPolicy = snapshot.values.general.runtimeModules;
@@ -1575,6 +1575,12 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 control.state = index == 1 ? WidgetAgentSkillInstallState::UpdateAvailable : WidgetAgentSkillInstallState::Current;
                 control.bundledRevision = 2;
                 control.installedRevision = index == 1 ? 1u : 2u;
+                if (index == 2)
+                {
+                    control.state = WidgetAgentSkillInstallState::NotInstalled;
+                    control.installed = false;
+                    control.installedRevision = 0;
+                }
                 packages.controlAgentSkills.push_back(std::move(control));
             }
             packages.controlAgentSkillTargetMask = 63;
