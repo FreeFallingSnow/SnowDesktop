@@ -100,6 +100,20 @@ void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     Draw(static_cast<ID2D1RenderTarget*>(context), rect, state, false, true, false);
 }
 
+void DesktopIcon::DrawMemberIcon(ID2D1DeviceContext* context, RECT rect, int state,
+    bool lightTheme, bool drawTitle, const DesktopWidget* demoCollection)
+{
+    Draw(context, rect, state, lightTheme, drawTitle, false, demoCollection);
+}
+
+MemberListPresentation DesktopIcon::GetMemberListPresentation() const
+{
+    if (!item_) return {};
+    return {{item_->typeName, item_->modifiedTime, item_->fileSize, false, item_->isCut},
+        item_->layoutKey, item_->layoutKey.empty() ? item_->parsingName : item_->layoutKey,
+        item_->sysIconIndex, item_->iconIsMediaThumbnail, !app_ || !app_->IsRenamingItem(item_)};
+}
+
 void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool lightTheme,
     bool drawText, bool quickNavLayout,
     const DesktopWidget* demoCollection,
@@ -340,6 +354,20 @@ Container* FolderEntryIcon::GetContainer() const { return container_; }
 void FolderEntryIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 {
     Draw(static_cast<ID2D1RenderTarget*>(context), rect, state, false, true, false);
+}
+
+void FolderEntryIcon::DrawMemberIcon(ID2D1DeviceContext* context, RECT rect, int state,
+    bool lightTheme, bool drawTitle, const DesktopWidget*)
+{
+    Draw(context, rect, state, lightTheme, drawTitle);
+}
+
+MemberListPresentation FolderEntryIcon::GetMemberListPresentation() const
+{
+    if (!entry_) return {};
+    return {{entry_->typeName, entry_->lastWriteTime, entry_->fileSize, entry_->isDirectory, entry_->isCut},
+        entry_->fullPath, {},
+        entry_->sysIconIndex, entry_->iconIsMediaThumbnail, !app_ || !app_->IsRenamingItem(entry_)};
 }
 
 void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool lightTheme,

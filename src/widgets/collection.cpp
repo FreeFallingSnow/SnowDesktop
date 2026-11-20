@@ -462,73 +462,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             context, scrollContentFadeCache_, content,
             GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
 
-        auto& slots = GetSlots();
-        std::vector<std::pair<Item*, RECT>>
-            foregroundTitles;
-        for (const auto& slot : slots)
-        {
-            if (!slot) continue;
-            const size_t itemKeyIndex = slot->GetIndex();
-            if (itemKeyIndex >= data_->itemKeys.size()) continue;
-            RECT cell = slot->GetBounds();
-            if (cell.bottom <= content.top || cell.top >= content.bottom) continue;
-
-            auto* icon = dynamic_cast<DesktopIcon*>(slot->GetItem());
-            DesktopItem* item = icon ? icon->GetDesktopItem() : nullptr;
-            if (!item)
-            {
-                if (!preview && app_->initialShellReadPending_)
-                {
-                    if (data_->listMode)
-                        DrawListItem(context, cell, nullptr, -1, L"", false, false);
-                    else
-                        app_->DrawPlaceholderIcon(context, -1,
-                            app_->GetItemIconRect(cell, app_->ResolveItemTitleLines(data_, IsPopupHosted())), 1.0f);
-                }
-                continue;
-            }
-            const DesktopItem& di = *item;
-
-            if (!data_->listMode)
-            {
-                if (privacyActive)
-                    DrawPrivacyPlaceholder(context, cell, di.name, false);
-                else
-                {
-                    bool hovered = !preview && !di.selected && PtInRect(&cell, GetRenderPointer()) && PtInRect(&content, GetRenderPointer());
-                    const auto titleLayers =
-                        snowdesktop::item_render_layer_rules::
-                            ResolveTitleLayerPlan(di.selected);
-                    icon->Draw(context, cell, di.selected ? 2 : (hovered ? 1 : 0),
-                        lt, titleLayers.drawWithItem, false, data_);
-                    if (titleLayers.drawInForeground)
-                        foregroundTitles.emplace_back(icon, cell);
-                }
-            }
-            else
-            {
-                if (privacyActive)
-                    DrawPrivacyPlaceholder(context, cell, di.name, false);
-                else
-                {
-                    const bool useDemoIdentity =
-                        app_->ShouldUseDemoCollectionIdentity(data_);
-                    const std::wstring_view demoIdentity =
-                        !useDemoIdentity ? std::wstring_view{} :
-                        (di.layoutKey.empty()
-                            ? std::wstring_view(di.parsingName)
-                            : std::wstring_view(di.layoutKey));
-                    DrawListItem(context, cell, di.iconBitmap,
-                        di.sysIconIndex, di.name, di.selected,
-                        di.iconIsMediaThumbnail, demoIdentity, data_,
-                        { di.typeName, di.modifiedTime,
-                          di.fileSize, false }, std::nullopt, !app_->IsRenamingItem(&di), di.layoutKey);
-                }
-            }
-        }
-        for (const auto& [item, bounds] : foregroundTitles)
-            item->DrawTitle(
-                context, bounds, true, 1.0f, lt, data_);
+        DrawMemberCells(context, content, data_->itemKeys.size(),
+            {data_->listMode, privacyActive, lt, data_, !preview && app_->initialShellReadPending_});
         return;
     }
 

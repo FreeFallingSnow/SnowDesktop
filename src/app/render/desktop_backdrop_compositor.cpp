@@ -654,10 +654,10 @@ struct DesktopBackdropCompositor::Impl
         struct Buffer
         {
             wuc::CompositionDrawingSurface surface{nullptr};
-            wuc::CompositionEffectBrush effect{nullptr};
             SIZE size{};
         };
         Buffer active, candidate;
+        wuc::CompositionSurfaceBrush sceneBrush{nullptr};
         RECT stagedFrame{};
         bool staged = false;
         wuc::SpriteVisual visual{nullptr};
@@ -1340,19 +1340,6 @@ struct DesktopBackdropCompositor::Impl
         const wf::Size extent{static_cast<float>(size.cx), static_cast<float>(size.cy)};
         buffer.surface = maskGraphicsDevice.CreateDrawingSurface(extent,
             wgx::DirectXPixelFormat::B8G8R8A8UIntNormalized, wgx::DirectXAlphaMode::Premultiplied);
-        const auto makeBrush = [&](const wuc::CompositionDrawingSurface& surface) {
-            auto brush = compositor.CreateSurfaceBrush(surface);
-            brush.Stretch(wuc::CompositionStretch::None);
-            brush.HorizontalAlignmentRatio(0.f);
-            brush.VerticalAlignmentRatio(0.f);
-            brush.BitmapInterpolationMode(wuc::CompositionBitmapInterpolationMode::NearestNeighbor);
-            return brush;
-        };
-        if (!precomposedSceneFactory)
-            precomposedSceneFactory = snowdesktop::backdrop_srgb::CreateSceneFactory(compositor);
-        buffer.effect = precomposedSceneFactory.CreateBrush();
-        buffer.effect.SetSourceParameter(L"backdrop", compositor.CreateBackdropBrush());
-        buffer.effect.SetSourceParameter(L"scene", makeBrush(buffer.surface));
         return buffer;
     }
 
@@ -3253,8 +3240,19 @@ bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opa
         if (!frame.visual)
         {
             auto visual = impl_->compositor.CreateSpriteVisual();
-            auto children = impl_->srgbContentRoot.Children();
-            children.InsertAtTop(visual);
+            auto sceneBrush = impl_->compositor.CreateSurfaceBrush(frame.candidate.surface);
+            sceneBrush.Stretch(wuc::CompositionStretch::None);
+            sceneBrush.HorizontalAlignmentRatio(0.f);
+            sceneBrush.VerticalAlignmentRatio(0.f);
+            sceneBrush.BitmapInterpolationMode(wuc::CompositionBitmapInterpolationMode::NearestNeighbor);
+            if (!impl_->precomposedSceneFactory)
+                impl_->precomposedSceneFactory = snowdesktop::backdrop_srgb::CreateSceneFactory(impl_->compositor);
+            auto effect = impl_->precomposedSceneFactory.CreateBrush();
+            effect.SetSourceParameter(L"backdrop", impl_->compositor.CreateBackdropBrush());
+            effect.SetSourceParameter(L"scene", sceneBrush);
+            visual.Brush(effect);
+            impl_->srgbContentRoot.Children().InsertAtTop(visual);
+            frame.sceneBrush = std::move(sceneBrush);
             frame.visual = std::move(visual);
             impl_->srgbContentOrderDirty = true;
         }
@@ -3263,7 +3261,9 @@ bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opa
         frame.visual.Size({static_cast<float>(frame.candidate.size.cx),
             static_cast<float>(frame.candidate.size.cy)});
         if (opacity >= 0.f) frame.visual.Opacity(std::clamp(opacity, 0.f, 1.f));
-        frame.visual.Brush(frame.candidate.effect);
+        // Keep the backdrop input attached to the same visual across content changes.
+        // The back buffer becomes visible only after its complete draw succeeded.
+        if (frame.active.surface) frame.sceneBrush.Surface(frame.candidate.surface);
         std::swap(frame.active, frame.candidate);
         frame.staged = false;
         frame.retirement.reset();

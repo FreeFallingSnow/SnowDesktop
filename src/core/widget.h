@@ -354,15 +354,6 @@ protected:
  * 滚动相关接口（GetScrollOffset、GetMaxScrollOffset 等）在此声明，
  * 由子类提供具体实现。滚动条绘制由 WidgetContainer::DrawScrollbar 统一处理。
  */
-struct ListItemDetails
-{
-    std::wstring typeName;
-    std::optional<FILETIME> modifiedTime;
-    std::optional<std::uint64_t> fileSize;
-    bool isDirectory = false;
-    bool isCut = false;
-};
-
 class ScrollingItemWidget : public WidgetContainer
 {
     friend struct NativeDragIntegrationAccess;
@@ -390,6 +381,19 @@ public:
     int GetTotalContentHeight() const override = 0;
     int GetVisibleContentHeight() const override = 0;
     RECT GetMemberLayoutRect(size_t index) const override = 0;
+
+    struct MemberPaint
+    {
+        bool listMode;
+        bool privacy;
+        bool light;
+        const DesktopWidget* demoCollection = nullptr;
+        bool showLoadingSlots = false;
+    };
+    void DrawMemberCells(ID2D1DeviceContext* context, RECT viewport, size_t memberCount,
+        const MemberPaint& paint);
+    void DrawFolderSearchResult(ID2D1DeviceContext* context, RECT cell, const Item& item,
+        const MemberListPresentation& presentation, bool light, bool hovered) const;
 
     void DrawListItem(ID2D1DeviceContext* context, RECT cell,
         HBITMAP iconBitmap, int sysIconIndex,

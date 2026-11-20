@@ -19,7 +19,6 @@
 #include "widget_chrome_rules.h"
 #include "widget/preview/widget_preview_scene.h"
 #include "ui/menu/menu_fluent_glyphs.h"
-#include "layout/item_render_layer_rules.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "layout/list_detail_rules.h"
 #include "layout/file_date_category.h"
@@ -1201,7 +1200,6 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         if (IsRectEmptyRect(content)) return;
         DrawDetailsHeader(context, content);
 
-        const auto& slots = GetSlots();
         if (keys.empty())
         {
             RECT empty = GetBodyRect();
@@ -1218,51 +1216,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         const snowdesktop::ScrollContentClip contentClip(
             context, scrollContentFadeCache_, content,
             GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
-        std::vector<std::pair<Item*, RECT>>
-            foregroundTitles;
-        for (size_t i = 0; i < slots.size(); ++i)
-        {
-            size_t idx = slots[i]->GetIndex();
-            if (idx >= keys.size()) continue;
-            RECT itemRect = slots[i]->GetBounds();
-            if (itemRect.bottom <= content.top || itemRect.top >= content.bottom) continue;
-
-            auto* icon = dynamic_cast<DesktopIcon*>(slots[i]->GetItem());
-            DesktopItem* item = icon ? icon->GetDesktopItem() : nullptr;
-            if (!item) continue;
-            const DesktopItem& di = *item;
-
-            if (!data_->listMode)
-            {
-                if (privacyActive)
-                    DrawPrivacyPlaceholder(context, itemRect, di.name, false);
-                else
-                {
-                    RECT bodyRect = GetBodyRect();
-                    bool hovered = !preview && !di.selected && PtInRect(&itemRect, GetRenderPointer()) && PtInRect(&bodyRect, GetRenderPointer());
-                    const auto titleLayers =
-                        snowdesktop::item_render_layer_rules::
-                            ResolveTitleLayerPlan(di.selected);
-                    icon->Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0),
-                        lt, titleLayers.drawWithItem);
-                    if (titleLayers.drawInForeground)
-                        foregroundTitles.emplace_back(
-                            icon, itemRect);
-                }
-                continue;
-            }
-            if (privacyActive)
-                DrawPrivacyPlaceholder(context, itemRect, di.name, false);
-            else
-                DrawListItem(context, itemRect, di.iconBitmap,
-                    di.sysIconIndex, di.name, di.selected,
-                    di.iconIsMediaThumbnail, {}, nullptr,
-                    { di.typeName, di.modifiedTime,
-                      di.fileSize, false }, std::nullopt, !app_->IsRenamingItem(&di), di.layoutKey);
-        }
-        for (const auto& [item, bounds] : foregroundTitles)
-            item->DrawTitle(
-                context, bounds, true, 1.0f, lt);
+        DrawMemberCells(context, content, keys.size(), {data_->listMode, privacyActive, lt});
         return;
     }
 
@@ -1320,12 +1274,9 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
     if (IsRectEmptyRect(content)) return;
     DrawDetailsHeader(context, content);
 
-    const auto& slots = GetSlots();
     const snowdesktop::ScrollContentClip contentClip(
         context, scrollContentFadeCache_, content,
         GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
-    std::vector<std::pair<Item*, RECT>>
-        foregroundTitles;
 
     if (data_->dateHeaders && !searching)
     {
@@ -1354,50 +1305,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         }
     }
 
-    for (size_t i = 0; i < slots.size(); ++i)
-    {
-        size_t idx = slots[i]->GetIndex();
-        if (idx >= keys.size()) continue;
-        RECT itemRect = slots[i]->GetBounds();
-        if (itemRect.bottom <= content.top || itemRect.top >= content.bottom) continue;
-
-        auto* icon = dynamic_cast<DesktopIcon*>(slots[i]->GetItem());
-        DesktopItem* item = icon ? icon->GetDesktopItem() : nullptr;
-        if (!item) continue;
-        const DesktopItem& di = *item;
-
-        if (!data_->listMode)
-        {
-            if (privacyActive)
-                DrawPrivacyPlaceholder(context, itemRect, di.name, false);
-            else
-            {
-                RECT bodyRect = GetBodyRect();
-                bool hovered = !preview && !di.selected && PtInRect(&itemRect, GetRenderPointer()) && PtInRect(&bodyRect, GetRenderPointer());
-                const auto titleLayers =
-                    snowdesktop::item_render_layer_rules::
-                        ResolveTitleLayerPlan(di.selected);
-                icon->Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0),
-                    lt, titleLayers.drawWithItem);
-                if (titleLayers.drawInForeground)
-                    foregroundTitles.emplace_back(
-                        icon, itemRect);
-            }
-            continue;
-        }
-
-        if (privacyActive)
-            DrawPrivacyPlaceholder(context, itemRect, di.name, false);
-        else
-            DrawListItem(context, itemRect, di.iconBitmap,
-                di.sysIconIndex, di.name, di.selected,
-                di.iconIsMediaThumbnail, {}, nullptr,
-                { di.typeName, di.modifiedTime,
-                  di.fileSize, false }, std::nullopt, !app_->IsRenamingItem(&di), di.layoutKey);
-    }
-    for (const auto& [item, bounds] : foregroundTitles)
-        item->DrawTitle(
-            context, bounds, true, 1.0f, lt);
+    DrawMemberCells(context, content, keys.size(), {data_->listMode, privacyActive, lt});
 }
 
 RECT FileCategories::GetMemberLayoutRect(size_t index) const

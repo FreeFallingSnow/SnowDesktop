@@ -19,7 +19,6 @@
 #include "navigation/search_match.h"
 #include "widget/preview/widget_preview_scene.h"
 #include "common/l10n.h"
-#include "layout/item_render_layer_rules.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "storage_title_bar_layout.h"
 #include "layout/folder_sort_rules.h"
@@ -1934,116 +1933,7 @@ void FileGroup::DrawContent(
         const snowdesktop::ScrollContentClip contentClip(
             context, scrollContentFadeCache_, content,
             GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
-        std::vector<std::pair<Item*, RECT>>
-            foregroundTitles;
-        for (const auto& slot : GetSlots())
-        {
-            if (!slot || !slot->GetItem())
-                continue;
-            RECT cell = slot->GetBounds();
-            if (cell.bottom <= content.top ||
-                cell.top >= content.bottom)
-                continue;
-            Item* item = slot->GetItem();
-            bool isDirectory = false;
-            bool iconIsMediaThumbnail = false;
-            std::wstring_view iconIdentity;
-            bool drawTitle = true;
-            int sysIconIndex = -1;
-            ListItemDetails details;
-            if (auto* desktop =
-                    dynamic_cast<DesktopIcon*>(item))
-            {
-                DesktopItem* sourceItem =
-                    desktop->GetDesktopItem();
-                if (sourceItem)
-                {
-                    iconIdentity = sourceItem->layoutKey;
-                    drawTitle = !app_->IsRenamingItem(sourceItem);
-                    sysIconIndex =
-                        sourceItem->sysIconIndex;
-                    iconIsMediaThumbnail =
-                        sourceItem->iconIsMediaThumbnail;
-                    details.typeName = sourceItem->typeName;
-                    details.modifiedTime = sourceItem->modifiedTime;
-                    details.fileSize = sourceItem->fileSize;
-                }
-            }
-            else if (auto* folder =
-                         dynamic_cast<
-                             FolderEntryIcon*>(item))
-            {
-                FolderEntry* sourceEntry =
-                    folder->GetFolderEntry();
-                if (sourceEntry)
-                {
-                    iconIdentity = sourceEntry->fullPath;
-                    drawTitle = !app_->IsRenamingItem(sourceEntry);
-                    isDirectory =
-                        sourceEntry->isDirectory;
-                    sysIconIndex =
-                        sourceEntry->sysIconIndex;
-                    iconIsMediaThumbnail =
-                        sourceEntry->iconIsMediaThumbnail;
-                    details.typeName = sourceEntry->typeName;
-                    details.modifiedTime = sourceEntry->lastWriteTime;
-                    details.fileSize = sourceEntry->fileSize;
-                    details.isDirectory = sourceEntry->isDirectory;
-                    details.isCut = sourceEntry->isCut;
-                }
-            }
-            if (privacyActive)
-                DrawPrivacyPlaceholder(
-                    context, cell,
-                    item->GetTitle(), isDirectory);
-            else if (data_->listMode)
-                DrawListItem(
-                    context, cell,
-                    item->GetIconBitmap(),
-                    sysIconIndex,
-                    item->GetTitle(),
-                    item->IsSelected(),
-                    iconIsMediaThumbnail,
-                    {}, nullptr, details, std::nullopt, drawTitle, iconIdentity);
-            else
-            {
-                const bool hovered =
-                    !item->IsSelected() &&
-                    PtInRect(
-                        &cell,
-                        app_->lastMousePoint_);
-                const bool selected =
-                    item->IsSelected();
-                const int state = selected
-                    ? 2 : (hovered ? 1 : 0);
-                const auto titleLayers =
-                    snowdesktop::item_render_layer_rules::
-                        ResolveTitleLayerPlan(selected);
-                if (auto* desktop =
-                        dynamic_cast<DesktopIcon*>(item))
-                {
-                    desktop->Draw(
-                        context, cell, state,
-                        light, titleLayers.drawWithItem);
-                }
-                else if (auto* folder =
-                             dynamic_cast<
-                                 FolderEntryIcon*>(item))
-                {
-                    folder->Draw(
-                        context, cell, state,
-                        light, titleLayers.drawWithItem);
-                }
-                else
-                    item->Draw(context, cell, state);
-                if (titleLayers.drawInForeground)
-                    foregroundTitles.emplace_back(
-                        item, cell);
-            }
-        }
-        for (const auto& [item, bounds] : foregroundTitles)
-            item->DrawTitle(
-                context, bounds, true, 1.0f, light);
+        DrawMemberCells(context, content, results.size(), {data_->listMode, privacyActive, light});
         return;
     }
 

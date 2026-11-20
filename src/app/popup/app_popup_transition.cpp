@@ -826,14 +826,14 @@ void DesktopApp::RefreshDockFolderPopupGeometry(bool present)
             dockFolderPopupWidget_,
             popupRect_));
     if (!present) return;
-    InvalidateCollectionPopupContent();
-    if (popupAnimationCompositorDriven_)
-        return; // The queued paint updates pixels; geometry settles at completion.
     if (folderPreview_ && folderPreview_->inlineBounds)
     {
         (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
         return;
     }
+    InvalidateCollectionPopupContent();
+    if (popupAnimationCompositorDriven_)
+        return; // The queued paint updates pixels; geometry settles at completion.
     InvalidateCollectionPopupDesktopScene(previousBounds);
     UpdateFloatingPopupWindowBounds(true);
 }

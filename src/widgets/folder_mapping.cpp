@@ -27,7 +27,6 @@
 #include "widget_chrome_rules.h"
 #include "widget/preview/widget_preview_scene.h"
 #include "settings/category_settings.h"
-#include "layout/item_render_layer_rules.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "storage_title_bar_layout.h"
 #include <algorithm>
@@ -1024,11 +1023,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
         return;
     }
 
-    auto& slots = GetSlots();
     RECT content = FolderMappingContentRect(this);
-    bool listMode = data_->listMode;
-    std::vector<std::pair<Item*, RECT>>
-        foregroundTitles;
 
     const snowdesktop::ScrollContentClip contentClip(
         context, scrollContentFadeCache_, content,
@@ -1067,51 +1062,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
                     : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.52f));
         }
     }
-    for (const auto& slot : slots)
-    {
-        if (!slot) continue;
-        size_t visibleIndex = slot->GetIndex();
-        if (visibleIndex >= visibleEntries.size()) continue;
-        size_t entryIndex = visibleEntries[visibleIndex];
-        if (entryIndex >= data_->folderEntries.size()) continue;
-        auto* icon = dynamic_cast<FolderEntryIcon*>(slot->GetItem());
-        FolderEntry* item = icon ? icon->GetFolderEntry() : nullptr;
-        if (!item) continue;
-        const FolderEntry& entry = *item;
-        RECT cell = slot->GetBounds();
-        if (cell.bottom <= content.top || cell.top >= content.bottom) continue;
-
-        if (!listMode)
-        {
-            if (privacyActive)
-                DrawPrivacyPlaceholder(context, cell, entry.DisplayName(), entry.isDirectory);
-            else
-            {
-                const POINT pointer = GetRenderPointer();
-                const bool hovered = !preview && !entry.selected && PtInRect(&cell, pointer) && PtInRect(&content, pointer);
-                const auto titleLayers =
-                    snowdesktop::item_render_layer_rules::
-                        ResolveTitleLayerPlan(entry.selected);
-                icon->Draw(context, cell, entry.selected ? 2 : (hovered ? 1 : 0),
-                    lt, titleLayers.drawWithItem);
-                if (titleLayers.drawInForeground)
-                    foregroundTitles.emplace_back(icon, cell);
-            }
-            continue;
-        }
-
-        if (privacyActive)
-            DrawPrivacyPlaceholder(context, cell, entry.DisplayName(), entry.isDirectory);
-        else
-            DrawListItem(context, cell, entry.iconBitmap, entry.sysIconIndex,
-                entry.DisplayName(), entry.selected, entry.iconIsMediaThumbnail,
-                {}, nullptr,
-                { entry.typeName, entry.lastWriteTime,
-                  entry.fileSize, entry.isDirectory, entry.isCut }, std::nullopt, !app_->IsRenamingItem(&entry), entry.fullPath);
-    }
-    for (const auto& [item, bounds] : foregroundTitles)
-        item->DrawTitle(
-            context, bounds, true, 1.0f, lt);
+    DrawMemberCells(context, content, visibleEntries.size(), {data_->listMode, privacyActive, lt});
 }
 
 RECT FolderMapping::GetMemberLayoutRect(size_t index) const

@@ -580,9 +580,11 @@ void DesktopApp::RestoreFolderPreviewHome(bool present)
     dockFolderPopupMappingWidgetId_.clear();
     dockFolderPopupAvailable_ = dockFolderPopupLoading_ = false;
     dockFolderPopupKnownItemCount_ = 0;
+    bool restoreDesktopSelection = false;
     if (present)
     {
-        ClearSelection();
+        restoreDesktopSelection = ClearSelection() || !session.selectedDesktopKeys.empty() ||
+            !session.selectedFolderPaths.empty();
         for (const auto& key : session.selectedDesktopKeys)
         {
             const size_t index = FindItemIndexByKey(key);
@@ -637,6 +639,15 @@ void DesktopApp::RestoreFolderPreviewHome(bool present)
     if (!present) return;
     AdvanceFloatingPopupContentGeneration();
     if (dockFolderPopupOpen_) QueueFolderRead(dockFolderPopupWidget_.sourceFolderPath);
+    if (session.inlineBounds)
+    {
+        InvalidateDragStaticScene(false);
+        if (restoreDesktopSelection && hwnd_)
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        else
+            (void)QueueDesktopWidgetComposition(session.hostWidgetId);
+        return;
+    }
     InvalidateCollectionPopupContent();
     if (previousPopup) StartFolderPreviewPopupResize(*previousPopup);
     RefreshOpenCollectionPopupGeometry();
@@ -1186,12 +1197,9 @@ void DesktopApp::SetFolderPreviewSearchOpen(bool open)
     view.SetSearchFocused(open);
     if (open) FocusDesktopInputWindow();
     typeToSelectSession_.Reset();
-    RefreshDockFolderPopupGeometry();
-    if (!open && folderPreview_ && folderPreview_->inlineBounds)
-    {
+    if (!open && folderPreview_->inlineBounds)
         UpdateWidgetHoverExpansion(lastMousePoint_);
-        InvalidateRect(hwnd_, &*folderPreview_->inlineBounds, FALSE);
-    }
+    RefreshDockFolderPopupGeometry();
     UpdateHostInputImePosition();
 }
 

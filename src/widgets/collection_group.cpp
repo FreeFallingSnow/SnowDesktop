@@ -19,7 +19,6 @@
 #include "widget_chrome_rules.h"
 #include "widget/preview/widget_preview_scene.h"
 #include "common/l10n.h"
-#include "layout/item_render_layer_rules.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "storage_title_bar_layout.h"
 #include <algorithm>
@@ -1168,77 +1167,8 @@ void CollectionGroup::DrawContent(
             activeCollection = &app_->widgets_[activeIndex];
     }
 
-    std::vector<std::pair<Item*, RECT>>
-        foregroundTitles;
-    for (const auto& slot : GetSlots())
-    {
-        if (!slot || !slot->GetItem()) continue;
-        RECT row = slot->GetBounds();
-        if (row.bottom <= content.top ||
-            row.top >= content.bottom)
-            continue;
-        auto* icon =
-            dynamic_cast<DesktopIcon*>(slot->GetItem());
-        if (!icon) continue;
-        DesktopItem* item = icon->GetDesktopItem();
-        if (!item) continue;
-        if (contentView->listMode)
-        {
-            if (privacyActive)
-                DrawPrivacyPlaceholder(
-                    context, row, item->name, false);
-            else
-            {
-                const bool useDemoIdentity =
-                    app_->ShouldUseDemoCollectionIdentity(activeCollection);
-                const std::wstring_view demoIdentity =
-                    !useDemoIdentity ? std::wstring_view{} :
-                    (item->layoutKey.empty()
-                        ? std::wstring_view(item->parsingName)
-                        : std::wstring_view(item->layoutKey));
-                DrawListItem(
-                    context, row, item->iconBitmap,
-                    item->sysIconIndex, item->name,
-                    item->selected, item->iconIsMediaThumbnail,
-                    demoIdentity, activeCollection,
-                    { item->typeName, item->modifiedTime,
-                      item->fileSize, false }, std::nullopt, !app_->IsRenamingItem(item), item->layoutKey);
-            }
-        }
-        else if (privacyActive)
-        {
-            DrawPrivacyPlaceholder(
-                context, row, item->name, false);
-        }
-        else
-        {
-            RECT body = GetBodyRect();
-            const bool hovered =
-                !IsPreviewRendering() &&
-                !item->selected &&
-                PtInRect(
-                    &row, app_->lastMousePoint_) &&
-                PtInRect(
-                    &body, app_->lastMousePoint_);
-            const auto titleLayers =
-                snowdesktop::item_render_layer_rules::
-                    ResolveTitleLayerPlan(
-                        item->selected);
-            icon->Draw(
-                context, row,
-                item->selected
-                    ? 2
-                    : (hovered ? 1 : 0),
-                light, titleLayers.drawWithItem,
-                false, activeCollection);
-            if (titleLayers.drawInForeground)
-                foregroundTitles.emplace_back(icon, row);
-        }
-    }
-    for (const auto& [item, bounds] : foregroundTitles)
-        item->DrawTitle(
-            context, bounds, true, 1.0f,
-            light, activeCollection);
+    DrawMemberCells(context, content, keys.size(),
+        {contentView->listMode, privacyActive, light, activeCollection});
 }
 
 RECT CollectionGroup::GetMemberLayoutRect(size_t index) const

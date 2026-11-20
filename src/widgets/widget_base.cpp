@@ -18,6 +18,7 @@
 #include "guide_widget.h"
 #include "layout/collection_popup_layout.h"
 #include "layout/list_detail_rules.h"
+#include "layout/item_render_layer_rules.h"
 #include "widget/view/widget_clip_geometry.h"
 #include "common/types.h"
 #include "common/constants.h"
@@ -553,8 +554,9 @@ bool WidgetContainer::IsCollapsed() const
 
 RECT WidgetContainer::PresentedSlotBounds(size_t index, RECT bounds) const
 {
-    if (!data_ || !app_ || app_->pendingLandingCaches_.empty()) return bounds;
-    const auto position = app_->FileDropMemberLayout(*data_, this).Member(index);
+    const auto& layout = PendingFileLayout();
+    if (layout.hidden.empty() && layout.gaps.empty()) return bounds;
+    const auto position = layout.Member(index);
     if (!position) return {};
     return *position == index ? bounds : GetMemberLayoutRect(*position);
 }
@@ -2848,6 +2850,58 @@ void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
     }
     app_->DrawComponentListTitle(context, textRect, title, scale, FontCu(app_->listItemFontSizeCu_),
         lightTheme, scrollOffset);
+}
+
+void ScrollingItemWidget::DrawMemberCells(ID2D1DeviceContext* context, RECT viewport,
+    size_t memberCount, const MemberPaint& paint)
+{
+    const POINT pointer = GetRenderPointer();
+    const bool interactive = !IsPreviewRendering() && PtInRect(&viewport, pointer);
+    const bool useDemoIdentity = paint.listMode && paint.demoCollection &&
+        app_->ShouldUseDemoCollectionIdentity(paint.demoCollection);
+    std::vector<std::pair<Item*, RECT>> foregroundTitles;
+    for (const auto& slot : GetSlots())
+    {
+        if (!slot || slot->GetIndex() >= memberCount) continue;
+        const RECT cell = slot->GetBounds();
+        RECT visible{};
+        if (!IntersectRect(&visible, &cell, &viewport)) continue;
+        Item* item = slot->GetItem();
+        if (!item)
+        {
+            if (paint.showLoadingSlots)
+            {
+                if (paint.listMode)
+                    DrawListItem(context, cell, nullptr, -1, L"", false, false);
+                else
+                    app_->DrawPlaceholderIcon(context, -1,
+                        app_->GetItemIconRect(cell, app_->ResolveItemTitleLines(data_, IsPopupHosted())), 1.0f);
+            }
+            continue;
+        }
+        const bool hovered = interactive && PtInRect(&cell, pointer);
+        if (paint.privacy || paint.listMode || item->IsSearchResult())
+        {
+            const auto presentation = item->GetMemberListPresentation();
+            if (paint.privacy)
+                DrawPrivacyPlaceholder(context, cell, item->GetTitle(), presentation.details.isDirectory);
+            else if (item->IsSearchResult())
+                DrawFolderSearchResult(context, cell, *item, presentation, paint.light, hovered);
+            else
+                DrawListItem(context, cell, item->GetIconBitmap(), presentation.systemIcon,
+                    item->GetTitle(), item->IsSelected(), presentation.thumbnail,
+                    useDemoIdentity ? presentation.demoIdentity : std::wstring_view{}, paint.demoCollection,
+                    presentation.details, paint.light, presentation.drawTitle, presentation.iconIdentity, viewport);
+            continue;
+        }
+        const bool selected = item->IsSelected();
+        const auto titles = snowdesktop::item_render_layer_rules::ResolveTitleLayerPlan(selected);
+        item->DrawMemberIcon(context, cell, selected ? 2 : hovered ? 1 : 0,
+            paint.light, titles.drawWithItem, paint.demoCollection);
+        if (titles.drawInForeground) foregroundTitles.emplace_back(item, cell);
+    }
+    for (const auto& [item, cell] : foregroundTitles)
+        item->DrawTitle(context, cell, true, 1.0f, paint.light, paint.demoCollection);
 }
 
 /**
