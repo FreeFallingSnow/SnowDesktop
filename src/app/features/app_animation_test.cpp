@@ -288,17 +288,11 @@ struct NativeAnimationTest
             item.release();
             app.containers_.emplace_back(container);
         }
-        DesktopWidget lua;
-        lua.id = L"fixture-lua";
-        lua.type = DesktopWidgetType::LuaScript;
-        lua.bounds = {330, 320, 500, 470};
-        lua.gridCell.pageId = page.id;
-        lua.gridSpan = {2, 2};
-        app.widgets_.push_back(std::move(lua));
         app.dockEntries_.push_back({DockEntryType::Collection, L"fixture-fan"});
         for (std::size_t i = 0; i < 5; ++i)
             app.dockEntries_.push_back({DockEntryType::DesktopItem, app.items_[i].layoutKey});
-        auto model = std::make_unique<DockContainer>(&app, &app.dockEntries_, client);
+        const RECT dockArea{client.left, client.bottom - 104, client.right, client.bottom};
+        auto model = std::make_unique<DockContainer>(&app, &app.dockEntries_, dockArea);
         dock = model.get();
         app.containers_.push_back(std::move(model));
         app.EnsureNavTabOrder();
@@ -332,9 +326,24 @@ struct NativeAnimationTest
         output.close();
         Require(static_cast<bool>(output), "write fixture Lua file");
         app.widgetEngine_ = std::make_unique<WidgetEngine>();
-        Require(app.widgetEngine_->Init(app.d2dContext_.Get(), app.dwriteFactory_.Get()) &&
-            app.widgetEngine_->EnsureWidgetDirectoryPreviewLoaded(L"fixture-lua", package),
-            "load fixture Lua panel");
+        Require(app.widgetEngine_->InitPreview(app.d2dContext_.Get(), app.dwriteFactory_.Get()),
+            "initialize Lua fixture engine");
+        if (!app.widgetEngine_->EnsureWidgetDirectoryPreviewLoaded(L"fixture-lua", package))
+        {
+            const auto error = app.widgetEngine_->GetWidgetRuntimeFailure(L"fixture-lua");
+            throw std::runtime_error(error && !error->detail.empty() ? error->detail : "load fixture Lua panel");
+        }
+        DesktopWidget lua;
+        lua.id = L"fixture-lua";
+        lua.type = DesktopWidgetType::LuaScript;
+        lua.bounds = {330, 320, 500, 470};
+        lua.gridCell.pageId = app.gridPages_.front().id;
+        lua.gridSpan = {2, 2};
+        lua.showOnHoverOnly = true;
+        app.widgets_.push_back(std::move(lua));
+        auto view = CreateWidget(&app.widgets_.back(), &app);
+        Require(view != nullptr, "create fixture Lua source view");
+        app.items_oo_.push_back(std::move(view));
     }
 
     void Pump(double milliseconds)
@@ -422,7 +431,9 @@ struct NativeAnimationTest
             }, [&] { return !dock->IsMagnificationAnimating(); });
             return step("leave", [&] {
                 MoveDock(kOutside);
-                return dock->IsMagnificationAnimating();
+                // The magnification wave follows the pointer immediately
+                // on exit. Only single-icon mode animates its exit amplitude.
+                return scenario.effect == 2 || dock->IsMagnificationAnimating();
             }, [&] { return !dock->IsMagnificationAnimating(); }) && enter;
         }
         if (scenario.route == Route::NavDock || scenario.route == Route::NavPointer)
@@ -446,10 +457,9 @@ struct NativeAnimationTest
             const bool roll = scenario.route == Route::Roll;
             const auto index = app.FindWidgetIndexById(roll ? L"fixture-roll" : L"fixture-fade");
             const auto& widget = app.widgets_.at(index);
-            const auto move = [&](POINT point, bool visible) {
+            const auto move = [&](POINT point) {
                 app.lastMousePoint_ = point;
                 if (roll) app.UpdateWidgetHoverExpansion(point);
-                else app.SyncDesktopWidgetPresentationVisibility(widget, widget.bounds, visible, true);
                 app.OnPaint(&widget.bounds);
                 return roll ? app.IsWidgetHoverExpansionAnimating(widget) :
                     app.desktopWidgetHoverFadeFrameToken_ != 0;
@@ -459,8 +469,8 @@ struct NativeAnimationTest
                 const auto found = app.desktopWidgetCompositionItems_.find(widget.id);
                 return found != app.desktopWidgetCompositionItems_.end() && found->second.visible;
             };
-            const bool enter = step("enter", [&] { return move(Center(widget.bounds), true); }, isVisible);
-            return step("leave", [&] { return move(kOutside, false); }, [&] { return !isVisible(); }) && enter;
+            const bool enter = step("enter", [&] { return move(Center(widget.bounds)); }, isVisible);
+            return step("leave", [&] { return move(kOutside); }, [&] { return !isVisible(); }) && enter;
         }
         if (scenario.route == Route::LuaPanel)
         {
@@ -498,7 +508,9 @@ struct NativeAnimationTest
             const bool native = scenario.effect == 0;
             const bool minimize = step("minimize", [&] {
                 if (native) { ShowWindow(source, SW_SHOWMINNOACTIVE); return true; }
-                return transition->StartMinimize(source, anchor) && transition->IsActiveFor(source);
+                return transition->StartMinimize(source, anchor, nullptr,
+                    [](HWND window) { ShowWindow(window, SW_SHOWMINNOACTIVE); }) &&
+                    transition->IsActiveFor(source);
             }, [&] { return IsIconic(source) && !transition->IsActive(); });
             const bool restore = step("restore", [&] {
                 if (native) { ShowWindow(source, SW_SHOWNOACTIVATE); return true; }
