@@ -464,7 +464,7 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.general.advancedFeatures.reminder", L"Start Steam, sign in online to an account that owns SnowDesktop, then unlock."},
     LocalizedFallback{"settings.general.advancedFeatures.largeIcons", L"Large software icons"},
     LocalizedFallback{"settings.general.advancedFeatures.largeIconsDescription", L"Personalize software icons, freely adjust their size, and display Steam games as posters."},
-    LocalizedFallback{"settings.general.advancedFeatures.largeIconsUsage", L"To use: right-click a software icon → Convert to large icon"},
+    LocalizedFallback{"settings.general.advancedFeatures.largeIconsUsage", L"To use: right-click a software icon → Icon personalization → Convert to large icon"},
     LocalizedFallback{"settings.general.advancedFeatures.availableAfterUnlock", L"Available after unlocking"},
     LocalizedFallback{"settings.general.advancedFeatures.infoTitle", L"Unlock and offline access information"},
     LocalizedFallback{"settings.general.advancedFeatures.offlineInfo", L"Starting SnowDesktop while Steam is online automatically updates the offline record after successful verification."},
