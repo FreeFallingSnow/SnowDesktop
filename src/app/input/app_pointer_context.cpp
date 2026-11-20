@@ -150,6 +150,7 @@ bool DesktopApp::ShowHostInputContextMenu(
 void DesktopApp::OnRightButtonDown(
     PersistentDockHost* dockHost, POINT point)
 {
+    ClearDesktopSurfaceKeyboardFocus();
     if (folderPreview_ && point.x != LONG_MIN && point.y != LONG_MIN)
         folderPreview_->keyboardFocused = IsPointOccludedByOpenPopup(point);
     typeToSelectSession_.Reset();

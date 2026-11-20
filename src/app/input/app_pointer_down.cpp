@@ -47,6 +47,7 @@ bool NextDetailsSortAscending(
 
 void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
+    ClearDesktopSurfaceKeyboardFocus();
     luaPanelOutsidePressGeneration_ = 0;
     if (nativeMenuSession_)
         DismissActiveContextMenuForPopupTransition();

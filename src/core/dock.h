@@ -10,6 +10,7 @@
 #include "ui/render/native_tooltip_content.h"
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 struct DragSourceList;
@@ -128,6 +129,20 @@ public:
     size_t Capacity() const;
     bool HasCapacity(size_t additional) const;
     bool ScrollByWheelDelta(POINT pointer, int wheelDelta);
+    struct KeyboardTarget
+    {
+        enum class Kind { Start, Search, Entry, Running, Frequent };
+        Kind kind;
+        size_t index;
+        std::wstring key;
+        RECT bounds;
+        bool focused;
+        bool scrollable;
+    };
+    std::vector<KeyboardTarget> KeyboardTargets(bool alongDock = false);
+    std::optional<KeyboardTarget> FocusedKeyboardTarget();
+    void SetKeyboardFocus(const KeyboardTarget& target);
+    bool ClearKeyboardFocus();
     bool IsWindowsButtonPoint(POINT pt) const;
     bool IsSearchPoint(POINT pt) const;
     DockEntryItem* EntryAtPoint(POINT pt) const;
@@ -169,6 +184,7 @@ public:
         snowdesktop::dock_magnification::HoverEntryAnimation entry;
         snowdesktop::dock_magnification::SingleFocusAnimation single;
         std::shared_ptr<EntryRemovalTimeline> removals;
+        std::wstring keyboardFocusKey;
     };
     PresentationState CapturePresentationState() const;
     bool RestorePresentationState(const PresentationState& state);
@@ -272,6 +288,7 @@ private:
     mutable size_t mainEntryCount_ = 0;
     mutable size_t folderEntryCount_ = 0;
     mutable int scrollOffset_ = 0;
+    std::wstring keyboardFocusKey_;
     // Cache the measured tooltip size separately from its visual anchor so
     // pointer-driven magnification can move the chip without rebuilding a
     // DirectWrite layout for every WM_MOUSEMOVE.

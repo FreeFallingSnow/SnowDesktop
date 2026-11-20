@@ -52,6 +52,15 @@ struct StatusBarDockState
     bool interacting = false; // This monitor's bar-owned activation/menu/panel.
     RECT adjacentDockBounds{}; // Visible separate edge Dock panel, in screen pixels.
 };
+struct StatusBarKeyboardTarget
+{
+    HWND window = nullptr;
+    std::string key;
+    StatusBarAction action = StatusBarAction::None;
+    bool tray = false;
+    RECT bounds{}; // Screen pixels.
+    bool focused = false;
+};
 class StatusBar final
 {
 public:
@@ -115,6 +124,10 @@ public:
     bool ContainsTrayMenuPoint(HMONITOR monitor, POINT screen) const;
     void CancelTrayMenuSession(HMONITOR monitor = nullptr);
     bool ContainsPoint(POINT screen) const;
+    std::vector<StatusBarKeyboardTarget> KeyboardTargets(bool horizontal) const;
+    bool FocusFromDesktop(const StatusBarKeyboardTarget& target);
+    bool InvokeDesktopKeyboardFocus(bool repeated);
+    bool ClearDesktopKeyboardFocus();
     // UI-thread snapshot for the short Task View input handoff. The hook uses
     // immutable screen rectangles and never queries application windows.
     std::vector<RECT> InputBounds() const;

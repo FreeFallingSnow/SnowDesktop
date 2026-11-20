@@ -250,7 +250,7 @@ bool DesktopApp::IsMarqueePointerGesturePendingOrActive() const
 
 bool DesktopApp::ClearSelection(const DesktopWidget* localWidget)
 {
-    bool changed = keyboardNavVisualFocus_;
+    bool changed = ClearDesktopSurfaceKeyboardFocus() || keyboardNavVisualFocus_;
     for (const auto& container : containers_)
         if (const auto* view = dynamic_cast<const ScrollingItemWidget*>(container.get()); view && view->folderSearch_)
             for (const auto& row : view->folderSearch_->rows)

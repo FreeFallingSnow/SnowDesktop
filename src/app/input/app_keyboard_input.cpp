@@ -526,6 +526,11 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     if (insertPaste) { ctrl = true; shift = false; }
     // Alt/Win combinations belong to the system or focused component.
     if (win || (alt && key != VK_RETURN)) return false;
+    if (!ctrl && !alt && (key == VK_RETURN || key == VK_SPACE) &&
+        !quickNavigation_->open && !IsCollectionPopupInteractive() &&
+        luaWidgetPanelRequest_.widgetId.empty() && (!systemPanel_ || !systemPanel_->IsOpen()) &&
+        ActivateDesktopSurfaceKeyboardFocus(repeated))
+        return true;
     if (!ctrl && !alt && popupKeyboardTarget && !dockFolderPopupOpen_ &&
         popupWidgetIndex_ < widgets_.size() && (popupArrowKey || key == VK_RETURN) &&
         (!keyboardNavInsideWidget_ || keyboardNavWidgetIndex_ != popupWidgetIndex_ ||

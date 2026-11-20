@@ -400,7 +400,7 @@ HMONITOR DockContainer::GetMonitor() const
 DockContainer::PresentationState DockContainer::CapturePresentationState() const
 {
     return {area_, magnificationFocusRect_, scrollOffset_,
-        magnificationEntry_, singleMagnification_, entryRemovals_};
+        magnificationEntry_, singleMagnification_, entryRemovals_, keyboardFocusKey_};
 }
 
 bool DockContainer::RestorePresentationState(const PresentationState& state)
@@ -416,6 +416,7 @@ bool DockContainer::RestorePresentationState(const PresentationState& state)
     magnificationEntry_ = state.entry;
     singleMagnification_ = state.single;
     if (state.removals) entryRemovals_ = state.removals;
+    keyboardFocusKey_ = state.keyboardFocusKey;
     ReconcileEntryRemovals();
     return true;
 }
@@ -1979,6 +1980,87 @@ bool DockContainer::ScrollByWheelDelta(POINT pointer, int wheelDelta)
     return true;
 }
 
+std::vector<DockContainer::KeyboardTarget> DockContainer::KeyboardTargets(bool alongDock)
+{
+    using Kind = KeyboardTarget::Kind;
+    std::vector<KeyboardTarget> targets;
+    if (!app_ || !app_->IsDockContainerInteractionVisible(this)) return targets;
+    const auto& slots = GetSlots();
+    const RECT viewport = GetScrollViewport(GetBounds());
+    const bool includeOverflow = alongDock && !keyboardFocusKey_.empty();
+    const auto add = [&](Kind kind, size_t index, std::wstring key, RECT bounds, bool scrollable) {
+        if (IsRectEmpty(&bounds)) return;
+        RECT visible{};
+        if (scrollable && !includeOverflow && !IntersectRect(&visible, &bounds, &viewport)) return;
+        const bool focused = key == keyboardFocusKey_;
+        targets.push_back({kind, index, std::move(key), bounds, focused, scrollable});
+    };
+    add(Kind::Start, 0, L"start", GetWindowsButtonRect(), false);
+    add(Kind::Search, 0, L"search", GetSearchRect(), false);
+    const size_t fixedCount = SortableEntryCount();
+    for (const auto& slot : slots)
+    {
+        if (!slot) continue;
+        const RECT bounds = slot->GetBounds();
+        if (const auto* entry = dynamic_cast<const DockEntryItem*>(slot->GetItem()))
+        {
+            const size_t index = entry->GetEntryIndex();
+            add(Kind::Entry, index, L"entry:" + std::to_wstring(static_cast<int>(entry->GetEntryType())) +
+                L":" + ToUpperInvariant(entry->GetReference()), bounds, index < fixedCount);
+        }
+        else if (const auto* running = dynamic_cast<const DockRunningItem*>(slot->GetItem()))
+        {
+            const size_t index = running->GetRunningIndex();
+            if (index < app_->dockUnpinnedRunningApps_.size() &&
+                app_->dockUnpinnedRunningApps_[index].presence.Interactive())
+                add(Kind::Running, index, L"running:" + running->GetIdentityKey(), bounds, true);
+        }
+        else if (const auto* frequent = dynamic_cast<const DockFrequentItem*>(slot->GetItem()))
+        {
+            const size_t index = frequent->GetItemIndex();
+            if (index < app_->items_.size())
+                add(Kind::Frequent, index, L"frequent:" + ToUpperInvariant(app_->items_[index].layoutKey),
+                    bounds, true);
+        }
+    }
+    return targets;
+}
+
+std::optional<DockContainer::KeyboardTarget> DockContainer::FocusedKeyboardTarget()
+{
+    if (keyboardFocusKey_.empty()) return std::nullopt;
+    auto targets = KeyboardTargets();
+    const auto focused = std::find_if(targets.begin(), targets.end(), [](const auto& target) {
+        return target.focused;
+    });
+    if (focused == targets.end()) return std::nullopt;
+    return std::move(*focused);
+}
+
+void DockContainer::SetKeyboardFocus(const KeyboardTarget& target)
+{
+    keyboardFocusKey_ = target.key;
+    if (!target.scrollable) return;
+    const RECT bounds = GetBounds();
+    const RECT viewport = GetScrollViewport(bounds);
+    const LONG start = IsVertical() ? target.bounds.top : target.bounds.left;
+    const LONG end = IsVertical() ? target.bounds.bottom : target.bounds.right;
+    const LONG viewStart = IsVertical() ? viewport.top : viewport.left;
+    const LONG viewEnd = IsVertical() ? viewport.bottom : viewport.right;
+    const LONG adjustment = start < viewStart ? start - viewStart : std::max(0L, end - viewEnd);
+    const int offset = std::clamp(scrollOffset_ + static_cast<int>(adjustment), 0, GetMaxScrollOffset(bounds));
+    if (offset == scrollOffset_) return;
+    scrollOffset_ = offset;
+    InvalidateSlots();
+}
+
+bool DockContainer::ClearKeyboardFocus()
+{
+    if (keyboardFocusKey_.empty()) return false;
+    keyboardFocusKey_.clear();
+    return true;
+}
+
 std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
 {
     namespace removal = snowdesktop::dock_entry_removal;
@@ -2958,6 +3040,14 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     }
     for (const auto& [cell, file] : pendingFileCells_)
         app_->DrawPendingFile(context, visualRectFor(cell), file.get(), nullptr, false, lt);
+    if (const auto focused = FocusedKeyboardTarget())
+    {
+        RECT outline = visualRectFor(focused->bounds);
+        if (focused->scrollable && hasOverflow)
+            IntersectRect(&outline, &outline, &scrollVisualViewport);
+        app_->DrawWidgetPanelBorder(context, outline, 6.f,
+            D2D1::ColorF(0, 0.f), true, 1.6f);
+    }
 }
 
 std::vector<Item*> DockContainer::GetSelectedItems() const

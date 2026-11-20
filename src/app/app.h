@@ -1646,6 +1646,8 @@ private:
     bool HasPasteableFileClipboardData() const;
     /** @brief 根据方向键在桌面网格上进行 2D 空间导航。 @param arrowKey 方向键的虚拟键码 */
     void NavigateDesktopGrid(WPARAM arrowKey);
+    bool ClearDesktopSurfaceKeyboardFocus();
+    bool ActivateDesktopSurfaceKeyboardFocus(bool repeated);
     /** @brief 在组件内部导航成员项。 @param arrowKey 方向键的虚拟键码 */
     void NavigateWidgetMembers(WPARAM arrowKey);
     /** @brief 进入当前选中的组件以进行内部导航。 */

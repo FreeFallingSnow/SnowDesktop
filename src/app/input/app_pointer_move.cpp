@@ -26,6 +26,7 @@
 
 void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
 {
+    ClearDesktopSurfaceKeyboardFocus();
     typeToSelectSession_.Reset();
     if (rightButtonItemDrag_ ||
         (HasActiveContextMenuSession() && dragSession_.HasContext())) return;

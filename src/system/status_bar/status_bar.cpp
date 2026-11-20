@@ -309,6 +309,7 @@ struct StatusBar::Impl
         bool snapshotReady = false;
         StatusBarInteraction interaction;
         bool keyboardFocusVisible = false;
+        bool desktopKeyboardFocus = false;
         StatusBarInteractionVisualState paintedInteraction;
         StatusBarPresentationPreparation presentationPreparation;
         struct MetricPress
@@ -1146,7 +1147,8 @@ struct StatusBar::Impl
         }
         StatusBarInteractionVisualState InteractionVisual() const
         {
-            return StatusBarInteractionVisual(interaction, keyboardFocusVisible, GetFocus() == hwnd, dropIndicator);
+            return StatusBarInteractionVisual(interaction, keyboardFocusVisible,
+                desktopKeyboardFocus || GetFocus() == hwnd, dropIndicator);
         }
         bool ReusableInteractionFrame(const RECT& client, const StatusBarPalette& palette) const
         {
@@ -1709,6 +1711,25 @@ struct StatusBar::Impl
             auto onActivated = owner.activate;
             onActivated(invocation->action, hwnd, anchor);
         }
+        void ShowKeyboardFocus()
+        {
+            TrayScrollFrame frame{trayScroll.offset, interaction.hovered, dropIndicator};
+            bool canceledMenu = false;
+            presentationPreparation.Run([&] {
+                if (owner.tray) owner.tray->CancelFocusReturn();
+                const auto focused = interaction.focused;
+                if (focused && *focused < items.size() && items[*focused].icon)
+                    trayScroll.Reveal(items[*focused].contentBounds);
+                const bool sameTray = focused && *focused < items.size() && items[*focused].icon &&
+                    items[*focused].icon->key == trayMenuKey;
+                canceledMenu = !sameTray && CancelTrayMenu();
+                keyboardFocusVisible = true;
+                ClearHover();
+            });
+            if (frame.previousOffset != trayScroll.offset) Paint(false, false, &frame);
+            else PaintInteraction();
+            if (canceledMenu && owner.dockChanged) owner.dockChanged(false);
+        }
         void BeginMetricPress(POINT point)
         {
             const auto hit = HitTestStatusBarItems(items, point);
@@ -1927,23 +1948,7 @@ struct StatusBar::Impl
             {
                 if (DispatchStatusBarKeyboard(message, wp, lp, (GetKeyState(VK_SHIFT) & 0x8000) != 0,
                     self->interaction, self->items,
-                    [&] {
-                        TrayScrollFrame frame{self->trayScroll.offset, self->interaction.hovered, self->dropIndicator};
-                        bool canceledMenu = false;
-                        self->presentationPreparation.Run([&] {
-                            if (self->owner.tray) self->owner.tray->CancelFocusReturn();
-                            const auto focused = self->interaction.focused;
-                            if (focused && *focused < self->items.size() && self->items[*focused].icon)
-                                self->trayScroll.Reveal(self->items[*focused].contentBounds);
-                            const bool sameTray = focused && *focused < self->items.size() && self->items[*focused].icon &&
-                                self->items[*focused].icon->key == self->trayMenuKey;
-                            canceledMenu = !sameTray && self->CancelTrayMenu();
-                            self->keyboardFocusVisible = true; self->ClearHover();
-                        });
-                        if (frame.previousOffset != self->trayScroll.offset) self->Paint(false, false, &frame);
-                        else self->PaintInteraction();
-                        if (canceledMenu && self->owner.dockChanged) self->owner.dockChanged(false);
-                    },
+                    [&] { self->ShowKeyboardFocus(); },
                     [&](bool context) { self->ActivateItem(self->interaction.focused, context); },
                     [&] {
                         self->revealState.Dismiss();
@@ -2781,6 +2786,86 @@ bool StatusBar::ContainsPoint(POINT screen) const
         if (window->OwnsPointer(local)) return true;
     }
     return false;
+}
+std::vector<StatusBarKeyboardTarget> StatusBar::KeyboardTargets(bool horizontal) const
+{
+    std::vector<StatusBarKeyboardTarget> targets;
+    if (impl_->removingWindows) return targets;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (!window || !window->InputAvailable()) continue;
+        const auto focused = window->desktopKeyboardFocus && window->keyboardFocusVisible
+            ? window->interaction.focused : std::nullopt;
+        for (std::size_t i = 0; i < window->items.size(); ++i)
+        {
+            const auto& item = window->items[i];
+            if (item.action == StatusBarAction::None || item.action == StatusBarAction::ShowDesktop)
+                continue;
+            RECT bounds = horizontal && focused && item.icon ? item.contentBounds : item.bounds;
+            if (IsRectEmpty(&bounds)) continue;
+            MapWindowPoints(window->hwnd, nullptr, reinterpret_cast<POINT*>(&bounds), 2);
+            auto identity = StatusBarTargetOf(item);
+            targets.push_back({window->hwnd, std::move(identity.key), identity.action, identity.tray,
+                bounds, focused == i});
+        }
+    }
+    return targets;
+}
+
+bool StatusBar::FocusFromDesktop(const StatusBarKeyboardTarget& target)
+{
+    if (impl_->removingWindows) return false;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (!window || window->hwnd != target.window || !window->InputAvailable()) continue;
+        const StatusBarTarget identity{target.key, target.tray, target.action};
+        const auto item = std::find_if(window->items.begin(), window->items.end(), [&](const auto& item) {
+            return StatusBarTargetOf(item) == identity;
+        });
+        if (item == window->items.end()) return false;
+        window->desktopKeyboardFocus = true;
+        window->interaction.focused = static_cast<std::size_t>(item - window->items.begin());
+        window->ShowKeyboardFocus();
+        return true;
+    }
+    return false;
+}
+
+bool StatusBar::InvokeDesktopKeyboardFocus(bool repeated)
+{
+    if (impl_->removingWindows) return false;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (!window || !window->desktopKeyboardFocus || !window->keyboardFocusVisible ||
+            !window->InputAvailable()) continue;
+        const auto index = window->interaction.focused;
+        if (!index || *index >= window->items.size() || IsRectEmpty(&window->items[*index].bounds))
+            return false;
+        if (!repeated)
+        {
+            const bool context = window->items[*index].action == StatusBarAction::MenuForegroundAppName;
+            window->ActivateItem(index, context);
+        }
+        return true;
+    }
+    return false;
+}
+
+bool StatusBar::ClearDesktopKeyboardFocus()
+{
+    bool changed = false;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (!window || !std::exchange(window->desktopKeyboardFocus, false)) continue;
+        window->keyboardFocusVisible = false;
+        if (window->hwnd) InvalidateRect(window->hwnd, nullptr, FALSE);
+        changed = true;
+    }
+    return changed;
 }
 std::vector<RECT> StatusBar::InputBounds() const
 {
