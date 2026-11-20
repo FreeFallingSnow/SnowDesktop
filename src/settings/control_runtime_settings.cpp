@@ -1,6 +1,7 @@
 #include "settings_controller_interface.h"
 #include "settings_snapshot.h"
 #include "control_runtime_settings.h"
+#include "control_settings_search.h"
 
 #include "platform/usage_guide.h"
 #include "desktop/desktop_style_presets.h"
@@ -97,6 +98,18 @@ Value HostResult(const Target& target, const SettingsActionResult& result)
 
 bool IsRuntimeSettingsTarget(const Target& target) noexcept { return target.kind == "runtime-services"; }
 
+Value DescribeRuntimeSettingsFields(bool animationDiagnosticsAvailable, bool usageGuideAvailable)
+{
+    using namespace control;
+    return Object({
+        {"animationDiagnosticsEnabled", Object({{"type", String("boolean")}, {"default", Boolean(false)},
+            {"available", Boolean(animationDiagnosticsAvailable)},
+            {"description", String("Enables the host's detailed animation diagnostics when that service is available.")}})},
+        {"usageGuideExpanded", Object({{"type", String("boolean")}, {"default", Boolean(true)},
+            {"available", Boolean(usageGuideAvailable)},
+            {"description", String("Expands or collapses the usage guide section. This does not start a lesson.")}})}});
+}
+
 Value HandleRuntimeSettings(std::string_view method, const Value& params,
     const Target& target, const RuntimeSettingsContext& context)
 {
@@ -121,11 +134,8 @@ Value HandleRuntimeSettings(std::string_view method, const Value& params,
             {"debugUiVisible", Boolean(context.debugVisible && context.debugVisible())}});
         if (method == "settings.catalog")
         {
-            result.object.emplace("fields", Object({
-                {"animationDiagnosticsEnabled", Object({{"type", String("boolean")}, {"default", Boolean(false)}, {"available", Boolean(status.animationDiagnosticsEnabled.has_value())},
-                    {"description", String("Enables the host's detailed animation diagnostics when that service is available.")}})},
-                {"usageGuideExpanded", Object({{"type", String("boolean")}, {"default", Boolean(true)}, {"available", Boolean(status.usageGuideExpanded.has_value())},
-                    {"description", String("Expands or collapses the usage guide section. This does not start a lesson.")}})}}));
+            result.object.emplace("fields", DescribeRuntimeSettingsFields(status.animationDiagnosticsEnabled.has_value(),
+                status.usageGuideExpanded.has_value()));
             result.object.emplace("maximumChanges", Number(1));
             result.object.emplace("readOnly", Names({"temporaryInitializationEnabled", "windowSupport", "advancedFeatures", "generation", "settingsRevision", "animationDiagnosticsStatus"}));
             auto actions = Array();

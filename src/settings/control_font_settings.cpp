@@ -1,6 +1,7 @@
 #include "settings_controller_interface.h"
 #include "settings_snapshot.h"
 #include "control_font_settings.h"
+#include "control_settings_search.h"
 
 #include <algorithm>
 
@@ -55,6 +56,18 @@ Value Names(std::initializer_list<std::string_view> names)
 
 bool IsFontSettingsTarget(const Target& target) noexcept { return target.kind == "fonts"; }
 
+Value DescribeFontSettingsFields()
+{
+    using namespace control;
+    return Object({{"selection", Object({{"type", String("object")},
+        {"description", String("Saves the requested application font. The applied font changes after restart.")},
+        {"properties", Object({{"package", Object({{"type", String("string")},
+            {"description", String("Selects the installed font package from the advertised choices.")}})},
+            {"family", Object({{"type", String("string")},
+                {"description", String("Selects the font family within the selected package.")}})}})},
+        {"default", Selection({})}, {"optionsSource", String("values.choices; paginate with offset/limit")}})}});
+}
+
 Value HandleFontSettings(std::string_view method, const Value& params,
     const Target& target, const FontSettingsContext& context)
 {
@@ -86,13 +99,7 @@ Value HandleFontSettings(std::string_view method, const Value& params,
         auto result = read();
         if (method == "settings.catalog")
         {
-            result.object.emplace("fields", Object({{"selection", Object({{"type", String("object")},
-                {"description", String("Saves the requested application font. The applied font changes after restart.")},
-                {"properties", Object({{"package", Object({{"type", String("string")},
-                    {"description", String("Selects the installed font package from the advertised choices.")}})},
-                    {"family", Object({{"type", String("string")},
-                        {"description", String("Selects the font family within the selected package.")}})}})},
-                {"default", Selection({})}, {"optionsSource", String("values.choices; paginate with offset/limit")}})}}));
+            result.object.emplace("fields", DescribeFontSettingsFields());
             result.object.emplace("readOnly", Names({"applied", "restartRequired", "choices", "choiceCount"}));
             result.object.emplace("actions", Names({"import", "restart"}));
         }

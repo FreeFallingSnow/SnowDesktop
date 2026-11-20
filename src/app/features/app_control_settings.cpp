@@ -15,10 +15,14 @@
 #include "settings/control_theme_settings.h"
 #include "settings/control_runtime_settings.h"
 #include "settings/control_package_settings.h"
+#include "settings/control_settings_search.h"
 #include "data/data_paths.h"
 #include "theme/theme_library_settings.h"
 #include "widget/runtime/widget_engine.h"
 #include "widget/runtime/widget_theme_selection.h"
+#include "widget/settings/widget_engine_settings_backend.h"
+#include <algorithm>
+#include <cstddef>
 
 snowdesktop::control::Value DesktopApp::HandleControlSettings(
     std::string_view method, const snowdesktop::control::Value& params)
@@ -31,6 +35,33 @@ snowdesktop::control::Value DesktopApp::HandleControlSettings(
     const auto& options = settingsWindow_->HostOptions();
     const auto current = settingsController_->Snapshot();
     if (!current || !current->initialized) throw Error("not_ready", "Settings controller is not initialized");
+    if (method == "settings.search")
+    {
+        SettingsDescriptionSearch search(params);
+        search.AddHostFields();
+        const auto widgetCount = std::count_if(widgets_.begin(), widgets_.end(), [](const auto& widget) {
+            return widget.type == DesktopWidgetType::LuaScript;
+        });
+        std::ptrdiff_t loadedCount = 0;
+        if (widgetEngine_)
+            for (const auto& loaded : widgetEngine_->GetWidgets())
+            {
+                if (!loaded.valid || loaded.runtimeToken == 0) continue;
+                const auto index = FindWidgetIndexById(loaded.widgetId);
+                if (index >= widgets_.size() || widgets_[index].type != DesktopWidgetType::LuaScript) continue;
+                ++loadedCount;
+                const SettingsSearchTarget source{{"widget", WideToUtf8(loaded.widgetId)}, false, {},
+                    WideToUtf8(widgets_[index].title)};
+                const auto addDeclarations = [&](const auto& fields) {
+                    for (const auto& field : fields)
+                        if (!field.key.empty() && !widget_runtime::IsReservedDeclarativeSettingKey(field.key))
+                            search.AddField(source, field.key, field.agentDescription);
+                };
+                addDeclarations(loaded.manifest.settings);
+                addDeclarations(loaded.scriptSettings);
+            }
+        return search.Results(static_cast<std::size_t>(widgetCount - loadedCount));
+    }
     if (method == "settings.catalog" && !params.Find("target"))
     {
         Fields(params, {});

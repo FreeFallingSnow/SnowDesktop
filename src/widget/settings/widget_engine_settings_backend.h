@@ -13,6 +13,8 @@
 
 namespace snowdesktop::widget_runtime
 {
+bool IsReservedDeclarativeSettingKey(std::string_view key) noexcept;
+
 namespace widget_settings_backend_detail
 {
 inline WidgetSettingCondition ConvertCondition(

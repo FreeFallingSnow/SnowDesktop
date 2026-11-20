@@ -1,4 +1,5 @@
 #include "control_widget_settings.h"
+#include "control_settings_search.h"
 #include "control_settings_values.h"
 #include "winui/windows_compat.h"
 #include <charconv>
@@ -163,6 +164,11 @@ std::uint64_t Decimal(const Value& params, std::string_view key)
 }
 }
 
+Value DescribeWidgetAppearanceFields()
+{
+    return DescribeValue(widget_runtime::WidgetHostAppearancePatch{});
+}
+
 Value HandleWidgetSettings(std::string_view method, const Value& params,
     const Target& target, widget_runtime::IWidgetSettingsService& service,
     const std::function<bool(std::wstring_view)>& ensure, const WidgetThemeControl& themes)
@@ -217,8 +223,8 @@ Value HandleWidgetSettings(std::string_view method, const Value& params,
             addAction("chooseFile", keySchema, "open-owned-filesystem-picker");
             addAction("chooseReference", keySchema, "open-owned-reference-picker");
             addAction("applyPreset", Object({{"id", String("declared-preset-id")}}), "save-atomic-preset");
-            addAction("appearance", DescribeValue(WidgetHostAppearancePatch{}), "save-host-appearance");
-            addAction("previewAppearance", DescribeValue(WidgetHostAppearancePatch{}), "transient-host-appearance");
+            addAction("appearance", DescribeWidgetAppearanceFields(), "save-host-appearance");
+            addAction("previewAppearance", DescribeWidgetAppearanceFields(), "transient-host-appearance");
             addAction("previewSetting", Object({{"key", String("ordinary-setting-key")}, {"value", String("typed-setting-value")}}), "transient-setting");
             addAction("setSearchQuery", Object({{"key", String("search-setting-key")}, {"query", String("text")}}), "save-search-query");
             addAction("commitPreview", Object(), "save-preview");

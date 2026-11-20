@@ -44,6 +44,7 @@ WidgetSettingsBackendResult WrongThread()
     return BackendResult(WidgetSettingsBackendStatus::Failed,
         "wrongThread", "widget settings backend requires its owner thread");
 }
+}
 
 bool IsReservedDeclarativeSettingKey(std::string_view key) noexcept
 {
@@ -61,6 +62,8 @@ bool IsReservedDeclarativeSettingKey(std::string_view key) noexcept
         key == "__contentTheme" || key == "__panelGradient" || key == "__edgeLight";
 }
 
+namespace
+{
 bool IsHostAppearancePresetKey(std::string_view key) noexcept
 {
     return key == "followPersonalization" || key == "bg" ||

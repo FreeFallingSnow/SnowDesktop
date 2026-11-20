@@ -12,6 +12,7 @@
 #include "settings_controller_interface.h"
 #include "settings_snapshot.h"
 #include "control_global_settings.h"
+#include "control_settings_search.h"
 #include "control_settings_values.h"
 #include "layout/layout_spacing_rules.h"
 #include <cstring>
@@ -326,6 +327,10 @@ bool IsGlobalSettingsTarget(const Target& target)
 {
     return target.kind == "global" || target.kind == "personalization" || target.kind == "dock" || target.kind == "navigation" ||
         target.kind == "general" || target.kind == "category" || target.kind == "desktop";
+}
+Value DescribeGlobalSettingsFields()
+{
+    return Schema({"global", {}});
 }
 Value HandleGlobalSettings(std::string_view method, const Value& params, const Target& target, const GlobalSettingsContext& context)
 {

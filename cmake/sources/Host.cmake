@@ -239,6 +239,8 @@ set(SNOWDESKTOP_SOURCES
     src/app/features/app_control_settings.cpp
     src/app/features/app_control_native_widgets.cpp
     src/settings/control_settings.h
+    src/settings/control_settings_search.cpp
+    src/settings/control_settings_search.h
     src/settings/control_settings_values.h
     src/settings/control_global_settings.cpp
     src/settings/control_global_settings.h

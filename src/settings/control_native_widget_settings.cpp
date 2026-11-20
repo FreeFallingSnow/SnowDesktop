@@ -1,4 +1,5 @@
 #include "control_native_widget_settings.h"
+#include "control_settings_search.h"
 
 #include "layout/list_detail_rules.h"
 #include <algorithm>
@@ -119,6 +120,25 @@ Value Read(const Target& target, const NativeWidgetSettingsState& state, bool ca
     result.object.emplace("editable", Boolean(state.editable));
     result.object.emplace("searchAvailable", Boolean(state.searchAvailable));
     if (!catalog) return result;
+    result.object.emplace("fields", DescribeNativeWidgetFields(state));
+    result.object.emplace("demoIconCategories", Strings(state.demoIconCategories));
+    result.object.emplace("readOnly", Strings({"id", "type", "contentTargetId", "sourceTargetId", "sortTargetId", "activeChildId", "childIds", "sourceFolderPath", "placement", "customTitle", "searchText"}));
+    auto actions = Array();
+    if (state.collectAvailable) actions.array.push_back(String("collect-now"));
+    if (state.searchAvailable) actions.array.push_back(String("set-search"));
+    if (!state.childIds.empty()) actions.array.push_back(String("reorder-tabs"));
+    result.object.emplace("actions", std::move(actions));
+    result.object.emplace("constraints", Strings({"Group activeCategoryId changes cannot be combined with content/source edits; read the new revision first",
+        "listColumns above one disables metadata columns; explicitly enabling metadata requires one column",
+        "Placement and membership use the existing widgets/place and native grouping operations",
+        "set-search changes only the live view; its query is not persisted"}));
+    return result;
+}
+}
+
+Value DescribeNativeWidgetFields(const NativeWidgetSettingsState& state)
+{
+    using namespace control;
     auto fields = Object();
     const auto values = NativeWidgetConfigurationJson(state.values);
     const auto defaults = NativeWidgetConfigurationJson(state.defaults);
@@ -137,20 +157,7 @@ Value Read(const Target& target, const NativeWidgetSettingsState& state, bool ca
         if (key == "title") field.object.emplace("resetDescription", String("Clears the custom title and restores the native type/source title"));
         fields.object.emplace(key, std::move(field));
     }
-    result.object.emplace("fields", std::move(fields));
-    result.object.emplace("demoIconCategories", Strings(state.demoIconCategories));
-    result.object.emplace("readOnly", Strings({"id", "type", "contentTargetId", "sourceTargetId", "sortTargetId", "activeChildId", "childIds", "sourceFolderPath", "placement", "customTitle", "searchText"}));
-    auto actions = Array();
-    if (state.collectAvailable) actions.array.push_back(String("collect-now"));
-    if (state.searchAvailable) actions.array.push_back(String("set-search"));
-    if (!state.childIds.empty()) actions.array.push_back(String("reorder-tabs"));
-    result.object.emplace("actions", std::move(actions));
-    result.object.emplace("constraints", Strings({"Group activeCategoryId changes cannot be combined with content/source edits; read the new revision first",
-        "listColumns above one disables metadata columns; explicitly enabling metadata requires one column",
-        "Placement and membership use the existing widgets/place and native grouping operations",
-        "set-search changes only the live view; its query is not persisted"}));
-    return result;
-}
+    return fields;
 }
 
 control::Value NativeWidgetConfigurationJson(const NativeWidgetConfiguration& values)

@@ -163,6 +163,30 @@ Value DesktopLayoutResultSchema()
         })},
     });
 }
+
+Value SettingsSearchResultSchema()
+{
+    const auto target = ResultObject("Settings catalog target. Some target kinds need an instance ID.", {
+        {"kind", ResultField("string", "Settings target kind.")},
+        {"id", ResultField("string", "Concrete instance ID, when provided.")},
+    });
+    const auto match = ResultObject("One documented field or action argument.", {
+        {"target", target},
+        {"field", ResultField("string", "Field path relative to the target or action. [] refers to an array element and .* to a map value.")},
+        {"description", ResultField("string", "English behavior description from the settings metadata.")},
+        {"requiresTargetId", ResultField("boolean", "When present and true, resolve a concrete instance before querying its catalog.")},
+        {"action", ResultField("string", "Named settings.action when the field is an action argument. Omitted for direct fields.")},
+        {"name", ResultField("string", "Name of the Lua instance, when available.")},
+    });
+    return ResultObject("One page of matching setting descriptions.", {
+        {"query", ResultField("string", "Search text after trimming surrounding whitespace.")},
+        {"results", ResultArray("Matches ordered by relevance, with a deterministic tie order.", match)},
+        {"total", ResultField("integer", "Number of matching descriptions before pagination.")},
+        {"offset", ResultField("integer", "Zero-based starting match for this page.")},
+        {"limit", ResultField("integer", "Maximum matches requested for this page.")},
+        {"unavailableWidgetCount", ResultField("integer", "Number of Lua instances whose runtime declarations were unavailable.")},
+    });
+}
 }
 
 Value Describe()
@@ -187,6 +211,7 @@ Value Describe()
     add("ui.dismissMenu", true, "{}");
     add("ui.settingsRefresh", false, "{}");
     add("ui.settingsState", false, "{id:string}");
+    add("settings.search", false, "{query:string,offset?:integer,limit?:integer}", "settingsSearch");
     add("settings.catalog", false, "{target?:{kind:string,id?:string},offset?:integer,limit?:integer}");
     add("settings.get", false, "{target:{kind:string,id?:string},offset?:integer,limit?:integer}");
     add("settings.update", true, "{target:{kind:string,id?:string},ifRevision:string,changes:object}");
@@ -214,15 +239,17 @@ Value Describe()
     add("settings.open", true, "{page?:string,widgetId?:string}");
     add("dock.show", true, "{}");
     add("dock.hide", true, "{}");
+    auto resultSchemas = DesktopLayoutResultSchema();
+    resultSchemas.object.emplace("settingsSearch", SettingsSearchResultSchema());
     return Object({{"protocolVersion", Number(ProtocolVersion)}, {"methods", std::move(methods)},
-        {"resultSchemas", DesktopLayoutResultSchema()},
+        {"resultSchemas", std::move(resultSchemas)},
         {"maximumFrameBytes", Number(static_cast<double>(MaximumFrameBytes))},
         {"guidance", Object({
             {"language", String("en")},
             {"overview", String("SnowDesktop organizes desktop items in pages, grids and storage components. It also provides visual personalization, a Dock, a status bar and Quick Navigation.")},
             {"organize", String("Read desktop.getLayout and settings.catalog first. Use widgets.place for an existing component's position or span, and the page target for grid dimensions. File Categories can collect matching desktop items when their native-widget catalog advertises collect-now.")},
             {"appearance", String("Use the personalization target for common surface defaults, desktop for ordinary icon and title presentation, and the individual component or icon target for its own overrides. An independent theme may take precedence over global settings.")},
-            {"settings", String("Call settings.catalog without a target to discover domains and live component instances. Query a concrete target to read its fields, action availability and revision. Use settings.update for writable fields and settings.action for named operations. Refresh the revision before each edit and respect confirmation, restart and availability requirements.")},
+            {"settings", String("Use settings.search to find settings by keywords in their field paths and English descriptions. Results identify a target and field, plus an action for action arguments. Resolve targets marked requiresTargetId, then use settings.catalog on the concrete target to check values, constraints, availability and revision. Call settings.catalog without a target to discover domains and live component instances. Refresh the revision before each edit and respect confirmation, restart and availability requirements.")},
             {"components", String("Use native-widget for built-in storage component view and content settings and widget for Lua-authored settings and host appearance. Discover a loaded Lua instance's optional English action declarations with widgets.agentActions. A delivered action ran the component event callback; verify the outcome separately.")},
         })},
         {"capabilities", Object({{"elements", Number(1)}, {"privatePointer", Number(1)}, {"privateKeyboard", Number(1)},
@@ -231,7 +258,7 @@ Value Describe()
             {"nativeWidgetControls", Number(1)}, {"demoElementTargets", Number(1)},
             {"nativePopupControls", Number(1)}, {"menuControlValues", Number(1)}, {"settingsPrivateInput", Number(0)},
             {"directSettings", Number(1)}, {"settingsSchema", Number(1)}, {"nativeWidgetSettings", Number(1)},
-            {"settingsGuidance", Number(1)}, {"widgetAgentActions", Number(1)}})}});
+            {"settingsGuidance", Number(1)}, {"settingsSearch", Number(1)}, {"widgetAgentActions", Number(1)}})}});
 }
 
 std::string Dispatch(std::string_view request, const Handler& handler,

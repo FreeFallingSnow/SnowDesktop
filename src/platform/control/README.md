@@ -312,6 +312,23 @@ bindings of documented types at compile time. Native field catalogs own
 descriptions for specialized targets. First-party components maintain English
 descriptions in the same Lua declaration as the field.
 
+When `api.describe` advertises `settingsSearch:1`, call `settings.search` with
+an English keyword query such as `{"query":"above the first row","limit":5}`.
+Each whitespace-separated term must appear in the field path, target kind,
+description or Lua instance name. English letter case is ignored. Exact field
+names rank first, followed by matches in field paths and descriptions.
+Results include the description and its target and field path. An `action`
+identifies a settings action argument, such as a Lua appearance field.
+For a result marked `requiresTargetId`, select the relevant instance before
+requesting its catalog. Use the concrete catalog to verify current
+availability, constraints and revision. The default limit is 12, the maximum
+is 50, and `offset` advances through the same query's ordered matches.
+
+Search reads shared host field metadata and descriptions declared by loaded
+Lua instances. It returns no setting values. `unavailableWidgetCount` reports
+instances whose Lua declarations are unavailable at search time. A field
+becomes searchable when its catalog metadata supplies a description.
+
 ### Direct settings access
 
 Capabilities `directSettings:1` and `settingsSchema:1` add semantic settings
@@ -323,6 +340,7 @@ pointer adapter. The pipe protocol major and Lua component API remain unchanged.
 
 | Method | Parameters | Result |
 | --- | --- | --- |
+| `settings.search` | `{query,offset?,limit?}` | Ranked matches across the host's documented settings and loaded Lua instances |
 | `settings.catalog` | `{target?,offset?,limit?}` | Without a target, target kinds and current native/Lua instance identities; with a target, current values, fields, constraints and available actions |
 | `settings.get` | `{target,offset?,limit?}` | Current target values and opaque `revision` |
 | `settings.update` | `{target,ifRevision,changes}` | Apply a named field patch through its native owner |

@@ -1,6 +1,7 @@
 #include "settings_controller_interface.h"
 #include "settings_snapshot.h"
 #include "control_calendar_settings.h"
+#include "control_settings_search.h"
 
 #include <algorithm>
 
@@ -45,8 +46,11 @@ Value Series(const CalendarSeries& series)
     return Object({{"id", String(series.id)}, {"hostRevision", Number(series.revision)},
         {"event", Event(series.event)}, {"rule", Rule(series.rule)}, {"exceptions", std::move(exceptions)}});
 }
-Value EventFields()
+}
+
+Value DescribeCalendarEventFields()
 {
+    using namespace control;
     auto reminders = Array();
     for (const int minutes : {-1, 0, 5, 15, 30, 60, 1440}) reminders.array.push_back(Number(minutes));
     return Object({{"title", Object({{"type", String("string")}, {"maximumBytes", Number(512)}, {"required", Boolean(true)},
@@ -65,6 +69,17 @@ Value EventFields()
             {"description", String("Schedules a reminder this many minutes before the event. -1 disables it and 0 chooses the event time.")}})}});
 }
 
+Value DescribeCalendarSeriesFields()
+{
+    using namespace control;
+    return Object({{"event", DescribeCalendarEventFields()},
+        {"rule", Object({{"kind", Names({"dates", "weekly", "monthly"})}, {"interval", Object({{"minimum", Number(1)}, {"maximum", Number(99)}})},
+            {"weekdays", Object({{"minimum", Number(1)}, {"maximum", Number(7)}, {"maximumItems", Number(7)}})},
+            {"monthDay", Object({{"minimum", Number(0)}, {"maximum", Number(31)}})}, {"dates", Object({{"maximumItems", Number(366)}})}})}});
+}
+
+namespace
+{
 void TextPatch(const Value& values, const char* key, std::string& output, std::size_t maximum)
 {
     const auto* field = values.Find(key);
@@ -216,10 +231,8 @@ Value HandleCalendarSettings(std::string_view method, const Value& params,
         auto output = Object({{"target", TargetJson(target)}, {"revision", String(targetRevision)}, {"values", std::move(values)}});
         if (method == "settings.catalog")
         {
-            output.object.emplace("fields", event ? EventFields() : selectedSeries ? Object({{"event", EventFields()},
-                {"rule", Object({{"kind", Names({"dates", "weekly", "monthly"})}, {"interval", Object({{"minimum", Number(1)}, {"maximum", Number(99)}})},
-                    {"weekdays", Object({{"minimum", Number(1)}, {"maximum", Number(7)}, {"maximumItems", Number(7)}})},
-                    {"monthDay", Object({{"minimum", Number(0)}, {"maximum", Number(31)}})}, {"dates", Object({{"maximumItems", Number(366)}})}})}}) : Object());
+            output.object.emplace("fields", event ? DescribeCalendarEventFields() :
+                selectedSeries ? DescribeCalendarSeriesFields() : Object());
             output.object.emplace("actions", event || selectedSeries ? Names({"remove"}) : Names({"create-event", "create-series"}));
             output.object.emplace("readOnly", Names({"id", "hostRevision", "seriesId", "occurrenceDate", "occurrenceOverride", "exceptions"}));
             output.object.emplace("occurrenceTargetFormat", String("calendar-event id is seriesId/YYYY-MM-DD; edit/remove uses the existing occurrence service"));

@@ -1,5 +1,6 @@
 #include "common/json_value.h"
 #include "control_icon_settings.h"
+#include "control_settings_search.h"
 #include "control_settings_values.h"
 #include "icons/large_icon_config.h"
 #include "icons/large_icon_config_codec.h"
@@ -193,6 +194,29 @@ bool IsIconSettingsTarget(const Target& target) noexcept
     return target.kind == "icon-appearance" || target.kind == "icon-library" || target.kind == "large-icon";
 }
 
+Value DescribeIconAppearanceFields(const IconBeautifySettings& defaults)
+{
+    return DescribeValue(defaults);
+}
+
+Value DescribeLargeIconFields(const LargeIconConfig& defaults)
+{
+    using namespace control;
+    auto fields = Object();
+    VisitLargeIconFields(defaults, [&](const char* key, const auto& field) {
+        auto description = DescribeValue(field);
+        description.object["readOnly"] = Boolean(ReadOnlyLarge(key));
+        for (const auto& [name, help] : kLargeIconGuidance)
+            if (name == key)
+            {
+                description.object.emplace("description", String(std::string(help)));
+                break;
+            }
+        fields.object.emplace(key, std::move(description));
+    });
+    return fields;
+}
+
 Value HandleIconSettings(std::string_view method, const Value& params,
     const Target& target, const IconSettingsContext& context)
 {
@@ -218,7 +242,7 @@ Value HandleIconSettings(std::string_view method, const Value& params,
             response.object.emplace("choices", ToValue(snapshot.themes));
             if (catalogue)
             {
-                response.object.emplace("fields", DescribeValue(snapshot.current.settings));
+                response.object.emplace("fields", DescribeIconAppearanceFields(snapshot.current.settings));
                 response.object.emplace("actions", Actions({"preview", "inherit", "previewInherit", "cancel"}));
             }
             return response;
@@ -277,19 +301,8 @@ Value HandleIconSettings(std::string_view method, const Value& params,
             response.object.emplace("error", String(snapshot.error));
             if (catalogue)
             {
-                auto fields = Object();
                 const auto defaults = snapshot.defaultConfig.empty() ? LargeIconConfig{} : Config(snapshot.defaultConfig);
-                VisitLargeIconFields(defaults, [&](const char* key, const auto& field) {
-                    auto description = DescribeValue(field); description.object["readOnly"] = Boolean(ReadOnlyLarge(key));
-                    for (const auto& [name, help] : kLargeIconGuidance)
-                        if (name == key)
-                        {
-                            description.object.emplace("description", String(std::string(help)));
-                            break;
-                        }
-                    fields.object.emplace(key, std::move(description));
-                });
-                response.object.emplace("fields", std::move(fields));
+                response.object.emplace("fields", DescribeLargeIconFields(defaults));
                 response.object.emplace("actions", Actions({"preview", "cancel", "refresh", "import", "library", "restoreNormal"}));
                 response.object.emplace("exclusiveEditSession", Boolean(true));
             }
