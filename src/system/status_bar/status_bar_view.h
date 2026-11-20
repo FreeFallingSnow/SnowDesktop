@@ -71,11 +71,11 @@ bool SameStatusBarPalette(const StatusBarPalette&, const StatusBarPalette&);
 // rejection does not change any geometry; variable reservations arrange again.
 bool RestoreStatusBarContentLayout(std::vector<StatusBarItem>&,
     const std::vector<StatusBarItem>& previous, bool mergedDock, bool frameReusable);
-// Use after successful layout retention (and any retained tray translation).
-// Painted envelopes include the low-alpha fringe, without changing hit bounds.
+// Compare two arranged frames. A different previous tray viewport is needed
+// only when reflow moved its clipping edge. Paint bounds include the ink fringe.
 std::vector<RECT> StatusBarContentDamage(const std::vector<StatusBarItem>&,
     const std::vector<StatusBarItem>& previous, UINT width, UINT height, float scale,
-    const StatusBarTrayScroll&, RECT additional = {});
+    const StatusBarTrayScroll&, RECT additional = {}, std::optional<RECT> previousTrayViewport = {});
 inline std::size_t StatusBarControlPart(float localDip, bool hasBattery = true)
 { return localDip < 28 ? 0 : (localDip < 56 || !hasBattery) ? 1 : 2; }
 inline std::optional<std::size_t> HitTestStatusBarItems(const std::vector<StatusBarItem>& items, POINT point)

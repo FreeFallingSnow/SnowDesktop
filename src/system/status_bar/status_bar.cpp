@@ -1127,10 +1127,28 @@ struct StatusBar::Impl
             if (partialCandidate)
                 updatePalette = StatusBarPalette{HighContrast(), SystemColor(COLOR_WINDOW), SystemColor(COLOR_WINDOWTEXT),
                     SystemColor(COLOR_HIGHLIGHT), SystemColor(COLOR_HIGHLIGHTTEXT)};
-            const bool reusableContent = partialCandidate && SameStatusBarPalette(*retainedPalette, *updatePalette) &&
+            const bool retainedResources = partialCandidate && SameStatusBarPalette(*retainedPalette, *updatePalette);
+            bool reusableContent = retainedResources &&
                 (focusFrame ? RetainStatusBarPreparedLayout(items, previousItems, focusFrame->scroll, trayScroll,
                     mergedDockHeight > 0, focusFrame->layoutReusable) :
                     same || RestoreStatusBarContentLayout(items, previousItems, mergedDockHeight > 0, retainedFrameValid));
+            std::optional<RECT> previousTrayViewport;
+            if (!reusableContent && retainedResources && trayOnly && !scrollFrame && !focusFrame)
+            {
+                // Tray registration changes can move cells without changing
+                // the surface, colors, or font snapshot used to draw them.
+                auto arrangedScroll = trayScroll;
+                bool arranged = false;
+                const auto result = ArrangeStatusBarContent(owner.text.Get(), drawResources.format.Get(), items,
+                    w, h, TrayScale(), mergedDockHeight > 0, owner.settings.timeNotificationRightAligned,
+                    arrangedScroll, dockQuickSearch, &arranged);
+                if (SUCCEEDED(result) && arranged)
+                {
+                    previousTrayViewport = trayScroll.viewport;
+                    trayScroll = arrangedScroll;
+                    reusableContent = true;
+                }
+            }
             if (reusableContent && (scrollFrame || focusFrame || !same || !IsRectEmpty(&interactionDamage)) &&
                 (!scrollFrame || UpdateStatusBarTrayScrollLayout(items, scrollFrame->previousOffset, trayScroll, retainedFrameValid)))
             {
@@ -1139,12 +1157,19 @@ struct StatusBar::Impl
                 std::vector<RECT> damage;
                 if (!scrollFrame)
                 {
-                    damage = StatusBarContentDamage(items, previousItems, w, h, TrayScale(), trayScroll);
+                    damage = StatusBarContentDamage(items, previousItems, w, h, TrayScale(), trayScroll,
+                        {}, previousTrayViewport);
                     for (const auto& feedback : StatusBarInteractionDamageRegions(items, paintedInteraction, InteractionVisual(), w, h))
                         AddStatusBarInteractionDamage(damage, feedback);
                     if (focusFrame && focusFrame->scroll.offset != trayScroll.offset)
                         AddStatusBarInteractionDamage(damage, trayScroll.viewport);
-                    if (damage.empty()) { TraceValue("paint.empty_damage"); SyncTooltip(); return; }
+                    if (damage.empty())
+                    {
+                        if (previousTrayViewport) PublishTrayGeometry();
+                        TraceValue("paint.empty_damage");
+                        SyncTooltip();
+                        return;
+                    }
                 }
                 paintDirty = true;
                 PublishTrayGeometry();
@@ -1163,6 +1188,8 @@ struct StatusBar::Impl
                 const auto drawnInteraction = InteractionVisual();
                 const auto result = PaintSceneUpdates(damage, *updatePalette, drawnInteraction);
                 TraceValue(SUCCEEDED(result) ? "draw.partial.success" : "draw.partial.failure");
+                if (SUCCEEDED(result) && previousTrayViewport)
+                    TraceValue("draw.tray_layout.partial");
                 painting = false;
                 if (SUCCEEDED(result) && ReplayTrayScrollPaint(prepareHidden, trayOnly, scrollFrame, presentation)) return;
                 if (result == E_INVALIDARG)
@@ -1278,6 +1305,8 @@ struct StatusBar::Impl
             TraceValue(SUCCEEDED(surfaceResult) ? "surface.end.success" : "surface.end.failure");
             const auto result = FAILED(contentResult) ? contentResult : !prepared ? E_FAIL : surfaceResult;
             TraceValue(SUCCEEDED(result) ? "draw.full.success" : "draw.full.failure");
+            if (SUCCEEDED(result))
+                performance::Value("status_bar", "full_update_pixels", {}, static_cast<double>(w) * h);
             painting = false;
             if (SUCCEEDED(result))
             {
@@ -1312,6 +1341,7 @@ struct StatusBar::Impl
         HRESULT PaintSceneUpdates(std::span<const RECT> damage, const StatusBarPalette& palette,
             const StatusBarInteractionVisualState& drawnInteraction)
         {
+            double pixels = 0;
             for (const auto& region : damage)
             {
                 const auto result = backdrop.UpdateSrgbScene(SceneContentKey(), region,
@@ -1323,7 +1353,9 @@ struct StatusBar::Impl
                             &drawResources, &retainedFrameValid, true);
                     });
                 if (FAILED(result)) return result;
+                pixels += static_cast<double>(region.right - region.left) * (region.bottom - region.top);
             }
+            performance::Value("status_bar", "partial_update_pixels", {}, pixels);
             return S_OK;
         }
         void PaintHover()
@@ -1607,6 +1639,7 @@ struct StatusBar::Impl
             }
             if (message == tray::ChangeMessage())
             {
+                performance::Scope trace("status_bar", "tray.change");
                 if (self->owner.tray && self->owner.tray->AcknowledgeChange(window, static_cast<std::uint64_t>(wp)))
                     self->Paint(false, true);
                 return 0;

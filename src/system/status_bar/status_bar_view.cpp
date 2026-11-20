@@ -464,18 +464,29 @@ bool RestoreStatusBarContentLayout(std::vector<StatusBarItem>& items,
 }
 std::vector<RECT> StatusBarContentDamage(const std::vector<StatusBarItem>& items,
     const std::vector<StatusBarItem>& previous, UINT width, UINT height, float scale,
-    const StatusBarTrayScroll& scroll, RECT additional)
+    const StatusBarTrayScroll& scroll, RECT additional, std::optional<RECT> previousTrayViewport)
 {
     std::vector<RECT> result;
     const RECT client{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
-    if (items.size() != previous.size()) return {client};
+    const RECT oldViewport = previousTrayViewport.value_or(scroll.viewport);
+    const bool viewportChanged = !EqualRect(&oldViewport, &scroll.viewport);
     const auto add = [&](RECT bounds) { RECT clipped{}; IntersectRect(&clipped, &bounds, &client); AddStatusBarDamage(result, clipped); };
-    for (std::size_t i = 0; i < items.size(); ++i)
-        if (!SameStatusBarItemPixels(items[i], previous[i]))
-        {
-            add(StatusBarItemPaintBounds(previous[i], scale, scroll.viewport));
-            add(StatusBarItemPaintBounds(items[i], scale, scroll.viewport));
-        }
+    const auto common = std::min(items.size(), previous.size());
+    for (std::size_t i = 0; i < common; ++i)
+    {
+        const auto& before = previous[i];
+        const auto& after = items[i];
+        if (SameStatusBarItemPixels(after, before) &&
+            (!previousTrayViewport || (EqualRect(&after.bounds, &before.bounds) &&
+                EqualRect(&after.contentBounds, &before.contentBounds) && !(viewportChanged && after.icon))))
+            continue;
+        add(StatusBarItemPaintBounds(before, scale, oldViewport));
+        add(StatusBarItemPaintBounds(after, scale, scroll.viewport));
+    }
+    for (std::size_t i = common; i < previous.size(); ++i)
+        add(StatusBarItemPaintBounds(previous[i], scale, oldViewport));
+    for (std::size_t i = common; i < items.size(); ++i)
+        add(StatusBarItemPaintBounds(items[i], scale, scroll.viewport));
     add(additional);
     return result;
 }
