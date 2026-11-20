@@ -1409,17 +1409,18 @@ void WidgetEngine::RuntimeOpenWidgetPanel(
         return;
     LuaWidgetPanelRequest request;
     request.widgetId = widgetId;
-    request.desktopGesture = trustedGestureState_.Active() &&
-        CurrentWidgetSurface(d2dState_) == "desktop";
+    const std::string_view sourceSurface = CurrentWidgetSurface(d2dState_);
+    const bool trustedGesture = trustedGestureState_.Active();
+    request.desktopGesture = trustedGesture && sourceSurface == "desktop";
+    request.panelGesture = trustedGesture && sourceSurface == "panel";
     if (request.desktopGesture && d2dState_)
         request.desktopOpenerKey = d2dState_->desktopPopupOpenerKey;
     request.title = std::move(title);
     request.surface = "panel";
     request.width = std::clamp(width, 320, 900);
     request.height = std::clamp(height, 280, 900);
-    const std::string_view sourceSurface = CurrentWidgetSurface(d2dState_);
     const int index = FindWidget(widgetId);
-    if (trustedGestureState_.Active() && IsPanelSurface(sourceSurface) && index >= 0)
+    if (trustedGesture && IsPanelSurface(sourceSurface) && index >= 0)
     {
         const auto& widget = widgets_[index];
         float x = 0.0f, y = 0.0f;

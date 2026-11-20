@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/popup/popup_resize_transition.h"
 #include "diagnostics/diagnostic_log.h"
 #include "diagnostics/performance_trace.h"
 #include "widget/runtime/widget_engine.h"
@@ -12,6 +13,12 @@
 
 namespace
 {
+bool SamePanelSize(const RECT& first, const RECT& second)
+{
+    return first.right - first.left == second.right - second.left &&
+        first.bottom - first.top == second.bottom - second.top;
+}
+
 void InvalidateLuaPanelDesktopFootprint(HWND desktop, RECT panel, RECT snapshot, RECT source = {})
 {
     if (!desktop || !IsWindow(desktop)) return;
@@ -68,15 +75,23 @@ void DesktopApp::OpenLuaWidgetPanel(
     // Distinct desktop elements may open panels with the same title. A repeat
     // of the current opener leaves dismissal to the outside-click policy.
     const bool sameWidget = luaWidgetPanelRequest_.widgetId == request.widgetId;
-    const bool samePanel = sameWidget &&
+    const bool sameSurface = sameWidget &&
         luaWidgetPanelRequest_.surface == request.surface &&
         luaWidgetPanelRequest_.title == request.title &&
-        luaWidgetPanelRequest_.anchorKey == request.anchorKey &&
+        luaWidgetPanelRequest_.anchorKey == request.anchorKey;
+    const bool samePanel = sameSurface &&
         luaWidgetPanelRequest_.desktopOpenerKey == request.desktopOpenerKey;
     if (request.desktopGesture && samePanel)
         return;
     if (widgetEngine_)
         widgetEngine_->SetPanelTheme(collectionPopupAppearance_);
+    // An action inside the current panel inherits its original opener.
+    if (request.panelGesture && sameSurface && !luaWidgetPanelFinalizing_ &&
+        luaWidgetPanelAnimation_.IsInteractive())
+    {
+        RefreshLuaWidgetPanel(request);
+        return;
+    }
     {
         wchar_t message[320]{};
         swprintf_s(
@@ -166,6 +181,60 @@ void DesktopApp::OpenLuaWidgetPanel(
     }
 }
 
+void DesktopApp::RefreshLuaWidgetPanel(const LuaWidgetPanelRequest& request)
+{
+    namespace motion = snowdesktop::animation;
+    using namespace snowdesktop::popup_resize_transition;
+
+    const RECT previousLayout = GetLuaWidgetPanelLayoutRect();
+    const RECT previous = luaWidgetPanelResize_
+        ? luaWidgetPanelResize_->Panel(previousLayout) : previousLayout;
+    luaWidgetPanelRequest_.width = request.width;
+    luaWidgetPanelRequest_.height = request.height;
+    if (!SamePanelSize(previousLayout, GetLuaWidgetPanelLayoutRect()))
+    {
+        if (IsRectEmpty(&luaWidgetPanelResizeOrigin_))
+            luaWidgetPanelResizeOrigin_ = previousLayout;
+        const RECT target = GetLuaWidgetPanelLayoutRect();
+        luaWidgetPanelResize_.reset();
+        if (!IsRectEmpty(&previous) && !IsRectEmpty(&target) &&
+            !SamePanelSize(previous, target) && motion::RuntimePopupEffect() != motion::NoEffect)
+        {
+            // The opening snapshot has the old content and dimensions.
+            if (luaWidgetPanelAnimation_.IsAnimating())
+            {
+                luaWidgetPanelAnimation_.ShowImmediately();
+                if (const auto token = std::exchange(luaPanelAnimationFrameToken_, 0))
+                    uiAnimationScheduler_.Cancel(token);
+                ResetLuaWidgetPanelAnimationCache();
+            }
+            auto transition = std::make_shared<Transition>(Geometry{previous, {}}, Geometry{target, {}},
+                snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(),
+                motion::RuntimeDurationScale());
+            luaWidgetPanelResize_ = transition;
+            const auto token = uiAnimationScheduler_.StartAnimation(snowdesktop::UiAnimationSurface::Popup,
+                [this, weak = std::weak_ptr<Transition>(transition)](double now) {
+                    const auto current = weak.lock();
+                    if (!current || luaWidgetPanelResize_ != current ||
+                        luaWidgetPanelAnimation_.IsClosing() || exitRequested_)
+                        return false;
+                    const bool keep = motion::RuntimePopupEffect() != motion::NoEffect &&
+                        current->Advance(now);
+                    if (!keep)
+                        luaWidgetPanelResize_.reset();
+                    uiAnimationScheduler_.RequestFramePresentation(&luaWidgetPanelResize_, [this] {
+                        if (IsLuaPanelHostedByFloatingWindow() && !luaWidgetPanelAnimation_.IsClosing())
+                            UpdateFloatingPopupWindowBounds(true, false);
+                    });
+                    return keep;
+                });
+            if (!token)
+                luaWidgetPanelResize_.reset();
+        }
+    }
+    UpdateFloatingPopupWindowBounds(false);
+}
+
 void DesktopApp::FinalizeCloseLuaWidgetPanel(
     bool allowPendingOpen)
 {
@@ -191,6 +260,8 @@ void DesktopApp::FinalizeCloseLuaWidgetPanel(
     luaWidgetPanelRequest_ = {};
     luaWidgetPanelRect_ = {};
     luaWidgetPanelAnchorPoint_ = {};
+    luaWidgetPanelResizeOrigin_ = {};
+    luaWidgetPanelResize_.reset();
     if (luaWidgetPanelMouseDown_ || luaWidgetPanelCaptureHwnd_)
     {
         mouseDown_ = false;

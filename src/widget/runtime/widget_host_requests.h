@@ -66,6 +66,7 @@ struct LuaWidgetPanelRequest
     bool dismissOnEscape = true;
     bool modal = false;
     bool desktopGesture = false;
+    bool panelGesture = false;
 };
 
 struct LogicalSlotPickerRequest

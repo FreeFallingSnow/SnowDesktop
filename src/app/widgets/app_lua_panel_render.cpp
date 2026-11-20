@@ -3,10 +3,11 @@
 #include "common/utils.h"
 #include "app/navigation/quick_navigation_theme.h"
 #include "app/popup/popup_opacity_scope.h"
+#include "app/popup/popup_resize_transition.h"
 
 // Lua-widget panel layout and rendering.
 
-RECT DesktopApp::GetLuaWidgetPanelRect() const
+RECT DesktopApp::GetLuaWidgetPanelLayoutRect() const
 {
     if (luaWidgetPanelRequest_.widgetId.empty())
         return {};
@@ -140,14 +141,20 @@ RECT DesktopApp::GetLuaWidgetPanelRect() const
         luaWidgetPanelAnchorPoint_.x + 12;
     int top =
         luaWidgetPanelAnchorPoint_.y + 12;
-    if (left + width > work.right - marginX)
-        left =
-            luaWidgetPanelAnchorPoint_.x -
-            width - 12;
-    if (top + height > work.bottom - marginY)
-        top =
-            luaWidgetPanelAnchorPoint_.y -
-            height - 12;
+    if (!IsRectEmpty(&luaWidgetPanelResizeOrigin_))
+    {
+        const RECT& origin = luaWidgetPanelResizeOrigin_;
+        // Keep the edge facing the original opener fixed through resizes.
+        left = origin.right <= luaWidgetPanelAnchorPoint_.x ? origin.right - width : origin.left;
+        top = origin.bottom <= luaWidgetPanelAnchorPoint_.y ? origin.bottom - height : origin.top;
+    }
+    else
+    {
+        if (left + width > work.right - marginX)
+            left = luaWidgetPanelAnchorPoint_.x - width - 12;
+        if (top + height > work.bottom - marginY)
+            top = luaWidgetPanelAnchorPoint_.y - height - 12;
+    }
     left = std::clamp(
         left,
         static_cast<int>(work.left + marginX),
@@ -158,6 +165,18 @@ RECT DesktopApp::GetLuaWidgetPanelRect() const
         static_cast<int>(work.bottom - height - marginY));
     return MakeRect(
         left, top, left + width, top + height);
+}
+
+RECT DesktopApp::GetLuaWidgetPanelRect() const
+{
+    const RECT layout = GetLuaWidgetPanelLayoutRect();
+    return luaWidgetPanelResize_ ? luaWidgetPanelResize_->Panel(layout) : layout;
+}
+
+RECT DesktopApp::GetLuaWidgetPanelReservedRect() const
+{
+    const RECT layout = GetLuaWidgetPanelLayoutRect();
+    return luaWidgetPanelResize_ ? luaWidgetPanelResize_->ReservedPanel(layout) : layout;
 }
 
 POINT DesktopApp::GetLuaWidgetPanelAnimationAnchor(const RECT& panel) const

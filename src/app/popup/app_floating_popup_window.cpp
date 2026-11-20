@@ -401,7 +401,7 @@ RECT DesktopApp::CalculateFloatingPopupWindowBounds() const
         if (luaWidgetPanelRequest_.modal && hwnd_ && IsWindow(hwnd_))
             GetClientRect(hwnd_, &panelBounds);
         else
-            panelBounds = InflateCopy(GetLuaWidgetPanelRect(), 6);
+            panelBounds = InflateCopy(GetLuaWidgetPanelReservedRect(), 6);
         bounds = UnionRects(bounds, panelBounds);
     }
     return bounds;

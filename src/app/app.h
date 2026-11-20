@@ -2626,7 +2626,9 @@ private:
     std::span<const snowdesktop::PanelBackdropIcon> CollectionPopupIconBackdrops() const;
     void PublishCollectionPopupIconBackdrops(snowdesktop::CollectionPopupIconMaterials::Icons icons);
     void PublishCollectionPopupFanBackdrops();
+    RECT GetLuaWidgetPanelLayoutRect() const;
     RECT GetLuaWidgetPanelRect() const;
+    RECT GetLuaWidgetPanelReservedRect() const;
     static constexpr float kLuaWidgetPanelCornerRadius = 18.0f;
     POINT GetLuaWidgetPanelAnimationAnchor(const RECT& panel) const;
     RECT GetLuaWidgetPanelContentRect() const;
@@ -2638,6 +2640,7 @@ private:
     void ResetLuaWidgetPanelAnimationCache();
     void OpenLuaWidgetPanel(
         const LuaWidgetPanelRequest& request);
+    void RefreshLuaWidgetPanel(const LuaWidgetPanelRequest& request);
     void CloseLuaWidgetPanel(
         const std::wstring& widgetId = L"",
         const char* reason = "dismissed");
@@ -4743,6 +4746,8 @@ private:
     bool luaWidgetPanelAnimationCompositorDriven_ = false;
     RECT luaWidgetPanelRect_{};
     POINT luaWidgetPanelAnchorPoint_{};
+    RECT luaWidgetPanelResizeOrigin_{};
+    std::shared_ptr<snowdesktop::popup_resize_transition::Transition> luaWidgetPanelResize_;
     bool luaWidgetPanelMouseDown_ = false;
     std::uint32_t luaPanelOutsidePressGeneration_ = 0;
     HWND luaWidgetPanelCaptureHwnd_ = nullptr;
