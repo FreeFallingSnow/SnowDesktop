@@ -2747,7 +2747,7 @@
   "settings.debug.profile.nameHint": "重複しない名前を1～60文字で入力してください。新しい環境は空の設定とレイアウトで開始します。",
   "settings.agentOperations.title": "Agent 操作",
   "settings.agentOperations.skill": "SnowDesktop 操作 Skill",
-  "settings.agentOperations.description": "AI アシスタントがローカル制御インターフェイスを通じて SnowDesktop を操作できます。",
+  "settings.agentOperations.description": "下の SnowDesktop 操作 Skill をインストールすると、AI アシスタントにデスクトップのウィジェットの並べ替えや、使い方に合わせた Dock とステータスバーの設定変更を頼めます。",
   "settings.contextMenu.expandAllExtensions": "すべての拡張項目を表示",
   "settings.contextMenu.expandAllExtensions.description": "現在の選択対象から読み取った拡張メニュー項目をすべて表示し、下の表示設定を無効にします。オフにすると元の設定に戻ります。",
   "app.settings.context_menu_opaque_follow_system": "Win11スタイル-不透明-システムの明暗に追従",
@@ -2945,5 +2945,6 @@
   "app.settings.icon_shadow_popup": "ポップアップ内のアイコン",
   "app.settings.icon_shadow_quick_navigation": "クイックナビゲーションのアイコン",
   "app.settings.icon_shadow_subject": "装飾アイコン本体の影",
-  "app.settings.widgets_permission_clipboard_observe": "バックグラウンドでクリップボードの内容を読み取る"
+  "app.settings.widgets_permission_clipboard_observe": "バックグラウンドでクリップボードの内容を読み取る",
+  "settings.agentOperations.introTitle": "AI でデスクトップを整理"
 }

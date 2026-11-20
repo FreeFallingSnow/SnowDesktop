@@ -2747,7 +2747,7 @@
   "settings.debug.profile.nameHint": "Geben Sie einen eindeutigen Namen mit 1–60 Zeichen ein. Neue Umgebungen beginnen mit leeren Einstellungen und Layouts.",
   "settings.agentOperations.title": "Agent-Steuerung",
   "settings.agentOperations.skill": "Skill zur SnowDesktop-Steuerung",
-  "settings.agentOperations.description": "Lassen Sie Ihren KI-Assistenten SnowDesktop über die lokale Steuerschnittstelle bedienen.",
+  "settings.agentOperations.description": "Installieren Sie den unten aufgeführten Skill zur SnowDesktop-Steuerung. Danach können Sie Ihren KI-Assistenten bitten, Desktop-Widgets neu anzuordnen oder das Dock und die Statusleiste an Ihre Gewohnheiten anzupassen.",
   "settings.contextMenu.expandAllExtensions": "Alle Erweiterungseinträge anzeigen",
   "settings.contextMenu.expandAllExtensions.description": "Alle für die aktuelle Auswahl gelesenen Erweiterungsmenüeinträge anzeigen und die Anzeigeeinstellungen darunter deaktivieren. Beim Ausschalten werden Ihre Einstellungen wiederhergestellt.",
   "app.settings.context_menu_opaque_follow_system": "Win11-Stil - Deckend - System (Hell/Dunkel)",
@@ -2945,5 +2945,6 @@
   "app.settings.icon_shadow_popup": "Symbole in Pop-ups",
   "app.settings.icon_shadow_quick_navigation": "Symbole in der Schnellnavigation",
   "app.settings.icon_shadow_subject": "Schatten des verschönerten Symbolmotivs",
-  "app.settings.widgets_permission_clipboard_observe": "Zwischenablageinhalte im Hintergrund lesen"
+  "app.settings.widgets_permission_clipboard_observe": "Zwischenablageinhalte im Hintergrund lesen",
+  "settings.agentOperations.introTitle": "Den Desktop mit KI organisieren"
 }

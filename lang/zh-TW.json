@@ -2747,7 +2747,7 @@
   "settings.debug.profile.nameHint": "請輸入不重複的名稱，長度為1至60個字元。新環境使用空白設定與版面配置。",
   "settings.agentOperations.title": "Agent 操作",
   "settings.agentOperations.skill": "SnowDesktop 操作 Skill",
-  "settings.agentOperations.description": "讓 AI 助手透過本機控制介面操作 SnowDesktop。",
+  "settings.agentOperations.description": "安裝下方的 SnowDesktop 操作 Skill 後，您可以請 AI 助理重新排列桌面小工具，或依照您的使用習慣調整 Dock 和狀態列設定。",
   "settings.contextMenu.expandAllExtensions": "展開全部擴充項目",
   "settings.contextMenu.expandAllExtensions.description": "顯示目前物件讀取到的全部擴充功能表項目，並停用下方的顯示設定；關閉後恢復原設定。",
   "app.settings.context_menu_opaque_follow_system": "Win11風格-不透明-深淺跟隨",
@@ -2945,5 +2945,6 @@
   "app.settings.icon_shadow_popup": "彈出視窗中的圖示",
   "app.settings.icon_shadow_quick_navigation": "快速導覽中的圖示",
   "app.settings.icon_shadow_subject": "美化主體陰影",
-  "app.settings.widgets_permission_clipboard_observe": "在背景讀取剪貼簿內容"
+  "app.settings.widgets_permission_clipboard_observe": "在背景讀取剪貼簿內容",
+  "settings.agentOperations.introTitle": "讓 AI 幫您整理桌面"
 }

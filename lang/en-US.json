@@ -2747,7 +2747,7 @@
   "settings.debug.profile.nameHint": "Enter a unique name of 1–60 characters. New environments start with empty settings and layouts.",
   "settings.agentOperations.title": "Agent Operations",
   "settings.agentOperations.skill": "SnowDesktop Control Skill",
-  "settings.agentOperations.description": "Let your AI assistant operate SnowDesktop through its local control interface.",
+  "settings.agentOperations.description": "Install the SnowDesktop Control Skill below, then ask your AI assistant to rearrange desktop widgets or adjust the Dock and status bar to suit the way you work.",
   "settings.contextMenu.expandAllExtensions": "Show all extension items",
   "settings.contextMenu.expandAllExtensions.description": "Show every extension menu item read for the current selection and disable the display settings below. Turn off to restore your settings.",
   "app.settings.context_menu_opaque_follow_system": "Win11 Style - Opaque - Follow Light/Dark",
@@ -2945,5 +2945,6 @@
   "app.settings.icon_shadow_popup": "Icons in pop-ups",
   "app.settings.icon_shadow_quick_navigation": "Icons in Quick Navigation",
   "app.settings.icon_shadow_subject": "Beautified icon subject shadow",
-  "app.settings.widgets_permission_clipboard_observe": "Read clipboard content in the background"
+  "app.settings.widgets_permission_clipboard_observe": "Read clipboard content in the background",
+  "settings.agentOperations.introTitle": "Organize your desktop with AI"
 }

@@ -2747,7 +2747,7 @@
   "settings.debug.profile.nameHint": "Digite um nome exclusivo de 1 a 60 caracteres. Novos ambientes começam com configurações e layouts vazios.",
   "settings.agentOperations.title": "Operações do agente",
   "settings.agentOperations.skill": "Skill de controle do SnowDesktop",
-  "settings.agentOperations.description": "Permita que seu assistente de IA controle o SnowDesktop pela interface de controle local.",
+  "settings.agentOperations.description": "Instale o Skill de controle do SnowDesktop abaixo. Depois, peça ao seu assistente de IA para reorganizar os widgets da área de trabalho ou ajustar o Dock e a barra de status do jeito que você prefere.",
   "settings.contextMenu.expandAllExtensions": "Mostrar todos os itens de extensões",
   "settings.contextMenu.expandAllExtensions.description": "Mostra todos os itens de menu de extensões lidos para a seleção atual e desativa as configurações de exibição abaixo. Desative para restaurar suas configurações.",
   "app.settings.context_menu_opaque_follow_system": "Estilo Win11 - Opaco - Seguir claro/escuro",
@@ -2945,5 +2945,6 @@
   "app.settings.icon_shadow_popup": "Ícones em janelas pop-up",
   "app.settings.icon_shadow_quick_navigation": "Ícones na navegação rápida",
   "app.settings.icon_shadow_subject": "Sombra da figura do ícone estilizado",
-  "app.settings.widgets_permission_clipboard_observe": "Ler o conteúdo da área de transferência em segundo plano"
+  "app.settings.widgets_permission_clipboard_observe": "Ler o conteúdo da área de transferência em segundo plano",
+  "settings.agentOperations.introTitle": "Organize sua área de trabalho com IA"
 }
