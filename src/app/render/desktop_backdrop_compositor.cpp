@@ -27,6 +27,7 @@
 #include "icons/large_icon_shape_geometry.h"
 #include "icons/icon_backdrop_geometry.h"
 #include "platform/shell_overlay_window.h"
+#include "widget/view/widget_native_marquee.h"
 
 #include <d2d1_1.h>
 #include <d3d11.h>
@@ -57,6 +58,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <map>
@@ -453,6 +455,14 @@ SharedBackdropCompositionContext& SharedBackdropContext()
 
 } // namespace
 
+struct DesktopBackdropCompositor::SrgbMarqueeScene
+{
+    wuc::SpriteVisual body{nullptr};
+    wuc::CompositionSurfaceBrush flattened{nullptr};
+    std::vector<wuc::AnimationController> animations;
+    bool paused = false;
+};
+
 struct DesktopBackdropCompositor::Impl
 {
     struct PanelVisual
@@ -659,6 +669,8 @@ struct DesktopBackdropCompositor::Impl
         };
         Buffer active, candidate;
         wuc::CompositionSurfaceBrush sceneBrush{nullptr};
+        wuc::CompositionEffectBrush sceneEffect{nullptr};
+        PreparedMarquees marquees;
         RECT stagedFrame{};
         bool staged = false;
         wuc::SpriteVisual visual{nullptr};
@@ -3171,12 +3183,146 @@ bool DesktopBackdropCompositor::StageSrgbSceneFrame(HWND window, std::uintptr_t 
     }
 }
 
+DesktopBackdropCompositor::PreparedMarquees DesktopBackdropCompositor::PrepareSrgbMarquees(
+    HWND window, ID2D1Device* device, const RECT& clientFrame, const RECT& allowed,
+    std::span<const snowdesktop::widget_runtime::NativeMarqueeText> marquees)
+{
+    if (!window || !device || marquees.empty() || IsRectEmpty(&clientFrame) || IsRectEmpty(&allowed))
+        return {};
+    snowdesktop::performance::Scope trace("composition.srgb", "prepare_marquee");
+    try
+    {
+        if (!impl_->compositor && !impl_->EnsureDispatcherQueue()) return {};
+        impl_->EnsureSrgbContentTarget(window);
+        impl_->EnsureMaskGraphicsDevice(device);
+        const auto& compositor = impl_->compositor;
+        auto result = std::make_shared<SrgbMarqueeScene>();
+        auto root = compositor.CreateContainerVisual();
+        auto body = compositor.CreateSpriteVisual();
+        const wfn::float2 size{static_cast<float>(clientFrame.right - clientFrame.left),
+            static_cast<float>(clientFrame.bottom - clientFrame.top)};
+        root.Size(size);
+        body.Size(size);
+        root.Children().InsertAtBottom(body);
+        for (const auto& marquee : marquees)
+        {
+            const auto& box = marquee.viewport;
+            const float cycle = marquee.textWidth + marquee.gap;
+            if (!marquee.scrolling || !marquee.layout || !std::isfinite(cycle) || cycle <= 0 ||
+                !std::isfinite(marquee.speed) || marquee.speed <= 0 ||
+                !std::isfinite(marquee.offset) || !std::isfinite(marquee.originY) || !std::isfinite(marquee.alpha) ||
+                !(box.left >= allowed.left && box.right <= allowed.right &&
+                    box.top >= allowed.top && box.bottom <= allowed.bottom &&
+                    box.right > box.left && box.bottom > box.top) ||
+                marquee.originX != box.left)
+                return {};
+
+            DWRITE_OVERHANG_METRICS ink{};
+            winrt::check_hresult(marquee.layout->GetOverhangMetrics(&ink));
+            const float guard = std::ceil(std::max(2.0f, ink.left + 1.0f));
+            const float width = std::ceil(guard + 3.0f * cycle + std::max(2.0f, ink.right + 1.0f));
+            const float top = std::floor(box.top);
+            const float height = std::ceil(box.bottom - top);
+            if (!(width > 0 && width <= D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION &&
+                height > 0 && height <= D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION))
+                return {};
+            const auto duration = std::chrono::duration<double>(cycle / marquee.speed);
+            if (duration < std::chrono::milliseconds(1) || duration > std::chrono::hours(24))
+                return {};
+
+            const auto strip = impl_->CreateSrgbContentBuffer({static_cast<LONG>(width), static_cast<LONG>(height)});
+            Impl::PaintSrgbSurface(strip.surface, [&](ID2D1DeviceContext* target, POINT origin) {
+                target->SetDpi(96.f, 96.f);
+                target->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+                target->SetTransform(D2D1::Matrix3x2F::Identity());
+                target->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+                target->Clear(D2D1::ColorF(0, 0.f));
+                const auto color = D2D1::ColorF(static_cast<UINT32>(marquee.color),
+                    std::clamp(marquee.alpha, 0.0f, 1.0f));
+                winrt::com_ptr<ID2D1SolidColorBrush> inkBrush;
+                const auto hr = target->CreateSolidColorBrush(color, inkBrush.put());
+                if (FAILED(hr)) return hr;
+                for (int repeat = 0; repeat != 3; ++repeat)
+                    target->DrawTextLayout({origin.x + guard + repeat * cycle, origin.y + marquee.originY - top},
+                        marquee.layout.Get(), inkBrush.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                return S_OK;
+            });
+            auto clipped = compositor.CreateContainerVisual();
+            clipped.Offset({box.left - clientFrame.left, box.top - clientFrame.top, 0.f});
+            clipped.Size({box.right - box.left, box.bottom - box.top});
+            clipped.Clip(compositor.CreateInsetClip());
+            auto glyphs = compositor.CreateSpriteVisual();
+            auto brush = compositor.CreateSurfaceBrush(strip.surface);
+            brush.Stretch(wuc::CompositionStretch::None);
+            brush.HorizontalAlignmentRatio(0.f);
+            brush.VerticalAlignmentRatio(0.f);
+            brush.BitmapInterpolationMode(wuc::CompositionBitmapInterpolationMode::Linear);
+            glyphs.Brush(brush);
+            glyphs.Size({width, height});
+            // Start at the saved phase. Three copies let a full revolution
+            // wrap from that phase without a host update or an exposed gap.
+            const float start = -guard - std::fmod(std::max(0.0f, marquee.offset), cycle);
+            glyphs.Offset({start, top - box.top, 0.f});
+            auto slide = compositor.CreateScalarKeyFrameAnimation();
+            slide.Duration(std::chrono::duration_cast<wf::TimeSpan>(duration));
+            slide.IterationBehavior(wuc::AnimationIterationBehavior::Forever);
+            slide.InsertKeyFrame(0.f, start);
+            slide.InsertKeyFrame(1.f, start - cycle, compositor.CreateLinearEasingFunction());
+            glyphs.StartAnimation(L"Offset.X", slide);
+            auto animation = glyphs.TryGetAnimationController(L"Offset.X");
+            if (!animation) return {};
+            result->animations.push_back(std::move(animation));
+            clipped.Children().InsertAtTop(glyphs);
+            root.Children().InsertAtTop(clipped);
+        }
+
+        // The detached tree is sampled as a single scene. The live backdrop
+        // still uses the same effect, one visible visual, and one opacity.
+        auto surface = compositor.CreateVisualSurface();
+        surface.SourceSize(size);
+        surface.SourceVisual(root);
+        auto flattened = compositor.CreateSurfaceBrush(surface);
+        flattened.Stretch(wuc::CompositionStretch::None);
+        flattened.HorizontalAlignmentRatio(0.f);
+        flattened.VerticalAlignmentRatio(0.f);
+        flattened.BitmapInterpolationMode(wuc::CompositionBitmapInterpolationMode::NearestNeighbor);
+        result->body = std::move(body);
+        result->flattened = std::move(flattened);
+        return result;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.srgb_marquee", error.code());
+        return {};
+    }
+}
+
+bool DesktopBackdropCompositor::PauseSrgbMarquees(std::uintptr_t key)
+{
+    const auto item = impl_->srgbContent.find(key);
+    if (item == impl_->srgbContent.end() || !item->second.marquees || item->second.marquees->paused)
+        return false;
+    try
+    {
+        for (const auto& animation : item->second.marquees->animations)
+            animation.Pause();
+        item->second.marquees->paused = true;
+        impl_->srgbContentCommitPending = true;
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.pause_srgb_marquee", error.code());
+        return false;
+    }
+}
+
 bool DesktopBackdropCompositor::PublishSrgbScene(HWND window, std::uintptr_t key,
     const RECT& clientFrame, ID2D1DeviceContext* context, POINT atlasOffset, ID2D1CommandList* scene,
-    float opacity)
+    float opacity, PreparedMarquees marquees)
 {
     return StageSrgbScene(window, key, clientFrame, context, atlasOffset, scene) &&
-        PublishSrgbContent(key, opacity);
+        PublishSrgbContent(key, opacity, std::move(marquees));
 }
 
 HRESULT DesktopBackdropCompositor::UpdateSrgbScene(std::uintptr_t key, const RECT& damage,
@@ -3254,7 +3400,7 @@ bool DesktopBackdropCompositor::PresentPremultipliedPixels(HWND window, SIZE siz
         }) && PublishSrgbContent(key) && CommitSrgbContent();
 }
 
-bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opacity)
+bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opacity, PreparedMarquees marquees)
 {
     const auto entry = impl_->srgbContent.find(key);
     if (entry == impl_->srgbContent.end() || !entry->second.staged) return false;
@@ -3277,6 +3423,7 @@ bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opa
             visual.Brush(effect);
             impl_->srgbContentRoot.Children().InsertAtTop(visual);
             frame.sceneBrush = std::move(sceneBrush);
+            frame.sceneEffect = std::move(effect);
             frame.visual = std::move(visual);
             impl_->srgbContentOrderDirty = true;
         }
@@ -3288,6 +3435,16 @@ bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opa
         // Keep the backdrop input attached to the same visual across content changes.
         // The back buffer becomes visible only after its complete draw succeeded.
         if (frame.active.surface) frame.sceneBrush.Surface(frame.candidate.surface);
+        if (marquees)
+        {
+            marquees->body.Brush(frame.sceneBrush);
+            frame.sceneEffect.SetSourceParameter(L"scene", marquees->flattened);
+        }
+        else if (frame.marquees)
+        {
+            frame.sceneEffect.SetSourceParameter(L"scene", frame.sceneBrush);
+        }
+        frame.marquees = std::move(marquees);
         std::swap(frame.active, frame.candidate);
         frame.staged = false;
         frame.retirement.reset();

@@ -137,6 +137,8 @@ bool DesktopApp::SyncDesktopWidgetOcclusion(const DesktopWidget& widget, const R
     {
         pendingDesktopWidgetCompositions_.erase(widget.id);
         PauseWidgetMarqueeComposition(widget.id);
+        if (desktopBackdropCompositor_.PauseSrgbMarquees(item.BackdropOwnerKey()))
+            (void)CommitCompositionAnimationFrame();
     }
     else if (item.visible)
         pendingDesktopWidgetCompositions_.insert_or_assign(widget.id, std::nullopt);
@@ -684,6 +686,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
         }
 
         snowdesktop::widget_runtime::WidgetSurfacePaint paint;
+        DesktopBackdropCompositor::PreparedMarquees marquees;
         desktopWidgetCompositionDrawInProgress_ = true;
         item.iconBackdrops.BeginDraw();
         desktopWidgetIconBackdropsDrawing_ = &item.iconBackdrops;
@@ -706,9 +709,26 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
             struct PaintOutput
             {
                 WidgetEngine* engine;
-                ~PaintOutput() { if (engine) engine->SetDesktopSurfacePaintOutput(nullptr); }
+                ~PaintOutput()
+                {
+                    if (!engine) return;
+                    engine->SetNativeMarqueeSyncCallback({});
+                    engine->SetDesktopSurfacePaintOutput(nullptr);
+                }
             } output{widgetEngine_.get()};
             if (output.engine) output.engine->SetDesktopSurfacePaintOutput(&paint);
+            if (output.engine && !commands && item.visible && !item.occluded)
+            {
+                output.engine->SetNativeMarqueeSyncCallback([&](const std::wstring& owner,
+                    const std::vector<snowdesktop::widget_runtime::NativeMarqueeText>& labels, bool reducedMotion) {
+                    if (reducedMotion || owner != contentId || IsRectEmpty(&paint.nativeMarqueeBounds) ||
+                        !output.engine->GetScrollControls(contentId).empty())
+                        return false;
+                    marquees = desktopBackdropCompositor_.PrepareSrgbMarquees(
+                        hwnd_, d2dDevice_.Get(), contentFrame, paint.nativeMarqueeBounds, labels);
+                    return static_cast<bool>(marquees);
+                });
+            }
             luaWidget->DrawCompositionSurface(
                 context.Get(), widgetData->bounds,
                 widgetData->selected ? 2 : 0, true, output.engine ? &paint : nullptr);
@@ -762,7 +782,9 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
             if (!preparedScene)
                 preparedScene = desktopBackdropCompositor_.PublishSrgbScene(
                     hwnd_, sceneKey, contentFrame, context.Get(), updateOffset, recorded,
-                    item.visible ? item.HoverOpacity() : 0.f);
+                    item.visible ? item.HoverOpacity() : 0.f, marquees);
+            if (preparedScene && marquees)
+                snowdesktop::performance::Value("widget.composition", "native_marquee_scene", contentId, 1);
         }
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();

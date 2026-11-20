@@ -44,6 +44,7 @@ struct WidgetSurfacePaint
     Microsoft::WRL::ComPtr<ID2D1Bitmap1> background;
     std::vector<Microsoft::WRL::ComPtr<ID2D1Bitmap1>> images;
     std::optional<PersonalizationSettings> appearance;
+    RECT nativeMarqueeBounds{};
 
     std::optional<RECT> DamageFrom(const WidgetSurfacePaint& previous) const;
 };

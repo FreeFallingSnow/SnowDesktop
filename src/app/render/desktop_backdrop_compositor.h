@@ -23,6 +23,7 @@ struct ID2D1Device;
 struct IDCompositionDevice2;
 struct IDCompositionVisual;
 namespace snowdesktop::popup_motion_curve { struct Timeline; }
+namespace snowdesktop::widget_runtime { struct NativeMarqueeText; }
 namespace snowdesktop
 {
 struct PanelBackdropIcon
@@ -189,18 +190,25 @@ public:
     };
 
     using SrgbSceneDraw = std::function<HRESULT(ID2D1DeviceContext*, POINT)>;
+    struct SrgbMarqueeScene;
+    using PreparedMarquees = std::shared_ptr<SrgbMarqueeScene>;
+    PreparedMarquees PrepareSrgbMarquees(HWND window, ID2D1Device* device,
+        const RECT& clientFrame, const RECT& allowed,
+        std::span<const snowdesktop::widget_runtime::NativeMarqueeText> marquees);
+    bool PauseSrgbMarquees(std::uintptr_t key);
     bool StageSrgbSceneFrame(HWND window, std::uintptr_t key, const RECT& clientFrame,
         ID2D1Device* device, const SrgbSceneDraw& draw);
     bool StageSrgbScene(HWND window, std::uintptr_t key, const RECT& clientFrame,
         ID2D1DeviceContext* context, POINT atlasOffset, ID2D1CommandList* scene,
         const RECT* paintRect = nullptr);
     bool PublishSrgbScene(HWND window, std::uintptr_t key, const RECT& clientFrame,
-        ID2D1DeviceContext* context, POINT atlasOffset, ID2D1CommandList* scene, float opacity = 1.f);
+        ID2D1DeviceContext* context, POINT atlasOffset, ID2D1CommandList* scene, float opacity = 1.f,
+        PreparedMarquees marquees = {});
     HRESULT UpdateSrgbScene(std::uintptr_t key, const RECT& damage, const SrgbSceneDraw& draw);
     HRESULT UpdateSrgbScene(std::uintptr_t key, const RECT& damage,
         ID2D1CommandList* scene, POINT atlasOffset);
     bool PresentPremultipliedPixels(HWND window, SIZE size, const std::uint32_t* pixels);
-    bool PublishSrgbContent(std::uintptr_t key, float opacity = 1.0f);
+    bool PublishSrgbContent(std::uintptr_t key, float opacity = 1.0f, PreparedMarquees marquees = {});
     bool HasSrgbContent(std::uintptr_t key) const noexcept;
     // Keep the DirectComposition surface attached. Retire its old highlight
     // visual after DirectComposition accepts the ordinary highlight replacement.

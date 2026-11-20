@@ -468,6 +468,20 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     recordingPhase.reset();
     recordingPhase.emplace("widget.composition", "content.commands", data_->id);
     const auto contentBounds = app_->ToD2DRect(frame);
+    if (surfacePaint && !preview && !selected && !hovered)
+    {
+        // Only interior text can be composed above the recorded body without
+        // changing the rounded clip, reflection, title, or interaction layers.
+        RECT allowed = frame;
+        const float rim = effectSettings.widgetEdgeHighlightEnabled
+            ? std::clamp(effectSettings.widgetEdgeHighlightWidth,
+                kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) : 0.0f;
+        const LONG edge = static_cast<LONG>(std::ceil(std::max(panelStroke, rim))) + Cu(2.0f);
+        InflateRect(&allowed, -edge, -(static_cast<LONG>(panelRadius) + edge));
+        if (data_->showTitle && !data_->bottomBarHover)
+            allowed.bottom = std::min(allowed.bottom, frame.bottom - Cu(36.0f));
+        surfacePaint->nativeMarqueeBounds = allowed;
+    }
     auto* contentClip = panelRadius > 0.0f
         ? GetCachedClipGeometry(app_->GetD2DFactory(), frame, panelRadius) : nullptr;
     if (contentClip)

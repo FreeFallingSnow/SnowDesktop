@@ -1170,10 +1170,28 @@ static bool BeginNativeMarqueeCapture(D2DState* state,
     return true;
 }
 
+static void StepNativeMarqueeOffsets(LuaWidget::NativeMarqueeSurface& surface,
+    std::chrono::steady_clock::time_point now)
+{
+    const float elapsed = surface.lastAdvance.time_since_epoch().count() == 0
+        ? 0.0f : std::chrono::duration<float, std::milli>(now - surface.lastAdvance).count();
+    for (auto& marquee : surface.marquees)
+    {
+        if (!marquee.scrolling) continue;
+        marquee.offset = snowdesktop::widget_runtime::AdvanceDrawMarqueeOffset(
+            marquee.offset, elapsed, marquee.speed /
+                static_cast<float>(snowdesktop::animation::RuntimeDurationScale()),
+            marquee.textWidth + marquee.gap);
+    }
+    surface.lastAdvance = now;
+}
+
 static void CommitNativeMarqueeCapture(D2DState* state,
     LuaWidget::NativeMarqueeSurface& surface,
     ComPtr<ID2D1CommandList> commands)
 {
+    const auto now = std::chrono::steady_clock::now();
+    if (surface.compositionManaged) StepNativeMarqueeOffsets(surface, now);
     for (auto& pending : surface.pendingMarquees)
     {
         const auto previous = std::find_if(surface.marquees.begin(),
@@ -1190,7 +1208,7 @@ static void CommitNativeMarqueeCapture(D2DState* state,
     surface.staticCommands = std::move(commands);
     surface.commandDevice.Reset();
     if (state) surface.commandDevice = state->bitmapDevice;
-    surface.lastAdvance = std::chrono::steady_clock::now();
+    surface.lastAdvance = now;
     surface.framePending = false;
 }
 
@@ -1237,21 +1255,7 @@ bool AdvanceNativeMarqueeSurface(
 {
     if (surface.compositionManaged || !HasActiveNativeMarquee(surface))
         return false;
-    const float deltaMilliseconds = surface.lastAdvance.time_since_epoch().
-            count() == 0
-        ? 0.0f
-        : static_cast<float>(std::chrono::duration_cast<
-            std::chrono::microseconds>(now - surface.lastAdvance).count()) /
-            1000.0f;
-    surface.lastAdvance = now;
-    for (auto& marquee : surface.marquees)
-    {
-        if (!marquee.scrolling) continue;
-        marquee.offset = snowdesktop::widget_runtime::
-            AdvanceDrawMarqueeOffset(marquee.offset, deltaMilliseconds,
-                marquee.speed / static_cast<float>(snowdesktop::animation::RuntimeDurationScale()),
-                marquee.textWidth + marquee.gap);
-    }
+    StepNativeMarqueeOffsets(surface, now);
     surface.framePending = true;
     return true;
 }
@@ -2028,7 +2032,9 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             const bool reducedMotion = found->preview ||
                 !widgetTimerRequestCallback_ ||
                 HostManagedAnimationsSuppressed();
-            const bool compositionManaged =
+            const bool placementStable = hostInputDropWidgetId_ != widgetId;
+            if (!placementStable) found->desktopMarquee.compositionManaged = false;
+            const bool compositionManaged = placementStable &&
                 SyncNativeMarqueeComposition(*found, reducedMotion);
             DrawNativeMarqueeSurface(d2dState_,
                 found->desktopMarquee,
