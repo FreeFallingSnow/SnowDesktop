@@ -232,6 +232,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/navigation/app_quick_navigation_features.cpp
     src/app/navigation/app_quick_navigation_preview.cpp
     src/app/features/app_theme_preview.cpp
+    src/app/features/app_animation_test.cpp
     src/app/features/app_control.cpp
     src/app/features/app_control_runtime.h
     src/app/features/app_control_elements.cpp

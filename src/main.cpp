@@ -12,6 +12,7 @@
  */
 
 #include "app/app.h"
+#include "app/features/app_animation_test.h"
 #include "platform/application_version.h"
 #include "common/utils.h"
 #include "diagnostics/diagnostic_log.h"
@@ -428,6 +429,8 @@ void ShowStartupFailure(const snowdesktop::operation_feedback::Failure& failure)
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCommand)
 {
+    if (const auto result = snowdesktop::animation_test::TryRun(instance))
+        return *result;
     if (const auto result = snowdesktop::widget_authoring::TryRunWidgetAuthorInstallCommand())
         return *result;
     if (const auto result = snowdesktop::taskbar_hook::TryRunTaskbarSymbolHelper()) return *result;

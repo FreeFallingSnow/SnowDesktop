@@ -510,6 +510,23 @@ scripts\build.bat acceptance-complete ID -TaskRevision T -AcceptanceId A -Accept
 `capture -Seconds 60` 采集并生成 JSON/CSV，`start` / `stop -Session ...`
 支持异步自动化控制，`report` / `compare` 支持离线分析。
 
+### 独立宿主动画测试
+
+在已生成 Release 后，用 PowerShell 7 运行。每次选择一个新输出目录，默认保存在 `.codex-probes/`。
+夹具进程生成固定集合、Dock、Lua 面板和最小化源窗口，使用独立数据目录与逻辑输入。
+
+```powershell
+./scripts/test_animations.ps1 -PlanOnly -OutputDirectory .codex-probes/animation-plan
+./scripts/test_animations.ps1 -PlanPath .codex-probes/animation-plan/plan.json -Offline
+./scripts/test_animations.ps1 -Scenarios dock-hover,popup-resize,navigation-dock-genie,window-attraction -Repeats 4 -Offline
+```
+
+完整计划由宿主生成，列出可选场景、效果和重复次数。用同一份计划、显示设置和预热条件复测候选版本，
+可通过 `-ExecutablePath` 指定候选运行文件。结果目录包含计划、各动作的触发与状态回执、Perfetto 原始追踪、
+分析报告和 `animation-pacing.csv`。CSV 的 P95、最长间隔和超期来自宿主 UI 调度轨道。
+走原生合成动画的动作可以有状态回执而无 UI 逐帧样本。共享提交计数覆盖动作时间窗，包含同一夹具内的其他提交。
+显示器合成时钟由 Perfetto 报告单列，作为显示节奏参考。实体屏的透明度和流畅观感仍按实际产品入口验收。
+
 ## 协作协议 v2：登记、计划与阻塞等待
 
 宿主参与范围先按[根规则](../AGENTS.md#任务与协作)选择。以下 `begin/claim/plan/ready/commit` 流程用于 `host` 任务；`independent` 任务只维护 Task，见[宿主参与与独立任务](#宿主参与与独立任务)。

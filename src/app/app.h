@@ -326,6 +326,7 @@ public:
     friend class LuaScript;
     friend class GuideWidget;
     friend struct NativeDragIntegrationAccess;
+    friend struct NativeAnimationTest;
     friend struct DockFolderIconCompletionTestAccess;
 
         using QuickNavigationEntry = snowdesktop::quick_navigation::Entry;
