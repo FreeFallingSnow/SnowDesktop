@@ -25,6 +25,8 @@
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
 
+#include <optional>
+
 // Shell New menu, desktop host restoration and protected-icon handling.
 
 DesktopApp::ShellPopupMenuLayerGuard::
@@ -500,13 +502,14 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     };
     const bool intersectsTransition = intersectsPresentation(transitionWindow);
     const bool intersectsNavigation = intersectsPresentation(navigationWindow);
+    const bool temporarilyFloating = IsPersistentDockHostEffectivelyFloating(host);
+    const bool keepReservedLayer = !temporarilyFloating && host.ShouldKeepReservedFloatingLayer();
+    const auto reservedFullscreen = keepReservedLayer ? RecheckFullscreenSource(host.monitor) : std::nullopt;
+    const bool floating = temporarilyFloating || (keepReservedLayer && !reservedFullscreen);
     if ((intersectsTransition || intersectsNavigation) &&
-        IsPersistentDockHostEffectivelyFloating(host) &&
-        ShouldShowPersistentDockHost(host) && IsWindowVisible(host.hwnd))
+        floating && ShouldShowPersistentDockHost(host) && IsWindowVisible(host.hwnd))
     {
-        // Only the Dock's interaction state owns its band. A presentation may
-        // lower its target below this pair, but cannot re-promote a Dock already
-        // dismissed by an outside click.
+        // Keep the presentation below a Dock already in the floating band.
         if (!merged) host.backdrop.SetPopupWindowPairZOrder(
             host.hwnd, HWND_TOPMOST, true);
         if (!wasTopmost)
@@ -550,7 +553,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         popupAnchoredToDock_ && collectionPopupDockHost_ == &host &&
         (popupAnimation_.IsInteractive() || !popupAnimation_.IsHidden()) &&
         ShouldShowFloatingPopupWindow();
-    const bool promoted = IsPersistentDockHostEffectivelyFloating(host) ||
+    const bool promoted = floating ||
         hostsCollectionPopup ||
         (host.mergedPresentationActive && host.mergedAnimation.IsClosing());
     const bool systemShowDesktopGuard =
@@ -571,7 +574,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         const HWND desktopHost =
             desktopWindows_.host && IsWindow(desktopWindows_.host)
                 ? desktopWindows_.host : nullptr;
-        const auto fullscreen = RecheckFullscreenSource(host.monitor);
+        const auto fullscreen = keepReservedLayer ? reservedFullscreen : RecheckFullscreenSource(host.monitor);
         const HWND fullscreenWindow = fullscreen ? fullscreen->window : nullptr;
         const auto isTaskWindow = [](HWND window) {
             // Reject hidden/tool surfaces before the task-window query

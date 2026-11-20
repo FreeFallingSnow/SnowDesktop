@@ -24,6 +24,7 @@ struct DesktopApp::PersistentDockHost
     RECT popupRect{};
     RECT guideOcclusionRect{};
     bool active = false;
+    bool ShouldKeepReservedFloatingLayer() const;
     snowdesktop::desktop_hover_rules::RetainedDockLeaveTracking retainedLeaveTracking;
     // Promotion is per monitor. Selection only identifies the Host that
     // currently owns pointer/keyboard-associated actions.

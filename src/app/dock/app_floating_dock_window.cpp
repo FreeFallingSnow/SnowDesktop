@@ -123,6 +123,16 @@ bool DesktopApp::IsPersistentDockHostEffectivelyFloating(
                 dockSettings_.showOnlyWhenSummoned);
 }
 
+bool DesktopApp::PersistentDockHost::ShouldKeepReservedFloatingLayer() const
+{
+    const auto& settings = owner->dockSettings_;
+    return settings.reserveScreenSpace && owner->generalSettings_.dockEnabled &&
+        !owner->desktopStartupPresentationPending_ && container && !container->IsMergedWithStatusBar() &&
+        snowdesktop::floating_dock_rules::ShouldShowPersistentDockHost(
+            active, false, settings.showOnlyWhenSummoned, owner->customDesktopVisible_,
+            owner->desktopIconsHidden_, settings.keepWhenDesktopHidden, owner->desktopPassthroughActive_);
+}
+
 bool DesktopApp::ShouldShowPersistentDockHost(
     const PersistentDockHost& host) const
 {
@@ -149,12 +159,18 @@ bool DesktopApp::IsPersistentDockDesktopBandOccluded(
     const PersistentDockHost& host) const
 {
     if (!host.active || !host.hwnd || !IsWindow(host.hwnd) ||
-        !host.monitor || IsRectEmpty(&host.dockRect))
+        !host.monitor || !host.container)
         return false;
     // A fullscreen source on this monitor always covers the desktop band.
     if (RecheckFullscreenSource(host.monitor))
         return true;
-    RECT dockScreen = host.dockRect;
+    if (host.ShouldKeepReservedFloatingLayer())
+        return false;
+    // The magnification hit area can extend past both ends of an edge-attached
+    // panel. Occlusion is based on the resting panel that the window can cover.
+    RECT dockScreen = host.container->GetBounds();
+    if (IsRectEmpty(&dockScreen))
+        return false;
     if (hwnd_ && IsWindow(hwnd_))
         MapWindowPoints(
             hwnd_, nullptr,
