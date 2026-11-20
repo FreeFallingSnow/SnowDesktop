@@ -713,6 +713,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             if (targets.empty())
                 widgets_[widgetIndex].selected = true;
             SyncKeyboardNavFromSelection();
+            keyboardNavVisualFocus_ = targets.empty();
             InvalidateRect(hwnd_, nullptr, FALSE);
             break;
         }

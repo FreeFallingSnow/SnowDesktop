@@ -190,7 +190,10 @@ void DesktopApp::NavigateDesktopGrid(WPARAM arrowKey)
         }
         const auto& first = targets[firstIdx];
         if (first.isWidget)
+        {
             widgets_[first.index].selected = true;
+            keyboardNavVisualFocus_ = true;
+        }
         else
             items_[first.index].selected = true;
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -347,7 +350,10 @@ void DesktopApp::NavigateDesktopGrid(WPARAM arrowKey)
     ClearSelection();
     const auto& next = targets[static_cast<size_t>(nextIndex)];
     if (next.isWidget)
+    {
         widgets_[next.index].selected = true;
+        keyboardNavVisualFocus_ = true;
+    }
     else
         items_[next.index].selected = true;
 

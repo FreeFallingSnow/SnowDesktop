@@ -410,7 +410,10 @@ void DesktopApp::ExitWidget()
         CloseCollectionPopup();
 
     if (wi < widgets_.size())
+    {
         widgets_[wi].selected = true;
+        keyboardNavVisualFocus_ = true;
+    }
 
     InvalidateRect(hwnd_, nullptr, FALSE);
 }

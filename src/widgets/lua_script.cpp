@@ -126,7 +126,7 @@ bool LuaScript::SafeReadFlags(WidgetEngine* engine,
  *   8. 按组件底栏与悬停状态决定是否绘制底栏、移动和缩放手柄；
  *   9. 若底栏可见，绘制底部渐变条（无自定义样式时）；
  *  10. 若 showTitle 为 true 且存在标题文本，则绘制控件标题；
- *  11. 在内容与渐变之上绘制普通或选中边框及边缘高光；
+ *  11. 在内容与渐变之上绘制普通边框和边缘高光，或键盘焦点外框；
  *  12. 无底栏时悬浮绘制左下移动手柄，并绘制右下角缩放手柄。
  *
  * @param context  Direct2D 设备上下文，用于所有绘制调用
@@ -178,6 +178,8 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     if (IsRectEmptyRect(frame)) return;
 
     const bool selected = presentation.selected || state == 2;
+    const bool drawFocusOutline = presentation.selected && !preview &&
+        app_->keyboardNavVisualFocus_ && !app_->keyboardNavInsideWidget_;
     const POINT renderPointer = preview
         ? GetRenderPointer() : app_->lastMousePoint_;
     const bool hovered = PtInRect(&frame, renderPointer) != FALSE;
@@ -400,7 +402,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     PersonalizationSettings backgroundEffects = effectSettings;
     backgroundEffects.widgetEdgeHighlightEnabled = false;
     const float panelRadius = static_cast<float>(Cu(cornerRadiusCu));
-    const float panelStroke = selected
+    const float panelStroke = drawFocusOutline
         ? std::max(1.6f, configuredStroke) : configuredStroke;
     const D2D1_COLOR_F transparentBorder = D2D1::ColorF(0, 0.0f);
     const bool hasBackgroundLayer = engine && widgetOk &&
@@ -780,8 +782,8 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
 
     // Keep the outline and reflection above Lua content and the host gradient.
     app_->DrawWidgetPanelBorder(context, frame, panelRadius,
-        borderColor, selected, panelStroke);
-    if (!selected)
+        borderColor, drawFocusOutline, panelStroke);
+    if (!drawFocusOutline)
         (void)app_->DrawWidgetPanelEdgeHighlight(
             context, frame, static_cast<float>(Cu(cornerRadiusCu)),
             fillColor, &effectSettings);

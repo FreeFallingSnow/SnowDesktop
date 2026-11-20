@@ -3391,6 +3391,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     }
 
     const bool selected = data_->selected;
+    const bool drawFocusOutline = selected && !IsPreviewRendering() &&
+        app_->keyboardNavVisualFocus_ && !app_->keyboardNavInsideWidget_;
     const bool hovered = IsPreviewInteractive() &&
         PtInRect(&frame, mousePt) != FALSE;
     const bool fixedGuideAppearance =
@@ -3436,7 +3438,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     const float configuredStroke = std::clamp(
         borderAppearance.widgetBorderWidth,
         kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
-    float strokeW = selected
+    const float strokeW = drawFocusOutline
         ? std::max(1.6f, configuredStroke) : configuredStroke;
 
     // ── 1. Background (defer the outline until after content) ──
@@ -3656,9 +3658,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     // Draw the outline once, above content and the title gradient. Translucent
     // borders would darken if drawn both below and above these layers.
     app_->DrawWidgetPanelBorder(context, frame, radius,
-        borderColor, selected, strokeW);
-    // Selection keeps its flat accent outline without a material reflection.
-    if (!selected)
+        borderColor, drawFocusOutline, strokeW);
+    if (!drawFocusOutline)
         (void)app_->DrawWidgetPanelEdgeHighlight(
             context, frame, radius, fillColor, &borderAppearance);
 }

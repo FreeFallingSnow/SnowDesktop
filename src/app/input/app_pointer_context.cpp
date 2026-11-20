@@ -592,7 +592,8 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
     // Preserve surface ownership on press, then consume release without a menu.
     if (largeIconGesture_) { CancelLargeIconGesture(); return; }
     if (renameController_.IsActive()) return;
-    keyboardNavVisualFocus_ = false;
+    if (std::exchange(keyboardNavVisualFocus_, false) && !keyboardNavInsideWidget_)
+        InvalidateRect(hwnd_, nullptr, FALSE);
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     ActivateInlineFolderPreviewAtPoint(pt);
     auto* popupGroup = IsPointOccludedByOpenPopup(pt) ? GetGroupPopupView() : nullptr;

@@ -65,6 +65,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         CommitRename(false);
     const bool hadKeyboardVisualFocus = keyboardNavVisualFocus_;
     keyboardNavVisualFocus_ = false;
+    if (hadKeyboardVisualFocus && !keyboardNavInsideWidget_)
+        InvalidateRect(hwnd_, nullptr, FALSE);
     ClearPopupMouseDownItem();
     ClearPopupDragTarget();
     pendingWidgetButtonAction_ = WidgetHit::None;
@@ -995,9 +997,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 pt.y - luaFrame.top);
         }
 
-        // An input field owns its pointer interaction. Do not select the
-        // containing Lua widget here, otherwise the outer blue selection
-        // frame appears on top of the field and disrupts live editing.
+        // An input field owns its pointer interaction and editing focus.
         const bool otherSelectionChanged = hostInputArea
             ? ClearSelection(&ResolveLuaWidgetFrameOwner(widgets_[wi]))
             : SelectWidgetOnly(wi);
