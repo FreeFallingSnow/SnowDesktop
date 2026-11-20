@@ -2,6 +2,7 @@
 
 #include "widget/view/widget_view_tree.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -10,6 +11,8 @@
 
 namespace snowdesktop::widget_runtime
 {
+inline constexpr std::size_t MaximumExtendedTextAreaBytes = 256 * 1024;
+
 enum class ViewAccessibilityPattern : std::uint32_t
 {
     None = 0,

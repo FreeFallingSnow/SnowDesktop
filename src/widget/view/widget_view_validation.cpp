@@ -110,6 +110,7 @@ bool IsLeafNode(ViewNodeType type) noexcept
 
 bool ValidateNode(const ViewNode& node, std::size_t depth,
     std::size_t& nodes, std::size_t& textBytes,
+    std::size_t& extendedTextAreaBytes,
     std::size_t& seriesPoints, std::size_t& collectionItems,
     std::unordered_set<std::string>& keys,
     std::unordered_set<char>& accessKeys,
@@ -893,8 +894,21 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         error = "item references are reserved for referenceIcon nodes";
         return false;
     }
+    const bool extendedTextArea = node.type == ViewNodeType::TextArea &&
+        node.maximumUtf8Bytes > ViewTreeLimits::MaximumTextBytes;
+    const auto valueBytes = node.inputValue.size();
+    const auto ordinaryValueBytes = extendedTextArea ? 0 : valueBytes;
+    if (extendedTextArea)
+    {
+        if (valueBytes > MaximumExtendedTextAreaBytes - extendedTextAreaBytes)
+        {
+            error = "view tree extended textArea value limit exceeded";
+            return false;
+        }
+        extendedTextAreaBytes += valueBytes;
+    }
     if (node.text.size() > ViewTreeLimits::MaximumTextBytes ||
-        node.inputValue.size() > ViewTreeLimits::MaximumTextBytes ||
+        ordinaryValueBytes > ViewTreeLimits::MaximumTextBytes ||
         node.placeholder.size() > ViewTreeLimits::MaximumTextBytes ||
         node.alt.size() > ViewTreeLimits::MaximumTextBytes ||
         node.tooltipTitle.size() >
@@ -902,7 +916,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         node.tooltip.size() > ViewTreeLimits::MaximumTextBytes ||
         node.validationMessage.size() > ViewTreeLimits::MaximumTextBytes ||
         textBytes + node.debugName.size() + node.testId.size() +
-            node.text.size() + node.inputValue.size() +
+            node.text.size() + ordinaryValueBytes +
             node.placeholder.size() + node.alt.size() +
             node.tooltipTitle.size() + node.tooltip.size() +
             node.validationMessage.size() + node.locale.size() >
@@ -912,7 +926,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         return false;
     }
     textBytes += node.debugName.size() + node.testId.size() +
-        node.text.size() + node.inputValue.size() +
+        node.text.size() + ordinaryValueBytes +
         node.placeholder.size() + node.alt.size() +
         node.tooltipTitle.size() + node.tooltip.size() +
         node.validationMessage.size() + node.locale.size();
@@ -1074,11 +1088,14 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         return false;
     }
     if (IsInputNode(node.type) &&
-        (node.maximumUtf8Bytes > 64 * 1024 ||
+        (node.maximumUtf8Bytes > (node.type == ViewNodeType::TextArea
+                ? MaximumExtendedTextAreaBytes : 64 * 1024) ||
             (node.maximumUtf8Bytes > 0 &&
                 node.inputValue.size() > node.maximumUtf8Bytes)))
     {
-        error = "input maxBytes must be at most 65536 and contain the controlled value";
+        error = node.type == ViewNodeType::TextArea
+            ? "textArea maxBytes must be at most 262144 and contain the controlled value"
+            : "input maxBytes must be at most 65536 and contain the controlled value";
         return false;
     }
     const std::size_t accessibilityTextBytes =
@@ -1422,7 +1439,7 @@ bool ValidateNode(const ViewNode& node, std::size_t depth,
         return false;
     }
     for (const auto& child : node.children)
-        if (!ValidateNode(child, depth + 1, nodes, textBytes,
+        if (!ValidateNode(child, depth + 1, nodes, textBytes, extendedTextAreaBytes,
                 seriesPoints, collectionItems, keys, accessKeys, resources,
                 node.type, error)) return false;
     return true;
@@ -1463,12 +1480,13 @@ bool ValidateViewTreeStructure(const ViewNode& root, std::string& error)
 {
     std::size_t nodes = 0;
     std::size_t textBytes = 0;
+    std::size_t extendedTextAreaBytes = 0;
     std::size_t seriesPoints = 0;
     std::size_t collectionItems = 0;
     std::unordered_set<std::string> keys;
     std::unordered_set<char> accessKeys;
     std::unordered_set<std::string> resources;
-    return ValidateNode(root, 0, nodes, textBytes, seriesPoints,
+    return ValidateNode(root, 0, nodes, textBytes, extendedTextAreaBytes, seriesPoints,
         collectionItems, keys, accessKeys, resources, std::nullopt, error);
 }
 

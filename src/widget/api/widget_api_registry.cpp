@@ -260,6 +260,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "view.image",
     "view.image.tint",
     "view.inputControls",
+    "view.textArea.largeValue",
     "view.input.required",
     "view.input.selection",
     "view.keyboard.accessKey",

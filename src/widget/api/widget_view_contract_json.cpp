@@ -268,6 +268,8 @@ void WriteLimits(std::ostream& output)
            << ViewTreeLimits::MaximumTooltipTitleBytes
            << ",\"maximumTotalTextBytes\":"
            << ViewTreeLimits::MaximumTotalTextBytes
+           << ",\"maximumExtendedTextAreaBytes\":"
+           << MaximumExtendedTextAreaBytes
            << ",\"maximumResources\":" << ViewTreeLimits::MaximumResources
            << ",\"maximumSeriesPoints\":"
            << ViewTreeLimits::MaximumSeriesPoints

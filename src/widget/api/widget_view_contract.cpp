@@ -362,7 +362,7 @@ constexpr auto kProperties = std::to_array<ViewPropertyContract>({
     EnumProperty("validationState", ViewPropertyEnumSet::ValidationState),
     Property("validationMessage", ViewPropertyValueKind::String),
     RangedProperty("maxBytes", ViewPropertyValueKind::Integer,
-        0.0, 65536.0),
+        0.0, static_cast<double>(MaximumExtendedTextAreaBytes)),
     RangedProperty("year", ViewPropertyValueKind::Integer,
         1.0, 9999.0),
     RangedProperty("month", ViewPropertyValueKind::Integer,

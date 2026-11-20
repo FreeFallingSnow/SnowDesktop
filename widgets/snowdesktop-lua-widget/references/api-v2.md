@@ -731,6 +731,9 @@ Lua 不会获得剪贴板内容或原生句柄。`liveUpdate=false` 将 change �
 实时模式下用 `cancelled=true` 建议恢复初始值。`focus/blur/submit` 为可选动作；单行 Enter
 提交，`textArea` Enter 换行而 Ctrl+Enter 提交。`numberInput` 的上下方向键按 step 调整，
 文本是完整且位于范围内的数字时，change 还带 `numberValid=true` 和 `controlValue`。
+支持 `view.textArea.largeValue` 时，`view.textArea` 可显式设置 `maxBytes` 至
+262144。设置值超过 4096 后，控件的 `value` 使用全树独立的 256 KiB 多行编辑额度。
+默认值和其他输入控件的额度沿用原有规则。兼容旧宿主时先检测该 feature。
 探测 `view.keyboardNavigation.basic` 后，Tab/Shift+Tab 可在这些输入与同树其他可操作元素
 之间循环；进入输入后仍由上述宿主编辑器处理文本键、选择、IME 和提交。
 

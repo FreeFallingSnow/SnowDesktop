@@ -384,7 +384,7 @@
 ---@field required? boolean Text-like, numeric, and select form requirement exposed through host accessibility semantics; it does not validate or block submission.
 ---@field validationState? SnowViewValidationState Input/select validation state; defaults to none.
 ---@field validationMessage? string Bounded validation detail exposed as semantic help text; render a text node too when the message must be visibly persistent.
----@field maxBytes? integer Input UTF-8 limit from 0/default through 65536; declarative default is the 4096-byte node limit.
+---@field maxBytes? integer Input UTF-8 limit from 0/default through 65536. With view.textArea.largeValue, textArea accepts up to 262144 bytes and uses a separate 256 KiB tree budget when maxBytes exceeds 4096.
 ---@field thickness? number Progress or data-series stroke thickness.
 ---@field trackOpacity? number Progress track or chart guide opacity between 0 and 1.
 ---@field fillOpacity? number Progress or data-series foreground opacity between 0 and 1.
