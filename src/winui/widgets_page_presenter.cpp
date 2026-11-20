@@ -820,6 +820,9 @@ struct WidgetsPagePresenter::Impl
         controlRoot = muxc::StackPanel{};
         controlRoot.Spacing(24.0);
         controlRoot.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        muxc::StackPanel controlHeader;
+        controlHeader.Spacing(8.0);
+        controlRoot.Children().Append(controlHeader);
         muxc::Border controlIntroCard;
         muxc::StackPanel controlIntroContent;
         controlIntroContent.Spacing(4.0);
@@ -833,17 +836,17 @@ struct WidgetsPagePresenter::Impl
         controlIntroContent.Children().Append(controlIntroDescription);
         presenter_controls::InitializeSettingsGroup(
             controlIntroCard, nullptr, controlIntroContent, cardStyle, true);
-        controlRoot.Children().Append(controlIntroCard);
+        controlHeader.Children().Append(controlIntroCard);
 
         muxc::Border agentAccessCard;
         muxc::StackPanel agentAccessRows;
         agentAccessToggle = muxc::ToggleSwitch{};
         agentAccessRow.Initialize(agentAccessToggle);
         agentAccessRows.Children().Append(agentAccessRow.root);
-        presenter_controls::UpdateSettingsSubrows(agentAccessRows);
+        presenter_controls::UpdateSettingsSubrows(agentAccessRows, 0.0);
         presenter_controls::InitializeSettingsGroup(
             agentAccessCard, nullptr, agentAccessRows, cardStyle);
-        controlRoot.Children().Append(agentAccessCard);
+        controlHeader.Children().Append(agentAccessCard);
 
         InitializeCard(controlSkillCard, cardStyle, controlRoot);
         controlSkillApplyButton = muxc::Button{};
