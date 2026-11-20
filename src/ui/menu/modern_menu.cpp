@@ -1645,39 +1645,7 @@ private:
         KillTimer(popup.hwnd, kSubmenuCloseTimer);
         popup.hoveredItem = keyboard ? -1 : index;
         popup.keyboardItem = keyboard ? index : -1;
-        if (options_.onHover)
-        {
-            HoverInfo info;
-            info.depth = popup.depth;
-            info.keyboard = keyboard;
-            info.popupScreenRect = {
-                popup.panelScreenOrigin.x,
-                popup.panelScreenOrigin.y,
-                popup.panelScreenOrigin.x + popup.panelWidth,
-                popup.panelScreenOrigin.y + popup.panelHeight,
-            };
-            if (index >= 0 &&
-                static_cast<size_t>(index) < popup.items->size())
-            {
-                const Item& hovered = (*popup.items)[index];
-                if (hovered.enabled && !hovered.separator &&
-                    hovered.children.empty())
-                {
-                    info.command = hovered.command;
-                    info.itemScreenRect = popup.itemRects[index];
-                    if (hovered.horizontalScrollAction)
-                    {
-                        OffsetRect(&info.itemScreenRect,
-                            -popup.horizontalScrollOffset, 0);
-                    }
-                    OffsetRect(&info.itemScreenRect,
-                        popup.panelScreenOrigin.x - shadowSize_,
-                        popup.panelScreenOrigin.y - shadowSize_ -
-                            popup.scrollOffset);
-                }
-            }
-            options_.onHover(info);
-        }
+        ReportHoveredItem(popup, index, keyboard);
         if (updateChildren && index >= 0 &&
             static_cast<size_t>(index) < popup.items->size() &&
             !(*popup.items)[index].children.empty() &&
@@ -1700,6 +1668,43 @@ private:
         Render(popup);
     }
 
+    RECT ItemScreenRect(const Popup& popup, int index) const
+    {
+        RECT rect = popup.itemRects[index];
+        if ((*popup.items)[index].horizontalScrollAction)
+            OffsetRect(&rect, -popup.horizontalScrollOffset, 0);
+        OffsetRect(&rect,
+            popup.panelScreenOrigin.x - shadowSize_,
+            popup.panelScreenOrigin.y - shadowSize_ - popup.scrollOffset);
+        return rect;
+    }
+
+    void ReportHoveredItem(const Popup& popup, int index, bool keyboard) const
+    {
+        if (!options_.onHover) return;
+        HoverInfo info;
+        info.depth = popup.depth;
+        info.keyboard = keyboard;
+        info.popupWindow = popup.hwnd;
+        info.popupScreenRect = {
+            popup.panelScreenOrigin.x,
+            popup.panelScreenOrigin.y,
+            popup.panelScreenOrigin.x + popup.panelWidth,
+            popup.panelScreenOrigin.y + popup.panelHeight,
+        };
+        if (index >= 0 && static_cast<size_t>(index) < popup.items->size())
+        {
+            const Item& hovered = (*popup.items)[index];
+            if (hovered.enabled && !hovered.separator &&
+                hovered.children.empty())
+            {
+                info.command = hovered.command;
+                info.itemScreenRect = ItemScreenRect(popup, index);
+            }
+        }
+        options_.onHover(info);
+    }
+
     void ActivateItem(Popup& popup, int index, bool keyboard)
     {
         if (index < 0 || static_cast<size_t>(index) >= popup.items->size())
@@ -1719,12 +1724,11 @@ private:
             CancelTextInputEditor(popup);
             return;
         }
-        RECT rect = popup.itemRects[index];
-        if (item.horizontalScrollAction)
-            OffsetRect(&rect, -popup.horizontalScrollOffset, 0);
-        OffsetRect(&rect,
-            popup.panelScreenOrigin.x - shadowSize_,
-            popup.panelScreenOrigin.y - shadowSize_ - popup.scrollOffset);
+        const RECT rect = ItemScreenRect(popup, index);
+        // Release and access-key activation can select a row before the
+        // pointer's next move. Companion commands need this row's geometry.
+        if (options_.onCommand)
+            ReportHoveredItem(popup, index, keyboard);
         if (options_.onCommand &&
             options_.onCommand(command, rootItems_))
         {
@@ -2696,6 +2700,7 @@ private:
             SetScrollViewport(popup);
             CloseFromDepth(popup.depth + 1);
             popup.hoveredItem = popup.keyboardItem = -1;
+            ReportHoverAfterScroll(popup);
             Render(popup);
         }
     }
@@ -2717,8 +2722,24 @@ private:
             CloseFromDepth(popup.depth + 1);
             popup.hoveredItem = -1;
             popup.keyboardItem = -1;
+            ReportHoverAfterScroll(popup);
             Render(popup);
         }
+    }
+
+    void ReportHoverAfterScroll(Popup& popup)
+    {
+        if (!options_.onHover) return;
+        POINT point{};
+        const bool overPopup =
+            snowdesktop::private_pointer::CursorPosition(&point) &&
+            snowdesktop::private_pointer::WindowAtPoint(point) == popup.hwnd;
+        if (overPopup) ScreenToClient(popup.hwnd, &point);
+        const int index = overPopup ? HitTest(popup, point) : -1;
+        if (index >= 0 && !(*popup.items)[index].separator)
+            SetHoveredItem(popup, index, false);
+        else
+            ReportHoveredItem(popup, -1, false);
     }
 
     int MaxHorizontalScroll(const Popup& popup) const
@@ -2956,6 +2977,7 @@ private:
 
     void CloseFromDepth(int depth)
     {
+        const bool removedPopup = static_cast<int>(popups_.size()) > depth;
         closing_ = true;
         while (static_cast<int>(popups_.size()) > depth)
         {
@@ -2976,6 +2998,8 @@ private:
             textInputCompositionCursor_ = 0;
         }
         closing_ = false;
+        if (removedPopup && options_.onHover)
+            options_.onHover({});
     }
 
     void Cancel()

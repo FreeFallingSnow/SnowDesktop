@@ -97,6 +97,7 @@ struct HoverInfo
     UINT command = 0;
     RECT itemScreenRect{};
     RECT popupScreenRect{};
+    HWND popupWindow = nullptr;
     int depth = 0;
     bool keyboard = false;
 };

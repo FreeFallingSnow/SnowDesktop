@@ -164,21 +164,17 @@ public:
 
     /** Start the menu-scoped Wallpaper Engine capture before a preview opens. */
     void PrefetchDesktopWallpaperBackdrop(HWND owner, POINT screenPoint);
-    bool Show(const Model& model, const RECT& menuBounds,
-        HWND owner, UINT dpi, bool lightTheme,
-        ApplyHandler onApply = {}, const RECT& itemBounds = {},
+    bool Show(const Model& model, const modern_menu::HoverInfo& anchor,
+        HWND owner, UINT dpi, bool lightTheme, ApplyHandler onApply,
         modern_menu::Appearance appearance =
             modern_menu::Appearance::FollowSystem);
-    /** Use the same dwell delay as opening a real menu submenu. */
-    bool ScheduleShow(const Model& model, const RECT& menuBounds,
-        HWND owner, UINT dpi, bool lightTheme,
-        ApplyHandler onApply = {}, const RECT& itemBounds = {},
-        modern_menu::Appearance appearance =
-            modern_menu::Appearance::FollowSystem);
+    /** Switch an open preview after the same dwell delay as a submenu. */
+    void ScheduleShow(const Model& model, const modern_menu::HoverInfo& anchor);
     /** Delay dismissal long enough for the pointer to cross the menu gap. */
     void ScheduleHide();
     void Hide();
     void Close();
+    bool IsOpen() const;
     HWND Handle() const { return hwnd_; }
     const std::vector<POINT>& CommittedPositionsForTesting() const
     {
@@ -225,6 +221,7 @@ private:
     };
 
     bool EnsureCreated(HWND owner);
+    bool ShowModel(Model model, const modern_menu::HoverInfo& anchor);
     bool RenderCurrent();
     WallpaperBackdropLoadResult LoadDesktopWallpaperBackdrop();
     void StartWallpaperEngineBackdropCapture(const RECT& monitorBounds);
@@ -233,7 +230,9 @@ private:
     void SelectRelative(int delta);
     void SetOption(OptionSetting setting, bool value);
     void ApplyCurrent();
-    bool PointerInsideMenuOrPreview() const;
+    bool PointerInsidePreviewOrAnchor() const;
+    void StartHoverTimer(UINT delay);
+    void CancelHoverTransition();
     std::wstring ModelIdentity(const Model& model) const;
     void ApplyWindowAppearance();
     POINT ResolvePosition(const RECT& menuBounds, UINT dpi) const;
@@ -247,8 +246,7 @@ private:
     Model model_;
     size_t currentCard_ = 0;
     std::wstring modelIdentity_;
-    RECT menuBounds_{};
-    RECT itemBounds_{};
+    modern_menu::HoverInfo anchor_;
     RECT previousButton_{};
     RECT nextButton_{};
     RECT pagerRect_{};
@@ -275,14 +273,9 @@ private:
     bool componentHovered_ = false;
     ApplyHandler onApply_;
     Model pendingModel_;
-    RECT pendingMenuBounds_{};
-    RECT pendingItemBounds_{};
-    HWND pendingOwner_ = nullptr;
-    UINT pendingDpi_ = USER_DEFAULT_SCREEN_DPI;
-    bool pendingLightTheme_ = true;
-    modern_menu::Appearance pendingAppearance_ =
-        modern_menu::Appearance::FollowSystem;
-    ApplyHandler pendingOnApply_;
+    modern_menu::HoverInfo pendingAnchor_;
+    UINT_PTR hoverTimer_ = 0;
+    UINT_PTR nextHoverTimerId_ = 0;
     struct CachedCardFrame
     {
         Bitmap bitmap;
