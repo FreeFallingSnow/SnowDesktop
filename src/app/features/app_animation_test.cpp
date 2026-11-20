@@ -315,14 +315,17 @@ struct NativeAnimationTest
         manifest.close();
         Require(static_cast<bool>(manifest), "write fixture Lua manifest");
         std::ofstream output(package / L"main.lua", std::ios::binary);
-        output << R"lua(return {
+        output << R"lua(return widget.define({
+    view = function()
+        return view.text({ text = "Animation fixture" })
+    end,
     panel = function()
         return view.column({ padding = 16, children = {
             view.text({ text = "Fixed animation fixture", height = 32 }),
             view.text({ text = "Lua panel content", height = 32 })
         } })
     end
-})lua";
+}))lua";
         output.close();
         Require(static_cast<bool>(output), "write fixture Lua file");
         app.widgetEngine_ = std::make_unique<WidgetEngine>();
@@ -483,7 +486,10 @@ struct NativeAnimationTest
             const bool open = step("open", [&] {
                 app.OpenLuaWidgetPanel(request);
                 return app.luaWidgetPanelAnimation_.IsAnimating();
-            }, [&] { return app.luaWidgetPanelAnimation_.IsInteractive() && !app.luaWidgetPanelAnimation_.IsAnimating(); });
+            }, [&] {
+                return app.luaWidgetPanelAnimation_.IsInteractive() && !app.luaWidgetPanelAnimation_.IsAnimating() &&
+                    !app.widgetEngine_->GetWidgetRuntimeFailure(L"fixture-lua");
+            });
             return step("close", [&] {
                 app.CloseLuaWidgetPanel();
                 return app.luaWidgetPanelAnimation_.IsAnimating();
