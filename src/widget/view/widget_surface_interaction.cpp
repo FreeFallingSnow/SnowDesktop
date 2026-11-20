@@ -39,7 +39,7 @@ using snowdesktop::widget_runtime::PushInteractionValue;
 using snowdesktop::lua_runtime::LuaTableUsesOnlyFields;
 using snowdesktop::lua_runtime::LuaTableIsContiguousArray;
 
-static bool IsValidUtf8Local(const std::string& value)
+static bool IsValidUtf8Local(std::string_view value)
 {
     if (value.empty()) return false;
     return MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
@@ -409,9 +409,13 @@ int lua_InteractionScroll(lua_State* state)
     luaL_checktype(state, 1, LUA_TTABLE);
     lua_settop(state, 1);
     const int descriptor = lua_absindex(state, 1);
-    const std::string key = ReadRequiredStringField(
-        state, descriptor, "key");
-    if (key.size() > 128 || key.find('\0') != std::string::npos ||
+    // Lua validation can longjmp. Keep the key rooted on the Lua stack and
+    // construct owning C++ values only after the last argument check.
+    lua_getfield(state, descriptor, "key");
+    std::size_t keyLength = 0;
+    const char* keyValue = luaL_checklstring(state, -1, &keyLength);
+    const std::string_view key(keyValue, keyLength);
+    if (key.size() > 128 || key.find('\0') != std::string_view::npos ||
         !IsValidUtf8Local(key))
     {
         return luaL_error(state,
@@ -445,19 +449,19 @@ int lua_InteractionScroll(lua_State* state)
             "interaction.scroll: shape geometry must be finite, positive, and bounded");
     }
 
-    std::string orientation = "vertical";
+    bool horizontal = false;
     lua_getfield(state, descriptor, "orientation");
     if (!lua_isnil(state, -1))
     {
         std::size_t length = 0;
         const char* value = luaL_checklstring(state, -1, &length);
-        orientation.assign(value ? value : "", length);
+        const std::string_view orientation(value, length);
+        horizontal = orientation == "horizontal";
+        if (!horizontal && orientation != "vertical")
+            return luaL_error(state,
+                "interaction.scroll: orientation must be vertical or horizontal");
     }
     lua_pop(state, 1);
-    if (orientation != "vertical" && orientation != "horizontal")
-        return luaL_error(state,
-            "interaction.scroll: orientation must be vertical or horizontal");
-    const bool horizontal = orientation == "horizontal";
     const char* contentField = horizontal ? "contentWidth" : "contentHeight";
     const char* rejectedField = horizontal ? "contentHeight" : "contentWidth";
     lua_getfield(state, descriptor, rejectedField);
@@ -493,30 +497,33 @@ int lua_InteractionScroll(lua_State* state)
     const int viewportExtent = horizontal ? viewportWidth : viewportHeight;
     const int contentExtent = std::max(
         viewportExtent, static_cast<int>(requestedContentExtent));
-    LuaWidget::HostControl control;
-    control.type = LuaWidget::HostControl::Type::Scroll;
-    control.id = key;
-    control.horizontal = horizontal;
-    control.contentWidth = horizontal ? contentExtent : viewportWidth;
-    control.viewportWidth = viewportWidth;
-    control.contentHeight = horizontal ? viewportHeight : contentExtent;
-    control.viewportHeight = viewportHeight;
-    control.rect = {
-        static_cast<LONG>(std::lround(x)),
-        static_cast<LONG>(std::lround(y)),
-        static_cast<LONG>(std::lround(x + width)),
-        static_cast<LONG>(std::lround(y + height)),
-    };
-    d2d->engine->RuntimeRegisterHostControl(
-        BoundWidgetId(state), std::move(control));
-    const int offset = d2d->engine->RuntimeGetScrollOffset(
-        BoundWidgetId(state), key);
+    int offset = 0;
+    {
+        const auto widgetId = BoundWidgetId(state);
+        const std::string controlId(key);
+        LuaWidget::HostControl control;
+        control.type = LuaWidget::HostControl::Type::Scroll;
+        control.id = controlId;
+        control.horizontal = horizontal;
+        control.contentWidth = horizontal ? contentExtent : viewportWidth;
+        control.viewportWidth = viewportWidth;
+        control.contentHeight = horizontal ? viewportHeight : contentExtent;
+        control.viewportHeight = viewportHeight;
+        control.rect = {
+            static_cast<LONG>(std::lround(x)),
+            static_cast<LONG>(std::lround(y)),
+            static_cast<LONG>(std::lround(x + width)),
+            static_cast<LONG>(std::lround(y + height)),
+        };
+        d2d->engine->RuntimeRegisterHostControl(widgetId, std::move(control));
+        offset = d2d->engine->RuntimeGetScrollOffset(widgetId, controlId);
+    }
     lua_createtable(state, 0, 7);
     lua_pushinteger(state, offset);
     lua_setfield(state, -2, "offset");
     lua_pushinteger(state, std::max(0, contentExtent - viewportExtent));
     lua_setfield(state, -2, "maximum");
-    lua_pushlstring(state, orientation.data(), orientation.size());
+    lua_pushstring(state, horizontal ? "horizontal" : "vertical");
     lua_setfield(state, -2, "orientation");
     lua_pushinteger(state, viewportExtent);
     lua_setfield(state, -2, "viewportExtent");
@@ -535,8 +542,8 @@ int lua_InteractionSetScrollOffset(lua_State* state)
 {
     std::size_t keyLength = 0;
     const char* keyValue = luaL_checklstring(state, 1, &keyLength);
-    const std::string key(keyValue ? keyValue : "", keyLength);
-    if (key.size() > 128 || key.find('\0') != std::string::npos ||
+    const std::string_view key(keyValue, keyLength);
+    if (key.size() > 128 || key.find('\0') != std::string_view::npos ||
         !IsValidUtf8Local(key))
     {
         return luaL_error(state,
@@ -547,11 +554,15 @@ int lua_InteractionSetScrollOffset(lua_State* state)
     if (!d2d || !d2d->engine)
         return luaL_error(state,
             "interaction.setScrollOffset: host context is unavailable");
-    d2d->engine->RuntimeSetScrollOffset(BoundWidgetId(state), key,
-        static_cast<int>(std::clamp<lua_Integer>(
-            requested, 0, 1'000'000)));
-    lua_pushinteger(state, d2d->engine->RuntimeGetScrollOffset(
-        BoundWidgetId(state), key));
+    int offset = 0;
+    {
+        const auto widgetId = BoundWidgetId(state);
+        const std::string controlId(key);
+        d2d->engine->RuntimeSetScrollOffset(widgetId, controlId,
+            static_cast<int>(std::clamp<lua_Integer>(requested, 0, 1'000'000)));
+        offset = d2d->engine->RuntimeGetScrollOffset(widgetId, controlId);
+    }
+    lua_pushinteger(state, offset);
     return 1;
 }
 
