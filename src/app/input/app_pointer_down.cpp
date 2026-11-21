@@ -65,9 +65,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     if (renameController_.IsActive())
         CommitRename(false);
     const bool hadKeyboardVisualFocus = keyboardNavVisualFocus_;
-    keyboardNavVisualFocus_ = false;
-    if (hadKeyboardVisualFocus && !keyboardNavInsideWidget_)
-        InvalidateRect(hwnd_, nullptr, FALSE);
+    if (hadKeyboardVisualFocus)
+        UpdateWidgetControlSelection(nullptr, [this] { keyboardNavVisualFocus_ = false; });
     ClearPopupMouseDownItem();
     ClearPopupDragTarget();
     pendingWidgetButtonAction_ = WidgetHit::None;
@@ -315,6 +314,11 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     pendingCtrlToggleWidgetItem_ = nullptr;
     marqueeRect_ = MakeRect(pt.x, pt.y, pt.x, pt.y);
 
+    const auto blurSearch = [this](ScrollingItemWidget& view) {
+        const bool focused = view.IsSearchFocused();
+        view.SetSearchFocused(false);
+        if (focused) InvalidateWidgetControls(view);
+    };
     if (IsCollectionPopupInteractive())
     {
         auto* view = GetCategorizedPopupView();
@@ -326,16 +330,14 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             const RECT search = view->GetSearchBoxRect();
             if (!IsRectEmptyRect(search) && PtInRect(&search, pt))
             {
-                for (auto& candidate : containers_)
-                    if (auto* other = dynamic_cast<ScrollingItemWidget*>(candidate.get()); other && other != view)
-                        other->SetSearchFocused(false);
+                PrepareWidgetSearchFocus(*view, false);
                 view->BeginSearchPointerSelection(pt, (wp & MK_SHIFT) != 0);
                 FocusDesktopInputWindow();
                 mouseDownHit_ = nullptr;
                 snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                 UpdateHostInputImePosition();
                 if (folderPreview_) RefreshDockFolderPopupGeometry();
-                InvalidateRect(hwnd_, nullptr, FALSE);
+                if (!inlineFolderPreview) InvalidateWidgetControls(*view);
                 return;
             }
             if (view->BeginCategoryTabDrag(pt))
@@ -348,10 +350,10 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 mouseDownHit_ = nullptr;
                 snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                 ResetCollectionPopupAnimationCache();
-                InvalidateRect(hwnd_, nullptr, FALSE);
+                InvalidateWidgetControls(*view);
                 return;
             }
-            view->SetSearchFocused(false);
+            blurSearch(*view);
         }
     }
 
@@ -452,7 +454,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 popupScrollbarDragStartOffset_ = scroll;
                 mouseDownHit_ = nullptr;
                 snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
-                InvalidateRect(hwnd_, &popup, FALSE);
+                InvalidateCollectionPopupControls();
                 return;
             }
         }
@@ -936,8 +938,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());
                 if (searchable && searchable->IsSearchFocused())
                 {
-                    searchable->SetSearchFocused(false);
-                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    blurSearch(*searchable);
                 }
             }
         }
@@ -1107,7 +1108,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 mouseDownWidgetIndex_ = wi;
                 mouseDownHit_ = nullptr;
                 snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
-                InvalidateRect(hwnd_, popupGroup ? &popupGroupFrame : &widgets_[wi].bounds, FALSE);
+                InvalidateWidgetControls(*wc);
                 return;
             }
         }
@@ -1357,11 +1358,12 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 widgets_[wi].activeCategoryId = id;
                 if (!group->SetFolderSearchScrollOffset(0)) widgets_[wi].scrollOffset = 0;
                 group->InvalidateHostedView();
-                ClearSelection();
                 const size_t childIndex =
                     FindWidgetIndexById(id);
-                if (childIndex < widgets_.size())
-                    widgets_[childIndex].selected = true;
+                UpdateWidgetControlSelection(&widgets_[wi], [&] {
+                    ClearSelection();
+                    if (childIndex < widgets_.size()) widgets_[childIndex].selected = true;
+                });
                 mouseDownWidgetIndex_ = wi;
                 mouseDownHit_ =
                     group->GetSourceTabItemAtPoint(pt);
@@ -1371,7 +1373,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     SyncKeyboardNavFromSelection();
                 }
                 SaveLayoutSlots();
-                InvalidateRect(hwnd_, nullptr, FALSE);
+                InvalidateWidgetControls(*wc);
             }
             return;
         }
@@ -1412,11 +1414,12 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                         dynamic_cast<CollectionGroup*>(wc))
                     {
                         group->InvalidateFilterCache();
-                        ClearSelection();
                         const size_t childIndex =
                             FindWidgetIndexById(id);
-                        if (childIndex < widgets_.size())
-                            widgets_[childIndex].selected = true;
+                        UpdateWidgetControlSelection(&widgets_[wi], [&] {
+                            ClearSelection();
+                            if (childIndex < widgets_.size()) widgets_[childIndex].selected = true;
+                        });
                         mouseDownWidgetIndex_ = wi;
                         mouseDownHit_ =
                             group->GetTabItemAtPoint(pt);
@@ -1436,7 +1439,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                             wc->InvalidateSlots();
                     }
                     SaveLayoutSlots();
-                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    InvalidateWidgetControls(*wc);
                     return;
                 }
             }
@@ -1445,27 +1448,21 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         else if (wh == WidgetHit::SearchBox)
         {
             auto* searchable = dynamic_cast<ScrollingItemWidget*>(wc);
-            for (auto& c : containers_)
-            {
-                auto* other = dynamic_cast<ScrollingItemWidget*>(c.get());
-                if (other && other != searchable)
-                    other->SetSearchFocused(false);
-            }
             if (searchable)
             {
                 // Search focus belongs to the widget interaction, not merely
                 // to the shared hidden IME input HWND. Keep the owning widget
                 // selected so a hover-only widget remains visible while the
                 // pointer temporarily enters the IME candidate window.
-                SelectWidgetOnly(wi);
+                PrepareWidgetSearchFocus(*searchable, true);
                 searchable->BeginSearchPointerSelection(
                     pt, (wp & MK_SHIFT) != 0);
                 mouseDownWidgetIndex_ = wi;
                 mouseDownHit_ = nullptr;
                 snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                 UpdateHostInputImePosition();
+                InvalidateWidgetControls(*searchable);
             }
-            InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
     }
@@ -1482,8 +1479,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());
             if (searchable && searchable->IsSearchFocused())
             {
-                searchable->SetSearchFocused(false);
-                InvalidateRect(hwnd_, nullptr, FALSE);
+                blurSearch(*searchable);
             }
         }
     }

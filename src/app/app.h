@@ -16,6 +16,7 @@
 #include "ui/render/d2d_drawing.h"
 #include "ui/render/font_weight_rules.h"
 #include "app/render/composition_state_types.h"
+#include "app/render/system_icon_placeholder_demand.h"
 #include "app/popup/collection_popup_icon_materials.h"
 #include "icons/icon_shadow.h"
 #include "icons/icon_shadow_settings.h"
@@ -2711,6 +2712,10 @@ private:
     snowdesktop::popup_resize_transition::Geometry GetPresentedCollectionPopupGeometry() const;
     void StartFolderPreviewPopupResize(snowdesktop::popup_resize_transition::Geometry before);
     void InvalidateCollectionPopupContent();
+    void InvalidateCollectionPopupControls(bool immediate = false);
+    void InvalidateWidgetControls(const WidgetContainer& owner, bool immediate = false);
+    void PrepareWidgetSearchFocus(ScrollingItemWidget& target, bool selectOwner);
+    void UpdateWidgetControlSelection(const DesktopWidget* nextOwner, const std::function<void()>& update);
     bool PrepareCompositionAnimationOverlay(
         UiCompositionAnimationOverlay& overlay,
         const DragRenderCache& cache,
@@ -2935,6 +2940,7 @@ private:
     // ── Async Icon Loading ──────────────────────────────────
     void StartIconLoader();
     void QueueSystemIconBitmap(int index, int size, bool beautify, std::uint64_t key, bool quick);
+    void InvalidateSystemIconConsumers(std::uint64_t key);
     void StopIconLoader();
     void BeginIconLoadGeneration();
     void CancelDockFolderPopupIconLoads();
@@ -2944,6 +2950,8 @@ private:
     void RefreshIconBitmapResolution();
     void EnqueueIconLoad(IconLoadTask task);
     bool OnIconLoaded(WPARAM wParam, LPARAM lParam);
+    void InvalidateDesktopItemIconConsumers(const DesktopItem& item, bool iconChanged, bool systemIconChanged);
+    void InvalidateDesktopIconPixels(const DesktopItem& item, bool systemIconChanged);
     void DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT iconRect,
         float alpha, bool allowBeautify = true);
     /** @brief 绘制与应用稳定身份绑定的快捷导航应用图标快照。 */
@@ -4846,6 +4854,7 @@ private:
     uint64_t dockFolderPopupIconGeneration_ = 1;
 
     std::unordered_map<std::uint64_t, ComPtr<ID2D1Bitmap>> placeholderIconCache_;
+    snowdesktop::SystemIconPlaceholderDemand systemIconDemand_;
     /** @} */
 
     /** @name 新建菜单 COM 上下文 */

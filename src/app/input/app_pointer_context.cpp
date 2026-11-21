@@ -884,13 +884,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         const std::wstring folderPath = dockFolder ? dockFolderPopupWidget_.sourceFolderPath : std::wstring{};
         if (widgetEngine_ && widgetEngine_->HasFocusedHostInput())
             widgetEngine_->BlurHostInput(false);
-        if (auto* popupView = GetCategorizedPopupView(); popupView && popupView != view)
-            popupView->SetSearchFocused(false);
-        for (const auto& container : containers_)
-            if (auto* other = dynamic_cast<ScrollingItemWidget*>(container.get()); other && other != view)
-                other->SetSearchFocused(false);
-        if (!popupOccludesPoint && !view->GetWidgetData()->selected)
-            SelectWidgetOnly(FindWidgetIndexById(widgetId));
+        PrepareWidgetSearchFocus(*view, !popupOccludesPoint && !view->GetWidgetData()->selected);
         view->SetSearchFocused(true);
         RestoreInteractionInputFocus(true);
         UpdateHostInputImePosition();
@@ -905,7 +899,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                 ImmReleaseContext(owner, ime);
             }
         }
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        InvalidateWidgetControls(*view);
 
         const auto command = text::ShowEditingMenu(owner, screenPt,
             view->GetSearchMenuState(), text::MenuKind::ComponentSearch);
@@ -924,8 +918,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                 ShowDockFolderPopupContextMenu(screenPt);
             else if (const size_t index = FindWidgetIndexById(widgetId); index < widgets_.size())
             {
-                SelectWidgetOnly(index);
-                InvalidateRect(hwnd_, nullptr, FALSE);
+                UpdateWidgetControlSelection(&widgets_[index], [&] { SelectWidgetOnly(index); });
                 ShowWidgetContextMenu(screenPt, index);
             }
             return;
@@ -935,14 +928,10 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         {
             popupScrollOffset_ = 0;
             if (folderPreview_) RefreshDockFolderPopupGeometry();
-            else
-            {
-                InvalidateCollectionPopupContent();
-                InvalidateFloatingPopupWindow();
-            }
         }
         UpdateHostInputImePosition();
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        if (!(popupOccludesPoint && folderPreview_ && folderPreview_->inlineBounds))
+            InvalidateWidgetControls(*view);
         return;
     }
 

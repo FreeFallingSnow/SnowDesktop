@@ -497,6 +497,8 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         context->BeginDraw();
         context->Clear(D2D1::ColorF(0u, 0.f));
         drawing_.Reset();
+        snowdesktop::SystemIconPlaceholderDemand::Paint placeholderPaint(systemIconDemand_,
+            snowdesktop::SystemIconPlaceholderDemand::Host::Navigation, nav.hwnd);
         DrawQuickNavigationSurface(context);
         hr = context->EndDraw();
         context->SetTarget(nullptr);

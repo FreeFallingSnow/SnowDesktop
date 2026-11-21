@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/dock/persistent_dock_host.h"
 #include "settings/shell_extension_settings.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
@@ -332,6 +333,113 @@ void DesktopApp::ClearSelectionForExternalWindow(HWND window)
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
     InvalidatePersistentDockHosts();
     InvalidateFloatingPopupWindow();
+}
+
+void DesktopApp::UpdateWidgetControlSelection(const DesktopWidget* nextOwner, const std::function<void()>& update)
+{
+    // Capture the old title extents and the visible projections before clearing selection.
+    std::vector<RECT> desktopDamage;
+    std::vector<HWND> dockDamage;
+    std::unordered_set<std::wstring> selectedKeys;
+    std::unordered_set<std::wstring> owners;
+    bool popupDamage = keyboardNavVisualFocus_ && IsCollectionPopupKeyboardTarget();
+    for (const auto& item : items_)
+    {
+        if (!item.selected) continue;
+        selectedKeys.insert(ToUpperInvariant(item.layoutKey));
+        if (IsItemInAnyWidget(item) || IsRectEmpty(&item.bounds) ||
+            (desktopIconsHidden_ && !IsRetainedLargeIcon(item))) continue;
+        RECT bounds = item.largeIcon ? GetLargeIconFrameRect(item) : item.bounds;
+        const RECT adornment = item.largeIcon ? GetLargeIconResizeHandleRect(item) : GetItemTextRect(item.bounds, true);
+        UnionRect(&bounds, &bounds, &adornment);
+        desktopDamage.push_back(bounds);
+    }
+    for (const auto& widget : widgets_)
+    {
+        if (&widget == nextOwner || widget.selected ||
+            std::ranges::any_of(widget.folderEntries, [](const FolderEntry& entry) { return entry.selected; }) ||
+            (!selectedKeys.empty() && std::ranges::any_of(widget.itemKeys, [&](const auto& key) {
+                return selectedKeys.contains(ToUpperInvariant(key));
+            })))
+        {
+            owners.insert(widget.id);
+            owners.insert(ResolveLuaWidgetFrameOwner(widget).id);
+        }
+    }
+    if (keyboardNavVisualFocus_ && keyboardNavInsideWidget_ && keyboardNavWidgetIndex_ < widgets_.size())
+        owners.insert(widgets_[keyboardNavWidgetIndex_].id);
+    const bool selectedRunning = std::ranges::any_of(dockUnpinnedRunningApps_, [](const auto& app) { return app.selected; });
+    const bool dockSelectionPossible = selectedRunning || !selectedKeys.empty() || !owners.empty() ||
+        std::ranges::any_of(dockEntries_, [](const DockEntry& entry) { return entry.selected; });
+    for (const auto& container : containers_)
+    {
+        if (auto* view = dynamic_cast<ScrollingItemWidget*>(container.get()); view && view->folderSearch_ &&
+            std::ranges::any_of(view->folderSearch_->rows, [](const auto& row) { return row.recursive && row.recursive->selected; }))
+            owners.insert(view->GetWidgetData()->id);
+        auto* dock = dynamic_cast<DockContainer*>(container.get());
+        if (!dock || !dockSelectionPossible) continue;
+        const bool runningHere = selectedRunning && std::ranges::any_of(dock->KeyboardTargets(), [&](const auto& target) {
+            return target.kind == DockContainer::KeyboardTarget::Kind::Running && target.index < dockUnpinnedRunningApps_.size() &&
+                dockUnpinnedRunningApps_[target.index].selected;
+        });
+        if (!runningHere && dock->GetSelectedItems().empty()) continue;
+        if (IsDockHostedByPersistentHost(dock))
+        {
+            if (auto* host = FindPersistentDockHost(dock)) dockDamage.push_back(host->hwnd);
+        }
+        else desktopDamage.push_back(dock->GetInteractiveBounds());
+    }
+    const auto* popup = GetOpenPopupWidget();
+    for (size_t i = 0; i < widgets_.size(); ++i)
+    {
+        const auto& widget = widgets_[i];
+        if (!owners.contains(widget.id) && !std::ranges::any_of(widget.childWidgetIds, [&](const auto& id) {
+                return owners.contains(id);
+            })) continue;
+        popupDamage |= popup == &widget || (dockFolderPopupOpen_ && dockFolderPopupMappingWidgetId_ == widget.id);
+        if (IsGroupedWidget(widget) || IsRectEmpty(&widget.bounds) ||
+            (desktopIconsHidden_ && !widget.keepWhenDesktopHidden)) continue;
+        RECT bounds = GetStandaloneWidgetFrameRect(widget);
+        if (snowdesktop::single_cell_widget::IsIconMode(widget))
+        {
+            const RECT title = GetItemTextRect(widget.bounds, true);
+            UnionRect(&bounds, &bounds, &title);
+        }
+        desktopDamage.push_back(bounds);
+    }
+    update();
+    for (auto bounds : desktopDamage)
+    {
+        if (IsRectEmpty(&bounds)) continue;
+        InflateRect(&bounds, 4, 4);
+        if (hwnd_) InvalidateRect(hwnd_, &bounds, FALSE);
+    }
+    for (HWND dock : dockDamage)
+        if (dock && IsWindow(dock)) InvalidateRect(dock, nullptr, FALSE);
+    if (popupDamage) InvalidateCollectionPopupControls();
+}
+
+void DesktopApp::PrepareWidgetSearchFocus(ScrollingItemWidget& target, bool selectOwner)
+{
+    std::vector<ScrollingItemWidget*> previous;
+    const auto addFocused = [&](ScrollingItemWidget* view) {
+        if (view && view != &target && view->IsSearchFocused())
+            previous.push_back(view);
+    };
+    addFocused(dockFolderPopupContainer_.get());
+    for (const auto& container : containers_)
+        addFocused(dynamic_cast<ScrollingItemWidget*>(container.get()));
+
+    if (selectOwner && target.GetWidgetData())
+    {
+        const size_t index = FindWidgetIndexById(target.GetWidgetData()->id);
+        UpdateWidgetControlSelection(target.GetWidgetData(), [&] { SelectWidgetOnly(index); });
+    }
+    for (auto* view : previous)
+    {
+        view->SetSearchFocused(false);
+        InvalidateWidgetControls(*view);
+    }
 }
 
 bool DesktopApp::OwnsWidgetKeyboardNavigation(

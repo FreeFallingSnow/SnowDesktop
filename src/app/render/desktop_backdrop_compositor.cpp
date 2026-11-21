@@ -717,6 +717,8 @@ struct DesktopBackdropCompositor::Impl
     wuc::CompositionGraphicsDevice maskGraphicsDevice{nullptr};
     std::vector<PanelVisual> panels;
     std::unordered_map<std::uintptr_t, std::size_t> panelOwners;
+    struct ChangedIconPanel { RECT frame; std::uintptr_t ownerKey; bool redrawing; };
+    std::vector<ChangedIconPanel> changedIconPanels;
 
     auto FindPanel(const RECT& frame, std::uintptr_t ownerKey, bool background = false)
     {
@@ -1567,6 +1569,7 @@ struct DesktopBackdropCompositor::Impl
         genieOpacity = 1.0f;
         panels.clear();
         panelOwners.clear();
+        changedIconPanels.clear();
         blurFactories.clear();
         if (!preserveSrgbContent)
         {
@@ -2537,12 +2540,42 @@ void DesktopBackdropCompositor::ClearGenieTransform()
     }
 }
 
-void DesktopBackdropCompositor::BeginFrame(bool completeCollection)
+void DesktopBackdropCompositor::QueueIconPanelRecollection(const RECT& iconFrame, std::uintptr_t ownerKey)
+{
+    if (!impl_->available || impl_->panels.empty()) return;
+    // Shell placeholders use the exact square destination as their anonymous
+    // identity. Styled file bitmaps use their item owner and may be letterboxed.
+    for (const auto key : {ownerKey, std::uintptr_t{0}})
+    {
+        const auto panel = impl_->FindPanel(iconFrame, key);
+        if (panel == impl_->panels.end() || panel->iconShape < 0 ||
+            !snowdesktop::desktop_backdrop_update_rules::CoversClientArea(&iconFrame, panel->frame)) continue;
+        const auto pending = std::find_if(impl_->changedIconPanels.begin(), impl_->changedIconPanels.end(),
+            [&](const auto& value) { return value.ownerKey == key && EqualRect(&value.frame, &panel->frame); });
+        if (pending == impl_->changedIconPanels.end())
+            impl_->changedIconPanels.push_back({panel->frame, key, false});
+        else
+            pending->redrawing = false; // A reentrant delivery belongs to the next content paint.
+    }
+}
+
+void DesktopBackdropCompositor::BeginFrame(bool completeCollection, const RECT* desktopIconDamage)
 {
     DiscardStagedFrame();
     if (!impl_->available)
         return;
     impl_->BeginCollection(completeCollection);
+    if (completeCollection) impl_->changedIconPanels.clear();
+    else for (auto& changed : impl_->changedIconPanels)
+    {
+        changed.redrawing = desktopIconDamage &&
+            snowdesktop::desktop_backdrop_update_rules::CoversClientArea(desktopIconDamage, changed.frame);
+        if (changed.redrawing)
+        {
+            const auto panel = impl_->FindPanel(changed.frame, changed.ownerKey);
+            if (panel != impl_->panels.end() && EqualRect(&panel->frame, &changed.frame)) panel->seen = false;
+        }
+    }
 }
 
 bool DesktopBackdropCompositor::BeginStagedFrame()
@@ -4225,6 +4258,15 @@ void DesktopBackdropCompositor::EndFrame(
     bool requestCommit)
 {
     if (impl_->stagingFrame) return;
+    // Retire the replaced file's old glass in the transaction that drew its
+    // new pixels. A retained widget or a foreground-only frame cannot consume it.
+    std::erase_if(impl_->changedIconPanels, [&](const auto& changed) {
+        if (!changed.redrawing) return false;
+        const auto panel = impl_->FindPanel(changed.frame, changed.ownerKey);
+        if (panel != impl_->panels.end() && !panel->seen && EqualRect(&panel->frame, &changed.frame))
+            (void)RemoveIconPanel(changed.frame, changed.ownerKey);
+        return true;
+    });
     impl_->collectingFrame = false;
     if (!impl_->available)
         return;

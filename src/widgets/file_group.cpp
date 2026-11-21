@@ -1563,11 +1563,7 @@ bool FileGroup::TryScrollTabs(POINT pt, int delta, bool* changed)
                         sourceTabs.left);
         if (changed) *changed = old != data_->tabScrollOffset;
         if (old != data_->tabScrollOffset)
-        {
             InvalidateHostedView();
-            InvalidateRect(app_->hwnd_, nullptr, FALSE);
-            return true;
-        }
         return true;
     }
 

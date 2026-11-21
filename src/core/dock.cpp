@@ -2626,7 +2626,9 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 
 void DockContainer::DrawContents(ID2D1DeviceContext* context)
 {
-    if (!context) return;
+    if (!context || !app_) return;
+    snowdesktop::SystemIconPlaceholderDemand::Paint placeholderPaint(app_->systemIconDemand_,
+        snowdesktop::SystemIconPlaceholderDemand::Host::Dock, this);
     const auto& slots = GetSlots();
     const size_t count = entries_ ? entries_->size() : 0;
     const size_t fixedCount = SortableEntryCount();

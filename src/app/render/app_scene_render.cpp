@@ -98,6 +98,8 @@ void DesktopApp::DrawStaticBackground(
             if (!intersectsUpdate(di->largeIcon ? GetLargeIconFrameRect(*di) : di->bounds, 8))
                 continue;
             int state = selected ? 2 : (hovered ? 1 : 0);
+            snowdesktop::SystemIconPlaceholderDemand::Paint placeholderPaint(systemIconDemand_,
+                snowdesktop::SystemIconPlaceholderDemand::Host::DesktopItem, di, di->layoutKey, iconLoadSerial_);
             icon->Draw(
                 ctx, di->bounds, state,
                 false,

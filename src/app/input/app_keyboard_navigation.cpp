@@ -320,8 +320,13 @@ bool DesktopApp::ClearDesktopSurfaceKeyboardFocus()
     {
         auto* dock = dynamic_cast<DockContainer*>(container.get());
         if (!dock || !dock->ClearKeyboardFocus()) continue;
-        if (auto* host = FindPersistentDockHost(dock)) InvalidateFloatingDockWindow(*host);
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        if (auto* host = FindPersistentDockHost(dock); host && IsDockHostedByPersistentHost(dock))
+            InvalidateFloatingDockWindow(*host);
+        else if (hwnd_)
+        {
+            const RECT bounds = dock->GetInteractiveBounds();
+            if (!IsRectEmpty(&bounds)) InvalidateRect(hwnd_, &bounds, FALSE);
+        }
         changed = true;
     }
     return changed;

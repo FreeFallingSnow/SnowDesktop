@@ -13,7 +13,6 @@
 #include "widget/view/widget_composition_layer_rules.h"
 #include "widget/runtime/widget_visibility_rules.h"
 #include "widget/view/widget_scroll_rules.h"
-#include "widgets/single_cell_widget_rules.h"
 #include "layout/popup_scrollbar_layout.h"
 #include "drag_drop/ole_drag_rules.h"
 #include "drag_drop/drag_input_rules.h"
@@ -314,26 +313,6 @@ void DesktopApp::OnMouseMoveAt(
     const POINT tracePoint = current;
     if (DockTrayPopupPointerMove(current)) return;
     if (TryStartWidgetContentDrag(current, wp)) return;
-    const auto queueCategorizedDesktopOwner = [this](ScrollingItemWidget* view) {
-        DesktopWidget* data = view->GetWidgetData();
-        // Single-cell thumbnails read the unfiltered source list, not tab
-        // order or search editing state. Dock popups edit a separate copy.
-        if (!data || IsRectEmptyRect(data->bounds) ||
-            snowdesktop::single_cell_widget::IsDesktopSingleCell(*data))
-            return;
-        const size_t index = FindWidgetIndexById(data->id);
-        if (index >= widgets_.size() || &widgets_[index] != data)
-            return;
-        // A pending complete scene already owns the source update. Let it
-        // establish the layers and backdrop owners before submitting a child.
-        if (desktopBackdropFullCollectionPending_)
-        {
-            if (hwnd_ && IsWindow(hwnd_))
-                InvalidateRect(hwnd_, nullptr, FALSE);
-            return;
-        }
-        (void)QueueDesktopWidgetComposition(data->id);
-    };
     if (auto* view = GetCategorizedPopupView(); view &&
         (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))
     {
@@ -345,17 +324,7 @@ void DesktopApp::OnMouseMoveAt(
             if (tabPress) view->UpdateCategoryTabDrag(current, &changed);
             else changed = view->UpdateSearchPointerSelection(current);
         }
-        if (changed)
-        {
-            if (folderPreview_ && folderPreview_->inlineBounds)
-                (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
-            else queueCategorizedDesktopOwner(view);
-            if (IsCollectionPopupHostedByFloatingWindow() &&
-                floatingPopupHwnd_ && IsWindow(floatingPopupHwnd_))
-                InvalidateFloatingPopupWindow(false);
-            else
-                InvalidateCollectionPopupAnimation(false);
-        }
+        if (changed) InvalidateWidgetControls(*view);
         return;
     }
     for (auto& container : containers_)
@@ -364,7 +333,7 @@ void DesktopApp::OnMouseMoveAt(
         {
             bool changed = false;
             categorized->UpdateCategoryTabDrag(current, &changed);
-            if (changed) queueCategorizedDesktopOwner(categorized);
+            if (changed) InvalidateWidgetControls(*categorized);
             return;
         }
     RecordShellHoverTrace(
@@ -536,10 +505,7 @@ void DesktopApp::OnMouseMoveAt(
                     current.y - popupScrollbarDragStartY_, geometry);
             auto* search = GetCategorizedPopupView();
             if (!search || !search->SetFolderSearchScrollOffset(scroll)) popupScrollOffset_ = scroll;
-            if (folderPreview_ && folderPreview_->inlineBounds)
-                (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
-            else
-                (void)PresentDesktopForegroundComposition(popup);
+            InvalidateCollectionPopupControls(true);
         }
         return;
     }
@@ -567,7 +533,7 @@ void DesktopApp::OnMouseMoveAt(
                 group->InvalidateHostedView();
             else
                 container->InvalidateSlots();
-            (void)QueueDesktopWidgetComposition(data->id);
+            InvalidateWidgetControls(*container, true);
         }
         return;
     }
@@ -581,7 +547,7 @@ void DesktopApp::OnMouseMoveAt(
             continue;
         const bool changed = searchable->UpdateSearchPointerSelection(current);
         UpdateHostInputImePosition();
-        if (changed) queueCategorizedDesktopOwner(searchable);
+        if (changed) InvalidateWidgetControls(*searchable);
         return;
     }
 

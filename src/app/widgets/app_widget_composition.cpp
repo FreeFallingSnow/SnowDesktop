@@ -742,6 +742,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
         DesktopBackdropCompositor::PreparedMarquees marquees;
         desktopWidgetCompositionDrawInProgress_ = true;
         item.iconBackdrops.BeginDraw();
+        snowdesktop::SystemIconPlaceholderDemand::Paint placeholderPaint(systemIconDemand_,
+            snowdesktop::SystemIconPlaceholderDemand::Host::Widget, widgetData, widgetId);
         desktopWidgetIconBackdropsDrawing_ = &item.iconBackdrops;
         desktopWidgetBackdropRequestedDuringDraw_ = false;
         desktopWidgetBackdropCornerRadiusDuringDraw_ = 0.0f;

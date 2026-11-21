@@ -217,6 +217,8 @@ bool DesktopApp::RenderDragPreviewCompositionFrame(
     DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get());
     drawing_.Reset();
     const auto& dragItems = dragSession_.Items();
+    snowdesktop::SystemIconPlaceholderDemand::Paint placeholderPaint(systemIconDemand_,
+        snowdesktop::SystemIconPlaceholderDemand::Host::Drag, dragPreviewHwnd_);
     const std::size_t previewItemCount = std::min(
         dragPreviewItemIndices_.size(),
         dragPreviewItemBounds_.size());

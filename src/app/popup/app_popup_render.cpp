@@ -207,6 +207,11 @@ void DesktopApp::DrawCollectionPopup(
         }
     }
 
+    // Replaying the retained snapshot leaves its existing icon requests intact.
+    std::optional<snowdesktop::SystemIconPlaceholderDemand::Paint> placeholderPaint;
+    if (!inlinePreview && (renderingFloatingPopup_ || popupIcons))
+        placeholderPaint.emplace(systemIconDemand_, snowdesktop::SystemIconPlaceholderDemand::Host::Popup,
+            nullptr, widget.id, dockFolderPopupOpen_ ? dockFolderPopupIconGeneration_ : 0);
     const auto& popupKeys = GetPopupItemKeysView(widget);
     const auto drawPreviewMarquee = [&] {
         if (folderPreview_ && folderPreview_->keyboardFocused && marqueeActive_ && marqueeDockFolderPopup_)
@@ -663,6 +668,7 @@ void DesktopApp::DrawCollectionPopup(
                 L":" + std::to_wstring(iconAppearanceRevision_) + L":" + std::to_wstring(iconCustomizationRevision_) +
                 L":" + std::wstring(iconIdentity);
             auto cached = popupFanIconDrawings_.find(cacheKey);
+            const auto previousMiss = systemIconDemand_.MissRevision();
             if (cached == popupFanIconDrawings_.end())
             {
                 if (popupFanIconDrawings_.size() >= 24)
@@ -687,6 +693,7 @@ void DesktopApp::DrawCollectionPopup(
                     static_cast<float>(pose.icon.bottom - pose.icon.top));
                 const auto iconOffset = D2D1::Point2F(static_cast<float>(pose.icon.left), static_cast<float>(pose.icon.top));
                 ctx->DrawImage(drawing.commands.Get(), &iconOffset, &iconBounds);
+                if (systemIconDemand_.MissRevision() != previousMiss) popupFanIconDrawings_.erase(cached);
                 iconDrawn = true;
             }
         }

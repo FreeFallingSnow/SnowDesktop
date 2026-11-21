@@ -416,6 +416,7 @@ bool DesktopApp::DrawIndependentDockIcon(ID2D1DeviceContext* ctx, const DockEntr
     auto& cached = dockAppearanceImages_[key + L":" + std::to_wstring(edge)];
     if (!cached.bitmap || cached.sources != signature)
     {
+        const auto previousMiss = systemIconDemand_.MissRevision();
         snowdesktop::icon_image::Image source;
         {
             RawIconCapture raw(drawingIconAppearanceSource_);
@@ -428,6 +429,7 @@ bool DesktopApp::DrawIndependentDockIcon(ID2D1DeviceContext* ctx, const DockEntr
         if (!uploaded) return false;
         iconGlassBackdrop_.erase(cached.bitmap.Get()); iconBitmapStyles_.erase(cached.bitmap.Get());
         cached = {std::move(signature), std::move(uploaded)};
+        if (systemIconDemand_.MissRevision() != previousMiss) cached.sources.clear();
     }
     const auto drawIcon = [&](ID2D1DeviceContext* drawing) {
         DrawIconBitmap(drawing, cached.bitmap.Get(), target, 1.f, reinterpret_cast<std::uintptr_t>(&widgets_[owner]));

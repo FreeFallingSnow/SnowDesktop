@@ -137,7 +137,8 @@ public:
     /** @brief 恢复普通面板及根视觉；与后续正常属性更新一起提交。 */
     void ClearGenieTransform();
     /** @brief 开始收集一帧的玻璃区域。完整帧会在 EndFrame 清理未再次出现的视觉。 */
-    void BeginFrame(bool completeCollection);
+    void BeginFrame(bool completeCollection, const RECT* desktopIconDamage = nullptr);
+    void QueueIconPanelRecollection(const RECT& iconFrame, std::uintptr_t ownerKey);
     // Dock full redraws collect plain panel data until their content surface
     // is ready. No live visual, native region, or seen flag changes here, so
     // another target's shared-controller commit cannot publish this candidate.

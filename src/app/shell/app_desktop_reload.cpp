@@ -24,6 +24,10 @@
 #include "dock/dock_minimize_protocol.h"
 #include "platform/window_support/window_support_pointer_metadata.h"
 #include "desktop/desktop_membership_recovery.h"
+#include "desktop/folder_mapping_visibility_rules.h"
+#include "icons/icon_render_rules.h"
+#include "icons/large_icon_shape_geometry.h"
+#include "icons/large_icon_transform.h"
 #include "shell/directory_change_watch.h"
 
 // SID 字符串格式化（S-1-5-21-...），直接按 SID 内存布局解析，
@@ -1216,6 +1220,122 @@ void DesktopApp::EnqueueIconLoad(IconLoadTask task)
     QueueIconTask(std::move(task));
 }
 
+namespace
+{
+void InvalidateIconBounds(HWND window, RECT bounds)
+{
+    if (!window || IsRectEmpty(&bounds)) return;
+    InflateRect(&bounds, 8, 8);
+    InvalidateRect(window, &bounds, FALSE);
+}
+}
+
+void DesktopApp::InvalidateDesktopIconPixels(const DesktopItem& item, bool systemIconChanged)
+{
+    // Large cards consume a separately loaded asset. Only their Shell
+    // placeholder uses this delivery, and the 3D card can project beyond its cell.
+    if (!IsRectEmpty(&item.bounds) && !IsItemInAnyWidget(item))
+    {
+        if (!item.largeIcon && !desktopIconsHidden_)
+        {
+            const RECT icon = GetItemIconRect(item.bounds);
+            desktopBackdropCompositor_.QueueIconPanelRecollection(icon,
+                reinterpret_cast<std::uintptr_t>(&item) | 1u);
+            RECT bounds = item.bounds;
+            if (item.selected)
+            {
+                const RECT title = GetItemTextRect(item.bounds, true);
+                UnionRect(&bounds, &bounds, &title);
+            }
+            InvalidateIconBounds(hwnd_, bounds);
+        }
+        else if (item.largeIcon && systemIconChanged && IsLargeIconVisible(item, lastMousePoint_, desktopIconsHidden_))
+        {
+            const auto runtime = largeIconRuntime_.find(item.layoutKey);
+            if (runtime == largeIconRuntime_.end() || !runtime->second.asset)
+            {
+                RECT bounds = GetLargeIconFrameRect(item);
+                const auto& config = EffectiveLargeIconConfig(item);
+                if (config.effect == 1 && runtime != largeIconRuntime_.end())
+                {
+                    const RECT card = snowdesktop::large_icon_shape::Frame(config, bounds);
+                    const auto& motion = runtime->second.motion;
+                    const auto transform = snowdesktop::large_icon_transform::Resolve(
+                        static_cast<float>(card.right - card.left), static_cast<float>(card.bottom - card.top),
+                        motion.tiltX, motion.tiltY, static_cast<float>(config.amplitude));
+                    if (transform.active)
+                    {
+                        const RECT projection = snowdesktop::large_icon_transform::Bounds(card, transform.matrix);
+                        UnionRect(&bounds, &bounds, &projection);
+                    }
+                }
+                InvalidateIconBounds(hwnd_, bounds);
+            }
+        }
+    }
+}
+
+void DesktopApp::InvalidateDesktopItemIconConsumers(const DesktopItem& item, bool iconChanged, bool systemIconChanged)
+{
+    using snowdesktop::folder_mapping_visibility::EqualInsensitive;
+    const std::wstring itemKey = item.layoutKey;
+    if (iconChanged) InvalidateDesktopIconPixels(item, systemIconChanged);
+    // Folder mappings own FolderEntry bitmaps. Their itemKeys are persisted
+    // ordering, even when a path happens to equal this desktop item's key.
+    std::unordered_set<std::wstring> affected;
+    if (IsItemInAnyWidget(item)) for (const auto& source : widgets_)
+    {
+        if ((source.type != DesktopWidgetType::Collection && source.type != DesktopWidgetType::FileCategories) ||
+            std::none_of(source.itemKeys.begin(), source.itemKeys.end(),
+                [&](const auto& key) { return EqualInsensitive(key, itemKey); }))
+            continue;
+        affected.insert(source.id);
+        const auto parent = source.type == DesktopWidgetType::Collection
+            ? FindCollectionGroupIndexForChild(source.id) : FindFileGroupIndexForChild(source.id);
+        if (parent < widgets_.size()) affected.insert(widgets_[parent].id);
+    }
+    for (const auto& id : affected)
+    {
+        const auto index = FindWidgetIndexById(id);
+        if (index >= widgets_.size()) continue;
+        const auto& owner = widgets_[index];
+        // The derived entrance signature only tracks HBITMAPs. Metadata can
+        // change a shortcut arrow or system placeholder with the same bitmap.
+        if (iconChanged && !dockAppearanceImages_.empty())
+        {
+            const auto cached = dockAppearanceImages_.find(L"widget:" + id + L":" +
+                std::to_wstring(snowdesktop::icon_render_rules::kMaximumSourcePixels));
+            if (cached != dockAppearanceImages_.end()) cached->second.sources.clear();
+        }
+        const RECT frame = GetStandaloneWidgetFrameRect(owner);
+        if (!IsRectEmpty(&frame))
+        {
+            if (HasDesktopWidgetComposition(id)) (void)QueueDesktopWidgetComposition(id);
+            else InvalidateIconBounds(hwnd_, frame);
+        }
+    }
+    if (iconChanged && std::any_of(dockEntries_.begin(), dockEntries_.end(), [&](const DockEntry& entry) {
+            return entry.type == DockEntryType::DesktopItem ? EqualInsensitive(entry.reference, itemKey)
+                : IsLogicalDockEntryType(entry.type) && affected.contains(entry.reference);
+        }))
+    {
+        for (const auto& container : containers_)
+            if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+            {
+                auto* host = FindPersistentDockHost(dock);
+                if (host && host->active) InvalidateFloatingDockWindow(*host, false);
+                else InvalidateIconBounds(hwnd_, dock->GetAnimationVisualBounds(true));
+            }
+    }
+    if (const auto* popup = GetOpenPopupWidget(); popup && affected.contains(popup->id))
+    {
+        InvalidateCollectionPopupContent();
+        InvalidateFloatingPopupWindow(false);
+    }
+    if (dragSession_.HasContext()) InvalidateDragStaticScene(false);
+    if (quickNavigation_->open) InvalidateQuickNavigationWindow();
+}
+
 bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
 {
     auto* result = reinterpret_cast<IconLoadResult*>(lParam);
@@ -1244,14 +1364,26 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
         return false;
     }
     bool matched = false;
+    DesktopItem* changedDesktopItem = nullptr;
+    bool iconChanged = false;
+    bool systemIconChanged = false;
 
     if (result->isDesktopItem)
     {
         for (auto& item : items_)
         {
-            if (ToUpperInvariant(item.layoutKey) == ToUpperInvariant(result->layoutKey) &&
+            if (snowdesktop::folder_mapping_visibility::EqualInsensitive(item.layoutKey, result->layoutKey) &&
                 snowdesktop::shell_icon_request::Matches(result->requestKey, item))
             {
+                systemIconChanged = result->sysIconIndex >= 0 && result->sysIconIndex != item.sysIconIndex;
+                const bool typeChanged = !result->typeName.empty() && result->typeName != item.typeName;
+                const bool previousArrow = ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut);
+                const bool drewArrow = previousArrow && (item.iconBitmap || item.iconState != IconState::Loading);
+                const auto& target = result->shortcutTarget;
+                const bool classificationChanged = result->phase == IconLoadPhase::Shortcut &&
+                    (item.isShortcut != result->isShortcut || item.isApplicationShortcut != result->isApplicationShortcut ||
+                        item.shortcutTarget.classified != target.classified || item.shortcutTarget.directory != target.directory ||
+                        item.shortcutTarget.application != target.application || item.shortcutTarget.extension != target.extension);
                 const auto incomingBitmap = result->bitmap;
                 snowdesktop::shell_icon_request::ApplyBitmap(item, result->phase,
                     result->bitmap, result->bitmapSize, result->iconIsMediaThumbnail,
@@ -1265,6 +1397,12 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                 snowdesktop::shell_icon_request::ApplyPresentation(item, result->phase,
                     result->isShortcut, result->isApplicationShortcut);
                 if (result->phase == IconLoadPhase::Shortcut) item.shortcutTarget = result->shortcutTarget;
+                const bool arrow = ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut);
+                const bool drawsArrow = arrow && (item.iconBitmap || item.iconState != IconState::Loading);
+                iconChanged = (incomingBitmap && item.iconBitmap == incomingBitmap) || systemIconChanged ||
+                    previousArrow != arrow || drewArrow != drawsArrow;
+                if (iconChanged || typeChanged || classificationChanged)
+                    changedDesktopItem = &item;
                 if (result->phase == IconLoadPhase::Phase1)
                 {
                     IconLoadTask phase2;
@@ -1278,9 +1416,6 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                     phase2.phase = IconLoadPhase::Phase2;
                     EnqueueIconLoad(std::move(phase2));
                 }
-                InvalidateRect(hwnd_, nullptr, FALSE);
-                if (quickNavigation_->open)
-                    InvalidateQuickNavigationWindow();
                 break;
             }
         }
@@ -1390,9 +1525,9 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
         }
     }
 
+    bool membershipChanged = false;
     if (matched && !inlinePreviewResult && result->phase == IconLoadPhase::Shortcut)
     {
-        bool membershipChanged = false;
         if (result->isDesktopItem)
         {
             membershipChanged = ApplyAutoCollectFileCategoryWidgets();
@@ -1401,6 +1536,10 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
         {
             LayoutItems();
             RequestLayoutSave();
+            InvalidateDragStaticScene();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            InvalidateDockRects();
+            if (quickNavigation_->open) InvalidateQuickNavigationWindow();
         }
         for (auto& container : containers_)
         {
@@ -1410,9 +1549,14 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
             if (auto* mapping = dynamic_cast<FolderMapping*>(view)) mapping->InvalidateFilterCache();
         }
         if (auto* mapping = dynamic_cast<FolderMapping*>(dockFolderPopupContainer_.get())) mapping->InvalidateFilterCache();
-        InvalidateCollectionPopupContent();
-        InvalidateFloatingPopupWindow(false);
+        if (!result->isDesktopItem || membershipChanged)
+        {
+            InvalidateCollectionPopupContent();
+            InvalidateFloatingPopupWindow(false);
+        }
     }
+    if (changedDesktopItem && !membershipChanged)
+        InvalidateDesktopItemIconConsumers(*changedDesktopItem, iconChanged, systemIconChanged);
     if (!matched && result->bitmap)
         DeleteObject(result->bitmap);
     return matched;

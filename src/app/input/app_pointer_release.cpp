@@ -301,7 +301,8 @@ void DesktopApp::OnMouseLeave()
     }
     else
         HideDockWindowPreview();
-    const bool clearedDesktopHover = navHoverSide_ != 0 || navHotEdgeHover_ ||
+    const int previousNavSide = navHoverSide_;
+    const bool clearedDesktopHover = previousNavSide != 0 || navHotEdgeHover_ ||
         (!listTitleHoverPopup_ && !listTitleHoverOwner_.empty());
     SetPageNavHotEdgeHover(0);
     navAutoFlipDir_ = 0;
@@ -374,7 +375,20 @@ void DesktopApp::OnMouseLeave()
             ShellHoverTraceEvent::MouseLeaveEnd);
         return;
     }
-    if (hwnd_)
+    if (hwnd_ && luaWidgetPanelMouseDown_ && captureWindow &&
+        captureWindow == luaWidgetPanelCaptureHwnd_ &&
+        !dragSession_.HasContext() && !dragDropController_.IsTransportActive())
+    {
+        // The panel still receives the captured move and up when the pointer
+        // crosses its HWND. Only desktop chrome cleared above needs erasing.
+        if (previousNavSide)
+        {
+            RECT left{}, right{};
+            GetNavHotEdgeRects(left, right);
+            InvalidateRect(hwnd_, previousNavSide < 0 ? &left : &right, FALSE);
+        }
+    }
+    else if (hwnd_)
         InvalidateRect(hwnd_, nullptr, FALSE);
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MouseLeaveEnd);
@@ -1131,30 +1145,33 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
     if (auto* view = GetCategorizedPopupView(); view &&
         (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))
     {
-        const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
-        CategorizedPopupScope scope(view, GetCategorizedPopupFrame(popup));
-        if (view->HasCategoryTabPress())
         {
-            view->UpdateCategoryTabDrag(upPoint);
-            view->EndCategoryTabDrag(true);
-            if (dockFolderPopupOpen_)
+            const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
+            CategorizedPopupScope scope(view, GetCategorizedPopupFrame(popup));
+            if (view->HasCategoryTabPress())
             {
-                const size_t source = FindWidgetIndexById(dockFolderPopupMappingWidgetId_);
-                if (source < widgets_.size())
+                view->UpdateCategoryTabDrag(upPoint);
+                view->EndCategoryTabDrag(true);
+                if (dockFolderPopupOpen_)
                 {
-                    widgets_[source].categoryTabOrder = dockFolderPopupWidget_.categoryTabOrder;
-                    widgets_[source].activeCategoryId = dockFolderPopupWidget_.activeCategoryId;
+                    const size_t source = FindWidgetIndexById(dockFolderPopupMappingWidgetId_);
+                    if (source < widgets_.size())
+                    {
+                        widgets_[source].categoryTabOrder = dockFolderPopupWidget_.categoryTabOrder;
+                        widgets_[source].activeCategoryId = dockFolderPopupWidget_.activeCategoryId;
+                    }
                 }
+                RequestLayoutSave();
             }
-            RequestLayoutSave();
+            else view->FinishSearchPointerSelection(upPoint);
         }
-        else view->FinishSearchPointerSelection(upPoint);
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
         snowdesktop::private_pointer::ReleasePointerCapture();
         if (folderPreview_) RefreshDockFolderPopupGeometry();
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        if (auto* current = GetCategorizedPopupView(); current && !(folderPreview_ && folderPreview_->inlineBounds))
+            InvalidateWidgetControls(*current);
         return;
     }
     for (auto& container : containers_)
@@ -1166,8 +1183,8 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             mouseDown_ = false;
             mouseDownWidgetIndex_ = static_cast<size_t>(-1);
             mouseDownHit_ = nullptr;
+            InvalidateWidgetControls(*categorized);
             snowdesktop::private_pointer::ReleasePointerCapture();
-            InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
     if (HandleUsageGuidePointerUp(upPoint)) return;
@@ -1216,12 +1233,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
         snowdesktop::private_pointer::ReleasePointerCapture();
-        if (folderPreview_ && folderPreview_->inlineBounds)
-            (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
-        else if (ShouldShowFloatingPopupWindow())
-            InvalidateFloatingPopupWindow(true);
-        else
-            InvalidateRect(hwnd_, nullptr, FALSE);
+        InvalidateCollectionPopupControls(true);
         return;
     }
 
@@ -1253,9 +1265,9 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+        if (container) InvalidateWidgetControls(*container);
         snowdesktop::private_pointer::ReleasePointerCapture();
         RequestLayoutSave();
-        InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
 
@@ -1313,6 +1325,13 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         const std::string surface =
             luaWidgetPanelRequest_.surface;
         const auto panelGeneration = floatingPopupMouseHookGeneration_;
+        const RECT previousDesktopPanel = IsLuaPanelHostedByFloatingWindow()
+            ? RECT{} : GetLuaWidgetPanelRect();
+        const auto panelStillInteractive = [&] {
+            return panelGeneration == floatingPopupMouseHookGeneration_ &&
+                luaWidgetPanelRequest_.widgetId == panelWidgetId &&
+                luaWidgetPanelAnimation_.IsInteractive();
+        };
         const bool pointerCaptured = widgetEngine_ &&
             widgetEngine_->HasInteractionPointerCapture(
                 panelWidgetId, surface);
@@ -1320,9 +1339,9 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             widgetEngine_ &&
             widgetEngine_->HandleHostInputPointerUp(
                 panelWidgetId, localX, localY, surface);
-        if (!hostInputHandled &&
-            (PtInRect(&content, upPoint) || pointerCaptured) &&
-            widgetEngine_)
+        const bool dispatchMouseUp = widgetEngine_ && !hostInputHandled &&
+            (PtInRect(&content, upPoint) || pointerCaptured);
+        if (dispatchMouseUp)
         {
             const char* upEvent = surface == "dialog"
                 ? "onDialogMouseUp"
@@ -1336,9 +1355,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                 panelWidgetId,
                 upEvent,
                 localX, localY, 1, 0);
-            if (panelGeneration == floatingPopupMouseHookGeneration_ &&
-                luaWidgetPanelRequest_.widgetId == panelWidgetId &&
-                luaWidgetPanelAnimation_.IsInteractive() && PtInRect(&content, upPoint))
+            if (panelStillInteractive() && PtInRect(&content, upPoint))
             {
                 widgetEngine_->InvokeMouseEvent(
                     panelWidgetId,
@@ -1350,7 +1367,31 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDown_ = false;
         ReleaseLuaWidgetPanelCaptureIfOwned();
         UpdateHostInputImePosition();
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        // A panel callback can change the model its desktop widget draws, even
+        // when the callback closes the panel or replaces it with another one.
+        if ((hostInputHandled || dispatchMouseUp) && widgetEngine_ &&
+            FindWidgetIndexById(panelWidgetId) < widgets_.size())
+            widgetEngine_->RuntimeInvalidateHost(panelWidgetId, std::nullopt, "desktop");
+        // Closing or replacing a panel publishes its old footprint and its successor.
+        if (!panelStillInteractive()) return;
+        if (IsLuaPanelHostedByFloatingWindow())
+        {
+            // Its WM_LBUTTONUP dispatcher presents after this handler returns.
+            if (!handlingFloatingPopupInput_)
+                InvalidateFloatingPopupWindow();
+        }
+        else
+        {
+            const RECT currentPanel = GetLuaWidgetPanelRect();
+            const auto invalidatePanel = [this](RECT panel) {
+                if (IsRectEmpty(&panel)) return;
+                InflateRect(&panel, 3, 3);
+                InvalidateRect(hwnd_, &panel, FALSE);
+            };
+            if (!EqualRect(&previousDesktopPanel, &currentPanel))
+                invalidatePanel(previousDesktopPanel);
+            invalidatePanel(currentPanel);
+        }
         return;
     }
 
@@ -1370,9 +1411,9 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ =
             static_cast<size_t>(-1);
+        InvalidateWidgetControls(*searchable);
         snowdesktop::private_pointer::ReleasePointerCapture();
         UpdateHostInputImePosition();
-        InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
 

@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/dock/persistent_dock_host.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "common/utils.h"
@@ -701,6 +702,7 @@ void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
     auto cached = cache.find(cacheKey);
     if (cached == cache.end())
     {
+        systemIconDemand_.Miss(cacheKey);
         QueueSystemIconBitmap(sysIconIndex, sourceSize, beautify, cacheKey, false);
         loading();
         return;
@@ -793,10 +795,79 @@ void DesktopApp::DrawQuickNavAppIcon(
  * @param text 通知文本（如"第3页"）。
  */
 
+void DesktopApp::InvalidateSystemIconConsumers(std::uint64_t key)
+{
+    using Host = snowdesktop::SystemIconPlaceholderDemand::Host;
+    for (const auto& owner : systemIconDemand_.Take(key))
+    {
+        switch (owner.host)
+        {
+        case Host::DesktopItem:
+        {
+            const auto index = FindItemIndexByKey(owner.id);
+            if (index >= items_.size() || owner.generation != iconLoadSerial_) break;
+            const auto& file = items_[index];
+            if (reinterpret_cast<std::uintptr_t>(&file) == owner.token &&
+                file.sysIconIndex == static_cast<int>(key >> 32) && (file.largeIcon || !file.iconBitmap))
+                InvalidateDesktopIconPixels(file, true);
+            break;
+        }
+        case Host::Widget:
+        {
+            const auto index = FindWidgetIndexById(owner.id);
+            const auto active = desktopWidgetCompositionItems_.find(owner.id);
+            if (index < widgets_.size() && reinterpret_cast<std::uintptr_t>(&widgets_[index]) == owner.token &&
+                active != desktopWidgetCompositionItems_.end() && active->second.visible)
+                (void)QueueDesktopWidgetComposition(owner.id);
+            break;
+        }
+        case Host::Dock:
+            for (const auto& container : containers_)
+            {
+                auto* dock = dynamic_cast<DockContainer*>(container.get());
+                if (!dock || reinterpret_cast<std::uintptr_t>(dock) != owner.token) continue;
+                auto* host = FindPersistentDockHost(dock);
+                if (host && host->active)
+                {
+                    if (IsWindowVisible(host->hwnd)) InvalidateFloatingDockWindow(*host, false);
+                }
+                else if (hwnd_ && (!desktopIconsHidden_ || dockSettings_.keepWhenDesktopHidden))
+                {
+                    const RECT bounds = dock->GetAnimationVisualBounds(true);
+                    if (!IsRectEmpty(&bounds)) InvalidateRect(hwnd_, &bounds, FALSE);
+                }
+                break;
+            }
+            break;
+        case Host::Popup:
+            if (const auto* popup = GetOpenPopupWidget(); popup && popup->id == owner.id &&
+                IsCollectionPopupHostedByFloatingWindow() &&
+                owner.generation == (dockFolderPopupOpen_ ? dockFolderPopupIconGeneration_ : 0))
+            {
+                InvalidateCollectionPopupContent();
+                InvalidateFloatingPopupWindow(false);
+            }
+            break;
+        case Host::Navigation:
+            if (quickNavigation_->open && reinterpret_cast<std::uintptr_t>(quickNavigation_->hwnd) == owner.token)
+                InvalidateQuickNavigationWindow();
+            break;
+        case Host::Drag:
+            if (dragSession_.IsActive() && reinterpret_cast<std::uintptr_t>(dragPreviewHwnd_) == owner.token &&
+                IsWindowVisible(dragPreviewHwnd_))
+            {
+                InvalidateDragStaticScene(false);
+                SyncDragPreviewWindow();
+            }
+            break;
+        }
+    }
+}
+
 void DesktopApp::QueueSystemIconBitmap(int index, int size, bool beautify,
     std::uint64_t key, bool quick)
 {
-    shellVisualWork_.Submit((quick ? L"quick-system:" : L"system:") + std::to_wstring(key),
+    const bool queued = shellVisualWork_.Submit((quick ? L"quick-system:" : L"system:") + std::to_wstring(key),
         [index, size, quick] {
             auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
             ComPtr<IImageList> list;
@@ -811,10 +882,13 @@ void DesktopApp::QueueSystemIconBitmap(int index, int size, bool beautify,
             }
             return result;
         }, [this, key, quick, beautify](auto result) {
-            if (!result || !result->bitmap) return;
-            auto bitmap = CreateD2DBitmapFromHBitmap(result->bitmap, beautify);
+            auto bitmap = result && result->bitmap ? CreateD2DBitmapFromHBitmap(result->bitmap, beautify) : nullptr;
             ComPtr<ID2D1Bitmap> converted;
-            if (!bitmap || FAILED(bitmap.As(&converted))) return;
+            if (!bitmap || FAILED(bitmap.As(&converted)))
+            {
+                if (!quick) (void)systemIconDemand_.Take(key);
+                return;
+            }
             (quick ? quickNavigation_->sysIconCache : placeholderIconCache_)[key] = std::move(converted);
             if (quick)
             {
@@ -823,15 +897,10 @@ void DesktopApp::QueueSystemIconBitmap(int index, int size, bool beautify,
                 InvalidateQuickNavigationWindow();
                 return;
             }
-            // Placeholder icons are shared by all of these presentation hosts;
-            // retain the complete refresh fallback for their consumers.
             snowdesktop::performance::Scope trace("render", "shared-placeholder.delivery");
-            InvalidateDragStaticScene();
-            InvalidateRect(hwnd_, nullptr, FALSE);
-            InvalidateDockRects();
-            InvalidateFloatingPopupWindow(false);
-            InvalidateQuickNavigationWindow();
+            InvalidateSystemIconConsumers(key);
         }, hwnd_, kBackgroundShellReadyMessage);
+    if (!queued && !quick) (void)systemIconDemand_.Take(key);
 }
 
 bool DesktopApp::ShouldBeautifyIconBitmap(bool iconIsMediaThumbnail) const
