@@ -497,7 +497,7 @@
   "app.settings.theme": "Thème",
   "app.settings.category_name": "Nom de la catégorie",
   "app.settings.category_extensions": "Extensions",
-  "app.settings.category_hint": "Les extensions standard correspondent aussi aux fichiers cibles des raccourcis ; .LNK:FOLDER correspond aux raccourcis de dossiers, .LNK:.PDF aux raccourcis PDF, .LNK:APP aux raccourcis d’applications et .URL:STEAM aux liens de lancement Steam.",
+  "app.settings.category_hint": "Les extensions standard correspondent aussi aux fichiers cibles des raccourcis. .LNK:FOLDER correspond aux raccourcis de dossiers, .LNK:.PDF aux raccourcis PDF et .LNK:APP aux raccourcis d’applications. .URL:STEAM et .URL:EPIC correspondent respectivement aux liens de lancement Steam et Epic Games.",
   "app.settings.category_rules": "Règles de catégorie",
   "app.settings.tab_height": "Hauteur de la barre supérieure, des onglets et du champ de recherche",
   "app.settings.scrollable_title_bar_position": "Afficher la barre de titre en haut des widgets de rangement",
@@ -2948,5 +2948,8 @@
   "app.settings.widgets_permission_clipboard_observe": "Lire le contenu du presse-papiers en arrière-plan",
   "settings.agentOperations.introTitle": "Organisez votre bureau avec l’IA",
   "settings.agentOperations.access": "Autoriser l’accès des agents",
-  "settings.agentOperations.access.description": "Autorisez les assistants IA locaux à lire des informations ou à modifier SnowDesktop via son interface de contrôle."
+  "settings.agentOperations.access.description": "Autorisez les assistants IA locaux à lire des informations ou à modifier SnowDesktop via son interface de contrôle.",
+  "largeIcon.epic": "Couverture Epic",
+  "largeIcon.source.epic-local": "Cache Epic local",
+  "largeIcon.source.epic-online": "Couverture Epic en ligne"
 }

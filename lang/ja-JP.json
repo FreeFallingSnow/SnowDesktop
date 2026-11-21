@@ -497,7 +497,7 @@
   "app.settings.theme": "テーマ",
   "app.settings.category_name": "名前",
   "app.settings.category_extensions": "拡張機能",
-  "app.settings.category_hint": "通常の拡張子はショートカットのリンク先ファイルにも一致します。.LNK:FOLDER はフォルダーのショートカット、.LNK:.PDF は PDF のショートカット、.LNK:APP はアプリのショートカット、.URL:STEAM は Steam の起動リンクに一致します。",
+  "app.settings.category_hint": "通常の拡張子はショートカットのリンク先ファイルにも一致します。.LNK:FOLDER はフォルダー、.LNK:.PDF は PDF、.LNK:APP はアプリのショートカットに一致します。.URL:STEAM と .URL:EPIC は、それぞれ Steam と Epic Games の起動リンクに一致します。",
   "app.settings.category_rules": "カテゴリのルール",
   "app.settings.tab_height": "上部バー・タブ・検索ボックスの高さ",
   "app.settings.scrollable_title_bar_position": "収納ウィジェットのタイトルバーを上部に表示",
@@ -2948,5 +2948,8 @@
   "app.settings.widgets_permission_clipboard_observe": "バックグラウンドでクリップボードの内容を読み取る",
   "settings.agentOperations.introTitle": "AI でデスクトップを整理",
   "settings.agentOperations.access": "Agent のアクセスを許可",
-  "settings.agentOperations.access.description": "ローカルの AI アシスタントが制御インターフェイスを通じて SnowDesktop の情報を読み取ったり、変更を加えたりできます。"
+  "settings.agentOperations.access.description": "ローカルの AI アシスタントが制御インターフェイスを通じて SnowDesktop の情報を読み取ったり、変更を加えたりできます。",
+  "largeIcon.epic": "Epic カバー",
+  "largeIcon.source.epic-local": "Epic のローカルキャッシュ",
+  "largeIcon.source.epic-online": "Epic のオンラインカバー"
 }

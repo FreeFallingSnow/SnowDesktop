@@ -497,7 +497,7 @@
   "app.settings.theme": "主題",
   "app.settings.category_name": "名稱",
   "app.settings.category_extensions": "擴充名",
-  "app.settings.category_hint": "一般副檔名也會比對捷徑的目標檔案；.LNK:FOLDER 比對資料夾捷徑，.LNK:.PDF 比對 PDF 捷徑，.LNK:APP 比對應用程式捷徑，.URL:STEAM 比對 Steam 啟動連結。",
+  "app.settings.category_hint": "一般副檔名也會比對捷徑的目標檔案。.LNK:FOLDER 比對資料夾捷徑，.LNK:.PDF 比對 PDF 捷徑，.LNK:APP 比對應用程式捷徑，.URL:STEAM 和 .URL:EPIC 分別比對 Steam 和 Epic 遊戲啟動連結。",
   "app.settings.category_rules": "分類規則",
   "app.settings.tab_height": "頂欄、標籤與搜尋框高度",
   "app.settings.scrollable_title_bar_position": "收納元件使用頂部標題列",
@@ -2948,5 +2948,8 @@
   "app.settings.widgets_permission_clipboard_observe": "在背景讀取剪貼簿內容",
   "settings.agentOperations.introTitle": "讓 AI 幫您整理桌面",
   "settings.agentOperations.access": "允許 Agent 存取",
-  "settings.agentOperations.access.description": "允許本機 AI 助理透過控制介面讀取資訊或變更 SnowDesktop。"
+  "settings.agentOperations.access.description": "允許本機 AI 助理透過控制介面讀取資訊或變更 SnowDesktop。",
+  "largeIcon.epic": "Epic 封面",
+  "largeIcon.source.epic-local": "Epic 本機快取",
+  "largeIcon.source.epic-online": "Epic 線上封面"
 }

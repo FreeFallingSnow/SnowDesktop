@@ -497,7 +497,7 @@
   "app.settings.theme": "Tema",
   "app.settings.category_name": "Nome",
   "app.settings.category_extensions": "Extensões",
-  "app.settings.category_hint": "Extensões comuns também correspondem aos arquivos de destino dos atalhos; .LNK:FOLDER corresponde a atalhos de pastas, .LNK:.PDF a atalhos de PDF, .LNK:APP a atalhos de aplicativos e .URL:STEAM a links de inicialização do Steam.",
+  "app.settings.category_hint": "Extensões comuns também correspondem aos arquivos de destino dos atalhos. .LNK:FOLDER corresponde a atalhos de pastas, .LNK:.PDF a atalhos de PDF e .LNK:APP a atalhos de aplicativos. .URL:STEAM e .URL:EPIC correspondem a links de inicialização do Steam e da Epic Games, respectivamente.",
   "app.settings.category_rules": "Regras da categoria",
   "app.settings.tab_height": "Altura da barra superior, das abas e da caixa de pesquisa",
   "app.settings.scrollable_title_bar_position": "Usar a barra de título superior nos widgets de armazenamento",
@@ -2948,5 +2948,8 @@
   "app.settings.widgets_permission_clipboard_observe": "Ler o conteúdo da área de transferência em segundo plano",
   "settings.agentOperations.introTitle": "Organize sua área de trabalho com IA",
   "settings.agentOperations.access": "Permitir acesso de agentes",
-  "settings.agentOperations.access.description": "Permite que assistentes de IA locais leiam informações ou façam alterações no SnowDesktop pela interface de controle."
+  "settings.agentOperations.access.description": "Permite que assistentes de IA locais leiam informações ou façam alterações no SnowDesktop pela interface de controle.",
+  "largeIcon.epic": "Capa da Epic",
+  "largeIcon.source.epic-local": "Cache local da Epic",
+  "largeIcon.source.epic-online": "Capa on-line da Epic"
 }

@@ -497,7 +497,7 @@
   "app.settings.theme": "Thema",
   "app.settings.category_name": "Name",
   "app.settings.category_extensions": "Erweiterungen",
-  "app.settings.category_hint": "Normale Dateiendungen passen auch auf Dateiziele von Verknüpfungen; .LNK:FOLDER passt auf Ordnerverknüpfungen, .LNK:.PDF auf PDF-Verknüpfungen, .LNK:APP auf Anwendungsverknüpfungen und .URL:STEAM auf Steam-Startlinks.",
+  "app.settings.category_hint": "Normale Dateiendungen passen auch auf Dateiziele von Verknüpfungen. .LNK:FOLDER passt auf Ordnerverknüpfungen, .LNK:.PDF auf PDF-Verknüpfungen und .LNK:APP auf Anwendungsverknüpfungen. .URL:STEAM und .URL:EPIC passen auf Startlinks von Steam beziehungsweise Epic Games.",
   "app.settings.category_rules": "Kategorieregeln",
   "app.settings.tab_height": "Höhe von oberer Leiste, Tabs und Suchfeld",
   "app.settings.scrollable_title_bar_position": "Titelleisten von Ablage-Widgets oben anzeigen",
@@ -2948,5 +2948,8 @@
   "app.settings.widgets_permission_clipboard_observe": "Zwischenablageinhalte im Hintergrund lesen",
   "settings.agentOperations.introTitle": "Den Desktop mit KI organisieren",
   "settings.agentOperations.access": "Agentenzugriff zulassen",
-  "settings.agentOperations.access.description": "Lokale KI-Assistenten können über die Steuerschnittstelle Informationen aus SnowDesktop lesen oder Änderungen vornehmen."
+  "settings.agentOperations.access.description": "Lokale KI-Assistenten können über die Steuerschnittstelle Informationen aus SnowDesktop lesen oder Änderungen vornehmen.",
+  "largeIcon.epic": "Epic-Cover",
+  "largeIcon.source.epic-local": "Lokaler Epic-Cache",
+  "largeIcon.source.epic-online": "Online-Cover von Epic"
 }

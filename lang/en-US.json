@@ -497,7 +497,7 @@
     "app.settings.theme": "Theme",
     "app.settings.category_name": "Name",
     "app.settings.category_extensions": "Extensions",
-    "app.settings.category_hint": "Standard extensions also match shortcut file targets; .LNK:FOLDER matches folder shortcuts, .LNK:.PDF matches PDF shortcuts, .LNK:APP matches application shortcuts, and .URL:STEAM matches Steam launch links.",
+    "app.settings.category_hint": "Standard extensions also match shortcut file targets. .LNK:FOLDER matches folder shortcuts, .LNK:.PDF matches PDF shortcuts, and .LNK:APP matches application shortcuts. .URL:STEAM and .URL:EPIC match Steam and Epic Games launch links, respectively.",
     "app.settings.category_rules": "Category Rules",
     "app.settings.tab_height": "Top Bar, Tab and Search Box Height",
     "app.settings.scrollable_title_bar_position": "Use top title bars for storage widgets",
@@ -2948,5 +2948,8 @@
   "app.settings.widgets_permission_clipboard_observe": "Read clipboard content in the background",
   "settings.agentOperations.introTitle": "Organize your desktop with AI",
   "settings.agentOperations.access": "Allow agent access",
-  "settings.agentOperations.access.description": "Let local AI assistants read or change SnowDesktop through its control interface."
+  "settings.agentOperations.access.description": "Let local AI assistants read or change SnowDesktop through its control interface.",
+  "largeIcon.epic": "Epic cover",
+  "largeIcon.source.epic-local": "Local Epic cache",
+  "largeIcon.source.epic-online": "Online Epic cover"
 }

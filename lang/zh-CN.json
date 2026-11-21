@@ -497,7 +497,7 @@
     "app.settings.theme": "主题",
     "app.settings.category_name": "名称",
     "app.settings.category_extensions": "扩展名",
-    "app.settings.category_hint": "普通后缀也匹配快捷方式的文件目标；.LNK:FOLDER 匹配文件夹快捷方式，.LNK:.PDF 匹配 PDF 快捷方式，.LNK:APP 匹配应用快捷方式，.URL:STEAM 匹配 Steam 启动链接。",
+    "app.settings.category_hint": "普通后缀也匹配快捷方式的文件目标。.LNK:FOLDER 匹配文件夹快捷方式，.LNK:.PDF 匹配 PDF 快捷方式，.LNK:APP 匹配应用快捷方式，.URL:STEAM 和 .URL:EPIC 分别匹配 Steam 和 Epic 游戏启动链接。",
     "app.settings.category_rules": "分类规则",
     "app.settings.tab_height": "顶栏、标签与搜索框高度",
     "app.settings.scrollable_title_bar_position": "收纳组件使用顶部标题栏",
@@ -2948,5 +2948,8 @@
   "app.settings.widgets_permission_clipboard_observe": "在后台读取剪贴板内容",
   "settings.agentOperations.introTitle": "让 AI 帮您整理桌面",
   "settings.agentOperations.access": "允许 Agent 访问",
-  "settings.agentOperations.access.description": "允许本机 AI 助手通过控制接口读取信息或更改 SnowDesktop。"
+  "settings.agentOperations.access.description": "允许本机 AI 助手通过控制接口读取信息或更改 SnowDesktop。",
+  "largeIcon.epic": "Epic 封面",
+  "largeIcon.source.epic-local": "Epic 本地缓存",
+  "largeIcon.source.epic-online": "Epic 在线封面"
 }
