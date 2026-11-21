@@ -50,6 +50,16 @@ struct Breadcrumb
     std::vector<std::wstring> hiddenParents;
 };
 
+enum class HeaderControl { Back, Home, Breadcrumb, Search };
+
+struct HeaderTarget
+{
+    HeaderControl control;
+    size_t breadcrumb = 0;
+
+    bool operator==(const HeaderTarget&) const = default;
+};
+
 struct Session
 {
     std::wstring viewKey;
@@ -68,6 +78,8 @@ struct Session
     float inlineScale = 1.0f;
     bool inlineTopTitleBar = false;
     bool keyboardFocused = true;
+    std::optional<HeaderTarget> headerFocus;
+    bool selectFirstItemOnLoad = false;
     bool searchOpen = false;
     bool inlineListMode = false;
     bool inlineDateHeaders = false;

@@ -17,6 +17,7 @@
 #include <cmath>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 
 // Collection and Dock-folder popup transitions.
 
@@ -755,6 +756,13 @@ void DesktopApp::RefreshDockFolderPopup(
             std::make_unique<FolderMapping>(
                 &dockFolderPopupWidget_, this);
     dockFolderPopupContainer_->InvalidateFilterCache();
+    if (previewDirectoryLoaded && std::exchange(folderPreview_->selectFirstItemOnLoad, false) &&
+        folderPreview_->keyboardFocused && dockFolderPopupAvailable_)
+    {
+        RefreshDockFolderPopupGeometry(false);
+        if (!IsFolderPreviewContentPrivate(popupRect_) && GetPopupItemCount(dockFolderPopupWidget_) != 0)
+            SelectDockFolderPopupKeyboardItem(0, false);
+    }
     if (folderPreview_ && snapshot && folderPreview_->pendingPopupResize)
     {
         const auto from = *folderPreview_->pendingPopupResize;

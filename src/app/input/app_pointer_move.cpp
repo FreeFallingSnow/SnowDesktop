@@ -1958,7 +1958,7 @@ void DesktopApp::OnMouseMoveAt(
                     PtInRect(&frame, current) != FALSE;
                 const bool interactionRetained =
                     popupWidgetIndex_ == widgetIndex ||
-                    HasFocusedFolderPreviewSearch(&w) ||
+                    RetainsInlineFolderPreview(w) ||
                     (!interactionPinnedWidgetId_.empty() &&
                         interactionPinnedWidgetId_ == w.id) ||
                     snowdesktop::widget_visibility_rules::

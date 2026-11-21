@@ -2676,16 +2676,22 @@ private:
     bool TryFolderPreviewDoubleClick(POINT point, WPARAM keyState, const std::wstring& menuPath = {});
     bool TryFolderPreviewActivation(POINT point, WPARAM keyState, const std::wstring& menuPath, bool keyboard);
     void ClearInlineFolderPreviewSelectionOutside(POINT point);
-    bool HandleFolderPreviewHeaderPress(POINT point);
+    bool HandleFolderPreviewHeaderPress(POINT point, bool keyboard = false);
+    bool HandleFolderPreviewHeaderKey(WPARAM key, bool shift, bool repeated);
+    bool ClearFolderPreviewHeaderFocus();
+    bool RetainsInlineFolderPreview(const DesktopWidget& owner) const;
+    bool IsFolderPreviewContentPrivate(const RECT& panel) const;
+    bool SelectDockFolderPopupKeyboardItem(size_t visibleIndex, bool present = true);
     void SetFolderPreviewSearchOpen(bool open);
-    bool HasFocusedFolderPreviewSearch(const DesktopWidget* inlineOwner = nullptr) const;
+    bool HasFocusedFolderPreviewSearch() const;
     bool IsFolderPreviewSearchImeWindow(HWND window) const;
     float GetFolderPreviewInsertionPad(const RECT& popup, size_t index, bool after) const;
     void SyncFolderPreviewSortToOtherViews();
     bool HandleFolderPreviewBreadcrumbContextMenu(POINT point, bool show);
     UINT TrackFolderPreviewPathMenu(HMENU menu, POINT screenPoint, bool textOnly);
-    void ShowFolderPreviewDirectory(const std::wstring& path, bool fromFan = false, bool present = true);
-    bool NavigateFolderPreviewBack();
+    void ShowFolderPreviewDirectory(const std::wstring& path, bool fromFan = false, bool present = true,
+        bool keyboard = false);
+    bool NavigateFolderPreviewBack(bool keyboard = false);
     void DiscardFolderPreview();
     void SaveFolderPreviewView();
     void SuspendDockFolderPreviewHome(snowdesktop::folder_preview::Session& session);
@@ -3229,7 +3235,7 @@ private:
     const DesktopWidget* GetInlineFolderPreviewData(const DesktopWidget& host) const;
     snowdesktop::folder_preview::NavigationRow GetFolderPreviewNavigationRow(const RECT& panel) const;
     std::vector<snowdesktop::folder_preview::Breadcrumb> GetFolderPreviewBreadcrumbs(const RECT& popup) const;
-    void OpenFolderPreviewPath(const std::wstring& path, bool fromFan = false);
+    void OpenFolderPreviewPath(const std::wstring& path, bool fromFan = false, bool keyboard = false);
     DesktopWidget* GetFolderPreviewComponent();
     void CommitFolderPreviewDisplaySettings();
     void SortDockFolderPopupContents(int mode, bool ascending);

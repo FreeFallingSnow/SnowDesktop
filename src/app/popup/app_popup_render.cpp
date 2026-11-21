@@ -152,8 +152,7 @@ void DesktopApp::DrawCollectionPopup(
     const auto* motion = GetCollectionPopupResizeTransition();
     const RECT presentedPanel = motion ? motion->Panel(popupRect_) : popupRect_;
     if (const auto* host = GetFolderPreviewComponent()) dockFolderPopupWidget_.privacyMode = host->privacyMode;
-    const bool privatePreview = folderPreview_ && widget.privacyMode && !PtInRect(&presentedPanel, pointer) &&
-        !dragSession_.IsActive() && !dragDropController_.IsExternalDragActive();
+    const bool privatePreview = IsFolderPreviewContentPrivate(presentedPanel);
 
     PopupOpacityScope opacity(ctx, applyAnimation, animation.opacity);
 
@@ -250,16 +249,21 @@ void DesktopApp::DrawCollectionPopup(
                     : (std::numeric_limits<LONG>::max)());
         if (folderPreview_)
         {
+            using namespace snowdesktop::folder_preview;
             const auto row = GetFolderPreviewNavigationRow(presentedPanel);
             const auto controlColor = [&](float alpha) {
                 return lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, alpha)
                                   : D2D1::ColorF(1.0f, 1.0f, 1.0f, alpha);
             };
-            const auto highlight = [&](RECT rect) {
+            const auto highlight = [&](RECT rect, bool focused = false) {
                 InflateRect(&rect, -ScaleWidgetCu(2.0f, row.scale), -ScaleWidgetCu(3.0f, row.scale));
                 if (!IsRectEmpty(&rect))
                     DrawD2DRoundedRectangle(ctx, rect, static_cast<float>(ScaleWidgetCu(5.0f, row.scale)),
-                        controlColor(0.10f), controlColor(0.0f), 0.0f);
+                        controlColor(focused ? 0.20f : 0.10f),
+                        controlColor(focused ? 0.65f : 0.0f), focused ? 1.0f : 0.0f);
+            };
+            const auto hasFocus = [&](HeaderTarget target) {
+                return folderPreview_->keyboardFocused && folderPreview_->headerFocus == target;
             };
             if (!IsRectEmpty(&row.bounds))
                 DrawD2DRoundedRectangle(ctx, row.bounds, static_cast<float>(ScaleWidgetCu(8.0f, row.scale)),
@@ -267,9 +271,10 @@ void DesktopApp::DrawCollectionPopup(
             const auto drawNavigationButton = [&](const RECT& bounds, bool home) {
                 if (IsRectEmpty(&bounds)) return;
                 const bool hovered = PtInRect(&bounds, pointer) != FALSE;
-                if (hovered) highlight(bounds);
+                const bool focused = hasFocus({home ? HeaderControl::Home : HeaderControl::Back});
+                if (hovered || focused) highlight(bounds, focused);
                 ComPtr<ID2D1SolidColorBrush> brush;
-                if (FAILED(ctx->CreateSolidColorBrush(controlColor(hovered ? 1.0f : 0.82f), &brush))) return;
+                if (FAILED(ctx->CreateSolidColorBrush(controlColor(hovered || focused ? 1.0f : 0.82f), &brush))) return;
                 const float centerX = (bounds.left + bounds.right) * 0.5f + (home ? -2.0f : 2.0f) * row.scale;
                 const float centerY = (bounds.top + bounds.bottom) * 0.5f;
                 const auto line = [&](float x1, float y1, float x2, float y2) {
@@ -299,13 +304,14 @@ void DesktopApp::DrawCollectionPopup(
             {
                 const bool hovered = PtInRect(&row.searchButton, pointer) != FALSE;
                 const bool active = folderPreview_->searchOpen;
-                if (hovered || active) highlight(row.searchButton);
+                const bool focused = hasFocus({HeaderControl::Search});
+                if (hovered || active || focused) highlight(row.searchButton, focused);
                 const auto center = D2D1::Point2F(
                     (row.searchButton.left + row.searchButton.right) * 0.5f - row.scale,
                     (row.searchButton.top + row.searchButton.bottom) * 0.5f - row.scale);
                 const float stroke = std::max(1.0f, 1.25f * row.scale);
                 ComPtr<ID2D1SolidColorBrush> brush;
-                if (SUCCEEDED(ctx->CreateSolidColorBrush(controlColor(hovered || active ? 1.0f : 0.82f), &brush)))
+                if (SUCCEEDED(ctx->CreateSolidColorBrush(controlColor(hovered || active || focused ? 1.0f : 0.82f), &brush)))
                 {
                     ctx->DrawEllipse(D2D1::Ellipse(center, 3.8f * row.scale, 3.8f * row.scale), brush.Get(), stroke);
                     ctx->DrawLine(D2D1::Point2F(center.x + 2.7f * row.scale, center.y + 2.7f * row.scale),
@@ -330,6 +336,8 @@ void DesktopApp::DrawCollectionPopup(
             {
                 const auto& crumb = crumbs[i];
                 RECT label = crumb.bounds;
+                const bool focused = hasFocus({HeaderControl::Breadcrumb, i});
+                if (focused) highlight(crumb.bounds, true);
                 const LONG separator = snowdesktop::collection_popup_layout::ScaleDimension(10, row.scale);
                 if (i != 0)
                 {
@@ -347,10 +355,10 @@ void DesktopApp::DrawCollectionPopup(
                         DrawD2DRoundedRectangle(ctx, dropBounds, static_cast<float>(ScaleWidgetCu(5.0f, row.scale)),
                             D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.15f), D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.60f));
                 }
-                else if (hovered) highlight(label);
+                else if (hovered && !focused) highlight(label);
                 InflateRect(&label, -snowdesktop::collection_popup_layout::ScaleDimension(3, row.scale), 0);
                 DrawD2DTextEllipsis(ctx, crumb.label, label, textFormat,
-                    controlColor(hovered || i + 1 == crumbs.size() ? 0.97f : 0.82f),
+                    controlColor(hovered || focused || i + 1 == crumbs.size() ? 0.97f : 0.82f),
                     DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             }
         }

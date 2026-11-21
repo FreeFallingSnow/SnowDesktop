@@ -149,7 +149,7 @@ void DesktopApp::DrawStaticBackground(
         const bool rollAnimating = IsWidgetHoverExpansionAnimating(widgetData);
         const bool interactionRetained =
             popupOpen || interactionPinned ||
-            HasFocusedFolderPreviewSearch(&widgetData) ||
+            RetainsInlineFolderPreview(widgetData) ||
             (stackIndicatorVisible && luaStackIndicator_.stackId == widgetData.id) ||
             (rollAnimating && !fadeOnHover) ||
             snowdesktop::widget_visibility_rules::

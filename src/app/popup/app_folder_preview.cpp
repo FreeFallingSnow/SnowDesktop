@@ -22,6 +22,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace
 {
@@ -277,7 +278,7 @@ bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const 
     const auto expectedPopupPath = folderPreview_ ? dockFolderPopupWidget_.sourceFolderPath : std::wstring{};
     const auto dockFolderSourceId = dockFolderPopupOpen_ ? dockFolderPopupSourceId_ : std::wstring{};
     const auto popupGeneration = floatingPopupMouseHookGeneration_;
-    const auto finish = [this, target, expectedPopupPath, forcePreview, clearTriggerSelection, fromMenu,
+    const auto finish = [this, target, expectedPopupPath, forcePreview, clearTriggerSelection, fromMenu, keyboard,
                             dockFolderSourceId, popupGeneration]
         (snowdesktop::item_location::FolderTarget resolved) {
         const auto& sourceId = target.sourceId;
@@ -401,7 +402,7 @@ bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const 
             folderPreview_.emplace(std::move(session));
             ClearSelection();
         }
-        OpenFolderPreviewPath(resolved.path, fromFan);
+        OpenFolderPreviewPath(resolved.path, fromFan, keyboard);
     };
     folderReadWork_.Cancel(kResolveWorkKey);
     if (target.knownDirectory)
@@ -414,10 +415,18 @@ bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const 
     }, finish, hwnd_, kBackgroundShellReadyMessage);
 }
 
-void DesktopApp::ShowFolderPreviewDirectory(const std::wstring& path, bool fromFan, bool present)
+void DesktopApp::ShowFolderPreviewDirectory(const std::wstring& path, bool fromFan, bool present, bool keyboard)
 {
+    using namespace snowdesktop::folder_preview;
     const RECT previous = popupRect_;
     const bool keepTemporaryDisplay = folderPreview_->IsTemporary() && dockFolderPopupOpen_;
+    ClearFolderPreviewHeaderFocus();
+    if (keyboard && folderPreview_->keyboardFocused)
+    {
+        // Hold the surface open during loading and keep restored scroll positions.
+        folderPreview_->headerFocus = HeaderTarget{HeaderControl::Back};
+        folderPreview_->selectFirstItemOnLoad = folderPreview_->pages.back().scroll == 0;
+    }
     if (dockFolderPopupContainer_) dockFolderPopupContainer_->SetSearchFocused(false);
     CancelRenameClick();
     if (!dragSession_.HasContext() && !dragDropController_.IsTransportActive() &&
@@ -509,7 +518,7 @@ void DesktopApp::ShowFolderPreviewDirectory(const std::wstring& path, bool fromF
     }
 }
 
-bool DesktopApp::NavigateFolderPreviewBack()
+bool DesktopApp::NavigateFolderPreviewBack(bool keyboard)
 {
     using namespace snowdesktop::folder_preview;
     if (!folderPreview_ || dragSession_.HasContext() || dragDropController_.IsTransportActive()) return false;
@@ -524,11 +533,11 @@ bool DesktopApp::NavigateFolderPreviewBack()
     if (!folderPreview_->inlineBounds)
         folderPreview_->pendingPopupResize = GetPresentedCollectionPopupGeometry();
     folderPreview_->pages.pop_back();
-    ShowFolderPreviewDirectory(folderPreview_->pages.back().path);
+    ShowFolderPreviewDirectory(folderPreview_->pages.back().path, false, true, keyboard);
     return true;
 }
 
-void DesktopApp::OpenFolderPreviewPath(const std::wstring& path, bool fromFan)
+void DesktopApp::OpenFolderPreviewPath(const std::wstring& path, bool fromFan, bool keyboard)
 {
     folderReadWork_.Cancel(snowdesktop::folder_preview::kResolveWorkKey);
     if (!folderPreview_->pages.empty())
@@ -540,7 +549,7 @@ void DesktopApp::OpenFolderPreviewPath(const std::wstring& path, bool fromFan)
             folderPreview_->pendingPopupResize = GetPresentedCollectionPopupGeometry();
     }
     folderPreview_->pages.push_back({path});
-    ShowFolderPreviewDirectory(folderPreview_->pages.back().path, fromFan);
+    ShowFolderPreviewDirectory(folderPreview_->pages.back().path, fromFan, true, keyboard);
 }
 
 void DesktopApp::RestoreFolderPreviewHome(bool present)
@@ -796,6 +805,7 @@ void DesktopApp::SuspendInlineFolderPreview()
     if (!folderPreview_ || !folderPreview_->inlineBounds) return;
     SaveFolderPreviewView();
     folderPreview_->keyboardFocused = false;
+    ClearFolderPreviewHeaderFocus();
     if (dockFolderPopupContainer_) dockFolderPopupContainer_->SetSearchFocused(false);
     folderReadWork_.Cancel(snowdesktop::folder_preview::kResolveWorkKey);
     PreserveDockFolderPopupDragSourceForTransition();
@@ -1145,11 +1155,30 @@ bool DesktopApp::HandleFolderPreviewBreadcrumbContextMenu(POINT point, bool show
     return true;
 }
 
-bool DesktopApp::HasFocusedFolderPreviewSearch(const DesktopWidget* inlineOwner) const
+bool DesktopApp::ClearFolderPreviewHeaderFocus()
+{
+    if (!folderPreview_) return false;
+    folderPreview_->selectFirstItemOnLoad = false;
+    return std::exchange(folderPreview_->headerFocus, std::nullopt).has_value();
+}
+
+bool DesktopApp::RetainsInlineFolderPreview(const DesktopWidget& owner) const
+{
+    return folderPreview_ && folderPreview_->keyboardFocused && folderPreview_->inlineBounds &&
+        folderPreview_->hostWidgetId == owner.id &&
+        (folderPreview_->headerFocus || HasFocusedFolderPreviewSearch());
+}
+
+bool DesktopApp::IsFolderPreviewContentPrivate(const RECT& panel) const
+{
+    return folderPreview_ && dockFolderPopupWidget_.privacyMode && !PtInRect(&panel, lastMousePoint_) &&
+        !dragSession_.IsActive() && !dragDropController_.IsExternalDragActive();
+}
+
+bool DesktopApp::HasFocusedFolderPreviewSearch() const
 {
     return folderPreview_ && folderPreview_->keyboardFocused && folderPreview_->searchOpen &&
-        dockFolderPopupContainer_ && dockFolderPopupContainer_->IsSearchFocused() &&
-        (!inlineOwner || (folderPreview_->inlineBounds && folderPreview_->hostWidgetId == inlineOwner->id));
+        dockFolderPopupContainer_ && dockFolderPopupContainer_->IsSearchFocused();
 }
 
 bool DesktopApp::IsFolderPreviewSearchImeWindow(HWND window) const
@@ -1181,6 +1210,7 @@ void DesktopApp::SetFolderPreviewSearchOpen(bool open)
     auto& view = *dockFolderPopupContainer_;
     if (open)
     {
+        ClearFolderPreviewHeaderFocus();
         if (widgetEngine_ && widgetEngine_->HasFocusedHostInput()) widgetEngine_->BlurHostInput(false);
         for (auto& container : containers_)
             if (auto* other = dynamic_cast<ScrollingItemWidget*>(container.get()))
@@ -1203,7 +1233,100 @@ void DesktopApp::SetFolderPreviewSearchOpen(bool open)
     UpdateHostInputImePosition();
 }
 
-bool DesktopApp::HandleFolderPreviewHeaderPress(POINT point)
+bool DesktopApp::HandleFolderPreviewHeaderKey(WPARAM key, bool shift, bool repeated)
+{
+    using namespace snowdesktop::folder_preview;
+    const auto focus = folderPreview_->headerFocus;
+    const bool tab = key == VK_TAB;
+    if (!tab && key != VK_UP &&
+        (!focus || (key != VK_LEFT && key != VK_RIGHT && key != VK_DOWN &&
+            key != VK_HOME && key != VK_END && key != VK_RETURN)))
+        return false;
+    const bool editing = HasFocusedFolderPreviewSearch();
+    if (editing && (!tab || dockFolderPopupContainer_->IsSearchComposing())) return false;
+
+    const RECT popup = GetCollectionPopupRect(dockFolderPopupWidget_);
+    const auto* motion = GetCollectionPopupResizeTransition();
+    const RECT panel = motion ? motion->Panel(popup) : popup;
+    const bool privateContents = IsFolderPreviewContentPrivate(panel);
+    const size_t itemCount = privateContents || !dockFolderPopupAvailable_ || dockFolderPopupLoading_
+        ? 0 : GetPopupItemCount(dockFolderPopupWidget_);
+    if (!focus && key == VK_UP)
+    {
+        const int columns = UsesCollectionPopupList(dockFolderPopupWidget_)
+            ? 1 : std::max(1, GetCollectionPopupColumnCount(popup));
+        const size_t firstRow = std::min(itemCount, static_cast<size_t>(columns));
+        bool firstRowSelected = false;
+        for (size_t i = 0; i < firstRow; ++i)
+        {
+            const size_t index = GetPopupFolderEntryIndex(dockFolderPopupWidget_, i);
+            if (index < dockFolderPopupWidget_.folderEntries.size() &&
+                dockFolderPopupWidget_.folderEntries[index].selected)
+            {
+                firstRowSelected = true;
+                break;
+            }
+        }
+        if (itemCount != 0 && !firstRowSelected) return false;
+    }
+
+    const auto row = GetFolderPreviewNavigationRow(panel);
+    std::vector<std::pair<HeaderTarget, RECT>> targets;
+    const auto append = [&](HeaderTarget target, const RECT& rect) {
+        if (!IsRectEmpty(&rect)) targets.emplace_back(target, rect);
+    };
+    append({HeaderControl::Back}, row.back);
+    append({HeaderControl::Home}, row.home);
+    if (!privateContents)
+    {
+        GetCollectionPopupTextFormat(row.scale, false);
+        const auto crumbs = GetFolderPreviewBreadcrumbs(panel);
+        for (size_t i = 0; i < crumbs.size(); ++i)
+            append({HeaderControl::Breadcrumb, i}, crumbs[i].bounds);
+    }
+    append({HeaderControl::Search}, row.searchButton);
+    if (targets.empty()) return false;
+
+    const auto last = static_cast<int>(targets.size()) - 1;
+    const auto current = std::find_if(targets.begin(), targets.end(), [&](const auto& target) {
+        return focus == target.first;
+    });
+    const int index = current == targets.end() ? -1 : static_cast<int>(current - targets.begin());
+    if (key == VK_RETURN)
+    {
+        if (!repeated && current != targets.end())
+            HandleFolderPreviewHeaderPress(ItemCenter(current->second), true);
+        return true;
+    }
+
+    int next = 0;
+    if (tab)
+    {
+        if (editing) next = shift ? last : last + 1;
+        else if (index < 0) next = shift ? last : 0;
+        else next = index + (shift ? -1 : 1);
+    }
+    else if (key == VK_DOWN) next = last + 1;
+    else if (key == VK_END) next = last;
+    else if (key == VK_LEFT) next = std::max(0, index - 1);
+    else if (key == VK_RIGHT) next = std::min(last, index + 1);
+
+    if ((next < 0 || next > last) && itemCount != 0 && SelectDockFolderPopupKeyboardItem(0))
+        return true;
+    if (key == VK_DOWN) return true;
+    if (next < 0) next = last;
+    if (next > last) next = 0;
+    if (dockFolderPopupContainer_) dockFolderPopupContainer_->SetSearchFocused(false);
+    ClearSelection();
+    for (auto& entry : dockFolderPopupWidget_.folderEntries) entry.selected = false;
+    folderPreview_->headerFocus = targets[static_cast<size_t>(next)].first;
+    typeToSelectSession_.Reset();
+    RefreshDockFolderPopupGeometry();
+    UpdateHostInputImePosition();
+    return true;
+}
+
+bool DesktopApp::HandleFolderPreviewHeaderPress(POINT point, bool keyboard)
 {
     if (!folderPreview_ || !IsCollectionPopupInteractive()) return false;
     if (folderPreview_->inlineBounds &&
@@ -1224,7 +1347,7 @@ bool DesktopApp::HandleFolderPreviewHeaderPress(POINT point)
     }
     if (PtInRect(&row.back, point))
     {
-        NavigateFolderPreviewBack();
+        NavigateFolderPreviewBack(keyboard);
         return true;
     }
     if (PtInRect(&folderPreview_->inlineExplorerButton, point))
@@ -1246,7 +1369,7 @@ bool DesktopApp::HandleFolderPreviewHeaderPress(POINT point)
             const auto& crumb = crumbs[i];
             if (PtInRect(&crumb.bounds, point))
             {
-                if (i != 0 && crumb.hiddenParents.empty()) OpenFolderPreviewPath(crumb.path);
+                if (i != 0 && crumb.hiddenParents.empty()) OpenFolderPreviewPath(crumb.path, false, keyboard);
                 else if (HMENU menu = CreatePopupMenu())
                 {
                     auto destinations = crumb.hiddenParents;
@@ -1273,7 +1396,7 @@ bool DesktopApp::HandleFolderPreviewHeaderPress(POINT point)
                     const UINT choice = TrackFolderPreviewPathMenu(menu, screenPoint, true);
                     if (choice > 0 && choice <= destinations.size() && folderPreview_ && folderPreview_->viewKey == viewKey &&
                         dockFolderPopupWidget_.sourceFolderPath == originalPath)
-                        OpenFolderPreviewPath(destinations[choice - 1]);
+                        OpenFolderPreviewPath(destinations[choice - 1], false, keyboard);
                 }
                 return true;
             }

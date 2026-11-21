@@ -203,7 +203,11 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     {
         if (!(wp & MK_CONTROL)) ClearInlineFolderPreviewSelectionOutside(pt);
         ActivateInlineFolderPreviewAtPoint(pt);
-        if (folderPreview_) folderPreview_->keyboardFocused = IsPointOccludedByOpenPopup(pt);
+        if (folderPreview_)
+        {
+            folderPreview_->keyboardFocused = IsPointOccludedByOpenPopup(pt);
+            if (ClearFolderPreviewHeaderFocus()) RefreshDockFolderPopupGeometry();
+        }
         if (HandleFolderPreviewHeaderPress(pt)) return;
     }
     const bool inlineFolderPreview = folderPreview_ && folderPreview_->inlineBounds;

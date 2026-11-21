@@ -252,6 +252,7 @@ bool DesktopApp::IsMarqueePointerGesturePendingOrActive() const
 bool DesktopApp::ClearSelection(const DesktopWidget* localWidget)
 {
     bool changed = ClearDesktopSurfaceKeyboardFocus() || keyboardNavVisualFocus_;
+    changed |= ClearFolderPreviewHeaderFocus();
     for (const auto& container : containers_)
         if (const auto* view = dynamic_cast<const ScrollingItemWidget*>(container.get()); view && view->folderSearch_)
             for (const auto& row : view->folderSearch_->rows)
@@ -278,17 +279,17 @@ void DesktopApp::ClearInlineFolderPreviewSelectionOutside(POINT point)
 {
     if (!folderPreview_ || !folderPreview_->inlineBounds || PtInRect(&*folderPreview_->inlineBounds, point)) return;
     folderPreview_->keyboardFocused = false;
-    bool changed = false;
+    bool changed = ClearFolderPreviewHeaderFocus();
     if (dockFolderPopupContainer_ && dockFolderPopupContainer_->IsSearchFocused())
     {
         dockFolderPopupContainer_->SetSearchFocused(false);
-        (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
         changed = true;
     }
     for (auto& entry : dockFolderPopupWidget_.folderEntries)
         changed |= std::exchange(entry.selected, false);
     if (!changed) return;
     UpdateWidgetHoverExpansion(point);
+    (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
     InvalidateRect(hwnd_, &*folderPreview_->inlineBounds, FALSE);
 }
 
@@ -309,15 +310,16 @@ void DesktopApp::ClearSelectionForExternalWindow(HWND window)
 
     const bool previewSearchBlurred =
         folderPreview_ && dockFolderPopupContainer_ && dockFolderPopupContainer_->IsSearchFocused();
-    if (previewSearchBlurred)
-    {
+    const bool previewHeaderBlurred = folderPreview_ && folderPreview_->headerFocus.has_value();
+    if (previewHeaderBlurred || previewSearchBlurred)
         folderPreview_->keyboardFocused = false;
+    if (previewSearchBlurred)
         dockFolderPopupContainer_->SetSearchFocused(false);
-        RefreshDockFolderPopupGeometry();
-    }
     const auto revision = selectionController_.Revision();
     const bool keyboardFocus = keyboardNavVisualFocus_;
     ClearSelection();
+    if (previewHeaderBlurred || previewSearchBlurred)
+        RefreshDockFolderPopupGeometry();
     bool popupSelection = false;
     for (auto& entry : dockFolderPopupWidget_.folderEntries)
     {
@@ -325,7 +327,7 @@ void DesktopApp::ClearSelectionForExternalWindow(HWND window)
         entry.selected = false;
     }
     if (revision == selectionController_.Revision() &&
-        !keyboardFocus && !popupSelection && !previewSearchBlurred)
+        !keyboardFocus && !popupSelection && !previewSearchBlurred && !previewHeaderBlurred)
         return;
 
     // Expanded selected titles and keyboard frames can extend beyond their
