@@ -1657,6 +1657,7 @@ WidgetSystemDataProvider::SampleNetworkTraffic()
     {
         const auto& row = table->Table[index];
         if (row.Type == IF_TYPE_SOFTWARE_LOOPBACK ||
+            row.InterfaceAndOperStatusFlags.FilterInterface ||
             row.OperStatus != IfOperStatusUp ||
             row.MediaConnectState != MediaConnectStateConnected)
             continue;

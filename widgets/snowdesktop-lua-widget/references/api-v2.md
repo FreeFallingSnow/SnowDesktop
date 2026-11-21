@@ -1976,8 +1976,9 @@ API v2、原有权限和采样频率不变，普通订阅保持上述整体有�
 采样得到相同的新语义才切换；单次相反或异常采样继续返回上一稳定语义，但使用本次
 采样时间戳保持快照新鲜。权限撤销仍由授权层立即生效，不经过此稳定处理。
 traffic value 包含 `connected/receivedBytes/sentBytes/downloadBytesPerSecond/
-uploadBytesPerSecond`。累计字节是当前已连接非 loopback 接口的合计；速率按接口 LUID
-分别差分后求和，新加入、重连或计数器重置的接口先建立基线，不把其历史累计量计入速率。
+uploadBytesPerSecond`。累计字节和速率来自当前已连接的接口，排除回环接口和 Windows
+标记为 `FilterInterface` 的筛选器接口。速率按接口 LUID 分别差分后求和，单位为字节每秒。
+新加入、重连或计数器重置的接口先建立基线，不把其历史累计量计入速率。
 首次差分样本为 `available=false, warmingUp=true`；没有已连接接口时返回
 `available=true, connected=false` 和零速率。
 虚拟接口仍包含在上述范围内，该合计不等同于去重后的互联网流量。状态和流量是两个独立
