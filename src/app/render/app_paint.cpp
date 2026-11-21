@@ -48,9 +48,9 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
     compositionPaintInProgress_ = true;
     struct PaintScope final
     {
-        bool& active;
-        ~PaintScope() { active = false; }
-    } paintScope{ compositionPaintInProgress_ };
+        DesktopApp& app;
+        ~PaintScope() { app.FinishDesktopCompositionPaint(); }
+    } paintScope{ *this };
 
     bool surfaceRecreated = false;
     HRESULT hr;

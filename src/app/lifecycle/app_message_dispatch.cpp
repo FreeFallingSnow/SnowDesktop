@@ -632,7 +632,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                             ShouldPresentRetainedMouseLeave(
                                 passiveHover,
                                 pointerPositionChanged) && !PresentCollectionPopupHoverChange(previousHover, false))
-                        PresentPassiveHoverVisualChange();
+                        PresentPassiveHoverVisualChange(previousHover);
                 }
                 return 0;
             }

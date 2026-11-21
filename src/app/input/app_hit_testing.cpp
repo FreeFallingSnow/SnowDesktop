@@ -318,7 +318,7 @@ void DesktopApp::UpdateWidgetHoverExpansion(POINT point)
         if (!widgetHoverExpansionFrameToken_)
             AdvanceWidgetHoverExpansion(0.0, true);
     }
-    InvalidateDragStaticScene();
+    InvalidateDragStaticScene(needsFullPaint);
     if (hwnd_) InvalidateRect(hwnd_, needsFullPaint ? nullptr : &dirty, FALSE);
 }
 

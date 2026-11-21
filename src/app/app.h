@@ -642,8 +642,9 @@ private:
     void CancelActiveItemDrag();
     /** @brief 在同步 Shell 放置前提交拖拽结束帧并移除已隐藏组件的毛玻璃。 */
     void CommitDragVisualEndBeforeShellOperation();
-    /** @brief 同步呈现被动悬浮可见性变化。 */
-    void PresentPassiveHoverVisualChange();
+    RECT GetDesktopHoverDamage(POINT point, const DockContainer* dock) const;
+    /** @brief 同步呈现指针交接前后受影响区域的悬停状态。 */
+    void PresentPassiveHoverVisualChange(POINT previousHover);
     bool PresentCollectionPopupHoverChange(POINT previousHover, bool allowResize = true);
     enum class ShellHoverTraceEvent : std::uint8_t
     {
@@ -2749,6 +2750,7 @@ private:
         bool* srgbDamageOnly = nullptr);
     bool DeferRetainedDesktopWidgetCompositionForPopupResize();
     void ScheduleDeferredDesktopWidgetPresentation();
+    void FinishDesktopCompositionPaint();
     bool StartDesktopWidgetHoverRoll(DesktopWidgetCompositionItem& item,
         const RECT& frame, LONG collapsedHeight, float radius,
         const snowdesktop::popup_motion_curve::Timeline& timeline);
@@ -3574,6 +3576,7 @@ private:
     ULONGLONG desktopWidgetLastPointerPresentTick_ = 0;
     snowdesktop::UiScheduleToken desktopWidgetHoverTailToken_ = 0;
     snowdesktop::UiScheduleToken deferredDesktopWidgetPresentationToken_ = 0;
+    bool desktopWidgetPresentationBlocked_ = false;
     snowdesktop::UiScheduleToken desktopWidgetPopupResizeTailToken_ = 0;
     snowdesktop::UiScheduleToken desktopWidgetHoverFadeFrameToken_ = 0;
     bool desktopWidgetHoverFadePending_ = false;

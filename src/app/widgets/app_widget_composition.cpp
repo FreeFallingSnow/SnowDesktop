@@ -267,11 +267,35 @@ bool DesktopApp::QueueDesktopWidgetComposition(
         });
 }
 
+void DesktopApp::FinishDesktopCompositionPaint()
+{
+    compositionPaintInProgress_ = false;
+    if (desktopWidgetPresentationBlocked_ || desktopWidgetHoverFadePending_ ||
+        !pendingWidgetMarqueeCompositions_.empty())
+        ScheduleDeferredDesktopWidgetPresentation();
+}
+
 void DesktopApp::ScheduleDeferredDesktopWidgetPresentation()
 {
-    if (deferredDesktopWidgetPresentationToken_ ||
-        (pendingDesktopWidgetCompositions_.empty() && pendingWidgetMarqueeCompositions_.empty() &&
-         !desktopWidgetHoverFadePending_))
+    if (exitRequested_ || graphicsDeviceRecovery_.Pending() ||
+        desktopWidgetCompositionFailurePending_ || !dcompDevice_)
+        return;
+    if (pendingDesktopWidgetCompositions_.empty() && pendingWidgetMarqueeCompositions_.empty() &&
+        !desktopWidgetHoverFadePending_)
+    {
+        desktopWidgetPresentationBlocked_ = false;
+        return;
+    }
+    if (snowdesktop::widget_composition_layer_rules::ShouldDeferWidgetSurfaceDraw(
+            compositionPaintInProgress_, IsAnyPersistentDockHostPainting(),
+            floatingPopupCompositionPaintInProgress_, desktopWidgetPointerBatchActive_))
+    {
+        desktopWidgetPresentationBlocked_ = true;
+        return;
+    }
+    desktopWidgetPresentationBlocked_ = false;
+    if (deferredDesktopWidgetPresentationToken_ || desktopWidgetHoverTailToken_ ||
+        desktopWidgetPopupResizeTailToken_)
         return;
 
     // A provider can enqueue work while the popup or Dock owns BeginDraw.
@@ -280,6 +304,7 @@ void DesktopApp::ScheduleDeferredDesktopWidgetPresentation()
         1, [this](snowdesktop::UiScheduleToken token) {
             if (deferredDesktopWidgetPresentationToken_ != token) return;
             deferredDesktopWidgetPresentationToken_ = 0;
+            if (desktopWidgetHoverTailToken_ || desktopWidgetPopupResizeTailToken_) return;
             if (pendingDesktopWidgetCompositions_.empty() && pendingWidgetMarqueeCompositions_.empty() &&
                 !desktopWidgetHoverFadePending_) return;
             (void)uiAnimationScheduler_.RequestScheduledPresentation(
@@ -341,10 +366,11 @@ bool DesktopApp::PresentQueuedDesktopWidgetComposition(bool passivePointerFrame,
                 floatingPopupCompositionPaintInProgress_,
                 desktopWidgetPointerBatchActive_))
     {
-        if (desktopWidgetHoverFadePending_ && hwnd_)
-            InvalidateRect(hwnd_, nullptr, FALSE);
+        // The owner of the outer paint or pointer batch will release the work.
+        desktopWidgetPresentationBlocked_ = true;
         return true;
     }
+    desktopWidgetPresentationBlocked_ = false;
     if (!passivePointerFrame && yieldToPopupResize && DeferRetainedDesktopWidgetCompositionForPopupResize())
         return true;
     if (passivePointerFrame && !pendingDesktopWidgetCompositions_.empty())
@@ -414,9 +440,11 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
     {
         if (desktopWidgetHoverFadePending_ && !compositionPaintInProgress_)
         {
+            compositionPaintInProgress_ = true;
             desktopBackdropCompositor_.BeginFrame(false);
             KeepDesktopWidgetBackdropPanels();
             desktopBackdropCompositor_.EndFrame(false);
+            FinishDesktopCompositionPaint();
         }
         if (SyncDesktopWidgetCompositionZOrder())
             return true;
@@ -453,6 +481,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
     snowdesktop::performance::Value("composition.shared", "batch_widget_count", {},
         static_cast<double>(pending.size()));
     pendingDesktopWidgetCompositions_.clear();
+    desktopWidgetPresentationBlocked_ = false;
     const bool ownsPaintScope = !compositionPaintInProgress_;
     const auto hasSharedWork = [&] {
         return compositionCommitPending_ || desktopWidgetHoverFadePending_ ||
@@ -1043,7 +1072,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
         KeepDesktopWidgetBackdropPanels();
         desktopBackdropCompositor_.EndFrame(false);
     }
-    if (ownsPaintScope) compositionPaintInProgress_ = false;
+    if (ownsPaintScope) FinishDesktopCompositionPaint();
     if (srgbDamageOnly) *srgbDamageOnly = regionalOnly;
     if (!structuralOk && hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -1092,7 +1121,12 @@ void DesktopApp::DrainDesktopWidgetSurfaceResults()
             changed = true;
         }
     }
-    if (changed) (void)PresentQueuedDesktopWidgetComposition();
+    if (changed)
+    {
+        // Attaching a finished surface may need only a shared commit.
+        (void)CommitCompositionAnimationFrame();
+        (void)PresentQueuedDesktopWidgetComposition();
+    }
 }
 
 bool DesktopApp::HasDesktopWidgetComposition(
@@ -1314,6 +1348,8 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
 
 void DesktopApp::KeepDesktopWidgetBackdropPanels()
 {
+    // A fade requested while publishing these visuals belongs to the next pass.
+    desktopWidgetHoverFadePending_ = false;
     for (auto& [id, item] : desktopWidgetCompositionItems_)
     {
         if (!item.visible || !item.contentVisible)
@@ -1332,6 +1368,7 @@ void DesktopApp::KeepDesktopWidgetBackdropPanels()
                 desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
                 item.presentingSrgb = false;
                 pendingDesktopWidgetCompositions_.insert_or_assign(id, std::nullopt);
+                desktopWidgetPresentationBlocked_ = true;
             }
         }
         if (desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey()))
@@ -1380,7 +1417,6 @@ void DesktopApp::KeepDesktopWidgetBackdropPanels()
         if (item.hoverFade && item.hoverFade->motion.IsClosing())
             item.hoverFade->compositorFadingOut = SubmitDesktopWidgetFadeOut(item);
     }
-    desktopWidgetHoverFadePending_ = false;
 }
 
 void DesktopApp::LogDesktopWidgetBackdropState(const wchar_t* phase) const
@@ -1657,6 +1693,7 @@ void DesktopApp::ResetDesktopWidgetComposition()
     widgetSurfaceRendererUnavailable_ = false;
     uiAnimationScheduler_.Cancel(deferredDesktopWidgetPresentationToken_);
     deferredDesktopWidgetPresentationToken_ = 0;
+    desktopWidgetPresentationBlocked_ = false;
     if (desktopWidgetHoverTailToken_)
         uiAnimationScheduler_.Cancel(desktopWidgetHoverTailToken_);
     desktopWidgetHoverTailToken_ = 0;

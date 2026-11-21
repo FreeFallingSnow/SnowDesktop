@@ -285,8 +285,13 @@ void DesktopApp::OnMouseMoveAt(
         ~WidgetPointerBatch()
         {
             app.desktopWidgetPointerBatchActive_ = previous;
-            if (!previous && !app.pendingDesktopWidgetCompositions_.empty())
-                (void)app.PresentQueuedDesktopWidgetComposition(passive);
+            if (!previous)
+            {
+                if (!app.pendingDesktopWidgetCompositions_.empty())
+                    (void)app.PresentQueuedDesktopWidgetComposition(passive);
+                else
+                    app.ScheduleDeferredDesktopWidgetPresentation();
+            }
         }
     } widgetPointerBatch{ *this, desktopWidgetPointerBatchActive_ };
     // Only passive hover is a short transaction. A pressed move may enter
@@ -2015,7 +2020,7 @@ void DesktopApp::OnMouseMoveAt(
                 break;
             }
             if (hoverOnlyVisibilityChanged)
-                PresentPassiveHoverVisualChange();
+                PresentPassiveHoverVisualChange(oldMouse);
         }
     }
     RecordShellHoverTrace(

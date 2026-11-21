@@ -1015,24 +1015,9 @@ void DesktopApp::CommitDragVisualEndBeforeShellOperation()
 {
     HideDragPreviewWindow();
     dragRenderCache_.Reset();
-    PresentPassiveHoverVisualChange();
-    // The ordinary hover path must never wait for DWM. Shell operations are a
-    // presentation boundary, but asynchronous handlers only need the batched
-    // DComp work submitted before they are queued. Synchronous compatibility
-    // fallbacks perform their own DwmFlush immediately before entering Shell.
-    FlushPendingCompositionCommit();
-}
-
-void DesktopApp::PresentPassiveHoverVisualChange()
-{
-    snowdesktop::performance::Scope trace("input", "hover.passive.present");
+    // A completed drop can change membership and geometry beyond the pointer.
+    // Publish the entire settled scene before handing the operation to Shell.
     UpdateWidgetHoverExpansion(lastMousePoint_);
-    RecordShellHoverTrace(
-        ShellHoverTraceEvent::PassivePresent);
-    // Content and backdrop are collected from the same full render pass. The
-    // backdrop compositor constrains its helper HWND to the resulting panel
-    // set, so stale blur pixels cannot outlive the content frame even if the
-    // Windows Composition commit completes later.
     desktopBackdropFullCollectionPending_ = true;
     if (hwnd_ && IsWindow(hwnd_))
     {
@@ -1042,6 +1027,7 @@ void DesktopApp::PresentPassiveHoverVisualChange()
     }
     InvalidateFloatingDockWindow(true);
     InvalidateFloatingPopupWindow(true);
+    FlushPendingCompositionCommit();
 }
 
 /**
