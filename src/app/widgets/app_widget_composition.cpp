@@ -64,6 +64,36 @@ HRESULT RetireRenderedSurface(
     return result;
 }
 
+HRESULT DrawSceneWithStaticCover(ID2D1DeviceContext* target, POINT offset,
+    const RECT& frame, POINT recordingOffset, ID2D1CommandList* body,
+    const snowdesktop::widget_runtime::WidgetImageSpin& cover)
+{
+    target->SetDpi(96.f, 96.f);
+    target->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+    target->SetTransform(D2D1::Matrix3x2F::Identity());
+    target->Clear(D2D1::ColorF(0, 0.f));
+    const auto source = D2D1::RectF(static_cast<float>(recordingOffset.x),
+        static_cast<float>(recordingOffset.y), static_cast<float>(recordingOffset.x + frame.right - frame.left),
+        static_cast<float>(recordingOffset.y + frame.bottom - frame.top));
+    target->DrawImage(body, D2D1::Point2F(static_cast<float>(offset.x), static_cast<float>(offset.y)),
+        source, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+
+    target->SetTransform(D2D1::Matrix3x2F::Translation(
+        static_cast<float>(offset.x - frame.left), static_cast<float>(offset.y - frame.top)));
+    const auto& dest = cover.destination;
+    const float radius = (dest.right - dest.left) * .5f;
+    Microsoft::WRL::ComPtr<ID2D1Factory> factory;
+    Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> clip;
+    target->GetFactory(&factory);
+    const HRESULT hr = factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(dest, radius, radius), &clip);
+    if (FAILED(hr)) return hr;
+    target->PushLayer(D2D1::LayerParameters(dest, clip.Get(), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE), nullptr);
+    target->DrawBitmap(cover.bitmap.Get(), dest, cover.opacity, cover.interpolation, cover.source);
+    target->PopLayer();
+    target->SetTransform(D2D1::Matrix3x2F::Identity());
+    return S_OK;
+}
+
 HRESULT UpdateHoverOpacity(IDCompositionDesktopDevice* device,
     DesktopWidgetCompositionItem& item, float opacity)
 {
@@ -149,7 +179,8 @@ bool DesktopApp::SyncDesktopWidgetOcclusion(const DesktopWidget& widget, const R
         popupDeferredWidgetUpdates_.erase(widget.id);
         pendingDesktopWidgetCompositions_.erase(widget.id);
         PauseWidgetMarqueeComposition(widget.id);
-        if (desktopBackdropCompositor_.PauseSrgbMarquees(item.BackdropOwnerKey()))
+        const bool spinPaused = desktopBackdropCompositor_.PauseSrgbImageSpin(item.BackdropOwnerKey());
+        if (desktopBackdropCompositor_.PauseSrgbMarquees(item.BackdropOwnerKey()) || spinPaused)
             (void)CommitCompositionAnimationFrame();
     }
     else if (item.visible)
@@ -281,7 +312,9 @@ bool DesktopApp::QueueDesktopWidgetComposition(
 bool DesktopApp::DeferWidgetUpdateDuringPopup(const DesktopWidget& widget,
     const DesktopWidgetCompositionItem& item, const RECT& bounds, std::optional<RECT> damage)
 {
-    if (!uiAnimationScheduler_.IsBatchingPresentations() || !popupAnimation_.IsAnimating() ||
+    const bool backgroundUpdate = uiAnimationScheduler_.IsBatchingPresentations() ||
+        (widgetRuntimeMaintenanceActive_ && !snowdesktop::UiImmediatePresentationScope::IsActive());
+    if (!backgroundUpdate || !popupAnimation_.IsAnimating() ||
         !IsCollectionPopupHostedByFloatingWindow() || !item.visible || !item.contentVisible ||
         item.occluded || item.renderFailed || !SameRect(bounds, item.bounds) ||
         desktopStartupPresentationPending_ || desktopWidgetCompositionFailurePending_ ||
@@ -686,7 +719,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
             IntersectRect(&dirty, &*damage, &contentFrame) &&
             desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey()) &&
             widgetEngine_->CanReplayDesktopMarqueeFrame(contentId, bounds,
-                widgetData->gridSpan.columns, widgetData->gridSpan.rows, d2dDevice_.Get()))
+                widgetData->gridSpan.columns, widgetData->gridSpan.rows, d2dDevice_.Get()) &&
+            desktopBackdropCompositor_.MatchesSrgbImageSpin(item.BackdropOwnerKey(), {}))
         {
             snowdesktop::performance::Scope updateScope("widget.composition", "marquee.damage", contentId);
             RECT surfaceDamage = dirty;
@@ -790,9 +824,9 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
         }
         context->SetDpi(96.0f, 96.0f);
         context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+        const POINT clientToTarget{updateOffset.x - surfaceLeft, updateOffset.y - surfaceTop};
         context->SetTransform(D2D1::Matrix3x2F::Translation(
-            static_cast<float>(updateOffset.x - surfaceLeft),
-            static_cast<float>(updateOffset.y - surfaceTop)));
+            static_cast<float>(clientToTarget.x), static_cast<float>(clientToTarget.y)));
         std::optional<DesktopBackdropCompositor::SrgbSceneRecording> scene;
         if (!commands)
         {
@@ -801,6 +835,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
         }
 
         snowdesktop::widget_runtime::WidgetSurfacePaint paint;
+        snowdesktop::widget_runtime::WidgetImageSpin cover;
+        DesktopBackdropCompositor::PreparedImageSpin spin;
         DesktopBackdropCompositor::PreparedMarquees marquees;
         desktopWidgetCompositionDrawInProgress_ = true;
         item.iconBackdrops.BeginDraw();
@@ -826,14 +862,29 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
             struct PaintOutput
             {
                 WidgetEngine* engine;
+                snowdesktop::widget_runtime::WidgetSurfacePaint& paint;
                 ~PaintOutput()
                 {
                     if (!engine) return;
+                    paint.imageSpinCapture = nullptr;
+                    engine->SetDesktopImageSpinOutput(nullptr);
                     engine->SetNativeMarqueeSyncCallback({});
                     engine->SetDesktopSurfacePaintOutput(nullptr);
                 }
-            } output{widgetEngine_.get()};
+            };
+            snowdesktop::widget_runtime::WidgetImageSpinCapture capture{clientToTarget, {}};
+            PaintOutput output{widgetEngine_.get(), paint};
             if (output.engine) output.engine->SetDesktopSurfacePaintOutput(&paint);
+            if (output.engine && (commands || (scene && scene->Scene())) && item.visible && !item.occluded)
+            {
+                capture.prepare = [&](const snowdesktop::widget_runtime::WidgetImageSpin& image) {
+                    spin = desktopBackdropCompositor_.PrepareSrgbImageSpin(
+                        hwnd_, sceneKey, d2dDevice_.Get(), contentFrame, image);
+                    return static_cast<bool>(spin);
+                };
+                paint.imageSpinCapture = &capture;
+                output.engine->SetDesktopImageSpinOutput(&cover);
+            }
             if (output.engine && !commands && item.visible && !item.occluded)
             {
                 output.engine->SetNativeMarqueeSyncCallback([&](const std::wstring& owner,
@@ -909,7 +960,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
         bool preparedScene = false;
         if (SUCCEEDED(sceneResult))
         {
-            const auto localDamage = hasLocalBase ? paint.DamageFrom(item.precomposedPaint) : std::nullopt;
+            const auto localDamage = hasLocalBase && desktopBackdropCompositor_.MatchesSrgbImageSpin(sceneKey, spin)
+                ? paint.DamageFrom(item.precomposedPaint) : std::nullopt;
             RECT patch{};
             if (localDamage && IntersectRect(&patch, &*localDamage, &contentFrame) &&
                 !SameRect(patch, contentFrame))
@@ -922,9 +974,18 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
                         static_cast<double>(patch.right - patch.left) * (patch.bottom - patch.top));
             }
             if (!preparedScene)
+            {
+                const float opacity = item.visible ? item.HoverOpacity() : 0.f;
                 preparedScene = desktopBackdropCompositor_.PublishSrgbScene(
-                    hwnd_, sceneKey, contentFrame, context.Get(), updateOffset, recorded,
-                    item.visible ? item.HoverOpacity() : 0.f, marquees);
+                    hwnd_, sceneKey, contentFrame, context.Get(), updateOffset, recorded, opacity, marquees, spin);
+                // The recording omits the cover only after preparation succeeds. If
+                // attaching it fails, put those same pixels above the body before publishing.
+                if (!preparedScene && spin)
+                    preparedScene = desktopBackdropCompositor_.StageSrgbSceneFrame(
+                        hwnd_, sceneKey, contentFrame, d2dDevice_.Get(), [&](ID2D1DeviceContext* target, POINT offset) {
+                            return DrawSceneWithStaticCover(target, offset, contentFrame, updateOffset, recorded, cover);
+                        }) && desktopBackdropCompositor_.PublishSrgbContent(sceneKey, opacity, marquees);
+            }
             if (preparedScene && marquees)
                 snowdesktop::performance::Value("widget.composition", "native_marquee_scene", contentId, 1);
         }

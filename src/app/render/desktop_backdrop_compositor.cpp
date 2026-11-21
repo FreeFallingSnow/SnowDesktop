@@ -28,6 +28,7 @@
 #include "icons/icon_backdrop_geometry.h"
 #include "platform/shell_overlay_window.h"
 #include "widget/view/widget_native_marquee.h"
+#include "widget/view/widget_surface_renderer.h"
 
 #include <d2d1_1.h>
 #include <d3d11.h>
@@ -466,8 +467,7 @@ struct DesktopBackdropCompositor::SrgbMarqueeScene
     RECT frame{};
     RECT allowed{};
     std::vector<snowdesktop::widget_runtime::NativeMarqueeText> labels;
-    wuc::SpriteVisual body{nullptr};
-    wuc::CompositionSurfaceBrush flattened{nullptr};
+    wuc::ContainerVisual visual{nullptr};
     std::vector<wuc::AnimationController> animations;
     bool paused = false;
 
@@ -484,6 +484,17 @@ struct DesktopBackdropCompositor::SrgbMarqueeScene
                     a.color == b.color && a.alpha == b.alpha && a.scrolling == b.scrolling;
             });
     }
+};
+
+struct DesktopBackdropCompositor::SrgbImageSpinScene
+{
+    snowdesktop::widget_runtime::WidgetImageSpin image;
+    RECT frame{};
+    winrt::com_ptr<ID2D1Device> device;
+    wuc::SpriteVisual visual{nullptr};
+    wuc::CompositionPropertySet phase{nullptr};
+    wuc::AnimationController controller{nullptr};
+    bool paused = true;
 };
 
 struct DesktopBackdropCompositor::Impl
@@ -695,6 +706,11 @@ struct DesktopBackdropCompositor::Impl
         wuc::CompositionSurfaceBrush sceneBrush{nullptr};
         wuc::CompositionEffectBrush sceneEffect{nullptr};
         PreparedMarquees marquees;
+        PreparedImageSpin spin;
+        wuc::ContainerVisual layers{nullptr};
+        wuc::SpriteVisual body{nullptr};
+        wuc::CompositionVisualSurface layersSurface{nullptr};
+        wuc::CompositionSurfaceBrush flattened{nullptr};
         RECT stagedFrame{};
         bool staged = false;
         wuc::SpriteVisual visual{nullptr};
@@ -1432,6 +1448,43 @@ struct DesktopBackdropCompositor::Impl
         buffer.surface = maskGraphicsDevice.CreateDrawingSurface(extent,
             wgx::DirectXPixelFormat::B8G8R8A8UIntNormalized, wgx::DirectXAlphaMode::Premultiplied);
         return buffer;
+    }
+
+    // All moving children are sampled together before the single scene/backdrop effect.
+    void EnsureSrgbLayers(std::uintptr_t key)
+    {
+        auto& frame = srgbContent[key];
+        if (frame.layers) return;
+        auto root = compositor.CreateContainerVisual();
+        auto body = compositor.CreateSpriteVisual();
+        root.Children().InsertAtBottom(body);
+        auto surface = compositor.CreateVisualSurface();
+        surface.SourceVisual(root);
+        auto brush = compositor.CreateSurfaceBrush(surface);
+        brush.Stretch(wuc::CompositionStretch::None);
+        brush.HorizontalAlignmentRatio(0.f);
+        brush.VerticalAlignmentRatio(0.f);
+        brush.BitmapInterpolationMode(wuc::CompositionBitmapInterpolationMode::NearestNeighbor);
+        frame.body = std::move(body);
+        frame.layersSurface = std::move(surface);
+        frame.flattened = std::move(brush);
+        frame.layers = std::move(root);
+    }
+
+    static void BindSrgbLayers(SrgbContent& frame, const PreparedImageSpin& spin,
+        const PreparedMarquees& marquees)
+    {
+        const auto children = frame.layers.Children();
+        children.RemoveAll();
+        if (spin || marquees)
+        {
+            frame.body.Brush(frame.sceneBrush);
+            children.InsertAtBottom(frame.body);
+            if (spin) children.InsertAtTop(spin->visual);
+            if (marquees) children.InsertAtTop(marquees->visual);
+            frame.sceneEffect.SetSourceParameter(L"scene", frame.flattened);
+        }
+        else frame.sceneEffect.SetSourceParameter(L"scene", frame.sceneBrush);
     }
 
     static void PaintSrgbSurface(const wuc::CompositionDrawingSurface& surface,
@@ -3325,14 +3378,12 @@ DesktopBackdropCompositor::PreparedMarquees DesktopBackdropCompositor::PrepareSr
         impl_->EnsureSrgbContentTarget(window);
         impl_->EnsureMaskGraphicsDevice(device);
         const auto& compositor = impl_->compositor;
+        impl_->EnsureSrgbLayers(key);
         auto result = std::make_shared<SrgbMarqueeScene>();
         auto root = compositor.CreateContainerVisual();
-        auto body = compositor.CreateSpriteVisual();
         const wfn::float2 size{static_cast<float>(clientFrame.right - clientFrame.left),
             static_cast<float>(clientFrame.bottom - clientFrame.top)};
         root.Size(size);
-        body.Size(size);
-        root.Children().InsertAtBottom(body);
         for (const auto& marquee : marquees)
         {
             const auto& box = marquee.viewport;
@@ -3413,18 +3464,7 @@ DesktopBackdropCompositor::PreparedMarquees DesktopBackdropCompositor::PrepareSr
             root.Children().InsertAtTop(clipped);
         }
 
-        // The detached tree is sampled as a single scene. The live backdrop
-        // still uses the same effect, one visible visual, and one opacity.
-        auto surface = compositor.CreateVisualSurface();
-        surface.SourceSize(size);
-        surface.SourceVisual(root);
-        auto flattened = compositor.CreateSurfaceBrush(surface);
-        flattened.Stretch(wuc::CompositionStretch::None);
-        flattened.HorizontalAlignmentRatio(0.f);
-        flattened.VerticalAlignmentRatio(0.f);
-        flattened.BitmapInterpolationMode(wuc::CompositionBitmapInterpolationMode::NearestNeighbor);
-        result->body = std::move(body);
-        result->flattened = std::move(flattened);
+        result->visual = std::move(root);
         result->frame = clientFrame;
         result->allowed = allowed;
         result->labels.assign(marquees.begin(), marquees.end());
@@ -3436,6 +3476,129 @@ DesktopBackdropCompositor::PreparedMarquees DesktopBackdropCompositor::PrepareSr
         snowdesktop::performance::Value("composition.srgb", "marquee_prepare_hresult", {},
             static_cast<double>(error.code().value));
         return {};
+    }
+}
+
+DesktopBackdropCompositor::PreparedImageSpin DesktopBackdropCompositor::PrepareSrgbImageSpin(
+    HWND window, std::uintptr_t key, ID2D1Device* device, const RECT& clientFrame,
+    const snowdesktop::widget_runtime::WidgetImageSpin& image)
+{
+    if (!window || !key || !device || !image.bitmap || IsRectEmpty(&clientFrame)) return {};
+    const auto& dest = image.destination;
+    const float edge = dest.right - dest.left;
+    const float height = dest.bottom - dest.top;
+    if (!(edge > 0.f && height > 0.f && edge <= 16382.f && std::abs(edge - height) < 1.f) ||
+        !(image.degreesPerSecond >= 0.f && image.degreesPerSecond <= 360.f)) return {};
+    try
+    {
+        if (!impl_->compositor && !impl_->EnsureDispatcherQueue()) return {};
+        impl_->EnsureSrgbContentTarget(window);
+        impl_->EnsureMaskGraphicsDevice(device);
+        impl_->EnsureSrgbLayers(key);
+        const auto& old = impl_->srgbContent.at(key).spin;
+        const auto sameRect = [](const D2D1_RECT_F& a, const D2D1_RECT_F& b) {
+            return a.left == b.left && a.top == b.top && a.right == b.right && a.bottom == b.bottom;
+        };
+        if (old && old->device.get() == device && old->image.bitmap.Get() == image.bitmap.Get() &&
+            sameRect(old->image.source, image.source) && sameRect(old->image.destination, dest) &&
+            EqualRect(&old->frame, &clientFrame) && old->image.interpolation == image.interpolation &&
+            old->image.opacity == image.opacity)
+        {
+            if (old->image.degreesPerSecond == image.degreesPerSecond) return old;
+            // Publish the speed change with the body, without replacing its pixels or clock.
+            auto next = std::make_shared<SrgbImageSpinScene>(*old);
+            next->image.degreesPerSecond = image.degreesPerSecond;
+            return next;
+        }
+        auto result = std::make_shared<SrgbImageSpinScene>();
+        result->frame = clientFrame;
+        result->device.copy_from(device);
+        result->image = image;
+        const LONG extent = static_cast<LONG>(std::ceil(edge)) + 2;
+        const auto buffer = impl_->CreateSrgbContentBuffer({extent, extent});
+        Impl::PaintSrgbSurface(buffer.surface, [&](ID2D1DeviceContext* ctx, POINT offset) {
+            ctx->SetDpi(96.f, 96.f);
+            ctx->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+            ctx->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x), static_cast<float>(offset.y)));
+            ctx->Clear(D2D1::ColorF(0, 0.f));
+            const auto rect = D2D1::RectF(1.f, 1.f, edge + 1.f, edge + 1.f);
+            winrt::com_ptr<ID2D1Factory> factory;
+            ctx->GetFactory(factory.put());
+            winrt::com_ptr<ID2D1EllipseGeometry> clip;
+            const auto hr = factory->CreateEllipseGeometry(D2D1::Ellipse(
+                {edge * .5f + 1.f, edge * .5f + 1.f}, edge * .5f, edge * .5f), clip.put());
+            if (FAILED(hr)) return hr;
+            ctx->PushLayer(D2D1::LayerParameters(rect, clip.get(), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE), nullptr);
+            ctx->DrawBitmap(image.bitmap.Get(), rect, image.opacity, image.interpolation, image.source);
+            ctx->PopLayer();
+            return S_OK;
+        });
+        const auto& compositor = impl_->compositor;
+        if (old && old->device.get() == device)
+        {
+            // A replacement cover or geometry gets a new raster but shares the current rotation.
+            result->phase = old->phase;
+            result->controller = old->controller;
+            result->paused = old->paused;
+        }
+        else
+        {
+            result->phase = compositor.CreatePropertySet();
+            result->phase.InsertScalar(L"Angle", 0.f);
+            auto turn = compositor.CreateScalarKeyFrameAnimation();
+            turn.Duration(std::chrono::seconds(1));
+            turn.IterationBehavior(wuc::AnimationIterationBehavior::Forever);
+            turn.InsertKeyFrame(0.f, 0.f);
+            turn.InsertKeyFrame(1.f, 360.f, compositor.CreateLinearEasingFunction());
+            result->phase.StartAnimation(L"Angle", turn);
+            result->controller = result->phase.TryGetAnimationController(L"Angle");
+            if (!result->controller) return {};
+            result->controller.Pause();
+            result->controller.Progress(0.f);
+        }
+        auto disc = compositor.CreateSpriteVisual();
+        auto brush = compositor.CreateSurfaceBrush(buffer.surface);
+        brush.Stretch(wuc::CompositionStretch::None);
+        brush.BitmapInterpolationMode(wuc::CompositionBitmapInterpolationMode::Linear);
+        disc.Brush(brush);
+        disc.Size({static_cast<float>(extent), static_cast<float>(extent)});
+        disc.Offset({dest.left - clientFrame.left - 1.f, dest.top - clientFrame.top - 1.f, 0.f});
+        disc.CenterPoint({edge * .5f + 1.f, edge * .5f + 1.f, 0.f});
+        auto angle = compositor.CreateExpressionAnimation(L"clock.Angle");
+        angle.SetReferenceParameter(L"clock", result->phase);
+        disc.StartAnimation(L"RotationAngleInDegrees", angle);
+        result->visual = std::move(disc);
+        return result;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.prepare_image_spin", error.code());
+        return {};
+    }
+}
+
+bool DesktopBackdropCompositor::MatchesSrgbImageSpin(std::uintptr_t key, const PreparedImageSpin& spin) const noexcept
+{
+    const auto item = impl_->srgbContent.find(key);
+    if (item == impl_->srgbContent.end()) return !spin;
+    return item->second.spin == spin && (!spin || !spin->paused || spin->image.degreesPerSecond == 0.f);
+}
+
+bool DesktopBackdropCompositor::PauseSrgbImageSpin(std::uintptr_t key)
+{
+    const auto it = impl_->srgbContent.find(key);
+    if (it == impl_->srgbContent.end() || !it->second.spin || it->second.spin->paused) return false;
+    try
+    {
+        it->second.spin->controller.Pause();
+        it->second.spin->paused = true;
+        impl_->srgbContentCommitPending = true;
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.pause_image_spin", error.code());
+        return false;
     }
 }
 
@@ -3461,10 +3624,10 @@ bool DesktopBackdropCompositor::PauseSrgbMarquees(std::uintptr_t key)
 
 bool DesktopBackdropCompositor::PublishSrgbScene(HWND window, std::uintptr_t key,
     const RECT& clientFrame, ID2D1DeviceContext* context, POINT atlasOffset, ID2D1CommandList* scene,
-    float opacity, PreparedMarquees marquees)
+    float opacity, PreparedMarquees marquees, PreparedImageSpin spin)
 {
     return StageSrgbScene(window, key, clientFrame, context, atlasOffset, scene) &&
-        PublishSrgbContent(key, opacity, std::move(marquees));
+        PublishSrgbContent(key, opacity, std::move(marquees), std::move(spin));
 }
 
 HRESULT DesktopBackdropCompositor::UpdateSrgbScene(std::uintptr_t key, const RECT& damage,
@@ -3542,7 +3705,8 @@ bool DesktopBackdropCompositor::PresentPremultipliedPixels(HWND window, SIZE siz
         }) && PublishSrgbContent(key) && CommitSrgbContent();
 }
 
-bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opacity, PreparedMarquees marquees)
+bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opacity,
+    PreparedMarquees marquees, PreparedImageSpin spin)
 {
     const auto entry = impl_->srgbContent.find(key);
     if (entry == impl_->srgbContent.end() || !entry->second.staged) return false;
@@ -3571,30 +3735,50 @@ bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opa
         }
         frame.visual.Offset({static_cast<float>(frame.stagedFrame.left),
             static_cast<float>(frame.stagedFrame.top), 0.f});
-        frame.visual.Size({static_cast<float>(frame.candidate.size.cx),
-            static_cast<float>(frame.candidate.size.cy)});
+        const wfn::float2 size{static_cast<float>(frame.candidate.size.cx),
+            static_cast<float>(frame.candidate.size.cy)};
+        frame.visual.Size(size);
         if (opacity >= 0.f) frame.visual.Opacity(std::clamp(opacity, 0.f, 1.f));
         // Keep the backdrop input attached to the same visual across content changes.
         // The back buffer becomes visible only after its complete draw succeeded.
-        if (frame.active.surface) frame.sceneBrush.Surface(frame.candidate.surface);
-        if (marquees)
+        frame.sceneBrush.Surface(frame.candidate.surface);
+        if (spin || marquees)
         {
-            if (frame.marquees != marquees)
+            // The root remains the same when the cover, scrolling text, or body changes.
+            if ((!frame.spin && !frame.marquees) || frame.active.size.cx != frame.candidate.size.cx ||
+                frame.active.size.cy != frame.candidate.size.cy)
             {
-                marquees->body.Brush(frame.sceneBrush);
-                frame.sceneEffect.SetSourceParameter(L"scene", marquees->flattened);
+                frame.layers.Size(size);
+                frame.body.Size(size);
+                frame.layersSurface.SourceSize(size);
             }
-            if (marquees->paused)
+            const auto oldDisc = frame.spin ? frame.spin->visual : nullptr;
+            const auto newDisc = spin ? spin->visual : nullptr;
+            if (oldDisc != newDisc || frame.marquees != marquees)
+                Impl::BindSrgbLayers(frame, spin, marquees);
+            if (spin)
+            {
+                const float speed = spin->image.degreesPerSecond;
+                if (speed > 0.f)
+                {
+                    if (!frame.spin || frame.spin->controller != spin->controller ||
+                        speed != frame.spin->image.degreesPerSecond)
+                        spin->controller.PlaybackRate(speed / 360.f);
+                    if (spin->paused) spin->controller.Resume();
+                }
+                else if (!spin->paused) spin->controller.Pause();
+                spin->paused = speed == 0.f;
+            }
+            if (marquees && marquees->paused)
             {
                 for (const auto& animation : marquees->animations) animation.Resume();
                 marquees->paused = false;
             }
         }
-        else if (frame.marquees)
-        {
-            frame.sceneEffect.SetSourceParameter(L"scene", frame.sceneBrush);
-        }
+        else if (frame.spin || frame.marquees)
+            Impl::BindSrgbLayers(frame, {}, {});
         frame.marquees = std::move(marquees);
+        frame.spin = std::move(spin);
         std::swap(frame.active, frame.candidate);
         frame.staged = false;
         frame.retirement.reset();
@@ -3603,6 +3787,26 @@ bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opa
     }
     catch (const winrt::hresult_error& error)
     {
+        // A static retry can follow in this transaction. Undo partially installed
+        // children before exposing the previous pixels or accepting the retry.
+        if (frame.layers && frame.sceneEffect)
+        {
+            try
+            {
+                frame.sceneBrush.Surface(frame.active.surface);
+                Impl::BindSrgbLayers(frame, frame.spin, frame.marquees);
+                if (frame.spin)
+                {
+                    if (frame.spin->paused) frame.spin->controller.Pause();
+                    else
+                    {
+                        frame.spin->controller.PlaybackRate(frame.spin->image.degreesPerSecond / 360.f);
+                        frame.spin->controller.Resume();
+                    }
+                }
+            }
+            catch (const winrt::hresult_error&) { /* Device recovery owns an unavailable compositor. */ }
+        }
         impl_->lastError = FormatHresult(L"backdrop.srgb_content_publish", error.code());
         impl_->srgbPublicationFailed = true;
         if (frame.active.surface && IsWindow(impl_->srgbContentWindow))

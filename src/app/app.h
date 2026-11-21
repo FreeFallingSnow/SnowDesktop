@@ -3577,6 +3577,7 @@ private:
         pendingDesktopWidgetCompositions_;
     std::unordered_map<std::wstring, std::optional<RECT>> popupDeferredWidgetUpdates_;
     snowdesktop::UiScheduleToken popupDeferredWidgetToken_ = 0;
+    bool widgetRuntimeMaintenanceActive_ = false;
     std::vector<RECT> desktopWidgetCoverage_;
     std::vector<std::wstring> desktopWidgetCompositionZOrder_;
     std::unordered_map<std::wstring,

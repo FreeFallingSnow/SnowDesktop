@@ -895,18 +895,26 @@ static void DrawWidgetViewBitmap(WidgetDrawContext* state,
         if (transform._11 == 1.0f && transform._22 == 1.0f &&
             transform._12 == 0.0f && transform._21 == 0.0f)
         {
+            const auto* capture = state->desktopSurfacePaint ? state->desktopSurfacePaint->imageSpinCapture : nullptr;
+            // The atlas/command-list translation belongs to the recorder.
+            // Keep only the view's translation in the desktop client frame.
+            const float dx = transform._31 - (capture ? static_cast<float>(capture->clientToTarget.x) : 0.f);
+            const float dy = transform._32 - (capture ? static_cast<float>(capture->clientToTarget.y) : 0.f);
             const auto absolute = D2D1::RectF(
-                destination.left + transform._31, destination.top + transform._32,
-                destination.right + transform._31, destination.bottom + transform._32);
+                destination.left + dx, destination.top + dy, destination.right + dx, destination.bottom + dy);
             const auto& widget = state->widgetRect;
             if (absolute.left >= widget.left && absolute.top >= widget.top &&
                 absolute.right <= widget.right && absolute.bottom <= widget.bottom)
             {
-                *spin = {sampled.bitmap, absolute, sourceRect, interpolation,
+                WidgetImageSpin candidate{sampled.bitmap, absolute, sourceRect, interpolation,
                     opacity, reducedMotion ? 0.0f : *node.imageSpinSpeed};
-                snowdesktop::performance::Value("widget.composition",
-                    "image_spin.layer", state->currentWidgetId, 1);
-                return;
+                if (!capture || capture->prepare(candidate))
+                {
+                    *spin = std::move(candidate);
+                    snowdesktop::performance::Value("widget.composition",
+                        "image_spin.layer", state->currentWidgetId, 1);
+                    return;
+                }
             }
         }
     }

@@ -27,6 +27,7 @@
 #include "platform/user_object_recovery.h"
 #include "diagnostics/performance_trace.h"
 #include "ui/render/ui_animation_scheduler.h"
+#include <utility>
 
 namespace
 {
@@ -773,6 +774,15 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (widgetEngine_)
         {
             snowdesktop::performance::Scope trace("shared.maintenance", "runtime.tick");
+            // Provider and task completions can invalidate a widget synchronously
+            // here, outside the animation scheduler's timer dispatch.
+            struct MaintenanceScope
+            {
+                bool& active;
+                bool previous;
+                explicit MaintenanceScope(bool& value) : active(value), previous(std::exchange(value, true)) {}
+                ~MaintenanceScope() { active = previous; }
+            } maintenance(widgetRuntimeMaintenanceActive_);
             widgetEngine_->TickRuntime();
         }
         {
