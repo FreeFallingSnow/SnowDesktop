@@ -511,12 +511,16 @@ void UiAnimationScheduler::RequestFramePresentation(
     QueuePresentation(owner, std::move(callback));
 }
 
+bool UiAnimationScheduler::IsBatchingPresentations() const noexcept
+{
+    return (dispatchingTimers_ || advancingFrame_) && !UiImmediatePresentationScope::IsActive();
+}
+
 bool UiAnimationScheduler::RequestScheduledPresentation(
     const void* owner, std::function<bool()> callback)
 {
     if (!callback) return false;
-    if (UiImmediatePresentationScope::IsActive() ||
-        (!dispatchingTimers_ && !advancingFrame_))
+    if (!IsBatchingPresentations())
     {
         // Immediate feedback publishes the current owner state, superseding
         // any presentation queued before the native message was dispatched.

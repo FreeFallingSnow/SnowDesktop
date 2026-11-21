@@ -23,6 +23,15 @@ bool SameRect(const RECT& left, const RECT& right)
     return EqualRect(&left, &right) != FALSE;
 }
 
+void MergeWidgetDamage(std::unordered_map<std::wstring, std::optional<RECT>>& updates,
+    const std::wstring& id, std::optional<RECT> damage)
+{
+    auto [entry, inserted] = updates.try_emplace(id, damage);
+    if (inserted || !entry->second) return;
+    if (damage) UnionRect(&*entry->second, &*entry->second, &*damage);
+    else entry->second.reset();
+}
+
 struct DesktopWidgetSurfaceFailure
 {
     std::wstring widgetId;
@@ -137,6 +146,7 @@ bool DesktopApp::SyncDesktopWidgetOcclusion(const DesktopWidget& widget, const R
         widgetSurfaceRenderer_->SetPaused(item.renderTarget, covered || !item.visible);
     if (covered)
     {
+        popupDeferredWidgetUpdates_.erase(widget.id);
         pendingDesktopWidgetCompositions_.erase(widget.id);
         PauseWidgetMarqueeComposition(widget.id);
         if (desktopBackdropCompositor_.PauseSrgbMarquees(item.BackdropOwnerKey()))
@@ -248,15 +258,16 @@ bool DesktopApp::QueueDesktopWidgetComposition(
         item.visible = true;
     }
 
-    // A full update supersedes queued marquee ticks for the same surface.
-    auto [update, queued] = pendingDesktopWidgetCompositions_.try_emplace(widgetId, damage);
-    if (!queued)
+    if (popupAnimationCompositorDriven_ &&
+        DeferWidgetUpdateDuringPopup(*widgetData, item, bounds, damage))
+        return true;
+    // Input or a geometry/content change supersedes the delayed frame.
+    if (!popupDeferredWidgetUpdates_.empty())
     {
-        if (!damage)
-            update->second.reset();
-        else if (update->second)
-            UnionRect(&*update->second, &*update->second, &*damage);
+        if (auto deferred = popupDeferredWidgetUpdates_.extract(widgetId); deferred)
+            MergeWidgetDamage(pendingDesktopWidgetCompositions_, widgetId, deferred.mapped());
     }
+    MergeWidgetDamage(pendingDesktopWidgetCompositions_, widgetId, damage);
     const snowdesktop::UiImmediatePresentationScope immediatePresentation(
         desktopWidgetPointerBatchActive_);
     // Every timed widget update adds its ID before the scheduler presents the
@@ -265,6 +276,57 @@ bool DesktopApp::QueueDesktopWidgetComposition(
         &pendingDesktopWidgetCompositions_, [this] {
             return PresentQueuedDesktopWidgetComposition();
         });
+}
+
+bool DesktopApp::DeferWidgetUpdateDuringPopup(const DesktopWidget& widget,
+    const DesktopWidgetCompositionItem& item, const RECT& bounds, std::optional<RECT> damage)
+{
+    if (!uiAnimationScheduler_.IsBatchingPresentations() || !popupAnimation_.IsAnimating() ||
+        !IsCollectionPopupHostedByFloatingWindow() || !item.visible || !item.contentVisible ||
+        item.occluded || item.renderFailed || !SameRect(bounds, item.bounds) ||
+        desktopStartupPresentationPending_ || desktopWidgetCompositionFailurePending_ ||
+        updatingDisplayTopology_ || exitRequested_ || mouseDown_ || desktopWidgetPointerBatchActive_ ||
+        widgetAction_ != WidgetAction::None || dragSession_.HasContext() ||
+        item.hoverFade || item.hoverRollOpening || pendingDesktopWidgetCompositions_.contains(widget.id))
+        return false;
+    const auto* popup = GetOpenPopupWidget();
+    if (!popup || popup->id == widget.id || dockFolderPopupMappingWidgetId_ == widget.id) return false;
+    const auto* page = ResolveCollectionPopupPage(*popup);
+    RECT intersection{};
+    if (!page || !IntersectRect(&intersection, &page->bounds, &popupRect_) ||
+        IntersectRect(&intersection, &page->bounds, &bounds)) return false;
+    // A stack switch must display the new member's first frame immediately.
+    if (IsLuaDesktopSurface(widget))
+    {
+        const auto* content = ResolveLuaWidgetContent(&widget);
+        if (!content || item.renderedContentId != content->id) return false;
+    }
+    if (!popupDeferredWidgetToken_)
+    {
+        // Ordinary transitions release at completion. Keep a fixed deadline
+        // from the first update if the user repeatedly reverses the animation.
+        constexpr UINT maximumDelayMs = 180;
+        popupDeferredWidgetToken_ = uiAnimationScheduler_.ScheduleOnce(maximumDelayMs,
+            [this](snowdesktop::UiScheduleToken token) {
+                if (popupDeferredWidgetToken_ == token) ReleaseWidgetUpdatesAfterPopup();
+            });
+        if (!popupDeferredWidgetToken_) return false;
+    }
+    MergeWidgetDamage(popupDeferredWidgetUpdates_, widget.id, damage);
+    snowdesktop::performance::Value("widget.composition", "popup.deferred", widget.id, 1);
+    return true;
+}
+
+void DesktopApp::ReleaseWidgetUpdatesAfterPopup()
+{
+    if (popupDeferredWidgetToken_) uiAnimationScheduler_.Cancel(popupDeferredWidgetToken_);
+    popupDeferredWidgetToken_ = 0;
+    if (popupDeferredWidgetUpdates_.empty()) return;
+    for (const auto& [id, damage] : popupDeferredWidgetUpdates_)
+        MergeWidgetDamage(pendingDesktopWidgetCompositions_, id, damage);
+    popupDeferredWidgetUpdates_.clear();
+    (void)uiAnimationScheduler_.RequestScheduledPresentation(&pendingDesktopWidgetCompositions_,
+        [this] { return PresentQueuedDesktopWidgetComposition(); });
 }
 
 void DesktopApp::FinishDesktopCompositionPaint()
@@ -1254,6 +1316,7 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
     // frame commits the retained surface at its previous size.
     const bool refreshBeforeShow = visible &&
         (!item.visible || !EqualRect(&item.bounds, &bounds));
+    if (!visible || refreshBeforeShow) popupDeferredWidgetUpdates_.erase(widgetId);
     if (refreshBeforeShow)
     {
         pendingDesktopWidgetCompositions_.insert_or_assign(widgetId, std::nullopt);
@@ -1584,6 +1647,7 @@ void DesktopApp::RemoveDesktopWidgetComposition(
     const std::wstring& widgetId,
     bool invalidateRoot)
 {
+    popupDeferredWidgetUpdates_.erase(widgetId);
     pendingDesktopWidgetCompositions_.erase(widgetId);
     pendingWidgetMarqueeCompositions_.erase(widgetId);
     widgetMarqueeCompositionItems_.erase(widgetId);
@@ -1690,6 +1754,9 @@ bool DesktopApp::SyncDesktopWidgetCompositionZOrder()
 
 void DesktopApp::ResetDesktopWidgetComposition()
 {
+    uiAnimationScheduler_.Cancel(popupDeferredWidgetToken_);
+    popupDeferredWidgetToken_ = 0;
+    popupDeferredWidgetUpdates_.clear();
     // Join before resetting devices, command resources or the parent tree.
     widgetSurfaceRenderer_.reset();
     widgetSurfaceRendererUnavailable_ = false;

@@ -835,6 +835,7 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
                     popupAnimation_.IsHidden())
                 {
                     FinalizeCloseCollectionPopup();
+                    ReleaseWidgetUpdatesAfterPopup();
                     return;
                 }
                 if (popupAnimation_.IsAnimating())
@@ -855,6 +856,7 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
                 ResetCollectionPopupAnimationCache();
                 if (onDesktop && hwnd_ && IsWindow(hwnd_))
                     InvalidateRect(hwnd_, &dirty, FALSE);
+                ReleaseWidgetUpdatesAfterPopup();
             });
     if (!popupAnimationCompletionToken_)
     {

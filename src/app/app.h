@@ -2760,6 +2760,9 @@ private:
     bool FlushPendingDesktopWidgetComposition(bool yieldToPopupResize = false,
         bool* srgbDamageOnly = nullptr);
     bool DeferRetainedDesktopWidgetCompositionForPopupResize();
+    bool DeferWidgetUpdateDuringPopup(const DesktopWidget& widget,
+        const DesktopWidgetCompositionItem& item, const RECT& bounds, std::optional<RECT> damage);
+    void ReleaseWidgetUpdatesAfterPopup();
     void ScheduleDeferredDesktopWidgetPresentation();
     void FinishDesktopCompositionPaint();
     bool StartDesktopWidgetHoverRoll(DesktopWidgetCompositionItem& item,
@@ -3572,6 +3575,8 @@ private:
         desktopWidgetCompositionItems_;
     std::unordered_map<std::wstring, std::optional<RECT>>
         pendingDesktopWidgetCompositions_;
+    std::unordered_map<std::wstring, std::optional<RECT>> popupDeferredWidgetUpdates_;
+    snowdesktop::UiScheduleToken popupDeferredWidgetToken_ = 0;
     std::vector<RECT> desktopWidgetCoverage_;
     std::vector<std::wstring> desktopWidgetCompositionZOrder_;
     std::unordered_map<std::wstring,

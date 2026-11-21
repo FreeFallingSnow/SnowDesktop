@@ -116,6 +116,7 @@ public:
     // snapshot. Outside scheduled callbacks it remains synchronous, including
     // its failure result. No additional wakeup or frame delay is introduced.
     bool RequestScheduledPresentation(const void* owner, std::function<bool()> callback);
+    [[nodiscard]] bool IsBatchingPresentations() const noexcept;
 
     void SetSoftwareRendering(bool softwareRendering);
     void RefreshDisplayRate();
