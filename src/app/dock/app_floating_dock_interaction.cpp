@@ -682,10 +682,23 @@ void DesktopApp::ToggleFloatingDock()
         }
         return;
     }
-    if (IsPersistentDockHostPromoted(*floatingDockHost_))
-        CloseFloatingDock(*floatingDockHost_);
-    else
-        ShowFloatingDock(floatingDockHost_->monitor, DockRevealSource::Hotkey);
+
+    auto& host = *floatingDockHost_;
+    if (!IsPersistentDockHostPromoted(host))
+    {
+        ShowFloatingDock(host.monitor, DockRevealSource::Hotkey);
+        return;
+    }
+
+    // Keep the anchor visible while its popup is open. Check the current
+    // desktop band because a covering window can change after the summon.
+    if (host.HasActiveAssociatedSurface() &&
+        (dockSettings_.showOnlyWhenSummoned ||
+            (host.container && !host.container->IsMergedWithStatusBar() &&
+                IsPersistentDockDesktopBandOccluded(host))))
+        return;
+
+    CloseFloatingDock(host);
 }
 
 void DesktopApp::InvalidateFloatingDockWindow(

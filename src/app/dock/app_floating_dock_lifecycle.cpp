@@ -218,6 +218,27 @@ void DesktopApp::ApplyFloatingDockHotkey()
     }
 }
 
+bool DesktopApp::PersistentDockHost::HasActiveAssociatedSurface() const
+{
+    if (owner->IsDockStartMenuActive(monitor) ||
+        owner->collectionPopupDockHost_ == this ||
+        owner->quickNavigationDockHost_ == this)
+        return true;
+
+    const RECT& anchor = owner->dockWindowPreviewAnchorScreen_;
+    if (owner->dockWindowPreview_ && owner->dockWindowPreview_->IsVisible() && !IsRectEmpty(&anchor))
+    {
+        const POINT center{(anchor.left + anchor.right) / 2, (anchor.top + anchor.bottom) / 2};
+        if (MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST) == monitor)
+            return true;
+    }
+
+    using snowdesktop::floating_dock_rules::IsMenuOwnedByDock;
+    return IsMenuOwnedByDock(snowdesktop::modern_menu::ActiveRootWindow(), hwnd) ||
+        IsMenuOwnedByDock(
+            owner->shellPopupTrackerOwnerHwnd_.load(std::memory_order_acquire), hwnd);
+}
+
 bool DesktopApp::UpdatePassiveDragRevealHosts(
     POINT cursorScreen)
 {
@@ -321,32 +342,8 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
                     edgeScreenRect,
                     dockSettings_.position);
 
-        bool previewAssociated = false;
-        if (dockWindowPreview_ &&
-            dockWindowPreview_->IsVisible() &&
-            !IsRectEmpty(&dockWindowPreviewAnchorScreen_))
-        {
-            const POINT previewAnchorCenter{
-                (dockWindowPreviewAnchorScreen_.left +
-                    dockWindowPreviewAnchorScreen_.right) / 2,
-                (dockWindowPreviewAnchorScreen_.top +
-                    dockWindowPreviewAnchorScreen_.bottom) / 2
-            };
-            previewAssociated = MonitorFromPoint(
-                previewAnchorCenter,
-                MONITOR_DEFAULTTONEAREST) == host.monitor;
-        }
-        const bool associatedSurfaceActive =
-            IsDockStartMenuActive(host.monitor) ||
-            collectionPopupDockHost_ == &host ||
-            quickNavigationDockHost_ == &host ||
-            previewAssociated ||
-            snowdesktop::floating_dock_rules::IsMenuOwnedByDock(
-                snowdesktop::modern_menu::ActiveRootWindow(), host.hwnd) ||
-            snowdesktop::floating_dock_rules::IsMenuOwnedByDock(
-                shellPopupTrackerOwnerHwnd_.load(std::memory_order_acquire), host.hwnd);
         const bool keepPassiveDragReveal =
-            associatedSurfaceActive || pointerInEdgeCorridor ||
+            host.HasActiveAssociatedSurface() || pointerInEdgeCorridor ||
             PtInRect(&dockScreenRect, cursorScreen) ||
             (merged && ((statusBar_ && statusBar_->HasInteractionSession(host.monitor)) ||
                 pointerInEdgeCorridor ||
