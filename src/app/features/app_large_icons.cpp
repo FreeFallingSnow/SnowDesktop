@@ -11,12 +11,23 @@
 #include "steam/steam_entitlement.h"
 #include "settings/animation_settings.h"
 #include "icons/large_icon_steam.h"
+#include "shell/shortcut_category_target.h"
 #include "icons/large_icon_render_rules.h"
 #include "icons/large_icon_renderer.h"
 #include "icons/large_icon_edit_rules.h"
 #include "icons/large_icon_preset_rules.h"
 #include "icons/large_icon_visibility_rules.h"
 #include "icons/large_icon_shape_geometry.h"
+
+namespace
+{
+int GameCoverContent(std::wstring_view url)
+{
+    if (snowdesktop::large_icon_steam::AppId(url)) return snowdesktop::kLargeIconSteamCover;
+    if (!snowdesktop::shortcut_application_rules::EpicGameKey(url).empty()) return snowdesktop::kLargeIconEpicCover;
+    return 0;
+}
+}
 
 void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesystem::path importPath, int variant,
     std::vector<std::wstring> importKeys)
@@ -35,13 +46,19 @@ void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesyst
     // The display signature must stay identical while an initial import is
     // pending. Otherwise a paint requests the original and cancels the import.
     if (request.content == 1 && request.reference.empty()) request.content = 0;
-    request.language = snowdesktop::large_icon_steam::Language(Locale::Instance().GetEffectiveLanguage());
+    if (request.content != snowdesktop::kLargeIconEpicCover)
+        request.language = snowdesktop::large_icon_steam::Language(Locale::Instance().GetEffectiveLanguage());
     const auto frame = GetLargeIconFrameRect(item);
     const int width = std::max<LONG>(1, frame.right - frame.left), height = std::max<LONG>(1, frame.bottom - frame.top);
     request.pixels = !request.fillLayer && request.content == 0 ? snowdesktop::icon_render_rules::SourcePixelsForTarget(
         static_cast<int>(std::min(width, height) * config.contentScale)) : std::clamp(std::max(width, height), 256, 2048);
     request.portrait = config.steamOrientation == 2 || (config.steamOrientation == 0 && double(width) / height < 1.195);
-    if (variant) { request.content = 2; request.pixels = 256; request.portrait = variant == 2; }
+    if (variant)
+    {
+        if (!snowdesktop::IsLargeIconGameCover(request.content)) return;
+        request.pixels = 256;
+        request.portrait = variant == 2;
+    }
     auto& runtime = largeIconRuntime_[item.layoutKey];
     const auto stamp = item.modifiedTime ? (std::uint64_t(item.modifiedTime->dwHighDateTime) << 32) |
         item.modifiedTime->dwLowDateTime : 0;
@@ -57,15 +74,18 @@ void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesyst
             snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() < runtime.retryAt)) return;
     // Paint/animation frames compare only model values. Read shortcut contents
     // only when a new resource generation is actually needed.
-    if (request.content == 2)
+    if (snowdesktop::IsLargeIconGameCover(request.content))
     {
-        wchar_t url[2048]{};
-        GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url, static_cast<DWORD>(std::size(url)), item.parsingName.c_str());
-        request.appId = snowdesktop::large_icon_steam::AppId(url).value_or(0);
+        const auto url = snowdesktop::category_collection_rules::ReadInternetShortcutUrl(item.parsingName);
+        if (request.content == snowdesktop::kLargeIconSteamCover)
+            request.appId = snowdesktop::large_icon_steam::AppId(url).value_or(0);
+        else
+            request.epicGameKey = snowdesktop::shortcut_application_rules::EpicGameKey(url);
     }
     // Keep the last displayed source while its replacement is decoded. The
     // delivered generation swaps pixels atomically; a failed different source
     // falls back only after that failure is known.
+    if (variant && savedSignature != signature) runtime.previews[variant - 1].reset();
     savedSignature = signature;
     if (!variant)
     {
@@ -164,8 +184,10 @@ void DesktopApp::ProcessLargeIconAssets()
         state.asset = std::move(result.asset);
         state.sourceContent = result.request.content; state.sourceReference = result.request.reference;
         if (assetChanged) changedDesktopAsset();
-        if (snowdesktop::IsLargeIconFill(*items_[index].largeIcon) && items_[index].largeIcon->content == 2 && state.asset->reference.starts_with("steam-") &&
-            items_[index].largeIcon->cachedCover != state.asset->reference)
+        const auto& config = *items_[index].largeIcon;
+        const bool gameCover = (config.content == snowdesktop::kLargeIconSteamCover && state.asset->reference.starts_with("steam-")) ||
+            (config.content == snowdesktop::kLargeIconEpicCover && state.asset->reference.starts_with("epic-"));
+        if (snowdesktop::IsLargeIconFill(config) && gameCover && config.cachedCover != state.asset->reference)
         {
             items_[index].largeIcon->cachedCover = state.asset->reference;
             persist = true;
@@ -211,12 +233,9 @@ bool DesktopApp::SetLargeIconConfigs(const std::vector<std::pair<size_t, std::op
         auto& item = items_[index];
         const bool desktop = !IsItemInAnyWidget(item) && item.gridCell.pageId != kDockPageId;
         if (!snowdesktop::large_icon_edit_rules::CanStore(config, CanEditLargeIcons(), desktop)) return false;
-        if (config && snowdesktop::IsLargeIconFill(*config) && config->content == 2)
-        {
-            wchar_t url[2048]{};
-            GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url, static_cast<DWORD>(std::size(url)), item.parsingName.c_str());
-            if (!snowdesktop::large_icon_steam::AppId(url)) return false;
-        }
+        if (config && snowdesktop::IsLargeIconFill(*config) && snowdesktop::IsLargeIconGameCover(config->content) &&
+            GameCoverContent(snowdesktop::category_collection_rules::ReadInternetShortcutUrl(item.parsingName)) != config->content)
+            return false;
         const bool sameSize = config && item.largeIcon && config->columns == item.largeIcon->columns && config->rows == item.largeIcon->rows;
         const GridSpan span = sameSize ? item.gridSpan : config ? GridSpan{config->columns, config->rows} : GridSpan{1, 1};
         if (config && !sameSize)
@@ -295,12 +314,19 @@ snowdesktop::LargeIconConfig DesktopApp::MakeLargeIconDefaults(size_t index)
         (static_cast<UINT>(style.widgetBorderG * 255) << 8) | static_cast<UINT>(style.widgetBorderB * 255);
     if (index < items_.size())
     {
-        wchar_t url[2048]{};
-        GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url, static_cast<DWORD>(std::size(url)), items_[index].parsingName.c_str());
-        if (snowdesktop::large_icon_steam::AppId(url)) { config.backgroundStyle = -2; config.content = 2; config.fit = 1; }
+        const int gameCover = GameCoverContent(
+            snowdesktop::category_collection_rules::ReadInternetShortcutUrl(items_[index].parsingName));
+        if (gameCover == snowdesktop::kLargeIconSteamCover)
+        {
+            config.backgroundStyle = -2; config.content = gameCover; config.fit = 1;
+        }
         const auto target = ResolveIconTarget(items_[index].layoutKey);
         if (const auto replacement = iconOverrides_.find(target); replacement != iconOverrides_.end() && !missingIconTargets_.contains(target))
             snowdesktop::large_icon_preset_rules::UseLibraryIcon(config, replacement->second);
+        if (gameCover == snowdesktop::kLargeIconEpicCover)
+        {
+            config.backgroundStyle = -2; config.content = gameCover; config.fit = 1;
+        }
     }
     config.effect = snowdesktop::large_icon_preset_rules::DefaultEffect(config);
     return config;
@@ -384,18 +410,17 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     result.frameLimit = snowdesktop::animation::RuntimeFrameLimit();
     result.animations = snowdesktop::animation::RuntimeAnimationsEnabled();
     result.neutral = IsLightContentTheme() ? 0xc9ced6u : 0x414751u;
-    wchar_t steamUrl[2048]{};
-    GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", steamUrl, static_cast<DWORD>(std::size(steamUrl)), item.parsingName.c_str());
-    result.steam = snowdesktop::large_icon_steam::AppId(steamUrl).has_value();
+    result.gameCoverContent = GameCoverContent(
+        snowdesktop::category_collection_rules::ReadInternetShortcutUrl(item.parsingName));
     for (const auto& key : keys)
     {
         const auto& target = items_[FindItemIndexByKey(key)];
-        wchar_t url[2048]{};
-        GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url, static_cast<DWORD>(std::size(url)), target.parsingName.c_str());
-        result.steam = result.steam && snowdesktop::large_icon_steam::AppId(url).has_value();
+        if (result.gameCoverContent && &target != &item && GameCoverContent(
+                snowdesktop::category_collection_rules::ReadInternetShortcutUrl(target.parsingName)) != result.gameCoverContent)
+            result.gameCoverContent = 0;
         result.anyFill = result.anyFill || snowdesktop::IsLargeIconFill(*target.largeIcon);
     }
-    if (keys.size() > 1 && !result.steam)
+    if (keys.size() > 1 && !result.gameCoverContent)
     {
         auto defaults = MakeLargeIconDefaults(index);
         defaults.backgroundStyle = -1; defaults.content = 0;
@@ -454,7 +479,8 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     }
     else if (request.action == "refresh")
     {
-        if (!snowdesktop::IsLargeIconFill(*item.largeIcon) || item.largeIcon->content != 2 || !result.steam)
+        if (!snowdesktop::IsLargeIconFill(*item.largeIcon) || !result.gameCoverContent ||
+            item.largeIcon->content != result.gameCoverContent)
             result.error = "largeIcon.invalid";
         else
         {
@@ -539,8 +565,9 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     result.frameWidth = std::max<LONG>(1, visibleFrame.right - visibleFrame.left);
     result.frameHeight = std::max<LONG>(1, visibleFrame.bottom - visibleFrame.top);
     RequestLargeIconAsset(index);
-    if (result.editable && result.steam && snowdesktop::IsLargeIconFill(EffectiveLargeIconConfig(item)) &&
-        EffectiveLargeIconConfig(item).content == 2) for (int variant = 1; variant <= 2; ++variant) RequestLargeIconAsset(index, false, {}, variant);
+    if (result.editable && result.gameCoverContent && snowdesktop::IsLargeIconFill(EffectiveLargeIconConfig(item)) &&
+        EffectiveLargeIconConfig(item).content == result.gameCoverContent)
+        for (int variant = 1; variant <= 2; ++variant) RequestLargeIconAsset(index, false, {}, variant);
     if (const auto runtime = largeIconRuntime_.find(item.layoutKey); runtime != largeIconRuntime_.end())
     {
         result.loading = runtime->second.pending || runtime->second.previewGenerations[0] != 0 ||

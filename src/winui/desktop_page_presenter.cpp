@@ -1818,7 +1818,8 @@ struct DesktopPagePresenter::Impl
             L"\n" + L("app.settings.category_hint",
                 L"Standard extensions also match shortcut file targets; "
                 L".LNK:FOLDER matches folder shortcuts, .LNK:.PDF matches PDF shortcuts, "
-                L".LNK:APP matches application shortcuts, and .URL:STEAM matches Steam launch links.");
+                L".LNK:APP matches application shortcuts, .URL:STEAM matches Steam launch links, "
+                L"and .URL:EPIC matches Epic Games launch links.");
         muxc::ToolTipService::SetToolTip(extensions, winrt::box_value(help));
         muxa::AutomationProperties::SetHelpText(extensions, help);
     }

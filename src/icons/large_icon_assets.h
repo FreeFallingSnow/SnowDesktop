@@ -30,7 +30,7 @@ struct LargeIconAssetRequest
     std::uint32_t appId = 0;
     bool portrait = false, localOnly = false, refresh = false;
     bool fillLayer = false; // import destination and generation identity
-    std::string language = "english", reference, lastGood;
+    std::string language = "english", reference, lastGood, epicGameKey;
     std::filesystem::path importPath;
     std::vector<std::wstring> importKeys; // Captured batch; never follows later desktop selection.
 };

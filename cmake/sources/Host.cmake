@@ -168,6 +168,8 @@ set(SNOWDESKTOP_SOURCES
     src/app/features/app_large_icons.cpp
     src/app/features/app_large_icon_interaction.cpp
     src/icons/large_icon_assets.cpp
+    src/icons/large_icon_epic.cpp
+    src/icons/large_icon_epic_cache.cpp
     src/icons/large_icon_config_codec.cpp
     src/icons/icon_image_codec.cpp
     src/icons/icon_pack_archive.cpp

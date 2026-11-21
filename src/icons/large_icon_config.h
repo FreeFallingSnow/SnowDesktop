@@ -9,6 +9,7 @@ namespace snowdesktop
 bool IsManagedLargeIconImage(std::string_view name);
 bool ValidateLargeIconConfig(const LargeIconConfig& c);
 
+inline bool IsLargeIconGameCover(int content) { return content == kLargeIconSteamCover || content == kLargeIconEpicCover; }
 inline bool IsLargeIconFill(const LargeIconConfig& config) { return config.backgroundStyle == -2; }
 inline int LargeIconActiveContent(const LargeIconConfig& config)
 { return IsLargeIconFill(config) ? config.content : config.foregroundContent; }

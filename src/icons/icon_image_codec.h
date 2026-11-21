@@ -24,8 +24,8 @@ struct Image
 };
 
 // edge == 0 retains raster dimensions (SVG defaults to 1024 pixels).
-bool Decode(const std::filesystem::path& path, int edge, Image& image, std::string& error);
-bool DecodeBytes(std::string_view bytes, int edge, Image& image, std::string& error);
+bool Decode(const std::filesystem::path& path, int edge, Image& image, std::string& error, bool allowAvif = false);
+bool DecodeBytes(std::string_view bytes, int edge, Image& image, std::string& error, bool allowAvif = false);
 bool EncodePng(const Image& image, std::string& bytes, std::string& error);
 bool PadSquare(Image& image);
 HBITMAP CreateBitmap(const Image& image);

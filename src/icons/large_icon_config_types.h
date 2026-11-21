@@ -8,6 +8,9 @@
 
 namespace snowdesktop
 {
+inline constexpr int kLargeIconSteamCover = 2;
+inline constexpr int kLargeIconEpicCover = 3;
+
 // An optional presentation of a Shell item. Runtime state and entitlement never
 // belong here. Span remains the user's intent when a monitor temporarily shrinks.
 struct LargeIconConfig
@@ -24,7 +27,7 @@ struct LargeIconConfig
     bool followComponentRadius = false; // Missing field preserves existing independent radii.
     bool showOnHoverOnly = false;
     bool keepWhenDesktopHidden = false;
-    int content = 0; // 0 original, 1 imported static image, 2 Steam
+    int content = 0; // 0 original, 1 imported static image, 2 Steam, 3 Epic
     int fit = 1; // Fill layer only: 0 contain, 1 cover. Foreground always contains.
     double focusX = .5, focusY = .5;
     std::string image;
@@ -52,7 +55,7 @@ struct LargeIconConfig
     int coverHover = 0; // 0 none, 1 zoom, 2 title scrim
     double amplitude = 1;
     int delayMs = 120, enterMs = 200, exitMs = 160;
-    int steamOrientation = 0; // 0 automatic, 1 landscape, 2 portrait
+    int steamOrientation = 0; // Stored name for game cover orientation: 0 automatic, 1 landscape, 2 portrait
     bool localOnly = false;
 
     // v2: background selector is flat; nonnegative values are component preset

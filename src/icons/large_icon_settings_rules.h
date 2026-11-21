@@ -1,11 +1,12 @@
 #pragma once
+#include "large_icon_config.h"
 #include "large_icon_render_rules.h"
 
 namespace snowdesktop::large_icon_settings_rules
 {
 enum class Field
 {
-    Always, Fill, FillImage, Crop, Steam,
+    Always, Fill, FillImage, Crop, GameCover,
     Custom, Gradient, Solid, Blur, Border, Edge, Foreground, ForegroundImage, ForegroundPosition,
     Title, ManualTitle, Tilt, Zoom, Glow, Shine, Radius, RadiusFollow, FlagDirection, RegularHexagon
 };
@@ -22,7 +23,7 @@ inline bool Visible(Field field, const LargeIconConfig& c, bool hasEdge = false)
     case Field::Fill: return fill;
     case Field::FillImage: return fill && c.content == 1;
     case Field::Crop: return fill && c.fit == 1;
-    case Field::Steam: return fill && c.content == 2;
+    case Field::GameCover: return fill && IsLargeIconGameCover(c.content);
     case Field::Custom: return custom;
     case Field::Gradient: return custom && c.gradient.enabled;
     case Field::Solid: return custom && !c.gradient.enabled;

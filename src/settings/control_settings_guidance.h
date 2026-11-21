@@ -62,7 +62,7 @@ inline constexpr auto Fields<DesktopDisplaySettings> = std::to_array<Description
     {"desktopTitleLines", "Chooses one or two lines for ordinary desktop item captions. The page icon baseline is calculated independently of this line-count choice."},
     {"largeFolderTitleLines", "Chooses one or two lines for item captions in fixed large-folder collection grids with titles visible. One line shortens the title area and distributes the freed height between rows and at both outer edges, including above the first row. Icon size, row centers and grid capacity stay the same. Scrolling icon grids use scrollingTitleLines."},
     {"scrollingTitleLines", "Chooses one or two lines in scrolling icon-grid captions. List mode uses its own row text layout."},
-    {"shortcutArrowMode", "Controls the shortcut overlay on shell items that are links. 0 shows it on non-application shortcuts, 1 hides it on all shortcuts, and 2 shows it on all shortcuts."},
+    {"shortcutArrowMode", "Controls the shortcut overlay on shell items that are links. 0 shows it on non-application shortcuts, 1 hides it on all shortcuts, and 2 shows it on all shortcuts. Steam and Epic Games launch links count as applications."},
     {"iconBeautify", "Global treatment for ordinary icons. Individual icon appearance can inherit or override it, and file thumbnails have a separate participation switch."},
     {"titleEllipsis", "Enables ellipsis trimming in title layouts when the full caption exceeds the available text area."},
     {"groupComponentBadges", "Shows component-type badges on eligible item icons in a group. The renderer only draws badges for supported component types."},
@@ -256,7 +256,7 @@ inline constexpr auto Fields<PanelGradientStop> = std::to_array<Description>({
 template<>
 inline constexpr auto Fields<CategorySettings> = std::to_array<Description>({
     {"tabFontSize", "Sets the nominal font size for file category tabs before the host scales their layout."},
-    {"rules", "Edits the category labels and extension match rules used to classify desktop items. Applying changes can move items between categories or affect automatic collection."},
+    {"rules", "Edits the category labels and extension match rules used to classify desktop items. .URL:STEAM and .URL:EPIC match their respective game launch shortcuts. Applying changes can move items between categories or affect automatic collection."},
     {"collectProgramsEnabled", "Includes eligible program shortcuts in category collection. Their eligibility still depends on classification and the target component's collection rules."},
 });
 

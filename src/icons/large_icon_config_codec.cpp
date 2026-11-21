@@ -40,7 +40,7 @@ bool ValidateLargeIconConfig(const LargeIconConfig& c)
         c.columns >= 1 && c.columns <= 1024 &&
         c.rows >= 1 && c.rows <= 1024 && c.shape >= 0 && c.shape <= 5 && c.flagDirection >= 0 && c.flagDirection <= 3 &&
         range(c.contentScale, .1, 1) && range(c.fillScale, .25, 3) &&
-        range(c.radius, 0, 512) && (c.radiusPercent == -1 || range(c.radiusPercent, 0, 100)) && c.content >= 0 && c.content <= 2 &&
+        range(c.radius, 0, 512) && (c.radiusPercent == -1 || range(c.radiusPercent, 0, 100)) && c.content >= 0 && c.content <= kLargeIconEpicCover &&
         c.fit >= 0 && c.fit <= 1 && range(c.focusX, 0, 1) && range(c.focusY, 0, 1) &&
         IsManagedLargeIconImage(c.image) && IsManagedLargeIconImage(c.cachedCover) &&
         c.manualColor <= 0xffffff && c.borderColor <= 0xffffff && c.titleColor <= 0xffffff &&

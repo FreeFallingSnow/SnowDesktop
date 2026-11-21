@@ -568,14 +568,10 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
             }
             else if (isUrl)
             {
-                wchar_t url[32768]{};
-                shellCalls::Call(L"Classify.ReadUrl", [&] {
-                    return GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url,
-                                                    static_cast<DWORD>(std::size(url)),
-                                                    path.c_str());
-                });
-                result->isApplicationShortcut = shortcutRules::IsSteamApplicationUrl(url);
-                result->shortcutTarget.application = result->isApplicationShortcut;
+                using namespace snowdesktop::category_collection_rules;
+                const auto url = shellCalls::Call(L"Classify.ReadUrl", [&] { return ReadInternetShortcutUrl(path); });
+                result->shortcutTarget = ClassifyInternetShortcut(url);
+                result->isApplicationShortcut = result->shortcutTarget.application;
             }
             result->isApplicationShortcut = result->isApplicationShortcut ||
                 snowdesktop::category_collection_rules::IsProgramItem(

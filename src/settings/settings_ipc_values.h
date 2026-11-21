@@ -142,7 +142,7 @@ SD_IPC_FIELDS(IconLibrarySnapshot, v.groups, v.entries, v.imported, v.importedGr
     v.error, v.target, v.targetName, v.workshopAvailable, v.coverPath, v.preparationId, v.publishedUrl, v.completedAction, v.operationId, v.progress);
 SD_IPC_FIELDS(LargeIconSettingsSnapshot, v.key, v.name, v.imagePath, v.session, v.revision,
     v.available, v.editable, v.succeeded, v.maxColumns, v.maxRows, v.config, v.error,
-    v.landscapePath, v.portraitPath, v.source, v.landscapeSource, v.portraitSource, v.accent, v.steam,
+    v.landscapePath, v.portraitPath, v.source, v.landscapeSource, v.portraitSource, v.accent, v.gameCoverContent,
     v.frameWidth, v.frameHeight, v.frameColumns, v.frameRows, v.frameLimit, v.unitScale, v.durationScale, v.frameWidths, v.frameHeights, v.animations, v.neutral,
     v.defaultConfig, v.imageWidth, v.imageHeight, v.hasEdgeColor, v.loading, v.edgeColor, v.itemCount, v.anyFill, v.mixedFields);
 SD_IPC_FIELDS(SettingsActionResult,

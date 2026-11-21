@@ -1382,8 +1382,7 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                 const auto& target = result->shortcutTarget;
                 const bool classificationChanged = result->phase == IconLoadPhase::Shortcut &&
                     (item.isShortcut != result->isShortcut || item.isApplicationShortcut != result->isApplicationShortcut ||
-                        item.shortcutTarget.classified != target.classified || item.shortcutTarget.directory != target.directory ||
-                        item.shortcutTarget.application != target.application || item.shortcutTarget.extension != target.extension);
+                        item.shortcutTarget != target);
                 const auto incomingBitmap = result->bitmap;
                 snowdesktop::shell_icon_request::ApplyBitmap(item, result->phase,
                     result->bitmap, result->bitmapSize, result->iconIsMediaThumbnail,

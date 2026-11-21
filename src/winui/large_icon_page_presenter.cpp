@@ -2,6 +2,7 @@
 #include <cmath>
 #include <algorithm>
 #include "common/json_value.h"
+#include "common/l10n.h"
 #include "large_icon_page_presenter.h"
 #include "icon_library_page_presenter.h"
 #include "settings_presenter_controls.h"
@@ -134,7 +135,9 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             }
             coverLabels[i].Text(source.empty() ? L(snapshot.loading ? "largeIcon.loading" : "largeIcon.unavailable") :
                 L(source == "original" ? "largeIcon.source.original" : source == "local" ? "largeIcon.source.local" :
-                    source == "steam-local" ? "largeIcon.source.steam-local" : source == "steam-online" ? "largeIcon.source.steam-online" : "largeIcon.source.cache"));
+                    source == "steam-local" ? "largeIcon.source.steam-local" : source == "steam-online" ? "largeIcon.source.steam-online" :
+                    source == "epic-local" ? "largeIcon.source.epic-local" : source == "epic-online" ? "largeIcon.source.epic-online" :
+                    "largeIcon.source.cache"));
         }
         syncing = false;
     }
@@ -150,7 +153,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         sending = true;
         const auto oldRevision = snapshot.revision;
         const auto oldError = snapshot.error;
-        const auto oldSteam = snapshot.steam;
+        const auto oldGameCover = snapshot.gameCoverContent;
         const auto oldName = snapshot.name;
         const auto oldCount = snapshot.itemCount;
         const bool wasDirty = dirty;
@@ -169,7 +172,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             if (snapshot.error.empty() && (oldError == "largeIcon.saveFailed" || oldError == "largeIcon.invalid"))
                 snapshot.error = oldError;
         }
-        if (oldSteam != snapshot.steam || oldCount != snapshot.itemCount) Build();
+        if (oldGameCover != snapshot.gameCoverContent || oldCount != snapshot.itemCount) Build();
         else Sync();
         if ((snapshot.name != oldName || snapshot.itemCount != oldCount) && nameChanged) nameChanged();
         return snapshot.succeeded;
@@ -204,8 +207,8 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     void Track(const x::FrameworkElement& element, Field field)
     {
         visibility.push_back([this, element, field] {
-            const bool steam = field != Field::Steam || snapshot.steam;
-            element.Visibility(steam && large_icon_settings_rules::Visible(field, draft, snapshot.hasEdgeColor) ? x::Visibility::Visible : x::Visibility::Collapsed);
+            const bool supported = field != Field::GameCover || snapshot.gameCoverContent == draft.content;
+            element.Visibility(supported && large_icon_settings_rules::Visible(field, draft, snapshot.hasEdgeColor) ? x::Visibility::Visible : x::Visibility::Collapsed);
         });
     }
     void RegisterTarget(std::string id, const x::FrameworkElement& target, Field field)
@@ -240,15 +243,12 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         for (int depth = 0; depth < 4; ++depth)
         {
             const auto field = entry->second.field;
-            // This item has no Steam artwork source. Do not direct the user to
-            // a source choice that is absent from this object's editor.
-            if (field == Field::Steam && !snapshot.steam)
+            if (field == Field::GameCover && !snapshot.gameCoverContent)
             {
                 unavailable();
                 return root;
             }
-            const bool visible = (field != Field::Steam || snapshot.steam) &&
-                large_icon_settings_rules::Visible(field, draft, snapshot.hasEdgeColor);
+            const bool visible = large_icon_settings_rules::Visible(field, draft, snapshot.hasEdgeColor);
             const bool enabled = large_icon_settings_rules::Enabled(
                 field, draft, snapshot.hasEdgeColor, snapshot.accent != 0);
             if (visible && enabled) break;
@@ -258,7 +258,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             const bool custom = draft.backgroundStyle == 9;
             switch (field)
             {
-            case Field::FillImage: case Field::Steam:
+            case Field::FillImage: case Field::GameCover:
                 if (fill) parent = "largeIcon.fillSource";
                 break;
             case Field::Crop:
@@ -759,8 +759,10 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         Slider(size, "largeIcon.rows", &LargeIconConfig::rows, 1, std::max(1, snapshot.maxRows));
         Toggle(size, "largeIcon.followComponentRadius", &LargeIconConfig::followComponentRadius, Field::RadiusFollow, 0);
         Slider(size, "largeIcon.radius", &LargeIconConfig::radiusPercent, 0, 100, 1, 1, L"%", Field::Radius, 1);
-        if (snapshot.steam) Choice(bg, "largeIcon.fillSource", &LargeIconConfig::content,
-            {{0,"largeIcon.original"},{1,"largeIcon.image"},{2,"largeIcon.steam"}}, Field::Fill, 1);
+        if (snapshot.gameCoverContent)
+            Choice(bg, "largeIcon.fillSource", &LargeIconConfig::content,
+                {{0,"largeIcon.original"},{1,"largeIcon.image"},{snapshot.gameCoverContent,
+                    snapshot.gameCoverContent == kLargeIconEpicCover ? L10N_KEY("largeIcon.epic") : L10N_KEY("largeIcon.steam")}}, Field::Fill, 1);
         else Choice(bg, "largeIcon.fillSource", &LargeIconConfig::content, {{0,"largeIcon.original"},{1,"largeIcon.image"}}, Field::Fill, 1);
         Action(bg, "largeIcon.image", "largeIcon.import", [](auto& self) { self.Send("import"); }, Field::FillImage, 2);
         Action(bg, "iconLibrary.choose", "iconLibrary.choose", [](auto& self) { self.ChooseLibrary(); }, Field::FillImage, 2);
@@ -770,7 +772,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         Slider(imageDetails, "largeIcon.positionX", &LargeIconConfig::focusX, 0, 100, 1, 100, L"%", Field::Crop, 1);
         Slider(imageDetails, "largeIcon.positionY", &LargeIconConfig::focusY, 0, 100, 1, 100, L"%", Field::Crop, 1);
         Choice(imageDetails, "largeIcon.orientation", &LargeIconConfig::steamOrientation,
-            {{0,"largeIcon.auto"},{1,"largeIcon.landscape"},{2,"largeIcon.portrait"}}, Field::Steam, 2);
+            {{0,"largeIcon.auto"},{1,"largeIcon.landscape"},{2,"largeIcon.portrait"}}, Field::GameCover, 2);
         c::StackPanel gallery; gallery.Orientation(c::Orientation::Horizontal); gallery.Spacing(12); gallery.HorizontalAlignment(x::HorizontalAlignment::Right);
         for (int i = 0; i < 2; ++i)
         {
@@ -783,9 +785,9 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             visibility.push_back([this, choose, i] { choose.IsEnabled(!(i == 0 ? snapshot.landscapePath : snapshot.portraitPath).empty()); });
             asset.Children().Append(coverImages[i]); asset.Children().Append(coverLabels[i]); asset.Children().Append(choose); gallery.Children().Append(asset);
         }
-        imageDetails.Children().Append(gallery); Track(gallery, Field::Steam);
-        Toggle(imageDetails, "largeIcon.localOnly", &LargeIconConfig::localOnly, Field::Steam, 1);
-        Action(imageDetails, "largeIcon.refresh", "largeIcon.refresh", [](auto& self) { self.Send("refresh"); }, Field::Steam, 1);
+        imageDetails.Children().Append(gallery); Track(gallery, Field::GameCover);
+        Toggle(imageDetails, "largeIcon.localOnly", &LargeIconConfig::localOnly, Field::GameCover, 1);
+        Action(imageDetails, "largeIcon.refresh", "largeIcon.refresh", [](auto& self) { self.Send("refresh"); }, Field::GameCover, 1);
         c::TextBlock fillHeading; fillHeading.Text(L("largeIcon.colorAndFill"));
         fillHeading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); fillHeading.Margin({16,12,16,4});
         bg.Children().Append(fillHeading); Track(fillHeading, Field::Custom);
