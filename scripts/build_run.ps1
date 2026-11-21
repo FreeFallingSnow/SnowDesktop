@@ -171,6 +171,9 @@ function Enter-BatchRun($Request){
 }
 
 try {
+    if($RunId -and $Command -in 'start','invoke'){
+        throw 'An existing Run is read through run status or run wait. Start/invoke do not accept -RunId; no new Run was created.'
+    }
     if($Command -eq 'budget'){
         if($CpuSlots -or $MemoryMiB){throw 'Use capacity fields for budget configuration and slots/MiB for run start.'}
         if($CpuCapacity -or $MemoryCapacityMiB){

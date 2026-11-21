@@ -50,14 +50,14 @@ def atomic(path, value):
             temporary.unlink()
 
 @contextlib.contextmanager
-def lease(path):
+def lease(path, create=True):
     """Kernel ownership, automatically released on process exit."""
     if os.name == 'nt':
         kernel = ctypes.WinDLL('kernel32', use_last_error=True)
         kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
                                       ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p]
         kernel.CreateFileW.restype = ctypes.c_void_p
-        handle = kernel.CreateFileW(str(path), 0xC0000000, 0, None, 4, 0x80, None)
+        handle = kernel.CreateFileW(str(path), 0xC0000000, 0, None, 4 if create else 3, 0x80, None)
         if handle == ctypes.c_void_p(-1).value:
             code = ctypes.get_last_error()
             if code in (32, 33):
@@ -69,7 +69,7 @@ def lease(path):
             kernel.CloseHandle(ctypes.c_void_p(handle))
     else:
         import fcntl
-        with open(str(path), 'a+b') as stream:
+        with open(str(path), 'a+b' if create else 'r+b') as stream:
             fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
             yield
 
@@ -123,6 +123,15 @@ def observe_dirty_paths(repo, state, ticket):
     if dirty:
         return None, 'Requested path still has uncommitted changes: ' + ', '.join(dirty[:4])
     return None
+
+def observe_standalone_output(directory):
+    try:
+        with lease(directory / 'build.lock', create=False):
+            return False
+    except FileNotFoundError:
+        return False
+    except BlockingIOError:
+        return True
 
 def observed_batch(ticket, state):
     current = state.get('current')
@@ -272,6 +281,9 @@ def worker(repo, directory, module, ticket_id):
                             status, reason = 'attention', 'Build owner exited; diagnose and explicitly recover the frozen batch.'
                         else:
                             status, reason = condition(ticket, state, result)
+                    if status == 'eligible' and ticket['condition'] in ('window', 'files') and not current:
+                        if observe_standalone_output(directory):
+                            status, reason = None, 'A standalone execution owns build.lock; waiting for its release.'
                     if status == 'eligible' and ticket['condition'] == 'files':
                         observation = observe_dirty_paths(repo, state, ticket)
                         if observation:

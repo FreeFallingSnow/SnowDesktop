@@ -342,7 +342,15 @@ function Complete-CheckRecord($Selection) {
     } finally { $lease.Dispose() }
     return [pscustomobject]@{ check=$report; exitCode=$code }
 }
-function Emit-Result($Result) {
+function Emit-Result($Result,[string]$NewerBatch='') {
+    $code=$Result.exitCode
+    if($NewerBatch){
+        $Result=$Result.PSObject.Copy()
+        if($code -eq 0){$code=5}
+        Set-Field $Result 'newerBatchId' $NewerBatch
+        Set-Field $Result 'verificationForCurrentEdits' $false
+        Set-Field $Result 'observationExitCode' $code
+    }
     if($Compact -or ($CliSummary -and -not $FullResult)){
         if((Get-Field $Result 'resultScope') -eq 'participant'){
             $member=$Result.participants[0]
@@ -350,10 +358,15 @@ function Emit-Result($Result) {
             Set-Field $summary 'resultScope' 'participant'
             Set-Field $summary 'participant' $member.id
             Set-Field $summary 'editRevision' (Get-EditRevision $member)
-            $summary|ConvertTo-Json -Depth 8
-        }else{Get-CompactBatchResult $Result (Result-Path $Result.batchId)|ConvertTo-Json -Depth 8}
+        }else{$summary=Get-CompactBatchResult $Result (Result-Path $Result.batchId)}
+        if($NewerBatch){
+            Set-Field $summary 'newerBatchId' $NewerBatch
+            Set-Field $summary 'verificationForCurrentEdits' $false
+            Set-Field $summary 'observationExitCode' $code
+        }
+        $summary|ConvertTo-Json -Depth 8
     }else{ConvertTo-Json -InputObject $Result -Depth 20}
-    exit $Result.exitCode
+    exit $code
 }
 
 try {
@@ -715,16 +728,16 @@ try {
             if ($Command -eq 'event-wait') { # Its bounded observation loop resumes after releasing metadata, below.
             }
             elseif ($Command -in 'finish','wait' -and $null -ne $result) {
-                if ($null -ne $current -and $current.id -ne $Batch -and
-                    @($current.participants | Where-Object id -eq $Participant).Count -gt 0) {
-                    throw 'This participant has a newer active batch. Its old result cannot verify new edits; use the batch ID from the latest begin.'
-                }
                 if (@($result.participants | Where-Object id -eq $Participant).Count -ne 1) { throw 'Participant does not belong to this result.' }
                 if((Get-Field $result 'protocolVersion' 1) -ge 2 -and $Revision -lt 0){throw 'Result requires persisted edit revision.'}
                 Assert-EditRevision (@($result.participants | Where-Object id -eq $Participant)[0]) $Revision
                 $completedEntry = @($result.participants | Where-Object id -eq $Participant)[0]
                 if ($null -ne $finishedRevision -and (Participant-Revision $completedEntry) -ne $finishedRevision) {
                     throw 'This finish was superseded by a reopened registration. Use finish for the current edit revision.'
+                }
+                if($current -and $current.id -ne $Batch -and
+                    @($current.participants|Where-Object {$_.id -eq $Participant -and $_.state -ne 'withdrawn'}).Count){
+                    Emit-Result $result $current.id
                 }
                 if (-not $hasFinishedCurrentBatch -and $result.outcome -eq 'passed') {
                     if (-not $result.PSObject.Properties['inputEnd'] -or $null -eq $result.inputEnd) {

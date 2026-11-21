@@ -57,7 +57,9 @@ function Invoke-CandidateBatchPipeline([string]$Root,$Request,$Context,$Record) 
     $plan=Read-EntryJson $planPath
     if($plan.schemaVersion -ne 1 -or $plan.batchId -ne $Request.batch -or $plan.configuration -ne 'Release'){throw 'Invalid candidate batch plan.'}
     $privatePlan=Join-Path $Context.output ('collaboration/'+$Request.batch+'.plan.json')
-    Write-CandidateJson $plan $privatePlan -Immutable
+    # Both phases bind the same frozen byte stream, including its JSON encoding.
+    [IO.File]::Copy($planPath,$privatePlan,$false)
+    if((Get-FileDigest $privatePlan) -ne $Request.planHash){throw 'Private frozen plan copy differs from the Run request.'}
     if(-not ('SnowDesktop.Build.Job' -as [type])){Add-Type -Path (Join-Path $PSScriptRoot 'build_job.cs')}
     Set-EntryRunControl $Context.source
     $log=Join-Path $Root ('.build/collaboration/'+$Request.batch+'.log')
