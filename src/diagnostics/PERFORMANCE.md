@@ -54,8 +54,12 @@ CLI 通过控制窗口发现 PID 并惰性打开 v3 本地管道。双向检查�
 宿主默认写入当前用户 LocalAppData/SnowDesktop/diagnostics/performance/<session>/，
 不依赖便携软件安装目录是否可写。`.pftrace.partial`
 和 `session.json.partial` 独占创建；flush、close 后原子发布，不覆盖同名文件。
-失败保留 partial，且不会被报告为完成。总空间为 1 GiB、最多 20 个完成会话；
-失败证据也计入空间，不自动删除。达到上限后需用户选择清理证据再采集。
+失败保留 partial。托管目录的限额为 1 GiB，最多保留最近 20 个已完成的托管会话。
+开始新采集时，宿主预留一个所请求的缓冲区（以 trace 文件上限为限）和 64 KiB 的
+manifest 空间。若数量或空间不足，会按完成时间从旧到新将所需的完整会话目录移至
+同级 `performance-archive/`，连同 trace、manifest 和已有分析一起保留。归档重名时
+追加数字后缀。失败、未完成、自选输出和无法确认归属的目录留在原处，所占空间继续
+计入托管目录限额。如果这些文件本身已经挤占新采集所需空间，采集返回 `captureStorageQuota`。
 
 manifest 包含 SDK/应用版本、进程角色、请求与配置身份、原生时间边界、可执行文件
 及 trace 哈希、覆盖范围和探针丢失计数。未知源码提交保持 null，不从附近 Git

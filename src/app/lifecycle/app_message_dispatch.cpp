@@ -96,7 +96,10 @@ bool DesktopApp::HandleShellContextMenuMessage(
 LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg, wp, lp)) return 0;
-    const snowdesktop::UiImmediatePresentationScope immediatePresentation;
+    // The runtime maintenance timer delivers background widget changes. A
+    // nested pointer or keyboard message still takes its own immediate scope.
+    const snowdesktop::UiImmediatePresentationScope immediatePresentation(
+        msg != WM_TIMER || wp != kWidgetRefreshTimerId);
     if (msg >= 0xC000 &&
         msg == snowdesktop::widget_runtime::WidgetSurfaceRenderer::ReadyMessage())
     {

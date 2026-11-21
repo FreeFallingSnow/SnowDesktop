@@ -1455,11 +1455,11 @@ struct DesktopBackdropCompositor::Impl
     {
         auto& frame = srgbContent[key];
         if (frame.layers) return;
-        auto root = compositor.CreateContainerVisual();
+        auto layers = compositor.CreateContainerVisual();
         auto body = compositor.CreateSpriteVisual();
-        root.Children().InsertAtBottom(body);
+        layers.Children().InsertAtBottom(body);
         auto surface = compositor.CreateVisualSurface();
-        surface.SourceVisual(root);
+        surface.SourceVisual(layers);
         auto brush = compositor.CreateSurfaceBrush(surface);
         brush.Stretch(wuc::CompositionStretch::None);
         brush.HorizontalAlignmentRatio(0.f);
@@ -1468,7 +1468,7 @@ struct DesktopBackdropCompositor::Impl
         frame.body = std::move(body);
         frame.layersSurface = std::move(surface);
         frame.flattened = std::move(brush);
-        frame.layers = std::move(root);
+        frame.layers = std::move(layers);
     }
 
     static void BindSrgbLayers(SrgbContent& frame, const PreparedImageSpin& spin,
@@ -3515,6 +3515,7 @@ DesktopBackdropCompositor::PreparedImageSpin DesktopBackdropCompositor::PrepareS
         result->device.copy_from(device);
         result->image = image;
         const LONG extent = static_cast<LONG>(std::ceil(edge)) + 2;
+        snowdesktop::performance::Scope raster("composition.srgb", "image_spin.raster");
         const auto buffer = impl_->CreateSrgbContentBuffer({extent, extent});
         Impl::PaintSrgbSurface(buffer.surface, [&](ID2D1DeviceContext* ctx, POINT offset) {
             ctx->SetDpi(96.f, 96.f);
@@ -3555,6 +3556,7 @@ DesktopBackdropCompositor::PreparedImageSpin DesktopBackdropCompositor::PrepareS
             if (!result->controller) return {};
             result->controller.Pause();
             result->controller.Progress(0.f);
+            snowdesktop::performance::Value("composition.srgb", "image_spin.new_clock", {}, 1);
         }
         auto disc = compositor.CreateSpriteVisual();
         auto brush = compositor.CreateSurfaceBrush(buffer.surface);
@@ -3764,7 +3766,11 @@ bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opa
                     if (!frame.spin || frame.spin->controller != spin->controller ||
                         speed != frame.spin->image.degreesPerSecond)
                         spin->controller.PlaybackRate(speed / 360.f);
-                    if (spin->paused) spin->controller.Resume();
+                    if (spin->paused)
+                    {
+                        spin->controller.Resume();
+                        snowdesktop::performance::Value("composition.srgb", "image_spin.resume_degrees_per_second", {}, speed);
+                    }
                 }
                 else if (!spin->paused) spin->controller.Pause();
                 spin->paused = speed == 0.f;
