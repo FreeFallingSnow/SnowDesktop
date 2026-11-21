@@ -488,13 +488,64 @@ struct DesktopBackdropCompositor::SrgbMarqueeScene
 
 struct DesktopBackdropCompositor::SrgbImageSpinScene
 {
+    struct Clock
+    {
+        explicit Clock(const wuc::Compositor& compositor) : phase(compositor.CreatePropertySet())
+        { phase.InsertScalar(L"Angle", 0.f); }
+
+        void Play(float speed)
+        {
+            if (speed == 0.f)
+            {
+                if (!paused)
+                {
+                    if (controller) controller.Pause();
+                    else phase.StopAnimation(L"Angle");
+                    paused = true;
+                }
+                return;
+            }
+            if (speed == turnSpeed && controller)
+            {
+                if (paused) controller.Resume();
+            }
+            else
+            {
+                const auto compositor = phase.Compositor();
+                constexpr double longestSeconds = 24.0 * 24.0 * 3600.0; // WUC's maximum keyframe duration.
+                const double period = 360.0 / speed;
+                const auto seconds = std::chrono::duration<double>(std::min(period, longestSeconds));
+                auto turn = compositor.CreateScalarKeyFrameAnimation();
+                turn.Duration(std::chrono::duration_cast<wf::TimeSpan>(seconds));
+                turn.IterationBehavior(wuc::AnimationIterationBehavior::Forever);
+                turn.StopBehavior(wuc::AnimationStopBehavior::LeaveCurrentValue);
+                // At a speed change, hand the displayed angle to the new turn on the compositor.
+                turn.InsertExpressionKeyFrame(0.f, L"Mod(this.StartingValue, 360.0)");
+                turn.InsertExpressionKeyFrame(1.f, L"Mod(this.StartingValue, 360.0) + 360.0",
+                    compositor.CreateLinearEasingFunction());
+                phase.StartAnimation(L"Angle", turn);
+                controller = nullptr;
+                turnSpeed = 0.f;
+                paused = false;
+                controller = phase.TryGetAnimationController(L"Angle");
+                if (!controller) throw winrt::hresult_error(E_UNEXPECTED);
+                if (period > longestSeconds) controller.PlaybackRate(static_cast<float>(longestSeconds / period));
+                turnSpeed = speed;
+            }
+            paused = false;
+        }
+
+        wuc::CompositionPropertySet phase{nullptr};
+        wuc::AnimationController controller{nullptr};
+        float turnSpeed = 0.f;
+        bool paused = true;
+    };
+
     snowdesktop::widget_runtime::WidgetImageSpin image;
     RECT frame{};
     winrt::com_ptr<ID2D1Device> device;
     wuc::SpriteVisual visual{nullptr};
-    wuc::CompositionPropertySet phase{nullptr};
-    wuc::AnimationController controller{nullptr};
-    bool paused = true;
+    std::shared_ptr<Clock> clock;
 };
 
 struct DesktopBackdropCompositor::Impl
@@ -3538,24 +3589,11 @@ DesktopBackdropCompositor::PreparedImageSpin DesktopBackdropCompositor::PrepareS
         if (old && old->device.get() == device)
         {
             // A replacement cover or geometry gets a new raster but shares the current rotation.
-            result->phase = old->phase;
-            result->controller = old->controller;
-            result->paused = old->paused;
+            result->clock = old->clock;
         }
         else
         {
-            result->phase = compositor.CreatePropertySet();
-            result->phase.InsertScalar(L"Angle", 0.f);
-            auto turn = compositor.CreateScalarKeyFrameAnimation();
-            turn.Duration(std::chrono::seconds(1));
-            turn.IterationBehavior(wuc::AnimationIterationBehavior::Forever);
-            turn.InsertKeyFrame(0.f, 0.f);
-            turn.InsertKeyFrame(1.f, 360.f, compositor.CreateLinearEasingFunction());
-            result->phase.StartAnimation(L"Angle", turn);
-            result->controller = result->phase.TryGetAnimationController(L"Angle");
-            if (!result->controller) return {};
-            result->controller.Pause();
-            result->controller.Progress(0.f);
+            result->clock = std::make_shared<SrgbImageSpinScene::Clock>(compositor);
             snowdesktop::performance::Value("composition.srgb", "image_spin.new_clock", {}, 1);
         }
         auto disc = compositor.CreateSpriteVisual();
@@ -3567,7 +3605,7 @@ DesktopBackdropCompositor::PreparedImageSpin DesktopBackdropCompositor::PrepareS
         disc.Offset({dest.left - clientFrame.left - 1.f, dest.top - clientFrame.top - 1.f, 0.f});
         disc.CenterPoint({edge * .5f + 1.f, edge * .5f + 1.f, 0.f});
         auto angle = compositor.CreateExpressionAnimation(L"clock.Angle");
-        angle.SetReferenceParameter(L"clock", result->phase);
+        angle.SetReferenceParameter(L"clock", result->clock->phase);
         disc.StartAnimation(L"RotationAngleInDegrees", angle);
         result->visual = std::move(disc);
         return result;
@@ -3583,17 +3621,16 @@ bool DesktopBackdropCompositor::MatchesSrgbImageSpin(std::uintptr_t key, const P
 {
     const auto item = impl_->srgbContent.find(key);
     if (item == impl_->srgbContent.end()) return !spin;
-    return item->second.spin == spin && (!spin || !spin->paused || spin->image.degreesPerSecond == 0.f);
+    return item->second.spin == spin && (!spin || !spin->clock->paused || spin->image.degreesPerSecond == 0.f);
 }
 
 bool DesktopBackdropCompositor::PauseSrgbImageSpin(std::uintptr_t key)
 {
     const auto it = impl_->srgbContent.find(key);
-    if (it == impl_->srgbContent.end() || !it->second.spin || it->second.spin->paused) return false;
+    if (it == impl_->srgbContent.end() || !it->second.spin || it->second.spin->clock->paused) return false;
     try
     {
-        it->second.spin->controller.Pause();
-        it->second.spin->paused = true;
+        it->second.spin->clock->Play(0.f);
         impl_->srgbContentCommitPending = true;
         return true;
     }
@@ -3713,6 +3750,7 @@ bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opa
     const auto entry = impl_->srgbContent.find(key);
     if (entry == impl_->srgbContent.end() || !entry->second.staged) return false;
     auto& frame = entry->second;
+    const float previousSpeed = frame.spin && !frame.spin->clock->paused ? frame.spin->image.degreesPerSecond : 0.f;
     try
     {
         if (!frame.visual)
@@ -3758,27 +3796,18 @@ bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opa
             const auto newDisc = spin ? spin->visual : nullptr;
             if (oldDisc != newDisc || frame.marquees != marquees)
                 Impl::BindSrgbLayers(frame, spin, marquees);
-            if (spin)
-            {
-                const float speed = spin->image.degreesPerSecond;
-                if (speed > 0.f)
-                {
-                    if (!frame.spin || frame.spin->controller != spin->controller ||
-                        speed != frame.spin->image.degreesPerSecond)
-                        spin->controller.PlaybackRate(speed / 360.f);
-                    if (spin->paused)
-                    {
-                        spin->controller.Resume();
-                        snowdesktop::performance::Value("composition.srgb", "image_spin.resume_degrees_per_second", {}, speed);
-                    }
-                }
-                else if (!spin->paused) spin->controller.Pause();
-                spin->paused = speed == 0.f;
-            }
             if (marquees && marquees->paused)
             {
                 for (const auto& animation : marquees->animations) animation.Resume();
                 marquees->paused = false;
+            }
+            if (spin)
+            {
+                const bool wasPaused = spin->clock->paused;
+                const float speed = spin->image.degreesPerSecond;
+                spin->clock->Play(speed);
+                if (wasPaused && speed > 0.f)
+                    snowdesktop::performance::Value("composition.srgb", "image_spin.resume_degrees_per_second", {}, speed);
             }
         }
         else if (frame.spin || frame.marquees)
@@ -3801,15 +3830,7 @@ bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opa
             {
                 frame.sceneBrush.Surface(frame.active.surface);
                 Impl::BindSrgbLayers(frame, frame.spin, frame.marquees);
-                if (frame.spin)
-                {
-                    if (frame.spin->paused) frame.spin->controller.Pause();
-                    else
-                    {
-                        frame.spin->controller.PlaybackRate(frame.spin->image.degreesPerSecond / 360.f);
-                        frame.spin->controller.Resume();
-                    }
-                }
+                if (frame.spin) frame.spin->clock->Play(previousSpeed);
             }
             catch (const winrt::hresult_error&) { /* Device recovery owns an unavailable compositor. */ }
         }
