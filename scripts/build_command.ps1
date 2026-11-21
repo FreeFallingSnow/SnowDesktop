@@ -6,9 +6,10 @@ $ErrorActionPreference='Stop'
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'build_entry.ps1')
 . (Join-Path $PSScriptRoot 'build_telemetry.ps1')
+. (Join-Path $PSScriptRoot 'build_protocol.ps1')
 if(-not (Test-EntryDelegation $root)){throw 'Observed build commands require the standard leased entry.'}
 $file='cmake';$arguments=@();$name=$Operation
-$reset=$null;$resetPath=$null;$configureKey=$null
+$reset=$null;$resetPath=$null;$configureKey=$null;$testPlanHash=$null;$context=$null
 if($Operation -eq 'configure'){
     if($Preset){$arguments=@('--preset',$Preset)}
     else{$arguments=@('-B',$Directory,'-S',$Source,'-A',$Architecture,('-DSNOWDESKTOP_OUTPUT_DIR='+$Output))}
@@ -26,7 +27,10 @@ if($Operation -eq 'configure'){
             $plan=Read-EntryJson $planPath
             if($plan.schemaVersion -ne 1 -or $plan.batchId -ne $request.batch -or $plan.configuration -ne 'Release' -or
                 $plan.mode -notin 'selected','full','skipped'){throw 'Invalid batch configure plan.'}
-            if($plan.mode -ne 'skipped'){$arguments+=@('-DBUILD_TESTING:BOOL=ON')}
+            if($plan.mode -ne 'skipped'){
+                $arguments=@('--preset','tests')
+                $testPlanHash=$request.planHash
+            }
         }
     }
     $context=Get-CandidateEntryContext $root
@@ -44,6 +48,14 @@ if($Operation -eq 'configure'){
 }elseif($Operation -eq 'build'){
     $name='build-targets'
     $arguments=if($Preset){@('--build','--preset',$Preset)}else{@('--build',$Directory,'--config',$Configuration)}
+    if($Preset -eq 'release' -and -not $Targets){
+        $leasedCandidate=Get-CandidateEntryContext $root
+        if($leasedCandidate){
+            . (Join-Path $PSScriptRoot 'build_candidate.ps1')
+            . (Join-Path $PSScriptRoot 'build_candidate_recovery.ps1')
+            Repair-CandidateProductLink $leasedCandidate
+        }
+    }
     if($Targets){$items=@($Targets.Split(','));foreach($item in $items){if($item -notmatch '^[A-Za-z0-9_.-]+$'){throw 'Build targets must be literal names.'}};$arguments+=@('--target')+$items}
 }else{
     $file=Get-BuildPowerShell
@@ -51,6 +63,12 @@ if($Operation -eq 'configure'){
 }
 $code=2
 Invoke-BuildStageCommand $root $name $file $arguments ([ref]$code)
+if($code -eq 0 -and $testPlanHash -and $context){
+    $cache=Resolve-CandidatePath $context.output 'CMakeCache.txt'
+    $inventory=Resolve-CandidatePath $context.output 'CTestTestfile.cmake'
+    Write-CandidateJson ([pscustomobject]@{runId=$runId;planHash=$testPlanHash;cache=(Get-FileDigest $cache);
+        inventory=(Get-FileDigest $inventory)}) (Resolve-CandidatePath $context.output 'collaboration/product-test-configure.json')
+}
 if($code -eq 0 -and $reset){
     $reset.configured=@($reset.configured)+@($configureKey)
     Write-CandidateJson $reset $resetPath

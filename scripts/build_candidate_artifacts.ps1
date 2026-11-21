@@ -328,14 +328,15 @@ function Publish-CandidateRuntime($Context,[string]$Action,[scriptblock]$CheckCa
     }finally{foreach($item in $opened){$item.stream.Dispose()}}
     } finally {$runtimeLease.Dispose()}
 }
-function Read-CandidateArtifact([string]$Root,[string]$Id,[string]$ExpectedDigest='',[switch]$VerifyFiles) {
+function Read-CandidateArtifact([string]$Root,[string]$Id,[string]$ExpectedDigest='',[switch]$VerifyFiles,[switch]$ManifestOnly) {
+    if($VerifyFiles -and $ManifestOnly){throw 'Select manifest-only inspection or full runtime verification.'}
     $directory=Get-CandidateArtifactDirectory $Root $Id
     $path=Resolve-CandidatePath $directory 'artifact.json'
     $digest=[IO.File]::ReadAllText($path+'.sha256').Trim()
     if($digest -notmatch '^[a-f0-9]{64}$' -or ($ExpectedDigest -and $digest -ne $ExpectedDigest) -or (Get-FileDigest $path) -ne $digest){throw 'Candidate artifact manifest integrity check failed.'}
     $manifest=Read-CandidateJson $path
     $runtime=Resolve-CandidatePath $directory 'runtime'
-    if(-not [IO.Directory]::Exists($runtime)){
+    if(-not $ManifestOnly -and -not [IO.Directory]::Exists($runtime)){
         $retirement=Read-EntryJson (Resolve-CandidatePath $directory 'retention.json')
         if((Get-Field $retirement 'runId') -eq $Id -and (Get-Field $retirement 'runtimeRemoved') -eq $true){
             throw 'Saved runtime was retired by the retention policy; its manifest and validation evidence are preserved. Select a retained build or build again.'

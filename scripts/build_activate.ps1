@@ -1,5 +1,6 @@
 [CmdletBinding()]
 param([ValidatePattern('^[a-f0-9]{32}$')][string]$ArtifactRun,
+    [ValidatePattern('^[a-f0-9]{32}$')][string]$RollbackFrom,
     [string]$RepositoryRoot='')
 
 # Activation only arranges a saved runtime. It does not compile live source,
@@ -33,21 +34,22 @@ function Start-ActivatedApplication([string]$Executable,[string]$Arguments) {
         return Start-Process @options
     }finally{foreach($name in $saved.Keys){[Environment]::SetEnvironmentVariable($name,$saved[$name],'Process')}}
 }
-function Invoke-BuiltRuntimeActivation([string]$Root,$Artifact,[scriptblock]$CheckCancellation={}) {
+function Invoke-BuiltRuntimeActivation([string]$Root,$Artifact,[scriptblock]$CheckCancellation={},[string]$RollbackFrom='') {
     if(-not $Artifact.manifest.productRuntime -or $Artifact.manifest.configuration -ne 'Release'){
         return [pscustomobject]@{status='not-product-release';runId=$Artifact.manifest.runId}
     }
     $targetRoot=Resolve-CandidatePath $Root '.build/Release'
     $executable=Resolve-CandidatePath $targetRoot 'SnowDesktop.exe'
     $stateRoot=Resolve-CandidatePath $Root '.build/collaboration'
-    $lease=$null
+    $lease=$null;$rollbackStaging=$null;$rollbackId=$null;$removed=@()
     $result=[pscustomobject]@{schemaVersion=1;runId=$Artifact.manifest.runId;candidate=$Artifact.manifest.candidate;
         artifactDigest=$Artifact.digest;sourceCapturedUtc=$Artifact.manifest.capturedUtc;artifactCreatedUtc=$Artifact.manifest.createdUtc;
         status='pending';path=$executable;oldPid=$null;newPid=$null;sha256=$null;replacedFiles=0;backup=$null;
+        previousRunId=$null;previousArtifactDigest=$null;latestSourceCapturedUtc=$Artifact.manifest.capturedUtc;
         dataDirectory=(Join-Path $targetRoot 'data');completedUtc=$null;error=''}
     try{
         Import-Module (Join-Path $PSScriptRoot 'deployment_payload.psm1') -Force
-        $null=Read-SnowDesktopDeploymentManifest -BuildOutput $Artifact.runtime
+        if(-not $RollbackFrom){$null=Read-SnowDesktopDeploymentManifest -BuildOutput $Artifact.runtime}
         $clock=[Diagnostics.Stopwatch]::StartNew()
         while(-not $lease){
             & $CheckCancellation
@@ -62,18 +64,69 @@ function Invoke-BuiltRuntimeActivation([string]$Root,$Artifact,[scriptblock]$Che
         # It never issues a configure/build credential for the live checkout.
         if(-not $lease.CanWrite -or $lease.Name -ne (Join-Path $stateRoot 'build.lock')){throw 'Runtime activation lost its output lease.'}
         $current=Read-EntryJson (Join-Path $stateRoot 'activation-current.json')
-        if($current -and (Get-Field $current 'sourceCapturedUtc') -and
-            (ConvertTo-UtcTimestamp $current.sourceCapturedUtc) -gt (ConvertTo-UtcTimestamp $result.sourceCapturedUtc)){$result.status='superseded';return $result}
-        Initialize-BuildActivationControl
-        $window=[IntPtr]::Zero;$process=$null
-        while($true){
-            $window=[SnowDesktop.Build.ActivationControl]::FindWindowEx([IntPtr]::Zero,$window,'SnowDesktopControlWindow','SnowDesktopControl')
-            if($window -eq [IntPtr]::Zero){break}
-            [uint32]$ownerId=0
-            [void][SnowDesktop.Build.ActivationControl]::GetWindowThreadProcessId($window,[ref]$ownerId)
-            $observed=Get-Process -Id $ownerId -ErrorAction SilentlyContinue
-            if($observed -and $observed.Path -eq $executable){$process=$observed;break}
+        $currentHighWater=Get-Field $current 'latestSourceCapturedUtc' (Get-Field $current 'sourceCapturedUtc')
+        if($currentHighWater -and (ConvertTo-UtcTimestamp $currentHighWater) -gt (ConvertTo-UtcTimestamp $result.sourceCapturedUtc)){
+            if(-not $RollbackFrom){$result.status='superseded';return $result}
+            $result.latestSourceCapturedUtc=$currentHighWater
         }
+        if($current -and $current.runId -ne $result.runId){
+            $result.previousRunId=$current.runId
+            $result.previousArtifactDigest=$current.artifactDigest
+        }
+        if($RollbackFrom){
+            if(-not $current -or $current.runId -ne $RollbackFrom -or $current.runId -eq $result.runId){throw 'Rollback requires the currently installed Run and a different prior Run.'}
+            if((Get-Field $current 'previousRunId') -and
+                ($current.previousRunId -ne $result.runId -or $current.previousArtifactDigest -ne $Artifact.digest)){
+                throw 'The target does not match the activation receipt for the previous Run.'
+            }
+            $live=Read-CandidateArtifact $Root $RollbackFrom $current.artifactDigest -ManifestOnly
+            if(-not $live.manifest.productRuntime -or $live.manifest.configuration -ne 'Release'){throw 'Current activation has no matching Release product manifest.'}
+            foreach($file in $live.manifest.files){
+                $installed=Resolve-CandidatePath $targetRoot $file.path
+                if(-not [IO.File]::Exists($installed) -or (Get-FileDigest $installed) -ne $file.sha256){throw "Installed file differs from the current activation: $($file.path)"}
+            }
+            $backupName=[IO.Path]::GetFileName([string](Get-Field $current 'backup'))
+            $backupRoot=$null
+            if($backupName -match ('^'+$RollbackFrom+'-[a-f0-9]{32}$')){
+                $backupRoot=Resolve-CandidatePath $Root ('.build/activation-backups/'+$backupName)
+            }
+            $rollbackId=[Guid]::NewGuid().ToString('N')
+            $rollbackStaging=Resolve-CandidatePath $stateRoot ('rollback-staging/'+$rollbackId)
+            [void][IO.Directory]::CreateDirectory($rollbackStaging)
+            foreach($file in $Artifact.manifest.files){
+                & $CheckCancellation
+                $sources=@((Resolve-CandidatePath $targetRoot $file.path),(Resolve-CandidatePath $Artifact.runtime $file.path))
+                if($backupRoot){$sources+=@(Resolve-CandidatePath $backupRoot $file.path)}
+                $source=@($sources|Where-Object {[IO.File]::Exists($_) -and (Get-FileDigest $_) -eq $file.sha256}|Select-Object -First 1)
+                if(-not $source.Count){throw "No retained file matches the previous Run: $($file.path)"}
+                $destination=Resolve-CandidatePath $rollbackStaging $file.path
+                [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination))
+                [IO.File]::Copy($source[0],$destination,$false)
+                if((Get-FileDigest $destination) -ne $file.sha256){throw 'A rollback input changed while being copied.'}
+            }
+            $Artifact.runtime=$rollbackStaging
+            $null=Read-SnowDesktopDeploymentManifest -BuildOutput $Artifact.runtime
+            $previousPaths=@($Artifact.manifest.files|ForEach-Object path)
+            $removed=@($live.manifest.files|Where-Object {$_.path -notin $previousPaths}|ForEach-Object {[pscustomobject]@{path=$_.path;remove=$true}})
+            Set-Field $result 'rollbackFrom' $RollbackFrom
+        }
+        Initialize-BuildActivationControl
+        $process=$null;$controlClock=[Diagnostics.Stopwatch]::StartNew()
+        do{
+            $window=[IntPtr]::Zero
+            while($true){
+                $window=[SnowDesktop.Build.ActivationControl]::FindWindowEx([IntPtr]::Zero,$window,'SnowDesktopControlWindow','SnowDesktopControl')
+                if($window -eq [IntPtr]::Zero){break}
+                [uint32]$ownerId=0
+                [void][SnowDesktop.Build.ActivationControl]::GetWindowThreadProcessId($window,[ref]$ownerId)
+                $observed=Get-Process -Id $ownerId -ErrorAction SilentlyContinue
+                if($observed -and $observed.Path -eq $executable){$process=$observed;break}
+            }
+            $waitingForControl=-not $process -and @(Get-Process SnowDesktop -ErrorAction SilentlyContinue|Where-Object Path -eq $executable).Count
+            if(-not $waitingForControl -or $controlClock.Elapsed.TotalSeconds -ge 4){break}
+            & $CheckCancellation
+            Start-Sleep -Milliseconds 200
+        }while($true)
         $arguments=''
         if($process){
             $result.oldPid=$ownerId
@@ -83,16 +136,25 @@ function Invoke-BuiltRuntimeActivation([string]$Root,$Artifact,[scriptblock]$Che
             $arguments=$launch.Groups['args'].Value.Trim()
             # Internal handoff handles/PIDs describe the previous launch only.
             $arguments=([regex]::Replace($arguments,'(^|\s)--(?:wait-for-pid|watch-process-handle)=\d+(?=\s|$)',' ')).Trim()
-        }elseif(@(Get-Process SnowDesktop -ErrorAction SilentlyContinue|Where-Object Path -eq $executable).Count){
-            throw 'The target application is running without its control window; runtime was retained.'
+        }elseif($waitingForControl){
+            $retry='scripts/build_activate.ps1 -ArtifactRun '+$result.runId
+            if($RollbackFrom){$retry+=' -RollbackFrom '+$RollbackFrom}
+            Set-Field $result 'retry' $retry
+            throw "The target application is running without its control window; runtime was retained. Retry this same saved Run using $retry."
         }
         $changes=@($Artifact.manifest.files|Where-Object{
             $target=Resolve-CandidatePath $targetRoot $_.path
             -not [IO.File]::Exists($target) -or (Get-FileDigest $target) -ne $_.sha256
-        })
+        })+$removed
         if(-not $changes.Count){
             $null=Read-SnowDesktopDeploymentManifest -BuildOutput $targetRoot
-            $result.status='already-current';$result.newPid=$result.oldPid;$result.sha256=Get-FileDigest $executable;return $result
+            $result.status='already-current';$result.newPid=$result.oldPid;$result.sha256=Get-FileDigest $executable
+            if($current -and $current.runId -eq $result.runId){
+                $result.backup=Get-Field $current 'backup'
+                $result.previousRunId=Get-Field $current 'previousRunId'
+                $result.previousArtifactDigest=Get-Field $current 'previousArtifactDigest'
+            }
+            return $result
         }
         $backup=Resolve-CandidatePath $Root ('.build/activation-backups/'+$result.runId+'-'+[Guid]::NewGuid().ToString('N'))
         [void][IO.Directory]::CreateDirectory($backup);$result.backup=$backup
@@ -114,8 +176,10 @@ function Invoke-BuiltRuntimeActivation([string]$Root,$Artifact,[scriptblock]$Che
                 # image by rename; no unrelated process is stopped.
                 if($hadOld){[IO.File]::Move($target,$saved)}
                 $replaced.Add([pscustomobject]@{target=$target;backup=$saved;hadOld=$hadOld})
-                [IO.File]::Copy((Resolve-CandidatePath $Artifact.runtime $file.path),$target,$false)
-                if((Get-FileDigest $target) -ne $file.sha256){throw 'Installed runtime hash differs from the saved build.'}
+                if(-not (Get-Field $file 'remove' $false)){
+                    [IO.File]::Copy((Resolve-CandidatePath $Artifact.runtime $file.path),$target,$false)
+                    if((Get-FileDigest $target) -ne $file.sha256){throw 'Installed runtime hash differs from the saved build.'}
+                }
             }
             $null=Read-SnowDesktopDeploymentManifest -BuildOutput $targetRoot
             if($process){
@@ -145,24 +209,31 @@ function Invoke-BuiltRuntimeActivation([string]$Root,$Artifact,[scriptblock]$Che
         $result.completedUtc=[DateTime]::UtcNow.ToString('o')
         if($lease){
             try{
-                Write-CandidateJson $result (Join-Path $stateRoot ($result.runId+'.activation.json'))
+                if($RollbackFrom){
+                    if(-not $rollbackId){$rollbackId=[Guid]::NewGuid().ToString('N')}
+                    Write-CandidateJson $result (Join-Path $stateRoot ($rollbackId+'.rollback.json')) -Immutable
+                }else{Write-CandidateJson $result (Join-Path $stateRoot ($result.runId+'.activation.json'))}
                 if($result.status -in 'activated','installed','already-current'){Write-CandidateJson $result (Join-Path $stateRoot 'activation-current.json')}
             }finally{
                 $lease.Dispose()
             }
         }
+        if($rollbackStaging){
+            try{Remove-CandidateRetiredDirectory (Resolve-CandidatePath $stateRoot 'rollback-staging') $rollbackId}
+            catch{[Console]::Error.WriteLine('Rollback staging cleanup deferred: '+$_.Exception.Message)}
+        }
     }
 }
-function Invoke-CandidateRuntimeActivation([string]$Root,[string]$Run,[scriptblock]$CheckCancellation={}) {
+function Invoke-CandidateRuntimeActivation([string]$Root,[string]$Run,[scriptblock]$CheckCancellation={},[string]$RollbackFrom='') {
     $runtimeLease=Open-CandidateRuntimeLease $Root
     $activation=$null
     try {
-    $artifact=Read-CandidateArtifact $Root $Run -VerifyFiles
+    $artifact=Read-CandidateArtifact $Root $Run -VerifyFiles:(-not $RollbackFrom) -ManifestOnly:([bool]$RollbackFrom)
     # Order by source capture, not completion time: a slow older build must
     # never replace a newer build that is already running.
     $snapshot=Read-CandidateManifest $Root $artifact.manifest.candidate
     Set-Field $artifact.manifest 'capturedUtc' $snapshot.manifest.capturedUtc
-    $activation=Invoke-BuiltRuntimeActivation $Root $artifact $CheckCancellation
+    $activation=Invoke-BuiltRuntimeActivation $Root $artifact $CheckCancellation $RollbackFrom
     return $activation
     } finally {
         $runtimeLease.Dispose()
@@ -181,6 +252,6 @@ $activationRoot=if($RepositoryRoot){[IO.Path]::GetFullPath($RepositoryRoot)}else
 . (Join-Path $PSScriptRoot 'build_inputs.ps1')
 . (Join-Path $PSScriptRoot 'build_candidate.ps1')
 . (Join-Path $PSScriptRoot 'build_candidate_artifacts.ps1')
-$activation=Invoke-CandidateRuntimeActivation $activationRoot $ArtifactRun
+$activation=Invoke-CandidateRuntimeActivation $activationRoot $ArtifactRun -RollbackFrom $RollbackFrom
 $activation|ConvertTo-Json -Depth 8
 if($activation.status -in 'failed','restored-after-failure'){exit 2}

@@ -315,11 +315,26 @@ function Enter-CandidateSlot($Snapshot,[string]$Name) {
     catch [IO.IOException]{throw 'Candidate slot is busy; existing materialization/executor retains its files.'}
     return [pscustomobject]@{key=$key;directory=$directory;source=(Join-Path $directory 'source');output=(Join-Path $directory 'output');state=(Join-Path $directory 'materialization.json');lease=$lease}
 }
+function Get-CandidateContextMismatch($Expected,$Observed) {
+    $changed=@()
+    $expectedEnvironment=$Expected.binding.environment
+    foreach($name in $Observed.binding.environment.Keys){
+        $before=if($expectedEnvironment -is [Collections.IDictionary]){$expectedEnvironment[$name]}else{Get-Field $expectedEnvironment $name}
+        if($before -ne $Observed.binding.environment[$name]){$changed+=@($name)}
+    }
+    foreach($name in @('tools','compilerTools','presets','configuration','checkoutRoot')){
+        $before=Get-Field $Expected.binding $name
+        $after=Get-Field $Observed.binding $name
+        if((ConvertTo-Json -InputObject $before -Depth 12 -Compress) -cne (ConvertTo-Json -InputObject $after -Depth 12 -Compress)){$changed+=@($name)}
+    }
+    $detail=if($changed.Count){' Changed fields: '+($changed -join ', ')+'.'}else{''}
+    return ('Candidate observed tools/environment changed; capture a new context.'+$detail)
+}
 function Set-CandidateSlotSource($Snapshot,$Lease) {
     if(-not $Lease.lease -or -not $Lease.lease.CanWrite){throw 'A live candidate slot lease is required.'}
     $manifest=$Snapshot.manifest
     $actual=Get-CandidateContext $manifest.files $manifest.context.binding.configuration $(if(Get-Field $manifest.context.binding 'checkoutRoot'){$manifest.sourceRoot}else{''})
-    if($actual.digest -ne $manifest.context.digest){throw 'Candidate observed tools/environment changed; capture a new context.'}
+    if($actual.digest -ne $manifest.context.digest){throw (Get-CandidateContextMismatch $manifest.context $actual)}
     $old=if([IO.File]::Exists($Lease.state)){Read-CandidateJson $Lease.state}else{$null}
     if($old -and ($old.source -ne $Lease.source -or $old.output -ne $Lease.output)){throw 'Compiler workspace provenance changed.'}
     [void][IO.Directory]::CreateDirectory($Lease.source);[void][IO.Directory]::CreateDirectory($Lease.output)

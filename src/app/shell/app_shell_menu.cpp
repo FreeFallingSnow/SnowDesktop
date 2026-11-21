@@ -3,6 +3,7 @@
 #include "app/navigation/quick_navigation_state.h"
 #include "app/layout/new_item_placement.h"
 #include "dock/dock_window_rules.h"
+#include "dock/floating_dock_layer_rules.h"
 #include "dock/dock_window_transition.h"
 #include "common/l10n.h"
 #include "diagnostics/diagnostic_log.h"

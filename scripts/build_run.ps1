@@ -20,6 +20,7 @@ param(
     [long]$EditRevision=-1,
     [ValidateRange(0,60)][int]$Seconds=30,
     [switch]$ReloadShell,[switch]$CloseApplication,
+    [switch]$Compact,[switch]$FullResult,[switch]$CliSummary,[switch]$SubmissionReceipt,
     [string]$Reason='', [switch]$ConfirmSharedCancellation,[switch]$Fresh,
     [ValidateRange(0,4096)][int]$CpuSlots=0,[ValidateRange(0,1048576)][int]$MemoryMiB=0,
     [ValidateRange(0,4096)][int]$CpuCapacity=0,[ValidateRange(0,1048576)][int]$MemoryCapacityMiB=0
@@ -94,7 +95,7 @@ function Read-RunRequest([string]$Id){
     }
     return $request
 }
-function Get-RunView([string]$Id){
+function Get-RunView([string]$Id,[switch]$Brief){
     $request=Read-RunRequest $Id
     $record=Read-RunJson (Run-Path $Id '.json')
     if($record.id -ne $Id -or $record.repositoryRoot -ne $root -or $record.nonce -ne $request.nonce){throw 'Run result identity mismatch.'}
@@ -103,9 +104,9 @@ function Get-RunView([string]$Id){
     if($ownerState -eq 'none'){$ownerState=Run-OwnerState $request.launcher}
     $terminal=$record.status -in 'passed','failed','cancelled','start-failed','invalidated','interrupted'
     $observed=if(-not $terminal -and $ownerState -eq 'exited'){'interrupted'}else{$record.status}
-    $metrics=if([IO.File]::Exists((Run-Path $Id '.resources.json'))){Read-RunJson (Run-Path $Id '.resources.json')}else{$null}
+    $metrics=if(-not $Brief -and [IO.File]::Exists((Run-Path $Id '.resources.json'))){Read-RunJson (Run-Path $Id '.resources.json')}else{$null}
     $stages=@();$stageError=''
-    try {$stages=@(Read-BuildStageEvents $root $Id)}catch{$stageError=$_.Exception.Message}
+    if(-not $Brief){try {$stages=@(Read-BuildStageEvents $root $Id)}catch{$stageError=$_.Exception.Message}}
     $subscriptions=@();$references=@()
     if($request.mode -eq 'verify'){
         $state=Read-EntryJson (Join-Path $root '.build/collaboration/state.json')
@@ -123,6 +124,17 @@ function Get-RunView([string]$Id){
     }
     return [pscustomobject]@{id=$Id;task=$request.task;status=$observed;persistedStatus=$record.status;terminal=($terminal -or $observed -eq 'interrupted');ownerState=$ownerState;subscriptions=$subscriptions;references=$references;recovery=$recovery;
         request=$request;record=$record;resources=$metrics;compileScheduling=@($stages|Where-Object {$_.PSObject.Properties['name'] -and $_.name -eq 'compile-scheduling'}|Select-Object -Last 1);stageEvents=$stages;stageError=$stageError;observation='Closing an observer does not cancel the Run. An exited owner requires an explicit new Run, never automatic takeover.'}
+}
+function Get-CompactRunView($View){
+    $record=$View.record;$product=Get-Field $record 'productBuild';$activation=Get-Field $record 'activation'
+    $logPath=if($product -and $product.exitCode -ne 0){$product.logPath}else{Get-Field $record 'logPath'}
+    return [pscustomobject]@{detail='compact';id=$View.id;task=$View.task;batch=(Get-Field $View.request 'batch');
+        status=$View.status;persistedStatus=$View.persistedStatus;terminal=$View.terminal;ownerState=$View.ownerState;
+        exitCode=$record.exitCode;error=$record.error;waitingFor=(Get-Field $record 'waitingFor');
+        productBuild=$(if($product){[pscustomobject]@{exitCode=$product.exitCode;logPath=$product.logPath}});
+        activation=$(if($activation){[pscustomobject]@{status=$activation.status;error=(Get-Field $activation 'error')}});
+        requestPath=(Run-Path $View.id '.request.json');resultPath=(Run-Path $View.id '.json');logPath=$logPath;
+        subscriptionsCount=$View.subscriptions.Count;referencesCount=$View.references.Count;recovery=$View.recovery}
 }
 function Run-CancellationRequested($Request){
     $path=Run-Path $Request.id '.cancel'
@@ -337,7 +349,7 @@ try {
         if(-not $joined){
             if(Get-Field $request 'candidateVerification' $false){
                 Set-Field $request 'runnerRuntime' (New-CandidateRunner $root $id)
-                Assert-CandidateToolset (Read-CandidateManifest $root $request.snapshot) $request.runnerRuntime
+                Assert-CandidateToolset (Read-CandidateManifest $root $request.snapshot) $request.runnerRuntime -VerificationOnly
             }
             Write-NewRunRequest $request;Write-RunRecord $record
         }
@@ -360,7 +372,9 @@ try {
             if($launched){throw ('Worker was admitted; observe Run '+$id+'. Launch receipt failed: '+$_.Exception.Message)}
             # No target code was admitted by the launch handshake.
             $record.status='start-failed';$record.exitCode=2;$record.error=$_.Exception.Message;$record.completedUtc=[DateTime]::UtcNow.ToString('o');Write-RunRecord $record
-            Get-RunView $id|ConvertTo-Json -Depth 30;exit 2
+            if($SubmissionReceipt){[pscustomobject]@{id=$id;status='start-failed';error=$record.error}|ConvertTo-Json}
+            else{Get-RunView $id|ConvertTo-Json -Depth 30}
+            exit 2
         }
         }
         if($Command -eq 'start'){
@@ -410,11 +424,12 @@ try {
         exit 0
     }
     if($Command -in 'status','wait','invoke'){
+        $brief=$Command -ne 'invoke' -and ($Compact -or ($CliSummary -and -not $FullResult))
         $timer=[Diagnostics.Stopwatch]::StartNew()
         $notice=[Diagnostics.Stopwatch]::StartNew();$logReaders=@{};$errorReader=$null
         try {
         do {
-            $view=Get-RunView $RunId
+            $view=Get-RunView $RunId -Brief:$brief
             if($Command -eq 'invoke'){
                 $errorPath=Run-Path $RunId '.stderr.log'
                 if(-not $errorReader -and [IO.File]::Exists($errorPath)){
@@ -435,7 +450,7 @@ try {
             }
             if($view.terminal -or $Command -eq 'status' -or ($Command -ne 'invoke' -and $timer.Elapsed.TotalSeconds -ge $Seconds)){break}
             $state=Read-EntryJson (Join-Path $root '.build/collaboration/state.json')
-            $observerTask=if($Task){$Task}else{$request.task}
+            $observerTask=if($Task){$Task}else{$view.task}
             # An unavailable/legacy task snapshot is not an execution failure or
             # acknowledgement. Keep observing; a later read retains all events.
             $urgent=@(Get-TaskEvents (Get-Field $state 'taskLedger') $observerTask -UrgentUnacknowledged)
@@ -449,7 +464,8 @@ try {
             if($view.status -eq 'interrupted'){exit 4}
             exit ([int]$view.record.exitCode)
         }
-        $view|ConvertTo-Json -Depth 30
+        if($brief){Get-CompactRunView $view|ConvertTo-Json -Depth 8}
+        else{$view|ConvertTo-Json -Depth 30}
         if($Command -eq 'wait'){
             if(-not $view.terminal){exit 10}
             if($view.status -eq 'interrupted'){exit 4}
@@ -730,4 +746,8 @@ try {
         if($ownerLease){$ownerLease.Dispose()}
     }
     $record|ConvertTo-Json -Depth 30;exit ([int]$record.exitCode)
-} catch {[Console]::Error.WriteLine($_.Exception.Message);exit 2}
+} catch {
+    if($SubmissionReceipt){[pscustomobject]@{status='submission-failed';error=$_.Exception.Message}|ConvertTo-Json}
+    else{[Console]::Error.WriteLine($_.Exception.Message)}
+    exit 2
+}

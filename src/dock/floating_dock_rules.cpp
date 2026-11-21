@@ -1,4 +1,5 @@
 #include "floating_dock_rules.h"
+#include "floating_dock_layer_rules.h"
 #include "theme/personalization_types.h"
 
 #include <algorithm>

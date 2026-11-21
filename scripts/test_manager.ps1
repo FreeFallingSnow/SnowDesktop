@@ -124,6 +124,26 @@ function Show-ConfiguredTestInventory {
     }
 }
 
+function Show-DeclaredTestNames {
+    $path=Join-Path $repositoryRoot 'cmake/testing/Tests.cmake'
+    $source=[IO.File]::ReadAllText($path)
+    $source=[regex]::Replace($source,'(?m)^\s*#.*$','')
+    $names=@([regex]::Matches($source,'(?m)^\s*(?:snowdesktop_add_test\(\s*[\w.-]+|add_test\(NAME)\s+([\w.-]+)(?=\s)' ) |
+        ForEach-Object {$_.Groups[1].Value})
+    foreach($loop in [regex]::Matches($source,'(?ms)^\s*foreach\((\w+) IN ITEMS\s+([^)]*)\)(.*?)^\s*endforeach\(\)')){
+        $variable='${'+$loop.Groups[1].Value+'}'
+        $pattern='(?m)^\s*add_test\(NAME\s+([\w.-]+)'+[regex]::Escape($variable)+'(?=\s)'
+        $items=@($loop.Groups[2].Value -split '\s+'|Where-Object {$_})
+        if(@($items|Where-Object {$_ -notmatch '^[\w.-]+$'}).Count){continue}
+        foreach($match in [regex]::Matches($loop.Groups[3].Value,$pattern)){
+            foreach($item in $items){$names+=@($match.Groups[1].Value+$item)}
+        }
+    }
+    if(-not $names.Count){throw 'No supported source test declarations were found.'}
+    'Source declarations from cmake/testing/Tests.cmake (availability and labels require configured CTest):'
+    $names|Sort-Object -Unique
+}
+
 # Direct PowerShell, batch, IDE and CI callers all enter the same private Job.
 # A coordinator child already has live delegated authority and does not recurse.
 if(-not [Environment]::GetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN','Process')) {
@@ -131,8 +151,8 @@ if(-not [Environment]::GetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN','Pro
         try { Show-ConfiguredTestInventory; exit 0 }
         catch {
             [Console]::Error.WriteLine('Test inventory unavailable: ' + $_.Exception.Message)
-            [Console]::Error.WriteLine('Inspect cmake/testing/Tests.cmake for source declarations, or configure through a leased tests Run when needed.')
-            exit 2
+            try {Show-DeclaredTestNames;exit 0}
+            catch {[Console]::Error.WriteLine($_.Exception.Message);exit 2}
         }
     }
     $entryOptions=@{Action='tests';Mode=$Mode;Filter=$Filter}
@@ -613,8 +633,30 @@ if($Mode -eq 'plan') {
         tasks=@($initialPlan.tasks|ForEach-Object {[pscustomobject]@{participant=$_.participant;requested=@($_.requirement.tests);suites=@($_.requirement.suites);status='not-run';reason=$_.requirement.reason;failed=@();requiresOutputIsolation=($_.requirement.requiredFull -or $_.requirement.suites -contains 'full')}})} |
         ConvertTo-Json -Depth 15 | Set-Content -LiteralPath (Join-Path $initialPlanRoot ($PlanBatch+'.coverage.json')) -Encoding UTF8
 }
-Write-Host "=== Configuring tests ==="
-Invoke-Checked -FilePath "cmake" -Arguments @("--preset", "tests")
+$prepared=$false
+if($Mode -eq 'plan'){
+    $candidateContext=Get-CandidateEntryContext $repositoryRoot
+    if($candidateContext){
+        $output=$candidateContext.output
+        $receipt=Read-EntryJson (Join-Path $output 'collaboration/product-test-configure.json')
+        $runDirectory=Join-Path $candidateContext.runRoot '.build/collaboration/runs'
+        $request=Read-EntryJson (Join-Path $runDirectory ($candidateContext.runId+'.request.json'))
+        $run=Read-EntryJson (Join-Path $runDirectory ($candidateContext.runId+'.json'))
+        $cache=Join-Path $output 'CMakeCache.txt'
+        $inventoryPath=Join-Path $output 'CTestTestfile.cmake'
+        $product=Get-Field $run 'productBuild'
+        $prepared=$receipt -and $product -and $product.exitCode -eq 0 -and $request.batch -eq $PlanBatch -and
+            $receipt.runId -eq $candidateContext.runId -and $receipt.planHash -eq $request.planHash -and
+            (Get-FileDigest (Join-Path $initialPlanRoot ($PlanBatch+'.plan.json'))) -eq $receipt.planHash -and
+            [IO.File]::Exists($cache) -and [IO.File]::Exists($inventoryPath) -and
+            (Get-FileDigest $cache) -eq $receipt.cache -and (Get-FileDigest $inventoryPath) -eq $receipt.inventory
+    }
+}
+if($prepared){Write-Host "=== Reusing this Run's test-enabled product configuration ==="}
+else{
+    Write-Host "=== Configuring tests ==="
+    Invoke-Checked -FilePath "cmake" -Arguments @("--preset", "tests")
+}
 
 if ($Mode -eq "plan") {
     if (-not $PlanBatch) { throw 'Plan mode requires a frozen batch ID.' }

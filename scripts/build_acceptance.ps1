@@ -27,14 +27,14 @@ function Get-AcceptanceArtifacts([string]$Root,[string]$Files) {
     }
     return $records
 }
-function Start-TaskAcceptance([string]$Root,$State,$Task,$Result,[long]$EditRevision,[string]$Criterion,[string]$Files) {
+function Start-TaskAcceptance([string]$Root,$State,$Task,$Result,[long]$EditRevision,[string]$Criterion,[string]$Files,$SourceTask=$Task,[switch]$Historical) {
     if([string]::IsNullOrWhiteSpace($Criterion)){throw 'Acceptance requires an observable criterion.'}
     if($Result.outcome -ne 'passed' -or $Result.inputCheck -ne 'stable'){throw 'Acceptance requires a passing stable candidate, independently of its eventual manual outcome.'}
-    $member=@($Result.participants|Where-Object id -eq $Task.id)
-    if($member.Count -ne 1){throw 'Acceptance task does not belong to this candidate.'}
+    $member=@($Result.participants|Where-Object { $_.id -eq $SourceTask.id -and $_.state -eq 'finished' -and -not (Get-Field $_ 'independentResult') })
+    if($member.Count -ne 1){throw 'Acceptance task does not belong to this common candidate.'}
     Assert-EditRevision $member[0] $EditRevision
     $requirement=Get-Field (Get-Field $member[0] 'testPlan') 'requirementsRevision'
-    if($null -eq $requirement -or $requirement -ne $Task.requirementsRevision){throw 'Candidate requirements are missing or stale; do not infer manual acceptance.'}
+    if($null -eq $requirement -or $requirement -ne $SourceTask.requirementsRevision){throw 'Candidate requirements are missing or stale; do not infer manual acceptance.'}
     if((Get-Field $Result 'protocolVersion' 1) -ge 4){
         . (Join-Path $PSScriptRoot 'build_candidate.ps1')
         . (Join-Path $PSScriptRoot 'build_candidate_artifacts.ps1')
@@ -48,7 +48,7 @@ function Start-TaskAcceptance([string]$Root,$State,$Task,$Result,[long]$EditRevi
             $relative=$_.Replace('\','/')
             if($relative.StartsWith('.build/Release/',[StringComparison]::OrdinalIgnoreCase)){$relative.Substring(15)}else{$relative}
         }) -join ',')
-        return New-SavedRuntimeAcceptance $Root $State $Task $artifact $runId $Criterion $runtimeFiles $Result.batchId $EditRevision
+        return New-SavedRuntimeAcceptance $Root $State $Task $artifact $runId $Criterion $runtimeFiles $Result.batchId $EditRevision $SourceTask -Historical:$Historical
     }
     $current=Get-BuildInputIdentity $Root
     if($current.digest -ne $Result.inputEnd.digest){throw 'Candidate inputs differ from current inputs.'}
@@ -68,11 +68,13 @@ function Start-TaskAcceptance([string]$Root,$State,$Task,$Result,[long]$EditRevi
         if(-not $association){throw 'Runtime artifact has no verified association with this candidate; existing output alone is insufficient.'}
         Set-Field $artifact 'sourceAssociation' $association
     }
-    $clock=Get-AcceptanceClock
+    $clock=if(-not $Historical){Get-AcceptanceClock}
     $entry=[pscustomobject]@{id=[Guid]::NewGuid().ToString('N');task=$Task.id;requirementsRevision=$Task.requirementsRevision;editRevision=$EditRevision;
         batchId=$Result.batchId;runId=(Get-Field $Result 'runId');sourceDigest=$Result.inputEnd.digest;criterion=$Criterion;
-        artifacts=$artifacts;status='running';startedUtc=$clock.utc;completedUtc=$null;
+        artifacts=$artifacts;status='running';startedUtc=$(if($clock){$clock.utc});completedUtc=$null;
         clock=$clock;elapsedSeconds=$null;durationStatus='running';reporter=$null;reference=$null;notes=$null}
+    Set-Field $entry 'candidateTask' $SourceTask.id
+    Set-Field $entry 'candidateRequirementsRevision' $SourceTask.requirementsRevision
     Set-Field $ledger 'acceptances' (@($records)+@($entry))
     return $entry
 }
@@ -96,14 +98,17 @@ function Get-RunAcceptanceArtifact([string]$Root,$Request,$Run,[string]$Id) {
         $summary.manifest -ne $artifact.path -or $summary.profile -ne $artifact.manifest.profile){throw 'Candidate Run and saved runtime disagree.'}
     return $artifact
 }
-function Start-RunAcceptance([string]$Root,$State,$Task,[string]$Id,$Request,$Run,[string]$Criterion,[string]$Files) {
+function Start-RunAcceptance([string]$Root,$State,$Task,[string]$Id,$Request,$Run,[string]$Criterion,[string]$Files,$SourceTask=$Task,[switch]$Historical) {
     if([string]::IsNullOrWhiteSpace($Criterion)){throw 'Acceptance requires an observable criterion.'}
-    if(-not $Request -or $Request.task -ne $Task.id -or -not $Request.PSObject.Properties['requirementsRevision'] -or
-        $Request.requirementsRevision -ne $Task.requirementsRevision){throw 'Candidate requirements are missing or stale; do not infer manual acceptance.'}
+    if((Get-Field $Request 'action') -eq 'batch'){
+        throw ('A common Run must be accepted through its member checkpoint: -Batch '+$Request.batch+' -Revision <member edit revision>.')
+    }
+    if(-not $Request -or $Request.task -ne $SourceTask.id -or -not $Request.PSObject.Properties['requirementsRevision'] -or
+        $Request.requirementsRevision -ne $SourceTask.requirementsRevision){throw 'Candidate requirements are missing or stale; do not infer manual acceptance.'}
     . (Join-Path $PSScriptRoot 'build_candidate.ps1')
     . (Join-Path $PSScriptRoot 'build_candidate_artifacts.ps1')
     $artifact=Get-RunAcceptanceArtifact $Root $Request $Run $Id
-    return New-SavedRuntimeAcceptance $Root $State $Task $artifact $Id $Criterion $Files
+    return New-SavedRuntimeAcceptance $Root $State $Task $artifact $Id $Criterion $Files $null $null $SourceTask -Historical:$Historical
 }
 function Get-CandidateInputAcceptance([string]$Root,$Artifact,[string]$Relative) {
     $snapshot=Read-CandidateManifest $Root $Artifact.manifest.candidate
@@ -117,7 +122,7 @@ function Get-CandidateInputAcceptance([string]$Root,$Artifact,[string]$Relative)
     if($current.sha256 -ne $file.sha256){throw 'Loaded candidate input differs from the saved candidate.'}
     return [pscustomobject]@{file=$file.path;sha256=$file.sha256;sourceAssociation='candidate input'}
 }
-function New-SavedRuntimeAcceptance([string]$Root,$State,$Task,$Artifact,[string]$Id,[string]$Criterion,[string]$Files,$BatchId=$null,$EditRevision=$null) {
+function New-SavedRuntimeAcceptance([string]$Root,$State,$Task,$Artifact,[string]$Id,[string]$Criterion,[string]$Files,$BatchId=$null,$EditRevision=$null,$SourceTask=$Task,[switch]$Historical) {
     $ledger=Get-TaskLedger $State;$records=@(Get-AcceptanceRecords $ledger)
     if($records.Count -ge 4096){throw 'Acceptance ledger is full; preserve its history.'}
     if(@($records|Where-Object {$_.task -eq $Task.id -and $_.status -eq 'running'}).Count){throw 'This task already has an open acceptance interval.'}
@@ -125,6 +130,9 @@ function New-SavedRuntimeAcceptance([string]$Root,$State,$Task,$Artifact,[string
     if($paths.Count -eq 0 -or $paths.Count -gt 64){throw 'Acceptance requires1 to64 explicitly identified runtime artifact files.'}
     $selected=@()
     foreach($relative in $paths){
+        if([IO.Path]::IsPathRooted($relative) -or $relative.Replace('\','/').StartsWith('.build/Release/',[StringComparison]::OrdinalIgnoreCase)){
+            throw 'Use runtime-relative paths for saved artifacts, for example -Files SnowDesktop.exe.'
+        }
         $null=Resolve-CandidatePath $artifact.runtime $relative
         $matches=@($artifact.manifest.files|Where-Object path -eq $relative.Replace('\','/'))
         if($matches.Count -ne 1){
@@ -135,13 +143,15 @@ function New-SavedRuntimeAcceptance([string]$Root,$State,$Task,$Artifact,[string
         $selected+=@([pscustomobject]@{file=$matches[0].path;sha256=$matches[0].sha256;
             sourceAssociation=$(if($artifact.manifest.productRuntime){'saved product runtime'}else{'saved test output'})})
     }
-    $clock=Get-AcceptanceClock
+    $clock=if(-not $Historical){Get-AcceptanceClock}
     $entry=[pscustomobject]@{id=[Guid]::NewGuid().ToString('N');task=$Task.id;requirementsRevision=$Task.requirementsRevision;
         editRevision=$EditRevision;batchId=$BatchId;runId=$Id;sourceDigest=$artifact.manifest.sourceDigest;criterion=$Criterion;
         candidate=$artifact.manifest.candidate;artifactManifestDigest=$artifact.digest;artifactRuntime=$artifact.runtime;
-        artifacts=$selected;status='running';startedUtc=$clock.utc;completedUtc=$null;clock=$clock;
+        artifacts=$selected;status='running';startedUtc=$(if($clock){$clock.utc});completedUtc=$null;clock=$clock;
         elapsedSeconds=$null;durationStatus='running';reporter=$null;reference=$null;notes=$null}
-    Set-Field $entry 'runtimeRetainUntilUtc' (Get-SavedRuntimeAcceptanceDeadline $entry).ToString('o')
+    Set-Field $entry 'candidateTask' $SourceTask.id
+    Set-Field $entry 'candidateRequirementsRevision' $SourceTask.requirementsRevision
+    if(-not $Historical){Set-Field $entry 'runtimeRetainUntilUtc' (Get-SavedRuntimeAcceptanceDeadline $entry).ToString('o')}
     Set-Field $ledger 'acceptances' (@($records)+@($entry));return $entry
 }
 function Complete-TaskAcceptance([string]$Root,$State,$Task,[string]$Id,[string]$Outcome,[string]$Reporter,[string]$Reference,[string]$Notes) {
@@ -174,11 +184,23 @@ function Complete-TaskAcceptance([string]$Root,$State,$Task,[string]$Id,[string]
             }
         }
     }
-    $end=Get-AcceptanceClock;$entry.durationStatus='unavailable'
-    if($entry.clock.available -and $end.available -and $entry.clock.frequency -eq $end.frequency -and
+    $end=Get-AcceptanceClock;$entry.durationStatus=if($null -eq $entry.clock){'unknown-start'}else{'unavailable'}
+    if($entry.clock -and $entry.clock.available -and $end.available -and $entry.clock.frequency -eq $end.frequency -and
         (ConvertTo-UtcTimestamp $entry.clock.bootUtc) -eq (ConvertTo-UtcTimestamp $end.bootUtc) -and [long]$end.ticks -ge [long]$entry.clock.ticks){
         $entry.elapsedSeconds=([long]$end.ticks-[long]$entry.clock.ticks)/[double]$end.frequency;$entry.durationStatus='monotonic'
     }
     $entry.status=$Outcome;$entry.completedUtc=$end.utc;$entry.reporter=$Reporter;$entry.reference=$Reference;$entry.notes=$Notes
     return $entry
+}
+function Get-AcceptanceSourceTask($State,$Task,[string]$SourceTask) {
+    if(-not $SourceTask -or $SourceTask -eq $Task.id){return $Task}
+    $ledger=Get-TaskLedger $State
+    $ancestor=$Task
+    $remaining=@($ledger.tasks).Count
+    while($remaining -gt 0 -and (Get-Field $ancestor 'previousTask')){
+        $remaining--
+        $ancestor=Find-VisibleTask $ledger $ancestor.previousTask
+        if($ancestor.id -eq $SourceTask -and $ancestor.phase -eq 'completed'){return $ancestor}
+    }
+    throw 'SourceTask must be a completed predecessor in this task-new chain.'
 }

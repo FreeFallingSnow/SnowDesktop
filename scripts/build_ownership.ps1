@@ -105,10 +105,19 @@ function Register-SourceOwnership($State,$Entry,[string]$BatchId) {
     }
     Set-Field $ledger 'sourceOwnership' $records
 }
-function Get-SourceChangeAudit($State) {
+function Test-OwnershipScopeMatch([string]$Path,[string[]]$Scopes) {
+    foreach($scope in $Scopes){
+        if($Path -ieq $scope -or $Path.StartsWith($scope+'/',[StringComparison]::OrdinalIgnoreCase) -or
+            $scope.StartsWith($Path+'/',[StringComparison]::OrdinalIgnoreCase)){return $true}
+    }
+    return $false
+}
+function Get-SourceChangeAudit($State,[string[]]$Paths=@()) {
     # NUL records retain spaces, Unicode and rename endpoints without relying
     # on Git's quoted display names. This is observation, never staging.
-    $status=Invoke-InputGit $repositoryRoot 'status --porcelain=v1 -z --untracked-files=all'
+    $arguments='--no-optional-locks status --porcelain=v1 -z --untracked-files=all'
+    if($Paths.Count){$arguments+=' -- '+(($Paths|ForEach-Object {'":(literal,icase)'+$_+'"'}) -join ' ')}
+    $status=Invoke-InputGit $repositoryRoot $arguments
     if($status.code -ne 0){throw 'Cannot inspect outstanding source changes; no task was closed.'}
     $ownership=@(Get-Field (Get-Field $State 'taskLedger') 'sourceOwnership' @())
     $changes=@();$records=$status.output.Split([char]0)
@@ -136,6 +145,7 @@ function Get-SourceChangeAudit($State) {
     foreach($owner in @(Get-PendingResourceOwnership|Sort-Object -Property file,participant -Unique)){
         $changes+= [pscustomobject]@{path=$owner.file;kind='resource-keys';task=$owner.participant}
     }
+    if($Paths.Count){$changes=@($changes|Where-Object {Test-OwnershipScopeMatch $_.path $Paths})}
     return [pscustomobject]@{checkedUtc=[DateTime]::UtcNow.ToString('o');changes=$changes;limitation='Ownership follows recorded claims and language key receipts; pre-upgrade and unregistered edits remain unassigned.'}
 }
 function Get-OwnedCommitIdentity($Entry) {
@@ -197,6 +207,32 @@ function Invoke-OwnedCommit($Selection,[string]$PathText,[string]$MessageFile) {
     $otherAfter=@(& git.exe ls-files --stage | Where-Object { $name=($_ -split "`t",2)[-1];@($paths|Where-Object {$name -eq $_ -or $name.StartsWith($_+'/')}).Count -eq 0 })
     $indexStable=@(Compare-Object $otherBefore $otherAfter).Count -eq 0
     return [pscustomobject]@{parent=$before;commit=$after;paths=$paths;otherIndexEntriesUnchanged=$indexStable;utc=[DateTime]::UtcNow.ToString('o');limitation='Only cooperating Git callers honor the transaction lease; same-file edits still require reviewed ownership.'}
+}
+function Invoke-AcceptanceCommit($Record,[string]$MessageFile) {
+    if(-not [IO.File]::Exists($MessageFile)){throw 'Acceptance commit requires an existing UTF-8 MessageFile.'}
+    $subject=[IO.File]::ReadLines($MessageFile)|Select-Object -First 1
+    if($subject -notmatch '^verify(?:\([^)]+\))?: '){throw 'An empty acceptance commit requires a verify subject.'}
+    if([IO.File]::Exists((Join-Path $repositoryRoot '.build/collaboration/resource-commit-pending.json'))){
+        throw 'An exact-key language commit needs recovery. Retry its original command before another Git checkpoint.'
+    }
+    $format='%(trailers:key=SnowDesktop-Acceptance,valueonly,separator=%x2C)'
+    $previous=Invoke-InputGit $repositoryRoot ('log --format="%H '+$format+'" --fixed-strings --grep="SnowDesktop-Acceptance: '+$Record.id+'"')
+    if($previous.code -ne 0){throw 'Cannot inspect acceptance commit history.'}
+    $seen=@($previous.output -split '\r?\n'|Where-Object {$_ -match ('^[0-9a-f]+ '+$Record.id+'$')})
+    if($seen.Count){return [pscustomobject]@{acceptanceId=$Record.id;commit=$seen[0].Split(' ')[0];reused=$true;paths=@()}}
+    Push-Location $repositoryRoot
+    try{
+        $indexBefore=@(& git.exe ls-files --stage)
+        if($LASTEXITCODE -ne 0){throw 'Cannot inspect the shared index.'}
+        if((Invoke-OwnedGitChange @('commit','--only','--allow-empty','-F',$MessageFile,'--trailer',('SnowDesktop-Acceptance: '+$Record.id))) -ne 0){
+            throw 'Empty acceptance commit failed; no reset was attempted.'
+        }
+        $commit=(& git.exe rev-parse HEAD) -join ''
+        $paths=@(& git.exe diff-tree --no-commit-id --name-only -r $commit)
+        $indexAfter=@(& git.exe ls-files --stage)
+        if($paths.Count -or @(Compare-Object -ReferenceObject (@('index')+$indexBefore) -DifferenceObject (@('index')+$indexAfter)).Count){throw 'Unexpected tree or index change; inspect the acceptance commit.'}
+        return [pscustomobject]@{acceptanceId=$Record.id;commit=$commit;reused=$false;paths=@();otherIndexEntriesUnchanged=$true}
+    }finally{Pop-Location}
 }
 function Invoke-ResourceCommit($Selection,[string]$Requests,[string]$MessageFile) {
     if(-not [IO.File]::Exists($MessageFile)){throw 'Resource commit requires an existing UTF-8 MessageFile.'}

@@ -59,7 +59,10 @@ def lease(path):
         kernel.CreateFileW.restype = ctypes.c_void_p
         handle = kernel.CreateFileW(str(path), 0xC0000000, 0, None, 4, 0x80, None)
         if handle == ctypes.c_void_p(-1).value:
-            raise BlockingIOError(ctypes.get_last_error(), 'Wait worker lease is occupied')
+            code = ctypes.get_last_error()
+            if code in (32, 33):
+                raise BlockingIOError(code, 'Collaboration lease is occupied', str(path))
+            raise ctypes.WinError(code)
         try:
             yield
         finally:
@@ -95,6 +98,32 @@ def overlaps(a, b):
     a, b = a.lower(), b.lower()
     return a == b or a.startswith(b + '/') or b.startswith(a + '/')
 
+def contains(scope, path):
+    scope, path = scope.casefold(), path.casefold()
+    return path == scope or path.startswith(scope + '/')
+
+def observe_dirty_paths(repo, state, ticket):
+    current = state.get('current') or {}
+    own = next((entry.get('ownedFiles', []) for entry in current.get('participants', [])
+                if entry['id'] == ticket['participant'] and entry['state'] == 'editing'), [])
+    requested = [file for file in ticket['files'] if not any(contains(scope, file) for scope in own)]
+    if not requested:
+        return None
+    pathspecs = [':(literal,icase)' + file for file in requested]
+    git = subprocess.run(['git', '--no-optional-locks', 'status',
+                          '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames', '--', *pathspecs],
+                         cwd=repo, capture_output=True, timeout=5)
+    if git.returncode:
+        return 'attention', 'Git could not inspect the requested paths; retry after inspecting the checkout.'
+    dirty = [record[3:] for record in git.stdout.decode('utf-8', errors='surrogateescape').split('\0') if record]
+    ownership = state.get('taskLedger', {}).get('sourceOwnership', [])
+    unknown = [file for file in dirty if not any(contains(entry['path'], file) for entry in ownership)]
+    if unknown:
+        return 'attention', 'Requested path has unassigned changes; review before explicit adoption: ' + ', '.join(unknown[:4])
+    if dirty:
+        return None, 'Requested path still has uncommitted changes: ' + ', '.join(dirty[:4])
+    return None
+
 def observed_batch(ticket, state):
     current = state.get('current')
     if ticket['condition'] not in ('peers', 'result'):
@@ -106,13 +135,16 @@ def observed_batch(ticket, state):
                  if batch.get('id') == expected), None)
 
 
+def participant_result_name(ticket):
+    return f"split-{ticket['batchId']}-{ticket['participant'].lower()}-{ticket['editRevision']}.json"
+
 def read_participant_result(repo, directory, module, ticket):
     if ticket['condition'] not in ('peers', 'result'):
         return None
     batch, participant, revision = ticket['batchId'], ticket['participant'], ticket['editRevision']
     if not HEX.fullmatch(batch) or not TASK.fullmatch(participant) or type(revision) is not int or revision < 0:
         raise ValueError('Invalid participant result address')
-    result = module.read_json(directory, f'split-{batch}-{participant.lower()}-{revision}.json')
+    result = module.read_json(directory, participant_result_name(ticket))
     if result is None:
         return None
     if (not isinstance(result, dict) or type(result.get('schemaVersion')) is not int or result['schemaVersion'] != 1 or
@@ -170,6 +202,10 @@ def condition(ticket, state, result):
         if result and current.get('id') == expected:
             return 'attention', 'Retirement requires explicit recovery.'
         if ticket['condition'] == 'files':
+            if current.get('membershipSealed') and not any(
+                    entry['id'] == ticket['participant'] and entry['state'] != 'withdrawn'
+                    for entry in current['participants']):
+                return None, 'The editing cohort is sealed; waiting for the next window.'
             for entry in current['participants']:
                 if entry['state'] != 'editing' or entry['id'] == ticket['participant']:
                     continue
@@ -236,11 +272,15 @@ def worker(repo, directory, module, ticket_id):
                             status, reason = 'attention', 'Build owner exited; diagnose and explicitly recover the frozen batch.'
                         else:
                             status, reason = condition(ticket, state, result)
+                    if status == 'eligible' and ticket['condition'] == 'files':
+                        observation = observe_dirty_paths(repo, state, ticket)
+                        if observation:
+                            status, reason = observation
                 except BlockingIOError:
                     time.sleep(.25)
                     continue
-                except (OSError, ValueError, KeyError, TypeError) as error:
-                    status, reason = 'attention', type(error).__name__ + ': state unavailable; no registration changed.'
+                except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
+                    status, reason = 'attention', type(error).__name__ + ': observation unavailable; no registration changed.'
             ticket['observations'] += 1
             ticket['reason'] = reason
             if status:
@@ -281,7 +321,19 @@ def foreground_wait(repo, module, directory, ticket):
                 else:
                     result = split or module.read_json(directory, batch_id + '.json')
                     if result and result.get('batchId') == batch_id:
-                        shown = dict(shown, result=result)
+                        if ticket.get('fullResult'):
+                            shown = dict(shown, result=result)
+                        else:
+                            path = directory / (batch_id + '.json')
+                            if split:
+                                path = directory / participant_result_name(shown)
+                            shown = dict(shown, result={
+                                'batchId': batch_id, 'runId': result.get('runId'),
+                                'outcome': result.get('outcome'), 'exitCode': result.get('exitCode'),
+                                'resultPath': str(path),
+                                'selectedCount': len((result.get('coverage') or {}).get('selected', [])),
+                                'completedCount': len((result.get('coverage') or {}).get('completed', []))
+                            })
             print(json.dumps(shown, ensure_ascii=True), flush=True)
             return 0 if shown['status'] in ('eligible','completed') else 2
         time.sleep(.25)
@@ -300,6 +352,7 @@ def main():
     p.add_argument('--next', default='When this wait returns, execute the saved next step using the latest begin/claim receipt.')
     p.add_argument('--reason', default='')
     p.add_argument('--new', action='store_true')
+    p.add_argument('--full-result', action='store_true', help='Embed the original result during foreground observation')
     p.add_argument('--root', type=Path, default=Path(__file__).resolve().parents[1])
     args = p.parse_args()
     foreground=args.action=='wait'
@@ -318,7 +371,7 @@ def main():
         if args.new:command.append('--new')
         created=subprocess.run(command,capture_output=True,text=True,encoding='utf-8')
         if created.returncode:raise ValueError(created.stderr.strip())
-        return foreground_wait(repo,module,directory,json.loads(created.stdout))
+        return foreground_wait(repo,module,directory,dict(json.loads(created.stdout), fullResult=args.full_result))
     if args.action == 'start':
         if not TASK.fullmatch(args.participant or '') or (args.batch and not HEX.fullmatch(args.batch)):
             p.error('Valid participant and optional batch IDs required')
@@ -327,7 +380,10 @@ def main():
             p.error('File wait requires --files')
         if args.condition in ('peers', 'result') and (not args.batch or args.revision < 0):
             p.error('Peer/result wait requires saved --batch and --revision')
-        key = hashlib.sha256(json.dumps([args.participant, args.condition, args.batch, args.revision, requested]).encode()).hexdigest()
+        identity = [args.participant, args.condition, args.batch, args.revision, requested]
+        if args.condition == 'files':
+            identity.append('check-git-status-v1')
+        key = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
         with lease(directory/('wait-' + key + '.lock')):
             pointer = module.read_json(directory, 'wait-' + key + '.json')
             if pointer and not args.new:
@@ -359,7 +415,7 @@ def main():
         p.error('Unknown wait ticket')
     shown = diagnostic(module, directory, ticket)
     if args.action == 'status':
-        if foreground:return foreground_wait(repo,module,directory,shown)
+        if foreground:return foreground_wait(repo,module,directory,dict(shown, fullResult=args.full_result))
         print(json.dumps(shown, ensure_ascii=False)); return 0
     if args.action == 'cancel':
         if shown['status'] == 'waiting':

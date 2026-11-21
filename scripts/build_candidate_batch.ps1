@@ -102,7 +102,7 @@ function Save-CandidateBatchPending([string]$Root,$Request,$Record,$Context) {
     $batch=if($state.current -and $state.current.id -eq $Request.batch){$state.current}else{@(Get-Field $state 'activeCandidates' @()|Where-Object id -eq $Request.batch)|Select-Object -First 1}
     if(-not $batch -or $batch.runId -ne $Request.id -or $batch.owner.pid -ne $PID -or $batch.owner.startTicks -ne $Record.owner.startTicks){throw 'Candidate result lost its frozen attempt owner.'}
     $inputCheck=if($Record.inputStart -and $Record.inputEnd){if($Record.inputStart.digest -eq $Record.inputEnd.digest){'stable'}else{'changed'}}else{'not-run'}
-    $outcome=if($Record.status -eq 'passed' -and $batch.testingPlan.mode -eq 'skipped'){'skipped'}else{$Record.status}
+    $outcome=if($Record.status -eq 'passed' -and -not $batch.testingPlan.buildRequired -and $batch.testingPlan.mode -eq 'skipped'){'skipped'}else{$Record.status}
     $result=[pscustomobject]@{schemaVersion=1;protocolVersion=4;batchId=$batch.id;repositoryRoot=$Root;
         logicalBatchId=(Get-Field $batch 'logicalBatchId' $batch.id);attempt=(Get-Field $batch 'attempt' 1);repairOf=(Get-Field $batch 'repairOf');repairSources=@(Get-RepairSources $batch);
         testingPlan=$batch.testingPlan;outcome=$outcome;exitCode=$Record.exitCode;error=$Record.error;createdUtc=$batch.createdUtc;
