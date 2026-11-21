@@ -8,7 +8,6 @@
 #include "app/dock/persistent_dock_host.h"
 #include "desktop_backdrop_update_rules.h"
 #include "diagnostics/performance_trace.h"
-#include "ui/render/highlight_coverage.h"
 
 // HBITMAP analysis, icon beautification and Direct2D bitmap caching.
 
@@ -507,7 +506,7 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateStyledD2DBitmap(HBITMAP hbm,
         return nullptr;
 
     snowdesktop::icon_styled_pixels::Prepared prepared;
-    if (!snowdesktop::icon_styled_pixels::Prepare(hbm, style, managedAlpha, nativeControlSource, prepared))
+    if (!snowdesktop::icon_styled_pixels::Prepare(hbm, style, managedAlpha, nativeControlSource, prepared, iconShadows_.subject))
         return nullptr;
     return UploadStyledIconPixels(prepared);
 }
@@ -534,14 +533,15 @@ ComPtr<ID2D1Bitmap1> DesktopApp::UploadStyledIconPixels(
 
     iconGlassBackdrop_[bitmap.Get()] = prepared.needsGlassBackdrop;
     iconBitmapStyles_[bitmap.Get()] = prepared.style;
-    if (!prepared.highlightCoverage.empty())
+    const auto& subject = prepared.subjectShadow;
+    if (!subject.empty())
     {
-        ComPtr<ID2D1Bitmap1> mask;
         const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
             D2D1::PixelFormat(DXGI_FORMAT_A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-        if (SUCCEEDED(d2dContext_->CreateBitmap(bitmap->GetPixelSize(),
-            prepared.highlightCoverage.data(), static_cast<UINT32>(buffer.width), &properties, &mask)))
-            snowdesktop::HighlightCoverage::SetBitmapMask(bitmap.Get(), mask.Get());
+        ComPtr<ID2D1Bitmap1> mask;
+        if (SUCCEEDED(d2dContext_->CreateBitmap(bitmap->GetPixelSize(), subject.data(),
+                static_cast<UINT32>(buffer.width), &properties, &mask)))
+            snowdesktop::icon_shadow::AttachSubjectMask(bitmap.Get(), mask.Get());
     }
     return bitmap;
 }
@@ -552,7 +552,8 @@ void DesktopApp::WarmStyledIconBitmap(HBITMAP bitmap,
     bool managedAlpha, bool nativeControlSource)
 {
     if (!bitmap || !prepared || prepared->source != bitmap ||
-        prepared->managedAlpha != managedAlpha || prepared->nativeControlSource != nativeControlSource)
+        prepared->managedAlpha != managedAlpha || prepared->nativeControlSource != nativeControlSource ||
+        prepared->subjectMaskRequested != iconShadows_.subject)
         return;
     try
     {
@@ -636,17 +637,16 @@ void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
         style.enabled && style.glassEnabled;
     if (translucentMaterial) RegisterIconBackdrop(target, plan.bounds, opacity, ownerKey, &style);
     snowdesktop::icon_bitmap_renderer::Draw(target, bitmap, plan, opacity, translucentMaterial);
-    if (opacity > 0.f)
-        snowdesktop::HighlightCoverage::RecordBitmap(target, bitmap,
-            D2D1::RectF(static_cast<float>(plan.bounds.left), static_cast<float>(plan.bounds.top),
-                static_cast<float>(plan.bounds.right), static_cast<float>(plan.bounds.bottom)));
+    (void)snowdesktop::icon_shadow::SubjectScope::Draw(target, bitmap, ToD2DRect(plan.bounds), opacity);
 }
 
 void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
     float opacity, std::uintptr_t ownerKey, const snowdesktop::IconBeautifySettings* style)
 {
-    if (drawingIconAppearanceSource_ || dragPreviewCompositionPaintInProgress_) return;
+    if (drawingIconAppearanceSource_ || dragPreviewCompositionPaintInProgress_ ||
+        target == iconShadowRecorder_.Get()) return;
     const auto& appearance = style ? *style : iconBeautifySettings_;
+    if (snowdesktop::CollectionPopupIconMaterials::DrawScope::Collect(target, frame, opacity, appearance)) return;
     // Popup/quick-navigation backdrops are collected by their own animation
     // transaction. Icons inherit that panel rather than adding a second blur.
     if (renderingFloatingPopup_ || quickNavigation_->compositionPaintInProgress) return;
@@ -693,6 +693,7 @@ void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
 
 void DesktopApp::ClearStyledIconCache()
 {
+    bitmapIconShadows_.Clear();
     preparedIconPixels_.Clear();
     for (const auto& [key, bitmap] : styledIconCache_)
     { (void)key; iconGlassBackdrop_.erase(bitmap.Get()); iconBitmapStyles_.erase(bitmap.Get()); }
@@ -711,6 +712,7 @@ ID2D1Bitmap* DesktopApp::GetStyledD2DBitmap(ID2D1RenderTarget* context, HBITMAP 
     const auto prepared = preparedIconPixels_.Take(bitmap);
     const bool preparedMatches = prepared && prepared->source == bitmap &&
         prepared->managedAlpha == managedAlpha && prepared->nativeControlSource == nativeControlSource &&
+        prepared->subjectMaskRequested == iconShadows_.subject &&
         iconStyleCache_.Get(snowdesktop::icon_beautify::Normalize(prepared->style)) == token;
     auto uploaded = preparedMatches ? UploadStyledIconPixels(*prepared) :
         CreateStyledD2DBitmap(bitmap, style, managedAlpha, nativeControlSource);
@@ -816,8 +818,8 @@ void DesktopApp::RecordIconTextResources() const
     mapBitmaps("placeholder", placeholderIconCache_);
     mapBitmaps("quick_nav_system", quickNavigation_->sysIconCache);
     mapBitmaps("quick_nav_app", quickNavigation_->appIconCache);
-    mapBitmaps("grid_text_shadow", itemTextShadowCache_);
-    mapBitmaps("list_text_shadow", componentListTextShadowCache_);
+    bitmaps("grid_text_shadow", [&](auto add) { itemTitleRenderer_.VisitShadowBitmaps(false, add); });
+    bitmaps("list_text_shadow", [&](auto add) { itemTitleRenderer_.VisitShadowBitmaps(true, add); });
     bitmaps("dock_appearance", [&](auto add) {
         for (const auto& [key, image] : dockAppearanceImages_) { (void)key; add(image.bitmap.Get()); }
     });
@@ -841,17 +843,15 @@ void DesktopApp::RecordIconTextResources() const
     value("native.icon.memory", "glass_metadata_entries", iconGlassBackdrop_.size());
     value("native.icon.memory", "fan_command_entries", popupFanIconDrawings_.size());
 
-    size_t gridInput = 0, listInput = 0, fanInput = 0;
-    for (const auto& [key, entry] : itemTextLayoutCache_)
-        gridInput += key.size() * sizeof(wchar_t) + entry.fullWidth.RetainedTextBytes();
-    for (const auto& [key, layout] : componentListTextLayoutCache_)
-    { (void)layout; listInput += key.size() * sizeof(wchar_t); }
+    size_t fanInput = 0;
     for (const auto& [key, layout] : popupFanTextLayouts_)
     { (void)layout; fanInput += key.size() * sizeof(wchar_t); }
-    value("native.text.memory", "grid_layout_entries", itemTextLayoutCache_.size());
-    value("native.text.memory", "grid_layout_input_bytes", gridInput);
-    value("native.text.memory", "list_layout_entries", componentListTextLayoutCache_.size());
-    value("native.text.memory", "list_layout_input_bytes", listInput);
+    const auto grid = itemTitleRenderer_.GetLayoutCacheUsage(false);
+    const auto list = itemTitleRenderer_.GetLayoutCacheUsage(true);
+    value("native.text.memory", "grid_layout_entries", grid.entries);
+    value("native.text.memory", "grid_layout_input_bytes", grid.inputBytes);
+    value("native.text.memory", "list_layout_entries", list.entries);
+    value("native.text.memory", "list_layout_input_bytes", list.inputBytes);
     value("native.text.memory", "fan_layout_entries", popupFanTextLayouts_.size());
     value("native.text.memory", "fan_layout_input_bytes", fanInput);
     const auto masks = snowdesktop::icon_beautify::TryGetMaskCacheStatistics();

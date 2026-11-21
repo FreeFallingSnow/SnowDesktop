@@ -5,6 +5,7 @@
 #include <windows.h>
 #include <d2d1_1.h>
 #include <wrl/client.h>
+#include <functional>
 #include <memory>
 #include <cstdint>
 #include <optional>
@@ -31,6 +32,12 @@ struct WidgetImageSpin
     float degreesPerSecond = 0.0f;
 };
 
+struct WidgetImageSpinCapture
+{
+    POINT clientToTarget{};
+    std::function<bool(const WidgetImageSpin&)> prepare;
+};
+
 struct WidgetSurfacePaint
 {
     std::uint64_t revision = 0;
@@ -44,6 +51,12 @@ struct WidgetSurfacePaint
     Microsoft::WRL::ComPtr<ID2D1Bitmap1> background;
     std::vector<Microsoft::WRL::ComPtr<ID2D1Bitmap1>> images;
     std::optional<PersonalizationSettings> appearance;
+    RECT nativeMarqueeBounds{};
+    float nativeMarqueeRadius = 0.f;
+    // Borrowed only while recording this frame, before it becomes a retained paint.
+    const WidgetImageSpinCapture* imageSpinCapture = nullptr;
+
+    std::optional<RECT> DamageFrom(const WidgetSurfacePaint& previous) const;
 };
 
 // UI-owned command recording with a separate raster/DirectComposition owner.

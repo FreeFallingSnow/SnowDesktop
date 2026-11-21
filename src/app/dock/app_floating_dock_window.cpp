@@ -6,10 +6,13 @@
 #include "diagnostics/diagnostic_log.h"
 #include "settings/animation_settings.h"
 #include "app/dock/persistent_dock_host.h"
+#include "app/dock/dock_platform_helpers.h"
+#include "app/dock/dock_taskbar_diagnostics.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "app/popup/popup_window_pair_z_order.h"
 #include "diagnostics/performance_trace.h"
 #include "platform/window_peek_policy.h"
+#include "ui/render/composition_motion_curve.h"
 
 // Floating-Dock window, composition surface and bounds management.
 
@@ -120,6 +123,16 @@ bool DesktopApp::IsPersistentDockHostEffectivelyFloating(
                 dockSettings_.showOnlyWhenSummoned);
 }
 
+bool DesktopApp::PersistentDockHost::ShouldKeepReservedFloatingLayer() const
+{
+    const auto& settings = owner->dockSettings_;
+    return settings.reserveScreenSpace && owner->generalSettings_.dockEnabled &&
+        !owner->desktopStartupPresentationPending_ && container && !container->IsMergedWithStatusBar() &&
+        snowdesktop::floating_dock_rules::ShouldShowPersistentDockHost(
+            active, false, settings.showOnlyWhenSummoned, owner->customDesktopVisible_,
+            owner->desktopIconsHidden_, settings.keepWhenDesktopHidden, owner->desktopPassthroughActive_);
+}
+
 bool DesktopApp::ShouldShowPersistentDockHost(
     const PersistentDockHost& host) const
 {
@@ -140,6 +153,100 @@ bool DesktopApp::ShouldShowPersistentDockHost(
             desktopIconsHidden_,
             dockSettings_.keepWhenDesktopHidden,
             desktopPassthroughActive_);
+}
+
+bool DesktopApp::IsPersistentDockDesktopBandOccluded(
+    const PersistentDockHost& host) const
+{
+    if (!host.active || !host.hwnd || !IsWindow(host.hwnd) ||
+        !host.monitor || !host.container)
+        return false;
+    // A fullscreen source on this monitor always covers the desktop band.
+    if (RecheckFullscreenSource(host.monitor))
+        return true;
+    if (host.ShouldKeepReservedFloatingLayer())
+        return false;
+    // The magnification hit area can extend past both ends of an edge-attached
+    // panel. Occlusion is based on the resting panel that the window can cover.
+    RECT dockScreen = host.container->GetBounds();
+    if (IsRectEmpty(&dockScreen))
+        return false;
+    if (hwnd_ && IsWindow(hwnd_))
+        MapWindowPoints(
+            hwnd_, nullptr,
+            reinterpret_cast<POINT*>(&dockScreen), 2);
+    else
+        OffsetRect(&dockScreen, virtualLeft_, virtualTop_);
+    // The desktop-band pair sits below ordinary applications, so any
+    // maximized application on this monitor that does not avoid the Dock
+    // covers it completely. Recognized at summon/dismissal moments only,
+    // with the cheap zoom test ahead of the per-window task queries.
+    struct OcclusionScan
+    {
+        HMONITOR monitor = nullptr;
+        const RECT* dockScreen = nullptr;
+        bool occluded = false;
+    } scan{host.monitor, &dockScreen};
+    EnumWindows([](HWND window, LPARAM parameter) -> BOOL
+    {
+        auto& scan = *reinterpret_cast<OcclusionScan*>(parameter);
+        if (IsZoomed(window) &&
+            MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST) == scan.monitor)
+        {
+            RECT bounds{};
+            if (GetWindowRect(window, &bounds) && IsDockTaskWindow(window) &&
+                snowdesktop::floating_dock_rules::
+                    MaximizedWindowCoversDock(bounds, *scan.dockScreen))
+            {
+                scan.occluded = true;
+                return FALSE;
+            }
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&scan));
+    return scan.occluded;
+}
+
+bool DesktopApp::EnterOccludedFloatingPresentation(
+    PersistentDockHost& host,
+    snowdesktop::floating_dock_rules::OccludedFloatingTransition transition)
+{
+    // Merged bars keep their own presentation; summon-only Docks already use
+    // this reveal timeline for every transition.
+    if (!host.active || !host.hwnd || !IsWindow(host.hwnd)) return false;
+    if (host.container && host.container->IsMergedWithStatusBar()) return false;
+    if (dockSettings_.showOnlyWhenSummoned) return false;
+    // A dismissal only re-decides for something that is actually floating.
+    if (transition ==
+            snowdesktop::floating_dock_rules::OccludedFloatingTransition::Dismissal &&
+        !IsPersistentDockHostEffectivelyFloating(host))
+        return false;
+    if (!IsPersistentDockDesktopBandOccluded(host))
+    {
+        // The covering window is already gone at this recognition moment:
+        // end an active session so the ordinary instant path takes over.
+        if (host.occludedFloatingPresentation)
+        {
+            host.occludedFloatingPresentation = false;
+            ResetMergedDockPresentation(host);
+        }
+        return false;
+    }
+    const bool startedSession = !std::exchange(
+        host.occludedFloatingPresentation, true);
+    if (startedSession)
+    {
+        snowdesktop::dock_taskbar_diagnostics::Record(
+            transition ==
+                    snowdesktop::floating_dock_rules::OccludedFloatingTransition::Reveal
+                ? L"dock-occluded-reveal"
+                : L"dock-occluded-dismissal",
+            host.hwnd);
+    }
+    // The reveal entry only marks the session: UpdatePersistentDockHostVisibility
+    // retires the still-occluded desktop pair inside its own reentrancy guard,
+    // before the promoted reveal frame is committed and shown.
+    return true;
 }
 
 bool DesktopApp::IsDockContainerInteractionVisible(
@@ -497,9 +604,27 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
         }
     } promotionInput{*this, host.hwnd};
     const bool merged = host.container && host.container->IsMergedWithStatusBar();
-    if (host.mergedPresentationActive && host.presentationMerged != merged)
+    if (host.occludedFloatingPresentation && (merged || dockSettings_.showOnlyWhenSummoned))
+    {
+        host.occludedFloatingPresentation = false;
         ResetMergedDockPresentation(host);
-    if (merged || dockSettings_.showOnlyWhenSummoned)
+    }
+    else if (host.mergedPresentationActive && host.presentationMerged != merged)
+        ResetMergedDockPresentation(host);
+    // An occluded floating session ends here once its collapse finished, so
+    // the hidden pair returns to the ordinary desktop presentation in this
+    // pass. The still-visible dismissal entry is excluded on purpose: its
+    // collapse animation has not started yet.
+    if (host.occludedFloatingPresentation && !merged &&
+        !dockSettings_.showOnlyWhenSummoned &&
+        !IsPersistentDockHostEffectivelyFloating(host) &&
+        !host.mergedAnimation.IsAnimating() && !IsWindowVisible(host.hwnd))
+    {
+        host.occludedFloatingPresentation = false;
+        ResetMergedDockPresentation(host);
+    }
+    if (merged || dockSettings_.showOnlyWhenSummoned ||
+        host.occludedFloatingPresentation)
     {
         host.updatingMergedPresentation = true;
         struct UpdateScope { bool& active; ~UpdateScope() { active = false; } } scope{host.updatingMergedPresentation};
@@ -512,9 +637,28 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
             host.backdrop.HidePopupWindowPair(host.hwnd);
             return;
         }
+        // The occluded session's reveal retires the still-occluded desktop
+        // pair inside this reentrancy-guarded scope, before activation
+        // samples the visibility pose. A dismissal keeps the live pair so
+        // its collapse animates from the visible pose; a session already
+        // presenting never re-hides its revealed frame.
+        if (host.occludedFloatingPresentation && !merged &&
+            !dockSettings_.showOnlyWhenSummoned &&
+            IsPersistentDockHostEffectivelyFloating(host) &&
+            !host.mergedPresentation.visible && IsWindowVisible(host.hwnd))
+        {
+            host.backdrop.HidePopupWindowPair(host.hwnd);
+        }
         if (!host.mergedPresentationActive)
         {
-            host.mergedAnimation.ResetHidden();
+            // An occluded session entered at dismissal starts from the live
+            // visible pose so its collapse animates away; every other
+            // activation starts hidden for the reveal.
+            if (host.occludedFloatingPresentation && !merged &&
+                !dockSettings_.showOnlyWhenSummoned && IsWindowVisible(host.hwnd))
+                host.mergedAnimation.ShowImmediately();
+            else
+                host.mergedAnimation.ResetHidden();
             host.presentationMerged = merged;
             host.mergedPresentationActive = true;
         }
@@ -522,16 +666,19 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
         namespace animation = snowdesktop::quick_navigation_animation_rules;
         // Reuse the short progress timeline, translating the complete strip at
         // full opacity. Animation never changes AppBar/work-area geometry.
-        const bool shouldShow = ShouldShowPersistentDockHost(host);
-        const bool immediateDrag = shouldShow && (dragSession_.IsActive() ||
-            (widgetAction_ == WidgetAction::Move && mouseDownWidgetIndex_ < widgets_.size()) ||
-            dragDropController_.IsTransportActive() || floatingDockExternalPointerDrag_.Active());
+        // The edge reveal/collapse timeline also covers drag-to-edge passive
+        // reveals: a drag no longer forces an instant presentation.
+        const bool shouldShow = host.occludedFloatingPresentation
+            ? IsPersistentDockHostEffectivelyFloating(host)
+            : ShouldShowPersistentDockHost(host);
         const bool wasAnimating = host.mergedAnimation.IsAnimating();
-        host.mergedAnimation.Configure(motion::RuntimeAnimationsEnabled() && !immediateDrag
+        host.mergedAnimation.Configure(motion::RuntimeAnimationsEnabled()
             ? animation::Effect::Fade : animation::Effect::None, std::min(1.0, motion::RuntimeDurationScale()), false, true);
         const bool changed = shouldShow != host.mergedAnimation.IsInteractive();
         if (changed || (wasAnimating && !host.mergedAnimation.IsAnimating()))
         {
+            uiAnimationScheduler_.Cancel(host.mergedAnimationToken);
+            host.mergedAnimationToken = 0;
             const auto now = static_cast<std::uint64_t>(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
             if (shouldShow) host.mergedAnimation.Open(now);
             else host.mergedAnimation.Close(now);
@@ -556,31 +703,58 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
         if (host.mergedAnimation.IsAnimating() && !host.mergedAnimationToken)
         {
             const HWND window = host.hwnd;
-            host.mergedAnimationToken = uiAnimationScheduler_.StartAnimation(
-                snowdesktop::UiAnimationSurface::FloatingDock, [this, window](double tick) {
-                    auto* current = FindPersistentDockHost(window);
-                    if (!current || !current->mergedPresentationActive || !current->active) return false;
-                    current->mergedAnimation.Advance(static_cast<std::uint64_t>(tick));
-                    const bool running = current->mergedAnimation.IsAnimating();
-                    if (!running) current->mergedAnimationToken = 0;
-                    ApplyMergedDockPresentationFrame(*current);
-                    if (!running)
+            const auto advance = [this, window](double tick, bool finish) {
+                auto* current = FindPersistentDockHost(window);
+                if (!current || !current->mergedPresentationActive || !current->active) return false;
+                if (finish)
+                {
+                    if (current->mergedAnimation.IsInteractive()) current->mergedAnimation.ShowImmediately();
+                    else current->mergedAnimation.ResetHidden();
+                }
+                else current->mergedAnimation.Advance(static_cast<std::uint64_t>(tick));
+                const bool running = current->mergedAnimation.IsAnimating();
+                if (!running) current->mergedAnimationToken = 0;
+                ApplyMergedDockPresentationFrame(*current);
+                if (!running)
+                {
+                    ApplyFloatingDockLayerPolicy(*current);
+                    UpdateFloatingDockWindowBounds(*current, false, true);
+                    InvalidateFloatingDockWindow(*current, true);
+                    if (current->occludedFloatingPresentation &&
+                        !IsPersistentDockHostEffectivelyFloating(*current))
                     {
-                        ApplyFloatingDockLayerPolicy(*current);
-                        // Recreate title/hit regions only once at the stable
-                        // endpoint. ApplyFrame itself performs no layout work.
-                        UpdateFloatingDockWindowBounds(*current, false, true);
-                        InvalidateFloatingDockWindow(*current, true);
+                        // The occluded session's collapse finished; restore
+                        // the ordinary desktop presentation in the same
+                        // turn instead of waiting for the next refresh.
+                        UpdatePersistentDockHostVisibility(*current);
                     }
-                    return running;
-                });
+                }
+                return running;
+            };
+            if (host.mergedPresentation.compositorSlide)
+            {
+                const auto remaining = host.mergedAnimation.RemainingTimeline();
+                host.mergedAnimationToken = uiAnimationScheduler_.ScheduleOnce(
+                    static_cast<UINT>(std::ceil(remaining.durationMilliseconds)),
+                    [advance](snowdesktop::UiScheduleToken) { advance(0, true); });
+            }
+            if (!host.mergedAnimationToken)
+                host.mergedAnimationToken = uiAnimationScheduler_.StartAnimation(
+                    snowdesktop::UiAnimationSurface::FloatingDock, [advance](double tick) { return advance(tick, false); });
+            if (!host.mergedAnimationToken)
+                advance(0, true);
         }
         else if (!host.mergedAnimation.IsAnimating() && host.mergedAnimationToken)
         {
             uiAnimationScheduler_.Cancel(host.mergedAnimationToken);
             host.mergedAnimationToken = 0;
         }
-        return;
+        if (!host.occludedFloatingPresentation || host.mergedAnimation.IsInteractive() ||
+            host.mergedAnimation.IsAnimating())
+            return;
+        // A synchronous collapse has no timer to return the window pair to
+        // its regular desktop presentation. Do so before leaving this pass.
+        host.occludedFloatingPresentation = false;
     }
     if (host.mergedPresentationActive) ResetMergedDockPresentation(host);
     const bool shouldShow =
@@ -614,18 +788,76 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
         ApplyFloatingDockLayerPolicy(host);
 }
 
+bool DesktopApp::PersistentDockHost::StartCompositionSlide(
+    const snowdesktop::popup_motion_curve::Timeline& progress, snowdesktop::StatusBar* mergedBar)
+{
+    const float x = mergedPresentation.hiddenOffsetX, y = mergedPresentation.hiddenOffsetY;
+    const float distance = x != 0.f ? x : y;
+    if (!owner->dcompDevice_ || !dcompVisual || distance == 0.f ||
+        (presentationMerged && !mergedBar) || progress.segments.empty())
+        return false;
+    ComPtr<IDCompositionAnimation> offset;
+    if (FAILED(snowdesktop::CreateCompositionMotionAnimation(owner->dcompDevice_.Get(), progress,
+        &offset, distance, -distance))) return false;
+    const auto direct = x != 0.f ? dcompVisual->SetOffsetX(offset.Get()) : dcompVisual->SetOffsetY(offset.Get());
+    if (FAILED(direct)) return false;
+    // The Dock and merged strip share the host's DirectComposition device.
+    // Bind the same animation object to both direct visuals before its commit.
+    if (backdrop.StartRootTranslationAnimation(progress, x, y, -x, -y, backdrop.IsAvailable()) &&
+        (!mergedBar || mergedBar->StartMergedDockSlide(monitor, offset.Get(), progress)) &&
+        backdrop.CommitSrgbContent() && owner->CommitCompositionAnimationFrame() &&
+        owner->FlushPendingCompositionCommit())
+    {
+        backdrop.CommitVisualChanges();
+        mergedPresentation.compositorSlide = true;
+        return true;
+    }
+    // Commit failure can synchronously release this host's graphics tree.
+    if (!frameReady || !dcompVisual || !mergedPresentationActive) return false;
+    backdrop.StopRootTranslationAnimation(mergedPresentation.offsetX, mergedPresentation.offsetY);
+    dcompVisual->SetOffsetX(mergedPresentation.offsetX);
+    dcompVisual->SetOffsetY(mergedPresentation.offsetY);
+    if (mergedBar) mergedBar->ApplyMergedDockPresentation(monitor, mergedPresentation);
+    backdrop.CommitVisualChanges();
+    (void)backdrop.CommitSrgbContent();
+    owner->CommitCompositionAnimationFrame();
+    return false;
+}
+
 void DesktopApp::ApplyMergedDockPresentationFrame(PersistentDockHost& host)
 {
-    auto frame = snowdesktop::MergedDockPresentationFrame(host.mergedAnimation);
-    frame.topmost = host.mergedPresentation.topmost;
-    frame.insertAfter = host.hwnd;
     MONITORINFO monitorInfo{sizeof(monitorInfo)};
     RECT motionBounds = host.dockRect;
     OffsetRect(&motionBounds, virtualLeft_, virtualTop_);
     if (host.presentationMerged && statusBar_)
         if (const auto strip = statusBar_->MergedStripBounds(host.monitor)) motionBounds = *strip;
-    if (GetMonitorInfoW(host.monitor, &monitorInfo))
-        snowdesktop::PositionDockRevealFrame(frame, dockSettings_.position, motionBounds, monitorInfo.rcMonitor);
+    const bool positioned = GetMonitorInfoW(host.monitor, &monitorInfo) != FALSE;
+    const auto sample = [&] {
+        auto frame = snowdesktop::MergedDockPresentationFrame(host.mergedAnimation);
+        frame.topmost = host.mergedPresentation.topmost;
+        frame.insertAfter = host.hwnd;
+        if (positioned)
+            snowdesktop::PositionDockRevealFrame(frame, dockSettings_.position, motionBounds, monitorInfo.rcMonitor);
+        return frame;
+    };
+    auto frame = sample();
+    if (host.mergedPresentation.compositorSlide)
+    {
+        if (host.mergedAnimationToken && host.mergedAnimation.IsAnimating() &&
+            host.mergedPresentation.hiddenOffsetX == frame.hiddenOffsetX &&
+            host.mergedPresentation.hiddenOffsetY == frame.hiddenOffsetY)
+            return;
+        if (host.mergedAnimationToken)
+        {
+            // Layout or monitor changes redirect the remaining travel at its
+            // current phase. Do not let the old completion enable input.
+            uiAnimationScheduler_.Cancel(host.mergedAnimationToken);
+            host.mergedAnimationToken = 0;
+            host.mergedAnimation.Advance(static_cast<std::uint64_t>(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
+            frame = sample();
+        }
+        host.backdrop.StopRootTranslationAnimation(frame.offsetX, frame.offsetY);
+    }
     if (host.presentationMerged && frame.visible &&
         (!statusBar_ || !statusBar_->PrepareMergedDockPresentation(host.monitor, frame)))
     {
@@ -669,12 +901,30 @@ void DesktopApp::ApplyMergedDockPresentationFrame(PersistentDockHost& host)
     host.backdrop.CommitVisualChanges();
     (void)host.backdrop.CommitSrgbContent();
     CommitCompositionAnimationFrame();
+    if (frame.visible && !host.mergedAnimationToken && host.mergedAnimation.IsAnimating())
+    {
+        // Layout and first-show paint precede playback. Start the retained
+        // clock with the submitted curve for a continuous reversal.
+        const bool started = host.StartCompositionSlide(host.mergedAnimation.RemainingTimeline(),
+            host.presentationMerged ? statusBar_.get() : nullptr);
+        if (snowdesktop::performance::Enabled())
+        {
+            const auto diagnosticOwner = std::to_wstring(reinterpret_cast<UINT_PTR>(host.hwnd));
+            snowdesktop::performance::Value("dock", "reveal.compositor", diagnosticOwner,
+                started ? 1 : 0, host.presentationRevision);
+        }
+        if (started)
+            host.mergedAnimation.ResumeAt(static_cast<std::uint64_t>(
+                snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
+    }
 }
 
 void DesktopApp::ResetMergedDockPresentation(PersistentDockHost& host)
 {
     if (host.mergedAnimationToken) uiAnimationScheduler_.Cancel(host.mergedAnimationToken);
     host.mergedAnimationToken = 0;
+    if (host.mergedPresentation.compositorSlide)
+        host.backdrop.StopRootTranslationAnimation(0.f, 0.f);
     host.mergedAnimation.ResetHidden();
     host.mergedPresentation = {};
     host.mergedPresentationActive = false;
@@ -691,6 +941,7 @@ void DesktopApp::ResetMergedDockPresentation(PersistentDockHost& host)
     host.mergedOpacity.Reset();
     host.backdrop.SetVisualOpacity(1.f);
     host.backdrop.SetVisualTranslation(0.f, 0.f);
+    host.backdrop.SetSrgbRootPose(1.f, 0.f, 0.f);
 }
 
 void DesktopApp::UpdatePersistentDockHostVisibility()
@@ -705,8 +956,7 @@ void DesktopApp::ResetFloatingDockCompositionResources(
 {
     ResetMergedDockPresentation(host);
     host.frameReady = false;
-    brushCache_.clear();
-    brushCacheContext_ = nullptr;
+    drawing_.Reset();
     if (host.dcompVisual)
         host.dcompVisual->SetContent(nullptr);
     host.dcompSurface.Reset();
@@ -816,7 +1066,8 @@ CalculateFloatingDockStableSourceRect(
                             static_cast<int>(std::ceil(96.f * tooltipScale))),
                 visualEdgeWidth);
 
-    if (dockSettings_.showOnlyWhenSummoned || host.container->IsMergedWithStatusBar())
+    if (dockSettings_.showOnlyWhenSummoned || host.occludedFloatingPresentation ||
+        host.container->IsMergedWithStatusBar())
     {
         MONITORINFO monitor{sizeof(monitor)};
         if (GetMonitorInfoW(host.monitor, &monitor))

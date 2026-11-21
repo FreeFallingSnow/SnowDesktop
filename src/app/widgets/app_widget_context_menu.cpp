@@ -10,6 +10,7 @@
 #include "app/menus/background_menu_order.h"
 #include "platform/demo_collection_rules.h"
 #include "layout/collection_titleless_rules.h"
+#include "layout/list_detail_rules.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/right_click_contract.h"
 #include "widget/packages/widget_removal.h"
@@ -473,9 +474,8 @@ void DesktopApp::ShowWidgetContextMenu(
         label += status;
         return label;
     };
-    const auto currentOptionLabel = [&](const wchar_t* title, bool current) {
-        return current ? statusLabel(title, _LW("statusBar.menu.current"))
-                       : std::wstring(title);
+    const auto autoCollectOptionLabel = [&](const wchar_t* title, bool selected) {
+        return selected ? statusLabel(title, L"\u2713") : std::wstring(title);
     };
     const auto visibilityLabel = [&](const wchar_t* title,
                                      bool visible) {
@@ -496,29 +496,31 @@ void DesktopApp::ShowWidgetContextMenu(
         autoCollectMenu = CreatePopupMenu();
         if (!autoCollectMenu) return;
         AppendMenuW(autoCollectMenu, MF_STRING, kContextWidgetAutoCollectAll,
-            currentOptionLabel(_LW("app.interact.auto_collect_all"),
+            autoCollectOptionLabel(_LW("app.interact.auto_collect_all"),
                 effectiveSource.autoCollect && effectiveSource.autoCollectCategoryIds.empty()).c_str());
         setFluentIcon(autoCollectMenu, kContextWidgetAutoCollectAll,
             snowdesktop::menu_fluent_glyphs::kCollectItems);
         AppendMenuW(autoCollectMenu, MF_SEPARATOR, 0, nullptr);
         for (const auto& category : GetCategoryOrder(categorySettings_))
         {
-            if (category == L"all") continue;
+            if (category == L"all" ||
+                (category == L"programs" && !categorySettings_.collectProgramsEnabled))
+                continue;
             const UINT commandId = kContextWidgetAutoCollectCategoryFirst +
                 static_cast<UINT>(autoCollectCategories.size());
             if (commandId > kContextWidgetAutoCollectCategoryLast) break;
             autoCollectCategories.push_back(category);
-            const bool checked = effectiveSource.autoCollect &&
-                snowdesktop::file_category_auto_collect_rules::Matches(
+            const bool checked =
+                snowdesktop::file_category_auto_collect_rules::AutoCollectsCategory(
                     effectiveSource, category);
             AppendMenuW(autoCollectMenu, MF_STRING, commandId,
-                currentOptionLabel(GetCategoryLabel(categorySettings_, category).c_str(), checked).c_str());
+                autoCollectOptionLabel(GetCategoryLabel(categorySettings_, category).c_str(), checked).c_str());
             setFluentIcon(autoCollectMenu, commandId,
                 snowdesktop::menu_fluent_glyphs::kCategoryBar);
         }
         AppendMenuW(autoCollectMenu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(autoCollectMenu, MF_STRING, kContextWidgetToggleAutoCollect,
-            currentOptionLabel(_LW("app.interact.auto_collect_off"), !effectiveSource.autoCollect).c_str());
+            autoCollectOptionLabel(_LW("app.interact.auto_collect_off"), !effectiveSource.autoCollect).c_str());
         setFluentIcon(autoCollectMenu, kContextWidgetToggleAutoCollect,
             snowdesktop::menu_fluent_glyphs::kAutoCollect);
         const auto label = statusLabel(_LW("app.interact.auto_collect"),
@@ -993,11 +995,11 @@ void DesktopApp::ShowWidgetContextMenu(
     SetMenuItemQuickAction(menu, kContextWidgetRename);
     SetMenuItemQuickAction(menu, kLuaStackRelease);
     SetMenuItemQuickAction(menu, kContextWidgetDelete);
-    setFluentIcon(menu, hoverToggleCommand, L"\uE5F2");
+    setFluentIcon(menu, hoverToggleCommand, snowdesktop::menu_fluent_glyphs::kWidgetHoverOnly);
     if (showExpandOnHoverOption)
         setFluentIcon(menu, kContextWidgetToggleExpandOnHover,
             snowdesktop::menu_fluent_glyphs::kChevronRight);
-    setFluentIcon(menu, keepToggleCommand, L"\uF359");
+    setFluentIcon(menu, keepToggleCommand, snowdesktop::menu_fluent_glyphs::kWidgetKeepWhenHidden);
     if (widget.type == DesktopWidgetType::Collection ||
         widget.type == DesktopWidgetType::FileCategories ||
         widget.type == DesktopWidgetType::FolderMapping ||
@@ -1005,7 +1007,8 @@ void DesktopApp::ShowWidgetContextMenu(
         widget.type == DesktopWidgetType::FileGroup)
     {
         setFluentIcon(menu, privacyToggleCommand,
-            widget.privacyMode ? L"\uE78F" : L"\uE795");
+            widget.privacyMode ? snowdesktop::menu_fluent_glyphs::kWidgetPrivacyOn
+                               : snowdesktop::menu_fluent_glyphs::kWidgetPrivacyOff);
     }
     if (showLargeFolderTitlelessOption)
     {
@@ -1062,7 +1065,7 @@ void DesktopApp::ShowWidgetContextMenu(
         shellRequest.extended = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
     }
     // Toggling an auto-collect option is a continuous configuration step: keep
-    // the submenu open, refresh its status text in place, and apply the
+    // the submenu open, refresh its selection marks in place, and apply the
     // resulting collection/layout work once the menu session ends.
     bool autoCollectPending = false;
     DesktopWidget autoCollectCandidate;
@@ -1112,12 +1115,12 @@ void DesktopApp::ShowWidgetContextMenu(
             {
                 if (child.command == kContextWidgetAutoCollectAll)
                 {
-                    child.label = currentOptionLabel(_LW("app.interact.auto_collect_all"),
+                    child.label = autoCollectOptionLabel(_LW("app.interact.auto_collect_all"),
                         source.autoCollect && source.autoCollectCategoryIds.empty());
                 }
                 else if (child.command == kContextWidgetToggleAutoCollect)
                 {
-                    child.label = currentOptionLabel(_LW("app.interact.auto_collect_off"), !source.autoCollect);
+                    child.label = autoCollectOptionLabel(_LW("app.interact.auto_collect_off"), !source.autoCollect);
                 }
                 else if (child.command >= kContextWidgetAutoCollectCategoryFirst &&
                     child.command <= kContextWidgetAutoCollectCategoryLast)
@@ -1126,9 +1129,9 @@ void DesktopApp::ShowWidgetContextMenu(
                         child.command - kContextWidgetAutoCollectCategoryFirst;
                     if (categoryIndex >= autoCollectCategories.size()) continue;
                     const auto& category = autoCollectCategories[categoryIndex];
-                    const bool current = source.autoCollect &&
-                        snowdesktop::file_category_auto_collect_rules::Matches(source, category);
-                    child.label = currentOptionLabel(GetCategoryLabel(categorySettings_, category).c_str(), current);
+                    const bool checked =
+                        snowdesktop::file_category_auto_collect_rules::AutoCollectsCategory(source, category);
+                    child.label = autoCollectOptionLabel(GetCategoryLabel(categorySettings_, category).c_str(), checked);
                 }
             }
             item.label = statusLabel(_LW("app.interact.auto_collect"),

@@ -39,6 +39,7 @@ bool IsGeneralShortcutOnlyCommit(
         before.gridPreviewHotkeyModifiers != after.gridPreviewHotkeyModifiers ||
         before.gridPreviewHotkeyVirtualKey != after.gridPreviewHotkeyVirtualKey;
     return shortcutChanged &&
+        before.agentOperationsEnabled == after.agentOperationsEnabled &&
         before.showAdvancedSettings == after.showAdvancedSettings &&
         before.steamShowRunningStatus == after.steamShowRunningStatus &&
         before.steamRoomVisible == after.steamRoomVisible &&
@@ -84,6 +85,7 @@ bool IsGeneralLoggingOnlyCommit(const GeneralSettings& before,
     const GeneralSettings& after) noexcept
 {
     return before.diagnosticLogModules != after.diagnosticLogModules &&
+        before.agentOperationsEnabled == after.agentOperationsEnabled &&
         before.showAdvancedSettings == after.showAdvancedSettings &&
         before.steamShowRunningStatus == after.steamShowRunningStatus &&
         before.steamRoomVisible == after.steamRoomVisible &&

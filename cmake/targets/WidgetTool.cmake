@@ -15,6 +15,7 @@ add_executable(snowwidget
     src/widget/authoring/widget_author_permissions.cpp
     src/widget/authoring/widget_author_test.cpp
     src/widget/api/widget_api_contract_json.cpp
+    src/widget/api/widget_contract_json_writer.cpp
     src/widget/api/widget_api_registry.cpp
     src/widget/runtime/widget_logical_slot.cpp
     src/widget/runtime/lua_runtime.cpp
@@ -28,9 +29,9 @@ add_executable(snowwidget
 target_compile_features(snowwidget PRIVATE cxx_std_20)
 snowdesktop_add_executable_version_resource(snowwidget "SnowDesktop widget authoring tool")
 target_include_directories(snowwidget PRIVATE src)
-target_link_libraries(snowwidget PRIVATE SnowDesktopLua SnowDesktopPerfetto bcrypt ole32 pdh dxgi)
+target_link_libraries(snowwidget PRIVATE
+    SnowDesktopApplicationVersion SnowDesktopLua SnowDesktopPerfetto bcrypt ole32 pdh dxgi)
 target_compile_definitions(snowwidget PRIVATE
-    SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
     SNOWDESKTOP_WIDGET_SKILL_REVISION=${SNOWDESKTOP_WIDGET_SKILL_REVISION})
 if (MSVC)
     set_property(TARGET snowwidget PROPERTY

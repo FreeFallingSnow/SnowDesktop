@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/dock/persistent_dock_host.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "common/utils.h"
@@ -7,13 +8,65 @@
 #include "diagnostics/performance_trace.h"
 #include "icons/icon_render_rules.h"
 #include "icons/icon_loading_placeholder.h"
-#include "ui/render/highlight_coverage.h"
 #include "platform/demo_mode_rules.h"
 #include "platform/demo_collection_rules.h"
 #include <commoncontrols.h>
 #include <cstdlib>
 
 // Shell-icon decoration, privacy placeholders and quick-navigation icons.
+
+ID2D1DeviceContext* DesktopApp::GetIconShadowRecorder()
+{
+    if (!iconShadowRecorder_ && d2dDevice_)
+        (void)d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &iconShadowRecorder_);
+    return iconShadowRecorder_.Get();
+}
+
+void DesktopApp::DrawIconShadow(ID2D1RenderTarget* target, RECT bounds, float scale, int strength,
+    int subjectStrength, const std::function<void(ID2D1DeviceContext*)>& drawIcon,
+    snowdesktop::icon_shadow::BitmapSource source)
+{
+    if (!target || strength <= 0 || drawingIconAppearanceSource_ || target == iconShadowRecorder_.Get() ||
+        IsRectEmpty(&bounds))
+        return;
+
+    ComPtr<ID2D1DeviceContext> context;
+    if (FAILED(target->QueryInterface(IID_PPV_ARGS(&context)))) return;
+    ComPtr<ID2D1Device> device;
+    context->GetDevice(&device);
+    if (device.Get() != d2dDevice_.Get()) return;
+
+    namespace shadow = snowdesktop::icon_shadow;
+    if (source.bitmap && subjectStrength > 0 && shadow::FindSubjectMask(source.bitmap))
+        return;
+
+    const shadow::BitmapKey key{source, bounds.right - bounds.left, bounds.bottom - bounds.top, scale, strength};
+    const bool cacheable = source.bitmap && source.opacity == 1.0f && key.width <= 192 && key.height <= 192;
+    if (cacheable)
+    {
+        if (const auto* cached = bitmapIconShadows_.Find(key))
+        {
+            shadow::Draw(context.Get(), *cached, bounds, scale);
+            return;
+        }
+    }
+
+    auto* recorder = GetIconShadowRecorder();
+    if (!recorder) return;
+
+    shadow::Drawing drawing;
+    const shadow::Style style{scale, snowdesktop::IconShadowOpacity(strength), cacheable};
+    shadow::SubjectScope probe(recorder, source.bitmap ? 0 : subjectStrength, true);
+    if (!shadow::Record(context.Get(), recorder, bounds, style, drawIcon, drawing) || probe.Used())
+        return;
+
+    shadow::Draw(context.Get(), drawing, bounds, scale);
+    if (cacheable)
+    {
+        drawing.sourceBitmap = source.bitmap;
+        bitmapIconShadows_.Insert(key, std::move(drawing));
+    }
+}
 
 bool DesktopApp::ShouldUseDemoIdentity(const DesktopItem& item) const
 {
@@ -411,19 +464,21 @@ void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT iconRect,
     ctx->DrawBitmap(arrowBitmap, dst, alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 
-void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
-    D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth, std::uintptr_t ownerKey)
+namespace
 {
-    if (!ctx || IsRectEmptyRect(rect)) return;
+ComPtr<ID2D1PathGeometry> CreateIconPlateGeometry(
+    ID2D1RenderTarget* ctx, RECT rect, snowdesktop::IconBeautifyShape shape)
+{
+    if (!ctx || IsRectEmptyRect(rect)) return {};
     ComPtr<ID2D1Factory> factory;
     ctx->GetFactory(&factory);
-    if (!factory) return;
+    if (!factory) return {};
 
     ComPtr<ID2D1PathGeometry> geometry;
     ComPtr<ID2D1GeometrySink> sink;
     if (FAILED(factory->CreatePathGeometry(&geometry)) || !geometry ||
         FAILED(geometry->Open(&sink)) || !sink)
-        return;
+        return {};
 
     const float left = static_cast<float>(rect.left);
     const float top = static_cast<float>(rect.top);
@@ -431,12 +486,9 @@ void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
     const float bottom = static_cast<float>(rect.bottom);
     const float width = right - left;
     const float height = bottom - top;
-    const auto shape = iconBeautifySettings_.enabled
-        ? iconBeautifySettings_.shape
-        : snowdesktop::IconBeautifyShape::LegacyRounded;
     const auto& outline = snowdesktop::icon_beautify::ShapeOutline(shape);
     if (outline.empty())
-        return;
+        return {};
     const auto toPoint = [&](const snowdesktop::icon_beautify::ShapePoint& point) {
         return D2D1::Point2F(
             left + point.x * width,
@@ -446,7 +498,41 @@ void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
     for (size_t index = 1; index < outline.size(); ++index)
         sink->AddLine(toPoint(outline[index]));
     sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-    if (FAILED(sink->Close())) return;
+    if (FAILED(sink->Close())) return {};
+    return geometry;
+}
+} // namespace
+
+void DesktopApp::DrawDockControlSubjectShadow(ID2D1DeviceContext* target, RECT bounds, float scale,
+    const std::function<void(ID2D1DeviceContext*)>& drawSubject)
+{
+    const int strength = snowdesktop::icon_shadow::SubjectScope::Claim(target);
+    if (strength <= 0) return;
+    auto* recorder = GetIconShadowRecorder();
+    if (!recorder || recorder == target) return;
+    const auto shape = iconBeautifySettings_.enabled
+        ? iconBeautifySettings_.shape : snowdesktop::IconBeautifyShape::LegacyRounded;
+    const auto plate = CreateIconPlateGeometry(target, bounds, shape);
+    if (!plate) return;
+
+    snowdesktop::icon_shadow::Drawing drawing;
+    // This shadow is composited with the plate before the window is presented.
+    const snowdesktop::icon_shadow::Style style{scale, snowdesktop::IconShadowOpacity(strength)};
+    if (!snowdesktop::icon_shadow::Record(target, recorder, bounds, style, drawSubject, drawing))
+        return;
+    target->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), plate.Get()), nullptr);
+    snowdesktop::icon_shadow::Draw(target, drawing, bounds, style.scale);
+    target->PopLayer();
+}
+
+void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
+    D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth, std::uintptr_t ownerKey)
+{
+    const auto shape = iconBeautifySettings_.enabled
+        ? iconBeautifySettings_.shape
+        : snowdesktop::IconBeautifyShape::LegacyRounded;
+    const auto geometry = CreateIconPlateGeometry(ctx, rect, shape);
+    if (!geometry) return;
 
     ComPtr<ID2D1SolidColorBrush> fillBrush;
     ComPtr<ID2D1SolidColorBrush> borderBrush;
@@ -475,9 +561,8 @@ void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
                 &properties, &bitmap))) return;
         cached = iconReflectionCache_.Insert(key, std::move(bitmap));
     }
-    ctx->DrawBitmap(cached->Get(), ToD2DRect(rect), 1.0f,
-        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-    snowdesktop::HighlightCoverage::RecordMask(ctx, cached->Get(), ToD2DRect(rect));
+    const auto destination = ToD2DRect(rect);
+    ctx->DrawBitmap(cached->Get(), destination, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 
 void DesktopApp::DrawPrivacyFaIcon(
@@ -617,12 +702,22 @@ void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
     auto cached = cache.find(cacheKey);
     if (cached == cache.end())
     {
+        systemIconDemand_.Miss(cacheKey);
         QueueSystemIconBitmap(sysIconIndex, sourceSize, beautify, cacheKey, false);
         loading();
         return;
     }
 
     DrawIconBitmap(ctx, cached->second.Get(), iconRect, alpha);
+}
+
+void DesktopApp::DrawQuickNavResultBitmap(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap, RECT bounds)
+{
+    if (!bitmap) return;
+    DrawIconWithShadows(target, bounds, QuickNavScale(100) / 100.0f,
+        iconShadows_.NavigationStrength(), [&](auto* drawing) {
+            DrawIconBitmap(drawing, bitmap, bounds);
+        }, {bitmap});
 }
 
 void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT dstRect)
@@ -656,7 +751,7 @@ void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, R
         return;
     }
 
-    DrawIconBitmap(ctx, cached->second.Get(), dstRect);
+    DrawQuickNavResultBitmap(ctx, cached->second.Get(), dstRect);
 }
 
 void DesktopApp::DrawQuickNavAppIcon(
@@ -686,8 +781,7 @@ void DesktopApp::DrawQuickNavAppIcon(
         }
         if (cached != quickNavigation_->appIconCache.end())
         {
-            DrawIconBitmap(
-                ctx, cached->second.Get(), dstRect);
+            DrawQuickNavResultBitmap(ctx, cached->second.Get(), dstRect);
             return;
         }
     }
@@ -701,10 +795,79 @@ void DesktopApp::DrawQuickNavAppIcon(
  * @param text 通知文本（如"第3页"）。
  */
 
+void DesktopApp::InvalidateSystemIconConsumers(std::uint64_t key)
+{
+    using Host = snowdesktop::SystemIconPlaceholderDemand::Host;
+    for (const auto& owner : systemIconDemand_.Take(key))
+    {
+        switch (owner.host)
+        {
+        case Host::DesktopItem:
+        {
+            const auto index = FindItemIndexByKey(owner.id);
+            if (index >= items_.size() || owner.generation != iconLoadSerial_) break;
+            const auto& file = items_[index];
+            if (reinterpret_cast<std::uintptr_t>(&file) == owner.token &&
+                file.sysIconIndex == static_cast<int>(key >> 32) && (file.largeIcon || !file.iconBitmap))
+                InvalidateDesktopIconPixels(file, true);
+            break;
+        }
+        case Host::Widget:
+        {
+            const auto index = FindWidgetIndexById(owner.id);
+            const auto active = desktopWidgetCompositionItems_.find(owner.id);
+            if (index < widgets_.size() && reinterpret_cast<std::uintptr_t>(&widgets_[index]) == owner.token &&
+                active != desktopWidgetCompositionItems_.end() && active->second.visible)
+                (void)QueueDesktopWidgetComposition(owner.id);
+            break;
+        }
+        case Host::Dock:
+            for (const auto& container : containers_)
+            {
+                auto* dock = dynamic_cast<DockContainer*>(container.get());
+                if (!dock || reinterpret_cast<std::uintptr_t>(dock) != owner.token) continue;
+                auto* host = FindPersistentDockHost(dock);
+                if (host && host->active)
+                {
+                    if (IsWindowVisible(host->hwnd)) InvalidateFloatingDockWindow(*host, false);
+                }
+                else if (hwnd_ && (!desktopIconsHidden_ || dockSettings_.keepWhenDesktopHidden))
+                {
+                    const RECT bounds = dock->GetAnimationVisualBounds(true);
+                    if (!IsRectEmpty(&bounds)) InvalidateRect(hwnd_, &bounds, FALSE);
+                }
+                break;
+            }
+            break;
+        case Host::Popup:
+            if (const auto* popup = GetOpenPopupWidget(); popup && popup->id == owner.id &&
+                IsCollectionPopupHostedByFloatingWindow() &&
+                owner.generation == (dockFolderPopupOpen_ ? dockFolderPopupIconGeneration_ : 0))
+            {
+                InvalidateCollectionPopupContent();
+                InvalidateFloatingPopupWindow(false);
+            }
+            break;
+        case Host::Navigation:
+            if (quickNavigation_->open && reinterpret_cast<std::uintptr_t>(quickNavigation_->hwnd) == owner.token)
+                InvalidateQuickNavigationWindow();
+            break;
+        case Host::Drag:
+            if (dragSession_.IsActive() && reinterpret_cast<std::uintptr_t>(dragPreviewHwnd_) == owner.token &&
+                IsWindowVisible(dragPreviewHwnd_))
+            {
+                InvalidateDragStaticScene(false);
+                SyncDragPreviewWindow();
+            }
+            break;
+        }
+    }
+}
+
 void DesktopApp::QueueSystemIconBitmap(int index, int size, bool beautify,
     std::uint64_t key, bool quick)
 {
-    shellVisualWork_.Submit((quick ? L"quick-system:" : L"system:") + std::to_wstring(key),
+    const bool queued = shellVisualWork_.Submit((quick ? L"quick-system:" : L"system:") + std::to_wstring(key),
         [index, size, quick] {
             auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
             ComPtr<IImageList> list;
@@ -719,10 +882,13 @@ void DesktopApp::QueueSystemIconBitmap(int index, int size, bool beautify,
             }
             return result;
         }, [this, key, quick, beautify](auto result) {
-            if (!result || !result->bitmap) return;
-            auto bitmap = CreateD2DBitmapFromHBitmap(result->bitmap, beautify);
+            auto bitmap = result && result->bitmap ? CreateD2DBitmapFromHBitmap(result->bitmap, beautify) : nullptr;
             ComPtr<ID2D1Bitmap> converted;
-            if (!bitmap || FAILED(bitmap.As(&converted))) return;
+            if (!bitmap || FAILED(bitmap.As(&converted)))
+            {
+                if (!quick) (void)systemIconDemand_.Take(key);
+                return;
+            }
             (quick ? quickNavigation_->sysIconCache : placeholderIconCache_)[key] = std::move(converted);
             if (quick)
             {
@@ -731,15 +897,10 @@ void DesktopApp::QueueSystemIconBitmap(int index, int size, bool beautify,
                 InvalidateQuickNavigationWindow();
                 return;
             }
-            // Placeholder icons are shared by all of these presentation hosts;
-            // retain the complete refresh fallback for their consumers.
             snowdesktop::performance::Scope trace("render", "shared-placeholder.delivery");
-            InvalidateDragStaticScene();
-            InvalidateRect(hwnd_, nullptr, FALSE);
-            InvalidateDockRects();
-            InvalidateFloatingPopupWindow(false);
-            InvalidateQuickNavigationWindow();
+            InvalidateSystemIconConsumers(key);
         }, hwnd_, kBackgroundShellReadyMessage);
+    if (!queued && !quick) (void)systemIconDemand_.Take(key);
 }
 
 bool DesktopApp::ShouldBeautifyIconBitmap(bool iconIsMediaThumbnail) const

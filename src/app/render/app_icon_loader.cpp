@@ -6,7 +6,9 @@
 #include "settings/general_settings.h"
 #include "app/shell/icon_load_task.h"
 #include "common/utils.h"
+#include "icons/shell_icon_bitmap.h"
 #include "icons/icon_render_rules.h"
+#include "layout/category_collection_rules.h"
 #include "settings/settings_controller.h"
 #include "app/dock/persistent_dock_host.h"
 #include "shell/shortcut_category_target.h"
@@ -296,8 +298,12 @@ void DesktopApp::DrainBackgroundShellWork()
         // First pixels/refinement update only the current popup's presentation;
         // source containers and all ordinary model deliveries remain fenced.
         if (dockFolderPopupOpen_ && popupAnimation_.IsInteractive())
-            iconWork_.Drain(std::to_wstring(iconLoadSerial_) + L"\nF\n" +
-                kDockFolderPopupWidgetId + L"\n");
+        {
+            const auto prefix = folderPreview_ && folderPreview_->inlineBounds
+                ? InlineFolderPreviewIconRequestPrefix(iconLoadSerial_, folderPreview_->hostWidgetId)
+                : std::to_wstring(iconLoadSerial_) + L"\nF\n" + kDockFolderPopupWidgetId + L"\n";
+            iconWork_.Drain(prefix);
+        }
         return;
     }
     folderReadDelivery_.Drain(
@@ -322,14 +328,14 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
     const std::array styles{
         snowdesktop::icon_beautify::Normalize(ResolveIconAppearance(identity, false)),
         snowdesktop::icon_beautify::Normalize(ResolveIconAppearance(identity, true))};
-    const auto preparePixels = [styles, preparation = preparedIconPixels_.Preparation()](const std::shared_ptr<IconLoadResult>& result) {
+    const auto preparePixels = [styles, subject = iconShadows_.subject, preparation = preparedIconPixels_.Preparation()](const std::shared_ptr<IconLoadResult>& result) {
         if (!result->bitmap) return;
         try
         {
             preparation->Run([&] {
                 auto prepared = std::make_shared<snowdesktop::icon_styled_pixels::Prepared>();
                 if (snowdesktop::icon_styled_pixels::Prepare(result->bitmap,
-                        styles[result->iconIsMediaThumbnail ? 1 : 0], false, false, *prepared))
+                        styles[result->iconIsMediaThumbnail ? 1 : 0], false, false, *prepared, subject))
                     result->preparedPixels = std::move(prepared);
             });
         }
@@ -363,6 +369,7 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
         result->requestKey = input->requestKey;
         result->layoutKey = input->layoutKey;
         result->widgetId = input->widgetId;
+        result->inlinePreviewHostId = input->inlinePreviewHostId;
         result->phase = input->phase;
         result->isDesktopItem = input->isDesktopItem;
         result->folderPath = input->folderPath;
@@ -561,14 +568,10 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
             }
             else if (isUrl)
             {
-                wchar_t url[32768]{};
-                shellCalls::Call(L"Classify.ReadUrl", [&] {
-                    return GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url,
-                                                    static_cast<DWORD>(std::size(url)),
-                                                    path.c_str());
-                });
-                result->isApplicationShortcut = shortcutRules::IsSteamApplicationUrl(url);
-                result->shortcutTarget.application = result->isApplicationShortcut;
+                using namespace snowdesktop::category_collection_rules;
+                const auto url = shellCalls::Call(L"Classify.ReadUrl", [&] { return ReadInternetShortcutUrl(path); });
+                result->shortcutTarget = ClassifyInternetShortcut(url);
+                result->isApplicationShortcut = result->shortcutTarget.application;
             }
             result->isApplicationShortcut = result->isApplicationShortcut ||
                 snowdesktop::category_collection_rules::IsProgramItem(
@@ -710,6 +713,13 @@ void DesktopApp::BeginIconLoadGeneration()
     ++iconLoadSerial_;
     iconWork_.Cancel();
     iconLoaderPendingKeys_.clear();
+    for (const auto& [host, preview] : inactiveInlineFolderPreviews_)
+    {
+        const auto& model = preview.model;
+        if (model.loading || std::any_of(model.data.folderEntries.begin(), model.data.folderEntries.end(),
+                [](const FolderEntry& entry) { return entry.iconState != IconState::FullQuality; }))
+            QueueFolderRead(model.data.sourceFolderPath);
+    }
 }
 
 void DesktopApp::CancelDockFolderPopupIconLoads()
@@ -717,6 +727,13 @@ void DesktopApp::CancelDockFolderPopupIconLoads()
     dockFolderPopupIconGeneration_ =
         snowdesktop::popup_icon_load_rules::NextGeneration(dockFolderPopupIconGeneration_);
     const auto prefix = std::to_wstring(iconLoadSerial_) + L"\nF\n" + kDockFolderPopupWidgetId + L"\n";
+    iconWork_.Cancel(prefix);
+    std::erase_if(iconLoaderPendingKeys_, [&](const auto& key) { return key.starts_with(prefix); });
+}
+
+void DesktopApp::CancelInlineFolderPreviewIconLoads(const std::wstring& hostId)
+{
+    const auto prefix = InlineFolderPreviewIconRequestPrefix(iconLoadSerial_, hostId);
     iconWork_.Cancel(prefix);
     std::erase_if(iconLoaderPendingKeys_, [&](const auto& key) { return key.starts_with(prefix); });
 }

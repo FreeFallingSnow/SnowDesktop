@@ -10,7 +10,11 @@
 #include "ui/render/native_tooltip_content.h"
 
 #include <memory>
+#include <optional>
 #include <vector>
+
+struct DragSourceList;
+struct DropPreviewList;
 
 class DesktopApp;
 namespace snowdesktop { class NativeTooltip; }
@@ -111,8 +115,7 @@ public:
             SlotSurfaceKind::Dock;
     }
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
-    void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
-        Slot* targetSlot, HitRegion region, int mods) override;
+    DropReceipt OnItemsDropped(const ItemDrop& drop) override;
     void DrawChrome(ID2D1DeviceContext* context, POINT mousePt) override;
     void DrawContents(ID2D1DeviceContext* context) override;
     RECT GetBounds() const override;
@@ -126,6 +129,20 @@ public:
     size_t Capacity() const;
     bool HasCapacity(size_t additional) const;
     bool ScrollByWheelDelta(POINT pointer, int wheelDelta);
+    struct KeyboardTarget
+    {
+        enum class Kind { Start, Search, Entry, Running, Frequent };
+        Kind kind;
+        size_t index;
+        std::wstring key;
+        RECT bounds;
+        bool focused;
+        bool scrollable;
+    };
+    std::vector<KeyboardTarget> KeyboardTargets(bool alongDock = false);
+    std::optional<KeyboardTarget> FocusedKeyboardTarget();
+    void SetKeyboardFocus(const KeyboardTarget& target);
+    bool ClearKeyboardFocus();
     bool IsWindowsButtonPoint(POINT pt) const;
     bool IsSearchPoint(POINT pt) const;
     DockEntryItem* EntryAtPoint(POINT pt) const;
@@ -167,9 +184,11 @@ public:
         snowdesktop::dock_magnification::HoverEntryAnimation entry;
         snowdesktop::dock_magnification::SingleFocusAnimation single;
         std::shared_ptr<EntryRemovalTimeline> removals;
+        std::wstring keyboardFocusKey;
     };
     PresentationState CapturePresentationState() const;
     bool RestorePresentationState(const PresentationState& state);
+    DropPreviewList FilePinPreview(const DragSourceList& sources, size_t insertIndex, POINT point) const;
     size_t GetDropInsertIndex(Slot* slot, HitRegion region) const
     { return InsertIndexFor(slot, region); }
     // A delayed external producer has not supplied its item types yet. Keep
@@ -209,6 +228,9 @@ private:
         snowdesktop::dock_folder_rules::InsertRange range, bool folderSource) const;
     int ItemIconSize() const;
     int ItemPitch() const;
+    size_t PendingFileCount(bool folders) const;
+    float AdditionalSlotUnits(bool folders) const;
+    std::vector<std::pair<RECT, std::shared_ptr<FolderEntry>>> pendingFileCells_;
     int ScaledSpacing() const;
     int ScaledSeparatorGap() const;
     float RunningSlotUnits() const;
@@ -266,6 +288,7 @@ private:
     mutable size_t mainEntryCount_ = 0;
     mutable size_t folderEntryCount_ = 0;
     mutable int scrollOffset_ = 0;
+    std::wstring keyboardFocusKey_;
     // Cache the measured tooltip size separately from its visual anchor so
     // pointer-driven magnification can move the chip without rebuilding a
     // DirectWrite layout for every WM_MOUSEMOVE.

@@ -16,7 +16,9 @@
 #include "core/item.h"
 #include "common/types.h"
 #include "app/app.h"
+#include "layout/folder_preview_header_layout.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/list_detail_rules.h"
 #include "common/utils.h"
 #include "collection_group_rules.h"
 #include "ui/menu/menu_fluent_glyphs.h"
@@ -25,7 +27,6 @@
 #include "widget_chrome_rules.h"
 #include "widget/preview/widget_preview_scene.h"
 #include "settings/category_settings.h"
-#include "layout/item_render_layer_rules.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "storage_title_bar_layout.h"
 #include <algorithm>
@@ -90,6 +91,12 @@ static size_t FolderEntryDateGroupRank(const FolderEntry& entry)
 
 RECT FolderMapping::GetSearchBoxRect() const
 {
+    if (app_ && app_->folderPreview_ && data_ == &app_->dockFolderPopupWidget_)
+    {
+        const RECT popup = app_->folderPreview_->inlineBounds.value_or(app_->popupRect_);
+        const auto* motion = app_->GetCollectionPopupResizeTransition();
+        return app_->GetFolderPreviewNavigationRow(motion ? motion->Panel(popup) : popup).searchBox;
+    }
     return GetCategorizedSearchBoxRect(
         data_ && app_ && data_->showSearchBox);
 }
@@ -99,7 +106,7 @@ static RECT FolderMappingTabsRect(FolderMapping* widget)
     DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
     return widget
         ? widget->GetCategorizedTabsRect(
-            data && data->showFileCategories)
+            data && data->showFileCategories && !widget->IsSearchActive())
         : RECT{};
 }
 
@@ -111,12 +118,18 @@ static RECT FolderMappingTabsRect(FolderMapping* widget)
 static RECT FolderMappingContentRect(FolderMapping* widget)
 {
     if (!widget) return {};
-    RECT body = snowdesktop::storage_title_bar::InsetContent(
-        widget->GetBodyRect(), widget->UsesTopTitleBar(),
+    namespace popup = snowdesktop::collection_popup_layout;
+    const bool hostedPopup = widget->IsPopupHosted() && !widget->IsInlinePreview();
+    const bool topTitleBar = widget->UsesTopTitleBar();
+    RECT body = hostedPopup ? popup::ResolveHostedContentRect(widget->GetBodyRect(), widget->GetCellScale())
+        : snowdesktop::storage_title_bar::InsetContent(
+        widget->GetBodyRect(), topTitleBar,
         widget->Cu(4.0f), widget->Cu(8.0f), widget->Cu(4.0f));
-    body.bottom = std::max<LONG>(body.top,
-        std::min<LONG>(body.bottom + widget->Cu(4.0f),
-            widget->GetScrollContentBottom()));
+    LONG contentBottom = widget->GetScrollContentBottom();
+    // The top-title inline frame already ends at the host's content boundary.
+    if (!(widget->IsInlinePreview() && topTitleBar))
+        contentBottom = std::min<LONG>(body.bottom + widget->Cu(4.0f), contentBottom);
+    body.bottom = std::max(body.top, contentBottom);
     if (IsRectEmptyRect(body)) return {};
     RECT tabs = FolderMappingTabsRect(widget);
     RECT search = widget->GetSearchBoxRect();
@@ -127,7 +140,8 @@ static RECT FolderMappingContentRect(FolderMapping* widget)
             !IsRectEmptyRect(search), search.bottom,
             widget->GetCategorizedTabRowOffset(),
             widget->Cu(widget->GetCategorizedTabRowPitch()),
-            widget->Cu(8.0f), widget->Cu(4.0f)));
+            hostedPopup ? widget->Cu(popup::kControlGapCu) - widget->Cu(popup::kTabSegmentInsetCu) : widget->Cu(8.0f),
+            widget->Cu(hostedPopup ? popup::kControlGapCu : 4.0f)));
     return widget->ApplyDetailsHeaderToViewport(body);
 }
 
@@ -195,6 +209,26 @@ std::wstring FolderMapping::CachedActiveCategoryId() const
             data_->activeCategoryId) != visibleCategoryIds_.end())
         return data_->activeCategoryId;
     return visibleCategoryIds_.empty() ? L"" : visibleCategoryIds_.front();
+}
+
+bool FolderMapping::RevealAllForMemberDrop(const DragSourceList& sources, bool fileBacked)
+{
+    if (!data_ || !app_ || !data_->showFileCategories || IsSearchActive()) return false;
+    const auto category = CachedActiveCategoryId();
+    if (category.empty() || category == L"all") return false;
+
+    // The only in-memory move into a mapping comes from the same folder.
+    if (!fileBacked && std::all_of(sources.entries.begin(), sources.entries.end(), [&](const auto& entry) {
+        return entry.memberIndex < data_->folderEntries.size() &&
+            FolderEntryCategoryId(data_->folderEntries[entry.memberIndex], app_->GetCategorySettings()) == category;
+    })) return false;
+
+    data_->activeCategoryId = L"all";
+    data_->scrollOffset = 0;
+    InvalidateSlots();
+    EnsureCategoryTabVisible(
+        std::find(visibleCategoryIds_.begin(), visibleCategoryIds_.end(), L"all") - visibleCategoryIds_.begin());
+    return true;
 }
 
 const std::vector<size_t>& FolderMapping::GetVisibleEntryIndices() const
@@ -410,6 +444,13 @@ RECT FolderMapping::GetContentViewportRect() const
     return FolderMappingContentRect(const_cast<FolderMapping*>(this));
 }
 
+void FolderMapping::SetInlinePreviewFrame(const RECT& frame)
+{
+    if (!inlinePreview_) InvalidateSlots();
+    inlinePreview_ = true;
+    SetPopupFrame(&frame);
+}
+
 void FolderMapping::ApplyMarqueeSelection(const RECT& contentRect)
 {
     if (UsesFolderSearch()) { ApplyFolderSearchMarquee(contentRect); return; }
@@ -452,7 +493,7 @@ static snowdesktop::widget_item_layout::Layout FolderMappingLocalLayout(
             std::max(widget->GetListRowHeight(),
                 metrics.minimumListHeight), widget->GetListSpacing(), snowdesktop::list_detail_rules::ListColumns(*data));
     return snowdesktop::widget_item_layout::ResolveGrid(
-        content, widget->IsPopupHosted()
+        content, widget->IsPopupHosted() && !widget->IsInlinePreview()
             ? snowdesktop::collection_popup_layout::ResolveGridColumnCount(
                 content.right - content.left, metrics.minimumGridWidth)
             : std::max(1, data->gridSpan.columns), 0,
@@ -469,12 +510,15 @@ void FolderMapping::EnsureDateLayout() const
         return;
     }
 
-    const auto& visibleEntries = GetVisibleEntryIndices();
+    const auto& members = GetVisibleEntryIndices();
+    const auto& pending = PendingFileLayout();
     const auto itemLayout = FolderMappingLocalLayout(
         const_cast<FolderMapping*>(this));
     const int currentItemHeight = itemLayout.vertical.cell +
         itemLayout.vertical.gap;
-    if (dateLayoutSource_ == visibleEntries &&
+    if (dateLayoutSource_ == members && dateLayoutHidden_ == pending.hidden &&
+        std::equal(dateLayoutBoundaries_.begin(), dateLayoutBoundaries_.end(), pending.gaps.begin(), pending.gaps.end(),
+            [](size_t index, const auto& gap) { return index == gap.boundary; }) &&
         dateLayoutListMode_ == data_->listMode &&
         dateLayoutItemHeight_ == currentItemHeight &&
         itemLayout.horizontal.count == dateLayoutColumns_ &&
@@ -482,7 +526,21 @@ void FolderMapping::EnsureDateLayout() const
         return;
 
     dateLayoutCache_.clear();
-    dateLayoutSource_ = visibleEntries;
+    dateLayoutSource_ = members;
+    dateLayoutHidden_ = pending.hidden;
+    dateLayoutBoundaries_.clear();
+    for (const auto& gap : pending.gaps) dateLayoutBoundaries_.push_back(gap.boundary);
+    std::vector<size_t> projected;
+    const bool shifted = !pending.hidden.empty() || !pending.gaps.empty();
+    if (shifted)
+    {
+        projected.resize(pending.Count(members.size()), data_->folderEntries.size());
+        for (size_t i = 0; i < members.size(); ++i)
+            if (const auto position = pending.Member(i)) projected[*position] = members[i];
+        for (const auto& gap : pending.gaps)
+            if (!members.empty()) projected[gap.position] = members[std::min(gap.boundary, members.size() - 1)];
+    }
+    const auto& visibleEntries = shifted ? projected : members;
     dateLayoutListMode_ = data_->listMode;
     dateLayoutItemHeight_ = currentItemHeight;
     dateLayoutColumns_ = itemLayout.horizontal.count;
@@ -551,7 +609,7 @@ static int FolderMappingContentHeight(FolderMapping* widget, size_t itemCount)
             : static_cast<int>(segments.back().y + segments.back().height);
     }
     return snowdesktop::widget_item_layout::ContentHeight(
-        FolderMappingLocalLayout(widget), itemCount);
+        FolderMappingLocalLayout(widget), widget->PendingFileLayout().Count(itemCount));
 }
 
 /**
@@ -599,7 +657,7 @@ static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex)
                 break;
             }
         }
-        if (!itemSegment && linearIndex == widget->GetVisibleEntryIndices().size())
+        if (!itemSegment && linearIndex >= widget->PendingFileLayout().Count(widget->GetVisibleEntryIndices().size()))
         {
             for (auto it = segments.rbegin(); it != segments.rend(); ++it)
             {
@@ -698,15 +756,14 @@ std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
             const auto localRange = snowdesktop::widget_item_layout::
                 VisibleRange(localLayout, segment.itemCount,
                     scroll - static_cast<int>(segment.y), visibleHeight);
-            const size_t firstInSegment = localRange.first;
-            const size_t lastInSegment = localRange.second;
-            for (size_t localIndex = firstInSegment;
-                localIndex < lastInSegment; ++localIndex)
-            {
-                visibleSlotIndices.push_back(
-                    segment.firstItemIndex + localIndex);
-            }
+            const auto range = PendingFileLayout().ModelRange(
+                {segment.firstItemIndex + localRange.first, segment.firstItemIndex + localRange.second},
+                visibleEntries.size());
+            for (size_t index = range.first; index < range.second; ++index)
+                visibleSlotIndices.push_back(index);
         }
+        std::sort(visibleSlotIndices.begin(), visibleSlotIndices.end());
+        visibleSlotIndices.erase(std::unique(visibleSlotIndices.begin(), visibleSlotIndices.end()), visibleSlotIndices.end());
 
         if (IncludeTrailingEmptySlot() && total > 0)
         {
@@ -719,8 +776,9 @@ std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
     }
     else if (total > 0)
     {
-        const auto range = snowdesktop::widget_item_layout::VisibleRange(
-            localLayout, total, scroll, visibleHeight);
+        const auto& pending = PendingFileLayout();
+        const auto range = pending.ModelRange(snowdesktop::widget_item_layout::VisibleRange(
+            localLayout, pending.Count(total), scroll, visibleHeight), total);
         const size_t firstIndex = range.first;
         const size_t lastIndex = range.second;
         visibleSlotIndices.reserve(lastIndex - firstIndex);
@@ -789,7 +847,7 @@ void FolderMapping::ReorderMembers(const std::vector<size_t>& indices, size_t in
 {
     if (UsesFolderSearch()) return;
     if (!data_ || !snowdesktop::folder_member_order::Reorder(*data_, indices, insertBefore)) return;
-    InvalidateSlots();
+    InvalidateFilterCache();
 }
 
 size_t FolderMapping::GetDropInsertIndex(
@@ -807,13 +865,7 @@ size_t FolderMapping::GetDropInsertIndex(
         }
         return data_->folderEntries.size();
     }
-    const auto& visibleEntries = GetVisibleEntryIndices();
-    size_t visibleInsert = targetSlot ? targetSlot->GetIndex() : visibleEntries.size();
-    if (targetSlot && region == HitRegion::SortAfter)
-        ++visibleInsert;
-    if (visibleInsert < visibleEntries.size())
-        return visibleEntries[visibleInsert];
-    return data_ ? data_->folderEntries.size() : 0;
+    return WidgetContainer::GetDropInsertIndex(targetSlot, region);
 }
 
 /**
@@ -886,27 +938,6 @@ int FolderMapping::GetVisibleContentHeight() const
 }
 
 /**
- * @brief 处理外部条目拖放到本组件时的回调
- * @param sourceItems 拖拽源条目列表
- * @param origin      源容器
- * @param targetSlot  目标槽位
- * @param region      命中区域
- * @param mods        键盘修饰键状态
- *
- * 通过 App 的拖放管道（BuildDragSourceList -> BuildDropPreviewList ->
- * ExecuteDropPipeline）执行完整的拖放处理流程。
- */
-void FolderMapping::OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
-    Slot* targetSlot, HitRegion region, int mods)
-{
-    if (!app_ || !data_) return;
-    DragSourceList sourceList = app_->BuildDragSourceList(sourceItems, origin);
-    DropPreviewList preview = app_->BuildDropPreviewList(sourceList, this, targetSlot, region, mods,
-        app_->dragSession_.CurrentPoint());
-    app_->ExecuteDropPipeline(sourceList, preview);
-}
-
-/**
  * @brief 绘制映射文件夹的内容区域
  * @param context D2D 设备上下文
  * @param body    组件主体矩形（未使用，内容区域由 FolderMappingContentRect 决定）
@@ -928,11 +959,12 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
         !PtInRect(&data_->bounds, GetRenderPointer());
     const bool lt = UsesLightContentTheme();
 
-    DrawSearchBox(context);
+    if (!app_->folderPreview_ || data_ != &app_->dockFolderPopupWidget_) DrawSearchBox(context);
     DrawDetailsHeader(context, FolderMappingContentRect(this));
 
     if (data_->folderEntries.empty())
     {
+        if (!PendingFileLayout().gaps.empty()) return;
         RECT empty = GetBodyRect();
         InflateRect(&empty, -Cu(12.0f), -Cu(12.0f));
         if (!preview && app_->initialShellReadPending_)
@@ -996,6 +1028,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
     const auto& visibleEntries = GetVisibleEntryIndices();
     if (visibleEntries.empty())
     {
+        if (!PendingFileLayout().gaps.empty()) return;
         RECT empty = FolderMappingContentRect(this);
         IDWriteTextFormat* centered = GetCuTextFormat(13.0f, false, true);
         IDWriteTextFormat* lightCentered = lt
@@ -1010,11 +1043,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
         return;
     }
 
-    auto& slots = GetSlots();
     RECT content = FolderMappingContentRect(this);
-    bool listMode = data_->listMode;
-    std::vector<std::pair<Item*, RECT>>
-        foregroundTitles;
 
     const snowdesktop::ScrollContentClip contentClip(
         context, scrollContentFadeCache_, content,
@@ -1053,51 +1082,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
                     : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.52f));
         }
     }
-    for (const auto& slot : slots)
-    {
-        if (!slot) continue;
-        size_t visibleIndex = slot->GetIndex();
-        if (visibleIndex >= visibleEntries.size()) continue;
-        size_t entryIndex = visibleEntries[visibleIndex];
-        if (entryIndex >= data_->folderEntries.size()) continue;
-        auto* icon = dynamic_cast<FolderEntryIcon*>(slot->GetItem());
-        FolderEntry* item = icon ? icon->GetFolderEntry() : nullptr;
-        if (!item) continue;
-        const FolderEntry& entry = *item;
-        RECT cell = slot->GetBounds();
-        if (cell.bottom <= content.top || cell.top >= content.bottom) continue;
-
-        if (!listMode)
-        {
-            if (privacyActive)
-                DrawPrivacyPlaceholder(context, cell, entry.DisplayName(), entry.isDirectory);
-            else
-            {
-                RECT bodyRect = GetBodyRect();
-                bool hovered = !preview && !entry.selected && PtInRect(&cell, GetRenderPointer()) && PtInRect(&bodyRect, GetRenderPointer());
-                const auto titleLayers =
-                    snowdesktop::item_render_layer_rules::
-                        ResolveTitleLayerPlan(entry.selected);
-                icon->Draw(context, cell, entry.selected ? 2 : (hovered ? 1 : 0),
-                    lt, titleLayers.drawWithItem);
-                if (titleLayers.drawInForeground)
-                    foregroundTitles.emplace_back(icon, cell);
-            }
-            continue;
-        }
-
-        if (privacyActive)
-            DrawPrivacyPlaceholder(context, cell, entry.DisplayName(), entry.isDirectory);
-        else
-            DrawListItem(context, cell, entry.iconBitmap, entry.sysIconIndex,
-                entry.DisplayName(), entry.selected, entry.iconIsMediaThumbnail,
-                {}, nullptr,
-                { entry.typeName, entry.lastWriteTime,
-                  entry.fileSize, entry.isDirectory }, std::nullopt, !app_->IsRenamingItem(&entry), entry.fullPath);
-    }
-    for (const auto& [item, bounds] : foregroundTitles)
-        item->DrawTitle(
-            context, bounds, true, 1.0f, lt);
+    DrawMemberCells(context, content, visibleEntries.size(), {data_->listMode, privacyActive, lt});
 }
 
 RECT FolderMapping::GetMemberLayoutRect(size_t index) const
@@ -1152,6 +1137,8 @@ void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bo
     const auto toggleBtn = FolderMappingFooterRect(this, WidgetHit::ListToggleBtn, handleRect);
     const auto dateBtn = FolderMappingFooterRect(this, WidgetHit::DateHeaderToggleBtn, handleRect);
     const auto openBtn = FolderMappingFooterRect(this, WidgetHit::OpenFolderBtn, handleRect);
+    const auto* content = app_->GetInlineFolderPreviewData(*data_);
+    if (!content) content = data_;
 
     IDWriteTextFormat* fluentFormat =
         GetCuFluentTextFormat(14.0f * bs);
@@ -1179,9 +1166,9 @@ void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bo
 
     drawFluentButton(dateBtn,
         snowdesktop::menu_fluent_glyphs::kDateHeader,
-        data_->dateHeaders);
+        content->dateHeaders);
     drawFluentButton(toggleBtn,
-        data_->listMode ? L"\uF462" : L"\uF4ED", true);
+        content->listMode ? L"\uF462" : L"\uF4ED", true);
     drawFluentButton(openBtn, L"\uF42E", true);
     (void)hovered;
 }

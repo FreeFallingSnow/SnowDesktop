@@ -29,6 +29,7 @@ add_library(SnowDesktopWorkshopManagerSupport STATIC
     src/component_workshop_publish.cpp
     src/component_preview_gallery.cpp
     src/manager_localization.cpp
+    src/manager_publish_preparation.cpp
     src/package_tool.cpp
     src/workshop_localization.cpp
     src/workshop_project.cpp
@@ -47,6 +48,7 @@ target_link_libraries(SnowDesktopWorkshopManagerSupport PUBLIC
 add_executable(SnowDesktopSteamBridge src/main.cpp src/presence_lifetime.h
     src/widget_multiplayer.cpp)
 target_link_libraries(SnowDesktopSteamBridge PRIVATE
+    SnowDesktopApplicationVersion
     SnowDesktopSteamWorkshopCore
     SnowDesktopWorkshopManagerSupport)
 
@@ -54,6 +56,7 @@ add_executable(SnowDesktopWorkshopManager WIN32
     src/manager_main.cpp
     src/preview_cache.cpp)
 target_link_libraries(SnowDesktopWorkshopManager PRIVATE
+    SnowDesktopApplicationVersion
     SnowDesktopSteamWorkshopCore
     SnowDesktopWorkshopManagerSupport
     SnowDesktopWorkshopImgui
@@ -84,7 +87,6 @@ foreach(STEAM_TARGET IN ITEMS
         SnowDesktopSteamBridge
         SnowDesktopWorkshopManager)
     target_compile_definitions(${STEAM_TARGET} PRIVATE
-        SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
     if (MSVC)
         set_property(TARGET ${STEAM_TARGET} PROPERTY

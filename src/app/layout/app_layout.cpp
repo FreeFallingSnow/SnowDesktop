@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "platform/application_version.h"
 #include "widgets/lua_stack.h"
 #include "diagnostics/debug_profile.h"
 #include "app/navigation/quick_navigation_state.h"
@@ -15,6 +16,7 @@
 #include "desktop/folder_mapping_visibility_rules.h"
 #include "desktop/desktop_membership_recovery.h"
 #include "layout/layout_scroll_save_rules.h"
+#include "layout/list_detail_rules.h"
 #include "interactive_layout_save.h"
 #include "icons/large_icon_backup.h"
 #include "icons/icon_appearance_codec.h"
@@ -231,6 +233,29 @@ void DesktopApp::LoadLayoutSlots()
             *document.shortcutArrowMode, 0, 2);
     groupComponentBadges_ = document.groupComponentBadges.value_or(true);
     beautifyFileThumbnails_ = document.beautifyFileThumbnails.value_or(false);
+    const snowdesktop::IconShadowSettings shadowDefaults;
+    const auto shadowStrength = [&](std::optional<int> value) {
+        if (!value) return snowdesktop::kDefaultIconShadowStrength;
+        return document.iconShadowStrengthsAreRelative.value_or(false)
+            ? *value : snowdesktop::RelativeIconShadowStrength(*value);
+    };
+    iconShadows_ = {
+        document.iconShadowFan.value_or(shadowDefaults.fan),
+        document.iconShadowDock.value_or(shadowDefaults.dock),
+        document.iconShadowExposedWidget.value_or(shadowDefaults.exposedWidget),
+        document.iconShadowDesktop.value_or(shadowDefaults.desktop),
+        document.iconShadowPopup.value_or(shadowDefaults.popup),
+        document.iconShadowQuickNavigation.value_or(shadowDefaults.quickNavigation),
+        document.iconShadowSubject.value_or(shadowDefaults.subject),
+        shadowStrength(document.iconShadowFanStrength),
+        shadowStrength(document.iconShadowDockStrength),
+        shadowStrength(document.iconShadowExposedWidgetStrength),
+        shadowStrength(document.iconShadowDesktopStrength),
+        shadowStrength(document.iconShadowPopupStrength),
+        shadowStrength(document.iconShadowQuickNavigationStrength),
+        shadowStrength(document.iconShadowSubjectStrength),
+    };
+    iconShadows_.Normalize();
 
     // Missing beautification fields are the compatibility path for old layouts.
     iconBeautifySettings_ = document.iconBeautifyPreset
@@ -978,7 +1003,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure, bool background)
             for (;;)
             {
                 const auto backup = snowdesktop::EnsureLargeIconUpgradeBackup(
-                    state, data, SNOWDESKTOP_VERSION, generation);
+                    state, data, snowdesktop::ApplicationVersion(), generation);
                 if (backup.ok)
                 {
                     largeIconUpgradeBackups_.insert(key);
@@ -1109,6 +1134,21 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure, bool background)
          << ",\n  \"groupComponentBadges\": " << (groupComponentBadges_ ? "true" : "false")
          << ",\n  \"iconBeautifyEnabled\": " << (iconBeautifySettings_.enabled ? "true" : "false")
          << ",\n  \"beautifyFileThumbnails\": " << (beautifyFileThumbnails_ ? "true" : "false")
+         << ",\n  \"iconShadowFan\": " << (iconShadows_.fan ? "true" : "false")
+         << ",\n  \"iconShadowDock\": " << (iconShadows_.dock ? "true" : "false")
+         << ",\n  \"iconShadowExposedWidget\": " << (iconShadows_.exposedWidget ? "true" : "false")
+         << ",\n  \"iconShadowDesktop\": " << (iconShadows_.desktop ? "true" : "false")
+         << ",\n  \"iconShadowPopup\": " << (iconShadows_.popup ? "true" : "false")
+         << ",\n  \"iconShadowQuickNavigation\": " << (iconShadows_.quickNavigation ? "true" : "false")
+         << ",\n  \"iconShadowSubject\": " << (iconShadows_.subject ? "true" : "false")
+         << ",\n  \"iconShadowStrengthsAreRelative\": true"
+         << ",\n  \"iconShadowFanStrength\": " << iconShadows_.fanStrength
+         << ",\n  \"iconShadowDockStrength\": " << iconShadows_.dockStrength
+         << ",\n  \"iconShadowExposedWidgetStrength\": " << iconShadows_.exposedWidgetStrength
+         << ",\n  \"iconShadowDesktopStrength\": " << iconShadows_.desktopStrength
+         << ",\n  \"iconShadowPopupStrength\": " << iconShadows_.popupStrength
+         << ",\n  \"iconShadowQuickNavigationStrength\": " << iconShadows_.quickNavigationStrength
+         << ",\n  \"iconShadowSubjectStrength\": " << iconShadows_.subjectStrength
          << ",\n  \"iconBeautifyPreset\": " << static_cast<int>(iconBeautifySettings_.preset)
          << ",\n  \"iconBeautifyGlassEnabled\": " << (iconBeautifySettings_.glassEnabled ? "true" : "false")
          << ",\n  \"iconBeautifyGlassBlurRadius\": " << iconBeautifySettings_.glassBlurRadius

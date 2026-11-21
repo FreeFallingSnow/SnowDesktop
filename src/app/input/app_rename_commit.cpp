@@ -122,8 +122,6 @@ void DesktopApp::ApplyPendingRenames()
                 destination.lastUsed = std::max(destination.lastUsed, usage.lastUsed);
                 usageChanged = true;
             }
-            if (cutPaths_.erase(oldKey))
-                cutPaths_.insert(newKey);
         }
         if (!result->metadataComplete || result->absoluteId.empty())
             continue;

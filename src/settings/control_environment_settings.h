@@ -3,7 +3,7 @@
 #include "control_settings.h"
 #include "settings_fwd.h"
 #include "winui/windows_compat.h"
-#include "winui/home_about_page_model.h"
+#include "home_about_status.h"
 #include "winui/page_layout_page_actions.h"
 
 namespace snowdesktop::control_settings
@@ -12,7 +12,7 @@ struct EnvironmentSettingsContext
 {
     ISettingsController& controller;
     winui::PageLayoutPageActions pages;
-    std::function<winui::HomeAboutStatusPatch(std::uint64_t, std::uint64_t)> homeAboutStatus;
+    std::function<settings::HomeAboutStatusPatch(std::uint64_t, std::uint64_t)> homeAboutStatus;
     std::function<bool()> debugVisible;
 };
 

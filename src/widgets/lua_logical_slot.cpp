@@ -1,6 +1,7 @@
 #include "lua_logical_slot.h"
 
 #include "core/item.h"
+#include "core/drop_model.h"
 #include "widget/runtime/widget_item_layout.h"
 
 #include <algorithm>
@@ -425,11 +426,9 @@ bool LuaLogicalSlotContainer::CommitItems(
         GetDropInsertIndex(targetSlot, region));
 }
 
-void LuaLogicalSlotContainer::OnItemsDropped(
-    const std::vector<Item*>& sourceItems, Container*, Slot* targetSlot,
-    HitRegion region, int)
+DropReceipt LuaLogicalSlotContainer::OnItemsDropped(const ItemDrop& drop)
 {
-    (void)CommitItems(sourceItems, targetSlot, region);
+    return DropReceipt::Submitted(drop.Allows(DropAction::Copy) && CommitItems(drop.items, drop.slot, drop.region), DropAction::Copy);
 }
 
 std::wstring LuaLogicalSlotContainer::GetDragHint(

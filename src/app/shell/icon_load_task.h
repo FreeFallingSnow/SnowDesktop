@@ -3,6 +3,7 @@
 #include "shell_icon_request.h"
 #include "common/types.h"
 #include "icons/icon_styled_pixels.h"
+#include "layout/category_collection_types.h"
 
 #include <windows.h>
 #include <cstdint>
@@ -11,6 +12,12 @@
 
 using IconLoadPhase = snowdesktop::shell_icon_request::Phase;
 
+inline std::wstring InlineFolderPreviewIconRequestPrefix(
+    std::uint64_t serial, const std::wstring& hostId)
+{
+    return std::to_wstring(serial) + L"\nI\n" + hostId + L"\n";
+}
+
 struct IconLoadTask {
     std::wstring sourceStamp;
     uint64_t serial = 0;
@@ -18,6 +25,7 @@ struct IconLoadTask {
     std::wstring requestKey;
     std::wstring layoutKey;
     std::wstring widgetId;
+    std::wstring inlinePreviewHostId;
     Pidl absolutePidl;
     int sysIconIndex = -1;
     std::wstring parsingName;
@@ -35,6 +43,7 @@ struct IconLoadResult {
     std::wstring requestKey;
     std::wstring layoutKey;
     std::wstring widgetId;
+    std::wstring inlinePreviewHostId;
     HBITMAP bitmap = nullptr;
     std::shared_ptr<const snowdesktop::icon_styled_pixels::Prepared> preparedPixels;
     SIZE bitmapSize{};

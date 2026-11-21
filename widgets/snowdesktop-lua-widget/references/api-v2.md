@@ -162,7 +162,8 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 探测 `view.pointer.events` 后，声明式节点还可显式观察高频 `pointerMove` 和 `wheel`；
 宿主滚动消费 wheel 时仍先更新滚动偏移并投递对应节点动作，动作不能取消滚动。
 事件驱动的数据 topic 发生变更时，持有对应订阅的组件收到 `data.change`，其中包含
-`topic/revision`；组件可在该事件中重建依赖日期范围等参数的订阅。
+`topic/revision`；组件可在该事件中重建依赖日期范围等参数的订阅。剪贴板订阅通过
+`event.clipboard` 投递该次变更的内容。
 声明 `settings.changeEvent` 后，宿主设置界面改变普通值、宿主外观、密码、文件系统句柄或
 实体引用时会发送 `settings.changed`。`keys` 是经过排序和去重的完整受影响设置键数组；
 `preview=true` 表示设置页正在应用尚未提交的实时预览，直接写入以及预览提交或取消后的
@@ -467,10 +468,11 @@ transition = {
 transform 插值只改变呈现矩阵，命中、宿主控件和 UIA 几何会在新 scene 提交时原子切换到
 目标矩阵，不会暴露逐帧中间几何。
 
-探测 `view.transition.layout` 后，`properties` 还可包含 `layout`。同一稳定 key 节点在父布局内的
-相对位置或尺寸变化时，宿主用呈现矩阵从上一帧布局插值到新布局；父子都声明时按层级组合，
-而滚动偏移与虚拟窗口平移不会被误判为布局变化。插值帧不重新求值布局，命中、裁剪、宿主输入
-和 UIA 几何仍在 scene 提交时原子使用目标布局，因此动画中的视觉位置不扩大可点击区域。
+探测 `view.transition.layout` 后，`properties` 还可包含 `layout`。已绘制节点保留稳定 key 和父节点时，
+它的位置、尺寸和绘制裁剪从上一帧过渡到目标布局。在容器上声明后，子节点继承该过渡，子节点也可声明自己的时长
+和缓动。文字和形状按插值后的节点矩形绘制，字号、圆角和边框宽度保持其声明值。途中再次改变布局会从最后绘制的
+位置继续。宿主逐帧应用绘制几何，滚动偏移和虚拟窗口平移直接应用。命中区域、宿主输入控件和 UIA 在 scene
+提交时使用目标布局及其裁剪。
 
 探测 `view.transition.enter` 后，任意节点还可单独声明：
 
@@ -491,7 +493,8 @@ transform。transform 是完整起始变换，省略字段使用单位变换默�
 
 探测 `view.transition.exit` 后，同一描述结构也可用于 `exitTransition`，其中 opacity/transform
 表示退场终点。新 scene 不再包含稳定 key 时，宿主从上一呈现状态创建不可交互的旧子树快照，
-保留旧父变换和裁剪并插值到终点；新 scene 的命中、焦点、宿主控件和 UIA 会立即提交，快照不会
+快照随退出时最近的存活祖先的内容框、呈现变换和裁剪移动，同时继续插值到退场终点。祖先从呈现中消失后，
+快照沿用最后一次绘制的位置和裁剪。新 scene 的命中、焦点、宿主控件和 UIA 会立即提交，快照不会
 继续接收动作、右键菜单或可信手势。移除的父节点声明退场时由它承载仍被移除的后代，已经在新
 scene 中复用的后代 key 会从快照剔除；没有退场的祖先不会阻止更深层节点使用自己的声明。
 同一 surface 最多保留 512 个快照节点，快速连续更新超过额度时最早的退场直接结束；key 在后续
@@ -728,6 +731,9 @@ Lua 不会获得剪贴板内容或原生句柄。`liveUpdate=false` 将 change �
 实时模式下用 `cancelled=true` 建议恢复初始值。`focus/blur/submit` 为可选动作；单行 Enter
 提交，`textArea` Enter 换行而 Ctrl+Enter 提交。`numberInput` 的上下方向键按 step 调整，
 文本是完整且位于范围内的数字时，change 还带 `numberValid=true` 和 `controlValue`。
+支持 `view.textArea.largeValue` 时，`view.textArea` 可显式设置 `maxBytes` 至
+262144。设置值超过 4096 后，控件的 `value` 使用全树独立的 256 KiB 多行编辑额度。
+默认值和其他输入控件的额度沿用原有规则。兼容旧宿主时先检测该 feature。
 探测 `view.keyboardNavigation.basic` 后，Tab/Shift+Tab 可在这些输入与同树其他可操作元素
 之间循环；进入输入后仍由上述宿主编辑器处理文本键、选择、IME 和提交。
 
@@ -1563,6 +1569,12 @@ role 推导焦点；显式 `focusable=false` 会退出焦点，key 观察目标�
 版本使用相同负载和按下/释放配对，`interaction.isFocused(key)` 可用于绘制焦点状态；这些事件
 不能取消宿主激活、组件槽位快捷键或字符/IME 输入。
 
+`interaction.dragImage` 允许即时绘制区域声明 `dragImage = imageHandle`。接受当前实例仍有效的
+运行时 `SnowImageResource`，例如剪贴板读取或订阅返回的句柄。用户在区域内按下左键并越过
+系统拖拽阈值后，宿主将该图片作为 OLE 复制数据提供给目标程序，支持 DIBV5 位图和虚拟
+`Image.png` 文件。开始拖拽会消费本次点击。宿主在启动时检查区域和图片句柄，预览和脚本
+事件无法发起系统拖拽。Lua 不接收拖拽目标、文件路径或拖拽结果。
+
 即时绘制滚动区域使用 `interaction.scroll(spec)`，不要调用 v1
 `ui.scrollArea`：
 
@@ -1587,6 +1599,16 @@ scroll key 同样是实例内稳定的 1–128 字节 UTF-8 字符串；只接�
 `interaction.setScrollOffset(key, offset)` 只在当前 render 已注册同 key 区域后设置并
 返回实际偏移。滚动不需要 `ui.input` 权限，基础 feature 为 `interaction.scroll`，横向扩展为
 `interaction.scroll.orientation`。
+
+支持 `draw.clip.edgeFade` 时，可为上面的 `draw.pushClip` 传入第五个参数
+`{ scroll = scroll, fadeLength = ui.metrics().layoutRowHeight * 0.5 }`。传入已经更新偏移的
+`interaction.scroll` 返回值。宿主按滚动方向对可见区域内的即时绘制内容应用透明度遮罩，
+渐隐长度受端外剩余内容和四分之一可视区限制。无溢出时内容保持完整可见。
+宿主滚动条和其它独立绘制的叠层沿用自身样式。背景绘制回调使用普通裁剪。
+
+声明式 `view.scroll`、`view.virtualList` 和 `view.virtualGrid` 可在探测
+`view.scroll.edgeFade` 后通过 `edgeFade` 指定渐隐长度。两类距离都以当前绘制坐标为单位，
+范围为 0–4096，默认 0。渐隐只作用于内容的绘制，滚动范围和交互命中由原有布局决定。
 
 右键命中带 `contextMenu` 绑定的 region 后，宿主同步调用 descriptor 的 `menu`：
 
@@ -1800,7 +1822,7 @@ ID 必须是 1–128 字节有效 UTF-8；同名请求在同一帧内合并，�
 `audio.output.default`、`audio.output.volume`、`audio.output.analysis`、
 `media.sessions`、`media.current`、`media.timeline`、`media.artwork`、`desktop.items`、
 `desktop.selection`、`desktop.changes`、`calendar.events` 和
-`calendar.selectedDate`、`app.indexStatus`，以及 `filesystem.watch`。在 `setup` 或模块
+`calendar.selectedDate`、`app.indexStatus`，以及 `filesystem.watch`、`clipboard.changes`。在 `setup` 或模块
 入口创建订阅，不要在每次 `render` 中重复订阅。
 
 `system.screenTime` 受 `system.screenTime.read` 保护，返回今日的 `enabled`、
@@ -1954,8 +1976,9 @@ API v2、原有权限和采样频率不变，普通订阅保持上述整体有�
 采样得到相同的新语义才切换；单次相反或异常采样继续返回上一稳定语义，但使用本次
 采样时间戳保持快照新鲜。权限撤销仍由授权层立即生效，不经过此稳定处理。
 traffic value 包含 `connected/receivedBytes/sentBytes/downloadBytesPerSecond/
-uploadBytesPerSecond`。累计字节是当前已连接非 loopback 接口的合计；速率按接口 LUID
-分别差分后求和，新加入、重连或计数器重置的接口先建立基线，不把其历史累计量计入速率。
+uploadBytesPerSecond`。累计字节和速率来自当前已连接的接口，排除回环接口和 Windows
+标记为 `FilterInterface` 的筛选器接口。速率按接口 LUID 分别差分后求和，单位为字节每秒。
+新加入、重连或计数器重置的接口先建立基线，不把其历史累计量计入速率。
 首次差分样本为 `available=false, warmingUp=true`；没有已连接接口时返回
 `available=true, connected=false` 和零速率。
 虚拟接口仍包含在上述范围内，该合计不等同于去重后的互联网流量。状态和流量是两个独立
@@ -2432,8 +2455,9 @@ end
 读取 Windows `HTML Format` 中的片段，写入时由宿主生成剪贴板头，不附带纯文本表示。
 宿主将 HTML 作为字符串传递。
 
-图片读取支持 PNG 和 Windows 位图。输入块最多 64 MiB，源图每边最多 16384 像素且总计最多
-67108864 像素，返回等比缩放至每边不超过 512 像素的临时 `SnowImageResource`。该句柄可用于
+图片读取支持 PNG 和 Windows 位图。支持 `clipboard.image.originalSize` 的宿主按原图尺寸解码，
+可处理 Windows 图像接口和当前内存能够承载的图片。较早宿主输出最长边 512 像素。
+返回临时 `SnowImageResource`。该句柄可用于
 `draw.image` 或 `view.image.source`，在热重载、实例卸载或资源回收后失效。写入接受当前实例
 仍可用的图片句柄或 `resource.image` 返回的包内资源，包内图片按比例缩放至每边不超过 2048 像素。
 宿主以带 alpha 通道的 `CF_DIBV5` 发布图片。
@@ -2445,12 +2469,59 @@ end
 剪贴板文件项采用 Explorer 兼容的 `CF_HDROP` 复制格式。引用隐藏实际路径，文件内容读取继续使用
 独立的 `filesystem` 授权。
 
+支持 `clipboard.filePaths` 时，用 `task.start("clipboard.write", { format = "file-paths", items = refs })`
+把 1 至 32 项完整地址写为 `CF_UNICODETEXT`，每行一个地址。接受当前实例手动读取的
+`items[i].ref` 或订阅事件的 `pathRefs`。操作需要可信用户手势及 `clipboard.read` 和
+`clipboard.write` 授权。引用仅在当前实例内有效，并随宿主回收而过期。
+
 任务在后台访问 Win32 剪贴板，同一实例最短间隔 100 ms。可能返回的错误包括
 `rateLimited`、`clipboardBusy`、`formatUnavailable`、`clipboardTooLarge`、
 `clipboardReadFailed`、`clipboardWriteFailed`、`clipboardImageDecodeFailed`、
 `clipboardImageDimensionsInvalid`、`clipboardImageUnavailable`、`clipboardReferenceUnavailable`、
 `invalidReference`、`handleAccessDenied`、`permissionRevoked` 和 `canceled`。预览从固定样例读取，
 写入和清空返回模拟结果，系统剪贴板保持原样。
+
+#### 剪贴板变更订阅
+
+`data.subscribe("clipboard.changes")` 使用 `data.clipboard.changes` feature，
+要求用户独立授权 `clipboard.observe`。组件在 `setup` 创建订阅，在 `data.change`
+事件中检查 `event.topic == "clipboard.changes"` 并读取 `event.clipboard`。
+事件同时提供 `subscriptionId` 与单调递增的 `revision`。
+
+| `event.clipboard.format` | 字段 |
+| --- | --- |
+| `text` | `text`，最多 262144 字节的 UTF-8 |
+| `image` | `rgb`，按行排列的 RGB 二进制字符串，以及 `width`、`height`，最长边 32 像素。支持 `data.clipboard.changes.image` 时可额外返回图片资源 |
+| `file-names` | `names`，最多 32 个文件或文件夹展示名。支持 `clipboard.filePaths` 且获准 `clipboard.read` 时，可附带按相同顺序排列的 `pathRefs` |
+| `empty` | 无历史内容，读取失败时带 `error` |
+
+一次变更优先投递图片，其次是文件展示名，最后是文本。宿主识别
+`Clipboard Viewer Ignore`、`ExcludeClipboardContentFromMonitorProcessing`、
+`CanIncludeInClipboardHistory=0` 和 `CanUploadToCloudClipboard=0`，命中时投递
+`empty`。可信手势中的 `clipboard.read` 仍可获取当前图片句柄和文件引用。
+
+支持 `data.clipboard.changes.image` 的宿主可在图片变更中附带实例绑定的
+`image` 句柄及 `imageWidth`、`imageHeight`。支持 `clipboard.image.originalSize` 时保留
+原始分辨率。每实例最多保留最近 8 个不同的后台图像资源。剪贴板像素缓存会优先保留最新
+资源，可以单独容纳一张超过常规缓存额度的原图。事件仍同时返回独立缩略图。
+资源被淘汰、组件重载或卸载后句柄失效，可用
+`resource.status(image).state` 检查。用户点击时，可以将仍可用的句柄作为
+`task.start("clipboard.write", { format = "image", image = image })` 的参数，
+写入需要 `clipboard.write` 授权。较早构建继续投递原有的缩略图字段。
+
+`clipboard.imageIdentity` 让订阅事件和手动读取图片的任务结果同时提供
+`imageId`。同一个宿主解码出的图片像素与尺寸相同，ID 就相同。
+订阅缺少可写图片句柄时仍提供 ID，组件可用它合并重复记录。该字段为不透明字符串，
+仅用于本次会话中判断图片内容是否相同。
+
+订阅从后续变更开始，组件失焦或暂时隐藏时继续运行。该主题由 Windows 通知驱动，
+忽略采样间隔与隐藏策略。快速覆盖或队列饱和时，中间变更可能被跳过。
+`handle:value()` 提供 `available`、`warmingUp` 和 `error` 状态，内容只随事件投递。
+最后一个获准订阅释放时注销监听。退订、撤权、禁用及组件卸载都会停止交付。
+预览返回 `previewUnavailable`。
+
+宿主须先发布此 feature，再发布声明 `clipboard.observe` 的组件。使用
+`requiredFeatures` 区分同版本的早期宿主构建，API 版本沿用 2。
 
 文件选择器只在当前可信用户手势中启动，并且只把用户实际选择的范围授予当前组件
 包与当前实例。`filesystem.pickOpen` 要求 `filesystem.userSelected.read`；
@@ -2913,21 +2984,42 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 媒体参数表只接受上述动作对应字段；其他任务同样拒绝未知字段、错误类型和越界数值。已移除的
 `media.playPause/next/previous` 不会注册进 VM，不能绕过任务的手势门禁。
 
+`view.icon` 和 `view.iconButton` 在支持 `view.icon.glyphInk` 的宿主上可以声明
+`glyphInkCentered = true`。宿主把字体轮廓的可见边界居中到节点的内容区。
+该模式下 `glyph` 使用单个 Unicode 字符。迁移时删除专为字形留白添加的单侧 padding 或偏移。
+
+支持 `view.text.inkAlignment` 的宿主允许 `view.text`、`view.badge`、`view.button`
+和 `view.link` 设置 `textInkAligned = true`。宿主用当前文本布局的可见边界执行
+`textAlign` 和 `verticalAlign`，水平起止随阅读方向变化。该选项只调整绘制原点，
+节点尺寸、换行、截断和命中区域仍由原有布局规则决定。可见范围超过内容区时，该轴按
+常规排版处理。未设置此选项的节点继续按行框排版。
+
 ### `draw`
 
 即时绘制坐标以组件左上角为 `(0, 0)`：
 
 - `draw.text(x, y, text, size?, color?, maxWidth?, bold?, singleLine?,
-  maxHeight?, alpha?, font?)`
+  maxHeight?, alpha?, font?, inkAlignment?)`
+
+  支持 `draw.text.inkAlignment` 时，可在最后传入 `{ x = "center", y = "center" }`
+  使 `(x, y)` 成为字形可见区域的中心。每轴可取 `"start"`、`"center"` 或 `"end"`，
+  横向分别表示左缘、中点和右缘，纵向分别表示上缘、中点和下缘。省略某一轴时，
+  该坐标仍表示常规绘制原点。宿主按实际参与绘制的布局计算边界，包含换行与省略号的结果。
+  无可见字形时沿用原点。组件可用 `widget.hasFeature("draw.text.inkAlignment")`
+  检测支持情况，旧宿主使用原有调用。
+
 - `draw.marqueeText({key, x, y, width, height, text, size?, color?, bold?,
-  speed?, gap?, alpha?, font?}) -> scrolling`
+  speed?, gap?, alpha?, font?, inkCentered?}) -> scrolling`
+
+  支持 `draw.text.inkAlignment` 时设置 `inkCentered = true` 可将可见文字在原滚动视区内垂直居中。
 - `draw.measureText(text, size?, maxWidth?, bold?, font?)`
 
   返回原有 `width`、`height` 行框度量。支持 `draw.textInkMetrics` 的宿主在
   渲染时还返回可选 `ink={left,top,width,height}`：相对于同参数 `draw.text`
   原点的可见字形边界，单位与绘制坐标一致。`left`、`top` 可为负，宽高非负；
   空串及纯空白的边界为零，无法测量时省略 `ink`。字体留白使行框中心不一定等于
-  字形中心；需要对齐字形顶部或中心时使用 `ink`。像素微调可能带来少量栅格差异。
+  字形中心。使用字形大小参与布局计算时读取 `ink`，绘制对齐优先使用
+  `draw.text` 的可选字形锚点。像素微调可能带来少量栅格差异。
   此增量不改变调用参数或原有宽高字段；依赖它的组件应声明
   `draw.textInkMetrics`，同版本早期构建也可能缺少该 feature。
 
@@ -2937,8 +3029,11 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 - `draw.gradientRect(x, y, width, height, startColor?, endColor?, direction?, radius?, alpha?)`
 - `draw.shadow(x, y, width, height, color?, blur?, radius?, offsetX?, offsetY?, alpha?)`
 - `draw.sparkline(values, x, y, width, height, color?, thickness?, min?, max?, alpha?)`
-- `draw.pushClip(x, y, width, height)`、`draw.popClip()`
-- `draw.fa(...)`、`draw.fluent(...)`
+- `draw.pushClip(x, y, width, height, options?)`、`draw.popClip()`
+- `draw.glyph(glyph, centerX, centerY, size, color?, iconFont?, alpha?) -> boolean`
+  使用字体的轮廓边界对齐到指定中心，绘制成功时返回 `true`。支持 `draw.glyph`
+  feature，`glyph` 为单个 Unicode 字符，`iconFont` 可为 `"fluent"`（默认）、
+  `"fluent-regular"` 或 `"fa"`。旧宿主可用 `draw.fluent` 或 `draw.fa` 降级。
 - `draw.image(imageHandle, x, y, width, height, alpha?)`
 - `draw.imageFit(imageHandle, x, y, width, height, fit?, alignment?, alpha?, interpolation?, rotationDegrees?, originX?, originY?, cornerRadius?)`
 - `draw.icon(ref, x, y, size?, alpha?)`：要求 `desktop.read`，只接受当前实例由

@@ -127,6 +127,7 @@ struct Server::Impl
     std::atomic<bool> running{false};
     Identity identity;
     Handler handler;
+    AccessCheck accessCheck;
     std::thread worker;
     std::mutex queueMutex;
     std::deque<std::shared_ptr<Pending>> queue;
@@ -156,7 +157,7 @@ struct Server::Impl
                 { request->phase = Pending::Phase::Cancelled; SetEvent(request->done); continue; }
                 request->phase = Pending::Phase::Executing;
             }
-            auto response = Dispatch(request->request, handler);
+            auto response = Dispatch(request->request, handler, accessCheck);
             { std::lock_guard lock(request->mutex); request->response = std::move(response); request->phase = Pending::Phase::Complete; }
             SetEvent(request->done);
         }
@@ -240,7 +241,8 @@ Server::~Server() { Stop(); }
 bool Server::Running() const noexcept { return impl_->running.load(); }
 DWORD Server::LastError() const noexcept { return impl_->error.load(); }
 
-bool Server::Start(Handler handler, std::wstring endpoint, DWORD timeoutMilliseconds)
+bool Server::Start(Handler handler, std::wstring endpoint, DWORD timeoutMilliseconds,
+    AccessCheck accessCheck)
 {
     if (impl_->window) { impl_->error.store(ERROR_ALREADY_INITIALIZED); return false; }
     if (!handler || !timeoutMilliseconds || !ReadIdentity(GetCurrentProcess(), impl_->identity))
@@ -264,6 +266,7 @@ bool Server::Start(Handler handler, std::wstring endpoint, DWORD timeoutMillisec
     impl_->window = CreateWindowExW(0, WindowClass, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, wc.hInstance, impl_.get());
     if (!impl_->window) { impl_->error.store(GetLastError()); Stop(); return false; }
     impl_->handler = std::move(handler);
+    impl_->accessCheck = std::move(accessCheck);
     impl_->timeout = timeoutMilliseconds;
     impl_->error.store(ERROR_SUCCESS);
     impl_->running.store(true);
@@ -282,6 +285,7 @@ void Server::Stop() noexcept
     if (impl_->pipe != INVALID_HANDLE_VALUE) { CloseHandle(impl_->pipe); impl_->pipe = INVALID_HANDLE_VALUE; }
     if (impl_->stop) { CloseHandle(impl_->stop); impl_->stop = nullptr; }
     impl_->handler = {};
+    impl_->accessCheck = {};
     impl_->running.store(false);
 }
 }

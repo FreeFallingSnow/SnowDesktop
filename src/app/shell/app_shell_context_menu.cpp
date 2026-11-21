@@ -114,6 +114,8 @@ void DesktopApp::ShowFolderEntryContextMenu(
     AppendMenuW(menu,
         canOpen ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextOpenCommand, _LW("app.menu.open"));
+    if (canOpen && singleSelection && !keepQuickNavigationOpen)
+        AppendFolderPreviewOpenMenuItem(menu, clientPoint, fullPath);
     AppendMenuW(menu,
         hasSelection ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextCopyPathCommand,
@@ -198,6 +200,9 @@ void DesktopApp::ShowFolderEntryContextMenu(
     if (canPersonalizeIcon && ExecuteIconOverrideMenu(command, fullPath)) return;
     switch (command)
     {
+    case kContextFolderPreviewOpen:
+        TryFolderPreviewDoubleClick(clientPoint, 0, fullPath);
+        return;
     case kContextOpenCommand:
         if (!canOpen)
             break;

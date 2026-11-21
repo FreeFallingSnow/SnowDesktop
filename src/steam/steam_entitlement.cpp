@@ -1,4 +1,5 @@
 #include "steam_entitlement.h"
+#include "platform/application_version.h"
 
 #include "data/atomic_file.h"
 #include "diagnostics/diagnostic_log.h"
@@ -636,13 +637,13 @@ struct Service::Impl
     {
         const auto traceId = ++nextTraceId;
         const bool runtimeAvailable = IsSafeRegularFile(steamRuntime);
-        Trace(traceId, L"service initialize host_version=" + DiagnosticText(SNOWDESKTOP_VERSION) +
+        Trace(traceId, L"service initialize host_version=" + DiagnosticText(snowdesktop::ApplicationVersion()) +
             L" expected_app_id=" + std::to_wstring(kSnowDesktopSteamAppId) +
             L" runtime_available=" + std::to_wstring(runtimeAvailable) +
             L" runtime=" + steamRuntime.wstring());
         snapshot.bridgeAvailable = runtimeAvailable &&
             IsSteamBridgeExecutableCompatible(
-                bridgeExecutable, SNOWDESKTOP_VERSION, &snapshot.widgetMultiplayerAvailable);
+                bridgeExecutable, snowdesktop::ApplicationVersion(), &snapshot.widgetMultiplayerAvailable);
         snapshot.state = snapshot.bridgeAvailable
             ? State::Unregistered : State::BridgeUnavailable;
         const auto cached = UnprotectCache(protectedCache, traceId);

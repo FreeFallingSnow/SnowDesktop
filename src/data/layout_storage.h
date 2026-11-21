@@ -1,6 +1,6 @@
 #pragma once
 
-#include "icons/large_icon_config.h"
+#include "icons/large_icon_config_types.h"
 #include "icons/icon_appearance.h"
 #include "dock/dock_layout_settings.h"
 
@@ -169,6 +169,21 @@ struct Document
     std::optional<bool> groupComponentBadges;
     std::optional<bool> iconBeautifyEnabled;
     std::optional<bool> beautifyFileThumbnails;
+    std::optional<bool> iconShadowFan;
+    std::optional<bool> iconShadowDock;
+    std::optional<bool> iconShadowExposedWidget;
+    std::optional<bool> iconShadowDesktop;
+    std::optional<bool> iconShadowPopup;
+    std::optional<bool> iconShadowQuickNavigation;
+    std::optional<bool> iconShadowSubject;
+    std::optional<bool> iconShadowStrengthsAreRelative;
+    std::optional<int> iconShadowFanStrength;
+    std::optional<int> iconShadowDockStrength;
+    std::optional<int> iconShadowExposedWidgetStrength;
+    std::optional<int> iconShadowDesktopStrength;
+    std::optional<int> iconShadowPopupStrength;
+    std::optional<int> iconShadowQuickNavigationStrength;
+    std::optional<int> iconShadowSubjectStrength;
     std::optional<int> iconBeautifyPreset;
     std::optional<bool> iconBeautifyGlassEnabled;
     std::optional<float> iconBeautifyGlassBlurRadius;

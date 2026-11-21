@@ -71,7 +71,7 @@ public:
     /** Rebind localized component schema after the runtime reload completes. */
     void ApplyLanguageChange(bool widgetRuntimeReloaded);
     [[nodiscard]] bool PublishHomeAboutStatus(
-        HomeAboutStatusPatch patch);
+        settings::HomeAboutStatusPatch patch);
 
     [[nodiscard]] bool PreTranslateMessage(MSG* message) noexcept;
     [[nodiscard]] bool ProcessTabNavigation(MSG* message) noexcept;

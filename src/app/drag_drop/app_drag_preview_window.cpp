@@ -1,5 +1,4 @@
 #include "app/app.h"
-#include "ui/render/highlight_coverage.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_transition.h"
 #include "common/utils.h"
@@ -204,8 +203,8 @@ bool DesktopApp::RenderDragPreviewCompositionFrame(
 
     ComPtr<ID2D1DeviceContext> context;
     context.Attach(rawContext);
-    snowdesktop::HighlightCoverage coverage;
-    snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), coverage);
+    constexpr std::uintptr_t materialKey = 1;
+    const RECT client{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
     context->SetDpi(96.0f, 96.0f);
     context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
     context->SetTransform(D2D1::Matrix3x2F::Translation(
@@ -215,9 +214,11 @@ bool DesktopApp::RenderDragPreviewCompositionFrame(
         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     context->Clear(D2D1::ColorF(0, 0, 0, 0));
 
-    brushCache_.clear();
-    brushCacheContext_ = context.Get();
+    DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get());
+    drawing_.Reset();
     const auto& dragItems = dragSession_.Items();
+    snowdesktop::SystemIconPlaceholderDemand::Paint placeholderPaint(systemIconDemand_,
+        snowdesktop::SystemIconPlaceholderDemand::Host::Drag, dragPreviewHwnd_);
     const std::size_t previewItemCount = std::min(
         dragPreviewItemIndices_.size(),
         dragPreviewItemBounds_.size());
@@ -279,26 +280,22 @@ bool DesktopApp::RenderDragPreviewCompositionFrame(
         }
         else item->Draw(context.Get(), destination, 3);
     }
-    constexpr std::uintptr_t materialKey = 1;
-    const RECT client{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
-    const bool stagedHighlights = !coverage.Empty() && dragPreviewHighlights_.StageSrgbContent(
-        dragPreviewHwnd_, materialKey, client, context.Get(), updateOffset);
+    const auto sceneResult = scene.Finish();
+    const bool presentingHighlights = SUCCEEDED(sceneResult) && dragPreviewHighlights_.PublishSrgbScene(
+        dragPreviewHwnd_, materialKey, client, context.Get(), updateOffset, scene.Scene());
     context->SetTransform(D2D1::Matrix3x2F::Identity());
     context.Reset();
-    brushCache_.clear();
-    brushCacheContext_ = nullptr;
+    drawing_.Reset();
 
     hr = dragPreviewDcompSurface_->EndDraw();
-    if (FAILED(hr))
+    if (FAILED(hr) || !presentingHighlights)
     {
         ResetDragPreviewCompositionResources();
         return false;
     }
-    const bool presentingHighlights = stagedHighlights &&
-        dragPreviewHighlights_.PublishSrgbContent(materialKey);
-    if (!presentingHighlights) dragPreviewHighlights_.RemoveSrgbContent(materialKey);
-    if (FAILED(dragPreviewDcompVisual_->SetContent(
-        presentingHighlights ? nullptr : dragPreviewDcompSurface_.Get())))
+    if (FAILED(dragPreviewHighlights_.SetDirectContentForSrgb(
+        materialKey, presentingHighlights, dcompDevice_.Get(),
+        dragPreviewDcompVisual_.Get(), dragPreviewDcompSurface_.Get())))
     {
         ResetDragPreviewCompositionResources();
         return false;
@@ -629,8 +626,6 @@ bool DesktopApp::RenderTrayDragPreviewFrame()
     const auto& preview = *trayDragPreview_;
     const UINT extent = preview.iconSize + (std::max)(8u, preview.iconSize / 3u) + 4u;
     if (FAILED(CreateOrResizeDragPreviewCompositionSurface(extent, extent))) return false;
-    dragPreviewHighlights_.RemoveSrgbContent(1);
-    if (FAILED(dragPreviewDcompVisual_->SetContent(dragPreviewDcompSurface_.Get()))) return false;
     ComPtr<ID2D1DeviceContext> context;
     POINT offset{};
     if (FAILED(dragPreviewDcompSurface_->BeginDraw(nullptr, IID_PPV_ARGS(&context), &offset))) return false;
@@ -639,6 +634,7 @@ bool DesktopApp::RenderTrayDragPreviewFrame()
     context->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x), static_cast<float>(offset.y)));
     context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     context->Clear(D2D1::ColorF(0, 0.f));
+    DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get());
     ComPtr<ID2D1Bitmap> bitmap;
     const auto properties = D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
     HRESULT result = context->CreateBitmap(D2D1::SizeU(preview.width, preview.height), preview.pixels.data(),
@@ -672,9 +668,14 @@ bool DesktopApp::RenderTrayDragPreviewFrame()
         else context->DrawLine({center.x - radius * .5f, center.y + radius * .5f},
             {center.x + radius * .5f, center.y - radius * .5f}, ink.Get(), stroke);
     }
+    const auto recorded = scene.Finish();
+    const RECT frame{0, 0, static_cast<LONG>(extent), static_cast<LONG>(extent)};
+    const bool prepared = SUCCEEDED(recorded) && SUCCEEDED(result) && dragPreviewHighlights_.PublishSrgbScene(
+        dragPreviewHwnd_, 1, frame, context.Get(), offset, scene.Scene());
     context.Reset();
     const auto end = dragPreviewDcompSurface_->EndDraw();
-    if (FAILED(result) || FAILED(end) || !CommitCompositionAnimationFrame())
+    if (!prepared || FAILED(end) ||
+        !CommitCompositionAnimationFrame())
     { ResetDragPreviewCompositionResources(); return false; }
     trayDragPreview_->dirty = false;
     FlushPendingCompositionCommit();

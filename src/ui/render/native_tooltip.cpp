@@ -181,6 +181,7 @@ struct NativeTooltip::Impl
         }
         // No hidden popup keeps a glass composition target alive.
         backdrop.Reset();
+        paintDirty = true;
         hidingWindow = false;
     }
     void Hide() { HideWindow(); state.Leave(); fixedPanel = {}; fixedLayout = {}; allowCapture = false; }
@@ -251,6 +252,7 @@ struct NativeTooltip::Impl
         context->Clear(D2D1::ColorF(0, 0.f));
         context->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
         context->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+        DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get());
         ComPtr<ID2D1SolidColorBrush> brush;
         result = context->CreateSolidColorBrush(D2D1::ColorF(0), &brush);
         if (SUCCEEDED(result))
@@ -290,13 +292,19 @@ struct NativeTooltip::Impl
             DrawNativeTooltipText(context.Get(), D2D1::RectF(offset, offset,
                 offset + layout.width, offset + layout.height), layout, appearance);
         }
+        const auto recorded = scene.Finish();
+        const RECT frame{0, 0, static_cast<LONG>(w), static_cast<LONG>(h)};
+        const bool prepared = SUCCEEDED(result) && SUCCEEDED(recorded) && backdrop.PublishSrgbScene(
+            window, reinterpret_cast<std::uintptr_t>(this), frame, context.Get(), origin, scene.Scene(), opacity);
         context.Reset();
         const HRESULT ended = surface->EndDraw();
+        if (!prepared && SUCCEEDED(result)) result = FAILED(recorded) ? recorded : E_FAIL;
         if (FAILED(result)) return result;
         if (FAILED(ended)) return ended;
         if (FAILED(result = visual->SetContent(surface.Get()))) return result;
         if (FAILED(result = opacityEffect->SetOpacity(opacity))) return result;
-        return composition->Commit();
+        result = composition->Commit();
+        return FAILED(result) || backdrop.CommitSrgbContent() ? result : E_FAIL;
     }
     void Sync(bool show)
     {
@@ -366,7 +374,7 @@ struct NativeTooltip::Impl
                 bounds.bottom - bounds.top, SWP_NOACTIVATE | SWP_NOZORDER);
         }
         const bool glass = appearance.glassEnabled && !highContrast;
-        if (!glass) backdrop.Reset();
+        if (!glass) backdrop.ResetBackdrop();
         else if (moved || environmentChanged || paintDirty || !backdrop.IsAvailable())
         {
             if (!backdrop.IsAvailable()) backdrop.InitializePopup(window, true, false);
@@ -526,7 +534,8 @@ bool NativeTooltip::SetOpacity(float opacity)
         self.backdrop.SetVisualOpacity(self.opacity);
         self.backdrop.CommitVisualChanges();
     }
-    return true;
+    self.backdrop.SetSrgbContentOpacity(reinterpret_cast<std::uintptr_t>(&self), self.opacity);
+    return self.backdrop.CommitSrgbContent();
 }
 void NativeTooltip::Hide() { impl_->Hide(); }
 void NativeTooltip::Close() { impl_->Close(); }

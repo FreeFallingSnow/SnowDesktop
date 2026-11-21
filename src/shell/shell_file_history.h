@@ -78,6 +78,7 @@ struct Result
     bool succeeded = false;
     std::vector<std::pair<std::wstring, std::wstring>> renames;
     std::vector<std::wstring> removed;
+    std::vector<std::wstring> restored;
     std::wstring failedPath;
     HRESULT status = S_OK;
 };
@@ -307,7 +308,11 @@ public:
                 hr = Rename(from, to, entry.identity);
                 if (SUCCEEDED(hr)) result.renames.emplace_back(from, to);
             }
-            else if (!redo) hr = Restore(entry);
+            else if (!redo)
+            {
+                hr = Restore(entry);
+                if (SUCCEEDED(hr)) result.restored.push_back(entry.original);
+            }
             else
             {
                 Group recycled;

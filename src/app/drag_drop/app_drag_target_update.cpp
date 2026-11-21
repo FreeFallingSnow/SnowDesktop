@@ -1,5 +1,7 @@
 #include "app/app.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/folder_preview_header_layout.h"
+#include "common/l10n.h"
 #include "common/utils.h"
 #include "core/drag_target_resolver.h"
 #include "layout/popup_drag_rules.h"
@@ -29,72 +31,38 @@ void DesktopApp::ResolveCurrentDragTargetAt(POINT clientPoint)
 
     dragSession_.UpdatePoint(clientPoint);
 
-    Container* targetContainer = nullptr;
-    Slot* targetSlot = nullptr;
-    HitRegion targetRegion = HitRegion::None;
-    if (dragDropController_.IsExternalDragActive())
-    {
-        if (!HitTestPopupForDrag(
-                clientPoint, targetContainer,
-                targetSlot, targetRegion))
-        {
-            const DragTargetResolution resolved =
-                dragDropController_.ResolveExternalTarget(
-                    containers_, clientPoint,
-                    [&](const Container& candidate) {
-                        return !desktopIconsHidden_ ||
-                            IsRetainedContainer(&candidate);
-                    });
-            targetContainer = resolved.container;
-            targetSlot = resolved.slot;
-            targetRegion = resolved.region;
-        }
-    }
-    else
-    {
-        const bool suppressDesktopWidgetTargets =
-            SuppressDesktopWidgetDragTargets();
-        const bool groupedEntryDrag =
-            dragSession_.SourceList().
-                hasCollectionGroupEntries ||
-            dragSession_.SourceList().
-                hasFileGroupEntries;
-        const bool popupHit =
-            !suppressDesktopWidgetTargets &&
-            (!groupedEntryDrag || GetGroupPopupView()) &&
-            HitTestPopupForDrag(
-                clientPoint, targetContainer,
-                targetSlot, targetRegion);
-        if (!popupHit)
-        {
-            const DragTargetResolution resolved =
-                dragDropController_.ResolveInternalTarget(
-                    containers_, clientPoint,
-                    [&](const Container& candidate) {
-                        if (desktopIconsHidden_ &&
-                            !IsRetainedContainer(&candidate))
-                            return false;
-                        return !suppressDesktopWidgetTargets ||
-                            (!dynamic_cast<const DesktopGrid*>(&candidate) &&
-                             !dynamic_cast<const WidgetContainer*>(&candidate));
-                    });
-            targetContainer = resolved.container;
-            targetSlot = resolved.slot;
-            targetRegion = resolved.region;
-        }
-    }
+    const bool external = dragDropController_.IsExternalDragActive();
+    const auto& sources = dragSession_.SourceList();
+    const bool suppressDesktopWidgetTargets = !external && SuppressDesktopWidgetDragTargets();
+    bool popupHit = false;
+    const auto resolve = [&]() -> DragTargetResolution {
+        DragTargetResolution target;
+        popupHit = !suppressDesktopWidgetTargets &&
+            (external || !(sources.hasCollectionGroupEntries || sources.hasFileGroupEntries) || GetGroupPopupView()) &&
+            HitTestPopupForDrag(clientPoint, target.container, target.slot, target.region);
+        if (popupHit) return target;
 
-    if (!dragDropController_.IsExternalDragActive() &&
-        snowdesktop::file_source_eligibility::ContainsProtectedDesktopIcons(dragSession_.SourceList()) &&
-        snowdesktop::file_source_eligibility::ForPhysicalFolder(dragSession_.SourceList()).Empty())
+        const auto visible = [&](const Container& candidate) {
+            return !desktopIconsHidden_ || IsRetainedContainer(&candidate);
+        };
+        if (external) return dragDropController_.ResolveExternalTarget(containers_, clientPoint, visible);
+        return dragDropController_.ResolveInternalTarget(containers_, clientPoint, [&](const Container& candidate) {
+            return visible(candidate) && (!suppressDesktopWidgetTargets ||
+                (!dynamic_cast<const DesktopGrid*>(&candidate) && !dynamic_cast<const WidgetContainer*>(&candidate)));
+        });
+    };
+    auto target = resolve();
+
+    if (!external && snowdesktop::file_source_eligibility::ContainsProtectedDesktopIcons(sources) &&
+        snowdesktop::file_source_eligibility::ForPhysicalFolder(sources).Empty())
     {
-        auto* widget = dynamic_cast<WidgetContainer*>(targetContainer);
+        auto* widget = dynamic_cast<WidgetContainer*>(target.container);
         const DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
         if (auto* group = dynamic_cast<FileGroup*>(widget))
         {
             auto id = group->SourceIdAtPoint(clientPoint);
-            if (id.empty() && group->IsGroupSearchActive() && targetSlot)
-                if (auto* source = group->GetSourceContainerForItem(targetSlot->GetItem()))
+            if (id.empty() && group->IsGroupSearchActive() && target.slot)
+                if (auto* source = group->GetSourceContainerForItem(target.slot->GetItem()))
                     if (auto* sourceData = source->GetWidgetData()) id = sourceData->id;
             if (id.empty()) id = group->GetActiveSourceId();
             const auto index = FindWidgetIndexById(id);
@@ -102,30 +70,160 @@ void DesktopApp::ResolveCurrentDragTargetAt(POINT clientPoint)
         }
         if (data && data->type == DesktopWidgetType::FolderMapping)
         {
-            targetSlot = nullptr;
-            targetRegion = HitRegion::Blocked;
+            target.slot = nullptr;
+            target.region = HitRegion::Blocked;
         }
     }
-    dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
+
+    const auto revealAll = [&] {
+        if (target.region != HitRegion::Empty && target.region != HitRegion::SortBefore &&
+            target.region != HitRegion::SortAfter) return false;
+        auto* view = dynamic_cast<ScrollingItemWidget*>(target.container);
+        if (!view || view->IsSearchActive()) return false;
+        auto* group = dynamic_cast<FileGroup*>(view);
+        auto* source = group ? group->GetActiveSourceContainer() : view;
+        const auto* data = source ? source->GetWidgetData() : nullptr;
+        if (!data || !data->showFileCategories || data->activeCategoryId == L"all" ||
+            (data->type != DesktopWidgetType::FileCategories && data->type != DesktopWidgetType::FolderMapping))
+            return false;
+        if (popupHit && !group)
+        {
+            // The popup hit test already limits placement to its item viewport.
+            if (GetCategorizedPopupView() != view) return false;
+        }
+        else
+        {
+            if (view->IsSingleCellDesktopPoint(clientPoint)) return false;
+            const RECT viewport = view->GetContentViewportRect();
+            if (clientPoint.y < viewport.top || clientPoint.y >= viewport.bottom) return false;
+        }
+        if (external)
+        {
+            const auto& summary = dragDropController_.ExternalSummary();
+            if (summary.applicationShortcut ||
+                !DragTargetResolver::AcceptsExternal(*view, static_cast<size_t>(std::max(1, summary.fileCount))) ||
+                (data->type == DesktopWidgetType::FolderMapping &&
+                 IsSelfContainedFolderDrop(externalFileDropPaths_, data->sourceFolderPath)))
+                return false;
+            return view->RevealAllForMemberDrop(sources, true);
+        }
+
+        const auto plan = BuildDropPreviewList(sources, view, target.slot, target.region,
+            DropActionToMods(dragSession_.Action()), clientPoint);
+        return !plan.Empty() && plan.targetContainer == source &&
+            view->RevealAllForMemberDrop(sources, plan.fileBacked);
+    };
+    if (revealAll())
+    {
+        const auto* switched = target.container;
+        dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);
+        if (popupHit)
+        {
+            popupScrollOffset_ = 0;
+            InvalidateCollectionPopupContent();
+            RefreshOpenCollectionPopupGeometry();
+        }
+        InvalidateDragStaticScene();
+        RequestLayoutSave();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        target = resolve();
+        if (target.container == switched && target.region == HitRegion::Handoff && target.slot)
+            dragSession_.KeepPlacementAfterViewChange(target.container, target.slot->GetBounds());
+    }
+
+    if (target.region == HitRegion::Handoff && target.slot &&
+        dragSession_.KeepsPlacementAfterViewChange(target.container))
+    {
+        const RECT bounds = target.slot->GetBounds();
+        const auto* popup = popupHit ? GetOpenPopupWidget() : nullptr;
+        const bool vertical = popup && !IsGroupWidgetType(popup->type)
+            ? UsesCollectionPopupList(*popup) && GetCollectionPopupColumnCount(GetCollectionPopupRect(*popup)) == 1
+            : target.container->GetInsertionStyle() == BarStyle::HBar;
+        target.region = snowdesktop::popup_drag_rules::IsAfterInsertionMidpoint(bounds, clientPoint, vertical)
+            ? HitRegion::SortAfter : HitRegion::SortBefore;
+    }
+    dragSession_.UpdateTarget(target.container, target.slot, target.region);
 }
 
 void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
 {
     if (!dragSession_.IsActive()) return;
 
+    if (!dragDropController_.IsExternalDragActive())
+        dragSession_.UpdateActionFromMods(mods);
     ResolveCurrentDragTargetAt(clientPoint);
 
-    std::wstring hint;
-    if (dragSession_.TargetContainer() &&
-        dragSession_.TargetRegion() != HitRegion::None)
-    {
-        hint = dragSession_.TargetContainer()->GetDragHint(
-            dragSession_.TargetSlot(), dragSession_.TargetRegion(),
-            dragSession_.Items(), dragSession_.Source(), mods);
-    }
     if (!UpdateWidgetPairDragHint(clientPoint, mods))
-        ShowDragHintWindow(clientPoint, hint);
+        ShowDragHintWindow(clientPoint, GetCurrentDragTargetHint(mods));
     InvalidateFloatingDockWindow(true);
+}
+
+std::wstring DesktopApp::GetCurrentDragTargetHint(
+    int mods, std::optional<DWORD> negotiatedEffect) const
+{
+    const auto* target = dragSession_.TargetContainer();
+    const auto region = dragSession_.TargetRegion();
+    if (!target || region == HitRegion::None || region == HitRegion::Blocked) return {};
+    auto* slot = dragSession_.TargetSlot();
+    if (region == HitRegion::Handoff)
+    {
+        const auto* item = slot ? slot->GetItem() : nullptr;
+        if (!item && dynamic_cast<const DesktopGrid*>(target))
+            item = HitTestIcon(dragSession_.CurrentPoint());
+        const DesktopItem* desktop = nullptr;
+        bool directory = false;
+        if (const auto* icon = dynamic_cast<const DesktopIcon*>(item))
+            desktop = icon->GetDesktopItem();
+        else if (const auto* frequent = dynamic_cast<const DockFrequentItem*>(item))
+        {
+            const auto index = frequent->GetItemIndex();
+            if (index < items_.size()) desktop = &items_[index];
+        }
+        else if (const auto* folderIcon = dynamic_cast<const FolderEntryIcon*>(item))
+        {
+            if (const auto* entry = folderIcon->GetFolderEntry())
+                directory = entry->isDirectory || entry->shortcutTarget.directory;
+        }
+        else if (const auto* dockItem = dynamic_cast<const DockEntryItem*>(item))
+        {
+            const auto index = dockItem->GetEntryIndex();
+            if (index < dockEntries_.size())
+                directory = ResolveDockFolderTarget(dockEntries_[index]).available;
+        }
+        else if (folderPreview_ && slot == popupDragTarget_.Get())
+            directory = dynamic_cast<const ExternalFileItem*>(item) != nullptr;
+
+        if (desktop && desktop->desktopIconClsid.empty())
+        {
+            // Filesystem enumeration records a timestamp for both types and
+            // a size only for files. Link metadata identifies directory links.
+            directory = desktop->shortcutTarget.directory ||
+                (desktop->modifiedTime.has_value() && !desktop->fileSize.has_value());
+        }
+        if (directory)
+        {
+            DWORD effect = negotiatedEffect.value_or(DROPEFFECT_NONE);
+            if (!negotiatedEffect)
+            {
+                const DWORD allowed = dragDropController_.IsExternalDragActive()
+                    ? dragDropController_.ExternalSummary().allowedEffects
+                    : DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
+                effect = dragDropController_.IsExternalDragActive() && externalOwnedContent_
+                    ? allowed & DROPEFFECT_COPY
+                    : ChooseDropEffect(static_cast<DWORD>(mods), allowed);
+            }
+            auto name = item->GetTitle();
+            if (name.empty()) name = item->GetPath();
+            switch (effect)
+            {
+            case DROPEFFECT_MOVE: return _LFW("core.drag.move_into_folder", name);
+            case DROPEFFECT_COPY: return _LFW("core.drag.copy_into_folder", name);
+            case DROPEFFECT_LINK: return _LFW("core.drag.link_in_folder", name);
+            default: return {};
+            }
+        }
+    }
+    return target->GetDragHint(slot, region, dragSession_.Items(), dragSession_.Source(), mods);
 }
 
 /**
@@ -398,6 +496,18 @@ void DesktopApp::RebindDragSourceAfterRebuild()
 bool DesktopApp::HitTestPopupForDrag(POINT client,
     Container*& targetContainer, Slot*& targetSlot, HitRegion& targetRegion)
 {
+    if (!inactiveInlineFolderPreviews_.empty() && !IsPointOccludedByOpenPopup(client) &&
+        FindInactiveInlineFolderPreviewHostAtPoint(client))
+    {
+        ActivateInlineFolderPreviewAtPoint(client, true);
+        if (!IsPointOccludedByOpenPopup(client))
+        {
+            // An inactive preview must not hand a drop to the hidden homepage
+            // beneath it when a separate popup owns the active interaction.
+            targetRegion = HitRegion::Blocked;
+            return true;
+        }
+    }
     if (!IsCollectionPopupInteractive())
         return false;
     if (desktopIconsHidden_ && !IsOpenPopupRetained())
@@ -426,6 +536,37 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
     {
         const RECT popup = GetCollectionPopupRect(
             dockFolderPopupWidget_);
+        if (folderPreview_)
+        {
+            const auto* motion = GetCollectionPopupResizeTransition();
+            const RECT panel = motion ? motion->Panel(popup) : popup;
+            const auto navigation = GetFolderPreviewNavigationRow(panel);
+            if (PtInRect(&navigation.breadcrumb, client))
+            {
+                targetContainer = dockFolderPopupContainer_.get();
+                targetSlot = nullptr;
+                targetRegion = HitRegion::Blocked;
+                if (!dockFolderPopupAvailable_) return true;
+
+                const bool external = dragDropController_.IsExternalDragActive();
+                const auto sourcePaths = external ? externalFileDropPaths_ : dragSession_.SourceList().FilePaths();
+                if (!external && sourcePaths.empty()) return true;
+                for (const auto& crumb : GetFolderPreviewBreadcrumbs(panel))
+                {
+                    if (crumb.path.empty() || !PtInRect(&crumb.bounds, client)) continue;
+                    if (IsSelfContainedFolderDrop(sourcePaths, crumb.path)) return true;
+
+                    // Each ancestor has a distinct path length within this
+                    // view, including when overflow changes the visible list.
+                    targetSlot = popupDragTarget_.BindHandoff(targetContainer, crumb.bounds,
+                        crumb.path.size(), SlotFeedbackRole::Popup, &dockFolderPopupWidget_,
+                        [&] { return std::make_unique<ExternalFileItem>(crumb.path); });
+                    targetRegion = HitRegion::Handoff;
+                    return true;
+                }
+                return true;
+            }
+        }
         if (!PtInRect(&popup, client))
             return false;
 
@@ -555,7 +696,9 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                 const auto popupMetrics =
                     GetOpenCollectionPopupLayoutMetrics();
                 const bool listLayout = UsesCollectionPopupList(dockFolderPopupWidget_);
-                const long gutter = listLayout
+                const long gutter = folderPreview_
+                    ? static_cast<long>(std::ceil(GetFolderPreviewInsertionPad(popup, i, after)))
+                    : listLayout
                     ? static_cast<long>(snowdesktop::widget_item_layout::InsertionBoundaryPad(
                         GetCollectionPopupItemRect(popup, 0), GetCollectionPopupItemRect(popup, 1),
                         GetCollectionPopupColumnCount(popup) > 1))

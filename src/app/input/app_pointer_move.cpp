@@ -3,6 +3,7 @@
 #include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/list_detail_rules.h"
 #include "diagnostics/diagnostic_log.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
@@ -12,7 +13,6 @@
 #include "widget/view/widget_composition_layer_rules.h"
 #include "widget/runtime/widget_visibility_rules.h"
 #include "widget/view/widget_scroll_rules.h"
-#include "widgets/single_cell_widget_rules.h"
 #include "layout/popup_scrollbar_layout.h"
 #include "drag_drop/ole_drag_rules.h"
 #include "drag_drop/drag_input_rules.h"
@@ -25,6 +25,7 @@
 
 void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
 {
+    ClearDesktopSurfaceKeyboardFocus();
     typeToSelectSession_.Reset();
     if (rightButtonItemDrag_ ||
         (HasActiveContextMenuSession() && dragSession_.HasContext())) return;
@@ -267,7 +268,6 @@ void DesktopApp::OnMouseMoveAt(
     WPARAM wp, POINT current,
     bool* dragPreviewSynced)
 {
-    UpdateDesktopIdleHide();
     if (dragPreviewSynced)
         *dragPreviewSynced = false;
     // This updater is also called after button-up was dequeued and by keyboard,
@@ -284,8 +284,13 @@ void DesktopApp::OnMouseMoveAt(
         ~WidgetPointerBatch()
         {
             app.desktopWidgetPointerBatchActive_ = previous;
-            if (!previous && !app.pendingDesktopWidgetCompositions_.empty())
-                (void)app.PresentQueuedDesktopWidgetComposition(passive);
+            if (!previous)
+            {
+                if (!app.pendingDesktopWidgetCompositions_.empty())
+                    (void)app.PresentQueuedDesktopWidgetComposition(passive);
+                else
+                    app.ScheduleDeferredDesktopWidgetPresentation();
+            }
         }
     } widgetPointerBatch{ *this, desktopWidgetPointerBatchActive_ };
     // Only passive hover is a short transaction. A pressed move may enter
@@ -307,27 +312,7 @@ void DesktopApp::OnMouseMoveAt(
         GetSystemMetrics(SM_CYDRAG));
     const POINT tracePoint = current;
     if (DockTrayPopupPointerMove(current)) return;
-    if (TryStartWidgetTextDrag(current, wp)) return;
-    const auto queueCategorizedDesktopOwner = [this](ScrollingItemWidget* view) {
-        DesktopWidget* data = view->GetWidgetData();
-        // Single-cell thumbnails read the unfiltered source list, not tab
-        // order or search editing state. Dock popups edit a separate copy.
-        if (!data || IsRectEmptyRect(data->bounds) ||
-            snowdesktop::single_cell_widget::IsDesktopSingleCell(*data))
-            return;
-        const size_t index = FindWidgetIndexById(data->id);
-        if (index >= widgets_.size() || &widgets_[index] != data)
-            return;
-        // A pending complete scene already owns the source update. Let it
-        // establish the layers and backdrop owners before submitting a child.
-        if (desktopBackdropFullCollectionPending_)
-        {
-            if (hwnd_ && IsWindow(hwnd_))
-                InvalidateRect(hwnd_, nullptr, FALSE);
-            return;
-        }
-        (void)QueueDesktopWidgetComposition(data->id);
-    };
+    if (TryStartWidgetContentDrag(current, wp)) return;
     if (auto* view = GetCategorizedPopupView(); view &&
         (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))
     {
@@ -339,15 +324,7 @@ void DesktopApp::OnMouseMoveAt(
             if (tabPress) view->UpdateCategoryTabDrag(current, &changed);
             else changed = view->UpdateSearchPointerSelection(current);
         }
-        if (changed)
-        {
-            queueCategorizedDesktopOwner(view);
-            if (IsCollectionPopupHostedByFloatingWindow() &&
-                floatingPopupHwnd_ && IsWindow(floatingPopupHwnd_))
-                InvalidateFloatingPopupWindow(false);
-            else
-                InvalidateCollectionPopupAnimation(false);
-        }
+        if (changed) InvalidateWidgetControls(*view);
         return;
     }
     for (auto& container : containers_)
@@ -356,7 +333,7 @@ void DesktopApp::OnMouseMoveAt(
         {
             bool changed = false;
             categorized->UpdateCategoryTabDrag(current, &changed);
-            if (changed) queueCategorizedDesktopOwner(categorized);
+            if (changed) InvalidateWidgetControls(*categorized);
             return;
         }
     RecordShellHoverTrace(
@@ -514,10 +491,7 @@ void DesktopApp::OnMouseMoveAt(
         if (popupWidget)
         {
             const RECT popup = GetCollectionPopupRect(*popupWidget);
-            const RECT viewport = snowdesktop::popup_scrollbar_layout::Viewport(
-                popup, GetCollectionPopupContentRect(popup));
-            const int visible = std::max<int>(
-                1, viewport.bottom - viewport.top);
+            const auto [viewport, visible] = GetCollectionPopupScrollbarLayout(popup);
             const int maximum = GetCollectionPopupMaxScrollOffset(
                 *popupWidget, popup);
             const auto geometry = snowdesktop::widget_scroll_rules::
@@ -531,7 +505,7 @@ void DesktopApp::OnMouseMoveAt(
                     current.y - popupScrollbarDragStartY_, geometry);
             auto* search = GetCategorizedPopupView();
             if (!search || !search->SetFolderSearchScrollOffset(scroll)) popupScrollOffset_ = scroll;
-            (void)PresentDesktopForegroundComposition(popup);
+            InvalidateCollectionPopupControls(true);
         }
         return;
     }
@@ -559,7 +533,7 @@ void DesktopApp::OnMouseMoveAt(
                 group->InvalidateHostedView();
             else
                 container->InvalidateSlots();
-            (void)QueueDesktopWidgetComposition(data->id);
+            InvalidateWidgetControls(*container, true);
         }
         return;
     }
@@ -573,12 +547,13 @@ void DesktopApp::OnMouseMoveAt(
             continue;
         const bool changed = searchable->UpdateSearchPointerSelection(current);
         UpdateHostInputImePosition();
-        if (changed) queueCategorizedDesktopOwner(searchable);
+        if (changed) InvalidateWidgetControls(*searchable);
         return;
     }
 
     if (detailColumnResizeActive_)
     {
+        snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_SIZEWE));
         DesktopWidget* resizedWidget =
             detailColumnResizePopup_
             ? GetOpenPopupWidget()
@@ -602,21 +577,28 @@ void DesktopApp::OnMouseMoveAt(
                     widget.detailShowType,
                     widget.detailShowSize,
                     positions);
+            float* dividerPosition = nullptr;
             switch (detailColumnResizeColumn_)
             {
             case snowdesktop::list_detail_rules::Column::Modified:
-                widget.detailModifiedPosition = position;
+                dividerPosition = &widget.detailModifiedPosition;
                 break;
             case snowdesktop::list_detail_rules::Column::Type:
-                widget.detailTypePosition = position;
+                dividerPosition = &widget.detailTypePosition;
                 break;
             case snowdesktop::list_detail_rules::Column::Size:
-                widget.detailSizePosition = position;
+                dividerPosition = &widget.detailSizePosition;
                 break;
             default:
                 break;
             }
-            if (detailColumnResizePopup_)
+            if (!dividerPosition || *dividerPosition == position) return;
+            *dividerPosition = position;
+            if (detailColumnResizePopup_ && folderPreview_ && folderPreview_->inlineBounds)
+            {
+                (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+            }
+            else if (detailColumnResizePopup_)
             {
                 const RECT popup =
                     GetCollectionPopupRect(*resizedWidget);
@@ -628,7 +610,6 @@ void DesktopApp::OnMouseMoveAt(
                 (void)QueueDesktopWidgetComposition(resizedWidget->id);
             }
         }
-        snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_SIZEWE));
         return;
     }
 
@@ -1421,11 +1402,6 @@ void DesktopApp::OnMouseMoveAt(
 
         const bool suppressDesktopWidgetTargets =
             SuppressDesktopWidgetDragTargets();
-        const bool groupedEntryDrag =
-            dragSession_.SourceList().
-                hasCollectionGroupEntries ||
-            dragSession_.SourceList().
-                hasFileGroupEntries;
         if (suppressDesktopWidgetTargets)
         {
             SetPageNavHotEdgeHover(0);
@@ -1435,32 +1411,8 @@ void DesktopApp::OnMouseMoveAt(
         else if (!UpdateDragPageNavigation(current))
             return;
 
-        // OO hit testing: iterate all containers in reverse (topmost first)
-        Container* targetContainer = nullptr;
-        Slot* targetSlot = nullptr;
-        HitRegion targetRegion = HitRegion::None;
-        const bool popupHit =
-            !suppressDesktopWidgetTargets &&
-            (!groupedEntryDrag || GetGroupPopupView()) &&
-            HitTestPopupForDrag(current, targetContainer, targetSlot, targetRegion);
-        if (!popupHit)
-        {
-            const DragTargetResolution resolved =
-                dragDropController_.ResolveInternalTarget(
-                    containers_, current,
-                    [&](const Container& candidate) {
-                        if (desktopIconsHidden_ &&
-                            !IsRetainedContainer(&candidate))
-                            return false;
-                        return !suppressDesktopWidgetTargets ||
-                            (!dynamic_cast<const DesktopGrid*>(&candidate) &&
-                             !dynamic_cast<const WidgetContainer*>(&candidate));
-                    });
-            targetContainer = resolved.container;
-            targetSlot = resolved.slot;
-            targetRegion = resolved.region;
-        }
-        dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
+        ResolveCurrentDragTargetAt(current);
+        auto* targetContainer = dragSession_.TargetContainer();
 
         if (dynamic_cast<DesktopGrid*>(dragSession_.Source()) &&
             dynamic_cast<DesktopGrid*>(targetContainer))
@@ -1522,9 +1474,7 @@ void DesktopApp::OnMouseMoveAt(
         if (const std::wstring removalHint = GetDockDragOutRemovalHint(current);
             !removalHint.empty())
             hint = removalHint;
-        else if (targetContainer && targetRegion != HitRegion::None)
-            hint = targetContainer->GetDragHint(targetSlot, targetRegion,
-                dragSession_.Items(), dragSession_.Source(), currentMods);
+        else hint = GetCurrentDragTargetHint(currentMods);
 
         if (!UpdateWidgetPairDragHint(current, currentMods))
             ShowDragHintWindow(current, hint);
@@ -1538,13 +1488,15 @@ void DesktopApp::OnMouseMoveAt(
             std::abs(current.y - mouseDownPoint_.y) > 3)
         {
             const bool startingMarquee = !marqueeActive_;
-            if (startingMarquee)
+            const bool previewMarquee = folderPreview_ && marqueeDockFolderPopup_;
+            if (startingMarquee && !previewMarquee)
             {
                 dragRenderCache_.Reset();
                 marqueeFullPresentPending_ = true;
             }
             marqueeActive_ = true;
             UpdateMarqueeSelection(current);
+            if (previewMarquee) return;
             if (!startingMarquee &&
                 marqueeWidgetIndex_ < widgets_.size() &&
                 popupWidgetIndex_ != marqueeWidgetIndex_)
@@ -1629,14 +1581,27 @@ void DesktopApp::OnMouseMoveAt(
                 a.index == b.index;
         };
         auto findHoverVisual = [&](POINT point) -> MouseHoverVisual {
+            const bool coveredByWindow = IsCollectionPopupHostedByFloatingWindow() && IsPointOccludedByOpenPopup(point);
+            const auto* inactiveHost = coveredByWindow ? nullptr : FindInactiveInlineFolderPreviewHostAtPoint(point);
+            const InlineFolderPreviewProjection projection(inactiveHost ? this : nullptr,
+                inactiveHost ? inactiveHost->id : std::wstring{});
             if (const DesktopWidget* popupWidget =
                     GetOpenPopupWidget();
-                IsCollectionPopupInteractive() &&
-                (!desktopIconsHidden_ || IsOpenPopupRetained()) &&
+                (inactiveHost || IsCollectionPopupInteractive()) &&
+                (inactiveHost || !desktopIconsHidden_ || IsOpenPopupRetained()) &&
                 popupWidget &&
                 !IsRectEmptyRect(popupRect_) &&
                 PtInRect(&popupRect_, point))
             {
+                using snowdesktop::widget_composition_layer_rules::PointerVisualLayer;
+                const DesktopWidget* previewHost = nullptr;
+                if (folderPreview_ && folderPreview_->inlineBounds)
+                {
+                    const size_t host = FindWidgetIndexById(folderPreview_->hostWidgetId);
+                    if (host < widgets_.size()) previewHost = &widgets_[host];
+                }
+                const auto layer = previewHost ? PointerVisualLayer::Widget : PointerVisualLayer::Foreground;
+                const auto* hoverOwner = previewHost ? previewHost : popupWidget;
                 RECT content = GetCollectionPopupContentRect(popupRect_);
                 if (PtInRect(&content, point))
                 {
@@ -1650,10 +1615,8 @@ void DesktopApp::OnMouseMoveAt(
                             continue;
                         if (HitTestCollectionPopupItem(popupRect_, i, point))
                             return {
-                                popupWidget, popupWidget, 1, i, false,
-                                nullptr, popupRect_,
-                                snowdesktop::widget_composition_layer_rules::
-                                    PointerVisualLayer::Foreground };
+                                hoverOwner, hoverOwner, 1, i, false,
+                                previewHost, popupRect_, layer };
                     }
                 }
                 if (UsesCollectionPopupFan(*popupWidget) &&
@@ -1663,10 +1626,7 @@ void DesktopApp::OnMouseMoveAt(
                     return {popupWidget, popupWidget, 3, 0, true, nullptr, popupRect_,
                         snowdesktop::widget_composition_layer_rules::PointerVisualLayer::Foreground};
                 return {
-                    popupWidget, popupWidget, 2, 0, true,
-                    nullptr, popupRect_,
-                    snowdesktop::widget_composition_layer_rules::
-                        PointerVisualLayer::Foreground };
+                    hoverOwner, hoverOwner, 2, 0, true, previewHost, popupRect_, layer };
             }
 
             if (DockContainer* dock = GetDockContainerAtPoint(point))
@@ -1998,6 +1958,7 @@ void DesktopApp::OnMouseMoveAt(
                     PtInRect(&frame, current) != FALSE;
                 const bool interactionRetained =
                     popupWidgetIndex_ == widgetIndex ||
+                    RetainsInlineFolderPreview(w) ||
                     (!interactionPinnedWidgetId_.empty() &&
                         interactionPinnedWidgetId_ == w.id) ||
                     snowdesktop::widget_visibility_rules::
@@ -2025,7 +1986,7 @@ void DesktopApp::OnMouseMoveAt(
                 break;
             }
             if (hoverOnlyVisibilityChanged)
-                PresentPassiveHoverVisualChange();
+                PresentPassiveHoverVisualChange(oldMouse);
         }
     }
     RecordShellHoverTrace(

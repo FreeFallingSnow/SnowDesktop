@@ -381,7 +381,7 @@ bool DesktopApp::SyncWidgetMarqueeCompositionVisibility()
             previewSourceId && widgetId == *previewSourceId;
         const bool ownerVisible =
             parent != desktopWidgetCompositionItems_.end() &&
-            parent->second.visible &&
+            parent->second.visible && parent->second.contentVisible &&
             !snowdesktop::widget_visibility_rules::
                 ShouldHideWidgetPreviewSource(
                     widgetAction_ == WidgetAction::Move,
@@ -390,8 +390,9 @@ bool DesktopApp::SyncWidgetMarqueeCompositionVisibility()
         for (auto& [key, item] : items)
         {
             (void)key;
-            const size_t owner = snowdesktop::lua_stack::SurfaceOwner(widgets_, item.instanceId, &luaStackMemberDrag_);
-            const bool visible = ownerVisible && owner < widgets_.size() && widgets_[owner].id == widgetId;
+            // The active stack member can change before its body is drawn.
+            // Keep the text paired with the body actually being presented.
+            const bool visible = ownerVisible && parent->second.renderedContentId == item.instanceId;
             if (item.visible == visible)
                 continue;
             if (item.clip &&

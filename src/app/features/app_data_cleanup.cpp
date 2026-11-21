@@ -3,6 +3,7 @@
 #include "data/data_paths.h"
 #include "icons/large_icon_assets.h"
 #include "icons/large_icon_steam.h"
+#include "shell/shortcut_category_target.h"
 #include "desktop/desktop_source.h"
 
 void DesktopApp::SynchronizeLargeIconAssets()
@@ -35,12 +36,9 @@ void DesktopApp::SynchronizeLargeIconAssets()
         source.sourceStamp = item.modifiedTime ? (std::uint64_t(item.modifiedTime->dwHighDateTime) << 32) |
             item.modifiedTime->dwLowDateTime : 0;
         source.sourceIconIndex = item.sysIconIndex;
-        wchar_t url[2048]{};
-        if (_wcsicmp(std::filesystem::path(item.parsingName).extension().c_str(), L".url") == 0)
-        {
-            GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url, static_cast<DWORD>(std::size(url)), item.parsingName.c_str());
-            source.appId = snowdesktop::large_icon_steam::AppId(url).value_or(0);
-        }
+        const auto url = snowdesktop::category_collection_rules::ReadInternetShortcutUrl(item.parsingName);
+        source.appId = snowdesktop::large_icon_steam::AppId(url).value_or(0);
+        source.epicGameKey = snowdesktop::shortcut_application_rules::EpicGameKey(url);
         sources.push_back(std::move(source));
     }
     largeIconAssets_->RetainReferences(std::move(retained));

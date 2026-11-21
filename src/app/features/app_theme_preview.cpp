@@ -98,7 +98,7 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
         context->SetTarget(target.Get()); context->SetDpi(96, 96);
         context->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
         context->BeginDraw(); context->DrawBitmap(backdrop.Get());
-        brushCache_.clear(); brushCacheContext_ = context.Get();
+        drawing_.Reset();
         RECT bounds{};
         const auto material = [&](RECT r, const PersonalizationSettings& p, float radius) {
             if (p.glassEnabled && !widget_preview::DrawStage(context.Get(), r,
@@ -216,7 +216,10 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
             }
             context->SetTransform(D2D1::Matrix3x2F::Identity());
         }
-        require(context->EndDraw()); context->SetTarget(nullptr); brushCache_.clear(); brushCacheContext_ = nullptr;
+        const HRESULT drawResult = context->EndDraw();
+        context->SetTarget(nullptr);
+        drawing_.Reset();
+        require(drawResult);
         ComPtr<ID2D1Bitmap1> readback; require(context->CreateBitmap(size, nullptr, 0,
             D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW, format, 96, 96), &readback));
         require(readback->CopyFromBitmap(nullptr, target.Get(), nullptr));

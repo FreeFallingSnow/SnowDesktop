@@ -1,6 +1,6 @@
 #include "ui/render/app_font.h"
-#include "ui/render/highlight_coverage.h"
 #include "app/app.h"
+#include "ui/render/rgba_color.h"
 #include "navigation/quick_navigation_animation_rules.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
@@ -19,197 +19,167 @@
 
 // Quick-navigation DirectWrite and DirectComposition rendering resources.
 
+bool snowdesktop::quick_navigation::State::PublishPrecomposedFrame(
+    ID2D1Device* device, quick_navigation_animation_rules::Effect effect, float deformationAmount, float opacity)
+{
+    performance::Scope trace("navigation.render", "precompose");
+    namespace rules = quick_navigation_animation_rules;
+    namespace genie = dock_genie;
+    if (!sceneBitmap) return false;
+    RECT bounds{};
+    if (!GetClientRect(hwnd, &bounds) || IsRectEmpty(&bounds)) return false;
+    const auto key = reinterpret_cast<std::uintptr_t>(hwnd);
+    const auto asRect = [](const RECT& r) {
+        return genie::Rect{static_cast<double>(r.left), static_cast<double>(r.top),
+            static_cast<double>(r.right), static_cast<double>(r.bottom)};
+    };
+    const auto panel = asRect(rect);
+    const auto dock = asRect(animationDockRect);
+    const auto edge = static_cast<genie::Edge>(animationDockEdge);
+    const double width = panel.right - panel.left;
+    const double height = panel.bottom - panel.top;
+    if (width <= 0 || height <= 0) return false;
+    const bool deformed = deformationAmount > 0.f && rules::IsDeformationEffect(effect);
+    struct Strip
+    {
+        D2D1_RECT_F clip, source, destination;
+        rules::GenieStripProjection projection;
+    };
+    std::array<Strip, genie::StripCount> strips;
+    std::size_t stripCount = 0;
+    std::optional<dock_attraction::Frame> mesh;
+    const auto toRectangle = [](const genie::Rect& value) {
+        return D2D1::RectF(static_cast<float>(value.left), static_cast<float>(value.top),
+            static_cast<float>(value.right), static_cast<float>(value.bottom));
+    };
+    if (deformed && effect == rules::Effect::Attraction)
+        mesh = dock_attraction::MeshFrame(panel, dock, deformationAmount);
+    else if (deformed)
+    {
+        // Match the body's pixel partitions and source crops before projection.
+        for (std::size_t index = 0; index < genie::StripCount; ++index)
+        {
+            const auto clip = rules::GenieRasterBandClip(panel, dock, edge, deformationAmount, width, height,
+                index, hostRect.left, hostRect.top, bounds.right, bounds.bottom);
+            if (clip.right <= clip.left || clip.bottom <= clip.top) continue;
+            const auto projection = rules::GenieProjection(panel, dock, edge, deformationAmount, width, height,
+                index, hostRect.left, hostRect.top);
+            const auto crop = rules::GenieSourceBandClip(projection, clip, edge, width, height);
+            if (crop.right <= crop.left || crop.bottom <= crop.top) continue;
+            const auto source = toRectangle(crop);
+            strips[stripCount++] = {toRectangle(clip), source,
+                D2D1::RectF(source.left - projection.sourceX, source.top - projection.sourceY,
+                    source.right - projection.sourceX, source.bottom - projection.sourceY), projection};
+        }
+    }
+    if (deformed)
+    {
+        // The native HWND retains monitor coordinates. Rasterize only the
+        // fixed envelope visible through its expanded region for both effects.
+        const RECT fence = WindowFence(true);
+        const double clientPixels = static_cast<double>(bounds.right) * bounds.bottom;
+        if (!IntersectRect(&bounds, &bounds, &fence))
+            return false;
+        const double pixels = static_cast<double>(bounds.right - bounds.left) *
+            (bounds.bottom - bounds.top);
+        performance::Value("navigation.render", "deformation_surface_pixels", L"", pixels);
+        performance::Value("navigation.render", "deformation_client_pixels", L"", clientPixels);
+    }
+    else
+    {
+        bounds = rect;
+        OffsetRect(&bounds, -hostRect.left, -hostRect.top);
+    }
+    if (!backdropCompositor.StageSrgbSceneFrame(hwnd, key, bounds, device,
+            [&](ID2D1DeviceContext* target, POINT origin) {
+                performance::Scope draw("navigation.render", "precompose.draw");
+                auto* bitmap = sceneBitmap.Get();
+                const float atlasX = static_cast<float>(origin.x - (deformed ? bounds.left : 0));
+                const float atlasY = static_cast<float>(origin.y - (deformed ? bounds.top : 0));
+                target->SetDpi(96.f, 96.f);
+                target->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+                target->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
+                target->SetTransform(D2D1::Matrix3x2F::Identity());
+                target->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(origin.x),
+                    static_cast<float>(origin.y),
+                    static_cast<float>(origin.x + bounds.right - bounds.left),
+                    static_cast<float>(origin.y + bounds.bottom - bounds.top)),
+                    D2D1_ANTIALIAS_MODE_ALIASED);
+                target->SetTransform(D2D1::Matrix3x2F::Translation(atlasX, atlasY));
+                target->Clear(D2D1::ColorF(0, 0.f));
+                if (!deformed)
+                {
+                    const auto area = D2D1::RectF(0.f, 0.f, static_cast<float>(width), static_cast<float>(height));
+                    target->DrawBitmap(bitmap, &area, 1.f,
+                        D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR, &area, nullptr);
+                    target->PopAxisAlignedClip();
+                    return S_OK;
+                }
+                if (mesh)
+                {
+                    const auto hr = rules::DrawAttractionMesh(target, bitmap, *mesh,
+                        hostRect.left, hostRect.top, width, height);
+                    target->PopAxisAlignedClip();
+                    return hr;
+                }
+
+                target->SetTransform(D2D1::Matrix3x2F::Identity());
+                for (const auto& strip : std::span(strips.data(), stripCount))
+                {
+                    const auto& p = strip.projection;
+                    // Translate the projected position into the surface atlas.
+                    const D2D1_MATRIX_4X4_F transform{
+                        p.m11 + atlasX * p.m14, p.m12 + atlasY * p.m14, 0.f, p.m14,
+                        p.m21 + atlasX * p.m24, p.m22 + atlasY * p.m24, 0.f, p.m24,
+                        0.f, 0.f, 1.f, 0.f,
+                        p.m41 + atlasX * p.m44, p.m42 + atlasY * p.m44, 0.f, p.m44};
+                    target->PushAxisAlignedClip(D2D1::RectF(strip.clip.left + atlasX, strip.clip.top + atlasY,
+                        strip.clip.right + atlasX, strip.clip.bottom + atlasY),
+                        D2D1_ANTIALIAS_MODE_ALIASED);
+                    target->DrawBitmap(bitmap, &strip.destination, 1.f, D2D1_INTERPOLATION_MODE_LINEAR,
+                        &strip.source, &transform);
+                    target->PopAxisAlignedClip();
+                }
+                target->PopAxisAlignedClip();
+                return S_OK;
+            }) || !backdropCompositor.PublishSrgbContent(key, animationCompositorDriven ? -1.f : opacity))
+        return false;
+    sceneDirty = false;
+    sceneFrameDeformed = deformed;
+    return animationCompositorDriven || backdropCompositor.SetSrgbContentPose(key, {}, 1.f, opacity);
+}
+
 void DesktopApp::ClearQuickNavigationDeformation()
 {
     quickNavigation_->backdropCompositor.ClearGenieTransform();
-    if (quickNavigation_->genieStrips.empty() && !quickNavigation_->attractionSurface)
-        return;
-    if (quickNavigation_->dcompVisual)
-    {
-        quickNavigation_->dcompVisual->RemoveAllVisuals();
-        const auto contentKey = reinterpret_cast<std::uintptr_t>(quickNavigation_->hwnd);
-        quickNavigation_->dcompVisual->SetContent(quickNavigation_->backdropCompositor.HasSrgbContent(contentKey)
-            ? nullptr : quickNavigation_->dcompSurface.Get());
-        quickNavigation_->dcompVisual->SetTransform(quickNavigation_->dcompScaleTransform.Get());
-    }
-    quickNavigation_->genieStrips.clear();
-    quickNavigation_->attractionSurface.Reset();
-    quickNavigation_->attractionSurfaceSize = {};
-    quickNavigation_->genieStripEdge = -1;
 }
 
 bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
 {
-    namespace genie = snowdesktop::dock_genie;
-    namespace navigation = snowdesktop::quick_navigation_animation_rules;
-    if (!quickNavigation_->dcompDevice || !quickNavigation_->dcompVisual ||
-        !quickNavigation_->dcompSurface || !quickNavigation_->dcompEffect)
+    auto& nav = *quickNavigation_;
+    if (!nav.PublishPrecomposedFrame(d2dDevice_.Get(),
+        snowdesktop::quick_navigation_animation_rules::Effect::Genie, collapsed, opacity))
         return false;
-
-    if (quickNavigation_->genieStripEdge != quickNavigation_->animationDockEdge ||
-        quickNavigation_->attractionSurface)
-        ClearQuickNavigationDeformation();
-    const auto edge = static_cast<genie::Edge>(quickNavigation_->animationDockEdge);
-    // A resize can retain a larger backing surface. Warp only the painted panel,
-    // including when dismissal interrupts the transition before its final frame.
-    const float width = static_cast<float>(std::max<LONG>(1,
-        quickNavigation_->rect.right - quickNavigation_->rect.left));
-    const float height = static_cast<float>(std::max<LONG>(1,
-        quickNavigation_->rect.bottom - quickNavigation_->rect.top));
-    const auto rect = [](const RECT& value) {
-        return genie::Rect{static_cast<double>(value.left), static_cast<double>(value.top),
-            static_cast<double>(value.right), static_cast<double>(value.bottom)};
-    };
-    const auto projectionFor = [&](size_t index) {
-        return navigation::GenieProjection(rect(quickNavigation_->rect),
-            rect(quickNavigation_->animationDockRect), edge, collapsed, width, height,
-            index, quickNavigation_->hostRect.left, quickNavigation_->hostRect.top);
-    };
-    const auto clipFor = [&](size_t index) {
-        return navigation::GenieRasterBandClip(rect(quickNavigation_->rect),
-            rect(quickNavigation_->animationDockRect), edge, collapsed, width, height,
-            index, quickNavigation_->hostRect.left, quickNavigation_->hostRect.top,
-            quickNavigation_->hostRect.right - quickNavigation_->hostRect.left,
-            quickNavigation_->hostRect.bottom - quickNavigation_->hostRect.top);
-    };
-    HRESULT hr = S_OK;
-    if (quickNavigation_->genieStrips.empty())
-    {
-        // Destination clip -> projection -> cropped bitmap. The source crop
-        // precedes perspective, so its intermediate bitmap never crosses w=0.
-        // Reuse the same live surface and visuals on every frame.
-        quickNavigation_->genieStrips.reserve(genie::StripCount * 3);
-        for (size_t i = 0; i < genie::StripCount && SUCCEEDED(hr); ++i)
-        {
-            ComPtr<IDCompositionVisual2> strip;
-            hr = quickNavigation_->dcompDevice->CreateVisual(&strip);
-            if (FAILED(hr)) break;
-            quickNavigation_->genieStrips.push_back(strip);
-            hr = strip->SetBorderMode(DCOMPOSITION_BORDER_MODE_HARD);
-            ComPtr<IDCompositionVisual2> projectionVisual;
-            if (SUCCEEDED(hr)) hr = quickNavigation_->dcompDevice->CreateVisual(&projectionVisual);
-            if (SUCCEEDED(hr)) quickNavigation_->genieStrips.push_back(projectionVisual);
-            if (SUCCEEDED(hr)) hr = projectionVisual->SetBorderMode(DCOMPOSITION_BORDER_MODE_SOFT);
-            if (SUCCEEDED(hr)) hr = projectionVisual->SetBitmapInterpolationMode(
-                DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
-            ComPtr<IDCompositionVisual2> content;
-            if (SUCCEEDED(hr)) hr = quickNavigation_->dcompDevice->CreateVisual(&content);
-            if (SUCCEEDED(hr)) quickNavigation_->genieStrips.push_back(content);
-            if (SUCCEEDED(hr)) hr = content->SetContent(quickNavigation_->dcompSurface.Get());
-            const auto projection = projectionFor(i);
-            if (SUCCEEDED(hr)) hr = content->SetOffsetX(-projection.sourceX);
-            if (SUCCEEDED(hr)) hr = content->SetOffsetY(-projection.sourceY);
-            if (SUCCEEDED(hr)) hr = content->SetBorderMode(DCOMPOSITION_BORDER_MODE_SOFT);
-            if (SUCCEEDED(hr)) hr = content->SetBitmapInterpolationMode(
-                DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
-            if (SUCCEEDED(hr)) hr = projectionVisual->AddVisual(content.Get(), TRUE, nullptr);
-            if (SUCCEEDED(hr)) hr = strip->AddVisual(projectionVisual.Get(), TRUE, nullptr);
-            if (SUCCEEDED(hr)) hr = quickNavigation_->dcompVisual->AddVisual(strip.Get(), TRUE, nullptr);
-        }
-        if (SUCCEEDED(hr)) hr = quickNavigation_->dcompVisual->SetContent(nullptr);
-        if (SUCCEEDED(hr)) hr = quickNavigation_->dcompVisual->SetTransform(D2D1::Matrix3x2F::Identity());
-        if (SUCCEEDED(hr)) hr = quickNavigation_->dcompVisual->SetOffsetX(0.0f);
-        if (SUCCEEDED(hr)) hr = quickNavigation_->dcompVisual->SetOffsetY(0.0f);
-        if (FAILED(hr))
-        {
-            ClearQuickNavigationDeformation();
-            return false;
-        }
-        quickNavigation_->genieStripEdge = quickNavigation_->animationDockEdge;
-    }
-    for (size_t i = 0; i < genie::StripCount && SUCCEEDED(hr); ++i)
-    {
-        // Clipping before perspective leaves fractional independently sampled
-        // joins. Partition the final pixels on the parent instead, preserving
-        // soft bitmap edges without gaps or double-blended translucent bands.
-        const auto bounds = clipFor(i);
-        hr = quickNavigation_->genieStrips[i * 3]->SetClip(D2D1::RectF(
-            static_cast<float>(bounds.left), static_cast<float>(bounds.top),
-            static_cast<float>(bounds.right), static_cast<float>(bounds.bottom)));
-        const auto matrix = projectionFor(i);
-        const auto source = navigation::GenieSourceBandClip(matrix, bounds, edge, width, height);
-        if (SUCCEEDED(hr)) hr = quickNavigation_->genieStrips[i * 3 + 2]->SetClip(D2D1::RectF(
-            static_cast<float>(source.left), static_cast<float>(source.top),
-            static_cast<float>(source.right), static_cast<float>(source.bottom)));
-        ComPtr<IDCompositionVisual3> projectedStrip;
-        if (SUCCEEDED(hr)) hr = quickNavigation_->genieStrips[i * 3 + 1].As(&projectedStrip);
-        if (SUCCEEDED(hr)) hr = projectedStrip->SetTransform(D2D1_MATRIX_4X4_F{
-            matrix.m11, matrix.m12, 0.0f, matrix.m14,
-            matrix.m21, matrix.m22, 0.0f, matrix.m24,
-            0.0f, 0.0f, 1.0f, 0.0f,
-            matrix.m41, matrix.m42, 0.0f, matrix.m44});
-    }
-    if (SUCCEEDED(hr)) hr = quickNavigation_->dcompEffect->SetOpacity(opacity);
-    if (FAILED(hr)) return false;
-    if (quickNavigation_->glassTheme && quickNavigation_->backdropCompositor.IsAvailable())
-    {
-        RECT panel = quickNavigation_->rect;
-        RECT dock = quickNavigation_->animationDockRect;
-        OffsetRect(&panel, -quickNavigation_->hostRect.left, -quickNavigation_->hostRect.top);
-        OffsetRect(&dock, -quickNavigation_->hostRect.left, -quickNavigation_->hostRect.top);
-        if (!quickNavigation_->backdropCompositor.SetGenieTransform(panel, dock,
-                quickNavigation_->animationDockEdge, collapsed, opacity))
-            return false;
-    }
-    return CommitQuickNavigationCompositionFrame();
+    if (!nav.glassTheme || !nav.backdropCompositor.IsAvailable()) return true;
+    RECT panel = nav.rect, dock = nav.animationDockRect;
+    OffsetRect(&panel, -nav.hostRect.left, -nav.hostRect.top);
+    OffsetRect(&dock, -nav.hostRect.left, -nav.hostRect.top);
+    snowdesktop::performance::Scope trace("navigation.render", "genie.backdrop");
+    return nav.backdropCompositor.SetGenieTransform(panel, dock, nav.animationDockEdge, collapsed, opacity);
 }
 
 bool DesktopApp::ApplyQuickNavigationAttractionFrame(float collapsed, float opacity)
 {
-    namespace attraction = snowdesktop::dock_attraction;
-    namespace navigation = snowdesktop::quick_navigation_animation_rules;
-    if (!quickNavigation_->dcompDevice || !quickNavigation_->dcompVisual || !quickNavigation_->attractionBitmap ||
-        !quickNavigation_->dcompEffect)
+    auto& nav = *quickNavigation_;
+    if (!nav.PublishPrecomposedFrame(d2dDevice_.Get(),
+        snowdesktop::quick_navigation_animation_rules::Effect::Attraction, collapsed, opacity))
         return false;
-    if (!quickNavigation_->genieStrips.empty()) ClearQuickNavigationDeformation();
-    HRESULT hr = S_OK;
-    const SIZE size{std::max<LONG>(1, quickNavigation_->hostRect.right - quickNavigation_->hostRect.left),
-        std::max<LONG>(1, quickNavigation_->hostRect.bottom - quickNavigation_->hostRect.top)};
-    if (!quickNavigation_->attractionSurface || size.cx != quickNavigation_->attractionSurfaceSize.cx ||
-        size.cy != quickNavigation_->attractionSurfaceSize.cy)
-    {
-        quickNavigation_->attractionSurface.Reset();
-        hr = quickNavigation_->dcompDevice->CreateSurface(static_cast<UINT>(size.cx), static_cast<UINT>(size.cy),
-            DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &quickNavigation_->attractionSurface);
-        if (FAILED(hr)) return false;
-        quickNavigation_->attractionSurfaceSize = size;
-    }
-    const auto rect = [](const RECT& value) {
-        return attraction::Rect{static_cast<double>(value.left), static_cast<double>(value.top),
-            static_cast<double>(value.right), static_cast<double>(value.bottom)};
-    };
-    const auto frame = attraction::MeshFrame(rect(quickNavigation_->rect),
-        rect(quickNavigation_->animationDockRect), collapsed);
-    ComPtr<ID2D1DeviceContext> context;
-    POINT offset{};
-    hr = quickNavigation_->attractionSurface->BeginDraw(nullptr, IID_PPV_ARGS(&context), &offset);
-    if (FAILED(hr)) return false;
-    context->SetDpi(96, 96);
-    context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
-    context->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x), static_cast<float>(offset.y)));
-    context->Clear(D2D1::ColorF(0, 0.f));
-    hr = navigation::DrawAttractionMesh(context.Get(), quickNavigation_->attractionBitmap.Get(), frame,
-        quickNavigation_->hostRect.left, quickNavigation_->hostRect.top,
-        quickNavigation_->rect.right - quickNavigation_->rect.left,
-        quickNavigation_->rect.bottom - quickNavigation_->rect.top);
-    context.Reset();
-    const HRESULT endResult = quickNavigation_->attractionSurface->EndDraw();
-    if (SUCCEEDED(hr)) hr = endResult;
-    if (SUCCEEDED(hr)) hr = quickNavigation_->dcompVisual->SetContent(quickNavigation_->attractionSurface.Get());
-    if (SUCCEEDED(hr)) hr = quickNavigation_->dcompVisual->SetTransform(D2D1::Matrix3x2F::Identity());
-    if (SUCCEEDED(hr)) hr = quickNavigation_->dcompVisual->SetOffsetX(0.0f);
-    if (SUCCEEDED(hr)) hr = quickNavigation_->dcompVisual->SetOffsetY(0.0f);
-    if (SUCCEEDED(hr)) hr = quickNavigation_->dcompEffect->SetOpacity(opacity);
-    if (FAILED(hr)) return false;
-    if (quickNavigation_->glassTheme && quickNavigation_->backdropCompositor.IsAvailable())
-    {
-        RECT panel = quickNavigation_->rect, dock = quickNavigation_->animationDockRect;
-        OffsetRect(&panel, -quickNavigation_->hostRect.left, -quickNavigation_->hostRect.top);
-        OffsetRect(&dock, -quickNavigation_->hostRect.left, -quickNavigation_->hostRect.top);
-        if (!quickNavigation_->backdropCompositor.SetAttractionTransform(panel, dock, collapsed, opacity))
-            return false;
-    }
-    return CommitQuickNavigationCompositionFrame();
+    if (!nav.glassTheme || !nav.backdropCompositor.IsAvailable()) return true;
+    RECT panel = nav.rect, dock = nav.animationDockRect;
+    OffsetRect(&panel, -nav.hostRect.left, -nav.hostRect.top);
+    OffsetRect(&dock, -nav.hostRect.left, -nav.hostRect.top);
+    snowdesktop::performance::Scope trace("navigation.render", "attraction.backdrop");
+    return nav.backdropCompositor.SetAttractionTransform(panel, dock, collapsed, opacity);
 }
 
 void DesktopApp::EnsureQuickNavTextFormats()
@@ -291,14 +261,16 @@ void DesktopApp::ResetQuickNavCompositionResources()
 {
     ClearQuickNavigationDeformation();
     StopQuickNavigationAnimationTimeline();
-    brushCache_.clear();
-    brushCacheContext_ = nullptr;
+    drawing_.Reset();
     quickNavigation_->sysIconCache.clear();
     quickNavigation_->appIconCache.clear();
     if (quickNavigation_->dcompVisual)
         quickNavigation_->dcompVisual->SetContent(nullptr);
-    quickNavigation_->dcompSurface.Reset();
-    quickNavigation_->attractionBitmap.Reset();
+    quickNavigation_->sceneBitmap.Reset();
+    quickNavigation_->sceneContext.Reset();
+    quickNavigation_->sceneDirty = false;
+    quickNavigation_->sceneFrameDeformed = false;
+    quickNavigation_->backdropCompositor.RemoveSrgbContent(reinterpret_cast<std::uintptr_t>(quickNavigation_->hwnd));
     quickNavigation_->compWidth = 0;
     quickNavigation_->compHeight = 0;
     quickNavigation_->compositionCommitPending = false;
@@ -448,23 +420,22 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
         }
     }
 
-    if (quickNavigation_->dcompSurface && quickNavigation_->compWidth == width && quickNavigation_->compHeight == height)
+    if (quickNavigation_->sceneBitmap && quickNavigation_->compWidth == width && quickNavigation_->compHeight == height)
         return S_OK;
 
     ClearQuickNavigationDeformation();
-    ComPtr<IDCompositionSurface> surface;
-    HRESULT hr = quickNavigation_->dcompDevice->CreateSurface(width, height,
-        DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &surface);
-    if (FAILED(hr))
+    auto& nav = *quickNavigation_;
+    if (!nav.sceneContext)
     {
-        wchar_t buf[128];
-        wsprintfW(buf, L"QuickNav CreateSurface %ux%u FAILED hr=0x%08X", width, height, static_cast<unsigned>(hr));
-        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Navigation, buf, DiagnosticLogLevel::Warning);
-        return hr;
+        const auto created = d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &nav.sceneContext);
+        if (FAILED(created)) return created;
     }
-    // Keep the previously painted content attached until the replacement has
-    // completed EndDraw. An allocation is not a presentable frame yet.
-    quickNavigation_->dcompSurface = surface;
+    ComPtr<ID2D1Bitmap1> bitmap;
+    const auto props = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96);
+    const auto created = nav.sceneContext->CreateBitmap(D2D1::SizeU(width, height), nullptr, 0, &props, &bitmap);
+    if (FAILED(created)) return created;
+    nav.sceneBitmap = std::move(bitmap);
     quickNavigation_->compWidth = width;
     quickNavigation_->compHeight = height;
     return S_OK;
@@ -507,141 +478,38 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         quickNavigation_->compositionPaintInProgress
     };
 
-
-    IDCompositionSurface* previousSurface = quickNavigation_->dcompSurface.Get();
-    HRESULT hr = CreateOrResizeQuickNavCompositionSurface();
-    if (FAILED(hr))
-    {
-        RecoverQuickNavCompositionFailure(L"CreateOrResizeQuickNavCompositionSurface", hr);
-        EndPaint(hwnd, &ps);
-        return;
-    }
-    ID2D1DeviceContext* rawContext = nullptr;
-    POINT updateOffset{};
-    hr = quickNavigation_->dcompSurface->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
-        reinterpret_cast<void**>(&rawContext), &updateOffset);
-    if (FAILED(hr) || !rawContext)
-    {
-        RecoverQuickNavCompositionFailure(L"BeginDraw", hr);
-        EndPaint(hwnd, &ps);
-        return;
-    }
-
-    ComPtr<ID2D1DeviceContext> ctx;
-    ctx.Attach(rawContext);
-    snowdesktop::HighlightCoverage highlightCoverage;
-    snowdesktop::HighlightCoverage::Scope captureHighlights(ctx.Get(), highlightCoverage);
-    ctx->SetDpi(96.0f, 96.0f);
-    ctx->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
-    // 内容 surface 只按目标面板大小分配；顶层宿主可以覆盖完整动画路径。
-    ctx->SetTransform(D2D1::Matrix3x2F::Translation(
-        static_cast<float>(
-            updateOffset.x -
-            quickNavigation_->rect.left),
-        static_cast<float>(
-            updateOffset.y -
-            quickNavigation_->rect.top)));
-    ctx->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    // 文本抗锯齿沿用 DComp 默认（与桌面一致），避免在 alpha 表面上强制 ClearType 产生彩色毛边。
-    ctx->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
-
-    brushCache_.clear();
-    brushCacheContext_ = ctx.Get();
-
-    HRESULT contentResult = S_OK;
-    if (quickNavigation_->animation.GetEffect() ==
-        snowdesktop::quick_navigation_animation_rules::Effect::Attraction)
-    {
-        // Keep one ordinary image of the panel. The animated mesh samples this
-        // bitmap directly; it never samples separately clipped DComp children.
-        ComPtr<ID2D1DeviceContext> sourceContext;
-        contentResult = d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &sourceContext);
-        const auto bitmapSize = quickNavigation_->attractionBitmap ? quickNavigation_->attractionBitmap->GetPixelSize() : D2D1_SIZE_U{};
-        if (SUCCEEDED(contentResult) && (!quickNavigation_->attractionBitmap ||
-                bitmapSize.width != quickNavigation_->compWidth || bitmapSize.height != quickNavigation_->compHeight))
-        {
-            quickNavigation_->attractionBitmap.Reset();
-            contentResult = sourceContext->CreateBitmap(D2D1::SizeU(quickNavigation_->compWidth, quickNavigation_->compHeight),
-                nullptr, 0, D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
-                    D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96),
-                &quickNavigation_->attractionBitmap);
-        }
-        if (SUCCEEDED(contentResult))
-        {
-            sourceContext->SetTarget(quickNavigation_->attractionBitmap.Get());
-            sourceContext->SetDpi(96, 96);
-            sourceContext->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
-            sourceContext->BeginDraw();
-            sourceContext->Clear(D2D1::ColorF(0, 0.f));
-            sourceContext->SetTransform(D2D1::Matrix3x2F::Translation(
-                -static_cast<float>(quickNavigation_->rect.left), -static_cast<float>(quickNavigation_->rect.top)));
-            brushCacheContext_ = sourceContext.Get();
-            snowdesktop::HighlightCoverage sourceCoverage;
-            {
-                snowdesktop::HighlightCoverage::Scope captureSource(sourceContext.Get(), sourceCoverage);
-                DrawQuickNavigationSurface(sourceContext.Get());
-            }
-            contentResult = sourceContext->EndDraw();
-            sourceContext->SetTarget(nullptr);
-            brushCache_.clear();
-            brushCacheContext_ = ctx.Get();
-            if (SUCCEEDED(contentResult))
-            {
-                const auto frame = D2D1::RectF(
-                    static_cast<float>(quickNavigation_->rect.left), static_cast<float>(quickNavigation_->rect.top),
-                    static_cast<float>(quickNavigation_->rect.left) + static_cast<float>(quickNavigation_->compWidth),
-                    static_cast<float>(quickNavigation_->rect.top) + static_cast<float>(quickNavigation_->compHeight));
-                sourceCoverage.AttachToSnapshot(d2dDevice_.Get(), quickNavigation_->attractionBitmap.Get());
-                ctx->DrawBitmap(quickNavigation_->attractionBitmap.Get(), frame);
-                snowdesktop::HighlightCoverage::RecordBitmap(ctx.Get(), quickNavigation_->attractionBitmap.Get(), frame);
-            }
-        }
-    }
-    else
-    {
-        quickNavigation_->attractionBitmap.Reset();
-        DrawQuickNavigationSurface(ctx.Get());
-    }
-    const auto srgbKey = reinterpret_cast<std::uintptr_t>(hwnd);
-    RECT srgbFrame = quickNavigation_->rect;
-    OffsetRect(&srgbFrame, -quickNavigation_->hostRect.left, -quickNavigation_->hostRect.top);
-    const bool deforming = quickNavigation_->animation.IsAnimating() &&
-        snowdesktop::quick_navigation_animation_rules::IsDeformationEffect(
-            quickNavigation_->animation.GetEffect());
-    const bool previouslySrgb = quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey);
-    const bool stagedSrgb = SUCCEEDED(contentResult) && quickNavigation_->glassTheme &&
-        quickNavigation_->backdropCompositor.IsAvailable() && !deforming &&
-        (!quickNavigation_->animationCompositorDriven || previouslySrgb) &&
-        quickNavigation_->backdropCompositor.StageSrgbContent(hwnd, srgbKey, srgbFrame, ctx.Get(), updateOffset);
-    ctx->SetTransform(D2D1::Matrix3x2F::Identity());
-    ctx.Reset();
-    brushCache_.clear();
-    brushCacheContext_ = nullptr;
-
-    hr = quickNavigation_->dcompSurface->EndDraw();
-    if (SUCCEEDED(hr)) hr = contentResult;
-    if (FAILED(hr))
-    {
-        RecoverQuickNavCompositionFailure(L"EndDraw", hr);
-        EndPaint(hwnd, &ps);
-        return;
-    }
-    // Preserve the native animation timeline during hover and caret repaints.
+    // Initialize the backdrop before deciding how to draw the first hidden
+    // frame. Otherwise a cold open starts with an ordinary rim.
     if (!quickNavigation_->animationCompositorDriven)
         UpdateQuickNavigationBackdrop();
-    const bool srgbPresented = stagedSrgb && quickNavigation_->backdropCompositor.PublishSrgbContent(
-        srgbKey, quickNavigation_->animationCompositorDriven ? -1.f : 1.f);
-    if (!srgbPresented) quickNavigation_->backdropCompositor.RemoveSrgbContent(srgbKey);
-    if (srgbPresented || previouslySrgb || previousSurface != quickNavigation_->dcompSurface.Get())
+
+    HRESULT hr = CreateOrResizeQuickNavCompositionSurface();
+    if (SUCCEEDED(hr))
     {
-        hr = quickNavigation_->dcompVisual->SetContent(
-            srgbPresented ? nullptr : quickNavigation_->dcompSurface.Get());
-        if (FAILED(hr))
-        {
-            RecoverQuickNavCompositionFailure(L"Publish painted surface", hr);
-            EndPaint(hwnd, &ps);
-            return;
-        }
+        auto& nav = *quickNavigation_;
+        auto* context = nav.sceneContext.Get();
+        context->SetTarget(nav.sceneBitmap.Get());
+        context->SetDpi(96.f, 96.f);
+        context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+        context->SetTransform(D2D1::Matrix3x2F::Translation(
+            -static_cast<float>(nav.rect.left), -static_cast<float>(nav.rect.top)));
+        context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        context->BeginDraw();
+        context->Clear(D2D1::ColorF(0u, 0.f));
+        drawing_.Reset();
+        snowdesktop::SystemIconPlaceholderDemand::Paint placeholderPaint(systemIconDemand_,
+            snowdesktop::SystemIconPlaceholderDemand::Host::Navigation, nav.hwnd);
+        DrawQuickNavigationSurface(context);
+        hr = context->EndDraw();
+        context->SetTarget(nullptr);
+        drawing_.Reset();
+        nav.sceneDirty = SUCCEEDED(hr);
+    }
+    if (FAILED(hr))
+    {
+        RecoverQuickNavCompositionFailure(L"Draw precomposed scene", hr);
+        EndPaint(hwnd, &ps);
+        return;
     }
     ApplyQuickNavigationAnimationFrame();
     if (!CommitQuickNavigationCompositionFrame())
@@ -659,18 +527,14 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     quickNavigation_->backdropCompositor.CommitVisualChanges();
     if (!quickNavigation_->backdropCompositor.CommitSrgbContent())
     {
-        quickNavigation_->backdropCompositor.RemoveSrgbContent(srgbKey);
-        (void)quickNavigation_->dcompVisual->SetContent(quickNavigation_->dcompSurface.Get());
-        (void)CommitQuickNavigationCompositionFrame();
-        (void)FlushPendingQuickNavigationCompositionCommit();
-        (void)quickNavigation_->backdropCompositor.CommitSrgbContent();
+        InvalidateRect(hwnd, nullptr, FALSE);
     }
     quickNavigation_->compositionRenderRecoveryPending = false;
 
     EndPaint(hwnd, &ps);
 }
 
-void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
+void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context, QuickNavigationPaintPart part)
 {
     ComPtr<ID2D1DeviceContext> ctx = context;
     const QuickNavTheme t = ResolveQuickNavTheme(quickNavigation_->lightTheme, navigationSettings_, quickNavigation_->glassTheme);
@@ -680,6 +544,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             QuickNavScale(navigationSettings_.layout.cornerRadius));
     const auto windowClipGeometry = snowdesktop::smooth_corners::Geometry(
         d2dFactory_.Get(), ToD2DRect(overlay), windowCornerRadius);
+    const snowdesktop::ScopedIconBackdropClip highlightClip(ctx.Get(), overlay, windowClipGeometry.Get());
     bool windowClipPushed = false;
     if (windowClipGeometry)
     {
@@ -690,55 +555,65 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             nullptr);
         windowClipPushed = true;
     }
-    const float borderAlpha =
-        std::clamp(quickNavigation_->appearance.widgetBorderAlpha, 0.0f, 1.0f);
-    auto background = quickNavigation_->appearance;
-    background.widgetEdgeHighlightEnabled = false;
-    background.acrylicEnabled = false;
-    DrawWidgetPanelBackground(ctx.Get(), overlay, windowCornerRadius,
-        D2D1::ColorF(background.widgetBgR, background.widgetBgG, background.widgetBgB, background.widgetAlpha),
-        D2D1::ColorF(0, 0, 0, 0), false, background.widgetBorderWidth,
-        &background, false, 0, static_cast<float>(QuickNavScale(100)) / 100.0f);
-    if (quickNavigation_->appearance.glassEnabled && quickNavigation_->appearance.acrylicEnabled)
+    if (part != QuickNavigationPaintPart::Content)
     {
-        POINT screenOrigin{};
-        if (!quickNavigation_->preview) ClientToScreen(quickNavigation_->hwnd, &screenOrigin);
-        DrawAcrylicNoise(ctx.Get(), overlay, windowCornerRadius,
-            quickNavigation_->appearance.contentTheme == 1, screenOrigin);
-    }
-    const RECT searchRect = GetQuickNavigationSearchRect(overlay);
-    DrawD2DFilledRectangle(ctx.Get(), searchRect,
-        ToD2DColor(t.searchBg), D2D1::ColorF(0,0,0,0.f));
-    if (overlay.bottom > searchRect.bottom)
-        DrawD2DSeparator(ctx.Get(), MakeRect(searchRect.left, searchRect.bottom - QuickNavScale(1), searchRect.right, searchRect.bottom),
-            ToD2DColor(t.searchBorder));
-    const float windowBorderStrokeWidth = std::clamp(quickNavigation_->appearance.widgetBorderWidth, kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
-    const float windowBorderInset =
-        windowBorderStrokeWidth * 0.5f;
-    const D2D1_RECT_F windowBorderRect =
-        D2D1::RectF(
-            static_cast<float>(overlay.left) +
-                windowBorderInset,
-            static_cast<float>(overlay.top) +
-                windowBorderInset,
-            static_cast<float>(overlay.right) -
-                windowBorderInset,
-            static_cast<float>(overlay.bottom) -
-                windowBorderInset);
-    DrawD2DRoundedRectangle(ctx.Get(),
-        windowBorderRect,
-        std::max(
-            0.0f,
-            windowCornerRadius - windowBorderInset),
-        D2D1::ColorF(0, 0, 0, 0),
-        D2D1::ColorF(quickNavigation_->appearance.widgetBorderR,
-            quickNavigation_->appearance.widgetBorderG,
-            quickNavigation_->appearance.widgetBorderB, borderAlpha),
-        windowBorderStrokeWidth);
-    (void)DrawWidgetPanelEdgeHighlight(ctx.Get(), overlay, windowCornerRadius,
-        D2D1::ColorF(background.widgetBgR, background.widgetBgG, background.widgetBgB, background.widgetAlpha),
-        &quickNavigation_->appearance, static_cast<float>(QuickNavScale(100)) / 100.0f);
+        const float borderAlpha =
+            std::clamp(quickNavigation_->appearance.widgetBorderAlpha, 0.0f, 1.0f);
+        auto background = quickNavigation_->appearance;
+        background.widgetEdgeHighlightEnabled = false;
+        background.acrylicEnabled = false;
+        DrawWidgetPanelBackground(ctx.Get(), overlay, windowCornerRadius,
+            D2D1::ColorF(background.widgetBgR, background.widgetBgG, background.widgetBgB, background.widgetAlpha),
+            D2D1::ColorF(0, 0, 0, 0), false, background.widgetBorderWidth,
+            &background, false, 0, static_cast<float>(QuickNavScale(100)) / 100.0f);
+        if (quickNavigation_->appearance.glassEnabled && quickNavigation_->appearance.acrylicEnabled)
+        {
+            POINT screenOrigin{};
+            if (!quickNavigation_->preview) ClientToScreen(quickNavigation_->hwnd, &screenOrigin);
+            DrawAcrylicNoise(ctx.Get(), overlay, windowCornerRadius,
+                quickNavigation_->appearance.contentTheme == 1, screenOrigin);
+        }
+        const RECT searchRect = GetQuickNavigationSearchRect(overlay);
+        DrawD2DFilledRectangle(ctx.Get(), searchRect,
+            ToD2DColor(t.searchBg), D2D1::ColorF(0,0,0,0.f));
+        if (overlay.bottom > searchRect.bottom)
+            DrawD2DSeparator(ctx.Get(), MakeRect(searchRect.left, searchRect.bottom - QuickNavScale(1), searchRect.right, searchRect.bottom),
+                ToD2DColor(t.searchBorder));
+        const float windowBorderStrokeWidth = std::clamp(quickNavigation_->appearance.widgetBorderWidth, kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+        const float windowBorderInset =
+            windowBorderStrokeWidth * 0.5f;
+        const D2D1_RECT_F windowBorderRect =
+            D2D1::RectF(
+                static_cast<float>(overlay.left) +
+                    windowBorderInset,
+                static_cast<float>(overlay.top) +
+                    windowBorderInset,
+                static_cast<float>(overlay.right) -
+                    windowBorderInset,
+                static_cast<float>(overlay.bottom) -
+                    windowBorderInset);
+        DrawD2DRoundedRectangle(ctx.Get(),
+            windowBorderRect,
+            std::max(
+                0.0f,
+                windowCornerRadius - windowBorderInset),
+            D2D1::ColorF(0, 0, 0, 0),
+            D2D1::ColorF(quickNavigation_->appearance.widgetBorderR,
+                quickNavigation_->appearance.widgetBorderG,
+                quickNavigation_->appearance.widgetBorderB, borderAlpha),
+            windowBorderStrokeWidth);
+        {
+            (void)DrawWidgetPanelEdgeHighlight(ctx.Get(), overlay, windowCornerRadius,
+                D2D1::ColorF(background.widgetBgR, background.widgetBgG, background.widgetBgB, background.widgetAlpha),
+                &quickNavigation_->appearance, static_cast<float>(QuickNavScale(100)) / 100.0f);
+        }
 
+    }
+    if (part == QuickNavigationPaintPart::Chrome)
+    {
+        if (windowClipPushed) ctx->PopLayer();
+        return;
+    }
     const bool searching = !GetQuickNavigationEffectiveSearchText().empty();
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
     QuickNavigationContentModel contentModel =
@@ -1426,8 +1301,13 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                     if (!IsLuaLogicalSlotPickerOpen() &&
                         generalSettings_.demoModeEnabled &&
                         demoIdentityAssetsAvailable_)
-                        DrawDemoIdentityIcon(ctx.Get(), entry.parsingName,
-                            iconRect);
+                    {
+                        const auto drawIcon = [&](auto* drawing) {
+                            DrawDemoIdentityIcon(drawing, entry.parsingName, iconRect);
+                        };
+                        DrawIconWithShadows(ctx.Get(), iconRect, QuickNavScale(100) / 100.0f,
+                            iconShadows_.NavigationStrength(), drawIcon);
+                    }
                     else
                         DrawQuickNavAppIcon(
                             ctx.Get(), entry, iconRect);

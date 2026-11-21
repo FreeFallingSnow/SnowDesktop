@@ -4,61 +4,16 @@
 #include "widget/preview/widget_preview_stage.h"
 #include "theme/panel_gradient_renderer.h"
 
-// Reusable Direct2D drawing primitives.
-
 void DesktopApp::DrawD2DRoundedRectangle(ID2D1RenderTarget* ctx, RECT rect, float radius,
     D2D1_COLOR_F fill, D2D1_COLOR_F stroke, float strokeWidth)
 {
-    if (!ctx || IsRectEmptyRect(rect)) return;
-    DrawD2DRoundedRectangle(
-        ctx, ToD2DRect(rect), radius,
-        fill, stroke, strokeWidth);
+    drawing_.DrawRoundedRectangle(ctx, rect, radius, fill, stroke, strokeWidth);
 }
 
-void DesktopApp::DrawD2DRoundedRectangle(
-    ID2D1RenderTarget* ctx, D2D1_RECT_F rect,
-    float radius, D2D1_COLOR_F fill,
-    D2D1_COLOR_F stroke, float strokeWidth)
+void DesktopApp::DrawD2DRoundedRectangle(ID2D1RenderTarget* ctx, D2D1_RECT_F rect,
+    float radius, D2D1_COLOR_F fill, D2D1_COLOR_F stroke, float strokeWidth)
 {
-    if (!ctx || rect.right <= rect.left ||
-        rect.bottom <= rect.top)
-        return;
-    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
-    {
-        brushCache_.clear();
-        brushCacheContext_ = ctx;
-    }
-
-    if (fill.a > 0.0f)
-    {
-        std::uint64_t k = D2DColorBrushKey(fill);
-        auto it = brushCache_.find(k);
-        if (it == brushCache_.end())
-        {
-            ComPtr<ID2D1SolidColorBrush> b;
-            if (SUCCEEDED(ctx->CreateSolidColorBrush(fill, &b)) && b)
-                it = brushCache_.emplace(k, std::move(b)).first;
-            else
-                return;
-        }
-        if (it != brushCache_.end() && it->second)
-            snowdesktop::smooth_corners::Fill(ctx, rect, radius, it->second.Get());
-    }
-    if (stroke.a > 0.0f)
-    {
-        std::uint64_t k = D2DColorBrushKey(stroke);
-        auto it = brushCache_.find(k);
-        if (it == brushCache_.end())
-        {
-            ComPtr<ID2D1SolidColorBrush> b;
-            if (SUCCEEDED(ctx->CreateSolidColorBrush(stroke, &b)) && b)
-                it = brushCache_.emplace(k, std::move(b)).first;
-            else
-                return;
-        }
-        if (it != brushCache_.end() && it->second)
-            snowdesktop::smooth_corners::Stroke(ctx, rect, radius, it->second.Get(), strokeWidth);
-    }
+    drawing_.DrawRoundedRectangle(ctx, rect, radius, fill, stroke, strokeWidth);
 }
 
 void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, float radius,
@@ -67,28 +22,10 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
     std::uintptr_t backdropOwnerKey, float effectScale)
 {
     if (!ctx || IsRectEmptyRect(frame)) return;
-    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
-    {
-        brushCache_.clear();
-        brushCacheContext_ = ctx;
-    }
-
     PersonalizationSettings p = effectSettings
         ? *effectSettings
         : CurrentPersonalization();
     radius = std::max(0.0f, radius);
-
-    auto getBrush = [&](const D2D1_COLOR_F& c) -> ID2D1SolidColorBrush* {
-        const auto key = D2DColorBrushKey(c);
-        auto it = brushCache_.find(key);
-        if (it == brushCache_.end())
-        {
-            ComPtr<ID2D1SolidColorBrush> b;
-            if (FAILED(ctx->CreateSolidColorBrush(c, &b)) || !b) return nullptr;
-            it = brushCache_.emplace(key, std::move(b)).first;
-        }
-        return it->second.Get();
-    };
 
     D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(ToD2DRect(frame), radius, radius);
 
@@ -123,8 +60,8 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
 
     if (!snowdesktop::DrawPanelGradient(ctx, ToD2DRect(frame), radius, p.panelGradient, 1.f, true) && fill.a > 0.0f)
     {
-        if (auto* fillBrush = getBrush(fill))
-            snowdesktop::smooth_corners::Fill(ctx, rr.rect, radius, fillBrush);
+        if (auto fillBrush = drawing_.GetSolidBrush(ctx, fill))
+            snowdesktop::smooth_corners::Fill(ctx, rr.rect, radius, fillBrush.Get());
     }
     if (p.glassEnabled && p.acrylicEnabled)
     {
@@ -256,37 +193,5 @@ void DesktopApp::DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame,
 void DesktopApp::DrawD2DFilledRectangle(ID2D1RenderTarget* ctx, RECT rect,
     D2D1_COLOR_F fill, D2D1_COLOR_F stroke)
 {
-    if (!ctx || IsRectEmptyRect(rect)) return;
-    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
-    {
-        brushCache_.clear();
-        brushCacheContext_ = ctx;
-    }
-
-    if (fill.a > 0.0f)
-    {
-        std::uint64_t k = D2DColorBrushKey(fill);
-        auto it = brushCache_.find(k);
-        if (it == brushCache_.end())
-        {
-            ComPtr<ID2D1SolidColorBrush> b;
-            if (SUCCEEDED(ctx->CreateSolidColorBrush(fill, &b)) && b)
-                it = brushCache_.emplace(k, std::move(b)).first;
-        }
-        if (it != brushCache_.end() && it->second)
-            ctx->FillRectangle(ToD2DRect(rect), it->second.Get());
-    }
-    if (stroke.a > 0.0f)
-    {
-        std::uint64_t k = D2DColorBrushKey(stroke);
-        auto it = brushCache_.find(k);
-        if (it == brushCache_.end())
-        {
-            ComPtr<ID2D1SolidColorBrush> b;
-            if (SUCCEEDED(ctx->CreateSolidColorBrush(stroke, &b)) && b)
-                it = brushCache_.emplace(k, std::move(b)).first;
-        }
-        if (it != brushCache_.end() && it->second)
-            ctx->DrawRectangle(ToD2DRect(rect), it->second.Get(), 1.0f, nullptr);
-    }
+    drawing_.DrawFilledRectangle(ctx, rect, fill, stroke);
 }

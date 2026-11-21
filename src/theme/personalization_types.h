@@ -180,6 +180,7 @@ struct PersonalizationSettings
     float popupHoverDelayMs = kDefaultPopupHoverDelayMs;
     // Close collection/Dock folder popups when the pointer leaves; opt-in.
     bool popupCloseOnMouseLeave = false;
+    bool folderDoubleClickPreview = false;
 
     int backgroundPreset = 0;
     /** @brief 独立的组件圆角半径，不属于主题预设。 */

@@ -28,7 +28,6 @@ function(snowdesktop_configure_host target)
             _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
             WINVER=0x0A00 _WIN32_WINNT=0x0A00
             DISABLE_XAML_GENERATED_MAIN
-            SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
             SNOWDESKTOP_STEAM_APP_ID=${SNOWDESKTOP_STEAM_APP_ID}
             SNOWDESKTOP_STORE_ID="${SNOWDESKTOP_STORE_ID}"
             SNOWDESKTOP_PACKAGE_FAMILY_NAME="${SNOWDESKTOP_PACKAGE_FAMILY_NAME}")
@@ -62,14 +61,13 @@ function(snowdesktop_configure_host target)
         target_compile_options(${target} PRIVATE -Wall -Wextra -pedantic)
         target_compile_definitions(${target} PRIVATE
             _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
-            SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
             SNOWDESKTOP_STEAM_APP_ID=${SNOWDESKTOP_STEAM_APP_ID}
             SNOWDESKTOP_STORE_ID="${SNOWDESKTOP_STORE_ID}"
             SNOWDESKTOP_PACKAGE_FAMILY_NAME="${SNOWDESKTOP_PACKAGE_FAMILY_NAME}")
     endif()
 
     target_link_libraries(${target} PRIVATE
-        webpdecoder SnowDesktopPuff SnowDesktopWindowSupport SnowDesktopLibIcal
+        SnowDesktopApplicationVersion webpdecoder SnowDesktopPuff SnowDesktopWindowSupport SnowDesktopLibIcal
         ${SNOWDESKTOP_SYSTEM_CONTROL_LIBRARIES}
         SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
         SnowDesktopSearchVisibility

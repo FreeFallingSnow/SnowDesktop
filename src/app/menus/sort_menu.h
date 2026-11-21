@@ -1,7 +1,7 @@
 #pragma once
 
 #include "common/constants.h"
-#include "layout/folder_sort_rules.h"
+#include "layout/folder_sort_types.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/modern_menu.h"
 

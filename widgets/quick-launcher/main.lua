@@ -3,6 +3,8 @@ local descriptor
 local desktopChanges
 local appIndexStatus
 
+local EDGE_FADE = widget.hasFeature("draw.clip.edgeFade")
+
 local function componentMetrics()
     local row = ui.metrics().layoutRowHeight
     local scale = row / 28
@@ -31,11 +33,17 @@ local fluent = {
 
 local settings = {
     fields = {
-        { key = "query", label = l10n.tr("lua_widget.quick_launcher.query"),
+        { key = "query",
+            agentDescription = "Sets the search text used to find matching desktop items and applications. A changed query refreshes the results.",
+            label = l10n.tr("lua_widget.quick_launcher.query"),
             type = "text", default = "" },
-        { key = "fontScale", label = l10n.tr("lua_widget.common.font_scale"),
+        { key = "fontScale",
+            agentDescription = "Scales the search field and result text using the component layout metrics.",
+            label = l10n.tr("lua_widget.common.font_scale"),
             type = "int", default = 100, min = 70, max = 160 },
-        { key = "textColor", label = l10n.tr("lua_widget.common.text_color"),
+        { key = "textColor",
+            agentDescription = "Sets the text color used by the launcher. Following personalization can substitute the theme foreground.",
+            label = l10n.tr("lua_widget.common.text_color"),
             type = "color", default = 0xFFFFFF },
     },
 }
@@ -347,12 +355,13 @@ local function render(context, model)
         width = width - contentInset, height = viewportHeight }
     local scroll = interaction.scroll({
         key = "quick-results", shape = scrollViewport,
-        contentHeight = math.ceil(contentHeight),
+        contentHeight = contentHeight > viewportHeight and math.ceil(contentHeight) or 0,
     })
     local iconSize = math.max(fontSize + metrics.spacingXs,
         metrics.spacingLg)
     draw.pushClip(contentInset, listTop,
-        width - contentInset * 2, viewportHeight)
+        width - contentInset * 2, viewportHeight,
+        EDGE_FADE and { scroll = scroll, fadeLength = itemHeight * 0.5 } or nil)
     for index, row in ipairs(model.rows) do
         local rowHeight = row.kind == "header" and headerHeight or itemStride
         local y = listTop + offsets[index] - scroll.offset
@@ -396,22 +405,18 @@ local function render(context, model)
                 local iconX = contentInset + metrics.spacingSm
                 local iconY = y + math.max(0, (itemHeight - iconSize) / 2)
                 if item.preview then
-                    draw.fluent(fluent.open, iconX, iconY, iconSize,
-                        colors.text)
+                    draw.glyph(fluent.open, iconX + iconSize / 2, iconY + iconSize / 2,
+                        iconSize, colors.text, "fluent")
                 else
                     draw.icon(item.ref, iconX, iconY, iconSize,
                         (selected or hovered) and 1.0 or 0.86)
                 end
                 local textX = iconX + iconSize + metrics.spacingSm
-                local textMetrics = draw.measureText(
-                    item.title, fontSize, 0, false)
-                local textY = y + math.max(0,
-                    (itemHeight - textMetrics.height) / 2)
-                draw.text(textX, textY, item.title,
+                draw.text(textX, y + itemHeight / 2, item.title,
                     fontSize, colors.text,
                     math.max(unit,
                         width - contentInset - textX - metrics.spacingXs),
-                    false, true)
+                    false, true, nil, nil, nil, { y = "center" })
             end
         end
     end

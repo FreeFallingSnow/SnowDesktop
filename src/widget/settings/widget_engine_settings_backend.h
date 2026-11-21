@@ -13,6 +13,8 @@
 
 namespace snowdesktop::widget_runtime
 {
+bool IsReservedDeclarativeSettingKey(std::string_view key) noexcept;
+
 namespace widget_settings_backend_detail
 {
 inline WidgetSettingCondition ConvertCondition(
@@ -29,6 +31,7 @@ inline WidgetSettingSourceField ConvertSetting(
     schema.key = source.key;
     schema.label = source.label;
     schema.description = source.description;
+    schema.agentDescription = source.agentDescription;
     schema.group = source.group;
     schema.validationMessage = source.validationMessage;
     schema.rawType = source.type.empty() ? "text" : source.type;

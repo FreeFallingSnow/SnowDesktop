@@ -642,6 +642,37 @@ struct DesktopPagePresenter::Impl
     SettingRow beautifyModeRow;
     muxc::ToggleSwitch beautifyFileThumbnails{nullptr};
     SettingRow beautifyFileThumbnailsRow;
+    muxc::Expander iconShadowCard{nullptr};
+    struct ShadowOption
+    {
+        bool IconShadowSettings::* field;
+        int IconShadowSettings::* strengthField;
+        const char* labelKey;
+        const wchar_t* fallback;
+        muxc::CheckBox check{nullptr};
+        muxc::TextBlock label{nullptr};
+        muxc::Slider slider{nullptr};
+        muxc::TextBlock value{nullptr};
+        muxc::Button reset{nullptr};
+        presenter_controls::CoalescedPreviewTimer<int> strengthUpdate;
+        winrt::event_token clicked{}, changed{}, resetClicked{};
+    };
+    std::array<ShadowOption, 7> shadowOptions{{
+        {&IconShadowSettings::fan, &IconShadowSettings::fanStrength,
+            "app.settings.icon_shadow_fan", L"Icons in fan view"},
+        {&IconShadowSettings::dock, &IconShadowSettings::dockStrength,
+            "app.settings.icon_shadow_dock", L"Dock icons"},
+        {&IconShadowSettings::exposedWidget, &IconShadowSettings::exposedWidgetStrength,
+            "app.settings.icon_shadow_exposed_widget", L"Exposed widget icons"},
+        {&IconShadowSettings::desktop, &IconShadowSettings::desktopStrength,
+            "app.settings.icon_shadow_desktop", L"Desktop icons"},
+        {&IconShadowSettings::popup, &IconShadowSettings::popupStrength,
+            "app.settings.icon_shadow_popup", L"Icons in pop-ups"},
+        {&IconShadowSettings::quickNavigation, &IconShadowSettings::quickNavigationStrength,
+            "app.settings.icon_shadow_quick_navigation", L"Icons in Quick Navigation"},
+        {&IconShadowSettings::subject, &IconShadowSettings::subjectStrength,
+            "app.settings.icon_shadow_subject", L"Beautified icon subject shadow"},
+    }};
     std::unique_ptr<ColorEditor> backgroundStart;
     std::unique_ptr<NumericEditor> backgroundOpacity;
     std::shared_ptr<EdgeLightEditor> edgeLightEditor;
@@ -939,6 +970,59 @@ struct DesktopPagePresenter::Impl
         beautifyCard.content.Children().Append(beautifyAdvanced);
         beautifyCard.content.Children().Append(iconThemes->SaveContent());
         iconThemes->SetCustomContent({beautifyAdvanced});
+
+        iconShadowCard = muxc::Expander{};
+        iconShadowCard.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        iconShadowCard.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        iconShadowCard.Padding({0});
+        muxc::StackPanel shadowRows;
+        for (auto& option : shadowOptions)
+        {
+            option.check = muxc::CheckBox{};
+            option.check.MinWidth(0);
+            option.label = muxc::TextBlock{};
+            option.label.TextWrapping(mux::TextWrapping::Wrap);
+            option.check.Content(option.label);
+
+            option.slider = muxc::Slider{};
+            option.slider.Minimum(kMinIconShadowStrength);
+            option.slider.Maximum(kMaxIconShadowStrength);
+            option.slider.StepFrequency(1);
+            option.slider.SmallChange(1);
+            option.slider.LargeChange(10);
+            option.slider.VerticalAlignment(mux::VerticalAlignment::Center);
+            option.value = muxc::TextBlock{};
+            option.value.MinWidth(42);
+            option.value.TextAlignment(mux::TextAlignment::Right);
+            option.value.VerticalAlignment(mux::VerticalAlignment::Center);
+            option.reset = muxc::Button{};
+
+            muxc::Grid editors;
+            editors.ColumnSpacing(8);
+            muxc::ColumnDefinition sliderColumn;
+            sliderColumn.Width(mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star));
+            editors.ColumnDefinitions().Append(sliderColumn);
+            for (int index = 0; index < 2; ++index)
+            {
+                muxc::ColumnDefinition column;
+                column.Width(mux::GridLengthHelper::Auto());
+                editors.ColumnDefinitions().Append(column);
+            }
+            editors.Children().Append(option.slider);
+            muxc::Grid::SetColumn(option.value, 1);
+            editors.Children().Append(option.value);
+            muxc::Grid::SetColumn(option.reset, 2);
+            editors.Children().Append(option.reset);
+
+            SettingRow row;
+            row.Initialize(editors, 228);
+            row.text.Children().Clear();
+            row.text.Children().Append(option.check);
+            presenter_controls::StyleSettingsSubrow(row.root, &option == &shadowOptions.front(), 0);
+            shadowRows.Children().Append(row.root);
+        }
+        iconShadowCard.Content(shadowRows);
+        beautifyCard.content.Children().Append(iconShadowCard);
 
         backgroundStart = MakeBeautifyColor(
             [](IconBeautifySettings& settings,
@@ -1332,6 +1416,32 @@ struct DesktopPagePresenter::Impl
             UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
                 [enabled](DesktopDisplaySettings& settings) { settings.beautifyFileThumbnails = enabled; });
         });
+        for (auto& option : shadowOptions)
+        {
+            option.clicked = option.check.Click([this, field = option.field](const auto& sender, const auto&) {
+                const bool enabled = sender.template as<muxc::CheckBox>().IsChecked().Value();
+                UpdateDesktop(SettingsUpdateMode::Commit, [field, enabled](DesktopDisplaySettings& settings) {
+                    settings.iconShadows.*field = enabled;
+                });
+            });
+            option.strengthUpdate.Initialize([this, field = option.strengthField](int strength) {
+                UpdateDesktop(SettingsUpdateMode::PreviewAndCommit, [field, strength](DesktopDisplaySettings& settings) {
+                    settings.iconShadows.*field = strength;
+                });
+            });
+            option.changed = option.slider.ValueChanged([this, &option](const auto&, const auto& args) {
+                const int strength = static_cast<int>(std::lround(args.NewValue()));
+                option.value.Text(std::to_wstring(strength) + L"%");
+                if (!updatingControls && !closed && active && !iconEditorMode)
+                    option.strengthUpdate.Queue(strength);
+            });
+            option.resetClicked = option.reset.Click([this, &option](const auto&, const auto&) {
+                if (closed || !active || iconEditorMode) return;
+                option.slider.Value(kDefaultIconShadowStrength);
+                option.strengthUpdate.Queue(kDefaultIconShadowStrength);
+                option.strengthUpdate.Flush();
+            });
+        }
         glassEnabledToken = glassEnabled.Toggled([this](auto const&, auto const&) {
             const bool v = glassEnabled.IsOn();
             UpdateBeautify(SettingsUpdateMode::PreviewAndCommit, [v](auto& settings) { settings.glassEnabled = v; });
@@ -1708,7 +1818,8 @@ struct DesktopPagePresenter::Impl
             L"\n" + L("app.settings.category_hint",
                 L"Standard extensions also match shortcut file targets; "
                 L".LNK:FOLDER matches folder shortcuts, .LNK:.PDF matches PDF shortcuts, "
-                L".LNK:APP matches application shortcuts, and .URL:STEAM matches Steam launch links.");
+                L".LNK:APP matches application shortcuts, .URL:STEAM matches Steam launch links, "
+                L"and .URL:EPIC matches Epic Games launch links.");
         muxc::ToolTipService::SetToolTip(extensions, winrt::box_value(help));
         muxa::AutomationProperties::SetHelpText(extensions, help);
     }
@@ -1750,6 +1861,7 @@ struct DesktopPagePresenter::Impl
     {
         SetDependentVisibility(beautifyModeRow.root, beautifyEnabled || iconEditorMode, beautifyPreset);
         SetDependentVisibility(beautifyFileThumbnailsRow.root, beautifyEnabled && !iconEditorMode, beautifyPreset);
+        iconShadowCard.Visibility(iconEditorMode ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         SetDependentVisibility(edgeLightEditor->Content(), edgeReflection.IsOn(), edgeReflection);
         SetDependentVisibility(glassBlurRadius->root, glassEnabled.IsOn(), glassEnabled);
         SetDependentVisibility(reflectionWidth->root, edgeReflection.IsOn(), edgeReflection);
@@ -1786,6 +1898,16 @@ struct DesktopPagePresenter::Impl
             std::clamp(settings.shortcutArrowMode, 0, 2));
         groupComponentBadges.IsOn(settings.groupComponentBadges);
         beautifyFileThumbnails.IsOn(settings.beautifyFileThumbnails);
+        for (const auto& option : shadowOptions)
+        {
+            option.check.IsChecked(settings.iconShadows.*(option.field));
+            if (!option.strengthUpdate.pending)
+            {
+                const int strength = settings.iconShadows.*(option.strengthField);
+                option.slider.Value(strength);
+                option.value.Text(std::to_wstring(strength) + L"%");
+            }
+        }
 
         const IconBeautifySettings& value = settings.iconBeautify;
         beautifyEnabled = value.enabled;
@@ -1916,6 +2038,8 @@ struct DesktopPagePresenter::Impl
 
     void CommitContinuousEdits()
     {
+        for (auto& option : shadowOptions)
+            option.strengthUpdate.Flush();
         if (edgeLightEditor) edgeLightEditor->Flush();
         if (gradientEditor) gradientEditor->Flush();
         for (NumericEditor* editor : ContinuousNumbers())
@@ -2097,6 +2221,20 @@ struct DesktopPagePresenter::Impl
         iconThemes->LocalizeText();
         beautifyFileThumbnailsRow.SetText(L("app.settings.beautify_file_thumbnails", L"Beautify file thumbnails"));
         muxa::AutomationProperties::SetName(beautifyFileThumbnails, beautifyFileThumbnailsRow.label.Text());
+        const auto shadowTitle = L("app.settings.icon_shadows", L"Icon shadows");
+        iconShadowCard.Header(winrt::box_value(shadowTitle));
+        muxa::AutomationProperties::SetName(iconShadowCard, shadowTitle);
+        const auto strengthLabel = L("app.settings.beautify_shadow_strength", L"Shadow strength");
+        const auto resetLabel = L("app.settings.restore_default", L"Restore default");
+        for (const auto& option : shadowOptions)
+        {
+            const auto label = L(option.labelKey, option.fallback);
+            option.label.Text(label);
+            muxa::AutomationProperties::SetName(option.check, label);
+            muxa::AutomationProperties::SetName(option.slider, strengthLabel + L" (" + label + L")");
+            presenter_controls::ConfigureRestoreDefaultButton(option.reset,
+                resetLabel + L" (" + strengthLabel + L", " + label + L")");
+        }
         beautifyModeRow.SetText(
             L("iconStyle.strategy", L"Icon processing"));
         muxa::AutomationProperties::SetName(
@@ -2240,6 +2378,7 @@ struct DesktopPagePresenter::Impl
         if (id == "desktop.fontWeight") return itemFontWeight->number;
         if (id == "desktop.shortcutArrow") return shortcutArrow;
         if (id == "desktop.groupComponentBadges") return groupComponentBadges;
+        if (id == "desktop.iconShadows") return iconShadowCard;
         if (id == "desktop.categoryCounts") return showCategoryTabCounts;
         if (id == "desktop.collectPrograms") return collectPrograms;
         if (id == "desktop.iconBeautify" ||
@@ -2371,6 +2510,13 @@ struct DesktopPagePresenter::Impl
             beautifyPreset.SelectionChanged(beautifyPresetToken);
             beautifyMode.SelectionChanged(beautifyModeToken);
             beautifyFileThumbnails.Toggled(beautifyFileThumbnailsToken);
+            for (auto& option : shadowOptions)
+            {
+                option.strengthUpdate.Close();
+                option.check.Click(option.clicked);
+                option.slider.ValueChanged(option.changed);
+                option.reset.Click(option.resetClicked);
+            }
             backgroundSource.SelectionChanged(backgroundSourceToken);
             filterMode.SelectionChanged(filterModeToken);
             glassEnabled.Toggled(glassEnabledToken); edgeReflection.Toggled(edgeReflectionToken);

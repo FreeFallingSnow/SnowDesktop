@@ -20,6 +20,7 @@ struct NativeTooltipLayoutOptions
     float paddingXRatio = .85f, paddingYRatio = 1.f / 3.f;
     float minimumWidth = 0.f, minimumHeight = 0.f;
     bool centered = false;
+    bool centerTextInkVertically = false;
 };
 inline HRESULT CreateNativeTooltipTextFormat(IDWriteFactory* factory,
     IDWriteTextFormat** format, float scale = 1.f, bool wrap = true)
@@ -36,6 +37,7 @@ struct NativeTooltipTextLayout
     float width = 0;
     float height = 0;
     float paddingX = 0.f, paddingY = 0.f;
+    bool centerTextInkVertically = false;
 };
 inline HRESULT MeasureNativeTooltip(IDWriteFactory* factory, IDWriteTextFormat* format,
     std::wstring_view title, std::wstring_view body, float maximumWidth,
@@ -81,6 +83,7 @@ inline HRESULT MeasureNativeTooltip(IDWriteFactory* factory, IDWriteTextFormat* 
         result.layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         result.layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     }
+    result.centerTextInkVertically = options.centerTextInkVertically;
     return S_OK;
 }
 inline bool NativeTooltipHighContrast()
@@ -105,8 +108,21 @@ inline void DrawNativeTooltipText(ID2D1RenderTarget* context, D2D1_RECT_F bounds
     const auto content = D2D1::RectF(bounds.left + measured.paddingX, bounds.top + measured.paddingY,
         std::max(bounds.left + measured.paddingX, bounds.right - measured.paddingX),
         std::max(bounds.top + measured.paddingY, bounds.bottom - measured.paddingY));
+    float textY = content.top;
+    if (measured.centerTextInkVertically)
+    {
+        DWRITE_OVERHANG_METRICS overhang{};
+        if (SUCCEEDED(measured.layout->GetOverhangMetrics(&overhang)))
+        {
+            const float inkTop = -overhang.top;
+            const float inkBottom = measured.layout->GetMaxHeight() + overhang.bottom;
+            const float contentHeight = content.bottom - content.top;
+            if (inkBottom > inkTop && inkBottom - inkTop <= contentHeight)
+                textY += (contentHeight - inkTop - inkBottom) * 0.5f;
+        }
+    }
     context->PushAxisAlignedClip(content, D2D1_ANTIALIAS_MODE_ALIASED);
-    context->DrawTextLayout(D2D1::Point2F(content.left, content.top), measured.layout.Get(),
+    context->DrawTextLayout(D2D1::Point2F(content.left, textY), measured.layout.Get(),
         brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
     context->PopAxisAlignedClip();
 }

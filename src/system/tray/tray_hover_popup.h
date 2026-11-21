@@ -20,6 +20,7 @@ public:
     void Reset();
     bool Visible() const;
     bool Covers(HWND window) const;
+    bool IsActivatingPreview(HWND window) const;
 
 private:
     static void CALLBACK OnEvent(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD);

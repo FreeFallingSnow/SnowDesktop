@@ -1,6 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <string>
 #include <string_view>
 
 namespace snowdesktop::shortcut_application_rules
@@ -172,5 +174,75 @@ inline bool IsSteamApplicationUrl(std::wstring_view url)
             suffix == L'\n';
     }
     return false;
+}
+
+inline constexpr std::size_t MaxEpicIdentifierLength = 64;
+
+inline bool ValidEpicIdentifier(std::string_view value)
+{
+    return !value.empty() && value.size() <= MaxEpicIdentifierLength &&
+        std::ranges::all_of(value, [](char c) {
+            return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
+        });
+}
+
+inline bool ValidEpicGameKey(std::string_view key)
+{
+    const auto dot = key.find('.');
+    return ValidEpicIdentifier(key.substr(0, dot)) &&
+        (dot == key.npos || ValidEpicIdentifier(key.substr(dot + 1)));
+}
+
+// Qualified shortcuts use namespace.catalogItemId. Older shortcuts use AppName.
+inline std::string EpicGameKey(std::wstring_view url)
+{
+    url = Trim(url);
+    constexpr std::wstring_view prefix = L"com.epicgames.launcher://apps/";
+    if (!StartsWithIgnoreCase(url, prefix)) return {};
+    url.remove_prefix(prefix.size());
+    const auto query = url.find(L'?');
+    if (query == url.npos || query > 3 * MaxEpicIdentifierLength + 6) return {};
+    auto parameters = url.substr(query + 1);
+    bool launches = false;
+    while (!parameters.empty())
+    {
+        const auto separator = parameters.find_first_of(L"&#");
+        const auto parameter = parameters.substr(0, separator);
+        if (StartsWithIgnoreCase(parameter, L"action="))
+        {
+            if (launches || !EqualsIgnoreCase(parameter, L"action=launch")) return {};
+            launches = true;
+        }
+        if (separator == parameters.npos || parameters[separator] == L'#') break;
+        parameters.remove_prefix(separator + 1);
+    }
+    if (!launches) return {};
+    url = url.substr(0, query);
+    std::string path;
+    for (std::size_t i = 0; i < url.size(); ++i)
+    {
+        wchar_t c = UpperAscii(url[i]);
+        if (c == L'%' && url.size() - i >= 3 && url[i + 1] == L'3' && UpperAscii(url[i + 2]) == L'A')
+        {
+            path.push_back(':');
+            i += 2;
+        }
+        else if (c <= 0x7f)
+        {
+            if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c + (L'a' - L'A'));
+            path.push_back(static_cast<char>(c));
+        }
+        else return {};
+    }
+    const auto first = path.find(':');
+    if (first == path.npos) return ValidEpicIdentifier(path) ? path : std::string{};
+    const auto last = path.find(':', first + 1);
+    const std::string_view parts(path);
+    if (last == path.npos || !ValidEpicIdentifier(parts.substr(0, first)) ||
+        !ValidEpicIdentifier(parts.substr(first + 1, last - first - 1)) ||
+        !ValidEpicIdentifier(parts.substr(last + 1))) return {};
+    path[first] = '.';
+    path.resize(last);
+    return path;
 }
 } // namespace snowdesktop::shortcut_application_rules

@@ -70,7 +70,7 @@ std::vector<std::wstring> DesktopApp::GetSelectedFolderEntryPaths(size_t* firstW
     if (firstWidgetIndex)
         *firstWidgetIndex = static_cast<size_t>(-1);
 
-    if (IsCollectionPopupInteractive() &&
+    if (IsCollectionPopupKeyboardTarget() &&
         dockFolderPopupOpen_)
     {
         std::vector<std::wstring> paths;
@@ -242,8 +242,89 @@ size_t DesktopApp::FindFolderMappingShortcutTarget() const
     return static_cast<size_t>(-1);
 }
 
-std::uint64_t DesktopApp::PublishFileClipboard(IDataObject* data, const wchar_t* copySource)
+bool DesktopApp::WriteClipboardText(HWND owner, const std::wstring& text)
 {
+    if (text.empty()) return false;
+
+    const SIZE_T bytes = (text.size() + 1) * sizeof(wchar_t);
+    HGLOBAL storage = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    if (!storage) return false;
+
+    void* target = GlobalLock(storage);
+    if (!target)
+    {
+        GlobalFree(storage);
+        return false;
+    }
+    CopyMemory(target, text.c_str(), bytes);
+    GlobalUnlock(storage);
+
+    bool written = false;
+    if (OpenClipboard(owner))
+    {
+        written = EmptyClipboard() && SetClipboardData(CF_UNICODETEXT, storage) != nullptr;
+        CloseClipboard();
+    }
+    if (!written) GlobalFree(storage);
+    return written;
+}
+
+void DesktopApp::CopyPathsToClipboard(const std::vector<std::wstring>& paths)
+{
+    std::wstring text;
+    for (const auto& path : paths)
+    {
+        if (path.empty()) continue;
+        if (!text.empty()) text += L"\r\n";
+        text += path;
+    }
+    WriteClipboardText(ShellDialogOwnerHwnd(), text);
+}
+
+std::vector<std::wstring> DesktopApp::GetSelectedDesktopFilePaths() const
+{
+    std::vector<std::wstring> paths;
+    for (const auto& item : items_)
+    {
+        if (!item.selected || !item.desktopIconClsid.empty()) continue;
+        wchar_t path[MAX_PATH]{};
+        if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
+            paths.emplace_back(path);
+    }
+    return paths;
+}
+
+namespace
+{
+void SetClipboardMoveEffect(IDataObject* data)
+{
+    const auto formatId = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
+    if (!formatId) return;
+
+    HGLOBAL storage = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD));
+    if (!storage) return;
+    auto* effect = static_cast<DWORD*>(GlobalLock(storage));
+    if (!effect)
+    {
+        GlobalFree(storage);
+        return;
+    }
+    *effect = DROPEFFECT_MOVE;
+    GlobalUnlock(storage);
+
+    FORMATETC format{formatId, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+    STGMEDIUM medium{};
+    medium.tymed = TYMED_HGLOBAL;
+    medium.hGlobal = storage;
+    if (FAILED(data->SetData(&format, &medium, TRUE)))
+        ReleaseStgMedium(&medium);
+}
+}
+
+std::uint64_t DesktopApp::PublishFileClipboard(IDataObject* data, bool cut, const wchar_t* copySource)
+{
+    if (cut) SetClipboardMoveEffect(data);
+
     if (!copySource || !snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Shell))
     {
         OleSetClipboard(data);
@@ -273,6 +354,30 @@ std::uint64_t DesktopApp::PublishFileClipboard(IDataObject* data, const wchar_t*
     return copyId;
 }
 
+void DesktopApp::CopyCutSelectedDesktopFiles(bool cut, const wchar_t* copySource)
+{
+    std::vector<PCUITEMID_CHILD> pidls;
+    for (const auto& item : items_)
+    {
+        if (item.selected && item.childPidl.get() && item.desktopIconClsid.empty())
+            pidls.push_back(reinterpret_cast<PCUITEMID_CHILD>(item.childPidl.get()));
+    }
+    if (pidls.empty() && !cut) return;
+
+    std::uint64_t clipboardCopyId = 0;
+    ComPtr<IDataObject> dataObj;
+    if (!pidls.empty() &&
+        SUCCEEDED(desktopFolder_->GetUIObjectOf(hwnd_, static_cast<UINT>(pidls.size()),
+            pidls.data(), IID_IDataObject, nullptr,
+            reinterpret_cast<void**>(dataObj.GetAddressOf()))) && dataObj)
+    {
+        clipboardCopyId = PublishFileClipboard(dataObj.Get(), cut, copySource);
+    }
+
+    UpdateCutState(clipboardCopyId);
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
 /**
  * @brief 复制或剪切选中的文件夹条目到剪贴板
  * @param cut true 为剪切，false 为复制
@@ -287,26 +392,7 @@ bool DesktopApp::CopyCutSelectedFolderEntries(bool cut, const wchar_t* copySourc
     ComPtr<IDataObject> dataObj = CreateFileDropDataObject(paths);
     if (!dataObj) return false;
 
-    cutPaths_.clear();
-    if (cut)
-    {
-        CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
-        FORMATETC fmt{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
-        STGMEDIUM med{};
-        med.tymed = TYMED_HGLOBAL;
-        med.hGlobal = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD));
-        if (med.hGlobal)
-        {
-            *static_cast<DWORD*>(GlobalLock(med.hGlobal)) = DROPEFFECT_MOVE;
-            GlobalUnlock(med.hGlobal);
-            dataObj->SetData(&fmt, &med, TRUE);
-        }
-
-        for (const auto& path : paths)
-            cutPaths_.insert(path);
-    }
-
-    const auto clipboardCopyId = PublishFileClipboard(dataObj.Get(), copySource);
+    const auto clipboardCopyId = PublishFileClipboard(dataObj.Get(), cut, copySource);
     UpdateCutState(clipboardCopyId);
     InvalidateRect(hwnd_, nullptr, FALSE);
     InvalidateFloatingDockWindow();
@@ -324,7 +410,7 @@ bool DesktopApp::DeleteSelectedFolderEntries(bool permanentDelete)
     if (paths.empty()) return false;
 
     std::wstring popupDirectory;
-    if (dockFolderPopupOpen_ && IsCollectionPopupInteractive() && desktopItemsReady_ &&
+    if (dockFolderPopupOpen_ && IsCollectionPopupKeyboardTarget() && desktopItemsReady_ &&
         std::none_of(paths.begin(), paths.end(), [this](const auto& path) {
             return FindItemIndexByKey(path) < items_.size() ||
                 std::any_of(dockEntries_.begin(), dockEntries_.end(), [&](const auto& entry) {
@@ -334,26 +420,8 @@ bool DesktopApp::DeleteSelectedFolderEntries(bool permanentDelete)
         }))
         popupDirectory = dockFolderPopupWidget_.sourceFolderPath;
 
-    for (const auto& path : paths)
-        cutPaths_.erase(path);
-
-    std::vector<snowdesktop::ShellFileOperationStep> steps;
-    steps.push_back({
-        FO_DELETE,
-        std::move(paths),
-        {},
-        static_cast<FILEOP_FLAGS>(permanentDelete
-            ? FOF_WANTNUKEWARNING
-            : (FOF_ALLOWUNDO |
-               FOF_NOCONFIRMATION |
-               FOF_NOERRORUI)) });
-    return QueueShellFileOperation(
-        std::move(steps),
-        [this, popupDirectory = std::move(popupDirectory)](bool succeeded) {
-            if (!succeeded) return;
-            if (popupDirectory.empty()) RequestShellRefresh();
-            else RequestFolderRefresh({popupDirectory});
-        });
+    return QueueFileDeletion(
+        std::move(paths), permanentDelete, FOF_NOERRORUI, std::move(popupDirectory));
 }
 
 /**
@@ -443,7 +511,6 @@ bool DesktopApp::PasteClipboardToFolderPath(
             if (GetClipboardSequenceNumber() == clipboardSequence)
             {
                 EmptyClipboard();
-                cutPaths_.clear();
                 UpdateCutState();
                 InvalidateRect(hwnd_, nullptr, FALSE);
             }

@@ -2,6 +2,7 @@ local player = module.require("modules/local_queue.lua")
 local panel=module.require("modules/panel_ui.lua")
 local playbackOptions=module.require("modules/playback_options.lua")
 local M = {}
+local CENTER_GLYPH = widget and widget.hasFeature and widget.hasFeature("view.icon.glyphInk")
 -- Fluent System Icons Regular, matching the host's embedded font.
 local fluent = {
     play = utf8.char(0xF605), -- play_20_regular
@@ -234,6 +235,7 @@ function M.panel(_context,model,systemSession,systemPermission)
                         text(track.key..".index",tostring(i),row*0.4,color,{width=indexWidth,minWidth=indexWidth,flexShrink=0,textAlign="start"}),
                         text(track.key..".title",track.name,row*0.43,color,{minWidth=0,textAlign="start"}),
                         view.icon({key=track.key..".grip",glyph=utf8.char(0xF0C9),iconFont="fa",width=row*0.5,height=row*0.6,flexShrink=0,
+                            glyphInkCentered=CENTER_GLYPH or nil,
                             fontSize=row*0.35,style={foreground=secondary}}),
                     }})}})
             }

@@ -18,6 +18,7 @@
  */
 
 #pragma once
+#include "drag_drop/file_drop_presentation.h"
 #include "ui/input/text_input_state.h"
 #include "ui/render/inline_tooltip_backdrop.h"
 #include "item.h"
@@ -25,6 +26,7 @@
 #include "slot.h"
 #include "layout/item_visual_metrics.h"
 #include "layout/layout_spacing_rules.h"
+#include "layout/list_detail_types.h"
 #include <d2d1_1.h>
 #include <dwrite.h>
 #include <wrl/client.h>
@@ -180,6 +182,16 @@ protected:
     mutable std::unordered_map<int, ComPtr<IDWriteTextFormat>> cuFluentTextFormatCache_;
 };
 
+class WidgetContainer;
+
+struct WidgetMemberDestination
+{
+    WidgetContainer* view;
+    DesktopWidget* model;
+    size_t index;
+    std::wstring activateChildId;
+};
+
 /**
  * @class WidgetContainer
  * @brief 可接收拖放的组件，Widget + ListContainer 的组合体
@@ -205,6 +217,8 @@ public:
     // Forward Container pure virtuals to Widget implementations
     std::wstring GetTitle() const override { return Widget::GetTitle(); }
     RECT GetBounds() const override { return Widget::GetBounds(); }
+    RECT PresentedSlotBounds(size_t index, RECT modelBounds) const override;
+    const snowdesktop::file_drop_presentation::Layout& PendingFileLayout() const;
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
 
     // ── Chrome geometry ──────────────────────────────────
@@ -269,6 +283,14 @@ public:
         (void)indices;
         (void)insertBefore;
     }
+    DropReceipt OnItemsDropped(const ItemDrop& drop) override;
+    using DropMembers = snowdesktop::file_drop_presentation::MemberView;
+    virtual DropMembers VisibleDropMembers(const DesktopWidget& model) const;
+    virtual DropMembers FilteredDropMembers(const DesktopWidget& model) const;
+    virtual WidgetMemberDestination ResolveMemberDestination(Slot* slot, HitRegion region, POINT point);
+    virtual std::wstring DropTabAt(POINT) const { return {}; }
+    virtual void InvalidateActiveDropChild() {}
+    size_t GroupDropInsertIndex(Slot* slot, HitRegion region, POINT point) const;
     virtual size_t GetDropInsertIndex(Slot* targetSlot, HitRegion region) const;
     virtual bool AllowsDesktopKey(const std::wstring& key) const { (void)key; return true; }
 
@@ -332,20 +354,15 @@ protected:
  * 滚动相关接口（GetScrollOffset、GetMaxScrollOffset 等）在此声明，
  * 由子类提供具体实现。滚动条绘制由 WidgetContainer::DrawScrollbar 统一处理。
  */
-struct ListItemDetails
-{
-    std::wstring typeName;
-    std::optional<FILETIME> modifiedTime;
-    std::optional<std::uint64_t> fileSize;
-    bool isDirectory = false;
-};
-
 class ScrollingItemWidget : public WidgetContainer
 {
     friend struct NativeDragIntegrationAccess;
     friend class DesktopApp;
 public:
     ScrollingItemWidget(DesktopWidget* data, DesktopApp* app);
+    DropMembers VisibleDropMembers(const DesktopWidget& model) const override;
+    void AppendSearchDropRow(DropMembers& view, const std::wstring& ownerId, size_t member,
+        const std::wstring& key, const FolderEntry* recursive) const;
     struct SearchPresentation
     {
         std::wstring widgetId;
@@ -364,6 +381,19 @@ public:
     int GetTotalContentHeight() const override = 0;
     int GetVisibleContentHeight() const override = 0;
     RECT GetMemberLayoutRect(size_t index) const override = 0;
+
+    struct MemberPaint
+    {
+        bool listMode;
+        bool privacy;
+        bool light;
+        const DesktopWidget* demoCollection = nullptr;
+        bool showLoadingSlots = false;
+    };
+    void DrawMemberCells(ID2D1DeviceContext* context, RECT viewport, size_t memberCount,
+        const MemberPaint& paint);
+    void DrawFolderSearchResult(ID2D1DeviceContext* context, RECT cell, const Item& item,
+        const MemberListPresentation& presentation, bool light, bool hovered) const;
 
     void DrawListItem(ID2D1DeviceContext* context, RECT cell,
         HBITMAP iconBitmap, int sysIconIndex,
@@ -416,7 +446,9 @@ public:
         return searchCompositionCursor_;
     }
     void SetSearchCursorPosition(size_t position);
+    // Project a file group's editor state into its hosted source for layout and drawing.
     void SetSearchEditingState(
+        bool focused,
         size_t cursor,
         size_t selectionAnchor,
         const std::wstring& compositionText,
@@ -443,12 +475,13 @@ public:
         return searchPointerSelecting_;
     }
     void SetSearchComposition(
-        const std::wstring& text, size_t cursor);
+        HWND inputWindow, const std::wstring& text, size_t cursor);
     void CommitSearchComposition(
         const std::wstring& text);
     void ClearSearchComposition();
-    void BeginSearchComposition();
-    bool IsSearchComposing() const { return searchComposing_; }
+    void CancelSearchComposition();
+    void BeginSearchComposition(HWND inputWindow);
+    bool IsSearchComposing() const { return searchImeWindow_ != nullptr; }
     bool GetSearchCaretRect(RECT& rect) const;
     virtual RECT GetSearchBoxRect() const { return {}; }
     bool IsSearchActive() const { return !searchText_.empty(); }
@@ -523,6 +556,7 @@ public:
         return categorizedTabRowOffset_;
     }
     virtual std::wstring CategoryIdAtPoint(POINT pt) const { (void)pt; return L""; }
+    virtual bool RevealAllForMemberDrop(const DragSourceList&, bool) { return false; }
     std::vector<std::wstring> GetCategoryTabOrder() const;
     bool BeginCategoryTabDrag(POINT point);
     bool UpdateCategoryTabDrag(POINT point, bool* orderChanged = nullptr);
@@ -545,7 +579,7 @@ protected:
     std::wstring searchText_;
     snowdesktop::text_input::History searchHistory_;
     wchar_t searchHighSurrogate_ = 0;
-    bool searchComposing_ = false;
+    HWND searchImeWindow_ = nullptr;
     std::wstring searchDuplicateImeResult_;
     size_t searchCursorPos_ = 0;
     size_t searchSelectionAnchor_ = 0;
@@ -616,8 +650,6 @@ public:
                 DesktopWidgetType::Collection);
     }
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
-    void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
-        Slot* targetSlot, HitRegion region, int mods) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
     int GetBottomBarButtonCount() const override;
@@ -631,7 +663,6 @@ public:
     Item* GetMemberItem(size_t idx) const override;
     std::vector<size_t> GetSelectedMemberIndices() const override;
     void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore) override;
-    size_t GetDropInsertIndex(Slot* targetSlot, HitRegion region) const override;
 
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override;
@@ -651,6 +682,7 @@ public:
     RECT GetAllButtonRect() const;
     RECT GetTitleCellRect() const;
     bool HidesBottomBarTitle() const override;
+    RECT PresentedSlotBounds(size_t index, RECT modelBounds) const override;
 
 private:
     RECT GetThumbnailIconRect(RECT rect) const;
@@ -698,8 +730,6 @@ public:
      */
     bool AutoCollectsItem(const std::wstring& layoutKey) const;
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
-    void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
-        Slot* targetSlot, HitRegion region, int mods) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
     int GetBottomBarButtonCount() const override { return 2; }
@@ -709,12 +739,14 @@ public:
     bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) override;
     void EnsureCategoryTabVisible(size_t index) override;
     std::wstring GetCategoryDisplayLabel(const std::wstring& categoryId) const;
+    bool RevealAllForMemberDrop(const DragSourceList& sources, bool fileBacked) override;
     void InvalidateCategoryCache();
     std::vector<Item*> GetSelectedItems() const override;
     bool NeedsShellReloadAfterDrop() const override { return false; }
     Item* GetMemberItem(size_t idx) const override;
     std::vector<size_t> GetSelectedMemberIndices() const override;
     void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore) override;
+    DropMembers FilteredDropMembers(const DesktopWidget& model) const override;
     size_t GetDropInsertIndex(Slot* targetSlot, HitRegion region) const override;
     bool AllowsDesktopKey(const std::wstring& key) const override;
 
@@ -803,8 +835,6 @@ public:
                 DesktopWidgetType::FolderMapping);
     }
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
-    void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
-        Slot* targetSlot, HitRegion region, int mods) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
     int GetBottomBarButtonCount() const override { return 3; }
@@ -813,6 +843,7 @@ public:
     Item* GetMemberItem(size_t idx) const override;
     std::vector<size_t> GetSelectedMemberIndices() const override;
     void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore) override;
+    DropMembers FilteredDropMembers(const DesktopWidget& model) const override;
     size_t GetDropInsertIndex(Slot* targetSlot, HitRegion region) const override;
 
     size_t GetSlotCount() const override;
@@ -829,8 +860,11 @@ public:
     RECT GetContentViewportRect() const override;
     void ApplyMarqueeSelection(const RECT& contentRect) override;
     bool NeedsShellReloadAfterDrop() const override { return false; }
+    void SetInlinePreviewFrame(const RECT& frame);
+    bool IsInlinePreview() const { return inlinePreview_; }
     RECT GetSearchBoxRect() const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
+    bool RevealAllForMemberDrop(const DragSourceList& sources, bool fileBacked) override;
     bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) override;
     void EnsureCategoryTabVisible(size_t index) override;
     const std::vector<size_t>& GetVisibleEntryIndices() const;
@@ -865,6 +899,7 @@ private:
     std::wstring CachedActiveCategoryId() const;
 
     std::shared_ptr<snowdesktop::popup_resize_transition::Transition> popupResizeTransition_;
+    bool inlinePreview_ = false;
 
     mutable std::vector<std::wstring> categorySnapshotPaths_;
     mutable std::unordered_map<std::wstring, std::vector<size_t>> entryIndicesByCategory_;
@@ -876,6 +911,8 @@ private:
     mutable bool categorySnapshotValid_ = false;
     mutable std::vector<DateLayoutSegment> dateLayoutCache_;
     mutable std::vector<size_t> dateLayoutSource_;
+    mutable std::vector<size_t> dateLayoutHidden_;
+    mutable std::vector<size_t> dateLayoutBoundaries_;
     mutable bool dateLayoutListMode_ = false;
     mutable int dateLayoutItemHeight_ = 0;
     mutable int dateLayoutColumns_ = 0;
@@ -929,8 +966,10 @@ public:
     }
 
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
-    void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
-        Slot* targetSlot, HitRegion region, int mods) override;
+    WidgetMemberDestination ResolveMemberDestination(Slot* slot, HitRegion region, POINT point) override;
+    std::wstring DropTabAt(POINT point) const override { return CategoryIdAtPoint(point); }
+    void InvalidateActiveDropChild() override { InvalidateFilterCache(); }
+    DropReceipt OnItemsDropped(const ItemDrop& drop) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered) override;
     int GetBottomBarButtonCount() const override { return 1; }
@@ -944,6 +983,7 @@ public:
     Item* GetMemberItem(size_t idx) const override;
     std::vector<size_t> GetSelectedMemberIndices() const override;
     void ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore) override;
+    DropMembers FilteredDropMembers(const DesktopWidget& model) const override;
     size_t GetDropInsertIndex(Slot* targetSlot, HitRegion region) const override;
     size_t GetSlotCount() const override;
     int GetItemHeight() const override;
@@ -1028,9 +1068,10 @@ public:
     }
 
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
-    void OnItemsDropped(const std::vector<Item*>& sourceItems,
-        Container* origin, Slot* targetSlot, HitRegion region,
-        int mods) override;
+    WidgetMemberDestination ResolveMemberDestination(Slot* slot, HitRegion region, POINT point) override;
+    std::wstring DropTabAt(POINT point) const override { return SourceIdAtPoint(point); }
+    void InvalidateActiveDropChild() override { InvalidateHostedView(); }
+    DropReceipt OnItemsDropped(const ItemDrop& drop) override;
     void DrawContent(ID2D1DeviceContext* context, RECT body) override;
     void DrawButtons(ID2D1DeviceContext* context, RECT handleRect,
         bool hovered) override;
@@ -1047,6 +1088,7 @@ public:
     std::vector<size_t> GetSelectedMemberIndices() const override;
     void ReorderMembers(const std::vector<size_t>& indices,
         size_t insertBefore) override;
+    DropMembers FilteredDropMembers(const DesktopWidget& model) const override;
     size_t GetDropInsertIndex(Slot* targetSlot,
         HitRegion region) const override;
     size_t GetSlotCount() const override;
@@ -1084,6 +1126,7 @@ public:
     std::vector<Item*> GetHostedSelectedItemsForSource(
         const std::wstring& childId) const;
     std::vector<std::wstring> GetHostedVisibleCategoryIds() const;
+    bool RevealAllForMemberDrop(const DragSourceList& sources, bool fileBacked) override;
     std::vector<std::wstring> GetHostedVisibleItemKeys() const;
     std::vector<size_t> GetHostedVisibleFolderIndices() const;
     bool IsGroupSearchActive() const;
@@ -1126,45 +1169,6 @@ private:
         std::wstring,
         std::unique_ptr<ScrollingItemWidget>>
         hostedSourceCache_;
-};
-
-/**
- * @class GuideWidget
- * @brief 分页系统使用指南组件
- *
- * GuideWidget 继承 WidgetContainer，作为新页面的欢迎卡片和操作入口。
- * 无子项、不接受拖放；删除卡片后，现有空页清理流程会移除该页面。
- */
-class GuideWidget : public WidgetContainer
-{
-protected:
-    void CollectControlRegions(std::vector<WidgetControlRegion>& regions) const override;
-public:
-    using WidgetContainer::WidgetContainer;
-
-    snowdesktop::slot_contract::SlotSurfaceKind
-        GetSlotSurfaceKind() const override
-    {
-        return snowdesktop::slot_contract::
-            SurfaceForWidgetType(
-                DesktopWidgetType::Guide);
-    }
-    size_t GetSlotCount() const override { return 0; }
-    std::vector<std::unique_ptr<Slot>> BuildSlots() override { return {}; }
-    void DrawContent(ID2D1DeviceContext* context, RECT body) override;
-    WidgetHit HitTestWidget(POINT pt) const override;
-    int GetMaxScrollOffset() const override { return 0; }
-    HitRegion HitTestDrag(POINT /*pt*/, Slot*& outSlot) override { outSlot = nullptr; return HitRegion::None; }
-    std::wstring GetDragHint(Slot*, HitRegion, const std::vector<Item*>&, Container*, int) const override { return L""; }
-    void OnItemsDropped(const std::vector<Item*>&, Container*, Slot*, HitRegion, int) override {}
-    std::vector<Item*> GetSelectedItems() const override { return {}; }
-    void ToggleDetails() { detailsExpanded_ = !detailsExpanded_; }
-    // Shared drawing, hit testing and internal automation geometry.
-    RECT GetPrimaryButtonRect(RECT body) const;
-    RECT GetSecondaryButtonRect(RECT body) const;
-
-private:
-    bool detailsExpanded_ = false;
 };
 
 /**

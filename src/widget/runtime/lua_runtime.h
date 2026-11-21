@@ -3,7 +3,10 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
+#include <span>
 #include <string>
+#include <string_view>
 
 extern "C" {
 #include <lua.h>
@@ -28,6 +31,20 @@ struct LuaRuntimeQuota
 
 namespace snowdesktop::lua_runtime
 {
+// Pushes a value or an error object while keeping allocating Lua operations protected.
+bool PushProtectedLuaString(lua_State* state, std::string_view text);
+// Returns -1 for a C callback that will raise the staged error after native cleanup.
+int DeferLuaError(lua_State* state, std::string_view message);
+
+bool LuaTableUsesOnlyFields(lua_State* state, int index,
+    std::span<const std::string_view> allowed,
+    std::string_view context, std::string& error);
+bool LuaTableUsesOnlyFields(lua_State* state, int index,
+    std::initializer_list<std::string_view> allowed,
+    std::string_view context, std::string& error);
+bool LuaTableIsContiguousArray(lua_State* state, int index,
+    std::string_view context, std::string& error);
+
 void* QuotaAllocator(void* userData, void* pointer, std::size_t oldSize, std::size_t newSize);
 void SampleAllocationTraffic(LuaRuntimeQuota& quota, std::wstring_view owner);
 inline constexpr std::int64_t kDefaultInstructionBudget = 500000;

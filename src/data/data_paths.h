@@ -52,6 +52,9 @@ std::wstring GetDataStateRootPath();
 
 namespace snowdesktop::data_paths
 {
+// Resolve the active log file and migrate an existing legacy log before opening it.
+std::wstring GetDiagnosticLogPath();
+
 // Private helper process only. Set before any application data path is used.
 void SetIsolatedAuthoringDataRoot(std::wstring root);
 }

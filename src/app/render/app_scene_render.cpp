@@ -47,7 +47,7 @@ void DesktopApp::DrawStaticBackground(
 
     const bool suppressDesktopWidgetTargets = SuppressDesktopWidgetDragTargets();
     const bool popupOccludesPointer =
-        IsPointOccludedByOpenPopup(lastMousePoint_);
+        !(folderPreview_ && folderPreview_->inlineBounds) && IsPointOccludedByOpenPopup(lastMousePoint_);
     const POINT interactionMousePoint = lastMousePoint_;
     if (suppressDesktopWidgetTargets)
         lastMousePoint_ = { LONG_MIN, LONG_MIN };
@@ -77,6 +77,7 @@ void DesktopApp::DrawStaticBackground(
             if (!icon) continue;
             DesktopItem* di = icon->GetDesktopItem();
             if (!di || IsRectEmptyRect(di->bounds)) continue;
+            if (IsPendingMovedFile(di->parsingName, di->layoutKey)) continue;
             if (hiddenMode && !IsRetainedLargeIcon(*di)) continue;
             if (di->largeIcon && !IsLargeIconVisible(*di, lastMousePoint_, hiddenMode)) continue;
             if (dragSession_.IsActive() && !dragSession_.Items().empty() &&
@@ -97,6 +98,8 @@ void DesktopApp::DrawStaticBackground(
             if (!intersectsUpdate(di->largeIcon ? GetLargeIconFrameRect(*di) : di->bounds, 8))
                 continue;
             int state = selected ? 2 : (hovered ? 1 : 0);
+            snowdesktop::SystemIconPlaceholderDemand::Paint placeholderPaint(systemIconDemand_,
+                snowdesktop::SystemIconPlaceholderDemand::Host::DesktopItem, di, di->layoutKey, iconLoadSerial_);
             icon->Draw(
                 ctx, di->bounds, state,
                 false,
@@ -117,6 +120,10 @@ void DesktopApp::DrawStaticBackground(
         !dragSession_.HasContext() && !dragDropController_.IsExternalDragActive() &&
         widgetAction_ == WidgetAction::None;
     const bool stackIndicatorVisible = IsLuaStackIndicatorVisible();
+    const size_t luaPopupIndex = luaWidgetPanelRequest_.widgetId.empty()
+        ? widgets_.size() : FindWidgetIndexById(luaWidgetPanelRequest_.widgetId);
+    const auto* luaPopupOwner = luaPopupIndex < widgets_.size()
+        ? &ResolveLuaWidgetFrameOwner(widgets_[luaPopupIndex]) : nullptr;
     for (size_t widgetIndex = 0;
          widgetIndex < widgets_.size();
          ++widgetIndex)
@@ -131,15 +138,18 @@ void DesktopApp::DrawStaticBackground(
         // artifact at the desktop origin.
         const RECT widgetFrame =
             GetStandaloneWidgetFrameRect(widgetData);
-        const bool popupOpen =
-            popupWidgetIndex_ < widgets_.size() &&
-            widgetIndex == popupWidgetIndex_;
+        const bool popupOpen = widgetIndex == popupWidgetIndex_ ||
+            (dockFolderPopupOpen_ && !dockFolderPopupMappingWidgetId_.empty() &&
+                widgetData.id == dockFolderPopupMappingWidgetId_ &&
+                IsCollectionPopupHostedByFloatingWindow()) ||
+            &widgetData == luaPopupOwner;
         const bool interactionPinned =
             !interactionPinnedWidgetId_.empty() &&
             widgetData.id == interactionPinnedWidgetId_;
         const bool rollAnimating = IsWidgetHoverExpansionAnimating(widgetData);
         const bool interactionRetained =
             popupOpen || interactionPinned ||
+            RetainsInlineFolderPreview(widgetData) ||
             (stackIndicatorVisible && luaStackIndicator_.stackId == widgetData.id) ||
             (rollAnimating && !fadeOnHover) ||
             snowdesktop::widget_visibility_rules::
@@ -362,7 +372,8 @@ void DesktopApp::DrawDesktopForeground(
 void DesktopApp::DrawDynamicOverlays(
     ID2D1DeviceContext* ctx,
     bool hiddenMode,
-    const RECT* updateRect)
+    const RECT* updateRect,
+    snowdesktop::CollectionPopupIconMaterials::PaintResult* popupIcons)
 {
     snowdesktop::performance::Scope performanceScope("desktop", "overlays");
     auto beginPopupAnimationTransform =
@@ -566,8 +577,9 @@ void DesktopApp::DrawDynamicOverlays(
         // These popup views draw their feedback with their own content clip
         // and animation. A generic pass would blend the same indicator again.
         if (popupTarget &&
-            (wc == GetGroupPopupView() ||
-                wc == GetDateGroupedPopupView(GetCollectionPopupRect(*openPopupWidget))))
+            ((folderPreview_ && targetSlot && dynamic_cast<const ExternalFileItem*>(targetSlot->GetItem())) ||
+                wc == GetGroupPopupView() ||
+                wc == GetHostedFolderMappingPopupView(GetCollectionPopupRect(*openPopupWidget))))
             return;
         const bool targetUsesPopupLayer =
             snowdesktop::popup_drag_rules::
@@ -605,7 +617,9 @@ void DesktopApp::DrawDynamicOverlays(
                 const bool fanMode = UsesCollectionPopupFan(*openPopupWidget);
                 // List rows use their own font/spacing-dependent geometry.
                 // Both sides of a boundary must meet halfway across that gap.
-                popupInsertionPad = UsesCollectionPopupList(*openPopupWidget) && !fanMode
+                popupInsertionPad = folderPreview_ && targetSlot
+                    ? GetFolderPreviewInsertionPad(popup, targetSlot->GetIndex(), targetRegion == HitRegion::SortAfter)
+                    : UsesCollectionPopupList(*openPopupWidget) && !fanMode
                     ? snowdesktop::widget_item_layout::InsertionBoundaryPad(
                         GetCollectionPopupItemRect(popup, 0),
                         GetCollectionPopupItemRect(popup, 1), !listMode)
@@ -742,7 +756,10 @@ void DesktopApp::DrawDynamicOverlays(
     // Blue insertion bars and green handoff boxes for the desktop, widgets and
     // Dock are part of the background interaction layer.
     if (!renderingFloatingPopup_)
+    {
+        if (!renderingFloatingDock_ && !hiddenMode) DrawFileDropPlaceholders(ctx);
         drawDropPreviewLayer(false);
+    }
 
     const bool collectionHostedByFloatingPopup =
         IsCollectionPopupHostedByFloatingWindow();
@@ -759,6 +776,7 @@ void DesktopApp::DrawDynamicOverlays(
                 !(popupAnchoredToDock_ &&
                     persistentDockHostOwnsVisual_);
     if (popupBelongsToCurrentSurface &&
+        !(folderPreview_ && folderPreview_->inlineBounds) &&
         (!hiddenMode || IsOpenPopupRetained()) &&
         GetOpenPopupWidget())
     {
@@ -769,7 +787,7 @@ void DesktopApp::DrawDynamicOverlays(
         if (suppressPopupHover)
             lastMousePoint_ = {
                 LONG_MIN, LONG_MIN };
-        DrawCollectionPopup(ctx);
+        DrawCollectionPopup(ctx, true, nullptr, popupIcons);
         if (suppressPopupHover)
             lastMousePoint_ =
                 interactionPoint;
@@ -820,7 +838,7 @@ void DesktopApp::DrawDynamicOverlays(
         snowdesktop::widget_composition_layer_rules::MarqueeBelongsToSurface(
             popupMarquee, popupBelongsToCurrentSurface,
             renderingFloatingDock_, renderingFloatingPopup_);
-    if (marqueeActive_ && marqueeBelongsToCurrentSurface)
+    if (marqueeActive_ && marqueeBelongsToCurrentSurface && !(folderPreview_ && marqueeDockFolderPopup_))
     {
         if (!marqueeDockFolderPopup_ &&
             marqueeWidgetIndex_ >= widgets_.size())
@@ -831,6 +849,7 @@ void DesktopApp::DrawDynamicOverlays(
                 if (!icon) continue;
                 DesktopItem* item = icon->GetDesktopItem();
                 if (!item || !item->selected || IsRectEmptyRect(item->bounds)) continue;
+                if (IsPendingMovedFile(item->parsingName, item->layoutKey)) continue;
                 icon->Draw(ctx, item->bounds, 2);
             }
             // Component entrances have retained child surfaces. Their live
@@ -889,11 +908,7 @@ void DesktopApp::RenderFrame(
     const RECT* updateRect,
     bool hiddenMode)
 {
-    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
-    {
-        brushCache_.clear();
-        brushCacheContext_ = ctx;
-    }
+    drawing_.PrepareTarget(ctx);
     // The root surface is the stable desktop background. Widgets and all
     // foreground interaction content are owned by higher DComp layers.
     DrawStaticBackground(ctx, updateRect, hiddenMode);

@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "platform/application_version.h"
 #include "general_page_presenter.h"
 #include "hotkey_recorder.h"
 #include "settings/settings_controller_interface.h"
@@ -10,6 +11,8 @@
 #include "platform/force_restart_hotkey.h"
 
 #include "settings_window_host.h"
+#include "home_about_page_model.h"
+#include "screen_time_page_actions.h"
 #include "settings/settings_window_open_rules.h"
 #include "settings/settings_search_catalog.h"
 #include "settings/bar_settings_rules.h"
@@ -493,13 +496,13 @@ struct SettingsWindowHost::Impl
     std::map<std::string, std::filesystem::path> themeBackgrounds;
 
     std::filesystem::path ThemeBridge() const { return std::filesystem::path(GetExecutableDirectoryPath()) / L"SnowDesktopSteamBridge.exe"; }
-    bool ThemeSharingAvailable() const { return themes::workshop::Available(ThemeBridge(), SNOWDESKTOP_VERSION); }
+    bool ThemeSharingAvailable() const { return themes::workshop::Available(ThemeBridge(), snowdesktop::ApplicationVersion()); }
     void CompleteThemeTask(const std::shared_ptr<ThemeTask>& task, bool success, std::string error)
     {
         if (themeTask != task) return;
         ThemeLibraryResult result;
         result.succeeded = success;
-        result.workshopAvailable = themes::workshop::Availability(ThemeBridge(), SNOWDESKTOP_VERSION, result.sharingAvailable);
+        result.workshopAvailable = themes::workshop::Availability(ThemeBridge(), snowdesktop::ApplicationVersion(), result.sharingAvailable);
         std::string ignored;
         if (!themes::Load(themes::LibraryPath(), result.library, ignored))
         { result.succeeded = false; if (error.empty()) error = ignored; }
@@ -1292,7 +1295,7 @@ struct SettingsWindowHost::Impl
             SynchronizePageBackends(*snapshot);
             if (options.homeAboutStatus)
             {
-                HomeAboutStatusPatch patch = options.homeAboutStatus(
+                settings::HomeAboutStatusPatch patch = options.homeAboutStatus(
                     snapshot->generation, snapshot->revision);
                 // Preserve the host's status sequence; it also orders direct
                 // publications while the controller snapshot is unchanged.
@@ -2181,22 +2184,17 @@ struct SettingsWindowHost::Impl
         auto calendar = options.calendarPage;
         calendar.commitGeneral = general.commitGeneral;
         shell->SetCalendarPageActions(std::move(calendar));
-        snowdesktop::winui::ScreenTimePageActions screenTime;
-        screenTime.commitGeneral = general.commitGeneral;
-        screenTime.clear = [weak](std::uint64_t generation) {
-            const auto state = weak.lock();
-            if (!state || !state->alive.load() || !state->owner ||
-                !state->owner->controller ||
-                !state->owner->controller->IsGenerationCurrent(generation))
-                return false;
-            SettingsHostActions::Request request;
-            request.action = SettingsHostActions::Action::ClearScreenTime;
-            const auto result =
-                state->owner->controller->InvokeHostAction(request);
-            state->owner->ShowActionError(result);
-            return result.Succeeded();
-        };
-        shell->SetScreenTimePageActions(std::move(screenTime));
+        shell->SetScreenTimePageActions(MakeScreenTimePageActions(
+            general.commitGeneral,
+            [weak]() -> ISettingsController* {
+                if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+                    return state->owner->controller;
+                return nullptr;
+            },
+            [weak](const SettingsActionResult& result) {
+                if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+                    state->owner->ShowActionError(result);
+            }));
         shell->SetGeneralPageActions(std::move(general));
 
         PageLayoutPageActions pageLayout = options.pageLayoutPage;
@@ -2820,7 +2818,7 @@ struct SettingsWindowHost::Impl
     ThemeLibraryResult ThemeOperation(std::uint64_t generation, const ThemeLibraryRequest& request)
     {
         ThemeLibraryResult result;
-        result.workshopAvailable = themes::workshop::Availability(ThemeBridge(), SNOWDESKTOP_VERSION, result.sharingAvailable);
+        result.workshopAvailable = themes::workshop::Availability(ThemeBridge(), snowdesktop::ApplicationVersion(), result.sharingAvailable);
         if (!controller || !controller->IsGenerationCurrent(generation)) return result;
         const auto current = controller->Snapshot();
         if (!current || current->externalReplacementPending) return result;
@@ -4274,7 +4272,7 @@ void SettingsWindowHost::ApplyLanguageChange(bool widgetRuntimeReloaded)
 }
 
 bool SettingsWindowHost::PublishHomeAboutStatus(
-    HomeAboutStatusPatch patch)
+    settings::HomeAboutStatusPatch patch)
 {
     const bool applied = impl_->initialized && impl_->OnOwnerThread() && impl_->shell &&
         impl_->controller &&

@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
+#include "app/render/desktop_backdrop_compositor.h"
 #include "modern_menu.h"
 #include "menu_control_snapshot.h"
 #include "ui/input/text_input_state.h"
@@ -115,6 +116,7 @@ thread_local MenuController* gControlController = nullptr;
 
 struct Popup
 {
+    DesktopBackdropCompositor content;
     MenuController* controller = nullptr;
     std::vector<Item>* items = nullptr;
     HWND hwnd = nullptr;
@@ -487,7 +489,8 @@ public:
             externalActivation_ = true;
         result_.reason = superseded_ ? ExitReason::Replaced :
             externalActivation_ ? ExitReason::ExternalActivation :
-            result_.command ? ExitReason::Command : ExitReason::Cancelled;
+            result_.command ? ExitReason::Command :
+            cancelledByEscape_ ? ExitReason::Escape : ExitReason::Cancelled;
         if (superseded_ || externalActivation_)
         {
             // Existing hosts only consume command. They must also see a
@@ -696,10 +699,10 @@ public:
         return DefWindowProcW(hwnd, message, wParam, lParam);
     }
 
-    void Render(Popup& popup)
+    bool Render(Popup& popup)
     {
         if (!popup.hwnd || popup.windowWidth <= 0 || popup.windowHeight <= 0)
-            return;
+            return false;
 
         BITMAPINFO bitmapInfo{};
         bitmapInfo.bmiHeader.biSize = sizeof(bitmapInfo.bmiHeader);
@@ -717,7 +720,7 @@ public:
         {
             if (memoryDc) DeleteDC(memoryDc);
             if (bitmap) DeleteObject(bitmap);
-            return;
+            return false;
         }
         HGDIOBJ oldBitmap = SelectObject(memoryDc, bitmap);
         auto* pixels = static_cast<std::uint32_t*>(rawPixels);
@@ -872,21 +875,17 @@ public:
         };
         SIZE size{ popup.windowWidth, popup.windowHeight };
         const bool wasVisible = IsWindowVisible(popup.hwnd) != FALSE;
-        POINT source{};
-        BLENDFUNCTION blend{
-            AC_SRC_OVER, 0, 255, AC_SRC_ALPHA,
-        };
-        const BOOL presented = UpdateLayeredWindow(
-            popup.hwnd, nullptr,
-            &destination, &size,
-            memoryDc, &source, 0,
-            &blend, ULW_ALPHA);
+        const BOOL placed = SetWindowPos(popup.hwnd, nullptr, destination.x, destination.y,
+            size.cx, size.cy, SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER);
+        const bool presented = placed && popup.content.PresentPremultipliedPixels(
+            popup.hwnd, size, pixels);
         if (presented && !wasVisible)
             ShowWindow(popup.hwnd, SW_SHOWNOACTIVATE);
 
         SelectObject(memoryDc, oldBitmap);
         DeleteDC(memoryDc);
         DeleteObject(bitmap);
+        return presented;
     }
 
     HWND CompanionWindow() const
@@ -1109,6 +1108,11 @@ private:
         if (!popup->hwnd)
             return false;
 
+        if (!SetLayeredWindowAttributes(popup->hwnd, 0, 255, LWA_ALPHA))
+        {
+            DestroyWindow(popup->hwnd);
+            return false;
+        }
         ApplyBlurClipRegion(*popup);
         ApplyWindowAppearance(popup->hwnd);
 
@@ -1124,8 +1128,9 @@ private:
                 break;
             }
         }
-        Render(*rawPopup);
-        return true;
+        if (Render(*rawPopup)) return true;
+        CloseFromDepth(depth);
+        return false;
     }
 
     bool UsesQuickActionStrip(const Popup& popup, const Item& item) const
@@ -1151,14 +1156,16 @@ private:
         popup.rowMetrics = metrics_;
         // Each cascade owns its gutter; icons in descendants or separators
         // do not reserve space here. Search and inline controls keep their metrics.
-        if (popup.depth > 0 && std::ranges::none_of(*popup.items,
+        const bool compactTextRoot = popup.depth == 0 && options_.compactTextRoot;
+        if ((popup.depth > 0 || compactTextRoot) && std::ranges::none_of(*popup.items,
                 [](const Item& item) {
                     return !item.separator && !item.textInput && !item.inlineAction &&
                         (item.checked || item.image || !item.glyph.empty());
                 }))
             popup.rowMetrics.iconColumnWidth = 0;
         HDC screenDc = GetDC(nullptr);
-        int width = metrics_.minimumWidth;
+        if (compactTextRoot) popup.rowMetrics.minimumWidth = Scale(120, options_.dpi);
+        int width = popup.rowMetrics.minimumWidth;
         std::vector<int> quickIndices;
         std::vector<int> regularIndices;
         std::vector<int> inlineWidths(popup.items->size(), 0);
@@ -1639,39 +1646,7 @@ private:
         KillTimer(popup.hwnd, kSubmenuCloseTimer);
         popup.hoveredItem = keyboard ? -1 : index;
         popup.keyboardItem = keyboard ? index : -1;
-        if (options_.onHover)
-        {
-            HoverInfo info;
-            info.depth = popup.depth;
-            info.keyboard = keyboard;
-            info.popupScreenRect = {
-                popup.panelScreenOrigin.x,
-                popup.panelScreenOrigin.y,
-                popup.panelScreenOrigin.x + popup.panelWidth,
-                popup.panelScreenOrigin.y + popup.panelHeight,
-            };
-            if (index >= 0 &&
-                static_cast<size_t>(index) < popup.items->size())
-            {
-                const Item& hovered = (*popup.items)[index];
-                if (hovered.enabled && !hovered.separator &&
-                    hovered.children.empty())
-                {
-                    info.command = hovered.command;
-                    info.itemScreenRect = popup.itemRects[index];
-                    if (hovered.horizontalScrollAction)
-                    {
-                        OffsetRect(&info.itemScreenRect,
-                            -popup.horizontalScrollOffset, 0);
-                    }
-                    OffsetRect(&info.itemScreenRect,
-                        popup.panelScreenOrigin.x - shadowSize_,
-                        popup.panelScreenOrigin.y - shadowSize_ -
-                            popup.scrollOffset);
-                }
-            }
-            options_.onHover(info);
-        }
+        ReportHoveredItem(popup, index, keyboard);
         if (updateChildren && index >= 0 &&
             static_cast<size_t>(index) < popup.items->size() &&
             !(*popup.items)[index].children.empty() &&
@@ -1694,6 +1669,43 @@ private:
         Render(popup);
     }
 
+    RECT ItemScreenRect(const Popup& popup, int index) const
+    {
+        RECT rect = popup.itemRects[index];
+        if ((*popup.items)[index].horizontalScrollAction)
+            OffsetRect(&rect, -popup.horizontalScrollOffset, 0);
+        OffsetRect(&rect,
+            popup.panelScreenOrigin.x - shadowSize_,
+            popup.panelScreenOrigin.y - shadowSize_ - popup.scrollOffset);
+        return rect;
+    }
+
+    void ReportHoveredItem(const Popup& popup, int index, bool keyboard) const
+    {
+        if (!options_.onHover) return;
+        HoverInfo info;
+        info.depth = popup.depth;
+        info.keyboard = keyboard;
+        info.popupWindow = popup.hwnd;
+        info.popupScreenRect = {
+            popup.panelScreenOrigin.x,
+            popup.panelScreenOrigin.y,
+            popup.panelScreenOrigin.x + popup.panelWidth,
+            popup.panelScreenOrigin.y + popup.panelHeight,
+        };
+        if (index >= 0 && static_cast<size_t>(index) < popup.items->size())
+        {
+            const Item& hovered = (*popup.items)[index];
+            if (hovered.enabled && !hovered.separator &&
+                hovered.children.empty())
+            {
+                info.command = hovered.command;
+                info.itemScreenRect = ItemScreenRect(popup, index);
+            }
+        }
+        options_.onHover(info);
+    }
+
     void ActivateItem(Popup& popup, int index, bool keyboard)
     {
         if (index < 0 || static_cast<size_t>(index) >= popup.items->size())
@@ -1713,12 +1725,11 @@ private:
             CancelTextInputEditor(popup);
             return;
         }
-        RECT rect = popup.itemRects[index];
-        if (item.horizontalScrollAction)
-            OffsetRect(&rect, -popup.horizontalScrollOffset, 0);
-        OffsetRect(&rect,
-            popup.panelScreenOrigin.x - shadowSize_,
-            popup.panelScreenOrigin.y - shadowSize_ - popup.scrollOffset);
+        const RECT rect = ItemScreenRect(popup, index);
+        // Release and access-key activation can select a row before the
+        // pointer's next move. Companion commands need this row's geometry.
+        if (options_.onCommand)
+            ReportHoveredItem(popup, index, keyboard);
         if (options_.onCommand &&
             options_.onCommand(command, rootItems_))
         {
@@ -1854,6 +1865,7 @@ private:
             }
             else
             {
+                cancelledByEscape_ = true;
                 Cancel();
             }
             break;
@@ -2690,6 +2702,7 @@ private:
             SetScrollViewport(popup);
             CloseFromDepth(popup.depth + 1);
             popup.hoveredItem = popup.keyboardItem = -1;
+            ReportHoverAfterScroll(popup);
             Render(popup);
         }
     }
@@ -2711,8 +2724,24 @@ private:
             CloseFromDepth(popup.depth + 1);
             popup.hoveredItem = -1;
             popup.keyboardItem = -1;
+            ReportHoverAfterScroll(popup);
             Render(popup);
         }
+    }
+
+    void ReportHoverAfterScroll(Popup& popup)
+    {
+        if (!options_.onHover) return;
+        POINT point{};
+        const bool overPopup =
+            snowdesktop::private_pointer::CursorPosition(&point) &&
+            snowdesktop::private_pointer::WindowAtPoint(point) == popup.hwnd;
+        if (overPopup) ScreenToClient(popup.hwnd, &point);
+        const int index = overPopup ? HitTest(popup, point) : -1;
+        if (index >= 0 && !(*popup.items)[index].separator)
+            SetHoveredItem(popup, index, false);
+        else
+            ReportHoveredItem(popup, -1, false);
     }
 
     int MaxHorizontalScroll(const Popup& popup) const
@@ -2950,6 +2979,7 @@ private:
 
     void CloseFromDepth(int depth)
     {
+        const bool removedPopup = static_cast<int>(popups_.size()) > depth;
         closing_ = true;
         while (static_cast<int>(popups_.size()) > depth)
         {
@@ -2970,6 +3000,8 @@ private:
             textInputCompositionCursor_ = 0;
         }
         closing_ = false;
+        if (removedPopup && options_.onHover)
+            options_.onHover({});
     }
 
     void Cancel()
@@ -3253,6 +3285,7 @@ private:
     bool closing_ = false;
     bool superseded_ = false;
     bool externalActivation_ = false;
+    bool cancelledByEscape_ = false;
     bool hasTracedZOrderSnapshot_ = false;
     OwnedPopupZOrderSnapshot tracedZOrderSnapshot_{};
     Result result_{};

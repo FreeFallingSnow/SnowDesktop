@@ -1,5 +1,4 @@
 #include "ui/input/private_pointer.h"
-#include "ui/render/highlight_coverage.h"
 #include "app/app.h"
 #include "dock/dock_window_transition.h"
 #include "diagnostics/diagnostic_log.h"
@@ -30,6 +29,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     host.compositionPaintInProgress = true;
     struct FloatingPaintScope final
     {
+        DesktopApp& app;
         bool& active;
         PersistentDockHost*& renderingHost;
         PersistentDockHost* previousHost;
@@ -40,8 +40,10 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
             active = false;
             renderingHost = previousHost;
             renderingFloating = previousFloating;
+            app.ScheduleDeferredDesktopWidgetPresentation();
         }
     } paintScope{
+        *this,
         host.compositionPaintInProgress,
         renderingPersistentDockHost_,
         renderingPersistentDockHost_,
@@ -130,8 +132,8 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     } surfaceDrawScope{frameSurface.Get()};
     ComPtr<ID2D1DeviceContext> context;
     context.Attach(rawContext);
-    snowdesktop::HighlightCoverage highlightCoverage;
-    snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), highlightCoverage);
+    RECT contentFrame{};
+    GetClientRect(host.hwnd, &contentFrame);
     context->SetDpi(96.0f, 96.0f);
     context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
     context->SetTransform(
@@ -146,9 +148,9 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     context->Clear(
         D2D1::ColorF(0, 0, 0, 0));
+    DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get());
 
-    brushCache_.clear();
-    brushCacheContext_ = context.Get();
+    drawing_.Reset();
     renderingFloatingDock_ = true;
     try
     {
@@ -201,9 +203,9 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     }
     catch (...)
     {
+        (void)scene.Finish();
         context.Reset();
-        brushCache_.clear();
-        brushCacheContext_ = nullptr;
+        drawing_.Reset();
         const HRESULT finish = surfaceDrawScope.Finish();
         RecoverFloatingDockCompositionFailure(host, L"Draw candidate",
             FAILED(finish) ? finish : E_FAIL, preserveExistingFrame && replacingSurface);
@@ -211,18 +213,19 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     }
     renderingFloatingDock_ = false;
 
-    RECT contentFrame{};
-    GetClientRect(host.hwnd, &contentFrame);
+    const HRESULT sceneResult = scene.Finish();
     const auto srgbKey = reinterpret_cast<std::uintptr_t>(&host);
-    const bool stagedSrgb = host.backdrop.StageSrgbContent(
-        host.hwnd, srgbKey, contentFrame, context.Get(), updateOffset);
+    const bool srgbPresented = SUCCEEDED(sceneResult) && host.backdrop.PublishSrgbScene(
+        host.hwnd, srgbKey, contentFrame, context.Get(), updateOffset, scene.Scene(),
+        host.presentationMerged ? host.mergedPresentation.opacity : 1.f);
     context->SetTransform(
         D2D1::Matrix3x2F::Identity());
     context.Reset();
-    brushCache_.clear();
-    brushCacheContext_ = nullptr;
+    drawing_.Reset();
 
     hr = snowdesktop::startup_diagnostics::Call(L"Dock.EndDraw", [&] { return surfaceDrawScope.Finish(); });
+    if (FAILED(sceneResult)) hr = sceneResult;
+    if (SUCCEEDED(hr) && !srgbPresented) hr = E_FAIL;
     if (FAILED(hr))
     {
         RecoverFloatingDockCompositionFailure(
@@ -233,10 +236,8 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     // SetContent only after the replacement surface contains a complete
     // frame. The following composition commit then publishes the pixels and
     // the content switch atomically instead of exposing an empty surface.
-    const bool srgbPresented = stagedSrgb && host.backdrop.PublishSrgbContent(
-        srgbKey, host.presentationMerged ? host.mergedPresentation.opacity : 1.f);
-    if (!srgbPresented) host.backdrop.RemoveSrgbContent(srgbKey);
-    hr = host.dcompVisual->SetContent(srgbPresented ? nullptr : frameSurface.Get());
+    hr = host.backdrop.SetDirectContentForSrgb(srgbKey, srgbPresented, dcompDevice_.Get(),
+        host.dcompVisual.Get(), frameSurface.Get());
     if (FAILED(hr))
     {
         RecoverFloatingDockCompositionFailure(
@@ -254,12 +255,6 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         host.compHeight = static_cast<UINT>(
             std::max<LONG>(1, client.bottom - client.top));
     }
-    const bool deferredWidgetsFlushed =
-        FlushPendingDesktopWidgetComposition() &&
-        FlushPendingWidgetMarqueeComposition() &&
-        SyncWidgetMarqueeCompositionVisibility();
-    if (!deferredWidgetsFlushed && hwnd_ && IsWindow(hwnd_))
-        InvalidateRect(hwnd_, nullptr, FALSE);
     if (!CommitCompositionAnimationFrame())
     {
         RecoverFloatingDockCompositionFailure(
@@ -276,6 +271,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     // do not leave content queued until the outer message pump returns.
     // These independent devices cannot guarantee one common DWM display frame.
     if (!FlushPendingCompositionCommit()) return false;
+    host.backdrop.OnDirectContentCommitted(dcompDevice_.Get());
     if (stagedBackdrop)
     {
         snowdesktop::performance::Scope backdropScope("dock", "floating.backdrop_apply", diagnosticOwner, revision);
@@ -290,11 +286,8 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     }
     if (!host.backdrop.CommitSrgbContent())
     {
-        host.backdrop.RemoveSrgbContent(srgbKey);
-        (void)host.dcompVisual->SetContent(frameSurface.Get());
-        (void)CommitCompositionAnimationFrame();
-        (void)FlushPendingCompositionCommit();
-        (void)host.backdrop.CommitSrgbContent();
+        RecoverFloatingDockCompositionFailure(host, L"Precomposed content", E_FAIL, true);
+        return false;
     }
     if (host.collectingMergedGlass && statusBar_)
         statusBar_->ApplyMergedDockIconGlass(host.monitor, d2dDevice_.Get(), host.mergedGlassIcons);

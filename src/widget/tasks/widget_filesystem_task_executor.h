@@ -20,6 +20,9 @@
 
 namespace snowdesktop::widget_runtime
 {
+bool IsFilesystemPickerTask(std::string_view taskName);
+bool IsFilesystemHandleTask(std::string_view taskName);
+
 struct WidgetFilesystemMetadata
 {
     WidgetFilesystemHandleKind kind = WidgetFilesystemHandleKind::File;

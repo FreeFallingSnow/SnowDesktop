@@ -282,6 +282,53 @@ This adapter is pending and must be validated on the actual XAML island.
 The advertised capability value is `settingsPrivateInput:0`; clients must not
 infer input support from the presence of `settingsAutomation:1`.
 
+### Agent guidance and access
+
+Enable **Settings > Agent Operations > Allow agent access** on the local
+SnowDesktop installation before connecting. The setting defaults to off for
+new and existing profiles without an explicit choice. While off, the local
+endpoint returns JSON-RPC error `-32000` with
+`error.data.code: "agent_operations_disabled"` and instructions to enable it
+locally. This response also applies to `api.describe`. A client cannot turn
+access on through the endpoint. Turning it off ends private input and cancels
+active capture and fixed-data export work. Operations already completed keep
+their results.
+
+With access enabled, `api.describe` advertises `settingsGuidance:1` and returns
+an English `guidance` object describing feature areas and discovery paths.
+`settings.catalog` returns English `description` annotations alongside the
+settings they describe, including nested controller fields, native storage view
+fields, Lua host appearance arguments and Lua internal settings that declare an
+`agentDescription`. Descriptions supplement the field constraints and the
+target's current availability. A missing annotation means no behavioral
+description is supplied for that field.
+
+Maintain descriptions with the setting's real behavior. Trace the controller
+or component binding through validation, save and final effect. Describe stored
+units, meaningful enum values, dependencies, overrides, availability and side
+effects when they change how to operate the setting. The controller catalog
+projects descriptions from `control_settings_guidance.h` and checks the field
+bindings of documented types at compile time. Native field catalogs own
+descriptions for specialized targets. First-party components maintain English
+descriptions in the same Lua declaration as the field.
+
+When `api.describe` advertises `settingsSearch:1`, call `settings.search` with
+an English keyword query such as `{"query":"above the first row","limit":5}`.
+Each whitespace-separated term must appear in the field path, target kind,
+description or Lua instance name. English letter case is ignored. Exact field
+names rank first, followed by matches in field paths and descriptions.
+Results include the description and its target and field path. An `action`
+identifies a settings action argument, such as a Lua appearance field.
+For a result marked `requiresTargetId`, select the relevant instance before
+requesting its catalog. Use the concrete catalog to verify current
+availability, constraints and revision. The default limit is 12, the maximum
+is 50, and `offset` advances through the same query's ordered matches.
+
+Search reads shared host field metadata and descriptions declared by loaded
+Lua instances. It returns no setting values. `unavailableWidgetCount` reports
+instances whose Lua declarations are unavailable at search time. A field
+becomes searchable when its catalog metadata supplies a description.
+
 ### Direct settings access
 
 Capabilities `directSettings:1` and `settingsSchema:1` add semantic settings
@@ -293,6 +340,7 @@ pointer adapter. The pipe protocol major and Lua component API remain unchanged.
 
 | Method | Parameters | Result |
 | --- | --- | --- |
+| `settings.search` | `{query,offset?,limit?}` | Ranked matches across the host's documented settings and loaded Lua instances |
 | `settings.catalog` | `{target?,offset?,limit?}` | Without a target, target kinds and current native/Lua instance identities; with a target, current values, fields, constraints and available actions |
 | `settings.get` | `{target,offset?,limit?}` | Current target values and opaque `revision` |
 | `settings.update` | `{target,ifRevision,changes}` | Apply a named field patch through its native owner |
@@ -472,6 +520,10 @@ objects; unknown fields are rejected. JSON-RPC replies contain either `result`
 or `error`; domain failures carry a stable string at `error.data.code`.
 
 `api.describe` returns `protocolVersion`, frame limits and supported operations.
+A method entry may specify `resultSchema`, a key in the discovery response's
+`resultSchemas` object. Read the schema's English `description` annotations
+for field meaning, units and scope. Keep descriptions in sync when changing
+these results or adding a new publicly described field.
 This registry is the discovery source for later adapters. After the first public release, v1 changes may add
 methods or optional result fields; existing meanings remain stable. Incompatible
 changes require a new protocol major version and endpoint name. This API version
@@ -481,9 +533,11 @@ is independent of the Lua component `apiVersion`.
 | --- | --- | --- |
 | `api.describe` | `{}` | Protocol and method discovery |
 | `app.getState` | `{}` | Host PID, locale, desktop visibility, popup/navigation state and animation flags |
-| `desktop.getLayout` | `{}` | Active page geometry, widgets and `layoutRevision` |
+| `desktop.getLayout` | `{}` | Desktop grid page geometry, widget instances and `layoutRevision` |
 | `widgets.list` | `{}` | Same layout snapshot, including widget IDs and placement |
 | `widgets.get` | `{id}` | One widget and the current layout revision |
+| `widgets.agentActions` | `{id}` | English descriptions and argument types of actions declared by the loaded Lua instance |
+| `widgets.invokeAgentAction` | `{id,action,arguments?}` | Validate the named action and arguments, then deliver an untrusted `agent.action` event to that instance |
 | `widgets.place` | `{id,pageId,column,row,columns,rows,ifLayoutRevision}` | Move/resize using the existing placement and displacement rules |
 | `widgets.open` | `{id}` | Request a standalone native storage widget's popup |
 | `widgets.close` | `{}` | Request closing the current storage popup |
@@ -492,6 +546,20 @@ is independent of the Lua component `apiVersion`.
 | `settings.open` | `{page?}` or `{widgetId}` | Open an allowed settings page or an existing widget's settings |
 | `dock.show` | `{}` | Request revealing the floating Dock using existing policy |
 | `dock.hide` | `{}` | Close floating Dock presentations; does not disable the persistent Dock |
+
+`widgetAgentActions:1` advertises the Lua discovery and invocation methods.
+The instance must already be loaded in the live desktop. Invocation validates
+the declaration again and delivers the event on the widget runtime's owning
+thread under its existing execution limits. A `delivered` reply acknowledges
+successful callback execution. The callback may finish its work
+asynchronously. Existing package permissions and trusted-gesture checks remain
+in effect.
+
+Layout widget `memberCount` is the length of `memberIds`, the list of child
+widget instances. Count rows with `type: "lua"` for Lua instances, including
+those belonging to a stack. Collection contents such as files and shortcuts
+have no total count in the layout response. Visible UI item rows can cover
+only a portion of a collection.
 
 Settings `page` values are `general`, `desktop`, `widgets`, `backup-and-data`,
 `about`, `dock`, `taskbar`, `quick-navigation`, `theme-manager`, `status-bar`,

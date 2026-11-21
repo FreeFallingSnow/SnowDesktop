@@ -587,6 +587,7 @@
     "system.storage.read"
   ],
   "requiredFeatures": [
+    "draw.text.inkAlignment",
     "data.subscribe",
     "data.system.cpu",
     "data.system.gpu",

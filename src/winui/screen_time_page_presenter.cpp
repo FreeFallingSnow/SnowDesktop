@@ -2,14 +2,19 @@
 #include "screen_time_page_presenter.h"
 
 #include "data/data_paths.h"
+#include "settings/settings_controller_interface.h"
 #include "settings_presenter_controls.h"
+#include "system/calendar/calendar_service.h"
 #include "system/screen_time/screen_time_tracker.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <map>
+#include <optional>
 #include <string>
+#include <utility>
 
 #include <winrt/Microsoft.UI.Dispatching.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
@@ -17,14 +22,39 @@
 #include <winrt/Microsoft.UI.Xaml.Media.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
 #include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Globalization.h>
 #include <winrt/Windows.Storage.Streams.h>
 
 namespace snowdesktop::winui
 {
+
+ScreenTimePageActions MakeScreenTimePageActions(
+    ScreenTimePageActions::CommitGeneral commitGeneral,
+    std::function<ISettingsController*()> currentController,
+    std::function<void(const SettingsActionResult&)> showResult)
+{
+    return {
+        std::move(commitGeneral),
+        [currentController = std::move(currentController), showResult = std::move(showResult)](
+            std::uint64_t generation) {
+            auto* controller = currentController();
+            if (!controller || !controller->IsGenerationCurrent(generation))
+                return false;
+            SettingsHostActions::Request request;
+            request.action = SettingsHostActions::Action::ClearScreenTime;
+            const auto result = controller->InvokeHostAction(request);
+            showResult(result);
+            return result.Succeeded();
+        }
+    };
+}
+
 namespace mux = winrt::Microsoft::UI::Xaml;
 namespace muxc = mux::Controls;
 namespace muxa = mux::Automation;
 namespace muxmi = mux::Media::Imaging;
+namespace wf = winrt::Windows::Foundation;
+namespace wg = winrt::Windows::Globalization;
 
 namespace
 {
@@ -126,6 +156,36 @@ mux::FrameworkElement UsageTrack(std::int64_t seconds, std::int64_t peak,
 std::wstring HourLabel(int hour)
 {
     return (hour < 10 ? L"0" : L"") + std::to_wstring(hour) + L":00";
+}
+
+std::optional<wf::DateTime> PickerDate(const std::string& date)
+{
+    const auto info = calendar::CalendarService::GetDateInfo(date);
+    if (!info) return std::nullopt;
+
+    wg::Calendar local;
+    local.ChangeCalendarSystem(L"GregorianCalendar");
+    local.ChangeClock(L"24HourClock");
+    local.Day(1);
+    local.Year(info->year);
+    local.Month(info->month);
+    local.Day(info->day);
+    local.Hour(12);
+    local.Minute(0);
+    local.Second(0);
+    local.Nanosecond(0);
+    return local.GetDateTime();
+}
+
+std::string DateKey(wf::DateTime value)
+{
+    wg::Calendar local;
+    local.ChangeCalendarSystem(L"GregorianCalendar");
+    local.SetDateTime(value);
+    char date[16]{};
+    std::snprintf(date, sizeof(date), "%04d-%02d-%02d",
+        local.Year(), local.Month(), local.Day());
+    return date;
 }
 
 mux::UIElement UsageChart(const std::vector<std::int64_t>& values,
@@ -318,7 +378,7 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
     muxc::TextBlock paused{nullptr};
     muxc::TextBlock total{nullptr};
     muxc::TextBlock weekCaption{nullptr};
-    muxc::ComboBox dayList{nullptr};
+    muxc::CalendarDatePicker dayPicker{nullptr};
     muxc::Border chartHost{nullptr};
     muxc::Border appsHost{nullptr};
     muxc::ToggleSwitch enabled{nullptr};
@@ -335,7 +395,6 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
     bool enabledValue = true;
     bool week = false;
     std::string selectedDate;
-    std::string firstPickerDate;
     winrt::event_token dayChanged;
     bool active = false;
     bool closed = false;
@@ -404,10 +463,12 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
         total.TextWrapping(mux::TextWrapping::Wrap);
         total.VerticalAlignment(mux::VerticalAlignment::Center);
         summary.Children().Append(total);
-        dayList = muxc::ComboBox{};
-        dayList.VerticalAlignment(mux::VerticalAlignment::Center);
-        muxc::Grid::SetColumn(dayList, 1);
-        summary.Children().Append(dayList);
+        dayPicker = muxc::CalendarDatePicker{};
+        dayPicker.CalendarIdentifier(L"GregorianCalendar");
+        dayPicker.DateFormat(L"{year.full}-{month.integer(2)}-{day.integer(2)}");
+        dayPicker.VerticalAlignment(mux::VerticalAlignment::Center);
+        muxc::Grid::SetColumn(dayPicker, 1);
+        summary.Children().Append(dayPicker);
         weekCaption = SmallLabel(L"");
         weekCaption.Visibility(mux::Visibility::Collapsed);
         weekCaption.VerticalAlignment(mux::VerticalAlignment::Center);
@@ -422,6 +483,7 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
         overview.Children().Append(chartHost);
         muxc::Border overviewCard;
         if (cardStyle) overviewCard.Style(cardStyle);
+        overviewCard.Padding({16, 6, 16, 16});
         overviewCard.Child(overview);
         root.Children().Append(overviewCard);
 
@@ -477,14 +539,18 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
         ticked = timer.Tick([this](const auto&, const auto&) {
             if (active && !closed) Reload();
         });
-        dayChanged = dayList.SelectionChanged([this](const auto&, const auto&) {
-            if (updating || closed) return;
-            if (const auto selected = dayList.SelectedItem().try_as<winrt::hstring>())
+        dayChanged = dayPicker.DateChanged([this](
+            const muxc::CalendarDatePicker&,
+            const muxc::CalendarDatePickerDateChangedEventArgs& args) {
+            if (updating || closed || week) return;
+            if (const auto selected = args.NewDate())
             {
-                selectedDate = winrt::to_string(*selected);
+                auto date = DateKey(selected.Value());
+                if (date == selectedDate) return;
+                selectedDate = std::move(date);
                 visibleApps = kAppPageSize;
-                Reload();
             }
+            Reload();
         });
         moreClicked = moreApps.Click([this](const auto&, const auto&) {
             if (closed) return;
@@ -541,7 +607,7 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (clear) clear.Click(cleared);
         if (range) range.SelectionChanged(ranged);
         if (timer) timer.Tick(ticked);
-        if (dayList) dayList.SelectionChanged(dayChanged);
+        if (dayPicker) dayPicker.DateChanged(dayChanged);
         if (moreApps) moreApps.Click(moreClicked);
         if (root) root.ActualThemeChanged(iconThemeChanged);
     }
@@ -555,31 +621,18 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
 
     void Reload()
     {
+        constexpr int weekDays = 7;
         const auto history = snowdesktop::screen_time::LoadReports(
             GetDataFilePath(L"SnowDesktop.screen-time.json"));
-        const auto now = std::chrono::system_clock::to_time_t(
-            std::chrono::system_clock::now());
-        std::vector<snowdesktop::screen_time::DayReport> recent;
-        recent.reserve(7);
-        for (int offset = 6; offset >= 0; --offset)
-        {
-            std::tm local{};
-            localtime_s(&local, &now);
-            local.tm_mday -= offset;
-            local.tm_hour = 12;
-            mktime(&local);
-            char text[16]{};
-            sprintf_s(text, "%04d-%02d-%02d",
-                local.tm_year + 1900, local.tm_mon + 1, local.tm_mday);
-            snowdesktop::screen_time::DayReport day;
-            day.date = text;
+        const auto today = calendar::CalendarService::CurrentLocalNow().date;
+        const screen_time::DayReport emptyDay;
+        const auto reportForDate = [&](const std::string& date) -> const screen_time::DayReport& {
             const auto found = std::find_if(history.begin(), history.end(),
-                [&](const auto& item) { return item.date == day.date; });
-            if (found != history.end()) day = *found;
-            recent.push_back(std::move(day));
-        }
+                [&](const auto& item) { return item.date == date; });
+            return found != history.end() ? *found : emptyDay;
+        };
 
-        dayList.Visibility(week ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        dayPicker.Visibility(week ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         weekCaption.Visibility(week ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         if (week)
         {
@@ -587,13 +640,15 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
             std::map<std::string, screen_time::AppTotal> apps;
             std::vector<std::int64_t> totals;
             std::vector<std::wstring> dates;
-            totals.reserve(recent.size());
-            dates.reserve(recent.size());
-            for (const auto& day : recent)
+            totals.reserve(weekDays);
+            dates.reserve(weekDays);
+            for (int offset = 1 - weekDays; offset <= 0; ++offset)
             {
+                const auto date = *calendar::CalendarService::AddDays(today, offset);
+                const auto& day = reportForDate(date);
                 sum += day.totalSeconds;
                 totals.push_back(day.totalSeconds);
-                dates.push_back(Widen(day.date));
+                dates.push_back(Widen(date));
                 for (const auto& app : day.apps)
                 {
                     auto& totalForApp = apps[app.identity];
@@ -616,25 +671,34 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
             return;
         }
 
+        auto firstDate = *calendar::CalendarService::AddDays(today, 1 - weekDays);
+        auto minimum = *PickerDate(firstDate);
+        for (const auto& day : history)
+        {
+            if (day.date >= firstDate) break;
+            if (const auto candidate = PickerDate(day.date))
+            {
+                firstDate = day.date;
+                minimum = *candidate;
+                break;
+            }
+        }
+        if (selectedDate < firstDate || selectedDate > today)
+            selectedDate = today;
+
         updating = true;
-        if (firstPickerDate != recent.front().date)
+        const auto maximum = *PickerDate(today);
+        if (maximum > dayPicker.MaxDate()) dayPicker.MaxDate(maximum);
+        if (minimum != dayPicker.MinDate()) dayPicker.MinDate(minimum);
+        if (maximum != dayPicker.MaxDate()) dayPicker.MaxDate(maximum);
+        const auto current = dayPicker.Date();
+        if (!current || DateKey(current.Value()) != selectedDate)
         {
-            firstPickerDate = recent.front().date;
-            dayList.Items().Clear();
-            for (const auto& day : recent)
-                dayList.Items().Append(winrt::box_value(Widen(day.date)));
+            const auto selected = *PickerDate(selectedDate);
+            dayPicker.Date(winrt::box_value(selected).as<wf::IReference<wf::DateTime>>());
         }
-        int selectedIndex = static_cast<int>(recent.size()) - 1;
-        for (int index = 0; index < static_cast<int>(recent.size()); ++index)
-        {
-            if (recent[static_cast<std::size_t>(index)].date == selectedDate)
-                selectedIndex = index;
-        }
-        if (dayList.SelectedIndex() != selectedIndex)
-            dayList.SelectedIndex(selectedIndex);
         updating = false;
-        const auto& day = recent[static_cast<std::size_t>(selectedIndex)];
-        selectedDate = day.date;
+        const auto& day = reportForDate(selectedDate);
         total.Text(Duration(localize, day.totalSeconds));
         chartHost.Child(UsageChart(
             std::vector<std::int64_t>(day.hours.begin(), day.hours.end()),
@@ -857,7 +921,7 @@ void ScreenTimePagePresenter::RefreshLocalizedText()
     impl_->overviewTitle.Text(impl_->L("settings.screenTime.overview"));
     impl_->appsTitle.Text(impl_->L("settings.screenTime.appUsage"));
     impl_->weekCaption.Text(impl_->L("settings.screenTime.recentWeek"));
-    muxa::AutomationProperties::SetName(impl_->dayList,
+    muxa::AutomationProperties::SetName(impl_->dayPicker,
         impl_->L("settings.screenTime.day"));
     impl_->ShowPaused();
     if (impl_->active) impl_->Reload();
@@ -889,6 +953,7 @@ void ScreenTimePagePresenter::Deactivate()
 {
     impl_->active = false;
     if (impl_->timer) impl_->timer.Stop();
+    if (impl_->dayPicker.IsCalendarOpen()) impl_->dayPicker.IsCalendarOpen(false);
     if (impl_->clearDialog) impl_->clearDialog.Hide();
 }
 

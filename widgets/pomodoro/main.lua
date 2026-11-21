@@ -17,13 +17,34 @@ local descriptor
 
 local settings = {
     fields = {
-        { key = "soundEnabled", label = l10n.tr("lua_widget.pomodoro.sound"), type = "bool", default = false },
-        { key = "workMin", label = l10n.tr("lua_widget.pomodoro.work_minutes"), type = "duration", unit = "minutes", default = 25, min = 1, max = 120 },
-        { key = "breakMin", label = l10n.tr("lua_widget.pomodoro.short_break_minutes"), type = "duration", unit = "minutes", default = 5, min = 1, max = 60 },
-        { key = "longBreakMin", label = l10n.tr("lua_widget.pomodoro.long_break_minutes"), type = "duration", unit = "minutes", default = 15, min = 1, max = 120 },
-        { key = "longBreakInterval", label = l10n.tr("lua_widget.pomodoro.long_break_interval"), type = "int", default = 4, min = 1, max = 10 },
-        { key = "workColor", label = l10n.tr("lua_widget.pomodoro.work_color"), type = "color", default = DEFAULT_WORK_COLOR },
-        { key = "breakColor", label = l10n.tr("lua_widget.pomodoro.break_color"), type = "color", default = DEFAULT_BREAK_COLOR },
+        { key = "soundEnabled",
+            agentDescription = "Plays the component's alert sound at a phase transition when enabled.",
+            label = l10n.tr("lua_widget.pomodoro.sound"), type = "bool", default = false
+        },
+        { key = "workMin",
+            agentDescription = "Sets the target duration of a work phase in minutes.",
+            label = l10n.tr("lua_widget.pomodoro.work_minutes"), type = "duration", unit = "minutes", default = 25, min = 1, max = 120
+        },
+        { key = "breakMin",
+            agentDescription = "Sets the short break duration in minutes. Long breaks use longBreakMin.",
+            label = l10n.tr("lua_widget.pomodoro.short_break_minutes"), type = "duration", unit = "minutes", default = 5, min = 1, max = 60
+        },
+        { key = "longBreakMin",
+            agentDescription = "Sets the duration in minutes of scheduled long breaks.",
+            label = l10n.tr("lua_widget.pomodoro.long_break_minutes"), type = "duration", unit = "minutes", default = 15, min = 1, max = 120
+        },
+        { key = "longBreakInterval",
+            agentDescription = "Selects how many completed work sessions trigger a long break.",
+            label = l10n.tr("lua_widget.pomodoro.long_break_interval"), type = "int", default = 4, min = 1, max = 10
+        },
+        { key = "workColor",
+            agentDescription = "Sets the work phase accent used by the timer view.",
+            label = l10n.tr("lua_widget.pomodoro.work_color"), type = "color", default = DEFAULT_WORK_COLOR
+        },
+        { key = "breakColor",
+            agentDescription = "Sets the break phase accent used by the timer view.",
+            label = l10n.tr("lua_widget.pomodoro.break_color"), type = "color", default = DEFAULT_BREAK_COLOR
+        },
     },
 }
 

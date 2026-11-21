@@ -1,7 +1,7 @@
 #pragma once
 
 #include "settings/settings_ipc_values.h"
-#include "home_about_ipc_values.h"
+#include "settings/home_about_ipc_values.h"
 #include "general_advanced_feature_ipc_values.h"
 #include "window_support_ipc_values.h"
 #include "settings_window_host_options.h"
@@ -71,7 +71,7 @@ SD_IPC_FIELDS(winui::InstalledWidgetPackageSnapshot,
     v.developmentOverrideActive, v.canCreateDevelopmentProject, v.canInstallDevelopmentSnapshot, v.canPublishDevelopmentPackage,
     v.restorableVersions, v.permissionState, v.canRevokePermissions, v.permissions,
     v.declaredNetworkDomains, v.grantedNetworkDomains, v.invalidSources, v.workshopInstallFailures,
-    v.instances, v.canExportDevelopmentPackage, v.nativeHelpers);
+    v.instances, v.canExportDevelopmentPackage, v.nativeHelpers, v.hasInstalledVersion);
 SD_IPC_FIELDS(winui::WidgetsPageHostOperationResult,
     v.succeeded, v.changed, v.message);
 SD_IPC_FIELDS(winui::WidgetPermissionEditorRequest,

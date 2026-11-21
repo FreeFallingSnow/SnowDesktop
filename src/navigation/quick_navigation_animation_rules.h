@@ -261,6 +261,8 @@ public:
         Configure(fade ? Effect::Fade : Effect::Scale, durationScale);
     }
     [[nodiscard]] Effect GetEffect() const { return effect_; }
+    // Preserve the sampled pose when attaching a prepared compositor timeline.
+    void ResumeAt(std::uint64_t now) { lastTick_ = now; }
     [[nodiscard]] bool UsesResponsiveMotion() const { return responsive_; }
     [[nodiscard]] double Velocity() const { return motion_.velocity; }
     [[nodiscard]] popup_motion_curve::Timeline RemainingTimeline() const

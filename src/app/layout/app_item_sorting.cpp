@@ -2,6 +2,7 @@
 #include "grid_geometry.h"
 #include "common/utils.h"
 #include "layout/folder_sort_rules.h"
+#include "layout/list_detail_rules.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "diagnostics/diagnostic_log.h"
 #include "layout/desktop_item_sort_rules.h"
@@ -278,7 +279,7 @@ void DesktopApp::UpdateCutState(std::uint64_t clipboardCopyId)
     const auto sequence = GetClipboardSequenceNumber();
     const auto queuedAt = clipboardCopyId ? Clock::now() : Clock::time_point{};
     const bool submitted = clipboardReadWork_.Submit(L"cut-state",
-        [clipboardCopyId, queuedAt, sequence] {
+        [clipboardCopyId, queuedAt, sequence]() -> std::optional<std::unordered_set<std::wstring>> {
         const auto started = clipboardCopyId ? Clock::now() : Clock::time_point{};
         const DWORD readSequence = clipboardCopyId ? GetClipboardSequenceNumber() : 0;
         const auto initialized = OleInitialize(nullptr);
@@ -331,9 +332,14 @@ void DesktopApp::UpdateCutState(std::uint64_t clipboardCopyId)
                     UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
                     for (UINT i = 0; i < count; ++i)
                     {
-                        wchar_t path[MAX_PATH]{};
-                        if (DragQueryFileW(hDrop, i, path, MAX_PATH) > 0)
+                        const UINT length = DragQueryFileW(hDrop, i, nullptr, 0);
+                        if (length == 0) continue;
+                        std::wstring path(static_cast<size_t>(length) + 1, L'\0');
+                        if (DragQueryFileW(hDrop, i, path.data(), length + 1) == length)
+                        {
+                            path.resize(length);
                             clipCutPaths.insert(ToUpperInvariant(path));
+                        }
                     }
                     ReleaseStgMedium(&medDrop);
                 }
@@ -354,42 +360,27 @@ void DesktopApp::UpdateCutState(std::uint64_t clipboardCopyId)
                 Milliseconds(getFinished - getStarted).count(), preferredDetails);
             WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, message);
         }
+        if (FAILED(getResult)) return std::nullopt;
         return clipCutPaths;
     }, [this, sequence](auto clipCutPaths) {
         if (GetClipboardSequenceNumber() != sequence) { UpdateCutState(); return; }
-    for (auto& item : items_)
-    {
-        item.isCut = false;
-        if (item.desktopIconClsid.empty() == false) continue;
-        item.isCut = clipCutPaths.contains(ToUpperInvariant(item.parsingName));
-    }
+        if (!clipCutPaths) return;
+        clipboardCutSequence_ = sequence;
+        clipboardCutPaths_ = std::move(*clipCutPaths);
+        for (auto& item : items_)
+            item.isCut = !clipboardCutPaths_.empty() && item.desktopIconClsid.empty() &&
+                clipboardCutPaths_.contains(ToUpperInvariant(item.parsingName));
 
-    for (auto& widget : widgets_)
-    {
-        if (widget.type != DesktopWidgetType::FolderMapping)
-            continue;
-        for (auto& entry : widget.folderEntries)
-        {
-            entry.isCut = false;
-            if (!entry.fullPath.empty() &&
-                clipCutPaths.contains(ToUpperInvariant(entry.fullPath)))
-                entry.isCut = true;
-        }
-    }
-    if (dockFolderPopupOpen_)
-    {
-        for (auto& entry :
-             dockFolderPopupWidget_.
-                folderEntries)
-        {
-            entry.isCut = false;
-            if (!entry.fullPath.empty() &&
-                clipCutPaths.contains(
-                    ToUpperInvariant(
-                        entry.fullPath)))
-                entry.isCut = true;
-        }
-    }
+        for (auto& widget : widgets_)
+            if (widget.type == DesktopWidgetType::FolderMapping)
+                ApplyFolderCutState(widget.folderEntries);
+        if (dockFolderPopupOpen_)
+            ApplyFolderCutState(dockFolderPopupWidget_.folderEntries);
+        if (folderPreview_ && folderPreview_->folderHome)
+            ApplyFolderCutState(folderPreview_->folderHome->data.folderEntries);
+        for (auto& [host, preview] : inactiveInlineFolderPreviews_)
+            ApplyFolderCutState(preview.model.data.folderEntries);
+
         InvalidateRect(hwnd_, nullptr, FALSE);
         InvalidateDockRects();
         InvalidateFloatingPopupWindow(false);
@@ -402,6 +393,16 @@ void DesktopApp::UpdateCutState(std::uint64_t clipboardCopyId)
             GetCurrentProcessId(), static_cast<unsigned long long>(clipboardCopyId), sequence);
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, message);
     }
+}
+
+void DesktopApp::ApplyFolderCutState(std::vector<FolderEntry>& entries)
+{
+    if (entries.empty()) return;
+    const bool current = clipboardCutSequence_ == GetClipboardSequenceNumber();
+    if (!current) UpdateCutState();
+    const bool hasCutPaths = current && !clipboardCutPaths_.empty();
+    for (auto& entry : entries)
+        entry.isCut = hasCutPaths && clipboardCutPaths_.contains(ToUpperInvariant(entry.fullPath));
 }
 
 // ── Shell 变更通知 ──────────────────────────────────────────

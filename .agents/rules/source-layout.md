@@ -44,7 +44,18 @@
 - `widget_author_test.cpp` 等实现产品 `snowwidget test`、lint、预览功能的文件属于 `widget/authoring/`；验证这些功能的回归测试属于 `tests/`，按文件实际职责归档。
 - 需要新增职责模块时，先更新本节归属规则并明确边界，再创建目录；不为单个未分类文件随意增加 `misc/`、`helpers/`、`temp/` 等收容目录。
 
+### 按职责组织源码
+
+- 添加功能时，沿生产调用找到负责该规则、状态或资源的模块。新增逻辑与原实现共同维护同一约束时，就地扩展。组合入口负责模块接线、调用顺序和生命周期协调。
+- 走查时关注职责有没有越界。例如，新代码实现了另一模块已有的业务规则、开始写入另一模块持有的状态，或给纯解析逻辑引入文件系统依赖。遇到这些情况，把相应逻辑放回负责它的模块；确有独立职责且缺少合适实现时，再在所属模块建立私有实现。
+
+例如，为组件包的 `previewData.variants` 增加字段时，清单 JSON 的解析与格式诊断归 `widget_package_manifest_fields.cpp` 的 `ReadPreviewVariants`。若该字段需要核实资源文件存在，磁盘检查归 `WidgetPackageValidator::ValidateDirectory`。`widget_package.cpp` 继续承担已有入口职责。[预览字段解析](../../src/widget/packages/widget_package_manifest_fields.cpp) · [目录验证](../../src/widget/packages/widget_package_validation.cpp)
+
+走查时判断改动是否放在合适的组件中，并结合相邻代码检查引入的复杂度。这一做法参考 [Google 的代码评审指南](https://google.github.io/eng-practices/review/reviewer/looking-for.html#design)。
+
 ### 类职责、公共头与依赖边界
+
+跨模块审计可按[代码健康分析方法](../../scripts/code-health.md)复用跨版本历史和依赖基线，结合实际调用与状态所有者选择下一批重构。
 
 - 修改公共头、向组合类增加功能状态或操作、增加跨模块依赖，或发现局部改动导致广泛重编译时，实施前检查本次涉及的类、状态和构建依赖。用简短说明确定功能所有者、需要保留的协调接口及实际消费者；优先处理与当前需求相关的边界问题，其他遗留问题记录位置和影响。
 - 一组模型、缓存、异步任务、资源和状态转换具有独立用途、状态约束或生命周期时，由对应功能对象集中持有并维护。只需参数和结果的算法归功能模块；只有需要直接维护对象内部约束或承担应用协调的操作才作为组合类成员。移动 `.cpp` 方法体后，继续检查类声明、嵌套模型和成员状态的职责归属。

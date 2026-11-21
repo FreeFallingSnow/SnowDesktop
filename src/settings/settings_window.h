@@ -1,5 +1,6 @@
 #pragma once
 
+#include "home_about_status.h"
 #include "settings_route.h"
 #include "winui/settings_window_host_options.h"
 
@@ -75,7 +76,7 @@ public:
     [[nodiscard]] bool PrepareLanguageChange();
     void ApplyLanguageChange(bool widgetRuntimeReloaded);
     [[nodiscard]] bool PublishHomeAboutStatus(
-        snowdesktop::winui::HomeAboutStatusPatch patch);
+        snowdesktop::settings::HomeAboutStatusPatch patch);
 
     [[nodiscard]] bool PreTranslateMessage(MSG* message) noexcept;
     [[nodiscard]] bool ProcessTabNavigation(MSG* message) noexcept;

@@ -30,7 +30,9 @@ public:
 
 // No notifications or batches: every accepted operation has a correlated reply.
 using Handler = std::function<Value(std::string_view, const Value&)>;
-std::string Dispatch(std::string_view request, const Handler& handler) noexcept;
+using AccessCheck = std::function<bool()>;
+std::string Dispatch(std::string_view request, const Handler& handler,
+    const AccessCheck& accessCheck = {}) noexcept;
 Value Describe();
 void Fields(const Value& params, std::initializer_list<std::string_view> allowed);
 std::string Text(const Value& params, std::string_view key, bool required = true);

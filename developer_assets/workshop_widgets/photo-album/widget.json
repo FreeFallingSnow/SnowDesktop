@@ -513,7 +513,7 @@
     "interaction.contextMenu",
     "widget.size.aspectRatio"
   ],
-  "optionalFeatures": ["interaction.contextMenu.keepOpen"],
+  "optionalFeatures": ["view.icon.glyphInk", "interaction.contextMenu.keepOpen"],
   "resources": {
     "sample": {
       "type": "image",

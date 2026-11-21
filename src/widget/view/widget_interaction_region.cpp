@@ -441,6 +441,7 @@ InteractionHoverTransition WidgetInteractionRegions::CommitFrame()
     if (!ContainsKey(pressedKey_))
     {
         pressedKey_.clear();
+        pressedDragImage_.clear();
         pressedButton_ = -1;
         pointerPressStarted_ = {};
         clickCandidateKey_.clear();
@@ -486,6 +487,8 @@ InteractionPointerResult WidgetInteractionRegions::PointerDown(
 {
     UpdateHover(x, y);
     pressedKey_ = hoveredKey_;
+    const auto* region = button == 1 ? Find(pressedKey_) : nullptr;
+    pressedDragImage_ = region && region->enabled ? region->dragImage : std::string{};
     pressedButton_ = button;
     pointerPressStarted_ = pressedKey_.empty()
         ? std::chrono::steady_clock::time_point{}
@@ -512,6 +515,7 @@ InteractionPointerResult WidgetInteractionRegions::PointerUp(
     else
         clickCandidateKey_.clear();
     pressedKey_.clear();
+    pressedDragImage_.clear();
     pressedButton_ = -1;
     pointerPressStarted_ = {};
     return result;
@@ -568,6 +572,7 @@ WidgetInteractionRegions::ResolveRangeValue(
 void WidgetInteractionRegions::CancelPointerPress() noexcept
 {
     pressedKey_.clear();
+    pressedDragImage_.clear();
     clickCandidateKey_.clear();
     pressedButton_ = -1;
     pointerPressStarted_ = {};
@@ -579,6 +584,14 @@ bool WidgetInteractionRegions::HasPointerCapture() const noexcept
         PointerPressExpired()) return false;
     const InteractionRegion* pressed = Find(pressedKey_);
     return pressed && pressed->enabled && pressed->capturePointer;
+}
+
+std::string_view WidgetInteractionRegions::PressedDragImage() const noexcept
+{
+    if (pressedDragImage_.empty() || PointerPressExpired()) return {};
+    const auto* region = Find(pressedKey_);
+    return region && region->enabled && region->dragImage == pressedDragImage_
+        ? std::string_view(pressedDragImage_) : std::string_view{};
 }
 
 std::string WidgetInteractionRegions::ConsumeClickTarget(float x, float y)
@@ -1016,11 +1029,8 @@ void WidgetInteractionRegions::Reset() noexcept
     frameOpen_ = false;
     pointerKnown_ = false;
     hoveredKey_.clear();
-    pressedKey_.clear();
-    clickCandidateKey_.clear();
+    CancelPointerPress();
     retiredHoverRegion_.reset();
-    pressedButton_ = -1;
-    pointerPressStarted_ = {};
     ++generation_;
 }
 

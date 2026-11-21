@@ -245,14 +245,14 @@ bool Svg(std::string_view bytes, int edge, Image& image, std::string& error)
 }
 }
 
-bool Decode(const std::filesystem::path& path, int edge, Image& image, std::string& error)
+bool Decode(const std::filesystem::path& path, int edge, Image& image, std::string& error, bool allowAvif)
 {
     image = {}; error.clear(); std::string bytes;
     if (!Read(path, bytes, error)) return false;
     if (Lower(path.extension().wstring()) == L".svg") return Svg(bytes, edge, image, error);
-    return DecodeBytes(bytes, edge, image, error);
+    return DecodeBytes(bytes, edge, image, error, allowAvif);
 }
-bool DecodeBytes(std::string_view bytes, int edge, Image& image, std::string& error)
+bool DecodeBytes(std::string_view bytes, int edge, Image& image, std::string& error, bool allowAvif)
 {
     image = {}; error.clear();
     if (bytes.empty() || bytes.size() > kMaxFileBytes) return Fail(error, "iconLibrary.tooLarge");
@@ -302,6 +302,7 @@ bool DecodeBytes(std::string_view bytes, int edge, Image& image, std::string& er
     else if (container == GUID_ContainerFormatJpeg) image.format = "jpg";
     else if (container == GUID_ContainerFormatBmp) image.format = "bmp";
     else if (container == GUID_ContainerFormatIco) image.format = "ico";
+    else if (allowAvif && container == GUID_ContainerFormatHeif && bytes.size() >= 12 && bytes.substr(4, 8) == "ftypavif") image.format = "avif";
     else return Fail(error, "iconLibrary.invalid");
     ComPtr<IWICBitmapFrameDecode> frame;
     if (FAILED(decoder->GetFrame(0, &frame))) return Fail(error, "iconLibrary.invalid");

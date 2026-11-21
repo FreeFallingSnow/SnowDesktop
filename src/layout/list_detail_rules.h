@@ -1,5 +1,7 @@
 #pragma once
 
+#include "list_detail_types.h"
+
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -7,15 +9,6 @@
 
 namespace snowdesktop::list_detail_rules
 {
-
-enum class Column
-{
-    None,
-    Name,
-    Modified,
-    Type,
-    Size,
-};
 
 inline constexpr std::string_view ToString(Column column)
 {
@@ -78,30 +71,9 @@ inline int RowHeight(
         scaled38 + static_cast<int>(std::ceil(lineDelta)));
 }
 
-struct Columns
-{
-    int nameWidth = 0;
-    int modifiedWidth = 0;
-    int typeWidth = 0;
-    int sizeWidth = 0;
-    bool showModified = false;
-    bool showType = false;
-    bool showSize = false;
-};
-
-inline constexpr float kDefaultModifiedPosition = 140.0f / 510.0f;
-inline constexpr float kDefaultTypePosition = 300.0f / 510.0f;
-inline constexpr float kDefaultSizePosition = 420.0f / 510.0f;
 inline constexpr float kMinimumDividerPosition = 0.05f;
 inline constexpr float kMaximumDividerPosition = 0.95f;
 inline constexpr float kMinimumDividerGap = 0.04f;
-
-struct DividerPositions
-{
-    float modified = kDefaultModifiedPosition;
-    float type = kDefaultTypePosition;
-    float size = kDefaultSizePosition;
-};
 
 inline constexpr float ClampStoredPosition(float position)
 {

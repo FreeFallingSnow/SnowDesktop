@@ -3,6 +3,7 @@
 #include "common/types.h"
 #include "data/layout_storage.h"
 #include "layout/folder_sort_rules.h"
+#include "layout/list_detail_rules.h"
 #include <ostream>
 
 namespace snowdesktop::widget_layout_codec

@@ -10,7 +10,6 @@
 #pragma once
 
 #include "drop_model.h"
-#include "container.h"
 #include "slot.h"
 
 #include <cstddef>
@@ -30,22 +29,7 @@ struct SlotFeedbackKey
     std::uint32_t variant = 0;
     bool hasItem = false;
 
-    static std::optional<SlotFeedbackKey> From(Slot* slot)
-    {
-        if (!slot) return std::nullopt;
-        const auto& identity = slot->GetFeedbackIdentity();
-        if (identity.role == SlotFeedbackRole::None)
-            return std::nullopt;
-        return SlotFeedbackKey{
-            identity.role,
-            slot->GetBounds(),
-            identity.scopeBounds,
-            slot->GetIndex(),
-            identity.revision,
-            identity.variant,
-            slot->GetItem() != nullptr,
-        };
-    }
+    static std::optional<SlotFeedbackKey> From(Slot* slot);
 
     bool operator==(const SlotFeedbackKey& other) const
     {
@@ -155,41 +139,7 @@ public:
      * 将会话标记为激活状态，初始化所有字段，并调用 InvalidateStaticScene() 刷新场景版本号。
      */
     void Begin(Container* source, std::vector<Item*> items, DragSourceList sourceList,
-        POINT mouseDown, POINT current)
-    {
-        active_ = true;
-        visualVisible_ = true;
-        hasContext_ = true;
-        source_ = source;
-        items_ = std::move(items);
-        sourceList_ = std::move(sourceList);
-        if (sourceList_.hasSearchResults)
-        {
-            items_.clear();
-            for (auto& entry : sourceList_.entries)
-            {
-                if (entry.retainedItem) entry.item = entry.retainedItem.get();
-                if (entry.item) items_.push_back(entry.item);
-            }
-        }
-        mouseDownPoint_ = mouseDown;
-        visualMouseDownPoint_ = mouseDown;
-        currentPoint_ = current;
-        visualItemBounds_.clear();
-        primaryVisualIndex_ = static_cast<size_t>(-1);
-        pointerAnchored_ = false;
-        visualBoundsOffset_ = {};
-        action_ = DropAction::Move;
-        targetContainer_ = nullptr;
-        targetSlot_ = nullptr;
-        targetSlotGeneration_ = 0;
-        targetSlotGenerationTracked_ = false;
-        targetSlotFeedbackKey_ = {};
-        targetRegion_ = HitRegion::None;
-        presentationAnchorValid_ = false;
-        presentationAnchorCell_ = {};
-        InvalidateStaticScene();
-    }
+        POINT mouseDown, POINT current);
 
     /**
      * @brief 更新鼠标当前位置
@@ -197,7 +147,21 @@ public:
      */
     void UpdatePoint(POINT current)
     {
+        if (placementAfterViewChange_ && !PtInRect(&placementAfterViewChangeBounds_, current))
+            placementAfterViewChange_ = nullptr;
         currentPoint_ = current;
+    }
+
+    // Preserve placement over an icon exposed by the view change until the
+    // pointer leaves that cell.
+    void KeepPlacementAfterViewChange(Container* target, RECT bounds)
+    {
+        placementAfterViewChange_ = target;
+        placementAfterViewChangeBounds_ = bounds;
+    }
+    bool KeepsPlacementAfterViewChange(const Container* target) const
+    {
+        return target && placementAfterViewChange_ == target;
     }
 
     /**
@@ -303,14 +267,7 @@ public:
      *
      * 调用 DropActionFromMods 计算新的动作类型，若与当前不同则更新并令场景版本失效。
      */
-    bool UpdateActionFromMods(int mods, DropAction defaultAction = DropAction::Move)
-    {
-        DropAction next = DropActionFromMods(mods, defaultAction);
-        if (next == action_) return false;
-        action_ = next;
-        InvalidateStaticScene();
-        return true;
-    }
+    bool UpdateActionFromMods(int mods, DropAction defaultAction = DropAction::Move);
 
     /**
      * @brief 更新拖拽目标和命中区域
@@ -318,37 +275,7 @@ public:
      * @param targetSlot      目标插槽指针
      * @param targetRegion    命中区域类型
      */
-    bool UpdateTarget(Container* targetContainer, Slot* targetSlot, HitRegion targetRegion)
-    {
-        const bool nextGenerationTracked =
-            targetContainer && targetSlot &&
-            !targetSlot->IsTransientDragTarget();
-        const std::uint64_t nextGeneration =
-            nextGenerationTracked
-                ? targetContainer->GetSlotGeneration()
-                : 0;
-        const auto nextFeedbackKey =
-            snowdesktop::drag_target::SlotFeedbackKey::From(targetSlot);
-        const bool slotChanged =
-            targetSlotFeedbackKey_ || nextFeedbackKey
-                ? targetSlotFeedbackKey_ != nextFeedbackKey
-                : targetSlot_ != targetSlot ||
-                    targetSlotGeneration_ != nextGeneration ||
-                    targetSlotGenerationTracked_ != nextGenerationTracked;
-        const bool presentationChanged =
-            targetContainer_ != targetContainer ||
-            slotChanged ||
-            targetRegion_ != targetRegion;
-        targetContainer_ = targetContainer;
-        targetSlot_ = targetSlot;
-        targetSlotGeneration_ = nextGeneration;
-        targetSlotGenerationTracked_ = nextGenerationTracked;
-        targetSlotFeedbackKey_ = nextFeedbackKey;
-        targetRegion_ = targetRegion;
-        if (presentationChanged)
-            InvalidatePresentation();
-        return presentationChanged;
-    }
+    bool UpdateTarget(Container* targetContainer, Slot* targetSlot, HitRegion targetRegion);
 
     /**
      * @brief 更新桌面放置反馈使用的请求网格。
@@ -357,32 +284,10 @@ public:
      * 两者可在不同时间跨格；请求网格必须独立进入呈现键，避免命中槽
      * 尚未变化时继续显示上一格的落点。
      */
-    bool UpdatePresentationAnchor(const GridCell& cell)
-    {
-        if (cell.pageId.empty())
-            return ClearPresentationAnchor();
-        const bool changed =
-            !presentationAnchorValid_ ||
-            presentationAnchorCell_.pageId != cell.pageId ||
-            presentationAnchorCell_.column != cell.column ||
-            presentationAnchorCell_.row != cell.row;
-        presentationAnchorValid_ = true;
-        presentationAnchorCell_ = cell;
-        if (changed)
-            InvalidatePresentation();
-        return changed;
-    }
+    bool UpdatePresentationAnchor(const GridCell& cell);
 
     /** @brief 清除非桌面目标不再使用的请求网格呈现键。 */
-    bool ClearPresentationAnchor()
-    {
-        if (!presentationAnchorValid_)
-            return false;
-        presentationAnchorValid_ = false;
-        presentationAnchorCell_ = {};
-        InvalidatePresentation();
-        return true;
-    }
+    bool ClearPresentationAnchor();
 
     /**
      * @brief 重新绑定拖拽源（用于跨容器拖拽时的源切换等场景）
@@ -392,46 +297,7 @@ public:
      *
      * 同时重置目标信息，并令场景版本失效。
      */
-    void RebindSource(Container* source, std::vector<Item*> items, DragSourceList sourceList)
-    {
-        source_ = source;
-        items_ = std::move(items);
-        // A widget on the page being replaced can only recreate its logical
-        // member wrappers after the turn; their new layout bounds are empty
-        // because the source page is no longer visible.  Keep the drag-start
-        // bounds on those transient wrappers so the existing visual snapshot
-        // and hit-coordinate context remain usable until the drop completes.
-        const size_t retainedBounds = std::min(
-            items_.size(), visualItemBounds_.size());
-        for (size_t i = 0; i < retainedBounds; ++i)
-        {
-            if (!items_[i])
-                continue;
-            const RECT currentBounds = items_[i]->GetBounds();
-            const RECT retained = visualItemBounds_[i];
-            const bool currentHasArea =
-                currentBounds.right > currentBounds.left &&
-                currentBounds.bottom > currentBounds.top;
-            const bool retainedHasArea =
-                retained.right > retained.left &&
-                retained.bottom > retained.top;
-            if (currentHasArea || !retainedHasArea)
-            {
-                continue;
-            }
-            items_[i]->SetBounds(retained);
-        }
-        sourceList_ = std::move(sourceList);
-        targetContainer_ = nullptr;
-        targetSlot_ = nullptr;
-        targetSlotGeneration_ = 0;
-        targetSlotGenerationTracked_ = false;
-        targetSlotFeedbackKey_ = {};
-        targetRegion_ = HitRegion::None;
-        presentationAnchorValid_ = false;
-        presentationAnchorCell_ = {};
-        InvalidateStaticScene();
-    }
+    void RebindSource(Container* source, std::vector<Item*> items, DragSourceList sourceList);
 
     /**
      * @brief 在运行时对象重建前解除所有裸指针绑定
@@ -439,25 +305,7 @@ public:
      * 保留拖拽动作、坐标以及 DragSourceList 中可用于重建来源的稳定元数据，
      * 但清除 Container / Item / Slot 等随对象树重建而失效的运行时指针。
      */
-    void DetachRuntimeBindings()
-    {
-        if (!active_) return;
-
-        source_ = nullptr;
-        items_.clear();
-        sourceList_.origin = nullptr;
-        for (auto& entry : sourceList_.entries)
-            entry.item = nullptr;
-        targetContainer_ = nullptr;
-        targetSlot_ = nullptr;
-        targetSlotGeneration_ = 0;
-        targetSlotGenerationTracked_ = false;
-        targetSlotFeedbackKey_ = {};
-        targetRegion_ = HitRegion::None;
-        presentationAnchorValid_ = false;
-        presentationAnchorCell_ = {};
-        InvalidateStaticScene();
-    }
+    void DetachRuntimeBindings();
 
     /**
      * @brief 在执行同步放置操作前结束交互态，但暂时保留放置上下文
@@ -466,87 +314,29 @@ public:
      * 此时拖拽交互必须已经结束，否则界面会继续绘制拖拽预览。
      * Items / Source / Target / CurrentPoint 会保留到 End()，供当前放置调用完成。
      */
-    void DeactivateForDrop()
-    {
-        if (!active_) return;
-        active_ = false;
-        visualVisible_ = false;
-        InvalidateStaticScene();
-    }
+    void DeactivateForDrop();
 
     /** @brief 恢复菜单决策后的目标解析与提交，不重新显示拖拽虚影。 */
-    bool ResumeAfterDropDecision()
-    {
-        if (!hasContext_) return false;
-        active_ = true;
-        visualVisible_ = false;
-        InvalidateStaticScene();
-        return true;
-    }
+    bool ResumeAfterDropDecision();
 
     /**
      * @brief 使当前静态场景版本号失效（递增版本号）
      *
      * 版本号递增后若归零，则重置为 1，确保版本号始终为正数。
      */
-    void InvalidateStaticScene()
-    {
-        ++staticSceneRevision_;
-        if (staticSceneRevision_ == 0)
-            staticSceneRevision_ = 1;
-        InvalidatePresentation();
-    }
+    void InvalidateStaticScene();
 
     /**
      * @brief 结束拖拽会话，将所有字段重置为初始状态
      *
      * 清空源/目标信息、项列表、坐标等，并令场景版本失效。
      */
-    void End()
-    {
-        active_ = false;
-        visualVisible_ = false;
-        hasContext_ = false;
-        source_ = nullptr;
-        items_.clear();
-        visualItemBounds_.clear();
-        sourceList_ = {};
-        primaryVisualIndex_ = static_cast<size_t>(-1);
-        targetContainer_ = nullptr;
-        targetSlot_ = nullptr;
-        targetSlotGeneration_ = 0;
-        targetSlotGenerationTracked_ = false;
-        targetSlotFeedbackKey_ = {};
-        targetRegion_ = HitRegion::None;
-        presentationAnchorValid_ = false;
-        presentationAnchorCell_ = {};
-        action_ = DropAction::Move;
-        mouseDownPoint_ = {};
-        visualMouseDownPoint_ = {};
-        currentPoint_ = {};
-        pointerAnchored_ = false;
-        visualBoundsOffset_ = {};
-        InvalidateStaticScene();
-    }
+    void End();
 
 private:
-    void InvalidatePresentation()
-    {
-        ++presentationRevision_;
-        if (presentationRevision_ == 0)
-            presentationRevision_ = 1;
-    }
+    void InvalidatePresentation();
 
-    bool TargetSlotGenerationIsCurrent() const
-    {
-        if (!targetSlot_)
-            return true;
-        if (!targetSlotGenerationTracked_)
-            return true;
-        return targetContainer_ &&
-            targetContainer_->GetSlotGeneration() ==
-                targetSlotGeneration_;
-    }
+    bool TargetSlotGenerationIsCurrent() const;
 
     bool active_ = false;                    /**< 拖拽会话是否处于激活状态 */
     bool visualVisible_ = false;             /**< 应用自绘拖拽虚影是否可见 */
@@ -563,6 +353,8 @@ private:
     POINT visualBoundsOffset_{};             /**< 将主视觉热点吸附到指针的快照平移量 */
     DropAction action_ = DropAction::Move;   /**< 当前拖拽动作类型，默认为 Move */
     Container* targetContainer_ = nullptr;   /**< 目标容器指针 */
+    Container* placementAfterViewChange_ = nullptr;
+    RECT placementAfterViewChangeBounds_{};
     Slot* targetSlot_ = nullptr;             /**< 目标插槽指针 */
     std::uint64_t targetSlotGeneration_ = 0; /**< 目标插槽所属缓存代次 */
     bool targetSlotGenerationTracked_ = false; /**< 是否由 Container 缓存代次约束 */

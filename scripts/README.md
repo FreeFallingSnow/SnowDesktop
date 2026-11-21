@@ -32,9 +32,13 @@
 明确的全空计划直接发布 skipped，不复制源码、不创建Run或编译槽，也不计作测试通过。
 捕获失败、所有者退出或部分发布均保留证据，只能按原尝试显式检查/恢复；没有超时接管或自动重启。
 独立候选进程操作只检查私有输出；原工作区的应用和Shell不参与其构建产物替换。
+私有 Release 的 `SnowDesktop.exe` 缺失或 PE 节不完整时，执行器在原租约内把无效文件和该目标的链接跟踪移到 `collaboration/link-recovery/`，保留编译对象再走正常编译命令。
+应用控制窗口短时不可用时，激活会在同一租约内等待最多 4 秒，随后返回原 Run 的补切命令。
+明确恢复上一轮可用 `scripts/build_activate.ps1 -ArtifactRun PREVIOUS -RollbackFrom CURRENT`。回退比对当前激活和两个产品清单，以现有运行文件、旧产物或激活备份中的匹配文件恢复。只处理产品清单内的路径，验证失败时保留当前版本。
+回退另存 `.build/collaboration/<id>.rollback.json`，保留原始激活回执和防止过期候选覆盖的时间上限。
 `tests -Mode verify -PlanBatch B` 对第4版基线只核对现有私有槽，不倒退或重新准备源码。
 槽仍匹配时，保留活动去重、订阅及前后校验，在私有租约下仅执行已配置测试；原工作区可继续编辑。
-槽、二进制、测试定义、显式运行文件或工具上下文变化时拒绝补验，不能用保存的旧结果自动跳过测试。
+槽、二进制、测试定义、显式运行文件或工具上下文变化时拒绝补验。无编译复验容许仅打包模块 `deployment_payload.psm1` 和 `packaging_input.ps1` 与原执行器不同，测试仍从冻结源码运行。候选上下文不符时显示变化字段名。
 
 ```bat
 scripts\build.bat task-open my-task -TaskName "当前调查任务"
@@ -84,7 +88,7 @@ Run 状态与编译后选择账本通过同一 AtomicPublication 发布：仅共
 
 编译后意图保存为 Run 的不可变 `.test-intent.json`，绑定真实候选、原请求哈希和每项输入；它不是已结束基线或执行凭据。父执行器已持有槽位租约，核对不重复申请。`coverage.selected` 保留完整需求，`executedSelection`/`completed`/JUnit/重试仅含本次执行，`references` 保存独立凭据。全部引用时状态为 `fulfilled`，不创建空 JUnit 或伪造通过用例，最终结果的 `binaries`/`runtimeFiles` 为空且不发布新的测试运行包；最终发布再次核对原报告/凭据。引用不会注册为新的执行来源。
 
-`start` 只提交一次执行，返回后工作进程继续持有自己的执行租约。请求先在同目录唯一临时文件中完整写入并刷新，关闭后再以不可覆盖的改名发布为 `.build/collaboration/runs/<id>.request.json`，后续不改写；发布前终止创建者不会留下可被最终文件名发现的半成品请求。发布完成仍须通过 Run 状态判断执行是否已开始。记录、日志、资源采样和带代际标记的取消请求分别保存。`wait` 最多等待 60 秒，未结束返回 10，紧急未确认消息返回 6；两者均保留运行。退出观察者不取消执行，只有显式 `cancel` 才请求终止本次私有 Job 内的进程树。取消请求和已完成取消分开报告。
+`start` 只提交一次执行，返回后工作进程继续持有自己的执行租约。请求以不可覆盖的改名发布到 `.build/collaboration/runs/<id>.request.json`。既有 Run 用 `status` 或 `wait`，`start/invoke` 拒绝带 `-RunId` 的调用。`wait` 最多等待 60 秒，未结束返回 10，紧急未确认消息返回 6。退出观察者保留 Run。显式 `cancel` 请求只作用于本次私有 Job，取消请求与完成回执分别保存。
 
 启动必须获父 Job 允许脱离；拒绝时保留 `start-failed` 和原始请求，不退化成依附聊天的后台进程。执行者随后为编译和测试创建带 `KILL_ON_JOB_CLOSE` 的私有 Job，未继承执行租约或 Job 句柄；执行者异常退出会清理子进程。观察接口将已确认退出的执行者投影为 `interrupted`，保留最后记录和请求，不按心跳超时重新接管。继续执行需显式新建 Run。普通入口与协作入口均禁用 MSBuild 节点复用，避免旧工作节点逃出本次归属。
 
@@ -217,6 +221,8 @@ PDB 与导入库留在 Release/Debug 根目录，增量链接状态留在原中�
 scripts\build.bat run start -Task task-a -Action snapshot -SnapshotInputs generated/config.h
 scripts\build.bat run wait -Task task-a -RunId <runId> -Seconds 60
 scripts\build.bat candidate inspect -Snapshot <snapshotId>
+scripts\build.bat candidate paths
+scripts\build.bat candidate paths -ExecutionSlot <historicalSlotKey>
 scripts\build.bat candidate materialize -Task task-a -Snapshot <snapshotId>
 ```
 
@@ -237,6 +243,9 @@ scripts\build.bat candidate materialize -Task task-a -Snapshot <snapshotId>
 新检出默认使用 `.build/build-workspace/`；已有热目录可由 `.build/candidate-workspace.json` 的受限绑定继续使用，
 不搬动缓存。旧 `Slot`/`CandidateSlot` 参数仅兼容已保存调用，不能选择第二份缓存。工具链与快照上下文仍逐次校验，
 不同检出及配置在同一公共 Git 资源中串行使用这份目录；源码变化正常触发依赖重编，不能跨上下文冒用结果。
+`candidate paths` 通过相同的 Git 公共目录和绑定校验，只读返回检出目录、公共 Git 目录、槽键、编译目录和迁移绑定 SHA-256。
+`-ExecutionSlot` 可查询历史槽路径。无效绑定或槽键返回 2，错误写入标准错误流。
+新 Run 的 `candidateExecution.pathProjection` 保存同一结果，供看板核对日志路径。
 `materialize` 保留固定源码、输出目录，只复制变化的受管文件；未变化文件
 时间及输出缓存保持原样。变化文件使用实际准备时间，防止原工作区在旧候选编译期间完成的编辑携带更早
 时间戳、使后续候选错误跳过重编译。只删除上一个快照管理、且内容仍匹配的旧输入，不清理输出目录。活动工作目录
@@ -360,7 +369,7 @@ scripts\build.bat diagnose -Help
 scripts\build.bat status MY_TASK -Compact
 ```
 
-`diagnose` 在**当前调用上下文**向 `.build/collaboration/diagnose-<id>/` 写入唯一临时文件，再用标准持久启动器运行一个只写完成标记的子进程；不配置、不编译、不修改 Task 或 ACL。返回 0 表示这两个环境探测通过，返回 2 附失败原因和下一步；探测日志保留在该独立目录。它不检查应用功能、编译能力或激活结果，也不证明另一个 Host/沙箱上下文可用。
+`diagnose` 在**当前调用上下文**分别探测协调目录、公共 Git 执行额度目录的写权限和标准持久子进程启动。尚未初始化额度目录时探测其父目录。探针使用唯一临时文件，不修改现有锁、Task 或 ACL。返回 0 表示三个探测通过，返回 2 附失败原因和下一步。Run 尚未分配时，批次失败回执也保留提交进程的诊断。各项结果仅适用于原调用上下文。
 
 目录拒写时先区分沙箱 writable roots 与实际文件权限。完整权限上下文成功而 confined 调用失败时，应修正调用环境的目录放行；ACL 修复后仍须重试原 confined 操作，不能依据外部写入成功认定恢复。生成目录不可写时提示使用已获授权的完整权限上下文或外部终端，不自动改变用户 ACL。
 
@@ -460,14 +469,13 @@ CTest 命令/属性摘要和执行环境摘要。采集在目标生成后、测�
 当前环境摘要绑定已解析工具、缓存/预设及明确环境字段，但外部 SDK 和语义依赖尚未闭合，
 `reuseAllowed=false`，不能据此自动跨候选省略测试；普通独立 Run 的逐条索引和去重仍待接入。
 
-人工验收独立于构建与测试。先用 `task-list` 读取当前任务修订，然后登记：
-两个写命令均须使用最新 `TaskRevision`；未结束的验收须先完成或取消，再关闭 Task。
+人工验收独立于构建与测试。先读取当前任务修订。验收写入使用最新 `TaskRevision`，未结束的验收须先完成或取消，再关闭 Task。
 
 第4版批次已知需要等待人工验收时，可在原有 `plan` 命令附加 `-AcceptanceRetentionHours 1..168`，
 例如 `-AcceptanceRetentionHours 48`。窗口从对应 Run 通过并完成时起算，只保护该计划绑定的保存产物。
 保存产物的验收开始后，本任务的计划保留转为进行中记录的 24 小时期限。完成或取消即释放该记录的保留，
 其他参与者的保留分别计算。到期的产物由后续正常清理处理。候选、需求修订和所选文件的校验仍按原流程执行。
-`-Suites none` 不接受保留参数；只引用既有证据、没有导出运行文件的 Run 没有新增产物可保留。
+模块的 `-Suites none -TemporaryVerification` 仍生成产品，可声明保留。纯豁免或仅引用既有证据、没有导出运行文件的 Run 无新增产物。
 升级前已冻结的运行器副本继续执行原清理策略，新保留机制以运行器采用本版脚本为准。
 
 ```bat
@@ -475,13 +483,15 @@ scripts\build.bat acceptance-start ID -Batch B -Revision R -TaskRevision T -Acce
 scripts\build.bat acceptance-start ID -CandidateRun RUN -TaskRevision T -AcceptanceCriterion "原始样本出现预期结果" -Files SnowDesktop.exe
 scripts\build.bat acceptance-list ID -Batch B
 scripts\build.bat acceptance-complete ID -TaskRevision T -AcceptanceId A -AcceptanceOutcome passed -Reporter user -Reference "实际反馈或证据位置" -Notes "原始样本、观察步骤和结果"
+scripts\build.bat acceptance-record ID -SourceTask ORIGINAL -Batch B -Revision R -TaskRevision T -Files SnowDesktop.exe -AcceptanceCriterion "实际条件" -Reporter user -Reference "实际反馈" -Notes "观察步骤和结论"
+scripts\build.bat acceptance-commit ID -TaskRevision T -AcceptanceId A -MessageFile C:\Temp\verified.txt
 ```
 
 开始时要求候选已通过且输入稳定、任务需求修订一致，运行文件须属于该候选的输入、已记录构建输出或测试输出。
 旧格式缺少需求关联、未验证的现有输出以及路径链接均不推断为可验收候选。文件关联表示可核对的文件身份，
 实际进程加载与可见行为仍由观察和引用证明，不能仅凭文件哈希宣称实机通过。
 独立候选 Run 使用 `-CandidateRun`，不填写批次或编辑修订。运行文件的 `-Files` 相对该 Run 保存的 runtime 目录填写，例如 `SnowDesktop.exe`；此入口不接受运行文件的绝对路径或 `.build/Release/` 前缀。未匹配的路径须为原快照中仍存在的源码输入，按仓库相对路径核对内容对象与实际加载源文件。验收结束再次核对所选源码，源码改变则拒绝通过；无关源码变化不影响所选文件。链接、快照外文件及缺失对象不允许用于验收，不把源码输入标成测试输出。
-第4版批次验收仍用 `-Batch/-Revision`，保留实际成员和需求修订；运行文件绑定保存的产物，兼容识别 `.build/Release/` 前缀。
+第4版批次验收用 `-Batch/-Revision` 绑定实际成员和需求修订，兼容识别 `.build/Release/` 前缀。`-CandidateRun` 指向共同 Run 时会解析同一成员检查点，找不到时提示批次入口。
 原工作区可以继续编辑，第1～3版批次原有的当前输入核对保持不变。
 它要求提交时保存的需求修订及通过且输入稳定的运行记录，核对 Run、快照、清单和逐文件哈希；
 旧 Run 缺少关联时明确拒绝。`test-files` 只表示所选测试输出，不表示完整产品或运行依赖已经闭合。
@@ -490,7 +500,8 @@ scripts\build.bat acceptance-complete ID -TaskRevision T -AcceptanceId A -Accept
 反馈来源为 user 或 agent，须记录真实观察；已完成记录不可改写，结果不改动原构建/测试结论，也不表示发布。
 区间使用同一系统启动周期内的 QPC 单调计数；UTC 只用于显示，跨重启或无法取得时钟身份时明确未记录耗时。
 参见 [Windows 高精度计时说明](https://learn.microsoft.com/en-us/windows/win32/sysinfo/acquiring-high-resolution-time-stamps)。
-不补造既往验收的开始时间。只读看板与悬浮窗分别展示逐条测试证据和人工验收，不把两者相加为测试通过数。
+事后收到验收反馈可用 `acceptance-record` 登记。可省略 `-SourceTask` 使用当前任务，也可指定通过 `task-new` 连续关系追溯的已完成前序任务。回执保存候选原需求和引用，持续时间标记 `unknown-start`。无文件差异的通过或失败记录用 `acceptance-commit` 保存，消息首行使用 `verify`，自动附验收 ID，重试返回原提交。
+只读看板与悬浮窗分别展示逐条测试证据和人工验收。
 观测文件每 Run 的读取预算为 4 MiB / 100 文件，超限保留原始记录并报告不可用；界面任务区间只显示最近80项，标注省略数。
 观测能力本身不构成提速证明，性能比较仍需相同输入、工具链、缓存和外部负载下的独立基线。
 
@@ -504,6 +515,23 @@ scripts\build.bat acceptance-complete ID -TaskRevision T -AcceptanceId A -Accept
 `profile.bat` 是默认关闭的性能采集入口。`status` 查询当前宿主能力，
 `capture -Seconds 60` 采集并生成 JSON/CSV，`start` / `stop -Session ...`
 支持异步自动化控制，`report` / `compare` 支持离线分析。
+
+### 独立宿主动画测试
+
+在已生成 Release 后，用 PowerShell 7 运行。每次选择一个新输出目录，默认保存在 `.codex-probes/`。
+夹具进程生成固定集合、Dock、Lua 面板和最小化源窗口，使用独立数据目录与逻辑输入。
+
+```powershell
+./scripts/test_animations.ps1 -PlanOnly -OutputDirectory .codex-probes/animation-plan
+./scripts/test_animations.ps1 -PlanPath .codex-probes/animation-plan/plan.json -Offline
+./scripts/test_animations.ps1 -Scenarios dock-hover,popup-resize,navigation-dock-genie,window-attraction -Repeats 4 -Offline
+```
+
+完整计划由宿主生成，列出可选场景、效果和重复次数。用同一份计划、显示设置和预热条件复测候选版本，
+可通过 `-ExecutablePath` 指定候选运行文件。结果目录包含计划、各动作的触发与状态回执、Perfetto 原始追踪、
+分析报告和 `animation-pacing.csv`。CSV 的 P95、最长间隔和超期来自宿主 UI 调度轨道。
+走原生合成动画的动作可以有状态回执而无 UI 逐帧样本。共享提交计数覆盖动作时间窗，包含同一夹具内的其他提交。
+显示器合成时钟由 Perfetto 报告单列，作为显示节奏参考。实体屏的透明度和流畅观感仍按实际产品入口验收。
 
 ## 协作协议 v2：登记、计划与阻塞等待
 
@@ -534,9 +562,9 @@ build is a separate activation step that gracefully exits and restores an alread
 
 示例测试名必须替换为 `scripts\test.bat list` 的实际名称。`ready-and-wait` 默认在原工具进程中标记就绪、执行计划中的轻量检查、等待屏障和共同结果；不依赖 Python 或隐藏后台启动。工具 yield 后续等同一 session。`wait` 仅观察；兼容 `finish -AutoCheck` 使用同一执行路径。`ready` 仅为明确选择的后台模式：同修订存活 worker 复用，启动失败保留 pending 登记、报告 unavailable 和前台接管命令，不假报已运行。Windows PowerShell 路径按系统目录解析，pwsh 调用可用。
 
-CLI 的 `ready-and-wait/finish/wait` 默认返回精简结束回执：batch/Run、结果、选择/完成/通过/失败/未运行/引用计数、最多 16 个失败名称及完整 `resultPath`，并保留原退出码。完整不可变 JSON、日志和证据仍保存原处；加 `-FullResult` 输出原完整对象。直接调用 `build_manager.ps1` 保持原输出兼容，可显式 `-Compact` 选择精简形式。精简输出不重写结果，也不将未运行或引用证据计为本次通过。
+CLI 的 `ready-and-wait/finish/wait` 默认返回精简回执，包含批次、Run、产品构建、激活、测试计数、失败名称和原件路径，并保留原退出码。产品构建失败时回执指向实际产品日志。带 Task 或批次的 `status` 以及 `run status/wait` 也默认精简。需要原对象时加 `-FullResult`。直接调用 PowerShell 实现保留旧输出，可用 `-Compact` 选择摘要。`task-list -Files a,b` 只查询指定路径的差异归属及记录中的认领。`watch wait` 默认显示终态和原件路径，`--full-result` 可嵌入原回执。
 
-等待阶段可只读审查接口、签名、夹具、测试名称、静态语法及已有可复用证据。内置 `check` 只做差异空白、变化的 PowerShell 和指定构建 JSON 语法及输出占用观察，不声称完成原生编译、接口语义审查或宿主 UI 验收。
+成员就绪检查按声明路径读取已跟踪与未跟踪文件，再检查补丁空白、PowerShell 和指定 JSON 语法。实际构建或测试前，协调器在成员都就绪后核对完整工作树差异。普通计划保存显式工具链选择的摘要，提交上下文不符时显示字段名，请从匹配的等待进程继续。源码相同的已有产品或续修父批次会在冻结时给出一次提示，计划仍按原要求执行。
 
 ```bat
 scripts\build.bat check task-a -Batch <batchId> -Revision <editRevision>
@@ -552,6 +580,8 @@ rem begin 成功返回后才能修复文件；使用新 editRevision 重报 plan
 
 第4版批次的所有要求均明确豁免宿主构建和测试时，在检查、需求修订及输入核对通过后直接归档 `skipped/not-required`。
 这种空计划只使用协调状态事务和原有 Git 协作检查，无需取得构建租约、复制候选或启动执行器。
+
+宿主模块已有定向观察且正式用例无对应场景时，可用 `plan -Scope module -Suites none -TemporaryVerification "验证入口、输入和观察条件"` 声明标准 Release 加独立临时验证，并在 `-Reason` 记录豁免依据。该文字随冻结计划保存，临时验证完成前保持待验，执行器不把它作为命令执行。产品与正式测试都需要时，新候选以测试预设配置产品，以同 Run、计划哈希、缓存及 CTest 清单核对后复用该次配置。
 
 第4版批次中，`docs`、`component` 或 `tool` 的 `none` 计划可以显式加 `-Independent`。
 此选项用于已经核对可独立完成的宿主参与任务。`-Inputs` 必须覆盖自己的认领路径和这次检查需要读取的文件。
@@ -707,6 +737,8 @@ scripts\build.bat watch wait --ticket TICKET
 默认保持对话活动，执行阻塞 `ready-and-wait/finish/wait/watch wait`，不设截止时间；`-WaitSeconds 0`（watch 为 `--timeout 0`）可显式表达同一语义，正数指定有界等待。脚本持续等待结果或需处理事件，无变化时不重复向模型返回；本地观察不产生模型请求。工具因传输时限 yield 时继续同一 session，不重新启动 status 命令或提交候选。取消观察不取消共享 Run。后台结束回合仅是明确选择无人值守时的选项；测试内部的故障兜底时限不随观察接口改变。
 
 完成者的文件声明保留为来源追溯；新任务可在活动编辑窗口 claim 接手，仍在编辑的代码文件需排队。接手只读检查在全体编辑结束后自动重验，原测试要求保留，不需要原会话修改文件。原会话旧轮次或 finished 状态不能再次写入。
+文件观察继续等待前序认领路径的未提交差异，遇到无归属的脏路径时提示审阅。已就绪成员仍可走现有显式交接；`eligible` 只表示当时可尝试，实际 `claim` 重新核对编辑归属和 Git 状态。
+没有编辑批次时，文件或窗口观察还等待独立执行持有的 `build.lock`。旧批次观察遇到同成员的新批次时仍返回原结果，附 `newerBatchId` 和 `verificationForCurrentEdits=false`。旧结果若是通过，观察进程返回 5，原件和测试判定保留。
 
 明确豁免清单只有 `scripts/shared_resources.json` 中列出的十个 `lang/*.json`；语言条目使用以下安全路径，无需原对话同意：
 
@@ -821,7 +853,7 @@ Python 入口的总超时包含两次启动和目标执行，不通过扩大原�
 full/core/fast 排除 tools、manual 和 temporary；name/label 可显式选择现有按需条目。
 各测试使用独立临时目录、日志和端口；共享桌面、Explorer 或宿主运行资源的条目通过 `RESOURCE_LOCK snowdesktop_desktop` 互斥。
 
-`scripts/test.bat list` 读取本检出 `.build` 的已配置 Release 清单，在临时目录枚举名称和标签。
+`scripts/test.bat list` 优先读取本检出已生成的 Release 清单。在清单不可读时列出 `cmake/testing/Tests.cmake` 中可静态识别的名称并标明来源。实际可用性和标签以配置后的 CTest 清单为准。
 编辑中也可查询，无需申请执行租约。回执按 CMake 已记录的配置输入时间戳区分疑似过期、无法判断及未发现更新。
 清单缺失（例如只配置过私有候选槽）时，核对 `cmake/testing/Tests.cmake`，或在可取得执行权时用
 `scripts/build.bat run start -Task ID -Action tests -Mode list` 显式配置并列出测试。

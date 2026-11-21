@@ -65,6 +65,7 @@ the component directory.
 | Data topics, tasks and typed arguments | `& $SnowWidget system-contract` |
 | Signatures for the editor | [LuaLS declarations](library/snowdesktop-v2.lua) |
 | Behavior, callbacks and feature flags | Search the matching heading in the [API v2 reference](references/api-v2.md) |
+| Describe component settings and actions for AI | [Agent operations](references/agent-operations.md) |
 
 ## Author the package
 
@@ -112,6 +113,38 @@ absolute paths, parent traversal, symlinks, junctions and files outside the
 package. Exclude DLLs, scripts used as helpers and undeclared executables.
 For an authorized native helper, follow the API reference's **Native EXE
 helpers** contract for hashes, permissions, user consent and the fixed protocol.
+
+### Text and font icon alignment
+
+For a label centered in a badge, button or icon row, align its visible text
+instead of subtracting half the font size or line height. On immediate
+surfaces pass { x = "center", y = "center" } as the last draw.text argument,
+and use the center as its coordinates. Omit the axis you do not need.
+For view.text, view.badge, view.button and view.link, set
+textInkAligned = true and choose textAlign and verticalAlign.
+Use the features draw.text.inkAlignment and view.text.inkAlignment
+respectively. Move any existing glyph offsets into the legacy fallback and
+keep measurement for sizing, text fit and layout.
+When aligning scrolling labels, pass inkCentered = true to draw.marqueeText
+with draw.text.inkAlignment and position the viewport at its intended origin.
+
+Use the host's glyph outline to center icons. On immediate surfaces, use
+`draw.glyph(glyph, centerX, centerY, size, color, iconFont)`. For
+`view.icon` and `view.iconButton`, enable `glyphInkCentered = true`.
+Remove glyph-specific coordinate and padding adjustments from that path.
+For older hosts, declare and probe `draw.glyph` or `view.icon.glyphInk`
+as appropriate and keep any legacy corrections in the fallback branch.
+
+### Scrolling edge fades
+
+When a scrolling list should soften clipped rows, explicitly enable its
+edge fade. On an immediate surface, probe `draw.clip.edgeFade` and pass
+`{ scroll = scroll, fadeLength = row * 0.5 }` to `draw.pushClip`. Use the
+result of `interaction.scroll` after any offset adjustment. Pair the clip
+with `draw.popClip()` before painting fixed controls. On a declarative
+scroll container, probe `view.scroll.edgeFade` and set
+`edgeFade = row * 0.5`. The host fades only edges with more content.
+Check the start, middle, end, and a list that fits.
 
 ## Verify the requested outcome
 

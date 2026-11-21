@@ -255,6 +255,8 @@
     "app.launch"
   ],
   "requiredFeatures": [
+    "draw.text.inkAlignment",
+    "draw.glyph",
     "control.focus",
     "control.textInput",
     "data.desktop.changes",
@@ -275,6 +277,7 @@
     "ui.semanticMetrics.rowUnit"
   ],
   "optionalFeatures": [
+    "draw.clip.edgeFade",
     "data.app.indexStatus",
     "task.app.launch",
     "task.app.search",

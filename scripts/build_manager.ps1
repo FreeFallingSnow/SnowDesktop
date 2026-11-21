@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Position = 0, Mandatory = $true)]
-    [ValidateSet('begin', 'ready', 'ready-and-wait', 'finish', 'wait', 'check', 'plan', 'claim', 'commit', 'issue', 'status', 'recover', 'repair', 'repair-abandon', 'task-open', 'task-new', 'task-stage', 'task-close', 'task-list', 'event-post', 'event-read', 'event-wait', 'event-ack', 'edit-verify', 'execute', 'publish-run', 'evidence-list', 'acceptance-start', 'acceptance-complete', 'acceptance-list')][string]$Command,
+    [ValidateSet('begin', 'ready', 'ready-and-wait', 'finish', 'wait', 'check', 'plan', 'claim', 'commit', 'issue', 'status', 'recover', 'repair', 'repair-abandon', 'task-open', 'task-new', 'task-stage', 'task-close', 'task-list', 'event-post', 'event-read', 'event-wait', 'event-ack', 'edit-verify', 'execute', 'publish-run', 'evidence-list', 'acceptance-start', 'acceptance-complete', 'acceptance-list', 'acceptance-record', 'acceptance-commit')][string]$Command,
     [Parameter(Position = 1)][ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$')][string]$Participant,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$Batch,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$ExecutionRun,
@@ -13,6 +13,7 @@ param(
     [long]$Revision = -1,
     [ValidateSet('unknown','module','docs','component','tool','test','public','infrastructure')][string]$Scope = 'unknown',
     [string]$Suites = 'selected', [string]$Tests = '', [string]$Inputs = '',
+    [ValidateLength(0,2000)][string]$TemporaryVerification='',
     [switch]$AdoptExistingChanges, [switch]$Add, [switch]$DeferBatchResult, [switch]$Compact, [switch]$FullResult, [switch]$CliSummary, [string]$Files = '', [string]$MessageFile = '',
     [string]$IssueId = '', [string]$Assignee = '', [ValidateSet('open','resolved','deferred')][string]$IssueState = 'open',
     [ValidateRange(0,4096)][int]$ResourceCpuSlots=0,[ValidateRange(0,1048576)][int]$ResourceMemoryMiB=0,
@@ -33,6 +34,7 @@ param(
     [ValidateSet('adapter','agent')][string]$AckLevel='adapter',
     [ValidatePattern('^[a-f0-9]{32}$')][string]$AcceptanceId,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$CandidateRun,
+    [ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$')][string]$SourceTask,
     [ValidateRange(1,168)][int]$AcceptanceRetentionHours,
     [ValidateLength(0,1000)][string]$AcceptanceCriterion='',
     [ValidateSet('passed','failed','cancelled')][string]$AcceptanceOutcome='passed',
@@ -49,6 +51,7 @@ param(
 if($Command -in 'ready-and-wait','finish','wait','event-wait' -and -not $PSBoundParameters.ContainsKey('WaitSeconds')){$WaitSeconds=0}
 if($AcceptanceRetentionHours -and $Command -ne 'plan'){throw 'AcceptanceRetentionHours is a plan option.'}
 if($Independent -and $Command -ne 'plan'){throw 'Independent is a plan option.'}
+if($TemporaryVerification -and $Command -ne 'plan'){throw 'TemporaryVerification is a plan option.'}
 if($Command -eq 'ready-and-wait') {
     if($Revision -lt 0){throw 'ready-and-wait requires the latest -Revision.'}
     & $PSCommandPath finish $Participant -Batch $Batch -Revision $Revision -WaitSeconds $WaitSeconds -AutoCheck -ReloadShell:$ReloadShell -CloseApplication:$CloseApplication -Compact:$Compact -FullResult:$FullResult -CliSummary:$CliSummary
@@ -66,6 +69,7 @@ $statePath = Join-Path $stateRoot 'state.json'
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $lastNotice = -30
 $lastWaitMessage = $null
+$stateWaitReported = $false
 $hasFinishedCurrentBatch = $false
 $finishedRevision = $null
 $utf8 = New-Object Text.UTF8Encoding($false)
@@ -132,7 +136,7 @@ function Get-BatchWaitMessage($Current) {
                     } catch {$message+='; stage unavailable (observation failed)'}
                 } elseif($status -eq 'queued'){
                     $waiting=[string](Get-Field $record 'waitingFor' '')
-                    $message+=': Run '+$runId+' queued; waiting for '+$(if($waiting){$waiting}else{'resource reason not recorded'})
+                    $message+=': Run '+$runId+$(if($waiting){' queued; waiting for '+$waiting}else{' is preparing for resource admission'})
                 } elseif($status -eq 'starting'){$message+=': Run '+$runId+' starting'}
                 elseif($status -in 'passed','failed','cancelled','start-failed','invalidated','interrupted'){$message+=': Run '+$runId+' '+$status+'; common result pending'}
                 else{throw 'Run observation status unavailable.'}
@@ -160,7 +164,12 @@ function Wait-Again([string]$Message,$Current=$null) {
         # Stage reads happen only when reporting, after releasing the state
         # transaction. Observing must never relaunch or cancel the Run.
         if($Current){$Message=Get-BatchWaitMessage $Current}
-        if($Message -ne $script:lastWaitMessage){[Console]::Error.WriteLine($Message);$script:lastWaitMessage=$Message}
+        if($Message -eq 'Waiting for the collaboration state transaction.'){
+            if(-not $script:stateWaitReported){[Console]::Error.WriteLine($Message);$script:stateWaitReported=$true}
+        }elseif($Message -ne $script:lastWaitMessage){
+            [Console]::Error.WriteLine($Message)
+            $script:lastWaitMessage=$Message
+        }
         $script:lastNotice = $clock.Elapsed.TotalSeconds
     }
     Start-Sleep -Milliseconds 200
@@ -333,7 +342,15 @@ function Complete-CheckRecord($Selection) {
     } finally { $lease.Dispose() }
     return [pscustomobject]@{ check=$report; exitCode=$code }
 }
-function Emit-Result($Result) {
+function Emit-Result($Result,[string]$NewerBatch='') {
+    $code=$Result.exitCode
+    if($NewerBatch){
+        $Result=$Result.PSObject.Copy()
+        if($code -eq 0){$code=5}
+        Set-Field $Result 'newerBatchId' $NewerBatch
+        Set-Field $Result 'verificationForCurrentEdits' $false
+        Set-Field $Result 'observationExitCode' $code
+    }
     if($Compact -or ($CliSummary -and -not $FullResult)){
         if((Get-Field $Result 'resultScope') -eq 'participant'){
             $member=$Result.participants[0]
@@ -341,10 +358,15 @@ function Emit-Result($Result) {
             Set-Field $summary 'resultScope' 'participant'
             Set-Field $summary 'participant' $member.id
             Set-Field $summary 'editRevision' (Get-EditRevision $member)
-            $summary|ConvertTo-Json -Depth 8
-        }else{Get-CompactBatchResult $Result (Result-Path $Result.batchId)|ConvertTo-Json -Depth 8}
+        }else{$summary=Get-CompactBatchResult $Result (Result-Path $Result.batchId)}
+        if($NewerBatch){
+            Set-Field $summary 'newerBatchId' $NewerBatch
+            Set-Field $summary 'verificationForCurrentEdits' $false
+            Set-Field $summary 'observationExitCode' $code
+        }
+        $summary|ConvertTo-Json -Depth 8
     }else{ConvertTo-Json -InputObject $Result -Depth 20}
-    exit $Result.exitCode
+    exit $code
 }
 
 try {
@@ -364,7 +386,7 @@ try {
             if($independentReceipt){Emit-Result $independentReceipt}
         }
         $state=Read-State;$current=if($Batch){Find-BoundBatch $state $Batch}else{$state.current};$result=if($Batch){Read-Result $Batch}else{$null}
-        if($Compact){
+        if($Compact -or ($CliSummary -and -not $FullResult -and ($Participant -or $Batch))){
             if($Batch -and -not $current -and -not $result){throw 'Unknown batch.'}
             Get-CompactCollaborationStatus $state $Participant $current $result|ConvertTo-Json -Depth 12;exit 0
         }
@@ -387,7 +409,27 @@ try {
         }
         exit 0
     }
-    if($Command -in 'acceptance-start','acceptance-complete'){
+    if($SourceTask -and $Command -ne 'acceptance-record'){throw '-SourceTask is only valid with acceptance-record.'}
+    if($Command -eq 'acceptance-commit'){
+        if(-not $Participant -or -not $AcceptanceId){throw 'Acceptance commit requires its owner task and -AcceptanceId.'}
+        $metadata=Lock-State
+        $acceptanceGitLease=$null
+        try{
+            $state=Read-State
+            $task=Find-VisibleTask (Get-TaskLedger $state) $Participant
+            Assert-TaskRevision $task $TaskRevision
+            $record=@(Get-Field $state.taskLedger 'acceptances' @()|Where-Object {$_.id -eq $AcceptanceId -and $_.task -eq $Participant})|Select-Object -First 1
+            if(-not $record -or $record.status -notin 'passed','failed' -or -not $record.completedUtc -or -not $record.reference -or -not @($record.artifacts).Count){
+                throw 'Acceptance commit requires a completed pass/fail receipt with artifacts and a feedback reference.'
+            }
+            $acceptanceGitLease=Try-Lease 'git.lock'
+            if(-not $acceptanceGitLease){throw 'A cooperating Git transaction is running. Retry; shared index was not changed.'}
+        }finally{$metadata.Dispose()}
+        try{Invoke-AcceptanceCommit $record $MessageFile|ConvertTo-Json -Depth 8}
+        finally{$acceptanceGitLease.Dispose()}
+        exit 0
+    }
+    if($Command -in 'acceptance-start','acceptance-complete','acceptance-record'){
         if(-not $Participant){throw 'Acceptance requires a registered task ID.'}
         . (Join-Path $PSScriptRoot 'build_acceptance.ps1')
         . (Join-Path $PSScriptRoot 'build_candidate.ps1')
@@ -396,26 +438,40 @@ try {
         try{
             # Fence cleanup from the first read of saved files until the
             # durable acceptance record is published in the state ledger.
-            if($Command -eq 'acceptance-start' -or $AcceptanceOutcome -eq 'passed'){
+            if($Command -ne 'acceptance-complete' -or $AcceptanceOutcome -eq 'passed'){
                 $runtimeLease=Open-CandidateRuntimeLease $repositoryRoot
             }
             $metadata=Lock-State
             $state=Read-State;$task=Find-VisibleTask (Get-TaskLedger $state) $Participant;Assert-TaskRevision $task $TaskRevision
             if($task.phase -in 'completed','cancelled'){throw 'A closed task cannot open or complete acceptance.'}
-            if($Command -eq 'acceptance-start'){
+            if($Command -in 'acceptance-start','acceptance-record'){
+                $historical=$Command -eq 'acceptance-record'
+                if($historical -and $AcceptanceOutcome -eq 'cancelled'){throw 'Historical acceptance requires the reported pass or failure.'}
+                $source=Get-AcceptanceSourceTask $state $task $SourceTask
                 if($CandidateRun){
                     if($Batch -or $Revision -ge 0){throw 'CandidateRun acceptance cannot also name a batch/edit revision.'}
                     $request=Read-EntryJson (Join-Path $stateRoot ('runs/'+$CandidateRun+'.request.json'))
                     $saved=Read-EntryJson (Join-Path $stateRoot ('runs/'+$CandidateRun+'.json'))
-                    $record=Start-RunAcceptance $repositoryRoot $state $task $CandidateRun $request $saved $AcceptanceCriterion $Files
+                    $commonBatch=Get-Field $request 'batch'
+                    if((Get-Field $request 'action') -eq 'batch' -and $commonBatch -match '^[a-f0-9]{32}$'){
+                        if($Files.Replace('\','/') -match '(^|,)\.build/Release/'){throw 'Use runtime-relative paths with -CandidateRun, for example -Files SnowDesktop.exe.'}
+                        $common=Read-Result $commonBatch
+                        $member=@(Get-Field $common 'participants' @()|Where-Object id -eq $source.id)|Select-Object -First 1
+                        if($common -and $common.runId -eq $CandidateRun -and $member){
+                            $record=Start-TaskAcceptance $repositoryRoot $state $task $common (Get-EditRevision $member) $AcceptanceCriterion $Files $source -Historical:$historical
+                        }else{throw "Use -Batch $commonBatch -Revision <member edit revision> for a common Run. No matching member checkpoint was found."}
+                    }else{
+                        $record=Start-RunAcceptance $repositoryRoot $state $task $CandidateRun $request $saved $AcceptanceCriterion $Files $source -Historical:$historical
+                    }
                 }else{
                     if(-not $Batch -or $Revision -lt 0){throw 'Acceptance start requires CandidateRun or the candidate batch and edit revision.'}
                     $saved=Read-Result $Batch;if(-not $saved){throw 'Candidate result is not available.'}
                     if(@($saved.participants|Where-Object {$_.id -eq $Participant -and (Get-Field $_ 'independentResult')}).Count){
                         throw 'An independently archived member has no common candidate to accept.'
                     }
-                    $record=Start-TaskAcceptance $repositoryRoot $state $task $saved $Revision $AcceptanceCriterion $Files
+                    $record=Start-TaskAcceptance $repositoryRoot $state $task $saved $Revision $AcceptanceCriterion $Files $source -Historical:$historical
                 }
+                if($historical){$record=Complete-TaskAcceptance $repositoryRoot $state $task $record.id $AcceptanceOutcome $Reporter $Reference $Notes}
             }else{
                 if(-not $AcceptanceId){throw 'Acceptance completion requires -AcceptanceId.'}
                 $record=Complete-TaskAcceptance $repositoryRoot $state $task $AcceptanceId $AcceptanceOutcome $Reporter $Reference $Notes
@@ -431,7 +487,18 @@ try {
     }
     if($Command -in 'task-list','event-read') {
         $state=Read-State;$ledger=Get-Field $state 'taskLedger'
-        if($Command -eq 'task-list') {[pscustomobject]@{tasks=@(Get-Field $ledger 'tasks' @());sequence=(Get-Field $ledger 'sequence' 0);sourceChanges=(Get-SourceChangeAudit $state)}|ConvertTo-Json -Depth 20}
+        if($Command -eq 'task-list'){
+            if($Files){
+                $requested=@($Files.Split(',')|Where-Object {$_}|ForEach-Object {Normalize-OwnedPath $_}|Sort-Object -Unique)
+                if(-not $requested.Count -or $requested.Count -gt 32){throw 'Task-list -Files requires 1..32 literal paths.'}
+                $changes=(Get-SourceChangeAudit $state $requested).changes
+                $owners=@(Get-Field $ledger 'sourceOwnership' @()|Where-Object {Test-OwnershipScopeMatch $_.path $requested})
+                [pscustomobject]@{paths=$requested;changes=@($changes|Select-Object -First 64);changeCount=@($changes).Count;
+                    owners=@($owners|Select-Object -First 64);ownerCount=$owners.Count}|ConvertTo-Json -Depth 8
+            }else{
+                [pscustomobject]@{tasks=@(Get-Field $ledger 'tasks' @());sequence=(Get-Field $ledger 'sequence' 0);sourceChanges=(Get-SourceChangeAudit $state)}|ConvertTo-Json -Depth 20
+            }
+        }
         else {
             if(-not $Participant){throw 'event-read requires a task ID.'}
             [pscustomobject]@{events=@(Get-TaskEvents $ledger $Participant $AfterSequence | Select-Object -First 100);sequence=(Get-Field $ledger 'sequence' 0);delivery='Reading is not acknowledgement.'}|ConvertTo-Json -Depth 20
@@ -661,16 +728,16 @@ try {
             if ($Command -eq 'event-wait') { # Its bounded observation loop resumes after releasing metadata, below.
             }
             elseif ($Command -in 'finish','wait' -and $null -ne $result) {
-                if ($null -ne $current -and $current.id -ne $Batch -and
-                    @($current.participants | Where-Object id -eq $Participant).Count -gt 0) {
-                    throw 'This participant has a newer active batch. Its old result cannot verify new edits; use the batch ID from the latest begin.'
-                }
                 if (@($result.participants | Where-Object id -eq $Participant).Count -ne 1) { throw 'Participant does not belong to this result.' }
                 if((Get-Field $result 'protocolVersion' 1) -ge 2 -and $Revision -lt 0){throw 'Result requires persisted edit revision.'}
                 Assert-EditRevision (@($result.participants | Where-Object id -eq $Participant)[0]) $Revision
                 $completedEntry = @($result.participants | Where-Object id -eq $Participant)[0]
                 if ($null -ne $finishedRevision -and (Participant-Revision $completedEntry) -ne $finishedRevision) {
                     throw 'This finish was superseded by a reopened registration. Use finish for the current edit revision.'
+                }
+                if($current -and $current.id -ne $Batch -and
+                    @($current.participants|Where-Object {$_.id -eq $Participant -and $_.state -ne 'withdrawn'}).Count){
+                    Emit-Result $result $current.id
                 }
                 if (-not $hasFinishedCurrentBatch -and $result.outcome -eq 'passed') {
                     if (-not $result.PSObject.Properties['inputEnd'] -or $null -eq $result.inputEnd) {
@@ -872,14 +939,18 @@ try {
 
                 if ($Command -eq 'plan') {
                     if ($entry.state -ne 'editing') { throw 'Plan changes require atomic begin/reopen before editing.' }
-                    Set-Field $entry 'testPlan' (New-TaskPlan $entry $Scope $Suites $Tests $Inputs $Reason)
+                    if($TemporaryVerification -and $current.protocolVersion -ne 4){throw 'Temporary verification declarations require a v4 editing batch.'}
+                    Set-Field $entry 'testPlan' (New-TaskPlan $entry $Scope $Suites $Tests $Inputs $Reason $TemporaryVerification)
+                    if($current.protocolVersion -ge 4 -and ($entry.testPlan.suites -notcontains 'none' -or $TemporaryVerification)){
+                        Set-Field $entry.testPlan 'submitterSelectors' (Get-BatchSubmitterSelectors)
+                    }
                     if($Independent){
                         if($current.protocolVersion -ne 4){throw 'Independent plans require a v4 editing batch.'}
                         Assert-IndependentPlan $entry.testPlan $entry
                         Set-Field $entry.testPlan 'independent' $true
                     }
                     if($AcceptanceRetentionHours){
-                        if((Get-Field $current 'protocolVersion' 1) -lt 4 -or $entry.testPlan.suites -contains 'none'){
+                        if((Get-Field $current 'protocolVersion' 1) -lt 4 -or ($entry.testPlan.suites -contains 'none' -and -not $TemporaryVerification)){
                             throw 'Acceptance retention requires a v4 candidate plan with a saved runtime.'
                         }
                         Set-Field $entry.testPlan 'acceptanceRetentionHours' $AcceptanceRetentionHours
@@ -1068,6 +1139,11 @@ try {
                         # input identity, closing the new-begin/start-build race.
                         try {
                             $frozenPlan=New-FrozenPlan $current
+                            if($frozenPlan.buildRequired -or $frozenPlan.mode -ne 'skipped'){
+                                Assert-BatchSubmitterSelectors $frozenPlan
+                                $wholeCheck=Invoke-LightCheck $null -WholeCheckout
+                                if(-not $wholeCheck.passed){throw ('Checkout check before freezing failed: '+($wholeCheck.issues -join "`n"))}
+                            }
                             foreach($request in $frozenPlan.tasks){
                                 $required=Get-Field $request.requirement 'requirementsRevision'
                                 if($null -ne $required -and $required -ne (Find-VisibleTask (Get-TaskLedger $state) $request.participant).requirementsRevision){throw 'Requirements changed after planning; reopen and update the declared plan before execution.'}
@@ -1098,6 +1174,8 @@ try {
                         Write-AtomicJson $frozenPlan (Join-Path $stateRoot ($current.id + '.plan.json'))
                         Set-Field $current 'testingPlan' $frozenPlan
                         $startInputs = Get-BuildInputIdentity $repositoryRoot
+                        try{Write-BatchBuildAdvice $frozenPlan $startInputs}
+                        catch{[Console]::Error.WriteLine('Build advice unavailable: '+$_.Exception.Message)}
                         $current | Add-Member -NotePropertyName inputStart -NotePropertyValue $startInputs -Force
                         $current.phase = 'building'
                         Set-Field $current 'planStatus' 'executing'
@@ -1153,8 +1231,12 @@ try {
             }
             if((Get-Field $selected 'protocolVersion' 1) -ge 3 -and -not $ExecutionRun){
                 try {
-                    $submitted=& (Join-Path $PSScriptRoot 'build_run.ps1') -Command start -Task $Participant -Action batch -Batch $selected.id -EditRevision $observedRevision
-                    if($LASTEXITCODE -ne 0){throw ('Persistent batch submission failed: '+($submitted -join "`n"))}
+                    $submitted=& (Join-Path $PSScriptRoot 'build_run.ps1') -Command start -Task $Participant -Action batch -Batch $selected.id -EditRevision $observedRevision -SubmissionReceipt
+                    if($LASTEXITCODE -ne 0){
+                        $failure=if($submitted){($submitted -join "`n")|ConvertFrom-Json}
+                        $diagnostic=Get-Field $failure 'error' 'The submission process returned no structured diagnostic. Run scripts/build.bat diagnose in the same context.'
+                        throw ('Persistent batch submission failed: '+$diagnostic)
+                    }
                 } catch {
                     $metadata=Lock-State
                     try {
@@ -1166,7 +1248,7 @@ try {
                             $runRecord=if($reserved){Read-EntryJson (Join-Path $stateRoot ('runs/'+$reserved+'.json'))}else{$null}
                             if($runRecord -and $runRecord.status -ne 'start-failed'){throw ('Run '+$reserved+' is already reserved; inspect its owner and saved result. Submission observation failed, so no replacement outcome was published.')}
                             $result=New-Result $ownedBatch 'failed' 2 $submissionError
-                            if($runRecord -and $runRecord.status -eq 'start-failed'){
+                            if(($runRecord -and $runRecord.status -eq 'start-failed') -or $submissionError -match 'Access (is )?denied|UnauthorizedAccess|拒绝访问|parent Job'){
                                 Set-Field $result 'recovery' ([pscustomobject]@{diagnose='scripts/build.bat diagnose';begin=('scripts/build.bat begin '+$Participant);
                                     next='Fix the launch context, begin, claim reviewed paths with -AdoptExistingChanges, plan, then ready-and-wait using the NEW batch/revision. The unchanged frozen checkpoint remains committable through the OLD batch/revision.';
                                     details='scripts/README.md#构建环境诊断与启动恢复'})

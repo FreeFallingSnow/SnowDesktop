@@ -611,44 +611,10 @@ bool DesktopApp::HandleQuickNavigationRightClick(POINT point, POINT screenPoint)
 
 bool DesktopApp::CopyTextToClipboard(const std::wstring& text)
 {
-    if (text.empty())
-        return false;
-
-    HWND owner = quickNavigation_->hwnd && IsWindow(quickNavigation_->hwnd)
+    const HWND owner = quickNavigation_->hwnd && IsWindow(quickNavigation_->hwnd)
         ? quickNavigation_->hwnd
         : hwnd_;
-    if (!OpenClipboard(owner))
-        return false;
-
-    EmptyClipboard();
-    const SIZE_T bytes = (text.size() + 1) * sizeof(wchar_t);
-    HGLOBAL handle = GlobalAlloc(GMEM_MOVEABLE, bytes);
-    if (!handle)
-    {
-        CloseClipboard();
-        return false;
-    }
-
-    void* data = GlobalLock(handle);
-    if (!data)
-    {
-        GlobalFree(handle);
-        CloseClipboard();
-        return false;
-    }
-
-    std::memcpy(data, text.c_str(), bytes);
-    GlobalUnlock(handle);
-
-    if (!SetClipboardData(CF_UNICODETEXT, handle))
-    {
-        GlobalFree(handle);
-        CloseClipboard();
-        return false;
-    }
-
-    CloseClipboard();
-    return true;
+    return WriteClipboardText(owner, text);
 }
 
 std::wstring DesktopApp::SanitizeShortcutFileStem(const std::wstring& name)

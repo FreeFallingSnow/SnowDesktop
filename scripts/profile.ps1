@@ -26,14 +26,18 @@ $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $repository 'tools/performance/legacy_report.ps1')
 
 function New-RequestId { return [Guid]::NewGuid().ToString('N') }
-function Invoke-Control([hashtable]$Request) {
+function Invoke-Control([hashtable]$Request, [switch]$ReadCapabilities) {
     $Request.protocolVersion = 3
     if (-not $Request.requestId) { $Request.requestId = New-RequestId }
     $reply = [SnowDesktopPerformanceClientV3]::Request($script:hostPid, (ConvertTo-Json $Request -Depth 5 -Compress)) | ConvertFrom-Json
     if ($reply.protocolVersion -ne 3 -or $reply.processId -ne $script:hostPid -or $reply.requestId -ne $Request.requestId) { throw 'controlReplyIdentityMismatch' }
     if ($Request.ContainsKey('sessionId') -and -not [string]::IsNullOrEmpty($Request.sessionId) -and
         $reply.sessionId -ne $Request.sessionId) { throw 'controlReplySessionMismatch' }
-    if ($reply.errorCode) { throw ($reply.errorCode + ': ' + (ConvertTo-Json $reply -Depth 6 -Compress)) }
+    # A status reply carries the previous capture's terminal error. Its host
+    # capabilities still describe the next request on this authenticated pipe.
+    $previousFailure = $ReadCapabilities -and $Request.command -eq 'status' -and
+        $reply.state -eq 'failed' -and $reply.generation -gt 0 -and $reply.captureRequestId
+    if ($reply.errorCode -and -not $previousFailure) { throw ($reply.errorCode + ': ' + (ConvertTo-Json $reply -Depth 6 -Compress)) }
     return $reply
 }
 function Wait-Capture([string]$Id, [UInt64]$ExpectedGeneration) {
@@ -159,7 +163,7 @@ public static class SnowDesktopPerformanceClientV3 {
     if ($Command -eq 'status') { Invoke-Control @{command='status';requestId=(New-RequestId);sessionId=[string]$Session} | ConvertTo-Json -Depth 8 -Compress; exit 0 }
     if ($Command -in @('start','capture')) {
         if ($Modules.Count -or $InputSampleEvery -ne 1) {
-            $capabilities = (Invoke-Control @{command='status';requestId=(New-RequestId)}).capabilities
+            $capabilities = (Invoke-Control @{command='status';requestId=(New-RequestId)} -ReadCapabilities).capabilities
             if (-not $capabilities.PSObject.Properties['moduleFilter'] -or -not $capabilities.moduleFilter -or
                 -not $capabilities.PSObject.Properties['inputSampling'] -or -not $capabilities.inputSampling) {
                 throw 'captureFilterCapabilityUnavailable: update the host before requesting modules or input sampling.'

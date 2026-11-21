@@ -1,5 +1,7 @@
 #pragma once
 
+#include "category_collection_types.h"
+
 #include <algorithm>
 #include <cwctype>
 #include <string>
@@ -8,14 +10,6 @@
 
 namespace snowdesktop::category_collection_rules
 {
-struct ShortcutTarget
-{
-    bool classified = false;
-    bool directory = false;
-    bool application = false;
-    std::wstring extension;
-};
-
 inline std::wstring NormalizeExtensionToken(std::wstring token)
 {
     while (!token.empty() && token.front() == L'*') token.erase(token.begin());
@@ -50,7 +44,8 @@ inline bool MatchesExtensionRule(std::wstring_view rule, std::wstring_view exten
 {
     if (rule == L".LNK:FOLDER") return extension == L".LNK" && target.directory;
     if (rule == L".LNK:APP") return extension == L".LNK" && target.application;
-    if (rule == L".URL:STEAM") return extension == L".URL" && target.application;
+    if (rule == L".URL:STEAM") return extension == L".URL" && target.urlKind == UrlShortcutKind::Steam;
+    if (rule == L".URL:EPIC") return extension == L".URL" && target.urlKind == UrlShortcutKind::Epic;
     if (rule.starts_with(L".LNK:."))
         return extension == L".LNK" && !target.directory && rule.substr(5) == target.extension;
     // Plain suffixes also match a link's file target. Explicit .LNK/.URL rules

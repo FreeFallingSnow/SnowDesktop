@@ -39,8 +39,6 @@ namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
 namespace muxi = winrt::Microsoft::UI::Xaml::Input;
 using presenter_controls::ColorFlyoutEditor;
-using presenter_controls::CoalescedPreviewTimer;
-using presenter_controls::QuantizeNumericValue;
 using presenter_controls::SettingRow;
 
 namespace
@@ -106,20 +104,7 @@ struct ContinuousControl
     float DockSettings::* dockMember = nullptr;
     double scale = 1.0;
     double defaultValue = std::numeric_limits<double>::quiet_NaN();
-    bool dirty = false;
-    CoalescedPreviewTimer<double> preview;
-    mux::DispatcherTimer idleCommitTimer{nullptr};
-
-    winrt::event_token sliderChanged{};
-    winrt::event_token numberChanged{};
-    winrt::event_token sliderReleased{};
-    winrt::event_token numberReleased{};
-    winrt::event_token sliderLostFocus{};
-    winrt::event_token numberLostFocus{};
-    winrt::event_token sliderKeyDown{};
-    winrt::event_token numberKeyDown{};
-    winrt::event_token resetClicked{};
-    winrt::event_token idleCommitToken{};
+    presenter_controls::ContinuousNumberBinding binding;
 };
 
 struct ColorControl
@@ -362,6 +347,9 @@ struct PersonalizationPagePresenter::Impl
     muxc::ToggleSwitch popupCloseOnMouseLeave{nullptr};
     SettingRow popupCloseOnMouseLeaveRow;
     winrt::event_token popupCloseOnMouseLeaveToken{};
+    muxc::ComboBox folderDoubleClickAction{nullptr};
+    SettingRow folderDoubleClickActionRow;
+    winrt::event_token folderDoubleClickActionToken{};
 
     SettingRow presetRow;
     SettingRow quickNavigationThemeRow;
@@ -878,11 +866,16 @@ struct PersonalizationPagePresenter::Impl
         layoutCard.content.Children().Append(
             luaWidgetContentRowHeight.row.root);
         presenter_controls::UpdateSettingsSubrows(layoutCard.content, 0.0);
+
         widgetTransformCursors = muxc::ToggleSwitch{};
         widgetTransformCursors.HorizontalAlignment(mux::HorizontalAlignment::Right);
         widgetTransformCursorsRow.Initialize(widgetTransformCursors);
         widgetTransformCursorsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         widgetInteractionCard.content.Children().Append(widgetTransformCursorsRow.root);
+        folderDoubleClickAction = muxc::ComboBox{};
+        folderDoubleClickActionRow.Initialize(folderDoubleClickAction);
+        folderDoubleClickActionRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        widgetInteractionCard.content.Children().Append(folderDoubleClickActionRow.root);
         presenter_controls::UpdateSettingsSubrows(fontCard.content, 0.0);
         presenter_controls::UpdateSettingsSubrows(contextMenuCard.content, 0.0);
         presenter_controls::UpdateSettingsSubrows(widgetInteractionCard.content, 0.0);
@@ -1375,7 +1368,7 @@ struct PersonalizationPagePresenter::Impl
         dockFollowCornerRadiusToken = dockFollowCornerRadius.Toggled([this](const auto&, const auto&) {
             if (!CanEmit()) return;
             const bool follow = dockFollowCornerRadius.IsOn();
-            Commit(dockCornerRadius);
+            dockCornerRadius.binding.Commit();
             EmitDockAppearance(SettingsUpdateMode::PreviewAndCommit, [follow](auto& settings) {
                 settings.followComponentCornerRadius = follow;
             });
@@ -1509,6 +1502,14 @@ struct PersonalizationPagePresenter::Impl
                         settings.popupCloseOnMouseLeave = enabled;
                     });
             });
+        folderDoubleClickActionToken = folderDoubleClickAction.SelectionChanged(
+            [this](const auto&, const auto&) {
+                const int action = folderDoubleClickAction.SelectedIndex();
+                if (action < 0) return;
+                Emit(SettingsUpdateMode::PreviewAndCommit, [action](PersonalizationSettings& settings) {
+                    settings.folderDoubleClickPreview = action == 1;
+                });
+            });
         widgetTransformCursorsToken = widgetTransformCursors.Toggled(
             [this](const auto&, const auto&) {
                 const bool enabled = widgetTransformCursors.IsOn();
@@ -1523,110 +1524,15 @@ struct PersonalizationPagePresenter::Impl
 
     void HookContinuousControl(ContinuousControl& control)
     {
-        control.idleCommitTimer = mux::DispatcherTimer{};
-        control.idleCommitTimer.Interval(std::chrono::milliseconds(650));
-        control.idleCommitToken = control.idleCommitTimer.Tick(
-            [this, &control](const auto&, const auto&) {
-                control.idleCommitTimer.Stop();
-                Commit(control);
+        control.binding.Bind(control.slider, control.number, control.reset,
+            control.defaultValue, synchronizingPair,
+            {
+                [this] { return !updatingControls && !closed; },
+                [this] { return CanEmit(); },
+                [this, &control](SettingsUpdateMode mode, double value) {
+                    EmitContinuous(control, mode, static_cast<float>(value * control.scale));
+                }
             });
-        control.preview.Initialize([this, &control](const double& value) {
-            PublishPreview(control, value);
-        });
-        control.sliderChanged = control.slider.ValueChanged(
-            [this, &control](const auto&, const auto&) {
-                if (updatingControls || synchronizingPair || closed)
-                    return;
-                const double value = control.slider.Value();
-                synchronizingPair = true;
-                presenter_controls::SetNumberBoxValue(control.number, value);
-                synchronizingPair = false;
-                Preview(control, value);
-            });
-        control.numberChanged = control.number.ValueChanged(
-            [this, &control](const auto&, const auto&) {
-                if (updatingControls || synchronizingPair || closed)
-                    return;
-                double value = control.number.Value();
-                if (std::isnan(value))
-                    value = control.slider.Value();
-                value = std::clamp(
-                    value, control.slider.Minimum(), control.slider.Maximum());
-                synchronizingPair = true;
-                control.slider.Value(value);
-                synchronizingPair = false;
-                Preview(control, value);
-            });
-        control.sliderReleased = control.slider.PointerReleased(
-            [this, &control](const auto&, const auto&) {
-                Commit(control);
-            });
-        control.numberReleased = control.number.PointerReleased(
-            [this, &control](const auto&, const auto&) {
-                Commit(control);
-            });
-        control.sliderLostFocus = control.slider.LostFocus(
-            [this, &control](const auto&, const auto&) {
-                Commit(control);
-            });
-        control.numberLostFocus = control.number.LostFocus(
-            [this, &control](const auto&, const auto&) {
-                Commit(control);
-            });
-        control.sliderKeyDown = control.slider.KeyDown(
-            [this, &control](const auto&, const muxi::KeyRoutedEventArgs& args) {
-                if (IsEnter(args))
-                    Commit(control);
-            });
-        control.numberKeyDown = control.number.KeyDown(
-            [this, &control](const auto&, const muxi::KeyRoutedEventArgs& args) {
-                if (IsEnter(args))
-                    Commit(control);
-            });
-        if (control.reset)
-        {
-            control.resetClicked = control.reset.Click(
-                [this, &control](const auto&, const auto&) {
-                    if (!std::isfinite(control.defaultValue)) return;
-                    control.idleCommitTimer.Stop();
-                    control.preview.Cancel();
-                    control.dirty = false;
-                    const float value = static_cast<float>(
-                        control.defaultValue * control.scale);
-                    EmitContinuous(control, SettingsUpdateMode::PreviewAndCommit, value);
-                });
-        }
-    }
-
-    void Preview(ContinuousControl& control, double uiValue)
-    {
-        if (!CanEmit())
-            return;
-        control.dirty = true;
-        control.idleCommitTimer.Stop();
-        control.idleCommitTimer.Start();
-        control.preview.Queue(uiValue);
-    }
-
-    void PublishPreview(ContinuousControl& control, double uiValue)
-    {
-        if (!control.dirty || !CanEmit())
-            return;
-        const float value = static_cast<float>(uiValue * control.scale);
-        EmitContinuous(control, SettingsUpdateMode::Preview, value);
-    }
-
-    void Commit(ContinuousControl& control)
-    {
-        if (control.idleCommitTimer)
-            control.idleCommitTimer.Stop();
-        control.preview.Cancel();
-        if (!control.dirty || !CanEmit())
-            return;
-        control.dirty = false;
-        const float value = static_cast<float>(
-            control.slider.Value() * control.scale);
-        EmitContinuous(control, SettingsUpdateMode::PreviewAndCommit, value);
     }
 
     void EmitContinuous(ContinuousControl& control, SettingsUpdateMode mode, float value)
@@ -1641,12 +1547,7 @@ struct PersonalizationPagePresenter::Impl
         ContinuousControl& control,
         double rawValue)
     {
-        const double value = rawValue / control.scale;
-        const double clamped = QuantizeNumericValue(value,
-            control.slider.Minimum(), control.slider.Maximum(),
-            control.slider.StepFrequency());
-        control.slider.Value(clamped);
-        presenter_controls::SyncNumberBoxValue(control.number, clamped);
+        control.binding.PatchValue(rawValue / control.scale);
     }
 
     void PatchColor(
@@ -1688,6 +1589,7 @@ struct PersonalizationPagePresenter::Impl
         groupTabHoverSwitch.IsOn(settings.groupTabHoverSwitch);
         categoryTabHoverSwitch.IsOn(settings.categoryTabHoverSwitch);
         popupCloseOnMouseLeave.IsOn(settings.popupCloseOnMouseLeave);
+        folderDoubleClickAction.SelectedIndex(settings.folderDoubleClickPreview ? 1 : 0);
         topTitleBarToggle.IsOn(settings.scrollableTitleBarOnTop);
         widgetTransformCursors.IsOn(settings.widgetTransformCursors);
         contentThemeCombo.SelectedIndex(
@@ -2192,6 +2094,14 @@ struct PersonalizationPagePresenter::Impl
                 L"Close collection and Dock folder popups after the pointer moves out, including while dragging. Keep them open during renaming or context menu actions."));
         muxa::AutomationProperties::SetName(
             popupCloseOnMouseLeave, popupCloseOnMouseLeaveRow.label.Text());
+        folderDoubleClickActionRow.SetText(
+            L("settings.widgetBehavior.folderDoubleClick", L"Default action for opening folders in widgets and Dock popups"),
+            L("settings.widgetBehavior.folderDoubleClickHint"));
+        ReplaceComboItems(folderDoubleClickAction, {
+            {"app.interact.open_in_explorer", L"Open in File Explorer"},
+            {"settings.widgetBehavior.previewFolderInPlace", L"Preview in the widget"},
+        });
+        muxa::AutomationProperties::SetName(folderDoubleClickAction, folderDoubleClickActionRow.label.Text());
         muxa::AutomationProperties::SetName(
             gradientToggle, gradientToggleRow.label.Text());
         const auto explain = [](auto& row, const std::wstring& text) { row.SetText(std::wstring(row.label.Text().c_str()), text); };
@@ -2240,11 +2150,7 @@ struct PersonalizationPagePresenter::Impl
         {
             edgeLightEditor->Cancel();
             for (ContinuousControl* control : continuousControls)
-            {
-                if (control->idleCommitTimer)
-                    control->idleCommitTimer.Stop();
-                control->dirty = false;
-            }
+                control->binding.Cancel();
         }
         dockAppearanceHost.IsEnabled(snapshot.values.general.dockEnabled);
         dockFollowCornerRadiusRow.SetEnabled(snapshot.values.general.dockEnabled);
@@ -2462,6 +2368,8 @@ struct PersonalizationPagePresenter::Impl
         }
         if (id == "personalization.popupCloseOnMouseLeave")
             return popupCloseOnMouseLeave;
+        if (id == "personalization.folderDoubleClickPreview")
+            return folderDoubleClickAction;
         if (id == "personalization.popupHoverDelayMs")
         {
             if (!popupHoverOpen.IsOn())
@@ -2486,32 +2394,6 @@ struct PersonalizationPagePresenter::Impl
         return nullptr;
     }
 
-    void UnhookContinuousControl(ContinuousControl& control) noexcept
-    {
-        try
-        {
-            if (control.idleCommitTimer)
-            {
-                control.idleCommitTimer.Stop();
-                control.idleCommitTimer.Tick(control.idleCommitToken);
-            }
-            control.preview.Close();
-            control.slider.ValueChanged(control.sliderChanged);
-            control.number.ValueChanged(control.numberChanged);
-            control.slider.PointerReleased(control.sliderReleased);
-            control.number.PointerReleased(control.numberReleased);
-            control.slider.LostFocus(control.sliderLostFocus);
-            control.number.LostFocus(control.numberLostFocus);
-            control.slider.KeyDown(control.sliderKeyDown);
-            control.number.KeyDown(control.numberKeyDown);
-            if (control.reset)
-                control.reset.Click(control.resetClicked);
-        }
-        catch (...)
-        {
-        }
-    }
-
     void UnhookColorControl(ColorControl& control) noexcept
     {
         control.editor.Close();
@@ -2534,7 +2416,7 @@ struct PersonalizationPagePresenter::Impl
             if (panelGradientEditor) panelGradientEditor->Flush();
             if (edgeLightEditor) edgeLightEditor->Flush();
             for (ContinuousControl* control : continuousControls)
-                Commit(*control);
+                control->binding.Commit();
         }
         catch (...)
         {
@@ -2601,6 +2483,7 @@ struct PersonalizationPagePresenter::Impl
             groupTabHoverSwitch.Toggled(groupTabHoverToken);
             categoryTabHoverSwitch.Toggled(categoryTabHoverToken);
             popupCloseOnMouseLeave.Toggled(popupCloseOnMouseLeaveToken);
+            folderDoubleClickAction.SelectionChanged(folderDoubleClickActionToken);
             topTitleBarToggle.Toggled(topTitleBarToken);
             widgetTransformCursors.Toggled(widgetTransformCursorsToken);
         }
@@ -2608,7 +2491,7 @@ struct PersonalizationPagePresenter::Impl
         {
         }
         for (ContinuousControl* control : continuousControls)
-            UnhookContinuousControl(*control);
+            control->binding.Close();
         for (ColorControl* control : colorControls)
             UnhookColorControl(*control);
             if (panelGradientEditor) panelGradientEditor->Close();

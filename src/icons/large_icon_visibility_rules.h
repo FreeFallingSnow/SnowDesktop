@@ -1,5 +1,5 @@
 #pragma once
-#include "large_icon_config.h"
+#include "large_icon_config_types.h"
 #include "widget/runtime/widget_visibility_rules.h"
 
 namespace snowdesktop::large_icon_visibility_rules

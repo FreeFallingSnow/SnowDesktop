@@ -2,7 +2,11 @@
 
 #include "widget_view_tree.h"
 
+#include <functional>
 #include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
 
 extern "C" {
 #include <lua.h>
@@ -57,4 +61,25 @@ int LuaViewMonthCalendar(lua_State* state);
 int LuaViewSlotSurface(lua_State* state);
 int LuaViewSlotItem(lua_State* state);
 int LuaViewSpacer(lua_State* state);
+
+class WidgetDrawContext;
+class WidgetViewHost;
+
+struct WidgetViewFrame
+{
+    ViewNode tree;
+    std::vector<InteractionRegion> regions;
+    std::vector<ViewScrollViewport> scrollViewports;
+    std::vector<ViewInputControl> inputControls;
+
+    bool SubmitRegions(WidgetInteractionRegions& target, std::string& error);
+};
+
+using WidgetViewFrameLayout = std::function<bool(ViewNode&, std::string&)>;
+
+// Return the existing diagnostic code for the first failed preparation step.
+std::string_view PrepareWidgetViewFrame(
+    lua_State* state, int index, WidgetDrawContext* draw, const WidgetViewHost& host,
+    const LogicalSlotModel& slots, const std::unordered_map<std::string, int>& offsets,
+    const WidgetViewFrameLayout& layout, WidgetViewFrame& frame, std::string& error);
 }

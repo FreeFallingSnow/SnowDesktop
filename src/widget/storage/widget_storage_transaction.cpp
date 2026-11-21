@@ -1,63 +1,12 @@
 #include "widget_storage_transaction.h"
 
+#include "common/utf8.h"
+
 #include <algorithm>
-#include <cstdint>
 #include <utility>
 
 namespace snowdesktop::widget_runtime
 {
-namespace
-{
-bool IsValidUtf8(std::string_view value) noexcept
-{
-    std::size_t index = 0;
-    while (index < value.size())
-    {
-        const auto lead = static_cast<unsigned char>(value[index]);
-        std::size_t length = 0;
-        std::uint32_t codePoint = 0;
-        if (lead <= 0x7f)
-        {
-            length = 1;
-            codePoint = lead;
-        }
-        else if (lead >= 0xc2 && lead <= 0xdf)
-        {
-            length = 2;
-            codePoint = lead & 0x1f;
-        }
-        else if (lead >= 0xe0 && lead <= 0xef)
-        {
-            length = 3;
-            codePoint = lead & 0x0f;
-        }
-        else if (lead >= 0xf0 && lead <= 0xf4)
-        {
-            length = 4;
-            codePoint = lead & 0x07;
-        }
-        else
-            return false;
-        if (index + length > value.size()) return false;
-        for (std::size_t offset = 1; offset < length; ++offset)
-        {
-            const auto continuation =
-                static_cast<unsigned char>(value[index + offset]);
-            if ((continuation & 0xc0) != 0x80) return false;
-            codePoint = (codePoint << 6) | (continuation & 0x3f);
-        }
-        if ((length == 2 && codePoint < 0x80) ||
-            (length == 3 && codePoint < 0x800) ||
-            (length == 4 && codePoint < 0x10000) ||
-            codePoint > 0x10ffff ||
-            (codePoint >= 0xd800 && codePoint <= 0xdfff))
-            return false;
-        index += length;
-    }
-    return true;
-}
-}
-
 WidgetStorageTransaction::WidgetStorageTransaction(
     const StorageMap& source, std::string instancePrefix)
     : candidate_(source),
@@ -69,7 +18,7 @@ bool WidgetStorageTransaction::ValidateKey(
     std::string_view key, std::string& error) const
 {
     if (key.empty() || key.size() > kMaximumKeyBytes ||
-        key.find('\0') != std::string_view::npos || !IsValidUtf8(key))
+        key.find('\0') != std::string_view::npos || !utf8::IsValid(key))
     {
         error = "key must contain 1 to 128 bytes of valid UTF-8";
         return false;
@@ -81,7 +30,7 @@ bool WidgetStorageTransaction::ValidateHostMetadataKey(
     std::string_view key, std::string& error) const
 {
     if (!key.starts_with("__host.") || key.size() > 512 ||
-        key.find('\0') != std::string_view::npos || !IsValidUtf8(key))
+        key.find('\0') != std::string_view::npos || !utf8::IsValid(key))
     {
         error = "host metadata key is invalid";
         return false;
@@ -133,7 +82,7 @@ bool WidgetStorageTransaction::Set(std::string key, std::string value,
     error.clear();
     if (!ConsumeOperation(error) || !ValidateKey(key, error)) return false;
     if (value.size() > kMaximumValueBytes ||
-        (!value.empty() && !IsValidUtf8(value)))
+        (!value.empty() && !utf8::IsValid(value)))
     {
         error = "value must be at most 65536 bytes of valid UTF-8";
         return false;
@@ -181,7 +130,7 @@ bool WidgetStorageTransaction::SetHostMetadata(
     if (!ValidateHostMetadataKey(key, error))
         return false;
     if (value.size() > kMaximumValueBytes ||
-        (!value.empty() && !IsValidUtf8(value)))
+        (!value.empty() && !utf8::IsValid(value)))
     {
         error = "host metadata value is invalid";
         return false;

@@ -1,5 +1,9 @@
 #pragma once
+#include "common/json_value.h"
+#include "large_icon_config.h"
+#include "large_icon_config_codec.h"
 #include "large_icon_settings.h"
+#include <algorithm>
 #include <utility>
 
 namespace snowdesktop::large_icon_edit_rules

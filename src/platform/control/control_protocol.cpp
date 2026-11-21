@@ -88,12 +88,117 @@ int Integer(const Value& params, std::string_view key, int minimum, int maximum)
     return static_cast<int>(field->number);
 }
 
+namespace
+{
+Value ResultField(const char* type, const char* description)
+{
+    return Object({{"type", String(type)}, {"description", String(description)}});
+}
+
+Value ResultObject(const char* description,
+    std::initializer_list<std::pair<std::string, Value>> properties)
+{
+    auto result = ResultField("object", description);
+    result.object.emplace("properties", Object(properties));
+    return result;
+}
+
+Value ResultArray(const char* description, Value items)
+{
+    auto result = ResultField("array", description);
+    result.object.emplace("items", std::move(items));
+    return result;
+}
+
+Value DesktopLayoutResultSchema()
+{
+    const auto bounds = ResultObject(
+        "Host layout rectangle in physical pixels relative to the virtual desktop origin. Use ui.snapshot for screen coordinates and visibility.", {
+        {"left", ResultField("integer", "X coordinate of the left edge.")},
+        {"top", ResultField("integer", "Y coordinate of the top edge.")},
+        {"right", ResultField("integer", "X coordinate of the exclusive right edge.")},
+        {"bottom", ResultField("integer", "Y coordinate of the exclusive bottom edge.")},
+    });
+    const auto page = ResultObject("Grid geometry for a desktop page or layout surface.", {
+        {"id", ResultField("string", "Page ID referenced by widget.pageId.")},
+        {"monitorId", ResultField("string", "Host display identity for the page.")},
+        {"bounds", bounds},
+        {"columns", ResultField("integer", "Number of grid columns on this page.")},
+        {"rows", ResultField("integer", "Number of grid rows on this page.")},
+        {"dpiX", ResultField("integer", "Horizontal display DPI used for layout scaling.")},
+        {"dpiY", ResultField("integer", "Vertical display DPI used for layout scaling.")},
+    });
+    const auto widget = ResultObject("Placement and group membership for one widget instance.", {
+        {"id", ResultField("string", "Widget instance ID. Pass this to widgets.get or widget-targeted settings queries.")},
+        {"type", ResultField("string", "Instance type, such as collection, lua, or luaStack. Count type lua for Lua instances. A luaStack is the container of its child instances.")},
+        {"title", ResultField("string", "Current display title. Titles can be shared by different widget instances.")},
+        {"pageId", ResultField("string", "Stored placement page. __snowdesktop_dock__ is the Dock surface.")},
+        {"column", ResultField("integer", "Stored zero-based starting column for the widget's grid placement.")},
+        {"row", ResultField("integer", "Stored zero-based starting row for the widget's grid placement.")},
+        {"columns", ResultField("integer", "Horizontal grid span in cells.")},
+        {"rows", ResultField("integer", "Vertical grid span in cells.")},
+        {"grouped", ResultField("boolean", "True when the widget is a child of another widget. For grouped widgets, the parent owns the visible placement.")},
+        {"bounds", bounds},
+        {"activeMemberId", ResultField("string", "Selected child widget ID for a Lua stack. Other widget types return an empty string.")},
+        {"memberCount", ResultField("integer", "Number of child widget IDs, equal to the length of memberIds. A collection can hold files or shortcuts and still return zero. This result has no total collection item count.")},
+        {"memberIds", ResultArray("Child widget instance IDs in stored order. Collection files and shortcuts are outside this list.",
+            ResultField("string", "ID of one child widget instance."))},
+    });
+    const auto revision = ResultField("string", "Opaque layout identity including placement state. Use the latest value as ifLayoutRevision before moving or resizing a widget.");
+    const auto layout = ResultObject("Current desktop grid geometry and widget placements.", {
+        {"layoutRevision", revision},
+        {"pages", ResultArray("Grid pages in the host layout.", page)},
+        {"widgets", ResultArray("Widget instances, including group children and Dock widgets.", widget)},
+    });
+    return Object({
+        {"layout", layout},
+        {"widget", ResultObject("One widget and its layout identity.", {
+            {"widget", widget},
+            {"layoutRevision", revision},
+        })},
+        {"placement", ResultObject("Result of applying an in-memory widget placement.", {
+            {"status", ResultField("string", "Applied means the requested placement was accepted by the host.")},
+            {"persistence", ResultField("string", "Queued means saving was scheduled after application in memory.")},
+            {"layout", layout},
+        })},
+    });
+}
+
+Value SettingsSearchResultSchema()
+{
+    const auto target = ResultObject("Settings catalog target. Some target kinds need an instance ID.", {
+        {"kind", ResultField("string", "Settings target kind.")},
+        {"id", ResultField("string", "Concrete instance ID, when provided.")},
+    });
+    const auto match = ResultObject("One documented field or action argument.", {
+        {"target", target},
+        {"field", ResultField("string", "Field path relative to the target or action. [] refers to an array element and .* to a map value.")},
+        {"description", ResultField("string", "English behavior description from the settings metadata.")},
+        {"requiresTargetId", ResultField("boolean", "When present and true, resolve a concrete instance before querying its catalog.")},
+        {"action", ResultField("string", "Named settings.action when the field is an action argument. Omitted for direct fields.")},
+        {"name", ResultField("string", "Name of the Lua instance, when available.")},
+    });
+    return ResultObject("One page of matching setting descriptions.", {
+        {"query", ResultField("string", "Search text after trimming surrounding whitespace.")},
+        {"results", ResultArray("Matches ordered by relevance, with a deterministic tie order.", match)},
+        {"total", ResultField("integer", "Number of matching descriptions before pagination.")},
+        {"offset", ResultField("integer", "Zero-based starting match for this page.")},
+        {"limit", ResultField("integer", "Maximum matches requested for this page.")},
+        {"unavailableWidgetCount", ResultField("integer", "Number of Lua instances whose runtime declarations were unavailable.")},
+    });
+}
+}
+
 Value Describe()
 {
     Value methods = Array();
-    const auto add = [&](const char* name, bool mutation, const char* parameters) {
-        methods.array.push_back(Object({{"name", String(name)}, {"mutates", Boolean(mutation)},
-            {"parameters", String(parameters)}}));
+    const auto add = [&](const char* name, bool mutation, const char* parameters,
+                         const char* resultSchema = nullptr) {
+        auto method = Object({{"name", String(name)}, {"mutates", Boolean(mutation)},
+            {"parameters", String(parameters)}});
+        if (resultSchema)
+            method.object.emplace("resultSchema", String(resultSchema));
+        methods.array.push_back(std::move(method));
     };
     add("api.describe", false, "{}");
     add("app.getState", false, "{}");
@@ -106,6 +211,7 @@ Value Describe()
     add("ui.dismissMenu", true, "{}");
     add("ui.settingsRefresh", false, "{}");
     add("ui.settingsState", false, "{id:string}");
+    add("settings.search", false, "{query:string,offset?:integer,limit?:integer}", "settingsSearch");
     add("settings.catalog", false, "{target?:{kind:string,id?:string},offset?:integer,limit?:integer}");
     add("settings.get", false, "{target:{kind:string,id?:string},offset?:integer,limit?:integer}");
     add("settings.update", true, "{target:{kind:string,id?:string},ifRevision:string,changes:object}");
@@ -120,10 +226,12 @@ Value Describe()
     add("capture.record", true, "{monitorId?:string,includeSystemCursor?:boolean,durationMs:integer,fps:integer}");
     add("capture.state", false, "{id:string}");
     add("capture.cancel", true, "{id:string}");
-    add("desktop.getLayout", false, "{}");
-    add("widgets.list", false, "{}");
-    add("widgets.get", false, "{id:string}");
-    add("widgets.place", true, "{id:string,pageId:string,column:integer,row:integer,columns:integer,rows:integer,ifLayoutRevision:string}");
+    add("desktop.getLayout", false, "{}", "layout");
+    add("widgets.list", false, "{}", "layout");
+    add("widgets.get", false, "{id:string}", "widget");
+    add("widgets.agentActions", false, "{id:string}");
+    add("widgets.invokeAgentAction", true, "{id:string,action:string,arguments?:object}");
+    add("widgets.place", true, "{id:string,pageId:string,column:integer,row:integer,columns:integer,rows:integer,ifLayoutRevision:string}", "placement");
     add("widgets.open", true, "{id:string}");
     add("widgets.close", true, "{}");
     add("navigation.open", true, "{}");
@@ -131,17 +239,30 @@ Value Describe()
     add("settings.open", true, "{page?:string,widgetId?:string}");
     add("dock.show", true, "{}");
     add("dock.hide", true, "{}");
+    auto resultSchemas = DesktopLayoutResultSchema();
+    resultSchemas.object.emplace("settingsSearch", SettingsSearchResultSchema());
     return Object({{"protocolVersion", Number(ProtocolVersion)}, {"methods", std::move(methods)},
+        {"resultSchemas", std::move(resultSchemas)},
         {"maximumFrameBytes", Number(static_cast<double>(MaximumFrameBytes))},
+        {"guidance", Object({
+            {"language", String("en")},
+            {"overview", String("SnowDesktop organizes desktop items in pages, grids and storage components. It also provides visual personalization, a Dock, a status bar and Quick Navigation.")},
+            {"organize", String("Read desktop.getLayout and settings.catalog first. Use widgets.place for an existing component's position or span, and the page target for grid dimensions. File Categories can collect matching desktop items when their native-widget catalog advertises collect-now.")},
+            {"appearance", String("Use the personalization target for common surface defaults, desktop for ordinary icon and title presentation, and the individual component or icon target for its own overrides. An independent theme may take precedence over global settings.")},
+            {"settings", String("Use settings.search to find settings by keywords in their field paths and English descriptions. Results identify a target and field, plus an action for action arguments. Resolve targets marked requiresTargetId, then use settings.catalog on the concrete target to check values, constraints, availability and revision. Call settings.catalog without a target to discover domains and live component instances. Refresh the revision before each edit and respect confirmation, restart and availability requirements.")},
+            {"components", String("Use native-widget for built-in storage component view and content settings and widget for Lua-authored settings and host appearance. Discover a loaded Lua instance's optional English action declarations with widgets.agentActions. A delivered action ran the component event callback; verify the outcome separately.")},
+        })},
         {"capabilities", Object({{"elements", Number(1)}, {"privatePointer", Number(1)}, {"privateKeyboard", Number(1)},
             {"demoCursor", Number(1)}, {"monitorCapture", Number(1)}, {"menus", Number(1)},
             {"settingsAutomation", Number(1)}, {"previewRender", Number(1)}, {"monitorRecording", Number(1)},
             {"nativeWidgetControls", Number(1)}, {"demoElementTargets", Number(1)},
             {"nativePopupControls", Number(1)}, {"menuControlValues", Number(1)}, {"settingsPrivateInput", Number(0)},
-            {"directSettings", Number(1)}, {"settingsSchema", Number(1)}, {"nativeWidgetSettings", Number(1)}})}});
+            {"directSettings", Number(1)}, {"settingsSchema", Number(1)}, {"nativeWidgetSettings", Number(1)},
+            {"settingsGuidance", Number(1)}, {"settingsSearch", Number(1)}, {"widgetAgentActions", Number(1)}})}});
 }
 
-std::string Dispatch(std::string_view request, const Handler& handler) noexcept
+std::string Dispatch(std::string_view request, const Handler& handler,
+    const AccessCheck& accessCheck) noexcept
 {
     Value id;
     try
@@ -160,7 +281,10 @@ std::string Dispatch(std::string_view request, const Handler& handler) noexcept
         Fields(root, {"jsonrpc", "id", "method", "params"});
         if (Text(root, "jsonrpc") != "2.0") throw Error("invalid_request", "jsonrpc must be 2.0", -32600);
         const auto method = Text(root, "method");
-        const auto description = Describe();
+        if (accessCheck && !accessCheck())
+            throw Error("agent_operations_disabled",
+                "Ask the user to enable Allow agent access in SnowDesktop Settings > Agent Operations.");
+        static const auto description = Describe();
         bool known = false;
         for (const auto& entry : description.Find("methods")->array)
             if (entry.Find("name")->string == method) known = true;

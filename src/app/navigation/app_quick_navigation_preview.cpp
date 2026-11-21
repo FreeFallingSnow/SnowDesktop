@@ -214,9 +214,12 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
                             {request.canvasWidth,request.canvasHeight,quickNavigation_->rect.left,quickNavigation_->rect.top}, &stage))
                         throw std::runtime_error("quick navigation material backdrop failed");
             }
-            brushCache_.clear(); brushCacheContext_ = context.Get();
+            drawing_.Reset();
             DrawQuickNavigationSurface(context.Get());
-            require(context->EndDraw()); context->SetTarget(nullptr); brushCache_.clear(); brushCacheContext_ = nullptr;
+            const HRESULT drawResult = context->EndDraw();
+            context->SetTarget(nullptr);
+            drawing_.Reset();
+            require(drawResult);
             if (name == "expanded-tile" || name == "collapsed-empty")
             {
                 const std::size_t fixture = name == "expanded-tile" ? 0 : 1;
@@ -232,12 +235,12 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
                     static_cast<float>(-quickNavigation_->rect.left),
                     static_cast<float>(-quickNavigation_->rect.top)));
                 context->BeginDraw(); context->Clear(D2D1::ColorF(0, 0.f));
-                brushCacheContext_ = context.Get();
                 DrawQuickNavigationSurface(context.Get());
-                require(context->EndDraw());
+                const HRESULT snapshotResult = context->EndDraw();
                 context->SetTarget(nullptr);
                 context->SetTransform(D2D1::Matrix3x2F::Identity());
-                brushCache_.clear(); brushCacheContext_ = nullptr;
+                drawing_.Reset();
+                require(snapshotResult);
             }
             ComPtr<ID2D1Bitmap1> readback;
             require(context->CreateBitmap(size,nullptr,0,D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,format,96,96),&readback));

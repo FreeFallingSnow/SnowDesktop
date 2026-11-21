@@ -3,6 +3,11 @@
 #include "widgets_page_backend.h"
 #include "widgets_page_backend_state.h"
 #include "widget_package_review.h"
+#include "widget/packages/widget_package_catalog_snapshot.h"
+#include "widget/packages/widget_package_limits.h"
+#include "widget/packages/widget_package_manager.h"
+#include "widget/packages/widget_package_source.h"
+#include "widget/packages/widget_package_validation.h"
 #include "diagnostics/diagnostic_log.h"
 #include "source_search_worker.h"
 #include "theme/theme_library_settings.h"
@@ -1090,7 +1095,9 @@ struct WidgetsPageBackend::Impl final
         snapshot.enabled = group.managed
             ? group.managed->enabled : display ? display->enabled : false;
         snapshot.active = display && display->active;
-        snapshot.canEnable = group.managed != nullptr;
+        snapshot.hasInstalledVersion = group.managed != nullptr;
+        snapshot.canEnable = snapshot.hasInstalledVersion || group.development != nullptr ||
+            (display && display->builtin && !display->enabled);
         snapshot.canUninstall = group.managed != nullptr ||
             !group.invalidManaged.empty();
         // Adding a component creates a persisted desktop instance. Invalid
@@ -1099,8 +1106,8 @@ struct WidgetsPageBackend::Impl final
             static_cast<bool>(options.addPackageToDesktop);
         snapshot.canAddToDesktop = snapshot.showAddToDesktop &&
             display->active && display->enabled;
-        snapshot.canUseDevelopmentOverride = display &&
-            group.development != nullptr;
+        snapshot.canUseDevelopmentOverride = display && group.development &&
+            (group.managed || group.builtin);
         snapshot.developmentOverrideActive = display && group.development &&
             group.development->active;
         const std::string workshopExternalItemId =
@@ -1203,6 +1210,9 @@ struct WidgetsPageBackend::Impl final
                         }))
                 {
                     snapshot.restorableVersions.push_back({version});
+                    if (snapshot.restorableVersions.size() ==
+                        snowdesktop::widget::kMaxRestorablePackageVersions)
+                        break;
                 }
             }
         }
@@ -2536,8 +2546,8 @@ struct WidgetsPageBackend::Impl final
     {
         if (BusyForMutation()) return ReportBusy();
         const std::string packageId = WideToUtf8(request.packageId);
-        const InstalledPackage* managed = FindManagedPackage(packageId);
-        if (!managed)
+        const auto* package = FindSnapshotPackage(request.packageId);
+        if (!package || !package->canEnable)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
                 L("app.settings.widgets_error_toggle_unavailable",
@@ -2708,7 +2718,7 @@ struct WidgetsPageBackend::Impl final
         const std::string packageId = WideToUtf8(request.packageId);
         const InstalledWidgetPackageSnapshot* snapshotPackage =
             FindSnapshotPackage(request.packageId);
-        if (!snapshotPackage)
+        if (!snapshotPackage || !snapshotPackage->canUseDevelopmentOverride)
         {
             SetFeedback(WidgetsPageFeedbackSeverity::Error,
                 L("app.settings.widgets_error_package_unavailable",
@@ -2718,6 +2728,7 @@ struct WidgetsPageBackend::Impl final
             return false;
         }
         const bool previous = snapshotPackage->developmentOverrideActive;
+        const bool packageEnabled = snapshotPackage->enabled;
         if (previous == request.enabled)
             return true;
         const bool developmentExists = std::any_of(
@@ -2749,6 +2760,11 @@ struct WidgetsPageBackend::Impl final
                 Utf8ToWide(error)));
             return false;
         }
+        if (!packageEnabled)
+        {
+            FinishTask(WidgetsPageHostOperationResult::Success());
+            return true;
+        }
 
         const auto activePackage =
             WidgetEngine::GetWidgetPackage(request.packageId);
@@ -2770,10 +2786,7 @@ struct WidgetsPageBackend::Impl final
                 // treating a permission-blocked reload as toggle failure.
                 for (const std::wstring& instance : instances)
                     engine.UnloadWidget(instance);
-                FinishTask(WidgetsPageHostOperationResult::Success(),
-                    request.enabled
-                        ? "app.settings.widgets_development_activated_ok"
-                        : "app.settings.widgets_development_deactivated_ok");
+                FinishTask(WidgetsPageHostOperationResult::Success());
                 return true;
             }
         }
@@ -2824,10 +2837,7 @@ struct WidgetsPageBackend::Impl final
                 std::move(message)));
             return false;
         }
-        FinishTask(WidgetsPageHostOperationResult::Success(),
-            request.enabled
-                ? "app.settings.widgets_development_activated_ok"
-                : "app.settings.widgets_development_deactivated_ok");
+        FinishTask(WidgetsPageHostOperationResult::Success());
         return true;
     }
 

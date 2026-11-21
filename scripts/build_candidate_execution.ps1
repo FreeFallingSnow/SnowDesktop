@@ -36,13 +36,15 @@ function Assert-CandidateRunner([string]$Root,$Request,[string]$ScriptDirectory)
         return ,$locks
     }catch{foreach($stream in $locks){$stream.Dispose()};throw}
 }
-function Assert-CandidateToolset($Snapshot,$Runtime) {
+function Assert-CandidateToolset($Snapshot,$Runtime,[switch]$VerificationOnly) {
     $required=@('build_entry.ps1','build_inputs.ps1','build_telemetry.ps1','build_candidate_execution.ps1','build_candidate.ps1','build_job.cs','build_command.ps1','test_manager.ps1','build_run.ps1','build_protocol.ps1')
     foreach($name in @($required)+@($Runtime.files.name)|Sort-Object -Unique){
+        # Verification uses the frozen test tree and does not arrange packages.
+        if($VerificationOnly -and $name -in 'deployment_payload.psm1','packaging_input.ps1'){continue}
         $source=@($Snapshot.manifest.files|Where-Object path -eq ('scripts/'+$name))
         $runner=@($Runtime.files|Where-Object name -eq $name)
         if($source.Count -ne 1 -or $source[0].state -ne 'present' -or $runner.Count -ne 1 -or $source[0].sha256 -ne $runner[0].sha256){
-            throw 'Snapshot requires a matching candidate execution toolset; capture the updated runtime first.'
+            throw "Snapshot execution toolset differs at scripts/$name. Capture the updated runtime first."
         }
     }
 }
@@ -66,7 +68,7 @@ function Initialize-CandidateOutput($Slot,[string]$Configuration,[switch]$Existi
 function Get-CandidateExecutionSnapshot([string]$Root,$Request) {
     $snapshot=Read-CandidateManifest $Root $Request.snapshot
     if($snapshot.digest -ne $Request.snapshotManifestDigest -or $snapshot.manifest.context.binding.configuration -ne $Request.configuration){throw 'Candidate snapshot/configuration identity changed.'}
-    Assert-CandidateToolset $snapshot $Request.runnerRuntime
+    Assert-CandidateToolset $snapshot $Request.runnerRuntime -VerificationOnly:(Get-Field $Request 'candidateVerification' $false)
     return $snapshot
 }
 function Enter-CandidateExecution([string]$Root,$Request,[switch]$RequireExisting,$SnapshotForSlot=$null) {
@@ -80,11 +82,12 @@ function Enter-CandidateExecution([string]$Root,$Request,[switch]$RequireExistin
         $slot=Enter-CandidateSlot $snapshot $Request.candidateSlot
         $snapshot=Read-CandidateManifest $Root $Request.snapshot -VerifyObjects
         $expectedKey='workspace'
+        $pathProjection=Get-CandidatePathProjection $Root $snapshot.store $expectedKey
         if($snapshot.digest -ne $Request.snapshotManifestDigest -or $snapshot.manifest.context.binding.configuration -ne $Request.configuration -or
-            $slot.key -ne $expectedKey -or $slot.directory -ne (Get-CandidateWorkspaceDirectory $snapshot.store)){
+            $slot.key -ne $expectedKey -or $slot.directory -ne $pathProjection.directory){
             throw 'Candidate snapshot/configuration identity changed after slot acquisition.'
         }
-        Assert-CandidateToolset $snapshot $Request.runnerRuntime
+        Assert-CandidateToolset $snapshot $Request.runnerRuntime -VerificationOnly:(Get-Field $Request 'candidateVerification' $false)
         if($RequireExisting){
             $old=Read-CandidateJson $slot.state
             if($old.snapshot -ne $Request.snapshot -or $old.manifestDigest -ne $Request.snapshotManifestDigest){throw 'Verification candidate slot changed; use a matching new baseline.'}
@@ -94,7 +97,8 @@ function Enter-CandidateExecution([string]$Root,$Request,[switch]$RequireExistin
         $buildLock=[IO.File]::Open((Join-Path $slot.output 'collaboration/build.lock'),'OpenOrCreate','ReadWrite','None')
         $entry=[pscustomobject]@{lease=$buildLock;oldToken=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN','Process')}
         $context=[pscustomobject]@{schemaVersion=1;runRoot=$Root;runId=$Request.id;nonce=$Request.nonce;snapshot=$snapshot.manifest.id;
-            manifest=$snapshot.path;manifestDigest=$snapshot.digest;source=$slot.source;output=$slot.output;slot=$slot.key;configuration=$Request.configuration}
+            manifest=$snapshot.path;manifestDigest=$snapshot.digest;source=$slot.source;output=$slot.output;slot=$slot.key;configuration=$Request.configuration;
+            pathProjection=$pathProjection}
         if((Get-Field $Request 'candidateBatch' $false)){Set-Field $context 'batchId' $Request.batch}
         $null=Start-EntryCredential $slot.source '' $context
         # The caller retains every captured source handle for the whole Run.
@@ -137,7 +141,7 @@ function Get-CandidateSourceIdentity([string]$Root,$Context) {
     Initialize-CandidateOutput ([pscustomobject]@{source=$context.source;output=$context.output;directory=$directory}) $context.configuration -Existing
     if($snapshot.digest -ne $context.manifestDigest -or $snapshot.path -ne $context.manifest){throw 'Candidate source manifest changed.'}
     $actual=Get-CandidateContext $snapshot.manifest.files $context.configuration $(if(Get-Field $snapshot.manifest.context.binding 'checkoutRoot'){$snapshot.manifest.sourceRoot}else{''})
-    if($actual.digest -ne $snapshot.manifest.context.digest){throw 'Candidate observed environment/tools changed.'}
+    if($actual.digest -ne $snapshot.manifest.context.digest){throw (Get-CandidateContextMismatch $snapshot.manifest.context $actual)}
     $files=@();$known=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach($file in $snapshot.manifest.files){
         $path=Resolve-CandidatePath $Root $file.path;[void]$known.Add($file.path.Replace('/','\'))

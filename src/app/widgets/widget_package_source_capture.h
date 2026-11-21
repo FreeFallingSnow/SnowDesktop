@@ -2,6 +2,7 @@
 
 #include "common/types.h"
 #include "widget/packages/widget_package_source_snapshot.h"
+#include "widget/packages/widget_package_source_types.h"
 
 namespace snowdesktop::widget_source_capture
 {

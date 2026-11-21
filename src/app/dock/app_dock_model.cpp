@@ -1,5 +1,4 @@
 #include "app/app.h"
-#include "widgets/lua_stack.h"
 #include "diagnostics/diagnostic_log.h"
 #include "diagnostics/performance_trace.h"
 #include "common/utils.h"
@@ -8,7 +7,7 @@
 #include "data/data_paths.h"
 #include "app/shell/shell_icon_request.h"
 #include "dock_folder_popup_read.h"
-#include "common/json_value.h"
+#include "dock/dock_usage_storage.h"
 #include "dock_platform_helpers.h"
 #include "dock/dock_pin_cleanup.h"
 #include "dock/dock_drop_model.h"
@@ -257,53 +256,6 @@ size_t DesktopApp::DockFolderEntryCount() const
         }));
 }
 
-size_t DesktopApp::FindCollectionGroupIndexForChild(
-    const std::wstring& childId) const
-{
-    for (size_t i = 0; i < widgets_.size(); ++i)
-    {
-        const DesktopWidget& widget = widgets_[i];
-        if (widget.type != DesktopWidgetType::CollectionGroup) continue;
-        if (std::find(widget.childWidgetIds.begin(),
-            widget.childWidgetIds.end(), childId) !=
-            widget.childWidgetIds.end())
-            return i;
-    }
-    return static_cast<size_t>(-1);
-}
-
-bool DesktopApp::IsGroupedCollection(
-    const DesktopWidget& widget) const
-{
-    return widget.type == DesktopWidgetType::Collection &&
-        FindCollectionGroupIndexForChild(widget.id) < widgets_.size();
-}
-
-size_t DesktopApp::FindFileGroupIndexForChild(
-    const std::wstring& childId) const
-{
-    for (size_t i = 0; i < widgets_.size(); ++i)
-    {
-        const DesktopWidget& widget = widgets_[i];
-        if (widget.type != DesktopWidgetType::FileGroup) continue;
-        if (std::find(widget.childWidgetIds.begin(),
-                widget.childWidgetIds.end(), childId) !=
-            widget.childWidgetIds.end())
-            return i;
-    }
-    return static_cast<size_t>(-1);
-}
-
-bool DesktopApp::IsGroupedWidget(
-    const DesktopWidget& widget) const
-{
-    if (widget.type == DesktopWidgetType::LuaScript && snowdesktop::lua_stack::Owner(widgets_, widget.id) < widgets_.size()) return true;
-    if (IsGroupedCollection(widget)) return true;
-    return (widget.type == DesktopWidgetType::FileCategories ||
-            widget.type == DesktopWidgetType::FolderMapping) &&
-        FindFileGroupIndexForChild(widget.id) < widgets_.size();
-}
-
 bool DesktopApp::IsRecycleBinDockEntry(const DockEntry& entry) const
 {
     return entry.type == DockEntryType::DesktopItem &&
@@ -328,71 +280,16 @@ void DesktopApp::NormalizeDockRecycleBinPosition()
 
 void DesktopApp::LoadDockUsageStats()
 {
-    dockUsageStats_.clear();
-    std::ifstream file(GetDataFilePath(L"SnowDesktop.dock-usage.json"), std::ios::binary);
-    if (!file) return;
-    std::ostringstream stream;
-    stream << file.rdbuf();
-    JsonValue root;
-    if (!ParseJson(stream.str(), root) || !root.IsObject()) return;
-    const JsonValue* entries = root.Find("entries");
-    if (!entries || !entries->IsArray()) return;
-
-    auto readInteger = [](const JsonValue& object,
-        std::string_view name, int& output)
-    {
-        const JsonValue* value = object.Find(name);
-        if (!value || !value->IsNumber() ||
-            !std::isfinite(value->number) ||
-            std::trunc(value->number) != value->number ||
-            value->number < std::numeric_limits<int>::min() ||
-            value->number > std::numeric_limits<int>::max())
-        {
-            return false;
-        }
-        output = static_cast<int>(value->number);
-        return true;
-    };
-
-    for (const JsonValue& entry : entries->array)
-    {
-        if (!entry.IsObject()) continue;
-        const JsonValue* key = entry.Find("key");
-        int launchCount = 0;
-        int lastUsed = 0;
-        if (key && key->IsString() &&
-            readInteger(entry, "launchCount", launchCount) &&
-            launchCount > 0)
-        {
-            readInteger(entry, "lastUsed", lastUsed);
-            const std::wstring normalizedKey =
-                ToUpperInvariant(Utf8ToWide(key->string));
-            if (!normalizedKey.empty())
-                dockUsageStats_[normalizedKey] =
-                    { launchCount, std::max(0, lastUsed) };
-        }
-    }
+    snowdesktop::dock_usage::Load(GetDataFilePath(L"SnowDesktop.dock-usage.json"), dockUsageStats_);
 }
 
 void DesktopApp::SaveDockUsageStats() const
 {
-    std::ofstream file(GetDataFilePath(L"SnowDesktop.dock-usage.json"),
-        std::ios::binary | std::ios::trunc);
-    if (!file) return;
-    file << "{\n  \"entries\": [\n";
-    size_t written = 0;
-    for (const auto& [key, record] : dockUsageStats_)
-    {
-        if (key.empty() || record.launchCount <= 0) continue;
-        const size_t itemIndex = FindItemIndexByKey(key);
-        if (itemIndex >= items_.size() || !IsDockUsageEligibleItem(items_[itemIndex]))
-            continue;
-        if (written++ > 0) file << ",\n";
-        file << "    { \"key\": \"" << JsonEscapeUtf8(key)
-             << "\", \"launchCount\": " << record.launchCount
-             << ", \"lastUsed\": " << record.lastUsed << " }";
-    }
-    file << "\n  ]\n}\n";
+    snowdesktop::dock_usage::Save(GetDataFilePath(L"SnowDesktop.dock-usage.json"), dockUsageStats_,
+        [this](const std::wstring& key) {
+            const size_t index = FindItemIndexByKey(key);
+            return index < items_.size() && IsDockUsageEligibleItem(items_[index]);
+        });
 }
 
 bool DesktopApp::IsDockUsageEligibleItem(const DesktopItem& item) const

@@ -18,6 +18,9 @@ inline constexpr int kMaximumColumns = 5;
 inline constexpr int kEmptyColumns = 3;
 inline constexpr int kEmptyRows = 2;
 inline constexpr int kMinimumListRows = 5;
+inline constexpr float kControlGapCu = 6.0f;
+inline constexpr float kHostedBodyInsetCu = 4.0f;
+inline constexpr float kTabSegmentInsetCu = 2.0f;
 
 // Popup chrome must remain readable even on a very dense desktop grid.
 inline float ResolveChromeScale(float pageScale)
@@ -59,28 +62,35 @@ inline int ScaleDimension(float value, float scale)
         static_cast<float>(value) * std::clamp(scale, 0.1f, 8.0f))));
 }
 
-inline HeaderVerticalBounds ResolveHeaderVerticalBounds(float scale)
+inline int ResolveControlRowHeight(float tabHeightCu, float scale)
 {
-    scale = ResolveChromeScale(scale);
-    HeaderVerticalBounds result;
-    result.titleTop = ScaleDimension(18, scale);
-    result.titleBottom = ScaleDimension(44, scale);
-
-    const int sortButtonHeight = ScaleDimension(34, scale);
-    result.sortButtonTop = result.titleTop +
-        (result.titleBottom - result.titleTop - sortButtonHeight) / 2;
-    result.sortButtonBottom = result.sortButtonTop + sortButtonHeight;
-    return result;
+    return ScaleDimension(collection_group_rules::ResolveCategorizedControlMetrics(tabHeightCu).searchBoxHeightCu, scale);
 }
 
-// Rendering and inline title editing must share the visible popup anchor.
-inline RECT ResolveTitleRect(const RECT& popup, float scale,
+inline RECT ResolveBodyRect(const RECT& popup, const Metrics& metrics)
+{
+    const LONG left = std::min<LONG>(popup.left + metrics.paddingX, (popup.left + popup.right) / 2);
+    const LONG right = std::max<LONG>(left, popup.right - metrics.paddingX);
+    const LONG top = std::min<LONG>(popup.bottom, popup.top + metrics.headerHeight);
+    return {left, top, right, std::max<LONG>(top, popup.bottom - metrics.bottomPadding)};
+}
+
+inline RECT ResolveHostedContentRect(RECT frame, float scale)
+{
+    const int inset = ScaleDimension(kHostedBodyInsetCu, scale);
+    frame.left = std::min<LONG>(frame.right, frame.left + inset);
+    frame.right = std::max<LONG>(frame.left, frame.right - inset);
+    return frame;
+}
+
+// Painting, commands and title editing share the first control row.
+inline RECT ResolveTitleRect(const RECT& popup, const Metrics& metrics,
     LONG trailingLimit = (std::numeric_limits<LONG>::max)())
 {
-    const auto header = ResolveHeaderVerticalBounds(scale);
-    const int inset = ScaleDimension(22, scale);
-    return { popup.left + inset, popup.top + header.titleTop,
-        std::min(popup.right - inset, trailingLimit), popup.top + header.titleBottom };
+    const RECT body = ResolveBodyRect(popup, metrics);
+    const LONG top = std::min<LONG>(popup.bottom, popup.top + metrics.topPadding);
+    return {body.left, top, std::max(body.left, std::min(body.right, trailingLimit)),
+        std::min<LONG>(popup.bottom, top + metrics.controlRowHeight)};
 }
 
 /**
@@ -97,7 +107,8 @@ inline Metrics ResolveMetrics(
     int minimumVisualWidth,
     int minimumVisualHeight,
     float pageScale,
-    int minimumListHeight = 1)
+    int minimumListHeight = 1,
+    float categorizedTabHeightCu = 34.0f)
 {
     Metrics result;
     result.scale = ResolveChromeScale(pageScale);
@@ -108,8 +119,10 @@ inline Metrics ResolveMetrics(
     result.minimumListHeight = std::max(1, minimumListHeight);
     result.paddingX = ScaleDimension(
         kCollectionPopupPaddingX, result.scale);
-    result.headerHeight = ScaleDimension(
-        kCollectionPopupHeaderHeight, result.scale);
+    result.topPadding = ScaleDimension(12.0f, result.scale);
+    result.controlRowHeight = ResolveControlRowHeight(categorizedTabHeightCu, result.scale);
+    result.controlGap = ScaleDimension(kControlGapCu, result.scale);
+    result.headerHeight = result.topPadding + result.controlRowHeight + result.controlGap;
     result.bottomPadding = ScaleDimension(
         kCollectionPopupBottomPadding, result.scale);
     result.gapX = ScaleDimension(

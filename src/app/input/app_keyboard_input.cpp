@@ -33,7 +33,7 @@ bool DesktopApp::TryHandlePageNavigationKey(
     const auto navigationAction =
         snowdesktop::page_navigation_rules::ResolveKeyboardNavigationAction(
             generalSettings_.pageNavigationKeyboardEnabled, textInputActive,
-            quickNavigation_->open || IsCollectionPopupInteractive() ||
+            quickNavigation_->open || IsCollectionPopupKeyboardTarget() ||
                 !luaWidgetPanelRequest_.widgetId.empty() ||
                 (systemPanel_ && systemPanel_->IsOpen()) ||
                 keyboardNavInsideWidget_ ||
@@ -145,7 +145,7 @@ void DesktopApp::DispatchLuaWidgetViewKeyEvent(
     WPARAM key, bool pressed, bool repeated)
 {
     if (!widgetEngine_ || quickNavigation_->open ||
-        IsCollectionPopupInteractive())
+        IsCollectionPopupKeyboardTarget())
         return;
     const bool ctrl = (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) != 0;
     const bool shift = (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) != 0;
@@ -154,8 +154,39 @@ void DesktopApp::DispatchLuaWidgetViewKeyEvent(
         key, pressed, repeated, ctrl, shift, alt);
 }
 
+bool DesktopApp::SelectDockFolderPopupKeyboardItem(size_t visibleIndex, bool present)
+{
+    auto& popup = dockFolderPopupWidget_;
+    const size_t index = GetPopupFolderEntryIndex(popup, visibleIndex);
+    if (index >= popup.folderEntries.size()) return false;
+    if (auto* view = GetCategorizedPopupView()) view->SetSearchFocused(false);
+    ClearSelection();
+    for (auto& entry : popup.folderEntries) entry.selected = false;
+    popup.folderEntries[index].selected = true;
+    keyboardNavWidgetIndex_ = FindWidgetIndexById(dockFolderPopupMappingWidgetId_);
+    keyboardNavInsideWidget_ = keyboardNavWidgetIndex_ < widgets_.size();
+    keyboardNavMemberIndex_ = static_cast<int>(visibleIndex);
+    keyboardNavVisualFocus_ = true;
+    const RECT content = GetCollectionPopupContentRect(popupRect_);
+    const RECT item = GetCollectionPopupItemRect(popupRect_, visibleIndex);
+    if (item.top < content.top) popupScrollOffset_ += item.top - content.top;
+    else if (item.bottom > content.bottom) popupScrollOffset_ += item.bottom - content.bottom;
+    popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
+        GetCollectionPopupMaxScrollOffset(popup, popupRect_));
+    if (present)
+    {
+        ResetCollectionPopupAnimationCache();
+        if (folderPreview_) RefreshDockFolderPopupGeometry();
+        UpdateHostInputImePosition();
+        InvalidateFloatingPopupWindow(false);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+    return true;
+}
+
 bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
 {
+    if (key == VK_ESCAPE && repeated) return true;
     if (key == VK_ESCAPE && nativeMenuSession_)
     {
         DismissActiveContextMenuForPopupTransition();
@@ -201,10 +232,35 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     }
 
     if (renameController_.IsActive()) return false;
+    const bool popupKeyboardTarget = IsCollectionPopupKeyboardTarget();
+    const bool previewKeyboardTarget = folderPreview_ && popupKeyboardTarget;
+    const bool folderPopupKeyboardTarget = dockFolderPopupOpen_ && (!folderPreview_ || popupKeyboardTarget);
+    bool ctrl = (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+    bool shift = (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+    const bool alt = (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) != 0;
+    if (previewKeyboardTarget && !quickNavigation_->open && luaWidgetPanelRequest_.widgetId.empty() &&
+        !dragSession_.HasContext() && !dragDropController_.IsTransportActive())
+    {
+        if (key == 'F' && ctrl && !shift && !alt)
+        {
+            if (!repeated) SetFolderPreviewSearchOpen(true);
+            return true;
+        }
+        if (key == VK_ESCAPE && folderPreview_->searchOpen)
+        {
+            if (HasFocusedFolderPreviewSearch())
+                folderPreview_->headerFocus = snowdesktop::folder_preview::HeaderTarget{
+                    snowdesktop::folder_preview::HeaderControl::Search};
+            SetFolderPreviewSearchOpen(false);
+            return true;
+        }
+        if (!ctrl && !alt && HandleFolderPreviewHeaderKey(key, shift, repeated)) return true;
+    }
 
     std::optional<CategorizedPopupScope> popupLayout;
-    const bool popupNavigationKey = key == VK_RETURN || key == VK_ESCAPE || key == VK_UP ||
-        key == VK_DOWN || key == VK_LEFT || key == VK_RIGHT || key == VK_HOME || key == VK_END || key == VK_TAB;
+    const bool popupArrowKey = key == VK_UP || key == VK_DOWN || key == VK_LEFT || key == VK_RIGHT;
+    const bool popupNavigationKey = key == VK_RETURN || key == VK_ESCAPE || popupArrowKey ||
+        key == VK_HOME || key == VK_END || key == VK_TAB;
     if (popupNavigationKey && !dockFolderPopupOpen_ && IsCollectionPopupInteractive())
         if (const auto* popup = GetOpenPopupWidget())
             if (auto* view = GetCategorizedPopupView())
@@ -216,15 +272,17 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         {
             const bool handled = view->HandleSearchKey(key);
             popupScrollOffset_ = 0;
-            ResetCollectionPopupAnimationCache();
+            if (previewKeyboardTarget) RefreshDockFolderPopupGeometry();
+            else ResetCollectionPopupAnimationCache();
             InvalidateRect(hwnd_, nullptr, FALSE);
             if (handled || (key != VK_RETURN && key != VK_UP && key != VK_DOWN)) return handled;
         }
-        for (auto& c : containers_)
+        if (!previewKeyboardTarget)
         {
-            auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());
-            if (searchable && searchable->IsSearchFocused())
+            for (auto& c : containers_)
             {
+                auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());
+                if (!searchable || !searchable->IsSearchFocused()) continue;
                 if (searchable->HandleSearchKey(key))
                 {
                     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -242,34 +300,37 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     {
         if (key == VK_ESCAPE)
         {
-            CloseQuickNavigation();
+            CloseQuickNavigation(true, true);
             return true;
         }
     }
 
-    bool ctrl = (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-    bool shift = (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-    bool alt = (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) != 0;
     bool restoreFloatingDockLayer = false;
-    if (key == VK_RETURN && repeated && IsCollectionPopupInteractive()) return true;
+    if (key == VK_RETURN && repeated && popupKeyboardTarget) return true;
+    if (key == VK_RETURN && !alt && !repeated && !quickNavigation_->open && luaWidgetPanelRequest_.widgetId.empty() &&
+        TryFolderPreviewActivation({}, (ctrl ? MK_CONTROL : 0) | (shift ? MK_SHIFT : 0), {}, true))
+        return true;
 
     // Keyboard selection follows the whole fan's order and scrolls its window
     // as needed; the final action still opens the complete grid.
     if (auto* popup = GetOpenPopupWidget(); !ctrl && !alt &&
-        IsCollectionPopupInteractive() && popup && UsesCollectionPopupFan(*popup) &&
+        popupKeyboardTarget && popup && UsesCollectionPopupFan(*popup) &&
         GetPopupItemCount(*popup) > 0)
     {
         const int count = static_cast<int>(GetPopupItemCount(*popup));
+        const auto& keys = GetPopupItemKeysView(*popup);
         int current = popupFanActionFocused_ ? count : -1;
         for (int i = 0; current < 0 && i < count; ++i)
         {
             if (dockFolderPopupOpen_)
             {
-                if (popup->folderEntries[i].selected) current = i;
+                if (popup->folderEntries[GetPopupFolderEntryIndex(
+                        *popup, static_cast<size_t>(i))].selected)
+                    current = i;
             }
             else
             {
-                const auto item = FindItemIndexByKey(popup->itemKeys[i]);
+                const auto item = FindItemIndexByKey(keys[i]);
                 if (item < items_.size() && items_[item].selected) current = i;
             }
         }
@@ -279,26 +340,27 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
                 ShowAllCollectionPopupItems();
             else if (dockFolderPopupOpen_)
             {
-                const auto path = popup->folderEntries[current].fullPath;
+                const auto path = popup->folderEntries[GetPopupFolderEntryIndex(
+                    *popup, static_cast<size_t>(current))].fullPath;
                 if (LaunchPathWithShortcutPolicy(hwnd_, path)) CloseCollectionPopup();
             }
             else
             {
-                const auto item = FindItemIndexByKey(popup->itemKeys[current]);
-                if (item < items_.size() && LaunchDesktopItem(item)) CloseCollectionPopup();
+                const auto item = FindItemIndexByKey(keys[current]);
+                const bool keepPopup = popup->type == DesktopWidgetType::Collection;
+                if (item < items_.size() && LaunchDesktopItem(item) && !keepPopup) CloseCollectionPopup();
             }
             return true;
         }
-        if (key == VK_UP || key == VK_DOWN || key == VK_LEFT || key == VK_RIGHT ||
-            key == VK_HOME || key == VK_END || key == VK_TAB)
+        if (popupArrowKey || key == VK_HOME || key == VK_END || key == VK_TAB ||
+            (key == VK_RETURN && current < 0))
         {
             int next = current;
             const bool forward = key == VK_RIGHT || (key == VK_TAB && !shift) ||
                 (key == VK_DOWN && CollectionPopupFanRootAbove()) ||
                 (key == VK_UP && !CollectionPopupFanRootAbove());
-            if (key == VK_HOME) next = 0;
+            if (current < 0 || key == VK_HOME) next = 0;
             else if (key == VK_END) next = count;
-            else if (current < 0) next = static_cast<int>(std::ceil(GetCollectionPopupFanScrollOffset(popupRect_)));
             else if (key == VK_TAB) next = (current + (forward ? 1 : count)) % (count + 1);
             else next = std::clamp(current + (forward ? 1 : -1), 0, count);
             ClearSelection();
@@ -308,13 +370,23 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             if (next < count)
             {
                 EnsureCollectionPopupFanItemVisible(static_cast<size_t>(next));
-                if (dockFolderPopupOpen_) popup->folderEntries[next].selected = true;
+                if (dockFolderPopupOpen_)
+                    popup->folderEntries[GetPopupFolderEntryIndex(
+                        *popup, static_cast<size_t>(next))].selected = true;
                 else
                 {
-                    const auto item = FindItemIndexByKey(popup->itemKeys[next]);
+                    const auto item = FindItemIndexByKey(keys[next]);
                     if (item < items_.size()) items_[item].selected = true;
                 }
             }
+            if (!dockFolderPopupOpen_ && popupWidgetIndex_ < widgets_.size())
+            {
+                keyboardNavInsideWidget_ = true;
+                keyboardNavWidgetIndex_ = popupWidgetIndex_;
+                keyboardNavMemberIndex_ = next < count ? next : -1;
+                keyboardNavVisualFocus_ = true;
+            }
+            InvalidateFloatingPopupWindow(false);
             InvalidateRect(hwnd_, nullptr, FALSE);
             return true;
         }
@@ -333,24 +405,29 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     }
     if (!luaWidgetPanelRequest_.widgetId.empty() &&
         (luaWidgetPanelRequest_.modal ||
+            (luaWidgetPanelAnimation_.IsInteractive() && popupNavigationKey) ||
             (widgetEngine_ && widgetEngine_->HasHostViewKeyboardFocus())) &&
         key != VK_ESCAPE)
         return true;
 
-    if (dockFolderPopupOpen_ && IsCollectionPopupInteractive() && !ctrl && !alt &&
-        (key == VK_UP || key == VK_DOWN || key == VK_LEFT || key == VK_RIGHT ||
-            key == VK_HOME || key == VK_END))
+    if (dockFolderPopupOpen_ && popupKeyboardTarget && !ctrl && !alt &&
+        (popupArrowKey || key == VK_HOME || key == VK_END ||
+            (key == VK_RETURN && std::none_of(dockFolderPopupWidget_.folderEntries.begin(),
+                dockFolderPopupWidget_.folderEntries.end(), [](const auto& entry) { return entry.selected; }))))
     {
         const int count = static_cast<int>(GetPopupItemCount(dockFolderPopupWidget_));
         if (count == 0) return true;
         int current = -1;
         for (int index = 0; index < count; ++index)
-            if (dockFolderPopupWidget_.folderEntries[
-                    GetPopupFolderEntryIndex(dockFolderPopupWidget_, static_cast<size_t>(index))].selected)
+        {
+            const size_t entry = GetPopupFolderEntryIndex(dockFolderPopupWidget_, static_cast<size_t>(index));
+            if (entry < dockFolderPopupWidget_.folderEntries.size() &&
+                dockFolderPopupWidget_.folderEntries[entry].selected)
             {
                 current = index;
                 break;
             }
+        }
         const int columns = UsesCollectionPopupList(dockFolderPopupWidget_)
             ? 1 : std::max(1, GetCollectionPopupColumnCount(popupRect_));
         int next = current < 0 ? 0 : current;
@@ -359,28 +436,11 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         else if (current >= 0)
             next = std::clamp(current + (key == VK_UP ? -columns : key == VK_DOWN ? columns :
                 key == VK_LEFT ? -1 : 1), 0, count - 1);
-        if (auto* view = GetCategorizedPopupView()) view->SetSearchFocused(false);
-        ClearSelection();
-        for (auto& entry : dockFolderPopupWidget_.folderEntries) entry.selected = false;
-        dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(
-            dockFolderPopupWidget_, static_cast<size_t>(next))].selected = true;
-        keyboardNavWidgetIndex_ = FindWidgetIndexById(dockFolderPopupMappingWidgetId_);
-        keyboardNavInsideWidget_ = keyboardNavWidgetIndex_ < widgets_.size();
-        keyboardNavMemberIndex_ = next;
-        keyboardNavVisualFocus_ = true;
-        const RECT content = GetCollectionPopupContentRect(popupRect_);
-        const RECT item = GetCollectionPopupItemRect(popupRect_, static_cast<size_t>(next));
-        if (item.top < content.top) popupScrollOffset_ += item.top - content.top;
-        else if (item.bottom > content.bottom) popupScrollOffset_ += item.bottom - content.bottom;
-        popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
-            GetCollectionPopupMaxScrollOffset(dockFolderPopupWidget_, popupRect_));
-        ResetCollectionPopupAnimationCache();
-        UpdateHostInputImePosition();
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        SelectDockFolderPopupKeyboardItem(static_cast<size_t>(next));
         return true;
     }
 
-    if (ctrl && !alt && (key == 'Z' || key == 'Y') && widgetEngine_ &&
+    if (!previewKeyboardTarget && ctrl && !alt && (key == 'Z' || key == 'Y') && widgetEngine_ &&
         !widgetEngine_->HasFocusedHostInput() &&
         !(snowdesktop::private_pointer::AsyncKeyState(VK_LWIN) & 0x8000) && !(snowdesktop::private_pointer::AsyncKeyState(VK_RWIN) & 0x8000))
     {
@@ -439,7 +499,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
 
     if (widgetEngine_ && !quickNavigation_->open &&
         luaWidgetPanelRequest_.widgetId.empty() &&
-        !IsCollectionPopupInteractive())
+        !popupKeyboardTarget)
     {
         size_t selectedLua = static_cast<size_t>(-1);
         bool multipleSelected = false;
@@ -483,6 +543,22 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     if (insertPaste) { ctrl = true; shift = false; }
     // Alt/Win combinations belong to the system or focused component.
     if (win || (alt && key != VK_RETURN)) return false;
+    if (!ctrl && !alt && (key == VK_RETURN || key == VK_SPACE) &&
+        !quickNavigation_->open && !IsCollectionPopupHostedByFloatingWindow() &&
+        luaWidgetPanelRequest_.widgetId.empty() && (!systemPanel_ || !systemPanel_->IsOpen()) &&
+        ActivateDesktopSurfaceKeyboardFocus(repeated))
+        return true;
+    if (!ctrl && !alt && popupKeyboardTarget && !dockFolderPopupOpen_ &&
+        popupWidgetIndex_ < widgets_.size() && (popupArrowKey || key == VK_RETURN) &&
+        (!keyboardNavInsideWidget_ || keyboardNavWidgetIndex_ != popupWidgetIndex_ ||
+            (keyboardNavMemberIndex_ < 0 && !keyboardNavSearchBox_)))
+    {
+        popupLayout.reset();
+        popupScrollOffset_ = 0;
+        EnterWidget();
+        InvalidateFloatingPopupWindow(false);
+        return true;
+    }
     switch (key)
     {
     case 'Z':
@@ -498,7 +574,12 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         {
             std::wstring directory;
             std::optional<NewItemTarget> newItemTarget;
-            if (dockFolderPopupOpen_ && dockFolderPopupAvailable_)
+            if (previewKeyboardTarget && !dockFolderPopupAvailable_)
+            {
+                MessageBeep(MB_ICONWARNING);
+                break;
+            }
+            if (folderPopupKeyboardTarget && dockFolderPopupAvailable_)
             {
                 directory = dockFolderPopupWidget_.sourceFolderPath;
                 newItemTarget = NewItemTarget{NewItemTarget::Surface::FolderPopup, {}, dockFolderPopupSourceId_};
@@ -581,61 +662,33 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             (void)RemoveLuaStackMember(id, screen);
             break;
         }
-        cutPaths_.clear();
-        std::vector<std::wstring> paths;
-        for (const auto& item : items_)
-        {
-            if (!item.selected || !item.desktopIconClsid.empty()) continue;
-            wchar_t path[MAX_PATH]{};
-            if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
-            {
-                cutPaths_.erase(path);
-                paths.push_back(path);
-            }
-        }
-
-        if (!paths.empty())
-        {
-            std::vector<snowdesktop::ShellFileOperationStep> steps;
-            steps.push_back({
-                FO_DELETE,
-                std::move(paths),
-                {},
-                static_cast<FILEOP_FLAGS>(shift
-                    ? FOF_WANTNUKEWARNING
-                    : (FOF_ALLOWUNDO |
-                       FOF_NOCONFIRMATION)) });
-            QueueShellFileOperation(
-                std::move(steps),
-                [this](bool succeeded) {
-                    if (succeeded)
-                        RequestShellRefresh();
-                });
-        }
+        QueueFileDeletion(GetSelectedDesktopFilePaths(), shift);
         break;
     }
     case 'C':
+    {
         if (!ctrl) break;
         handled = true;
         restoreFloatingDockLayer = true;
         if (shift)
         {
             auto paths = GetSelectedFolderEntryPaths();
-            if (paths.empty())
-                for (const auto& item : items_)
-                {
-                    if (!item.selected || !item.desktopIconClsid.empty()) continue;
-                    wchar_t path[MAX_PATH]{};
-                    if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
-                        paths.emplace_back(path);
-                }
-            if (!paths.empty()) CopyPathsToClipboard(paths);
+            if (paths.empty()) paths = GetSelectedDesktopFilePaths();
+            CopyPathsToClipboard(paths);
             break;
         }
         if (CopyCutSelectedFolderEntries(false))
             break;
-        InvokeSelectedShellVerb("copy");
+        const bool hasNamespaceSelection = std::any_of(items_.begin(), items_.end(),
+            [](const auto& item) {
+                return item.selected && item.childPidl.get() && !item.desktopIconClsid.empty();
+            });
+        if (hasNamespaceSelection)
+            InvokeSelectedShellVerb("copy");
+        else
+            CopyCutSelectedDesktopFiles(false, L"desktop_keyboard");
         break;
+    }
     case 'X':
         if (!ctrl) break;
     {
@@ -644,50 +697,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         if (CopyCutSelectedFolderEntries(true))
             break;
 
-        cutPaths_.clear();
-
-        std::vector<PCUITEMID_CHILD> pidls;
-        std::vector<size_t> selectedIndexes;
-        for (size_t i = 0; i < items_.size(); ++i)
-        {
-            if (!items_[i].selected || !items_[i].desktopIconClsid.empty()) continue;
-            pidls.push_back(reinterpret_cast<PCUITEMID_CHILD>(items_[i].childPidl.get()));
-            selectedIndexes.push_back(i);
-        }
-
-        if (!pidls.empty())
-        {
-            ComPtr<IDataObject> dataObj;
-            if (SUCCEEDED(desktopFolder_->GetUIObjectOf(hwnd_, static_cast<UINT>(pidls.size()),
-                pidls.data(), IID_IDataObject, nullptr,
-                reinterpret_cast<void**>(dataObj.GetAddressOf()))) && dataObj)
-            {
-                CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
-                FORMATETC fmt{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
-                STGMEDIUM med{};
-                med.tymed = TYMED_HGLOBAL;
-                med.hGlobal = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD));
-                if (med.hGlobal)
-                {
-                    *static_cast<DWORD*>(GlobalLock(med.hGlobal)) = DROPEFFECT_MOVE;
-                    GlobalUnlock(med.hGlobal);
-                    dataObj->SetData(&fmt, &med, TRUE);
-                }
-
-                OleSetClipboard(dataObj.Get());
-                OleFlushClipboard();
-            }
-        }
-
-        for (size_t idx : selectedIndexes)
-        {
-            wchar_t path[MAX_PATH]{};
-            if (SHGetPathFromIDListW(items_[idx].absolutePidl.get(), path))
-                cutPaths_.insert(path);
-        }
-
-        UpdateCutState();
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        CopyCutSelectedDesktopFiles(true);
     }
     break;
     case 'V':
@@ -697,7 +707,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         restoreFloatingDockLayer = true;
         // Once a popup/mapping has selected the destination, failure belongs
         // to that target. Never retry the user's paste on the desktop.
-        if (dockFolderPopupOpen_)
+        if (folderPopupKeyboardTarget)
         {
             if (!dockFolderPopupAvailable_ || !PasteClipboardToFolderPath(
                     dockFolderPopupWidget_.sourceFolderPath))
@@ -716,13 +726,13 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     break;
     case 'A':
         if (!ctrl) break;
-        if (IsCollectionPopupInteractive())
+        if (popupKeyboardTarget)
             ShowAllCollectionPopupItems();
         handled = true;
         restoreFloatingDockLayer = true;
     {
         if (auto* popup = GetOpenPopupWidget();
-            IsCollectionPopupInteractive() && popup)
+            popupKeyboardTarget && popup)
         {
             const size_t owner = dockFolderPopupOpen_
                 ? FindWidgetIndexById(dockFolderPopupMappingWidgetId_) : popupWidgetIndex_;
@@ -754,6 +764,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             if (targets.empty())
                 widgets_[widgetIndex].selected = true;
             SyncKeyboardNavFromSelection();
+            keyboardNavVisualFocus_ = targets.empty();
             InvalidateRect(hwnd_, nullptr, FALSE);
             break;
         }
@@ -774,13 +785,12 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             else if (paths.empty()) InvokeSelectedShellVerb("properties");
             break;
         }
-        if (!ctrl && !shift && dockFolderPopupOpen_ &&
-            IsCollectionPopupInteractive())
+        if (dockFolderPopupOpen_ && popupKeyboardTarget)
         {
             if (repeated) break;
             const auto paths = GetSelectedFolderEntryPaths();
             if (paths.size() == 1 &&
-                LaunchPathWithShortcutPolicy(hwnd_, paths.front()))
+                LaunchPathWithShortcutPolicy(hwnd_, paths.front()) && !folderPreview_)
                 CloseCollectionPopup();
             break;
         }
@@ -862,10 +872,20 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
                     luaWidgetPanelRequest_.widgetId,
                     "escape");
         }
-        else if (IsCollectionPopupInteractive())
+        else if (previewKeyboardTarget)
+            NavigateFolderPreviewBack(true);
+        else if (popupKeyboardTarget)
         {
+            if (collectionPopupKeyboardReturn_)
+            {
+                CloseCollectionPopup(true, true);
+                return true;
+            }
             if (keyboardNavInsideWidget_ && keyboardNavWidgetIndex_ < widgets_.size() &&
-                snowdesktop::single_cell_widget::IsSingleCell(widgets_[keyboardNavWidgetIndex_]))
+                (keyboardNavWidgetIndex_ == popupWidgetIndex_ ||
+                    (dockFolderPopupOpen_ &&
+                        widgets_[keyboardNavWidgetIndex_].id == dockFolderPopupMappingWidgetId_ &&
+                        snowdesktop::single_cell_widget::IsSingleCell(widgets_[keyboardNavWidgetIndex_]))))
             {
                 ExitWidget();
                 if (IsCollectionPopupInteractive()) CloseCollectionPopup(false);
@@ -886,7 +906,10 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     case VK_RIGHT:
         handled = true;
         if (keyboardNavInsideWidget_)
+        {
             NavigateWidgetMembers(key);
+            if (popupKeyboardTarget) InvalidateFloatingPopupWindow(false);
+        }
         else
             NavigateDesktopGrid(key);
         break;
@@ -909,7 +932,8 @@ bool DesktopApp::TryDismissPopupForEscape()
     using snowdesktop::desktop_keyboard_rules::PopupEscapeAction;
     const auto action = snowdesktop::desktop_keyboard_rules::ResolvePopupEscapeAction(
         quickNavigation_->open, !luaWidgetPanelRequest_.widgetId.empty(),
-        luaWidgetPanelRequest_.dismissOnEscape, GetOpenPopupWidget() != nullptr);
+        luaWidgetPanelRequest_.dismissOnEscape,
+        GetOpenPopupWidget() != nullptr && (!folderPreview_ || folderPreview_->keyboardFocused));
     switch (action)
     {
     case PopupEscapeAction::CloseQuickNavigation:
@@ -921,6 +945,8 @@ bool DesktopApp::TryDismissPopupForEscape()
     case PopupEscapeAction::KeepLuaPanel:
         return true;
     case PopupEscapeAction::CloseCollectionPopup:
+        if (folderPreview_)
+            return NavigateFolderPreviewBack();
         pendingCollectionPopupOpen_.reset();
         CancelCollectionPopupDwell();
         CancelCollectionGroupTabDwell();

@@ -250,6 +250,7 @@ bool LoadPersonalization(
     ReadBoolField(text, "popupHoverOpen", s.popupHoverOpen);
     s.popupCloseOnMouseLeave = false;
     ReadBoolField(text, "popupCloseOnMouseLeave", s.popupCloseOnMouseLeave);
+    ReadBoolField(text, "folderDoubleClickPreview", s.folderDoubleClickPreview);
     s.popupHoverDelayMs = kDefaultPopupHoverDelayMs;
     if (documentParsed)
         if (const auto* delay = document.Find("popupHoverDelayMs"); delay && delay->IsNumber())
@@ -368,6 +369,8 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
          << NormalizePopupHoverDelayMs(s.popupHoverDelayMs) << ",\n";
     file << "  \"popupCloseOnMouseLeave\": "
          << (s.popupCloseOnMouseLeave ? "true" : "false") << ",\n";
+    file << "  \"folderDoubleClickPreview\": "
+         << (s.folderDoubleClickPreview ? "true" : "false") << ",\n";
     file << "  \"backgroundPreset\": " << s.backgroundPreset << ",\n";
     file << "  \"cornerRadius\": " << s.cornerRadius << ",\n";
     auto pinAppearance = s;

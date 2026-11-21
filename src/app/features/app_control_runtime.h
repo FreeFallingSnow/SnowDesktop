@@ -32,6 +32,14 @@ struct Runtime
     std::unique_ptr<winui::IWidgetsPageBackend> controlPackages;
     demo::ExportService demo;
     ~Runtime() { Stop(); }
+    void RevokeAccess()
+    {
+        privatePointer.End();
+        cursor.Hide();
+        capture.Cancel();
+        demo.Cancel();
+    }
+
     void Stop() noexcept
     {
         if (controlPackages) controlPackages->Close();

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 namespace snowdesktop
 {
@@ -198,7 +199,7 @@ UiScheduleToken UiAnimationScheduler::StartAnimation(
 }
 
 UiScheduleToken UiAnimationScheduler::ScheduleInterval(
-    UINT intervalMilliseconds, TimerCallback callback)
+    UINT intervalMilliseconds, TimerCallback callback, IntervalOwner owner)
 {
     if (!callback || (!timer_ && !Initialize()))
         return 0;
@@ -211,6 +212,8 @@ UiScheduleToken UiAnimationScheduler::ScheduleInterval(
         interval,
         true,
         std::move(callback),
+        false,
+        owner,
     });
     ArmNextWakeup();
     return token;
@@ -286,6 +289,7 @@ void UiAnimationScheduler::CancelAll()
     lastDeliveredFrameMilliseconds_ = 0.0;
     lastPresentationMilliseconds_ = 0.0;
     nextComponentFrameMilliseconds_ = 0.0;
+    yieldedComponentWork_ = false;
     consecutiveOverBudgetFrames_ = 0;
     recoveryStartMilliseconds_ = 0.0;
     adaptiveDivisor_ = 1;
@@ -311,22 +315,22 @@ void UiAnimationScheduler::DispatchDue()
     const auto cancellation = presentationCancellation_;
     bool componentFrameDispatched = false;
     performance::Scope dispatchTrace("animation.scheduler", "dispatch");
-    std::vector<UiScheduleToken> dueTimers;
-    dueTimers.reserve(timerEntries_.size());
+    std::vector<UiScheduleToken> hostTimers;
+    std::vector<std::pair<double, UiScheduleToken>> componentTimers;
     for (const auto& [token, entry] : timerEntries_)
     {
-        if (entry.dueMilliseconds <= now + 0.05 &&
-            (!entry.componentFrame ||
-                nextComponentFrameMilliseconds_ <= now + 0.05))
-            dueTimers.push_back(token);
+        if (entry.dueMilliseconds > now + 0.05 ||
+            (entry.componentFrame && nextComponentFrameMilliseconds_ > now + 0.05))
+            continue;
+        if (entry.componentFrame || entry.intervalOwner == IntervalOwner::Widget)
+            componentTimers.emplace_back(entry.dueMilliseconds, token);
+        else
+            hostTimers.push_back(token);
     }
-
-    dispatchingTimers_ = true;
-    for (UiScheduleToken token : dueTimers)
-    {
+    const auto dispatchTimer = [&](UiScheduleToken token) {
         auto found = timerEntries_.find(token);
         if (found == timerEntries_.end())
-            continue;
+            return;
 
         TimerCallback callback = found->second.callback;
         componentFrameDispatched |= found->second.componentFrame;
@@ -337,7 +341,7 @@ void UiAnimationScheduler::DispatchDue()
             found->second.dueMilliseconds =
                 AdvanceRepeatingDeadline(
                     found->second.dueMilliseconds,
-                    interval, now);
+                    interval, MonotonicMilliseconds());
         }
         else
         {
@@ -353,15 +357,15 @@ void UiAnimationScheduler::DispatchDue()
         {
             Cancel(token);
         }
-    }
+    };
+    dispatchingTimers_ = true;
+    for (UiScheduleToken token : hostTimers) dispatchTimer(token);
     dispatchingTimers_ = false;
 
-    // Component/deadline callbacks above may take longer than a frame. Sample
-    // again after that work so every animated surface receives the current
-    // time, rather than replaying a pose from before a slow callback.
+    // A host deadline can open, cancel or retarget an animation.
     const double frameNow = MonotonicMilliseconds();
-    if (!frameEntries_.empty() &&
-        frameNow + 0.05 >= nextFrameMilliseconds_)
+    const bool frameDue = !frameEntries_.empty() && frameNow + 0.05 >= nextFrameMilliseconds_;
+    if (frameDue)
     {
         const double interval = EffectiveFrameIntervalMs();
         std::uint64_t missed = 0;
@@ -452,8 +456,31 @@ void UiAnimationScheduler::DispatchDue()
         }
     }
 
-    // Deadline-only snapshots need the same boundary even with no animation
-    // registered; otherwise queued component surfaces would never be drawn.
+    FlushPresentations();
+    // Give the message pump a commit and input boundary before starting Lua.
+    // A saturated foreground may yield a given component batch only once.
+    if (!componentTimers.empty() && (frameDue || !hostTimers.empty()) && !yieldedComponentWork_)
+    {
+        yieldedComponentWork_ = true;
+        ArmNextWakeup();
+        traceFrame_ = 0;
+        return;
+    }
+    yieldedComponentWork_ = false;
+    const double componentStarted = MonotonicMilliseconds();
+    const double componentBudget = EffectiveFrameIntervalMs() * 0.25;
+    std::sort(componentTimers.begin(), componentTimers.end());
+    dispatchingTimers_ = true;
+    unsigned componentCount = 0;
+    for (const auto& due : componentTimers)
+    {
+        dispatchTimer(due.second);
+        // Limit the number of potentially expensive owner paints accumulated
+        // even when the Lua callbacks themselves only mark surfaces dirty.
+        if (++componentCount >= 4 || MonotonicMilliseconds() - componentStarted >= componentBudget)
+            break;
+    }
+    dispatchingTimers_ = false;
     FlushPresentations();
     if (componentFrameDispatched &&
         presentationCancellation_ == cancellation)
@@ -464,7 +491,7 @@ void UiAnimationScheduler::DispatchDue()
         // unusually slow callback. Named timers and native animations remain
         // independently runnable during this component-only cooldown.
         const double completed = MonotonicMilliseconds();
-        const double inputWindow = std::clamp(completed - now,
+        const double inputWindow = std::clamp(completed - componentStarted,
             0.0, 1000.0 / kMinimumRefreshHz);
         nextComponentFrameMilliseconds_ = completed + inputWindow;
     }
@@ -484,12 +511,16 @@ void UiAnimationScheduler::RequestFramePresentation(
     QueuePresentation(owner, std::move(callback));
 }
 
+bool UiAnimationScheduler::IsBatchingPresentations() const noexcept
+{
+    return (dispatchingTimers_ || advancingFrame_) && !UiImmediatePresentationScope::IsActive();
+}
+
 bool UiAnimationScheduler::RequestScheduledPresentation(
     const void* owner, std::function<bool()> callback)
 {
     if (!callback) return false;
-    if (UiImmediatePresentationScope::IsActive() ||
-        (!dispatchingTimers_ && !advancingFrame_))
+    if (!IsBatchingPresentations())
     {
         // Immediate feedback publishes the current owner state, superseding
         // any presentation queued before the native message was dispatched.

@@ -273,6 +273,20 @@ void DesktopApp::PresentPointerInteractionFrame(
         ~PointerFrameScope() { active = previous; }
     } pointerFrameScope{presentingPointerInteractionFrame_, previousPointerFrame};
 
+    if (folderPreview_ && marqueeActive_ && marqueeDockFolderPopup_)
+    {
+        if (folderPreview_->inlineBounds)
+            (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+        else if (ShouldShowFloatingPopupWindow())
+            InvalidateFloatingPopupWindow(true);
+        else
+        {
+            InvalidateRect(hwnd_, &popupRect_, FALSE);
+            PresentDesktopPointerUpdate();
+        }
+        return;
+    }
+
     // Move the cached compact drag surface before any desktop or Dock paint.
     // This keeps the ghost attached to the input message even when the
     // larger feedback surfaces need more time to redraw.
@@ -773,7 +787,7 @@ void DesktopApp::ClearPopupDragTarget()
 /**
  * @brief 结束当前拖拽会话，重置拖拽渲染缓存
  */
-void DesktopApp::EndDragSession()
+void DesktopApp::EndDragSession(bool publishDragResult)
 {
     ResetPointerInteractionDamage();
     externalFileDropPaths_.clear();
@@ -791,6 +805,10 @@ void DesktopApp::EndDragSession()
     CancelCollectionPopupDwell();
     CancelCollectionGroupTabDwell();
     dragSession_.End();
+    if (!releasingFileSources_.empty())
+        FinishFileRemovalVisibility(std::exchange(releasingFileSources_, {}), {});
+    for (const auto& request : pendingLandingCaches_)
+        if (request.visualId) InvalidateFileDropVisual(request, true);
     ResetDockRunningDrag();
     dragIconsOnly_ = false;
     ClearPopupDragTarget();
@@ -808,6 +826,7 @@ void DesktopApp::EndDragSession()
     cachedDropPreviewTarget_ = nullptr;
     cachedDropPreviewSlot_ = nullptr;
     RestoreDesktopAfterDockDrag();
+    if (!publishDragResult) return;
     // Publish the committed Dock geometry/pixels after all source wrappers
     // have been released, including drops outside every Dock host window.
     if (generalSettings_.dockEnabled)
@@ -872,6 +891,8 @@ bool DesktopApp::CanCancelPointerPressAfterCaptureLoss() const
 
 void DesktopApp::CancelPointerPressWithoutCaptureRelease()
 {
+    const bool inlinePreviewMarquee = folderPreview_ && folderPreview_->inlineBounds &&
+        marqueeActive_ && marqueeDockFolderPopup_;
     luaPanelOutsidePressGeneration_ = 0;
     rightButtonItemDrag_ = false;
     if (auto* view = GetCategorizedPopupView())
@@ -962,7 +983,9 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
     dockFolderPopupMarqueeInitialSelection_.clear();
     if (widgetEngine_)
         widgetEngine_->CancelInteractionPointerPress();
-    if (commitDockFolderPopupResize)
+    if (commitDockFolderPopupResize && folderPreview_)
+        CommitFolderPreviewDisplaySettings();
+    else if (commitDockFolderPopupResize)
         CommitDockFolderPopupStateToSource();
     else if (layoutNeedsSave)
         RequestLayoutSave();
@@ -971,6 +994,8 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
         InvalidateRect(hwnd_, nullptr, FALSE);
     InvalidateFloatingDockWindow();
     InvalidateFloatingPopupWindow();
+    if (inlinePreviewMarquee && folderPreview_)
+        (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
 }
 
 void DesktopApp::ReleaseCapturePreservingPointerState()
@@ -990,24 +1015,9 @@ void DesktopApp::CommitDragVisualEndBeforeShellOperation()
 {
     HideDragPreviewWindow();
     dragRenderCache_.Reset();
-    PresentPassiveHoverVisualChange();
-    // The ordinary hover path must never wait for DWM. Shell operations are a
-    // presentation boundary, but asynchronous handlers only need the batched
-    // DComp work submitted before they are queued. Synchronous compatibility
-    // fallbacks perform their own DwmFlush immediately before entering Shell.
-    FlushPendingCompositionCommit();
-}
-
-void DesktopApp::PresentPassiveHoverVisualChange()
-{
-    snowdesktop::performance::Scope trace("input", "hover.passive.present");
+    // A completed drop can change membership and geometry beyond the pointer.
+    // Publish the entire settled scene before handing the operation to Shell.
     UpdateWidgetHoverExpansion(lastMousePoint_);
-    RecordShellHoverTrace(
-        ShellHoverTraceEvent::PassivePresent);
-    // Content and backdrop are collected from the same full render pass. The
-    // backdrop compositor constrains its helper HWND to the resulting panel
-    // set, so stale blur pixels cannot outlive the content frame even if the
-    // Windows Composition commit completes later.
     desktopBackdropFullCollectionPending_ = true;
     if (hwnd_ && IsWindow(hwnd_))
     {
@@ -1017,6 +1027,7 @@ void DesktopApp::PresentPassiveHoverVisualChange()
     }
     InvalidateFloatingDockWindow(true);
     InvalidateFloatingPopupWindow(true);
+    FlushPendingCompositionCommit();
 }
 
 /**

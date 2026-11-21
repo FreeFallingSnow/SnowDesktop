@@ -1,9 +1,11 @@
 #include "ui/input/private_pointer.h"
+#include "platform/application_version.h"
 #include "app/app.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_transition.h"
 #include "dock/dock_settings.h"
 #include "common/l10n.h"
+#include "icons/icon_library.h"
 #include "diagnostics/diagnostic_log.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
@@ -25,6 +27,7 @@
 #include "platform/user_object_recovery.h"
 #include "diagnostics/performance_trace.h"
 #include "ui/render/ui_animation_scheduler.h"
+#include <utility>
 
 namespace
 {
@@ -366,7 +369,8 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         const auto trace = [queryId](std::string_view message) {
             snowdesktop::widget::WriteSteamWorkshopDiagnostic(queryId, message);
         };
-        trace("phase=poll.begin host=" SNOWDESKTOP_VERSION " registered=" +
+        trace(std::string("phase=poll.begin host=") + snowdesktop::ApplicationVersion() +
+            " registered=" +
             std::to_string(installedPackages->size()));
         trace("phase=theme_probe.begin");
         // Background reconciliation consumes only Steam's local manifests and
@@ -737,9 +741,20 @@ void DesktopApp::OnTimer(WPARAM timerId)
         // The immediate foreground callback remains deactivation-only.
         {
             snowdesktop::performance::Scope trace("shared.maintenance", "desktop.hover_reconcile");
-            ReconcileDesktopHoverState(
-                snowdesktop::desktop_hover_rules::
-                    ReconcileMode::AllowActivationAfterForegroundSettle);
+            // A modern menu can stay open while the desktop receives normal
+            // pointer moves. Preserve that hover while the live hit still
+            // agrees with the last sample; the fallback still clears a leave
+            // that the menu loop may have consumed.
+            POINT cursorPoint{};
+            const bool retainMenuHover = snowdesktop::modern_menu::IsActive() &&
+                TryGetDesktopHoverPointFromCursor(cursorPoint) &&
+                cursorPoint.x == lastMousePoint_.x && cursorPoint.y == lastMousePoint_.y;
+            if (!retainMenuHover)
+            {
+                ReconcileDesktopHoverState(
+                    snowdesktop::desktop_hover_rules::
+                        ReconcileMode::AllowActivationAfterForegroundSettle);
+            }
         }
         // Keep display hot-plug recovery independent from the hidden control
         // window's host-watch timer. Some display-driver paths leave that
@@ -759,6 +774,15 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (widgetEngine_)
         {
             snowdesktop::performance::Scope trace("shared.maintenance", "runtime.tick");
+            // Provider and task completions can invalidate a widget synchronously
+            // here, outside the animation scheduler's timer dispatch.
+            struct MaintenanceScope
+            {
+                bool& active;
+                bool previous;
+                explicit MaintenanceScope(bool& value) : active(value), previous(std::exchange(value, true)) {}
+                ~MaintenanceScope() { active = previous; }
+            } maintenance(widgetRuntimeMaintenanceActive_);
             widgetEngine_->TickRuntime();
         }
         {
@@ -964,7 +988,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
                     return;
                 }
                 snowdesktop::popup_animation_rules::OpenAfterClose(
-                    popupAnimation_, GetOpenPopupWidget() != nullptr,
+                    popupAnimation_, IsCollectionPopupHostedByFloatingWindow(),
                     [this] { pendingCollectionPopupOpen_.reset(); BeginCollectionPopupClose(false); },
                     [this, group, dwellPoint] {
                         ResetDockHandoffDwell();
@@ -983,7 +1007,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 // another folder during its close. Keep polling the live drag
                 // target, so leaving, cancellation or a third folder wins.
                 snowdesktop::popup_animation_rules::OpenAfterClose(
-                    popupAnimation_, GetOpenPopupWidget() != nullptr,
+                    popupAnimation_, IsCollectionPopupHostedByFloatingWindow(),
                     [this] {
                         pendingCollectionPopupOpen_.reset();
                         BeginCollectionPopupClose(false);

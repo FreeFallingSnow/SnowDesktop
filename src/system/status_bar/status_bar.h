@@ -10,6 +10,7 @@
 #include <optional>
 
 struct IDCompositionDesktopDevice;
+struct IDCompositionAnimation;
 struct IDWriteFactory;
 struct ID2D1DeviceContext;
 struct ID2D1Device;
@@ -51,6 +52,15 @@ struct StatusBarDockState
     bool interacting = false; // This monitor's bar-owned activation/menu/panel.
     RECT adjacentDockBounds{}; // Visible separate edge Dock panel, in screen pixels.
 };
+struct StatusBarKeyboardTarget
+{
+    HWND window = nullptr;
+    std::string key;
+    StatusBarAction action = StatusBarAction::None;
+    bool tray = false;
+    RECT bounds{}; // Screen pixels.
+    bool focused = false;
+};
 class StatusBar final
 {
 public:
@@ -88,8 +98,8 @@ public:
     // Coalesce a UI continuation on its live bar HWND. The callback is run
     // from window dispatch, never inside the shared animation scheduler.
     bool PostActivation(HWND owner, std::function<void()> callback);
-    // UI-thread summon boundary: sample before any Dock window/focus changes.
-    void PrepareDockReveal(HMONITOR monitor);
+    // Called after the Dock's frame is ready and before it takes input focus.
+    void PrepareDockReveal(HMONITOR monitor, HWND fullscreenSource);
     // Independent edge/fullscreen reveals dismiss from their own interaction.
     bool HasTemporaryReveal(HMONITOR monitor) const;
     void DismissTemporaryReveal(HMONITOR monitor);
@@ -97,10 +107,12 @@ public:
     // Session queries must not evaluate Dock geometry (which queries visibility).
     void SetInteractionSessionProvider(std::function<bool(HMONITOR)> provider);
     void SetMergedAppearanceProvider(std::function<PersonalizationSettings(HMONITOR)> provider);
-    void RefreshDockState(HMONITOR monitor);
+    void RefreshDockState(HMONITOR monitor, bool dockDismissed = false);
     // Prepare the first complete strip frame without revealing either HWND.
     bool PrepareMergedDockPresentation(HMONITOR monitor, const StatusBarDockPresentation& frame);
     void ApplyMergedDockPresentation(HMONITOR monitor, const StatusBarDockPresentation& frame);
+    bool StartMergedDockSlide(HMONITOR monitor, IDCompositionAnimation* offset,
+        const popup_motion_curve::Timeline& progress);
     bool IsInteractionAvailable(HMONITOR monitor) const;
     HWND InteractionWindow(HMONITOR monitor) const;
     HWND MergedPresentationBottomWindow(HMONITOR monitor) const;
@@ -112,6 +124,10 @@ public:
     bool ContainsTrayMenuPoint(HMONITOR monitor, POINT screen) const;
     void CancelTrayMenuSession(HMONITOR monitor = nullptr);
     bool ContainsPoint(POINT screen) const;
+    std::vector<StatusBarKeyboardTarget> KeyboardTargets(bool horizontal) const;
+    bool FocusFromDesktop(const StatusBarKeyboardTarget& target);
+    bool InvokeDesktopKeyboardFocus(bool repeated);
+    bool ClearDesktopKeyboardFocus();
     // UI-thread snapshot for the short Task View input handoff. The hook uses
     // immutable screen rectangles and never queries application windows.
     std::vector<RECT> InputBounds() const;
@@ -124,6 +140,7 @@ public:
     void SetSharedTray(std::shared_ptr<tray::Service> service);
     void SetTrayDragHandlers(std::function<void(const StatusBarSettings&)> changed,
         std::function<bool(std::string_view, POINT)> dropOutside);
+    void SetMetricOrderChanged(std::function<void(std::vector<std::string>)> changed);
     bool DropTrayIcon(std::string_view key, POINT screen);
     bool PreviewTrayDrop(std::string_view key, POINT screen);
     void SetTrayDragFeedback(TrayDragFeedback feedback);

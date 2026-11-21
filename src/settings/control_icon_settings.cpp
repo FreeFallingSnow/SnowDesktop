@@ -1,6 +1,9 @@
 #include "common/json_value.h"
 #include "control_icon_settings.h"
+#include "control_settings_search.h"
 #include "control_settings_values.h"
+#include "icons/large_icon_config.h"
+#include "icons/large_icon_config_codec.h"
 #include "icons/large_icon_edit_rules.h"
 #include <algorithm>
 
@@ -46,6 +49,91 @@ bool ReadOnlyLarge(std::string_view key)
     return key == "version" || key == "image" || key == "imageAssetId" || key == "cachedCover" ||
         key == "foregroundImage" || key == "foregroundImageAssetId";
 }
+// Keep in sync with VisitLargeIconFields and the shape, material and title
+// resolvers in the large-icon renderer.
+constexpr auto kLargeIconGuidance = std::to_array<guidance::Description>({
+    {"version", "Identifies the stored large icon configuration format."},
+    {"columns", "Sets the intended horizontal grid span. The page placement rules may temporarily constrain it."},
+    {"rows", "Sets the intended vertical grid span. The page placement rules may temporarily constrain it."},
+    {"shape", "Selects the frame mask. 0 rounded rectangle, 1 rounded square, 2 circle, 3 flag, 4 diamond and 5 hexagon."},
+    {"flagDirection", "Sets the flag notch direction when shape is flag. 0 right, 1 left, 2 up and 3 down."},
+    {"regularHexagon", "Fits a hexagon with equal edges inside the allocated grid span."},
+    {"followComponentRadius", "Uses the shared component corner radius when the shape supports rounded edges."},
+    {"showOnHoverOnly", "Shows the large icon when hovered according to the host's visibility rules."},
+    {"keepWhenDesktopHidden", "Keeps the item eligible to display when SnowDesktop hides other desktop items."},
+    {"contentScale", "Scales the foreground separately from the frame and background fill."},
+    {"fillScale", "Multiplies the fill image's contain or cover scale without changing the foreground."},
+    {"radius", "Sets the fallback radius in component units when radiusPercent is -1 and shared radius is off."},
+    {"radiusPercent", "Sets the radius as a percentage of half the short frame edge. -1 uses the fallback radius."},
+    {"content", "Chooses the image fill source. 0 uses the original icon, 1 uses a local image, 2 uses Steam cover art, and 3 uses Epic cover art. Game covers require a matching launcher shortcut."},
+    {"fit", "Uses contain with 0 or cover with 1 for the fill layer. The foreground always contains."},
+    {"focusX", "Sets the horizontal focus of the fill crop from 0 left to 1 right."},
+    {"focusY", "Sets the vertical focus of the fill crop from 0 top to 1 bottom."},
+    {"image", "Reports the current fill image reference. Use the owned image import action to replace it."},
+    {"imageAssetId", "Reports the managed fill image ID. Use the library action for selection."},
+    {"cachedCover", "Reports the host-owned cached cover reference."},
+    {"autoColor", "Uses automatically derived color where the current background mode supports it."},
+    {"manualColor", "Supplies the manual background color for the applicable appearance path."},
+    {"colorMix", "Sets how much of the chosen color contributes to the applicable background blend."},
+    {"opacity", "Sets the base frame opacity."},
+    {"hoverOpacity", "Sets the target frame opacity on hover when it is not linked."},
+    {"border", "Enables the frame border."},
+    {"hoverOpacityLinked", "Links the hover opacity to the base opacity."},
+    {"borderColor", "Sets the enabled frame border color."},
+    {"borderWidth", "Sets the enabled frame border thickness."},
+    {"borderOpacity", "Sets opacity of the enabled frame border."},
+    {"shadow", "Enables the frame shadow."},
+    {"shadowStrength", "Sets the strength of the enabled frame shadow."},
+    {"titleMode", "Chooses a floating title with 0 or a left-reveal title with 1."},
+    {"titleSize", "Controls the saved font size of the ordinary large-icon title."},
+    {"revealTitleSize", "Sets the requested size of the revealed title. The renderer adapts it to the frame width and height."},
+    {"autoTitleColor", "Uses contrast-aware title color for the applicable large-icon title path."},
+    {"titleColor", "Sets the title color when automatic title color is off."},
+    {"hoverContent", "Chooses the content hover effect. 0 none, 1 reveal left, 2 zoom and 3 lift."},
+    {"hoverFrame", "Chooses which frame effect responds to hover. 0 none, 1 background, 2 border and 3 shadow."},
+    {"press", "Enables feedback while the large icon is pressed."},
+    {"launch", "Selects launch feedback. 0 none, 1 jump and 2 pulse."},
+    {"coverHover", "Selects cover hover behavior. 0 none, 1 zoom and 2 title scrim."},
+    {"amplitude", "Scales the magnitude of applicable large-icon animation effects."},
+    {"delayMs", "Sets the hover effect delay in milliseconds."},
+    {"enterMs", "Sets the hover entrance duration in milliseconds."},
+    {"exitMs", "Sets the hover exit duration in milliseconds."},
+    {"steamOrientation", "Selects Steam or Epic cover orientation. 0 follows the frame proportions, 1 selects landscape, and 2 selects portrait."},
+    {"localOnly", "Uses locally available Steam or Epic covers and skips network requests. Epic covers may come from SnowDesktop's saved images or from the launcher's local image cache."},
+    {"backgroundStyle", "Selects the background source. -4 uses the icon plate, -3 legacy default, -2 image fill, -1 follows components, and nonnegative values select a component preset. -5 is a legacy neutral style."},
+    {"smartFill", "Enables derived icon fill in the applicable background treatment."},
+    {"themeColor", "Stores the compatibility flag for the beautify-style background. It is mutually exclusive with themeGradient."},
+    {"themeGradient", "Stores the compatibility flag for the gradient background. It is mutually exclusive with themeColor."},
+    {"defaultBackground", "Sets the default icon plate treatment. 0 icon plate, 1 editable gradient and 2 editable solid."},
+    {"defaultSolidColor", "Sets the color for the editable solid default background."},
+    {"defaultSolidOpacity", "Sets alpha for the editable solid default background."},
+    {"defaultGradient", "Stores the editable default plate gradient. Disabled allows the default treatment to derive colors from the icon."},
+    {"themeOpacity", "Sets opacity for the applicable icon-derived background."},
+    {"themeAngle", "Sets the angle of the applicable legacy theme gradient."},
+    {"foregroundContent", "Uses the original icon with 0 or imported foreground art with 1."},
+    {"foregroundImage", "Reports the current foreground image reference. Use the owned import action to replace it."},
+    {"foregroundImageAssetId", "Reports the managed foreground asset ID."},
+    {"iconX", "Sets horizontal foreground alignment from 0 left to 1 right."},
+    {"iconY", "Sets vertical foreground alignment from 0 top to 1 bottom."},
+    {"material", "Selects plain, glass or acrylic for the applicable custom background."},
+    {"componentTheme", "Selects light or dark foreground colors for a component material."},
+    {"blurRadius", "Sets the blur radius when the background material uses blur."},
+    {"edgeHighlight", "Enables the material's edge reflection."},
+    {"edgeWidth", "Sets width of the enabled reflection."},
+    {"edgeStrength", "Sets intensity of the enabled reflection."},
+    {"edgeLight", "Sets directional light and halo terms for the enabled edge reflection."},
+    {"gradient", "Supplies explicit gradient stops and angle for the custom background."},
+    {"gradientOpacity", "Multiplies gradient opacity while preserving the relative alpha of its stops."},
+    {"effect", "Selects 0 none, 1 3D, 2 dynamic title, 3 gentle zoom, 4 edge glow or 5 one-shot shine."},
+    {"titleDirection", "Chooses left with 0 or up with 1 for the directional title reveal when automatic direction is off."},
+    {"autoTitleDirection", "Lets the renderer choose title direction based on the frame."},
+    {"titleWeight", "Sets the font weight for the revealed title."},
+    {"zoomAmount", "Sets the amount of the gentle zoom effect."},
+    {"glowStrength", "Sets the strength of the edge glow effect."},
+    {"shineStrength", "Sets the intensity of the one-shot shine effect."},
+    {"shineDurationMs", "Sets the duration of the one-shot shine in milliseconds."},
+});
+
 Value LargeValue(const LargeIconConfig& config)
 {
     auto result = Object();
@@ -106,6 +194,29 @@ bool IsIconSettingsTarget(const Target& target) noexcept
     return target.kind == "icon-appearance" || target.kind == "icon-library" || target.kind == "large-icon";
 }
 
+Value DescribeIconAppearanceFields(const IconBeautifySettings& defaults)
+{
+    return DescribeValue(defaults);
+}
+
+Value DescribeLargeIconFields(const LargeIconConfig& defaults)
+{
+    using namespace control;
+    auto fields = Object();
+    VisitLargeIconFields(defaults, [&](const char* key, const auto& field) {
+        auto description = DescribeValue(field);
+        description.object["readOnly"] = Boolean(ReadOnlyLarge(key));
+        for (const auto& [name, help] : kLargeIconGuidance)
+            if (name == key)
+            {
+                description.object.emplace("description", String(std::string(help)));
+                break;
+            }
+        fields.object.emplace(key, std::move(description));
+    });
+    return fields;
+}
+
 Value HandleIconSettings(std::string_view method, const Value& params,
     const Target& target, const IconSettingsContext& context)
 {
@@ -131,7 +242,7 @@ Value HandleIconSettings(std::string_view method, const Value& params,
             response.object.emplace("choices", ToValue(snapshot.themes));
             if (catalogue)
             {
-                response.object.emplace("fields", DescribeValue(snapshot.current.settings));
+                response.object.emplace("fields", DescribeIconAppearanceFields(snapshot.current.settings));
                 response.object.emplace("actions", Actions({"preview", "inherit", "previewInherit", "cancel"}));
             }
             return response;
@@ -190,13 +301,8 @@ Value HandleIconSettings(std::string_view method, const Value& params,
             response.object.emplace("error", String(snapshot.error));
             if (catalogue)
             {
-                auto fields = Object();
                 const auto defaults = snapshot.defaultConfig.empty() ? LargeIconConfig{} : Config(snapshot.defaultConfig);
-                VisitLargeIconFields(defaults, [&](const char* key, const auto& field) {
-                    auto description = DescribeValue(field); description.object["readOnly"] = Boolean(ReadOnlyLarge(key));
-                    fields.object.emplace(key, std::move(description));
-                });
-                response.object.emplace("fields", std::move(fields));
+                response.object.emplace("fields", DescribeLargeIconFields(defaults));
                 response.object.emplace("actions", Actions({"preview", "cancel", "refresh", "import", "library", "restoreNormal"}));
                 response.object.emplace("exclusiveEditSession", Boolean(true));
             }

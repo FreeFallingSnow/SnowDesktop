@@ -1,4 +1,5 @@
 #include "performance_capture.h"
+#include "platform/application_version.h"
 #include "performance_trace.h"
 #include "performance_trace_control.h"
 #include "performance_control_pipe.h"
@@ -21,7 +22,6 @@
 #include <cmath>
 #include <condition_variable>
 #include <deque>
-#include <fstream>
 #include <iomanip>
 #include <locale>
 #include <mutex>
@@ -30,10 +30,6 @@
 #include <stdexcept>
 #include <thread>
 #include <vector>
-
-#ifndef SNOWDESKTOP_VERSION
-#define SNOWDESKTOP_VERSION "test"
-#endif
 
 namespace snowdesktop::performance
 {
@@ -156,10 +152,14 @@ struct File
     HANDLE value = INVALID_HANDLE_VALUE;
     ~File() { if (value != INVALID_HANDLE_VALUE) CloseHandle(value); }
 };
-std::string HashFile(const std::filesystem::path& path)
+std::string HashFile(const std::filesystem::path& path, bool ordinaryFileOnly = false)
 {
-    File file{ CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr) };
+    File file{ CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+        FILE_FLAG_SEQUENTIAL_SCAN | (ordinaryFileOnly ? FILE_FLAG_OPEN_REPARSE_POINT : 0), nullptr) };
     if (file.value == INVALID_HANDLE_VALUE) return {};
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (ordinaryFileOnly && (!GetFileInformationByHandle(file.value, &info) ||
+        (info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)))) return {};
     BCRYPT_ALG_HANDLE algorithm = nullptr;
     BCRYPT_HASH_HANDLE hash = nullptr;
     if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) return {};
@@ -207,33 +207,85 @@ bool SafeDirectory(const std::filesystem::path& path, bool allowMissing)
     }
     return true;
 }
-std::uint64_t StorageRemaining(const std::filesystem::path& root)
+constexpr std::uint64_t storageQuota = 1024ULL * 1024 * 1024;
+constexpr DWORD manifestReserve = 65536;
+
+struct StoredCapture
 {
-    constexpr std::uint64_t quota = 1024ULL * 1024 * 1024;
-    std::uint64_t bytes = 0;
-    unsigned entries = 0, completed = 0;
-    for (const auto& item : std::filesystem::recursive_directory_iterator(root))
+    std::filesystem::path directory;
+    std::filesystem::file_time_type completed;
+    std::uint64_t bytes;
+    std::string traceHash;
+};
+
+std::string ManagedTraceHash(const std::filesystem::path& directory)
+{
+    const auto id = Utf8(directory.filename().wstring());
+    if (!ValidId(id)) return {};
+    File file{CreateFileW((directory / L"session.json").c_str(), GENERIC_READ, FILE_SHARE_READ,
+        nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr)};
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (file.value == INVALID_HANDLE_VALUE || !GetFileInformationByHandle(file.value, &info) ||
+        (info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) ||
+        info.nFileSizeHigh || !info.nFileSizeLow || info.nFileSizeLow > manifestReserve) return {};
+    std::string text(info.nFileSizeLow, '\0');
+    DWORD read = 0;
+    JsonValue value;
+    if (!ReadFile(file.value, text.data(), info.nFileSizeLow, &read, nullptr) ||
+        read != info.nFileSizeLow || !ParseJson(text, value)) return {};
+    const auto matches = [&](const char* key, std::string_view expected) {
+        const auto* field = value.Find(key);
+        return field && field->IsString() && field->string == expected;
+    };
+    const auto yes = [&](const char* key) {
+        const auto* field = value.Find(key);
+        return field && field->IsBoolean() && field->boolean;
+    };
+    const auto* schema = value.Find("schemaVersion");
+    const auto* hash = value.Find("traceSha256");
+    if (!yes("managedStorage") || !yes("completion") || !schema || !schema->IsNumber() || schema->number != 2 ||
+        !matches("format", "perfetto") || !matches("state", "completed") || !matches("sessionId", id) ||
+        !matches("traceFile", "trace.pftrace") || !hash || !hash->IsString() || hash->string.size() != 64 ||
+        hash->string.find_first_not_of("0123456789abcdef") != std::string::npos) return {};
+    return hash->string;
+}
+
+HANDLE OpenStorageDirectory(const std::filesystem::path& directory, DWORD access)
+{
+    if (!SafeDirectory(directory, false)) throw std::runtime_error("captureStoragePathRejected");
+    File file{CreateFileW(directory.c_str(), FILE_TRAVERSE | FILE_READ_ATTRIBUTES | access, FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr)};
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (file.value == INVALID_HANDLE_VALUE || !GetFileInformationByHandle(file.value, &info) ||
+        !(info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+        throw std::runtime_error("captureStoragePathRejected");
+    const auto handle = file.value;
+    file.value = INVALID_HANDLE_VALUE;
+    return handle;
+}
+
+// Rename the pinned source directory on its own volume. Never replace an existing archive.
+std::filesystem::path ArchiveCapture(HANDLE source, const std::filesystem::path& archive,
+    const std::filesystem::path& name)
+{
+    for (unsigned suffix = 0; suffix < 10000; ++suffix)
     {
-        if (++entries > 10000) throw std::runtime_error("captureStorageEntryLimit");
-        const auto attributes = GetFileAttributesW(item.path().c_str());
-        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) throw std::runtime_error("captureStoragePathRejected");
-        if (!item.is_regular_file()) continue;
-        const auto size = item.file_size();
-        if (size > quota - bytes) throw std::runtime_error("captureStorageQuota");
-        bytes += size;
-        if (item.path().filename() == L"session.json")
-        {
-            if (size > 65536) throw std::runtime_error("captureManifestLimit");
-            std::ifstream input(item.path(), std::ios::binary);
-            const std::string text((std::istreambuf_iterator<char>(input)), {});
-            JsonValue manifest; std::string error;
-            if (!ParseJson(text, manifest, &error)) throw std::runtime_error("captureStorageManifestInvalid");
-            const auto* complete = manifest.Find("completion");
-            if (complete && complete->IsBoolean() && complete->boolean) ++completed;
-        }
+        auto destination = archive / name;
+        if (suffix) destination += L"-" + std::to_wstring(suffix);
+        destination.make_preferred();
+        if (GetFileAttributesW(destination.c_str()) != INVALID_FILE_ATTRIBUTES) continue;
+        const auto& path = destination.native();
+        const auto size = sizeof(FILE_RENAME_INFO) + path.size() * sizeof(wchar_t);
+        std::vector<BYTE> buffer(size);
+        auto* rename = reinterpret_cast<FILE_RENAME_INFO*>(buffer.data());
+        rename->ReplaceIfExists = FALSE;
+        rename->FileNameLength = static_cast<DWORD>(path.size() * sizeof(wchar_t));
+        std::copy(path.begin(), path.end(), rename->FileName);
+        if (SetFileInformationByHandle(source, FileRenameInfo, rename, static_cast<DWORD>(size))) return destination;
+        const auto error = GetLastError();
+        if (error != ERROR_FILE_EXISTS && error != ERROR_ALREADY_EXISTS) throw std::runtime_error("captureArchiveFailed");
     }
-    if (completed >= 20 || bytes + 65536 >= quota) throw std::runtime_error("captureStorageQuota");
-    return quota - bytes - 65536; // Reserve bounded manifest/metadata space.
+    throw std::runtime_error("captureArchiveNameLimit");
 }
 struct Record
 {
@@ -267,6 +319,92 @@ struct State
     ~State() { { std::lock_guard lock(mutex); workerExit = true; stopRequested.store(true); analysisCancel.store(true); } wake.notify_all(); if (worker.joinable()) worker.join(); }
 };
 State state;
+
+std::uint64_t StorageRemaining(const std::filesystem::path& root, const std::filesystem::path& active,
+    const CaptureOptions& options)
+{
+    // The caller holds .capture-storage.lock, also used by managed analysis.
+    File rootDirectory{OpenStorageDirectory(root, 0)};
+    std::vector<StoredCapture> completed;
+    std::uint64_t bytes = 0;
+    unsigned entries = 0;
+    const auto inspect = [&](const std::filesystem::directory_entry& item) {
+        if (++entries > 10000) throw std::runtime_error("captureStorageEntryLimit");
+        const auto attributes = GetFileAttributesW(item.path().c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT))
+            throw std::runtime_error("captureStoragePathRejected");
+        if (attributes & FILE_ATTRIBUTE_DIRECTORY) return false;
+        const auto size = item.file_size();
+        if (size > UINT64_MAX - bytes) throw std::runtime_error("captureStorageQuota");
+        bytes += size;
+        return true;
+    };
+    for (const auto& child : std::filesystem::directory_iterator(root))
+    {
+        if (inspect(child)) continue;
+        const auto start = bytes;
+        bool partial = false, trace = false;
+        for (const auto& item : std::filesystem::recursive_directory_iterator(child.path()))
+        {
+            if (!inspect(item)) continue;
+            if (item.path().extension() == L".partial") partial = true;
+            if (item.path().parent_path() == child.path() && item.path().filename() == L"trace.pftrace") trace = true;
+        }
+        if (partial || !trace || child.path() == active) continue;
+        auto hash = ManagedTraceHash(child.path());
+        if (!hash.empty()) completed.push_back({child.path(),
+            std::filesystem::last_write_time(child.path() / L"session.json"), bytes - start, std::move(hash)});
+    }
+    // Reserve one requested buffer, capped by the trace limit, plus the completion manifest.
+    const auto reserve = std::min<std::uint64_t>(options.maximumFileBytes, options.bufferKiB * 1024ULL);
+    const auto budget = storageQuota - manifestReserve - reserve;
+    if (completed.size() >= 20 || bytes > budget)
+    {
+        std::sort(completed.begin(), completed.end(), [](const auto& a, const auto& b) {
+            return a.completed == b.completed ? a.directory < b.directory : a.completed < b.completed;
+        });
+        std::vector<const StoredCapture*> toArchive;
+        auto remaining = completed.size();
+        for (const auto& capture : completed)
+        {
+            if (remaining < 20 && bytes <= budget) break;
+            --remaining;
+            if (HashFile(capture.directory / L"trace.pftrace", true) != capture.traceHash) continue;
+            bytes -= capture.bytes;
+            toArchive.push_back(&capture);
+        }
+        if (bytes > budget) throw std::runtime_error("captureStorageQuota");
+        if (!toArchive.empty())
+        {
+            const auto archive = root.parent_path() / L"performance-archive";
+            if (!SafeDirectory(archive, true)) throw std::runtime_error("captureStoragePathRejected");
+            std::error_code createError;
+            std::filesystem::create_directory(archive, createError);
+            if (createError) throw std::runtime_error("captureArchiveFailed");
+            File archiveDirectory{OpenStorageDirectory(archive, 0)};
+            if (std::filesystem::equivalent(root, archive)) throw std::runtime_error("captureStoragePathRejected");
+            for (const auto* capture : toArchive)
+            {
+                File source{OpenStorageDirectory(capture->directory, DELETE)};
+                if (ManagedTraceHash(capture->directory) != capture->traceHash)
+                    throw std::runtime_error("captureArchiveSourceChanged");
+                if (!SafeDirectory(archive, false)) throw std::runtime_error("captureStoragePathRejected");
+                const auto target = ArchiveCapture(source.value, archive, capture->directory.filename());
+                std::lock_guard lock(state.mutex);
+                for (const auto& record : state.history)
+                {
+                    auto& snapshot = record->snapshot;
+                    if (record->managedRoot != root || snapshot.manifest.parent_path() != capture->directory) continue;
+                    snapshot.trace = target / snapshot.trace.filename();
+                    snapshot.manifest = target / snapshot.manifest.filename();
+                    if (!snapshot.report.empty()) snapshot.report = target / snapshot.report.lexically_relative(capture->directory);
+                }
+            }
+        }
+    }
+    return storageQuota - manifestReserve - bytes;
+}
+
 UINT SampleMessage() noexcept
 { static const auto message = RegisterWindowMessageW(L"FreeFallingSnow.SnowDesktop.Performance.Sample.v3"); return message; }
 UINT ControlMessage() noexcept
@@ -309,7 +447,7 @@ std::string Manifest(const Record& record, bool complete)
     out << "{\"schemaVersion\":2,\"probeSchemaVersion\":4,\"format\":\"perfetto\",\"sdkVersion\":\"v58.2\",\"sessionId\":" << Quote(record.snapshot.session)
         << ",\"generation\":" << record.snapshot.generation << ",\"requestId\":" << Quote(record.snapshot.requestId)
         << ",\"state\":" << Quote(complete ? "completed" : "failed") << ",\"completion\":" << (complete ? "true" : "false")
-        << ",\"errorCode\":" << Quote(record.snapshot.error) << ",\"hostVersion\":" << Quote(SNOWDESKTOP_VERSION)
+        << ",\"errorCode\":" << Quote(record.snapshot.error) << ",\"hostVersion\":" << Quote(snowdesktop::ApplicationVersion())
         << ",\"managedStorage\":" << (record.managedRoot.empty() ? "false" : "true")
         << ",\"finalWidgetSampleConfirmed\":" << (record.finalWidgetSample ? "true" : "false")
         << ",\"processId\":" << GetCurrentProcessId() << ",\"processRole\":" << Quote(ProcessRole(record.options.processRole)) << ",\"sourceCommit\":null,\"executableSha256\":"
@@ -398,9 +536,15 @@ void Worker(std::shared_ptr<Record> record) noexcept
             if (storageLease.value == INVALID_HANDLE_VALUE) throw std::runtime_error("captureStorageBusy");
             LARGE_INTEGER leaseSize{};
             if (!GetFileSizeEx(storageLease.value, &leaseSize) || leaseSize.QuadPart != 0) throw std::runtime_error("captureStorageLockInvalid");
-            fileLimit = std::min(fileLimit, StorageRemaining(managedRoot));
         }
         if (std::filesystem::exists(record->snapshot.manifest)) throw std::runtime_error("manifestAlreadyExists");
+        if (storageLease.value != INVALID_HANDLE_VALUE)
+        {
+            if (std::filesystem::exists(partialManifest)) throw std::runtime_error("cannotReserveManifest");
+            if (std::filesystem::exists(record->snapshot.trace)) throw std::runtime_error("outputAlreadyExists");
+            if (std::filesystem::exists(record->snapshot.trace.wstring() + L".partial")) throw std::runtime_error("cannotReserveOutput");
+            fileLimit = std::min(fileLimit, StorageRemaining(managedRoot, directory, record->options));
+        }
         manifest.value = CreateFileW(partialManifest.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_NEW,
             FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
         if (manifest.value == INVALID_HANDLE_VALUE) throw std::runtime_error("cannotReserveManifest");

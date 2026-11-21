@@ -1,12 +1,14 @@
 #pragma once
 
-#include "settings_ipc_channel.h"
 #include <windows.h>
 #include <memory>
 #include <string>
+#include <string_view>
 
 namespace snowdesktop::settings_ipc
 {
+class Channel;
+
 class SettingsProcess final
 {
 public:

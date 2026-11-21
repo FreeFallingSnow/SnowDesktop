@@ -4,12 +4,12 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 if($Help){
     'Usage: scripts/build.bat diagnose [-Help]'
-    'Checks coordination-directory writes and the standard persistent child launcher in THIS process context. No configure/build, ACL changes, task changes, or automatic replay.'
+    'Checks coordination and shared Git resource-directory writes and the persistent launcher in THIS context.'
     exit 0
 }
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $stateRoot=Join-Path $root '.build/collaboration'
-$report=[ordered]@{schemaVersion=1;repositoryRoot=$root;contextPid=$PID;writeProbe=$null;persistentLaunch=$null;next=@()}
+$report=[ordered]@{schemaVersion=1;repositoryRoot=$root;contextPid=$PID;writeProbe=$null;gitResourceWriteProbe=$null;persistentLaunch=$null;next=@()}
 $probe=$null;$child=$null
 try {
     # Unique generated paths only; never open/alter the live state or its lock.
@@ -22,6 +22,20 @@ try {
 } catch {
     $report.writeProbe=[pscustomobject]@{status='denied';path=$stateRoot;error=$_.Exception.Message}
     $report.next=@('Check the caller sandbox writable roots and effective permissions. Use an authorized full-access context or external terminal. Do not infer an ACL defect or automatically change ACLs from this denial.')
+}
+try {
+    . (Join-Path $PSScriptRoot 'build_inputs.ps1')
+    $git=Invoke-InputGit $root 'rev-parse --path-format=absolute --git-common-dir'
+    if($git.code -ne 0 -or -not [IO.Path]::IsPathRooted($git.output.Trim())){throw 'Cannot resolve the common Git directory.'}
+    $common=[IO.Path]::GetFullPath($git.output.Trim())
+    $directory=Join-Path $common 'snowdesktop-execution'
+    if(-not [IO.Directory]::Exists($directory)){$directory=$common}
+    $path=Join-Path $directory ('snowdesktop-probe-'+[Guid]::NewGuid().ToString('N')+'.tmp')
+    $file=[IO.FileStream]::new($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None,1,[IO.FileOptions]::DeleteOnClose)
+    try{$file.WriteByte(1);$file.Flush()}finally{$file.Dispose()}
+    $report.gitResourceWriteProbe=[pscustomobject]@{status='passed';path=$directory}
+}catch{
+    $report.gitResourceWriteProbe=[pscustomobject]@{status='denied';path=$directory;error=$_.Exception.Message}
 }
 if($report.writeProbe.status -eq 'passed'){
     try {
@@ -40,6 +54,9 @@ if($report.writeProbe.status -eq 'passed'){
         if($child){try{if(-not $child.HasExited){$child.Kill();$child.WaitForExit()}}finally{$child.Dispose()}}
     }
 }else{$report.persistentLaunch=[pscustomobject]@{status='not-run';reason='Coordination directory is not writable.'}}
+if($report.gitResourceWriteProbe.status -ne 'passed'){
+    $report.next=@('Check write permission for the common Git resource scope in this exact caller context. A read-only Git checkout may pass the coordination and launcher probes but cannot admit a heavy Run.')+@($report.next)
+}
 $report|ConvertTo-Json -Depth 8
-if($report.writeProbe.status -ne 'passed' -or $report.persistentLaunch.status -ne 'passed'){exit 2}
+if($report.writeProbe.status -ne 'passed' -or $report.gitResourceWriteProbe.status -ne 'passed' -or $report.persistentLaunch.status -ne 'passed'){exit 2}
 exit 0

@@ -59,7 +59,7 @@ if (BUILD_TESTING)
             src/widget/runtime/lua_runtime.cpp
             src/data/atomic_file.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES bcrypt SnowDesktopLua
+        LINK_LIBRARIES bcrypt SnowDesktopJson SnowDesktopLua
         LABELS contract filesystem security task lua widget)
 
     snowdesktop_add_test(
@@ -69,6 +69,7 @@ if (BUILD_TESTING)
             tests/localization_contract_tests.cpp
             src/common/l10n.cpp
         INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES SnowDesktopJson
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS core contract l10n)
 
@@ -83,7 +84,7 @@ if (BUILD_TESTING)
             src/ui/input/control_pointer.cpp
             src/ui/render/demo_cursor.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES SnowDesktopPointerInput user32 advapi32 gdi32 bcrypt
+        LINK_LIBRARIES SnowDesktopJson SnowDesktopPointerInput user32 advapi32 gdi32 bcrypt
         LABELS contract integration ipc)
 
     snowdesktop_add_test(
@@ -107,6 +108,7 @@ if (BUILD_TESTING)
             src/widget/api/widget_api_registry.cpp
             src/widget/runtime/widget_logical_slot.cpp
             src/widget/packages/widget_package.cpp
+            src/widget/packages/widget_package_manifest_fields.cpp
             src/data/atomic_file.cpp
             src/widget/permissions/widget_permission_broker.cpp
             src/widget/permissions/widget_permission_state.cpp
@@ -253,7 +255,7 @@ if (BUILD_TESTING)
     snowdesktop_add_test(SnowDesktopDeploymentManifestTests behavior_manifest
         SOURCES tests/behavior/deployment_manifest_tests.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES SnowDesktopWidgetPackages
+        LINK_LIBRARIES SnowDesktopJson SnowDesktopWidgetPackages
         COMMAND_ARGUMENTS "$<TARGET_FILE_DIR:SnowDesktop>"
         LABELS core integration deployment behavior)
     add_dependencies(SnowDesktopDeploymentManifestTests SnowDesktop)

@@ -733,6 +733,8 @@
     "widget.size.aspectRatio"
   ],
   "optionalFeatures": [
+    "draw.text.inkAlignment",
+    "draw.glyph",
     "task.shell.openUri"
   ],
   "resources": {

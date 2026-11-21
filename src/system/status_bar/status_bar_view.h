@@ -36,6 +36,7 @@ struct StatusBarItem
     std::optional<status_bar_input_method::ProfileIcon> inputIcon;
     RECT contentBounds{}; // Full scrolled tray cell; bounds is its visible hit target.
     std::wstring batteryPercentageText;
+    bool reserveTrafficWidth = false;
 };
 
 inline constexpr wchar_t kStatusBarDesktopAppName[] = L"SnowDesktop";
@@ -64,18 +65,19 @@ struct StatusBarPalette
     bool highContrast = false;
     D2D1_COLOR_F background{}, foreground{}, highlight{}, highlightText{};
 };
-std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings&, const StatusBarSnapshot&);
+std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings&, const StatusBarSnapshot&,
+    std::span<const std::string> previewMetricOrder = {});
 bool SameStatusBarContent(const std::vector<StatusBarItem>&, const std::vector<StatusBarItem>&);
 bool SameStatusBarPalette(const StatusBarPalette&, const StatusBarPalette&);
 // Reuse only a complete, reliable layout with identical extent inputs. A
 // rejection does not change any geometry; variable reservations arrange again.
 bool RestoreStatusBarContentLayout(std::vector<StatusBarItem>&,
     const std::vector<StatusBarItem>& previous, bool mergedDock, bool frameReusable);
-// Use after successful layout retention (and any retained tray translation).
-// Painted envelopes include the low-alpha fringe, without changing hit bounds.
+// Compare two arranged frames. A different previous tray viewport is needed
+// only when reflow moved its clipping edge. Paint bounds include the ink fringe.
 std::vector<RECT> StatusBarContentDamage(const std::vector<StatusBarItem>&,
     const std::vector<StatusBarItem>& previous, UINT width, UINT height, float scale,
-    const StatusBarTrayScroll&, RECT additional = {});
+    const StatusBarTrayScroll&, RECT additional = {}, std::optional<RECT> previousTrayViewport = {});
 inline std::size_t StatusBarControlPart(float localDip, bool hasBattery = true)
 { return localDip < 28 ? 0 : (localDip < 56 || !hasBattery) ? 1 : 2; }
 inline std::optional<std::size_t> HitTestStatusBarItems(const std::vector<StatusBarItem>& items, POINT point)
@@ -141,6 +143,11 @@ RECT StatusBarTrayScrollDamage(const std::vector<StatusBarItem>&, std::optional<
     RECT viewport, const std::optional<RECT>& before, const std::optional<RECT>& after, UINT width, UINT height);
 void DrawStatusBarDropIndicator(ID2D1DeviceContext*, const std::optional<RECT>&,
     const PersonalizationSettings&, const StatusBarPalette&, UINT dpi);
+HRESULT DrawStatusBarContentRegion(ID2D1DeviceContext*, POINT, IDWriteFactory*, std::vector<StatusBarItem>&,
+    const RECT&, UINT width, UINT height, float scale, const PersonalizationSettings&, const StatusBarPalette&,
+    std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused, bool mergedDock,
+    StatusBarTrayScroll&, const std::optional<RECT>& indicator, UINT dpi, StatusBarDrawResources*,
+    bool* frameReusable, bool keepPreparedText);
 HRESULT DrawStatusBarContentUpdate(IDCompositionSurface*, IDWriteFactory*, std::vector<StatusBarItem>&,
     RECT damage, UINT width, UINT height, float scale, const PersonalizationSettings&, const StatusBarPalette&,
     std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused, bool mergedDock,

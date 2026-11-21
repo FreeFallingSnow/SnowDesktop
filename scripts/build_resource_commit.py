@@ -355,6 +355,9 @@ def main():
         print(json.dumps(commit(args), ensure_ascii=True))
     except (ValueError, OSError, KeyError, TypeError) as error:
         print(str(error), file=sys.stderr)
+        if isinstance(error, OSError):
+            print('Retry the original commit -ResourceRequests command after resolving the reported I/O or lease error.',
+                  file=sys.stderr)
         return 2
     return 0
 

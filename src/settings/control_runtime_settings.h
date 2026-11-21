@@ -4,7 +4,7 @@
 #include "settings_fwd.h"
 #include "platform/window_support/window_capabilities.h"
 #include "winui/general_advanced_feature_status.h"
-#include "winui/home_about_page_model.h"
+#include "home_about_status.h"
 
 namespace snowdesktop::control_settings
 {
@@ -16,7 +16,7 @@ struct RuntimeSettingsContext
     std::function<winui::GeneralAdvancedFeatureStatus()> advancedFeatureStatus;
     std::function<void()> registerAdvancedFeatures;
     std::function<bool()> resetAdvancedFeatures;
-    std::function<winui::HomeAboutStatusPatch(std::uint64_t, std::uint64_t)> homeAboutStatus;
+    std::function<settings::HomeAboutStatusPatch(std::uint64_t, std::uint64_t)> homeAboutStatus;
     std::function<HWND()> ownerWindow;
     std::function<bool()> debugVisible;
 };

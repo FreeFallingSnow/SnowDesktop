@@ -22,6 +22,7 @@ struct GeneralSettings
     // not serialized into SnowDesktop.general.json.
     bool autoStartEnabled = false;
     bool showAdvancedSettings = false;
+    bool agentOperationsEnabled = false;
     bool steamShowRunningStatus = false;
     bool steamRoomVisible = false;
     snowdesktop::runtime_modules::Policy runtimeModules;

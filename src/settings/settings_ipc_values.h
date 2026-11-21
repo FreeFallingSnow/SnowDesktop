@@ -8,6 +8,7 @@
 #include "layout/page_layout_settings.h"
 #include "icons/large_icon_settings.h"
 #include "icons/icon_appearance.h"
+#include "icons/icon_library.h"
 #include "settings_search_index.h"
 
 // Private same-executable wire schema. Keep field lists explicit: no
@@ -32,7 +33,7 @@ SD_IPC_FIELDS(PersonalizationSettings,
     v.glassEnabled, v.glassBlurRadius, v.acrylicEnabled, v.contentTheme, v.panelGradient,
     v.groupTabHoverSwitch, v.categoryTabHoverSwitch, v.tabHoverDelayMs,
     v.windowPinBorderEnabled, v.windowPinBorderR, v.windowPinBorderG, v.windowPinBorderB,
-    v.windowPinBorderWidth, v.windowPinBorderOpacity);
+    v.windowPinBorderWidth, v.windowPinBorderOpacity, v.folderDoubleClickPreview);
 SD_IPC_FIELDS(SurfaceTheme, v.mode, v.customized, v.appearance);
 SD_IPC_FIELDS(StatusBarAppearanceRule, v.enabled, v.theme);
 SD_IPC_FIELDS(SystemTaskbarDynamicRule,
@@ -77,7 +78,7 @@ SD_IPC_FIELDS(StatusBarSettings,
     v.legacyShellUi, v.maximizedWindow, v.legacyVisibleWindow, v.noWindow, v.inputMethod,
     v.quickControlOrder, v.hiddenQuickControls, v.clockShowSeconds, v.timeNotificationRightAligned, v.batteryPercentage, v.showDesktop,
     v.controlCenterSingleIcon, v.notifications, v.showOnlyWhenSummoned, v.edgeRevealGesture,
-    v.foregroundAppName, v.foregroundAppNameCentered, v.appWindow);
+    v.foregroundAppName, v.foregroundAppNameCentered, v.appWindow, v.metricOrder);
 SD_IPC_FIELDS(app_fonts::Selection, v.package, v.family);
 SD_IPC_FIELDS(PopupAppearanceRule, v.enabled, v.theme);
 SD_IPC_FIELDS(runtime_modules::Target, v.process, v.name, v.explorer);
@@ -85,7 +86,7 @@ SD_IPC_FIELDS(runtime_modules::Status, v.module, v.allowed, v.active, v.error, v
 SD_IPC_FIELDS(runtime_modules::Snapshot, v.policyRevision, v.modules);
 SD_IPC_FIELDS(runtime_modules::Policy, v.allowed);
 SD_IPC_FIELDS(GeneralSettings,
-    v.showAdvancedSettings, v.steamShowRunningStatus, v.steamRoomVisible, v.runtimeModules,
+    v.showAdvancedSettings, v.agentOperationsEnabled, v.steamShowRunningStatus, v.steamRoomVisible, v.runtimeModules,
     v.diagnosticLogModules, v.autoStartEnabled, v.softwareDesktopEnabled, v.demoModeEnabled, v.doubleClickHideDesktop,
     v.desktopIdleHideEnabled, v.desktopIdleHideDelaySeconds, v.desktopIdleHidePauseWithWindows,
     v.screenTimeEnabled,
@@ -116,11 +117,15 @@ SD_IPC_FIELDS(IconBeautifySettings,
     v.filterStrength, v.filterTintR, v.filterTintG, v.filterTintB,
     v.outlineEnabled, v.outlineWidth, v.outlineOpacity, v.outlineR,
     v.outlineG, v.outlineB, v.shadowStrength, v.backgroundSource, v.backgroundGradient, v.filterMode);
+SD_IPC_FIELDS(IconShadowSettings, v.fan, v.dock, v.exposedWidget, v.desktop, v.popup, v.quickNavigation, v.subject,
+    v.fanStrength, v.dockStrength, v.exposedWidgetStrength, v.desktopStrength, v.popupStrength, v.quickNavigationStrength,
+    v.subjectStrength);
 SD_IPC_FIELDS(DesktopDisplaySettings,
     v.dockEnabled, v.iconSpacingScale,
     v.scrollingIconSpacingYScale, v.listRowSpacingScale,
     v.itemIconSizeScale, v.itemFontSizeCu,
-    v.listItemFontSizeCu, v.fanTitleFontSizeCu, v.itemFontWeight, v.desktopTitleLines, v.largeFolderTitleLines, v.scrollingTitleLines, v.shortcutArrowMode, v.iconBeautify, v.titleEllipsis, v.groupComponentBadges, v.beautifyFileThumbnails);
+    v.listItemFontSizeCu, v.fanTitleFontSizeCu, v.itemFontWeight, v.desktopTitleLines, v.largeFolderTitleLines, v.scrollingTitleLines, v.shortcutArrowMode, v.iconBeautify, v.titleEllipsis, v.groupComponentBadges, v.beautifyFileThumbnails,
+    v.iconShadows);
 SD_IPC_FIELDS(SettingsRoute,
     v.page, v.widgetInstanceId, v.focusId, v.itemKey, v.guideTopic);
 SD_IPC_FIELDS(LargeIconSettingsRequest, v.key, v.session, v.revision, v.action, v.config, v.path, v.fields);
@@ -137,7 +142,7 @@ SD_IPC_FIELDS(IconLibrarySnapshot, v.groups, v.entries, v.imported, v.importedGr
     v.error, v.target, v.targetName, v.workshopAvailable, v.coverPath, v.preparationId, v.publishedUrl, v.completedAction, v.operationId, v.progress);
 SD_IPC_FIELDS(LargeIconSettingsSnapshot, v.key, v.name, v.imagePath, v.session, v.revision,
     v.available, v.editable, v.succeeded, v.maxColumns, v.maxRows, v.config, v.error,
-    v.landscapePath, v.portraitPath, v.source, v.landscapeSource, v.portraitSource, v.accent, v.steam,
+    v.landscapePath, v.portraitPath, v.source, v.landscapeSource, v.portraitSource, v.accent, v.gameCoverContent,
     v.frameWidth, v.frameHeight, v.frameColumns, v.frameRows, v.frameLimit, v.unitScale, v.durationScale, v.frameWidths, v.frameHeights, v.animations, v.neutral,
     v.defaultConfig, v.imageWidth, v.imageHeight, v.hasEdgeColor, v.loading, v.edgeColor, v.itemCount, v.anyFill, v.mixedFields);
 SD_IPC_FIELDS(SettingsActionResult,
@@ -191,7 +196,7 @@ SD_IPC_FIELDS(widget_runtime::WidgetSettingCondition,
 SD_IPC_FIELDS(widget_runtime::WidgetSettingOption,
     v.value, v.label);
 SD_IPC_FIELDS(widget_runtime::WidgetSettingFieldSchema,
-    v.key, v.label, v.description, v.group,
+    v.key, v.label, v.description, v.agentDescription, v.group,
     v.validationMessage, v.rawType, v.searchKey, v.binding,
     v.access, v.emptyLabel, v.noResultsLabel, v.minimum,
     v.maximum, v.step, v.minimumLength, v.maximumLength,

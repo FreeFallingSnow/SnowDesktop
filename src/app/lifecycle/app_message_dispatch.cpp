@@ -96,7 +96,10 @@ bool DesktopApp::HandleShellContextMenuMessage(
 LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg, wp, lp)) return 0;
-    const snowdesktop::UiImmediatePresentationScope immediatePresentation;
+    // The runtime maintenance timer delivers background widget changes. A
+    // nested pointer or keyboard message still takes its own immediate scope.
+    const snowdesktop::UiImmediatePresentationScope immediatePresentation(
+        msg != WM_TIMER || wp != kWidgetRefreshTimerId);
     if (msg >= 0xC000 &&
         msg == snowdesktop::widget_runtime::WidgetSurfaceRenderer::ReadyMessage())
     {
@@ -452,6 +455,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         // The guide owns its captured gesture, including moves outside its
         // bounds. Handle it before passive-hover filtering can discard them.
         if (HandleUsageGuidePointerMove(pt)) return 0;
+        // Check for movement over empty wallpaper before filtering hidden
+        // content or passive hover on the paired render surfaces.
+        if (desktopIconsHidden_ && desktopIdleHide_.AutoHidden())
+            UpdateDesktopIdleHide();
         const bool nativeDragActive =
             snowdesktop::drag_input_rules::IsNativeDragActive(
                 dragSession_.IsActive(),
@@ -622,12 +629,13 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                 mouseDown_,
                                 dragSession_.IsActive(),
                                 widgetInteractionActive);
+                    const POINT previousHover = lastMousePoint_;
                     lastMousePoint_ = cursorClient;
                     if (snowdesktop::desktop_hover_rules::
                             ShouldPresentRetainedMouseLeave(
                                 passiveHover,
-                                pointerPositionChanged))
-                        PresentPassiveHoverVisualChange();
+                                pointerPositionChanged) && !PresentCollectionPopupHoverChange(previousHover, false))
+                        PresentPassiveHoverVisualChange(previousHover);
                 }
                 return 0;
             }
@@ -787,6 +795,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             if (HandleQuickNavigationClick(pt))
                 return 0;
         }
+
+        if (TryFolderPreviewDoubleClick(pt, wp)) return 0;
 
         if (IsCollectionPopupInteractive() && IsPointOccludedByOpenPopup(pt))
         {
@@ -1040,7 +1050,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     const std::wstring path =
                         dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(dockFolderPopupWidget_, i)].fullPath;
                     if (LaunchPathWithShortcutPolicy(
-                            hwnd_, path))
+                            hwnd_, path) && !folderPreview_)
                         CloseCollectionPopup();
                     return 0;
                 }
@@ -1233,6 +1243,12 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return HandleInputMessage(hwnd, msg, wp, lp);
     case WM_SYSKEYDOWN:
     {
+        if ((wp == VK_MENU || wp == VK_CONTROL || wp == VK_SHIFT) &&
+            dragSession_.IsActive() && !dragDropController_.IsTransportActive())
+        {
+            RefreshDragHintFromKeyboard();
+            return 0;
+        }
         typeToSelectSuppressChar_ = TryHandleFilePreviewKey(wp,
             (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0);
         if (typeToSelectSuppressChar_) { typeToSelectSession_.Reset(); return 0; }
@@ -1315,6 +1331,12 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         RefreshDragHintFromKeyboard();
         return 0;
     case WM_SYSKEYUP:
+        if ((wp == VK_MENU || wp == VK_CONTROL || wp == VK_SHIFT) &&
+            dragSession_.IsActive() && !dragDropController_.IsTransportActive())
+        {
+            RefreshDragHintFromKeyboard();
+            return 0;
+        }
         if ((wp >= 'A' && wp <= 'Z') || (wp >= '0' && wp <= '9'))
             DispatchLuaWidgetViewKeyEvent(wp, false, false);
         break;

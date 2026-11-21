@@ -97,6 +97,7 @@ struct HoverInfo
     UINT command = 0;
     RECT itemScreenRect{};
     RECT popupScreenRect{};
+    HWND popupWindow = nullptr;
     int depth = 0;
     bool keyboard = false;
 };
@@ -158,6 +159,7 @@ struct Options
     bool lightTheme = true;
     /** 托盘菜单使用；确保根菜单和子菜单位于任务栏之上。 */
     bool topmost = false;
+    bool compactTextRoot = false;
     Appearance appearance = Appearance::FollowSystem;
     RootPlacement rootPlacement = RootPlacement::Default;
     RECT anchorRect{};
@@ -195,6 +197,7 @@ enum class ExitReason
     None,
     Command,
     Cancelled,
+    Escape,
     ExternalActivation,
     Replaced,
 };

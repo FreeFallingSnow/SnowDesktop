@@ -24,6 +24,8 @@ struct DesktopApp::PersistentDockHost
     RECT popupRect{};
     RECT guideOcclusionRect{};
     bool active = false;
+    bool ShouldKeepReservedFloatingLayer() const;
+    bool HasActiveAssociatedSurface() const;
     snowdesktop::desktop_hover_rules::RetainedDockLeaveTracking retainedLeaveTracking;
     // Promotion is per monitor. Selection only identifies the Host that
     // currently owns pointer/keyboard-associated actions.
@@ -53,9 +55,15 @@ struct DesktopApp::PersistentDockHost
     snowdesktop::quick_navigation_animation_rules::State mergedAnimation;
     snowdesktop::UiScheduleToken mergedAnimationToken = 0;
     snowdesktop::StatusBarDockPresentation mergedPresentation;
+    bool StartCompositionSlide(const snowdesktop::popup_motion_curve::Timeline& progress,
+        snowdesktop::StatusBar* mergedBar);
     // Shared visibility timeline for merged bars and summon-only Docks.
     bool mergedPresentationActive = false, updatingMergedPresentation = false;
     bool presentationMerged = false;
+    // An occluded floating session reuses that shared reveal/collapse
+    // timeline: the reveal recognition retired the hidden desktop pair, and
+    // the dismissal recognition re-checks the cover before collapsing.
+    bool occludedFloatingPresentation = false;
     bool mergedInteractionHeld = false, mergedCloseAfterInteraction = false;
     ComPtr<IDCompositionEffectGroup> mergedOpacity;
     bool compositionRenderRecoveryPending = false;

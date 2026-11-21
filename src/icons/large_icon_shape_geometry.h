@@ -1,11 +1,12 @@
 #pragma once
-#include "large_icon_config.h"
+#include "large_icon_config_types.h"
 #include "theme/flat_glass_rim.h"
-#include "ui/render/highlight_coverage.h"
 #include "ui/render/smooth_corner_geometry.h"
 #include <d2d1.h>
 #include <d2d1helper.h>
 #include <wrl/client.h>
+#include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace snowdesktop::large_icon_shape
@@ -150,8 +151,8 @@ inline void DrawMaterialOutline(ID2D1RenderTarget* target, int shape, RECT bound
             const float lighting = material.Lighting((mid.x - frame.left) / w, (mid.y - frame.top) / h);
             brush->SetColor(D2D1::ColorF(0xffffff, std::clamp(strength * lighting, 0.f, 1.f)));
             const float width = material.BorderWidth(edgeWidth, lighting) * 2;
-            target->DrawLine(from, to, brush.Get(), width);
-            if (lighting > 0.f) HighlightCoverage::RecordLine(target, from, to, width);
+            if (lighting > 0.f)
+                target->DrawLine(from, to, brush.Get(), width);
         }
     }
 }

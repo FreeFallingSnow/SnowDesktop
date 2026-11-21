@@ -19,8 +19,30 @@ bool DesktopApp::UpdateWidgetHandleCursor(POINT point)
     LPCWSTR cursor = nullptr;
     if (widgetAction_ == WidgetAction::Resize) cursor = resizeCursor;
     else if (widgetAction_ == WidgetAction::Move) cursor = moveCursor;
-    else if (!dragSession_.IsActive() && !HasActiveContextMenuSession() && !IsPointOccludedByOpenPopup(point))
+    else if (folderPreview_ && folderPreview_->inlineBounds &&
+        !dragSession_.IsActive() && !HasActiveContextMenuSession() && IsCollectionPopupInteractive() &&
+        (PtInRect(&folderPreview_->inlineResizeHandle, point) ||
+            PtInRect(&folderPreview_->inlineCollapseButton, point)))
     {
+        cursor = PtInRect(&folderPreview_->inlineResizeHandle, point) ? resizeCursor : IDC_HAND;
+    }
+    else if (folderPreview_ && folderPreview_->inlineBounds && IsCollectionPopupInteractive() &&
+        !dragSession_.HasContext() && !HasActiveContextMenuSession())
+    {
+        if (PtInRect(&folderPreview_->inlineTitle, point)) cursor = IDC_HAND;
+    }
+    if (!cursor && !dragSession_.IsActive() && !HasActiveContextMenuSession() && !IsPointOccludedByOpenPopup(point))
+    {
+        if (const auto* host = FindInactiveInlineFolderPreviewHostAtPoint(point))
+        {
+            const auto& preview = inactiveInlineFolderPreviews_.at(host->id).session;
+            if (preview && PtInRect(&preview->inlineTitle, point)) cursor = IDC_HAND;
+        }
+        if (cursor)
+        {
+            snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, cursor));
+            return true;
+        }
         WidgetHit hit = WidgetHit::None;
         const auto standalone = HitTestStandaloneWidgetIndex(point);
         if (standalone < widgets_.size()) hit = HitTestStandaloneWidget(standalone, point);
@@ -66,6 +88,7 @@ DesktopIcon* DesktopApp::HitTestIcon(POINT pt) const
         if (!icon) continue;
         DesktopItem* di = icon->GetDesktopItem();
         if (!di || IsRectEmptyRect(di->bounds)) continue;
+        if (IsPendingMovedFile(di->parsingName, di->layoutKey)) continue;
         if (desktopIconsHidden_ && !IsRetainedLargeIcon(*di)) continue;
         RECT selRect = di->largeIcon ? GetLargeIconFrameRect(*di)
             : GetItemSelectionRect(di->bounds, di->selected);
@@ -192,7 +215,7 @@ void DesktopApp::UpdateWidgetHoverExpansion(POINT point)
 {
     namespace motion = snowdesktop::animation;
     const bool pointerAvailable = !HasActiveContextMenuSession() &&
-        !IsPointOccludedByOpenPopup(point);
+        !(IsCollectionPopupHostedByFloatingWindow() && IsPointOccludedByOpenPopup(point));
     bool changed = false;
     bool suppressionStillInside = false;
     bool needsFullPaint = false;
@@ -234,6 +257,7 @@ void DesktopApp::UpdateWidgetHoverExpansion(POINT point)
         bool retained = interactionPinnedWidgetId_ == widget.id ||
             popupWidgetIndex_ == index ||
             (mouseDown_ && mouseDownWidgetIndex_ == index) ||
+            RetainsInlineFolderPreview(widget) ||
             snowdesktop::widget_visibility_rules::ShouldRetainForKeyboardNavigation(
                 keyboardNavVisualFocus_, keyboardNavInsideWidget_,
                 keyboardNavWidgetIndex_, index);
@@ -294,7 +318,7 @@ void DesktopApp::UpdateWidgetHoverExpansion(POINT point)
         if (!widgetHoverExpansionFrameToken_)
             AdvanceWidgetHoverExpansion(0.0, true);
     }
-    InvalidateDragStaticScene();
+    InvalidateDragStaticScene(needsFullPaint);
     if (hwnd_) InvalidateRect(hwnd_, needsFullPaint ? nullptr : &dirty, FALSE);
 }
 

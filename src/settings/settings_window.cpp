@@ -5,6 +5,7 @@
 
 #include "settings_controller.h"
 #include "settings_ipc_services.h"
+#include "settings_ipc_typed.h"
 #include "settings_process.h"
 #include "widget/settings/widget_settings_service.h"
 #include "winui/settings_ipc_backends.h"
@@ -118,7 +119,7 @@ struct SettingsWindow::Impl
         {
             channel = std::make_unique<ipc::Channel>();
             backends = std::make_unique<ipc::BackendServer>(*channel, *controller, widgetEngine, options);
-            channel->Bind<void>("ui.closed", [this] {
+            ipc::TypedChannel{*channel}.Bind<void>("ui.closed", [this] {
                 EndContextMenuInspection();
                 closing = true;
                 snowdesktop::EmergencyRestartHotkey().SetSettingsWindow(nullptr);
@@ -160,7 +161,7 @@ struct SettingsWindow::Impl
     }
     template<class... A> void Notify(const char* name, const A&... arguments) noexcept
     {
-        try { if (channel && channel->Connected() && !closing) channel->Notify(name, arguments...); }
+        try { if (channel && channel->Connected() && !closing) ipc::TypedChannel{*channel}.Notify(name, arguments...); }
         catch (...) {}
     }
 };
@@ -250,13 +251,13 @@ bool SettingsWindow::ShowExitConfirm()
     if (!IsVisible())
         return Open(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::General),
             [this](bool opened) { if (opened) impl_->Notify("ui.exitConfirmation"); });
-    try { impl_->channel->Notify("ui.exitConfirmation"); return true; } catch (...) { return false; }
+    try { ipc::TypedChannel{*impl_->channel}.Notify("ui.exitConfirmation"); return true; } catch (...) { return false; }
 }
 bool SettingsWindow::FlushPendingChanges()
 {
     if (!impl_->channel || !impl_->process.Running() || impl_->closing || impl_->opening)
         return !impl_->controller || impl_->controller->FlushAll().Succeeded();
-    try { return impl_->channel->Call<bool>("ui.flush"); } catch (...) { return false; }
+    try { return ipc::TypedChannel{*impl_->channel}.Call<bool>("ui.flush"); } catch (...) { return false; }
 }
 void SettingsWindow::SetWidgetSettingsService(snowdesktop::widget_runtime::WidgetSettingsService* service) noexcept
 {
@@ -271,13 +272,13 @@ void SettingsWindow::RefreshGeneralRuntimeState() { impl_->Notify("ui.refreshGen
 bool SettingsWindow::PrepareLanguageChange()
 {
     if (!impl_->channel || !impl_->process.Running() || impl_->closing || impl_->opening) return true;
-    try { return impl_->channel->Call<bool>("ui.prepareLanguage"); } catch (...) { return false; }
+    try { return ipc::TypedChannel{*impl_->channel}.Call<bool>("ui.prepareLanguage"); } catch (...) { return false; }
 }
 void SettingsWindow::ApplyLanguageChange(bool reloaded) { impl_->Notify("ui.applyLanguage", reloaded); }
-bool SettingsWindow::PublishHomeAboutStatus(snowdesktop::winui::HomeAboutStatusPatch patch)
+bool SettingsWindow::PublishHomeAboutStatus(snowdesktop::settings::HomeAboutStatusPatch patch)
 {
     if (!impl_->channel || !impl_->channel->Connected() || impl_->closing || impl_->opening) return false;
-    try { return impl_->channel->Call<bool>("ui.homeStatus", patch); } catch (...) { return false; }
+    try { return ipc::TypedChannel{*impl_->channel}.Call<bool>("ui.homeStatus", patch); } catch (...) { return false; }
 }
 bool SettingsWindow::PreTranslateMessage(MSG*) noexcept { return false; }
 bool SettingsWindow::ProcessTabNavigation(MSG*) noexcept { return false; }
@@ -292,7 +293,7 @@ bool SettingsWindow::IsVisible() const noexcept { const HWND window = Window(); 
 bool SettingsWindow::IsHotkeyCaptureActive() const noexcept
 {
     if (!IsVisible() || !impl_->channel || !impl_->channel->Connected() || impl_->opening) return false;
-    try { return impl_->channel->Call<bool>("ui.hotkeyCapture"); } catch (...) { return false; }
+    try { return ipc::TypedChannel{*impl_->channel}.Call<bool>("ui.hotkeyCapture"); } catch (...) { return false; }
 }
 void SettingsWindow::CaptureRegisteredHotkey(UINT modifiers, UINT key) { impl_->Notify("ui.captureHotkey", modifiers, key); }
 const std::wstring& SettingsWindow::LastError() const noexcept { return impl_->lastError; }

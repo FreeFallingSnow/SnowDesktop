@@ -130,14 +130,8 @@ DragTargetResolution DragDropController::ResolveInternalTarget(
     POINT point,
     const DragTargetResolver::CandidateFilter& filter)
 {
-    DragTargetResolution resolution =
-        DragTargetResolver::ResolveInternal(
-            containers, point, session_.SourceList(), filter);
-    session_.UpdateTarget(
-        resolution.container,
-        resolution.slot,
-        resolution.region);
-    return resolution;
+    return DragTargetResolver::ResolveInternal(
+        containers, point, session_.SourceList(), filter);
 }
 
 DragTargetResolution DragDropController::ResolveExternalTarget(
@@ -145,14 +139,7 @@ DragTargetResolution DragDropController::ResolveExternalTarget(
     POINT point,
     const DragTargetResolver::CandidateFilter& filter)
 {
-    DragTargetResolution resolution =
-        DragTargetResolver::ResolveExternal(
-            containers, point, filter,
-            static_cast<std::size_t>(std::max(
-                1, externalSummary_.fileCount)));
-    session_.UpdateTarget(
-        resolution.container,
-        resolution.slot,
-        resolution.region);
-    return resolution;
+    return DragTargetResolver::ResolveExternal(
+        containers, point, filter,
+        static_cast<std::size_t>(std::max(1, externalSummary_.fileCount)));
 }

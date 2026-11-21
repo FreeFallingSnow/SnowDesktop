@@ -6,7 +6,7 @@
 #include "navigation/search_match.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "layout/collection_popup_layout.h"
-#include "layout/item_render_layer_rules.h"
+#include "layout/list_detail_rules.h"
 #include "ui/render/file_search_result_row.h"
 #include <unordered_set>
 #include <shlwapi.h>
@@ -120,6 +120,8 @@ void ScrollingItemWidget::RefreshFolderSearch()
 void ScrollingItemWidget::EnsureFolderSearch() const
 {
     if (IsPreviewRendering()) return;
+    // The preview filters its currently enumerated directory.
+    if (app_ && app_->folderPreview_ && data_ == &app_->dockFolderPopupWidget_) return;
     if (!data_ || !app_ || !data_->showSearchBox || searchText_.empty() ||
         (data_->type != DesktopWidgetType::FileCategories &&
         data_->type != DesktopWidgetType::FolderMapping &&
@@ -617,7 +619,6 @@ void ScrollingItemWidget::DrawFolderSearch(ID2D1DeviceContext* context)
     const auto subtle = light ? D2D1::ColorF(0, 0, 0, 0.72f) : D2D1::ColorF(1, 1, 1, 0.52f);
     const bool privacy = data_->privacyMode && !app_->dragSession_.IsActive() &&
         !app_->dragDropController_.IsExternalDragActive() && !PtInRect(&data_->bounds, app_->lastMousePoint_);
-    const auto& slots = GetSlots();
     const snowdesktop::ScrollContentClip clip(context, scrollContentFadeCache_, content,
         GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
     if (FolderSearchCount() == 0)
@@ -662,62 +663,28 @@ void ScrollingItemWidget::DrawFolderSearch(ID2D1DeviceContext* context)
         RECT notice{content.left, y, content.right, y + Cu(30.0f)};
         app_->DrawD2DText(context, FolderSearchNotice(), notice, GetCuTextFormat(12.0f, false, true), subtle);
     }
-    std::vector<std::pair<Item*, RECT>> foreground;
-    for (const auto& slot : slots)
-    {
-        auto* item = slot->GetItem(); if (!item) continue;
-        const RECT cell = slot->GetBounds();
-        ListItemDetails details;
-        int systemIcon = -1;
-        bool thumbnail = false;
-        bool drawTitle = true;
-        if (auto* desktop = dynamic_cast<DesktopIcon*>(item))
-        {
-            const auto* source = desktop->GetDesktopItem();
-            systemIcon = source->sysIconIndex; thumbnail = source->iconIsMediaThumbnail;
-            details = {source->typeName, source->modifiedTime, source->fileSize, false};
-            drawTitle = !app_->IsRenamingItem(source);
-        }
-        else if (auto* folder = dynamic_cast<FolderEntryIcon*>(item))
-        {
-            const auto* source = folder->GetFolderEntry();
-            systemIcon = source->sysIconIndex; thumbnail = source->iconIsMediaThumbnail;
-            details = {source->typeName, source->lastWriteTime, source->fileSize, source->isDirectory};
-            drawTitle = !app_->IsRenamingItem(source);
-        }
-        if (privacy) DrawPrivacyPlaceholder(context, cell, item->GetTitle(), details.isDirectory);
-        else if (item->IsSearchResult())
-        {
-            namespace row = snowdesktop::file_search_result_row;
-            const auto* entry = dynamic_cast<FolderEntryIcon*>(item)->GetFolderEntry();
-            const auto modified = row::ModifiedTime(entry->lastWriteTime);
-            const auto geometry = row::Resolve(cell, {Cu(28.0f), Cu(12.0f), Cu(10.0f), Cu(6.0f),
-                Cu(19.0f), Cu(5.0f), Cu(118.0f), Cu(156.0f), Cu(8.0f)}, !modified.empty());
-            const bool hover = PtInRect(&cell, app_->lastMousePoint_) != FALSE;
-            app_->DrawD2DRoundedRectangle(context, cell, static_cast<float>(Cu(4.0f)),
-                light ? D2D1::ColorF(0, 0, 0, item->IsSelected() ? 0.15f : hover ? 0.08f : 0.0f)
-                      : D2D1::ColorF(1, 1, 1, item->IsSelected() ? 0.19f : hover ? 0.09f : 0.0f), D2D1::ColorF(0, 0));
-            app_->DrawD2DRoundedRectangle(context, geometry.icon, static_cast<float>(Cu(4.0f)),
-                D2D1::ColorF(1, 1, 1, 0.08f), D2D1::ColorF(1, 1, 1, 0.12f));
-            app_->DrawQuickNavSysIcon(context, systemIcon, geometry.icon);
-            if (drawTitle) app_->DrawD2DTextEllipsis(context, item->GetTitle(), geometry.name, GetCuTextFormat(13.0f, false, false),
-                light ? D2D1::ColorF(0, 0, 0, 0.92f) : D2D1::ColorF(1, 1, 1, 0.92f),
-                DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            app_->DrawD2DTextEllipsis(context, item->GetPath(), geometry.path, GetCuTextFormat(11.0f, false, false),
-                subtle, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            if (!modified.empty()) app_->DrawD2DTextEllipsis(context, modified, geometry.modified,
-                GetCuTextFormat(11.0f, false, false), subtle, DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        }
-        else if (data_->listMode) DrawListItem(context, cell, item->GetIconBitmap(), systemIcon,
-            item->GetTitle(), item->IsSelected(), thumbnail, {}, nullptr, details, std::nullopt, drawTitle, item->GetPath());
-        else
-        {
-            const auto layers = snowdesktop::item_render_layer_rules::ResolveTitleLayerPlan(item->IsSelected());
-            const int visual = item->IsSelected() ? 2 : (PtInRect(&cell, app_->lastMousePoint_) ? 1 : 0);
-            if (auto* desktop = dynamic_cast<DesktopIcon*>(item)) desktop->Draw(context, cell, visual, light, layers.drawWithItem);
-            else if (auto* folder = dynamic_cast<FolderEntryIcon*>(item)) folder->Draw(context, cell, visual, light, layers.drawWithItem);
-            if (layers.drawInForeground) foreground.emplace_back(item, cell);
-        }
-    }
-    for (const auto& [item, bounds] : foreground) item->DrawTitle(context, bounds, true, 1.0f, light);
+    DrawMemberCells(context, content, FolderSearchCount(), {data_->listMode, privacy, light});
+}
+
+void ScrollingItemWidget::DrawFolderSearchResult(ID2D1DeviceContext* context, RECT cell,
+    const Item& item, const MemberListPresentation& presentation, bool light, bool hovered) const
+{
+    namespace row = snowdesktop::file_search_result_row;
+    const auto subtle = light ? D2D1::ColorF(0, 0, 0, 0.72f) : D2D1::ColorF(1, 1, 1, 0.52f);
+    const auto modified = row::ModifiedTime(presentation.details.modifiedTime.value_or(FILETIME{}));
+    const auto geometry = row::Resolve(cell, {Cu(28.0f), Cu(12.0f), Cu(10.0f), Cu(6.0f),
+        Cu(19.0f), Cu(5.0f), Cu(118.0f), Cu(156.0f), Cu(8.0f)}, !modified.empty());
+    app_->DrawD2DRoundedRectangle(context, cell, static_cast<float>(Cu(4.0f)),
+        light ? D2D1::ColorF(0, 0, 0, item.IsSelected() ? 0.15f : hovered ? 0.08f : 0.0f)
+              : D2D1::ColorF(1, 1, 1, item.IsSelected() ? 0.19f : hovered ? 0.09f : 0.0f), D2D1::ColorF(0, 0));
+    app_->DrawD2DRoundedRectangle(context, geometry.icon, static_cast<float>(Cu(4.0f)),
+        D2D1::ColorF(1, 1, 1, 0.08f), D2D1::ColorF(1, 1, 1, 0.12f));
+    app_->DrawQuickNavSysIcon(context, presentation.systemIcon, geometry.icon);
+    if (presentation.drawTitle) app_->DrawD2DTextEllipsis(context, item.GetTitle(), geometry.name, GetCuTextFormat(13.0f, false, false),
+        light ? D2D1::ColorF(0, 0, 0, 0.92f) : D2D1::ColorF(1, 1, 1, 0.92f),
+        DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    app_->DrawD2DTextEllipsis(context, item.GetPath(), geometry.path, GetCuTextFormat(11.0f, false, false),
+        subtle, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    if (!modified.empty()) app_->DrawD2DTextEllipsis(context, modified, geometry.modified,
+        GetCuTextFormat(11.0f, false, false), subtle, DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 }

@@ -37,6 +37,7 @@ bool IsWidgetLayoutFocus(std::string_view focusId) noexcept
 bool IsWidgetBehaviorFocus(std::string_view focusId) noexcept
 {
     return focusId == "personalization.scrollableTitleBarOnTop" ||
+        focusId == "personalization.folderDoubleClickPreview" ||
         focusId == "personalization.popupHoverOpen" ||
         focusId == "personalization.groupTabHoverSwitch" ||
         focusId == "personalization.categoryTabHoverSwitch" ||

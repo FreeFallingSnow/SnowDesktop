@@ -1,4 +1,5 @@
 #include "ui/render/app_font.h"
+#include "ui/render/icon_backdrop_clip.h"
 #include "status_bar_view.h"
 #include "diagnostics/performance_trace.h"
 #include "status_bar_glyphs.h"
@@ -16,6 +17,7 @@
 #include <wrl/client.h>
 #include <cmath>
 #include <cstddef>
+#include <iterator>
 #include <utility>
 
 namespace snowdesktop
@@ -224,7 +226,8 @@ std::pair<std::wstring, std::wstring> NetworkVisual(const StatusBarSnapshot& sna
     return {kUnknown, _LW("statusBar.networkUnknown")};
 }
 }
-std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const StatusBarSnapshot& snapshot)
+std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const StatusBarSnapshot& snapshot,
+    std::span<const std::string> previewMetricOrder)
 {
     std::vector<StatusBarItem> items;
     using namespace status_bar_glyphs;
@@ -261,6 +264,7 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
         add("notifications", L"", StatusBarAction::Notifications, notificationGlyph);
         items.back().tip = _LW(notificationTip);
     }
+    const auto metricStart = items.size();
     if (s.cpu)
     {
         const auto value = snapshot.cpu;
@@ -294,6 +298,14 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
             L"↓ " + StatusBarRate(value->downloadBytesPerSecond) +
              L" ↑ " + StatusBarRate(value->uploadBytesPerSecond) : L"↓ — ↑ —", StatusBarAction::Traffic, L"", true);
     }
+    const auto firstMetric = items.begin() + static_cast<std::ptrdiff_t>(metricStart);
+    const auto metricOrder = previewMetricOrder.empty() ? std::span<const std::string>(s.metricOrder) : previewMetricOrder;
+    const auto metricRank = [&](const StatusBarItem& item) {
+        return std::find(metricOrder.begin(), metricOrder.end(), item.key) - metricOrder.begin();
+    };
+    std::stable_sort(firstMetric, items.end(), [&](const auto& a, const auto& b) { return metricRank(a) < metricRank(b); });
+    const auto traffic = std::find_if(firstMetric, items.end(), [](const auto& item) { return item.action == StatusBarAction::Traffic; });
+    if (traffic != items.end()) traffic->reserveTrafficWidth = std::next(traffic) != items.end();
     {
         if (!snapshot.tray.empty())
         {
@@ -376,13 +388,14 @@ bool SameStatusBarItemPixels(const StatusBarItem& a, const StatusBarItem& b)
     return a.text == b.text && a.glyph == b.glyph && a.controlGlyphs == b.controlGlyphs &&
         a.batteryTone == b.batteryTone && a.batteryLevel == b.batteryLevel && a.batteryPluggedIn == b.batteryPluggedIn &&
         a.flipGlyph == b.flipGlyph && a.inputIcon == b.inputIcon &&
-        a.batteryPercentageText == b.batteryPercentageText;
+        a.batteryPercentageText == b.batteryPercentageText && a.reserveTrafficWidth == b.reserveTrafficWidth;
 }
 std::wstring StatusBarReservedText(const StatusBarItem& item, bool mergedDock)
 {
     if (item.key == "cpu") return L"CPU 100%";
     if (item.key == "memory") return L"RAM 100%";
     if (item.key == "gpu") return L"GPU 100%";
+    if (item.reserveTrafficWidth) return L"↓ 888.8 MiB/s  ↑ 888.8 MiB/s";
     auto reserved = item.key == "clock" ? StatusBarClockDisplay(item.text, StatusBarUsesTwoLineClock(mergedDock)) : item.text;
     if (item.key == "clock") for (auto& c : reserved) if (c >= L'0' && c <= L'9') c = L'8';
     return reserved;
@@ -463,18 +476,29 @@ bool RestoreStatusBarContentLayout(std::vector<StatusBarItem>& items,
 }
 std::vector<RECT> StatusBarContentDamage(const std::vector<StatusBarItem>& items,
     const std::vector<StatusBarItem>& previous, UINT width, UINT height, float scale,
-    const StatusBarTrayScroll& scroll, RECT additional)
+    const StatusBarTrayScroll& scroll, RECT additional, std::optional<RECT> previousTrayViewport)
 {
     std::vector<RECT> result;
     const RECT client{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
-    if (items.size() != previous.size()) return {client};
+    const RECT oldViewport = previousTrayViewport.value_or(scroll.viewport);
+    const bool viewportChanged = !EqualRect(&oldViewport, &scroll.viewport);
     const auto add = [&](RECT bounds) { RECT clipped{}; IntersectRect(&clipped, &bounds, &client); AddStatusBarDamage(result, clipped); };
-    for (std::size_t i = 0; i < items.size(); ++i)
-        if (!SameStatusBarItemPixels(items[i], previous[i]))
-        {
-            add(StatusBarItemPaintBounds(previous[i], scale, scroll.viewport));
-            add(StatusBarItemPaintBounds(items[i], scale, scroll.viewport));
-        }
+    const auto common = std::min(items.size(), previous.size());
+    for (std::size_t i = 0; i < common; ++i)
+    {
+        const auto& before = previous[i];
+        const auto& after = items[i];
+        if (SameStatusBarItemPixels(after, before) &&
+            (!previousTrayViewport || (EqualRect(&after.bounds, &before.bounds) &&
+                EqualRect(&after.contentBounds, &before.contentBounds) && !(viewportChanged && after.icon))))
+            continue;
+        add(StatusBarItemPaintBounds(before, scale, oldViewport));
+        add(StatusBarItemPaintBounds(after, scale, scroll.viewport));
+    }
+    for (std::size_t i = common; i < previous.size(); ++i)
+        add(StatusBarItemPaintBounds(previous[i], scale, oldViewport));
+    for (std::size_t i = common; i < items.size(); ++i)
+        add(StatusBarItemPaintBounds(items[i], scale, scroll.viewport));
     add(additional);
     return result;
 }
@@ -1164,6 +1188,28 @@ void DrawStatusBarDropIndicator(ID2D1DeviceContext* context, const std::optional
     }
 }
 
+HRESULT DrawStatusBarContentRegion(ID2D1DeviceContext* context, POINT offset, IDWriteFactory* text,
+    std::vector<StatusBarItem>& items, const RECT& region, UINT width, UINT height, float scale,
+    const PersonalizationSettings& appearance, const StatusBarPalette& palette,
+    std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused,
+    bool mergedDock, StatusBarTrayScroll& trayScroll, const std::optional<RECT>& indicator, UINT dpi,
+    StatusBarDrawResources* resources, bool* frameReusable, bool keepPreparedText)
+{
+    context->SetDpi(96, 96);
+    context->SetTransform(D2D1::Matrix3x2F::Translation(
+        static_cast<float>(offset.x - region.left), static_cast<float>(offset.y - region.top)));
+    context->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
+    context->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+    context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(region.left), static_cast<float>(region.top),
+        static_cast<float>(region.right), static_cast<float>(region.bottom)), D2D1_ANTIALIAS_MODE_ALIASED);
+    context->Clear(D2D1::ColorF(0, 0.f));
+    const auto result = DrawStatusBarContent(context, text, items, width, height, scale,
+        appearance, palette, hovered, keyboardFocusVisible, focused, mergedDock, false, &trayScroll, true, &region, resources, keepPreparedText, frameReusable);
+    DrawStatusBarDropIndicator(context, indicator, appearance, palette, dpi);
+    context->PopAxisAlignedClip();
+    return result;
+}
+
 HRESULT DrawStatusBarContentUpdate(IDCompositionSurface* surface, IDWriteFactory* text,
     std::vector<StatusBarItem>& items, RECT region, UINT width, UINT height, float scale,
     const PersonalizationSettings& appearance, const StatusBarPalette& palette,
@@ -1178,18 +1224,10 @@ HRESULT DrawStatusBarContentUpdate(IDCompositionSurface* surface, IDWriteFactory
     performance::Value("shared.status_bar", SUCCEEDED(begin)
         ? "surface.begin.success" : "surface.begin.failure", {}, 1);
     if (FAILED(begin)) return begin;
-    context->SetDpi(96, 96);
-    context->SetTransform(D2D1::Matrix3x2F::Translation(
-        static_cast<float>(offset.x - region.left), static_cast<float>(offset.y - region.top)));
-    context->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
-    context->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
-    context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(region.left), static_cast<float>(region.top),
-        static_cast<float>(region.right), static_cast<float>(region.bottom)), D2D1_ANTIALIAS_MODE_ALIASED);
-    context->Clear(D2D1::ColorF(0, 0.f));
-    const auto result = DrawStatusBarContent(context.Get(), text, items, width, height, scale,
-        appearance, palette, hovered, keyboardFocusVisible, focused, mergedDock, false, &trayScroll, true, &region, resources, keepPreparedText, frameReusable);
-    DrawStatusBarDropIndicator(context.Get(), indicator, appearance, palette, dpi);
-    context->PopAxisAlignedClip(); context.Reset();
+    const auto result = DrawStatusBarContentRegion(context.Get(), offset, text, items, region, width, height,
+        scale, appearance, palette, hovered, keyboardFocusVisible, focused, mergedDock, trayScroll,
+        indicator, dpi, resources, frameReusable, keepPreparedText);
+    context.Reset();
     const auto ended = surface->EndDraw();
     performance::Value("shared.status_bar", SUCCEEDED(ended)
         ? "surface.end.success" : "surface.end.failure", {}, 1);
@@ -1251,6 +1289,7 @@ void DrawStatusBarEdge(ID2D1DeviceContext* context, RECT frame, const Personaliz
             position == DockPosition::Right ? HighlightEdge::Left : HighlightEdge::Bottom;
         for (const auto& segment : segments)
         {
+            const ScopedIconBackdropClip highlightClip(context, segment);
             context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(segment.left), static_cast<float>(segment.top),
                 static_cast<float>(segment.right), static_cast<float>(segment.bottom)), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
             (void)widget_preview::DrawEdgeHighlight(context, frame, 0,

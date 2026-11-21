@@ -9,52 +9,12 @@
 
 D2D1_RECT_F DesktopApp::ToD2DRect(const RECT& r)
 {
-    return D2D1::RectF(static_cast<float>(r.left), static_cast<float>(r.top),
-        static_cast<float>(r.right), static_cast<float>(r.bottom));
+    return snowdesktop::ToD2DRect(r);
 }
 
-std::uint64_t D2DColorBrushKey(const D2D1_COLOR_F& c)
-{
-    const auto quantize = [](float value) -> std::uint64_t {
-        return static_cast<std::uint64_t>(std::lround(
-            std::clamp(value, 0.0f, 1.0f) * 65535.0f));
-    };
-    return quantize(c.r) |
-        (quantize(c.g) << 16) |
-        (quantize(c.b) << 32) |
-        (quantize(c.a) << 48);
-}
-
-/** @brief 将 GDI COLORREF（0x00BBGGRR）转换为 D2D1_COLOR_F，可选 alpha。 */
-D2D1_COLOR_F ToD2DColor(COLORREF c, float a)
-{
-    // COLORREF 是 0x00BBGGRR；D2D1::ColorF(UINT32) 期望 0xRRGGBB，故显式按通道构造。
-    return D2D1::ColorF(
-        GetRValue(c) / 255.0f,
-        GetGValue(c) / 255.0f,
-        GetBValue(c) / 255.0f,
-        a);
-}
-
-/** @brief 用 D2D 绘制一条 1 像素粗的水平/垂直分隔线。 */
 void DesktopApp::DrawD2DSeparator(ID2D1RenderTarget* ctx, RECT rect, const D2D1_COLOR_F& color)
 {
-    if (!ctx || IsRectEmptyRect(rect)) return;
-    if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
-    {
-        brushCache_.clear();
-        brushCacheContext_ = ctx;
-    }
-    const std::uint64_t key = D2DColorBrushKey(color);
-    auto it = brushCache_.find(key);
-    if (it == brushCache_.end())
-    {
-        ComPtr<ID2D1SolidColorBrush> b;
-        if (FAILED(ctx->CreateSolidColorBrush(color, &b)) || !b) return;
-        it = brushCache_.emplace(key, std::move(b)).first;
-    }
-    if (it != brushCache_.end() && it->second)
-        ctx->FillRectangle(ToD2DRect(rect), it->second.Get());
+    drawing_.DrawSeparator(ctx, rect, color);
 }
 
 snowdesktop::PageItemVisualMetrics DesktopApp::GetPageItemVisualMetrics(

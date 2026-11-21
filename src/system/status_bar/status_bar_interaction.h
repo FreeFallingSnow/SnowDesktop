@@ -1,8 +1,39 @@
 #pragma once
 #include "status_bar_view.h"
+#include <iterator>
 
 namespace snowdesktop
 {
+inline bool IsStatusBarMetric(StatusBarAction action)
+{
+    using Action = StatusBarAction;
+    return action == Action::Cpu || action == Action::Memory || action == Action::Gpu || action == Action::Traffic;
+}
+struct StatusBarMetricSlot
+{
+    std::string key;
+    LONG midpoint;
+};
+inline std::optional<std::vector<std::string>> PreviewStatusBarMetricOrder(
+    const std::vector<std::string>& savedOrder, const std::vector<StatusBarMetricSlot>& slots,
+    const std::string& source, LONG x)
+{
+    if (slots.size() < 2) return {};
+    // Use the initial cell midpoints for the whole gesture. With live
+    // bounds, a reorder or a wider traffic cell could move its own target.
+    const auto before = std::find_if(slots.begin(), slots.end(), [&](const auto& slot) { return x < slot.midpoint; });
+    if ((before != slots.end() && before->key == source) ||
+        (before != slots.begin() && std::prev(before)->key == source)) return {};
+    const bool append = before == slots.end();
+    const auto& targetKey = append ? slots.back().key : before->key;
+    auto order = savedOrder;
+    if (!std::erase(order, source)) return {};
+    const auto target = std::find(order.begin(), order.end(), targetKey);
+    if (target == order.end()) return {};
+    order.insert(append ? std::next(target) : target, source);
+    return order;
+}
+
 struct StatusBarTrayDrop
 {
     bool pinned = true;

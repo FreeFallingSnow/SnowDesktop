@@ -1,4 +1,5 @@
 #include "steam_workshop_source.h"
+#include "platform/application_version.h"
 #include "common/bounded_file_query.h"
 
 #include "data/data_paths.h"
@@ -9,6 +10,8 @@
 #include "steam_child_environment.h"
 #include "steam_workshop_cache.h"
 #include "steam_workshop_validation_cache.h"
+#include "widget/packages/widget_package_manager.h"
+#include "widget/packages/widget_package_validation.h"
 #include "shell/shell_extension_diagnostics.h"
 
 #include <windows.h>
@@ -35,7 +38,7 @@ constexpr UINT kBridgeTimeoutExitCode = 6;
 bool RequiresNewerHost(const PackageManifest& manifest)
 {
     return !MeetsWidgetMinimumHostVersion(
-        SNOWDESKTOP_VERSION, manifest.minHostVersion);
+        snowdesktop::ApplicationVersion(), manifest.minHostVersion);
 }
 
 std::string MinimumHostVersionMessage(const PackageManifest& manifest,

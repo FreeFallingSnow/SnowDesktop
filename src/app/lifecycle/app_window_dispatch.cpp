@@ -290,6 +290,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
     auto focusedSearchWidget =
         [this]() -> ScrollingItemWidget* {
         if (auto* view = GetCategorizedPopupView(); view && view->IsSearchFocused()) return view;
+        if (folderPreview_ && IsCollectionPopupKeyboardTarget()) return nullptr;
         for (auto& container : containers_)
         {
             auto* searchable =
@@ -300,6 +301,11 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
                 return searchable;
         }
         return nullptr;
+    };
+    const auto refreshPreviewSearch = [this](const ScrollingItemWidget* searchable, bool queryChanged) {
+        if (!folderPreview_ || !searchable || searchable != dockFolderPopupContainer_.get()) return;
+        if (queryChanged) popupScrollOffset_ = 0;
+        RefreshDockFolderPopupGeometry();
     };
 
     switch (msg)
@@ -336,7 +342,8 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         }
         if (auto* searchable = focusedSearchWidget())
         {
-            searchable->BeginSearchComposition();
+            typeToSelectImeComposing_ = false;
+            searchable->BeginSearchComposition(hwnd);
             UpdateHostInputImePosition();
             return 0;
         }
@@ -370,9 +377,10 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
                 else
                 {
                     searchable->SetSearchComposition(
-                        composition, cursor);
+                        hwnd, composition, cursor);
                 }
                 UpdateHostInputImePosition();
+                refreshPreviewSearch(searchable, false);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return 0;
             }
@@ -439,7 +447,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
                     else
                     {
                         searchable->SetSearchComposition(
-                            composition, cursor);
+                            hwnd, composition, cursor);
                     }
                 }
                 else if (lp == 0)
@@ -456,6 +464,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
                 ImmReleaseContext(hwnd, context);
             }
             UpdateHostInputImePosition();
+            refreshPreviewSearch(searchable, (lp & GCS_RESULTSTR) != 0);
             InvalidateRect(hwnd_, nullptr, FALSE);
             return 0;
         }
@@ -475,6 +484,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         {
             searchable->ClearSearchComposition();
             UpdateHostInputImePosition();
+            refreshPreviewSearch(searchable, false);
             InvalidateRect(hwnd_, nullptr, FALSE);
             return 0;
         }
@@ -509,6 +519,12 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
     }
     case WM_SYSKEYDOWN:
     {
+        if ((wp == VK_MENU || wp == VK_CONTROL || wp == VK_SHIFT) &&
+            dragSession_.IsActive() && !dragDropController_.IsTransportActive())
+        {
+            RefreshDragHintFromKeyboard();
+            return 0;
+        }
         typeToSelectSuppressChar_ = TryHandleFilePreviewKey(wp,
             (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0);
         if (typeToSelectSuppressChar_) { typeToSelectSession_.Reset(); return 0; }
@@ -575,7 +591,8 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
                 view->AppendSearchChar(ch);
                 typeToSelectSession_.Reset();
                 popupScrollOffset_ = 0;
-                ResetCollectionPopupAnimationCache();
+                if (folderPreview_) RefreshDockFolderPopupGeometry();
+                else ResetCollectionPopupAnimationCache();
                 UpdateHostInputImePosition();
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return 0;
@@ -602,6 +619,12 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         RefreshDragHintFromKeyboard();
         return 0;
     case WM_SYSKEYUP:
+        if ((wp == VK_MENU || wp == VK_CONTROL || wp == VK_SHIFT) &&
+            dragSession_.IsActive() && !dragDropController_.IsTransportActive())
+        {
+            RefreshDragHintFromKeyboard();
+            return 0;
+        }
         if ((wp >= 'A' && wp <= 'Z') || (wp >= '0' && wp <= '9'))
             DispatchLuaWidgetViewKeyEvent(wp, false, false);
         break;

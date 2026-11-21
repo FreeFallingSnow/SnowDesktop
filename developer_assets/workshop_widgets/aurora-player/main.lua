@@ -2,6 +2,7 @@ local player = module.require("modules/player.lua")
 local localPlayback = module.require("modules/local_playback.lua")
 local systemAudio = module.require("modules/system_audio.lua")
 local responsive = module.require("modules/responsive.lua")
+local CENTER_GLYPH = widget.hasFeature("view.icon.glyphInk")
 
 local mediaCurrent
 local mediaArtwork
@@ -431,6 +432,7 @@ local function controlButton(key, glyph, label, enabled, colors, primary,
         key = key,
         glyph = glyph,
         iconFont = "fa",
+        glyphInkCentered = CENTER_GLYPH or nil,
         width = size,
         height = size,
         fontSize = size * (primary and 0.38 or 0.36),
@@ -527,6 +529,7 @@ local function coverNode(artwork, size, colors, rotation, spinSpeed)
                     key = "aurora.record.placeholder.icon",
                     glyph = glyphs.music,
                     iconFont = "fa",
+                    glyphInkCentered = CENTER_GLYPH or nil,
                     width = "fill",
                     height = "fill",
                     fontSize = size * 0.18,

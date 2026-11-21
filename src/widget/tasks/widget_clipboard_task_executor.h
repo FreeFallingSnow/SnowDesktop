@@ -79,9 +79,6 @@ public:
     using NowProvider = std::function<Clock::time_point()>;
 
     static constexpr std::size_t MaximumTextBytes = 256 * 1024;
-    static constexpr std::size_t MaximumImageBytes = 64 * 1024 * 1024;
-    static constexpr std::uint32_t MaximumImageSourceDimension = 16384;
-    static constexpr std::uint32_t MaximumImageOutputDimension = 512;
     static constexpr std::size_t MaximumFileReferences = 32;
     static constexpr auto MinimumActionInterval =
         std::chrono::milliseconds(100);
@@ -103,7 +100,7 @@ public:
     std::size_t ActiveCount() const;
 
     static bool SupportsAction(std::string_view action) noexcept;
-    static bool SupportsFormat(std::string_view format) noexcept;
+    static bool SupportsFormat(std::string_view format, bool write) noexcept;
     static bool ValidateRequest(
         const WidgetClipboardTaskRequest& request) noexcept;
 

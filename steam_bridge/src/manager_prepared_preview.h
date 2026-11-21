@@ -41,8 +41,7 @@ private:
 };
 
 // The caller supplies its existing, exclusively owned package directory.
-// Keep this shared owner as the last member of PreparedManagerPublish so the
-// preview is removed before PackagedWidget tries to remove the empty directory.
+// Release this owner before PackagedWidget tries to remove the empty directory.
 inline std::shared_ptr<ManagerPreparedPreview> FreezeManagerPreview(
     const std::filesystem::path& source,
     const std::filesystem::path& directory, std::string& error)

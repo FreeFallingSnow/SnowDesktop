@@ -1,6 +1,7 @@
 #pragma once
 
-#include "widget/packages/widget_package.h"
+#include "widget/packages/widget_package_limits.h"
+#include "widget/packages/widget_package_manager.h"
 
 #include <windows.h>
 #include <winioctl.h>

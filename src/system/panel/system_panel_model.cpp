@@ -866,7 +866,7 @@ void SystemPanelModel::ManageQuickControls(float& y)
             move.tooltip=move.accessibilityLabel=name+L" · "+_LW(delta<0?"controlCenter.moveUp":"controlCenter.moveDown");
             Command(nodeId,[this,id,delta]{auto& order=settings_.quickControlOrder;const auto at=std::find(order.begin(),order.end(),id);if(at==order.end())return;const auto next=at-order.begin()+delta;if(next<0||next>=static_cast<std::ptrdiff_t>(order.size()))return;std::swap(order[static_cast<std::size_t>(at-order.begin())],order[static_cast<std::size_t>(next)]);SaveQuickControls();});
         }
-        auto& show=Add(prefix+".visible",ui::Role::Toggle,Rect(right-36,y+4,36,32),L"",visible?L"\uE73E":L"\uE739");
+        auto& show=Add(prefix+".visible",ui::Role::CheckBox,Rect(right-36,y+4,36,32));
         show.selected=visible;show.tooltip=show.accessibilityLabel=name+L" · "+_LW(visible?"controlCenter.hideButton":"controlCenter.showButton");
         Command(show.id,[this,id]{
             if(QuickControlVisible(id))

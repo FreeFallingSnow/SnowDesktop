@@ -180,10 +180,27 @@ void DesktopApp::SetQuickNavigationTopmost(
  */
 void DesktopApp::UpdateQuickNavigationBackdrop()
 {
-    if (!quickNavigation_->glassTheme || !quickNavigation_->hwnd ||
-        !IsWindow(quickNavigation_->hwnd))
+    // A settings change can rebuild the glass while the opening or closing curve is playing.
+    if (quickNavigation_->animationCompositorDriven)
+    {
+        quickNavigation_->animation.Advance(static_cast<std::uint64_t>(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
+        StopQuickNavigationAnimationTimeline();
+        if (!quickNavigation_->open && quickNavigation_->animation.IsHidden())
+        {
+            FinalizeCloseQuickNavigation();
+            return;
+        }
+        EnsureUiAnimationFrame();
+        InvalidateQuickNavigationWindow();
+    }
+    if (!quickNavigation_->hwnd || !IsWindow(quickNavigation_->hwnd))
     {
         quickNavigation_->backdropCompositor.Reset();
+        return;
+    }
+    if (!quickNavigation_->glassTheme)
+    {
+        quickNavigation_->backdropCompositor.ResetBackdrop();
         return;
     }
 
@@ -738,11 +755,13 @@ void DesktopApp::PositionQuickNavigationWindow(bool present)
     auto& resize = quickNavigation_->animation.Resize();
     const auto now = static_cast<std::uint64_t>(
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
+    // The selected Dock effect persists after its opening animation finishes.
+    const bool deforming = quickNavigation_->animation.IsAnimating() &&
+        snowdesktop::quick_navigation_animation_rules::IsDeformationEffect(
+            quickNavigation_->animation.GetEffect());
     if (!resize.IsAnimating() && quickNavigation_->open && quickNavigation_->collapsed &&
         quickNavigation_->fixedTop && quickNavigation_->animation.IsInteractive() &&
-        !snowdesktop::quick_navigation_animation_rules::IsDeformationEffect(
-            quickNavigation_->animation.GetEffect()) &&
-        !IsRectEmpty(&quickNavigation_->rect) &&
+        !deforming && !IsRectEmpty(&quickNavigation_->rect) &&
         quickNavigation_->rect.left == nextRect.left && quickNavigation_->rect.top == nextRect.top &&
         quickNavigation_->rect.right == nextRect.right && quickNavigation_->rect.bottom != nextRect.bottom)
     {
@@ -848,48 +867,52 @@ void DesktopApp::PositionQuickNavigationWindow(bool present)
         EnsureUiAnimationFrame();
 }
 
-void DesktopApp::UpdateQuickNavigationWindowRegion(
-    bool expanded)
+RECT snowdesktop::quick_navigation::State::WindowFence(bool expanded) const
 {
-    if (!quickNavigation_->hwnd ||
-        !IsWindow(quickNavigation_->hwnd))
-        return;
     RECT animationPath{};
     if (expanded)
     {
-        animationPath = MakeRect(quickNavigation_->animationAnchorPoint.x - 1,
-            quickNavigation_->animationAnchorPoint.y - 1,
-            quickNavigation_->animationAnchorPoint.x + 2,
-            quickNavigation_->animationAnchorPoint.y + 2);
-        animationPath = QuickNavigationRetainedAllocation(animationPath, quickNavigation_->animationDockRect);
-        if (quickNavigation_->animation.GetEffect() ==
-            snowdesktop::quick_navigation_animation_rules::Effect::Attraction)
+        animationPath = MakeRect(animationAnchorPoint.x - 1, animationAnchorPoint.y - 1,
+            animationAnchorPoint.x + 2, animationAnchorPoint.y + 2);
+        animationPath = QuickNavigationRetainedAllocation(animationPath, animationDockRect);
+        if (animation.GetEffect() == quick_navigation_animation_rules::Effect::Attraction)
         {
-            const auto rect = [](const RECT& r) {
-                return snowdesktop::dock_attraction::Rect{static_cast<double>(r.left),
+            const auto asRect = [](const RECT& r) {
+                return dock_attraction::Rect{static_cast<double>(r.left),
                     static_cast<double>(r.top), static_cast<double>(r.right), static_cast<double>(r.bottom)};
             };
-            const auto bounds = snowdesktop::dock_attraction::Bounds(
-                rect(quickNavigation_->rect), rect(quickNavigation_->animationDockRect));
+            const auto bounds = dock_attraction::Bounds(asRect(rect), asRect(animationDockRect));
             const RECT envelope{static_cast<LONG>(std::floor(bounds.left)),
                 static_cast<LONG>(std::floor(bounds.top)), static_cast<LONG>(std::ceil(bounds.right)),
                 static_cast<LONG>(std::ceil(bounds.bottom))};
             animationPath = QuickNavigationRetainedAllocation(animationPath, envelope);
         }
     }
+    RECT fence = QuickNavigationWindowFence(rect, animationPath, hostRect, expanded);
+    ++fence.right;
+    ++fence.bottom;
+    return fence;
+}
+
+void DesktopApp::UpdateQuickNavigationWindowRegion(
+    bool expanded)
+{
+    snowdesktop::performance::Scope trace("navigation.render", "window_region");
+    if (!quickNavigation_->hwnd ||
+        !IsWindow(quickNavigation_->hwnd))
+        return;
 
     // Even while opening/closing, the input fence covers only the visible
     // animation path, not the monitor-sized native coordinate reservation.
-    const RECT panelRegionRect = QuickNavigationWindowFence(quickNavigation_->rect,
-        animationPath, quickNavigation_->hostRect, expanded);
+    const RECT panelRegionRect = quickNavigation_->WindowFence(expanded);
     // Keep the native region rectangular. The DComp surface owns the rounded
     // alpha edge; applying a binary Win32 rounded region here clips away its
     // partial-coverage pixels and leaves visibly jagged corners at rest.
     if (HRGN panelRegion = CreateRectRgn(
             panelRegionRect.left,
             panelRegionRect.top,
-            panelRegionRect.right + 1,
-            panelRegionRect.bottom + 1))
+            panelRegionRect.right,
+            panelRegionRect.bottom))
     {
         HRGN previousRegion = CreateRectRgn(0, 0, 0, 0);
         const bool unchanged = previousRegion &&
@@ -1292,18 +1315,14 @@ void DesktopApp::OpenQuickNavigation(
                     snowdesktop::UiAnimationScheduler::
                         MonotonicMilliseconds()));
             if (!StartQuickNavigationCompositionAnimation())
-            {
-                ApplyQuickNavigationAnimationFrame();
                 EnsureUiAnimationFrame();
-            }
         }
         else
         {
             quickNavigation_->animation.
                 ShowImmediately();
-        }
-        if (!quickNavigation_->animationCompositorDriven)
             ApplyQuickNavigationAnimationFrame();
+        }
         if (quickNavigation_->searchEdit &&
             IsWindow(quickNavigation_->searchEdit))
         {
@@ -1393,18 +1412,14 @@ void DesktopApp::OpenQuickNavigation(
                 snowdesktop::UiAnimationScheduler::
                     MonotonicMilliseconds()));
         if (!StartQuickNavigationCompositionAnimation())
-        {
-            ApplyQuickNavigationAnimationFrame();
             EnsureUiAnimationFrame();
-        }
     }
     else
     {
         quickNavigation_->animation.
             ShowImmediately();
-    }
-    if (!quickNavigation_->animationCompositorDriven)
         ApplyQuickNavigationAnimationFrame();
+    }
     if (quickNavigation_->searchEdit && IsWindow(quickNavigation_->searchEdit))
     {
         (void)FocusKeyboardWindow(
@@ -1425,7 +1440,7 @@ void DesktopApp::OpenQuickNavigation(
 /**
  * @brief 关闭快捷导航面板
  */
-void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
+void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus, bool returnKeyboardFocus)
 {
     snowdesktop::performance::Scope trace("navigation", "close.request");
     quickNavigation_->externalDialogActive = false;
@@ -1436,6 +1451,7 @@ void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
         ReleaseCapturePreservingPointerState();
     CancelQuickNavigationTabHover();
     if (!quickNavigation_->open) return;
+    auto restore = std::exchange(quickNavigation_->keyboardFocusReturn, {});
     if (!quickNavigation_->postCloseAction)
         quickNavigation_->slotPickerRequest = {};
     if (renameController_.
@@ -1515,6 +1531,8 @@ void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
         snowdesktop::performance::Scope focusTrace("navigation", "close.restore_focus");
         FocusDesktopInputWindow();
     }
+    if (returnKeyboardFocus && restore && !quickNavigation_->postCloseAction)
+        restore();
 
     if (!quickNavigation_->hwnd ||
         !IsWindow(quickNavigation_->hwnd))
@@ -1542,7 +1560,6 @@ void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
     }
     if (!StartQuickNavigationCompositionAnimation())
     {
-        ApplyQuickNavigationAnimationFrame();
         EnsureUiAnimationFrame();
         InvalidateQuickNavigationWindow();
     }
@@ -1568,17 +1585,15 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
     namespace rules = snowdesktop::quick_navigation_animation_rules;
     const auto effect = quickNavigation_->animation.GetEffect();
     bool deformationFrame = quickNavigation_->animation.IsAnimating() && rules::IsDeformationEffect(effect);
-    if (deformationFrame &&
-        quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey) &&
-        quickNavigation_->dcompVisual &&
-        SUCCEEDED(quickNavigation_->dcompVisual->SetContent(quickNavigation_->dcompSurface.Get())))
-    {
-        quickNavigation_->backdropCompositor.RemoveSrgbContent(srgbKey);
-        (void)quickNavigation_->backdropCompositor.CommitSrgbContent();
-    }
     if (quickNavigation_->animationCompositorDriven)
+    {
+        // Input, IME or a search result can change pixels during a native animation.
+        // Publish the new scene into the existing visual without replacing its tracks.
+        if (quickNavigation_->sceneDirty &&
+            !quickNavigation_->PublishPrecomposedFrame(d2dDevice_.Get(), rules::Effect::None, 0.f, 1.f))
+            InvalidateQuickNavigationWindow();
         return;
-
+    }
     auto visual =
         quickNavigation_->animation.GetVisual();
     const float anchorX = static_cast<float>(
@@ -1589,7 +1604,7 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
         quickNavigation_->hostRect.top);
 
     const float collapsed = 1.0f - rules::EaseInOutSmooth(visual.progress);
-    if (deformationFrame && !(effect == rules::Effect::Attraction
+    if (deformationFrame && quickNavigation_->sceneBitmap && !(effect == rules::Effect::Attraction
             ? ApplyQuickNavigationAttractionFrame(collapsed, visual.opacity)
             : ApplyQuickNavigationGenieFrame(collapsed, visual.opacity)))
     {
@@ -1599,6 +1614,10 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
         deformationFrame = false;
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Navigation, L"QuickNav deformation unavailable; using scale for this session", DiagnosticLogLevel::Warning);
     }
+    if (!deformationFrame && quickNavigation_->sceneBitmap &&
+        (quickNavigation_->sceneDirty || quickNavigation_->sceneFrameDeformed) &&
+        !quickNavigation_->PublishPrecomposedFrame(d2dDevice_.Get(), rules::Effect::None, 0.f, visual.opacity))
+        InvalidateQuickNavigationWindow();
     if (!deformationFrame)
     {
         ClearQuickNavigationDeformation();
@@ -1658,6 +1677,10 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
     // Visibility-only frames have no pending pixel update.
     if (!quickNavigation_->compositionPaintInProgress)
     {
+        snowdesktop::performance::Scope trace("navigation.render", "commit");
+        if (quickNavigation_->backdropCompositor.HasSrgbContent(srgbKey) &&
+            !FlushPendingQuickNavigationCompositionCommit())
+            return;
         quickNavigation_->backdropCompositor.CommitVisualChanges();
         (void)quickNavigation_->backdropCompositor.CommitSrgbContent();
     }
@@ -1671,6 +1694,7 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
 
 void DesktopApp::FinalizeCloseQuickNavigation()
 {
+    quickNavigation_->keyboardFocusReturn = {};
     std::function<void()> postCloseAction =
         std::move(quickNavigation_->postCloseAction);
     quickNavigation_->postCloseAction = {};
@@ -1700,7 +1724,7 @@ void DesktopApp::FinalizeCloseQuickNavigation()
         QuickNavigationInvocationSource::Pointer;
     quickNavigationDockHost_ = nullptr;
     quickNavigation_->slotPickerRequest = {};
-    if (!postCloseAction && !exitRequested_ && quickNavigation_->hwnd && quickNavigation_->dcompSurface)
+    if (!postCloseAction && !exitRequested_ && quickNavigation_->hwnd && quickNavigation_->sceneBitmap)
     {
         // Retain the hidden composition host for a quick reopen. Search and
         // IME state, capture and hit geometry belong only to the old session.

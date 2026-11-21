@@ -4,6 +4,7 @@
 #include "ui/render/font_weight_rules.h"
 #include "dock/dock_layout_settings.h"
 #include "icons/icon_beautify.h"
+#include "icons/icon_shadow_settings.h"
 
 namespace snowdesktop
 {
@@ -27,5 +28,6 @@ struct DesktopDisplaySettings
     bool groupComponentBadges = true;
     bool beautifyFileThumbnails = false;
     IconBeautifySettings iconBeautify;
+    IconShadowSettings iconShadows;
 };
 } // namespace snowdesktop

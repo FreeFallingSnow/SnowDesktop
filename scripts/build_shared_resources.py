@@ -400,6 +400,10 @@ def main():
         print(json.dumps(run(args),ensure_ascii=True))
     except (ValueError,OSError,KeyError,TypeError) as error:
         print(str(error),file=sys.stderr)
+        if args.command == 'apply' and isinstance(error, OSError):
+            print(f'Request {args.request} was retained. After resolving the I/O error, retry the same command: '
+                  f'scripts/build.bat resource apply {args.participant} --batch {args.batch} '
+                  f'--revision {args.revision} --request {args.request}', file=sys.stderr)
         return 2
     return 0
 

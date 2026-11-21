@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "dock/dock_tray_rules.h"
+#include "dock/floating_dock_rules.h"
 #include "app/app.h"
 #include "dock/dock_window_rules.h"
 #include "dock/dock_window_preview.h"
@@ -16,7 +17,9 @@
 #include "drag_drop/drag_input_rules.h"
 #include "steam/steam_app_identity.h"
 #include "widget/runtime/widget_visibility_rules.h"
+#include "widget/view/widget_composition_layer_rules.h"
 #include "widget/view/widget_scroll_rules.h"
+#include "widgets/guide_widget.h"
 #include "layout/popup_scrollbar_layout.h"
 
 #include <utility>
@@ -59,6 +62,184 @@ bool OpenMissingWidgetWorkshopPage(HWND owner,
     }
     return true;
 }
+}
+
+RECT DesktopApp::GetDesktopHoverDamage(POINT point, const DockContainer* dock) const
+{
+    RECT dirty{};
+    if (point.x == LONG_MIN && point.y == LONG_MIN) return dirty;
+    const auto include = [&](RECT bounds, LONG padding) {
+        if (IsRectEmpty(&bounds)) return;
+        InflateRect(&bounds, padding, padding);
+        UnionRect(&dirty, &dirty, &bounds);
+    };
+    for (const auto& item : items_)
+    {
+        const RECT frame = item.largeIcon ? GetLargeIconFrameRect(item) : item.bounds;
+        if (PtInRect(&frame, point)) include(frame, 8);
+    }
+    for (const auto& widget : widgets_)
+    {
+        const RECT frame = GetStandaloneWidgetFrameRect(widget);
+        const RECT hoverFrame = GetDesktopWidgetHoverFrameRect(widget, frame);
+        if (PtInRect(&frame, point) || PtInRect(&hoverFrame, point))
+            include(frame, snowdesktop::widget_composition_layer_rules::kWidgetSurfaceBorderOverdraw);
+    }
+    if (dock && !IsDockHostedByPersistentHost(dock))
+        include(snowdesktop::floating_dock_rules::ExpandHostForTitleLayer(
+            dock->GetInteractiveBounds(), dockSettings_.position), 4);
+    if (GetOpenPopupWidget() && !IsCollectionPopupHostedByFloatingWindow() && PtInRect(&popupRect_, point))
+        include(popupRect_, 6);
+    if (!luaWidgetPanelRequest_.widgetId.empty() && !ShouldShowFloatingPopupWindow() &&
+        PtInRect(&luaWidgetPanelRect_, point))
+        include(luaWidgetPanelRect_, 6);
+    if (IsPointInUsageGuide(point)) include(usageGuideFrame_, 4);
+    RECT left{}, right{};
+    GetNavHotEdgeRects(left, right);
+    if (PtInRect(&left, point)) include(left, 4);
+    if (PtInRect(&right, point)) include(right, 4);
+    return dirty;
+}
+
+void DesktopApp::PresentPassiveHoverVisualChange(POINT previousHover)
+{
+    snowdesktop::performance::Scope trace("input", "hover.passive.present");
+    RecordShellHoverTrace(ShellHoverTraceEvent::PassivePresent);
+    const RECT oldBounds = GetDesktopHoverDamage(previousHover, GetDockContainerAtPoint(previousHover));
+    UpdateWidgetHoverExpansion(lastMousePoint_);
+    const RECT newBounds = GetDesktopHoverDamage(lastMousePoint_, GetDockContainerAtPoint(lastMousePoint_));
+    if (hwnd_)
+    {
+        const auto present = [&](const RECT& bounds) {
+            if (IsRectEmpty(&bounds)) return;
+            InvalidateRect(hwnd_, &bounds, FALSE);
+            if (!compositionPaintInProgress_) UpdateWindow(hwnd_);
+        };
+        RECT overlap{}, both{};
+        if (IntersectRect(&overlap, &oldBounds, &newBounds))
+        {
+            UnionRect(&both, &oldBounds, &newBounds);
+            present(both);
+        }
+        else
+        {
+            // Windows returns one bounding box for all outstanding damage.
+            // Present disjoint hover targets separately when jumping between displays.
+            present(oldBounds);
+            present(newBounds);
+        }
+        if (IsRectEmpty(&oldBounds) && IsRectEmpty(&newBounds))
+        {
+            RECT client{};
+            GetClientRect(hwnd_, &client);
+            const RECT tooltip = desktopForegroundTooltipDamage_.IncludePrevious({}, client);
+            if (!IsRectEmpty(&tooltip)) (void)PresentDesktopForegroundComposition(tooltip);
+        }
+        SyncDockTitleTooltip();
+        SyncPageNavHotEdgeTooltip();
+        SyncLuaWidgetTooltip();
+    }
+    InvalidateFloatingDockWindow(true);
+    InvalidateFloatingPopupWindow(true);
+}
+
+bool DesktopApp::PresentCollectionPopupHoverChange(POINT previousHover, bool allowResize)
+{
+    if (dragSession_.HasContext() || dragDropController_.IsTransportActive())
+        return false;
+
+    const bool floatingCollection = IsCollectionPopupHostedByFloatingWindow();
+    const bool resizing = allowResize && floatingCollection && GetCollectionPopupResizeTransition();
+    const auto* previousDock = GetDockContainerAtPoint(previousHover);
+    const auto* currentDock = GetDockContainerAtPoint(lastMousePoint_);
+    if (!resizing)
+    {
+        if (mouseDown_ || widgetAction_ != WidgetAction::None || marqueeActive_ || middleButtonWidgetMove_ ||
+            detailColumnResizeActive_ || luaWidgetPanelMouseDown_ || snowdesktop::private_pointer::Capture() ||
+            desktopBackdropFullCollectionPending_ || HasActiveContextMenuSession() || IsLuaStackIndicatorVisible() ||
+            (floatingCollection && (!popupAnchoredToDock_ || !collectionPopupDockHost_ || !collectionPopupDockHost_->active)) ||
+            (!floatingCollection && (folderPreview_ || ShouldShowFloatingPopupWindow())))
+            return false;
+
+        if (!floatingCollection && !previousDock && !currentDock) return false;
+        const auto collectionSurface = [&](POINT point, const DockContainer* dock) {
+            if (floatingCollection && IsPointOccludedByOpenPopup(point)) return true;
+            if (!dock || !IsDockHostedByPersistentHost(dock)) return false;
+            if (floatingCollection) return dock == collectionPopupDockHost_->container;
+            // The close completion has released the popup owner. Only a known
+            // collection entrance can identify the returning Dock hover here.
+            const auto* entry = dock->EntryAtPoint(point);
+            if (!entry || entry->GetEntryIndex() >= dockEntries_.size()) return false;
+            return IsLogicalDockEntryType(entry->GetEntryType()) || IsFolderDockEntry(dockEntries_[entry->GetEntryIndex()]);
+        };
+        const bool previousOwned = collectionSurface(previousHover, previousDock);
+        const bool currentOwned = collectionSurface(lastMousePoint_, currentDock);
+        const auto cleared = [](POINT point) { return point.x == LONG_MIN && point.y == LONG_MIN; };
+        // Another input HWND can send its leave after the previous one has
+        // already cleared the shared desktop hover for this Dock popup.
+        if (!previousOwned && !currentOwned &&
+            !(floatingCollection && cleared(previousHover) && cleared(lastMousePoint_)))
+            return false;
+        const auto emptyDesktop = [&](POINT point, const DockContainer* dock) {
+            if (cleared(point)) return true;
+            RECT left{}, right{};
+            GetNavHotEdgeRects(left, right);
+            return !dock && !IsPointInUsageGuide(point) && !PtInRect(&left, point) && !PtInRect(&right, point) &&
+                !HitTestIcon(point) && !IsPointOverWidgetChrome(point);
+        };
+        if ((!previousOwned && !emptyDesktop(previousHover, previousDock)) ||
+            (!currentOwned && !emptyDesktop(lastMousePoint_, currentDock)))
+            return false;
+        // Hover-only frames can extend beyond their present hit target. Keep
+        // the visibility transaction when such a frame is entered or left.
+        for (const auto& widget : widgets_)
+        {
+            if (!widget.showOnHoverOnly) continue;
+            const RECT frame = GetDesktopWidgetHoverFrameRect(widget, GetStandaloneWidgetFrameRect(widget));
+            if ((PtInRect(&frame, previousHover) != FALSE) != (PtInRect(&frame, lastMousePoint_) != FALSE))
+                return false;
+        }
+    }
+
+    snowdesktop::performance::Scope present("input", resizing ? "hover.popup_resize.present" : "hover.dock_popup.present");
+    const auto invalidateHover = [&](POINT point, const DockContainer* dock) {
+        const RECT dirty = GetDesktopHoverDamage(point, dock);
+        if (hwnd_ && !IsRectEmpty(&dirty)) InvalidateRect(hwnd_, &dirty, FALSE);
+    };
+    // Passive window handoffs and timer samples change the same two hover
+    // footprints. Leave their paint pending while the popup presents its frame.
+    invalidateHover(previousHover, previousDock);
+    if (lastMousePoint_.x != previousHover.x || lastMousePoint_.y != previousHover.y)
+        invalidateHover(lastMousePoint_, currentDock);
+    UpdateWidgetHoverExpansion(lastMousePoint_);
+    UpdateLargeIconHover();
+    if (floatingCollection) InvalidateFloatingPopupWindow(false);
+
+    const auto* presentedDock = floatingDockHoverTargetOwner_;
+    if (!currentDock || currentDock != presentedDock)
+    {
+        floatingDockHoverTargetOwner_ = nullptr;
+        floatingDockHoverTargetIndex_ = 0;
+        floatingDockHoverTargetKind_ = 0;
+        if (floatingDockHoverTailToken_)
+            uiAnimationScheduler_.Cancel(std::exchange(floatingDockHoverTailToken_, 0));
+    }
+    for (const auto& host : persistentDockHosts_)
+        if (host && host->container && (host->container == previousDock ||
+                host->container == currentDock || host->container == presentedDock))
+            UpdateFloatingDockWindowBounds(*host, true);
+    if (!resizing)
+    {
+        RECT client{};
+        if (GetClientRect(hwnd_, &client))
+        {
+            const RECT tooltip = desktopForegroundTooltipDamage_.IncludePrevious({}, client);
+            if (!IsRectEmpty(&tooltip)) InvalidateRect(hwnd_, &tooltip, FALSE);
+        }
+        SyncDockTitleTooltip();
+        SyncLuaWidgetTooltip();
+    }
+    return true;
 }
 
 void DesktopApp::OnMouseLeave()
@@ -120,6 +301,9 @@ void DesktopApp::OnMouseLeave()
     }
     else
         HideDockWindowPreview();
+    const int previousNavSide = navHoverSide_;
+    const bool clearedDesktopHover = previousNavSide != 0 || navHotEdgeHover_ ||
+        (!listTitleHoverPopup_ && !listTitleHoverOwner_.empty());
     SetPageNavHotEdgeHover(0);
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
@@ -175,20 +359,36 @@ void DesktopApp::OnMouseLeave()
             lastMousePoint_.x, lastMousePoint_.y, cursorScreen.x, cursorScreen.y,
             cursorValid ? 1 : 0);
         snowdesktop::dock_taskbar_diagnostics::Record(phase);
+        const POINT previousHover = lastMousePoint_;
         lastMousePoint_ = { LONG_MIN, LONG_MIN };
         ClearListTitleHover();
         if (widgetEngine_)
             widgetEngine_->ClearInteractionHover();
-        // The title is part of the floating HWND region. Shrink that input
-        // island before presenting the cleared frame so an invisible stale
-        // tooltip cannot continue intercepting mouse input.
-        UpdateFloatingDockWindowBounds(false);
-        PresentPassiveHoverVisualChange();
+        if ((clearedDesktopHover && !GetCollectionPopupResizeTransition()) ||
+            !PresentCollectionPopupHoverChange(previousHover))
+        {
+            // Shrink the title's input island before presenting the cleared frame.
+            UpdateFloatingDockWindowBounds(false);
+            PresentPassiveHoverVisualChange(previousHover);
+        }
         RecordShellHoverTrace(
             ShellHoverTraceEvent::MouseLeaveEnd);
         return;
     }
-    if (hwnd_)
+    if (hwnd_ && luaWidgetPanelMouseDown_ && captureWindow &&
+        captureWindow == luaWidgetPanelCaptureHwnd_ &&
+        !dragSession_.HasContext() && !dragDropController_.IsTransportActive())
+    {
+        // The panel still receives the captured move and up when the pointer
+        // crosses its HWND. Only desktop chrome cleared above needs erasing.
+        if (previousNavSide)
+        {
+            RECT left{}, right{};
+            GetNavHotEdgeRects(left, right);
+            InvalidateRect(hwnd_, previousNavSide < 0 ? &left : &right, FALSE);
+        }
+    }
+    else if (hwnd_)
         InvalidateRect(hwnd_, nullptr, FALSE);
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MouseLeaveEnd);
@@ -335,7 +535,8 @@ void DesktopApp::ReconcileDesktopHoverState(
                 PtInRect(&pointerDockHost->dockRect, lastMousePoint_) &&
                 PtInRect(&pointerDockHost->dockRect, activeCursorPoint) &&
                 !dragDropController_.IsTransportActive() &&
-                !GetOpenPopupWidget() && !ShouldShowFloatingPopupWindow();
+                !ShouldShowFloatingPopupWindow();
+            const POINT previousHover = lastMousePoint_;
             lastMousePoint_ = activateHover
                 ? cursorPoint : activeCursorPoint;
             UpdateListTitleHover();
@@ -346,12 +547,12 @@ void DesktopApp::ReconcileDesktopHoverState(
                 UpdateDockWindowPreview(lastMousePoint_);
                 PresentPointerInteractionFrame();
             }
-            else
+            else if (!PresentCollectionPopupHoverChange(previousHover))
             {
                 // On a surface handoff, synchronize both the old and new
                 // regions so stale visuals cannot outlive the hover state.
                 UpdateFloatingDockWindowBounds(false);
-                PresentPassiveHoverVisualChange();
+                PresentPassiveHoverVisualChange(previousHover);
             }
             RecordShellHoverTrace(
                 activateHover
@@ -407,7 +608,7 @@ void DesktopApp::ReconcileDesktopHoverState(
 
     if (hoverAlreadyCleared && foregroundChanged &&
         listTitleHoverOwner_.empty() && !dragDropController_.IsTransportActive() &&
-        !GetOpenPopupWidget() && luaWidgetPanelRequest_.widgetId.empty())
+        !IsCollectionPopupHostedByFloatingWindow() && luaWidgetPanelRequest_.widgetId.empty())
     {
         // Window placement is repaired above. Reuse the cleared desktop
         // frame while cancelling any pending Dock preview on a new handoff.
@@ -438,6 +639,7 @@ std::uint64_t DesktopApp::HoverOnlyVisibleMask() const
             continue;
         const bool interactionRetained =
             popupWidgetIndex_ == widgetIndex ||
+            RetainsInlineFolderPreview(widget) ||
             (!interactionPinnedWidgetId_.empty() &&
                 interactionPinnedWidgetId_ == widget.id) ||
             snowdesktop::widget_visibility_rules::
@@ -735,10 +937,11 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
 
     // 在激活外部应用前完整结束本次桌面交互，避免鼠标捕获、选择高亮或
     // 拖拽预览跨到新前台窗口后仍残留。
-    EndDragSession();
+    const bool popupEntryOnDockHost = (IsLogicalDockEntryType(entryType) || folderEntry) &&
+        IsDockHostedByPersistentHost(dock);
+    EndDragSession(!popupEntryOnDockHost);
     HideDragHintWindow();
-    if (!waitForDoubleClick)
-        ClearSelection();
+    const bool selectionCleared = !waitForDoubleClick && ClearSelection();
     mouseDown_ = false;
     mouseDownHit_ = nullptr;
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
@@ -752,12 +955,13 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
     snowdesktop::private_pointer::ReleasePointerCapture();
-    InvalidateDragStaticScene();
-    const bool popupEntryOnFloatingDock =
-        (IsLogicalDockEntryType(entryType) ||
-         folderEntry) &&
-        IsDockContainerEffectivelyFloating(dock);
-    if (hwnd_ && !popupEntryOnFloatingDock)
+    InvalidateDragStaticScene(!popupEntryOnDockHost || selectionCleared);
+    if (popupEntryOnDockHost && selectionCleared)
+    {
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        InvalidateFloatingDockWindow(false);
+    }
+    else if (hwnd_ && !popupEntryOnDockHost)
     {
         if (IsDockContainerEffectivelyFloating(dock))
             InvalidateFloatingDockWindow(true);
@@ -906,7 +1110,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
             L":" + ToUpperInvariant(reference);
         if (IsCollectionPopupInteractive() &&
             dockFolderPopupOpen_ &&
-            dockFolderPopupSourceId_ == sourceId &&
+            GetDockFolderPopupEntrySourceId() == sourceId &&
             collectionPopupDockHost_ == requestedDockHost)
             CloseCollectionPopup();
         else
@@ -941,29 +1145,33 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
     if (auto* view = GetCategorizedPopupView(); view &&
         (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))
     {
-        const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
-        CategorizedPopupScope scope(view, GetCategorizedPopupFrame(popup));
-        if (view->HasCategoryTabPress())
         {
-            view->UpdateCategoryTabDrag(upPoint);
-            view->EndCategoryTabDrag(true);
-            if (dockFolderPopupOpen_)
+            const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
+            CategorizedPopupScope scope(view, GetCategorizedPopupFrame(popup));
+            if (view->HasCategoryTabPress())
             {
-                const size_t source = FindWidgetIndexById(dockFolderPopupMappingWidgetId_);
-                if (source < widgets_.size())
+                view->UpdateCategoryTabDrag(upPoint);
+                view->EndCategoryTabDrag(true);
+                if (dockFolderPopupOpen_)
                 {
-                    widgets_[source].categoryTabOrder = dockFolderPopupWidget_.categoryTabOrder;
-                    widgets_[source].activeCategoryId = dockFolderPopupWidget_.activeCategoryId;
+                    const size_t source = FindWidgetIndexById(dockFolderPopupMappingWidgetId_);
+                    if (source < widgets_.size())
+                    {
+                        widgets_[source].categoryTabOrder = dockFolderPopupWidget_.categoryTabOrder;
+                        widgets_[source].activeCategoryId = dockFolderPopupWidget_.activeCategoryId;
+                    }
                 }
+                RequestLayoutSave();
             }
-            RequestLayoutSave();
+            else view->FinishSearchPointerSelection(upPoint);
         }
-        else view->FinishSearchPointerSelection(upPoint);
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
         snowdesktop::private_pointer::ReleasePointerCapture();
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        if (folderPreview_) RefreshDockFolderPopupGeometry();
+        if (auto* current = GetCategorizedPopupView(); current && !(folderPreview_ && folderPreview_->inlineBounds))
+            InvalidateWidgetControls(*current);
         return;
     }
     for (auto& container : containers_)
@@ -975,8 +1183,8 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             mouseDown_ = false;
             mouseDownWidgetIndex_ = static_cast<size_t>(-1);
             mouseDownHit_ = nullptr;
+            InvalidateWidgetControls(*categorized);
             snowdesktop::private_pointer::ReleasePointerCapture();
-            InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
     if (HandleUsageGuidePointerUp(upPoint)) return;
@@ -985,9 +1193,15 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         if (HandleLargeIconPointerUp()) return;
     }
     if (middleButtonWidgetMove_) return;
+    if (dragSession_.IsActive())
+    {
+        // Retain the source and final hit-test context through commit. Only
+        // the floating ghost ends here, before any synchronous drop work.
+        dragSession_.SetVisualVisible(false);
+        HideDragPreviewWindow();
+    }
     (void)wp;
     int dropPreviewMods = 0;
-    bool commitVisualBeforeDrop = false;
     HideDragHintWindow();
 
     if (popupScrollbarDragging_)
@@ -999,10 +1213,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         if (popupWidget && IsCollectionPopupInteractive())
         {
             const RECT popup = GetCollectionPopupRect(*popupWidget);
-            const RECT viewport = snowdesktop::popup_scrollbar_layout::Viewport(
-                popup, GetCollectionPopupContentRect(popup));
-            const int visible = std::max<int>(
-                1, viewport.bottom - viewport.top);
+            const auto [viewport, visible] = GetCollectionPopupScrollbarLayout(popup);
             const int maximum = GetCollectionPopupMaxScrollOffset(
                 *popupWidget, popup);
             const auto geometry = snowdesktop::widget_scroll_rules::
@@ -1022,7 +1233,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
         snowdesktop::private_pointer::ReleasePointerCapture();
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        InvalidateCollectionPopupControls(true);
         return;
     }
 
@@ -1054,9 +1265,9 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+        if (container) InvalidateWidgetControls(*container);
         snowdesktop::private_pointer::ReleasePointerCapture();
         RequestLayoutSave();
-        InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
 
@@ -1076,8 +1287,13 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
         snowdesktop::private_pointer::ReleasePointerCapture();
-        if (dockFolderPopupResize)
+        if (dockFolderPopupResize && folderPreview_)
+            CommitFolderPreviewDisplaySettings();
+        else if (dockFolderPopupResize)
+        {
+            snowdesktop::InteractiveLayoutSave save(this);
             CommitDockFolderPopupStateToSource();
+        }
         else
             RequestLayoutSave();
         if (popupResize)
@@ -1109,6 +1325,13 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         const std::string surface =
             luaWidgetPanelRequest_.surface;
         const auto panelGeneration = floatingPopupMouseHookGeneration_;
+        const RECT previousDesktopPanel = IsLuaPanelHostedByFloatingWindow()
+            ? RECT{} : GetLuaWidgetPanelRect();
+        const auto panelStillInteractive = [&] {
+            return panelGeneration == floatingPopupMouseHookGeneration_ &&
+                luaWidgetPanelRequest_.widgetId == panelWidgetId &&
+                luaWidgetPanelAnimation_.IsInteractive();
+        };
         const bool pointerCaptured = widgetEngine_ &&
             widgetEngine_->HasInteractionPointerCapture(
                 panelWidgetId, surface);
@@ -1116,9 +1339,9 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             widgetEngine_ &&
             widgetEngine_->HandleHostInputPointerUp(
                 panelWidgetId, localX, localY, surface);
-        if (!hostInputHandled &&
-            (PtInRect(&content, upPoint) || pointerCaptured) &&
-            widgetEngine_)
+        const bool dispatchMouseUp = widgetEngine_ && !hostInputHandled &&
+            (PtInRect(&content, upPoint) || pointerCaptured);
+        if (dispatchMouseUp)
         {
             const char* upEvent = surface == "dialog"
                 ? "onDialogMouseUp"
@@ -1132,9 +1355,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                 panelWidgetId,
                 upEvent,
                 localX, localY, 1, 0);
-            if (panelGeneration == floatingPopupMouseHookGeneration_ &&
-                luaWidgetPanelRequest_.widgetId == panelWidgetId &&
-                luaWidgetPanelAnimation_.IsInteractive() && PtInRect(&content, upPoint))
+            if (panelStillInteractive() && PtInRect(&content, upPoint))
             {
                 widgetEngine_->InvokeMouseEvent(
                     panelWidgetId,
@@ -1146,7 +1367,31 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDown_ = false;
         ReleaseLuaWidgetPanelCaptureIfOwned();
         UpdateHostInputImePosition();
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        // A panel callback can change the model its desktop widget draws, even
+        // when the callback closes the panel or replaces it with another one.
+        if ((hostInputHandled || dispatchMouseUp) && widgetEngine_ &&
+            FindWidgetIndexById(panelWidgetId) < widgets_.size())
+            widgetEngine_->RuntimeInvalidateHost(panelWidgetId, std::nullopt, "desktop");
+        // Closing or replacing a panel publishes its old footprint and its successor.
+        if (!panelStillInteractive()) return;
+        if (IsLuaPanelHostedByFloatingWindow())
+        {
+            // Its WM_LBUTTONUP dispatcher presents after this handler returns.
+            if (!handlingFloatingPopupInput_)
+                InvalidateFloatingPopupWindow();
+        }
+        else
+        {
+            const RECT currentPanel = GetLuaWidgetPanelRect();
+            const auto invalidatePanel = [this](RECT panel) {
+                if (IsRectEmpty(&panel)) return;
+                InflateRect(&panel, 3, 3);
+                InvalidateRect(hwnd_, &panel, FALSE);
+            };
+            if (!EqualRect(&previousDesktopPanel, &currentPanel))
+                invalidatePanel(previousDesktopPanel);
+            invalidatePanel(currentPanel);
+        }
         return;
     }
 
@@ -1166,9 +1411,9 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ =
             static_cast<size_t>(-1);
+        InvalidateWidgetControls(*searchable);
         snowdesktop::private_pointer::ReleasePointerCapture();
         UpdateHostInputImePosition();
-        InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
 
@@ -1412,6 +1657,8 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
     {
         if (HandleDockClickRelease(upPoint))
             return;
+        const bool previewMarquee = folderPreview_ && marqueeActive_ && marqueeDockFolderPopup_;
+        if (previewMarquee) UpdateMarqueeSelection(upPoint);
         const bool otherSelectionDamage = marqueeActive_ || dockPressedContainer_ ||
             pendingCtrlToggleDesktopIndex_ < items_.size() || pendingCtrlToggleWidgetItem_;
         ClearDockPressedState();
@@ -1521,7 +1768,11 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         ++expectedCaptureReleaseDepth_;
         snowdesktop::private_pointer::ReleasePointerCapture();
         --expectedCaptureReleaseDepth_;
-        if (otherSelectionDamage || IsRectEmpty(&luaDamage))
+        if (previewMarquee && folderPreview_ && folderPreview_->inlineBounds)
+            (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+        else if (previewMarquee && ShouldShowFloatingPopupWindow())
+            InvalidateFloatingPopupWindow(true);
+        else if (otherSelectionDamage || IsRectEmpty(&luaDamage))
             InvalidateRect(hwnd_, nullptr, FALSE);
         else
         {
@@ -1571,29 +1822,6 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             ((snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) ? MK_ALT : 0)))
         goto cleanup;
 
-    ResolveCurrentDragTargetAt(upPoint);
-
-    if (!GetDockDragOutRemovalHint(upPoint).empty())
-    {
-        const bool removed = RemoveDockDragOutItems(dragSession_.Items());
-        ClearSelection();
-        EndDragSession();
-        if (removed)
-        {
-            RequestLayoutSave();
-            LayoutItems();
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        }
-        goto cleanup;
-    }
-
-    if (!dragSession_.TargetContainer() ||
-        dragSession_.TargetRegion() == HitRegion::None ||
-        dragSession_.TargetRegion() == HitRegion::Blocked)
-    {
-        goto cleanup;
-    }
-
     if (!rightDrop)
     {
         dropPreviewMods = 0;
@@ -1601,287 +1829,11 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         if (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) dropPreviewMods |= MK_ALT;
         if (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) dropPreviewMods |= MK_SHIFT;
     }
-    commitVisualBeforeDrop =
-        dragSession_.TargetRegion() == HitRegion::Handoff;
-    if (!commitVisualBeforeDrop)
-    {
-        const DropPreviewList dropPreview = BuildDropPreviewList(
-            dragSession_.SourceList(),
-            dragSession_.TargetContainer(),
-            dragSession_.TargetSlot(),
-            dragSession_.TargetRegion(),
-            dropPreviewMods,
-            dragSession_.CurrentPoint());
-        commitVisualBeforeDrop = dropPreview.fileBacked;
-    }
-
-    // Shell/file-backed drop handlers may synchronously show a progress
-    // window. Commit their visual end up front, but keep pure internal moves
-    // in the current frame until the model has its final position. Otherwise
-    // the source item is synchronously painted once at its old location.
-    dragSession_.DeactivateForDrop();
-    mouseDown_ = false;
-    mouseDownHit_ = nullptr;
-    ReleaseCapturePreservingPointerState();
-    if (commitVisualBeforeDrop)
-        CommitDragVisualEndBeforeShellOperation();
-
-    {
-        const int mods = dropPreviewMods;
-
-        if (dragSession_.TargetRegion() == HitRegion::Handoff && dragSession_.TargetSlot()
-            && dragSession_.TargetSlot()->GetItem())
-        {
-            Item* targetItem = dragSession_.TargetSlot()->GetItem();
-            const bool dockFolderPopupTarget =
-                IsOpenDockFolderPopupDropTarget(
-                    dragSession_.TargetContainer(),
-                    targetItem);
-            const bool dockFolderPopupSource =
-                dockFolderPopupOpen_ &&
-                dragSession_.Source() ==
-                    dockFolderPopupContainer_.get();
-            bool explicitDockFolderTarget =
-                dockFolderPopupTarget;
-            if (auto* dockTarget = dynamic_cast<DockEntryItem*>(targetItem))
-            {
-                const size_t targetEntryIndex =
-                    dockTarget->GetEntryIndex();
-                explicitDockFolderTarget =
-                    targetEntryIndex <
-                        dockEntries_.size() &&
-                    IsFolderDockEntry(
-                        dockEntries_[
-                            targetEntryIndex]);
-                if (dynamic_cast<DockContainer*>(
-                        dragSession_.Source()) &&
-                    targetEntryIndex <
-                        dockEntries_.size() &&
-                    IsRecycleBinDockEntry(
-                        dockEntries_[targetEntryIndex]) &&
-                    RemoveDockDragOutItems(
-                        dragSession_.Items()))
-                {
-                    ClearSelection();
-                    EndDragSession();
-                    RequestLayoutSave();
-                    LayoutItems();
-                    InvalidateRect(
-                        hwnd_, nullptr, FALSE);
-                    goto cleanup;
-                }
-                if (IsLogicalDockEntryType(dockTarget->GetEntryType()))
-                {
-                    const bool executed = DropItemsIntoDockCollection(
-                        dragSession_.Items(), dragSession_.Source(), dockTarget, mods);
-                    RequestLayoutSave();
-                    ClearSelection();
-                    EndDragSession();
-                    if (executed)
-                    {
-                        LayoutItems();
-                        InvalidateRect(hwnd_, nullptr, FALSE);
-                    }
-                    goto cleanup;
-                }
-            }
-            auto* targetDesktopIcon = dynamic_cast<DesktopIcon*>(targetItem);
-            DesktopItem* targetDesktopItem = targetDesktopIcon
-                ? targetDesktopIcon->GetDesktopItem() : nullptr;
-            if (dynamic_cast<DockContainer*>(dragSession_.Source()) && targetDesktopItem &&
-                _wcsicmp(targetDesktopItem->desktopIconClsid.c_str(),
-                    kDesktopIconClsidRecycleBin) == 0)
-            {
-                MoveDockItemsToDesktop(dragSession_.Items(),
-                    ResolveDesktopRequestCell(
-                        dragSession_.SourceList(),
-                        dragSession_.CurrentPoint()));
-                RequestLayoutSave();
-                ClearSelection();
-                EndDragSession();
-                goto cleanup;
-            }
-            const std::vector<std::wstring> sourcePaths =
-                dragSession_.SourceList().FilePaths();
-            const bool fullyPathBackedSource =
-                !sourcePaths.empty() &&
-                sourcePaths.size() ==
-                    dragSession_.SourceList().entries.size();
-            const std::wstring targetPath = targetItem->GetPath();
-            const DWORD targetAttributes = targetPath.empty()
-                ? INVALID_FILE_ATTRIBUTES
-                : GetFileAttributesW(targetPath.c_str());
-            if (!sourcePaths.empty() &&
-                targetAttributes != INVALID_FILE_ATTRIBUTES &&
-                (targetAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
-            {
-                DWORD keyState = MK_LBUTTON;
-                if (mods & MK_CONTROL) keyState |= MK_CONTROL;
-                if (mods & MK_ALT) keyState |= MK_ALT;
-                if (mods & MK_SHIFT) keyState |= MK_SHIFT;
-                const DWORD selectedEffect = ChooseDropEffect(
-                    keyState,
-                    DROPEFFECT_COPY |
-                        DROPEFFECT_MOVE |
-                        DROPEFFECT_LINK);
-                const DropAction action =
-                    selectedEffect == DROPEFFECT_LINK
-                        ? DropAction::Link
-                        : selectedEffect == DROPEFFECT_COPY
-                            ? DropAction::Copy
-                            : DropAction::Move;
-                DragSourceList fileSources =
-                    dragSession_.SourceList();
-                auto finished = [this,
-                    dockFolderPopupTarget,
-                    dockFolderPopupSource](bool succeeded) {
-                    if (!succeeded)
-                        return;
-                    ReloadItems(false);
-                    if ((dockFolderPopupTarget ||
-                         dockFolderPopupSource) &&
-                        dockFolderPopupOpen_)
-                        RefreshDockFolderPopup();
-                };
-                if (MaterializeFilesToFolder(
-                        fileSources, targetPath, action,
-                        std::move(finished)))
-                {
-                    RequestLayoutSave();
-                    ClearSelection();
-                    EndDragSession();
-                    goto cleanup;
-                }
-            }
-            DWORD shellKeyState = rightDrop && (wp & MK_RBUTTON) ? MK_RBUTTON : MK_LBUTTON;
-            if (mods & MK_CONTROL) shellKeyState |= MK_CONTROL;
-            if (mods & MK_ALT) shellKeyState |= MK_ALT;
-            if (mods & MK_SHIFT) shellKeyState |= MK_SHIFT;
-            if (explicitDockFolderTarget &&
-                (mods & (MK_CONTROL | MK_ALT | MK_SHIFT)) == 0)
-                shellKeyState |= MK_SHIFT;
-            POINT shellPoint = dragSession_.CurrentPoint();
-            ClientToScreen(hwnd_, &shellPoint);
-            if (fullyPathBackedSource && !targetPath.empty() &&
-                QueueShellDrop(
-                    sourcePaths,
-                    targetPath,
-                    shellKeyState,
-                    POINTL{ shellPoint.x, shellPoint.y },
-                    DROPEFFECT_COPY | DROPEFFECT_MOVE |
-                        DROPEFFECT_LINK,
-                    [this,
-                     dockFolderPopupTarget,
-                     dockFolderPopupSource](bool succeeded) {
-                        if (!succeeded)
-                            return;
-                        if ((dockFolderPopupTarget ||
-                             dockFolderPopupSource) &&
-                            dockFolderPopupOpen_)
-                            RefreshDockFolderPopup();
-                    }))
-            {
-                RequestLayoutSave();
-                ClearSelection();
-                EndDragSession();
-                goto cleanup;
-            }
-            // Only non-path or queue-rejection compatibility cases reach this
-            // synchronous Shell fallback.
-            DwmFlush();
-            ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSession_.Items());
-            if (dataObj)
-            {
-                ComPtr<IDropTarget> dropTarget;
-                if (auto* targetIcon = dynamic_cast<DesktopIcon*>(targetItem))
-                {
-                    DesktopItem* desktopItem = targetIcon->GetDesktopItem();
-                    if (desktopItem && desktopItem->childPidl.get())
-                    {
-                        PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(desktopItem->childPidl.get());
-                        desktopFolder_->GetUIObjectOf(hwnd_, 1, &child, IID_IDropTarget, nullptr,
-                            reinterpret_cast<void**>(dropTarget.GetAddressOf()));
-                    }
-                }
-                else if (!targetItem->GetPath().empty())
-                {
-                    ComPtr<IShellItem> shellItem;
-                    if (SUCCEEDED(SHCreateItemFromParsingName(targetItem->GetPath().c_str(),
-                        nullptr, IID_PPV_ARGS(&shellItem))) && shellItem)
-                    {
-                        shellItem->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&dropTarget));
-                    }
-                }
-
-                if (dropTarget)
-                {
-                    POINT screen = dragSession_.CurrentPoint();
-                    ClientToScreen(hwnd_, &screen);
-                    POINTL spl{ screen.x, screen.y };
-                    DWORD effect = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
-                    if (SUCCEEDED(dropTarget->DragEnter(
-                            dataObj.Get(), shellKeyState, spl, &effect)))
-                    {
-                        dropTarget->DragOver(
-                            shellKeyState, spl, &effect);
-                        dropTarget->Drop(
-                            dataObj.Get(), shellKeyState, spl, &effect);
-                    }
-                }
-            }
-            RequestLayoutSave();
-            ClearSelection();
-            EndDragSession();
-            if (dockFolderPopupTarget ||
-                dockFolderPopupSource)
-                RefreshDockFolderPopup();
-            ReloadItems();
-            goto cleanup;
-        }
-
-        Container* targetContainer = dragSession_.TargetContainer();
-        bool needsReload = targetContainer->NeedsShellReloadAfterDrop();
-        const bool desktopTarget = dynamic_cast<DesktopGrid*>(targetContainer) != nullptr;
-        const auto layoutBeforeDrop = layoutPassRevision_;
-        const bool dockFolderPopupTarget =
-            IsOpenDockFolderPopupDropTarget(
-                targetContainer,
-                dragSession_.TargetSlot()
-                    ? dragSession_.TargetSlot()->GetItem()
-                    : nullptr);
-        const bool dockFolderPopupSource =
-            dockFolderPopupOpen_ &&
-            dragSession_.Source() ==
-                dockFolderPopupContainer_.get();
-        targetContainer->OnItemsDropped(dragSession_.Items(), dragSession_.Source(),
-            dragSession_.TargetSlot(), dragSession_.TargetRegion(), mods);
-
-        RequestLayoutSave();
-        ClearSelection();
-        EndDragSession();
-        if (dockFolderPopupTarget ||
-            dockFolderPopupSource)
-            RefreshDockFolderPopup();
-        if (needsReload)
-        {
-            RebuildContainersAndItems();
-            ReloadItems();
-        }
-        else
-        {
-            // 内容变更可能使某些溢出页变空（后面有非空页时应立即清理顺延）
-            // 先 ApplyPageMapping（可能重排 pageId），再由 LayoutItems 重建运行时对象
-            if (!desktopTarget || layoutPassRevision_ == layoutBeforeDrop)
-            {
-                ApplyPageMapping();
-                LayoutItems();
-            }
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        }
-    }
+    CommitInternalDragRelease(upPoint, dropPreviewMods | ((rightDrop && (wp & MK_RBUTTON)) ? MK_RBUTTON : MK_LBUTTON),
+        DROPEFFECT_MOVE | DROPEFFECT_COPY | DROPEFFECT_LINK);
 
 cleanup:
-    EndDragSession();
+    if (dragSession_.HasContext()) EndDragSession();
     ClearPopupMouseDownItem();
     dockFolderPopupDragItems_.clear();
     dockFolderPopupMarqueeInitialSelection_.clear();

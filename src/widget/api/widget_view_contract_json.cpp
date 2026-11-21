@@ -1,5 +1,6 @@
 #include "widget_view_contract_json.h"
 
+#include "widget_contract_json_writer.h"
 #include "widget_view_contract.h"
 #include "widget/view/widget_view_tree.h"
 
@@ -14,36 +15,7 @@ namespace snowdesktop::widget_runtime
 {
 namespace
 {
-void WriteJsonString(std::ostream& output, std::string_view value)
-{
-    static constexpr char kHex[] = "0123456789abcdef";
-    output << '"';
-    for (const unsigned char character : value)
-    {
-        switch (character)
-        {
-        case '"': output << "\\\""; break;
-        case '\\': output << "\\\\"; break;
-        case '\b': output << "\\b"; break;
-        case '\f': output << "\\f"; break;
-        case '\n': output << "\\n"; break;
-        case '\r': output << "\\r"; break;
-        case '\t': output << "\\t"; break;
-        default:
-            if (character < 0x20)
-            {
-                output << "\\u00" << kHex[character >> 4]
-                       << kHex[character & 0x0f];
-            }
-            else
-            {
-                output << static_cast<char>(character);
-            }
-            break;
-        }
-    }
-    output << '"';
-}
+using widget_contract_json::WriteJsonString;
 
 template <typename Range, typename Writer>
 void WriteJsonArray(std::ostream& output, const Range& values,
@@ -296,6 +268,8 @@ void WriteLimits(std::ostream& output)
            << ViewTreeLimits::MaximumTooltipTitleBytes
            << ",\"maximumTotalTextBytes\":"
            << ViewTreeLimits::MaximumTotalTextBytes
+           << ",\"maximumExtendedTextAreaBytes\":"
+           << MaximumExtendedTextAreaBytes
            << ",\"maximumResources\":" << ViewTreeLimits::MaximumResources
            << ",\"maximumSeriesPoints\":"
            << ViewTreeLimits::MaximumSeriesPoints

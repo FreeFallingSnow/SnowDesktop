@@ -38,6 +38,7 @@ PendingLandingCache BuildLanding(const DragSourceList& sources, const DropPrevie
             if (created != createdPathsBySource->end()) entry.createdPath = created->second;
         }
         entry.cell = landing.cell;
+        entry.span = landing.span;
         entry.plannedPageSize = landing.plannedPageSize;
         entry.insertIndex = landing.insertIndex;
         entry.widgetId = landing.widgetId;
@@ -84,14 +85,18 @@ inline void Publish(Queue& queue, PendingLandingCache cache)
 inline void Complete(Queue& queue, PendingLandingCache cache,
     const ShellFileOperationResult& result)
 {
+    std::unordered_map<std::wstring, const std::wstring*> destinations;
+    for (const auto& output : result.outputs)
+        destinations.emplace(ToUpperInvariant(output.source), &output.destination);
+    std::erase_if(cache.files, [&](const auto& file) { return !destinations.contains(ToUpperInvariant(file.sourcePath)); });
+    cache.UpdateMovedSourceKeys();
     size_t omitted = 0;
     std::erase_if(cache.entries, [&](PendingLandingEntry& entry) {
-        const auto output = std::find_if(result.outputs.begin(), result.outputs.end(),
-            [&](const auto& item) { return _wcsicmp(item.source.c_str(), entry.sourcePath.c_str()) == 0; });
-        if (output == result.outputs.end()) { ++omitted; return true; }
+        const auto output = destinations.find(ToUpperInvariant(entry.sourcePath));
+        if (output == destinations.end()) { ++omitted; return true; }
         if (entry.kind == DropLandingKind::WidgetIndex)
             entry.insertIndex -= std::min(entry.insertIndex, omitted);
-        entry.createdPath = output->destination;
+        entry.createdPath = *output->second;
         return false;
     });
     for (auto& placement : cache.folderPlacements)
@@ -103,9 +108,8 @@ inline void Complete(Queue& queue, PendingLandingCache cache,
         }
         else
             for (const auto& source : placement.sourcePaths)
-                for (const auto& output : result.outputs)
-                    if (_wcsicmp(source.c_str(), output.source.c_str()) == 0)
-                        placement.createdPaths.push_back(output.destination);
+                if (const auto output = destinations.find(ToUpperInvariant(source)); output != destinations.end())
+                    placement.createdPaths.push_back(*output->second);
     }
     std::erase_if(cache.folderPlacements, [](const auto& placement) { return placement.createdPaths.empty(); });
     Publish(queue, std::move(cache));

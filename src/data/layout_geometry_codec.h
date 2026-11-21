@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/types.h"
+#include "icons/large_icon_config_codec.h"
 #include "layout_storage.h"
 #include <ostream>
 

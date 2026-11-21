@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace snowdesktop::component_preview
@@ -89,8 +90,6 @@ using Microsoft::WRL::ComPtr;
 
 constexpr wchar_t kPreviewWindowClass[] =
     L"SnowDesktop.ComponentPreviewPopup";
-constexpr UINT_PTR kOpenTimer = 1;
-constexpr UINT_PTR kHideTimer = 2;
 constexpr UINT kWallpaperEngineFrameReady = WM_APP + 0x349;
 constexpr DWORD kWallpaperEngineCaptureTimeoutMs = 2500;
 
@@ -675,9 +674,9 @@ bool Window::EnsureCreated(HWND owner)
     return hwnd_ != nullptr;
 }
 
-bool Window::Show(const Model& model, const RECT& menuBounds,
+bool Window::Show(const Model& model, const modern_menu::HoverInfo& anchor,
     HWND owner, UINT dpi, bool lightTheme, ApplyHandler onApply,
-    const RECT& itemBounds, modern_menu::Appearance appearance)
+    modern_menu::Appearance appearance)
 {
     if (model.Empty())
     {
@@ -687,18 +686,7 @@ bool Window::Show(const Model& model, const RECT& menuBounds,
     if (!EnsureCreated(owner))
         return false;
 
-    KillTimer(hwnd_, kOpenTimer);
-    KillTimer(hwnd_, kHideTimer);
-    const std::wstring identity = ModelIdentity(model);
-    if (identity != modelIdentity_)
-    {
-        currentCard_ = std::min(
-            model.initialCard, model.cards.size() - 1);
-        modelIdentity_ = identity;
-    }
-    model_ = model;
-    menuBounds_ = menuBounds;
-    itemBounds_ = itemBounds;
+    CancelHoverTransition();
     dpi_ = dpi ? dpi : USER_DEFAULT_SCREEN_DPI;
     const modern_menu::Appearance effectiveAppearance =
         modern_menu::appearance_rules::ResolveForCurrentWindows(
@@ -712,6 +700,20 @@ bool Window::Show(const Model& model, const RECT& menuBounds,
     panelRadiusDip_ = modern_menu::appearance_rules::CompanionPanelRadiusDip(
         effectiveAppearance);
     onApply_ = std::move(onApply);
+    ApplyWindowAppearance();
+    return ShowModel(model, anchor);
+}
+
+bool Window::ShowModel(Model model, const modern_menu::HoverInfo& anchor)
+{
+    std::wstring identity = ModelIdentity(model);
+    if (!IsOpen() || identity != modelIdentity_)
+    {
+        currentCard_ = std::min(model.initialCard, model.cards.size() - 1);
+        modelIdentity_ = std::move(identity);
+        model_ = std::move(model);
+    }
+    anchor_ = anchor;
     componentHovered_ = false;
     waitingForWallpaperEngineFrame_ = false;
     currentCard_ = std::min(currentCard_, model_.cards.size() - 1);
@@ -729,103 +731,91 @@ bool Window::Show(const Model& model, const RECT& menuBounds,
                 WallpaperBackdropLoadResult::WaitingForCapture)
             {
                 waitingForWallpaperEngineFrame_ = true;
-                ApplyWindowAppearance();
                 return true;
             }
         }
     }
-    ApplyWindowAppearance();
     if (!RenderCurrent())
+    {
+        Hide();
         return false;
+    }
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
     return true;
 }
 
-bool Window::ScheduleShow(const Model& model, const RECT& menuBounds,
-    HWND owner, UINT dpi, bool lightTheme, ApplyHandler onApply,
-    const RECT& itemBounds, modern_menu::Appearance appearance)
+void Window::ScheduleShow(const Model& model,
+    const modern_menu::HoverInfo& anchor)
 {
+    if (!IsOpen()) return;
     if (model.Empty())
     {
         ScheduleHide();
-        return false;
+        return;
     }
-    if (!EnsureCreated(owner)) return false;
 
-    const std::wstring identity = ModelIdentity(model);
-    if (IsWindowVisible(hwnd_) && identity == modelIdentity_)
+    CancelHoverTransition();
+    if (ModelIdentity(model) == modelIdentity_)
     {
-        const modern_menu::Appearance effectiveAppearance =
-            modern_menu::appearance_rules::ResolveForCurrentWindows(
-                appearance, lightTheme);
-        const bool resolvedLightTheme =
-            modern_menu::appearance_rules::IsLightTheme(
-                effectiveAppearance, lightTheme);
-        const bool resolvedBlur =
-            modern_menu::appearance_rules::UsesSystemBlur(
-                effectiveAppearance);
-        if (resolvedLightTheme != lightTheme_ ||
-            resolvedBlur != blurEnabled_ ||
-            modern_menu::appearance_rules::PanelPaddingDip(effectiveAppearance) !=
-                menuPanelPaddingDip_ ||
-            modern_menu::appearance_rules::CompanionPanelRadiusDip(effectiveAppearance) !=
-                panelRadiusDip_)
-        {
-            return Show(model, menuBounds, owner, dpi, lightTheme,
-                std::move(onApply), itemBounds, appearance);
-        }
-        KillTimer(hwnd_, kOpenTimer);
-        KillTimer(hwnd_, kHideTimer);
-        menuBounds_ = menuBounds;
-        itemBounds_ = itemBounds;
-        onApply_ = std::move(onApply);
-        return true;
+        anchor_ = anchor;
+        return;
     }
 
     pendingModel_ = model;
-    pendingMenuBounds_ = menuBounds;
-    pendingItemBounds_ = itemBounds;
-    pendingOwner_ = owner;
-    pendingDpi_ = dpi;
-    pendingLightTheme_ = lightTheme;
-    pendingAppearance_ = appearance;
-    pendingOnApply_ = std::move(onApply);
-    // A sibling submenu keeps its old contents visible until the new frame
-    // is ready.  Starting a close timer here used to hide the old preview
-    // first, and Hide() also cancelled the pending open timer.
-    KillTimer(hwnd_, kHideTimer);
-    SetTimer(hwnd_, kOpenTimer,
-        modern_menu::kSubmenuOpenDelayMs, nullptr);
-    return true;
+    pendingAnchor_ = anchor;
+    StartHoverTimer(modern_menu::kSubmenuOpenDelayMs);
 }
 
 void Window::ScheduleHide()
 {
-    if (!hwnd_ || !IsWindow(hwnd_)) return;
-    KillTimer(hwnd_, kOpenTimer);
+    CancelHoverTransition();
+    if (!IsOpen()) return;
+    if (!IsWindowVisible(anchor_.popupWindow))
+        Hide();
+    else
+        StartHoverTimer(modern_menu::kSubmenuCloseDelayMs);
+}
+
+bool Window::IsOpen() const
+{
+    return hwnd_ && (IsWindowVisible(hwnd_) || waitingForWallpaperEngineFrame_);
+}
+
+void Window::StartHoverTimer(UINT delay)
+{
+    // KillTimer cannot retract a queued WM_TIMER. Give each transition its
+    // own ID so an older notification cannot commit a newer hover target.
+    if (++nextHoverTimerId_ == 0) ++nextHoverTimerId_;
+    hoverTimer_ = SetTimer(hwnd_, nextHoverTimerId_, delay, nullptr);
+}
+
+void Window::CancelHoverTransition()
+{
+    if (hoverTimer_)
+        KillTimer(hwnd_, std::exchange(hoverTimer_, 0));
     pendingModel_ = {};
-    waitingForWallpaperEngineFrame_ = false;
-    if (IsWindowVisible(hwnd_))
-        SetTimer(hwnd_, kHideTimer,
-            modern_menu::kSubmenuCloseDelayMs, nullptr);
+    pendingAnchor_ = {};
 }
 
 void Window::Hide()
 {
+    CancelHoverTransition();
     if (hwnd_ && IsWindow(hwnd_))
     {
-        KillTimer(hwnd_, kHideTimer);
-        KillTimer(hwnd_, kOpenTimer);
+        // Hiding the window may be followed by a queued mouse-leave notification.
+        waitingForWallpaperEngineFrame_ = false;
         ShowWindow(hwnd_, SW_HIDE);
+        pointerTracking_ = false;
+        componentHovered_ = false;
         desktopWallpaper_ = {};
         desktopWallpaperBounds_ = {};
         desktopWallpaperEngineFrame_.reset();
-        waitingForWallpaperEngineFrame_ = false;
     }
 }
 
 void Window::Close()
 {
+    CancelHoverTransition();
     CancelWallpaperEngineBackdropCapture(true);
     if (hwnd_ && IsWindow(hwnd_)) DestroyWindow(hwnd_);
     hwnd_ = nullptr;
@@ -834,8 +824,7 @@ void Window::Close()
     model_ = {};
     modelIdentity_.clear();
     onApply_ = {};
-    pendingModel_ = {};
-    pendingOnApply_ = {};
+    anchor_ = {};
     cardFrameCache_.clear();
     cardFrameCacheBytes_ = 0;
     cardFrameUseSerial_ = 0;
@@ -885,8 +874,8 @@ Window::LoadDesktopWallpaperBackdrop()
         desktopWallpaperEngineFrame_.reset();
     }
     const POINT anchor{
-        (menuBounds_.left + menuBounds_.right) / 2,
-        (menuBounds_.top + menuBounds_.bottom) / 2,
+        (anchor_.popupScreenRect.left + anchor_.popupScreenRect.right) / 2,
+        (anchor_.popupScreenRect.top + anchor_.popupScreenRect.bottom) / 2,
     };
     const HMONITOR selectedMonitor = MonitorFromPoint(anchor,
         MONITOR_DEFAULTTONEAREST);
@@ -1251,7 +1240,7 @@ bool Window::RenderCurrent()
         (resizeHintHeight ? Scale(2, dpi_) + resizeHintHeight : 0) +
         gap + previewInset + previewHeight + previewInset +
         externalControlsHeight + padding;
-    POINT destination = ResolvePosition(menuBounds_, dpi_);
+    POINT destination = ResolvePosition(anchor_.popupScreenRect, dpi_);
 
     BITMAPINFO info{};
     info.bmiHeader.biSize = sizeof(info.bmiHeader);
@@ -1671,13 +1660,14 @@ void Window::ApplyCurrent()
         onApply_(settings);
 }
 
-bool Window::PointerInsideMenuOrPreview() const
+bool Window::PointerInsidePreviewOrAnchor() const
 {
+    if (!IsWindowVisible(anchor_.popupWindow)) return false;
     POINT point{};
     if (!private_pointer::CursorPosition(&point)) return false;
-    RECT previewBounds{};
-    return hwnd_ && GetWindowRect(hwnd_, &previewBounds) &&
-        PtInRect(&previewBounds, point);
+    const HWND hit = private_pointer::WindowAtPoint(point);
+    return hit == hwnd_ ||
+        (hit == anchor_.popupWindow && PtInRect(&anchor_.itemScreenRect, point));
 }
 
 void Window::ApplyWindowAppearance()
@@ -1776,8 +1766,8 @@ POINT Window::ResolvePosition(const RECT& menuBounds, UINT dpi) const
     left = std::clamp(left, static_cast<int>(info.rcWork.left),
         std::max(static_cast<int>(info.rcWork.left),
             static_cast<int>(info.rcWork.right) - width_));
-    const int anchorTop = IsRectEmpty(&itemBounds_)
-        ? menuBounds.top : itemBounds_.top - panelPadding;
+    const int anchorTop = IsRectEmpty(&anchor_.itemScreenRect)
+        ? menuBounds.top : anchor_.itemScreenRect.top - panelPadding;
     const int top = std::clamp(anchorTop,
         static_cast<int>(info.rcWork.top),
         std::max(static_cast<int>(info.rcWork.top),
@@ -1803,7 +1793,7 @@ LRESULT CALLBACK Window::WindowProc(
     {
     case WM_MOUSEMOVE:
     {
-        KillTimer(hwnd, kHideTimer);
+        self->CancelHoverTransition();
         if (!self->pointerTracking_)
         {
             TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE,
@@ -1838,7 +1828,9 @@ LRESULT CALLBACK Window::WindowProc(
             self->componentHovered_ = false;
             self->RenderCurrent();
         }
-        self->ScheduleHide();
+        // The next menu row may already have scheduled its replacement.
+        if (!self->hoverTimer_)
+            self->ScheduleHide();
         return 0;
     case WM_CANCELMODE:
         self->pointerTracking_ = false;
@@ -1878,28 +1870,20 @@ LRESULT CALLBACK Window::WindowProc(
             self->ApplyCurrent();
         return 0;
     case WM_TIMER:
-        if (wParam == kOpenTimer)
+        if (wParam == self->hoverTimer_ && self->hoverTimer_)
         {
-            KillTimer(hwnd, kOpenTimer);
-            if (!self->pendingModel_.Empty())
-            {
-                Model model = std::move(self->pendingModel_);
-                ApplyHandler handler = std::move(self->pendingOnApply_);
-                self->Show(model, self->pendingMenuBounds_,
-                    self->pendingOwner_, self->pendingDpi_,
-                    self->pendingLightTheme_, std::move(handler),
-                    self->pendingItemBounds_,
-                    self->pendingAppearance_);
-            }
-        }
-        else if (wParam == kHideTimer)
-        {
-            KillTimer(hwnd, kHideTimer);
-            // A stale close notification from the previously hovered row
-            // must not dismiss a sibling preview that is waiting to open.
-            if (!self->pendingModel_.Empty())
-                return 0;
-            if (!self->PointerInsideMenuOrPreview())
+            Model model = std::move(self->pendingModel_);
+            const auto anchor = self->pendingAnchor_;
+            self->CancelHoverTransition();
+
+            POINT point{};
+            if (!model.Empty() && IsWindowVisible(anchor.popupWindow) &&
+                (anchor.keyboard ||
+                    (private_pointer::CursorPosition(&point) &&
+                        PtInRect(&anchor.itemScreenRect, point) &&
+                        private_pointer::WindowAtPoint(point) == anchor.popupWindow)))
+                self->ShowModel(std::move(model), anchor);
+            else if (!self->PointerInsidePreviewOrAnchor())
                 self->Hide();
         }
         return 0;

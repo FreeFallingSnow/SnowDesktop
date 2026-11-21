@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/types.h"
+#include "layout/category_collection_rules.h"
 
 namespace snowdesktop::category_collection_rules
 {

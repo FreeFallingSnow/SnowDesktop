@@ -3,6 +3,7 @@
 #include "windows_compat.h"
 #include "widgets_page_backend_state.h"
 #include "widget/packages/widget_package.h"
+#include "widget/packages/widget_package_manager.h"
 #include "widget/packages/widget_package_read.h"
 
 #include <algorithm>

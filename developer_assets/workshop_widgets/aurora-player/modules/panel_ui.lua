@@ -1,4 +1,5 @@
 local M={}
+local CENTER_GLYPH = widget and widget.hasFeature and widget.hasFeature("view.icon.glyphInk")
 function M.theme()
     local darkText=widget.theme().contentTheme==1
     return darkText and {primary=0x18212C,secondary=0x667180,surface=0xE8EDF3,well=0xD9E1EB,
@@ -14,11 +15,13 @@ function M.text(key,text,row,options)
 end
 function M.icon(key,glyph,row,color)
     return view.icon({key=key,glyph=utf8.char(glyph),iconFont="fa",width=row,height=row,
+        glyphInkCentered=CENTER_GLYPH or nil,
         fontSize=row*0.45,style={foreground=color or M.theme().primary}})
 end
 function M.iconButton(key,glyph,label,row,action,enabled,active)
     local c=M.theme()
     return view.iconButton({key=key,glyph=utf8.char(glyph),iconFont="fa",width=row,height=row,
+        glyphInkCentered=CENTER_GLYPH or nil,
         fontSize=row*0.44,enabled=enabled~=false,
         style={foreground=active and c.onAccent or c.secondary,background=active and c.accent or c.surface,
             cornerRadius=row*0.5,borderWidth=0},events={click={id=action}},accessibility={label=label}})

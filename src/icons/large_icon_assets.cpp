@@ -6,7 +6,9 @@
 #include "shell/shortcut_application_rules.h"
 #include "shortcut_icon_resource.h"
 #include "large_icon_config.h"
+#include "common/json_value.h"
 #include "large_icon_steam.h"
+#include "large_icon_epic.h"
 #include "platform/http_runtime.h"
 #include "ui/preview/preview_png_writer.h"
 #include "icon_beautify.h"
@@ -18,12 +20,14 @@
 #include <cstring>
 #include <wincodec.h>
 #include <wrl/client.h>
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <fstream>
 #include <mutex>
+#include <sstream>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -47,6 +51,11 @@ std::int64_t Now()
 {
     return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
+std::string EpicSourcePrefix(std::string_view key)
+{
+    return shortcut_application_rules::ValidEpicGameKey(key) ? "epic-" + std::string(key) + "-" : std::string{};
+}
+
 bool AutomaticImageName(std::wstring_view name)
 {
     if (name.size() > 160 || !name.ends_with(L".png") ||
@@ -65,6 +74,18 @@ bool AutomaticImageName(std::wstring_view name)
         else if (name.starts_with(L"landscape-")) name.remove_prefix(10);
         else return false;
         return !name.empty() && std::all_of(name.begin(), name.end(), [](wchar_t c) { return c >= L'a' && c <= L'z'; });
+    }
+    if (name.starts_with(L"epic-"))
+    {
+        name.remove_prefix(5);
+        if (name.ends_with(L"-local")) name.remove_suffix(6);
+        if (name.ends_with(L"-portrait")) name.remove_suffix(9);
+        else if (name.ends_with(L"-landscape")) name.remove_suffix(10);
+        else return false;
+        std::string key;
+        key.reserve(name.size());
+        for (wchar_t ch : name) key.push_back(static_cast<char>(ch)); // The name is validated ASCII above.
+        return shortcut_application_rules::ValidEpicGameKey(key);
     }
     if (name.starts_with(L"raw-")) name.remove_prefix(4);
     else if (name.starts_with(L"preview-")) name.remove_prefix(8);
@@ -166,7 +187,7 @@ std::shared_ptr<LargeIconAsset> Decode(const std::filesystem::path& path, int ta
     std::error_code ec;
     icon_image::Image decoded;
     std::string decodeError;
-    if (!icon_image::Decode(path, std::clamp(target, 64, 2048), decoded, decodeError)) return {};
+    if (!icon_image::Decode(path, std::clamp(target, 64, 2048), decoded, decodeError, reference.starts_with("epic-"))) return {};
     const UINT width = static_cast<UINT>(decoded.width), height = static_cast<UINT>(decoded.height);
     const auto& pixels = decoded.pixels;
     if (!output.empty() && path != output)
@@ -285,13 +306,23 @@ std::shared_ptr<LargeIconAsset> RawIcon(const LargeIconAssetRequest& request, co
     return Decode(output, target, {}, reference, "original");
 }
 
-int Download(std::string_view url, std::stop_token stop, std::vector<std::byte>& bytes, std::uint64_t limit)
+int Download(std::string_view url, std::stop_token stop, std::vector<std::byte>& bytes, std::uint64_t limit,
+    bool epic = false)
 {
     http_stream::Options options; options.url = Wide(url); options.maximumResponseBytes = limit;
     options.totalTimeoutMs = 20000; options.timeoutMs = 8000;
+    if (epic)
+    {
+        if (!large_icon_epic::IsCoverUrl(url)) return 0;
+        options.publicHttpsOnly = true;
+        options.maxRedirects = 0;
+    }
     const auto result = http_stream::StreamHttpGet(options, stop,
-        [](const auto& head) { return head.status == 200 && head.finalUrl.starts_with(L"https://") &&
-            http_security::IsAllowedUrlForDomains(head.finalUrl, {"api.steampowered.com", "shared.akamai.steamstatic.com", "shared.steamstatic.com"}); },
+        [epic](const auto& head) {
+            if (head.status != 200 || !head.finalUrl.starts_with(L"https://")) return false;
+            return epic ? http_security::IsAllowedUrlForDomains(head.finalUrl, {"cdn1.epicgames.com", "cdn2.epicgames.com", "cdn.epicgames.com"}) :
+                http_security::IsAllowedUrlForDomains(head.finalUrl, {"api.steampowered.com", "shared.akamai.steamstatic.com", "shared.steamstatic.com"});
+        },
         [&](auto chunk) { bytes.insert(bytes.end(), chunk.begin(), chunk.end()); return true; });
     return result.responseAccepted && result.error.empty() && !result.cancelled ? 200 : (result.head.status == 200 ? 0 : result.head.status);
 }
@@ -475,12 +506,83 @@ struct LargeIconAssets::Impl
     {
         if (!r.importPath.empty()) return r.reference;
         if (r.content == 1 && IsManagedLargeIconImage(r.reference) && !r.reference.empty()) return r.reference;
-        if (r.content == 2 && r.appId) return "steam-" + std::to_string(r.appId) + (r.portrait ? "-portrait-" : "-landscape-") + r.language + ".png";
+        if (r.content == kLargeIconSteamCover && r.appId) return "steam-" + std::to_string(r.appId) + (r.portrait ? "-portrait-" : "-landscape-") + r.language + ".png";
+        if (r.content == kLargeIconEpicCover)
+        {
+            const auto prefix = EpicSourcePrefix(r.epicGameKey);
+            if (!prefix.empty()) return prefix + (r.portrait ? "portrait.png" : "landscape.png");
+        }
         // Request is called by the desktop paint path. Only inspect the Shell
         // model here; disk access belongs to the workers. The icon index also
         // changes when a Shell association changes without touching the file.
         return RawSourcePrefix(r) + std::to_string(r.pixels) + ".png";
     }
+    std::shared_ptr<LargeIconAsset> DecodeEpicCover(const LargeIconAssetRequest& r, std::string_view bytes,
+        const std::string& reference, const char* source, std::string& error)
+    {
+        const auto temporary = directory / Wide(reference + "-" + std::to_string(r.generation) + ".download");
+        if (!atomic_file::WriteAll(temporary, bytes))
+        {
+            error = "largeIcon.saveFailed";
+            return {};
+        }
+        auto asset = Decode(temporary, r.pixels, directory / Wide(reference), reference, source);
+        std::error_code ec;
+        std::filesystem::remove(temporary, ec);
+        return asset;
+    }
+
+    std::shared_ptr<LargeIconAsset> LoadEpic(const LargeIconAssetRequest& r, std::stop_token stop,
+        const std::string& reference, std::string& error)
+    {
+        if (!shortcut_application_rules::ValidEpicGameKey(r.epicGameKey)) { error = "largeIcon.unavailable"; return {}; }
+        const auto localReference = reference.substr(0, reference.size() - 4) + "-local.png";
+        const auto localPath = directory / Wide(localReference);
+        if (r.localOnly && !r.refresh)
+            if (auto cached = Decode(localPath, r.pixels, {}, localReference, "epic-local")) return cached;
+
+        const auto url = large_icon_epic::CoverUrl(r.epicGameKey, r.portrait, stop);
+        if (stop.stop_requested()) return {};
+        const auto failure = directory / Wide(reference + ".failure");
+        std::int64_t retryAt = 0;
+        if (!r.localOnly && !url.empty())
+        {
+            if (std::ifstream record(failure); record) record >> retryAt;
+            if (r.refresh || Now() >= retryAt)
+            {
+                std::vector<std::byte> bytes;
+                const auto status = Download(url, stop, bytes, maxFile, true);
+                if (stop.stop_requested()) return {};
+                if (status == 200 && !bytes.empty())
+                {
+                    const std::string_view image(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+                    if (auto asset = DecodeEpicCover(r, image, reference, "epic-online", error))
+                    {
+                        std::error_code ec;
+                        std::filesystem::remove(failure, ec);
+                        return asset;
+                    }
+                }
+                std::ofstream record(failure, std::ios::trunc);
+                record << Now() + (status == 404 ? 86400 : 120);
+            }
+        }
+        if (r.refresh)
+            if (auto old = Decode(directory / Wide(reference), r.pixels, {}, reference, "cache")) return old;
+        if (!r.refresh)
+            if (auto local = Decode(localPath, r.pixels, {}, localReference, "epic-local")) return local;
+        for (const auto& image : large_icon_epic::CachedCovers(url, stop))
+        {
+            if (stop.stop_requested()) return {};
+            if (auto asset = DecodeEpicCover(r, image, localReference, "epic-local", error)) return asset;
+        }
+        if (r.refresh)
+            if (auto local = Decode(localPath, r.pixels, {}, localReference, "epic-local")) return local;
+
+        if (error.empty()) error = "largeIcon.unavailable";
+        return {};
+    }
+
     std::shared_ptr<LargeIconAsset> Load(const LargeIconAssetRequest& r, std::stop_token stop, std::string& error)
     {
         std::error_code ec;
@@ -511,6 +613,7 @@ struct LargeIconAssets::Impl
             return original;
         }
         if (r.content == 1) { error = "largeIcon.unavailable"; return {}; }
+        if (r.content == kLargeIconEpicCover) return LoadEpic(r, stop, reference, error);
         if (r.appId)
         {
             for (const auto& local : LocalCovers(steamDirectory, r.appId, r.portrait, stop))
@@ -556,7 +659,15 @@ struct LargeIconAssets::Impl
 
     std::shared_ptr<LargeIconAsset> LoadFallback(LargeIconAssetRequest request, std::stop_token stop)
     {
-        if (request.content != 2 || request.variant != 0 || !request.importPath.empty()) return {};
+        if (!IsLargeIconGameCover(request.content) || request.variant != 0 || !request.importPath.empty()) return {};
+        if (request.content == kLargeIconEpicCover)
+        {
+            const auto prefix = EpicSourcePrefix(request.epicGameKey);
+            const std::string_view saved(request.lastGood);
+            const auto variant = !prefix.empty() && saved.starts_with(prefix) ? saved.substr(prefix.size()) : std::string_view{};
+            if (variant != "portrait.png" && variant != "landscape.png" &&
+                variant != "portrait-local.png" && variant != "landscape-local.png") request.lastGood.clear();
+        }
         request.refresh = false;
         for (int content : {1, 0})
         {
@@ -754,6 +865,8 @@ void LargeIconAssets::RetainSources(std::vector<LargeIconAssetRequest> sources)
     {
         if (!source.parsingName.empty()) impl_->sourcePrefixes.push_back(RawSourcePrefix(source));
         if (source.appId) impl_->sourcePrefixes.push_back("steam-" + std::to_string(source.appId) + "-");
+        if (auto prefix = EpicSourcePrefix(source.epicGameKey); !prefix.empty())
+            impl_->sourcePrefixes.push_back(std::move(prefix));
     }
     impl_->sourcesKnown = true;
     ++impl_->referencesRevision;

@@ -2,6 +2,16 @@ local providers=module.require("modules/providers.lua")
 local client=module.require("modules/client.lua")
 local json=module.require("modules/json.lua")
 local whale=resource.image("whale")
+local CENTER_GLYPH = widget.hasFeature("draw.glyph")
+
+local function drawFa(glyph, cx, cy, size, color)
+    if CENTER_GLYPH then
+        draw.glyph(glyph, cx, cy, size, color, "fa")
+    else
+        draw.fa(glyph, cx - size / 2, cy - size / 2, size, color)
+    end
+end
+
 local fluent={
     refresh=utf8.char(0xF13D), -- arrow_clockwise_20_regular
     companion=utf8.char(0xF479), -- heart_20_regular
@@ -70,13 +80,18 @@ local function palette()
         blue=darkText and 0x2865C9 or 0x92BEFF,green=darkText and 0x197352 or 0x8DDBB5,
         orange=darkText and 0xA55319 or 0xFFC18B}
 end
+local CENTER_TEXT = widget.hasFeature("draw.text.inkAlignment") and {y="center"} or nil
+
 local function text(x,y,value,size,color,width,bold,height)
     local measured=draw.measureText(tostring(value),size,0,bold or false)
-    local ink=measured.ink
     local boxHeight=height or size*1.6
-    local originY=y+(boxHeight-ink.height)*0.5-ink.top
-    -- Keep the visible ink center and leave room for fractional line metrics.
-    draw.text(x,originY,tostring(value),size,color,width,bold or false,true,measured.height+size*0.25)
+    local originY=y+boxHeight*0.5
+    if not CENTER_TEXT then
+        local ink=measured.ink
+        originY=originY-ink.height*0.5-ink.top
+    end
+    draw.text(x,originY,tostring(value),size,color,width,bold or false,true,
+        measured.height+size*0.25,nil,nil,CENTER_TEXT)
 end
 local function fitted(x,y,value,size,color,width,bold,height)
     local measured=draw.measureText(tostring(value),size,0,bold or false)
@@ -115,7 +130,8 @@ local function region(id,x,y,w,h,label,quiet)
         cursor="hand",focusable=true,tooltip=label,accessibility={role="button",label=label},
         events={click={id=id},keyDown={id="keyboard",value=id},contextMenu={id="menu",scope="component"}}})
     if not quiet and (interaction.isHovered(id) or interaction.isFocused(id)) then draw.rect(x,y,w,h,palette().primary,h*0.18,0.08) end
-    if interaction.isFocused(id) then draw.strokeRect(x,y,w,h,palette().blue,h*0.18,h*0.035,0.9) end
+    -- The host draws the keyboard focus cue for the whale's quiet region.
+    if not quiet and interaction.isFocused(id) then draw.strokeRect(x,y,w,h,palette().blue,h*0.18,h*0.035,0.9) end
 end
 local function card(x,y,w,h,colors,radius)
     draw.rect(x,y,w,h,colors.card,radius,0.48)
@@ -241,7 +257,7 @@ local function render(_context,m)
     fitted(ox+pad,headerY,name,row*0.63,colors.primary,titleWidth,true,row)
     local function headerAction(id,x,glyph,label)
         region(id,x,headerY,row,row,label)
-        draw.fa(glyph,x+row*0.24,headerY+row*0.24,row*0.52,colors.secondary)
+        drawFa(glyph, x + row / 2, headerY + row / 2, row * 0.52, colors.secondary)
     end
     headerAction("refresh",ox+w-pad-row*2.12,"",c.refresh)
     headerAction("settings",ox+w-pad-row,"",c.settings)
@@ -303,10 +319,11 @@ local function render(_context,m)
     draw.rect(ox+pad,footerY,buttonWidth,row*0.94,colors.blue,row*0.28,0.09)
     region(actionId,ox+pad,footerY,buttonWidth,row*0.94,action)
     fitted(ox+pad+row*0.32,footerY,action,row*0.41,colors.blue,buttonWidth-row*1.05,false,row*0.94)
-    draw.fa(whaleMode and "" or "",ox+pad+buttonWidth-row*0.49,footerY+row*0.32,row*0.28,colors.blue)
+    drawFa(whaleMode and "" or "", ox + pad + buttonWidth - row * 0.35,
+        footerY + row * 0.47, row * 0.28, colors.blue)
     local consoleX=ox+w-pad-row
     region("console",consoleX,footerY,row,row*0.94,c.console)
-    draw.fa("",consoleX+row*0.29,footerY+row*0.28,row*0.38,colors.secondary)
+    drawFa("", consoleX + row / 2, footerY + row * 0.47, row * 0.38, colors.secondary)
     if hasNotice then
         local noticeY=footerY-noticeHeight-row*0.10
         local notice=status(m,c)

@@ -3,6 +3,8 @@
 #include "app/layout/grid_geometry.h"
 #include "widget/packages/widget_size_rules.h"
 
+#include <algorithm>
+
 namespace snowdesktop::widget
 {
 inline WidgetSizeGridMetrics WidgetSizeMetricsForPage(const GridPage* page, GridCell cell)

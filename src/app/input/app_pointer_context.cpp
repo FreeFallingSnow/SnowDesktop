@@ -150,6 +150,12 @@ bool DesktopApp::ShowHostInputContextMenu(
 void DesktopApp::OnRightButtonDown(
     PersistentDockHost* dockHost, POINT point)
 {
+    ClearDesktopSurfaceKeyboardFocus();
+    if (folderPreview_ && point.x != LONG_MIN && point.y != LONG_MIN)
+    {
+        folderPreview_->keyboardFocused = IsPointOccludedByOpenPopup(point);
+        if (ClearFolderPreviewHeaderFocus()) RefreshDockFolderPopupGeometry();
+    }
     typeToSelectSession_.Reset();
     // Nonactivating Dock Hosts do not dismiss another menu on their own.
     // Unwind that session before release starts an asynchronous running-app
@@ -192,7 +198,11 @@ void DesktopApp::OnRightButtonDown(
             return;
     }
 
+    if (!(snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000))
+        ClearInlineFolderPreviewSelectionOutside(point);
+    ActivateInlineFolderPreviewAtPoint(point);
     ClearPopupMouseDownItem();
+    if (HandleFolderPreviewBreadcrumbContextMenu(point, false)) return;
     Item* pressed = nullptr;
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
     const auto beginWidgetMove = [&](size_t index) {
@@ -586,8 +596,10 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
     // Preserve surface ownership on press, then consume release without a menu.
     if (largeIconGesture_) { CancelLargeIconGesture(); return; }
     if (renameController_.IsActive()) return;
-    keyboardNavVisualFocus_ = false;
+    if (std::exchange(keyboardNavVisualFocus_, false) && !keyboardNavInsideWidget_)
+        InvalidateRect(hwnd_, nullptr, FALSE);
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+    ActivateInlineFolderPreviewAtPoint(pt);
     auto* popupGroup = IsPointOccludedByOpenPopup(pt) ? GetGroupPopupView() : nullptr;
     POINT screenPt = pt;
     ClientToScreen(hwnd_, &screenPt);
@@ -771,6 +783,8 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             return;
     }
 
+    if (HandleFolderPreviewBreadcrumbContextMenu(pt, true)) return;
+
     // A hover-only widget must remain visible while any context menu opened
     // from its frame, contents, tabs, or collection popup is active.  The
     // guard deliberately keeps the pin when the selected command starts an
@@ -873,13 +887,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         const std::wstring folderPath = dockFolder ? dockFolderPopupWidget_.sourceFolderPath : std::wstring{};
         if (widgetEngine_ && widgetEngine_->HasFocusedHostInput())
             widgetEngine_->BlurHostInput(false);
-        if (auto* popupView = GetCategorizedPopupView(); popupView && popupView != view)
-            popupView->SetSearchFocused(false);
-        for (const auto& container : containers_)
-            if (auto* other = dynamic_cast<ScrollingItemWidget*>(container.get()); other && other != view)
-                other->SetSearchFocused(false);
-        if (!popupOccludesPoint && !view->GetWidgetData()->selected)
-            SelectWidgetOnly(FindWidgetIndexById(widgetId));
+        PrepareWidgetSearchFocus(*view, !popupOccludesPoint && !view->GetWidgetData()->selected);
         view->SetSearchFocused(true);
         RestoreInteractionInputFocus(true);
         UpdateHostInputImePosition();
@@ -894,7 +902,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                 ImmReleaseContext(owner, ime);
             }
         }
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        InvalidateWidgetControls(*view);
 
         const auto command = text::ShowEditingMenu(owner, screenPt,
             view->GetSearchMenuState(), text::MenuKind::ComponentSearch);
@@ -913,8 +921,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                 ShowDockFolderPopupContextMenu(screenPt);
             else if (const size_t index = FindWidgetIndexById(widgetId); index < widgets_.size())
             {
-                SelectWidgetOnly(index);
-                InvalidateRect(hwnd_, nullptr, FALSE);
+                UpdateWidgetControlSelection(&widgets_[index], [&] { SelectWidgetOnly(index); });
                 ShowWidgetContextMenu(screenPt, index);
             }
             return;
@@ -923,11 +930,11 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         if (popupOccludesPoint)
         {
             popupScrollOffset_ = 0;
-            InvalidateCollectionPopupContent();
-            InvalidateFloatingPopupWindow();
+            if (folderPreview_) RefreshDockFolderPopupGeometry();
         }
         UpdateHostInputImePosition();
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        if (!(popupOccludesPoint && folderPreview_ && folderPreview_->inlineBounds))
+            InvalidateWidgetControls(*view);
         return;
     }
 

@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "desktop/desktop_icon_settings.h"
 #include "common/l10n.h"
 #include "common/utils.h"
 #include "dock/dock_settings.h"

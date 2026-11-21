@@ -3,6 +3,8 @@
 #include "data/atomic_file.h"
 #include "common/json_value.h"
 #include "icons/icon_appearance_codec.h"
+#include "icons/icon_library.h"
+#include "icons/large_icon_config_codec.h"
 #include <set>
 
 #include <windows.h>
@@ -802,6 +804,28 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.iconBeautifyEnabled, error) ||
         !ReadOptionalRootBoolean(root, "beautifyFileThumbnails",
             decoded.beautifyFileThumbnails, error) ||
+        !ReadOptionalRootBoolean(root, "iconShadowFan", decoded.iconShadowFan, error) ||
+        !ReadOptionalRootBoolean(root, "iconShadowDock", decoded.iconShadowDock, error) ||
+        !ReadOptionalRootBoolean(root, "iconShadowExposedWidget", decoded.iconShadowExposedWidget, error) ||
+        !ReadOptionalRootBoolean(root, "iconShadowDesktop", decoded.iconShadowDesktop, error) ||
+        !ReadOptionalRootBoolean(root, "iconShadowPopup", decoded.iconShadowPopup, error) ||
+        !ReadOptionalRootBoolean(root, "iconShadowQuickNavigation", decoded.iconShadowQuickNavigation, error) ||
+        !ReadOptionalRootBoolean(root, "iconShadowSubject", decoded.iconShadowSubject, error) ||
+        !ReadOptionalRootBoolean(root, "iconShadowStrengthsAreRelative", decoded.iconShadowStrengthsAreRelative, error) ||
+        !ReadOptionalInteger(root, "iconShadowFanStrength", "iconShadowFanStrength",
+            decoded.iconShadowFanStrength, error) ||
+        !ReadOptionalInteger(root, "iconShadowDockStrength", "iconShadowDockStrength",
+            decoded.iconShadowDockStrength, error) ||
+        !ReadOptionalInteger(root, "iconShadowExposedWidgetStrength", "iconShadowExposedWidgetStrength",
+            decoded.iconShadowExposedWidgetStrength, error) ||
+        !ReadOptionalInteger(root, "iconShadowDesktopStrength", "iconShadowDesktopStrength",
+            decoded.iconShadowDesktopStrength, error) ||
+        !ReadOptionalInteger(root, "iconShadowPopupStrength", "iconShadowPopupStrength",
+            decoded.iconShadowPopupStrength, error) ||
+        !ReadOptionalInteger(root, "iconShadowQuickNavigationStrength", "iconShadowQuickNavigationStrength",
+            decoded.iconShadowQuickNavigationStrength, error) ||
+        !ReadOptionalInteger(root, "iconShadowSubjectStrength", "iconShadowSubjectStrength",
+            decoded.iconShadowSubjectStrength, error) ||
         !ReadOptionalBoolean(root, "iconBeautifyGlassEnabled", "iconBeautifyGlassEnabled",
             decoded.iconBeautifyGlassEnabled, error) ||
         !ReadOptionalFloat(root, "iconBeautifyGlassBlurRadius", "iconBeautifyGlassBlurRadius",

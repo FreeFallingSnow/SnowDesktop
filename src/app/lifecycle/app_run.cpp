@@ -1,4 +1,5 @@
 #include "platform/force_restart_hotkey.h"
+#include "platform/application_version.h"
 #include "diagnostics/debug_profile.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "settings/settings_search_catalog.h"
@@ -7,6 +8,7 @@
 #include "settings/settings_search_index.h"
 #include "dock/dock_window_preview.h"
 #include "common/l10n.h"
+#include "icons/icon_library.h"
 #include "ui/render/app_font.h"
 #include "diagnostics/diagnostic_log.h"
 #include "widget/runtime/widget_engine.h"
@@ -499,7 +501,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     };
 
     MigrateLegacyDataPaths();
-    const std::wstring startupIdentity = L"Run start version=" + Utf8ToWide(SNOWDESKTOP_VERSION) +
+    const std::wstring startupIdentity = L"Run start version=" + Utf8ToWide(snowdesktop::ApplicationVersion()) +
         L" pid=" + std::to_wstring(GetCurrentProcessId()) +
         L" logModules=" + std::to_wstring(snowdesktop::diagnostics::enabledLogModules.load(std::memory_order_relaxed));
     WriteDiagnosticLogEntry(startupIdentity.c_str());
@@ -623,6 +625,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         desktopSettings.shortcutArrowMode = shortcutArrowMode_;
         desktopSettings.groupComponentBadges = groupComponentBadges_;
         desktopSettings.beautifyFileThumbnails = beautifyFileThumbnails_;
+        desktopSettings.iconShadows = iconShadows_;
         desktopSettings.iconBeautify = iconBeautifySettings_;
         (void)settingsController_->SynchronizeDesktop(
             std::move(desktopSettings));
@@ -1093,6 +1096,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         desktop.shortcutArrowMode = shortcutArrowMode_;
         desktop.groupComponentBadges = groupComponentBadges_;
         desktop.beautifyFileThumbnails = beautifyFileThumbnails_;
+        desktop.iconShadows = iconShadows_;
         desktop.iconBeautify = iconBeautifySettings_;
         (void)settingsController_->SynchronizeDesktop(std::move(desktop));
         SyncSystemTaskbarSettingsFromWindows();
@@ -1274,9 +1278,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     };
     settingsHostOptions.widgetsPage.addPackageToDesktop = [this](
         std::wstring_view packageId) {
-        const std::size_t before = widgets_.size();
-        AddLuaWidgetAt(POINT{-32000, -32000}, std::wstring(packageId));
-        if (widgets_.size() == before)
+        if (!AddLuaWidgetAt(POINT{-32000, -32000}, std::wstring(packageId)))
         {
             return snowdesktop::winui::WidgetsPageHostOperationResult::
                 Failure(_LW("app.settings.widgets_add_to_desktop_failed"));
@@ -1556,7 +1558,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     }
                     if (!IsRectEmpty(&dirty))
                     {
-                        if (QueueDesktopWidgetComposition(widgetId))
+                        if (QueueDesktopWidgetComposition(widgetId,
+                                requestedDirty ? std::optional<RECT>{dirty} : std::nullopt))
                         {
                             invalidated = true;
                         }
@@ -1574,13 +1577,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             }
             if (!invalidated && customDesktopVisible_)
                 InvalidateRect(hwnd_, nullptr, FALSE);
-        });
-        widgetEngine_->SetNativeMarqueeSyncCallback([this](
-                const std::wstring& widgetId,
-                const std::vector<snowdesktop::widget_runtime::NativeMarqueeText>& marquees,
-                bool reducedMotion) {
-            return QueueWidgetMarqueeComposition(
-                widgetId, marquees, reducedMotion);
         });
         widgetEngine_->SetDesktopOpenCallback([this](const std::wstring& path) {
             return LuaOpenPath(path);
@@ -1703,7 +1699,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                                 widgetId,
                                 static_cast<UINT_PTR>(dueToken));
                         }
-                    });
+                    }, snowdesktop::UiAnimationScheduler::IntervalOwner::Widget);
             if (!token)
                 return 0;
             const UINT_PTR timerId =

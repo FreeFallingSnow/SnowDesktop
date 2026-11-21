@@ -105,6 +105,7 @@ set(SNOWDESKTOP_PERFETTO_PROBE_SOURCES
     src/dock/dock_settings.cpp
     src/shell/shell_extension_catalogue.cpp
     src/shell/shell_extension_service.cpp
+    src/system/panel/system_panel.cpp
     src/system/status_bar/status_bar.cpp
     src/system/status_bar/status_bar_input_method.cpp
     src/system/status_bar/status_bar_view.cpp
@@ -114,6 +115,7 @@ set(SNOWDESKTOP_PERFETTO_PROBE_SOURCES
     src/widget/runtime/lua_runtime.cpp
     src/widget/runtime/widget_engine.cpp
     src/widget/view/widget_surface_renderer.cpp
+    src/widget/view/widget_view_renderer.cpp
     src/widget/view/widget_gpu_timing.cpp
     src/widgets/lua_script.cpp
     src/widget/runtime/widget_lua_lifecycle.cpp

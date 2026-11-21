@@ -8,17 +8,88 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 
 namespace snowdesktop
 {
 
 enum class ScrollContentAxis { Vertical, Horizontal };
 
+struct ScrollContentFade
+{
+    float leading;
+    float trailing;
+    ScrollContentAxis axis;
+};
+
+inline ScrollContentFade ResolveScrollContentFade(float extent, float offset,
+    float maximum, float fadeLength, ScrollContentAxis axis)
+{
+    const float length = (std::min)(fadeLength, extent * 0.25f);
+    return {std::clamp(offset, 0.0f, length),
+        std::clamp(maximum - offset, 0.0f, length), axis};
+}
+
+struct ContentOpacityLayer
+{
+    D2D1_RECT_F bounds;
+    D2D1_MATRIX_3X2_F transform;
+    float opacity;
+    Microsoft::WRL::ComPtr<ID2D1Brush> brush;
+    std::optional<ScrollContentFade> scrollFade;
+    std::shared_ptr<const ContentOpacityLayer> parent;
+};
+
+// The original draw and the highlight replay use the same opacity layer.
+class ScopedContentOpacityLayer
+{
+public:
+    ScopedContentOpacityLayer(ID2D1DeviceContext* context, const D2D1_RECT_F& bounds,
+        float opacity, ID2D1Brush* brush = nullptr, std::optional<ScrollContentFade> scrollFade = {})
+        : context_(context), previous_(current_)
+    {
+        if (!context_) return;
+        D2D1_MATRIX_3X2_F transform{};
+        context_->GetTransform(&transform);
+        // The scrolling brush is cached and can move before replay. Keep its
+        // fade distances and rebuild it in the replay context instead.
+        layer_ = std::make_shared<ContentOpacityLayer>(ContentOpacityLayer{bounds, transform,
+            opacity, Microsoft::WRL::ComPtr<ID2D1Brush>(scrollFade ? nullptr : brush),
+            scrollFade, Current(context_)});
+        current_ = this;
+        context_->PushLayer(D2D1::LayerParameters1(bounds, nullptr,
+            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::Matrix3x2F::Identity(), opacity, brush), nullptr);
+    }
+
+    ~ScopedContentOpacityLayer()
+    {
+        if (!context_) return;
+        context_->PopLayer();
+        current_ = previous_;
+    }
+
+    ScopedContentOpacityLayer(const ScopedContentOpacityLayer&) = delete;
+    ScopedContentOpacityLayer& operator=(const ScopedContentOpacityLayer&) = delete;
+
+    static std::shared_ptr<const ContentOpacityLayer> Current(ID2D1RenderTarget* target)
+    {
+        for (auto* scope = current_; scope; scope = scope->previous_)
+            if (scope->context_ == target) return scope->layer_;
+        return {};
+    }
+
+private:
+    ID2D1DeviceContext* context_;
+    const ScopedContentOpacityLayer* previous_;
+    std::shared_ptr<const ContentOpacityLayer> layer_;
+    inline static thread_local const ScopedContentOpacityLayer* current_ = nullptr;
+};
+
 // Each native scrolling widget reuses its mask while the viewport and edge
 // distances are unchanged. A new D2D device must never reuse the old brush.
 class ScrollContentFadeCache
 {
-    friend class ScrollContentClip;
+public:
 
     ID2D1LinearGradientBrush* Resolve(ID2D1DeviceContext* context,
         const D2D1_RECT_F& viewport, float leading, float trailing,
@@ -68,6 +139,7 @@ class ScrollContentFadeCache
         return brush_.Get();
     }
 
+private:
     Microsoft::WRL::ComPtr<ID2D1Device> device_;
     Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> brush_;
     float extent_ = 0.0f;
@@ -100,23 +172,18 @@ public:
         // Keep the middle half clear even in a very small viewport. Grow the
         // fade with the hidden distance so the first scroll pixel cannot dim
         // a whole row. Trailing scroll padding is not hidden content.
-        const float length = (std::min)(fadeLength, extent * 0.25f);
         const float offset = static_cast<float>((std::max)(0, scrollOffset));
-        const float leading = (std::min)(length, offset);
-        const float trailing = std::clamp(
-            static_cast<float>(contentExtent) - extent - offset, 0.0f, length);
-        auto* brush = cache.Resolve(context_, bounds, leading, trailing, axis);
+        const auto fade = ResolveScrollContentFade(extent, offset,
+            static_cast<float>(contentExtent) - extent, fadeLength, axis);
+        auto* brush = cache.Resolve(context_, bounds, fade.leading, fade.trailing, axis);
         if (!brush) return;
-        context_->PushLayer(D2D1::LayerParameters1(bounds, nullptr,
-            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::Matrix3x2F::Identity(),
-            1.0f, brush), nullptr);
-        layerPushed_ = true;
+        opacityLayer_.emplace(context_, bounds, 1.0f, brush, fade);
     }
 
     ~ScrollContentClip()
     {
         if (!context_) return;
-        if (layerPushed_) context_->PopLayer();
+        opacityLayer_.reset();
         context_->PopAxisAlignedClip();
     }
 
@@ -126,7 +193,7 @@ public:
 private:
     ID2D1DeviceContext* context_;
     ScopedIconBackdropClip backdropClip_;
-    bool layerPushed_ = false;
+    std::optional<ScopedContentOpacityLayer> opacityLayer_;
 };
 
 } // namespace snowdesktop

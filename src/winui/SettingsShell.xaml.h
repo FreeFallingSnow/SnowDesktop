@@ -2,6 +2,7 @@
 
 #include "SettingsShell.g.h"
 
+#include "settings/home_about_status.h"
 #include "settings/settings_fwd.h"
 #include "dock/dock_layout_settings.h"
 #include "settings/settings_search_index.h"
@@ -152,7 +153,7 @@ struct SettingsShell : SettingsShellT<SettingsShell>
             iconAppearancePage_->Activate();
     }
     [[nodiscard]] bool ApplyHomeAboutStatusPatch(
-        const snowdesktop::winui::HomeAboutStatusPatch& patch);
+        const snowdesktop::settings::HomeAboutStatusPatch& patch);
     void SetWidgetSettingsService(
         snowdesktop::widget_runtime::IWidgetSettingsService* service) noexcept;
     /** Bind a current component snapshot; replaying the bound revision is safe. */
@@ -257,6 +258,7 @@ private:
     snowdesktop::winui::RuntimeModulesQuery runtimeModulesQuery_;
     std::unique_ptr<snowdesktop::winui::RuntimeModulesPagePresenter> runtimeModulesPage_;
     bool advancedSettingsVisible_ = false;
+    bool agentOperationsEnabled_ = false;
     snowdesktop::runtime_modules::Policy runtimeModulePolicy_;
     winrt::Microsoft::UI::Xaml::Controls::InfoBar moduleNotice_{nullptr};
     winrt::Microsoft::UI::Xaml::Controls::InfoBar moduleLoadNotice_{nullptr};

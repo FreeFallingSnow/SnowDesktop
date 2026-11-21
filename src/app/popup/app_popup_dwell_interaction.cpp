@@ -191,7 +191,7 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
             popupScrollOffset_ = 0;
             ResetCollectionPopupAnimationCache();
         }
-        SaveLayoutSlots();
+        RequestLayoutSave();
         InvalidateRect(hwnd_, nullptr, FALSE);
         PresentDesktopPointerUpdate();
         InvalidateFloatingDockWindow(true);
@@ -293,7 +293,7 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
     if (allowOpen && popupHoverController_.IsReady(now, delayMs))
     {
         snowdesktop::popup_animation_rules::OpenAfterClose(
-            popupAnimation_, GetOpenPopupWidget() != nullptr,
+            popupAnimation_, IsCollectionPopupHostedByFloatingWindow(),
             [this] {
                 pendingCollectionPopupOpen_.reset();
                 BeginCollectionPopupClose(false);
@@ -663,7 +663,7 @@ bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now,
     // timer stays armed while closing, and each poll rechecks the current drag
     // and candidate instead of queuing an open into the close callback.
     return snowdesktop::popup_animation_rules::OpenAfterClose(
-        popupAnimation_, GetOpenPopupWidget() != nullptr,
+        popupAnimation_, IsCollectionPopupHostedByFloatingWindow(),
         [this] {
             pendingCollectionPopupOpen_.reset();
             BeginCollectionPopupClose(false);
@@ -931,7 +931,7 @@ bool DesktopApp::TryActivateCollectionGroupTab(
     cachedDropPreview_ = {};
     cachedDropPreviewPoint_ = {-1, -1};
     dragSession_.InvalidateStaticScene();
-    SaveLayoutSlots();
+    RequestLayoutSave();
     InvalidateRect(hwnd_, nullptr, FALSE);
 
     int mods = 0;
@@ -971,6 +971,8 @@ ShowDockFolderPopupContextMenu(
     const std::vector<std::wstring>
         selectedPaths =
             GetSelectedFolderEntryPaths();
+    POINT clientPoint = screenPoint;
+    ScreenToClient(hwnd_, &clientPoint);
     const bool singleSelection =
         selectedPaths.size() == 1;
     const bool hasSelection =
@@ -1024,6 +1026,8 @@ ShowDockFolderPopupContextMenu(
                 : MF_STRING | MF_GRAYED,
             kContextOpenCommand,
             _LW("app.menu.open"));
+        if (canOpen && singleSelection)
+            AppendFolderPreviewOpenMenuItem(menu, clientPoint, selectedPaths.front());
         AppendMenuW(
             menu,
             hasSelection
@@ -1115,6 +1119,7 @@ ShowDockFolderPopupContextMenu(
     else
     {
         AppendDockFolderPopupDisplayMenu(menu);
+        if (folderPreview_) AppendFileHistoryMenu(menu);
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         const bool canPaste = dockFolderPopupAvailable_ &&
             HasPasteableFileClipboardData();
@@ -1140,7 +1145,14 @@ ShowDockFolderPopupContextMenu(
         sortMenu = snowdesktop::sort_menu::Create(
             [](const char* key) { return _LW(key); });
         if (sortMenu)
+        {
+            if (folderPreview_)
+                for (const auto& row : snowdesktop::sort_menu::kRows)
+                    if (row.mode == dockFolderPopupWidget_.folderSortMode)
+                        CheckMenuItem(sortMenu, dockFolderPopupWidget_.folderSortAscending
+                            ? row.ascendingCommand : row.descendingCommand, MF_BYCOMMAND | MF_CHECKED);
             AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), _LW("app.menu.sort_by"));
+        }
     }
 
     SetMenuItemIcon(menu, kContextOpenCommand, L"\uF08E");
@@ -1227,6 +1239,13 @@ ShowDockFolderPopupContextMenu(
 
     switch (command)
     {
+    case kFileUndoCommand:
+    case kFileRedoCommand:
+        if (!QueueFileHistory(command == kFileRedoCommand)) MessageBeep(MB_ICONWARNING);
+        break;
+    case kContextFolderPreviewOpen:
+        if (singleSelection) TryFolderPreviewDoubleClick(clientPoint, 0, selectedPaths.front());
+        return;
     case kContextOpenCommand:
         if (!canOpen)
             break;

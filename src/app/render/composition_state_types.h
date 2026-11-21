@@ -4,6 +4,7 @@
 #include "layout/popup_animation_rules.h"
 #include "widget/view/widget_composition_layer_rules.h"
 #include "widget/view/widget_native_marquee.h"
+#include "widget/view/widget_surface_renderer.h"
 #include <d2d1_1.h>
 #include <dcomp.h>
 #include <dwrite.h>
@@ -19,6 +20,7 @@ using UiCompositionAnimationHost =
     snowdesktop::widget_composition_layer_rules::CompositionHost;
 
 namespace snowdesktop::widget_runtime { struct WidgetSurfaceTarget; }
+class DesktopBackdropCompositor;
 
 struct UiCompositionAnimationOverlay
 {
@@ -33,16 +35,10 @@ struct UiCompositionAnimationOverlay
         UiCompositionAnimationHost::Desktop;
     bool active = false;
     bool presentingHighlights = false;
+    std::optional<RECT> srgbRetirementBounds;
 
     HRESULT SetPlacementOffset(POINT offset) const;
-};
-
-struct PopupFanIconDrawing
-{
-    Microsoft::WRL::ComPtr<ID2D1CommandList> commands;
-    Microsoft::WRL::ComPtr<ID2D1Effect> shadow;
-    Microsoft::WRL::ComPtr<ID2D1Image> shadowImage;
-    D2D1_RECT_F shadowBounds{};
+    void FinishSrgbRetirement(DesktopBackdropCompositor& compositor, UiCompositionAnimationHost paintHost);
 };
 
 struct PopupFanBackdrop
@@ -95,6 +91,8 @@ struct DesktopWidgetCompositionItem
     std::shared_ptr<snowdesktop::widget_runtime::WidgetSurfaceTarget> renderTarget;
     Microsoft::WRL::ComPtr<IDCompositionVisual2> renderedVisual;
     std::wstring renderedContentId;
+    snowdesktop::widget_runtime::WidgetSurfacePaint precomposedPaint;
+    Microsoft::WRL::ComPtr<ID2D1DeviceContext> precomposedRecorder;
     bool renderedVisualAttached = false;
     bool renderFailed = false;
     bool occluded = false;
@@ -103,10 +101,13 @@ struct DesktopWidgetCompositionItem
     UINT height = 0;
     std::uint64_t hiddenSince = 0;
     bool visible = false;
+    // The body has finished drawing and its clip is open for this frame.
+    bool contentVisible = false;
     struct HoverFade
     {
         snowdesktop::popup_animation_rules::State motion;
         bool waitingForPixels = false;
+        bool compositorFadingOut = false;
     };
     std::optional<HoverFade> hoverFade;
     // Present only while the content and backdrop own matching native clips.
@@ -120,6 +121,7 @@ struct DesktopWidgetCompositionItem
     bool backdropRequested = false;
     bool backdropRegistered = false;
     bool presentingSrgb = false;
+    bool marqueeDamageUnavailable = false;
     int backdropCornerRadius = 0;
     int backdropBlurRadius = 0;
     snowdesktop::WidgetIconBackdrops iconBackdrops;

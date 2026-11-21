@@ -1,6 +1,7 @@
 #include "icon_beautify.h"
 #include "icon_beautify_preview.h"
 #include "icon_render_rules.h"
+#include "icon_shadow_settings.h"
 #include "theme/flat_glass_rim.h"
 #include "theme/appearance_edge_presets.h"
 
@@ -641,8 +642,7 @@ void ApplyTexture(std::vector<std::uint32_t>& output, int width, int height,
 }
 
 void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int height,
-    const IconBeautifySettings& settings, int rasterScale = 1,
-    std::vector<std::uint8_t>* coverage = nullptr)
+    const IconBeautifySettings& settings, int rasterScale = 1)
 {
     if (!settings.edgeHighlightEnabled || settings.edgeHighlightStrength <= 0.0f) return;
     const auto& outline = OutlineFor(settings.shape);
@@ -654,7 +654,6 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
     const float rimInset = depth * .5f;
     const float halo = rimInset + std::max(material.InnerSupport(depth, false), material.InnerSupport(depth, true));
     const auto& inner = CachedMask(settings.shape, width, height, halo);
-    if (coverage) coverage->assign(output.size(), 0);
     for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x)
     {
         const size_t index = static_cast<size_t>(y) * width + x;
@@ -682,25 +681,17 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
         // supersampled together with the normalized contour and depth.
         const float light = material.Intensity(distance / rasterScale, depth / rasterScale, lighting);
         const int alpha = static_cast<int>(std::lround(light * settings.edgeHighlightStrength * mask[index]));
-        output[index] = SourceOver(PackPremultiplied(255, 255, 255, alpha), output[index]);
+        const auto reflection = PackPremultiplied(255, 255, 255, alpha);
+        output[index] = SourceOver(reflection, output[index]);
         int shadowAlpha = 0;
         if (material.settings.shadowStrength > 0.f)
         {
             shadowAlpha = static_cast<int>(std::lround(
                 material.Occlusion(distance / rasterScale, depth / rasterScale, lighting) *
                 settings.edgeHighlightStrength * material.settings.shadowStrength * mask[index]));
-            output[index] = SourceOver(
-                PackPremultiplied(4, 6, 9, shadowAlpha), output[index]);
         }
-        if (coverage && alpha > 0)
-        {
-            // Use the reflection's share of the pixel so the correction fades
-            // with the reflected light through the inner edge of the rim.
-            const int outputAlpha = static_cast<int>(output[index] >> 24);
-            const int reflected = alpha * (255 - shadowAlpha);
-            (*coverage)[index] = static_cast<std::uint8_t>(
-                std::min(255, (reflected + outputAlpha / 2) / outputAlpha));
-        }
+        const auto shadow = PackPremultiplied(4, 6, 9, shadowAlpha);
+        output[index] = SourceOver(shadow, output[index]);
     }
 }
 
@@ -1047,10 +1038,58 @@ std::vector<std::uint32_t> RenderEdgeReflection(int width, int height,
     return pixels;
 }
 
+// Two box passes per axis approximate the fan shadow's Gaussian blur in O(pixel count).
+static void BlurSubjectAxis(const std::vector<std::uint8_t>& source,
+    std::vector<std::uint8_t>& target, int lines, int samples, int lineStride, int sampleStride, int radius)
+{
+    const int divisor = radius * 2 + 1;
+    for (int line = 0; line < lines; ++line)
+    {
+        const auto base = static_cast<std::size_t>(line) * lineStride;
+        const auto pixel = [&](int sample) { return base + static_cast<std::size_t>(sample) * sampleStride; };
+        int sum = 0;
+        for (int sample = 0; sample <= radius && sample < samples; ++sample)
+            sum += source[pixel(sample)];
+        for (int sample = 0; sample < samples; ++sample)
+        {
+            target[pixel(sample)] = static_cast<std::uint8_t>((sum + divisor / 2) / divisor);
+            if (sample >= radius) sum -= source[pixel(sample - radius)];
+            if (sample + radius + 1 < samples) sum += source[pixel(sample + radius + 1)];
+        }
+    }
+}
+
+static std::vector<std::uint8_t> BuildSubjectShadow(const std::vector<std::uint8_t>& alpha,
+    const std::vector<std::uint8_t>& plate, int width, int height)
+{
+    // The bitmap can be several times the displayed icon size. Scale both
+    // distances so the subject still has a soft shadow after downsampling.
+    const float pixelsPerReferenceUnit = std::min(width, height) / 52.0f;
+    const float sigma = kIconShadowBlur * pixelsPerReferenceUnit;
+    const int radius = std::max(1, static_cast<int>(std::lround((std::sqrt(1.0f + 6.0f * sigma * sigma) - 1.0f) * 0.5f)));
+    const int offset = std::max(1, static_cast<int>(std::lround(kIconShadowOffset * pixelsPerReferenceUnit)));
+    std::vector<std::uint8_t> scratch(alpha.size()), blurred(alpha.size()), shadow(alpha.size());
+    BlurSubjectAxis(alpha, scratch, height, width, width, 1, radius);
+    BlurSubjectAxis(scratch, blurred, height, width, width, 1, radius);
+    BlurSubjectAxis(blurred, scratch, width, height, 1, width, radius);
+    BlurSubjectAxis(scratch, blurred, width, height, 1, width, radius);
+    for (int y = offset; y < height; ++y)
+        for (int x = 0; x < width; ++x)
+        {
+            const auto align = static_cast<std::size_t>(y) * width + x;
+            const auto cast = static_cast<std::size_t>(y - offset) * width + x;
+            shadow[align] = static_cast<std::uint8_t>(
+                (blurred[cast] * plate[align] * (255 - alpha[align]) + 255 * 255 / 2) / (255 * 255));
+        }
+    if (std::none_of(shadow.begin(), shadow.end(), [](auto coverage) { return coverage != 0; }))
+        return {};
+    return shadow;
+}
+
 static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>& source,
     int width, int height, const IconBeautifySettings& rawSettings,
     std::optional<PlateFill> detectedEdgeFill, int rasterScale, SourceKind sourceKind,
-    std::vector<std::uint8_t>* coverage = nullptr)
+    std::vector<std::uint8_t>* subjectShadow = nullptr)
 {
     if (width <= 0 || height <= 0 ||
         source.size() != static_cast<size_t>(width) * height)
@@ -1208,7 +1247,7 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
         }
         ApplyTexture(output, width, height, settings, rasterScale);
         ApplyOutline(output, width, height, settings, rasterScale);
-        ApplyEdgeReflection(output, width, height, settings, rasterScale, coverage);
+        ApplyEdgeReflection(output, width, height, settings, rasterScale);
         return output;
     }
 
@@ -1239,6 +1278,8 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
     const int destLeft = (width - destW) / 2;
     const int destTop = (height - destH) / 2;
 
+    std::vector<std::uint8_t> subjectAlpha;
+    if (subjectShadow) subjectAlpha.resize(output.size());
     constexpr std::array<std::tuple<int, int, int>, 7> passes{{
         {0,1,120},{-1,1,63},{1,1,63},{0,2,51},{-1,0,40},{1,0,40},{0,-1,29}
     }};
@@ -1259,8 +1300,9 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
                 const int py = oy + dy * rasterScale;
                 if (px < 0 || py < 0 || px >= width || py >= height) continue;
                 const size_t index = static_cast<size_t>(py) * width + px;
+                const int coverage = PixelA(sampled) * mask[index];
                 const int opacity = static_cast<int>(std::round(baseOpacity * settings.shadowStrength));
-                const int alpha = (PixelA(sampled) * mask[index] * opacity +
+                const int alpha = (coverage * opacity +
                     255 * 255 / 2) / (255 * 255);
                 if (alpha > 0)
                     output[index] = SourceOver(PackPremultiplied(48, 58, 72, alpha), output[index]);
@@ -1281,21 +1323,25 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
                 SampleBilinear(source, width, height, sx, sy), settings),
                 mask[index]);
             output[index] = SourceOver(sampled, output[index]);
+            if (!subjectAlpha.empty())
+                subjectAlpha[index] = static_cast<std::uint8_t>(PixelA(sampled));
         }
 
+    if (!subjectAlpha.empty())
+        *subjectShadow = BuildSubjectShadow(subjectAlpha, mask, width, height);
     ApplyTexture(output, width, height, settings, rasterScale);
     ApplyOutline(output, width, height, settings, rasterScale);
-    ApplyEdgeReflection(output, width, height, settings, rasterScale, coverage);
+    ApplyEdgeReflection(output, width, height, settings, rasterScale);
     return output;
 }
 
 std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
     int width, int height, const IconBeautifySettings& settings,
     std::optional<PlateFill> detectedEdgeFill, SourceKind sourceKind,
-    std::vector<std::uint8_t>* coverage)
+    std::vector<std::uint8_t>* subjectShadow)
 {
-    if (coverage) coverage->clear();
-    return RenderAtScale(source, width, height, settings, detectedEdgeFill, 1, sourceKind, coverage);
+    if (subjectShadow) subjectShadow->clear();
+    return RenderAtScale(source, width, height, settings, detectedEdgeFill, 1, sourceKind, subjectShadow);
 }
 
 MaskCacheStatistics TryGetMaskCacheStatistics()

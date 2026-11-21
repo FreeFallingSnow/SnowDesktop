@@ -193,16 +193,16 @@
                 <NavigationViewItem x:Name="CalendarItem" Tag="calendar" />
                 <NavigationViewItem x:Name="ScreenTimeItem" Tag="screen-time" />
                 <NavigationViewItem x:Name="BackupItem" Tag="backup-and-data" />
+                <NavigationViewItem x:Name="AgentOperationsItem" Tag="agent-operations">
+                    <NavigationViewItem.InfoBadge>
+                        <InfoBadge x:Name="ControlSkillUpdateBadge"
+                                   Style="{StaticResource AttentionDotInfoBadgeStyle}"
+                                   Visibility="Collapsed" />
+                    </NavigationViewItem.InfoBadge>
+                </NavigationViewItem>
                 <NavigationViewItem x:Name="AdvancedSettingsItem" Tag="group-advanced" Visibility="Collapsed" IsExpanded="False" SelectsOnInvoked="False">
                     <NavigationViewItem.MenuItems>
                         <NavigationViewItem x:Name="RuntimeModulesItem" Tag="runtime-modules" />
-                        <NavigationViewItem x:Name="AgentOperationsItem" Tag="agent-operations">
-                            <NavigationViewItem.InfoBadge>
-                                <InfoBadge x:Name="ControlSkillUpdateBadge"
-                                           Style="{StaticResource AttentionDotInfoBadgeStyle}"
-                                           Visibility="Collapsed" />
-                            </NavigationViewItem.InfoBadge>
-                        </NavigationViewItem>
                     </NavigationViewItem.MenuItems>
                 </NavigationViewItem>
             </NavigationView.MenuItems>

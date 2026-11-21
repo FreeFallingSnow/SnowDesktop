@@ -7,6 +7,8 @@
 
 #include "steam_workshop_sync.h"
 #include "steam_workshop_diagnostics.h"
+#include "widget/packages/widget_package_paths.h"
+#include "widget/packages/widget_package_source.h"
 
 #include <chrono>
 #include <filesystem>

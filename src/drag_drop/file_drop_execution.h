@@ -23,6 +23,8 @@ struct Services
     std::function<void()> savePins;
     std::function<void(const std::vector<std::wstring>&)> forgetMovedKeys;
     std::function<void()> refresh;
+    std::function<std::uint64_t(PendingLandingCache, const DragSourceList&, DropAction)> beginPlacement;
+    std::function<PendingLandingCache(std::uint64_t)> takePlacement;
 };
 
 // One production transaction owns the captured placement, actual file outputs,
@@ -34,6 +36,7 @@ inline bool Execute(const DragSourceList& sources, const DropPreviewList& previe
 {
     if (!result) result = std::make_shared<ShellFileOperationResult>();
     const bool folderTarget = preview.targetKind == DropTargetKind::FolderMapping && preview.targetWidget;
+    const std::wstring folderPath = folderTarget ? preview.targetWidget->sourceFolderPath : std::wstring{};
     PendingLandingCache cache = folderTarget ? PendingLandingCache{} :
         pending_drop::BuildLanding(sources, preview, services.snapshotDesktopKeys(), GetTickCount(), services.fileName);
     if (folderTarget)
@@ -42,17 +45,20 @@ inline bool Execute(const DragSourceList& sources, const DropPreviewList& previe
         DragSourceList orderedSources;
         orderedSources.entries.reserve(order.size());
         for (const auto* entry : order) orderedSources.entries.push_back(*entry);
-        cache.folderPlacements.push_back(services.folderPlacement(*preview.targetWidget,
-            preview.insertIndex, order.empty() ? &sources : &orderedSources));
+        auto placement = services.folderPlacement(*preview.targetWidget,
+            preview.insertIndex, order.empty() ? &sources : &orderedSources);
+        if (!placement.sourceFolderPath.empty()) cache.folderPlacements.push_back(std::move(placement));
     }
 
+    const auto ticket = services.beginPlacement(std::move(cache), sources, preview.action);
     auto completed = std::make_shared<std::atomic_bool>(false);
     auto committed = std::make_shared<bool>(false);
-    auto operationCompletion = [&placements, services, result, completed, committed, cache = std::move(cache),
+    auto operationCompletion = [&placements, services, result, completed, committed, ticket,
         entries = sources.entries, action = preview.action,
         pinToDock = preview.pinMaterializedItemsToDock, dockInsertIndex = preview.dockInsertIndex,
         completion = std::move(completion)](bool succeeded) mutable {
         if (completed->exchange(true)) return;
+        auto placement = services.takePlacement(ticket);
         if (!result->outputs.empty())
         {
             if (pinToDock)
@@ -65,7 +71,7 @@ inline bool Execute(const DragSourceList& sources, const DropPreviewList& previe
                 else succeeded = false;
             }
             else
-                pending_drop::Complete(placements, std::move(cache), *result);
+                pending_drop::Complete(placements, std::move(placement), *result);
             if (action == DropAction::Move)
             {
                 std::vector<std::wstring> movedKeys;
@@ -82,7 +88,7 @@ inline bool Execute(const DragSourceList& sources, const DropPreviewList& previe
     };
     const bool duplicateNames = preview.action == DropAction::Copy && sources.hasDesktopIcons && !sources.hasExternalFiles;
     const bool queued = folderTarget
-        ? services.folder(sources, preview.targetWidget->sourceFolderPath, preview.action, operationCompletion, synchronously, result)
+        ? services.folder(sources, folderPath, preview.action, operationCompletion, synchronously, result)
         : services.desktop(sources, preview.action, duplicateNames, operationCompletion, synchronously, result);
     if (!queued) operationCompletion(false);
     return queued && (!synchronously || *committed);

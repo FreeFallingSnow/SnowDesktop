@@ -415,7 +415,6 @@ bool DesktopApp::PinDockRunningTarget(const std::wstring& runningKey,
                 dockAppIdentityCache_.Publish(cacheKey, cached.ticket, std::move(identity));
                 AdoptDockRunningPresentation(runningKey, itemIndex);
             }
-            RebuildContainersAndItems();
             ApplyPageMapping();
             LayoutItems();
             return true;

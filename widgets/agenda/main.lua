@@ -1,5 +1,10 @@
 -- agenda/main.lua - API v2 calendar agenda with local editing
+local draft = module.require("modules/editor_draft.lua")
+local draftKeys = draft.keys
 local descriptor
+
+local EDGE_FADE = widget.hasFeature("draw.clip.edgeFade")
+local VIEW_EDGE_FADE = widget.hasFeature("view.scroll.edgeFade")
 
 local function componentMetrics()
     local row = ui.metrics().layoutRowHeight
@@ -30,16 +35,6 @@ local fluent = {
     next = utf8.char(0xF181),
 }
 
-local DRAFT_TITLE = "agenda_draft_title"
-local DRAFT_DATE = "agenda_draft_date"
-local DRAFT_ALL_DAY = "agenda_draft_all_day"
-local DRAFT_START = "agenda_draft_start"
-local DRAFT_END = "agenda_draft_end"
-local DRAFT_REMINDER = "agenda_draft_reminder"
-local DRAFT_NOTES = "agenda_draft_notes"
-local EDITOR_MODE = "agenda_editor_mode"
-local EDITOR_ID = "agenda_editor_id"
-local EDITOR_REVISION = "agenda_editor_revision"
 local SELECTED_ID = "agenda_selected_id"
 local reminderValues = { -1, 0, 5, 15, 30, 60, 1440 }
 
@@ -50,56 +45,11 @@ local function supportsSeries()
         type(calendar.seriesById)=="function"
 end
 
-local function copyRule(rule)
-    local result={kind=rule.kind,dates={},startDate=rule.startDate,endDate=rule.endDate or "",
-        interval=rule.interval or 1,weekdays={},monthDay=rule.monthDay or 0}
-    for _,date in ipairs(rule.dates or {}) do result.dates[#result.dates+1]=date end
-    for _,weekday in ipairs(rule.weekdays or {}) do result.weekdays[#result.weekdays+1]=weekday end
-    return result
-end
-
-local function defaultRule(date)
-    local info=calendar.dateInfo(date)
-    return {kind="dates",dates={date},startDate=date,endDate="",interval=1,
-        weekdays={info and info.weekday or 1},monthDay=info and info.day or 1}
-end
-
-local function ruleMatches(rule,date)
-    if not calendar.dateInfo(date) then return false end
-    if rule.kind=="dates" then
-        for _,item in ipairs(rule.dates) do if item==date then return true end end
-        return false
-    end
-    if date<rule.startDate or (rule.endDate~="" and date>rule.endDate) then return false end
-    local current,anchor=calendar.dateInfo(date),calendar.dateInfo(rule.startDate)
-    if not current or not anchor then return false end
-    if rule.kind=="monthly" then
-        local months=(current.year-anchor.year)*12+current.month-anchor.month
-        if months<0 or months%rule.interval~=0 then return false end
-        return current.day==(rule.monthDay==0 and current.daysInMonth or rule.monthDay)
-    end
-    if rule.kind=="weekly" then
-        local function serial(info)
-            local y=info.year-1
-            local days=y*365+math.floor(y/4)-math.floor(y/100)+math.floor(y/400)+info.day
-            for month=1,info.month-1 do
-                local first=calendar.dateInfo(string.format("%04d-%02d-01",info.year,month))
-                days=days+first.daysInMonth
-            end
-            return days
-        end
-        local weeks=math.floor((serial(current)-current.weekday+1-
-            (serial(anchor)-anchor.weekday+1))/7)
-        if weeks<0 or weeks%rule.interval~=0 then return false end
-        for _,weekday in ipairs(rule.weekdays) do if weekday==current.weekday then return true end end
-    end
-    return false
-end
-
 local settings = {
     fields = {
         {
             key = "rangeDays",
+            agentDescription = "Selects how many days of events to query, including the starting date. It affects which event groups appear.",
             label = l10n.tr("lua_widget.agenda.range"),
             type = "select",
             default = "7",
@@ -113,6 +63,7 @@ local settings = {
         },
         {
             key = "fontScale",
+            agentDescription = "Scales the agenda's rendered text and its measured row layout relative to the component metrics.",
             label = l10n.tr("lua_widget.common.font_scale"),
             type = "int",
             default = 100,
@@ -122,39 +73,19 @@ local settings = {
     },
 }
 
-local function trim(value)
-    return (value or ""):gsub("^%s+", ""):gsub("%s+$", "")
-end
-
 local function todayDate()
     local now = time.parts()
     return string.format("%04d-%02d-%02d", now.year, now.month, now.day)
 end
 
-local function formatTime(minutes)
-    local value = math.max(0, math.min(1439, tonumber(minutes) or 0))
-    return string.format("%02d:%02d", math.floor(value / 60), value % 60)
-end
-
 local function eventTiming(item)
     return item.allDay and l10n.tr("lua_widget.agenda.all_day") or
-        (formatTime(item.startMinutes) .. " – " .. formatTime(item.endMinutes))
+        (draft.formatTime(item.startMinutes) .. " – " .. draft.formatTime(item.endMinutes))
 end
 
 local function isSubscription(id)
     -- The host uses this reserved prefix for ICS event IDs.
     return type(id) == "string" and id:sub(1, 4) == "ics-"
-end
-
-local function parseTime(value)
-    local hour, minute = string.match(trim(value), "^(%d%d?):(%d%d)$")
-    hour = tonumber(hour)
-    minute = tonumber(minute)
-    if not hour or not minute or hour < 0 or hour > 23 or
-        minute < 0 or minute > 59 then
-        return nil
-    end
-    return hour * 60 + minute
 end
 
 local function rangeDays()
@@ -258,22 +189,9 @@ local function events(model)
     return result
 end
 
-local function clearDraftTransaction(tx)
-    tx:remove(DRAFT_TITLE)
-    tx:remove(DRAFT_DATE)
-    tx:remove(DRAFT_ALL_DAY)
-    tx:remove(DRAFT_START)
-    tx:remove(DRAFT_END)
-    tx:remove(DRAFT_REMINDER)
-    tx:remove(DRAFT_NOTES)
-    tx:remove(EDITOR_MODE)
-    tx:remove(EDITOR_ID)
-    tx:remove(EDITOR_REVISION)
-end
-
 local function clearDraft(model)
     if model.pendingPanelTask then task.cancel(model.pendingPanelTask) end
-    storage.transaction(clearDraftTransaction)
+    draft.clear()
     model.editorError = nil
     model.pendingPanelTask = nil
     model.datePicker = nil
@@ -288,7 +206,7 @@ local function clearDraft(model)
 end
 
 local function openEditor(model)
-    local title = storage.get(EDITOR_MODE) == "edit" and
+    local title = storage.get(draftKeys.mode) == "edit" and
         l10n.tr("lua_widget.agenda.edit") or
         l10n.tr("lua_widget.agenda.add")
     model.editorError = nil
@@ -318,39 +236,11 @@ local function startNew(model)
         return
     end
     local date = selectedDate(model)
-    local startMinutes = 540
-    if date == todayDate() then
-        local now = time.parts()
-        startMinutes = math.min(1410,
-            math.floor((now.hour * 60 + now.min + 29) / 30) * 30)
-    end
-    storage.transaction(function(tx)
-        clearDraftTransaction(tx)
-        tx:set(DRAFT_TITLE, "")
-        tx:set(DRAFT_DATE, date)
-        tx:set(DRAFT_ALL_DAY, "0")
-        tx:set(DRAFT_START, formatTime(startMinutes))
-        tx:set(DRAFT_END, formatTime(math.min(1439, startMinutes + 60)))
-        tx:set(DRAFT_REMINDER, "15")
-        tx:set(EDITOR_MODE, "new")
-    end)
-    model.rule=supportsSeries() and defaultRule(date) or nil
+    draft.startNew(date, todayDate())
+    model.rule=supportsSeries() and draft.defaultRule(date) or nil
     model.scope="single"
     model.mode="single"
     openEditor(model)
-end
-
-local function fillDraftFromItem(item)
-    storage.transaction(function(tx)
-        tx:set(DRAFT_TITLE,item.title or "")
-        tx:set(DRAFT_DATE,item.date)
-        tx:set(DRAFT_ALL_DAY,item.allDay and "1" or "0")
-        tx:set(DRAFT_START,formatTime(item.startMinutes))
-        tx:set(DRAFT_END,formatTime(item.endMinutes))
-        tx:set(DRAFT_REMINDER,tostring(item.reminderMinutes or -1))
-        if item.notes and item.notes~="" then tx:set(DRAFT_NOTES,item.notes)
-        else tx:remove(DRAFT_NOTES) end
-    end)
 end
 
 local function startEdit(model, item, wholeSeries)
@@ -359,108 +249,31 @@ local function startEdit(model, item, wholeSeries)
         widget.closePanel()
         return
     end
-    storage.transaction(function(tx)
-        clearDraftTransaction(tx)
-        tx:set(EDITOR_MODE, "edit")
-        tx:set(EDITOR_ID, item.id)
-        tx:set(EDITOR_REVISION, tostring(item.revision))
-    end)
-    fillDraftFromItem(item)
+    draft.startEdit(item)
     model.occurrenceItem=item
     model.seriesDefinition=item.seriesId and supportsSeries() and calendar.seriesById(item.seriesId) or nil
     model.scope=model.seriesDefinition and (wholeSeries and "series" or "occurrence") or "single"
     model.mode=model.scope=="series" and model.seriesDefinition.rule.kind or "single"
     if model.seriesDefinition then
-        model.rule=copyRule(model.seriesDefinition.rule)
-        if model.scope=="series" then fillDraftFromItem(model.seriesDefinition.event) end
+        model.rule=draft.copyRule(model.seriesDefinition.rule)
+        if model.scope=="series" then draft.fillFromItem(model.seriesDefinition.event) end
     else model.rule=nil end
     openEditor(model)
 end
 
 local function saveDraft(model)
     if model.pendingPanelTask or not widget.hasPermission("calendar.write") then return end
-    local title = trim(storage.get(DRAFT_TITLE) or "")
-    if title == "" then model.editorError = "invalidTitle" return end
-    local date = trim(storage.get(DRAFT_DATE) or "")
-    local mode = model.mode or "single"
-    local seriesMode=mode~="single"
-    local rule
-    if seriesMode then
-        rule=copyRule(model.rule)
-        rule.kind=mode
-        rule.interval=tonumber(rule.interval)
-        rule.monthDay=tonumber(rule.monthDay)
-        rule.startDate=date
-        rule.endDate=trim(rule.endDate or "")
-        if mode=="dates" then
-            table.sort(rule.dates)
-            date=rule.dates[1] or ""
-            rule.startDate=date
-            rule.endDate=rule.dates[#rule.dates] or ""
-            rule.interval=1;rule.weekdays={};rule.monthDay=0
-        elseif mode=="weekly" then rule.dates={};rule.monthDay=0
-        elseif mode=="monthly" then rule.dates={};rule.weekdays={} end
-        if not calendar.dateInfo(rule.startDate) or
-            (rule.endDate~="" and (not calendar.dateInfo(rule.endDate) or rule.endDate<rule.startDate)) or
-            not rule.interval or rule.interval<1 or rule.interval>99 or rule.interval%1~=0 or
-            (mode=="dates" and (#rule.dates<1 or #rule.dates>366)) or
-            (mode=="weekly" and #rule.weekdays==0) or
-            (mode=="monthly" and (not rule.monthDay or rule.monthDay<0 or rule.monthDay>31 or rule.monthDay%1~=0)) then
-            model.editorError="invalidDate";return
-        end
-    end
-    if not calendar.dateInfo(date) then
-        model.editorError = "invalidDate"
+    local request, reason = draft.buildSaveRequest(model)
+    if reason == "confirmSeriesChange" then
+        model.confirmSeriesChange = true
+        widget.invalidate()
         return
     end
-    local allDay = storage.get(DRAFT_ALL_DAY) == "1"
-    local startMinutes = parseTime(storage.get(DRAFT_START) or "")
-    local endMinutes = parseTime(storage.get(DRAFT_END) or "")
-    if not allDay and (not startMinutes or not endMinutes or
-        endMinutes < startMinutes) then
-        model.editorError = "invalidTime"
+    if not request then
+        model.editorError = reason
         return
     end
-    local arguments = {
-        title = title,
-        date = date,
-        allDay = allDay,
-        startMinutes = allDay and 0 or startMinutes,
-        endMinutes = allDay and 0 or endMinutes,
-        notes = storage.get(DRAFT_NOTES) or "",
-        reminderMinutes = tonumber(storage.get(DRAFT_REMINDER)) or 15,
-    }
-    local taskName = seriesMode and "calendar.series.create" or "calendar.create"
-    if storage.get(EDITOR_MODE) == "edit" then
-        if model.scope=="series" and model.seriesDefinition then
-            taskName="calendar.series.update"
-            arguments.id=model.seriesDefinition.id
-            arguments.expectedRevision=model.seriesDefinition.revision
-            if #model.seriesDefinition.exceptions>0 and not model.confirmSeriesChange then
-                for _,exception in ipairs(model.seriesDefinition.exceptions) do
-                    if not ruleMatches(rule,exception.occurrenceDate) then
-                        model.confirmSeriesChange=true
-                        widget.invalidate()
-                        return
-                    end
-                end
-            end
-        else
-            taskName="calendar.update"
-            arguments.id=storage.get(EDITOR_ID) or ""
-            arguments.expectedRevision=tonumber(storage.get(EDITOR_REVISION)) or 0
-        end
-    end
-    if seriesMode then
-        arguments.kind=rule.kind
-        arguments.dates=rule.dates
-        arguments.startDate=rule.startDate
-        arguments.endDate=rule.endDate
-        arguments.interval=rule.interval
-        arguments.weekdays=rule.weekdays
-        arguments.monthDay=rule.monthDay
-    end
-    local taskId, taskError = task.start(taskName, arguments)
+    local taskId, taskError = task.start(request.name, request.arguments)
     if taskId then
         model.pendingPanelTask = taskId
         model.editorError = nil
@@ -524,10 +337,9 @@ local function registerRegion(key, shape, eventsValue, label, enabled, viewport)
 end
 
 local function centeredText(text, x, y, width, height, size, color, bold, alpha)
-    local measured = draw.measureText(text, size, 0, bold)
-    draw.text(x + math.max(0, (width - measured.width) / 2),
-        y + math.max(0, (height - measured.height) / 2), text, size,
-        color, math.max(1, width), bold, true, 0, alpha or 1.0)
+    draw.text(x + width / 2, y + height / 2, text, size,
+        color, math.max(1, width), bold, true, 0, alpha or 1.0, nil,
+        { x = "center", y = "center" })
 end
 
 local function drawHeaderButton(key, glyph, label, shape, colors, enabled,
@@ -539,11 +351,8 @@ local function drawHeaderButton(key, glyph, label, shape, colors, enabled,
             colors.accent, metrics.controlRadius,
             pressed and 0.16 or 0.10)
     end
-    draw.fluent(glyph,
-        shape.x + (shape.width - metrics.iconSize) / 2,
-        shape.y + (shape.height - metrics.iconSize) / 2 +
-            metrics.spacingXs * 0.5,
-        metrics.iconSize, colors.accent, enabled and 1.0 or 0.28)
+    draw.glyph(glyph, shape.x + shape.width / 2, shape.y + shape.height / 2,
+        metrics.iconSize, colors.accent, "fluent", enabled and 1.0 or 0.28)
     registerRegion(key, { type = "roundedRect", x = shape.x, y = shape.y,
         width = shape.width, height = shape.height,
         radius = metrics.controlRadius },
@@ -559,7 +368,7 @@ local function drawHeaderTextButton(key, label, shape, colors, enabled,
     draw.rect(shape.x, shape.y, shape.width, shape.height,
         colors.accent, metrics.controlRadius,
         pressed and 0.16 or (hovered and 0.10 or 0.055))
-    centeredText(label, shape.x - metrics.strokeWidth * 0.5,
+    centeredText(label, shape.x,
         shape.y, shape.width, shape.height,
         fontSize, colors.accent, true,
         enabled and 0.92 or 0.28)
@@ -687,18 +496,20 @@ local function render(context, model)
         mainFont + smallFont + metrics.spacingSm)
     local rowGap = metrics.spacingXs
     local rowHeight = cardHeight + rowGap
+    local contentHeight = #items * rowHeight - rowGap
     local scrollViewport = { type = "rect", x = pad, y = listTop,
         width = width - pad, height = viewportHeight }
     local scroll = interaction.scroll({
         key = "agenda.scroll",
         shape = scrollViewport,
-        contentHeight = math.ceil(#items * rowHeight - rowGap),
+        contentHeight = contentHeight > viewportHeight and math.ceil(contentHeight) or 0,
     })
     local first = math.max(1, math.floor(scroll.offset / rowHeight) + 1)
     local last = math.min(#items,
         math.ceil((scroll.offset + viewportHeight) / rowHeight))
     local selectedId = storage.get(SELECTED_ID)
-    draw.pushClip(pad, listTop, width - pad * 2, viewportHeight)
+    draw.pushClip(pad, listTop, width - pad * 2, viewportHeight,
+        EDGE_FADE and { scroll = scroll, fadeLength = metrics.layoutRowHeight * 0.5 } or nil)
     for index = first, last do
         local item = items[index]
         local subscribed = isSubscription(item.id)
@@ -782,20 +593,20 @@ local function panel(context, model)
     elseif model.datePicker then
         children={model.datePicker:view({rowHeight=row}),button("picker.back",l10n.tr("lua_widget.agenda.cancel"))}
     else
-        local title=storage.get(DRAFT_TITLE) or ""
-        local date=storage.get(DRAFT_DATE) or ""
-        local start=storage.get(DRAFT_START) or ""
-        local finish=storage.get(DRAFT_END) or ""
-        local allDay=storage.get(DRAFT_ALL_DAY)=="1"
-        local titleError=trim(title)=="" and l10n.tr("lua_widget.agenda.invalid_title") or nil
+        local title=storage.get(draftKeys.title) or ""
+        local date=storage.get(draftKeys.date) or ""
+        local start=storage.get(draftKeys.startTime) or ""
+        local finish=storage.get(draftKeys.endTime) or ""
+        local allDay=storage.get(draftKeys.allDay)=="1"
+        local titleError=draft.trim(title)=="" and l10n.tr("lua_widget.agenda.invalid_title") or nil
         local dateError=model.mode~="dates" and not calendar.dateInfo(date) and l10n.tr("lua_widget.agenda.invalid_date") or nil
-        local startMinutes,endMinutes=parseTime(start),parseTime(finish)
+        local startMinutes,endMinutes=draft.parseTime(start),draft.parseTime(finish)
         local timeError=not allDay and (not startMinutes or not endMinutes or endMinutes<startMinutes)
             and l10n.tr("lua_widget.agenda.invalid_time") or nil
         local function field(key,value,label,err,multi)
             children[#children+1]=view.text({key=key..".label",text=label,height=row,fontSize=row*0.43,style={foreground="textSecondary"}})
             local options={key=key,value=value,style={foreground="textPrimary"},height=row,fontSize=row*0.46,
-                maxBytes=key==DRAFT_TITLE and 512 or (multi and 8192 or 10),enabled=not busy,
+                maxBytes=key==draftKeys.title and 512 or (multi and 8192 or 10),enabled=not busy,
                 validationState=err and "error" or "none",validationMessage=err or "",
                 action={id="agenda.field",value=key},accessibility={label=label}}
             if multi then
@@ -806,8 +617,8 @@ local function panel(context, model)
             children[#children+1]=multi and view.textArea(options) or view.textInput(options)
             if err then children[#children+1]=view.text({key=key..".error",text=err,height=row,fontSize=row*0.42,style={foreground="textSecondary"}}) end
         end
-        field(DRAFT_TITLE,title,l10n.tr("lua_widget.agenda.title"),titleError)
-        if supportsSeries() and (storage.get(EDITOR_MODE)=="new" or model.seriesDefinition) then
+        field(draftKeys.title,title,l10n.tr("lua_widget.agenda.title"),titleError)
+        if supportsSeries() and (storage.get(draftKeys.mode)=="new" or model.seriesDefinition) then
             if model.seriesDefinition then
                 selectField("scope",l10n.tr("lua_widget.agenda.scope"),model.scope,{
                     {key="occurrence",value="occurrence",label=l10n.tr("lua_widget.agenda.scope_occurrence")},
@@ -856,7 +667,7 @@ local function panel(context, model)
                 enabled=not busy,action={id="agenda.panel",value="openDatePicker"},
                 accessibility={label=dateLabel..": "..(#dates>0 and table.concat(dates,", ") or summary)}})
         else
-            field(DRAFT_DATE,date,model.mode=="single" and l10n.tr("lua_widget.agenda.date") or
+            field(draftKeys.date,date,model.mode=="single" and l10n.tr("lua_widget.agenda.date") or
                 l10n.tr("lua_widget.agenda.start_date"),dateError)
             children[#children+1]=button("openDatePicker",l10n.tr("lua_widget.agenda.choose_date"),not busy)
         end
@@ -918,8 +729,8 @@ local function panel(context, model)
                     action={id="agenda.panel",value="openTimePicker"},
                     accessibility={label=label..": "..value..". "..l10n.tr("lua_widget.agenda.choose_time")}})
             end
-            timeField(DRAFT_START,start,l10n.tr("lua_widget.agenda.start"))
-            timeField(DRAFT_END,finish,l10n.tr("lua_widget.agenda.end"))
+            timeField(draftKeys.startTime,start,l10n.tr("lua_widget.agenda.start"))
+            timeField(draftKeys.endTime,finish,l10n.tr("lua_widget.agenda.end"))
             if timeError then children[#children+1]=view.text({key="agenda.time.error",text=l10n.tr("lua_widget.agenda.invalid_time"),
                 height=row,fontSize=row*0.42,style={foreground="textSecondary"}}) end
         end
@@ -929,8 +740,8 @@ local function panel(context, model)
             reminders[#reminders+1]={key=key,value=key,label=reminderLabel(minutes)}
         end
         selectField("reminder",l10n.tr("lua_widget.agenda.reminder"),
-            storage.get(DRAFT_REMINDER) or "15",reminders)
-        field(DRAFT_NOTES,storage.get(DRAFT_NOTES) or "",l10n.tr("lua_widget.agenda.notes"),nil,true)
+            storage.get(draftKeys.reminder) or "15",reminders)
+        field(draftKeys.notes,storage.get(draftKeys.notes) or "",l10n.tr("lua_widget.agenda.notes"),nil,true)
         local err=editorErrorText(model.editorError)
         if err then children[#children+1]=view.text({key="agenda.save.error",text=err,height=row*2,fontSize=row*0.43,textWrap="wrap"}) end
         if model.confirmSeriesChange then
@@ -943,7 +754,8 @@ local function panel(context, model)
     end
     local page=details and "details" or model.timePicker and "time"
         or model.datePicker and "date" or "editor"
-    return view.scroll({key="agenda.panel.scroll."..page,width="fill",height="fill",children={
+    return view.scroll({key="agenda.panel.scroll."..page,width="fill",height="fill",
+        edgeFade=VIEW_EDGE_FADE and row * 0.5 or nil,children={
         view.column({key="agenda.form",width="fill",height="auto",padding=row*0.2,gap=row*0.25,children=children})}})
 end
 
@@ -978,13 +790,13 @@ local function handlePanelAction(model, id)
     elseif id == "save" then
         saveDraft(model)
     elseif id == "toggleAllDay" then
-        storage.set(DRAFT_ALL_DAY,
-            storage.get(DRAFT_ALL_DAY) == "1" and "0" or "1")
+        storage.set(draftKeys.allDay,
+            storage.get(draftKeys.allDay) == "1" and "0" or "1")
         widget.invalidate()
     elseif id == "scope" and model.seriesDefinition then
         model.scope=model.scope=="series" and "occurrence" or "series"
         model.mode=model.scope=="series" and model.rule.kind or "single"
-        fillDraftFromItem(model.scope=="series" and model.seriesDefinition.event or model.occurrenceItem)
+        draft.fillFromItem(model.scope=="series" and model.seriesDefinition.event or model.occurrenceItem)
         model.confirmSeriesChange=false
         widget.invalidate()
     elseif id:sub(1,5)=="mode:" and model.rule and model.scope~="occurrence" then
@@ -992,7 +804,7 @@ local function handlePanelAction(model, id)
         if mode=="single" or mode=="dates" or mode=="weekly" or mode=="monthly" then
             if model.seriesDefinition and mode=="single" then return end
             model.mode=mode;model.rule.kind=mode
-            local date=storage.get(DRAFT_DATE) or todayDate()
+            local date=storage.get(draftKeys.date) or todayDate()
             local info=calendar.dateInfo(date)
             if #model.rule.dates==0 then model.rule.dates={date} end
             if #model.rule.weekdays==0 then model.rule.weekdays={info and info.weekday or 1} end
@@ -1002,10 +814,10 @@ local function handlePanelAction(model, id)
         end
     elseif id == "endType" and model.rule then
         model.rule.endDate=model.rule.endDate=="" and
-            (calendar.addDays(storage.get(DRAFT_DATE) or todayDate(),30) or todayDate()) or ""
+            (calendar.addDays(storage.get(draftKeys.date) or todayDate(),30) or todayDate()) or ""
         model.confirmSeriesChange=false;widget.invalidate()
     elseif id == "lastDay" and model.rule then
-        local info=calendar.dateInfo(storage.get(DRAFT_DATE) or todayDate())
+        local info=calendar.dateInfo(storage.get(draftKeys.date) or todayDate())
         model.rule.monthDay=model.rule.monthDay==0 and (info and info.day or 1) or 0
         model.confirmSeriesChange=false;widget.invalidate()
     elseif id == "openDatePicker" then
@@ -1013,13 +825,13 @@ local function handlePanelAction(model, id)
             model.datePicker=ui.datePicker({key="agenda.date",mode="multiple",value=model.rule.dates,
                 todayDate=todayDate(),allowClear=false})
         else
-            model.datePicker=ui.datePicker({key="agenda.date",value=storage.get(DRAFT_DATE) or "",
+            model.datePicker=ui.datePicker({key="agenda.date",value=storage.get(draftKeys.date) or "",
                 todayDate=todayDate(),allowClear=false})
         end
         widget.invalidate()
     elseif id == "openTimePicker" then
         model.timePicker=ui.timePicker({key="agenda.time",mode="range",allowClear=false,
-            value={startTime=storage.get(DRAFT_START) or "",endTime=storage.get(DRAFT_END) or ""}})
+            value={startTime=storage.get(draftKeys.startTime) or "",endTime=storage.get(draftKeys.endTime) or ""}})
         widget.invalidate()
     elseif id == "picker.back" then
         model.timePicker=nil
@@ -1039,7 +851,7 @@ local function event(_context, model, value)
         local result=model.timePicker:handle(value)
         if result then
             if result.changed then
-                storage.transaction(function(tx) tx:set(DRAFT_START,result.value.startTime);tx:set(DRAFT_END,result.value.endTime) end)
+                storage.transaction(function(tx) tx:set(draftKeys.startTime,result.value.startTime);tx:set(draftKeys.endTime,result.value.endTime) end)
                 model.timePicker=nil
             end
             widget.invalidate();return
@@ -1051,8 +863,8 @@ local function event(_context, model, value)
             if result.changed then
                 if model.mode=="dates" and model.rule then
                     model.rule.dates=result.value
-                    storage.set(DRAFT_DATE,result.value[1])
-                else storage.set(DRAFT_DATE,result.value) end
+                    storage.set(draftKeys.date,result.value[1])
+                else storage.set(draftKeys.date,result.value) end
                 model.datePicker=nil;model.confirmSeriesChange=false
             end
             widget.invalidate()
@@ -1078,7 +890,7 @@ local function event(_context, model, value)
             if (model.rule.endDate=="")~=(selection=="never") then handlePanelAction(model,"endType") end
         elseif field=="reminder" then
             for _,minutes in ipairs(reminderValues) do
-                if selection==tostring(minutes) then storage.set(DRAFT_REMINDER,selection);break end
+                if selection==tostring(minutes) then storage.set(draftKeys.reminder,selection);break end
             end
         end
         widget.invalidate();return
@@ -1107,7 +919,7 @@ local function event(_context, model, value)
         return
     end
     if value.kind=="action" and value.id=="agenda.field" and value.surface=="panel" then
-        local allowed={ [DRAFT_TITLE]=true,[DRAFT_DATE]=true,[DRAFT_START]=true,[DRAFT_END]=true,[DRAFT_NOTES]=true }
+        local allowed={ [draftKeys.title]=true,[draftKeys.date]=true,[draftKeys.startTime]=true,[draftKeys.endTime]=true,[draftKeys.notes]=true }
         if not model.pendingPanelTask and allowed[value.value] and type(value.text)=="string" then
             storage.set(value.value,value.text)
             model.editorError=nil
@@ -1147,10 +959,10 @@ local function event(_context, model, value)
         if value.taskId == model.pendingPanelTask then
             model.pendingPanelTask = nil
             if value.ok and value.value then
-                local date = storage.get(DRAFT_DATE) or selectedDate(model)
+                local date = storage.get(draftKeys.date) or selectedDate(model)
                 local id = value.value.id
                 storage.transaction(function(tx)
-                    clearDraftTransaction(tx)
+                    draft.clearTransaction(tx)
                     if id and id ~= "" then tx:set(SELECTED_ID, id) end
                 end)
                 calendar.selectDate(date)

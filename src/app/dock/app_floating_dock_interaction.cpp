@@ -10,6 +10,8 @@
 #include "platform/foreground_fullscreen.h"
 #include "app/popup/popup_window_pair_z_order.h"
 
+#include <optional>
+
 namespace
 {
 struct ImmediateDockPaintDeferral
@@ -246,7 +248,6 @@ void DesktopApp::ShowFloatingDock(
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, L"Floating Dock reveal suppressed: target monitor fullscreen");
         return;
     }
-    if (statusBar_) statusBar_->PrepareDockReveal(targetMonitor);
     HideDockWindowPreview();
 
     const bool hostWasVisible =
@@ -256,6 +257,7 @@ void DesktopApp::ShowFloatingDock(
     // Host promotes only its content/backdrop pair and leaves other promoted
     // monitors untouched.
     bool revealFramePrepared = false;
+    bool occludedReveal = false;
     {
         // Layout, status-bar refresh and renderer callbacks can all revisit
         // visibility/layer policy. Keep the existing native band until the
@@ -269,6 +271,13 @@ void DesktopApp::ShowFloatingDock(
             ~RevealPreparation() { pending = previous; }
         } preparation(floatingDockHost_->revealPending);
         ImmediateDockPaintDeferral defer(floatingDockHost_->immediatePaintDeferred);
+        // Recognize the summon against the live desktop band: while a
+        // covering window hides the Dock completely, mark the occluded
+        // session here; the visibility pass retires that invisible pair and
+        // reveals through the session's edge animation below.
+        occludedReveal = EnterOccludedFloatingPresentation(
+            *floatingDockHost_,
+            snowdesktop::floating_dock_rules::OccludedFloatingTransition::Reveal);
         floatingDockHost_->promoted = true;
         floatingDockHost_->promotionInputVisible = false;
         floatingDockHost_->windowActionPromotion.Retain();
@@ -276,7 +285,7 @@ void DesktopApp::ShowFloatingDock(
         floatingDockHost_->passivelyRevealed = false;
         floatingDockHost_->passiveRevealTick = 0;
         floatingDockHost_->passiveLeaveStartTick = 0;
-        if (!hostWasVisible)
+        if (!hostWasVisible || occludedReveal)
         {
             POINT cursorDesktop{};
             if (snowdesktop::private_pointer::CursorPosition(&cursorDesktop))
@@ -306,6 +315,13 @@ void DesktopApp::ShowFloatingDock(
         // A recovery paint remains queued without exposing the old frame in a
         // newly promoted window.
         floatingDockHost_->promoted = hostWasPromoted;
+        if (occludedReveal && !hostWasPromoted &&
+            !floatingDockHost_->mergedPresentationActive)
+        {
+            // The summon aborted before its first frame; keep the ordinary
+            // desktop presentation instead of collapsing from a live pose.
+            floatingDockHost_->occludedFloatingPresentation = false;
+        }
         RefreshFloatingDockVisibilityState();
         if (statusBar_) statusBar_->RefreshDockState(floatingDockHost_->monitor);
         UpdatePersistentDockHostVisibility(*floatingDockHost_);
@@ -320,9 +336,16 @@ void DesktopApp::ShowFloatingDock(
         return;
     }
     // Rendering/host synchronization can pump work; recheck before promotion.
+    const auto statusBarFullscreen = statusBar_ ? RecheckFullscreenSource(targetMonitor) : std::nullopt;
     if (FullscreenBlocksDockReveal(source, targetMonitor))
     {
         floatingDockHost_->promoted = false;
+        if (occludedReveal && !hostWasPromoted &&
+            !floatingDockHost_->mergedPresentationActive)
+        {
+            // Same abort handling as the failed frame above.
+            floatingDockHost_->occludedFloatingPresentation = false;
+        }
         if (statusBar_) statusBar_->DismissTemporaryReveal(targetMonitor);
         CancelStatusBarActivation(targetMonitor, false);
         RefreshFloatingDockVisibilityState();
@@ -330,6 +353,8 @@ void DesktopApp::ShowFloatingDock(
         UpdatePersistentDockHostVisibility(*floatingDockHost_);
         return;
     }
+    if (statusBar_)
+        statusBar_->PrepareDockReveal(targetMonitor, statusBarFullscreen ? statusBarFullscreen->window : nullptr);
     UpdatePersistentDockHostVisibility(
         *floatingDockHost_);
     RefreshFloatingDockPromotionInput(*floatingDockHost_);
@@ -497,6 +522,12 @@ void DesktopApp::CloseFloatingDock(
         floatingDockHoverHandoffRect_ = {};
     }
 
+    // Recognize the dismissal against the live desktop band: while a covering
+    // window still hides the return target, collapse through the occluded
+    // session's edge animation instead of the instant demotion.
+    EnterOccludedFloatingPresentation(
+        host,
+        snowdesktop::floating_dock_rules::OccludedFloatingTransition::Dismissal);
     host.promoted = false;
     host.promotionInputFocusPendingUntil = 0;
     host.promotionInputRequestInputTime.reset();
@@ -515,7 +546,7 @@ void DesktopApp::CloseFloatingDock(
     // still before restoring keyboard focus below.
     {
         ImmediateDockPaintDeferral defer(host.immediatePaintDeferred);
-        if (statusBar_) statusBar_->RefreshDockState(host.monitor);
+        if (statusBar_) statusBar_->RefreshDockState(host.monitor, true);
         UpdatePersistentDockHostVisibility(host);
     }
     InvalidateFloatingDockWindow(host, true);
@@ -562,6 +593,9 @@ void DesktopApp::CloseAllFloatingDocks(
     {
         if (host)
         {
+            EnterOccludedFloatingPresentation(
+                *host,
+                snowdesktop::floating_dock_rules::OccludedFloatingTransition::Dismissal);
             host->promoted = false;
             host->promotionInputFocusPendingUntil = 0;
             host->promotionInputRequestInputTime.reset();
@@ -583,7 +617,7 @@ void DesktopApp::CloseAllFloatingDocks(
             continue;
         {
             ImmediateDockPaintDeferral defer(host->immediatePaintDeferred);
-            if (statusBar_) statusBar_->RefreshDockState(host->monitor);
+            if (statusBar_) statusBar_->RefreshDockState(host->monitor, true);
             UpdatePersistentDockHostVisibility(*host);
         }
         InvalidateFloatingDockWindow(*host, true);
@@ -648,10 +682,23 @@ void DesktopApp::ToggleFloatingDock()
         }
         return;
     }
-    if (IsPersistentDockHostPromoted(*floatingDockHost_))
-        CloseFloatingDock(*floatingDockHost_);
-    else
-        ShowFloatingDock(floatingDockHost_->monitor, DockRevealSource::Hotkey);
+
+    auto& host = *floatingDockHost_;
+    if (!IsPersistentDockHostPromoted(host))
+    {
+        ShowFloatingDock(host.monitor, DockRevealSource::Hotkey);
+        return;
+    }
+
+    // Keep the anchor visible while its popup is open. Check the current
+    // desktop band because a covering window can change after the summon.
+    if (host.HasActiveAssociatedSurface() &&
+        (dockSettings_.showOnlyWhenSummoned ||
+            (host.container && !host.container->IsMergedWithStatusBar() &&
+                IsPersistentDockDesktopBandOccluded(host))))
+        return;
+
+    CloseFloatingDock(host);
 }
 
 void DesktopApp::InvalidateFloatingDockWindow(

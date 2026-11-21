@@ -630,7 +630,8 @@ public:
 
     bool Apply(bool hookEnabled, bool defaultEnabled,
         const PersonalizationSettings& appearance,
-        const std::vector<SystemTaskbarTargetAppearance>& targets, bool appearanceEnabled, bool suppressTaskbar)
+        const std::vector<SystemTaskbarTargetAppearance>& targets, bool appearanceEnabled,
+        bool suppressTaskbar)
     {
         snowdesktop::performance::Scope trace("shared.taskbar", "controller.apply");
         hookEnabled = hookEnabled && snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar);
@@ -1450,7 +1451,8 @@ LONG DrainSystemTaskbarAutoHideTrace(
 
 bool ApplySystemTaskbarBackdrop(bool hookEnabled, bool defaultEnabled,
     const PersonalizationSettings& appearance,
-    const std::vector<SystemTaskbarTargetAppearance>& targets, bool appearanceEnabled, bool suppressTaskbar)
+    const std::vector<SystemTaskbarTargetAppearance>& targets, bool appearanceEnabled,
+    bool suppressTaskbar)
 {
     return GetTaskbarBackdropController().Apply(hookEnabled, defaultEnabled,
         appearance, targets, appearanceEnabled, suppressTaskbar);

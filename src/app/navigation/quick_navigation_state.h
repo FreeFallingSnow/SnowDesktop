@@ -64,12 +64,12 @@ struct State
     Microsoft::WRL::ComPtr<IDCompositionVisual2> dcompVisual;
     Microsoft::WRL::ComPtr<IDCompositionEffectGroup> dcompEffect;
     Microsoft::WRL::ComPtr<IDCompositionScaleTransform> dcompScaleTransform;
-    Microsoft::WRL::ComPtr<IDCompositionSurface> dcompSurface;
-    std::vector<Microsoft::WRL::ComPtr<IDCompositionVisual2>> genieStrips;
-    Microsoft::WRL::ComPtr<ID2D1Bitmap1> attractionBitmap;
-    Microsoft::WRL::ComPtr<IDCompositionSurface> attractionSurface;
-    SIZE attractionSurfaceSize{};
-    int genieStripEdge = -1;
+    bool PublishPrecomposedFrame(ID2D1Device* device, snowdesktop::quick_navigation_animation_rules::Effect effect,
+        float collapsed, float opacity);
+    Microsoft::WRL::ComPtr<ID2D1DeviceContext> sceneContext;
+    Microsoft::WRL::ComPtr<ID2D1Bitmap1> sceneBitmap;
+    bool sceneDirty = false;
+    bool sceneFrameDeformed = false;
     UINT compWidth = 0;
     UINT compHeight = 0;
     bool compositionRenderRecoveryPending = false;
@@ -108,6 +108,7 @@ struct State
     QuickNavigationInvocationSource invocationSource =
         QuickNavigationInvocationSource::Pointer;
     std::function<void()> postCloseAction;
+    std::function<void()> keyboardFocusReturn;
     RECT renameItemRect{};
     size_t activeWidgetIndex = static_cast<size_t>(-1);
     int scrollOffset = 0;
@@ -125,6 +126,7 @@ struct State
     RECT rect{};
     /** @brief 快速导航合成宿主范围，覆盖目标面板与当前会话动画锚点。 */
     RECT hostRect{};
+    RECT WindowFence(bool expanded) const;
     bool windowRegionExpanded = false;
     std::wstring searchText;
     std::wstring effectiveSearchText;

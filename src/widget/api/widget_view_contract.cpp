@@ -244,7 +244,8 @@ constexpr ViewPropertyEffect PropertyEffects(std::string_view name,
             "checked", "indeterminate", "selected", "sticky", "visible",
             "visibility", "enabled", "focusable", "cursor",
             "showScrollbar", "textAlign", "verticalAlign", "textWrap",
-            "maxLines", "overflowText" }))
+            "maxLines", "overflowText", "glyphInkCentered", "textInkAligned",
+            "edgeFade" }))
         add(ViewPropertyEffect::Paint);
     if (IsNamed(name, { "value", "min", "max", "step", "selectedValue",
             "expanded", "selectAll", "liveUpdate", "readOnly", "required",
@@ -332,6 +333,7 @@ constexpr auto kProperties = std::to_array<ViewPropertyContract>({
     Property("label", ViewPropertyValueKind::String),
     Property("glyph", ViewPropertyValueKind::String),
     EnumProperty("iconFont", ViewPropertyEnumSet::IconFont),
+    Property("glyphInkCentered", ViewPropertyValueKind::Boolean),
     Property("source", ViewPropertyValueKind::Resource),
     RangedProperty("spinSpeed", ViewPropertyValueKind::Number, 0.0, 360.0),
     Property("font", ViewPropertyValueKind::Resource),
@@ -361,7 +363,7 @@ constexpr auto kProperties = std::to_array<ViewPropertyContract>({
     EnumProperty("validationState", ViewPropertyEnumSet::ValidationState),
     Property("validationMessage", ViewPropertyValueKind::String),
     RangedProperty("maxBytes", ViewPropertyValueKind::Integer,
-        0.0, 65536.0),
+        0.0, static_cast<double>(MaximumExtendedTextAreaBytes)),
     RangedProperty("year", ViewPropertyValueKind::Integer,
         1.0, 9999.0),
     RangedProperty("month", ViewPropertyValueKind::Integer,
@@ -478,10 +480,12 @@ constexpr auto kProperties = std::to_array<ViewPropertyContract>({
     Property("acceleratorText", ViewPropertyValueKind::String),
     EnumProperty("alignItems", ViewPropertyEnumSet::Alignment),
     Property("showScrollbar", ViewPropertyValueKind::Boolean),
+    RangedProperty("edgeFade", ViewPropertyValueKind::Number, 0.0, 4096.0),
     EnumProperty("alignSelf", ViewPropertyEnumSet::SelfAlignment),
     EnumProperty("justifyContent", ViewPropertyEnumSet::Justification),
     EnumProperty("textAlign", ViewPropertyEnumSet::TextAlignment),
     EnumProperty("verticalAlign", ViewPropertyEnumSet::VerticalAlignment),
+    Property("textInkAligned", ViewPropertyValueKind::Boolean),
     EnumProperty("textWrap", ViewPropertyEnumSet::TextWrap),
     RangedProperty("maxLines", ViewPropertyValueKind::Integer,
         0.0, 64.0),
@@ -894,6 +898,9 @@ bool ViewNodeAllowsProperty(
     if (property == "fontSize") return IsTypographyNode(type);
     if (property == "bold") return IsBoldTypographyNode(type);
     if (property == "textAlign") return IsTextAlignmentNode(type);
+    if (property == "textInkAligned")
+        return IsType(type, { ViewNodeType::Text, ViewNodeType::Badge,
+            ViewNodeType::Button, ViewNodeType::Link });
     if (property == "fontWeight" || property == "fontStyle" ||
         property == "lineHeight" || property == "letterSpacing" ||
         property == "verticalAlign" || property == "textWrap" ||
@@ -905,7 +912,7 @@ bool ViewNodeAllowsProperty(
     if (property == "glowRadius") return type == ViewNodeType::Text;
     if (property == "spans") return type == ViewNodeType::StyledText;
     if (property == "label") return IsLabelNode(type);
-    if (property == "glyph" || property == "iconFont")
+    if (property == "glyph" || property == "iconFont" || property == "glyphInkCentered")
         return type == ViewNodeType::Icon || type == ViewNodeType::IconButton;
     if (property == "source" || property == "spinSpeed")
         return type == ViewNodeType::Image;
@@ -1013,7 +1020,7 @@ bool ViewNodeAllowsProperty(
     if (property == "sticky") return type == ViewNodeType::ListItem;
     if (property == "checkedStyle")
         return IsCheck(type) || type == ViewNodeType::RadioGroup;
-    if (property == "showScrollbar")
+    if (property == "showScrollbar" || property == "edgeFade")
         return type == ViewNodeType::Scroll || IsVirtual(type);
     if (property == "accessKey" || property == "acceleratorText")
         return IsActionNode(type) &&

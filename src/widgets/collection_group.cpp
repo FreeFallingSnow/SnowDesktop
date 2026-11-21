@@ -9,6 +9,7 @@
 #include "common/types.h"
 #include "app/app.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/list_detail_rules.h"
 #include "common/utils.h"
 #include "core/drop_model.h"
 #include "drag_drop/desktop_widget_icon_drop_rules.h"
@@ -18,7 +19,6 @@
 #include "widget_chrome_rules.h"
 #include "widget/preview/widget_preview_scene.h"
 #include "common/l10n.h"
-#include "layout/item_render_layer_rules.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "storage_title_bar_layout.h"
 #include <algorithm>
@@ -71,7 +71,10 @@ RECT CollectionGroupTabsRect(CollectionGroup* widget)
 RECT CollectionGroupContentRect(CollectionGroup* widget)
 {
     if (!widget) return {};
-    RECT body = snowdesktop::storage_title_bar::InsetContent(
+    namespace popup = snowdesktop::collection_popup_layout;
+    const bool hostedPopup = widget->IsPopupHosted();
+    RECT body = hostedPopup ? popup::ResolveHostedContentRect(widget->GetBodyRect(), widget->GetCellScale())
+        : snowdesktop::storage_title_bar::InsetContent(
         widget->GetBodyRect(), widget->UsesTopTitleBar(),
         widget->Cu(4.0f), widget->Cu(8.0f), widget->Cu(4.0f));
     body.bottom = std::max<LONG>(body.top,
@@ -81,11 +84,12 @@ RECT CollectionGroupContentRect(CollectionGroup* widget)
     if (!IsRectEmptyRect(search))
         body.top = std::min<LONG>(
             body.bottom,
-            search.bottom + widget->Cu(8.0f));
+            search.bottom + widget->Cu(hostedPopup ? popup::kControlGapCu : 8.0f));
     RECT tabs = CollectionGroupTabsRect(widget);
     if (!IsRectEmptyRect(tabs))
         body.top = std::min<LONG>(
-            body.bottom, std::max(body.top, tabs.bottom + widget->Cu(8.0f)));
+            body.bottom, std::max(body.top, tabs.bottom + (hostedPopup
+                ? widget->Cu(popup::kControlGapCu) - widget->Cu(popup::kTabSegmentInsetCu) : widget->Cu(8.0f))));
     return widget->ApplyDetailsHeaderToViewport(body);
 }
 
@@ -268,7 +272,7 @@ int CollectionGroupContentHeight(
         widget ? widget->GetWidgetData() : nullptr;
     if (!data) return 0;
     return snowdesktop::widget_item_layout::ContentHeight(
-        CollectionGroupLocalLayout(widget), itemCount);
+        CollectionGroupLocalLayout(widget), widget->PendingFileLayout().Count(itemCount));
 }
 
 RECT CollectionGroupListToggleRect(CollectionGroup* widget)
@@ -689,9 +693,10 @@ CollectionGroup::BuildSlots()
     const int visibleHeight =
         std::max<int>(1, content.bottom - content.top);
     const int scroll = GetScrollOffset();
-    const auto range = snowdesktop::widget_item_layout::VisibleRange(
-        CollectionGroupLocalLayout(this), count,
-        scroll, visibleHeight);
+    const auto& pending = PendingFileLayout();
+    const auto range = pending.ModelRange(snowdesktop::widget_item_layout::VisibleRange(
+        CollectionGroupLocalLayout(this), pending.Count(count),
+        scroll, visibleHeight), count);
     const size_t firstIndex = range.first;
     const size_t lastIndex = range.second;
 
@@ -812,28 +817,7 @@ size_t CollectionGroup::GetDropInsertIndex(
         return index;
     }
 
-    DesktopWidget* active =
-        CollectionGroupActiveCollection(
-            const_cast<CollectionGroup*>(this));
-    if (!active) return 0;
-
-    size_t visibleInsert = targetSlot
-        ? targetSlot->GetIndex()
-        : GetVisibleItemKeys().size();
-    if (targetSlot && region == HitRegion::SortAfter)
-        ++visibleInsert;
-    const auto& visible = GetVisibleItemKeys();
-    if (visibleInsert < visible.size())
-    {
-        const std::wstring anchor =
-            ToUpperInvariant(visible[visibleInsert]);
-        for (size_t i = 0;
-            i < active->itemKeys.size(); ++i)
-            if (ToUpperInvariant(active->itemKeys[i]) ==
-                anchor)
-                return i;
-    }
-    return active->itemKeys.size();
+    return WidgetContainer::GetDropInsertIndex(targetSlot, region);
 }
 
 int CollectionGroup::GetTotalContentHeight() const
@@ -1045,72 +1029,23 @@ std::wstring CollectionGroup::GetDragHint(
         slot, region, sourceItems, origin, mods);
 }
 
-void CollectionGroup::OnItemsDropped(
-    const std::vector<Item*>& sourceItems,
-    Container* origin, Slot* targetSlot,
-    HitRegion region, int mods)
+WidgetMemberDestination CollectionGroup::ResolveMemberDestination(Slot* slot, HitRegion region, POINT point)
 {
-    if (!app_ || !data_) return;
-    const auto sourceListForMembership = app_->BuildDragSourceList(sourceItems, origin);
-    if (sourceListForMembership.HasDesktopWidgetIcons())
-    {
-        app_->DropDesktopWidgetIconsIntoGroup(this, sourceListForMembership, targetSlot, region, mods);
-        return;
-    }
-    if (sourceListForMembership.SlotPayloadKind() == snowdesktop::slot_contract::DragPayloadKind::CollectionWidget)
-    {
-        const size_t insertion = !snowdesktop::group_tab_drag_preview::IsTabInsertion(targetSlot, region) &&
-            CategoryIdAtPoint(app_->dragSession_.CurrentPoint()).empty()
-            ? data_->childWidgetIds.size() : GetDropInsertIndex(targetSlot, region);
-        app_->MoveWidgetSourcesToGroup(sourceItems, app_->FindWidgetIndexById(data_->id), insertion);
-        return;
-    }
-    const bool allCollections = std::all_of(
-        sourceItems.begin(), sourceItems.end(),
-        [](Item* item) {
-            return dynamic_cast<
-                CollectionGroupEntryItem*>(item) != nullptr;
-        });
-    const DragSourceList& sessionSource =
-        app_->dragSession_.SourceList();
-    DragSourceList sourceList =
-        !sessionSource.Empty() &&
-            app_->dragSession_.Source() == origin
-        ? sessionSource
-        : app_->BuildDragSourceList(
-            sourceItems, origin);
-    DropPreviewList preview =
-        app_->BuildDropPreviewList(
-            sourceList, this, targetSlot, region,
-            mods, app_->dragSession_.CurrentPoint());
-    if (allCollections && !snowdesktop::group_tab_drag_preview::IsTabInsertion(targetSlot, region) &&
-        CategoryIdAtPoint(
-            app_->dragSession_.CurrentPoint()).empty())
-    {
-        preview.insertIndex =
-            data_->childWidgetIds.size();
-        for (size_t i = 0;
-            i < preview.landings.size(); ++i)
-            preview.landings[i].insertIndex =
-                preview.insertIndex + i;
-    }
-    DesktopApp* app = app_;
-    const std::wstring groupId = data_->id;
-    const std::wstring hitChild = !allCollections ? CategoryIdAtPoint(app->dragSession_.CurrentPoint()) : L"";
-    const bool activate = !hitChild.empty() && !preview.Empty() && preview.targetWidget && preview.targetWidget->id == hitChild;
-    if (!app->ExecuteDropPipeline(sourceList, preview) || !activate) return;
-    // Submission may rebuild this view. Resolve only stable IDs afterwards.
-    const size_t groupIndex = app->FindWidgetIndexById(groupId);
-    if (groupIndex >= app->widgets_.size()) return;
-    auto& group = app->widgets_[groupIndex];
-    if (group.type != DesktopWidgetType::CollectionGroup ||
-        std::find(group.childWidgetIds.begin(), group.childWidgetIds.end(), hitChild) == group.childWidgetIds.end()) return;
-    group.activeCategoryId = hitChild;
-    for (const auto& container : app->containers_)
-        if (auto* current = dynamic_cast<CollectionGroup*>(container.get()); current && current->GetWidgetData() == &group)
-            current->InvalidateFilterCache();
-    app->SaveLayoutSlots();
-    InvalidateRect(app->hwnd_, nullptr, FALSE);
+    auto tab = CategoryIdAtPoint(point);
+    auto* child = FindCollectionWidget(this, tab.empty() ? GetActiveCollectionId() : tab);
+    if (!child || child->type != DesktopWidgetType::Collection) return {this, data_, 0, {}};
+    return {this, child, tab.empty() ? GetDropInsertIndex(slot, region) : child->itemKeys.size(), std::move(tab)};
+}
+
+DropReceipt CollectionGroup::OnItemsDropped(const ItemDrop& drop)
+{
+    if (!app_ || !data_ || drop.items.empty()) return {};
+    if (drop.sources.HasDesktopWidgetIcons())
+        return app_->DropDesktopWidgetIconsIntoGroup(this, drop);
+    if (drop.sources.SlotPayloadKind() == snowdesktop::slot_contract::DragPayloadKind::CollectionWidget)
+        return DropReceipt::Submitted(drop.Allows(DropAction::Move) && app_->MoveWidgetSourcesToGroup(drop.items,
+            app_->FindWidgetIndexById(data_->id), drop.preview.groupInsertIndex), DropAction::Move);
+    return WidgetContainer::OnItemsDropped(drop);
 }
 
 void CollectionGroup::DrawContent(
@@ -1232,77 +1167,8 @@ void CollectionGroup::DrawContent(
             activeCollection = &app_->widgets_[activeIndex];
     }
 
-    std::vector<std::pair<Item*, RECT>>
-        foregroundTitles;
-    for (const auto& slot : GetSlots())
-    {
-        if (!slot || !slot->GetItem()) continue;
-        RECT row = slot->GetBounds();
-        if (row.bottom <= content.top ||
-            row.top >= content.bottom)
-            continue;
-        auto* icon =
-            dynamic_cast<DesktopIcon*>(slot->GetItem());
-        if (!icon) continue;
-        DesktopItem* item = icon->GetDesktopItem();
-        if (!item) continue;
-        if (contentView->listMode)
-        {
-            if (privacyActive)
-                DrawPrivacyPlaceholder(
-                    context, row, item->name, false);
-            else
-            {
-                const bool useDemoIdentity =
-                    app_->ShouldUseDemoCollectionIdentity(activeCollection);
-                const std::wstring_view demoIdentity =
-                    !useDemoIdentity ? std::wstring_view{} :
-                    (item->layoutKey.empty()
-                        ? std::wstring_view(item->parsingName)
-                        : std::wstring_view(item->layoutKey));
-                DrawListItem(
-                    context, row, item->iconBitmap,
-                    item->sysIconIndex, item->name,
-                    item->selected, item->iconIsMediaThumbnail,
-                    demoIdentity, activeCollection,
-                    { item->typeName, item->modifiedTime,
-                      item->fileSize, false }, std::nullopt, !app_->IsRenamingItem(item), item->layoutKey);
-            }
-        }
-        else if (privacyActive)
-        {
-            DrawPrivacyPlaceholder(
-                context, row, item->name, false);
-        }
-        else
-        {
-            RECT body = GetBodyRect();
-            const bool hovered =
-                !IsPreviewRendering() &&
-                !item->selected &&
-                PtInRect(
-                    &row, app_->lastMousePoint_) &&
-                PtInRect(
-                    &body, app_->lastMousePoint_);
-            const auto titleLayers =
-                snowdesktop::item_render_layer_rules::
-                    ResolveTitleLayerPlan(
-                        item->selected);
-            icon->Draw(
-                context, row,
-                item->selected
-                    ? 2
-                    : (hovered ? 1 : 0),
-                light, titleLayers.drawWithItem,
-                false, activeCollection);
-            if (titleLayers.drawInForeground)
-                foregroundTitles.emplace_back(icon, row);
-        }
-    }
-    for (const auto& [item, bounds] : foregroundTitles)
-        item->DrawTitle(
-            context, bounds, true, 1.0f,
-            light, activeCollection);
+    DrawMemberCells(context, content, keys.size(),
+        {contentView->listMode, privacyActive, light, activeCollection});
 }
 
 RECT CollectionGroup::GetMemberLayoutRect(size_t index) const

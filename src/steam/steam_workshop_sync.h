@@ -5,9 +5,12 @@
 
 #pragma once
 
-#include "widget/packages/widget_package.h"
+#include "steam_workshop_subscription_history.h"
+#include "widget/packages/widget_package_catalog_snapshot.h"
+#include "widget/packages/widget_package_source.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -56,9 +59,6 @@ struct SteamWorkshopSubscriptionSnapshot
             !confirmedUnsubscribedPublishedFileIds.empty();
     }
 };
-
-using SteamWorkshopSubscriptionHistory =
-    std::unordered_map<std::string, std::vector<std::string>>;
 
 enum class SteamWorkshopSyncActionKind
 {

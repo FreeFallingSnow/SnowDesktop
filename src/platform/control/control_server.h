@@ -18,7 +18,8 @@ public:
     Server(const Server&) = delete;
     Server& operator=(const Server&) = delete;
     // Call Start/Stop on the owning UI thread. Handler runs on that thread.
-    bool Start(Handler handler, std::wstring endpoint = {}, DWORD timeoutMilliseconds = 5000);
+    bool Start(Handler handler, std::wstring endpoint = {},
+        DWORD timeoutMilliseconds = 5000, AccessCheck accessCheck = {});
     void Stop() noexcept;
     [[nodiscard]] bool Running() const noexcept;
     [[nodiscard]] DWORD LastError() const noexcept;

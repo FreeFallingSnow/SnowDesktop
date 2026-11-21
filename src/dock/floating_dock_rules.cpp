@@ -1,4 +1,5 @@
 #include "floating_dock_rules.h"
+#include "floating_dock_layer_rules.h"
 #include "theme/personalization_types.h"
 
 #include <algorithm>
@@ -166,6 +167,16 @@ bool ShouldSummonForDockSurface(
     bool floatingDockVisible)
 {
     return sourceBelongsToDock && !floatingDockVisible;
+}
+
+bool MaximizedWindowCoversDock(
+    const RECT& window, const RECT& dockScreen)
+{
+    if (IsRectEmpty(&dockScreen) || IsRectEmpty(&window))
+        return false;
+    return window.left <= dockScreen.left && window.top <= dockScreen.top &&
+        window.right >= dockScreen.right &&
+        window.bottom >= dockScreen.bottom;
 }
 
 bool ShouldStartSystemShowDesktopLayerGuard(

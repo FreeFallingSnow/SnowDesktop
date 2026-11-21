@@ -92,6 +92,8 @@ set(SNOWDESKTOP_SOURCES
     src/ui/render/native_tooltip_preferences.h
     src/ui/render/native_tooltip_state.h
     src/ui/render/native_control_geometry.h
+    src/ui/render/d2d_drawing.cpp
+    src/ui/render/d2d_drawing.h
     src/ui/render/file_search_result_row.h
     src/ui/render/smooth_corner_geometry.h
     src/system/tray/tray_model.cpp
@@ -139,9 +141,11 @@ set(SNOWDESKTOP_SOURCES
     src/data/data_cleanup.cpp
     src/icons/website_icon.cpp
     src/app/drag_drop/app_drop_execution.cpp
+    src/app/drag_drop/app_internal_drop_release.cpp
     src/app/drag_drop/app_external_slot_drop.cpp
     src/app/drag_drop/app_drop_preview.cpp
     src/app/drag_drop/app_drop_render.cpp
+    src/app/drag_drop/app_file_drop_presentation.cpp
     src/app/dock/app_floating_dock_interaction.cpp
     src/app/dock/app_floating_dock_lifecycle.cpp
     src/app/dock/app_floating_dock_render.cpp
@@ -164,6 +168,9 @@ set(SNOWDESKTOP_SOURCES
     src/app/features/app_large_icons.cpp
     src/app/features/app_large_icon_interaction.cpp
     src/icons/large_icon_assets.cpp
+    src/icons/large_icon_epic.cpp
+    src/icons/large_icon_epic_cache.cpp
+    src/icons/large_icon_config_codec.cpp
     src/icons/icon_image_codec.cpp
     src/icons/icon_pack_archive.cpp
     src/icons/icon_pack_archive.h
@@ -218,6 +225,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/input/app_pointer_release.cpp
     src/app/popup/app_popup_geometry.cpp
     src/app/popup/app_popup_dwell_interaction.cpp
+    src/app/popup/app_folder_preview.cpp
     src/app/popup/app_popup_context_menu.cpp
     src/app/popup/app_popup_lifecycle.cpp
     src/app/popup/app_popup_render.cpp
@@ -226,12 +234,15 @@ set(SNOWDESKTOP_SOURCES
     src/app/navigation/app_quick_navigation_features.cpp
     src/app/navigation/app_quick_navigation_preview.cpp
     src/app/features/app_theme_preview.cpp
+    src/app/features/app_animation_test.cpp
     src/app/features/app_control.cpp
     src/app/features/app_control_runtime.h
     src/app/features/app_control_elements.cpp
     src/app/features/app_control_settings.cpp
     src/app/features/app_control_native_widgets.cpp
     src/settings/control_settings.h
+    src/settings/control_settings_search.cpp
+    src/settings/control_settings_search.h
     src/settings/control_settings_values.h
     src/settings/control_global_settings.cpp
     src/settings/control_global_settings.h
@@ -323,6 +334,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/lifecycle/app_window_dispatch.cpp
     src/app/widgets/app_widget_context_menu.cpp
     src/app/widgets/app_widget_grouping.cpp
+    src/app/widgets/app_widget_consent.cpp
     src/app/widgets/app_widget_marquee_composition.cpp
     src/app/widgets/app_widget_composition.cpp
     src/app/widgets/app_widget_placement.cpp
@@ -336,15 +348,20 @@ set(SNOWDESKTOP_SOURCES
     src/app/lifecycle/startup_animation.cpp
     src/app/features/wallpaper_engine_capture.cpp
     src/data/atomic_file.cpp
+    src/data/folder_preview_sort.cpp
+    src/data/folder_preview_view_state.cpp
     src/dock/dock_window_preview.cpp
     src/dock/dock_window_preview_toolbar.cpp
     src/dock/dock_thumbnail_toolbar.cpp
     src/dock/dock_window_preview_layout.h
     src/dock/dock_window_pin.cpp
+    src/dock/dock_usage_storage.cpp
     src/dock/dock_window_transition.cpp
     src/dock/dock_window_source_cloak.h
     src/core/item.cpp
+    src/core/drag_session.cpp
     src/core/drag_target_resolver.cpp
+    src/core/drop_model.cpp
     src/core/dock.cpp
     src/core/dock_entry_removal.cpp
     src/core/slot.cpp
@@ -375,6 +392,8 @@ set(SNOWDESKTOP_SOURCES
     src/platform/force_restart_hotkey.h
     src/diagnostics/debug_profile.cpp
     src/platform/deployment_context.cpp
+    src/platform/deployment_identity.cpp
+    src/platform/deployment_identity.h
     src/platform/hook_entry_deployment.cpp
     src/platform/hook_entry_deployment.h
     src/platform/hook_entry_protocol.h
@@ -384,10 +403,14 @@ set(SNOWDESKTOP_SOURCES
     src/dock/dock_cloak_dispatcher.h
     src/platform/shell_overlay_window.h
     src/platform/window_peek_policy.h
+    src/icons/shell_icon_bitmap.cpp
+    src/icons/shell_icon_bitmap.h
     src/icons/shortcut_icon_resource.cpp
     src/icons/shortcut_icon_resource.h
     src/icons/icon_load_diagnostics.h
     src/common/utils.cpp
+    src/desktop/desktop_icon_settings.cpp
+    src/common/utf8.cpp
     src/diagnostics/diagnostic_log.cpp
     src/platform/operation_feedback.cpp
     src/desktop/desktop_display_settings.h
@@ -397,10 +420,15 @@ set(SNOWDESKTOP_SOURCES
     src/settings/settings_route.h
     src/settings/settings_search_index.cpp
     src/settings/settings_search_index.h
+    src/settings/home_about_ipc_values.h
+    src/settings/home_about_status.h
     src/settings/personalization_initialization.h
     src/settings/settings_store_native.cpp
     src/settings/settings_window.cpp
     src/settings/settings_ipc_channel.cpp
+    src/settings/settings_ipc_codec.cpp
+    src/settings/settings_ipc_typed.h
+    src/settings/settings_ipc_wire.h
     src/settings/icon_library_ipc_paging.h
     src/settings/settings_ipc_services.cpp
     src/settings/settings_ipc_widget_service.cpp
@@ -479,6 +507,7 @@ set(SNOWDESKTOP_SOURCES
     src/winui/settings_shell_navigation.cpp
     src/winui/settings_shell_navigation.h
     src/winui/settings_focus_feedback.h
+    src/winui/settings_presenter_controls.cpp
     src/winui/settings_visual_preview.cpp
     src/winui/settings_visual_preview.h
     src/winui/settings_window_host.cpp
@@ -495,6 +524,7 @@ set(SNOWDESKTOP_SOURCES
     src/winui/xaml_type_info_bridge.cpp
     src/winui/xaml_type_info_impl_bridge.cpp
     src/ui/render/ui_animation_scheduler.cpp
+    src/ui/render/composition_motion_curve.cpp
     src/theme/personalization.cpp
     src/theme/personalization_path.cpp
     src/theme/theme_library_settings.cpp
@@ -552,7 +582,11 @@ set(SNOWDESKTOP_SOURCES
     src/widget/preview/widget_preview_scene_model.cpp
     src/common/l10n.cpp
     src/layout/item_location.cpp
+    src/layout/category_collection_types.h
+    src/layout/folder_sort_types.h
+    src/layout/list_detail_types.h
     src/data/layout_storage.cpp
+    src/data/layout_backup_files.cpp
     src/ui/menu/menu_icon_render.cpp
     src/ui/menu/menu_builtin_icon.cpp
     src/ui/menu/modern_menu.cpp
@@ -565,17 +599,24 @@ set(SNOWDESKTOP_SOURCES
     src/navigation/quick_navigation_search_async.cpp
     src/widget/runtime/lua_runtime.cpp
     src/widget/api/widget_api_registry.cpp
+    src/widget/api/widget_lua_api_host.cpp
     src/widget/packages/widget_package_image_cache.cpp
     src/widget/runtime/widget_l10n_format.cpp
+    src/widget/runtime/widget_l10n_lua.cpp
+    src/widget/runtime/widget_l10n_lua.h
     src/widget/runtime/widget_time.cpp
     src/widget/preview/widget_preview_context.cpp
     src/widget/preview/widget_preset_preview.h
     src/widget/data/widget_data_broker.cpp
+    src/widget/data/widget_resource_lua.cpp
+    src/widget/data/widget_resource_lua.h
     src/widget/data/widget_calendar_event_query.cpp
     src/widget/data/widget_calendar_event_query.h
     src/widget/api/widget_calendar_query_options.cpp
     src/widget/api/widget_calendar_query_options.h
     src/widget/tasks/widget_task_broker.cpp
+    src/widget/tasks/widget_task_start_lua.cpp
+    src/widget/tasks/widget_native_task_dispatch.cpp
     src/widget/tasks/widget_native_task_executor.cpp
     src/widget/tasks/widget_location_task_executor.cpp
     src/widget/tasks/widget_notification_runtime.cpp
@@ -583,10 +624,20 @@ set(SNOWDESKTOP_SOURCES
     src/widget/tasks/widget_media_task_executor.cpp
     src/widget/tasks/widget_audio_output_task_executor.cpp
     src/widget/tasks/widget_audio_playback.cpp
+    src/widget/tasks/widget_audio_task_dispatch.cpp
     src/widget/tasks/widget_system_control_tasks.cpp
     src/widget/tasks/widget_clipboard_task_executor.cpp
+    src/widget/tasks/widget_clipboard_task_dispatch.cpp
+    src/widget/tasks/widget_clipboard_task_dispatch.h
+    src/widget/tasks/widget_network_task_dispatch.cpp
+    src/widget/tasks/widget_network_task_dispatch.h
+    src/widget/tasks/widget_task_result_store.cpp
+    src/widget/tasks/widget_task_result_store.h
+    src/widget/tasks/widget_task_host.cpp
     src/widget/tasks/widget_filesystem_handle_store.cpp
     src/widget/tasks/widget_filesystem_task_executor.cpp
+    src/widget/tasks/widget_filesystem_task_dispatch.cpp
+    src/widget/tasks/widget_filesystem_task_dispatch.h
     src/widget/tasks/widget_filesystem_watch_service.cpp
     src/widget/tasks/widget_filesystem_watch_origin.cpp
     src/widget/tasks/widget_filesystem_watch_origin.h
@@ -598,6 +649,38 @@ set(SNOWDESKTOP_SOURCES
     src/widget/data/widget_audio_analysis_provider.cpp
     src/widget/view/widget_draw_geometry.cpp
     src/widget/view/widget_surface_renderer.cpp
+    src/widget/view/widget_draw_context.cpp
+    src/widget/view/widget_draw_context.h
+    src/widget/view/widget_draw_lua.cpp
+    src/widget/view/widget_draw_lua.h
+    src/widget/view/widget_control_lua.cpp
+    src/widget/view/widget_control_lua.h
+    src/widget/view/widget_layout_lua.cpp
+    src/widget/view/widget_layout_lua.h
+    src/widget/view/widget_runtime_image_cache.cpp
+    src/widget/view/widget_runtime_image_cache.h
+    src/widget/view/widget_render_host_context.cpp
+    src/widget/view/widget_render_host_context.h
+    src/widget/view/widget_surface_host.cpp
+    src/widget/view/widget_surface_host.h
+    src/widget/view/widget_host_input_support.h
+    src/widget/view/widget_host_input_state.h
+    src/widget/view/widget_surface_context.h
+    src/widget/view/widget_host_input.cpp
+    src/widget/view/widget_host_input_events.cpp
+    src/widget/view/widget_host_scroll.cpp
+    src/widget/view/widget_surface_interaction.h
+    src/widget/view/widget_surface_interaction.cpp
+    src/widget/view/widget_appearance_host.cpp
+    src/widget/view/widget_pointer_host.cpp
+    src/widget/view/widget_resource_host.h
+    src/widget/view/widget_resource_host.cpp
+    src/widget/view/widget_interaction_lua_value.cpp
+    src/widget/view/widget_interaction_lua_value.h
+    src/widget/view/widget_view_renderer.cpp
+    src/widget/view/widget_view_renderer.h
+    src/widget/view/widget_view_text.cpp
+    src/widget/view/widget_view_text.h
     src/widget/view/widget_gpu_timing.cpp
     src/widget/view/widget_background_cache.cpp
     src/widget/view/widget_image_sampling.cpp
@@ -607,11 +690,22 @@ set(SNOWDESKTOP_SOURCES
     src/widget/view/widget_accessibility_provider.cpp
     src/widget/view/widget_view_accessibility.cpp
     src/widget/api/widget_view_contract.cpp
+    src/widget/view/widget_view_interaction.cpp
+    src/widget/view/widget_view_layout.cpp
+    src/widget/view/widget_view_layout_animation.cpp
+    src/widget/view/widget_view_transition_validation.cpp
     src/widget/view/widget_view_tree.cpp
+    src/widget/view/widget_view_validation.cpp
     src/widget/view/widget_view_lua.cpp
     src/widget/view/widget_text_input_rules.cpp
     src/widget/storage/widget_storage_transaction.cpp
     src/widget/storage/widget_storage_value.cpp
+    src/widget/storage/widget_storage_runtime.cpp
+    src/widget/storage/widget_storage_runtime.h
+    src/widget/storage/widget_storage_lua.cpp
+    src/widget/storage/widget_storage_lua.h
+    src/widget/storage/widget_storage_host.h
+    src/widget/storage/widget_storage_host.cpp
     src/widget/storage/widget_storage_write_budget.cpp
     src/widget/storage/widget_secret_store.cpp
     src/widget/settings/widget_settings_model.h
@@ -620,6 +714,8 @@ set(SNOWDESKTOP_SOURCES
     src/widget/settings/widget_engine_settings_backend.cpp
     src/widget/settings/widget_engine_settings_backend.h
     src/widget/settings/widget_setting_rules.cpp
+    src/widget/settings/widget_settings_declarations.cpp
+    src/widget/settings/widget_settings_declarations.h
     src/widget/runtime/widget_logical_slot.cpp
     src/widget/runtime/widget_lua_lifecycle.cpp
     src/widget/runtime/widget_runtime_diagnostics.cpp
@@ -633,19 +729,56 @@ set(SNOWDESKTOP_SOURCES
     src/widget/runtime/widget_runtime_scheduler.cpp
     src/widget/runtime/widget_timer_dispatch.h
     src/widget/runtime/widget_calendar_provider.h
-    src/widget/runtime/widget_data_subscribe_lua.inc
+    src/widget/runtime/widget_lua_binding_context.cpp
+    src/widget/runtime/widget_lua_binding_context.h
     src/widget/runtime/widget_engine.cpp
+    src/widget/runtime/widget_instance.h
+    src/widget/runtime/widget_logical_slot_host.cpp
+    src/widget/runtime/widget_calendar_host.cpp
+    src/widget/runtime/widget_desktop_host.h
+    src/widget/runtime/widget_desktop_host.cpp
+    src/widget/runtime/widget_timer_host.cpp
+    src/widget/runtime/widget_menu_host.cpp
+    src/widget/runtime/widget_diagnostics_host.cpp
+    src/widget/runtime/widget_logical_slot_lua.cpp
+    src/widget/runtime/widget_logical_slot_lua.h
+    src/widget/runtime/widget_calendar_lua.cpp
+    src/widget/runtime/widget_calendar_lua.h
+    src/widget/runtime/widget_schedule_lua.cpp
+    src/widget/runtime/widget_schedule_lua.h
+    src/widget/runtime/widget_time_lua.cpp
+    src/widget/runtime/widget_time_lua.h
+    src/widget/runtime/widget_module_lua.cpp
+    src/widget/runtime/widget_module_lua.h
+    src/widget/data/widget_system_lua.cpp
+    src/widget/data/widget_system_lua.h
+    src/widget/data/widget_data_subscription_lua.cpp
+    src/widget/data/widget_data_subscription_lua.h
+    src/widget/data/widget_data_snapshot.cpp
+    src/widget/data/widget_data_host.cpp
+    src/widget/data/widget_clipboard_observer.cpp
+    src/widget/data/widget_data_snapshot.h
+    src/widget/data/widget_system_control_data.cpp
     src/widget/runtime/widget_multiplayer.cpp
     src/widget/permissions/widget_permission_broker.cpp
     src/widget/permissions/widget_permission_state.cpp
     src/widget/packages/widget_package.cpp
+    src/widget/packages/widget_size_rules.cpp
+    src/widget/packages/widget_size_types.h
     src/widget/packages/widget_package_paths.cpp
+    src/widget/packages/widget_package_paths.h
+    src/widget/packages/widget_package_host.cpp
+    src/widget/packages/widget_package_host.h
+    src/widget/packages/widget_script_manifest.cpp
+    src/widget/packages/widget_manifest_locale.cpp
+    src/widget/packages/widget_script_manifest.h
     src/steam/steam_workshop_cache.cpp
     src/steam/steam_workshop_diagnostics.h
     src/steam/steam_workshop_source.cpp
     src/steam/steam_workshop_sync.cpp
     src/system/system_snapshot.cpp
     src/platform/http_runtime.cpp
+    src/widgets/widget_drop_members.cpp
     src/widgets/widget_folder_search.cpp
     src/widgets/widget_base.cpp
     src/widgets/collection.cpp

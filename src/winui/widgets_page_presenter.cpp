@@ -37,6 +37,7 @@ enum class PackageFilter : std::uint8_t
 {
     All,
     Installed,
+    Disabled,
     Included,
     Development,
 };
@@ -292,7 +293,7 @@ struct WidgetsPagePresenter::Impl
         muxc::TextBlock sourceId{nullptr};
         muxc::Button enabledAction{nullptr};
         muxc::Button addAction{nullptr};
-        muxc::Button developmentAction{nullptr};
+        muxc::ComboBox versionSelector{nullptr};
         std::vector<muxc::Button> advancedActions;
         std::vector<std::function<void()>> revokers;
         muxc::Expander details{nullptr};
@@ -323,6 +324,12 @@ struct WidgetsPagePresenter::Impl
     muxc::StackPanel root{nullptr};
     muxc::InfoBar feedbackBar{nullptr};
     muxc::StackPanel controlRoot{nullptr};
+    muxc::TextBlock controlIntroTitle{nullptr};
+    muxc::TextBlock controlIntroDescription{nullptr};
+    presenter_controls::SettingRow agentAccessRow;
+    muxc::ToggleSwitch agentAccessToggle{nullptr};
+    std::function<void(bool)> agentAccessChanged;
+    winrt::event_token agentAccessToken{};
     SettingsCard controlSkillCard;
     presenter_controls::SettingRow controlSkillActionsRow;
     muxc::Button controlSkillApplyButton{nullptr};
@@ -351,9 +358,11 @@ struct WidgetsPagePresenter::Impl
     SettingsCard debugRuntimeCard;
 
     muxc::TextBox searchBox{nullptr};
+    muxc::ScrollViewer filterScroll{nullptr};
     muxc::StackPanel filterActions{nullptr};
     muxc::RadioButton allFilterButton{nullptr};
     muxc::RadioButton installedFilterButton{nullptr};
+    muxc::RadioButton disabledFilterButton{nullptr};
     muxc::RadioButton includedFilterButton{nullptr};
     muxc::RadioButton developmentFilterButton{nullptr};
     muxc::Grid managementToolbar{nullptr};
@@ -447,6 +456,7 @@ struct WidgetsPagePresenter::Impl
     winrt::event_token searchCompositionEndedToken{};
     winrt::event_token allFilterToken{};
     winrt::event_token installedFilterToken{};
+    winrt::event_token disabledFilterToken{};
     winrt::event_token includedFilterToken{};
     winrt::event_token developmentFilterToken{};
     winrt::event_token installFileToken{};
@@ -536,7 +546,8 @@ struct WidgetsPagePresenter::Impl
     }
 
     [[nodiscard]] std::wstring PackageStateText(
-        const InstalledWidgetPackageSnapshot& package) const
+        const InstalledWidgetPackageSnapshot& package,
+        bool showsVersionSelector) const
     {
         if (!package.valid)
         {
@@ -545,28 +556,12 @@ struct WidgetsPagePresenter::Impl
                     L"Workshop install failed")
                 : L("app.settings.invalid", L"Invalid");
         }
-        if (package.canUseDevelopmentOverride)
-        {
-            if (package.developmentOverrideActive)
-            {
-                return L("app.settings.widgets_development_active",
-                    L"Development version active");
-            }
-            if (package.canEnable)
-            {
-                return L("app.settings.widgets_development_using_installed",
-                    L"Currently using the installed version");
-            }
-            return L("app.settings.widgets_development_inactive",
-                L"Development version inactive");
-        }
+        if (package.canEnable && !package.enabled)
+            return L("app.settings.widgets_disabled", L"Disabled");
+        if (showsVersionSelector || package.development)
+            return {};
         if (package.canEnable)
-        {
-            return L(package.enabled
-                    ? "app.settings.widgets_active"
-                    : "app.settings.widgets_disabled",
-                package.enabled ? L"In use" : L"Disabled");
-        }
+            return L("app.settings.widgets_active", L"In use");
         return L("app.settings.valid", L"Valid");
     }
 
@@ -785,18 +780,26 @@ struct WidgetsPagePresenter::Impl
         filterActions.HorizontalAlignment(mux::HorizontalAlignment::Left);
         allFilterButton = muxc::RadioButton{};
         installedFilterButton = muxc::RadioButton{};
+        disabledFilterButton = muxc::RadioButton{};
         includedFilterButton = muxc::RadioButton{};
         developmentFilterButton = muxc::RadioButton{};
         for (const muxc::RadioButton& button : {allFilterButton,
-                 installedFilterButton, includedFilterButton,
+                 installedFilterButton, disabledFilterButton, includedFilterButton,
                  developmentFilterButton})
         {
             button.UseSystemFocusVisuals(true);
             button.GroupName(L"WidgetsPackageFilter");
+            button.MinWidth(0);
             button.HorizontalAlignment(mux::HorizontalAlignment::Left);
             filterActions.Children().Append(button);
         }
-        filterCard.content.Children().Append(filterActions);
+        filterScroll = muxc::ScrollViewer{};
+        filterScroll.HorizontalScrollMode(muxc::ScrollMode::Enabled);
+        filterScroll.HorizontalScrollBarVisibility(muxc::ScrollBarVisibility::Auto);
+        filterScroll.VerticalScrollMode(muxc::ScrollMode::Disabled);
+        filterScroll.VerticalScrollBarVisibility(muxc::ScrollBarVisibility::Disabled);
+        filterScroll.Content(filterActions);
+        filterCard.content.Children().Append(filterScroll);
 
         taskProgress = muxc::ProgressBar{};
         taskStatus = muxc::TextBlock{};
@@ -817,6 +820,34 @@ struct WidgetsPagePresenter::Impl
         controlRoot = muxc::StackPanel{};
         controlRoot.Spacing(24.0);
         controlRoot.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        muxc::StackPanel controlHeader;
+        controlHeader.Spacing(8.0);
+        controlRoot.Children().Append(controlHeader);
+        muxc::Border controlIntroCard;
+        muxc::StackPanel controlIntroContent;
+        controlIntroContent.Spacing(4.0);
+        controlIntroTitle = muxc::TextBlock{};
+        controlIntroTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        controlIntroTitle.TextWrapping(mux::TextWrapping::Wrap);
+        muxa::AutomationProperties::SetHeadingLevel(controlIntroTitle,
+            muxa::Peers::AutomationHeadingLevel::Level2);
+        controlIntroDescription = MakeSecondaryText(L"");
+        controlIntroContent.Children().Append(controlIntroTitle);
+        controlIntroContent.Children().Append(controlIntroDescription);
+        presenter_controls::InitializeSettingsGroup(
+            controlIntroCard, nullptr, controlIntroContent, cardStyle, true);
+        controlHeader.Children().Append(controlIntroCard);
+
+        muxc::Border agentAccessCard;
+        muxc::StackPanel agentAccessRows;
+        agentAccessToggle = muxc::ToggleSwitch{};
+        agentAccessRow.Initialize(agentAccessToggle);
+        agentAccessRows.Children().Append(agentAccessRow.root);
+        presenter_controls::UpdateSettingsSubrows(agentAccessRows, 0.0);
+        presenter_controls::InitializeSettingsGroup(
+            agentAccessCard, nullptr, agentAccessRows, cardStyle);
+        controlHeader.Children().Append(agentAccessCard);
+
         InitializeCard(controlSkillCard, cardStyle, controlRoot);
         controlSkillApplyButton = muxc::Button{};
         controlSkillApplyButton.UseSystemFocusVisuals(true);
@@ -1039,6 +1070,11 @@ struct WidgetsPagePresenter::Impl
 
     void HookStaticEvents()
     {
+        agentAccessToken = agentAccessToggle.Toggled(
+            [this](const auto&, const auto&) {
+                if (!updatingControls && !closed && active && agentAccessChanged)
+                    agentAccessChanged(agentAccessToggle.IsOn());
+            });
         searchChangedToken = searchBox.TextChanged(
             [this](const auto&, const auto&) { SearchFromInput(); });
         searchCompositionStartedToken = searchBox.TextCompositionStarted(
@@ -1068,6 +1104,10 @@ struct WidgetsPagePresenter::Impl
                 const winrt::Windows::Foundation::IInspectable&,
                 const mux::RoutedEventArgs&) {
                 selectFilter(PackageFilter::Installed);
+            });
+        disabledFilterToken = disabledFilterButton.Checked(
+            [selectFilter](const auto&, const auto&) {
+                selectFilter(PackageFilter::Disabled);
             });
         includedFilterToken = includedFilterButton.Checked(
             [selectFilter](
@@ -1370,6 +1410,10 @@ struct WidgetsPagePresenter::Impl
             if (!IsInstalledPackage(package))
                 return false;
             break;
+        case PackageFilter::Disabled:
+            if (!IsDisabledPackage(package))
+                return false;
+            break;
         case PackageFilter::Included:
             if (!IsIncludedPackage(package))
                 return false;
@@ -1394,8 +1438,15 @@ struct WidgetsPagePresenter::Impl
     [[nodiscard]] static bool IsInstalledPackage(
         const InstalledWidgetPackageSnapshot& package) noexcept
     {
-        return package.canEnable || package.canUninstall ||
-            !package.workshopInstallFailures.empty();
+        return !IsDisabledPackage(package) &&
+            (package.hasInstalledVersion || package.canUninstall ||
+                !package.workshopInstallFailures.empty());
+    }
+
+    [[nodiscard]] static bool IsDisabledPackage(
+        const InstalledWidgetPackageSnapshot& package) noexcept
+    {
+        return package.canEnable && !package.enabled;
     }
 
     [[nodiscard]] static bool IsDevelopmentPackage(
@@ -1476,6 +1527,10 @@ struct WidgetsPagePresenter::Impl
         {
             appendTag(L("app.settings.widgets_filter_installed", L"Installed"));
         }
+        if (IsDisabledPackage(package))
+        {
+            appendTag(L("app.settings.widgets_disabled", L"Disabled"));
+        }
         if (IsIncludedPackage(package))
         {
             appendTag(L("app.settings.widgets_filter_builtin", L"Included"));
@@ -1503,49 +1558,46 @@ struct WidgetsPagePresenter::Impl
                 : mux::Visibility::Visible);
     }
 
-    [[nodiscard]] std::wstring FilterText(
-        std::string_view key,
-        std::wstring_view fallback,
-        std::size_t count) const
-    {
-        return L(key, fallback) + L" " + std::to_wstring(count);
-    }
-
     void RefreshFilterItems()
     {
         const bool wasUpdating = updatingControls;
         updatingControls = true;
-        const std::size_t installedCount = InstalledPackageCount();
-        const std::size_t includedCount = IncludedPackageCount();
-        const std::size_t developmentCount = DevelopmentPackageCount();
-        allFilterButton.Content(winrt::box_value(FilterText(
-            "app.settings.widgets_filter_all", L"All", PackageCount())));
-        installedFilterButton.Content(winrt::box_value(FilterText(
-            "app.settings.widgets_filter_installed", L"Installed",
-            installedCount)));
-        includedFilterButton.Content(winrt::box_value(FilterText(
-            "app.settings.widgets_filter_builtin", L"Included",
-            includedCount)));
-        developmentFilterButton.Content(winrt::box_value(FilterText(
-            "app.settings.widgets_filter_development", L"Local development",
-            developmentCount)));
-        allFilterButton.IsChecked(filter == PackageFilter::All);
-        installedFilterButton.IsChecked(filter == PackageFilter::Installed);
-        includedFilterButton.IsChecked(filter == PackageFilter::Included);
-        developmentFilterButton.IsChecked(
-            filter == PackageFilter::Development);
-        SetAutomation(allFilterButton,
-            FilterText("app.settings.widgets_filter_all", L"All",
-                PackageCount()));
-        SetAutomation(installedFilterButton,
-            FilterText("app.settings.widgets_filter_installed", L"Installed",
-                installedCount));
-        SetAutomation(includedFilterButton,
-            FilterText("app.settings.widgets_filter_builtin", L"Included",
-                includedCount));
-        SetAutomation(developmentFilterButton,
-            FilterText("app.settings.widgets_filter_development",
-                L"Local development", developmentCount));
+        const auto disabledCount = static_cast<std::size_t>(std::count_if(
+            packages.begin(), packages.end(), IsDisabledPackage));
+        const struct
+        {
+            muxc::RadioButton button;
+            PackageFilter value;
+            std::string_view key;
+            std::wstring_view fallback;
+            std::size_t count;
+        } items[] = {
+            {allFilterButton, PackageFilter::All,
+                "app.settings.widgets_filter_all", L"All", PackageCount()},
+            {installedFilterButton, PackageFilter::Installed,
+                "app.settings.widgets_filter_installed", L"Installed", InstalledPackageCount()},
+            {disabledFilterButton, PackageFilter::Disabled,
+                "app.settings.widgets_disabled", L"Disabled", disabledCount},
+            {includedFilterButton, PackageFilter::Included,
+                "app.settings.widgets_filter_builtin", L"Included", IncludedPackageCount()},
+            {developmentFilterButton, PackageFilter::Development,
+                "app.settings.widgets_filter_development", L"Local development", DevelopmentPackageCount()},
+        };
+        for (const auto& item : items)
+            if (item.value == filter && item.count == 0)
+            {
+                filter = PackageFilter::All;
+                break;
+            }
+        for (const auto& item : items)
+        {
+            const auto label = L(item.key, item.fallback) + L" " + std::to_wstring(item.count);
+            item.button.Content(winrt::box_value(label));
+            item.button.Visibility(item.count ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+            item.button.IsChecked(item.count != 0 && filter == item.value);
+            SetAutomation(item.button, label);
+        }
+        filterScroll.Visibility(packages.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         updatingControls = wasUpdating;
     }
 
@@ -2074,11 +2126,13 @@ struct WidgetsPagePresenter::Impl
             selected.UseSystemFocusVisuals(true);
             const std::wstring label = AgentSkillTargetLabel(skill.kind);
             selected.Content(winrt::box_value(label));
-            const std::wstring installedVersion = skill.installedRevision == 0
-                ? L"—" : std::to_wstring(skill.installedRevision);
-            const std::wstring version = FormatValues(L(
-                "app.settings.widgets_skill_installed_version",
-                L"Installed version %s"), {installedVersion});
+            std::wstring version;
+            if (skill.installed && skill.installedRevision != 0)
+            {
+                version = FormatValues(L(
+                    "app.settings.widgets_skill_installed_version",
+                    L"Installed version %s"), {std::to_wstring(skill.installedRevision)});
+            }
             const std::wstring stateAndPath = JoinMetadata(
                 {AgentSkillStateLabel(skill.state), version,
                  skill.targetPath});
@@ -2638,17 +2692,20 @@ struct WidgetsPagePresenter::Impl
         primaryActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
         primaryActions.Spacing(8.0);
 
+        const bool showsVersionSelector = developerOverridesVisible &&
+            package.canUseDevelopmentOverride;
+        const std::wstring packageState = PackageStateText(
+            package, showsVersionSelector);
         presenter_controls::SettingRow summaryRow;
         summaryRow.Initialize(primaryActions, 0.0);
         summaryRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         summaryRow.SetText(PackageDisplayName(package), JoinMetadata(
-            {package.sourceName, PackageStateText(package)}));
+            {package.sourceName, packageState}));
         muxc::TextBlock name = summaryRow.label;
         name.FontWeight(
             winrt::Windows::UI::Text::FontWeights::SemiBold());
         name.TextWrapping(mux::TextWrapping::Wrap);
         muxc::TextBlock metadata = summaryRow.help;
-        const std::wstring packageState = PackageStateText(package);
         muxa::AutomationProperties::SetLiveSetting(metadata,
             muxa::Peers::AutomationLiveSetting::Polite);
         muxc::StackPanel body;
@@ -2667,13 +2724,18 @@ struct WidgetsPagePresenter::Impl
         muxc::Grid identity;
         identity.ColumnSpacing(12);
         muxc::ColumnDefinition identityName, identityState;
-        identityState.Width(mux::GridLengthHelper::Auto());
+        identityState.Width(showsVersionSelector
+            ? mux::GridLengthHelper::FromValueAndType(1.0, mux::GridUnitType::Star)
+            : mux::GridLengthHelper::Auto());
         identity.ColumnDefinitions().Append(identityName);
         identity.ColumnDefinitions().Append(identityState);
         summaryRow.text.Children().Clear();
         identity.Children().Append(name);
         metadata.VerticalAlignment(mux::VerticalAlignment::Center);
-        metadata.TextWrapping(mux::TextWrapping::NoWrap);
+        metadata.TextWrapping(showsVersionSelector
+            ? mux::TextWrapping::Wrap : mux::TextWrapping::NoWrap);
+        if (showsVersionSelector)
+            metadata.TextAlignment(mux::TextAlignment::Right);
         muxc::Grid::SetColumn(metadata, 1);
         identity.Children().Append(metadata);
         summaryRow.text.Children().Append(identity);
@@ -2826,47 +2888,49 @@ struct WidgetsPagePresenter::Impl
             }
         }
 
-        muxc::Button developmentAction{nullptr};
-        if (developerOverridesVisible &&
-            package.canUseDevelopmentOverride)
+        muxc::ComboBox versionSelector{nullptr};
+        if (showsVersionSelector)
         {
-            developmentAction = MakeActionButton(L(
-                package.developmentOverrideActive
-                    ? "app.settings.widgets_development_deactivate"
-                    : "app.settings.widgets_development_activate",
-                package.developmentOverrideActive
-                    ? L"Deactivate Development Version"
-                    : L"Activate Development Version"));
-            HookClick(developmentAction,
-                [this, packageId = package.packageId](
-                    const winrt::Windows::Foundation::IInspectable&,
-                    const mux::RoutedEventArgs&) {
+            versionSelector = muxc::ComboBox{};
+            versionSelector.MinWidth(144.0);
+            versionSelector.MinHeight(32.0);
+            versionSelector.VerticalAlignment(mux::VerticalAlignment::Center);
+            versionSelector.UseSystemFocusVisuals(true);
+            versionSelector.Items().Append(winrt::box_value(package.hasInstalledVersion
+                ? L("app.settings.widgets_installed_version", L"Installed version")
+                : L("app.settings.widgets_filter_builtin", L"Included")));
+            versionSelector.Items().Append(winrt::box_value(L(
+                "app.settings.widgets_development_version", L"Development version")));
+            versionSelector.SelectedIndex(package.developmentOverrideActive ? 1 : 0);
+            const auto token = versionSelector.SelectionChanged(
+                [this, selector = versionSelector, packageId = package.packageId](
+                    const auto&, const auto&) {
                     if (updatingControls || closed || !active)
                         return;
                     const auto* current = FindPackage(packageId);
-                    if (!current || !current->canUseDevelopmentOverride)
+                    const int selected = selector.SelectedIndex();
+                    if (!current || !current->canEnable ||
+                        !current->canUseDevelopmentOverride ||
+                        (selected != 0 && selected != 1))
                         return;
+                    const int activeVersion = current->developmentOverrideActive ? 1 : 0;
+                    if (selected == activeVersion)
+                        return;
+                    // The host can reject the switch. Keep the displayed version
+                    // tied to its latest snapshot until it confirms the change.
+                    selector.SelectedIndex(activeVersion);
                     WidgetsPageRequest request;
-                    request.command =
-                        WidgetsPageCommand::SetDevelopmentOverride;
+                    request.command = WidgetsPageCommand::SetDevelopmentOverride;
                     request.packageId = packageId;
-                    request.enabled =
-                        !current->developmentOverrideActive;
+                    request.enabled = selected == 1;
                     Emit(std::move(request));
-                },
-                revokers);
-            presenter_controls::SettingRow developmentRow;
-            developmentRow.Initialize(developmentAction, 300.0);
-            developmentRow.SetControlAlignment(
-                mux::HorizontalAlignment::Right);
-            developmentRow.SetText(L(
-                    "app.settings.widgets_development",
-                    L"Development version"),
-                L("settings.developer.overrides.description",
-                    L"Use the local development source."));
-            detailsBody.Children().Append(developmentRow.root);
+                });
+            revokers.emplace_back([selector = versionSelector, token] {
+                selector.SelectionChanged(token);
+            });
+            SetAutomation(versionSelector, L("app.settings.version", L"Version"));
+            primaryActions.Children().InsertAt(0, versionSelector);
         }
-
         muxc::TextBlock sourceId{nullptr};
         muxc::Expander permissionSection{nullptr};
         mux::FrameworkElement permissionTarget{nullptr};
@@ -2932,7 +2996,7 @@ struct WidgetsPagePresenter::Impl
         packageRowBindings.push_back(PackageRowBinding{
             package.packageId, row, name, metadata, descriptionRow, descriptionRefresh,
             version, author, sourceId, enabledAction, addAction,
-            developmentAction,
+            versionSelector,
             std::move(advancedActions), std::move(revokers), details, permissionSection, permissionTarget});
     }
 
@@ -3025,11 +3089,14 @@ struct WidgetsPagePresenter::Impl
         const PackageRowBinding& binding,
         const InstalledWidgetPackageSnapshot& package)
     {
-        const std::wstring packageState = PackageStateText(package);
+        const std::wstring packageState = PackageStateText(
+            package, static_cast<bool>(binding.versionSelector));
         const std::wstring displayName = PackageDisplayName(package);
         binding.name.Text(displayName);
-        binding.metadata.Text(JoinMetadata(
-            {package.sourceName, packageState}));
+        const auto metadata = JoinMetadata({package.sourceName, packageState});
+        binding.metadata.Text(metadata);
+        binding.metadata.Visibility(metadata.empty()
+            ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         PopulatePackageDescription(binding.descriptionRow, package, binding.descriptionRefresh);
         binding.version.Text(
             L("app.settings.version", L"Version") + L": " +
@@ -3070,18 +3137,9 @@ struct WidgetsPagePresenter::Impl
         }
         if (binding.addAction)
             binding.addAction.IsEnabled(package.canAddToDesktop);
-        if (binding.developmentAction)
-        {
-            const std::wstring label = L(
-                package.developmentOverrideActive
-                    ? "app.settings.widgets_development_deactivate"
-                    : "app.settings.widgets_development_activate",
-                package.developmentOverrideActive
-                    ? L"Deactivate Development Version"
-                    : L"Activate Development Version");
-            binding.developmentAction.Content(winrt::box_value(label));
-            SetAutomation(binding.developmentAction, label);
-        }
+        if (binding.versionSelector)
+            binding.versionSelector.SelectedIndex(
+                package.developmentOverrideActive ? 1 : 0);
     }
 
     [[nodiscard]] bool TryPatchInstalledRows(
@@ -3398,7 +3456,16 @@ struct WidgetsPagePresenter::Impl
         const bool previousUpdating = updatingControls;
         updatingControls = true;
 
-        controlSkillCard.title.Text(L("app.settings.widgets_agent_skill", L"Agent Skill"));
+        controlIntroTitle.Text(L("settings.agentOperations.introTitle",
+            L"Organize your desktop with AI"));
+        controlIntroDescription.Text(L("settings.agentOperations.description",
+            L"Install the SnowDesktop Control Skill below, then ask your AI assistant to use widgets to organize desktop items, fine-tune visual effects, and adjust settings to fit the way you work."));
+        agentAccessRow.SetText(
+            L("settings.agentOperations.access", L"Allow agent access"),
+            L("settings.agentOperations.access.description",
+                L"Let local AI assistants read or change SnowDesktop through its control interface."));
+        SetAutomation(agentAccessToggle, agentAccessRow.label.Text(), agentAccessRow.help.Text());
+        controlSkillCard.title.Text(L("settings.agentOperations.skill", L"SnowDesktop Control Skill"));
         controlSkillCard.description.Text(L"");
         controlSkillCard.description.Visibility(mux::Visibility::Collapsed);
         controlSkillApplyButton.Content(winrt::box_value(L("app.settings.widgets_skill_sync_all", L"Apply Selection")));
@@ -3705,6 +3772,7 @@ struct WidgetsPagePresenter::Impl
             searchBox.TextCompositionEnded(searchCompositionEndedToken);
             allFilterButton.Checked(allFilterToken);
             installedFilterButton.Checked(installedFilterToken);
+            disabledFilterButton.Checked(disabledFilterToken);
             includedFilterButton.Checked(includedFilterToken);
             developmentFilterButton.Checked(developmentFilterToken);
             installFileButton.Click(installFileToken);
@@ -3712,6 +3780,7 @@ struct WidgetsPagePresenter::Impl
             selfDevelopButton.Click(selfDevelopToken);
             cancelTaskButton.Click(cancelTaskToken);
             developerRefreshButton.Click(developerRefreshToken);
+            agentAccessToggle.Toggled(agentAccessToken);
             controlSkillApplyButton.Click(controlSkillApplyToken);
             controlSkillRefreshButton.Click(controlSkillRefreshToken);
             agentSkillApplyButton.Click(agentSkillApplyToken);
@@ -3792,6 +3861,24 @@ mux::FrameworkElement WidgetsPagePresenter::AgentOperationsFocusTarget() const n
 {
     if (!impl_) return nullptr;
     return impl_->firstControlSkillTarget ? impl_->firstControlSkillTarget : impl_->controlSkillApplyButton;
+}
+
+void WidgetsPagePresenter::SetAgentAccessAction(std::function<void(bool)> change)
+{
+    impl_->agentAccessChanged = std::move(change);
+}
+
+void WidgetsPagePresenter::ApplyAgentAccess(bool enabled)
+{
+    const bool wasUpdating = impl_->updatingControls;
+    impl_->updatingControls = true;
+    impl_->agentAccessToggle.IsOn(enabled);
+    impl_->updatingControls = wasUpdating;
+}
+
+mux::FrameworkElement WidgetsPagePresenter::AgentAccessFocusTarget() const noexcept
+{
+    return impl_ ? impl_->agentAccessToggle : nullptr;
 }
 
 mux::UIElement WidgetsPagePresenter::DebugContent() const noexcept

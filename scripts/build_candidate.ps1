@@ -1,11 +1,12 @@
 [CmdletBinding()]
 param(
     [Alias('Verb')][ValidateSet('candidate')][string]$CandidateVerb='candidate',
-    [Alias('Command')][ValidateSet('inspect','materialize','repair','artifact')][string]$CandidateCommand='inspect',
+    [Alias('Command')][ValidateSet('inspect','materialize','repair','artifact','paths')][string]$CandidateCommand='inspect',
     [Alias('Snapshot')][ValidatePattern('^[a-f0-9]{32}$')][string]$CandidateSnapshot,
     [Alias('Task')][ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$')][string]$CandidateTask,
     [Alias('Artifact')][ValidatePattern('^[a-f0-9]{32}$')][string]$CandidateArtifact,
-    [Alias('Slot')][ValidatePattern('^[a-z0-9][a-z0-9-]{0,31}$')][string]$CandidateSlotName='default'
+    [Alias('Slot')][ValidatePattern('^[a-z0-9][a-z0-9-]{0,31}$')][string]$CandidateSlotName='default',
+    [string]$ExecutionSlot='workspace'
 )
 
 # Snapshot content is separate from Git's index and from mutable build output.
@@ -55,13 +56,23 @@ function Get-CandidateStore([string]$Root,[switch]$Create) {
         workspace=(Resolve-CandidatePath $parent '.build/build-workspace');
         workspaceBinding=(Resolve-CandidatePath $parent '.build/candidate-workspace.json')}
 }
-function Get-CandidateWorkspaceDirectory($Store) {
+function Get-CandidateWorkspaceDirectory($Store,[ref]$BindingSha256) {
     # One stable compiler workspace for the common Git resource. A migration
     # binding may retain an existing warm directory without relocating caches.
     if(-not [IO.File]::Exists($Store.workspaceBinding)){return $Store.workspace}
-    $binding=Read-CandidateJson $Store.workspaceBinding
-    if($binding.schemaVersion -ne 1 -or $binding.commonGitDirectory -ne $Store.commonGitDirectory){throw 'Invalid compiler workspace binding.'}
-    $directory=[IO.Path]::GetFullPath([string]$binding.directory)
+    $binding=if($BindingSha256){
+        Read-CandidateJson $Store.workspaceBinding -RequireObject -Sha256 $BindingSha256
+    }else{Read-CandidateJson $Store.workspaceBinding -RequireObject}
+    $properties=$binding.PSObject.Properties
+    $version=$properties['schemaVersion']
+    $boundGitDirectory=$properties['commonGitDirectory']
+    $boundDirectory=$properties['directory']
+    if(-not $version -or ($version.Value -isnot [int] -and $version.Value -isnot [long]) -or $version.Value -ne 1 -or
+        -not $boundGitDirectory -or $boundGitDirectory.Value -isnot [string] -or $boundGitDirectory.Value -ne $Store.commonGitDirectory -or
+        -not $boundDirectory -or $boundDirectory.Value -isnot [string] -or -not [IO.Path]::IsPathRooted($boundDirectory.Value)){
+        throw 'Invalid compiler workspace binding.'
+    }
+    $directory=[IO.Path]::GetFullPath($boundDirectory.Value)
     if($directory -eq $Store.workspace){return Resolve-CandidatePath ([IO.Path]::GetDirectoryName($directory)) ([IO.Path]::GetFileName($directory))}
     $name=[IO.Path]::GetFileName($directory)
     if([IO.Path]::GetDirectoryName($directory) -ne $Store.slots -or $name -notmatch '^[a-f0-9]{16}-[a-z0-9][a-z0-9-]{0,31}$'){throw 'Compiler workspace escaped its fixed output scope.'}
@@ -72,6 +83,12 @@ function Get-CandidateExecutionDirectory($Store,[string]$Key) {
     # Historical records keep their original paths; they never allocate space.
     if($Key -notmatch '^[a-f0-9]{16}-[a-z0-9][a-z0-9-]{0,31}$'){throw 'Invalid historical compiler directory.'}
     return Resolve-CandidatePath $Store.slots $Key
+}
+function Get-CandidatePathProjection([string]$Root,$Store,[string]$Key) {
+    $bindingSha256=$null
+    $directory=if($Key -eq 'workspace'){Get-CandidateWorkspaceDirectory $Store ([ref]$bindingSha256)}else{Get-CandidateExecutionDirectory $Store $Key}
+    return [pscustomobject]@{schemaVersion=1;checkoutRoot=$Root;commonGitDirectory=$Store.commonGitDirectory;slot=$Key;
+        directory=$directory;bindingSha256=$bindingSha256}
 }
 function Write-CandidateJson($Value,[string]$Path,[switch]$Immutable) {
     $temp=$Path+'.'+[Guid]::NewGuid().ToString('N')+'.tmp';$backup=$temp+'.bak'
@@ -84,12 +101,23 @@ function Write-CandidateJson($Value,[string]$Path,[switch]$Immutable) {
         foreach($file in @($temp,$backup)){if([IO.File]::Exists($file)){[IO.File]::Delete($file)}}
     }
 }
-function Read-CandidateJson([string]$Path) {
-    $stream=[IO.File]::Open($Path,'Open','Read',([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+function Read-CandidateJson([string]$Path,[ref]$Sha256,[switch]$RequireObject) {
+    $share=if($Sha256){[IO.FileShare]::Read}else{[IO.FileShare]::ReadWrite}
+    $stream=[IO.File]::Open($Path,'Open','Read',($share -bor [IO.FileShare]::Delete))
     try{
         if($stream.Length -gt 16MB){throw 'Candidate metadata exceeds its byte budget.'}
+        if($Sha256){
+            $sha=[Security.Cryptography.SHA256]::Create()
+            try{$Sha256.Value=[BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','').ToLowerInvariant()}
+            finally{$sha.Dispose()}
+            $stream.Position=0
+        }
         $reader=[IO.StreamReader]::new($stream,[Text.Encoding]::UTF8)
-        try{return $reader.ReadToEnd()|ConvertFrom-Json}finally{$reader.Dispose()}
+        try{
+            $text=$reader.ReadToEnd()
+            if($RequireObject -and -not $text.TrimStart().StartsWith('{')){throw 'Expected candidate metadata object.'}
+            return $text|ConvertFrom-Json
+        }finally{$reader.Dispose()}
     }finally{$stream.Dispose()}
 }
 function Get-CandidatePaths([string]$Root,[string]$ExtraInputs='') {
@@ -287,11 +315,26 @@ function Enter-CandidateSlot($Snapshot,[string]$Name) {
     catch [IO.IOException]{throw 'Candidate slot is busy; existing materialization/executor retains its files.'}
     return [pscustomobject]@{key=$key;directory=$directory;source=(Join-Path $directory 'source');output=(Join-Path $directory 'output');state=(Join-Path $directory 'materialization.json');lease=$lease}
 }
+function Get-CandidateContextMismatch($Expected,$Observed) {
+    $changed=@()
+    $expectedEnvironment=$Expected.binding.environment
+    foreach($name in $Observed.binding.environment.Keys){
+        $before=if($expectedEnvironment -is [Collections.IDictionary]){$expectedEnvironment[$name]}else{Get-Field $expectedEnvironment $name}
+        if($before -ne $Observed.binding.environment[$name]){$changed+=@($name)}
+    }
+    foreach($name in @('tools','compilerTools','presets','configuration','checkoutRoot')){
+        $before=Get-Field $Expected.binding $name
+        $after=Get-Field $Observed.binding $name
+        if((ConvertTo-Json -InputObject $before -Depth 12 -Compress) -cne (ConvertTo-Json -InputObject $after -Depth 12 -Compress)){$changed+=@($name)}
+    }
+    $detail=if($changed.Count){' Changed fields: '+($changed -join ', ')+'.'}else{''}
+    return ('Candidate observed tools/environment changed; capture a new context.'+$detail)
+}
 function Set-CandidateSlotSource($Snapshot,$Lease) {
     if(-not $Lease.lease -or -not $Lease.lease.CanWrite){throw 'A live candidate slot lease is required.'}
     $manifest=$Snapshot.manifest
     $actual=Get-CandidateContext $manifest.files $manifest.context.binding.configuration $(if(Get-Field $manifest.context.binding 'checkoutRoot'){$manifest.sourceRoot}else{''})
-    if($actual.digest -ne $manifest.context.digest){throw 'Candidate observed tools/environment changed; capture a new context.'}
+    if($actual.digest -ne $manifest.context.digest){throw (Get-CandidateContextMismatch $manifest.context $actual)}
     $old=if([IO.File]::Exists($Lease.state)){Read-CandidateJson $Lease.state}else{$null}
     if($old -and ($old.source -ne $Lease.source -or $old.output -ne $Lease.output)){throw 'Compiler workspace provenance changed.'}
     [void][IO.Directory]::CreateDirectory($Lease.source);[void][IO.Directory]::CreateDirectory($Lease.output)
@@ -356,6 +399,10 @@ $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'build_protocol.ps1')
 . (Join-Path $PSScriptRoot 'build_inputs.ps1')
 try {
+    if($CandidateCommand -eq 'paths'){
+        Get-CandidatePathProjection $root (Get-CandidateStore $root) $ExecutionSlot|ConvertTo-Json -Depth 4
+        exit 0
+    }
     if($CandidateCommand -eq 'artifact'){
         . (Join-Path $PSScriptRoot 'build_candidate_artifacts.ps1')
         $artifact=Read-CandidateArtifact $root $CandidateArtifact -VerifyFiles

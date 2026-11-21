@@ -18,6 +18,7 @@
 #include "common/l10n.h"
 #include "common/utils.h"
 #include "widget/runtime/widget_engine.h"
+#include "widget/runtime/widget_instance_manifest.h"
 #include "widget/preview/widget_preview_scene.h"
 #include "diagnostics/performance_trace.h"
 #include <optional>
@@ -125,7 +126,7 @@ bool LuaScript::SafeReadFlags(WidgetEngine* engine,
  *   8. 按组件底栏与悬停状态决定是否绘制底栏、移动和缩放手柄；
  *   9. 若底栏可见，绘制底部渐变条（无自定义样式时）；
  *  10. 若 showTitle 为 true 且存在标题文本，则绘制控件标题；
- *  11. 在内容与渐变之上绘制普通或选中边框及边缘高光；
+ *  11. 在内容与渐变之上绘制普通边框和边缘高光，或键盘焦点外框；
  *  12. 无底栏时悬浮绘制左下移动手柄，并绘制右下角缩放手柄。
  *
  * @param context  Direct2D 设备上下文，用于所有绘制调用
@@ -177,6 +178,12 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     if (IsRectEmptyRect(frame)) return;
 
     const bool selected = presentation.selected || state == 2;
+    const bool ownsPopup = app_->luaWidgetPanelRequest_.widgetId == data_->id &&
+        !app_->luaWidgetPanelAnimation_.IsHidden();
+    const bool retainSelectionOutline = presentation.showOnHoverOnly ||
+        (app_->keyboardNavVisualFocus_ && !app_->keyboardNavInsideWidget_);
+    const bool drawFocusOutline = !preview &&
+        (ownsPopup || (presentation.selected && retainSelectionOutline));
     const POINT renderPointer = preview
         ? GetRenderPointer() : app_->lastMousePoint_;
     const bool hovered = PtInRect(&frame, renderPointer) != FALSE;
@@ -399,7 +406,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     PersonalizationSettings backgroundEffects = effectSettings;
     backgroundEffects.widgetEdgeHighlightEnabled = false;
     const float panelRadius = static_cast<float>(Cu(cornerRadiusCu));
-    const float panelStroke = selected
+    const float panelStroke = drawFocusOutline
         ? std::max(1.6f, configuredStroke) : configuredStroke;
     const D2D1_COLOR_F transparentBorder = D2D1::ColorF(0, 0.0f);
     const bool hasBackgroundLayer = engine && widgetOk &&
@@ -447,19 +454,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         // The loaded VM already owns the manifest for this exact generation.
         // Resolving the package path and reparsing widget.json on each frame
         // performs synchronous filesystem work on the desktop input thread.
-        const LuaWidgetManifest* loadedManifest = nullptr;
-        if (engine)
-        {
-            const auto& loaded = engine->GetWidgets();
-            for (auto position = loaded.rbegin(); position != loaded.rend(); ++position)
-            {
-                if (position->widgetId == data_->id)
-                {
-                    loadedManifest = &position->manifest;
-                    break;
-                }
-            }
-        }
+        const auto* loadedManifest = snowdesktop::widget_runtime::LoadedManifest(engine, data_->id);
         std::optional<LuaWidgetManifest> unloadedManifest;
         if (!loadedManifest)
         {
@@ -479,6 +474,21 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     recordingPhase.reset();
     recordingPhase.emplace("widget.composition", "content.commands", data_->id);
     const auto contentBounds = app_->ToD2DRect(frame);
+    if (surfacePaint && !preview && !selected && !hovered)
+    {
+        // Only interior text can be composed above the recorded body without
+        // changing the rounded clip, reflection, title, or interaction layers.
+        RECT allowed = frame;
+        const float rim = effectSettings.widgetEdgeHighlightEnabled
+            ? std::clamp(effectSettings.widgetEdgeHighlightWidth,
+                kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) : 0.0f;
+        const LONG edge = static_cast<LONG>(std::ceil(std::max(panelStroke, rim))) + Cu(2.0f);
+        InflateRect(&allowed, -edge, -edge);
+        if (data_->showTitle && !data_->bottomBarHover)
+            allowed.bottom = std::min(allowed.bottom, frame.bottom - Cu(36.0f));
+        surfacePaint->nativeMarqueeBounds = allowed;
+        surfacePaint->nativeMarqueeRadius = panelRadius;
+    }
     auto* contentClip = panelRadius > 0.0f
         ? GetCachedClipGeometry(app_->GetD2DFactory(), frame, panelRadius) : nullptr;
     if (contentClip)
@@ -776,8 +786,8 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
 
     // Keep the outline and reflection above Lua content and the host gradient.
     app_->DrawWidgetPanelBorder(context, frame, panelRadius,
-        borderColor, selected, panelStroke);
-    if (!selected)
+        borderColor, drawFocusOutline, panelStroke);
+    if (!drawFocusOutline)
         (void)app_->DrawWidgetPanelEdgeHighlight(
             context, frame, static_cast<float>(Cu(cornerRadiusCu)),
             fillColor, &effectSettings);

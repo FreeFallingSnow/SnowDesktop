@@ -12,6 +12,7 @@
 #include "settings_controller_interface.h"
 #include "settings_snapshot.h"
 #include "control_global_settings.h"
+#include "control_settings_search.h"
 #include "control_settings_values.h"
 #include "layout/layout_spacing_rules.h"
 #include <cstring>
@@ -112,6 +113,7 @@ void Enrich(Value& schema, const std::string& path)
         Range(schema, "tooltipFontSize", kMinimumTooltipFontSize, kMaximumTooltipFontSize);
         Range(schema, "desktopIdleHideDelaySeconds", 1, desktop_idle_hide::kMaxDelaySeconds);
         ReadOnly(schema, "autoStartEnabled", "Windows-owned projection; use set-auto-start action");
+        ReadOnly(schema, "agentOperationsEnabled", "Only the SnowDesktop Settings > Agent Operations page can change local agent access");
         if (auto* font = Child(schema, "font")) font->object["restartRequired"] = Boolean(true);
         if (auto* language = Child(schema, "language")) language->object["maxLength"] = Number(84);
     }
@@ -325,6 +327,10 @@ bool IsGlobalSettingsTarget(const Target& target)
 {
     return target.kind == "global" || target.kind == "personalization" || target.kind == "dock" || target.kind == "navigation" ||
         target.kind == "general" || target.kind == "category" || target.kind == "desktop";
+}
+Value DescribeGlobalSettingsFields()
+{
+    return Schema({"global", {}});
 }
 Value HandleGlobalSettings(std::string_view method, const Value& params, const Target& target, const GlobalSettingsContext& context)
 {

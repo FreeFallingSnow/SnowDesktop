@@ -6,11 +6,13 @@
 
 #include <windows.h>
 #include <d2d1_1.h>
+#include <wrl/client.h>
 #include "icons/icon_beautify.h"
 #include "ui/render/icon_backdrop_clip.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <future>
 #include <memory>
 #include <optional>
@@ -18,7 +20,10 @@
 #include <string>
 
 struct ID2D1Device;
+struct IDCompositionDevice2;
+struct IDCompositionVisual;
 namespace snowdesktop::popup_motion_curve { struct Timeline; }
+namespace snowdesktop::widget_runtime { struct NativeMarqueeText; struct WidgetImageSpin; }
 namespace snowdesktop
 {
 struct PanelBackdropIcon
@@ -132,7 +137,8 @@ public:
     /** @brief 恢复普通面板及根视觉；与后续正常属性更新一起提交。 */
     void ClearGenieTransform();
     /** @brief 开始收集一帧的玻璃区域。完整帧会在 EndFrame 清理未再次出现的视觉。 */
-    void BeginFrame(bool completeCollection);
+    void BeginFrame(bool completeCollection, const RECT* desktopIconDamage = nullptr);
+    void QueueIconPanelRecollection(const RECT& iconFrame, std::uintptr_t ownerKey);
     // Dock full redraws collect plain panel data until their content surface
     // is ready. No live visual, native region, or seen flag changes here, so
     // another target's shared-controller commit cannot publish this candidate.
@@ -145,7 +151,8 @@ public:
     bool CollectStagedPanelIcon(std::uintptr_t ownerKey, snowdesktop::PanelBackdropIcon icon);
     // Apply regions to the existing rounded panel, sampling its backdrop once.
     bool SetPanelIconRegions(std::uintptr_t ownerKey, ID2D1Device* drawDevice,
-        std::span<const snowdesktop::PanelBackdropIcon> icons, bool extendOutline);
+        std::span<const snowdesktop::PanelBackdropIcon> icons, bool extendOutline,
+        float configuredIconBlur = 0.0f, bool iconsOnly = false);
     // Extra popup allocation for shared Dock icons, with a fixed screen-space display clip.
     bool SetPopupWindowPadding(const RECT& padding, const RECT& displayBounds);
     /**
@@ -166,10 +173,57 @@ public:
     // The clip is local to a fixed sampling envelope and can animate independently.
     bool AddClippedPanel(const RECT& envelope, ID2D1Geometry* clip,
         float blurRadius, std::uintptr_t ownerKey);
-    bool StageSrgbContent(HWND window, std::uintptr_t key, const RECT& clientFrame,
-        ID2D1DeviceContext* context, POINT atlasOffset);
-    bool PublishSrgbContent(std::uintptr_t key, float opacity = 1.0f);
+    class SrgbSceneRecording
+    {
+    public:
+        explicit SrgbSceneRecording(ID2D1DeviceContext* context);
+        ~SrgbSceneRecording();
+        SrgbSceneRecording(const SrgbSceneRecording&) = delete;
+        SrgbSceneRecording& operator=(const SrgbSceneRecording&) = delete;
+
+        HRESULT Finish();
+        ID2D1CommandList* Scene() const noexcept { return scene_.Get(); }
+
+    private:
+        ID2D1DeviceContext* context_ = nullptr;
+        Microsoft::WRL::ComPtr<ID2D1Image> target_;
+        Microsoft::WRL::ComPtr<ID2D1CommandList> scene_;
+    };
+
+    using SrgbSceneDraw = std::function<HRESULT(ID2D1DeviceContext*, POINT)>;
+    struct SrgbMarqueeScene;
+    using PreparedMarquees = std::shared_ptr<SrgbMarqueeScene>;
+    PreparedMarquees PrepareSrgbMarquees(HWND window, std::uintptr_t key, ID2D1Device* device,
+        const RECT& clientFrame, const RECT& allowed,
+        std::span<const snowdesktop::widget_runtime::NativeMarqueeText> marquees);
+    bool PauseSrgbMarquees(std::uintptr_t key);
+    struct SrgbImageSpinScene;
+    using PreparedImageSpin = std::shared_ptr<SrgbImageSpinScene>;
+    PreparedImageSpin PrepareSrgbImageSpin(HWND window, std::uintptr_t key, ID2D1Device* device,
+        const RECT& clientFrame, const snowdesktop::widget_runtime::WidgetImageSpin& image);
+    bool MatchesSrgbImageSpin(std::uintptr_t key, const PreparedImageSpin& spin) const noexcept;
+    bool PauseSrgbImageSpin(std::uintptr_t key);
+    bool StageSrgbSceneFrame(HWND window, std::uintptr_t key, const RECT& clientFrame,
+        ID2D1Device* device, const SrgbSceneDraw& draw);
+    bool StageSrgbScene(HWND window, std::uintptr_t key, const RECT& clientFrame,
+        ID2D1DeviceContext* context, POINT atlasOffset, ID2D1CommandList* scene,
+        const RECT* paintRect = nullptr);
+    bool PublishSrgbScene(HWND window, std::uintptr_t key, const RECT& clientFrame,
+        ID2D1DeviceContext* context, POINT atlasOffset, ID2D1CommandList* scene, float opacity = 1.f,
+        PreparedMarquees marquees = {}, PreparedImageSpin spin = {});
+    HRESULT UpdateSrgbScene(std::uintptr_t key, const RECT& damage, const SrgbSceneDraw& draw);
+    HRESULT UpdateSrgbScene(std::uintptr_t key, const RECT& damage,
+        ID2D1CommandList* scene, POINT atlasOffset);
+    bool PresentPremultipliedPixels(HWND window, SIZE size, const std::uint32_t* pixels);
+    bool PublishSrgbContent(std::uintptr_t key, float opacity = 1.0f,
+        PreparedMarquees marquees = {}, PreparedImageSpin spin = {});
     bool HasSrgbContent(std::uintptr_t key) const noexcept;
+    // Keep the DirectComposition surface attached. Retire its old highlight
+    // visual after DirectComposition accepts the ordinary highlight replacement.
+    HRESULT SetDirectContentForSrgb(std::uintptr_t key, bool srgbPublished,
+        IDCompositionDevice2* device, IDCompositionVisual* visual, IUnknown* surface);
+    void RetireSrgbAfterDirectCommit(std::uintptr_t key);
+    void OnDirectContentCommitted(IDCompositionDevice2* device);
     void RemoveSrgbContent(std::uintptr_t key);
     void SetSrgbContentOrder(std::span<const std::uintptr_t> bottomToTop);
     void SetSrgbContentOpacity(std::uintptr_t key, float opacity);
@@ -200,28 +254,30 @@ public:
     bool KeepPanel(const RECT& frame, std::uintptr_t ownerKey = 0);
     /** @brief 修改指定面板透明度；由 CommitVisualChanges 统一提交。 */
     bool SetPanelOpacity(const RECT& frame, float opacity, std::uintptr_t ownerKey = 0);
+    bool StartOwnerFadeOut(std::uintptr_t ownerKey, float fromOpacity,
+        UINT durationMilliseconds, float normalizedStartSlope);
     /** @brief 修改根视觉透明度；由 CommitVisualChanges 统一提交。 */
     bool SetVisualOpacity(float opacity);
     // Translation stays inside the stable popup allocation; no AppBar movement.
     void SetVisualTranslation(float x, float y);
+    // Both Windows Composition roots use the same offset = base + factor * progress.
+    // The caller owns the matching DirectComposition content and the input geometry.
+    [[nodiscard]] bool StartRootTranslationAnimation(
+        const snowdesktop::popup_motion_curve::Timeline& progress,
+        float baseX, float baseY, float factorX, float factorY, bool includeGlass,
+        bool presentOnBackdrop = false);
+    bool StopRootTranslationAnimation(float x, float y);
     /** @brief 立即提交同线程所有 backdrop 目标的共享视觉事务，不等待 GPU 完成。 */
     void CommitVisualChanges();
     // Submit a completed EndFrame(false) after the matching content commit.
     void CommitDeferredFrame();
     /**
-     * @brief 提交共享视觉事务，并在该批次真正完成后投递窗口消息。
-     *
-     * 用于跨 HWND 的视觉交接；接收方可在通知后安全回收旧目标，避免
-     * 合成提交尚未完成时提前隐藏旧玻璃层。
-     */
-    bool CommitVisualChangesAndNotify(
-        HWND notifyWindow, UINT message, WPARAM token);
-    /**
      * @brief 结束本帧面板集合并同步辅助窗口区域。
-     * @param requestCommit 是否立即执行合成提交；跨目标交接可延后到
-     *        两侧属性全部设置后，通过 CommitVisualChangesAndNotify 一次提交。
+     * @param requestCommit 是否立即执行合成提交。跨目标交接可在属性准备完成后一起提交。
      */
     void EndFrame(bool requestCommit = true);
+    /** @brief 释放背景辅助窗口和面板，保留内容窗口的 sRGB 合成层。 */
+    void ResetBackdrop();
     /** @brief 销毁合成目标和辅助窗口。 */
     void Reset();
 

@@ -357,6 +357,7 @@
 ---@field spinSpeed? number Clockwise degrees per second (0–360) for a circular desktop image on a separate composition layer. Zero pauses the rotation. Probe view.imageSpin first.
 ---@field alt? string Required by image and referenceIcon nodes; use an empty string for decorative visuals.
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
+---@field glyphInkCentered? boolean Center the visible outline for icon and iconButton. Requires view.icon.glyphInk.
 ---@field shape? 'rectangle'|'roundedRectangle'|'circle'|'ellipse'
 ---@field orientation? 'horizontal'|'vertical' Divider, radioGroup/slider, scroll, eager list, or virtualList axis; scroll and lists default to vertical.
 ---@field value? number|string Numeric progress/slider/numberInput value, or controlled textInput/textArea/searchBox string.
@@ -383,7 +384,7 @@
 ---@field required? boolean Text-like, numeric, and select form requirement exposed through host accessibility semantics; it does not validate or block submission.
 ---@field validationState? SnowViewValidationState Input/select validation state; defaults to none.
 ---@field validationMessage? string Bounded validation detail exposed as semantic help text; render a text node too when the message must be visibly persistent.
----@field maxBytes? integer Input UTF-8 limit from 0/default through 65536; declarative default is the 4096-byte node limit.
+---@field maxBytes? integer Input UTF-8 limit from 0/default through 65536. With view.textArea.largeValue, textArea accepts up to 262144 bytes and uses a separate 256 KiB tree budget when maxBytes exceeds 4096.
 ---@field thickness? number Progress or data-series stroke thickness.
 ---@field trackOpacity? number Progress track or chart guide opacity between 0 and 1.
 ---@field fillOpacity? number Progress or data-series foreground opacity between 0 and 1.
@@ -451,8 +452,10 @@
 ---@field sticky? boolean ListItem-only opt-in that pins headers inside the nearest vertical scroll while their eager list remains visible. Requires view.collection.stickyHeaders.
 ---@field busy? boolean Common host-observable busy state; collection loadingContent becomes active when supplied.
 ---@field showScrollbar? boolean Scroll or virtual-collection host scrollbar visibility; defaults to true.
+---@field edgeFade? number Fade length for scroll and virtual collections, 0..4096. Requires view.scroll.edgeFade.
 ---@field textAlign? 'start'|'center'|'end'
 ---@field verticalAlign? 'start'|'center'|'end' Text block alignment inside the node; defaults to center.
+---@field textInkAligned? boolean Use visible text bounds for textAlign and verticalAlign on text, badge, button and link. Requires view.text.inkAlignment.
 ---@field textWrap? SnowViewTextWrap Defaults to noWrap, except styledText defaults to wrap.
 ---@field maxLines? integer Maximum rendered lines from 0/unlimited through 64.
 ---@field overflowText? SnowViewTextOverflow Defaults to ellipsis, except styledText defaults to clip.
@@ -567,6 +570,7 @@
 ---@field key string Stable key, 1..128 UTF-8 bytes.
 ---@field shape SnowInteractionShape
 ---@field cursor? 'default'|'hand'|'text'|'crosshair'
+---@field dragImage? SnowImageResource Live runtime image for a native copy drag from this region. Requires interaction.dragImage.
 ---@field tooltip? string|SnowTooltipDescriptor Bounded host tooltip; descriptor form additionally requires interaction.tooltip.rich.
 ---@field capturePointer? boolean Keep primary-pointer move/up routed to this stable key until release or host cancellation; requires interaction.pointerCapture plus pointerMove or pointerUp.
 ---@field events? SnowInteractionEvents
@@ -733,6 +737,7 @@
 ---@field reason? string
 ---@field topic? string Updated data subscription topic for data.change.
 ---@field revision? integer Monotonic provider revision for data.change.
+---@field clipboard? SnowClipboardChangeValue Content for the clipboard.changes topic.
 ---@field slotId? string Manifest logical-slot ID for slot.changed.
 ---@field slotKind? 'binding'|'collection' Logical slot model kind for slot.changed.
 ---@field operation? 'bound'|'replaced'|'added'|'removed'|'moved'|'transferred'|'cleared'|'availability'|'undone'|'redone' Logical slot transaction for slot.changed.
@@ -935,6 +940,7 @@
 ---@field height number Nonnegative visible glyph height in logical drawing units; raster hinting may change final pixel bounds slightly.
 
 ---@class SnowMarqueeTextOptions
+---@field inkCentered? boolean Vertically center visible text in the viewport. Requires draw.text.inkAlignment.
 ---@field key string Stable 1..128-byte key used to preserve the native scroll phase across data refreshes.
 ---@field x number Viewport x in desktop render coordinates.
 ---@field y number Viewport y in desktop render coordinates.
@@ -1725,6 +1731,22 @@ function animation.cancelFrame(id) end
 ---@field revision integer
 ---@field overflow boolean True when changes were lost and the caller should run filesystem.list again.
 
+---@class SnowClipboardChangeValue
+---@field format 'text'|'image'|'file-names'|'empty'
+---@field text? string UTF-8 text up to 262144 bytes.
+---@field rgb? string Packed RGB bytes in row order.
+---@field width? integer Thumbnail width, up to 32 pixels.
+---@field height? integer Thumbnail height, up to 32 pixels.
+---@field image? SnowImageResource Session image, available with data.clipboard.changes.image and subject to runtime cache limits.
+---@field imageWidth? integer Width of the retained image in pixels.
+---@field imageHeight? integer Height of the retained image in pixels.
+---@field imageId? string Content identity for equality in the current session. Requires clipboard.imageIdentity.
+---@field names? string[] At most 32 file or folder display names.
+---@field pathRefs? string[] Opaque file path references matching names, for clipboard.write with file-paths. Requires clipboard.filePaths and clipboard.read.
+---@field error? string Capture error for empty events.
+
+---@class SnowClipboardChangesDataValue Empty. Read status from the envelope and content from data.change events.
+
 ---@class SnowDataSnapshot<T>
 ---@field available boolean
 ---@field value? T
@@ -1783,6 +1805,7 @@ data = {}
 ---@overload fun(topic: 'calendar.selectedDate', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowCalendarSelectedDateDataValue>
 ---@overload fun(topic: 'app.indexStatus', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAppIndexStatusDataValue>
 ---@overload fun(topic: 'filesystem.watch', options: SnowFilesystemWatchSubscribeOptions): SnowDataSubscription<SnowFilesystemWatchDataValue>
+---@overload fun(topic: 'clipboard.changes', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowClipboardChangesDataValue>
 ---@param topic string
 ---@param options? SnowDataSubscribeOptions
 ---@return SnowDataSubscription<table>
@@ -1891,7 +1914,11 @@ function data.subscribe(topic, options) end
 ---@field format 'file-reference' Requires task.clipboard.fileReference.write.
 ---@field items string[] One to 32 current clipboard item refs or readable filesystem handles owned by this instance.
 
----@alias SnowClipboardWriteArguments SnowClipboardTextWriteArguments|SnowClipboardHtmlWriteArguments|SnowClipboardImageWriteArguments|SnowClipboardFileReferenceWriteArguments
+---@class SnowClipboardFilePathsWriteArguments
+---@field format 'file-paths' Requires clipboard.filePaths.
+---@field items string[] One to 32 current clipboard file path references owned by this instance.
+
+---@alias SnowClipboardWriteArguments SnowClipboardTextWriteArguments|SnowClipboardHtmlWriteArguments|SnowClipboardImageWriteArguments|SnowClipboardFileReferenceWriteArguments|SnowClipboardFilePathsWriteArguments
 
 ---@class SnowClipboardTextReadTaskValue
 ---@field format 'text'
@@ -1904,8 +1931,9 @@ function data.subscribe(topic, options) end
 ---@class SnowClipboardImageReadTaskValue
 ---@field format 'image'
 ---@field image SnowImageResource Temporary instance-scoped image handle for draw.image or view.image.source; do not persist it.
----@field width integer Decoded width after host scaling, from 1 through 512.
----@field height integer Decoded height after host scaling, from 1 through 512.
+---@field width integer Width of the decoded image in pixels.
+---@field height integer Height of the decoded image in pixels.
+---@field imageId? string Matches clipboard.changes for the same decoded image. Requires clipboard.imageIdentity.
 
 ---@class SnowClipboardFileReference
 ---@field ref string Opaque instance-scoped item reference accepted by draw.icon and shell.openItem/revealItem; never a path or file-content grant.
@@ -2525,7 +2553,12 @@ draw = {}
 ---@param maxHeight? number
 ---@param alpha? number
 ---@param font? SnowFontResource
-function draw.text(x, y, text, size, color, maxWidth, bold, singleLine, maxHeight, alpha, font) end
+---@param inkAlignment? SnowDrawTextInkAlignment
+function draw.text(x, y, text, size, color, maxWidth, bold, singleLine, maxHeight, alpha, font, inkAlignment) end
+
+---@class SnowDrawTextInkAlignment Requires draw.text.inkAlignment.
+---@field x? 'start'|'center'|'end' Anchor x to the visual left edge, midpoint or right edge.
+---@field y? 'start'|'center'|'end' Anchor y to the visual top edge, midpoint or bottom edge.
 
 ---Draw single-line overflow text with a host-native continuous marquee. Requires draw.marqueeText and a declared required/optional feature. The host caches the remaining immediate drawing and advances visible desktop frames without re-entering Lua.
 ---@param options SnowMarqueeTextOptions
@@ -2587,7 +2620,12 @@ function draw.strokeRect(x, y, width, height, color, radius, thickness, alpha) e
 ---@param y number
 ---@param width number
 ---@param height number
-function draw.pushClip(x, y, width, height) end
+---@param options? SnowDrawClipOptions
+function draw.pushClip(x, y, width, height, options) end
+
+---@class SnowDrawClipOptions Requires draw.clip.edgeFade.
+---@field scroll SnowInteractionScrollState The current state returned by interaction.scroll.
+---@field fadeLength number Maximum edge fade length in drawing units, 0..4096.
 
 function draw.popClip() end
 
@@ -2674,6 +2712,16 @@ function draw.fa(glyph, x, y, size, color) end
 ---@param size? number
 ---@param color? integer
 function draw.fluent(glyph, x, y, size, color) end
+
+---@param glyph string One Unicode scalar in the selected icon font.
+---@param centerX number
+---@param centerY number
+---@param size number
+---@param color? integer
+---@param iconFont? 'fluent'|'fluent-regular'|'fa'
+---@param alpha? number
+---@return boolean drawn
+function draw.glyph(glyph, centerX, centerY, size, color, iconFont, alpha) end
 
 ---Draw the Shell icon for an opaque ref returned by app.search,
 ---desktop.search, or everything.search. Requires desktop.read.

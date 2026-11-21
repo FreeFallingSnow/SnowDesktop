@@ -1,7 +1,12 @@
 #pragma once
 
-#include "widget_package.h"
+#include "widget_package_catalog_snapshot.h"
 #include "steam/steam_workshop_sync.h"
+
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace snowdesktop::widget
 {

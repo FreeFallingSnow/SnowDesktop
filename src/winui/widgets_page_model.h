@@ -278,6 +278,7 @@ struct InstalledWidgetPackageSnapshot
     bool canInstallDevelopmentSnapshot = false;
     bool canPublishDevelopmentPackage = false;
     bool canExportDevelopmentPackage = false;
+    bool hasInstalledVersion = false;
     std::vector<WidgetRestorableVersionSnapshot> restorableVersions;
     WidgetPackagePermissionState permissionState =
         WidgetPackagePermissionState::LegacyImplicit;

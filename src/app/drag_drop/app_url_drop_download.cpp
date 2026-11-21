@@ -125,6 +125,7 @@ bool DesktopApp::QueueUrlDropDownload(
     request.destinationDirectory = destinationDirectory;
     request.maximumBytes = 64ull * 1024ull * 1024ull;
     request.timeoutMs = 10000;
+    completion->visualId = BeginFileDropRead(completion->preview, false);
     const bool queued = urlDropDownloadWorker_.Enqueue(
         std::move(request),
         [completionWindow, completion](
@@ -139,7 +140,10 @@ bool DesktopApp::QueueUrlDropDownload(
             }
         });
     if (!queued)
+    {
+        TakeFileDropVisual(completion->visualId);
         delete completion;
+    }
     return queued;
 }
 
@@ -218,6 +222,7 @@ void DesktopApp::OnUrlDropDownloadCompleted(LPARAM lParam)
     std::unique_ptr<UrlDropDownloadUiCompletion> completion(
         reinterpret_cast<UrlDropDownloadUiCompletion*>(lParam));
     if (!completion) return;
+    TakeFileDropVisual(completion->visualId);
     if (exitRequested_)
     {
         DiscardDownloadedUrlDropFile(completion->result);
@@ -415,7 +420,10 @@ void DesktopApp::StopUrlDropDownloadWorker()
                 reinterpret_cast<UrlDropDownloadUiCompletion*>(
                     message.lParam);
             if (completion)
+            {
+                TakeFileDropVisual(completion->visualId);
                 DiscardDownloadedUrlDropFile(completion->result);
+            }
             delete completion;
         }
     }

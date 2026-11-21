@@ -143,15 +143,26 @@ function Get-CompactCollaborationStatus($State,[string]$Participant,$Current,$Re
         current=(Get-CompactBatch $Current $Participant);activeCandidates=@($candidates|Select-Object -Last 8|ForEach-Object {Get-CompactBatch $_ $Participant});
         activeCandidateCount=$candidates.Count;activeCandidatesTruncated=($candidates.Count -gt 8);recentEvents=$recent;recentEventsTruncated=($events.Count -gt 8);
         result=$(if($Result){[pscustomobject]@{batchId=$Result.batchId;outcome=$Result.outcome;exitCode=$Result.exitCode;runId=(Get-Field $Result 'runId');recovery=(Get-Field $Result 'recovery')}}else{$null});
-        observation='Atomic read-only summary; use status without -Compact for full details, event-read for event text. Reading does not acknowledge events.'}
+        observation='Atomic read-only summary; use status -FullResult for full details, event-read for event text. Reading does not acknowledge events.'}
 }
 function Get-CompactBatchResult($Result,[string]$ResultPath) {
     $coverage=Get-Field $Result 'coverage';$completed=@(Get-Field $coverage 'completed' @())
+    $product=Get-Field $Result 'productBuild'
+    $activation=Get-Field $Result 'activation'
+    $productFailed=$product -and $null -ne $product.exitCode -and $product.exitCode -ne 0
+    $errorText=Get-Field $Result 'error' ''
+    $logPath=Get-Field $Result 'logPath'
+    if($productFailed){
+        $logPath=Get-Field $product 'logPath' $logPath
+        if(-not $errorText){$errorText="Product build failed (exit $($product.exitCode)). See the product build log."}
+    }
     $failures=@($completed|Where-Object {$_.status -in 'failed','invalidated','interrupted','cancelled'}|ForEach-Object name)
     $selectedCount=@(Get-Field $coverage 'selected' @()).Count
     $referencesCount=@(Get-Field $coverage 'references' @()).Count
     return [pscustomobject]@{schemaVersion=1;detail='compact';batchId=$Result.batchId;runId=(Get-Field $Result 'runId');
-        outcome=$Result.outcome;exitCode=$Result.exitCode;error=(Get-Field $Result 'error' '');resultPath=$ResultPath;
+        outcome=$Result.outcome;exitCode=$Result.exitCode;error=$errorText;resultPath=$ResultPath;logPath=$logPath;
+        productBuild=$(if($product){[pscustomobject]@{exitCode=$product.exitCode;logPath=(Get-Field $product 'logPath')}});
+        activation=$(if($activation){[pscustomobject]@{status=(Get-Field $activation 'status');error=(Get-Field $activation 'error')}});
         inputCheck=(Get-Field $Result 'inputCheck');recovery=(Get-Field $Result 'recovery');
         selectedCount=$selectedCount;completedCount=$completed.Count;
         passedCount=@($completed|Where-Object status -eq 'passed').Count;failedCount=$failures.Count;
@@ -287,7 +298,47 @@ function Assert-TestOnlyPlan($Plan) {
         throw 'Test-only plans require reviewed inputs within tests/; product or build input changes keep their normal scope.'
     }
 }
-function New-TaskPlan($Entry, [string]$Scope, [string]$Suites, [string]$Tests, [string]$Inputs, [string]$Reason) {
+function Get-BatchSubmitterSelectors {
+    $selectors=[ordered]@{}
+    foreach($name in @('CMAKE_GENERATOR','CMAKE_GENERATOR_PLATFORM','CMAKE_GENERATOR_TOOLSET','CMAKE_GENERATOR_INSTANCE',
+        'CMAKE_TOOLCHAIN_FILE','CC','CXX','VCINSTALLDIR','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion')){
+        $selectors[$name]=Get-VerificationTextDigest ([string][Environment]::GetEnvironmentVariable($name,'Process'))
+    }
+    return [pscustomobject]$selectors
+}
+function Assert-BatchSubmitterSelectors($Plan) {
+    $actual=Get-BatchSubmitterSelectors
+    foreach($member in @($Plan.tasks|Where-Object {$_.requirement.source -eq 'task-declared'})){
+        $expected=Get-Field $member.requirement 'submitterSelectors'
+        if(-not $expected){continue}
+        $changed=@($actual.PSObject.Properties|Where-Object {(Get-Field $expected $_.Name) -ne $_.Value}|ForEach-Object Name)
+        if($changed.Count){
+            throw ('Current waiting process does not match the toolchain declared by '+$member.participant+': '+($changed -join ', ')+'. Continue from a matching waiting context or reopen and align the affected plans.')
+        }
+    }
+}
+function Write-BatchBuildAdvice($Plan,$InputStart) {
+    if(-not $Plan.buildRequired){return}
+    foreach($source in @($Plan.repairSources)){
+        $failed=Read-Result $source.parentBatchId
+        $previous=Get-Field $failed 'originalInputStart' (Get-Field $failed 'inputStart')
+        $product=Get-Field $failed 'productBuild'
+        if($previous -and $previous.digest -eq $InputStart.digest -and $product -and $product.exitCode -ne 0){
+            [Console]::Error.WriteLine('Build advice: repair '+$source.parentBatchId+' still has the same checkout inputs as its failed product build. Inspect '+$product.logPath+' and confirm the failed dependency or toolchain changed.')
+        }
+    }
+    $active=Read-EntryJson (Join-Path $stateRoot 'activation-current.json')
+    $id=Get-Field $active 'runId'
+    if($id -notmatch '^[a-f0-9]{32}$'){return}
+    $saved=Read-EntryJson (Join-Path $stateRoot ('runs/'+$id+'.json'))
+    $binding=Get-Field $saved 'candidateBinding'
+    $product=Get-Field $saved 'productBuild'
+    if((Get-Field $binding 'originalInputDigest') -eq $InputStart.digest -and $product -and $product.exitCode -eq 0 -and
+        [IO.File]::Exists((Join-Path $repositoryRoot ('.build/candidate-artifacts/'+$id+'/runtime/SnowDesktop.exe')))){
+        [Console]::Error.WriteLine('Build advice: active Run '+$id+' already built matching checkout inputs. Verify its toolchain, saved product and requested test binaries before considering no-build verification; the declared plan is unchanged.')
+    }
+}
+function New-TaskPlan($Entry, [string]$Scope, [string]$Suites, [string]$Tests, [string]$Inputs, [string]$Reason,[string]$TemporaryVerification='') {
     $suiteList = @($Suites.Split(',') | Where-Object { $_ } | Sort-Object -Unique)
     if ($suiteList.Count -eq 0 -or @($suiteList | Where-Object { $_ -notin 'full','core','fast','tools','selected','none' }).Count) { throw 'Suites must be full/core/fast/tools/selected/none.' }
     if ($suiteList -contains 'tools') { throw 'Tool tests have been removed; use task-scoped temporary verification instead.' }
@@ -297,7 +348,13 @@ function New-TaskPlan($Entry, [string]$Scope, [string]$Suites, [string]$Tests, [
     foreach ($path in $paths) {
         if ($path -eq '.' -or [IO.Path]::IsPathRooted($path) -or $path -match '(^|[\\/])\.\.([\\/]|$)|[:*?"<>|]' -or $path -match '^(\.git|\.build|\.codex-probes)([\\/]|$)') { throw 'Inputs must be literal repository-relative paths, outside generated/state directories.' }
     }
-    if ($suiteList -contains 'none' -and ($suiteList.Count -ne 1 -or $names.Count -gt 0 -or $Scope -notin 'docs','component','tool')) { throw 'Explicit no-host-tests is limited to docs/component/tool and cannot be mixed with tests.' }
+    $temporaryOnly=$Scope -eq 'module' -and -not [string]::IsNullOrWhiteSpace($TemporaryVerification)
+    if($TemporaryVerification -and (-not $temporaryOnly -or $suiteList.Count -ne 1 -or $suiteList[0] -ne 'none')){
+        throw 'TemporaryVerification describes the separate observation for a module plan with -Suites none.'
+    }
+    if ($suiteList -contains 'none' -and ($suiteList.Count -ne 1 -or $names.Count -gt 0 -or ($Scope -notin 'docs','component','tool' -and -not $temporaryOnly))) {
+        throw 'No CTest suite is allowed for docs/component/tool, or for module with explicit -TemporaryVerification, and cannot be mixed with test names.'
+    }
     if (($suiteList -contains 'selected') -and $names.Count -eq 0) { throw 'Selected tests must not be empty.' }
     if ([string]::IsNullOrWhiteSpace($Reason) -or $paths.Count -eq 0) { throw 'A plan requires Inputs and a reason/dependency mapping (or exemption basis); full also requires the concrete need for whole-product coverage.' }
     # Scope describes impact, not permission to expand the selected tests.
@@ -307,6 +364,7 @@ function New-TaskPlan($Entry, [string]$Scope, [string]$Suites, [string]$Tests, [
     $plan=[pscustomobject]@{ schemaVersion=1; scope=$Scope; suites=$suiteList; tests=$names; inputs=$paths;
         reason=$Reason; editRevision=(Get-EditRevision $Entry); source='task-declared'; lightChecks=@('builtin-basic'); requiredFull=$requiredFull;
         escalationReason=$(if($requiredFull){$Reason}else{''}); inputIdentity=$null }
+    if($temporaryOnly){Set-Field $plan 'temporaryVerification' $TemporaryVerification.Trim()}
     Assert-TestOnlyPlan $plan
     return $plan
 }
@@ -343,13 +401,11 @@ function Get-TaskIdentity($Plan) {
     $listing = Invoke-InputGit $repositoryRoot 'ls-files -z --cached --others --exclude-standard'
     if ($listing.code -ne 0) { throw 'Cannot enumerate declared task inputs.' }
     $selected = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-    $scoped=(Get-Field $Plan 'independent' $false) -and (Get-Field $Plan 'source') -eq 'task-declared'
-    $pathComparison=if($scoped){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
     foreach ($declared in $paths) {
         $declared = $declared.Replace('\','/').TrimEnd('/')
         [void]$selected.Add($declared) # also records missing/deleted files
         foreach ($file in $listing.output.Split([char]0)) {
-            if ($file -eq $declared -or $file.StartsWith($declared + '/', $pathComparison)) { [void]$selected.Add($file) }
+            if ($file -eq $declared -or $file.StartsWith($declared + '/', [StringComparison]::OrdinalIgnoreCase)) { [void]$selected.Add($file) }
         }
     }
     $sha = [Security.Cryptography.SHA256]::Create(); $text = New-Object Text.StringBuilder
@@ -368,29 +424,33 @@ function Get-TaskIdentity($Plan) {
     } finally { $sha.Dispose() }
     return [pscustomobject]@{ algorithm='sha256-declared-paths-v1'; digest=$digest; fileCount=$selected.Count }
 }
-function Invoke-LightCheck($Plan) {
+function Invoke-LightCheck($Plan,[switch]$WholeCheckout) {
     # No build, shared artifacts, host startup or arbitrary user command.
     $issues=New-Object 'System.Collections.Generic.List[string]'
     $allowed=@(Get-Field $Plan 'inputs' @())
-    $scoped=(Get-Field $Plan 'independent' $false) -and (Get-Field $Plan 'source') -eq 'task-declared'
-    $pathComparison=if($scoped){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::CurrentCulture}
-    if($scoped){
-        if(-not $allowed.Count){throw 'Independent light check requires explicit literal input paths.'}
-        # Normalize-OwnedPath rejects quotes and uses forward slashes. Git
-        # receives literal, case-insensitive pathspecs through argv, no shell.
+    $pathspecs=''
+    if(-not $WholeCheckout -and (Get-Field $Plan 'source') -ne 'repair-carried'){
+        if(-not $allowed.Count){throw 'Light check requires explicit literal input paths.'}
         $pathspecs=($allowed|ForEach-Object {'":(literal,icase)'+(Normalize-OwnedPath $_)+'"'}) -join ' '
-        $diff=Invoke-InputGit $repositoryRoot ('diff --check HEAD -- '+$pathspecs)
-    }else{$diff=Invoke-InputGit $repositoryRoot 'diff --check'}
+    }
+    $diff=Invoke-InputGit $repositoryRoot ('diff --check HEAD -- '+$pathspecs)
     if ($diff.code -ne 0) { $issues.Add(('git diff --check: ' + $diff.output + $diff.error).Trim()) }
-    $changed=Invoke-InputGit $repositoryRoot 'diff --name-only -z HEAD'
-    $untracked=Invoke-InputGit $repositoryRoot 'ls-files -z --others --exclude-standard'
+    $changed=Invoke-InputGit $repositoryRoot ('diff --name-only -z HEAD -- '+$pathspecs)
+    $untracked=Invoke-InputGit $repositoryRoot ('ls-files -z --others --exclude-standard -- '+$pathspecs)
     if ($changed.code -ne 0 -or $untracked.code -ne 0) { throw 'Cannot determine lightweight check scope.' }
+    $newFiles=@($untracked.output.Split([char]0) | Where-Object { $_ })
     $candidates=@(($changed.output + $untracked.output).Split([char]0) | Where-Object { $_ } | Sort-Object -Unique)
     $checked=New-Object 'System.Collections.Generic.List[string]'
     foreach ($relative in $candidates) {
-        if ($allowed.Count -gt 0 -and @($allowed | Where-Object { $relative -eq $_ -or $relative.StartsWith($_.TrimEnd('/') + '/', $pathComparison) }).Count -eq 0) { continue }
         $absolute=Join-Path $repositoryRoot $relative
         if (-not [IO.File]::Exists($absolute)) { continue }
+        if($relative -in $newFiles){
+            $normalized=Normalize-OwnedPath $relative
+            $newDiff=Invoke-InputGit $repositoryRoot ('diff --no-index --check -- /dev/null "'+$normalized+'"')
+            if($newDiff.output -or $newDiff.code -notin 0,1){
+                $issues.Add(("git diff --check (${relative}): "+$newDiff.output+$newDiff.error).Trim())
+            }
+        }
         if ($relative.EndsWith('.ps1',[StringComparison]::OrdinalIgnoreCase)) {
             $tokens=$null; $parseErrors=$null
             [void][Management.Automation.Language.Parser]::ParseFile($absolute,[ref]$tokens,[ref]$parseErrors)
@@ -417,7 +477,10 @@ function New-FrozenPlan($Current) {
         # docs/tool exemptions can join a test-only repair, while any product
         # obligation must still require its normal complete product build.
         $declared=@((Get-Field $entry 'testPlan'))+@(Get-Field $entry 'repairRequirements' @()|ForEach-Object {$_.requirement})
-        foreach($requirement in $declared){Assert-TestOnlyPlan $requirement}
+        foreach($requirement in $declared){
+            Assert-TestOnlyPlan $requirement
+            if(Get-Field $requirement 'temporaryVerification'){$build=$true;$exclusive=$true}
+        }
         $plan=Get-EffectiveTaskPlan $entry
         if ($plan.editRevision -ne (Get-EditRevision $entry)) { throw "Plan is stale for $($entry.id); reopen/update plan before ready." }
         if ($plan.source -eq 'task-declared' -and $plan.inputIdentity -and (Get-TaskIdentity $plan).digest -ne $plan.inputIdentity.digest) { throw "Declared inputs changed after ready for $($entry.id); reopen and update plan." }

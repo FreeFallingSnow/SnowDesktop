@@ -4,6 +4,7 @@
  */
 
 #include "deployment_context.h"
+#include "platform/application_version.h"
 #include "injectable_runtime_cache.h"
 #include "hook_entry_deployment.h"
 #include "data/data_paths.h"
@@ -43,7 +44,6 @@ constexpr wchar_t kRuntimeDirectory[] = L"SnowDesktop.Runtime";
 constexpr wchar_t kTaskbarHookFilename[] = L"SnowDesktopTaskbarHook.dll";
 std::mutex injectableDeploymentMutex;
 constexpr wchar_t kRuntimeHookOwnerLockFilename[] = L".owner.lock";
-constexpr wchar_t kVersion[] = SNOWDESKTOP_WIDEN(SNOWDESKTOP_VERSION);
 constexpr wchar_t kStoreId[] = SNOWDESKTOP_WIDEN(SNOWDESKTOP_STORE_ID);
 constexpr wchar_t kPackageFamilyName[] =
     SNOWDESKTOP_WIDEN(SNOWDESKTOP_PACKAGE_FAMILY_NAME);
@@ -144,20 +144,6 @@ std::optional<std::wstring> PackagedStartupQueryTokenFromCommandLine()
     }
     LocalFree(arguments);
     return result;
-}
-
-std::wstring GetCurrentPackageFamilyNameString()
-{
-    UINT32 length = 0;
-    const LONG sizeResult = GetCurrentPackageFamilyName(&length, nullptr);
-    if (sizeResult != ERROR_INSUFFICIENT_BUFFER || length <= 1)
-        return {};
-
-    std::wstring familyName(length, L'\0');
-    if (GetCurrentPackageFamilyName(&length, familyName.data()) != ERROR_SUCCESS)
-        return {};
-    familyName.resize(length - 1);
-    return familyName;
 }
 
 bool IsBareFilename(const wchar_t* filename) noexcept
@@ -675,7 +661,7 @@ public:
         CleanupLegacyRuntimeRootsOnce(data);
         CleanupStaleRuntimeDirectories(copiesRoot_);
 
-        path_ = copiesRoot_ / (std::wstring(kVersion) + L"-" +
+        path_ = copiesRoot_ / (std::wstring(snowdesktop::ApplicationVersionWide()) + L"-" +
             std::to_wstring(GetCurrentProcessId()) + L"-" +
             std::to_wstring(GetTickCount64()));
         std::filesystem::create_directories(path_, error);
@@ -941,69 +927,6 @@ snowdesktop::deployment::PackagedAutoStartState RunStartupTaskOnMta(
 
 namespace snowdesktop::deployment
 {
-bool IsPackaged() noexcept
-{
-    static const bool packaged = [] {
-        UINT32 length = 0;
-        return GetCurrentPackageFullName(&length, nullptr) ==
-            ERROR_INSUFFICIENT_BUFFER;
-    }();
-    return packaged;
-}
-
-const RuntimeDeploymentContext& GetRuntimeDeploymentContext() noexcept
-{
-    static const RuntimeDeploymentContext context = [] {
-        std::wstring executable(32768, L'\0');
-        const DWORD length = GetModuleFileNameW(nullptr, executable.data(),
-            static_cast<DWORD>(executable.size()));
-        if (length == 0 || length >= executable.size())
-        {
-            RuntimeDeploymentContext failed;
-            failed.kind = RuntimeDeploymentKind::Invalid;
-            failed.explicitContext = true;
-            failed.error = "Current executable path is unavailable";
-            return failed;
-        }
-        executable.resize(length);
-        return ResolveRuntimeDeploymentContext(executable, IsPackaged());
-    }();
-    return context;
-}
-
-bool HasInvalidRuntimeDeploymentContext() noexcept
-{
-    return GetRuntimeDeploymentContext().kind ==
-        RuntimeDeploymentKind::Invalid;
-}
-
-std::wstring GetPackageLocalStatePath()
-{
-    if (!IsPackaged())
-        return {};
-
-    const std::wstring familyName = GetCurrentPackageFamilyNameString();
-    if (familyName.empty())
-        return {};
-
-    PWSTR localAppData = nullptr;
-    if (FAILED(SHGetKnownFolderPath(
-            FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &localAppData)))
-        return {};
-
-    std::filesystem::path path(localAppData);
-    CoTaskMemFree(localAppData);
-    path /= L"Packages";
-    path /= familyName;
-    path /= L"LocalState";
-
-    std::error_code error;
-    std::filesystem::create_directories(path, error);
-    if (error && !std::filesystem::is_directory(path))
-        return {};
-    return path.wstring();
-}
-
 std::wstring GetRuntimeFilePath(const wchar_t* filename)
 {
     if (!IsBareFilename(filename))

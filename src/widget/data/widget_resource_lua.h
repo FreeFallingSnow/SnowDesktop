@@ -1,7 +1,10 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
+#include <optional>
+#include <span>
 #include <string>
 
 extern "C" {
@@ -61,4 +64,31 @@ inline void PushResourceHandle(lua_State* state, LuaResourceType type,
     }
     lua_setmetatable(state, -2);
 }
+
+class WidgetPackageImageCache;
+
+// The engine provides its device and instance-owned caches. The package Lua
+// binding owns resource declarations, handles and status reporting.
+struct LuaResourceHost
+{
+    WidgetPackageImageCache* (*imageCache)(lua_State*);
+    bool (*ensureImageBitmap)(lua_State*, const std::string&);
+    std::string (*hashFile)(const std::wstring&);
+    std::string (*hashBytes)(std::span<const std::uint8_t>);
+    bool (*fontDeviceAvailable)(lua_State*);
+    bool (*preloadFont)(lua_State*, const std::wstring&);
+    bool (*hasPrivateFont)(lua_State*, const std::wstring&);
+    bool (*hasRuntimeImage)(lua_State*, const char*);
+};
+
+std::optional<std::wstring> ResolveResourceHandlePath(
+    lua_State* state, int index, LuaResourceType expected);
+std::optional<std::string> ResolveResourceHandleImageContentKey(
+    lua_State* state, int index);
+
+int lua_ResourceExists(lua_State* state);
+int lua_ResourceAudio(lua_State* state);
+int LoadLuaPackageImage(lua_State* state, const LuaResourceHost& host);
+int LoadLuaPackageFont(lua_State* state, const LuaResourceHost& host);
+int PushLuaResourceStatus(lua_State* state, const LuaResourceHost& host);
 }

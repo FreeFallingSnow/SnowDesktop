@@ -350,7 +350,7 @@ DesktopApp::ExportNativeComponentPreviews(
                     D2D1::ColorF(style.widgetBgR, style.widgetBgG, style.widgetBgB, style.widgetAlpha),
                     D2D1::ColorF(style.widgetBorderR, style.widgetBorderG, style.widgetBorderB, style.widgetBorderAlpha),
                     false, style.widgetBorderWidth * scale, &style, false, 0, scale);
-                brushCache_.clear(); brushCacheContext_ = nullptr;
+                drawing_.Reset();
             });
 
     if (request.component == "status-bar" && request.theme) return ExportThemeSurfacePreview(request);
@@ -362,7 +362,7 @@ DesktopApp::ExportNativeComponentPreviews(
                     D2D1::ColorF(fill.widgetBgR, fill.widgetBgG, fill.widgetBgB, fill.widgetAlpha),
                     D2D1::ColorF(0, 0.f), false, 0, &fill, false, 0, scale);
                 DrawStatusBarEdge(context, frame, style, scale, position);
-                brushCache_.clear(); brushCacheContext_ = nullptr;
+                drawing_.Reset();
             });
 
     if (request.component == "quick-navigation") return ExportQuickNavigationPreviews(request);
@@ -624,7 +624,7 @@ DesktopApp::ExportNativeComponentPreviews(
             const std::filesystem::path outputPath =
                 request.outputDirectory / variant.filename;
             if (!preview_png::Save(outputPath, canvas.width, canvas.height,
-                    canvas.pixels, result.error))
+                    canvas.pixels, result.error, preview_png::Filter::Adaptive))
             {
                 result.stage = "png." + std::string(definition.id) +
                     "." + variant.id;

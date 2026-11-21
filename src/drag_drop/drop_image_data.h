@@ -3,11 +3,21 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
+
+#include <windef.h>
 
 struct IDataObject;
+namespace snowdesktop::widget_runtime { struct WidgetRuntimeImagePixels; }
 
 namespace snowdesktop::drop_image_data
 {
+// Each successful call transfers ownership of the returned medium to the caller.
+HGLOBAL CreateDibV5(const widget_runtime::WidgetRuntimeImagePixels& image) noexcept;
+HRESULT CreateDragDataObject(
+    std::shared_ptr<const widget_runtime::WidgetRuntimeImagePixels> image,
+    IDataObject** result) noexcept;
+
 enum class SourceFormat : std::uint8_t
 {
     None,

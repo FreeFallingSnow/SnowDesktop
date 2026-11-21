@@ -1,4 +1,5 @@
 #include "lua_stack.h"
+#include "widget_group_membership.h"
 
 #include <algorithm>
 #include <set>
@@ -12,11 +13,7 @@ bool IsSurface(DesktopWidgetType type) noexcept
 
 size_t Owner(const std::vector<DesktopWidget>& widgets, std::wstring_view member)
 {
-    for (size_t i = 0; i < widgets.size(); ++i)
-        if (widgets[i].type == DesktopWidgetType::LuaStack &&
-            std::find(widgets[i].childWidgetIds.begin(), widgets[i].childWidgetIds.end(), member) !=
-                widgets[i].childWidgetIds.end()) return i;
-    return widgets.size();
+    return widget_groups::FindParent(widgets, member, DesktopWidgetType::LuaStack).value_or(widgets.size());
 }
 
 size_t Active(const std::vector<DesktopWidget>& widgets, size_t owner, const MemberDrag* presentation)

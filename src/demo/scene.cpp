@@ -132,7 +132,8 @@ Scene ParseScene(const Value& value)
     }
     for (const auto& entry : Entries(value, "surfaces", 12, true))
     {
-        Fields(entry, {"id", "kind", "title", "x", "y", "width", "height", "items", "children", "popup", "visible", "listMode", "showSearch", "showCategories", "scrollContainer"});
+        Fields(entry, {"id", "kind", "title", "x", "y", "width", "height", "items", "children", "popup", "visible",
+            "listMode", "showSearch", "showCategories", "scrollContainer", "dockAnchored", "fanPopup"});
         Surface surface; surface.id = Identifier(entry, "id");
         if (!surfaces.insert(surface.id).second) Invalid("Duplicate scene surface identity");
         surface.kind = StringField(entry, "kind", "collection", 32);
@@ -147,8 +148,13 @@ Scene ParseScene(const Value& value)
         surface.showSearch = Flag(entry, "showSearch", true); surface.showCategories = Flag(entry, "showCategories", true);
         surface.scrollContainer = Flag(entry, "scrollContainer", true);
         surface.popup = Flag(entry, "popup", false);
+        surface.dockAnchored = Flag(entry, "dockAnchored", false);
+        surface.fanPopup = Flag(entry, "fanPopup", false);
         if (surface.popup && surface.kind != "collection" && surface.kind != "files" && surface.kind != "mapping" &&
             surface.kind != "collection-group" && surface.kind != "file-group") Invalid("Only storage widgets support popup presentation");
+        if (surface.dockAnchored && !surface.popup) Invalid("Dock anchors require popup presentation");
+        if (surface.fanPopup && (!surface.dockAnchored || (surface.kind != "collection" &&
+            surface.kind != "files" && surface.kind != "mapping"))) Invalid("Fan presentation requires a Dock-anchored non-group storage popup");
         if (entry.Find("scrollContainer") && surface.kind != "collection") Invalid("Only collection supports scrollContainer");
         std::unordered_set<std::string> used;
         for (const auto& id : Entries(entry, "items", 128, false))
@@ -219,17 +225,22 @@ Scene ParseScene(const Value& value)
                 step.durationMs = Integer(entry, "durationMs", 1, scene.durationMs - step.atMs);
                 step.size = {Integer(entry, "width", 32, scene.width), Integer(entry, "height", 32, scene.height)};
             }
-            else if (step.action == "surface.view" || step.action == "surface.search" || step.action == "surface.category")
+            else if (step.action == "surface.view" || step.action == "surface.search" ||
+                step.action == "surface.category" || step.action == "surface.folderPreview")
             {
                 Fields(entry, {"action", "atMs", "target", "value"});
-                step.value = StringField(entry, "value", {}, 384, step.action == "surface.search");
+                const bool preview = step.action == "surface.folderPreview";
+                const bool search = step.action == "surface.search";
+                step.value = StringField(entry, "value", {}, 384, search || preview);
                 if (!entry.Find("value")) Invalid("Surface value is required");
                 if (step.action == "surface.view" && step.value != "grid" && step.value != "list") Invalid("Unknown native surface view");
                 const auto& targetSurface = *std::find_if(scene.surfaces.begin(), scene.surfaces.end(), [&](const Surface& surface) { return surface.id == step.target; });
                 const auto& kind = targetSurface.kind;
                 if (kind == "dock" || kind == "status-bar" ||
                     (step.action == "surface.view" && kind == "collection" && !targetSurface.scrollContainer) ||
-                    (step.action == "surface.search" && kind != "files" && kind != "mapping" && kind != "navigation") ||
+                    (search && kind != "files" && kind != "mapping" && kind != "navigation" &&
+                        kind != "file-group" && kind != "collection-group") ||
+                    (preview && kind != "mapping" && kind != "files" && kind != "file-group") ||
                     (step.action == "surface.category" && kind != "files" && kind != "mapping"))
                     Invalid("Surface does not implement this native operation");
                 if (step.action == "surface.category" && step.value != "all" &&
@@ -273,8 +284,19 @@ Frame EvaluateLayout(const Scene& scene, std::uint64_t milliseconds)
             Bounds(scene, next); live.motion = {live.surface.bounds, next, static_cast<std::uint64_t>(step.atMs), step.durationMs};
         }
         else if (step.action == "surface.view") live.surface.listMode = step.value == "list";
-        else if (step.action == "surface.search") live.surface.search = step.value;
+        else if (step.action == "surface.search")
+        {
+            if (live.surface.folderPreviewPath.empty()) live.surface.search = step.value;
+            else live.surface.folderPreviewSearch = step.value;
+        }
         else if (step.action == "surface.category") live.surface.category = step.value;
+        else if (step.action == "surface.folderPreview")
+        {
+            if (step.value.empty()) live.surface.folderPreviewSearch.reset();
+            else if (live.surface.folderPreviewSearch && live.surface.folderPreviewPath != step.value)
+                live.surface.folderPreviewSearch->clear();
+            live.surface.folderPreviewPath = step.value;
+        }
     }
     Frame frame;
     for (auto& live : surfaces)

@@ -48,11 +48,19 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
     compositionPaintInProgress_ = true;
     struct PaintScope final
     {
-        bool& active;
-        ~PaintScope() { active = false; }
-    } paintScope{ compositionPaintInProgress_ };
+        DesktopApp& app;
+        ~PaintScope() { app.FinishDesktopCompositionPaint(); }
+    } paintScope{ *this };
 
-    HRESULT hr = CreateOrResizeCompositionSurface();
+    bool surfaceRecreated = false;
+    HRESULT hr;
+    {
+        const auto previousSurface = dcompSurface_;
+        const auto previousForeground = desktopForegroundCompositionSurface_;
+        hr = CreateOrResizeCompositionSurface();
+        surfaceRecreated = previousSurface.Get() != dcompSurface_.Get() ||
+            previousForeground.Get() != desktopForegroundCompositionSurface_.Get();
+    }
     if (FAILED(hr))
     {
         RecoverCompositionRenderFailure(
@@ -65,11 +73,10 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
     GetClientRect(hwnd_, &clientRect);
     RECT clippedUpdate{};
     const RECT* dcompUpdate = nullptr;
-    if (updateRect &&
+    if (!surfaceRecreated && updateRect &&
         IntersectRect(&clippedUpdate, updateRect, &clientRect) &&
         !IsRectEmpty(&clippedUpdate))
     {
-        highlight_tiles::IncludeRetainedTiles(clippedUpdate, clientRect, desktopSrgbTiles_);
         dcompUpdate = &clippedUpdate;
     }
 
@@ -90,8 +97,6 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
 
     ComPtr<ID2D1DeviceContext> context;
     context.Attach(rawContext);
-    snowdesktop::HighlightCoverage highlightCoverage;
-    snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), highlightCoverage);
     context->SetDpi(96.0f, 96.0f);
     context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
     const LONG updateLeft = dcompUpdate ? dcompUpdate->left : 0;
@@ -100,6 +105,7 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
         static_cast<float>(updateOffset.x - updateLeft),
         static_cast<float>(updateOffset.y - updateTop)));
     context->Clear(D2D1::ColorF(0, 0, 0, 0));
+    DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get());
 
     const bool widgetPreviewActive =
         widgetAction_ == WidgetAction::Move ||
@@ -121,7 +127,7 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
                 desktopMarqueeActive,
                 dcompUpdate,
                 clientRect);
-    desktopBackdropCompositor_.BeginFrame(completeGlassCollection);
+    desktopBackdropCompositor_.BeginFrame(completeGlassCollection, dcompUpdate ? dcompUpdate : &clientRect);
     if (widgetPreviewActive && mouseDownWidgetIndex_ < widgets_.size() && !luaStackMemberDrag_.Armed())
     {
         desktopBackdropCompositor_.RemovePanel(
@@ -131,25 +137,23 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
     RenderFrame(context.Get(), forceCompleteGlassCollection ? nullptr : dcompUpdate, desktopIconsHidden_);
 
     const RECT dirty = dcompUpdate ? *dcompUpdate : clientRect;
-    const auto srgbCandidates = highlight_tiles::Stage(desktopBackdropCompositor_, hwnd_,
-        context.Get(), highlightCoverage, clientRect, dirty, updateOffset,
-        desktopSrgbTiles_, nextDesktopSrgbKey_);
-
+    std::vector<DesktopSrgbTile> srgbCandidates;
+    const auto recorded = scene.Finish();
+    const bool prepared = SUCCEEDED(recorded) && highlight_tiles::Stage(desktopBackdropCompositor_, hwnd_,
+        context.Get(), scene.Scene(), clientRect, dirty, updateOffset,
+        desktopSrgbTiles_, nextDesktopSrgbKey_, srgbCandidates);
     context->SetTransform(D2D1::Matrix3x2F::Identity());
     context.Reset();
     hr = paintSurface->EndDraw();
-    if (FAILED(hr))
+    if (!prepared || FAILED(hr))
     {
-        RecoverCompositionRenderFailure(L"Background EndDraw", hr);
+        RecoverCompositionRenderFailure(L"Background scene", FAILED(hr) ? hr : E_FAIL);
         return false;
     }
-    if (!highlight_tiles::Publish(desktopBackdropCompositor_, dirty, srgbCandidates, desktopSrgbTiles_))
-    {
-        RecoverCompositionRenderFailure(L"Publish desktop highlight tile", E_FAIL);
-        return false;
-    }
+    highlight_tiles::Publish(desktopBackdropCompositor_, dirty,
+        EqualRect(&dirty, &clientRect) != FALSE, srgbCandidates, desktopSrgbTiles_);
 
-    if (!FlushPendingDesktopWidgetComposition() ||
+    if (!FlushPendingDesktopWidgetComposition(true) ||
         desktopWidgetCompositionFailurePending_)
     {
         desktopWidgetCompositionFailurePending_ = false;

@@ -1,15 +1,17 @@
 #include "app/app.h"
-#include "ui/render/highlight_coverage.h"
 #include "diagnostics/diagnostic_log.h"
 #include "common/utils.h"
 #include "app/render/desktop_backdrop_update_rules.h"
 #include "diagnostics/performance_trace.h"
-#include "desktop/display_color_mode.h"
 #include "settings/animation_settings.h"
 #include "widget/view/widget_surface_retention.h"
 #include "widget/view/widget_surface_renderer.h"
 #include "widget/runtime/widget_engine.h"
 #include "ui/render/ui_presentation_scope.h"
+#include "ui/render/smooth_corner_geometry.h"
+
+#include <algorithm>
+#include <array>
 
 namespace
 {
@@ -21,6 +23,15 @@ bool SameRect(const RECT& left, const RECT& right)
     return EqualRect(&left, &right) != FALSE;
 }
 
+void MergeWidgetDamage(std::unordered_map<std::wstring, std::optional<RECT>>& updates,
+    const std::wstring& id, std::optional<RECT> damage)
+{
+    auto [entry, inserted] = updates.try_emplace(id, damage);
+    if (inserted || !entry->second) return;
+    if (damage) UnionRect(&*entry->second, &*entry->second, &*damage);
+    else entry->second.reset();
+}
+
 struct DesktopWidgetSurfaceFailure
 {
     std::wstring widgetId;
@@ -28,6 +39,16 @@ struct DesktopWidgetSurfaceFailure
     HRESULT hr = E_FAIL;
     bool retry = true;
 };
+
+void CloseWidgetContentClip(DesktopWidgetCompositionItem& item)
+{
+    item.contentVisible = false;
+    if (item.clip)
+    {
+        (void)item.clip->SetRight(0.0f);
+        (void)item.clip->SetBottom(0.0f);
+    }
+}
 
 HRESULT RetireRenderedSurface(
     snowdesktop::widget_runtime::WidgetSurfaceRenderer* renderer,
@@ -41,6 +62,36 @@ HRESULT RetireRenderedSurface(
     item.renderTarget.reset();
     item.renderedVisual.Reset();
     return result;
+}
+
+HRESULT DrawSceneWithStaticCover(ID2D1DeviceContext* target, POINT offset,
+    const RECT& frame, POINT recordingOffset, ID2D1CommandList* body,
+    const snowdesktop::widget_runtime::WidgetImageSpin& cover)
+{
+    target->SetDpi(96.f, 96.f);
+    target->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+    target->SetTransform(D2D1::Matrix3x2F::Identity());
+    target->Clear(D2D1::ColorF(0, 0.f));
+    const auto source = D2D1::RectF(static_cast<float>(recordingOffset.x),
+        static_cast<float>(recordingOffset.y), static_cast<float>(recordingOffset.x + frame.right - frame.left),
+        static_cast<float>(recordingOffset.y + frame.bottom - frame.top));
+    target->DrawImage(body, D2D1::Point2F(static_cast<float>(offset.x), static_cast<float>(offset.y)),
+        source, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+
+    target->SetTransform(D2D1::Matrix3x2F::Translation(
+        static_cast<float>(offset.x - frame.left), static_cast<float>(offset.y - frame.top)));
+    const auto& dest = cover.destination;
+    const float radius = (dest.right - dest.left) * .5f;
+    Microsoft::WRL::ComPtr<ID2D1Factory> factory;
+    Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> clip;
+    target->GetFactory(&factory);
+    const HRESULT hr = factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(dest, radius, radius), &clip);
+    if (FAILED(hr)) return hr;
+    target->PushLayer(D2D1::LayerParameters(dest, clip.Get(), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE), nullptr);
+    target->DrawBitmap(cover.bitmap.Get(), dest, cover.opacity, cover.interpolation, cover.source);
+    target->PopLayer();
+    target->SetTransform(D2D1::Matrix3x2F::Identity());
+    return S_OK;
 }
 
 HRESULT UpdateHoverOpacity(IDCompositionDesktopDevice* device,
@@ -122,19 +173,23 @@ bool DesktopApp::SyncDesktopWidgetOcclusion(const DesktopWidget& widget, const R
     item.occluded = covered;
     snowdesktop::performance::Value("desktop", "widget_occluded", widget.id, covered ? 1 : 0);
     if (widgetSurfaceRenderer_)
-        widgetSurfaceRenderer_->SetPaused(item.renderTarget, covered);
+        widgetSurfaceRenderer_->SetPaused(item.renderTarget, covered || !item.visible);
     if (covered)
     {
+        popupDeferredWidgetUpdates_.erase(widget.id);
         pendingDesktopWidgetCompositions_.erase(widget.id);
         PauseWidgetMarqueeComposition(widget.id);
+        const bool spinPaused = desktopBackdropCompositor_.PauseSrgbImageSpin(item.BackdropOwnerKey());
+        if (desktopBackdropCompositor_.PauseSrgbMarquees(item.BackdropOwnerKey()) || spinPaused)
+            (void)CommitCompositionAnimationFrame();
     }
     else if (item.visible)
-        pendingDesktopWidgetCompositions_.insert(widget.id);
+        pendingDesktopWidgetCompositions_.insert_or_assign(widget.id, std::nullopt);
     return covered;
 }
 
 bool DesktopApp::QueueDesktopWidgetComposition(
-    const std::wstring& widgetId)
+    const std::wstring& widgetId, std::optional<RECT> damage)
 {
     if (graphicsDeviceRecovery_.Pending()) return false;
     snowdesktop::performance::Scope performanceScope(
@@ -150,7 +205,8 @@ bool DesktopApp::QueueDesktopWidgetComposition(
     {
         const auto& owner = ResolveLuaWidgetFrameOwner(widgets_[memberIndex]);
         if (owner.id != widgetId)
-            return ResolveLuaWidgetContent(&owner) == &widgets_[memberIndex] ? QueueDesktopWidgetComposition(owner.id) : true;
+            return ResolveLuaWidgetContent(&owner) == &widgets_[memberIndex]
+                ? QueueDesktopWidgetComposition(owner.id, damage) : true;
     }
     if (widgetId.empty() || !dcompDevice_ || !dcompVisual_ || !hwnd_)
         return fail();
@@ -233,7 +289,16 @@ bool DesktopApp::QueueDesktopWidgetComposition(
         item.visible = true;
     }
 
-    pendingDesktopWidgetCompositions_.insert(widgetId);
+    if (popupAnimationCompositorDriven_ &&
+        DeferWidgetUpdateDuringPopup(*widgetData, item, bounds, damage))
+        return true;
+    // Input or a geometry/content change supersedes the delayed frame.
+    if (!popupDeferredWidgetUpdates_.empty())
+    {
+        if (auto deferred = popupDeferredWidgetUpdates_.extract(widgetId); deferred)
+            MergeWidgetDamage(pendingDesktopWidgetCompositions_, widgetId, deferred.mapped());
+    }
+    MergeWidgetDamage(pendingDesktopWidgetCompositions_, widgetId, damage);
     const snowdesktop::UiImmediatePresentationScope immediatePresentation(
         desktopWidgetPointerBatchActive_);
     // Every timed widget update adds its ID before the scheduler presents the
@@ -244,7 +309,150 @@ bool DesktopApp::QueueDesktopWidgetComposition(
         });
 }
 
-bool DesktopApp::PresentQueuedDesktopWidgetComposition(bool passivePointerFrame)
+bool DesktopApp::DeferWidgetUpdateDuringPopup(const DesktopWidget& widget,
+    const DesktopWidgetCompositionItem& item, const RECT& bounds, std::optional<RECT> damage)
+{
+    const bool backgroundUpdate = uiAnimationScheduler_.IsBatchingPresentations() ||
+        (widgetRuntimeMaintenanceActive_ && !snowdesktop::UiImmediatePresentationScope::IsActive());
+    if (!backgroundUpdate || !popupAnimation_.IsAnimating() ||
+        !IsCollectionPopupHostedByFloatingWindow() || !item.visible || !item.contentVisible ||
+        item.occluded || item.renderFailed || !SameRect(bounds, item.bounds) ||
+        desktopStartupPresentationPending_ || desktopWidgetCompositionFailurePending_ ||
+        updatingDisplayTopology_ || exitRequested_ || mouseDown_ || desktopWidgetPointerBatchActive_ ||
+        widgetAction_ != WidgetAction::None || dragSession_.HasContext() ||
+        item.hoverFade || item.hoverRollOpening || pendingDesktopWidgetCompositions_.contains(widget.id))
+        return false;
+    const auto* popup = GetOpenPopupWidget();
+    if (!popup || popup->id == widget.id || dockFolderPopupMappingWidgetId_ == widget.id) return false;
+    const auto* page = ResolveCollectionPopupPage(*popup);
+    RECT intersection{};
+    if (!page || !IntersectRect(&intersection, &page->bounds, &popupRect_) ||
+        IntersectRect(&intersection, &page->bounds, &bounds)) return false;
+    // A stack switch must display the new member's first frame immediately.
+    if (IsLuaDesktopSurface(widget))
+    {
+        const auto* content = ResolveLuaWidgetContent(&widget);
+        if (!content || item.renderedContentId != content->id) return false;
+    }
+    if (!popupDeferredWidgetToken_)
+    {
+        // Ordinary transitions release at completion. Keep a fixed deadline
+        // from the first update if the user repeatedly reverses the animation.
+        constexpr UINT maximumDelayMs = 180;
+        popupDeferredWidgetToken_ = uiAnimationScheduler_.ScheduleOnce(maximumDelayMs,
+            [this](snowdesktop::UiScheduleToken token) {
+                if (popupDeferredWidgetToken_ == token) ReleaseWidgetUpdatesAfterPopup();
+            });
+        if (!popupDeferredWidgetToken_) return false;
+    }
+    MergeWidgetDamage(popupDeferredWidgetUpdates_, widget.id, damage);
+    snowdesktop::performance::Value("widget.composition", "popup.deferred", widget.id, 1);
+    return true;
+}
+
+void DesktopApp::ReleaseWidgetUpdatesAfterPopup()
+{
+    if (popupDeferredWidgetToken_) uiAnimationScheduler_.Cancel(popupDeferredWidgetToken_);
+    popupDeferredWidgetToken_ = 0;
+    if (popupDeferredWidgetUpdates_.empty()) return;
+    for (const auto& [id, damage] : popupDeferredWidgetUpdates_)
+        MergeWidgetDamage(pendingDesktopWidgetCompositions_, id, damage);
+    popupDeferredWidgetUpdates_.clear();
+    (void)uiAnimationScheduler_.RequestScheduledPresentation(&pendingDesktopWidgetCompositions_,
+        [this] { return PresentQueuedDesktopWidgetComposition(); });
+}
+
+void DesktopApp::FinishDesktopCompositionPaint()
+{
+    compositionPaintInProgress_ = false;
+    if (desktopWidgetPresentationBlocked_ || desktopWidgetHoverFadePending_ ||
+        !pendingWidgetMarqueeCompositions_.empty())
+        ScheduleDeferredDesktopWidgetPresentation();
+}
+
+void DesktopApp::ScheduleDeferredDesktopWidgetPresentation()
+{
+    if (exitRequested_ || graphicsDeviceRecovery_.Pending() ||
+        desktopWidgetCompositionFailurePending_ || !dcompDevice_)
+        return;
+    if (pendingDesktopWidgetCompositions_.empty() && pendingWidgetMarqueeCompositions_.empty() &&
+        !desktopWidgetHoverFadePending_)
+    {
+        desktopWidgetPresentationBlocked_ = false;
+        return;
+    }
+    if (snowdesktop::widget_composition_layer_rules::ShouldDeferWidgetSurfaceDraw(
+            compositionPaintInProgress_, IsAnyPersistentDockHostPainting(),
+            floatingPopupCompositionPaintInProgress_, desktopWidgetPointerBatchActive_))
+    {
+        desktopWidgetPresentationBlocked_ = true;
+        return;
+    }
+    desktopWidgetPresentationBlocked_ = false;
+    if (deferredDesktopWidgetPresentationToken_ || desktopWidgetHoverTailToken_ ||
+        desktopWidgetPopupResizeTailToken_)
+        return;
+
+    // A provider can enqueue work while the popup or Dock owns BeginDraw.
+    // Its last complete desktop frame stays visible until its own presentation.
+    deferredDesktopWidgetPresentationToken_ = uiAnimationScheduler_.ScheduleAnimationFrame(
+        1, [this](snowdesktop::UiScheduleToken token) {
+            if (deferredDesktopWidgetPresentationToken_ != token) return;
+            deferredDesktopWidgetPresentationToken_ = 0;
+            if (desktopWidgetHoverTailToken_ || desktopWidgetPopupResizeTailToken_) return;
+            if (pendingDesktopWidgetCompositions_.empty() && pendingWidgetMarqueeCompositions_.empty() &&
+                !desktopWidgetHoverFadePending_) return;
+            (void)uiAnimationScheduler_.RequestScheduledPresentation(
+                &pendingDesktopWidgetCompositions_, [this] { return PresentQueuedDesktopWidgetComposition(); });
+        });
+    if (!deferredDesktopWidgetPresentationToken_ && hwnd_)
+        InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+bool DesktopApp::DeferRetainedDesktopWidgetCompositionForPopupResize()
+{
+    if ((!desktopWidgetPopupResizeTailToken_ &&
+            (!GetCollectionPopupResizeTransition() || !IsCollectionPopupHostedByFloatingWindow())) ||
+        desktopStartupPresentationPending_ || desktopWidgetCompositionFailurePending_ ||
+        graphicsDeviceRecovery_.Pending() || updatingDisplayTopology_ ||
+        exitRequested_ || pendingDesktopWidgetCompositions_.empty() || mouseDown_ ||
+        widgetAction_ != WidgetAction::None || middleButtonWidgetMove_ ||
+        marqueeActive_ || detailColumnResizeActive_ || popupScrollbarDragging_ ||
+        luaWidgetPanelMouseDown_ || renameController_.IsActive() ||
+        dragSession_.HasContext() || dragDropController_.IsTransportActive())
+        return false;
+
+    // Only retire queued work later when every owner can continue showing its
+    // last frame. First paints and recovery still complete on their own path.
+    if (!std::ranges::all_of(pendingDesktopWidgetCompositions_, [this](const auto& update) {
+            const auto found = desktopWidgetCompositionItems_.find(update.first);
+            return found != desktopWidgetCompositionItems_.end() &&
+                found->second.visible && found->second.contentVisible;
+        }))
+        return false;
+
+    if (!desktopWidgetPopupResizeTailToken_)
+    {
+        // This deadline is measured from the first deferral, including across
+        // retargets. Repeated navigation cannot indefinitely hold repaint work.
+        constexpr UINT maximumDeferralMs = 250;
+        desktopWidgetPopupResizeTailToken_ = uiAnimationScheduler_.ScheduleOnce(
+            maximumDeferralMs, [this](snowdesktop::UiScheduleToken token) {
+                if (desktopWidgetPopupResizeTailToken_ != token) return;
+                desktopWidgetPopupResizeTailToken_ = 0;
+                (void)uiAnimationScheduler_.RequestScheduledPresentation(
+                    &desktopWidgetPopupResizeTailToken_, [this] {
+                        return PresentQueuedDesktopWidgetComposition(false, false);
+                    });
+            });
+        if (desktopWidgetPopupResizeTailToken_)
+            snowdesktop::performance::Value("popup", "resize.desktop_widgets_deferred", {},
+                static_cast<double>(pendingDesktopWidgetCompositions_.size()));
+    }
+    return desktopWidgetPopupResizeTailToken_ != 0;
+}
+
+bool DesktopApp::PresentQueuedDesktopWidgetComposition(bool passivePointerFrame, bool yieldToPopupResize)
 {
     if (snowdesktop::widget_composition_layer_rules::
             ShouldDeferWidgetSurfaceDraw(
@@ -253,10 +461,13 @@ bool DesktopApp::PresentQueuedDesktopWidgetComposition(bool passivePointerFrame)
                 floatingPopupCompositionPaintInProgress_,
                 desktopWidgetPointerBatchActive_))
     {
-        if (desktopWidgetHoverFadePending_ && hwnd_)
-            InvalidateRect(hwnd_, nullptr, FALSE);
+        // The owner of the outer paint or pointer batch will release the work.
+        desktopWidgetPresentationBlocked_ = true;
         return true;
     }
+    desktopWidgetPresentationBlocked_ = false;
+    if (!passivePointerFrame && yieldToPopupResize && DeferRetainedDesktopWidgetCompositionForPopupResize())
+        return true;
     if (passivePointerFrame && !pendingDesktopWidgetCompositions_.empty())
     {
         const UINT delay = snowdesktop::widget_composition_layer_rules::
@@ -279,15 +490,27 @@ bool DesktopApp::PresentQueuedDesktopWidgetComposition(bool passivePointerFrame)
         uiAnimationScheduler_.Cancel(desktopWidgetHoverTailToken_);
         desktopWidgetHoverTailToken_ = 0;
     }
-    if (FlushPendingDesktopWidgetComposition() &&
-        FlushPendingWidgetMarqueeComposition() &&
-        SyncWidgetMarqueeCompositionVisibility() &&
-        CommitCompositionAnimationFrame() &&
-        FlushPendingCompositionCommit())
+    bool srgbDamageOnly = false;
+    if (FlushPendingDesktopWidgetComposition(false, &srgbDamageOnly))
     {
-        // Lua tooltips live outside the widget surface and need to follow local commits too.
-        SyncLuaWidgetTooltip();
-        return true;
+        bool presented;
+        if (srgbDamageOnly)
+        {
+            snowdesktop::performance::Scope trace("widget.composition", "marquee.commit_srgb");
+            presented = desktopBackdropCompositor_.CommitSrgbContent();
+        }
+        else
+        {
+            presented = FlushPendingWidgetMarqueeComposition() &&
+                SyncWidgetMarqueeCompositionVisibility() &&
+                CommitCompositionAnimationFrame() && FlushPendingCompositionCommit();
+        }
+        if (presented)
+        {
+            // Lua tooltips live outside the widget surface and need to follow local commits too.
+            SyncLuaWidgetTooltip();
+            return true;
+        }
     }
     desktopWidgetCompositionFailurePending_ = true;
     if (hwnd_ && IsWindow(hwnd_))
@@ -295,18 +518,28 @@ bool DesktopApp::PresentQueuedDesktopWidgetComposition(bool passivePointerFrame)
     return false;
 }
 
-bool DesktopApp::FlushPendingDesktopWidgetComposition()
+bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, bool* srgbDamageOnly)
 {
+    if (srgbDamageOnly) *srgbDamageOnly = false;
     if (graphicsDeviceRecovery_.Pending()) return false;
     if (desktopWidgetPointerBatchActive_) return true;
     if (desktopWidgetHoverTailToken_) return true;
+    if (yieldToPopupResize && DeferRetainedDesktopWidgetCompositionForPopupResize())
+        return true;
+    if (desktopWidgetPopupResizeTailToken_)
+    {
+        uiAnimationScheduler_.Cancel(desktopWidgetPopupResizeTailToken_);
+        desktopWidgetPopupResizeTailToken_ = 0;
+    }
     if (pendingDesktopWidgetCompositions_.empty())
     {
         if (desktopWidgetHoverFadePending_ && !compositionPaintInProgress_)
         {
+            compositionPaintInProgress_ = true;
             desktopBackdropCompositor_.BeginFrame(false);
             KeepDesktopWidgetBackdropPanels();
             desktopBackdropCompositor_.EndFrame(false);
+            FinishDesktopCompositionPaint();
         }
         if (SyncDesktopWidgetCompositionZOrder())
             return true;
@@ -343,16 +576,30 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
     snowdesktop::performance::Value("composition.shared", "batch_widget_count", {},
         static_cast<double>(pending.size()));
     pendingDesktopWidgetCompositions_.clear();
+    desktopWidgetPresentationBlocked_ = false;
     const bool ownsPaintScope = !compositionPaintInProgress_;
-    if (ownsPaintScope)
-    {
-        compositionPaintInProgress_ = true;
-        desktopBackdropCompositor_.BeginFrame(false);
-    }
+    const auto hasSharedWork = [&] {
+        return compositionCommitPending_ || desktopWidgetHoverFadePending_ ||
+            desktopWidgetCompositionFailurePending_ || !pendingWidgetMarqueeCompositions_.empty() ||
+            !widgetMarqueeCompositionItems_.empty();
+    };
+    bool regionalOnly = srgbDamageOnly && ownsPaintScope && !hasSharedWork() &&
+        std::ranges::all_of(pending, [](const auto& request) { return request.second.has_value(); });
+    bool collectingBackdrops = false;
+    const auto requireSharedFrame = [&] {
+        regionalOnly = false;
+        if (ownsPaintScope && !collectingBackdrops)
+        {
+            desktopBackdropCompositor_.BeginFrame(false);
+            collectingBackdrops = true;
+        }
+    };
+    if (ownsPaintScope) compositionPaintInProgress_ = true;
+    if (!regionalOnly) requireSharedFrame();
 
     bool structuralOk = true;
     std::vector<DesktopWidgetSurfaceFailure> surfaceFailures;
-    for (const auto& widgetId : pending)
+    for (const auto& [widgetId, damage] : pending)
     {
         auto composition = desktopWidgetCompositionItems_.find(widgetId);
         if (composition == desktopWidgetCompositionItems_.end())
@@ -461,53 +708,62 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         const bool boundsChanged = !SameRect(oldBounds, bounds);
         const RECT contentFrame{surfaceLeft, surfaceTop,
             surfaceLeft + static_cast<LONG>(width), surfaceTop + static_cast<LONG>(height)};
-        POINT center{bounds.left + (bounds.right - bounds.left) / 2,
-            bounds.top + (bounds.bottom - bounds.top) / 2};
-        namespace display = snowdesktop::display_color;
-        // The independent native text scroller remains a child of the original surface.
-        const bool srgbEligible =
-            !widgetMarqueeCompositionItems_.contains(widgetId) && ClientToScreen(hwnd_, &center) &&
-            display::ModeForMonitor(MonitorFromPoint(center, MONITOR_DEFAULTTONULL)) == display::Mode::WideColor;
-        const bool asynchronous = luaWidget && widgetSurfaceRenderer_ && !item.renderFailed && !srgbEligible;
-        // The synchronous surface and the worker target may coexist during handoff
-        // when they represent the same Lua content at the same size.
-        const bool sameSurface = item.width == width && item.height == height &&
-            item.renderedContentId == contentId;
-        if (item.renderTarget && (!asynchronous || !sameSurface))
+        const POINT interactionPoint = lastMousePoint_;
+        const POINT paintPointer = SuppressDesktopWidgetDragTargets() ||
+            (IsCollectionPopupHostedByFloatingWindow() && IsPointOccludedByOpenPopup(interactionPoint))
+            ? POINT{LONG_MIN, LONG_MIN} : interactionPoint;
+        RECT dirty{};
+        if (damage && luaWidget && widgetEngine_ && item.surface && item.contentVisible &&
+            item.presentingSrgb && !item.marqueeDamageUnavailable && !boundsChanged &&
+            item.width == width && item.height == height && item.renderedContentId == contentId &&
+            IntersectRect(&dirty, &*damage, &contentFrame) &&
+            desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey()) &&
+            widgetEngine_->CanReplayDesktopMarqueeFrame(contentId, bounds,
+                widgetData->gridSpan.columns, widgetData->gridSpan.rows, d2dDevice_.Get()) &&
+            desktopBackdropCompositor_.MatchesSrgbImageSpin(item.BackdropOwnerKey(), {}))
         {
-            const HRESULT retired = RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
-            if (FAILED(retired))
+            snowdesktop::performance::Scope updateScope("widget.composition", "marquee.damage", contentId);
+            RECT surfaceDamage = dirty;
+            OffsetRect(&surfaceDamage, -surfaceLeft, -surfaceTop);
+            const HRESULT updated = desktopBackdropCompositor_.UpdateSrgbScene(
+                item.BackdropOwnerKey(), surfaceDamage,
+                [&](ID2D1DeviceContext* context, POINT offset) {
+                    context->SetDpi(96.0f, 96.0f);
+                    context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+                    context->SetTransform(D2D1::Matrix3x2F::Translation(
+                        static_cast<float>(offset.x - dirty.left),
+                        static_cast<float>(offset.y - dirty.top)));
+                    context->PushAxisAlignedClip(ToD2DRect(dirty), D2D1_ANTIALIAS_MODE_ALIASED);
+                    context->Clear(D2D1::ColorF(0, 0, 0, 0));
+                    desktopWidgetCompositionDrawInProgress_ = true;
+                    lastMousePoint_ = paintPointer;
+                    // Replay the existing draw order while the surface clips
+                    // writes to the damaged part. Its backdrop remains attached.
+                    luaWidget->DrawCompositionSurface(
+                        context, widgetData->bounds, widgetData->selected ? 2 : 0, false, nullptr);
+                    lastMousePoint_ = interactionPoint;
+                    desktopWidgetCompositionDrawInProgress_ = false;
+                    context->PopAxisAlignedClip();
+                    context->SetTransform(D2D1::Matrix3x2F::Identity());
+                    drawing_.Reset();
+                    return S_OK;
+                });
+            if (SUCCEEDED(updated))
             {
-                surfaceFailures.push_back({widgetId, L"Retire worker visual", retired, true});
+                snowdesktop::performance::Value("widget.composition", "marquee_damage_pixels", contentId,
+                    static_cast<double>(dirty.right - dirty.left) * (dirty.bottom - dirty.top));
                 continue;
             }
-        }
-        if (asynchronous && item.surface && !sameSurface)
-        {
-            const HRESULT detached = item.visual->SetContent(nullptr);
-            if (FAILED(detached))
+            if (updated != E_INVALIDARG)
             {
-                surfaceFailures.push_back({widgetId, L"Detach synchronous surface", detached, true});
+                surfaceFailures.push_back({widgetId, L"Update marquee region", updated, true});
                 continue;
             }
-            item.surface.Reset();
+            // Retain the full path for a surface that rejects regional draws.
+            item.marqueeDamageUnavailable = true;
         }
-        if (asynchronous && !item.renderTarget)
-        {
-            item.renderTarget = widgetSurfaceRenderer_->CreateTarget(
-                widgetId, width, height, &item.renderedVisual, contentId);
-            if (!item.renderTarget)
-            {
-                item.renderFailed = true;
-                surfaceFailures.push_back({widgetId, L"Create worker visual", E_FAIL, true});
-                continue;
-            }
-            item.renderedContentId = contentId;
-            item.width = width;
-            item.height = height;
-        }
-
-        if (!asynchronous && (!item.surface || item.width != width || item.height != height))
+        requireSharedFrame();
+        if (!item.surface || item.width != width || item.height != height)
         {
             ComPtr<IDCompositionSurface> surface;
             HRESULT hr = dcompDevice_->CreateSurface(
@@ -525,53 +781,72 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             item.surface = std::move(surface);
             item.width = width;
             item.height = height;
+            item.marqueeDamageUnavailable = false;
+            item.precomposedPaint = {};
             snowdesktop::performance::Value(
                 "widget.composition", "surface_created", widgetId, 1);
         }
 
-        ID2D1DeviceContext* rawContext = nullptr;
+        const auto sceneKey = item.BackdropOwnerKey();
+        const bool hasLocalBase = luaWidget && !boundsChanged && item.contentVisible &&
+            item.presentingSrgb && item.renderedContentId == contentId && item.precomposedPaint.revision != 0 &&
+            desktopBackdropCompositor_.HasSrgbContent(sceneKey);
+        ComPtr<ID2D1DeviceContext> context;
         ComPtr<ID2D1CommandList> commands;
-        POINT updateOffset{};
-        HRESULT hr = asynchronous
-            ? widgetSurfaceRenderer_->BeginRecording(&rawContext, &commands)
-            : item.surface->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
-                reinterpret_cast<void**>(&rawContext), &updateOffset);
-        if (FAILED(hr) || !rawContext)
+        // This visual already has a transparent DComp surface. Record a Lua
+        // refresh without opening and clearing that whole scratch allocation.
+        if (hasLocalBase)
         {
-            surfaceFailures.push_back({
-                widgetId, L"BeginDraw",
-                FAILED(hr) ? hr : E_FAIL, true });
-            continue;
+            if (!item.precomposedRecorder)
+                (void)d2dDevice_->CreateDeviceContext(
+                    D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &item.precomposedRecorder);
+            if (item.precomposedRecorder && SUCCEEDED(item.precomposedRecorder->CreateCommandList(&commands)))
+                context = item.precomposedRecorder;
         }
 
-        ComPtr<ID2D1DeviceContext> context;
-        context.Attach(rawContext);
-        snowdesktop::HighlightCoverage highlightCoverage;
-        snowdesktop::HighlightCoverage::Scope captureHighlights(context.Get(), highlightCoverage);
+        POINT updateOffset{};
+        HRESULT hr = S_OK;
+        if (commands)
+        {
+            context->SetTarget(commands.Get());
+            context->BeginDraw();
+        }
+        else
+        {
+            hr = item.surface->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
+                reinterpret_cast<void**>(context.ReleaseAndGetAddressOf()), &updateOffset);
+            if (FAILED(hr) || !context)
+            {
+                surfaceFailures.push_back({
+                    widgetId, L"BeginDraw", FAILED(hr) ? hr : E_FAIL, true });
+                continue;
+            }
+        }
         context->SetDpi(96.0f, 96.0f);
         context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
-        if (!asynchronous)
+        const POINT clientToTarget{updateOffset.x - surfaceLeft, updateOffset.y - surfaceTop};
+        context->SetTransform(D2D1::Matrix3x2F::Translation(
+            static_cast<float>(clientToTarget.x), static_cast<float>(clientToTarget.y)));
+        std::optional<DesktopBackdropCompositor::SrgbSceneRecording> scene;
+        if (!commands)
         {
-            context->SetTransform(D2D1::Matrix3x2F::Translation(
-                static_cast<float>(updateOffset.x - surfaceLeft),
-                static_cast<float>(updateOffset.y - surfaceTop)));
             context->Clear(D2D1::ColorF(0, 0, 0, 0));
+            scene.emplace(context.Get());
         }
 
+        snowdesktop::widget_runtime::WidgetSurfacePaint paint;
+        snowdesktop::widget_runtime::WidgetImageSpin cover;
+        DesktopBackdropCompositor::PreparedImageSpin spin;
+        DesktopBackdropCompositor::PreparedMarquees marquees;
         desktopWidgetCompositionDrawInProgress_ = true;
         item.iconBackdrops.BeginDraw();
+        snowdesktop::SystemIconPlaceholderDemand::Paint placeholderPaint(systemIconDemand_,
+            snowdesktop::SystemIconPlaceholderDemand::Host::Widget, widgetData, widgetId);
         desktopWidgetIconBackdropsDrawing_ = &item.iconBackdrops;
         desktopWidgetBackdropRequestedDuringDraw_ = false;
         desktopWidgetBackdropCornerRadiusDuringDraw_ = 0.0f;
         desktopWidgetBackdropBlurRadiusDuringDraw_ = 0.0f;
-        snowdesktop::widget_runtime::WidgetImageSpin imageSpin;
-        snowdesktop::widget_runtime::WidgetSurfacePaint surfacePaint;
-        const POINT interactionPoint = lastMousePoint_;
-        if (SuppressDesktopWidgetDragTargets() ||
-            IsPointOccludedByOpenPopup(lastMousePoint_))
-        {
-            lastMousePoint_ = { LONG_MIN, LONG_MIN };
-        }
+        lastMousePoint_ = paintPointer;
         if (drawRollSnapshot)
         {
             widgetContainer->DrawHoverRollSnapshot(context.Get(), lastMousePoint_);
@@ -584,27 +859,72 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         {
             snowdesktop::performance::Scope contentScope(
                 "widget.composition", "content.record", contentId);
-            // The child draw captures its base material request; the owning
-            // surface registers the native panel after EndDraw succeeds.
-            struct SurfaceOutputScope
+            struct PaintOutput
             {
                 WidgetEngine* engine;
-                ~SurfaceOutputScope()
+                snowdesktop::widget_runtime::WidgetSurfacePaint& paint;
+                ~PaintOutput()
                 {
                     if (!engine) return;
+                    paint.imageSpinCapture = nullptr;
                     engine->SetDesktopImageSpinOutput(nullptr);
+                    engine->SetNativeMarqueeSyncCallback({});
                     engine->SetDesktopSurfacePaintOutput(nullptr);
                 }
-            } output{asynchronous ? widgetEngine_.get() : nullptr};
-            if (output.engine)
+            };
+            snowdesktop::widget_runtime::WidgetImageSpinCapture capture{clientToTarget, {}};
+            PaintOutput output{widgetEngine_.get(), paint};
+            if (output.engine) output.engine->SetDesktopSurfacePaintOutput(&paint);
+            if (output.engine && (commands || (scene && scene->Scene())) && item.visible && !item.occluded)
             {
-                output.engine->SetDesktopImageSpinOutput(&imageSpin);
-                output.engine->SetDesktopSurfacePaintOutput(&surfacePaint);
+                capture.prepare = [&](const snowdesktop::widget_runtime::WidgetImageSpin& image) {
+                    spin = desktopBackdropCompositor_.PrepareSrgbImageSpin(
+                        hwnd_, sceneKey, d2dDevice_.Get(), contentFrame, image);
+                    return static_cast<bool>(spin);
+                };
+                paint.imageSpinCapture = &capture;
+                output.engine->SetDesktopImageSpinOutput(&cover);
+            }
+            if (output.engine && !commands && item.visible && !item.occluded)
+            {
+                output.engine->SetNativeMarqueeSyncCallback([&](const std::wstring& owner,
+                    const std::vector<snowdesktop::widget_runtime::NativeMarqueeText>& labels, bool reducedMotion) {
+                    if (reducedMotion || owner != contentId || IsRectEmpty(&paint.nativeMarqueeBounds) ||
+                        !output.engine->GetScrollControls(contentId).empty())
+                        return false;
+                    if (labels.empty() || std::none_of(labels.begin(), labels.end(),
+                            [](const auto& label) { return label.scrolling; }))
+                        return false;
+                    if (paint.nativeMarqueeRadius > 0.f)
+                    {
+                        const auto clip = snowdesktop::smooth_corners::Geometry(GetD2DFactory(),
+                            ToD2DRect(paint.nativeMarqueeBounds), paint.nativeMarqueeRadius);
+                        if (!clip) return false;
+                        for (const auto& label : labels)
+                        {
+                            const auto& r = label.viewport;
+                            const std::array corners{D2D1::Point2F(r.left, r.top), D2D1::Point2F(r.right, r.top),
+                                D2D1::Point2F(r.left, r.bottom), D2D1::Point2F(r.right, r.bottom)};
+                            for (const auto point : corners)
+                            {
+                                BOOL contains = FALSE;
+                                if (FAILED(clip->FillContainsPoint(point, nullptr, &contains)) || !contains)
+                                {
+                                    snowdesktop::performance::Value(
+                                        "widget.composition", "marquee_clip_rejected", contentId, 1);
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                    marquees = desktopBackdropCompositor_.PrepareSrgbMarquees(
+                        hwnd_, sceneKey, d2dDevice_.Get(), contentFrame, paint.nativeMarqueeBounds, labels);
+                    return static_cast<bool>(marquees);
+                });
             }
             luaWidget->DrawCompositionSurface(
                 context.Get(), widgetData->bounds,
-                widgetData->selected ? 2 : 0, true,
-                output.engine ? &surfacePaint : nullptr);
+                widgetData->selected ? 2 : 0, true, output.engine ? &paint : nullptr);
         }
         else
         {
@@ -625,39 +945,86 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                 desktopWidgetBackdropBlurRadiusDuringDraw_)), 0, 48);
         desktopWidgetBackdropRequestedDuringDraw_ = false;
 
-        const bool stagedSrgb = srgbEligible && !asynchronous &&
-            desktopBackdropCompositor_.StageSrgbContent(hwnd_, item.BackdropOwnerKey(),
-                contentFrame, context.Get(), updateOffset);
+        HRESULT sceneResult;
+        if (commands)
+        {
+            sceneResult = context->EndDraw();
+            context->SetTarget(nullptr);
+            if (SUCCEEDED(sceneResult)) sceneResult = commands->Close();
+        }
+        else
+        {
+            sceneResult = scene->Finish();
+        }
+        auto* recorded = commands ? commands.Get() : scene->Scene();
+        bool preparedScene = false;
+        if (SUCCEEDED(sceneResult))
+        {
+            const auto localDamage = hasLocalBase && desktopBackdropCompositor_.MatchesSrgbImageSpin(sceneKey, spin)
+                ? paint.DamageFrom(item.precomposedPaint) : std::nullopt;
+            RECT patch{};
+            if (localDamage && IntersectRect(&patch, &*localDamage, &contentFrame) &&
+                !SameRect(patch, contentFrame))
+            {
+                OffsetRect(&patch, -surfaceLeft, -surfaceTop);
+                const POINT origin{updateOffset.x + patch.left, updateOffset.y + patch.top};
+                preparedScene = SUCCEEDED(desktopBackdropCompositor_.UpdateSrgbScene(sceneKey, patch, recorded, origin));
+                if (preparedScene)
+                    snowdesktop::performance::Value("widget.composition", "local_refresh_damage_pixels", contentId,
+                        static_cast<double>(patch.right - patch.left) * (patch.bottom - patch.top));
+            }
+            if (!preparedScene)
+            {
+                const float opacity = item.visible ? item.HoverOpacity() : 0.f;
+                preparedScene = desktopBackdropCompositor_.PublishSrgbScene(
+                    hwnd_, sceneKey, contentFrame, context.Get(), updateOffset, recorded, opacity, marquees, spin);
+                // The recording omits the cover only after preparation succeeds. If
+                // attaching it fails, put those same pixels above the body before publishing.
+                if (!preparedScene && spin)
+                    preparedScene = desktopBackdropCompositor_.StageSrgbSceneFrame(
+                        hwnd_, sceneKey, contentFrame, d2dDevice_.Get(), [&](ID2D1DeviceContext* target, POINT offset) {
+                            return DrawSceneWithStaticCover(target, offset, contentFrame, updateOffset, recorded, cover);
+                        }) && desktopBackdropCompositor_.PublishSrgbContent(sceneKey, opacity, marquees);
+            }
+            if (preparedScene && marquees)
+                snowdesktop::performance::Value("widget.composition", "native_marquee_scene", contentId, 1);
+        }
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
-        HRESULT endDrawHr = asynchronous
-            ? widgetSurfaceRenderer_->EndRecording(commands.Get()) : item.surface->EndDraw();
-        if (asynchronous && SUCCEEDED(endDrawHr))
-        {
-            const RECT surfaceBounds{surfaceLeft, surfaceTop,
-                surfaceLeft + static_cast<LONG>(width), surfaceTop + static_cast<LONG>(height)};
-            if (!widgetSurfaceRenderer_->Submit(item.renderTarget, commands.Get(),
-                    surfaceBounds, std::move(imageSpin), std::move(surfacePaint)))
-                endDrawHr = E_FAIL;
-        }
-        brushCache_.clear();
-        brushCacheContext_ = nullptr;
+        HRESULT endDrawHr = commands ? S_OK : item.surface->EndDraw();
+        if (FAILED(sceneResult)) endDrawHr = sceneResult;
+        if (!preparedScene && SUCCEEDED(endDrawHr)) endDrawHr = E_FAIL;
+        drawing_.Reset();
         if (FAILED(endDrawHr))
         {
-            if (asynchronous) item.renderFailed = true;
             item.iconBackdrops.DiscardDraw();
             surfaceFailures.push_back({
                 widgetId, L"EndDraw", endDrawHr, true });
             continue;
         }
 
+        // Keep the outgoing worker visual attached until the synchronous
+        // replacement has finished drawing and can be committed with it.
+        if (item.renderTarget)
+        {
+            const HRESULT retired = RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
+            if (FAILED(retired))
+            {
+                item.iconBackdrops.DiscardDraw();
+                surfaceFailures.push_back({widgetId, L"Retire worker visual", retired, true});
+                continue;
+            }
+        }
+
+        const bool showContent = item.visible &&
+            (item.surface || item.renderedVisualAttached);
         const bool hadRoll = item.hoverRollOpening.has_value();
         const bool backdropChanged = !item.backdropRegistered || boundsChanged ||
             item.backdropCornerRadius != backdropCornerRadius ||
             item.backdropBlurRadius != backdropBlurRadius ||
             (hadRoll && !drawRollSnapshot);
         item.backdropRequested = backdropRequested;
-        if (backdropRequested)
+        if (showContent && backdropRequested)
         {
             if (backdropChanged)
             {
@@ -676,11 +1043,9 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             item.backdropRegistered = false;
         }
 
-        const bool srgbPresented = stagedSrgb && desktopBackdropCompositor_.PublishSrgbContent(
-            item.BackdropOwnerKey(), item.HoverOpacity());
-        if (!srgbPresented)
-            desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
-        hr = asynchronous ? S_OK : item.visual->SetContent(srgbPresented ? nullptr : item.surface.Get());
+        const bool srgbPresented = showContent;
+        hr = desktopBackdropCompositor_.SetDirectContentForSrgb(
+            item.BackdropOwnerKey(), srgbPresented, dcompDevice_.Get(), item.visual.Get(), item.surface.Get());
         if (SUCCEEDED(hr))
             item.presentingSrgb = srgbPresented;
         if (SUCCEEDED(hr))
@@ -708,7 +1073,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         if (!rollInstalled)
         {
             item.hoverRollOpening.reset();
-            if (srgbPresented)
+            if (desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey()))
                 desktopBackdropCompositor_.SetSrgbContentRollClip(item.BackdropOwnerKey(),
                     drawRollSnapshot ? visibleBounds : RECT{}, static_cast<float>(backdropCornerRadius));
             if (drawRollSnapshot)
@@ -732,8 +1097,6 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         const float clipHeight = static_cast<float>(
             snowdesktop::widget_composition_layer_rules::WidgetSurfaceExtent(
                 item.bounds.bottom - item.bounds.top));
-        const bool showContent = item.visible &&
-            (item.surface || item.renderedVisualAttached);
         if (SUCCEEDED(hr))
             hr = item.clip->SetRight(showContent ? static_cast<float>(width) : 0.0f);
         if (SUCCEEDED(hr))
@@ -746,18 +1109,36 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         }
         else
         {
-            if (luaWidget && !asynchronous)
+            item.contentVisible = showContent;
+            if (luaWidget)
+            {
                 item.renderedContentId = contentId;
-            if (!asynchronous && item.hoverFade && item.hoverFade->waitingForPixels)
+                item.precomposedPaint = paint.revision != 0 && paint.appearance
+                    ? std::move(paint) : snowdesktop::widget_runtime::WidgetSurfacePaint{};
+            }
+            if (showContent && item.hoverFade && item.hoverFade->waitingForPixels)
                 StartDesktopWidgetHoverFade(item, true);
             if (item.backdropRegistered)
                 desktopBackdropCompositor_.SetPanelAnimationFence(item.BackdropOwnerKey(), hoverSamplingEnvelope);
-            item.iconBackdrops.Publish(desktopBackdropCompositor_, item.HoverOpacity(),
-                item.backdropRegistered ? item.BackdropOwnerKey() : 0, d2dDevice_.Get());
+            if (showContent)
+            {
+                const float fileIconBlur = dynamic_cast<ScrollingItemWidget*>(widgetContainer) &&
+                    iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled
+                    ? iconBeautifySettings_.glassBlurRadius : 0.f;
+                item.iconBackdrops.Publish(desktopBackdropCompositor_, item.HoverOpacity(),
+                    item.backdropRegistered ? item.BackdropOwnerKey() : 0, d2dDevice_.Get(), fileIconBlur);
+            }
+            else
+                item.iconBackdrops.DiscardDraw();
         }
     }
 
-    if (!SyncDesktopWidgetCompositionZOrder())
+    // The retained surface update leaves visual order, glass and native
+    // children untouched. A nested request or a failure returns to the
+    // ordinary frame before it can change those resources.
+    if (regionalOnly && (hasSharedWork() || !surfaceFailures.empty() || !pendingDesktopWidgetCompositions_.empty()))
+        requireSharedFrame();
+    if (!regionalOnly && !SyncDesktopWidgetCompositionZOrder())
     {
         desktopWidgetCompositionFailurePending_ = true;
         structuralOk = false;
@@ -792,13 +1173,18 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         }
 
         auto& item = position->second;
-        desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
-        item.presentingSrgb = false;
+        if (!desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey()))
+        {
+            item.presentingSrgb = false;
+            CloseWidgetContentClip(item);
+        }
         (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
         item.surface.Reset();
+        item.precomposedRecorder.Reset();
+        item.precomposedPaint = {};
         item.width = 0;
         item.height = 0;
-        pendingDesktopWidgetCompositions_.insert(failure.widgetId);
+        pendingDesktopWidgetCompositions_.insert_or_assign(failure.widgetId, std::nullopt);
         if (hwnd_ && IsWindow(hwnd_))
         {
             RECT dirty = item.bounds;
@@ -806,12 +1192,13 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             InvalidateRect(hwnd_, &dirty, FALSE);
         }
     }
-    if (ownsPaintScope)
+    if (collectingBackdrops)
     {
         KeepDesktopWidgetBackdropPanels();
         desktopBackdropCompositor_.EndFrame(false);
-        compositionPaintInProgress_ = false;
     }
+    if (ownsPaintScope) FinishDesktopCompositionPaint();
+    if (srgbDamageOnly) *srgbDamageOnly = regionalOnly;
     if (!structuralOk && hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, FALSE);
     return structuralOk;
@@ -831,37 +1218,40 @@ void DesktopApp::DrainDesktopWidgetSurfaceResults()
         HRESULT hr = result.status;
         if (SUCCEEDED(hr) && item.visible)
         {
-            // The worker has committed actual pixels. Attach beneath the
-            // existing native marquee children and retire the startup surface.
+            // Replace the pixels beneath the native marquee children. Keep
+            // the existing clip, which may be closed pending a geometry draw.
             hr = item.visual->AddVisual(item.renderedVisual.Get(), TRUE, nullptr);
             if (SUCCEEDED(hr))
                 item.renderedVisualAttached = true;
-            if (SUCCEEDED(hr)) hr = item.clip->SetRight(static_cast<float>(item.width));
-            if (SUCCEEDED(hr)) hr = item.clip->SetBottom(static_cast<float>(item.height));
             if (SUCCEEDED(hr)) hr = item.visual->SetContent(nullptr);
             if (SUCCEEDED(hr))
-            {
                 item.surface.Reset();
-                if (item.hoverFade && item.hoverFade->waitingForPixels)
-                    StartDesktopWidgetHoverFade(item, true);
-            }
             changed = true;
         }
         if (FAILED(hr))
         {
             item.renderFailed = true;
             (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
-            if (!item.surface) item.width = item.height = 0;
+            if (!item.surface)
+            {
+                CloseWidgetContentClip(item);
+                item.width = item.height = 0;
+            }
             if (RequestGraphicsDeviceRecovery(L"Widget render worker", hr)) return;
             const auto message = L"Widget render worker failed; using synchronous surface: " +
                 result.owner + L" hr=" + std::to_wstring(hr);
             WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering,
                 message.c_str(), DiagnosticLogLevel::Warning);
-            if (item.visible) pendingDesktopWidgetCompositions_.insert(result.owner);
+            if (item.visible) pendingDesktopWidgetCompositions_.insert_or_assign(result.owner, std::nullopt);
             changed = true;
         }
     }
-    if (changed) (void)PresentQueuedDesktopWidgetComposition();
+    if (changed)
+    {
+        // Attaching a finished surface may need only a shared commit.
+        (void)CommitCompositionAnimationFrame();
+        (void)PresentQueuedDesktopWidgetComposition();
+    }
 }
 
 bool DesktopApp::HasDesktopWidgetComposition(
@@ -893,7 +1283,7 @@ bool DesktopApp::SyncDesktopWidgetPresentationVisibility(
         item.hoverFade.reset();
     else
     {
-        const bool pixelsVisible = item.visible && (item.surface || item.renderedVisualAttached);
+        const bool pixelsVisible = item.contentVisible;
         if (!item.hoverFade)
         {
             auto& fade = item.hoverFade.emplace();
@@ -919,6 +1309,7 @@ void DesktopApp::StartDesktopWidgetHoverFade(DesktopWidgetCompositionItem& item,
 {
     auto& fade = *item.hoverFade;
     fade.waitingForPixels = false;
+    fade.compositorFadingOut = false;
     fade.motion.Configure(true, snowdesktop::animation::RuntimeDurationScale());
     const auto tick = static_cast<std::uint64_t>(
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
@@ -950,7 +1341,7 @@ bool DesktopApp::AdvanceDesktopWidgetHoverFades(double nowMilliseconds)
         else if (motion.IsInteractive()) motion.ShowImmediately();
         else motion.ResetHidden();
         active |= motion.IsAnimating();
-        changed = true;
+        changed |= !item.hoverFade->compositorFadingOut || !motion.IsAnimating();
         if (motion.IsHidden() && hwnd_)
         {
             // Let the scene retire the zero-opacity child and its retained pixels.
@@ -986,9 +1377,10 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
     // frame commits the retained surface at its previous size.
     const bool refreshBeforeShow = visible &&
         (!item.visible || !EqualRect(&item.bounds, &bounds));
+    if (!visible || refreshBeforeShow) popupDeferredWidgetUpdates_.erase(widgetId);
     if (refreshBeforeShow)
     {
-        pendingDesktopWidgetCompositions_.insert(widgetId);
+        pendingDesktopWidgetCompositions_.insert_or_assign(widgetId, std::nullopt);
         if (desktopWidgetHoverTailToken_)
         {
             uiAnimationScheduler_.Cancel(desktopWidgetHoverTailToken_);
@@ -996,15 +1388,14 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
         }
         // Keep the old, anchored hover frame until the new child pixels are
         // ready, even if a pointer batch defers its draw past this commit.
-        const bool keepPresentedFrame = retainOnHeightChange && item.visible &&
+        const bool keepPresentedFrame = retainOnHeightChange && item.contentVisible &&
             item.surface && item.bounds.left == bounds.left &&
             item.bounds.top == bounds.top && item.bounds.right == bounds.right;
-        if (item.clip && !keepPresentedFrame)
+        const bool keepSrgbFrame = item.visible &&
+            desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey());
+        if (item.clip && !keepPresentedFrame && !keepSrgbFrame)
         {
-            desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
-            item.presentingSrgb = false;
-            (void)item.clip->SetRight(0.0f);
-            (void)item.clip->SetBottom(0.0f);
+            CloseWidgetContentClip(item);
         }
     }
     if (item.visible == visible)
@@ -1015,7 +1406,9 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
     {
         // Ownership survives eviction. Rebuild even when this widget lies
         // outside the current dirty rectangle; hidden data may have changed.
-        pendingDesktopWidgetCompositions_.insert(widgetId);
+        pendingDesktopWidgetCompositions_.insert_or_assign(widgetId, std::nullopt);
+        if (widgetSurfaceRenderer_)
+            widgetSurfaceRenderer_->SetPaused(item.renderTarget, item.occluded);
     }
     else if (GetDesktopWidgetSurfaceBytes(widgetId) != 0)
     {
@@ -1028,13 +1421,24 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
     }
     if (!visible)
     {
+        const auto index = FindWidgetIndexById(widgetId);
+        if (index < widgets_.size())
+            widgets_[index].keepInitialComposition = false;
         desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
         item.presentingSrgb = false;
-        // Stop queued/in-flight publication. A later show gets a fresh target
-        // identity, so a late completion cannot open the hidden clip.
         item.hoverFade.reset();
-        (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
-        item.renderedContentId.clear();
+        if (desktopIconsHidden_ && item.renderedVisualAttached && widgetSurfaceRenderer_)
+        {
+            // Keep the presented body behind the closed clip. A brief desktop
+            // hide can show the same pixels while the worker refreshes them.
+            widgetSurfaceRenderer_->SetPaused(item.renderTarget, true);
+        }
+        else
+        {
+            // Reject late ready messages from a target that never appeared.
+            (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
+            item.renderedContentId.clear();
+        }
         item.iconBackdrops.Hide(desktopBackdropCompositor_);
     }
     if (!visible && item.clip)
@@ -1045,11 +1449,10 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
             item.hoverRollOpening.reset();
         }
         item.hoverRollUnavailable = false;
-        (void)item.clip->SetRight(0.0f);
-        (void)item.clip->SetBottom(0.0f);
     }
     if (!visible)
     {
+        CloseWidgetContentClip(item);
         // Retaining pixels briefly must not keep a native animation running
         // behind a zero-sized clip. The next draw uses the retained phase/time.
         const auto marquees = widgetMarqueeCompositionItems_.find(widgetId);
@@ -1071,8 +1474,18 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
 
 void DesktopApp::KeepDesktopWidgetBackdropPanels()
 {
+    // A fade requested while publishing these visuals belongs to the next pass.
+    desktopWidgetHoverFadePending_ = false;
     for (auto& [id, item] : desktopWidgetCompositionItems_)
     {
+        if (!item.visible || !item.contentVisible)
+        {
+            if (item.backdropRegistered)
+                (void)desktopBackdropCompositor_.RemovePanel(item.bounds, item.BackdropOwnerKey());
+            item.backdropRegistered = false;
+            item.iconBackdrops.Hide(desktopBackdropCompositor_);
+            continue;
+        }
         const float opacity = item.HoverOpacity();
         if (item.presentingSrgb && !desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey()))
         {
@@ -1080,10 +1493,11 @@ void DesktopApp::KeepDesktopWidgetBackdropPanels()
             {
                 desktopBackdropCompositor_.RemoveSrgbContent(item.BackdropOwnerKey());
                 item.presentingSrgb = false;
-                pendingDesktopWidgetCompositions_.insert(id);
+                pendingDesktopWidgetCompositions_.insert_or_assign(id, std::nullopt);
+                desktopWidgetPresentationBlocked_ = true;
             }
         }
-        if (item.presentingSrgb)
+        if (desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey()))
             desktopBackdropCompositor_.SetSrgbContentOpacity(item.BackdropOwnerKey(), opacity);
         const HRESULT opacityResult = UpdateHoverOpacity(dcompDevice_.Get(), item, opacity);
         if (FAILED(opacityResult) &&
@@ -1100,7 +1514,7 @@ void DesktopApp::KeepDesktopWidgetBackdropPanels()
             // draw. Restoring only its full static geometry would flash.
             if (!item.backdropRegistered && item.visible)
             {
-                pendingDesktopWidgetCompositions_.insert(id);
+                pendingDesktopWidgetCompositions_.insert_or_assign(id, std::nullopt);
                 if (hwnd_) InvalidateRect(hwnd_, &item.bounds, FALSE);
             }
         }
@@ -1124,13 +1538,11 @@ void DesktopApp::KeepDesktopWidgetBackdropPanels()
                 (void)desktopBackdropCompositor_.SetPanelOpacity(
                     item.bounds, opacity, item.BackdropOwnerKey());
         }
-        if (item.visible)
-            item.iconBackdrops.Restore(desktopBackdropCompositor_, opacity,
-                item.backdropRegistered ? item.BackdropOwnerKey() : 0, d2dDevice_.Get());
-        else
-            item.iconBackdrops.Hide(desktopBackdropCompositor_);
+        item.iconBackdrops.Restore(desktopBackdropCompositor_, opacity,
+            item.backdropRegistered ? item.BackdropOwnerKey() : 0, d2dDevice_.Get());
+        if (item.hoverFade && item.hoverFade->motion.IsClosing())
+            item.hoverFade->compositorFadingOut = SubmitDesktopWidgetFadeOut(item);
     }
-    desktopWidgetHoverFadePending_ = false;
 }
 
 void DesktopApp::LogDesktopWidgetBackdropState(const wchar_t* phase) const
@@ -1222,16 +1634,25 @@ void DesktopApp::TrimHiddenDesktopWidgetSurfaces()
         const auto& id = owners[release.index];
         auto& item = desktopWidgetCompositionItems_.at(id);
         HRESULT hr = S_OK;
-        if (item.surface)
+        if (item.renderTarget)
+        {
+            hr = RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
+            changed = true;
+        }
+        if (SUCCEEDED(hr) && item.surface)
         {
             // Resetting our ComPtr alone leaves the visual's reference alive.
             hr = item.visual->SetContent(nullptr);
             if (SUCCEEDED(hr))
             {
                 item.surface.Reset();
-                item.width = item.height = 0;
                 changed = true;
             }
+        }
+        if (!item.surface && !item.renderTarget)
+        {
+            item.width = item.height = 0;
+            item.renderedContentId.clear();
         }
         const auto marquees = widgetMarqueeCompositionItems_.find(id);
         if (SUCCEEDED(hr) && marquees != widgetMarqueeCompositionItems_.end())
@@ -1287,6 +1708,7 @@ void DesktopApp::RemoveDesktopWidgetComposition(
     const std::wstring& widgetId,
     bool invalidateRoot)
 {
+    popupDeferredWidgetUpdates_.erase(widgetId);
     pendingDesktopWidgetCompositions_.erase(widgetId);
     pendingWidgetMarqueeCompositions_.erase(widgetId);
     widgetMarqueeCompositionItems_.erase(widgetId);
@@ -1294,11 +1716,12 @@ void DesktopApp::RemoveDesktopWidgetComposition(
     if (position == desktopWidgetCompositionItems_.end())
         return;
     const RECT bounds = position->second.bounds;
-    desktopBackdropCompositor_.RemoveSrgbContent(position->second.BackdropOwnerKey());
-    (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), position->second);
+    const auto backdropOwner = position->second.BackdropOwnerKey();
+    desktopBackdropCompositor_.RemoveSrgbContent(backdropOwner);
     position->second.iconBackdrops.Hide(desktopBackdropCompositor_);
-    if (position->second.backdropRegistered)
-        (void)desktopBackdropCompositor_.RemovePanel(bounds, position->second.BackdropOwnerKey());
+    // Query by owner even when cached registration was lost during recovery.
+    (void)desktopBackdropCompositor_.RemovePanel(bounds, backdropOwner);
+    (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), position->second);
     if (desktopWidgetCompositionLayer_ && position->second.visual)
     {
         (void)desktopWidgetCompositionLayer_->RemoveVisual(
@@ -1392,12 +1815,21 @@ bool DesktopApp::SyncDesktopWidgetCompositionZOrder()
 
 void DesktopApp::ResetDesktopWidgetComposition()
 {
+    uiAnimationScheduler_.Cancel(popupDeferredWidgetToken_);
+    popupDeferredWidgetToken_ = 0;
+    popupDeferredWidgetUpdates_.clear();
     // Join before resetting devices, command resources or the parent tree.
     widgetSurfaceRenderer_.reset();
     widgetSurfaceRendererUnavailable_ = false;
+    uiAnimationScheduler_.Cancel(deferredDesktopWidgetPresentationToken_);
+    deferredDesktopWidgetPresentationToken_ = 0;
+    desktopWidgetPresentationBlocked_ = false;
     if (desktopWidgetHoverTailToken_)
         uiAnimationScheduler_.Cancel(desktopWidgetHoverTailToken_);
     desktopWidgetHoverTailToken_ = 0;
+    if (desktopWidgetPopupResizeTailToken_)
+        uiAnimationScheduler_.Cancel(desktopWidgetPopupResizeTailToken_);
+    desktopWidgetPopupResizeTailToken_ = 0;
     if (desktopWidgetHoverFadeFrameToken_)
         uiAnimationScheduler_.Cancel(desktopWidgetHoverFadeFrameToken_);
     desktopWidgetHoverFadeFrameToken_ = 0;

@@ -19,7 +19,7 @@ void DesktopApp::BeginRenameSelected(
         ShowAllCollectionPopupItems();
     renameCommitPending_ = false;
 
-    if (IsCollectionPopupInteractive() &&
+    if (IsCollectionPopupKeyboardTarget() &&
         dockFolderPopupOpen_ &&
         std::none_of(widgets_.begin(), widgets_.end(),
             [](const DesktopWidget& widget) { return widget.selected; }))
@@ -101,13 +101,12 @@ void DesktopApp::BeginRenameSelected(
             const auto& popupWidget = dockFolderPopupOpen_
                 ? dockFolderPopupWidget_ : widgets_[selectedWidgetIndex];
             frame = GetCollectionPopupRect(popupWidget);
-            const float popupScale = GetCollectionPopupLayoutMetrics(popupWidget).scale;
+            const auto metrics = GetCollectionPopupLayoutMetrics(popupWidget);
             handle = snowdesktop::collection_popup_layout::ResolveTitleRect(
-                frame, popupScale, dockFolderPopupOpen_
-                    ? GetDockFolderPopupSortButtonRect(frame).left -
-                        snowdesktop::collection_popup_layout::ScaleDimension(10, popupScale)
+                frame, metrics, dockFolderPopupOpen_ && !folderPreview_
+                    ? GetDockFolderPopupSortButtonRect(frame).left - metrics.controlGap
                     : (std::numeric_limits<LONG>::max)());
-            fontSize = snowdesktop::collection_popup_layout::ResolveTitleFontSize(popupScale);
+            fontSize = snowdesktop::collection_popup_layout::ResolveTitleFontSize(metrics.scale);
             fontWeight = FW_SEMIBOLD;
             leftAligned = true;
             foundContainer = true;

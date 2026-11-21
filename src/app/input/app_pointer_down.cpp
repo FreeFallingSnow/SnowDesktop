@@ -6,7 +6,8 @@
 #include "diagnostics/diagnostic_log.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
-#include "layout/folder_sort_rules.h"
+#include "layout/folder_sort_types.h"
+#include "layout/list_detail_rules.h"
 #include "app/dock/dock_tray_popup_state.h"
 #include "app/dock/persistent_dock_host.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
@@ -19,8 +20,34 @@
 
 // Primary-button press handling and drag-source initialization.
 
+namespace
+{
+int DetailsFolderSortMode(snowdesktop::list_detail_rules::Column column)
+{
+    using snowdesktop::list_detail_rules::Column;
+    namespace sort = snowdesktop::folder_sort_rules;
+    switch (column)
+    {
+    case Column::Name: return sort::kName;
+    case Column::Modified: return sort::kModified;
+    case Column::Type: return sort::kType;
+    case Column::Size: return sort::kSize;
+    default: return sort::kManual;
+    }
+}
+
+bool NextDetailsSortAscending(
+    const DesktopWidget* data, snowdesktop::list_detail_rules::Column column)
+{
+    return data && data->contentSortColumn == column
+        ? !data->contentSortAscending
+        : snowdesktop::list_detail_rules::DefaultAscending(column);
+}
+}
+
 void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
+    ClearDesktopSurfaceKeyboardFocus();
     luaPanelOutsidePressGeneration_ = 0;
     if (nativeMenuSession_)
         DismissActiveContextMenuForPopupTransition();
@@ -38,12 +65,14 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     if (renameController_.IsActive())
         CommitRename(false);
     const bool hadKeyboardVisualFocus = keyboardNavVisualFocus_;
-    keyboardNavVisualFocus_ = false;
+    if (hadKeyboardVisualFocus)
+        UpdateWidgetControlSelection(nullptr, [this] { keyboardNavVisualFocus_ = false; });
     ClearPopupMouseDownItem();
     ClearPopupDragTarget();
     pendingWidgetButtonAction_ = WidgetHit::None;
     pendingWidgetButtonClosedPopup_ = false;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+    folderReadWork_.Cancel(snowdesktop::folder_preview::kResolveWorkKey);
     if (DockTrayPopupPointerDown(pt))
     {
         mouseDown_ = true;
@@ -170,6 +199,21 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             return;
         }
     }
+    if (!quickNavigation_->open)
+    {
+        if (!(wp & MK_CONTROL)) ClearInlineFolderPreviewSelectionOutside(pt);
+        ActivateInlineFolderPreviewAtPoint(pt);
+        if (folderPreview_)
+        {
+            folderPreview_->keyboardFocused = IsPointOccludedByOpenPopup(pt);
+            if (ClearFolderPreviewHeaderFocus()) RefreshDockFolderPopupGeometry();
+        }
+        if (HandleFolderPreviewHeaderPress(pt)) return;
+    }
+    const bool inlineFolderPreview = folderPreview_ && folderPreview_->inlineBounds;
+    const bool inlinePreviewChromePress = inlineFolderPreview &&
+        (PtInRect(&folderPreview_->inlineTitleBar, pt) ||
+            PtInRect(&folderPreview_->inlineResizeHandle, pt) || PtInRect(&folderPreview_->inlineCollapseButton, pt));
     auto* popupGroup = IsPointOccludedByOpenPopup(pt) ? GetGroupPopupView() : nullptr;
     DockContainer* pointDock = popupGroup ? nullptr : GetDockContainerAtPoint(pt);
     PersistentDockHost* pointDockHost =
@@ -206,7 +250,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 pressedOpenPopupFolderToggle =
                     IsCollectionPopupInteractive() &&
                     dockFolderPopupOpen_ &&
-                    dockFolderPopupSourceId_ == sourceId &&
+                    GetDockFolderPopupEntrySourceId() == sourceId &&
                     popupOwnedByPointDock;
             }
         }
@@ -274,6 +318,11 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     pendingCtrlToggleWidgetItem_ = nullptr;
     marqueeRect_ = MakeRect(pt.x, pt.y, pt.x, pt.y);
 
+    const auto blurSearch = [this](ScrollingItemWidget& view) {
+        const bool focused = view.IsSearchFocused();
+        view.SetSearchFocused(false);
+        if (focused) InvalidateWidgetControls(view);
+    };
     if (IsCollectionPopupInteractive())
     {
         auto* view = GetCategorizedPopupView();
@@ -285,15 +334,14 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             const RECT search = view->GetSearchBoxRect();
             if (!IsRectEmptyRect(search) && PtInRect(&search, pt))
             {
-                for (auto& candidate : containers_)
-                    if (auto* other = dynamic_cast<ScrollingItemWidget*>(candidate.get()); other && other != view)
-                        other->SetSearchFocused(false);
+                PrepareWidgetSearchFocus(*view, false);
                 view->BeginSearchPointerSelection(pt, (wp & MK_SHIFT) != 0);
                 FocusDesktopInputWindow();
                 mouseDownHit_ = nullptr;
                 snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                 UpdateHostInputImePosition();
-                InvalidateRect(hwnd_, nullptr, FALSE);
+                if (folderPreview_) RefreshDockFolderPopupGeometry();
+                if (!inlineFolderPreview) InvalidateWidgetControls(*view);
                 return;
             }
             if (view->BeginCategoryTabDrag(pt))
@@ -306,15 +354,15 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 mouseDownHit_ = nullptr;
                 snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                 ResetCollectionPopupAnimationCache();
-                InvalidateRect(hwnd_, nullptr, FALSE);
+                InvalidateWidgetControls(*view);
                 return;
             }
-            view->SetSearchFocused(false);
+            blurSearch(*view);
         }
     }
 
     // 外部点击先关闭集合弹窗，但保留本次按下事件，继续命中弹窗下方的真实目标。
-    if (IsCollectionPopupInteractive() &&
+    if (!folderPreview_ && IsCollectionPopupInteractive() &&
         popupWidgetIndex_ < widgets_.size())
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
@@ -329,12 +377,10 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             collectionPopupClosedByPointerDown = true;
         }
     }
-    else if (IsCollectionPopupInteractive() &&
+    else if (!inlineFolderPreview && IsCollectionPopupInteractive() &&
         dockFolderPopupOpen_)
     {
-        const RECT popup =
-            GetCollectionPopupRect(
-                dockFolderPopupWidget_);
+        const RECT popup = GetPresentedCollectionPopupGeometry().panel;
         if (!PtInRect(&popup, pt) &&
             !pressedOpenPopupFolderToggle)
         {
@@ -359,7 +405,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     bool ctrl = (wp & MK_CONTROL) != 0;
     const bool shift = (wp & MK_SHIFT) != 0;
 
-    if (IsCollectionPopupInteractive())
+    if (IsCollectionPopupInteractive() && !inlinePreviewChromePress)
     {
         DesktopWidget* popupWidget = nullptr;
         bool pressedPopupToggle = false;
@@ -392,11 +438,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     return;
                 }
             }
-            const RECT viewport = snowdesktop::popup_scrollbar_layout::Viewport(
-                popup, GetCollectionPopupContentRect(popup));
+            const auto [viewport, visible] = GetCollectionPopupScrollbarLayout(popup);
             const float scrollbarScale = GetOpenCollectionPopupLayoutMetrics().scale;
-            const int visible = std::max<int>(
-                1, viewport.bottom - viewport.top);
             const int maximum = GetCollectionPopupMaxScrollOffset(
                 *popupWidget, popup);
             auto* searchPopup = GetCategorizedPopupView();
@@ -415,7 +458,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 popupScrollbarDragStartOffset_ = scroll;
                 mouseDownHit_ = nullptr;
                 snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
-                InvalidateRect(hwnd_, &popup, FALSE);
+                InvalidateCollectionPopupControls();
                 return;
             }
         }
@@ -423,6 +466,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
     if (IsCollectionPopupInteractive() &&
         dockFolderPopupOpen_ &&
+        !inlinePreviewChromePress &&
         !pressedOpenPopupFolderToggle)
     {
         const RECT popup = GetCollectionPopupRect(
@@ -447,7 +491,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             }
 
             const RECT content =
-                GetCollectionPopupContentRect(popup);
+                folderPreview_ ? GetPresentedCollectionPopupGeometry().content : GetCollectionPopupContentRect(popup);
             const RECT detailsHeader =
                 GetCollectionPopupDetailsHeaderRect(popup);
             if (!IsRectEmptyRect(detailsHeader) &&
@@ -477,6 +521,15 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 else
                 {
                     mouseDown_ = false;
+                    if (folderPreview_ && dockFolderPopupAvailable_ && dockFolderPopupContainer_)
+                    {
+                        const auto columns = dockFolderPopupContainer_->GetDetailsColumns(
+                            detailsHeader.right - detailsHeader.left);
+                        const auto column = snowdesktop::list_detail_rules::HitColumn(
+                            columns, pt.x - detailsHeader.left);
+                        SortDockFolderPopupContents(DetailsFolderSortMode(column),
+                            NextDetailsSortAscending(&dockFolderPopupWidget_, column));
+                    }
                 }
                 return;
             }
@@ -540,7 +593,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 snowdesktop::
                     collection_popup_layout::
                         AllowsMarqueeStart(
-                            true,
+                            !folderPreview_ || PtInRect(&content, pt),
                             clickedPopupItem,
                             false);
             if (!clickedPopupItem && !ctrl)
@@ -573,7 +626,10 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             mouseDownWidgetIndex_ =
                 static_cast<size_t>(-1);
             snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
-            InvalidateRect(hwnd_, nullptr, FALSE);
+            if (folderPreview_ && folderPreview_->inlineBounds)
+                (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+            else
+                InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
     }
@@ -729,7 +785,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             }
             if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
             {
-                if (!ctrl) ClearSelection();
+                const bool selectionCleared = !ctrl && ClearSelection();
+                bool popupEntryOnDockHost = false;
                 dockPressedEntry_ = dockItem->GetEntryIndex();
                 // Popup toggles and single-click launches are actions, so do
                 // not flash a selection indicator while the button is held.
@@ -737,10 +794,9 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 if (dockPressedEntry_ < dockEntries_.size())
                 {
                     const DockEntry& entry = dockEntries_[dockPressedEntry_];
-                    if (ctrl ||
-                        (!dockSettings_.singleClickLaunchItems &&
-                            !IsLogicalDockEntryType(entry.type) &&
-                            !IsFolderDockEntry(entry)))
+                    const bool popupEntry = IsLogicalDockEntryType(entry.type) || IsFolderDockEntry(entry);
+                    popupEntryOnDockHost = popupEntry && IsDockHostedByPersistentHost(dock);
+                    if (ctrl || (!dockSettings_.singleClickLaunchItems && !popupEntry))
                         dockItem->SetSelected(true);
                 }
                 if (dockPressedEntry_ < dockEntries_.size() &&
@@ -775,7 +831,13 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 }
                 mouseDownHit_ = dockItem;
                 snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
-                InvalidateRect(hwnd_, nullptr, FALSE);
+                // The Dock HWND presents its press. Desktop pixels only change if
+                // the press also removed a selection or keyboard focus elsewhere.
+                if (!popupEntryOnDockHost || selectionCleared || hadKeyboardVisualFocus ||
+                    (collectionPopupClosedByPointerDown && desktopBackdropFullCollectionPending_))
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                if (popupEntryOnDockHost && (selectionCleared || ctrl))
+                    InvalidateFloatingDockWindow(false);
                 return;
             }
             if (DockRunningItem* runningItem = dock->RunningItemAtPoint(pt))
@@ -880,8 +942,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());
                 if (searchable && searchable->IsSearchFocused())
                 {
-                    searchable->SetSearchFocused(false);
-                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    blurSearch(*searchable);
                 }
             }
         }
@@ -942,9 +1003,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 pt.y - luaFrame.top);
         }
 
-        // An input field owns its pointer interaction. Do not select the
-        // containing Lua widget here, otherwise the outer blue selection
-        // frame appears on top of the field and disrupts live editing.
+        // An input field owns its pointer interaction and editing focus.
         const bool otherSelectionChanged = hostInputArea
             ? ClearSelection(&ResolveLuaWidgetFrameOwner(widgets_[wi]))
             : SelectWidgetOnly(wi);
@@ -1053,7 +1112,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 mouseDownWidgetIndex_ = wi;
                 mouseDownHit_ = nullptr;
                 snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
-                InvalidateRect(hwnd_, popupGroup ? &popupGroupFrame : &widgets_[wi].bounds, FALSE);
+                InvalidateWidgetControls(*wc);
                 return;
             }
         }
@@ -1143,29 +1202,14 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             auto* list = dynamic_cast<ScrollingItemWidget*>(wc);
             if (!list) return;
             auto column = snowdesktop::list_detail_rules::Column::Name;
-            int mode = snowdesktop::folder_sort_rules::kName;
             if (wh == WidgetHit::DetailsModifiedHeader)
-            {
                 column = snowdesktop::list_detail_rules::Column::Modified;
-                mode = snowdesktop::folder_sort_rules::kModified;
-            }
             else if (wh == WidgetHit::DetailsTypeHeader)
-            {
                 column = snowdesktop::list_detail_rules::Column::Type;
-                mode = snowdesktop::folder_sort_rules::kType;
-            }
             else if (wh == WidgetHit::DetailsSizeHeader)
-            {
                 column = snowdesktop::list_detail_rules::Column::Size;
-                mode = snowdesktop::folder_sort_rules::kSize;
-            }
-            const DesktopWidget* sortData = list->GetDetailsSortData();
-            const bool ascending = sortData &&
-                sortData->contentSortColumn == column
-                ? !sortData->contentSortAscending
-                : snowdesktop::list_detail_rules::
-                    DefaultAscending(column);
-            SortWidgetContents(wi, mode, ascending);
+            SortWidgetContents(wi, DetailsFolderSortMode(column),
+                NextDetailsSortAscending(list->GetDetailsSortData(), column));
             return;
         }
         else if (wh == WidgetHit::Content)
@@ -1318,11 +1362,12 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 widgets_[wi].activeCategoryId = id;
                 if (!group->SetFolderSearchScrollOffset(0)) widgets_[wi].scrollOffset = 0;
                 group->InvalidateHostedView();
-                ClearSelection();
                 const size_t childIndex =
                     FindWidgetIndexById(id);
-                if (childIndex < widgets_.size())
-                    widgets_[childIndex].selected = true;
+                UpdateWidgetControlSelection(&widgets_[wi], [&] {
+                    ClearSelection();
+                    if (childIndex < widgets_.size()) widgets_[childIndex].selected = true;
+                });
                 mouseDownWidgetIndex_ = wi;
                 mouseDownHit_ =
                     group->GetSourceTabItemAtPoint(pt);
@@ -1332,7 +1377,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     SyncKeyboardNavFromSelection();
                 }
                 SaveLayoutSlots();
-                InvalidateRect(hwnd_, nullptr, FALSE);
+                InvalidateWidgetControls(*wc);
             }
             return;
         }
@@ -1373,11 +1418,12 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                         dynamic_cast<CollectionGroup*>(wc))
                     {
                         group->InvalidateFilterCache();
-                        ClearSelection();
                         const size_t childIndex =
                             FindWidgetIndexById(id);
-                        if (childIndex < widgets_.size())
-                            widgets_[childIndex].selected = true;
+                        UpdateWidgetControlSelection(&widgets_[wi], [&] {
+                            ClearSelection();
+                            if (childIndex < widgets_.size()) widgets_[childIndex].selected = true;
+                        });
                         mouseDownWidgetIndex_ = wi;
                         mouseDownHit_ =
                             group->GetTabItemAtPoint(pt);
@@ -1397,7 +1443,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                             wc->InvalidateSlots();
                     }
                     SaveLayoutSlots();
-                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    InvalidateWidgetControls(*wc);
                     return;
                 }
             }
@@ -1406,27 +1452,21 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         else if (wh == WidgetHit::SearchBox)
         {
             auto* searchable = dynamic_cast<ScrollingItemWidget*>(wc);
-            for (auto& c : containers_)
-            {
-                auto* other = dynamic_cast<ScrollingItemWidget*>(c.get());
-                if (other && other != searchable)
-                    other->SetSearchFocused(false);
-            }
             if (searchable)
             {
                 // Search focus belongs to the widget interaction, not merely
                 // to the shared hidden IME input HWND. Keep the owning widget
                 // selected so a hover-only widget remains visible while the
                 // pointer temporarily enters the IME candidate window.
-                SelectWidgetOnly(wi);
+                PrepareWidgetSearchFocus(*searchable, true);
                 searchable->BeginSearchPointerSelection(
                     pt, (wp & MK_SHIFT) != 0);
                 mouseDownWidgetIndex_ = wi;
                 mouseDownHit_ = nullptr;
                 snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                 UpdateHostInputImePosition();
+                InvalidateWidgetControls(*searchable);
             }
-            InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
     }
@@ -1443,8 +1483,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());
             if (searchable && searchable->IsSearchFocused())
             {
-                searchable->SetSearchFocused(false);
-                InvalidateRect(hwnd_, nullptr, FALSE);
+                blurSearch(*searchable);
             }
         }
     }

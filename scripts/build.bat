@@ -19,6 +19,8 @@ if /i "%~1"=="evidence-list" goto collaboration
 if /i "%~1"=="acceptance-list" goto collaboration
 if /i "%~1"=="acceptance-start" goto collaboration
 if /i "%~1"=="acceptance-complete" goto collaboration
+if /i "%~1"=="acceptance-record" goto collaboration
+if /i "%~1"=="acceptance-commit" goto collaboration
 if /i "%~1"=="event-post" goto collaboration
 if /i "%~1"=="event-read" goto collaboration
 if /i "%~1"=="event-wait" goto collaboration
@@ -31,7 +33,7 @@ if /i "%~1"=="repair" goto collaboration
 if /i "%~1"=="repair-abandon" goto collaboration
 if /i "%~1"=="begin" goto collaboration
 if /i "%~1"=="finish" goto observation
-if /i "%~1"=="status" goto collaboration
+if /i "%~1"=="status" goto observation
 if /i "%~1"=="recover" goto collaboration
 if /i "%~1"=="ready" goto collaboration
 if /i "%~1"=="wait" goto observation
@@ -69,7 +71,7 @@ if defined SNOWDESKTOP_EXECUTION_TOKEN goto leased
 "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_entry.ps1 -Action release %RELOAD_SHELL_ARG%
 exit /b %ERRORLEVEL%
 :persistent
-"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_run.ps1" %*
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_run.ps1" %* -CliSummary
 exit /b %ERRORLEVEL%
 :candidate
 "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_candidate.ps1" %*

@@ -1,8 +1,12 @@
 #pragma once
 #include "common/json_value.h"
 
+struct lua_State;
+
 namespace snowdesktop::widget_runtime
 {
+void PushSystemControlJson(lua_State* state, const JsonValue& value);
+
 // Only these six data contracts expose the structured control-service payload.
 // Existing audio output topics keep their published typed fields and defaults.
 inline bool IsSystemControlDataTopic(std::string_view topic)

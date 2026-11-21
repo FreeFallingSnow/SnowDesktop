@@ -6,6 +6,7 @@
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
 #include "drag_drop/ole_drag_rules.h"
+#include "drag_drop/drop_image_data.h"
 
 // OLE surface classification, effect choice and coordinate conversion.
 
@@ -303,10 +304,11 @@ std::optional<bool> DesktopApp::DeliverWidgetTextDrop(
     return true;
 }
 
-bool DesktopApp::TryStartWidgetTextDrag(POINT point, WPARAM keys)
+bool DesktopApp::TryStartWidgetContentDrag(POINT point, WPARAM keys)
 {
     if (!mouseDown_ || !(keys & MK_LBUTTON) || widgetTextDragSource_ ||
-        dragDropController_.IsTransportActive() || snowdesktop::private_pointer::Active())
+        widgetImageDragActive_ || dragDropController_.IsTransportActive() ||
+        snowdesktop::private_pointer::Active())
         return false;
     if (std::abs(point.x - mouseDownPoint_.x) < GetSystemMetrics(SM_CXDRAG) &&
         std::abs(point.y - mouseDownPoint_.y) < GetSystemMetrics(SM_CYDRAG))
@@ -346,7 +348,24 @@ bool DesktopApp::TryStartWidgetTextDrag(POINT point, WPARAM keys)
             captured = true;
         }
     }
-    if (!captured) return false;
+    ComPtr<IDataObject> imageData;
+    if (!captured && widgetEngine_)
+    {
+        std::shared_ptr<const snowdesktop::widget_runtime::WidgetRuntimeImagePixels> image;
+        if (luaWidgetPanelMouseDown_)
+            image = widgetEngine_->TakeInteractionImageDrag(
+                luaWidgetPanelRequest_.widgetId, luaWidgetPanelRequest_.surface);
+        else if (mouseDownWidgetIndex_ < widgets_.size() &&
+            IsLuaDesktopSurface(widgets_[mouseDownWidgetIndex_]))
+        {
+            if (const auto* content = ResolveLuaWidgetContent(&widgets_[mouseDownWidgetIndex_]))
+                image = widgetEngine_->TakeInteractionImageDrag(content->id, "desktop");
+        }
+        if (image)
+            (void)snowdesktop::drop_image_data::CreateDragDataObject(
+                std::move(image), imageData.GetAddressOf());
+    }
+    if (!captured && !imageData) return false;
 
     // DoDragDrop pumps a nested window loop and takes capture itself. The
     // original gesture is already consumed; it cannot become an item drag.
@@ -356,7 +375,8 @@ bool DesktopApp::TryStartWidgetTextDrag(POINT point, WPARAM keys)
     luaWidgetPanelMouseDown_ = false;
     luaWidgetPanelCaptureHwnd_ = nullptr;
     ReleaseCapturePreservingPointerState();
-    RunWidgetTextDrag(std::move(source));
+    if (imageData) RunWidgetImageDrag(imageData.Get());
+    else RunWidgetTextDrag(std::move(source));
     return true;
 }
 

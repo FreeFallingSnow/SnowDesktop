@@ -375,6 +375,7 @@ bool SystemSnapshotService::SampleSystem()
         {
             const auto& row = table->Table[i];
             if (row.Type == IF_TYPE_SOFTWARE_LOOPBACK ||
+                row.InterfaceAndOperStatusFlags.FilterInterface ||
                 row.OperStatus != IfOperStatusUp ||
                 row.MediaConnectState != MediaConnectStateConnected)
                 continue;

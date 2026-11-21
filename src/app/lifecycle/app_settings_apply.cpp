@@ -1,8 +1,10 @@
 #include "platform/force_restart_hotkey.h"
+#include "platform/application_version.h"
 #include "dock/dock_fullscreen_applications.h"
 #include "dock/dock_fullscreen_policy.h"
 #include "shell/shell_extension_service.h"
 #include "app/app.h"
+#include "app/features/app_control_runtime.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "platform/usage_guide.h"
 #include "navigation/navigation_settings.h"
@@ -574,12 +576,12 @@ void DesktopApp::PublishHomeAboutStatus()
     (void)settingsWindow_->PublishHomeAboutStatus(BuildHomeAboutStatus(snapshot->generation));
 }
 
-snowdesktop::winui::HomeAboutStatusPatch DesktopApp::BuildHomeAboutStatus(std::uint64_t generation)
+snowdesktop::settings::HomeAboutStatusPatch DesktopApp::BuildHomeAboutStatus(std::uint64_t generation)
 {
     // Pushes and snapshot-triggered reads share one sequence. Controller
     // revisions cannot order session-only changes such as temporary layouts.
     auto patch = homeAboutStatusSequence_.Next(generation);
-    patch.applicationVersion = Utf8ToWide(SNOWDESKTOP_VERSION);
+    patch.applicationVersion = Utf8ToWide(snowdesktop::ApplicationVersion());
     patch.installedWidgetCount = widgets_.size();
     patch.usageGuideExpanded = usageGuideExpanded_;
     patch.packaged = snowdesktop::deployment::IsPackaged();
@@ -597,7 +599,7 @@ snowdesktop::winui::HomeAboutStatusPatch DesktopApp::BuildHomeAboutStatus(std::u
     patch.debugDataDirectory = selectedPaths.data.wstring();
     patch.debugDesktopDirectory = configuration.desktop.wstring();
     patch.debugEnvironmentId = configuration.selectedEnvironment;
-    patch.debugEnvironments = std::vector<snowdesktop::winui::DebugEnvironmentSummary>{};
+    patch.debugEnvironments = std::vector<snowdesktop::settings::DebugEnvironmentSummary>{};
     for (const auto& environment : configuration.environments)
     {
         patch.debugEnvironments->push_back({environment.id, environment.name});
@@ -802,6 +804,7 @@ bool DesktopApp::SynchronizeReloadedLayoutSettings()
     desktop.shortcutArrowMode = shortcutArrowMode_;
     desktop.groupComponentBadges = groupComponentBadges_;
     desktop.beautifyFileThumbnails = beautifyFileThumbnails_;
+    desktop.iconShadows = iconShadows_;
     desktop.iconBeautify = iconBeautifySettings_;
     const bool generalSynchronized =
         settingsController_->SynchronizeGeneral(generalSettings_);
@@ -1130,6 +1133,7 @@ public:
                 snapshot.values.desktop.fanTitleFontSizeCu);
             app_.PreviewItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(
                 snapshot.values.desktop.itemFontWeight));
+            app_.SetIconShadows(snapshot.values.desktop.iconShadows);
             app_.SetIconBeautifySettings(
                 snapshot.values.desktop.iconBeautify,
                 snapshot.values.desktop.beautifyFileThumbnails,
@@ -1264,7 +1268,11 @@ public:
         if (dockCommitted) app_.dockSettings_ = requestedDockSettings;
         if (generalCommitted)
         {
+            const bool revokeAgentAccess = app_.generalSettings_.agentOperationsEnabled &&
+                !snapshot.values.general.agentOperationsEnabled;
             app_.generalSettings_ = snapshot.values.general;
+            if (revokeAgentAccess && app_.applicationControlRuntime_)
+                app_.applicationControlRuntime_->RevokeAccess();
             app_.ApplyScreenTimeEnabled();
         }
 
@@ -1412,6 +1420,7 @@ public:
                 desktop.itemFontWeight));
             app_.SetShortcutArrowMode(desktop.shortcutArrowMode);
             app_.SetGroupComponentBadges(desktop.groupComponentBadges);
+            app_.SetIconShadows(desktop.iconShadows);
             app_.SetIconBeautifySettings(
                 desktop.iconBeautify,
                 desktop.beautifyFileThumbnails,
@@ -1547,9 +1556,7 @@ public:
             break;
         case Action::AddWidgetToDesktop:
         {
-            const size_t previousCount = app_.widgets_.size();
-            app_.AddLuaWidgetAt(POINT{ -32000, -32000 }, request.value);
-            if (app_.widgets_.size() == previousCount)
+            if (!app_.AddLuaWidgetAt(POINT{ -32000, -32000 }, request.value))
             {
                 return snowdesktop::SettingsActionResult::Failure(
                     L"The widget could not be added to the desktop.");
@@ -2255,7 +2262,11 @@ void DesktopApp::LoadGeneralSettingsAndApply()
     const bool demoModeEnabled = generalSettings_.demoModeEnabled;
     GeneralSettings settings;
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
+    const bool revokeAgentAccess = generalSettings_.agentOperationsEnabled &&
+        !settings.agentOperationsEnabled;
     generalSettings_ = settings;
+    if (revokeAgentAccess && applicationControlRuntime_)
+        applicationControlRuntime_->RevokeAccess();
     ApplyRuntimeModulePolicy();
     snowdesktop::diagnostics::SetLogModules(settings.diagnosticLogModules);
     snowdesktop::app_fonts::Select(settings.font, std::filesystem::path(GetExecutableDirectoryPath()) / L"Assets", GetDataDirectoryPath());
@@ -2603,6 +2614,13 @@ bool DesktopApp::IsOpenPopupRetained() const
         return GetOpenPopupWidget() != nullptr;
     if (!GetOpenPopupWidget())
         return false;
+    if (folderPreview_ && !popupAnchoredToDock_)
+    {
+        if (folderPreview_->IsTemporary()) return false;
+        const size_t host = FindWidgetIndexById(folderPreview_->hostWidgetId.empty()
+            ? folderPreview_->sourceWidgetId : folderPreview_->hostWidgetId);
+        return host < widgets_.size() && widgets_[host].keepWhenDesktopHidden;
+    }
     if (dockFolderPopupOpen_ || popupAnchoredToDock_)
         return dockSettings_.keepWhenDesktopHidden ||
             (collectionPopupDockHost_ &&

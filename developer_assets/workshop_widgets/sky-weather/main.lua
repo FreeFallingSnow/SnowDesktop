@@ -42,21 +42,32 @@ local function palette()
     return {primary=light and 0x161616 or 0xFFFFFF,secondary=light and 0x565656 or 0xD0D0D0,
         card=light and 0x161616 or 0xFFFFFF,cardAlpha=light and 0.05 or 0.08}
 end
-local function text(x,y,value,size,color,width,bold,height)
-    draw.text(x,y,tostring(value),size,color,width,bold or false,true,height or size*1.5)
+local INK_TEXT=widget.hasFeature("draw.text.inkAlignment")
+local CENTER_X={x="center"}
+local TOP_Y={y="start"}
+local CENTER_Y={y="center"}
+local function text(x,y,value,size,color,width,bold,height,anchors)
+    draw.text(x,y,tostring(value),size,color,width,bold or false,true,
+        height or size*1.5,nil,nil,anchors)
 end
 local function center(x,y,width,value,size,color,bold)
+    if INK_TEXT then
+        text(x+width/2,y,value,size,color,width,bold,nil,CENTER_X)
+        return
+    end
     local measured=draw.measureText(tostring(value),size,width,bold or false)
     text(x+math.max(0,(width-measured.width)*0.5),y,value,size,color,width,bold)
 end
-local function textAtInkTop(x,y,value,size,color,width,bold)
-    local measured=draw.measureText(tostring(value),size,0,bold or false)
-    text(x,y-measured.ink.top,value,size,color,width,bold,measured.height)
+local function textAtInkTop(x,y,value,size,color,width,bold,measured,height)
+    measured=measured or draw.measureText(tostring(value),size,0,bold or false)
+    text(x,INK_TEXT and y or y-measured.ink.top,value,size,color,width,bold,
+        height or measured.height,INK_TEXT and TOP_Y or nil)
     return measured
 end
-local function textAtInkCenter(x,y,value,size,color,width,bold)
-    local measured=draw.measureText(tostring(value),size,0,bold or false)
-    text(x,y-measured.ink.top-measured.ink.height*0.5,value,size,color,width,bold,measured.height)
+local function textAtInkCenter(x,y,value,size,color,width,bold,measured)
+    measured=measured or draw.measureText(tostring(value),size,0,bold or false)
+    text(x,INK_TEXT and y or y-measured.ink.top-measured.ink.height*0.5,
+        value,size,color,width,bold,measured.height,INK_TEXT and CENTER_Y or nil)
 end
 local function forecastLabel(day,data)
     return day.date==data.localTime:sub(1,10) and l10n.tr("lua_widget.sky_weather.today") or l10n.tr(weekdayKeys[(weather.weekday(day.date) or 0)+1])
@@ -190,13 +201,13 @@ local function render(_context,m)
     local titleWidth=w-p*2-header*3.6
     local titleSize=header*0.68
     local measuredTitle=draw.measureText(title,titleSize,0,true)
-    local titleInk=measuredTitle.ink
     local titleDisplayWidth=math.min(measuredTitle.width,titleWidth-header*0.8)
     region("cities",p-header*0.22,headerTop,header*1.90+titleDisplayWidth,headerHeight,l10n.tr("lua_widget.sky_weather.choose_city"))
     draw.path({{op="move",x=p+header*0.05,y=headerCenter-header*0.09},{op="line",x=p+header*0.62,y=headerCenter-header*0.32},
         {op="line",x=p+header*0.4,y=headerCenter+header*0.32},{op="line",x=p+header*0.3,y=headerCenter+header*0.03},{op="close"}},
         {fillColor=colors.primary,alpha=1})
-    text(p+header*0.9,headerCenter-titleInk.top-titleInk.height*0.5,title,titleSize,colors.primary,titleWidth-header*0.8,true,measuredTitle.height)
+    textAtInkCenter(p+header*0.9,headerCenter,title,titleSize,colors.primary,
+        titleWidth-header*0.8,true,measuredTitle)
     local cx=p+header*1.2+titleDisplayWidth
     draw.line(cx,headerCenter-header*0.075,cx+header*0.15,headerCenter+header*0.075,header*0.04,colors.primary,1)
     draw.line(cx+header*0.15,headerCenter+header*0.075,cx+header*0.30,headerCenter-header*0.075,header*0.04,colors.primary,1)
@@ -245,14 +256,13 @@ local function render(_context,m)
             heroY=wideCenter-blockHeight*0.5
         end
         local numberTop=heroY+(heroVisibleHeight-numberInk.height)*0.5
-        local numberY=numberTop-numberInk.top
         glyph(kind,heroX+icon*0.5,heroY+heroVisibleHeight*0.5,icon)
-        text(tx,numberY,value,size,colors.primary,budget,false,heroH)
+        textAtInkTop(tx,numberTop,value,size,colors.primary,budget,false,measure,heroH)
         local unit=cfg.unit=="f" and l10n.tr("lua_widget.sky_weather.fahrenheit") or l10n.tr("lua_widget.sky_weather.celsius")
         local unitSize=size*0.27
         local unitMeasure=draw.measureText(unit,unitSize,0,false)
-        local unitInk=unitMeasure.ink
-        text(tx+measure.width+size*0.02,numberTop-unitInk.top,unit,unitSize,colors.primary,size,false,unitMeasure.height)
+        textAtInkTop(tx+measure.width+size*0.02,numberTop,unit,unitSize,
+            colors.primary,size,false,unitMeasure)
         local weatherBottom=heroY+heroVisibleHeight
         if wide then
             local infoTop=weatherBottom+short*0.065

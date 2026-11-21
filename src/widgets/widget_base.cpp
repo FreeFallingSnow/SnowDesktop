@@ -15,6 +15,10 @@
  * - CreateWidget：组件工厂函数，根据 DesktopWidgetType 创建对应的具体组件实例。
  */
 #include "core/widget.h"
+#include "guide_widget.h"
+#include "layout/collection_popup_layout.h"
+#include "layout/list_detail_rules.h"
+#include "layout/item_render_layer_rules.h"
 #include "widget/view/widget_clip_geometry.h"
 #include "common/types.h"
 #include "common/constants.h"
@@ -22,6 +26,7 @@
 #include "app/app.h"
 #include "ui/input/text_input_window.h"
 #include "collection_group_rules.h"
+#include "group_tab_drag_preview.h"
 #include "widget_chrome_rules.h"
 #include "single_cell_widget_rules.h"
 #include "layout/popup_scrollbar_layout.h"
@@ -34,6 +39,7 @@
 #include "layout/category_collection_rules.h"
 #include "desktop/desktop_category_item_rules.h"
 #include <d2d1_1.h>
+#include <imm.h>
 #include <wrl/client.h>
 #include "common/l10n.h"
 #include <algorithm>
@@ -139,7 +145,7 @@ bool ScrollingItemWidget::EndCategoryTabDrag(bool commit)
             InvalidateCategoryTabSource(this);
         }
         else if (categoryTabDragging_ && app_)
-            app_->SaveLayoutSlots();
+            app_->RequestLayoutSave();
     }
     pressedCategoryTab_.clear();
     pressedCategorySourceId_.clear();
@@ -273,7 +279,8 @@ bool Widget::UsesLightContentTheme() const
 {
     if (!app_) return false;
     const auto* container = dynamic_cast<const WidgetContainer*>(this);
-    return container && container->IsPopupHosted()
+    const auto* mapping = dynamic_cast<const FolderMapping*>(this);
+    return container && container->IsPopupHosted() && !(mapping && mapping->IsInlinePreview())
         ? app_->collectionPopupLightTheme_ : app_->IsLightContentTheme();
 }
 
@@ -545,6 +552,21 @@ bool WidgetContainer::IsCollapsed() const
         data_ && app_ && app_->IsWidgetCollapsed(*data_);
 }
 
+RECT WidgetContainer::PresentedSlotBounds(size_t index, RECT bounds) const
+{
+    const auto& layout = PendingFileLayout();
+    if (layout.hidden.empty() && layout.gaps.empty()) return bounds;
+    const auto position = layout.Member(index);
+    if (!position) return {};
+    return *position == index ? bounds : GetMemberLayoutRect(*position);
+}
+
+const snowdesktop::file_drop_presentation::Layout& WidgetContainer::PendingFileLayout() const
+{
+    static const snowdesktop::file_drop_presentation::Layout empty;
+    return app_ && data_ ? app_->FileDropMemberLayout(*data_, this) : empty;
+}
+
 bool WidgetContainer::IsSingleCellPresentation() const
 {
     return data_ && snowdesktop::single_cell_widget::IsDesktopSingleCell(*data_) &&
@@ -589,7 +611,7 @@ void WidgetContainer::DrawSingleCellContents(ID2D1DeviceContext* context, RECT b
             {
                 if (entries.size() == 4) break;
                 const auto* icon = scene ? scene->FindFolderEntry(entry.fullPath) : &entry;
-                if (icon) entries.push_back({&source, nullptr, icon});
+                if (icon && (scene || !app_->IsPendingMovedFile(entry.fullPath))) entries.push_back({&source, nullptr, icon});
             }
         }
         else for (const auto& key : source.itemKeys)
@@ -598,7 +620,7 @@ void WidgetContainer::DrawSingleCellContents(ID2D1DeviceContext* context, RECT b
             const auto index = scene ? static_cast<size_t>(-1) : app_->FindItemIndexByKey(key);
             const auto* item = scene ? scene->FindDesktopItem(key)
                 : (index < app_->items_.size() ? &app_->items_[index] : nullptr);
-            if (item) entries.push_back({&source, item, nullptr});
+            if (item && (scene || !app_->IsPendingMovedFile(item->parsingName, key))) entries.push_back({&source, item, nullptr});
         }
     };
     if (IsGroupWidgetType(data_->type))
@@ -625,31 +647,35 @@ void WidgetContainer::DrawSingleCellContents(ID2D1DeviceContext* context, RECT b
         const auto ownerKey = entry.folder ? reinterpret_cast<std::uintptr_t>(entry.folder)
             : reinterpret_cast<std::uintptr_t>(entry.desktop);
         const bool directory = entry.folder && entry.folder->isDirectory;
-        if (privateContents)
-        {
-            app_->DrawPrivacyFaIcon(context, icon, directory);
-            continue;
-        }
-        const auto& identity = entry.folder ? entry.folder->fullPath : entry.desktop->layoutKey;
-        const HBITMAP bitmap = entry.folder ? entry.folder->iconBitmap : entry.desktop->iconBitmap;
-        const bool thumbnail = entry.folder ? entry.folder->iconIsMediaThumbnail : entry.desktop->iconIsMediaThumbnail;
-        const int sysIndex = entry.folder ? entry.folder->sysIconIndex : entry.desktop->sysIconIndex;
-        const bool demo = entry.desktop && app_->ShouldUseDemoCollectionIdentity(entry.owner);
-        if (demo)
-            app_->DrawDemoCollectionIdentityIcon(context, *entry.owner, identity, icon, 1.0f);
-        else if (auto* custom = app_->GetSmallCustomIcon(context, identity, edge))
-            app_->DrawIconBitmap(context, custom, icon, 1.0f, ownerKey);
-        else if (bitmap)
-        {
-            if (auto* image = app_->GetTargetIconBitmap(context, bitmap, identity, thumbnail))
-                app_->DrawIconBitmap(context, image, icon, 1.0f, ownerKey);
-            else app_->DrawPlaceholderIcon(context, sysIndex, icon, 1.0f);
-        }
-        else app_->DrawPlaceholderIcon(context, sysIndex, icon, 1.0f);
-        if (!demo && app_->ShouldDrawShortcutArrow(
-                entry.folder ? entry.folder->isShortcut : entry.desktop->isShortcut,
-                entry.folder ? entry.folder->isApplicationShortcut : entry.desktop->isApplicationShortcut))
-            app_->DrawShortcutArrowOverlay(context, icon, 1.0f);
+        const auto drawIcon = [&](ID2D1DeviceContext* drawing) {
+            if (privateContents)
+            {
+                app_->DrawPrivacyFaIcon(drawing, icon, directory);
+                return;
+            }
+            const auto& identity = entry.folder ? entry.folder->fullPath : entry.desktop->layoutKey;
+            const HBITMAP bitmap = entry.folder ? entry.folder->iconBitmap : entry.desktop->iconBitmap;
+            const bool thumbnail = entry.folder ? entry.folder->iconIsMediaThumbnail : entry.desktop->iconIsMediaThumbnail;
+            const int sysIndex = entry.folder ? entry.folder->sysIconIndex : entry.desktop->sysIconIndex;
+            const bool demo = entry.desktop && app_->ShouldUseDemoCollectionIdentity(entry.owner);
+            if (demo)
+                app_->DrawDemoCollectionIdentityIcon(drawing, *entry.owner, identity, icon, 1.0f);
+            else if (auto* custom = app_->GetSmallCustomIcon(drawing, identity, edge))
+                app_->DrawIconBitmap(drawing, custom, icon, 1.0f, ownerKey);
+            else if (bitmap)
+            {
+                if (auto* image = app_->GetTargetIconBitmap(drawing, bitmap, identity, thumbnail))
+                    app_->DrawIconBitmap(drawing, image, icon, 1.0f, ownerKey);
+                else app_->DrawPlaceholderIcon(drawing, sysIndex, icon, 1.0f);
+            }
+            else app_->DrawPlaceholderIcon(drawing, sysIndex, icon, 1.0f);
+            if (!demo && app_->ShouldDrawShortcutArrow(
+                    entry.folder ? entry.folder->isShortcut : entry.desktop->isShortcut,
+                    entry.folder ? entry.folder->isApplicationShortcut : entry.desktop->isApplicationShortcut))
+                app_->DrawShortcutArrowOverlay(drawing, icon, 1.0f);
+        };
+        app_->DrawIconWithShadows(context, icon, app_->GetItemLayoutScale(tile),
+            IsPopupHosted() ? app_->iconShadows_.PopupStrength() : app_->iconShadows_.WidgetStrength(), drawIcon);
     }
 }
 
@@ -728,11 +754,26 @@ LONG WidgetContainer::GetScrollContentBottom() const
 RECT WidgetContainer::GetScrollbarViewportRect() const
 {
     RECT viewport = GetContentViewportRect();
-    if (popupFrameActive_)
-        return snowdesktop::popup_scrollbar_layout::Viewport(hostedFrame_, viewport);
-    if (UsesTopTitleBar())
+    const auto* preview = app_ && popupFrameActive_ && app_->folderPreview_ &&
+        this == app_->dockFolderPopupContainer_.get() && app_->folderPreview_->inlineTopTitleBar
+        ? &*app_->folderPreview_ : nullptr;
+    if (popupFrameActive_ && !preview)
+    {
+        RECT panel = hostedFrame_;
+        if (app_ && !(app_->folderPreview_ && app_->folderPreview_->inlineBounds))
+        {
+            const auto metrics = app_->GetOpenCollectionPopupLayoutMetrics();
+            panel.right += metrics.paddingX - snowdesktop::collection_popup_layout::ScaleDimension(
+                snowdesktop::collection_popup_layout::kHostedBodyInsetCu, metrics.scale);
+        }
+        return snowdesktop::popup_scrollbar_layout::Viewport(panel, viewport);
+    }
+    if (preview || UsesTopTitleBar())
+    {
+        const RECT resize = preview ? preview->inlineResizeHandle : GetResizeHandleRect();
         viewport.bottom = std::max<LONG>(viewport.top,
-            std::min(viewport.bottom, GetResizeHandleRect().top));
+            std::min(viewport.bottom, resize.top));
+    }
     return viewport;
 }
 
@@ -1140,18 +1181,55 @@ void WidgetContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRe
     slot->DrawDropIndicator(ctx, region, itemPad);
 }
 
+DropReceipt WidgetContainer::OnItemsDropped(const ItemDrop& drop)
+{
+    if (!app_ || !data_ || !drop.Allows(drop.preview.action)) return {};
+    DesktopApp* app = app_;
+    const auto& childId = drop.preview.activateChildId;
+    const auto groupId = childId.empty() ? std::wstring{} : data_->id;
+    const auto receipt = DropReceipt::Submitted(app->ExecuteDropPipeline(drop.sources, drop.preview), drop.preview.action);
+    if (!receipt.action || childId.empty()) return receipt;
+
+    // Submission may rebuild every container. Resolve the group again by ID.
+    const auto index = app->FindWidgetIndexById(groupId);
+    if (index >= app->widgets_.size()) return receipt;
+    auto& group = app->widgets_[index];
+    if (std::find(group.childWidgetIds.begin(), group.childWidgetIds.end(), childId) == group.childWidgetIds.end())
+        return receipt;
+    group.activeCategoryId = childId;
+    for (const auto& container : app->containers_)
+        if (auto* view = dynamic_cast<WidgetContainer*>(container.get()); view && view->GetWidgetData() == &group)
+            view->InvalidateActiveDropChild();
+    app->RequestLayoutSave();
+    InvalidateRect(app->hwnd_, nullptr, FALSE);
+    return receipt;
+}
+
+WidgetMemberDestination WidgetContainer::ResolveMemberDestination(Slot* slot, HitRegion region, POINT)
+{
+    return {this, data_, GetDropInsertIndex(slot, region), {}};
+}
+
+size_t WidgetContainer::GroupDropInsertIndex(Slot* slot, HitRegion region, POINT point) const
+{
+    if (DropTabAt(point).empty() && !snowdesktop::group_tab_drag_preview::IsTabInsertion(slot, region))
+        return data_ ? data_->childWidgetIds.size() : 0;
+    return GetDropInsertIndex(slot, region);
+}
+
 /**
  * @brief 计算拖放插入索引位置
  * @param targetSlot 目标插槽
  * @param region 命中区域（决定插入前/后）
  * @return 插入位置的索引
  */
-size_t WidgetContainer::GetDropInsertIndex(Slot* targetSlot, HitRegion region) const
+size_t WidgetContainer::GetDropInsertIndex(Slot* slot, HitRegion region) const
 {
-    size_t insertAt = targetSlot ? targetSlot->GetIndex() : GetSlotCount();
-    if (targetSlot && region == HitRegion::SortAfter)
-        ++insertAt;
-    return std::min(insertAt, GetSlotCount());
+    const auto* model = GetContentViewData();
+    if (!model) return 0;
+    const auto members = FilteredDropMembers(*model);
+    if (!slot) return members.ModelCount();
+    return members.ModelBoundary(slot->GetIndex() + (region == HitRegion::SortAfter ? 1u : 0u));
 }
 
 // ── ScrollingItemWidget shared helpers ─────────────────────────
@@ -1222,6 +1300,18 @@ RECT ScrollingItemWidget::GetCategorizedSearchBoxRect(
     if (categorizedSearchVisibilityOverrideActive_)
         visible = categorizedSearchVisible_;
     if (!visible) return {};
+    if (IsPopupHosted())
+    {
+        namespace layout = snowdesktop::collection_popup_layout;
+        RECT row = layout::ResolveHostedContentRect(GetBodyRect(), GetCellScale());
+        const int height = Cu(GetCategorizedSearchBoxHeight());
+        const bool groupTabs = data_ && IsGroupWidgetType(data_->type) && !data_->childWidgetIds.empty() &&
+            (data_->type != DesktopWidgetType::FileGroup ||
+                snowdesktop::collection_group_rules::ShouldShowFileGroupSourceTabs(data_->showSearchBox, searchText_.empty()));
+        if (groupTabs || categorizedTabRowOffset_ > 0) row.top += height + Cu(layout::kControlGapCu);
+        row.bottom = std::min<LONG>(row.bottom, row.top + height);
+        return IsRectEmpty(&row) ? RECT{} : row;
+    }
     RECT body = snowdesktop::storage_title_bar::InsetContent(
         GetBodyRect(), UsesTopTitleBar(), Cu(10.0f), Cu(12.0f), Cu(4.0f));
     if ((data_ && IsGroupWidgetType(data_->type) && !data_->childWidgetIds.empty()) ||
@@ -1247,6 +1337,24 @@ RECT ScrollingItemWidget::GetCategorizedTabsRect(
     if (categorizedTabsVisibilityOverrideActive_)
         visible = categorizedTabsVisible_;
     if (!visible) return {};
+    if (IsPopupHosted())
+    {
+        namespace layout = snowdesktop::collection_popup_layout;
+        RECT row = layout::ResolveHostedContentRect(GetBodyRect(), GetCellScale());
+        const int outlineInset = Cu(layout::kTabSegmentInsetCu);
+        const int height = Cu(GetCategorizedSearchBoxHeight());
+        const int gap = Cu(layout::kControlGapCu);
+        const RECT search = data_ && IsGroupWidgetType(data_->type) ? RECT{} : GetSearchBoxRect();
+        const LONG top = IsRectEmptyRect(search)
+            ? row.top + categorizedTabRowOffset_ * (height + gap) : search.bottom + gap;
+        // Segment painters trim 2 CU on each edge. Give the raw tab strip
+        // that allowance so its visible outline matches the search row.
+        row.left -= outlineInset;
+        row.right += outlineInset;
+        row.top = top - outlineInset;
+        row.bottom = std::min<LONG>(row.bottom + outlineInset, top + height + outlineInset);
+        return IsRectEmpty(&row) ? RECT{} : row;
+    }
     RECT body = snowdesktop::storage_title_bar::InsetContent(
         GetBodyRect(), UsesTopTitleBar(), Cu(10.0f), Cu(8.0f), Cu(4.0f));
     if (IsRectEmptyRect(body)) return {};
@@ -1313,6 +1421,8 @@ float ScrollingItemWidget::
 float ScrollingItemWidget::
     GetCategorizedTabRowPitch() const
 {
+    if (IsPopupHosted())
+        return GetCategorizedSearchBoxHeight() + snowdesktop::collection_popup_layout::kControlGapCu;
     return snowdesktop::collection_group_rules::
         ResolveCategorizedControlMetrics(
             GetCategorizedTabHeight()).rowPitchCu;
@@ -1591,15 +1701,10 @@ void ScrollingItemWidget::DeleteSearchText(bool word)
 
 void ScrollingItemWidget::ClearSearchText()
 {
-    searchHistory_.Clear(); searchHighSurrogate_ = 0;
-    searchComposing_=false;searchDuplicateImeResult_.clear();
+    searchHistory_.Clear();
     searchText_.clear();
     searchCursorPos_ = 0;
-    searchSelectionAnchor_ = 0;
-    searchCompositionText_.clear();
-    searchCompositionCursor_ = 0;
-    searchFocused_ = false;
-    searchPointerSelecting_ = false;
+    SetSearchFocused(false);
     if (searchText_.empty()) folderSearch_.reset();
     InvalidateSlots();
 }
@@ -1614,11 +1719,11 @@ void ScrollingItemWidget::SetSearchFocused(bool focused)
     searchFocused_ = focused;
     if (!focused)
     {
-        searchComposing_=false;searchDuplicateImeResult_.clear();searchHighSurrogate_=0;
+        searchDuplicateImeResult_.clear();
+        searchHighSurrogate_ = 0;
         searchSelectionAnchor_ = searchCursorPos_;
-        searchCompositionText_.clear();
-        searchCompositionCursor_ = 0;
         EndSearchPointerSelection();
+        CancelSearchComposition();
     }
 }
 
@@ -1630,11 +1735,13 @@ void ScrollingItemWidget::SetSearchCursorPosition(
 }
 
 void ScrollingItemWidget::SetSearchEditingState(
+    bool focused,
     size_t cursor,
     size_t selectionAnchor,
     const std::wstring& compositionText,
     size_t compositionCursor)
 {
+    searchFocused_ = focused;
     searchCursorPos_ = std::min(cursor, searchText_.size());
     searchSelectionAnchor_ =
         std::min(selectionAnchor, searchText_.size());
@@ -1683,7 +1790,7 @@ void ScrollingItemWidget::MoveCursorEnd(bool extendSelection)
 
 snowdesktop::text_input::MenuState ScrollingItemWidget::GetSearchMenuState() const
 {
-    if (!searchFocused_ || searchComposing_) return {};
+    if (!searchFocused_ || IsSearchComposing()) return {};
     const bool selected = HasSearchSelection();
     return {searchHistory_.CanUndo(), searchHistory_.CanRedo(), selected, selected,
         IsClipboardFormatAvailable(CF_UNICODETEXT) != FALSE, !searchText_.empty()};
@@ -1692,7 +1799,7 @@ snowdesktop::text_input::MenuState ScrollingItemWidget::GetSearchMenuState() con
 void ScrollingItemWidget::ExecuteSearchEditCommand(snowdesktop::text_input::MenuCommand command)
 {
     using Command = snowdesktop::text_input::MenuCommand;
-    if (!searchFocused_ || searchComposing_) return;
+    if (!searchFocused_ || IsSearchComposing()) return;
     searchDuplicateImeResult_.clear();
     searchHighSurrogate_ = 0;
 
@@ -1798,7 +1905,7 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
 {
     if (!searchFocused_) return false;
     searchDuplicateImeResult_.clear();
-    if (searchComposing_) return true;
+    if (IsSearchComposing()) return true;
 
     const bool control =
         (snowdesktop::private_pointer::KeyState(VK_CONTROL) & 0x8000) != 0;
@@ -1959,10 +2066,10 @@ size_t ScrollingItemWidget::HitTestSearchTextPosition(
 void ScrollingItemWidget::BeginSearchPointerSelection(
     POINT point, bool extendSelection)
 {
-    const bool mayDrag = searchFocused_ && !searchComposing_ &&
+    const bool mayDrag = searchFocused_ && !IsSearchComposing() &&
         !extendSelection && HasSearchSelection() && !snowdesktop::private_pointer::Active();
     SetSearchFocused(true);
-    ClearSearchComposition();
+    CancelSearchComposition();
     std::optional<size_t> hitCharacter;
     const size_t position = HitTestSearchTextPosition(
         point, nullptr, mayDrag ? &hitCharacter : nullptr);
@@ -2007,7 +2114,7 @@ void ScrollingItemWidget::EndSearchPointerSelection()
 std::optional<snowdesktop::text_input::DragSelection> ScrollingItemWidget::TakeSearchTextDrag()
 {
     if (!searchPointerSelecting_ || !searchSelectionDragArmed_ ||
-        searchComposing_ || !HasSearchSelection())
+        IsSearchComposing() || !HasSearchSelection())
         return std::nullopt;
     EndSearchPointerSelection();
     return snowdesktop::text_input::DragSelection{
@@ -2019,7 +2126,7 @@ bool ScrollingItemWidget::GetSearchTextDropCaret(POINT point, RECT& caret,
 {
     caret = {};
     const RECT box = GetSearchBoxRect();
-    if (searchComposing_ || !PtInRect(&box, point)) return false;
+    if (IsSearchComposing() || !PtInRect(&box, point)) return false;
     const auto position = HitTestSearchTextPosition(point, &caret);
     return !IsRectEmpty(&caret) && (!move || move->CanMove(searchText_, position));
 }
@@ -2028,7 +2135,7 @@ bool ScrollingItemWidget::DropSearchText(POINT point, std::wstring_view text,
     const snowdesktop::text_input::DragSelection* move)
 {
     const RECT box = GetSearchBoxRect();
-    if (searchComposing_ || !PtInRect(&box, point)) return false;
+    if (IsSearchComposing() || !PtInRect(&box, point)) return false;
     const auto normalized = move ? std::wstring{} :
         snowdesktop::text_input::NormalizeTransfer(text, false);
     if (!move && normalized.empty()) return false;
@@ -2055,11 +2162,11 @@ bool ScrollingItemWidget::DropSearchText(POINT point, std::wstring_view text,
 }
 
 void ScrollingItemWidget::SetSearchComposition(
-    const std::wstring& text, size_t cursor)
+    HWND inputWindow, const std::wstring& text, size_t cursor)
 {
     if (!searchFocused_)
         return;
-    searchComposing_=true;
+    searchImeWindow_ = inputWindow;
     searchCompositionText_ = text;
     searchCompositionCursor_ =
         std::min(cursor, text.size());
@@ -2078,12 +2185,33 @@ void ScrollingItemWidget::CommitSearchComposition(
 
 void ScrollingItemWidget::ClearSearchComposition()
 {
-    searchComposing_=false;
+    searchImeWindow_ = nullptr;
     searchCompositionText_.clear();
     searchCompositionCursor_ = 0;
 }
-void ScrollingItemWidget::BeginSearchComposition()
-{searchComposing_=true;searchCompositionText_.clear();searchCompositionCursor_=0;searchDuplicateImeResult_.clear();}
+
+void ScrollingItemWidget::CancelSearchComposition()
+{
+    // The shared input proxy can keep Win32 focus after this editor blurs.
+    // Clear the local composition before notifying the IME, which can send messages back.
+    const HWND inputWindow = searchImeWindow_;
+    ClearSearchComposition();
+    if (!inputWindow) return;
+    if (const HIMC ime = ImmGetContext(inputWindow))
+    {
+        ImmNotifyIME(ime, NI_COMPOSITIONSTR, CPS_CANCEL, 0);
+        ImmNotifyIME(ime, NI_CLOSECANDIDATE, 0, 0);
+        ImmReleaseContext(inputWindow, ime);
+    }
+}
+
+void ScrollingItemWidget::BeginSearchComposition(HWND inputWindow)
+{
+    searchImeWindow_ = inputWindow;
+    searchCompositionText_.clear();
+    searchCompositionCursor_ = 0;
+    searchDuplicateImeResult_.clear();
+}
 
 bool ScrollingItemWidget::GetSearchCaretRect(
     RECT& rect) const
@@ -2240,24 +2368,6 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
         !layout)
         return;
 
-    auto getBrush =
-        [&](const D2D1_COLOR_F& color)
-            -> ID2D1SolidColorBrush* {
-        const auto key = D2DColorBrushKey(color);
-        auto found = app_->brushCache_.find(key);
-        if (found == app_->brushCache_.end())
-        {
-            ComPtr<ID2D1SolidColorBrush> brush;
-            if (FAILED(context->CreateSolidColorBrush(
-                    color, &brush)) ||
-                !brush)
-                return nullptr;
-            found = app_->brushCache_.emplace(
-                key, std::move(brush)).first;
-        }
-        return found->second.Get();
-    };
-
     context->PushAxisAlignedClip(
         D2D1::RectF(
             static_cast<float>(textRect.left),
@@ -2287,8 +2397,8 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
                     start, length, 0.0f, 0.0f,
                     metrics.data(), count, &count)))
             {
-                ID2D1SolidColorBrush* selectionBrush =
-                    getBrush(D2D1::ColorF(
+                auto selectionBrush =
+                    app_->drawing_.GetSolidBrush(context, D2D1::ColorF(
                         stateColor.r,
                         stateColor.g,
                         stateColor.b,
@@ -2306,22 +2416,22 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
                                     hit.width,
                                 textRect.top + hit.top +
                                     hit.height),
-                            selectionBrush);
+                            selectionBrush.Get());
                     }
                 }
             }
         }
     }
 
-    if (ID2D1SolidColorBrush* textBrush =
-            getBrush(showingPlaceholder
+    if (auto textBrush =
+            app_->drawing_.GetSolidBrush(context, showingPlaceholder
                 ? placeholder : foreground))
     {
         context->DrawTextLayout(
             D2D1::Point2F(
                 static_cast<float>(textRect.left),
                 static_cast<float>(textRect.top)),
-            layout.Get(), textBrush,
+            layout.Get(), textBrush.Get(),
             D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
 
@@ -2342,8 +2452,8 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
                     0.0f, 0.0f,
                     metrics.data(), count, &count)))
             {
-                ID2D1SolidColorBrush* underlineBrush =
-                    getBrush(foreground);
+                auto underlineBrush =
+                    app_->drawing_.GetSolidBrush(context, foreground);
                 if (underlineBrush)
                 {
                     for (UINT32 i = 0; i < count; ++i)
@@ -2360,7 +2470,7 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
                                 textRect.left + hit.left +
                                     std::max(1.5f, hit.width),
                                 y + 1.5f),
-                            underlineBrush);
+                            underlineBrush.Get());
                     }
                 }
             }
@@ -2392,8 +2502,8 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
                 hitPosition, trailing,
                 &caretX, &caretY, &metrics)))
         {
-            ID2D1SolidColorBrush* caretBrush =
-                getBrush(foreground);
+            auto caretBrush =
+                app_->drawing_.GetSolidBrush(context, foreground);
             if (caretBrush)
             {
                 context->FillRectangle(
@@ -2408,7 +2518,7 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
                             std::max(
                                 metrics.height,
                                 FontCu(15.0f))),
-                    caretBrush);
+                    caretBrush.Get());
             }
         }
     }
@@ -2418,10 +2528,10 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
             static_cast<float>(caret->top));
         const auto to = D2D1::Point2F(static_cast<float>(caret->left),
             static_cast<float>(caret->bottom));
-        if (auto* halo = getBrush(D2D1::ColorF(0x0B1220, 0.72f)))
-            context->DrawLine(from, to, halo, 4.0f);
-        if (auto* accent = getBrush(D2D1::ColorF(0x72C7FF)))
-            context->DrawLine(from, to, accent, 2.0f);
+        if (auto halo = app_->drawing_.GetSolidBrush(context, D2D1::ColorF(0x0B1220, 0.72f)))
+            context->DrawLine(from, to, halo.Get(), 4.0f);
+        if (auto accent = app_->drawing_.GetSolidBrush(context, D2D1::ColorF(0x72C7FF)))
+            context->DrawLine(from, to, accent.Get(), 2.0f);
     }
     context->PopAxisAlignedClip();
 }
@@ -2581,7 +2691,7 @@ void ScrollingItemWidget::DrawDetailsHeader(
     IDWriteTextFormat* format = GetCuTextFormatWeight(
         GetCategorizedTabFontSize(),
         DWRITE_FONT_WEIGHT_SEMI_BOLD, false);
-    if (!format) format = app_->componentListTextFormat_.Get();
+    if (!format) format = app_->itemTitleRenderer_.ListFormat();
     const D2D1_COLOR_F color = light
         ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)
         : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f);
@@ -2720,92 +2830,78 @@ void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
     RECT cell, RECT iconRect, const std::wstring& title,
     bool lightTheme, RECT hoverRect, std::wstring_view identity) const
 {
-    if (!app_ || !context || !app_->dwriteFactory_ || !app_->componentListTextFormat_ || title.empty()) return;
+    if (!app_ || !context || title.empty()) return;
     const RECT textRect = MakeRect(iconRect.right + Cu(6.0f), cell.top + Cu(2.0f),
         cell.right - Cu(6.0f), cell.bottom - Cu(2.0f));
-    if (textRect.right <= textRect.left) return;
-    const float width = static_cast<float>(textRect.right - textRect.left);
-    const float height = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
-    const float layoutScale = GetCellScale();
-    const float fontSize = FontCu(app_->listItemFontSizeCu_);
-    const auto fontWeight = static_cast<DWRITE_FONT_WEIGHT>(
-        snowdesktop::font_weight_rules::RenderedWeight(app_->itemFontWeight_, lightTheme));
-    const std::wstring layoutKey = L"list\x1f" + title + L"\x1f" +
-        std::to_wstring(width) + L"x" + std::to_wstring(height) + L"@" +
-        std::to_wstring(layoutScale) + L"@" + std::to_wstring(fontSize) + L"@" + std::to_wstring(fontWeight);
-    // Both presentations use immutable layouts with the same explicit font.
-    const auto getLayout = [&](bool scrolling) -> ComPtr<IDWriteTextLayout> {
-        const std::wstring key = scrolling ? layoutKey + L"\x1fscroll" : layoutKey;
-        auto& cache = app_->componentListTextLayoutCache_;
-        if (const auto found = cache.find(key); found != cache.end()) return found->second;
-        ComPtr<IDWriteTextLayout> layout;
-        if (FAILED(app_->dwriteFactory_->CreateTextLayout(title.c_str(), static_cast<UINT32>(title.size()),
-                app_->componentListTextFormat_.Get(), width, height, &layout)) || !layout) return {};
-        const DWRITE_TEXT_RANGE range{0, static_cast<UINT32>(title.size())};
-        layout->SetFontSize(fontSize, range);
-        snowdesktop::app_fonts::SetWeight(layout.Get(), fontWeight, range);
-        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-        layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
-            fontSize * 7.0f / 6.0f, fontSize * 5.0f / 6.0f);
-        DWRITE_TRIMMING trimming{};
-        if (scrolling)
-        {
-            layout->SetTrimming(&trimming, nullptr);
-            DWRITE_TEXT_METRICS metrics{};
-            if (FAILED(layout->GetMetrics(&metrics))) return {};
-            layout->SetMaxWidth(std::max(width, std::ceil(metrics.widthIncludingTrailingWhitespace)));
-        }
-        else
-        {
-            trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
-            ComPtr<IDWriteInlineObject> ellipsis;
-            ComPtr<IDWriteTextFormat> format;
-            snowdesktop::app_fonts::CreateTextFormat(app_->dwriteFactory_, L"Segoe UI", fontWeight,
-                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &format);
-            if (SUCCEEDED(app_->dwriteFactory_->CreateEllipsisTrimmingSign(
-                    format ? format.Get() : app_->componentListTextFormat_.Get(), &ellipsis)) && ellipsis)
-                layout->SetTrimming(&trimming, ellipsis.Get());
-        }
-        cache.emplace(key, layout);
-        return layout;
-    };
+    const float scale = GetCellScale();
+    snowdesktop::ItemTitleRenderer::ScrollOffset scrollOffset;
     if (!IsPreviewRendering() && data_ && PtInRect(&hoverRect, app_->lastMousePoint_))
     {
-        if (const auto layout = getLayout(true))
-        {
-            DWRITE_TEXT_METRICS metrics{};
-            if (SUCCEEDED(layout->GetMetrics(&metrics)))
-            {
-                std::wstring owner = data_->id;
-                const size_t groupIndex = app_->FindFileGroupIndexForChild(owner);
-                if (groupIndex < app_->widgets_.size()) owner = app_->widgets_[groupIndex].id;
-                const std::wstring key = (identity.empty()
-                    ? std::to_wstring(hoverRect.left) + L"," + std::to_wstring(hoverRect.top)
-                    : std::wstring(identity)) + L"\x1f" + title;
-                if (const auto offset = app_->ResolveListTitleHover(owner, key, hoverRect,
-                        IsPopupHosted(), metrics.widthIncludingTrailingWhitespace, width, layoutScale))
-                {
-                    // Keep the caller's viewport clip; only this title moves.
-                    context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(textRect.left), static_cast<float>(textRect.top),
-                        static_cast<float>(textRect.right), static_cast<float>(textRect.bottom)), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-                    const std::wstring shadowKey = layoutKey + L"\x1fscroll";
-                    const float cycle = metrics.widthIncludingTrailingWhitespace + std::max(1.0f, 24.0f * layoutScale);
-                    for (const float shift : {0.0f, cycle})
-                        app_->DrawStyledItemTextLayout(context, layout.Get(), shadowKey,
-                            D2D1::Point2F(textRect.left - *offset + shift, static_cast<float>(textRect.top)),
-                            D2D1::SizeF(layout->GetMaxWidth(), height), layoutScale, 1.0f, lightTheme, true);
-                    context->PopAxisAlignedClip();
-                    return;
-                }
-            }
-        }
+        scrollOffset = [&](float naturalWidth, float viewportWidth) {
+            std::wstring owner = data_->id;
+            const size_t groupIndex = app_->FindFileGroupIndexForChild(owner);
+            if (groupIndex < app_->widgets_.size()) owner = app_->widgets_[groupIndex].id;
+            const std::wstring key = (identity.empty()
+                ? std::to_wstring(hoverRect.left) + L"," + std::to_wstring(hoverRect.top)
+                : std::wstring(identity)) + L"\x1f" + title;
+            return app_->ResolveListTitleHover(owner, key, hoverRect,
+                IsPopupHosted(), naturalWidth, viewportWidth, scale);
+        };
     }
-    if (const auto layout = getLayout(false))
-        app_->DrawStyledItemTextLayout(context, layout.Get(), layoutKey,
-            D2D1::Point2F(static_cast<float>(textRect.left), static_cast<float>(textRect.top)),
-            D2D1::SizeF(width, height), layoutScale, 1.0f, lightTheme, true);
+    app_->DrawComponentListTitle(context, textRect, title, scale, FontCu(app_->listItemFontSizeCu_),
+        lightTheme, scrollOffset);
+}
+
+void ScrollingItemWidget::DrawMemberCells(ID2D1DeviceContext* context, RECT viewport,
+    size_t memberCount, const MemberPaint& paint)
+{
+    const POINT pointer = GetRenderPointer();
+    const bool interactive = !IsPreviewRendering() && PtInRect(&viewport, pointer);
+    const bool useDemoIdentity = paint.listMode && paint.demoCollection &&
+        app_->ShouldUseDemoCollectionIdentity(paint.demoCollection);
+    std::vector<std::pair<Item*, RECT>> foregroundTitles;
+    for (const auto& slot : GetSlots())
+    {
+        if (!slot || slot->GetIndex() >= memberCount) continue;
+        const RECT cell = slot->GetBounds();
+        RECT visible{};
+        if (!IntersectRect(&visible, &cell, &viewport)) continue;
+        Item* item = slot->GetItem();
+        if (!item)
+        {
+            if (paint.showLoadingSlots)
+            {
+                if (paint.listMode)
+                    DrawListItem(context, cell, nullptr, -1, L"", false, false);
+                else
+                    app_->DrawPlaceholderIcon(context, -1,
+                        app_->GetItemIconRect(cell, app_->ResolveItemTitleLines(data_, IsPopupHosted())), 1.0f);
+            }
+            continue;
+        }
+        const bool hovered = interactive && PtInRect(&cell, pointer);
+        if (paint.privacy || paint.listMode || item->IsSearchResult())
+        {
+            const auto presentation = item->GetMemberListPresentation();
+            if (paint.privacy)
+                DrawPrivacyPlaceholder(context, cell, item->GetTitle(), presentation.details.isDirectory);
+            else if (item->IsSearchResult())
+                DrawFolderSearchResult(context, cell, *item, presentation, paint.light, hovered);
+            else
+                DrawListItem(context, cell, item->GetIconBitmap(), presentation.systemIcon,
+                    item->GetTitle(), item->IsSelected(), presentation.thumbnail,
+                    useDemoIdentity ? presentation.demoIdentity : std::wstring_view{}, paint.demoCollection,
+                    presentation.details, paint.light, presentation.drawTitle, presentation.iconIdentity, viewport);
+            continue;
+        }
+        const bool selected = item->IsSelected();
+        const auto titles = snowdesktop::item_render_layer_rules::ResolveTitleLayerPlan(selected);
+        item->DrawMemberIcon(context, cell, selected ? 2 : hovered ? 1 : 0,
+            paint.light, titles.drawWithItem, paint.demoCollection);
+        if (titles.drawInForeground) foregroundTitles.emplace_back(item, cell);
+    }
+    for (const auto& [item, cell] : foregroundTitles)
+        item->DrawTitle(context, cell, true, 1.0f, paint.light, paint.demoCollection);
 }
 
 /**
@@ -2831,7 +2927,8 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
 
     const bool light = lightTheme.value_or(
         UsesLightContentTheme());
-    bool hovered = PtInRect(&cell, app_->lastMousePoint_) != FALSE;
+    const POINT pointer = GetRenderPointer();
+    const bool hovered = PtInRect(&cell, pointer) && (!hoverViewport || PtInRect(&*hoverViewport, pointer));
     if (hovered && !selected)
     {
         app_->DrawD2DRoundedRectangle(context, cell, static_cast<float>(Cu(6.0f)),
@@ -2854,25 +2951,30 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
     RECT iconRect = snowdesktop::ResolveListItemIconRect(
         nameCell, nameCell.left + Cu(4.0f), visualMetrics);
 
-    if (!demoIdentity.empty())
-    {
-        if (demoCollection)
-            app_->DrawDemoCollectionIdentityIcon(
-                context, *demoCollection, demoIdentity, iconRect);
+    const float iconOpacity = details.isCut ? 0.4f : 1.0f;
+    const auto drawIcon = [&](ID2D1DeviceContext* drawing) {
+        if (!demoIdentity.empty())
+        {
+            if (demoCollection)
+                app_->DrawDemoCollectionIdentityIcon(
+                    drawing, *demoCollection, demoIdentity, iconRect, iconOpacity);
+            else
+                app_->DrawDemoIdentityIcon(drawing, demoIdentity, iconRect, iconOpacity);
+        }
+        else if (auto custom = app_->GetSmallCustomIcon(drawing, iconIdentity, iconRect.right - iconRect.left))
+            app_->DrawIconBitmap(drawing, custom, iconRect, iconOpacity);
+        else if (ID2D1Bitmap* bmp = app_->GetTargetIconBitmap(drawing, iconBitmap, iconIdentity, iconIsMediaThumbnail))
+        {
+            app_->DrawIconBitmap(drawing, bmp, iconRect, iconOpacity,
+                reinterpret_cast<std::uintptr_t>(iconBitmap));
+        }
         else
-            app_->DrawDemoIdentityIcon(context, demoIdentity, iconRect);
-    }
-    else if (auto custom = app_->GetSmallCustomIcon(context, iconIdentity, iconRect.right - iconRect.left))
-        app_->DrawIconBitmap(context, custom, iconRect);
-    else if (ID2D1Bitmap* bmp = app_->GetTargetIconBitmap(context, iconBitmap, iconIdentity, iconIsMediaThumbnail))
-    {
-        app_->DrawIconBitmap(context, bmp, iconRect, 1.0f,
-            reinterpret_cast<std::uintptr_t>(iconBitmap));
-    }
-    else
-    {
-        app_->DrawPlaceholderIcon(context, sysIconIndex, iconRect, 1.0f);
-    }
+        {
+            app_->DrawPlaceholderIcon(drawing, sysIconIndex, iconRect, iconOpacity);
+        }
+    };
+    app_->DrawIconWithShadows(context, iconRect, GetCellScale(),
+        IsPopupHosted() ? app_->iconShadows_.PopupStrength() : app_->iconShadows_.WidgetStrength(), drawIcon);
 
     const std::wstring title = demoIdentity.empty()
         ? name
@@ -2909,7 +3011,7 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
         app_->listItemFontSizeCu_, static_cast<DWRITE_FONT_WEIGHT>(
             snowdesktop::font_weight_rules::RenderedWeight(
                 app_->itemFontWeight_, light)), false);
-    if (!format) format = app_->componentListTextFormat_.Get();
+    if (!format) format = app_->itemTitleRenderer_.ListFormat();
     const D2D1_COLOR_F color = light
         ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.66f)
         : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.66f);
@@ -2954,6 +3056,12 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
     if (!app_ || !context || IsRectEmptyRect(rect)) return;
     (void)name;
 
+    const auto drawIcon = [&](RECT icon) {
+        app_->DrawIconWithShadows(context, icon, GetCellScale(),
+            IsPopupHosted() ? app_->iconShadows_.PopupStrength() : app_->iconShadows_.WidgetStrength(),
+            [&](auto* drawing) { app_->DrawPrivacyFaIcon(drawing, icon, isDir); });
+    };
+
     const std::wstring label = isDir ? _LW("widget.base.folder_type") : _LW("widget.base.file_type");
     const int width = rect.right - rect.left;
     const int height = rect.bottom - rect.top;
@@ -2962,7 +3070,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
     {
         const RECT iconRect = snowdesktop::ResolveCenteredIconRect(
             rect, forcedIconSize);
-        app_->DrawPrivacyFaIcon(context, iconRect, isDir);
+        drawIcon(iconRect);
         if (showLabel)
             app_->DrawItemText(context, rect, label, false, 1.0f,
                 UsesLightContentTheme(), true, app_->ResolveItemTitleLines(data_, IsPopupHosted()));
@@ -2974,7 +3082,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         const auto visualMetrics = GetItemVisualMetrics();
         RECT iconRect = snowdesktop::ResolveListItemIconRect(
             rect, rect.left + Cu(4.0f), visualMetrics);
-        app_->DrawPrivacyFaIcon(context, iconRect, isDir);
+        drawIcon(iconRect);
         if (showLabel)
             DrawListItemTitle(
                 context, rect, iconRect, label,
@@ -2991,7 +3099,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         if (centerIconVertically)
             iconRect = snowdesktop::ResolveVerticallyCenteredIconRect(
                 rect, iconRect);
-        app_->DrawPrivacyFaIcon(context, iconRect, isDir);
+        drawIcon(iconRect);
         if (showLabel)
             app_->DrawItemText(context, rect, label, false, 1.0f,
                 UsesLightContentTheme(), true, app_->ResolveItemTitleLines(data_, IsPopupHosted()));
@@ -3006,7 +3114,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
             rect.top + (height - iconSize) / 2,
             rect.left + (width + iconSize) / 2,
             rect.top + (height + iconSize) / 2);
-        app_->DrawPrivacyFaIcon(context, iconRect, isDir);
+        drawIcon(iconRect);
         return;
     }
 
@@ -3018,7 +3126,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         (height - titleHeight - iconSize - Cu(2.0f)) / 2);
     RECT iconRect = MakeRect(rect.left + (width - iconSize) / 2,
         iconTop, rect.left + (width + iconSize) / 2, iconTop + iconSize);
-    app_->DrawPrivacyFaIcon(context, iconRect, isDir);
+    drawIcon(iconRect);
 
     RECT titleRect = MakeRect(rect.left + Cu(1.0f), iconRect.bottom + Cu(2.0f),
         rect.right - Cu(1.0f), rect.bottom);
@@ -3180,13 +3288,30 @@ ID2D1Geometry* WidgetContainer::GetCachedClipGeometry(
  */
 void WidgetContainer::DrawHoverRollSnapshot(ID2D1DeviceContext* context, POINT mousePt)
 {
+    const DesktopApp::InlineFolderPreviewProjection projection(!IsPreviewRendering() ? app_ : nullptr,
+        data_ ? data_->id : std::wstring{});
+    const bool showingFolderPreview = !IsPreviewRendering() && app_ && data_ && app_->GetInlineFolderPreviewData(*data_);
+    const int previousScroll = showingFolderPreview ? app_->popupScrollOffset_ : 0;
+    const int previousModelScroll = showingFolderPreview ? app_->dockFolderPopupWidget_.scrollOffset : 0;
     struct SnapshotScope
     {
         bool& drawing;
         ~SnapshotScope() { drawing = false; }
-    } snapshot{drawingHoverRollSnapshot_};
-    drawingHoverRollSnapshot_ = true;
-    DrawChrome(context, mousePt);
+    };
+    {
+        const SnapshotScope snapshot{drawingHoverRollSnapshot_};
+        drawingHoverRollSnapshot_ = true;
+        DrawChrome(context, mousePt);
+    }
+    if (showingFolderPreview)
+    {
+        // The expanded image is clipped by the roll animation. Keep the live
+        // interaction bounds and scroll position for the next normal frame.
+        app_->folderPreview_->SetInlineGeometry(*this);
+        app_->popupRect_ = app_->dockFolderPopupWidget_.bounds = *app_->folderPreview_->inlineBounds;
+        app_->popupScrollOffset_ = previousScroll;
+        app_->dockFolderPopupWidget_.scrollOffset = previousModelScroll;
+    }
 }
 
 void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
@@ -3246,8 +3371,34 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     RECT frame = GetFrameRect();
     RECT body = GetBodyRect();
     if (frame.right <= frame.left || body.bottom <= body.top) return;
+    const DesktopApp::InlineFolderPreviewProjection previewProjection(!IsPreviewRendering() ? app_ : nullptr, data_->id);
+    const auto& preview = app_->folderPreview_;
+    const bool showingFolderPreview = !IsPreviewRendering() && preview && preview->inlineBounds && preview->hostWidgetId == data_->id;
+    if (showingFolderPreview && !IsPreviewRendering())
+    {
+        const RECT titleBar = GetMoveHandleRect();
+        const RECT title = GetTitleRect();
+        const RECT resize = GetResizeHandleRect();
+        if (!EqualRect(&frame, &*preview->inlineBounds) || !EqualRect(&titleBar, &preview->inlineTitleBar) ||
+            !EqualRect(&title, &preview->inlineTitle) || !EqualRect(&resize, &preview->inlineResizeHandle) ||
+            GetCellScale() != preview->inlineScale)
+        {
+            app_->folderPreview_->SetInlineGeometry(*this);
+            app_->dockFolderPopupWidget_.bounds = frame;
+            app_->dockFolderPopupWidget_.gridSpan = data_->gridSpan;
+            app_->popupPageId_ = data_->gridCell.pageId;
+        }
+    }
 
     const bool selected = data_->selected;
+    const bool ownsPopup = !app_->popupAnimation_.IsHidden() &&
+        app_->IsCollectionPopupHostedByFloatingWindow() &&
+        (app_->GetOpenPopupWidget() == data_ ||
+            (app_->dockFolderPopupOpen_ && app_->dockFolderPopupMappingWidgetId_ == data_->id));
+    const bool retainSelectionOutline = data_->showOnHoverOnly ||
+        (app_->keyboardNavVisualFocus_ && !app_->keyboardNavInsideWidget_);
+    const bool drawFocusOutline = !IsPreviewRendering() &&
+        (ownsPopup || (selected && retainSelectionOutline));
     const bool hovered = IsPreviewInteractive() &&
         PtInRect(&frame, mousePt) != FALSE;
     const bool fixedGuideAppearance =
@@ -3293,20 +3444,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     const float configuredStroke = std::clamp(
         borderAppearance.widgetBorderWidth,
         kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
-    float strokeW = selected
+    const float strokeW = drawFocusOutline
         ? std::max(1.6f, configuredStroke) : configuredStroke;
-
-    auto getBrush = [&](const D2D1_COLOR_F& c) -> ID2D1SolidColorBrush* {
-        const auto key = D2DColorBrushKey(c);
-        auto it = app_->brushCache_.find(key);
-        if (it == app_->brushCache_.end())
-        {
-            ComPtr<ID2D1SolidColorBrush> b;
-            if (FAILED(context->CreateSolidColorBrush(c, &b)) || !b) return nullptr;
-            it = app_->brushCache_.emplace(key, std::move(b)).first;
-        }
-        return it->second.Get();
-    };
 
     // ── 1. Background (defer the outline until after content) ──
     PersonalizationSettings backgroundAppearance = borderAppearance;
@@ -3326,8 +3465,12 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                 D2D1::RectF((float)frame.left, (float)frame.top, (float)frame.right, (float)frame.bottom),
                 clipGeo), nullptr);
 
-        if (IsSingleCellPresentation()) DrawSingleCellContents(context, body);
+        if (showingFolderPreview)
+            app_->DrawCollectionPopup(context, false, &*preview->inlineBounds);
+        else if (IsSingleCellPresentation()) DrawSingleCellContents(context, body);
         else DrawContent(context, body);
+        if (!showingFolderPreview && !IsPreviewRendering())
+            app_->DrawFileDropPlaceholders(context, data_, this);
 
         if (clipGeo) context->PopLayer();
     }
@@ -3398,18 +3541,18 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     // Large folders without a bottom title show only the resize dot over their
     // content on hover. Otherwise the regular title-bar rules apply, so an
     // exactly filled collection keeps its bottom title and rename anchor.
-    const bool showHandle = largeFolder && !bottomBarTitle ? hovered :
-        persistentBottomBar || !data_->bottomBarHover || hovered;
+    const bool showHandle = showingFolderPreview || (largeFolder && !bottomBarTitle ? hovered :
+        persistentBottomBar || !data_->bottomBarHover || hovered);
 
     if (showHandle)
     {
         // Top title: larger centered text, without a shadow.
         const bool demoCollectionTitle =
             app_->ShouldUseDemoCollectionIdentity(data_);
-        const std::wstring displayTitle = demoCollectionTitle
+        const std::wstring displayTitle = showingFolderPreview ? app_->dockFolderPopupWidget_.title : demoCollectionTitle
             ? app_->GetDemoCollectionCategoryTitle(*data_)
             : data_->title;
-        if (bottomBarTitle && !displayTitle.empty() && data_->showTitle)
+        if (bottomBarTitle && !displayTitle.empty() && (showingFolderPreview || data_->showTitle))
         {
             RECT titleRect = GetTitleRect();
             LONG tw = titleRect.right - titleRect.left;
@@ -3432,20 +3575,26 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                         (float)tw, (float)th, &layout);
                     if (layout)
                     {
+                        layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                        const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+                        ComPtr<IDWriteInlineObject> ellipsis;
+                        if (SUCCEEDED(dwrite->CreateEllipsisTrimmingSign(fmt, &ellipsis)))
+                            layout->SetTrimming(&trimming, ellipsis.Get());
                         if (!lightTheme && !UsesTopTitleBar())
                         {
-                            if (auto* shadowBrush = getBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)))
+                            if (auto shadowBrush = app_->drawing_.GetSolidBrush(
+                                context, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)))
                                 context->DrawTextLayout(
                                     D2D1::Point2F((float)titleRect.left + Cu(1.0f), (float)titleRect.top + Cu(1.0f)),
-                                    layout.Get(), shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                                    layout.Get(), shadowBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
                         }
 
-                        if (auto* textBrush = getBrush(lightTheme
+                        if (auto textBrush = app_->drawing_.GetSolidBrush(context, lightTheme
                             ? D2D1::ColorF(0.11f, 0.13f, 0.17f, 0.82f)
                             : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f)))
                             context->DrawTextLayout(
                                 D2D1::Point2F((float)titleRect.left, (float)titleRect.top),
-                                layout.Get(), textBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                                layout.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
                     }
                 }
             }
@@ -3471,10 +3620,10 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                 ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.50f)
                 : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f);
 
-            if (auto* b = getBrush(dotFill))
-                context->FillRoundedRectangle(pill, b);
-            if (auto* b = getBrush(dotStroke))
-                context->DrawRoundedRectangle(pill, b, 1.0f);
+            if (auto b = app_->drawing_.GetSolidBrush(context, dotFill))
+                context->FillRoundedRectangle(pill, b.Get());
+            if (auto b = app_->drawing_.GetSolidBrush(context, dotStroke))
+                context->DrawRoundedRectangle(pill, b.Get(), 1.0f);
         }
 
         if (UsesTopTitleBar())
@@ -3503,19 +3652,20 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         // Subclass buttons
         {
             RECT handle = GetMoveHandleRect();
-            if (!largeFolder && !IsSingleCellPresentation()) DrawButtons(context, handle, hovered);
+            if (!largeFolder && !IsSingleCellPresentation())
+                DrawButtons(context, handle, hovered);
         }
     }
 
     // ── Scrollbar (on top of everything, hover only) ──────────
-    if (!IsCollapsed() && !IsSingleCellPresentation()) DrawScrollbar(context, hovered);
+    if (!showingFolderPreview && !IsCollapsed() && !IsSingleCellPresentation())
+        DrawScrollbar(context, hovered);
 
     // Draw the outline once, above content and the title gradient. Translucent
     // borders would darken if drawn both below and above these layers.
     app_->DrawWidgetPanelBorder(context, frame, radius,
-        borderColor, selected, strokeW);
-    // Selection keeps its flat accent outline without a material reflection.
-    if (!selected)
+        borderColor, drawFocusOutline, strokeW);
+    if (!drawFocusOutline)
         (void)app_->DrawWidgetPanelEdgeHighlight(
             context, frame, radius, fillColor, &borderAppearance);
 }

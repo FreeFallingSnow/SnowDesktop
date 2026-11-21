@@ -1,4 +1,5 @@
 #include "settings_ipc_channel.h"
+#include "settings_ipc_codec.h"
 #include "platform/pending_window_message.h"
 
 #include <atomic>
@@ -15,8 +16,8 @@ namespace
 constexpr UINT DispatchMessageId = WM_APP + 0x681;
 constexpr UINT_PTR AsyncTimerId = 1;
 constexpr std::uint32_t Magic = 0x53444950; // SDIP
-// Adds the Dock and status-bar appearance rules to the settings payload.
-constexpr std::uint32_t Version = 64;
+// Carries the available game cover provider in the large icon settings payload.
+constexpr std::uint32_t Version = 68;
 constexpr std::size_t HeaderSize = 24;
 constexpr std::size_t MaximumQueuedBytes = MaximumFrameBytes * 2;
 constexpr std::size_t MaximumQueuedItems = 1024;

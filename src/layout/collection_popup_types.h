@@ -14,7 +14,10 @@ struct Metrics
     int cellHeight = kMinCellHeight;
     int minimumListHeight = 1;
     int paddingX = kCollectionPopupPaddingX;
-    int headerHeight = kCollectionPopupHeaderHeight;
+    int topPadding = 12;
+    int controlRowHeight = 30;
+    int controlGap = 6;
+    int headerHeight = topPadding + controlRowHeight + controlGap;
     int bottomPadding = kCollectionPopupBottomPadding;
     int gapX = kCollectionPopupGapX;
     int gapY = kCollectionPopupGapY;
@@ -22,14 +25,6 @@ struct Metrics
     int anchorGap = 12;
     int maximumWidth = 560;
     int maximumHeight = 640;
-};
-
-struct HeaderVerticalBounds
-{
-    int titleTop = 18;
-    int titleBottom = 44;
-    int sortButtonTop = 14;
-    int sortButtonBottom = 48;
 };
 
 struct FanPoint { float x = 0; float y = 0; };

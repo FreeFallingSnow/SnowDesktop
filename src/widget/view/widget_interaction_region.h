@@ -115,6 +115,7 @@ struct InteractionRegion
     std::optional<InteractionAffineTransform> hitTransform;
     std::optional<InteractionClipRect> clip;
     std::string cursor;
+    std::string dragImage;
     std::string tooltipTitle;
     std::string tooltip;
     std::string accessKey;
@@ -201,6 +202,7 @@ public:
     InteractionPointerResult PointerUp(float x, float y, int button);
     void CancelPointerPress() noexcept;
     bool HasPointerCapture() const noexcept;
+    std::string_view PressedDragImage() const noexcept;
     std::string ConsumeClickTarget(float x, float y);
     std::string TargetAt(float x, float y) const;
     std::string PointerMoveTarget(float x, float y);
@@ -261,6 +263,7 @@ private:
     float pointerY_ = 0.0f;
     std::string hoveredKey_;
     std::string pressedKey_;
+    std::string pressedDragImage_;
     std::string clickCandidateKey_;
     std::optional<InteractionRegion> retiredHoverRegion_;
     int pressedButton_ = -1;

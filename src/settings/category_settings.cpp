@@ -6,6 +6,7 @@
  */
 
 #include "category_settings.h"
+#include "layout/category_collection_rules.h"
 #include "data/data_paths.h"
 #include "common/l10n.h"
 #include "common/utils.h"
@@ -38,7 +39,7 @@ namespace
             { L"documents", L10N_KEY("widget.categories.default_document"), "documents", L".TXT .MD .DOC .DOCX .PDF .XLS .XLSX .PPT .PPTX .CSV" },
             { L"archives", L10N_KEY("widget.categories.default_archive"), "archives", L".ZIP .RAR .7Z .TAR .GZ .BZ2 .XZ" },
             { L"audio", L10N_KEY("widget.categories.default_audio"), "audio", L".MP3 .WAV .FLAC .AAC .M4A .OGG" },
-            { L"programs", L10N_KEY("widget.categories.default_program"), "programs", L".EXE .MSI .BAT .CMD .LNK:APP .URL:STEAM" },
+            { L"programs", L10N_KEY("widget.categories.default_program"), "programs", L".EXE .MSI .BAT .CMD .LNK:APP .URL:STEAM .URL:EPIC" },
         };
         count = sizeof(rules) / sizeof(rules[0]);
         return rules;
@@ -458,7 +459,8 @@ bool LoadCategorySettings(const wchar_t* path, CategorySettings& settings)
 
     NormalizeCategorySettings(settings);
     double syntaxVersion = 0;
-    if (!ReadDoubleField(text, "ruleSyntaxVersion", syntaxVersion) || syntaxVersion < 2)
+    ReadDoubleField(text, "ruleSyntaxVersion", syntaxVersion);
+    if (syntaxVersion < 2)
     {
         for (auto& rule : settings.rules)
         {
@@ -473,6 +475,10 @@ bool LoadCategorySettings(const wchar_t* path, CategorySettings& settings)
             }
         }
     }
+    if (syntaxVersion < 3)
+        for (auto& rule : settings.rules)
+            if (rule.id == L"programs" && rule.extensions == L".EXE .MSI .BAT .CMD .LNK:APP .URL:STEAM")
+                rule.extensions += L" .URL:EPIC";
     return true;
 }
 
@@ -484,7 +490,7 @@ bool SaveCategorySettings(const wchar_t* path, const CategorySettings& settings)
     std::ostringstream file;
 
     file << "{\n";
-    file << "  \"ruleSyntaxVersion\": 2,\n";
+    file << "  \"ruleSyntaxVersion\": 3,\n";
     file << "  \"tabFontSize\": " << normalized.tabFontSize << ",\n";
     file << "  \"collectProgramsEnabled\": " <<
         (normalized.collectProgramsEnabled ? "true" : "false") << ",\n";

@@ -464,7 +464,7 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.general.advancedFeatures.reminder", L"Start Steam, sign in online to an account that owns SnowDesktop, then unlock."},
     LocalizedFallback{"settings.general.advancedFeatures.largeIcons", L"Large software icons"},
     LocalizedFallback{"settings.general.advancedFeatures.largeIconsDescription", L"Personalize software icons, freely adjust their size, and display Steam games as posters."},
-    LocalizedFallback{"settings.general.advancedFeatures.largeIconsUsage", L"To use: right-click a software icon → Convert to large icon"},
+    LocalizedFallback{"settings.general.advancedFeatures.largeIconsUsage", L"To use: right-click a software icon → Icon personalization → Convert to large icon"},
     LocalizedFallback{"settings.general.advancedFeatures.availableAfterUnlock", L"Available after unlocking"},
     LocalizedFallback{"settings.general.advancedFeatures.infoTitle", L"Unlock and offline access information"},
     LocalizedFallback{"settings.general.advancedFeatures.offlineInfo", L"Starting SnowDesktop while Steam is online automatically updates the offline record after successful verification."},
@@ -719,6 +719,15 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
                     L"SettingsShellFontAwesomeGlyphTemplate"))
                     .as<mux::DataTemplate>());
         widgetsPage_->SetActions(widgetsPageActions_);
+        widgetsPage_->SetAgentAccessAction([weak = get_weak()](bool enabled) {
+            if (const auto shell = weak.get(); shell && !shell->closed_ &&
+                shell->generalPageActions_.commitGeneral)
+            {
+                shell->generalPageActions_.commitGeneral(shell->navigation_.Generation(),
+                    [enabled](GeneralSettings& general) { general.agentOperationsEnabled = enabled; });
+            }
+        });
+        widgetsPage_->ApplyAgentAccess(agentOperationsEnabled_);
     };
     const auto ensureBackup = [&]() {
         if (backupDataPage_)
@@ -1392,7 +1401,7 @@ void SettingsShell::SetLargeIconSettingsAction(snowdesktop::LargeIconSettingsAct
 }
 
 bool SettingsShell::ApplyHomeAboutStatusPatch(
-    const snowdesktop::winui::HomeAboutStatusPatch& patch)
+    const snowdesktop::settings::HomeAboutStatusPatch& patch)
 {
     if (generalPage_) generalPage_->ApplyOnboardingStatus(patch);
     const bool applied = homeAboutPage_ && homeAboutPage_->ApplyStatusPatch(patch);
@@ -1748,8 +1757,11 @@ bool SettingsShell::ApplySnapshot(
         if (replacement && routeRequested_) routeRequested_(*replacement);
         if (runtimeModulesPage_) runtimeModulesPage_->ApplySnapshot(snapshot);
         desktopStyleDockEnabled_ = snapshot.values.general.dockEnabled;
+        agentOperationsEnabled_ = snapshot.values.general.agentOperationsEnabled;
         if (sessionActive_)
             EnsurePresentersForPage(navigation_.Route().page);
+        if (widgetsPage_)
+            widgetsPage_->ApplyAgentAccess(agentOperationsEnabled_);
         if (runtimeModulesPage_) runtimeModulesPage_->ApplySnapshot(snapshot);
         if (generalPage_)
             generalPage_->ApplySnapshot(snapshot);
@@ -2445,7 +2457,7 @@ void SettingsShell::RenderNavigationSelection(bool revealCurrent)
     const auto selected = NavigationItemForPage(selectedPage);
     if (revealCurrent)
     {
-        if (selectedPage == SettingsPage::RuntimeModules || selectedPage == SettingsPage::AgentOperations) AdvancedSettingsItem().IsExpanded(true);
+        if (selectedPage == SettingsPage::RuntimeModules) AdvancedSettingsItem().IsExpanded(true);
         switch (snowdesktop::SettingsPageCategory(selectedPage))
         {
         case snowdesktop::SettingsCategory::DesktopOrganization: DesktopOrganizationItem().IsExpanded(true); break;
@@ -3024,6 +3036,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 personalizationPage_->WidgetBehaviorContent());
             registerPersonalizationFocus({
                 "personalization.widgetTransformCursors",
+                "personalization.folderDoubleClickPreview",
                 "personalization.scrollableTitleBarOnTop",
                 "personalization.showGroupTabCounts",
                 "personalization.popupHoverOpen",
@@ -3126,6 +3139,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             registerDesktopFocus({
                 "desktop.iconBeautify",
                 "desktop.iconBeautify.mode",
+                "desktop.iconShadows",
                 "desktop.iconBeautify.backgroundSource",
                 "desktop.iconBeautify.filterMode",
                 "desktop.iconBeautify.backgroundColor",
@@ -3333,6 +3347,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(widgetsPage_->AgentOperationsContent());
             widgetsPage_->Activate(navigation_.Generation());
             RegisterFocusTarget("agentOperations.skill", widgetsPage_->AgentOperationsFocusTarget());
+            RegisterFocusTarget("agentOperations.access", widgetsPage_->AgentAccessFocusTarget());
         }
         break;
     case SettingsPage::DeveloperTools:

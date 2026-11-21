@@ -2,12 +2,18 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace snowdesktop::widget_runtime
 {
+// WIC represents both pixel stride and CopyPixels buffer size as UINT.
+inline constexpr auto kMaximumRuntimeImageBytes =
+    (std::numeric_limits<std::uint32_t>::max)();
+inline constexpr auto kMaximumRuntimeImageDimension = kMaximumRuntimeImageBytes / 4;
+
 struct WidgetRuntimeImagePixels
 {
     std::uint32_t width = 0;
@@ -21,9 +27,11 @@ inline bool IsValidWidgetRuntimeImage(
     std::uint32_t maximumDimension = 2048) noexcept
 {
     return pixels.width > 0 && pixels.height > 0 &&
+        pixels.width <= kMaximumRuntimeImageDimension &&
         pixels.width <= maximumDimension &&
         pixels.height <= maximumDimension &&
         pixels.stride == pixels.width * 4 &&
+        pixels.height <= kMaximumRuntimeImageBytes / pixels.stride &&
         pixels.bgraPremultiplied.size() ==
             static_cast<std::size_t>(pixels.stride) * pixels.height;
 }
@@ -32,7 +40,8 @@ inline std::string MakeWidgetRuntimeImageToken(
     std::string_view source, const WidgetRuntimeImagePixels& pixels)
 {
     if (source.empty() || source.size() > 16 ||
-        !IsValidWidgetRuntimeImage(pixels))
+        !IsValidWidgetRuntimeImage(pixels,
+            source == "clipboard" ? kMaximumRuntimeImageDimension : 2048))
         return {};
     constexpr std::uint64_t offset = 14695981039346656037ull;
     constexpr std::uint64_t prime = 1099511628211ull;

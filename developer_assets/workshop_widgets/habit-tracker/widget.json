@@ -548,6 +548,7 @@
       }
     ]
   },
+  "optionalFeatures": ["view.icon.glyphInk"],
   "requiredFeatures": [
     "calendar.dateMath",
     "l10n.basic",

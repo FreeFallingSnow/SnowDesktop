@@ -1,7 +1,7 @@
 #pragma once
 
 #include "widget/runtime/widget_item_layout.h"
-#include "widget/runtime/widget_logical_slot.h"
+#include "widget/runtime/widget_logical_slot_values.h"
 
 #include <windows.h>
 

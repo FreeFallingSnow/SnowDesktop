@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "ui/render/rgba_color.h"
 #include "settings/settings_search_index.h"
 #include "common/constants.h"
 #include "app/navigation/quick_navigation_state.h"
@@ -17,6 +18,7 @@
 #include "platform/operation_feedback.h"
 #include "shell/shell_launch_process.h"
 #include "ui/menu/menu_fluent_glyphs.h"
+#include "ui/render/smooth_corner_geometry.h"
 #include <wincodec.h>
 #include <shobjidl.h>
 
@@ -640,7 +642,8 @@ void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
         else if (row.kind == Kind::Item && row.index < model.entries.size() && model.entries[row.index].itemIndex < items_.size())
         {
             const auto& item = items_[model.entries[row.index].itemIndex];
-            if (item.iconBitmap) DrawIconBitmap(context, GetTargetIconBitmap(context, item.iconBitmap, item.layoutKey, item.iconIsMediaThumbnail), icon);
+            if (item.iconBitmap) DrawQuickNavResultBitmap(context,
+                GetTargetIconBitmap(context, item.iconBitmap, item.layoutKey, item.iconIsMediaThumbnail), icon);
             else DrawQuickNavSysIcon(context, item.sysIconIndex, icon);
         }
         else if (row.kind == Kind::Item && row.index < model.entries.size())
@@ -649,7 +652,8 @@ void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
             if (entry.widgetIndex < widgets_.size() && entry.folderEntryIndex < widgets_[entry.widgetIndex].folderEntries.size())
             {
                 const auto& item = widgets_[entry.widgetIndex].folderEntries[entry.folderEntryIndex];
-                if (item.iconBitmap) DrawIconBitmap(context, GetTargetIconBitmap(context, item.iconBitmap, item.fullPath, item.iconIsMediaThumbnail), icon);
+                if (item.iconBitmap) DrawQuickNavResultBitmap(context,
+                    GetTargetIconBitmap(context, item.iconBitmap, item.fullPath, item.iconIsMediaThumbnail), icon);
                 else DrawQuickNavSysIcon(context,item.sysIconIndex,icon);
             }
             else if (entry.kind ==
@@ -866,12 +870,10 @@ void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
     {
         RECT popup = GetQuickNavigationListRowRect(0); popup.bottom = GetQuickNavigationListRowRect(count - 1).bottom;
         InflateRect(&popup, QuickNavScale(4), QuickNavScale(4));
-        // The menu overlays already-painted items on the same surface. An
-        // opaque backing keeps their icons and labels out of the menu rows.
+        const float radius = static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius));
         auto popupFill = ToD2DColor(theme.searchBg);
         popupFill.a = 1.f;
-        DrawD2DRoundedRectangle(context, popup, static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-            popupFill, ToD2DColor(theme.searchBorder, .45f));
+        DrawD2DRoundedRectangle(context, popup, radius, popupFill, ToD2DColor(theme.searchBorder, .45f));
     }
     for (size_t i = 0; i < count; ++i)
     {

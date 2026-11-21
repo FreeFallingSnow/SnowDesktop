@@ -1,4 +1,5 @@
 #include "ui/render/app_font.h"
+#include "ui/render/icon_backdrop_clip.h"
 #include "large_icon_renderer.h"
 #include "theme/panel_gradient_renderer.h"
 #include "large_icon_title_measure.h"
@@ -110,9 +111,10 @@ void DrawEdgeGlow(ID2D1RenderTarget* target, const LargeIconConfig& c, const Vie
         brush->SetOpacity(static_cast<float>(c.glowStrength) * view.hover * view.opacity * std::exp(-3.f * i / (steps - 1)));
         const auto outline = large_icon_shape::Geometry(factory.Get(), c.shape, inner, innerRadius, c.flagDirection);
         if (!outline) continue;
-        target->DrawGeometry(outline.Get(), brush.Get(), stroke);
-        if (brush->GetOpacity() > 0.f)
-            HighlightCoverage::RecordStroke(target, outline.Get(), stroke);
+        auto highlightColor = brush->GetColor();
+        highlightColor.a *= brush->GetOpacity();
+        if (highlightColor.a > 0.f)
+            target->DrawGeometry(outline.Get(), brush.Get(), stroke);
     }
 }
 }
@@ -179,7 +181,11 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
     ComPtr<ID2D1Layer> layer;
     if (!clip || (FAILED(target->QueryInterface(IID_PPV_ARGS(&context))) &&
         FAILED(target->CreateLayer(nullptr, &layer)))) return;
-    const auto push = [&] { target->PushLayer(D2D1::LayerParameters(frame, clip.Get()), layer.Get()); };
+    std::optional<ScopedIconBackdropClip> highlightClip;
+    const auto push = [&] {
+        target->PushLayer(D2D1::LayerParameters(frame, clip.Get()), layer.Get());
+        highlightClip.emplace(target, view.frame, clip.Get());
+    };
     // Arbitrary silhouettes mask the material as well as the image. Preserve
     // the original rounded panel path and its edge treatment for old layouts.
     if (c.shape >= 2) push();
@@ -254,6 +260,7 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
     }
     DrawEdgeGlow(target, c, view, frame, radius);
     target->PopLayer();
+    highlightClip.reset();
     if (view.selected)
     {
         ComPtr<ID2D1SolidColorBrush> brush;

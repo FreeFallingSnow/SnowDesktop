@@ -56,6 +56,7 @@ struct StatusBarSettings
     std::vector<std::string> hiddenQuickControls;
     std::vector<std::string> leftOrder = {"menu", "quickSearch", "taskView"};
     std::vector<std::string> rightOrder = {"tray", "cpu", "memory", "gpu", "traffic", "network", "volume", "battery", "controlCenter"};
+    std::vector<std::string> metricOrder = {"cpu", "memory", "gpu", "traffic"};
     friend bool operator==(const StatusBarSettings&, const StatusBarSettings&) = default;
 };
 

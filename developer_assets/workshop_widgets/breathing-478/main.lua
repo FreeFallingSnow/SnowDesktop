@@ -120,8 +120,9 @@ local function readAccent()
     return math.max(0, math.min(MAX_COLOR, value))
 end
 
--- Ink bounds center the visible glyphs, not the font line box, so mixed
--- labels and numerals stay optically centered in the circle.
+local CENTER_TEXT = widget.hasFeature("draw.text.inkAlignment") and
+    { x = "center", y = "center" } or nil
+
 local function inkBounds(text, size, bold)
     local metrics = draw.measureText(text, size, 0, bold)
     local ink = metrics.ink
@@ -151,10 +152,13 @@ end
 
 local function drawTextOptical(text, centerX, centerY, size, color,
         maximumWidth, bold, alpha)
-    local bounds = inkBounds(text, size, bold)
-    draw.text(centerX - bounds.left - bounds.width * 0.5,
-        centerY - bounds.top - bounds.height * 0.5, text, size, color,
-        maximumWidth, bold, true, nil, alpha or 1)
+    if not CENTER_TEXT then
+        local bounds = inkBounds(text, size, bold)
+        centerX = centerX - bounds.left - bounds.width * 0.5
+        centerY = centerY - bounds.top - bounds.height * 0.5
+    end
+    draw.text(centerX, centerY, text, size, color, maximumWidth, bold, true,
+        nil, alpha or 1, nil, CENTER_TEXT)
 end
 
 -- draw.arc has flat stroke ends; little end caps make the segmented idle ring

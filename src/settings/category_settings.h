@@ -1,7 +1,7 @@
 #pragma once
 
 #include "category_settings_types.h"
-#include "layout/category_collection_rules.h"
+#include "layout/category_collection_types.h"
 
 std::wstring GetCategorySettingsPath();
 bool LoadCategorySettings(const wchar_t* path, CategorySettings& settings);

@@ -6,8 +6,52 @@
 #include "app/dock/dock_tray_popup_state.h"
 #include "app/popup/categorized_popup_scope.h"
 #include "navigation/quick_navigation_rules.h"
+#include "widgets/single_cell_widget_rules.h"
 
 // Mouse-wheel routing across active drag, popup and widget containers.
+
+void DesktopApp::InvalidateCollectionPopupControls(bool immediate)
+{
+    if (!GetOpenPopupWidget()) return;
+    if (folderPreview_ && folderPreview_->inlineBounds)
+    {
+        if (dcompDevice_ && dcompVisual_ && !desktopBackdropFullCollectionPending_)
+            (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+        else if (hwnd_)
+            InvalidateRect(hwnd_, &*folderPreview_->inlineBounds, FALSE);
+        return;
+    }
+    InvalidateCollectionPopupContent();
+    if (IsCollectionPopupHostedByFloatingWindow())
+        InvalidateFloatingPopupWindow(immediate);
+    else
+        InvalidateCollectionPopupAnimation(false);
+}
+
+void DesktopApp::InvalidateWidgetControls(const WidgetContainer& owner, bool immediate)
+{
+    const auto* data = owner.GetWidgetData();
+    if (!data) return;
+    const bool popupOwner = data == GetOpenPopupWidget();
+    const auto index = FindWidgetIndexById(data->id);
+    if (index < widgets_.size() && &widgets_[index] == data &&
+        !IsGroupedWidget(*data) && !IsRectEmpty(&data->bounds) &&
+        !snowdesktop::single_cell_widget::IsDesktopSingleCell(*data))
+    {
+        // A shared popup view can temporarily be laid out in popup coordinates.
+        // Let the desktop restore its own geometry before it draws that owner.
+        if (popupOwner || data->showOnHoverOnly || desktopBackdropFullCollectionPending_ ||
+            !dcompDevice_ || !dcompVisual_)
+        {
+            RECT bounds = GetStandaloneWidgetFrameRect(*data);
+            InflateRect(&bounds, 4, 4);
+            if (hwnd_) InvalidateRect(hwnd_, &bounds, FALSE);
+        }
+        else
+            (void)QueueDesktopWidgetComposition(data->id);
+    }
+    if (popupOwner) InvalidateCollectionPopupControls(immediate);
+}
 
 void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
 {
@@ -17,6 +61,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
 
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     ScreenToClient(hwnd_, &pt);
+    ActivateInlineFolderPreviewAtPoint(pt);
     if (dockTrayPopup_ && IsPointOccludedByOpenPopup(pt))
     {
         const RECT popup = GetCollectionPopupRect(dockTrayPopup_->widget);
@@ -38,7 +83,9 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             dragDropController_.IsExternalDragActive()
                 ? DropAction::Copy : DropAction::Move);
 
-    if (!luaWidgetPanelRequest_.widgetId.empty() &&
+    const bool overStackIndicator = IsLuaStackIndicatorVisible() &&
+        PtInRect(&luaStackIndicator_.bounds, pt);
+    if (!overStackIndicator && !luaWidgetPanelRequest_.widgetId.empty() &&
         luaWidgetPanelAnimation_.IsInteractive())
     {
         const RECT content =
@@ -132,7 +179,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         }
     }
 
-    if (IsLuaStackIndicatorVisible() && PtInRect(&luaStackIndicator_.bounds, pt))
+    if (overStackIndicator)
     {
         (void)ScrollLuaWidgetStack(luaStackIndicator_.stackId, GET_WHEEL_DELTA_WPARAM(wp));
         return;
@@ -178,7 +225,8 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         return true;
     };
 
-    if (DockContainer* dock = GetDockContainerAtPoint(pt))
+    const bool insideFolderPreview = folderPreview_ && IsPointInsideOpenPopup(pt);
+    if (DockContainer* dock = insideFolderPreview ? nullptr : GetDockContainerAtPoint(pt))
     {
         const int delta = GET_WHEEL_DELTA_WPARAM(wp);
         if (dock->ScrollByWheelDelta(pt, delta))
@@ -199,22 +247,30 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
     {
         RECT popup =
             GetCollectionPopupRect(*popupWidget);
-        if (PtInRect(&popup, pt))
+        const auto presented = GetPresentedCollectionPopupGeometry();
+        if (PtInRect(&presented.panel, pt))
         {
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
             if (auto* group = GetGroupPopupView())
             {
                 const RECT frame = GetCategorizedPopupFrame(popup);
                 group->SetPopupFrame(&frame);
-                if (!group->TryScrollTabs(pt, delta))
+                bool tabsChanged = false;
+                if (group->TryScrollTabs(pt, delta, &tabsChanged))
                 {
-                    const int next = std::clamp(group->GetScrollOffset() - delta / 2, 0, group->GetMaxScrollOffset());
-                    if (!group->SetFolderSearchScrollOffset(next)) group->GetWidgetData()->scrollOffset = next;
-                    if (auto* files = dynamic_cast<FileGroup*>(group)) files->InvalidateHostedView();
-                    else group->InvalidateSlots();
+                    if (tabsChanged)
+                    {
+                        if (refreshDragAfterScroll()) (void)PresentDesktopForegroundComposition(presented.panel);
+                        else InvalidateWidgetControls(*group, true);
+                    }
+                    return;
                 }
+                const int next = std::clamp(group->GetScrollOffset() - delta / 2, 0, group->GetMaxScrollOffset());
+                if (!group->SetFolderSearchScrollOffset(next)) group->GetWidgetData()->scrollOffset = next;
+                if (auto* files = dynamic_cast<FileGroup*>(group)) files->InvalidateHostedView();
+                else group->InvalidateSlots();
                 (void)refreshDragAfterScroll();
-                InvalidateRect(hwnd_, nullptr, FALSE);
+                (void)PresentDesktopForegroundComposition(presented.panel);
                 return;
             }
             if (auto* view = GetCategorizedPopupView())
@@ -223,12 +279,13 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                 if (view->IsSearchActive() && view->SetFolderSearchScrollOffset(view->GetScrollOffset() - delta / 2))
                 {
                     (void)refreshDragAfterScroll();
-                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    (void)PresentDesktopForegroundComposition(presented.panel);
                     return;
                 }
-                if (view->TryScrollTabs(pt, delta))
+                bool tabsChanged = false;
+                if (view->TryScrollTabs(pt, delta, &tabsChanged))
                 {
-                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    if (tabsChanged) InvalidateWidgetControls(*view, true);
                     return;
                 }
             }
@@ -250,7 +307,10 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                     popupWidgetIndex_)))
                 UpdateMarqueeSelection(pt);
             (void)refreshDragAfterScroll();
-            (void)PresentDesktopForegroundComposition(popup);
+            if (folderPreview_ && folderPreview_->inlineBounds)
+                (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+            else
+                (void)PresentDesktopForegroundComposition(presented.panel);
             return;
         }
     }
@@ -283,7 +343,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                 if (!tabsChanged) return;
                 const bool dragRefreshed = refreshDragAfterScroll();
                 DeferScrollLayoutSave();
-                (void)QueueDesktopWidgetComposition(data->id);
+                InvalidateWidgetControls(*categorized);
                 if (dragRefreshed)
                 {
                     InvalidateRect(hwnd_, nullptr, FALSE);

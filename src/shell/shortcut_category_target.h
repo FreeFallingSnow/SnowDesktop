@@ -71,19 +71,31 @@ inline ShortcutTarget ReadShellLinkTarget(IShellLinkW* link)
     return result;
 }
 
+inline std::wstring ReadInternetShortcutUrl(const std::wstring& path)
+{
+    if (!shortcut_application_rules::HasExtension(path, L".url")) return {};
+    wchar_t url[32768]{};
+    const DWORD length = GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url,
+        static_cast<DWORD>(std::size(url)), path.c_str());
+    return length < std::size(url) - 1 ? std::wstring(url, length) : std::wstring{};
+}
+
+inline ShortcutTarget ClassifyInternetShortcut(std::wstring_view url)
+{
+    namespace rules = shortcut_application_rules;
+    ShortcutTarget result;
+    result.classified = true;
+    if (rules::IsSteamApplicationUrl(url)) result.urlKind = UrlShortcutKind::Steam;
+    else if (!rules::EpicGameKey(url).empty()) result.urlKind = UrlShortcutKind::Epic;
+    result.application = result.urlKind != UrlShortcutKind::None;
+    return result;
+}
+
 inline ShortcutTarget ReadShortcutTarget(const std::wstring& path)
 {
     namespace rules = snowdesktop::shortcut_application_rules;
     ShortcutTarget result;
-    if (rules::HasExtension(path, L".url"))
-    {
-        wchar_t url[32768]{};
-        GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url,
-            static_cast<DWORD>(std::size(url)), path.c_str());
-        result.classified = true;
-        result.application = rules::IsSteamApplicationUrl(url);
-        return result;
-    }
+    if (rules::HasExtension(path, L".url")) return ClassifyInternetShortcut(ReadInternetShortcutUrl(path));
     if (!rules::HasExtension(path, L".lnk")) return result;
     Microsoft::WRL::ComPtr<IShellLinkW> link;
     Microsoft::WRL::ComPtr<IPersistFile> file;

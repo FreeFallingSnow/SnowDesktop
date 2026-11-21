@@ -24,36 +24,54 @@
 
 | 编号 | 优先级 | 问题 | 状态 |
 | --- | --- | --- | --- |
-| [CF-001](#cf-001-持久执行器被父-job-拒绝) | P0 | 持久执行器被父 Job 拒绝，缺少可执行恢复指引 | 待验证：原 DSH 环境 |
-| [CF-002](#cf-002-生成目录被沙箱拒写) | P0 | 沙箱拒写生成目录，被误作 ACL 问题处理 | 待验证：原 confined 操作 |
-| [CF-003](#cf-003-任务关闭后同会话无法继续) | P1 | 同会话无法在关闭后登记下一任务 | task-new 已解决；后继任务验收关联缺口已确认 |
+| [CF-001](#cf-001-持久执行器被父-job-拒绝) | P0 | 持久执行器被父 Job 拒绝，缺少可执行恢复指引 | 已保留提交诊断；原 DSH 启动环境待复测 |
+| [CF-002](#cf-002-生成目录被沙箱拒写) | P0 | 沙箱拒写生成目录，被误作 ACL 问题处理 | 已加公共 Git 目录探针；原受限环境待复测 |
+| [CF-003](#cf-003-任务关闭后同会话无法继续) | P1 | 同会话无法在关闭后登记下一任务 | 已支持在 task-new 链中补录前序验收 |
 | [CF-004](#cf-004-claim-替换语义不明显) | P2 | claim 覆盖原路径集合 | 已解决：通用协调器回归通过 |
 | [CF-005](#cf-005-共享候选阻塞本任务关闭) | P2 | 其他参与者候选执行阻塞本任务关闭 | 已解决：通用协调器回归通过 |
 | [CF-006](#cf-006-启动失败后恢复路径分散) | P2 | start-failed 的重开与提交路径难发现 | 已解决：恢复回执回归通过 |
 | [CF-007](#cf-007-预览和诊断入口难发现) | P2 | 预览位置参数和诊断入口难发现 | 已解决：过程驱动通过 |
 | [CF-008](#cf-008-插件输出与加载版本) | P2 | 关闭后 JSON 错误、状态过大、热更新版本不明 | 已解决：桥接与实际SDK检查通过 |
 | [CF-009](#cf-009-工具计划的默认资源申报) | P2 | 小范围工具计划的默认额度与低内存排队 | 已解决：资源准入回归通过 |
-| [CF-010](#cf-010-等待结束回执过大) | P2 | 等待结束回执重复输出整份证据 | 已解决：CLI及原件保持回归通过 |
-| [CF-011](#cf-011-独立检查等待共享编辑屏障) | P1 | 已就绪工具检查等待产品开发闭合 | 无宿主执行的闭合计划可拆分；编译/测试仍需闭合依赖 |
-| [CF-012](#cf-012-观察等待默认超时导致模型轮询) | P2 | 观察等待固定超时，造成重复模型调用 | 已解决：通用等待与适配器检查通过 |
-| [CF-013](#cf-013-共享资源的键级编辑与提交粒度不闭合) | P1 | 语言键事务可合并，提交仍以整文件授权 | 已实现：按资源请求提交精确键 |
-| [CF-014](#cf-014-候选环境失配没有字段差异) | P2 | 环境校验拒绝时缺少具体变化字段 | 待核实：恢复回执改进 |
-| [CF-015](#cf-015-模块计划无法声明临时定向验证) | P2 | 模块计划必须选择正式 CTest，无法只声明临时验证 | 已确认：计划准入限制 |
+| [CF-010](#cf-010-等待结束回执过大) | P2 | 等待结束回执重复输出整份证据 | 已加 Run、路径及产品阶段摘要 |
+| [CF-011](#cf-011-独立检查等待共享编辑屏障) | P1 | 已就绪工具检查等待产品开发闭合 | 已限定成员预检；宿主执行仍共享最终冻结 |
+| [CF-012](#cf-012-观察等待默认超时导致模型轮询) | P2 | 观察等待固定超时，造成重复模型调用 | 已收敛准备阶段和重复锁提示 |
+| [CF-013](#cf-013-共享资源的键级编辑与提交粒度不闭合) | P1 | 语言键事务可合并，提交仍以整文件授权 | 精确键提交已用；租约错误会给出具体路径 |
+| [CF-014](#cf-014-候选环境失配没有字段差异) | P2 | 环境校验拒绝时缺少具体变化字段 | 已在候选入口报告变化字段 |
+| [CF-015](#cf-015-模块计划无法声明临时定向验证) | P2 | 模块计划必须选择正式 CTest，无法只声明临时验证 | 支持独立临时验证声明，已实测复用产品配置 |
 | [CF-016](#cf-016-候选回收与人工验收登记存在竞争) | P1 | 已通过候选在人工验收登记前被回收 | 已实现：计划和进行中验收有界保留 |
-| [CF-017](#cf-017-构建前缺少疑似重复构建提醒) | P2 | 未核对既有产物便提交构建，建议在执行前提示可复用候选 | 待核实：告警建议已登记 |
-| [CF-018](#cf-018-固定内存估算限制编译并行且缺少动态调整) | P2 | 普通与重型编译统一按固定内存成本估算，低申报使整轮维持单路 | 已实现；已有实际4路派发记录，最终修订待后续实际构建观察 |
-| [CF-019](#cf-019-应用全量被扩大为工具回归并阻断产物打包) | P1 | Agent 将应用 full 扩大为 full,tools，混合失败阻止独立通过的产品产物打包 | 已确认：范围已纠正；门禁分离待评估 |
-| [CF-020](#cf-020-验收产物路径拒绝缺少修正示例) | P2 | CandidateRun 产物路径误用后，错误回执未说明 runtime 相对路径 | 已澄清手册；拒绝回执待完善 |
-| [CF-021](#cf-021-协作提交无法直接保存空验收记录) | P2 | 提交规则允许空 verify，协作 commit 仍要求有差异的路径 | 已确认：源码与规则入口不闭合 |
-| [CF-022](#cf-022-冻结前空白检查遗漏未跟踪的新文件) | P2 | 新文件的空白问题到冻结后提交才暴露 | 已确认：冻结前检查覆盖缺口 |
+| [CF-017](#cf-017-构建前缺少疑似重复构建提醒) | P2 | 未核对既有产物便提交构建，建议在执行前提示可复用候选 | 已加当前保存候选的输入匹配提示 |
+| [CF-018](#cf-018-固定内存估算限制编译并行且缺少动态调整) | P2 | 普通与重型编译统一按固定内存成本估算，低申报使整轮维持单路 | 已在实际 Run 观察 3、4、12 路派发 |
+| [CF-019](#cf-019-应用全量被扩大为工具回归并阻断产物打包) | P1 | Agent 将应用 full 扩大为 full,tools，混合失败阻止独立通过的产品产物打包 | 已加独立证据判定；无法拆分的历史记录仍拒绝 |
+| [CF-020](#cf-020-验收产物路径拒绝缺少修正示例) | P2 | CandidateRun 产物路径误用后，错误回执未说明 runtime 相对路径 | 已提示 runtime 相对路径示例 |
+| [CF-021](#cf-021-协作提交无法直接保存空验收记录) | P2 | 提交规则允许空 verify，协作 commit 仍要求有差异的路径 | 已加空验收提交，隔离暂存区场景通过 |
+| [CF-022](#cf-022-冻结前空白检查遗漏未跟踪的新文件) | P2 | 新文件的空白问题到冻结后提交才暴露 | 已覆盖，隔离样本验证不暂存 |
 | [CF-023](#cf-023-dsh-插件精确版本限制阻止宿主升级) | P1 | DSH 宿主升级后，协作插件因精确版本限制拒载 | 已通过本机预检器对照 |
-| [CF-024](#cf-024-同一候选槽的局部续修重编多个宿主模块) | P2 | 局部续修后出现多组宿主源码重新编译 | 已观察重编，触发依赖待核实 |
-| [CF-025](#cf-025-文件观察提前结束) | P2 | 前序候选的文件仍有待提交改动，文件观察已返回可认领 | 已确认，待补充观察条件 |
-| [CF-026](#cf-026-打包脚本变更阻止复验已保存候选) | P2 | 无编译复验要求当前检出的打包脚本与旧候选一致 | 已确认，使用新快照定向执行 |
+| [CF-024](#cf-024-同一候选槽的局部续修重编多个宿主模块) | P2 | 局部续修后出现多组宿主源码重新编译 | 已收窄 Dock 模板依赖，日历对照已澄清，渲染头依赖待收窄 |
+| [CF-025](#cf-025-文件观察提前结束) | P2 | 前序候选的文件仍有待提交改动，文件观察已返回可认领 | 已检查脏路径与编辑窗口；隔离观察通过 |
+| [CF-026](#cf-026-打包脚本变更阻止复验已保存候选) | P2 | 无编译复验要求当前检出的打包脚本与旧候选一致 | 已限定无编译复验的打包文件差异 |
 | [CF-027](#cf-027-常规页低频状态预览按控件序号定位) | P2 | 共用模块提示插入后，常规页预览在首项中止 | 已解决：深浅预览各导出 13 张 |
 | [CF-028](#cf-028-steam-打包将两种程序集布局误判为桥接程序过期) | P0 | 已通过的 Release 候选因两种部署清单产生不同 EXE 哈希而无法打包 | 已解决：复用原候选并通过打包 |
-| [CF-029](#cf-029-语言资源原子替换失败后缺少重试指引) | P2 | 语言键写入因原子替换失败退出，回执缺少同请求恢复指引 | 已确认：同请求恢复成功 |
-| [CF-031](#cf-031-共同续修采用早先等待进程的工具链) | P1 | 已就绪成员的等待进程可以用不同于最后一位提交者的工具链启动构建 | 实测一次重复失败，待改进提交前诊断 |
+| [CF-029](#cf-029-语言资源原子替换失败后缺少重试指引) | P2 | 语言键写入因原子替换失败退出，回执缺少同请求恢复指引 | 已给出原请求重试命令 |
+| [CF-030](#cf-030-链接中断后复用不完整的候选程序) | P2 | 中断后复用不完整的程序和链接跟踪 | 已归档损坏链接状态并保留对象 |
+| [CF-031](#cf-031-共同续修采用早先等待进程的工具链) | P1 | 已就绪成员的等待进程可以用不同于最后一位提交者的工具链启动构建 | 已核对计划与提交进程的工具链选择 |
+| [CF-032](#cf-032-已激活候选缺少显式回退入口) | P1 | 用户要求恢复上一轮运行文件时需要重新构建 | 已加显式回退入口，桌面运行态待实测 |
+| [CF-033](#cf-033-候选重编已知失败的共享源码) | P2 | 后提交候选包含同一未修正的依赖错误 | 同输入续修有提示；跨批依赖判定仍待证据 |
+| [CF-034](#cf-034-首次激活时宿主控制窗口不可用) | P2 | 构建通过后，运行中的宿主暂时无法通过控制窗口正常退出 | 已加限时等待和同 Run 补切指令 |
+| [CF-035](#cf-035-共同-run-的验收入口未提示按批次绑定) | P2 | 共同 Run 的参与者无法直接从 Run 入口绑定验收 | 已解析成员检查点或提示原批次 |
+| [CF-036](#cf-036-codex-跨对话等待返回通用错误) | P2 | 统筹对话无法通过 Codex 应用等待多个已登记对话 | 当前即时复测成功；原间歇错误根因未定 |
+
+### 2026-11-21 处理与证据
+
+- 续修批次 `8ea145b4d4ce4b3297972b5d9ee5449b`、Run `502e5ee8e5bc4cab9b57b9a9c59cb3f4` 完成标准 Release、激活及 `behavior_manifest`，保存在 `d6a0e96f`。测试日志第 1 行记录复用产品配置，测试阶段没有再次运行主配置。产品阶段自带的独立辅助目标仍按原入口配置。原五项定向结果和两次 Run 均保留。观察旧批次、拒绝带现有 Run 的 `invoke`、检查独立输出租约也已通过隔离验证。
+- 首轮批次 `6fbdcc3a7c6e463e950ead7d23c924eb`、Run `553a3760150e41f6a226103e6a690f93` 标准 Release、激活和五项定向测试均通过，以 `06c017ed1` 保存。本机 EXE 与激活回执 SHA-256 一致。CF-015 的配置复用首轮回退，两个日志各有一次主配置。缓存和 CTest 清单哈希一致，私有计划重新序列化后的字节哈希与请求不同。续修保留冻结计划原字节和哈希校验，使用原槽补验。
+- CF-012、025。首轮归档后的 `begin` 两次报告独立执行持有 `build.lock`，记录中的 owner 退出后原 Task 成功进入批次 `8ea145b4d4ce4b3297972b5d9ee5449b`。窗口观察现在覆盖该租约；旧批次回执仍可读取并与新编辑区分，传入既有 Run 的 `invoke` 会拒绝提交。
+- CF-024、033。日历两份快照只有 `calendar_ics.cpp` 内容不同，工具上下文一致。首轮在 C3861 停止，日志没有列出 WinUI 的 `settings_ipc_backends.cpp`、`App.xaml.cpp` 与 `cmake_pch.cxx`；第二轮才报出这些编译单元。这对日志能证明编译到达的阶段不同。CF-033 的两个 C2039 日志虽同指 `IconLibrarySnapshot`，快照中的 `src/app/app.h` 字节哈希也不同，不能以整树或报错文件哈希证明依赖相同。继续保留跨批失败指纹缺口。
+- CF-019、032。隔离样本验证混合结果中应用通过、应用失败的门禁差异，以及回退拒绝错误当前 Run、从激活备份恢复已回收运行文件、保留数据和最新捕获时间。真实桌面运行态留待实测。
+- Task `resolve-collaboration-feedback-20261121`。CF-003、010、015、021、022、025、030 的临时夹具在忽略目录 `.codex-probes/resolve-collaboration-feedback-20261121/`。验证了前序补录的未知起点、空提交保留暂存区和幂等重试、失败回执的产品日志、模块声明保留产品构建、跟踪与未跟踪文件空白、脏路径及干净路径等待，以及不完整程序与链接跟踪的归档。临时夹具不加入 CTest。
+- CF-001、002。本次调用的三个诊断探针通过，原件 `.build/collaboration/diagnose-7e2422c9752f48a0b546b0788cfa735d/`。该结果适用于本次调用；原 DSH 父 Job 和原受限调用仍须在对应上下文复测。没有修改 ACL 或沙箱配置。
+- CF-018。已有 Run `c5b42bd5c237467aa22e089f0b3fb47c` 的 `compile-scheduling` 观察包含重型命令 3 路、补充 2304 MiB 后 4 路、普通命令补充 2048 MiB 后 12 路。该 Run 的产品构建和测试通过；没有为记录重跑，也未测量独立编译提速或压低首次申报。
+- CF-036。六个本地项目对话的 `wait_threads(timeoutMs=0)` 返回 `turnCompleted` 和一条完成结果，未返回通用错误。该次即时查询没有复现原 11 月 19 日问题；原六个目标的有界等待和内部失败阶段仍未核实。工作区交接和批次等待路径继续可用。
 
 
 ### CF-001 持久执行器被父 Job 拒绝
@@ -63,6 +81,17 @@
 - **源码确认**：`build_entry.ps1` 使用 `CREATE_BREAKAWAY_FROM_JOB`，访问拒绝时保留失败；此路径不自动退化。父 Job 是否允许脱离由调用环境决定，见 [Microsoft 进程创建标志](https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags)。
 - **处理方向**：通用环境诊断和恢复回执；由支持的适配器 Host 显式调用标准后台 `ready`，或在允许脱离的外部终端继续。默认持久执行、租约、日志与 Job 归属保留。DSH Host 本身若同样受限，仍须调整宿主执行环境；不得把提示完善算作该环境已修复。
 
+- **Codex 共同候选续证（2026-11-19）**：`architecture-first-six-coordination` 批次 `ae006c2d60d146e0b697fc0ab11f5eca` 修订 0 返回 `Persistent batch submission failed: `，Run ID 为空，输入核对未启动。相同调用环境的 `scripts/build.bat diagnose` 回报父 Job 拒绝持久执行器，证据在 `.build/collaboration/diagnose-e43a3412233f457c87745ed41aa2cf5f/`。保留原批次，外层执行环境诊断通过后沿用共享续修与原测试范围。
+
+- **Workshop Manager 参与者续证（2026-11-19）**：Task `architecture-remaining-tooling`，批次 `c512788a34ee4c24892cdf66bfd6d180`。`scripts/build.bat diagnose` 的写探针通过，持久执行器被父 Job 拒绝，首个启动证据为 `.build/collaboration/diagnose-0e38bba4790b4f518dfd432609df0caf/stdout.log.startup-1.json`。本参与者交接源码、计划和已知环境限制，由具备持久执行能力的统筹入口提交共同候选。
+
+- **同批参与者与执行结果（2026-11-19）**：下列 Task 的既有 `scripts/build.bat diagnose` 回执均记录写探针通过、父 Job 拒绝持久启动。已核对各目录中的 `stdout.log.startup-1.json` 均为 `scriptStarted:false`。统筹从通过启动诊断的调用上下文提交同一批次，Run `915ac4ab99264af2b44a4dd9ab694196` 完成标准 Release、激活和 14 项定向测试。受限调用上下文仍按原方式交接给具备持久启动能力的执行者。
+  - `architecture-remaining-settings` · `.build/collaboration/diagnose-21b87e5c1702440b8ca9b5dc663d1a8c/`
+  - `architecture-remaining-lua` · `.build/collaboration/diagnose-1eff6ddbfe2848c287dc18a7e087c4c8/`
+  - `architecture-remaining-drag-widgets` · `.build/collaboration/diagnose-b47707fb8ea94a448c3c5552099d7c1e/`
+  - `architecture-remaining-runtime-utilities` · `.build/collaboration/diagnose-43c1aa1acb1d42a18b45189ae8168080/`
+  - `architecture-remaining-render` · `.build/collaboration/diagnose-5bad187f4a87486ca2ad7e1f02d8f6cd/`
+
 ### CF-002 生成目录被沙箱拒写
 
 - **原始反馈**：`task-stage` 写 `.build/collaboration/state.lock` 及 `Set-Content .build/...` 被拒；给 `.build` 和协调目录增加当前用户 FullControl ACE 后，confined 调用仍失败，切到 full access 后成功。报告者称 ACL 诊断技能提示 `verify_original_confined_operation`，实际原操作仍未通过。
@@ -70,7 +99,19 @@
 - **证据边界**：原始 ACL、沙箱策略和回滚脚本路径待补；该报告支持继续区分 ACL 与沙箱层，不能仅凭拒绝访问推定 ACL 根因。
 - **处理方向**：诊断在原调用上下文验证唯一临时文件写入，明确 Host 与工具沙箱权限不能互相证明；拒绝时提示检查 writable roots、使用已获授权的完整权限上下文或外部终端。仓库工具不自动修改 ACL；DSH 的沙箱放行仍属宿主职责。
 
+- **共同候选写入拒绝续证（2026-11-19）**：`architecture-six-06-widget-package` 的原 `ready-and-wait` 前台 stderr 报 `.git/snowdesktop-execution/budget.lock` Access denied。首批 `ae006c2d60d146e0b697fc0ab11f5eca` 修订 0 保存为失败，`runId=null`，精简与完整批次回执的 `Persistent batch submission failed: ` 均缺底层错误。用户批准的受管外层环境重试后成功创建 Run `0ea248e67599439989fe983266b2fcd6`。受管只读 `.git` 和单独的持久进程启动诊断分别见本条与 CF-001，无需改 ACL。后续应在提交失败的归档回执保留 stderr 上下文。
+
 ### CF-003 任务关闭后同会话无法继续
+
+- **弹窗尺寸过渡实测补录（2026-11-19）**：原 Task `task-f08b7fa0dc184b2bb72060126c73a696` 关闭后，用户对「快捷访问」原位预览回复「实际观感可以接收」。Task `popup-quick-access-visual-20261119` 核对批次 `10342c557b8b418b9e5c319fb36c5465` 修订 0、Run `160e3f59103f467d9b146a087970e686`，确认保存候选、激活回执和当前运行路径的 EXE 哈希一致。原 Task 已关闭，本 Task 缺少原批次成员资格，未调用 `acceptance-start`。本地 `verify` 记录反馈，验收起点未知，复用原构建。总表第 10 项有待回填的验收记录，保留其他任务正在编辑的总表。
+
+- **整树校验实测补录（2026-11-18）**：原 Task `task-8500e8ba3ef941eab3637c9875217be3` 关闭后，用户对移除与添加卡片回复「没问题」。后继 Task `task-b840db32d64a46a59ee07001c0df18b1` 核对本机和保存候选 Run `2f4a8220a8364fb6a2d8f8a3e45c5c31` 的 EXE 哈希，以及测试组件 1.0.1 的部署脚本。沿用 verify 提交补录实测。当前布局任务将保持原 Task 活跃至验收。
+
+- **跨聊天接手验收（2026-11-18，源码确认）**：任务 `code-health-04-component-packages` 接手 `task-8500e8ba3ef941eab3637c9875217be3` 已冻结的批次 `d50470c64fd749f290cb0322b12d104b` 修订 0 和 Run `2a9e6535be694361ad7eca9c4e8fe7b7`。`Start-TaskAcceptance` 只接受原批次成员，`Start-RunAcceptance` 同样校验原请求 Task，无法用新负责人的登记绑定已激活候选。未调用已知会拒绝的命令。以 `bfb0c0d1` 绑定用户反馈和原运行身份。后继验收关联及无历史起点的补录仍待处理。
+
+- **视图转场实测补录（2026-11-18）**　用户对桌面「组件 API 测试」的颜色切换、移除和添加三步回复「没问题」。后继 Task `task-8500e8ba3ef941eab3637c9875217be3` 核对实际运行的 Run `7595dbbf19f64fbe8ef887806b089361`、本机 EXE 哈希和组件 `3ac44a679` 的部署文件。沿用 `verify` 提交记录反馈及文件身份，验收起点未知。原候选成员要求及后继补录缺口仍待处理。
+
+- **通知计划实测补录（2026-11-18）**：Task `code-health-8` 关闭后，用户对重启后预约通知投递场景回复「测试通过」。后继 Task `task-972b9eca9efe40778dc851dcdfce222c` 核对原批次 `751ee068e3fa46439d9f69e4b5d5c99b` 修订 0、Run `7595dbbf19f64fbe8ef887806b089361`，本地 EXE、保存候选与激活回执的 SHA-256 一致。源码仍要求原候选成员为活跃任务，因此用 `verify` 提交补录反馈，未执行已知会被拒绝的验收命令。后继关联及历史起点未知的验收补录入口仍待实现。
 
 - **快捷导航外框验收补录（2026-11-15）**：实现 Task `task-36d46c6113de48faac177538597573dd` 关闭后，用户确认外框在展开和收起时都跟随面板。后继 Task `task-45798df55a754d0d927ec28648657bf6` 核对批次 `5e685b6473264dfd9d7d99290f753259` 修订 0 和 Run `5a5239b3ba44481aafe18adbb4456f22`，保存的候选 EXE、激活回执和本地 Release EXE 的 SHA-256 一致。源码仍要求原候选成员为活跃任务，后继任务无法通过 `acceptance-start` 绑定该候选。本次以 `verify` 提交记录用户反馈及运行文件身份，无需重编或重测。后继验收关联及无历史起点的补录入口仍待实现。
 - **滚轮音量提示验收补录（2026-11-15）**：`music-volume-wheel-popup` 关闭后收到用户反馈「实测通过」。后继 Task `task-1769c78936524282a92749b07cd74047` 核对原批次 `c422b6989dce4cf2adac91038e4d001a` 修订 0、Run `f5d9abba2aa64a3facd830fcc0fc42a8`。保存的运行文件、激活回执和本地 Release 可执行文件的 SHA-256 一致。源码确认 `acceptance-start` 仍要求活跃任务及原候选成员资格。后继任务将用户反馈与原构建绑定到 `verify` 提交，保留验收起点未知的事实。这次只处理记录，无需重编或重测。
@@ -117,6 +158,18 @@
 
 ### CF-010 等待结束回执过大
 
+- **构建与测试的验证字段（2026-11-20）**：Task `large-icon-help-path`、批次 `c4a3cb381983459c9fdbff318af30b72` 修订 0、Run `95d055f943c04757b323f8426ce2450e`。精简回执显示本地化契约测试通过。为核对 Release 和激活，Agent 随后投影批次结果中的整个 `coverage`，内嵌执行上下文使输出截断。仅读取 `productBuild.exitCode`、`activation.status` 和 `coverage.completed` 后确认构建、激活及一次测试通过。该测试的依赖报告仍含 `source-report-not-in-generated-project`，本轮未尝试复用测试证据。
+
+- **产品编译失败回执（2026-11-19）**：Task `task-d303abaaffbb4e0cafd904a0798290d0` 的批次 `f95ea11f31334d0281b6f1a887568d84`、Run `2fab5ae480d342bc8c1899901d9f6e61` 经 `ready-and-wait` 返回失败，精简回执的 `error` 为空。归档 JSON 顶层 `logPath` 指向不存在的批次测试日志，实际 C2039 诊断在 `productBuild.logPath` 所指的 `.log.product.log`。本任务按产品日志完成定向续修。后续可在产品失败终态返回实际失败阶段及可读日志路径。未为反馈另跑构建。
+
+- **批次观察终态（2026-11-19）**：Task `wcg-material-extraction` 为接入已冻结的共享源码，执行 `watch wait --condition result --batch c512788a34ee4c24892cdf66bfd6d180 --revision 0`。票据 `fd47e3c2d700235bc995382ae1bba953` 正确返回 Run `915ac4ab99264af2b44a4dd9ab694196` 通过，同时嵌入产品、测试和依赖观察原件，工具回执被截断（chunk `d622ae`）。从原回执确认终态后只核对目标 Git 路径并接续新批次，没有复查完整状态或重跑该候选。后续可让票据终态默认输出结果路径与计数。
+
+- **Steam 打包前确认既有 Run（2026-11-19）**：Task `steam-beta-release-20261119` 执行 `scripts/build.bat run status -RunId ff076e13380e49e2bab7930d6408530c`，确认 Run 为 `passed`，同一回执输出 runner 文件清单和逐项目 MSBuild 遥测并被工具截断。发布预检改从原 Run 回执读取状态、输入摘要和产品构建结果，沿用既有 Release 产物，未重查完整状态或重新编译。单 Run 状态仍缺少默认精简输出。
+
+- **Run 状态查询（2026-11-18）**：Task `code-health-2` 核对任务 4 的 Run `2a9e6535be694361ad7eca9c4e8fe7b7` 是否结束。`scripts/build.bat run status -RunId … -Compact` 返回 `A parameter cannot be found that matches parameter name 'Compact'`。默认查询确认通过，同时输出 5,451 行请求与阶段记录并被截断。后续使用精简批次回执或投影所需 Run 字段，未重交构建。Run 状态仍缺少精简选项。
+
+- **源文件归属查询（2026-11-18）**：Task `code-health-8` 为确认正在回填的 `CODE_HEALTH.md` 归属运行 `scripts/build.bat task-list`，回执包含完整 Task 历史，工具输出被截断。源码确认该分支同时序列化完整任务数组与 `sourceChanges`。随后用 Git 确认前序任务已提交，再由批次 `751ee068e3fa46439d9f69e4b5d5c99b` 修订 0 的 `claim` 原子确认归属。可补按路径读取归属的窄回执，未重复查询或构建。
+
 - **单任务状态查询（2026-11-16）**：Task `task-c4672fc2024d4b49b86093109d956516` 用 `scripts/build.bat status task-c4672fc2024d4b49b86093109d956516` 核对批次 `225f0675906f49d89daa16aa7d9a955d` 的编辑修订，回执仍包含全局历史并被工具截断（chunk `ae2715`）。已从批次成员和目标 Task 字段恢复修订，继续原批次，未为反馈重复查询或构建。单任务状态查询仍需要默认窄回执，完整历史按需读取。
 
 - **工坊管理器定向编译终态（2026-11-15）**：Task `workshop-tag-shortcuts`、批次 `51db66e07c034a55bf500c67dcf7516b` 修订 0、Run `2dee1c34d3824199bf02e92a723e5810`。`run wait -Task workshop-tag-shortcuts -RunId 2dee1c34d3824199bf02e92a723e5810 -Seconds 60` 返回 `passed`，但同回执包含请求、runner 文件列表与全部阶段，工具记录 2029 行并截断（chunk `041dca`）。终态默认精简、完整历史另取的缺口仍存在。在后续调查中复用原记录，未重跑此请求。
@@ -147,7 +200,20 @@
 
 ### CF-011 独立检查等待共享编辑屏障
 
+- **宿主预检包含仍在编辑的同行路径（2026-11-20）**：Task `statusbar-metric-reorder`、批次 `291917aceadd426ebfb021a72d04440b` 修订 0 的 `ready-and-wait` 在轻量检查 `900c47332e4b4569b09ba6697fecd33d` 报 `widgets/snowdesktop-lua-widget/library/snowdesktop-v2.lua:3015: new blank line at EOF.`。本任务两处认领路径的 `git diff --check` 已通过，同批 Lua 文件仍在编辑。首次失败未启动 Run，保留原批次等待路径修正。后续可评估就绪时先检查各自认领路径，再在共同冻结时检查完整差异。
+
+- **宿主局部改动错过共同批次（2026-11-19）**：Task `statusbar-fullscreen-reveal` 的 `begin` 返回 `Waiting for batch 7cf8d6d16e3240e29b6bee9d8896ee3f: editing phase; editing peers version-compile-scope.`。源码与状态确认，先就绪的成员封闭了批次，状态栏路径与已有成员声明的写入范围分离，仍须等 Run `6f3c12a43971472391d0240801254b26` 捕获后才能进入批次 `5094c9fa1bef4af39f4017281d863dc3`。沿用原等待进程，另行编译的成本未测。P2，后续可评估在冻结前允许依赖范围明确、写入无冲突的新成员加入。同任务的 `scripts/test.bat list` 因检出缺少启用 `BUILD_TESTING` 的生成清单返回 1，改查 CMake 声明确认 `foreground_fullscreen`，未为查询配置。可评估缺少清单时提供声明级查询。
+
+- 2026-11-20，任务 `foreground-motion-20261120`、批次 `77a4edee2bfc4cd8a696772aee395136` 的 `scripts/test.bat list` 同样返回 1，提示 `The checkout has no generated test inventory with BUILD_TESTING enabled.`。已从 `cmake/testing/Tests.cmake` 核对宿主调度与交互用例名，未为枚举单独配置；上项声明级查询仍可减少这次人工查阅。
+
+- **工具检查晚于产品同行就绪（2026-11-19）**：Task `task-28099fa5e95f43ada8803915dff41370` 在批次 `a7803f4dc2394a50832f7057081330f3` 修订 0 申报 `tool/none -Independent`。候选路径 CLI 与看板日志夹具已通过，另一成员已 `finished`，因此 `ready-and-wait` 按已有行为进入 Run `5228547cd7684d9eaddc9ffd40a80297` 的共享等待。冻结计划只执行另一成员的产品构建和测试，工具计划未添加构建或 CTest。新 Run 的 `pathProjection` 已经由新版看板用真实记录核对。工具按冻结检查点提交为 `32c7b9b5`。后续仍可让已通过自身检查的空计划独立归档，同时保留产品成员的同一 Run。
+
+- **同行已就绪时文档仍进入共享构建（2026-11-18）**：Task `task-52a0430b03e04412805a1170dfe1fa6a` 在绘制拆分 Run `7c5575df6d844771abc5af4a8ace0132` 通过后，只认领 `CODE_HEALTH.md`，批次 `1505fb5e92a1467b9c5865ff51cf0635` 修订 0 声明 `docs/none -Independent`。冻结计划的两方输入与认领路径无交集，回执仍随布局转场 Run `a2512aaf58bc43c4bab491588fcca955` 发布，独立回执字段为空。本轮沿用原等待会话和两次既有构建结果。源码确认 `build_manager.ps1` 仅在仍有成员处于 editing 时尝试独立发布。下一步让已通过轻量检查且输入无交集的空计划也能独立闭合，保留原构建与测试计划。
+
+- **验证回填在登记时遇到独占租约（2026-11-18）**：Task `code-health-5` 已完成标准 Release 和原定回归，来源批次 `27ef9727dade4e739c4d0e62f2770227` 修订 0、Run `341657452b4841f2a3ee2a8a4359453b`。只为回填总表调用 `begin` 时返回 `A standalone shared-output entry owns build.lock. No editor registered; read status and retry after execution finishes.`；`status code-health-5 -Compact` 显示无活动批次或候选，无法由回执定位持有人。源码确认无编辑窗口时 `begin` 在声明计划前探测 `build.lock`。再次登记成功，文档用 `docs/none -Independent`，复用原验证。P2，文档归档阶段已能分离，后续可补只读的占用归属或等待入口。未追加构建或复现。
+
 - **非空计划冻结遇到共享租约（2026-11-15）**：Task `dock-liquid-glass-preset` 的批次 `158b9cbde5fb4b9ca6ceb0c948f73303` 修订 0 声明 `module/selected`，轻量检查通过，`ready-and-wait` 在冻结前返回 1，原文为 `Unexpected occupied build lease; inspect status without clearing registrations.`。只读状态确认本批次仍是就绪成员，无本批次 Run；执行租约归批次 `52ec2edf1f404ddf9767db3f29d482f9` 的 Run `8cbc6a26035240dfaee1ecec50caeda5`。源码确认非空计划在冻结时尝试 `build.lock`，租约已用时会结束前台等待。本次保留同批次，等待正常释放后继续，不清除登记或开启额外构建槽。下一步是在合法竞争时等待冻结租约并保留原观察进程。
+- **候选已排队时 Git 事务结束前台等待（2026-11-19）**：Task `task-40977fc85edd4847b361a242933a430d` 在续修批次 `89f6725f38da4e7089d5ad6b0e8523e1` 修订 2 运行 `ready-and-wait`，先确认 Run `c2b0ea11ae3243b78a31ef0fb20efbe4` 已排队，后以退出码 1 返回 `A Git transaction is running; retry after its receipt is durable.`。通过同一批次与修订的 `wait` 取得原 Run 的编译失败回执，未重新提交。候选已排队后的前台等待仍有可复现缺口，待核对 Git 事务发生的具体阶段并沿用原观察会话。
 
 - **按依赖拆分（2026-11-08）**：Task `collab-dependency-split-20261108` 接入 `plan -Independent`。明确豁免宿主构建和测试的成员通过自身路径检查、核对实际认领后可提前归档。临时 Git 夹具验证了构建锁占用、其他成员无关空白错误、原修订提交与关闭、共同结果发布后仍能读取独立回执，以及路径重叠和未认领时继续等待。使用原批次和现有执行槽，未启动构建或测试 Run。
 
@@ -176,6 +242,12 @@
 
 ### CF-012 观察等待默认超时导致模型轮询
 
+- **大图标文案候选排队（2026-11-20）**：Task `large-icon-help-path` 的批次 `c4a3cb381983459c9fdbff318af30b72` 修订 0、Run `95d055f943c04757b323f8426ce2450e`。原 `ready-and-wait` 会话 38238 在同一排队阶段多次报告 `Candidate slot is busy; existing materialization/executor retains its files.` 和 `Waiting for the collaboration state transaction.`。继续原会话后进入执行，Release 和本地化契约测试通过。重复提示仍可按排队原因及阶段去重。
+
+- **组件局部刷新候选续证（2026-11-20）**：Task `task-edbf89c2988e40f28ac1cdb235b8c253`、批次 `b1a733fa04d6491280d13c55e4ec35e9` 修订 0、Run `dfc45d351d544a51814850d071891989`。原 `ready-and-wait` 会话 32512 入队报 `queued; waiting for resource reason not recorded`。继续原观察，Release 和四项定向检查通过。待核对队列原因字段的发布时点。
+
+- **组件安装批次续证（2026-11-18）**：Task `task-6d19c3ab79f94e3681f6115e6e070c7d`、批次 `0209f167b8d547709f2480e28b595ccb` 修订 0。原 `ready-and-wait` 会话 25562 的回执 `6b44c0`、`c3b2a6` 两次报告同一个编辑者 `task-52a0430b03e04412805a1170dfe1fa6a`；`7a676d`、`c42091` 只报告 `Waiting for the collaboration state transaction.`。期间续接同一观察进程，未另查状态或提交构建。后续共同 Run `7c5575df6d844771abc5af4a8ace0132` 通过 Release 和四项定向测试。建议继续按业务阶段和短时事务分别去重。
+
 - **前台构建重复提示（2026-11-16）**：Task `dock-single-preview-anchor-20261116`、批次 `27d647c2f4494e6baf4b8888c1db0380` 修订 0、Run `4e6e544084eb4594b04bc186c82d58b0`。原 `ready-and-wait` 会话 54194 入队时显示 `resource reason not recorded`，执行时交替重复 `latest stage start compile` 与 `Waiting for the collaboration state transaction.`，见同一续接回执 `8a133f`。全程复用该观察进程。待按业务阶段和短时事务分别去重，保留实际变化。
 
 - **候选槽排队续证（2026-11-15）**：Task `ime-search-candidate-position`、批次 `e9de509e81f74f608fe6ae5408402da5` 修订 0、Run `0c528b8495b642cbb3e8819324cd1d00` 的 `.stderr.log` 重复记录 38 条 `Candidate slot is busy; existing materialization/executor retains its files.`。只读核对了前序 Run `c4ec5646568e428581fc02f513b2b1e7` 的执行阶段，继续原 `ready-and-wait` 会话并过滤重复等待提示，原 Run 后续通过。建议仅在排队原因或阶段改变时输出一条提示，保留原有排队状态与等待证据。
@@ -200,6 +272,18 @@
 - **证据与边界**：已核对本机DSH的 `dsh-tool-call-timeout-policy`：未声明工具 `timeoutMs` 时不设置该层截止。进程内持续观察不调用模型；传输yield续接同一session。测试内部故障兜底仍有界。默认/0、事件到达、显式超时、取消与编辑权不变已通过既有通用/适配器驱动，实际SDK也验证工具注册后没有外层截止。真实用户Host的长期连接及重载仍需安装环境回验。
 
 ### CF-013 共享资源的键级编辑与提交粒度不闭合
+
+- **大图标使用路径译文续证（2026-11-20）**：Task `large-icon-help-path` 的批次 `c4a3cb381983459c9fdbff318af30b72` 修订 0、Run `95d055f943c04757b323f8426ce2450e` 通过后，首次 `commit -ResourceRequests` 退出码为 2，返回 `[Errno 32] Wait worker lease is occupied`（`0d19da`）。内置英文提示经路径提交保存为 `ff96b6f4` 后，原十个请求重试成功，保存为 `c8982e7a`。本轮沿用原构建结果，具体占用的租约仍未识别。
+
+- **广色域显示补偿文案续证（2026-11-19）** Task `wgc-shadow-layering` 在批次 `0a379e1719334cb19f1d00861a7f0aa5` 修订 0、Run `890dcb8903ee46f5b4153a6c1231c403` 排队期间，`commit -ResourceRequests` 返回 `[Errno 32] Wait worker lease is occupied`。原 Run 通过后沿用十份回执提交 `080f33588`，没有为提交重跑构建。错误仍未指出实际占用的租约。
+
+- **主体阴影译文提交续证（2026-11-19）**：Task `task-d303abaaffbb4e0cafd904a0798290d0` 的批次 `8d9a5bf434c4479f9b5c61287b47f69a`、Run `fa2ed75c266c42d5bd990b035e5c7df2` 通过后，源码已保存为 `c444aa55`。`commit -ResourceRequests` 两次经冻结回执、一次经后继登记返回 `[Errno 32] Wait worker lease is occupied`。`build_resource_commit.py` 对 `git.lock` 和 `state.lock` 共用同一错误信息，原十个请求仍保留。在后继批次 `3357e7e2e83645438919afc0ecf0e303` 的计划登记成功后，原请求通过键级事务保存为 `8ff632a5`。本次未为提交失败另跑构建。
+
+- **全局高光开关翻译提交（2026-11-19）**：Task `wcg-material-extraction` 的批次 `a7803f4dc2394a50832f7057081330f3` 修订 0、Run `5228547cd7684d9eaddc9ffd40a80297` 生成 Release 后，源码提交成功。原候选仍在测试时，`commit -ResourceRequests` 首次和同一请求重试均返回 `[Errno 32] Wait worker lease is occupied`（chunks `09a2b5`、`42a106`）。十份资源应用回执仍保留。源码上的事务会尝试取得状态锁与 Git 锁，当前错误未指明哪一个被占用。待原测试结束后沿用原十份回执提交，无需重跑构建。
+
+- **预览退出标题提交续证（2026-11-17）**：Task `folder-preview-in-place` 的批次 `d4bce4f63c1044efafa91f6e6673d544` 修订 0、Run `313b42a7ba6d491aab7c8315665a54a8` 通过后，源码提交成功，紧接的 `commit -ResourceRequests` 返回 `[Errno 32] Wait worker lease is occupied`。同一批资源请求重试成功并生成 `3940e1bc1`，额外产生一次 CLI 调用，未重跑构建或测试。等待结束回执与观察者租约释放的顺序仍待核对。
+
+- **目录双击设置提交续证（2026-11-17）**：Task `folder-preview-in-place` 的批次 `b9f37841b0b04386b6544ce84b38e43c` 修订 0、Run `b7f4de7f803247a18a5d08058493387e` 通过后，首次 `commit -ResourceRequests` 返回 `[Errno 32] Wait worker lease is occupied`。使用同一组请求重试成功，提交 `78cdcadab`，保存十种语言的三项键变更。观察 worker 释放租约的时序仍待处理；此次未额外构建或复现。
 
 - **删除键的续证（2026-11-10）**：Task `task-e8cf5ce885b04bada68577e1cb187fff` 在批次 `fb53e9157ddd4a0b95948a79dec2cc1f` 删除前台应用菜单的两项文案。十个工作区语言文件均已有无关键的顺序差异。源码确认 `resource apply` 原来要求字符串补丁，整路径提交会带上其他差异。本轮让已准备的键接受 `null` 删除，并沿用原事务和精确键提交，保留其他工作区内容。
 
@@ -226,6 +310,34 @@
 
 ### CF-015 模块计划无法声明临时定向验证
 
+- **状态栏排序配置续证（2026-11-20）**：Task `statusbar-metric-reorder`、批次 `81a988b0c92145f38e0b889aff7a0d00` 修订 0、Run `ee1a5ae299294e158f9377dd01b1490b`。产品日志记录 Release 配置 2.9 秒、生成 3.4 秒，测试日志对同一候选目录另记配置 3.1 秒、生成 2.9 秒。定向选择 `behavior_settings`，通过 Release、激活和设置存储回归。产品与测试阶段配置能否复用仍待核对，未为记录另行构建或测试。
+
+- **三行回收槽位（2026-11-20）**：Task `member-paint-transition`、批次 `7f9eee9647c244b188a59da0fe040c2c`、Run `fe8059e4248144b9906e6183f129ec99` 的 Release 与七项正式测试已通过。临时槽位命中和 WARP 绘制探针随后等候项目执行租约，见 `.codex-probes/member-paint-transition/build-check.ps1`；当时原检出进入另一编辑批次 `ae5ad257764749bc92f85bea31043c3a`。原反馈的绑定与调度缺口仍在；未因等待重建该候选。
+
+- **拖拽落位回执（2026-11-20）**　Task `object-drop-refactor` 的批次 `ee60f4ec424844d49647a821c8c8b9b7`、Run `9fb8a9e442f843b5b13140e7cf158f03` 完成 Release 激活及 10 项定向测试。批次外的 `.codex-probes/object-drop-refactor/build-check.ps1` 首次在编译前收到 `Shared output busy: batch b1a733fa04d6491280d13c55e4ec35e9 / editing`。探针需要链接已验证的宿主对象来检查自身 OLE 回执和分组落点，等待期间两个集成批次先后复用编译槽。取得执行权后，核对 Run `dfc45d351d544a51814850d071891989` 的测试程序哈希、后续槽的源码差异及对象时间，复用其宿主对象完成了四种 OLE 回执、分组标签落位、源图标绘制及部分回收的定向验证。后续仍需让模块计划绑定一次性验证和指定 Run 的对象。
+
+- **组件刷新归档库续证（2026-11-18）**：Task `task-40977fc85edd4847b361a242933a430d` 的批次 `a036f2a9fe804d96880eb29a51112ea6`、Run `866b5dc7e51647c48b1f2c738b036f31` 通过后，`save-candidate.ps1` 因槽已复用拒绝全局摘要不符，原文为 `Reusable slot no longer matches the package source batch.`。读取两份不可变源码清单，差异仅为 `CODE_HEALTH.md` 和宿主 `src/app/input/app_pointer_release.cpp`。组件包库写入时间在原 Run 内，复制前后哈希和当前槽摘要相符，记录于 `.codex-probes/code-health-04-refresh/saved-candidate-binding.json`。随后取普通执行权完成 5,156 字节生产库对照。未重编产品，后续仍需让临时验证绑定候选库，减少槽复用后的人工比对。
+- **组件启停归档库续证（2026-11-19）**：同一 Task 的批次 `677ef827c6134a67967da157f8c292d0`、Run `0d9e0fb525f948568eaf454e794c9ced` 的标准 Release 和激活通过，本地化测试另有失败回执。批次结束时槽已切到其他候选，临时链接所需的三个库须重新核对两份不可变源码清单、组件包库写入时间和复制前后哈希，证据见 `.codex-probes/code-health-04-refresh/saved-enablement-binding.json`。已保存基线库，复用该产品构建，后续仍需允许临时验证绑定指定的构建产物。
+- **续修中的定向前端检查（2026-11-19）**：同一 Task 的续修批次 `89f6725f38da4e7089d5ad6b0e8523e1` 修订 2，尝试通过普通项目执行权运行无产物的 MSVC `/Zs` 检查。源码核对 `Enter-BuildEntry` 会拒绝任何活动编辑批次，独立等待本批退役无法在冻结前完成，`check` 仅接收内置轻量检查。已停止该等待，合并到本批正式编译检查。后续可考虑让批次声明无共享写入的临时前端命令，并明确其执行权和结束条件。
+
+- **组件安装事务对照（2026-11-18）**：Task `task-6d19c3ab79f94e3681f6115e6e070c7d`、批次 `0209f167b8d547709f2480e28b595ccb`、Run `7c5575df6d844771abc5af4a8ace0132`。两项正式测试覆盖设置宿主与真实 ZIP 安装。批次外的目录、来源和注册表失败对照只能在完成后通过 `run-checks.ps1 -WaitForLease` 申请执行权，会话 97616 先报告 `Waiting for the project execution lease for the installation probe.`，后续用旧、新归档包库取得 1,236 字节一致的报告。标准构建和正式测试均复用，无追加产品构建；临时定向验证仍待纳入批次计划。
+
+- **Lua 任务绑定续证（2026-11-18）**：Task `task-52a0430b03e04412805a1170dfe1fa6a` 在 Run `dd12405be44d473f8dc0f1de02c4f260` 通过后首次运行临时 Lua 探针，入口报告共享执行租约或事务占用。本地状态转空后复用候选对象，只链接并运行 18 项探针成功。计划仍无法绑定临时检查，保留首次拒绝和通过日志。
+
+- **退出转场和布局对照（2026-11-18）**：Task `task-b840db32d64a46a59ee07001c0df18b1`、续修批次 `15b07c6e915b4527b7516aace8f95f47` 修订 1、Run `0f369eff55414328a42b9799252a1167`。临时驱动只链接已保存的前后生产对象，修正驱动的包含路径后 `run-checks.ps1` 首次重试被 `Shared output lease/transaction is busy` 拒绝。用同一前台脚本等普通执行权后，基线复现旧位置、候选八项通过。复用已构建的产品和两项正式测试。批次仍不能直接携带专用临时验证。后续首帧对照复用相同对象，首次取得工作区租约后被 `Shared project resources busy: heavy execution lane` 拒绝，释放租约并等待两类窗口后，前后几何一致。这次只链接临时驱动和现有对象。
+
+- **组件来源归档库对照（2026-11-18）**：Task `task-8cba4c000221462ebf59fb8874728771` 的批次 `a4b6c57ee055415fbbf1a65a3140a398` 修订 0、Run `335ff4b95ddd4b91a1a98a6142c23027` 通过后，`run-checks.ps1 -Mode candidate -WaitForLease` 只需链接已保存的驱动和库，仍在其他任务编辑期间等待普通执行权。同一前台进程随后取得租约，一次链接通过，1,935 字节与基线一致。下一步是核对批次如何携带这种已声明的临时链接和执行。复用原构建和正式测试结果。
+
+- **原生分流临时验证（2026-11-18）**：Task `code-health-2` 的批次 `4a160c99953447c0a29e4c36b6833270` 修订 0、Run `2f4a8220a8364fb6a2d8f8a3e45c5c31` 完成构建后，独立头检查和探针首次进入执行权返回 `Shared output lease/transaction is busy; no configure, build, arrangement or process action started.`。在下一可用窗口沿用相同命令，直接链接候选对象并执行成功。批次仍不能携带此临时验证，保留首次拒绝与后续成功，未重编产品或重跑正式测试。
+
+- **共享构建后的临时链接（2026-11-18）**：Task `code-health-04-component-packages` 从批次 `79f36ec1e5384874a0596293f404c9cf` 修订 0、Run `cbdb5b6737114bf89581afae51b16498` 保存三个库，用于注册表生产入口的临时对照。首次 `run-registry-check.ps1 -Mode baseline` 拿普通 `Enter-BuildEntry` 租约时返回 `Shared output lease/transaction is busy`，尚未启动链接。已保留基线库，后续等执行窗口补验。批次计划仍无法携带任务专用的临时链接和执行，租约本身按预期生效。
+
+- **通知计划存储续证（2026-11-18）**：Task `code-health-8`、批次 `751ee068e3fa46439d9f69e4b5d5c99b` 修订 0、Run `7595dbbf19f64fbe8ef887806b089361`。当前 CTest 清单没有通知计划存储条目。标准 Release 和部署契约 `behavior_manifest` 通过，通知计划的读写和拒绝行为由临时生产入口对照验证。产品与测试日志分别记录向同一候选目录配置，测试阶段 CMake 耗时 6.97 秒。仍待支持模块计划按需声明临时验证及核对配置复用条件。未另开任务、重复提交或扩大到全量。
+
+- **桌面 WCG 图标选中底板续证（2026-11-17）**：Task `icon-selection-highlight-gaps`、批次 `3cda9c8e1702464ca0e0601fb236d031` 修订 0、Run `2db7d4c8173a434e93f80ae0f85802cd`。现有 CTest 无 WCG 外观场景，经 `scripts/build.bat ready-and-wait` 选 `behavior_manifest` 核对部署。产品日志第 14–15 行记录配置 3.1 秒、生成 3.0 秒，测试日志第 7–8 行对同一候选目录再次配置 3.1 秒、生成 2.7 秒。Release、激活及部署契约通过，WCG 外观待实机。继续核对产品与测试阶段共享配置的条件。
+
+- **副屏任务栏背景绘制续证（2026-11-17）**：Task `task-3fd9c750523d4952ba3ca65c0448048e`、批次 `1635cc113f6b4f629bf39de1f7bf8ace` 修订 0、Run `198fd59be1a44b56bd5fda8d42ed6b3e` 经 `scripts/build.bat ready-and-wait` 完成。模块计划选 `behavior_manifest` 检查发行 DLL，副屏视觉单独实机验收。产品日志第 937–938 行和测试日志第 433–434 行记录同一候选的宿主链接，测试阶段也重新复制运行资源。测试配置用时 6.27 秒，目标构建总计 55.45 秒，包含必要的测试驱动构建，未单独测量宿主重链接成本。Release、激活和部署契约通过。后续核对测试阶段能否复用同一候选的宿主产物；本条只保存实际证据。
+
 - **托盘排序续证（2026-11-16）**：Task `tray-reorder-stability`、批次 `6dfe33bba00847aba10e134233919b4f` 修订 0。现有 CTest 没有托盘排序条目，计划沿用 `behavior_manifest` 核对交付文件，状态栏和溢出菜单用现有离屏预览覆盖模型与绘制，受保护进程的身份查询使用本机样本。模块计划仍不能直接表达这一组合，沿用 CF-015 的准入限制，未为反馈重复构建。
 
 - **工坊管理器续证（2026-11-15）**：Task `workshop-tag-shortcuts`、修复批次 `fa1f95839c044f99903102a5a345d718` 修订 2、Run `b8b86881051544b9a29db177ba726fcc`。`.log.product.log` 记录 Release 配置及生成，随后 `.log` 对同一候选目录配置测试，用时 6.53 秒，三项定向测试通过。标签同行调整只涉及独立管理器，复用此前检查结论，另做管理器定向编译和界面核对。配置复用及批次内单一生产目标声明仍待处理。
@@ -247,6 +359,14 @@
 - **来源与证据**：2026-11-04，Task `task-8071ca0eeffa4e399782658dd729d837`，批次 `19f0476bc15c467f97f9d12daf5d6906` 修订0。Shell 参数局部修正有临时 C++ 生产入口探针，无对应正式 CTest；`plan -Scope module -Suites none` 返回 `Explicit no-host-tests is limited to docs/component/tool and cannot be mixed with tests.`。`build_protocol.ps1` 的 `New-TaskPlan` 确认此限制。
 - **影响与本次处理**：规则默认一次性验证不扩展正式测试工程，计划入口却要求模块选择正式条目。本次增加选择 `behavior_manifest` 检查产品部署契约，参数本身仍由临时探针检查；Run `2afc920a0b284917acbca709a3e597fa` 的标准产品构建、激活和该条目通过，临时探针随后通过。没有新增永久测试或全量测试，额外编译与等待成本未单独测量。记录位于 `.codex-probes/powerrename-background/`。
 - **下一步**：允许模块声明“产品构建加临时定向验证”及可审查的正式测试豁免理由，继续绑定源码、执行权、命令和结果，避免为满足计划准入选择间接条目或新增永久测试。当前只登记，未修改准入实现，也未为反馈重复构建。
+
+- **大图标头自足性续证（2026-11-18）**：Task `code-health-20261118` 在编辑期沿用已知准入限制，先走查，再由批次 `db1f743709e343fcab58855ace19e930` / Run `672af510c8b6475a85ffb8ed27dfbe08` 编译真实消费者。Release 及 5 项定向回归通过后，忽略目录的临时 `/Zs /W4 /WX` 检查经执行租约发现 `large_icon_edit_rules.h` 缺少 `<algorithm>`（C2039，日志 `.codex-probes/code-health-20261118/compiler-probe.log`）。本任务保存该编译通过的修订并补齐直接依赖。Run `150b85cd7d3b4b9c83315a17ea29d399` 的标准 Release、设置宿主回归以及随后的独立头复验均通过。后续若能在编辑期按独立输出授权同一前端检查，可在冻结前发现这类由 PCH 掩盖的遗漏。
+
+- **视图树预检续证（2026-11-18）**：Task `code-health-03` 在尚未加入编辑批次时，经 `Enter-BuildEntry` 请求只写 `.codex-probes/code-health-03/` 的 MSVC 预检，因批次 `27ef9727dade4e739c4d0e62f2770227` 有其他编辑任务，返回 `Shared output busy`，未启动编译。上一批提交后，独立头和编译单元检查通过。临时链接补齐依赖时又遇到事务占用，待文档批次 `6f3049166bf04f34a490dc029d28848c` 释放后复用对象，只续链接和 22 项对照。编辑期独立输出的预检入口仍待处理。
+
+- **整树校验续证（2026-11-18）**　Task `task-8500e8ba3ef941eab3637c9875217be3` 在批次 `79f36ec1e5384874a0596293f404c9cf` 编辑期请求临时 MSVC 检查，普通入口返回 `Shared output busy`。完成走查及共享 Run `c164e4a479e344ee914b94684006e027` 后，`4a160c99953447c0a29e4c36b6833270` 也因活动编辑占用普通入口。等待释放后，无 PCH 独立前端检查及 17 项入口对照通过，复用了保存的候选对象。现有入口把独立诊断和共享输出执行一起准入，编辑期有边界的前置检查仍待处理。
+
+- **独立动画夹具续证（2026-11-20）**：Task `task-fa8531d0618049c2844f061172e54d85`、批次 `896766e553fb40baae8e503d689e0fac` 修订 0。只改宿主私有夹具，实测由可重放计划执行。该批次的 `module/manual` 被拒为非法 suite，`module/none` 被拒为超出允许 scope。改用一项焦点隔离 CTest，复用上一候选 Run `ba0e54777f2a49619b0029ca4dea4d9c` 已完成的相关产品验证。仍待为宿主模块表达标准 Release 加已声明的独立实测。本条不增加编译或用例。
 
 ### CF-016 候选回收与人工验收登记存在竞争
 
@@ -320,6 +440,14 @@
 
 ### CF-021 协作提交无法直接保存空验收记录
 
+- **Dock 弹窗快捷键验收（2026-11-21）**：用户对 `77e3f051` 的两种原场景实测回复「没问题」。续接 Task `task-c4e4db5febf0424a92b3c2161a587db7` 核对本地 EXE 与原 Run `c5b42bd5c237467aa22e089f0b3fb47c` 激活回执的 SHA-256 一致。空验收提交入口仍缺失，本条随 `verify` 提交保存，复用原构建和测试记录。
+
+- **Dock 实机验收续证（2026-11-20）**：Task `dock-reserve-stay-awake` 对提交 `7be96636` 的用户反馈已保存为验收 `0bd8923472de4010b071439b41426da2`，绑定批次 `f38b4e6ae1cd41a3a8b3773bee16cae0`、修订 0、Run `4b718a58576f4d2c9e91c6b635e2d766` 和本机相符的可执行文件哈希。协作提交尚无空验收入口，复用后续状态栏功能批次分路径归档验收；原候选不重建、不重复运行通过的检查。
+
+- **状态栏动画验收续证（2026-11-20）**：同一 Task 的提交 `3a2249dc` 已通过用户实测，验收 `6b00af0eca6244e4b3352f2817cdb2a8` 绑定批次 `b95ae8b1b15c470ab133d68ea7f045b8` 和 Run `aaa80180d1684acf87ddc1ae384adb80`。用归档批次 `4fc05d805ede48d6b1159476ece55bf8` 保存验收提交，沿用原候选与三项定向测试结果。
+
+- **首次添加授权验收（2026-11-18）**：Task `widget-add-authorization` 收到占位保留和授权后原位加载的实测反馈，验收 `6b7d8a5cb1b7467db154f79d40305b94` 已通过。协作提交仍需认领有差异的路径，因此只将此验收回执记入独立文档提交，沿用 Run `1c83f507584a47779e9029b9bd45a74d`。
+
 - **输入法候选续证（2026-11-15）**：Task `ime-search-candidate-position` 对候选 `b43b0526`（原批次 `e9de509e81f74f608fe6ae5408402da5`、Run `0c528b8495b642cbb3e8819324cd1d00`、验收 `1390831ccd334b0ab236583aa5f93b43`）登记用户复测未通过。用户在「添加组件」搜索框输入中文时，候选条上移后仍距搜索框下沿约 20 像素。用独立文档批次 `2339a0a4b2b746e49425b34d5316b5cc` 保存失败验收和本条协作记录，原候选编译及部署契约结果照存。协调提交缺少空 `verify` 入口，仍需要额外文档归档，无需重编或重跑正式测试即可保存此次验收。
 
 - **滚轮音量提示续证（2026-11-15）**：同 [CF-003](#cf-003-任务关闭后同会话无法继续) 的后继任务。协作提交仍要求具体差异路径，事后实测通过与本次反馈通过文档轻量批次 `f9b027a781ee4664a6aec14a2550b229` 保存。增加了文档认领与归档操作，复用原 Run 的产品和测试结果。
@@ -328,11 +456,15 @@
 - **效率影响与状态**：P2，增加收尾调查及归档步骤，没有因此配置、编译或重跑通过测试；额外耗时/token未测量。本任务在独立verify提交中纳入本条真实反馈，并绑定原采样与用户验收，保留此前try历史，没有修改协作实现或绕过Git事务。
 - **下一步**：为纯验收提供显式空提交入口，校验对应Task、原候选/文件身份、验收回执及暂存区隔离，继续持有协调器Git事务租约；没有真实文件修改时不为其创建产品候选或构建。当前为已确认、待实现，不声称入口已修复。
 
+- **弹窗几何验收续证（2026-11-18）**：Task `code-health-6` 在批次 `eea61f9e35ab457295876ce81e47efbc` 修订 0 回填总表。并行提交 `4b2a31a73` 已保存该文件中完整的第 6 项验收行，随后本任务的协作提交返回 `no changes added to commit`。保留并行提交历史，并在独立 `verify` 提交中用本条记录绑定验收 `45926ce23e3e43a8a51f17dc151b81d3`。沿用原候选和实测结果。
+
 ### CF-022 冻结前空白检查遗漏未跟踪的新文件
 
 - **来源**：2026-11-06，CLI，Task `task-63ff9aa5c5324bad9c8dd7ff4b445101`，批次 `08a35cc2146c4d2f9578b28b9968d079` 修订 0，Run `db432d2617b34e34aa2b10c52d93be69`。
 - **实测与源码**：冻结前 `git diff --check` 未报告未跟踪的五子棋 `main.lua`。标准 Release 和五项测试通过后，协作提交对认领的新文件执行 `git add --intent-to-add`，随后拒绝提交并报告 `main.lua:226: new blank line at EOF`。原错误已留在任务目录。`Invoke-LightCheck` 的空白检查也调用 `git diff --check`，后续的未跟踪文件枚举仅用于脚本及 JSON 语法检查。
 - **影响与下一步**：先保存已通过构建的宿主改动，再在用户要求调整卡片位置的新编辑修订去掉尾部空行。未为空白单独重编。可在冻结前对认领的未跟踪文本补只读空白检查，使检查覆盖与提交一致。当前未修改检查器。
+
+- **渲染上下文续证（2026-11-19）**：Task `task-d0e3e98f9309441b8698f53290775176`，批次 `99d0c35bf0cf45edac560a2809bc7824` 修订 0，Run `acefe323ca3a4ba0a873cdf37e93c515` 的标准 Release、四项测试及两份组件预览像素对照通过。冻结后提交才报告 `src/widget/view/widget_render_host_context.cpp:151: new blank line at EOF`。后续批次 `a4b515724bec494d9fe2bb594f27042c` 合并宿主输入改动，修正该空行并在冻结前直接检查认领的新文件。未为空白单独编译。
 
 ### CF-023 DSH 插件精确版本限制阻止宿主升级
 
@@ -342,6 +474,8 @@
 - **用户反馈**：更新后回复“没问题了”。具体的 Host 回执和面板加载版本以 DSH 当次显示为准。
 
 ### CF-024 同一候选槽的局部续修重编多个宿主模块
+
+- **组件局部刷新候选续证（2026-11-20）**：Task `task-edbf89c2988e40f28ac1cdb235b8c253`、批次 `b1a733fa04d6491280d13c55e4ec35e9` 修订 0、Run `dfc45d351d544a51814850d071891989`。改动涉及 `app/app.h` 和其包含的 `composition_state_types.h`。产品日志 `b1a733fa04d6491280d13c55e4ec35e9.log.product.log` 记录重新生成 `SnowDesktopHostPch.lib`，随后编译本任务未修改的 `app_clipboard_interaction.cpp` 和 `app_menu_icons.cpp`。源码确认这些编译单元共用宿主 PCH，额外成本未单独测量。沿用原 Run，后续评估将局部绘制状态与组合根头的依赖收窄。
 
 - **来源**：2026-11-10，CLI，Task `calendar-ics-subscriptions-20261110`。对照批次 `6935a08f187f4e5ab54942c412c905be` 修订 2、Run `c77d7675a5e74747bdfd3ad852dc8080` 与续修批次 `b4e75fc6e1ac437ba0dbe344b5a46e23` 修订 4、Run `f5f1d056ef664e27ae2ed219cbcb4835`，入口均为 `scripts/build.bat ready-and-wait`。
 - **实测与影响**：本任务在两轮间只调整 `calendar_ics.cpp` 的两处 libical 调用。两轮产品日志均指向同一候选槽 `a32a06cfeb995ec8-batches`，后一轮记录了 `settings_ipc_backends.cpp`、`App.xaml.cpp` 和多份 WinUI 设置页源码的编译。原件为 `.build/collaboration/<批次>.log.product.log`。已观察到重编；其他冻结输入、生成文件和 MSBuild 依赖的触发链待核实，额外耗时未单独测量。
@@ -353,11 +487,43 @@
 
 - **目录绘制续修补证（2026-11-16）**：Task `task-73694d317c60435baadfe2e7e2ff0863`，以同一入口比较批次 `eec01ffbe02343f2986f9501b6ca617f`、Run `a119d5f5cbe240e49ca0fc2f84d765ff` 与批次 `30ec8ae4f6534ed196c90298d533c9f0`、Run `d9d61e9dcab845c89eef858ff8048a1f`，两批修订均为 0，产品日志均指向 `a32a06cfeb995ec8-batches`。后一批任务差异仅含三个 `.cpp`，产品日志从 2 条 `app_*.cpp` 编译行增至 128 条，并重新探测 C++ 编译器 ABI。产品阶段总耗时分别为 83.508 秒和 865.153 秒，含配置、编译、链接和整理。两批 Release 和定向检查均通过。触发重新配置和扩大编译的原因待查，尚未将两批总耗时的差额归于单一原因。本条复用现有日志，无追加构建。
 
+- **空闲桌面补证（2026-11-17）**：Task `idle-desktop-visibility`，批次 `c2f3cda8ee704e2b8e14946249f7e1d7` 修订 0、Run `c3bb18646e63485a8b58f91e2e55e900`，入口 `ready-and-wait`。本任务改动四个文件，产品日志 `c2f3cda8ee704e2b8e14946249f7e1d7.log.product.log` 还记录未改动的 `settings_window_host.cpp` 编译。源码确认修改的 `desktop_idle_hide.h` 由 `app/app.h` 包含。产品 `build-targets` 阶段记录 671.979 秒（Run 的 `stages.*.jsonl`），设置目标的实际失效链和单独成本待核对。Release 和三项定向测试通过，直接复用原 Run 记录。
+
 ### CF-025 文件观察提前结束
+
+- **剪贴板接口续证（2026-11-20）**：Task `clipboard-original-size`、批次 `d1b98672072b4fc9999a870e52761ae0` 修订 0。两处 Lua 公共接口文件由同批 `ai-settings-disclosure` 编辑。对方就绪后，`claim -Add` 从活动归属冲突变为 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`。本任务将自有差异保存为可复原补丁并撤回自身编辑，允许前序冻结和提交后再认领；保留对方归属。共享文件仍缺少同批次按补丁交接的路径。
+
+- **Dock 层级修复续证（2026-11-20）**：Task `dock-reserve-stay-awake` 的 `watch wait --condition files` 票据 `68703a138607be8614812c5feae02916` 对 `src/app/shell/app_shell_menu.cpp` 返回 `eligible`，Git 仍显示前序 DSH 任务的未提交修改，批次 `c425238ece434a098799197476e18115`、Run `8defbaff90b44d84a3f2aafef62cc329` 当时仍在构建。沿原 Run 等待结果，用户授权接手后复用原验证回执提交 `eb4e3fa5`，再认领本次续修路径。文件票据仍需反映未提交的前序改动。
+
+- **Dock 渐隐裁剪续证（2026-11-19）** Task `wgc-shadow-layering` 的票据 `e26ac202cc4a260223ea486d6bb06177` 对 `src/core/dock.cpp` 和状态栏视图返回 `eligible`。Git 仍显示前序阴影任务的 Dock 改动未提交。按实际归属先修改状态栏，待 `9ff48b4f2` 保存前序改动后认领 Dock，在批次 `cf0af9d5f44b4dc6b28381a62a4aa308` 合并验证。文件观察仍需区分窗口可用和路径可安全认领。
+
+- **任务 4 实机验收收尾续证（2026-11-19）**：Task `task-40977fc85edd4847b361a242933a430d` 的票据 `0939f0570e30519dcdcb9f528b0e3ad1` 对 `CODE_HEALTH.md` 返回 `eligible`。Git 仍显示任务 14 未提交的启动登记。待原差异提交且文件可认领后补录任务 4 用户实测，无需重新构建。
+
+- **组件历史保留总表续证（2026-11-19）**：Task `code-health-04-retain-two-versions` 在批次 `10342c557b8b418b9e5c319fb36c5465`、Run `160e3f59103f467d9b146a087970e686` 通过并提交代码后，票据 `6464e453a167aa3f455943ac65435fab` 对 `CODE_HEALTH.md` 返回 `eligible`。随即核对仍有任务 13 的未提交差异，保留其归属。扩展等待仍无法落盘总表，原验证见 `.codex-probes/code-health-04-retain-versions/verification.md`；待前序提交后补录，无需重新构建。
+
+- **文件系统任务分流续证（2026-11-19）**：Task `code-health-13-fs-completion` 的票据 `6f988485f3fee716a5c07e8a586612f7` 对引擎实现、头和宿主源码清单返回 `eligible`。Git 仍显示 `widget_engine.cpp` 有任务 `code-health-04-retain-two-versions` 的待提交差异，前序候选 Run `160e3f59103f467d9b146a087970e686` 仍在构建。先完成隔离基线和模块草稿，等前序提交后认领。文件观察仍需覆盖待提交状态。
+
+- **即时图片修复总表续证（2026-11-19）**：Task `task-52a0430b03e04412805a1170dfe1fa6a` 的票据 `a85ca53d88079df515e18d61d69b15a7` 对 `CODE_HEALTH.md` 返回 `eligible`，Git 仍有批次 `d4bfa2ee3f9644b19a087095b20b382a` 的任务 10 条目差异。保留前序任务改动，修复提交与验证继续使用 Run `6718d503f2d44f348d159b75ff49170c`。文件观察仍需覆盖待提交状态。
+
+- **绘制拆分总表续证（2026-11-18）**：Task `task-52a0430b03e04412805a1170dfe1fa6a` 的票据 `6784a610cb17099267937141b22be044` 对 `CODE_HEALTH.md` 返回 `eligible`，Git 仍有任务 10 待提交改动。继续等待任务 10 提交 `7cd41ab2f` 后，重新认领总表成功。未接手其他任务改动，复用原构建。
+
+- **同批待提交的宿主源清单（2026-11-18）**：Task `task-52a0430b03e04412805a1170dfe1fa6a` 在批次 `f1195bfc412947849d6ec0429042b1d1` 修订 1 认领 `cmake/sources/Host.cmake`，视图交互任务已就绪但尚待共同构建，清单仍有待提交改动。回执为 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`。本轮复用已登记的视图和绘制编译单元，原批次继续共同验证。保留其他任务的清单修改和提交归属。后续需让结构文件待提交状态与编辑屏障可共同表达。
+
+- **组件包总表续证（2026-11-18）**：Task `task-6d19c3ab79f94e3681f6115e6e070c7d` 的票据 `b8a18c9c8cb719807048e36450721b89` 对 `CODE_HEALTH.md` 返回 `eligible`，Git 仍有任务 2 的三行待提交修改。等待提交 `552cc495c` 后，新的视图任务仍持有文件，批次 `ecfd38b2c4194a50b3d275f7e63600a5` 的认领拒绝，已撤回本任务空登记。使用手册的 `watch wait --new` 取得新票据 `51ec61f169b7de697cc6904c472f492e`，在 `f1195bfc412947849d6ec0429042b1d1` 修订 0 认领成功。认领保护正常，未采用他人改动或追加构建。文件观察仍需同时反映归属和待提交状态。
+
+- **共享反馈文件续证（2026-11-18）**：Task `task-8cba4c000221462ebf59fb8874728771` 的票据 `32be340b67a87d15dd81ac4bf5eb08aa` 对 `scripts/COLLABORATION_FEEDBACK.md` 提前返回 `eligible`。Git 核对时仍有 `widget-add-authorization` 的差异。等待前序提交后，在 `15b07c6e915b4527b7516aace8f95f47` 修订 0 重新认领成功。下一步仍是让文件票据能反映未提交状态。
+
+- **原生任务接线续证（2026-11-18）**：Task `code-health-2` 用票据 `970a2ecb8a404fdc2a187258f3e6f275` 等 `cmake/sources/Host.cmake` 得到 `eligible`。视图树 Run `c164e4a479e344ee914b94684006e027` 已捕获该路径，Git 仍显示前序任务未提交。批次 `4a160c99953447c0a29e4c36b6833270` 修订 0 的 `claim -Add` 再次拒绝脏路径，未改变认领集合。等前序提交后接线，未接手文件或额外提交构建。文件票据仍需区分已冻结与已提交。
 
 - **实测**：2026-11-10，Task `equal-width-dialog-buttons` 的 `watch wait --condition files` 票据 `60dbdd917961def6c363b541ea23f1ae` 返回 `eligible`。前序日历 Run `f829e893544f42b2848fc5c0ffd7cc13` 已冻结，`src/system/panel/system_panel_model.cpp` 仍有前序任务的待提交改动。Task 在批次 `781988dcbc324ac5a85d2030414f7234` 修订 0 执行 `claim`，收到 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`
 - **源码确认及处理**：`build_wait_tasks.py` 的 `files` 条件只核对当前窗口的编辑成员，未核对指定路径的 Git 状态。认领保护正常，本任务等待前序提交后再认领，未接手他人改动或为反馈重建。
 - **下一步**：支持等待目标路径进入可安全认领的状态，区分前序冻结未提交、无归属的脏路径和显式接手，保留 `claim` 的原子复核。
+
+- **验收回填续证（2026-11-18）**：Task `code-health-6` 的 `watch wait --condition files --files CODE_HEALTH.md` 票据 `c9b8e9ccfdf439c457f48fc5a48c4f3d` 在任务 3 的批次 `eeb100d8c50e4edf80b7a061bc44ce0c`、Run `47ceb61e103e4252b6ddce9637e73efc` 冻结后返回 `eligible`。该文件仍有任务 3 的未提交改动，任务 6 在批次 `9b0a6d2748dd4bf4a8599eb68735cc60` 修订 0 的认领被拒，原文为 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`。撤回自身空登记，在本地等待前序提交后重新认领成功。本次回填复用既有构建和实测证据。
+
+- **续证（2026-11-18）**：Task `code-health-20261118` 在剪贴板批次 `565e44309195466e9b02ff255cbe2c40` 已冻结期间，以 `watch wait --condition files --files src/app/app.h` 获得票据 `307f0fccdea4ecc3790b442b43fdafbc` 和 `eligible`。`git status` 与 `task-list.sourceChanges` 显示该路径仍有前序任务的未提交改动。没有重新认领或启动验证，得到用户授权后由文件所有者补齐声明，两项任务合用续修 Run `672af510c8b6475a85ffb8ed27dfbe08`。文件可安全认领的等待条件仍待处理。
+
+- **视图树续证（2026-11-18）**：Task `code-health-03` 的文件票据 `e07811479072ae97f1ab95430430a2e4` 返回 `eligible` 后，Git 复核发现前序 Run `341657452b4841f2a3ee2a8a4359453b` 对 `cmake/sources/Host.cmake` 的修改仍待提交。本任务保留前序归属，以只读进程观察该路径与 HEAD 一致，再取得执行和编辑权。没有接手前序修改或为此重复构建。现有文件票据仍需补充等待待提交改动的条件。
 
 ### CF-026 打包脚本变更阻止复验已保存候选
 
@@ -396,3 +562,34 @@
 - **续修结果**：批次 `50b5b4d46a6644dd92c5a55a753acd49` 修订 7、Run `289c9d9fba8e4fea8e27776a35fc81cd` 在创建等待进程前传入两个 CMake 选择变量。产品日志第 11–12 行确认编译器为 `19.50.35740.0`，第 611–620 行记录 Shell 文件和静态库编译成功。Release 激活，同批 11 项定向检查通过。该结果证实本次恢复路径，协作器的提交前检查仍待完善。
 - **默认工具链再次失败（2026-11-16）**：Task `dock-single-preview-anchor-20261116`、批次 `27d647c2f4494e6baf4b8888c1db0380` 修订 0、Run `4e6e544084eb4594b04bc186c82d58b0`。产品日志第 11–12 行显示默认 `19.52.37029.0`，第 549 行记录 Dock 所在 `SnowDesktopHost_app` 编译成功，第 623 行记录 `SnowDesktopHost_shell` 的 `MSB6006` 和 `0xC00000FD`，定向测试未执行。失败原件保留，续修批次 `cb8e98ab754e46d1bd8e7c029dd0a583` 在登记时选择 `14.50.35717`，复用上条恢复路径。下一步仍是候选冻结前核对工具链，避免已知失败占用构建槽。
 - **触发输入续证（2026-11-16）**：Task `dock-thumbnail-hover-delay`。前述失败的本机转储记录 `c1xx.dll` 19.52.37029.0 调用栈反复进入相同帧后溢出。使用实际编译参数单独复现 `shell_extension_menu.cpp`；分别移除预编译头、依赖报告、优化和调试信息仍失败。二分定位 `AppendPackagedCommands` 后将递归 lambda 改为直接调用，语法检查和原 Release 参数的对象编译通过。临时证据留在该 Task 的忽略目录，正式候选验证独立存档。
+
+- **受限等待方取得提交权（2026-11-19，实测）**：续修批次 `3a8d4d895033434698dc0cf85d35bf79` 中 `architecture-six-01-layout` 修订 3 通过前置检查并在受限前台等待。统筹随后在获批环境进入屏障，01 的前台取得提交权，stderr 报 `.git/snowdesktop-execution/budget.lock` Access denied。共同回执保存 `runId=null`、`inputCheck=not-run`。同一修正继续用继承成员的续修，获批入口填最后一项就绪，其他对话用只读 `wait`。这是提交者权限的具体证据，与前述工具链失配同属提交方环境选择。
+
+### CF-032 已激活候选缺少显式回退入口
+
+- **实测（2026-11-17）**：Task `task-e4a0d0c3ebf74ea0b6237b4e496324bd`，批次 `19bee344d45b4a8486a37c34505d841a` 修订 0、Run `3d9da96df836442bb0e9d321020d59a3` 激活后出现用户报告的泛白，用户授权恢复上一轮 Run `2db7d4c8173a434e93f80ae0f85802cd` 的效果。上一轮保存的运行目录已不可用。新 Run 激活回执中的备份 `SnowDesktop.exe` 仍在，SHA-256 与上一轮激活回执一致。
+- **源码确认与影响**：`scripts/build_activate.ps1 -ArtifactRun` 只接受保存的完整运行包，并在新候选已激活时以 `superseded` 拒绝旧快照。该保护阻止迟到的自动激活，也没有专门的手动回退事务。本次通过批次 `6336fb9b19684a37a59003e1b9375aa0` 恢复相关源码并重新生成运行候选，未改协调状态或手工覆盖运行目录。
+- **下一步**：提供明确指定当前 Run 和目标备份的回退入口。沿用输出租约，校验文件与当前激活身份，保留用户数据、启动状态和独立回退回执。
+
+### CF-033 候选重编已知失败的共享源码
+
+- **实测（2026-11-18）**：`code-health-20261118` 的批次 `df547424901b493b8d712f19a4311e36` / Run `2c77c63416304840915950ae07250aea` 首次报告 `app.h` 的 `IconLibrarySnapshot` 与 `IconLibraryRequest` 编译错误 C2039。随后 `task-6c5683a0092945dba05fdd04d901325f` 的批次 `565e44309195466e9b02ff255cbe2c40` 修订 0 / Run `b22db32355fa4780bde1e23c03e282f4` 经 `ready-and-wait` 运行标准 Release，再次报告同一错误。两次原始诊断保存在各自的 `.log.product.log`。
+- **源码与影响**：相邻任务的全树快照均包含同一未修正的类型可见性问题。第二轮再次配置和编译后失败，且修复所需的 `app.h` 由剪贴板任务认领。两任务将声明和调用方分开认领，共用续修批次 `db1f743709e343fcab58855ace19e930`。
+- **下一步**：检查排队候选的失败依赖指纹能否与已保存的编译诊断匹配，在启动前提供共享续修提示。保留快照边界与原失败证据。依赖匹配能力待评估。
+
+### CF-034 首次激活时宿主控制窗口不可用
+
+- 2026-11-18，Task `code-health-03` 的批次 `eeb100d8c50e4edf80b7a061bc44ce0c` 修订 0、Run `47ceb61e103e4252b6ddce9637e73efc` 构建与定向回归通过，批次回执的首次激活错误为 `The target application is running without its control window; runtime was retained.`
+- 同一 Run 经 `scripts/build_activate.ps1 -ArtifactRun` 补切成功，已核对本机 EXE 与保存产物的 SHA-256。多执行一次激活，保留首次失败和恢复回执。原因待核实，后续可评估在控制窗口暂不可用时直接返回同一候选的补切指令。
+
+### CF-035 共同 Run 的验收入口未提示按批次绑定
+
+- **实测**：2026-11-18，Task `task-52a0430b03e04412805a1170dfe1fa6a` 在批次 `a036f2a9fe804d96880eb29a51112ea6` 修订 0 的 Run `866b5dc7e51647c48b1f2c738b036f31` 通过并激活。调用 `acceptance-start -CandidateRun` 返回 `Candidate requirements are missing or stale; do not infer manual acceptance.`，该成员的要求版本在 Task 与冻结计划均为 0。
+- **源码确认**：`Start-RunAcceptance` 校验 Run 请求的单个任务归属，请求记录为同行 `task-40977fc85edd4847b361a242933a430d`。`Start-TaskAcceptance` 按共同批次成员校验其计划、修订与保存产物身份。
+- **处理与下一步**：本轮用 `acceptance-start -Batch a036f2a9fe804d96880eb29a51112ea6 -Revision 0` 取得验收 `a3d21708dd10438aaaec822d365636d9`，复用原候选。建议遇到共同 Run 归属不匹配时，提示对应批次入口并保留现有成员和产物校验。
+- **并行激活续证**：原验收登记后，Run `f0c23e6c26774d29b6a8375942befe66` 替换了本地运行文件。本批六份输入的快照哈希一致，四项离屏预览复核相同。该 Run 的批次成员只有其原任务。本轮关闭旧验收区间，在任务证据中独立记录当前 EXE 指纹及待观察步骤。
+
+### CF-036 Codex 跨对话等待返回通用错误
+
+- **实测**：2026-11-19，Task `architecture-first-six-coordination`，批次 `ae006c2d60d146e0b697fc0ab11f5eca` 修订 0。六个 `create_thread` 均返回本地主机和对话 ID，协调器确认六个实现任务入批。用这些 ID 调用 `codex_app/wait_threads` 获取即时快照（0 ms）和有界等待（50,000 ms），两次均返回 `Mcp error: -32000: Codex app tool request failed`。同批单个 `read_thread` 和定向发送成功。
+- **影响与处理**：统筹用工作区交接记录、协调器状态和原批次前台等待继续，增加了读取步骤。问题涉及 Codex 原生对话等待。本轮沿用一个共同候选，未为定位该错误新增构建。后续应由该入口返回失败阶段，便于区分不支持多目标、连接和单个对话身份问题。根因待核实。

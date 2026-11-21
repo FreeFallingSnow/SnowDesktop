@@ -189,6 +189,9 @@ end
 
 local lightInk = { main = 0xF8FAFF, muted = 0xD8E0EF, day = 0xFFC66D, night = 0xD7BCFF }
 local darkInk = { main = 0x152237, muted = 0x47566C, day = 0x875018, night = 0x63419B }
+local INK_TEXT = widget.hasFeature("draw.text.inkAlignment")
+local START_TEXT = { x = "start", y = "center" }
+local END_TEXT = { x = "end", y = "center" }
 
 local function glyphBounds(metrics)
     return metrics.ink or { left = 0, top = 0, width = metrics.width, height = metrics.height }
@@ -234,8 +237,13 @@ local function render(context, model)
         end
         local start = x * scale
         if rightAligned then start = start - bounds.width end
-        draw.text(start - bounds.left, y - bounds.top - bounds.height / 2,
-            value, fontSize, color, budget * 1.02, bold, true)
+        if INK_TEXT then
+            draw.text(x * scale, y, value, fontSize, color, budget * 1.02,
+                bold, true, nil, nil, nil, rightAligned and END_TEXT or START_TEXT)
+        else
+            draw.text(start - bounds.left, y - bounds.top - bounds.height / 2,
+                value, fontSize, color, budget * 1.02, bold, true)
+        end
         return start, bounds.width
     end
 

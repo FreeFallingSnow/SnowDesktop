@@ -6,6 +6,7 @@
 #include "widgets/folder_member_order.h"
 #include "app/shell/shell_icon_request.h"
 #include "layout/folder_mapping_rules.h"
+#include "layout/list_detail_rules.h"
 #include "widgets/file_category_auto_collect_rules.h"
 
 // Folder-mapping enumeration and automatic file-category collection.
@@ -90,7 +91,8 @@ snowdesktop::shell_refresh::FolderSnapshot snowdesktop::shell_refresh::ReadFolde
 }
 
 void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
-    bool enqueueIconLoads, const snowdesktop::shell_refresh::FolderSnapshot* snapshot)
+    bool enqueueIconLoads, const snowdesktop::shell_refresh::FolderSnapshot* snapshot,
+    const snowdesktop::folder_preview::Session* inlinePreview)
 {
     if (snapshot && snowdesktop::shell_refresh::FolderKey(snapshot->path) !=
             snowdesktop::shell_refresh::FolderKey(widget.sourceFolderPath))
@@ -108,6 +110,15 @@ void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
     {
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Widgets, L"Folder enumeration failed; retaining current entries", DiagnosticLogLevel::Warning);
         return;
+    }
+    if (inlinePreview || (folderPreview_ && &widget == &dockFolderPopupWidget_))
+    {
+        auto sort = folderPreviewSort_.Get(snowdesktop::shell_refresh::FolderKey(snapshot->path));
+        widget.folderSortMode = sort.mode;
+        widget.contentSortColumn = snowdesktop::list_detail_rules::FromLegacyFolderSortMode(sort.mode);
+        widget.folderSortAscending = sort.ascending;
+        widget.contentSortAscending = sort.ascending;
+        widget.itemKeys = std::move(sort.order);
     }
     auto previous = std::exchange(widget.folderEntries, snapshot->entries);
     std::unordered_map<std::wstring, size_t> previousByPath;
@@ -128,6 +139,11 @@ void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
         task.sourceStamp = snowdesktop::shell_icon_request::Stamp(entry);
         task.serial = iconLoadSerial_;
         task.widgetId = widget.id;
+        if (inlinePreview)
+        {
+            task.inlinePreviewHostId = inlinePreview->hostWidgetId;
+            task.popupGeneration = inlinePreview->inlineIconGeneration;
+        }
         task.layoutKey = ToUpperInvariant(entry.fullPath);
         if (absolute != snapshot->absoluteIds.end())
             task.absolutePidl.reset(ILCloneFull(absolute->second.get()));
@@ -142,6 +158,7 @@ void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
     for (const auto& oldEntry : previous)
         if (oldEntry.iconBitmap)
             EraseD2DIconCacheForBitmap(oldEntry.iconBitmap);
+    ApplyFolderCutState(widget.folderEntries);
     snowdesktop::folder_member_order::Refresh(widget, ToUpperInvariant);
 }
 

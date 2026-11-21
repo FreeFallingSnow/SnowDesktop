@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/layout/interactive_layout_save.h"
 #include "common/l10n.h"
 #include "diagnostics/diagnostic_log.h"
 #include "settings/settings_snapshot.h"
@@ -7,6 +8,7 @@
 #include "settings/settings_controller.h"
 #include "drag_drop/pending_drop_completion.h"
 #include "widgets/collection_group_rules.h"
+#include "widgets/folder_member_order.h"
 #include "widgets/widget_group_drop.h"
 #include "layout/folder_self_drop_rules.h"
 #include "layout/item_location.h"
@@ -171,10 +173,18 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
         if (sourceList.hasCollectionGroupEntries ||
             sourceList.hasFileGroupEntries)
         {
-            return snowdesktop::widget_group_drop::ReleasePlan(sourceList, preview,
+            const bool changed = snowdesktop::widget_group_drop::ReleasePlan(sourceList, preview,
                 [this](const auto& id, GridCell cell, bool collection) {
                     return collection ? ReleaseCollectionFromGroup(id, cell) : ReleaseWidgetFromFileGroup(id, cell);
                 });
+            if (changed)
+            {
+                EnsureNavTabOrder();
+                LayoutItems();
+                RequestLayoutSave();
+                InvalidateRect(hwnd_, nullptr, TRUE);
+            }
+            return changed;
         }
         snowdesktop::internal_desktop_drop::Services services;
         services.removeKeys = [this](const auto& keys) { RemoveDesktopKeysFromWidgets(keys); };
@@ -405,9 +415,11 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
             if (indices.empty())
                 indices = targetWidget->GetSelectedMemberIndices();
             targetWidget->ReorderMembers(indices, preview.insertIndex);
-            if (targetWidget ==
-                dockFolderPopupContainer_.get())
+            if (targetWidget == dockFolderPopupContainer_.get())
+            {
+                snowdesktop::InteractiveLayoutSave save(this);
                 CommitDockFolderPopupStateToSource();
+            }
             targetWidget->InvalidateSlots();
             if (reorderActiveCollection)
                 if (auto* group = dynamic_cast<CollectionGroup*>(sourceList.origin))
@@ -416,34 +428,57 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
         }
 
         WidgetContainer* originWidget = dynamic_cast<WidgetContainer*>(sourceList.origin);
-        DesktopWidget* originData = originWidget ? originWidget->GetWidgetData() : nullptr;
-        size_t inserted = 0;
+        std::vector<std::wstring> accepted;
+        accepted.reserve(preview.landings.size());
         for (const auto& landing : preview.landings)
         {
-            auto it = std::find_if(sourceList.entries.begin(), sourceList.entries.end(),
-                [&](const DragSourceEntry& entry) { return entry.sourceIndex == landing.sourceIndex; });
-            if (it == sourceList.entries.end() || it->desktopKey.empty()) continue;
-            std::wstring key = ToUpperInvariant(it->desktopKey);
-            if (!targetWidget->AllowsDesktopKey(key)) continue;
-
-            if (preview.action == DropAction::Move)
+            const DragSourceEntry* entry = nullptr;
+            if (landing.sourceIndex < sourceList.entries.size() &&
+                sourceList.entries[landing.sourceIndex].sourceIndex == landing.sourceIndex)
+                entry = &sourceList.entries[landing.sourceIndex];
+            else
             {
-                if (originData)
-                    RemoveDesktopKeysFromWidgets({key});
-                else
-                    RemoveDesktopKeysFromWidgets({key});
+                const auto found = std::ranges::find(sourceList.entries, landing.sourceIndex,
+                    &DragSourceEntry::sourceIndex);
+                if (found != sourceList.entries.end()) entry = &*found;
             }
-
-            auto exists = std::find_if(preview.targetWidget->itemKeys.begin(),
-                preview.targetWidget->itemKeys.end(),
-                [&](const std::wstring& existing) { return ToUpperInvariant(existing) == key; });
-            if (exists == preview.targetWidget->itemKeys.end())
+            if (!entry || entry->desktopKey.empty()) continue;
+            auto key = ToUpperInvariant(entry->desktopKey);
+            if (!targetWidget->AllowsDesktopKey(key)) continue;
+            accepted.push_back(std::move(key));
+        }
+        auto& targetKeys = preview.targetWidget->itemKeys;
+        const bool moving = preview.action == DropAction::Move;
+        // Existing target members must retain the sequential removal/insertion
+        // semantics. Ordinary cross-collection moves can revoke ownership once.
+        const std::unordered_set<std::wstring> movingKeys(accepted.begin(), accepted.end());
+        const bool bulkMove = moving && movingKeys.size() == accepted.size() &&
+            std::ranges::none_of(targetKeys, [&](const auto& key) {
+                return movingKeys.contains(ToUpperInvariant(key));
+            });
+        if (bulkMove)
+        {
+            RemoveDesktopKeysFromWidgets(accepted);
+            const size_t insertAt = std::min(preview.insertIndex, targetKeys.size());
+            targetKeys.insert(targetKeys.begin() + static_cast<std::ptrdiff_t>(insertAt),
+                accepted.begin(), accepted.end());
+        }
+        else
+        {
+            size_t inserted = 0;
+            for (const auto& key : accepted)
             {
-                size_t insertAt = std::min(preview.insertIndex + inserted, preview.targetWidget->itemKeys.size());
-                preview.targetWidget->itemKeys.insert(
-                    preview.targetWidget->itemKeys.begin() + static_cast<std::ptrdiff_t>(insertAt), key);
+                if (moving) RemoveDesktopKeysFromWidgets({key});
+                if (std::ranges::any_of(targetKeys, [&](const auto& existing) {
+                        return ToUpperInvariant(existing) == key;
+                    })) continue;
+                const size_t insertAt = std::min(preview.insertIndex + inserted, targetKeys.size());
+                targetKeys.insert(targetKeys.begin() + static_cast<std::ptrdiff_t>(insertAt), key);
                 ++inserted;
             }
+        }
+        for (const auto& key : accepted)
+        {
             size_t itemIndex = FindItemIndexByKey(key);
             if (itemIndex != static_cast<size_t>(-1))
                 items_[itemIndex].gridCell = preview.targetWidget->gridCell;
@@ -465,13 +500,49 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
     {
         auto* targetWidget = dynamic_cast<WidgetContainer*>(preview.targetContainer);
         if (!targetWidget) return false;
+        if (folderPreview_ && targetWidget == dockFolderPopupContainer_.get())
+        {
+            auto& widget = dockFolderPopupWidget_;
+            std::unordered_set<std::wstring> movingPaths;
+            for (const auto& entry : sourceList.entries)
+                if (!entry.filePath.empty()) movingPaths.insert(ToUpperInvariant(entry.filePath));
+            std::vector<size_t> indices;
+            for (size_t i = 0; i < widget.folderEntries.size(); ++i)
+                if (movingPaths.contains(ToUpperInvariant(widget.folderEntries[i].fullPath))) indices.push_back(i);
+            const int previousMode = widget.folderSortMode;
+            const auto previousColumn = widget.contentSortColumn;
+            const auto previousOrder = widget.itemKeys;
+            if (!snowdesktop::folder_member_order::Reorder(widget, indices, preview.insertIndex)) return false;
+
+            const bool changed = previousOrder != widget.itemKeys;
+            const bool saved = !changed || folderPreviewSort_.Set(
+                snowdesktop::shell_refresh::FolderKey(widget.sourceFolderPath),
+                {snowdesktop::folder_sort_rules::kManual, widget.folderSortAscending, widget.itemKeys});
+            if (!changed || !saved)
+            {
+                widget.folderSortMode = previousMode;
+                widget.contentSortColumn = previousColumn;
+                if (!saved)
+                {
+                    widget.itemKeys = previousOrder;
+                    snowdesktop::folder_member_order::Refresh(widget, ToUpperInvariant);
+                    MessageBeep(MB_ICONWARNING);
+                }
+            }
+            dockFolderPopupContainer_->InvalidateFilterCache();
+            if (changed && saved) SyncFolderPreviewSortToOtherViews();
+            RefreshDockFolderPopupGeometry();
+            return saved;
+        }
         std::vector<size_t> indices = sourceMemberIndices();
         if (indices.empty())
             indices = targetWidget->GetSelectedMemberIndices();
         targetWidget->ReorderMembers(indices, preview.insertIndex);
-        if (targetWidget ==
-            dockFolderPopupContainer_.get())
+        if (targetWidget == dockFolderPopupContainer_.get())
+        {
+            snowdesktop::InteractiveLayoutSave save(this);
             CommitDockFolderPopupStateToSource();
+        }
         return true;
     }
 
@@ -505,8 +576,8 @@ bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
                 _LFW("app.grid.copy_suffix_num", std::to_wstring(index))) + ext;
     };
     services.shortcutName = _LW("widget.shortcut");
-    services.enqueue = [this](auto request, auto done) {
-        return QueueShellFileOperation(std::move(request), std::move(done));
+    services.dispatch = [this](auto request, auto done, bool sync) {
+        return DispatchMaterializedFileOperation(std::move(request), std::move(done), sync);
     };
     return snowdesktop::desktop_file_materialization::Materialize(sourceList, action,
         duplicateDesktopCopyNames, TrimTrailingPathSeparators(desktopPath),
@@ -528,8 +599,8 @@ bool DesktopApp::MaterializeFilesToFolder(const DragSourceList& sourceList,
     std::shared_ptr<snowdesktop::ShellFileOperationResult> result)
 {
     snowdesktop::desktop_file_materialization::Services services;
-    services.enqueue = [this](auto request, auto done) {
-        return QueueShellFileOperation(std::move(request), std::move(done));
+    services.dispatch = [this](auto request, auto done, bool sync) {
+        return DispatchMaterializedFileOperation(std::move(request), std::move(done), sync);
     };
     return snowdesktop::desktop_file_materialization::MaterializeFolder(sourceList, folderPath,
         action, services, std::move(completion), executeSynchronously, std::move(result));
@@ -554,8 +625,11 @@ void DesktopApp::StorePendingLandingCache(const DragSourceList& sourceList,
     const DropPreviewList& preview, const std::unordered_set<std::wstring>& existingKeys,
     const std::unordered_map<size_t, std::wstring>* createdPathsBySource)
 {
-    snowdesktop::pending_drop::Publish(pendingLandingCaches_,
-        BuildPendingLandingCache(sourceList, preview, existingKeys, createdPathsBySource));
+    auto cache = BuildPendingLandingCache(sourceList, preview, existingKeys, createdPathsBySource);
+    cache.visualId = ++nextFileDropVisual_;
+    CaptureFileDropAppearance(cache, sourceList);
+    fileDropLayouts_.clear();
+    snowdesktop::pending_drop::Publish(pendingLandingCaches_, std::move(cache));
 }
 
 PendingFolderPlacement DesktopApp::BuildPendingFolderPlacement(
@@ -564,14 +638,21 @@ PendingFolderPlacement DesktopApp::BuildPendingFolderPlacement(
     const DragSourceList* sourceList) const
 {
     const bool popup = targetWidget.id == kDockFolderPopupWidgetId;
-    return snowdesktop::pending_drop::BuildFolder(targetWidget, insertIndex, sourceList,
+    auto placement = snowdesktop::pending_drop::BuildFolder(targetWidget, insertIndex, sourceList,
         popup ? dockFolderPopupMappingWidgetId_ : targetWidget.id,
         popup ? dockFolderPopupSourceId_ : std::wstring{}, ToUpperInvariant, FileNameFromPath);
+    if (popup && folderPreview_)
+        placement.previewSortAtDrop = PendingFolderPlacement::PreviewSort{
+            targetWidget.folderSortMode, targetWidget.folderSortAscending};
+    return placement;
 }
 
 void DesktopApp::ActivatePendingFolderPlacement(PendingFolderPlacement placement)
 {
+    if (placement.sourceFolderPath.empty() || placement.popupSourceId.starts_with(L"folder-preview:"))
+        return; // A Shell handoff without output paths cannot identify new preview members.
     PendingLandingCache cache;
+    cache.visualId = ++nextFileDropVisual_;
     cache.folderPlacements.push_back(std::move(placement));
     snowdesktop::pending_drop::Publish(pendingLandingCaches_, std::move(cache));
 }
@@ -588,6 +669,18 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
     std::shared_ptr<snowdesktop::ShellFileOperationResult> result)
 {
     snowdesktop::file_drop_execution::Services services;
+    services.beginPlacement = [this, dockTarget = preview.pinMaterializedItemsToDock,
+        monitor = preview.dockMonitor, index = preview.dockInsertIndex](PendingLandingCache cache,
+            const DragSourceList& sources, DropAction action) {
+        if (dockTarget)
+        {
+            auto* dock = GetDockContainer();
+            cache.dockMonitor = monitor ? monitor : (dock ? dock->GetMonitor() : nullptr);
+            cache.dockInsertIndex = index;
+        }
+        return BeginFileDropVisual(std::move(cache), true, &sources, action);
+    };
+    services.takePlacement = [this](std::uint64_t id) { return TakeFileDropVisual(id); };
     services.snapshotDesktopKeys = [this] { return SnapshotDesktopKeys(); };
     services.folderPlacement = [this](const auto& widget, size_t index, const DragSourceList* sources) {
         return BuildPendingFolderPlacement(widget, index, sources);
@@ -605,7 +698,13 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
     services.pin = [this](const auto& paths, size_t index) { return AddMaterializedItemsToDock(paths, index); };
     services.savePins = [this] { RequestLayoutSave(); };
     services.forgetMovedKeys = [this](const auto& keys) { RemoveDesktopKeysFromWidgets(keys); };
-    services.refresh = [this] { RequestShellRefresh(); };
+    const auto previewDirectory = folderPreview_ && preview.targetWidget == &dockFolderPopupWidget_
+        ? dockFolderPopupWidget_.sourceFolderPath : std::wstring{};
+    services.refresh = [this, previewDirectory] {
+        fileDropLayouts_.clear();
+        if (!previewDirectory.empty()) RequestFolderRefresh({previewDirectory});
+        RequestShellRefresh();
+    };
     return snowdesktop::file_drop_execution::Execute(sourceList, preview, pendingLandingCaches_,
         std::move(services), std::move(completion), executeSynchronously, std::move(result));
 }

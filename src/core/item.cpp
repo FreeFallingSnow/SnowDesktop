@@ -100,6 +100,20 @@ void DesktopIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     Draw(static_cast<ID2D1RenderTarget*>(context), rect, state, false, true, false);
 }
 
+void DesktopIcon::DrawMemberIcon(ID2D1DeviceContext* context, RECT rect, int state,
+    bool lightTheme, bool drawTitle, const DesktopWidget* demoCollection)
+{
+    Draw(context, rect, state, lightTheme, drawTitle, false, demoCollection);
+}
+
+MemberListPresentation DesktopIcon::GetMemberListPresentation() const
+{
+    if (!item_) return {};
+    return {{item_->typeName, item_->modifiedTime, item_->fileSize, false, item_->isCut},
+        item_->layoutKey, item_->layoutKey.empty() ? item_->parsingName : item_->layoutKey,
+        item_->sysIconIndex, item_->iconIsMediaThumbnail, !app_ || !app_->IsRenamingItem(item_)};
+}
+
 void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool lightTheme,
     bool drawText, bool quickNavLayout,
     const DesktopWidget* demoCollection,
@@ -185,40 +199,46 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
                        : D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * alpha));
     }
 
-    if (useDemoIdentity)
+    ID2D1Bitmap* bitmap = nullptr;
+    if (!useDemoIdentity)
     {
-        if (demoCollection)
-            app_->DrawDemoCollectionIdentityIcon(
-                context, *demoCollection, demoIdentity, iconRect, alpha);
-        else
-            app_->DrawDemoIdentityIcon(context, demoIdentity, iconRect, alpha);
+        // Pending loads can still provide the most recently available bitmap.
+        bitmap = app_->GetSmallCustomIcon(context, item_->layoutKey, iconRect.right - iconRect.left);
+        if (!bitmap && item_->iconBitmap)
+            bitmap = app_->GetTargetIconBitmap(context, item_->iconBitmap, item_->layoutKey, item_->iconIsMediaThumbnail);
     }
-    // Loading describes pending work, not whether the last image is drawable.
-    else if (auto custom = app_->GetSmallCustomIcon(context, item_->layoutKey, iconRect.right - iconRect.left))
-        app_->DrawIconBitmap(context, custom, iconRect, alpha,
-            reinterpret_cast<std::uintptr_t>(item_), true);
-    else if (!item_->iconBitmap)
-    {
-        app_->DrawPlaceholderIcon(context, item_->sysIconIndex, iconRect, alpha);
-    }
-    else
-    {
-        ID2D1Bitmap* bmp = app_->GetTargetIconBitmap(context, item_->iconBitmap, item_->layoutKey, item_->iconIsMediaThumbnail);
-        if (bmp)
-        {
-            app_->DrawIconBitmap(context, bmp, iconRect, alpha,
-                reinterpret_cast<std::uintptr_t>(item_), true);
-        }
-        else
-        {
-            app_->DrawPlaceholderIcon(context, item_->sysIconIndex, iconRect, alpha);
-        }
-    }
-
-    if (!useDemoIdentity &&
+    const bool shortcut = !useDemoIdentity &&
         app_->ShouldDrawShortcutArrow(item_->isShortcut, item_->isApplicationShortcut) &&
-        (item_->iconBitmap || item_->iconState != IconState::Loading))
-        app_->DrawShortcutArrowOverlay(context, iconRect, alpha);
+        (item_->iconBitmap || item_->iconState != IconState::Loading);
+    const auto drawIcon = [&](ID2D1RenderTarget* drawing) {
+        if (useDemoIdentity)
+        {
+            if (demoCollection)
+                app_->DrawDemoCollectionIdentityIcon(
+                    drawing, *demoCollection, demoIdentity, iconRect, alpha);
+            else
+                app_->DrawDemoIdentityIcon(drawing, demoIdentity, iconRect, alpha);
+        }
+        else if (bitmap)
+            app_->DrawIconBitmap(drawing, bitmap, iconRect, alpha,
+                reinterpret_cast<std::uintptr_t>(item_));
+        else
+            app_->DrawPlaceholderIcon(drawing, item_->sysIconIndex, iconRect, alpha);
+
+        if (shortcut)
+            app_->DrawShortcutArrowOverlay(drawing, iconRect, alpha);
+    };
+    const bool inPopup = popupHosted_ || (widget && widget->IsPopupHosted());
+    const bool shadow = inPopup ? app_->iconShadows_.popup
+        : widget ? app_->iconShadows_.exposedWidget
+                 : (app_->iconShadows_.desktop && dynamic_cast<DesktopGrid*>(container_));
+    const bool enabled = quickNavLayout ? app_->iconShadows_.quickNavigation : shadow;
+    const int strength = quickNavLayout ? app_->iconShadows_.quickNavigationStrength
+        : inPopup ? app_->iconShadows_.popupStrength
+                  : widget ? app_->iconShadows_.exposedWidgetStrength : app_->iconShadows_.desktopStrength;
+    app_->DrawIconWithShadows(context, iconRect,
+        quickNavLayout ? app_->QuickNavScale(100) / 100.0f : app_->GetItemLayoutScale(rect),
+        enabled ? strength : 0, drawIcon, {bitmap, alpha, shortcut});
 
     if (!dragged && drawText)
         DrawTitle(context, rect, selected, alpha, lightTheme, demoCollection);
@@ -336,6 +356,20 @@ void FolderEntryIcon::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     Draw(static_cast<ID2D1RenderTarget*>(context), rect, state, false, true, false);
 }
 
+void FolderEntryIcon::DrawMemberIcon(ID2D1DeviceContext* context, RECT rect, int state,
+    bool lightTheme, bool drawTitle, const DesktopWidget*)
+{
+    Draw(context, rect, state, lightTheme, drawTitle);
+}
+
+MemberListPresentation FolderEntryIcon::GetMemberListPresentation() const
+{
+    if (!entry_) return {};
+    return {{entry_->typeName, entry_->lastWriteTime, entry_->fileSize, entry_->isDirectory, entry_->isCut},
+        entry_->fullPath, {},
+        entry_->sysIconIndex, entry_->iconIsMediaThumbnail, !app_ || !app_->IsRenamingItem(entry_)};
+}
+
 void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool lightTheme,
     bool drawText, bool quickNavLayout)
 {
@@ -380,29 +414,29 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
                        : D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * opacity));
     }
 
-    if (auto custom = app_->GetSmallCustomIcon(context, entry_->fullPath, iconRect.right - iconRect.left))
-        app_->DrawIconBitmap(context, custom, iconRect, opacity, reinterpret_cast<std::uintptr_t>(entry_));
-    else if (!entry_->iconBitmap)
-    {
-        app_->DrawPlaceholderIcon(context, entry_->sysIconIndex, iconRect, opacity);
-    }
-    else
-    {
-        ID2D1Bitmap* bmp = app_->GetTargetIconBitmap(context, entry_->iconBitmap, entry_->fullPath, entry_->iconIsMediaThumbnail);
-        if (bmp)
-        {
-            app_->DrawIconBitmap(context, bmp, iconRect, opacity,
-                reinterpret_cast<std::uintptr_t>(entry_));
-        }
+    auto* bitmap = app_->GetSmallCustomIcon(context, entry_->fullPath, iconRect.right - iconRect.left);
+    if (!bitmap && entry_->iconBitmap)
+        bitmap = app_->GetTargetIconBitmap(context, entry_->iconBitmap, entry_->fullPath, entry_->iconIsMediaThumbnail);
+    const bool shortcut = app_->ShouldDrawShortcutArrow(entry_->isShortcut, entry_->isApplicationShortcut) &&
+        (entry_->iconBitmap || entry_->iconState != IconState::Loading);
+    const auto drawIcon = [&](ID2D1RenderTarget* drawing) {
+        if (bitmap)
+            app_->DrawIconBitmap(drawing, bitmap, iconRect, opacity, reinterpret_cast<std::uintptr_t>(entry_));
         else
-        {
-            app_->DrawPlaceholderIcon(context, entry_->sysIconIndex, iconRect, opacity);
-        }
-    }
+            app_->DrawPlaceholderIcon(drawing, entry_->sysIconIndex, iconRect, opacity);
 
-    if (app_->ShouldDrawShortcutArrow(entry_->isShortcut, entry_->isApplicationShortcut) &&
-        (entry_->iconBitmap || entry_->iconState != IconState::Loading))
-        app_->DrawShortcutArrowOverlay(context, iconRect, opacity);
+        if (shortcut)
+            app_->DrawShortcutArrowOverlay(drawing, iconRect, opacity);
+    };
+    const bool shadow = widget &&
+        (widget->IsPopupHosted() ? app_->iconShadows_.popup : app_->iconShadows_.exposedWidget);
+    const bool enabled = quickNavLayout ? app_->iconShadows_.quickNavigation : shadow;
+    const int strength = quickNavLayout ? app_->iconShadows_.quickNavigationStrength
+        : widget && widget->IsPopupHosted() ? app_->iconShadows_.popupStrength
+                                           : app_->iconShadows_.exposedWidgetStrength;
+    app_->DrawIconWithShadows(context, iconRect,
+        quickNavLayout ? app_->QuickNavScale(100) / 100.0f : app_->GetItemLayoutScale(rect),
+        enabled ? strength : 0, drawIcon, {bitmap, opacity, shortcut});
 
     if (!dragged && drawText)
         DrawTitle(context, rect, selected, opacity, lightTheme);

@@ -5,6 +5,7 @@
 #include "settings/animation_settings.h"
 #include "common/utils.h"
 #include "layout/folder_sort_rules.h"
+#include "layout/list_detail_rules.h"
 #include "app/dock/dock_tray_popup_state.h"
 #include "app/dock/persistent_dock_host.h"
 #include "diagnostics/performance_trace.h"
@@ -131,7 +132,7 @@ TryActivateDockPopupFromMenuPointerPress(
         L":" + ToUpperInvariant(entry.reference);
     if (IsCollectionPopupInteractive() &&
         dockFolderPopupOpen_ &&
-        dockFolderPopupSourceId_ == sourceId &&
+        GetDockFolderPopupEntrySourceId() == sourceId &&
         collectionPopupDockHost_ == requestedDockHost)
     {
         CloseCollectionPopup();
@@ -162,6 +163,7 @@ void DesktopApp::OpenDockFolderPopupAt(
     else entry = dockEntries_[entryIndex];
 
     DismissActiveContextMenuForPopupTransition();
+    SuspendInlineFolderPreview();
 
     if (DockContainer* dock =
             GetDockContainerAtPoint(anchorPoint))
@@ -201,8 +203,18 @@ void DesktopApp::OpenDockFolderPopupAt(
         }
     }
     const bool sameSource = dockFolderPopupOpen_ &&
-        dockFolderPopupSourceId_ == sourceId &&
+        GetDockFolderPopupEntrySourceId() == sourceId &&
         collectionPopupDockHost_ == requestedDockHost;
+    if (sameSource && folderPreview_)
+    {
+        if (popupAnimation_.IsClosing())
+        {
+            pendingCollectionPopupOpen_.reset();
+            StartCollectionPopupAnimation(true);
+            UpdateFloatingPopupWindowBounds(true);
+        }
+        return;
+    }
     if (!sameSource && GetOpenPopupWidget() &&
         snowdesktop::popup_animation_rules::OccludesSurface(popupAnimation_))
     {
@@ -421,7 +433,8 @@ void DesktopApp::OpenDockFolderPopupAt(
     SyncFolderChangeNotifications();
     // Prepare the model/geometry without revealing a loading frame under the
     // previous timeline. Start the new animation before presenting the host.
-    RefreshDockFolderPopup(nullptr, false);
+    if (!ResumeFolderPreviewForPopup({}, dockFolderPopupMappingWidgetId_))
+        RefreshDockFolderPopup(nullptr, false);
     StartCollectionPopupAnimation(
         reverseClosingAnimation);
     if (popupAnchoredToDock_)
@@ -441,7 +454,7 @@ void DesktopApp::OpenDockFolderPopupAt(
 }
 
 void DesktopApp::StartCollectionPopupAnimation(
-    bool reverseClosingAnimation)
+    bool reverseClosingAnimation, bool fromFan)
 {
     snowdesktop::performance::Scope openingScope("popup", "animation.prepare");
     const auto refreshDockTitles = [&]() {
@@ -449,14 +462,20 @@ void DesktopApp::StartCollectionPopupAnimation(
         InvalidateDockRects();
     };
     const DesktopWidget* widget = GetOpenPopupWidget();
-    popupAnimation_.Configure(
-        snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
-        snowdesktop::animation::RuntimeDurationScale() *
-            (widget && UsesCollectionPopupFan(*widget) ? 2.4 : 1.0),
-        !(widget && UsesCollectionPopupFan(*widget)));
+    // Reversing an expanded panel keeps the effect chosen when it began closing.
+    if (!(reverseClosingAnimation && popupFanShowAll_))
+    {
+        const bool fan = widget && UsesCollectionPopupFan(*widget);
+        popupAnimation_.Configure(
+            fromFan || snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
+            snowdesktop::animation::RuntimeDurationScale() *
+                (fromFan ? 0.7 : (fan ? 2.4 : 1.0)),
+            !fan);
+    }
     if (!reverseClosingAnimation)
     {
         popupAnimation_.ResetHidden();
+        PublishCollectionPopupIconBackdrops({});
         popupFanIconDrawings_.clear();
     }
     if (!(snowdesktop::animation::RuntimePopupEffect() != 0))
@@ -512,6 +531,16 @@ void DesktopApp::InvalidateCollectionPopupDesktopScene(RECT previousBounds)
     RECT dirty{};
     UnionRect(&dirty, &previousBounds, &popupRect_);
     UnionRect(&dirty, &dirty, &popupAnimationCacheRect_);
+    if (IsCollectionPopupHostedByFloatingWindow())
+    {
+        const size_t sourceIndex = dockFolderPopupOpen_
+            ? FindWidgetIndexById(dockFolderPopupMappingWidgetId_) : popupWidgetIndex_;
+        if (sourceIndex < widgets_.size())
+        {
+            const RECT sourceFrame = GetStandaloneWidgetFrameRect(widgets_[sourceIndex]);
+            UnionRect(&dirty, &dirty, &sourceFrame);
+        }
+    }
     if (IsRectEmptyRect(dirty)) return;
     InflateRect(&dirty, 6, 6);
     InvalidateRect(hwnd_, &dirty, FALSE);
@@ -538,15 +567,26 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
 
 void DesktopApp::FinalizeCloseCollectionPopup()
 {
+    collectionPopupKeyboardReturn_ = {};
+    PublishCollectionPopupIconBackdrops({});
+    const size_t sourceIndex = dockFolderPopupOpen_
+        ? FindWidgetIndexById(dockFolderPopupMappingWidgetId_) : popupWidgetIndex_;
+    const RECT sourceFrame = IsCollectionPopupHostedByFloatingWindow() && sourceIndex < widgets_.size()
+        ? GetStandaloneWidgetFrameRect(widgets_[sourceIndex]) : RECT{};
+    const RECT previewBounds = folderPreview_ ? popupRect_ : RECT{};
+    const bool temporaryPreview = folderPreview_ && folderPreview_->IsTemporary();
+    DiscardFolderPreview();
     const bool collectAllDesktopBackdrops = !IsCollectionPopupHostedByFloatingWindow() ||
         dragSession_.HasContext() || dragDropController_.IsExternalDragActive();
     if (listTitleHoverPopup_) ClearListTitleHover();
-    if (auto* view = GetCategorizedPopupView())
+    auto* searchView = GetCategorizedPopupView();
+    if (!searchView) searchView = dockFolderPopupContainer_.get();
+    if (searchView)
     {
-        view->EndCategoryTabDrag(false);
-        view->EndSearchPointerSelection();
-        view->SetSearchFocused(false);
-        view->SetPopupFrame(nullptr);
+        searchView->EndCategoryTabDrag(false);
+        searchView->EndSearchPointerSelection();
+        searchView->SetSearchFocused(false);
+        searchView->SetPopupFrame(nullptr);
     }
     // A date-grouped folder can have projected its live view even when a
     // later menu action hides every categorized control before closing.
@@ -559,7 +599,9 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     auto pendingOpen =
         std::move(pendingCollectionPopupOpen_);
     pendingCollectionPopupOpen_.reset();
-    RECT dirty = popupRect_;
+    RECT dirty{};
+    UnionRect(&dirty, &popupRect_, &previewBounds);
+    UnionRect(&dirty, &dirty, &sourceFrame);
     if (!IsRectEmptyRect(popupAnimationCacheRect_))
     {
         if (IsRectEmptyRect(dirty))
@@ -572,8 +614,12 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     popupAnimation_.ResetHidden();
     ResetCollectionPopupAnimationCache();
     if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
-        !dockFolderPopupOpen_ && !dockTrayPopup_)
+        !dockFolderPopupOpen_ && !dockTrayPopup_ && !pendingOpen && !temporaryPreview)
+    {
+        if (!IsRectEmptyRect(previewBounds)) InvalidateCollectionPopupDesktopScene(previewBounds);
+        ResumeInlineFolderPreview();
         return;
+    }
     ResetDockTrayPopup();
     if (dockFolderPopupOpen_)
         CancelDockFolderPopupIconLoads();
@@ -590,6 +636,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     dockFolderPopupDragItems_.clear();
     dockFolderPopupMarqueeInitialSelection_.clear();
     ClearDockFolderPopupEntries();
+    dockFolderPopupWidget_ = {};
     marqueeDockFolderPopup_ = false;
     popupScrollOffset_ = 0;
     ResetCollectionPopupFanScroll();
@@ -639,6 +686,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
                 pendingOpen->categoryId);
         }
     }
+    else ResumeInlineFolderPreview();
 }
 
 void DesktopApp::ClearDockFolderPopupEntries()
@@ -654,10 +702,13 @@ void DesktopApp::ClearDockFolderPopupEntries()
 }
 
 void DesktopApp::CloseCollectionPopup(
-    bool clearSelection)
+    bool clearSelection, bool returnKeyboardFocus)
 {
+    auto restore = std::exchange(collectionPopupKeyboardReturn_, {});
+    if (returnKeyboardFocus) pendingCollectionPopupOpen_.reset();
     CancelPopupHover(true);
     BeginCollectionPopupClose(clearSelection);
+    if (returnKeyboardFocus && restore) restore();
 }
 
 void DesktopApp::ContinueCollectionPopupSwitch()
@@ -683,10 +734,10 @@ void DesktopApp::ContinueCollectionPopupSwitch()
 
 void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
 {
+    if (!IsCollectionPopupHostedByFloatingWindow()) return;
+    collectionPopupKeyboardReturn_ = {};
     CancelRenameClick();
-    if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
-        !dockFolderPopupOpen_ && !dockTrayPopup_)
-        return;
+    folderReadWork_.Cancel(snowdesktop::folder_preview::kResolveWorkKey);
     if (popupAnimation_.IsClosing())
         return;
 
@@ -709,7 +760,8 @@ void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
     marqueeDockFolderPopup_ = false;
     dockFolderPopupMarqueeInitialSelection_.clear();
 
-    if (!(snowdesktop::animation::RuntimePopupEffect() != 0))
+    const auto effect = snowdesktop::animation::RuntimePopupEffect();
+    if (effect == 0)
     {
         FinalizeCloseCollectionPopup();
         return;
@@ -724,9 +776,19 @@ void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
         ClearDesktopBehindCompositionAnimation(
             popupAnimationCacheRect_);
     }
-    popupAnimation_.Close(static_cast<std::uint64_t>(
-        snowdesktop::UiAnimationScheduler::
-            MonotonicMilliseconds()));
+    const auto now = static_cast<std::uint64_t>(
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
+    if (popupFanShowAll_)
+    {
+        // The short fan-to-panel fade is only for the view change. A close
+        // during that fade keeps its current opacity and full panel size.
+        popupAnimation_.Advance(now);
+        const bool fadingIn = popupAnimation_.IsAnimating() &&
+            popupAnimation_.GetVisual().opacity < 1.0f;
+        popupAnimation_.Configure(fadingIn || effect == snowdesktop::animation::Fade,
+            snowdesktop::animation::RuntimeDurationScale(), true);
+    }
+    popupAnimation_.Close(now);
     if (popupAnimation_.IsHidden())
     {
         FinalizeCloseCollectionPopup();

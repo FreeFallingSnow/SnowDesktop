@@ -2,6 +2,7 @@
 #include "settings/settings_controller_interface.h"
 #include "settings/settings_process.h"
 #include "settings/settings_ipc_services.h"
+#include "settings/settings_ipc_typed.h"
 #include "settings_ipc_backends.h"
 #include "settings_ipc_values.h"
 #include "common/l10n.h"
@@ -29,12 +30,12 @@ int RunSettingsProcess(HINSTANCE instance)
         std::unique_ptr<winui::SettingsWindowHost> host;
         bool closing = false;
         auto loadLanguage = [&] {
-            const auto language = channel.Call<std::string>("options.locale");
+            const auto language = TypedChannel{channel}.Call<std::string>("options.locale");
             Locale::Instance().SetLanguage(language.c_str());
         };
         channel.SetDisconnected([&] { closing = true; PostQuitMessage(ERROR_BROKEN_PIPE); });
         using Initialized = std::tuple<bool, std::uint64_t, std::wstring>;
-        channel.Bind<Initialized, std::string>("ui.initialize", [&](const std::string& identity) {
+        TypedChannel{channel}.Bind<Initialized, std::string>("ui.initialize", [&](const std::string& identity) {
             if (identity != ExecutableIdentity() || host)
                 throw ProtocolError("settings executable/protocol identity mismatch");
             wchar_t executable[32768]{};
@@ -50,38 +51,38 @@ int RunSettingsProcess(HINSTANCE instance)
             auto options = CreateRemoteHostOptions(channel);
             options.sessionClosed = [&] {
                 closing = true;
-                channel.Notify("ui.closed");
+                TypedChannel{channel}.Notify("ui.closed");
                 PostQuitMessage(0);
             };
             host = std::make_unique<winui::SettingsWindowHost>();
             const bool initialized = host->Initialize(instance, *controller, widgets.get(), std::move(options));
             return Initialized{initialized, reinterpret_cast<std::uint64_t>(host->Window()), host->LastError()};
         });
-        channel.Bind<std::pair<bool, std::wstring>, SettingsRoute>("ui.open", [&](SettingsRoute route) {
+        TypedChannel{channel}.Bind<std::pair<bool, std::wstring>, SettingsRoute>("ui.open", [&](SettingsRoute route) {
             const bool opened = host && !closing && host->Open(route);
             return std::pair{opened, host ? host->LastError() : std::wstring{}};
         });
-        channel.Bind<bool>("ui.flush", [&] { return host && host->FlushPendingChanges(); });
-        channel.Bind<void>("ui.closeIfMinimized", [&] {
+        TypedChannel{channel}.Bind<bool>("ui.flush", [&] { return host && host->FlushPendingChanges(); });
+        TypedChannel{channel}.Bind<void>("ui.closeIfMinimized", [&] {
             // Recheck on the UI owner thread: the user may have restored it
             // between collapsing the desktop reference and receiving this message.
             if (host && !closing && IsIconic(host->Window())) (void)host->Hide();
         });
-        channel.Bind<bool>("ui.prepareLanguage", [&] { return !host || host->PrepareLanguageChange(); });
-        channel.Bind<void, bool>("ui.applyLanguage", [&](bool reloaded) {
+        TypedChannel{channel}.Bind<bool>("ui.prepareLanguage", [&] { return !host || host->PrepareLanguageChange(); });
+        TypedChannel{channel}.Bind<void, bool>("ui.applyLanguage", [&](bool reloaded) {
             loadLanguage();
             if (host) host->ApplyLanguageChange(reloaded);
         });
-        channel.Bind<void>("ui.refreshWidgets", [&] { if (host && !closing) host->RefreshWidgetsPage(); });
-        channel.Bind<void>("ui.refreshGeneral", [&] { if (host && !closing) host->RefreshGeneralRuntimeState(); });
-        channel.Bind<bool, winui::HomeAboutStatusPatch>("ui.homeStatus", [&](auto patch) {
+        TypedChannel{channel}.Bind<void>("ui.refreshWidgets", [&] { if (host && !closing) host->RefreshWidgetsPage(); });
+        TypedChannel{channel}.Bind<void>("ui.refreshGeneral", [&] { if (host && !closing) host->RefreshGeneralRuntimeState(); });
+        TypedChannel{channel}.Bind<bool, settings::HomeAboutStatusPatch>("ui.homeStatus", [&](auto patch) {
             return host && !closing && host->PublishHomeAboutStatus(std::move(patch));
         });
-        channel.Bind<bool>("ui.hotkeyCapture", [&] { return host && !closing && host->IsHotkeyCaptureActive(); });
-        channel.Bind<void, UINT, UINT>("ui.captureHotkey", [&](UINT modifiers, UINT key) {
+        TypedChannel{channel}.Bind<bool>("ui.hotkeyCapture", [&] { return host && !closing && host->IsHotkeyCaptureActive(); });
+        TypedChannel{channel}.Bind<void, UINT, UINT>("ui.captureHotkey", [&](UINT modifiers, UINT key) {
             if (host && !closing) host->CaptureRegisteredHotkey(modifiers, key);
         });
-        channel.Bind<void>("ui.exitConfirmation", [&] {
+        TypedChannel{channel}.Bind<void>("ui.exitConfirmation", [&] {
             if (host && !closing) host->ShowExitConfirmation([&](bool confirmed) {
                 if (!confirmed || !host->FlushPendingChanges()) return;
                 SettingsHostActions::Request request;

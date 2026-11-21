@@ -1,6 +1,7 @@
 #include "settings/settings_snapshot.h"
 #include "settings/settings_controller_interface.h"
 #include "settings_ipc_backends.h"
+#include "settings/settings_ipc_typed.h"
 #include <thread>
 #include "settings_ipc_values.h"
 #include "settings/settings_ipc_services.h"
@@ -68,7 +69,7 @@ public:
     {
         state_->options = std::move(options);
         std::weak_ptr<WidgetProxyState> weak = state_;
-        channel_.Bind<void, std::shared_ptr<const WidgetsPageSnapshot>>("widgets.changed",
+        TypedChannel{channel_}.Bind<void, std::shared_ptr<const WidgetsPageSnapshot>>("widgets.changed",
             [weak](auto snapshot) {
                 auto state = weak.lock();
                 if (!state || state->closed || !snapshot) return;
@@ -77,39 +78,39 @@ public:
                 state->snapshot = snapshot;
                 if (state->options.snapshotChanged) state->options.snapshotChanged(std::move(snapshot));
             });
-        channel_.Bind<void, Token, Token>("widgets.pick", [weak, &channel](Token id, Token generation) {
+        TypedChannel{channel_}.Bind<void, Token, Token>("widgets.pick", [weak, &channel](Token id, Token generation) {
             const auto state = weak.lock();
             if (!state || state->closed || !state->options.pickPackage)
-            { channel.Notify("widgets.picked", id, Path{}); return; }
+            { TypedChannel{channel}.Notify("widgets.picked", id, Path{}); return; }
             state->options.pickPackage(generation, [weak, &channel, id](Path selected) {
                 if (auto live = weak.lock(); live && !live->closed && channel.Connected())
-                    channel.Notify("widgets.picked", id, selected);
+                    TypedChannel{channel}.Notify("widgets.picked", id, selected);
             });
         });
-        channel_.Bind<void, Token, Token, std::filesystem::path, std::string, std::string>("widgets.export",
+        TypedChannel{channel_}.Bind<void, Token, Token, std::filesystem::path, std::string, std::string>("widgets.export",
             [weak, &channel](Token id, Token generation, std::filesystem::path projectRoot,
                 std::string packageId, std::string version) {
                 const auto state = weak.lock();
                 if (!state || state->closed || !state->options.exportDevelopmentPackage)
-                { channel.Notify("widgets.exported", id, std::optional<WidgetsPageHostOperationResult>{}); return; }
+                { TypedChannel{channel}.Notify("widgets.exported", id, std::optional<WidgetsPageHostOperationResult>{}); return; }
                 state->options.exportDevelopmentPackage(generation, std::move(projectRoot),
                     std::move(packageId), std::move(version),
                     [weak, &channel, id](std::optional<WidgetsPageHostOperationResult> result) {
                         if (auto live = weak.lock(); live && !live->closed && channel.Connected())
-                            channel.Notify("widgets.exported", id, result);
+                            TypedChannel{channel}.Notify("widgets.exported", id, result);
                     });
             });
-        channel_.Bind<void, Token, Token, WidgetInstallConfirmationRequest>("widgets.confirm",
+        TypedChannel{channel_}.Bind<void, Token, Token, WidgetInstallConfirmationRequest>("widgets.confirm",
             [weak, &channel](Token id, Token generation, WidgetInstallConfirmationRequest request) {
                 const auto state = weak.lock();
                 if (!state || state->closed || !state->options.confirmInstall)
-                { channel.Notify("widgets.confirmed", id, false); return; }
+                { TypedChannel{channel}.Notify("widgets.confirmed", id, false); return; }
                 state->options.confirmInstall(generation, std::move(request), [weak, &channel, id](bool answer) {
                     if (auto live = weak.lock(); live && !live->closed && channel.Connected())
-                        channel.Notify("widgets.confirmed", id, answer);
+                        TypedChannel{channel}.Notify("widgets.confirmed", id, answer);
                 });
             });
-        channel_.Call<void>("widgets.create");
+        TypedChannel{channel_}.Call<void>("widgets.create");
     }
     ~WidgetsProxy() override { Close(); }
     void SetSnapshotChangedCallback(WidgetsPageBackendOptions::SnapshotChangedCallback callback) override
@@ -118,22 +119,22 @@ public:
     {
         state_->generation = generation;
         state_->active = true;
-        try { state_->active = channel_.Call<bool>("widgets.Activate", generation, discoverSources); }
+        try { state_->active = TypedChannel{channel_}.Call<bool>("widgets.Activate", generation, discoverSources); }
         catch (...) { state_->active = false; }
         return state_->active;
     }
     void Deactivate() noexcept override
     {
         state_->active = false;
-        try { channel_.Call<void>("widgets.Deactivate"); } catch (...) {}
+        try { TypedChannel{channel_}.Call<void>("widgets.Deactivate"); } catch (...) {}
     }
     bool Refresh() override
     {
-        try { return channel_.Call<bool>("widgets.Refresh"); } catch (...) { return false; }
+        try { return TypedChannel{channel_}.Call<bool>("widgets.Refresh"); } catch (...) { return false; }
     }
     bool Invoke(Token generation, WidgetsPageRequest request) override
     {
-        try { return channel_.Call<bool>("widgets.Invoke", generation, request); } catch (...) { return false; }
+        try { return TypedChannel{channel_}.Call<bool>("widgets.Invoke", generation, request); } catch (...) { return false; }
     }
     std::shared_ptr<const WidgetsPageSnapshot> Snapshot() const noexcept override { return state_->snapshot; }
     Token Generation() const noexcept override { return state_->generation; }
@@ -143,7 +144,7 @@ public:
     {
         if (state_->closed) return;
         state_->closed = true;
-        try { channel_.Call<void>("widgets.Close"); } catch (...) {}
+        try { TypedChannel{channel_}.Call<void>("widgets.Close"); } catch (...) {}
         state_->snapshot.reset();
         state_->options = {};
     }
@@ -170,7 +171,7 @@ public:
     {
         state_->options = std::move(options);
         std::weak_ptr<BackupProxyState> weak = state_;
-        channel_.Bind<void, BackupDataPageSnapshot>("backup.changed", [weak](BackupDataPageSnapshot snapshot) {
+        TypedChannel{channel_}.Bind<void, BackupDataPageSnapshot>("backup.changed", [weak](BackupDataPageSnapshot snapshot) {
             const auto state = weak.lock();
             if (!state || state->closed) return;
             if (snapshot.generation == state->snapshot.generation &&
@@ -178,35 +179,35 @@ public:
             state->snapshot = std::move(snapshot);
             if (state->changed) state->changed(state->snapshot);
         });
-        channel_.Bind<void, Token, bool>("backup.confirmed", [weak](Token id, bool answer) {
+        TypedChannel{channel_}.Bind<void, Token, bool>("backup.confirmed", [weak](Token id, bool answer) {
             if (auto state = weak.lock(); state && !state->closed) state->confirmations.Complete(id, answer);
         });
-        channel_.Bind<void, Token, Path>("backup.picked", [weak](Token id, Path selected) {
+        TypedChannel{channel_}.Bind<void, Token, Path>("backup.picked", [weak](Token id, Path selected) {
             if (auto state = weak.lock(); state && !state->closed) state->pickers.Complete(id, std::move(selected));
         });
-        channel_.Bind<void, Token, BackupDataConfirmationRequest>("backup.dialog",
+        TypedChannel{channel_}.Bind<void, Token, BackupDataConfirmationRequest>("backup.dialog",
             [weak, &channel](Token id, BackupDataConfirmationRequest request) {
                 const auto state = weak.lock();
                 if (!state || state->closed || !state->options.confirm)
-                { channel.Notify("backup.dialog.result", id, false); return; }
+                { TypedChannel{channel}.Notify("backup.dialog.result", id, false); return; }
                 state->options.confirm(state->options.ownerWindow(), std::move(request),
                     [weak, &channel, id](bool answer) {
                         if (auto live = weak.lock(); live && !live->closed && channel.Connected())
-                            channel.Notify("backup.dialog.result", id, answer);
+                            TypedChannel{channel}.Notify("backup.dialog.result", id, answer);
                     });
             });
-        channel_.Bind<void, Token, BackupDataPickerRequest>("backup.picker",
+        TypedChannel{channel_}.Bind<void, Token, BackupDataPickerRequest>("backup.picker",
             [weak, &channel](Token id, BackupDataPickerRequest request) {
                 const auto state = weak.lock();
                 if (!state || state->closed || !state->options.pickPath)
-                { channel.Notify("backup.picker.result", id, Path{}); return; }
+                { TypedChannel{channel}.Notify("backup.picker.result", id, Path{}); return; }
                 state->options.pickPath(state->options.ownerWindow(), std::move(request),
                     [weak, &channel, id](Path selected) {
                         if (auto live = weak.lock(); live && !live->closed && channel.Connected())
-                            channel.Notify("backup.picker.result", id, selected);
+                            TypedChannel{channel}.Notify("backup.picker.result", id, selected);
                     });
             });
-        channel_.Call<void>("backup.create");
+        TypedChannel{channel_}.Call<void>("backup.create");
     }
     ~BackupProxy() override { Close(); }
     BackupDataPageActions Actions() override
@@ -216,18 +217,18 @@ public:
         auto* channel = &channel_;
         actions.invoke = [weak, channel](Token generation, Token revision, BackupDataActionRequest request) {
             if (auto state = weak.lock(); state && !state->closed)
-                channel->Notify("backup.invoke", generation, revision, request);
+                TypedChannel{*channel}.Notify("backup.invoke", generation, revision, request);
         };
         actions.cancel = [weak, channel](Token generation, Token revision, Token id) {
             if (auto state = weak.lock(); state && !state->closed)
-                channel->Notify("backup.cancel", generation, revision, id);
+                TypedChannel{*channel}.Notify("backup.cancel", generation, revision, id);
         };
         actions.confirm = [weak, channel](Token generation, Token revision,
             BackupDataConfirmationRequest request, auto done) {
             if (auto state = weak.lock(); state && !state->closed)
             {
                 const auto id = state->confirmations.Add(std::move(done));
-                channel->Notify("backup.confirm", id, generation, revision, request);
+                TypedChannel{*channel}.Notify("backup.confirm", id, generation, revision, request);
             }
             else if (done) done(false);
         };
@@ -236,7 +237,7 @@ public:
             if (auto state = weak.lock(); state && !state->closed)
             {
                 const auto id = state->pickers.Add(std::move(done));
-                channel->Notify("backup.pick", id, generation, revision, request);
+                TypedChannel{*channel}.Notify("backup.pick", id, generation, revision, request);
             }
             else if (done) done(std::nullopt);
         };
@@ -249,18 +250,18 @@ public:
     }
     BackupDataPageSnapshot CurrentSnapshot() const override { return state_->snapshot; }
     void Activate(Token generation) override
-    { try { channel_.Call<void>("backup.Activate", generation); } catch (...) {} }
+    { try { TypedChannel{channel_}.Call<void>("backup.Activate", generation); } catch (...) {} }
     void Deactivate() noexcept override
-    { try { channel_.Call<void>("backup.Deactivate"); } catch (...) {} }
+    { try { TypedChannel{channel_}.Call<void>("backup.Deactivate"); } catch (...) {} }
     void Refresh() override
-    { try { channel_.Call<void>("backup.Refresh"); } catch (...) {} }
+    { try { TypedChannel{channel_}.Call<void>("backup.Refresh"); } catch (...) {} }
     void Close() noexcept override
     {
         if (state_->closed) return;
         state_->closed = true;
         // This acknowledgement must precede controller.CloseSession: a backup
         // may already have committed external replacement while we were open.
-        try { channel_.Call<void>("backup.Close"); } catch (...) {}
+        try { TypedChannel{channel_}.Call<void>("backup.Close"); } catch (...) {}
         state_->confirmations.Cancel();
         state_->pickers.Cancel();
         state_->snapshot = {};
@@ -286,7 +287,7 @@ struct BackendServer::Impl
     Completions<std::optional<WidgetsPageHostOperationResult>> exports;
 
     template<class... A> void Notify(const char* name, const A&... args) noexcept
-    { try { if (channel.Connected()) channel.Notify(name, args...); } catch (...) {} }
+    { try { if (channel.Connected()) TypedChannel{channel}.Notify(name, args...); } catch (...) {} }
 
     Impl(Channel& channelValue, ISettingsController& controllerValue,
         WidgetEngine* engineValue, SettingsWindowHostOptions configured)
@@ -294,7 +295,7 @@ struct BackendServer::Impl
     {
         BindContextMenuInspection(channel, {options.contextMenu, options.contextMenuClosed});
 #define SD_OPTION(Name, Return) \
-        channel.Bind<Return>("options." #Name, [this] { return options.Name ? options.Name() : Return{}; });
+        TypedChannel{channel}.Bind<Return>("options." #Name, [this] { return options.Name ? options.Name() : Return{}; });
         SD_OPTION(searchInput, SettingsSearchIndexInput)
         SD_OPTION(startupConflict, GeneralStartupConflict)
         SD_OPTION(windowSupportStatus, window_support::SupportStatus)
@@ -304,18 +305,18 @@ struct BackendServer::Impl
         SD_OPTION(debugVisible, bool)
 #undef SD_OPTION
         using Languages = std::vector<std::pair<std::string, std::wstring>>;
-        channel.Bind<Languages>("options.languageCatalog", [this] {
+        TypedChannel{channel}.Bind<Languages>("options.languageCatalog", [this] {
             return options.languageCatalog ? options.languageCatalog() : Languages{};
         });
-        channel.Bind<std::string>("options.locale", [this] {
+        TypedChannel{channel}.Bind<std::string>("options.locale", [this] {
             return options.widgetsPage.locale ? options.widgetsPage.locale() : std::string("en-US");
         });
-        channel.Bind<std::wstring>("options.title", [this] { return options.windowTitle; });
-        channel.Bind<bool>("options.workshopAvailable", [this] {
+        TypedChannel{channel}.Bind<std::wstring>("options.title", [this] { return options.windowTitle; });
+        TypedChannel{channel}.Bind<bool>("options.workshopAvailable", [this] {
             const auto& widgets = options.widgetsPage;
             return widgets.workshopAvailable && widgets.workshopAvailable() && widgets.openWorkshop;
         });
-        channel.Bind<std::pair<bool, std::wstring>>("options.openGuideWorkshop", [this] {
+        TypedChannel{channel}.Bind<std::pair<bool, std::wstring>>("options.openGuideWorkshop", [this] {
             const auto& widgets = options.widgetsPage;
             // Availability can change while a guide row remains displayed.
             if (!widgets.workshopAvailable || !widgets.workshopAvailable() || !widgets.openWorkshop)
@@ -324,10 +325,10 @@ struct BackendServer::Impl
             const auto result = widgets.openWorkshop("steam-workshop");
             return std::pair{result.succeeded, result.message};
         });
-        channel.Bind<HomeAboutStatusPatch, Token, Token>("options.homeAboutStatus", [this](Token generation, Token revision) {
-            return options.homeAboutStatus ? options.homeAboutStatus(generation, revision) : HomeAboutStatusPatch{};
+        TypedChannel{channel}.Bind<settings::HomeAboutStatusPatch, Token, Token>("options.homeAboutStatus", [this](Token generation, Token revision) {
+            return options.homeAboutStatus ? options.homeAboutStatus(generation, revision) : settings::HomeAboutStatusPatch{};
         });
-        channel.Bind<bool, std::wstring>("options.ensureWidget", [this](std::wstring id) {
+        TypedChannel{channel}.Bind<bool, std::wstring>("options.ensureWidget", [this](std::wstring id) {
             return options.ensureWidgetSettingsInstance && options.ensureWidgetSettingsInstance(id);
         });
         channel.BindDeferredRaw("options.runtimeModulesStatus", [](auto arguments, Channel::Completion reply) {
@@ -352,27 +353,27 @@ struct BackendServer::Impl
                 complete();
             }
         });
-        channel.Bind<void>("options.registerAdvancedFeatures", [this] {
+        TypedChannel{channel}.Bind<void>("options.registerAdvancedFeatures", [this] {
             if (options.registerAdvancedFeatures) options.registerAdvancedFeatures();
         });
-        channel.Bind<steam_room::Status, steam_room::Command>("options.steamRoom", [this](steam_room::Command command) {
+        TypedChannel{channel}.Bind<steam_room::Status, steam_room::Command>("options.steamRoom", [this](steam_room::Command command) {
             return options.steamRoom ? options.steamRoom(command) : steam_room::Status{};
         });
-        channel.Bind<void, bool, std::uint64_t>("options.configureWindowSupport", [this](bool enabled, std::uint64_t handle) {
+        TypedChannel{channel}.Bind<void, bool, std::uint64_t>("options.configureWindowSupport", [this](bool enabled, std::uint64_t handle) {
             const auto owner = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(handle));
             if (!channel.OwnsPeerWindow(owner))
                 throw ProtocolError("window support owner does not belong to the settings connection");
             if (options.configureWindowSupport) options.configureWindowSupport(enabled, owner);
         });
-        channel.Bind<bool>("options.resetAdvancedFeatures", [this] {
+        TypedChannel{channel}.Bind<bool>("options.resetAdvancedFeatures", [this] {
             return options.resetAdvancedFeatures && options.resetAdvancedFeatures();
         });
-        channel.Bind<std::optional<std::vector<calendar::CalendarEvent>>, Token>("calendar.events", [this](Token generation) -> std::optional<std::vector<calendar::CalendarEvent>> {
+        TypedChannel{channel}.Bind<std::optional<std::vector<calendar::CalendarEvent>>, Token>("calendar.events", [this](Token generation) -> std::optional<std::vector<calendar::CalendarEvent>> {
             const auto current = controller.Snapshot();
             if (!engine || !current || !current->sessionActive || current->generation != generation || current->route.page != SettingsPage::Calendar) return std::nullopt;
             return engine->RuntimeCalendarSingleEvents();
         });
-        channel.Bind<calendar::MutationResult, Token, calendar::CalendarEvent, bool>("calendar.mutate", [this](Token generation, calendar::CalendarEvent event, bool remove) -> calendar::MutationResult {
+        TypedChannel{channel}.Bind<calendar::MutationResult, Token, calendar::CalendarEvent, bool>("calendar.mutate", [this](Token generation, calendar::CalendarEvent event, bool remove) -> calendar::MutationResult {
             const auto current = controller.Snapshot();
             if (!engine || !current || !current->sessionActive || current->generation != generation || current->route.page != SettingsPage::Calendar) return {false, {}, 0, "unavailable"};
             if (remove)
@@ -385,17 +386,17 @@ struct BackendServer::Impl
             if (event.id.empty()) return engine->RuntimeCalendarCreate(std::move(event));
             return engine->RuntimeCalendarUpdate(event.id, event.revision, event);
         });
-        channel.Bind<std::optional<std::vector<calendar::CalendarSeries>>, Token>("calendar.series", [this](Token generation) -> std::optional<std::vector<calendar::CalendarSeries>> {
+        TypedChannel{channel}.Bind<std::optional<std::vector<calendar::CalendarSeries>>, Token>("calendar.series", [this](Token generation) -> std::optional<std::vector<calendar::CalendarSeries>> {
             const auto current = controller.Snapshot();
             if (!engine || !current || !current->sessionActive || current->generation != generation || current->route.page != SettingsPage::Calendar) return std::nullopt;
             return engine->RuntimeCalendarSeries();
         });
-        channel.Bind<std::optional<calendar::CalendarEvent>, Token, std::string>("calendar.occurrence", [this](Token generation, std::string id) -> std::optional<calendar::CalendarEvent> {
+        TypedChannel{channel}.Bind<std::optional<calendar::CalendarEvent>, Token, std::string>("calendar.occurrence", [this](Token generation, std::string id) -> std::optional<calendar::CalendarEvent> {
             const auto current = controller.Snapshot();
             if (!engine || !current || !current->sessionActive || current->generation != generation || current->route.page != SettingsPage::Calendar) return std::nullopt;
             return engine->RuntimeCalendarEventById(id);
         });
-        channel.Bind<calendar::MutationResult, Token, calendar::CalendarSeries, bool>("calendar.series.mutate", [this](Token generation, calendar::CalendarSeries series, bool remove) -> calendar::MutationResult {
+        TypedChannel{channel}.Bind<calendar::MutationResult, Token, calendar::CalendarSeries, bool>("calendar.series.mutate", [this](Token generation, calendar::CalendarSeries series, bool remove) -> calendar::MutationResult {
             const auto current = controller.Snapshot();
             if (!engine || !current || !current->sessionActive || current->generation != generation || current->route.page != SettingsPage::Calendar) return {false, {}, 0, "unavailable"};
             if (remove) return engine->RuntimeCalendarSeriesRemove(series.id, series.revision);
@@ -404,99 +405,99 @@ struct BackendServer::Impl
             const auto revision = series.revision;
             return engine->RuntimeCalendarSeriesUpdate(id, revision, std::move(series));
         });
-        channel.Bind<std::optional<std::vector<calendar::SubscriptionInfo>>, Token>("calendar.subscriptions",
+        TypedChannel{channel}.Bind<std::optional<std::vector<calendar::SubscriptionInfo>>, Token>("calendar.subscriptions",
             [this](Token generation) -> std::optional<std::vector<calendar::SubscriptionInfo>> {
                 const auto current = controller.Snapshot();
                 if (!engine || !current || !current->sessionActive || current->generation != generation ||
                     current->route.page != SettingsPage::Calendar) return std::nullopt;
                 return engine->RuntimeCalendarSubscriptions();
             });
-        channel.Bind<std::optional<calendar::SubscriptionDetails>, Token, std::string>("calendar.subscriptionDetails",
+        TypedChannel{channel}.Bind<std::optional<calendar::SubscriptionDetails>, Token, std::string>("calendar.subscriptionDetails",
             [this](Token generation, std::string id) -> std::optional<calendar::SubscriptionDetails> {
                 const auto current = controller.Snapshot();
                 if (!engine || !current || !current->sessionActive || current->generation != generation ||
                     current->route.page != SettingsPage::Calendar) return std::nullopt;
                 return engine->RuntimeCalendarSubscriptionDetails(id);
             });
-        channel.Bind<calendar::SubscriptionResult, Token, calendar::SubscriptionCommand>("calendar.subscription",
+        TypedChannel{channel}.Bind<calendar::SubscriptionResult, Token, calendar::SubscriptionCommand>("calendar.subscription",
             [this](Token generation, calendar::SubscriptionCommand command) {
                 const auto current = controller.Snapshot();
                 if (!engine || !current || !current->sessionActive || current->generation != generation ||
                     current->route.page != SettingsPage::Calendar) return calendar::SubscriptionResult::Unavailable;
                 return engine->RuntimeCalendarSubscription(std::move(command));
             });
-        channel.Bind<PageLayoutSnapshot>("pages.capture", [this] {
+        TypedChannel{channel}.Bind<PageLayoutSnapshot>("pages.capture", [this] {
             return options.pageLayoutPage.capture ? options.pageLayoutPage.capture() : PageLayoutSnapshot{};
         });
-        channel.Bind<PageRemovalImpact, std::wstring>("pages.removal.analyze", [this](auto id) {
+        TypedChannel{channel}.Bind<PageRemovalImpact, std::wstring>("pages.removal.analyze", [this](auto id) {
             return options.pageLayoutPage.analyzeRemoval ? options.pageLayoutPage.analyzeRemoval(id) : PageRemovalImpact{};
         });
-        channel.Bind<PageLayoutOperationResult, Token, std::wstring, std::wstring>("pages.rename", [this](Token revision, auto id, auto name) {
+        TypedChannel{channel}.Bind<PageLayoutOperationResult, Token, std::wstring, std::wstring>("pages.rename", [this](Token revision, auto id, auto name) {
             return options.pageLayoutPage.renamePage ? options.pageLayoutPage.renamePage(revision, id, name) : PageLayoutOperationResult{};
         });
-        channel.Bind<PageLayoutOperationResult, Token, std::wstring>("pages.remove", [this](Token revision, auto id) {
+        TypedChannel{channel}.Bind<PageLayoutOperationResult, Token, std::wstring>("pages.remove", [this](Token revision, auto id) {
             return options.pageLayoutPage.removePage ? options.pageLayoutPage.removePage(revision, id) : PageLayoutOperationResult{};
         });
-        channel.Bind<LargeIconSettingsSnapshot, LargeIconSettingsRequest>("largeIcon.edit", [this](auto request) {
+        TypedChannel{channel}.Bind<LargeIconSettingsSnapshot, LargeIconSettingsRequest>("largeIcon.edit", [this](auto request) {
             return options.largeIconSettings ? options.largeIconSettings(std::move(request)) : LargeIconSettingsSnapshot{};
         });
-        channel.Bind<IconAppearanceSnapshot, IconAppearanceRequest>("iconAppearance.edit", [this](auto request) {
+        TypedChannel{channel}.Bind<IconAppearanceSnapshot, IconAppearanceRequest>("iconAppearance.edit", [this](auto request) {
             return options.iconAppearance ? options.iconAppearance(std::move(request)) : IconAppearanceSnapshot{};
         });
         BindIconLibraryPages(channel, [this](auto request) {
             return options.iconLibrary ? options.iconLibrary(std::move(request)) : IconLibrarySnapshot{};
         });
-        channel.Bind<PageGridChangeImpact, std::wstring, int, int>("pages.analyze", [this](std::wstring id, int columns, int rows) {
+        TypedChannel{channel}.Bind<PageGridChangeImpact, std::wstring, int, int>("pages.analyze", [this](std::wstring id, int columns, int rows) {
             return options.pageLayoutPage.analyzeGrid ? options.pageLayoutPage.analyzeGrid(id, columns, rows) : PageGridChangeImpact{};
         });
-        channel.Bind<PageLayoutOperationResult, Token, std::vector<std::wstring>>("pages.order", [this](Token revision, auto ids) {
+        TypedChannel{channel}.Bind<PageLayoutOperationResult, Token, std::vector<std::wstring>>("pages.order", [this](Token revision, auto ids) {
             return options.pageLayoutPage.applyOrder ? options.pageLayoutPage.applyOrder(revision, std::move(ids)) : PageLayoutOperationResult{};
         });
-        channel.Bind<PageLayoutOperationResult, Token, std::wstring, int, int>("pages.grid", [this](Token revision, auto id, int columns, int rows) {
+        TypedChannel{channel}.Bind<PageLayoutOperationResult, Token, std::wstring, int, int>("pages.grid", [this](Token revision, auto id, int columns, int rows) {
             return options.pageLayoutPage.applyGrid ? options.pageLayoutPage.applyGrid(revision, id, columns, rows) : PageLayoutOperationResult{};
         });
-        channel.Bind<PageLayoutOperationResult, Token>("pages.add", [this](Token revision) {
+        TypedChannel{channel}.Bind<PageLayoutOperationResult, Token>("pages.add", [this](Token revision) {
             return options.pageLayoutPage.addPage ? options.pageLayoutPage.addPage(revision) : PageLayoutOperationResult{};
         });
 
-        channel.Bind<void>("widgets.create", [this] { CreateWidgets(); });
-        channel.Bind<bool, Token, bool>("widgets.Activate", [this](Token generation, bool discover) {
+        TypedChannel{channel}.Bind<void>("widgets.create", [this] { CreateWidgets(); });
+        TypedChannel{channel}.Bind<bool, Token, bool>("widgets.Activate", [this](Token generation, bool discover) {
             return widgets && widgets->Activate(generation, discover);
         });
-        channel.Bind<void>("widgets.Deactivate", [this] { if (widgets) widgets->Deactivate(); });
-        channel.Bind<bool>("widgets.Refresh", [this] { return widgets && widgets->Refresh(); });
-        channel.Bind<bool, Token, WidgetsPageRequest>("widgets.Invoke", [this](Token generation, auto request) {
+        TypedChannel{channel}.Bind<void>("widgets.Deactivate", [this] { if (widgets) widgets->Deactivate(); });
+        TypedChannel{channel}.Bind<bool>("widgets.Refresh", [this] { return widgets && widgets->Refresh(); });
+        TypedChannel{channel}.Bind<bool, Token, WidgetsPageRequest>("widgets.Invoke", [this](Token generation, auto request) {
             return widgets && widgets->Invoke(generation, std::move(request));
         });
-        channel.Bind<void>("widgets.Close", [this] { if (widgets) widgets->Close(); widgets.reset(); });
-        channel.Bind<void, Token, std::optional<WidgetsPageHostOperationResult>>("widgets.exported",
+        TypedChannel{channel}.Bind<void>("widgets.Close", [this] { if (widgets) widgets->Close(); widgets.reset(); });
+        TypedChannel{channel}.Bind<void, Token, std::optional<WidgetsPageHostOperationResult>>("widgets.exported",
             [this](Token id, auto result) { exports.Complete(id, std::move(result)); });
-        channel.Bind<void, Token, Path>("widgets.picked", [this](Token id, Path path) { pickers.Complete(id, std::move(path)); });
-        channel.Bind<void, Token, bool>("widgets.confirmed", [this](Token id, bool answer) { confirmations.Complete(id, answer); });
+        TypedChannel{channel}.Bind<void, Token, Path>("widgets.picked", [this](Token id, Path path) { pickers.Complete(id, std::move(path)); });
+        TypedChannel{channel}.Bind<void, Token, bool>("widgets.confirmed", [this](Token id, bool answer) { confirmations.Complete(id, answer); });
 
-        channel.Bind<void>("backup.create", [this] { CreateBackup(); });
-        channel.Bind<void, Token>("backup.Activate", [this](Token generation) { if (backup) backup->Activate(generation); });
-        channel.Bind<void>("backup.Deactivate", [this] { if (backup) backup->Deactivate(); });
-        channel.Bind<void>("backup.Refresh", [this] { if (backup) backup->Refresh(); });
-        channel.Bind<void>("backup.Close", [this] { if (backup) backup->Close(); backup.reset(); });
-        channel.Bind<void, Token, Token, BackupDataActionRequest>("backup.invoke", [this](Token generation, Token revision, auto request) {
+        TypedChannel{channel}.Bind<void>("backup.create", [this] { CreateBackup(); });
+        TypedChannel{channel}.Bind<void, Token>("backup.Activate", [this](Token generation) { if (backup) backup->Activate(generation); });
+        TypedChannel{channel}.Bind<void>("backup.Deactivate", [this] { if (backup) backup->Deactivate(); });
+        TypedChannel{channel}.Bind<void>("backup.Refresh", [this] { if (backup) backup->Refresh(); });
+        TypedChannel{channel}.Bind<void>("backup.Close", [this] { if (backup) backup->Close(); backup.reset(); });
+        TypedChannel{channel}.Bind<void, Token, Token, BackupDataActionRequest>("backup.invoke", [this](Token generation, Token revision, auto request) {
             if (backup) backup->Actions().invoke(generation, revision, std::move(request));
         });
-        channel.Bind<void, Token, Token, Token>("backup.cancel", [this](Token generation, Token revision, Token id) {
+        TypedChannel{channel}.Bind<void, Token, Token, Token>("backup.cancel", [this](Token generation, Token revision, Token id) {
             if (backup) backup->Actions().cancel(generation, revision, id);
         });
-        channel.Bind<void, Token, Token, Token, BackupDataConfirmationRequest>("backup.confirm", [this](Token id, Token generation, Token revision, auto request) {
+        TypedChannel{channel}.Bind<void, Token, Token, Token, BackupDataConfirmationRequest>("backup.confirm", [this](Token id, Token generation, Token revision, auto request) {
             if (backup) backup->Actions().confirm(generation, revision, std::move(request),
                 [this, id](bool answer) { Notify("backup.confirmed", id, answer); });
             else Notify("backup.confirmed", id, false);
         });
-        channel.Bind<void, Token, Token, Token, BackupDataPickerRequest>("backup.pick", [this](Token id, Token generation, Token revision, auto request) {
+        TypedChannel{channel}.Bind<void, Token, Token, Token, BackupDataPickerRequest>("backup.pick", [this](Token id, Token generation, Token revision, auto request) {
             if (backup) backup->Actions().pickPath(generation, revision, std::move(request),
                 [this, id](Path path) { Notify("backup.picked", id, path); });
             else Notify("backup.picked", id, Path{});
         });
-        channel.Bind<void, Token, bool>("backup.dialog.result", [this](Token id, bool answer) { confirmations.Complete(id, answer); });
-        channel.Bind<void, Token, Path>("backup.picker.result", [this](Token id, Path path) { pickers.Complete(id, std::move(path)); });
+        TypedChannel{channel}.Bind<void, Token, bool>("backup.dialog.result", [this](Token id, bool answer) { confirmations.Complete(id, answer); });
+        TypedChannel{channel}.Bind<void, Token, Path>("backup.picker.result", [this](Token id, Path path) { pickers.Complete(id, std::move(path)); });
     }
     void CreateWidgets()
     {
@@ -577,11 +578,11 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
             try { completed(Unpack<runtime_modules::Snapshot>(bytes)); } catch (...) { completed({}); }
         });
     };
-    options.windowTitle = channel.Call<std::wstring>("options.title");
+    options.windowTitle = TypedChannel{channel}.Call<std::wstring>("options.title");
     options.localize = [](std::string_view key) { return std::wstring(Locale::Instance().TrW(std::string(key).c_str())); };
-    options.languageCatalog = [&channel] { return channel.Call<std::vector<std::pair<std::string, std::wstring>>>("options.languageCatalog"); };
+    options.languageCatalog = [&channel] { return TypedChannel{channel}.Call<std::vector<std::pair<std::string, std::wstring>>>("options.languageCatalog"); };
 #define SD_REMOTE_OPTION(Name, Return) \
-    options.Name = [&channel] { return channel.Call<Return>("options." #Name); };
+    options.Name = [&channel] { return TypedChannel{channel}.Call<Return>("options." #Name); };
     SD_REMOTE_OPTION(searchInput, SettingsSearchIndexInput)
     SD_REMOTE_OPTION(startupConflict, GeneralStartupConflict)
     SD_REMOTE_OPTION(windowSupportStatus, window_support::SupportStatus)
@@ -590,57 +591,57 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     SD_REMOTE_OPTION(developerToolsVisible, bool)
     SD_REMOTE_OPTION(debugVisible, bool)
 #undef SD_REMOTE_OPTION
-    options.homeAboutStatus = [&channel](Token generation, Token revision) { return channel.Call<HomeAboutStatusPatch>("options.homeAboutStatus", generation, revision); };
-    options.ensureWidgetSettingsInstance = [&channel](std::wstring_view id) { return channel.Call<bool>("options.ensureWidget", std::wstring(id)); };
-    options.refreshExternalState = [&channel] { channel.Call<void>("options.refreshExternalState"); };
-    options.registerAdvancedFeatures = [&channel] { channel.Call<void>("options.registerAdvancedFeatures"); };
+    options.homeAboutStatus = [&channel](Token generation, Token revision) { return TypedChannel{channel}.Call<settings::HomeAboutStatusPatch>("options.homeAboutStatus", generation, revision); };
+    options.ensureWidgetSettingsInstance = [&channel](std::wstring_view id) { return TypedChannel{channel}.Call<bool>("options.ensureWidget", std::wstring(id)); };
+    options.refreshExternalState = [&channel] { TypedChannel{channel}.Call<void>("options.refreshExternalState"); };
+    options.registerAdvancedFeatures = [&channel] { TypedChannel{channel}.Call<void>("options.registerAdvancedFeatures"); };
     options.steamRoom = [&channel](steam_room::Command command) {
         if (command == steam_room::Command::Invite) AllowSetForegroundWindow(channel.PeerProcessId());
-        return channel.Call<steam_room::Status>("options.steamRoom", command);
+        return TypedChannel{channel}.Call<steam_room::Status>("options.steamRoom", command);
     };
     options.configureWindowSupport = [&channel](bool enabled, HWND owner) {
         // The user clicked in this foreground settings process. Transfer the
         // foreground permission to the actual host before its worker invokes UAC.
         AllowSetForegroundWindow(channel.PeerProcessId());
-        channel.Call<void>("options.configureWindowSupport", enabled, static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(owner)));
+        TypedChannel{channel}.Call<void>("options.configureWindowSupport", enabled, static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(owner)));
     };
-    options.resetAdvancedFeatures = [&channel] { return channel.Call<bool>("options.resetAdvancedFeatures"); };
-    options.widgetsPage.workshopAvailable = [&channel] { return channel.Call<bool>("options.workshopAvailable"); };
+    options.resetAdvancedFeatures = [&channel] { return TypedChannel{channel}.Call<bool>("options.resetAdvancedFeatures"); };
+    options.widgetsPage.workshopAvailable = [&channel] { return TypedChannel{channel}.Call<bool>("options.workshopAvailable"); };
     options.widgetsPage.openWorkshop = [&channel](std::string_view) {
-        const auto [succeeded, message] = channel.Call<std::pair<bool, std::wstring>>("options.openGuideWorkshop");
+        const auto [succeeded, message] = TypedChannel{channel}.Call<std::pair<bool, std::wstring>>("options.openGuideWorkshop");
         return winui::WidgetsPageHostOperationResult{succeeded, false, message};
     };
-    options.calendarPage.events = [&channel](Token generation) { return channel.Call<std::optional<std::vector<calendar::CalendarEvent>>>("calendar.events", generation); };
-    options.calendarPage.mutate = [&channel](Token generation, calendar::CalendarEvent event, bool remove) { return channel.Call<calendar::MutationResult>("calendar.mutate", generation, event, remove); };
-    options.calendarPage.series = [&channel](Token generation) { return channel.Call<std::optional<std::vector<calendar::CalendarSeries>>>("calendar.series", generation); };
-    options.calendarPage.occurrence = [&channel](Token generation, std::string id) { return channel.Call<std::optional<calendar::CalendarEvent>>("calendar.occurrence", generation, id); };
-    options.calendarPage.mutateSeries = [&channel](Token generation, calendar::CalendarSeries series, bool remove) { return channel.Call<calendar::MutationResult>("calendar.series.mutate", generation, series, remove); };
+    options.calendarPage.events = [&channel](Token generation) { return TypedChannel{channel}.Call<std::optional<std::vector<calendar::CalendarEvent>>>("calendar.events", generation); };
+    options.calendarPage.mutate = [&channel](Token generation, calendar::CalendarEvent event, bool remove) { return TypedChannel{channel}.Call<calendar::MutationResult>("calendar.mutate", generation, event, remove); };
+    options.calendarPage.series = [&channel](Token generation) { return TypedChannel{channel}.Call<std::optional<std::vector<calendar::CalendarSeries>>>("calendar.series", generation); };
+    options.calendarPage.occurrence = [&channel](Token generation, std::string id) { return TypedChannel{channel}.Call<std::optional<calendar::CalendarEvent>>("calendar.occurrence", generation, id); };
+    options.calendarPage.mutateSeries = [&channel](Token generation, calendar::CalendarSeries series, bool remove) { return TypedChannel{channel}.Call<calendar::MutationResult>("calendar.series.mutate", generation, series, remove); };
     options.calendarPage.subscriptions = [&channel](Token generation) {
-        return channel.Call<std::optional<std::vector<calendar::SubscriptionInfo>>>("calendar.subscriptions", generation);
+        return TypedChannel{channel}.Call<std::optional<std::vector<calendar::SubscriptionInfo>>>("calendar.subscriptions", generation);
     };
     options.calendarPage.subscriptionDetails = [&channel](Token generation, std::string id) {
-        return channel.Call<std::optional<calendar::SubscriptionDetails>>("calendar.subscriptionDetails", generation, id);
+        return TypedChannel{channel}.Call<std::optional<calendar::SubscriptionDetails>>("calendar.subscriptionDetails", generation, id);
     };
     options.calendarPage.subscription = [&channel](Token generation, calendar::SubscriptionCommand command) {
-        return channel.Call<calendar::SubscriptionResult>("calendar.subscription", generation, std::move(command));
+        return TypedChannel{channel}.Call<calendar::SubscriptionResult>("calendar.subscription", generation, std::move(command));
     };
-    options.pageLayoutPage.capture = [&channel] { return channel.Call<PageLayoutSnapshot>("pages.capture"); };
-    options.pageLayoutPage.analyzeRemoval = [&channel](const std::wstring& id) { return channel.Call<PageRemovalImpact>("pages.removal.analyze", id); };
-    options.pageLayoutPage.renamePage = [&channel](Token revision, const std::wstring& id, const std::wstring& name) { return channel.Call<PageLayoutOperationResult>("pages.rename", revision, id, name); };
-    options.pageLayoutPage.removePage = [&channel](Token revision, const std::wstring& id) { return channel.Call<PageLayoutOperationResult>("pages.remove", revision, id); };
+    options.pageLayoutPage.capture = [&channel] { return TypedChannel{channel}.Call<PageLayoutSnapshot>("pages.capture"); };
+    options.pageLayoutPage.analyzeRemoval = [&channel](const std::wstring& id) { return TypedChannel{channel}.Call<PageRemovalImpact>("pages.removal.analyze", id); };
+    options.pageLayoutPage.renamePage = [&channel](Token revision, const std::wstring& id, const std::wstring& name) { return TypedChannel{channel}.Call<PageLayoutOperationResult>("pages.rename", revision, id, name); };
+    options.pageLayoutPage.removePage = [&channel](Token revision, const std::wstring& id) { return TypedChannel{channel}.Call<PageLayoutOperationResult>("pages.remove", revision, id); };
     options.largeIconSettings = [&channel](LargeIconSettingsRequest request) {
-        return channel.Call<LargeIconSettingsSnapshot>("largeIcon.edit", request);
+        return TypedChannel{channel}.Call<LargeIconSettingsSnapshot>("largeIcon.edit", request);
     };
     options.iconAppearance = [&channel](IconAppearanceRequest request) {
-        return channel.Call<IconAppearanceSnapshot>("iconAppearance.edit", request);
+        return TypedChannel{channel}.Call<IconAppearanceSnapshot>("iconAppearance.edit", request);
     };
     options.iconLibrary = [&channel](IconLibraryRequest request) {
         return CallIconLibraryPages(channel, request);
     };
-    options.pageLayoutPage.analyzeGrid = [&channel](std::wstring_view id, int columns, int rows) { return channel.Call<PageGridChangeImpact>("pages.analyze", std::wstring(id), columns, rows); };
-    options.pageLayoutPage.applyOrder = [&channel](Token revision, const std::vector<std::wstring>& ids) { return channel.Call<PageLayoutOperationResult>("pages.order", revision, ids); };
-    options.pageLayoutPage.applyGrid = [&channel](Token revision, std::wstring_view id, int columns, int rows) { return channel.Call<PageLayoutOperationResult>("pages.grid", revision, std::wstring(id), columns, rows); };
-    options.pageLayoutPage.addPage = [&channel](Token revision) { return channel.Call<PageLayoutOperationResult>("pages.add", revision); };
+    options.pageLayoutPage.analyzeGrid = [&channel](std::wstring_view id, int columns, int rows) { return TypedChannel{channel}.Call<PageGridChangeImpact>("pages.analyze", std::wstring(id), columns, rows); };
+    options.pageLayoutPage.applyOrder = [&channel](Token revision, const std::vector<std::wstring>& ids) { return TypedChannel{channel}.Call<PageLayoutOperationResult>("pages.order", revision, ids); };
+    options.pageLayoutPage.applyGrid = [&channel](Token revision, std::wstring_view id, int columns, int rows) { return TypedChannel{channel}.Call<PageLayoutOperationResult>("pages.grid", revision, std::wstring(id), columns, rows); };
+    options.pageLayoutPage.addPage = [&channel](Token revision) { return TypedChannel{channel}.Call<PageLayoutOperationResult>("pages.add", revision); };
     options.createWidgetsBackend = [&channel](WidgetsPageBackendOptions configured) { return std::make_unique<WidgetsProxy>(channel, std::move(configured)); };
     options.createBackupBackend = [&channel](BackupDataPageBackendOptions configured) { return std::make_unique<BackupProxy>(channel, std::move(configured)); };
     return options;

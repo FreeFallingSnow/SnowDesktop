@@ -9,10 +9,10 @@
 #include <shlobj.h>
 
 #include "constants.h"
-#include "layout/folder_sort_rules.h"
-#include "layout/list_detail_rules.h"
-#include "icons/large_icon_config.h"
-#include "layout/category_collection_rules.h"
+#include "icons/large_icon_config_types.h"
+#include "layout/category_collection_types.h"
+#include "layout/folder_sort_types.h"
+#include "layout/list_detail_types.h"
 
 #include <cstdint>
 #include <optional>
@@ -512,6 +512,7 @@ struct DesktopWidget
     GridSpan maxGridSpan{ 0, 0 }; // 0 means unrestricted (up to the current grid page)
     RECT bounds{};
     float cellScale = 1.0f; // Runtime layout cache; recalculated by LayoutItems().
+    bool keepInitialComposition = false; // Runtime only, until a new widget is first hidden.
     bool selected = false;
     bool autoCollect = false;
     // Empty preserves the legacy All scope; IDs reference category settings.

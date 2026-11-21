@@ -193,6 +193,7 @@
     "app.launch"
   ],
   "requiredFeatures": [
+    "draw.glyph",
     "data.media.current",
     "data.media.artwork",
     "data.subscribe",

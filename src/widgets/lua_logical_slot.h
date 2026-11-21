@@ -48,9 +48,7 @@ public:
             SlotSurfaceKind::LuaLogicalSlot;
     }
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
-    void OnItemsDropped(const std::vector<Item*>& sourceItems,
-        Container* origin, Slot* targetSlot, HitRegion region,
-        int mods) override;
+    DropReceipt OnItemsDropped(const ItemDrop& drop) override;
     RECT GetBounds() const override;
     BarStyle GetInsertionStyle() const override;
     HitRegion HitTestDrag(POINT point, Slot*& outSlot) override;

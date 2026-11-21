@@ -51,6 +51,50 @@ function Wait-SnowDesktopPackagingRun([string]$Root,[string]$Task,[string]$Run) 
     if($code -ne 0){throw "Packaging Run $Run did not complete successfully (exit $code); evidence is preserved."}
 }
 
+function Get-SnowDesktopPackagingEvidence([string]$Root,$Run) {
+    if($Run.status -eq 'passed' -and $Run.exitCode -eq 0){return 'passed-run'}
+    $product=Get-Field $Run 'productBuild'
+    if($Run.status -notin 'failed','cancelled' -or -not $product -or $product.exitCode -ne 0){
+        throw 'Packaging requires a passed Run or independently verified product and full application coverage.'
+    }
+    $request=Read-EntryJson (Join-Path $Root ('.build/collaboration/runs/'+$Run.id+'.request.json'))
+    $batch=Get-Field $request 'batch'
+    if($batch -notmatch '^[a-f0-9]{32}$' -or $request.action -ne 'batch' -or -not (Get-Field $request 'candidateBatch') -or
+        $request.nonce -ne $Run.nonce -or $request.id -ne $Run.id -or $request.repositoryRoot -ne $Root){
+        throw 'The product-only success has no matching batch request.'
+    }
+    . (Join-Path $PSScriptRoot 'build_candidate_batch.ps1')
+    $binding=Read-CandidateBatchBinding $Root $request
+    $result=Read-EntryJson (Join-Path $Root ('.build/collaboration/'+$batch+'.json'))
+    $coverage=Get-Field $result 'coverage'
+    if(-not $result -or $result.batchId -ne $batch -or $result.runId -ne $Run.id -or $result.repositoryRoot -ne $Root -or
+        $result.inputCheck -ne 'stable' -or $result.outcome -ne $Run.status -or $binding.snapshot -ne $Run.artifact.candidate -or
+        $result.artifact.manifestDigest -ne $Run.artifact.manifestDigest -or $result.inputEnd.digest -ne $Run.inputEnd.digest -or
+        (Get-Field $coverage 'batchId') -ne $batch -or (Get-Field (Get-Field (Get-Field $coverage 'postChecks') 'outputIsolation') 'status') -ne 'passed'){
+        throw 'The product-only success lacks matching stable application evidence and a passing output-isolation check.'
+    }
+    $tasks=@(Get-Field $coverage 'tasks' @())
+    $mixed=@($tasks|Where-Object {$_.suites -contains 'tools' -and @($_.suites).Count -ne 1})
+    $app=@($tasks|Where-Object {$_.suites -notcontains 'tools' -and $_.suites -notcontains 'none'})
+    $tools=@($tasks|Where-Object {$_.suites -contains 'tools'})
+    if($mixed.Count -or -not $tools.Count -or -not @($app|Where-Object {$_.suites -contains 'full' -and $_.status -eq 'passed' -and @($_.requested).Count}).Count){
+        throw 'Packaging cannot separate application coverage from this Run. Use a saved Run with distinct, passing full application coverage.'
+    }
+    $names=@($app|ForEach-Object requested|Sort-Object -Unique)
+    $toolsOnly=@($tools|ForEach-Object requested|Where-Object {$_ -notin $names}|Sort-Object -Unique)
+    $selected=@(Get-Field $coverage 'selected' @())
+    if(@($selected|Where-Object {$_ -notin $names -and $_ -notin $toolsOnly}).Count){throw 'The selection contains tests without a recorded application or tool obligation.'}
+    if(-not @($selected|Where-Object {
+        $testName=$_
+        $testName -in $toolsOnly -and -not @($coverage.completed|Where-Object {$_.name -eq $testName -and $_.status -eq 'passed'}).Count
+    }).Count){throw 'The failed Run has no separately identified unsuccessful tool test.'}
+    foreach($name in $names){
+        $cases=@($coverage.completed|Where-Object name -eq $name)
+        if($name -notin $selected -or $cases.Count -ne 1 -or $cases[0].status -ne 'passed'){throw "Application test $name does not have a unique passing result."}
+    }
+    return 'passed-product-and-application'
+}
+
 function Get-SnowDesktopPackagingContext([string]$Root,[string]$ArtifactRun='') {
     $Root=[IO.Path]::GetFullPath($Root).TrimEnd('\','/')
     $runtimeLease=Open-CandidateRuntimeLease $Root
@@ -63,9 +107,10 @@ function Get-SnowDesktopPackagingContext([string]$Root,[string]$ArtifactRun='') 
     if($ArtifactRun -notmatch '^[a-f0-9]{32}$'){throw 'Invalid packaging ArtifactRun.'}
     $run=Read-EntryJson (Join-Path $Root ('.build/collaboration/runs/'+$ArtifactRun+'.json'))
     if(-not $run -or $run.id -ne $ArtifactRun -or $run.repositoryRoot -ne $Root -or
-        $run.status -ne 'passed' -or $run.exitCode -ne 0 -or -not $run.completedUtc -or
+        -not $run.completedUtc -or
         -not $run.inputStart -or -not $run.inputEnd -or $run.inputStart.digest -ne $run.inputEnd.digest -or
-        -not $run.artifact){throw 'Packaging requires a passed, stable build Run with saved artifacts.'}
+        -not $run.artifact){throw 'Packaging requires a stable, completed build Run with saved artifacts.'}
+    $packagingEvidence=Get-SnowDesktopPackagingEvidence $Root $run
     $artifact=Read-CandidateArtifact $Root $ArtifactRun $run.artifact.manifestDigest -VerifyFiles
     if(-not $artifact.manifest.productRuntime -or $artifact.manifest.configuration -ne 'Release' -or
         $artifact.manifest.sourceDigest -ne $run.inputEnd.digest){throw 'Packaging requires the matching saved Release product runtime.'}
@@ -96,7 +141,7 @@ function Get-SnowDesktopPackagingContext([string]$Root,[string]$ArtifactRun='') 
     }
     $provenance=[pscustomobject]@{runId=$ArtifactRun;snapshot=$artifact.manifest.candidate;
         sourceDigest=$artifact.manifest.sourceDigest;sourceManifestDigest=$artifact.manifest.sourceManifestDigest;
-        capturedHead=$artifact.manifest.sourceHead;artifactManifestDigest=$artifact.digest}
+        capturedHead=$artifact.manifest.sourceHead;artifactManifestDigest=$artifact.digest;evidence=$packagingEvidence}
     return [pscustomobject]@{root=$Root;source=$source;runtime=$artifact.runtime;version=$version;
         provenance=$provenance;sourceFiles=$selected;runtimeLease=$runtimeLease}
     } catch {$runtimeLease.Dispose();throw}

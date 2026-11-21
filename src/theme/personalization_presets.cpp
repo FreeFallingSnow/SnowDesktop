@@ -238,6 +238,7 @@ void ApplyAppearancePreset(PersonalizationSettings& settings, int presetId)
     preset.popupHoverOpen = settings.popupHoverOpen;
     preset.popupHoverDelayMs = settings.popupHoverDelayMs;
     preset.popupCloseOnMouseLeave = settings.popupCloseOnMouseLeave;
+    preset.folderDoubleClickPreview = settings.folderDoubleClickPreview;
     preset.contextMenuStyle = settings.contextMenuStyle;
     preset.windowPinBorderEnabled = settings.windowPinBorderEnabled;
     preset.windowPinBorderR = settings.windowPinBorderR;

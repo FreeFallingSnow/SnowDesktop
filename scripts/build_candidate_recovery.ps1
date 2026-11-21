@@ -1,6 +1,54 @@
 # Explicit repair of the one frozen source tree. Compiler output is never
 # cleared, copied or traversed; old source bytes remain in a non-executable
 # recovery archive for inspection, including files outside the managed manifest.
+function Test-CompleteProductImage([string]$Path) {
+    if(-not [IO.File]::Exists($Path)){return $false}
+    $stream=[IO.File]::Open($Path,'Open','Read',[IO.FileShare]::Read)
+    $reader=[IO.BinaryReader]::new($stream)
+    try {
+        if($stream.Length -lt 64 -or $reader.ReadUInt16() -ne 0x5a4d){return $false}
+        $stream.Position=60
+        $offset=$reader.ReadInt32()
+        if($offset -lt 64 -or [long]$offset+24 -gt $stream.Length){return $false}
+        $stream.Position=$offset
+        if($reader.ReadUInt32() -ne 0x4550){return $false}
+        [void]$reader.ReadUInt16()
+        $sections=$reader.ReadUInt16()
+        $stream.Position=[long]$offset+20
+        $optionalBytes=$reader.ReadUInt16()
+        $stream.Position=[long]$offset+24
+        if($optionalBytes -lt 2 -or $sections -lt 1 -or $sections -gt 96 -or
+            $stream.Position+$optionalBytes+40*$sections -gt $stream.Length -or
+            $reader.ReadUInt16() -notin 0x10b,0x20b){return $false}
+        $table=[long]$offset+24+$optionalBytes
+        for($index=0;$index -lt $sections;$index++){
+            $stream.Position=$table+40*$index+16
+            $bytes=$reader.ReadUInt32()
+            $start=$reader.ReadUInt32()
+            if($bytes -gt 0 -and ($start -eq 0 -or [long]$start+$bytes -gt $stream.Length)){return $false}
+        }
+        return $true
+    }finally{$reader.Dispose()}
+}
+function Repair-CandidateProductLink($Context) {
+    $output=$Context.output
+    $exe=Resolve-CandidatePath $output 'Release/SnowDesktop.exe'
+    if(Test-CompleteProductImage $exe){return}
+    $tracker=Resolve-CandidatePath $output 'SnowDesktop.dir/Release/SnowDesktop.tlog'
+    $logs=@()
+    if([IO.Directory]::Exists($tracker)){
+        $logs=@([IO.Directory]::EnumerateFiles($tracker,'link.*.tlog')|ForEach-Object {
+            Resolve-CandidatePath $tracker ([IO.Path]::GetFileName($_))
+        })
+    }
+    $files=@($logs)
+    if([IO.File]::Exists($exe)){$files+=@($exe)}
+    if(-not $files.Count){return}
+    $archive=Resolve-CandidatePath $output ('collaboration/link-recovery/'+$Context.runId+'-'+[Guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($archive)
+    foreach($file in $files){[IO.File]::Move($file,(Resolve-CandidatePath $archive ([IO.Path]::GetFileName($file))))}
+    Write-Host "Archived incomplete SnowDesktop Release link state at $archive. Existing compiler objects were retained."
+}
 function Assert-CandidateRecoveryLease($Snapshot,$Lease) {
     $store=Get-CandidateStore $Snapshot.manifest.sourceRoot
     if($store.root -ne $Snapshot.store.root -or $store.commonGitDirectory -ne $Snapshot.store.commonGitDirectory){throw 'Recovery snapshot store changed.'}
@@ -69,7 +117,7 @@ function Repair-CandidateWorkspace($Snapshot,$Lease,[scriptblock]$CheckCancellat
     if($snapshot.path -ne $expectedPath -or $snapshot.digest -ne $expectedDigest){throw 'Recovery snapshot identity changed.'}
     $manifest=$snapshot.manifest
     $actual=Get-CandidateContext $manifest.files $manifest.context.binding.configuration $(if(Get-Field $manifest.context.binding 'checkoutRoot'){$manifest.sourceRoot}else{''})
-    if($actual.digest -ne $manifest.context.digest){throw 'Recovery tools/environment changed; capture a new snapshot.'}
+    if($actual.digest -ne $manifest.context.digest){throw (Get-CandidateContextMismatch $manifest.context $actual)}
     if(-not [IO.Directory]::Exists($Lease.output)){throw 'Recovery requires the existing compiler output directory.'}
     $opened=[Collections.Generic.List[object]]::new()
     $archive=$null;$journal=$null;$receipt=$null

@@ -3,6 +3,11 @@
 #include "common/utils.h"
 #include "diagnostics/crashlog.h"
 #include "widget/runtime/widget_item_layout.h"
+#include "app/layout/grid_geometry.h"
+#include "app/navigation/quick_navigation_state.h"
+#include <algorithm>
+#include <cstdlib>
+#include <tuple>
 
 // Keyboard drag hints, Shell verbs and desktop-grid navigation.
 
@@ -36,12 +41,7 @@ void DesktopApp::RefreshDragHintFromKeyboard()
     }
 
     std::wstring hint = GetDockDragOutRemovalHint(dragSession_.CurrentPoint());
-    if (hint.empty() && dragSession_.TargetContainer() &&
-        dragSession_.TargetRegion() != HitRegion::None)
-    {
-        hint = dragSession_.TargetContainer()->GetDragHint(dragSession_.TargetSlot(),
-            dragSession_.TargetRegion(), dragSession_.Items(), dragSession_.Source(), mods);
-    }
+    if (hint.empty()) hint = GetCurrentDragTargetHint(mods);
 
     if (dragDropController_.IsTransportActive())
     {
@@ -88,275 +88,326 @@ void DesktopApp::InvokeSelectedShellVerb(const char* verb)
         ReloadItems();
 }
 
-/**
- * @brief 在桌面网格上按 2D 空间导航选中项
- * @param arrowKey 方向键虚拟键码
- *
- * 收集当前可见页面上所有可导航目标（桌面图标 + 组件），
- * 按 gridCell 的 column/row 进行上下左右空间移动。
- * 没有任何选中时，从首列首行开始纵向搜索第一个目标。
- */
+namespace
+{
+enum class DesktopDirectionSurface { File, Widget, Dock, StatusBar };
+struct DesktopDirectionTarget
+{
+    DesktopDirectionSurface surface;
+    size_t index;
+    RECT bounds; // Screen coordinates across all monitors.
+    bool focused;
+};
+
+using DirectionRank = std::tuple<bool, long long, long long, long long>;
+
+std::optional<DirectionRank> RankInDirection(RECT from, RECT to, WPARAM key)
+{
+    const bool horizontal = key == VK_LEFT || key == VK_RIGHT;
+    const bool forward = key == VK_RIGHT || key == VK_DOWN;
+    if (!horizontal && key != VK_UP && key != VK_DOWN)
+        return std::nullopt;
+
+    if (!horizontal)
+    {
+        from = {from.top, from.left, from.bottom, from.right};
+        to = {to.top, to.left, to.bottom, to.right};
+    }
+    const long long primary = forward
+        ? static_cast<long long>(to.left) + to.right - from.left - from.right
+        : static_cast<long long>(from.left) + from.right - to.left - to.right;
+    if (primary <= 0) return std::nullopt;
+
+    const bool projects = from.top < to.bottom && to.top < from.bottom;
+    const long long secondary = std::abs(static_cast<long long>(to.top) + to.bottom - from.top - from.bottom);
+    return DirectionRank{!projects, projects ? primary : primary + 2 * secondary, primary, secondary};
+}
+
+bool IsDesktopGridTarget(const DesktopDirectionTarget& target)
+{
+    return target.surface == DesktopDirectionSurface::File ||
+        target.surface == DesktopDirectionSurface::Widget;
+}
+}
+
 void DesktopApp::NavigateDesktopGrid(WPARAM arrowKey)
 {
-    if (items_.empty() && widgets_.empty()) return;
-
-    // 构建当前可见页面 ID 集合
-    std::unordered_set<std::wstring> visiblePageIds;
-    for (const auto& gp : gridPages_)
-        if (!gp.id.empty())
-            visiblePageIds.insert(gp.id);
-    const bool hasVisiblePages = !visiblePageIds.empty();
-
-    struct Target { bool isWidget; size_t index; int column; int row; int colSpan; int rowSpan; std::wstring pageId; };
-    std::vector<Target> targets;
-
-    // 收集未收纳的桌面项（有名称、有边界、在可见页面上）
-    for (size_t i = 0; i < items_.size(); ++i)
-    {
-        const auto& item = items_[i];
-        if (item.name.empty()) continue;
-        if (desktopIconsHidden_ && !IsRetainedLargeIcon(item)) continue;
-        if (IsRectEmptyRect(item.bounds)) continue;
-        if (collectedKeysCache_.contains(ToUpperInvariant(item.layoutKey))) continue;
-        if (hasVisiblePages && !visiblePageIds.contains(item.gridCell.pageId)) continue;
-        targets.push_back({ false, i,
-            item.gridCell.column, item.gridCell.row,
-            item.gridSpan.columns, item.gridSpan.rows,
-            item.gridCell.pageId });
-    }
-
-    // 收集当前可见页面上的组件
-    for (size_t i = 0; i < widgets_.size(); ++i)
-    {
-        const auto& w = widgets_[i];
-        if (IsGroupedWidget(w)) continue;
-        if (desktopIconsHidden_ && !w.keepWhenDesktopHidden) continue;
-        if (hasVisiblePages && !visiblePageIds.contains(w.gridCell.pageId)) continue;
-        targets.push_back({ true, i,
-            w.gridCell.column, w.gridCell.row,
-            w.gridSpan.columns, w.gridSpan.rows,
-            w.gridCell.pageId });
-    }
-
-    if (targets.empty()) return;
-
-    // 按列、行排序（纵向搜索：逐列从上到下）
-    std::sort(targets.begin(), targets.end(), [](const Target& a, const Target& b) {
-        if (a.column != b.column) return a.column < b.column;
-        return a.row < b.row;
-    });
-
-    // 查找当前选中目标
-    int currentIndex = -1;
-    for (size_t i = 0; i < targets.size(); ++i)
-    {
-        const auto& t = targets[i];
-        if (t.isWidget ? widgets_[t.index].selected : items_[t.index].selected)
+    if (desktopPassthroughActive_) return;
+    const bool horizontal = arrowKey == VK_LEFT || arrowKey == VK_RIGHT;
+    const auto screenBounds = [this](RECT bounds) {
+        OffsetRect(&bounds, virtualLeft_, virtualTop_);
+        return bounds;
+    };
+    const auto fileAvailable = [this](const DesktopItem& item) {
+        return !item.name.empty() && (!desktopIconsHidden_ || IsRetainedLargeIcon(item)) &&
+            !IsDockExclusiveItemKey(item.layoutKey) &&
+            !collectedKeysCache_.contains(ToUpperInvariant(item.layoutKey)) &&
+            !IsPendingMovedFile(item.parsingName, item.layoutKey);
+    };
+    const auto widgetAvailable = [this](const DesktopWidget& widget) {
+        return !IsGroupedWidget(widget) && !IsDockExclusiveWidgetId(widget.id) &&
+            (!desktopIconsHidden_ || widget.keepWhenDesktopHidden);
+    };
+    const auto gridTargets = [&] {
+        std::vector<DesktopDirectionTarget> targets;
+        for (size_t i = 0; i < items_.size(); ++i)
         {
-            currentIndex = static_cast<int>(i);
-            break;
+            const auto& item = items_[i];
+            if (!fileAvailable(item) || IsRectEmpty(&item.bounds) ||
+                (!gridPages_.empty() && !FindGridPage(gridPages_, item.gridCell.pageId))) continue;
+            const RECT bounds = item.largeIcon ? GetLargeIconFrameRect(item) : item.bounds;
+            targets.push_back({DesktopDirectionSurface::File, i, screenBounds(bounds), item.selected});
         }
-    }
-
-    if (currentIndex < 0)
-    {
-        // 无选中：选中鼠标所在页的第一个目标，不执行方向移动
-        ClearSelection();
-        // 确定鼠标所在的可见页面
-        std::wstring mousePageId;
+        for (size_t i = 0; i < widgets_.size(); ++i)
         {
-            POINT screenPt{};
-            snowdesktop::private_pointer::CursorPosition(&screenPt);
-            for (const auto& gp : gridPages_)
-            {
-                if (!gp.id.empty() && PtInRect(&gp.workArea, screenPt))
-                {
-                    mousePageId = gp.id;
-                    break;
-                }
-            }
+            const auto& widget = widgets_[i];
+            if (!widgetAvailable(widget) || IsRectEmpty(&widget.bounds) ||
+                (!gridPages_.empty() && !FindGridPage(gridPages_, widget.gridCell.pageId))) continue;
+            const RECT bounds = GetStandaloneWidgetFrameRect(widget);
+            if (!IsRectEmpty(&bounds))
+                targets.push_back({DesktopDirectionSurface::Widget, i, screenBounds(bounds), widget.selected});
         }
-        // 在目标列表中找该页的第一个
-        size_t firstIdx = 0;
-        if (!mousePageId.empty())
-        {
-            bool foundOnPage = false;
-            for (size_t i = 0; i < targets.size(); ++i)
-            {
-                if (targets[i].pageId == mousePageId)
-                {
-                    firstIdx = i;
-                    foundOnPage = true;
-                    break;
-                }
-            }
-            if (!foundOnPage)
-                firstIdx = 0;   // 该页无目标，回退到首个
-        }
-        const auto& first = targets[firstIdx];
-        if (first.isWidget)
-            widgets_[first.index].selected = true;
-        else
-            items_[first.index].selected = true;
-        InvalidateRect(hwnd_, nullptr, FALSE);
-        return;
-    }
-
-    const Target& current = targets[static_cast<size_t>(currentIndex)];
-    int nextIndex = -1;
-
-    // 辅助：两个区间 [a, a+lenA) 与 [b, b+lenB) 是否相交
-    auto spansOverlap = [](int a, int lenA, int b, int lenB) {
-        return a < b + lenB && b < a + lenA;
+        return targets;
     };
 
-    switch (arrowKey)
+    auto targets = gridTargets();
+    struct DockTarget { DockContainer* dock; DockContainer::KeyboardTarget target; };
+    std::vector<DockTarget> dockTargets;
+    const bool verticalDock = dockSettings_.position == DockPosition::Left ||
+        dockSettings_.position == DockPosition::Right;
+    for (const auto& container : containers_)
     {
-    case VK_UP:
-    {
-        int bestRow = -1;
-        int bestIdx = -1;
-        for (size_t i = 0; i < targets.size(); ++i)
+        auto* dock = dynamic_cast<DockContainer*>(container.get());
+        if (!dock) continue;
+        for (auto& target : dock->KeyboardTargets(horizontal != verticalDock))
         {
-            if (static_cast<int>(i) == currentIndex) continue;
-            const auto& t = targets[i];
-            if (t.pageId == current.pageId &&
-                spansOverlap(current.column, current.colSpan, t.column, t.colSpan) &&
-                t.row < current.row && t.row > bestRow)
-            {
-                bestRow = t.row;
-                bestIdx = static_cast<int>(i);
-            }
+            targets.push_back({DesktopDirectionSurface::Dock, dockTargets.size(),
+                screenBounds(target.bounds), target.focused});
+            dockTargets.push_back({dock, std::move(target)});
         }
-        nextIndex = bestIdx;
-        break;
     }
-    case VK_DOWN:
+
+    const auto barTargets = statusBar_
+        ? statusBar_->KeyboardTargets(horizontal) : std::vector<snowdesktop::StatusBarKeyboardTarget>{};
+    for (size_t i = 0; i < barTargets.size(); ++i)
+        targets.push_back({DesktopDirectionSurface::StatusBar, i, barTargets[i].bounds, barTargets[i].focused});
+
+    const auto focus = [&](const DesktopDirectionTarget& target) {
+        ClearSelection();
+        switch (target.surface)
+        {
+        case DesktopDirectionSurface::File:
+            items_[target.index].selected = true;
+            break;
+        case DesktopDirectionSurface::Widget:
+            widgets_[target.index].selected = true;
+            keyboardNavVisualFocus_ = true;
+            break;
+        case DesktopDirectionSurface::Dock:
+        {
+            const auto& destination = dockTargets[target.index];
+            destination.dock->SetKeyboardFocus(destination.target);
+            if (auto* host = FindPersistentDockHost(destination.dock))
+                InvalidateFloatingDockWindow(*host);
+            break;
+        }
+        case DesktopDirectionSurface::StatusBar:
+            if (statusBar_) statusBar_->FocusFromDesktop(barTargets[target.index]);
+            break;
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    };
+
+    const auto nextPage = [&](const std::wstring& sourcePage, RECT origin) {
+        if (!horizontal || sourcePage.empty() || sourcePage != lastMonitorPageId_ || gridPages_.empty())
+            return false;
+        const int delta = arrowKey == VK_RIGHT ? 1 : -1;
+        int offset = pageOffset_;
+        for (;;)
+        {
+            const int adjacent = NextNonEmptyOffset(offset, delta);
+            if (adjacent == offset) return false;
+            offset = adjacent;
+            const size_t pageIndex = gridPages_.size() - 1 + static_cast<size_t>(offset);
+            if (pageIndex >= savedPageIds_.size()) return false;
+            const auto& page = savedPageIds_[pageIndex];
+            const bool hasFile = std::any_of(items_.begin(), items_.end(), [&](const auto& item) {
+                return item.gridCell.pageId == page && fileAvailable(item);
+            });
+            const bool hasWidget = std::any_of(widgets_.begin(), widgets_.end(), [&](const auto& widget) {
+                return widget.gridCell.pageId == page && widgetAvailable(widget);
+            });
+            if (hasFile || hasWidget) break;
+        }
+
+        ClearSelection();
+        JumpToPageOffset(offset);
+        const auto* page = FindGridPage(gridPages_, lastMonitorPageId_);
+        if (!page) return true;
+        const LONG edge = arrowKey == VK_RIGHT ? page->workArea.left : page->workArea.right;
+        origin.left = edge - 1;
+        origin.right = edge + 1;
+        const auto candidates = gridTargets();
+        const DesktopDirectionTarget* best = nullptr;
+        std::optional<DirectionRank> bestRank;
+        for (const auto& candidate : candidates)
+        {
+            const auto& candidatePage = candidate.surface == DesktopDirectionSurface::File
+                ? items_[candidate.index].gridCell.pageId : widgets_[candidate.index].gridCell.pageId;
+            if (candidatePage != page->id) continue;
+            const auto rank = RankInDirection(origin, candidate.bounds, arrowKey);
+            if (rank && (!bestRank || *rank < *bestRank))
+            {
+                best = &candidate;
+                bestRank = rank;
+            }
+        }
+        if (best) focus(*best);
+        return true;
+    };
+
+    const auto current = std::find_if(targets.begin(), targets.end(), [](const auto& target) {
+        return target.focused;
+    });
+    if (current == targets.end())
     {
-        int bestRow = -1;
-        int bestIdx = -1;
-        for (size_t i = 0; i < targets.size(); ++i)
+        POINT cursor{};
+        snowdesktop::private_pointer::CursorPosition(&cursor);
+        const HMONITOR monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
+        const auto initialRank = [&](const DesktopDirectionTarget& target) {
+            const bool otherMonitor = MonitorFromRect(&target.bounds, MONITOR_DEFAULTTONEAREST) != monitor;
+            return std::tuple{otherMonitor, !IsDesktopGridTarget(target), target.bounds.left, target.bounds.top};
+        };
+        const auto first = std::min_element(targets.begin(), targets.end(), [&](const auto& a, const auto& b) {
+            return initialRank(a) < initialRank(b);
+        });
+        if (first == targets.end() || std::get<0>(initialRank(*first)) || !IsDesktopGridTarget(*first))
         {
-            if (static_cast<int>(i) == currentIndex) continue;
-            const auto& t = targets[i];
-            if (t.pageId == current.pageId &&
-                spansOverlap(current.column, current.colSpan, t.column, t.colSpan) &&
-                t.row > current.row)
-            {
-                if (bestRow < 0 || t.row < bestRow)
-                {
-                    bestRow = t.row;
-                    bestIdx = static_cast<int>(i);
-                }
-            }
+            const auto* flipPage = FindGridPage(gridPages_, lastMonitorPageId_);
+            if (flipPage && MonitorFromRect(&flipPage->bounds, MONITOR_DEFAULTTONEAREST) == monitor &&
+                nextPage(flipPage->id, RECT{cursor.x, cursor.y, cursor.x + 1, cursor.y + 1}))
+                return;
         }
-        nextIndex = bestIdx;
-        break;
-    }
-    case VK_LEFT:
-    {
-        int bestCol = -1;
-        int bestIdx = -1;
-        for (size_t i = 0; i < targets.size(); ++i)
-        {
-            if (static_cast<int>(i) == currentIndex) continue;
-            const auto& t = targets[i];
-            if (t.pageId == current.pageId &&
-                spansOverlap(current.row, current.rowSpan, t.row, t.rowSpan) &&
-                t.column < current.column && t.column > bestCol)
-            {
-                bestCol = t.column;
-                bestIdx = static_cast<int>(i);
-            }
-        }
-        if (bestIdx < 0)
-        {
-            int bestRow = -1;
-            for (size_t i = 0; i < targets.size(); ++i)
-            {
-                const auto& t = targets[i];
-                if (t.pageId == current.pageId && t.row < current.row && t.row > bestRow)
-                    bestRow = t.row;
-            }
-            if (bestRow >= 0)
-            {
-                bestCol = -1;
-                for (size_t i = 0; i < targets.size(); ++i)
-                {
-                    const auto& t = targets[i];
-                    if (t.pageId == current.pageId && t.row == bestRow &&
-                        (bestCol < 0 || t.column > bestCol))
-                    {
-                        bestCol = t.column;
-                        bestIdx = static_cast<int>(i);
-                    }
-                }
-            }
-        }
-        nextIndex = bestIdx;
-        break;
-    }
-    case VK_RIGHT:
-    {
-        int bestCol = -1;
-        int bestIdx = -1;
-        for (size_t i = 0; i < targets.size(); ++i)
-        {
-            if (static_cast<int>(i) == currentIndex) continue;
-            const auto& t = targets[i];
-            if (t.pageId == current.pageId &&
-                spansOverlap(current.row, current.rowSpan, t.row, t.rowSpan) &&
-                t.column > current.column)
-            {
-                if (bestCol < 0 || t.column < bestCol)
-                {
-                    bestCol = t.column;
-                    bestIdx = static_cast<int>(i);
-                }
-            }
-        }
-        if (bestIdx < 0)
-        {
-            int bestRow = -1;
-            for (size_t i = 0; i < targets.size(); ++i)
-            {
-                const auto& t = targets[i];
-                if (t.pageId == current.pageId &&
-                    t.row > current.row && (bestRow < 0 || t.row < bestRow))
-                    bestRow = t.row;
-            }
-            if (bestRow >= 0)
-            {
-                bestCol = -1;
-                for (size_t i = 0; i < targets.size(); ++i)
-                {
-                    const auto& t = targets[i];
-                    if (t.pageId == current.pageId && t.row == bestRow &&
-                        (bestCol < 0 || t.column < bestCol))
-                    {
-                        bestCol = t.column;
-                        bestIdx = static_cast<int>(i);
-                    }
-                }
-            }
-        }
-        nextIndex = bestIdx;
-        break;
-    }
-    default:
+        if (first != targets.end()) focus(*first);
         return;
     }
 
-    if (nextIndex < 0) return;   // 该方向无有效目标
+    const DesktopDirectionTarget* best = nullptr;
+    std::optional<DirectionRank> bestRank;
+    for (const auto& candidate : targets)
+    {
+        if (&candidate == &*current) continue;
+        const auto rank = RankInDirection(current->bounds, candidate.bounds, arrowKey);
+        if (rank && (!bestRank || *rank < *bestRank))
+        {
+            best = &candidate;
+            bestRank = rank;
+        }
+    }
+    if ((!bestRank || std::get<0>(*bestRank)) && IsDesktopGridTarget(*current))
+    {
+        const auto& sourcePage = current->surface == DesktopDirectionSurface::File
+            ? items_[current->index].gridCell.pageId : widgets_[current->index].gridCell.pageId;
+        if (nextPage(sourcePage, current->bounds)) return;
+    }
+    if (best) focus(*best);
+}
 
-    ClearSelection();
-    const auto& next = targets[static_cast<size_t>(nextIndex)];
-    if (next.isWidget)
-        widgets_[next.index].selected = true;
-    else
-        items_[next.index].selected = true;
+bool DesktopApp::ClearDesktopSurfaceKeyboardFocus()
+{
+    bool changed = statusBar_ && statusBar_->ClearDesktopKeyboardFocus();
+    for (const auto& container : containers_)
+    {
+        auto* dock = dynamic_cast<DockContainer*>(container.get());
+        if (!dock || !dock->ClearKeyboardFocus()) continue;
+        if (auto* host = FindPersistentDockHost(dock); host && IsDockHostedByPersistentHost(dock))
+            InvalidateFloatingDockWindow(*host);
+        else if (hwnd_)
+        {
+            const RECT bounds = dock->GetInteractiveBounds();
+            if (!IsRectEmpty(&bounds)) InvalidateRect(hwnd_, &bounds, FALSE);
+        }
+        changed = true;
+    }
+    return changed;
+}
 
-    InvalidateRect(hwnd_, nullptr, FALSE);
+bool DesktopApp::ActivateDesktopSurfaceKeyboardFocus(bool repeated)
+{
+    if (statusBar_ && statusBar_->InvokeDesktopKeyboardFocus(repeated)) return true;
+    for (const auto& container : containers_)
+    {
+        auto* dock = dynamic_cast<DockContainer*>(container.get());
+        if (!dock) continue;
+        const auto focused = dock->FocusedKeyboardTarget();
+        if (!focused) continue;
+        if (repeated) return true;
+
+        RECT anchor = dock->GetElementVisualRect(focused->bounds, lastMousePoint_);
+        const POINT point{(anchor.left + anchor.right) / 2, (anchor.top + anchor.bottom) / 2};
+        OffsetRect(&anchor, virtualLeft_, virtualTop_);
+        const auto restore = [this, monitor = dock->GetMonitor(), key = focused->key] {
+            if (exitRequested_ || desktopPassthroughActive_) return;
+            for (const auto& candidate : containers_)
+            {
+                auto* source = dynamic_cast<DockContainer*>(candidate.get());
+                if (!source || source->GetMonitor() != monitor) continue;
+                const auto targets = source->KeyboardTargets();
+                const auto match = std::find_if(targets.begin(), targets.end(), [&](const auto& target) {
+                    return target.key == key;
+                });
+                if (match == targets.end()) continue;
+                ClearSelection();
+                source->SetKeyboardFocus(*match);
+                if (auto* host = FindPersistentDockHost(source)) InvalidateFloatingDockWindow(*host);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                RestoreInteractionInputFocus();
+                return;
+            }
+        };
+        if (auto* host = FindPersistentDockHost(dock)) SelectPersistentDockHost(host);
+        using Kind = DockContainer::KeyboardTarget::Kind;
+        switch (focused->kind)
+        {
+        case Kind::Start:
+            ToggleWindowsStartMenu(dock);
+            break;
+        case Kind::Search:
+            OpenQuickNavigation(QuickNavigationInvocationSource::DockSearch,
+                POINT{point.x + virtualLeft_, point.y + virtualTop_});
+            if (quickNavigation_->open) quickNavigation_->keyboardFocusReturn = restore;
+            break;
+        case Kind::Running:
+            if (focused->index < dockUnpinnedRunningApps_.size())
+                ActivateOrToggleDockWindow(dockUnpinnedRunningApps_[focused->index].window,
+                    std::nullopt, nullptr, anchor);
+            break;
+        case Kind::Frequent:
+            ActivateOrToggleDockItem(focused->index, std::nullopt, nullptr, anchor);
+            break;
+        case Kind::Entry:
+            if (focused->index < dockEntries_.size())
+            {
+                const auto& entry = dockEntries_[focused->index];
+                if (IsLogicalDockEntryType(entry.type))
+                {
+                    const size_t index = FindWidgetIndexById(entry.reference);
+                    if (index < widgets_.size()) OpenCollectionPopupAt(index, point);
+                }
+                else if (IsFolderDockEntry(entry))
+                    OpenDockFolderPopupAt(focused->index, point);
+                else
+                {
+                    const size_t index = FindItemIndexByKey(entry.reference);
+                    if (index < items_.size()) ActivateOrToggleDockItem(index, std::nullopt, nullptr, anchor);
+                }
+            }
+            break;
+        }
+        if (IsCollectionPopupInteractive()) collectionPopupKeyboardReturn_ = restore;
+        return true;
+    }
+    return false;
 }
 
 /**
@@ -1417,7 +1468,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     // 确保选中的成员项可见
     ScrollWidgetToMember(keyboardNavWidgetIndex_, nextIdx);
 
-    // Collection 大文件夹模式：超界自动弹窗 / 退回内联区域自动关闭
+    // Collection 大文件夹模式：超出外露区域时进入弹窗。
     if (widget.type == DesktopWidgetType::Collection && !widget.scrollContainerMode)
     {
         int cols = std::max(1, widget.gridSpan.columns);
@@ -1464,15 +1515,9 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
                     popupAnchor);
             }
         }
-        else if (popupWidgetIndex_ == keyboardNavWidgetIndex_ &&
-            (cols > 1 || rows > 1))   // 紧凑模式保持弹窗常开
-        {
-            // 退回内联区域时保留刚导航选中的成员项，但仍播放关闭动画。
-            CloseCollectionPopup(false);
-        }
     }
 
-    // 弹窗滚动跟随（若弹窗仍打开）
+    // 弹窗滚动跟随键盘选中的项目。
     if (popupWidgetIndex_ == keyboardNavWidgetIndex_ &&
         popupWidgetIndex_ < widgets_.size() && !GetGroupPopupView())
     {

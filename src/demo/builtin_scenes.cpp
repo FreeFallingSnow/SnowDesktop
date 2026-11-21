@@ -41,12 +41,16 @@ control::Value Describe()
         {"atMs":6400,"action":"cursor.move","durationMs":650,"x":960,"y":990}]})", scene);
     (void)ParseScene(scene);
     auto kinds = Array(), actions = Array();
-    for (const auto* kind : {"collection", "files", "mapping", "popup", "dock", "status-bar", "navigation"}) kinds.array.push_back(String(kind));
-    for (const auto* action : {"cursor.move", "cursor.down", "cursor.up", "surface.show", "surface.hide", "surface.move", "surface.resize", "surface.view", "surface.search", "surface.category"}) actions.array.push_back(String(action));
+    for (const auto* kind : {"collection", "files", "mapping", "popup", "dock", "status-bar", "navigation", "collection-group", "file-group"}) kinds.array.push_back(String(kind));
+    for (const auto* action : {"cursor.move", "cursor.down", "cursor.up", "surface.show", "surface.hide", "surface.move", "surface.resize",
+            "surface.view", "surface.search", "surface.category", "surface.folderPreview"}) actions.array.push_back(String(action));
     return Object({{"sceneSchemaVersion", Number(SceneSchemaVersion)}, {"example", std::move(scene)},
         {"surfaceKinds", std::move(kinds)}, {"actions", std::move(actions)},
         {"maximumDurationMs", Number(30000)}, {"maximumSurfaces", Number(12)}, {"maximumItems", Number(128)},
         {"maximumSteps", Number(256)}, {"maximumPixelFrames", Number(4000000000.0)},
+        {"folderPreview", Object({{"surfaceKinds", String("files, mapping, file-group")},
+            {"value", String("breadcrumb path for surface.folderPreview; empty returns to the fixture home")},
+            {"popupOptions", String("dockAnchored, fanPopup")}})},
         {"elementTargets", Object({{"surfaceKinds", String("collection, files, mapping")},
             {"keys", String("view, search, open, date-headers, category/<id>, header/<column>, divider/<column>, collapse, move, resize")},
             {"resolution", String("native hit-tested visible control center at cursor arrival time; unavailable controls fail the export")}})},

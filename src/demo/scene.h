@@ -3,6 +3,7 @@
 #include "platform/control/control_protocol.h"
 #include "ui/render/demo_cursor.h"
 #include <windows.h>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -18,10 +19,13 @@ struct Item
 struct Surface
 {
     std::string id, kind, title, search, category = "all";
+    std::string folderPreviewPath;
+    std::optional<std::string> folderPreviewSearch;
     RECT bounds{};
     std::vector<std::string> items, children;
     bool visible = true, listMode = false, showSearch = true, showCategories = true;
     bool scrollContainer = true, popup = false;
+    bool dockAnchored = false, fanPopup = false;
 };
 struct Step
 {

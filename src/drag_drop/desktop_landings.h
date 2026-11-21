@@ -21,7 +21,7 @@ struct Services
 inline std::vector<DropLanding> Build(const DragSourceList& sourceList, GridCell targetCell, bool internalMove,
     const GridPage& requestedPage, const std::vector<DesktopWidget>& widgets_, const std::vector<DesktopItem>& items_,
     const std::unordered_map<std::wstring, int>& savedPageColumns_, const std::unordered_map<std::wstring, int>& savedPageRows_,
-    const Services& services)
+    const Services& services, const std::vector<PendingLandingCache>& pending = {})
 {
     std::vector<DropLanding> landings;
     const auto* page = &requestedPage;
@@ -59,6 +59,16 @@ inline std::vector<DropLanding> Build(const DragSourceList& sourceList, GridCell
             sourceKeys.insert(services.normalize(entry.desktopKey));
 
     std::unordered_set<std::wstring> usedSlots;
+    for (const auto& request : pending)
+    {
+        if (!request.visualId || request.dockMonitor) continue;
+        for (const auto& entry : request.entries)
+        {
+            if (entry.kind != DropLandingKind::DesktopCell) continue;
+            grid_occupancy::Mark(usedSlots, entry.cell, entry.span);
+            if (entry.plannedPageSize) reservedIds.push_back(entry.cell.pageId);
+        }
+    }
     for (const auto& w : widgets_)
         if (!services.grouped(w))
             grid_occupancy::Mark(usedSlots, w.gridCell, w.gridSpan);

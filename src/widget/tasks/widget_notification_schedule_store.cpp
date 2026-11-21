@@ -1,6 +1,7 @@
 #include "widget_notification_schedule_store.h"
 
 #include "common/json_value.h"
+#include "common/utf8.h"
 
 #include <algorithm>
 #include <cmath>
@@ -16,56 +17,10 @@ namespace
 constexpr int SchemaVersion = 2;
 constexpr double MaximumDueMs = 32503680000000.0; // 3000-01-01 UTC
 
-bool IsValidUtf8(std::string_view value)
+bool IsValidScheduleText(std::string_view value)
 {
-    for (std::size_t index = 0; index < value.size();)
-    {
-        const unsigned char first =
-            static_cast<unsigned char>(value[index]);
-        if (first <= 0x7F)
-        {
-            if (first == 0) return false;
-            ++index;
-            continue;
-        }
-        std::size_t count = 0;
-        unsigned codePoint = 0;
-        if ((first & 0xE0) == 0xC0)
-        {
-            count = 2;
-            codePoint = first & 0x1F;
-            if (codePoint < 2) return false;
-        }
-        else if ((first & 0xF0) == 0xE0)
-        {
-            count = 3;
-            codePoint = first & 0x0F;
-        }
-        else if ((first & 0xF8) == 0xF0)
-        {
-            count = 4;
-            codePoint = first & 0x07;
-        }
-        else
-        {
-            return false;
-        }
-        if (index + count > value.size()) return false;
-        for (std::size_t offset = 1; offset < count; ++offset)
-        {
-            const unsigned char next =
-                static_cast<unsigned char>(value[index + offset]);
-            if ((next & 0xC0) != 0x80) return false;
-            codePoint = (codePoint << 6) | (next & 0x3F);
-        }
-        if ((count == 3 && codePoint < 0x800) ||
-            (count == 4 && codePoint < 0x10000) ||
-            codePoint > 0x10FFFF ||
-            (codePoint >= 0xD800 && codePoint <= 0xDFFF))
-            return false;
-        index += count;
-    }
-    return true;
+    return value.find('\0') == std::string_view::npos &&
+        snowdesktop::utf8::IsValid(value);
 }
 
 std::string EscapeJson(std::string_view value)
@@ -128,13 +83,12 @@ bool WidgetNotificationScheduleStore::Validate(
         error = "notification schedule fields are out of range";
         return false;
     }
-    if (!IsValidUtf8(entry.instanceId) ||
-        !IsValidUtf8(entry.packageId) ||
-        !IsValidUtf8(entry.notificationId) ||
-        !IsValidUtf8(entry.title) ||
-        !IsValidUtf8(entry.message) ||
-        (!entry.imageResource.empty() &&
-            !IsValidUtf8(entry.imageResource)))
+    if (!IsValidScheduleText(entry.instanceId) ||
+        !IsValidScheduleText(entry.packageId) ||
+        !IsValidScheduleText(entry.notificationId) ||
+        !IsValidScheduleText(entry.title) ||
+        !IsValidScheduleText(entry.message) ||
+        !IsValidScheduleText(entry.imageResource))
     {
         error = "notification schedule text is not valid UTF-8";
         return false;
@@ -144,7 +98,8 @@ bool WidgetNotificationScheduleStore::Validate(
     {
         if (action.id.empty() || action.id.size() > 64 ||
             action.label.empty() || action.label.size() > 64 ||
-            !IsValidUtf8(action.id) || !IsValidUtf8(action.label) ||
+            !IsValidScheduleText(action.id) ||
+            !IsValidScheduleText(action.label) ||
             !actionIds.insert(action.id).second)
         {
             error = "notification schedule actions are invalid";

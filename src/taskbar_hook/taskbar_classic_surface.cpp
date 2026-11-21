@@ -1,13 +1,84 @@
 #include "taskbar_classic_surface.h"
 #include "taskbar_classic_appearance.h"
 #include "taskbar_material_render.h"
+#include <d2d1_1.h>
+#include <d2d1_1helper.h>
 #include <d3d11.h>
+#include <wrl/client.h>
+#include <DispatcherQueue.h>
+#include <windows.ui.composition.interop.h>
+#pragma push_macro("GetCurrentTime")
+#undef GetCurrentTime
+#include <winrt/Windows.UI.Composition.Core.h>
+#include <winrt/Windows.UI.Composition.Desktop.h>
+#include <winrt/Windows.System.h>
+#include "ui/render/backdrop_srgb_effect.h"
+#pragma pop_macro("GetCurrentTime")
 #include <dwmapi.h>
 #include <dxgi.h>
 
 namespace snowdesktop::taskbar_hook::native
 {
 using Microsoft::WRL::ComPtr;
+namespace wc = winrt::Windows::UI::Composition;
+namespace ac = ABI::Windows::UI::Composition;
+namespace ws = winrt::Windows::System;
+namespace dx = winrt::Windows::Graphics::DirectX;
+
+struct ClassicSurface::Composition
+{
+    ws::DispatcherQueueController dispatcher{nullptr};
+    wc::Core::CompositorController controller{nullptr};
+    wc::Desktop::DesktopWindowTarget target{nullptr};
+    wc::SpriteVisual visual{nullptr};
+    wc::CompositionGraphicsDevice graphics{nullptr};
+    wc::CompositionEffectFactory factory{nullptr};
+
+    explicit Composition(HWND window)
+    {
+        if (!ws::DispatcherQueue::GetForCurrentThread())
+        {
+            const auto library = LoadLibraryW(L"CoreMessaging.dll");
+            if (!library) winrt::throw_last_error();
+            using CreateQueue = decltype(&CreateDispatcherQueueController);
+            const auto createQueue = reinterpret_cast<CreateQueue>(
+                GetProcAddress(library, "CreateDispatcherQueueController"));
+            const DispatcherQueueOptions options{sizeof(options), DQTYPE_THREAD_CURRENT, DQTAT_COM_NONE};
+            const auto result = createQueue ? createQueue(options,
+                reinterpret_cast<ABI::Windows::System::IDispatcherQueueController**>(
+                    winrt::put_abi(dispatcher))) : E_NOTIMPL;
+            FreeLibrary(library);
+            winrt::check_hresult(result);
+        }
+        controller = wc::Core::CompositorController();
+        const auto compositor = controller.Compositor();
+        const auto interop = compositor.as<ac::ICompositorInterop>();
+        winrt::check_hresult(compositor.as<ac::Desktop::ICompositorDesktopInterop>()->CreateDesktopWindowTarget(
+            window, FALSE, reinterpret_cast<ac::Desktop::IDesktopWindowTarget**>(winrt::put_abi(target))));
+
+        ComPtr<ID3D11Device> d3d;
+        auto result = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
+            &d3d, nullptr, nullptr);
+        if (FAILED(result))
+            result = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
+                &d3d, nullptr, nullptr);
+        winrt::check_hresult(result);
+        ComPtr<IDXGIDevice> dxgi;
+        winrt::check_hresult(d3d.As(&dxgi));
+        ComPtr<ID2D1Device> d2d;
+        winrt::check_hresult(D2D1CreateDevice(dxgi.Get(), nullptr, &d2d));
+        winrt::check_hresult(interop->CreateGraphicsDevice(d2d.Get(),
+            reinterpret_cast<ac::ICompositionGraphicsDevice**>(winrt::put_abi(graphics))));
+        factory = backdrop_srgb::CreateSceneFactory(compositor);
+        visual = compositor.CreateSpriteVisual();
+        target.Root(visual);
+    }
+};
+
+ClassicSurface::ClassicSurface() = default;
+ClassicSurface::~ClassicSurface() { Reset(); }
 
 namespace
 {
@@ -65,9 +136,7 @@ void ClassicSurface::Reset()
     if (window_ && GetPropW(window_, kClassicBackdropProperty) == backdrop_)
         RemovePropW(window_, kClassicBackdropProperty);
     if (backdrop_) ShowWindow(backdrop_, SW_HIDE);
-    if (target_) target_->SetRoot(nullptr);
-    if (device_) device_->Commit();
-    visual_.Reset(); target_.Reset(); device_.Reset(); factory_.Reset();
+    composition_.reset();
     if (backdrop_) DestroyWindow(backdrop_);
     backdrop_ = nullptr;
     window_ = nullptr;
@@ -110,7 +179,7 @@ HRESULT ClassicSurface::Synchronize(HWND window)
         bounds.right - bounds.left, bounds.bottom - bounds.top, flags) ? S_OK : E_FAIL;
 }
 
-HRESULT ClassicSurface::Draw(HWND window, const TargetAppearance& style)
+HRESULT ClassicSurface::Draw(HWND window, const TargetAppearance& style) try
 {
     const auto gradient = DecodeGradient(style.gradient);
     if (!NeedsClassicSurface(style))
@@ -123,7 +192,7 @@ HRESULT ClassicSurface::Draw(HWND window, const TargetAppearance& style)
     const LONG width = bounds.right - bounds.left, height = bounds.bottom - bounds.top;
     if (width <= 0 || height <= 0) return S_FALSE;
     HRESULT hr = S_OK;
-    if (!device_ || window_ != window)
+    if (!composition_ || window_ != window)
     {
         Reset();
         backdrop_ = CreateBackdrop();
@@ -132,40 +201,23 @@ HRESULT ClassicSurface::Draw(HWND window, const TargetAppearance& style)
         if (!SetLayeredWindowAttributes(backdrop_, 0, 255, LWA_ALPHA) ||
             !SetPropW(window, kClassicBackdropProperty, backdrop_))
         { Reset(); return E_FAIL; }
-        ComPtr<ID3D11Device> d3d;
-        hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
-            D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
-            &d3d, nullptr, nullptr);
-        if (FAILED(hr))
-            hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
-                &d3d, nullptr, nullptr);
-        ComPtr<IDXGIDevice> dxgi;
-        if (SUCCEEDED(hr)) hr = d3d.As(&dxgi);
-        if (SUCCEEDED(hr)) hr = DCompositionCreateDevice(dxgi.Get(), IID_PPV_ARGS(&device_));
-        if (SUCCEEDED(hr)) hr = device_->CreateTargetForHwnd(backdrop_, FALSE, &target_);
-        if (SUCCEEDED(hr)) hr = device_->CreateVisual(&visual_);
-        if (SUCCEEDED(hr)) hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory_.GetAddressOf());
-        if (FAILED(hr)) { Reset(); return hr; }
+        composition_ = std::make_unique<Composition>(backdrop_);
     }
 
     hr = ApplyBackdropMaterial(backdrop_, style);
     if (FAILED(hr)) { Reset(); return hr; }
 
-    ComPtr<IDCompositionSurface> surface;
-    hr = device_->CreateSurface(static_cast<UINT>(width), static_cast<UINT>(height),
-        DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &surface);
-    ComPtr<IDXGISurface> dxgiSurface;
+    auto& scene = *composition_;
+    const winrt::Windows::Foundation::Numerics::float2 size{static_cast<float>(width), static_cast<float>(height)};
+    const auto surface = scene.graphics.CreateDrawingSurface({size.x, size.y}, dx::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+        dx::DirectXAlphaMode::Premultiplied);
+    const auto drawing = surface.as<ac::ICompositionDrawingSurfaceInterop>();
+    ComPtr<ID2D1DeviceContext> render;
     POINT offset{};
-    if (SUCCEEDED(hr)) hr = surface->BeginDraw(nullptr, IID_PPV_ARGS(&dxgiSurface), &offset);
-    if (FAILED(hr)) return hr;
-    ComPtr<ID2D1RenderTarget> render;
-    auto properties = D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96);
-    hr = factory_->CreateDxgiSurfaceRenderTarget(dxgiSurface.Get(), &properties, &render);
-    if (SUCCEEDED(hr))
+    winrt::check_hresult(drawing->BeginDraw(nullptr, IID_PPV_ARGS(&render), &offset));
+    try
     {
-        render->BeginDraw();
+        render->SetDpi(96.f, 96.f);
         render->SetTransform(D2D1::Matrix3x2F::Translation(
             static_cast<float>(offset.x), static_cast<float>(offset.y)));
         const auto rectangle = D2D1::RectF(0, 0, static_cast<float>(width), static_cast<float>(height));
@@ -196,16 +248,29 @@ HRESULT ClassicSurface::Draw(HWND window, const TargetAppearance& style)
             static_cast<UINT>(height), static_cast<float>(GetDpiForWindow(window)) / 96.f, style,
             ResolveTaskbarMaterialEdge(window));
         render->PopAxisAlignedClip();
-        const HRESULT drawResult = render->EndDraw();
-        if (SUCCEEDED(hr)) hr = drawResult;
     }
-    const HRESULT endResult = surface->EndDraw();
-    if (SUCCEEDED(hr)) hr = endResult;
-    if (SUCCEEDED(hr)) hr = visual_->SetContent(surface.Get());
-    if (SUCCEEDED(hr)) hr = target_->SetRoot(visual_.Get());
-    if (SUCCEEDED(hr)) hr = device_->Commit();
+    catch (...)
+    {
+        (void)drawing->EndDraw();
+        throw;
+    }
+    const auto endResult = drawing->EndDraw();
+    winrt::check_hresult(hr);
+    winrt::check_hresult(endResult);
+    const auto compositor = scene.controller.Compositor();
+    const auto brush = scene.factory.CreateBrush();
+    brush.SetSourceParameter(L"backdrop", compositor.CreateBackdropBrush());
+    brush.SetSourceParameter(L"scene", compositor.CreateSurfaceBrush(surface));
+    scene.visual.Size(size);
+    scene.visual.Brush(brush);
+    scene.controller.Commit();
     if (SUCCEEDED(hr)) hr = Synchronize(window);
     if (FAILED(hr)) Reset();
     return hr;
+}
+catch (...)
+{
+    Reset();
+    return winrt::to_hresult();
 }
 }

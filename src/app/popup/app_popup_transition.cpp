@@ -12,10 +12,12 @@
 #include "shell/item_sort_metadata.h"
 #include "settings/animation_settings.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/list_detail_rules.h"
 #include "popup_resize_transition.h"
 #include <cmath>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 
 // Collection and Dock-folder popup transitions.
 
@@ -96,8 +98,15 @@ RECT Transition::ReservedPanel(RECT target) const
 
 RECT Transition::Content(RECT target, RECT layoutPanel) const
 {
-    return Targets({layoutPanel, target})
-        ? Interpolate(from_.content, target, progress_.Amount()) : target;
+    if (!Targets({layoutPanel, target})) return target;
+    const RECT panel = Panel(layoutPanel);
+    // The new page's chrome is already visible. Its insets stay attached to
+    // the moving frame even if the old page had a different header.
+    const LONG top = panel.top + target.top - layoutPanel.top;
+    const LONG left = panel.left + target.left - layoutPanel.left;
+    return {left, top,
+        std::max(left, panel.right - (layoutPanel.right - target.right)),
+        std::max(top, panel.bottom - (layoutPanel.bottom - target.bottom))};
 }
 }
 
@@ -235,7 +244,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
             static_cast<unsigned long long>(widgetIndex),
             floatingPopupMouseHookGeneration_,
             luaWidgetPanelRequest_.widgetId.empty() ? 0 : 1,
-            GetOpenPopupWidget() ? 1 : 0,
+            IsCollectionPopupHostedByFloatingWindow() ? 1 : 0,
             mouseDown_ ? 1 : 0,
             snowdesktop::private_pointer::Capture());
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message);
@@ -250,6 +259,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     CancelCollectionPopupDwell();
 
     DismissActiveContextMenuForPopupTransition();
+    SuspendInlineFolderPreview();
 
     PersistentDockHost* requestedDockHost = nullptr;
     if (DockContainer* requestedDock =
@@ -347,6 +357,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         }
     }
 
+    if (dockFolderPopupContainer_) dockFolderPopupContainer_->SetSearchFocused(false);
     if (dockFolderPopupOpen_)
         CancelDockFolderPopupIconLoads();
     ResetDockTrayPopup();
@@ -438,6 +449,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     GetCategorizedPopupView();
     popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
         GetCollectionPopupMaxScrollOffset(widgets_[widgetIndex], popupRect_));
+    (void)ResumeFolderPreviewForPopup(widgets_[widgetIndex].id, {});
     StartCollectionPopupAnimation();
     if (popupAnchoredToDock_)
     {
@@ -557,7 +569,13 @@ void DesktopApp::RefreshDockFolderPopup(
     }
     shellDockFolderPopupRefreshPending_ = false;
     if (!dockFolderPopupOpen_) return;
-    const bool dockEntryOwnsBinding = dockFolderPopupMappingWidgetId_.empty();
+    const bool dockEntryOwnsBinding = !folderPreview_ && dockFolderPopupMappingWidgetId_.empty();
+    if (snapshot && folderPreview_ &&
+        snowdesktop::shell_refresh::FolderKey(snapshot->path) !=
+            snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath))
+        return;
+    const bool previewDirectoryLoaded = folderPreview_ && snapshot && dockFolderPopupLoading_ &&
+        !dockFolderPopupAvailable_;
     if (snapshot && dockEntryOwnsBinding &&
         snowdesktop::shell_refresh::FolderKey(snapshot->path) !=
             snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath))
@@ -674,7 +692,7 @@ void DesktopApp::RefreshDockFolderPopup(
         return Geometry{panel, GetCollectionPopupContentRect(panel)};
     };
     std::optional<Geometry> before;
-    if (snapshot && snapshot->complete && snapshot->entries.size() != dockFolderPopupWidget_.folderEntries.size() &&
+    if (!folderPreview_ && snapshot && snapshot->complete && snapshot->entries.size() != dockFolderPopupWidget_.folderEntries.size() &&
         present && dockFolderPopupAvailable_ && dockFolderPopupContainer_ &&
         IsCollectionPopupInteractive() && !popupAnimation_.IsAnimating() &&
         !UsesCollectionPopupFan(dockFolderPopupWidget_) && !UsesCollectionPopupList(dockFolderPopupWidget_) &&
@@ -696,12 +714,16 @@ void DesktopApp::RefreshDockFolderPopup(
         [this](const auto& path) { QueueFolderRead(path); },
         [this](const auto& folder) {
             EnumerateFolderMappingEntries(dockFolderPopupWidget_, true, &folder);
-            if (dockFolderPopupAvailable_ && !dragSession_.HasContext() &&
+            if (!folderPreview_ && dockFolderPopupAvailable_ && !dragSession_.HasContext() &&
                 !dragDropController_.IsTransportActive() && ApplyPendingFolderPlacements(
                     dockFolderPopupWidget_, dockFolderPopupMappingWidgetId_, dockFolderPopupSourceId_))
                 CommitDockFolderPopupStateToSource();
         }, targetPending);
     if (!accepted) return;
+    if (previewDirectoryLoaded)
+        popupScrollOffset_ = folderPreview_->pages.back().scroll;
+    if (folderPreview_ && snapshot && !dockFolderPopupAvailable_)
+        ClearDockFolderPopupEntries();
     if (snapshot && snapshot->complete && dockFolderPopupAvailable_)
         dockFolderPopupKnownItemCount_ = dockFolderPopupWidget_.folderEntries.size();
     if (snapshot)
@@ -709,7 +731,7 @@ void DesktopApp::RefreshDockFolderPopup(
         // Remember a successfully listed plain Dock folder in memory. Its next
         // open can reserve the real footprint instead of the empty-grid size.
         // Do not persist settings or trigger another folder refresh here.
-        if (dockFolderPopupAvailable_ && dockFolderPopupMappingWidgetId_.empty())
+        if (!folderPreview_ && dockFolderPopupAvailable_ && dockFolderPopupMappingWidgetId_.empty())
         {
             for (auto& entry : dockEntries_)
             {
@@ -734,6 +756,19 @@ void DesktopApp::RefreshDockFolderPopup(
             std::make_unique<FolderMapping>(
                 &dockFolderPopupWidget_, this);
     dockFolderPopupContainer_->InvalidateFilterCache();
+    if (previewDirectoryLoaded && std::exchange(folderPreview_->selectFirstItemOnLoad, false) &&
+        folderPreview_->keyboardFocused && dockFolderPopupAvailable_)
+    {
+        RefreshDockFolderPopupGeometry(false);
+        if (!IsFolderPreviewContentPrivate(popupRect_) && GetPopupItemCount(dockFolderPopupWidget_) != 0)
+            SelectDockFolderPopupKeyboardItem(0, false);
+    }
+    if (folderPreview_ && snapshot && folderPreview_->pendingPopupResize)
+    {
+        const auto from = *folderPreview_->pendingPopupResize;
+        folderPreview_->pendingPopupResize.reset();
+        if (present) StartFolderPreviewPopupResize(from);
+    }
     if (before && dockFolderPopupAvailable_)
     {
         RefreshDockFolderPopupGeometry(false);
@@ -756,8 +791,7 @@ void DesktopApp::RefreshDockFolderPopup(
                         snowdesktop::animation::RuntimePopupEffect() != snowdesktop::animation::NoEffect &&
                         current->Advance(now);
                     if (!keep) dockFolderPopupContainer_->SetPopupResizeTransition({});
-                    UpdateFloatingPopupWindowBounds(!keep, false);
-                    InvalidateFloatingPopupWindow(false);
+                    RequestCollectionPopupResizePresentation(keep);
                     if (!keep && hwnd_)
                         PostMessageW(hwnd_, kBackgroundShellReadyMessage, 0, 0);
                     return keep;
@@ -772,6 +806,8 @@ void DesktopApp::RefreshDockFolderPopup(
     if (refreshVisibleDockFolder && dockFolderPopupAvailable_)
     {
         RefreshDockFolderPopupGeometry(false);
+        if (folderPreview_ && folderPreview_->inlineBounds)
+            (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
         InvalidateCollectionPopupContent();
         InvalidateCollectionPopupDesktopScene(previousBounds);
         if (!EqualRect(&previousBounds, &popupRect_))
@@ -798,6 +834,11 @@ void DesktopApp::RefreshDockFolderPopupGeometry(bool present)
             dockFolderPopupWidget_,
             popupRect_));
     if (!present) return;
+    if (folderPreview_ && folderPreview_->inlineBounds)
+    {
+        (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+        return;
+    }
     InvalidateCollectionPopupContent();
     if (popupAnimationCompositorDriven_)
         return; // The queued paint updates pixels; geometry settles at completion.
@@ -835,7 +876,7 @@ void DesktopApp::RefreshOpenCollectionPopupGeometry()
 void DesktopApp::
 CommitDockFolderPopupStateToSource()
 {
-    if (!dockFolderPopupOpen_)
+    if (!dockFolderPopupOpen_ || folderPreview_)
         return;
 
     if (!dockFolderPopupMappingWidgetId_.empty())
@@ -958,9 +999,19 @@ void DesktopApp::SortDockFolderPopupContents(
     if (mode ==
         snowdesktop::folder_sort_rules::kManual)
         return;
+    if (folderPreview_)
+    {
+        if (!dockFolderPopupAvailable_) return;
+        const auto key = snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath);
+        if (!folderPreviewSort_.Set(key, {mode, ascending}))
+        {
+            MessageBeep(MB_ICONWARNING);
+            return;
+        }
+    }
 
     const size_t sourceIndex =
-        dockFolderPopupMappingWidgetId_.empty()
+        folderPreview_ || dockFolderPopupMappingWidgetId_.empty()
             ? static_cast<size_t>(-1)
             : FindWidgetIndexById(
                 dockFolderPopupMappingWidgetId_);
@@ -1001,7 +1052,8 @@ void DesktopApp::SortDockFolderPopupContents(
         if (dockFolderPopupContainer_)
             dockFolderPopupContainer_->
                 InvalidateFilterCache();
-        CommitDockFolderPopupStateToSource();
+        if (folderPreview_) SyncFolderPreviewSortToOtherViews();
+        else CommitDockFolderPopupStateToSource();
     }
 
     popupScrollOffset_ = 0;

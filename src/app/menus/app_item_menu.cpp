@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "desktop/desktop_icon_settings.h"
 #include "app/app.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
@@ -8,6 +9,7 @@
 #include "shell/shell_item_visibility.h"
 #include "desktop/desktop_item_reference_migration.h"
 #include "icons/large_icon_assets.h"
+#include "layout/list_detail_rules.h"
 #include "steam/steam_entitlement.h"
 #include "app/input/widget_search_context_menu.h"
 #include "icons/large_icon_steam.h"
@@ -47,46 +49,6 @@ bool DesktopApp::IsAdministratorRunnablePath(
     return
         snowdesktop::shell_item_action_rules::
             IsAdministratorRunnableExtension(normalizedExtension);
-}
-
-void DesktopApp::CopyPathsToClipboard(
-    const std::vector<std::wstring>& paths)
-{
-    std::wstring text;
-    for (const auto& path : paths)
-    {
-        if (path.empty())
-            continue;
-        if (!text.empty())
-            text += L"\r\n";
-        text += path;
-    }
-    if (text.empty() || !OpenClipboard(ShellDialogOwnerHwnd()))
-        return;
-
-    EmptyClipboard();
-    const SIZE_T byteCount =
-        (text.size() + 1) * sizeof(wchar_t);
-    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, byteCount);
-    if (!memory)
-    {
-        CloseClipboard();
-        return;
-    }
-
-    void* target = GlobalLock(memory);
-    if (!target)
-    {
-        GlobalFree(memory);
-        CloseClipboard();
-        return;
-    }
-    CopyMemory(target, text.c_str(), byteCount);
-    GlobalUnlock(memory);
-
-    if (!SetClipboardData(CF_UNICODETEXT, memory))
-        GlobalFree(memory);
-    CloseClipboard();
 }
 
 bool DesktopApp::RunPathAsAdministrator(
@@ -149,6 +111,7 @@ void DesktopApp::ShowItemContextMenu(
         return;
     }
     const std::wstring menuItemKey = items_[itemIndex].layoutKey;
+    const std::wstring menuParsingPath = items_[itemIndex].parsingName;
     PrepareMenuIconsForPoint(screenPoint);
 
     const bool dockMapping =
@@ -417,6 +380,9 @@ void DesktopApp::ShowItemContextMenu(
     }
     AppendMenuW(menu, canOpen ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextOpenCommand, _LW("app.menu.open"));
+    if (canOpen && !keepQuickNavigationOpen && !dockEntryIndex && !dockMappingEntryIndex &&
+        !dockFrequentItem && !dockApplicationItem && !namespaceItem)
+        AppendFolderPreviewOpenMenuItem(menu, clientPoint, menuParsingPath);
     if (canConvertFolderMapping)
         AppendMenuW(menu, MF_STRING, kContextAddFolderMappingWidget,
             _LW("app.menu.convert_folder_mapping"));
@@ -943,6 +909,9 @@ void DesktopApp::ShowItemContextMenu(
             if (!SetLargeIconConfigs(changes)) snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
         }
         break;
+    case kContextFolderPreviewOpen:
+        TryFolderPreviewDoubleClick(clientPoint, 0, menuParsingPath);
+        return;
     case kContextOpenCommand:
     {
         if (!canOpen)
@@ -1086,61 +1055,11 @@ void DesktopApp::ShowItemContextMenu(
         inlineEditorStarted = renameController_.IsActive();
         break;
     case kContextCutCommand:
-    case kContextCopyCommand:
-    {
-        cutPaths_.clear();
-        std::uint64_t clipboardCopyId = 0;
-
-        std::vector<PCUITEMID_CHILD> pidls;
-        std::vector<size_t> selectedIndexes;
-        for (size_t i = 0; i < items_.size(); ++i)
-        {
-            if (!items_[i].selected || !items_[i].desktopIconClsid.empty()) continue;
-            pidls.push_back(reinterpret_cast<PCUITEMID_CHILD>(items_[i].childPidl.get()));
-            selectedIndexes.push_back(i);
-        }
-
-        if (!pidls.empty())
-        {
-            ComPtr<IDataObject> dataObj;
-            if (SUCCEEDED(desktopFolder_->GetUIObjectOf(hwnd_, static_cast<UINT>(pidls.size()),
-                pidls.data(), IID_IDataObject, nullptr,
-                reinterpret_cast<void**>(dataObj.GetAddressOf()))) && dataObj)
-            {
-                if (command == kContextCutCommand)
-                {
-            CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
-                    FORMATETC fmt{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
-                    STGMEDIUM med{};
-                    med.tymed = TYMED_HGLOBAL;
-                    med.hGlobal = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD));
-                    if (med.hGlobal)
-                    {
-                        *static_cast<DWORD*>(GlobalLock(med.hGlobal)) = DROPEFFECT_MOVE;
-                        GlobalUnlock(med.hGlobal);
-                        dataObj->SetData(&fmt, &med, TRUE);
-                    }
-                }
-
-                clipboardCopyId = PublishFileClipboard(dataObj.Get(),
-                    command == kContextCopyCommand ? L"desktop_menu" : nullptr);
-            }
-        }
-
-        if (command == kContextCutCommand)
-        {
-            for (size_t idx : selectedIndexes)
-            {
-                wchar_t path[MAX_PATH]{};
-                if (SHGetPathFromIDListW(items_[idx].absolutePidl.get(), path))
-                    cutPaths_.insert(path);
-            }
-        }
-
-        UpdateCutState(clipboardCopyId);
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        CopyCutSelectedDesktopFiles(true);
         break;
-    }
+    case kContextCopyCommand:
+        CopyCutSelectedDesktopFiles(false, L"desktop_menu");
+        break;
     case kContextDeleteCommand:
     {
         if (removalAction ==
@@ -1172,35 +1091,7 @@ void DesktopApp::ShowItemContextMenu(
         {
             break;
         }
-        cutPaths_.clear();
-        std::vector<std::wstring> deletePaths;
-        for (const auto& item : items_)
-        {
-            if (!item.selected || !item.desktopIconClsid.empty()) continue;
-            wchar_t path[MAX_PATH]{};
-            if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
-            {
-                cutPaths_.erase(path);
-                deletePaths.push_back(path);
-            }
-        }
-        if (!deletePaths.empty())
-        {
-            std::vector<snowdesktop::ShellFileOperationStep> steps;
-            steps.push_back({
-                FO_DELETE,
-                std::move(deletePaths),
-                {},
-                static_cast<FILEOP_FLAGS>(
-                    FOF_ALLOWUNDO |
-                    FOF_NOCONFIRMATION) });
-            QueueShellFileOperation(
-                std::move(steps),
-                [this](bool succeeded) {
-                    if (succeeded)
-                        RequestShellRefresh();
-                });
-        }
+        QueueFileDeletion(GetSelectedDesktopFilePaths(), false);
         break;
     }
     case kContextMoreCommand:
@@ -1317,9 +1208,7 @@ void DesktopApp::ShowIsolatedShellMenu(snowdesktop::shell_extensions::Request re
                         RemoveDockMappingAt(*dockMappingEntryIndex);
                     return;
                 }
-                std::vector<snowdesktop::ShellFileOperationStep> steps;
-                steps.push_back({FO_DELETE, paths, {}, static_cast<FILEOP_FLAGS>(FOF_ALLOWUNDO | FOF_NOCONFIRMATION)});
-                QueueShellFileOperation(std::move(steps), [this](bool succeeded) { if (succeeded) RequestShellRefresh(); });
+                QueueFileDeletion(paths, false);
             }
             else if (result->invoked) RequestShellRefresh();
         });

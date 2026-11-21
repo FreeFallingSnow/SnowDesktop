@@ -44,6 +44,7 @@ WidgetSettingsBackendResult WrongThread()
     return BackendResult(WidgetSettingsBackendStatus::Failed,
         "wrongThread", "widget settings backend requires its owner thread");
 }
+}
 
 bool IsReservedDeclarativeSettingKey(std::string_view key) noexcept
 {
@@ -61,6 +62,8 @@ bool IsReservedDeclarativeSettingKey(std::string_view key) noexcept
         key == "__contentTheme" || key == "__panelGradient" || key == "__edgeLight";
 }
 
+namespace
+{
 bool IsHostAppearancePresetKey(std::string_view key) noexcept
 {
     return key == "followPersonalization" || key == "bg" ||
@@ -1489,11 +1492,7 @@ WidgetEngineSettingsBackend::ChooseFilesystemHandle(
 
     if (!oldHandle.empty() && oldHandle != grant.entry->handle)
     {
-        std::vector<std::uint64_t> taskIds;
-        for (const auto& [taskId, taskHandle] :
-            engine_.filesystemTaskHandles_)
-            if (taskHandle == oldHandle) taskIds.push_back(taskId);
-        for (const auto taskId : taskIds)
+        for (const auto taskId : engine_.filesystemTaskDispatch_.ActiveTasksForHandle(oldHandle))
             (void)engine_.RuntimeCancelTask(
                 widgetId, generation, taskId);
         std::vector<std::uint64_t> subscriptionIds;
@@ -1568,10 +1567,7 @@ WidgetEngineSettingsBackend::ClearFilesystemHandle(
             "storagePersistenceFailed");
     }
 
-    std::vector<std::uint64_t> taskIds;
-    for (const auto& [taskId, taskHandle] : engine_.filesystemTaskHandles_)
-        if (taskHandle == oldHandle) taskIds.push_back(taskId);
-    for (const auto taskId : taskIds)
+    for (const auto taskId : engine_.filesystemTaskDispatch_.ActiveTasksForHandle(oldHandle))
         (void)engine_.RuntimeCancelTask(
             widget.widgetId, widget.runtimeToken, taskId);
     std::vector<std::uint64_t> subscriptionIds;

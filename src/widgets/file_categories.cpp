@@ -19,9 +19,8 @@
 #include "widget_chrome_rules.h"
 #include "widget/preview/widget_preview_scene.h"
 #include "ui/menu/menu_fluent_glyphs.h"
-#include "layout/item_render_layer_rules.h"
 #include "widget/runtime/widget_item_layout.h"
-#include "layout/category_collection_rules.h"
+#include "layout/list_detail_rules.h"
 #include "layout/file_date_category.h"
 #include "desktop/desktop_category_item_rules.h"
 #include "storage_title_bar_layout.h"
@@ -329,6 +328,27 @@ std::wstring FileCategories::CachedActiveCategoryId() const
     return visible.empty() ? L"" : visible.front();
 }
 
+bool FileCategories::RevealAllForMemberDrop(const DragSourceList& sources, bool fileBacked)
+{
+    if (!data_ || !app_ || !data_->showFileCategories || IsSearchActive()) return false;
+    const auto category = CachedActiveCategoryId();
+    if (category.empty() || category == L"all") return false;
+
+    if (!fileBacked && std::all_of(sources.entries.begin(), sources.entries.end(), [&](const auto& entry) {
+        if (entry.desktopWidgetIcon) return true;
+        const auto index = app_->FindItemIndexByKey(entry.desktopKey);
+        const auto& items = app_->GetDesktopItems();
+        return index < items.size() && FileCategoryIdForItem(items[index], app_->GetCategorySettings()) == category;
+    })) return false;
+
+    data_->activeCategoryId = L"all";
+    data_->scrollOffset = 0;
+    InvalidateSlots();
+    const auto& categories = CachedVisibleCategoryIds();
+    EnsureCategoryTabVisible(std::find(categories.begin(), categories.end(), L"all") - categories.begin());
+    return true;
+}
+
 /**
  * @brief 构建当前激活分类的布局段表（LayoutSegment），缓存到 layoutCache_。
  *
@@ -563,7 +583,7 @@ static RECT FileCategoryTabsRect(FileCategories* widget)
         ? widget->GetWidgetData() : nullptr;
     return widget
         ? widget->GetCategorizedTabsRect(
-            data && data->showFileCategories)
+            data && data->showFileCategories && !widget->IsSearchActive())
         : RECT{};
 }
 
@@ -575,7 +595,10 @@ static RECT FileCategoryTabsRect(FileCategories* widget)
 static RECT FileCategoryContentRect(FileCategories* widget)
 {
     if (!widget) return {};
-    RECT body = snowdesktop::storage_title_bar::InsetContent(
+    namespace popup = snowdesktop::collection_popup_layout;
+    const bool hostedPopup = widget->IsPopupHosted();
+    RECT body = hostedPopup ? popup::ResolveHostedContentRect(widget->GetBodyRect(), widget->GetCellScale())
+        : snowdesktop::storage_title_bar::InsetContent(
         widget->GetBodyRect(), widget->UsesTopTitleBar(),
         widget->Cu(4.0f), widget->Cu(8.0f), widget->Cu(4.0f));
     body.bottom = std::max<LONG>(body.top,
@@ -588,16 +611,13 @@ static RECT FileCategoryContentRect(FileCategories* widget)
         snowdesktop::collection_group_rules::
             ResolveCategorizedContentTop(
                 body.top, body.bottom,
-                !(widget->GetWidgetData() &&
-                    widget->GetWidgetData()->showSearchBox &&
-                    widget->IsSearchActive()) &&
-                    !IsRectEmptyRect(tabs),
+                !IsRectEmptyRect(tabs),
                 tabs.bottom,
                 !IsRectEmptyRect(search), search.bottom,
                 widget->GetCategorizedTabRowOffset(),
                 widget->Cu(widget->GetCategorizedTabRowPitch()),
-                widget->Cu(8.0f),
-                widget->Cu(4.0f)));
+                hostedPopup ? widget->Cu(popup::kControlGapCu) - widget->Cu(popup::kTabSegmentInsetCu) : widget->Cu(8.0f),
+                widget->Cu(hostedPopup ? popup::kControlGapCu : 4.0f)));
     return widget->ApplyDetailsHeaderToViewport(body);
 }
 
@@ -771,7 +791,7 @@ static int FileCategoryContentHeight(FileCategories* widget, size_t itemCount)
             return static_cast<int>(segs.back().y + segs.back().height);
     }
     return snowdesktop::widget_item_layout::ContentHeight(
-        FileCategoryLocalLayout(widget), itemCount);
+        FileCategoryLocalLayout(widget), widget->PendingFileLayout().Count(itemCount));
 }
 
 /**
@@ -870,28 +890,6 @@ static RECT FileCategoryDateToggleRect(FileCategories* widget)
 }
 
 /**
- * @brief 根据可见槽位索引计算在 data->itemKeys 中的实际插入位置。
- * @param app DesktopApp 实例指针。
- * @param data 桌面组件数据。
- * @param visibleIndex 在激活分类可见列表中的索引。
- * @return data->itemKeys 中对应的插入位置索引。
- */
-static size_t InsertIndexForVisibleSlot(FileCategories* widget, size_t visibleIndex)
-{
-    DesktopApp* app = widget ? widget->GetApp() : nullptr;
-    DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
-    if (!app || !data) return 0;
-    const auto& visibleKeys = widget->GetSearchResultKeys();
-    if (visibleIndex < visibleKeys.size())
-    {
-        std::wstring anchor = ToUpperInvariant(visibleKeys[visibleIndex]);
-        for (size_t i = 0; i < data->itemKeys.size(); ++i)
-            if (ToUpperInvariant(data->itemKeys[i]) == anchor) return i;
-    }
-    return data->itemKeys.size();
-}
-
-/**
  * @brief 构建当前激活分类下所有可见项目的 Slot 列表。
  *        每个 Slot 对应一个可视区域内的桌面项目。
  * @return 唯一指针向量，包含所有可见项目对应的 Slot。
@@ -947,8 +945,9 @@ std::vector<std::unique_ptr<Slot>> FileCategories::BuildSlots()
         return slots;
     }
 
-    const auto range = snowdesktop::widget_item_layout::VisibleRange(
-        FileCategoryLocalLayout(this), keys.size(), scroll, visibleHeight);
+    const auto& pending = PendingFileLayout();
+    const auto range = pending.ModelRange(snowdesktop::widget_item_layout::VisibleRange(
+        FileCategoryLocalLayout(this), pending.Count(keys.size()), scroll, visibleHeight), keys.size());
     const size_t firstIndex = range.first;
     const size_t lastIndex = range.second;
 
@@ -1147,24 +1146,6 @@ int FileCategories::GetVisibleContentHeight() const
 }
 
 /**
- * @brief 处理项目拖放事件，执行拖放管道操作。
- * @param sourceItems 被拖拽的源项目列表。
- * @param origin 来源容器。
- * @param targetSlot 目标槽位（可为空）。
- * @param region 拖放命中区域。
- * @param mods 按键修饰符。
- */
-void FileCategories::OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
-    Slot* targetSlot, HitRegion region, int mods)
-{
-    if (!app_ || !data_) return;
-    DragSourceList sourceList = app_->BuildDragSourceList(sourceItems, origin);
-    DropPreviewList preview = app_->BuildDropPreviewList(sourceList, this, targetSlot, region, mods,
-        app_->dragSession_.CurrentPoint());
-    app_->ExecuteDropPipeline(sourceList, preview);
-}
-
-/**
  * @brief 获取拖放操作的插入索引。
  * @param targetSlot 目标槽位，为空时追加到末尾。
  * @param region 命中区域，SortAfter 表示插入到目标之后。
@@ -1183,10 +1164,7 @@ size_t FileCategories::GetDropInsertIndex(Slot* targetSlot, HitRegion region) co
             }
         return data_->itemKeys.size();
     }
-    size_t visibleInsert = targetSlot ? targetSlot->GetIndex() : GetSlotCount();
-    if (targetSlot && region == HitRegion::SortAfter)
-        ++visibleInsert;
-    return InsertIndexForVisibleSlot(const_cast<FileCategories*>(this), visibleInsert);
+    return WidgetContainer::GetDropInsertIndex(targetSlot, region);
 }
 
 /**
@@ -1243,7 +1221,6 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         if (IsRectEmptyRect(content)) return;
         DrawDetailsHeader(context, content);
 
-        const auto& slots = GetSlots();
         if (keys.empty())
         {
             RECT empty = GetBodyRect();
@@ -1260,51 +1237,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         const snowdesktop::ScrollContentClip contentClip(
             context, scrollContentFadeCache_, content,
             GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
-        std::vector<std::pair<Item*, RECT>>
-            foregroundTitles;
-        for (size_t i = 0; i < slots.size(); ++i)
-        {
-            size_t idx = slots[i]->GetIndex();
-            if (idx >= keys.size()) continue;
-            RECT itemRect = slots[i]->GetBounds();
-            if (itemRect.bottom <= content.top || itemRect.top >= content.bottom) continue;
-
-            auto* icon = dynamic_cast<DesktopIcon*>(slots[i]->GetItem());
-            DesktopItem* item = icon ? icon->GetDesktopItem() : nullptr;
-            if (!item) continue;
-            const DesktopItem& di = *item;
-
-            if (!data_->listMode)
-            {
-                if (privacyActive)
-                    DrawPrivacyPlaceholder(context, itemRect, di.name, false);
-                else
-                {
-                    RECT bodyRect = GetBodyRect();
-                    bool hovered = !preview && !di.selected && PtInRect(&itemRect, GetRenderPointer()) && PtInRect(&bodyRect, GetRenderPointer());
-                    const auto titleLayers =
-                        snowdesktop::item_render_layer_rules::
-                            ResolveTitleLayerPlan(di.selected);
-                    icon->Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0),
-                        lt, titleLayers.drawWithItem);
-                    if (titleLayers.drawInForeground)
-                        foregroundTitles.emplace_back(
-                            icon, itemRect);
-                }
-                continue;
-            }
-            if (privacyActive)
-                DrawPrivacyPlaceholder(context, itemRect, di.name, false);
-            else
-                DrawListItem(context, itemRect, di.iconBitmap,
-                    di.sysIconIndex, di.name, di.selected,
-                    di.iconIsMediaThumbnail, {}, nullptr,
-                    { di.typeName, di.modifiedTime,
-                      di.fileSize, false }, std::nullopt, !app_->IsRenamingItem(&di), di.layoutKey);
-        }
-        for (const auto& [item, bounds] : foregroundTitles)
-            item->DrawTitle(
-                context, bounds, true, 1.0f, lt);
+        DrawMemberCells(context, content, keys.size(), {data_->listMode, privacyActive, lt});
         return;
     }
 
@@ -1362,12 +1295,9 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
     if (IsRectEmptyRect(content)) return;
     DrawDetailsHeader(context, content);
 
-    const auto& slots = GetSlots();
     const snowdesktop::ScrollContentClip contentClip(
         context, scrollContentFadeCache_, content,
         GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
-    std::vector<std::pair<Item*, RECT>>
-        foregroundTitles;
 
     if (data_->dateHeaders && !searching)
     {
@@ -1396,50 +1326,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         }
     }
 
-    for (size_t i = 0; i < slots.size(); ++i)
-    {
-        size_t idx = slots[i]->GetIndex();
-        if (idx >= keys.size()) continue;
-        RECT itemRect = slots[i]->GetBounds();
-        if (itemRect.bottom <= content.top || itemRect.top >= content.bottom) continue;
-
-        auto* icon = dynamic_cast<DesktopIcon*>(slots[i]->GetItem());
-        DesktopItem* item = icon ? icon->GetDesktopItem() : nullptr;
-        if (!item) continue;
-        const DesktopItem& di = *item;
-
-        if (!data_->listMode)
-        {
-            if (privacyActive)
-                DrawPrivacyPlaceholder(context, itemRect, di.name, false);
-            else
-            {
-                RECT bodyRect = GetBodyRect();
-                bool hovered = !preview && !di.selected && PtInRect(&itemRect, GetRenderPointer()) && PtInRect(&bodyRect, GetRenderPointer());
-                const auto titleLayers =
-                    snowdesktop::item_render_layer_rules::
-                        ResolveTitleLayerPlan(di.selected);
-                icon->Draw(context, itemRect, di.selected ? 2 : (hovered ? 1 : 0),
-                    lt, titleLayers.drawWithItem);
-                if (titleLayers.drawInForeground)
-                    foregroundTitles.emplace_back(
-                        icon, itemRect);
-            }
-            continue;
-        }
-
-        if (privacyActive)
-            DrawPrivacyPlaceholder(context, itemRect, di.name, false);
-        else
-            DrawListItem(context, itemRect, di.iconBitmap,
-                di.sysIconIndex, di.name, di.selected,
-                di.iconIsMediaThumbnail, {}, nullptr,
-                { di.typeName, di.modifiedTime,
-                  di.fileSize, false }, std::nullopt, !app_->IsRenamingItem(&di), di.layoutKey);
-    }
-    for (const auto& [item, bounds] : foregroundTitles)
-        item->DrawTitle(
-            context, bounds, true, 1.0f, lt);
+    DrawMemberCells(context, content, keys.size(), {data_->listMode, privacyActive, lt});
 }
 
 RECT FileCategories::GetMemberLayoutRect(size_t index) const
@@ -1459,6 +1346,8 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
 {
     if (!data_ || !app_) return;
     const bool lt = UsesLightContentTheme();
+    const auto* content = app_->GetInlineFolderPreviewData(*data_);
+    if (!content) content = data_;
 
     RECT dateToggle = FileCategoryDateToggleRect(this);
     bool dateHot = IsPreviewInteractive() &&
@@ -1475,10 +1364,10 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
         snowdesktop::menu_fluent_glyphs::kDateHeader, dateToggle,
         iconFormat,
         lt
-            ? (data_->dateHeaders
+            ? (content->dateHeaders
                 ? (dateHot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.85f) : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.50f))
                 : (dateHot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.45f) : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.25f)))
-            : (data_->dateHeaders
+            : (content->dateHeaders
                 ? (dateHot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.55f))
                 : (dateHot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f))));
 
@@ -1486,7 +1375,7 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
     bool hot = IsPreviewInteractive() &&
         PtInRect(&toggle, GetRenderPointer()) != FALSE;
     app_->DrawD2DText(context,
-        data_->listMode ? L"\uF462" : L"\uF4ED", toggle,
+        content->listMode ? L"\uF462" : L"\uF4ED", toggle,
         iconFormat,
         lt
             ? (hot ? D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.85f) : D2D1::ColorF(0.10f, 0.12f, 0.16f, 0.50f))

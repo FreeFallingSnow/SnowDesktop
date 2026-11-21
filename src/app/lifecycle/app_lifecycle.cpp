@@ -138,6 +138,8 @@ DesktopApp::~DesktopApp()
     dockUnpinnedRunningApps_.clear();
     items_oo_.clear();
     containers_.clear();
+    fileDropLayouts_.clear();
+    pendingLandingCaches_.clear();
     ClearMenuIcons();
     if (faFontHandle_)
     {
@@ -340,8 +342,7 @@ void DesktopApp::ResetDesktopWindowResources()
     luaWidgetTooltip_.Close();
     popupAnimationOverlay_ = {};
     luaWidgetPanelAnimationOverlay_ = {};
-    brushCache_.clear();
-    brushCacheContext_ = nullptr;
+    drawing_.Reset();
     placeholderIconCache_.clear();
     dockFolderBitmapCache_.Retain([](const auto&) { return false; });
     ResetDesktopWidgetComposition();
@@ -1199,6 +1200,7 @@ void DesktopApp::RequestExit()
 void DesktopApp::CompleteExitRequest()
 {
     if (exitRequested_) return;
+    SaveFolderPreviewView();
     exitRequested_ = true;
     steamPresenceService_.reset();
     if (steamEntitlementService_) steamEntitlementService_->Stop();

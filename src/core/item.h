@@ -16,7 +16,10 @@
 #include <windows.h>
 #include <d2d1_1.h>
 #include <wrl/client.h>
+#include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <memory>
 #include <vector>
 
@@ -25,6 +28,25 @@ using Microsoft::WRL::ComPtr;
 class Container;
 class DesktopApp;
 struct DesktopWidget;
+
+struct ListItemDetails
+{
+    std::wstring typeName;
+    std::optional<FILETIME> modifiedTime;
+    std::optional<std::uint64_t> fileSize;
+    bool isDirectory = false;
+    bool isCut = false;
+};
+
+struct MemberListPresentation
+{
+    ListItemDetails details;
+    std::wstring_view iconIdentity;
+    std::wstring_view demoIdentity;
+    int systemIcon = -1;
+    bool thumbnail = false;
+    bool drawTitle = true;
+};
 
 /**
  * @class Item
@@ -81,6 +103,13 @@ public:
      * @param state   绘制状态：0=正常, 1=悬停, 2=选中, 3=拖拽中
      */
     virtual void Draw(ID2D1DeviceContext* context, RECT rect, int state) = 0;
+    virtual void DrawMemberIcon(ID2D1DeviceContext* context, RECT rect, int state,
+        bool, bool, const DesktopWidget*)
+    {
+        Draw(context, rect, state);
+    }
+    virtual MemberListPresentation GetMemberListPresentation() const { return {}; }
+
 
     /**
      * @brief 单独绘制标题，供跨单元格的选中标题前景层使用。
@@ -136,6 +165,9 @@ public:
     void SetSelected(bool selected) override;
     Container* GetContainer() const override;
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
+    void DrawMemberIcon(ID2D1DeviceContext* context, RECT rect, int state,
+        bool lightTheme, bool drawTitle, const DesktopWidget* demoCollection) override;
+    MemberListPresentation GetMemberListPresentation() const override;
     void Draw(ID2D1RenderTarget* context, RECT rect, int state,
         bool lightTheme = false, bool drawText = true,
         bool quickNavLayout = false,
@@ -186,6 +218,9 @@ public:
     void SetSelected(bool selected) override;
     Container* GetContainer() const override;
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
+    void DrawMemberIcon(ID2D1DeviceContext* context, RECT rect, int state,
+        bool lightTheme, bool drawTitle, const DesktopWidget* demoCollection) override;
+    MemberListPresentation GetMemberListPresentation() const override;
     void Draw(ID2D1RenderTarget* context, RECT rect, int state, bool lightTheme = false,
         bool drawText = true, bool quickNavLayout = false);
     void DrawTitle(ID2D1RenderTarget* context, RECT rect,

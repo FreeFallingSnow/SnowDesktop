@@ -117,6 +117,7 @@ local settings = {
     fields = {
         {
             key = "fontScale",
+            agentDescription = "Scales the note editor's text relative to the component's host row metrics.",
             label = l10n.tr("lua_widget.common.font_scale"),
             type = "int",
             default = 100,

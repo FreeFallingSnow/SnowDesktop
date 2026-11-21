@@ -1,6 +1,7 @@
 #include "settings_controller_interface.h"
 #include "settings_snapshot.h"
 #include "control_environment_settings.h"
+#include "control_settings_search.h"
 
 #include "data/debug_environment_catalog.h"
 #include "layout/page_management_rules.h"
@@ -136,10 +137,7 @@ Value Pages(std::string_view method, const Value& params, const Target& target, 
     {
         Fields(params, {"target"});
         auto output = Envelope(target, page ? Page(*page) : state, revision);
-        output.object.emplace("fields", page ? Object({
-            {"name", Object({{"type", String("string")}, {"maximumLength", Number(64)}, {"resetValue", String("")}})},
-            {"columns", Object({{"type", String("integer")}, {"minimum", Number(1)}, {"maximum", Number(50)}})},
-            {"rows", Object({{"type", String("integer")}, {"minimum", Number(1)}, {"maximum", Number(50)}})}}) : Object());
+        output.object.emplace("fields", page ? DescribePageSettingsFields() : Object());
         output.object.emplace("actions", page ? Strings({"analyze-grid", "set-grid", "analyze-removal", "remove"}) : Strings({"add", "reorder"}));
         output.object.emplace("readOnly", page ? Strings({"id", "itemCount", "widgetCount", "guideCount", "role", "monitorOrdinal", "visible", "activeOnLastMonitor"}) : Strings({"pages", "monitorCount", "editable", "hostRevision"}));
         return output;
@@ -252,7 +250,7 @@ Value Pages(std::string_view method, const Value& params, const Target& target, 
     throw Error("unsupported_action", "Unknown action for this page target");
 }
 
-Value DebugState(const winui::HomeAboutStatusPatch& status)
+Value DebugState(const settings::HomeAboutStatusPatch& status)
 {
     if (!status.debugEnvironments || !status.debugEnvironmentId || !status.debugProfileEnabled)
         throw Error("settings_unavailable", "Debug environment state is unavailable");
@@ -276,7 +274,7 @@ Value Debug(std::string_view method, const Value& params, const Target& target, 
     const auto revision = Revision(state);
     const bool single = target.kind == "debug-environment";
     const auto id = Wide(target.id);
-    const winui::DebugEnvironmentSummary* environment = nullptr;
+    const settings::DebugEnvironmentSummary* environment = nullptr;
     if (single)
     {
         const auto found = std::find_if(status.debugEnvironments->begin(), status.debugEnvironments->end(), [&](const auto& item) { return item.id == id; });
@@ -299,9 +297,7 @@ Value Debug(std::string_view method, const Value& params, const Target& target, 
         output.object.emplace("uiVisible", Boolean(context.debugVisible && context.debugVisible()));
         if (method == "settings.catalog")
         {
-            output.object.emplace("fields", single ? Object({{"name", Object({{"type", String("string")},
-                {"maximumLength", Number(static_cast<double>(debug_profile::MaximumEnvironmentNameLength))},
-                {"editable", Boolean(id == *status.debugEnvironmentId)}})}}) : Object());
+            output.object.emplace("fields", single ? DescribeDebugEnvironmentFields(id == *status.debugEnvironmentId) : Object());
             output.object.emplace("actions", single ? (id == *status.debugEnvironmentId ?
                 Strings({"set-enabled", "set-desktop", "clear"}) : Array()) : Strings({"create", "select"}));
             output.object.emplace("readOnly", Strings({"id", "selected", "enabled", "desktopDirectory", "dataDirectory", "environments", "selectedId", "generation"}));
@@ -381,6 +377,27 @@ Value Debug(std::string_view method, const Value& params, const Target& target, 
 bool IsEnvironmentSettingsTarget(const Target& target) noexcept
 {
     return target.kind == "pages" || target.kind == "page" || target.kind == "debug-environments" || target.kind == "debug-environment";
+}
+
+Value DescribePageSettingsFields()
+{
+    using namespace control;
+    return Object({
+        {"name", Object({{"type", String("string")}, {"maximumLength", Number(64)}, {"resetValue", String("")},
+            {"description", String("Rename the existing page without changing its identity or layout. An empty name restores the generated label. Rename and grid adjustments are separate transactions.")}})},
+        {"columns", Object({{"type", String("integer")}, {"minimum", Number(1)}, {"maximum", Number(50)},
+            {"description", String("Divide the page work area into this many columns. More columns can narrow the icon pitch and reduce the final icon size, even with the same desktop.itemIconSizeScale. Analyze together with rows via analyze-grid before changing dimensions; displaced items or resized components require confirmation.")}})},
+        {"rows", Object({{"type", String("integer")}, {"minimum", Number(1)}, {"maximum", Number(50)},
+            {"description", String("Divide the page work area into this many rows. More rows can reduce the pitch and leave less height for the icon after the title allowance. Analyze together with columns via analyze-grid before changing dimensions; displaced items or resized components require confirmation.")}})}});
+}
+
+Value DescribeDebugEnvironmentFields(bool editable)
+{
+    using namespace control;
+    return Object({{"name", Object({{"type", String("string")},
+        {"maximumLength", Number(static_cast<double>(debug_profile::MaximumEnvironmentNameLength))},
+        {"description", String("Renames the selected debug environment. Its persistent identity and directories are preserved.")},
+        {"editable", Boolean(editable)}})}});
 }
 
 Value HandleEnvironmentSettings(std::string_view method, const Value& params,

@@ -1,7 +1,8 @@
 #pragma once
-#include "large_icon_config.h"
+#include "large_icon_config_types.h"
 #include <functional>
 #include <map>
+#include <optional>
 
 namespace snowdesktop
 {
@@ -23,7 +24,7 @@ struct LargeIconSettingsSnapshot
     std::uint32_t accent = 0;
     std::uint32_t edgeColor = 0;
     bool hasEdgeColor = false;
-    bool steam = false;
+    int gameCoverContent = 0; // Artwork source available to every selected shortcut.
     std::uint64_t session = 0, revision = 0;
     bool available = false, editable = false, succeeded = false;
     int maxColumns = 1, maxRows = 1;

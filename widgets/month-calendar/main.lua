@@ -32,6 +32,7 @@ local settings = {
     fields = {
         {
             key = "weekStart",
+            agentDescription = "Chooses the first weekday for the calendar columns. Locale uses the locale's rule. The Monday and Sunday choices apply directly to grid placement.",
             label = l10n.tr("lua_widget.month_calendar.week_start"),
             type = "select",
             default = "locale",
@@ -44,12 +45,14 @@ local settings = {
         },
         {
             key = "showAdjacent",
+            agentDescription = "Shows dates outside the current month in the full month grid. The mini layout draws its own compact week.",
             label = l10n.tr("lua_widget.month_calendar.show_adjacent"),
             type = "bool",
             default = true,
         },
         {
             key = "fontScale",
+            agentDescription = "Scales calendar text relative to the panel's layout metrics.",
             label = l10n.tr("lua_widget.common.font_scale"),
             type = "int",
             default = 100,
@@ -273,11 +276,9 @@ end
 
 local function centeredText(text, x, y, width, height,
     size, color, bold, alpha)
-    local measured = draw.measureText(text, size, 0, bold)
-    draw.text(x + math.max(0, (width - measured.width) / 2),
-        y + math.max(0, (height - measured.height) / 2),
+    draw.text(x + width / 2, y + height / 2,
         text, size, color, math.max(1, width), bold, true, 0,
-        alpha or 1.0)
+        alpha or 1.0, nil, { x = "center", y = "center" })
 end
 
 local function submitButton(id, label, shape, metrics)
@@ -308,11 +309,8 @@ local function drawHeaderIconButton(id, glyph, label, colors, shape, metrics)
             colors.text, metrics.controlRadius,
             pressed and 0.16 or 0.10)
     end
-    draw.fluent(glyph,
-        shape.x + (shape.width - metrics.iconSize) / 2,
-        shape.y + (shape.height - metrics.iconSize) / 2 +
-            metrics.spacingXs * 0.5,
-        metrics.iconSize, colors.text)
+    draw.glyph(glyph, shape.x + shape.width / 2, shape.y + shape.height / 2,
+        metrics.iconSize, colors.text, "fluent")
     submitButton(id, label, shape, metrics)
 end
 

@@ -6,6 +6,7 @@
 // effects, XamlBlurBrush, visual-tree watcher, and TAP initialization code at:
 // https://github.com/TranslucentTB/TranslucentTB/tree/322e2b7395a51975150126276308b415970e080b
 // Taskbar source matching also follows upstream fix b8716c1207037013515a289c365918cb4aea109e.
+// Secondary taskbar background painting follows upstream workaround e8bbe7669d2d5358db49a5147cb78dea2fbf62fe.
 
 #include "taskbar_hook_protocol.h"
 #include "thumbnail_toolbar_protocol.h"
@@ -15,7 +16,6 @@
 #include "taskbar_hook_lifecycle.h"
 #include "taskbar_xaml_readiness.h"
 #include "taskview_visibility.h"
-#include "desktop/display_color_mode.h"
 #include "../shell/shell_start_pin_command.h"
 
 #include <windows.h>
@@ -441,6 +441,8 @@ void SetHookStatus(LONG status, DWORD error = ERROR_SUCCESS)
     std::lock_guard lock(g_hookStatusMutex);
     if (!g_sharedState || g_retired.load())
         return;
+    if (status == kStatusConnected && g_hookStatus != kStatusInjecting)
+        return; // A visual callback may have applied (or failed) before Advise returned.
     g_hookStatus = status;
     g_hookError = error;
     InterlockedExchange(&g_sharedState->lastError, static_cast<LONG>(error));
@@ -856,11 +858,7 @@ public:
             if (g_sharedState)
                 InterlockedExchange(&g_sharedState->diagnosticStage, 240);
             if (SUCCEEDED(result))
-            {
-                if (g_sharedState &&
-                    g_sharedState->status < kStatusConnected)
-                    InterlockedExchange(&g_sharedState->status, kStatusConnected);
-            }
+                SetHookStatus(kStatusConnected);
             else
                 SetHookStatus(kStatusFailed, static_cast<DWORD>(result));
             SignalReady();
@@ -882,7 +880,7 @@ public:
             }
             else if (type == L"Taskbar.TaskbarFrame")
             {
-                RegisterTaskbarFrame(element.Handle);
+                RegisterTaskbarFrame(element.Handle, FromHandle<wux::FrameworkElement>(element.Handle));
             }
             else if (type == winrt::name_of<wux::Shapes::Rectangle>())
             {
@@ -999,7 +997,7 @@ public:
                 }
             }
 
-            if (!info.background.control || !info.background.originalFill)
+            if (!info.background.control)
                 continue;
             if (info.appliedGeneration == snapshot.generation &&
                 info.appliedEnabled == enabled)
@@ -1022,7 +1020,7 @@ public:
                 ApplyEdges(info.background, effective, info.taskbar);
             }
             info.appliedGeneration = snapshot.generation;
-            info.appliedEnabled = enabled;
+            SetAppearanceApplied(info, enabled);
             if (!controllerEnabled && restoredNativeVisuals && info.taskbar)
             {
                 // Explorer owns the normal taskbar appearance. Replaying its
@@ -1061,6 +1059,7 @@ private:
         HWND edgeTaskbar = nullptr;
         winrt::event_token edgeSizeToken{};
         bool edgeSizeSubscribed = false;
+        bool originalFillWasUnset = false;
     };
 
     struct TaskbarInfo
@@ -1074,7 +1073,17 @@ private:
         LONG appliedContentTheme = -1;
         wux::ElementTheme nativeRequestedTheme = wux::ElementTheme::Default;
         bool appliedEnabled = false;
+        bool secondaryTaskbar = false;
     };
+
+    static void SetAppearanceApplied(TaskbarInfo& info, bool enabled)
+    {
+        if (info.appliedEnabled == enabled)
+            return;
+        info.appliedEnabled = enabled;
+        if (info.secondaryTaskbar)
+            InvalidateRect(info.taskbar, nullptr, !enabled);
+    }
 
     static bool RestoreContentTheme(TaskbarInfo& info)
     {
@@ -1102,23 +1111,28 @@ private:
         restored = RestoreControl(info.background) || restored;
         restored = RestoreControl(info.border) || restored;
         info.appliedGeneration = -1;
-        info.appliedEnabled = false;
+        SetAppearanceApplied(info, false);
         return restored;
+    }
+
+    static void RememberNativeFill(ControlInfo& control, const wux::Media::Brush& currentFill)
+    {
+        if (control.appliedFill && currentFill == control.appliedFill)
+            return;
+        // Explorer may supply no brush, or replace it after a system theme change.
+        // Preserve an unset empty fill so the template can supply a later value.
+        control.originalFill = currentFill;
+        control.originalFillWasUnset = !currentFill &&
+            control.control.ReadLocalValue(wux::Shapes::Shape::FillProperty()) ==
+                wux::DependencyProperty::UnsetValue();
     }
 
     static void ApplyBackdrop(ControlInfo& control, const Snapshot& snapshot)
     {
-        if (!control.control || !control.originalFill)
+        if (!control.control)
             return;
         const auto currentFill = control.control.Fill();
-        if (currentFill && (!control.appliedFill ||
-                currentFill != control.appliedFill))
-        {
-            // Windows replaces its native brushes when the system theme changes.
-            // Keep the latest native brush so disabling our material restores the
-            // current theme rather than the one active when the hook was loaded.
-            control.originalFill = currentFill;
-        }
+        RememberNativeFill(control, currentFill);
         const LONG backdropStyle = snapshot.style &
             (kStyleGlassBackdrop | kStyleAcrylicBackdrop);
         const bool parametersMatch = control.appliedStyle == backdropStyle &&
@@ -1191,14 +1205,10 @@ private:
     static void ApplySolidFill(ControlInfo& control, float red, float green,
         float blue, float alpha)
     {
-        if (!control.control || !control.originalFill)
+        if (!control.control)
             return;
         const auto currentFill = control.control.Fill();
-        if (currentFill && (!control.appliedFill ||
-                currentFill != control.appliedFill))
-        {
-            control.originalFill = currentFill;
-        }
+        RememberNativeFill(control, currentFill);
         const bool parametersMatch = control.appliedStyle == 0 &&
             control.appliedRed == red && control.appliedGreen == green &&
             control.appliedBlue == blue && control.appliedAlpha == alpha &&
@@ -1278,55 +1288,17 @@ private:
         context->SetDpi(96.f, 96.f);
         context->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x), static_cast<float>(offset.y)));
         context->Clear(D2D1::ColorF(0, 0));
-        namespace display = snowdesktop::display_color;
-        const bool correctHighlights = display::ModeForMonitor(
-            MonitorFromWindow(control.edgeTaskbar, MONITOR_DEFAULTTONULL)) == display::Mode::WideColor;
-        std::vector<std::uint32_t> coverage;
         const HRESULT drawResult = DrawTaskbarEdges(context.get(), width, height, scale, control.edgeStyle,
-            ResolveTaskbarMaterialEdge(control.edgeTaskbar), correctHighlights ? &coverage : nullptr);
+            ResolveTaskbarMaterialEdge(control.edgeTaskbar));
         const HRESULT endResult = interop->EndDraw();
-        winrt::check_hresult(drawResult); winrt::check_hresult(endResult);
-        const auto source = compositor.CreateSurfaceBrush(surface);
-        wuc::CompositionBrush brush = source;
-        if (correctHighlights && !coverage.empty())
-        {
-            try
-            {
-                const auto mask = control.edgeDevice.CreateDrawingSurface(
-                    {static_cast<float>(width), static_cast<float>(height)},
-                    winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized,
-                    winrt::Windows::Graphics::DirectX::DirectXAlphaMode::Premultiplied);
-                const auto maskInterop = mask.as<ABI::Windows::UI::Composition::ICompositionDrawingSurfaceInterop>();
-                context = nullptr;
-                winrt::check_hresult(maskInterop->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
-                    context.put_void(), &offset));
-                const auto properties = D2D1::BitmapProperties(
-                    D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-                winrt::com_ptr<ID2D1Bitmap> bitmap;
-                const auto created = context->CreateBitmap({width, height}, coverage.data(),
-                    width * static_cast<UINT32>(sizeof(std::uint32_t)), properties, bitmap.put());
-                if (SUCCEEDED(created))
-                {
-                    context->SetDpi(96.f, 96.f);
-                    context->SetTransform(D2D1::Matrix3x2F::Translation(
-                        static_cast<float>(offset.x), static_cast<float>(offset.y)));
-                    context->Clear(D2D1::ColorF(0, 0.f));
-                    context->DrawBitmap(bitmap.get());
-                }
-                const auto maskEnd = maskInterop->EndDraw();
-                winrt::check_hresult(created);
-                winrt::check_hresult(maskEnd);
-                if (!control.edgeEffectFactory)
-                    control.edgeEffectFactory = snowdesktop::backdrop_srgb::CreateFactory(compositor);
-                const auto material = control.edgeEffectFactory.CreateBrush();
-                material.SetSourceParameter(L"backdrop", compositor.CreateBackdropBrush());
-                material.SetSourceParameter(L"material", source);
-                material.SetSourceParameter(L"coverage", compositor.CreateSurfaceBrush(mask));
-                brush = material;
-            }
-            catch (const winrt::hresult_error&) {}
-        }
-        control.edgeVisual.Brush(brush);
+        winrt::check_hresult(drawResult);
+        winrt::check_hresult(endResult);
+        if (!control.edgeEffectFactory)
+            control.edgeEffectFactory = snowdesktop::backdrop_srgb::CreateSceneFactory(compositor);
+        const auto scene = control.edgeEffectFactory.CreateBrush();
+        scene.SetSourceParameter(L"backdrop", compositor.CreateBackdropBrush());
+        scene.SetSourceParameter(L"scene", compositor.CreateSurfaceBrush(surface));
+        control.edgeVisual.Brush(scene);
         control.edgeVisual.Size(size);
     }
 
@@ -1338,6 +1310,7 @@ private:
         control.edgeStyle.borderRed = snapshot.borderRed; control.edgeStyle.borderGreen = snapshot.borderGreen;
         control.edgeStyle.borderBlue = snapshot.borderBlue; control.edgeStyle.borderAlpha = snapshot.borderAlpha;
         control.edgeStyle.edge = snapshot.edge;
+        control.edgeStyle.style = snapshot.style;
         control.edgeTaskbar = taskbar;
         if (snapshot.borderAlpha <= 0 && (!snapshot.edge.highlightEnabled || snapshot.edge.highlightStrength <= 0))
         {
@@ -1441,8 +1414,13 @@ private:
             control.edgeVisual = nullptr; control.edgeDevice = nullptr;
             control.materialVisual.Close(); control.materialVisual = nullptr; control.originalChildVisual = nullptr;
         }
-        if (control.control && control.originalFill)
-            control.control.Fill(control.originalFill);
+        if (control.control && wasApplied && control.control.Fill() == control.appliedFill)
+        {
+            if (control.originalFillWasUnset)
+                control.control.ClearValue(wux::Shapes::Shape::FillProperty());
+            else
+                control.control.Fill(control.originalFill);
+        }
         control.appliedFill = nullptr;
         control.appliedStyle = -1;
         return wasApplied;
@@ -1457,12 +1435,12 @@ private:
         return inspectable.as<T>();
     }
 
-    wux::FrameworkElement FindParent(std::wstring_view name,
-        wux::FrameworkElement element)
+    static wux::FrameworkElement FindTaskbarFrame(wux::FrameworkElement element)
     {
         while (element)
         {
-            if (element.Name() == name)
+            if (element.Name() == L"TaskbarFrame" ||
+                winrt::get_class_name(element) == L"Taskbar.TaskbarFrame")
                 return element;
             auto parent = wux::Media::VisualTreeHelper::GetParent(element)
                 .try_as<wux::FrameworkElement>();
@@ -1473,17 +1451,24 @@ private:
         return nullptr;
     }
 
-    void RegisterTaskbarFrame(InstanceHandle frameHandle)
+    void RegisterTaskbarFrame(InstanceHandle frameHandle, const wux::FrameworkElement& frame)
     {
-        // The content can be the frame itself or an ancestor on Insider builds.
-        const auto xamlRoot = FromHandle<wux::UIElement>(frameHandle).XamlRoot();
-        if (!xamlRoot) return;
-        const auto rootContent = xamlRoot.Content();
-        if (!rootContent) return;
-        for (auto iterator = xamlSources_.begin(); iterator != xamlSources_.end();
-            ++iterator)
+        if (taskbars_.contains(frameHandle)) return;
+        const auto xamlRoot = frame.XamlRoot();
+        auto rootContent = xamlRoot ? xamlRoot.Content() : wux::UIElement{nullptr};
+        if (!rootContent)
         {
-            const auto source = FromHandle<wuxh::DesktopWindowXamlSource>(*iterator);
+            // Diagnostics can report the frame before XamlRoot is populated.
+            rootContent = frame;
+            while (auto parent = wux::Media::VisualTreeHelper::GetParent(rootContent)
+                .try_as<wux::UIElement>())
+                rootContent = std::move(parent);
+        }
+        // One island can acquire a new frame without rebuilding its XAML source.
+        // Retain the source handles until their own Remove notifications.
+        for (const auto sourceHandle : xamlSources_)
+        {
+            const auto source = FromHandle<wuxh::DesktopWindowXamlSource>(sourceHandle);
             wux::UIElement content{nullptr};
             try
             {
@@ -1502,21 +1487,16 @@ private:
             HWND taskbar = GetAncestor(xamlWindow, GA_PARENT);
             wchar_t type[64]{};
             GetClassNameW(taskbar, type, 64);
-            if (!IsCurrentHookInstance() && !g_retired.load() &&
-                wcscmp(type, L"Shell_TrayWnd") == 0)
+            const bool primary = wcscmp(type, L"Shell_TrayWnd") == 0;
+            const bool secondary = wcscmp(type, L"Shell_SecondaryTrayWnd") == 0;
+            if (!primary && !secondary) continue;
+            if (!IsCurrentHookInstance() && !g_retired.load() && primary)
             {
                 const DWORD error = ClaimHookInstance(taskbar);
                 if (error) { SetHookStatus(kStatusFailed, error); return; }
             }
             if (!IsCurrentHookInstance()) return;
-            auto& info = taskbars_[frameHandle];
-            info.xamlWindow = xamlWindow;
-            info.taskbar = taskbar;
-            info.rootElement = rootContent.try_as<wux::FrameworkElement>();
-            info.appliedContentTheme = -1;
-            if (info.rootElement)
-                info.nativeRequestedTheme = info.rootElement.RequestedTheme();
-            if (taskbar && subclassedTaskbars_.insert(taskbar).second)
+            if (subclassedTaskbars_.insert(taskbar).second)
             {
                 if (AttachHookOwner(taskbar) != ERROR_SUCCESS ||
                     !SetWindowSubclass(taskbar, TaskbarSubclassProc,
@@ -1527,7 +1507,13 @@ private:
                     return;
                 }
             }
-            xamlSources_.erase(iterator);
+            auto& info = taskbars_[frameHandle];
+            info.xamlWindow = xamlWindow;
+            info.taskbar = taskbar;
+            info.secondaryTaskbar = secondary;
+            info.rootElement = rootContent.try_as<wux::FrameworkElement>();
+            if (info.rootElement)
+                info.nativeRequestedTheme = info.rootElement.RequestedTheme();
             break;
         }
     }
@@ -1536,13 +1522,14 @@ private:
         InstanceHandle controlHandle, bool border)
     {
         const auto parent = FromHandle<wux::FrameworkElement>(parentHandle);
-        const auto frame = FindParent(L"TaskbarFrame", parent);
+        const auto frame = FindTaskbarFrame(parent);
         if (!frame)
             return;
         InstanceHandle frameHandle = 0;
         winrt::check_hresult(diagnostics_->GetHandleFromIInspectable(
             reinterpret_cast<::IInspectable*>(winrt::get_abi(frame)),
             &frameHandle));
+        RegisterTaskbarFrame(frameHandle, frame);
         auto iterator = taskbars_.find(frameHandle);
         if (iterator == taskbars_.end())
             return;
@@ -1551,7 +1538,6 @@ private:
             ? iterator->second.border : iterator->second.background;
         if (control.control) RestoreControl(control);
         control.control = shape;
-        control.originalFill = shape.Fill();
         iterator->second.appliedGeneration = -1;
         ApplyTaskbar(iterator->second.taskbar);
     }
@@ -1607,6 +1593,27 @@ private:
         return true;
     }
 
+    void ClearSecondaryTaskbarBackground(HWND window) const
+    {
+        if (!std::any_of(taskbars_.begin(), taskbars_.end(), [window](const auto& entry) {
+                const auto& info = entry.second;
+                return info.taskbar == window && info.secondaryTaskbar &&
+                    info.appliedEnabled && info.background.appliedFill;
+            }))
+            return;
+
+        // Explorer's legacy surface can cover the XAML brush. Clear it before
+        // Explorer paints, leaving the normal WM_PAINT chain in place.
+        RECT rect{};
+        if (!GetClientRect(window, &rect))
+            return;
+        if (const HDC dc = GetDCEx(window, nullptr, DCX_WINDOW | DCX_CACHE))
+        {
+            FillRect(dc, &rect, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+            ReleaseDC(window, dc);
+        }
+    }
+
     static LRESULT CALLBACK TaskbarSubclassProc(HWND window, UINT message,
         WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR reference)
     {
@@ -1626,6 +1633,8 @@ private:
             // observe graceful shutdown; a TAP must not consume their Apply.
             return DefSubclassProc(window, message, wParam, lParam);
         }
+        if (self && message == WM_PAINT && !g_forceRestore.load() && IsCurrentHookInstance())
+            self->ClearSecondaryTaskbarBackground(window);
         if (self && message == WM_NCDESTROY)
         {
             RemoveWindowSubclass(window, TaskbarSubclassProc,

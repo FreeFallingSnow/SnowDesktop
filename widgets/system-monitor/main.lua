@@ -30,15 +30,42 @@ local style = {
 
 local settings = {
     fields = {
-        { key = "show_cpu", label = l10n.tr("lua_widget.system_monitor.show_cpu"), type = "bool", default = monitorSources.defaults.cpu },
-        { key = "show_memory", label = l10n.tr("lua_widget.system_monitor.show_memory"), type = "bool", default = monitorSources.defaults.memory },
-        { key = "show_gpu", label = l10n.tr("lua_widget.system_monitor.show_gpu"), type = "bool", default = monitorSources.defaults.gpu },
-        { key = "show_vram", label = l10n.tr("lua_widget.system_monitor.show_vram"), type = "bool", default = monitorSources.defaults.vram },
-        { key = "show_network", label = l10n.tr("lua_widget.system_monitor.show_network"), type = "bool", default = monitorSources.defaults.network },
-        { key = "show_battery", label = l10n.tr("lua_widget.system_monitor.show_battery"), type = "bool", default = monitorSources.defaults.battery },
-        { key = "show_storage", label = l10n.tr("lua_widget.system_monitor.show_storage"), type = "bool", default = monitorSources.defaults.storage },
-        { key = "show_disk_io", label = l10n.tr("lua_widget.system_monitor.show_disk_io"), type = "bool", default = monitorSources.defaults.disk_io },
-        { key = "show_uptime", label = l10n.tr("lua_widget.system_monitor.show_uptime"), type = "bool", default = monitorSources.defaults.uptime },
+        { key = "show_cpu",
+            agentDescription = "Includes the processor card in the monitor's packed card layout.",
+            label = l10n.tr("lua_widget.system_monitor.show_cpu"), type = "bool", default = monitorSources.defaults.cpu
+        },
+        { key = "show_memory",
+            agentDescription = "Includes the physical memory card in the packed card layout.",
+            label = l10n.tr("lua_widget.system_monitor.show_memory"), type = "bool", default = monitorSources.defaults.memory
+        },
+        { key = "show_gpu",
+            agentDescription = "Includes the graphics utilization card in the packed card layout.",
+            label = l10n.tr("lua_widget.system_monitor.show_gpu"), type = "bool", default = monitorSources.defaults.gpu
+        },
+        { key = "show_vram",
+            agentDescription = "Includes the graphics memory card in the packed card layout.",
+            label = l10n.tr("lua_widget.system_monitor.show_vram"), type = "bool", default = monitorSources.defaults.vram
+        },
+        { key = "show_network",
+            agentDescription = "Includes the download and upload rate card in the packed card layout.",
+            label = l10n.tr("lua_widget.system_monitor.show_network"), type = "bool", default = monitorSources.defaults.network
+        },
+        { key = "show_battery",
+            agentDescription = "Includes the battery status card where data is available.",
+            label = l10n.tr("lua_widget.system_monitor.show_battery"), type = "bool", default = monitorSources.defaults.battery
+        },
+        { key = "show_storage",
+            agentDescription = "Includes the storage capacity card in the packed card layout.",
+            label = l10n.tr("lua_widget.system_monitor.show_storage"), type = "bool", default = monitorSources.defaults.storage
+        },
+        { key = "show_disk_io",
+            agentDescription = "Includes the disk throughput card in the packed card layout.",
+            label = l10n.tr("lua_widget.system_monitor.show_disk_io"), type = "bool", default = monitorSources.defaults.disk_io
+        },
+        { key = "show_uptime",
+            agentDescription = "Includes the system uptime card in the packed card layout.",
+            label = l10n.tr("lua_widget.system_monitor.show_uptime"), type = "bool", default = monitorSources.defaults.uptime
+        },
     },
 }
 
@@ -57,13 +84,16 @@ for _, field in ipairs(settings.fields) do
     sizeFields[#sizeFields + 1] = field
     sizeFields[#sizeFields + 1] = {
         key = "size_" .. id,
+        agentDescription = "Sets the preferred grid span of this metric card. The component packs visible cards into the current viewport and scrolls when they exceed it.",
         label = l10n.tr("lua_widget.system_monitor.card_size", cardTitles[id]),
         type = "select", default = "1x1", options = cardLayout.sizes,
     }
 end
 settings.fields = sizeFields
 table.insert(settings.fields, 1, {
-    key = "main_font_scale", label = l10n.tr("lua_widget.system_monitor.main_font_scale"),
+    key = "main_font_scale",
+    agentDescription = "Scales the main numeric readings inside the cards. The card packing sizes are controlled separately.",
+    label = l10n.tr("lua_widget.system_monitor.main_font_scale"),
     type = "int", default = 100, min = 70, max = 150,
 })
 
@@ -255,10 +285,9 @@ local function drawMarqueeText(key, x, y, text, fontSize, color,
 end
 
 local function centeredText(x, y, width, height, text, size, color, bold)
-    local font, metrics = fitFontSize(text, size, layout.fontCu(9), width, bold, height)
-    draw.text(x + math.max(0, (width - metrics.width) / 2),
-        y + math.max(0, (height - metrics.height) / 2), text, font,
-        color, width, bold, true, height)
+    local font = fitFontSize(text, size, layout.fontCu(9), width, bold, height)
+    draw.text(x + width / 2, y + height / 2, text, font,
+        color, width, bold, true, height, nil, nil, { x = "center", y = "center" })
 end
 
 local function gauge(x, y, width, height, info, palette)
@@ -310,8 +339,8 @@ local function wrappedText(x, y, width, height, text, palette, key)
             text, size, palette.cardSub, width)
         return
     end
-    draw.text(x, y + math.max(0, (height - metrics.height) / 2),
-        text, size, palette.cardSub, width, false, false, height)
+    draw.text(x, y + height / 2, text, size, palette.cardSub,
+        width, false, false, height, nil, nil, { y = "center" })
 end
 
 local function capacityText(x, y, width, height, info, palette, horizontal)
@@ -483,10 +512,11 @@ local function drawCard(x, y, width, height, info, palette, columns, rows)
         for index, line in ipairs(info.lines) do
             local font, metrics = fitted[index].font, fitted[index].metrics
             local lineX = x + inset + (sideBySide and (index - 1) * (slotWidth + lineGap) or 0)
-            local lineY = sideBySide and (bodyTop + math.max(0, (bodyHeight - metrics.height) / 2)) or nextY
+            local lineY = sideBySide and (bodyTop + bodyHeight / 2) or nextY
             draw.text(lineX, lineY,
                 line.text, font, line.color or palette.cardText,
-                slotWidth, false, true, metrics.height)
+                slotWidth, false, true, metrics.height, nil, nil,
+                sideBySide and { y = "center" } or nil)
             nextY = nextY + metrics.height + lineGap
         end
     else
@@ -502,13 +532,11 @@ local function drawCard(x, y, width, height, info, palette, columns, rows)
                     mainFont(15), palette.cardText, true)
             end
         else
-            local metrics = nil
-            valueFont, metrics = fitFontSize(info.value, valueFont,
+            valueFont = fitFontSize(info.value, valueFont,
                 layout.fontCu(10), contentWidth, true, bodyHeight)
-            draw.text(x + math.max(inset, (width - metrics.width) / 2),
-                bodyTop + math.max(0, (bodyHeight - metrics.height) / 2),
+            draw.text(x + width / 2, bodyTop + bodyHeight / 2,
                 info.value, valueFont, palette.cardText, contentWidth, true,
-                true, bodyHeight)
+                true, bodyHeight, nil, nil, { x = "center", y = "center" })
         end
     end
 

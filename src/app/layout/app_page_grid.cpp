@@ -1264,6 +1264,45 @@ void DesktopApp::SetIconBeautifyEnabled(bool enabled)
     SetIconBeautifySettings(settings, beautifyFileThumbnails_);
 }
 
+void DesktopApp::SetIconShadows(snowdesktop::IconShadowSettings settings)
+{
+    settings.Normalize();
+    if (settings == iconShadows_) return;
+
+    const bool subjectAvailabilityChanged = settings.subject != iconShadows_.subject;
+    const bool subjectChanged = subjectAvailabilityChanged ||
+        settings.subjectStrength != iconShadows_.subjectStrength;
+    const bool dockChanged = subjectChanged || settings.dock != iconShadows_.dock ||
+        settings.dockStrength != iconShadows_.dockStrength;
+    const bool popupChanged = subjectChanged || settings.fan != iconShadows_.fan ||
+        settings.fanStrength != iconShadows_.fanStrength || settings.popup != iconShadows_.popup ||
+        settings.popupStrength != iconShadows_.popupStrength;
+    const bool navigationChanged = subjectChanged || settings.quickNavigation != iconShadows_.quickNavigation ||
+        settings.quickNavigationStrength != iconShadows_.quickNavigationStrength;
+    iconShadows_ = settings;
+    if (subjectAvailabilityChanged)
+    {
+        ClearStyledIconCache();
+        d2dIconCache_.clear();
+        iconGlassBackdrop_.clear();
+        iconBitmapStyles_.clear();
+        quickNavigation_->sysIconCache.clear();
+        quickNavigation_->appIconCache.clear();
+    }
+    InvalidateDragStaticScene();
+    if (hwnd_)
+        InvalidateRect(hwnd_, nullptr, TRUE);
+    if (popupChanged)
+    {
+        InvalidateCollectionPopupContent();
+        InvalidateFloatingPopupWindow(false);
+    }
+    if (dockChanged)
+        InvalidateDockRects(TRUE);
+    if (navigationChanged)
+        InvalidateQuickNavigationWindow();
+}
+
 void DesktopApp::SetIconBeautifySettings(
     const snowdesktop::IconBeautifySettings& rawSettings,
     bool beautifyFileThumbnails,

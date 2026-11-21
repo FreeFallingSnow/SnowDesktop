@@ -1481,7 +1481,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         rendered = true;
         SettingsSnapshot snapshot; snapshot.revision = ++revision; snapshot.generation = 1;
         snapshot.initialized = snapshot.sessionActive = true;
-        snapshot.values.general.showAdvancedSettings = expanded || page == SettingsPage::RuntimeModules || page == SettingsPage::AgentOperations;
+        snapshot.values.general.showAdvancedSettings = expanded || page == SettingsPage::RuntimeModules;
         snapshot.values.general.steamRoomVisible = focusId == "general.steamRoom";
         snapshot.values.general.runtimeModules.allowed.fill(!disabled);
         *modulePreviewPolicy = snapshot.values.general.runtimeModules;
@@ -1540,18 +1540,22 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         snapshot.route.focusId = controlsGallery ? std::string{} : focusId;
         appearanceFixture->globalSettings = snapshot.values.desktop.iconBeautify;
         if (!shell->ApplySnapshot(snapshot)) throw std::runtime_error("preview route refused: " + key);
-        HomeAboutStatusPatch status; status.generation = 1; status.revision = revision;
+        settings::HomeAboutStatusPatch status; status.generation = 1; status.revision = revision;
         status.usageGuideExpanded = expanded; status.installedWidgetCount = 3;
-        status.backupState = SettingsBackupState::Ready; status.backupCount = 3;
+        status.backupState = settings::SettingsBackupState::Ready; status.backupCount = 3;
         status.debugDataDirectory = L"C:\\Preview\\SnowDesktop";
         status.debugDesktopDirectory = L"C:\\Preview\\Desktop";
-        status.debugEnvironments = std::vector<DebugEnvironmentSummary>{{L"default", L""}, {L"env-preview", L"Screenshot Demo"}};
+        status.debugEnvironments = std::vector<settings::DebugEnvironmentSummary>{{L"default", L""}, {L"env-preview", L"Screenshot Demo"}};
         status.debugEnvironmentId = L"env-preview";
         status.debugEnvironmentName = L"Screenshot Demo";
         (void)shell->ApplyHomeAboutStatusPatch(status);
         if (page == SettingsPage::Widgets || page == SettingsPage::DeveloperTools || page == SettingsPage::AgentOperations)
         {
             WidgetsPageSnapshot packages; packages.generation = 1; packages.revision = revision;
+            const bool developmentVersionPreview = focusId == "package-version-development";
+            const bool versionPreview = developmentVersionPreview ||
+                focusId == "package-version-installed";
+            packages.developerOverridesVisible = versionPreview;
             if (searching) packages.task.kind = WidgetsPageTaskKind::Searching;
             packages.workshopAvailable = true;
             packages.developerPublisherAvailable = true;
@@ -1571,6 +1575,12 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 control.state = index == 1 ? WidgetAgentSkillInstallState::UpdateAvailable : WidgetAgentSkillInstallState::Current;
                 control.bundledRevision = 2;
                 control.installedRevision = index == 1 ? 1u : 2u;
+                if (index == 2)
+                {
+                    control.state = WidgetAgentSkillInstallState::NotInstalled;
+                    control.installed = false;
+                    control.installedRevision = 0;
+                }
                 packages.controlAgentSkills.push_back(std::move(control));
             }
             packages.controlAgentSkillTargetMask = 63;
@@ -1586,7 +1596,41 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 if (index == 2 && focusId.starts_with("package-inline-layout"))
                     package.description.clear();
                 package.version = L"1.2.0"; package.author = L"SnowDesktop"; package.builtIn = index == 0;
-                package.enabled = index != 2; packages.installed.push_back(std::move(package));
+                package.enabled = index != 2;
+                package.hasInstalledVersion = !package.builtIn;
+                if (versionPreview && index == 0)
+                {
+                    package.name = english ? L"Gomoku" : L"五子棋"; // l10n-allow: isolated bilingual preview fixture.
+                    package.description = english
+                        ? L"Play locally, against the computer, or with a friend on Steam."
+                        : L"支持本地双人、三档人机和 Steam 对局。"; // l10n-allow: isolated bilingual preview fixture.
+                    package.builtIn = false;
+                    package.hasInstalledVersion = true;
+                    package.canUseDevelopmentOverride = true;
+                    package.development = developmentVersionPreview;
+                    package.developmentOverrideActive = developmentVersionPreview;
+                    package.sourceName = developmentVersionPreview
+                        ? _LW("app.settings.widgets_source_local")
+                        : _LW("app.settings.widgets_source_steam");
+                }
+                if (versionPreview && index == 1)
+                {
+                    package.development = true;
+                    package.hasInstalledVersion = false;
+                    package.canUninstall = false;
+                    package.enabled = !developmentVersionPreview;
+                    package.canAddToDesktop = package.enabled;
+                    package.sourceName = _LW("app.settings.widgets_source_local");
+                }
+                if (versionPreview && index == 2)
+                {
+                    package.builtIn = true;
+                    package.hasInstalledVersion = false;
+                    package.canEnable = false;
+                    package.canUninstall = false;
+                    package.enabled = true;
+                }
+                packages.installed.push_back(std::move(package));
                 WidgetRuntimeDiagnosticSnapshot diagnostic;
                 diagnostic.instanceId = L"widget-preview-" + std::to_wstring(index + 1);
                 diagnostic.packageId = L"d81cee29-8023-47d8-bfaf-f39d8d7fd5ac";

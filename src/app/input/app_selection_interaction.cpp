@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/dock/persistent_dock_host.h"
 #include "settings/shell_extension_settings.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
@@ -250,7 +251,8 @@ bool DesktopApp::IsMarqueePointerGesturePendingOrActive() const
 
 bool DesktopApp::ClearSelection(const DesktopWidget* localWidget)
 {
-    bool changed = keyboardNavVisualFocus_;
+    bool changed = ClearDesktopSurfaceKeyboardFocus() || keyboardNavVisualFocus_;
+    changed |= ClearFolderPreviewHeaderFocus();
     for (const auto& container : containers_)
         if (const auto* view = dynamic_cast<const ScrollingItemWidget*>(container.get()); view && view->folderSearch_)
             for (const auto& row : view->folderSearch_->rows)
@@ -273,6 +275,24 @@ bool DesktopApp::ClearSelection(const DesktopWidget* localWidget)
     return changed;
 }
 
+void DesktopApp::ClearInlineFolderPreviewSelectionOutside(POINT point)
+{
+    if (!folderPreview_ || !folderPreview_->inlineBounds || PtInRect(&*folderPreview_->inlineBounds, point)) return;
+    folderPreview_->keyboardFocused = false;
+    bool changed = ClearFolderPreviewHeaderFocus();
+    if (dockFolderPopupContainer_ && dockFolderPopupContainer_->IsSearchFocused())
+    {
+        dockFolderPopupContainer_->SetSearchFocused(false);
+        changed = true;
+    }
+    for (auto& entry : dockFolderPopupWidget_.folderEntries)
+        changed |= std::exchange(entry.selected, false);
+    if (!changed) return;
+    UpdateWidgetHoverExpansion(point);
+    (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+    InvalidateRect(hwnd_, &*folderPreview_->inlineBounds, FALSE);
+}
+
 void DesktopApp::ClearSelectionForExternalWindow(HWND window)
 {
     // Focus can move between our non-activating surfaces and input proxies.
@@ -286,11 +306,20 @@ void DesktopApp::ClearSelectionForExternalWindow(HWND window)
         dragSession_.HasContext() || dragDropController_.IsTransportActive())
         return;
 
-    if (filePreview_.RetainsSelection(window)) return;
+    if (filePreview_.RetainsSelection(window) || IsFolderPreviewSearchImeWindow(window)) return;
 
+    const bool previewSearchBlurred =
+        folderPreview_ && dockFolderPopupContainer_ && dockFolderPopupContainer_->IsSearchFocused();
+    const bool previewHeaderBlurred = folderPreview_ && folderPreview_->headerFocus.has_value();
+    if (previewHeaderBlurred || previewSearchBlurred)
+        folderPreview_->keyboardFocused = false;
+    if (previewSearchBlurred)
+        dockFolderPopupContainer_->SetSearchFocused(false);
     const auto revision = selectionController_.Revision();
     const bool keyboardFocus = keyboardNavVisualFocus_;
     ClearSelection();
+    if (previewHeaderBlurred || previewSearchBlurred)
+        RefreshDockFolderPopupGeometry();
     bool popupSelection = false;
     for (auto& entry : dockFolderPopupWidget_.folderEntries)
     {
@@ -298,7 +327,7 @@ void DesktopApp::ClearSelectionForExternalWindow(HWND window)
         entry.selected = false;
     }
     if (revision == selectionController_.Revision() &&
-        !keyboardFocus && !popupSelection)
+        !keyboardFocus && !popupSelection && !previewSearchBlurred && !previewHeaderBlurred)
         return;
 
     // Expanded selected titles and keyboard frames can extend beyond their
@@ -306,6 +335,113 @@ void DesktopApp::ClearSelectionForExternalWindow(HWND window)
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
     InvalidatePersistentDockHosts();
     InvalidateFloatingPopupWindow();
+}
+
+void DesktopApp::UpdateWidgetControlSelection(const DesktopWidget* nextOwner, const std::function<void()>& update)
+{
+    // Capture the old title extents and the visible projections before clearing selection.
+    std::vector<RECT> desktopDamage;
+    std::vector<HWND> dockDamage;
+    std::unordered_set<std::wstring> selectedKeys;
+    std::unordered_set<std::wstring> owners;
+    bool popupDamage = keyboardNavVisualFocus_ && IsCollectionPopupKeyboardTarget();
+    for (const auto& item : items_)
+    {
+        if (!item.selected) continue;
+        selectedKeys.insert(ToUpperInvariant(item.layoutKey));
+        if (IsItemInAnyWidget(item) || IsRectEmpty(&item.bounds) ||
+            (desktopIconsHidden_ && !IsRetainedLargeIcon(item))) continue;
+        RECT bounds = item.largeIcon ? GetLargeIconFrameRect(item) : item.bounds;
+        const RECT adornment = item.largeIcon ? GetLargeIconResizeHandleRect(item) : GetItemTextRect(item.bounds, true);
+        UnionRect(&bounds, &bounds, &adornment);
+        desktopDamage.push_back(bounds);
+    }
+    for (const auto& widget : widgets_)
+    {
+        if (&widget == nextOwner || widget.selected ||
+            std::ranges::any_of(widget.folderEntries, [](const FolderEntry& entry) { return entry.selected; }) ||
+            (!selectedKeys.empty() && std::ranges::any_of(widget.itemKeys, [&](const auto& key) {
+                return selectedKeys.contains(ToUpperInvariant(key));
+            })))
+        {
+            owners.insert(widget.id);
+            owners.insert(ResolveLuaWidgetFrameOwner(widget).id);
+        }
+    }
+    if (keyboardNavVisualFocus_ && keyboardNavInsideWidget_ && keyboardNavWidgetIndex_ < widgets_.size())
+        owners.insert(widgets_[keyboardNavWidgetIndex_].id);
+    const bool selectedRunning = std::ranges::any_of(dockUnpinnedRunningApps_, [](const auto& app) { return app.selected; });
+    const bool dockSelectionPossible = selectedRunning || !selectedKeys.empty() || !owners.empty() ||
+        std::ranges::any_of(dockEntries_, [](const DockEntry& entry) { return entry.selected; });
+    for (const auto& container : containers_)
+    {
+        if (auto* view = dynamic_cast<ScrollingItemWidget*>(container.get()); view && view->folderSearch_ &&
+            std::ranges::any_of(view->folderSearch_->rows, [](const auto& row) { return row.recursive && row.recursive->selected; }))
+            owners.insert(view->GetWidgetData()->id);
+        auto* dock = dynamic_cast<DockContainer*>(container.get());
+        if (!dock || !dockSelectionPossible) continue;
+        const bool runningHere = selectedRunning && std::ranges::any_of(dock->KeyboardTargets(), [&](const auto& target) {
+            return target.kind == DockContainer::KeyboardTarget::Kind::Running && target.index < dockUnpinnedRunningApps_.size() &&
+                dockUnpinnedRunningApps_[target.index].selected;
+        });
+        if (!runningHere && dock->GetSelectedItems().empty()) continue;
+        if (IsDockHostedByPersistentHost(dock))
+        {
+            if (auto* host = FindPersistentDockHost(dock)) dockDamage.push_back(host->hwnd);
+        }
+        else desktopDamage.push_back(dock->GetInteractiveBounds());
+    }
+    const auto* popup = GetOpenPopupWidget();
+    for (size_t i = 0; i < widgets_.size(); ++i)
+    {
+        const auto& widget = widgets_[i];
+        if (!owners.contains(widget.id) && !std::ranges::any_of(widget.childWidgetIds, [&](const auto& id) {
+                return owners.contains(id);
+            })) continue;
+        popupDamage |= popup == &widget || (dockFolderPopupOpen_ && dockFolderPopupMappingWidgetId_ == widget.id);
+        if (IsGroupedWidget(widget) || IsRectEmpty(&widget.bounds) ||
+            (desktopIconsHidden_ && !widget.keepWhenDesktopHidden)) continue;
+        RECT bounds = GetStandaloneWidgetFrameRect(widget);
+        if (snowdesktop::single_cell_widget::IsIconMode(widget))
+        {
+            const RECT title = GetItemTextRect(widget.bounds, true);
+            UnionRect(&bounds, &bounds, &title);
+        }
+        desktopDamage.push_back(bounds);
+    }
+    update();
+    for (auto bounds : desktopDamage)
+    {
+        if (IsRectEmpty(&bounds)) continue;
+        InflateRect(&bounds, 4, 4);
+        if (hwnd_) InvalidateRect(hwnd_, &bounds, FALSE);
+    }
+    for (HWND dock : dockDamage)
+        if (dock && IsWindow(dock)) InvalidateRect(dock, nullptr, FALSE);
+    if (popupDamage) InvalidateCollectionPopupControls();
+}
+
+void DesktopApp::PrepareWidgetSearchFocus(ScrollingItemWidget& target, bool selectOwner)
+{
+    std::vector<ScrollingItemWidget*> previous;
+    const auto addFocused = [&](ScrollingItemWidget* view) {
+        if (view && view != &target && view->IsSearchFocused())
+            previous.push_back(view);
+    };
+    addFocused(dockFolderPopupContainer_.get());
+    for (const auto& container : containers_)
+        addFocused(dynamic_cast<ScrollingItemWidget*>(container.get()));
+
+    if (selectOwner && target.GetWidgetData())
+    {
+        const size_t index = FindWidgetIndexById(target.GetWidgetData()->id);
+        UpdateWidgetControlSelection(target.GetWidgetData(), [&] { SelectWidgetOnly(index); });
+    }
+    for (auto* view : previous)
+    {
+        view->SetSearchFocused(false);
+        InvalidateWidgetControls(*view);
+    }
 }
 
 bool DesktopApp::OwnsWidgetKeyboardNavigation(
@@ -354,6 +490,9 @@ bool DesktopApp::HasSelectedFilesInWidget(
     };
 
     const auto& widget = widgets_[widgetIndex];
+    if (const auto* preview = GetInlineFolderPreviewData(widget);
+        preview && std::any_of(preview->folderEntries.begin(), preview->folderEntries.end(),
+            [](const FolderEntry& entry) { return entry.selected; })) return true;
     for (const auto& container : containers_)
         if (const auto* view = dynamic_cast<const ScrollingItemWidget*>(container.get()); view && view->GetWidgetData() == &widget && view->folderSearch_)
             for (const auto& row : view->folderSearch_->rows) if (row.recursive && row.recursive->selected) return true;
@@ -712,6 +851,7 @@ RECT DesktopApp::GetMarqueeViewportRect() const
     if (marqueeDockFolderPopup_ &&
         dockFolderPopupOpen_)
     {
+        if (folderPreview_) return GetPresentedCollectionPopupGeometry().content;
         return GetCollectionPopupContentRect(
             GetCollectionPopupRect(
                 dockFolderPopupWidget_));
@@ -751,8 +891,8 @@ void DesktopApp::UpdateMarqueeSelection(POINT current)
         const RECT popup =
             GetCollectionPopupRect(
                 dockFolderPopupWidget_);
-        const RECT viewport =
-            GetCollectionPopupContentRect(popup);
+        const RECT viewport = GetMarqueeViewportRect();
+        if (IsRectEmpty(&viewport)) return;
         const POINT contentAnchor{
             marqueeAnchorPoint_.x,
             marqueeAnchorPoint_.y +
@@ -778,8 +918,18 @@ void DesktopApp::UpdateMarqueeSelection(POINT current)
         OffsetRect(
             &marqueeRect_, 0,
             -currentScroll);
-        for (size_t i = 0;
-            i < GetPopupItemCount(dockFolderPopupWidget_); ++i)
+        if (folderPreview_ && folderPreview_->inlineBounds && dockFolderPopupContainer_)
+        {
+            auto& view = *dockFolderPopupContainer_;
+            view.ApplyMarqueeSelection(contentSelectionRect);
+            auto& entries = dockFolderPopupWidget_.folderEntries;
+            for (size_t i = 0; i < std::min(entries.size(), dockFolderPopupMarqueeInitialSelection_.size()); ++i)
+                entries[i].selected = entries[i].selected || dockFolderPopupMarqueeInitialSelection_[i];
+            return;
+        }
+        const size_t count = GetPopupItemCount(dockFolderPopupWidget_);
+        auto& entries = dockFolderPopupWidget_.folderEntries;
+        for (size_t i = 0; i < count; ++i)
         {
             RECT itemRect =
                 GetCollectionPopupItemRect(
@@ -787,11 +937,10 @@ void DesktopApp::UpdateMarqueeSelection(POINT current)
             OffsetRect(
                 &itemRect, 0,
                 currentScroll);
-            dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(dockFolderPopupWidget_, i)].selected =
-                (GetPopupFolderEntryIndex(dockFolderPopupWidget_, i) <
-                    dockFolderPopupMarqueeInitialSelection_.
-                        size() &&
-                 dockFolderPopupMarqueeInitialSelection_[GetPopupFolderEntryIndex(dockFolderPopupWidget_, i)]) ||
+            const size_t entry = GetPopupFolderEntryIndex(dockFolderPopupWidget_, i);
+            entries[entry].selected =
+                (entry < dockFolderPopupMarqueeInitialSelection_.size() &&
+                    dockFolderPopupMarqueeInitialSelection_[entry]) ||
                 (!IsRectEmptyRect(itemRect) && RectsIntersect(
                     itemRect,
                     contentSelectionRect));

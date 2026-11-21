@@ -1,6 +1,7 @@
 #include <algorithm>
 #include "settings/animation_preferences.h"
 #include "settings_ipc_services.h"
+#include "settings_ipc_typed.h"
 #include "settings_ipc_values.h"
 
 namespace snowdesktop::settings_ipc
@@ -35,11 +36,11 @@ class ControllerProxy final : public ISettingsController
 public:
     ControllerProxy(Channel& channel, Localize localize) : channel_(channel), localize_(std::move(localize))
     {
-        channel_.Bind<void, SnapshotPtr>("controller.changed", [this](SnapshotPtr snapshot) {
+        TypedChannel{channel_}.Bind<void, SnapshotPtr>("controller.changed", [this](SnapshotPtr snapshot) {
             Accept(std::move(snapshot));
         });
-        channel_.Bind<void>("controller.pending", [this] { if (pending_) pending_(); });
-        Accept(channel_.Call<SnapshotPtr>("controller.subscribe"));
+        TypedChannel{channel_}.Bind<void>("controller.pending", [this] { if (pending_) pending_(); });
+        Accept(TypedChannel{channel_}.Call<SnapshotPtr>("controller.subscribe"));
     }
     ~ControllerProxy() override
     {
@@ -124,7 +125,7 @@ private:
     {
         try
         {
-            auto result = channel_.CallWithTimeout<std::pair<SettingsActionResult, SnapshotPtr>>(
+            auto result = TypedChannel{channel_}.CallWithTimeout<std::pair<SettingsActionResult, SnapshotPtr>>(
                 timeout, std::string("controller.") + name, arguments...);
             Accept(std::move(result.second));
             return result.first;
@@ -154,9 +155,9 @@ void BindController(Channel& channel, ISettingsController& controller, Localize 
     controller.SetPendingWorkCallback({});
     using SnapshotPtr = ISettingsController::SnapshotPtr;
     using Reply = std::pair<SettingsActionResult, SnapshotPtr>;
-    channel.Bind<SnapshotPtr>("controller.Snapshot", [&] { return controller.Snapshot(); });
+    TypedChannel{channel}.Bind<SnapshotPtr>("controller.Snapshot", [&] { return controller.Snapshot(); });
 #define SD_CONTROLLER_ACTION(Name) \
-    channel.Bind<Reply>("controller." #Name, [&] { \
+    TypedChannel{channel}.Bind<Reply>("controller." #Name, [&] { \
         auto result = controller.Name(); return Reply{std::move(result), controller.Snapshot()}; });
     SD_CONTROLLER_ACTION(Initialize)
     SD_CONTROLLER_ACTION(CloseSession)
@@ -164,19 +165,19 @@ void BindController(Channel& channel, ISettingsController& controller, Localize 
     SD_CONTROLLER_ACTION(FlushAll)
 #undef SD_CONTROLLER_ACTION
 #define SD_CONTROLLER_ARGUMENT(Name, Type) \
-    channel.Bind<Reply, Type>("controller." #Name, [&](Type value) { \
+    TypedChannel{channel}.Bind<Reply, Type>("controller." #Name, [&](Type value) { \
         auto result = controller.Name(std::move(value)); \
         return Reply{std::move(result), controller.Snapshot()}; });
     SD_CONTROLLER_ARGUMENT(Reload, SettingsReloadPolicy)
     SD_CONTROLLER_ARGUMENT(Open, SettingsRoute)
     SD_CONTROLLER_ARGUMENT(InvokeHostAction, SettingsHostActions::Request)
 #undef SD_CONTROLLER_ARGUMENT
-    channel.Bind<Reply, SettingsDomain>("controller.RequestCommit", [&](SettingsDomain domains) {
+    TypedChannel{channel}.Bind<Reply, SettingsDomain>("controller.RequestCommit", [&](SettingsDomain domains) {
         controller.RequestCommit(domains);
         return Reply{SettingsActionResult::Success(), controller.Snapshot()};
     });
 #define SD_CONTROLLER_UPDATE(Name, Type, Member) \
-    channel.Bind<Reply, std::uint64_t, std::uint64_t, std::uint64_t, Type, SettingsUpdateMode>( \
+    TypedChannel{channel}.Bind<Reply, std::uint64_t, std::uint64_t, std::uint64_t, Type, SettingsUpdateMode>( \
         "controller.Update" #Name, [&, localize](std::uint64_t generation, std::uint64_t revision, std::uint64_t taskbarRevision, \
             Type value, SettingsUpdateMode mode) { \
         const auto current = controller.Snapshot(); \
@@ -195,12 +196,12 @@ void BindController(Channel& channel, ISettingsController& controller, Localize 
     SD_CONTROLLER_UPDATE(Category, CategorySettings, category)
     SD_CONTROLLER_UPDATE(Desktop, DesktopDisplaySettings, desktop)
 #undef SD_CONTROLLER_UPDATE
-    channel.Bind<SnapshotPtr>("controller.subscribe", [&] {
+    TypedChannel{channel}.Bind<SnapshotPtr>("controller.subscribe", [&] {
         controller.SetSnapshotChangedCallback([&channel](SnapshotPtr snapshot) {
-            try { if (channel.Connected()) channel.Notify("controller.changed", snapshot); } catch (...) {}
+            try { if (channel.Connected()) TypedChannel{channel}.Notify("controller.changed", snapshot); } catch (...) {}
         });
         controller.SetPendingWorkCallback([&channel] {
-            try { if (channel.Connected()) channel.Notify("controller.pending"); } catch (...) {}
+            try { if (channel.Connected()) TypedChannel{channel}.Notify("controller.pending"); } catch (...) {}
         });
         return controller.Snapshot();
     });
@@ -213,11 +214,11 @@ std::unique_ptr<ISettingsController> CreateControllerProxy(Channel& channel, Loc
 
 void BindContextMenuInspection(Channel& channel, ContextMenuInspectionCallbacks callbacks)
 {
-    channel.Bind<shell_extensions::CatalogueView, shell_extensions::Request, bool>("menu.inspect",
+    TypedChannel{channel}.Bind<shell_extensions::CatalogueView, shell_extensions::Request, bool>("menu.inspect",
         [inspect = std::move(callbacks.inspect)](auto request, bool refresh) {
             return inspect ? inspect(request, refresh) : shell_extensions::CatalogueView{};
         });
-    channel.Bind<void>("menu.inspect.close", [closed = std::move(callbacks.closed)] {
+    TypedChannel{channel}.Bind<void>("menu.inspect.close", [closed = std::move(callbacks.closed)] {
         if (closed) closed();
     });
 }
@@ -226,9 +227,9 @@ ContextMenuInspectionCallbacks CreateContextMenuInspectionProxy(Channel& channel
 {
     return {
         [&channel](const shell_extensions::Request& request, bool refresh) {
-            return channel.Call<shell_extensions::CatalogueView>("menu.inspect", request, refresh);
+            return TypedChannel{channel}.Call<shell_extensions::CatalogueView>("menu.inspect", request, refresh);
         },
-        [&channel] { channel.Notify("menu.inspect.close"); }
+        [&channel] { TypedChannel{channel}.Notify("menu.inspect.close"); }
     };
 }
 } // namespace snowdesktop::settings_ipc

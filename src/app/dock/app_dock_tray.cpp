@@ -83,7 +83,11 @@ bool DesktopApp::TryActivateDockTray(const std::wstring& executable, size_t item
     const auto targets = rules::CollectTargets(service->Current(), dockSettings_.trayApplications, executable, identity.validatedPayloadPaths);
     if (targets.empty()) return false;
     DismissDockWindowPreviewUntilLeave();
-    DockContainer* dock = GetDockContainerAtPoint(lastMousePoint_);
+    POINT sourcePoint = lastMousePoint_;
+    if (capturedAnchor && !IsRectEmpty(&*capturedAnchor))
+        sourcePoint = {(capturedAnchor->left + capturedAnchor->right) / 2 - virtualLeft_,
+            (capturedAnchor->top + capturedAnchor->bottom) / 2 - virtualTop_};
+    DockContainer* dock = GetDockContainerAtPoint(sourcePoint);
     RECT anchor = capturedAnchor.value_or(RECT{});
     if (IsRectEmpty(&anchor) && dock)
     {
@@ -317,7 +321,7 @@ bool DesktopApp::DockTrayPopupKeyDown(WPARAM key)
     if (!dockTrayPopup_ || !IsCollectionPopupInteractive()) return false;
     auto& state = *dockTrayPopup_;
     const int count = static_cast<int>(state.targets.size()) + 1;
-    if (key == VK_ESCAPE) { CloseCollectionPopup(false); return true; }
+    if (key == VK_ESCAPE) { CloseCollectionPopup(false, true); return true; }
     if (key == VK_RETURN) { if (state.focused >= 0) ActivateDockTrayPopupRow(state.focused); return true; }
     if ((key == VK_APPS || (key == VK_F10 && (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000))) &&
         state.focused >= 0) { ActivateDockTrayPopupRow(state.focused, true); return true; }

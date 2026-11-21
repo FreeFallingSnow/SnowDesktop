@@ -6,6 +6,7 @@
 #include "icons/large_icon_assets.h"
 #include "app/features/recycle_bin_poll_state.h"
 #include "icons/icon_appearance_codec.h"
+#include "icons/icon_library.h"
 #include "icons/icon_override_rules.h"
 #include "icons/icon_hbitmap_pixels.h"
 #include "theme/theme_library_settings.h"
@@ -415,6 +416,7 @@ bool DesktopApp::DrawIndependentDockIcon(ID2D1DeviceContext* ctx, const DockEntr
     auto& cached = dockAppearanceImages_[key + L":" + std::to_wstring(edge)];
     if (!cached.bitmap || cached.sources != signature)
     {
+        const auto previousMiss = systemIconDemand_.MissRevision();
         snowdesktop::icon_image::Image source;
         {
             RawIconCapture raw(drawingIconAppearanceSource_);
@@ -427,11 +429,15 @@ bool DesktopApp::DrawIndependentDockIcon(ID2D1DeviceContext* ctx, const DockEntr
         if (!uploaded) return false;
         iconGlassBackdrop_.erase(cached.bitmap.Get()); iconBitmapStyles_.erase(cached.bitmap.Get());
         cached = {std::move(signature), std::move(uploaded)};
+        if (systemIconDemand_.MissRevision() != previousMiss) cached.sources.clear();
     }
-    DrawIconBitmap(ctx, cached.bitmap.Get(), target, 1.f, reinterpret_cast<std::uintptr_t>(&widgets_[owner]));
-    if (entry.type == DockEntryType::FolderMapping && ShouldDrawShortcutArrow(true, false)) DrawShortcutArrowOverlay(ctx, target, 1.f);
-    // Badges belong to the entry and stay outside the beautified source.
-    if (IsGroupDockEntryType(entry.type)) DrawDockGroupBadge(ctx, target);
+    const auto drawIcon = [&](ID2D1DeviceContext* drawing) {
+        DrawIconBitmap(drawing, cached.bitmap.Get(), target, 1.f, reinterpret_cast<std::uintptr_t>(&widgets_[owner]));
+        if (entry.type == DockEntryType::FolderMapping && ShouldDrawShortcutArrow(true, false)) DrawShortcutArrowOverlay(drawing, target, 1.f);
+        // Badges belong to the entry and stay outside the beautified source.
+        if (IsGroupDockEntryType(entry.type)) DrawDockGroupBadge(drawing, target);
+    };
+    DrawIconWithShadows(ctx, target, GetItemLayoutScale(target), iconShadows_.DockStrength(), drawIcon);
     if (state == 2) DrawDockSelectionIndicator(ctx, target, CurrentDockAppearance().contentTheme == 1);
     return true;
 }

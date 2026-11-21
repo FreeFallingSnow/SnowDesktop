@@ -23,7 +23,7 @@ std::wstring DesktopApp::GetSelectedFilePreviewPath()
         return std::wstring{};
     };
     std::vector<SelectionController::Target> targets;
-    if (IsCollectionPopupInteractive())
+    if (IsCollectionPopupKeyboardTarget())
     {
         if (auto path = searchPath(GetCategorizedPopupView())) return *path;
         targets = GetPopupSelectionTargets();
