@@ -2951,5 +2951,10 @@
   "settings.agentOperations.access.description": "로컬 AI 도우미가 제어 인터페이스를 통해 SnowDesktop 정보를 읽거나 변경할 수 있게 합니다.",
   "largeIcon.epic": "Epic 표지",
   "largeIcon.source.epic-local": "Epic 로컬 캐시",
-  "largeIcon.source.epic-online": "Epic 온라인 표지"
+  "largeIcon.source.epic-online": "Epic 온라인 표지",
+  "modules.windowMinimize.standardTarget": "일반",
+  "modules.windowMinimize.administratorTarget": "관리자",
+  "modules.windowMinimize.target32": "32비트",
+  "modules.windowMinimize.administratorPendingResidency": "관리자 도우미 대상(로드 여부 미확인)",
+  "modules.windowMinimize.fullscreenSkipped": "전체 화면에서 최소화 버튼이 없어 건너뛴 창"
 }

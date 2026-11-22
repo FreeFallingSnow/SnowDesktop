@@ -2951,5 +2951,10 @@
   "settings.agentOperations.access.description": "Let local AI assistants read or change SnowDesktop through its control interface.",
   "largeIcon.epic": "Epic cover",
   "largeIcon.source.epic-local": "Local Epic cache",
-  "largeIcon.source.epic-online": "Online Epic cover"
+  "largeIcon.source.epic-online": "Online Epic cover",
+  "modules.windowMinimize.standardTarget": "Standard",
+  "modules.windowMinimize.administratorTarget": "Administrator",
+  "modules.windowMinimize.target32": "32-bit",
+  "modules.windowMinimize.administratorPendingResidency": "Administrator helper targets (residency unconfirmed)",
+  "modules.windowMinimize.fullscreenSkipped": "Windows skipped because they are fullscreen and have no Minimize button"
 }

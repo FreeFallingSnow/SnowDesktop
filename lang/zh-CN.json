@@ -2951,5 +2951,10 @@
   "settings.agentOperations.access.description": "允许本机 AI 助手通过控制接口读取信息或更改 SnowDesktop。",
   "largeIcon.epic": "Epic 封面",
   "largeIcon.source.epic-local": "Epic 本地缓存",
-  "largeIcon.source.epic-online": "Epic 在线封面"
+  "largeIcon.source.epic-online": "Epic 在线封面",
+  "modules.windowMinimize.standardTarget": "普通",
+  "modules.windowMinimize.administratorTarget": "管理员",
+  "modules.windowMinimize.target32": "32 位",
+  "modules.windowMinimize.administratorPendingResidency": "管理员辅助目标（驻留未确认）",
+  "modules.windowMinimize.fullscreenSkipped": "因全屏且没有最小化按钮而跳过 Hook 的窗口"
 }

@@ -2951,5 +2951,10 @@
   "settings.agentOperations.access.description": "ローカルの AI アシスタントが制御インターフェイスを通じて SnowDesktop の情報を読み取ったり、変更を加えたりできます。",
   "largeIcon.epic": "Epic カバー",
   "largeIcon.source.epic-local": "Epic のローカルキャッシュ",
-  "largeIcon.source.epic-online": "Epic のオンラインカバー"
+  "largeIcon.source.epic-online": "Epic のオンラインカバー",
+  "modules.windowMinimize.standardTarget": "標準",
+  "modules.windowMinimize.administratorTarget": "管理者",
+  "modules.windowMinimize.target32": "32 ビット",
+  "modules.windowMinimize.administratorPendingResidency": "管理者ヘルパーの対象（読み込み未確認）",
+  "modules.windowMinimize.fullscreenSkipped": "全画面表示で最小化ボタンがないためスキップしたウィンドウ"
 }

@@ -2951,5 +2951,10 @@
   "settings.agentOperations.access.description": "Lokale KI-Assistenten können über die Steuerschnittstelle Informationen aus SnowDesktop lesen oder Änderungen vornehmen.",
   "largeIcon.epic": "Epic-Cover",
   "largeIcon.source.epic-local": "Lokaler Epic-Cache",
-  "largeIcon.source.epic-online": "Online-Cover von Epic"
+  "largeIcon.source.epic-online": "Online-Cover von Epic",
+  "modules.windowMinimize.standardTarget": "Standard",
+  "modules.windowMinimize.administratorTarget": "Administrator",
+  "modules.windowMinimize.target32": "32-Bit",
+  "modules.windowMinimize.administratorPendingResidency": "Ziele des Administrator-Hilfsprozesses (geladene Module nicht bestätigt)",
+  "modules.windowMinimize.fullscreenSkipped": "Fenster, die im Vollbildmodus ohne Minimieren-Schaltfläche übersprungen wurden"
 }

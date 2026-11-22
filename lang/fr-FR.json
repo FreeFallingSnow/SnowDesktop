@@ -2951,5 +2951,10 @@
   "settings.agentOperations.access.description": "Autorisez les assistants IA locaux à lire des informations ou à modifier SnowDesktop via son interface de contrôle.",
   "largeIcon.epic": "Couverture Epic",
   "largeIcon.source.epic-local": "Cache Epic local",
-  "largeIcon.source.epic-online": "Couverture Epic en ligne"
+  "largeIcon.source.epic-online": "Couverture Epic en ligne",
+  "modules.windowMinimize.standardTarget": "Standard",
+  "modules.windowMinimize.administratorTarget": "Administrateur",
+  "modules.windowMinimize.target32": "32 bits",
+  "modules.windowMinimize.administratorPendingResidency": "Cibles de l’assistant administrateur (chargement non confirmé)",
+  "modules.windowMinimize.fullscreenSkipped": "Fenêtres ignorées en plein écran sans bouton de réduction"
 }
