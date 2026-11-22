@@ -3,6 +3,7 @@
 #include "dock_attraction_timeline.h"
 #include "dock_genie_timeline.h"
 #include "dock_minimize_protocol.h"
+#include "dock_minimize_target_policy.h"
 #include "dock_window_rules.h"
 #include "dock_window_source_cloak.h"
 #include "layout/popup_motion_curve.h"
@@ -694,6 +695,7 @@ bool DockWindowTransition::StartMinimize(
     HWND sourceWindow, RECT dockRect,
     HWND keepBelowWindow, std::function<void(HWND)> minimizeRequest)
 {
+    if (snowdesktop::dock_minimize::UsesNativeTransition(sourceWindow)) return false;
     if (StartHelperAnimation(sourceWindow, dockRect, keepBelowWindow, false)) return true;
     if (helperRouting_ && snowdesktop::window_support::WindowSupport().Resolve(
             snowdesktop::window_support::Capability::MinimizeAnimation, sourceWindow).provider !=
@@ -848,6 +850,7 @@ bool DockWindowTransition::StartRestore(
     RestoreCallback restoreCallback,
     HWND keepBelowWindow)
 {
+    if (snowdesktop::dock_minimize::UsesNativeTransition(sourceWindow)) return false;
     if (StartHelperAnimation(sourceWindow, dockRect, keepBelowWindow, true, restoreCallback)) return true;
     if (helperRouting_ && snowdesktop::window_support::WindowSupport().Resolve(
             snowdesktop::window_support::Capability::MinimizeAnimation, sourceWindow).provider !=

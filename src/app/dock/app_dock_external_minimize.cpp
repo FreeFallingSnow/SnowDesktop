@@ -1,11 +1,13 @@
 #include "app/app.h"
 #include "dock/dock_window_transition.h"
 #include "platform/runtime_module_policy.h"
+#include "platform/runtime_module_status.h"
 #include "diagnostics/diagnostic_log.h"
 #include "dock/dock_settings.h"
 #include "dock/dock_external_minimize.h"
 #include "dock_platform_helpers.h"
 #include "dock/dock_minimize_protocol.h"
+#include "dock/dock_minimize_target_policy.h"
 #include "diagnostics/performance_trace.h"
 #include "platform/deployment_context.h"
 #include "settings/animation_settings.h"
@@ -26,6 +28,7 @@ void DesktopApp::UpdateDockExternalMinimizeTargets()
         snowdesktop::window_support::WindowSupport().Submit(clear);
         dockExternalMinimize_.reset();
         snowdesktop::runtime_modules::SetActive(snowdesktop::runtime_modules::Module::WindowMinimize, 0);
+        snowdesktop::runtime_modules::SetWindowMinimizeTargets({}, {});
         return;
     }
     // The current target already owns its hook. Process-bitness checks, hook
@@ -80,8 +83,15 @@ void DesktopApp::UpdateDockExternalMinimizeTargets()
     helperTargets.command = wire::Command::ConfigureTargets;
     helperTargets.target = wire::Capture(receiver);
     std::vector<HWND> nativeTargets;
+    std::vector<HWND> administratorTargets;
+    std::vector<HWND> fullscreenSkipped;
     for (const HWND window : windows)
     {
+        if (snowdesktop::dock_minimize::UsesNativeTransition(window))
+        {
+            fullscreenSkipped.push_back(window);
+            continue;
+        }
         if (support::WindowSupport().Resolve(support::Capability::MinimizeAnimation, window).provider != support::Provider::Helper)
         { nativeTargets.push_back(window); continue; }
         if (helperTargets.targetCount == helperTargets.targets.size()) continue;
@@ -96,10 +106,12 @@ void DesktopApp::UpdateDockExternalMinimizeTargets()
             if (const auto resolved = dockWindowTransition_->ResolveMinimizeTarget(window))
             { target.anchor = resolved->anchor; target.keepBelow = reinterpret_cast<UINT_PTR>(resolved->dock); }
         helperTargets.targets[helperTargets.targetCount++] = target;
+        administratorTargets.push_back(window);
         if (dockWindowTransition_) dockWindowTransition_->ObserveNativeMinimize(window);
     }
     support::WindowSupport().Submit(helperTargets);
     dockExternalMinimize_->UpdateTargets(nativeTargets);
+    snowdesktop::runtime_modules::SetWindowMinimizeTargets(administratorTargets, fullscreenSkipped);
     const auto registrations = dockExternalMinimize_->RegistrationStatistics();
     const auto cloakRegistrations = dockExternalMinimize_->CloakStatistics();
     const auto active = dockExternalMinimize_->HookCount();
@@ -134,7 +146,8 @@ bool DesktopApp::HandleDockExternalMinimize(HWND window, DWORD deadline)
     };
     if (expired(L"external-message") ||
         !dockExternalMinimize_ || !dockExternalMinimize_->OwnsTarget(window) ||
-        !IsWindowVisible(window) || IsIconic(window)) return false;
+        !IsWindowVisible(window) || IsIconic(window) ||
+        snowdesktop::dock_minimize::UsesNativeTransition(window)) return false;
     floatingDockOutsidePress_.Cancel(window);
     dockSystemMinimizeStartedTick_.store(GetTickCount64());
     PrepareDockWindowMinimize(window, L"application-minimize", deadline);

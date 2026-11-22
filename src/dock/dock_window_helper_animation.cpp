@@ -1,6 +1,7 @@
 #include "dock_window_helper_animation.h"
 #include "dock_external_minimize.h"
 #include "dock_minimize_protocol.h"
+#include "dock_minimize_target_policy.h"
 #include "dock_window_transition.h"
 #include "platform/window_support/window_support_security.h"
 #include "platform/window_support/window_support_pointer_metadata.h"
@@ -38,7 +39,11 @@ struct DockWindowHelperAnimation::Impl
     {
         std::vector<HWND> windows;
         for (const auto& target : targets)
-            if (wire::Current(target.identity)) windows.push_back(wire::Window(target.identity));
+        {
+            const HWND window = wire::Window(target.identity);
+            if (wire::Current(target.identity) && !snowdesktop::dock_minimize::UsesNativeTransition(window))
+                windows.push_back(window);
+        }
         std::sort(windows.begin(), windows.end(), std::less<HWND>{});
         windows.erase(std::unique(windows.begin(), windows.end()), windows.end());
         hooks.UpdateTargets(windows);
@@ -59,7 +64,8 @@ struct DockWindowHelperAnimation::Impl
             const auto found = std::find_if(self->targets.begin(), self->targets.end(), [source](const auto& value) {
                 return wire::Window(value.identity) == source && wire::Current(value.identity);
             });
-            if (found == self->targets.end() || !self->hooks.OwnsTarget(source)) return FALSE;
+            if (found == self->targets.end() || !self->hooks.OwnsTarget(source) ||
+                snowdesktop::dock_minimize::UsesNativeTransition(source)) return FALSE;
             self->nativeMinimizing = found->identity;
             self->nativeMinimizeAt = GetTickCount();
             self->nativeMinimizeFrame = {};
@@ -140,16 +146,17 @@ bool DockWindowHelperAnimation::Configure(const wire::Request& request)
 bool DockWindowHelperAnimation::Start(const wire::Target& target, bool restore)
 {
     if (!Available() || !wire::Current(target.identity) || IsRectEmpty(&target.anchor) || !target.animate) return false;
+    const HWND window = wire::Window(target.identity);
+    if (snowdesktop::dock_minimize::UsesNativeTransition(window)) return false;
     auto found = std::find_if(impl_->targets.begin(), impl_->targets.end(), [&](const auto& value) {
         return value.identity.window == target.identity.window;
     });
     if (found == impl_->targets.end()) impl_->targets.push_back(target);
     else *found = target;
     impl_->UpdateHooks();
-    if (!impl_->hooks.OwnsTarget(wire::Window(target.identity))) return false;
+    if (!impl_->hooks.OwnsTarget(window)) return false;
     Impl::Preferences(target);
     impl_->current = target.identity;
-    const HWND window = wire::Window(target.identity);
     const HWND below = reinterpret_cast<HWND>(static_cast<UINT_PTR>(target.keepBelow));
     if (!restore) return impl_->transition.StartMinimize(window, target.anchor, below, [](HWND source) {
         PostMessageW(source, WM_SYSCOMMAND, SC_MINIMIZE, 0);

@@ -5,6 +5,7 @@
 #include "shell/native_start_menu.h"
 #include "theme/taskbar_appearance.h"
 #include "dock/dock_external_minimize.h"
+#include "dock/dock_minimize_target_policy.h"
 #include "taskbar_dynamic/search_visibility_detector.h"
 #include "dock/dock_settings.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
@@ -17,6 +18,7 @@
 
 void DesktopApp::PrepareDockWindowMinimize(HWND window, const wchar_t* origin, DWORD deadline)
 {
+    if (snowdesktop::dock_minimize::UsesNativeTransition(window)) return;
     snowdesktop::performance::Scope trace("dock.transition", "minimize.taskbar");
     snowdesktop::dock_taskbar_diagnostics::Begin(window, origin);
     if ((snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) && snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::WindowMinimize)) && ShouldProtectAutoHideTaskbar(dockSettings_, generalSettings_.dockEnabled,

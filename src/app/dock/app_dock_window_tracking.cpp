@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "dock/dock_window_rules.h"
+#include "dock/dock_minimize_target_policy.h"
 #include "dock/dock_window_preview.h"
 #include "dock/dock_window_transition.h"
 #include "platform/runtime_module_policy.h"
@@ -536,7 +537,7 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
     // yet acquired a synchronous CBT hook. Existing requests are deduplicated.
     if (event == EVENT_SYSTEM_MINIMIZESTART && IsDockTaskWindow(window) &&
         (snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) && snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::WindowMinimize)) && ShouldProtectAutoHideTaskbar(dockSettings_, generalSettings_.dockEnabled,
-            IsSystemTaskbarAutoHideEnabled()))
+            IsSystemTaskbarAutoHideEnabled()) && !snowdesktop::dock_minimize::UsesNativeTransition(window))
     {
         snowdesktop::dock_taskbar_diagnostics::Begin(window, L"system-minimize");
         RefreshSystemTaskbarAppearance(false);

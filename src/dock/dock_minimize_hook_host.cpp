@@ -1,5 +1,6 @@
 #include "dock_minimize_hook_threads.h"
 #include "dock_minimize_protocol.h"
+#include "dock_minimize_target_policy.h"
 #include "../taskbar_hook/tray_menu_first_show.h"
 
 #include <shellapi.h>
@@ -50,6 +51,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         return result;
     }
     if (count != 4) { LocalFree(args); return 1; }
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     wchar_t* end = nullptr;
     const DWORD ownerId = wcstoul(args[1], &end, 10);
     const bool validOwner = ownerId && end && !*end;
@@ -70,11 +72,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool quit = false;
     DWORD lastRevision = MAXDWORD;
     std::vector<HWND> readyWindows;
+    bool recheckExcludedTargets = false;
     while (!quit && WaitForSingleObject(owner, 0) == WAIT_TIMEOUT &&
         GetPropW(receiver, snowdesktop::dock_minimize::kOwnerProperty) == ULongToHandle(ownerId))
     {
         const DWORD revision = HandleToULong(GetPropW(receiver, snowdesktop::dock_minimize::kRevisionProperty));
-        if (revision != lastRevision || hooks.HasPendingRetries())
+        if (revision != lastRevision || hooks.HasPendingRetries() || recheckExcludedTargets)
         {
             lastRevision = revision;
             for (HWND window : readyWindows)
@@ -85,7 +88,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                     RemovePropW(window, snowdesktop::dock_minimize::kCloakDispatcherProperty);
             }
             readyWindows.clear();
-            struct Context { HWND receiver; std::vector<DWORD> threads; std::vector<HWND> windows; } context{receiver, {}, {}};
+            struct Context
+            {
+                HWND receiver;
+                std::vector<DWORD> threads;
+                std::vector<HWND> windows;
+                bool excludedTarget = false;
+            } context{receiver, {}, {}};
             EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
                 auto& state = *reinterpret_cast<Context*>(parameter);
                 if (GetPropW(window, snowdesktop::dock_minimize::kTargetProperty) != state.receiver)
@@ -94,11 +103,18 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 const DWORD thread = GetWindowThreadProcessId(window, &process);
                 if (thread && snowdesktop::dock_minimize::Is32BitProcess(process))
                 {
+                    if (snowdesktop::dock_minimize::UsesNativeTransition(window))
+                    {
+                        state.excludedTarget = true;
+                        return TRUE;
+                    }
                     state.threads.push_back(thread);
                     state.windows.push_back(window);
                 }
                 return TRUE;
             }, reinterpret_cast<LPARAM>(&context));
+            // A window can leave fullscreen before the parent publishes a new snapshot.
+            recheckExcludedTargets = context.excludedTarget;
             hooks.Sync(context.threads);
             for (HWND window : context.windows)
             {

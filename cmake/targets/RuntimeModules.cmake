@@ -124,8 +124,8 @@ snowdesktop_add_runtime_module(SnowDesktopDockPolicy
         src/dock/dock_settings_rules.cpp src/dock/dock_tray_targets.cpp
         src/dock/floating_dock_rules.cpp src/dock/dock_magnification.cpp
         src/dock/dock_running_animation.cpp src/dock/dock_rename_layout.cpp
-        src/dock/dock_window_rules.cpp
-    LINK_LIBRARIES user32 gdi32)
+        src/dock/dock_window_rules.cpp src/dock/dock_minimize_target_policy.cpp
+    LINK_LIBRARIES SnowDesktopFullscreen user32 gdi32)
 snowdesktop_add_runtime_module(SnowDesktopFullscreen
     SOURCES src/platform/foreground_fullscreen.cpp
     LINK_LIBRARIES user32 dwmapi)

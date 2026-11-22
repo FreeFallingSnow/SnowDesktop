@@ -152,10 +152,32 @@ struct RuntimeModulesPagePresenter::Impl
                 std::wstring details = self.L(kConflictKeys[i]);
                 details += L"\n\n" + self.L(status.targets.empty() ?
                     (status.residencyKnown ? "modules.noResident" : "modules.unknownResident") : "modules.resident");
+                const auto appendProcess = [&](const m::Target& target) {
+                    details += L"\n" + target.name + L" (" + std::to_wstring(target.process) + L")";
+                    if (target.access == m::TargetAccess::Standard)
+                        details += L" · " + self.L("modules.windowMinimize.standardTarget");
+                    else if (target.access == m::TargetAccess::Administrator)
+                        details += L" · " + self.L("modules.windowMinimize.administratorTarget");
+                    if (target.hook32) details += L" · " + self.L("modules.windowMinimize.target32");
+                };
                 for (const auto& target : status.targets)
                 {
-                    details += L"\n" + target.name + L" (" + std::to_wstring(target.process) + L")";
+                    appendProcess(target);
                     if (!status.allowed && target.explorer) explorer = true;
+                }
+                if (!status.administratorTargets.empty())
+                {
+                    details += L"\n\n" + self.L("modules.windowMinimize.administratorPendingResidency");
+                    for (const auto& target : status.administratorTargets) appendProcess(target);
+                }
+                if (!status.fullscreenSkipped.empty())
+                {
+                    details += L"\n\n" + self.L("modules.windowMinimize.fullscreenSkipped");
+                    for (const auto& window : status.fullscreenSkipped)
+                    {
+                        details += L"\n" + window.name + L" (" + std::to_wstring(window.process) + L")";
+                        if (!window.title.empty()) details += L" · " + window.title;
+                    }
                 }
                 if (status.error && status.error != ERROR_IO_PENDING) details += L"\n" + std::to_wstring(status.error);
                 card.details.Text(details);

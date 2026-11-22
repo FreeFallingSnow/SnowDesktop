@@ -25,10 +25,11 @@ set_source_files_properties(${MINHOOK32_SOURCES} PROPERTIES
 add_library(SnowDesktopHookEntry32 SHARED ../taskbar_hook/hook_entry.cpp)
 add_executable(SnowDesktopDockMinimizeHost32 WIN32
     dock_minimize_hook_host.cpp dock_cloak_dispatcher.cpp
+    dock_minimize_target_policy.cpp ../platform/foreground_fullscreen.cpp
     ../platform/runtime_module_policy.cpp)
 snowdesktop_add_executable_version_resource(SnowDesktopDockMinimizeHost32
     "SnowDesktop 32-bit Dock minimize animation host")
-target_link_libraries(SnowDesktopDockMinimizeHost32 PRIVATE shell32 user32)
+target_link_libraries(SnowDesktopDockMinimizeHost32 PRIVATE dwmapi shell32 user32)
 target_link_libraries(SnowDesktopDockMinimizeHook32 PRIVATE user32 dwmapi comctl32 shell32)
 target_link_libraries(SnowDesktopHookEntry32 PRIVATE user32)
 foreach(target SnowDesktopDockMinimizeHook32 SnowDesktopDockMinimizeHost32 SnowDesktopHookEntry32)

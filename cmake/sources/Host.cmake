@@ -320,6 +320,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/render/app_text_render.cpp
     src/platform/runtime_module_policy.h
     src/platform/runtime_module_status.h
+    src/platform/runtime_module_status.cpp
     src/winui/runtime_modules_page_presenter.h
     src/app/features/app_runtime_modules.cpp
     src/app/features/app_taskbar_integration.cpp

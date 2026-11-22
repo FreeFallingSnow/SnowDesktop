@@ -550,7 +550,7 @@ inline constexpr auto Fields<EdgeLightSettings> = std::to_array<Description>({
 
 template<>
 inline constexpr auto Fields<runtime_modules::Policy> = std::to_array<Description>({
-    {"allowed", "Specifies whether the taskbar, tray, window minimize, Start menu and wallpaper preview runtime modules are allowed, in that order. Disabling a module can disable dependent features."},
+    {"allowed", "Specifies whether the taskbar, tray, window minimize, Start menu and wallpaper preview runtime modules are allowed, in that order. Disabling a module can disable dependent features. Fullscreen windows without the WS_MINIMIZEBOX style use native Windows minimize and restore even when the window minimize module is allowed."},
 });
 
 template<>

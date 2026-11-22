@@ -81,8 +81,9 @@ SD_IPC_FIELDS(StatusBarSettings,
     v.foregroundAppName, v.foregroundAppNameCentered, v.appWindow, v.metricOrder);
 SD_IPC_FIELDS(app_fonts::Selection, v.package, v.family);
 SD_IPC_FIELDS(PopupAppearanceRule, v.enabled, v.theme);
-SD_IPC_FIELDS(runtime_modules::Target, v.process, v.name, v.explorer);
-SD_IPC_FIELDS(runtime_modules::Status, v.module, v.allowed, v.active, v.error, v.residencyKnown, v.targets);
+SD_IPC_FIELDS(runtime_modules::Target, v.process, v.name, v.explorer, v.access, v.hook32);
+SD_IPC_FIELDS(runtime_modules::SkippedWindow, v.process, v.name, v.title);
+SD_IPC_FIELDS(runtime_modules::Status, v.module, v.allowed, v.active, v.error, v.residencyKnown, v.targets, v.administratorTargets, v.fullscreenSkipped);
 SD_IPC_FIELDS(runtime_modules::Snapshot, v.policyRevision, v.modules);
 SD_IPC_FIELDS(runtime_modules::Policy, v.allowed);
 SD_IPC_FIELDS(GeneralSettings,
