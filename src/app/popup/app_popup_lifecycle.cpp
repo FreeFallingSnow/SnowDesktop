@@ -480,6 +480,9 @@ void DesktopApp::StartCollectionPopupAnimation(
         else refreshDockTitles();
         return;
     }
+    // Publish the Dock in its target band before the popup acquires its
+    // backdrop and snapshot. The popup model and anchor are already ready.
+    if (deferredDockPromotion) presentDeferredDock();
     // The snapshot visual belongs to the shared topmost popup host. Materialize
     // and size that host before preparing the animation cache so the snapshot
     // can be attached to the correct DComp tree instead of falling back to
@@ -494,8 +497,6 @@ void DesktopApp::StartCollectionPopupAnimation(
         PrepareCollectionPopupAnimationCache();
     }
     const double cacheElapsed = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - cacheStarted;
-    // Start the popup clock only after publishing a requested Dock elevation.
-    if (deferredDockPromotion) presentDeferredDock();
     popupAnimation_.Open(static_cast<std::uint64_t>(
         snowdesktop::UiAnimationScheduler::
             MonotonicMilliseconds()));
