@@ -479,6 +479,7 @@ struct WidgetSettingsPresenter::Impl
     std::shared_ptr<EdgeLightEditor> edgeLightEditor;
     std::vector<std::pair<presenter_controls::SettingRow*, muxc::Button>> appearanceResets;
     presenter_controls::SettingRow restoreBackgroundRow;
+    muxc::Button restoreBackground{nullptr};
     std::unique_ptr<presenter_controls::ColorFlyoutEditor>
         borderColorEditor;
     AppearanceScalarControl borderOpacity;
@@ -765,8 +766,8 @@ struct WidgetSettingsPresenter::Impl
         muxa::AutomationProperties::SetAutomationId(appearanceThemeRow.root, L"WidgetAppearanceThemeRow");
         appearanceCard.content.Children().Append(appearanceThemeRow.root);
 
-        muxc::Button restoreBackground; restoreBackground.HorizontalAlignment(mux::HorizontalAlignment::Right);
-        restoreBackground.Content(winrt::box_value(L("app.settings.restore_default", L"Restore default")));
+        restoreBackground = muxc::Button{};
+        restoreBackground.HorizontalAlignment(mux::HorizontalAlignment::Right);
         restoreBackground.Click([this](auto const&, auto const&) {
             if (!CanMutate()) return;
             wr::WidgetHostAppearanceState defaults; wr::WidgetHostAppearancePatch patch;
@@ -925,11 +926,6 @@ struct WidgetSettingsPresenter::Impl
             mux::HorizontalAlignment::Right);
         restoreScriptDefault.VerticalAlignment(
             mux::VerticalAlignment::Center);
-        restoreScriptDefault.VerticalContentAlignment(
-            mux::VerticalAlignment::Center);
-        restoreScriptDefault.HorizontalContentAlignment(
-            mux::HorizontalAlignment::Center);
-        restoreScriptDefault.MinHeight(32.0);
         restoreScriptDefaultRow.Initialize(restoreScriptDefault);
         restoreScriptDefaultRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
@@ -966,9 +962,6 @@ struct WidgetSettingsPresenter::Impl
         reset = muxc::Button{};
         reset.HorizontalAlignment(mux::HorizontalAlignment::Right);
         reset.VerticalAlignment(mux::VerticalAlignment::Center);
-        reset.VerticalContentAlignment(mux::VerticalAlignment::Center);
-        reset.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
-        reset.MinHeight(32.0);
         resetRow.Initialize(reset);
         resetCard.root.Padding({0.0});
         presenter_controls::StyleSettingsSubrow(resetRow.root, true, 0.0);
@@ -3787,6 +3780,8 @@ struct WidgetSettingsPresenter::Impl
         updatingControls = true;
         appearanceTitle.Text(L("app.settings.appearance", L"Appearance"));
         restoreBackgroundRow.SetText(L("appearance.restoreBackground", L"Restore panel defaults"), L("appearance.restoreBackground.description", L""));
+        presenter_controls::ConfigureRestoreDefaultButton(
+            restoreBackground, std::wstring(restoreBackgroundRow.label.Text()));
         followGlobalRow.SetText(
             L("engine.editor.follow_global", L"Follow global settings"));
         appearanceThemeRow.SetText(
@@ -3835,10 +3830,8 @@ struct WidgetSettingsPresenter::Impl
             L("widgetSettings.preset", L"Preset"));
         restoreScriptDefaultRow.SetText(
             L("widgetSettings.restorePreset", L"Restore the component's default preset"));
-        const auto restoreScriptDefaultText = L(
-            "app.settings.restore_default", L"Restore default");
-        restoreScriptDefault.Content(
-            winrt::box_value(restoreScriptDefaultText));
+        presenter_controls::ConfigureRestoreDefaultButton(
+            restoreScriptDefault, std::wstring(restoreScriptDefaultRow.label.Text()));
         scriptSettingsTitle.Text(
             L("widgetSettings.content", L"Content and behavior"));
         resetRow.SetText(
@@ -3851,10 +3844,8 @@ struct WidgetSettingsPresenter::Impl
         permissionsButton.Content(winrt::box_value(
             L("app.settings.widgets_manage_permissions", L"Manage permissions")));
         muxa::AutomationProperties::SetName(permissionsButton, permissionsRow.label.Text());
-        const auto resetText = L(
-            "app.settings.restore_default_settings",
-            L"Restore default settings");
-        reset.Content(winrt::box_value(resetText));
+        presenter_controls::ConfigureRestoreDefaultButton(reset,
+            L("app.settings.restore_default_settings", L"Restore default settings"));
         muxa::AutomationProperties::SetName(
             appearanceTitle, appearanceTitle.Text());
         muxa::AutomationProperties::SetName(
@@ -3904,11 +3895,7 @@ struct WidgetSettingsPresenter::Impl
         muxa::AutomationProperties::SetName(
             presetCombo, presetRow.label.Text());
         muxa::AutomationProperties::SetName(
-            restoreScriptDefault, restoreScriptDefaultText);
-        muxa::AutomationProperties::SetName(
             scriptSettingsTitle, scriptSettingsTitle.Text());
-        muxa::AutomationProperties::SetName(
-            reset, resetText);
 
         const auto explain = [](auto& row, const std::wstring& text) { row.SetText(std::wstring(row.label.Text().c_str()), text); };
         explain(glassRow, L("appearance.glassHelp", L""));

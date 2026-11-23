@@ -57,7 +57,8 @@ public:
     void RefreshLocalizedText()
     {
         row_.SetText(localize_("settings.bars.height"), localize_("settings.bars.height.description"));
-        reset_.Content(winrt::box_value(localize_("settings.bars.resetHeight")));
+        presenter_controls::ConfigureRestoreDefaultButton(reset_,
+            localize_("settings.bars.resetHeight") + L" · " + std::wstring(row_.label.Text()));
         winrt::Microsoft::UI::Xaml::Automation::AutomationProperties::SetName(slider_, row_.label.Text());
         winrt::Microsoft::UI::Xaml::Automation::AutomationProperties::SetName(number_, row_.label.Text());
     }

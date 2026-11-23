@@ -36,7 +36,7 @@ public:
         presenter_controls::BindInfoBarVisibility(notice_); root_.Children().Append(notice_);
         if (appearanceOnly_)
         {
-            winrt::Microsoft::UI::Xaml::Controls::HyperlinkButton resetLayout;
+            winrt::Microsoft::UI::Xaml::Controls::Button resetLayout;
             ConfigureGroupReset(resetLayout,"quickNav.layout");
             resetLayout.Click([this](auto&&,auto&&) {commit_([](auto& value) {value.layout = QuickNavigationLayout{};});});
             auto layoutHeader = Header("quickNav.layout",resetLayout);
@@ -126,7 +126,7 @@ public:
             });
             presenter_controls::ConfigureSettingsHeadingLink(addEngine_);
             Panel engineActions; engineActions.Orientation(winrt::Microsoft::UI::Xaml::Controls::Orientation::Horizontal); engineActions.Spacing(8);
-            winrt::Microsoft::UI::Xaml::Controls::HyperlinkButton resetEngines;
+            winrt::Microsoft::UI::Xaml::Controls::Button resetEngines;
             ConfigureGroupReset(resetEngines,"quickNav.engines.manage");
             resetEngines.Click([this](auto&&,auto&&) {commit_([](auto& value) {value.engines = NavigationSettings{}.engines; value.defaultEngine = "bing";});});
             engineActions.Children().Append(addEngine_); engineActions.Children().Append(resetEngines);
@@ -215,12 +215,6 @@ public:
         for (const auto& [key, label] : labels_) label.Text(L(key));
         for (const auto& [key, button] : groupResets_)
             presenter_controls::ConfigureRestoreDefaultButton(button, L("app.settings.restore_default") + L" · " + L(key));
-        for (const auto& [key, link] : groupResetLinks_)
-        {
-            link.Content(winrt::box_value(L("app.settings.restore_default")));
-            winrt::Microsoft::UI::Xaml::Automation::AutomationProperties::SetName(link,
-                L("app.settings.restore_default") + L" · " + L(key));
-        }
         for (const auto& [key, row] : rows_) row->SetText(L(key));
         if (!appearanceOnly_)
         {
@@ -254,12 +248,8 @@ private:
     void ConfigureGroupReset(const winrt::Microsoft::UI::Xaml::Controls::Button& button, const std::string& key)
     {
         presenter_controls::ConfigureRestoreDefaultButton(button, L("app.settings.restore_default") + L" · " + L(key));
+        button.VerticalAlignment(winrt::Microsoft::UI::Xaml::VerticalAlignment::Center);
         groupResets_.emplace_back(key, button);
-    }
-    void ConfigureGroupReset(const winrt::Microsoft::UI::Xaml::Controls::HyperlinkButton& link, const std::string& key)
-    {
-        presenter_controls::ConfigureSettingsHeadingLink(link);
-        groupResetLinks_.emplace_back(key, link);
     }
     bool Accept(const NavigationSettings& candidate)
     {
@@ -415,7 +405,6 @@ private:
     std::vector<std::pair<std::string,presenter_controls::SettingRow*>> rows_;
     std::vector<std::pair<std::string,winrt::Microsoft::UI::Xaml::Controls::TextBlock>> labels_;
     std::vector<std::pair<std::string,winrt::Microsoft::UI::Xaml::Controls::Button>> groupResets_;
-    std::vector<std::pair<std::string,winrt::Microsoft::UI::Xaml::Controls::HyperlinkButton>> groupResetLinks_;
     std::map<std::string,winrt::Microsoft::UI::Xaml::FrameworkElement> focus_;
 };
 }

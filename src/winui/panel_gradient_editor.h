@@ -345,7 +345,8 @@ private:
                     }, true);
                 });
                 ActionRow("panelGradient.addStop", add, 2);
-                c::Button reset; reset.Content(winrt::box_value(L("app.settings.restore_default")));
+                c::Button reset;
+                presenter_controls::ConfigureRestoreDefaultButton(reset, L("panelGradient.reset"));
                 reset.Click([weak](auto const&, auto const&) {
                     if (auto self = weak.lock()) self->Apply([](auto& v) { v = {}; v.enabled = true; }, true);
                 });
