@@ -155,6 +155,9 @@ public:
         float configuredIconBlur = 0.0f, bool iconsOnly = false);
     // Extra popup allocation for shared Dock icons, with a fixed screen-space display clip.
     bool SetPopupWindowPadding(const RECT& padding, const RECT& displayBounds);
+    // Translate scene coordinates into the popup content HWND at presentation.
+    POINT PopupSceneOffset() const noexcept;
+    bool SetPopupSceneOffset(POINT offset);
     /**
      * @brief 注册或更新一个圆角玻璃面板。
      * @param ownerKey 非零时作为跨几何变化保持稳定的面板身份；零值保留

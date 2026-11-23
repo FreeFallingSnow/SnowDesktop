@@ -598,14 +598,16 @@ UINT DesktopApp::ShowModernMenu(
     options.onHover = std::move(onHover);
     options.zOrderCompanion = std::move(zOrderCompanion);
     ConfigureModernMenuEventPump(options);
-    RECT popupSourceBounds{};
+    // A desktop-routed menu retains the popup layer relationship even when its
+    // anchor is outside the popup's compact native window.
+    const RECT popupSourceBounds{
+        virtualLeft_, virtualTop_, virtualLeft_ + std::max(1, virtualWidth_), virtualTop_ + std::max(1, virtualHeight_)};
     const bool floatingPopupHostVisible =
         ShouldShowFloatingPopupWindow() &&
         floatingPopupHwnd_ &&
         IsWindow(floatingPopupHwnd_) &&
         IsWindowVisible(floatingPopupHwnd_) &&
-        (owner == floatingPopupHwnd_ ||
-            (GetWindowRect(floatingPopupHwnd_, &popupSourceBounds) && PtInRect(&popupSourceBounds, screenPoint)));
+        (owner == floatingPopupHwnd_ || PtInRect(&popupSourceBounds, screenPoint));
     // A pointer can select another monitor while a menu is being prepared.
     // Bind Z-order ownership to the actual source surface, not the last
     // globally selected Dock. The menu keeps this HWND for its whole session.

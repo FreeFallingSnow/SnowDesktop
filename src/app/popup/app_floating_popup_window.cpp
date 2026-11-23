@@ -12,6 +12,7 @@
 #include "popup_window_pair_z_order.h"
 #include "layout/popup_round_geometry.h"
 #include "ui/render/d2d_drawing.h"
+#include "ui/render/blur_sampling_bounds.h"
 #include "theme/flat_glass_rim.h"
 #include "platform/shell_overlay_window.h"
 #include "diagnostics/performance_trace.h"
@@ -43,6 +44,31 @@ RECT UnionRects(const RECT& first, const RECT& second)
     RECT result{};
     UnionRect(&result, &first, &second);
     return result;
+}
+
+bool ContainsRect(const RECT& outer, const RECT& inner)
+{
+    return outer.left <= inner.left && outer.top <= inner.top &&
+        outer.right >= inner.right && outer.bottom >= inner.bottom;
+}
+
+RECT ResolveFloatingPopupWindowFrame(const RECT& desktop, RECT content)
+{
+    OffsetRect(&content, desktop.left, desktop.top);
+    MONITORINFO monitor{sizeof(monitor)};
+    if (!GetMonitorInfoW(MonitorFromRect(&content, MONITOR_DEFAULTTONULL), &monitor) ||
+        !ContainsRect(monitor.rcMonitor, content))
+        return desktop;
+
+    // The glass helper adds a sampling halo to the HWND. When the content
+    // fits, reserve that halo inside this display along the interior edges.
+    RECT frame = monitor.rcMonitor;
+    constexpr LONG halo = snowdesktop::blur_sampling::kMaximumBackdropMargin;
+    if (frame.left > desktop.left) frame.left += halo;
+    if (frame.top > desktop.top) frame.top += halo;
+    if (frame.right < desktop.right) frame.right -= halo;
+    if (frame.bottom < desktop.bottom) frame.bottom -= halo;
+    return ContainsRect(frame, content) ? frame : monitor.rcMonitor;
 }
 
 struct MenuHostZOrderSnapshot
@@ -699,9 +725,14 @@ HRESULT DesktopApp::EnsureFloatingPopupCompositionRoot()
     }
     if (!floatingPopupDcompVisual_)
     {
+        RECT windowFrame{};
+        if (!GetWindowRect(floatingPopupHwnd_, &windowFrame))
+            return E_FAIL;
         ComPtr<IDCompositionVisual2> root, live;
         HRESULT hr = dcompDevice_->CreateVisual(&root);
         if (SUCCEEDED(hr)) hr = dcompDevice_->CreateVisual(&live);
+        if (SUCCEEDED(hr)) hr = root->SetOffsetX(static_cast<float>(virtualLeft_ - windowFrame.left));
+        if (SUCCEEDED(hr)) hr = root->SetOffsetY(static_cast<float>(virtualTop_ - windowFrame.top));
         if (SUCCEEDED(hr)) hr = root->AddVisual(live.Get(), TRUE, nullptr);
         if (SUCCEEDED(hr)) hr = floatingPopupDcompTarget_->SetRoot(root.Get());
         if (FAILED(hr))
@@ -1311,7 +1342,26 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
         stackRegionChanged ||
         nextModalRegion != floatingPopupModalRegion_;
 
-    if (floatingPopupCompositionPaintInProgress_ && (boundsChanged || regionChanged))
+    const RECT desktopFrame{
+        virtualLeft_, virtualTop_, virtualLeft_ + std::max(1, virtualWidth_), virtualTop_ + std::max(1, virtualHeight_)};
+    RECT coverage = nextBounds;
+    if (!IsRectEmpty(&nextStackRegion))
+        coverage = UnionRects(coverage, InflateCopy(nextStackRegion, 6));
+    RECT windowFrame = ResolveFloatingPopupWindowFrame(desktopFrame, coverage);
+    RECT currentWindow{};
+    const bool windowKnown = GetWindowRect(floatingPopupHwnd_, &currentWindow) != FALSE;
+    // Keep the current allocation for the rest of this presentation when it
+    // already covers the new viewport, including recovery from shared content.
+    if (wasVisible && windowKnown && ContainsRect(desktopFrame, currentWindow) &&
+        ContainsRect(currentWindow, windowFrame))
+        windowFrame = currentWindow;
+    const bool windowChanged = !windowKnown || !EqualRect(&currentWindow, &windowFrame);
+    const POINT sceneOffset{virtualLeft_ - windowFrame.left, virtualTop_ - windowFrame.top};
+    const POINT previousOffset = collectionPopupBackdropCompositor_.PopupSceneOffset();
+    const bool viewportChanged = windowChanged ||
+        previousOffset.x != sceneOffset.x || previousOffset.y != sceneOffset.y;
+
+    if (floatingPopupCompositionPaintInProgress_ && (boundsChanged || regionChanged || viewportChanged))
     {
         // A Lua draw callback can replace the popup while BeginDraw owns the
         // surface. Leave its geometry intact until that frame has ended.
@@ -1328,21 +1378,32 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     const bool topmost =
         snowdesktop::floating_popup_rules::ShouldBeTopmost(
             true, shellPopupMenuLayerDepth_);
-    // The HWND and its glass helper use desktop coordinates. Only a display
-    // topology change can move them. The input region and compact paint
-    // surface still track the actual popup rectangles.
-    const int desktopWidth = std::max(1, virtualWidth_);
-    const int desktopHeight = std::max(1, virtualHeight_);
-    const RECT desktopBounds{
-        virtualLeft_, virtualTop_, virtualLeft_ + desktopWidth, virtualTop_ + desktopHeight};
-    RECT currentWindow{};
-    if (!GetWindowRect(floatingPopupHwnd_, &currentWindow) || !EqualRect(&currentWindow, &desktopBounds))
+    const LONG windowWidth = windowFrame.right - windowFrame.left;
+    const LONG windowHeight = windowFrame.bottom - windowFrame.top;
+    if (viewportChanged)
     {
-        if (wasVisible)
+        if (wasVisible && (!windowKnown || !ContainsRect(desktopFrame, currentWindow)))
+        {
+            // Retire the old presentation when its display has moved or
+            // disappeared. Ordinary reallocations keep native focus and capture.
             SuspendFloatingPopupPresentation();
-        wasVisible = false;
-        if (!SetWindowPos(floatingPopupHwnd_, nullptr, virtualLeft_, virtualTop_,
-                desktopWidth, desktopHeight, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER))
+            wasVisible = false;
+        }
+        HRESULT placed = S_OK;
+        if (floatingPopupDcompVisual_)
+        {
+            placed = floatingPopupDcompVisual_->SetOffsetX(static_cast<float>(sceneOffset.x));
+            if (SUCCEEDED(placed))
+                placed = floatingPopupDcompVisual_->SetOffsetY(static_cast<float>(sceneOffset.y));
+        }
+        if (FAILED(placed))
+        {
+            RecoverFloatingPopupCompositionFailure(L"Position popup composition root", placed);
+            return;
+        }
+        if (!collectionPopupBackdropCompositor_.SetPopupSceneOffset(sceneOffset) ||
+            (windowChanged && !SetWindowPos(floatingPopupHwnd_, nullptr, windowFrame.left, windowFrame.top,
+                windowWidth, windowHeight, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER)))
         {
             floatingPopupContentBounds_ = {};
             SuspendFloatingPopupPresentation();
@@ -1358,7 +1419,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             (collectionPopupGlassTheme_ &&
                 (IsLuaPanelHostedByFloatingWindow() || !IsRectEmpty(&nextStackRegion))));
     const bool refreshContent = refreshStableContent || !wasVisible ||
-        boundsChanged || regionChanged || backdropRecovery ||
+        boundsChanged || regionChanged || viewportChanged || backdropRecovery ||
         !floatingPopupSurfaces_.Content() || !floatingPopupDcompVisual_ ||
         graphicsDeviceRecovery_.Pending();
     if (refreshContent)
@@ -1371,15 +1432,16 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             UpdateCollectionPopupBackdrop();
     }
 
-    if (!wasVisible || boundsChanged || regionChanged)
+    if (!wasVisible || boundsChanged || regionChanged || viewportChanged)
     {
         HRGN windowRegion = CreateRectRgn(0, 0, 0, 0);
         bool regionReady = windowRegion != nullptr;
-        auto appendRegion = [&](const RECT& desktopRect, float radius) {
-            if (!windowRegion || IsRectEmpty(&desktopRect))
+        auto appendRegion = [&](RECT rect, float radius) {
+            if (!windowRegion || IsRectEmpty(&rect))
                 return;
+            OffsetRect(&rect, sceneOffset.x, sceneOffset.y);
             HRGN added = snowdesktop::popup_round_geometry::CreateWindowFence(
-                desktopRect, radius, 0, static_cast<float>(snowdesktop::flat_glass_rim::kPanelOverdraw));
+                rect, radius, 0, static_cast<float>(snowdesktop::flat_glass_rim::kPanelOverdraw));
             if (added)
             {
                 if (CombineRgn(
@@ -1414,13 +1476,14 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
         }
     }
 
-    const bool rendered = immediatePresent
+    const bool presentNow = immediatePresent || (wasVisible && viewportChanged);
+    const bool rendered = presentNow
         ? PresentFloatingPopupComposition()
         : false;
     if (!rendered && refreshContent)
     {
         InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
-        if (immediatePresent)
+        if (presentNow)
         {
             // A nested provider callback can ask for presentation while the
             // outer frame owns BeginDraw. It is deferred, not failed: preserve
@@ -1456,6 +1519,8 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             return;
         }
         ApplyCollectionPopupBackdropAnimationFrame();
+        snowdesktop::performance::Value("popup", "host.width", {}, windowWidth);
+        snowdesktop::performance::Value("popup", "host.height", {}, windowHeight);
         wchar_t message[224]{};
         wsprintfW(
             message,
@@ -1861,8 +1926,7 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         handlingFloatingPopupInput_ = false;
         return 0;
     case WM_DPICHANGED:
-        // The host covers the virtual desktop in physical pixels. Keep the
-        // desktop-coordinate regions instead of applying a DPI-scaled HWND.
+        // Placement and regions use physical pixels from display topology.
         InvalidateFloatingPopupWindow(false);
         return 0;
     case WM_DISPLAYCHANGE:

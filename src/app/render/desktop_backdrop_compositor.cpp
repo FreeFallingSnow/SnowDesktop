@@ -833,6 +833,7 @@ struct DesktopBackdropCompositor::Impl
     bool popupMode = false;
     bool popupTopmost = false;
     RECT popupPadding{};
+    POINT popupSceneOffset{};
     RECT popupDisplayBounds{};
     RECT submittedPopupDisplayClip{};
     wuc::CompositionRoundedRectangleGeometry popupDisplayClip{nullptr};
@@ -970,6 +971,17 @@ struct DesktopBackdropCompositor::Impl
         return popupMode ? snowdesktop::blur_sampling::kMaximumBackdropMargin : 0;
     }
 
+    wfn::float3 PopupPlacementOffset(POINT offset) const noexcept
+    {
+        const LONG margin = PlacementMargin();
+        return {static_cast<float>(margin + offset.x), static_cast<float>(margin + offset.y), 0.f};
+    }
+
+    static wfn::float4x4 SrgbSceneTranslation(POINT offset) noexcept
+    {
+        return {1,0,0,0, 0,1,0,0, 0,0,1,0, static_cast<float>(offset.x),static_cast<float>(offset.y),0,1};
+    }
+
     bool SyncPopupDisplayClip(POINT screenOrigin)
     {
         // The animation moves root inside a fixed display clip on
@@ -977,7 +989,9 @@ struct DesktopBackdropCompositor::Impl
         RECT clip = popupDisplayBounds;
         const bool enabled = !IsRectEmpty(&clip);
         const LONG margin = PlacementMargin();
-        if (enabled) OffsetRect(&clip, -screenOrigin.x - margin, -screenOrigin.y - margin);
+        if (enabled) OffsetRect(&clip,
+            -screenOrigin.x - margin - popupSceneOffset.x,
+            -screenOrigin.y - margin - popupSceneOffset.y);
         if (!enabled && !popupDisplayClip) return true;
         if (enabled && popupDisplayClip && EqualRect(&submittedPopupDisplayClip, &clip)) return true;
         try
@@ -1166,7 +1180,7 @@ struct DesktopBackdropCompositor::Impl
                 // the visual clip chooses which blurred pixels are displayed.
                 RECT samplingFence = panel.SamplingFence();
                 const LONG margin = PlacementMargin();
-                OffsetRect(&samplingFence, margin, margin);
+                OffsetRect(&samplingFence, margin + popupSceneOffset.x, margin + popupSceneOffset.y);
                 HRGN frameRegion = snowdesktop::popup_round_geometry::CreateWindowFence(
                     samplingFence, panel.FenceRadius());
                 if (!frameRegion)
@@ -1190,7 +1204,7 @@ struct DesktopBackdropCompositor::Impl
         {
             RECT exclusion = occlusionRect;
             const LONG margin = PlacementMargin();
-            OffsetRect(&exclusion, margin, margin);
+            OffsetRect(&exclusion, margin + popupSceneOffset.x, margin + popupSceneOffset.y);
             HRGN excluded = CreateRectRgnIndirect(&exclusion);
             const bool ok = excluded && CombineRgn(panelRegion, panelRegion, excluded, RGN_DIFF) != ERROR;
             if (excluded) DeleteObject(excluded);
@@ -1454,6 +1468,9 @@ struct DesktopBackdropCompositor::Impl
             catch (...) { children.InsertAtTop(srgbContentRoot); throw; }
         }
         srgbRootOnPopup = onPopup;
+        // The glass target already translates the whole placement root.
+        if (popupSceneOffset.x || popupSceneOffset.y)
+            srgbContentRoot.TransformMatrix(SrgbSceneTranslation(onPopup ? POINT{} : popupSceneOffset));
         srgbContentCommitPending = true;
     }
 
@@ -1485,6 +1502,8 @@ struct DesktopBackdropCompositor::Impl
         winrt::check_hresult(interop->CreateDesktopWindowTarget(window, TRUE,
             reinterpret_cast<awucd::IDesktopWindowTarget**>(winrt::put_abi(frameTarget))));
         auto frameRoot = compositor.CreateContainerVisual();
+        if (popupSceneOffset.x || popupSceneOffset.y)
+            frameRoot.TransformMatrix(SrgbSceneTranslation(popupSceneOffset));
         frameTarget.Root(frameRoot);
         srgbContentWindow = window;
         srgbContentTarget = std::move(frameTarget);
@@ -2027,8 +2046,7 @@ bool DesktopBackdropCompositor::InitializeInternal(
     {
         impl_->root = impl_->compositor.CreateContainerVisual();
         impl_->placementRoot = impl_->compositor.CreateContainerVisual();
-        const auto margin = static_cast<float>(impl_->PlacementMargin());
-        impl_->placementRoot.Offset({margin, margin, 0.0f});
+        impl_->placementRoot.Offset(impl_->PopupPlacementOffset(impl_->popupSceneOffset));
         impl_->placementRoot.Children().InsertAtTop(impl_->root);
         impl_->target.Root(impl_->placementRoot);
         impl_->available = true;
@@ -2945,6 +2963,39 @@ bool DesktopBackdropCompositor::SetPopupWindowPadding(const RECT& padding, const
     impl_->popupDisplayBounds = previousDisplayBounds;
     (void)impl_->SyncWindowPlacement();
     return false;
+}
+
+POINT DesktopBackdropCompositor::PopupSceneOffset() const noexcept
+{
+    return impl_->popupSceneOffset;
+}
+
+bool DesktopBackdropCompositor::SetPopupSceneOffset(POINT offset)
+{
+    if (impl_->popupSceneOffset.x == offset.x && impl_->popupSceneOffset.y == offset.y)
+        return true;
+    try
+    {
+        if (impl_->placementRoot)
+        {
+            impl_->placementRoot.Offset(impl_->PopupPlacementOffset(offset));
+            impl_->frameCommitPending = true;
+        }
+        if (impl_->srgbContentRoot && !impl_->srgbRootOnPopup)
+        {
+            impl_->srgbContentRoot.TransformMatrix(Impl::SrgbSceneTranslation(offset));
+            impl_->srgbContentCommitPending = true;
+        }
+        impl_->popupSceneOffset = offset;
+        impl_->panelRegionSnapshotValid = false;
+        impl_->transformedRegionDirty = true;
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.popup_scene_offset", error.code());
+        return false;
+    }
 }
 
 void DesktopBackdropCompositor::SetBackgroundPanels(
@@ -4548,7 +4599,10 @@ void DesktopBackdropCompositor::ResetBackdrop()
 void DesktopBackdropCompositor::Reset()
 {
     if (impl_)
+    {
         impl_->Reset();
+        impl_->popupSceneOffset = {};
+    }
 }
 
 bool DesktopBackdropCompositor::IsAvailable() const
