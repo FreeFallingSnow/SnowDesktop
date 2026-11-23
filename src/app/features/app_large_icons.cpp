@@ -112,7 +112,7 @@ void DesktopApp::ProcessLargeIconAssets()
     auto completed = largeIconAssets_->TakeCompleted();
     if (completed.empty()) return;
     bool persist = false;
-    bool desktopAssetsChanged = false, fullRepaint = false;
+    bool desktopAssetsChanged = false;
     std::vector<RECT> dirtyFrames;
     for (auto& result : completed)
     {
@@ -132,24 +132,14 @@ void DesktopApp::ProcessLargeIconAssets()
             continue;
         }
         if (state.generation != result.request.generation) continue;
-        const RECT oldFrame = GetLargeIconFrameRect(items_[index]);
-        const RECT oldBackdrop = state.backdropFrame;
         const auto changedDesktopAsset = [&] {
             desktopAssetsChanged = true;
             const auto& item = items_[index];
             if (!IsLargeIconVisible(item, lastMousePoint_, desktopIconsHidden_)) return;
-            const RECT frame = GetLargeIconFrameRect(item);
-            // The static renderer culls untransformed frames. Keep its complete
-            // path for 3D cards, including fallback from a failed 3D draw.
-            if (EffectiveLargeIconConfig(item).effect == 1 || IsRectEmptyRect(oldFrame) || IsRectEmptyRect(frame))
-            { fullRepaint = true; return; }
-            RECT dirty{};
-            UnionRect(&dirty, &oldFrame, &frame);
-            if (!IsRectEmptyRect(oldBackdrop)) UnionRect(&dirty, &dirty, &oldBackdrop);
-            // Asset aspect, inner title geometry and automatic color may change;
-            // all ordinary card effects remain clipped inside this fixed frame.
-            InflateRect(&dirty, 8, 8);
-            dirtyFrames.push_back(dirty);
+            RECT dirty = snowdesktop::large_icon_renderer::PaintBounds(GetLargeIconFrameRect(item),
+                EffectiveLargeIconConfig(item), state.motion.tiltX, state.motion.tiltY);
+            UnionRect(&dirty, &dirty, &state.backdropFrame);
+            if (!IsRectEmpty(&dirty)) dirtyFrames.push_back(dirty);
         };
         state.pending = false; state.error = result.error;
         state.retryAt = result.error.empty() ? 0 : snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() + 120000;
@@ -203,10 +193,7 @@ void DesktopApp::ProcessLargeIconAssets()
     // Replacing pixels does not change native glass ownership or layout. Keep
     // any already pending full collection, without requesting another one.
     if (hwnd_ && IsWindow(hwnd_))
-    {
-        if (fullRepaint) InvalidateRect(hwnd_, nullptr, FALSE);
-        else for (const auto& frame : dirtyFrames) InvalidateRect(hwnd_, &frame, FALSE);
-    }
+        for (const auto& frame : dirtyFrames) InvalidateRect(hwnd_, &frame, FALSE);
 }
 
 bool DesktopApp::CanEditLargeIcons() const

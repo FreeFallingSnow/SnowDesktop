@@ -6,6 +6,7 @@
 #include <dwrite.h>
 #include <functional>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <wrl/client.h>
@@ -48,10 +49,31 @@ struct View
 
 struct CardResources
 {
+    struct ImageCardKey
+    {
+        ID2D1Bitmap* bitmap;
+        LONG width, height;
+        float dpiX, dpiY, scale, opacity;
+        D2D1_ANTIALIAS_MODE antialias;
+        D2D1_UNIT_MODE unitMode;
+        bool selected;
+        bool operator==(const ImageCardKey&) const = default;
+    };
+    struct ImageCardRecording
+    {
+        ImageCardKey key;
+        LargeIconConfig config;
+        Microsoft::WRL::ComPtr<ID2D1CommandList> commands;
+    };
+
     Microsoft::WRL::ComPtr<ID2D1Device> device;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> recorder;
+    std::optional<ImageCardRecording> imageCard;
     TitleResources title;
 };
+
+// Frame, selection outline, and any pixels projected beyond the frame.
+RECT PaintBounds(RECT frame, const LargeIconConfig& config, float tiltX = 0.f, float tiltY = 0.f);
 
 // These are the production desktop draw paths, also usable with a WIC render
 // target for deterministic visual checks without creating a desktop window.

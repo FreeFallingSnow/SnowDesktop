@@ -164,6 +164,25 @@ void DrawResizeHandle(ID2D1RenderTarget* target, POINT center, int diameter, flo
     brush->SetColor(stroke);
     smooth_corners::Stroke(target, rect, radius, brush.Get(), 1.f);
 }
+RECT PaintBounds(RECT frame, const LargeIconConfig& config, float tiltX, float tiltY)
+{
+    if (IsRectEmpty(&frame)) return {};
+    if (tiltX != 0.f || tiltY != 0.f)
+    {
+        const RECT card = large_icon_shape::Frame(config, frame);
+        const auto transform = large_icon_transform::Resolve(static_cast<float>(card.right - card.left),
+            static_cast<float>(card.bottom - card.top), tiltX, tiltY, static_cast<float>(config.amplitude));
+        if (transform.active)
+        {
+            const RECT projected = large_icon_transform::Bounds(card, transform.matrix);
+            // Include the flat card too, in case the 3D draw falls back.
+            UnionRect(&frame, &frame, &projected);
+        }
+    }
+    InflateRect(&frame, 8, 8);
+    return frame;
+}
+
 void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIconConfig& c, const View& incoming)
 {
     auto view = incoming;
@@ -275,25 +294,52 @@ bool DrawCard3D(ID2D1DeviceContext* target, IDWriteFactory* fonts, const LargeIc
     if (!target || !transform.active) return false;
     ComPtr<ID2D1Device> device; target->GetDevice(&device);
     if (device.Get() != resources.device.Get())
-    { resources.recorder.Reset(); resources.device = device; }
+    {
+        resources.imageCard.reset();
+        resources.recorder.Reset();
+        resources.device = device;
+    }
     if (!device || (!resources.recorder && FAILED(device->CreateDeviceContext(
             D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &resources.recorder)))) return false;
     auto* recorder = resources.recorder.Get();
-    ComPtr<ID2D1CommandList> commands;
     ComPtr<ID2D1Effect> lighting, perspective;
-    if (FAILED(recorder->CreateCommandList(&commands)) ||
-        FAILED(recorder->CreateEffect(CLSID_D2D1ColorMatrix, &lighting)) ||
+    if (FAILED(recorder->CreateEffect(CLSID_D2D1ColorMatrix, &lighting)) ||
         FAILED(recorder->CreateEffect(CLSID_D2D13DTransform, &perspective))) return false;
-    float dpiX, dpiY; target->GetDpi(&dpiX, &dpiY);
-    recorder->SetDpi(dpiX, dpiY); recorder->SetUnitMode(target->GetUnitMode());
-    recorder->SetAntialiasMode(target->GetAntialiasMode());
-    recorder->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
-    recorder->SetTransform(D2D1::Matrix3x2F::Translation(-static_cast<float>(view.frame.left), -static_cast<float>(view.frame.top)));
-    recorder->SetTarget(commands.Get()); recorder->BeginDraw();
-    DrawFrame(recorder, fonts, config, view);
-    const HRESULT recorded = recorder->EndDraw();
-    recorder->SetTarget(nullptr);
-    if (FAILED(recorded) || FAILED(commands->Close())) { resources.recorder.Reset(); return false; }
+
+    // A loaded image-fill card has no backdrop or placeholder to refresh.
+    // Its local drawing stays constant while tilt and lighting change.
+    const bool cacheable = config.effect == 1 && IsLargeIconFill(config) && view.bitmap;
+    float dpiX, dpiY;
+    target->GetDpi(&dpiX, &dpiY);
+    const CardResources::ImageCardKey key{view.bitmap, view.frame.right - view.frame.left,
+        view.frame.bottom - view.frame.top, dpiX, dpiY, view.scale, view.opacity,
+        target->GetAntialiasMode(), target->GetUnitMode(), view.selected};
+    ComPtr<ID2D1CommandList> commands;
+    if (cacheable && resources.imageCard && resources.imageCard->key == key && resources.imageCard->config == config)
+        commands = resources.imageCard->commands;
+    else
+    {
+        resources.imageCard.reset();
+        if (FAILED(recorder->CreateCommandList(&commands))) return false;
+        recorder->SetDpi(dpiX, dpiY);
+        recorder->SetUnitMode(key.unitMode);
+        recorder->SetAntialiasMode(key.antialias);
+        recorder->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+        recorder->SetTransform(D2D1::Matrix3x2F::Translation(
+            -static_cast<float>(view.frame.left), -static_cast<float>(view.frame.top)));
+        recorder->SetTarget(commands.Get());
+        recorder->BeginDraw();
+        DrawFrame(recorder, fonts, config, view);
+        const HRESULT recorded = recorder->EndDraw();
+        recorder->SetTarget(nullptr);
+        if (FAILED(recorded) || FAILED(commands->Close()))
+        {
+            resources.recorder.Reset();
+            return false;
+        }
+        if (cacheable)
+            resources.imageCard.emplace(CardResources::ImageCardRecording{key, config, commands});
+    }
     lighting->SetInput(0, commands.Get());
     const float light = transform.light;
     const D2D1_MATRIX_5X4_F colors = D2D1::Matrix5x4F(light, 0, 0, 0, 0, light, 0, 0, 0, 0, light, 0, 0, 0, 0, 1, 0, 0, 0, 0);

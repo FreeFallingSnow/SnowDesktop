@@ -210,6 +210,7 @@ void DesktopApp::UpdateLargeIconHover()
     }
     const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
     bool moving = false;
+    bool visibilityChanged = false;
     for (auto it = largeIconRuntime_.begin(); it != largeIconRuntime_.end();)
     {
         const auto index = FindItemIndexByKey(it->first);
@@ -228,12 +229,16 @@ void DesktopApp::UpdateLargeIconHover()
         const int previousEffect = state.motion.activeEffect;
         const auto frame = GetLargeIconFrameRect(item);
         const bool visible = IsLargeIconVisible(item, lastMousePoint_, desktopIconsHidden_);
-        if (state.visible != visible)
+        const bool changedVisibility = state.visible != visible;
+        if (changedVisibility)
         {
+            visibilityChanged = true;
             state.visible = visible;
-            if (!visible) { desktopBackdropCompositor_.RemovePanel(state.backdropFrame); state.backdropFrame = {}; }
-            InvalidateDragStaticScene();
-            InvalidateRect(hwnd_, nullptr, FALSE);
+            if (!visible)
+            {
+                desktopBackdropCompositor_.RemovePanel(state.backdropFrame, reinterpret_cast<std::uintptr_t>(&state));
+                state.backdropFrame = {};
+            }
         }
         const bool menuOpen = !largeIconMenuKey_.empty() || HasActiveContextMenuSession();
         const bool menuTitle = !largeIconMenuKey_.empty() && largeIconMenuKey_ == item.layoutKey &&
@@ -251,20 +256,20 @@ void DesktopApp::UpdateLargeIconHover()
             2 * (lastMousePoint_.y - frame.top) / height - 1, PtInRect(&frame, lastMousePoint_) != FALSE,
             visible && interactive && pointerInteractive, snowdesktop::animation::RuntimeAnimationsEnabled(),
             snowdesktop::animation::RuntimeDurationScale(), config) || moving;
-        if (!compositionPaintInProgress_ && (previousHover != state.motion.hover || previousShine != state.motion.shine ||
-            previousTiltX != state.motion.tiltX || previousTiltY != state.motion.tiltY))
+        const bool changedPose = previousHover != state.motion.hover || previousShine != state.motion.shine ||
+            previousTiltX != state.motion.tiltX || previousTiltY != state.motion.tiltY ||
+            previousEffect != state.motion.activeEffect;
+        if (changedVisibility || (visible && !compositionPaintInProgress_ && changedPose))
         {
-            // Dynamic titles stay clipped inside the fixed card. Keep the
-            // existing full path for effects with transformed extents.
-            if (config.effect == 2 && previousEffect == 2)
-            {
-                RECT dirty = frame; InflateRect(&dirty, 8, 8);
+            const RECT oldBounds = snowdesktop::large_icon_renderer::PaintBounds(frame, config, previousTiltX, previousTiltY);
+            const RECT newBounds = snowdesktop::large_icon_renderer::PaintBounds(frame, config, state.motion.tiltX, state.motion.tiltY);
+            RECT dirty{};
+            if (UnionRect(&dirty, &oldBounds, &newBounds))
                 InvalidateRect(hwnd_, &dirty, FALSE);
-            }
-            else InvalidateRect(hwnd_, nullptr, FALSE);
         }
         ++it;
     }
+    if (visibilityChanged) InvalidateDragStaticScene(false);
     if (!moving && largeIconAnimationToken_)
     {
         uiAnimationScheduler_.Cancel(largeIconAnimationToken_);

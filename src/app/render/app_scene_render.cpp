@@ -12,6 +12,7 @@
 #include "layout/item_render_layer_rules.h"
 #include "drag_drop/drag_visual_rules.h"
 #include "icons/large_icon_render_rules.h"
+#include "icons/large_icon_renderer.h"
 #include "icons/large_icon_shape_geometry.h"
 #include "widget/view/widget_composition_layer_rules.h"
 #include "widget/runtime/widget_visibility_rules.h"
@@ -95,7 +96,17 @@ void DesktopApp::DrawStaticBackground(
                 foregroundTitles.push_back(
                     { icon, di->bounds });
             }
-            if (!intersectsUpdate(di->largeIcon ? GetLargeIconFrameRect(*di) : di->bounds, 8))
+            if (updateRect && di->largeIcon)
+            {
+                const auto& config = EffectiveLargeIconConfig(*di);
+                const auto runtime = largeIconRuntime_.find(di->layoutKey);
+                const auto* motion = config.effect == 1 && runtime != largeIconRuntime_.end()
+                    ? &runtime->second.motion : nullptr;
+                const RECT paintBounds = snowdesktop::large_icon_renderer::PaintBounds(
+                    GetLargeIconFrameRect(*di), config, motion ? motion->tiltX : 0.f, motion ? motion->tiltY : 0.f);
+                if (!intersectsUpdate(paintBounds)) continue;
+            }
+            else if (!intersectsUpdate(di->bounds, 8))
                 continue;
             int state = selected ? 2 : (hovered ? 1 : 0);
             snowdesktop::SystemIconPlaceholderDemand::Paint placeholderPaint(systemIconDemand_,
