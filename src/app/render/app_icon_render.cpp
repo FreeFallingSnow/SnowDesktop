@@ -697,7 +697,7 @@ void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
         static const snowdesktop::IconBeautifySettings unstyled;
         const auto& style = beautify ? iconBeautifySettings_ : unstyled;
         // Keep the native glyph's inset when applying the selected plate and material.
-        if (auto* bitmap = GetStyledD2DBitmap(ctx, loading::SourceBitmap(), style,
+        if (auto* bitmap = GetStyledD2DBitmap(ctx, loading::SourceBitmap(beautify), style,
                 /*managedAlpha=*/true, /*nativeControlSource=*/true))
         {
             DrawIconBitmap(ctx, bitmap, iconRect, alpha);
