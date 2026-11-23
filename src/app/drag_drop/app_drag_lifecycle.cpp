@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/drag_drop/desktop_drop_feedback.h"
 #include "dock/dock_window_rules.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
@@ -147,8 +148,8 @@ bool DesktopApp::CollectPointerInteractionBounds(RECT& result)
     }
     else if (dragSession_.IsActive())
     {
-        auto* desktop = dynamic_cast<DesktopGrid*>(dragSession_.TargetContainer());
-        if (!desktop || !dynamic_cast<DesktopGrid*>(dragSession_.Source())) return false;
+        auto* desktop = snowdesktop::desktop_drop_feedback::Target(dragSession_);
+        if (!desktop) return false;
         if (widgetPairAction_ != snowdesktop::widget_pair_drop::Action::None)
             return false;
         const auto region = dragSession_.TargetRegion();
@@ -445,8 +446,7 @@ void DesktopApp::PresentPointerInteractionFrame(
     if (itemDragFeedbackChanged && !firstItemDragFeedback &&
         !desktopBackdropFullCollectionPending_ && !desktopIconsHidden_ &&
         !widgetPreviewActive && !marqueeActive_ && navHoverSide_ == 0 &&
-        dynamic_cast<DesktopGrid*>(dragSession_.Source()) &&
-        dynamic_cast<DesktopGrid*>(dragSession_.TargetContainer()) &&
+        snowdesktop::desktop_drop_feedback::Target(dragSession_) &&
         !GetOpenPopupWidget() && !ShouldShowFloatingPopupWindow() &&
         hwnd_ && IsWindow(hwnd_))
     {

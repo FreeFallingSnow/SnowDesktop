@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/drag_drop/desktop_drop_feedback.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "layout/collection_popup_layout.h"
@@ -1412,10 +1413,7 @@ void DesktopApp::OnMouseMoveAt(
             return;
 
         ResolveCurrentDragTargetAt(current);
-        auto* targetContainer = dragSession_.TargetContainer();
-
-        if (dynamic_cast<DesktopGrid*>(dragSession_.Source()) &&
-            dynamic_cast<DesktopGrid*>(targetContainer))
+        if (snowdesktop::desktop_drop_feedback::Target(dragSession_))
         {
             // Drop feedback lives on the foreground surface, but icon hover
             // pixels still belong to the background. Retire both hover states
