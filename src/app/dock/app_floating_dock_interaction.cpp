@@ -12,18 +12,6 @@
 
 #include <optional>
 
-namespace
-{
-struct ImmediateDockPaintDeferral
-{
-    bool& deferred;
-    bool previous;
-    explicit ImmediateDockPaintDeferral(bool& value) : deferred(value), previous(value)
-    { deferred = true; }
-    ~ImmediateDockPaintDeferral() { deferred = previous; }
-};
-}
-
 void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, bool requestFocus,
     bool nativePointerInput)
 {
@@ -270,7 +258,7 @@ void DesktopApp::ShowFloatingDock(
             { pending = true; }
             ~RevealPreparation() { pending = previous; }
         } preparation(floatingDockHost_->revealPending);
-        ImmediateDockPaintDeferral defer(floatingDockHost_->immediatePaintDeferred);
+        PersistentDockHost::ImmediatePaintDeferral defer(*floatingDockHost_);
         // Recognize the summon against the live desktop band: while a
         // covering window hides the Dock completely, mark the occluded
         // session here; the visibility pass retires that invisible pair and
@@ -545,7 +533,7 @@ void DesktopApp::CloseFloatingDock(
     // immediate paint. Publish just once after the close state is complete,
     // still before restoring keyboard focus below.
     {
-        ImmediateDockPaintDeferral defer(host.immediatePaintDeferred);
+        PersistentDockHost::ImmediatePaintDeferral defer(host);
         if (statusBar_) statusBar_->RefreshDockState(host.monitor, true);
         UpdatePersistentDockHostVisibility(host);
     }
@@ -616,7 +604,7 @@ void DesktopApp::CloseAllFloatingDocks(
         if (!host)
             continue;
         {
-            ImmediateDockPaintDeferral defer(host->immediatePaintDeferred);
+            PersistentDockHost::ImmediatePaintDeferral defer(*host);
             if (statusBar_) statusBar_->RefreshDockState(host->monitor, true);
             UpdatePersistentDockHostVisibility(*host);
         }

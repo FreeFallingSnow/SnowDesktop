@@ -72,6 +72,22 @@ struct DesktopApp::PersistentDockHost
     bool collectingMergedGlass = false;
     std::vector<snowdesktop::PanelBackdropIcon> mergedGlassIcons;
     bool immediatePaintDeferred = false;
+    class ImmediatePaintDeferral final
+    {
+    public:
+        explicit ImmediatePaintDeferral(PersistentDockHost& host) noexcept
+            : deferred_(host.immediatePaintDeferred), previous_(deferred_)
+        {
+            deferred_ = true;
+        }
+        ~ImmediatePaintDeferral() { deferred_ = previous_; }
+        ImmediatePaintDeferral(const ImmediatePaintDeferral&) = delete;
+        ImmediatePaintDeferral& operator=(const ImmediatePaintDeferral&) = delete;
+
+    private:
+        bool& deferred_;
+        const bool previous_;
+    };
     bool windowRegionPending = false;
     bool backdropRecoveryPending = false;
     bool desktopLayerRestorePending = false;

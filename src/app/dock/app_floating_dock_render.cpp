@@ -13,6 +13,7 @@
 #include "desktop/desktop_hover_rules.h"
 #include "app/popup/popup_window_pair_z_order.h"
 
+#include <optional>
 #include <utility>
 
 // Floating-Dock paint and window-message dispatch.
@@ -617,12 +618,31 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     {
         snowdesktop::performance::Scope clickScope("dock.input", "button.up");
         SelectPersistentDockHost(&host);
-        handlingFloatingDockInput_ = true;
-        handlingPersistentDockHost_ = &host;
-        OnLeftButtonUpAt(
-            wp, desktopPoint());
-        handlingFloatingDockInput_ = false;
-        handlingPersistentDockHost_ = nullptr;
+        const POINT point = desktopPoint();
+        {
+            std::optional<PersistentDockHost::ImmediatePaintDeferral> defer;
+            if (host.active && host.frameReady && IsWindowVisible(hwnd) &&
+                host.container && dockPressedContainer_ == host.container &&
+                dockPressedEntry_ < dockEntries_.size() &&
+                !GetOpenPopupWidget() && !HasActiveContextMenuSession() &&
+                !dragSession_.HasContext() && !dragDropController_.IsTransportActive())
+            {
+                const auto* releasedEntry = host.container->EntryAtPoint(point);
+                const auto& pressed = dockEntries_[dockPressedEntry_];
+                if (releasedEntry && releasedEntry->GetEntryIndex() == dockPressedEntry_ &&
+                    (IsLogicalDockEntryType(pressed.type) || IsFolderDockEntry(pressed)))
+                {
+                    // Popup setup can request several paints of this same Dock.
+                    // Keep its pending region and pixels together for the final layout below.
+                    defer.emplace(host);
+                }
+            }
+            handlingFloatingDockInput_ = true;
+            handlingPersistentDockHost_ = &host;
+            OnLeftButtonUpAt(wp, point);
+            handlingFloatingDockInput_ = false;
+            handlingPersistentDockHost_ = nullptr;
+        }
         UpdateFloatingDockWindowBounds(host);
         return 0;
     }
