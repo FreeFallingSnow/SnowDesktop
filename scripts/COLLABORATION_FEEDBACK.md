@@ -310,6 +310,8 @@
 
 ### CF-015 模块计划无法声明临时定向验证
 
+- **回收站残留条目定向检查（2026-11-23）**：Task `task-0212c99954704458993d627aa509e214`、批次 `74d22d949fe64effbf3ada760c2a8824` 修订 0、Run `39140a8c11d347a78e659349e84db21b` 的标准 Release 和激活已通过。计划登记了 `-TemporaryVerification`，单独编译同一检测源码的临时程序时，`Enter-BuildEntry` 在调用编译器前返回 `Shared output busy: batch 3ed56a6376dd4a589c7d38240b62d9b3 / editing`。该程序只需在忽略目录写入临时产物，首次检查仍须等待新批次让出执行权。保留首次拒绝，复用已激活候选。待支持把无共享产物写入的临时检查随原批次调度。
+
 - **状态栏排序配置续证（2026-11-20）**：Task `statusbar-metric-reorder`、批次 `81a988b0c92145f38e0b889aff7a0d00` 修订 0、Run `ee1a5ae299294e158f9377dd01b1490b`。产品日志记录 Release 配置 2.9 秒、生成 3.4 秒，测试日志对同一候选目录另记配置 3.1 秒、生成 2.9 秒。定向选择 `behavior_settings`，通过 Release、激活和设置存储回归。产品与测试阶段配置能否复用仍待核对，未为记录另行构建或测试。
 
 - **三行回收槽位（2026-11-20）**：Task `member-paint-transition`、批次 `7f9eee9647c244b188a59da0fe040c2c`、Run `fe8059e4248144b9906e6183f129ec99` 的 Release 与七项正式测试已通过。临时槽位命中和 WARP 绘制探针随后等候项目执行租约，见 `.codex-probes/member-paint-transition/build-check.ps1`；当时原检出进入另一编辑批次 `ae5ad257764749bc92f85bea31043c3a`。原反馈的绑定与调度缺口仍在；未因等待重建该候选。
