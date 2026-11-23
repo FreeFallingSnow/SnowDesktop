@@ -1068,7 +1068,9 @@ private:
         POINT clientPoint, DockWindowPreviewTarget& target);
     void UpdateDockWindowPreview(POINT clientPoint);
     void OnDockWindowPreviewHoverTimer();
-    bool ShowDockWindowPreview(DockWindowPreviewTarget target, POINT clientPoint);
+    bool TryOpenDockWindowPicker(POINT clientPoint);
+    void ShowDockWindowPreview(DockWindowPreviewTarget target, POINT clientPoint,
+        const std::vector<DockWindowPreviewItem>& previewItems);
     void RefreshDockWindowPreviewItems();
     void HideDockWindowPreview();
     void DismissDockWindowPreviewUntilLeave();

@@ -287,7 +287,7 @@ inline constexpr auto Fields<DockSettings> = std::to_array<Description>({
     {"showWindowsButton", "Shows the Windows or Start button in the Dock."},
     {"showQuickSearchButton", "Shows the Quick Navigation button in the Dock."},
     {"showRunningApps", "Reports the running-app display state. The current product keeps it enabled."},
-    {"showWindowPreviews", "Shows previews for eligible running windows. The running application entries remain enabled."},
+    {"showWindowPreviews", "Shows window thumbnails when hovering over a Dock app icon. Clicking an icon with multiple windows always opens the window picker. Running application entries are controlled separately."},
     {"singleClickLaunchItems", "Enables launching ordinary Dock items with a single click."},
     {"startMenuKeepTaskbarHidden", "Keeps the Windows taskbar hidden for the applicable Start menu invocation path."},
     {"startMenuKeepTaskbarHiddenOnWinKey", "Extends taskbar hiding to the Windows-key Start menu path when applicable."},

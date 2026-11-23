@@ -1049,6 +1049,11 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
         return true;
     }
 
+    // A release within click slop can be outside the pressed icon.
+    if ((!runningAppKey.empty() || (appItemIndex < items_.size() && !folderEntry)) &&
+        TryOpenDockWindowPicker(mouseDownPoint_))
+        return true;
+
     if (dockSettings_.singleClickLaunchItems &&
         appItemIndex < items_.size() && !folderEntry &&
         pressedWindowAction == snowdesktop::dock_window_rules::DockClickAction::Launch)

@@ -390,7 +390,9 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
 {
     if (!dockWindowPreview_)
         return;
-    if (!generalSettings_.dockEnabled || !dockSettings_.showWindowPreviews || dragSession_.IsActive())
+    const bool previewVisible = dockWindowPreview_->IsVisible();
+    if (!generalSettings_.dockEnabled || dragSession_.IsActive() ||
+        (!dockSettings_.showWindowPreviews && !previewVisible))
     {
         HideDockWindowPreview();
         return;
@@ -399,8 +401,6 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
     DockWindowPreviewTarget target;
     const bool hasTarget =
         ResolveDockWindowPreviewTarget(clientPoint, target);
-    const bool previewVisible =
-        dockWindowPreview_->IsVisible();
     const bool previewMatchesTarget =
         hasTarget && dockWindowPreviewKey_ == target.targetToken;
     // The target token covers only the app identity. Update a moved anchor
@@ -430,7 +430,7 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
         }
         return;
     }
-    if (transition.armTimer && hwnd_)
+    if (dockSettings_.showWindowPreviews && transition.armTimer && hwnd_)
     {
         if (!previewVisible)
         {
@@ -504,16 +504,32 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
         return;
     }
 
-    ShowDockWindowPreview(std::move(target), cursorClient);
+    const auto previewItems = CollectDockWindowPreviewItems(target.identity);
+    if (!previewItems.empty())
+        ShowDockWindowPreview(std::move(target), cursorClient, previewItems);
 }
 
-bool DesktopApp::ShowDockWindowPreview(DockWindowPreviewTarget target, POINT clientPoint)
+bool DesktopApp::TryOpenDockWindowPicker(POINT clientPoint)
 {
-    const std::vector<DockWindowPreviewItem> previewItems =
-        CollectDockWindowPreviewItems(target.identity);
-    if (previewItems.empty())
+    DockWindowPreviewTarget target;
+    if (!dockWindowPreview_ || !ResolveDockWindowPreviewTarget(clientPoint, target))
+        return false;
+    const auto previewItems = CollectDockWindowPreviewItems(target.identity);
+    if (previewItems.size() < 2)
         return false;
 
+    // A click can reopen the same group after choosing a window suppressed its hover.
+    KillTimer(hwnd_, kDockWindowPreviewHoverTimerId);
+    dockWindowPreviewHover_.Reset();
+    ShowDockWindowPreview(std::move(target), clientPoint, previewItems);
+    if (dockWindowPreview_->IsVisible()) dockWindowPreview_->KeepVisible();
+    return true;
+}
+
+void DesktopApp::ShowDockWindowPreview(
+    DockWindowPreviewTarget target, POINT clientPoint,
+    const std::vector<DockWindowPreviewItem>& previewItems)
+{
     if (!target.floatingLayer)
     {
         const POINT anchorCenter{
@@ -542,10 +558,9 @@ bool DesktopApp::ShowDockWindowPreview(DockWindowPreviewTarget target, POINT cli
         IsLightContentTheme(),
         target.floatingLayer
             ? floatingDockHwnd_ : nullptr);
-    if (!dockWindowPreview_->IsVisible()) return false;
+    if (!dockWindowPreview_->IsVisible()) return;
     dockTitleTooltip_.Hide();
     dockWindowPreviewHover_.MarkPreviewShown(target.targetToken);
-    return true;
 }
 
 void DesktopApp::RefreshDockWindowPreviewItems()
