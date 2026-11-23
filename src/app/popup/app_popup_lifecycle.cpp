@@ -766,6 +766,10 @@ void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
         FinalizeCloseCollectionPopup();
         return;
     }
+    const bool stableFloatingContent = popupAnimation_.IsInteractive() && !popupAnimation_.IsAnimating() &&
+        !GetCollectionPopupResizeTransition() && !(folderPreview_ && folderPreview_->inlineBounds) &&
+        !IsLuaPanelHostedByFloatingWindow() && !IsLuaStackIndicatorVisible() &&
+        !dragSession_.HasContext() && !dragDropController_.IsExternalDragActive();
     UpdateFloatingPopupWindowBounds(false);
     PrepareCollectionPopupAnimationCache();
     if (dockFolderPopupContainer_) dockFolderPopupContainer_->SetPopupResizeTransition({});
@@ -798,6 +802,15 @@ void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
     {
         UpdateCollectionPopupCompositionAnimation();
         EnsureUiAnimationFrame();
+    }
+    else if (stableFloatingContent &&
+        popupAnimationOverlay_.host == UiCompositionAnimationHost::FloatingPopup)
+    {
+        // Starting the native track already paints and commits the floating
+        // surface. The source on the desktop still needs its own refresh.
+        InvalidateCollectionPopupDesktopScene();
+        SyncLuaWidgetTooltip();
+        return;
     }
     InvalidateCollectionPopupAnimation(true);
 }
