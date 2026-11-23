@@ -35,8 +35,8 @@ struct StatusBarPagePresenter::Impl
     muxc::StackPanel independentBody;
     muxc::StackPanel root, basic, leftItems, infoItems, appearanceRoot;
     bool centralizedAppearance = false;
-    muxc::Expander leftSection, infoSection, controlCenterSection, rulesSection;
-    muxc::TextBlock layoutTitle, clickTitle, visibilityTitle;
+    muxc::Expander mergedSection, leftSection, infoSection, controlCenterSection, rulesSection;
+    muxc::TextBlock layoutTitle, mergedTitle, clickTitle, visibilityTitle;
     muxc::ComboBox edge, monitors, clockPanel, controlPanel, inputPanel, timeNotificationPosition, controlDisplay, edgeRevealGesture;
     muxc::ComboBox foregroundAppNamePosition;
     SettingRow foregroundAppNamePositionRow;
@@ -229,7 +229,13 @@ struct StatusBarPagePresenter::Impl
         scaleRow.Initialize(editor);
         for (auto row : {edgeRow.root, monitorsRow.root, scaleRow.root}) layout.Children().Append(row);
         mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
-        layout.Children().Append(mergedHeight->Content());
+        muxc::StackPanel mergedContent;
+        mergedContent.Children().Append(mergedHeight->Content());
+        Title(mergedTitle);
+        mergedSection.Header(mergedTitle);
+        mergedSection.Content(mergedContent);
+        mergedSection.Visibility(mux::Visibility::Collapsed);
+        root.Children().Append(mergedSection);
         Title(visibilityTitle);
         auto visibility = Card(style, visibilityTitle);
         ToggleRow(visibility, "settings.dock.showOnlyWhenSummoned", "statusBar.showOnlyWhenSummoned",
@@ -243,7 +249,7 @@ struct StatusBarPagePresenter::Impl
             if (selected >= 0 && selected <= 1) Emit([selected](auto& settings) { settings.edgeRevealGesture = selected; });
         });
         revoke.push_back([control = edgeRevealGesture, revealSelection] { control.SelectionChanged(revealSelection); });
-        for (auto section : {leftSection, infoSection, controlCenterSection})
+        for (auto section : {mergedSection, leftSection, infoSection, controlCenterSection})
         {
             section.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
             section.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
@@ -389,7 +395,7 @@ struct StatusBarPagePresenter::Impl
             if (active && navigate) navigate(SettingsRoute::ForPage(SettingsPage::Calendar, "calendar.events"));
         });
         revoke.push_back([control = calendarLink, calendarToken] { control.Click(calendarToken); });
-        for (const auto panel : {basic, layout, visibility, leftItems, infoItems, controlCenter, clickBehavior})
+        for (const auto panel : {basic, layout, mergedContent, visibility, leftItems, infoItems, controlCenter, clickBehavior})
             presenter_controls::UpdateSettingsSubrows(panel, 0);
         auto token = edge.SelectionChanged([this](const auto&, const auto&) {
             const auto selected = edge.SelectedIndex();
@@ -531,6 +537,8 @@ struct StatusBarPagePresenter::Impl
             mux::Automation::AutomationProperties::SetHelpText(toggle->control, toggle->row.help.Text());
         }
         layoutTitle.Text(L("statusBar.layout"));
+        mergedTitle.Text(L("settings.bars.mergedSettings"));
+        mux::Automation::AutomationProperties::SetName(mergedSection, mergedTitle.Text());
         visibilityTitle.Text(L("settings.dock.visibilityAndSummon"));
         edgeRevealGestureRow.SetText(L("settings.dock.edgeRevealGesture"));
         mux::Automation::AutomationProperties::SetName(edgeRevealGesture, edgeRevealGestureRow.label.Text());
@@ -678,6 +686,8 @@ void StatusBarPagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
         snapshot.values.general.statusBar, monitorCount);
     impl_->monitorCount = monitorCount;
     impl_->mergedHeight->Update(snapshot);
+    impl_->mergedSection.Visibility(impl_->availability.anyMerged
+        ? mux::Visibility::Visible : mux::Visibility::Collapsed);
     impl_->dockRevision = snapshot.domainRevisions.dock;
     impl_->globalAppearance = snapshot.values.personalization;
     impl_->Sync(replaceSession);

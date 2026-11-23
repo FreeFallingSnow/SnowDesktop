@@ -1,9 +1,9 @@
 #include "pch.h"
 #include "dock/dock_settings_rules.h"
 #include <algorithm>
+#include "settings/bar_settings_rules.h"
 #include "settings/settings_snapshot.h"
 #include "desktop_style_page_presenter.h"
-#include "merged_bar_height_editor.h"
 #include "settings_presenter_controls.h"
 #include "desktop/desktop_style_presets.h"
 #include "dock/dock_collection_icon_rules.h"
@@ -180,7 +180,6 @@ struct DesktopStylePagePresenter::Impl
     DockPageActions actions;
     muxc::StackPanel root;
     muxc::GridView presets;
-    std::unique_ptr<MergedBarHeightEditor> mergedHeight;
     muxc::StackPanel companionOptions;
     muxc::ComboBox companionPosition, companionForm;
     SettingRow companionPositionRow, companionFormRow;
@@ -492,8 +491,6 @@ struct DesktopStylePagePresenter::Impl
                     settings.dockEnabled, value, settings.statusBar, GetSystemMetrics(SM_CMONITORS)).allDockMerged;
             });
 
-        mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
-        spaceCard.Children().Append(mergedHeight->Content());
         const auto related = AddSection(style, "settings.common.relatedSettings");
         AddRelatedLink(related, "settings.dock.visibilityAndSummon", "settings.related.dockVisibility",
             SettingsRoute::ForPage(SettingsPage::Dock, "dock.showOnlyWhenSummoned"),
@@ -958,7 +955,6 @@ struct DesktopStylePagePresenter::Impl
             muxc::ToolTipService::SetToolTip(card.item, winrt::box_value(card.title.Text()));
         }
         muxa::AutomationProperties::SetName(presets, L("settings.desktopStyle.presets"));
-        mergedHeight->RefreshLocalizedText();
         const auto localizeDraft = [this](const muxc::ComboBox& control, SettingRow& row,
             std::string_view label, std::initializer_list<std::string_view> options) {
             const int selectedIndex = control.SelectedIndex();
@@ -1003,7 +999,6 @@ struct DesktopStylePagePresenter::Impl
     void Close() noexcept
     {
         if (closed) return;
-        mergedHeight->Flush(); mergedHeight->Close();
         closed = true;
         active = false;
         gate->alive = false;
@@ -1023,7 +1018,7 @@ DesktopStylePagePresenter::DesktopStylePagePresenter(LocalizeCallback localize,
     const mux::Style& cardStyle, ApplyPresetCallback applyPreset)
     : impl_(std::make_unique<Impl>(std::move(localize), cardStyle, std::move(applyPreset))) {}
 DesktopStylePagePresenter::~DesktopStylePagePresenter() { Close(); }
-void DesktopStylePagePresenter::SetActions(DockPageActions actions) { impl_->mergedHeight->SetActions(actions); impl_->actions = std::move(actions); }
+void DesktopStylePagePresenter::SetActions(DockPageActions actions) { impl_->actions = std::move(actions); }
 bool DesktopStylePagePresenter::NeedsRecommendedAnimations(std::string_view preset) const
 {
     return !impl_->closed && impl_->hasSnapshot &&
@@ -1050,7 +1045,6 @@ void DesktopStylePagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
         if (presetNavigation) impl_->SelectPresetForFocus(snapshot.route.focusId);
         return;
     }
-    impl_->mergedHeight->Update(snapshot);
     impl_->monitorCount = monitorCount;
     impl_->generation = snapshot.generation;
     impl_->gate->generation = snapshot.generation;
@@ -1098,7 +1092,6 @@ void DesktopStylePagePresenter::Activate(std::string_view focusId)
 }
 void DesktopStylePagePresenter::Deactivate()
 {
-    impl_->mergedHeight->Flush();
     impl_->active = false;
     impl_->gate->active = false;
     impl_->gate->pending = false;
@@ -1109,8 +1102,6 @@ void DesktopStylePagePresenter::RegisterFocusTargets(const std::function<void(st
 {
     if (!target || impl_->closed) return;
     target("desktopStyle", impl_->presets);
-    target("desktopStyle.dock.mergedBarHeight", impl_->mergedHeight->Content().Visibility() == mux::Visibility::Visible
-        ? impl_->mergedHeight->FocusTarget().as<mux::FrameworkElement>() : impl_->adjustmentTitle);
     for (const auto preset : kPresets) target("desktopStyle." + std::string(preset), impl_->presets);
     for (const auto& toggle : impl_->toggles) target(toggle->focus, toggle->control);
     for (const auto& choice : impl_->choices) target(choice->focus, choice->control);

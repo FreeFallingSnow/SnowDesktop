@@ -641,8 +641,11 @@ struct DockPagePresenter::Impl
 
         presenter_controls::UpdateSettingsSubrows(enableCard.content, 0);
         InitializeCard(edgeSwipeCard, cardStyle, dockRoot);
-        InitializeCard(layoutCard, cardStyle, dockRoot);
-        InitializeCard(mergedCard, cardStyle, dockRoot, true);
+        muxc::StackPanel layoutCards;
+        layoutCards.Spacing(8.0);
+        InitializeCard(layoutCard, cardStyle, layoutCards);
+        InitializeCard(mergedCard, cardStyle, layoutCards, true);
+        dockRoot.Children().Append(layoutCards);
         InitializeCard(behaviorCard, cardStyle, dockRoot);
         InitializeCard(itemsCard, cardStyle, dockRoot);
         InitializeCard(fullscreenCard, cardStyle, dockRoot);
