@@ -372,6 +372,8 @@
 
 - **事后验收回填（2026-11-23）**：Task `task-ee5042349ebc49aeb916e72a076037b1` 按用户截图对上一版加载细弧调用 `acceptance-record -SourceTask task-efa4868c9e9544fca882189ad6154b8f -Batch 4bc943e2305c4b4ca9873fd9972fa087 -Revision 0`，返回 `Saved runtime was retired by the retention policy; its manifest and validation evidence are preserved. Select a retained build or build again.`。Run `b561dd7c67564c50a3c9266a767bc1a7` 的 `retention.json` 记录 `runtimeRemoved=true`、`reason=superseded-runtime`，原计划未申请验收保留。这次回填未能登记，用户截图与原候选回执仍可追溯。B 方案的新候选申请 24 小时验收保留。后续可评估用保留的清单、激活身份及原始反馈绑定事后失败记录的条件。本次未重建旧候选。
 
+- **无 CTest 的模块候选导出（2026-11-23）**：同 Task 的批次 `9076bbdeb07c42a0bb61705a8220e685` 修订 0、Run `6f1e5f8243f44d82bea25466f04a2b6a` 使用 `-Scope module -Suites none -TemporaryVerification … -AcceptanceRetentionHours 24`。计划通过，产品构建退出 `0`，导出报 `Invalid planned acceptance retention`，未激活。源码确认计划允许生成产品的临时验收声明，导出却拒绝全部 `none`。续修批次 `8c3a2889ae724e5c9d8a90414a8b0b15` 修订 2 将导出判据与计划对齐，沿同一槽补交付，保留首次失败回执。
+
 - **定向修复与验证（2026-11-08）**：Task `collab-priority-fixes-20261108` 增加绑定冻结计划和产物清单的保留意图，验收开始时转为 24 小时的进行中保留。PowerShell 7 与 5.1 的隔离候选夹具走过实际验收和清理入口，覆盖登记前、登记后、其他参与者、到期、取消、运行文件修改和实际回收，回收保留原证据。升级前已冻结的运行器仍沿用其原清理策略。
 
 - **回收发生在验收期间（2026-11-07）**：Task `task-a0a57ef0479d44e1b0732f484b0d472c`，批次 `d80a7cfd13c749c2b0a9d2402ba57138` 修订 0，Run `a6a031f21d4645f093e12fafd5c1c968`，验收 `58b3f996e74f48e4b2ae430ebfd4002b`。`acceptance-start` 已绑定保存的主程序，Win10 虚拟机部署和实测完成后，`acceptance-complete -AcceptanceOutcome passed` 返回 `Saved runtime was retired by the retention policy`。`retention.json` 记载 `runtimeRemoved=true`、`reason=superseded-runtime`，后续本机激活为 Run `cfc98b09057d46a0aaa57af82c4ae302`。此例说明成功开始的验收也会被回收打断。协调器记录以取消结束，匹配 SHA-256 的来宾实测回执和原始回收记录保存在 `.codex-probes/win10-menu-compatibility/`。后续应让进行中的验收持有有界保留租约。本次未为归档重复构建或恢复已回收目录。

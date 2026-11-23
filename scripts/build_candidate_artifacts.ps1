@@ -50,7 +50,9 @@ function Get-CandidatePlannedAcceptances($Context) {
     foreach($member in $plan.tasks){
         $hours=Get-Field $member.requirement 'acceptanceRetentionHours' 0
         if(-not $hours){continue}
-        if($hours -lt 1 -or $hours -gt 168 -or [int]$hours -ne $hours -or $member.requirement.suites -contains 'none' -or
+        $hasRuntime=$member.requirement.suites -notcontains 'none' -or
+            ($member.requirement.scope -eq 'module' -and (Get-Field $member.requirement 'temporaryVerification'))
+        if($hours -lt 1 -or $hours -gt 168 -or [int]$hours -ne $hours -or -not $hasRuntime -or
             $member.participant -notmatch '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$' -or $member.editRevision -lt 0 -or
             $null -eq (Get-Field $member.requirement 'requirementsRevision') -or $member.requirement.requirementsRevision -lt 0){
             throw 'Invalid planned acceptance retention.'
