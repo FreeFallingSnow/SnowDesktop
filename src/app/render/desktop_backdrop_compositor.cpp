@@ -762,6 +762,8 @@ struct DesktopBackdropCompositor::Impl
         wuc::SpriteVisual body{nullptr};
         wuc::CompositionVisualSurface layersSurface{nullptr};
         wuc::CompositionSurfaceBrush flattened{nullptr};
+        bool retainsMarqueeLayers = false;
+        bool sceneUsesLayers = false;
         RECT stagedFrame{};
         bool staged = false;
         wuc::SpriteVisual visual{nullptr};
@@ -1541,20 +1543,18 @@ struct DesktopBackdropCompositor::Impl
         frame.layers = std::move(layers);
     }
 
-    static void BindSrgbLayers(SrgbContent& frame, const PreparedImageSpin& spin,
-        const PreparedMarquees& marquees)
+    static void BindSrgbLayerChildren(SrgbContent& frame, const PreparedImageSpin& spin,
+        const PreparedMarquees& marquees, bool useLayers)
     {
         const auto children = frame.layers.Children();
         children.RemoveAll();
-        if (spin || marquees)
+        if (useLayers)
         {
             frame.body.Brush(frame.sceneBrush);
             children.InsertAtBottom(frame.body);
             if (spin) children.InsertAtTop(spin->visual);
             if (marquees) children.InsertAtTop(marquees->visual);
-            frame.sceneEffect.SetSourceParameter(L"scene", frame.flattened);
         }
-        else frame.sceneEffect.SetSourceParameter(L"scene", frame.sceneBrush);
     }
 
     static void PaintSrgbSurface(const wuc::CompositionDrawingSurface& surface,
@@ -3466,7 +3466,7 @@ DesktopBackdropCompositor::PreparedMarquees DesktopBackdropCompositor::PrepareSr
     HWND window, std::uintptr_t key, ID2D1Device* device, const RECT& clientFrame, const RECT& allowed,
     std::span<const snowdesktop::widget_runtime::NativeMarqueeText> marquees)
 {
-    if (!window || !key || !device || marquees.empty() || IsRectEmpty(&clientFrame) || IsRectEmpty(&allowed))
+    if (!window || !key || !device || marquees.empty() || IsRectEmpty(&clientFrame))
         return {};
     if (window == impl_->srgbContentWindow && device == impl_->maskDrawDevice.get())
     {
@@ -3490,6 +3490,9 @@ DesktopBackdropCompositor::PreparedMarquees DesktopBackdropCompositor::PrepareSr
         impl_->EnsureMaskGraphicsDevice(device);
         const auto& compositor = impl_->compositor;
         impl_->EnsureSrgbLayers(key);
+        // A host-drawn marquee uses the same scene surface as an animated child.
+        impl_->srgbContent.at(key).retainsMarqueeLayers = true;
+        if (IsRectEmpty(&allowed)) return {};
         auto result = std::make_shared<SrgbMarqueeScene>();
         auto root = compositor.CreateContainerVisual();
         const wfn::float2 size{static_cast<float>(clientFrame.right - clientFrame.left),
@@ -3811,6 +3814,8 @@ bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opa
     if (entry == impl_->srgbContent.end() || !entry->second.staged) return false;
     auto& frame = entry->second;
     const float previousSpeed = frame.spin && !frame.spin->clock->paused ? frame.spin->image.degreesPerSecond : 0.f;
+    const bool useLayers = frame.retainsMarqueeLayers || spin || marquees;
+    const bool sceneInputChanged = frame.sceneUsesLayers != useLayers;
     try
     {
         if (!frame.visual)
@@ -3842,10 +3847,10 @@ bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opa
         // Keep the backdrop input attached to the same visual across content changes.
         // The back buffer becomes visible only after its complete draw succeeded.
         frame.sceneBrush.Surface(frame.candidate.surface);
-        if (spin || marquees)
+        if (useLayers)
         {
             // The root remains the same when the cover, scrolling text, or body changes.
-            if ((!frame.spin && !frame.marquees) || frame.active.size.cx != frame.candidate.size.cx ||
+            if (sceneInputChanged || frame.active.size.cx != frame.candidate.size.cx ||
                 frame.active.size.cy != frame.candidate.size.cy)
             {
                 frame.layers.Size(size);
@@ -3854,8 +3859,8 @@ bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opa
             }
             const auto oldDisc = frame.spin ? frame.spin->visual : nullptr;
             const auto newDisc = spin ? spin->visual : nullptr;
-            if (oldDisc != newDisc || frame.marquees != marquees)
-                Impl::BindSrgbLayers(frame, spin, marquees);
+            if (sceneInputChanged || oldDisc != newDisc || frame.marquees != marquees)
+                Impl::BindSrgbLayerChildren(frame, spin, marquees, true);
             if (marquees && marquees->paused)
             {
                 for (const auto& animation : marquees->animations) animation.Resume();
@@ -3870,8 +3875,11 @@ bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opa
                     snowdesktop::performance::Value("composition.srgb", "image_spin.resume_degrees_per_second", {}, speed);
             }
         }
-        else if (frame.spin || frame.marquees)
-            Impl::BindSrgbLayers(frame, {}, {});
+        else if (sceneInputChanged)
+            Impl::BindSrgbLayerChildren(frame, {}, {}, false);
+        if (sceneInputChanged)
+            frame.sceneEffect.SetSourceParameter(L"scene", useLayers ? frame.flattened : frame.sceneBrush);
+        frame.sceneUsesLayers = useLayers;
         frame.marquees = std::move(marquees);
         frame.spin = std::move(spin);
         std::swap(frame.active, frame.candidate);
@@ -3889,7 +3897,10 @@ bool DesktopBackdropCompositor::PublishSrgbContent(std::uintptr_t key, float opa
             try
             {
                 frame.sceneBrush.Surface(frame.active.surface);
-                Impl::BindSrgbLayers(frame, frame.spin, frame.marquees);
+                Impl::BindSrgbLayerChildren(frame, frame.spin, frame.marquees, frame.sceneUsesLayers);
+                if (sceneInputChanged)
+                    frame.sceneEffect.SetSourceParameter(
+                        L"scene", frame.sceneUsesLayers ? frame.flattened : frame.sceneBrush);
                 if (frame.spin) frame.spin->clock->Play(previousSpeed);
             }
             catch (const winrt::hresult_error&) { /* Device recovery owns an unavailable compositor. */ }

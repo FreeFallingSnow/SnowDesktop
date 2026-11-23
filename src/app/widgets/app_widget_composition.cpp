@@ -889,17 +889,26 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
             {
                 output.engine->SetNativeMarqueeSyncCallback([&](const std::wstring& owner,
                     const std::vector<snowdesktop::widget_runtime::NativeMarqueeText>& labels, bool reducedMotion) {
-                    if (reducedMotion || owner != contentId || IsRectEmpty(&paint.nativeMarqueeBounds) ||
-                        !output.engine->GetScrollControls(contentId).empty())
+                    if (reducedMotion || owner != contentId)
                         return false;
-                    if (labels.empty() || std::none_of(labels.begin(), labels.end(),
+                    if (std::none_of(labels.begin(), labels.end(),
                             [](const auto& label) { return label.scrolling; }))
                         return false;
+                    const auto prepare = [&](const RECT& allowed) {
+                        marquees = desktopBackdropCompositor_.PrepareSrgbMarquees(
+                            hwnd_, sceneKey, d2dDevice_.Get(), contentFrame, allowed, labels);
+                        return static_cast<bool>(marquees);
+                    };
+                    // Keep the same foreground surface when the text needs
+                    // to stay in host draw order.
+                    if (IsRectEmpty(&paint.nativeMarqueeBounds) ||
+                        !output.engine->GetScrollControls(contentId).empty())
+                        return prepare({});
                     if (paint.nativeMarqueeRadius > 0.f)
                     {
                         const auto clip = snowdesktop::smooth_corners::Geometry(GetD2DFactory(),
                             ToD2DRect(paint.nativeMarqueeBounds), paint.nativeMarqueeRadius);
-                        if (!clip) return false;
+                        if (!clip) return prepare({});
                         for (const auto& label : labels)
                         {
                             const auto& r = label.viewport;
@@ -912,14 +921,12 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
                                 {
                                     snowdesktop::performance::Value(
                                         "widget.composition", "marquee_clip_rejected", contentId, 1);
-                                    return false;
+                                    return prepare({});
                                 }
                             }
                         }
                     }
-                    marquees = desktopBackdropCompositor_.PrepareSrgbMarquees(
-                        hwnd_, sceneKey, d2dDevice_.Get(), contentFrame, paint.nativeMarqueeBounds, labels);
-                    return static_cast<bool>(marquees);
+                    return prepare(paint.nativeMarqueeBounds);
                 });
             }
             luaWidget->DrawCompositionSurface(
