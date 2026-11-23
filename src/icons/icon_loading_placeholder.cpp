@@ -14,10 +14,9 @@ const icon_image::Image& Source()
     // Rasterize the static mark once, without a Shell request or an external asset.
     static const auto source = [] {
         constexpr int size = 128;
-        constexpr float radius = 0.264f;
-        const auto coverage = [](float distance, float halfWidth) {
-            return std::clamp((halfWidth - distance) * size + 0.5f, 0.0f, 1.0f);
-        };
+        constexpr float radius = 0.195f;
+        constexpr float halfStroke = 0.023f;
+        constexpr std::uint32_t gray = 148;
         icon_image::Image image;
         image.width = image.height = size;
         image.pixels.resize(size * size);
@@ -27,8 +26,7 @@ const icon_image::Image& Source()
             {
                 const float x = (column + 0.5f) / size - 0.5f;
                 const float y = (row + 0.5f) / size - 0.5f;
-                const float ringDistance = std::abs(std::sqrt(x * x + y * y) - radius);
-                float arcDistance = ringDistance;
+                float arcDistance = std::abs(std::sqrt(x * x + y * y) - radius);
                 if (x > 0.0f && y < 0.0f)
                 {
                     // Round caps at twelve and three o'clock leave the leading gap open.
@@ -37,19 +35,11 @@ const icon_image::Image& Source()
                     arcDistance = std::sqrt(std::min(x * x + top * top, right * right + y * y));
                 }
 
-                const float arc = coverage(arcDistance, 0.045f);
-                const float outlinedArc = coverage(arcDistance, 0.065f);
-                const float outline = outlinedArc - arc;
-                const float track = std::max(0.0f, coverage(ringDistance, 0.034f) - outlinedArc) * 0.58f;
-                const float light = std::clamp(0.5f - (x + y) / (2.0f * radius), 0.0f, 1.0f);
-                const auto channel = [&](float bright, float blue, float dark, float muted) {
-                    return static_cast<std::uint32_t>(std::lround(
-                        arc * std::lerp(blue, bright, light) + outline * dark + track * muted));
-                };
-                const auto alpha = static_cast<std::uint32_t>(std::lround(255.0f * (outlinedArc + track)));
+                const float coverage = std::clamp((halfStroke - arcDistance) * size + 0.5f, 0.0f, 1.0f);
+                const auto alpha = static_cast<std::uint32_t>(std::lround(coverage * 240.0f));
+                const std::uint32_t channel = (gray * alpha + 127u) / 255u;
                 image.pixels[static_cast<size_t>(row) * size + column] =
-                    (alpha << 24) | (channel(193, 90, 41, 120) << 16) |
-                    (channel(237, 168, 60, 145) << 8) | channel(255, 240, 84, 171);
+                    (alpha << 24) | (channel << 16) | (channel << 8) | channel;
             }
         }
         return image;
