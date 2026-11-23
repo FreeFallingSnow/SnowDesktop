@@ -449,6 +449,26 @@ struct DesktopStylePagePresenter::Impl
         AddChoice(dockCard, "settings.dock.monitor", "", "desktopStyle.dock.monitor", monitorOptions,
             [](const auto&, const auto& value) { return static_cast<int>(value.monitorScope); },
             [this](int index) { EmitDock([index](auto& value) { value.monitorScope = static_cast<DockMonitorScope>(index); }); }, DockEnabled);
+
+        AddDockToggle(dockCard, "settings.dock.reserveScreenSpace", "settings.dock.reserveScreenSpace.description",
+            "desktopStyle.dock.reserveScreenSpace", &DockSettings::reserveScreenSpace,
+            [](const auto& settings, const auto& value) {
+                const auto state = ResolveBarSettingsAvailability(settings.dockEnabled, value, settings.statusBar, GetSystemMetrics(SM_CMONITORS));
+                return settings.dockEnabled && !value.showOnlyWhenSummoned && !state.allDockMerged;
+            });
+        AddToggle(dockCard, "settings.dock.allowDesktopContentOverlap", "settings.dock.allowDesktopContentOverlap.description",
+            "desktopStyle.dock.allowDesktopContentOverlap",
+            [](const auto&, const auto& value) {
+                return dock_settings_rules::ShouldReserveDesktopWorkArea(value.showOnlyWhenSummoned, value.allowDesktopContentOverlap);
+            }, [this](bool enabled) {
+                EmitDock([enabled](auto& value) {
+                    value.allowDesktopContentOverlap = !enabled;
+                });
+            }, [](const auto& settings, const auto& value) {
+                return settings.dockEnabled && !value.showOnlyWhenSummoned && !ResolveBarSettingsAvailability(
+                    settings.dockEnabled, value, settings.statusBar, GetSystemMetrics(SM_CMONITORS)).allDockMerged;
+            });
+
         const auto barCard = AddSection(style, "settings.nav.statusBar");
         AddToggle(barCard, "statusBar.enabled", "", "desktopStyle.statusBar.enable", BarEnabled,
             [this](bool enabled) { EmitGeneral([enabled](auto& value) { value.statusBar.enabled = enabled; }); });
@@ -469,26 +489,6 @@ struct DesktopStylePagePresenter::Impl
                     general.runtimeModules.Allows(runtime_modules::Module::Taskbar)))
                 { Sync(); return; }
                 EmitDock([index](auto& value) { SetTaskbarDisplayMode(value, index); });
-            });
-
-        const auto spaceCard = AddSection(style, "settings.desktopStyle.spaceCoordination");
-        AddDockToggle(spaceCard, "settings.dock.reserveScreenSpace", "settings.dock.reserveScreenSpace.description",
-            "desktopStyle.dock.reserveScreenSpace", &DockSettings::reserveScreenSpace,
-            [](const auto& settings, const auto& value) {
-                const auto state = ResolveBarSettingsAvailability(settings.dockEnabled, value, settings.statusBar, GetSystemMetrics(SM_CMONITORS));
-                return settings.dockEnabled && !value.showOnlyWhenSummoned && !state.allDockMerged;
-            });
-        AddToggle(spaceCard, "settings.dock.allowDesktopContentOverlap", "settings.dock.allowDesktopContentOverlap.description",
-            "desktopStyle.dock.allowDesktopContentOverlap",
-            [](const auto&, const auto& value) {
-                return dock_settings_rules::ShouldReserveDesktopWorkArea(value.showOnlyWhenSummoned, value.allowDesktopContentOverlap);
-            }, [this](bool enabled) {
-                EmitDock([enabled](auto& value) {
-                    value.allowDesktopContentOverlap = !enabled;
-                });
-            }, [](const auto& settings, const auto& value) {
-                return settings.dockEnabled && !value.showOnlyWhenSummoned && !ResolveBarSettingsAvailability(
-                    settings.dockEnabled, value, settings.statusBar, GetSystemMetrics(SM_CMONITORS)).allDockMerged;
             });
 
         const auto related = AddSection(style, "settings.common.relatedSettings");
