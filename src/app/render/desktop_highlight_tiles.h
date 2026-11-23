@@ -28,13 +28,15 @@ bool Stage(DesktopBackdropCompositor& compositor, HWND window, ID2D1DeviceContex
         bounds.right += 2.f;
         bounds.bottom += 2.f;
     }
-    const auto tileStart = [](LONG value) { return value / kSceneTileSize * kSceneTileSize; };
+    const auto tileStart = [](LONG value, LONG start) {
+        return start + (value - start) / kSceneTileSize * kSceneTileSize;
+    };
     std::vector<std::uintptr_t> newKeys;
     std::vector<std::uintptr_t> staged;
     double paintedPixels = 0;
-    for (LONG top = tileStart(dirty.top); top < dirty.bottom; top += kSceneTileSize)
+    for (LONG top = tileStart(dirty.top, client.top); top < dirty.bottom; top += kSceneTileSize)
     {
-        for (LONG left = tileStart(dirty.left); left < dirty.right; left += kSceneTileSize)
+        for (LONG left = tileStart(dirty.left, client.left); left < dirty.right; left += kSceneTileSize)
         {
             const RECT frame{left, top, std::min(left + kSceneTileSize, client.right),
                 std::min(top + kSceneTileSize, client.bottom)};
@@ -84,7 +86,11 @@ bool Stage(DesktopBackdropCompositor& compositor, HWND window, ID2D1DeviceContex
         }
     }
     for (const auto key : staged)
-        if (!compositor.PublishSrgbContent(key)) return false;
+    {
+        if (compositor.PublishSrgbContent(key)) continue;
+        for (const auto created : newKeys) compositor.RemoveSrgbContent(created);
+        return false;
+    }
     performance::Value("desktop", "tile_raster_pixels", {}, paintedPixels);
     return true;
 }

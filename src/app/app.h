@@ -518,10 +518,10 @@ private:
     /** @brief 重建组件列表文本格式。 */
     void RecreateComponentListTextFormat();
     void RecreateFanTitleTextFormat();
-    /** @brief 创建或调整 DirectComposition 表面的大小。 @return S_OK 成功，否则为 HRESULT 错误码 */
+    /** @brief 同步各物理输出的桌面绘制表面。S_FALSE 表示重建成功。 */
     HRESULT CreateOrResizeCompositionSurface();
-    /** @brief 创建或调整位于组件层之上的透明桌面前景表面。 */
-    HRESULT CreateOrResizeDesktopForegroundCompositionSurface();
+    HRESULT RenderDesktopOutputScene(bool foreground, const RECT* updateRect,
+        const std::function<void(ID2D1DeviceContext*)>& draw);
     /** @brief 按固定的由后向前顺序重新挂接桌面根视觉子层。 */
     HRESULT SyncDesktopCompositionRootZOrder();
     /** @brief 将 Dock、弹窗和交互提示绘制到桌面前景表面。 */
@@ -531,8 +531,7 @@ private:
     /** @brief 立即局部更新 Dock、弹窗和交互提示所在的前景 DComp 表面。 */
     bool PresentDesktopForegroundComposition(
         const RECT& updateRect);
-    /** @brief 释放桌面前景 DComp 视觉和表面。 */
-    void ResetDesktopForegroundComposition();
+    void ResetDesktopOutputComposition();
     /** @brief 清理绑定到当前 D2D/DComp 目标的缓存资源。 */
     void ResetCompositionRenderCaches();
     /** @brief 在 DComp 渲染失败后重置 surface 并安排一次恢复重绘。 */
@@ -3563,12 +3562,23 @@ private:
     ComPtr<IDCompositionDesktopDevice> dcompDevice_;
     ComPtr<IDCompositionTarget> dcompTarget_;
     ComPtr<IDCompositionVisual2> dcompVisual_;
-    ComPtr<IDCompositionSurface> dcompSurface_;
+    struct DesktopOutputComposition
+    {
+        struct Layer
+        {
+            ComPtr<IDCompositionSurface> surface;
+            bool initialized = false;
+        };
+        RECT bounds{};
+        Layer background;
+        Layer foreground;
+    };
+    RECT desktopOutputClientBounds_{};
+    POINT desktopOutputScreenOrigin_{};
+    std::vector<DesktopOutputComposition> desktopOutputCompositions_;
+    ComPtr<IDCompositionVisual2> desktopBackgroundCompositionVisual_;
     ComPtr<IDCompositionVisual2> desktopForegroundCompositionVisual_;
-    ComPtr<IDCompositionSurface> desktopForegroundCompositionSurface_;
     snowdesktop::InlineTooltipPaintDamage desktopForegroundTooltipDamage_;
-    UINT desktopForegroundCompositionWidth_ = 0;
-    UINT desktopForegroundCompositionHeight_ = 0;
     ComPtr<IDCompositionVisual2> desktopWidgetCompositionLayer_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetSurfaceRenderer>
         widgetSurfaceRenderer_;
@@ -3587,7 +3597,6 @@ private:
         widgetMarqueeCompositionItems_;
     std::unordered_map<std::wstring, PendingWidgetMarqueeComposition>
         pendingWidgetMarqueeCompositions_;
-    UINT compositionWidth_ = 0, compositionHeight_ = 0;
     snowdesktop::GraphicsDeviceRecovery graphicsDeviceRecovery_;
     bool compositionRenderRecoveryPending_ = false;
     bool compositionPaintInProgress_ = false;

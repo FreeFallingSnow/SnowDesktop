@@ -420,9 +420,10 @@ void DesktopApp::PresentPointerInteractionFrame(
             !widgetLayerChanged && startupInitializationComplete_ &&
             !compositionPaintInProgress_ && !desktopPointerPresentPending_ &&
             !graphicsDeviceRecovery_.Pending() && !compositionRenderRecoveryPending_ &&
-            !desktopBackdropFullCollectionPending_ && desktopForegroundCompositionSurface_ &&
-            desktopForegroundCompositionWidth_ == static_cast<UINT>(client.right - client.left) &&
-            desktopForegroundCompositionHeight_ == static_cast<UINT>(client.bottom - client.top);
+            !desktopBackdropFullCollectionPending_ && !desktopOutputCompositions_.empty() &&
+            EqualRect(&desktopOutputClientBounds_, &client) &&
+            std::all_of(desktopOutputCompositions_.begin(), desktopOutputCompositions_.end(),
+                [](const auto& output) { return output.foreground.initialized; });
         if (canNarrow)
         {
             dirty = {};

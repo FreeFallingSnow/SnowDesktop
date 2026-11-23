@@ -68,7 +68,7 @@ void DesktopApp::TraceDesktopInteraction(const wchar_t* event, HWND subject,
          << L" foregroundFocus=" << gui.hwndFocus << L" capture=" << GetCapture()
          << L" rect=" << rect.left << L"," << rect.top << L"," << rect.right << L"," << rect.bottom
          << L" desktopVisible=" << customDesktopVisible_ << L" iconsHidden=" << desktopIconsHidden_
-         << L" surface=" << dcompSurface_.Get() << L" commitPending=" << compositionCommitPending_
+         << L" outputSurfaces=" << desktopOutputCompositions_.size() << L" commitPending=" << compositionCommitPending_
          << L" paintActive=" << compositionPaintInProgress_
          << L" recovery=" << graphicsDeviceRecovery_.Pending()
          << L" panels=" << desktopBackdropCompositor_.PanelCount();
@@ -112,11 +112,11 @@ void DesktopApp::TraceDesktopPresentation(const wchar_t* event, HRESULT result,
     wchar_t detail[384]{};
     swprintf_s(detail,
         L"DesktopInteraction id=%llu tick=%llu event=%ls sample=%u hr=0x%08X "
-        L"partial=%d dirty=%ld,%ld,%ld,%ld surface=%p pending=%d paintActive=%d recovery=%d",
+        L"partial=%d dirty=%ld,%ld,%ld,%ld outputSurfaces=%zu pending=%d paintActive=%d recovery=%d",
         desktopInteractionTraceId_, GetTickCount64(), event,
         desktopInteractionTraceFrames_, static_cast<unsigned>(result),
         dirty ? 1 : 0, rect.left, rect.top, rect.right, rect.bottom,
-        dcompSurface_.Get(), compositionCommitPending_ ? 1 : 0,
+        desktopOutputCompositions_.size(), compositionCommitPending_ ? 1 : 0,
         compositionPaintInProgress_ ? 1 : 0, graphicsDeviceRecovery_.Pending() ? 1 : 0);
     WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input, detail, DiagnosticLogLevel::Debug);
 }

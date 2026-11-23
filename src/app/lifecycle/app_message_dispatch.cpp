@@ -404,7 +404,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         // Explorer can resize its child before monitor/window geometry agrees.
         // Let the topology path synchronize the window and rebuild page grids.
         ResetDesktopWidgetComposition();
-        dcompSurface_.Reset();
+        ResetDesktopOutputComposition();
         ScheduleDisplayTopologyRefresh();
         InvalidateRect(hwnd_, nullptr, TRUE);
         return 0;

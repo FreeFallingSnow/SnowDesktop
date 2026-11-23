@@ -720,9 +720,7 @@ void DesktopApp::RefreshDisplayTopologyIfChanged()
         if (topologyChanged)
         {
             ResetDesktopWidgetComposition();
-            dcompSurface_.Reset();
-            compositionWidth_ = 0;
-            compositionHeight_ = 0;
+            ResetDesktopOutputComposition();
         }
     }
 

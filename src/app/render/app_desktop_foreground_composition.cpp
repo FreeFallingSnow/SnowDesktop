@@ -1,10 +1,7 @@
 #include "app/app.h"
-#include "app/render/desktop_highlight_tiles.h"
 #include "diagnostics/diagnostic_log.h"
 
 #include <array>
-
-namespace highlight_tiles = snowdesktop::desktop_highlight_tiles;
 
 HRESULT DesktopApp::SyncDesktopCompositionRootZOrder()
 {
@@ -25,7 +22,8 @@ HRESULT DesktopApp::SyncDesktopCompositionRootZOrder()
                     UiCompositionAnimationHost::Desktop)
             ? overlay.visual.Get() : nullptr;
     };
-    const std::array<IDCompositionVisual2*, 4> bottomToTop{
+    const std::array<IDCompositionVisual2*, 5> bottomToTop{
+        desktopBackgroundCompositionVisual_.Get(),
         desktopWidgetCompositionLayer_.Get(),
         desktopForegroundCompositionVisual_.Get(),
         desktopOverlayVisual(popupAnimationOverlay_),
@@ -146,80 +144,11 @@ HRESULT DesktopApp::SyncDesktopCompositionRootZOrder()
     return S_OK;
 }
 
-HRESULT DesktopApp::CreateOrResizeDesktopForegroundCompositionSurface()
-{
-    if (!dcompDevice_ || !dcompVisual_ || !hwnd_)
-        return E_UNEXPECTED;
-
-    RECT client{};
-    GetClientRect(hwnd_, &client);
-    const UINT width = static_cast<UINT>(
-        std::max<LONG>(1, client.right - client.left));
-    const UINT height = static_cast<UINT>(
-        std::max<LONG>(1, client.bottom - client.top));
-
-    if (!desktopForegroundCompositionVisual_)
-    {
-        HRESULT hr = dcompDevice_->CreateVisual(
-            &desktopForegroundCompositionVisual_);
-        if (FAILED(hr) || !desktopForegroundCompositionVisual_)
-            return FAILED(hr) ? hr : E_FAIL;
-        hr = dcompVisual_->AddVisual(
-            desktopForegroundCompositionVisual_.Get(), TRUE, nullptr);
-        if (SUCCEEDED(hr))
-            hr = SyncDesktopCompositionRootZOrder();
-        if (FAILED(hr))
-        {
-            (void)dcompVisual_->RemoveVisual(
-                desktopForegroundCompositionVisual_.Get());
-            desktopForegroundCompositionVisual_.Reset();
-            return hr;
-        }
-    }
-
-    if (desktopForegroundCompositionSurface_ &&
-        desktopForegroundCompositionWidth_ == width &&
-        desktopForegroundCompositionHeight_ == height)
-    {
-        return S_OK;
-    }
-
-    ComPtr<IDCompositionSurface> surface;
-    HRESULT hr = dcompDevice_->CreateSurface(
-        width, height,
-        DXGI_FORMAT_B8G8R8A8_UNORM,
-        DXGI_ALPHA_MODE_PREMULTIPLIED,
-        &surface);
-    if (FAILED(hr) || !surface)
-        return FAILED(hr) ? hr : E_FAIL;
-    hr = desktopForegroundCompositionVisual_->SetContent(surface.Get());
-    if (FAILED(hr))
-        return hr;
-
-    desktopForegroundCompositionSurface_ = std::move(surface);
-    desktopForegroundCompositionWidth_ = width;
-    desktopForegroundCompositionHeight_ = height;
-    ResetPointerInteractionDamage();
-    return S_OK;
-}
-
 bool DesktopApp::RenderDesktopForegroundComposition(
     const RECT* updateRect,
     bool hiddenMode)
 {
-    bool surfaceRecreated = false;
-    {
-        // Retain the old identity only across allocation, preventing address
-        // reuse from disguising a replacement. Release it before painting.
-        const auto previousSurface = desktopForegroundCompositionSurface_;
-        if (FAILED(CreateOrResizeDesktopForegroundCompositionSurface()) ||
-            !desktopForegroundCompositionSurface_)
-            return false;
-        surfaceRecreated = previousSurface.Get() != desktopForegroundCompositionSurface_.Get();
-    }
-
-    RECT client{};
-    GetClientRect(hwnd_, &client);
+    const RECT client = desktopOutputClientBounds_;
     const auto retiresHere = [](const UiCompositionAnimationOverlay& overlay) {
         return overlay.host == UiCompositionAnimationHost::Desktop && overlay.srgbRetirementBounds;
     };
@@ -227,9 +156,9 @@ bool DesktopApp::RenderDesktopForegroundComposition(
     const bool retireLuaPanel = retiresHere(luaWidgetPanelAnimationOverlay_);
     RECT clippedUpdate{};
     const RECT* dcompUpdate = nullptr;
-    // A replacement surface has no retained pixels. Its first draw must
-    // initialize the entire allocation even for a local input request.
-    if (!surfaceRecreated && updateRect &&
+    // The public presentation entry rebuilds both layers together if the
+    // output geometry has changed.
+    if (updateRect &&
         IntersectRect(&clippedUpdate, updateRect, &client) &&
         !IsRectEmpty(&clippedUpdate))
     {
@@ -250,48 +179,13 @@ bool DesktopApp::RenderDesktopForegroundComposition(
     // are included up front, so ordinary pointer paints remain one pass.
     for (int pass = 0; pass < 3; ++pass)
     {
-        ID2D1DeviceContext* rawContext = nullptr;
-        POINT updateOffset{};
-        HRESULT hr = desktopForegroundCompositionSurface_->BeginDraw(
-            dcompUpdate, __uuidof(ID2D1DeviceContext),
-            reinterpret_cast<void**>(&rawContext), &updateOffset);
-        if (FAILED(hr) || !rawContext) return false;
-
-        ComPtr<ID2D1DeviceContext> context;
-        context.Attach(rawContext);
-        context->SetDpi(96.0f, 96.0f);
-        context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
-        const LONG updateLeft = dcompUpdate ? dcompUpdate->left : 0;
-        const LONG updateTop = dcompUpdate ? dcompUpdate->top : 0;
-        context->SetTransform(D2D1::Matrix3x2F::Translation(
-            static_cast<float>(updateOffset.x - updateLeft),
-            static_cast<float>(updateOffset.y - updateTop)));
-        context->Clear(D2D1::ColorF(0, 0, 0, 0));
-        DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get());
-
-        drawing_.Reset();
-        struct TooltipDrawScope
-        {
-            snowdesktop::InlineTooltipPaintDamage& damage;
-            explicit TooltipDrawScope(snowdesktop::InlineTooltipPaintDamage& value) : damage(value) { damage.BeginDraw(); }
-            ~TooltipDrawScope() { damage.EndDraw(); }
-        };
-        { TooltipDrawScope tooltipDraw(desktopForegroundTooltipDamage_);
-          DrawDesktopForeground(context.Get(), hiddenMode, dcompUpdate); }
-        const RECT dirty = dcompUpdate ? *dcompUpdate : client;
-        std::vector<DesktopSrgbTile> candidates;
-        const auto recorded = scene.Finish();
-        const bool prepared = SUCCEEDED(recorded) && highlight_tiles::Stage(desktopBackdropCompositor_, hwnd_,
-            context.Get(), scene.Scene(), client, dirty, updateOffset,
-            foregroundSrgbTiles_, nextDesktopSrgbKey_, candidates);
-        context->SetTransform(D2D1::Matrix3x2F::Identity());
-        context.Reset();
-        drawing_.Reset();
-
-        hr = desktopForegroundCompositionSurface_->EndDraw();
-        if (!prepared || FAILED(hr)) return false;
-        highlight_tiles::Publish(desktopBackdropCompositor_, dirty,
-            EqualRect(&dirty, &client) != FALSE, candidates, foregroundSrgbTiles_);
+        desktopForegroundTooltipDamage_.BeginDraw();
+        const HRESULT hr = RenderDesktopOutputScene(true, dcompUpdate, [&](ID2D1DeviceContext* context) {
+            drawing_.Reset();
+            DrawDesktopForeground(context, hiddenMode, dcompUpdate);
+        });
+        desktopForegroundTooltipDamage_.EndDraw();
+        if (FAILED(hr)) return false;
         if (dcompUpdate)
         {
             const RECT required = desktopForegroundTooltipDamage_.IncludeCurrent(clippedUpdate, client);
@@ -354,6 +248,17 @@ bool DesktopApp::PresentDesktopForegroundComposition(
         return true;
     }
 
+    const HRESULT initialized = CreateOrResizeCompositionSurface();
+    if (FAILED(initialized))
+    {
+        RecoverCompositionRenderFailure(L"Desktop output surfaces", initialized);
+        return false;
+    }
+    if (initialized == S_FALSE || std::any_of(
+            desktopOutputCompositions_.begin(), desktopOutputCompositions_.end(),
+            [](const auto& output) { return !output.background.initialized; }))
+        return OnPaint();
+
     compositionPaintInProgress_ = true;
     struct PaintScope final
     {
@@ -386,19 +291,4 @@ bool DesktopApp::PresentDesktopForegroundComposition(
     SyncPageNavHotEdgeTooltip();
     SyncLuaWidgetTooltip();
     return true;
-}
-
-void DesktopApp::ResetDesktopForegroundComposition()
-{
-    for (const auto& tile : foregroundSrgbTiles_) desktopBackdropCompositor_.RemoveSrgbContent(tile.key);
-    foregroundSrgbTiles_.clear();
-    desktopForegroundCompositionSurface_.Reset();
-    desktopForegroundCompositionWidth_ = 0;
-    desktopForegroundCompositionHeight_ = 0;
-    if (dcompVisual_ && desktopForegroundCompositionVisual_)
-    {
-        (void)dcompVisual_->RemoveVisual(
-            desktopForegroundCompositionVisual_.Get());
-    }
-    desktopForegroundCompositionVisual_.Reset();
 }

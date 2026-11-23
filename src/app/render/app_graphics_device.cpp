@@ -198,11 +198,8 @@ void DesktopApp::RecreateFanTitleTextFormat()
 
 void DesktopApp::ResetCompositionRenderCaches()
 {
-    for (const auto& tile : desktopSrgbTiles_)
-        desktopBackdropCompositor_.RemoveSrgbContent(tile.key);
-    desktopSrgbTiles_.clear();
     ResetDesktopWidgetComposition();
-    ResetDesktopForegroundComposition();
+    ResetDesktopOutputComposition();
     ResetDragPreviewCompositionResources();
     dragRenderCache_.Reset();
     ResetCollectionPopupAnimationCache();
@@ -251,9 +248,6 @@ void DesktopApp::RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT h
     WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, buf, DiagnosticLogLevel::Warning);
 
     ResetCompositionRenderCaches();
-    dcompSurface_.Reset();
-    compositionWidth_ = 0;
-    compositionHeight_ = 0;
 
     if (!compositionRenderRecoveryPending_ && hwnd_ && IsWindow(hwnd_))
     {
@@ -263,49 +257,108 @@ void DesktopApp::RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT h
 }
 
 HRESULT DesktopApp::CreateOrResizeCompositionSurface()
+{
+    RECT client{};
+    POINT screenOrigin{};
+    if (!dcompDevice_ || !dcompVisual_ || !hwnd_ ||
+        !GetClientRect(hwnd_, &client) || IsRectEmpty(&client) ||
+        !ClientToScreen(hwnd_, &screenOrigin))
+        return E_UNEXPECTED;
+    if (!desktopOutputCompositions_.empty() &&
+        EqualRect(&client, &desktopOutputClientBounds_) &&
+        screenOrigin.x == desktopOutputScreenOrigin_.x &&
+        screenOrigin.y == desktopOutputScreenOrigin_.y)
+        return S_OK;
+
+    struct MonitorSample
     {
-        if (!dcompDevice_ || !dcompVisual_ || !hwnd_ || !IsWindow(hwnd_))
-            return E_UNEXPECTED;
-        RECT client{};
-        GetClientRect(hwnd_, &client);
-        const UINT width = static_cast<UINT>(std::max<LONG>(1, client.right - client.left));
-        const UINT height = static_cast<UINT>(std::max<LONG>(1, client.bottom - client.top));
-        if (dcompSurface_ && compositionWidth_ == width && compositionHeight_ == height)
-            return CreateOrResizeDesktopForegroundCompositionSurface();
+        RECT client;
+        POINT screenOrigin;
+        std::vector<DesktopOutputComposition> outputs;
+    } sample{client, screenOrigin, {}};
+    const auto collectOutput = [](HMONITOR, HDC, LPRECT screen, LPARAM param) -> BOOL {
+        auto& geometry = *reinterpret_cast<MonitorSample*>(param);
+        RECT local = *screen;
+        OffsetRect(&local, -geometry.screenOrigin.x, -geometry.screenOrigin.y);
+        RECT bounds{};
+        if (IntersectRect(&bounds, &local, &geometry.client) &&
+            std::none_of(geometry.outputs.begin(), geometry.outputs.end(),
+                [&](const auto& existing) { return EqualRect(&existing.bounds, &bounds) != FALSE; }))
+        {
+            auto& output = geometry.outputs.emplace_back();
+            output.bounds = bounds;
+        }
+        return TRUE;
+    };
+    if (!EnumDisplayMonitors(nullptr, nullptr, collectOutput,
+            reinterpret_cast<LPARAM>(&sample)) || sample.outputs.empty())
+        return HRESULT_FROM_WIN32(ERROR_NOT_READY);
 
-        ComPtr<IDCompositionSurface> surface;
-        HRESULT hr = dcompDevice_->CreateSurface(width, height,
-            DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &surface);
-        if (FAILED(hr))
-        {
-            wchar_t buf[128];
-            wsprintfW(buf, L"CreateSurface %ux%u FAILED hr=0x%08X", width, height, static_cast<unsigned>(hr));
-            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, buf, DiagnosticLogLevel::Warning);
-            return hr;
-        }
-        hr = dcompVisual_->SetContent(surface.Get());
-        if (FAILED(hr))
-        {
-            wchar_t buf[128];
-            wsprintfW(buf, L"SetContent FAILED hr=0x%08X", static_cast<unsigned>(hr));
-            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, buf, DiagnosticLogLevel::Warning);
-            return hr;
-        }
-        hr = dcompDevice_->Commit();
-        if (FAILED(hr))
-        {
-            wchar_t buf[128];
-            wsprintfW(buf, L"CreateSurface Commit FAILED hr=0x%08X",
-                static_cast<unsigned>(hr));
-            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, buf, DiagnosticLogLevel::Warning);
-            return hr;
-        }
-
-        dcompSurface_ = surface;
-        compositionWidth_ = width;
-        compositionHeight_ = height;
-        return CreateOrResizeDesktopForegroundCompositionSurface();
+    ComPtr<IDCompositionVisual2> background, foreground;
+    HRESULT hr = dcompDevice_->CreateVisual(&background);
+    if (SUCCEEDED(hr)) hr = dcompDevice_->CreateVisual(&foreground);
+    if (FAILED(hr)) return hr;
+    const auto createOutputLayer = [&](IDCompositionVisual2* parent,
+        const RECT& bounds, DesktopOutputComposition::Layer& layer) -> HRESULT {
+        ComPtr<IDCompositionVisual2> visual;
+        HRESULT result = dcompDevice_->CreateVisual(&visual);
+        if (SUCCEEDED(result)) result = visual->SetOffsetX(static_cast<float>(bounds.left));
+        if (SUCCEEDED(result)) result = visual->SetOffsetY(static_cast<float>(bounds.top));
+        if (SUCCEEDED(result))
+            result = dcompDevice_->CreateSurface(static_cast<UINT>(bounds.right - bounds.left),
+                static_cast<UINT>(bounds.bottom - bounds.top),
+                DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &layer.surface);
+        if (SUCCEEDED(result)) result = visual->SetContent(layer.surface.Get());
+        if (SUCCEEDED(result)) result = parent->AddVisual(visual.Get(), TRUE, nullptr);
+        return result;
+    };
+    for (auto& output : sample.outputs)
+    {
+        hr = createOutputLayer(background.Get(), output.bounds, output.background);
+        if (SUCCEEDED(hr))
+            hr = createOutputLayer(foreground.Get(), output.bounds, output.foreground);
+        if (FAILED(hr)) return hr;
     }
+    // Keep the root HWND for input and native window ordering. Its root visual
+    // owns no bitmap, and each raster child ends at a physical output edge.
+    ResetDesktopOutputComposition();
+    hr = dcompVisual_->AddVisual(background.Get(), TRUE, nullptr);
+    if (FAILED(hr)) return hr;
+    desktopBackgroundCompositionVisual_ = std::move(background);
+    hr = dcompVisual_->AddVisual(foreground.Get(), TRUE, nullptr);
+    if (SUCCEEDED(hr))
+    {
+        desktopForegroundCompositionVisual_ = std::move(foreground);
+        hr = SyncDesktopCompositionRootZOrder();
+    }
+    if (FAILED(hr))
+    {
+        ResetDesktopOutputComposition();
+        return hr;
+    }
+    desktopOutputClientBounds_ = client;
+    desktopOutputScreenOrigin_ = screenOrigin;
+    desktopOutputCompositions_ = std::move(sample.outputs);
+    return S_FALSE;
+}
+
+void DesktopApp::ResetDesktopOutputComposition()
+{
+    for (auto* tiles : {&desktopSrgbTiles_, &foregroundSrgbTiles_})
+    {
+        for (const auto& tile : *tiles) desktopBackdropCompositor_.RemoveSrgbContent(tile.key);
+        tiles->clear();
+    }
+    const auto detach = [&](ComPtr<IDCompositionVisual2>& layer) {
+        if (dcompVisual_ && layer) (void)dcompVisual_->RemoveVisual(layer.Get());
+        layer.Reset();
+    };
+    detach(desktopBackgroundCompositionVisual_);
+    detach(desktopForegroundCompositionVisual_);
+    desktopOutputCompositions_.clear();
+    desktopBackdropFullCollectionPending_ = true;
+    ResetPointerInteractionDamage();
+}
 
 void DesktopApp::InitializeDockWindowTransition()
 {
@@ -504,9 +557,7 @@ void DesktopApp::ReleaseGraphicsDeviceResources()
         visual.Reset();
         target.Reset();
     };
-    dcompSurface_.Reset();
     releaseRoot(dcompTarget_, dcompVisual_);
-    compositionWidth_ = compositionHeight_ = 0;
     compositionCommitPending_ = false;
     compositionRenderRecoveryPending_ = false;
     for (const auto& host : persistentDockHosts_)

@@ -346,12 +346,9 @@ void DesktopApp::ResetDesktopWindowResources()
     placeholderIconCache_.clear();
     dockFolderBitmapCache_.Retain([](const auto&) { return false; });
     ResetDesktopWidgetComposition();
-    ResetDesktopForegroundComposition();
-    dcompSurface_.Reset();
+    ResetDesktopOutputComposition();
     dcompVisual_.Reset();
     dcompTarget_.Reset();
-    compositionWidth_ = 0;
-    compositionHeight_ = 0;
     hwnd_ = nullptr;
 }
 
