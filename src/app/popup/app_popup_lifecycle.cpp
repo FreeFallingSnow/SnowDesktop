@@ -165,6 +165,7 @@ void DesktopApp::OpenDockFolderPopupAt(
     DismissActiveContextMenuForPopupTransition();
     SuspendInlineFolderPreview();
 
+    HMONITOR deferredDockPromotion = nullptr;
     if (DockContainer* dock =
             GetDockContainerAtPoint(anchorPoint))
     {
@@ -182,7 +183,7 @@ void DesktopApp::OpenDockFolderPopupAt(
                 anchorScreen.y += virtualTop_;
             }
             EnsureFloatingDockVisibleForAssociatedSurface(
-                anchorScreen);
+                anchorScreen, &deferredDockPromotion);
         }
     }
 
@@ -436,30 +437,23 @@ void DesktopApp::OpenDockFolderPopupAt(
     if (!ResumeFolderPreviewForPopup({}, dockFolderPopupMappingWidgetId_))
         RefreshDockFolderPopup(nullptr, false);
     StartCollectionPopupAnimation(
-        reverseClosingAnimation);
-    if (popupAnchoredToDock_)
-    {
-        PersistentDockHost* host =
-            collectionPopupDockHost_;
-        if (host &&
-            IsPersistentDockHostEffectivelyFloating(*host))
-        {
-            SelectPersistentDockHost(host);
-            UpdateFloatingDockWindowBounds(*host);
-            InvalidateFloatingDockWindow(*host, true);
-        }
-    }
+        reverseClosingAnimation, false, deferredDockPromotion);
+    PresentDockForCollectionPopup();
     InvalidateCollectionPopupDesktopScene(previousBounds);
     UpdateFloatingPopupWindowBounds(true);
 }
 
 void DesktopApp::StartCollectionPopupAnimation(
-    bool reverseClosingAnimation, bool fromFan)
+    bool reverseClosingAnimation, bool fromFan, HMONITOR deferredDockPromotion)
 {
     snowdesktop::performance::Scope openingScope("popup", "animation.prepare");
     const auto refreshDockTitles = [&]() {
         SyncDockTitleTooltip();
         InvalidateDockRects();
+    };
+    const auto presentDeferredDock = [&] {
+        refreshDockTitles();
+        ShowFloatingDock(deferredDockPromotion, DockRevealSource::AssociatedSurface, true);
     };
     const DesktopWidget* widget = GetOpenPopupWidget();
     // Reversing an expanded panel keeps the effect chosen when it began closing.
@@ -482,7 +476,8 @@ void DesktopApp::StartCollectionPopupAnimation(
     {
         popupAnimation_.ShowImmediately();
         ResetCollectionPopupAnimationCache();
-        refreshDockTitles();
+        if (deferredDockPromotion) presentDeferredDock();
+        else refreshDockTitles();
         return;
     }
     // The snapshot visual belongs to the shared topmost popup host. Materialize
@@ -499,6 +494,8 @@ void DesktopApp::StartCollectionPopupAnimation(
         PrepareCollectionPopupAnimationCache();
     }
     const double cacheElapsed = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - cacheStarted;
+    // Start the popup clock only after publishing a requested Dock elevation.
+    if (deferredDockPromotion) presentDeferredDock();
     popupAnimation_.Open(static_cast<std::uint64_t>(
         snowdesktop::UiAnimationScheduler::
             MonotonicMilliseconds()));
@@ -507,7 +504,7 @@ void DesktopApp::StartCollectionPopupAnimation(
         UpdateCollectionPopupCompositionAnimation();
         EnsureUiAnimationFrame();
     }
-    refreshDockTitles();
+    if (!deferredDockPromotion) refreshDockTitles();
     wchar_t message[240]{};
     swprintf_s(message,
         L"Popup animation prepared: driver=%s cacheMs=%.2f folder=%d fan=%d items=%llu",

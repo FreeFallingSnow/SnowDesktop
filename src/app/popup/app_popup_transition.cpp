@@ -334,6 +334,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     // content after its release handler returns.
     AdvanceFloatingPopupContentGeneration();
 
+    HMONITOR deferredDockPromotion = nullptr;
     if (DockContainer* dock =
             GetDockContainerAtPoint(anchorPoint))
     {
@@ -353,7 +354,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
                 anchorScreen.y += virtualTop_;
             }
             EnsureFloatingDockVisibleForAssociatedSurface(
-                anchorScreen);
+                anchorScreen, &deferredDockPromotion);
         }
     }
 
@@ -450,19 +451,8 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
         GetCollectionPopupMaxScrollOffset(widgets_[widgetIndex], popupRect_));
     (void)ResumeFolderPreviewForPopup(widgets_[widgetIndex].id, {});
-    StartCollectionPopupAnimation();
-    if (popupAnchoredToDock_)
-    {
-        PersistentDockHost* host =
-            collectionPopupDockHost_;
-        if (host &&
-            IsPersistentDockHostEffectivelyFloating(*host))
-        {
-            SelectPersistentDockHost(host);
-            UpdateFloatingDockWindowBounds(*host);
-            InvalidateFloatingDockWindow(*host, true);
-        }
-    }
+    StartCollectionPopupAnimation(false, false, deferredDockPromotion);
+    PresentDockForCollectionPopup();
     InvalidateCollectionPopupDesktopScene();
     UpdateFloatingPopupWindowBounds(true);
 }

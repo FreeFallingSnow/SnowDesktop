@@ -1151,7 +1151,8 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
 void DesktopApp::UpdateFloatingDockWindowBounds(
     PersistentDockHost& host,
     bool immediatePresent,
-    bool forceRegionRefresh)
+    bool forceRegionRefresh,
+    bool refreshUnchangedContent)
 {
     snowdesktop::startup_diagnostics::Scope startup(L"Dock.UpdateBounds");
     snowdesktop::performance::Scope performanceScope("dock", "floating.layout");
@@ -1253,7 +1254,9 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     {
         // Content can change at identical bounds (opacity, running marker,
         // icon pixels). The caller's synchronous presentation still matters.
-        InvalidateFloatingDockWindow(host, immediatePresent);
+        if (refreshUnchangedContent || host.windowRegionPending ||
+            GetUpdateRect(dockHostHwnd, nullptr, FALSE))
+            InvalidateFloatingDockWindow(host, immediatePresent);
         return;
     }
     host.guideOcclusionRect = guideOcclusion;

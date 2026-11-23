@@ -832,10 +832,12 @@ private:
     void ResetMergedDockPresentation(PersistentDockHost& host);
     void ShowFloatingDock(
         HMONITOR preferredMonitor = nullptr,
-        DockRevealSource source = DockRevealSource::AssociatedSurface);
+        DockRevealSource source = DockRevealSource::AssociatedSurface,
+        bool finishPopupRelease = false);
     bool FullscreenBlocksDockReveal(DockRevealSource source, HMONITOR monitor) const;
     bool EnsureFloatingDockVisibleForAssociatedSurface(
-        POINT anchorScreen);
+        POINT anchorScreen, HMONITOR* deferredPopupPromotion = nullptr);
+    void PresentDockForCollectionPopup();
     HWND KeepDockTopmostForAction(const RECT& anchorScreen, bool retainPromotion = true);
     void ReleaseTemporaryDockActionPromotion();
     void RefreshFloatingDockPromotionInput(PersistentDockHost& host, bool requestFocus = false,
@@ -889,7 +891,8 @@ private:
     void UpdateFloatingDockWindowBounds(
         PersistentDockHost& host,
         bool immediatePresent = true,
-        bool forceRegionRefresh = false);
+        bool forceRegionRefresh = false,
+        bool refreshUnchangedContent = true);
     void InvalidateFloatingDockWindow(bool immediate = false);
     void InvalidateFloatingDockWindow(
         PersistentDockHost& host,
@@ -3259,7 +3262,8 @@ private:
     /** @brief Esc 优先处理前景弹窗，保留仍按住的拖拽及其来源。 */
     bool TryDismissPopupForEscape();
     void StartCollectionPopupAnimation(
-        bool reverseClosingAnimation = false, bool fromFan = false);
+        bool reverseClosingAnimation = false, bool fromFan = false,
+        HMONITOR deferredDockPromotion = nullptr);
     void InvalidateCollectionPopupAnimation(
         bool invalidateStaticScene = false);
     RECT GetCollectionPopupDesktopFootprint(RECT previousBounds) const;

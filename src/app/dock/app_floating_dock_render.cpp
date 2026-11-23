@@ -619,8 +619,9 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         snowdesktop::performance::Scope clickScope("dock.input", "button.up");
         SelectPersistentDockHost(&host);
         const POINT point = desktopPoint();
+        bool promotionPresented = false;
         {
-            std::optional<PersistentDockHost::ImmediatePaintDeferral> defer;
+            std::optional<PersistentDockHost::PopupReleasePresentation> presentation;
             if (host.active && host.frameReady && IsWindowVisible(hwnd) &&
                 host.container && dockPressedContainer_ == host.container &&
                 dockPressedEntry_ < dockEntries_.size() &&
@@ -632,9 +633,9 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
                 if (releasedEntry && releasedEntry->GetEntryIndex() == dockPressedEntry_ &&
                     (IsLogicalDockEntryType(pressed.type) || IsFolderDockEntry(pressed)))
                 {
-                    // Popup setup can request several paints of this same Dock.
-                    // Keep its pending region and pixels together for the final layout below.
-                    defer.emplace(host);
+                    // Gather the popup's Dock damage until the promotion frame
+                    // or the release-tail layout presents it.
+                    presentation.emplace(host);
                 }
             }
             handlingFloatingDockInput_ = true;
@@ -642,8 +643,9 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
             OnLeftButtonUpAt(wp, point);
             handlingFloatingDockInput_ = false;
             handlingPersistentDockHost_ = nullptr;
+            promotionPresented = presentation && presentation->promotionPresented;
         }
-        UpdateFloatingDockWindowBounds(host);
+        UpdateFloatingDockWindowBounds(host, true, false, !promotionPresented);
         return 0;
     }
     case WM_CANCELMODE:

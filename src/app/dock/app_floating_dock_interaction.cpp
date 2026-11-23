@@ -194,7 +194,7 @@ void DesktopApp::RefreshFloatingDockPromotionInputs(bool requestFocus)
 // Floating-Dock visibility, pointer mapping and interaction state.
 
 void DesktopApp::ShowFloatingDock(
-    HMONITOR preferredMonitor, DockRevealSource source)
+    HMONITOR preferredMonitor, DockRevealSource source, bool finishPopupRelease)
 {
     floatingDockOutsidePress_.Cancel();
     if (desktopPassthroughActive_)
@@ -246,6 +246,7 @@ void DesktopApp::ShowFloatingDock(
     // monitors untouched.
     bool revealFramePrepared = false;
     bool occludedReveal = false;
+    HWND popupReleasePaintWindow = nullptr;
     {
         // Layout, status-bar refresh and renderer callbacks can all revisit
         // visibility/layer policy. Keep the existing native band until the
@@ -293,9 +294,17 @@ void DesktopApp::ShowFloatingDock(
         // Geometry and pixels use the same pointer sample on hidden reveals.
         UpdateFloatingDockWindowBounds(*floatingDockHost_, false, true);
         floatingDockLastPointerPresentTick_ = 0;
+        auto& host = *floatingDockHost_;
+        if (finishPopupRelease && hostWasVisible && !occludedReveal &&
+            collectionPopupDockHost_ == &host && host.popupReleasePresentation &&
+            host.hwnd && ValidateRect(host.hwnd, nullptr))
+        {
+            // The full-surface draw below covers the existing damage.
+            // Validate first so invalidations raised during drawing survive.
+            popupReleasePaintWindow = host.hwnd;
+        }
         revealFramePrepared =
-            RenderFloatingDockCompositionFrame(*floatingDockHost_) &&
-            FlushPendingCompositionCommit();
+            RenderFloatingDockCompositionFrame(host) && FlushPendingCompositionCommit();
     }
     if (!revealFramePrepared)
     {
@@ -351,11 +360,15 @@ void DesktopApp::ShowFloatingDock(
     if (source == DockRevealSource::AssociatedSurface &&
         !snowdesktop::fullscreen::ObserveForeground())
         BeginFloatingDockKeyboardSession(false);
+    if (popupReleasePaintWindow)
+        if (auto* host = FindPersistentDockHost(popupReleasePaintWindow);
+            host && host->popupReleasePresentation && IsPersistentDockHostPromoted(*host))
+            host->popupReleasePresentation->promotionPresented = true;
 }
 
 bool DesktopApp::
 EnsureFloatingDockVisibleForAssociatedSurface(
-    POINT anchorScreen)
+    POINT anchorScreen, HMONITOR* deferredPopupPromotion)
 {
     if (desktopPassthroughActive_)
         return false;
@@ -377,10 +390,38 @@ EnsureFloatingDockVisibleForAssociatedSurface(
         return true;
     }
 
+    auto& host = *floatingDockHost_;
+    if (deferredPopupPromotion && host.popupReleasePresentation &&
+        handlingPersistentDockHost_ == &host && host.monitor == monitor &&
+        !GetOpenPopupWidget() && !IsWindowVisible(floatingPopupHwnd_) &&
+        host.frameReady && host.dcompSurface && host.dcompVisual && IsWindowVisible(host.hwnd) &&
+        !host.revealPending && !host.mergedPresentationActive && !host.occludedFloatingPresentation &&
+        !host.container->IsMergedWithStatusBar() && !dockSettings_.showOnlyWhenSummoned &&
+        !host.compositionPaintInProgress && !host.compositionRenderRecoveryPending &&
+        !host.backdropRecoveryPending && !graphicsDeviceRecovery_.Pending() &&
+        !IsPersistentDockDesktopBandOccluded(host))
+    {
+        *deferredPopupPromotion = monitor;
+        return true;
+    }
+
     ShowFloatingDock(monitor);
     return floatingDockHost_ &&
         IsPersistentDockHostEffectivelyFloating(
             *floatingDockHost_);
+}
+
+void DesktopApp::PresentDockForCollectionPopup()
+{
+    auto* host = collectionPopupDockHost_;
+    if (!popupAnchoredToDock_ || !host || !IsPersistentDockHostEffectivelyFloating(*host))
+        return;
+
+    SelectPersistentDockHost(host);
+    if (host->popupReleasePresentation && host->popupReleasePresentation->promotionPresented)
+        return;
+    UpdateFloatingDockWindowBounds(*host);
+    InvalidateFloatingDockWindow(*host, true);
 }
 
 // Search, restore and opted-in minimization retain promotion. Other minimize

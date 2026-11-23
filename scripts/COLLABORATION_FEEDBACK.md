@@ -206,6 +206,8 @@
 
 - 2026-11-20，任务 `foreground-motion-20261120`、批次 `77a4edee2bfc4cd8a696772aee395136` 的 `scripts/test.bat list` 同样返回 1，提示 `The checkout has no generated test inventory with BUILD_TESTING enabled.`。已从 `cmake/testing/Tests.cmake` 核对宿主调度与交互用例名，未为枚举单独配置；上项声明级查询仍可减少这次人工查阅。
 
+- 2026-11-23，任务 `popup-dock-promotion-coalesce-20261123`、批次 `68755c88b78648ac822656a29fbd2cdc` 的 `scripts/test.bat list` 仍报告 `The checkout has no generated test inventory with BUILD_TESTING enabled.`。本次用已有通过回执与 CMake 声明确认 Dock 和拖放用例，再交同一批候选验证，未为查询额外配置。声明级查询仍待处理。
+
 - **工具检查晚于产品同行就绪（2026-11-19）**：Task `task-28099fa5e95f43ada8803915dff41370` 在批次 `a7803f4dc2394a50832f7057081330f3` 修订 0 申报 `tool/none -Independent`。候选路径 CLI 与看板日志夹具已通过，另一成员已 `finished`，因此 `ready-and-wait` 按已有行为进入 Run `5228547cd7684d9eaddc9ffd40a80297` 的共享等待。冻结计划只执行另一成员的产品构建和测试，工具计划未添加构建或 CTest。新 Run 的 `pathProjection` 已经由新版看板用真实记录核对。工具按冻结检查点提交为 `32c7b9b5`。后续仍可让已通过自身检查的空计划独立归档，同时保留产品成员的同一 Run。
 
 - **同行已就绪时文档仍进入共享构建（2026-11-18）**：Task `task-52a0430b03e04412805a1170dfe1fa6a` 在绘制拆分 Run `7c5575df6d844771abc5af4a8ace0132` 通过后，只认领 `CODE_HEALTH.md`，批次 `1505fb5e92a1467b9c5865ff51cf0635` 修订 0 声明 `docs/none -Independent`。冻结计划的两方输入与认领路径无交集，回执仍随布局转场 Run `a2512aaf58bc43c4bab491588fcca955` 发布，独立回执字段为空。本轮沿用原等待会话和两次既有构建结果。源码确认 `build_manager.ps1` 仅在仍有成员处于 editing 时尝试独立发布。下一步让已通过轻量检查且输入无交集的空计划也能独立闭合，保留原构建与测试计划。

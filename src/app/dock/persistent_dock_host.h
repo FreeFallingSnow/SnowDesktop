@@ -88,6 +88,26 @@ struct DesktopApp::PersistentDockHost
         bool& deferred_;
         const bool previous_;
     };
+    class PopupReleasePresentation final
+    {
+    public:
+        explicit PopupReleasePresentation(PersistentDockHost& host) noexcept
+            : host_(host), defer_(host), previous_(host.popupReleasePresentation)
+        {
+            host_.popupReleasePresentation = this;
+        }
+        ~PopupReleasePresentation() { host_.popupReleasePresentation = previous_; }
+        PopupReleasePresentation(const PopupReleasePresentation&) = delete;
+        PopupReleasePresentation& operator=(const PopupReleasePresentation&) = delete;
+
+        bool promotionPresented = false;
+
+    private:
+        PersistentDockHost& host_;
+        ImmediatePaintDeferral defer_;
+        PopupReleasePresentation* const previous_;
+    };
+    PopupReleasePresentation* popupReleasePresentation = nullptr;
     bool windowRegionPending = false;
     bool backdropRecoveryPending = false;
     bool desktopLayerRestorePending = false;
