@@ -354,7 +354,7 @@ void DesktopApp::DrawDemoIdentityIcon(ID2D1RenderTarget* context,
 
 void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT iconRect, float alpha)
 {
-    if (!ctx) return;
+    if (!ctx || IsRectEmpty(&iconRect)) return;
 
     if (iconBeautifySettings_.enabled)
     {
@@ -417,7 +417,8 @@ void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT iconRect,
             info.cbSize = sizeof(info);
             if (SUCCEEDED(SHGetStockIconInfo(SIID_LINK, SHGSI_ICON, &info)) && info.hIcon)
             {
-                result->bitmap = CreateAlphaBitmapFromIcon(info.hIcon, 32, 32, result->size);
+                result->bitmap = CreateAlphaBitmapFromIcon(info.hIcon,
+                    GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), result->size);
                 DestroyIcon(info.hIcon);
             }
             return result;
@@ -448,20 +449,15 @@ void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT iconRect,
 
     if (!arrowBitmap) return;
 
-    float scale = static_cast<float>(iconRect.bottom - iconRect.top) / 64.0f;
-    int arrowSz = static_cast<int>(30.0f * scale + 0.5f);
-    if (arrowSz < 10)
-        arrowSz = 10;
-    int arrowX = iconRect.left;
-    int arrowY = iconRect.bottom - arrowSz;
-
-    D2D1_RECT_F dst = D2D1::RectF(
-        static_cast<float>(arrowX),
-        static_cast<float>(arrowY),
-        static_cast<float>(arrowX + arrowSz),
-        static_cast<float>(arrowY + arrowSz));
-
-    ctx->DrawBitmap(arrowBitmap, dst, alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    // Scale the 32-DIP Shell overlay canvas against the 48-DIP desktop reference.
+    // Its transparent padding places the visible arrow at the bottom-left edge.
+    constexpr float kShellOverlayCanvasRatio = 32.0f / 48.0f;
+    const LONG iconSide = std::min(iconRect.right - iconRect.left, iconRect.bottom - iconRect.top);
+    const LONG overlaySide = std::max(1L, std::lround(iconSide * kShellOverlayCanvasRatio));
+    const RECT overlayRect{iconRect.left, iconRect.bottom - overlaySide,
+        iconRect.left + overlaySide, iconRect.bottom};
+    ctx->DrawBitmap(arrowBitmap, ToD2DRect(overlayRect), alpha,
+        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 
 namespace
