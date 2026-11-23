@@ -109,27 +109,37 @@ static std::vector<std::wstring> EnumerateRecycleBinDirectories()
     return directories;
 }
 
-/**
- * @brief 轻量检测回收站是否非空。
- * @details 仅需空/满两种图标状态，用 FindFirstFile 查找任意 $R 数据文件，
- *          找到第一个即返回，不遍历全部条目；万级条目时耗时毫秒级，
- *          远快于必须全量统计的 SHQueryRecycleBinW。
- *          注意按 $R 而非 $I 判定：清空回收站时 $R 必被删除，
- *          而 $I 元数据可能作为孤儿残留，不能作为“有内容”信号。
- */
+static bool RecycleBinDirectoryContainsItems(const std::wstring& directory)
+{
+    const auto prefix = directory + L'\\';
+    WIN32_FIND_DATAW entry{};
+    const HANDLE find = FindFirstFileW((prefix + L"$R*").c_str(), &entry);
+    if (find == INVALID_HANDLE_VALUE)
+        return false;
+
+    // Either half can be left behind. Stop at the first data entry with
+    // its matching metadata file; the count and sizes are unnecessary.
+    bool hasItems = false;
+    do
+    {
+        const std::wstring_view name(entry.cFileName);
+        if (name.size() <= 2 || (!name.starts_with(L"$R") && !name.starts_with(L"$r")))
+            continue;
+        const auto metadata = prefix + L"$I" + (entry.cFileName + 2);
+        const DWORD attrs = GetFileAttributesW(metadata.c_str());
+        hasItems = attrs != INVALID_FILE_ATTRIBUTES &&
+            (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
+    } while (!hasItems && FindNextFileW(find, &entry));
+
+    FindClose(find);
+    return hasItems;
+}
+
 static bool RecycleBinContainsItems()
 {
     for (const auto& dir : EnumerateRecycleBinDirectories())
-    {
-        WIN32_FIND_DATAW findData{};
-        HANDLE find = FindFirstFileW(
-            (dir + L"\\$R*").c_str(), &findData);
-        if (find != INVALID_HANDLE_VALUE)
-        {
-            FindClose(find);
+        if (RecycleBinDirectoryContainsItems(dir))
             return true;
-        }
-    }
     return false;
 }
 
