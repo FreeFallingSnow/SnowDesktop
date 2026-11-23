@@ -669,46 +669,44 @@ void DesktopApp::DrawPrivacyFaIcon(
 void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
     RECT iconRect, float alpha, bool allowBeautify)
 {
-    if (!ctx) return;
-    const auto loading = [&] {
-        snowdesktop::icon_loading_placeholder::Draw(ctx, iconRect, alpha,
-            allowBeautify && iconBeautifySettings_.enabled
-                ? iconBeautifySettings_.shape : snowdesktop::IconBeautifyShape::LegacyRounded);
-    };
-    if (sysIconIndex < 0)
-    {
-        loading();
+    if (!ctx || IsRectEmptyRect(iconRect) || alpha <= 0.0f)
         return;
-    }
 
-    // 快捷导航改走 DComp 后，ctx 必为 ID2D1DeviceContext（与桌面同源 d2dDevice_）。
-    // 非 device-context 路径已废弃，直接返回以避免在错误设备上创建位图。
+    alpha = std::min(alpha, 1.0f);
     ComPtr<ID2D1DeviceContext> deviceContext;
-    if (FAILED(ctx->QueryInterface(IID_PPV_ARGS(&deviceContext))) || !deviceContext || !d2dContext_)
-    { loading(); return; }
-    auto& cache = placeholderIconCache_;
+    ComPtr<ID2D1Device> device;
+    if (d2dContext_ && SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&deviceContext))) && deviceContext)
+        deviceContext->GetDevice(&device);
+    const bool sharedDevice = device && device.Get() == d2dDevice_.Get();
     const bool beautify = allowBeautify && iconBeautifySettings_.enabled;
-    const int targetSize = std::max(
-        iconRect.right - iconRect.left,
-        iconRect.bottom - iconRect.top);
-    const int sourceSize = snowdesktop::icon_render_rules::
-        SourcePixelsForTarget(targetSize);
-    const std::uint64_t cacheKey =
-        (static_cast<std::uint64_t>(
-            static_cast<std::uint32_t>(sysIconIndex)) << 32) |
-        (static_cast<std::uint64_t>(sourceSize) << 1) |
-        static_cast<std::uint64_t>(beautify ? 1 : 0);
-
-    auto cached = cache.find(cacheKey);
-    if (cached == cache.end())
+    if (sysIconIndex >= 0 && sharedDevice)
     {
+        const int targetSize = std::max(iconRect.right - iconRect.left, iconRect.bottom - iconRect.top);
+        const int sourceSize = snowdesktop::icon_render_rules::SourcePixelsForTarget(targetSize);
+        const std::uint64_t cacheKey =
+            (static_cast<std::uint64_t>(static_cast<std::uint32_t>(sysIconIndex)) << 32) |
+            (static_cast<std::uint64_t>(sourceSize) << 1) | static_cast<std::uint64_t>(beautify);
+        if (const auto cached = placeholderIconCache_.find(cacheKey); cached != placeholderIconCache_.end())
+        {
+            DrawIconBitmap(ctx, cached->second.Get(), iconRect, alpha);
+            return;
+        }
         systemIconDemand_.Miss(cacheKey);
         QueueSystemIconBitmap(sysIconIndex, sourceSize, beautify, cacheKey, false);
-        loading();
-        return;
     }
 
-    DrawIconBitmap(ctx, cached->second.Get(), iconRect, alpha);
+    namespace loading = snowdesktop::icon_loading_placeholder;
+    if (sharedDevice)
+    {
+        static const snowdesktop::IconBeautifySettings unstyled;
+        const auto& style = beautify ? iconBeautifySettings_ : unstyled;
+        if (auto* bitmap = GetStyledD2DBitmap(ctx, loading::SourceBitmap(), style, true))
+        {
+            DrawIconBitmap(ctx, bitmap, iconRect, alpha);
+            return;
+        }
+    }
+    loading::DrawUnstyled(ctx, iconRect, alpha);
 }
 
 void DesktopApp::DrawQuickNavResultBitmap(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap, RECT bounds)
@@ -723,15 +721,13 @@ void DesktopApp::DrawQuickNavResultBitmap(ID2D1RenderTarget* target, ID2D1Bitmap
 void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT dstRect)
 {
     if (!ctx) return;
-    if (sysIconIndex < 0)
-    {
-        snowdesktop::icon_loading_placeholder::Draw(ctx, dstRect, 1.0f,
-            snowdesktop::IconBeautifyShape::LegacyRounded);
-        return;
-    }
     // 仅 ID2D1DeviceContext（与桌面同源 d2dDevice_）才支持 CreateBitmap/共享。
     ComPtr<ID2D1DeviceContext> dc;
-    if (FAILED(ctx->QueryInterface(IID_PPV_ARGS(&dc))) || !dc) return;
+    if (sysIconIndex < 0 || FAILED(ctx->QueryInterface(IID_PPV_ARGS(&dc))) || !dc)
+    {
+        DrawPlaceholderIcon(ctx, -1, dstRect, 1.0f);
+        return;
+    }
 
     const int targetSize = std::max(
         dstRect.right - dstRect.left,
@@ -746,8 +742,7 @@ void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, R
     if (cached == quickNavigation_->sysIconCache.end())
     {
         QueueSystemIconBitmap(sysIconIndex, sourceSize, iconBeautifySettings_.enabled, cacheKey, true);
-        snowdesktop::icon_loading_placeholder::Draw(ctx, dstRect, 1.0f,
-            snowdesktop::IconBeautifyShape::LegacyRounded);
+        DrawPlaceholderIcon(ctx, -1, dstRect, 1.0f);
         return;
     }
 

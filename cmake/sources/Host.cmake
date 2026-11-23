@@ -35,6 +35,7 @@ set(SNOWDESKTOP_SOURCES
     src/icons/icon_appearance_rules.h
     src/icons/icon_customization_lifecycle.h
     src/icons/icon_control_source.h
+    src/icons/icon_loading_placeholder.cpp
     src/app/render/app_bitmap_cache.cpp
     src/app/render/desktop_composition_effect.h
     src/app/menus/app_background_menu.cpp

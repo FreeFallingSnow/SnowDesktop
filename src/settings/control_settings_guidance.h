@@ -63,7 +63,7 @@ inline constexpr auto Fields<DesktopDisplaySettings> = std::to_array<Description
     {"largeFolderTitleLines", "Chooses one or two lines for item captions in fixed large-folder collection grids with titles visible. One line shortens the title area and distributes the freed height between rows and at both outer edges, including above the first row. Icon size, row centers and grid capacity stay the same. Scrolling icon grids use scrollingTitleLines."},
     {"scrollingTitleLines", "Chooses one or two lines in scrolling icon-grid captions. List mode uses its own row text layout."},
     {"shortcutArrowMode", "Controls the shortcut overlay on shell items that are links. 0 shows it on non-application shortcuts, 1 hides it on all shortcuts, and 2 shows it on all shortcuts. Steam and Epic Games launch links count as applications."},
-    {"iconBeautify", "Global treatment for ordinary icons. Individual icon appearance can inherit or override it, and file thumbnails have a separate participation switch."},
+    {"iconBeautify", "Global treatment for ordinary icons and their loading placeholders on supported surfaces. Individual icon appearance can inherit or override the treatment of the loaded icon, and file thumbnails have a separate participation switch."},
     {"titleEllipsis", "Enables ellipsis trimming in title layouts when the full caption exceeds the available text area."},
     {"groupComponentBadges", "Shows component-type badges on eligible item icons in a group. The renderer only draws badges for supported component types."},
     {"beautifyFileThumbnails", "Includes rendered file thumbnails in the global icon beautification treatment. The icon appearance settings still determine the treatment."},
