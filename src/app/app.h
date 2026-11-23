@@ -3262,6 +3262,7 @@ private:
         bool reverseClosingAnimation = false, bool fromFan = false);
     void InvalidateCollectionPopupAnimation(
         bool invalidateStaticScene = false);
+    RECT GetCollectionPopupDesktopFootprint(RECT previousBounds) const;
     void InvalidateCollectionPopupDesktopScene(RECT previousBounds = {});
     /**
      * @brief 判断坐标点是否位于当前打开的弹出面板内。

@@ -520,17 +520,34 @@ void DesktopApp::StartCollectionPopupAnimation(
 
 
 
-void DesktopApp::InvalidateCollectionPopupDesktopScene(RECT previousBounds)
+RECT DesktopApp::GetCollectionPopupDesktopFootprint(RECT previousBounds) const
 {
-    // A windowed popup owns its backdrop. The desktop only updates the
-    // popup footprint and any scene invalidation required by an active drag.
-    InvalidateDragStaticScene(!IsCollectionPopupHostedByFloatingWindow() ||
-        dragSession_.HasContext() || dragDropController_.IsExternalDragActive());
-    if (!hwnd_ || !IsWindow(hwnd_)) return;
+    const bool floatingSnapshot = IsCollectionPopupHostedByFloatingWindow() &&
+        popupAnimationOverlay_.active &&
+        popupAnimationOverlay_.host == UiCompositionAnimationHost::FloatingPopup;
+    // The independent host owns the snapshot and glass. Keep desktop damage
+    // when an older footprint, desktop interaction, or pointer occlusion may change.
+    if (floatingSnapshot && IsRectEmptyRect(previousBounds) &&
+        !desktopBackdropFullCollectionPending_ && !GetCollectionPopupResizeTransition() &&
+        !dragSession_.HasContext() && !dragDropController_.IsTransportActive() &&
+        widgetAction_ == WidgetAction::None && !marqueeActive_ &&
+        !PtInRect(&popupRect_, lastMousePoint_) &&
+        !PtInRect(&floatingPopupCollectionRegion_, lastMousePoint_))
+        return {};
 
     RECT dirty{};
     UnionRect(&dirty, &previousBounds, &popupRect_);
     UnionRect(&dirty, &dirty, &popupAnimationCacheRect_);
+    return dirty;
+}
+
+void DesktopApp::InvalidateCollectionPopupDesktopScene(RECT previousBounds)
+{
+    InvalidateDragStaticScene(!IsCollectionPopupHostedByFloatingWindow() ||
+        dragSession_.HasContext() || dragDropController_.IsExternalDragActive());
+    if (!hwnd_ || !IsWindow(hwnd_)) return;
+
+    RECT dirty = GetCollectionPopupDesktopFootprint(previousBounds);
     if (IsCollectionPopupHostedByFloatingWindow())
     {
         const size_t sourceIndex = dockFolderPopupOpen_
@@ -599,18 +616,8 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     auto pendingOpen =
         std::move(pendingCollectionPopupOpen_);
     pendingCollectionPopupOpen_.reset();
-    RECT dirty{};
-    UnionRect(&dirty, &popupRect_, &previewBounds);
+    RECT dirty = GetCollectionPopupDesktopFootprint(previewBounds);
     UnionRect(&dirty, &dirty, &sourceFrame);
-    if (!IsRectEmptyRect(popupAnimationCacheRect_))
-    {
-        if (IsRectEmptyRect(dirty))
-            dirty = popupAnimationCacheRect_;
-        else
-            UnionRect(
-                &dirty, &dirty,
-                &popupAnimationCacheRect_);
-    }
     popupAnimation_.ResetHidden();
     ResetCollectionPopupAnimationCache();
     if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
