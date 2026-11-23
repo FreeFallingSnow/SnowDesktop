@@ -138,6 +138,8 @@ public:
     void ClearGenieTransform();
     /** @brief 开始收集一帧的玻璃区域。完整帧会在 EndFrame 清理未再次出现的视觉。 */
     void BeginFrame(bool completeCollection, const RECT* desktopIconDamage = nullptr);
+    /** @brief 停止本次收集，跳过未重绘玻璃的清理和原生窗口裁剪。 */
+    void CancelFrame();
     void QueueIconPanelRecollection(const RECT& iconFrame, std::uintptr_t ownerKey);
     // Dock full redraws collect plain panel data until their content surface
     // is ready. No live visual, native region, or seen flag changes here, so

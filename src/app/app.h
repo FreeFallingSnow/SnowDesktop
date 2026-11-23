@@ -534,8 +534,10 @@ private:
     void ResetDesktopOutputComposition();
     /** @brief 清理绑定到当前 D2D/DComp 目标的缓存资源。 */
     void ResetCompositionRenderCaches();
+    enum class CompositionRecoveryScope { All, DesktopOutputs };
     /** @brief 在 DComp 渲染失败后重置 surface 并安排一次恢复重绘。 */
-    void RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT hr);
+    void RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT hr,
+        CompositionRecoveryScope scope = CompositionRecoveryScope::All);
     /** @brief WM_PAINT 响应，触发完整帧渲染。 */
     bool OnPaint(const RECT* updateRect = nullptr);
     /** @brief 渲染一帧画面到指定的 D2D 上下文。 @param ctx D2D 设备上下文 */

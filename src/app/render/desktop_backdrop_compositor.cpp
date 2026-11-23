@@ -2700,6 +2700,15 @@ void DesktopBackdropCompositor::BeginFrame(bool completeCollection, const RECT* 
     }
 }
 
+void DesktopBackdropCompositor::CancelFrame()
+{
+    if (!impl_->collectingFrame) return;
+    impl_->collectingFrame = false;
+    impl_->completeCollection = false;
+    for (auto& panel : impl_->panels) panel.seen = true;
+    for (auto& changed : impl_->changedIconPanels) changed.redrawing = false;
+}
+
 bool DesktopBackdropCompositor::BeginStagedFrame()
 {
     DiscardStagedFrame();

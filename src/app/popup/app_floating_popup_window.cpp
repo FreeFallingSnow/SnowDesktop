@@ -1350,9 +1350,10 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     RECT windowFrame = ResolveFloatingPopupWindowFrame(desktopFrame, coverage);
     RECT currentWindow{};
     const bool windowKnown = GetWindowRect(floatingPopupHwnd_, &currentWindow) != FALSE;
-    // Keep the current allocation for the rest of this presentation when it
-    // already covers the new viewport, including recovery from shared content.
-    if (wasVisible && windowKnown && ContainsRect(desktopFrame, currentWindow) &&
+    // A monitor-local allocation can stay stable; a desktop-wide host must
+    // shrink once the reserved popups and stack indicator fit on one output.
+    if (wasVisible && windowKnown && !EqualRect(&currentWindow, &desktopFrame) &&
+        ContainsRect(desktopFrame, currentWindow) &&
         ContainsRect(currentWindow, windowFrame))
         windowFrame = currentWindow;
     const bool windowChanged = !windowKnown || !EqualRect(&currentWindow, &windowFrame);

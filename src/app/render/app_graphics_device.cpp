@@ -238,7 +238,8 @@ void DesktopApp::ResetCompositionRenderCaches()
     itemTitleRenderer_.ReleaseDeviceResources();
 }
 
-void DesktopApp::RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT hr)
+void DesktopApp::RecoverCompositionRenderFailure(
+    const wchar_t* stage, HRESULT hr, CompositionRecoveryScope scope)
 {
     if (RequestGraphicsDeviceRecovery(stage, hr))
         return;
@@ -247,7 +248,10 @@ void DesktopApp::RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT h
         stage ? stage : L"Render", static_cast<unsigned>(hr));
     WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, buf, DiagnosticLogLevel::Warning);
 
-    ResetCompositionRenderCaches();
+    if (scope == CompositionRecoveryScope::DesktopOutputs)
+        ResetDesktopOutputComposition();
+    else
+        ResetCompositionRenderCaches();
 
     if (!compositionRenderRecoveryPending_ && hwnd_ && IsWindow(hwnd_))
     {

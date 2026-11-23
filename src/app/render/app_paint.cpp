@@ -80,7 +80,7 @@ HRESULT DesktopApp::RenderDesktopOutputScene(
             // Record in desktop client coordinates once. This keeps the
             // existing ordering and side effects even for a cross-screen draw.
             DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get());
-            draw(context.Get());
+            if (scene.Scene()) draw(context.Get());
             hr = scene.Finish();
             if (SUCCEEDED(hr))
             {
@@ -203,22 +203,31 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
                 desktopMarqueeActive,
                 dcompUpdate,
                 clientRect);
-    desktopBackdropCompositor_.BeginFrame(completeGlassCollection, dcompUpdate ? dcompUpdate : &clientRect);
-    if (widgetPreviewActive && mouseDownWidgetIndex_ < widgets_.size() && !luaStackMemberDrag_.Armed())
-    {
-        desktopBackdropCompositor_.RemovePanel(
-            GetStandaloneWidgetFrameRect(
-                widgets_[mouseDownWidgetIndex_]));
-    }
+    bool backdropFrameStarted = false;
+    const auto beginBackdropFrame = [&] {
+        desktopBackdropCompositor_.BeginFrame(completeGlassCollection, dcompUpdate ? dcompUpdate : &clientRect);
+        backdropFrameStarted = true;
+        if (widgetPreviewActive && mouseDownWidgetIndex_ < widgets_.size() && !luaStackMemberDrag_.Armed())
+        {
+            desktopBackdropCompositor_.RemovePanel(
+                GetStandaloneWidgetFrameRect(
+                    widgets_[mouseDownWidgetIndex_]));
+        }
+    };
     hr = RenderDesktopOutputScene(false, dcompUpdate, [&](ID2D1DeviceContext* context) {
+        // A surface or command-list setup failure must leave the old glass in place.
+        beginBackdropFrame();
         RenderFrame(context, forceCompleteGlassCollection ? nullptr : dcompUpdate, desktopIconsHidden_);
     });
     if (FAILED(hr))
     {
-        desktopBackdropCompositor_.EndFrame(false);
-        RecoverCompositionRenderFailure(L"Desktop output background", hr);
+        if (backdropFrameStarted) desktopBackdropCompositor_.CancelFrame();
+        RecoverCompositionRenderFailure(L"Desktop output background", hr,
+            CompositionRecoveryScope::DesktopOutputs);
         return false;
     }
+    // A dirty rectangle in a gap between physical outputs does not invoke the draw callback.
+    if (!backdropFrameStarted) beginBackdropFrame();
 
     if (!FlushPendingDesktopWidgetComposition(true) ||
         desktopWidgetCompositionFailurePending_)
