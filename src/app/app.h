@@ -4680,7 +4680,7 @@ private:
     /** @brief 判断项名与源文件名是否匹配（用于放置后定位）。 @param itemName 项名称 @param srcFileName 源文件名 @return 匹配返回 true */
     static bool MatchPendingName(const std::wstring& itemName, const std::wstring& srcFileName);
     /** @brief 应用待处理的放置操作（外壳刷新后执行）。 */
-    void ApplyPendingPlacement();
+    bool ApplyPendingPlacement(bool desktopOnly, std::vector<std::wstring>& largeIconCopies);
     std::optional<NewItemRename> ApplyPendingNewItems(
         std::unordered_set<std::wstring>* desktopSlots = nullptr,
         const std::unordered_set<std::wstring>* desktopPaths = nullptr);
@@ -4688,7 +4688,7 @@ private:
     std::unordered_set<std::wstring> PendingDesktopNewItemPaths() const;
     void BeginNewItemRename(const std::optional<NewItemRename>& request);
     bool ApplyPendingPlacement(PendingLandingCache& cache,
-        std::unordered_set<std::wstring>& claimed);
+        std::unordered_set<std::wstring>& claimed, std::vector<std::wstring>& largeIconCopies);
     bool ApplyPendingFolderPlacements(PendingLandingCache& cache,
         DesktopWidget& targetWidget, const std::wstring& widgetId,
         const std::wstring& popupSourceId);

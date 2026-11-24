@@ -808,6 +808,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     }
     if (reloading_) return;
     const bool incremental = snapshot && snapshot->desktopIncremental;
+    const bool desktopWasReady = desktopItemsReady_ && !initialShellReadPending_;
     snowdesktop::startup_diagnostics::Scope startup(
         incremental ? L"ReloadItems.partial" : L"ReloadItems.complete",
         initialShellReadPending_, snapshot ? snapshot->desktopItems.size() : items_.size());
@@ -1081,17 +1082,36 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     // this same reload pass instead of waiting for the next manual refresh.
     placement.Finish();
     snowdesktop::startup_diagnostics::Call(L"ApplyPageMapping", [&] { ApplyPageMapping(); });
+    std::vector<std::wstring> largeIconCopies;
+    const auto applyPlacements = [&](bool desktopOnly) {
+        return snowdesktop::startup_diagnostics::Call(L"ApplyPendingPlacement", [&] {
+            return ApplyPendingPlacement(desktopOnly, largeIconCopies);
+        });
+    };
+    // Desktop cells can be reconciled before building the runtime tree.
+    // A member placement needs the refreshed widget containers for acceptance.
+    const bool placedDesktopOutputs = desktopWasReady && !reloadLayoutFromDisk &&
+        !layoutReload_.Pending() && !pendingLandingCaches_.empty() && applyPlacements(true);
     LayoutItems();
-    snowdesktop::startup_diagnostics::Call(L"ApplyPendingPlacement", [&] { ApplyPendingPlacement(); });
+    if (!placedDesktopOutputs && applyPlacements(false))
+    {
+        LayoutItems();
+        RequestLayoutSave();
+    }
+    for (const auto& key : largeIconCopies)
+        RequestLargeIconAsset(FindItemIndexByKey(key));
     UpdateCutState();
 
     if (snapshot) snapshot->layoutMs = GetTickCount64() - stageStarted;
     stageStarted = GetTickCount64();
-    if (!layoutReload_.Pending())
+    if (placedDesktopOutputs)
+        RequestLayoutSave(); // Persist from the settled model using the existing background save.
+    else if (!layoutReload_.Pending())
         snowdesktop::startup_diagnostics::Call(L"SaveLayoutSlots", [&] { SaveLayoutSlots(); });
     if (snapshot) snapshot->saveMs = GetTickCount64() - stageStarted;
     stageStarted = GetTickCount64();
-    RebuildContainersAndItems();
+    if (!placedDesktopOutputs)
+        RebuildContainersAndItems();
     if (snapshot) snapshot->rebuildMs = GetTickCount64() - stageStarted;
     reloading_ = false;
     if (snapshot) ApplyFileRemovalRefresh(*snapshot);

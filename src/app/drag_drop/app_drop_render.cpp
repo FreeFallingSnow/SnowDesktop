@@ -357,26 +357,28 @@ const DropPreviewList& DesktopApp::GetCachedDesktopDropPreview(
 }
 
 /**
- * @brief 应用缓存的放置结果，将新创建的文件分配到正确的网格位置或组件中。
+ * @brief 将新创建的文件分配到网格位置或组件中。
  */
-void DesktopApp::ApplyPendingPlacement()
+bool DesktopApp::ApplyPendingPlacement(bool desktopOnly, std::vector<std::wstring>& largeIconCopies)
 {
+    if (desktopOnly && std::any_of(pendingLandingCaches_.begin(), pendingLandingCaches_.end(),
+        [](const auto& cache) {
+            return cache.active && !cache.waitingForFiles && !cache.entries.empty() &&
+                (cache.dockMonitor || std::any_of(cache.entries.begin(), cache.entries.end(),
+                    [](const auto& entry) { return entry.kind != DropLandingKind::DesktopCell; }));
+        })) return false;
+
     fileDropLayouts_.clear();
     bool changed = false;
     std::unordered_set<std::wstring> claimed;
     for (auto& cache : pendingLandingCaches_)
-        changed = ApplyPendingPlacement(cache, claimed) || changed;
+        changed = ApplyPendingPlacement(cache, claimed, largeIconCopies) || changed;
     std::erase_if(pendingLandingCaches_, [](const auto& cache) { return !cache.active; });
-    if (changed)
-    {
-        LayoutItems();
-        RequestLayoutSave();
-        InvalidateRect(hwnd_, nullptr, TRUE);
-    }
+    return changed;
 }
 
 bool DesktopApp::ApplyPendingPlacement(PendingLandingCache& cache,
-    std::unordered_set<std::wstring>& claimed)
+    std::unordered_set<std::wstring>& claimed, std::vector<std::wstring>& largeIconCopies)
 {
     if (!cache.active || cache.waitingForFiles || cache.entries.empty()) return false;
     auto usedSlots = snowdesktop::desktop_output_placement::Used(widgets_, items_, claimed, cache.existingDesktopKeys,
@@ -395,8 +397,6 @@ bool DesktopApp::ApplyPendingPlacement(PendingLandingCache& cache,
             if (!item.name.empty() && !IsItemInAnyWidget(item) && !outputPaths.contains(ToUpperInvariant(item.parsingName)))
                 MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
     }
-    std::vector<std::wstring> largeIconCopies;
-
     auto findWidgetContainer = [&](const std::wstring& widgetId) -> WidgetContainer* {
         for (auto& container : containers_)
         {
@@ -425,7 +425,7 @@ bool DesktopApp::ApplyPendingPlacement(PendingLandingCache& cache,
     // Only their fresh enumeration can reconcile folder placements. Using
     // the current widget entries here could consume a batch before its files
     // appear in that old directory list.
-    const bool entriesChanged = snowdesktop::pending_drop::ApplyEntries(cache, widgets_, items_, claimed,
+    return snowdesktop::pending_drop::ApplyEntries(cache, widgets_, items_, claimed,
         ToUpperInvariant,
         [](const DesktopItem& item, const std::wstring& sourceName) {
             return MatchPendingName(item.name, sourceName) ||
@@ -471,9 +471,6 @@ bool DesktopApp::ApplyPendingPlacement(PendingLandingCache& cache,
             RefreshCollectedKeysCache();
             if (auto* widget = findWidgetContainer(id)) widget->InvalidateSlots();
         });
-    for (const auto& key : largeIconCopies)
-        RequestLargeIconAsset(FindItemIndexByKey(key));
-    return entriesChanged;
 }
 
 // ── 网格全局函数 ──────────────────────────────────────────
