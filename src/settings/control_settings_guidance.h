@@ -114,7 +114,7 @@ template<>
 inline constexpr auto Fields<GeneralSettings> = std::to_array<Description>({
     {"showAdvancedSettings", "Reveals the advanced settings group, including Runtime Modules. Access to the Agent Operations page is independent."},
     {"agentOperationsEnabled", "Allows local agent requests when enabled by the user in Settings > Agent Operations. This value is read-only over the control interface. Turning it off denies new requests and cancels private input, capture and demo export."},
-    {"steamShowRunningStatus", "Lets the Steam integration show SnowDesktop as running when the Steam bridge supports it."},
+    {"steamShowRunningStatus", "Shows SnowDesktop as running in Steam when a compatible bridge connects. If the connection fails or is lost, SnowDesktop retries after 30 seconds with a fresh bridge process. Turning this off stops the running-status bridge."},
     {"steamRoomVisible", "Keeps the Steam room service listening in the background for participation. The bridge must be available."},
     {"runtimeModules", "Controls which optional runtime modules may load. Use runtime-services for their actual state."},
     {"diagnosticLogModules", "Selects which diagnostic modules emit detailed logs. Unknown flag bits are rejected."},

@@ -1750,19 +1750,30 @@ int wmain(int argc, wchar_t* argv[])
     if (command == L"presence")
     {
 #if SNOWDESKTOP_HAS_STEAMWORKS
-        std::unique_ptr<SteamApiSession> session;
-        auto retryAt = std::chrono::steady_clock::time_point{};
+        std::optional<SteamApiSession> session;
+        std::chrono::steady_clock::time_point loginCheckAt;
         return snowdesktop::steam_bridge::RunPresenceLifetime(argc, argv, [&] {
-            if (session && !SteamAPI_IsSteamRunning()) session.reset();
-            if (session && std::chrono::steady_clock::now() >= retryAt &&
-                (!SteamUser() || !SteamUser()->BLoggedOn())) session.reset();
-            if (!session && std::chrono::steady_clock::now() >= retryAt)
+            if (!session)
             {
-                retryAt = std::chrono::steady_clock::now() + std::chrono::seconds(15);
-                auto candidate = std::make_unique<SteamApiSession>();
-                if (candidate->IsInitialized()) session = std::move(candidate);
+                loginCheckAt = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+                session.emplace();
+                // Failed Steamworks initialization can retain resources until process exit.
+                if (!session->IsInitialized()) return PrintInitializationFailure(*session);
             }
-            if (session) SteamAPI_RunCallbacks();
+            else if (!SteamAPI_IsSteamRunning())
+            {
+                return PrintError(kSteamOperationFailed, "steam_connection_lost",
+                    "The Steam client stopped running");
+            }
+            else if (std::chrono::steady_clock::now() >= loginCheckAt)
+            {
+                ISteamUser* user = SteamUser();
+                if (!user || !user->BLoggedOn())
+                    return PrintError(kSteamOperationFailed, "steam_not_logged_on",
+                        "Steam is offline; running status is unavailable");
+            }
+            SteamAPI_RunCallbacks();
+            return 0;
         });
 #else
         return kSteamworksUnavailable;

@@ -9,7 +9,7 @@
 
 namespace snowdesktop::steam_bridge
 {
-// Handles are explicitly inherited by the host, never discovered by PID/name.
+// The host explicitly inherits both handles. A nonzero tick result ends the worker.
 template<class Tick>
 int RunPresenceLifetime(int argc, wchar_t** argv, Tick tick)
 {
@@ -26,10 +26,15 @@ int RunPresenceLifetime(int argc, wchar_t** argv, Tick tick)
     };
     HANDLE waits[]{parse(argv[2 + 1]), parse(argv[4 + 1])};
     if (!waits[0] || !waits[1] || waits[0] == waits[1]) return 64;
+    int exitCode = 0;
     DWORD result = WAIT_TIMEOUT;
-    while ((result = WaitForMultipleObjects(2, waits, FALSE, 250)) == WAIT_TIMEOUT) tick();
+    while ((result = WaitForMultipleObjects(2, waits, FALSE, 250)) == WAIT_TIMEOUT)
+    {
+        exitCode = tick();
+        if (exitCode != 0) break;
+    }
     CloseHandle(waits[0]);
     CloseHandle(waits[1]);
-    return result == WAIT_FAILED ? 5 : 0;
+    return result == WAIT_FAILED ? 5 : exitCode;
 }
 }

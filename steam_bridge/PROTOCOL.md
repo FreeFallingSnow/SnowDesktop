@@ -1,10 +1,12 @@
 # SnowDesktop Steam Bridge protocol v1
 
 The bridge normally runs one-shot commands. The opt-in `presence` command
-keeps one Steam API session until its host exits or signals its inherited stop
-event. Its `--parent-handle` and `--stop-handle` arguments are inherited Windows
-handles, not PIDs or named objects. It retries Steam initialization in the same
-process when the client is unavailable; it never launches Steam. The host enables
+attempts one Steam API session per process. Its `--parent-handle` and
+`--stop-handle` arguments are inherited Windows handles. It exits with code 0
+when the host exits or signals the stop event, code 4 if Steam initialization
+fails, and code 5 if the session loses its Steam connection. While enabled, the
+host waits 30 seconds after the child exits before starting a fresh bridge
+process. The bridge leaves Steam client startup to the user. The host enables
 this session only when the saved General setting requests Steam running status
 (default: off) and a compatible SDK-enabled bridge is available. Background
 component, icon-pack, and theme synchronization reads only local Steam caches.
