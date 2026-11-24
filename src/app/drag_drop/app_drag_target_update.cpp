@@ -168,7 +168,8 @@ std::wstring DesktopApp::GetCurrentDragTargetHint(
     if (region == HitRegion::Handoff)
     {
         const auto* item = slot ? slot->GetItem() : nullptr;
-        if (!item && dynamic_cast<const DesktopGrid*>(target))
+        const bool desktopTarget = dynamic_cast<const DesktopGrid*>(target) != nullptr;
+        if (!item && desktopTarget)
             item = HitTestIcon(dragSession_.CurrentPoint());
         const DesktopItem* desktop = nullptr;
         bool directory = false;
@@ -193,6 +194,15 @@ std::wstring DesktopApp::GetCurrentDragTargetHint(
         else if (folderPreview_ && slot == popupDragTarget_.Get())
             directory = dynamic_cast<const ExternalFileItem*>(item) != nullptr;
 
+        const bool canCopyLargeIconSettings = desktopTarget && desktop && !rightButtonItemDrag_ &&
+            (mods & (MK_SHIFT | MK_ALT)) == 0 &&
+            FindLargeIconSettingsDragSource(dragSession_.SourceList(), *desktop);
+        if (canCopyLargeIconSettings && (mods & MK_CONTROL))
+            return _LFW("core.drag.release_copy_large_icon_settings", desktop->name);
+        const auto withSettingsHint = [canCopyLargeIconSettings](std::wstring hint) {
+            return canCopyLargeIconSettings && !hint.empty()
+                ? _LFW("core.drag.with_large_icon_settings_hint", hint) : hint;
+        };
         if (desktop && desktop->desktopIconClsid.empty())
         {
             // Filesystem enumeration records a timestamp for both types and
@@ -216,12 +226,13 @@ std::wstring DesktopApp::GetCurrentDragTargetHint(
             if (name.empty()) name = item->GetPath();
             switch (effect)
             {
-            case DROPEFFECT_MOVE: return _LFW("core.drag.move_into_folder", name);
-            case DROPEFFECT_COPY: return _LFW("core.drag.copy_into_folder", name);
-            case DROPEFFECT_LINK: return _LFW("core.drag.link_in_folder", name);
+            case DROPEFFECT_MOVE: return withSettingsHint(_LFW("core.drag.move_into_folder", name));
+            case DROPEFFECT_COPY: return withSettingsHint(_LFW("core.drag.copy_into_folder", name));
+            case DROPEFFECT_LINK: return withSettingsHint(_LFW("core.drag.link_in_folder", name));
             default: return {};
             }
         }
+        return withSettingsHint(target->GetDragHint(slot, region, dragSession_.Items(), dragSession_.Source(), mods));
     }
     return target->GetDragHint(slot, region, dragSession_.Items(), dragSession_.Source(), mods);
 }

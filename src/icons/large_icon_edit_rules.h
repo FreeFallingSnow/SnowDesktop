@@ -22,6 +22,23 @@ inline bool CanStore(const std::optional<LargeIconConfig>& config, bool unlocked
     return !config || (unlocked && desktop && ValidateLargeIconConfig(*config));
 }
 
+inline LargeIconConfig CopyAppearance(const LargeIconConfig& source, const LargeIconConfig& target)
+{
+    auto config = source;
+    config.columns = target.columns;
+    config.rows = target.rows;
+    config.content = target.content;
+    config.image = target.image;
+    config.imageAssetId = target.imageAssetId;
+    config.cachedCover = target.cachedCover;
+    config.foregroundContent = target.foregroundContent;
+    config.foregroundImage = target.foregroundImage;
+    config.foregroundImageAssetId = target.foregroundImageAssetId;
+    config.steamOrientation = target.steamOrientation;
+    config.localOnly = target.localOnly;
+    return config;
+}
+
 inline std::string CheckRequest(LargeIconEditSession& edit, const LargeIconSettingsRequest& request, bool unlocked)
 {
     if (!unlocked) { edit.preview.reset(); edit.previews.clear(); return "largeIcon.locked"; }

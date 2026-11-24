@@ -245,6 +245,7 @@ bool DesktopApp::PresentCollectionPopupHoverChange(POINT previousHover, bool all
 void DesktopApp::OnMouseLeave()
 {
     snowdesktop::performance::Scope trace("input", "hover.mouse_leave");
+    if (!largeIconSettingsPickKeys_.empty()) HideDragHintWindow();
     UpdateLuaStackIndicator(POINT{LONG_MIN, LONG_MIN});
     POINT popupPoint{};
     if (hwnd_ && IsWindow(hwnd_) && snowdesktop::private_pointer::CursorPosition(&popupPoint) &&
@@ -1197,7 +1198,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
     if (HandleUsageGuidePointerUp(upPoint)) return;
     {
         snowdesktop::InteractiveLayoutSave save(this);
-        if (HandleLargeIconPointerUp()) return;
+        if (HandleLargeIconPointerUp(upPoint)) return;
     }
     if (middleButtonWidgetMove_) return;
     if (dragSession_.IsActive())

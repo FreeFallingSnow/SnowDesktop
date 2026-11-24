@@ -241,6 +241,14 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             return TRUE;
         }
         if (LOWORD(lp) != HTCLIENT) break;
+        if (!largeIconSettingsPickKeys_.empty())
+        {
+            POINT point{};
+            const bool canPick = snowdesktop::private_pointer::CursorPosition(&point) &&
+                ScreenToClient(hwnd_, &point) && HitTestLargeIconSettingsSource(point);
+            snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, canPick ? IDC_CROSS : IDC_NO));
+            return TRUE;
+        }
         POINT guidePoint{};
         if (snowdesktop::private_pointer::CursorPosition(&guidePoint) && ScreenToClient(hwnd_, &guidePoint) && IsPointInUsageGuide(guidePoint))
         {
@@ -1341,6 +1349,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             DispatchLuaWidgetViewKeyEvent(wp, false, false);
         break;
     case WM_KILLFOCUS:
+        if (!largeIconSettingsPickKeys_.empty()) CancelLargeIconGesture();
         ClearSelectionForExternalWindow(
             wp ? reinterpret_cast<HWND>(wp) : snowdesktop::private_pointer::ForegroundWindow());
         typeToSelectSession_.Reset();
@@ -1363,7 +1372,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             usageGuidePlacement_.EndDrag();
             if (msg == WM_CANCELMODE && snowdesktop::private_pointer::Capture() == hwnd_) snowdesktop::private_pointer::ReleasePointerCapture();
         }
-        if (largeIconGesture_ && (msg == WM_CANCELMODE || reinterpret_cast<HWND>(lp) != hwnd_))
+        if (HasLargeIconInteraction() && (msg == WM_CANCELMODE ||
+            (reinterpret_cast<HWND>(lp) != hwnd_ && (largeIconGesture_ || !expectedCaptureReleaseDepth_))))
             CancelLargeIconGesture();
         ForgetLuaWidgetPanelCapture(hwnd);
         if (msg == WM_CANCELMODE ||

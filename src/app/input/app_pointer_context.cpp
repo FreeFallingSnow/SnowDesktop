@@ -185,7 +185,7 @@ void DesktopApp::OnRightButtonDown(
     // Tray and quick-navigation menus also use this preparation hook, without
     // a native item press. Only routed pointer coordinates may start a drag.
     if (point.x == LONG_MIN || point.y == LONG_MIN) return;
-    if (largeIconGesture_ || mouseDown_ || dragSession_.HasContext() ||
+    if (HasLargeIconInteraction() || mouseDown_ || dragSession_.HasContext() ||
         dragDropController_.IsTransportActive() || middleButtonWidgetMove_ ||
         widgetAction_ != WidgetAction::None ||
         IsPointInUsageGuide(point))
@@ -594,7 +594,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
     if (consumeRelease) return;
     // A right click cancels placement as one complete press/release gesture.
     // Preserve surface ownership on press, then consume release without a menu.
-    if (largeIconGesture_) { CancelLargeIconGesture(); return; }
+    if (HasLargeIconInteraction()) { CancelLargeIconGesture(); return; }
     if (renameController_.IsActive()) return;
     if (std::exchange(keyboardNavVisualFocus_, false) && !keyboardNavInsideWidget_)
         InvalidateRect(hwnd_, nullptr, FALSE);

@@ -51,7 +51,10 @@ void DesktopApp::BeginLargeIconPlacement(size_t index, snowdesktop::LargeIconCon
 
 void DesktopApp::CancelLargeIconGesture()
 {
-    if (!largeIconGesture_) return;
+    if (!HasLargeIconInteraction()) return;
+    if (!largeIconSettingsPickKeys_.empty()) HideDragHintWindow();
+    largeIconSettingsPickKeys_.clear();
+    largeIconSettingsPickSource_.clear();
     largeIconGesture_.reset();
     if (snowdesktop::private_pointer::Capture() == hwnd_) snowdesktop::private_pointer::ReleasePointerCapture();
     mouseDown_ = false;
@@ -61,8 +64,37 @@ void DesktopApp::CancelLargeIconGesture()
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
+void DesktopApp::BeginLargeIconSettingsPick(std::vector<std::wstring> keys)
+{
+    if (!CanEditLargeIcons() || keys.empty()) return;
+    CancelLargeIconGesture();
+    largeIconSettingsPickKeys_ = std::move(keys);
+    HandleLargeIconPointerMove(lastMousePoint_);
+}
+
+const DesktopItem* DesktopApp::HitTestLargeIconSettingsSource(POINT point) const
+{
+    if (IsPointOccludedByOpenPopup(point) || IsPointOverWidgetChrome(point)) return nullptr;
+    const auto* icon = HitTestIcon(point);
+    const auto* item = icon ? icon->GetDesktopItem() : nullptr;
+    if (!item || !item->largeIcon || !CanApplyLargeIconSettingsTo(*item)) return nullptr;
+    if (largeIconSettingsPickKeys_.size() == 1 && item->layoutKey == largeIconSettingsPickKeys_.front()) return nullptr;
+    return item;
+}
+
 bool DesktopApp::HandleLargeIconPointerDown(POINT point)
 {
+    if (!largeIconSettingsPickKeys_.empty())
+    {
+        if (!CanEditLargeIcons()) { CancelLargeIconGesture(); return true; }
+        largeIconSettingsPickSource_.clear();
+        if (const auto* source = HitTestLargeIconSettingsSource(point))
+        {
+            largeIconSettingsPickSource_ = source->layoutKey;
+            snowdesktop::private_pointer::SetPointerCapture(hwnd_);
+        }
+        return true;
+    }
     if (largeIconGesture_)
     {
         if (!CanEditLargeIcons()) { CancelLargeIconGesture(); return true; }
@@ -95,6 +127,13 @@ bool DesktopApp::HandleLargeIconPointerDown(POINT point)
 
 bool DesktopApp::HandleLargeIconPointerMove(POINT point)
 {
+    if (!largeIconSettingsPickKeys_.empty())
+    {
+        if (!CanEditLargeIcons()) { CancelLargeIconGesture(); return true; }
+        snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, HitTestLargeIconSettingsSource(point) ? IDC_CROSS : IDC_NO));
+        ShowDragHintWindow(point, _LW("largeIcon.pickSettingsSource"));
+        return true;
+    }
     if (!largeIconGesture_) return false;
     if (!CanEditLargeIcons()) { CancelLargeIconGesture(); return true; }
     auto& gesture = *largeIconGesture_;
@@ -124,8 +163,31 @@ bool DesktopApp::HandleLargeIconPointerMove(POINT point)
     return true;
 }
 
-bool DesktopApp::HandleLargeIconPointerUp()
+bool DesktopApp::HandleLargeIconPointerUp(POINT point)
 {
+    if (!largeIconSettingsPickKeys_.empty())
+    {
+        const auto* source = HitTestLargeIconSettingsSource(point);
+        const auto pressed = std::exchange(largeIconSettingsPickSource_, {});
+        if (source && source->layoutKey == pressed)
+        {
+            std::vector<size_t> targets;
+            for (const auto& key : largeIconSettingsPickKeys_)
+            {
+                const auto index = FindItemIndexByKey(key);
+                if (index >= items_.size() || !items_[index].largeIcon) break;
+                targets.push_back(index);
+            }
+            const bool haveTargets = targets.size() == largeIconSettingsPickKeys_.size();
+            const auto sourceIndex = FindItemIndexByKey(pressed);
+            CancelLargeIconGesture();
+            if (!haveTargets || sourceIndex >= items_.size() || !ApplyLargeIconSettings(items_[sourceIndex], targets))
+                snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+        }
+        else if (snowdesktop::private_pointer::Capture() == hwnd_)
+            ReleaseCapturePreservingPointerState();
+        return true;
+    }
     if (!largeIconGesture_) return false;
     if (largeIconGesture_->creating) return true;
     const auto gesture = *largeIconGesture_;

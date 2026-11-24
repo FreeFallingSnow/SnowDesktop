@@ -621,6 +621,38 @@ PendingLandingCache DesktopApp::BuildPendingLandingCache(const DragSourceList& s
         GetTickCount(), FileNameFromPath, createdPathsBySource);
 }
 
+void DesktopApp::CaptureDesktopLargeIconCopies(PendingLandingCache& cache, const DragSourceList& sources) const
+{
+    if (!CanEditLargeIcons()) return;
+    for (const auto& source : sources.entries)
+    {
+        if (source.filePath.empty() || source.fromDock) continue;
+        const auto index = FindItemIndexByKey(source.desktopKey.empty() ? source.filePath : source.desktopKey);
+        if (index >= items_.size()) continue;
+        const auto& item = items_[index];
+        if (!item.largeIcon || !PathsEqualInsensitive(item.parsingName, source.filePath)) continue;
+
+        const auto entry = std::find_if(cache.entries.begin(), cache.entries.end(), [&](const auto& landing) {
+            return landing.kind == DropLandingKind::DesktopCell && landing.sourceIndex == source.sourceIndex;
+        });
+        if (entry != cache.entries.end())
+        {
+            entry->copiedLargeIcon = item.largeIcon;
+            continue;
+        }
+        // Clipboard copies and drops without a preview cell use the new file's
+        // initial desktop cell as the starting point when it is enumerated.
+        PendingLandingEntry landing;
+        landing.kind = DropLandingKind::DesktopCell;
+        landing.action = DropAction::Copy;
+        landing.sourceIndex = source.sourceIndex;
+        landing.sourcePath = source.filePath;
+        landing.span = item.gridSpan;
+        landing.copiedLargeIcon = item.largeIcon;
+        cache.entries.push_back(std::move(landing));
+    }
+}
+
 void DesktopApp::StorePendingLandingCache(const DragSourceList& sourceList,
     const DropPreviewList& preview, const std::unordered_set<std::wstring>& existingKeys,
     const std::unordered_map<size_t, std::wstring>* createdPathsBySource)
@@ -670,6 +702,7 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
 {
     snowdesktop::file_drop_execution::Services services;
     services.beginPlacement = [this, dockTarget = preview.pinMaterializedItemsToDock,
+        desktopTarget = preview.targetKind == DropTargetKind::Desktop,
         monitor = preview.dockMonitor, index = preview.dockInsertIndex](PendingLandingCache cache,
             const DragSourceList& sources, DropAction action) {
         if (dockTarget)
@@ -678,6 +711,8 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
             cache.dockMonitor = monitor ? monitor : (dock ? dock->GetMonitor() : nullptr);
             cache.dockInsertIndex = index;
         }
+        else if (desktopTarget && action == DropAction::Copy)
+            CaptureDesktopLargeIconCopies(cache, sources);
         return BeginFileDropVisual(std::move(cache), true, &sources, action);
     };
     services.takePlacement = [this](std::uint64_t id) { return TakeFileDropVisual(id); };

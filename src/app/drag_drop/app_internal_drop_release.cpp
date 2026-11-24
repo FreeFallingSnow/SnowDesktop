@@ -14,11 +14,15 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
     const bool handoff = canDrop && region == HitRegion::Handoff;
     const auto sources = dragSession_.SourceList();
     const auto items = dragSession_.Items();
+    const auto* targetIcon = handoff && target == GetDesktopGrid() ? HitTestIcon(point) : nullptr;
+    const auto* desktop = targetIcon ? targetIcon->GetDesktopItem() : nullptr;
+    const auto* settingsSource = desktop && !rightButtonItemDrag_ && mods == MK_CONTROL
+        ? FindLargeIconSettingsDragSource(sources, *desktop) : nullptr;
     DropPreviewList preview;
     if (canDrop && !removeDockPin && !handoff)
         preview = GetCachedDesktopDropPreview(true, sources, target, slot, region, mods, point);
 
-    const bool submitVisualEnd = !removeDockPin && (handoff || preview.fileBacked);
+    const bool submitVisualEnd = !removeDockPin && !settingsSource && (handoff || preview.fileBacked);
     if (submitVisualEnd)
         HoldReleasingFileSources(handoff ? DropActionFromClipboardEffect(ChooseDropEffect(keys, allowed)) : preview.action);
     dragSession_.DeactivateForDrop();
@@ -45,7 +49,15 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
         refreshPopup = IsOpenDockFolderPopupDropTarget(target, item) ||
             (dockFolderPopupOpen_ && sources.origin == dockFolderPopupContainer_.get());
         const ItemDrop drop{items, sources, preview, slot, region, mods, point, allowed};
-        if (handoff)
+        if (settingsSource)
+        {
+            const auto index = FindItemIndexByKey(desktop->layoutKey);
+            if ((allowed & DROPEFFECT_COPY) && ApplyLargeIconSettings(*settingsSource, {index}))
+                effect = DROPEFFECT_COPY;
+            save = false; // The large-icon settings commit owns persistence.
+            refreshPopup = false;
+        }
+        else if (handoff)
         {
             effect = CommitItemHandoff(item, drop, keys, refreshPopup);
             // The asynchronous file callback refreshes the popup when its contents change.

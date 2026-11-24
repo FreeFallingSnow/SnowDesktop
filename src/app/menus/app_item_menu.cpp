@@ -305,9 +305,16 @@ void DesktopApp::ShowItemContextMenu(
     };
     const auto hoverOnly = [](const auto& config) { return config.showOnHoverOnly; };
     const auto keepWhenHidden = [](const auto& config) { return config.keepWhenDesktopHidden; };
-    const bool largeIconMenu = (selectedCount == 1 || allLargeIcons([](const auto&) { return true; })) && !dockFrequentItem && !dockApplicationItem &&
+    const bool desktopLargeIconMenu = !dockFrequentItem && !dockApplicationItem &&
         !dockMapping && !dockEntryIndex && !keepQuickNavigationOpen &&
         !IsItemInAnyWidget(items_[itemIndex]) && items_[itemIndex].gridCell.pageId != kDockPageId;
+    const bool largeIconMenu = desktopLargeIconMenu &&
+        allLargeIcons([](const auto&) { return true; });
+    const bool createLargeIcons = desktopLargeIconMenu && !largeIconMenu &&
+        std::all_of(largeIconKeys.begin(), largeIconKeys.end(), [&](const auto& key) {
+            const auto index = FindItemIndexByKey(key);
+            return index < items_.size() && !IsItemInAnyWidget(items_[index]) && items_[index].gridCell.pageId != kDockPageId;
+        });
     const auto entitlement = steamEntitlementService_
         ? steamEntitlementService_->Current() : snowdesktop::steam_entitlement::Snapshot{};
     using snowdesktop::large_icon_edit_rules::EntryAccess;
@@ -357,6 +364,9 @@ void DesktopApp::ShowItemContextMenu(
                 kContextLargeIconKeepWhenHidden, largeIconToggleLabel("app.interact.keep_when_hidden", keepWhenHidden).c_str());
             SetMenuItemIcon(settings, kContextLargeIconHoverOnly, L"\uF06E");
             SetMenuItemIcon(settings, kContextLargeIconKeepWhenHidden, L"\uF108");
+            AppendMenuW(settings, MF_STRING | (editable ? 0 : MF_GRAYED),
+                kContextLargeIconPickSettings, _LW("largeIcon.pickSettings"));
+            SetMenuItemIcon(settings, kContextLargeIconPickSettings, L"\uF1FB");
             AppendMenuW(settings, MF_STRING, kContextLargeIconSettings, _LW("largeIcon.detailedSettings"));
             SetMenuItemIcon(settings, reinterpret_cast<UINT_PTR>(backgrounds), L"\uF53F");
             SetMenuItemIcon(settings, reinterpret_cast<UINT_PTR>(effects), L"\uF0D0");
@@ -365,18 +375,16 @@ void DesktopApp::ShowItemContextMenu(
             SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(settings), L"\uF013");
         }
         else if (largeIconAccess != EntryAccess::Hidden)
-        {
-            // A locked Steam-capable build opens the unlock settings directly.
-            if (items_[itemIndex].largeIcon)
-                AppendMenuW(menu, MF_STRING, kContextLargeIconSettings, _LW("largeIcon.settings"));
-            else
-                AppendMenuW(iconPersonalization ? iconPersonalization : menu, MF_STRING, kContextLargeIconCreate, _LW("largeIcon.create"));
-        }
+            AppendMenuW(menu, MF_STRING, kContextLargeIconSettings, _LW("largeIcon.settings"));
         // Returning to ordinary icons must remain available without the Bridge.
-        if (items_[itemIndex].largeIcon)
-            AppendMenuW(menu, MF_STRING, kContextLargeIconRestore, _LW("largeIcon.restore"));
-        if (largeIconAccess != EntryAccess::Hidden || items_[itemIndex].largeIcon)
-            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kContextLargeIconRestore, _LW("largeIcon.restore"));
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    }
+    else if (createLargeIcons && largeIconAccess != EntryAccess::Hidden)
+    {
+        AppendMenuW(iconPersonalization ? iconPersonalization : menu, MF_STRING,
+            kContextLargeIconCreate, _LW(largeIconKeys.size() > 1 ? "largeIcon.createSelected" : "largeIcon.create"));
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     }
     AppendMenuW(menu, canOpen ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextOpenCommand, _LW("app.menu.open"));
@@ -880,22 +888,47 @@ void DesktopApp::ShowItemContextMenu(
         break;
     }
     case kContextLargeIconCreate:
-        if (largeIconMenu && largeIconAccess != EntryAccess::Hidden)
+        if (createLargeIcons && largeIconAccess != EntryAccess::Hidden)
         {
-            if (!CanEditLargeIcons()) { OpenLargeIconSettings(itemIndex); break; }
-            auto config = MakeLargeIconDefaults(itemIndex);
-            const auto& item = items_[itemIndex];
-            const auto* page = FindGridPage(gridPages_, item.gridCell.pageId);
-            std::unordered_set<std::wstring> occupied;
-            for (size_t i = 0; i < items_.size(); ++i)
-                if (i != itemIndex && !IsItemInAnyWidget(items_[i])) MarkGridArea(occupied, items_[i].gridCell, items_[i].gridSpan);
-            for (const auto& widget : widgets_) if (!IsGroupedWidget(widget)) MarkGridArea(occupied, widget.gridCell, widget.gridSpan);
-            const GridSpan span{config.columns, config.rows};
-            const bool fits = page && item.gridCell.column + span.columns <= page->columns &&
-                item.gridCell.row + span.rows <= page->rows && !AreGridSlotsMarked(occupied, item.gridCell, span);
-            if (!fits) BeginLargeIconPlacement(itemIndex, config);
-            else if (!SetLargeIconConfig(itemIndex, config))
+            if (!CanEditLargeIcons()) { OpenLargeIconSettings(largeIconKeys); break; }
+            if (largeIconKeys.size() == 1)
+            {
+                const auto index = FindItemIndexByKey(largeIconKey);
+                if (index >= items_.size() || items_[index].largeIcon || IsItemInAnyWidget(items_[index]) ||
+                    items_[index].gridCell.pageId == kDockPageId) break;
+                auto config = MakeLargeIconDefaults(index);
+                std::unordered_set<std::wstring> occupied;
+                for (size_t i = 0; i < items_.size(); ++i)
+                    if (i != index && !IsItemInAnyWidget(items_[i])) MarkGridArea(occupied, items_[i].gridCell, items_[i].gridSpan);
+                for (const auto& widget : widgets_) if (!IsGroupedWidget(widget)) MarkGridArea(occupied, widget.gridCell, widget.gridSpan);
+                if (!CanApplyLargeIconSettingsTo(items_[index]) ||
+                    AreGridSlotsMarked(occupied, items_[index].gridCell, {config.columns, config.rows}))
+                    BeginLargeIconPlacement(index, config);
+                else if (!SetLargeIconConfig(index, config))
+                    snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+                break;
+            }
+            std::vector<std::pair<size_t, std::optional<snowdesktop::LargeIconConfig>>> changes;
+            bool applicable = true;
+            for (const auto& key : largeIconKeys)
+            {
+                const auto index = FindItemIndexByKey(key);
+                if (index >= items_.size() || !CanApplyLargeIconSettingsTo(items_[index]))
+                {
+                    applicable = false;
+                    break;
+                }
+                if (!items_[index].largeIcon) changes.emplace_back(index, MakeLargeIconDefaults(index));
+            }
+            if (!applicable || (!changes.empty() && !SetLargeIconConfigs(changes)))
                 snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+        }
+        break;
+    case kContextLargeIconPickSettings:
+        if (largeIconMenu && largeIconAccess == EntryAccess::Edit)
+        {
+            if (CanEditLargeIcons()) BeginLargeIconSettingsPick(largeIconKeys);
+            else OpenLargeIconSettings(largeIconKeys);
         }
         break;
     case kContextLargeIconSettings:

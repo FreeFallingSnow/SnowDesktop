@@ -382,6 +382,20 @@ bool DesktopApp::ApplyPendingPlacement(PendingLandingCache& cache,
     auto usedSlots = snowdesktop::desktop_output_placement::Used(widgets_, items_, claimed, cache.existingDesktopKeys,
         ToUpperInvariant, [this](const auto& widget) { return IsGroupedWidget(widget); },
         [this](const auto& item) { return IsItemInAnyWidget(item); });
+    const bool hasLargeIconCopies = std::any_of(cache.entries.begin(), cache.entries.end(),
+        [](const auto& landing) { return landing.copiedLargeIcon.has_value(); });
+    if (hasLargeIconCopies)
+    {
+        // Files enumerated alongside the copies can already occupy a cell
+        // even if they have no landing to reconcile in this operation.
+        std::unordered_set<std::wstring> outputPaths;
+        for (const auto& landing : cache.entries)
+            if (!landing.createdPath.empty()) outputPaths.insert(ToUpperInvariant(landing.createdPath));
+        for (const auto& item : items_)
+            if (!item.name.empty() && !IsItemInAnyWidget(item) && !outputPaths.contains(ToUpperInvariant(item.parsingName)))
+                MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
+    }
+    std::vector<std::wstring> largeIconCopies;
 
     auto findWidgetContainer = [&](const std::wstring& widgetId) -> WidgetContainer* {
         for (auto& container : containers_)
@@ -432,13 +446,33 @@ bool DesktopApp::ApplyPendingPlacement(PendingLandingCache& cache,
                 return TryFindFreeCell(span, used, found, page, slot);
             };
             services.slot = [this](const auto& cell) { return SlotFromCell(gridPages_, cell); };
-            return snowdesktop::desktop_output_placement::Place(
-                {savedPageIds_, savedPageColumns_, savedPageRows_, gridPages_}, item, landing, usedSlots, services);
+            const snowdesktop::desktop_output_placement::State state{
+                savedPageIds_, savedPageColumns_, savedPageRows_, gridPages_};
+            if (!landing.copiedLargeIcon || landing.createdPath.empty() || !CanEditLargeIcons())
+                return snowdesktop::desktop_output_placement::Place(state, item, landing, usedSlots, services);
+
+            auto placement = landing;
+            if (placement.cell.pageId.empty()) placement.cell = item.gridCell;
+            const auto initialSpan = item.gridSpan;
+            item.gridSpan = placement.span;
+            if (!snowdesktop::desktop_output_placement::Place(state, item, placement, usedSlots, services))
+            {
+                // Retain the configured size even if the desktop has shrunk
+                // or the planned cells were taken while the copy was running.
+                item.gridSpan = initialSpan;
+                if (!snowdesktop::desktop_output_placement::Place(state, item, placement, usedSlots, services))
+                    MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
+            }
+            item.largeIcon = landing.copiedLargeIcon;
+            largeIconCopies.push_back(item.layoutKey);
+            return true;
         },
         [&](const std::wstring& id) {
             RefreshCollectedKeysCache();
             if (auto* widget = findWidgetContainer(id)) widget->InvalidateSlots();
         });
+    for (const auto& key : largeIconCopies)
+        RequestLargeIconAsset(FindItemIndexByKey(key));
     return entriesChanged;
 }
 

@@ -1524,6 +1524,9 @@ private:
     snowdesktop::LargeIconConfig MakeLargeIconDefaults(size_t itemIndex);
     bool SetLargeIconConfig(size_t itemIndex, std::optional<snowdesktop::LargeIconConfig> config);
     bool SetLargeIconConfigs(const std::vector<std::pair<size_t, std::optional<snowdesktop::LargeIconConfig>>>& configs);
+    bool CanApplyLargeIconSettingsTo(const DesktopItem& item) const;
+    const DesktopItem* FindLargeIconSettingsDragSource(const DragSourceList& sources, const DesktopItem& target) const;
+    bool ApplyLargeIconSettings(const DesktopItem& source, const std::vector<size_t>& targets);
     void OpenLargeIconSettings(size_t itemIndex);
     void OpenLargeIconSettings(std::vector<std::wstring> keys);
     RECT GetLargeIconFrameRect(const DesktopItem& item) const;
@@ -1543,7 +1546,10 @@ private:
     void UpdateLargeIconHover();
     bool HandleLargeIconPointerDown(POINT point);
     bool HandleLargeIconPointerMove(POINT point);
-    bool HandleLargeIconPointerUp();
+    bool HandleLargeIconPointerUp(POINT point);
+    void BeginLargeIconSettingsPick(std::vector<std::wstring> keys);
+    const DesktopItem* HitTestLargeIconSettingsSource(POINT point) const;
+    bool HasLargeIconInteraction() const { return largeIconGesture_ || !largeIconSettingsPickKeys_.empty(); }
     void CancelLargeIconGesture();
     void BeginLargeIconPlacement(size_t index, snowdesktop::LargeIconConfig config);
     void DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context, const RECT* updateRect = nullptr);
@@ -1647,7 +1653,7 @@ private:
      */
     bool PasteClipboardToFolderMapping(size_t widgetIndex);
     bool PasteClipboardToFolderPath(
-        const std::wstring& targetFolderPath);
+        const std::wstring& targetFolderPath, bool pasteToDesktop = false);
     /** @brief 将剪贴板文件粘贴到桌面目录。 */
     bool PasteClipboardToDesktop();
     /** @brief 判断剪贴板当前是否包含可粘贴的文件数据。 */
@@ -2491,6 +2497,7 @@ private:
      * @param existingKeys 现有的桌面键快照
      * @param createdPathsBySource 可选，已创建路径的映射
      */
+    void CaptureDesktopLargeIconCopies(PendingLandingCache& cache, const DragSourceList& sources) const;
     PendingLandingCache BuildPendingLandingCache(const DragSourceList& sourceList,
         const DropPreviewList& preview, const std::unordered_set<std::wstring>& existingKeys,
         const std::unordered_map<size_t, std::wstring>* createdPathsBySource = nullptr);
@@ -3761,6 +3768,8 @@ private:
         POINT resizePointerOffset{};
     };
     std::optional<LargeIconGesture> largeIconGesture_;
+    std::vector<std::wstring> largeIconSettingsPickKeys_;
+    std::wstring largeIconSettingsPickSource_;
     std::unique_ptr<snowdesktop::steam_entitlement::Service>
         steamEntitlementService_;
     snowdesktop::settings::HomeAboutStatusSequence homeAboutStatusSequence_;

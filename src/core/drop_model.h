@@ -514,6 +514,7 @@ struct PendingLandingEntry
     DesktopWidget* widget = nullptr;
     std::wstring widgetId;
     std::optional<GridSpan> plannedPageSize;
+    std::optional<snowdesktop::LargeIconConfig> copiedLargeIcon;
 };
 
 /**

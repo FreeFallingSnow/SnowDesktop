@@ -18,6 +18,7 @@
 #include "icons/large_icon_preset_rules.h"
 #include "icons/large_icon_visibility_rules.h"
 #include "icons/large_icon_shape_geometry.h"
+#include "layout/grid_occupancy.h"
 
 namespace
 {
@@ -207,6 +208,42 @@ bool DesktopApp::CanEditLargeIcons() const
 bool DesktopApp::SetLargeIconConfig(size_t index, std::optional<snowdesktop::LargeIconConfig> config)
 {
     return SetLargeIconConfigs({{index, std::move(config)}});
+}
+
+bool DesktopApp::CanApplyLargeIconSettingsTo(const DesktopItem& item) const
+{
+    if (item.layoutKey.empty() || IsItemInAnyWidget(item) || item.gridCell.pageId == kDockPageId) return false;
+    const auto* page = FindGridPage(gridPages_, item.gridCell.pageId);
+    return page && snowdesktop::grid_occupancy::Fits(*page, item.gridCell, item.gridSpan);
+}
+
+const DesktopItem* DesktopApp::FindLargeIconSettingsDragSource(
+    const DragSourceList& sources, const DesktopItem& target) const
+{
+    if (sources.entries.size() != 1 || containers_.empty() || sources.origin != containers_.front().get() ||
+        !CanEditLargeIcons() || !CanApplyLargeIconSettingsTo(target)) return nullptr;
+    const auto& entry = sources.entries.front();
+    if (entry.desktopKey.empty() || entry.kind != DropSourceKind::DesktopIcon || entry.fromDock || entry.desktopWidgetIcon)
+        return nullptr;
+    const auto index = FindItemIndexByKey(entry.desktopKey);
+    if (index >= items_.size()) return nullptr;
+    const auto& source = items_[index];
+    return &source != &target && source.largeIcon && CanApplyLargeIconSettingsTo(source) ? &source : nullptr;
+}
+
+bool DesktopApp::ApplyLargeIconSettings(const DesktopItem& source, const std::vector<size_t>& targets)
+{
+    if (!source.largeIcon || !CanEditLargeIcons()) return false;
+    std::vector<std::pair<size_t, std::optional<snowdesktop::LargeIconConfig>>> changes;
+    for (const auto index : targets)
+    {
+        if (index >= items_.size() || !CanApplyLargeIconSettingsTo(items_[index])) return false;
+        const auto& item = items_[index];
+        if (&item == &source) continue;
+        const auto target = item.largeIcon ? *item.largeIcon : MakeLargeIconDefaults(index);
+        changes.emplace_back(index, snowdesktop::large_icon_edit_rules::CopyAppearance(*source.largeIcon, target));
+    }
+    return !changes.empty() && SetLargeIconConfigs(changes);
 }
 
 bool DesktopApp::SetLargeIconConfigs(const std::vector<std::pair<size_t, std::optional<snowdesktop::LargeIconConfig>>>& configs)

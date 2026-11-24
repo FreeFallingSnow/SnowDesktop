@@ -7,6 +7,7 @@
 #include "widgets/widget_folder_search.h"
 #include "drag_drop/external_drop_content.h"
 #include "drag_drop/clipboard_file_operation.h"
+#include "drag_drop/pending_drop_completion.h"
 
 #include <atomic>
 #include <chrono>
@@ -440,7 +441,7 @@ bool DesktopApp::PasteClipboardToFolderMapping(size_t widgetIndex)
 }
 
 bool DesktopApp::PasteClipboardToFolderPath(
-    const std::wstring& targetFolderPath)
+    const std::wstring& targetFolderPath, bool pasteToDesktop)
 {
     if (targetFolderPath.empty())
         return false;
@@ -557,6 +558,25 @@ bool DesktopApp::PasteClipboardToFolderPath(
         sourceList.entries.push_back(std::move(entry));
     }
 
+    if (pasteToDesktop && action == DropAction::Copy)
+    {
+        PendingLandingCache cache;
+        CaptureDesktopLargeIconCopies(cache, sourceList);
+        if (!cache.entries.empty())
+        {
+            cache.existingDesktopKeys = SnapshotDesktopKeys();
+            const auto result = std::make_shared<snowdesktop::ShellFileOperationResult>();
+            return MaterializeFilesToFolder(sourceList, destinationPath, action,
+                [this, cache = std::move(cache), result, done = std::move(operationCompletion)](bool succeeded) mutable {
+                    if (!result->outputs.empty())
+                    {
+                        snowdesktop::pending_drop::Complete(pendingLandingCaches_, std::move(cache), *result);
+                        if (!succeeded) RequestShellRefresh();
+                    }
+                    done(succeeded);
+                }, false, result);
+        }
+    }
     return MaterializeFilesToFolder(
         sourceList, destinationPath,
         action, std::move(operationCompletion));
@@ -566,7 +586,7 @@ bool DesktopApp::PasteClipboardToDesktop()
 {
     wchar_t desktopPath[MAX_PATH]{};
     if (snowdesktop::desktop_source::CopyDirectory(desktopPath) &&
-        PasteClipboardToFolderPath(desktopPath))
+        PasteClipboardToFolderPath(desktopPath, true))
     {
         return true;
     }

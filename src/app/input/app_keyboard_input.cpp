@@ -205,10 +205,15 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     if (DockTrayPopupKeyDown(key)) return true;
     CancelRenameClick();
     if (key == VK_ESCAPE && (dragSession_.HasContext() ||
-            widgetAction_ != WidgetAction::None || largeIconGesture_))
+            widgetAction_ != WidgetAction::None || HasLargeIconInteraction()))
     {
         // Holding Esc after dismissing a popup must not cancel the same drag.
         if (repeated || TryDismissPopupForEscape()) return true;
+    }
+    if (!largeIconSettingsPickKeys_.empty())
+    {
+        if (key == VK_ESCAPE) CancelLargeIconGesture();
+        return true;
     }
     if (largeIconGesture_)
     {

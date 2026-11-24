@@ -94,6 +94,7 @@ constexpr UINT kContextOpenCommand = 41001;
 constexpr UINT kContextLargeIconCreate = 41970;
 constexpr UINT kContextLargeIconSettings = 41971;
 constexpr UINT kContextLargeIconRestore = 41972;
+constexpr UINT kContextLargeIconPickSettings = 41973;
 constexpr UINT kContextLargeIconBackgroundFirst = 41980; // 11 preset commands
 constexpr UINT kContextLargeIconEffectFirst = 41992; // Six effect commands; ends at 41997.
 constexpr UINT kContextLargeIconHoverOnly = 41998;
