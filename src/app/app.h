@@ -743,7 +743,7 @@ private:
     DockContainer* GetDockContainer() const;
     DockContainer* GetDockContainerAtPoint(POINT point) const;
     void InvalidateDockContainers();
-    void InvalidateDockRects(BOOL erase = FALSE);
+    void InvalidateDockRects(BOOL erase = FALSE, bool immediate = true);
     /** @brief 在当前输入消息内同步呈现已失效的桌面指针反馈。 */
     void PresentDesktopPointerUpdate();
     /** @brief 同步呈现桌面拖动及浮动 Dock 指针反馈。 */

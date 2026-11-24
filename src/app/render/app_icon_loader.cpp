@@ -274,7 +274,7 @@ void DesktopApp::DrainBackgroundShellWork()
     layoutSaveQueue_.Drain();
     if (exitRequested_ || compositionPaintInProgress_ || floatingPopupCompositionPaintInProgress_ || reloading_ ||
         HasActiveContextMenuSession() ||
-        shellFileOperationInFlight_ > 0 || !pendingRenames_.empty() ||
+        !pendingRenames_.empty() ||
         (dockWindowTransition_ && dockWindowTransition_->IsActive()))
         return; // The maintenance timer retries after the interaction fence.
     if (renameController_.IsActive())
@@ -289,12 +289,18 @@ void DesktopApp::DrainBackgroundShellWork()
     // pointer is still held. The delivery mailbox defers all source/model edits.
     folderReadWork_.Drain();
     RetryFolderReads();
-    if (dragSession_.HasContext() || dragDropController_.IsTransportActive() || mouseDown_)
+    const bool fileOperationActive = shellFileOperationInFlight_ > 0;
+    const bool pointerInteraction = dragSession_.HasContext() || dragDropController_.IsTransportActive() || mouseDown_;
+    if (fileOperationActive || pointerInteraction)
     {
         // Running-Dock lookup completions update only this gesture's pin
         // capability and indicator; actual pin commits retain the idle fence.
         if (dockRunningDrag_)
             shellVisualWork_.Drain(std::chrono::milliseconds(4), L"dock-running-drag:");
+        // A newly opened folder can need its shortcut target before it can
+        // request the listing. Keep other model deliveries behind the fence.
+        if (fileOperationActive && !pointerInteraction && dockFolderPopupOpen_ && dockFolderPopupLoading_)
+            shellVisualWork_.Drain(std::chrono::milliseconds(4), L"dock-target:");
         // First pixels/refinement update only the current popup's presentation;
         // source containers and all ordinary model deliveries remain fenced.
         if (dockFolderPopupOpen_ && popupAnimation_.IsInteractive())

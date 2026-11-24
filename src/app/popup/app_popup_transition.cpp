@@ -552,12 +552,16 @@ bool DesktopApp::IsOpenDockFolderPopupDropTarget(
 void DesktopApp::RefreshDockFolderPopup(
     const snowdesktop::shell_refresh::FolderSnapshot* snapshot, bool present)
 {
-    if (shellFileOperationInFlight_ > 0)
+    const bool fileOperationActive = shellFileOperationInFlight_ > 0;
+    const bool preparingOpen = !snapshot && !present;
+    const bool loadingFirstListing = dockFolderPopupLoading_ && !dockFolderPopupAvailable_;
+    if (fileOperationActive && !preparingOpen && !loadingFirstListing)
     {
         shellDockFolderPopupRefreshPending_ = true;
         return;
     }
-    shellDockFolderPopupRefreshPending_ = false;
+    if (!fileOperationActive)
+        shellDockFolderPopupRefreshPending_ = false;
     if (!dockFolderPopupOpen_) return;
     const bool dockEntryOwnsBinding = !folderPreview_ && dockFolderPopupMappingWidgetId_.empty();
     if (snapshot && folderPreview_ &&
@@ -702,9 +706,9 @@ void DesktopApp::RefreshDockFolderPopup(
         dockFolderPopupWidget_.sourceFolderPath, snapshot,
         dockFolderPopupAvailable_, dockFolderPopupLoading_,
         [this](const auto& path) { QueueFolderRead(path); },
-        [this](const auto& folder) {
+        [this, fileOperationActive](const auto& folder) {
             EnumerateFolderMappingEntries(dockFolderPopupWidget_, true, &folder);
-            if (!folderPreview_ && dockFolderPopupAvailable_ && !dragSession_.HasContext() &&
+            if (!fileOperationActive && !folderPreview_ && dockFolderPopupAvailable_ && !dragSession_.HasContext() &&
                 !dragDropController_.IsTransportActive() && ApplyPendingFolderPlacements(
                     dockFolderPopupWidget_, dockFolderPopupMappingWidgetId_, dockFolderPopupSourceId_))
                 CommitDockFolderPopupStateToSource();

@@ -57,10 +57,10 @@ bool DesktopApp::SynchronizeDockContainerAreas()
     return true;
 }
 
-void DesktopApp::InvalidateDockRects(BOOL erase)
+void DesktopApp::InvalidateDockRects(BOOL erase, bool immediate)
 {
     if (floatingDockHostActive_)
-        InvalidatePersistentDockHosts(true);
+        InvalidatePersistentDockHosts(immediate);
     if (!hwnd_) return;
     for (const auto& container : containers_)
     {

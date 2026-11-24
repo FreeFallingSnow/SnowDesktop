@@ -117,7 +117,8 @@ DesktopApp::ResolveDockFolderTarget(const DockEntry& entry, bool* targetPending,
         // Persistent Dock windows update their glass when they repaint below.
         owner->InvalidateDragStaticScene(hasDesktopDock);
         owner->UpdateFloatingDockWindowBounds(false);
-        owner->InvalidateDockRects();
+        // Coalesce asynchronous target results into the next Dock paint.
+        owner->InvalidateDockRects(FALSE, false);
         const auto sourceId = std::to_wstring(static_cast<int>(entry.type)) +
             L":" + ToUpperInvariant(entry.reference);
         if (!mapping && owner->dockFolderPopupOpen_ &&
