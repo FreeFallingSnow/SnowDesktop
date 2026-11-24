@@ -501,6 +501,8 @@
 
 ### CF-025 文件观察提前结束
 
+- **桌面落位续证（2026-11-24）**：Task `desktop-icon-drop-edge` 首次在 `349720808e0f4fb98eff77d3602bf38a` 修订 0 认领 `app_internal_drop_release.cpp`，因前序 Run `ae7256273f10455ea111b272e9f44f74` 的改动待提交，收到 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`。文件票据 `45b8c443ec5e8040d7e3b08c3f46a283` 在前序提交后返回 `eligible`，随后同一文件被 `large-icon-drag-copy` 认领以修正 C4456，第二次认领因活动冲突被拒。两次均撤回本任务的空编辑登记，避免阻塞共享批次。警告修订 Run `820a4fe7f0ef43019f11df693798f314` 完成后，另用只读 Git 观察等到 `e1bee0329` 写入，再安全认领；文件观察目前仍无法等待前序已冻结改动提交。
+
 - **剪贴板接口续证（2026-11-20）**：Task `clipboard-original-size`、批次 `d1b98672072b4fc9999a870e52761ae0` 修订 0。两处 Lua 公共接口文件由同批 `ai-settings-disclosure` 编辑。对方就绪后，`claim -Add` 从活动归属冲突变为 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`。本任务将自有差异保存为可复原补丁并撤回自身编辑，允许前序冻结和提交后再认领；保留对方归属。共享文件仍缺少同批次按补丁交接的路径。
 
 - **Dock 层级修复续证（2026-11-20）**：Task `dock-reserve-stay-awake` 的 `watch wait --condition files` 票据 `68703a138607be8614812c5feae02916` 对 `src/app/shell/app_shell_menu.cpp` 返回 `eligible`，Git 仍显示前序 DSH 任务的未提交修改，批次 `c425238ece434a098799197476e18115`、Run `8defbaff90b44d84a3f2aafef62cc329` 当时仍在构建。沿原 Run 等待结果，用户授权接手后复用原验证回执提交 `eb4e3fa5`，再认领本次续修路径。文件票据仍需反映未提交的前序改动。
