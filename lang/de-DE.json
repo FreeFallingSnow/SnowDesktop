@@ -2955,5 +2955,10 @@
   "modules.windowMinimize.administratorTarget": "Administrator",
   "modules.windowMinimize.target32": "32-Bit",
   "modules.windowMinimize.administratorPendingResidency": "Ziele des Administrator-Hilfsprozesses (geladene Module nicht bestätigt)",
-  "modules.windowMinimize.fullscreenSkipped": "Fenster, die im Vollbildmodus ohne Minimieren-Schaltfläche übersprungen wurden"
+  "modules.windowMinimize.fullscreenSkipped": "Fenster, die im Vollbildmodus ohne Minimieren-Schaltfläche übersprungen wurden",
+  "largeIcon.createSelected": "Große Symbole aktivieren",
+  "largeIcon.pickSettings": "Einstellungen für große Symbole übernehmen",
+  "largeIcon.pickSettingsSource": "Klicken Sie auf ein großes Symbol auf dem Desktop. Esc bricht die Auswahl ab.",
+  "core.drag.release_copy_large_icon_settings": "Loslassen: Einstellungen für großes Symbol auf „{0}“ übertragen",
+  "core.drag.with_large_icon_settings_hint": "{0} (Strg halten, um Einstellungen für große Symbole zu kopieren)"
 }

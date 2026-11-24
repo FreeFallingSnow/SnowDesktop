@@ -2955,5 +2955,10 @@
   "modules.windowMinimize.administratorTarget": "管理员",
   "modules.windowMinimize.target32": "32 位",
   "modules.windowMinimize.administratorPendingResidency": "管理员辅助目标（驻留未确认）",
-  "modules.windowMinimize.fullscreenSkipped": "因全屏且没有最小化按钮而跳过 Hook 的窗口"
+  "modules.windowMinimize.fullscreenSkipped": "因全屏且没有最小化按钮而跳过 Hook 的窗口",
+  "largeIcon.createSelected": "将所选项目转为大图标",
+  "largeIcon.pickSettings": "吸取大图标设置",
+  "largeIcon.pickSettingsSource": "点击桌面上的一个大图标，按 Esc 取消。",
+  "core.drag.release_copy_large_icon_settings": "释放：复制大图标设置到「{0}」",
+  "core.drag.with_large_icon_settings_hint": "{0}（按住 Ctrl 可复制大图标设置）"
 }

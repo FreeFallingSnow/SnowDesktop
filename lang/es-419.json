@@ -2955,5 +2955,10 @@
   "modules.windowMinimize.administratorTarget": "Administrador",
   "modules.windowMinimize.target32": "32 bits",
   "modules.windowMinimize.administratorPendingResidency": "Destinos del asistente de administrador (carga sin confirmar)",
-  "modules.windowMinimize.fullscreenSkipped": "Ventanas omitidas por estar en pantalla completa y no tener botón de minimizar"
+  "modules.windowMinimize.fullscreenSkipped": "Ventanas omitidas por estar en pantalla completa y no tener botón de minimizar",
+  "largeIcon.createSelected": "Activar iconos grandes para la selección",
+  "largeIcon.pickSettings": "Tomar la configuración de un icono grande",
+  "largeIcon.pickSettingsSource": "Haz clic en un icono grande del escritorio. Presiona Esc para cancelar.",
+  "core.drag.release_copy_large_icon_settings": "Suelta para copiar la configuración de icono grande a «{0}»",
+  "core.drag.with_large_icon_settings_hint": "{0} (Mantén Ctrl para copiar la configuración de icono grande)"
 }

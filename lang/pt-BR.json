@@ -2955,5 +2955,10 @@
   "modules.windowMinimize.administratorTarget": "Administrador",
   "modules.windowMinimize.target32": "32 bits",
   "modules.windowMinimize.administratorPendingResidency": "Destinos do auxiliar de administrador (carregamento não confirmado)",
-  "modules.windowMinimize.fullscreenSkipped": "Janelas ignoradas por estarem em tela cheia e não terem botão de minimizar"
+  "modules.windowMinimize.fullscreenSkipped": "Janelas ignoradas por estarem em tela cheia e não terem botão de minimizar",
+  "largeIcon.createSelected": "Ativar ícones grandes para a seleção",
+  "largeIcon.pickSettings": "Capturar as configurações de um ícone grande",
+  "largeIcon.pickSettingsSource": "Clique em um ícone grande da área de trabalho. Pressione Esc para cancelar.",
+  "core.drag.release_copy_large_icon_settings": "Solte para copiar as configurações de ícone grande para “{0}”",
+  "core.drag.with_large_icon_settings_hint": "{0} (Segure Ctrl para copiar as configurações de ícone grande)"
 }

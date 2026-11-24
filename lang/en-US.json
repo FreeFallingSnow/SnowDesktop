@@ -2955,5 +2955,10 @@
   "modules.windowMinimize.administratorTarget": "Administrator",
   "modules.windowMinimize.target32": "32-bit",
   "modules.windowMinimize.administratorPendingResidency": "Administrator helper targets (residency unconfirmed)",
-  "modules.windowMinimize.fullscreenSkipped": "Windows skipped because they are fullscreen and have no Minimize button"
+  "modules.windowMinimize.fullscreenSkipped": "Windows skipped because they are fullscreen and have no Minimize button",
+  "largeIcon.createSelected": "Enable large icons for selection",
+  "largeIcon.pickSettings": "Sample large icon settings",
+  "largeIcon.pickSettingsSource": "Click a large icon on the desktop. Press Esc to cancel.",
+  "core.drag.release_copy_large_icon_settings": "Release: Copy large icon settings to “{0}”",
+  "core.drag.with_large_icon_settings_hint": "{0} (Hold Ctrl to copy large icon settings)"
 }

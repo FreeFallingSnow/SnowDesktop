@@ -2955,5 +2955,10 @@
   "modules.windowMinimize.administratorTarget": "管理者",
   "modules.windowMinimize.target32": "32 ビット",
   "modules.windowMinimize.administratorPendingResidency": "管理者ヘルパーの対象（読み込み未確認）",
-  "modules.windowMinimize.fullscreenSkipped": "全画面表示で最小化ボタンがないためスキップしたウィンドウ"
+  "modules.windowMinimize.fullscreenSkipped": "全画面表示で最小化ボタンがないためスキップしたウィンドウ",
+  "largeIcon.createSelected": "選択項目を大型アイコンにする",
+  "largeIcon.pickSettings": "大型アイコンの設定を取り込む",
+  "largeIcon.pickSettingsSource": "デスクトップの大型アイコンをクリックしてください。Esc キーでキャンセルできます。",
+  "core.drag.release_copy_large_icon_settings": "ドロップ：「{0}」に大型アイコンの設定をコピー",
+  "core.drag.with_large_icon_settings_hint": "{0}（Ctrl キーを押すと大型アイコンの設定をコピー）"
 }

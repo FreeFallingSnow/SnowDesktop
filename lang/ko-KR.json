@@ -2955,5 +2955,10 @@
   "modules.windowMinimize.administratorTarget": "관리자",
   "modules.windowMinimize.target32": "32비트",
   "modules.windowMinimize.administratorPendingResidency": "관리자 도우미 대상(로드 여부 미확인)",
-  "modules.windowMinimize.fullscreenSkipped": "전체 화면에서 최소화 버튼이 없어 건너뛴 창"
+  "modules.windowMinimize.fullscreenSkipped": "전체 화면에서 최소화 버튼이 없어 건너뛴 창",
+  "largeIcon.createSelected": "선택한 항목을 큰 아이콘으로 전환",
+  "largeIcon.pickSettings": "큰 아이콘 설정 가져오기",
+  "largeIcon.pickSettingsSource": "바탕 화면의 큰 아이콘을 클릭하세요. 취소하려면 Esc 키를 누르세요.",
+  "core.drag.release_copy_large_icon_settings": "놓기: ‘{0}’에 큰 아이콘 설정 복사",
+  "core.drag.with_large_icon_settings_hint": "{0} (Ctrl 키를 누르면 큰 아이콘 설정 복사)"
 }

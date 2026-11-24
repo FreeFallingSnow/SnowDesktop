@@ -2955,5 +2955,10 @@
   "modules.windowMinimize.administratorTarget": "Administrateur",
   "modules.windowMinimize.target32": "32 bits",
   "modules.windowMinimize.administratorPendingResidency": "Cibles de l’assistant administrateur (chargement non confirmé)",
-  "modules.windowMinimize.fullscreenSkipped": "Fenêtres ignorées en plein écran sans bouton de réduction"
+  "modules.windowMinimize.fullscreenSkipped": "Fenêtres ignorées en plein écran sans bouton de réduction",
+  "largeIcon.createSelected": "Activer les grandes icônes pour la sélection",
+  "largeIcon.pickSettings": "Prélever les réglages d’une grande icône",
+  "largeIcon.pickSettingsSource": "Cliquez sur une grande icône du bureau. Appuyez sur Échap pour annuler.",
+  "core.drag.release_copy_large_icon_settings": "Relâchez pour copier les réglages de grande icône vers « {0} »",
+  "core.drag.with_large_icon_settings_hint": "{0} (Maintenez Ctrl pour copier les réglages de grande icône)"
 }

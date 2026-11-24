@@ -2955,5 +2955,10 @@
   "modules.windowMinimize.administratorTarget": "系統管理員",
   "modules.windowMinimize.target32": "32 位元",
   "modules.windowMinimize.administratorPendingResidency": "系統管理員輔助目標（尚未確認常駐）",
-  "modules.windowMinimize.fullscreenSkipped": "因全螢幕且沒有最小化按鈕而略過 Hook 的視窗"
+  "modules.windowMinimize.fullscreenSkipped": "因全螢幕且沒有最小化按鈕而略過 Hook 的視窗",
+  "largeIcon.createSelected": "將所選項目轉為大圖示",
+  "largeIcon.pickSettings": "擷取大圖示設定",
+  "largeIcon.pickSettingsSource": "點選桌面上的一個大圖示，按 Esc 取消。",
+  "core.drag.release_copy_large_icon_settings": "放開：將大圖示設定複製到「{0}」",
+  "core.drag.with_large_icon_settings_hint": "{0}（按住 Ctrl 可複製大圖示設定）"
 }
