@@ -1770,10 +1770,15 @@ void DesktopApp::OnMouseMoveAt(
                     collectedKeysCache_.count(ToUpperInvariant(item->layoutKey)))
                     continue;
                 if (PtInRect(&item->bounds, point))
+                {
+                    RECT paintBounds = item->bounds;
+                    // The centered hover stroke reaches one pixel outside the cell.
+                    InflateRect(&paintBounds, 1, 1);
                     return {
-                        item, item, 7, 0, false, nullptr, item->bounds,
+                        item, item, 7, 0, false, nullptr, paintBounds,
                         snowdesktop::widget_composition_layer_rules::
                             PointerVisualLayer::Background };
+                }
             }
 
             return {};

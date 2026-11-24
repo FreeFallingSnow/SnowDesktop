@@ -22,8 +22,6 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
     if (canDrop && !removeDockPin && !handoff)
         preview = GetCachedDesktopDropPreview(true, sources, target, slot, region, mods, point);
 
-    const bool desktopLayoutDrop = canDrop && target == GetDesktopGrid() &&
-        !removeDockPin && !handoff && !preview.fileBacked;
     const bool submitVisualEnd = !removeDockPin && !settingsSource && (handoff || preview.fileBacked);
     if (submitVisualEnd)
         HoldReleasingFileSources(handoff ? DropActionFromClipboardEffect(ChooseDropEffect(keys, allowed)) : preview.action);
@@ -94,16 +92,7 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
         if (!removeDockPin) ApplyPageMapping();
         LayoutItems();
     }
-    if (hwnd_)
-    {
-        // After layout and selection settle, present both desktop layers at
-        // the release point, even when the icon returns to the same cell.
-        if (desktopLayoutDrop)
-            lastMousePoint_ = point;
-        InvalidateRect(hwnd_, nullptr, FALSE);
-        if (desktopLayoutDrop && !compositionPaintInProgress_)
-            UpdateWindow(hwnd_);
-    }
+    InvalidateRect(hwnd_, nullptr, FALSE);
     return effect;
 }
 
