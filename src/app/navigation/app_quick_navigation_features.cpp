@@ -24,6 +24,7 @@
 
 namespace
 {
+constexpr int kListTextInsetDip = 8;
 constexpr const char* kScopeKeys[] = {"quickNav.type.all", "quickNav.type.app", "quickNav.type.file",
     "quickNav.type.web", "quickNav.type.settings", "quickNav.type.run", "quickNav.type.calculator"};
 constexpr const wchar_t* kScopeGlyphs[] = {L"\uF690", L"\uF123", L"\uF419", L"\uF45B", L"\uF6AA", L"\uF583", L"\uE233"};
@@ -622,7 +623,7 @@ void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
             PtInRect(&bounds, quickNavigation_->lastMousePoint);
         if (row.kind == Kind::Header)
         {
-            bounds.left += QuickNavScale(8);
+            bounds.left += QuickNavScale(kListTextInsetDip);
             DrawD2DTextEllipsis(context, row.title, bounds, quickNavigation_->pathTextFormat.Get(), ToD2DColor(theme.headerText));
             continue;
         }
@@ -692,7 +693,8 @@ void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
             DrawD2DRoundedRectangle(context, prefix, static_cast<float>(QuickNavScale(4)),
                 ToD2DColor(theme.searchBg, .3f), ToD2DColor(theme.searchBorder, .32f));
             RECT prefixText = prefix; prefixText.left += QuickNavScale(6); prefixText.right -= QuickNavScale(6);
-            DrawQuickNavigationCenteredText(context, row.detail, prefixText, quickNavigation_->pathTextFormat.Get(), ToD2DColor(theme.appTypeText));
+            DrawD2DTextEllipsis(context, row.detail, prefixText, quickNavigation_->pathTextFormat.Get(),
+                ToD2DColor(theme.appTypeText), DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             title.right = prefix.left - QuickNavScale(12);
             DrawQuickNavigationCenteredText(context, row.title, title, quickNavigation_->itemTextFormat.Get(), ToD2DColor(selected ? theme.selectedText : theme.appNameText));
             continue;
@@ -854,10 +856,14 @@ void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
     {
         if (quickNavigation_->collapsed && GetQuickNavigationEffectiveSearchText().empty())
         {
-            const int padding = QuickNavScale(std::max(4, navigationSettings_.layout.padding - 8));
-            RECT hint = MakeRect(quickNavigation_->rect.left + padding, quickNavigation_->rect.bottom - QuickNavScale(32),
-                quickNavigation_->rect.right - padding, quickNavigation_->rect.bottom - QuickNavScale(8));
-            DrawD2DTextEllipsis(context, _LW(quickNavigation_->searchType == QuickNavigationSearchType::All ? "quickNav.search.shortcutHint" : "quickNav.search.scopedHint"),
+            const RECT panel = quickNavigation_->rect;
+            const RECT search = GetQuickNavigationSearchRect(panel);
+            const RECT content = GetQuickNavigationContentRect(panel);
+            const bool allSources = quickNavigation_->searchType == QuickNavigationSearchType::All;
+            const int inset = QuickNavScale(kListTextInsetDip);
+            const LONG footerTop = allSources ? std::max(search.bottom, content.bottom) : search.bottom;
+            const RECT hint = MakeRect(content.left + inset, footerTop, content.right - inset, panel.bottom);
+            DrawD2DTextEllipsis(context, _LW(allSources ? "quickNav.search.shortcutHint" : "quickNav.search.scopedHint"),
                 hint, quickNavigation_->pathTextFormat.Get(), ToD2DColor(theme.appTypeText));
         }
         return;
