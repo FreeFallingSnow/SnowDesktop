@@ -26,6 +26,29 @@ namespace
 
 using Microsoft::WRL::ComPtr;
 
+std::wstring ResolveDuplicateCopyName(const ShellFileOperationStep& step)
+{
+    const auto& source = step.sources.front();
+    const auto& suffixes = *step.duplicateCopySuffixes;
+    const auto* filename = PathFindFileNameW(source.c_str());
+    const DWORD attributes = GetFileAttributesW(source.c_str());
+    const bool directory = attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY);
+    const auto* extension = directory ? filename + wcslen(filename) : PathFindExtensionW(filename);
+    const std::wstring stem(filename, extension);
+    const auto folder = std::filesystem::path(step.destination);
+    const auto numberPosition = suffixes.numbered.find(L"{0}");
+    for (int index = 1; index < 1000; ++index)
+    {
+        auto suffix = index == 1 ? suffixes.first : suffixes.numbered;
+        if (index != 1 && numberPosition != std::wstring::npos)
+            suffix.replace(numberPosition, 3, std::to_wstring(index));
+        auto name = stem + suffix + extension;
+        if (GetFileAttributesW((folder / name).c_str()) == INVALID_FILE_ATTRIBUTES)
+            return name;
+    }
+    return stem + suffixes.last + extension;
+}
+
 class FileDropDataObject final : public IDataObject
 {
 public:
@@ -887,11 +910,14 @@ bool ShellFileOperationWorker::Execute(
             continue;
         }
 
-        if (request.result && (step.function == FO_COPY || step.function == FO_MOVE))
+        const bool namedCopy = step.function == FO_COPY && step.duplicateCopySuffixes;
+        if (namedCopy || (request.result && (step.function == FO_COPY || step.function == FO_MOVE)))
         {
+            const auto result = request.result ? request.result : std::make_shared<ShellFileOperationResult>();
+            const auto name = namedCopy ? ResolveDuplicateCopyName(step) : std::wstring{};
             HRESULT status = S_OK;
             bool shellHandledErrors = false;
-            if (!ExecuteTrackedDropStep(step, request.result, status, shellHandledErrors))
+            if (!ExecuteTrackedDropStep(step, result, status, shellHandledErrors, name))
             {
                 allSucceeded = false;
                 if (!shellHandledErrors || isCancellation(static_cast<DWORD>(status)))

@@ -50,7 +50,7 @@ struct Services
     std::function<bool(const std::wstring&)> isStaging;
     std::function<bool(const std::wstring&, const std::wstring&)> pathsEqual;
     std::function<std::wstring(std::wstring)> normalize;
-    std::function<std::wstring(const std::wstring&, const std::wstring&, int)> copyName;
+    std::shared_ptr<const ShellDuplicateCopySuffixes> duplicateCopySuffixes;
     std::wstring shortcutName;
     std::function<bool(ShellFileOperationRequest, Completion, bool)> dispatch;
 };
@@ -58,7 +58,7 @@ struct Services
 // Desktop location, localized names and the UI queue are host services. Actual
 // request construction, Shell IO and in-flight shortcut reservations are shared.
 inline bool Materialize(const DragSourceList& sourceList, DropAction action,
-    bool duplicateDesktopCopyNames, const std::wstring& desktopPath,
+    const std::wstring& desktopPath,
     dock_drop_rules::MaterializedPathReservations& reservations, const Services& services,
     std::unordered_map<size_t, std::wstring>* createdPathsBySource,
     Completion completion, bool executeSynchronously,
@@ -80,43 +80,6 @@ inline bool Materialize(const DragSourceList& sourceList, DropAction action,
     std::unordered_set<std::wstring> reservedDestinations;
     auto materializedPathReservations =
         std::make_shared<std::vector<std::wstring>>();
-    auto makeUniqueCopyPath = [&](const std::wstring& path) {
-        const wchar_t* fileName = PathFindFileNameW(path.c_str());
-        DWORD attrs = GetFileAttributesW(path.c_str());
-        bool isDir = attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY);
-
-        std::wstring stem = fileName ? fileName : L"";
-        std::wstring ext;
-        if (!isDir)
-        {
-            wchar_t stemBuf[MAX_PATH]{};
-            wcscpy_s(stemBuf, stem.c_str());
-            PathRemoveExtensionW(stemBuf);
-            stem = stemBuf;
-            const wchar_t* extPtr = PathFindExtensionW(fileName);
-            ext = extPtr ? extPtr : L"";
-        }
-
-        for (int i = 1; i < 1000; ++i)
-        {
-            std::wstring name = services.copyName(stem, ext, i);
-            wchar_t dst[MAX_PATH]{};
-            PathCombineW(dst, desktopPath.c_str(), name.c_str());
-            const std::wstring candidate = dst;
-            if (GetFileAttributesW(dst) == INVALID_FILE_ATTRIBUTES &&
-                !reservedDestinations.contains(
-                    services.normalize(candidate)))
-            {
-                reservedDestinations.insert(
-                    services.normalize(candidate));
-                return std::wstring(dst);
-            }
-        }
-        wchar_t fallback[MAX_PATH]{};
-        PathCombineW(fallback, desktopPath.c_str(), services.copyName(stem, ext, 1000).c_str());
-        return std::wstring(fallback);
-    };
-
     auto makeUniqueShortcutPath = [&](const std::wstring& path) {
         const wchar_t* fileName = PathFindFileNameW(path.c_str());
         wchar_t stemBuf[MAX_PATH]{};
@@ -200,17 +163,18 @@ inline bool Materialize(const DragSourceList& sourceList, DropAction action,
         std::vector<std::wstring> normalCopies;
         for (const auto& path : paths)
         {
-            if (duplicateDesktopCopyNames && sameParentAsDesktop(path))
+            if (services.duplicateCopySuffixes && sameParentAsDesktop(path))
             {
                 steps.push_back({
                     FO_COPY,
                     { path },
-                    makeUniqueCopyPath(path),
+                    desktopPath,
                     static_cast<FILEOP_FLAGS>(
                         FOF_NOCONFIRMATION |
                         FOF_NOCONFIRMMKDIR |
                         FOF_NOERRORUI |
-                        FOF_RENAMEONCOLLISION) });
+                        FOF_RENAMEONCOLLISION),
+                    services.duplicateCopySuffixes });
             }
             else
                 normalCopies.push_back(path);

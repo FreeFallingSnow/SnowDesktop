@@ -570,17 +570,18 @@ bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
     services.isStaging = snowdesktop::drop_staging::Contains;
     services.pathsEqual = PathsEqualInsensitive;
     services.normalize = ToUpperInvariant;
-    services.copyName = [](const std::wstring& stem, const std::wstring& ext, int index) {
-        return stem + (index <= 1 ? std::wstring(_LW("app.grid.copy_suffix")) :
-            index == 1000 ? std::wstring(_LW("app.grid.copy_suffix_1000")) :
-                _LFW("app.grid.copy_suffix_num", std::to_wstring(index))) + ext;
-    };
+    if (duplicateDesktopCopyNames)
+        services.duplicateCopySuffixes = std::make_shared<const snowdesktop::ShellDuplicateCopySuffixes>(
+            snowdesktop::ShellDuplicateCopySuffixes{
+                _LW("app.grid.copy_suffix"),
+                _LW("app.grid.copy_suffix_num"),
+                _LW("app.grid.copy_suffix_1000")});
     services.shortcutName = _LW("widget.shortcut");
     services.dispatch = [this](auto request, auto done, bool sync) {
         return DispatchMaterializedFileOperation(std::move(request), std::move(done), sync);
     };
     return snowdesktop::desktop_file_materialization::Materialize(sourceList, action,
-        duplicateDesktopCopyNames, TrimTrailingPathSeparators(desktopPath),
+        TrimTrailingPathSeparators(desktopPath),
         pendingDesktopMaterializedPaths_, services, createdPathsBySource,
         std::move(completion), executeSynchronously, std::move(result));
 }

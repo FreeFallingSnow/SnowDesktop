@@ -69,7 +69,7 @@ public:
 
 inline bool ExecuteTrackedDropStep(const ShellFileOperationStep& step,
     const std::shared_ptr<ShellFileOperationResult>& result, HRESULT& failure,
-    bool& shellHandledErrors)
+    bool& shellHandledErrors, const std::wstring& requestedName)
 {
     shellHandledErrors = false;
     using namespace Microsoft::WRL;
@@ -84,12 +84,15 @@ inline bool ExecuteTrackedDropStep(const ShellFileOperationStep& step,
     if (FAILED(failure)) return false;
 
     auto folder = std::filesystem::path(step.destination);
-    std::wstring name;
+    auto name = requestedName;
     const DWORD attributes = GetFileAttributesW(folder.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_DIRECTORY))
     {
-        // Exact copy names are used only for a single desktop duplicate.
-        if (step.sources.size() != 1) { failure = HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND); return false; }
+        if (!name.empty() || step.sources.size() != 1)
+        {
+            failure = HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND);
+            return false;
+        }
         name = folder.filename().wstring();
         folder = folder.parent_path();
     }

@@ -20,6 +20,14 @@ namespace snowdesktop
 namespace external_drop_content { struct ShellFileSource; }
 namespace file_history { class History; struct Result; struct Entry; struct Description; }
 
+/** @brief Localized suffixes captured when submitting a desktop duplicate. */
+struct ShellDuplicateCopySuffixes
+{
+    std::wstring first;
+    std::wstring numbered;
+    std::wstring last;
+};
+
 /** @brief One path-based Shell operation executed by the worker. */
 struct ShellFileOperationStep
 {
@@ -27,6 +35,9 @@ struct ShellFileOperationStep
     std::vector<std::wstring> sources;
     std::wstring destination;
     FILEOP_FLAGS flags = 0;
+    // A single-source copy into destination. The worker resolves the name
+    // after earlier queued requests have finished creating their files.
+    std::shared_ptr<const ShellDuplicateCopySuffixes> duplicateCopySuffixes{};
 };
 
 /** @brief One Shell-link creation executed by the worker STA. */
