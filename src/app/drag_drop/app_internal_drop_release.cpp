@@ -15,9 +15,9 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
     const auto sources = dragSession_.SourceList();
     const auto items = dragSession_.Items();
     const auto* targetIcon = handoff && target == GetDesktopGrid() ? HitTestIcon(point) : nullptr;
-    const auto* desktop = targetIcon ? targetIcon->GetDesktopItem() : nullptr;
-    const auto* settingsSource = desktop && !rightButtonItemDrag_ && mods == MK_CONTROL
-        ? FindLargeIconSettingsDragSource(sources, *desktop) : nullptr;
+    const auto* targetDesktopItem = targetIcon ? targetIcon->GetDesktopItem() : nullptr;
+    const auto* settingsSource = targetDesktopItem && !rightButtonItemDrag_ && mods == MK_CONTROL
+        ? FindLargeIconSettingsDragSource(sources, *targetDesktopItem) : nullptr;
     DropPreviewList preview;
     if (canDrop && !removeDockPin && !handoff)
         preview = GetCachedDesktopDropPreview(true, sources, target, slot, region, mods, point);
@@ -51,7 +51,7 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
         const ItemDrop drop{items, sources, preview, slot, region, mods, point, allowed};
         if (settingsSource)
         {
-            const auto index = FindItemIndexByKey(desktop->layoutKey);
+            const auto index = FindItemIndexByKey(targetDesktopItem->layoutKey);
             if ((allowed & DROPEFFECT_COPY) && ApplyLargeIconSettings(*settingsSource, {index}))
                 effect = DROPEFFECT_COPY;
             save = false; // The large-icon settings commit owns persistence.
