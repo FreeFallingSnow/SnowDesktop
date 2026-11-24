@@ -848,6 +848,7 @@ struct DesktopBackdropCompositor::Impl
     bool synchronizedStableWindowRegion = false;
     std::size_t synchronizedPanelCount = 0;
     RECT synchronizedOcclusionRect{};
+    RECT synchronizedPopupDisplayRegion{};
     SIZE synchronizedWindowSize{};
     UINT synchronizedWindowDpi = 0;
 
@@ -1120,11 +1121,19 @@ struct DesktopBackdropCompositor::Impl
         const UINT windowDpi = GetDpiForWindow(backdropWindow);
         const bool windowGeometryKnown = GetWindowRect(backdropWindow, &windowFrame) && windowDpi != 0;
         const SIZE windowSize{windowFrame.right - windowFrame.left, windowFrame.bottom - windowFrame.top};
-        if (fenceAllocation && !windowGeometryKnown) return false;
+        const bool clipToOutput = popupMode && !IsRectEmpty(&popupDisplayBounds);
+        if ((fenceAllocation || clipToOutput) && !windowGeometryKnown) return false;
+        RECT popupDisplayRegion{};
+        if (clipToOutput)
+        {
+            popupDisplayRegion = popupDisplayBounds;
+            OffsetRect(&popupDisplayRegion, -windowFrame.left, -windowFrame.top);
+        }
         bool inputsMatch = panelRegionSnapshotValid && !animationPathRegionExpanded &&
             synchronizedStableWindowRegion == fenceAllocation &&
             windowGeometryKnown && synchronizedPanelCount == panels.size() &&
             EqualRect(&synchronizedOcclusionRect, &occlusionRect) &&
+            EqualRect(&synchronizedPopupDisplayRegion, &popupDisplayRegion) &&
             synchronizedWindowSize.cx == windowSize.cx && synchronizedWindowSize.cy == windowSize.cy &&
             synchronizedWindowDpi == windowDpi;
         if (inputsMatch && !fenceAllocation)
@@ -1159,6 +1168,7 @@ struct DesktopBackdropCompositor::Impl
             synchronizedPanelCount = panels.size();
             synchronizedStableWindowRegion = fenceAllocation;
             synchronizedOcclusionRect = occlusionRect;
+            synchronizedPopupDisplayRegion = popupDisplayRegion;
             synchronizedWindowSize = windowSize;
             synchronizedWindowDpi = windowDpi;
             panelRegionSnapshotValid = true;
@@ -1210,6 +1220,15 @@ struct DesktopBackdropCompositor::Impl
             HRGN excluded = CreateRectRgnIndirect(&exclusion);
             const bool ok = excluded && CombineRgn(panelRegion, panelRegion, excluded, RGN_DIFF) != ERROR;
             if (excluded) DeleteObject(excluded);
+            if (!ok) { DeleteObject(panelRegion); return false; }
+        }
+        if (clipToOutput)
+        {
+            // The visual clip limits the result. Bound the native sampling
+            // fence too, so the blur halo cannot reserve space on another output.
+            HRGN displayRegion = CreateRectRgnIndirect(&popupDisplayRegion);
+            const bool ok = displayRegion && CombineRgn(panelRegion, panelRegion, displayRegion, RGN_AND) != ERROR;
+            if (displayRegion) DeleteObject(displayRegion);
             if (!ok) { DeleteObject(panelRegion); return false; }
         }
         HRGN currentRegion = CreateRectRgn(0, 0, 0, 0);

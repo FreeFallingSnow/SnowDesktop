@@ -52,23 +52,33 @@ bool ContainsRect(const RECT& outer, const RECT& inner)
         outer.right >= inner.right && outer.bottom >= inner.bottom;
 }
 
+RECT ContainingOutputBounds(const RECT& screenContent)
+{
+    if (IsRectEmpty(&screenContent)) return {};
+    MONITORINFO monitor{sizeof(monitor)};
+    const HMONITOR output = MonitorFromRect(&screenContent, MONITOR_DEFAULTTONULL);
+    if (!output || !GetMonitorInfoW(output, &monitor) ||
+        !ContainsRect(monitor.rcMonitor, screenContent))
+        return {};
+    return monitor.rcMonitor;
+}
+
 RECT ResolveFloatingPopupWindowFrame(const RECT& desktop, RECT content)
 {
     OffsetRect(&content, desktop.left, desktop.top);
-    MONITORINFO monitor{sizeof(monitor)};
-    if (!GetMonitorInfoW(MonitorFromRect(&content, MONITOR_DEFAULTTONULL), &monitor) ||
-        !ContainsRect(monitor.rcMonitor, content))
+    const RECT output = ContainingOutputBounds(content);
+    if (IsRectEmpty(&output))
         return desktop;
 
     // The glass helper adds a sampling halo to the HWND. When the content
     // fits, reserve that halo inside this display along the interior edges.
-    RECT frame = monitor.rcMonitor;
+    RECT frame = output;
     constexpr LONG halo = snowdesktop::blur_sampling::kMaximumBackdropMargin;
     if (frame.left > desktop.left) frame.left += halo;
     if (frame.top > desktop.top) frame.top += halo;
     if (frame.right < desktop.right) frame.right -= halo;
     if (frame.bottom < desktop.bottom) frame.bottom -= halo;
-    return ContainsRect(frame, content) ? frame : monitor.rcMonitor;
+    return ContainsRect(frame, content) ? frame : output;
 }
 
 struct MenuHostZOrderSnapshot
@@ -1228,6 +1238,23 @@ void DesktopApp::UpdateCollectionPopupBackdrop(bool submit)
         collectionPopupBackdropCompositor_.SetPopupTopmost(topmost);
         collectionPopupBackdropCompositor_.Reattach(
             floatingPopupHwnd_);
+    }
+    RECT samplingOutput{};
+    if (collectionPanel && popup->type == DesktopWidgetType::Collection &&
+        !popupAnchoredToDock_ && !dockFolderPopupOpen_ && !dockTrayPopup_ &&
+        !IsLuaPanelHostedByFloatingWindow() && !IsLuaStackIndicatorVisible())
+    {
+        // The reserved body includes both poses of a resize. Limit only the
+        // helper's filter input when the entire desktop popup fits one output.
+        RECT screenContent = floatingPopupContentBounds_;
+        OffsetRect(&screenContent, virtualLeft_, virtualTop_);
+        samplingOutput = ContainingOutputBounds(screenContent);
+    }
+    if (!collectionPopupBackdropCompositor_.SetPopupWindowPadding({}, samplingOutput) &&
+        !collectionPopupBackdropCompositor_.SetPopupWindowPadding({}, {}))
+    {
+        RecoverFloatingPopupCompositionFailure(L"Position popup backdrop", E_FAIL);
+        return;
     }
     TraceMenuHostZOrderTransition(
         zOrderStage, menuZOrderBefore,
