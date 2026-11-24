@@ -16,6 +16,7 @@
 #include <wrl/client.h>
 
 #include <cstring>
+#include <filesystem>
 #include <iterator>
 #include <utility>
 
@@ -172,10 +173,27 @@ bool SafeInvokeContextMenu(
     }
 }
 
+std::wstring FileOpenWorkingDirectory(const std::wstring& path)
+{
+    const std::filesystem::path file(path);
+    if (!file.is_absolute()) return {};
+
+    const auto extension = file.extension().wstring();
+    if (_wcsicmp(extension.c_str(), L".lnk") == 0 ||
+        _wcsicmp(extension.c_str(), L".url") == 0)
+        return {};
+
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY))
+        return {};
+    return file.parent_path().wstring();
+}
+
 std::optional<bool> InvokeShellItemOpen(
     HWND owner,
     PCIDLIST_ABSOLUTE absolutePidl,
     int showCommand,
+    const std::wstring& directory,
     HANDLE acceptedEvent)
 {
     if (!absolutePidl)
@@ -209,8 +227,10 @@ std::optional<bool> InvokeShellItemOpen(
 
     // A supported handler owns the attempt, including failure. Falling back
     // after a rejected invocation could load a full menu or execute twice.
+    const std::wstring invocationDirectory =
+        directory.empty() ? DesktopShellInvocationDirectory() : directory;
     const bool opened = shell_open_command::Invoke(
-        contextMenu.Get(), validOwner, showCommand, acceptedEvent);
+        contextMenu.Get(), validOwner, showCommand, invocationDirectory, acceptedEvent);
     const DWORD error = GetLastError();
     contextMenu.Reset();
     parentFolder.Reset();
@@ -226,7 +246,7 @@ bool ExecuteOpenVerb(
     ULONG launchMask,
     decltype(&ShellExecuteExW) execute,
     HANDLE acceptedEvent,
-    const wchar_t* directory = nullptr)
+    const std::wstring& directory)
 {
     SHELLEXECUTEINFOW executeInfo{};
     executeInfo.cbSize = sizeof(executeInfo);
@@ -234,7 +254,7 @@ bool ExecuteOpenVerb(
     executeInfo.hwnd = owner && IsWindow(owner) ? owner : nullptr;
     executeInfo.lpVerb = L"open";
     executeInfo.lpFile = path.empty() ? nullptr : path.c_str();
-    executeInfo.lpDirectory = directory;
+    executeInfo.lpDirectory = directory.empty() ? nullptr : directory.c_str();
     if (absolutePidl)
     {
         executeInfo.fMask |= SEE_MASK_IDLIST;
@@ -250,6 +270,7 @@ bool ExecuteShellOpen(
     PCIDLIST_ABSOLUTE absolutePidl,
     int showCommand,
     ULONG launchMask,
+    const std::wstring& directory,
     HANDLE acceptedEvent)
 {
     if (path.empty() && !absolutePidl)
@@ -265,7 +286,7 @@ bool ExecuteShellOpen(
         SHParseDisplayName(path.c_str(), nullptr, &parsedPidl, 0, nullptr);
         absolutePidl = parsedPidl;
     }
-    const auto opened = InvokeShellItemOpen(owner, absolutePidl, showCommand, acceptedEvent);
+    const auto opened = InvokeShellItemOpen(owner, absolutePidl, showCommand, directory, acceptedEvent);
     if (opened.has_value())
     {
         const DWORD error = GetLastError();
@@ -277,7 +298,7 @@ bool ExecuteShellOpen(
     // Protocols or Shell objects without IContextMenu still use their
     // registered Open handler. No fallback follows a supported failed command.
     const bool executed = ExecuteOpenVerb(
-        owner, path, absolutePidl, showCommand, launchMask, &ShellExecuteExW, acceptedEvent);
+        owner, path, absolutePidl, showCommand, launchMask, &ShellExecuteExW, acceptedEvent, directory);
     const DWORD error = GetLastError();
     CoTaskMemFree(parsedPidl);
     SetLastError(error);
@@ -287,7 +308,7 @@ bool ExecuteShellOpen(
 } // namespace
 
 bool shell_open_command::Invoke(IContextMenu* contextMenu, HWND owner, int showCommand,
-    HANDLE acceptedEvent)
+    const std::wstring& directory, HANDLE acceptedEvent)
 {
     if (!contextMenu)
         return false;
@@ -361,11 +382,8 @@ bool shell_open_command::Invoke(IContextMenu* contextMenu, HWND owner, int showC
         invoke.lpVerb = "open";
         invoke.lpVerbW = L"open";
     }
-    const std::wstring invocationDirectory =
-        DesktopShellInvocationDirectory();
     std::string invocationDirectoryA;
-    SetShellInvocationDirectory(
-        invoke, invocationDirectory, invocationDirectoryA);
+    SetShellInvocationDirectory(invoke, directory, invocationDirectoryA);
     invoke.nShow = showCommand;
 
     const bool opened = SafeInvokeContextMenu(
@@ -601,7 +619,7 @@ bool shell_launch_process::ExecuteRequestWithApi(
             const auto directory = DesktopShellInvocationDirectory();
             api.allow(ASFW_ANY);
             return ExecuteOpenVerb(validOwner, path, nullptr, request.showCommand,
-                openMask, api.execute, acceptedEvent, directory.empty() ? nullptr : directory.c_str());
+                openMask, api.execute, acceptedEvent, directory);
         }
 
         const auto pidl = request.absolutePidl.empty() ? nullptr :
@@ -610,7 +628,13 @@ bool shell_launch_process::ExecuteRequestWithApi(
         if (api.open)
             return AcknowledgeOpen(
                 api.open(validOwner, path, pidl, request.showCommand, openMask), acceptedEvent);
-        return ExecuteShellOpen(validOwner, path, pidl, request.showCommand, openMask, acceptedEvent);
+
+        // Mapped and preview entries pass a filesystem path. Desktop items
+        // already carry their Shell identity and keep the desktop context.
+        const std::wstring directory = request.action == Action::OpenWithShortcutPolicy && !pidl
+            ? FileOpenWorkingDirectory(path) : std::wstring{};
+        return ExecuteShellOpen(
+            validOwner, path, pidl, request.showCommand, openMask, directory, acceptedEvent);
     }
     std::wstring executable = path;
     std::wstring parameters;
