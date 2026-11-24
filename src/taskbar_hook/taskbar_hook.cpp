@@ -880,7 +880,8 @@ public:
             }
             else if (type == L"Taskbar.TaskbarFrame")
             {
-                RegisterTaskbarFrame(element.Handle, FromHandle<wux::FrameworkElement>(element.Handle));
+                if (const auto frame = TryFromHandle<wux::FrameworkElement>(element.Handle))
+                    RegisterTaskbarFrame(element.Handle, frame);
             }
             else if (type == winrt::name_of<wux::Shapes::Rectangle>())
             {
@@ -1427,12 +1428,14 @@ private:
     }
 
     template<typename T>
-    T FromHandle(InstanceHandle handle)
+    T TryFromHandle(InstanceHandle handle) const noexcept
     {
+        // A cached handle can outlive the diagnostics reference to its element.
         wf::IInspectable inspectable{nullptr};
-        winrt::check_hresult(diagnostics_->GetIInspectableFromHandle(handle,
-            reinterpret_cast<::IInspectable**>(winrt::put_abi(inspectable))));
-        return inspectable.as<T>();
+        if (FAILED(diagnostics_->GetIInspectableFromHandle(handle,
+                reinterpret_cast<::IInspectable**>(winrt::put_abi(inspectable)))))
+            return nullptr;
+        return inspectable.try_as<T>();
     }
 
     static wux::FrameworkElement FindTaskbarFrame(wux::FrameworkElement element)
@@ -1468,7 +1471,8 @@ private:
         // Retain the source handles until their own Remove notifications.
         for (const auto sourceHandle : xamlSources_)
         {
-            const auto source = FromHandle<wuxh::DesktopWindowXamlSource>(sourceHandle);
+            const auto source = TryFromHandle<wuxh::DesktopWindowXamlSource>(sourceHandle);
+            if (!source) continue;
             wux::UIElement content{nullptr};
             try
             {
@@ -1482,8 +1486,9 @@ private:
                 continue;
 
             HWND xamlWindow = nullptr;
-            winrt::check_hresult(source.as<IDesktopWindowXamlSourceNative>()
-                ->get_WindowHandle(&xamlWindow));
+            const auto nativeSource = source.try_as<IDesktopWindowXamlSourceNative>();
+            if (!nativeSource || FAILED(nativeSource->get_WindowHandle(&xamlWindow)) || !xamlWindow)
+                continue;
             HWND taskbar = GetAncestor(xamlWindow, GA_PARENT);
             wchar_t type[64]{};
             GetClassNameW(taskbar, type, 64);
@@ -1521,19 +1526,20 @@ private:
     void RegisterTaskbarControl(InstanceHandle parentHandle,
         InstanceHandle controlHandle, bool border)
     {
-        const auto parent = FromHandle<wux::FrameworkElement>(parentHandle);
+        const auto parent = TryFromHandle<wux::FrameworkElement>(parentHandle);
         const auto frame = FindTaskbarFrame(parent);
         if (!frame)
             return;
         InstanceHandle frameHandle = 0;
-        winrt::check_hresult(diagnostics_->GetHandleFromIInspectable(
-            reinterpret_cast<::IInspectable*>(winrt::get_abi(frame)),
-            &frameHandle));
+        if (FAILED(diagnostics_->GetHandleFromIInspectable(
+                reinterpret_cast<::IInspectable*>(winrt::get_abi(frame)), &frameHandle)))
+            return;
+        const auto shape = TryFromHandle<wux::Shapes::Shape>(controlHandle);
+        if (!shape) return;
         RegisterTaskbarFrame(frameHandle, frame);
         auto iterator = taskbars_.find(frameHandle);
         if (iterator == taskbars_.end())
             return;
-        auto shape = FromHandle<wux::Shapes::Shape>(controlHandle);
         ControlInfo& control = border
             ? iterator->second.border : iterator->second.background;
         if (control.control) RestoreControl(control);
