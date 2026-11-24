@@ -349,6 +349,16 @@ winrt::com_ptr<GaussianBlurEffect> MakeBackdropBlur(int radius)
     return blur;
 }
 
+RECT ResolveBackdropSampleBounds(const RECT& allocation, const RECT& envelope,
+    LONG margin, const RECT& output) noexcept
+{
+    const RECT requested = snowdesktop::blur_sampling::SampleBounds(allocation, envelope, margin);
+    RECT bounded{};
+    if (!IsRectEmpty(&output) && IntersectRect(&bounded, &requested, &output))
+        return bounded;
+    return requested;
+}
+
 wuc::CompositionEffectFactory CreateBlurFactory(const wuc::Compositor& compositor, int radius)
 {
     return compositor.CreateEffectFactory(*MakeBackdropBlur(radius));
@@ -556,7 +566,7 @@ struct DesktopBackdropCompositor::Impl
         {
             std::vector<snowdesktop::PanelBackdropIcon> icons;
             RECT base{}, allocation{}, visibleBounds{}, samplingFrame{}, sampleBounds{};
-            RECT animationEnvelope{};
+            RECT animationEnvelope{}, samplingOutput{};
             LONG sampleMargin = 0;
             float corners = 0.0f;
             int blurRadius = 0;
@@ -644,11 +654,11 @@ struct DesktopBackdropCompositor::Impl
             sampleLocal = local;
         }
 
-        void SetBaseSampleBounds()
+        void SetBaseSampleBounds(const RECT& samplingOutput)
         {
             const LONG margin = snowdesktop::blur_sampling::KernelMargin(static_cast<float>(blurRadius));
-            SetSampleBounds(frame, snowdesktop::blur_sampling::SampleBounds(
-                frame, animationFence.value_or(RECT{}), margin), margin);
+            SetSampleBounds(frame, ResolveBackdropSampleBounds(
+                frame, animationFence.value_or(RECT{}), margin, samplingOutput), margin);
         }
 
         void SetTransform(const wfn::float4x4& value)
@@ -2832,6 +2842,7 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
     const auto panel = impl_->FindPanel({}, ownerKey);
     if (panel == impl_->panels.end()) return false;
     namespace blur = snowdesktop::panel_blur;
+    const RECT samplingOutput = impl_->submittedPopupDisplayClip;
     // The HWND allocation is reserved for the Dock's motion envelope. Keep
     // sampling in its pixel coordinates while the animated silhouettes move.
     RECT samplingFrame{};
@@ -2873,7 +2884,7 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
                     impl_->transformedRegionDirty = true;
                 }
                 panel->iconRegionsApplied = false;
-                panel->SetBaseSampleBounds();
+                panel->SetBaseSampleBounds(samplingOutput);
                 impl_->transformedRegionDirty = true;
                 impl_->frameCommitPending = true;
             }
@@ -2893,6 +2904,7 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
         const bool changed = !EqualRect(&cached.base, &panel->frame) ||
             !EqualRect(&cached.samplingFrame, &samplingFrame) ||
             !EqualRect(&cached.animationEnvelope, &animationEnvelope) ||
+            !EqualRect(&cached.samplingOutput, &samplingOutput) ||
             cached.corners != panel->cornerRadius || cached.blurRadius != panel->blurRadius ||
             cached.extendOutline != extendOutline || cached.iconsOnly != iconsOnly ||
             cached.configuredIconRadius != configuredRadius ||
@@ -2905,6 +2917,7 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
             next.base = panel->frame;
             next.samplingFrame = samplingFrame;
             next.animationEnvelope = animationEnvelope;
+            next.samplingOutput = samplingOutput;
             next.corners = panel->cornerRadius;
             next.blurRadius = panel->blurRadius;
             next.extendOutline = extendOutline;
@@ -2925,8 +2938,10 @@ bool DesktopBackdropCompositor::SetPanelIconRegions(std::uintptr_t ownerKey,
             next.sampleMargin = snowdesktop::blur_sampling::KernelMargin(static_cast<float>(maximumRadius));
             RECT displayEnvelope{};
             UnionRect(&displayEnvelope, &next.visibleBounds, &animationEnvelope);
-            next.sampleBounds = snowdesktop::blur_sampling::SampleBounds(
-                next.allocation, displayEnvelope, next.sampleMargin);
+            // Size the backdrop sprite and its mask surfaces from the same
+            // display-local input. Ancestor clips only limit the drawn result.
+            next.sampleBounds = ResolveBackdropSampleBounds(
+                next.allocation, displayEnvelope, next.sampleMargin, samplingOutput);
             if (geometry.outline)
             {
                 winrt::com_ptr<ID2D1Geometry> outline;
@@ -3143,7 +3158,7 @@ bool DesktopBackdropCompositor::UpdatePanel(
             existing->SetOffset({static_cast<float>(frame.left), static_cast<float>(frame.top), 0.0f});
             existing->SetSize(panelSize);
             existing->SetRadius(resolvedRadius);
-            existing->SetBaseSampleBounds();
+            existing->SetBaseSampleBounds(impl_->submittedPopupDisplayClip);
         }
         if (!keepDockSampling && smoothCorners)
         {
@@ -4269,7 +4284,7 @@ void DesktopBackdropCompositor::SetPanelAnimationFence(
     const RECT current = panel->animationFence.value_or(RECT{});
     if (!EqualRect(&previous, &current))
     {
-        if (!panel->iconRegionsApplied) panel->SetBaseSampleBounds();
+        if (!panel->iconRegionsApplied) panel->SetBaseSampleBounds(impl_->submittedPopupDisplayClip);
         // Regional brushes are prepared with their matching masks by the
         // component's icon collection before committing this frame.
         impl_->transformedRegionDirty = true;
