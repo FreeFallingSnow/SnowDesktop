@@ -474,6 +474,10 @@ std::vector<DesktopApp::QuickNavigationListRow> DesktopApp::BuildQuickNavigation
                     rows.push_back({Kind::Scope, static_cast<size_t>(type), ScopeLabel(type),
                         Utf8ToWide(navigationSettings_.prefixes[static_cast<size_t>(type) - 1]), {}, true});
         }
+        else if (quickNavigation_->collapsed)
+        {
+            rows.push_back({Kind::Notice, 0, _LW("quickNav.search.scopedHint"), {}, {}, false});
+        }
         return rows;
     }
     const auto header = [&](std::wstring title) { rows.push_back({Kind::Header, 0, std::move(title), {}, {}, false}); };
@@ -569,6 +573,8 @@ std::vector<DesktopApp::QuickNavigationListRow> DesktopApp::BuildQuickNavigation
 }
 int DesktopApp::QuickNavigationListRowHeight(const QuickNavigationListRow& row) const
 {
+    if (row.kind == QuickNavigationListRow::Kind::Notice)
+        return QuickNavScale(QuickNavigationHintHeightDip(navigationSettings_.layout.secondaryFontSize));
     return QuickNavScale(row.kind == QuickNavigationListRow::Kind::Header ? 28 :
         row.kind == QuickNavigationListRow::Kind::Scope ? 48 : navigationSettings_.layout.resultRowHeight);
 }
@@ -621,10 +627,13 @@ void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
             (quickNavigation_->listSelection < 0 && row.kind == Kind::Scope && i == 1);
         const bool hovered = row.enabled && PtInRect(&content, quickNavigation_->lastMousePoint) &&
             PtInRect(&bounds, quickNavigation_->lastMousePoint);
-        if (row.kind == Kind::Header)
+        if (row.kind == Kind::Header || row.kind == Kind::Notice)
         {
-            bounds.left += QuickNavScale(kListTextInsetDip);
-            DrawD2DTextEllipsis(context, row.title, bounds, quickNavigation_->pathTextFormat.Get(), ToD2DColor(theme.headerText));
+            const int inset = QuickNavScale(kListTextInsetDip);
+            bounds.left += inset;
+            bounds.right -= inset;
+            const auto& textColor = row.kind == Kind::Header ? theme.headerText : theme.appTypeText;
+            DrawD2DTextEllipsis(context, row.title, bounds, quickNavigation_->pathTextFormat.Get(), ToD2DColor(textColor));
             continue;
         }
         DrawD2DRoundedRectangle(context, bounds, static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
@@ -632,10 +641,9 @@ void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
             ToD2DColor(selected ? theme.selectedBorder : hovered ? theme.appRowHoverStroke : theme.resultBorder));
         const int size = QuickNavScale(36);
         RECT icon = MakeRect(bounds.left + QuickNavScale(8), (bounds.top + bounds.bottom - size) / 2, bounds.left + QuickNavScale(8) + size, (bounds.top + bounds.bottom + size) / 2);
-        if (row.kind != Kind::Notice)
-            DrawD2DRoundedRectangle(context, icon, static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-                ToD2DColor(theme.iconPlateFill),
-                ToD2DColor(theme.iconPlateBorder));
+        DrawD2DRoundedRectangle(context, icon, static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
+            ToD2DColor(theme.iconPlateFill),
+            ToD2DColor(theme.iconPlateBorder));
         if (row.kind == Kind::App && row.index < quickNavigation_->appResultIndices.size())
             DrawQuickNavAppIcon(context, quickNavigation_->appEntries[quickNavigation_->appResultIndices[row.index]], icon);
         else if (row.kind == Kind::Everything && row.index < quickNavigation_->everythingResults.size())
@@ -679,10 +687,10 @@ void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
         }
         else if (row.kind == Kind::Scope)
             DrawQuickNavigationActionIcon(context, static_cast<QuickNavigationSearchType>(row.index), icon, 28);
-        else if (row.kind != Kind::Notice)
+        else
             DrawQuickNavigationActionIcon(context, quickNavigation_->searchType, icon, 28);
         RECT title = bounds;
-        title.left = row.kind == Kind::Notice ? bounds.left + QuickNavScale(8) : icon.right + QuickNavScale(8);
+        title.left = icon.right + QuickNavScale(8);
         title.right -= QuickNavScale(8);
         if (row.kind == Kind::Scope)
         {
@@ -854,16 +862,16 @@ void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
     }
     if (quickNavigation_->menu == QuickNavigationMenu::None)
     {
-        if (quickNavigation_->collapsed && GetQuickNavigationEffectiveSearchText().empty())
+        if (quickNavigation_->collapsed && quickNavigation_->searchType == QuickNavigationSearchType::All &&
+            GetQuickNavigationEffectiveSearchText().empty())
         {
             const RECT panel = quickNavigation_->rect;
             const RECT search = GetQuickNavigationSearchRect(panel);
             const RECT content = GetQuickNavigationContentRect(panel);
-            const bool allSources = quickNavigation_->searchType == QuickNavigationSearchType::All;
             const int inset = QuickNavScale(kListTextInsetDip);
-            const LONG footerTop = allSources ? std::max(search.bottom, content.bottom) : search.bottom;
+            const LONG footerTop = std::max(search.bottom, content.bottom);
             const RECT hint = MakeRect(content.left + inset, footerTop, content.right - inset, panel.bottom);
-            DrawD2DTextEllipsis(context, _LW(allSources ? "quickNav.search.shortcutHint" : "quickNav.search.scopedHint"),
+            DrawD2DTextEllipsis(context, _LW("quickNav.search.shortcutHint"),
                 hint, quickNavigation_->pathTextFormat.Get(), ToD2DColor(theme.appTypeText));
         }
         return;

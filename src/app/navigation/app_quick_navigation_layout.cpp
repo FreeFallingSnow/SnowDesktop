@@ -12,6 +12,11 @@
 
 // Quick-navigation geometry, tabs and content hit testing.
 
+namespace
+{
+constexpr int kListTopInsetDip = 12;
+}
+
 RECT DesktopApp::GetQuickNavigationRect() const
 {
     RECT work{};
@@ -72,7 +77,12 @@ RECT DesktopApp::GetQuickNavigationRect() const
             int contentHeight = 0;
             for (const auto& row : rows)
                 contentHeight += QuickNavigationListRowHeight(row);
-            const int chromeHeight = base + QuickNavScale(12 + layout.padding + (GetQuickNavigationEffectiveSearchText().empty() ? 32 : 0));
+            const bool shortcutHint = quickNavigation_->searchType == QuickNavigationSearchType::All &&
+                quickNavigation_->menu == QuickNavigationMenu::None && GetQuickNavigationEffectiveSearchText().empty();
+            const bool standaloneNotice = rows.size() == 1 && rows.front().kind == QuickNavigationListRow::Kind::Notice;
+            const int bottomInset = shortcutHint ? QuickNavigationHintHeightDip(layout.secondaryFontSize) :
+                standaloneNotice ? kListTopInsetDip : layout.padding;
+            const int chromeHeight = base + QuickNavScale(kListTopInsetDip) + QuickNavScale(bottomInset);
             minimumHeight = chromeHeight;
             for (const auto& row : rows)
             {
@@ -207,9 +217,12 @@ RECT DesktopApp::GetQuickNavigationContentRect(const RECT& overlay) const
     const bool browsing = !UseQuickNavigationList() && GetQuickNavigationEffectiveSearchText().empty() && quickNavigation_->menu != QuickNavigationMenu::Types;
     const int padding = QuickNavScale(UseQuickNavigationList() || quickNavigation_->menu == QuickNavigationMenu::Types ?
         std::max(4, navigationSettings_.layout.padding - 8) : navigationSettings_.layout.padding);
-    const bool idleHints = quickNavigation_->collapsed && GetQuickNavigationEffectiveSearchText().empty() && quickNavigation_->menu == QuickNavigationMenu::None;
-    const int bottomInset = idleHints ? padding + QuickNavScale(32) : QuickNavScale(2);
-    return MakeRect(search.left + padding, search.bottom + QuickNavScale(browsing ? 56 : 12),
+    const bool shortcutHint = quickNavigation_->collapsed && quickNavigation_->searchType == QuickNavigationSearchType::All &&
+        quickNavigation_->menu == QuickNavigationMenu::None && GetQuickNavigationEffectiveSearchText().empty();
+    const int bottomInset = shortcutHint
+        ? QuickNavScale(QuickNavigationHintHeightDip(navigationSettings_.layout.secondaryFontSize))
+        : QuickNavScale(2);
+    return MakeRect(search.left + padding, search.bottom + QuickNavScale(browsing ? 56 : kListTopInsetDip),
         search.right - padding, overlay.bottom - bottomInset);
 }
 

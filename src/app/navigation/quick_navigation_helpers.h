@@ -15,6 +15,11 @@ inline constexpr size_t kQuickNavigationAppResultLimit = 80;
 inline constexpr size_t kQuickNavigationAppCollapsedResultCount = 5;
 inline constexpr std::uintptr_t kQuickNavigationBackdropPanelOwner = 1;
 
+inline constexpr int QuickNavigationHintHeightDip(int secondaryFontSize)
+{
+    return secondaryFontSize + 16;
+}
+
 // Allocation belongs to the open window, not to an individual animation frame.
 // Retain it through the settling frame; DestroyQuickNavigationWindow releases it.
 inline RECT QuickNavigationRetainedAllocation(const RECT& previous, const RECT& required)
