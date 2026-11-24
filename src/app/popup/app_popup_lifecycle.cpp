@@ -752,8 +752,17 @@ void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
     PreserveDockFolderPopupDragSourceForTransition();
     if (clearSelection && !dragSession_.HasContext())
     {
-        // Clearing desktop selection can change retained surfaces outside the popup.
-        if (ClearSelection())
+        const bool desktopCollection = !popupAnchoredToDock_ && !dockFolderPopupOpen_ && !dockTrayPopup_ &&
+            popupWidgetIndex_ < widgets_.size() && widgets_[popupWidgetIndex_].type == DesktopWidgetType::Collection &&
+            !folderPreview_ && !dragDropController_.IsTransportActive() &&
+            widgetAction_ == WidgetAction::None && !marqueeActive_ && !GetCollectionPopupResizeTransition();
+        if (desktopCollection)
+        {
+            // The closing snapshot captures the cleared popup. Invalidate the
+            // old selection's desktop and Dock projections before that handoff.
+            UpdateWidgetControlSelection(nullptr, [this] { ClearSelection(); }, false);
+        }
+        else if (ClearSelection())
             desktopBackdropFullCollectionPending_ = true;
         for (auto& entry :
              dockFolderPopupWidget_.folderEntries)

@@ -1142,6 +1142,8 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
 void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
     bool rightButtonRelease)
 {
+    const bool openedCollectionOnPress = !rightButtonRelease &&
+        std::exchange(desktopCollectionOpenPressHandled_, false);
     const auto outsidePanelGeneration = std::exchange(luaPanelOutsidePressGeneration_, 0);
     const bool rightDrop = rightButtonItemDrag_;
     if (DockTrayPopupPointerUp(upPoint)) return;
@@ -1666,6 +1668,11 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         if (previewMarquee) UpdateMarqueeSelection(upPoint);
         const bool otherSelectionDamage = marqueeActive_ || dockPressedContainer_ ||
             pendingCtrlToggleDesktopIndex_ < items_.size() || pendingCtrlToggleWidgetItem_;
+        // The opening press already updated the selection and published the
+        // popup. Its release may arrive through either HWND.
+        const bool collectionReleaseWithoutDamage = openedCollectionOnPress &&
+            !mouseDown_ && !mouseDownHit_ && mouseDownWidgetIndex_ >= widgets_.size() &&
+            !dragSession_.HasContext() && !dragDropController_.IsTransportActive() && !outsidePanelGeneration;
         ClearDockPressedState();
         RECT luaDamage{};
         if (mouseDownWidgetIndex_ < widgets_.size() &&
@@ -1777,9 +1784,9 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
         else if (previewMarquee && ShouldShowFloatingPopupWindow())
             InvalidateFloatingPopupWindow(true);
-        else if (otherSelectionDamage || IsRectEmpty(&luaDamage))
+        else if (otherSelectionDamage || (IsRectEmpty(&luaDamage) && !collectionReleaseWithoutDamage))
             InvalidateRect(hwnd_, nullptr, FALSE);
-        else
+        else if (!IsRectEmpty(&luaDamage))
         {
             InflateRect(&luaDamage, 4, 4);
             InvalidateRect(hwnd_, &luaDamage, FALSE);

@@ -2727,7 +2727,8 @@ private:
     void InvalidateCollectionPopupControls(bool immediate = false);
     void InvalidateWidgetControls(const WidgetContainer& owner, bool immediate = false);
     void PrepareWidgetSearchFocus(ScrollingItemWidget& target, bool selectOwner);
-    void UpdateWidgetControlSelection(const DesktopWidget* nextOwner, const std::function<void()>& update);
+    void UpdateWidgetControlSelection(const DesktopWidget* nextOwner, const std::function<void()>& update,
+        bool refreshPopup = true);
     bool PrepareCompositionAnimationOverlay(
         UiCompositionAnimationOverlay& overlay,
         const DragRenderCache& cache,
@@ -4271,6 +4272,7 @@ private:
     Item* mouseDownHit_ = nullptr;
     WidgetHit pendingWidgetButtonAction_ = WidgetHit::None;
     bool pendingWidgetButtonClosedPopup_ = false;
+    bool desktopCollectionOpenPressHandled_ = false;
     bool marqueeActive_ = false;
     bool marqueeFullPresentPending_ = false;
     RECT marqueeRect_{};

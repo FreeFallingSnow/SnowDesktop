@@ -892,6 +892,7 @@ bool DesktopApp::CanCancelPointerPressAfterCaptureLoss() const
 
 void DesktopApp::CancelPointerPressWithoutCaptureRelease()
 {
+    desktopCollectionOpenPressHandled_ = false;
     const bool inlinePreviewMarquee = folderPreview_ && folderPreview_->inlineBounds &&
         marqueeActive_ && marqueeDockFolderPopup_;
     luaPanelOutsidePressGeneration_ = 0;

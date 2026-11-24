@@ -47,6 +47,7 @@ bool NextDetailsSortAscending(
 
 void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
+    desktopCollectionOpenPressHandled_ = false;
     ClearDesktopSurfaceKeyboardFocus();
     luaPanelOutsidePressGeneration_ = 0;
     if (nativeMenuSession_)
@@ -1277,14 +1278,24 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         }
         else if (wh == WidgetHit::CollectionOpenBtn)
         {
-            SelectWidgetOnly(wi);
+            const bool desktopCollection = !handlingFloatingPopupInput_ && !handlingFloatingDockInput_ &&
+                widgets_[wi].type == DesktopWidgetType::Collection && !IsGroupedWidget(widgets_[wi]) &&
+                !dragSession_.HasContext() && !dragDropController_.IsTransportActive() &&
+                widgetAction_ == WidgetAction::None && !marqueeActive_;
+            if (desktopCollection)
+                UpdateWidgetControlSelection(&widgets_[wi], [&] { SelectWidgetOnly(wi); });
+            else
+                SelectWidgetOnly(wi);
             OpenCollectionPopupAt(
                 wi, pt, L"",
                 collectionPopupClosedByPointerDown);
             mouseDown_ = false;
             mouseDownWidgetIndex_ = static_cast<size_t>(-1);
             mouseDownHit_ = nullptr;
-            InvalidateRect(hwnd_, nullptr, FALSE);
+            desktopCollectionOpenPressHandled_ =
+                desktopCollection && popupWidgetIndex_ == wi && IsCollectionPopupInteractive();
+            if (!desktopCollection)
+                InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
         else if (wh == WidgetHit::ListToggleBtn)

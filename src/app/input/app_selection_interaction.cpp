@@ -337,14 +337,15 @@ void DesktopApp::ClearSelectionForExternalWindow(HWND window)
     InvalidateFloatingPopupWindow();
 }
 
-void DesktopApp::UpdateWidgetControlSelection(const DesktopWidget* nextOwner, const std::function<void()>& update)
+void DesktopApp::UpdateWidgetControlSelection(const DesktopWidget* nextOwner, const std::function<void()>& update,
+    bool refreshPopup)
 {
     // Capture the old title extents and the visible projections before clearing selection.
     std::vector<RECT> desktopDamage;
     std::vector<HWND> dockDamage;
     std::unordered_set<std::wstring> selectedKeys;
     std::unordered_set<std::wstring> owners;
-    bool popupDamage = keyboardNavVisualFocus_ && IsCollectionPopupKeyboardTarget();
+    bool popupDamage = refreshPopup && keyboardNavVisualFocus_ && IsCollectionPopupKeyboardTarget();
     for (const auto& item : items_)
     {
         if (!item.selected) continue;
@@ -391,14 +392,15 @@ void DesktopApp::UpdateWidgetControlSelection(const DesktopWidget* nextOwner, co
         }
         else desktopDamage.push_back(dock->GetInteractiveBounds());
     }
-    const auto* popup = GetOpenPopupWidget();
+    const auto* popup = refreshPopup ? GetOpenPopupWidget() : nullptr;
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
         const auto& widget = widgets_[i];
         if (!owners.contains(widget.id) && !std::ranges::any_of(widget.childWidgetIds, [&](const auto& id) {
                 return owners.contains(id);
             })) continue;
-        popupDamage |= popup == &widget || (dockFolderPopupOpen_ && dockFolderPopupMappingWidgetId_ == widget.id);
+        popupDamage |= popup == &widget ||
+            (refreshPopup && dockFolderPopupOpen_ && dockFolderPopupMappingWidgetId_ == widget.id);
         if (IsGroupedWidget(widget) || IsRectEmpty(&widget.bounds) ||
             (desktopIconsHidden_ && !widget.keepWhenDesktopHidden)) continue;
         RECT bounds = GetStandaloneWidgetFrameRect(widget);
