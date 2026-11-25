@@ -10,6 +10,7 @@
 #include "platform/control/control_protocol.h"
 #include "widget/permissions/widget_permission_broker.h"
 #include "widget/runtime/widget_engine.h"
+#include "widgets/single_cell_widget_rules.h"
 #include "widgets/widget_group_drop.h"
 
 #include <algorithm>
@@ -22,6 +23,38 @@ namespace
 using namespace snowdesktop::control;
 constexpr size_t MaxEdits = 1024;
 constexpr size_t NoIndex = static_cast<size_t>(-1);
+
+struct NativeComponent
+{
+    DesktopWidgetType type;
+    const char* id;
+    const char* name;
+    const char* purpose;
+    const char* layoutHint;
+};
+
+constexpr NativeComponent NativeComponents[] = {
+    {DesktopWidgetType::Collection, "collection", "Collection",
+        "Keep a manually chosen set of desktop icons together, such as application or system shortcuts.",
+        "Use a fixed preview for a small set, a scrolling panel for more items, or an icon entrance to save space."},
+    {DesktopWidgetType::CollectionGroup, "collection-group", "Collection Group",
+        "Switch between related collections using ordered tabs and search the active collection.",
+        "Share a panel or icon entrance across categories that do not need to stay visible at the same time."},
+    {DesktopWidgetType::FileCategories, "file-categories", "Desktop Files",
+        "Collect actual files from the desktop and browse them by file category or search.",
+        "Keep a panel for routine file browsing or use a compact entrance. Collect only within the user's requested scope."},
+    {DesktopWidgetType::FileGroup, "file-group", "File Group",
+        "Browse Desktop Files and folder mappings through source tabs. Search can span the group's sources.",
+        "Use one panel or icon entrance for several sources. Source tabs and file-type filters serve different purposes."},
+    {DesktopWidgetType::FolderMapping, "folder-mapping", "Folder Mapping",
+        "Browse an existing folder in place, with optional file-type filters and search.",
+        "Use a user-selected directory. A panel suits frequent browsing and an icon entrance frees space."},
+};
+
+bool HasFileCategories(DesktopWidgetType type)
+{
+    return type == DesktopWidgetType::FileCategories || type == DesktopWidgetType::FolderMapping;
+}
 
 const std::vector<Value>& OptionalArray(const Value& value, const char* key)
 {
@@ -86,11 +119,12 @@ Value CollectionVisibility(DesktopApp* app, const std::vector<GridPage>& pages,
     model.cellScale = GetGridPageCuScale(*page);
     model.scrollOffset = 0;
     Collection view(&model, app);
+    const bool icon = snowdesktop::single_cell_widget::IsIconMode(model);
     const bool compact = model.gridSpan.columns == 1 && model.gridSpan.rows == 1 && !model.scrollContainerMode;
     const auto viewport = model.scrollContainerMode ? view.GetContentViewportRect() : view.GetFrameRect();
     size_t full = 0, partial = 0;
-    const size_t thumbnails = compact ? std::min<size_t>(model.itemKeys.size(), 4) : 0;
-    if (!compact)
+    const size_t thumbnails = compact && !icon ? std::min<size_t>(model.itemKeys.size(), 4) : 0;
+    if (!compact && !icon)
         for (size_t i = 0; i < model.itemKeys.size(); ++i)
         {
             const auto member = view.GetMemberLayoutRect(i);
@@ -104,7 +138,7 @@ Value CollectionVisibility(DesktopApp* app, const std::vector<GridPage>& pages,
         {"partiallyVisible", Number(static_cast<double>(partial))},
         {"thumbnails", Number(static_cast<double>(thumbnails))},
         {"hidden", Number(static_cast<double>(model.itemKeys.size() - full - partial - thumbnails))},
-        {"presentation", String(compact ? "compact" : model.scrollContainerMode ? "scroll" : "grid")}});
+        {"presentation", String(icon ? "icon" : compact ? "compact" : model.scrollContainerMode ? "scroll" : "grid")}});
 }
 }
 
@@ -116,10 +150,62 @@ snowdesktop::control::Value DesktopApp::HandleControlDesktopEdits(
     {
         Fields(params, {});
         auto state = ApplicationControlLayout(true);
-        auto types = Array();
-        for (const char* type : {"collection", "collection-group", "file-categories", "file-group", "folder-mapping", "lua"})
-            types.array.push_back(String(type));
+        auto types = Array(), catalog = Array();
+        for (const auto& component : NativeComponents)
+        {
+            types.array.push_back(String(component.id));
+            DesktopWidget limits;
+            limits.type = component.type;
+            ConfigureWidgetGridLimits(limits);
+            auto views = Array();
+            if (component.type == DesktopWidgetType::Collection)
+                views.array = {String("fixed-grid"), String("scrolling-panel"), String("compact-preview")};
+            else
+                views.array = {String("scrolling-panel"), String("compact-preview")};
+            views.array.push_back(String("icon"));
+            auto controls = Object({});
+            if (component.type != DesktopWidgetType::Collection)
+                controls.object.emplace("search", Object({{"visibilityField", String("showSearchBox")},
+                    {"action", String("set-search")}, {"requiresOpenContentView", Boolean(true)}}));
+            if (HasFileCategories(component.type) || component.type == DesktopWidgetType::FileGroup)
+                controls.object.emplace("fileCategories", Object({{"visibilityField", String("showFileCategories")},
+                    {"selectionField", String(component.type == DesktopWidgetType::FileGroup ? "contentCategoryId" : "activeCategoryId")},
+                    {"availableIdsField", String("contentCategoryIds")}}));
+            if (IsGroupWidgetType(component.type))
+            {
+                auto children = Array();
+                children.array = component.type == DesktopWidgetType::CollectionGroup
+                    ? std::vector<Value>{String("collection")}
+                    : std::vector<Value>{String("file-categories"), String("folder-mapping")};
+                controls.object.emplace("groupTabs", Object({{"memberTypes", std::move(children)},
+                    {"selectionField", String("activeCategoryId")}, {"batchOperation", String("setGroups")}}));
+            }
+            if (component.type == DesktopWidgetType::FileCategories)
+                controls.object.emplace("collect", Object({{"action", String("collect-now")}}));
+            catalog.array.push_back(Object({{"type", String(component.id)}, {"name", String(component.name)},
+                {"purpose", String(component.purpose)}, {"layoutHint", String(component.layoutHint)},
+                {"presentations", std::move(views)},
+                {"minimumExpandedSpan", Object({{"columns", Number(limits.minGridSpan.columns)}, {"rows", Number(limits.minGridSpan.rows)}})},
+                {"compactSpan", Object({{"columns", Number(1)}, {"rows", Number(1)}})},
+                {"iconModeField", String("singleCellIconMode")}, {"settingsTargetKind", String("native-widget")},
+                {"controls", std::move(controls)}}));
+        }
+        types.array.push_back(String("lua"));
         state.object.emplace("creatableWidgetTypes", std::move(types));
+        state.object.emplace("componentCatalog", std::move(catalog));
+        auto& instances = state.object.at("widgets").array;
+        for (size_t index = 0; index < widgets_.size(); ++index)
+        {
+            const auto& widget = widgets_[index];
+            if (!snowdesktop::single_cell_widget::Supports(widget.type)) continue;
+            auto& fields = instances[index].object;
+            fields.emplace("singleCellIconMode", Boolean(snowdesktop::single_cell_widget::IsIconMode(widget) &&
+                !IsGroupedWidget(widget)));
+            if (widget.type != DesktopWidgetType::Collection)
+                fields.emplace("showSearchBox", Boolean(widget.showSearchBox));
+            if (HasFileCategories(widget.type))
+                fields.emplace("showFileCategories", Boolean(widget.showFileCategories));
+        }
         return state;
     }
     Fields(params, {"ifLayoutRevision", "addWidgets", "moveWidgets", "setCollections", "setGroups", "moveIcons"});
@@ -233,7 +319,7 @@ snowdesktop::control::Value DesktopApp::HandleControlDesktopEdits(
     for (const auto& operation : additions)
     {
         Fields(operation, {"ref", "type", "packageId", "folderItemId", "folderPath", "pageId", "column", "row", "columns", "rows",
-            "title", "itemIds", "scrollContainer", "showTitle", "titleOnHover"});
+            "title", "itemIds", "scrollContainer", "showTitle", "titleOnHover", "singleCellIconMode", "showSearchBox", "showFileCategories"});
         const auto ref = Text(operation, "ref");
         const auto index = proposedWidgets.size();
         if (ref.empty() || ref.size() > 128 || !widgetByRef.emplace(ref, index).second)
@@ -334,6 +420,17 @@ snowdesktop::control::Value DesktopApp::HandleControlDesktopEdits(
             setWidgetPlacement(widget, operation, ref);
         else
             unplacedAdditions.insert(index);
+        if (operation.Find("singleCellIconMode") && (unplacedAdditions.contains(index) ||
+            !snowdesktop::single_cell_widget::IsDesktopSingleCell(widget)))
+            throw Error("invalid_params", "singleCellIconMode requires a standalone 1 by 1 native component", -32602);
+        if (operation.Find("showSearchBox") && (!snowdesktop::single_cell_widget::Supports(widget.type) ||
+            widget.type == DesktopWidgetType::Collection))
+            throw Error("invalid_params", "showSearchBox requires a searchable native component", -32602);
+        if (operation.Find("showFileCategories") && !HasFileCategories(widget.type))
+            throw Error("invalid_params", "Set showFileCategories on Desktop Files or Folder Mapping, including when used as a file group source", -32602);
+        UpdateBool(operation, "singleCellIconMode", widget.singleCellIconMode);
+        UpdateBool(operation, "showSearchBox", widget.showSearchBox);
+        UpdateBool(operation, "showFileCategories", widget.showFileCategories);
         proposedWidgets.push_back(std::move(widget));
         newRefs.push_back(ref);
         changedWidgets.insert(index);
@@ -373,6 +470,8 @@ snowdesktop::control::Value DesktopApp::HandleControlDesktopEdits(
             if (!groupDrop::AcceptsChild(group.type, child.type) || !desktopGroupParticipant(child) ||
                 (parent != originalParents.end() && !desktopGroupParticipant(widgets_[parent->second])))
                 throw Error("invalid_target", "Child is incompatible with this desktop group");
+            if (childIndex >= originalWidgetCount && additions[childIndex - originalWidgetCount].Find("singleCellIconMode"))
+                throw Error("invalid_params", "Set singleCellIconMode on the standalone group entrance", -32602);
             if (!assignedChildren.insert(childIndex).second)
                 throw Error("duplicate_widget", "Component is assigned to more than one label");
             edit.children.push_back(child.id);

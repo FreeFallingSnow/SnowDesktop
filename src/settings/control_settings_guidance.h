@@ -315,7 +315,7 @@ inline constexpr auto Fields<DockSettings> = std::to_array<Description>({
     {"hoverEffect", "Selects the Dock icon hover effect. It runs only under the active animation policy."},
     {"hoverScale", "Sets the magnification ceiling for the relevant Dock icon hover effect."},
     {"launchEffect", "Selects the animation for a Dock entry when launched. The active animation policy can suppress it."},
-    {"windowEffect", "Selects the Dock-integrated window transition effect. Availability depends on the window and current animation policy."},
+    {"windowEffect", "Selects the Dock-integrated window minimize and restore effect. 3 is the macOS-style Genie effect, which falls back to Scale when Genie cannot run. Availability depends on the window and current animation policy."},
     {"followComponentAppearance", "Inherits shared component appearance for the Dock. Independent Dock appearance uses its own preset and custom values."},
     {"customAppearance", "Stores independent Dock material used by the custom preset."},
     {"appearancePreset", "Selects the Dock material preset when independent appearance is active."},

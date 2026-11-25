@@ -1,6 +1,7 @@
 #include "control_settings_search.h"
 
 #include "control_native_widget_settings.h"
+#include "control_runtime_settings.h"
 #include "icons/icon_beautify.h"
 #include "icons/large_icon_config.h"
 #include <algorithm>
@@ -110,6 +111,8 @@ void SettingsDescriptionSearch::AddHostFields()
     AddFields({{"calendar-series", {}}, true}, *series.Find("rule"), "rule");
     AddFields({{"fonts", {}}}, DescribeFontSettingsFields());
     AddFields({{"runtime-services", {}}}, DescribeRuntimeSettingsFields(false, false));
+    AddField({{"runtime-services", {}}, false, DesktopStyleAction}, DesktopStyleAction, DesktopStyleActionDescription);
+    AddField({{"runtime-services", {}}, false, DesktopStyleAnimationAction}, DesktopStyleAnimationAction, DesktopStyleAnimationActionDescription);
     AddFields({{"package", {}}, true}, DescribePackageSettingsFields(false, false));
     AddFields({{"agent-skills", {}}}, DescribeAgentSkillSettingsFields());
     AddFields({{"widget", {}}, true, "appearance"}, *DescribeWidgetAppearanceFields().Find("properties"));

@@ -8,6 +8,13 @@
 
 namespace snowdesktop::control_settings
 {
+inline constexpr auto DesktopStyleAction = "apply-desktop-style";
+inline constexpr auto DesktopStyleAnimationAction = "apply-style-animations";
+inline constexpr auto DesktopStyleActionDescription =
+    "Apply a desktop layout preset to the Dock, status bar and Windows taskbar. Compare the preset's bar positions, taskbar behavior and reserved space before applying.";
+inline constexpr auto DesktopStyleAnimationActionDescription =
+    "Apply the selected desktop style's recommended Dock icon hover and launch animations. Window minimize and restore effects are controlled separately by dock.windowEffect.";
+
 struct RuntimeSettingsContext
 {
     ISettingsController& controller;

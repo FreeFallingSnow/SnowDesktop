@@ -608,6 +608,21 @@ folder mapping can use `folderPath` for an absolute directory selected by the
 user. Preview and apply return group references and their children, and
 `desktop.inspect` includes the active child and mapping source when present.
 
+`desktopComponentCatalog:1` adds `desktop.inspect.componentCatalog` for native
+storage types. Each entry describes the purpose, supported presentations,
+minimum expanded and compact spans, and applicable controls. Read concrete
+`native-widget` catalogs for live actions and category IDs. Batch `addWidgets`
+accepts `singleCellIconMode` on a standalone 1×1 native component,
+`showSearchBox` on searchable native component types and `showFileCategories`
+on a Desktop Files or Folder Mapping source. `desktop.inspect.widgets`
+reports the applicable presentation and visibility flags. A collection icon's
+preview reports its items behind the entrance under `hidden`.
+
+Use `settings.search` to discover the `runtime-services` desktop style and
+recommended Dock motion actions. Its catalog describes preset effects on the
+Dock, status bar, Windows taskbar and reserved space. `dock.windowEffect`
+offers the separate Dock minimize and restore transition.
+
 The data cleanup worker retains finished `Automation/Captures` and
 `Automation/Demos` outputs for 30 days and incomplete runs for 7 days after the
 most recent write. Collection is confined to recognized UUID runs with known

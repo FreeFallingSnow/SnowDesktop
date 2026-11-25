@@ -145,10 +145,18 @@ Value HandleRuntimeSettings(std::string_view method, const Value& params,
             if (status.temporaryInitializationEnabled) actions.array.push_back(String("set-temporary-initialization"));
             actions.array.push_back(String("start-usage-guide-practice"));
             actions.array.push_back(String("trigger-crash-test"));
-            actions.array.push_back(String("apply-desktop-style"));
-            actions.array.push_back(String("apply-style-animations"));
+            actions.array.push_back(String(DesktopStyleAction));
+            actions.array.push_back(String(DesktopStyleAnimationAction));
             result.object.emplace("actions", std::move(actions));
             result.object.emplace("desktopStylePresets", Names({"native", "taskbar-dock", "island", "merged", "side"}));
+            result.object.emplace("desktopStylePresetDescriptions", Object({
+                {"native", String("Keep the Windows taskbar visible with SnowDesktop styling and turn off the Dock and status bar.")},
+                {"taskbar-dock", String("Keep a persistent Dock and auto-hide the Windows taskbar where supported. Turn off the status bar. The Dock edge and attachment are configurable.")},
+                {"island", String("Place an island Dock at the bottom and the status bar at the top, like the familiar macOS arrangement. Request Windows taskbar suppression.")},
+                {"merged", String("Combine the Dock and status bar in one bottom bar and request Windows taskbar suppression.")},
+                {"side", String("Place an attached Dock on the left and the status bar at the top. Reserve space for the Dock and request Windows taskbar suppression.")}}));
+            result.object.emplace("actionDescriptions", Object({{DesktopStyleAction, String(DesktopStyleActionDescription)},
+                {DesktopStyleAnimationAction, String(DesktopStyleAnimationActionDescription)}}));
             result.object.emplace("animationStylePresets", Names({"island", "merged", "side"}));
             result.object.emplace("desktopStyleArguments", Names({"preset", "dockPosition", "dockAttached", "confirmed"}));
             auto practices = Array();
@@ -196,9 +204,9 @@ Value HandleRuntimeSettings(std::string_view method, const Value& params,
     Fields(params, {"target", "ifRevision", "action", "arguments"});
     const auto action = Text(params, "action");
     const auto& arguments = Arguments(params);
-    if (action == "apply-desktop-style" || action == "apply-style-animations")
+    if (action == DesktopStyleAction || action == DesktopStyleAnimationAction)
     {
-        const bool layout = action == "apply-desktop-style";
+        const bool layout = action == DesktopStyleAction;
         if (layout) Fields(arguments, {"preset", "dockPosition", "dockAttached", "confirmed"});
         else Fields(arguments, {"preset", "confirmed"});
         const auto preset = Text(arguments, "preset");
