@@ -119,7 +119,15 @@ snowdesktop::control::Value DesktopApp::ApplicationControlLayout(bool includeDes
     for (const auto& widget : widgets_)
     {
         auto value = WidgetValue(widget, IsGroupedWidget(widget));
-        if (includeDesktopItems && widget.type != DesktopWidgetType::FolderMapping)
+        if (includeDesktopItems && IsGroupWidgetType(widget.type))
+            value.object.at("activeMemberId") = String(WideToUtf8(widget.activeCategoryId));
+        if (includeDesktopItems && widget.type == DesktopWidgetType::FolderMapping)
+        {
+            value.object.emplace("folderPath", String(WideToUtf8(widget.sourceFolderPath)));
+            if (!widget.sourceDesktopItemKey.empty())
+                value.object.emplace("folderItemId", String(WideToUtf8(widget.sourceDesktopItemKey)));
+        }
+        else if (includeDesktopItems)
         {
             auto members = Array();
             for (const auto& key : widget.itemKeys)

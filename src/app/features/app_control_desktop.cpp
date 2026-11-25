@@ -10,6 +10,7 @@
 #include "platform/control/control_protocol.h"
 #include "widget/permissions/widget_permission_broker.h"
 #include "widget/runtime/widget_engine.h"
+#include "widgets/widget_group_drop.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -121,7 +122,7 @@ snowdesktop::control::Value DesktopApp::HandleControlDesktopEdits(
         state.object.emplace("creatableWidgetTypes", std::move(types));
         return state;
     }
-    Fields(params, {"ifLayoutRevision", "addWidgets", "moveWidgets", "setCollections", "moveIcons"});
+    Fields(params, {"ifLayoutRevision", "addWidgets", "moveWidgets", "setCollections", "setGroups", "moveIcons"});
     if (!generalSettings_.softwareDesktopEnabled)
         throw Error("disabled", "Software desktop is disabled");
     if (layoutReload_.Pending() || reloading_ || applicationControlRuntime_->privatePointer.Current().enabled ||
@@ -136,20 +137,23 @@ snowdesktop::control::Value DesktopApp::HandleControlDesktopEdits(
     const auto& additions = OptionalArray(params, "addWidgets");
     const auto& widgetMoves = OptionalArray(params, "moveWidgets");
     const auto& collectionEdits = OptionalArray(params, "setCollections");
+    const auto& groupEdits = OptionalArray(params, "setGroups");
     const auto& iconMoves = OptionalArray(params, "moveIcons");
-    if (additions.empty() && widgetMoves.empty() && collectionEdits.empty() && iconMoves.empty())
+    if (additions.empty() && widgetMoves.empty() && collectionEdits.empty() && groupEdits.empty() && iconMoves.empty())
         throw Error("invalid_params", "Supply at least one desktop edit", -32602);
 
     struct PlannedCollection { size_t index; std::vector<std::wstring> keys; };
     struct PlannedIcon { GridCell cell; GridSpan span; };
+    struct PlannedGroup { size_t index; std::vector<std::wstring> children; std::optional<std::wstring> active; };
     const size_t originalWidgetCount = widgets_.size();
     auto proposedWidgets = widgets_;
     proposedWidgets.reserve(originalWidgetCount + additions.size());
     std::vector<std::string> newRefs;
-    std::unordered_set<std::string> usedRefs;
+    std::unordered_map<std::string, size_t> widgetByRef;
     std::unordered_map<std::wstring, size_t> widgetById, itemByKey, requestedOwner;
     std::unordered_set<std::wstring> protectedItems;
     std::unordered_set<size_t> changedWidgets;
+    std::unordered_set<size_t> unplacedAdditions;
     std::vector<PlannedCollection> collections;
     std::vector<std::wstring> newFolders;
     std::unordered_map<size_t, PlannedIcon> proposedIcons;
@@ -183,6 +187,15 @@ snowdesktop::control::Value DesktopApp::HandleControlDesktopEdits(
     const auto widgetIndex = [&](const std::string& id) {
         const auto found = widgetById.find(Utf8ToWide(id));
         if (found == widgetById.end()) throw Error("widget_not_found", "Unknown component: " + id);
+        return found->second;
+    };
+    const auto widgetReference = [&](const Value& value) {
+        if (static_cast<bool>(value.Find("id")) == static_cast<bool>(value.Find("ref")))
+            throw Error("invalid_params", "A component reference needs exactly one of id or ref", -32602);
+        if (value.Find("id")) return widgetIndex(Text(value, "id"));
+        const auto ref = Text(value, "ref");
+        const auto found = widgetByRef.find(ref);
+        if (found == widgetByRef.end()) throw Error("widget_not_found", "Unknown component ref: " + ref);
         return found->second;
     };
     const auto setMembers = [&](size_t index, const Value& operation) {
@@ -219,10 +232,11 @@ snowdesktop::control::Value DesktopApp::HandleControlDesktopEdits(
     };
     for (const auto& operation : additions)
     {
-        Fields(operation, {"ref", "type", "packageId", "folderItemId", "pageId", "column", "row", "columns", "rows",
+        Fields(operation, {"ref", "type", "packageId", "folderItemId", "folderPath", "pageId", "column", "row", "columns", "rows",
             "title", "itemIds", "scrollContainer", "showTitle", "titleOnHover"});
         const auto ref = Text(operation, "ref");
-        if (ref.empty() || ref.size() > 128 || !usedRefs.insert(ref).second)
+        const auto index = proposedWidgets.size();
+        if (ref.empty() || ref.size() > 128 || !widgetByRef.emplace(ref, index).second)
             throw Error("invalid_params", "Each new component needs a unique ref of 1 to 128 bytes", -32602);
         const auto type = Text(operation, "type");
         DesktopWidget widget;
@@ -236,22 +250,50 @@ snowdesktop::control::Value DesktopApp::HandleControlDesktopEdits(
         }
         else if (type == "folder-mapping")
         {
-            const auto sourceId = Text(operation, "folderItemId");
-            const auto& item = items_[itemIndex(sourceId)];
-            if (item.isShortcut || !item.desktopIconClsid.empty() || IsItemInAnyWidget(item) ||
-                !std::filesystem::path(item.parsingName).is_absolute())
-                throw Error("invalid_target", "Folder mapping requires a loose filesystem folder on the desktop: " + sourceId);
-            const auto attributes = GetFileAttributesW(item.parsingName.c_str());
+            namespace mapping = snowdesktop::folder_mapping_visibility;
+            const bool byItem = operation.Find("folderItemId") != nullptr;
+            if (byItem == (operation.Find("folderPath") != nullptr))
+                throw Error("invalid_params", "Folder mapping needs exactly one of folderItemId or folderPath", -32602);
+            std::filesystem::path path;
+            if (byItem)
+            {
+                const auto sourceId = Text(operation, "folderItemId");
+                const auto& item = items_[itemIndex(sourceId)];
+                if (item.isShortcut || !item.desktopIconClsid.empty() || IsItemInAnyWidget(item))
+                    throw Error("invalid_target", "Folder mapping requires a loose filesystem folder on the desktop: " + sourceId);
+                path = item.parsingName;
+                widget.title = item.name;
+                widget.sourceDesktopItemKey = item.layoutKey;
+            }
+            else
+            {
+                const auto source = Utf8ToWide(Text(operation, "folderPath"));
+                if (std::ranges::any_of(source, [](wchar_t c) { return c < 32; }))
+                    throw Error("invalid_params", "folderPath cannot contain control characters", -32602);
+                path = source;
+            }
+            if (!path.is_absolute())
+                throw Error("invalid_target", "Folder mapping requires an absolute filesystem directory: " + ref);
+            path = path.lexically_normal();
+            auto source = path.wstring();
+            const auto attributes = GetFileAttributesW(source.c_str());
             if (attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_DIRECTORY))
-                throw Error("invalid_target", "Folder mapping source is not an accessible directory: " + sourceId);
-            if (!requestedOwner.emplace(ToUpperInvariant(item.layoutKey), NoIndex).second)
-                throw Error("duplicate_item", "Folder mapping source already has a requested assignment: " + sourceId);
+                throw Error("invalid_target", "Folder mapping source is not an accessible directory: " + ref);
+            if (std::ranges::any_of(newFolders, [&](const auto& existing) {
+                return mapping::EqualInsensitive(mapping::SourcePathKey(existing), mapping::SourcePathKey(source));
+            }))
+                throw Error("duplicate_item", "Folder mapping source already has a requested assignment: " + ref);
+            for (const auto& item : items_)
+                if (mapping::IsSourceFolder(item, source) && !IsItemInAnyWidget(item) &&
+                    item.gridCell.pageId != kDockPageId &&
+                    !requestedOwner.emplace(ToUpperInvariant(item.layoutKey), NoIndex).second)
+                    throw Error("duplicate_item", "Folder mapping source already has a requested assignment: " + ref);
             widget.type = DesktopWidgetType::FolderMapping;
-            widget.title = item.name;
+            if (widget.title.empty()) widget.title = std::filesystem::path(mapping::SourcePathKey(source)).filename().wstring();
+            if (widget.title.empty()) widget.title = source;
             widget.showTitle = true;
-            widget.sourceFolderPath = item.parsingName;
-            widget.sourceDesktopItemKey = item.layoutKey;
-            newFolders.push_back(widget.sourceFolderPath);
+            widget.sourceFolderPath = source;
+            newFolders.push_back(std::move(source));
         }
         else if (type == "lua")
         {
@@ -278,8 +320,8 @@ snowdesktop::control::Value DesktopApp::HandleControlDesktopEdits(
 
         if (type != "lua" && operation.Find("packageId"))
             throw Error("invalid_params", "packageId only applies to Lua components", -32602);
-        if (type != "folder-mapping" && operation.Find("folderItemId"))
-            throw Error("invalid_params", "folderItemId only applies to folder mappings", -32602);
+        if (type != "folder-mapping" && (operation.Find("folderItemId") || operation.Find("folderPath")))
+            throw Error("invalid_params", "Folder source fields only apply to folder mappings", -32602);
         if (type != "collection" && (operation.Find("itemIds") || operation.Find("scrollContainer") ||
             operation.Find("showTitle") || operation.Find("titleOnHover")))
             throw Error("invalid_params", "Member and view fields apply to collections", -32602);
@@ -287,12 +329,62 @@ snowdesktop::control::Value DesktopApp::HandleControlDesktopEdits(
         widget.keepInitialComposition = true;
         SetTitle(widget, operation);
         ConfigureWidgetGridLimits(widget);
-        setWidgetPlacement(widget, operation, ref);
-        const auto index = proposedWidgets.size();
+        if (operation.Find("pageId") || operation.Find("column") || operation.Find("row") ||
+            operation.Find("columns") || operation.Find("rows"))
+            setWidgetPlacement(widget, operation, ref);
+        else
+            unplacedAdditions.insert(index);
         proposedWidgets.push_back(std::move(widget));
         newRefs.push_back(ref);
         changedWidgets.insert(index);
         if (type == "collection") setMembers(index, operation);
+    }
+    namespace groupDrop = snowdesktop::widget_group_drop;
+    const auto desktopGroupParticipant = [&](const DesktopWidget& widget) {
+        return widget.gridCell.pageId != kDockPageId && !std::ranges::any_of(dockEntries_, [&](const auto& entry) {
+            return IsWidgetDockEntryType(entry.type) && entry.reference == widget.id;
+        });
+    };
+    std::unordered_map<std::wstring, size_t> originalParents;
+    for (size_t i = 0; i < originalWidgetCount; ++i)
+        if (IsGroupWidgetType(widgets_[i].type))
+            for (const auto& child : widgets_[i].childWidgetIds)
+                originalParents.emplace(child, i);
+    std::unordered_set<size_t> editedGroups, assignedChildren;
+    std::vector<PlannedGroup> groups;
+    for (const auto& operation : groupEdits)
+    {
+        Fields(operation, {"id", "ref", "children", "activeChild"});
+        const auto index = widgetReference(operation);
+        const auto& group = proposedWidgets[index];
+        if (!IsGroupWidgetType(group.type) || !desktopGroupParticipant(group))
+            throw Error("invalid_target", "Only desktop collection and file groups can receive label edits");
+        if (!editedGroups.insert(index).second)
+            throw Error("duplicate_widget", "Group has multiple requested label lists");
+        if (!operation.Find("children"))
+            throw Error("invalid_params", "setGroups requires children", -32602);
+        PlannedGroup edit{index, {}, std::nullopt};
+        for (const auto& childReference : OptionalArray(operation, "children"))
+        {
+            Fields(childReference, {"id", "ref"});
+            const auto childIndex = widgetReference(childReference);
+            const auto& child = proposedWidgets[childIndex];
+            const auto parent = originalParents.find(child.id);
+            if (!groupDrop::AcceptsChild(group.type, child.type) || !desktopGroupParticipant(child) ||
+                (parent != originalParents.end() && !desktopGroupParticipant(widgets_[parent->second])))
+                throw Error("invalid_target", "Child is incompatible with this desktop group");
+            if (!assignedChildren.insert(childIndex).second)
+                throw Error("duplicate_widget", "Component is assigned to more than one label");
+            edit.children.push_back(child.id);
+        }
+        if (const auto* active = operation.Find("activeChild"))
+        {
+            Fields(*active, {"id", "ref"});
+            edit.active = proposedWidgets[widgetReference(*active)].id;
+            if (std::ranges::find(edit.children, *edit.active) == edit.children.end())
+                throw Error("invalid_target", "activeChild must be one of the requested labels");
+        }
+        groups.push_back(std::move(edit));
     }
     for (const auto& operation : widgetMoves)
     {
@@ -300,12 +392,56 @@ snowdesktop::control::Value DesktopApp::HandleControlDesktopEdits(
         const auto id = Text(operation, "id");
         const auto index = widgetIndex(id);
         const auto& original = widgets_[index];
-        if (IsGroupedWidget(original) || original.type == DesktopWidgetType::Guide ||
-            original.gridCell.pageId == kDockPageId)
-            throw Error("invalid_target", "Only standalone desktop components can be repositioned: " + id);
+        const auto parent = originalParents.find(original.id);
+        if (assignedChildren.contains(index))
+            throw Error("duplicate_widget", "Component cannot be positioned and assigned to a group: " + id);
+        if (original.type == DesktopWidgetType::Guide || original.gridCell.pageId == kDockPageId ||
+            (IsGroupedWidget(original) && (parent == originalParents.end() ||
+                !desktopGroupParticipant(widgets_[parent->second]) || !desktopGroupParticipant(original))))
+            throw Error("invalid_target", "Component does not have a movable desktop placement: " + id);
         if (!changedWidgets.insert(index).second)
             throw Error("duplicate_widget", "Component has multiple requested positions: " + id);
         setWidgetPlacement(proposedWidgets[index], operation, id);
+        if (parent != originalParents.end())
+        {
+            const auto& proposed = proposedWidgets[index];
+            if (!groupDrop::Release(proposedWidgets, original.id, widgets_[parent->second].type,
+                [&](size_t, size_t) -> std::optional<groupDrop::ReleasePlacement> {
+                    return groupDrop::ReleasePlacement{proposed.gridCell, proposed.gridSpan};
+                }))
+                throw Error("invalid_target", "Cannot release this component from its desktop group: " + id);
+        }
+    }
+    std::vector<DockEntry> desktopOnly;
+    for (const auto& edit : groups)
+        if (!edit.children.empty() && !groupDrop::Apply(proposedWidgets, desktopOnly, edit.index, edit.children, 0))
+            throw Error("invalid_target", "Cannot assign the requested group labels");
+    for (const auto& edit : groups)
+    {
+        auto& group = proposedWidgets[edit.index];
+        if (group.childWidgetIds != edit.children)
+            throw Error("missing_destination", "Move every omitted group child to another group or a desktop cell");
+        if (edit.active) group.activeCategoryId = *edit.active;
+    }
+    std::unordered_map<std::wstring, size_t> finalParents;
+    for (size_t i = 0; i < proposedWidgets.size(); ++i)
+        if (IsGroupWidgetType(proposedWidgets[i].type))
+            for (const auto& child : proposedWidgets[i].childWidgetIds)
+                finalParents.emplace(child, i);
+    for (const size_t index : unplacedAdditions)
+    {
+        auto& child = proposedWidgets[index];
+        const auto parent = finalParents.find(child.id);
+        if (parent == finalParents.end())
+            throw Error("invalid_placement", "A standalone component needs a desktop grid placement: " +
+                newRefs[index - originalWidgetCount]);
+        const auto& group = proposedWidgets[parent->second];
+        child.gridCell = group.gridCell;
+        const auto* page = FindGridPage(gridPages_, child.gridCell.pageId);
+        if (!page)
+            throw Error("invalid_placement", "The parent group needs a valid desktop grid placement");
+        child.gridSpan = ClampWidgetGridSpan(child, group.gridSpan,
+            page->columns - child.gridCell.column, page->rows - child.gridCell.row);
     }
     std::unordered_set<size_t> replacedCollections;
     for (const auto& operation : collectionEdits)
@@ -367,6 +503,7 @@ snowdesktop::control::Value DesktopApp::HandleControlDesktopEdits(
     {
         const auto& widget = widgets_[i];
         if (widget.type != DesktopWidgetType::Guide && !changedWidgets.contains(i) && !IsGroupedWidget(widget) &&
+            !finalParents.contains(widget.id) &&
             Fits(gridPages_, widget.gridCell, widget.gridSpan))
             Mark(occupied, widget.gridCell, widget.gridSpan);
     }
@@ -380,20 +517,38 @@ snowdesktop::control::Value DesktopApp::HandleControlDesktopEdits(
         Mark(occupied, cell, span);
     };
 
-    auto widgetResults = Array(), iconResults = Array(), collectionResults = Array();
     const bool apply = method == "desktop.applyEdits";
+    const auto identity = [&](size_t index) {
+        auto result = Object({});
+        if (index >= originalWidgetCount) result.object.emplace("ref", String(newRefs[index - originalWidgetCount]));
+        if (index < originalWidgetCount || apply) result.object.emplace("id", String(WideToUtf8(proposedWidgets[index].id)));
+        return result;
+    };
+    auto widgetResults = Array(), iconResults = Array(), collectionResults = Array(), groupResults = Array();
+    std::unordered_map<std::wstring, size_t> resultIndexById;
+    for (size_t i = 0; i < proposedWidgets.size(); ++i)
+        resultIndexById.emplace(proposedWidgets[i].id, i);
     for (size_t i = 0; i < proposedWidgets.size(); ++i)
     {
         if (!changedWidgets.contains(i)) continue;
         const auto& widget = proposedWidgets[i];
         const bool added = i >= originalWidgetCount;
         const auto label = added ? newRefs[i - originalWidgetCount] : WideToUtf8(widget.id);
-        reserve(widget.gridCell, widget.gridSpan, label);
-        auto result = Location(widget.gridCell, widget.gridSpan);
-        if (added) result.object.emplace("ref", String(label));
-        if (!added || apply) result.object.emplace("id", String(WideToUtf8(widget.id)));
+        const auto parent = finalParents.find(widget.id);
+        auto result = identity(i);
+        if (parent == finalParents.end())
+        {
+            reserve(widget.gridCell, widget.gridSpan, label);
+            result.object.merge(Location(widget.gridCell, widget.gridSpan).object);
+        }
+        else
+            result.object.emplace("parentGroup", identity(parent->second));
         if (added && widget.type == DesktopWidgetType::FolderMapping)
-            result.object.emplace("folderItemId", String(WideToUtf8(widget.sourceDesktopItemKey)));
+        {
+            result.object.emplace("folderPath", String(WideToUtf8(widget.sourceFolderPath)));
+            if (!widget.sourceDesktopItemKey.empty())
+                result.object.emplace("folderItemId", String(WideToUtf8(widget.sourceDesktopItemKey)));
+        }
         widgetResults.array.push_back(std::move(result));
     }
     for (const auto& operation : iconMoves)
@@ -409,22 +564,43 @@ snowdesktop::control::Value DesktopApp::HandleControlDesktopEdits(
     for (size_t i = 0; i < proposedWidgets.size(); ++i)
     {
         const auto& widget = proposedWidgets[i];
-        if (widget.type != DesktopWidgetType::Collection) continue;
         const bool added = i >= originalWidgetCount;
+        if (IsGroupWidgetType(widget.type) && (added || editedGroups.contains(i) ||
+            widgets_[i].childWidgetIds != widget.childWidgetIds))
+        {
+            auto result = identity(i);
+            result.object.emplace("title", String(WideToUtf8(widget.title)));
+            auto children = Array();
+            for (const auto& child : widget.childWidgetIds)
+            {
+                const auto childIndex = resultIndexById.find(child);
+                if (childIndex != resultIndexById.end())
+                    children.array.push_back(identity(childIndex->second));
+                else
+                    children.array.push_back(Object({{"id", String(WideToUtf8(child))}}));
+            }
+            result.object.emplace("children", std::move(children));
+            const auto active = resultIndexById.find(widget.activeCategoryId);
+            if (active != resultIndexById.end())
+                result.object.emplace("activeChild", identity(active->second));
+            groupResults.array.push_back(std::move(result));
+        }
+        if (widget.type != DesktopWidgetType::Collection) continue;
         if (!added && !changedWidgets.contains(i) && !replacedCollections.contains(i) &&
             widgets_[i].itemKeys == widget.itemKeys) continue;
         auto result = Object({{"title", String(WideToUtf8(widget.title))},
             {"itemCount", Number(static_cast<double>(widget.itemKeys.size()))}});
         if (added) result.object.emplace("ref", String(newRefs[i - originalWidgetCount]));
         if (!added || apply) result.object.emplace("id", String(WideToUtf8(widget.id)));
-        if (added || !IsGroupedWidget(widgets_[i]))
+        if (!finalParents.contains(widget.id))
             result.object.emplace("firstScreen", CollectionVisibility(this, gridPages_, widget));
         collectionResults.array.push_back(std::move(result));
     }
 
     auto result = Object({{"status", String(apply ? "applied" : "valid")},
         {"persistence", String(apply ? "queued" : "none")}, {"layoutRevision", String(revision)},
-        {"widgets", std::move(widgetResults)}, {"icons", std::move(iconResults)}, {"collections", std::move(collectionResults)}});
+        {"widgets", std::move(widgetResults)}, {"icons", std::move(iconResults)}, {"collections", std::move(collectionResults)},
+        {"groups", std::move(groupResults)}});
     if (Serialize(result).size() > MaximumFrameBytes - 2048)
         throw Error("result_too_large", "Split the desktop edits into smaller plans");
     if (apply)

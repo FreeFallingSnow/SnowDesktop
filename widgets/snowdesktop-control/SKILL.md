@@ -25,7 +25,7 @@ Prefer semantic operations for ordinary configuration. Read `settings.catalog` f
 
 For planning or organizing the desktop, read [desktop organization workflows](references/desktop-workflows.md). Use **first-time desktop setup** for an initial arrangement, including layout reference and optional feature guidance. Use **existing desktop management** for a scoped edit to an established layout.
 
-Use the [batch editing guide](references/desktop-editing.md) for creating components, assigning collection members and placing icons or components. On hosts with `desktopBatchEdits:1`, use `desktop.inspect`, `desktop.previewEdits` and `desktop.applyEdits` with the returned identities and grid coordinates.
+Use the [batch editing guide](references/desktop-editing.md) to create and place components, assign collection items, and move icons. On hosts with `desktopBatchEdits:1`, use `desktop.inspect`, `desktop.previewEdits` and `desktop.applyEdits` with the returned identities and grid coordinates. `desktopNativeComponents:1` adds direct controls for collection and file group tabs and explicitly chosen folder paths. Use these capabilities to build those components in the layout batch.
 
 For an individual existing component, `desktop.getLayout` and `widgets.place` remain available. Their layout revision comes from `desktop.getLayout`. Placement follows the application's displacement rules. Close storage popups and Quick Navigation before layout changes. `persistence:"queued"` acknowledges the in-memory layout.
 

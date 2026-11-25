@@ -600,6 +600,14 @@ positions, new widget IDs, and collection visibility. Layout persistence stays
 asynchronous. The existing `desktop.getLayout` and `widgets.place` contracts and
 protocol version remain compatible.
 
+`desktopNativeComponents:1` extends the same batch request with
+`setGroups`, allowing desktop collection and file groups to receive ordered
+tabs, transfer existing children, and include new children in the same
+transaction. Use `moveWidgets` to release a child to a desktop cell. A new
+folder mapping can use `folderPath` for an absolute directory selected by the
+user. Preview and apply return group references and their children, and
+`desktop.inspect` includes the active child and mapping source when present.
+
 The data cleanup worker retains finished `Automation/Captures` and
 `Automation/Demos` outputs for 30 days and incomplete runs for 7 days after the
 most recent write. Collection is confined to recognized UUID runs with known

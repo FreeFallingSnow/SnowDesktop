@@ -6,15 +6,16 @@ Read the [batch editing guide](desktop-editing.md) for request fields, capabilit
 
 Use this workflow when the user asks for an initial arrangement or wants to build a layout from scratch.
 
-1. **Read the desktop and establish the goal.** Use `desktop.inspect` to learn the available pages, screens, icons, collections and space. Reuse preferences the user has already given. Ask one focused question when a missing preference would change the layout, such as which apps need direct access or whether the user wants more room for wallpaper. An empty desktop is a valid starting point. Base proposed additions on the user's stated activities and available components.
-2. **Show the target arrangement.** For a new page or whole desktop, show a labeled sketch at the affected screens' proportions. Mark the direct-access icons, collection locations and relative sizes, reserved space, and content reached by scrolling or switching pages. Use the amount of content and its access priority to size each collection. Show a second option only when a concrete tradeoff calls for a choice.
-3. **Check and apply the plan.** Preflight the complete arrangement with the batch editor. Revise conflicts, unintended partial rows and placement that would hide an essential entry. Apply within the requested scope when the arrangement is clear. Use the checks below to explain what landed, how to find essentials and what still needs visual confirmation.
-4. **Offer one next feature.** After handing over the organized desktop, recommend a short, optional preview based on something the user said or a need that surfaced during the task. The user chooses whether to preview, apply or finish.
+1. **Read the desktop and establish the goal.** Use `desktop.inspect` to learn the screens, icons, components and space. For an open-ended first setup, ask together about the user's main activities, what they want one click away, and whether there is a working folder they want to browse from the desktop. If they want a folder mapping, establish which directory it should show. Reuse preferences already given. An empty desktop is a valid starting point.
+2. **Choose where each kind of item belongs.** Keep direct access for the user's priorities. Put other app and system shortcuts in task-based collections. Show actual working files with Desktop Files or a folder mapping when requested. Use a collection group for related categories that can share a footprint and a file group for several folder sources or Desktop Files panels. Use separate collections when the user needs their contents visible side by side. Use a compact or large-folder collection when the intended first screen fits, and a scrolling presentation for a larger set that needs continuous browsing. Choose consistent presentation for panels serving the same role.
+3. **Show and check the target arrangement.** For a whole desktop or a new page, show a labeled sketch at the affected screens' proportions. Mark direct entries, panels, group tabs, mapped folders and reserved space. Indicate which content needs switching tabs, scrolling, or opening a panel. Preflight the layout, including first-screen capacity and partially visible rows. When the user asks to be guided or a choice materially changes access, settle it before applying. Use the checks below to verify the applied layout and explain where essentials went.
+4. **Offer one next feature.** At handoff, name a specific optional next step that matches the user's goal. The user chooses whether to preview it, apply it or finish.
 
 | User's interest | What to offer |
 | --- | --- |
 | Consistent icon appearance | **Icon Beautification.** Show or open a preview of the available shape and background styles. |
 | More room for wallpaper or a different place for the bars | **Desktop Layout.** Open the preset preview and explain its effects on Dock, the status bar, the Windows taskbar and reserved space before applying. |
+| Regular access to working files | **Folder Mapping.** Ask which directory they want to browse from the desktop and show how it would fit. |
 | Information or controls they want on the desktop | **Explore Widgets.** Find a relevant built-in or Workshop component, explain what it does and where it would fit, and let the user choose whether to add it. |
 
 Use the host's advertised settings and preview actions or direct the user to the corresponding Usage Guide lesson. If the user chooses to finish, conclude the task there.
@@ -36,6 +37,6 @@ Use this workflow to maintain an established arrangement, including sorting new 
 
 ## Example requests
 
-- “First time using SnowDesktop. I mainly do research. Keep my browser and Zotero within easy reach.” Use first-time setup. Keep those entries direct, show the arrangement to scale, and offer one exploration option based on the rest of the user's context.
+- “I'm new to SnowDesktop. Help me organize my desktop.” Inspect the desktop and ask what the user does most, what needs direct access, and whether any working folder should be visible. Use the answers to choose components and show the arrangement.
 - “Put the three apps I just installed into Development.” Use existing desktop management. Resolve the three shortcuts and the Development collection, preview the change, apply it, and verify membership.
 - “These two collections are crowded.” Use existing desktop management. Inspect the affected collections, show the proposed fit or scroll change, and check the result against the actual desktop when visual evidence is available.

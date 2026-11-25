@@ -228,8 +228,8 @@ Value Describe()
     add("capture.cancel", true, "{id:string}");
     add("desktop.getLayout", false, "{}", "layout");
     add("desktop.inspect", false, "{}");
-    add("desktop.previewEdits", false, "{ifLayoutRevision:string,addWidgets?:array,moveWidgets?:array,setCollections?:array,moveIcons?:array}");
-    add("desktop.applyEdits", true, "{ifLayoutRevision:string,addWidgets?:array,moveWidgets?:array,setCollections?:array,moveIcons?:array}");
+    add("desktop.previewEdits", false, "{ifLayoutRevision:string,addWidgets?:array,moveWidgets?:array,setCollections?:array,setGroups?:array,moveIcons?:array}");
+    add("desktop.applyEdits", true, "{ifLayoutRevision:string,addWidgets?:array,moveWidgets?:array,setCollections?:array,setGroups?:array,moveIcons?:array}");
     add("widgets.list", false, "{}", "layout");
     add("widgets.get", false, "{id:string}", "widget");
     add("widgets.agentActions", false, "{id:string}");
@@ -250,7 +250,7 @@ Value Describe()
         {"guidance", Object({
             {"language", String("en")},
             {"overview", String("SnowDesktop organizes desktop items in pages, grids and storage components. It also provides visual personalization, a Dock, a status bar and Quick Navigation.")},
-            {"organize", String("Read desktop.getLayout and settings.catalog first. Use widgets.place for an existing component's position or span, and the page target for grid dimensions. File Categories can collect matching desktop items when their native-widget catalog advertises collect-now.")},
+            {"organize", String("Use desktop.inspect, desktop.previewEdits and desktop.applyEdits to create components, assign collection items and place desktop entries in a batch. desktopNativeComponents adds ordered collection and file group tabs and mappings for selected folder paths. Use the page settings target for grid dimensions, and native-widget settings for component views and the Desktop Files collect-now action.")},
             {"appearance", String("Use the personalization target for common surface defaults, desktop for ordinary icon and title presentation, and the individual component or icon target for its own overrides. An independent theme may take precedence over global settings.")},
             {"settings", String("Use settings.search to find settings by keywords in their field paths and English descriptions. Results identify a target and field, plus an action for action arguments. Resolve targets marked requiresTargetId, then use settings.catalog on the concrete target to check values, constraints, availability and revision. Call settings.catalog without a target to discover domains and live component instances. Refresh the revision before each edit and respect confirmation, restart and availability requirements.")},
             {"components", String("Use native-widget for built-in storage component view and content settings and widget for Lua-authored settings and host appearance. Discover a loaded Lua instance's optional English action declarations with widgets.agentActions. A delivered action ran the component event callback; verify the outcome separately.")},
@@ -261,7 +261,8 @@ Value Describe()
             {"nativeWidgetControls", Number(1)}, {"demoElementTargets", Number(1)},
             {"nativePopupControls", Number(1)}, {"menuControlValues", Number(1)}, {"settingsPrivateInput", Number(0)},
             {"directSettings", Number(1)}, {"settingsSchema", Number(1)}, {"nativeWidgetSettings", Number(1)},
-            {"settingsGuidance", Number(1)}, {"settingsSearch", Number(1)}, {"widgetAgentActions", Number(1)}, {"desktopBatchEdits", Number(1)}})}});
+            {"settingsGuidance", Number(1)}, {"settingsSearch", Number(1)}, {"widgetAgentActions", Number(1)},
+            {"desktopBatchEdits", Number(1)}, {"desktopNativeComponents", Number(1)}})}});
 }
 
 std::string Dispatch(std::string_view request, const Handler& handler,
