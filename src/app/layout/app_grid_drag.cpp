@@ -24,8 +24,6 @@ void DesktopApp::InitializeGridFromWindows()
     // Opening the page respects the saved panel preference and starts no practice.
     usageGuideWelcomePending_ = usageGuideWelcomeQueued_ = true;
 
-    if (snowdesktop::debug_profile::Enabled()) return;
-
     namespace native = snowdesktop::windows_desktop_layout;
     const auto snapshot = native::Capture();
     if (!snapshot.Available())
@@ -37,9 +35,7 @@ void DesktopApp::InitializeGridFromWindows()
         return;
     }
 
-    std::unordered_map<std::wstring, POINT> positions;
-    for (const auto& item : snapshot.items)
-        positions.emplace(ToUpperInvariant(item.parsingName), item.screenPosition);
+    const bool importItemPositions = !snowdesktop::debug_profile::Enabled();
     std::vector<POINT> spacingByPage;
     spacingByPage.reserve(gridPages_.size());
     for (auto& page : gridPages_)
@@ -56,22 +52,20 @@ void DesktopApp::InitializeGridFromWindows()
         page.rows = std::max(1, page.rows);
     }
 
-    struct Placement
+    struct NativePlacement
     {
-        size_t itemIndex;
         size_t pageIndex;
         native::Cell requested;
     };
-    std::vector<Placement> placements;
-    for (size_t index = 0; index < items_.size(); ++index)
+    std::unordered_map<std::wstring, NativePlacement> positions;
+    // Native geometry is useful for both real and simulated desktops, even
+    // when none of their item identities match.
+    for (const auto& item : snapshot.items)
     {
-        const auto& item = items_[index];
-        if (item.name.empty()) continue;
-        const auto found = positions.find(ToUpperInvariant(item.parsingName));
-        if (found == positions.end()) continue;
         // GridPage bounds and work areas are relative to the virtual desktop,
         // while the Shell capture uses physical screen coordinates.
-        const POINT point{found->second.x - virtualLeft_, found->second.y - virtualTop_};
+        const POINT point{item.screenPosition.x - virtualLeft_,
+            item.screenPosition.y - virtualTop_};
         for (size_t pageIndex = 0; pageIndex < gridPages_.size(); ++pageIndex)
         {
             auto& page = gridPages_[pageIndex];
@@ -84,7 +78,8 @@ void DesktopApp::InitializeGridFromWindows()
             // those cells instead of folding their items onto the previous one.
             page.columns = std::max(page.columns, cell.column + 1);
             page.rows = std::max(page.rows, cell.row + 1);
-            placements.push_back({index, pageIndex, cell});
+            if (importItemPositions)
+                positions.try_emplace(ToUpperInvariant(item.parsingName), NativePlacement{pageIndex, cell});
             break;
         }
     }
@@ -96,19 +91,26 @@ void DesktopApp::InitializeGridFromWindows()
         savedPageColumns_[page.id] = page.columns;
         savedPageRows_[page.id] = page.rows;
         ApplyIconSpacingToPage(page);
-        occupied.emplace_back(static_cast<size_t>(page.columns * page.rows), false);
+        if (!positions.empty())
+            occupied.emplace_back(static_cast<size_t>(page.columns * page.rows), false);
     }
     size_t imported = 0;
-    for (const auto& placement : placements)
+    if (!positions.empty())
     {
-        const auto& page = gridPages_[placement.pageIndex];
-        const auto cell = native::ClaimNearestCell(placement.requested,
-            page.columns, page.rows, occupied[placement.pageIndex]);
-        if (!cell) continue; // Existing overflow placement handles a full page.
-        auto& item = items_[placement.itemIndex];
-        item.gridCell = {page.id, cell->column, cell->row};
-        item.gridSpan = {1, 1};
-        ++imported;
+        for (auto& item : items_)
+        {
+            if (item.name.empty()) continue;
+            const auto found = positions.find(ToUpperInvariant(item.parsingName));
+            if (found == positions.end()) continue;
+            const auto& placement = found->second;
+            const auto& page = gridPages_[placement.pageIndex];
+            const auto cell = native::ClaimNearestCell(placement.requested,
+                page.columns, page.rows, occupied[placement.pageIndex]);
+            if (!cell) continue; // Existing overflow placement handles a full page.
+            item.gridCell = {page.id, cell->column, cell->row};
+            item.gridSpan = {1, 1};
+            ++imported;
+        }
     }
     RefreshIconBitmapResolution();
     const std::wstring message = L"Initialized grid from Windows: spacing=" +
