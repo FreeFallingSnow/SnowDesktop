@@ -350,13 +350,12 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             }
             const size_t widgetIndex =
                 HitTestStandaloneWidgetIndex(point);
-            if (widgetIndex < widgets_.size() &&
+            const auto* content = widgetIndex < widgets_.size() &&
                 IsLuaDesktopSurface(widgets_[widgetIndex]) &&
-                HitTestStandaloneWidget(widgetIndex, point) ==
-                    WidgetHit::Content)
+                HitTestStandaloneWidget(widgetIndex, point) == WidgetHit::Content
+                ? ResolveLuaWidgetContent(&widgets_[widgetIndex]) : nullptr;
+            if (content)
             {
-                const auto* content = ResolveLuaWidgetContent(&widgets_[widgetIndex]);
-                if (!content) break;
                 const RECT frame = GetStandaloneWidgetFrameRect(
                     widgets_[widgetIndex]);
                 const std::string cursor =
@@ -374,6 +373,13 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     return TRUE;
                 }
             }
+        }
+        if (hwnd == hwnd_ && reinterpret_cast<HWND>(wp) == hwnd)
+        {
+            // DefWindowProc sends WM_SETCURSOR synchronously to our Explorer
+            // parent. Use the desktop class's arrow for its own client area.
+            snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
+            return TRUE;
         }
         break;
     }
