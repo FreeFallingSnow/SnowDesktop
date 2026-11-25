@@ -16,7 +16,7 @@ Use the bundled PowerShell client for SnowDesktop's application control IPC. It 
 
 ## Work from the user's intent
 
-1. Identify what the user wants to find, see or do differently. For references to another desktop or style, infer candidate behaviors such as placement, launch and switching habits, visibility, or motion. Reuse explicit preferences and the current setup. Ask a focused question when plausible interpretations would lead to materially different changes.
+1. Identify what the user wants to find, see or do differently. For references to another desktop or style, infer candidate behaviors such as placement, launch and switching habits, visibility, or motion. Reuse explicit preferences and the current setup. When clarification would change the result, first share what you found and a recommendation in everyday terms. Ask about the user's routine or desired outcome so they can answer without knowing SnowDesktop's component names or ways of arranging them.
 2. Discover the closest supported controls. Use `desktop.inspect` for the layout and native component catalog. Use `settings.search` with short English phrases for behaviors and `settings.catalog` on matching targets for availability, choices and side effects. Look at adjacent capabilities when they help the same goal.
 3. Choose the smallest coherent set of changes. Preview spatial changes and explain any consequential side effects before applying. For a clear execution request, carry out the requested behavior through semantic operations. Offer optional add-ons separately when they change a preference the user has yet to express.
 4. Verify what changed through fresh state and, when relevant and available, a whole-screen visual check. Explain how to use any new entry points or controls.
