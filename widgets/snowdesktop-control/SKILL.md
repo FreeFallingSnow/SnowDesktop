@@ -23,9 +23,11 @@ Requests accept named JSON objects through `-ParametersJson` or UTF-8 `-Paramete
 
 Prefer semantic operations for ordinary configuration. Read `settings.catalog` for a concrete target to learn writable fields, constraints, defaults and named actions. Read fresh state immediately before mutation and pass its opaque `revision` as `ifRevision`. Respect read-only fields, current availability, Steam unlocks, permissions, and any target-specific confirmation arguments. Execute only changes within the user's request. Secret values are not returned by settings reads; use the catalog's explicit secret and picker actions where applicable.
 
-For layout, read `desktop.getLayout` or `widgets.list`, identify existing widget/page IDs, and use `widgets.place` with integral grid coordinates/spans and `ifLayoutRevision`. Close storage popups and Quick Navigation first. Placement follows the application's collision/displacement rules and cannot place grouped children independently. Its `persistence:"queued"` result acknowledges the in-memory layout, not durable storage.
+For adding components, assigning collection members, or repositioning multiple icons or components, use the [desktop editing workflow](references/desktop-editing.md). Discover `desktopBatchEdits:1`, call `desktop.inspect` once, and send one plan to `desktop.previewEdits` and `desktop.applyEdits`. Use returned item keys, component IDs and grid cells. Review collection capacity and collision errors in the preview.
 
-`widgets.open/close`, `navigation.open/close`, `dock.show/hide` and `settings.open` expose existing presentation actions. An `accepted` response is not completion: observe `app.getState` for readiness and animation settlement. This endpoint has no general live-widget create/delete, arbitrary program execution, generic file-operation or Workshop-publication method.
+For an individual existing component, `desktop.getLayout` and `widgets.place` remain available. Their layout revision comes from `desktop.getLayout`. Placement follows the application's displacement rules. Close storage popups and Quick Navigation before layout changes. `persistence:"queued"` acknowledges the in-memory layout.
+
+`widgets.open/close`, `navigation.open/close`, `dock.show/hide` and `settings.open` expose existing presentation actions. An `accepted` response is not completion: observe `app.getState` for readiness and animation settlement. Component creation is available through the desktop editing workflow on compatible hosts. This endpoint provides no general component deletion, arbitrary program execution, generic file operation or Workshop publication.
 
 ## Interaction and recording
 

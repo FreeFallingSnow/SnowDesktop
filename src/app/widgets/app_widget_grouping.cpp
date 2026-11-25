@@ -243,6 +243,22 @@ void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+DesktopWidget DesktopApp::BuildNativeStorageWidget(DesktopWidgetType type) const
+{
+    DesktopWidget widget;
+    widget.type = type;
+    widget.showTitle = true;
+    switch (type)
+    {
+    case DesktopWidgetType::Collection: widget.title = _LW("widget.collection"); break;
+    case DesktopWidgetType::CollectionGroup: widget.title = _LW("widget.collection_group"); break;
+    case DesktopWidgetType::FileGroup: widget.title = _LW("widget.file_group"); break;
+    case DesktopWidgetType::FileCategories: widget.title = _LW("widget.desktop_files"); break;
+    default: break;
+    }
+    return widget;
+}
+
 /**
  * @brief 按组件预览页所表达的尺寸与显示模式创建组件。
  */
@@ -267,29 +283,19 @@ std::wstring DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
     widget.showFileCategories = settings.showFileCategories;
     widget.showSearchBox = settings.showSearchBox;
 
+    const auto buildNativeStorage = [&](DesktopWidgetType type) {
+        const auto native = BuildNativeStorageWidget(type);
+        widget.type = native.type;
+        widget.title = native.title;
+        widget.showTitle = native.showTitle;
+        widget.bottomBarHover = native.bottomBarHover;
+    };
     switch (settings.kind)
     {
-    case ApplyKind::Collection:
-        widget.type = DesktopWidgetType::Collection;
-        widget.title = _LW("widget.collection");
-        widget.showTitle = true;
-        widget.bottomBarHover = true;
-        break;
-    case ApplyKind::CollectionGroup:
-        widget.type = DesktopWidgetType::CollectionGroup;
-        widget.title = _LW("widget.collection_group");
-        widget.showTitle = true;
-        break;
-    case ApplyKind::FileGroup:
-        widget.type = DesktopWidgetType::FileGroup;
-        widget.title = _LW("widget.file_group");
-        widget.showTitle = true;
-        break;
-    case ApplyKind::FileCategories:
-        widget.type = DesktopWidgetType::FileCategories;
-        widget.title = _LW("widget.desktop_files");
-        widget.showTitle = true;
-        break;
+    case ApplyKind::Collection: buildNativeStorage(DesktopWidgetType::Collection); break;
+    case ApplyKind::CollectionGroup: buildNativeStorage(DesktopWidgetType::CollectionGroup); break;
+    case ApplyKind::FileGroup: buildNativeStorage(DesktopWidgetType::FileGroup); break;
+    case ApplyKind::FileCategories: buildNativeStorage(DesktopWidgetType::FileCategories); break;
     case ApplyKind::FolderMapping:
     {
         std::wstring folderPath;

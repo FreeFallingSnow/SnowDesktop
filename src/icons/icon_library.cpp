@@ -105,7 +105,7 @@ bool IconLibrary::Load()
 {
     if (loaded_) return valid_;
     loaded_ = true;
-    if (!SafeDirectory(directory_) || !SafeDirectory(directory_ / L"originals") || !SafeDirectory(directory_ / L"previews") || !SafeDirectory(directory_ / L"packs")) return valid_ = false;
+    if (!SafeDirectory(directory_) || !SafeDirectory(directory_ / L"originals") || !SafeDirectory(directory_ / L"previews")) return valid_ = false;
     const auto index = directory_ / L"library.json";
     std::error_code ec;
     if (!std::filesystem::exists(index, ec)) return valid_ = !ec;
@@ -238,7 +238,8 @@ IconLibrarySnapshot IconLibrary::Refresh()
     loaded_ = false; valid_ = true; entries_.clear(); groups_.clear(); subscriptionAccounts_.clear(); ++revision_;
     return Read();
 }
-std::string IconLibrary::Import(const std::filesystem::path& path, std::string& error, const std::string& groupId, std::wstring name)
+std::string IconLibrary::Import(const std::filesystem::path& path, std::string& error,
+    const std::string& groupId, std::vector<std::string>& createdOriginals)
 {
     std::error_code ec;
     const auto size = std::filesystem::file_size(path, ec);
@@ -248,25 +249,32 @@ std::string IconLibrary::Import(const std::filesystem::path& path, std::string& 
     // The selected source may already be our hashed original. Release its
     // Windows read handle before atomically refreshing that same resource.
     input.close();
+    return ImportBytes(bytes, path.stem().wstring(), error, groupId, createdOriginals);
+}
+
+std::string IconLibrary::ImportBytes(std::string_view bytes, std::wstring name, std::string& error,
+    const std::string& groupId, std::vector<std::string>& createdOriginals)
+{
+    icon_image::Image image;
+    if (!icon_image::DecodeBytes(bytes, 256, image, error)) return {};
     const auto hash = Hash(bytes);
     if (hash.empty()) { error = "iconLibrary.saveFailed"; return {}; }
-    const auto stage = directory_ / (L".import-" + Wide(hash) + path.extension().wstring());
-    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); } } cleanup{stage};
-    if (!atomic_file::WriteAll(stage, bytes)) { error = "iconLibrary.saveFailed"; return {}; }
-    icon_image::Image image;
-    if (!icon_image::Decode(stage, 256, image, error)) return {};
     const auto id = hash + '.' + image.format;
     const auto original = IconAssetPath(directory_, id);
+    const DWORD attributes = GetFileAttributesW(original.c_str());
+    const bool originalMissing = attributes == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND;
     if (!atomic_file::WriteAll(original, bytes)) { error = "iconLibrary.saveFailed"; return {}; }
+    if (originalMissing) createdOriginals.push_back(id);
     // Reuse the actual decoded pixels for the rebuildable thumbnail; a large
     // pack must not decode every vector again during the following Read().
     const auto preview = directory_ / L"previews" / (Wide(id) + L"-v" + std::to_wstring(icon_image::kCacheVersion) + L".png");
     std::string previewError;
-    if (!preview_png::Save(preview, image.width, image.height, image.pixels, previewError)) { error = "iconLibrary.saveFailed"; return {}; }
+    if (!SafeFile(preview))
+        (void)preview_png::Save(preview, image.width, image.height, image.pixels, previewError);
     auto found = std::find_if(entries_.begin(), entries_.end(), [&](const auto& entry) { return entry.id == id; });
     if (found == entries_.end())
     {
-        IconLibraryEntry entry; entry.id = id; entry.format = image.format; entry.name = name.empty() ? path.stem().wstring() : std::move(name);
+        IconLibraryEntry entry; entry.id = id; entry.format = image.format; entry.name = std::move(name);
         entry.width = image.sourceWidth; entry.height = image.sourceHeight;
         entries_.push_back(std::move(entry));
         found = entries_.end() - 1;
@@ -461,6 +469,7 @@ IconLibrarySnapshot IconLibrary::Invoke(const IconLibraryRequest& request, const
     {
         if (!request.groupId.empty() && group == groups_.end()) { auto result = Read(); result.succeeded = false; result.error = "iconLibrary.stale"; return result; }
         const auto oldEntries = entries_; const auto oldGroups = groups_;
+        std::vector<std::string> createdOriginals;
         for (const auto& pathText : request.paths)
         {
             const std::filesystem::path path(pathText);
@@ -472,7 +481,7 @@ IconLibrarySnapshot IconLibrary::Invoke(const IconLibraryRequest& request, const
                     (extension == L".apk" && !android_icon_pack::Convert(archive, error)))
                 { operation.error = error; operation.failures.push_back(path.filename().wstring()); continue; }
                 const auto packageId = Hash(archive.original);
-                if (packageId.empty() || !atomic_file::WriteAll(directory_ / L"packs" / (Wide(packageId) + extension), archive.original))
+                if (packageId.empty())
                 { operation.error = "iconLibrary.saveFailed"; operation.failures.push_back(path.filename().wstring()); continue; }
                 archive.original.clear(); archive.original.shrink_to_fit();
                 IconLibraryGroup pack; pack.id = NewGroupId(); pack.name = path.stem().wstring(); pack.packageId = packageId;
@@ -486,10 +495,8 @@ IconLibrarySnapshot IconLibrary::Invoke(const IconLibraryRequest& request, const
                 for (const auto& item : archive.images)
                 {
                     const auto file = std::filesystem::path(Wide(item.name));
-                    const auto temporary = directory_ / (L".pack-" + Wide(packId) + file.extension().wstring());
                     std::string importError;
-                    const auto id = atomic_file::WriteAll(temporary, item.bytes) ? Import(temporary, importError, packId, file.stem().wstring()) : std::string{};
-                    std::error_code removeError; std::filesystem::remove(temporary, removeError);
+                    const auto id = ImportBytes(item.bytes, file.stem().wstring(), importError, packId, createdOriginals);
                     if (id.empty()) { operation.failures.push_back(Wide(item.name)); operation.error = importError.empty() ? "iconLibrary.invalid" : importError; }
                     else
                     {
@@ -507,12 +514,23 @@ IconLibrarySnapshot IconLibrary::Invoke(const IconLibraryRequest& request, const
             }
             else
             {
-                std::string error; const auto id = Import(path, error, request.groupId);
+                std::string error; const auto id = Import(path, error, request.groupId, createdOriginals);
                 if (!id.empty()) operation.imported.push_back(id); else operation.failures.push_back(path.filename().wstring());
                 if (!error.empty()) operation.error = error;
             }
         }
-        if (!Save()) { entries_ = oldEntries; groups_ = oldGroups; operation.imported.clear(); operation.error = "iconLibrary.saveFailed"; }
+        if (!Save())
+        {
+            entries_ = oldEntries; groups_ = oldGroups; operation.imported.clear(); operation.error = "iconLibrary.saveFailed";
+            for (const auto& id : createdOriginals)
+            {
+                if (std::ranges::any_of(oldEntries, [&](const auto& entry) { return entry.id == id; })) continue;
+                std::error_code ignored;
+                std::filesystem::remove(IconAssetPath(directory_, id), ignored);
+                std::filesystem::remove(directory_ / L"previews" /
+                    (Wide(id) + L"-v" + std::to_wstring(icon_image::kCacheVersion) + L".png"), ignored);
+            }
+        }
         else ++revision_;
     }
     else if (request.action == "rename")

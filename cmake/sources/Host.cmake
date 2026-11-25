@@ -237,6 +237,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/features/app_theme_preview.cpp
     src/app/features/app_animation_test.cpp
     src/app/features/app_control.cpp
+    src/app/features/app_control_desktop.cpp
     src/app/features/app_control_runtime.h
     src/app/features/app_control_elements.cpp
     src/app/features/app_control_settings.cpp

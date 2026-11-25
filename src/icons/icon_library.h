@@ -110,7 +110,9 @@ private:
     bool Load();
     bool Save();
     std::string Import(const std::filesystem::path& path, std::string& error,
-        const std::string& groupId = {}, std::wstring name = {});
+        const std::string& groupId, std::vector<std::string>& createdOriginals);
+    std::string ImportBytes(std::string_view bytes, std::wstring name, std::string& error,
+        const std::string& groupId, std::vector<std::string>& createdOriginals);
     std::filesystem::path directory_;
     std::vector<IconLibraryEntry> entries_;
     std::vector<IconLibraryGroup> groups_;

@@ -534,6 +534,9 @@ is independent of the Lua component `apiVersion`.
 | `api.describe` | `{}` | Protocol and method discovery |
 | `app.getState` | `{}` | Host PID, locale, desktop visibility, popup/navigation state and animation flags |
 | `desktop.getLayout` | `{}` | Desktop grid page geometry, widget instances and `layoutRevision` |
+| `desktop.inspect` | `{}` | Editable layout revision, current desktop items and collection membership, and creatable component types |
+| `desktop.previewEdits` | `{ifLayoutRevision,addWidgets?,moveWidgets?,setCollections?,moveIcons?}` | Validate all requested changes and return placements and collection capacity |
+| `desktop.applyEdits` | Same as `desktop.previewEdits` | Revalidate and apply the plan on the desktop thread, then queue layout persistence |
 | `widgets.list` | `{}` | Same layout snapshot, including widget IDs and placement |
 | `widgets.get` | `{id}` | One widget and the current layout revision |
 | `widgets.agentActions` | `{id}` | English descriptions and argument types of actions declared by the loaded Lua instance |
@@ -557,9 +560,8 @@ in effect.
 
 Layout widget `memberCount` is the length of `memberIds`, the list of child
 widget instances. Count rows with `type: "lua"` for Lua instances, including
-those belonging to a stack. Collection contents such as files and shortcuts
-have no total count in the layout response. Visible UI item rows can cover
-only a portion of a collection.
+those belonging to a stack. Use `desktop.inspect` for ordered collection
+shortcut and file keys, including members outside the visible viewport.
 
 Settings `page` values are `general`, `desktop`, `widgets`, `backup-and-data`,
 `about`, `dock`, `taskbar`, `quick-navigation`, `theme-manager`, `status-bar`,
@@ -589,6 +591,21 @@ children cannot be placed independently. Live drags and context menus reject
 UI changes with `busy`.
 Close storage popups and Quick Navigation before changing widget placement.
 
+`desktopBatchEdits:1` adds the batch workflow described in
+[Desktop editing](../../../widgets/snowdesktop-control/references/desktop-editing.md).
+Use the revision returned by `desktop.inspect` for both batch methods. Preview
+and apply share the same request schema and occupancy rules. All validation is
+completed before the host replaces the layout model. The response lists
+positions, new widget IDs, and collection visibility. Layout persistence stays
+asynchronous. The existing `desktop.getLayout` and `widgets.place` contracts and
+protocol version remain compatible.
+
+The data cleanup worker retains finished `Automation/Captures` and
+`Automation/Demos` outputs for 30 days and incomplete runs for 7 days after the
+most recent write. Collection is confined to recognized UUID runs with known
+output files. Full application-data backups omit Automation output. Export
+captures and demos to a separate location for long-term retention.
+
 ## Execution and lifetime
 
 Pipe I/O runs on a worker; all host operations execute on the owning UI thread.
@@ -598,8 +615,8 @@ Failure to acquire the endpoint is logged without disabling the desktop.
 
 The endpoint provides live discovery/operations plus isolated native render
 exports. Fixture data and virtual clocks belong to the private renderer; they
-do not replace the live user profile. Creating/removing live widgets, external
-application control and package publication remain outside this endpoint's
+do not replace the live user profile. Component removal, external application control and package publication remain
+outside this endpoint's
 current contract.
 
 ### Lua widget stacks

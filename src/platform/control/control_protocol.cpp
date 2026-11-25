@@ -227,6 +227,9 @@ Value Describe()
     add("capture.state", false, "{id:string}");
     add("capture.cancel", true, "{id:string}");
     add("desktop.getLayout", false, "{}", "layout");
+    add("desktop.inspect", false, "{}");
+    add("desktop.previewEdits", false, "{ifLayoutRevision:string,addWidgets?:array,moveWidgets?:array,setCollections?:array,moveIcons?:array}");
+    add("desktop.applyEdits", true, "{ifLayoutRevision:string,addWidgets?:array,moveWidgets?:array,setCollections?:array,moveIcons?:array}");
     add("widgets.list", false, "{}", "layout");
     add("widgets.get", false, "{id:string}", "widget");
     add("widgets.agentActions", false, "{id:string}");
@@ -258,7 +261,7 @@ Value Describe()
             {"nativeWidgetControls", Number(1)}, {"demoElementTargets", Number(1)},
             {"nativePopupControls", Number(1)}, {"menuControlValues", Number(1)}, {"settingsPrivateInput", Number(0)},
             {"directSettings", Number(1)}, {"settingsSchema", Number(1)}, {"nativeWidgetSettings", Number(1)},
-            {"settingsGuidance", Number(1)}, {"settingsSearch", Number(1)}, {"widgetAgentActions", Number(1)}})}});
+            {"settingsGuidance", Number(1)}, {"settingsSearch", Number(1)}, {"widgetAgentActions", Number(1)}, {"desktopBatchEdits", Number(1)}})}});
 }
 
 std::string Dispatch(std::string_view request, const Handler& handler,

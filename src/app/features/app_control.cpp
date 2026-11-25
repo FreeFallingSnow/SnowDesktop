@@ -106,7 +106,7 @@ void DesktopApp::InitializeApplicationControl()
     }
 }
 
-snowdesktop::control::Value DesktopApp::ApplicationControlLayout() const
+snowdesktop::control::Value DesktopApp::ApplicationControlLayout(bool includeDesktopItems) const
 {
     using namespace snowdesktop::control;
     Value pages = Array(), widgets = Array(), items = Array();
@@ -115,14 +115,58 @@ snowdesktop::control::Value DesktopApp::ApplicationControlLayout() const
             {"monitorId", String(WideToUtf8(page.monitorId))}, {"bounds", Rect(page.bounds)},
             {"columns", Number(page.columns)}, {"rows", Number(page.rows)},
             {"dpiX", Number(page.dpiX)}, {"dpiY", Number(page.dpiY)}}));
-    for (const auto& widget : widgets_) widgets.array.push_back(WidgetValue(widget, IsGroupedWidget(widget)));
-    Value identity = Object({{"pages", pages}, {"widgets", widgets}});
+    std::unordered_map<std::wstring, std::string> owners;
+    for (const auto& widget : widgets_)
+    {
+        auto value = WidgetValue(widget, IsGroupedWidget(widget));
+        if (includeDesktopItems && widget.type != DesktopWidgetType::FolderMapping)
+        {
+            auto members = Array();
+            for (const auto& key : widget.itemKeys)
+            {
+                members.array.push_back(String(WideToUtf8(key)));
+                owners.try_emplace(ToUpperInvariant(key), WideToUtf8(widget.id));
+            }
+            value.object.emplace("itemIds", std::move(members));
+            value.object.emplace("scrollContainer", Boolean(widget.scrollContainerMode));
+            value.object.emplace("showTitle", Boolean(widget.showTitle));
+            value.object.emplace("titleOnHover", Boolean(widget.bottomBarHover));
+        }
+        widgets.array.push_back(std::move(value));
+    }
     for (const auto& item : items_)
-        items.array.push_back(Object({{"key", String(WideToUtf8(item.layoutKey))},
+    {
+        auto value = Object({{"key", String(WideToUtf8(item.layoutKey))},
             {"pageId", String(WideToUtf8(item.gridCell.pageId))}, {"column", Number(item.gridCell.column)},
-            {"row", Number(item.gridCell.row)}, {"columns", Number(item.gridSpan.columns)}, {"rows", Number(item.gridSpan.rows)}}));
-    identity.object.emplace("items", std::move(items));
-    return Object({{"layoutRevision", String(Revision(identity))}, {"pages", std::move(pages)}, {"widgets", std::move(widgets)}});
+            {"row", Number(item.gridCell.row)}, {"columns", Number(item.gridSpan.columns)}, {"rows", Number(item.gridSpan.rows)}});
+        if (includeDesktopItems)
+        {
+            const auto owner = owners.find(ToUpperInvariant(item.layoutKey));
+            value.object.emplace("name", String(WideToUtf8(item.name)));
+            value.object.emplace("ownerWidgetId", String(owner == owners.end() ? "" : owner->second));
+            value.object.emplace("onDesktop", Boolean(!IsItemInAnyWidget(item) && item.gridCell.pageId != kDockPageId));
+        }
+        items.array.push_back(std::move(value));
+    }
+    if (!includeDesktopItems)
+    {
+        const auto identity = Object({{"pages", pages}, {"widgets", widgets}, {"items", std::move(items)}});
+        return Object({{"layoutRevision", String(Revision(identity))}, {"pages", std::move(pages)}, {"widgets", std::move(widgets)}});
+    }
+    auto state = Object({{"pages", std::move(pages)}, {"widgets", std::move(widgets)}, {"items", std::move(items)}});
+    auto dockOnly = Array();
+    for (const auto& entry : dockEntries_)
+        if (entry.type == DockEntryType::DesktopItem && !entry.keepOnDesktop)
+            dockOnly.array.push_back(String(WideToUtf8(entry.reference)));
+    auto mapped = Array();
+    for (const auto& widget : widgets_)
+        if (widget.type == DesktopWidgetType::FolderMapping)
+            mapped.array.push_back(Object({{"id", String(WideToUtf8(widget.id))},
+                {"path", String(WideToUtf8(widget.sourceFolderPath))}, {"itemId", String(WideToUtf8(widget.sourceDesktopItemKey))}}));
+    state.object.emplace("layoutRevision", String(Revision(Object({
+        {"layout", state}, {"dockOnly", std::move(dockOnly)}, {"mappedSources", std::move(mapped)},
+        {"geometryRevision", String(std::to_string(layoutPassRevision_))}}))));
+    return state;
 }
 
 snowdesktop::control::Value DesktopApp::HandleApplicationControl(
@@ -136,6 +180,8 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
     if (method == "settings.search" || method == "settings.catalog" || method == "settings.get" ||
         method == "settings.update" || method == "settings.reset" || method == "settings.action")
         return HandleControlSettings(method, params);
+    if (method == "desktop.inspect" || method == "desktop.previewEdits" || method == "desktop.applyEdits")
+        return HandleControlDesktopEdits(method, params);
     if (method == "preview.describe") { Fields(params, {}); return snowdesktop::demo::Describe(); }
     if (method == "preview.render")
     {
@@ -149,6 +195,7 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
         if (!applicationControlRuntime_->demo.Start(scene, executable,
             std::filesystem::path(GetDataDirectoryPath()) / L"Automation" / L"Demos", error))
             throw Error(error, "Scene export could not start");
+        ScheduleDataCleanup();
         return DemoValue(applicationControlRuntime_->demo.Current());
     }
     if (method == "preview.state" || method == "preview.cancel")
@@ -189,6 +236,7 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
         if (!applicationControlRuntime_->capture.Screenshot(Utf8ToWide(monitor),
             std::filesystem::path(GetDataDirectoryPath()) / L"Automation" / L"Captures", cursor && cursor->boolean, error))
             throw Error(error.empty() ? "capture_unavailable" : error, "Screenshot request could not start");
+        ScheduleDataCleanup();
         return CaptureValue(applicationControlRuntime_->capture.Current());
     }
     if (method == "capture.record")
@@ -203,6 +251,7 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
         if (!applicationControlRuntime_->capture.Record(Utf8ToWide(monitor),
             std::filesystem::path(GetDataDirectoryPath()) / L"Automation" / L"Captures", cursor && cursor->boolean,
             duration, fps, error)) throw Error(error.empty() ? "capture_unavailable" : error, "Recording request could not start");
+        ScheduleDataCleanup();
         return CaptureValue(applicationControlRuntime_->capture.Current());
     }
     if (method == "capture.state" || method == "capture.cancel")

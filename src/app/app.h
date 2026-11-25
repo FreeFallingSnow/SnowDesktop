@@ -1167,7 +1167,9 @@ private:
     /** Initialize the application-lifetime settings state owner. */
     void InitializeSettingsController();
     void InitializeApplicationControl();
-    snowdesktop::control::Value ApplicationControlLayout() const;
+    snowdesktop::control::Value ApplicationControlLayout(bool includeDesktopItems = false) const;
+    snowdesktop::control::Value HandleControlDesktopEdits(
+        std::string_view method, const snowdesktop::control::Value& params);
     snowdesktop::control::ElementSnapshot ApplicationControlElements();
     snowdesktop::control::Value HandlePrivatePointer(std::string_view method, const snowdesktop::control::Value& params);
     snowdesktop::control::Value PrivatePointerState(bool trace) const;
@@ -3029,6 +3031,7 @@ private:
     /** @brief 根据组件类型或 Lua 清单初始化网格尺寸限制。 */
     void ConfigureWidgetGridLimits(DesktopWidget& widget) const;
     void CaptureWidgetPackageSource(DesktopWidget& widget) const;
+    DesktopWidget BuildNativeStorageWidget(DesktopWidgetType type) const;
     /** @brief 将组件跨度限制在组件声明和当前页面允许的范围内。 */
     GridSpan ClampWidgetGridSpan(const DesktopWidget& widget, GridSpan span,
         int availableColumns, int availableRows) const;

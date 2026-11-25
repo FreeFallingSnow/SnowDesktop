@@ -27,3 +27,5 @@ Capture includes all visible content on the selected monitor, including other ap
 ## Fixed-data exports
 
 `preview.describe` returns scene schema, supported actions, bounds and a complete example. Use that result to construct `preview.render {scene}`, then poll `preview.state {id}`; cancel with `preview.cancel {id}`. Scenes use fixture data and virtual time; they do not edit the live desktop or prove end-to-end user interaction. Supported native surfaces include collections, file categories, folder mappings, popups, Dock, status bar and Quick Navigation. Output is limited to 3840x2160, 30 seconds and 60 fps, with a further work budget. Results live under `Automation/Demos/` and include scene, poster, sampled frames, silent MP4 and manifest. Arbitrary external programs, personal-file operations and Lua packages are outside this scene schema.
+
+Automation output directories are temporary. The host keeps finished captures and demos for 30 days and incomplete runs for 7 days after the most recent write. Copy files you want to retain to your own destination.

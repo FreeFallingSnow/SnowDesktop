@@ -6,6 +6,7 @@
 #include <shlobj.h>
 #include <wrl/client.h>
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cwchar>
 #include <limits>
@@ -85,20 +86,162 @@ std::vector<std::filesystem::path> Entries(const std::filesystem::path& director
         paths.push_back(it->path());
     return error ? std::vector<std::filesystem::path>{} : paths;
 }
-bool OwnerExited(std::wstring_view name, std::wstring_view prefix)
+bool Digits(std::wstring_view value)
 {
-    if (!name.starts_with(prefix)) return false;
-    name.remove_prefix(prefix.size());
-    const auto separator = name.find(L'-');
-    if (separator == name.npos || !separator || separator > 10) return false;
-    const auto digits = name.substr(0, separator);
-    if (!std::all_of(digits.begin(), digits.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; })) return false;
-    const auto pid = std::wcstoul(std::wstring(digits).c_str(), nullptr, 10);
+    return !value.empty() && value.find_first_not_of(L"0123456789") == value.npos;
+}
+bool ProcessExited(std::wstring_view digits)
+{
+    if (!Digits(digits) || digits.size() > 10) return false;
+    const auto pid = std::wcstoull(std::wstring(digits).c_str(), nullptr, 10);
     if (!pid || pid > (std::numeric_limits<DWORD>::max)() || pid == GetCurrentProcessId()) return false;
     HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(pid));
     if (!process) return GetLastError() == ERROR_INVALID_PARAMETER;
     const bool exited = WaitForSingleObject(process, 0) == WAIT_OBJECT_0;
     CloseHandle(process); return exited;
+}
+bool OwnerExited(std::wstring_view name, std::wstring_view prefix)
+{
+    if (!name.starts_with(prefix)) return false;
+    name.remove_prefix(prefix.size());
+    const auto separator = name.find(L'-');
+    return separator != name.npos && ProcessExited(name.substr(0, separator));
+}
+bool Hex(std::wstring_view value, std::size_t length)
+{
+    return value.size() == length && value.find_first_not_of(L"0123456789abcdefABCDEF") == value.npos;
+}
+bool IsUuid(std::wstring_view name)
+{
+    return name.size() == 36 && name[8] == L'-' && name[13] == L'-' && name[18] == L'-' && name[23] == L'-' &&
+        Hex(name.substr(0, 8), 8) && Hex(name.substr(9, 4), 4) && Hex(name.substr(14, 4), 4) &&
+        Hex(name.substr(19, 4), 4) && Hex(name.substr(24), 12);
+}
+bool SafeFile(const std::filesystem::path& path)
+{
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+        !(attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE));
+}
+bool GeneratedAutomationFile(std::wstring_view name, bool capture)
+{
+    constexpr std::array<std::wstring_view, 5> captureFiles{
+        L"capture.json", L"capture.png", L"capture.mp4", L"capture.partial.mp4", L"frames.csv"};
+    constexpr std::array<std::wstring_view, 7> demoFiles{
+        L"scene.json", L"scene-result.json", L"host-result.json", L"progress.json", L"poster.png", L"video.mp4", L"video.partial.mp4"};
+    if (capture) return std::ranges::find(captureFiles, name) != captureFiles.end();
+    return std::ranges::find(demoFiles, name) != demoFiles.end() ||
+        (name.starts_with(L"frame-") && name.ends_with(L".png") && name.size() > 10 &&
+         Digits(name.substr(6, name.size() - 10)));
+}
+std::size_t CollectAutomation(const std::filesystem::path& data, std::stop_token stop)
+{
+    using namespace std::chrono;
+    using FileClock = std::filesystem::file_time_type::clock;
+    const auto now = FileClock::now();
+    const auto root = data / L"Automation";
+    std::size_t removed = 0;
+    for (const bool capture : {true, false})
+    {
+        const auto category = root / (capture ? L"Captures" : L"Demos");
+        if (!SafeSubdirectory(data, category)) continue;
+        for (const auto& run : Entries(category))
+        {
+            if (stop.stop_requested()) return removed;
+            if (!IsUuid(run.filename().native()) || !SafeDirectory(run)) continue;
+            std::error_code error;
+            auto latest = std::filesystem::last_write_time(run, error);
+            if (error || now - latest < days(7)) continue;
+            std::vector<std::filesystem::path> files;
+            bool recognized = true, finishedOutput = false;
+            for (std::filesystem::directory_iterator entry(run, error), end; !error && entry != end; entry.increment(error))
+            {
+                const auto path = entry->path();
+                const auto name = path.filename().native();
+                if (!GeneratedAutomationFile(name, capture) || !SafeFile(path))
+                {
+                    recognized = false;
+                    break;
+                }
+                const auto stamp = entry->last_write_time(error);
+                if (error) break;
+                latest = std::max(latest, stamp);
+                finishedOutput |= name == (capture ? L"capture.png" : L"video.mp4") ||
+                    (capture && name == L"capture.mp4");
+                files.push_back(path);
+            }
+            const auto retention = finishedOutput ? days(30) : days(7);
+            if (error || !recognized || now - latest < retention || !SafeSubdirectory(data, run)) continue;
+
+            // Delete only the verified flat set. New or unknown files prevent
+            // removing the now nonempty directory, and junctions are never traversed.
+            bool complete = true;
+            for (const auto& file : files)
+            {
+                if (stop.stop_requested()) return removed;
+                if (!SafeSubdirectory(data, run) || !SafeFile(file) || !DeleteFileW(file.c_str()))
+                {
+                    complete = false;
+                    break;
+                }
+            }
+            if (complete && SafeSubdirectory(data, run) && RemoveDirectoryW(run.c_str())) ++removed;
+        }
+    }
+    return removed;
+}
+std::size_t CollectLegacyIconImports(const std::filesystem::path& data, std::stop_token stop)
+{
+    using namespace std::chrono;
+    const auto library = data / L"icon-library";
+    const auto packs = library / L"packs";
+    if (!SafeSubdirectory(data, library)) return 0;
+    const auto now = std::filesystem::file_time_type::clock::now();
+    std::size_t removed = 0;
+    const auto collect = [&](const std::filesystem::path& directory, bool archives) {
+        if (!SafeSubdirectory(data, directory)) return;
+        for (const auto& path : Entries(directory))
+        {
+            if (stop.stop_requested()) return;
+            const auto extension = path.extension().native();
+            const auto stem = path.stem().native();
+            const std::wstring_view name(stem);
+            const bool owned = archives
+                ? (extension == L".zip" || extension == L".apk") && Hex(name, 64)
+                : (name.starts_with(L".import-") && Hex(name.substr(8), 64)) ||
+                    (name.starts_with(L".pack-group-") && Hex(name.substr(12), 32));
+            if (!owned || !SafeFile(path)) continue;
+            std::error_code error;
+            const auto stamp = std::filesystem::last_write_time(path, error);
+            if (!error && now - stamp >= days(1) && SafeSubdirectory(data, directory) &&
+                SafeFile(path) && DeleteFileW(path.c_str())) ++removed;
+        }
+    };
+    collect(packs, true);
+    if (!stop.stop_requested() && SafeSubdirectory(data, packs)) RemoveDirectoryW(packs.c_str());
+    collect(library, false);
+    return removed;
+}
+std::size_t CollectSymbolPartials(const std::filesystem::path& data, std::stop_token stop)
+{
+    const auto root = data / L"ShellHookSymbols";
+    if (!SafeSubdirectory(data, root)) return 0;
+    std::size_t removed = 0;
+    for (const auto& directory : Entries(root))
+    {
+        const auto key = directory.filename().native();
+        if (key.size() < 33 || key.size() > 40 || !Hex(key, key.size()) || !SafeSubdirectory(data, directory)) continue;
+        for (const auto& file : Entries(directory))
+        {
+            if (stop.stop_requested()) return removed;
+            const auto name = file.filename().native();
+            constexpr std::wstring_view marker = L".pdb.partial-";
+            const auto start = name.find(marker);
+            if (start == name.npos || !ProcessExited(std::wstring_view(name).substr(start + marker.size()))) continue;
+            if (SafeSubdirectory(data, directory) && SafeFile(file) && DeleteFileW(file.c_str())) ++removed;
+        }
+    }
+    return removed;
 }
 void ReadJsonPaths(const JsonValue& value, std::vector<std::filesystem::path>& paths)
 {
@@ -119,7 +262,10 @@ std::size_t Collect(const std::filesystem::path& data,
     const std::vector<std::filesystem::path>& referencedPaths, std::stop_token stop)
 {
     if (!SafeDirectory(data)) return 0;
-    std::size_t removed = 0;
+    std::size_t removed = CollectAutomation(data, stop);
+    removed += CollectLegacyIconImports(data, stop);
+    removed += CollectSymbolPartials(data, stop);
+    if (stop.stop_requested()) return removed;
     auto protectedPaths = referencedPaths;
     bool canCollectLegacy = true;
     // Saved component values may still point to legacy backing files. Preserve

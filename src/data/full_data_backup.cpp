@@ -234,7 +234,9 @@ bool IsExcludedDataPath(const std::filesystem::path& relative)
     const std::wstring first = part->wstring();
     if (_wcsicmp(first.c_str(), L"crashdumps") == 0)
         return true;
-    if (_wcsicmp(first.c_str(), L"ShellHook") == 0)
+    if (_wcsicmp(first.c_str(), L"ShellHook") == 0 ||
+        _wcsicmp(first.c_str(), L"ShellHookSymbols") == 0 ||
+        _wcsicmp(first.c_str(), L"Automation") == 0)
         return true;
     if (_wcsicmp(first.c_str(), L"snowwidget") == 0)
         return true;
@@ -253,7 +255,8 @@ bool IsExcludedDataPath(const std::filesystem::path& relative)
         const auto next = std::next(part);
         // Thumbnails are rebuilt from retained originals. Omitting them also
         // keeps large icon packs within the ZIP32 backup entry budget.
-        if (next != relative.end() && _wcsicmp(next->wstring().c_str(), L"previews") == 0)
+        if (next != relative.end() && (_wcsicmp(next->wstring().c_str(), L"previews") == 0 ||
+            _wcsicmp(next->wstring().c_str(), L"packs") == 0))
             return true;
     }
     if (_wcsicmp(first.c_str(), L"widgets") == 0)
