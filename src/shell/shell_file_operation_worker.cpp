@@ -26,12 +26,11 @@ namespace
 
 using Microsoft::WRL::ComPtr;
 
-std::wstring ResolveDuplicateCopyName(const ShellFileOperationStep& step)
+std::wstring ResolveDuplicateCopyName(const ShellFileOperationStep& step, DWORD attributes)
 {
     const auto& source = step.sources.front();
     const auto& suffixes = *step.duplicateCopySuffixes;
     const auto* filename = PathFindFileNameW(source.c_str());
-    const DWORD attributes = GetFileAttributesW(source.c_str());
     const bool directory = attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY);
     const auto* extension = directory ? filename + wcslen(filename) : PathFindExtensionW(filename);
     const std::wstring stem(filename, extension);
@@ -47,6 +46,17 @@ std::wstring ResolveDuplicateCopyName(const ShellFileOperationStep& step)
             return name;
     }
     return stem + suffixes.last + extension;
+}
+
+DWORD CopyExactFile(const std::wstring& source, const std::wstring& destination,
+    const std::shared_ptr<ShellFileOperationResult>& result)
+{
+    // The caller owns name selection. Commit only to a free destination.
+    if (!CopyFileW(source.c_str(), destination.c_str(), TRUE))
+        return GetLastError();
+    if (result)
+        result->outputs.push_back({source, destination, false});
+    return ERROR_SUCCESS;
 }
 
 class FileDropDataObject final : public IDataObject
@@ -914,7 +924,28 @@ bool ShellFileOperationWorker::Execute(
         if (namedCopy || (request.result && (step.function == FO_COPY || step.function == FO_MOVE)))
         {
             const auto result = request.result ? request.result : std::make_shared<ShellFileOperationResult>();
-            const auto name = namedCopy ? ResolveDuplicateCopyName(step) : std::wstring{};
+            const auto& source = step.sources.front();
+            const DWORD attributes = namedCopy ? GetFileAttributesW(source.c_str()) : INVALID_FILE_ATTRIBUTES;
+            const auto name = namedCopy ? ResolveDuplicateCopyName(step, attributes) : std::wstring{};
+            constexpr DWORD shellCopyAttributes = FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT |
+                FILE_ATTRIBUTE_OFFLINE | FILE_ATTRIBUTE_DEVICE;
+            if (namedCopy && step.sources.size() == 1 && !name.empty() &&
+                attributes != INVALID_FILE_ATTRIBUTES && !(attributes & shellCopyAttributes))
+            {
+                // Copy ordinary duplicates on the worker without opening a
+                // separate Shell operation for each requested filename.
+                const auto destination = (std::filesystem::path(step.destination) / name).wstring();
+                const DWORD error = CopyExactFile(source, destination, result);
+                if (error == ERROR_SUCCESS) continue;
+                // Another writer may claim the name after resolution. Preserve
+                // the Shell's collision naming without replacing its file.
+                if (error != ERROR_FILE_EXISTS && error != ERROR_ALREADY_EXISTS)
+                {
+                    allSucceeded = false;
+                    record(source + L"\n" + destination, error);
+                    continue;
+                }
+            }
             HRESULT status = S_OK;
             bool shellHandledErrors = false;
             if (!ExecuteTrackedDropStep(step, result, status, shellHandledErrors, name))
@@ -961,16 +992,12 @@ bool ShellFileOperationWorker::Execute(
         if (copy.source.empty() || copy.destination.empty())
             continue;
         attempted = true;
-        // The destination was selected before the request was queued. Never
-        // let Shell collision renaming make the completion path inaccurate.
-        if (!CopyFileW(
-                copy.source.c_str(), copy.destination.c_str(), TRUE))
+        const DWORD error = CopyExactFile(copy.source, copy.destination, request.result);
+        if (error != ERROR_SUCCESS)
         {
-            record(copy.source + L"\n" + copy.destination, GetLastError());
+            record(copy.source + L"\n" + copy.destination, error);
             allSucceeded = false;
         }
-        else if (request.result)
-            request.result->outputs.push_back({copy.source, copy.destination, false});
     }
     for (const auto& shortcut : request.shortcuts)
     {
