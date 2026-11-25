@@ -1,6 +1,6 @@
 ---
 name: snowdesktop-control
-description: Operate a running SnowDesktop installation on Windows through its local control IPC. Use to inspect or change SnowDesktop settings, arrange existing widgets, open navigation or storage popups, capture the screen, or replay application-local input. Component development and Windows-wide automation use other tools.
+description: Operate a running SnowDesktop installation on Windows through its local control IPC. Use for first-time desktop setup, organizing or maintaining an existing desktop layout, configuring SnowDesktop settings, opening navigation or storage popups, capturing the desktop, or replaying application-local input. Component development and Windows-wide automation use other tools.
 ---
 
 # SnowDesktop control
@@ -23,7 +23,9 @@ Requests accept named JSON objects through `-ParametersJson` or UTF-8 `-Paramete
 
 Prefer semantic operations for ordinary configuration. Read `settings.catalog` for a concrete target to learn writable fields, constraints, defaults and named actions. Read fresh state immediately before mutation and pass its opaque `revision` as `ifRevision`. Respect read-only fields, current availability, Steam unlocks, permissions, and any target-specific confirmation arguments. Execute only changes within the user's request. Secret values are not returned by settings reads; use the catalog's explicit secret and picker actions where applicable.
 
-For adding components, assigning collection members, or repositioning multiple icons or components, use the [desktop editing workflow](references/desktop-editing.md). Discover `desktopBatchEdits:1`, call `desktop.inspect` once, and send one plan to `desktop.previewEdits` and `desktop.applyEdits`. Use returned item keys, component IDs and grid cells. Review collection capacity and collision errors in the preview.
+For planning or organizing the desktop, read [desktop organization workflows](references/desktop-workflows.md). Use **first-time desktop setup** for an initial arrangement, including layout reference and optional feature guidance. Use **existing desktop management** for a scoped edit to an established layout.
+
+Use the [batch editing guide](references/desktop-editing.md) for creating components, assigning collection members and placing icons or components. On hosts with `desktopBatchEdits:1`, use `desktop.inspect`, `desktop.previewEdits` and `desktop.applyEdits` with the returned identities and grid coordinates.
 
 For an individual existing component, `desktop.getLayout` and `widgets.place` remain available. Their layout revision comes from `desktop.getLayout`. Placement follows the application's displacement rules. Close storage popups and Quick Navigation before layout changes. `persistence:"queued"` acknowledges the in-memory layout.
 
