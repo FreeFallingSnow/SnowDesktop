@@ -47,9 +47,9 @@ Each operation array is optional and holds up to 1024 entries. Use at least one 
 
 | Field | Entry | Behavior |
 | --- | --- | --- |
-| `addWidgets` | `{ref,type,pageId?,column?,row?,columns?,rows?,title?,itemIds?,scrollContainer?,showTitle?,titleOnHover?,packageId?,folderItemId?,folderPath?,singleCellIconMode?,showSearchBox?,showFileCategories?}` | Supply all five placement fields for a standalone component. A new group child can omit all five. `ref` is a unique label within the plan, and apply returns its instance ID. Use the last three optional fields only when `desktopComponentCatalog:1` is advertised. |
+| `addWidgets` | `{ref,type,pageId?,column?,row?,columns?,rows?,title?,itemIds?,scrollContainer?,packageId?,folderItemId?,folderPath?,singleCellIconMode?,showSearchBox?,showFileCategories?}` | Supply all five placement fields for a standalone component. A new group child can omit all five. `ref` is a unique label within the plan, and apply returns its instance ID. Use the last three optional fields only when `desktopComponentCatalog:1` is advertised. |
 | `moveWidgets` | `{id,pageId,column,row,columns,rows}` | Move or resize an existing standalone desktop component or release a child of a desktop collection or file group to a specific cell. |
-| `setCollections` | `{id,itemIds,scrollContainer?,showTitle?,titleOnHover?}` | Replace a desktop collection's complete ordered member list. Assign every removed member to another collection or a cell in the same plan. |
+| `setCollections` | `{id,itemIds,scrollContainer?}` | Replace a desktop collection's complete ordered member list. Assign every removed member to another collection or a cell in the same plan. |
 | `setGroups` | `{id?\|ref?,children:[{id}\|{ref}],activeChild?:{id}\|{ref}}` | Replace the complete ordered tab list of a desktop collection or file group. Use the ID of an existing component or the ref of one added in this plan. |
 | `moveIcons` | `{key,pageId,column,row}` | Move loose icons or return collection members to the desktop. The host reserves the icon's required span. |
 

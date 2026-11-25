@@ -312,6 +312,9 @@ bindings of documented types at compile time. Native field catalogs own
 descriptions for specialized targets. First-party components maintain English
 descriptions in the same Lua declaration as the field.
 
+Keep agent-settable product properties tied to controls available in the app.
+Keep internal native presentation flags in the layout model and rendering path.
+
 When `api.describe` advertises `settingsSearch:1`, call `settings.search` with
 an English keyword query such as `{"query":"above the first row","limit":5}`.
 Each whitespace-separated term must appear in the field path, target kind,
@@ -456,6 +459,9 @@ folder source paths are read-only here; use the existing placement operation
 for layout changes. Native configuration applies through the shared host
 transaction and reports a persistence failure instead of successful application
 when the previous model must be restored.
+Legacy callers must omit `showTitle` and `bottomBarHover` when changing or
+resetting a `native-widget` target. Collection bottom-bar behavior comes from
+the saved layout and the native creation defaults.
 `set-search` takes `{query}`; `reorder-tabs` takes `{order:[existing-child-id,...]}`
 containing each current child exactly once; `collect-now` takes `{confirmed:true}`.
 
@@ -593,6 +599,8 @@ Close storage popups and Quick Navigation before changing widget placement.
 
 `desktopBatchEdits:1` adds the batch workflow described in
 [Desktop editing](../../../widgets/snowdesktop-control/references/desktop-editing.md).
+Legacy callers must omit `showTitle` and `titleOnHover` from `addWidgets` and
+`setCollections` entries. The desktop inventory omits both flags.
 Use the revision returned by `desktop.inspect` for both batch methods. Preview
 and apply share the same request schema and occupancy rules. All validation is
 completed before the host replaces the layout model. The response lists

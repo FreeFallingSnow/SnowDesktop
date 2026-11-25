@@ -12,8 +12,6 @@ namespace snowdesktop::control_settings
 struct NativeWidgetConfiguration
 {
     std::string title;
-    bool showTitle = false;
-    bool bottomBarHover = true;
     bool showOnHoverOnly = false;
     bool keepWhenDesktopHidden = false;
     bool privacyMode = false;

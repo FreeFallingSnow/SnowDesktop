@@ -72,7 +72,7 @@ NativeWidgetConfiguration NativeConfiguration(const DesktopWidget& widget)
     NativeWidgetConfiguration value;
     value.title = WideToUtf8(widget.title);
 #define NATIVE_FIELD(name) value.name = widget.name
-    NATIVE_FIELD(showTitle); NATIVE_FIELD(bottomBarHover); NATIVE_FIELD(showOnHoverOnly); NATIVE_FIELD(keepWhenDesktopHidden);
+    NATIVE_FIELD(showOnHoverOnly); NATIVE_FIELD(keepWhenDesktopHidden);
     NATIVE_FIELD(privacyMode); NATIVE_FIELD(singleCellIconMode); NATIVE_FIELD(scrollContainerMode); NATIVE_FIELD(largeFolderTitleless);
     NATIVE_FIELD(titleBarCollapsed); NATIVE_FIELD(titleBarExpandOnHover); NATIVE_FIELD(showSearchBox); NATIVE_FIELD(fanPopup);
     NATIVE_FIELD(listMode); NATIVE_FIELD(listColumns); NATIVE_FIELD(detailShowModified); NATIVE_FIELD(detailShowType); NATIVE_FIELD(detailShowSize);
@@ -126,7 +126,7 @@ snowdesktop::control_settings::NativeWidgetSettingsState DesktopApp::CaptureNati
     auto& values = state.values;
     values.title = WideToUtf8(owner.title);
 #define OWNER_BOOL(name) values.name = owner.name
-    OWNER_BOOL(showTitle); OWNER_BOOL(bottomBarHover); OWNER_BOOL(showOnHoverOnly); OWNER_BOOL(keepWhenDesktopHidden);
+    OWNER_BOOL(showOnHoverOnly); OWNER_BOOL(keepWhenDesktopHidden);
     OWNER_BOOL(privacyMode); OWNER_BOOL(singleCellIconMode); OWNER_BOOL(scrollContainerMode); OWNER_BOOL(largeFolderTitleless);
     OWNER_BOOL(titleBarCollapsed); OWNER_BOOL(titleBarExpandOnHover); OWNER_BOOL(showSearchBox); OWNER_BOOL(fanPopup);
 #undef OWNER_BOOL
@@ -151,7 +151,7 @@ snowdesktop::control_settings::NativeWidgetSettingsState DesktopApp::CaptureNati
         {"row", Number(owner.gridCell.row)}, {"columns", Number(owner.gridSpan.columns)}, {"rows", Number(owner.gridSpan.rows)}});
     state.editable = desktopItemsReady_ && !gridPages_.empty() && !layoutReload_.Pending() && !exitRequested_ && !reloading_ &&
         !pageMutationActive_ && !dragSession_.HasContext() && !dragDropController_.IsTransportActive() && widgetAction_ == WidgetAction::None;
-    state.editableKeys = {"title", "showTitle", "bottomBarHover", "showOnHoverOnly", "keepWhenDesktopHidden", "privacyMode",
+    state.editableKeys = {"title", "showOnHoverOnly", "keepWhenDesktopHidden", "privacyMode",
         "listMode", "listColumns", "detailShowModified", "detailShowType", "detailShowSize", "detailModifiedPosition", "detailTypePosition", "detailSizePosition", "sortColumn", "sortAscending"};
     if (single_cell_widget::IsDesktopSingleCell(owner)) state.editableKeys.push_back("singleCellIconMode");
     const bool noncompactCollection = owner.type == DesktopWidgetType::Collection && (owner.gridSpan.columns > 1 || owner.gridSpan.rows > 1);
@@ -286,7 +286,7 @@ bool DesktopApp::ApplyNativeWidgetSettings(const snowdesktop::control_settings::
             owner.title = owner.customTitle.empty() ? NativeDefaultTitle(owner) : owner.customTitle;
         }
 #define APPLY_OWNER(name) if (NativeKey(patch, #name)) owner.name = value.name
-        APPLY_OWNER(showTitle); APPLY_OWNER(bottomBarHover); APPLY_OWNER(showOnHoverOnly); APPLY_OWNER(keepWhenDesktopHidden);
+        APPLY_OWNER(showOnHoverOnly); APPLY_OWNER(keepWhenDesktopHidden);
         APPLY_OWNER(privacyMode); APPLY_OWNER(singleCellIconMode); APPLY_OWNER(scrollContainerMode); APPLY_OWNER(largeFolderTitleless);
         APPLY_OWNER(titleBarCollapsed); APPLY_OWNER(titleBarExpandOnHover); APPLY_OWNER(showSearchBox); APPLY_OWNER(fanPopup);
 #undef APPLY_OWNER

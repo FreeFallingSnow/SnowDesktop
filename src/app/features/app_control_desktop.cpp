@@ -287,8 +287,6 @@ snowdesktop::control::Value DesktopApp::HandleControlDesktopEdits(
     const auto setMembers = [&](size_t index, const Value& operation) {
         auto& widget = proposedWidgets[index];
         UpdateBool(operation, "scrollContainer", widget.scrollContainerMode);
-        UpdateBool(operation, "showTitle", widget.showTitle);
-        UpdateBool(operation, "titleOnHover", widget.bottomBarHover);
         const auto& members = OptionalArray(operation, "itemIds");
         std::vector<std::wstring> keys;
         keys.reserve(members.size());
@@ -319,7 +317,7 @@ snowdesktop::control::Value DesktopApp::HandleControlDesktopEdits(
     for (const auto& operation : additions)
     {
         Fields(operation, {"ref", "type", "packageId", "folderItemId", "folderPath", "pageId", "column", "row", "columns", "rows",
-            "title", "itemIds", "scrollContainer", "showTitle", "titleOnHover", "singleCellIconMode", "showSearchBox", "showFileCategories"});
+            "title", "itemIds", "scrollContainer", "singleCellIconMode", "showSearchBox", "showFileCategories"});
         const auto ref = Text(operation, "ref");
         const auto index = proposedWidgets.size();
         if (ref.empty() || ref.size() > 128 || !widgetByRef.emplace(ref, index).second)
@@ -408,8 +406,7 @@ snowdesktop::control::Value DesktopApp::HandleControlDesktopEdits(
             throw Error("invalid_params", "packageId only applies to Lua components", -32602);
         if (type != "folder-mapping" && (operation.Find("folderItemId") || operation.Find("folderPath")))
             throw Error("invalid_params", "Folder source fields only apply to folder mappings", -32602);
-        if (type != "collection" && (operation.Find("itemIds") || operation.Find("scrollContainer") ||
-            operation.Find("showTitle") || operation.Find("titleOnHover")))
+        if (type != "collection" && (operation.Find("itemIds") || operation.Find("scrollContainer")))
             throw Error("invalid_params", "Member and view fields apply to collections", -32602);
         widget.id = MakeNewWidgetId() + L"-batch-" + std::to_wstring(newRefs.size());
         widget.keepInitialComposition = true;
@@ -545,7 +542,7 @@ snowdesktop::control::Value DesktopApp::HandleControlDesktopEdits(
     std::unordered_set<size_t> replacedCollections;
     for (const auto& operation : collectionEdits)
     {
-        Fields(operation, {"id", "itemIds", "scrollContainer", "showTitle", "titleOnHover"});
+        Fields(operation, {"id", "itemIds", "scrollContainer"});
         const auto id = Text(operation, "id");
         const auto index = widgetIndex(id);
         if (widgets_[index].type != DesktopWidgetType::Collection || widgets_[index].gridCell.pageId == kDockPageId)

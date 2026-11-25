@@ -19,8 +19,6 @@ struct BooleanField
     const char* description;
 };
 constexpr BooleanField kBooleans[]{
-    {"showTitle", &NativeWidgetConfiguration::showTitle, "Shows the component title where its presentation uses the saved title visibility. Top title bar layouts may draw their own title chrome."},
-    {"bottomBarHover", &NativeWidgetConfiguration::bottomBarHover, "Shows the native bottom action bar on hover where the component uses that presentation."},
     {"showOnHoverOnly", &NativeWidgetConfiguration::showOnHoverOnly, "Conceals the component until the pointer enters its hover area. Global hover visibility animation preferences affect the transition."},
     {"keepWhenDesktopHidden", &NativeWidgetConfiguration::keepWhenDesktopHidden, "Keeps this component eligible for display when SnowDesktop hides desktop icons."},
     {"privacyMode", &NativeWidgetConfiguration::privacyMode, "Uses the component's privacy presentation to conceal its contents until revealed. Use normal membership operations to change what it contains."},

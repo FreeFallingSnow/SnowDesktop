@@ -137,8 +137,6 @@ snowdesktop::control::Value DesktopApp::ApplicationControlLayout(bool includeDes
             }
             value.object.emplace("itemIds", std::move(members));
             value.object.emplace("scrollContainer", Boolean(widget.scrollContainerMode));
-            value.object.emplace("showTitle", Boolean(widget.showTitle));
-            value.object.emplace("titleOnHover", Boolean(widget.bottomBarHover));
         }
         widgets.array.push_back(std::move(value));
     }
