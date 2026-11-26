@@ -7,39 +7,55 @@ for index = 0, moon.frameCount - 1 do
     frames[index] = lazy and resource.image(name, { lazy = true }) or resource.image(name)
 end
 
-local cardAppearance = {
-    bg = 0x203149,
-    alpha = 0.68,
-    border = 0x9CAFC6,
-    borderAlpha = 0.42,
-    gradientEndA = 0,
-    glassEnabled = true,
+local function isMoonOnly()
+    local value = storage.get("pureMoon")
+    return value == true or value == "1" or value == "true"
+end
+
+-- With the instance set to custom appearance, these stored settings can
+-- override the descriptor's transparent defaults.
+local surfaceOverrides = {
+    "__preset", "__panelGradient", "__edgeLight", "alpha", "borderAlpha",
+    "gradientEndA", "glassEnabled", "acrylicEnabled", "edgeHighlightEnabled",
+    "borderStyle",
 }
-local moonOnlyAppearance = {
-    bg = 0,
-    alpha = 0,
-    border = 0,
-    borderAlpha = 0,
-    gradientEndA = 0,
-    glassEnabled = false,
-    acrylicEnabled = false,
-    edgeHighlightEnabled = false,
-}
-local settings = {
-    presets = {
+
+local function applyMode(pureMoon, saveToggle)
+    storage.transaction(function(tx)
+        if saveToggle then
+            tx:set("pureMoon", pureMoon and "1" or "0")
+        end
+        if pureMoon then
+            tx:set("followPersonalization", "0")
+            for _, key in ipairs(surfaceOverrides) do tx:remove(key) end
+        else
+            tx:remove("followPersonalization")
+        end
+    end)
+end
+
+local function migrateStorage()
+    local preset = storage.get("__preset")
+    if preset == "moon-only" then
+        applyMode(true, true)
+    elseif preset == "card" or storage.get("followPersonalization") == "0" then
+        applyMode(false, false)
+    end
+end
+
+local function menu(_context, _model, request)
+    if request.id ~= "moon.menu" then return nil end
+    local status = isMoonOnly() and l10n.tr("lua_widget.moon_phase.on") or l10n.tr("lua_widget.moon_phase.off")
+    return ui.menu({
         {
-            id = "card",
-            label = l10n.tr("lua_widget.moon_phase.card"),
-            default = true,
-            values = cardAppearance,
+            id = "moon.toggle",
+            label = l10n.tr("lua_widget.moon_phase.moon_only") .. "\t" .. status,
+            icon = utf8.char(0xF87D), -- Fluent System Icons Regular: weather_moon_20.
+            iconFont = "fluent",
+            keepOpen = widget.hasFeature("interaction.contextMenu.keepOpen"),
         },
-        {
-            id = "moon-only",
-            label = l10n.tr("lua_widget.moon_phase.moon_only"),
-            values = moonOnlyAppearance,
-        },
-    },
-}
+    })
+end
 
 local function quarterName(quarter)
     if quarter == 0 then return l10n.tr("lua_widget.moon_phase.new") end
@@ -64,7 +80,8 @@ local function refresh(model)
 end
 
 local function setup()
-    local model = {}
+    local model = { pureMoon = isMoonOnly() }
+    if model.pureMoon then applyMode(true, false) end
     refresh(model)
     schedule.every("moon-phase", 60000, { whenHidden = "pause" })
     return model
@@ -74,19 +91,35 @@ local function event(_context, model, change)
     if (change.kind == "schedule" and change.id == "moon-phase")
         or change.kind == "environment" or (change.kind == "visibility" and change.visible) then
         refresh(model)
+    elseif change.kind == "action" and change.source == "contextMenu" and change.id == "moon.toggle" then
+        local pureMoon = not isMoonOnly()
+        applyMode(pureMoon, true)
+        model.pureMoon = pureMoon
+        widget.invalidate()
+    elseif change.kind == "settings.changed" and not change.preview then
+        local pureMoon = isMoonOnly()
+        if pureMoon or model.pureMoon ~= pureMoon then
+            applyMode(pureMoon, false)
+        end
+        model.pureMoon = pureMoon
+        widget.invalidate()
     end
 end
 
 local function render(context, model)
     local width, height = context.layoutSize.width, context.layoutSize.height
+    interaction.region({
+        key = "moon.surface",
+        shape = { type = "rect", x = 0, y = 0, width = width, height = height },
+        events = { contextMenu = { id = "moon.menu", scope = "component" } },
+    })
     local side = math.min(width, height)
     local diameter = side * 0.63
     if model.frame then
         draw.image(frames[model.frame], (width - diameter) / 2, (height - diameter) / 2, diameter, diameter)
     end
 
-    -- Applying an appearance preset updates this host key and its material together.
-    if storage.get("__preset") == "moon-only" then return end
+    if isMoonOnly() then return end
 
     local color = widget.theme().contentTheme == 1 and 0x18263A or 0xEDF3FA
     local inset = side * 0.074
@@ -110,17 +143,29 @@ end
 
 return widget.define({
     name = l10n.tr("lua_widget.moon_phase.name"),
-    useCustomStyle = true,
-    followPersonalizationDefault = false,
     showTitle = false,
-    bg = cardAppearance.bg,
-    alpha = cardAppearance.alpha,
-    border = cardAppearance.border,
-    borderAlpha = cardAppearance.borderAlpha,
-    gradientEndA = cardAppearance.gradientEndA,
-    glassEnabled = cardAppearance.glassEnabled,
+    useCustomStyle = true,
+    followPersonalizationDefault = true,
+    alpha = 0,
+    borderAlpha = 0,
+    gradientEndA = 0,
+    glassEnabled = false,
+    acrylicEnabled = false,
+    edgeHighlightEnabled = false,
+    migrateStorage = migrateStorage,
     setup = setup,
     event = event,
+    menu = menu,
     render = render,
-    settings = settings,
+    settings = {
+        fields = {
+            {
+                key = "pureMoon",
+                label = l10n.tr("lua_widget.moon_phase.moon_only"),
+                type = "bool",
+                default = false,
+                agentDescription = "Shows only the lunar disc and forces the panel background and border to be transparent regardless of the desktop theme. Turning it off restores the global appearance, title and next phase date. The component menu changes this same per-instance setting.",
+            },
+        },
+    },
 })

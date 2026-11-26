@@ -1,8 +1,12 @@
 # 月相 / Moon Phase
 
-离线桌面组件，默认占用 2×2 格。打开组件设置，在组件预设中选「常规」或「纯月相」。常规模式显示月相标题和下一次关键月相的本地日期，纯月相模式只显示月面。两种模式共用相同的月面比例和中心。
+离线桌面组件，默认占用 2×2 格并跟随全局主题。可在组件设置或组件右键菜单切换「纯月相」。开启后背景和边框完全透明，只显示月面。关闭后恢复全局主题、标题和下次关键月相的本地日期。切换时月面尺寸和位置保持一致。
 
-An offline 2×2 widget. Choose **Card** or **Moon Only** in the component presets. The card shows the local date of the next major phase. Moon Only displays the lunar disk alone. Both presets use the same disk size and position.
+This offline 2×2 widget follows the global theme by default. Toggle **Moon Only** in component settings or the context menu to display just the lunar disk over a transparent surface. Turning it off restores the global appearance, title and local date of the next major phase. The lunar disk keeps the same size and position.
+
+1.1.0 保留原组件 UUID，并将旧实例的纯月相预设迁移为开关。组件使用现有 API v2 外观与存储能力。
+
+Version 1.1.0 keeps the component UUID and migrates the previous Moon Only preset to the toggle. The widget uses the existing API v2 appearance and storage capabilities.
 
 ## 数据和素材 / Data and artwork
 

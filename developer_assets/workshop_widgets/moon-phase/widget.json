@@ -3,136 +3,146 @@
   "id": "d55305a7-01fe-4b58-8df7-8d8315161200",
   "slug": "moon-phase",
   "apiVersion": 2,
-  "dataVersion": 1,
+  "dataVersion": 2,
   "entry": "main.lua",
   "minHostVersion": "1.0.18.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "Moon Phase",
   "nameKey": "lua_widget.moon_phase.name",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "See the current Moon and the date of its next major phase.",
   "descriptionKey": "lua_widget.moon_phase.description",
   "locales": {
     "de-DE": {
       "lua_widget.moon_phase.name": "Mondphase",
       "lua_widget.moon_phase.description": "Zeigt den aktuellen Mond und das Datum der nächsten Hauptphase.",
-      "lua_widget.moon_phase.card": "Karte",
       "lua_widget.moon_phase.moon_only": "Nur Mond",
       "lua_widget.moon_phase.new": "Neumond",
       "lua_widget.moon_phase.first": "Erstes Viertel",
       "lua_widget.moon_phase.full": "Vollmond",
       "lua_widget.moon_phase.last": "Letztes Viertel",
       "lua_widget.moon_phase.date": "{1}.{0}.",
-      "lua_widget.moon_phase.out_of_range": "Datum außerhalb des Bereichs"
+      "lua_widget.moon_phase.out_of_range": "Datum außerhalb des Bereichs",
+      "lua_widget.moon_phase.on": "Ein",
+      "lua_widget.moon_phase.off": "Aus"
     },
     "en-US": {
       "lua_widget.moon_phase.name": "Moon Phase",
       "lua_widget.moon_phase.description": "See the current Moon and the date of its next major phase.",
-      "lua_widget.moon_phase.card": "Card",
       "lua_widget.moon_phase.moon_only": "Moon Only",
       "lua_widget.moon_phase.new": "New Moon",
       "lua_widget.moon_phase.first": "First Quarter",
       "lua_widget.moon_phase.full": "Full Moon",
       "lua_widget.moon_phase.last": "Last Quarter",
       "lua_widget.moon_phase.date": "{0}/{1}",
-      "lua_widget.moon_phase.out_of_range": "Date out of range"
+      "lua_widget.moon_phase.out_of_range": "Date out of range",
+      "lua_widget.moon_phase.on": "On",
+      "lua_widget.moon_phase.off": "Off"
     },
     "es-419": {
       "lua_widget.moon_phase.name": "Fase lunar",
       "lua_widget.moon_phase.description": "Muestra la Luna actual y la fecha de su próxima fase principal.",
-      "lua_widget.moon_phase.card": "Tarjeta",
       "lua_widget.moon_phase.moon_only": "Solo Luna",
       "lua_widget.moon_phase.new": "Luna nueva",
       "lua_widget.moon_phase.first": "Cuarto creciente",
       "lua_widget.moon_phase.full": "Luna llena",
       "lua_widget.moon_phase.last": "Cuarto menguante",
       "lua_widget.moon_phase.date": "{1}/{0}",
-      "lua_widget.moon_phase.out_of_range": "Fecha fuera del intervalo"
+      "lua_widget.moon_phase.out_of_range": "Fecha fuera del intervalo",
+      "lua_widget.moon_phase.on": "Activado",
+      "lua_widget.moon_phase.off": "Desactivado"
     },
     "es-ES": {
       "lua_widget.moon_phase.name": "Fase lunar",
       "lua_widget.moon_phase.description": "Muestra la Luna actual y la fecha de su próxima fase principal.",
-      "lua_widget.moon_phase.card": "Tarjeta",
       "lua_widget.moon_phase.moon_only": "Solo Luna",
       "lua_widget.moon_phase.new": "Luna nueva",
       "lua_widget.moon_phase.first": "Cuarto creciente",
       "lua_widget.moon_phase.full": "Luna llena",
       "lua_widget.moon_phase.last": "Cuarto menguante",
       "lua_widget.moon_phase.date": "{1}/{0}",
-      "lua_widget.moon_phase.out_of_range": "Fecha fuera del intervalo"
+      "lua_widget.moon_phase.out_of_range": "Fecha fuera del intervalo",
+      "lua_widget.moon_phase.on": "Activado",
+      "lua_widget.moon_phase.off": "Desactivado"
     },
     "fr-FR": {
       "lua_widget.moon_phase.name": "Phase lunaire",
       "lua_widget.moon_phase.description": "Affiche la Lune actuelle et la date de sa prochaine phase principale.",
-      "lua_widget.moon_phase.card": "Carte",
       "lua_widget.moon_phase.moon_only": "Lune seule",
       "lua_widget.moon_phase.new": "Nouvelle lune",
       "lua_widget.moon_phase.first": "Premier quartier",
       "lua_widget.moon_phase.full": "Pleine lune",
       "lua_widget.moon_phase.last": "Dernier quartier",
       "lua_widget.moon_phase.date": "{1}/{0}",
-      "lua_widget.moon_phase.out_of_range": "Date hors plage"
+      "lua_widget.moon_phase.out_of_range": "Date hors plage",
+      "lua_widget.moon_phase.on": "Activé",
+      "lua_widget.moon_phase.off": "Désactivé"
     },
     "ja-JP": {
       "lua_widget.moon_phase.name": "月相",
       "lua_widget.moon_phase.description": "現在の月の姿と次の主要な月相の日付を表示します。",
-      "lua_widget.moon_phase.card": "カード",
       "lua_widget.moon_phase.moon_only": "月のみ",
       "lua_widget.moon_phase.new": "新月",
       "lua_widget.moon_phase.first": "上弦",
       "lua_widget.moon_phase.full": "満月",
       "lua_widget.moon_phase.last": "下弦",
       "lua_widget.moon_phase.date": "{0}月{1}日",
-      "lua_widget.moon_phase.out_of_range": "対応期間外"
+      "lua_widget.moon_phase.out_of_range": "対応期間外",
+      "lua_widget.moon_phase.on": "オン",
+      "lua_widget.moon_phase.off": "オフ"
     },
     "ko-KR": {
       "lua_widget.moon_phase.name": "달의 위상",
       "lua_widget.moon_phase.description": "현재 달의 모습과 다음 주요 위상의 날짜를 표시합니다.",
-      "lua_widget.moon_phase.card": "카드",
       "lua_widget.moon_phase.moon_only": "달만 표시",
       "lua_widget.moon_phase.new": "삭",
       "lua_widget.moon_phase.first": "상현달",
       "lua_widget.moon_phase.full": "보름달",
       "lua_widget.moon_phase.last": "하현달",
       "lua_widget.moon_phase.date": "{0}월 {1}일",
-      "lua_widget.moon_phase.out_of_range": "지원 기간을 벗어남"
+      "lua_widget.moon_phase.out_of_range": "지원 기간을 벗어남",
+      "lua_widget.moon_phase.on": "켜짐",
+      "lua_widget.moon_phase.off": "꺼짐"
     },
     "pt-BR": {
       "lua_widget.moon_phase.name": "Fase da Lua",
       "lua_widget.moon_phase.description": "Mostra a Lua atual e a data de sua próxima fase principal.",
-      "lua_widget.moon_phase.card": "Cartão",
       "lua_widget.moon_phase.moon_only": "Só a Lua",
       "lua_widget.moon_phase.new": "Lua nova",
       "lua_widget.moon_phase.first": "Quarto crescente",
       "lua_widget.moon_phase.full": "Lua cheia",
       "lua_widget.moon_phase.last": "Quarto minguante",
       "lua_widget.moon_phase.date": "{1}/{0}",
-      "lua_widget.moon_phase.out_of_range": "Data fora do intervalo"
+      "lua_widget.moon_phase.out_of_range": "Data fora do intervalo",
+      "lua_widget.moon_phase.on": "Ativado",
+      "lua_widget.moon_phase.off": "Desativado"
     },
     "zh-CN": {
       "lua_widget.moon_phase.name": "月相",
       "lua_widget.moon_phase.description": "显示当前月面与下一次关键月相的日期。",
-      "lua_widget.moon_phase.card": "常规",
       "lua_widget.moon_phase.moon_only": "纯月相",
       "lua_widget.moon_phase.new": "新月",
       "lua_widget.moon_phase.first": "上弦月",
       "lua_widget.moon_phase.full": "满月",
       "lua_widget.moon_phase.last": "下弦月",
       "lua_widget.moon_phase.date": "{0}月{1}日",
-      "lua_widget.moon_phase.out_of_range": "日期超出支持范围"
+      "lua_widget.moon_phase.out_of_range": "日期超出支持范围",
+      "lua_widget.moon_phase.on": "已开启",
+      "lua_widget.moon_phase.off": "已关闭"
     },
     "zh-TW": {
       "lua_widget.moon_phase.name": "月相",
       "lua_widget.moon_phase.description": "顯示目前的月面與下一次主要月相的日期。",
-      "lua_widget.moon_phase.card": "一般",
       "lua_widget.moon_phase.moon_only": "純月相",
       "lua_widget.moon_phase.new": "新月",
       "lua_widget.moon_phase.first": "上弦月",
       "lua_widget.moon_phase.full": "滿月",
       "lua_widget.moon_phase.last": "下弦月",
       "lua_widget.moon_phase.date": "{0}月{1}日",
-      "lua_widget.moon_phase.out_of_range": "日期超出支援範圍"
+      "lua_widget.moon_phase.out_of_range": "日期超出支援範圍",
+      "lua_widget.moon_phase.on": "已開啟",
+      "lua_widget.moon_phase.off": "已關閉"
     }
   },
   "defaultSize": {
@@ -151,6 +161,9 @@
   "requiredFeatures": [
     "draw.advanced",
     "draw.immediate",
+    "interaction.contextMenu",
+    "interaction.pointerActions",
+    "interaction.region",
     "l10n.basic",
     "l10n.format",
     "lifecycle.event",
@@ -159,9 +172,12 @@
     "resource.package",
     "schedule.basic",
     "schedule.visibility",
+    "settings.changeEvent",
+    "storage.transaction",
     "time.basic"
   ],
   "optionalFeatures": [
+    "interaction.contextMenu.keepOpen",
     "resource.image.lazy"
   ],
   "resources": {
