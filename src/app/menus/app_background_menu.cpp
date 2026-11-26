@@ -785,7 +785,7 @@ DesktopApp::RenderWidgetMenuPreview(
         // shared Dock renderer owns the icon material and its outline.
         ComPtr<ID2D1Factory> outlineFactory;
         context->GetFactory(&outlineFactory);
-        const auto outline = !iconMode && previewEngine ?
+        const auto widgetOutline = !iconMode && previewEngine ?
             previewEngine->ResolveWidgetOutline(data->id, outlineFactory.Get(),
                 ToD2DRect(stageBounds)).positioned : nullptr;
         snowdesktop::widget_preview::DrawStage(context.Get(), stageBounds,
@@ -794,7 +794,7 @@ DesktopApp::RenderWidgetMenuPreview(
                 static_cast<float>(ScaleWidgetCu(
                     globalAppearance.cornerRadius, data->cellScale)) },
             { stage.canvasWidth, stage.canvasHeight,
-                stage.offsetX, stage.offsetY }, stage.wallpaper, outline.Get());
+                stage.offsetX, stage.offsetY }, stage.wallpaper, widgetOutline.Get());
         if (iconMode && iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled)
         {
             const auto& outline = snowdesktop::icon_beautify::ShapeOutline(iconBeautifySettings_.shape);
