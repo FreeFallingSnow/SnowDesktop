@@ -2960,5 +2960,9 @@
   "largeIcon.pickSettings": "Tomar la configuración de un icono grande",
   "largeIcon.pickSettingsSource": "Haz clic en un icono grande del escritorio. Presiona Esc para cancelar.",
   "core.drag.release_copy_large_icon_settings": "Suelta para copiar la configuración de icono grande a «{0}»",
-  "core.drag.with_large_icon_settings_hint": "{0} (Mantén Ctrl para copiar la configuración de icono grande)"
+  "core.drag.with_large_icon_settings_hint": "{0} (Mantén Ctrl para copiar la configuración de icono grande)",
+  "app.widget.placeholder.image_quota_single": "Una imagen decodificada supera los 64 MiB.",
+  "app.widget.placeholder.image_quota_pixels": "Las imágenes decodificadas superan los 128 MiB en total.",
+  "app.widget.placeholder.image_quota_encoded": "Los archivos de imagen en memoria superan los 128 MiB en total.",
+  "app.widget.placeholder.ignore_image_quota": "Ignorar siempre"
 }

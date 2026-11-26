@@ -2960,5 +2960,9 @@
   "largeIcon.pickSettings": "Prélever les réglages d’une grande icône",
   "largeIcon.pickSettingsSource": "Cliquez sur une grande icône du bureau. Appuyez sur Échap pour annuler.",
   "core.drag.release_copy_large_icon_settings": "Relâchez pour copier les réglages de grande icône vers « {0} »",
-  "core.drag.with_large_icon_settings_hint": "{0} (Maintenez Ctrl pour copier les réglages de grande icône)"
+  "core.drag.with_large_icon_settings_hint": "{0} (Maintenez Ctrl pour copier les réglages de grande icône)",
+  "app.widget.placeholder.image_quota_single": "Une image décodée dépasse 64 Mio.",
+  "app.widget.placeholder.image_quota_pixels": "Le total des images décodées dépasse 128 Mio.",
+  "app.widget.placeholder.image_quota_encoded": "Le total des fichiers image en mémoire dépasse 128 Mio.",
+  "app.widget.placeholder.ignore_image_quota": "Toujours ignorer"
 }

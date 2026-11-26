@@ -2960,5 +2960,9 @@
   "largeIcon.pickSettings": "吸取大图标设置",
   "largeIcon.pickSettingsSource": "点击桌面上的一个大图标，按 Esc 取消。",
   "core.drag.release_copy_large_icon_settings": "释放：复制大图标设置到「{0}」",
-  "core.drag.with_large_icon_settings_hint": "{0}（按住 Ctrl 可复制大图标设置）"
+  "core.drag.with_large_icon_settings_hint": "{0}（按住 Ctrl 可复制大图标设置）",
+  "app.widget.placeholder.image_quota_single": "单张图片解码后超过 64 MiB。",
+  "app.widget.placeholder.image_quota_pixels": "图片像素总量超过 128 MiB。",
+  "app.widget.placeholder.image_quota_encoded": "保留在内存中的图片文件总量超过 128 MiB。",
+  "app.widget.placeholder.ignore_image_quota": "始终忽略"
 }

@@ -2960,5 +2960,9 @@
   "largeIcon.pickSettings": "Einstellungen für große Symbole übernehmen",
   "largeIcon.pickSettingsSource": "Klicken Sie auf ein großes Symbol auf dem Desktop. Esc bricht die Auswahl ab.",
   "core.drag.release_copy_large_icon_settings": "Loslassen: Einstellungen für großes Symbol auf „{0}“ übertragen",
-  "core.drag.with_large_icon_settings_hint": "{0} (Strg halten, um Einstellungen für große Symbole zu kopieren)"
+  "core.drag.with_large_icon_settings_hint": "{0} (Strg halten, um Einstellungen für große Symbole zu kopieren)",
+  "app.widget.placeholder.image_quota_single": "Ein Bild überschreitet 64 MiB.",
+  "app.widget.placeholder.image_quota_pixels": "Bildpixel belegen mehr als 128 MiB.",
+  "app.widget.placeholder.image_quota_encoded": "Bilddateien im Speicher belegen mehr als 128 MiB.",
+  "app.widget.placeholder.ignore_image_quota": "Immer ignorieren"
 }

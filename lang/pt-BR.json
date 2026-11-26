@@ -2960,5 +2960,9 @@
   "largeIcon.pickSettings": "Capturar as configurações de um ícone grande",
   "largeIcon.pickSettingsSource": "Clique em um ícone grande da área de trabalho. Pressione Esc para cancelar.",
   "core.drag.release_copy_large_icon_settings": "Solte para copiar as configurações de ícone grande para “{0}”",
-  "core.drag.with_large_icon_settings_hint": "{0} (Segure Ctrl para copiar as configurações de ícone grande)"
+  "core.drag.with_large_icon_settings_hint": "{0} (Segure Ctrl para copiar as configurações de ícone grande)",
+  "app.widget.placeholder.image_quota_single": "Uma imagem decodificada excede 64 MiB.",
+  "app.widget.placeholder.image_quota_pixels": "As imagens decodificadas excedem 128 MiB no total.",
+  "app.widget.placeholder.image_quota_encoded": "Os arquivos de imagem mantidos na memória excedem 128 MiB no total.",
+  "app.widget.placeholder.ignore_image_quota": "Sempre ignorar"
 }

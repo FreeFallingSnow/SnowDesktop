@@ -2960,5 +2960,9 @@
   "largeIcon.pickSettings": "Sample large icon settings",
   "largeIcon.pickSettingsSource": "Click a large icon on the desktop. Press Esc to cancel.",
   "core.drag.release_copy_large_icon_settings": "Release: Copy large icon settings to “{0}”",
-  "core.drag.with_large_icon_settings_hint": "{0} (Hold Ctrl to copy large icon settings)"
+  "core.drag.with_large_icon_settings_hint": "{0} (Hold Ctrl to copy large icon settings)",
+  "app.widget.placeholder.image_quota_single": "One decoded image exceeds 64 MiB.",
+  "app.widget.placeholder.image_quota_pixels": "Decoded images exceed 128 MiB in total.",
+  "app.widget.placeholder.image_quota_encoded": "Image files held in memory exceed 128 MiB in total.",
+  "app.widget.placeholder.ignore_image_quota": "Always ignore"
 }
