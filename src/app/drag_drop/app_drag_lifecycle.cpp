@@ -96,7 +96,18 @@ bool DesktopApp::CollectPointerInteractionBounds(RECT& result)
                 add(target, 8);
             }
         }
-        else add(GetGridRect(gridPages_, widgetPreviewCell_, widgetPreviewSpan_));
+        else
+        {
+            const RECT grid = GetGridRect(gridPages_, widgetPreviewCell_, widgetPreviewSpan_);
+            if (!IsRectEmpty(&grid) && IsLuaDesktopSurface(widgets_[mouseDownWidgetIndex_]))
+            {
+                DesktopWidget destination;
+                destination.gridCell = widgetPreviewCell_;
+                destination.bounds = grid;
+                add(UnionCopy(grid, GetExpandedWidgetFrameRect(destination)));
+            }
+            else add(grid);
+        }
     }
     else if (marqueeActive_)
     {

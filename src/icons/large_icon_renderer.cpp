@@ -1,4 +1,5 @@
 #include "ui/render/app_font.h"
+#include "ui/render/placement_preview.h"
 #include "ui/render/icon_backdrop_clip.h"
 #include "large_icon_renderer.h"
 #include "theme/panel_gradient_renderer.h"
@@ -127,28 +128,8 @@ void DrawPlacementPreview(ID2D1RenderTarget* target, const LargeIconConfig& c,
         frame.right - frame.left, frame.bottom - frame.top, scale));
     ComPtr<ID2D1Factory> factory; target->GetFactory(&factory);
     const auto outline = large_icon_shape::Geometry(factory.Get(), c.shape, frame, radius, c.flagDirection);
-    ComPtr<ID2D1SolidColorBrush> brush;
-    const unsigned color = valid ? 0x68b5ff : 0xf16d70;
-    if (!outline || FAILED(target->CreateSolidColorBrush(D2D1::ColorF(color, .2f), &brush))) return;
-    if (c.shape != 0)
-    {
-        // Four corner brackets mark the occupied grid area, including card
-        // padding, without filling the transparent silhouette margins.
-        const auto grid = Rect(gridAllocation ? *gridAllocation : allocation);
-        const float length = std::min(16.f * std::max(1.f, scale),
-            std::min(grid.right - grid.left, grid.bottom - grid.top) * .25f);
-        brush->SetColor(D2D1::ColorF(color, .65f));
-        for (const float x : {grid.left, grid.right}) for (const float y : {grid.top, grid.bottom})
-        {
-            const auto corner = D2D1::Point2F(x, y);
-            target->DrawLine(corner, D2D1::Point2F(x + (x == grid.left ? length : -length), y), brush.Get(), 2.f);
-            target->DrawLine(corner, D2D1::Point2F(x, y + (y == grid.top ? length : -length)), brush.Get(), 2.f);
-        }
-        brush->SetColor(D2D1::ColorF(color, .2f));
-    }
-    target->FillGeometry(outline.Get(), brush.Get());
-    brush->SetColor(D2D1::ColorF(color, .95f));
-    target->DrawGeometry(outline.Get(), brush.Get(), 2.f);
+    const RECT* brackets = c.shape == 0 ? nullptr : (gridAllocation ? gridAllocation : &allocation);
+    snowdesktop::DrawPlacementPreview(target, outline.Get(), scale, valid, brackets);
 }
 void DrawResizeHandle(ID2D1RenderTarget* target, POINT center, int diameter, float radius, bool light, bool selected)
 {

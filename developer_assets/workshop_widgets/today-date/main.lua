@@ -23,6 +23,25 @@ local monthKeys = {
     "lua_widget.today_date.december",
 }
 
+local supportsShape = widget.hasFeature("widget.outline.condition")
+
+local function circleOutline()
+    -- Four cubic segments approximate the circle in a normalized square.
+    local near, far = 0.2238576251, 0.7761423749
+    return {
+        fit = "contain",
+        when = { setting = "shape", value = "circle" },
+        path = {
+            { op = "move", x = 0.5, y = 0 },
+            { op = "cubic", x1 = far, y1 = 0, x2 = 1, y2 = near, x = 1, y = 0.5 },
+            { op = "cubic", x1 = 1, y1 = far, x2 = far, y2 = 1, x = 0.5, y = 1 },
+            { op = "cubic", x1 = near, y1 = 1, x2 = 0, y2 = far, x = 0, y = 0.5 },
+            { op = "cubic", x1 = 0, y1 = near, x2 = near, y2 = 0, x = 0.5, y = 0 },
+            { op = "close" },
+        },
+    }
+end
+
 local function localDate()
     local parts = time.parts()
     return calendar.dateInfo(string.format("%04d-%02d-%02d", parts.year, parts.month, parts.day))
@@ -118,6 +137,23 @@ return widget.define({
     showTitle = false,
     useCustomStyle = true,
     followPersonalizationDefault = true,
+    outline = supportsShape and circleOutline() or nil,
+    settings = supportsShape and {
+        fields = {
+            {
+                key = "shape",
+                label = l10n.tr("lua_widget.today_date.shape"),
+                agentDescription = "Choose the desktop widget's outer shape. Rounded Rectangle is the default. Circle centers a circular outline inside the widget's grid area and preserves its proportions as the widget is resized.",
+                type = "select",
+                default = "roundedRectangle",
+                options = { "roundedRectangle", "circle" },
+                optionLabels = {
+                    l10n.tr("lua_widget.today_date.shape_rounded_rectangle"),
+                    l10n.tr("lua_widget.today_date.shape_circle"),
+                },
+            },
+        },
+    } or nil,
     setup = setup,
     event = event,
     render = render,

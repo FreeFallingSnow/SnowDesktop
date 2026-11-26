@@ -14,6 +14,7 @@
 #include "icons/large_icon_render_rules.h"
 #include "icons/large_icon_renderer.h"
 #include "icons/large_icon_shape_geometry.h"
+#include "ui/render/placement_preview.h"
 #include "widget/view/widget_composition_layer_rules.h"
 #include "widget/runtime/widget_visibility_rules.h"
 #include "widget/runtime/widget_item_layout.h"
@@ -513,36 +514,65 @@ void DesktopApp::DrawDynamicOverlays(
         }
         else if (!renderingFloatingDock_)
         {
-        GridCell cell = widgetPreviewCell_;
-        GridSpan span = widgetPreviewSpan_;
-        RECT previewBounds = GetGridRect(gridPages_, cell, span);
+            const GridCell& cell = widgetPreviewCell_;
+            const GridSpan span = widgetPreviewSpan_;
+            const RECT previewBounds = GetGridRect(gridPages_, cell, span);
 
-        bool widgetConflict = false;
-        for (size_t i = 0; i < widgets_.size(); ++i)
-        {
-            if (i == mouseDownWidgetIndex_ && !luaStackMemberDrag_.Armed()) continue;
-            const auto& ow = widgets_[i];
-            if (!snowdesktop::collection_group_rules::
-                    ShouldOccupyDesktopGrid(
-                        IsGroupedWidget(ow)))
-                continue;
-            if (ow.gridCell.pageId != cell.pageId) continue;
-            if (cell.column + span.columns <= ow.gridCell.column) continue;
-            if (ow.gridCell.column + ow.gridSpan.columns <= cell.column) continue;
-            if (cell.row + span.rows <= ow.gridCell.row) continue;
-            if (ow.gridCell.row + ow.gridSpan.rows <= cell.row) continue;
-            widgetConflict = true; break;
-        }
+            bool widgetConflict = false;
+            for (size_t i = 0; i < widgets_.size(); ++i)
+            {
+                if (i == mouseDownWidgetIndex_ && !luaStackMemberDrag_.Armed()) continue;
+                const auto& ow = widgets_[i];
+                if (!snowdesktop::collection_group_rules::
+                        ShouldOccupyDesktopGrid(
+                            IsGroupedWidget(ow)))
+                    continue;
+                if (ow.gridCell.pageId != cell.pageId) continue;
+                if (cell.column + span.columns <= ow.gridCell.column) continue;
+                if (ow.gridCell.column + ow.gridSpan.columns <= cell.column) continue;
+                if (cell.row + span.rows <= ow.gridCell.row) continue;
+                if (ow.gridCell.row + ow.gridSpan.rows <= cell.row) continue;
+                widgetConflict = true;
+                break;
+            }
 
-        bool ok = !widgetConflict && !cell.pageId.empty();
-        float radius = 8.0f;
-        D2D1::ColorF fill = ok ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.15f)
-                              : D2D1::ColorF(1.0f, 0.30f, 0.30f, 0.18f);
-        D2D1::ColorF border = ok ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.75f)
-                                 : D2D1::ColorF(1.0f, 0.25f, 0.25f, 0.85f);
+            const bool ok = !widgetConflict && !cell.pageId.empty();
+            const size_t sourceIndex = luaStackMemberDrag_.Armed()
+                ? luaStackMemberDrag_.MemberIndex(widgets_) : mouseDownWidgetIndex_;
+            const auto* content = sourceIndex < widgets_.size()
+                ? ResolveLuaWidgetContent(&widgets_[sourceIndex]) : nullptr;
+            snowdesktop::widget_runtime::WidgetOutlineGeometry outline;
+            RECT envelope = previewBounds;
+            if (widgetEngine_ && content && !IsRectEmpty(&previewBounds))
+            {
+                DesktopWidget destination;
+                destination.gridCell = cell;
+                destination.bounds = previewBounds;
+                const RECT frame = GetExpandedWidgetFrameRect(destination);
+                Microsoft::WRL::ComPtr<ID2D1Factory> factory;
+                ctx->GetFactory(&factory);
+                outline = widgetEngine_->ResolveWidgetOutline(
+                    content->id, factory.Get(), ToD2DRect(frame));
+                if (outline.positioned)
+                    envelope = UnionCopy(previewBounds, frame);
+            }
 
-        if (snowdesktop::foreground_paint_region::Intersects(updateRect, previewBounds))
-            DrawD2DRoundedRectangle(ctx, previewBounds, radius, fill, border, 2.0f);
+            if (snowdesktop::foreground_paint_region::Intersects(updateRect, envelope, 2))
+            {
+                if (outline.positioned)
+                {
+                    snowdesktop::DrawPlacementPreview(ctx, outline.positioned.Get(),
+                        GetItemLayoutScale(previewBounds), ok, &previewBounds);
+                }
+                else
+                {
+                    const D2D1::ColorF fill = ok ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.15f)
+                                                : D2D1::ColorF(1.0f, 0.30f, 0.30f, 0.18f);
+                    const D2D1::ColorF border = ok ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.75f)
+                                                  : D2D1::ColorF(1.0f, 0.25f, 0.25f, 0.85f);
+                    DrawD2DRoundedRectangle(ctx, previewBounds, 8.0f, fill, border, 2.0f);
+                }
+            }
         }
     }
 
