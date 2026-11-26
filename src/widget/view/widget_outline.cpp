@@ -9,6 +9,7 @@
 #include <array>
 #include <cmath>
 #include <string_view>
+#include <utility>
 
 extern "C" {
 #include <lua.h>
@@ -72,6 +73,37 @@ bool ValidateOutline(const std::vector<DrawPathCommand>& path, std::string& erro
     return false;
 }
 
+bool ReadOutlineCondition(lua_State* state, int index,
+    WidgetOutlineCondition& condition, std::string& error)
+{
+    if (!lua_istable(state, index))
+    {
+        error = "outline when must be a table";
+        return false;
+    }
+    if (!::snowdesktop::lua_runtime::LuaTableUsesOnlyFields(state, index,
+            { "setting", "value" }, "outline when", error))
+        return false;
+
+    index = lua_absindex(state, index);
+    const auto read = [&](const char* field, std::size_t limit, std::string& out) {
+        lua_pushstring(state, field);
+        lua_rawget(state, index);
+        std::size_t length = 0;
+        const char* value = lua_type(state, -1) == LUA_TSTRING
+            ? lua_tolstring(state, -1, &length) : nullptr;
+        const bool valid = value && length > 0 && length <= limit &&
+            std::string_view(value, length).find('\0') == std::string_view::npos;
+        if (valid) out.assign(value, length);
+        lua_pop(state, 1);
+        return valid;
+    };
+    if (read("setting", 128, condition.setting) && read("value", 1024, condition.value))
+        return true;
+    error = "outline when requires nonempty setting and value strings (up to 128 and 1024 bytes)";
+    return false;
+}
+
 ComPtr<ID2D1PathGeometry> BuildOutline(
     ID2D1Factory* factory, const WidgetOutline& outline)
 {
@@ -113,7 +145,7 @@ bool ReadWidgetOutline(lua_State* state, int descriptor, WidgetOutline& outline,
         return false;
     }
     if (!::snowdesktop::lua_runtime::LuaTableUsesOnlyFields(state, -1,
-            { "path", "fillRule", "fit" }, "outline", error))
+            { "path", "fillRule", "fit", "when" }, "outline", error))
         return false;
 
     lua_pushliteral(state, "fillRule");
@@ -146,6 +178,16 @@ bool ReadWidgetOutline(lua_State* state, int descriptor, WidgetOutline& outline,
             error = "outline fit must be fill or contain";
             return false;
         }
+    }
+    lua_pop(state, 1);
+    lua_pushliteral(state, "when");
+    lua_rawget(state, -2);
+    if (!lua_isnil(state, -1))
+    {
+        WidgetOutlineCondition condition;
+        if (!ReadOutlineCondition(state, -1, condition, error))
+            return false;
+        outline.when = std::move(condition);
     }
     lua_pop(state, 1);
     lua_pushliteral(state, "path");

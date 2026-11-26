@@ -206,6 +206,7 @@ local function circularOutline()
     local near, far = center - arm, center + arm
     return {
         fit = "contain",
+        when = { setting = "faceTheme", value = "theme" },
         path = {
             { op = "move", x = center, y = low },
             { op = "cubic", x1 = far, y1 = low, x2 = high, y2 = near, x = high, y = center },
@@ -219,7 +220,7 @@ end
 
 return widget.define({
     useCustomStyle = true,
-    outline = widget.hasFeature("widget.outline") and circularOutline() or nil,
+    outline = widget.hasFeature("widget.outline.condition") and circularOutline() or nil,
     bg = 0x000000,
     border = 0x000000,
     alpha = 0,

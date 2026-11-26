@@ -35,7 +35,11 @@ snowdesktop::widget_runtime::WidgetOutlineGeometry WidgetEngine::ResolveWidgetOu
 {
     const int index = FindWidget(widgetId);
     if (index < 0) return {};
-    return widgets_[index].outline.Resolve(factory, frame);
+    auto& outline = widgets_[index].outline;
+    if (outline.when &&
+        RuntimeGetStorageValue(widgetId, outline.when->setting) != outline.when->value)
+        return {};
+    return outline.Resolve(factory, frame);
 }
 
 bool WidgetEngine::WidgetOutlineContains(

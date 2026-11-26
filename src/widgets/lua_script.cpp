@@ -863,11 +863,13 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
 
     if (!showBottomBar && !showCompactMoveHandle && !showResizeHandle) return;
 
+    // An outline can leave the handle area over the desktop wallpaper.
+    const bool darkHandles = !outlined && chromeForeground.darkForeground;
     const float handleFillOpacity = selected ? 0.62f : 0.34f;
-    const D2D1_COLOR_F handleFill = chromeForeground.darkForeground
+    const D2D1_COLOR_F handleFill = darkHandles
         ? D2D1::ColorF(0.06f, 0.08f, 0.12f, handleFillOpacity)
         : D2D1::ColorF(1.0f, 1.0f, 1.0f, handleFillOpacity);
-    const D2D1_COLOR_F handleStroke = chromeForeground.darkForeground
+    const D2D1_COLOR_F handleStroke = darkHandles
         ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.50f)
         : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f);
 

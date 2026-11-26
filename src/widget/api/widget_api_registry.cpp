@@ -230,6 +230,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "ui.semanticMetrics.rowUnit",
     "widget.backgroundLayer",
     "widget.outline",
+    "widget.outline.condition",
     "widget.confirmRemoval",
     "widget.context",
     "widget.creationPresets",

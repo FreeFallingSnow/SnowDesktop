@@ -658,10 +658,15 @@
 ---@field opacity? number Composited opacity from 0..1; defaults to 1.
 ---@field blurRadius? number Explicit host-scaled blur radius from 0..48. Omit to inherit the glass material radius, or zero when glass is disabled.
 
+---@class SnowWidgetOutlineCondition
+---@field setting string String setting or storage key, up to 128 bytes.
+---@field value string Exact nonempty value, up to 1024 bytes.
+
 ---@class SnowWidgetOutline
 ---@field path SnowDrawPathCommand[] Closed contours with coordinates normalized to the desktop widget's allocation. Up to 256 commands.
 ---@field fillRule? 'alternate'|'winding' Defaults to alternate (even-odd).
 ---@field fit? 'fill'|'contain' Defaults to fill. Contain fits the unit square without stretching.
+---@field when? SnowWidgetOutlineCondition Other values use the default outline. Requires widget.outline.condition.
 
 ---@class SnowWidgetDefinition
 ---@field outline? SnowWidgetOutline Desktop surface geometry. Requires widget.outline.

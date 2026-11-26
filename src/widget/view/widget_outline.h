@@ -5,6 +5,7 @@
 #include <d2d1_1.h>
 #include <wrl/client.h>
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -23,11 +24,18 @@ struct WidgetOutlineGeometry
     Microsoft::WRL::ComPtr<ID2D1Geometry> positioned;
 };
 
+struct WidgetOutlineCondition
+{
+    std::string setting;
+    std::string value;
+};
+
 struct WidgetOutline
 {
     std::vector<DrawPathCommand> commands;
     D2D1_FILL_MODE fillMode = D2D1_FILL_MODE_ALTERNATE;
     bool contain = false;
+    std::optional<WidgetOutlineCondition> when;
 
     // One immutable filled outline, plus transforms for painting and the backdrop.
     Microsoft::WRL::ComPtr<ID2D1PathGeometry> unit;
