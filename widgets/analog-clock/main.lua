@@ -17,14 +17,15 @@ local settings = {
     fields = {
         {
             key = "faceTheme",
-            agentDescription = "Chooses the analog clock face, ring and hand palette. It changes the artwork drawn inside the panel.",
+            agentDescription = "Light and Dark draw a solid clock face. Theme uses the component's current appearance as the dial background and matches its foreground theme. Choosing Theme switches the Transparent Face appearance preset to Follow Global, including an instance still using that default preset. Other appearance choices stay selected.",
             label = l10n.tr("lua_widget.analog_clock.face_theme"),
             type = "select",
             default = "light",
-            options = { "light", "dark" },
+            options = { "light", "dark", "theme" },
             optionLabels = {
                 l10n.tr("lua_widget.analog_clock.theme_light"),
                 l10n.tr("lua_widget.analog_clock.theme_dark"),
+                l10n.tr("lua_widget.analog_clock.theme_host"),
             },
         },
         { key = "showSecondHand",
@@ -67,18 +68,40 @@ local palettes = {
     },
 }
 
-local function palette()
-    local faceTheme = storage.get("faceTheme")
-    return faceTheme == "dark" and palettes.dark or palettes.light
+local function palette(faceTheme)
+    if faceTheme == "theme" then
+        return widget.theme().contentTheme == 1 and palettes.light or palettes.dark
+    end
+    return palettes[faceTheme] or palettes.light
 end
 
 local function setup()
     schedule.every("clock", 1000, { whenHidden = "pause" })
 end
 
+local function event(_context, _model, change)
+    if change.kind ~= "settings.changed" or change.preview or
+        storage.get("faceTheme") ~= "theme" then
+        return
+    end
+    for _, key in ipairs(change.keys) do
+        if key == "faceTheme" then
+            local follow = storage.get("followPersonalization")
+            local preset = storage.get("__preset")
+            if follow ~= "1" and follow ~= "true" and
+                (preset == nil or preset == "transparent") then
+                storage.set("followPersonalization", "1")
+            end
+            return
+        end
+    end
+end
+
 local function render()
     local t = time.parts(time.now())
-    local colors = palette()
+    local faceTheme = storage.get("faceTheme")
+    local themedDial = faceTheme == "theme"
+    local colors = palette(faceTheme)
     local showSecondHand = storage.get("showSecondHand") ~= "0"
     local showNumbers = storage.get("showNumbers") ~= "0"
     local w = layout.width()
@@ -87,7 +110,7 @@ local function render()
     local cy = h / 2
     local size = math.min(w, h)
     local unit = size / 96
-    local r = size / 2 - unit * 10
+    local r = size / 2 - unit * (themedDial and 7 or 10)
     if r <= 0 then return end
 
     local function su(value)
@@ -114,11 +137,12 @@ local function render()
         draw.line(x1, y1, x2, y2, width, color, alpha or 1.0)
     end
 
-    -- 多层表盘，用填充圆模拟描边，避免依赖额外 stroke API。
-    draw.circle(cx, cy + su(1.5), r + outerStroke + su(1.2),
-        colors.shadow, 0.10)
-    draw.circle(cx, cy, r + outerStroke, colors.outer, 0.95)
-    draw.circle(cx, cy, r, colors.face, 1.0)
+    if not themedDial then
+        draw.circle(cx, cy + su(1.5), r + outerStroke + su(1.2),
+            colors.shadow, 0.10)
+        draw.circle(cx, cy, r + outerStroke, colors.outer, 0.95)
+        draw.circle(cx, cy, r, colors.face, 1.0)
+    end
 
     -- 刻度：主刻度更稳，副刻度更轻。
     for i = 0, 59 do
@@ -175,13 +199,33 @@ local function render()
     end
 end
 
+local function circularOutline()
+    local center, radius = 0.5, 0.46
+    local low, high = center - radius, center + radius
+    local arm = radius * 0.5522847498
+    local near, far = center - arm, center + arm
+    return {
+        fit = "contain",
+        path = {
+            { op = "move", x = center, y = low },
+            { op = "cubic", x1 = far, y1 = low, x2 = high, y2 = near, x = high, y = center },
+            { op = "cubic", x1 = high, y1 = far, x2 = far, y2 = high, x = center, y = high },
+            { op = "cubic", x1 = near, y1 = high, x2 = low, y2 = far, x = low, y = center },
+            { op = "cubic", x1 = low, y1 = near, x2 = near, y2 = low, x = center, y = low },
+            { op = "close" },
+        },
+    }
+end
+
 return widget.define({
     useCustomStyle = true,
+    outline = widget.hasFeature("widget.outline") and circularOutline() or nil,
     bg = 0x000000,
     border = 0x000000,
     alpha = 0,
     gradientEndA = 0,
     settings = settings,
     setup = setup,
+    event = event,
     render = render,
 })
