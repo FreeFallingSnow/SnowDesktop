@@ -17,7 +17,7 @@ local settings = {
     fields = {
         {
             key = "faceTheme",
-            agentDescription = "Light and Dark draw a solid clock face. Use Widget Appearance draws the dial with the component's current appearance and matches its foreground colors. Selecting it while using the Transparent Face preset, including the default appearance, turns on Follow Global. Other appearance choices stay selected.",
+            agentDescription = "Light and Dark draw a solid clock face and share one widget appearance. Use Widget Appearance draws the dial using a separate saved widget appearance and matches its foreground colors. Returning to Light or Dark restores the appearance from before entering this mode. Transparent Face is unavailable in Use Widget Appearance. The first activation from Transparent Face starts with Follow Global. Selecting Transparent Face while in this mode restores its last valid appearance.",
             label = l10n.tr("lua_widget.analog_clock.face_theme"),
             type = "select",
             default = "light",
@@ -75,23 +75,85 @@ local function palette(faceTheme)
     return palettes[faceTheme] or palettes.light
 end
 
+local appearanceKeys = {
+    followPersonalization = true,
+    __preset = true,
+    bg = true,
+    alpha = true,
+    gradientEndA = true,
+    border = true,
+    borderAlpha = true,
+    borderStyle = true,
+    borderWidth = true,
+    edgeHighlightEnabled = true,
+    edgeHighlightWidth = true,
+    edgeHighlightStrength = true,
+    glassEnabled = true,
+    acrylicEnabled = true,
+    __contentTheme = true,
+    __panelGradient = true,
+    __edgeLight = true,
+}
+
+local function applyAppearance(tx, appearance)
+    for key in pairs(appearanceKeys) do
+        local value = appearance[key]
+        if value == nil then
+            tx:remove(key)
+        else
+            tx:set(key, value)
+        end
+    end
+end
+
+local function syncFaceAppearance()
+    storage.transaction(function(tx)
+        local classic = tx:get("classicFaceAppearance")
+        if tx:get("faceTheme") ~= "theme" then
+            if classic then
+                applyAppearance(tx, classic)
+                tx:remove("classicFaceAppearance")
+            end
+            return
+        end
+
+        local appearance = {}
+        for key in pairs(appearanceKeys) do
+            appearance[key] = tx:get(key)
+        end
+
+        local remembered = tx:get("themedFaceAppearance")
+        if not classic then
+            tx:set("classicFaceAppearance", appearance)
+            appearance = remembered or appearance
+        end
+
+        local preset = appearance.__preset
+        if preset == nil or preset == "" or preset == "transparent" then
+            -- Keep an eligible preset ready when Follow Global is turned off.
+            appearance = remembered or {
+                followPersonalization = "1",
+                __preset = "__global_light",
+            }
+        end
+
+        applyAppearance(tx, appearance)
+        tx:set("themedFaceAppearance", appearance)
+    end)
+end
+
 local function setup()
+    syncFaceAppearance()
     schedule.every("clock", 1000, { whenHidden = "pause" })
 end
 
 local function event(_context, _model, change)
-    if change.kind ~= "settings.changed" or change.preview or
-        storage.get("faceTheme") ~= "theme" then
+    if change.kind ~= "settings.changed" or change.preview then
         return
     end
     for _, key in ipairs(change.keys) do
-        if key == "faceTheme" then
-            local follow = storage.get("followPersonalization")
-            local preset = storage.get("__preset")
-            if follow ~= "1" and follow ~= "true" and
-                (preset == nil or preset == "transparent") then
-                storage.set("followPersonalization", "1")
-            end
+        if key == "faceTheme" or appearanceKeys[key] then
+            syncFaceAppearance()
             return
         end
     end
