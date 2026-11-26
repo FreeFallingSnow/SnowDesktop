@@ -245,7 +245,7 @@ void WidgetEngine::Shutdown()
         {
             widget.lifecycle.Release(widget.state);
             luaL_unref(widget.state, LUA_REGISTRYINDEX, widget.ref);
-            ReleasePackageImageResources(d2dState_, widget.state);
+            ReleasePackageImageResources(d2dState_, widget.state, widget.widgetId);
             lua_close(widget.state);
             widget.state = nullptr;
         }
@@ -294,10 +294,17 @@ void WidgetEngine::Shutdown()
 
 void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
 {
+    RetireWidgetRuntime(widgetId, true);
+}
+
+void WidgetEngine::RetireWidgetRuntime(const std::wstring& widgetId,
+    bool removeSavedNotificationSchedules)
+{
     int idx = FindWidget(widgetId);
     if (idx < 0) return;
     if (d2dState_) d2dState_->scriptReadAhead.Forget(widgetId);
-    RemoveNotificationSchedules(widgetId);
+    if (removeSavedNotificationSchedules)
+        RemoveNotificationSchedules(widgetId);
     PreviewExecutionScope previewScope(
         widgets_[idx].preview ? &widgets_[idx].previewStorage : nullptr);
     ResetHostInputForWidget(widgetId);
@@ -319,7 +326,7 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
     {
         widgets_[idx].lifecycle.Release(state);
         luaL_unref(state, LUA_REGISTRYINDEX, widgets_[idx].ref);
-        ReleasePackageImageResources(d2dState_, state);
+        ReleasePackageImageResources(d2dState_, state, widgetId);
         lua_close(state);
         widgets_[idx].state = nullptr;
     }
@@ -662,6 +669,10 @@ bool WidgetEngine::EnsureWidgetLoaded(const std::wstring& widgetId, const std::w
     }
     if (LoadWidget(path, widgetId))
         return true;
+    if (const auto failure = GetWidgetRuntimeFailure(widgetId);
+        failure && failure->kind ==
+            snowdesktop::widget_runtime::WidgetHostStateKind::PackageImageQuotaExceeded)
+        return false;
     const std::string id = WideToUtf8(packageId);
     if (!RecoverWidgetPackage(id))
         return false;
@@ -885,13 +896,23 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
             "Cannot allocate isolated Lua state", quota->memoryExceeded);
         return false;
     }
-    const auto closePendingState = [d2dState = d2dState_](lua_State* value) {
+    const auto closePendingState = [d2dState = d2dState_, &widgetId](lua_State* value) {
         if (!value) return;
-        ReleasePackageImageResources(d2dState, value);
+        ReleasePackageImageResources(d2dState, value, widgetId);
         lua_close(value);
     };
     std::unique_ptr<lua_State, decltype(closePendingState)> stateGuard(
         state, closePendingState);
+    if (d2dState_)
+        d2dState_->packageImageCache.RegisterInstance(state,
+            !preview && PackageImageQuotaIgnored(widgetId));
+    const auto pauseIfImageQuotaExceeded = [&] {
+        if (!d2dState_) return false;
+        const auto reason = d2dState_->packageImageCache.ExceededQuota(state);
+        if (reason == snowdesktop::widget_runtime::PackageImageQuota::None) return false;
+        RecordPackageImageQuotaPause(widgetId, reason);
+        return true;
+    };
     const auto missing = snowdesktop::widget_api::MissingFeatures(
         pending.manifest.requiredFeatures);
     if (!missing.empty())
@@ -1022,9 +1043,10 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
             return false;
         }
         lua_pushvalue(state, -2);  // push sandbox as argument
-        if (const int status = snowdesktop::lua_runtime::ProtectedCall(
-                state, 1, 1, 1000000,
-                std::chrono::milliseconds(100)); status != LUA_OK)
+        const int status = snowdesktop::lua_runtime::ProtectedCall(
+            state, 1, 1, 1000000, std::chrono::milliseconds(100));
+        if (pauseIfImageQuotaExceeded()) return false;
+        if (status != LUA_OK)
         {
             if (status == LUA_ERRRUN && snowdesktop::widget_runtime::IsDryLoad() &&
                 !quota->memoryExceeded && !quota->executionExceeded)
@@ -1041,9 +1063,10 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     else
     {
         // Execute the chunk
-        if (const int status = snowdesktop::lua_runtime::ProtectedCall(
-                state, 0, 1, 1000000,
-                std::chrono::milliseconds(100)); status != LUA_OK)
+        const int status = snowdesktop::lua_runtime::ProtectedCall(
+            state, 0, 1, 1000000, std::chrono::milliseconds(100));
+        if (pauseIfImageQuotaExceeded()) return false;
+        if (status != LUA_OK)
         {
             if (status == LUA_ERRRUN && snowdesktop::widget_runtime::IsDryLoad() &&
                 !quota->memoryExceeded && !quota->executionExceeded)
@@ -1210,7 +1233,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         {
             failed.lifecycle.Release(failed.state);
             luaL_unref(failed.state, LUA_REGISTRYINDEX, failed.ref);
-            ReleasePackageImageResources(d2dState_, failed.state);
+            ReleasePackageImageResources(d2dState_, failed.state, widgetId);
             lua_close(failed.state);
             failed.state = nullptr;
         }
@@ -1449,7 +1472,14 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId,
     {
         // The enclosing package verification owns rollback for all instances.
         if (!snowdesktop::widget_runtime::HasStorageOverlay())
-            RecoverWidgetPackage(packageId, widgets_[idx].manifest.version);
+        {
+            const auto failure = GetWidgetRuntimeFailure(widgetId);
+            if (failure && failure->kind ==
+                snowdesktop::widget_runtime::WidgetHostStateKind::PackageImageQuotaExceeded)
+                PauseWidgetForPackageImageQuota(widgetId, failure->imageQuota);
+            else
+                RecoverWidgetPackage(packageId, widgets_[idx].manifest.version);
+        }
         return false;
     }
 
@@ -1477,7 +1507,7 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId,
     {
         old.lifecycle.Release(old.state);
         luaL_unref(old.state, LUA_REGISTRYINDEX, old.ref);
-        ReleasePackageImageResources(d2dState_, old.state);
+        ReleasePackageImageResources(d2dState_, old.state, widgetId);
         lua_close(old.state);
         old.state = nullptr;
     }
@@ -1492,6 +1522,50 @@ bool WidgetEngine::RetryWidget(const std::wstring& widgetId,
     if (FindWidget(widgetId) >= 0)
         return ReloadWidget(widgetId);
     return EnsureWidgetLoaded(widgetId, packageId);
+}
+
+bool WidgetEngine::IgnorePackageImageQuotaAndRetry(const std::wstring& widgetId,
+    const std::wstring& packageId)
+{
+    if (previewOnly_ || snowdesktop::widget_runtime::HasStorageOverlay() ||
+        GetWidgetHostState(widgetId, packageId).kind !=
+            snowdesktop::widget_runtime::WidgetHostStateKind::PackageImageQuotaExceeded ||
+        !PersistPackageImageQuotaOverride(widgetId))
+        return false;
+    const bool loaded = RetryWidget(widgetId, packageId);
+    RuntimeInvalidateHost(widgetId);
+    return loaded;
+}
+
+static snowdesktop::widget_runtime::WidgetHostState PackageImageQuotaPauseState(
+    snowdesktop::widget_runtime::PackageImageQuota reason)
+{
+    using snowdesktop::widget_runtime::PackageImageQuota;
+    const char* detail = "Package image quota exceeded";
+    switch (reason)
+    {
+    case PackageImageQuota::SingleImage:
+        detail = "A package image exceeds the 64 MiB decoded size limit";
+        break;
+    case PackageImageQuota::PixelBytes:
+        detail = "Package image pixels exceed the 128 MiB instance limit";
+        break;
+    case PackageImageQuota::EncodedBytes:
+        detail = "Package image snapshots exceed the 128 MiB instance limit";
+        break;
+    case PackageImageQuota::None:
+        break;
+    }
+    return { snowdesktop::widget_runtime::WidgetHostStateKind::PackageImageQuotaExceeded,
+        detail, reason };
+}
+
+void WidgetEngine::RecordPackageImageQuotaPause(const std::wstring& widgetId,
+    snowdesktop::widget_runtime::PackageImageQuota reason)
+{
+    auto state = PackageImageQuotaPauseState(reason);
+    RuntimeAddLog(widgetId, "error", state.detail);
+    widgetHostFailures_.insert_or_assign(widgetId, std::move(state));
 }
 
 snowdesktop::widget_runtime::WidgetHostState
@@ -1551,6 +1625,16 @@ std::optional<snowdesktop::widget_runtime::WidgetHostState>
 WidgetEngine::GetWidgetRuntimeFailure(
     const std::wstring& widgetId) const
 {
+    if (d2dState_)
+    {
+        const int index = FindWidget(widgetId);
+        if (index >= 0)
+        {
+            const auto reason = d2dState_->packageImageCache.ExceededQuota(widgets_[index].state);
+            if (reason != snowdesktop::widget_runtime::PackageImageQuota::None)
+                return PackageImageQuotaPauseState(reason);
+        }
+    }
     if (const auto failure = widgetHostFailures_.find(widgetId);
         failure != widgetHostFailures_.end())
         return failure->second;

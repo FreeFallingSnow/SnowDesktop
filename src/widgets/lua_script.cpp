@@ -590,6 +590,28 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             body = _LW("app.widget.placeholder.permission_denied");
             action = _LW("app.widget.placeholder.reauthorize");
             break;
+        case WidgetHostStateKind::PackageImageQuotaExceeded:
+        {
+            using snowdesktop::widget_runtime::PackageImageQuota;
+            title = _LW("app.widget.placeholder.runtime_title");
+            switch (hostState.imageQuota)
+            {
+            case PackageImageQuota::SingleImage:
+                body = _LW("app.widget.placeholder.image_quota_single");
+                break;
+            case PackageImageQuota::PixelBytes:
+                body = _LW("app.widget.placeholder.image_quota_pixels");
+                break;
+            case PackageImageQuota::EncodedBytes:
+                body = _LW("app.widget.placeholder.image_quota_encoded");
+                break;
+            case PackageImageQuota::None:
+                body = _LW("app.widget.placeholder.quota_body");
+                break;
+            }
+            action = _LW("app.widget.placeholder.ignore_image_quota");
+            break;
+        }
         case WidgetHostStateKind::QuotaExceeded:
             title = _LW("app.widget.placeholder.quota_title");
             body = _LW("app.widget.placeholder.quota_body");
@@ -631,7 +653,15 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             titleRect.right,
             actionRect.top - Cu(7.0f),
         };
-        if (titleRect.bottom > titleRect.top)
+        if (hostState.kind == WidgetHostStateKind::PackageImageQuotaExceeded &&
+            bodyRect.bottom - bodyRect.top < Cu(25.0f))
+        {
+            // Small widgets use the card's available text area for the reason.
+            title.clear();
+            bodyRect.top = frame.top + Cu(4.0f);
+            bodyRect.bottom = actionRect.top - Cu(2.0f);
+        }
+        if (!title.empty() && titleRect.bottom > titleRect.top)
         {
             app_->DrawD2DText(context, title, titleRect,
                 GetCuTextFormatWeight(16.0f,

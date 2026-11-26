@@ -1,5 +1,7 @@
 #pragma once
 
+#include "widget_package_image_quota.h"
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -36,6 +38,7 @@ enum class PackageImageAcquireError : unsigned char
     None,
     InvalidInput,
     DecodeFailed,
+    AllocationFailed,
     QuotaExceeded,
 };
 
@@ -44,13 +47,13 @@ class WidgetPackageImageCache
 public:
     static constexpr std::size_t DefaultMaximumSingleBytes =
         64ull * 1024ull * 1024ull;
-    static constexpr std::size_t DefaultMaximumTotalBytes =
+    static constexpr std::size_t DefaultMaximumInstanceBytes =
         128ull * 1024ull * 1024ull;
 
     WidgetPackageImageCache();
     WidgetPackageImageCache(
         std::size_t maximumSingleBytes,
-        std::size_t maximumTotalBytes);
+        std::size_t maximumInstanceBytes);
     ~WidgetPackageImageCache();
 
     // Owner-thread entry points. The digest callback runs on a private worker
@@ -62,15 +65,18 @@ public:
     bool PrewarmPending();
     std::size_t PreparedBytes() const noexcept;
 
+    // A replacement Lua VM has its own budget until it takes over.
+    void RegisterInstance(const void* vm, bool ignoreQuota);
+    PackageImageQuota ExceededQuota(const void* vm) const noexcept;
+    std::vector<std::string> ReleaseInstance(const void* vm);
     const PackageImageSource* Acquire(
-        const std::string& contentKey, const std::wstring& path,
+        const void* vm, const std::string& contentKey, const std::wstring& path,
         PackageImageAcquireError* error = nullptr, bool lazy = false,
         ContentDigest digest = {});
-    bool AcquireOnDemand(const std::string& key, const std::wstring& path);
+    bool AcquireOnDemand(const void* vm, const std::string& key, const std::wstring& path);
     bool IsOnDemand(const std::string& key) const noexcept;
     void RequestMetadata(const std::string& key, const std::string& owner,
         bool synchronous);
-    bool Release(const std::string& contentKey) noexcept;
     const PackageImageSource* Find(
         const std::string& contentKey) const noexcept;
     bool Failed(const std::string& contentKey) const noexcept;
@@ -102,12 +108,20 @@ public:
     void Clear() noexcept;
 
 private:
+    struct Instance
+    {
+        std::unordered_set<std::string> keys;
+        PackageImageQuota exceeded = PackageImageQuota::None;
+        bool ignoreQuota = false;
+    };
+
     struct Entry
     {
         PackageImageSource source;
         std::size_t references = 0;
         std::shared_ptr<const std::vector<std::uint8_t>> encoded;
         std::wstring diskPath;
+        const void* diskOwner = nullptr;
         PackageImageSize original;
         std::size_t reservedBytes = 0;
         std::uint64_t identity = 0;
@@ -129,6 +143,8 @@ private:
 
     const PackageImageSource* Fail(const std::string& contentKey,
         PackageImageAcquireError* error);
+    bool CheckQuota(Instance& instance, const std::string& key,
+        std::uint64_t pixelBytes, std::size_t encodedBytes);
     void CancelPrewarm() noexcept;
     void UpdateDemand(Entry& entry, Clock::time_point now);
     snowdesktop::BackgroundWork& DecodeWorker();
@@ -137,12 +153,11 @@ private:
         Clock::time_point now, bool synchronous);
 
     std::size_t maximumSingleBytes_ = DefaultMaximumSingleBytes;
-    std::size_t maximumTotalBytes_ = DefaultMaximumTotalBytes;
+    std::size_t maximumInstanceBytes_ = DefaultMaximumInstanceBytes;
     std::size_t bytes_ = 0;
-    std::size_t reservedBytes_ = 0;
     std::size_t encodedBytes_ = 0;
-    std::size_t pendingBytes_ = 0;
-    std::size_t pendingDiskBytes_ = 0;
+    bool decodePending_ = false;
+    std::unordered_map<const void*, Instance> instances_;
     std::uint64_t nextIdentity_ = 0;
     std::unordered_map<std::string, Entry> sources_;
     // Speculative pixels never consume live resource quota or references.

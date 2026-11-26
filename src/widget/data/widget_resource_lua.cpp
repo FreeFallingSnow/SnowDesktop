@@ -192,7 +192,8 @@ static __declspec(noinline) int AcquirePackageImageResource(lua_State* L,
         PackageImageAcquireError validationError = PackageImageAcquireError::None;
         if (!lazy && !onDemand &&
             !cache->Validate(*existingContentKey, &validationError))
-            return reject(validationError == PackageImageAcquireError::QuotaExceeded ? "quotaExceeded" : "decodeFailed");
+            return reject(validationError == PackageImageAcquireError::AllocationFailed
+                ? "unavailable" : "decodeFailed");
         if (!cache->Find(*existingContentKey) ||
             (!lazy && !onDemand && !host.ensureImageBitmap(L, *existingContentKey)))
             return reject("unavailable");
@@ -217,15 +218,16 @@ static __declspec(noinline) int AcquirePackageImageResource(lua_State* L,
     PackageImageAcquireError acquireError = PackageImageAcquireError::None;
     if (onDemand)
     {
-        if (!cache->AcquireOnDemand(contentKey, *path))
+        if (!cache->AcquireOnDemand(L, contentKey, *path))
             return reject("unavailable");
     }
     else if (!cache->Acquire(
-            contentKey, *path, &acquireError, lazy, host.hashBytes))
+            L, contentKey, *path, &acquireError, lazy, host.hashBytes))
     {
         return reject(acquireError == PackageImageAcquireError::QuotaExceeded
                 ? "quotaExceeded" :
-            acquireError == PackageImageAcquireError::InvalidInput
+            (acquireError == PackageImageAcquireError::InvalidInput ||
+                acquireError == PackageImageAcquireError::AllocationFailed)
                 ? "unavailable" : "decodeFailed");
     }
     lua_getfield(L, LUA_REGISTRYINDEX,
@@ -233,7 +235,6 @@ static __declspec(noinline) int AcquirePackageImageResource(lua_State* L,
     if (!lua_istable(L, -1))
     {
         lua_pop(L, 1);
-        (void)cache->Release(contentKey);
         return reject("hostUnavailable");
     }
     lua_pushlstring(L, contentKey.data(), contentKey.size());

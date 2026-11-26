@@ -481,6 +481,33 @@ static std::filesystem::path WidgetSecretStorePath()
         L"SnowDesktop.widget-secrets.bin";
 }
 
+static std::string PackageImageQuotaOverrideKey(const std::wstring& widgetId)
+{
+    return WideToUtf8(widgetId) + ".__host.ignorePackageImageQuota";
+}
+
+bool WidgetEngine::PackageImageQuotaIgnored(const std::wstring& widgetId) const
+{
+    const auto& storage = snowdesktop::widget_runtime::PersistentStorage();
+    const auto override = storage.find(PackageImageQuotaOverrideKey(widgetId));
+    return override != storage.end() && override->second == "1";
+}
+
+bool WidgetEngine::PersistPackageImageQuotaOverride(const std::wstring& widgetId)
+{
+    auto& storage = snowdesktop::widget_runtime::MutablePersistentStorage();
+    const auto key = PackageImageQuotaOverrideKey(widgetId);
+    const auto existing = storage.find(key);
+    const std::optional<std::string> previous = existing == storage.end()
+        ? std::nullopt : std::optional(existing->second);
+    storage.insert_or_assign(key, "1");
+    if (SaveStorageFile()) return true;
+    if (previous) storage.insert_or_assign(key, *previous);
+    else storage.erase(key);
+    RuntimeAddLog(widgetId, "error", "Could not save the package image quota override");
+    return false;
+}
+
 void WidgetEngine::InitializeWidgetStorage()
 {
     // Init storage path

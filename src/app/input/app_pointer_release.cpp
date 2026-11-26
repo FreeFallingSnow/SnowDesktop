@@ -1723,6 +1723,13 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                     luaContent->id,
                     luaContent->packageId);
             }
+            else if (!loaded && hostActionClicked &&
+                hostAction == snowdesktop::widget_runtime::
+                    WidgetHostAction::IgnorePackageImageQuota)
+            {
+                (void)widgetEngine_->IgnorePackageImageQuotaAndRetry(
+                    luaContent->id, luaContent->packageId);
+            }
             else if (loaded)
             {
                 luaDamage = frame;

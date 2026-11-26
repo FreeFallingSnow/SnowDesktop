@@ -130,54 +130,19 @@ using snowdesktop::widget_runtime::IsPreviewFilesystemHandle;
 using snowdesktop::widget_runtime::kFilesystemReadPermission;
 using snowdesktop::widget_runtime::kFilesystemWritePermission;
 
-static void ReleasePackageImageResourcesUnprotected(
-    D2DState* state, lua_State* luaState)
+void ReleasePackageImageResources(D2DState* state, lua_State* luaState,
+    const std::wstring& widgetId)
 {
     if (!state || !luaState) return;
-    state->packageImageCache.ForgetOwner(
-        WideToUtf8(BoundWidgetId(luaState)) + "|");
-    lua_getfield(luaState, LUA_REGISTRYINDEX,
-        "__widget_resource_content_keys");
-    if (lua_istable(luaState, -1))
+    state->packageImageCache.ForgetOwner(WideToUtf8(widgetId) + "|");
+    for (const auto& key : state->packageImageCache.ReleaseInstance(luaState))
     {
-        lua_pushnil(luaState);
-        while (lua_next(luaState, -2) != 0)
-        {
-            size_t length = 0;
-            const char* value = lua_tolstring(luaState, -1, &length);
-            if (value && length > 0)
-            {
-                const std::string contentKey(value, length);
-                if (state->packageImageCache.Release(contentKey))
-                {
-                    if (const auto found = state->imageCache.find(contentKey);
-                        found != state->imageCache.end())
-                    {
-                        state->imageSamplingCache.Remove(found->second.Get());
-                        state->imageCache.erase(found);
-                        state->imageCacheRevisions.erase(contentKey);
-                    }
-                }
-            }
-            lua_pop(luaState, 1);
-        }
+        const auto found = state->imageCache.find(key);
+        if (found == state->imageCache.end()) continue;
+        state->imageSamplingCache.Remove(found->second.Get());
+        state->imageCache.erase(found);
+        state->imageCacheRevisions.erase(key);
     }
-    lua_pop(luaState, 1);
-    lua_pushnil(luaState);
-    lua_setfield(luaState, LUA_REGISTRYINDEX,
-        "__widget_resource_content_keys");
-}
-
-void ReleasePackageImageResources(D2DState* state, lua_State* luaState)
-{
-    if (!state || !luaState) return;
-    std::string error;
-    (void)snowdesktop::lua_runtime::ProtectedHostCall(luaState,
-        +[](lua_State* inner) {
-            ReleasePackageImageResourcesUnprotected(
-                static_cast<D2DState*>(lua_touserdata(inner, 1)), inner);
-            return 0;
-        }, state, 0, error);
 }
 
 static snowdesktop::widget_runtime::LuaDrawImageResult ResolveDrawImageBitmap(
@@ -349,6 +314,15 @@ void BindWidgetDrawHost(lua_State* state, D2DState* context)
     snowdesktop::widget_runtime::BindLuaDrawContext(state, context, kLuaDrawHostServices);
 }
 
+void WidgetEngine::PauseWidgetForPackageImageQuota(const std::wstring& widgetId,
+    snowdesktop::widget_runtime::PackageImageQuota reason)
+{
+    RetireWidgetRuntime(widgetId, false);
+    RecordPackageImageQuotaPause(widgetId, reason);
+    if (d2dState_) d2dState_->backgroundCache.Erase(widgetId);
+    RuntimeInvalidateHost(widgetId);
+}
+
 void WidgetEngine::DrainPackageImageChanges()
 {
     if (d2dState_)
@@ -362,6 +336,16 @@ void WidgetEngine::DrainPackageImageChanges()
                 d2dState_->packageImageCache.ForgetOwner(prefix + "desktop");
         }
         d2dState_->packageImageCache.Pump();
+        using snowdesktop::widget_runtime::PackageImageQuota;
+        std::vector<std::pair<std::wstring, PackageImageQuota>> paused;
+        for (const auto& widget : widgets_)
+        {
+            const auto reason = d2dState_->packageImageCache.ExceededQuota(widget.state);
+            if (reason != PackageImageQuota::None)
+                paused.emplace_back(widget.widgetId, reason);
+        }
+        for (const auto& [id, reason] : paused)
+            PauseWidgetForPackageImageQuota(id, reason);
         const auto changed = d2dState_->packageImageCache.TakeChanged();
         std::vector<std::wstring> invalidated;
         for (const auto& key : changed)

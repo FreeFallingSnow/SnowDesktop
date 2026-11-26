@@ -1,5 +1,7 @@
 #pragma once
 
+#include "widget/packages/widget_package_image_quota.h"
+
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -13,6 +15,7 @@ enum class WidgetHostStateKind
     PermissionPending,
     PermissionDenied,
     QuotaExceeded,
+    PackageImageQuotaExceeded,
     RuntimeSuspended,
     LoadFailed,
 };
@@ -23,6 +26,7 @@ enum class WidgetHostAction
     OpenPackageSource,
     RequestPermission,
     Reload,
+    IgnorePackageImageQuota,
 };
 
 enum class WidgetConsentSessionAction
@@ -80,6 +84,7 @@ struct WidgetHostState
 {
     WidgetHostStateKind kind = WidgetHostStateKind::Ready;
     std::string detail;
+    PackageImageQuota imageQuota = PackageImageQuota::None;
 };
 
 constexpr bool ShowsHostPlaceholder(WidgetHostStateKind kind) noexcept
@@ -97,6 +102,8 @@ constexpr WidgetHostAction HostActionFor(
     case WidgetHostStateKind::PermissionPending:
     case WidgetHostStateKind::PermissionDenied:
         return WidgetHostAction::RequestPermission;
+    case WidgetHostStateKind::PackageImageQuotaExceeded:
+        return WidgetHostAction::IgnorePackageImageQuota;
     case WidgetHostStateKind::QuotaExceeded:
     case WidgetHostStateKind::RuntimeSuspended:
     case WidgetHostStateKind::LoadFailed:

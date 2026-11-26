@@ -293,6 +293,9 @@ bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
 
     std::unordered_map<std::string, std::string> migratedStorage = PersistentStorage();
     std::vector<std::wstring> updatedInstances;
+    using snowdesktop::widget_runtime::PackageImageQuota;
+    using snowdesktop::widget_runtime::WidgetHostStateKind;
+    std::vector<std::pair<std::wstring, PackageImageQuota>> pausedInstances;
     bool ok = true;
     std::string failure;
     {
@@ -313,7 +316,17 @@ bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
                 if (!ok)
                 {
                     if (const auto runtimeFailure = GetWidgetRuntimeFailure(dryId))
-                        failure = runtimeFailure->detail;
+                    {
+                        // A synthetic load has no user to approve an override.
+                        // Let real instances present the pause when placed.
+                        if (runtimeFailure->kind == WidgetHostStateKind::PackageImageQuotaExceeded)
+                        {
+                            trace("phase=dry_load.image_quota deferred_to_instance");
+                            ok = true;
+                        }
+                        else
+                            failure = runtimeFailure->detail;
+                    }
                 }
                 trace("phase=dry_load.end result=" + std::string(ok ? "ok" : "failed") +
                     " pathResolved=" + std::to_string(!path.empty()) + " error=" + failure);
@@ -331,9 +344,17 @@ bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
             {
                 if (!ReloadWidget(widgetId, deterministicFailure))
                 {
-                    ok = false;
                     if (const auto runtimeFailure = GetWidgetRuntimeFailure(widgetId))
+                    {
+                        if (runtimeFailure->kind == WidgetHostStateKind::PackageImageQuotaExceeded)
+                        {
+                            pausedInstances.emplace_back(widgetId, runtimeFailure->imageQuota);
+                            widgetHostFailures_.erase(widgetId);
+                            continue;
+                        }
                         failure = runtimeFailure->detail;
+                    }
+                    ok = false;
                     break;
                 }
                 updatedInstances.push_back(widgetId);
@@ -344,6 +365,8 @@ bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
     {
         MutablePersistentStorage() = std::move(migratedStorage);
         SaveStorageFile();
+        for (const auto& [id, reason] : pausedInstances)
+            PauseWidgetForPackageImageQuota(id, reason);
         TrimWidgetPackageHistory(GetWidgetPackageManager(), packageId);
         error.clear();
         trace("phase=verify.end result=ok");

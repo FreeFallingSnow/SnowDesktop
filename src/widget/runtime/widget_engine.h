@@ -481,6 +481,8 @@ public:
         bool* deterministicFailure = nullptr);
     bool RetryWidget(const std::wstring& widgetId,
         const std::wstring& packageId);
+    bool IgnorePackageImageQuotaAndRetry(const std::wstring& widgetId,
+        const std::wstring& packageId);
     snowdesktop::widget_runtime::WidgetHostState GetWidgetHostState(
         const std::wstring& widgetId,
         const std::wstring& packageId) const;
@@ -1395,6 +1397,14 @@ private:
      */
     bool hostedInteractionTooltips_ = false;
     int FindWidget(const std::wstring& widgetId) const;
+    bool PackageImageQuotaIgnored(const std::wstring& widgetId) const;
+    bool PersistPackageImageQuotaOverride(const std::wstring& widgetId);
+    void RetireWidgetRuntime(const std::wstring& widgetId,
+        bool removeSavedNotificationSchedules);
+    void PauseWidgetForPackageImageQuota(const std::wstring& widgetId,
+        snowdesktop::widget_runtime::PackageImageQuota reason);
+    void RecordPackageImageQuotaPause(const std::wstring& widgetId,
+        snowdesktop::widget_runtime::PackageImageQuota reason);
     void RecordWidgetHostFailure(const std::wstring& widgetId,
         const std::string& message, bool quotaExceeded = false,
         bool circuitOpen = false);
