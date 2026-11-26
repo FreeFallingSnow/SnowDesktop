@@ -116,6 +116,7 @@ end
 return widget.define({
     name = l10n.tr("lua_widget.today_date.name"),
     showTitle = false,
+    useCustomStyle = true,
     followPersonalizationDefault = true,
     setup = setup,
     event = event,

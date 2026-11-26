@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Today’s Date",
   "nameKey": "lua_widget.today_date.name",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Show the local date and weekday, with a ring marking the progress of the month.",
   "descriptionKey": "lua_widget.today_date.description",
   "locales": {
