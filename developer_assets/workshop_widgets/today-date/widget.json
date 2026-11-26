@@ -10,14 +10,13 @@
   "license": "GPL-3.0-only",
   "name": "Today’s Date",
   "nameKey": "lua_widget.today_date.name",
-  "version": "1.0.1",
-  "description": "Show the current date and weekday in your local time zone.",
+  "version": "1.1.0",
+  "description": "Show the local date and weekday, with a ring marking the progress of the month.",
   "descriptionKey": "lua_widget.today_date.description",
   "locales": {
     "zh-CN": {
       "lua_widget.today_date.name": "今日日期",
-      "lua_widget.today_date.description": "显示本地时区的日期和星期。",
-      "lua_widget.today_date.month_year": "{1}年{0}",
+      "lua_widget.today_date.description": "显示本地日期和星期，用环形刻度呈现本月进度。",
       "lua_widget.today_date.sunday": "星期日",
       "lua_widget.today_date.monday": "星期一",
       "lua_widget.today_date.tuesday": "星期二",
@@ -40,8 +39,7 @@
     },
     "zh-TW": {
       "lua_widget.today_date.name": "今日日期",
-      "lua_widget.today_date.description": "顯示本地時區的日期和星期。",
-      "lua_widget.today_date.month_year": "{1}年{0}",
+      "lua_widget.today_date.description": "顯示本地日期和星期，並以環形刻度呈現本月進度。",
       "lua_widget.today_date.sunday": "星期日",
       "lua_widget.today_date.monday": "星期一",
       "lua_widget.today_date.tuesday": "星期二",
@@ -64,8 +62,7 @@
     },
     "en-US": {
       "lua_widget.today_date.name": "Today’s Date",
-      "lua_widget.today_date.description": "Show the current date and weekday in your local time zone.",
-      "lua_widget.today_date.month_year": "{0} {1}",
+      "lua_widget.today_date.description": "Show the local date and weekday, with a ring marking the progress of the month.",
       "lua_widget.today_date.sunday": "Sunday",
       "lua_widget.today_date.monday": "Monday",
       "lua_widget.today_date.tuesday": "Tuesday",
@@ -88,8 +85,7 @@
     },
     "ja-JP": {
       "lua_widget.today_date.name": "今日の日付",
-      "lua_widget.today_date.description": "現地のタイムゾーンの日付と曜日を表示します。",
-      "lua_widget.today_date.month_year": "{1}年{0}",
+      "lua_widget.today_date.description": "現地の日付と曜日を表示し、円形の目盛りで月の進み具合を示します。",
       "lua_widget.today_date.sunday": "日曜日",
       "lua_widget.today_date.monday": "月曜日",
       "lua_widget.today_date.tuesday": "火曜日",
@@ -112,8 +108,7 @@
     },
     "ko-KR": {
       "lua_widget.today_date.name": "오늘 날짜",
-      "lua_widget.today_date.description": "현지 시간대의 날짜와 요일을 표시합니다.",
-      "lua_widget.today_date.month_year": "{1}년 {0}",
+      "lua_widget.today_date.description": "현지 날짜와 요일을 표시하고 원형 눈금으로 이번 달의 경과를 보여 줍니다.",
       "lua_widget.today_date.sunday": "일요일",
       "lua_widget.today_date.monday": "월요일",
       "lua_widget.today_date.tuesday": "화요일",
@@ -136,8 +131,7 @@
     },
     "de-DE": {
       "lua_widget.today_date.name": "Heutiges Datum",
-      "lua_widget.today_date.description": "Zeigt das aktuelle Datum und den Wochentag in der lokalen Zeitzone an.",
-      "lua_widget.today_date.month_year": "{0} {1}",
+      "lua_widget.today_date.description": "Zeigt das lokale Datum und den Wochentag an. Ein Ring markiert den Fortschritt des Monats.",
       "lua_widget.today_date.sunday": "Sonntag",
       "lua_widget.today_date.monday": "Montag",
       "lua_widget.today_date.tuesday": "Dienstag",
@@ -160,8 +154,7 @@
     },
     "fr-FR": {
       "lua_widget.today_date.name": "Date du jour",
-      "lua_widget.today_date.description": "Affiche la date et le jour de la semaine dans votre fuseau horaire.",
-      "lua_widget.today_date.month_year": "{0} {1}",
+      "lua_widget.today_date.description": "Affiche la date et le jour de la semaine dans votre fuseau horaire. Un anneau indique la progression du mois.",
       "lua_widget.today_date.sunday": "dimanche",
       "lua_widget.today_date.monday": "lundi",
       "lua_widget.today_date.tuesday": "mardi",
@@ -184,8 +177,7 @@
     },
     "es-ES": {
       "lua_widget.today_date.name": "Fecha de hoy",
-      "lua_widget.today_date.description": "Muestra la fecha y el día de la semana en tu zona horaria local.",
-      "lua_widget.today_date.month_year": "{0} de {1}",
+      "lua_widget.today_date.description": "Muestra la fecha y el día de la semana en tu zona horaria. Un anillo indica cuánto ha avanzado el mes.",
       "lua_widget.today_date.sunday": "domingo",
       "lua_widget.today_date.monday": "lunes",
       "lua_widget.today_date.tuesday": "martes",
@@ -208,8 +200,7 @@
     },
     "es-419": {
       "lua_widget.today_date.name": "Fecha de hoy",
-      "lua_widget.today_date.description": "Muestra la fecha y el día de la semana en tu zona horaria local.",
-      "lua_widget.today_date.month_year": "{0} de {1}",
+      "lua_widget.today_date.description": "Muestra la fecha y el día de la semana en tu zona horaria. Un anillo indica cuánto ha avanzado el mes.",
       "lua_widget.today_date.sunday": "domingo",
       "lua_widget.today_date.monday": "lunes",
       "lua_widget.today_date.tuesday": "martes",
@@ -232,8 +223,7 @@
     },
     "pt-BR": {
       "lua_widget.today_date.name": "Data de hoje",
-      "lua_widget.today_date.description": "Mostra a data e o dia da semana no seu fuso horário local.",
-      "lua_widget.today_date.month_year": "{0} de {1}",
+      "lua_widget.today_date.description": "Mostra a data e o dia da semana no seu fuso horário. Um anel indica quanto do mês já passou.",
       "lua_widget.today_date.sunday": "domingo",
       "lua_widget.today_date.monday": "segunda-feira",
       "lua_widget.today_date.tuesday": "terça-feira",
@@ -260,6 +250,7 @@
     "rows": 2
   },
   "requiredFeatures": [
+    "calendar.dateMath",
     "draw.immediate",
     "draw.text.inkAlignment",
     "l10n.basic",
