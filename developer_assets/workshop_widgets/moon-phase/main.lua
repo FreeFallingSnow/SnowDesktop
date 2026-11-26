@@ -20,26 +20,51 @@ local surfaceOverrides = {
     "borderStyle",
 }
 
+local savedAppearanceKey = "moonOnlyPreviousAppearance"
+
+local function restoreValue(tx, key, value)
+    if value == nil then
+        tx:remove(key)
+    else
+        tx:set(key, value)
+    end
+end
+
 local function applyMode(pureMoon, saveToggle)
     storage.transaction(function(tx)
         if saveToggle then
             tx:set("pureMoon", pureMoon and "1" or "0")
         end
+        local previous = tx:get(savedAppearanceKey)
         if pureMoon then
+            -- Keep the original values across reloads and theme edits in pure mode.
+            if type(previous) ~= "table" then
+                previous = { followPersonalization = tx:get("followPersonalization") }
+                for _, key in ipairs(surfaceOverrides) do previous[key] = tx:get(key) end
+                tx:set(savedAppearanceKey, previous)
+            end
             tx:set("followPersonalization", "0")
             for _, key in ipairs(surfaceOverrides) do tx:remove(key) end
-        else
-            tx:remove("followPersonalization")
+        elseif type(previous) == "table" then
+            restoreValue(tx, "followPersonalization", previous.followPersonalization)
+            for _, key in ipairs(surfaceOverrides) do restoreValue(tx, key, previous[key]) end
+            tx:remove(savedAppearanceKey)
         end
     end)
 end
 
-local function migrateStorage()
+local function migrateStorage(oldVersion)
     local preset = storage.get("__preset")
-    if preset == "moon-only" then
-        applyMode(true, true)
-    elseif preset == "card" or storage.get("followPersonalization") == "0" then
-        applyMode(false, false)
+    local legacyPurePreset = oldVersion == 1 and preset == "moon-only"
+    if legacyPurePreset or isMoonOnly() then
+        -- Older packages already overwrote these values while pure mode was on.
+        -- An empty snapshot returns these instances to the default follow mode.
+        storage.transaction(function(tx)
+            if legacyPurePreset then tx:set("pureMoon", "1") end
+            tx:set(savedAppearanceKey, {})
+        end)
+    elseif oldVersion == 1 and (preset == "card" or storage.get("followPersonalization") == "0") then
+        storage.remove("followPersonalization")
     end
 end
 
@@ -81,7 +106,9 @@ end
 
 local function setup()
     local model = { pureMoon = isMoonOnly() }
-    if model.pureMoon then applyMode(true, false) end
+    if model.pureMoon or storage.get(savedAppearanceKey) then
+        applyMode(model.pureMoon, false)
+    end
     refresh(model)
     schedule.every("moon-phase", 60000, { whenHidden = "pause" })
     return model
@@ -114,12 +141,13 @@ local function render(context, model)
         events = { contextMenu = { id = "moon.menu", scope = "component" } },
     })
     local side = math.min(width, height)
-    local diameter = side * 0.63
+    local pureMoon = isMoonOnly()
+    local diameter = side * (pureMoon and 0.84 or 0.63)
     if model.frame then
         draw.image(frames[model.frame], (width - diameter) / 2, (height - diameter) / 2, diameter, diameter)
     end
 
-    if isMoonOnly() then return end
+    if pureMoon then return end
 
     local color = widget.theme().contentTheme == 1 and 0x18263A or 0xEDF3FA
     local inset = side * 0.074
@@ -164,7 +192,7 @@ return widget.define({
                 label = l10n.tr("lua_widget.moon_phase.moon_only"),
                 type = "bool",
                 default = false,
-                agentDescription = "Shows only the lunar disc and forces the panel background and border to be transparent regardless of the desktop theme. Turning it off restores the global appearance, title and next phase date. The component menu changes this same per-instance setting.",
+                agentDescription = "Shows a larger lunar disc on a transparent surface. Turning it off restores the previous Follow Global setting and any appearance values overridden by Moon Only, along with the title and next phase date. The component menu changes this same per-instance setting.",
             },
         },
     },

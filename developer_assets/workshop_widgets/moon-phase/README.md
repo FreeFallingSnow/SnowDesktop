@@ -1,12 +1,14 @@
 # 月相 / Moon Phase
 
-离线桌面组件，默认占用 2×2 格并跟随全局主题。可在组件设置或组件右键菜单切换「纯月相」。开启后背景和边框完全透明，只显示月面。关闭后恢复全局主题、标题和下次关键月相的本地日期。切换时月面尺寸和位置保持一致。
+离线桌面组件，默认占用 2×2 格并跟随全局主题。可在组件设置或组件右键菜单切换「纯月相」。开启后背景和边框透明，月面放大到组件短边的 84%，中心保持原位。关闭后恢复开启前的主题跟随状态及被覆盖的外观设置，并显示标题和下次关键月相的本地日期。
 
-This offline 2×2 widget follows the global theme by default. Toggle **Moon Only** in component settings or the context menu to display just the lunar disk over a transparent surface. Turning it off restores the global appearance, title and local date of the next major phase. The lunar disk keeps the same size and position.
+This offline 2×2 widget follows the global theme by default. Toggle **Moon Only** in component settings or the context menu to display an enlarged lunar disk over a transparent surface. The disk spans 84% of the shorter side and keeps the same center. Turning the mode off restores the previous theme-following setting, any appearance values overridden by the mode, the title, and the local date of the next major phase.
 
 1.1.0 保留原组件 UUID，并将旧实例的纯月相预设迁移为开关。组件使用现有 API v2 外观与存储能力。
 
 Version 1.1.0 keeps the component UUID and migrates the previous Moon Only preset to the toggle. The widget uses the existing API v2 appearance and storage capabilities.
+
+从旧版升级时，如果纯月相已开启且缺少开启前的记录，首次关闭会回到默认跟随。 On upgrade, an active Moon Only instance with no saved appearance returns to the default Follow Global mode the first time it is turned off.
 
 ## 数据和素材 / Data and artwork
 
