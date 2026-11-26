@@ -805,6 +805,7 @@ void DesktopApp::EndDragSession(bool publishDragResult)
     ResetCompactCollectionHandoffDwell();
     CancelCollectionPopupDwell();
     CancelCollectionGroupTabDwell();
+    CancelFolderPreviewDragDwell();
     dragSession_.End();
     if (!releasingFileSources_.empty())
         FinishFileRemovalVisibility(std::exchange(releasingFileSources_, {}), {});

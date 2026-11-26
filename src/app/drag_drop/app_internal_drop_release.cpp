@@ -5,7 +5,8 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
 {
     const int mods = keys & (MK_CONTROL | MK_SHIFT | MK_ALT);
     dragSession_.UpdateActionFromMods(mods);
-    ResolveCurrentDragTargetAt(point);
+    ResolveCurrentDragTargetAt(point, true);
+    ResolveFolderPreviewOverflowDrop(point);
     auto* target = dragSession_.TargetContainer();
     auto* slot = dragSession_.TargetSlot();
     const auto region = dragSession_.TargetRegion();

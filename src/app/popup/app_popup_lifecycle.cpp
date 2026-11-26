@@ -691,7 +691,13 @@ void DesktopApp::FinalizeCloseCollectionPopup()
                 pendingOpen->categoryId);
         }
     }
-    else ResumeInlineFolderPreview();
+    else
+    {
+        ResumeInlineFolderPreview();
+        const POINT point = dragSession_.CurrentPoint();
+        if (dragSession_.IsActive() && FindInactiveInlineFolderPreviewHostAtPoint(point))
+            RefreshDragTargetAt(point, DropActionToMods(dragSession_.Action()));
+    }
 }
 
 void DesktopApp::ClearDockFolderPopupEntries()

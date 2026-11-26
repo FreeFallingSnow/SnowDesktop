@@ -157,7 +157,15 @@ void DesktopApp::RebuildContainersAndItems()
         widgetGroupTransition_.Request();
     demoCollectionIdentityCache_.clear();
     const bool wasDragging = dragSession_.IsActive();
+    // A folder popup source lives outside the desktop container tree. Snapshot
+    // it before the rebuild can clear its pressed item or change its view.
     if (wasDragging)
+        PreserveDockFolderPopupDragSourceForTransition();
+    const bool retainedPopupSource = dockFolderPopupDragSourceContainer_ &&
+        dragSession_.Source() == dockFolderPopupDragSourceContainer_.get();
+    if (retainedPopupSource)
+        dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);
+    else if (wasDragging)
         dragSession_.DetachRuntimeBindings();
 
     // All of these point into the runtime object tree that is about to be
@@ -321,7 +329,7 @@ void DesktopApp::RebuildContainersAndItems()
     for (auto& container : containers_)
         if (auto* widget = dynamic_cast<ScrollingItemWidget*>(container.get()))
             for (const auto& state : searchPresentations) widget->RestoreSearchPresentation(state);
-    RebindDragSourceAfterRebuild();
+    if (!retainedPopupSource) RebindDragSourceAfterRebuild();
     if (wasDragging && !dragSession_.IsActive())
     {
         mouseDown_ = false;

@@ -671,10 +671,13 @@ PendingFolderPlacement DesktopApp::BuildPendingFolderPlacement(
     const DragSourceList* sourceList) const
 {
     const bool popup = targetWidget.id == kDockFolderPopupWidgetId;
+    const bool capturedPreview = popup && &targetWidget != &dockFolderPopupWidget_;
     auto placement = snowdesktop::pending_drop::BuildFolder(targetWidget, insertIndex, sourceList,
-        popup ? dockFolderPopupMappingWidgetId_ : targetWidget.id,
-        popup ? dockFolderPopupSourceId_ : std::wstring{}, ToUpperInvariant, FileNameFromPath);
-    if (popup && folderPreview_)
+        capturedPreview ? std::wstring{} : popup ? dockFolderPopupMappingWidgetId_ : targetWidget.id,
+        capturedPreview ? L"folder-preview:" + snowdesktop::shell_refresh::FolderKey(targetWidget.sourceFolderPath)
+                        : popup ? dockFolderPopupSourceId_ : std::wstring{},
+        ToUpperInvariant, FileNameFromPath);
+    if (popup && (capturedPreview || folderPreview_))
         placement.previewSortAtDrop = PendingFolderPlacement::PreviewSort{
             targetWidget.folderSortMode, targetWidget.folderSortAscending};
     return placement;
@@ -734,8 +737,9 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
     services.pin = [this](const auto& paths, size_t index) { return AddMaterializedItemsToDock(paths, index); };
     services.savePins = [this] { RequestLayoutSave(); };
     services.forgetMovedKeys = [this](const auto& keys) { RemoveDesktopKeysFromWidgets(keys); };
-    const auto previewDirectory = folderPreview_ && preview.targetWidget == &dockFolderPopupWidget_
-        ? dockFolderPopupWidget_.sourceFolderPath : std::wstring{};
+    const auto previewDirectory = preview.targetWidget && preview.targetWidget->id == kDockFolderPopupWidgetId &&
+        (folderPreview_ || preview.targetWidget != &dockFolderPopupWidget_)
+        ? preview.targetWidget->sourceFolderPath : std::wstring{};
     services.refresh = [this, previewDirectory] {
         fileDropLayouts_.clear();
         if (!previewDirectory.empty()) RequestFolderRefresh({previewDirectory});

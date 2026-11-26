@@ -61,7 +61,8 @@ POINT ItemCenter(RECT bounds)
 }
 }
 
-std::optional<DesktopApp::FolderPreviewTarget> DesktopApp::FindFolderPreviewTarget(POINT point, bool keyboard)
+std::optional<DesktopApp::FolderPreviewTarget> DesktopApp::FindFolderPreviewTarget(
+    POINT point, bool keyboard, bool duringDrag)
 {
     using namespace snowdesktop::folder_preview;
     if (dockTrayPopup_) return std::nullopt;
@@ -96,7 +97,9 @@ std::optional<DesktopApp::FolderPreviewTarget> DesktopApp::FindFolderPreviewTarg
             if (!slot) continue;
             const RECT bounds = slot->GetBounds();
             const Item* item = slot->GetItem();
-            if (keyboard ? (!item || !item->IsSelected()) : !PtInRect(&bounds, point)) continue;
+            if (keyboard ? (!item || !item->IsSelected()) :
+                duringDrag ? slot->HitTest(point) != HitRegion::Handoff : !PtInRect(&bounds, point))
+                continue;
             if (!target.path.empty()) { target.path.clear(); return; }
             target.anchor = ItemCenter(bounds);
             if (const auto* icon = dynamic_cast<const DesktopIcon*>(item))
@@ -150,7 +153,8 @@ std::optional<DesktopApp::FolderPreviewTarget> DesktopApp::FindFolderPreviewTarg
             const auto& keys = GetPopupItemKeysView(*popup);
             for (size_t i = 0; i < count; ++i)
             {
-                if (!keyboard && !HitTestCollectionPopupItem(bounds, i, point)) continue;
+                if (!keyboard && !(duringDrag ? HitTestCollectionPopupHandoff(bounds, i, point) :
+                            HitTestCollectionPopupItem(bounds, i, point))) continue;
                 if (dockFolderPopupOpen_)
                 {
                     const auto index = GetPopupFolderEntryIndex(*popup, i);
@@ -174,7 +178,7 @@ std::optional<DesktopApp::FolderPreviewTarget> DesktopApp::FindFolderPreviewTarg
     }
     else
     {
-        if ((GetOpenPopupWidget() && !(folderPreview_ && folderPreview_->inlineBounds)) ||
+        if ((!duringDrag && IsCollectionPopupHostedByFloatingWindow()) ||
             (!keyboard && GetDockContainerAtPoint(point))) return std::nullopt;
         if (keyboard && keyboardNavInsideWidget_ && keyboardNavWidgetIndex_ >= widgets_.size())
             return std::nullopt;
@@ -261,15 +265,17 @@ bool DesktopApp::TryFolderPreviewDoubleClick(POINT point, WPARAM keyState, const
     return TryFolderPreviewActivation(point, keyState, menuPath, false);
 }
 
-bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const std::wstring& menuPath, bool keyboard)
+bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const std::wstring& menuPath,
+    bool keyboard, std::uint64_t dragRequest)
 {
     using namespace snowdesktop::folder_preview;
+    const bool duringDrag = dragRequest != 0;
     const bool fromMenu = !menuPath.empty();
     if (!fromMenu && (keyState & MK_SHIFT)) return false;
     const bool clearTriggerSelection = !fromMenu && (keyState & MK_CONTROL);
-    const bool forcePreview = fromMenu || clearTriggerSelection;
+    const bool forcePreview = duringDrag || fromMenu || clearTriggerSelection;
     if (!forcePreview && !personalizationSettings_.folderDoubleClickPreview) return false;
-    auto hit = FindFolderPreviewTarget(point, keyboard);
+    auto hit = FindFolderPreviewTarget(point, keyboard, duringDrag);
     if (!hit || (fromMenu && !PathsEqualInsensitive(hit->path, menuPath))) return false;
     if (hit->knownFile &&
         _wcsicmp(std::filesystem::path(hit->path).extension().c_str(), L".lnk") != 0) return false;
@@ -279,7 +285,7 @@ bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const 
     const auto dockFolderSourceId = dockFolderPopupOpen_ ? dockFolderPopupSourceId_ : std::wstring{};
     const auto popupGeneration = floatingPopupMouseHookGeneration_;
     const auto finish = [this, target, expectedPopupPath, forcePreview, clearTriggerSelection, fromMenu, keyboard,
-                            dockFolderSourceId, popupGeneration]
+                            dockFolderSourceId, popupGeneration, duringDrag, dragRequest]
         (snowdesktop::item_location::FolderTarget resolved) {
         const auto& sourceId = target.sourceId;
         const auto& hostId = target.hostId;
@@ -287,7 +293,21 @@ bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const 
         const auto& path = target.path;
         const auto& desktopKey = target.desktopKey;
         const bool inPopup = target.inPopup;
-        if (exitRequested_ || dragSession_.HasContext() || dragDropController_.IsTransportActive()) return;
+        if (exitRequested_) return;
+        if (duringDrag)
+        {
+            POINT cursor{};
+            if (!dragSession_.IsActive() || folderPreviewDragDwell_.request != dragRequest ||
+                !TryGetNativeDragHoverPointFromCursor(cursor)) return;
+            const auto current = FindFolderPreviewTarget(cursor, false, true);
+            if (!current || current->inPopup != inPopup || current->hostId != hostId ||
+                !PathsEqualInsensitive(current->path, path)) return;
+            const auto sources = dragDropController_.IsExternalDragActive()
+                ? externalFileDropPaths_ : dragSession_.SourceList().FilePaths();
+            if (!resolved.available || IsSelfContainedFolderDrop(sources, resolved.path)) return;
+            folderPreviewDragDwell_.point = lastMousePoint_ = cursor;
+        }
+        else if (dragSession_.HasContext() || dragDropController_.IsTransportActive()) return;
         const size_t index = FindWidgetIndexById(sourceId);
         if ((!sourceId.empty() && index >= widgets_.size()) ||
             (!forcePreview && !personalizationSettings_.folderDoubleClickPreview)) return;
@@ -316,7 +336,7 @@ bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const 
         if (resolved.path.empty() ||
             (!resolved.available && !target.knownDirectory))
         {
-            if (fromMenu) return;
+            if (fromMenu || duringDrag) return;
             const size_t item = FindItemIndexByKey(desktopKey);
             const bool accepted = !desktopKey.empty()
                 ? item < items_.size() && LaunchDesktopItem(item)
@@ -336,6 +356,7 @@ bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const 
         if (!folderPreview_)
         {
             Session session;
+            session.keyboardFocused = !duringDrag;
             session.sourceWidgetId = sourceId;
             if (!openingStandalone) session.hostWidgetId = hostId;
             if (!target.temporary) session.viewKey = FolderPreviewViewKey(hostId, sourceId, dockFolderSourceId);
@@ -400,9 +421,14 @@ bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const 
                 SuspendDockFolderPreviewHome(session);
             }
             folderPreview_.emplace(std::move(session));
-            ClearSelection();
+            if (!duringDrag) ClearSelection();
         }
         OpenFolderPreviewPath(resolved.path, fromFan, keyboard);
+        if (duringDrag)
+        {
+            RefreshDwellDragTarget(lastMousePoint_);
+            PresentPointerInteractionFrame();
+        }
     };
     folderReadWork_.Cancel(kResolveWorkKey);
     if (target.knownDirectory)
@@ -413,6 +439,76 @@ bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const 
     return folderReadWork_.Submit(kResolveWorkKey, [path = target.path] {
         return snowdesktop::item_location::ResolveFolderTarget(path);
     }, finish, hwnd_, kBackgroundShellReadyMessage);
+}
+
+void DesktopApp::CancelFolderPreviewDragDwell()
+{
+    auto& dwell = folderPreviewDragDwell_;
+    if (dwell.timerArmed) KillTimer(hwnd_, kFolderPreviewDragDwellTimerId);
+    if (!dwell.path.empty()) ++dwell.request;
+    dwell.path.clear();
+    dwell.timerArmed = dwell.requested = false;
+}
+
+bool DesktopApp::UpdateFolderPreviewDragDwell(POINT point)
+{
+    auto& dwell = folderPreviewDragDwell_;
+    const bool external = dragDropController_.IsExternalDragActive();
+    const auto& entries = dragSession_.SourceList().entries;
+    const bool files = external ? externalLuaFileDropAvailable_ :
+        std::any_of(entries.begin(), entries.end(), [](const auto& entry) { return !entry.filePath.empty(); });
+    if (!files || !CanCurrentDragUseCollectionPopup() || dockRunningDrag_ ||
+        quickNavigation_->open || HasActiveContextMenuSession() || SuppressDesktopWidgetDragTargets() ||
+        (!IsPointOccludedByOpenPopup(point) && FindInactiveInlineFolderPreviewHostAtPoint(point)))
+    {
+        CancelFolderPreviewDragDwell();
+        return false;
+    }
+
+    // Opening a directory can put a different folder beneath a stationary
+    // pointer. Require movement before tracking another candidate.
+    if (dwell.requested && std::abs(point.x - dwell.point.x) <= 2 &&
+        std::abs(point.y - dwell.point.y) <= 2) return true;
+
+    const auto target = FindFolderPreviewTarget(point, false, true);
+    if (!target || (target->knownFile && !target->directoryShortcut))
+    {
+        CancelFolderPreviewDragDwell();
+        return false;
+    }
+    if (dwell.requested || !PathsEqualInsensitive(dwell.path, target->path))
+    {
+        CancelFolderPreviewDragDwell();
+        dwell.path = target->path;
+        dwell.point = point;
+        dwell.started = GetTickCount();
+        ++dwell.request;
+    }
+    if (!dwell.timerArmed)
+        dwell.timerArmed = SetTimer(hwnd_, kFolderPreviewDragDwellTimerId,
+            kCollectionPopupDwellIntervalMs, nullptr) != 0;
+    if (GetTickCount() - dwell.started < kCollectionPopupDwellDelayMs) return true;
+
+    const auto sourcePaths = external ? externalFileDropPaths_ : dragSession_.SourceList().FilePaths();
+    if (IsSelfContainedFolderDrop(sourcePaths, target->path))
+    {
+        CancelFolderPreviewDragDwell();
+        return false;
+    }
+    if (!target->inPopup && IsCollectionPopupHostedByFloatingWindow())
+    {
+        pendingCollectionPopupOpen_.reset();
+        BeginCollectionPopupClose(false);
+        if (IsCollectionPopupHostedByFloatingWindow()) return true;
+    }
+
+    if (dwell.timerArmed) KillTimer(hwnd_, kFolderPreviewDragDwellTimerId);
+    dwell.timerArmed = false;
+    dwell.requested = true;
+    dwell.point = point;
+    lastMousePoint_ = point;
+    TryFolderPreviewActivation(point, 0, {}, false, dwell.request);
+    return true;
 }
 
 void DesktopApp::ShowFolderPreviewDirectory(const std::wstring& path, bool fromFan, bool present, bool keyboard)
@@ -437,6 +533,7 @@ void DesktopApp::ShowFolderPreviewDirectory(const std::wstring& path, bool fromF
     }
     CancelPopupHover(true);
     ClearListTitleHover();
+    PreserveDockFolderPopupDragSourceForTransition();
     ClearPopupDragTarget();
     ClearPopupMouseDownItem();
     ResetCollectionPopupAnimationCache();
@@ -1058,6 +1155,48 @@ UINT DesktopApp::TrackFolderPreviewPathMenu(HMENU menu, POINT screenPoint, bool 
     DestroyMenu(menu);
     ClearMenuIcons();
     return choice;
+}
+
+void DesktopApp::ResolveFolderPreviewOverflowDrop(POINT point)
+{
+    auto* slot = dragSession_.TargetSlot();
+    auto* view = dockFolderPopupContainer_.get();
+    if (!folderPreview_ || !view || dragSession_.TargetContainer() != view ||
+        dragSession_.TargetRegion() != HitRegion::Handoff || !slot ||
+        slot != popupDragTarget_.Get() || slot->GetItem()) return;
+
+    // This temporary slot represents a choice of directories. Block it until
+    // the user picks one, including when the menu is dismissed.
+    const RECT bounds = slot->GetBounds();
+    const auto directory = dockFolderPopupWidget_.sourceFolderPath;
+    dragSession_.UpdateTarget(view, nullptr, HitRegion::Blocked);
+    const auto sourcePaths = dragDropController_.IsExternalDragActive()
+        ? externalFileDropPaths_ : dragSession_.SourceList().FilePaths();
+    std::vector<std::wstring> choices;
+    for (auto& crumb : GetFolderPreviewBreadcrumbs(GetPresentedCollectionPopupGeometry().panel))
+        if (PtInRect(&crumb.bounds, point))
+        {
+            choices = std::move(crumb.hiddenParents);
+            break;
+        }
+    std::erase_if(choices, [&](const auto& path) { return IsSelfContainedFolderDrop(sourcePaths, path); });
+    if (choices.empty()) return;
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+    POINT anchor{bounds.left, bounds.bottom};
+    ClientToScreen(hwnd_, &anchor);
+    PrepareMenuIconsForPoint(anchor);
+    for (size_t index = 0; index < choices.size(); ++index)
+        AppendMenuW(menu, MF_STRING, index + 1, EscapePathMenuLabel(FolderName(choices[index])).c_str());
+    const auto choice = TrackFolderPreviewPathMenu(menu, anchor, true);
+    if (!choice || choice > choices.size() || !dragSession_.IsActive() || !folderPreview_ ||
+        dockFolderPopupContainer_.get() != view || dockFolderPopupWidget_.sourceFolderPath != directory)
+        return;
+    const auto& path = choices[choice - 1];
+    slot = popupDragTarget_.BindHandoff(view, bounds, path.size(), SlotFeedbackRole::Popup,
+        &dockFolderPopupWidget_, [&] { return std::make_unique<ExternalFileItem>(path); });
+    dragSession_.UpdateTarget(view, slot, HitRegion::Handoff);
 }
 
 bool DesktopApp::HandleFolderPreviewBreadcrumbContextMenu(POINT point, bool show)

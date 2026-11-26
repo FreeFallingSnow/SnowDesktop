@@ -121,7 +121,7 @@ static int PaddingPopupColumns(DesktopApp& app, RECT popup)
 static DragTargetResolution HitPaddingPopup(DesktopApp& app, POINT point)
 {
     DragTargetResolution result;
-    app.HitTestPopupForDrag(point, result.container, result.slot, result.region);
+    app.HitTestPopupForDrag(point, result.container, result.slot, result.region, false);
     return result;
 }
 static void ResetPaddingPopup(DesktopApp& app)

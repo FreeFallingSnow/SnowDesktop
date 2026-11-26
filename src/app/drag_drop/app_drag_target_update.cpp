@@ -15,7 +15,7 @@
 
 // Drag-target resolution, popup hit testing and page-navigation dwell.
 
-void DesktopApp::ResolveCurrentDragTargetAt(POINT clientPoint)
+void DesktopApp::ResolveCurrentDragTargetAt(POINT clientPoint, bool committing)
 {
     if (dockRunningDrag_ && dragSession_.IsActive())
     {
@@ -39,7 +39,7 @@ void DesktopApp::ResolveCurrentDragTargetAt(POINT clientPoint)
         DragTargetResolution target;
         popupHit = !suppressDesktopWidgetTargets &&
             (external || !(sources.hasCollectionGroupEntries || sources.hasFileGroupEntries) || GetGroupPopupView()) &&
-            HitTestPopupForDrag(clientPoint, target.container, target.slot, target.region);
+            HitTestPopupForDrag(clientPoint, target.container, target.slot, target.region, committing);
         if (popupHit) return target;
 
         const auto visible = [&](const Container& candidate) {
@@ -505,16 +505,28 @@ void DesktopApp::RebindDragSourceAfterRebuild()
  * @return 命中弹窗返回 true，否则 false
  */
 bool DesktopApp::HitTestPopupForDrag(POINT client,
-    Container*& targetContainer, Slot*& targetSlot, HitRegion& targetRegion)
+    Container*& targetContainer, Slot*& targetSlot, HitRegion& targetRegion, bool committing)
 {
     if (!inactiveInlineFolderPreviews_.empty() && !IsPointOccludedByOpenPopup(client) &&
         FindInactiveInlineFolderPreviewHostAtPoint(client))
     {
+        const bool external = dragDropController_.IsExternalDragActive();
+        const bool fileDrag = external ? externalLuaFileDropAvailable_ || externalOwnedContent_
+            : std::any_of(dragSession_.SourceList().entries.begin(), dragSession_.SourceList().entries.end(),
+                [](const auto& entry) { return !entry.filePath.empty(); });
+        if (fileDrag && IsCollectionPopupHostedByFloatingWindow())
+        {
+            pendingCollectionPopupOpen_.reset();
+            BeginCollectionPopupClose(false);
+            // Resolve a native release and the OLE acceptance effect against
+            // the inline view even when the closing animation still owns it.
+            if ((committing || external) && IsCollectionPopupHostedByFloatingWindow())
+                FinalizeCloseCollectionPopup();
+        }
         ActivateInlineFolderPreviewAtPoint(client, true);
         if (!IsPointOccludedByOpenPopup(client))
         {
-            // An inactive preview must not hand a drop to the hidden homepage
-            // beneath it when a separate popup owns the active interaction.
+            // The inline preview's homepage is not a visible drop target.
             targetRegion = HitRegion::Blocked;
             return true;
         }
@@ -564,7 +576,15 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                 if (!external && sourcePaths.empty()) return true;
                 for (const auto& crumb : GetFolderPreviewBreadcrumbs(panel))
                 {
-                    if (crumb.path.empty() || !PtInRect(&crumb.bounds, client)) continue;
+                    if (!PtInRect(&crumb.bounds, client)) continue;
+                    if (crumb.path.empty())
+                    {
+                        if (crumb.hiddenParents.empty()) return true;
+                        targetSlot = popupDragTarget_.BindPlacement(
+                            targetContainer, crumb.bounds, 0, SlotFeedbackRole::Popup);
+                        targetRegion = HitRegion::Handoff;
+                        return true;
+                    }
                     if (IsSelfContainedFolderDrop(sourcePaths, crumb.path)) return true;
 
                     // Each ancestor has a distinct path length within this
@@ -605,8 +625,8 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
         if (client.y < content.top || client.y >= content.bottom)
             return true;
 
-        if (dockFolderPopupWidget_.
-                folderEntries.empty())
+        const size_t visibleCount = GetPopupItemCount(dockFolderPopupWidget_);
+        if (visibleCount == 0)
         {
             RECT virtualItem =
                 GetCollectionPopupItemRect(
@@ -625,8 +645,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             return true;
         }
 
-        for (size_t i = 0;
-             i < GetPopupItemCount(dockFolderPopupWidget_); ++i)
+        for (size_t i = 0; i < visibleCount; ++i)
         {
             RECT itemRect =
                 GetCollectionPopupItemRect(popup, i);

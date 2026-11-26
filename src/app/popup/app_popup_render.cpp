@@ -347,7 +347,9 @@ void DesktopApp::DrawCollectionPopup(
                     label.left = chevron.right;
                 }
                 const bool hovered = PtInRect(&crumb.bounds, pointer) != FALSE;
-                if (!dropPath.empty() && crumb.path == dropPath)
+                const bool droppingOnOverflow = dropSlot && dropSlot == popupDragTarget_.Get() &&
+                    !dropSlot->GetItem() && !crumb.hiddenParents.empty();
+                if (droppingOnOverflow || (!dropPath.empty() && crumb.path == dropPath))
                 {
                     RECT dropBounds = label;
                     InflateRect(&dropBounds, -ScaleWidgetCu(2.0f, row.scale), -ScaleWidgetCu(3.0f, row.scale));

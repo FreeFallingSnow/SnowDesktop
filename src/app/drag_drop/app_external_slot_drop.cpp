@@ -115,6 +115,9 @@ DesktopApp::CaptureExternalSlotDestination(POINT point, DWORD keyState)
         result.widgetType = widget.type;
         result.folderPath = widget.sourceFolderPath;
         result.dockFolderPopup = target == dockFolderPopupContainer_.get();
+        if (result.dockFolderPopup && folderPreview_)
+            result.folderPreviewSort = PendingFolderPlacement::PreviewSort{
+                widget.folderSortMode, widget.folderSortAscending};
         result.volumeDefault = (keyState & (MK_CONTROL | MK_SHIFT | MK_ALT)) == 0;
     }
     // The read/download may outlive a popup, page, container tree or vector
@@ -249,11 +252,27 @@ bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destinat
         return false;
     }
 
+    // A preview is transient. When the live window has switched directories,
+    // file operations and pending placements still use the directory at release.
+    DesktopWidget capturedPreview;
+    if (destination.folderPreviewSort)
+    {
+        capturedPreview.id = destination.widgetId;
+        capturedPreview.type = destination.widgetType;
+        capturedPreview.sourceFolderPath = destination.folderPath;
+        capturedPreview.folderSortMode = destination.folderPreviewSort->mode;
+        capturedPreview.folderSortAscending = destination.folderPreviewSort->ascending;
+    }
     snowdesktop::external_file_destination::Services services;
-    services.resolveTarget = [this](const std::wstring& id, bool popup) -> DesktopWidget* {
+    services.resolveTarget = [this, &capturedPreview](const std::wstring& id, bool popup) -> DesktopWidget* {
         if (popup)
-            return dockFolderPopupOpen_ && dockFolderPopupWidget_.id == id
-                ? &dockFolderPopupWidget_ : nullptr;
+        {
+            if (dockFolderPopupOpen_ && dockFolderPopupWidget_.id == id &&
+                (capturedPreview.id.empty() || (folderPreview_ &&
+                    PathsEqualInsensitive(dockFolderPopupWidget_.sourceFolderPath, capturedPreview.sourceFolderPath))))
+                return &dockFolderPopupWidget_;
+            return capturedPreview.id.empty() ? nullptr : &capturedPreview;
+        }
         const size_t index = FindWidgetIndexById(id);
         return index < widgets_.size() ? &widgets_[index] : nullptr;
     };

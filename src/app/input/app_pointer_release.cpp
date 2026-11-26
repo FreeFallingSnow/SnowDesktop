@@ -1803,7 +1803,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
 
     if (rightDrop)
     {
-        ResolveCurrentDragTargetAt(upPoint);
+        ResolveCurrentDragTargetAt(upPoint, true);
         DWORD releaseKeyState = MK_RBUTTON;
         if (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) releaseKeyState |= MK_CONTROL;
         if (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) releaseKeyState |= MK_ALT;

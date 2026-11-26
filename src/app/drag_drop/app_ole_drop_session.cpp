@@ -901,7 +901,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
     }
     if (keyState & MK_RBUTTON)
     {
-        ResolveCurrentDragTargetAt(clientPoint);
+        ResolveCurrentDragTargetAt(clientPoint, true);
         if (!ChooseRightDragDropAction(clientPoint, keyState, *effect,
                 !dragDropController_.IsSelfDragActive(), presentMenu, externalContent))
         {
@@ -961,7 +961,8 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         *effect = CommitInternalDragRelease(clientPoint, keyState, *effect);
         return S_OK;
     }
-    ResolveCurrentDragTargetAt(clientPoint);
+    ResolveCurrentDragTargetAt(clientPoint, true);
+    ResolveFolderPreviewOverflowDrop(clientPoint);
     if (dragSession_.TargetRegion() == HitRegion::Blocked)
     {
         dragDropController_.EndExternalDrag();

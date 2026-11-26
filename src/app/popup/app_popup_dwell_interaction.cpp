@@ -468,6 +468,11 @@ void DesktopApp::UpdateCollectionPopupDwell(POINT point)
 {
     UpdatePopupCloseOnMouseLeave(point);
     lastMousePoint_ = point;
+    if (UpdateFolderPreviewDragDwell(point))
+    {
+        CancelCollectionPopupDwell();
+        return;
+    }
     if (!CanCurrentDragUseCollectionPopup())
     {
         TraceCollectionPopupDwell(

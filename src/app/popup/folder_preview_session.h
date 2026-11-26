@@ -31,6 +31,16 @@ inline void ConfigureDirectoryView(DesktopWidget& view)
     view.showFileCategories = false;
 }
 
+struct DragDwell
+{
+    std::wstring path;
+    POINT point{};
+    DWORD started = 0;
+    std::uint64_t request = 0;
+    bool timerArmed = false;
+    bool requested = false;
+};
+
 struct FolderPopupHome
 {
     DesktopWidget data;

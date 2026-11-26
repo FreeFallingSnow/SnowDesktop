@@ -51,6 +51,7 @@ const char* HostTimerPhase(WPARAM timerId) noexcept
     case kCompactCollectionHandoffDwellTimerId: return "host.compact_handoff";
     case kDockWindowPreviewHoverTimerId: return "host.preview_hover";
     case kPopupHoverTimerId: return "host.popup_hover";
+    case kFolderPreviewDragDwellTimerId: return "host.folder_preview_drag_dwell";
     case kLayoutScrollSaveTimerId: return "host.layout_save";
     case kSettingsWindowRetryTimerId: return "host.settings_retry";
     case kLargeIconRetryTimerId: return "host.large_icon_retry";
@@ -918,6 +919,12 @@ void DesktopApp::OnTimer(WPARAM timerId)
         POINT point{};
         if (TryGetDesktopHoverPointFromCursor(point)) UpdatePopupHover(point, true);
         else CancelPopupHover();
+    }
+    else if (timerId == kFolderPreviewDragDwellTimerId)
+    {
+        POINT point{};
+        if (TryGetNativeDragHoverPointFromCursor(point)) UpdateFolderPreviewDragDwell(point);
+        else CancelFolderPreviewDragDwell();
     }
     else if (timerId == kCollectionPopupDwellTimerId)
     {

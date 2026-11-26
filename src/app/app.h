@@ -1730,7 +1730,7 @@ private:
      * @param[out] targetRegion 命中的区域
      * @return 命中弹窗返回 true，否则 false
      */
-    bool HitTestPopupForDrag(POINT client, Container*& targetContainer, Slot*& targetSlot, HitRegion& targetRegion);
+    bool HitTestPopupForDrag(POINT client, Container*& targetContainer, Slot*& targetSlot, HitRegion& targetRegion, bool committing);
     /** @brief 清除所有选中项。 */
     // The return value ignores the local widget's own selection outline.
     bool ClearSelection(const DesktopWidget* localWidget = nullptr);
@@ -2686,10 +2686,15 @@ private:
         bool temporary = false;
     };
     static constexpr UINT kContextFolderPreviewOpen = 41074;
-    std::optional<FolderPreviewTarget> FindFolderPreviewTarget(POINT point, bool keyboard = false);
+    std::optional<FolderPreviewTarget> FindFolderPreviewTarget(
+        POINT point, bool keyboard = false, bool duringDrag = false);
     void AppendFolderPreviewOpenMenuItem(HMENU menu, POINT point, const std::wstring& path);
     bool TryFolderPreviewDoubleClick(POINT point, WPARAM keyState, const std::wstring& menuPath = {});
-    bool TryFolderPreviewActivation(POINT point, WPARAM keyState, const std::wstring& menuPath, bool keyboard);
+    bool TryFolderPreviewActivation(POINT point, WPARAM keyState, const std::wstring& menuPath, bool keyboard,
+        std::uint64_t dragRequest = 0);
+    bool UpdateFolderPreviewDragDwell(POINT point);
+    void CancelFolderPreviewDragDwell();
+    void ResolveFolderPreviewOverflowDrop(POINT point);
     void ClearInlineFolderPreviewSelectionOutside(POINT point);
     bool HandleFolderPreviewHeaderPress(POINT point, bool keyboard = false);
     bool HandleFolderPreviewHeaderKey(WPARAM key, bool shift, bool repeated);
@@ -3395,7 +3400,7 @@ private:
      * @brief 仅按给定坐标更新拖拽 point 和 target，不触发导航、提示或呈现。
      * @note 用于 button-up/OLE Drop 的最终坐标重新命中。
      */
-    void ResolveCurrentDragTargetAt(POINT clientPoint);
+    void ResolveCurrentDragTargetAt(POINT clientPoint, bool committing = false);
     /**
      * @brief 获取独立模式部件的框架矩形。
      * @param widget 部件引用
@@ -4457,6 +4462,7 @@ private:
         std::string luaSlotId;
         size_t insertIndex = 0;
         bool dockFolderPopup = false;
+        std::optional<PendingFolderPlacement::PreviewSort> folderPreviewSort;
         bool volumeDefault = false;
         std::optional<snowdesktop::widget_runtime::WidgetFileDropTarget> fileDropTarget;
     };
@@ -4745,6 +4751,7 @@ private:
     std::unique_ptr<Item> popupMouseDownItem_;
     bool dockFolderPopupOpen_ = false;
     std::optional<snowdesktop::folder_preview::Session> folderPreview_;
+    snowdesktop::folder_preview::DragDwell folderPreviewDragDwell_;
     std::unordered_map<std::wstring, snowdesktop::folder_preview::InlinePreview> inactiveInlineFolderPreviews_;
     std::shared_ptr<snowdesktop::popup_resize_transition::Transition> folderPreviewPopupResize_;
     snowdesktop::folder_preview::SortPreferences folderPreviewSort_;
