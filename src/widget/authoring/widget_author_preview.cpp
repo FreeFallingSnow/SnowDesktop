@@ -331,6 +331,12 @@ ResolvedPreviewStyle ResolvePreviewStyle(WidgetEngine& engine,
             resolved.material.contentTheme = storedTheme[0] - '0';
         resolved.theme.contentTheme = resolved.material.contentTheme;
     }
+    if (engine.ApplyTransparentSurfaceSetting(kPreviewWidgetId, resolved.material))
+    {
+        resolved.theme.alpha = resolved.material.widgetAlpha;
+        resolved.theme.borderAlpha = resolved.material.widgetBorderAlpha;
+        resolved.theme.gradientEndA = resolved.material.gradientEndA;
+    }
     return resolved;
 }
 

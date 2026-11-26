@@ -188,6 +188,7 @@ struct LuaWidget
     bool customStyle = false;            ///< 是否启用了自定义主题样式
     bool followPersonalizationDefault = false; ///< 尚未保存外观状态时是否默认跟随全局
     bool hasBackgroundLayer = false;     ///< 是否声明桌面装饰背景层
+    std::string transparentSurfaceSetting; ///< 控制宿主底板透明的布尔设置键
     LuaWidgetTheme theme;                ///< 自定义主题配置（当 customStyle 为 true 时生效）
     LuaWidgetPreviewDataState previewDataState =
         LuaWidgetPreviewDataState::Ready; ///< 作者预览的确定性数据状态

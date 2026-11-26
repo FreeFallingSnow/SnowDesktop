@@ -545,6 +545,8 @@ public:
      * @return 启用了自定义主题返回 true，否则返回 false
      */
     bool HasCustomStyle(const std::wstring& widgetId) const;
+    bool ApplyTransparentSurfaceSetting(const std::wstring& widgetId,
+        PersonalizationSettings& appearance) const;
     /** Return whether the loaded widget declares a desktop background layer. */
     bool HasBackgroundLayer(const std::wstring& widgetId) const;
 

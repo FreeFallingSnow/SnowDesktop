@@ -274,6 +274,12 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
 
         if (widgetOk)
         {
+            if (engine->ApplyTransparentSurfaceSetting(data_->id, effectSettings))
+            {
+                fillColor.a = effectSettings.widgetAlpha;
+                borderColor.a = effectSettings.widgetBorderAlpha;
+                gradientEndA = effectSettings.gradientEndA;
+            }
             auto colorToRgb = [](const D2D1::ColorF& color) {
                 auto toByte = [](float v) {
                     v = std::max(0.0f, std::min(1.0f, v));

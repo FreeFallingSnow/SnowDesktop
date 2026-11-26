@@ -1129,6 +1129,32 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         return false;
     }
 
+    std::string transparentSurfaceSetting;
+    lua_getfield(state, -1, "transparentSurfaceSetting");
+    const bool declaresTransparentSurface = !lua_isnil(state, -1);
+    if (lua_type(state, -1) == LUA_TSTRING)
+    {
+        size_t length = 0;
+        const char* key = lua_tolstring(state, -1, &length);
+        transparentSurfaceSetting.assign(key, length);
+    }
+    lua_pop(state, 1);
+    const auto declaresBooleanSetting = [&](const auto& settings) {
+        return std::any_of(settings.begin(), settings.end(), [&](const auto& setting) {
+            return setting.key == transparentSurfaceSetting && setting.type == "bool";
+        });
+    };
+    if (declaresTransparentSurface && (transparentSurfaceSetting.empty() ||
+        (!declaresBooleanSetting(pending.manifest.settings) &&
+            !declaresBooleanSetting(scriptSettings))))
+    {
+        const char* error = "transparentSurfaceSetting must name a declared bool setting";
+        RuntimeRecordError(widgetId, error);
+        RecordWidgetHostFailure(widgetId, error, false);
+        lua_pop(state, 1);
+        return false;
+    }
+
     if (!MigrateWidgetStorage(state, pending, *quota))
     {
         lua_pop(state, 1);
@@ -1161,6 +1187,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     w.customStyle = customStyle;
     w.followPersonalizationDefault = followPersonalizationDefault;
     w.hasBackgroundLayer = hasBackgroundLayer;
+    w.transparentSurfaceSetting = std::move(transparentSurfaceSetting);
     if (preview && previewConfiguration)
     {
         w.theme = previewConfiguration->theme;
