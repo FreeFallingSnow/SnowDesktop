@@ -18,6 +18,7 @@
 #include "common/l10n.h"
 #include "common/utils.h"
 #include "widget/runtime/widget_engine.h"
+#include "widget/view/widget_outline.h"
 #include "widget/runtime/widget_instance_manifest.h"
 #include "widget/preview/widget_preview_scene.h"
 #include "diagnostics/performance_trace.h"
@@ -399,54 +400,6 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     }
 
     recordingPhase.reset();
-    recordingPhase.emplace("widget.composition", "material.record", data_->id);
-    const float configuredStroke = std::clamp(
-        effectSettings.widgetBorderWidth,
-        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
-    PersonalizationSettings backgroundEffects = effectSettings;
-    backgroundEffects.widgetEdgeHighlightEnabled = false;
-    const float panelRadius = static_cast<float>(Cu(cornerRadiusCu));
-    const float panelStroke = drawFocusOutline
-        ? std::max(1.6f, configuredStroke) : configuredStroke;
-    const D2D1_COLOR_F transparentBorder = D2D1::ColorF(0, 0.0f);
-    const bool hasBackgroundLayer = engine && widgetOk &&
-        engine->HasBackgroundLayer(data_->id);
-    if (surfacePaint)
-    {
-        surfacePaint->authoredBackground = hasBackgroundLayer;
-        surfacePaint->backgroundKnown = !hasBackgroundLayer;
-    }
-    if (hasBackgroundLayer)
-    {
-        PersonalizationSettings materialEffects = backgroundEffects;
-        materialEffects.acrylicEnabled = false;
-        app_->DrawWidgetPanelBackground(context, frame, panelRadius,
-            fillColor, transparentBorder, false, panelStroke,
-            &materialEffects, !preview && registerBackdrop);
-
-        const float inheritedBlurRadius = effectSettings.glassEnabled
-            ? effectSettings.glassBlurRadius : 0.0f;
-        (void)SafeRenderBackgroundLayer(data_->id, engine, context, frame,
-            presentation.gridSpan.columns, presentation.gridSpan.rows,
-            inheritedBlurRadius, panelRadius);
-
-        D2D1_COLOR_F transparentFill = fillColor;
-        transparentFill.a = 0.0f;
-        // This pass only adds noise above the authored background.
-        // The material gradient was already drawn underneath it.
-        backgroundEffects.panelGradient.enabled = false;
-        app_->DrawWidgetPanelBackground(context, frame, panelRadius,
-            transparentFill, transparentBorder, false, panelStroke,
-            &backgroundEffects, false);
-    }
-    else
-    {
-        app_->DrawWidgetPanelBackground(context, frame, panelRadius,
-            fillColor, transparentBorder, false, panelStroke,
-            &backgroundEffects, !preview && registerBackdrop);
-    }
-
-    recordingPhase.reset();
     recordingPhase.emplace("widget.composition", "size.validate", data_->id);
     bool incompatibleSize = false;
     if (!preview)
@@ -472,9 +425,74 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         if (incompatibleSize) widgetOk = false;
     }
     recordingPhase.reset();
-    recordingPhase.emplace("widget.composition", "content.commands", data_->id);
+    recordingPhase.emplace("widget.composition", "material.record", data_->id);
+    const float configuredStroke = std::clamp(
+        effectSettings.widgetBorderWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+    PersonalizationSettings backgroundEffects = effectSettings;
+    backgroundEffects.widgetEdgeHighlightEnabled = false;
     const auto contentBounds = app_->ToD2DRect(frame);
-    if (surfacePaint && !preview && !selected && !hovered)
+    Microsoft::WRL::ComPtr<ID2D1Factory> outlineFactory;
+    context->GetFactory(&outlineFactory);
+    const auto outline = engine && widgetOk ?
+        engine->ResolveWidgetOutline(data_->id, outlineFactory.Get(), contentBounds) :
+        snowdesktop::widget_runtime::WidgetOutlineGeometry{};
+    const bool outlined = outline.positioned != nullptr;
+    const float panelRadius = outlined ? 0.0f : static_cast<float>(Cu(cornerRadiusCu));
+    bool publishBackdrop = !preview && registerBackdrop;
+    if (outlined && publishBackdrop && !app_->desktopWidgetCompositionDrawInProgress_)
+    {
+        if (effectSettings.glassEnabled)
+            app_->desktopBackdropCompositor_.AddClippedPanel(frame, outline.local.Get(),
+                effectSettings.glassBlurRadius, reinterpret_cast<std::uintptr_t>(this));
+        publishBackdrop = false;
+    }
+    if (outlined)
+        context->PushLayer(D2D1::LayerParameters1(contentBounds, outline.positioned.Get()), nullptr);
+    const float panelStroke = drawFocusOutline
+        ? std::max(1.6f, configuredStroke) : configuredStroke;
+    const D2D1_COLOR_F transparentBorder = D2D1::ColorF(0, 0.0f);
+    const bool hasBackgroundLayer = engine && widgetOk &&
+        engine->HasBackgroundLayer(data_->id);
+    if (surfacePaint)
+    {
+        surfacePaint->outline = outline.local;
+        surfacePaint->authoredBackground = hasBackgroundLayer;
+        surfacePaint->backgroundKnown = !hasBackgroundLayer;
+    }
+    if (hasBackgroundLayer)
+    {
+        PersonalizationSettings materialEffects = backgroundEffects;
+        materialEffects.acrylicEnabled = false;
+        app_->DrawWidgetPanelBackground(context, frame, panelRadius,
+            fillColor, transparentBorder, false, panelStroke,
+            &materialEffects, publishBackdrop);
+
+        const float inheritedBlurRadius = effectSettings.glassEnabled
+            ? effectSettings.glassBlurRadius : 0.0f;
+        (void)SafeRenderBackgroundLayer(data_->id, engine, context, frame,
+            presentation.gridSpan.columns, presentation.gridSpan.rows,
+            inheritedBlurRadius, panelRadius);
+
+        D2D1_COLOR_F transparentFill = fillColor;
+        transparentFill.a = 0.0f;
+        // This pass only adds noise above the authored background.
+        // The material gradient was already drawn underneath it.
+        backgroundEffects.panelGradient.enabled = false;
+        app_->DrawWidgetPanelBackground(context, frame, panelRadius,
+            transparentFill, transparentBorder, false, panelStroke,
+            &backgroundEffects, false);
+    }
+    else
+    {
+        app_->DrawWidgetPanelBackground(context, frame, panelRadius,
+            fillColor, transparentBorder, false, panelStroke,
+            &backgroundEffects, publishBackdrop);
+    }
+
+    recordingPhase.reset();
+    recordingPhase.emplace("widget.composition", "content.commands", data_->id);
+    if (surfacePaint && !outlined && !preview && !selected && !hovered)
     {
         // Only interior text can be composed above the recorded body without
         // changing the rounded clip, reflection, title, or interaction layers.
@@ -815,12 +833,33 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     }
 
     // Keep the outline and reflection above Lua content and the host gradient.
-    app_->DrawWidgetPanelBorder(context, frame, panelRadius,
-        borderColor, drawFocusOutline, panelStroke);
-    if (!drawFocusOutline)
-        (void)app_->DrawWidgetPanelEdgeHighlight(
-            context, frame, static_cast<float>(Cu(cornerRadiusCu)),
-            fillColor, &effectSettings);
+    if (outlined)
+    {
+        if (!drawFocusOutline)
+        {
+            snowdesktop::widget_runtime::DrawWidgetOutlineBorder(
+                context, outline.positioned.Get(), borderColor, panelStroke * 2.0f);
+            if (effectSettings.widgetEdgeHighlightEnabled)
+                snowdesktop::widget_runtime::DrawWidgetOutlineHighlight(
+                    context, outline.positioned.Get(), contentBounds, fillColor,
+                    std::clamp(effectSettings.widgetEdgeHighlightWidth,
+                        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth),
+                    effectSettings.widgetEdgeHighlightStrength, effectSettings.edgeLight);
+        }
+        context->PopLayer();
+        if (drawFocusOutline)
+            snowdesktop::widget_runtime::DrawWidgetOutlineBorder(
+                context, outline.positioned.Get(),
+                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.90f), panelStroke);
+    }
+    else
+    {
+        app_->DrawWidgetPanelBorder(context, frame, panelRadius,
+            borderColor, drawFocusOutline, panelStroke);
+        if (!drawFocusOutline)
+            (void)app_->DrawWidgetPanelEdgeHighlight(
+                context, frame, panelRadius, fillColor, &effectSettings);
+    }
 
     if (!showBottomBar && !showCompactMoveHandle && !showResizeHandle) return;
 

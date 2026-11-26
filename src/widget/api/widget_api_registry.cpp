@@ -229,6 +229,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "ui.durationPicker",
     "ui.semanticMetrics.rowUnit",
     "widget.backgroundLayer",
+    "widget.outline",
     "widget.confirmRemoval",
     "widget.context",
     "widget.creationPresets",

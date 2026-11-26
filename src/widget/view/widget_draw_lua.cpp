@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -707,96 +708,150 @@ int lua_DrawArc(lua_State* state)
     return 0;
 }
 
-int lua_DrawPath(lua_State* state)
+bool ReadLuaDrawPath(lua_State* state, int index,
+    std::vector<DrawPathCommand>& commands, std::string& error)
 {
-    luaL_checktype(state, 1, LUA_TTABLE);
-    std::string error;
-    if (!LuaTableIsContiguousArray(state, 1, "draw.path commands", error))
-        return luaL_error(state, "draw.path: %s", error.c_str());
-    const std::size_t count = lua_rawlen(state, 1);
-    if (count == 0 || count > 256)
-        return luaL_error(state,
-            "draw.path: commands must contain 1 to 256 items");
-    using Command = snowdesktop::widget_runtime::DrawPathCommand;
-    using Type = snowdesktop::widget_runtime::DrawPathCommandType;
-    std::vector<Command> commands;
-    commands.reserve(count);
-    for (std::size_t index = 0; index < count; ++index)
+    using Type = DrawPathCommandType;
+    const ::snowdesktop::lua_runtime::StackGuard stack(state);
+    index = lua_absindex(state, index);
+    if (!lua_istable(state, index) ||
+        !LuaTableIsContiguousArray(state, index, "draw path commands", error))
     {
-        lua_rawgeti(state, 1, static_cast<lua_Integer>(index + 1));
+        if (error.empty()) error = "draw path commands must be an array";
+        return false;
+    }
+    const std::size_t count = lua_rawlen(state, index);
+    if (count == 0 || count > 256)
+    {
+        error = "draw path commands must contain 1 to 256 items";
+        return false;
+    }
+    commands.clear();
+    commands.reserve(count);
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        lua_rawgeti(state, index, static_cast<lua_Integer>(i + 1));
         if (!lua_istable(state, -1))
         {
-            lua_pop(state, 1);
-            return luaL_error(state,
-                "draw.path: every command must be a table");
+            error = "every draw path command must be a table";
+            return false;
         }
-        lua_getfield(state, -1, "op");
-        const char* operation = luaL_checkstring(state, -1);
-        const std::string op = operation ? operation : "";
+        const int table = lua_absindex(state, -1);
+        lua_pushliteral(state, "op");
+        lua_rawget(state, table);
+        std::size_t length = 0;
+        const char* value = lua_type(state, -1) == LUA_TSTRING
+            ? lua_tolstring(state, -1, &length) : nullptr;
+        const auto op = value ? std::string_view(value, length) : std::string_view{};
         lua_pop(state, 1);
-        std::vector<std::string_view> allowed{ "op" };
-        Command command;
-        if (op == "move" || op == "line")
+
+        DrawPathCommand command;
+        static constexpr std::string_view close[] = { "op" };
+        static constexpr std::string_view point[] = { "op", "x", "y" };
+        static constexpr std::string_view quadratic[] = { "op", "x1", "y1", "x", "y" };
+        static constexpr std::string_view cubic[] = { "op", "x1", "y1", "x2", "y2", "x", "y" };
+        std::span<const std::string_view> allowed = point;
+        if (op == "move") command.type = Type::Move;
+        else if (op == "line") command.type = Type::Line;
+        else if (op == "quadratic")
         {
-            allowed = { "op", "x", "y" };
-            command.type = op == "move" ? Type::Move : Type::Line;
-            lua_getfield(state, -1, "x");
-            command.point.x = static_cast<float>(
-                luaL_checknumber(state, -1));
-            lua_pop(state, 1);
-            lua_getfield(state, -1, "y");
-            command.point.y = static_cast<float>(
-                luaL_checknumber(state, -1));
-            lua_pop(state, 1);
+            command.type = Type::Quadratic;
+            allowed = quadratic;
         }
         else if (op == "cubic")
         {
-            allowed = { "op", "x1", "y1", "x2", "y2", "x", "y" };
             command.type = Type::Cubic;
-            const auto read = [&](const char* field) {
-                lua_getfield(state, -1, field);
-                const float value = static_cast<float>(
-                    luaL_checknumber(state, -1));
-                lua_pop(state, 1);
-                return value;
-            };
-            command.control1 = { read("x1"), read("y1") };
-            command.control2 = { read("x2"), read("y2") };
-            command.point = { read("x"), read("y") };
-        }
-        else if (op == "quadratic")
-        {
-            allowed = { "op", "x1", "y1", "x", "y" };
-            command.type = Type::Quadratic;
-            const auto read = [&](const char* field) {
-                lua_getfield(state, -1, field);
-                const float value = static_cast<float>(
-                    luaL_checknumber(state, -1));
-                lua_pop(state, 1);
-                return value;
-            };
-            command.control1 = { read("x1"), read("y1") };
-            command.point = { read("x"), read("y") };
+            allowed = cubic;
         }
         else if (op == "close")
+        {
             command.type = Type::Close;
+            allowed = close;
+        }
         else
         {
-            lua_pop(state, 1);
-            return luaL_error(state,
-                "draw.path: unsupported command '%s'", op.c_str());
+            error = "unsupported draw path command";
+            return false;
         }
-        if (!LuaTableUsesOnlyFields(state, -1,
-                std::span<const std::string_view>(allowed),
-                "draw.path command", error))
+
+        const auto coordinate = [&](const char* key, float& destination) {
+            lua_pushstring(state, key);
+            lua_rawget(state, table);
+            int isNumber = 0;
+            destination = static_cast<float>(lua_tonumberx(state, -1, &isNumber));
+            lua_pop(state, 1);
+            return isNumber != 0;
+        };
+        if ((command.type != Type::Close &&
+                (!coordinate("x", command.point.x) || !coordinate("y", command.point.y))) ||
+            ((command.type == Type::Quadratic || command.type == Type::Cubic) &&
+                (!coordinate("x1", command.control1.x) || !coordinate("y1", command.control1.y))) ||
+            (command.type == Type::Cubic &&
+                (!coordinate("x2", command.control2.x) || !coordinate("y2", command.control2.y))))
         {
-            lua_pop(state, 1);
-            return luaL_error(state, "draw.path: %s", error.c_str());
+            error = "draw path coordinates must be numbers";
+            return false;
         }
+        if (!LuaTableUsesOnlyFields(state, table, allowed, "draw path command", error))
+            return false;
         commands.push_back(command);
         lua_pop(state, 1);
     }
-    if (!snowdesktop::widget_runtime::ValidateDrawPath(commands, error))
+    return ValidateDrawPath(commands, error);
+}
+
+ComPtr<ID2D1PathGeometry> BuildDrawPathGeometry(ID2D1Factory* factory,
+    const std::vector<DrawPathCommand>& commands, D2D1_FILL_MODE fillMode,
+    DrawPoint origin, bool filled)
+{
+    using Type = DrawPathCommandType;
+    ComPtr<ID2D1PathGeometry> geometry;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (!factory || FAILED(factory->CreatePathGeometry(&geometry)) ||
+        FAILED(geometry->Open(&sink)))
+        return nullptr;
+    sink->SetFillMode(fillMode);
+    bool open = false;
+    const auto point = [origin](DrawPoint value) {
+        return D2D1::Point2F(value.x + origin.x, value.y + origin.y);
+    };
+    for (const auto& command : commands)
+    {
+        switch (command.type)
+        {
+        case Type::Move:
+            if (open) sink->EndFigure(D2D1_FIGURE_END_OPEN);
+            sink->BeginFigure(point(command.point), filled
+                ? D2D1_FIGURE_BEGIN_FILLED : D2D1_FIGURE_BEGIN_HOLLOW);
+            open = true;
+            break;
+        case Type::Line:
+            sink->AddLine(point(command.point));
+            break;
+        case Type::Cubic:
+            sink->AddBezier(D2D1::BezierSegment(point(command.control1),
+                point(command.control2), point(command.point)));
+            break;
+        case Type::Quadratic:
+            sink->AddQuadraticBezier(D2D1::QuadraticBezierSegment(
+                point(command.control1), point(command.point)));
+            break;
+        case Type::Close:
+            sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+            open = false;
+            break;
+        }
+    }
+    if (open) sink->EndFigure(D2D1_FIGURE_END_OPEN);
+    if (FAILED(sink->Close())) return nullptr;
+    return geometry;
+}
+
+int lua_DrawPath(lua_State* state)
+{
+    std::string error;
+    std::vector<DrawPathCommand> commands;
+    if (!ReadLuaDrawPath(state, 1, commands, error))
         return luaL_error(state, "draw.path: %s", error.c_str());
 
     std::optional<int> fillColor;
@@ -855,42 +910,9 @@ int lua_DrawPath(lua_State* state)
     if (!d2d || !d2d->ctx) return 0;
     ComPtr<ID2D1Factory> factory;
     d2d->ctx->GetFactory(&factory);
-    ComPtr<ID2D1PathGeometry> geometry;
-    ComPtr<ID2D1GeometrySink> sink;
-    if (!factory || FAILED(factory->CreatePathGeometry(&geometry)) ||
-        !geometry || FAILED(geometry->Open(&sink)) || !sink)
-        return 0;
-    sink->SetFillMode(fillMode);
-    bool open = false;
-    const auto point = [d2d](const auto& value) {
-        return D2D1::Point2F(value.x + d2d->widgetRect.left,
-            value.y + d2d->widgetRect.top);
-    };
-    for (const auto& command : commands)
-    {
-        if (command.type == Type::Move)
-        {
-            if (open) sink->EndFigure(D2D1_FIGURE_END_OPEN);
-            sink->BeginFigure(point(command.point), fillColor
-                ? D2D1_FIGURE_BEGIN_FILLED : D2D1_FIGURE_BEGIN_HOLLOW);
-            open = true;
-        }
-        else if (command.type == Type::Line)
-            sink->AddLine(point(command.point));
-        else if (command.type == Type::Cubic)
-            sink->AddBezier(D2D1::BezierSegment(point(command.control1),
-                point(command.control2), point(command.point)));
-        else if (command.type == Type::Quadratic)
-            sink->AddQuadraticBezier(D2D1::QuadraticBezierSegment(
-                point(command.control1), point(command.point)));
-        else if (open)
-        {
-            sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-            open = false;
-        }
-    }
-    if (open) sink->EndFigure(D2D1_FIGURE_END_OPEN);
-    if (FAILED(sink->Close())) return 0;
+    const auto geometry = BuildDrawPathGeometry(factory.Get(), commands,
+        fillMode, {d2d->widgetRect.left, d2d->widgetRect.top}, fillColor.has_value());
+    if (!geometry) return 0;
     if (fillColor)
     {
         if (ID2D1SolidColorBrush* brush = GetCachedBrush(

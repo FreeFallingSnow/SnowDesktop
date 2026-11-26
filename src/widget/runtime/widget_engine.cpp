@@ -17,6 +17,7 @@
 #include "widget/packages/widget_package_paths.h"
 #include "widget/permissions/widget_permission_broker.h"
 #include "widget/preview/widget_preview_context.h"
+#include "widget/view/widget_outline.h"
 #include "widget/settings/widget_settings_declarations.h"
 #include "widget/settings/widget_system_settings.h"
 #include "widget/storage/widget_secret_store.h"
@@ -1143,6 +1144,16 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     ReadLuaDeclaredSettings(state, -1, scriptSettings,
         scriptSettingGroups, scriptPresets);
     std::string settingsError;
+    snowdesktop::widget_runtime::WidgetOutline outline;
+    if (!snowdesktop::widget_runtime::ReadWidgetOutline(state, -1, outline, settingsError))
+    {
+        markDeterministicFailure();
+        const std::string error = "widget.define: " + settingsError;
+        RuntimeRecordError(widgetId, error);
+        RecordWidgetHostFailure(widgetId, error, false);
+        lua_pop(state, 1);
+        return false;
+    }
     if (!ValidateWidgetSettings(pending.manifest, scriptSettings,
             scriptSettingGroups, scriptPresets, settingsError))
     {
@@ -1184,6 +1195,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     w.customStyle = customStyle;
     w.followPersonalizationDefault = followPersonalizationDefault;
     w.hasBackgroundLayer = hasBackgroundLayer;
+    w.outline = std::move(outline);
     if (preview && previewConfiguration)
     {
         w.theme = previewConfiguration->theme;

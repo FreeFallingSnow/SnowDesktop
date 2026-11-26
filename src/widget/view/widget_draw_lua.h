@@ -1,9 +1,12 @@
 #pragma once
 
 #include "widget_draw_context.h"
+#include "widget_draw_geometry.h"
 
 #include <optional>
 #include <string>
+#include <vector>
+#include <wrl/client.h>
 
 struct lua_State;
 
@@ -46,6 +49,11 @@ int lua_DrawPopClip(lua_State* state);
 int lua_DrawStrokeRect(lua_State* state);
 int lua_DrawMarqueeText(lua_State* state);
 int lua_DrawArc(lua_State* state);
+bool ReadLuaDrawPath(lua_State* state, int index,
+    std::vector<DrawPathCommand>& commands, std::string& error);
+Microsoft::WRL::ComPtr<ID2D1PathGeometry> BuildDrawPathGeometry(ID2D1Factory* factory,
+    const std::vector<DrawPathCommand>& commands, D2D1_FILL_MODE fillMode,
+    DrawPoint origin, bool filled);
 int lua_DrawPath(lua_State* state);
 int lua_DrawGradientRect(lua_State* state);
 int lua_DrawShadow(lua_State* state);

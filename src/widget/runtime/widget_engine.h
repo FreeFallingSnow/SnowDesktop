@@ -85,6 +85,7 @@ namespace snowdesktop::widget_runtime
 {
 struct WidgetImageSpin;
 struct WidgetSurfacePaint;
+struct WidgetOutlineGeometry;
 struct PackageImageSource;
 class WidgetAudioOutputTaskExecutor;
 class WidgetAudioPlayback;
@@ -629,6 +630,11 @@ public:
     /** Resolve the selected host material recipe while retaining custom values. */
     bool ReadCustomAppearance(const std::wstring& widgetId,
         PersonalizationSettings& appearance) const;
+
+    snowdesktop::widget_runtime::WidgetOutlineGeometry ResolveWidgetOutline(
+        const std::wstring& widgetId, ID2D1Factory* factory, D2D1_RECT_F frame);
+    bool WidgetOutlineContains(const std::wstring& widgetId,
+        ID2D1Factory* factory, const RECT& frame, POINT point);
 
     /** Reads stored/script material values for custom appearance resolution. */
     bool ReadCustomColors(const std::wstring& widgetId,

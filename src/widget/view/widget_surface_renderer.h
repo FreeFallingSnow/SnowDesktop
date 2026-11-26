@@ -51,6 +51,7 @@ struct WidgetSurfacePaint
     Microsoft::WRL::ComPtr<ID2D1Bitmap1> background;
     std::vector<Microsoft::WRL::ComPtr<ID2D1Bitmap1>> images;
     std::optional<PersonalizationSettings> appearance;
+    Microsoft::WRL::ComPtr<ID2D1Geometry> outline;
     RECT nativeMarqueeBounds{};
     float nativeMarqueeRadius = 0.f;
     // Borrowed only while recording this frame, before it becomes a retained paint.

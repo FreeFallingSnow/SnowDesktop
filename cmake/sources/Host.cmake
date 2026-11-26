@@ -675,6 +675,8 @@ set(SNOWDESKTOP_SOURCES
     src/widget/view/widget_surface_interaction.h
     src/widget/view/widget_surface_interaction.cpp
     src/widget/view/widget_appearance_host.cpp
+    src/widget/view/widget_outline.cpp
+    src/widget/view/widget_outline.h
     src/widget/view/widget_pointer_host.cpp
     src/widget/view/widget_resource_host.h
     src/widget/view/widget_resource_host.cpp

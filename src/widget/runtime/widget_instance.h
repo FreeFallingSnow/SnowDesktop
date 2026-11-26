@@ -10,6 +10,7 @@
 #include "widget/preview/widget_preview_context.h"
 #include "widget/storage/widget_storage_write_budget.h"
 #include "widget/view/widget_interaction_region.h"
+#include "widget/view/widget_outline.h"
 #include "widget/view/widget_native_marquee.h"
 #include "widget/view/widget_surface_context.h"
 #include "widget/view/widget_surface_theme.h"
@@ -188,6 +189,7 @@ struct LuaWidget
     bool customStyle = false;            ///< 是否启用了自定义主题样式
     bool followPersonalizationDefault = false; ///< 尚未保存外观状态时是否默认跟随全局
     bool hasBackgroundLayer = false;     ///< 是否声明桌面装饰背景层
+    snowdesktop::widget_runtime::WidgetOutline outline;
     LuaWidgetTheme theme;                ///< 自定义主题配置（当 customStyle 为 true 时生效）
     LuaWidgetPreviewDataState previewDataState =
         LuaWidgetPreviewDataState::Ready; ///< 作者预览的确定性数据状态

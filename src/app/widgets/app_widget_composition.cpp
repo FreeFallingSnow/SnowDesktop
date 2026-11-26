@@ -714,7 +714,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
             ? POINT{LONG_MIN, LONG_MIN} : interactionPoint;
         RECT dirty{};
         if (damage && luaWidget && widgetEngine_ && item.surface && item.contentVisible &&
-            item.presentingSrgb && !item.marqueeDamageUnavailable && !boundsChanged &&
+            item.presentingSrgb && !item.backdropOutline &&
+            !item.marqueeDamageUnavailable && !boundsChanged &&
             item.width == width && item.height == height && item.renderedContentId == contentId &&
             IntersectRect(&dirty, &*damage, &contentFrame) &&
             desktopBackdropCompositor_.HasSrgbContent(item.BackdropOwnerKey()) &&
@@ -878,6 +879,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
             if (output.engine && (commands || (scene && scene->Scene())) && item.visible && !item.occluded)
             {
                 capture.prepare = [&](const snowdesktop::widget_runtime::WidgetImageSpin& image) {
+                    if (paint.outline) return false;
                     spin = desktopBackdropCompositor_.PrepareSrgbImageSpin(
                         hwnd_, sceneKey, d2dDevice_.Get(), contentFrame, image);
                     return static_cast<bool>(spin);
@@ -889,7 +891,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
             {
                 output.engine->SetNativeMarqueeSyncCallback([&](const std::wstring& owner,
                     const std::vector<snowdesktop::widget_runtime::NativeMarqueeText>& labels, bool reducedMotion) {
-                    if (reducedMotion || owner != contentId)
+                    if (paint.outline || reducedMotion || owner != contentId)
                         return false;
                     if (std::none_of(labels.begin(), labels.end(),
                             [](const auto& label) { return label.scrolling; }))
@@ -1027,17 +1029,21 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition(bool yieldToPopupResize, b
             (item.surface || item.renderedVisualAttached);
         const bool hadRoll = item.hoverRollOpening.has_value();
         const bool backdropChanged = !item.backdropRegistered || boundsChanged ||
+            item.backdropOutline != paint.outline ||
             item.backdropCornerRadius != backdropCornerRadius ||
             item.backdropBlurRadius != backdropBlurRadius ||
             (hadRoll && !drawRollSnapshot);
         item.backdropRequested = backdropRequested;
+        item.backdropOutline = paint.outline;
         if (showContent && backdropRequested)
         {
             if (backdropChanged)
             {
-                item.backdropRegistered =
-                    desktopBackdropCompositor_.AddPanel(
-                        bounds,
+                item.backdropRegistered = item.backdropOutline
+                    ? desktopBackdropCompositor_.AddClippedPanel(bounds,
+                        item.backdropOutline.Get(), static_cast<float>(backdropBlurRadius),
+                        item.BackdropOwnerKey())
+                    : desktopBackdropCompositor_.AddPanel(bounds,
                         static_cast<float>(backdropCornerRadius),
                         static_cast<float>(backdropBlurRadius), item.BackdropOwnerKey(), true);
             }
@@ -1524,6 +1530,14 @@ void DesktopApp::KeepDesktopWidgetBackdropPanels()
                 pendingDesktopWidgetCompositions_.insert_or_assign(id, std::nullopt);
                 if (hwnd_) InvalidateRect(hwnd_, &item.bounds, FALSE);
             }
+        }
+        else if (item.backdropOutline)
+        {
+            item.backdropRegistered = item.visible && item.backdropRequested &&
+                (desktopBackdropCompositor_.KeepPanel(item.bounds, item.BackdropOwnerKey()) ||
+                    desktopBackdropCompositor_.AddClippedPanel(item.bounds,
+                        item.backdropOutline.Get(), static_cast<float>(item.backdropBlurRadius),
+                        item.BackdropOwnerKey()));
         }
         else
         {

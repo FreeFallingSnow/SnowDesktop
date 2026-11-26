@@ -232,6 +232,17 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   `panel`。探测 `view.surface.panel` 后，回调可返回一棵声明式视图；返回 `nil`
   则保留即时绘制。面板中的声明式输入与 `control.textInput/textArea` 均复用宿主
   输入代理和 storage-bound 契约。
+  桌面外框可声明 `outline={path=...,fillRule?,fit?}`（feature `widget.outline`）。
+  路径沿用 `draw.path` 的 `move`、`line`、`quadratic`、`cubic`、`close` 命令，每段轮廓都以 `close` 闭合。
+  最多 256 条命令，坐标和控制点均为有限的 0–1 数值。
+  默认 `fit="fill"` 将横纵轴各自缩放到组件外接矩形。`fit="contain"` 等比缩放并居中，适合圆形等需要保持比例的轮廓。
+  `fillRule="alternate"`（默认）使用奇偶填充，可用内轮廓镂空。`"winding"` 使用非零环绕，反向轮廓可以镂空。
+  可在同一个 path 里声明多个分离的轮廓。宿主材质、背景层、内容、描边、选中态、主体指针命中和作者预览使用同一填充轮廓。
+  桌面网格及移动、缩放手柄按矩形分配。`outline` 在实例加载时读取，重载时重新读取；未声明时使用现有圆角面板。
+  格式错误会阻止加载；没有可绘制填充的路径使用默认面板。
+  旧宿主可使用 `system.capabilities("widget.outline")` 检查支持。将异形作为必需行为的包在 manifest 的
+  `requiredFeatures` 声明 `widget.outline`，待支持宿主发布后再上架。
+
   `dialog` 由 `widget.openDialog` 打开并收到 `context.surface="dialog"`；它复用同一套
   声明式/即时渲染、滚动、输入和 action 管线，但由宿主居中显示、绘制遮罩并隔离桌面输入。
   `popover` 由可信桌面手势调用 `widget.openPopover`，并锚定上一棵成功桌面 scene 中的

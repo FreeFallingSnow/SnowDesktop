@@ -92,7 +92,7 @@ const AcrylicNoisePixels& GenerateAcrylicNoise(bool lightTheme);
 /** Draw the sharp wallpaper and, when requested, its clipped blurred layer. */
 bool DrawStage(ID2D1DeviceContext* context, const RECT& bounds,
     const StageStyle& style, const WallpaperViewport& viewport = {},
-    const Wallpaper* source = nullptr);
+    const Wallpaper* source = nullptr, ID2D1Geometry* outline = nullptr);
 
 /** Draw a one-shot acrylic texture for the out-of-process author preview. */
 void DrawAcrylicNoise(ID2D1DeviceContext* context, const RECT& bounds,

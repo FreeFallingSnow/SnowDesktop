@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
 #include "settings/animation_settings.h"
 #include "widget/view/widget_composition_layer_rules.h"
@@ -532,15 +533,20 @@ WidgetHit DesktopApp::HitTestStandaloneWidget(size_t widgetIndex, POINT pt) cons
         widget.minGridSpan.columns != widget.maxGridSpan.columns || widget.minGridSpan.rows != widget.maxGridSpan.rows))
         return WidgetHit::ResizeHandle;
     const auto* content = ResolveLuaWidgetContent(&widget);
+    const auto hitBody = [&]() {
+        return !content || !widgetEngine_ ||
+            widgetEngine_->WidgetOutlineContains(content->id, GetD2DFactory(), frame, pt)
+            ? WidgetHit::Content : WidgetHit::None;
+    };
     if (!snowdesktop::widget_chrome_rules::HasBottomBar(content ? content->showTitle : widget.showTitle))
     {
         RECT move = GetStandaloneWidgetCompactMoveHandleRect(widget);
         if (PtInRect(&move, pt)) return WidgetHit::MoveHandle;
-        return WidgetHit::Content;
+        return hitBody();
     }
     RECT move = GetStandaloneWidgetMoveHandleRect(widget);
     if (PtInRect(&move, pt)) return WidgetHit::MoveHandle;
-    return WidgetHit::Content;
+    return hitBody();
 }
 
 /**

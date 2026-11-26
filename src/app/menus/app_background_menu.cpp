@@ -6,6 +6,7 @@
 #include "ui/preview/component_preview.h"
 #include "ui/render/native_tooltip_preferences.h"
 #include "widget/runtime/widget_engine.h"
+#include "widget/view/widget_outline.h"
 #include "common/utils.h"
 #include "desktop/desktop_source.h"
 #include "widget/packages/widget_package.h"
@@ -782,13 +783,18 @@ DesktopApp::RenderWidgetMenuPreview(
     {
         // Desktop icon entrances have no full-cell panel backdrop. Their
         // shared Dock renderer owns the icon material and its outline.
+        ComPtr<ID2D1Factory> outlineFactory;
+        context->GetFactory(&outlineFactory);
+        const auto outline = !iconMode && previewEngine ?
+            previewEngine->ResolveWidgetOutline(data->id, outlineFactory.Get(),
+                ToD2DRect(stageBounds)).positioned : nullptr;
         snowdesktop::widget_preview::DrawStage(context.Get(), stageBounds,
             { stage.lightTheme, !iconMode && stageAppearance.glassEnabled,
                 stageAppearance.glassBlurRadius,
                 static_cast<float>(ScaleWidgetCu(
                     globalAppearance.cornerRadius, data->cellScale)) },
             { stage.canvasWidth, stage.canvasHeight,
-                stage.offsetX, stage.offsetY }, stage.wallpaper);
+                stage.offsetX, stage.offsetY }, stage.wallpaper, outline.Get());
         if (iconMode && iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled)
         {
             const auto& outline = snowdesktop::icon_beautify::ShapeOutline(iconBeautifySettings_.shape);

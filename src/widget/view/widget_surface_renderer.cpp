@@ -501,7 +501,7 @@ WidgetSurfaceRenderer::Target WidgetSurfaceRenderer::CreateTarget(
 std::optional<RECT> WidgetSurfacePaint::DamageFrom(const WidgetSurfacePaint& previous) const
 {
     if (baseRevision == 0 || baseRevision != previous.revision ||
-        !appearance || appearance != previous.appearance ||
+        !appearance || appearance != previous.appearance || outline != previous.outline ||
         !backgroundKnown || !previous.backgroundKnown ||
         authoredBackground != previous.authoredBackground ||
         background != previous.background || backgroundOpacity != previous.backgroundOpacity ||

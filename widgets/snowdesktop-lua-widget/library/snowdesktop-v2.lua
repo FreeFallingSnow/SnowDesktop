@@ -658,7 +658,13 @@
 ---@field opacity? number Composited opacity from 0..1; defaults to 1.
 ---@field blurRadius? number Explicit host-scaled blur radius from 0..48. Omit to inherit the glass material radius, or zero when glass is disabled.
 
+---@class SnowWidgetOutline
+---@field path SnowDrawPathCommand[] Closed contours with coordinates normalized to the desktop widget's allocation. Up to 256 commands.
+---@field fillRule? 'alternate'|'winding' Defaults to alternate (even-odd).
+---@field fit? 'fill'|'contain' Defaults to fill. Contain fits the unit square without stretching.
+
 ---@class SnowWidgetDefinition
+---@field outline? SnowWidgetOutline Desktop surface geometry. Requires widget.outline.
 ---@field name? string
 ---@field render? fun(context: SnowWidgetContext, model: any) Exactly one of render or view is required in API v2.
 ---@field view? fun(context: SnowWidgetContext, model: any): SnowViewNode Exactly one of view or render is required; requires view.tree.core for the current node subset.

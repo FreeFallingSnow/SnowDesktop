@@ -122,6 +122,7 @@ struct DesktopWidgetCompositionItem
     bool backdropRegistered = false;
     bool presentingSrgb = false;
     bool marqueeDamageUnavailable = false;
+    Microsoft::WRL::ComPtr<ID2D1Geometry> backdropOutline;
     int backdropCornerRadius = 0;
     int backdropBlurRadius = 0;
     snowdesktop::WidgetIconBackdrops iconBackdrops;

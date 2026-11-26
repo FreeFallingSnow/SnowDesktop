@@ -468,7 +468,7 @@ const AcrylicNoisePixels& GenerateAcrylicNoise(bool /*lightTheme*/)
 
 bool DrawStage(ID2D1DeviceContext* context, const RECT& bounds,
     const StageStyle& style, const WallpaperViewport& viewport,
-    const Wallpaper* source)
+    const Wallpaper* source, ID2D1Geometry* outline)
 {
     const int width = bounds.right - bounds.left;
     const int height = bounds.bottom - bounds.top;
@@ -523,10 +523,11 @@ bool DrawStage(ID2D1DeviceContext* context, const RECT& bounds,
     ComPtr<ID2D1Factory> factory;
     context->GetFactory(&factory);
     const float radius = std::max(0.0f, style.cornerRadius);
-    const auto clip = smooth_corners::Geometry(factory.Get(), ToD2DRect(bounds), radius);
+    const auto rounded = outline ? nullptr :
+        smooth_corners::Geometry(factory.Get(), displayBounds, radius);
+    auto* clip = outline ? outline : rounded.Get();
     if (!clip) return true;
-    context->PushLayer(D2D1::LayerParameters(
-        ToD2DRect(bounds), clip.Get()), nullptr);
+    context->PushLayer(D2D1::LayerParameters(displayBounds, clip), nullptr);
     context->DrawImage(blur.Get(), D2D1::Point2F(
         static_cast<float>(bounds.left), static_cast<float>(bounds.top)),
         displaySource, D2D1_INTERPOLATION_MODE_LINEAR,

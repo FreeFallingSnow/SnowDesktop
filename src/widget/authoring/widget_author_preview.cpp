@@ -12,6 +12,7 @@
 #include "widget/packages/widget_package_manager.h"
 #include "widget/packages/widget_package_validation.h"
 #include "widget/preview/widget_preview_stage.h"
+#include "widget/view/widget_outline.h"
 #include "ui/preview/preview_png_writer.h"
 
 #include <d2d1_1.h>
@@ -336,7 +337,7 @@ ResolvedPreviewStyle ResolvePreviewStyle(WidgetEngine& engine,
 
 void DrawHostBackground(ID2D1DeviceContext* context,
     const ResolvedPreviewStyle& resolved, const RECT& bounds, float scale,
-    bool drawMaterial, bool drawOverlay)
+    bool drawMaterial, bool drawOverlay, ID2D1Geometry* outline)
 {
     const LuaWidgetTheme& theme = resolved.theme;
     const auto color = [](int rgb, float alpha) {
@@ -374,6 +375,12 @@ void DrawHostBackground(ID2D1DeviceContext* context,
         const float strokeWidth = std::clamp(
             resolved.material.widgetBorderWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) * scale;
+        if (outline)
+        {
+            widget_runtime::DrawWidgetOutlineBorder(context, outline,
+                color(theme.border, theme.borderAlpha), strokeWidth * 2.0f);
+            return;
+        }
         const float borderInset = strokeWidth * 0.5f;
         const auto borderBounds = D2D1::RectF(
             rounded.rect.left + borderInset, rounded.rect.top + borderInset,
@@ -389,7 +396,8 @@ void DrawHostBackground(ID2D1DeviceContext* context,
 }
 
 void DrawHostEdgeHighlight(ID2D1DeviceContext* context,
-    const ResolvedPreviewStyle& resolved, const RECT& bounds, float scale)
+    const ResolvedPreviewStyle& resolved, const RECT& bounds, float scale,
+    ID2D1Geometry* outline)
 {
     if (!resolved.material.widgetEdgeHighlightEnabled ||
         resolved.material.widgetEdgeHighlightStrength <= 0.0005f)
@@ -406,6 +414,15 @@ void DrawHostEdgeHighlight(ID2D1DeviceContext* context,
     const float edgeWidth = std::clamp(
         resolved.material.widgetEdgeHighlightWidth,
         kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) * scale;
+    if (outline)
+    {
+        widget_runtime::DrawWidgetOutlineHighlight(context, outline,
+            D2D1::RectF(static_cast<float>(bounds.left), static_cast<float>(bounds.top),
+                static_cast<float>(bounds.right), static_cast<float>(bounds.bottom)),
+            color(theme.bg, theme.alpha), edgeWidth,
+            resolved.material.widgetEdgeHighlightStrength, resolved.material.edgeLight);
+        return;
+    }
     (void)snowdesktop::widget_preview::DrawEdgeHighlight(
         context, bounds, radius, color(theme.bg, theme.alpha), edgeWidth,
         resolved.material.widgetEdgeHighlightStrength,
@@ -742,8 +759,13 @@ PreviewRenderResult RenderWidgetPreview(
     }
     const RECT componentBounds{
         0, 0, result.componentWidth, result.componentHeight };
-    const ResolvedPreviewStyle resolvedStyle =
-        ResolvePreviewStyle(engine, *appearance);
+    ResolvedPreviewStyle resolvedStyle = ResolvePreviewStyle(engine, *appearance);
+    ComPtr<ID2D1Factory> outlineFactory;
+    context->GetFactory(&outlineFactory);
+    const auto outline = engine.ResolveWidgetOutline(kPreviewWidgetId, outlineFactory.Get(),
+        D2D1::RectF(0.f, 0.f, static_cast<float>(result.componentWidth),
+            static_cast<float>(result.componentHeight))).positioned;
+    if (outline) resolvedStyle.theme.cornerRadius = 0.f;
     const float outputScale = request.canvasSize > 0
         ? std::min(
             static_cast<float>(result.placementWidth) /
@@ -777,8 +799,10 @@ PreviewRenderResult RenderWidgetPreview(
                     resolvedStyle.material.glassBlurRadius,
                     std::max(0.0f,
                         resolvedStyle.theme.cornerRadius * dpiScale) }, {},
-                background.pixels.empty() ? nullptr : &background);
+                background.pixels.empty() ? nullptr : &background, outline.Get());
         }
+        if (outline)
+            context->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), outline.Get()), nullptr);
         const bool hasBackgroundLayer =
             engine.HasBackgroundLayer(kPreviewWidgetId);
         if (request.contentOnly)
@@ -795,7 +819,7 @@ PreviewRenderResult RenderWidgetPreview(
         else if (hasBackgroundLayer)
         {
             DrawHostBackground(context.Get(), resolvedStyle, componentBounds,
-                dpiScale, true, false);
+                dpiScale, true, false, outline.Get());
             (void)engine.RenderWidgetBackgroundLayer(kPreviewWidgetId,
                 context.Get(), componentBounds, request.columns, request.rows,
                 resolvedStyle.material.glassEnabled
@@ -803,20 +827,21 @@ PreviewRenderResult RenderWidgetPreview(
                 std::max(0.0f,
                     resolvedStyle.theme.cornerRadius * dpiScale));
             DrawHostBackground(context.Get(), resolvedStyle, componentBounds,
-                dpiScale, false, true);
+                dpiScale, false, true, outline.Get());
         }
         else
         {
             DrawHostBackground(context.Get(), resolvedStyle, componentBounds,
-                dpiScale, true, true);
+                dpiScale, true, true, outline.Get());
         }
         engine.RenderWidget(kPreviewWidgetId, L"", context.Get(), componentBounds,
             request.columns, request.rows);
         if (!request.contentOnly)
         {
             DrawHostEdgeHighlight(
-                context.Get(), resolvedStyle, componentBounds, dpiScale);
+                context.Get(), resolvedStyle, componentBounds, dpiScale, outline.Get());
         }
+        if (outline) context->PopLayer();
         graphicsResult = context->EndDraw();
         return graphicsResult;
     };
@@ -876,6 +901,12 @@ PreviewRenderResult RenderWidgetPreview(
                 background.pixels.empty() ? nullptr : &background);
             if (resolvedStyle.material.glassEnabled)
             {
+                const auto placementOutline = outline ?
+                    engine.ResolveWidgetOutline(kPreviewWidgetId, outlineFactory.Get(),
+                        D2D1::RectF(static_cast<float>(placementBounds.left),
+                            static_cast<float>(placementBounds.top),
+                            static_cast<float>(placementBounds.right),
+                            static_cast<float>(placementBounds.bottom))).positioned : nullptr;
                 snowdesktop::widget_preview::DrawStage(context.Get(),
                     placementBounds,
                     { resolvedStyle.lightStage, true,
@@ -886,7 +917,7 @@ PreviewRenderResult RenderWidgetPreview(
                                 placementScale) },
                     { result.width, result.height,
                         result.placementX, result.placementY },
-                    background.pixels.empty() ? nullptr : &background);
+                    background.pixels.empty() ? nullptr : &background, placementOutline.Get());
             }
         }
         context->DrawBitmap(componentTarget.Get(),

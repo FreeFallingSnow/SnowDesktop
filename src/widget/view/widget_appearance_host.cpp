@@ -3,6 +3,7 @@
 #include "common/constants.h"
 #include "theme/edge_light_codec.h"
 #include "widget/view/widget_appearance_presets.h"
+#include "widget/view/widget_outline.h"
 #include "widgets/widget_chrome_rules.h"
 
 #include <algorithm>
@@ -27,6 +28,26 @@ bool WidgetEngine::ReadBoolFlag(const std::wstring& packageId, const char* flag,
         }
     }
     return defaultVal;
+}
+
+snowdesktop::widget_runtime::WidgetOutlineGeometry WidgetEngine::ResolveWidgetOutline(
+    const std::wstring& widgetId, ID2D1Factory* factory, D2D1_RECT_F frame)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0) return {};
+    return widgets_[index].outline.Resolve(factory, frame);
+}
+
+bool WidgetEngine::WidgetOutlineContains(
+    const std::wstring& widgetId, ID2D1Factory* factory, const RECT& frame, POINT point)
+{
+    const auto outline = ResolveWidgetOutline(widgetId, factory, D2D1::RectF(
+        static_cast<float>(frame.left), static_cast<float>(frame.top),
+        static_cast<float>(frame.right), static_cast<float>(frame.bottom)));
+    if (!outline.positioned) return true;
+    BOOL inside = FALSE;
+    return SUCCEEDED(outline.positioned->FillContainsPoint(D2D1::Point2F(
+        static_cast<float>(point.x), static_cast<float>(point.y)), nullptr, &inside)) && inside;
 }
 
 bool WidgetEngine::ReadCustomAppearance(const std::wstring& widgetId,

@@ -603,6 +603,7 @@ struct DesktopBackdropCompositor::Impl
         float smoothRadius = -1.f;
         wuc::CompositionGeometricClip clip{nullptr};
         wuc::CompositionGeometry customGeometry{nullptr};
+        Microsoft::WRL::ComPtr<ID2D1Geometry> declaredClip;
         bool seen = false;
         bool background = false;
         int iconShape = -1;
@@ -709,7 +710,7 @@ struct DesktopBackdropCompositor::Impl
     // Values only: collecting a candidate must not touch the shared compositor.
     struct StagedPanel
     {
-        enum class Kind { Rounded, Icon, LargeIcon } kind = Kind::Rounded;
+        enum class Kind { Rounded, Icon, LargeIcon, Clipped } kind = Kind::Rounded;
         RECT frame{};
         float cornerRadius = 0, blurRadius = 0, opacity = 1;
         bool smoothCorners = false;
@@ -720,6 +721,7 @@ struct DesktopBackdropCompositor::Impl
         RECT projectedFrame{};
         std::optional<snowdesktop::IconBackdropClip> iconContentClip;
         std::vector<snowdesktop::PanelBackdropIcon> panelIcons;
+        Microsoft::WRL::ComPtr<ID2D1Geometry> declaredClip;
     };
     std::vector<StagedPanel> stagedPanels;
     std::unordered_map<std::uintptr_t, std::size_t> stagedPanelOwners;
@@ -2809,6 +2811,10 @@ bool DesktopBackdropCompositor::ApplyStagedFrame(ID2D1Device* drawDevice)
             applied = AddLargeIconPanel(panel.frame, panel.shape, panel.cornerRadius,
                 panel.blurRadius, panel.ownerKey, panel.flagDirection);
             break;
+        case Impl::StagedPanel::Kind::Clipped:
+            applied = AddClippedPanel(panel.frame, panel.declaredClip.Get(),
+                panel.blurRadius, panel.ownerKey);
+            break;
         }
         if (applied && panel.opacity != 1.0f)
             applied = SetPanelOpacity(panel.frame, panel.opacity, panel.ownerKey);
@@ -3143,6 +3149,7 @@ bool DesktopBackdropCompositor::UpdatePanel(
             existing->blurRadius = blurKey;
             existing->baseBlur = impl_->CreateBlurBrush(blurKey);
         }
+        if (!customClip) existing->declaredClip.Reset();
         existing->smoothCorners = smoothCorners;
         existing->cornerRadius = resolvedRadius;
         const wfn::float2 panelSize{
@@ -3287,6 +3294,7 @@ bool DesktopBackdropCompositor::AddIconPanel(const RECT& frame,
     {
         auto panel = impl_->FindPanel(frame, ownerKey);
         if (panel == impl_->panels.end()) return false;
+        panel->declaredClip.Reset();
         const SIZE size{frame.right - frame.left, frame.bottom - frame.top};
         const auto requestedClip = contentClip
             ? std::optional{*contentClip} : std::nullopt;
@@ -3326,19 +3334,30 @@ bool DesktopBackdropCompositor::AddIconPanel(const RECT& frame,
 bool DesktopBackdropCompositor::AddClippedPanel(const RECT& envelope,
     ID2D1Geometry* clip, float blurRadius, std::uintptr_t ownerKey)
 {
-    if (!clip || !ownerKey || impl_->stagingFrame ||
+    if (!clip || !ownerKey ||
         !UpdatePanel(envelope, 0.f, blurRadius, ownerKey, false, true)) return false;
+    if (impl_->stagingFrame)
+    {
+        auto panel = impl_->FindStagedPanel(envelope, ownerKey);
+        if (panel == impl_->stagedPanels.end()) return false;
+        panel->kind = Impl::StagedPanel::Kind::Clipped;
+        panel->declaredClip = clip;
+        return true;
+    }
     const auto panel = impl_->FindPanel(envelope, ownerKey);
     if (panel == impl_->panels.end()) return false;
     try
     {
-        auto geometry = panel->customGeometry.try_as<wuc::CompositionPathGeometry>();
-        if (!geometry) geometry = impl_->compositor.CreatePathGeometry();
-        winrt::com_ptr<ID2D1Geometry> source;
-        source.copy_from(clip);
-        geometry.Path(wuc::CompositionPath(winrt::make<BackdropGeometrySource>(std::move(source))));
-        panel->customGeometry = geometry;
-        panel->SetClip(geometry);
+        if (panel->declaredClip.Get() != clip || !panel->customGeometry)
+        {
+            auto geometry = impl_->compositor.CreatePathGeometry();
+            winrt::com_ptr<ID2D1Geometry> source;
+            source.copy_from(clip);
+            geometry.Path(wuc::CompositionPath(winrt::make<BackdropGeometrySource>(std::move(source))));
+            panel->customGeometry = geometry;
+            panel->declaredClip = clip;
+        }
+        panel->SetClip(panel->customGeometry);
         return true;
     }
     catch (const winrt::hresult_error& error)
@@ -3369,6 +3388,7 @@ bool DesktopBackdropCompositor::AddLargeIconPanel(const RECT& frame,
             panel->largeIconShape = -1;
             return true;
         }
+        panel->declaredClip.Reset();
         const SIZE size{frame.right - frame.left, frame.bottom - frame.top};
         if (panel->largeIconShape == shape && panel->largeIconFlagDirection == flagDirection &&
             panel->largeIconSize.cx == size.cx && panel->largeIconSize.cy == size.cy)
