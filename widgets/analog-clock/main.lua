@@ -17,7 +17,7 @@ local settings = {
     fields = {
         {
             key = "faceTheme",
-            agentDescription = "Light and Dark draw a solid clock face. Theme uses the component's current appearance as the dial background and matches its foreground theme. Choosing Theme switches the Transparent Face appearance preset to Follow Global, including an instance still using that default preset. Other appearance choices stay selected.",
+            agentDescription = "Light and Dark draw a solid clock face. Use Widget Appearance draws the dial with the component's current appearance and matches its foreground colors. Selecting it while using the Transparent Face preset, including the default appearance, turns on Follow Global. Other appearance choices stay selected.",
             label = l10n.tr("lua_widget.analog_clock.face_theme"),
             type = "select",
             default = "light",
