@@ -44,16 +44,9 @@ end
 
 local center = { x = "center", y = "center" }
 
-local function drawCentered(text, x, y, size, width, color, bold)
-    local metrics = draw.measureText(text, size, 0, bold)
-    local fittedSize = size * math.min(1, width / math.max(1, metrics.width))
-    draw.text(x, y, text, fittedSize, color, width + 2, bold, true, 0, 1, nil, center)
-end
-
 local function render(context, model)
     local width, height = context.layoutSize.width, context.layoutSize.height
     local side = math.min(width, height)
-    local x, y = width * 0.5, height * 0.5
     local textWidth = side * 0.84
     local darkForeground = widget.theme().contentTheme == 1
     local primary = darkForeground and 0x172634 or 0xF6FAFF
@@ -61,16 +54,32 @@ local function render(context, model)
     local secondary = darkForeground and 0x44566A or 0xE2EBF4
     local date = model.date
 
-    drawCentered(l10n.tr(weekdayKeys[date.wday]), x, y - side * 0.31,
-        side * 0.112, textWidth, accent, true)
-    drawCentered(tostring(date.day), x, y - side * 0.041,
-        side * 0.56, textWidth, primary, true)
-    draw.line(x - side * 0.11, y + side * 0.216,
-        x + side * 0.11, y + side * 0.216, math.max(1, side * 0.009), accent, 0.72)
     local monthYear = l10n.tr("lua_widget.today_date.month_year",
         l10n.tr(monthKeys[date.month]), tostring(date.year))
-    drawCentered(monthYear, x, y + side * 0.324,
-        side * 0.097, textWidth, secondary, false)
+    local lines = {
+        { text = l10n.tr(weekdayKeys[date.wday]), size = side * 0.116, color = accent, bold = true },
+        { text = tostring(date.day), size = side * 0.50, color = primary, bold = true },
+        { text = monthYear, size = side * 0.109, color = secondary, bold = false },
+    }
+    local gap = side * 0.071
+    local blockHeight = gap * (#lines - 1)
+    for _, line in ipairs(lines) do
+        local metrics = draw.measureText(line.text, line.size, 0, line.bold)
+        if metrics.width > textWidth then
+            line.size = line.size * textWidth / metrics.width
+            metrics = draw.measureText(line.text, line.size, 0, line.bold)
+        end
+        -- Use the visible glyph height when the host provides ink metrics.
+        line.height = metrics.ink and metrics.ink.height or line.size * 0.78
+        blockHeight = blockHeight + line.height
+    end
+
+    local x, y = width * 0.5, (height - blockHeight) * 0.5
+    for _, line in ipairs(lines) do
+        draw.text(x, y + line.height * 0.5, line.text, line.size, line.color,
+            textWidth + 2, line.bold, true, 0, 1, nil, center)
+        y = y + line.height + gap
+    end
 end
 
 return widget.define({
