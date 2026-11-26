@@ -774,7 +774,6 @@ DesktopApp::RenderWidgetMenuPreview(
             if (storedTheme == "0" || storedTheme == "1")
                 stageAppearance.contentTheme = storedTheme[0] - '0';
         }
-        previewEngine->ApplyTransparentSurfaceSetting(data->id, stageAppearance);
     }
     context->BeginDraw();
     context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));

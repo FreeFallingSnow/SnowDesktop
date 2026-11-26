@@ -227,11 +227,6 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   范围为 0–1；`blurRadius` 显式范围为 0–48，省略时在玻璃开启时继承宿主半径，关闭玻璃时
   为 0。宿主在每次背景绘制前读取这两个合成字段，因此 `settings.changed` 处理期间更新描述符
   会作用于紧随其后的绘制帧。
-  `transparentSurfaceSetting` 接受已声明的 `bool` 设置键，要求 feature
-  `widget.transparentSurfaceSetting`。开启时宿主桌面表面的填充、渐变、玻璃与亚克力、普通边框和
-  边缘高光完全透明。组件自己的绘制、交互以及宿主焦点和编辑提示继续生效。关闭时恢复解析出的主题。
-  普通设置写入会驱动宿主重绘，组件通过菜单写入时应使用 `storage.set(key, "1"|"0")` 并调用
-  `widget.invalidate()`。此选项同时用于添加组件预览与 `snowwidget preview`，无需开启 `useCustomStyle`。
   `panel` 只在
   `widget.openPanel` 打开的宿主辅助面板中执行，收到的 `context.surface` 为
   `panel`。探测 `view.surface.panel` 后，回调可返回一棵声明式视图；返回 `nil`

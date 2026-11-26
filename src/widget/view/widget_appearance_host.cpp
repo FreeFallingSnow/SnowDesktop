@@ -247,25 +247,6 @@ bool WidgetEngine::HasCustomStyle(const std::wstring& widgetId) const
     return idx >= 0 && widgets_[idx].customStyle;
 }
 
-bool WidgetEngine::ApplyTransparentSurfaceSetting(const std::wstring& widgetId,
-    PersonalizationSettings& appearance) const
-{
-    const int index = FindWidget(widgetId);
-    if (index < 0 || widgets_[index].transparentSurfaceSetting.empty())
-        return false;
-    const auto value = RuntimeGetStorageValue(widgetId, widgets_[index].transparentSurfaceSetting);
-    if (value != "1" && value != "true") return false;
-
-    appearance.widgetAlpha = 0.0f;
-    appearance.widgetBorderAlpha = 0.0f;
-    appearance.gradientEndA = 0.0f;
-    appearance.glassEnabled = false;
-    appearance.acrylicEnabled = false;
-    appearance.widgetEdgeHighlightEnabled = false;
-    appearance.panelGradient.enabled = false;
-    return true;
-}
-
 bool WidgetEngine::HasBackgroundLayer(const std::wstring& widgetId) const
 {
     const int index = FindWidget(widgetId);
