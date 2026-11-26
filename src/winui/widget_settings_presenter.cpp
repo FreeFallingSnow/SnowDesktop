@@ -2312,11 +2312,8 @@ struct WidgetSettingsPresenter::Impl
         for (const auto& field : snapshot.fields)
             cachedSchemas.push_back(field.schema);
         cachedGroups = snapshot.groups;
-        cachedPresets = snapshot.presets;
-        defaultPresetId = snapshot.defaultPresetId;
         cachedCustomStyle = snapshot.customStyle;
         currentHostAppearance = snapshot.hostAppearance;
-        RebuildPresetItems();
     }
 
     [[nodiscard]] bool SchemaChanged(
@@ -2324,8 +2321,6 @@ struct WidgetSettingsPresenter::Impl
     {
         if (snapshot.fields.size() != cachedSchemas.size() ||
             snapshot.groups != cachedGroups ||
-            snapshot.presets != cachedPresets ||
-            snapshot.defaultPresetId != defaultPresetId ||
             snapshot.customStyle != cachedCustomStyle)
             return true;
         for (std::size_t index = 0; index < snapshot.fields.size(); ++index)
@@ -2466,6 +2461,13 @@ struct WidgetSettingsPresenter::Impl
         revision = snapshot.revision;
         hasSnapshot = true;
         if (rebuild) RebuildFields(snapshot, !newIdentity);
+        if (rebuild || snapshot.presets != cachedPresets ||
+            snapshot.defaultPresetId != defaultPresetId)
+        {
+            cachedPresets = snapshot.presets;
+            defaultPresetId = snapshot.defaultPresetId;
+            RebuildPresetItems();
+        }
         PatchAppearance(snapshot);
         PatchFields(snapshot);
         updatingControls = oldUpdating;

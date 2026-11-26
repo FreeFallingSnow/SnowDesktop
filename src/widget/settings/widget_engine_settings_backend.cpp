@@ -160,6 +160,9 @@ WidgetSettingPresetSchema ConvertPreset(
     result.id = source.id;
     result.label = source.label;
     result.isDefault = source.isDefault;
+    if (source.showWhen)
+        result.showWhen =
+            widget_settings_backend_detail::ConvertCondition(*source.showWhen);
     for (const auto& [key, encoded] : source.values)
     {
         if (IsHostAppearancePresetKey(key))

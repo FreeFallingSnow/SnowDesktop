@@ -394,6 +394,7 @@ static LuaWidgetManifest::SettingPreset ReadLuaPresetTable(lua_State* L, int tab
         preset.label = LuaReadStorageField(L, tableIndex, "name");
     preset.isDefault = LuaReadBoolField(L, tableIndex, "default") ||
         LuaReadBoolField(L, tableIndex, "isDefault");
+    preset.showWhen = ReadLuaSettingConditionField(L, tableIndex, "showWhen");
 
     lua_getfield(L, tableIndex, "values");
     if (lua_istable(L, -1))
@@ -638,6 +639,7 @@ static bool ValidateSettingPresentation(
 static bool ValidateSettingConditionsAndConstraints(
     const std::vector<LuaWidgetManifest::Setting>& manifestSettings,
     const std::vector<LuaWidgetManifest::Setting>& scriptSettings,
+    const std::vector<LuaWidgetManifest::SettingPreset>& scriptPresets,
     std::string& error)
 {
     error.clear();
@@ -654,21 +656,20 @@ static bool ValidateSettingConditionsAndConstraints(
         declarations.emplace(setting.key, &setting);
 
     std::unordered_map<std::string, std::vector<std::string>> edges;
-    const auto validateCondition = [&](const LuaWidgetManifest::Setting& owner,
-        const LuaWidgetManifest::SettingCondition& condition) {
-        if (condition.key.empty() || condition.key == owner.key ||
+    const auto validateCondition = [&](const std::string& ownerId,
+        const LuaWidgetManifest::SettingCondition& condition, bool isField) {
+        const std::string owner = (isField ? "setting '" : "preset '") + ownerId + "'";
+        if (condition.key.empty() || (isField && condition.key == ownerId) ||
             !snowdesktop::widget_runtime::IsValidSettingCondition(
                 condition.operation, condition.values.size()))
         {
-            error = "setting '" + owner.key +
-                "' has an invalid condition";
+            error = owner + " has an invalid condition";
             return false;
         }
         const auto source = declarations.find(condition.key);
         if (source == declarations.end())
         {
-            error = "setting '" + owner.key +
-                "' condition references undeclared setting '" +
+            error = owner + " condition references undeclared setting '" +
                 condition.key + "'";
             return false;
         }
@@ -682,8 +683,7 @@ static bool ValidateSettingConditionsAndConstraints(
                 IsFilesystemHandleSettingType(sourceSetting.type) ||
                 IsEntityReferenceSettingType(sourceSetting.type)))
         {
-            error = "setting '" + owner.key +
-                "' may only test presence/truthiness of host-managed setting '" +
+            error = owner + " may only test presence/truthiness of host-managed setting '" +
                 condition.key + "'";
             return false;
         }
@@ -694,8 +694,7 @@ static bool ValidateSettingConditionsAndConstraints(
             if (contains || (!existenceOnly &&
                     sourceSetting.type == "multiSelect"))
             {
-                error = "setting '" + owner.key +
-                    "' uses an incompatible condition for '" +
+                error = owner + " uses an incompatible condition for '" +
                     condition.key + "'";
                 return false;
             }
@@ -709,8 +708,7 @@ static bool ValidateSettingConditionsAndConstraints(
                         sourceSetting.options.end(), expected) ==
                     sourceSetting.options.end())
                 {
-                    error = "setting '" + owner.key +
-                        "' condition uses an undeclared option from '" +
+                    error = owner + " condition uses an undeclared option from '" +
                         condition.key + "'";
                     return false;
                 }
@@ -722,8 +720,7 @@ static bool ValidateSettingConditionsAndConstraints(
             {
                 if (expected != "0" && expected != "1")
                 {
-                    error = "setting '" + owner.key +
-                        "' boolean condition values must be booleans";
+                    error = owner + " boolean condition values must be booleans";
                     return false;
                 }
             }
@@ -740,13 +737,12 @@ static bool ValidateSettingConditionsAndConstraints(
                         !snowdesktop::widget_runtime::IsValidDurationSettingValue(number,
                             sourceSetting.durationUnit, sourceSetting.minValue, sourceSetting.maxValue, sourceSetting.stepValue)))
                 {
-                    error = "setting '" + owner.key +
-                        "' numeric condition is outside the source bounds";
+                    error = owner + " numeric condition is outside the source bounds";
                     return false;
                 }
             }
         }
-        edges[owner.key].push_back(condition.key);
+        if (isField) edges[ownerId].push_back(condition.key);
         return true;
     };
 
@@ -779,17 +775,20 @@ static bool ValidateSettingConditionsAndConstraints(
             return false;
         }
         if (setting.showWhen &&
-            !validateCondition(setting, *setting.showWhen)) return false;
+            !validateCondition(setting.key, *setting.showWhen, true)) return false;
         if (setting.enabledWhen &&
-            !validateCondition(setting, *setting.enabledWhen)) return false;
+            !validateCondition(setting.key, *setting.enabledWhen, true)) return false;
         if (!setting.dependsOn.empty())
         {
             LuaWidgetManifest::SettingCondition dependency;
             dependency.key = setting.dependsOn;
             dependency.operation = "truthy";
-            if (!validateCondition(setting, dependency)) return false;
+            if (!validateCondition(setting.key, dependency, true)) return false;
         }
     }
+    for (const auto& preset : scriptPresets)
+        if (preset.showWhen &&
+            !validateCondition(preset.id, *preset.showWhen, false)) return false;
 
     std::unordered_map<std::string, int> state;
     const std::function<bool(const std::string&)> visit =
@@ -1031,7 +1030,8 @@ bool ValidateWidgetSettings(const LuaWidgetManifest& manifest,
             manifest.logicalSlots, error) &&
         ValidateSettingPresentation(manifest.settings, settings,
             manifest.settingGroups, groups, error) &&
-        ValidateSettingConditionsAndConstraints(manifest.settings, settings, error) &&
+        ValidateSettingConditionsAndConstraints(
+            manifest.settings, settings, presets, error) &&
         ValidateOrdinaryDeclarativeSettings(manifest.settings, settings,
             manifest.presets, presets, error);
 }

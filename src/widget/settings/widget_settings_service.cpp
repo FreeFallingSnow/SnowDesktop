@@ -127,6 +127,28 @@ WidgetSettingFieldState* FindField(
     return field == snapshot.fields.end() ? nullptr : &*field;
 }
 
+bool IsPresetAvailable(const WidgetSettingsSnapshot& snapshot,
+    const WidgetSettingPresetSchema& preset)
+{
+    if (!preset.showWhen) return true;
+    const auto* source = FindField(snapshot, preset.showWhen->key);
+    return source && WidgetSettingConditionMatches(*source, *preset.showWhen);
+}
+
+WidgetSettingsSnapshot VisibleSettingsSnapshot(WidgetSettingsSnapshot snapshot)
+{
+    std::erase_if(snapshot.presets, [&](const auto& preset) {
+        return !IsPresetAvailable(snapshot, preset);
+    });
+    const auto defaultPreset = std::find_if(snapshot.presets.begin(),
+        snapshot.presets.end(), [](const auto& preset) {
+            return preset.isDefault || preset.id == "default";
+        });
+    if (defaultPreset != snapshot.presets.end())
+        snapshot.defaultPresetId = defaultPreset->id;
+    return snapshot;
+}
+
 struct BuiltSnapshot
 {
     WidgetSettingsBackendDescriptor descriptor;
@@ -216,7 +238,6 @@ WidgetSettingsBackendResult BuildSnapshot(
         if (preset.isDefault || preset.id == "default")
         {
             defaultPreset = &preset;
-            snapshot.defaultPresetId = preset.id;
             break;
         }
 
@@ -423,7 +444,7 @@ WidgetSettingsLoadResult WidgetSettingsService::Load(std::wstring widgetId)
             }
             existing->second.descriptor = std::move(built.descriptor);
             existing->second.snapshot = std::move(built.snapshot);
-            loaded.snapshot = existing->second.snapshot;
+            loaded.snapshot = VisibleSettingsSnapshot(existing->second.snapshot);
         }
         else
         {
@@ -439,7 +460,7 @@ WidgetSettingsLoadResult WidgetSettingsService::Load(std::wstring widgetId)
             State::Session session;
             session.descriptor = std::move(built.descriptor);
             session.snapshot = std::move(built.snapshot);
-            loaded.snapshot = session.snapshot;
+            loaded.snapshot = VisibleSettingsSnapshot(session.snapshot);
             state_->sessions.insert_or_assign(
                 widgetId, std::move(session));
         }
@@ -465,9 +486,8 @@ std::optional<WidgetSettingsSnapshot> WidgetSettingsService::Snapshot(
 {
     std::lock_guard lock(state_->mutex);
     const auto found = state_->sessions.find(std::wstring(widgetId));
-    return found == state_->sessions.end()
-        ? std::nullopt
-        : std::optional<WidgetSettingsSnapshot>(found->second.snapshot);
+    if (found == state_->sessions.end()) return std::nullopt;
+    return VisibleSettingsSnapshot(found->second.snapshot);
 }
 
 void WidgetSettingsService::Close(std::wstring_view widgetId)
@@ -1173,7 +1193,8 @@ WidgetSettingMutationResult WidgetSettingsService::ApplyPreset(
         session.snapshot.presets.end(), [&](const auto& value) {
             return value.id == presetId;
         });
-    if (preset == session.snapshot.presets.end())
+    if (preset == session.snapshot.presets.end() ||
+        !IsPresetAvailable(session.snapshot, *preset))
         return { WidgetSettingMutationStatus::PresetNotFound,
             session.snapshot.generation, session.snapshot.revision,
             "presetNotFound", {} };

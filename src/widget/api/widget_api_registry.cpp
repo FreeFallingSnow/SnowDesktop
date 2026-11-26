@@ -150,6 +150,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "settings.folderReference",
     "settings.groups",
     "settings.multiSelect",
+    "settings.presets.showWhen",
     "settings.range",
     "settings.secretReference",
     "settings.select.localizedOptions",

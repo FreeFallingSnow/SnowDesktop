@@ -5,6 +5,11 @@ local settings = {
             id = "transparent",
             label = l10n.tr("lua_widget.analog_clock.preset_transparent"),
             default = true,
+            showWhen = widget.hasFeature("settings.presets.showWhen") and {
+                key = "faceTheme",
+                operator = "notEquals",
+                value = "theme",
+            } or nil,
             values = {
                 bg = 0x000000,
                 border = 0x000000,
@@ -17,7 +22,7 @@ local settings = {
     fields = {
         {
             key = "faceTheme",
-            agentDescription = "Light and Dark draw a solid clock face and share one widget appearance. Use Widget Appearance draws the dial using a separate saved widget appearance and matches its foreground colors. Returning to Light or Dark restores the appearance from before entering this mode. Transparent Face is unavailable in Use Widget Appearance. The first activation from Transparent Face starts with Follow Global. Selecting Transparent Face while in this mode restores its last valid appearance.",
+            agentDescription = "Light and Dark draw a solid clock face and share one widget appearance. Use Widget Appearance draws the dial using a separate saved widget appearance and matches its foreground colors. Returning to Light or Dark restores the appearance from before entering this mode. The appearance preset list hides Transparent Face in Use Widget Appearance. The first activation from Transparent Face starts with Follow Global.",
             label = l10n.tr("lua_widget.analog_clock.face_theme"),
             type = "select",
             default = "light",

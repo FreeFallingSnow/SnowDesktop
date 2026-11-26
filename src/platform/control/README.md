@@ -434,7 +434,9 @@ completed. Font changes and some environment operations report restart effects.
 Lua instance `settings.update` accepts one declared key at a time in `changes`,
 as advertised by `updateLimit:1`; it does not promise a multi-setting atomic
 transaction that the existing service cannot provide. Use the native atomic
-preset operation for declared presets. Ordinary values are natural JSON;
+preset operation for declared presets. The catalog lists presets currently
+available to the instance. A Lua preset omitted by its visibility condition
+also returns `presetNotFound` when applied. Ordinary values are natural JSON;
 integers outside JSON's exact range use `{integer:"<decimal>"}`. Whole-instance
 reset restores ordinary settings only. Secret text is never included in get or
 catalog results; secret write/clear, filesystem handles, references, searches,

@@ -70,6 +70,7 @@ struct LuaWidgetManifest
         std::unordered_map<std::string, std::vector<std::string>>
             arrayValues;
         bool isDefault = false;
+        std::optional<SettingCondition> showWhen;
     };
     bool hasManifest = false;          ///< 是否存在清单文件
     int schemaVersion = 0;             ///< 组件包清单版本

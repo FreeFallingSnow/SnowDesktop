@@ -130,6 +130,7 @@
 ---@field id string
 ---@field label string
 ---@field default? boolean
+---@field showWhen? SnowSettingCondition Offer and apply this Lua preset only when the condition matches. Requires settings.presets.showWhen.
 ---@field values table<string, string|number|boolean|string[]> May include host-owned __contentTheme=0|1 so a component appearance preset keeps host chrome aligned with its foreground.
 
 ---@class SnowWidgetSettings

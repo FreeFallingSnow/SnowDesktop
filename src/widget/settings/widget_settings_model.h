@@ -148,6 +148,7 @@ struct WidgetSettingPresetSchema
      * and never become part of the public v2 schema.
      */
     std::map<std::string, std::string, std::less<>> hostAppearanceValues;
+    std::optional<WidgetSettingCondition> showWhen;
 
     bool operator==(const WidgetSettingPresetSchema&) const = default;
 };
@@ -818,6 +819,25 @@ inline void ScrubOpaqueWidgetSettingFieldState(
         field.opaque.displayLabel.clear();
 }
 
+inline bool WidgetSettingConditionMatches(const WidgetSettingFieldState& source,
+    const WidgetSettingCondition& condition)
+{
+    std::vector<std::string> expected = condition.values;
+    if (source.schema.Kind() == WidgetSettingKind::Range)
+    {
+        for (auto& value : expected)
+        {
+            double parsed = source.schema.minimum;
+            if (ParseFiniteSettingNumber(value, parsed))
+                value = FormatWidgetSettingNumber(SnapRangeSettingValue(
+                    parsed, source.schema.minimum, source.schema.maximum,
+                    source.schema.step));
+        }
+    }
+    return EvaluateSettingCondition(condition.operation,
+        WidgetSettingConditionValues(source), expected);
+}
+
 inline void ResolveWidgetSettingFieldStates(
     std::vector<WidgetSettingFieldState>& fields)
 {
@@ -832,22 +852,8 @@ inline void ResolveWidgetSettingFieldStates(
 
     const auto evaluate = [&](const WidgetSettingCondition& condition) {
         const auto source = byKey.find(condition.key);
-        if (source == byKey.end()) return false;
-        std::vector<std::string> expected = condition.values;
-        if (source->second->schema.Kind() == WidgetSettingKind::Range)
-        {
-            for (auto& value : expected)
-            {
-                double parsed = source->second->schema.minimum;
-                if (ParseFiniteSettingNumber(value, parsed))
-                    value = FormatWidgetSettingNumber(SnapRangeSettingValue(
-                        parsed, source->second->schema.minimum,
-                        source->second->schema.maximum,
-                        source->second->schema.step));
-            }
-        }
-        return EvaluateSettingCondition(condition.operation,
-            WidgetSettingConditionValues(*source->second), expected);
+        return source != byKey.end() &&
+            WidgetSettingConditionMatches(*source->second, condition);
     };
 
     for (auto& field : fields)
@@ -887,6 +893,7 @@ inline bool NormalizeWidgetSettingPreset(
     normalized.label = input.label;
     normalized.hostAppearanceValues = input.hostAppearanceValues;
     normalized.isDefault = input.isDefault;
+    normalized.showWhen = input.showWhen;
     errorCode.clear();
 
     for (const auto& [key, value] : input.values)

@@ -3382,6 +3382,12 @@ settings = {
 
 使用前分别探测 `settings.dependencies`（`dependsOn/enabledWhen`）和 `settings.showWhen`。
 
+Lua 声明的 `settings.presets` 也可以用相同的 `showWhen` 条件语法，能力名为
+`settings.presets.showWhen`。条件读取已声明字段的当前值。条件不满足时，设置页的预设列表和
+应用控制目录省略该预设，显式应用该预设的请求也会被拒绝。可选列表的变化不写入已存值，
+带 `default=true` 的预设仍用于初始化默认值。兼容旧宿主时，用
+`widget.hasFeature("settings.presets.showWhen")` 检测能力后再声明条件。
+
 `appSearch` 设置使用 `key` 保存用户选中的应用显示名，使用 `searchKey` 保存搜索文字；
 宿主复用应用索引并在后台完成匹配，在设置页直接显示候选项。`emptyLabel` 和
 `noResultsLabel` 必须使用组件清单中的本地化文本。该控件只负责设置交互；组件运行时仍应
