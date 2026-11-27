@@ -15,6 +15,7 @@
 #include <atomic>
 #include <new>
 #include <shldisp.h>
+#include <shlobj.h>
 #include <utility>
 #include <filesystem>
 
@@ -196,9 +197,20 @@ bool DesktopApp::QueueShellFileOperation(
         return false;
     }
 
-    const bool deferRemoval = std::ranges::any_of(request.steps, [](const auto& step) {
+    const bool hasDeletion = std::ranges::any_of(request.steps, [](const auto& step) {
         return step.function == FO_DELETE;
     });
+    bool deferRemoval = false;
+    if (hasDeletion)
+    {
+        SHELLSTATE shellState{};
+        SHGetSetSettings(&shellState, SSF_NOCONFIRMRECYCLE, FALSE);
+        deferRemoval = std::ranges::any_of(request.steps, [&](const auto& step) {
+            return step.function == FO_DELETE &&
+                (!(step.flags & FOF_ALLOWUNDO) ||
+                    (!(step.flags & FOF_NOCONFIRMATION) && !shellState.fNoConfirmRecycle));
+        });
+    }
     std::vector<std::wstring> removedPaths;
     std::vector<DockEntry> removalPins;
     std::shared_ptr<ShellRemovalSources> removal;
@@ -227,15 +239,15 @@ bool DesktopApp::QueueShellFileOperation(
             }
         }
         auto callback = std::move(result->callback);
-        result->callback = [this, removal, removalPins, deferRemoval,
+        result->callback = [this, removal, removalPins, deferRemoval, hasDeletion,
             callback = std::move(callback)](bool succeeded) {
             // A delete may wait for Shell confirmation. Hide only the items
             // observed to have departed, and let the refresh retire their pins.
             const auto& hiddenPaths = deferRemoval ? removal->departed : removal->paths;
             if (deferRemoval) BeginFileRemovalVisibility(hiddenPaths);
             FinishFileRemovalVisibility(hiddenPaths, removal->departed);
-            if (succeeded || deferRemoval) RemoveDesktopKeysFromWidgets(removal->departed);
-            else
+            if (succeeded || hasDeletion) RemoveDesktopKeysFromWidgets(removal->departed);
+            if (!succeeded)
                 for (const auto& container : containers_)
                     if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
                         for (const auto& pin : removalPins) dock->CancelEntryRemoval(pin);
