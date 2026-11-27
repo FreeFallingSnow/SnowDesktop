@@ -276,11 +276,11 @@ inline bool AddMaterialized(State state, const std::vector<std::wstring>& paths,
             continue;
         }
         DockEntry entry{DockEntryType::DesktopItem, key, keepOnDesktop};
-        if (services.freeItemOrder && services.dropSection)
+        if (services.dropSection)
         {
             const auto range = SectionRange(state.entries, *services.dropSection, services);
             insertIndex = std::clamp(insertIndex, range.begin, range.end);
-            entry.freeOrderSection = services.dropSection;
+            if (services.freeItemOrder) entry.freeOrderSection = services.dropSection;
             InsertInSection(state.entries, insertIndex, range, std::move(entry));
         }
         else

@@ -76,7 +76,10 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
             const bool logical = target->GetSlotSurfaceKind() == snowdesktop::slot_contract::SlotSurfaceKind::LuaLogicalSlot;
             save = !logical;
             reload = target->NeedsShellReloadAfterDrop();
-            const bool dockReorder = dynamic_cast<DockContainer*>(target) && dynamic_cast<DockContainer*>(sources.origin);
+            const bool dockReorder = dynamic_cast<DockContainer*>(target) && dynamic_cast<DockContainer*>(sources.origin) &&
+                std::none_of(items.begin(), items.end(), [](const Item* source) {
+                    return dynamic_cast<const DockFrequentItem*>(source) != nullptr;
+                });
             const bool desktop = target == GetDesktopGrid();
             const bool handlesLayout = preview.fileBacked || (snowdesktop::member_drop_layout::OnlyReordersMembers(
                 sources, preview) && !GetOpenPopupWidget() && !IsGroupedWidget(*preview.targetWidget));

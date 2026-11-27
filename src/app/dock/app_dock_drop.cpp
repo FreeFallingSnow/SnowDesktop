@@ -175,7 +175,7 @@ DropReceipt DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         return DropReceipt::Submitted(ExecuteDropPipeline(sourceList, preview), DropAction::Link);
     }
 
-    const bool keepSource = pinFrequent || (mods & MK_CONTROL) != 0;
+    const bool keepSource = (mods & MK_CONTROL) != 0;
     std::vector<DockEntry> additions;
     for (Item* source : sourceItems)
     {
@@ -187,7 +187,7 @@ DropReceipt DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
             if (std::none_of(dockEntries_.begin(), dockEntries_.end(), [&](const auto& entry) {
                 return entry.type == DockEntryType::DesktopItem && PathsEqualInsensitive(entry.reference, key);
             }))
-                additions.push_back({DockEntryType::DesktopItem, key, true});
+                additions.push_back({DockEntryType::DesktopItem, key, keepSource});
             continue;
         }
         if (auto* icon = dynamic_cast<DesktopIcon*>(source))

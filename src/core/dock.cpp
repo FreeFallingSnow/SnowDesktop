@@ -3638,7 +3638,7 @@ std::wstring DockContainer::GetDragHint(Slot* slot, HitRegion region,
         app_ && app_->dragDropController_.IsExternalDragActive(),
         source.hasWidgets || source.hasCollectionGroupEntries ||
             source.hasFileGroupSourceLabels,
-        pinFrequent || (mods & MK_CONTROL) != 0));
+        (mods & MK_CONTROL) != 0));
     if (app_ && !app_->dockSettings_.freeItemOrder && app_->dragSession_.HasContext())
     {
         const bool belongsToFiles = HasOnlyFolderDragSource();

@@ -11,8 +11,7 @@ struct DesktopApp::DockRunningDragState
     std::shared_ptr<DockRunningPinTarget> application;
     std::shared_ptr<DockRunningPinTarget> folder;
     bool explorer = false;
-    bool existingDesktopItem = false;
-    bool resolved = false;
+    bool pinOnly = false;
     std::wstring desktopFolderKey;
     std::uint64_t serial = 0;
     snowdesktop::dock_running_drag::Target target;

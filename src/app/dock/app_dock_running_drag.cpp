@@ -10,6 +10,8 @@
 #include "desktop/desktop_source.h"
 #include "layout/logical_slot_picker_rules.h"
 
+#include <tuple>
+
 namespace drag = snowdesktop::dock_running_drag;
 namespace pin = snowdesktop::dock_running_app_pin;
 
@@ -116,16 +118,30 @@ bool DesktopApp::BeginDockRunningDrag(POINT point)
 {
     const auto found = std::find_if(dockUnpinnedRunningApps_.begin(), dockUnpinnedRunningApps_.end(),
         [&](const auto& app) { return app.presence.Interactive() && app.identityKey == dockPressedRunningAppKey_; });
-    if (found == dockUnpinnedRunningApps_.end() || found->minimizedThumbnail || !mouseDownHit_) return false;
+    if (found == dockUnpinnedRunningApps_.end() || !mouseDownHit_) return false;
+    auto application = found;
+    if (found->minimizedThumbnail)
+    {
+        // The per-window card stays in the task area. Pin its underlying
+        // application only if it still has an unpinned application icon.
+        application = std::find_if(dockUnpinnedRunningApps_.begin(), dockUnpinnedRunningApps_.end(),
+            [&](const auto& app) {
+                return app.presence.Interactive() && !app.minimizedThumbnail &&
+                    (app.window == found->window || std::ranges::find(app.trackedWindows, found->window) != app.trackedWindows.end());
+            });
+        if (application == dockUnpinnedRunningApps_.end()) return false;
+    }
     auto state = std::make_shared<DockRunningDragState>();
-    state->running = *found;
+    state->running = *application;
+    state->running.window = found->window;
+    state->pinOnly = found->minimizedThumbnail != nullptr;
     // The snapshot only identifies the application. The live model remains
     // the sole owner of its bitmap and tracked-window presentation.
     state->running.iconBitmap = nullptr;
     state->serial = ++dockRunningDragSerial_;
     state->explorer = snowdesktop::shortcut_application_rules::IsExplorerExecutable(found->executablePath) &&
         snowdesktop::dock_explorer_pin::IsFolderWindow(found->window);
-    state->existingDesktopItem = FindDesktopItemForDockRunningApp(*found).has_value();
+    const bool resolveApplication = !state->explorer && !FindDesktopItemForDockRunningApp(*application);
     state->visual = std::make_unique<DockRunningItem>(this, nullptr,
         static_cast<size_t>(found - dockUnpinnedRunningApps_.begin()));
     const RECT bounds = mouseDownHit_->GetBounds();
@@ -144,25 +160,29 @@ bool DesktopApp::BeginDockRunningDrag(POINT point)
     UpdateFloatingDockWindowBounds(false);
     DismissDockWindowPreviewUntilLeave();
     if (hwnd_) SetTimer(hwnd_, kNativeDragHoverRecoveryTimerId, kNativeDragHoverRecoveryIntervalMs, nullptr);
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    if (!state->explorer && !resolveApplication) return true;
+
     const std::wstring explorerName = _LW("app.dock.explorer_name");
     const auto desktopSources = state->explorer ? ReadRunningFolderSources(items_, dockEntries_)
         : std::vector<RunningDesktopFolderSource>{};
     const bool submitted = shellVisualWork_.Submit(L"dock-running-drag:" + std::to_wstring(state->serial),
-        [state, explorerName, desktopSources] {
+        [state, explorerName, desktopSources, resolveApplication] {
             auto folder = state->explorer ? ReadDockRunningPinTarget(state->running, true, explorerName) : nullptr;
+            auto applicationTarget = resolveApplication ? ReadDockRunningPinTarget(state->running, false, explorerName) : nullptr;
             const auto key = folder ? MatchRunningFolderSource(folder->folderPath, desktopSources)
                 : std::wstring{};
-            return std::make_pair(std::move(folder), key);
+            return std::tuple{std::move(folder), std::move(applicationTarget), key};
         }, [this, state](const auto& targets) {
-            state->folder = targets.first;
-            state->desktopFolderKey = targets.second;
-            state->resolved = true;
+            const auto& [folder, applicationTarget, folderKey] = targets;
+            state->folder = folder;
+            state->application = applicationTarget;
+            state->desktopFolderKey = folderKey;
             // Presentation-only delivery is allowed while holding the pointer.
             if (dockRunningDrag_ == state && dragSession_.IsActive())
                 UpdateDockRunningDrag(dragSession_.CurrentPoint());
         }, hwnd_, kBackgroundShellReadyMessage);
-    if (!submitted) state->resolved = true;
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    if (!submitted) MessageBeep(MB_ICONWARNING);
     return true;
 }
 
@@ -196,18 +216,21 @@ void DesktopApp::UpdateDockRunningDrag(POINT point)
     {
         dock = GetDockContainerAtPoint(point);
         if (dock) state.target = dock->GetRunningDragTarget(point);
-        const auto desktop = FindDesktopItemForDockRunningApp(*live);
-        const bool mainSource = desktop && *desktop < items_.size() &&
-            (dockSettings_.freeItemOrder || !IsFolderDockEntry({DockEntryType::DesktopItem, items_[*desktop].layoutKey, true}));
-        const auto folderIndex = FindItemIndexByKey(state.desktopFolderKey);
-        const bool folderSource = state.explorer && state.resolved && state.folder &&
-            folderIndex < items_.size() &&
-            IsFolderDockEntry({DockEntryType::DesktopItem, items_[folderIndex].layoutKey, true});
-        state.existingDesktopItem = mainSource || folderSource;
-        const bool explorerFolder = state.explorer && state.resolved && state.folder;
-        if ((state.target.area == drag::Area::Files && !folderSource && !explorerFolder) ||
-            (state.target.area == drag::Area::Fixed && !mainSource && !state.explorer))
-            state.target = {};
+        const auto area = state.target.area;
+        if (area == drag::Area::Running && state.pinOnly) state.target = {};
+        if (area == drag::Area::Fixed || area == drag::Area::Files)
+        {
+            const auto desktop = state.explorer ? std::nullopt : FindDesktopItemForDockRunningApp(*live);
+            const bool useDesktop = desktop && *desktop < items_.size();
+            const bool desktopFolder = useDesktop &&
+                IsFolderDockEntry({DockEntryType::DesktopItem, items_[*desktop].layoutKey, true});
+            const bool desktopAtTarget = useDesktop &&
+                (dockSettings_.freeItemOrder || area == (desktopFolder ? drag::Area::Files : drag::Area::Fixed));
+            const bool shellTarget = state.explorer
+                ? area == drag::Area::Fixed || state.folder != nullptr
+                : area == drag::Area::Fixed && state.application != nullptr;
+            if (!desktopAtTarget && !shellTarget) state.target = {};
+        }
     }
     dragSession_.UpdateTarget(state.target.area == drag::Area::None ? nullptr : dock,
         nullptr, state.target.area == drag::Area::None ? HitRegion::None : HitRegion::Empty);
@@ -222,11 +245,12 @@ std::wstring DesktopApp::GetDockRunningDragHint() const
     if (state.target.area == drag::Area::Running) return _LW("core.drag.release_adjust_order");
     if (state.target.area == drag::Area::Fixed || state.target.area == drag::Area::Files)
     {
+        if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
+            return _LW("core.dock.release_dock_map_full");
         if (state.explorer && (state.target.area == drag::Area::Fixed || state.desktopFolderKey.empty()))
             return _LW(state.target.area == drag::Area::Fixed
                 ? "app.dock.pin_explorer_to_fixed" : "app.dock.pin_current_folder_to_files");
-        return _LW((GetAsyncKeyState(VK_CONTROL) & 0x8000)
-            ? "core.dock.release_dock_map_full" : "core.dock.release_move_dock_ctrl");
+        return _LW("core.dock.release_move_dock_ctrl");
     }
     return {};
 }
@@ -283,8 +307,9 @@ void DesktopApp::QueueDockRunningPin(std::shared_ptr<DockRunningDragState> state
             DockMainEntryCount() + DockFolderEntryCount());
         const std::wstring key = items_[desktop].layoutKey;
         DesktopIcon source(&items_[desktop], nullptr, this);
-        CommitDockDrop({&source}, nullptr, dock, index, mods & MK_CONTROL,
-            DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK, position.section);
+        if (!CommitDockDrop({&source}, nullptr, dock, index, mods & MK_CONTROL,
+            DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK, position.section).Effect())
+            return;
         if (!folder && std::any_of(dockEntries_.begin(), dockEntries_.end(), [&](const auto& entry) {
                 return entry.type == DockEntryType::DesktopItem && entry.reference == ToUpperInvariant(key);
             })) AdoptDockRunningPresentation(state->running.identityKey, desktop);
@@ -293,24 +318,32 @@ void DesktopApp::QueueDockRunningPin(std::shared_ptr<DockRunningDragState> state
     // Explorer always uses the explicit default launcher in Fixed, or the
     // exact visible folder in Files. Application matching can name a different
     // Explorer shortcut with directory arguments and must not substitute it.
+    const bool keepOnDesktop = (mods & MK_CONTROL) != 0;
     if (!state->explorer)
-    if (const auto desktop = FindDesktopItemForDockRunningApp(*live); desktop && *desktop < items_.size())
     {
-        const bool folder = IsFolderDockEntry({DockEntryType::DesktopItem, items_[*desktop].layoutKey, true});
-        if (dockSettings_.freeItemOrder || position.area == (folder ? drag::Area::Files : drag::Area::Fixed))
-            commitExisting(*desktop, folder);
+        if (const auto desktop = FindDesktopItemForDockRunningApp(*live); desktop && *desktop < items_.size())
+        {
+            const bool folder = IsFolderDockEntry({DockEntryType::DesktopItem, items_[*desktop].layoutKey, true});
+            if (dockSettings_.freeItemOrder || position.area == (folder ? drag::Area::Files : drag::Area::Fixed))
+                commitExisting(*desktop, folder);
+        }
+        else if (state->application && position.area == drag::Area::Fixed)
+        {
+            const size_t index = position.Resolve(dockEntries_, DockMainEntryCount(),
+                DockMainEntryCount() + DockFolderEntryCount());
+            if (!PinDockRunningTarget(state->running.identityKey, *state->application, index, position.section, keepOnDesktop))
+                MessageBeep(MB_ICONWARNING);
+        }
         return;
     }
-    // Ordinary running applications still require an existing desktop entry.
-    // Explorer has two well-defined targets and may materialize either one.
-    if (!state->explorer || (position.area != drag::Area::Files && position.area != drag::Area::Fixed)) return;
+    if (position.area != drag::Area::Files && position.area != drag::Area::Fixed) return;
     const auto readSources = [this] { return ReadRunningFolderSources(items_, dockEntries_); };
     const bool folder = position.area == drag::Area::Files;
     const auto sources = folder ? readSources() : std::vector<RunningDesktopFolderSource>{};
     // Snapshot every entry used by duplicate detection. Recheck on delivery;
     // another queued drop may have inserted a matching folder in the meantime.
     const std::wstring explorerName = _LW("app.dock.explorer_name");
-    const auto ready = folder ? state->folder : state->application;
+    const auto ready = folder ? state->folder : nullptr;
     const bool submitted = shellVisualWork_.Submit(L"dock-running-pin:" +
         std::to_wstring(state->serial) + L":" + std::to_wstring(retry),
         [state, ready, explorerName, sources, folder] {
@@ -319,7 +352,7 @@ void DesktopApp::QueueDockRunningPin(std::shared_ptr<DockRunningDragState> state
             auto key = resolved && folder ? MatchRunningFolderSource(resolved->folderPath, sources)
                 : std::wstring{};
             return std::make_pair(std::move(resolved), std::move(key));
-        }, [this, state, position, mods, retry, sources, readSources, commitExisting](const auto& result) {
+        }, [this, state, position, mods, retry, sources, readSources, commitExisting, keepOnDesktop](const auto& result) {
             if (exitRequested_ || !generalSettings_.dockEnabled) return;
             const auto live = std::find_if(dockUnpinnedRunningApps_.begin(), dockUnpinnedRunningApps_.end(),
                 [&](const auto& app) { return app.presence.Interactive() && app.identityKey == state->running.identityKey; });
@@ -340,7 +373,7 @@ void DesktopApp::QueueDockRunningPin(std::shared_ptr<DockRunningDragState> state
             }
             const size_t index = position.Resolve(dockEntries_, DockMainEntryCount(),
                 DockMainEntryCount() + DockFolderEntryCount());
-            if (!PinDockRunningTarget(state->running.identityKey, *target, index, position.section))
+            if (!PinDockRunningTarget(state->running.identityKey, *target, index, position.section, keepOnDesktop))
                 MessageBeep(MB_ICONWARNING);
         }, hwnd_, kBackgroundShellReadyMessage);
     if (!submitted) MessageBeep(MB_ICONWARNING);
@@ -360,12 +393,15 @@ void DesktopApp::AdoptDockRunningPresentation(const std::wstring& runningKey, si
 }
 
 bool DesktopApp::PinDockRunningTarget(const std::wstring& runningKey,
-    const DockRunningPinTarget& target, size_t insertIndex, std::optional<DockEntrySection> section)
+    const DockRunningPinTarget& target, size_t insertIndex, std::optional<DockEntrySection> section,
+    bool keepOnDesktop)
 {
     if (!hwnd_ || !IsWindow(hwnd_) || exitRequested_ || dragSession_.HasContext() ||
         dragDropController_.IsTransportActive()) return false;
     DockContainer* dock = GetDockContainer();
     if (!dock) return false;
+    const auto insertionSection = section.value_or(
+        target.folderPath.empty() ? DockEntrySection::Fixed : DockEntrySection::Files);
     const bool pinned = pin::CreateAndPin([dock] { return dock->HasCapacity(1); },
         [&] { return pin::CreateShortcut(snowdesktop::desktop_source::Directory(),
             SanitizeShortcutFileStem(target.entry.name), target.entry.absolutePidl.get()); },
@@ -373,8 +409,8 @@ bool DesktopApp::PinDockRunningTarget(const std::wstring& runningKey,
             auto item = pin::ReadShortcutItem(path, target.entry.name, target.folderPath.empty());
             if (!item) return false;
             item->layoutKey = ToUpperInvariant(path);
-            item->gridCell = {kDockPageId, 0, 0};
-            if (!AddMaterializedItemsToDock({path}, insertIndex, false, section)) return false;
+            if (!keepOnDesktop) item->gridCell = {kDockPageId, 0, 0};
+            if (!AddMaterializedItemsToDock({path}, insertIndex, keepOnDesktop, insertionSection)) return false;
             items_.push_back(std::move(*item));
             RefreshDesktopItemIndexCache();
             const size_t itemIndex = items_.size() - 1;
@@ -388,25 +424,10 @@ bool DesktopApp::PinDockRunningTarget(const std::wstring& runningKey,
                 dockFolderTargetCache_.Publish(folderKey, cached.ticket,
                     snowdesktop::item_location::FolderTarget{target.folderPath,
                         snowdesktop::item_location::FolderTargetKind::Shortcut, true});
+                // Materialization assigned an order relative to the target
+                // section before the new shortcut's folder type was known.
                 NormalizeDockRecycleBinPosition();
-                // The new path was not in items_ during initial insertion, so
-                // its folder classification could not yet be known. Restore
-                // the requested file-area boundary after publishing it.
-                const auto added = std::find_if(dockEntries_.begin(), dockEntries_.end(), [&](const auto& entry) {
-                    return entry.type == DockEntryType::DesktopItem && entry.reference == ToUpperInvariant(path);
-                });
-                if (!dockSettings_.freeItemOrder && added != dockEntries_.end())
-                {
-                    DockEntry entry = std::move(*added);
-                    entry.userOrder.reset();
-                    dockEntries_.erase(added);
-                    const size_t begin = DockMainEntryCount();
-                    const size_t end = begin + DockFolderEntryCount();
-                    const size_t index = std::clamp(insertIndex, begin, end);
-                    dockEntries_.insert(dockEntries_.begin() + static_cast<std::ptrdiff_t>(index), std::move(entry));
-                    NormalizeDockRecycleBinPosition();
-                    InvalidateDockContainers();
-                }
+                InvalidateDockContainers();
             }
             else
             {

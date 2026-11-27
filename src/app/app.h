@@ -1152,7 +1152,8 @@ private:
     static std::shared_ptr<DockRunningPinTarget> ReadDockRunningPinTarget(
         const DockRunningAppInfo& running, bool folder, const std::wstring& explorerName);
     bool PinDockRunningTarget(const std::wstring& runningKey,
-        const DockRunningPinTarget& target, size_t insertIndex, std::optional<DockEntrySection> section = {});
+        const DockRunningPinTarget& target, size_t insertIndex, std::optional<DockEntrySection> section = {},
+        bool keepOnDesktop = false);
     void AdoptDockRunningPresentation(const std::wstring& runningKey, size_t itemIndex);
     std::vector<size_t> GetFrequentDockItemIndices();
     bool SuppressDesktopWidgetDragTargets() const;
