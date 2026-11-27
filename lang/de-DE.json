@@ -1942,7 +1942,7 @@
   "settings.dock.gestureSwipe": "Streichen",
   "settings.dock.gestureHover": "Verweilen",
   "settings.dock.windowPreviews": "Fenstervorschauen laufender Apps",
-  "settings.dock.windowPreviews.description": "Zeigen Sie mit der Maus auf ein App-Symbol oder wischen Sie vom Symbol zur Bildschirmmitte, um Fenstervorschauen anzuzeigen.",
+  "settings.dock.windowPreviews.description": "Zeige eine größere Fenstervorschau an, indem du auf ein App-Symbol oder eine Fensterminiatur im Dock zeigst oder von dort zum Bildschirminhalt wischst.",
   "edgeLight.direction": "Reflexionsrichtung",
   "edgeLight.direction.description": "Dreht helle und gedämpfte Bereiche; 0° zeigt nach rechts, 90° nach unten.",
   "edgeLight.spread": "Winkel des hellen Bereichs",
@@ -2980,5 +2980,5 @@
   "app.dock.remove_separator": "Trennlinie entfernen",
   "core.drag.dock_section_redirect": "{0} (Leertaste drücken, um „Freie Anordnung“ zu aktivieren)",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "Fenster im Programmsymbol minimieren",
-  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Deaktivieren, um jedes minimierte Fenster einzeln im Aufgabenbereich des Docks anzuzeigen."
+  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Bei deaktivierter Option erscheinen alle geöffneten Fenster einzeln als Miniaturen im Aufgabenbereich des Docks. Angeheftete Symbole dienen als Verknüpfungen."
 }

@@ -1942,7 +1942,7 @@
   "settings.dock.gestureSwipe": "Swipe",
   "settings.dock.gestureHover": "Hover",
   "settings.dock.windowPreviews": "Window thumbnails for running apps",
-  "settings.dock.windowPreviews.description": "Hover over an app icon or swipe from it toward the screen content to see window thumbnails.",
+  "settings.dock.windowPreviews.description": "Hover over an app icon or a task thumbnail, or swipe from it toward the screen content, to see a larger window preview.",
   "edgeLight.direction": "Rotation",
   "edgeLight.direction.description": "Rotates both bright and subdued sectors; 0° points right and 90° points down.",
   "edgeLight.spread": "Bright sector width",
@@ -2980,5 +2980,5 @@
   "app.dock.remove_separator": "Remove separator",
   "core.drag.dock_section_redirect": "{0} (Press Space to enable Free item order)",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "Minimize windows into application icons",
-  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Turn off to show each minimized window separately in the Dock task area."
+  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Turn off to show every open window as a thumbnail in the Dock task area. Pinned icons act as shortcuts."
 }

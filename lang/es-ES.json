@@ -1942,7 +1942,7 @@
   "settings.dock.gestureSwipe": "Deslizar",
   "settings.dock.gestureHover": "Mantener el puntero",
   "settings.dock.windowPreviews": "Miniaturas de ventanas de aplicaciones en ejecución",
-  "settings.dock.windowPreviews.description": "Pasa el puntero sobre el icono de una aplicación o desliza el dedo desde él hacia el interior de la pantalla para ver las miniaturas de las ventanas.",
+  "settings.dock.windowPreviews.description": "Coloca el puntero sobre el icono de una aplicación o una miniatura de tarea, o desliza desde ahí hacia el contenido de la pantalla, para ver una vista previa más grande.",
   "edgeLight.direction": "Dirección del reflejo",
   "edgeLight.direction.description": "Gira las zonas claras y atenuadas; 0° apunta a la derecha y 90° hacia abajo.",
   "edgeLight.spread": "Ángulo de la zona clara",
@@ -2980,5 +2980,5 @@
   "app.dock.remove_separator": "Quitar separador",
   "core.drag.dock_section_redirect": "{0} (pulsa la barra espaciadora para activar «Orden libre»)",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "Minimizar ventanas en los iconos de las aplicaciones",
-  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Desactiva esta opción para mostrar cada ventana minimizada por separado en el área de tareas del Dock."
+  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Desactiva esta opción para mostrar cada ventana abierta como miniatura en el área de tareas del Dock. Los iconos fijados funcionan como accesos directos."
 }

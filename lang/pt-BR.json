@@ -1942,7 +1942,7 @@
   "settings.dock.gestureSwipe": "Deslizar",
   "settings.dock.gestureHover": "Manter o ponteiro",
   "settings.dock.windowPreviews": "Miniaturas das janelas de aplicativos em execução",
-  "settings.dock.windowPreviews.description": "Passe o ponteiro sobre o ícone de um aplicativo ou deslize o dedo a partir dele em direção ao centro da tela para ver as miniaturas das janelas.",
+  "settings.dock.windowPreviews.description": "Passe o cursor sobre um ícone de aplicativo ou uma miniatura de tarefa, ou deslize a partir desse item em direção ao conteúdo da tela, para ver uma prévia maior.",
   "edgeLight.direction": "Direção do reflexo",
   "edgeLight.direction.description": "Gira as áreas claras e atenuadas; 0° aponta para a direita e 90° para baixo.",
   "edgeLight.spread": "Ângulo da área clara",
@@ -2980,5 +2980,5 @@
   "app.dock.remove_separator": "Remover separador",
   "core.drag.dock_section_redirect": "{0} (pressione a barra de espaço para ativar «Ordem livre»)",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "Minimizar janelas nos ícones dos aplicativos",
-  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Desative para exibir cada janela minimizada separadamente na área de tarefas do Dock."
+  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Desative para exibir cada janela aberta como uma miniatura na área de tarefas do Dock. Os ícones fixados funcionam como atalhos."
 }

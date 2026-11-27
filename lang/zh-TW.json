@@ -1942,7 +1942,7 @@
   "settings.dock.gestureSwipe": "掃動",
   "settings.dock.gestureHover": "停留",
   "settings.dock.windowPreviews": "執行中應用程式的視窗縮圖",
-  "settings.dock.windowPreviews.description": "將滑鼠停在應用程式圖示上，或用手指從圖示朝螢幕內容滑動，即可查看視窗縮圖。",
+  "settings.dock.windowPreviews.description": "將指標停留在應用程式圖像或工作縮圖上，或從該項目朝螢幕內容方向滑動，即可查看放大的視窗預覽。",
   "edgeLight.direction": "反光方向",
   "edgeLight.direction.description": "同時旋轉亮區與減淡區；0° 朝右，90° 朝下。",
   "edgeLight.spread": "亮區覆蓋角度",
@@ -2980,5 +2980,5 @@
   "app.dock.remove_separator": "移除分隔線",
   "core.drag.dock_section_redirect": "{0}（按空白鍵開啟自由排列）",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "將視窗最小化至應用程式圖像",
-  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "關閉後，每個最小化的視窗都會個別顯示在 Dock 的工作區。"
+  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "關閉後，所有執行中的視窗都會在 Dock 的工作區個別顯示為縮圖。固定的圖像可作為捷徑。"
 }

@@ -1942,7 +1942,7 @@
   "settings.dock.gestureSwipe": "スワイプ",
   "settings.dock.gestureHover": "ホバー",
   "settings.dock.windowPreviews": "実行中のアプリのウィンドウサムネイル",
-  "settings.dock.windowPreviews.description": "アプリのアイコンにポインターを合わせるか、アイコンから画面の内側へ指でスワイプすると、ウィンドウのサムネイルが表示されます。",
+  "settings.dock.windowPreviews.description": "アプリアイコンやタスクのサムネイルにポインタを合わせるか、そこから画面の内側にスワイプすると、拡大プレビューが表示されます。",
   "edgeLight.direction": "反射の方向",
   "edgeLight.direction.description": "明るい部分と弱い部分を一緒に回転します。0° は右、90° は下を向きます。",
   "edgeLight.spread": "明るい部分の角度",
@@ -2980,5 +2980,5 @@
   "app.dock.remove_separator": "区切り線を削除",
   "core.drag.dock_section_redirect": "{0}（スペースキーを押すと「自由に並べ替え」がオンになります）",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "ウインドウをアプリケーションアイコンにしまう",
-  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "オフにすると、最小化したウインドウがDockのタスク領域に個別に表示されます。"
+  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "オフにすると、開いているすべてのウインドウがDockのタスク領域にサムネイルで個別に表示されます。固定したアイコンはショートカットとして使えます。"
 }

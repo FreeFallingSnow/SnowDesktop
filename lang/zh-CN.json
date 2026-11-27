@@ -1942,7 +1942,7 @@
   "settings.dock.gestureSwipe": "扫动",
   "settings.dock.gestureHover": "悬停",
   "settings.dock.windowPreviews": "运行应用的窗口缩略图",
-  "settings.dock.windowPreviews.description": "悬停在应用图标上，或用手指从图标朝屏幕内容方向滑动，即可查看窗口缩略图。",
+  "settings.dock.windowPreviews.description": "悬停在应用图标或任务缩略图上，或从该项朝屏幕内容方向滑动，即可查看放大的窗口预览。",
   "edgeLight.direction": "反光方向",
   "edgeLight.direction.description": "同时旋转亮区与减淡区；0° 朝右，90° 朝下。",
   "edgeLight.spread": "亮区覆盖角度",
@@ -2980,5 +2980,5 @@
   "app.dock.remove_separator": "删除分割线",
   "core.drag.dock_section_redirect": "{0}（按空格键开启自由排列）",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "将窗口最小化为应用程序图标",
-  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "关闭后，每个最小化的窗口都会单独显示在 Dock 的任务区。"
+  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "关闭后，所有运行窗口都会在 Dock 任务区单独显示为缩略图。固定项用作快捷方式。"
 }

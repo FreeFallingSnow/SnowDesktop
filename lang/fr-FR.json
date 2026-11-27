@@ -1942,7 +1942,7 @@
   "settings.dock.gestureSwipe": "Balayage",
   "settings.dock.gestureHover": "Survol",
   "settings.dock.windowPreviews": "Miniatures des fenêtres des applications ouvertes",
-  "settings.dock.windowPreviews.description": "Survolez l'icône d'une application ou faites glisser le doigt de l'icône vers l'intérieur de l'écran pour afficher les miniatures des fenêtres.",
+  "settings.dock.windowPreviews.description": "Survolez une icône d’application ou une miniature de tâche, ou balayez depuis cet élément vers le contenu de l’écran, pour agrandir l’aperçu.",
   "edgeLight.direction": "Direction du reflet",
   "edgeLight.direction.description": "Fait pivoter les zones claires et atténuées ; 0° pointe à droite et 90° vers le bas.",
   "edgeLight.spread": "Angle de la zone claire",
@@ -2980,5 +2980,5 @@
   "app.dock.remove_separator": "Supprimer le séparateur",
   "core.drag.dock_section_redirect": "{0} (appuyez sur la barre d’espace pour activer « Ordre libre »)",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "Réduire les fenêtres dans les icônes des applications",
-  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Désactivez cette option pour afficher chaque fenêtre réduite séparément dans la zone des tâches du Dock."
+  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Désactivez cette option pour afficher chaque fenêtre ouverte sous forme de miniature dans la zone des tâches du Dock. Les icônes épinglées servent de raccourcis."
 }
