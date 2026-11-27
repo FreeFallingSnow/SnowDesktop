@@ -2977,5 +2977,6 @@
   "settings.dock.freeItemOrder": "Ordre libre",
   "settings.dock.freeItemOrder.description": "Déplacez les éléments entre les zones Épinglés et Fichiers. Vous pouvez déplacer la recherche rapide dans la zone Fichiers.",
   "app.dock.add_separator": "Ajouter un séparateur",
-  "app.dock.remove_separator": "Supprimer le séparateur"
+  "app.dock.remove_separator": "Supprimer le séparateur",
+  "core.drag.dock_section_redirect": "{0} (activez « Ordre libre » pour déposer ici)"
 }

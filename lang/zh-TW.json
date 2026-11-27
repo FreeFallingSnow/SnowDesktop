@@ -2977,5 +2977,6 @@
   "settings.dock.freeItemOrder": "自由排列",
   "settings.dock.freeItemOrder.description": "在釘選區和檔案區之間拖曳項目，快速搜尋可在檔案區內調整位置。",
   "app.dock.add_separator": "新增分隔線",
-  "app.dock.remove_separator": "移除分隔線"
+  "app.dock.remove_separator": "移除分隔線",
+  "core.drag.dock_section_redirect": "{0}（可開啟自由排列）"
 }

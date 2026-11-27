@@ -2977,5 +2977,6 @@
   "settings.dock.freeItemOrder": "Orden libre",
   "settings.dock.freeItemOrder.description": "Arrastra elementos entre la zona de anclados y la de archivos. Puedes colocar la búsqueda rápida donde quieras dentro de la zona de archivos.",
   "app.dock.add_separator": "Añadir separador",
-  "app.dock.remove_separator": "Quitar separador"
+  "app.dock.remove_separator": "Quitar separador",
+  "core.drag.dock_section_redirect": "{0} (activa «Orden libre» para soltar aquí)"
 }

@@ -2977,5 +2977,6 @@
   "settings.dock.freeItemOrder": "Free item order",
   "settings.dock.freeItemOrder.description": "Drag items between the pinned and file sections. Quick Search can be reordered in the file section.",
   "app.dock.add_separator": "Add separator",
-  "app.dock.remove_separator": "Remove separator"
+  "app.dock.remove_separator": "Remove separator",
+  "core.drag.dock_section_redirect": "{0} (Enable Free item order to drop here)"
 }

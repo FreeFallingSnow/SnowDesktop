@@ -2977,5 +2977,6 @@
   "settings.dock.freeItemOrder": "Ordem livre",
   "settings.dock.freeItemOrder.description": "Arraste itens entre as áreas de itens fixados e arquivos. A Busca Rápida pode ser movida dentro da área de arquivos.",
   "app.dock.add_separator": "Adicionar separador",
-  "app.dock.remove_separator": "Remover separador"
+  "app.dock.remove_separator": "Remover separador",
+  "core.drag.dock_section_redirect": "{0} (ative «Ordem livre» para soltar aqui)"
 }

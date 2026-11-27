@@ -2977,5 +2977,6 @@
   "settings.dock.freeItemOrder": "自由排列",
   "settings.dock.freeItemOrder.description": "在固定区和文件区之间拖动条目，快捷搜索可在文件区内调整位置。",
   "app.dock.add_separator": "添加分割线",
-  "app.dock.remove_separator": "删除分割线"
+  "app.dock.remove_separator": "删除分割线",
+  "core.drag.dock_section_redirect": "{0}（可开启自由排列）"
 }

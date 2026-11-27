@@ -2977,5 +2977,6 @@
   "settings.dock.freeItemOrder": "自由に並べ替え",
   "settings.dock.freeItemOrder.description": "ピン留めエリアとファイルエリアの間で項目をドラッグできます。クイック検索はファイルエリア内で移動できます。",
   "app.dock.add_separator": "区切り線を追加",
-  "app.dock.remove_separator": "区切り線を削除"
+  "app.dock.remove_separator": "区切り線を削除",
+  "core.drag.dock_section_redirect": "{0}（ここに置くには「自由に並べ替え」をオン）"
 }

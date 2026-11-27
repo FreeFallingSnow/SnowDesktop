@@ -2977,5 +2977,6 @@
   "settings.dock.freeItemOrder": "자유롭게 정렬",
   "settings.dock.freeItemOrder.description": "고정 영역과 파일 영역 사이에서 항목을 끌어 이동할 수 있습니다. 빠른 검색은 파일 영역 안에서 위치를 바꿀 수 있습니다.",
   "app.dock.add_separator": "구분선 추가",
-  "app.dock.remove_separator": "구분선 제거"
+  "app.dock.remove_separator": "구분선 제거",
+  "core.drag.dock_section_redirect": "{0} (여기에 놓으려면 ‘자유롭게 정렬’을 켜세요)"
 }
