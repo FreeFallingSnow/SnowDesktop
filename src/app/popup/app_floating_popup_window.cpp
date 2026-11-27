@@ -1906,12 +1906,16 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         if (wp == kPopupMouseLeaveTimerId)
         {
             SyncPopupMouseLeaveTimer();
+            const bool trackStackHover = snowdesktop::touch_input::CanHover() ||
+                snowdesktop::private_pointer::Active();
+            if (!trackStackHover && !luaStackIndicator_.stackId.empty())
+                UpdateLuaStackIndicator({});
             POINT point{};
             if (popupMouseLeaveTimerArmed_ && hwnd_ && IsWindow(hwnd_) &&
                 snowdesktop::private_pointer::CursorPosition(&point) && ScreenToClient(hwnd_, &point))
             {
                 UpdatePopupCloseOnMouseLeave(point);
-                if (!luaStackIndicator_.stackId.empty())
+                if (trackStackHover && !luaStackIndicator_.stackId.empty())
                 {
                     POINT screen = point;
                     ClientToScreen(hwnd_, &screen);
@@ -1937,7 +1941,7 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
                     }
                 }
             }
-            else if (!luaStackIndicator_.stackId.empty()) HideLuaStackIndicator();
+            else if (trackStackHover && !luaStackIndicator_.stackId.empty()) HideLuaStackIndicator();
             return 0;
         }
         break;

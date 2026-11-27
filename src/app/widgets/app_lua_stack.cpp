@@ -320,6 +320,16 @@ void DesktopApp::UpdateLuaStackIndicator(POINT point, std::wstring_view changedS
         if (!IsLuaStackIndicatorVisible()) HideLuaStackIndicator();
         return;
     }
+    if (changedStack.empty() && !snowdesktop::touch_input::CanHover() &&
+        !snowdesktop::private_pointer::Active())
+    {
+        // A touch page change owns its feedback window. A passive update
+        // cannot replace it with a stack under the resting mouse cursor.
+        if (!luaStackIndicator_.stackId.empty() &&
+            (!luaStackIndicator_.pageFeedbackTimer || !IsLuaStackIndicatorVisible()))
+            HideLuaStackIndicator();
+        return;
+    }
     // The indicator and its bridge own hover before components underneath.
     const bool indicatorHover = IsLuaStackIndicatorVisible() &&
         (PtInRect(&luaStackIndicator_.bounds, point) || PtInRect(&luaStackIndicator_.bridge, point));
@@ -405,7 +415,8 @@ void DesktopApp::UpdateLuaStackIndicator(POINT point, std::wstring_view changedS
                 if (luaStackIndicator_.pageFeedbackTimer != timer) return;
                 luaStackIndicator_.pageFeedbackTimer = {};
                 const auto index = FindWidgetIndexById(luaStackIndicator_.stackId);
-                if (snowdesktop::touch_input::CanHover() && index < widgets_.size())
+                if ((snowdesktop::touch_input::CanHover() || snowdesktop::private_pointer::Active()) &&
+                    index < widgets_.size())
                 {
                     const RECT currentFrame = GetStandaloneWidgetFrameRect(widgets_[index]);
                     if (PtInRect(&currentFrame, lastMousePoint_) ||
