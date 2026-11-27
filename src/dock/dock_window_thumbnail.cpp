@@ -128,30 +128,22 @@ Pixels CaptureRedirectedSurface(WindowIdentity source)
         return {};
 
     using Microsoft::WRL::ComPtr;
-    struct CaptureDevice
-    {
-        LUID luid{};
-        ComPtr<ID3D11Device> device;
-        ComPtr<ID3D11DeviceContext> context;
-    };
-    thread_local CaptureDevice capture;
-    if (!capture.device || capture.luid.LowPart != luid.LowPart || capture.luid.HighPart != luid.HighPart)
-    {
-        capture = {};
-        ComPtr<IDXGIFactory4> factory;
-        ComPtr<IDXGIAdapter> adapter;
-        if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))) ||
-            FAILED(factory->EnumAdapterByLuid(luid, IID_PPV_ARGS(&adapter))) ||
-            FAILED(D3D11CreateDevice(adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr,
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
-                &capture.device, nullptr, &capture.context)))
-            return {};
-        capture.luid = luid;
-    }
+    // Release graphics resources in ordinary worker code. A thread-local D3D
+    // device would be released in a TLS destructor under the loader lock.
+    ComPtr<IDXGIFactory4> factory;
+    ComPtr<IDXGIAdapter> adapter;
+    ComPtr<ID3D11Device> device;
+    ComPtr<ID3D11DeviceContext> context;
+    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))) ||
+        FAILED(factory->EnumAdapterByLuid(luid, IID_PPV_ARGS(&adapter))) ||
+        FAILED(D3D11CreateDevice(adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
+            &device, nullptr, &context)))
+        return {};
 
     // This is a legacy DXGI shared handle, owned by the underlying surface.
     ComPtr<ID3D11Texture2D> texture;
-    if (FAILED(capture.device->OpenSharedResource(sharedHandle, IID_PPV_ARGS(&texture)))) return {};
+    if (FAILED(device->OpenSharedResource(sharedHandle, IID_PPV_ARGS(&texture)))) return {};
     D3D11_TEXTURE2D_DESC desc{};
     texture->GetDesc(&desc);
     constexpr UINT restricted = D3D11_RESOURCE_MISC_RESTRICTED_CONTENT |
@@ -168,13 +160,13 @@ Pixels CaptureRedirectedSurface(WindowIdentity source)
     desc.BindFlags = desc.MiscFlags = 0;
     desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     ComPtr<ID3D11Texture2D> staging;
-    if (FAILED(capture.device->CreateTexture2D(&desc, nullptr, &staging))) return {};
-    capture.context->CopySubresourceRegion(staging.Get(), 0, 0, 0, 0, texture.Get(), 0, nullptr);
+    if (FAILED(device->CreateTexture2D(&desc, nullptr, &staging))) return {};
+    context->CopySubresourceRegion(staging.Get(), 0, 0, 0, 0, texture.Get(), 0, nullptr);
     D3D11_MAPPED_SUBRESOURCE mapped{};
-    if (FAILED(capture.context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) return {};
+    if (FAILED(context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) return {};
     Pixels pixels = SamplePixels(mapped.pData, mapped.RowPitch,
         static_cast<int>(desc.Width), static_cast<int>(desc.Height));
-    capture.context->Unmap(staging.Get(), 0);
+    context->Unmap(staging.Get(), 0);
     if (!AllowsRedirectedSurface(source)) return {};
     return pixels;
 }

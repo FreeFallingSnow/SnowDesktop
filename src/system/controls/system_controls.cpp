@@ -174,7 +174,6 @@ struct Service::Impl
     std::shared_ptr<std::atomic_bool> sampleCanceled = std::make_shared<std::atomic_bool>(false);
     std::jthread sampler;
     std::vector<std::jthread> executors;
-    std::size_t activeWorkers = 0;
     // Reserve one physical source across Sample, Execute/readback and Release.
     // Backend locks are not an ownership boundary: a release queued before an
     // executor's readback could otherwise close and then recreate its resources.
@@ -183,19 +182,6 @@ struct Service::Impl
     std::uint64_t next = 0, revision = 0;
     bool stopping = false;
     explicit Impl(std::shared_ptr<Backend> value) : backend(value ? std::move(value) : CreateWindowsBackend()) {}
-    // Call with mutex held. Once the worker reports completion it no longer
-    // uses this state, even if Windows is still running thread-detach handlers.
-    std::jthread StartWorker(void (Impl::*run)(std::stop_token))
-    {
-        std::jthread worker([this, run](std::stop_token token) {
-            (this->*run)(token);
-            std::lock_guard guard(mutex);
-            --activeWorkers;
-            changed.notify_all();
-        });
-        ++activeWorkers;
-        return worker;
-    }
     std::map<std::string, std::chrono::milliseconds> Sources()
     {
         std::map<std::string, std::chrono::milliseconds> result;
@@ -303,7 +289,7 @@ struct Service::Impl
             }
             changed.notify_all();
         }
-        // Report completion only after returning from COM cleanup.
+        // Shutdown releases only after both sampling and executors have joined.
         if (SUCCEEDED(apartment)) CoUninitialize();
     }
     void Finish(const std::shared_ptr<Work>& work, Result result)
@@ -403,7 +389,7 @@ bool Service::Subscribe(std::string consumer, std::string topic, std::chrono::mi
     const auto scheduled = impl_->due.find(source);
     if (scheduled == impl_->due.end()) impl_->due[source] = Clock::now();
     else scheduled->second = (std::min)(scheduled->second, Clock::now() + interval);
-    if (!impl_->sampler.joinable()) impl_->sampler = impl_->StartWorker(&Impl::Samples);
+    if (!impl_->sampler.joinable()) impl_->sampler = std::jthread([this](std::stop_token token) { impl_->Samples(token); });
     impl_->changed.notify_all(); return true;
 }
 bool Service::Unsubscribe(std::string_view consumer, std::string_view topic)
@@ -472,13 +458,9 @@ std::uint64_t Service::Start(std::string consumer, Request request)
             Target(previous->request) == Target(work->request)) previous->cancel.canceled->store(true);
     }
     impl_->active[work->id] = work; impl_->pending.push_back(work);
-    if (!impl_->sampler.joinable()) impl_->sampler = impl_->StartWorker(&Impl::Samples);
-    if (impl_->executors.empty())
-    {
-        impl_->executors.reserve(3);
-        for (unsigned index = 0; index < 3; ++index)
-            impl_->executors.emplace_back(impl_->StartWorker(&Impl::Execute));
-    }
+    if (!impl_->sampler.joinable()) impl_->sampler = std::jthread([this](std::stop_token token) { impl_->Samples(token); });
+    if (impl_->executors.empty()) for (unsigned index = 0; index < 3; ++index)
+        impl_->executors.emplace_back([this](std::stop_token token) { impl_->Execute(token); });
     impl_->changed.notify_all(); return work->id;
 }
 bool Service::Cancel(std::uint64_t id)
@@ -505,19 +487,16 @@ void Service::Invalidate(std::string_view source)
 void Service::Shutdown()
 {
     {
-        std::unique_lock guard(impl_->mutex);
+        std::lock_guard guard(impl_->mutex);
         if (impl_->stopping) return;
         impl_->stopping = true; impl_->wake = {}; impl_->sampleCanceled->store(true);
         for (const auto& [id, work] : impl_->active) { (void)id; work->cancel.canceled->store(true); }
         impl_->sampler.request_stop();
         for (auto& executor : impl_->executors) executor.request_stop();
         impl_->changed.notify_all();
-        impl_->changed.wait(guard, [this] { return impl_->activeWorkers == 0; });
     }
-    // Work and COM cleanup have finished. The native thread handle can stay
-    // unsignaled while graphics drivers process DLL thread-detach callbacks.
-    if (impl_->sampler.joinable()) impl_->sampler.detach();
-    for (auto& executor : impl_->executors) if (executor.joinable()) executor.detach();
+    if (impl_->sampler.joinable()) impl_->sampler.join();
+    for (auto& executor : impl_->executors) if (executor.joinable()) executor.join();
     for (const auto* source : {"audio", "brightness", "wifi", "bluetooth", "power", "media", "hotspot", "vpn"}) impl_->backend->Release(source);
     impl_->pending.clear(); impl_->active.clear();
 }
