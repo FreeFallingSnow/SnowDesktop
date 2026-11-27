@@ -16,6 +16,7 @@ namespace snowdesktop::background_menu_order
 // Only explicitly marked host background menus participate. Item menus,
 // author-defined element menus and every nested cascade keep their own order.
 inline constexpr ULONG_PTR kRootTag = 0x53444247;
+inline constexpr UINT kLuaStackSwitchFirst = 50000;
 
 inline bool Mark(HMENU menu)
 {
@@ -95,6 +96,7 @@ inline Position Resolve(const modern_menu::Item& item)
         HasChild(item, kContextWidgetSortByName)) return {Group::Content, 40};
     if (HasChild(item, kContextWidgetListColumnsFirst)) return {Group::Content, 50};
     if (HasChild(item, kContextWidgetDetailName)) return {Group::Content, 60};
+    if (HasChild(item, kLuaStackSwitchFirst)) return {Group::Behavior, 40};
     if (item.builtinIcon == menu_icon::BuiltinIcon::Display) return {Group::Content, 30};
     if (item.glyph == menu_fluent_glyphs::kIconPersonalization) return {Group::Appearance, 0};
     if (HasChild(item, kContextWidgetDemoCategoryFirst)) return {Group::Appearance, 10};

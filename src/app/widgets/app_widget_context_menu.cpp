@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "ui/input/touch_input.h"
 #include "app/app.h"
 #include "common/l10n.h"
 #include "widget/runtime/widget_engine.h"
@@ -23,12 +24,15 @@
 
 #include <commctrl.h>
 #include <functional>
+#include <unordered_map>
 
 // Widget editor, group-tab and generic widget context menus.
 
 namespace
 {
+using snowdesktop::background_menu_order::kLuaStackSwitchFirst;
 constexpr UINT kLuaStackRelease = 43788;
+constexpr UINT kLuaStackSwitchLast = 65534;
 constexpr UINT kDockChooseIcon = 43770;
 constexpr UINT kDockRestoreIcon = 43771;
 constexpr UINT kDockBeautifyIcon = 43786, kDockInheritIcon = 43787;
@@ -905,6 +909,12 @@ void DesktopApp::ShowWidgetContextMenu(
                 widget.gridSpan.rows);
     const bool showExpandOnHoverOption = snowdesktop::storage_title_bar::UsesTop(
         widget, CurrentPersonalization().scrollableTitleBarOnTop);
+    struct StackSwitchChoice
+    {
+        std::wstring memberId;
+        std::wstring title;
+    };
+    std::vector<StackSwitchChoice> stackSwitchChoices;
     if (!luaElementMenu)
     {
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -957,6 +967,51 @@ void DesktopApp::ShowWidgetContextMenu(
         }
         if (!stackMenuId.empty())
         {
+            std::unordered_map<std::wstring, size_t> titleCounts;
+            for (const auto& memberId : visibilityOwner.childWidgetIds)
+            {
+                if (stackSwitchChoices.size() > kLuaStackSwitchLast - kLuaStackSwitchFirst) break;
+                const size_t index = FindWidgetIndexById(memberId);
+                if (index >= widgets_.size() || widgets_[index].type != DesktopWidgetType::LuaScript)
+                    continue;
+                const auto& member = widgets_[index];
+                auto title = member.title.empty()
+                    ? WidgetEngine::GetWidgetDisplayName(member.packageId) : member.title;
+                std::ranges::replace(title, L'\t', L' ');
+                ++titleCounts[title];
+                stackSwitchChoices.push_back({memberId, std::move(title)});
+            }
+            if (stackSwitchChoices.size() > 1)
+            {
+                const HMENU switchMenu = CreatePopupMenu();
+                const auto* active = ResolveLuaWidgetContent(&visibilityOwner);
+                bool complete = switchMenu != nullptr;
+                for (size_t i = 0; complete && i < stackSwitchChoices.size(); ++i)
+                {
+                    const auto& choice = stackSwitchChoices[i];
+                    auto label = choice.title;
+                    if (label.empty() || titleCounts.at(choice.title) > 1)
+                        label += L" (" + std::to_wstring(i + 1) + L")";
+                    for (size_t pos = label.find(L'&'); pos != std::wstring::npos;
+                         pos = label.find(L'&', pos + 2))
+                        label.insert(pos, 1, L'&');
+                    const UINT flags = MF_STRING |
+                        (active && active->id == choice.memberId ? MF_CHECKED : 0);
+                    complete = AppendMenuW(switchMenu, flags,
+                        kLuaStackSwitchFirst + static_cast<UINT>(i), label.c_str()) != FALSE;
+                }
+                if (complete && AppendMenuW(menu, MF_POPUP,
+                    reinterpret_cast<UINT_PTR>(switchMenu), _LW("app.lua_stack.switch_to")))
+                    setFluentIcon(menu, reinterpret_cast<UINT_PTR>(switchMenu),
+                        snowdesktop::menu_fluent_glyphs::kPages);
+                else
+                {
+                    if (switchMenu) DestroyMenu(switchMenu);
+                    stackSwitchChoices.clear();
+                }
+            }
+            else
+                stackSwitchChoices.clear();
             AppendMenuW(menu, MF_STRING, kLuaStackRelease, _LW("app.lua_stack.release"));
             setFluentIcon(menu, kLuaStackRelease, L"\uF582");
         }
@@ -1276,6 +1331,22 @@ void DesktopApp::ShowWidgetContextMenu(
         {
             widgetEngine_->InvokeMenu(menuWidgetId, luaMenuActions[itemIndex]);
             InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        return;
+    }
+
+    if (command >= kLuaStackSwitchFirst &&
+        command - kLuaStackSwitchFirst < stackSwitchChoices.size())
+    {
+        const bool touch = !snowdesktop::private_pointer::Active() &&
+            snowdesktop::touch_input::IsCurrentTouchInput();
+        RestoreDesktopWindowLayer();
+        RestoreInteractionInputFocus();
+        const auto& choice = stackSwitchChoices[command - kLuaStackSwitchFirst];
+        if (SelectLuaStackMember(stackMenuId, choice.memberId))
+        {
+            if (touch) SelectWidgetInteractionOwner(stackMenuId);
+            UpdateLuaStackIndicator(lastMousePoint_, stackMenuId);
         }
         return;
     }
