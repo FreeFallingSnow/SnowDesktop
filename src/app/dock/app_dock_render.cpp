@@ -607,7 +607,7 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         rect.left + (rect.right - rect.left + iconSize) / 2,
         rect.top + (rect.bottom - rect.top + iconSize) / 2
     };
-    const bool lt = (CurrentDockAppearance(dockMonitor).contentTheme == 1);
+    const bool darkText = CurrentDockAppearance(dockMonitor).contentTheme == 1;
     const bool verticalDock = dockSettings_.position == DockPosition::Left ||
         dockSettings_.position == DockPosition::Right;
     if (app.minimizedThumbnail)
@@ -623,8 +623,11 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         const float height = frame.bottom - frame.top;
 
         ComPtr<ID2D1SolidColorBrush> fill;
-        const float surface = lt ? 0.88f : 0.20f;
-        if (SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(surface, surface, surface, 0.84f * presence), &fill)))
+        const float placeholder = darkText ? 0.88f : 0.20f;
+        const auto backdrop = thumbnail
+            ? D2D1::ColorF(darkText ? D2D1::ColorF::White : D2D1::ColorF::Black, 0.24f * presence)
+            : D2D1::ColorF(placeholder, placeholder, placeholder, 0.84f * presence);
+        if (SUCCEEDED(ctx->CreateSolidColorBrush(backdrop, &fill)))
         {
             const float radius = edge * 0.07f;
             ctx->FillRoundedRectangle(D2D1::RoundedRect(frame, radius, radius), fill.Get());
@@ -641,7 +644,7 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         }
         else if (fill)
         {
-            const float detail = lt ? 0.47f : 0.68f;
+            const float detail = darkText ? 0.47f : 0.68f;
             fill->SetColor(D2D1::ColorF(detail, detail, detail, 0.7f * imageOpacity));
             ctx->DrawLine(D2D1::Point2F(frame.left + width * 0.16f, frame.top + height * 0.22f),
                 D2D1::Point2F(frame.left + width * 0.84f, frame.top + height * 0.22f), fill.Get());
@@ -686,7 +689,7 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         DrawDockAttentionDot(ctx, iconRect, presence);
     if (state == 2)
     {
-        DrawDockSelectionIndicator(ctx, iconRect, lt);
+        DrawDockSelectionIndicator(ctx, iconRect, darkText);
         return;
     }
 
@@ -718,7 +721,7 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
     const auto indicator =
         snowdesktop::dock_window_rules::
             ResolveDockRunningIndicatorColor(
-                lt, app.foreground, app.minimized);
+                darkText, app.foreground, app.minimized);
     const D2D1_COLOR_F color =
         D2D1::ColorF(
             indicator.red,

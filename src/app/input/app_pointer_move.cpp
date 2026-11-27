@@ -11,7 +11,9 @@
 #include "common/utils.h"
 #include "desktop/desktop_hover_rules.h"
 #include "layout/collection_titleless_rules.h"
+#include "app/dock/persistent_dock_host.h"
 #include "dock/dock_magnification.h"
+#include "dock/dock_window_thumbnail.h"
 #include "widget/view/widget_composition_layer_rules.h"
 #include "widget/runtime/widget_visibility_rules.h"
 #include "widget/view/widget_scroll_rules.h"
@@ -25,6 +27,20 @@
 
 // Middle-button behavior and pointer-move drag updates.
 
+namespace
+{
+const DockRunningAppInfo* MinimizedDockThumbnailAtPoint(const DockContainer& dock, POINT point,
+    const std::vector<DockRunningAppInfo>& apps)
+{
+    const auto* item = dock.RunningItemAtPoint(point);
+    if (!item || item->GetRunningIndex() >= apps.size()) return nullptr;
+    const auto& app = apps[item->GetRunningIndex()];
+    if (!app.minimizedThumbnail || !IsIconic(app.window)) return nullptr;
+    const auto identity = snowdesktop::dock_window_thumbnail::WindowIdentity::Capture(app.window);
+    return identity.IsCurrent() && identity.Key() == app.identityKey ? &app : nullptr;
+}
+}
+
 void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
 {
     ClearDesktopSurfaceKeyboardFocus();
@@ -33,19 +49,39 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
         (HasActiveContextMenuSession() && dragSession_.HasContext())) return;
     CancelPopupHover(true);
     CancelRenameClick();
-    (void)wp;
     if (renameController_.IsActive())
         CommitRename(false);
     if (!luaWidgetPanelRequest_.widgetId.empty() &&
         luaWidgetPanelRequest_.modal)
         return;
-    if (mouseDown_ || dragSession_.IsActive() ||
+    if (mouseDown_ || middleButtonWidgetMove_ || dragSession_.IsActive() ||
         widgetAction_ != WidgetAction::None || largeIconGesture_)
         return;
 
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     if (quickNavigation_->open) return;
-    if (GetDockContainerAtPoint(pt)) return;
+    if (auto* dock = GetDockContainerAtPoint(pt))
+    {
+        if (dockSettings_.minimizeWindowsIntoApplicationIcon || HasActiveContextMenuSession() ||
+            dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
+            snowdesktop::touch_input::routingTouch || (wp & (MK_LBUTTON | MK_RBUTTON)))
+            return;
+        const auto* card = MinimizedDockThumbnailAtPoint(*dock, pt, dockUnpinnedRunningApps_);
+        if (!card || IsDockWindowClosePending(card->window)) return;
+        const HWND target = card->window;
+        auto identity = card->identityKey;
+        const auto* host = FindPersistentDockHost(dock);
+        const HWND capture = host && IsDockHostedByPersistentHost(dock) ? host->hwnd : hwnd_;
+        snowdesktop::private_pointer::SetPointerCapture(capture);
+        if (snowdesktop::private_pointer::Capture() != capture) return;
+        // Use the existing middle-button capture and its cancellation path.
+        // Record window identity so a moving Dock cannot retarget this press.
+        middleButtonWidgetMove_ = true;
+        dockPressedContainer_ = dock;
+        dockPressedRunningAppKey_ = std::move(identity);
+        dockPressedTargetWindow_ = target;
+        return;
+    }
     if (IsCollectionPopupInteractive() &&
         popupWidgetIndex_ < widgets_.size() &&
         !(folderPreview_ && folderPreview_->inlineBounds && PtInRect(&*folderPreview_->inlineBounds, pt)))
@@ -138,6 +174,24 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
 void DesktopApp::OnMiddleButtonUpAt(WPARAM wp, POINT point)
 {
     if (!middleButtonWidgetMove_) return;
+    if (dockPressedContainer_ && dockPressedTargetWindow_)
+    {
+        const bool hasCapture = IsOwnedPointerCaptureWindow(snowdesktop::private_pointer::Capture());
+        const auto* dock = hasCapture ? GetDockContainerAtPoint(point) : nullptr;
+        const auto* card = dock && dock == dockPressedContainer_ &&
+            !dockSettings_.minimizeWindowsIntoApplicationIcon && !(wp & (MK_LBUTTON | MK_RBUTTON))
+            ? MinimizedDockThumbnailAtPoint(*dock, point, dockUnpinnedRunningApps_) : nullptr;
+        const auto target = card && card->window == dockPressedTargetWindow_ &&
+            card->identityKey == dockPressedRunningAppKey_
+            ? snowdesktop::dock_window_thumbnail::WindowIdentity::Capture(card->window)
+            : snowdesktop::dock_window_thumbnail::WindowIdentity{};
+        middleButtonWidgetMove_ = false;
+        ClearDockPressedState();
+        if (hasCapture) ReleaseCapturePreservingPointerState();
+        if (target.IsCurrent() && IsIconic(target.window) && !IsDockWindowClosePending(target.window))
+            CloseDockWindowFromPreview(target.window);
+        return;
+    }
     if (!dragSession_.IsActive() && widgetAction_ == WidgetAction::None)
     {
         // A middle click selects the large icon without entering any launch,
