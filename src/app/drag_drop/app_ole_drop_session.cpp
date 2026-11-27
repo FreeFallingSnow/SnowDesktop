@@ -997,6 +997,8 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                 dragSession_.TargetSlot(),
                 dragSession_.TargetRegion())
             : 0;
+    const auto externalDockSection = externalDockMappingTarget && dockSettings_.freeItemOrder
+        ? std::optional{externalDropDock->GetSectionAtPoint(clientPoint)} : std::nullopt;
     dragDropController_.EndExternalDrag();
     if (desktopIconsHidden_ &&
         !IsRetainedContainer(
@@ -2273,7 +2275,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             {
                 const auto mappingEffect = snowdesktop::dock_drop_rules::ChooseExternalMappingEffect(*effect);
                 const bool pinned = mappingEffect != DROPEFFECT_NONE &&
-                    AddMaterializedItemsToDock(dropPaths, externalDockInsertIndex, true);
+                    AddMaterializedItemsToDock(dropPaths, externalDockInsertIndex, true, externalDockSection);
                 if (pinned) { RequestLayoutSave(); RequestShellRefresh(); }
                 EndDragSession();
                 *effect = pinned ? mappingEffect : DROPEFFECT_NONE;
@@ -2305,6 +2307,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             desktopPreview.pinMaterializedItemsToDock = true;
             desktopPreview.dockInsertIndex =
                 externalDockInsertIndex;
+            desktopPreview.dockSection = externalDockSection;
             FileOperationCompletion asyncCompletion;
             const bool sourceSupportsAsync =
                 PrepareOleAsyncFileOperation(

@@ -681,7 +681,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             if (entryIndex < dockEntries_.size())
             {
                 ClearSelection();
-                if (dockItem->GetEntryType() == DockEntryType::Separator)
+                if (IsDockLayoutEntry(dockItem->GetEntryType()))
                 {
                     ShowDockContextMenu(screenPt);
                     return;

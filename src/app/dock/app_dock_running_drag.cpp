@@ -245,10 +245,11 @@ void DesktopApp::CommitDockRunningDrag(POINT point, int mods)
     if (!state || state->target.area == drag::Area::None) return;
     const auto target = state->target;
     drag::PinPosition position{target.area, target.index};
+    position.section = target.section;
     if (target.area != drag::Area::Running)
     {
-        const size_t begin = target.area == drag::Area::Files ? DockMainEntryCount() : 0;
-        const size_t end = target.area == drag::Area::Files
+        const size_t begin = position.UsesFileSection() ? DockMainEntryCount() : 0;
+        const size_t end = position.UsesFileSection()
             ? DockMainEntryCount() + DockFolderEntryCount() : DockMainEntryCount();
         if (target.index < end) position.before = dockEntries_[target.index];
         if (target.index > begin) position.after = dockEntries_[target.index - 1];
@@ -282,7 +283,8 @@ void DesktopApp::QueueDockRunningPin(std::shared_ptr<DockRunningDragState> state
             DockMainEntryCount() + DockFolderEntryCount());
         const std::wstring key = items_[desktop].layoutKey;
         DesktopIcon source(&items_[desktop], nullptr, this);
-        CommitDockDrop({&source}, nullptr, dock, index, mods & MK_CONTROL);
+        CommitDockDrop({&source}, nullptr, dock, index, mods & MK_CONTROL,
+            DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK, position.section);
         if (!folder && std::any_of(dockEntries_.begin(), dockEntries_.end(), [&](const auto& entry) {
                 return entry.type == DockEntryType::DesktopItem && entry.reference == ToUpperInvariant(key);
             })) AdoptDockRunningPresentation(state->running.identityKey, desktop);
@@ -338,7 +340,7 @@ void DesktopApp::QueueDockRunningPin(std::shared_ptr<DockRunningDragState> state
             }
             const size_t index = position.Resolve(dockEntries_, DockMainEntryCount(),
                 DockMainEntryCount() + DockFolderEntryCount());
-            if (!PinDockRunningTarget(state->running.identityKey, *target, index))
+            if (!PinDockRunningTarget(state->running.identityKey, *target, index, position.section))
                 MessageBeep(MB_ICONWARNING);
         }, hwnd_, kBackgroundShellReadyMessage);
     if (!submitted) MessageBeep(MB_ICONWARNING);
@@ -358,7 +360,7 @@ void DesktopApp::AdoptDockRunningPresentation(const std::wstring& runningKey, si
 }
 
 bool DesktopApp::PinDockRunningTarget(const std::wstring& runningKey,
-    const DockRunningPinTarget& target, size_t insertIndex)
+    const DockRunningPinTarget& target, size_t insertIndex, std::optional<DockEntrySection> section)
 {
     if (!hwnd_ || !IsWindow(hwnd_) || exitRequested_ || dragSession_.HasContext() ||
         dragDropController_.IsTransportActive()) return false;
@@ -372,7 +374,7 @@ bool DesktopApp::PinDockRunningTarget(const std::wstring& runningKey,
             if (!item) return false;
             item->layoutKey = ToUpperInvariant(path);
             item->gridCell = {kDockPageId, 0, 0};
-            if (!AddMaterializedItemsToDock({path}, insertIndex, false)) return false;
+            if (!AddMaterializedItemsToDock({path}, insertIndex, false, section)) return false;
             items_.push_back(std::move(*item));
             RefreshDesktopItemIndexCache();
             const size_t itemIndex = items_.size() - 1;

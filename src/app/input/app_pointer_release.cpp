@@ -937,6 +937,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
         pressedEntryIndex < dockEntries_.size() &&
         !IsLogicalDockEntryType(dockEntries_[pressedEntryIndex].type) &&
         IsFolderDockEntry(dockEntries_[pressedEntryIndex]);
+    const bool openQuickSearch = entryType == DockEntryType::QuickSearch && dock->IsSearchPoint(point);
 
     size_t appItemIndex = frequentItemIndex;
     if (appItemIndex >= items_.size() && entryType == DockEntryType::DesktopItem)
@@ -1001,6 +1002,11 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     // second release for folders and closed items using double-click launch.
     // In single-click mode the first release already launched the item, so
     // consume the second release without launching it again.
+    if (entryType == DockEntryType::QuickSearch)
+    {
+        if (openQuickSearch) OpenQuickNavigation(QuickNavigationInvocationSource::DockSearch);
+        return true;
+    }
     const size_t trayTargetCount = appItemIndex < items_.size() && !folderEntry ? DockTrayTargetCount(appItemIndex) : 0;
     if (trayTargetCount)
     {

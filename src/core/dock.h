@@ -200,6 +200,7 @@ public:
     size_t GetExternalDropInsertIndex(Slot* slot, HitRegion region) const;
     size_t GetInsertIndexAtPoint(POINT pt) const;
     std::optional<size_t> GetSeparatorInsertIndex(POINT point) const;
+    DockEntrySection GetSectionAtPoint(POINT point) const;
     snowdesktop::dock_running_drag::Target GetRunningDragTarget(POINT pt) const;
     void DrawInsertionPreview(ID2D1DeviceContext* context, size_t insertIndex) const;
 
@@ -220,6 +221,9 @@ private:
     bool IsEdgeAttached() const;
     void RefreshEntryGroupCounts() const;
     float FixedEntryUnits() const;
+    float FolderEntryUnits() const;
+    float SeparatorSlotUnits() const;
+    size_t VisibleModelEntryCount() const;
     bool HasTrailingRecycleBin() const;
     size_t SortableEntryCount() const;
     size_t FolderEntryCount() const;
@@ -230,7 +234,7 @@ private:
     bool HasOnlyFolderDragSource() const;
     bool IsFolderDragSource(Item* source) const;
     bool HasMixedFolderDragSource() const;
-    snowdesktop::dock_folder_rules::InsertRange GetDragInsertRange() const;
+    snowdesktop::dock_folder_rules::InsertRange GetDragInsertRange(POINT point) const;
     void DrawPartitionInsertionPreview(ID2D1DeviceContext* context, size_t insertIndex,
         snowdesktop::dock_folder_rules::InsertRange range, bool folderSource) const;
     int ItemIconSize() const;
@@ -294,6 +298,8 @@ private:
     mutable size_t mainEntryCount_ = 0;
     mutable size_t folderEntryCount_ = 0;
     mutable size_t separatorEntryCount_ = 0;
+    mutable size_t folderSeparatorCount_ = 0;
+    mutable size_t quickSearchEntryIndex_ = static_cast<size_t>(-1);
     mutable int scrollOffset_ = 0;
     std::wstring keyboardFocusKey_;
     // Cache the measured tooltip size separately from its visual anchor so

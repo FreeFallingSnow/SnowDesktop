@@ -16,6 +16,7 @@ struct Target
     Area area = Area::None;
     size_t index = 0;
     long axis = 0;
+    std::optional<DockEntrySection> section;
 };
 
 // The separators belong to the adjoining pin areas. In particular, an empty
@@ -54,12 +55,18 @@ struct PinPosition
     size_t index = 0;
     std::optional<DockEntry> before;
     std::optional<DockEntry> after;
+    std::optional<DockEntrySection> section;
+
+    bool UsesFileSection() const noexcept
+    {
+        return section ? *section == DockEntrySection::Files : area == Area::Files;
+    }
 
     size_t Resolve(const std::vector<DockEntry>& entries, size_t mainEnd,
         size_t filesEnd) const
     {
-        const size_t begin = area == Area::Files ? mainEnd : 0;
-        const size_t end = area == Area::Files ? filesEnd : mainEnd;
+        const size_t begin = UsesFileSection() ? mainEnd : 0;
+        const size_t end = UsesFileSection() ? filesEnd : mainEnd;
         const auto find = [&](const DockEntry& anchor) {
             for (size_t i = begin; i < end; ++i)
                 if (entries[i].type == anchor.type && entries[i].reference == anchor.reference)

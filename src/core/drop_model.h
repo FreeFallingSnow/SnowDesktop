@@ -443,6 +443,7 @@ struct DropPreviewList
     // desktop-item snapshot.
     bool pinMaterializedItemsToDock = false;
     size_t dockInsertIndex = 0;
+    std::optional<DockEntrySection> dockSection;
     HMONITOR dockMonitor = nullptr;
     size_t groupInsertIndex = 0;
     std::wstring activateChildId;
@@ -598,6 +599,7 @@ struct PendingLandingCache
     bool waitingForFiles = false;
     HMONITOR dockMonitor = nullptr;
     size_t dockInsertIndex = 0;
+    std::optional<DockEntrySection> dockSection;
     std::vector<PendingLandingEntry> entries;
     std::vector<PendingFolderPlacement> folderPlacements;
     std::unordered_set<std::wstring> existingDesktopKeys;
@@ -617,6 +619,7 @@ struct PendingLandingCache
         waitingForFiles = false;
         dockMonitor = nullptr;
         dockInsertIndex = 0;
+        dockSection.reset();
         entries.clear();
         folderPlacements.clear();
         existingDesktopKeys.clear();

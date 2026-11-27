@@ -102,6 +102,7 @@ DesktopApp::CaptureExternalSlotDestination(POINT point, DWORD keyState)
         result.preview.fileBacked = true;
         result.preview.pinMaterializedItemsToDock = true;
         result.preview.dockInsertIndex = dock->GetExternalDropInsertIndex(slot, region);
+        if (dockSettings_.freeItemOrder) result.preview.dockSection = dock->GetSectionAtPoint(point);
         result.preview.dockMonitor = dock->GetMonitor();
     }
     else
@@ -280,8 +281,8 @@ bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destinat
         return BuildExternalDesktopPreviewList(anchor, count);
     };
     services.canPinExisting = [this](const auto& files) { return CanPinExistingDesktopPaths(files); };
-    services.pinExisting = [this](const auto& files, size_t index) {
-        return AddMaterializedItemsToDock(files, index, true);
+    services.pinExisting = [this, section = destination.preview.dockSection](const auto& files, size_t index) {
+        return AddMaterializedItemsToDock(files, index, true, section);
     };
     services.dockHasCapacity = [this](size_t count) {
         const auto* dock = GetDockContainer();

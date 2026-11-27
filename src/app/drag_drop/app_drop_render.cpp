@@ -19,6 +19,7 @@ std::uint64_t DesktopApp::BeginFileDropRead(const DropPreviewList& preview, bool
     {
         cache.dockMonitor = preview.dockMonitor;
         cache.dockInsertIndex = preview.dockInsertIndex;
+        cache.dockSection = preview.dockSection;
     }
     else if (preview.targetKind == DropTargetKind::FolderMapping)
     {

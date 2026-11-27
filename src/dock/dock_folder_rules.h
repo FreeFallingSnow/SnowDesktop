@@ -12,6 +12,7 @@ enum class EntryGroup
     Main,
     Folder,
     Recycle,
+    SearchControl,
 };
 
 constexpr int Rank(EntryGroup group)
@@ -24,6 +25,8 @@ constexpr int Rank(EntryGroup group)
         return 1;
     case EntryGroup::Recycle:
         return 2;
+    case EntryGroup::SearchControl:
+        return 3;
     }
     return 0;
 }

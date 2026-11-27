@@ -33,7 +33,7 @@ void DockContainer::PrepareEntryRemoval(size_t entryIndex)
         entryRemovals_->Cancel(RemovalKey((*entries_)[entryIndex]));
         return;
     }
-    if ((*entries_)[entryIndex].type == DockEntryType::Separator || app_->IsRecycleBinDockEntry((*entries_)[entryIndex]) ||
+    if (IsDockLayoutEntry((*entries_)[entryIndex].type) || app_->IsRecycleBinDockEntry((*entries_)[entryIndex]) ||
         !snowdesktop::animation::RuntimeAnimationsEnabled() || !app_->d2dContext_) return;
     // Capture final artwork before its item/widget/resources are destroyed.
     // The snapshot shares the renderer's device, never a model or Item pointer.
@@ -56,7 +56,7 @@ void DockContainer::PrepareEntryRemoval(size_t entryIndex)
     capture->SetTarget(nullptr);
     if (FAILED(drawn)) return;
     entryRemovals_->Prepare(EntryRemovalKeys(), entryIndex,
-        !app_->dockSettings_.freeItemOrder && app_->IsFolderDockEntry((*entries_)[entryIndex])
+        entryIndex >= FolderEntryBegin() && entryIndex < FolderEntryBegin() + FolderEntryCount()
             ? snowdesktop::dock_entry_removal::Group::Folder
             : snowdesktop::dock_entry_removal::Group::Fixed, std::move(bitmap));
 }

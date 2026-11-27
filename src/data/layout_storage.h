@@ -132,6 +132,7 @@ struct DockRecord
     std::optional<float> detailModifiedPosition;
     std::optional<float> detailTypePosition;
     std::optional<float> detailSizePosition;
+    std::optional<int> freeOrderSection;
 };
 
 struct Document

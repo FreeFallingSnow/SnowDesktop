@@ -972,7 +972,9 @@ private:
     int GetDockPageEdgeMargin(const GridPage& page, bool vertical) const;
     snowdesktop::dock_drop_model::Services DockDropServices();
     DropReceipt CommitDockDrop(const std::vector<Item*>& sourceItems, Container* origin,
-        DockContainer* targetDock, size_t insertIndex, int mods, DWORD allowed = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK);
+        DockContainer* targetDock, size_t insertIndex, int mods,
+        DWORD allowed = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK,
+        std::optional<DockEntrySection> section = {});
     snowdesktop::dock_desktop_return::Services DockDesktopReturnServices() const;
     std::vector<snowdesktop::dock_desktop_return::Landing> PlanDockDesktopReturn(
         const std::vector<Item*>& sourceItems, GridCell target) const;
@@ -980,7 +982,7 @@ private:
     void RestoreDockEntriesToDesktop();
     bool AddMaterializedItemsToDock(
         const std::vector<std::wstring>& createdPaths,
-        size_t insertIndex, bool keepOnDesktop = false);
+        size_t insertIndex, bool keepOnDesktop = false, std::optional<DockEntrySection> section = {});
     bool CanPinExistingDesktopPaths(const std::vector<std::wstring>& paths) const;
     bool LaunchDesktopItem(
         size_t itemIndex, bool animateDockLaunch = false, bool allowDockTray = true);
@@ -1140,7 +1142,7 @@ private:
     static std::shared_ptr<DockRunningPinTarget> ReadDockRunningPinTarget(
         const DockRunningAppInfo& running, bool folder, const std::wstring& explorerName);
     bool PinDockRunningTarget(const std::wstring& runningKey,
-        const DockRunningPinTarget& target, size_t insertIndex);
+        const DockRunningPinTarget& target, size_t insertIndex, std::optional<DockEntrySection> section = {});
     void AdoptDockRunningPresentation(const std::wstring& runningKey, size_t itemIndex);
     std::vector<size_t> GetFrequentDockItemIndices();
     bool SuppressDesktopWidgetDragTargets() const;

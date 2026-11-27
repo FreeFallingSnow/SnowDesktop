@@ -578,7 +578,15 @@ enum class DockEntryType
     CollectionGroup,
     FileGroup,
     Separator,
+    QuickSearch,
 };
+
+enum class DockEntrySection { Fixed, Files };
+
+constexpr bool IsDockLayoutEntry(DockEntryType type)
+{
+    return type == DockEntryType::Separator || type == DockEntryType::QuickSearch;
+}
 
 constexpr bool IsGroupWidgetType(DesktopWidgetType type)
 {
@@ -654,6 +662,8 @@ struct DockEntry
     // Runtime rank from the saved array or an explicit Dock edit. Shell
     // classification may regroup entries but must not overwrite this order.
     std::optional<size_t> userOrder;
+    // Custom separators have an explicit section in both modes.
+    std::optional<DockEntrySection> freeOrderSection;
 };
 
 struct DockUsageRecord

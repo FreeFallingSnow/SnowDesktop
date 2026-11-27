@@ -34,9 +34,12 @@ snowdesktop::dock_drop_model::Services DesktopApp::DockDropServices()
 
 
 DropReceipt DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
-    Container* origin, DockContainer* targetDock, size_t insertIndex, int mods, DWORD allowed)
+    Container* origin, DockContainer* targetDock, size_t insertIndex, int mods, DWORD allowed,
+    std::optional<DockEntrySection> section)
 {
     if (!targetDock || sourceItems.empty()) return {};
+    auto services = DockDropServices();
+    if (dockSettings_.freeItemOrder) services.dropSection = section.value_or(targetDock->GetSectionAtPoint(lastMousePoint_));
     if ((mods & (MK_CONTROL | MK_ALT)) != 0)
     {
         std::vector<Item*> files;
@@ -48,7 +51,7 @@ DropReceipt DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         }
         if (files.size() != sourceItems.size())
         {
-            if (!files.empty()) return CommitDockDrop(files, origin, targetDock, insertIndex, mods, allowed);
+            if (!files.empty()) return CommitDockDrop(files, origin, targetDock, insertIndex, mods, allowed, section);
             return {};
         }
     }
@@ -63,7 +66,7 @@ DropReceipt DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
                 const size_t index = dockItem->GetEntryIndex();
                 if (index < dockEntries_.size()) indices.push_back(index);
             }
-        const auto result = snowdesktop::dock_drop_model::Reorder(dockEntries_, std::move(indices), insertIndex, DockDropServices(), true);
+        const auto result = snowdesktop::dock_drop_model::Reorder(dockEntries_, std::move(indices), insertIndex, services, true);
         if (result != snowdesktop::dock_drop_model::ReorderResult::Changed)
         {
             if (result == snowdesktop::dock_drop_model::ReorderResult::MixedSections) MessageBeep(MB_ICONWARNING);
@@ -140,7 +143,6 @@ DropReceipt DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         [](const auto& entry) { return entry.keepOnDesktop; }) ? DropAction::Copy : DropAction::Move;
     if (additions.empty() || !(allowed & DropEffectFromAction(action))) return {};
 
-    auto services = DockDropServices();
     services.capacity = [targetDock](size_t count) { return targetDock->HasCapacity(count); };
     if (!snowdesktop::dock_drop_model::Pin({dockEntries_, widgets_}, additions, insertIndex, services))
     {
@@ -155,10 +157,12 @@ DropReceipt DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
 
 bool DesktopApp::AddMaterializedItemsToDock(
     const std::vector<std::wstring>& createdPaths,
-    size_t insertIndex, bool keepOnDesktop)
+    size_t insertIndex, bool keepOnDesktop, std::optional<DockEntrySection> section)
 {
+    auto services = DockDropServices();
+    services.dropSection = section;
     if (!snowdesktop::dock_drop_model::AddMaterialized({dockEntries_, widgets_}, createdPaths,
-            insertIndex, keepOnDesktop, DockDropServices())) return false;
+            insertIndex, keepOnDesktop, services)) return false;
     RefreshCollectedKeysCache();
     InvalidateDockContainers();
     InvalidateDragStaticScene();
@@ -310,7 +314,7 @@ void DesktopApp::RestoreDockEntriesToDesktop()
     int startSlot = 0;
     for (const DockEntry& entry : dockEntries_)
     {
-        if (entry.keepOnDesktop || entry.type == DockEntryType::Separator) continue;
+        if (entry.keepOnDesktop || IsDockLayoutEntry(entry.type)) continue;
         GridSpan span{ 1, 1 };
         if (IsWidgetDockEntryType(entry.type))
         {

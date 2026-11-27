@@ -14,15 +14,21 @@ inline DockEntry Restore(const layout_storage::DockRecord& saved,
     const std::vector<DesktopWidget>& widgets, Decode decode, Normalize normalize)
 {
     DockEntry entry;
+    if (saved.freeOrderSection && *saved.freeOrderSection >= static_cast<int>(DockEntrySection::Fixed) &&
+        *saved.freeOrderSection <= static_cast<int>(DockEntrySection::Files))
+        entry.freeOrderSection = static_cast<DockEntrySection>(*saved.freeOrderSection);
     if (saved.type == "collection")
         entry.type = DockEntryType::Collection;
     else if (saved.type == "folderMapping")
         entry.type = DockEntryType::FolderMapping;
     else if (saved.type == "separator")
-        return DockEntry{DockEntryType::Separator, decode(saved.reference)};
+        entry.type = DockEntryType::Separator;
+    else if (saved.type == "quickSearch")
+        entry.type = DockEntryType::QuickSearch;
     else
         entry.type = DockEntryType::DesktopItem;
     entry.reference = decode(saved.reference);
+    if (IsDockLayoutEntry(entry.type)) return entry;
     // Preserve the existing on-disk "collection" reference token. The
     // referenced widget supplies its precise runtime type, including groups.
     if (entry.type == DockEntryType::Collection)
@@ -78,9 +84,12 @@ inline DockEntry Restore(const layout_storage::DockRecord& saved,
 template<class Escape>
 inline void Write(std::ostream& file, const DockEntry& entry, Escape escape)
 {
-    if (entry.type == DockEntryType::Separator)
+    if (IsDockLayoutEntry(entry.type))
     {
-        file << "    { \"type\": \"separator\", \"ref\": \"" << escape(entry.reference) << "\" }";
+        file << "    { \"type\": \"" << (entry.type == DockEntryType::Separator ? "separator" : "quickSearch")
+            << "\", \"ref\": \"" << escape(entry.reference) << "\"";
+        if (entry.freeOrderSection) file << ", \"freeOrderSection\": " << static_cast<int>(*entry.freeOrderSection);
+        file << " }";
         return;
     }
     file << "    { \"type\": \""
@@ -89,7 +98,9 @@ inline void Write(std::ostream& file, const DockEntry& entry, Escape escape)
                 : (entry.type == DockEntryType::FolderMapping
                     ? "folderMapping" : "item"))
          << "\", \"ref\": \"" << escape(entry.reference)
-         << "\", \"keepOnDesktop\": " << (entry.keepOnDesktop ? "true" : "false")
+         << "\"";
+    if (entry.freeOrderSection) file << ", \"freeOrderSection\": " << static_cast<int>(*entry.freeOrderSection);
+    file << ", \"keepOnDesktop\": " << (entry.keepOnDesktop ? "true" : "false")
          << ", \"folderSortMode\": "
          << snowdesktop::folder_sort_rules::
                 NormalizeMode(

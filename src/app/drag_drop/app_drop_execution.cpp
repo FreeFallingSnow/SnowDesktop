@@ -707,13 +707,14 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
     snowdesktop::file_drop_execution::Services services;
     services.beginPlacement = [this, dockTarget = preview.pinMaterializedItemsToDock,
         desktopTarget = preview.targetKind == DropTargetKind::Desktop,
-        monitor = preview.dockMonitor, index = preview.dockInsertIndex](PendingLandingCache cache,
+        monitor = preview.dockMonitor, index = preview.dockInsertIndex, section = preview.dockSection](PendingLandingCache cache,
             const DragSourceList& sources, DropAction action) {
         if (dockTarget)
         {
             auto* dock = GetDockContainer();
             cache.dockMonitor = monitor ? monitor : (dock ? dock->GetMonitor() : nullptr);
             cache.dockInsertIndex = index;
+            cache.dockSection = section;
         }
         else if (desktopTarget && action == DropAction::Copy)
             CaptureDesktopLargeIconCopies(cache, sources);
@@ -734,7 +735,9 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
         auto done, bool sync, auto outputs) {
         return MaterializeFilesToFolder(sources, path, action, std::move(done), sync, std::move(outputs));
     };
-    services.pin = [this](const auto& paths, size_t index) { return AddMaterializedItemsToDock(paths, index); };
+    services.pin = [this, section = preview.dockSection](const auto& paths, size_t index) {
+        return AddMaterializedItemsToDock(paths, index, false, section);
+    };
     services.savePins = [this] { RequestLayoutSave(); };
     services.forgetMovedKeys = [this](const auto& keys) { RemoveDesktopKeysFromWidgets(keys); };
     const auto previewDirectory = preview.targetWidget && preview.targetWidget->id == kDockFolderPopupWidgetId &&

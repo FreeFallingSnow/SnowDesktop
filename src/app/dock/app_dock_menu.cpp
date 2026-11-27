@@ -360,9 +360,12 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint, bool powerUserMenu)
             separatorId = entry->GetReference();
         else if (const auto index = dock->GetSeparatorInsertIndex(clientPoint))
         {
+            const auto section = dock->GetSectionAtPoint(clientPoint);
+            const auto range = snowdesktop::dock_drop_model::SectionRange(dockEntries_, section, DockDropServices());
             auto& position = separatorPosition.emplace(snowdesktop::dock_running_drag::Area::Fixed, *index);
-            if (*index < DockMainEntryCount()) position.before = dockEntries_[*index];
-            if (*index > 0) position.after = dockEntries_[*index - 1];
+            position.section = section;
+            if (*index < range.end) position.before = dockEntries_[*index];
+            if (*index > range.begin) position.after = dockEntries_[*index - 1];
         }
     }
     const bool merged = dock && dock->IsMergedWithStatusBar();
@@ -384,7 +387,7 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint, bool powerUserMenu)
     {
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kDockAddSeparator, _LW("app.dock.add_separator"));
-        SetMenuItemIcon(menu, kDockAddSeparator, L"\uE710");
+        SetMenuItemIcon(menu, kDockAddSeparator, L"\uF371", MenuIconFont::FluentRegular); // divider_tall_24_regular
     }
     if (!separatorId.empty())
     {
@@ -415,9 +418,12 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint, bool powerUserMenu)
             GUID id{};
             wchar_t text[40]{};
             if (FAILED(CoCreateGuid(&id)) || !StringFromGUID2(id, text, 40)) return;
-            const size_t fixedEnd = DockMainEntryCount();
-            const size_t index = separatorPosition->Resolve(dockEntries_, fixedEnd, fixedEnd);
-            snowdesktop::dock_drop_model::InsertSeparator(dockEntries_, index, fixedEnd, text);
+            const auto section = *separatorPosition->section;
+            const auto range = snowdesktop::dock_drop_model::SectionRange(dockEntries_, section, DockDropServices());
+            const size_t index = separatorPosition->Resolve(dockEntries_, DockMainEntryCount(), range.end);
+            DockEntry separator{DockEntryType::Separator, text};
+            separator.freeOrderSection = section;
+            snowdesktop::dock_drop_model::InsertInSection(dockEntries_, index, range, std::move(separator));
         }
         else if (!std::erase_if(dockEntries_, [&](const auto& entry) {
             return entry.type == DockEntryType::Separator && entry.reference == separatorId;
@@ -886,7 +892,8 @@ void DesktopApp::ShowDockRunningAppContextMenu(
             pinTarget.identity.executablePath = target->identity.executablePath;
             pinTarget.identity.appUserModelId = target->identity.appUserModelId;
             pinTarget.folderPath = target->folderPath;
-            if (!PinDockRunningTarget(runningKey, pinTarget, dock->GetInsertIndexAtPoint(clientPoint)))
+            const auto section = pinTarget.folderPath.empty() ? DockEntrySection::Fixed : DockEntrySection::Files;
+            if (!PinDockRunningTarget(runningKey, pinTarget, dock->GetInsertIndexAtPoint(clientPoint), section))
                 MessageBeep(MB_ICONWARNING);
         };
         if (command == kContextDockPinCurrentFolder)

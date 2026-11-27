@@ -84,7 +84,7 @@ DragSourceList DesktopApp::BuildDragSourceList(
                     entry.protectedDesktopIcon = IsProtectedDesktopIcon(item);
                 }
             }
-            else if (entry.dockEntryType != DockEntryType::Separator)
+            else if (!IsDockLayoutEntry(entry.dockEntryType))
             {
                 entry.kind = DropSourceKind::Widget;
                 list.hasWidgets = true;
@@ -469,6 +469,7 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
         const auto index = dock->GetDropInsertIndex(targetSlot, region);
         preview = dock->FilePinPreview(sourceList, index, dropPoint);
         preview.dockInsertIndex = index;
+        if (dockSettings_.freeItemOrder) preview.dockSection = dock->GetSectionAtPoint(dropPoint);
         return preview;
     }
     if (sourceList.Empty() || !target ||

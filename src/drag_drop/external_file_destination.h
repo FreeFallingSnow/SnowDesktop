@@ -78,9 +78,11 @@ bool Commit(const CapturedDestination& destination,
         if (!services.dockHasCapacity(paths.size())) return false;
         const auto action = preview.action;
         const auto insertIndex = preview.dockInsertIndex;
+        const auto section = preview.dockSection;
         preview = services.desktopPreview(preview.anchorCell, paths.size());
         preview.pinMaterializedItemsToDock = true;
         preview.dockInsertIndex = insertIndex;
+        preview.dockSection = section;
         preview.action = action;
     }
     else if (preview.targetKind == DropTargetKind::Desktop)

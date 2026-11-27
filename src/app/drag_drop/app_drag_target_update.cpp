@@ -33,9 +33,9 @@ void DesktopApp::ResolveCurrentDragTargetAt(POINT clientPoint, bool committing)
 
     const bool external = dragDropController_.IsExternalDragActive();
     const auto& sources = dragSession_.SourceList();
-    const bool separatorDrag = std::any_of(sources.entries.begin(), sources.entries.end(),
-        [](const auto& source) { return source.fromDock && source.dockEntryType == DockEntryType::Separator; });
-    if (separatorDrag)
+    const bool dockLayoutDrag = std::any_of(sources.entries.begin(), sources.entries.end(),
+        [](const auto& source) { return source.fromDock && IsDockLayoutEntry(source.dockEntryType); });
+    if (dockLayoutDrag)
     {
         auto* dock = GetDockContainerAtPoint(clientPoint);
         Slot* slot = nullptr;

@@ -589,6 +589,8 @@ bool DecodeDockEntries(const JsonValue& root, Document& document,
                 record.type, error) ||
             !ReadRequiredString(object, "ref", path + ".ref",
                 record.reference, error) ||
+            !ReadOptionalInteger(object, "freeOrderSection", path + ".freeOrderSection",
+                record.freeOrderSection, error) ||
             !ReadBoolean(object, "keepOnDesktop",
                 path + ".keepOnDesktop", record.keepOnDesktop, error) ||
             !ReadInteger(object, "folderSortMode",

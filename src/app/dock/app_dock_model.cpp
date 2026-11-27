@@ -239,23 +239,21 @@ bool DesktopApp::IsFolderDockEntry(const DockEntry& entry) const
 
 size_t DesktopApp::DockMainEntryCount() const
 {
-    if (dockSettings_.freeItemOrder) return dockEntries_.size();
+    const auto services = const_cast<DesktopApp*>(this)->DockDropServices();
     return static_cast<size_t>(std::count_if(
         dockEntries_.begin(), dockEntries_.end(),
-        [this](const DockEntry& entry) {
-            return !IsRecycleBinDockEntry(entry) &&
-                !IsFolderDockEntry(entry);
+        [&](const DockEntry& entry) {
+            return snowdesktop::dock_drop_model::GroupOf(entry, services) == snowdesktop::dock_folder_rules::EntryGroup::Main;
         }));
 }
 
 size_t DesktopApp::DockFolderEntryCount() const
 {
-    if (dockSettings_.freeItemOrder) return 0;
+    const auto services = const_cast<DesktopApp*>(this)->DockDropServices();
     return static_cast<size_t>(std::count_if(
         dockEntries_.begin(), dockEntries_.end(),
-        [this](const DockEntry& entry) {
-            return !IsRecycleBinDockEntry(entry) &&
-                IsFolderDockEntry(entry);
+        [&](const DockEntry& entry) {
+            return snowdesktop::dock_drop_model::GroupOf(entry, services) == snowdesktop::dock_folder_rules::EntryGroup::Folder;
         }));
 }
 
@@ -267,7 +265,9 @@ bool DesktopApp::IsRecycleBinDockEntry(const DockEntry& entry) const
 
 void DesktopApp::NormalizeDockRecycleBinPosition()
 {
-    snowdesktop::dock_drop_model::Normalize(dockEntries_, DockDropServices());
+    const auto services = DockDropServices();
+    snowdesktop::dock_drop_model::Normalize(dockEntries_, services);
+    snowdesktop::dock_drop_model::EnsureQuickSearch(dockEntries_, services);
 }
 
 void DesktopApp::LoadDockUsageStats()

@@ -3040,7 +3040,7 @@ struct DockPagePresenter::Impl
         freeItemOrderRow.SetText(
             L("settings.dock.freeItemOrder", L"Free item order"),
             L("settings.dock.freeItemOrder.description",
-                L"Drag pinned items, files, and Recycle Bin into any order."));
+                L"Drag items between the pinned and file sections. Quick Search can be reordered in the file section."));
         muxa::AutomationProperties::SetName(freeItemOrder, freeItemOrderRow.label.Text());
         showFrequentItemsRow.SetText(L(
             "app.dock.show_frequent_items", L"Show Frequent Items"));
