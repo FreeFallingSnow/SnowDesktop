@@ -227,14 +227,14 @@ private:
     float FixedEntryUnits() const;
     float FolderEntryUnits() const;
     float SeparatorSlotUnits() const;
-    size_t VisibleModelEntryCount() const;
-    bool HasTrailingRecycleBin() const;
+    size_t ModelEntryCount() const;
+    bool HasImplicitSearchSlot() const;
+    RECT FirstVisibleFileSlot() const;
     size_t SortableEntryCount() const;
     size_t FolderEntryCount() const;
     size_t FolderEntryBegin() const;
     size_t EmptyRunningDragFixedSlots() const;
     size_t EmptyRunningDragFileSlots() const;
-    bool HasOnlyRecycleBinDragSource() const;
     bool HasOnlyFolderDragSource() const;
     bool IsFolderDragSource(Item* source) const;
     bool HasMixedFolderDragSource() const;

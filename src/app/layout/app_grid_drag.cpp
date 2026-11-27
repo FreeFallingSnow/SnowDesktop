@@ -18,7 +18,8 @@ void DesktopApp::InitializeGridFromWindows()
     if (!initializeGridFromWindows_) return;
     initializeGridFromWindows_ = false;
     if (gridPages_.empty() || !layoutRecords_.empty() ||
-        !widgets_.empty() || !dockEntries_.empty()) return;
+        !widgets_.empty() || std::any_of(dockEntries_.begin(), dockEntries_.end(),
+            [](const auto& entry) { return entry.type != DockEntryType::QuickSearch; })) return;
 
     // Offer help only for actual initialization, including capture fallback.
     // Opening the page respects the saved panel preference and starts no practice.

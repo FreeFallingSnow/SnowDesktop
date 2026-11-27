@@ -11,24 +11,11 @@ enum class EntryGroup
 {
     Main,
     Folder,
-    Recycle,
-    SearchControl,
 };
 
 constexpr int Rank(EntryGroup group)
 {
-    switch (group)
-    {
-    case EntryGroup::Main:
-        return 0;
-    case EntryGroup::Folder:
-        return 1;
-    case EntryGroup::Recycle:
-        return 2;
-    case EntryGroup::SearchControl:
-        return 3;
-    }
-    return 0;
+    return static_cast<int>(group);
 }
 
 template <typename Entry, typename Classifier>

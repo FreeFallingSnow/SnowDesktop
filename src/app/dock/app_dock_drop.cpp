@@ -25,7 +25,7 @@ bool DockContainer::PreviewFreeOrderForDrag(DesktopApp& app)
 
     const POINT point = session.CurrentPoint();
     const bool overFiles = dock->GetSectionAtPoint(point) == DockEntrySection::Files;
-    const bool belongsToFiles = dock->HasOnlyFolderDragSource() || dock->HasOnlyRecycleBinDragSource();
+    const bool belongsToFiles = dock->HasOnlyFolderDragSource();
     if (overFiles == belongsToFiles && !dock->HasMixedFolderDragSource()) return false;
 
     const bool hadQuickSearch = std::any_of(app.dockEntries_.begin(), app.dockEntries_.end(),
@@ -374,7 +374,8 @@ bool DesktopApp::MoveDockItemsToDesktop(
 
 void DesktopApp::RestoreDockEntriesToDesktop()
 {
-    if (dockEntries_.empty()) return;
+    const auto isSearch = [](const DockEntry& entry) { return entry.type == DockEntryType::QuickSearch; };
+    if (std::all_of(dockEntries_.begin(), dockEntries_.end(), isSearch)) return;
     const GridPage* first = GetFirstPageGridPage();
     const std::wstring preferredPage = first ? first->id : L"";
     std::unordered_set<std::wstring> usedSlots;
@@ -411,6 +412,6 @@ void DesktopApp::RestoreDockEntriesToDesktop()
             if (widgetIndex < widgets_.size()) widgets_[widgetIndex].gridCell = cell;
         }
     }
-    dockEntries_.clear();
+    std::erase_if(dockEntries_, [&](const DockEntry& entry) { return !isSearch(entry); });
     RefreshCollectedKeysCache();
 }
