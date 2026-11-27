@@ -127,9 +127,10 @@ bool DesktopApp::QueueFileDeletion(std::vector<std::wstring> paths, bool permane
 {
     if (paths.empty()) return false;
 
+    // Let the Shell apply the user's Recycle Bin confirmation setting.
     const auto flags = static_cast<FILEOP_FLAGS>(permanentDelete
         ? FOF_WANTNUKEWARNING
-        : (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | extraRecycleFlags));
+        : (FOF_ALLOWUNDO | extraRecycleFlags));
     std::vector<snowdesktop::ShellFileOperationStep> steps;
     steps.push_back({FO_DELETE, std::move(paths), {}, flags});
     return QueueShellFileOperation(std::move(steps),
