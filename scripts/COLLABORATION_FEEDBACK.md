@@ -485,6 +485,8 @@
 
 ### CF-024 同一候选槽的局部续修重编多个宿主模块
 
+- **触屏模拟绑定头文件续证（2026-11-27）**：Task `task-0ab8bb1df6694336a217d1407668edd0`、批次 `5ba98de0e12d47eca3af365af2682fbe`、Run `ccdbc03c510d4129a0c3d4999f5bbdab` 以 `ready-and-wait` 在候选槽 `a32a06cfeb995ec8-batches` 构建。产品日志记录了未改动的 `app_drag_preview_window.cpp` 和 `app_file_drop_presentation.cpp` 参与编译。源码确认 `app/app.h` 经 `settings/general_settings_types.h` 引入 `ui/input/touch_simulator.h`，通用设置类型为默认键常量引入的头还承载模拟器校验、运行入口和录入标记。后续可把通用设置对该头的依赖收窄到绑定默认值。本轮未单独测量重编成本，续修仅由原 Run 的 C2397 触发。
+
 - **组件局部刷新候选续证（2026-11-20）**：Task `task-edbf89c2988e40f28ac1cdb235b8c253`、批次 `b1a733fa04d6491280d13c55e4ec35e9` 修订 0、Run `dfc45d351d544a51814850d071891989`。改动涉及 `app/app.h` 和其包含的 `composition_state_types.h`。产品日志 `b1a733fa04d6491280d13c55e4ec35e9.log.product.log` 记录重新生成 `SnowDesktopHostPch.lib`，随后编译本任务未修改的 `app_clipboard_interaction.cpp` 和 `app_menu_icons.cpp`。源码确认这些编译单元共用宿主 PCH，额外成本未单独测量。沿用原 Run，后续评估将局部绘制状态与组合根头的依赖收窄。
 
 - **来源**：2026-11-10，CLI，Task `calendar-ics-subscriptions-20261110`。对照批次 `6935a08f187f4e5ab54942c412c905be` 修订 2、Run `c77d7675a5e74747bdfd3ad852dc8080` 与续修批次 `b4e75fc6e1ac437ba0dbe344b5a46e23` 修订 4、Run `f5f1d056ef664e27ae2ed219cbcb4835`，入口均为 `scripts/build.bat ready-and-wait`。
