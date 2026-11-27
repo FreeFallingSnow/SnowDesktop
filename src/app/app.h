@@ -22,7 +22,7 @@
 #include "icons/icon_shadow_settings.h"
 #include "app/render/demo_icon_load_types.h"
 #include "app/dock/dock_runtime_types.h"
-#include "dock/dock_minimized_window_thumbnail.h"
+#include "dock/dock_window_thumbnail.h"
 #include "app/lifecycle/auto_start_result.h"
 #include "app/render/drag_render_cache.h"
 #include "app/navigation/quick_navigation_models.h"
@@ -1070,6 +1070,7 @@ private:
     void HandleDockWindowListChanged(HWND window, DWORD event);
     void RefreshDockRunningWindows(bool invalidateChanged = true,
         HWND preferredWindow = nullptr);
+    void RefreshDockTaskThumbnails();
     bool AdvanceDockRunningAnimations(double nowMilliseconds);
     void PruneDockPendingCloseWindows();
     bool IsDockWindowClosePending(HWND window);
@@ -1079,6 +1080,8 @@ private:
         const DockAppIdentity& identity,
         bool includeCloaked = false,
         bool preferTaskbarDocumentProxies = true);
+    std::vector<DockWindowPreviewItem> CollectDockPresentationPreviewItems(
+        const DockAppIdentity& identity, std::wstring_view windowKey);
     void CloseDockWindowFromPreview(HWND window);
     void CloseDockApplicationWindows(
         const DockAppIdentity& identity);
@@ -1086,7 +1089,7 @@ private:
         POINT clientPoint, DockWindowPreviewTarget& target);
     void UpdateDockWindowPreview(POINT clientPoint);
     void OnDockWindowPreviewHoverTimer();
-    bool TryOpenDockWindowPicker(POINT clientPoint, bool byTouch = false);
+    bool TryOpenDockWindowPicker(POINT clientPoint, bool byTouch = false, bool allowSingleWindow = false);
     void ShowDockWindowPreview(DockWindowPreviewTarget target, POINT clientPoint,
         const std::vector<DockWindowPreviewItem>& previewItems, bool byTouch = false);
     void RefreshDockWindowPreviewItems();
@@ -3908,6 +3911,7 @@ private:
         dockLaunchBounces_;
     DockPreviewHoverController dockWindowPreviewHover_;
     std::wstring dockWindowPreviewKey_;
+    std::wstring dockWindowPreviewWindowKey_;
     DockAppIdentity dockWindowPreviewIdentity_;
     RECT dockWindowPreviewAnchorScreen_{};
     DWORD systemTaskbarBackdropRefreshTick_ = 0;
@@ -3937,7 +3941,7 @@ private:
     DWORD desktopHoverForegroundObservedTick_ = 0;
     DWORD dockRunningWindowsStateTick_ = 0;
     DWORD dockRunningWindowsRefreshTick_ = 0;
-    snowdesktop::dock_minimized_window::ThumbnailCache dockMinimizedThumbnails_;
+    snowdesktop::dock_window_thumbnail::ThumbnailCache dockWindowThumbnails_;
     snowdesktop::UiScheduleToken dockDiscoveryRetryToken_ = 0;
     double dockDiscoveryDeferUntil_ = 0.0;
     bool dockProcessSnapshotPending_ = false;

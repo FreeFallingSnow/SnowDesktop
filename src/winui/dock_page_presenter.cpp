@@ -2939,12 +2939,12 @@ struct DockPagePresenter::Impl
         SetContinuousText(edgeHoverDelayMs,
             "settings.dock.edgeHoverDelay", L"Hover delay");
         windowPreviewsRow.SetText(L("settings.dock.windowPreviews", L"Task thumbnails"),
-            L("settings.dock.windowPreviews.description", L"Hover over an app icon or swipe from it toward the screen content to see its open windows."));
+            L("settings.dock.windowPreviews.description", L"Hover over an app icon or a task thumbnail, or swipe from it toward the screen content, to see a larger window preview."));
         muxa::AutomationProperties::SetName(edgeRevealGesture, edgeRevealGestureRow.label.Text());
         muxa::AutomationProperties::SetName(windowPreviews, windowPreviewsRow.label.Text());
         minimizeWindowsIntoApplicationIconRow.SetText(
             L("settings.dock.minimizeWindowsIntoApplicationIcon", L"Minimize windows into application icons"),
-            L("settings.dock.minimizeWindowsIntoApplicationIcon.description", L"Turn off to show each minimized window separately in the Dock task area."));
+            L("settings.dock.minimizeWindowsIntoApplicationIcon.description", L"Turn off to show every open window as a thumbnail in the Dock task area. Pinned icons act as shortcuts."));
         muxa::AutomationProperties::SetName(minimizeWindowsIntoApplicationIcon,
             minimizeWindowsIntoApplicationIconRow.label.Text());
         fullscreenPolicyRow.SetText(

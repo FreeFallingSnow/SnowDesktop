@@ -858,7 +858,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     if (itemIndex < items_.size())
                     {
                         const DockWindowVisualState state =
-                            GetDockWindowVisualState(itemIndex);
+                            dockSettings_.minimizeWindowsIntoApplicationIcon
+                            ? GetDockWindowVisualState(itemIndex) : DockWindowVisualState::Closed;
                         dockPressedWindowAction_ =
                             snowdesktop::dock_window_rules::
                                 ResolveDockClickAction(
@@ -927,8 +928,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 if (dockPressedFrequentItem_ < items_.size())
                 {
                     const DockWindowVisualState state =
-                        GetDockWindowVisualState(
-                            dockPressedFrequentItem_);
+                        dockSettings_.minimizeWindowsIntoApplicationIcon
+                        ? GetDockWindowVisualState(dockPressedFrequentItem_) : DockWindowVisualState::Closed;
                     dockPressedWindowAction_ =
                         snowdesktop::dock_window_rules::
                             ResolveDockClickAction(

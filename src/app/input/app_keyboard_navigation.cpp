@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "dock/dock_window_rules.h"
 #include "common/utils.h"
 #include "diagnostics/crashlog.h"
 #include "widget/runtime/widget_item_layout.h"
@@ -382,7 +383,9 @@ bool DesktopApp::ActivateDesktopSurfaceKeyboardFocus(bool repeated)
             {
                 const auto& app = dockUnpinnedRunningApps_[focused->index];
                 std::optional<snowdesktop::dock_window_rules::DockClickAction> action;
-                if (app.minimizedThumbnail) action = snowdesktop::dock_window_rules::DockClickAction::Restore;
+                if (app.minimizedThumbnail)
+                    action = snowdesktop::dock_window_rules::ResolveDockClickAction(
+                        true, IsIconic(app.window) != FALSE, app.foreground);
                 ActivateOrToggleDockWindow(app.window, action, nullptr, anchor);
             }
             break;

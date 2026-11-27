@@ -762,8 +762,10 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                 DismissDockWindowPreviewUntilLeave();
                 InvalidateRect(
                     hwnd_, nullptr, FALSE);
-                ShowDockRunningAppContextMenu(
-                    screenPt, runningIndex);
+                if (dockUnpinnedRunningApps_[runningIndex].minimizedThumbnail)
+                    (void)TryOpenDockWindowPicker(pt, false, true);
+                else
+                    ShowDockRunningAppContextMenu(screenPt, runningIndex);
                 return;
             }
         }

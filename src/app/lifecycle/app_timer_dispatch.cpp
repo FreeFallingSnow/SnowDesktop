@@ -846,6 +846,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
             snowdesktop::performance::Scope trace("shared.maintenance", "dock.minimize_targets");
             UpdateDockExternalMinimizeTargets();
         }
+        RefreshDockTaskThumbnails();
     }
     else if (timerId == kDockWindowPreviewHoverTimerId)
     {

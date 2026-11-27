@@ -358,7 +358,8 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         }
         drawDesktopItem(ctx, items_[index], iconRect, nullptr, true);
         const auto running = dockRunningWindows_.find(DockItemWindowKey(items_[index]));
-        if (running != dockRunningWindows_.end() && dockWindowAttention_.HasAny(
+        if (dockSettings_.minimizeWindowsIntoApplicationIcon && running != dockRunningWindows_.end() &&
+            dockWindowAttention_.HasAny(
                 running->second.window, running->second.trackedWindows))
             DrawDockAttentionDot(ctx, iconRect);
         if (state == 2)
@@ -366,7 +367,8 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         if (launchTransformApplied)
             ctx->SetTransform(previousTransform);
 
-        const DockWindowVisualState windowState = GetDockWindowVisualState(index);
+        const DockWindowVisualState windowState = dockSettings_.minimizeWindowsIntoApplicationIcon
+            ? GetDockWindowVisualState(index) : DockWindowVisualState::Closed;
         if (windowState != DockWindowVisualState::Closed && state != 2)
         {
             const bool minimized = windowState == DockWindowVisualState::Minimized;
@@ -642,6 +644,15 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
             DrawIconBitmap(ctx, appIcon, badge, presence, reinterpret_cast<std::uintptr_t>(&app), true);
         else
             DrawPlaceholderIcon(ctx, -1, badge, presence, true);
+        if (app.foreground)
+        {
+            const float tone = lt ? 0.12f : 0.96f;
+            ComPtr<ID2D1SolidColorBrush> focus;
+            if (SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(tone, tone, tone, 0.72f * presence), &focus)))
+                ctx->DrawRectangle(frame, focus.Get(), std::max(1.0f, edge * 0.04f));
+        }
+        if (dockWindowAttention_.HasAny(app.window, app.trackedWindows))
+            DrawDockAttentionDot(ctx, iconRect, presence);
         if (state == 2) DrawDockSelectionIndicator(ctx, iconRect, lt);
         return;
     }

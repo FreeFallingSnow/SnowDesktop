@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace snowdesktop::dock_minimized_window { class Thumbnail; }
+namespace snowdesktop::dock_window_thumbnail { class Thumbnail; }
 
 enum class DockWindowVisualState
 {
@@ -40,6 +40,7 @@ struct DockWindowPreviewTarget
     DockAppIdentity identity;
     std::wstring identityKey;
     std::wstring targetToken;
+    std::wstring windowKey;
     RECT anchorScreen{};
     bool floatingLayer = false;
     // Borrowed from the running snapshot for synchronous toolbar prefetch.
@@ -72,6 +73,7 @@ struct DockRunningAppInfo
     bool minimized = false;
     bool foreground = false;
     bool selected = false;
-    std::shared_ptr<snowdesktop::dock_minimized_window::Thumbnail> minimizedThumbnail;
+    // A per-window task retains this thumbnail across show-state changes.
+    std::shared_ptr<snowdesktop::dock_window_thumbnail::Thumbnail> minimizedThumbnail;
     std::vector<HWND> trackedWindows;
 };

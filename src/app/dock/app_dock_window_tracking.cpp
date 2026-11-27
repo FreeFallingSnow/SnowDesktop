@@ -1,7 +1,7 @@
 #include "app/app.h"
 #include "dock/dock_window_rules.h"
 #include "dock/dock_minimize_target_policy.h"
-#include "dock/dock_minimized_window_thumbnail.h"
+#include "dock/dock_window_thumbnail.h"
 #include "dock/dock_window_preview.h"
 #include "dock/dock_window_transition.h"
 #include "platform/runtime_module_policy.h"
@@ -481,8 +481,6 @@ void DesktopApp::RefreshDockForegroundState()
         return;
     const DWORD observedForegroundTick = dockForegroundChangedTick_.load();
     const HWND foreground = ResolveDockSemanticForegroundWindow();
-    if (!dockSettings_.minimizeWindowsIntoApplicationIcon && IsDockTaskWindow(foreground))
-        dockMinimizedThumbnails_.Warm(foreground, hwnd_, kBackgroundShellReadyMessage);
     const int primaryButton = GetSystemMetrics(SM_SWAPBUTTON)
         ? VK_RBUTTON : VK_LBUTTON;
     if (snowdesktop::dock_window_rules::ShouldDeferDockForegroundFeedback(
@@ -510,7 +508,6 @@ void DesktopApp::RefreshDockForegroundState()
     }
     for (DockRunningAppInfo& app : dockUnpinnedRunningApps_)
     {
-        if (app.minimizedThumbnail) continue;
         changed |= snowdesktop::dock_window_rules::
             RefreshTrackedDockForegroundState(
                 app, foreground, matchesForeground, isMinimized);
@@ -523,6 +520,15 @@ void DesktopApp::RefreshDockForegroundState()
     // identities and bitmaps remain owned by the periodic discovery model.
     if (changed)
         InvalidateDockRects();
+}
+
+void DesktopApp::RefreshDockTaskThumbnails()
+{
+    if (!generalSettings_.dockEnabled || dockSettings_.minimizeWindowsIntoApplicationIcon) return;
+    for (const auto& app : dockUnpinnedRunningApps_)
+        if (app.presence.Visible() && app.minimizedThumbnail)
+            dockWindowThumbnails_.Refresh(app.minimizedThumbnail, app.minimized, app.foreground,
+                hwnd_, kBackgroundShellReadyMessage);
 }
 
 void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
@@ -773,7 +779,6 @@ void DesktopApp::RefreshDockRunningWindows(
         bool foreground = false;
         int score = -1;
         std::vector<HWND> trackedWindows;
-        bool minimizedThumbnail = false;
     };
 
     std::unordered_set<size_t> itemIndices;
@@ -818,9 +823,7 @@ void DesktopApp::RefreshDockRunningWindows(
         ? GetAncestor(preferredWindow, GA_ROOT) : nullptr;
     const HWND actualForeground =
         ResolveDockSemanticForegroundWindow();
-    const bool separateMinimizedWindows = !dockSettings_.minimizeWindowsIntoApplicationIcon;
-    if (generalSettings_.dockEnabled && separateMinimizedWindows && IsDockTaskWindow(actualForeground))
-        dockMinimizedThumbnails_.Warm(actualForeground, hwnd_, kBackgroundShellReadyMessage);
+    const bool separateWindows = !dockSettings_.minimizeWindowsIntoApplicationIcon;
     const HWND scoringForeground = preferredRoot ? preferredRoot : actualForeground;
     struct EnumContext
     {
@@ -840,7 +843,7 @@ void DesktopApp::RefreshDockRunningWindows(
         bool fixedIdentityPending = false;
         bool hasApplicationPins = false;
         std::unordered_map<DWORD, std::wstring> processAppIds;
-        bool separateMinimizedWindows = false;
+        bool separateWindows = false;
     };
     DockProcessParentMap processParents;
     if (useBackgroundSnapshot && preparedProcessSnapshot)
@@ -852,7 +855,7 @@ void DesktopApp::RefreshDockRunningWindows(
         &dockPendingCloseWindows_, &processParents };
     context.fixedIdentityPending = fixedIdentityPending;
     context.hasApplicationPins = hasApplicationPins;
-    context.separateMinimizedWindows = separateMinimizedWindows;
+    context.separateWindows = separateWindows;
 
     if (generalSettings_.dockEnabled)
     {
@@ -908,7 +911,6 @@ void DesktopApp::RefreshDockRunningWindows(
             int score = DockWindowsShareActivationGroup(
                 window, context->scoringForeground) ? 1000 : 0;
             const bool minimized = IsIconic(window) != FALSE;
-            const bool minimizedThumbnail = minimized && context->separateMinimizedWindows;
             score += 100;
             if (!minimized) score += 20;
             if (!GetWindow(window, GW_OWNER)) score += 10;
@@ -935,28 +937,20 @@ void DesktopApp::RefreshDockRunningWindows(
                 target.score = score;
             }
 
-            bool fixed = false;
-            for (const DockAppIdentity& identity : *context->fixedIdentities)
-            {
-                fixed = snowdesktop::
-                    dock_app_identity_rules::
-                        MatchesRunningApp(
-                            identity.kind,
-                            identity.executablePath,
-                            identity.appUserModelId,
-                            identity.steamInstallDirectory,
-                            pathIt->second,
-                            appUserModelId,
-                            ancestorIt->second, identity.validatedPayloadPaths);
-                if (fixed) break;
-            }
-            if (fixed && !minimizedThumbnail) return TRUE;
+            if (!context->separateWindows &&
+                std::ranges::any_of(*context->fixedIdentities, [&](const auto& identity) {
+                    return snowdesktop::dock_app_identity_rules::MatchesRunningApp(
+                        identity.kind, identity.executablePath, identity.appUserModelId,
+                        identity.steamInstallDirectory, pathIt->second, appUserModelId,
+                        ancestorIt->second, identity.validatedPayloadPaths);
+                }))
+                return TRUE;
 
             // The first running presentation must not wait for a Shell query.
             // Executable identity is usable now; refine its ID/artwork later
             // without restarting the same window's entrance animation.
-            const std::wstring identityKey = minimizedThumbnail
-                ? snowdesktop::dock_minimized_window::WindowIdentity{window, processId, threadId}.Key()
+            const std::wstring identityKey = context->separateWindows
+                ? snowdesktop::dock_window_thumbnail::WindowIdentity{window, processId, threadId}.Key()
                 : snowdesktop::dock_app_identity_rules::RunningWindowIdentity(
                     pathIt->second, appUserModelId, reinterpret_cast<UINT_PTR>(window), processId, threadId);
             if (identityKey.empty()) return TRUE;
@@ -975,8 +969,8 @@ void DesktopApp::RefreshDockRunningWindows(
                     pathIt->second, appUserModelId,
                     ancestorIt->second,
                     window, minimized,
-                    !minimizedThumbnail && DockWindowsShareActivationGroup(window, context->actualForeground),
-                    score, { window }, minimizedThumbnail });
+                    !minimized && DockWindowsShareActivationGroup(window, context->actualForeground),
+                    score, { window } });
             }
             else
             {
@@ -1040,12 +1034,11 @@ void DesktopApp::RefreshDockRunningWindows(
         {
             const auto found = runningCandidateIndices.find(existing.identityKey);
             size_t index = found != runningCandidateIndices.end() ? found->second : runningCandidates.size();
-            if (index == runningCandidates.size())
+            if (!separateWindows && !existing.minimizedThumbnail && index == runningCandidates.size())
                 for (size_t candidateIndex = 0; candidateIndex < runningCandidates.size(); ++candidateIndex)
                 {
                     const auto& candidate = runningCandidates[candidateIndex];
-                    if (!consumed[candidateIndex] && !candidate.minimizedThumbnail && !existing.minimizedThumbnail &&
-                        candidate.executablePath == existing.executablePath &&
+                    if (!consumed[candidateIndex] && candidate.executablePath == existing.executablePath &&
                         std::find(existing.trackedWindows.begin(), existing.trackedWindows.end(), candidate.window) !=
                             existing.trackedWindows.end())
                     {
@@ -1089,7 +1082,7 @@ void DesktopApp::RefreshDockRunningWindows(
         for (size_t i = 0; i < dockUnpinnedRunningApps_.size(); ++i)
         {
             DockRunningAppInfo& old = dockUnpinnedRunningApps_[i];
-            const bool sameWindow = !candidate.minimizedThumbnail && !old.minimizedThumbnail &&
+            const bool sameWindow = !separateWindows && !old.minimizedThumbnail &&
                 (old.executablePath == info.executablePath ||
                 old.executablePath.empty() || info.executablePath.empty()) &&
                 std::find(old.trackedWindows.begin(), old.trackedWindows.end(), info.window) !=
@@ -1121,10 +1114,9 @@ void DesktopApp::RefreshDockRunningWindows(
         }
         info.presence.SetVisible(true, animationNow, animatePresence,
             snowdesktop::animation::RuntimeDurationScale());
-        if (candidate.minimizedThumbnail && !info.minimizedThumbnail)
-            info.minimizedThumbnail = dockMinimizedThumbnails_.Show(
-                snowdesktop::dock_minimized_window::WindowIdentity::Capture(info.window),
-                hwnd_, kBackgroundShellReadyMessage);
+        if (separateWindows && !info.minimizedThumbnail)
+            info.minimizedThumbnail = std::make_shared<snowdesktop::dock_window_thumbnail::Thumbnail>(
+                snowdesktop::dock_window_thumbnail::WindowIdentity::Capture(info.window));
         if (!info.iconBitmap || refineIdentityArtwork)
         {
             const int requestSize = std::max(requiredIconSize, info.iconRequestedSize);
@@ -1193,7 +1185,7 @@ void DesktopApp::RefreshDockRunningWindows(
     {
         if (reused[i]) continue;
         auto& old = dockUnpinnedRunningApps_[i];
-        if (old.minimizedThumbnail && (!separateMinimizedWindows || !generalSettings_.dockEnabled))
+        if (static_cast<bool>(old.minimizedThumbnail) != separateWindows)
             continue;
         DockRunningAppInfo exiting = old;
         exiting.presence.SetVisible(false, animationNow, animatePresence,
@@ -1206,9 +1198,6 @@ void DesktopApp::RefreshDockRunningWindows(
         runningApps.insert(runningApps.begin() + static_cast<std::ptrdiff_t>(
             std::min(i, runningApps.size())), std::move(exiting));
     }
-    if (separateMinimizedWindows)
-        std::stable_partition(runningApps.begin(), runningApps.end(),
-            [](const auto& app) { return !app.minimizedThumbnail; });
 
     bool runningLayoutChanged = runningApps.size() != dockUnpinnedRunningApps_.size();
     bool runningVisualChanged = runningLayoutChanged;
@@ -1235,6 +1224,7 @@ void DesktopApp::RefreshDockRunningWindows(
         old.iconBitmap = nullptr;
     }
     dockUnpinnedRunningApps_ = std::move(runningApps);
+    RefreshDockTaskThumbnails();
     dockRunningAppsInitialized_ = true;
     EnsureUiAnimationFrame();
 
@@ -1281,6 +1271,11 @@ bool DesktopApp::ActivateOrToggleDockItem(
     if (itemIndex >= items_.size()) return false;
     const DockAppIdentity requestedIdentity =
         ResolveDockAppIdentity(itemIndex);
+    if (!dockSettings_.minimizeWindowsIntoApplicationIcon)
+    {
+        if (TryActivateDockTray(requestedIdentity.executablePath, itemIndex, pressedAnchorScreen)) return true;
+        return LaunchDesktopItem(itemIndex);
+    }
     if (snowdesktop::dock_window_rules::
             ShouldSuppressDockWindowCommand(
                 IsDockAppClosePending(requestedIdentity)))
@@ -1583,10 +1578,8 @@ bool DesktopApp::ActivateOrToggleDockWindow(
 
     for (DockRunningAppInfo& app : dockUnpinnedRunningApps_)
     {
-        if (app.minimizedThumbnail) continue;
-        const bool matchesTarget =
-            DockWindowsShareApplicationIdentity(
-                app.window, target);
+        const bool matchesTarget = app.minimizedThumbnail ? app.window == target :
+            DockWindowsShareApplicationIdentity(app.window, target);
         if (nowForeground) app.foreground = matchesTarget;
         if (matchesTarget)
         {
@@ -1741,13 +1734,12 @@ void DesktopApp::UpdateDockWindowActivationState(
     for (DockRunningAppInfo& app :
          dockUnpinnedRunningApps_)
     {
-        if (app.minimizedThumbnail) continue;
         if (!app.window || !IsWindow(app.window))
             continue;
         const bool matchesTarget =
-            app.window == target ||
+            app.window == target || (!app.minimizedThumbnail &&
             DockWindowsShareApplicationIdentity(
-                app.window, target);
+                app.window, target));
         if (foreground)
             app.foreground = matchesTarget;
         else if (matchesTarget)

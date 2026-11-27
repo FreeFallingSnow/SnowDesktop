@@ -1372,7 +1372,7 @@ public:
             if (dockEnabledChanged)
             {
                 if (!app_.generalSettings_.dockEnabled)
-                    app_.dockMinimizedThumbnails_.Clear();
+                    app_.dockWindowThumbnails_.Clear();
                 app_.dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
                 if (app_.settingsController_)
                 {
@@ -1960,7 +1960,7 @@ private:
     void RefreshDockMinimizedWindowMode(bool groupMinimizedWindows)
     {
         if (app_.dockSettings_.minimizeWindowsIntoApplicationIcon == groupMinimizedWindows) return;
-        app_.dockMinimizedThumbnails_.Clear();
+        app_.dockWindowThumbnails_.Clear();
         app_.HideDockWindowPreview();
         app_.dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
     }

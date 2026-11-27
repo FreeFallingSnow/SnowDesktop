@@ -318,7 +318,7 @@ void DesktopApp::DrainBackgroundShellWork()
     iconWork_.Drain();
     dockIconWork_.Drain();
     dockIdentityWork_.Drain();
-    if (dockMinimizedThumbnails_.Drain())
+    if (dockWindowThumbnails_.Drain())
     {
         InvalidateDragStaticScene(false);
         InvalidateDockRects();

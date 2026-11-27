@@ -280,6 +280,19 @@ DesktopApp::CollectDockWindowPreviewItems(
     return regularItems;
 }
 
+std::vector<DockWindowPreviewItem> DesktopApp::CollectDockPresentationPreviewItems(
+    const DockAppIdentity& identity, std::wstring_view windowKey)
+{
+    if (windowKey.empty()) return CollectDockWindowPreviewItems(identity);
+    const auto item = std::ranges::find_if(dockUnpinnedRunningApps_, [&](const auto& app) {
+        return app.minimizedThumbnail && app.presence.Interactive() && app.identityKey == windowKey;
+    });
+    if (item == dockUnpinnedRunningApps_.end() || !IsDockTaskWindow(item->window) ||
+        IsDockWindowClosePending(item->window))
+        return {};
+    return {{item->window, item->title}};
+}
+
 void DesktopApp::CloseDockWindowFromPreview(
     HWND window)
 {
@@ -320,7 +333,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
     RECT anchor{};
     bool found = false;
     const auto resolveDesktopItem = [&](size_t itemIndex, RECT bounds) {
-        if (itemIndex >= items_.size() ||
+        if (!dockSettings_.minimizeWindowsIntoApplicationIcon || itemIndex >= items_.size() ||
             GetDockWindowVisualState(itemIndex) == DockWindowVisualState::Closed)
             return false;
         target.identity = ResolveDockAppIdentity(itemIndex);
@@ -339,7 +352,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
         {
             const DockRunningAppInfo& app =
                 dockUnpinnedRunningApps_[index];
-            if (app.minimizedThumbnail) return false;
+            if (app.minimizedThumbnail) target.windowKey = app.identityKey;
             target.identity.executablePath = app.executablePath;
             target.identity.appUserModelId = app.appUserModelId;
             target.identity.kind =
@@ -375,8 +388,8 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
     // while the icon grows or shifts during the hover animation.
     if (dockSettings_.hoverEffect != 1)
         anchor = dock->GetElementVisualRect(anchor, clientPoint);
-    target.identityKey =
-        DockWindowPreviewIdentityKey(target.identity);
+    target.identityKey = target.windowKey.empty()
+        ? DockWindowPreviewIdentityKey(target.identity) : target.windowKey;
     if (target.identityKey.empty())
         return false;
 
@@ -506,18 +519,19 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
         return;
     }
 
-    const auto previewItems = CollectDockWindowPreviewItems(target.identity);
+    const auto previewItems = CollectDockPresentationPreviewItems(target.identity, target.windowKey);
     if (!previewItems.empty())
         ShowDockWindowPreview(std::move(target), cursorClient, previewItems);
 }
 
-bool DesktopApp::TryOpenDockWindowPicker(POINT clientPoint, bool byTouch)
+bool DesktopApp::TryOpenDockWindowPicker(POINT clientPoint, bool byTouch, bool allowSingleWindow)
 {
     DockWindowPreviewTarget target;
     if (!dockWindowPreview_ || !ResolveDockWindowPreviewTarget(clientPoint, target))
         return false;
-    const auto previewItems = CollectDockWindowPreviewItems(target.identity);
-    if (previewItems.size() < (byTouch ? 1u : 2u))
+    if (!target.windowKey.empty() && !byTouch && !allowSingleWindow) return false;
+    const auto previewItems = CollectDockPresentationPreviewItems(target.identity, target.windowKey);
+    if (previewItems.size() < (byTouch || allowSingleWindow ? 1u : 2u))
         return false;
 
     // A click can reopen the same group after choosing a window suppressed its hover.
@@ -554,6 +568,7 @@ void DesktopApp::ShowDockWindowPreview(
         }
     }
     dockWindowPreviewKey_ = target.targetToken;
+    dockWindowPreviewWindowKey_ = std::move(target.windowKey);
     dockWindowPreviewIdentity_ = target.identity;
     dockWindowPreviewAnchorScreen_ = target.anchorScreen;
     dockWindowPreview_->Show(
@@ -569,8 +584,9 @@ void DesktopApp::ShowDockWindowPreview(
 void DesktopApp::RefreshDockWindowPreviewItems()
 {
     if (!dockWindowPreview_ || !dockWindowPreview_->IsVisible() ||
-        dockWindowPreviewIdentity_.kind == DockAppIdentityKind::None) return;
-    dockWindowPreview_->UpdateItems(CollectDockWindowPreviewItems(dockWindowPreviewIdentity_));
+        (dockWindowPreviewWindowKey_.empty() && dockWindowPreviewIdentity_.kind == DockAppIdentityKind::None)) return;
+    dockWindowPreview_->UpdateItems(CollectDockPresentationPreviewItems(
+        dockWindowPreviewIdentity_, dockWindowPreviewWindowKey_));
 }
 
 void DesktopApp::HideDockWindowPreview()
@@ -590,6 +606,7 @@ void DesktopApp::HideDockWindowPreview()
         dockWindowPreview_->Hide();
     dockWindowPreviewHover_.Reset();
     dockWindowPreviewKey_.clear();
+    dockWindowPreviewWindowKey_.clear();
     dockWindowPreviewIdentity_ = {};
     dockWindowPreviewAnchorScreen_ = {};
 }
@@ -602,6 +619,7 @@ void DesktopApp::DismissDockWindowPreviewUntilLeave()
     if (dockWindowPreview_)
         dockWindowPreview_->Dismiss();
     dockWindowPreviewKey_.clear();
+    dockWindowPreviewWindowKey_.clear();
     dockWindowPreviewIdentity_ = {};
     dockWindowPreviewAnchorScreen_ = {};
 }

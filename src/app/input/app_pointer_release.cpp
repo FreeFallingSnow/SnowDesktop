@@ -1108,8 +1108,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
         {
             const HWND runningWindow = running->window;
             ActivateOrToggleDockWindow(
-                runningWindow, running->minimizedThumbnail
-                    ? snowdesktop::dock_window_rules::DockClickAction::Restore : pressedWindowAction,
+                runningWindow, pressedWindowAction,
                 pressedTargetWindow, pressedAnchorScreen);
         }
     }

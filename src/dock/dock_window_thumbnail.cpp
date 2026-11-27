@@ -1,10 +1,9 @@
-#include "dock_minimized_window_thumbnail.h"
+#include "dock_window_thumbnail.h"
 
 #include <algorithm>
-#include <iterator>
 #include <utility>
 
-namespace snowdesktop::dock_minimized_window
+namespace snowdesktop::dock_window_thumbnail
 {
 namespace
 {
@@ -38,6 +37,10 @@ bool AllowsPreview(WindowIdentity window) noexcept
 Pixels CapturePixels(WindowIdentity source, bool minimized)
 {
     if (!AllowsPreview(source)) return {};
+    DWORD_PTR reply = 0;
+    if (!SendMessageTimeoutW(source.window, WM_NULL, 0, 0,
+            SMTO_BLOCK | SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT, 100, &reply))
+        return {};
     RECT bounds{};
     if (IsIconic(source.window))
     {
@@ -69,30 +72,36 @@ Pixels CapturePixels(WindowIdentity source, bool minimized)
     dib.previous = SelectObject(dib.dc, dib.bitmap);
     if (!dib.previous || dib.previous == HGDI_ERROR) return {};
     auto* pixels = static_cast<std::uint32_t*>(buffer);
-    std::fill_n(pixels, static_cast<size_t>(width) * height, 0u);
-    if (!PrintWindow(source.window, dib.dc, PW_RENDERFULLCONTENT) ||
-        !GdiFlush() || !AllowsPreview(source))
-        return {};
-
     constexpr int maxThumbnailEdge = 256;
     const int divisor = std::max({width, height, maxThumbnailEdge});
     const auto targetWidth = static_cast<UINT32>(std::max(1, width * maxThumbnailEdge / divisor));
     const auto targetHeight = static_cast<UINT32>(std::max(1, height * maxThumbnailEdge / divisor));
     Pixels result{{targetWidth, targetHeight}, {}};
     result.data.resize(static_cast<size_t>(targetWidth) * targetHeight);
-    bool hasContent = false;
-    for (UINT32 y = 0; y < targetHeight; ++y)
+    // Render-full-content handles composed windows. Some Win32 windows
+    // still require the ordinary WM_PRINT path to draw their client area.
+    constexpr UINT printModes[]{PW_RENDERFULLCONTENT, 0};
+    for (const UINT flags : printModes)
     {
-        const size_t row = static_cast<size_t>(y) * height / targetHeight * width;
-        for (UINT32 x = 0; x < targetWidth; ++x)
+        std::fill_n(pixels, static_cast<size_t>(width) * height, 0u);
+        if (!PrintWindow(source.window, dib.dc, flags) || !GdiFlush()) continue;
+        if (!AllowsPreview(source)) return {};
+        bool hasContent = false;
+        for (UINT32 y = 0; y < targetHeight; ++y)
         {
-            const auto pixel = pixels[row + static_cast<size_t>(x) * width / targetWidth] & 0x00ffffffu;
-            result.data[static_cast<size_t>(y) * targetWidth + x] = pixel;
-            // Some iconic HWNDs return success after painting only a title bar.
-            hasContent |= y >= targetHeight / 4 && pixel != 0;
+            const size_t row = static_cast<size_t>(y) * height / targetHeight * width;
+            for (UINT32 x = 0; x < targetWidth; ++x)
+            {
+                const auto pixel = pixels[row + static_cast<size_t>(x) * width / targetWidth] & 0x00ffffffu;
+                result.data[static_cast<size_t>(y) * targetWidth + x] = pixel;
+                // Ignore chrome when testing whether the client was drawn.
+                hasContent |= y > targetHeight / 4 && y < targetHeight * 3 / 4 &&
+                    x > targetWidth / 8 && x < targetWidth * 7 / 8 && pixel != 0;
+            }
         }
+        if (hasContent) return result;
     }
-    return hasContent ? std::move(result) : Pixels{};
+    return {};
 }
 }
 
@@ -110,7 +119,7 @@ bool WindowIdentity::IsCurrent() const noexcept
 
 std::wstring WindowIdentity::Key() const
 {
-    return L"minimized-window:" + std::to_wstring(reinterpret_cast<UINT_PTR>(window)) +
+    return L"task-window:" + std::to_wstring(reinterpret_cast<UINT_PTR>(window)) +
         L":" + std::to_wstring(process) + L":" + std::to_wstring(thread);
 }
 
@@ -134,64 +143,76 @@ ID2D1Bitmap1* Thumbnail::Bitmap(ID2D1DeviceContext& context)
     return bitmap_.Get();
 }
 
-void ThumbnailCache::Warm(HWND window, HWND notifyWindow, UINT message)
+void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool minimized,
+    bool foreground, HWND notifyWindow, UINT message)
 {
-    const auto identity = WindowIdentity::Capture(window);
-    if (!identity.IsCurrent() || IsIconic(window)) return;
-    const auto existing = std::ranges::find(warm_, identity, &WarmEntry::window);
-    if (existing != warm_.end())
+    if (!thumbnail || !notifyWindow) return;
+    auto& state = *thumbnail;
+    if (state.epoch_ != epoch_)
     {
-        std::rotate(warm_.begin(), existing, std::next(existing));
+        state.epoch_ = epoch_;
+        state.pending_ = false;
+        state.refreshNeeded_ = true;
+        state.nextAttempt_ = 0;
+    }
+    if (state.minimized_ != minimized || (foreground && !state.foreground_))
+    {
+        state.refreshNeeded_ = true;
+        state.nextAttempt_ = 0;
+    }
+    state.minimized_ = minimized;
+    state.foreground_ = foreground;
+    if (state.pending_) return;
+    const auto now = GetTickCount64();
+    if (now < state.nextAttempt_) return;
+    // Keep the last usable frame while iconic. The normal window can
+    // provide its next frame on restore without replacing the task entry.
+    if (!state.pixels_.empty() && (minimized || (!state.refreshNeeded_ && !foreground)))
+    {
+        state.nextAttempt_ = now + 3000;
+        if (!AllowsPreview(state.source_))
+        {
+            state.pixels_.clear();
+            state.bitmap_.Reset();
+            repaint_ = true;
+            PostMessageW(notifyWindow, message, 0, 0);
+        }
         return;
     }
-    // Keep the preceding foreground window until discovery observes its
-    // minimization, even when the next app has already taken focus.
-    constexpr size_t maxRecentWindows = 4;
-    if (warm_.size() >= maxRecentWindows) warm_.pop_back();
-    warm_.push_front({identity, std::make_shared<Thumbnail>()});
-    Request(identity, warm_.front().thumbnail, false, notifyWindow, message);
-}
-
-std::shared_ptr<Thumbnail> ThumbnailCache::Show(WindowIdentity window, HWND notifyWindow, UINT message)
-{
-    std::shared_ptr<Thumbnail> thumbnail;
-    const auto existing = std::ranges::find(warm_, window, &WarmEntry::window);
-    if (existing != warm_.end())
-    {
-        thumbnail = std::move(existing->thumbnail);
-        warm_.erase(existing);
-    }
-    if (!thumbnail || !AllowsPreview(window)) thumbnail = std::make_shared<Thumbnail>();
-    thumbnail->shown_ = true;
-    Request(window, thumbnail, true, notifyWindow, message);
-    return thumbnail;
-}
-
-void ThumbnailCache::Request(WindowIdentity window, const std::shared_ptr<Thumbnail>& thumbnail,
-    bool minimized, HWND notifyWindow, UINT message)
-{
+    state.nextAttempt_ = now + (state.pixels_.empty() ? 3000 : 1000);
+    const auto source = state.source_;
+    const auto epoch = epoch_;
     const auto weak = std::weak_ptr{thumbnail};
-    work_.Submit(window.Key() + (minimized ? L":iconic:" : L":visible:") +
+    state.pending_ = work_.Submit(source.Key() + L":" +
         std::to_wstring(reinterpret_cast<UINT_PTR>(thumbnail.get())),
-        [window, minimized, weak] {
-            return weak.expired() ? Pixels{} : CapturePixels(window, minimized);
-        }, [this, window, minimized, weak](Pixels pixels) {
+        [source, minimized, weak] {
+            return weak.expired() ? Pixels{} : CapturePixels(source, minimized);
+        }, [this, source, minimized, weak, epoch](Pixels pixels) {
             const auto target = weak.lock();
-            if (!target || pixels.data.empty() || !AllowsPreview(window) ||
-                (!minimized && target->minimizedFrame_))
+            if (!target || epoch != epoch_) return;
+            target->pending_ = false;
+            if (!AllowsPreview(source))
+            {
+                repaint_ |= !target->pixels_.empty();
+                target->pixels_.clear();
+                target->bitmap_.Reset();
                 return;
+            }
+            if (pixels.data.empty() || (minimized && !target->minimized_)) return;
+            if (target->size_.width == pixels.size.width && target->size_.height == pixels.size.height &&
+                target->pixels_ == pixels.data) return;
             target->size_ = pixels.size;
             target->pixels_ = std::move(pixels.data);
             target->bitmap_.Reset();
-            target->minimizedFrame_ = minimized;
-            repaint_ |= target->shown_;
+            repaint_ = true;
         }, notifyWindow, message);
+    if (state.pending_) state.refreshNeeded_ = false;
 }
 
 void ThumbnailCache::Clear()
 {
     work_.Cancel();
-    warm_.clear();
+    ++epoch_;
     repaint_ = false;
 }
 

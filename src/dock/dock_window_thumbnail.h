@@ -5,12 +5,11 @@
 #include <d2d1_1.h>
 #include <wrl/client.h>
 #include <cstdint>
-#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
 
-namespace snowdesktop::dock_minimized_window
+namespace snowdesktop::dock_window_thumbnail
 {
 struct WindowIdentity
 {
@@ -27,39 +26,37 @@ struct WindowIdentity
 class Thumbnail final
 {
 public:
+    explicit Thumbnail(WindowIdentity source) : source_(source) {}
     ID2D1Bitmap1* Bitmap(ID2D1DeviceContext& context);
 
 private:
     friend class ThumbnailCache;
+    WindowIdentity source_;
     D2D1_SIZE_U size_{};
     std::vector<std::uint32_t> pixels_;
     Microsoft::WRL::ComPtr<ID2D1Device> device_;
     Microsoft::WRL::ComPtr<ID2D1Bitmap1> bitmap_;
-    bool shown_ = false;
-    bool minimizedFrame_ = false;
+    std::uint64_t epoch_ = 0;
+    ULONGLONG nextAttempt_ = 0;
+    bool minimized_ = false;
+    bool foreground_ = false;
+    bool pending_ = false;
+    bool refreshNeeded_ = true;
 };
 
 class ThumbnailCache final
 {
 public:
-    void Warm(HWND window, HWND notifyWindow, UINT message);
-    std::shared_ptr<Thumbnail> Show(WindowIdentity window, HWND notifyWindow, UINT message);
+    void Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool minimized,
+        bool foreground, HWND notifyWindow, UINT message);
     void Clear();
     bool Drain();
 
 private:
-    void Request(WindowIdentity window, const std::shared_ptr<Thumbnail>& thumbnail,
-        bool minimized, HWND notifyWindow, UINT message);
-
     // PrintWindow is synchronous and an unresponsive app can stall its caller.
     // Keep it off the UI thread and out of the Shell metadata queue.
     BackgroundWork work_{2, 64};
-    struct WarmEntry
-    {
-        WindowIdentity window;
-        std::shared_ptr<Thumbnail> thumbnail;
-    };
-    std::deque<WarmEntry> warm_;
+    std::uint64_t epoch_ = 1;
     bool repaint_ = false;
 };
 }
