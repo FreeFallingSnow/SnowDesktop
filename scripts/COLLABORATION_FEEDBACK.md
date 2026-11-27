@@ -304,6 +304,8 @@
 - **实际绕行**：用户仅为该次操作特许在Git协作锁下用临时索引按19键提交，提交 `3a7bb60595a7fdaf32b5bd4abc139d07d5164250`。已读 `.codex-probes/winx-start-context-menu/locale-commit.json`：记录十种语言、每语言19键、resourceRequests、`otherIndexEntriesUnchanged=true` 和 `workingFilesUnchanged=true`。临时脚本不入库，不作为通用接口已修复的证据。
 - **影响与下一步**：共享资源能编辑却不能精确提交，增加例外操作和交接成本。让requestId/键级归属贯穿认领、就绪、提交和关闭，在单一Git租约下构造事务提交；覆盖已有暂存、键冲突、HEAD变化和中断恢复。当前仅登记，尚未实现，未为反馈增加构建。
 
+- **控制目录条目的续证（2026-11-27）**：Task `task-e1342d88d140425e8982d15edc760f8f` 与 `dock-free-order-separators` 分别需要更新 `src/settings/control_settings_guidance.h` 中不同的字段。批次 `ee3c330d9bbe40f6b360cdcf62d0d7d0` 的 `claim` 先返回 `Active file edit conflicts`，前序就绪后又返回 `Newly claimed paths already have changes`。续修 Run `f6df782874c04a15b06b511ac0003ffe` 的产品和七项检查通过，前序文件提交 `61f414b21` 后才认领并在批次 `14469975a1954577920480c7602bb913` 补两条英文说明。界面语言使用现有键级事务一次合入。当前按路径保护 C++ 内容，额外候选只覆盖控制目录变化。后续可评估是否将可独立验证的目录说明按字段拆分，避免放宽一般源码的归属边界。
+
 ### CF-014 候选环境失配没有字段差异
 
 - **反馈来源**：`fav-nav-bar` 事件1065（2026-11-04T11:36:20Z）。原产品成功后，候选 `b0578947517d459c8859dc0dc1018b19` 的补验Run `6834bb89369943c3b162a4027e8e47fd` 返回 `Candidate observed tools/environment changed; capture a new context`，未开始编译；反馈称回执没有列出精确变化字段。
