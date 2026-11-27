@@ -98,13 +98,17 @@ Value HostResult(const Target& target, const SettingsActionResult& result)
 
 bool IsRuntimeSettingsTarget(const Target& target) noexcept { return target.kind == "runtime-services"; }
 
-Value DescribeRuntimeSettingsFields(bool animationDiagnosticsAvailable, bool usageGuideAvailable)
+Value DescribeRuntimeSettingsFields(bool animationDiagnosticsAvailable, bool usageGuideAvailable,
+    bool touchSimulationAvailable)
 {
     using namespace control;
     return Object({
         {"animationDiagnosticsEnabled", Object({{"type", String("boolean")}, {"default", Boolean(false)},
             {"available", Boolean(animationDiagnosticsAvailable)},
             {"description", String("Enables the host's detailed animation diagnostics when that service is available.")}})},
+        {"touchSimulationActive", Object({{"type", String("boolean")}, {"default", Boolean(false)},
+            {"available", Boolean(touchSimulationAvailable)},
+            {"description", String("Reports whether the mouse-to-touch input hook is running in the current Windows session. The desired setting and held shortcut are stored under general.")}})},
         {"usageGuideExpanded", Object({{"type", String("boolean")}, {"default", Boolean(true)},
             {"available", Boolean(usageGuideAvailable)},
             {"description", String("Expands or collapses the usage guide section. This does not start a lesson.")}})}});
@@ -120,6 +124,7 @@ Value HandleRuntimeSettings(std::string_view method, const Value& params,
     const auto support = context.windowSupportStatus ? context.windowSupportStatus() : window_support::SupportStatus{};
     const auto advanced = context.advancedFeatureStatus ? context.advancedFeatureStatus() : winui::GeneralAdvancedFeatureStatus{};
     auto state = Object({{"animationDiagnosticsEnabled", Optional(status.animationDiagnosticsEnabled)},
+        {"touchSimulationActive", Optional(status.touchSimulationActive)},
         {"temporaryInitializationEnabled", Optional(status.temporaryInitializationEnabled)}, {"usageGuideExpanded", Optional(status.usageGuideExpanded)},
         {"windowSupport", context.windowSupportStatus ? WindowSupport(support) : Value{}},
         {"advancedFeatures", context.advancedFeatureStatus ? Advanced(advanced) : Value{}},
@@ -135,9 +140,9 @@ Value HandleRuntimeSettings(std::string_view method, const Value& params,
         if (method == "settings.catalog")
         {
             result.object.emplace("fields", DescribeRuntimeSettingsFields(status.animationDiagnosticsEnabled.has_value(),
-                status.usageGuideExpanded.has_value()));
+                status.usageGuideExpanded.has_value(), status.touchSimulationActive.has_value()));
             result.object.emplace("maximumChanges", Number(1));
-            result.object.emplace("readOnly", Names({"temporaryInitializationEnabled", "windowSupport", "advancedFeatures", "generation", "settingsRevision", "animationDiagnosticsStatus"}));
+            result.object.emplace("readOnly", Names({"temporaryInitializationEnabled", "windowSupport", "advancedFeatures", "generation", "settingsRevision", "animationDiagnosticsStatus", "touchSimulationActive"}));
             auto actions = Array();
             if (context.configureWindowSupport && context.windowSupportStatus) actions.array.push_back(String("configure-window-support"));
             if (context.registerAdvancedFeatures && context.advancedFeatureStatus && advanced.bridgeAvailable) actions.array.push_back(String("unlock-advanced-features"));

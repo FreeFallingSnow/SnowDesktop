@@ -1,4 +1,5 @@
 #include "platform/force_restart_hotkey.h"
+#include "ui/input/touch_simulator.h"
 #include "platform/application_version.h"
 #include "dock/dock_fullscreen_applications.h"
 #include "dock/dock_fullscreen_policy.h"
@@ -587,6 +588,7 @@ snowdesktop::settings::HomeAboutStatusPatch DesktopApp::BuildHomeAboutStatus(std
     patch.packaged = snowdesktop::deployment::IsPackaged();
     patch.animationDiagnosticsEnabled =
         uiAnimationScheduler_.DiagnosticsEnabled();
+    patch.touchSimulationActive = snowdesktop::touch_simulation::Enabled();
     patch.temporaryInitializationEnabled = !initializationExperimentDirectory_.empty();
     const auto& profile = snowdesktop::debug_profile::Current();
     snowdesktop::debug_profile::Configuration configuration;
@@ -1149,6 +1151,18 @@ public:
         using snowdesktop::HasSettingsDomain;
         using snowdesktop::SettingsDomain;
 
+        const auto updateTouchSimulation = [&](const GeneralSettings& requested) {
+            const auto& current = app_.generalSettings_;
+            if (current.touchSimulationEnabled == requested.touchSimulationEnabled &&
+                current.touchSimulationModifiers == requested.touchSimulationModifiers &&
+                current.touchSimulationKey == requested.touchSimulationKey) return;
+            if (!snowdesktop::touch_simulation::Configure(requested.touchSimulationEnabled,
+                    requested.touchSimulationModifiers, requested.touchSimulationKey))
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input,
+                    L"Mouse-to-touch simulation could not start", DiagnosticLogLevel::Warning);
+            app_.PublishHomeAboutStatus();
+        };
+
         // Shortcut edits only need to update the in-memory mirror and the
         // relevant registration. Running the full domain pipeline here would
         // rebuild desktop layout and erase the desktop host even though no
@@ -1186,6 +1200,7 @@ public:
             snowdesktop::settings_update_rules::IsGeneralShortcutOnlyCommit(
                 app_.generalSettings_, snapshot.values.general))
         {
+            updateTouchSimulation(snapshot.values.general);
             app_.generalSettings_ = snapshot.values.general;
             snowdesktop::EmergencyRestartHotkey().Apply(app_.generalSettings_.forceRestartHotkeyEnabled,
                 app_.generalSettings_.forceRestartHotkeyModifiers, app_.generalSettings_.forceRestartHotkeyVirtualKey);
@@ -1270,6 +1285,7 @@ public:
         {
             const bool revokeAgentAccess = app_.generalSettings_.agentOperationsEnabled &&
                 !snapshot.values.general.agentOperationsEnabled;
+            updateTouchSimulation(snapshot.values.general);
             app_.generalSettings_ = snapshot.values.general;
             if (revokeAgentAccess && app_.applicationControlRuntime_)
                 app_.applicationControlRuntime_->RevokeAccess();

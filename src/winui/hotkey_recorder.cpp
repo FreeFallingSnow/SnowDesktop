@@ -44,23 +44,25 @@ std::uint32_t SamplePhysicalModifiers() noexcept
 }
 
 std::uint32_t ResolveRoutedVirtualKey(
-    const muxi::KeyRoutedEventArgs& args) noexcept
+    const muxi::KeyRoutedEventArgs& args, bool preserveModifierSide = false) noexcept
 {
     const auto routedVirtualKey =
         static_cast<std::uint32_t>(args.Key());
-    if (routedVirtualKey != HotkeyRecorderRules::KeyProcess)
+    const bool genericModifier = preserveModifierSide &&
+        (routedVirtualKey == VK_SHIFT || routedVirtualKey == VK_CONTROL || routedVirtualKey == VK_MENU);
+    if (routedVirtualKey != HotkeyRecorderRules::KeyProcess && !genericModifier)
         return routedVirtualKey;
 
     const auto keyStatus = args.KeyStatus();
     UINT scanCode = keyStatus.ScanCode;
-    if (scanCode == 0)
-        return 0;
+    if (scanCode == 0) return genericModifier ? routedVirtualKey : 0;
     if (keyStatus.IsExtendedKey)
         scanCode |= 0xE000u;
     const UINT scanCodeVirtualKey = MapVirtualKeyExW(
         scanCode,
         MAPVK_VSC_TO_VK_EX,
         GetKeyboardLayout(0));
+    if (genericModifier) return scanCodeVirtualKey ? scanCodeVirtualKey : routedVirtualKey;
     return HotkeyRecorderRules::ResolveCapturedVirtualKey(
         routedVirtualKey, scanCodeVirtualKey);
 }
@@ -83,7 +85,8 @@ std::wstring VirtualKeyName(std::uint32_t virtualKey)
     }
 
     UINT scanCode = MapVirtualKeyW(virtualKey, MAPVK_VK_TO_VSC);
-    if (virtualKey == VK_INSERT || virtualKey == VK_DELETE ||
+    if (virtualKey == VK_RCONTROL || virtualKey == VK_RMENU ||
+        virtualKey == VK_INSERT || virtualKey == VK_DELETE ||
         virtualKey == VK_HOME || virtualKey == VK_END ||
         virtualKey == VK_PRIOR || virtualKey == VK_NEXT ||
         virtualKey == VK_LEFT || virtualKey == VK_RIGHT ||
@@ -343,6 +346,7 @@ struct HotkeyRecorderState
     bool enabled = true;
     bool localDesktopHotkey = false;
     bool allowStandaloneAlt = false;
+    bool heldBindingMode = false;
     bool alive = true;
     bool lastActionCleared = false;
     bool dialogOpen = false;
@@ -391,7 +395,7 @@ void UpdateVisuals(const std::shared_ptr<HotkeyRecorderState>& state)
                     : state->committedConflictMessage);
         }
         else if (!committed.Empty() && committed.modifiers == 0 &&
-            !state->localDesktopHotkey)
+            !state->localDesktopHotkey && !state->heldBindingMode)
         {
             inlineStatus = L"⚠ " + StatusWithDetails(
                 state->text.noModifierStatus, state->text.noModifierWarning);
@@ -756,7 +760,7 @@ HotkeyRecorder::HotkeyRecorder()
         [weak](const auto&, const muxi::KeyRoutedEventArgs& args) {
             const auto state = weak.lock();
             if (!state || !state->alive || !state->rules.Active()) return;
-            const auto virtualKey = ResolveRoutedVirtualKey(args);
+            const auto virtualKey = ResolveRoutedVirtualKey(args, state->heldBindingMode);
             if (virtualKey == 0)
             {
                 args.Handled(true);
@@ -769,7 +773,7 @@ HotkeyRecorder::HotkeyRecorder()
                 return;
             }
             const auto transition = state->rules.KeyDown(
-                virtualKey, SamplePhysicalModifiers(), state->allowStandaloneAlt);
+                virtualKey, SamplePhysicalModifiers(), state->allowStandaloneAlt, state->heldBindingMode);
             args.Handled(true);
             ApplyTransition(state, transition);
         });
@@ -958,6 +962,11 @@ void HotkeyRecorder::CancelCapture()
 void HotkeyRecorder::SetAllowStandaloneAlt(bool allow) noexcept
 {
     state_->allowStandaloneAlt = allow;
+}
+
+void HotkeyRecorder::SetHeldBindingMode(bool enabled) noexcept
+{
+    state_->heldBindingMode = enabled;
 }
 
 void HotkeyRecorder::CaptureRegisteredHotkey(

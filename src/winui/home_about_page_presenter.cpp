@@ -4,10 +4,12 @@
 #include "diagnostics/diagnostic_log_modules.h"
 
 #include "home_about_page_presenter.h"
+#include "ui/input/touch_simulator.h"
 #include "settings_presenter_controls.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -170,6 +172,14 @@ struct HomeAboutPagePresenter::Impl
     Section demoModeSection;
     Section initializationSection;
     Section animationSection;
+    Section touchSimulationSection;
+    controls::SettingRow touchSimulationRow;
+    controls::SettingRow touchSimulationKeyRow;
+    muxc::ToggleSwitch touchSimulationToggle{nullptr};
+    HotkeyRecorder touchSimulationRecorder;
+    winrt::event_token touchSimulationToken{};
+    std::optional<bool> touchSimulationActive;
+    bool touchSimulationEnabled = false;
     Section resetUnlockSection;
     Section crashSection;
     controls::SettingRow demoModeRow;
@@ -500,6 +510,22 @@ struct HomeAboutPagePresenter::Impl
         animationRow.text.Children().Append(animationStatus);
         animationSection.content.Children().Append(animationRow.root);
 
+        InitializeSection(touchSimulationSection, cardStyle, debugRoot);
+        touchSimulationSection.title.Visibility(mux::Visibility::Collapsed);
+        touchSimulationToggle = muxc::ToggleSwitch{};
+        touchSimulationToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        touchSimulationToggle.UseSystemFocusVisuals(true);
+        touchSimulationRow.Initialize(touchSimulationToggle);
+        touchSimulationSection.content.Children().Append(touchSimulationRow.root);
+        touchSimulationRecorder.SetHeldBindingMode(true);
+        touchSimulationRecorder.SetDefaultValue({0, touch_simulation::DefaultKey});
+        touchSimulationRecorder.Root().HorizontalAlignment(mux::HorizontalAlignment::Right);
+        touchSimulationKeyRow.Initialize(touchSimulationRecorder.Root());
+        touchSimulationKeyRow.SetCompactEditor();
+        touchSimulationKeyRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        touchSimulationSection.content.Children().Append(touchSimulationKeyRow.root);
+        presenter_controls::UpdateSettingsSubrows(touchSimulationSection.content);
+
         InitializeSection(resetUnlockSection, cardStyle, debugRoot);
         resetUnlockSection.title.Visibility(mux::Visibility::Collapsed);
         resetUnlockButton = muxc::Button{};
@@ -678,6 +704,26 @@ struct HomeAboutPagePresenter::Impl
                 actions.setAnimationDiagnostics(
                     generation, animationToggle.IsOn());
             });
+        touchSimulationToken = touchSimulationToggle.Toggled([this](const auto&, const auto&) {
+            if (updatingControls || !CanInvokeDebug() || !actions.updateGeneral) return;
+            actions.updateGeneral(generation, SettingsUpdateMode::Commit,
+                [enabled = touchSimulationToggle.IsOn()](GeneralSettings& settings) {
+                    settings.touchSimulationEnabled = enabled && settings.touchSimulationKey != 0;
+                });
+        });
+        touchSimulationRecorder.SetAvailabilityProbe([](HotkeyChord chord, std::uint64_t,
+            std::uint64_t, HotkeyRecorder::AvailabilityCompletion completion) {
+            completion(touch_simulation::ValidBinding(chord.modifiers, chord.virtualKey), {});
+        });
+        touchSimulationRecorder.SetCommittedCallback([this](HotkeyChord chord) {
+            if (!CanInvokeDebug() || !actions.updateGeneral) return;
+            actions.updateGeneral(generation, SettingsUpdateMode::Commit,
+                [chord](GeneralSettings& settings) {
+                    settings.touchSimulationModifiers = chord.modifiers;
+                    settings.touchSimulationKey = chord.virtualKey;
+                    if (chord.Empty()) settings.touchSimulationEnabled = false;
+                });
+        });
         resetUnlockToken = resetUnlockButton.Click(
             [this](const auto&, const auto&) {
                 if (CanInvokeDebug() && actions.requestResetUnlockConfirmation)
@@ -785,6 +831,13 @@ struct HomeAboutPagePresenter::Impl
         forceRestartToggle.IsOn(forceRestartEnabled);
         demoModeToggle.IsOn(demoModeEnabled);
         animationToggle.IsOn(animationDiagnosticsEnabled);
+        touchSimulationToggle.IsOn(touchSimulationEnabled);
+        touchSimulationRow.SetEnabled(!touchSimulationRecorder.Value().Empty());
+        const bool touchStartFailed = touchSimulationEnabled && touchSimulationActive == false;
+        touchSimulationRow.SetText(L("settings.debug.touchSimulation.title"),
+            L(touchStartFailed ? "settings.debug.touchSimulation.unavailable" :
+                "settings.debug.touchSimulation.description"));
+        SetAutomation(touchSimulationToggle, touchSimulationRow.label.Text(), touchSimulationRow.help.Text());
         initializationToggle.IsOn(temporaryInitializationEnabled);
         updatingControls = false;
         animationStatus.Text(animationDiagnosticsStatus);
@@ -883,6 +936,10 @@ struct HomeAboutPagePresenter::Impl
             forceRestartToggleRow.help.Text());
         forceRestartChordRow.SetText(L("app.settings.hotkey"));
         forceRestartRecorder.SetText(HotkeyText(L("settings.debug.forceRestartHotkey")));
+        touchSimulationKeyRow.SetText(L("app.settings.hotkey"));
+        touchSimulationRecorder.SetText(HotkeyText(L("settings.debug.touchSimulation.title")));
+        muxa::AutomationProperties::SetAutomationId(touchSimulationToggle, L"debug.touchSimulation");
+        muxa::AutomationProperties::SetAutomationId(touchSimulationRecorder.FocusTarget(), L"debug.touchSimulation.hotkey");
         SetSectionTitle(debugProfileSection, "settings.debug.profile.title", L"Debug environment");
         profileRow.SetText(L("settings.debug.profile.enabled"), L("settings.debug.profile.description"));
         environmentRow.SetText(L("settings.debug.profile.environment"), L("settings.debug.profile.switchHint"));
@@ -947,6 +1004,8 @@ struct HomeAboutPagePresenter::Impl
         applicationVersion.clear();
         packaged = false;
         animationDiagnosticsEnabled = false;
+        touchSimulationActive.reset();
+        touchSimulationEnabled = false;
         temporaryInitializationEnabled = false;
         profileEnabled = false;
         profileDirectory.clear();
@@ -985,6 +1044,11 @@ struct HomeAboutPagePresenter::Impl
             forceRestartRecorder.Root().IsEnabled(forceRestartEnabled);
             forceRestartChordRow.SetEnabled(forceRestartEnabled);
             forceRestartRecorder.SetValue(forceRestartChord, generation);
+            touchSimulationEnabled = snapshot.values.general.touchSimulationEnabled;
+            const HotkeyChord touchChord{snapshot.values.general.touchSimulationModifiers,
+                snapshot.values.general.touchSimulationKey};
+            if (newGeneration || touchSimulationRecorder.Value() != touchChord)
+                touchSimulationRecorder.SetValue(touchChord, generation);
         }
         RenderStatus();
     }
@@ -1006,6 +1070,7 @@ struct HomeAboutPagePresenter::Impl
         if (patch.animationDiagnosticsEnabled)
             animationDiagnosticsEnabled =
                 *patch.animationDiagnosticsEnabled;
+        if (patch.touchSimulationActive) touchSimulationActive = patch.touchSimulationActive;
         if (patch.temporaryInitializationEnabled)
             temporaryInitializationEnabled = *patch.temporaryInitializationEnabled;
         if (patch.debugProfileEnabled) profileEnabled = *patch.debugProfileEnabled;
@@ -1042,6 +1107,8 @@ struct HomeAboutPagePresenter::Impl
         if (page == SettingsPage::Debug)
         {
             if (focusId == "debug.forceRestartHotkey") return forceRestartToggle;
+            if (focusId == "debug.touchSimulation") return touchSimulationToggle;
+            if (focusId == "debug.touchSimulation.hotkey") return touchSimulationRecorder.FocusTarget();
             if (focusId == "debug.forceRestartHotkey.hotkey")
                 return forceRestartEnabled ? forceRestartRecorder.FocusTarget() : forceRestartToggle;
             if (focusId == "debug.profile") return profileToggle;
@@ -1088,6 +1155,7 @@ struct HomeAboutPagePresenter::Impl
             demoModeToggle.Toggled(demoModeToken);
             initializationToggle.Toggled(initializationToken);
             animationToggle.Toggled(animationToken);
+            touchSimulationToggle.Toggled(touchSimulationToken);
             resetUnlockButton.Click(resetUnlockToken);
             crashButton.Click(crashToken);
         }
@@ -1095,6 +1163,7 @@ struct HomeAboutPagePresenter::Impl
         {
         }
         forceRestartRecorder.Close();
+        touchSimulationRecorder.Close();
         actions = {};
         localize = {};
     }
@@ -1164,6 +1233,7 @@ void HomeAboutPagePresenter::Deactivate() noexcept
     if (impl_ && !impl_->closed)
     {
         impl_->forceRestartRecorder.CancelCapture();
+        impl_->touchSimulationRecorder.CancelCapture();
         impl_->active = false;
     }
 }
@@ -1178,12 +1248,15 @@ mux::FrameworkElement HomeAboutPagePresenter::FocusTarget(
 bool HomeAboutPagePresenter::IsHotkeyCaptureActive() const noexcept
 {
     return impl_ && !impl_->closed && impl_->active &&
-        impl_->forceRestartRecorder.IsCapturing();
+        (impl_->forceRestartRecorder.IsCapturing() || impl_->touchSimulationRecorder.IsCapturing());
 }
 
 void HomeAboutPagePresenter::CaptureRegisteredHotkey(UINT modifiers, UINT virtualKey)
 {
-    if (IsHotkeyCaptureActive())
+    if (!IsHotkeyCaptureActive()) return;
+    if (impl_->touchSimulationRecorder.IsCapturing())
+        impl_->touchSimulationRecorder.CaptureRegisteredHotkey(modifiers, virtualKey);
+    else
         impl_->forceRestartRecorder.CaptureRegisteredHotkey(modifiers, virtualKey);
 }
 

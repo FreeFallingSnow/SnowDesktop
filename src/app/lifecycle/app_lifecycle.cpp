@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "ui/input/touch_simulator.h"
 #include "platform/force_restart_hotkey.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "app/app.h"
@@ -54,6 +55,7 @@ DesktopApp::DesktopApp()
 
 DesktopApp::~DesktopApp()
 {
+    snowdesktop::touch_simulation::Stop();
     snowdesktop::StopWinKeyStartTap();
     UnregisterScreenTimeNotifications();
     // Closed draw lists retain images and fonts. Join before releasing any

@@ -29,7 +29,8 @@ public:
 
     explicit operator bool() const noexcept { return running_.load(); }
 
-    bool Start(HINSTANCE instance, HOOKPROC callback)
+    bool Start(HINSTANCE instance, HOOKPROC callback,
+        bool (*initialize)() = nullptr, void (*shutdown)() = nullptr)
     {
         if (running_.load())
             return true;
@@ -41,16 +42,20 @@ public:
         auto ready = started.get_future();
         try
         {
-            thread_ = std::thread([this, instance, callback,
+            thread_ = std::thread([this, instance, callback, initialize, shutdown,
                 started = std::move(started)]() mutable {
                 MSG message{};
                 PeekMessageW(&message, nullptr, 0, 0, PM_NOREMOVE);
-                const HHOOK hook = api_.install(
-                    WH_MOUSE_LL, callback, instance, 0);
+                const bool initialized = !initialize || initialize();
+                const HHOOK hook = initialized ? api_.install(
+                    WH_MOUSE_LL, callback, instance, 0) : nullptr;
                 running_.store(hook != nullptr);
                 started.set_value(hook != nullptr);
                 if (!hook)
+                {
+                    if (initialized && shutdown) shutdown();
                     return;
+                }
 
                 bool quit = false;
                 // A system/input wake can win over the stop event. Check stop
@@ -75,6 +80,7 @@ public:
                     }
                 }
                 api_.uninstall(hook);
+                if (shutdown) shutdown();
                 running_.store(false);
             });
         }

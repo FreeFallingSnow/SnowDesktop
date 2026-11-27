@@ -1,4 +1,5 @@
 #include "platform/force_restart_hotkey.h"
+#include "ui/input/touch_simulator.h"
 #include "platform/application_version.h"
 #include "diagnostics/debug_profile.h"
 #include "platform/window_support/window_support_runtime.h"
@@ -907,6 +908,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     LoadNavigationSettingsAndApply();
     snowdesktop::EmergencyRestartHotkey().Apply(generalSettings_.forceRestartHotkeyEnabled,
         generalSettings_.forceRestartHotkeyModifiers, generalSettings_.forceRestartHotkeyVirtualKey);
+    if (!snowdesktop::touch_simulation::Configure(generalSettings_.touchSimulationEnabled,
+            generalSettings_.touchSimulationModifiers, generalSettings_.touchSimulationKey))
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input,
+            L"Mouse-to-touch simulation could not start", DiagnosticLogLevel::Warning);
     snowdesktop::SoftwareDesktopHotkey().Apply(controlHwnd_, generalSettings_);
     ApplyFloatingDockHotkey();
     ApplyDesktopPassthroughHotkey();

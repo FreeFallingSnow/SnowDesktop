@@ -102,7 +102,8 @@ SD_IPC_FIELDS(GeneralSettings,
     v.quickNavigationAppearance, v.collectionPopupAppearance, v.globalQuickNavigationAppearance,
     v.globalCollectionPopupAppearance, v.tooltipAppearanceOverride, v.barPanelAppearanceOverride, v.shellExtensions, v.statusBar,
     v.contextMenuExpandQuickActions, v.contextMenuHidePageManagement, v.contextMenuHideMoreManagement, v.tooltipFontSize,
-    v.gridPreviewHotkeyEnabled, v.gridPreviewHotkeyModifiers, v.gridPreviewHotkeyVirtualKey);
+    v.gridPreviewHotkeyEnabled, v.gridPreviewHotkeyModifiers, v.gridPreviewHotkeyVirtualKey,
+    v.touchSimulationEnabled, v.touchSimulationModifiers, v.touchSimulationKey);
 SD_IPC_FIELDS(CategoryRule,
     v.id, v.customLabel, v.extensions, v.enabled);
 SD_IPC_FIELDS(CategorySettings,

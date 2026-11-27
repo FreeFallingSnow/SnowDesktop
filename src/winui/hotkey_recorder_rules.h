@@ -120,7 +120,8 @@ public:
     [[nodiscard]] HotkeyRecorderTransition KeyDown(
         std::uint32_t virtualKey,
         std::uint32_t physicalModifiers,
-        bool allowStandaloneAlt = false) noexcept
+        bool allowStandaloneAlt = false,
+        bool allowHeldBinding = false) noexcept
     {
         if (!active_)
             return {};
@@ -129,7 +130,17 @@ public:
         if (virtualKey == KeyEnter || virtualKey == KeyEscape ||
             virtualKey == KeyTab)
             return {};
-        if (allowStandaloneAlt && (virtualKey == KeyAlt ||
+        if (allowHeldBinding && IsModifierKey(virtualKey))
+        {
+            if (virtualKey == KeyLeftWindows || virtualKey == KeyRightWindows)
+                return {};
+            if (virtualKey == KeyShift || virtualKey == KeyLeftShift || virtualKey == KeyRightShift)
+                physicalModifiers &= ~ModifierShift;
+            else if (virtualKey == KeyControl || virtualKey == KeyLeftControl || virtualKey == KeyRightControl)
+                physicalModifiers &= ~ModifierControl;
+            else physicalModifiers &= ~ModifierAlt;
+        }
+        else if (allowStandaloneAlt && (virtualKey == KeyAlt ||
                 virtualKey == KeyLeftAlt || virtualKey == KeyRightAlt) &&
             (physicalModifiers & ~ModifierAlt) == 0)
         {

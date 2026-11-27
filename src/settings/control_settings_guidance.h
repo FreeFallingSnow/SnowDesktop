@@ -170,6 +170,9 @@ inline constexpr auto Fields<GeneralSettings> = std::to_array<Description>({
     {"gridPreviewHotkeyEnabled", "Enables the desktop grid overlay shortcut. It is a visual preview of the grid."},
     {"gridPreviewHotkeyModifiers", "Sets the Windows modifier mask for the desktop grid preview shortcut."},
     {"gridPreviewHotkeyVirtualKey", "Sets the Windows virtual key for the desktop grid preview shortcut."},
+    {"touchSimulationEnabled", "Enables system-wide mouse-to-touch simulation while the configured chord is held. Left click and drag simulate a contact and the wheel simulates pinch. Requires a binding and is restored at startup."},
+    {"touchSimulationModifiers", "Sets the Windows MOD_* mask of additional modifiers to hold. A standalone modifier is recorded as the virtual key itself, so its own mask bit must be omitted. Change together with touchSimulationKey when replacing a binding."},
+    {"touchSimulationKey", "Sets the Windows virtual-key code to hold before clicking or scrolling. The default is Right Shift (161). Set the key and modifiers to zero and disable simulation to clear the binding."},
 });
 
 template<>

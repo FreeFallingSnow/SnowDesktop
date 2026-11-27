@@ -63,6 +63,8 @@ public:
     void SetValue(HotkeyChord value, std::uint64_t generation);
     void SetDefaultValue(HotkeyChord value);
     void SetAllowStandaloneAlt(bool allow) noexcept;
+    /** Records keys held during another input, including side-specific modifiers. */
+    void SetHeldBindingMode(bool enabled) noexcept;
     [[nodiscard]] HotkeyChord Value() const noexcept;
     [[nodiscard]] bool IsCapturing() const noexcept;
 

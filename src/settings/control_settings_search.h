@@ -61,7 +61,8 @@ Value DescribeLargeIconFields(const LargeIconConfig& defaults);
 Value DescribeCalendarEventFields();
 Value DescribeCalendarSeriesFields();
 Value DescribeFontSettingsFields();
-Value DescribeRuntimeSettingsFields(bool animationDiagnosticsAvailable, bool usageGuideAvailable);
+Value DescribeRuntimeSettingsFields(bool animationDiagnosticsAvailable, bool usageGuideAvailable,
+    bool touchSimulationAvailable = false);
 Value DescribePackageSettingsFields(bool canEnable, bool canUseDevelopmentOverride);
 Value DescribeAgentSkillSettingsFields();
 Value DescribeWidgetAppearanceFields();

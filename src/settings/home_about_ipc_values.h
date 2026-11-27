@@ -19,7 +19,8 @@ template<> struct Fields<settings::HomeAboutStatusPatch>
             v.packaged, v.backupState, v.backupCount, v.backupDetail, v.animationDiagnosticsEnabled,
             v.animationDiagnosticsStatus, v.temporaryInitializationEnabled,
             v.usageGuideExpanded, v.debugProfileEnabled, v.debugDataDirectory, v.debugDesktopDirectory,
-            v.debugEnvironments, v.debugEnvironmentId, v.debugEnvironmentName);
+            v.debugEnvironments, v.debugEnvironmentId, v.debugEnvironmentName,
+            v.touchSimulationActive);
     }
 };
 }

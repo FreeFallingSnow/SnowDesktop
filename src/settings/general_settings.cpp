@@ -14,6 +14,7 @@
  */
 
 #include "general_settings.h"
+#include "ui/input/touch_simulator.h"
 #include "data/data_paths.h"
 
 #include <shlwapi.h>
@@ -127,6 +128,7 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         settings.softwareDesktopHotkeyEnabled = val;
     if (ReadBoolField(text, "forceRestartHotkeyEnabled", val))
         settings.forceRestartHotkeyEnabled = val;
+    ReadBoolField(text, "touchSimulationEnabled", settings.touchSimulationEnabled);
     if (ReadBoolField(text, "demoModeEnabled", val))
         settings.demoModeEnabled = val;
     if (ReadBoolField(text, "doubleClickHideDesktop", val))
@@ -154,6 +156,18 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     if (ReadBoolField(text, "contextMenuHideMoreManagement", val))
         settings.contextMenuHideMoreManagement = val;
     int hotkeyValue = 0;
+    if (ReadIntField(text, "touchSimulationModifiers", hotkeyValue))
+        settings.touchSimulationModifiers = static_cast<UINT>(hotkeyValue);
+    if (ReadIntField(text, "touchSimulationKey", hotkeyValue))
+        settings.touchSimulationKey = static_cast<UINT>(hotkeyValue);
+    if (!snowdesktop::touch_simulation::ValidBinding(
+            settings.touchSimulationModifiers, settings.touchSimulationKey))
+    {
+        settings.touchSimulationEnabled = false;
+        settings.touchSimulationModifiers = 0;
+        settings.touchSimulationKey = snowdesktop::touch_simulation::DefaultKey;
+    }
+    if (!settings.touchSimulationKey) settings.touchSimulationEnabled = false;
     if (ReadIntField(text, "gridPreviewHotkeyModifiers", hotkeyValue))
         settings.gridPreviewHotkeyModifiers = static_cast<UINT>(hotkeyValue) &
             (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
@@ -341,6 +355,10 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
          << settings.forceRestartHotkeyModifiers << ",\n";
     file << "  \"forceRestartHotkeyVirtualKey\": "
          << settings.forceRestartHotkeyVirtualKey << ",\n";
+    file << "  \"touchSimulationEnabled\": "
+         << (settings.touchSimulationEnabled ? "true" : "false") << ",\n";
+    file << "  \"touchSimulationModifiers\": " << settings.touchSimulationModifiers << ",\n";
+    file << "  \"touchSimulationKey\": " << settings.touchSimulationKey << ",\n";
     file << "  \"softwareDesktopHotkeyEnabled\": "
          << (settings.softwareDesktopHotkeyEnabled ? "true" : "false") << ",\n";
     file << "  \"softwareDesktopHotkeyModifiers\": "

@@ -10,6 +10,7 @@
 #include "navigation/navigation_settings.h"
 #include "theme/personalization.h"
 #include "settings_controller_interface.h"
+#include "ui/input/touch_simulator.h"
 #include "settings_snapshot.h"
 #include "control_global_settings.h"
 #include "control_settings_search.h"
@@ -237,6 +238,10 @@ void CheckCorrelatedValues(const SettingsValues& values, const Value& changes, c
             throw Error("invalid_params", "The requested font is not installed", -32602);
         if (general->Find("diagnosticLogModules") && values.general.diagnosticLogModules != diagnostics::NormalizeLogModules(values.general.diagnosticLogModules))
             throw Error("invalid_params", "Unknown diagnostic log module flags", -32602);
+        if ((general->Find("touchSimulationEnabled") || general->Find("touchSimulationModifiers") || general->Find("touchSimulationKey")) &&
+            (!touch_simulation::ValidBinding(values.general.touchSimulationModifiers, values.general.touchSimulationKey) ||
+                (values.general.touchSimulationEnabled && !values.general.touchSimulationKey)))
+            throw Error("invalid_params", "Invalid mouse-to-touch binding or missing key while enabled", -32602);
     }
     const auto checkAppearance = [](const PersonalizationSettings& value) {
         if (!ValidatePanelGradient(value.panelGradient) || !ValidateEdgeLight(value.edgeLight))

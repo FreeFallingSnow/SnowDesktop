@@ -9,6 +9,7 @@
 #include "animation_preferences.h"
 #include "ui/render/app_font_types.h"
 #include "ui/render/native_tooltip_settings.h"
+#include "ui/input/touch_simulator.h"
 #include "system/calendar/calendar_display.h"
 #include "dock/dock_layout_settings.h"
 #include "theme/surface_theme_types.h"
@@ -33,6 +34,9 @@ struct GeneralSettings
     bool forceRestartHotkeyEnabled = true;
     UINT forceRestartHotkeyModifiers = MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN;
     UINT forceRestartHotkeyVirtualKey = 'S';
+    bool touchSimulationEnabled = false;
+    UINT touchSimulationModifiers = 0;
+    UINT touchSimulationKey = snowdesktop::touch_simulation::DefaultKey;
     std::uint32_t diagnosticLogModules = 0;
     bool demoModeEnabled = false;
     bool doubleClickHideDesktop = false;

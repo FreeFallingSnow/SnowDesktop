@@ -48,6 +48,7 @@ struct HomeAboutStatusPatch
     std::optional<std::vector<DebugEnvironmentSummary>> debugEnvironments;
     std::optional<std::wstring> debugEnvironmentId;
     std::optional<std::wstring> debugEnvironmentName;
+    std::optional<bool> touchSimulationActive;
 };
 
 // Shared by requested snapshots and unsolicited host publications. This

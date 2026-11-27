@@ -393,6 +393,8 @@ set(SNOWDESKTOP_SOURCES
     src/platform/single_instance.cpp
     src/platform/force_restart_hotkey.cpp
     src/platform/force_restart_hotkey.h
+    src/ui/input/touch_simulator.cpp
+    src/ui/input/touch_simulator.h
     src/diagnostics/debug_profile.cpp
     src/platform/deployment_context.cpp
     src/platform/deployment_identity.cpp

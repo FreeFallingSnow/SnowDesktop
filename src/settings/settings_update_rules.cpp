@@ -16,6 +16,9 @@ bool IsGeneralShortcutOnlyCommit(
         before.forceRestartHotkeyEnabled != after.forceRestartHotkeyEnabled ||
         before.forceRestartHotkeyModifiers != after.forceRestartHotkeyModifiers ||
         before.forceRestartHotkeyVirtualKey != after.forceRestartHotkeyVirtualKey ||
+        before.touchSimulationEnabled != after.touchSimulationEnabled ||
+        before.touchSimulationModifiers != after.touchSimulationModifiers ||
+        before.touchSimulationKey != after.touchSimulationKey ||
         before.softwareDesktopHotkeyEnabled != after.softwareDesktopHotkeyEnabled ||
         before.softwareDesktopHotkeyModifiers != after.softwareDesktopHotkeyModifiers ||
         before.softwareDesktopHotkeyVirtualKey != after.softwareDesktopHotkeyVirtualKey ||
@@ -98,6 +101,9 @@ bool IsGeneralLoggingOnlyCommit(const GeneralSettings& before,
         before.forceRestartHotkeyEnabled == after.forceRestartHotkeyEnabled &&
         before.forceRestartHotkeyModifiers == after.forceRestartHotkeyModifiers &&
         before.forceRestartHotkeyVirtualKey == after.forceRestartHotkeyVirtualKey &&
+        before.touchSimulationEnabled == after.touchSimulationEnabled &&
+        before.touchSimulationModifiers == after.touchSimulationModifiers &&
+        before.touchSimulationKey == after.touchSimulationKey &&
         before.demoModeEnabled == after.demoModeEnabled &&
         before.doubleClickHideDesktop == after.doubleClickHideDesktop &&
         before.desktopIdleHideEnabled == after.desktopIdleHideEnabled &&
