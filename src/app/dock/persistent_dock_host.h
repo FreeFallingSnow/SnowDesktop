@@ -3,6 +3,7 @@
 #include "app/app.h"
 #include "desktop/desktop_hover_types.h"
 #include "dock/floating_dock_rules.h"
+#include "dock/dock_window_live_thumbnails.h"
 #include "navigation/quick_navigation_animation_rules.h"
 #include "system/status_bar/status_bar.h"
 #include "ui/render/ui_animation_scheduler.h"
@@ -69,6 +70,7 @@ struct DesktopApp::PersistentDockHost
     bool compositionRenderRecoveryPending = false;
     bool compositionPaintInProgress = false;
     bool collectingPanelIcons = false;
+    bool drawLiveThumbnails = false;
     bool collectingMergedGlass = false;
     std::vector<snowdesktop::PanelBackdropIcon> mergedGlassIcons;
     bool immediatePaintDeferred = false;
@@ -121,7 +123,9 @@ struct DesktopApp::PersistentDockHost
     DesktopBackdropCompositor backdrop;
     ComPtr<IDCompositionTarget> dcompTarget;
     ComPtr<IDCompositionVisual2> dcompVisual;
+    ComPtr<IDCompositionVisual2> dcompContentVisual;
     ComPtr<IDCompositionSurface> dcompSurface;
+    snowdesktop::dock_window_thumbnail::LiveThumbnailLayer liveThumbnails;
     UINT compWidth = 0;
     UINT compHeight = 0;
 };

@@ -1,4 +1,5 @@
 #include "dock_window_thumbnail.h"
+#include "dock_window_live_thumbnails.h"
 
 #include <algorithm>
 #include <bit>
@@ -8,12 +9,7 @@
 #include <d3d11.h>
 #include <dwmapi.h>
 #include <dxgi1_4.h>
-#include <windows.graphics.capture.interop.h>
-#include <windows.graphics.directx.direct3d11.interop.h>
-#include <winrt/Windows.Foundation.h>
-#include <winrt/Windows.Foundation.Metadata.h>
-#include <winrt/Windows.Graphics.Capture.h>
-#include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
+#include <new>
 #include <wincrypt.h>
 #include <utility>
 
@@ -26,6 +22,7 @@ struct Pixels
     D2D1_SIZE_U size{};
     std::vector<std::uint32_t> data;
     bool fromSession = false;
+    bool liveDwmFrame = false;
 };
 
 bool HasUnpaintedTopBand(HWND window, const Pixels& frame)
@@ -96,20 +93,6 @@ struct ComposedThumbnail
     {
         if (thumbnail) DwmUnregisterThumbnail(thumbnail);
         if (window) DestroyWindow(window);
-    }
-};
-
-namespace capture = winrt::Windows::Graphics::Capture;
-
-struct WindowCapture
-{
-    capture::Direct3D11CaptureFramePool pool{nullptr};
-    capture::GraphicsCaptureSession session{nullptr};
-
-    ~WindowCapture()
-    {
-        try { if (session) session.Close(); } catch (...) {}
-        try { if (pool) pool.Close(); } catch (...) {}
     }
 };
 
@@ -391,69 +374,7 @@ Pixels CaptureRedirectedSurface(WindowIdentity source, bool iconic)
     return pixels;
 }
 
-Pixels CaptureVisibleWindow(WindowIdentity source)
-{
-    namespace directx = winrt::Windows::Graphics::DirectX;
-    if (!IsWindowVisible(source.window) || IsIconic(source.window) || !AllowsRedirectedSurface(source))
-        return {};
-    try
-    {
-        if (!capture::GraphicsCaptureSession::IsSupported()) return {};
-        capture::GraphicsCaptureItem item{nullptr};
-        const auto interop = winrt::get_activation_factory<capture::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
-        if (FAILED(interop->CreateForWindow(source.window,
-                winrt::guid_of<capture::GraphicsCaptureItem>(), winrt::put_abi(item))) || !item)
-            return {};
-        const auto size = item.Size();
-        if (!IsUsableSize(size.Width, size.Height)) return {};
-
-        winrt::com_ptr<ID3D11Device> device;
-        winrt::com_ptr<ID3D11DeviceContext> context;
-        if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
-                device.put(), nullptr, context.put()))) return {};
-        winrt::com_ptr<IInspectable> inspectable;
-        winrt::check_hresult(CreateDirect3D11DeviceFromDXGIDevice(
-            device.as<IDXGIDevice>().get(), inspectable.put()));
-        const auto graphicsDevice = inspectable.as<directx::Direct3D11::IDirect3DDevice>();
-        WindowCapture captureWork;
-        captureWork.pool = capture::Direct3D11CaptureFramePool::CreateFreeThreaded(
-            graphicsDevice, directx::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size);
-        captureWork.session = captureWork.pool.CreateCaptureSession(item);
-        if (winrt::Windows::Foundation::Metadata::ApiInformation::IsPropertyPresent(
-                L"Windows.Graphics.Capture.GraphicsCaptureSession", L"IsCursorCaptureEnabled"))
-            captureWork.session.IsCursorCaptureEnabled(false);
-        if (!AllowsRedirectedSurface(source) || IsIconic(source.window)) return {};
-        captureWork.session.StartCapture();
-        const ULONGLONG deadline = GetTickCount64() + 180;
-        do
-        {
-            if (!AllowsRedirectedSurface(source) || IsIconic(source.window)) return {};
-            if (auto frame = captureWork.pool.TryGetNextFrame())
-            {
-                const auto content = frame.ContentSize();
-                const auto surface = frame.Surface().as<
-                    ::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();
-                winrt::com_ptr<ID3D11Texture2D> texture;
-                winrt::check_hresult(surface->GetInterface(__uuidof(ID3D11Texture2D), texture.put_void()));
-                auto pixels = ReadTexture(
-                    *texture.get(), *device.get(), *context.get(), content.Width, content.Height);
-                frame.Close();
-                if (!pixels.data.empty() && !HasUnpaintedTopBand(source.window, pixels) &&
-                    AllowsRedirectedSurface(source))
-                    return pixels;
-            }
-            Sleep(8);
-        } while (GetTickCount64() < deadline);
-    }
-    catch (const winrt::hresult_error&)
-    {
-        // Capture availability and permission can change with the window.
-    }
-    return {};
-}
-
-Pixels ReadComposedThumbnailPixels(HWND destination, int width, int height)
+Pixels ReadComposedThumbnailPixels(HWND destination, HWND source, int width, int height)
 {
     WindowDib dib;
     if (!dib.dc) return {};
@@ -477,7 +398,7 @@ Pixels ReadComposedThumbnailPixels(HWND destination, int width, int height)
         std::fill_n(pixels, static_cast<size_t>(width) * height, 0u);
         if (!PrintWindow(destination, dib.dc, flags) || !GdiFlush()) continue;
         auto result = SamplePixels(buffer, static_cast<size_t>(width) * sizeof(*pixels), width, height, true);
-        if (!result.data.empty()) return result;
+        if (!result.data.empty() && !HasUnpaintedTopBand(source, result)) return result;
     }
     return {};
 }
@@ -506,22 +427,18 @@ Pixels CaptureComposedThumbnail(WindowIdentity source, bool iconic)
     const LONG longest = std::max(size.cx, size.cy);
     const int width = std::max(32, MulDiv(size.cx, edge, longest));
     const int height = std::max(32, MulDiv(size.cy, edge, longest));
-    DWM_THUMBNAIL_PROPERTIES properties{};
-    properties.dwFlags = DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE | DWM_TNP_OPACITY;
-    properties.rcDestination = {0, 0, width, height};
-    properties.opacity = 255;
-    properties.fVisible = TRUE;
-    if (FAILED(DwmUpdateThumbnailProperties(image.thumbnail, &properties)) ||
-        !SetWindowPos(image.window, nullptr,
+    if (!SetWindowPos(image.window, nullptr,
             GetSystemMetrics(SM_XVIRTUALSCREEN) - width - 16,
             GetSystemMetrics(SM_YVIRTUALSCREEN) - height - 16, width, height,
-            SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW))
+            SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW) ||
+        FAILED(snowdesktop::dock_thumbnail::UpdateWholeWindowThumbnail(
+            image.thumbnail, {0, 0, width, height}, size)))
         return {};
     UpdateWindow(image.window);
     if (FAILED(DwmFlush()) || !AllowsRedirectedSurface(source) ||
         (IsIconic(source.window) != FALSE) != iconic)
         return {};
-    auto pixels = ReadComposedThumbnailPixels(image.window, width, height);
+    auto pixels = ReadComposedThumbnailPixels(image.window, source.window, width, height);
     if (!AllowsRedirectedSurface(source)) return {};
     return pixels;
 }
@@ -530,16 +447,153 @@ Pixels CapturePixels(WindowIdentity source, bool allowExtraCapture)
 {
     if (!AllowsPreview(source)) return {};
     const bool iconic = IsIconic(source.window) != FALSE;
-    // A newly shown or restored window may still be presenting its first frame.
-    // Read composed content without requesting a repaint from the source HWND.
+    // Prefer the same whole-window DWM thumbnail used by hover previews when
+    // filling an empty cache. A redirected surface is a cheaper refresh path.
+    if (allowExtraCapture)
+    {
+        auto result = CaptureComposedThumbnail(source, iconic);
+        if (!result.data.empty())
+        {
+            result.liveDwmFrame = iconic;
+            return result;
+        }
+    }
     auto result = CaptureRedirectedSurface(source, iconic);
-    if (!result.data.empty() && !HasUnpaintedTopBand(source.window, result)) return result;
-    if (!allowExtraCapture) return {};
-    result = CaptureComposedThumbnail(source, iconic);
-    if (!result.data.empty() && !HasUnpaintedTopBand(source.window, result)) return result;
-    if (iconic) return {};
-    return CaptureVisibleWindow(source);
+    if (HasUnpaintedTopBand(source.window, result)) return {};
+    return result;
 }
+
+struct RetiredThumbnailVisuals
+{
+    Microsoft::WRL::ComPtr<IDCompositionDesktopDevice> device;
+    std::vector<dock_thumbnail::SharedVisual> images;
+};
+
+void CALLBACK ReleaseRetiredThumbnailVisuals(PTP_CALLBACK_INSTANCE, void* context)
+{
+    const std::unique_ptr<RetiredThumbnailVisuals> retired(
+        static_cast<RetiredThumbnailVisuals*>(context));
+    if (SUCCEEDED(retired->device->WaitForCommitCompletion())) (void)DwmFlush();
+}
+}
+
+void LiveThumbnailLayer::BeginFrame() noexcept
+{
+    for (auto& entry : entries_)
+    {
+        entry.second.pending.reset();
+        entry.second.requested = false;
+    }
+}
+
+std::optional<D2D1_RECT_F> LiveThumbnailLayer::Place(HWND destination,
+    IDCompositionDesktopDevice& device, WindowIdentity source, D2D1_RECT_F card, POINT origin)
+{
+    if (!source.IsCurrent() || !IsIconic(source.window) ||
+        card.right <= card.left || card.bottom <= card.top)
+        return {};
+    const auto [found, added] = entries_.try_emplace(source.window);
+    auto& entry = found->second;
+    if (added) entry.source = source;
+    if (entry.source != source) return {};
+    entry.requested = true;
+    if (!entry.image.visual)
+    {
+        const auto now = GetTickCount64();
+        if (now < entry.retryAfter) return {};
+        entry.retryAfter = now + 5000;
+        SIZE size{};
+        if (!AllowsRedirectedSurface(source) ||
+            FAILED(dock_thumbnail::SourceSize(source.window, size)))
+            return {};
+        const SIZE expected = ReadWindowSize(source.window, true);
+        if (size.cx < expected.cx / 2 || size.cy < expected.cy / 2)
+            return {};
+        if (FAILED(entry.image.Create(destination, source.window, &device, size)))
+            return {};
+        entry.sourceSize = size;
+    }
+
+    const float width = static_cast<float>(entry.sourceSize.cx);
+    const float height = static_cast<float>(entry.sourceSize.cy);
+    const float scale = std::min((card.right - card.left) / width, (card.bottom - card.top) / height);
+    const float x = (card.left + card.right - width * scale) * 0.5f;
+    const float y = (card.top + card.bottom - height * scale) * 0.5f;
+    entry.pending = Placement{scale, x - static_cast<float>(origin.x), y - static_cast<float>(origin.y)};
+    return D2D1::RectF(x, y, x + width * scale, y + height * scale);
+}
+
+HRESULT LiveThumbnailLayer::Publish(IDCompositionVisual& root, IDCompositionVisual& foreground) noexcept
+{
+    for (auto it = entries_.begin(); it != entries_.end();)
+    {
+        auto& entry = it->second;
+        if (!entry.pending)
+        {
+            if (entry.requested)
+            {
+                ++it;
+                continue;
+            }
+            if (entry.attached)
+            {
+                try { retired_.emplace_back(); }
+                catch (...) { return E_OUTOFMEMORY; }
+                const HRESULT hr = root.RemoveVisual(entry.image.visual.Get());
+                if (FAILED(hr))
+                {
+                    retired_.pop_back();
+                    return hr;
+                }
+                retired_.back() = std::move(entry.image);
+            }
+            it = entries_.erase(it);
+            continue;
+        }
+
+        if (entry.pending != entry.published)
+        {
+            const auto& pose = *entry.pending;
+            const D2D1_MATRIX_3X2_F transform{pose.scale, 0, 0, pose.scale, pose.x, pose.y};
+            const HRESULT hr = static_cast<IDCompositionVisual*>(entry.image.visual.Get())->SetTransform(transform);
+            if (FAILED(hr)) return hr;
+            entry.published = entry.pending;
+        }
+        if (!entry.attached)
+        {
+            const HRESULT hr = root.AddVisual(entry.image.visual.Get(), FALSE, &foreground);
+            if (FAILED(hr)) return hr;
+            entry.attached = true;
+        }
+        ++it;
+    }
+    return S_OK;
+}
+
+void LiveThumbnailLayer::RetireAfterCommit(IDCompositionDesktopDevice& device) noexcept
+{
+    if (retired_.empty()) return;
+    auto retired = std::unique_ptr<RetiredThumbnailVisuals>(new (std::nothrow) RetiredThumbnailVisuals);
+    if (!retired) return;
+    retired->device = &device;
+    retired->images.swap(retired_);
+    // DWM may still be showing the old frame when the detach is queued.
+    // Release registrations only after the replacement committed and presented.
+    auto* pending = retired.release();
+    if (!TrySubmitThreadpoolCallback(ReleaseRetiredThumbnailVisuals, pending, nullptr))
+    {
+        pending->images.swap(retired_);
+        delete pending;
+    }
+}
+
+void LiveThumbnailLayer::Reset(IDCompositionVisual* root) noexcept
+{
+    if (root)
+        for (const auto& entry : entries_)
+            if (entry.second.attached) (void)root->RemoveVisual(entry.second.image.visual.Get());
+    entries_.clear();
+    retired_.clear();
 }
 
 D2D1_RECT_F CardFrame(RECT cell, int edge, bool vertical)
@@ -695,6 +749,8 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
         state.refreshNeeded_ = true;
         state.nextAttempt_ = 0;
         state.nextExtraCapture_ = 0;
+        state.liveDwmProbeUntil_ = 0;
+        state.liveDwmFrame_ = false;
         state.nextSessionWrite_ = 0;
         state.sessionRead_ = false;
         state.sessionWritePending_ = false;
@@ -703,7 +759,12 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
     {
         state.refreshNeeded_ = true;
         state.nextAttempt_ = 0;
-        if (state.minimized_ != minimized) state.nextExtraCapture_ = 0;
+        if (state.minimized_ != minimized)
+        {
+            state.nextExtraCapture_ = 0;
+            state.liveDwmFrame_ = false;
+            state.liveDwmProbeUntil_ = minimized ? GetTickCount64() + 5000 : 0;
+        }
     }
     state.minimized_ = minimized;
     state.foreground_ = foreground;
@@ -711,6 +772,8 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
     if (state.pending_) return;
     const auto now = GetTickCount64();
     if (now < state.nextAttempt_) return;
+    const bool checkLiveDwmFrame = minimized && !state.liveDwmFrame_ &&
+        now < state.liveDwmProbeUntil_ && now >= state.nextExtraCapture_;
     if (!minimized)
     {
         const SIZE size = ReadWindowSize(state.source_.window, false);
@@ -723,15 +786,17 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
     }
     // Keep the last usable frame while iconic. The normal window can
     // provide its next frame on restore without replacing the task entry.
-    if (!state.pixels_.empty() && (minimized || (!state.refreshNeeded_ && !foreground)))
+    if (!state.pixels_.empty() && !checkLiveDwmFrame &&
+        (minimized || (!state.refreshNeeded_ && !foreground)))
     {
         state.nextAttempt_ = now + 3000;
-        if (!AllowsPreview(state.source_))
+        if (!AllowsPreview(state.source_) || (state.liveDwmFrame_ && !AllowsRedirectedSurface(state.source_)))
         {
             if (state.sessionRevision_) ForgetSessionFrame(state.source_);
             state.sessionRevision_ = 0;
             state.pixels_.clear();
             state.bitmap_.Reset();
+            state.liveDwmFrame_ = false;
             changed_ |= state.minimized_ || now < state.prepareMinimizeUntil_;
             PostMessageW(notifyWindow, message, 0, 0);
         }
@@ -741,8 +806,9 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
     const auto source = state.source_;
     const auto epoch = epoch_;
     const auto weak = std::weak_ptr{thumbnail};
-    const bool allowExtraCapture = state.pixels_.empty() && now >= state.nextExtraCapture_ &&
-        (minimized || foreground || state.nextExtraCapture_ == 0);
+    const bool allowExtraCapture = checkLiveDwmFrame ||
+        (state.pixels_.empty() && now >= state.nextExtraCapture_ &&
+            (minimized || foreground || state.nextExtraCapture_ == 0));
     const bool readSession = minimized && state.pixels_.empty() && !state.sessionRead_;
     state.pending_ = work_.Submit(source.Key() + L":" +
         std::to_wstring(reinterpret_cast<UINT_PTR>(thumbnail.get())),
@@ -758,7 +824,8 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
             const auto target = weak.lock();
             if (!target || epoch != epoch_) return;
             target->pending_ = false;
-            if (!AllowsPreview(source) || (pixels.fromSession && !AllowsRedirectedSurface(source)))
+            if (!AllowsPreview(source) ||
+                ((pixels.fromSession || target->liveDwmFrame_) && !AllowsRedirectedSurface(source)))
             {
                 if (target->sessionRevision_) ForgetSessionFrame(source);
                 target->sessionRevision_ = 0;
@@ -766,9 +833,15 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
                     !target->pixels_.empty();
                 target->pixels_.clear();
                 target->bitmap_.Reset();
+                target->liveDwmFrame_ = false;
                 return;
             }
             if (pixels.data.empty() || (minimized && !target->minimized_)) return;
+            if (pixels.liveDwmFrame && target->minimized_ && !target->liveDwmFrame_)
+            {
+                target->liveDwmFrame_ = true;
+                changed_ = true;
+            }
             if (target->size_.width == pixels.size.width && target->size_.height == pixels.size.height &&
                 target->pixels_ == pixels.data) return;
             target->size_ = pixels.size;
@@ -783,7 +856,7 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
     {
         state.refreshNeeded_ = false;
         if (readSession) state.sessionRead_ = true;
-        if (allowExtraCapture) state.nextExtraCapture_ = now + 5000;
+        if (allowExtraCapture) state.nextExtraCapture_ = now + (checkLiveDwmFrame ? 1500 : 5000);
     }
 }
 

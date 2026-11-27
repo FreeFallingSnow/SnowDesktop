@@ -34,6 +34,8 @@ class Thumbnail final
 public:
     explicit Thumbnail(WindowIdentity source) : source_(source) {}
     ID2D1Bitmap1* Bitmap(ID2D1DeviceContext& context);
+    WindowIdentity Source() const noexcept { return source_; }
+    bool HasLiveDwmFrame() const noexcept { return liveDwmFrame_; }
 
 private:
     friend class ThumbnailCache;
@@ -46,12 +48,14 @@ private:
     std::uint64_t epoch_ = 0;
     ULONGLONG nextAttempt_ = 0;
     ULONGLONG nextExtraCapture_ = 0;
+    ULONGLONG liveDwmProbeUntil_ = 0;
     ULONGLONG nextSessionWrite_ = 0;
     ULONGLONG prepareMinimizeUntil_ = 0;
     std::uint64_t frameRevision_ = 0;
     std::uint64_t sessionRevision_ = 0;
     bool minimizedInDock_ = false;
     bool minimized_ = false;
+    bool liveDwmFrame_ = false;
     bool foreground_ = false;
     bool pending_ = false;
     bool sessionRead_ = false;

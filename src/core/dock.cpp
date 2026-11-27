@@ -3074,6 +3074,9 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     const RECT search = GetSearchRect();
     const int maxScrollOffset = GetMaxScrollOffset(GetBounds());
     const bool hasOverflow = maxScrollOffset > 0;
+    // Keep the image in the Dock surface when its scroll opacity mask applies.
+    if (auto* host = app_->renderingPersistentDockHost_; host && host->container == this)
+        host->drawLiveThumbnails = !hasOverflow;
     const RECT scrollViewport = GetVisualScrollViewport(app_->lastMousePoint_);
     RECT scrollVisualViewport = snowdesktop::dock_magnification::
         ExpandPerpendicularBounds(scrollViewport, app_->dockSettings_.position,

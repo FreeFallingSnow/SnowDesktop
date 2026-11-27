@@ -957,8 +957,14 @@ void DesktopApp::ResetFloatingDockCompositionResources(
     ResetMergedDockPresentation(host);
     host.frameReady = false;
     drawing_.Reset();
-    if (host.dcompVisual)
-        host.dcompVisual->SetContent(nullptr);
+    host.liveThumbnails.Reset(host.dcompVisual.Get());
+    if (host.dcompContentVisual)
+    {
+        (void)host.dcompContentVisual->SetContent(nullptr);
+        if (host.dcompVisual)
+            (void)host.dcompVisual->RemoveVisual(host.dcompContentVisual.Get());
+        host.dcompContentVisual.Reset();
+    }
     host.dcompSurface.Reset();
     host.compWidth = 0;
     host.compHeight = 0;

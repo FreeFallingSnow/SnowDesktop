@@ -825,6 +825,14 @@ CreateOrResizeFloatingDockCompositionSurface(
         if (FAILED(hr))
             return hr;
     }
+    if (!host.dcompContentVisual)
+    {
+        ComPtr<IDCompositionVisual2> content;
+        HRESULT hr = dcompDevice_->CreateVisual(&content);
+        if (SUCCEEDED(hr)) hr = host.dcompVisual->AddVisual(content.Get(), TRUE, nullptr);
+        if (FAILED(hr)) return hr;
+        host.dcompContentVisual = std::move(content);
+    }
     if (host.dcompSurface &&
         host.compWidth == width &&
         host.compHeight == height)

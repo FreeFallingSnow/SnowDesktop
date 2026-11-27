@@ -8,6 +8,24 @@
 
 namespace snowdesktop::dock_thumbnail
 {
+inline HRESULT UpdateWholeWindowThumbnail(
+    HTHUMBNAIL thumbnail, RECT destination, SIZE sourceSize) noexcept
+{
+    DWM_THUMBNAIL_PROPERTIES properties{};
+    properties.dwFlags = DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE |
+        DWM_TNP_OPACITY | DWM_TNP_SOURCECLIENTAREAONLY;
+    properties.rcDestination = destination;
+    if (sourceSize.cx > 0 && sourceSize.cy > 0)
+    {
+        properties.dwFlags |= DWM_TNP_RECTSOURCE;
+        properties.rcSource = {0, 0, sourceSize.cx, sourceSize.cy};
+    }
+    properties.opacity = 255;
+    properties.fVisible = TRUE;
+    properties.fSourceClientAreaOnly = FALSE;
+    return DwmUpdateThumbnailProperties(thumbnail, &properties);
+}
+
 // Optional Windows 10/11 DWM ABI, illustrated by ADeltaX's shared-visual demo:
 // https://gist.github.com/ADeltaX/aea6aac248604d0cb7d423a61b06e247
 // Resolve only on the known platform family. Failure leaves the documented

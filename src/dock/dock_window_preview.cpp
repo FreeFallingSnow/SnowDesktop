@@ -2,6 +2,7 @@
 #include "dock_window_preview.h"
 #include "ui/input/touch_input.h"
 #include "dock_window_preview_layout.h"
+#include "dock_window_shared_thumbnail.h"
 
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/render/ui_animation_scheduler.h"
@@ -1116,25 +1117,9 @@ void DockWindowPreview::RegisterThumbnails()
         DwmQueryThumbnailSourceSize(thumbnail, &sourceSize);
         RECT destination = FitThumbnailRect(
             thumbnailRects_[index], sourceSize);
-        RECT source{0, 0, sourceSize.cx, sourceSize.cy};
         OffsetRect(&destination, -cardRects_[index].left, -cardRects_[index].top);
-        DWM_THUMBNAIL_PROPERTIES properties{};
-        properties.dwFlags =
-            DWM_TNP_RECTDESTINATION |
-            DWM_TNP_VISIBLE |
-            DWM_TNP_OPACITY |
-            DWM_TNP_SOURCECLIENTAREAONLY;
-        properties.rcDestination = destination;
-        if (sourceSize.cx > 0 && sourceSize.cy > 0)
-        {
-            properties.dwFlags |= DWM_TNP_RECTSOURCE;
-            properties.rcSource = source;
-        }
-        properties.opacity = 255;
-        properties.fVisible = TRUE;
-        properties.fSourceClientAreaOnly = FALSE;
-        if (FAILED(DwmUpdateThumbnailProperties(
-                thumbnail, &properties)))
+        if (FAILED(snowdesktop::dock_thumbnail::UpdateWholeWindowThumbnail(
+                thumbnail, destination, sourceSize)))
         {
             DwmUnregisterThumbnail(thumbnail);
             thumbnails_[index] = nullptr;

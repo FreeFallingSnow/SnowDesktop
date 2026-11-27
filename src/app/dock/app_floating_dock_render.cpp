@@ -152,6 +152,8 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         D2D1::ColorF(0, 0, 0, 0));
     DesktopBackdropCompositor::SrgbSceneRecording scene(context.Get());
 
+    host.liveThumbnails.BeginFrame();
+    host.drawLiveThumbnails = false;
     drawing_.Reset();
     renderingFloatingDock_ = true;
     try
@@ -239,11 +241,13 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     // frame. The following composition commit then publishes the pixels and
     // the content switch atomically instead of exposing an empty surface.
     hr = host.backdrop.SetDirectContentForSrgb(srgbKey, srgbPresented, dcompDevice_.Get(),
-        host.dcompVisual.Get(), frameSurface.Get());
+        host.dcompContentVisual.Get(), frameSurface.Get());
+    if (SUCCEEDED(hr))
+        hr = host.liveThumbnails.Publish(*host.dcompVisual.Get(), *host.dcompContentVisual.Get());
     if (FAILED(hr))
     {
         RecoverFloatingDockCompositionFailure(
-            host, L"SetContent", hr,
+            host, L"SetContent or live thumbnails", hr,
             preserveExistingFrame && replacingSurface);
         return false;
     }
@@ -291,6 +295,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         RecoverFloatingDockCompositionFailure(host, L"Precomposed content", E_FAIL, true);
         return false;
     }
+    host.liveThumbnails.RetireAfterCommit(*dcompDevice_.Get());
     if (host.collectingMergedGlass && statusBar_)
         statusBar_->ApplyMergedDockIconGlass(host.monitor, d2dDevice_.Get(), host.mergedGlassIcons);
     if (recoveringBackdrop && host.backdrop.IsAvailable())

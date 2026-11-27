@@ -11,6 +11,7 @@
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "icons/icon_render_rules.h"
 #include "widgets/single_cell_widget_rules.h"
+#include "app/dock/persistent_dock_host.h"
 
 // Dock controls, entries and running-application rendering.
 
@@ -613,26 +614,46 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
     if (app.minimizedThumbnail)
     {
         const float edge = static_cast<float>(iconSize);
-        auto* thumbnail = app.minimizedThumbnail->Bitmap(*ctx);
+        const auto frame = snowdesktop::dock_window_thumbnail::CardFrame(rect, iconSize, verticalDock);
+        ComPtr<ID2D1SolidColorBrush> fill;
+        const bool haveBrush = SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(0, 0.f), &fill));
+        std::optional<D2D1_RECT_F> liveImage;
+        if (auto* host = renderingPersistentDockHost_; host &&
+            host->collectingPanelIcons && host->drawLiveThumbnails && dcompDevice_ &&
+            haveBrush && presence >= 1.0f && !app.thumbnailMotion && app.minimizedThumbnail->HasLiveDwmFrame())
+        {
+            liveImage = host->liveThumbnails.Place(host->hwnd, *dcompDevice_.Get(),
+                app.minimizedThumbnail->Source(), frame, {host->sourceRect.left, host->sourceRect.top});
+        }
+        auto* thumbnail = liveImage ? nullptr : app.minimizedThumbnail->Bitmap(*ctx);
         // The slot grows beneath the moving window. Until we have a real
         // image, show the moving window on its own, without an empty face.
         if (!thumbnail && app.thumbnailMotion) return;
         const float imageOpacity = app.thumbnailMotion ? 1.0f : presence;
-        const auto frame = snowdesktop::dock_window_thumbnail::CardFrame(rect, iconSize, verticalDock);
         const float width = frame.right - frame.left;
         const float height = frame.bottom - frame.top;
 
-        ComPtr<ID2D1SolidColorBrush> fill;
         const float placeholder = darkText ? 0.88f : 0.20f;
-        const auto backdrop = thumbnail
+        const auto backdrop = thumbnail || liveImage
             ? D2D1::ColorF(darkText ? D2D1::ColorF::White : D2D1::ColorF::Black, 0.24f * presence)
             : D2D1::ColorF(placeholder, placeholder, placeholder, 0.84f * presence);
-        if (SUCCEEDED(ctx->CreateSolidColorBrush(backdrop, &fill)))
+        if (haveBrush)
         {
             const float radius = edge * 0.07f;
+            fill->SetColor(backdrop);
             ctx->FillRoundedRectangle(D2D1::RoundedRect(frame, radius, radius), fill.Get());
         }
-        if (thumbnail)
+        if (liveImage)
+        {
+            // The DWM visual is below this surface. Clear its fitted rectangle
+            // before drawing the badge, which stays in the precomposed scene.
+            fill->SetColor(D2D1::ColorF(0, 0.f));
+            const auto blend = ctx->GetPrimitiveBlend();
+            ctx->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_COPY);
+            ctx->FillRectangle(*liveImage, fill.Get());
+            ctx->SetPrimitiveBlend(blend);
+        }
+        else if (thumbnail)
         {
             const auto source = thumbnail->GetSize();
             const float scale = std::min(width / source.width, height / source.height);
