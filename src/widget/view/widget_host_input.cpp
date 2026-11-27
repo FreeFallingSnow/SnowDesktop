@@ -1260,6 +1260,11 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
     auto& surfaceRegions = InteractionRegionsForSurface(
         widget, normalizedSurface);
     auto& surfaceFocus = ViewFocusForSurface(widget, normalizedSurface);
+    // A pointer target can be the next navigation starting point without a cue.
+    const auto showFocusCue = [&] {
+        if (!std::exchange(ViewFocusCueForSurface(widget, normalizedSurface), true))
+            RuntimeInvalidateHost(widgetId, std::nullopt, normalizedSurface);
+    };
     if (!alt)
     {
         const auto* select = surfaceRegions.ExpandedSelectForFocus(surfaceFocus);
@@ -1433,7 +1438,6 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
                 return focusTarget(focusKeys.front());
             return false;
         }
-        widget.panelViewFocusCueVisible = true;
         const std::string focusedKey = focusKeys[*focusedIndex];
         const auto* focusedRegion = regions.Find(focusedKey);
         if (!focusedRegion) return false;
@@ -1452,6 +1456,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
             key == VK_UP || key == VK_DOWN)
         {
             if (alt) return false;
+            showFocusCue();
             if (focusedRegion->controlKind ==
                 snowdesktop::widget_runtime::
                     InteractionControlKind::Slider)
@@ -1494,6 +1499,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
         if ((key == VK_RETURN || key == VK_SPACE) && !alt)
         {
             if (repeated) return true;
+            showFocusCue();
             const auto input = std::find_if(widget.hostControls.rbegin(),
                 widget.hostControls.rend(), [&](const auto& control) {
                     return control.type ==
@@ -1615,7 +1621,6 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
         return focusTarget(focusKeys[*next]);
     }
     if (!focusedIndex) return false;
-    widget.viewFocusCueVisible = true;
     const std::string focusedKey = focusKeys[*focusedIndex];
     const auto* focusedRegion =
         widget.interactionRegions.Find(focusedKey);
@@ -1638,6 +1643,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
         if (!alt && focusedRegion->controlKind ==
                 snowdesktop::widget_runtime::InteractionControlKind::Slider)
         {
+            showFocusCue();
             const int direction = key == VK_LEFT || key == VK_DOWN ? -1 : 1;
             const auto stepped = widget.interactionRegions.ResolveKeyboardStep(
                 focusedKey, direction);
@@ -1667,6 +1673,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
         {
             const auto* slot = focusedSlot();
             if (!slot) return false;
+            showFocusCue();
             if (slot->kind != snowdesktop::widget_runtime::
                     LogicalSlotKind::Collection)
                 return true;
@@ -1686,6 +1693,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
             }
             return true;
         }
+        showFocusCue();
         const auto next = FindNextHostViewFocus(
             widget.interactionRegions, focusKeys, *focusedIndex, key);
         if (next)
@@ -1696,6 +1704,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
     {
         const auto* slot = focusedSlot();
         if (!slot) return false;
+        showFocusCue();
         const bool removable = slot->kind == snowdesktop::widget_runtime::
                 LogicalSlotKind::Collection || slot->allowClear;
         if (!removable) return true;
@@ -1723,6 +1732,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
     if ((key == VK_RETURN || key == VK_SPACE) && !alt)
     {
         if (repeated) return true;
+        showFocusCue();
         const auto input = std::find_if(widget.hostControls.rbegin(),
             widget.hostControls.rend(), [&](const auto& control) {
                 return control.type == LuaWidget::HostControl::Type::Input &&

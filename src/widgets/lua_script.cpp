@@ -181,17 +181,16 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     if (IsRectEmptyRect(frame)) return;
 
     const bool selected = presentation.selected || state == 2;
-    const bool touchSelection = !preview && !snowdesktop::touch_input::CanHover() &&
-        !snowdesktop::private_pointer::Active();
     const bool ownsPopup = app_->luaWidgetPanelRequest_.widgetId == data_->id &&
         !app_->luaWidgetPanelAnimation_.IsHidden();
-    const bool keyboardOutline = presentation.selected &&
-        app_->keyboardNavVisualFocus_ && !app_->keyboardNavInsideWidget_;
-    const bool pointerOutline = !touchSelection &&
-        (ownsPopup || (presentation.selected && presentation.showOnHoverOnly));
-    const bool drawFocusOutline = !preview && (keyboardOutline || pointerOutline);
+    const bool retainSelectionOutline = presentation.showOnHoverOnly ||
+        (app_->keyboardNavVisualFocus_ && !app_->keyboardNavInsideWidget_);
+    const bool drawFocusOutline = !preview &&
+        (ownsPopup || (presentation.selected && retainSelectionOutline));
     const POINT renderPointer = preview
         ? GetRenderPointer() : app_->lastMousePoint_;
+    const bool touchSelection = !preview && !snowdesktop::touch_input::CanHover() &&
+        !snowdesktop::private_pointer::Active();
     const bool hovered = touchSelection ? presentation.selected : PtInRect(&frame, renderPointer) != FALSE;
     const bool lightTheme = app_->IsLightContentTheme();
 

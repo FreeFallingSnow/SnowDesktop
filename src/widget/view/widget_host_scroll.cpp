@@ -11,6 +11,7 @@
 #include "settings/animation_settings.h"
 #include "ui/input/private_pointer.h"
 #include "ui/input/text_input_accessibility.h"
+#include "ui/input/touch_input.h"
 #include "ui/render/app_font.h"
 #include "ui/render/native_control_geometry.h"
 #include "widget/api/widget_api_registry.h"
@@ -330,6 +331,13 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
     const std::string normalizedSurface =
         NormalizeWidgetSurface(surface);
     WidgetSurfaceScope surfaceScope(d2dState_, normalizedSurface.c_str());
+    if (!wheel && !snowdesktop::private_pointer::Active() &&
+        snowdesktop::touch_input::IsCurrentTouchInput() &&
+        std::exchange(ViewFocusCueForSurface(widget, normalizedSurface), false))
+    {
+        // A touch can keep the same target while dismissing its keyboard cue.
+        RuntimeInvalidateHost(widgetId, std::nullopt, normalizedSurface);
+    }
     POINT point{ x, y };
     for (auto it = widget.hostControls.rbegin();
         it != widget.hostControls.rend(); ++it)
