@@ -41,6 +41,7 @@ constexpr UINT kDockStartIcon = 41876, kDockSearchIcon = 41877;
 constexpr UINT kDockStartRestoreIcon = 41878, kDockSearchRestoreIcon = 41879;
 constexpr UINT kDockStartBeautify = 41890, kDockStartInherit = 41891;
 constexpr UINT kDockSearchBeautify = 41892, kDockSearchInherit = 41893;
+constexpr UINT kDockStartIconBorder = 41894, kDockSearchIconBorder = 41895;
 constexpr UINT kDesktopStyleFirst = 41880;
 constexpr wchar_t const* kDesktopStyles[]{L"native", L"taskbar-dock", L"island", L"merged", L"side"};
 constexpr char const* kDesktopStyleLabels[]{"settings.desktopStyle.native.title", "settings.desktopStyle.taskbar-dock.title",
@@ -184,7 +185,8 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
         if (target == menu) dockActionIcons.emplace_back(command, glyph);
         else SetMenuItemIcon(target, command, glyph, MenuIconFont::FluentRegular);
     };
-    const auto addIconPersonalization = [&](UINT change, UINT restore, const wchar_t* target, const wchar_t* title) {
+    const auto addIconPersonalization = [&](UINT change, UINT restore, const wchar_t* target,
+        const wchar_t* title, UINT border, bool withBorder) {
         const HMENU submenu=CreatePopupMenu(); if(!submenu)return submenu;
         AppendMenuW(submenu,MF_STRING,change,_LW("iconLibrary.change"));
         AppendMenuW(submenu,MF_STRING | (iconOverrides_.contains(target)?0:MF_GRAYED),restore,_LW("iconLibrary.restore"));
@@ -199,18 +201,21 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
             AppendMenuW(submenu, MF_STRING, beauty + 1, _LW("iconAppearance.inherit"));
             SetMenuItemIcon(submenu, beauty + 1, L"\uF19A", MenuIconFont::FluentRegular);
         }
+        if (!iconOverrides_.contains(target) && !ResolveIconAppearance(target).enabled)
+            addToggle(submenu, border, _LW("app.dock.add_icon_border"), withBorder,
+                snowdesktop::menu_fluent_glyphs::kIconBorder);
         const auto label = std::wstring(title) + L"\t" + _LW("iconLibrary.personalize");
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(submenu), label.c_str());
         return submenu;
     };
     const auto startIconMenu = addIconPersonalization(kDockStartIcon, kDockStartRestoreIcon,
-        L"control:start", _LW("app.dock.start_button"));
+        L"control:start", _LW("app.dock.start_button"), kDockStartIconBorder, dockSettings_.startIconBorder);
     if (startIconMenu) AppendMenuW(menu, MF_STRING, kDockStartButton,
         _LW(dockSettings_.showWindowsButton ? "app.interact.shown" : "app.interact.hidden"));
     else addToggle(menu, kDockStartButton, _LW("app.dock.start_button"), dockSettings_.showWindowsButton,
         L"\uF133", true, true);
     const auto searchIconMenu = addIconPersonalization(kDockSearchIcon, kDockSearchRestoreIcon,
-        L"control:search", _LW("app.dock.quick_search"));
+        L"control:search", _LW("app.dock.quick_search"), kDockSearchIconBorder, dockSettings_.quickSearchIconBorder);
     if (searchIconMenu) AppendMenuW(menu, MF_STRING, kDockQuickSearchButton,
         _LW(dockSettings_.showQuickSearchButton ? "app.interact.shown" : "app.interact.hidden"));
     else addToggle(menu, kDockQuickSearchButton, _LW("app.dock.quick_search"), dockSettings_.showQuickSearchButton,
@@ -382,6 +387,24 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint, bool powerUserMenu)
 
 void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
 {
+    bool DockSettings::* iconBorder = nullptr;
+    switch (command)
+    {
+    case kDockStartIconBorder: iconBorder = &DockSettings::startIconBorder; break;
+    case kDockSearchIconBorder: iconBorder = &DockSettings::quickSearchIconBorder; break;
+    case kContextDockRecycleBinIconBorder: iconBorder = &DockSettings::recycleBinIconBorder; break;
+    }
+    if (iconBorder)
+    {
+        if (!settingsController_) return;
+        auto updated = settingsController_->Snapshot()->values.dock;
+        updated.*iconBorder = !(updated.*iconBorder);
+        settingsController_->UpdateDock(std::move(updated), snowdesktop::SettingsUpdateMode::Commit);
+        const auto result = settingsController_->FlushPending();
+        if (!result.Succeeded())
+            snowdesktop::operation_feedback::ShowMessageBox(owner, result.message.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR);
+        return;
+    }
     if (command >= kDockStartBeautify && command <= kDockSearchInherit)
     {
         const std::wstring target = command <= kDockStartInherit ? L"control:start" : L"control:search";

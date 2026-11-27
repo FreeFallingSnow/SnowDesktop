@@ -240,6 +240,7 @@ constexpr UINT kContextDockPinCurrentFolder = 41819;
 constexpr UINT kContextDockSingleClickLaunch = 41820;
 constexpr UINT kContextDockShowOnlyWhenSummoned = 41821;
 constexpr UINT kContextDockWindowPreviews = 41822;
+constexpr UINT kContextDockRecycleBinIconBorder = 41823;
 
 // ── 外壳变更通知 ──────────────────────────────
 constexpr UINT kShellChangeMessage = WM_APP + 2;

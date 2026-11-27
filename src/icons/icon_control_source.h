@@ -16,9 +16,9 @@ inline int ReplacementSourcePixels(std::wstring_view, int)
     return icon_render_rules::kMaximumSourcePixels;
 }
 // Rendering is independent of hover: interactive feedback belongs to Dock.
-inline bool UsesBitmap(std::wstring_view identity, bool independent, const IconBeautifySettings& style)
+inline bool UsesBitmap(std::wstring_view identity, const IconBeautifySettings& style)
 {
-    return (identity == L"control:start" || identity == L"control:search") && (independent || style.enabled);
+    return style.enabled && (identity == L"control:start" || identity == L"control:search");
 }
 inline icon_image::Image MakeSource(std::wstring_view target, bool light, int edge = 128)
 {

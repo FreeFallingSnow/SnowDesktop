@@ -2672,8 +2672,12 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                 app_->DrawIconBitmap(drawing, custom, background);
                 return;
             }
-            app_->DrawDockControlBackground(drawing, background, 0, !lt, 0, monitor);
-            const float logoSize = std::max(1.0f, backgroundSize * 0.58f);
+            const bool withBorder = app_->dockSettings_.startIconBorder ||
+                app_->iconOverrides_.contains(L"control:start") ||
+                app_->ResolveIconAppearance(L"control:start").enabled;
+            if (withBorder)
+                app_->DrawDockControlBackground(drawing, background, 0, !lt, 0, monitor);
+            const float logoSize = std::max(1.0f, backgroundSize * (withBorder ? 0.58f : 1.0f));
             const float paneGap = std::max(1.5f, logoSize * 0.09f);
             const float paneSize = (logoSize - paneGap) * 0.5f;
             const float logoLeft = (background.left + background.right - logoSize) * 0.5f;
@@ -2984,7 +2988,6 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     {
         const RECT searchVisual = visualRectFor(search);
         const int backgroundSize = GetElementIconSize(search, searchVisual);
-        const float searchScale = static_cast<float>(backgroundSize) / 52.0f;
         RECT searchBackground{
             searchVisual.left +
                 (searchVisual.right - searchVisual.left - backgroundSize) / 2,
@@ -3003,7 +3006,17 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                 app_->DrawIconBitmap(drawing, custom, searchBackground);
                 return;
             }
-            app_->DrawDockControlBackground(drawing, searchBackground, 0, !lt, 0, monitor);
+            const bool withBorder = app_->dockSettings_.quickSearchIconBorder ||
+                app_->iconOverrides_.contains(L"control:search") ||
+                app_->ResolveIconAppearance(L"control:search").enabled;
+            if (withBorder)
+                app_->DrawDockControlBackground(drawing, searchBackground, 0, !lt, 0, monitor);
+            constexpr float ringRadius = 9.2f;
+            constexpr float handleEnd = 13.5f;
+            constexpr float stroke = 2.35f;
+            const float searchScale = static_cast<float>(backgroundSize) /
+                (withBorder ? 52.0f : ringRadius + handleEnd + stroke);
+            const float centerOffset = (withBorder ? 2.7f : (handleEnd - ringRadius) * 0.5f) * searchScale;
             const auto drawSubject = [&](ID2D1DeviceContext* subject) {
                 ComPtr<ID2D1SolidColorBrush> brush;
                 if (FAILED(subject->CreateSolidColorBrush(
@@ -3021,17 +3034,17 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                     factory->CreateStrokeStyle(properties, nullptr, 0, &roundedStroke);
                 }
                 const float centerX = (searchBackground.left + searchBackground.right) / 2.0f -
-                    2.7f * searchScale;
+                    centerOffset;
                 const float centerY = (searchBackground.top + searchBackground.bottom) / 2.0f -
-                    2.7f * searchScale;
-                const float searchStroke = std::max(1.5f, 2.35f * searchScale);
+                    centerOffset;
+                const float searchStroke = std::max(1.5f, stroke * searchScale);
                 subject->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(centerX, centerY),
-                    9.2f * searchScale, 9.2f * searchScale),
+                    ringRadius * searchScale, ringRadius * searchScale),
                     brush.Get(), searchStroke, roundedStroke.Get());
                 subject->DrawLine(D2D1::Point2F(centerX + 6.6f * searchScale,
                         centerY + 6.6f * searchScale),
-                    D2D1::Point2F(centerX + 13.5f * searchScale,
-                        centerY + 13.5f * searchScale),
+                    D2D1::Point2F(centerX + handleEnd * searchScale,
+                        centerY + handleEnd * searchScale),
                     brush.Get(), searchStroke, roundedStroke.Get());
             };
             app_->DrawDockControlSubjectShadow(drawing, searchBackground, iconScale, drawSubject);

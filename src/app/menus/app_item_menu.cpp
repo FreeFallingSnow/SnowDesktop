@@ -332,6 +332,18 @@ void DesktopApp::ShowItemContextMenu(
         snowdesktop::widget_search_context_menu::IsSearchResultAtPoint(containers_, clientPoint);
     const auto iconPersonalization = !searchResultMenu && selectedCount == 1 && !items_[itemIndex].largeIcon ?
         AppendIconOverrideMenu(nullptr, customIconIdentity) : nullptr;
+    if (iconPersonalization && dockEntryIndex && *dockEntryIndex < dockEntries_.size() &&
+        IsRecycleBinDockEntry(dockEntries_[*dockEntryIndex]) &&
+        !iconOverrides_.contains(ResolveIconTarget(customIconIdentity)) &&
+        !ResolveIconAppearance(customIconIdentity).enabled)
+    {
+        const auto label = std::wstring(_LW("app.dock.add_icon_border")) + L"\t" +
+            _LW(dockSettings_.recycleBinIconBorder ? "app.interact.on" : "app.interact.off");
+        AppendMenuW(iconPersonalization, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(iconPersonalization, MF_STRING, kContextDockRecycleBinIconBorder, label.c_str());
+        SetMenuItemIcon(iconPersonalization, kContextDockRecycleBinIconBorder,
+            snowdesktop::menu_fluent_glyphs::kIconBorder, MenuIconFont::FluentRegular);
+    }
     if (largeIconMenu)
     {
         if (items_[itemIndex].largeIcon && largeIconAccess == EntryAccess::Edit)
@@ -823,6 +835,9 @@ void DesktopApp::ShowItemContextMenu(
     if (!searchResultMenu && ExecuteIconOverrideMenu(command, customIconIdentity)) return;
     switch (command)
     {
+    case kContextDockRecycleBinIconBorder:
+        ExecuteDockContextMenuCommand(command, menuOwner);
+        return;
     case kContextAddFolderMappingWidget:
     {
         // The menu pumps messages. Re-resolve the source identity rather than

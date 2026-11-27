@@ -255,7 +255,11 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         const bool recycleBin = _wcsicmp(item.desktopIconClsid.c_str(),
             kDesktopIconClsidRecycleBin) == 0;
         auto* bitmap = GetSmallCustomIcon(destination, item.layoutKey, target.right - target.left);
-        const bool separateRecyclePlate = recycleBin && !bitmap && !drawingIconAppearanceSource_ && !ResolveIconAppearance(item.layoutKey).enabled;
+        const bool defaultRecycleIcon = recycleBin && !bitmap && !drawingIconAppearanceSource_ &&
+            !ResolveIconAppearance(item.layoutKey).enabled;
+        const bool separateRecyclePlate = defaultRecycleIcon &&
+            (entry.type != DockEntryType::DesktopItem || dockSettings_.recycleBinIconBorder ||
+                iconOverrides_.contains(ResolveIconTarget(item.layoutKey)));
         if (separateRecyclePlate)
         {
             const int shortSide = std::max(1, static_cast<int>(std::min(
@@ -289,7 +293,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
             else if (bitmap)
                 DrawIconBitmap(drawing, bitmap, bitmapTarget, alpha, reinterpret_cast<std::uintptr_t>(&item));
             else
-                DrawPlaceholderIcon(drawing, item.sysIconIndex, bitmapTarget, alpha, !separateRecyclePlate);
+                DrawPlaceholderIcon(drawing, item.sysIconIndex, bitmapTarget, alpha, !defaultRecycleIcon);
             if (shortcut)
                 DrawShortcutArrowOverlay(drawing, bitmapTarget, alpha);
         };

@@ -473,7 +473,8 @@ ID2D1Bitmap* DesktopApp::GetSmallCustomIcon(ID2D1RenderTarget* context, std::wst
     const auto found = iconOverrides_.find(target);
     if (found != iconOverrides_.end() && !missingIconTargets_.contains(target))
         if (auto* custom = GetDockCustomIcon(context, found->second, pixels, identity)) return custom;
-    if (snowdesktop::icon_control::UsesBitmap(identity, FindIconAppearance(target) != nullptr, ResolveIconAppearance(identity)))
+    const auto style = ResolveIconAppearance(identity);
+    if (snowdesktop::icon_control::UsesBitmap(identity, style))
     {
         const bool light = CurrentDockAppearance().contentTheme == 1;
         const int edge = std::max(128, snowdesktop::icon_render_rules::SourcePixelsForTarget(pixels));
@@ -484,7 +485,7 @@ ID2D1Bitmap* DesktopApp::GetSmallCustomIcon(ID2D1RenderTarget* context, std::wst
             source = std::make_shared<snowdesktop::BackgroundBitmap>();
             source->bitmap = snowdesktop::icon_image::CreateBitmap(snowdesktop::icon_control::MakeSource(target, light, edge));
         }
-        return GetStyledD2DBitmap(context, source->bitmap, ResolveIconAppearance(identity), true, true);
+        return GetStyledD2DBitmap(context, source->bitmap, style, true, true);
     }
     return nullptr;
 }

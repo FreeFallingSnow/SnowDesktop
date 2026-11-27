@@ -1519,6 +1519,9 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     ReadBoolField(text, "startMenuKeepTaskbarHidden", settings.startMenuKeepTaskbarHidden);
     ReadBoolField(text, "startMenuKeepTaskbarHiddenOnWinKey", settings.startMenuKeepTaskbarHiddenOnWinKey);
     ReadBoolField(text, "showQuickSearchButton", settings.showQuickSearchButton);
+    ReadBoolField(text, "startIconBorder", settings.startIconBorder);
+    ReadBoolField(text, "quickSearchIconBorder", settings.quickSearchIconBorder);
+    ReadBoolField(text, "recycleBinIconBorder", settings.recycleBinIconBorder);
     ReadBoolField(text, "showRunningApps", settings.showRunningApps);
     ReadBoolField(text, "showWindowPreviews", settings.showWindowPreviews);
     ReadBoolField(text, "singleClickLaunchItems",
@@ -1734,6 +1737,9 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << (settings.startMenuKeepTaskbarHiddenOnWinKey ? "true" : "false") << ",\n";
     file << "  \"showQuickSearchButton\": "
          << (settings.showQuickSearchButton ? "true" : "false") << ",\n";
+    file << "  \"startIconBorder\": " << (settings.startIconBorder ? "true" : "false") << ",\n";
+    file << "  \"quickSearchIconBorder\": " << (settings.quickSearchIconBorder ? "true" : "false") << ",\n";
+    file << "  \"recycleBinIconBorder\": " << (settings.recycleBinIconBorder ? "true" : "false") << ",\n";
     // Preserve the legacy keys for downgrade compatibility while migrating
     // every saved configuration to the unconditional feature behavior.
     file << "  \"showRunningApps\": true,\n";
