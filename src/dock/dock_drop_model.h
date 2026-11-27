@@ -79,11 +79,19 @@ inline void Normalize(std::vector<DockEntry>& entries, const Services& services)
     std::stable_partition(tail, entries.end(),
         [](const auto& entry) { return entry.type == DockEntryType::QuickSearch; });
 
-    // The grouped layout becomes the current order, including on the next
-    // switch to free order. A separator's section is its current placement.
-    for (auto& entry : entries)
-        if (entry.type != DockEntryType::Separator) entry.freeOrderSection.reset();
-    dock_folder_rules::CaptureUserOrder(entries);
+    // Clear the old free placement. Preserve ordinary ranks while the Shell
+    // resolves folder targets, so a provisional section cannot reorder them.
+    size_t nextOrder = 0;
+    for (auto entry = entries.begin(); entry != tail; ++entry)
+    {
+        nextOrder = std::max(nextOrder, *entry->userOrder + 1);
+        if (entry->type != DockEntryType::Separator) entry->freeOrderSection.reset();
+    }
+    for (auto entry = tail; entry != entries.end(); ++entry)
+    {
+        entry->userOrder = nextOrder++;
+        entry->freeOrderSection.reset();
+    }
 }
 
 inline dock_folder_rules::InsertRange SectionRange(const std::vector<DockEntry>& entries,
@@ -285,6 +293,15 @@ inline ReorderResult Reorder(std::vector<DockEntry>& entries, std::vector<size_t
     const bool movingSearch = std::any_of(indices.begin(), indices.end(), [&](size_t index) {
         return entries[index].type == DockEntryType::QuickSearch;
     });
+    std::vector<size_t> groupedRanks;
+    if (!services.freeItemOrder)
+    {
+        // Reuse the active ranks of the grouped slots. An unrelated item may
+        // still be waiting for the Shell to resolve its default section.
+        dock_folder_rules::EnsureUserOrder(entries);
+        groupedRanks.reserve(entries.size());
+        for (const auto& entry : entries) groupedRanks.push_back(*entry.userOrder);
+    }
     insertIndex = std::min(insertIndex, entries.size());
     std::vector<DockEntry> movingMain, movingFolders;
     for (size_t index : indices)
@@ -318,7 +335,8 @@ inline ReorderResult Reorder(std::vector<DockEntry>& entries, std::vector<size_t
         std::make_move_iterator(movingFolders.begin()), std::make_move_iterator(movingFolders.end()));
     entries.insert(entries.begin() + static_cast<std::ptrdiff_t>(mainInsert),
         std::make_move_iterator(movingMain.begin()), std::make_move_iterator(movingMain.end()));
-    dock_folder_rules::CaptureUserOrder(entries);
+    for (size_t i = 0; i < entries.size(); ++i) entries[i].userOrder = groupedRanks[i];
+    Normalize(entries, services);
     return ReorderResult::Changed;
 }
 
