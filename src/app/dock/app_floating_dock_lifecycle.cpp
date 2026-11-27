@@ -661,7 +661,8 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         // suppression, so retire it after the physical press has ended.
         dockSuppressClickReleaseEntry_ =
             static_cast<size_t>(-1);
-        ClearDockPressedState();
+        // A thumbnail's middle click owns the same pressed target until its release.
+        if (!middleButtonWidgetMove_) ClearDockPressedState();
     }
 
     POINT cursor{};

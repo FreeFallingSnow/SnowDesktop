@@ -28,6 +28,28 @@ struct Pixels
     bool fromSession = false;
 };
 
+bool HasUnpaintedTopBand(HWND window, const Pixels& frame)
+{
+    if (frame.data.empty() || (GetWindowLongPtrW(window, GWL_STYLE) & WS_CAPTION) != WS_CAPTION)
+        return false;
+
+    // A redirected frame can contain the client image before the window
+    // chrome is available. Ignore the thin frame borders, but require an
+    // uninterrupted band of black pixels so a dark title bar with detail passes.
+    const UINT32 margin = std::max(1u, frame.size.width / 32);
+    const UINT32 firstRow = frame.size.height / 64;
+    const UINT32 rows = std::max(2u, (frame.size.height + 9) / 10);
+    if (frame.size.width <= 2 * margin || frame.size.height < firstRow + rows) return false;
+    for (UINT32 y = firstRow; y < firstRow + rows; ++y)
+    {
+        const auto* row = frame.data.data() + static_cast<size_t>(y) * frame.size.width;
+        if (std::any_of(row + margin, row + frame.size.width - margin,
+                [](std::uint32_t pixel) { return pixel != 0; }))
+            return false;
+    }
+    return true;
+}
+
 constexpr UINT32 kMaxThumbnailEdge = 256;
 constexpr wchar_t kSessionCacheKey[] = L"Software\\SnowDesktop.DockThumbnailSession.v1";
 constexpr DWORD kMaxSessionFrames = 64;
@@ -167,6 +189,7 @@ Pixels ReadSessionFrame(WindowIdentity source)
         return {};
     Pixels frame{header.size, std::vector<std::uint32_t>(count), true};
     std::memcpy(frame.data.data(), plain.blob.pbData + sizeof(header), count * sizeof(std::uint32_t));
+    if (HasUnpaintedTopBand(source.window, frame)) return {};
     return frame;
 }
 
@@ -416,7 +439,9 @@ Pixels CaptureVisibleWindow(WindowIdentity source)
                 auto pixels = ReadTexture(
                     *texture.get(), *device.get(), *context.get(), content.Width, content.Height);
                 frame.Close();
-                if (!pixels.data.empty() && AllowsRedirectedSurface(source)) return pixels;
+                if (!pixels.data.empty() && !HasUnpaintedTopBand(source.window, pixels) &&
+                    AllowsRedirectedSurface(source))
+                    return pixels;
             }
             Sleep(8);
         } while (GetTickCount64() < deadline);
@@ -508,9 +533,11 @@ Pixels CapturePixels(WindowIdentity source, bool allowExtraCapture)
     // A newly shown or restored window may still be presenting its first frame.
     // Read composed content without requesting a repaint from the source HWND.
     auto result = CaptureRedirectedSurface(source, iconic);
-    if (!result.data.empty() || !allowExtraCapture) return result;
+    if (!result.data.empty() && !HasUnpaintedTopBand(source.window, result)) return result;
+    if (!allowExtraCapture) return {};
     result = CaptureComposedThumbnail(source, iconic);
-    if (!result.data.empty() || iconic) return result;
+    if (!result.data.empty() && !HasUnpaintedTopBand(source.window, result)) return result;
+    if (iconic) return {};
     return CaptureVisibleWindow(source);
 }
 }
