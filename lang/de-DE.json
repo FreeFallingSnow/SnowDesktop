@@ -2978,7 +2978,7 @@
   "settings.dock.freeItemOrder.description": "Ziehen Sie Einträge zwischen dem Bereich für angeheftete Elemente und dem Dateibereich. Die Schnellsuche kann innerhalb des Dateibereichs verschoben werden.",
   "app.dock.add_separator": "Trennlinie hinzufügen",
   "app.dock.remove_separator": "Trennlinie entfernen",
-  "core.drag.dock_section_redirect": "{0} (Aktivieren Sie „Freie Anordnung“, um hier abzulegen)",
+  "core.drag.dock_section_redirect": "{0} (Leertaste drücken, um „Freie Anordnung“ zu aktivieren)",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "Fenster im Programmsymbol minimieren",
   "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Deaktivieren, um jedes minimierte Fenster einzeln im Aufgabenbereich des Docks anzuzeigen."
 }

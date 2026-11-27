@@ -2978,7 +2978,7 @@
   "settings.dock.freeItemOrder.description": "在釘選區和檔案區之間拖曳項目，快速搜尋可在檔案區內調整位置。",
   "app.dock.add_separator": "新增分隔線",
   "app.dock.remove_separator": "移除分隔線",
-  "core.drag.dock_section_redirect": "{0}（可開啟自由排列）",
+  "core.drag.dock_section_redirect": "{0}（按空白鍵開啟自由排列）",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "將視窗最小化至應用程式圖像",
   "settings.dock.minimizeWindowsIntoApplicationIcon.description": "關閉後，每個最小化的視窗都會個別顯示在 Dock 的工作區。"
 }

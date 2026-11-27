@@ -2978,7 +2978,7 @@
   "settings.dock.freeItemOrder.description": "Drag items between the pinned and file sections. Quick Search can be reordered in the file section.",
   "app.dock.add_separator": "Add separator",
   "app.dock.remove_separator": "Remove separator",
-  "core.drag.dock_section_redirect": "{0} (Enable Free item order to drop here)",
+  "core.drag.dock_section_redirect": "{0} (Press Space to enable Free item order)",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "Minimize windows into application icons",
   "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Turn off to show each minimized window separately in the Dock task area."
 }

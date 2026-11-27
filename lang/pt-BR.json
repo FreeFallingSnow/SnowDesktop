@@ -2978,7 +2978,7 @@
   "settings.dock.freeItemOrder.description": "Arraste itens entre as áreas de itens fixados e arquivos. A Busca Rápida pode ser movida dentro da área de arquivos.",
   "app.dock.add_separator": "Adicionar separador",
   "app.dock.remove_separator": "Remover separador",
-  "core.drag.dock_section_redirect": "{0} (ative «Ordem livre» para soltar aqui)",
+  "core.drag.dock_section_redirect": "{0} (pressione a barra de espaço para ativar «Ordem livre»)",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "Minimizar janelas nos ícones dos aplicativos",
   "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Desative para exibir cada janela minimizada separadamente na área de tarefas do Dock."
 }

@@ -2978,7 +2978,7 @@
   "settings.dock.freeItemOrder.description": "고정 영역과 파일 영역 사이에서 항목을 끌어 이동할 수 있습니다. 빠른 검색은 파일 영역 안에서 위치를 바꿀 수 있습니다.",
   "app.dock.add_separator": "구분선 추가",
   "app.dock.remove_separator": "구분선 제거",
-  "core.drag.dock_section_redirect": "{0} (여기에 놓으려면 ‘자유롭게 정렬’을 켜세요)",
+  "core.drag.dock_section_redirect": "{0} (스페이스바를 눌러 ‘자유롭게 정렬’ 켜기)",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "윈도우를 응용 프로그램 아이콘으로 최소화",
   "settings.dock.minimizeWindowsIntoApplicationIcon.description": "끄면 최소화한 윈도우가 Dock의 작업 영역에 하나씩 표시됩니다."
 }
