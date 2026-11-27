@@ -593,6 +593,7 @@
 
 - **实测（2026-11-18）**：`code-health-20261118` 的批次 `df547424901b493b8d712f19a4311e36` / Run `2c77c63416304840915950ae07250aea` 首次报告 `app.h` 的 `IconLibrarySnapshot` 与 `IconLibraryRequest` 编译错误 C2039。随后 `task-6c5683a0092945dba05fdd04d901325f` 的批次 `565e44309195466e9b02ff255cbe2c40` 修订 0 / Run `b22db32355fa4780bde1e23c03e282f4` 经 `ready-and-wait` 运行标准 Release，再次报告同一错误。两次原始诊断保存在各自的 `.log.product.log`。
 - **源码与影响**：相邻任务的全树快照均包含同一未修正的类型可见性问题。第二轮再次配置和编译后失败，且修复所需的 `app.h` 由剪贴板任务认领。两任务将声明和调用方分开认领，共用续修批次 `db1f743709e343fcab58855ace19e930`。
+- **复现（2026-11-27）**：Dock 批次 `9765ada44a2041a0bc7ef0b72a0d1c6e` / Run `40c8c3cb1ad4470d9e0a2ee4fe3c3ccf` 与 `touch-group-tab-drag-20261127` 批次 `bbe81579d52748c4a3e90e6acccab09b` / Run `528a95d6efc44652bfcf40addb3cf561` 均在产品编译报告 `app_dock_render.cpp:742` 的 `verticalDock` C2065、`app_dock_window_tracking.cpp:963` 的 C2665 和 `RunningWindowCandidate.thumbnail` C2039。两批的 `.log.product.log` 保留原始诊断。第二次编译再次被同一组错误阻断，未运行测试。触屏任务的定向语法检查通过，已登记 Issue `4449b3e54607481f9d898ce9aaad5576` 并沿续修批次 `30654924871948258fb023b718b63438` 验证。
 - **下一步**：检查排队候选的失败依赖指纹能否与已保存的编译诊断匹配，在启动前提供共享续修提示。保留快照边界与原失败证据。依赖匹配能力待评估。
 
 ### CF-034 首次激活时宿主控制窗口不可用
