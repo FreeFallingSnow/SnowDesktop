@@ -73,6 +73,10 @@ public:
     /** @brief 拖拽是否仍保留可供释放提交使用的坐标上下文。 */
     bool HasContext() const { return hasContext_; }
 
+    enum class DockFreeOrderPreview { None, ExistingQuickSearch, AddedQuickSearch };
+    DockFreeOrderPreview DockOrderPreview() const { return dockOrderPreview_; }
+    void SetDockOrderPreview(DockFreeOrderPreview preview) { dockOrderPreview_ = preview; }
+
     /** @brief 获取拖拽源容器指针 */
     Container* Source() const { return source_; }
 
@@ -341,6 +345,7 @@ private:
     bool active_ = false;                    /**< 拖拽会话是否处于激活状态 */
     bool visualVisible_ = false;             /**< 应用自绘拖拽虚影是否可见 */
     bool hasContext_ = false;                /**< 是否保留释放提交所需的拖拽上下文 */
+    DockFreeOrderPreview dockOrderPreview_ = DockFreeOrderPreview::None;
     Container* source_ = nullptr;            /**< 拖拽源容器指针 */
     std::vector<Item*> items_;              /**< 被拖拽的 Item 指针列表 */
     DragSourceList sourceList_;              /**< 拖拽源列表 */

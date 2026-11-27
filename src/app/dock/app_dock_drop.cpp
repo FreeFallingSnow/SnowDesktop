@@ -4,8 +4,83 @@
 #include "desktop/desktop_source.h"
 #include "dock/dock_drop_model.h"
 #include "dock/dock_desktop_return.h"
+#include "settings/settings_controller.h"
+#include "settings/settings_snapshot.h"
 
 // Dock insertion, collection drops and restoration to the desktop.
+
+bool DockContainer::PreviewFreeOrderForDrag(DesktopApp& app)
+{
+    auto& session = app.dragSession_;
+    if (!session.IsActive() || app.dockSettings_.freeItemOrder || !app.settingsController_ ||
+        app.dockRunningDrag_) return false;
+
+    const auto* dock = dynamic_cast<const DockContainer*>(session.TargetContainer());
+    const HitRegion region = session.TargetRegion();
+    if (!dock || (region != HitRegion::SortBefore && region != HitRegion::SortAfter && region != HitRegion::Empty) ||
+        (session.Source() != dock && !dock->HasCapacity(std::max<size_t>(1, session.Items().size()))))
+        return false;
+    if (app.dragDropController_.IsExternalDragActive() &&
+        app.dragDropController_.ExternalSummary().applicationShortcut) return false;
+
+    const POINT point = session.CurrentPoint();
+    const bool overFiles = dock->GetSectionAtPoint(point) == DockEntrySection::Files;
+    const bool belongsToFiles = dock->HasOnlyFolderDragSource() || dock->HasOnlyRecycleBinDragSource();
+    if (overFiles == belongsToFiles && !dock->HasMixedFolderDragSource()) return false;
+
+    const bool hadQuickSearch = std::any_of(app.dockEntries_.begin(), app.dockEntries_.end(),
+        [](const auto& entry) { return entry.type == DockEntryType::QuickSearch; });
+    session.SetDockOrderPreview(hadQuickSearch ? DragSession::DockFreeOrderPreview::ExistingQuickSearch
+                                              : DragSession::DockFreeOrderPreview::AddedQuickSearch);
+    // Preview the same layout as the switch, while leaving its persisted
+    // value untouched until a Dock insertion actually accepts the drop.
+    app.dockSettings_.freeItemOrder = true;
+    app.ResetDockHandoffDwell();
+    app.NormalizeDockRecycleBinPosition();
+    app.RebuildContainersAndItems();
+    if (session.IsActive())
+    {
+        app.ResolveCurrentDragTargetAt(point);
+        app.ShowDragHintWindow(point, app.GetCurrentDragTargetHint(DropActionToMods(session.Action())));
+        if (app.dragDropController_.IsTransportActive()) app.PresentOleDragInteractionFrame();
+        else app.PresentPointerInteractionFrame();
+    }
+    return true;
+}
+
+void DockContainer::FinishFreeOrderForDrag(DesktopApp& app, bool dropped)
+{
+    auto& session = app.dragSession_;
+    const auto preview = session.DockOrderPreview();
+    if (preview == DragSession::DockFreeOrderPreview::None) return;
+    session.SetDockOrderPreview(DragSession::DockFreeOrderPreview::None);
+
+    if (app.settingsController_)
+    {
+        auto settings = app.settingsController_->Snapshot()->values.dock;
+        if (dropped && !settings.freeItemOrder)
+        {
+            settings.freeItemOrder = true;
+            app.settingsController_->UpdateDock(std::move(settings), snowdesktop::SettingsUpdateMode::Commit);
+        }
+        if (app.settingsController_->Snapshot()->values.dock.freeItemOrder) return;
+    }
+
+    app.dockSettings_.freeItemOrder = false;
+    if (preview == DragSession::DockFreeOrderPreview::AddedQuickSearch)
+        std::erase_if(app.dockEntries_, [](const auto& entry) { return entry.type == DockEntryType::QuickSearch; });
+    app.NormalizeDockRecycleBinPosition();
+    app.InvalidateDockContainers();
+    app.InvalidateDragStaticScene();
+}
+
+HitRegion DockContainer::ResolveFreeOrderPreviewTarget(POINT point, Slot*& slot, HitRegion region)
+{
+    if (region != HitRegion::Handoff || app_->dragSession_.DockOrderPreview() == DragSession::DockFreeOrderPreview::None)
+        return region;
+    app_->ResetDockHandoffDwell();
+    return RedirectDragToNearestInsertion(point, slot);
+}
 
 snowdesktop::dock_drop_model::Services DesktopApp::DockDropServices()
 {

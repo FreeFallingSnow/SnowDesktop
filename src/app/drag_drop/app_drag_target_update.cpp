@@ -39,7 +39,8 @@ void DesktopApp::ResolveCurrentDragTargetAt(POINT clientPoint, bool committing)
     {
         auto* dock = GetDockContainerAtPoint(clientPoint);
         Slot* slot = nullptr;
-        const auto region = dock ? dock->HitTestDrag(clientPoint, slot) : HitRegion::None;
+        auto region = dock ? dock->HitTestDrag(clientPoint, slot) : HitRegion::None;
+        if (dock) region = dock->ResolveFreeOrderPreviewTarget(clientPoint, slot, region);
         dragSession_.UpdateTarget(region == HitRegion::None ? nullptr : dock, slot, region);
         return;
     }
@@ -141,6 +142,8 @@ void DesktopApp::ResolveCurrentDragTargetAt(POINT clientPoint, bool committing)
             dragSession_.KeepPlacementAfterViewChange(target.container, target.slot->GetBounds());
     }
 
+    if (auto* dock = dynamic_cast<DockContainer*>(target.container))
+        target.region = dock->ResolveFreeOrderPreviewTarget(clientPoint, target.slot, target.region);
     if (target.region == HitRegion::Handoff && target.slot &&
         dragSession_.KeepsPlacementAfterViewChange(target.container))
     {

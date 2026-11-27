@@ -514,6 +514,8 @@ HRESULT DesktopApp::HandleOleDragEnter(
     {
         PrepareDockBackdropForDragTransition();
         dragSession_.Begin(nullptr, {}, {}, client, client);
+        if (hwnd_)
+            SetTimer(hwnd_, kNativeDragHoverRecoveryTimerId, kNativeDragHoverRecoveryIntervalMs, nullptr);
     }
     else
         dragSession_.UpdatePoint(client);
@@ -645,6 +647,8 @@ HRESULT DesktopApp::HandleOleDragOver(
     {
         PrepareDockBackdropForDragTransition();
         dragSession_.Begin(nullptr, {}, {}, client, client);
+        if (hwnd_)
+            SetTimer(hwnd_, kNativeDragHoverRecoveryTimerId, kNativeDragHoverRecoveryIntervalMs, nullptr);
     }
     else
         dragSession_.UpdatePoint(client);
@@ -1079,6 +1083,8 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         }
         *effect = DropExternalSlotContent(dataObject, *destination, *effect,
             sourceUsesAsyncMode, dropPaths);
+        if (*effect && destination->preview.pinMaterializedItemsToDock)
+            DockContainer::FinishFreeOrderForDrag(*this, true);
         EndDragSession();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return S_OK;
@@ -2276,7 +2282,12 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                 const auto mappingEffect = snowdesktop::dock_drop_rules::ChooseExternalMappingEffect(*effect);
                 const bool pinned = mappingEffect != DROPEFFECT_NONE &&
                     AddMaterializedItemsToDock(dropPaths, externalDockInsertIndex, true, externalDockSection);
-                if (pinned) { RequestLayoutSave(); RequestShellRefresh(); }
+                if (pinned)
+                {
+                    DockContainer::FinishFreeOrderForDrag(*this, true);
+                    RequestLayoutSave();
+                    RequestShellRefresh();
+                }
                 EndDragSession();
                 *effect = pinned ? mappingEffect : DROPEFFECT_NONE;
                 return S_OK;
@@ -2324,6 +2335,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                 !sourceSupportsAsync);
             if (executed)
             {
+                DockContainer::FinishFreeOrderForDrag(*this, true);
                 EndDragSession();
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 *effect = mappingEffect;

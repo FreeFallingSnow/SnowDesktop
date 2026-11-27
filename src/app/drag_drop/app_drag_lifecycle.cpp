@@ -817,6 +817,7 @@ void DesktopApp::EndDragSession(bool publishDragResult)
     CancelCollectionPopupDwell();
     CancelCollectionGroupTabDwell();
     CancelFolderPreviewDragDwell();
+    DockContainer::FinishFreeOrderForDrag(*this, false);
     dragSession_.End();
     if (!releasingFileSources_.empty())
         FinishFileRemovalVisibility(std::exchange(releasingFileSources_, {}), {});

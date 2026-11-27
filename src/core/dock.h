@@ -126,6 +126,10 @@ public:
         const std::vector<Item*>& sourceItems, Container* origin, int mods) const override;
     void DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion region) override;
 
+    static bool PreviewFreeOrderForDrag(DesktopApp& app);
+    static void FinishFreeOrderForDrag(DesktopApp& app, bool dropped);
+    HitRegion ResolveFreeOrderPreviewTarget(POINT point, Slot*& slot, HitRegion region);
+
     size_t Capacity() const;
     bool HasCapacity(size_t additional) const;
     bool ScrollByWheelDelta(POINT pointer, int wheelDelta);

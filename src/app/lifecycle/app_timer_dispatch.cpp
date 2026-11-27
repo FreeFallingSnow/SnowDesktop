@@ -582,9 +582,14 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 KillTimer(hwnd_, kNativeDragHoverRecoveryTimerId);
             return;
         }
-        if (dragDropController_.IsTransportActive() ||
-            (snowdesktop::private_pointer::AsyncKeyState(PointerGestureVirtualKey()) & 0x8000) == 0)
-            return;
+        const bool nativePointerDown = !dragDropController_.IsTransportActive() &&
+            (snowdesktop::private_pointer::AsyncKeyState(PointerGestureVirtualKey()) & 0x8000) != 0;
+        // Dock hosts do not always own keyboard focus. External drags also
+        // report only modifiers in their OLE key state, so sample Space here.
+        if ((nativePointerDown || dragDropController_.IsExternalDragActive()) &&
+            (snowdesktop::private_pointer::AsyncKeyState(VK_SPACE) & 0x8000) &&
+            DockContainer::PreviewFreeOrderForDrag(*this)) return;
+        if (!nativePointerDown) return;
 
         POINT recoveredPoint{};
         if (TryGetNativeDragHoverPointFromCursor(

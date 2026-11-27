@@ -13,6 +13,7 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
     const bool removeDockPin = !GetDockDragOutRemovalHint(point).empty();
     const bool canDrop = target && region != HitRegion::None && region != HitRegion::Blocked;
     const bool handoff = canDrop && region == HitRegion::Handoff;
+    const bool dockInsertion = canDrop && !handoff && dynamic_cast<DockContainer*>(target);
     const auto sources = dragSession_.SourceList();
     const auto items = dragSession_.Items();
     const auto* targetIcon = handoff && target == GetDesktopGrid() ? HitTestIcon(point) : nullptr;
@@ -79,6 +80,7 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
         }
     }
 
+    if (effect && dockInsertion) DockContainer::FinishFreeOrderForDrag(*this, true);
     if (effect && save) RequestLayoutSave();
     if (canDrop || removeDockPin) ClearSelection();
     if (dragSession_.HasContext()) EndDragSession();

@@ -1240,8 +1240,9 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure, bool background)
         file << (i + 1 == widgets_.size() ? "\n" : ",\n");
     }
     file << "  ],\n  \"dockEntries\": [\n";
-    const auto orderedDockEntries =
-        snowdesktop::dock_folder_rules::EntriesInUserOrder(dockEntries_);
+    auto orderedDockEntries = snowdesktop::dock_folder_rules::EntriesInUserOrder(dockEntries_);
+    if (dragSession_.DockOrderPreview() == DragSession::DockFreeOrderPreview::AddedQuickSearch)
+        std::erase_if(orderedDockEntries, [](const auto* entry) { return entry->type == DockEntryType::QuickSearch; });
     for (size_t i = 0; i < orderedDockEntries.size(); ++i)
     {
         const DockEntry& entry = *orderedDockEntries[i];

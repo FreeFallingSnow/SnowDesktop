@@ -30,6 +30,7 @@ void DragSession::Begin(Container* source, std::vector<Item*> items,
     active_ = true;
     visualVisible_ = true;
     hasContext_ = true;
+    dockOrderPreview_ = DockFreeOrderPreview::None;
     source_ = source;
     items_ = std::move(items);
     sourceList_ = std::move(sourceList);
@@ -225,6 +226,7 @@ void DragSession::End()
     active_ = false;
     visualVisible_ = false;
     hasContext_ = false;
+    dockOrderPreview_ = DockFreeOrderPreview::None;
     source_ = nullptr;
     placementAfterViewChange_ = nullptr;
     items_.clear();

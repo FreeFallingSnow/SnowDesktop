@@ -194,6 +194,10 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         DismissActiveContextMenuForPopupTransition();
         return true;
     }
+    if (key == VK_SPACE && dragSession_.IsActive() &&
+        (dragSession_.DockOrderPreview() != DragSession::DockFreeOrderPreview::None ||
+            DockContainer::PreviewFreeOrderForDrag(*this)))
+        return true;
     if (TryHandleFilePreviewKey(key, repeated)) return true;
     // Text arrives as WM_CHAR. Commands, arrows and scope changes end the
     // previous query before subsequent text can reuse it.
