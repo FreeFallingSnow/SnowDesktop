@@ -4,6 +4,7 @@
 #include "dock/dock_running_animation.h"
 #include <windows.h>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -74,5 +75,13 @@ struct DockRunningAppInfo
     bool selected = false;
     // A per-window task retains this thumbnail across show-state changes.
     std::shared_ptr<snowdesktop::dock_window_thumbnail::Thumbnail> minimizedThumbnail;
+    struct ThumbnailMotion
+    {
+        bool restoring;
+        float fromAmount;
+        float fromImageOpacity;
+    };
+    std::optional<ThumbnailMotion> thumbnailMotion;
+    float thumbnailImageOpacity = 1.0f;
     std::vector<HWND> trackedWindows;
 };

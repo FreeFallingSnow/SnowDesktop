@@ -116,6 +116,11 @@ double TransitionDuration(int effect) noexcept
            snowdesktop::animation::RuntimeDurationScale();
 }
 
+// The elevated transition uses the same performance counter as the host.
+// Publish one atomic clock sample on its presentation HWND without changing
+// the helper wire layout. Low 32 bits hold the duration and direction.
+constexpr wchar_t kThumbnailTimelineProperty[] = L"SnowDesktop.Dock.ThumbnailTimeline";
+
 double MonotonicTimeMilliseconds() noexcept
 {
     LARGE_INTEGER counter{};
@@ -2168,6 +2173,24 @@ bool DockWindowTransition::ScheduleAnimationWake()
         animationScheduler_->Cancel(animationToken_);
     animationToken_ = 0;
 
+    if constexpr (sizeof(UINT_PTR) == sizeof(std::uint64_t))
+    {
+        if (!helperRouting_ && presenting_ && !awaitingRestoreVisibility_)
+        {
+            if (restoreCloak_ || preparingRestore_ || awaitingMinimizePresentation_)
+                RemovePropW(hwnd_, kThumbnailTimelineProperty);
+            else
+            {
+                const auto start = static_cast<DWORD>(static_cast<std::uint64_t>(animationStartTimeMs_));
+                const auto duration = static_cast<DWORD>(std::ceil(std::max(1.0, animationDurationMs_)));
+                const auto direction = direction_ == DockWindowTransitionDirection::Restore ? 1u : 0u;
+                const auto clock = (static_cast<std::uint64_t>(start) << 32u) |
+                    (static_cast<std::uint64_t>(duration) << 1u) | direction;
+                SetPropW(hwnd_, kThumbnailTimelineProperty, reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(clock)));
+            }
+        }
+    }
+
     const bool retiring = awaitingRestoreVisibility_ && restoreFadeStartTimeMs_ > 0.0;
     if (UsesCompositionImage() && !restoreCloak_ && !preparingRestore_ && !awaitingMinimizePresentation_)
     {
@@ -2845,6 +2868,7 @@ void DockWindowTransition::Finish()
         diagnosticCallback_(L"Dock taskbar phase: overlay-before-hide");
     if (transitionWindow)
     {
+        RemovePropW(transitionWindow, kThumbnailTimelineProperty);
         ShowWindow(
             transitionWindow, SW_HIDE);
         SetWindowRgn(
@@ -3034,6 +3058,44 @@ DockWindowTransition::GetDirection() const
         if (snapshot.animationActive) return snapshot.direction == 1 ? DockWindowTransitionDirection::Restore : DockWindowTransitionDirection::Minimize;
     }
     return pendingExternalRestore_ ? DockWindowTransitionDirection::Restore : direction_;
+}
+
+std::optional<DockWindowTransition::ThumbnailMotion> DockWindowTransition::GetThumbnailMotion(double now) const
+{
+    if (presenting_ && SourceIdentityCurrent())
+    {
+        const double progress = awaitingRestoreVisibility_ ? 1.0 :
+            (awaitingMinimizePresentation_ || restoreCloak_ || preparingRestore_ || pendingExternalRestore_)
+            ? 0.0 : std::clamp((now - animationStartTimeMs_) / std::max(1.0, animationDurationMs_), 0.0, 1.0);
+        return ThumbnailMotion{sourceWindow_, direction_, progress};
+    }
+    if (!helperRouting_) return std::nullopt;
+
+    namespace wire = snowdesktop::window_support::protocol;
+    const auto snapshot = snowdesktop::window_support::WindowSupport().HelperSnapshot();
+    if (snapshot.animationActive && wire::Current(snapshot.animationTarget))
+    {
+        const auto direction = snapshot.direction == 1 ? DockWindowTransitionDirection::Restore
+                                                        : DockWindowTransitionDirection::Minimize;
+        double progress = 0.0;
+        if constexpr (sizeof(UINT_PTR) == sizeof(std::uint64_t))
+        {
+            const auto presentation = reinterpret_cast<HWND>(static_cast<UINT_PTR>(snapshot.presentation));
+            const auto clock = static_cast<std::uint64_t>(
+                reinterpret_cast<UINT_PTR>(GetPropW(presentation, kThumbnailTimelineProperty)));
+            const auto duration = static_cast<DWORD>(clock) >> 1u;
+            if (duration && (clock & 1u) == snapshot.direction)
+            {
+                const auto elapsed = static_cast<std::int32_t>(
+                    static_cast<DWORD>(static_cast<std::uint64_t>(now)) - static_cast<DWORD>(clock >> 32u));
+                progress = std::clamp(static_cast<double>(elapsed) / duration, 0.0, 1.0);
+            }
+        }
+        return ThumbnailMotion{wire::Window(snapshot.animationTarget), direction, progress};
+    }
+    if (remoteAnimation_ && remoteAnimation_->pending && GetTickCount64() - remoteAnimation_->acceptedAt < 2500)
+        return ThumbnailMotion{remoteAnimation_->source, remoteAnimation_->direction, 0.0};
+    return std::nullopt;
 }
 
 HWND DockWindowTransition::GetPresentationWindow() const noexcept

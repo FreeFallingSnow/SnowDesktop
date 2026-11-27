@@ -64,6 +64,14 @@ void Presence::Advance(double now)
     }
 }
 
+void Presence::SetTransitionAmount(float amount)
+{
+    amount_ = from_ = std::clamp(amount, 0.0f, 1.0f);
+    to_ = 1.0f;
+    visible_ = true;
+    animating_ = false;
+}
+
 float Presence::Amount() const
 { return amount_; }
 

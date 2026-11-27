@@ -332,7 +332,9 @@ void DesktopApp::EnsureUiAnimationFrame()
     }
 
     if (!dockRunningAnimationFrameToken_ &&
-        (std::any_of(dockUnpinnedRunningApps_.begin(), dockUnpinnedRunningApps_.end(),
+        ((!dockSettings_.minimizeWindowsIntoApplicationIcon && dockWindowTransition_ &&
+             dockWindowTransition_->GetThumbnailMotion(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds())) ||
+         std::any_of(dockUnpinnedRunningApps_.begin(), dockUnpinnedRunningApps_.end(),
             [](const auto& app) { return app.presence.IsAnimating(); }) ||
          std::any_of(containers_.begin(), containers_.end(), [](const auto& container) {
             const auto* dock = dynamic_cast<const DockContainer*>(container.get());

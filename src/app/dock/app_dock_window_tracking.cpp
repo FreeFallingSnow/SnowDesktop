@@ -527,6 +527,9 @@ void DesktopApp::RefreshDockTaskThumbnails()
     if (exitRequested_ || !generalSettings_.dockEnabled || dockSettings_.minimizeWindowsIntoApplicationIcon) return;
     if (dockWindowThumbnails_.Refresh(ResolveDockSemanticForegroundWindow(), hwnd_, kBackgroundShellReadyMessage))
         dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
+    if (!dockRunningAnimationFrameToken_ && dockWindowTransition_ &&
+        dockWindowTransition_->GetThumbnailMotion(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()))
+        EnsureUiAnimationFrame();
 }
 
 void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
@@ -594,7 +597,10 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
     if (tracked && stateOnly)
     {
         if (!dockSettings_.minimizeWindowsIntoApplicationIcon && event != EVENT_SYSTEM_FOREGROUND)
+        {
             dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
+            EnsureUiAnimationFrame();
+        }
         return;
     }
     if (!tracked && !IsDockTaskWindow(window)) return;
@@ -1085,6 +1091,8 @@ void DesktopApp::RefreshDockRunningWindows(
                     old.trackedWindows.end();
             if (reused[i] || (old.identityKey != info.identityKey && !sameWindow)) continue;
             info.presence = old.presence;
+            info.thumbnailMotion = old.thumbnailMotion;
+            info.thumbnailImageOpacity = old.thumbnailImageOpacity;
             refineIdentityArtwork = (old.appUserModelId != info.appUserModelId &&
                 !info.appUserModelId.empty()) ||
                 (old.executablePath.empty() && !info.executablePath.empty());
@@ -1106,8 +1114,9 @@ void DesktopApp::RefreshDockRunningWindows(
             reused[i] = true;
             break;
         }
-        info.presence.SetVisible(true, animationNow, animatePresence,
-            snowdesktop::animation::RuntimeDurationScale());
+        if (!info.thumbnailMotion)
+            info.presence.SetVisible(true, animationNow, animatePresence,
+                snowdesktop::animation::RuntimeDurationScale());
         if (!info.iconBitmap || refineIdentityArtwork)
         {
             const int requestSize = std::max(requiredIconSize, info.iconRequestedSize);
@@ -1417,6 +1426,8 @@ bool DesktopApp::ActivateOrToggleDockItem(
             transitionStarted = dockWindowTransition_->StartMinimize(
                 target, *pressedAnchorScreen,
                 transitionKeepBelowWindow, IssueDockNativeMinimize);
+            if (transitionStarted && !dockSettings_.minimizeWindowsIntoApplicationIcon)
+                EnsureUiAnimationFrame();
             if (transitionStarted && !dockSettings_.summonOnAppMinimize)
                 KeepDockTopmostForAction(*pressedAnchorScreen, false);
         }
@@ -1446,6 +1457,8 @@ bool DesktopApp::ActivateOrToggleDockItem(
                 },
                 transitionKeepBelowWindow))
         {
+            if (!dockSettings_.minimizeWindowsIntoApplicationIcon)
+                EnsureUiAnimationFrame();
             InvalidateDockRects();
             return true;
         }
@@ -1554,6 +1567,8 @@ bool DesktopApp::ActivateOrToggleDockWindow(
             transitionStarted = dockWindowTransition_->StartMinimize(
                 target, *pressedAnchorScreen,
                 transitionKeepBelowWindow, IssueDockNativeMinimize);
+            if (transitionStarted && !dockSettings_.minimizeWindowsIntoApplicationIcon)
+                EnsureUiAnimationFrame();
             if (transitionStarted && !dockSettings_.summonOnAppMinimize)
                 KeepDockTopmostForAction(*pressedAnchorScreen, false);
         }
@@ -1585,6 +1600,8 @@ bool DesktopApp::ActivateOrToggleDockWindow(
                 },
                 transitionKeepBelowWindow))
         {
+            if (!dockSettings_.minimizeWindowsIntoApplicationIcon)
+                EnsureUiAnimationFrame();
             InvalidateDockRects();
             return true;
         }
@@ -1822,18 +1839,118 @@ bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
                 dock->GetAnimationVisualBounds(), dockSettings_.position);
             UnionRect(&desktopDirty, &desktopDirty, &bounds);
         }
-    bool keep = false;
+    const auto windowMotion = generalSettings_.dockEnabled &&
+        !dockSettings_.minimizeWindowsIntoApplicationIcon && dockWindowTransition_
+        ? dockWindowTransition_->GetThumbnailMotion(nowMilliseconds) : std::nullopt;
+    const bool restoring = windowMotion && windowMotion->direction == DockWindowTransitionDirection::Restore;
+    const HWND movingWindow = windowMotion ? windowMotion->window : nullptr;
+    const auto tracksWindow = [movingWindow](const auto& state) {
+        return state.window == movingWindow || std::ranges::find(state.trackedWindows, movingWindow) !=
+            state.trackedWindows.end();
+    };
+    bool changed = false;
+    if (movingWindow && !restoring &&
+        std::ranges::none_of(dockUnpinnedRunningApps_, [movingWindow](const auto& app) {
+            return app.minimizedThumbnail && app.window == movingWindow;
+        }))
+    {
+        // Full Shell discovery is deferred until after the window animation.
+        // Start only this tracked card, using its existing thumbnail and icon.
+        if (auto thumbnail = dockWindowThumbnails_.Find(movingWindow))
+        {
+            DockRunningAppInfo card;
+            card.minimizedThumbnail = std::move(thumbnail);
+            card.window = movingWindow;
+            card.minimized = true;
+            card.identityKey = snowdesktop::dock_window_thumbnail::WindowIdentity::Capture(movingWindow).Key();
+            card.trackedWindows.push_back(movingWindow);
+            wchar_t title[512]{};
+            GetWindowTextW(movingWindow, title, static_cast<int>(std::size(title)));
+            card.title = title;
+            const auto group = std::ranges::find_if(dockUnpinnedRunningApps_, [&](const auto& app) {
+                return !app.minimizedThumbnail && tracksWindow(app);
+            });
+            HBITMAP icon = nullptr;
+            if (group != dockUnpinnedRunningApps_.end())
+            {
+                card.executablePath = group->executablePath;
+                card.appUserModelId = group->appUserModelId;
+                card.ancestorExecutablePaths = group->ancestorExecutablePaths;
+                card.iconBitmapSize = group->iconBitmapSize;
+                icon = group->iconBitmap;
+            }
+            else
+            {
+                for (const auto& entry : dockEntries_)
+                {
+                    if (entry.type != DockEntryType::DesktopItem) continue;
+                    const size_t index = FindItemIndexByKey(entry.reference);
+                    if (index >= items_.size()) continue;
+                    const auto state = dockRunningWindows_.find(DockItemWindowKey(items_[index]));
+                    if (state == dockRunningWindows_.end() || !tracksWindow(state->second)) continue;
+                    icon = items_[index].iconBitmap;
+                    if (icon)
+                    {
+                        BITMAP bitmap{};
+                        if (GetObjectW(icon, sizeof(bitmap), &bitmap))
+                            card.iconBitmapSize = {bitmap.bmWidth, bitmap.bmHeight};
+                    }
+                    break;
+                }
+            }
+            if (icon) card.iconBitmap = static_cast<HBITMAP>(CopyImage(icon, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION));
+            card.thumbnailImageOpacity = 0.0f;
+            dockUnpinnedRunningApps_.push_back(std::move(card));
+            changed = true;
+        }
+    }
+
+    bool keep = windowMotion.has_value();
     for (const auto& container : containers_)
         if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+        {
+            changed |= dock->IsEntryRemovalAnimating();
             keep |= dock->AdvanceEntryRemovalAnimation(nowMilliseconds);
+        }
     const bool animationsEnabled = snowdesktop::animation::RuntimeAnimationsEnabled();
     for (auto& app : dockUnpinnedRunningApps_)
     {
-        if (animationsEnabled)
+        const float previousAmount = app.presence.Amount();
+        const float previousImageOpacity = app.thumbnailImageOpacity;
+        if (movingWindow && app.minimizedThumbnail && app.window == movingWindow)
+        {
+            if (!app.thumbnailMotion || app.thumbnailMotion->restoring != restoring)
+                app.thumbnailMotion = DockRunningAppInfo::ThumbnailMotion{
+                    restoring, app.presence.Amount(), app.thumbnailImageOpacity};
+            const auto smooth = [](double progress) {
+                const auto t = static_cast<float>(std::clamp(progress, 0.0, 1.0));
+                return t * t * (3.0f - 2.0f * t);
+            };
+            const float target = restoring ? 0.0f : 1.0f;
+            const double progress = windowMotion->progress;
+            // Make room before the moving window reaches the Dock. Reveal
+            // its pixels near landing; on restore, collapse as it expands.
+            app.presence.SetTransitionAmount(std::lerp(app.thumbnailMotion->fromAmount, target,
+                smooth(progress / (restoring ? 0.70 : 0.82))));
+            app.thumbnailImageOpacity = std::lerp(app.thumbnailMotion->fromImageOpacity, target,
+                smooth(restoring ? progress / 0.28 : (progress - 0.72) / 0.28));
+        }
+        else if (app.thumbnailMotion)
+        {
+            const bool minimized = generalSettings_.dockEnabled &&
+                !dockSettings_.minimizeWindowsIntoApplicationIcon && IsIconic(app.window);
+            app.presence.SetVisible(minimized, nowMilliseconds, false);
+            app.thumbnailMotion.reset();
+            app.thumbnailImageOpacity = 1.0f;
+            dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
+        }
+        else if (animationsEnabled)
             app.presence.Advance(nowMilliseconds);
         else
             app.presence.SetVisible(app.presence.Visible(), nowMilliseconds, false);
         keep |= app.presence.IsAnimating();
+        changed |= previousAmount != app.presence.Amount() ||
+            previousImageOpacity != app.thumbnailImageOpacity || app.presence.IsHidden();
         if (app.presence.IsHidden() && app.iconBitmap)
         {
             EraseD2DIconCacheForBitmap(app.iconBitmap);
@@ -1842,6 +1959,7 @@ bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
         }
     }
     std::erase_if(dockUnpinnedRunningApps_, [](const auto& app) { return app.presence.IsHidden(); });
+    if (!changed) return keep;
     InvalidateDockContainers();
     // Persistent hosts reconcile their own glass. Only a desktop-owned Dock
     // can change the desktop backdrop geometry during the running animation.

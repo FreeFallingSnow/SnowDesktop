@@ -12,6 +12,7 @@ public:
     static constexpr double kDurationMilliseconds = 220.0;
 
     void SetVisible(bool visible, double now, bool animate, double durationScale = 1.0);
+    void SetTransitionAmount(float amount);
 
     void Advance(double now);
 

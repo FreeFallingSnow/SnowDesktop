@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <d3d11.h>
+#include <dwmapi.h>
 #include <dxgi1_4.h>
 #include <windows.graphics.capture.interop.h>
 #include <windows.graphics.directx.direct3d11.interop.h>
@@ -35,6 +36,18 @@ struct WindowDib
         if (previous && previous != HGDI_ERROR) SelectObject(dc, previous);
         if (bitmap) DeleteObject(bitmap);
         if (dc) DeleteDC(dc);
+    }
+};
+
+struct ComposedThumbnail
+{
+    HWND window = nullptr;
+    HTHUMBNAIL thumbnail = nullptr;
+
+    ~ComposedThumbnail()
+    {
+        if (thumbnail) DwmUnregisterThumbnail(thumbnail);
+        if (window) DestroyWindow(window);
     }
 };
 
@@ -96,7 +109,7 @@ bool ColorsDifferVisibly(std::uint32_t first, std::uint32_t second)
     return false;
 }
 
-Pixels SamplePixels(const void* buffer, size_t rowPitch, int width, int height)
+Pixels SamplePixels(const void* buffer, size_t rowPitch, int width, int height, bool composedThumbnail = false)
 {
     constexpr int maxThumbnailEdge = 256;
     const int divisor = std::max({width, height, maxThumbnailEdge});
@@ -108,6 +121,7 @@ Pixels SamplePixels(const void* buffer, size_t rowPitch, int width, int height)
     const UINT32 innerLeft = targetWidth / 8;
     const UINT32 innerRight = targetWidth - innerLeft;
     UINT32 detailRows = 0;
+    UINT32 clientDetailRows = 0;
     for (UINT32 y = 0; y < targetHeight; ++y)
     {
         const auto* row = reinterpret_cast<const std::uint32_t*>(
@@ -123,11 +137,23 @@ Pixels SamplePixels(const void* buffer, size_t rowPitch, int width, int height)
             previous = pixel;
         }
         if (edges >= 3 && y >= targetHeight / 8 && y < targetHeight - targetHeight / 8)
+        {
             ++detailRows;
+            if (y >= targetHeight / 4) ++clientDetailRows;
+        }
     }
     // Initial minimized frames can contain solid horizontal bands and no
     // client content. A nonblack pixel on its own does not validate a frame.
-    if (detailRows < std::max(1u, targetHeight / 12)) return {};
+    if (composedThumbnail)
+    {
+        // DWM can report the original window size while supplying only its
+        // toolbar. Check the scaled client area as well as the full frame.
+        if (detailRows < std::max(2u, targetHeight / 24) ||
+            clientDetailRows < std::max(2u, targetHeight / 48))
+            return {};
+    }
+    else if (detailRows < std::max(1u, targetHeight / 12))
+        return {};
     return result;
 }
 
@@ -273,7 +299,7 @@ Pixels CaptureVisibleWindow(WindowIdentity source)
     return {};
 }
 
-Pixels PrintWindowPixels(WindowIdentity source, bool iconic)
+Pixels PrintWindowPixels(WindowIdentity source, bool iconic, bool composedThumbnail = false)
 {
     if (!AllowsPreview(source)) return {};
     DWORD_PTR reply = 0;
@@ -308,21 +334,68 @@ Pixels PrintWindowPixels(WindowIdentity source, bool iconic)
         std::fill_n(pixels, static_cast<size_t>(width) * height, 0u);
         if (!PrintWindow(source.window, dib.dc, flags) || !GdiFlush()) continue;
         if (!AllowsPreview(source)) return {};
-        auto result = SamplePixels(buffer, static_cast<size_t>(width) * sizeof(*pixels), width, height);
+        auto result = SamplePixels(buffer, static_cast<size_t>(width) * sizeof(*pixels), width, height, composedThumbnail);
         if (!result.data.empty()) return result;
     }
     return {};
 }
 
-Pixels CapturePixels(WindowIdentity source, bool allowGraphicsCapture)
+Pixels CaptureComposedThumbnail(WindowIdentity source)
+{
+    if (!AllowsRedirectedSurface(source) || !IsIconic(source.window)) return {};
+    ComposedThumbnail image;
+    // The thumbnail interface renders to a top-level HWND. Use a small
+    // off-screen destination so its result can join the Dock's own scene.
+    image.window = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, L"STATIC", nullptr,
+        WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (!image.window || FAILED(DwmRegisterThumbnail(image.window, source.window, &image.thumbnail)))
+        return {};
+    SIZE size{};
+    if (FAILED(DwmQueryThumbnailSourceSize(image.thumbnail, &size)) || size.cx < 32 || size.cy < 32)
+        return {};
+    const SIZE expected = ReadWindowSize(source.window, true);
+    if (size.cx < expected.cx / 2 || size.cy < expected.cy / 2) return {};
+    constexpr LONG edge = 256;
+    const LONG longest = std::max(size.cx, size.cy);
+    const int width = std::max(32, MulDiv(size.cx, edge, longest));
+    const int height = std::max(32, MulDiv(size.cy, edge, longest));
+    DWM_THUMBNAIL_PROPERTIES properties{};
+    properties.dwFlags = DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE | DWM_TNP_OPACITY;
+    properties.rcDestination = {0, 0, width, height};
+    properties.opacity = 255;
+    properties.fVisible = TRUE;
+    if (FAILED(DwmUpdateThumbnailProperties(image.thumbnail, &properties)) ||
+        !SetWindowPos(image.window, nullptr,
+            GetSystemMetrics(SM_XVIRTUALSCREEN) - width - 16,
+            GetSystemMetrics(SM_YVIRTUALSCREEN) - height - 16, width, height,
+            SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW))
+        return {};
+    UpdateWindow(image.window);
+    if (FAILED(DwmFlush()) || !AllowsRedirectedSurface(source) || !IsIconic(source.window))
+        return {};
+    auto pixels = PrintWindowPixels(WindowIdentity::Capture(image.window), false, true);
+    if (!AllowsRedirectedSurface(source)) return {};
+    return pixels;
+}
+
+Pixels CapturePixels(WindowIdentity source, bool allowExtraCapture)
 {
     if (!AllowsPreview(source)) return {};
     const bool iconic = IsIconic(source.window) != FALSE;
     auto result = iconic ? CaptureRedirectedSurface(source, true) : PrintWindowPixels(source, false);
     if (!result.data.empty()) return result;
-    result = iconic ? PrintWindowPixels(source, true) : CaptureRedirectedSurface(source, false);
+    if (iconic)
+    {
+        if (allowExtraCapture)
+        {
+            result = CaptureComposedThumbnail(source);
+            if (!result.data.empty()) return result;
+        }
+        return PrintWindowPixels(source, true);
+    }
+    result = CaptureRedirectedSurface(source, false);
     if (!result.data.empty()) return result;
-    return !iconic && allowGraphicsCapture ? CaptureVisibleWindow(source) : Pixels{};
+    return allowExtraCapture ? CaptureVisibleWindow(source) : Pixels{};
 }
 }
 
@@ -414,9 +487,12 @@ bool ThumbnailCache::Refresh(HWND foreground, HWND notifyWindow, UINT message)
     };
     if (auto foregroundThumbnail = Find(foreground))
         refresh(foregroundThumbnail, true);
-    for (const auto& [window, thumbnail] : windows_)
-        if (window != foreground)
-            refresh(thumbnail, false);
+    // On startup give already-present cards a chance to load before
+    // preparing snapshots for windows that are still on screen.
+    for (const bool minimized : {true, false})
+        for (const auto& [window, thumbnail] : windows_)
+            if (window != foreground && thumbnail->minimizedInDock_ == minimized)
+                refresh(thumbnail, false);
     return stateChanged;
 }
 
@@ -431,13 +507,13 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
         state.pending_ = false;
         state.refreshNeeded_ = true;
         state.nextAttempt_ = 0;
-        state.nextGraphicsCapture_ = 0;
+        state.nextExtraCapture_ = 0;
     }
     if (state.minimized_ != minimized || (foreground && !state.foreground_))
     {
         state.refreshNeeded_ = true;
         state.nextAttempt_ = 0;
-        if (state.minimized_ && !minimized) state.nextGraphicsCapture_ = 0;
+        if (state.minimized_ != minimized) state.nextExtraCapture_ = 0;
     }
     state.minimized_ = minimized;
     state.foreground_ = foreground;
@@ -472,12 +548,12 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
     const auto source = state.source_;
     const auto epoch = epoch_;
     const auto weak = std::weak_ptr{thumbnail};
-    const bool allowGraphicsCapture = !minimized && state.pixels_.empty() &&
-        now >= state.nextGraphicsCapture_ && (foreground || state.nextGraphicsCapture_ == 0);
+    const bool allowExtraCapture = state.pixels_.empty() && now >= state.nextExtraCapture_ &&
+        (minimized || foreground || state.nextExtraCapture_ == 0);
     state.pending_ = work_.Submit(source.Key() + L":" +
         std::to_wstring(reinterpret_cast<UINT_PTR>(thumbnail.get())),
-        [source, weak, allowGraphicsCapture] {
-            return weak.expired() ? Pixels{} : CapturePixels(source, allowGraphicsCapture);
+        [source, weak, allowExtraCapture] {
+            return weak.expired() ? Pixels{} : CapturePixels(source, allowExtraCapture);
         }, [this, source, minimized, weak, epoch](Pixels pixels) {
             const auto target = weak.lock();
             if (!target || epoch != epoch_) return;
@@ -500,7 +576,7 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
     if (state.pending_)
     {
         state.refreshNeeded_ = false;
-        if (allowGraphicsCapture) state.nextGraphicsCapture_ = now + 5000;
+        if (allowExtraCapture) state.nextExtraCapture_ = now + 5000;
     }
 }
 

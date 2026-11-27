@@ -614,6 +614,7 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
     {
         const float edge = static_cast<float>(iconSize);
         auto* thumbnail = app.minimizedThumbnail->Bitmap(*ctx);
+        const float imageOpacity = presence * app.thumbnailImageOpacity;
         const auto frame = snowdesktop::dock_window_thumbnail::CardFrame(rect, iconSize, verticalDock);
         const float width = frame.right - frame.left;
         const float height = frame.bottom - frame.top;
@@ -625,7 +626,7 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
             const float radius = edge * 0.07f;
             ctx->FillRoundedRectangle(D2D1::RoundedRect(frame, radius, radius), fill.Get());
         }
-        if (thumbnail)
+        if (thumbnail && imageOpacity > 0.0f)
         {
             const auto source = thumbnail->GetSize();
             const float scale = std::min(width / source.width, height / source.height);
@@ -633,12 +634,12 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
             const float yMargin = (height - source.height * scale) * 0.5f;
             const auto image = D2D1::RectF(frame.left + xMargin, frame.top + yMargin,
                 frame.right - xMargin, frame.bottom - yMargin);
-            ctx->DrawBitmap(thumbnail, &image, presence, D2D1_INTERPOLATION_MODE_LINEAR, nullptr, nullptr);
+            ctx->DrawBitmap(thumbnail, &image, imageOpacity, D2D1_INTERPOLATION_MODE_LINEAR, nullptr, nullptr);
         }
-        else if (fill)
+        else if (fill && imageOpacity > 0.0f)
         {
             const float detail = lt ? 0.47f : 0.68f;
-            fill->SetColor(D2D1::ColorF(detail, detail, detail, 0.7f * presence));
+            fill->SetColor(D2D1::ColorF(detail, detail, detail, 0.7f * imageOpacity));
             ctx->DrawLine(D2D1::Point2F(frame.left + width * 0.16f, frame.top + height * 0.22f),
                 D2D1::Point2F(frame.left + width * 0.84f, frame.top + height * 0.22f), fill.Get());
         }

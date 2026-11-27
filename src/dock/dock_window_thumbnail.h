@@ -45,7 +45,7 @@ private:
     Microsoft::WRL::ComPtr<ID2D1Bitmap1> bitmap_;
     std::uint64_t epoch_ = 0;
     ULONGLONG nextAttempt_ = 0;
-    ULONGLONG nextGraphicsCapture_ = 0;
+    ULONGLONG nextExtraCapture_ = 0;
     bool minimizedInDock_ = false;
     bool minimized_ = false;
     bool foreground_ = false;

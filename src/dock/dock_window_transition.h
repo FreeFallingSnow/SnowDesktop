@@ -166,6 +166,13 @@ public:
     bool IsActiveFor(HWND window) const;
     bool IsPresentationWindow(HWND window) const noexcept;
     DockWindowTransitionDirection GetDirection() const;
+    struct ThumbnailMotion
+    {
+        HWND window;
+        DockWindowTransitionDirection direction;
+        double progress;
+    };
+    std::optional<ThumbnailMotion> GetThumbnailMotion(double nowMilliseconds) const;
 
 private:
     struct RemoteAnimation;

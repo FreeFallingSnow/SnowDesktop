@@ -502,6 +502,8 @@ void DesktopApp::InitializeDockWindowTransition()
         dockWindowTransition_->SetPresentationCallback([this](HWND presentation) {
             if (!presentation) ReleaseTemporaryDockActionPromotion();
             ApplyFloatingDockLayerPolicy();
+            if (presentation && !dockSettings_.minimizeWindowsIntoApplicationIcon)
+                EnsureUiAnimationFrame();
         });
         dockWindowTransition_->SetDiagnosticCallback([this](const wchar_t* message) {
             snowdesktop::dock_taskbar_diagnostics::Record(message,
