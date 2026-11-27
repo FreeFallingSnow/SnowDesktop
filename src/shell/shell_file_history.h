@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -92,6 +93,7 @@ public:
     bool strictRecycle = false;
     bool completed = false;
     HRESULT status = E_ABORT;
+    std::function<void(const std::wstring&)> recycleStarted;
 
     bool Matches(IShellItem* item) const
     {
@@ -128,8 +130,16 @@ public:
     {
         if (!Matches(item)) return S_OK;
         if (strictRecycle && !(flags & TSF_DELETE_RECYCLE_IF_POSSIBLE)) return E_ABORT;
-        return (!strictRecycle && !entry.identity.valid) || Identify(entry.original) == entry.identity
-            ? S_OK : HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+        if ((strictRecycle || entry.identity.valid) && !(Identify(entry.original) == entry.identity))
+            return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+        if (recycleStarted && (flags & TSF_DELETE_RECYCLE_IF_POSSIBLE))
+        {
+            // The Shell has accepted the recycle operation. Presentation
+            // feedback must never change the outcome of a file operation.
+            try { recycleStarted(entry.original); }
+            catch (...) {}
+        }
+        return S_OK;
     }
     IFACEMETHODIMP PostDeleteItem(DWORD, IShellItem* item, HRESULT hr, IShellItem* recycled) override
     {
@@ -157,7 +167,8 @@ public:
     IFACEMETHODIMP ResumeTimer() override { return S_OK; }
 };
 
-inline HRESULT Recycle(const std::vector<std::wstring>& paths, DWORD flags, Group& recorded, bool strict = false)
+inline HRESULT Recycle(const std::vector<std::wstring>& paths, DWORD flags, Group& recorded,
+    bool strict = false, const std::function<void(const std::wstring&)>& recycleStarted = {})
 {
     using namespace Microsoft::WRL;
     ComPtr<IFileOperation> operation;
@@ -176,6 +187,7 @@ inline HRESULT Recycle(const std::vector<std::wstring>& paths, DWORD flags, Grou
         sink->entry = {Entry::Kind::Delete, path, {}, Identify(path), {}};
         if (strict && !sink->entry.identity.valid) return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
         sink->strictRecycle = strict;
+        sink->recycleStarted = recycleStarted;
         hr = SHCreateItemFromParsingName(path.c_str(), nullptr, IID_PPV_ARGS(&sink->requested));
         if (FAILED(hr)) return hr;
         hr = operation->DeleteItem(sink->requested.Get(), sink.Get());

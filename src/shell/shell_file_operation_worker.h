@@ -80,6 +80,8 @@ struct ShellFileOperationRequest
     std::vector<ShellExactFileCopyOperationStep> exactFileCopies;
     std::vector<ShellShortcutOperationStep> shortcuts;
     std::shared_ptr<ShellFileOperationResult> result;
+    // Runs on the file-operation STA when the Shell starts recycling a source.
+    std::function<void(const std::wstring&)> recycleStarted{};
 };
 
 /** A rename owns only copied paths/PIDL bytes, never UI-thread COM objects. */

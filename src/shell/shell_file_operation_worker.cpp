@@ -911,7 +911,8 @@ bool ShellFileOperationWorker::Execute(
 
         if (recycled && step.function == FO_DELETE && (step.flags & FOF_ALLOWUNDO))
         {
-            const HRESULT status = file_history::Recycle(step.sources, step.flags, *recycled);
+            const HRESULT status = file_history::Recycle(
+                step.sources, step.flags, *recycled, false, request.recycleStarted);
             if (FAILED(status))
             {
                 allSucceeded = false;

@@ -30,6 +30,8 @@ struct ShellRemovalSources
 {
     std::vector<std::wstring> paths;
     std::vector<std::wstring> departed;
+    // UI-thread state for sources hidden after the Shell starts recycling.
+    std::unordered_set<std::wstring> hiddenAfterConfirmation;
 
     void ReadDepartures()
     {
@@ -221,7 +223,20 @@ bool DesktopApp::QueueShellFileOperation(
     {
         removal = std::make_shared<ShellRemovalSources>();
         removal->paths = std::move(removedPaths);
-        if (!deferRemoval)
+        if (deferRemoval)
+        {
+            request.recycleStarted = [this, completionWindow, removal](const std::wstring& path) {
+                auto started = std::make_unique<ShellFileOperationUiCompletion>();
+                started->fileOperation = false;
+                started->callback = [this, removal, path](bool) {
+                    if (removal->hiddenAfterConfirmation.insert(ToUpperInvariant(path)).second)
+                        BeginFileRemovalVisibility({path});
+                };
+                snowdesktop::PostShellFileOperationCompletion(completionWindow,
+                    kShellFileOperationCompletedMessage, std::move(started), true);
+            };
+        }
+        else
         {
             for (size_t i = 0; i < dockEntries_.size(); ++i)
             {
@@ -241,11 +256,20 @@ bool DesktopApp::QueueShellFileOperation(
         auto callback = std::move(result->callback);
         result->callback = [this, removal, removalPins, deferRemoval, hasDeletion,
             callback = std::move(callback)](bool succeeded) {
-            // A delete may wait for Shell confirmation. Hide only the items
-            // observed to have departed, and let the refresh retire their pins.
-            const auto& hiddenPaths = deferRemoval ? removal->departed : removal->paths;
-            if (deferRemoval) BeginFileRemovalVisibility(hiddenPaths);
-            FinishFileRemovalVisibility(hiddenPaths, removal->departed);
+            std::vector<std::wstring> confirmedPaths;
+            if (deferRemoval)
+            {
+                // Permanent deletes and any missed start notification still
+                // reconcile on completion using observed source departures.
+                std::vector<std::wstring> newlyDeparted;
+                for (const auto& path : removal->departed)
+                    if (removal->hiddenAfterConfirmation.insert(ToUpperInvariant(path)).second)
+                        newlyDeparted.push_back(path);
+                BeginFileRemovalVisibility(newlyDeparted);
+                confirmedPaths.assign(removal->hiddenAfterConfirmation.begin(),
+                    removal->hiddenAfterConfirmation.end());
+            }
+            FinishFileRemovalVisibility(deferRemoval ? confirmedPaths : removal->paths, removal->departed);
             if (succeeded || hasDeletion) RemoveDesktopKeysFromWidgets(removal->departed);
             if (!succeeded)
                 for (const auto& container : containers_)
