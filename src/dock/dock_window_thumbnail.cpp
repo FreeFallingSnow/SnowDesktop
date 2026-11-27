@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstdlib>
 #include <d3d11.h>
 #include <dxgi1_4.h>
 #include <utility>
@@ -64,6 +65,16 @@ bool IsUsableSize(int width, int height)
     return width >= 32 && height >= 32 && width <= maxSourcePixels / height;
 }
 
+bool ColorsDifferVisibly(std::uint32_t first, std::uint32_t second)
+{
+    constexpr int contrast = 24;
+    for (const unsigned shift : {0u, 8u, 16u})
+        if (std::abs(static_cast<int>((first >> shift) & 0xffu) -
+                     static_cast<int>((second >> shift) & 0xffu)) >= contrast)
+            return true;
+    return false;
+}
+
 Pixels SamplePixels(const void* buffer, size_t rowPitch, int width, int height)
 {
     constexpr int maxThumbnailEdge = 256;
@@ -73,21 +84,29 @@ Pixels SamplePixels(const void* buffer, size_t rowPitch, int width, int height)
     Pixels result{{targetWidth, targetHeight}, {}};
     result.data.resize(static_cast<size_t>(targetWidth) * targetHeight);
     const auto* bytes = static_cast<const unsigned char*>(buffer);
-    bool hasContent = false;
+    const UINT32 innerLeft = targetWidth / 8;
+    const UINT32 innerRight = targetWidth - innerLeft;
+    UINT32 detailRows = 0;
     for (UINT32 y = 0; y < targetHeight; ++y)
     {
         const auto* row = reinterpret_cast<const std::uint32_t*>(
             bytes + static_cast<size_t>(y) * height / targetHeight * rowPitch);
+        std::uint32_t previous = 0;
+        unsigned edges = 0;
         for (UINT32 x = 0; x < targetWidth; ++x)
         {
             const auto pixel = row[static_cast<size_t>(x) * width / targetWidth] & 0x00ffffffu;
             result.data[static_cast<size_t>(y) * targetWidth + x] = pixel;
-            // Ignore chrome when testing whether the client was drawn.
-            hasContent |= y > targetHeight / 4 && y < targetHeight * 3 / 4 &&
-                x > targetWidth / 8 && x < targetWidth * 7 / 8 && pixel != 0;
+            if (x > innerLeft && x < innerRight)
+                edges += ColorsDifferVisibly(previous, pixel);
+            previous = pixel;
         }
+        if (edges >= 3 && y >= targetHeight / 8 && y < targetHeight - targetHeight / 8)
+            ++detailRows;
     }
-    if (!hasContent) return {};
+    // Initial minimized frames can contain solid horizontal bands and no
+    // client content. A nonblack pixel on its own does not validate a frame.
+    if (detailRows < std::max(1u, targetHeight / 12)) return {};
     return result;
 }
 
@@ -189,7 +208,7 @@ Pixels PrintWindowPixels(WindowIdentity source, bool iconic)
     auto* pixels = static_cast<std::uint32_t*>(buffer);
     // Render-full-content handles composed windows. Some Win32 windows
     // still require the ordinary WM_PRINT path to draw their client area.
-    constexpr UINT printModes[]{PW_RENDERFULLCONTENT, 0};
+    constexpr UINT printModes[]{PW_RENDERFULLCONTENT, PW_RENDERFULLCONTENT | PW_CLIENTONLY, 0};
     for (const UINT flags : printModes)
     {
         std::fill_n(pixels, static_cast<size_t>(width) * height, 0u);
@@ -201,11 +220,10 @@ Pixels PrintWindowPixels(WindowIdentity source, bool iconic)
     return {};
 }
 
-Pixels CapturePixels(WindowIdentity source, bool minimized)
+Pixels CapturePixels(WindowIdentity source)
 {
     if (!AllowsPreview(source)) return {};
     const bool iconic = IsIconic(source.window) != FALSE;
-    if (iconic && !minimized) return {};
     auto result = iconic ? CaptureRedirectedSurface(source) : PrintWindowPixels(source, false);
     if (!result.data.empty()) return result;
     return iconic ? PrintWindowPixels(source, true) : CaptureRedirectedSurface(source);
@@ -334,14 +352,14 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
         }
         return;
     }
-    state.nextAttempt_ = now + (state.pixels_.empty() && minimized ? 3000 : 1000);
+    state.nextAttempt_ = now + (state.pixels_.empty() && minimized ? 1500 : 1000);
     const auto source = state.source_;
     const auto epoch = epoch_;
     const auto weak = std::weak_ptr{thumbnail};
     state.pending_ = work_.Submit(source.Key() + L":" +
         std::to_wstring(reinterpret_cast<UINT_PTR>(thumbnail.get())),
-        [source, minimized, weak] {
-            return weak.expired() ? Pixels{} : CapturePixels(source, minimized);
+        [source, weak] {
+            return weak.expired() ? Pixels{} : CapturePixels(source);
         }, [this, source, minimized, weak, epoch](Pixels pixels) {
             const auto target = weak.lock();
             if (!target || epoch != epoch_) return;

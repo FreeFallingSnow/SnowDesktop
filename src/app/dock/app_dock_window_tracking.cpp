@@ -524,7 +524,7 @@ void DesktopApp::RefreshDockForegroundState()
 
 void DesktopApp::RefreshDockTaskThumbnails()
 {
-    if (!generalSettings_.dockEnabled || dockSettings_.minimizeWindowsIntoApplicationIcon) return;
+    if (exitRequested_ || !generalSettings_.dockEnabled || dockSettings_.minimizeWindowsIntoApplicationIcon) return;
     if (dockWindowThumbnails_.Refresh(ResolveDockSemanticForegroundWindow(), hwnd_, kBackgroundShellReadyMessage))
         dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
 }
@@ -978,7 +978,7 @@ void DesktopApp::RefreshDockRunningWindows(
                     candidate.score = score;
                 }
             };
-            if (!pinned)
+            if (!pinned && !showThumbnail)
                 addCandidate(snowdesktop::dock_app_identity_rules::RunningWindowIdentity(
                     pathIt->second, appUserModelId, reinterpret_cast<UINT_PTR>(window), processId, threadId), false);
             if (showThumbnail) addCandidate(source.Key(), true);
