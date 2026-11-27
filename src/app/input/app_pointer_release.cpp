@@ -1689,7 +1689,21 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             return;
         const bool previewMarquee = folderPreview_ && marqueeActive_ && marqueeDockFolderPopup_;
         if (previewMarquee) UpdateMarqueeSelection(upPoint);
-        const bool otherSelectionDamage = marqueeActive_ || dockPressedContainer_ ||
+        bool inlinePreviewSelected = false;
+        if (!marqueeActive_ && marqueeDockFolderPopup_ && mouseDown_ && !mouseDownHit_ &&
+            folderPreview_ && folderPreview_->inlineBounds && !rightButtonRelease &&
+            !(wp & (MK_CONTROL | MK_SHIFT)))
+        {
+            const RECT viewport = GetMarqueeViewportRect();
+            const size_t host = FindWidgetIndexById(folderPreview_->hostWidgetId);
+            if (host < widgets_.size() && PtInRect(&viewport, upPoint))
+            {
+                SelectWidgetOnly(host);
+                (void)QueueDesktopWidgetComposition(widgets_[host].id);
+                inlinePreviewSelected = true;
+            }
+        }
+        const bool otherSelectionDamage = inlinePreviewSelected || marqueeActive_ || dockPressedContainer_ ||
             pendingCtrlToggleDesktopIndex_ < items_.size() || pendingCtrlToggleWidgetItem_;
         // The opening press already updated the selection and published the
         // popup. Its release may arrive through either HWND.

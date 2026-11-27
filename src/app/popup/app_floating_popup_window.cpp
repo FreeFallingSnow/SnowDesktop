@@ -367,13 +367,17 @@ void DesktopApp::HandleFloatingPopupExternalPointerDown(
     const HMONITOR hitMonitor = MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONULL);
     const bool statusBarOutsideCollection = !pointOnHostedPopup && targetWindow &&
         statusBar_ && hitMonitor && targetWindow == statusBar_->InteractionWindow(hitMonitor);
-    if (folderPreview_ && !pointOnHostedPopup && !targetBelongsToInternalSurface)
+    const bool hostedCollection = IsCollectionPopupHostedByFloatingWindow();
+    const bool previewingCollectionFile = hostedCollection &&
+        !targetBelongsToInternalSurface && filePreview_.IsPreviewWindow(targetWindow);
+    if (folderPreview_ && !pointOnHostedPopup &&
+        !targetBelongsToInternalSurface && !previewingCollectionFile)
         folderPreview_->keyboardFocused = false;
     const bool dismissCollection =
         snowdesktop::floating_popup_rules::
             ShouldDismissForExternalPointerDown(
-                IsCollectionPopupHostedByFloatingWindow(),
-                targetBelongsToInternalSurface && !statusBarOutsideCollection,
+                hostedCollection,
+                (targetBelongsToInternalSurface || previewingCollectionFile) && !statusBarOutsideCollection,
                 dragActive);
     const bool dismissLuaPanel =
         snowdesktop::floating_popup_rules::
@@ -426,7 +430,7 @@ void DesktopApp::DismissTouchPopupsOnExternalActivation(HWND foreground, DWORD t
         HideDockWindowPreview();
     if (!floatingPopupHwnd_ || !IsWindowVisible(floatingPopupHwnd_) ||
         static_cast<LONG>(tick - floatingPopupPointerGenerationStartedAt_) <= 0) return;
-    if (IsCollectionPopupHostedByFloatingWindow())
+    if (IsCollectionPopupHostedByFloatingWindow() && !filePreview_.IsPreviewWindow(foreground))
     {
         pendingCollectionPopupOpen_.reset();
         CloseCollectionPopup();

@@ -105,6 +105,7 @@ public:
     Availability Current() const;
     bool Matches(Shortcut pressed) const;
     bool Request(Shortcut pressed, std::wstring path, bool repeated);
+    bool IsPreviewWindow(HWND window) const;
     // Called only after the host has excluded its own interaction surfaces.
     // An unrelated external focus transfer ends the preview's selection lease.
     bool RetainsSelection(HWND window);

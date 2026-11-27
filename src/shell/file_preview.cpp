@@ -400,6 +400,16 @@ bool Service::Request(Shortcut pressed, std::wstring path, bool repeated)
     return true;
 }
 
+bool Service::IsPreviewWindow(HWND window) const
+{
+    if (!state_ || !window) return false;
+    DWORD pid = 0;
+    if (!GetWindowThreadProcessId(window, &pid) || !pid) return false;
+    std::lock_guard lock(state_->mutex);
+    return !state_->stopped && state_->session.pid == pid &&
+        state_->session == IdentifyProcess(pid);
+}
+
 bool Service::RetainsSelection(HWND window)
 {
     if (!state_) return false;
