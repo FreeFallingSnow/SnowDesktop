@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "ui/input/touch_input.h"
+#include "ui/input/touch_simulator.h"
 #include "app/app.h"
 #include "app/input/grid_preview_shortcut.h"
 #include "widget/view/widget_surface_renderer.h"
@@ -205,6 +206,11 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
     switch (msg)
     {
+    case snowdesktop::touch_simulation::EdgeSwipeMessage:
+        if (snowdesktop::touch_simulation::Enabled() && !snowdesktop::private_pointer::Active())
+            (void)TryRevealTouchEdge(snowdesktop::touch_input::ScreenPoint(static_cast<LPARAM>(wp)),
+                snowdesktop::touch_input::ScreenPoint(lp));
+        return 0;
     case WM_COMMAND:
         if (renameInputWindow_ && reinterpret_cast<HWND>(lp) == renameInputWindow_ &&
             HIWORD(wp) == EN_UPDATE)

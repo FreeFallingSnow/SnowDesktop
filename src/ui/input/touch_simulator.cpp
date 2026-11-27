@@ -6,6 +6,7 @@
 #include <array>
 #include <limits>
 #include <optional>
+#include <utility>
 
 namespace snowdesktop::touch_simulation
 {
@@ -25,6 +26,7 @@ constexpr int kPinchMinRadius = 12;
 constexpr int kPinchMaxRadius = 72;
 constexpr auto kContact = POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT;
 constexpr ULONG_PTR kPointerSignature = 0xFF515700;
+std::atomic<HWND> edgeGestureTarget = nullptr;
 using Points = std::array<POINT, 2>;
 
 struct ButtonEvent { UINT key = 0; bool up = false; };
@@ -151,6 +153,7 @@ private:
     {
         auto& self = Current();
         self.End(true);
+        self.singleDragOrigin_.reset();
         self.blockedButtons_ = 0;
         self.aimActive_ = false;
         self.paintedAim_.reset();
@@ -296,6 +299,7 @@ private:
             return 0;
         case WM_DISPLAYCHANGE:
             self.End(true);
+            self.singleDragOrigin_.reset();
             return 0;
         }
         return DefWindowProcW(window, message, wp, lp);
@@ -342,14 +346,22 @@ private:
                 (std::min)(point.x + 20, bounds.right - 1);
         }
         Begin(points, twoContacts ? 2 : 1);
+        singleDragOrigin_ = twoContacts ? std::nullopt : std::optional{point};
     }
 
     void EndDrag(POINT point) noexcept
     {
-        if (!count_ || pinching_) return;
-        dragPoint_ = point;
-        Frame();
-        End(false);
+        const auto origin = std::exchange(singleDragOrigin_, std::nullopt);
+        if (count_ && !pinching_)
+        {
+            dragPoint_ = point;
+            Frame();
+            End(false);
+        }
+        // Shell gestures can take injected contacts before an app sees them.
+        // Report completed simulated swipes to SnowDesktop's own receiver too.
+        if (const HWND target = edgeGestureTarget.load(); target && origin)
+            PostMessageW(target, EdgeSwipeMessage, MAKEWPARAM(origin->x, origin->y), MAKELPARAM(point.x, point.y));
     }
 
     Points PinchPoints(int radius) const noexcept
@@ -425,6 +437,7 @@ private:
     UINT count_ = 0;
     Points sentPoints_{};
     POINT dragPoint_{};
+    std::optional<POINT> singleDragOrigin_;
     bool pinching_ = false;
     POINT pinchCenter_{};
     RECT pinchBounds_{};
@@ -437,6 +450,7 @@ private:
 }
 
 bool Configure(bool enabled, UINT modifiers, UINT key) { return Simulator::Current().Configure(enabled, modifiers, key); }
+void SetEdgeGestureTarget(HWND window) noexcept { edgeGestureTarget.store(window); }
 bool Enabled() noexcept { return Simulator::Current().Enabled(); }
 void Stop() noexcept { Simulator::Current().Stop(); }
 }

@@ -5,6 +5,7 @@
 #include "common/utils.h"
 #include "common/l10n.h"
 #include "ui/input/private_pointer.h"
+#include "ui/input/touch_input.h"
 #include "app/layout/grid_geometry.h"
 #include "layout/grid_occupancy.h"
 #include "layout/widget_displacement.h"
@@ -174,8 +175,8 @@ bool DesktopApp::StepLuaWidgetStack(const std::wstring& stackId, int step)
     const auto count = static_cast<std::int64_t>(members.size());
     const auto position = active == members.end() ? 0 : static_cast<std::int64_t>(active - members.begin());
     const size_t next = static_cast<size_t>(((position + step) % count + count) % count);
-    (void)SelectLuaStackMember(stableId, members[next]);
-    UpdateLuaStackIndicator(lastMousePoint_);
+    if (!SelectLuaStackMember(stableId, members[next])) return false;
+    UpdateLuaStackIndicator(lastMousePoint_, stableId);
     return true;
 }
 
@@ -297,13 +298,14 @@ void DesktopApp::HideLuaStackIndicator()
     // Its hover-only owner still needs a desktop paint to start fading out.
     if (shown) InvalidateLuaStackHoverVisibility(luaStackIndicator_.stackId);
     const bool pressed = !luaStackIndicator_.pressedMember.empty();
+    uiAnimationScheduler_.Cancel(luaStackIndicator_.pageFeedbackTimer);
     luaStackIndicator_ = {};
     if (pressed && snowdesktop::private_pointer::Capture() == floatingPopupHwnd_)
         snowdesktop::private_pointer::ReleasePointerCapture();
     if (shown) UpdateFloatingPopupWindowBounds();
 }
 
-void DesktopApp::UpdateLuaStackIndicator(POINT point)
+void DesktopApp::UpdateLuaStackIndicator(POINT point, std::wstring_view changedStack)
 {
     if (widgetAction_ != WidgetAction::None || dragSession_.HasContext() ||
         dragDropController_.IsTransportActive() || !customDesktopVisible_ ||
@@ -323,11 +325,14 @@ void DesktopApp::UpdateLuaStackIndicator(POINT point)
         (PtInRect(&luaStackIndicator_.bounds, point) || PtInRect(&luaStackIndicator_.bridge, point));
     const RECT pointer{point.x, point.y, point.x + 1, point.y + 1};
     size_t target = static_cast<size_t>(-1);
-    if (!IsLuaStackIndicatorOccluded(pointer))
+    if (!changedStack.empty())
+        target = FindWidgetIndexById(std::wstring(changedStack));
+    else if (!IsLuaStackIndicatorOccluded(pointer))
         target = indicatorHover ? FindWidgetIndexById(luaStackIndicator_.stackId)
             : HitTestStandaloneWidgetIndex(point);
     if (target >= widgets_.size() || widgets_[target].type != DesktopWidgetType::LuaStack)
     {
+        if (luaStackIndicator_.pageFeedbackTimer && IsLuaStackIndicatorVisible()) return;
         if (!luaStackIndicator_.stackId.empty())
         {
             const ULONGLONG now = GetTickCount64();
@@ -374,6 +379,7 @@ void DesktopApp::UpdateLuaStackIndicator(POINT point)
     if (newTarget)
     {
         InvalidateLuaStackHoverVisibility(luaStackIndicator_.stackId);
+        uiAnimationScheduler_.Cancel(luaStackIndicator_.pageFeedbackTimer);
         luaStackIndicator_ = {};
     }
     luaStackIndicator_.stackId = stack.id;
@@ -391,6 +397,28 @@ void DesktopApp::UpdateLuaStackIndicator(POINT point)
     luaStackIndicator_.padding = padding;
     luaStackIndicator_.visibleCount = visible;
     luaStackIndicator_.first = first;
+    if (!changedStack.empty())
+    {
+        uiAnimationScheduler_.Cancel(luaStackIndicator_.pageFeedbackTimer);
+        luaStackIndicator_.pageFeedbackTimer = uiAnimationScheduler_.ScheduleOnce(
+            1500, [this](snowdesktop::UiScheduleToken timer) {
+                if (luaStackIndicator_.pageFeedbackTimer != timer) return;
+                luaStackIndicator_.pageFeedbackTimer = {};
+                const auto index = FindWidgetIndexById(luaStackIndicator_.stackId);
+                if (snowdesktop::touch_input::CanHover() && index < widgets_.size())
+                {
+                    const RECT currentFrame = GetStandaloneWidgetFrameRect(widgets_[index]);
+                    if (PtInRect(&currentFrame, lastMousePoint_) ||
+                        PtInRect(&luaStackIndicator_.bounds, lastMousePoint_) ||
+                        PtInRect(&luaStackIndicator_.bridge, lastMousePoint_))
+                    {
+                        UpdateLuaStackIndicator(lastMousePoint_);
+                        return;
+                    }
+                }
+                HideLuaStackIndicator();
+            });
+    }
     if (newTarget) InvalidateLuaStackHoverVisibility(stack.id);
     if (newTarget || !EqualRect(&oldBounds, &luaStackIndicator_.bounds)) UpdateFloatingPopupWindowBounds(true);
     else if (rowsChanged && floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_))
@@ -429,8 +457,9 @@ bool DesktopApp::HandleLuaStackIndicatorPointer(POINT point, bool pressed)
         luaStackIndicator_.pressedMember.clear();
         snowdesktop::private_pointer::ReleasePointerCapture();
         luaStackWheel_.Hold(luaStackIndicator_.stackId, GetTickCount64());
-        if (activate) (void)SelectLuaStackMember(luaStackIndicator_.stackId, id);
-        UpdateLuaStackIndicator(point);
+        const auto stackId = luaStackIndicator_.stackId;
+        if (activate && SelectLuaStackMember(stackId, id)) UpdateLuaStackIndicator(point, stackId);
+        else UpdateLuaStackIndicator(point);
     }
     return true;
 }

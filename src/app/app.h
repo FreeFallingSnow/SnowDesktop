@@ -427,6 +427,8 @@ private:
     bool HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPARAM position);
     bool HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LPARAM position);
     bool HandleDesktopTouchEdge(HWND window, UINT message, WPARAM pointer, LPARAM position);
+    bool TryRevealTouchEdge(POINT start, std::optional<POINT> end = std::nullopt);
+    bool CanRevealDockFromTouch(HMONITOR monitor) const;
     static LRESULT CALLBACK TouchEdgeWndProc(HWND window, UINT message, WPARAM wp, LPARAM lp);
     void SyncTouchEdgeWindows();
     void DestroyTouchEdgeWindows();
@@ -3086,7 +3088,7 @@ private:
     bool RemoveLuaStackMember(const std::wstring& stackId, POINT screenPoint);
     bool IsLuaStackIndicatorVisible() const;
     bool IsLuaStackIndicatorOccluded(const RECT& bounds) const;
-    void UpdateLuaStackIndicator(POINT point);
+    void UpdateLuaStackIndicator(POINT point, std::wstring_view changedStack = {});
     void HideLuaStackIndicator();
     void InvalidateLuaStackHoverVisibility(const std::wstring& stackId);
     bool HandleLuaStackIndicatorPointer(POINT point, bool pressed);
@@ -3102,6 +3104,7 @@ private:
         int pitch = 16;
         int padding = 8;
         ULONGLONG hideAfter = 0;
+        snowdesktop::UiScheduleToken pageFeedbackTimer = {};
     } luaStackIndicator_;
     snowdesktop::lua_stack::WheelGesture luaStackWheel_;
     snowdesktop::lua_stack::MemberDrag luaStackMemberDrag_;

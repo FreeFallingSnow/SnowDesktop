@@ -606,8 +606,17 @@ SHORT KeyState(int key) noexcept
 }
 SHORT AsyncKeyState(int key) noexcept
 {
-    if (touch_input::routingTouch && key == VK_LBUTTON)
-        return touch_input::routedContactDown ? static_cast<SHORT>(0x8000) : 0;
+    if (touch_input::routingTouch)
+    {
+        if (key == VK_MBUTTON)
+            return (touch_input::routedMouseButtons & MK_MBUTTON) ? static_cast<SHORT>(0x8000) : 0;
+        if (key == VK_LBUTTON || key == VK_RBUTTON)
+        {
+            const bool primary = (key == VK_LBUTTON) != (GetSystemMetrics(SM_SWAPBUTTON) != 0);
+            const WPARAM button = primary ? MK_LBUTTON : MK_RBUTTON;
+            return (touch_input::routedMouseButtons & button) ? static_cast<SHORT>(0x8000) : 0;
+        }
+    }
     if (!Active()) return GetAsyncKeyState(key);
     if (GetSystemMetrics(SM_SWAPBUTTON))
     {

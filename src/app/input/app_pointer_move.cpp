@@ -47,7 +47,8 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
     if (quickNavigation_->open) return;
     if (GetDockContainerAtPoint(pt)) return;
     if (IsCollectionPopupInteractive() &&
-        popupWidgetIndex_ < widgets_.size())
+        popupWidgetIndex_ < widgets_.size() &&
+        !(folderPreview_ && folderPreview_->inlineBounds && PtInRect(&*folderPreview_->inlineBounds, pt)))
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
         if (PtInRect(&popup, pt)) return;

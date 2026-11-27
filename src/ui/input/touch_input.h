@@ -11,7 +11,7 @@ namespace snowdesktop::touch_input
 inline thread_local bool touchMode = false;
 inline thread_local ULONGLONG lastTouchPress = 0;
 inline thread_local bool routingTouch = false;
-inline thread_local bool routedContactDown = false;
+inline thread_local WPARAM routedMouseButtons = 0;
 inline thread_local POINT routedPoint{};
 inline thread_local std::optional<bool> panHorizontal;
 
@@ -73,19 +73,19 @@ inline bool RecentlyPressed() noexcept
 class RoutedTouch final
 {
 public:
-    RoutedTouch(POINT screen, bool pressed, std::optional<bool> horizontal = std::nullopt) noexcept
-        : previous_(routingTouch), previousDown_(routedContactDown), previousPoint_(routedPoint),
+    explicit RoutedTouch(POINT screen, WPARAM buttons = 0, std::optional<bool> horizontal = std::nullopt) noexcept
+        : previous_(routingTouch), previousButtons_(routedMouseButtons), previousPoint_(routedPoint),
           previousPan_(panHorizontal)
     {
         routingTouch = touchMode = true;
-        routedContactDown = pressed;
+        routedMouseButtons = buttons;
         routedPoint = screen;
         panHorizontal = horizontal;
     }
     ~RoutedTouch()
     {
         routingTouch = previous_;
-        routedContactDown = previousDown_;
+        routedMouseButtons = previousButtons_;
         routedPoint = previousPoint_;
         panHorizontal = previousPan_;
     }
@@ -94,7 +94,7 @@ public:
 
 private:
     bool previous_;
-    bool previousDown_;
+    WPARAM previousButtons_;
     POINT previousPoint_;
     std::optional<bool> previousPan_;
 };
@@ -103,7 +103,7 @@ inline LRESULT RouteMouse(HWND window, UINT message, POINT screen, WPARAM button
 {
     POINT client = screen;
     if (!ScreenToClient(window, &client)) return 0;
-    const RoutedTouch scope(screen, (buttons & MK_LBUTTON) != 0);
+    const RoutedTouch scope(screen, buttons);
     return SendMessageW(window, message, buttons, MAKELPARAM(client.x, client.y));
 }
 
