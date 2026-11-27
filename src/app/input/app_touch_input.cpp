@@ -82,67 +82,6 @@ struct ScrollTouch
     bool horizontal = false;
 };
 
-struct TouchDragCompatibility
-{
-    HWND window = nullptr;
-    UINT32 pointerId = 0;
-    bool dragging = false;
-    bool canceled = false;
-    bool gestureConfigChanged = false;
-    GESTURECONFIG oldGestureConfig{};
-    ULONGLONG suppressUntil = 0;
-
-    void Begin(HWND owner, WPARAM pointer)
-    {
-        if (pointerId) End();
-        *this = {};
-        window = owner;
-        pointerId = GET_POINTERID_WPARAM(pointer);
-        // The host recognizes this contact itself. Keep the legacy gesture
-        // recognizer from replacing the compatibility mouse stream.
-        UINT count = 1;
-        GESTURECONFIG block{0, 0, GC_ALLGESTURES};
-        gestureConfigChanged = GetGestureConfig(window, 0, 0, &count, &oldGestureConfig, sizeof(oldGestureConfig)) &&
-            SetGestureConfig(window, 0, 1, &block, sizeof(block));
-    }
-
-    bool Owns(HWND owner, WPARAM pointer) const
-    {
-        return window == owner && pointerId && pointerId == GET_POINTERID_WPARAM(pointer);
-    }
-
-    void End()
-    {
-        if (gestureConfigChanged && IsWindow(window))
-            SetGestureConfig(window, 0, 1, &oldGestureConfig, sizeof(oldGestureConfig));
-        gestureConfigChanged = false;
-        pointerId = 0;
-        dragging = false;
-        suppressUntil = GetTickCount64() + 250;
-    }
-};
-
-thread_local TouchDragCompatibility dragCompatibility;
-
-// User32 needs the complete contact to generate the compatibility mouse
-// stream consumed by OLE. SnowDesktop handles the actual gesture in parallel.
-struct PromoteDragPointer
-{
-    HWND window;
-    UINT message;
-    WPARAM pointer;
-    LPARAM position;
-    bool promote = false;
-    bool finished = false;
-
-    ~PromoteDragPointer()
-    {
-        if (!promote) return;
-        if (IsWindow(window)) DefWindowProcW(window, message, pointer, position);
-        if (finished && dragCompatibility.Owns(window, pointer)) dragCompatibility.End();
-    }
-};
-
 struct EdgeTouch
 {
     HWND window = nullptr;
@@ -236,52 +175,13 @@ void DesktopApp::ObserveDesktopTouch(HWND window, UINT message, WPARAM pointer, 
             snowdesktop::floating_popup_rules::PackScreenPoint(screen));
 }
 
-bool DesktopApp::HandleTouchDragCompatibility(HWND window, UINT message, WPARAM buttons, LPARAM position)
-{
-    if (dragCompatibility.window != window) return false;
-    if (message == WM_CANCELMODE || message == WM_NCDESTROY)
-    {
-        if (dragCompatibility.pointerId && !dragDropController_.IsSelfDragActive()) dragCompatibility.End();
-        return false;
-    }
-    if (IsNewContact(message, buttons) && !dragCompatibility.pointerId)
-    {
-        dragCompatibility = {};
-        return false;
-    }
-    if (touch::routingTouch || (message != WM_MOUSEMOVE && message != WM_LBUTTONDOWN &&
-            message != WM_LBUTTONUP && message != WM_LBUTTONDBLCLK &&
-            message != WM_RBUTTONDOWN && message != WM_RBUTTONUP) || !touch::IsCurrentTouchInput()) return false;
-    if (!dragCompatibility.pointerId && GetTickCount64() >= dragCompatibility.suppressUntil) return false;
-    if (message == WM_MOUSEMOVE && (buttons & MK_LBUTTON) && dragCompatibility.dragging &&
-        dragSession_.IsActive() && !dragDropController_.IsTransportActive())
-    {
-        POINT point = touch::ScreenPoint(position);
-        if (hwnd_ && ClientToScreen(window, &point) && ScreenToClient(hwnd_, &point) &&
-            IsExternalDropWindowAt(point))
-        {
-            // The genuine promoted mouse message gives OLE the User32
-            // mouse stream for this touch contact.
-            OnMouseMoveAt(buttons, point);
-            if (!dragSession_.IsActive()) dragCompatibility.canceled = true;
-            PresentPointerInteractionFrame();
-        }
-    }
-    return true;
-}
-
 bool DesktopApp::HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPARAM position)
 {
-    if (snowdesktop::private_pointer::Active()) return false;
-    if (HandleTouchDragCompatibility(window, message, pointer, position)) return true;
+    if (!touch::IsPointerMessage(message) || snowdesktop::private_pointer::Active()) return false;
     using Action = touch::GestureAction;
     static thread_local DockTouch gesture;
     static thread_local touch::TapSequence taps;
     if (gesture.window && !IsWindow(gesture.window)) gesture = {};
-    if (gesture.window == window && (message == WM_NCDESTROY ||
-            (message == WM_CANCELMODE && !dragDropController_.IsSelfDragActive()))) gesture = {};
-    if (!touch::IsPointerMessage(message)) return false;
-    PromoteDragPointer promotion{window, message, pointer, position};
     const POINT screen = touch::ScreenPoint(position);
     if (IsNewContact(message, pointer))
     {
@@ -307,23 +207,10 @@ bool DesktopApp::HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPAR
         DockWindowPreviewTarget target;
         gesture.preview = dockSettings_.showWindowPreviews && ResolveDockWindowPreviewTarget(desktop, target);
         gesture.contact.Begin(pointer, screen);
-        if (draggable)
-        {
-            dragCompatibility.Begin(window, pointer);
-            promotion.promote = true;
-        }
         return true;
     }
     if (gesture.window != window || !gesture.contact.Owns(pointer)) return false;
-    promotion.promote = dragCompatibility.Owns(window, pointer);
-    const bool canceled = message == WM_POINTERCAPTURECHANGED || touch::IsCanceled(pointer);
-    promotion.finished = message == WM_POINTERUP || canceled;
-    if (promotion.promote && (dragDropController_.IsSelfDragActive() || dragCompatibility.canceled))
-    {
-        if (promotion.finished) gesture = {};
-        return true;
-    }
-    if (canceled)
+    if (message == WM_POINTERCAPTURECHANGED || touch::IsCanceled(pointer))
     {
         const bool dragging = gesture.action == Action::Drag;
         gesture = {};
@@ -348,7 +235,6 @@ bool DesktopApp::HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPAR
             if (gesture.draggable && (contact.Held() || (!openPreview && !scrollAlongDock)))
             {
                 gesture.action = Action::Drag;
-                if (promotion.promote && message == WM_POINTERUPDATE) dragCompatibility.dragging = true;
                 touch::RouteMouse(window, WM_LBUTTONDOWN, contact.start, MK_LBUTTON);
             }
             else if (openPreview)
@@ -397,16 +283,13 @@ bool DesktopApp::HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPAR
 bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LPARAM position)
 {
     if (snowdesktop::private_pointer::Active()) return false;
-    if (HandleTouchDragCompatibility(window, message, pointer, position)) return true;
     using Action = touch::GestureAction;
     static thread_local ScrollTouch gesture;
     static thread_local touch::TapSequence taps;
     if (gesture.window && !IsWindow(gesture.window)) gesture = {};
-    if (gesture.window == window && (message == WM_NCDESTROY ||
-            (message == WM_CANCELMODE && !dragDropController_.IsSelfDragActive())))
+    if (gesture.window == window && (message == WM_CANCELMODE || message == WM_NCDESTROY))
         gesture = {};
     if (!touch::IsPointerMessage(message)) return false;
-    PromoteDragPointer promotion{window, message, pointer, position};
     const POINT screen = touch::ScreenPoint(position);
     if (IsNewContact(message, pointer))
     {
@@ -562,23 +445,10 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
         gesture.window = window;
         gesture.target = std::move(target);
         gesture.contact.Begin(pointer, screen);
-        if (gesture.target.doubleTap)
-        {
-            dragCompatibility.Begin(window, pointer);
-            promotion.promote = true;
-        }
         return true;
     }
     if (gesture.window != window || !gesture.contact.Owns(pointer)) return false;
-    promotion.promote = dragCompatibility.Owns(window, pointer);
-    const bool canceled = message == WM_POINTERCAPTURECHANGED || touch::IsCanceled(pointer);
-    promotion.finished = message == WM_POINTERUP || canceled;
-    if (promotion.promote && (dragDropController_.IsSelfDragActive() || dragCompatibility.canceled))
-    {
-        if (promotion.finished) gesture = {};
-        return true;
-    }
-    if (canceled)
+    if (message == WM_POINTERCAPTURECHANGED || touch::IsCanceled(pointer))
     {
         const bool dragging = gesture.action == Action::Drag;
         gesture = {};
@@ -603,7 +473,6 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
         if (dragItem || gesture.target.directWidgetDrag || (gesture.target.moveWidget && contact.Held()))
         {
             gesture.action = Action::Drag;
-            if (promotion.promote && message == WM_POINTERUPDATE) dragCompatibility.dragging = true;
             if (gesture.target.directWidgetDrag) gesture.target.moveWidget = false;
             if (gesture.target.moveWidget && widgetEngine_) widgetEngine_->ClearDesktopTouchHoverUnless();
             touch::RouteMouse(window, gesture.target.moveWidget ? WM_MBUTTONDOWN : WM_LBUTTONDOWN,

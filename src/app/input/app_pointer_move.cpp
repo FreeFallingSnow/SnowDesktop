@@ -1185,8 +1185,8 @@ void DesktopApp::OnMouseMoveAt(
             SyncDragPreviewWindow();
             if (dragPreviewSynced) *dragPreviewSynced = true;
         }
-        // Touch drag handoff comes from User32's promoted WM_MOUSEMOVE.
-        // Samples sent directly by the gesture dispatcher stay local.
+        // OLE uses the native mouse stream. The desktop gesture dispatcher
+        // keeps ownership of touch contacts it handles directly.
         const bool overExternal = !snowdesktop::touch_input::routingTouch &&
             IsExternalDropWindowAt(current);
 
