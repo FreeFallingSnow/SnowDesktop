@@ -2972,5 +2972,6 @@
   "settings.debug.touchSimulation.mouseRight": "マウスの右ボタン",
   "settings.debug.touchSimulation.mouseMiddle": "マウスの中央ボタン",
   "settings.debug.touchSimulation.mouseBack": "マウスのサイドボタン 1",
-  "settings.debug.touchSimulation.mouseForward": "マウスのサイドボタン 2"
+  "settings.debug.touchSimulation.mouseForward": "マウスのサイドボタン 2",
+  "app.dock.add_icon_border": "枠線を追加"
 }

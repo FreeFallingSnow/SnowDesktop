@@ -2972,5 +2972,6 @@
   "settings.debug.touchSimulation.mouseRight": "Bouton droit de la souris",
   "settings.debug.touchSimulation.mouseMiddle": "Bouton central de la souris",
   "settings.debug.touchSimulation.mouseBack": "Bouton latéral 1 de la souris",
-  "settings.debug.touchSimulation.mouseForward": "Bouton latéral 2 de la souris"
+  "settings.debug.touchSimulation.mouseForward": "Bouton latéral 2 de la souris",
+  "app.dock.add_icon_border": "Ajouter une bordure"
 }

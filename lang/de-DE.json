@@ -2972,5 +2972,6 @@
   "settings.debug.touchSimulation.mouseRight": "Rechte Maustaste",
   "settings.debug.touchSimulation.mouseMiddle": "Mittlere Maustaste",
   "settings.debug.touchSimulation.mouseBack": "Seitliche Maustaste 1",
-  "settings.debug.touchSimulation.mouseForward": "Seitliche Maustaste 2"
+  "settings.debug.touchSimulation.mouseForward": "Seitliche Maustaste 2",
+  "app.dock.add_icon_border": "Rahmen hinzufügen"
 }

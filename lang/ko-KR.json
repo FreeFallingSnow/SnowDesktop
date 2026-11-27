@@ -2972,5 +2972,6 @@
   "settings.debug.touchSimulation.mouseRight": "마우스 오른쪽 버튼",
   "settings.debug.touchSimulation.mouseMiddle": "마우스 가운데 버튼",
   "settings.debug.touchSimulation.mouseBack": "마우스 측면 버튼 1",
-  "settings.debug.touchSimulation.mouseForward": "마우스 측면 버튼 2"
+  "settings.debug.touchSimulation.mouseForward": "마우스 측면 버튼 2",
+  "app.dock.add_icon_border": "테두리 추가"
 }

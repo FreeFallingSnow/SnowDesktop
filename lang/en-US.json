@@ -2972,5 +2972,6 @@
   "settings.debug.touchSimulation.mouseRight": "Right mouse button",
   "settings.debug.touchSimulation.mouseMiddle": "Middle mouse button",
   "settings.debug.touchSimulation.mouseBack": "Mouse side button 1",
-  "settings.debug.touchSimulation.mouseForward": "Mouse side button 2"
+  "settings.debug.touchSimulation.mouseForward": "Mouse side button 2",
+  "app.dock.add_icon_border": "Add border"
 }
