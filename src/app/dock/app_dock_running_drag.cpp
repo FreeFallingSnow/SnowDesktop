@@ -198,7 +198,7 @@ void DesktopApp::UpdateDockRunningDrag(POINT point)
         if (dock) state.target = dock->GetRunningDragTarget(point);
         const auto desktop = FindDesktopItemForDockRunningApp(*live);
         const bool mainSource = desktop && *desktop < items_.size() &&
-            !IsFolderDockEntry({DockEntryType::DesktopItem, items_[*desktop].layoutKey, true});
+            (dockSettings_.freeItemOrder || !IsFolderDockEntry({DockEntryType::DesktopItem, items_[*desktop].layoutKey, true}));
         const auto folderIndex = FindItemIndexByKey(state.desktopFolderKey);
         const bool folderSource = state.explorer && state.resolved && state.folder &&
             folderIndex < items_.size() &&
@@ -295,7 +295,8 @@ void DesktopApp::QueueDockRunningPin(std::shared_ptr<DockRunningDragState> state
     if (const auto desktop = FindDesktopItemForDockRunningApp(*live); desktop && *desktop < items_.size())
     {
         const bool folder = IsFolderDockEntry({DockEntryType::DesktopItem, items_[*desktop].layoutKey, true});
-        if (position.area == (folder ? drag::Area::Files : drag::Area::Fixed)) commitExisting(*desktop, folder);
+        if (dockSettings_.freeItemOrder || position.area == (folder ? drag::Area::Files : drag::Area::Fixed))
+            commitExisting(*desktop, folder);
         return;
     }
     // Ordinary running applications still require an existing desktop entry.
@@ -392,15 +393,16 @@ bool DesktopApp::PinDockRunningTarget(const std::wstring& runningKey,
                 const auto added = std::find_if(dockEntries_.begin(), dockEntries_.end(), [&](const auto& entry) {
                     return entry.type == DockEntryType::DesktopItem && entry.reference == ToUpperInvariant(path);
                 });
-                if (added != dockEntries_.end())
+                if (!dockSettings_.freeItemOrder && added != dockEntries_.end())
                 {
                     DockEntry entry = std::move(*added);
+                    entry.userOrder.reset();
                     dockEntries_.erase(added);
                     const size_t begin = DockMainEntryCount();
                     const size_t end = begin + DockFolderEntryCount();
                     const size_t index = std::clamp(insertIndex, begin, end);
                     dockEntries_.insert(dockEntries_.begin() + static_cast<std::ptrdiff_t>(index), std::move(entry));
-                    snowdesktop::dock_folder_rules::CaptureUserOrder(dockEntries_);
+                    NormalizeDockRecycleBinPosition();
                     InvalidateDockContainers();
                 }
             }

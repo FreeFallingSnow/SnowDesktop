@@ -1526,6 +1526,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     ReadBoolField(text, "showWindowPreviews", settings.showWindowPreviews);
     ReadBoolField(text, "singleClickLaunchItems",
         settings.singleClickLaunchItems);
+    ReadBoolField(text, "freeItemOrder", settings.freeItemOrder);
     ReadBoolField(text, "showFrequentItems", settings.showFrequentItems);
     ReadBoolField(text, "keepWhenDesktopHidden",
         settings.keepWhenDesktopHidden);
@@ -1746,6 +1747,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"showWindowPreviews\": " << (settings.showWindowPreviews ? "true" : "false") << ",\n";
     file << "  \"singleClickLaunchItems\": "
          << (settings.singleClickLaunchItems ? "true" : "false") << ",\n";
+    file << "  \"freeItemOrder\": " << (settings.freeItemOrder ? "true" : "false") << ",\n";
     file << "  \"showFrequentItems\": "
          << (settings.showFrequentItems ? "true" : "false") << ",\n";
     file << "  \"keepWhenDesktopHidden\": "

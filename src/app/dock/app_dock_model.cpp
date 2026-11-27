@@ -239,6 +239,7 @@ bool DesktopApp::IsFolderDockEntry(const DockEntry& entry) const
 
 size_t DesktopApp::DockMainEntryCount() const
 {
+    if (dockSettings_.freeItemOrder) return dockEntries_.size();
     return static_cast<size_t>(std::count_if(
         dockEntries_.begin(), dockEntries_.end(),
         [this](const DockEntry& entry) {
@@ -249,6 +250,7 @@ size_t DesktopApp::DockMainEntryCount() const
 
 size_t DesktopApp::DockFolderEntryCount() const
 {
+    if (dockSettings_.freeItemOrder) return 0;
     return static_cast<size_t>(std::count_if(
         dockEntries_.begin(), dockEntries_.end(),
         [this](const DockEntry& entry) {
@@ -265,18 +267,7 @@ bool DesktopApp::IsRecycleBinDockEntry(const DockEntry& entry) const
 
 void DesktopApp::NormalizeDockRecycleBinPosition()
 {
-    snowdesktop::dock_folder_rules::NormalizeKeepingUserOrder(
-        dockEntries_,
-        [this](const DockEntry& entry) {
-            if (IsRecycleBinDockEntry(entry))
-                return snowdesktop::dock_folder_rules::
-                    EntryGroup::Recycle;
-            return IsFolderDockEntry(entry)
-                ? snowdesktop::dock_folder_rules::
-                    EntryGroup::Folder
-                : snowdesktop::dock_folder_rules::
-                    EntryGroup::Main;
-        });
+    snowdesktop::dock_drop_model::Normalize(dockEntries_, DockDropServices());
 }
 
 void DesktopApp::LoadDockUsageStats()

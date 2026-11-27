@@ -668,12 +668,24 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         EnsureFloatingDockVisibleForAssociatedSurface(
             screenPt);
 
+        if (dock->GetSeparatorInsertIndex(pt))
+        {
+            ClearSelection();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            ShowDockContextMenu(screenPt);
+            return;
+        }
         if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
         {
             const size_t entryIndex = dockItem->GetEntryIndex();
             if (entryIndex < dockEntries_.size())
             {
                 ClearSelection();
+                if (dockItem->GetEntryType() == DockEntryType::Separator)
+                {
+                    ShowDockContextMenu(screenPt);
+                    return;
+                }
                 dockItem->SetSelected(true);
                 const RECT dockItemBounds = dock->GetElementVisualRect(
                     dockItem->GetBounds(), pt);

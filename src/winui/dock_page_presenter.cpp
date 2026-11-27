@@ -376,6 +376,7 @@ struct DockPagePresenter::Impl
     muxc::ComboBox edgeRevealGesture{nullptr};
     muxc::ToggleSwitch windowPreviews{nullptr};
     muxc::ToggleSwitch singleClickLaunchItems{nullptr};
+    muxc::ToggleSwitch freeItemOrder{nullptr};
     muxc::ComboBox fullscreenPolicyCombo{nullptr};
     muxc::Button fullscreenExceptionAdd{nullptr};
     muxc::ComboBox fullscreenRunningApps{nullptr};
@@ -480,6 +481,7 @@ struct DockPagePresenter::Impl
     SettingRow floatingEdgeSwipeRow;
     SettingRow edgeRevealGestureRow, windowPreviewsRow;
     SettingRow singleClickLaunchItemsRow;
+    SettingRow freeItemOrderRow;
     SettingRow fullscreenPolicyRow;
     SettingRow showWindowsButtonRow;
     SettingRow startMenuKeepTaskbarHiddenRow;
@@ -546,6 +548,7 @@ struct DockPagePresenter::Impl
     winrt::event_token floatingEdgeSwipeToken{};
     winrt::event_token edgeRevealGestureToken{}, windowPreviewsToken{};
     winrt::event_token singleClickLaunchItemsToken{};
+    winrt::event_token freeItemOrderToken{};
     winrt::event_token fullscreenPolicyToken{};
     winrt::event_token showWindowsButtonToken{};
     winrt::event_token startMenuKeepTaskbarHiddenToken{};
@@ -686,6 +689,7 @@ struct DockPagePresenter::Impl
         edgeRevealGesture = NewCombo();
         windowPreviews = muxc::ToggleSwitch{};
         singleClickLaunchItems = muxc::ToggleSwitch{};
+        freeItemOrder = muxc::ToggleSwitch{};
         fullscreenPolicyCombo = NewCombo();
         showWindowsButtonToggle = muxc::ToggleSwitch{};
         startMenuKeepTaskbarHiddenToggle = muxc::ToggleSwitch{};
@@ -720,6 +724,8 @@ struct DockPagePresenter::Impl
         windowPreviewsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         singleClickLaunchItemsRow.Initialize(singleClickLaunchItems);
         singleClickLaunchItemsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        freeItemOrderRow.Initialize(freeItemOrder);
+        freeItemOrderRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         fullscreenPolicyRow.Initialize(fullscreenPolicyCombo);
         fullscreenPolicyRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         muxc::Grid startActions, searchActions;
@@ -859,6 +865,7 @@ struct DockPagePresenter::Impl
         itemsCard.content.Children().Append(frequentItemCount.root);
         itemsCard.content.Children().Append(windowPreviewsRow.root);
         itemsCard.content.Children().Append(singleClickLaunchItemsRow.root);
+        itemsCard.content.Children().Append(freeItemOrderRow.root);
         trayEditor = std::make_unique<DockTraySettingsEditor>(
             [this](std::string_view key, std::wstring_view fallback) { return L(key, fallback); },
             [this](auto edit) { EmitDock(SettingsUpdateMode::PreviewAndCommit, std::move(edit)); },
@@ -1443,6 +1450,11 @@ struct DockPagePresenter::Impl
             const bool value = singleClickLaunchItems.IsOn();
             EmitDock(SettingsUpdateMode::PreviewAndCommit,
                 [value](DockSettings& settings) { settings.singleClickLaunchItems = value; });
+        });
+        freeItemOrderToken = freeItemOrder.Toggled([this](const auto&, const auto&) {
+            const bool value = freeItemOrder.IsOn();
+            EmitDock(SettingsUpdateMode::Commit,
+                [value](DockSettings& settings) { settings.freeItemOrder = value; });
         });
         fullscreenPolicyToken = fullscreenPolicyCombo.SelectionChanged(
             [this](const auto&, const auto&) {
@@ -2037,6 +2049,7 @@ struct DockPagePresenter::Impl
         edgeRevealGesture.SelectedIndex(settings.edgeRevealGesture);
         windowPreviews.IsOn(settings.showWindowPreviews);
         singleClickLaunchItems.IsOn(settings.singleClickLaunchItems);
+        freeItemOrder.IsOn(settings.freeItemOrder);
         floatingShortcutToggle.IsOn(settings.floatingShortcutMode);
         fullscreenPolicyCombo.SelectedIndex(static_cast<int>(settings.fullscreenPolicy));
         trayEditor->Update(settings);
@@ -2160,6 +2173,7 @@ struct DockPagePresenter::Impl
         edgeHoverDelayMs.row.SetEnabled(dockEnabled && floatingEdgeSwipeToggle.IsOn());
         windowPreviewsRow.SetEnabled(dockEnabled);
         singleClickLaunchItemsRow.SetEnabled(dockEnabled);
+        freeItemOrderRow.SetEnabled(dockEnabled);
         frequentItemCount.root.Visibility(showFrequentItemsToggle.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         showOnlyWhenSummonedRow.SetEnabled(dockEnabled);
         summonOnAppMinimizeRow.SetEnabled(dockEnabled);
@@ -3023,6 +3037,11 @@ struct DockPagePresenter::Impl
                 L"When off, double-click to launch. Folders and collections keep their current opening behavior."));
         muxa::AutomationProperties::SetName(
             singleClickLaunchItems, singleClickLaunchItemsRow.label.Text());
+        freeItemOrderRow.SetText(
+            L("settings.dock.freeItemOrder", L"Free item order"),
+            L("settings.dock.freeItemOrder.description",
+                L"Drag pinned items, files, and Recycle Bin into any order."));
+        muxa::AutomationProperties::SetName(freeItemOrder, freeItemOrderRow.label.Text());
         showFrequentItemsRow.SetText(L(
             "app.dock.show_frequent_items", L"Show Frequent Items"));
         muxa::AutomationProperties::SetName(
@@ -3306,6 +3325,7 @@ struct DockPagePresenter::Impl
         }
         if (id == "dock.showWindowPreviews") return dockTarget(windowPreviews);
         if (id == "dock.singleClickLaunchItems") return dockTarget(singleClickLaunchItems);
+        if (id == "dock.freeItemOrder") return dockTarget(freeItemOrder);
         if (id == "dock.trayApplications") return dockTarget(trayEditor->FocusTarget());
         if (id == "dock.fullscreenPolicy" || id == "dock.floatingEdgeSwipeBlockFullscreen")
             return dockTarget(fullscreenPolicyCombo);
@@ -3498,6 +3518,7 @@ struct DockPagePresenter::Impl
             edgeRevealGesture.SelectionChanged(edgeRevealGestureToken);
             windowPreviews.Toggled(windowPreviewsToken);
             singleClickLaunchItems.Toggled(singleClickLaunchItemsToken);
+            freeItemOrder.Toggled(freeItemOrderToken);
             fullscreenPolicyCombo.SelectionChanged(fullscreenPolicyToken);
             fullscreenExceptionAdd.Click(fullscreenExceptionAddToken);
             fullscreenRunningApps.DropDownOpened(fullscreenRunningOpenToken);

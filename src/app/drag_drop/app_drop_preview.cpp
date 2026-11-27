@@ -84,7 +84,7 @@ DragSourceList DesktopApp::BuildDragSourceList(
                     entry.protectedDesktopIcon = IsProtectedDesktopIcon(item);
                 }
             }
-            else
+            else if (entry.dockEntryType != DockEntryType::Separator)
             {
                 entry.kind = DropSourceKind::Widget;
                 list.hasWidgets = true;

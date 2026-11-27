@@ -295,6 +295,7 @@ inline constexpr auto Fields<DockSettings> = std::to_array<Description>({
     {"showRunningApps", "Reports the running-app display state. The current product keeps it enabled."},
     {"showWindowPreviews", "Shows window thumbnails when hovering over a Dock app icon or swiping from a running app icon toward the screen content with touch. Clicking an icon with multiple windows always opens the window picker. Running application entries are controlled separately."},
     {"singleClickLaunchItems", "Enables launching ordinary Dock items with a single click."},
+    {"freeItemOrder", "Lets pinned items, file entries, and Recycle Bin share one draggable order. Off groups the entries by type. Custom separators are part of the saved order and belong to the pinned section in grouped mode. Start, Search, unpinned running apps, and frequent items keep their own layout."},
     {"startMenuKeepTaskbarHidden", "Keeps the Windows taskbar hidden for the applicable Start menu invocation path."},
     {"startMenuKeepTaskbarHiddenOnWinKey", "Extends taskbar hiding to the Windows-key Start menu path when applicable."},
     {"showFrequentItems", "Displays frequently used items along with the Dock's other entries. frequentItemCount limits their count."},

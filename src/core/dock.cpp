@@ -34,6 +34,8 @@
 
 namespace
 {
+constexpr float kSeparatorSlotUnits = 0.4f;
+
 int ClampPointerAxisToCenters(
     int pointerAxis, const std::vector<RECT>& rects, bool vertical)
 {
@@ -256,6 +258,7 @@ std::wstring DockEntryItem::GetTitle() const
 {
     const DockEntry* entry = Entry();
     if (!entry || !app_) return L"";
+    if (entry->type == DockEntryType::Separator) return _LW("app.dock.separator");
     if (entry->type == DockEntryType::DesktopItem)
     {
         size_t index = app_->FindItemIndexByKey(entry->reference);
@@ -350,6 +353,25 @@ void DockEntryItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     if (entry && app_)
     {
         const auto* dock = dynamic_cast<const DockContainer*>(container_);
+        if (entry->type == DockEntryType::Separator)
+        {
+            if (!dock) return;
+            const bool vertical = dock->GetInsertionStyle() == BarStyle::HBar;
+            const bool light = app_->CurrentDockAppearance(dock->GetMonitor()).contentTheme == 1;
+            const float x = (rect.left + rect.right) * 0.5f;
+            const float y = (rect.top + rect.bottom) * 0.5f;
+            const float halfLength = dock->GetElementIconSize(bounds_, rect) * 0.3f;
+            ComPtr<ID2D1SolidColorBrush> brush;
+            if (SUCCEEDED(context->CreateSolidColorBrush(
+                D2D1::ColorF(light ? 0.0f : 1.0f, light ? 0.0f : 1.0f, light ? 0.0f : 1.0f,
+                    state == 2 ? 0.8f : 0.42f), &brush)))
+            {
+                const float dx = vertical ? halfLength : 0.0f;
+                const float dy = vertical ? 0.0f : halfLength;
+                context->DrawLine(D2D1::Point2F(x - dx, y - dy), D2D1::Point2F(x + dx, y + dy), brush.Get());
+            }
+            return;
+        }
         if (dock && entry->type == DockEntryType::DesktopItem &&
             app_->FindItemIndexByKey(entry->reference) >= app_->items_.size())
         {
@@ -500,7 +522,21 @@ void DockContainer::RefreshEntryGroupCounts() const
         app_ ? app_->DockMainEntryCount() : 0;
     folderEntryCount_ =
         app_ ? app_->DockFolderEntryCount() : 0;
+    separatorEntryCount_ = entries_ ? static_cast<size_t>(std::count_if(entries_->begin(), entries_->end(),
+        [](const auto& entry) { return entry.type == DockEntryType::Separator; })) : 0;
     entryGroupCountGeneration_ = generation;
+}
+
+float DockContainer::FixedEntryUnits() const
+{
+    RefreshEntryGroupCounts();
+    return static_cast<float>(mainEntryCount_) - static_cast<float>(separatorEntryCount_) * (1.0f - kSeparatorSlotUnits);
+}
+
+bool DockContainer::HasTrailingRecycleBin() const
+{
+    return app_ && !app_->dockSettings_.freeItemOrder && entries_ && !entries_->empty() &&
+        app_->IsRecycleBinDockEntry(entries_->back());
 }
 
 size_t DockContainer::SortableEntryCount() const
@@ -522,7 +558,7 @@ size_t DockContainer::FolderEntryBegin() const
 
 bool DockContainer::HasOnlyRecycleBinDragSource() const
 {
-    if (!app_)
+    if (!app_ || app_->dockSettings_.freeItemOrder)
         return false;
 
     const auto& sourceItems = app_->dragSession_.Items();
@@ -632,7 +668,7 @@ bool DockContainer::HasOnlyFolderDragSource() const
 
 bool DockContainer::HasMixedFolderDragSource() const
 {
-    if (!app_) return false;
+    if (!app_ || app_->dockSettings_.freeItemOrder) return false;
     bool folders = false, main = false;
     if (app_->dragDropController_.IsExternalDragActive())
         for (const auto& path : app_->externalFileDropPaths_)
@@ -649,6 +685,7 @@ bool DockContainer::HasMixedFolderDragSource() const
 snowdesktop::dock_folder_rules::InsertRange DockContainer::GetDragInsertRange() const
 {
     const auto main = SortableEntryCount(), folders = FolderEntryCount();
+    if (app_ && app_->dockSettings_.freeItemOrder) return {0, main};
     if (HasMixedFolderDragSource()) return {0, main + folders};
     return snowdesktop::dock_folder_rules::GroupInsertRange(HasOnlyFolderDragSource(), main, folders);
 }
@@ -742,7 +779,7 @@ size_t DockContainer::PendingFileCount(bool folders) const
         {
             if (request.files.empty() && !folders) ++count;
             for (const auto& file : request.files)
-                if (file.appearance->isDirectory == folders) ++count;
+                if ((!app_->dockSettings_.freeItemOrder && file.appearance->isDirectory) == folders) ++count;
         }
     return count;
 }
@@ -759,25 +796,22 @@ size_t DockContainer::EmptyRunningDragFixedSlots() const
 
 size_t DockContainer::EmptyRunningDragFileSlots() const
 {
-    return app_ && app_->IsDockRunningDragExplorer() && FolderEntryCount() == 0 ? 1 : 0;
+    return app_ && !app_->dockSettings_.freeItemOrder && app_->IsDockRunningDragExplorer() && FolderEntryCount() == 0 ? 1 : 0;
 }
 
 RECT DockContainer::GetBounds() const
 {
     ReconcileEntryRemovals();
-    const size_t count = entries_ ? entries_->size() : 0;
     const float runningUnits = RunningSlotUnits();
     const size_t frequentCount = app_
         ? app_->GetFrequentDockItemIndices().size() : 0;
-    const size_t fixedCount = SortableEntryCount() + EmptyRunningDragFixedSlots();
     const bool showWindowsButton = app_ && ShowDockWindowsButton(app_->dockSettings_);
     const bool showSearchButton = app_ && app_->dockSettings_.showQuickSearchButton;
-    const bool hasRecycleBin = count > 0 && app_ && app_->IsRecycleBinDockEntry(entries_->back());
     const auto axis = snowdesktop::dock_entry_removal::LayoutDockAxis(
-        showWindowsButton, static_cast<float>(fixedCount) + AdditionalSlotUnits(false),
+        showWindowsButton, FixedEntryUnits() + static_cast<float>(EmptyRunningDragFixedSlots()) + AdditionalSlotUnits(false),
         runningUnits, static_cast<float>(frequentCount),
         static_cast<float>(FolderEntryCount() + EmptyRunningDragFileSlots()) + AdditionalSlotUnits(true) +
-            static_cast<float>(showSearchButton) + static_cast<float>(hasRecycleBin));
+            static_cast<float>(showSearchButton) + static_cast<float>(HasTrailingRecycleBin()));
     const bool vertical = IsVertical();
     const int iconSize = ItemIconSize();
     const int slotLength = ItemPitch();
@@ -895,9 +929,7 @@ std::vector<RECT> DockContainer::GetTrailingMagnificationRects() const
         candidates.push_back(search);
 
     const size_t count = entries_ ? entries_->size() : 0;
-    if (count > 0 && app_ &&
-        app_->IsRecycleBinDockEntry(entries_->back()) &&
-        count - 1 < slots.size() && slots[count - 1])
+    if (HasTrailingRecycleBin() && count <= slots.size() && slots[count - 1])
     {
         const RECT recycleBin = slots[count - 1]->GetBounds();
         if (!IsRectEmpty(&recycleBin))
@@ -1774,8 +1806,7 @@ std::vector<RECT> DockContainer::GetOcclusionRects(POINT pointer) const
     const RECT windowsButton = GetWindowsButtonRect();
     const RECT search = GetSearchRect();
     RECT recycleBin{};
-    if (entries_ && !entries_->empty() &&
-        app_->IsRecycleBinDockEntry(entries_->back()) &&
+    if (HasTrailingRecycleBin() &&
         entries_->size() <= slots.size() && slots[entries_->size() - 1])
         recycleBin = slots[entries_->size() - 1]->GetBounds();
 
@@ -1860,8 +1891,7 @@ RECT DockContainer::GetVisualScrollViewport(POINT pointer) const
     const RECT leadingVisual = IsRectEmpty(&windowsButton)
         ? RECT{} : GetElementVisualRect(windowsButton, pointer);
     RECT trailingFixed = GetSearchRect();
-    if (IsRectEmpty(&trailingFixed) && entries_ && !entries_->empty() &&
-        app_->IsRecycleBinDockEntry(entries_->back()) && entries_->size() <= slots.size())
+    if (IsRectEmpty(&trailingFixed) && HasTrailingRecycleBin() && entries_->size() <= slots.size())
         trailingFixed = slots[entries_->size() - 1]->GetBounds();
     if (folderCount > 0 &&
         folderBegin < slots.size() && slots[folderBegin])
@@ -1890,13 +1920,11 @@ RECT DockContainer::GetScrollViewport(const RECT& bounds) const
     RECT viewport = bounds;
     const int halfGap = ScaledSpacing() / 2;
     const bool showWindows = app_ && ShowDockWindowsButton(app_->dockSettings_);
-    const size_t count = entries_ ? entries_->size() : 0;
-    const bool hasRecycleBin = count > 0 && app_ &&
-        app_->IsRecycleBinDockEntry(entries_->back());
+    const bool hasRecycleBin = HasTrailingRecycleBin();
     const float runningUnits = RunningSlotUnits();
     const size_t frequentCount = app_
         ? app_->GetFrequentDockItemIndices().size() : 0;
-    const float fixedUnits = static_cast<float>(SortableEntryCount() + EmptyRunningDragFixedSlots()) + AdditionalSlotUnits(false);
+    const float fixedUnits = FixedEntryUnits() + static_cast<float>(EmptyRunningDragFixedSlots()) + AdditionalSlotUnits(false);
     const float folderUnits = static_cast<float>(FolderEntryCount() + EmptyRunningDragFileSlots()) + AdditionalSlotUnits(true);
     const size_t searchSlots = app_ && app_->dockSettings_.showQuickSearchButton ? 1 : 0;
     const float controls = static_cast<float>(searchSlots) + static_cast<float>(hasRecycleBin);
@@ -1928,10 +1956,9 @@ RECT DockContainer::GetScrollViewport(const RECT& bounds) const
 
 int DockContainer::GetMaxScrollOffset(const RECT& bounds) const
 {
-    const size_t fixedCount = SortableEntryCount() + EmptyRunningDragFixedSlots();
     const size_t frequentCount = app_
         ? app_->GetFrequentDockItemIndices().size() : 0;
-    const auto axis = snowdesktop::dock_entry_removal::LayoutAxis({static_cast<float>(fixedCount) + AdditionalSlotUnits(false),
+    const auto axis = snowdesktop::dock_entry_removal::LayoutAxis({FixedEntryUnits() + static_cast<float>(EmptyRunningDragFixedSlots()) + AdditionalSlotUnits(false),
         RunningSlotUnits(), static_cast<float>(frequentCount), 0.0f});
     const long long contentExtent = snowdesktop::dock_running_animation::AxisLength(axis.units, ItemPitch()) +
         snowdesktop::dock_running_animation::AxisLength(axis.gaps, ScaledSeparatorGap());
@@ -2004,6 +2031,7 @@ std::vector<DockContainer::KeyboardTarget> DockContainer::KeyboardTargets(bool a
         const RECT bounds = slot->GetBounds();
         if (const auto* entry = dynamic_cast<const DockEntryItem*>(slot->GetItem()))
         {
+            if (entry->GetEntryType() == DockEntryType::Separator) continue;
             const size_t index = entry->GetEntryIndex();
             add(Kind::Entry, index, L"entry:" + std::to_wstring(static_cast<int>(entry->GetEntryType())) +
                 L":" + ToUpperInvariant(entry->GetReference()), bounds, index < fixedCount);
@@ -2077,14 +2105,14 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
     const size_t fixedCount = SortableEntryCount();
     const size_t folderCount = FolderEntryCount();
     const size_t folderBegin = FolderEntryBegin();
-    const bool hasRecycleBin = count > 0 && app_ && app_->IsRecycleBinDockEntry(entries_->back());
+    const bool hasRecycleBin = HasTrailingRecycleBin();
     const size_t runningCount = app_ ? app_->dockUnpinnedRunningApps_.size() : 0;
     const auto frequentIndices = app_ ? app_->GetFrequentDockItemIndices() : std::vector<size_t>{};
     const size_t frequentCount = frequentIndices.size();
     const bool showWindowsButton = app_ && ShowDockWindowsButton(app_->dockSettings_);
     const bool showSearchButton = app_ && app_->dockSettings_.showQuickSearchButton;
     const size_t trailingControls = static_cast<size_t>(showSearchButton) + static_cast<size_t>(hasRecycleBin);
-    const float fixedUnits = static_cast<float>(fixedCount + EmptyRunningDragFixedSlots()) + AdditionalSlotUnits(false);
+    const float fixedUnits = FixedEntryUnits() + static_cast<float>(EmptyRunningDragFixedSlots()) + AdditionalSlotUnits(false);
     const float folderUnits = static_cast<float>(folderCount + EmptyRunningDragFileSlots()) + AdditionalSlotUnits(true);
     const auto axis = removal::LayoutDockAxis(showWindowsButton,
         fixedUnits, RunningSlotUnits(), static_cast<float>(frequentCount),
@@ -2125,7 +2153,8 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
                     const auto boundary = std::clamp(request.dockInsertIndex, first, end);
                     if (request.files.empty() && !folder) incoming.emplace_back(boundary, nullptr);
                     for (const auto& file : request.files)
-                        if (file.appearance->isDirectory == folder) incoming.emplace_back(boundary, file.appearance);
+                        if ((!app_->dockSettings_.freeItemOrder && file.appearance->isDirectory) == folder)
+                            incoming.emplace_back(boundary, file.appearance);
                 }
         std::stable_sort(incoming.begin(), incoming.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
         const auto cellAt = [&](float begin, float amount) {
@@ -2133,16 +2162,22 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
                           : makeCell(1, begin, amount);
         };
         size_t inserted = 0;
-        float tail = 0;
+        float tail = 0.0f;
+        float separatorReduction = 0.0f;
         for (const auto& cell : cells)
         {
+            const float begin = cell.begin - separatorReduction;
+            const bool separator = cell.modelIndex != removal::kNoIndex &&
+                (*entries_)[cell.modelIndex].type == DockEntryType::Separator;
+            const float amount = separator ? kSeparatorSlotUnits : cell.amount;
             while (cell.modelIndex != removal::kNoIndex && inserted < incoming.size() && incoming[inserted].first <= cell.modelIndex)
             {
-                pendingFileCells_.emplace_back(cellAt(cell.begin + static_cast<float>(inserted), 1.f), incoming[inserted].second);
+                pendingFileCells_.emplace_back(cellAt(begin + static_cast<float>(inserted), 1.f), incoming[inserted].second);
                 ++inserted;
             }
-            tail = cell.begin + cell.amount;
-            const RECT rect = cellAt(cell.begin + static_cast<float>(inserted), cell.amount);
+            tail = begin + amount;
+            separatorReduction += cell.amount - amount;
+            const RECT rect = cellAt(begin + static_cast<float>(inserted), amount);
             if (cell.modelIndex != removal::kNoIndex) entryCells[cell.modelIndex] = rect;
             else entryRemovalCells_.emplace_back(cell.removalIndex, rect);
         }
@@ -2227,6 +2262,43 @@ size_t DockContainer::GetInsertIndexAtPoint(POINT pt) const
             });
 }
 
+std::optional<size_t> DockContainer::GetSeparatorInsertIndex(POINT point) const
+{
+    const RECT panel = GetVisualPanelBounds(point);
+    if (!PtInRect(&panel, point) || IsWindowsButtonPoint(point) || IsSearchPoint(point) ||
+        RunningItemAtPoint(point) || FrequentItemAtPoint(point)) return std::nullopt;
+
+    const size_t fixedCount = SortableEntryCount();
+    if (const auto* hit = EntryAtPoint(point); hit &&
+        (hit->GetEntryIndex() >= fixedCount || hit->GetEntryType() == DockEntryType::Separator))
+        return std::nullopt;
+    if (fixedCount == 0) return 0;
+    if (GetMaxScrollOffset(GetBounds()) > 0 && !IsPointInScrollViewport(point)) return std::nullopt;
+
+    const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
+    const bool vertical = IsVertical();
+    const long axis = vertical ? point.y : point.x;
+    const auto start = [vertical](const RECT& rect) { return vertical ? rect.top : rect.left; };
+    const auto end = [vertical](const RECT& rect) { return vertical ? rect.bottom : rect.right; };
+    const auto visual = [&](size_t i) { return GetElementVisualRect(slots[i]->GetBounds(), point); };
+    if (axis < start(visual(0)) - ScaledSpacing() || axis >= end(visual(fixedCount - 1)) + ScaledSpacing())
+        return std::nullopt;
+
+    size_t boundary = fixedCount;
+    for (size_t i = 0; i < fixedCount; ++i)
+    {
+        const RECT rect = visual(i);
+        const long center = (start(rect) + end(rect)) / 2;
+        const int iconSize = GetElementIconSize(slots[i]->GetBounds(), rect);
+        const bool separator = (*entries_)[i].type == DockEntryType::Separator;
+        const long begin = separator ? start(rect) : center - iconSize / 2;
+        const long finish = separator ? end(rect) : begin + iconSize;
+        if (axis >= begin && axis < finish) return std::nullopt;
+        if (boundary == fixedCount && axis < center) boundary = i;
+    }
+    return boundary;
+}
+
 snowdesktop::dock_running_drag::Target DockContainer::GetRunningDragTarget(POINT pt) const
 {
     namespace running = snowdesktop::dock_running_drag;
@@ -2260,6 +2332,8 @@ snowdesktop::dock_running_drag::Target DockContainer::GetRunningDragTarget(POINT
         : std::max(lastRunningEnd, start(visualBounds(slots.size() - 1)) - ScaledSeparatorGap() -
             static_cast<long>(EmptyRunningDragFileSlots()) * ItemPitch());
     running::Target result{ running::AreaAt(axis, runningBegin, filesBegin), 0, 0 };
+    if (app_->dockSettings_.freeItemOrder && result.area == running::Area::Files)
+        result.area = running::Area::Fixed;
     size_t begin = 0;
     size_t limit = mainEnd;
     if (result.area == running::Area::Running)
@@ -2360,7 +2434,8 @@ void DockContainer::DrawInsertionPreview(ID2D1DeviceContext* context, size_t ins
         DrawPartitionInsertionPreview(context, std::clamp(insertIndex, main, main + folders), {main, main + folders}, true);
         return;
     }
-    DrawPartitionInsertionPreview(context, insertIndex, GetDragInsertRange(), HasOnlyFolderDragSource());
+    DrawPartitionInsertionPreview(context, insertIndex, GetDragInsertRange(),
+        app_ && !app_->dockSettings_.freeItemOrder && HasOnlyFolderDragSource());
 }
 
 void DockContainer::DrawPartitionInsertionPreview(ID2D1DeviceContext* context, size_t insertIndex,
@@ -2405,7 +2480,7 @@ void DockContainer::DrawPartitionInsertionPreview(ID2D1DeviceContext* context, s
         // Files occupy the trailing lane. Its first component belongs before
         // Search/Trash, whose real paint is outside the scrolling clip.
         const size_t count = entries_ ? entries_->size() : 0;
-        if (IsRectEmpty(&boundary) && count > 0 && app_->IsRecycleBinDockEntry(entries_->back()))
+        if (IsRectEmpty(&boundary) && HasTrailingRecycleBin())
             boundary = slots[count - 1]->GetBounds();
         if (!IsRectEmpty(&boundary))
         {
@@ -2459,7 +2534,7 @@ void DockContainer::DrawPartitionInsertionPreview(ID2D1DeviceContext* context, s
                 // With only utility controls, the scrollable group has zero
                 // length. Its base viewport must not clamp away the real
                 // Search/Trash/Start animation of the adjacent boundary.
-                if (IsRectEmpty(&boundary) && count > 0 && app_->IsRecycleBinDockEntry(entries_->back()))
+                if (IsRectEmpty(&boundary) && HasTrailingRecycleBin())
                     boundary = slots[count - 1]->GetBounds();
                 if (IsRectEmpty(&boundary))
                 {
@@ -2635,8 +2710,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     const size_t folderBegin = FolderEntryBegin();
     const size_t folderCount = FolderEntryCount();
     const size_t folderEnd = folderBegin + folderCount;
-    const bool hasRecycleBin = count > 0 && app_ &&
-        app_->IsRecycleBinDockEntry(entries_->back());
+    const bool hasRecycleBin = HasTrailingRecycleBin();
     const auto monitor = GetMonitor();
     const bool lt = app_->CurrentDockAppearance(monitor).contentTheme == 1;
     const RECT magnificationFocus =
@@ -2907,7 +2981,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     };
     include(groups[0], windowsButton);
     groups[0].units = IsRectEmpty(&windowsButton) ? 0.0f : 1.0f;
-    groups[1].units = static_cast<float>(fixedCount) + AdditionalSlotUnits(false);
+    groups[1].units = FixedEntryUnits() + AdditionalSlotUnits(false);
     groups[2].units = RunningSlotUnits();
     groups[3].units = static_cast<float>(frequentItems_.size());
     groups[4].units = static_cast<float>(folderCount) + AdditionalSlotUnits(true) +
@@ -3100,6 +3174,10 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
         return RedirectDragToNearestInsertion(pt, outSlot);
     }
     const bool pointInScrollViewport = IsPointInScrollViewport(pt);
+    const bool freeOrder = app_->dockSettings_.freeItemOrder;
+    const auto& sources = app_->dragSession_.SourceList().entries;
+    const bool separatorSource = std::any_of(sources.begin(), sources.end(),
+        [](const auto& source) { return source.fromDock && source.dockEntryType == DockEntryType::Separator; });
     const auto& slots = GetSlots();
     for (const auto& slot : slots)
     {
@@ -3116,8 +3194,7 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
             dockEntry->GetEntryIndex() < app_->dockEntries_.size() &&
             app_->IsFolderDockEntry(
                 app_->dockEntries_[dockEntry->GetEntryIndex()]);
-        const bool fixedTrailingSlot =
-            searchSlot || recycleBinSlot || folderSlot;
+        const bool fixedTrailingSlot = searchSlot || (!freeOrder && (recycleBinSlot || folderSlot));
         if (!pointInScrollViewport && !fixedTrailingSlot)
             continue;
         outSlot = slot.get();
@@ -3141,7 +3218,8 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
 
         RECT handoffRect = bounds;
         InflateRect(&handoffRect, -16, -10);
-        if (recycleBinSlot)
+        if (recycleBinSlot && !separatorSource &&
+            (!freeOrder || (!dynamic_cast<DockContainer*>(app_->dragSession_.Source()) && PtInRect(&handoffRect, pt))))
         {
             resetDwell();
             const auto& sourceItems = app_->dragSession_.Items();
@@ -3178,7 +3256,7 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
         const bool collectionTarget =
             folderDockItem &&
             IsLogicalDockEntryType(folderDockItem->GetEntryType());
-        const bool canHandoff = !dockMetadataReorder &&
+        const bool canHandoff = !separatorSource && !dockMetadataReorder &&
             targetItem && !targetItem->IsSelected() &&
             (groupAcceptsSource || (!groupTarget && snowdesktop::dock_drop_rules::
                 SupportsHandoffTarget(
@@ -3386,9 +3464,7 @@ DockEntryItem* DockContainer::EntryAtPoint(POINT pt) const
                 return dynamic_cast<DockEntryItem*>(slots[i]->GetItem());
         }
     }
-    if (count > 0 && app_ &&
-        app_->IsRecycleBinDockEntry(entries_->back()) &&
-        count - 1 < slots.size())
+    if (HasTrailingRecycleBin() && count <= slots.size())
     {
         RECT bounds = slots[count - 1]->GetBounds();
         if (IsFocusedElementRect(bounds, pt))

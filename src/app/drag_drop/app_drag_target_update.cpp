@@ -33,6 +33,16 @@ void DesktopApp::ResolveCurrentDragTargetAt(POINT clientPoint, bool committing)
 
     const bool external = dragDropController_.IsExternalDragActive();
     const auto& sources = dragSession_.SourceList();
+    const bool separatorDrag = std::any_of(sources.entries.begin(), sources.entries.end(),
+        [](const auto& source) { return source.fromDock && source.dockEntryType == DockEntryType::Separator; });
+    if (separatorDrag)
+    {
+        auto* dock = GetDockContainerAtPoint(clientPoint);
+        Slot* slot = nullptr;
+        const auto region = dock ? dock->HitTestDrag(clientPoint, slot) : HitRegion::None;
+        dragSession_.UpdateTarget(region == HitRegion::None ? nullptr : dock, slot, region);
+        return;
+    }
     const bool suppressDesktopWidgetTargets = !external && SuppressDesktopWidgetDragTargets();
     bool popupHit = false;
     const auto resolve = [&]() -> DragTargetResolution {

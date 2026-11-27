@@ -18,6 +18,8 @@ inline DockEntry Restore(const layout_storage::DockRecord& saved,
         entry.type = DockEntryType::Collection;
     else if (saved.type == "folderMapping")
         entry.type = DockEntryType::FolderMapping;
+    else if (saved.type == "separator")
+        return DockEntry{DockEntryType::Separator, decode(saved.reference)};
     else
         entry.type = DockEntryType::DesktopItem;
     entry.reference = decode(saved.reference);
@@ -76,6 +78,11 @@ inline DockEntry Restore(const layout_storage::DockRecord& saved,
 template<class Escape>
 inline void Write(std::ostream& file, const DockEntry& entry, Escape escape)
 {
+    if (entry.type == DockEntryType::Separator)
+    {
+        file << "    { \"type\": \"separator\", \"ref\": \"" << escape(entry.reference) << "\" }";
+        return;
+    }
     file << "    { \"type\": \""
          << (IsLogicalDockEntryType(entry.type)
                 ? "collection"

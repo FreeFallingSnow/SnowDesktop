@@ -10,6 +10,7 @@
 snowdesktop::dock_drop_model::Services DesktopApp::DockDropServices()
 {
     snowdesktop::dock_drop_model::Services services;
+    services.freeItemOrder = dockSettings_.freeItemOrder;
     services.normalize = ToUpperInvariant;
     services.recycle = [this](const auto& entry) { return IsRecycleBinDockEntry(entry); };
     services.folder = [this](const auto& entry) { return IsFolderDockEntry(entry); };
@@ -60,9 +61,7 @@ DropReceipt DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
             if (auto* dockItem = dynamic_cast<DockEntryItem*>(item))
             {
                 const size_t index = dockItem->GetEntryIndex();
-                if (index < dockEntries_.size() &&
-                    !IsRecycleBinDockEntry(dockEntries_[index]))
-                    indices.push_back(index);
+                if (index < dockEntries_.size()) indices.push_back(index);
             }
         const auto result = snowdesktop::dock_drop_model::Reorder(dockEntries_, std::move(indices), insertIndex, DockDropServices(), true);
         if (result != snowdesktop::dock_drop_model::ReorderResult::Changed)
@@ -311,7 +310,7 @@ void DesktopApp::RestoreDockEntriesToDesktop()
     int startSlot = 0;
     for (const DockEntry& entry : dockEntries_)
     {
-        if (entry.keepOnDesktop) continue;
+        if (entry.keepOnDesktop || entry.type == DockEntryType::Separator) continue;
         GridSpan span{ 1, 1 };
         if (IsWidgetDockEntryType(entry.type))
         {

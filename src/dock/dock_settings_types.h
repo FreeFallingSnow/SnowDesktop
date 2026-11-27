@@ -71,6 +71,7 @@ struct DockSettings : DockLayoutSettings
     bool showRunningApps = true;
     bool showWindowPreviews = true;
     bool singleClickLaunchItems = false;
+    bool freeItemOrder = false;
     bool startMenuKeepTaskbarHidden = false;
     bool startMenuKeepTaskbarHiddenOnWinKey = false;
     bool startIconBorder = true;

@@ -559,6 +559,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Dock, "dock.singleClickLaunchItems",
         "settings.dock.singleClickLaunchItems",
         "settings.dock.singleClickLaunchItems.description"},
+    {SettingsPage::Dock, "dock.freeItemOrder", "settings.dock.freeItemOrder",
+        "settings.dock.freeItemOrder.description"},
     {SettingsPage::Dock, "dock.fullscreenPolicy",
         "settings.dock.fullscreenDefaultPolicy", "settings.dock.fullscreenPolicy.description"},
     {SettingsPage::Dock, "dock.fullscreenExceptions",

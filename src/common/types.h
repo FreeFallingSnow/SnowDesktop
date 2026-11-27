@@ -577,6 +577,7 @@ enum class DockEntryType
     DesktopFiles,
     CollectionGroup,
     FileGroup,
+    Separator,
 };
 
 constexpr bool IsGroupWidgetType(DesktopWidgetType type)
@@ -617,6 +618,7 @@ constexpr DockEntryType DockEntryTypeForWidget(DesktopWidgetType type)
  * @details DesktopItem 使用 layoutKey，Collection/FolderMapping/DesktopFiles 使用 widget id。
  *          DesktopItem 的 keepOnDesktop=true 表示 Ctrl“假复制”；
  *          组件始终是唯一实例，进入 Dock 后不会保留桌面入口。
+ *          Separator 使用独立的布局 ID。
  */
 struct DockEntry
 {

@@ -1090,7 +1090,9 @@ public:
                 app_.dockSettings_.systemTaskbarAlignment;
             const bool committedTaskbarSuppression = app_.dockSettings_.suppressSystemTaskbar;
             const bool committedTaskbarSuppressionAllMonitors = app_.dockSettings_.suppressSystemTaskbarAllMonitors;
+            const bool committedFreeItemOrder = app_.dockSettings_.freeItemOrder;
             app_.dockSettings_ = snapshot.values.dock;
+            app_.dockSettings_.freeItemOrder = committedFreeItemOrder;
             app_.dockSettings_.systemTaskbarAutoHide = committedTaskbarAutoHide;
             app_.dockSettings_.systemTaskbarAlignment = committedTaskbarAlignment;
             app_.dockSettings_.suppressSystemTaskbar = committedTaskbarSuppression;
@@ -1280,7 +1282,18 @@ public:
         // Publish both domain mirrors before any layout, surface or hotkey
         // observes a desktop-style preset. Shell request rejection above must
         // still leave both mirrors untouched.
-        if (dockCommitted) app_.dockSettings_ = requestedDockSettings;
+        if (dockCommitted)
+        {
+            const bool dockOrderChanged = app_.dockSettings_.freeItemOrder != requestedDockSettings.freeItemOrder;
+            app_.dockSettings_ = requestedDockSettings;
+            if (dockOrderChanged)
+            {
+                app_.EndDragSession();
+                app_.ClearDockPressedState();
+                app_.NormalizeDockRecycleBinPosition();
+                app_.InvalidateDockContainers();
+            }
+        }
         if (generalCommitted)
         {
             const bool revokeAgentAccess = app_.generalSettings_.agentOperationsEnabled &&

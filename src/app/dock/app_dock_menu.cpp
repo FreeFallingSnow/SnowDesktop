@@ -10,6 +10,7 @@
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "settings/bar_settings_rules.h"
 #include "dock/dock_settings_rules.h"
+#include "dock/dock_drop_model.h"
 #include "dock_platform_helpers.h"
 #include "dock_running_app_pin_rules.h"
 #include "dock_explorer_pin.h"
@@ -25,6 +26,8 @@ namespace
 {
 constexpr UINT kDockStatusBarSettingsCommand = 1;
 constexpr UINT kDockTaskManagerCommand = 2;
+constexpr UINT kDockAddSeparator = 41896;
+constexpr UINT kDockRemoveSeparator = 41897;
 constexpr UINT kDockMonitorScopeFirst = 41830;
 constexpr UINT kDockScaleFirst = 41840;
 constexpr int kDockScalePercent[]{50, 75, 100, 125, 150, 175, 200};
@@ -346,25 +349,48 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
 void DesktopApp::ShowDockContextMenu(POINT screenPoint, bool powerUserMenu)
 {
     POINT clientPoint = screenPoint;
-    if (!powerUserMenu && statusBar_ && hwnd_ && ScreenToClient(hwnd_, &clientPoint))
+    DockContainer* dock = !powerUserMenu && hwnd_ && ScreenToClient(hwnd_, &clientPoint)
+        ? GetDockContainerAtPoint(clientPoint) : nullptr;
+    std::optional<snowdesktop::dock_running_drag::PinPosition> separatorPosition;
+    std::wstring separatorId;
+    if (dock)
     {
-        const DockContainer* dock = GetDockContainerAtPoint(clientPoint);
-        if (dock && dock->IsMergedWithStatusBar())
+        if (const auto* entry = dock->EntryAtPoint(clientPoint);
+            entry && entry->GetEntryType() == DockEntryType::Separator)
+            separatorId = entry->GetReference();
+        else if (const auto index = dock->GetSeparatorInsertIndex(clientPoint))
         {
-            const HMONITOR monitor = MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST);
-            if (const HWND owner = statusBar_->InteractionWindow(monitor))
-            {
-                // Both parts of the merged strip share the same activation
-                // hold and menu lifetime; never restore the desktop band here.
-                ActivateStatusBar(snowdesktop::StatusBarAction::Menu, owner,
-                    RECT{screenPoint.x, screenPoint.y, screenPoint.x + 1, screenPoint.y + 1});
-            }
-            return;
+            auto& position = separatorPosition.emplace(snowdesktop::dock_running_drag::Area::Fixed, *index);
+            if (*index < DockMainEntryCount()) position.before = dockEntries_[*index];
+            if (*index > 0) position.after = dockEntries_[*index - 1];
         }
     }
+    const bool merged = dock && dock->IsMergedWithStatusBar();
+    if (merged && statusBar_ && !separatorPosition && separatorId.empty())
+    {
+        const HMONITOR monitor = MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST);
+        if (const HWND owner = statusBar_->InteractionWindow(monitor))
+        {
+            // Both parts of the merged strip share the same activation hold.
+            ActivateStatusBar(snowdesktop::StatusBarAction::Menu, owner,
+                RECT{screenPoint.x, screenPoint.y, screenPoint.x + 1, screenPoint.y + 1});
+        }
+        return;
+    }
     PrepareMenuIconsForPoint(screenPoint);
-    HMENU menu = CreateDockContextMenu(false);
-    if (!menu) return;
+    HMENU menu = separatorId.empty() ? CreateDockContextMenu(merged) : CreatePopupMenu();
+    if (!menu) { ClearMenuIcons(); return; }
+    if (separatorPosition)
+    {
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kDockAddSeparator, _LW("app.dock.add_separator"));
+        SetMenuItemIcon(menu, kDockAddSeparator, L"\uE710");
+    }
+    if (!separatorId.empty())
+    {
+        AppendMenuW(menu, MF_STRING, kDockRemoveSeparator, _LW("app.dock.remove_separator"));
+        SetMenuItemIcon(menu, kDockRemoveSeparator, L"\uE74D");
+    }
     if (powerUserMenu)
     {
         const HMENU root = snowdesktop::power_user_menu::Create(menu,
@@ -378,9 +404,32 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint, bool powerUserMenu)
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_, true);
     DestroyMenu(menu);
     ClearMenuIcons();
-    RestoreDesktopWindowLayer();
+    if (!merged) RestoreDesktopWindowLayer();
     if (command != kContextDockDetailedSettings)
         RestoreInteractionInputFocus();
+    if (command == kDockAddSeparator || command == kDockRemoveSeparator)
+    {
+        if (!generalSettings_.dockEnabled || dragSession_.HasContext() || dragDropController_.IsTransportActive()) return;
+        if (command == kDockAddSeparator && separatorPosition)
+        {
+            GUID id{};
+            wchar_t text[40]{};
+            if (FAILED(CoCreateGuid(&id)) || !StringFromGUID2(id, text, 40)) return;
+            const size_t fixedEnd = DockMainEntryCount();
+            const size_t index = separatorPosition->Resolve(dockEntries_, fixedEnd, fixedEnd);
+            snowdesktop::dock_drop_model::InsertSeparator(dockEntries_, index, fixedEnd, text);
+        }
+        else if (!std::erase_if(dockEntries_, [&](const auto& entry) {
+            return entry.type == DockEntryType::Separator && entry.reference == separatorId;
+        })) return;
+        ClearDockPressedState();
+        InvalidateDockContainers();
+        InvalidateDragStaticScene();
+        UpdateFloatingDockWindowBounds(false);
+        InvalidateDockRects();
+        RequestLayoutSave();
+        return;
+    }
     if (!powerUserMenu || !snowdesktop::power_user_menu::Execute(command, ShellLaunchOwnerHwnd(hwnd_)))
         ExecuteDockContextMenuCommand(command, hwnd_);
 }

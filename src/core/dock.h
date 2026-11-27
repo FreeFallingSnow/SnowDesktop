@@ -199,6 +199,7 @@ public:
     // the hit boundary until materialization can split the actual batch.
     size_t GetExternalDropInsertIndex(Slot* slot, HitRegion region) const;
     size_t GetInsertIndexAtPoint(POINT pt) const;
+    std::optional<size_t> GetSeparatorInsertIndex(POINT point) const;
     snowdesktop::dock_running_drag::Target GetRunningDragTarget(POINT pt) const;
     void DrawInsertionPreview(ID2D1DeviceContext* context, size_t insertIndex) const;
 
@@ -218,6 +219,8 @@ private:
     bool IsVertical() const;
     bool IsEdgeAttached() const;
     void RefreshEntryGroupCounts() const;
+    float FixedEntryUnits() const;
+    bool HasTrailingRecycleBin() const;
     size_t SortableEntryCount() const;
     size_t FolderEntryCount() const;
     size_t FolderEntryBegin() const;
@@ -272,8 +275,7 @@ private:
     bool IsFocusedElementRect(const RECT& baseRect, POINT pointer) const;
     RECT GetScrollViewport(const RECT& bounds) const;
     RECT GetVisualScrollViewport(POINT pointer) const;
-    // Only fixed, running and frequent applications scroll. Files and utility
-    // controls keep their trailing layout in every Dock mode.
+    // Grouped files and utility controls keep their trailing layout.
     int GetMaxScrollOffset(const RECT& bounds) const;
     bool IsPointInScrollViewport(POINT point) const;
     size_t InsertIndexFor(Slot* slot, HitRegion region) const;
@@ -291,6 +293,7 @@ private:
     mutable std::uint64_t entryGroupCountGeneration_ = 0;
     mutable size_t mainEntryCount_ = 0;
     mutable size_t folderEntryCount_ = 0;
+    mutable size_t separatorEntryCount_ = 0;
     mutable int scrollOffset_ = 0;
     std::wstring keyboardFocusKey_;
     // Cache the measured tooltip size separately from its visual anchor so
