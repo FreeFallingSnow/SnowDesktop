@@ -46,10 +46,16 @@ private:
     std::uint64_t epoch_ = 0;
     ULONGLONG nextAttempt_ = 0;
     ULONGLONG nextExtraCapture_ = 0;
+    ULONGLONG nextSessionWrite_ = 0;
+    ULONGLONG prepareMinimizeUntil_ = 0;
+    std::uint64_t frameRevision_ = 0;
+    std::uint64_t sessionRevision_ = 0;
     bool minimizedInDock_ = false;
     bool minimized_ = false;
     bool foreground_ = false;
     bool pending_ = false;
+    bool sessionRead_ = false;
+    bool sessionWritePending_ = false;
     bool refreshNeeded_ = true;
 };
 
@@ -65,12 +71,14 @@ public:
     void SetTrackedWindows(std::span<const TrackedWindow> windows);
     std::shared_ptr<Thumbnail> Find(HWND window) const;
     bool Refresh(HWND foreground, HWND notifyWindow, UINT message);
+    void PrepareMinimize(HWND window, HWND notifyWindow, UINT message);
     void Clear();
     bool Drain();
 
 private:
     void Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool minimized,
         bool foreground, HWND notifyWindow, UINT message);
+    void SaveForSession(const std::shared_ptr<Thumbnail>& thumbnail, HWND notifyWindow, UINT message);
 
     // PrintWindow is synchronous and an unresponsive app can stall its caller.
     // Keep it off the UI thread and out of the Shell metadata queue.

@@ -18,6 +18,8 @@
 
 void DesktopApp::PrepareDockWindowMinimize(HWND window, const wchar_t* origin, DWORD deadline)
 {
+    if (generalSettings_.dockEnabled && !dockSettings_.minimizeWindowsIntoApplicationIcon)
+        dockWindowThumbnails_.PrepareMinimize(window, hwnd_, kBackgroundShellReadyMessage);
     if (snowdesktop::dock_minimize::UsesNativeTransition(window)) return;
     snowdesktop::performance::Scope trace("dock.transition", "minimize.taskbar");
     snowdesktop::dock_taskbar_diagnostics::Begin(window, origin);

@@ -614,7 +614,10 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
     {
         const float edge = static_cast<float>(iconSize);
         auto* thumbnail = app.minimizedThumbnail->Bitmap(*ctx);
-        const float imageOpacity = presence * app.thumbnailImageOpacity;
+        // The slot grows beneath the moving window. Until we have a real
+        // image, show the moving window on its own, without an empty face.
+        if (!thumbnail && app.thumbnailMotion) return;
+        const float imageOpacity = app.thumbnailMotion ? 1.0f : presence;
         const auto frame = snowdesktop::dock_window_thumbnail::CardFrame(rect, iconSize, verticalDock);
         const float width = frame.right - frame.left;
         const float height = frame.bottom - frame.top;
@@ -626,7 +629,7 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
             const float radius = edge * 0.07f;
             ctx->FillRoundedRectangle(D2D1::RoundedRect(frame, radius, radius), fill.Get());
         }
-        if (thumbnail && imageOpacity > 0.0f)
+        if (thumbnail)
         {
             const auto source = thumbnail->GetSize();
             const float scale = std::min(width / source.width, height / source.height);
@@ -636,7 +639,7 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
                 frame.right - xMargin, frame.bottom - yMargin);
             ctx->DrawBitmap(thumbnail, &image, imageOpacity, D2D1_INTERPOLATION_MODE_LINEAR, nullptr, nullptr);
         }
-        else if (fill && imageOpacity > 0.0f)
+        else if (fill)
         {
             const float detail = lt ? 0.47f : 0.68f;
             fill->SetColor(D2D1::ColorF(detail, detail, detail, 0.7f * imageOpacity));

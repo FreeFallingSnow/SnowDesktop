@@ -79,9 +79,7 @@ struct DockRunningAppInfo
     {
         bool restoring;
         float fromAmount;
-        float fromImageOpacity;
     };
     std::optional<ThumbnailMotion> thumbnailMotion;
-    float thumbnailImageOpacity = 1.0f;
     std::vector<HWND> trackedWindows;
 };

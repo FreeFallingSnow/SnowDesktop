@@ -4,6 +4,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <d3d11.h>
 #include <dwmapi.h>
 #include <dxgi1_4.h>
@@ -13,6 +14,7 @@
 #include <winrt/Windows.Foundation.Metadata.h>
 #include <winrt/Windows.Graphics.Capture.h>
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
+#include <wincrypt.h>
 #include <utility>
 
 namespace snowdesktop::dock_window_thumbnail
@@ -23,6 +25,30 @@ struct Pixels
 {
     D2D1_SIZE_U size{};
     std::vector<std::uint32_t> data;
+    bool fromSession = false;
+};
+
+constexpr UINT32 kMaxThumbnailEdge = 256;
+constexpr wchar_t kSessionCacheKey[] = L"Software\\SnowDesktop.DockThumbnailSession.v1";
+constexpr DWORD kMaxSessionFrames = 64;
+SRWLOCK sessionWriteLock = SRWLOCK_INIT;
+
+struct SessionFrameHeader
+{
+    std::uint64_t processCreation;
+    D2D1_SIZE_U size;
+};
+
+struct SessionRegistryKey
+{
+    HKEY key = nullptr;
+    ~SessionRegistryKey() { if (key) RegCloseKey(key); }
+};
+
+struct ProtectedFrame
+{
+    DATA_BLOB blob{};
+    ~ProtectedFrame() { LocalFree(blob.pbData); }
 };
 
 struct WindowDib
@@ -79,6 +105,109 @@ bool AllowsRedirectedSurface(WindowIdentity window) noexcept
         GetWindowDisplayAffinity(window.window, &affinity) && affinity == WDA_NONE;
 }
 
+std::uint64_t SessionProcessCreation(WindowIdentity source)
+{
+    if (!source.IsCurrent()) return 0;
+    DWORD sourceSession = 0, currentSession = 0;
+    if (!ProcessIdToSessionId(source.process, &sourceSession) ||
+        !ProcessIdToSessionId(GetCurrentProcessId(), &currentSession) || sourceSession != currentSession)
+        return 0;
+    const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, source.process);
+    if (!process) return 0;
+    FILETIME creation{}, exit{}, kernel{}, user{};
+    const BOOL read = GetProcessTimes(process, &creation, &exit, &kernel, &user);
+    CloseHandle(process);
+    return read && source.IsCurrent()
+        ? (static_cast<std::uint64_t>(creation.dwHighDateTime) << 32u) | creation.dwLowDateTime : 0;
+}
+
+std::wstring SessionFrameName(WindowIdentity source)
+{
+    return std::to_wstring(reinterpret_cast<UINT_PTR>(source.window)) + L"." +
+        std::to_wstring(source.process) + L"." + std::to_wstring(source.thread);
+}
+
+void ForgetSessionFrame(WindowIdentity source)
+{
+    SessionRegistryKey registry;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kSessionCacheKey, 0, KEY_SET_VALUE, &registry.key) == ERROR_SUCCESS)
+        RegDeleteValueW(registry.key, SessionFrameName(source).c_str());
+}
+
+Pixels ReadSessionFrame(WindowIdentity source)
+{
+    if (!AllowsRedirectedSurface(source)) return {};
+    const auto processCreation = SessionProcessCreation(source);
+    if (!processCreation) return {};
+    SessionRegistryKey registry;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kSessionCacheKey, 0, KEY_QUERY_VALUE, &registry.key) != ERROR_SUCCESS)
+        return {};
+    const auto name = SessionFrameName(source);
+    DWORD bytes = 0;
+    constexpr auto limit = static_cast<DWORD>(sizeof(SessionFrameHeader) +
+        kMaxThumbnailEdge * kMaxThumbnailEdge * sizeof(std::uint32_t) + 4096);
+    if (RegGetValueW(registry.key, nullptr, name.c_str(), RRF_RT_REG_BINARY, nullptr, nullptr, &bytes) != ERROR_SUCCESS ||
+        !bytes || bytes > limit)
+        return {};
+    std::vector<BYTE> encrypted(bytes);
+    if (RegGetValueW(registry.key, nullptr, name.c_str(), RRF_RT_REG_BINARY, nullptr, encrypted.data(), &bytes) != ERROR_SUCCESS)
+        return {};
+    DATA_BLOB input{bytes, encrypted.data()};
+    ProtectedFrame plain;
+    if (!CryptUnprotectData(&input, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &plain.blob) ||
+        plain.blob.cbData < sizeof(SessionFrameHeader))
+        return {};
+    SessionFrameHeader header{};
+    std::memcpy(&header, plain.blob.pbData, sizeof(header));
+    if (header.processCreation != processCreation || !header.size.width || !header.size.height ||
+        header.size.width > kMaxThumbnailEdge || header.size.height > kMaxThumbnailEdge)
+        return {};
+    const size_t count = static_cast<size_t>(header.size.width) * header.size.height;
+    if (plain.blob.cbData != sizeof(header) + count * sizeof(std::uint32_t) || !AllowsRedirectedSurface(source))
+        return {};
+    Pixels frame{header.size, std::vector<std::uint32_t>(count), true};
+    std::memcpy(frame.data.data(), plain.blob.pbData + sizeof(header), count * sizeof(std::uint32_t));
+    return frame;
+}
+
+bool WriteSessionFrame(WindowIdentity source, const Pixels& frame)
+{
+    if (!AllowsRedirectedSurface(source)) return false;
+    const auto processCreation = SessionProcessCreation(source);
+    if (!processCreation) return false;
+    const SessionFrameHeader header{processCreation, frame.size};
+    const size_t pixelBytes = frame.data.size() * sizeof(std::uint32_t);
+    std::vector<BYTE> plain(sizeof(header) + pixelBytes);
+    std::memcpy(plain.data(), &header, sizeof(header));
+    std::memcpy(plain.data() + sizeof(header), frame.data.data(), pixelBytes);
+    DATA_BLOB input{static_cast<DWORD>(plain.size()), plain.data()};
+    ProtectedFrame encrypted;
+    if (!CryptProtectData(&input, L"SnowDesktop window thumbnail", nullptr, nullptr, nullptr,
+            CRYPTPROTECT_UI_FORBIDDEN, &encrypted.blob))
+        return false;
+    struct WriteLock
+    {
+        WriteLock() { AcquireSRWLockExclusive(&sessionWriteLock); }
+        ~WriteLock() { ReleaseSRWLockExclusive(&sessionWriteLock); }
+    } writeLock;
+    SessionRegistryKey registry;
+    // Volatile keys survive a Dock restart but are not saved with the user
+    // hive. The last image is tied to the same window and process lifetime.
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, kSessionCacheKey, 0, nullptr, REG_OPTION_VOLATILE,
+            KEY_QUERY_VALUE | KEY_SET_VALUE, nullptr, &registry.key, nullptr) != ERROR_SUCCESS)
+        return false;
+    const auto name = SessionFrameName(source);
+    DWORD count = 0;
+    if (RegQueryInfoKeyW(registry.key, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+            &count, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS ||
+        (count >= kMaxSessionFrames && RegQueryValueExW(registry.key, name.c_str(), nullptr,
+            nullptr, nullptr, nullptr) != ERROR_SUCCESS) ||
+        !AllowsRedirectedSurface(source))
+        return false;
+    return RegSetValueExW(registry.key, name.c_str(), 0, REG_BINARY,
+        encrypted.blob.pbData, encrypted.blob.cbData) == ERROR_SUCCESS;
+}
+
 SIZE ReadWindowSize(HWND window, bool iconic) noexcept
 {
     RECT bounds{};
@@ -111,7 +240,7 @@ bool ColorsDifferVisibly(std::uint32_t first, std::uint32_t second)
 
 Pixels SamplePixels(const void* buffer, size_t rowPitch, int width, int height, bool composedThumbnail = false)
 {
-    constexpr int maxThumbnailEdge = 256;
+    constexpr int maxThumbnailEdge = kMaxThumbnailEdge;
     const int divisor = std::max({width, height, maxThumbnailEdge});
     const auto targetWidth = static_cast<UINT32>(std::max(1, width * maxThumbnailEdge / divisor));
     const auto targetHeight = static_cast<UINT32>(std::max(1, height * maxThumbnailEdge / divisor));
@@ -340,9 +469,11 @@ Pixels PrintWindowPixels(WindowIdentity source, bool iconic, bool composedThumbn
     return {};
 }
 
-Pixels CaptureComposedThumbnail(WindowIdentity source)
+Pixels CaptureComposedThumbnail(WindowIdentity source, bool iconic)
 {
-    if (!AllowsRedirectedSurface(source) || !IsIconic(source.window)) return {};
+    if (!AllowsRedirectedSurface(source) || !IsWindowVisible(source.window) ||
+        (IsIconic(source.window) != FALSE) != iconic)
+        return {};
     ComposedThumbnail image;
     // The thumbnail interface renders to a top-level HWND. Use a small
     // off-screen destination so its result can join the Dock's own scene.
@@ -353,9 +484,12 @@ Pixels CaptureComposedThumbnail(WindowIdentity source)
     SIZE size{};
     if (FAILED(DwmQueryThumbnailSourceSize(image.thumbnail, &size)) || size.cx < 32 || size.cy < 32)
         return {};
-    const SIZE expected = ReadWindowSize(source.window, true);
-    if (size.cx < expected.cx / 2 || size.cy < expected.cy / 2) return {};
-    constexpr LONG edge = 256;
+    if (iconic)
+    {
+        const SIZE expected = ReadWindowSize(source.window, true);
+        if (size.cx < expected.cx / 2 || size.cy < expected.cy / 2) return {};
+    }
+    constexpr LONG edge = 512;
     const LONG longest = std::max(size.cx, size.cy);
     const int width = std::max(32, MulDiv(size.cx, edge, longest));
     const int height = std::max(32, MulDiv(size.cy, edge, longest));
@@ -371,7 +505,8 @@ Pixels CaptureComposedThumbnail(WindowIdentity source)
             SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW))
         return {};
     UpdateWindow(image.window);
-    if (FAILED(DwmFlush()) || !AllowsRedirectedSurface(source) || !IsIconic(source.window))
+    if (FAILED(DwmFlush()) || !AllowsRedirectedSurface(source) ||
+        (IsIconic(source.window) != FALSE) != iconic)
         return {};
     auto pixels = PrintWindowPixels(WindowIdentity::Capture(image.window), false, true);
     if (!AllowsRedirectedSurface(source)) return {};
@@ -388,14 +523,16 @@ Pixels CapturePixels(WindowIdentity source, bool allowExtraCapture)
     {
         if (allowExtraCapture)
         {
-            result = CaptureComposedThumbnail(source);
+            result = CaptureComposedThumbnail(source, true);
             if (!result.data.empty()) return result;
         }
         return PrintWindowPixels(source, true);
     }
     result = CaptureRedirectedSurface(source, false);
     if (!result.data.empty()) return result;
-    return allowExtraCapture ? CaptureVisibleWindow(source) : Pixels{};
+    if (!allowExtraCapture) return {};
+    result = CaptureComposedThumbnail(source, false);
+    return result.data.empty() ? CaptureVisibleWindow(source) : std::move(result);
 }
 }
 
@@ -468,6 +605,9 @@ void ThumbnailCache::SetTrackedWindows(std::span<const TrackedWindow> windows)
         tracked.emplace(source.window, std::move(cached));
     }
     windows_.swap(tracked);
+    for (const auto& [window, thumbnail] : tracked)
+        if (!windows_.contains(window) && thumbnail->sessionRevision_ && !thumbnail->source_.IsCurrent())
+            ForgetSessionFrame(thumbnail->source_);
 }
 
 std::shared_ptr<Thumbnail> ThumbnailCache::Find(HWND window) const
@@ -496,6 +636,47 @@ bool ThumbnailCache::Refresh(HWND foreground, HWND notifyWindow, UINT message)
     return stateChanged;
 }
 
+void ThumbnailCache::PrepareMinimize(HWND window, HWND notifyWindow, UINT message)
+{
+    const auto thumbnail = Find(window);
+    if (!thumbnail || !thumbnail->source_.IsCurrent() || IsIconic(window)) return;
+    thumbnail->prepareMinimizeUntil_ = GetTickCount64() + 1500;
+    if (!thumbnail->pixels_.empty() || thumbnail->pending_) return;
+    thumbnail->nextAttempt_ = 0;
+    thumbnail->nextExtraCapture_ = 0;
+    Refresh(thumbnail, false, true, notifyWindow, message);
+}
+
+void ThumbnailCache::SaveForSession(const std::shared_ptr<Thumbnail>& thumbnail, HWND notifyWindow, UINT message)
+{
+    auto& state = *thumbnail;
+    if (state.pixels_.empty() || state.sessionWritePending_ ||
+        state.sessionRevision_ == state.frameRevision_ || (state.sessionRevision_ && !state.minimized_))
+        return;
+    const auto now = GetTickCount64();
+    if (now < state.nextSessionWrite_) return;
+    state.nextSessionWrite_ = now + 5000;
+    const auto source = state.source_;
+    const auto revision = state.frameRevision_;
+    const auto epoch = epoch_;
+    const auto weak = std::weak_ptr{thumbnail};
+    const std::wstring key = L"session-write:" + source.Key() + L":" +
+        std::to_wstring(reinterpret_cast<UINT_PTR>(thumbnail.get()));
+    state.sessionWritePending_ = work_.Submit(key,
+        [source, weak, frame = Pixels{state.size_, state.pixels_}] {
+            return !weak.expired() && WriteSessionFrame(source, frame);
+        }, [this, weak, epoch, revision](bool success) {
+            const auto target = weak.lock();
+            if (!target || epoch != epoch_) return;
+            target->sessionWritePending_ = false;
+            if (success)
+            {
+                target->sessionRevision_ = revision;
+                target->nextSessionWrite_ = 0;
+            }
+        }, notifyWindow, message);
+}
+
 void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool minimized,
     bool foreground, HWND notifyWindow, UINT message)
 {
@@ -508,6 +689,9 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
         state.refreshNeeded_ = true;
         state.nextAttempt_ = 0;
         state.nextExtraCapture_ = 0;
+        state.nextSessionWrite_ = 0;
+        state.sessionRead_ = false;
+        state.sessionWritePending_ = false;
     }
     if (state.minimized_ != minimized || (foreground && !state.foreground_))
     {
@@ -517,6 +701,7 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
     }
     state.minimized_ = minimized;
     state.foreground_ = foreground;
+    SaveForSession(thumbnail, notifyWindow, message);
     if (state.pending_) return;
     const auto now = GetTickCount64();
     if (now < state.nextAttempt_) return;
@@ -537,9 +722,11 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
         state.nextAttempt_ = now + 3000;
         if (!AllowsPreview(state.source_))
         {
+            if (state.sessionRevision_) ForgetSessionFrame(state.source_);
+            state.sessionRevision_ = 0;
             state.pixels_.clear();
             state.bitmap_.Reset();
-            changed_ |= state.minimized_;
+            changed_ |= state.minimized_ || now < state.prepareMinimizeUntil_;
             PostMessageW(notifyWindow, message, 0, 0);
         }
         return;
@@ -550,17 +737,27 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
     const auto weak = std::weak_ptr{thumbnail};
     const bool allowExtraCapture = state.pixels_.empty() && now >= state.nextExtraCapture_ &&
         (minimized || foreground || state.nextExtraCapture_ == 0);
+    const bool readSession = minimized && state.pixels_.empty() && !state.sessionRead_;
     state.pending_ = work_.Submit(source.Key() + L":" +
         std::to_wstring(reinterpret_cast<UINT_PTR>(thumbnail.get())),
-        [source, weak, allowExtraCapture] {
-            return weak.expired() ? Pixels{} : CapturePixels(source, allowExtraCapture);
-        }, [this, source, minimized, weak, epoch](Pixels pixels) {
+        [source, weak, allowExtraCapture, readSession] {
+            if (weak.expired()) return Pixels{};
+            if (readSession)
+            {
+                auto cached = ReadSessionFrame(source);
+                if (!cached.data.empty()) return cached;
+            }
+            return CapturePixels(source, allowExtraCapture);
+        }, [this, source, minimized, weak, epoch, notifyWindow, message](Pixels pixels) {
             const auto target = weak.lock();
             if (!target || epoch != epoch_) return;
             target->pending_ = false;
-            if (!AllowsPreview(source))
+            if (!AllowsPreview(source) || (pixels.fromSession && !AllowsRedirectedSurface(source)))
             {
-                changed_ |= target->minimized_ && !target->pixels_.empty();
+                if (target->sessionRevision_) ForgetSessionFrame(source);
+                target->sessionRevision_ = 0;
+                changed_ |= (target->minimized_ || GetTickCount64() < target->prepareMinimizeUntil_) &&
+                    !target->pixels_.empty();
                 target->pixels_.clear();
                 target->bitmap_.Reset();
                 return;
@@ -571,11 +768,15 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
             target->size_ = pixels.size;
             target->pixels_ = std::move(pixels.data);
             target->bitmap_.Reset();
-            changed_ |= target->minimized_;
+            ++target->frameRevision_;
+            if (pixels.fromSession) target->sessionRevision_ = target->frameRevision_;
+            changed_ |= target->minimized_ || GetTickCount64() < target->prepareMinimizeUntil_;
+            SaveForSession(target, notifyWindow, message);
         }, notifyWindow, message);
     if (state.pending_)
     {
         state.refreshNeeded_ = false;
+        if (readSession) state.sessionRead_ = true;
         if (allowExtraCapture) state.nextExtraCapture_ = now + 5000;
     }
 }

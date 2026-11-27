@@ -1092,7 +1092,6 @@ void DesktopApp::RefreshDockRunningWindows(
             if (reused[i] || (old.identityKey != info.identityKey && !sameWindow)) continue;
             info.presence = old.presence;
             info.thumbnailMotion = old.thumbnailMotion;
-            info.thumbnailImageOpacity = old.thumbnailImageOpacity;
             refineIdentityArtwork = (old.appUserModelId != info.appUserModelId &&
                 !info.appUserModelId.empty()) ||
                 (old.executablePath.empty() && !info.executablePath.empty());
@@ -1899,7 +1898,6 @@ bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
                 }
             }
             if (icon) card.iconBitmap = static_cast<HBITMAP>(CopyImage(icon, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION));
-            card.thumbnailImageOpacity = 0.0f;
             dockUnpinnedRunningApps_.push_back(std::move(card));
             changed = true;
         }
@@ -1916,24 +1914,21 @@ bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
     for (auto& app : dockUnpinnedRunningApps_)
     {
         const float previousAmount = app.presence.Amount();
-        const float previousImageOpacity = app.thumbnailImageOpacity;
         if (movingWindow && app.minimizedThumbnail && app.window == movingWindow)
         {
             if (!app.thumbnailMotion || app.thumbnailMotion->restoring != restoring)
                 app.thumbnailMotion = DockRunningAppInfo::ThumbnailMotion{
-                    restoring, app.presence.Amount(), app.thumbnailImageOpacity};
+                    restoring, app.presence.Amount()};
             const auto smooth = [](double progress) {
                 const auto t = static_cast<float>(std::clamp(progress, 0.0, 1.0));
                 return t * t * (3.0f - 2.0f * t);
             };
             const float target = restoring ? 0.0f : 1.0f;
             const double progress = windowMotion->progress;
-            // Make room before the moving window reaches the Dock. Reveal
-            // its pixels near landing; on restore, collapse as it expands.
+            // Make room before landing and collapse as the window expands.
+            // The thumbnail picture and card scale together.
             app.presence.SetTransitionAmount(std::lerp(app.thumbnailMotion->fromAmount, target,
                 smooth(progress / (restoring ? 0.70 : 0.82))));
-            app.thumbnailImageOpacity = std::lerp(app.thumbnailMotion->fromImageOpacity, target,
-                smooth(restoring ? progress / 0.28 : (progress - 0.72) / 0.28));
         }
         else if (app.thumbnailMotion)
         {
@@ -1941,7 +1936,7 @@ bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
                 !dockSettings_.minimizeWindowsIntoApplicationIcon && IsIconic(app.window);
             app.presence.SetVisible(minimized, nowMilliseconds, false);
             app.thumbnailMotion.reset();
-            app.thumbnailImageOpacity = 1.0f;
+            changed = true;
             dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
         }
         else if (animationsEnabled)
@@ -1949,8 +1944,7 @@ bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
         else
             app.presence.SetVisible(app.presence.Visible(), nowMilliseconds, false);
         keep |= app.presence.IsAnimating();
-        changed |= previousAmount != app.presence.Amount() ||
-            previousImageOpacity != app.thumbnailImageOpacity || app.presence.IsHidden();
+        changed |= previousAmount != app.presence.Amount() || app.presence.IsHidden();
         if (app.presence.IsHidden() && app.iconBitmap)
         {
             EraseD2DIconCacheForBitmap(app.iconBitmap);
