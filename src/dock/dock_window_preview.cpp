@@ -158,6 +158,17 @@ DockWindowPreviewMonitorContext ResolveDockWindowPreviewMonitorContext(
     return context;
 }
 
+size_t DockWindowPreviewTouchPageSize(const DockWindowPreviewMonitorContext& monitor)
+{
+    const int cardWidth = ScaleForDpi(200, monitor.dpi);
+    const int cardHeight = ScaleForDpi(155, monitor.dpi);
+    const LONG width = monitor.workArea.right - monitor.workArea.left;
+    const LONG height = monitor.workArea.bottom - monitor.workArea.top;
+    const int columns = std::clamp(static_cast<int>(width * 0.90) / cardWidth, 1, 4);
+    const int rows = std::clamp(static_cast<int>(height * 0.78) / cardHeight, 1, 2);
+    return static_cast<size_t>(columns * rows);
+}
+
 RECT ResolveDockWindowPreviewPanelPlacement(
     RECT anchorScreen, DockPosition dockPosition, SIZE panelSize,
     const RECT& workArea, UINT dpi)
@@ -809,10 +820,13 @@ void DockWindowPreview::Show(
 {
     snowdesktop::performance::Scope trace("dock.preview", "show");
     const bool wasVisible = IsVisible();
-    touchOpened_ = touchOpened;
-    touchContact_.Reset();
     const bool newAnchor = dockPosition_ != dockPosition ||
         !EqualRect(&anchorScreen_, &anchorScreen);
+    const bool takeFocus = touchOpened && (!wasVisible || !touchOpened_ || newAnchor);
+    const bool keepTouchPage = touchOpened && touchOpened_ && wasVisible && !newAnchor;
+    touchOpened_ = touchOpened;
+    touchContact_.Reset();
+    touchMoved_ = false;
     const bool startSlide = !wasVisible || newAnchor || slideClosing_;
     const bool slideWithinMonitor = wasVisible && startSlide && dockPosition_ == dockPosition &&
         MonitorFromRect(&anchorScreen_, MONITOR_DEFAULTTONEAREST) ==
@@ -868,6 +882,21 @@ void DockWindowPreview::Show(
     const DockWindowPreviewMonitorContext context =
         ResolveDockWindowPreviewMonitorContext(anchorCenter);
     dpi_ = context.dpi;
+    if (touchOpened_)
+    {
+        touchItems_ = std::move(items_);
+        touchPageSize_ = DockWindowPreviewTouchPageSize(context);
+        touchPage_ = keepTouchPage && sameGroup ?
+            std::min(touchPage_, (touchItems_.size() - 1) / touchPageSize_) : 0;
+        const size_t start = touchPage_ * touchPageSize_;
+        const size_t end = std::min(touchItems_.size(), start + touchPageSize_);
+        items_.assign(touchItems_.begin() + start, touchItems_.begin() + end);
+    }
+    else
+    {
+        touchItems_.clear();
+        touchPage_ = 0;
+    }
     if (!EnsureWindows(items_.size()))
     {
         Hide();
@@ -956,7 +985,7 @@ void DockWindowPreview::Show(
     if (startSlide) StartSlide();
     if (!wasVisible && IsVisible() && visibilityChanged_) visibilityChanged_();
     UpdateToolbarTooltips();
-    if (touchOpened_ && hwnd_ && IsWindowVisible(hwnd_))
+    if (takeFocus && hwnd_ && IsWindowVisible(hwnd_))
         SetForegroundWindow(hwnd_);
     else if (!touchOpened_) RefreshPointerTracking(true);
 }
@@ -973,11 +1002,25 @@ void DockWindowPreview::UpdateItems(const std::vector<DockWindowPreviewItem>& it
         Dismiss();
         return;
     }
-    if (current.size() == items_.size() && std::equal(current.begin(), current.end(), items_.begin(),
+    const auto& previous = touchOpened_ ? touchItems_ : items_;
+    if (current.size() == previous.size() && std::equal(current.begin(), current.end(), previous.begin(),
             [](const auto& left, const auto& right) { return left.window == right.window && left.title == right.title; }))
         return;
     const HWND owner = peekOwner_;
-    Show(current, anchorScreen_, dockPosition_, lightTheme_, owner);
+    Show(current, anchorScreen_, dockPosition_, lightTheme_, owner, touchOpened_);
+}
+
+void DockWindowPreview::StepTouchPage(int direction)
+{
+    if (!TouchOpened() || touchItems_.size() <= touchPageSize_) return;
+    const size_t last = (touchItems_.size() - 1) / touchPageSize_;
+    const size_t next = direction > 0 ? std::min(touchPage_ + 1, last) :
+        touchPage_ - (touchPage_ > 0);
+    if (next == touchPage_) return;
+    touchPage_ = next;
+    // Show rebuilds the visible card windows and retains the current page.
+    const auto all = touchItems_;
+    Show(all, anchorScreen_, dockPosition_, lightTheme_, peekOwner_, true);
 }
 
 void DockWindowPreview::Layout(RECT monitorWorkArea, UINT dpi, bool reuseThumbnails)
@@ -1254,6 +1297,15 @@ void DockWindowPreview::MoveSlideCards()
 
 void DockWindowPreview::RemoveWindow(HWND window)
 {
+    if (TouchOpened())
+    {
+        auto remaining = touchItems_;
+        const auto removed = std::erase_if(remaining, [window](const auto& item) { return item.window == window; });
+        if (!removed) return;
+        if (remaining.empty()) Dismiss();
+        else Show(remaining, anchorScreen_, dockPosition_, lightTheme_, peekOwner_, true);
+        return;
+    }
     const auto found = std::find_if(items_.begin(), items_.end(),
         [window](const auto& item) { return item.window == window; });
     if (found == items_.end()) return;
@@ -1310,6 +1362,9 @@ void DockWindowPreview::RemoveWindow(HWND window)
 void DockWindowPreview::Hide()
 {
     StopSlide();
+    touchContact_.Reset();
+    touchItems_.clear();
+    touchPage_ = 0;
     dockHideDue_ = 0;
     if (toolbarClient_) toolbarClient_->SetTargets({});
     ClearToolbarTooltips();
@@ -2267,6 +2322,7 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
                 preview->PinButtonIndexAtPoint(point) >= 0 || preview->ToolbarRegionAtPoint(point) >= 0)
                 break;
             contact.Begin(wParam, screen);
+            preview->touchMoved_ = false;
             preview->CancelPeek();
             preview->UpdatePeekTarget(preview->items_[index].window);
             return 0;
@@ -2281,14 +2337,21 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
         if (message == WM_POINTERUPDATE || message == WM_POINTERUP)
         {
             contact.last = screen;
-            const bool moved = contact.Moved(screen, touch::Dips(8, GetDpiForWindow(window)));
-            if (moved && preview->peekCandidate_.window) preview->CancelPeek(true);
+            preview->touchMoved_ |= contact.Moved(screen, touch::Dips(8, GetDpiForWindow(window)));
+            if (preview->touchMoved_ && (preview->peekCandidate_.window || preview->windowPeek_.Active()))
+                preview->CancelPeek(true);
             if (message == WM_POINTERUP)
             {
+                const int dx = screen.x - contact.start.x;
+                const int dy = screen.y - contact.start.y;
+                const int travel = std::abs(dx) >= std::abs(dy) ? dx : dy;
                 const bool held = contact.Held() || preview->windowPeek_.Active();
+                const bool moved = preview->touchMoved_;
                 contact.Reset();
                 preview->CancelPeek(true);
-                if (!moved && !held)
+                if (moved && std::abs(travel) >= touch::Dips(28, GetDpiForWindow(window)))
+                    preview->StepTouchPage(travel < 0 ? 1 : -1);
+                else if (!moved && !held)
                 {
                     preview->RecordPointerInteraction(WM_LBUTTONUP);
                     preview->OnLeftButtonUp(point);
@@ -2297,9 +2360,21 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
         }
         return 0;
     }
+    case WM_MOUSEWHEEL:
+    case WM_MOUSEHWHEEL:
+        if (!preview->TouchOpened()) break;
+        preview->StepTouchPage(GET_WHEEL_DELTA_WPARAM(wParam) < 0 ? 1 : -1);
+        return 0;
     case WM_MOUSEMOVE:
     {
-        if (snowdesktop::touch_input::Observe(message)) return 0;
+        if (snowdesktop::touch_input::Observe(message) || !snowdesktop::touch_input::CanHover()) return 0;
+        if (preview->TouchOpened() && preview->touchItems_.size() > preview->items_.size())
+        {
+            const auto all = preview->touchItems_;
+            preview->Show(all, preview->anchorScreen_, preview->dockPosition_,
+                preview->lightTheme_, preview->peekOwner_);
+            return 0;
+        }
         preview->touchOpened_ = false;
         preview->pointerReconcilePending_ = false;
         // Reflow can leave queued client coordinates from the old geometry.

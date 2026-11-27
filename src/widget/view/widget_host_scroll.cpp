@@ -278,33 +278,39 @@ bool WidgetEngine::IsHostScrollbarDragging(
         hostScrollbarDrag_.surface == NormalizeWidgetSurface(surface);
 }
 
-bool WidgetEngine::OwnsDesktopWheel(const std::wstring& widgetId, int x, int y, int delta) const
+bool WidgetEngine::OwnsSurfaceWheel(const std::wstring& widgetId, int x, int y, int delta,
+    std::string_view surface, std::optional<bool> horizontal) const
 {
     const int index = FindWidget(widgetId);
     if (index < 0) return false;
     const auto& widget = widgets_[index];
     const POINT point{x, y};
+    const std::string normalized = NormalizeWidgetSurface(surface);
+    const auto& regions = InteractionRegionsForSurface(widget, normalized);
     const auto canScroll = [&](const LuaWidget::HostControl& control) {
-        const int maximum = control.horizontal && !control.selectPopup
+        const bool alongX = control.horizontal && !control.selectPopup;
+        if (horizontal && *horizontal != alongX) return false;
+        const int maximum = alongX
             ? std::max(0, control.contentWidth - control.viewportWidth)
             : std::max(0, control.contentHeight - control.viewportHeight);
-        return delta == 0 || snowdesktop::widget_scroll_rules::ApplyWheelDelta(
-            RuntimeGetScrollOffset(widgetId, control.id, "desktop"), maximum, delta).moved;
+        if (delta == 0) return !horizontal || maximum > 0;
+        return snowdesktop::widget_scroll_rules::ApplyWheelDelta(
+            RuntimeGetScrollOffset(widgetId, control.id, normalized), maximum, delta).moved;
     };
     // Match HandleHostUiPointer's popup-first routing, even if an enclosing
     // scroll container is still able to move behind the expanded list.
     for (auto it = widget.hostControls.rbegin(); it != widget.hostControls.rend(); ++it)
     {
-        if (!it->enabled || !HostControlBelongsToSurface(*it, "desktop") || !HostControlContainsPoint(*it, point)) continue;
+        if (!it->enabled || !HostControlBelongsToSurface(*it, normalized) || !HostControlContainsPoint(*it, point)) continue;
         if (it->selectPopup) return canScroll(*it);
     }
     std::string actionKey;
-    const bool customAction = widget.interactionRegions.ActionAt(
+    const bool customAction = !horizontal.value_or(false) && regions.ActionAt(
         static_cast<float>(x), static_cast<float>(y), "wheel", &actionKey) != nullptr;
     bool actionBelongsToScrollControl = false;
     for (auto it = widget.hostControls.rbegin(); it != widget.hostControls.rend(); ++it)
     {
-        if (!it->enabled || !HostControlBelongsToSurface(*it, "desktop") || !HostControlContainsPoint(*it, point)) continue;
+        if (!it->enabled || !HostControlBelongsToSurface(*it, normalized) || !HostControlContainsPoint(*it, point)) continue;
         if (it->type != LuaWidget::HostControl::Type::Scroll &&
             !(it->type == LuaWidget::HostControl::Type::Input && it->multiline)) continue;
         if (canScroll(*it)) return true;
@@ -316,7 +322,7 @@ bool WidgetEngine::OwnsDesktopWheel(const std::wstring& widgetId, int x, int y, 
 }
 
 bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int y,
-    int delta, bool wheel, std::string_view surface)
+    int delta, bool wheel, std::string_view surface, std::optional<bool> horizontal)
 {
     int index = FindWidget(widgetId);
     if (index < 0) return false;
@@ -352,6 +358,7 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
             }
             return false;
         }
+        if (horizontal.value_or(false)) return true;
         const int maximum = std::max(0,
             it->contentHeight - it->viewportHeight);
         int& offset = ScrollOffsetsForSurface(
@@ -375,6 +382,7 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
                     LuaWidget::HostControl::Type::Input &&
                     it->multiline)))
         {
+            if (horizontal && *horizontal != it->horizontal) continue;
             const int maximum = it->horizontal
                 ? std::max(0, it->contentWidth - it->viewportWidth)
                 : std::max(0, it->contentHeight - it->viewportHeight);

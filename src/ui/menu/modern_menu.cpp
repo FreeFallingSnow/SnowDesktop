@@ -128,7 +128,9 @@ struct Popup
     int scrollOffset = 0;
     snowdesktop::touch_input::Contact touchContact;
     int touchStartScroll = 0;
-    bool touchPanning = false;
+    int touchStartHorizontalScroll = 0;
+    snowdesktop::touch_input::GestureAction touchAction = snowdesktop::touch_input::GestureAction::Pending;
+    bool touchInHorizontalLane = false;
     int scrollBand = 0;
     int scrollTopBand = 0, scrollBottomBand = 0;
     int scrollHover = 0;
@@ -532,6 +534,7 @@ public:
     {
         if (!snowdesktop::private_pointer::MessageAllowed(hwnd, message, wParam, lParam)) return 0;
         namespace touch = snowdesktop::touch_input;
+        using TouchAction = touch::GestureAction;
         const bool touched = touch::Observe(message, wParam);
         if (touch::IsPointerMessage(message))
         {
@@ -546,7 +549,10 @@ public:
                     return DefWindowProcW(hwnd, message, wParam, lParam);
                 contact.Begin(wParam, screen);
                 popup.touchStartScroll = popup.scrollOffset;
-                popup.touchPanning = false;
+                popup.touchStartHorizontalScroll = popup.horizontalScrollOffset;
+                popup.touchAction = TouchAction::Pending;
+                popup.touchInHorizontalLane = MaxHorizontalScroll(popup) > 0 &&
+                    PtInRect(&popup.horizontalScrollRect, point);
                 popup.scrollHover = 0;
                 SetHoveredItem(popup, -1, false, false);
                 KillTimer(hwnd, kSubmenuOpenTimer);
@@ -564,14 +570,21 @@ public:
                 if (message == WM_POINTERUPDATE || message == WM_POINTERUP)
                 {
                     const int slop = touch::Dips(8, options_.dpi);
-                    const int delta = screen.y - contact.start.y;
-                    if (std::abs(delta) >= slop && std::abs(delta) >= std::abs(screen.x - contact.start.x))
-                        popup.touchPanning = true;
-                    if (popup.touchPanning)
-                        ScrollTo(popup, popup.touchStartScroll - delta, false);
+                    const int dx = screen.x - contact.start.x;
+                    const int dy = screen.y - contact.start.y;
+                    if (popup.touchAction == TouchAction::Pending && contact.Moved(screen, slop))
+                    {
+                        if (std::abs(dy) >= std::abs(dx)) popup.touchAction = TouchAction::Pan;
+                        else if (popup.touchInHorizontalLane) popup.touchAction = TouchAction::Swipe;
+                        else popup.touchAction = TouchAction::Consumed;
+                    }
+                    if (popup.touchAction == TouchAction::Pan)
+                        ScrollTo(popup, popup.touchStartScroll - dy, false);
+                    else if (popup.touchAction == TouchAction::Swipe)
+                        ScrollHorizontalTo(popup, popup.touchStartHorizontalScroll - dx, false);
                     if (message == WM_POINTERUP)
                     {
-                        const bool tap = !popup.touchPanning && !contact.Moved(screen, slop);
+                        const bool tap = popup.touchAction == TouchAction::Pending;
                         contact.Reset();
                         pointerPressed_ = false;
                         if (tap)
@@ -2779,17 +2792,21 @@ private:
 
     void ScrollHorizontal(Popup& popup, int direction)
     {
+        ScrollHorizontalTo(popup, popup.horizontalScrollOffset + direction * metrics_.rowHeight * 2,
+            snowdesktop::touch_input::CanHover());
+    }
+
+    void ScrollHorizontalTo(Popup& popup, int offset, bool restoreHover)
+    {
         const int oldOffset = popup.horizontalScrollOffset;
-        popup.horizontalScrollOffset = std::clamp(
-            popup.horizontalScrollOffset +
-                direction * metrics_.rowHeight * 2,
-            0, MaxHorizontalScroll(popup));
+        popup.horizontalScrollOffset = std::clamp(offset, 0, MaxHorizontalScroll(popup));
         if (popup.horizontalScrollOffset != oldOffset)
         {
             CloseFromDepth(popup.depth + 1);
             popup.hoveredItem = -1;
             popup.keyboardItem = -1;
-            ReportHoverAfterScroll(popup);
+            if (restoreHover) ReportHoverAfterScroll(popup);
+            else ReportHoveredItem(popup, -1, false);
             Render(popup);
         }
     }

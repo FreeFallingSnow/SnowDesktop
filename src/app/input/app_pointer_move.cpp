@@ -1178,7 +1178,10 @@ void DesktopApp::OnMouseMoveAt(
             SyncDragPreviewWindow();
             if (dragPreviewSynced) *dragPreviewSynced = true;
         }
-        bool overExternal = IsExternalDropWindowAt(current);
+        // This sample belongs to WM_POINTER capture. The modal mouse OLE loop
+        // cannot release that contact through the custom gesture dispatcher.
+        const bool overExternal = !snowdesktop::touch_input::routingTouch &&
+            IsExternalDropWindowAt(current);
 
         if (overExternal)
         {

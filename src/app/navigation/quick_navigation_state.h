@@ -156,7 +156,9 @@ struct State
     bool scrollbarDragging = false;
     snowdesktop::touch_input::Contact touchContact;
     int touchStartScroll = 0;
-    bool touchPanning = false;
+    snowdesktop::touch_input::GestureAction touchAction = snowdesktop::touch_input::GestureAction::Pending;
+    bool touchOverTabs = false;
+    bool touchTabDraggable = false;
     int scrollbarDragStartY = 0;
     int scrollbarDragThumbTop = 0;
     int scrollbarDragStartOffset = 0;

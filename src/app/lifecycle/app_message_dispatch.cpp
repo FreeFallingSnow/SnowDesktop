@@ -98,11 +98,12 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg, wp, lp)) return 0;
     ObserveDesktopTouch(hwnd, msg, wp, lp);
-    if (HandleDockTouch(hwnd, msg, wp, lp) || HandleDesktopTouchEdge(hwnd, msg, wp, lp)) return 0;
     // The runtime maintenance timer delivers background widget changes. A
     // nested pointer or keyboard message still takes its own immediate scope.
     const snowdesktop::UiImmediatePresentationScope immediatePresentation(
         msg != WM_TIMER || wp != kWidgetRefreshTimerId);
+    if (HandleDockTouch(hwnd, msg, wp, lp) || HandleDesktopTouchEdge(hwnd, msg, wp, lp) ||
+        HandleTouchScroll(hwnd, msg, wp, lp)) return 0;
     if (msg >= 0xC000 &&
         msg == snowdesktop::widget_runtime::WidgetSurfaceRenderer::ReadyMessage())
     {

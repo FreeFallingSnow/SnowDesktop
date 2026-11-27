@@ -1760,6 +1760,8 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         }
     } nativeMenuPresentationScope{ *this };
 
+    if (HandleTouchScroll(hwnd, msg, wp, lp)) return 0;
+
     auto desktopPoint = [&]() {
         return FloatingPopupClientToDesktop(
             POINT{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
@@ -1806,24 +1808,6 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         return 0;
     case WM_POINTERACTIVATE:
         return PA_NOACTIVATE;
-    case WM_GESTURENOTIFY:
-        if (IsCollectionPopupInteractive())
-            snowdesktop::touch_input::ConfigureVerticalPan(hwnd);
-        break;
-    case WM_GESTURE:
-    {
-        static thread_local snowdesktop::touch_input::VerticalPan pan;
-        POINT origin{};
-        int delta = 0;
-        if (!IsCollectionPopupInteractive() || !pan.Read(lp, origin, delta)) break;
-        if (delta)
-        {
-            const snowdesktop::touch_input::RoutedTouch centered(origin, false);
-            OnMouseWheel(MAKEWPARAM(0, std::clamp(delta * 2, -32768, 32767)),
-                MAKELPARAM(origin.x, origin.y));
-        }
-        return 0;
-    }
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
     {

@@ -159,10 +159,14 @@ bool DesktopApp::SelectLuaStackMember(std::wstring stackId, std::wstring memberI
 
 bool DesktopApp::ScrollLuaWidgetStack(const std::wstring& stackId, int delta)
 {
+    return StepLuaWidgetStack(stackId, luaStackWheel_.Consume(stackId, delta, GetTickCount64()));
+}
+
+bool DesktopApp::StepLuaWidgetStack(const std::wstring& stackId, int step)
+{
     const std::wstring stableId(stackId);
     const size_t index = FindWidgetIndexById(stableId);
     if (index >= widgets_.size() || widgets_[index].type != DesktopWidgetType::LuaStack) return false;
-    const int step = luaStackWheel_.Consume(stableId, delta, GetTickCount64());
     if (!step) return true;
     const auto members = widgets_[index].childWidgetIds;
     if (members.empty()) return true;

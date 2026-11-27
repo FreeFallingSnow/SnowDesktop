@@ -139,7 +139,8 @@ struct SystemPanel::Impl
     std::vector<RECT> cards;float scale=1;int width=0,height=0;bool showing=false,closing=false,modal=false,destroying=false;tray::MenuRetentionSession context;WPARAM closeGeneration=0;
     touch_input::Contact touchContact;
     float touchStartScroll = 0;
-    bool touchPanning = false;
+    touch_input::GestureAction touchAction = touch_input::GestureAction::Pending;
+    bool touchDraggable = false;
     Impl(SettingsChanged c,SystemCalendarActions dates,std::function<bool(std::string_view,POINT)> drop,UiAnimationScheduler* timing,IDCompositionDesktopDevice* graphics,IDWriteFactory* fonts,Background draw)
         :changed(std::move(c)),calendar(std::move(dates)),dropOutside(std::move(drop)),background(std::move(draw)),scheduler(timing),composition(graphics),text(fonts){}
     ~Impl(){lifetime->alive=false;destroying=true;HideNow();calendarInputs.reset();tooltip.Close();if(accessibility)accessibility->DetachWindow(window);backdrop.Reset();surface.Reset();visual.Reset();target.Reset();if(window)DestroyWindow(window);}
@@ -1177,22 +1178,28 @@ struct SystemPanel::Impl
             if(self->slide.IsAnimating()&&((m>=WM_MOUSEFIRST&&m<=WM_MOUSELAST)||m==WM_KEYDOWN))return 0;
             if (touch_input::IsPointerMessage(m) && !self->slide.IsAnimating())
             {
+                using TouchAction = touch_input::GestureAction;
                 const POINT screen = touch_input::ScreenPoint(lp);
                 POINT client = screen;
                 ScreenToClient(w, &client);
                 const auto point = self->ModelPoint(client.x, client.y);
                 auto& contact = self->touchContact;
-                if (m == WM_POINTERDOWN && touched && IS_POINTER_PRIMARY_WPARAM(wp) &&
-                    self->model->MaximumScroll() > 0)
+                if (m == WM_POINTERDOWN && touched && IS_POINTER_PRIMARY_WPARAM(wp))
                 {
                     const auto viewport = self->model->ScrollViewport();
                     const auto* node = self->model->View().Hit(point);
-                    if (point.x >= viewport.left && point.x < viewport.right && point.y >= viewport.top &&
+                    const bool draggable = node && node->id.starts_with("tray:");
+                    const bool scrollable = self->model->MaximumScroll() > 0;
+                    const bool onScrollbar = self->model->ScrollbarGeometry().CanDrag() &&
+                        point.x >= self->model->View().width - 12;
+                    if ((scrollable || draggable) && !onScrollbar && point.x >= viewport.left &&
+                        point.x < viewport.right && point.y >= viewport.top &&
                         point.y < viewport.bottom && (!node || node->role != ui::Role::Slider))
                     {
                         contact.Begin(wp, screen);
                         self->touchStartScroll = self->model->ScrollOffset();
-                        self->touchPanning = false;
+                        self->touchAction = TouchAction::Pending;
+                        self->touchDraggable = draggable;
                         return 0;
                     }
                 }
@@ -1201,33 +1208,44 @@ struct SystemPanel::Impl
                     if (m == WM_POINTERCAPTURECHANGED || touch_input::IsCanceled(wp))
                     {
                         contact.Reset();
+                        if (self->touchAction == TouchAction::Drag) SendMessageW(w, WM_CANCELMODE, 0, 0);
                         return 0;
                     }
                     if (m == WM_POINTERUPDATE || m == WM_POINTERUP)
                     {
                         const int slop = touch_input::Dips(8, GetDpiForWindow(w));
                         const int delta = screen.y - contact.start.y;
-                        if (std::abs(delta) >= slop && std::abs(delta) >= std::abs(screen.x - contact.start.x))
-                            self->touchPanning = true;
-                        if (self->touchPanning)
+                        if (self->touchAction == TouchAction::Pending && contact.Moved(screen, slop))
+                        {
+                            if (self->touchDraggable && contact.Held())
+                            {
+                                self->touchAction = TouchAction::Drag;
+                                touch_input::RouteMouse(w, WM_LBUTTONDOWN, contact.start, MK_LBUTTON);
+                                if (!life->alive) return 0;
+                            }
+                            else if (std::abs(delta) >= std::abs(screen.x - contact.start.x))
+                                self->touchAction = TouchAction::Pan;
+                            else self->touchAction = TouchAction::Consumed;
+                        }
+                        if (self->touchAction == TouchAction::Pan)
                         {
                             self->model->Scroll(self->touchStartScroll - delta / self->scale - self->model->ScrollOffset());
                             self->Arrange();
                             self->Paint();
                         }
+                        if (self->touchAction == TouchAction::Drag)
+                        {
+                            touch_input::RouteMouse(w, WM_MOUSEMOVE, screen, MK_LBUTTON);
+                            if (!life->alive) return 0;
+                        }
                         if (m == WM_POINTERUP)
                         {
-                            const bool tap = !self->touchPanning && !contact.Moved(screen, slop);
+                            const auto action = self->touchAction;
                             const bool held = contact.Held();
                             const POINT origin = contact.start;
                             contact.Reset();
-                            if (tap)
-                            {
-                                touch_input::RouteMouse(w, held ? WM_RBUTTONDOWN : WM_LBUTTONDOWN,
-                                    origin, held ? MK_RBUTTON : MK_LBUTTON);
-                                if (life->alive)
-                                    touch_input::RouteMouse(w, held ? WM_RBUTTONUP : WM_LBUTTONUP, screen);
-                            }
+                            if (action == TouchAction::Drag) touch_input::RouteMouse(w, WM_LBUTTONUP, screen);
+                            else if (action == TouchAction::Pending) touch_input::RouteClick(w, origin, held);
                         }
                     }
                     return 0;

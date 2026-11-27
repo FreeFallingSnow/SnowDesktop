@@ -326,6 +326,9 @@ struct StatusBar::Impl
         std::optional<MetricPress> metricPress;
         std::string pressedTray;
         std::optional<tray::Identity> middleTrayPress, lastMiddleTray;
+        touch_input::Contact trayTouch;
+        touch_input::GestureAction trayTouchAction = touch_input::GestureAction::Pending;
+        bool trayTouchDraggable = false;
         std::string trayMenuKey;
         tray::MenuRetentionSession trayMenu;
         POINT trayPress{};
@@ -1822,6 +1825,57 @@ struct StatusBar::Impl
             if (GetAsyncKeyState(primaryButton) < 0) MoveMetricPress(point, false);
             else FinishMetricPress(point);
         }
+        bool HandleTrayTouch(UINT message, WPARAM pointer, LPARAM position, bool touched)
+        {
+            if (!touch_input::IsPointerMessage(message)) return false;
+            using Action = touch_input::GestureAction;
+            const POINT screen = touch_input::ScreenPoint(position);
+            if (message == WM_POINTERDOWN && touched && IS_POINTER_PRIMARY_WPARAM(pointer))
+            {
+                POINT point = screen;
+                if (!ScreenToClient(hwnd, &point) || !PtInRect(&trayScroll.viewport, point)) return false;
+                const auto hit = HitTestStatusBarItems(items, point);
+                trayTouchDraggable = hit && items[*hit].icon;
+                if (!trayTouchDraggable && !trayScroll.Maximum()) return false;
+                trayTouch.Begin(pointer, screen);
+                trayTouchAction = Action::Pending;
+                return true;
+            }
+            if (!trayTouch.Owns(pointer)) return false;
+            if (message == WM_POINTERCAPTURECHANGED || touch_input::IsCanceled(pointer))
+            {
+                trayTouch.Reset();
+                if (trayTouchAction == Action::Drag) SendMessageW(hwnd, WM_CANCELMODE, 0, 0);
+                return true;
+            }
+            if (message != WM_POINTERUPDATE && message != WM_POINTERUP) return true;
+            const int slop = touch_input::Dips(8, dpi);
+            if (trayTouchAction == Action::Pending && trayTouch.Moved(screen, slop))
+            {
+                if (trayTouchDraggable && trayTouch.Held())
+                {
+                    trayTouchAction = Action::Drag;
+                    touch_input::RouteMouse(hwnd, WM_LBUTTONDOWN, trayTouch.start, MK_LBUTTON);
+                }
+                else if (std::abs(screen.x - trayTouch.start.x) >= std::abs(screen.y - trayTouch.start.y))
+                    trayTouchAction = Action::Pan;
+                else trayTouchAction = Action::Consumed;
+            }
+            if (trayTouchAction == Action::Pan)
+                ScrollTray(trayTouch.last.x - screen.x);
+            trayTouch.last = screen;
+            if (trayTouchAction == Action::Drag)
+                touch_input::RouteMouse(hwnd, WM_MOUSEMOVE, screen, MK_LBUTTON);
+            if (message == WM_POINTERUP)
+            {
+                const auto released = trayTouch;
+                trayTouch.Reset();
+                if (trayTouchAction == Action::Drag) touch_input::RouteMouse(hwnd, WM_LBUTTONUP, screen);
+                else if (trayTouchAction == Action::Pending)
+                    touch_input::RouteClick(hwnd, released.start, released.Held());
+            }
+            return true;
+        }
         bool TrayMouse(UINT message, POINT point)
         {
             if (!owner.tray) return false;
@@ -1920,6 +1974,7 @@ struct StatusBar::Impl
             if (touched && (message == WM_POINTERDOWN || message == WM_POINTERCAPTURECHANGED ||
                 message == WM_LBUTTONDOWN || message == WM_LBUTTONUP))
                 self->UpdateInteraction([&] { self->ClearHover(); });
+            if (self->HandleTrayTouch(message, wp, lp, touched)) return 0;
             if (!self->InputAvailable() &&
                 ((message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) || message == WM_CONTEXTMENU ||
                     message == WM_KEYDOWN || message == WM_KEYUP || message == WM_CHAR ||
@@ -2351,6 +2406,7 @@ struct StatusBar::Impl
             }
             case WM_CANCELMODE:
             case WM_CAPTURECHANGED:
+                self->trayTouch.Reset();
                 self->UpdateInteraction([&] {
                     self->EndDragFeedback();
                     self->CancelMetricPress();

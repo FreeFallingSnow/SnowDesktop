@@ -120,6 +120,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
 {
     if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg, wp, lp)) return 0;
     namespace touch = snowdesktop::touch_input;
+    using TouchAction = touch::GestureAction;
     ObserveDesktopTouch(hwnd, msg, wp, lp);
     const bool touched = touch::Observe(msg, wp);
     auto& navigation = *quickNavigation_;
@@ -135,18 +136,24 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             !HasActiveContextMenuSession())
         {
             const RECT content = GetQuickNavigationContentRect(navigation.rect);
+            const RECT tabs = GetQuickNavigationTabsRect(navigation.rect);
+            const bool onTabs = !UseQuickNavigationList() && GetQuickNavigationEffectiveSearchText().empty() &&
+                PtInRect(&tabs, point) && point.x >= GetQuickNavigationTabsStart(navigation.rect);
+            const auto tab = onTabs ? GetQuickNavigationTabAtPoint(point) : std::nullopt;
             RECT track{}, thumb{};
             int maximum = 0, height = 0;
             const bool onScrollbar = GetQuickNavigationScrollbarGeometry(
                 navigation.rect, track, thumb, maximum, height) && PtInRect(&track, point);
-            if (PtInRect(&content, point) && !onScrollbar)
+            if (onTabs || (PtInRect(&content, point) && !onScrollbar))
             {
                 CancelQuickNavigationTabHover();
                 navigation.pointerTarget = {};
                 navigation.lastMousePoint = {LONG_MIN, LONG_MIN};
                 navigation.scrollbarHovered = false;
                 navigation.touchStartScroll = navigation.scrollOffset;
-                navigation.touchPanning = false;
+                navigation.touchAction = TouchAction::Pending;
+                navigation.touchOverTabs = onTabs;
+                navigation.touchTabDraggable = tab && *tab >= 2 && navigation.menu == QuickNavigationMenu::None;
                 contact.Begin(wp, screen);
                 InvalidateQuickNavigationWindow(true);
                 return 0;
@@ -157,7 +164,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             if (msg == WM_POINTERCAPTURECHANGED || touch::IsCanceled(wp))
             {
                 contact.Reset();
-                navigation.touchPanning = false;
+                if (navigation.touchAction == TouchAction::Drag) SendMessageW(hwnd, WM_CANCELMODE, 0, 0);
                 return 0;
             }
             if (msg == WM_POINTERUPDATE || msg == WM_POINTERUP)
@@ -165,21 +172,42 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                 const int slop = touch::Dips(8, GetDpiForWindow(hwnd));
                 const int deltaY = screen.y - contact.start.y;
                 const int deltaX = screen.x - contact.start.x;
-                if (std::abs(deltaY) >= slop && std::abs(deltaY) >= std::abs(deltaX))
-                    navigation.touchPanning = true;
-                if (navigation.touchPanning && !renameController_.BlocksScrolling())
+                if (navigation.touchAction == TouchAction::Pending && contact.Moved(screen, slop))
                 {
-                    navigation.scrollOffset = std::clamp(navigation.touchStartScroll - deltaY,
-                        0, GetQuickNavigationMaxScrollOffset(navigation.rect));
-                    InvalidateQuickNavigationWindow(true);
+                    if (navigation.touchTabDraggable && contact.Held())
+                    {
+                        navigation.touchAction = TouchAction::Drag;
+                        touch::RouteMouse(hwnd, WM_LBUTTONDOWN, contact.start, MK_LBUTTON);
+                    }
+                    else if (navigation.touchOverTabs ? std::abs(deltaX) >= std::abs(deltaY) :
+                        std::abs(deltaY) >= std::abs(deltaX))
+                        navigation.touchAction = TouchAction::Pan;
+                    else navigation.touchAction = TouchAction::Consumed;
                 }
+                if (navigation.touchAction == TouchAction::Pan && !renameController_.BlocksScrolling())
+                {
+                    if (navigation.touchOverTabs)
+                    {
+                        const int pixels = screen.x - contact.last.x;
+                        if (pixels) OnMouseWheel(touch::PanWheel(pixels), MAKELPARAM(contact.start.x, contact.start.y));
+                    }
+                    else
+                    {
+                        navigation.scrollOffset = std::clamp(navigation.touchStartScroll - deltaY,
+                            0, GetQuickNavigationMaxScrollOffset(navigation.rect));
+                        InvalidateQuickNavigationWindow(true);
+                    }
+                }
+                contact.last = screen;
+                if (navigation.touchAction == TouchAction::Drag)
+                    touch::RouteMouse(hwnd, WM_MOUSEMOVE, screen, MK_LBUTTON);
                 if (msg == WM_POINTERUP)
                 {
-                    const bool activate = !navigation.touchPanning && !contact.Moved(screen, slop);
+                    const auto action = navigation.touchAction;
                     const bool held = contact.Held();
                     contact.Reset();
-                    navigation.touchPanning = false;
-                    if (activate)
+                    if (action == TouchAction::Drag) touch::RouteMouse(hwnd, WM_LBUTTONUP, screen);
+                    else if (action == TouchAction::Pending)
                     {
                         if (held) HandleQuickNavigationRightClick(point, screen);
                         else HandleQuickNavigationClick(point);

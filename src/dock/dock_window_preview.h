@@ -118,6 +118,7 @@ private:
         HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 
     bool EnsureWindows(size_t count);
+    void StepTouchPage(int direction);
     void Layout(RECT monitorWorkArea, UINT dpi, bool reuseThumbnails = false);
     void RegisterThumbnails();
     void UnregisterThumbnails();
@@ -212,6 +213,10 @@ private:
     PointerSession pointerSession_ = PointerSession::AwaitingEntry;
     bool touchOpened_ = false;
     snowdesktop::touch_input::Contact touchContact_;
+    bool touchMoved_ = false;
+    std::vector<DockWindowPreviewItem> touchItems_;
+    size_t touchPage_ = 0;
+    size_t touchPageSize_ = 1;
     POINT entryOriginScreen_{};
     bool entryOriginKnown_ = false;
     DockPosition dockPosition_ = DockPosition::Bottom;

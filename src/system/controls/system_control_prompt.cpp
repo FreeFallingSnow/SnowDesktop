@@ -1,6 +1,7 @@
 #include "system_control_prompt.h"
 #include "platform/operation_feedback.h"
 #include "ui/input/text_input_window.h"
+#include "ui/input/touch_input.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
 #include "ui/render/native_form_style.h"
 #include "widget/view/widget_scroll_rules.h"
@@ -52,6 +53,7 @@ struct Prompt
     unsigned dpi=96;
     int width=440,height=320,maximumHeight=700,bodyHeight=0,viewportHeight=180,scroll=0,dragStart=0,dragOffset=0,previewResult=0;
     int securityChoice=1;
+    touch_input::VerticalPan touchPan;
     struct Item{HWND window;std::wstring label;int height=0,gap=0,top=0;bool paragraph=false;};
     std::vector<Item> items;
     ~Prompt(){if(font)DeleteObject(font);if(headingFont)DeleteObject(headingFont);if(backgroundBrush)DeleteObject(backgroundBrush);if(fieldBrush)DeleteObject(fieldBrush);}
@@ -89,9 +91,26 @@ struct Prompt
             text_input::SetPadding(edit,12.f*static_cast<float>(dpi)/96.f,4.f*static_cast<float>(dpi)/96.f);
         }
     }
+    bool HandleTouchPan(HWND targetWindow, UINT message, LPARAM parameter)
+    {
+        if (message == WM_GESTURENOTIFY && Scrollbar().CanDrag())
+            touch_input::ConfigureVerticalPan(targetWindow);
+        if (message != WM_GESTURE) return false;
+        POINT origin{};
+        int delta = 0;
+        if (!touchPan.Read(parameter, origin, delta)) return false;
+        if (delta && Scrollbar().CanDrag())
+        {
+            scroll -= Dip(delta);
+            Layout();
+        }
+        return true;
+    }
     static LRESULT CALLBACK ChildProcedure(HWND w,UINT m,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR data)
     {
-        if(m==WM_SETFOCUS)SendMessageW(reinterpret_cast<HWND>(data),kReveal,reinterpret_cast<WPARAM>(w),0);
+        auto* self = reinterpret_cast<Prompt*>(data);
+        if(m==WM_SETFOCUS)SendMessageW(self->window,kReveal,reinterpret_cast<WPARAM>(w),0);
+        if (w != self->ssid && w != self->password && self->HandleTouchPan(w, m, lp)) return 0;
         if(m==WM_NCDESTROY)RemoveWindowSubclass(w,ChildProcedure,1);
         return DefSubclassProc(w,m,wp,lp);
     }
@@ -127,6 +146,7 @@ struct Prompt
     static LRESULT CALLBACK ViewportProcedure(HWND w,UINT m,WPARAM wp,LPARAM lp)
     {
         auto* self=reinterpret_cast<Prompt*>(GetWindowLongPtrW(w,GWLP_USERDATA));
+        if (self && self->HandleTouchPan(w, m, lp)) return 0;
         if(m==WM_PAINT&&self){PAINTSTRUCT paint{};const auto dc=BeginPaint(w,&paint);self->PaintViewport(dc);EndPaint(w,&paint);return 0;}
         if((m==WM_PRINT||m==WM_PRINTCLIENT)&&self){self->PaintViewport(reinterpret_cast<HDC>(wp));return 0;}
         if(m==WM_ERASEBKGND)return 1;
@@ -153,7 +173,7 @@ struct Prompt
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),GetModuleHandleW(nullptr),nullptr);
         if(!child)throw std::runtime_error("prompt control unavailable");
         SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(font),FALSE);
-        if(!SetWindowSubclass(child,ChildProcedure,1,reinterpret_cast<DWORD_PTR>(window)))throw std::runtime_error("prompt focus handler unavailable");
+        if(!SetWindowSubclass(child,ChildProcedure,1,reinterpret_cast<DWORD_PTR>(this)))throw std::runtime_error("prompt focus handler unavailable");
         items.push_back({child,paragraph?text:std::wstring{},itemHeight,gap,0,paragraph});return child;
     }
     void Label(const std::wstring& text,int gap=6){Child(L"STATIC",text,SS_NOPREFIX,-1,20,gap,true);}

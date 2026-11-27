@@ -1,10 +1,13 @@
 #include "app/app.h"
 #include "app/dock/persistent_dock_host.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "app/popup/categorized_popup_scope.h"
 #include "dock/dock_window_preview.h"
 #include "layout/floating_popup_rules.h"
 #include "system/status_bar/status_bar.h"
 #include "ui/input/private_pointer.h"
 #include "ui/input/touch_input.h"
+#include "widget/runtime/widget_engine.h"
 
 #include <array>
 
@@ -54,8 +57,29 @@ struct DockTouch
 {
     HWND window = nullptr;
     touch::Contact contact;
-    bool dragging = false;
-    bool slideOut = false;
+    touch::GestureAction action = touch::GestureAction::Pending;
+    bool scrollable = false;
+    bool draggable = false;
+    bool preview = false;
+};
+
+struct ScrollTarget
+{
+    bool horizontal = false;
+    bool vertical = false;
+    bool draggable = false;
+    bool doubleTap = false;
+    bool lua = false;
+    std::wstring stackId;
+};
+
+struct ScrollTouch
+{
+    HWND window = nullptr;
+    touch::Contact contact;
+    ScrollTarget target;
+    touch::GestureAction action = touch::GestureAction::Pending;
+    bool horizontal = false;
 };
 
 struct EdgeTouch
@@ -132,26 +156,42 @@ void DesktopApp::ObserveDesktopTouch(HWND window, UINT message, WPARAM pointer, 
 bool DesktopApp::HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPARAM position)
 {
     if (!touch::IsPointerMessage(message) || snowdesktop::private_pointer::Active()) return false;
+    using Action = touch::GestureAction;
     static thread_local DockTouch gesture;
+    static thread_local touch::TapSequence taps;
     if (gesture.window && !IsWindow(gesture.window)) gesture = {};
     const POINT screen = touch::ScreenPoint(position);
     if (IsNewContact(message, pointer))
     {
-        if (gesture.contact.Active() || !dockSettings_.showWindowPreviews || !hwnd_) return false;
+        if (gesture.contact.Active() || !hwnd_ || HasActiveContextMenuSession()) return false;
         POINT desktop = screen;
         if (!ScreenToClient(hwnd_, &desktop)) return false;
-        DockWindowPreviewTarget target;
-        if (!ResolveDockWindowPreviewTarget(desktop, target)) return false;
+        DockContainer* dock = GetDockContainerAtPoint(desktop);
+        if (!dock || IsPointOccludedByOpenPopup(desktop) ||
+            dock->IsWindowsButtonPoint(desktop) || dock->IsSearchPoint(desktop))
+        {
+            taps.Reset();
+            return false;
+        }
+        const bool draggable = dock->EntryAtPoint(desktop) || dock->RunningItemAtPoint(desktop) ||
+            dock->FrequentItemAtPoint(desktop);
+        const bool scrollable = dock->CanScrollAt(desktop);
+        if (!draggable && !scrollable) return false;
         gesture = {};
         gesture.window = window;
+        gesture.draggable = draggable;
+        gesture.scrollable = scrollable;
+        DockWindowPreviewTarget target;
+        gesture.preview = dockSettings_.showWindowPreviews && ResolveDockWindowPreviewTarget(desktop, target);
         gesture.contact.Begin(pointer, screen);
         return true;
     }
     if (gesture.window != window || !gesture.contact.Owns(pointer)) return false;
     if (message == WM_POINTERCAPTURECHANGED || touch::IsCanceled(pointer))
     {
-        const bool dragging = gesture.dragging;
+        const bool dragging = gesture.action == Action::Drag;
         gesture = {};
+        taps.Reset();
         if (dragging) SendMessageW(window, WM_CANCELMODE, 0, 0);
         return true;
     }
@@ -159,37 +199,240 @@ bool DesktopApp::HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPAR
     {
         auto& contact = gesture.contact;
         const int slop = touch::Dips(12, GetDpiForWindow(window));
-        if (!gesture.dragging && !gesture.slideOut && contact.Moved(screen, slop))
+        const int dx = screen.x - contact.start.x;
+        const int dy = screen.y - contact.start.y;
+        const bool vertical = IsVertical(dockSettings_.position);
+        if (gesture.action == Action::Pending && contact.Moved(screen, slop))
         {
-            gesture.slideOut = IsOutwardSwipe(dockSettings_.position, contact, screen, slop);
-            gesture.dragging = !gesture.slideOut;
-            if (gesture.dragging) touch::RouteMouse(window, WM_LBUTTONDOWN, contact.start, MK_LBUTTON);
+            taps.Reset();
+            if (gesture.draggable && contact.Held())
+            {
+                gesture.action = Action::Drag;
+                touch::RouteMouse(window, WM_LBUTTONDOWN, contact.start, MK_LBUTTON);
+            }
+            else if (gesture.preview && IsOutwardSwipe(dockSettings_.position, contact, screen, slop))
+                gesture.action = Action::Swipe;
+            else if (gesture.scrollable && (vertical ? std::abs(dy) >= std::abs(dx) : std::abs(dx) >= std::abs(dy)))
+                gesture.action = Action::Pan;
+            else gesture.action = Action::Consumed;
         }
-        if (message == WM_POINTERUPDATE)
+        if (gesture.action == Action::Pan)
         {
-            contact.last = screen;
-            if (gesture.dragging) touch::RouteMouse(window, WM_MOUSEMOVE, screen, MK_LBUTTON);
-            return true;
+            const int pixels = vertical ? screen.y - contact.last.y : screen.x - contact.last.x;
+            const touch::RoutedTouch scope(contact.start, false);
+            if (pixels) OnMouseWheel(touch::PanWheel(pixels), MAKELPARAM(contact.start.x, contact.start.y));
         }
+        contact.last = screen;
+        if (gesture.action == Action::Drag) touch::RouteMouse(window, WM_MOUSEMOVE, screen, MK_LBUTTON);
+        if (message != WM_POINTERUP) return true;
 
         const DockTouch released = gesture;
         gesture = {};
-        if (released.dragging) touch::RouteMouse(window, WM_LBUTTONUP, screen);
-        else if (released.slideOut)
+        if (released.action == Action::Drag) touch::RouteMouse(window, WM_LBUTTONUP, screen);
+        else if (released.action == Action::Swipe)
         {
             POINT origin = released.contact.start;
-            if (ScreenToClient(hwnd_, &origin)) (void)TryOpenDockWindowPicker(origin, true);
+            if (IsOutwardSwipe(dockSettings_.position, released.contact, screen, slop) &&
+                ScreenToClient(hwnd_, &origin)) (void)TryOpenDockWindowPicker(origin, true);
         }
-        else if (released.contact.Held())
+        else if (released.action == Action::Pending)
         {
-            touch::RouteMouse(window, WM_RBUTTONDOWN, screen, MK_RBUTTON);
-            touch::RouteMouse(window, WM_RBUTTONUP, screen);
+            if (released.contact.Held())
+            {
+                taps.Reset();
+                touch::RouteClick(window, released.contact.start, true);
+            }
+            else if (taps.Complete(window, released.contact.start))
+            {
+                touch::RouteMouse(window, WM_LBUTTONDBLCLK, released.contact.start, MK_LBUTTON);
+                if (IsWindow(window)) touch::RouteMouse(window, WM_LBUTTONUP, screen);
+            }
+            else touch::RouteClick(window, released.contact.start, false);
         }
-        else
+    }
+    return true;
+}
+
+bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LPARAM position)
+{
+    if (snowdesktop::private_pointer::Active()) return false;
+    using Action = touch::GestureAction;
+    static thread_local ScrollTouch gesture;
+    static thread_local touch::TapSequence taps;
+    if (gesture.window && !IsWindow(gesture.window)) gesture = {};
+    if (gesture.window == window && (message == WM_CANCELMODE || message == WM_NCDESTROY))
+        gesture = {};
+    if (!touch::IsPointerMessage(message)) return false;
+    const POINT screen = touch::ScreenPoint(position);
+    if (IsNewContact(message, pointer))
+    {
+        if (gesture.contact.Active() || !hwnd_ || HasActiveContextMenuSession() ||
+            quickNavigation_->open || dragSession_.HasContext()) return false;
+        POINT desktop = screen;
+        if (!ScreenToClient(hwnd_, &desktop)) return false;
+        ScrollTarget target;
+        const auto nativeTarget = [&](WidgetContainer& view) {
+            const WidgetHit hit = view.HitTestWidget(desktop);
+            if (view.IsCollapsed() || (view.GetWidgetData()->showOnHoverOnly &&
+                !view.GetWidgetData()->selected)) return;
+            auto* scrolling = dynamic_cast<ScrollingItemWidget*>(&view);
+            const bool onTab = hit == WidgetHit::CategoryTab || hit == WidgetHit::SourceTab;
+            target.horizontal = scrolling && scrolling->TryScrollTabs(desktop, 0);
+            if (onTab) target.draggable = true;
+            if (hit != WidgetHit::Content || target.horizontal) return;
+            const RECT viewport = view.GetContentViewportRect();
+            if (!PtInRect(&viewport, desktop)) return;
+            target.vertical = view.GetMaxScrollOffset() > 0;
+            const auto& slots = view.GetSlots();
+            target.draggable = std::any_of(slots.begin(), slots.end(), [&](const auto& slot) {
+                const RECT bounds = slot->GetBounds();
+                return slot->GetItem() && PtInRect(&bounds, desktop);
+            });
+            target.doubleTap = target.draggable;
+        };
+        const auto luaTarget = [&](const std::wstring& id, RECT bounds, std::string_view surface) {
+            if (!widgetEngine_) return false;
+            const int x = desktop.x - bounds.left;
+            const int y = desktop.y - bounds.top;
+            if (widgetEngine_->IsSurfaceSliderAt(id, x, y, surface)) return false;
+            target.lua = true;
+            target.horizontal = widgetEngine_->OwnsSurfaceWheel(id, x, y, 0, surface, true);
+            target.vertical = widgetEngine_->OwnsSurfaceWheel(id, x, y, 0, surface, false);
+            target.draggable = widgetEngine_->OwnsSurfaceDrag(id, x, y, surface);
+            return !widgetEngine_->IsHostInputAt(id, x, y, surface);
+        };
+        if (luaWidgetPanelAnimation_.IsInteractive() && !luaWidgetPanelRequest_.widgetId.empty())
         {
-            touch::RouteMouse(window, WM_LBUTTONDOWN, released.contact.start, MK_LBUTTON);
-            touch::RouteMouse(window, WM_LBUTTONUP, screen);
+            const RECT content = GetLuaWidgetPanelContentRect();
+            if (PtInRect(&content, desktop))
+                luaTarget(luaWidgetPanelRequest_.widgetId, content, luaWidgetPanelRequest_.surface);
         }
+        else if (auto* popup = GetOpenPopupWidget(); popup && IsPointInsideOpenPopup(desktop) &&
+            IsCollectionPopupInteractive())
+        {
+            const RECT bounds = GetCollectionPopupRect(*popup);
+            auto* group = GetGroupPopupView();
+            auto* categorized = group ? group : GetCategorizedPopupView();
+            CategorizedPopupScope scope(categorized, GetCategorizedPopupFrame(bounds));
+            if (categorized) nativeTarget(*categorized);
+            const RECT content = GetCollectionPopupContentRect(bounds);
+            const bool fan = UsesCollectionPopupFan(*popup);
+            if (!target.horizontal && (fan || PtInRect(&content, desktop)))
+            {
+                target.vertical = target.vertical || fan || GetCollectionPopupMaxScrollOffset(*popup, bounds) > 0;
+                if (!group && !target.draggable && !dockTrayPopup_)
+                {
+                    const size_t count = GetPopupItemCount(*popup);
+                    for (size_t index = 0; index < count; ++index)
+                    {
+                        if (!HitTestCollectionPopupItem(bounds, index, desktop)) continue;
+                        target.draggable = target.doubleTap = true;
+                        break;
+                    }
+                }
+            }
+        }
+        else if (window == hwnd_)
+        {
+            const size_t index = HitTestStandaloneWidgetIndex(desktop);
+            if (index < widgets_.size() && HitTestStandaloneWidget(index, desktop) == WidgetHit::Content)
+            {
+                auto& owner = widgets_[index];
+                auto* content = ResolveLuaWidgetContent(&owner);
+                if (content && widgetEngine_ && (!content->showOnHoverOnly || owner.selected))
+                {
+                    widgetEngine_->EnsureWidgetLoaded(content->id, content->packageId);
+                    const bool canTurnStack = luaTarget(content->id, GetStandaloneWidgetFrameRect(owner), "desktop");
+                    if (canTurnStack && owner.type == DesktopWidgetType::LuaStack && owner.childWidgetIds.size() > 1)
+                        target.stackId = owner.id;
+                }
+            }
+            else
+            {
+                for (auto entry = containers_.rbegin(); entry != containers_.rend(); ++entry)
+                {
+                    auto* view = dynamic_cast<WidgetContainer*>(entry->get());
+                    if (!view || !view->GetWidgetData() ||
+                        (desktopIconsHidden_ && !IsRetainedContainer(view)) ||
+                        view->HitTestWidget(desktop) == WidgetHit::None) continue;
+                    nativeTarget(*view);
+                    break;
+                }
+            }
+        }
+        if (!target.horizontal && !target.vertical && !target.draggable && target.stackId.empty())
+        {
+            taps.Reset();
+            return false;
+        }
+        gesture = {};
+        gesture.window = window;
+        gesture.target = std::move(target);
+        gesture.contact.Begin(pointer, screen);
+        return true;
+    }
+    if (gesture.window != window || !gesture.contact.Owns(pointer)) return false;
+    if (message == WM_POINTERCAPTURECHANGED || touch::IsCanceled(pointer))
+    {
+        const bool dragging = gesture.action == Action::Drag;
+        gesture = {};
+        taps.Reset();
+        if (dragging) SendMessageW(window, WM_CANCELMODE, 0, 0);
+        return true;
+    }
+    if (message != WM_POINTERUPDATE && message != WM_POINTERUP) return true;
+
+    auto& contact = gesture.contact;
+    const int slop = touch::Dips(8, GetDpiForWindow(window));
+    const int dx = screen.x - contact.start.x;
+    const int dy = screen.y - contact.start.y;
+    if (gesture.action == Action::Pending && contact.Moved(screen, slop))
+    {
+        taps.Reset();
+        gesture.horizontal = std::abs(dx) > std::abs(dy);
+        if (gesture.target.draggable && contact.Held())
+        {
+            gesture.action = Action::Drag;
+            touch::RouteMouse(window, WM_LBUTTONDOWN, contact.start, MK_LBUTTON);
+        }
+        else if (gesture.horizontal && !gesture.target.horizontal && !gesture.target.stackId.empty())
+            gesture.action = Action::Swipe;
+        else if (gesture.horizontal ? gesture.target.horizontal : gesture.target.vertical)
+            gesture.action = Action::Pan;
+        else gesture.action = Action::Consumed;
+    }
+    if (gesture.action == Action::Pan)
+    {
+        const int pixels = gesture.horizontal ? screen.x - contact.last.x : screen.y - contact.last.y;
+        if (pixels)
+        {
+            const touch::RoutedTouch scope(contact.start, false, gesture.target.lua
+                ? std::optional<bool>(gesture.horizontal) : std::nullopt);
+            OnMouseWheel(touch::PanWheel(pixels), MAKELPARAM(contact.start.x, contact.start.y));
+        }
+    }
+    contact.last = screen;
+    if (gesture.action == Action::Drag) touch::RouteMouse(window, WM_MOUSEMOVE, screen, MK_LBUTTON);
+    if (message != WM_POINTERUP) return true;
+
+    ScrollTouch released = std::move(gesture);
+    gesture = {};
+    if (released.action == Action::Drag) touch::RouteMouse(window, WM_LBUTTONUP, screen);
+    else if (released.action == Action::Swipe && std::abs(dx) >= touch::Dips(28, GetDpiForWindow(window)))
+        (void)StepLuaWidgetStack(released.target.stackId, dx < 0 ? 1 : -1);
+    else if (released.action == Action::Pending)
+    {
+        if (released.contact.Held())
+        {
+            taps.Reset();
+            touch::RouteClick(window, released.contact.start, true);
+        }
+        else if (released.target.doubleTap && taps.Complete(window, released.contact.start))
+        {
+            touch::RouteMouse(window, WM_LBUTTONDBLCLK, released.contact.start, MK_LBUTTON);
+            if (IsWindow(window)) touch::RouteMouse(window, WM_LBUTTONUP, screen);
+        }
+        else touch::RouteClick(window, released.contact.start, false);
     }
     return true;
 }

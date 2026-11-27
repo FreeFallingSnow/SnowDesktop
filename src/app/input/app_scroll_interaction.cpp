@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "ui/input/touch_input.h"
 #include "app/app.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "widget/runtime/widget_engine.h"
@@ -68,7 +69,8 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         const int maximum = GetCollectionPopupMaxScrollOffset(dockTrayPopup_->widget, popup);
         popupScrollOffset_ = std::clamp(popupScrollOffset_ - GET_WHEEL_DELTA_WPARAM(wp) / 2, 0, maximum);
         dockTrayPopup_->keyboardNavigation = false;
-        DockTrayPopupPointerMove(pt);
+        if (snowdesktop::touch_input::CanHover()) DockTrayPopupPointerMove(pt);
+        else dockTrayPopup_->hovered = -1;
         InvalidateCollectionPopupContent();
         InvalidateFloatingPopupWindow(false);
         return;
@@ -97,7 +99,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                     luaWidgetPanelRequest_.widgetId,
                     pt.x - content.left, pt.y - content.top,
                     GET_WHEEL_DELTA_WPARAM(wp), true,
-                    luaWidgetPanelRequest_.surface))
+                    luaWidgetPanelRequest_.surface, snowdesktop::touch_input::panHorizontal))
                 (void)PresentDesktopForegroundComposition(
                     GetLuaWidgetPanelRect());
             return;
@@ -115,9 +117,9 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             if (!widgetEngine_ ||
                 !widgetEngine_->HandleHostUiPointer(
                     luaWidgetPanelRequest_.widgetId,
-                    localX, localY, delta, true, surface))
+                    localX, localY, delta, true, surface, snowdesktop::touch_input::panHorizontal))
             {
-                if (widgetEngine_)
+                if (widgetEngine_ && !snowdesktop::touch_input::panHorizontal.value_or(false))
                 {
                     const char* eventName = surface == "dialog"
                         ? "onDialogWheel"
@@ -199,18 +201,23 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         int localY = pt.y - frame.top;
         if (widgets_[luaWidget].type == DesktopWidgetType::LuaStack)
         {
-            if (!widgetEngine_->OwnsDesktopWheel(luaContent->id, localX, localY, delta))
+            if (!widgetEngine_->OwnsSurfaceWheel(luaContent->id, localX, localY, delta,
+                    "desktop", snowdesktop::touch_input::panHorizontal))
             {
-                (void)ScrollLuaWidgetStack(widgets_[luaWidget].id, delta);
+                if (!snowdesktop::touch_input::panHorizontal)
+                    (void)ScrollLuaWidgetStack(widgets_[luaWidget].id, delta);
                 return;
             }
-            (void)luaStackWheel_.Consume(widgets_[luaWidget].id, delta, GetTickCount64(), true);
+            if (!snowdesktop::touch_input::panHorizontal)
+                (void)luaStackWheel_.Consume(widgets_[luaWidget].id, delta, GetTickCount64(), true);
         }
         if (!widgetEngine_->HandleHostUiPointer(
                 luaContent->id, localX, localY,
-                delta, true))
-            widgetEngine_->InvokeMouseEvent(luaContent->id, "onWheel",
-                localX, localY, 0, delta);
+                delta, true, "desktop", snowdesktop::touch_input::panHorizontal))
+        {
+            if (!snowdesktop::touch_input::panHorizontal.value_or(false))
+                widgetEngine_->InvokeMouseEvent(luaContent->id, "onWheel", localX, localY, 0, delta);
+        }
         else
             UpdateHostInputImePosition();
         (void)QueueDesktopWidgetComposition(luaContent->id);

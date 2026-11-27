@@ -425,6 +425,7 @@ private:
     LRESULT HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     void ObserveDesktopTouch(HWND window, UINT message, WPARAM pointer, LPARAM position);
     bool HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPARAM position);
+    bool HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LPARAM position);
     bool HandleDesktopTouchEdge(HWND window, UINT message, WPARAM pointer, LPARAM position);
     static LRESULT CALLBACK TouchEdgeWndProc(HWND window, UINT message, WPARAM wp, LPARAM lp);
     void SyncTouchEdgeWindows();
@@ -3077,6 +3078,7 @@ private:
     bool WantsLuaStackMemberDrag() const;
     bool SelectLuaStackMember(std::wstring stackId, std::wstring memberId);
     bool ScrollLuaWidgetStack(const std::wstring& stackId, int delta);
+    bool StepLuaWidgetStack(const std::wstring& stackId, int step);
     bool ReleaseLuaStackMember(const std::wstring& stackId);
     bool CommitLuaStackMemberDrag(GridCell targetCell);
     bool RemoveLuaStackMember(const std::wstring& stackId, POINT screenPoint);

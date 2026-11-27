@@ -1288,9 +1288,13 @@ public:
         std::string_view alignment, int& offset, int& maximum,
         bool& changed, std::string& error,
         std::string_view surface = {});
-    bool OwnsDesktopWheel(const std::wstring& widgetId, int x, int y, int delta) const;
+    bool OwnsSurfaceWheel(const std::wstring& widgetId, int x, int y, int delta,
+        std::string_view surface = "desktop", std::optional<bool> horizontal = std::nullopt) const;
+    bool OwnsSurfaceDrag(const std::wstring& widgetId, int x, int y, std::string_view surface) const;
+    bool IsSurfaceSliderAt(const std::wstring& widgetId, int x, int y, std::string_view surface) const;
     bool HandleHostUiPointer(const std::wstring& widgetId, int x, int y,
-        int delta, bool wheel, std::string_view surface = "desktop");
+        int delta, bool wheel, std::string_view surface = "desktop",
+        std::optional<bool> horizontal = std::nullopt);
     std::vector<LuaWidget::HostControl> GetScrollControls(
         const std::wstring& widgetId,
         std::string_view surface = "desktop") const;

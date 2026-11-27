@@ -297,6 +297,24 @@ bool WidgetEngine::HasInteractionPointerCapture(
             HasPointerCapture();
 }
 
+bool WidgetEngine::OwnsSurfaceDrag(const std::wstring& widgetId, int x, int y, std::string_view surface) const
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0) return false;
+    const auto& regions = InteractionRegionsForSurface(widgets_[index], surface);
+    const auto* region = regions.Find(regions.TargetAt(static_cast<float>(x), static_cast<float>(y)));
+    return region && region->enabled && !region->dragImage.empty();
+}
+
+bool WidgetEngine::IsSurfaceSliderAt(const std::wstring& widgetId, int x, int y, std::string_view surface) const
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0) return false;
+    const auto& regions = InteractionRegionsForSurface(widgets_[index], surface);
+    const auto* region = regions.Find(regions.TargetAt(static_cast<float>(x), static_cast<float>(y)));
+    return region && region->controlKind == snowdesktop::widget_runtime::InteractionControlKind::Slider;
+}
+
 std::shared_ptr<const snowdesktop::widget_runtime::WidgetRuntimeImagePixels>
 WidgetEngine::TakeInteractionImageDrag(const std::wstring& widgetId, std::string_view surface)
 {

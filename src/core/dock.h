@@ -129,6 +129,10 @@ public:
     size_t Capacity() const;
     bool HasCapacity(size_t additional) const;
     bool ScrollByWheelDelta(POINT pointer, int wheelDelta);
+    bool CanScrollAt(POINT pointer) const
+    {
+        return IsPointInScrollViewport(pointer) && GetMaxScrollOffset(GetBounds()) > 0;
+    }
     struct KeyboardTarget
     {
         enum class Kind { Start, Search, Entry, Running, Frequent };

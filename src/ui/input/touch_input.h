@@ -2,7 +2,9 @@
 
 #include <Windows.h>
 #include <windowsx.h>
+#include <algorithm>
 #include <cstdlib>
+#include <optional>
 
 namespace snowdesktop::touch_input
 {
@@ -11,6 +13,7 @@ inline thread_local ULONGLONG lastTouchPress = 0;
 inline thread_local bool routingTouch = false;
 inline thread_local bool routedContactDown = false;
 inline thread_local POINT routedPoint{};
+inline thread_local std::optional<bool> panHorizontal;
 
 inline bool IsPointerMessage(UINT message) noexcept
 {
@@ -70,18 +73,21 @@ inline bool RecentlyPressed() noexcept
 class RoutedTouch final
 {
 public:
-    RoutedTouch(POINT screen, bool pressed) noexcept
-        : previous_(routingTouch), previousDown_(routedContactDown), previousPoint_(routedPoint)
+    RoutedTouch(POINT screen, bool pressed, std::optional<bool> horizontal = std::nullopt) noexcept
+        : previous_(routingTouch), previousDown_(routedContactDown), previousPoint_(routedPoint),
+          previousPan_(panHorizontal)
     {
         routingTouch = touchMode = true;
         routedContactDown = pressed;
         routedPoint = screen;
+        panHorizontal = horizontal;
     }
     ~RoutedTouch()
     {
         routingTouch = previous_;
         routedContactDown = previousDown_;
         routedPoint = previousPoint_;
+        panHorizontal = previousPan_;
     }
     RoutedTouch(const RoutedTouch&) = delete;
     RoutedTouch& operator=(const RoutedTouch&) = delete;
@@ -90,6 +96,7 @@ private:
     bool previous_;
     bool previousDown_;
     POINT previousPoint_;
+    std::optional<bool> previousPan_;
 };
 
 inline LRESULT RouteMouse(HWND window, UINT message, POINT screen, WPARAM buttons = 0)
@@ -98,6 +105,18 @@ inline LRESULT RouteMouse(HWND window, UINT message, POINT screen, WPARAM button
     if (!ScreenToClient(window, &client)) return 0;
     const RoutedTouch scope(screen, (buttons & MK_LBUTTON) != 0);
     return SendMessageW(window, message, buttons, MAKELPARAM(client.x, client.y));
+}
+
+inline void RouteClick(HWND window, POINT screen, bool context)
+{
+    RouteMouse(window, context ? WM_RBUTTONDOWN : WM_LBUTTONDOWN,
+        screen, context ? MK_RBUTTON : MK_LBUTTON);
+    if (IsWindow(window)) RouteMouse(window, context ? WM_RBUTTONUP : WM_LBUTTONUP, screen);
+}
+
+inline WPARAM PanWheel(int pixels) noexcept
+{
+    return MAKEWPARAM(0, 2 * std::clamp(pixels, -16384, 16383));
 }
 
 inline POINT ScreenPoint(LPARAM packed) noexcept
@@ -135,6 +154,30 @@ struct Contact
         return std::abs(point.x - start.x) >= distance || std::abs(point.y - start.y) >= distance;
     }
     bool Held() const noexcept { return GetTickCount64() - started >= 550; }
+};
+
+enum class GestureAction { Pending, Pan, Drag, Swipe, Consumed };
+
+class TapSequence
+{
+public:
+    void Reset() noexcept { window_ = nullptr; }
+    bool Complete(HWND window, POINT screen) noexcept
+    {
+        const ULONGLONG now = GetTickCount64();
+        const bool doubleTap = window == window_ && now - time_ <= GetDoubleClickTime() &&
+            std::abs(screen.x - location_.x) <= GetSystemMetrics(SM_CXDOUBLECLK) / 2 &&
+            std::abs(screen.y - location_.y) <= GetSystemMetrics(SM_CYDOUBLECLK) / 2;
+        window_ = doubleTap ? nullptr : window;
+        location_ = screen;
+        time_ = now;
+        return doubleTap;
+    }
+
+private:
+    HWND window_ = nullptr;
+    POINT location_{};
+    ULONGLONG time_ = 0;
 };
 
 inline void ConfigureVerticalPan(HWND window)

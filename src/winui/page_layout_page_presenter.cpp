@@ -186,7 +186,7 @@ struct PageLayoutPagePresenter::Impl
         pageList.CanDragItems(true);
         pageList.CanReorderItems(true);
         pageList.AllowDrop(true);
-        pageList.IsSwipeEnabled(false);
+        pageList.IsSwipeEnabled(true);
         pageList.MinHeight(68.0);
         pageList.MaxHeight(360.0);
         listContent.Children().Append(pageList);
