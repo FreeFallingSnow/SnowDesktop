@@ -9,6 +9,7 @@
 #include "common/constants.h"
 #include "common/utils.h"
 #include "dock/dock_folder_rules.h"
+#include "dock/dock_drop_model.h"
 #include "dock/dock_launch_animation.h"
 #include "dock/dock_magnification.h"
 #include "dock/dock_settings.h"
@@ -41,6 +42,12 @@ float RunningItemSlotUnits(const DockRunningAppInfo& running, float iconFraction
         ? 1.0f + iconFraction * (running.minimizedThumbnail->LayoutAspectRatio() - 1.0f)
         : 1.0f;
     return units * running.presence.Amount();
+}
+
+size_t SortableFileEnd(const std::vector<DockEntry>* entries, bool freeOrder)
+{
+    namespace model = snowdesktop::dock_drop_model;
+    return entries ? model::SortableEnd(*entries, freeOrder, model::IsRecycleBinEntry) : 0;
 }
 
 const DragSourceEntry* DraggedSeparator(const DragSourceList& sources)
@@ -644,7 +651,8 @@ bool DockContainer::IsFolderDragSource(Item* source) const
         if (index >= app_->dockEntries_.size()) return false;
         const auto& entry = app_->dockEntries_[index];
         if (app_->IsRecycleBinDockEntry(entry))
-            return entry.freeOrderSection.value_or(DockEntrySection::Files) == DockEntrySection::Files;
+            return !app_->dockSettings_.freeItemOrder ||
+                entry.freeOrderSection.value_or(DockEntrySection::Files) == DockEntrySection::Files;
         return entry.type == DockEntryType::QuickSearch ||
             (entry.type == DockEntryType::Separator && entry.freeOrderSection == DockEntrySection::Files) ||
             app_->IsFolderDockEntry(entry);
@@ -738,15 +746,18 @@ bool DockContainer::HasMixedFolderDragSource() const
 
 snowdesktop::dock_folder_rules::InsertRange DockContainer::GetDragInsertRange(POINT point) const
 {
-    const auto main = SortableEntryCount(), folders = FolderEntryCount();
-    if (app_ && app_->dockSettings_.freeItemOrder)
+    const auto main = SortableEntryCount();
+    const bool freeOrder = app_ && app_->dockSettings_.freeItemOrder;
+    const auto end = SortableFileEnd(entries_, freeOrder);
+    const auto folders = end - main;
+    if (freeOrder)
     {
         const auto& sources = app_->dragSession_.SourceList().entries;
         const bool searchDrag = std::any_of(sources.begin(), sources.end(),
             [](const auto& source) { return source.fromDock && source.dockEntryType == DockEntryType::QuickSearch; });
         return snowdesktop::dock_folder_rules::GroupInsertRange(searchDrag || GetSectionAtPoint(point) == DockEntrySection::Files, main, folders);
     }
-    if (HasMixedFolderDragSource()) return {0, main + folders};
+    if (HasMixedFolderDragSource()) return {0, end};
     return snowdesktop::dock_folder_rules::GroupInsertRange(HasOnlyFolderDragSource(), main, folders);
 }
 
@@ -2272,7 +2283,7 @@ size_t DockContainer::GetExternalDropInsertIndex(Slot* slot, HitRegion region) c
 {
     if (app_ && app_->dockSettings_.freeItemOrder)
         return GetInsertIndexAtPoint(app_->dragSession_.CurrentPoint());
-    const snowdesktop::dock_folder_rules::InsertRange range{0, SortableEntryCount() + FolderEntryCount()};
+    const snowdesktop::dock_folder_rules::InsertRange range{0, SortableFileEnd(entries_, false)};
     if (!slot) return range.end;
     return snowdesktop::dock_folder_rules::SlotInsertionIndex(range, slot->GetIndex(), region == HitRegion::SortAfter);
 }
@@ -2345,18 +2356,32 @@ std::optional<size_t> DockContainer::GetSeparatorInsertIndex(POINT point) const
         RunningItemAtPoint(point) || FrequentItemAtPoint(point)) return std::nullopt;
 
     const bool files = GetSectionAtPoint(point) == DockEntrySection::Files;
-    const auto range = snowdesktop::dock_folder_rules::GroupInsertRange(files, SortableEntryCount(), FolderEntryCount());
+    const auto main = SortableEntryCount();
+    const auto range = snowdesktop::dock_folder_rules::GroupInsertRange(
+        files, main, SortableFileEnd(entries_, freeOrder) - main);
     if (const auto* hit = EntryAtPoint(point); hit &&
         (hit->GetEntryIndex() < range.begin || hit->GetEntryIndex() >= range.end || hit->GetEntryType() == DockEntryType::Separator))
         return std::nullopt;
-    if (range.begin == range.end) return range.end;
-    if (!files && GetMaxScrollOffset(GetBounds()) > 0 && !IsPointInScrollViewport(point)) return std::nullopt;
 
     const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
     const bool vertical = IsVertical();
     const long axis = vertical ? point.y : point.x;
     const auto start = [vertical](const RECT& rect) { return vertical ? rect.top : rect.left; };
     const auto end = [vertical](const RECT& rect) { return vertical ? rect.bottom : rect.right; };
+    if (files && !freeOrder)
+    {
+        for (size_t i = range.end; i < ModelEntryCount() && i < slots.size(); ++i)
+        {
+            const RECT base = slots[i]->GetBounds();
+            if (IsRectEmpty(&base)) continue;
+            const RECT visual = GetElementVisualRect(base, point);
+            if (axis >= (start(visual) + end(visual)) / 2) return std::nullopt;
+            break;
+        }
+    }
+    if (range.begin == range.end) return range.end;
+    if (!files && GetMaxScrollOffset(GetBounds()) > 0 && !IsPointInScrollViewport(point)) return std::nullopt;
+
     long firstStart = LONG_MAX;
     long lastEnd = LONG_MIN;
     size_t boundary = range.end;
@@ -2403,7 +2428,7 @@ snowdesktop::dock_running_drag::Target DockContainer::GetRunningDragTarget(POINT
     const auto end = [&](const RECT& rect) { return IsVertical() ? rect.bottom : rect.right; };
     const long axis = IsVertical() ? pt.y : pt.x;
     const size_t mainEnd = SortableEntryCount();
-    const size_t filesEnd = mainEnd + FolderEntryCount();
+    const size_t filesEnd = SortableFileEnd(entries_, app_->dockSettings_.freeItemOrder);
     if (!app_->dockSettings_.freeItemOrder)
     {
         if (const auto* entry = EntryAtPoint(pt); entry && entry->GetEntryIndex() < count &&
@@ -2503,7 +2528,7 @@ void DockContainer::DrawInsertionPreview(ID2D1DeviceContext* context, size_t ins
         const size_t begin = target.area == running::Area::Running ? count :
             files ? main : 0;
         const size_t end = target.area == running::Area::Running ? runningEnd :
-            files ? main + FolderEntryCount() : main;
+            files ? SortableFileEnd(entries_, app_->dockSettings_.freeItemOrder) : main;
         const size_t boundary = target.area == running::Area::Running ? count + target.index : target.index;
         const size_t anchor = boundary < end ? boundary : end > begin ? end - 1 :
             files && runningEnd > count ? runningEnd - 1 : count;
@@ -2522,9 +2547,10 @@ void DockContainer::DrawInsertionPreview(ID2D1DeviceContext* context, size_t ins
     }
     if (HasMixedFolderDragSource())
     {
-        const auto main = SortableEntryCount(), folders = FolderEntryCount();
+        const auto main = SortableEntryCount();
+        const auto end = SortableFileEnd(entries_, false);
         DrawPartitionInsertionPreview(context, std::min(insertIndex, main), {0, main}, false);
-        DrawPartitionInsertionPreview(context, std::clamp(insertIndex, main, main + folders), {main, main + folders}, true);
+        DrawPartitionInsertionPreview(context, std::clamp(insertIndex, main, end), {main, end}, true);
         return;
     }
     const POINT pointer = app_->dragSession_.HasContext() ? app_->dragSession_.CurrentPoint() : app_->lastMousePoint_;
@@ -2559,11 +2585,11 @@ void DockContainer::DrawPartitionInsertionPreview(ID2D1DeviceContext* context, s
     }
     if (IsRectEmpty(&boundary) && folderSource)
     {
-        if (HasImplicitSearchSlot() && !slots.empty())
+        const RECT firstFile = FirstVisibleFileSlot();
+        if (!IsRectEmpty(&firstFile))
         {
-            const RECT search = slots.back()->GetBounds();
-            const RECT visual = GetElementVisualRect(search, pointer);
-            DrawDockInsertionIndicator(context, search, visual,
+            const RECT visual = GetElementVisualRect(firstFile, pointer);
+            DrawDockInsertionIndicator(context, firstFile, visual,
                 static_cast<float>(IsVertical() ? visual.top : visual.left), IsVertical(), ItemIconSize());
             return;
         }

@@ -259,8 +259,7 @@ size_t DesktopApp::DockFolderEntryCount() const
 
 bool DesktopApp::IsRecycleBinDockEntry(const DockEntry& entry) const
 {
-    return entry.type == DockEntryType::DesktopItem &&
-        _wcsicmp(entry.reference.c_str(), kDesktopIconClsidRecycleBin) == 0;
+    return snowdesktop::dock_drop_model::IsRecycleBinEntry(entry);
 }
 
 void DesktopApp::NormalizeDockRecycleBinPosition()

@@ -37,14 +37,60 @@ inline dock_folder_rules::EntryGroup GroupOf(const DockEntry& entry, const Servi
     using Group = dock_folder_rules::EntryGroup;
     if (entry.type == DockEntryType::QuickSearch) return Group::Folder;
     const bool recycle = services.recycle(entry);
-    if (entry.freeOrderSection && (services.freeItemOrder || entry.type == DockEntryType::Separator || recycle))
+    if (entry.freeOrderSection && (services.freeItemOrder || entry.type == DockEntryType::Separator))
         return *entry.freeOrderSection == DockEntrySection::Files ? Group::Folder : Group::Main;
     return recycle || services.folder(entry) ? Group::Folder : Group::Main;
+}
+
+inline bool IsTrailingControl(const DockEntry& entry, const Services& services)
+{
+    return !services.freeItemOrder &&
+        (entry.type == DockEntryType::QuickSearch || services.recycle(entry));
+}
+
+inline bool IsRecycleBinEntry(const DockEntry& entry)
+{
+    return entry.type == DockEntryType::DesktopItem &&
+        _wcsicmp(entry.reference.c_str(), kDesktopIconClsidRecycleBin) == 0;
+}
+
+template <typename IsRecycle>
+inline size_t SortableEnd(const std::vector<DockEntry>& entries, bool freeItemOrder, IsRecycle recycle)
+{
+    size_t end = entries.size();
+    if (freeItemOrder) return end;
+    while (end > 0 && (entries[end - 1].type == DockEntryType::QuickSearch || recycle(entries[end - 1])))
+        --end;
+    return end;
+}
+
+inline size_t SortableEnd(const std::vector<DockEntry>& entries, const Services& services)
+{
+    return SortableEnd(entries, services.freeItemOrder, services.recycle);
 }
 
 inline void Normalize(std::vector<DockEntry>& entries, const Services& services)
 {
     dock_folder_rules::NormalizeKeepingUserOrder(entries, [&](const auto& entry) { return GroupOf(entry, services); });
+    if (services.freeItemOrder) return;
+
+    const auto tail = std::stable_partition(entries.begin(), entries.end(),
+        [&](const auto& entry) { return !IsTrailingControl(entry, services); });
+    if (tail == entries.end()) return;
+    std::stable_partition(tail, entries.end(),
+        [](const auto& entry) { return entry.type == DockEntryType::QuickSearch; });
+    const size_t end = static_cast<size_t>(tail - entries.begin());
+
+    // Closing free order resets only these controls. Keep ordinary entry
+    // ranks and sections, and make the new tail slots their current order.
+    size_t nextOrder = 0;
+    for (size_t i = 0; i < end; ++i)
+        nextOrder = std::max(nextOrder, *entries[i].userOrder + 1);
+    for (size_t i = end; i < entries.size(); ++i)
+    {
+        entries[i].userOrder = nextOrder++;
+        entries[i].freeOrderSection.reset();
+    }
 }
 
 inline dock_folder_rules::InsertRange SectionRange(const std::vector<DockEntry>& entries,
@@ -53,7 +99,7 @@ inline dock_folder_rules::InsertRange SectionRange(const std::vector<DockEntry>&
     using Group = dock_folder_rules::EntryGroup;
     const size_t mainEnd = static_cast<size_t>(std::count_if(entries.begin(), entries.end(),
         [&](const auto& entry) { return GroupOf(entry, services) == Group::Main; }));
-    return section == DockEntrySection::Files ? dock_folder_rules::InsertRange{mainEnd, entries.size()} :
+    return section == DockEntrySection::Files ? dock_folder_rules::InsertRange{mainEnd, SortableEnd(entries, services)} :
         dock_folder_rules::InsertRange{0, mainEnd};
 }
 
@@ -74,6 +120,12 @@ inline void EnsureQuickSearch(std::vector<DockEntry>& entries, const Services& s
 {
     if (std::any_of(entries.begin(), entries.end(),
         [](const auto& entry) { return entry.type == DockEntryType::QuickSearch; })) return;
+    if (!services.freeItemOrder)
+    {
+        entries.push_back({DockEntryType::QuickSearch, L"__quick_search__"});
+        Normalize(entries, services);
+        return;
+    }
 
     auto range = SectionRange(entries, DockEntrySection::Files, services);
     const auto files = entries.begin() + static_cast<std::ptrdiff_t>(range.begin);
@@ -157,9 +209,13 @@ inline bool Pin(State state, const std::vector<DockEntry>& additions, size_t ins
             insertIndex = std::clamp(insertIndex, range.begin, range.end);
             InsertInSection(state.entries, insertIndex++, range, std::move(placed));
         }
+        else if (IsTrailingControl(addition, services))
+        {
+            state.entries.push_back(addition);
+        }
         else
         {
-            insertIndex = std::min(insertIndex, state.entries.size());
+            insertIndex = std::min(insertIndex, SortableEnd(state.entries, services));
             state.entries.insert(state.entries.begin() + static_cast<std::ptrdiff_t>(insertIndex), addition);
             ++insertIndex;
         }
@@ -210,7 +266,7 @@ inline bool AddMaterialized(State state, const std::vector<std::wstring>& paths,
         }
         else
         {
-            insertIndex = std::min(insertIndex, state.entries.size());
+            insertIndex = std::min(insertIndex, SortableEnd(state.entries, services));
             state.entries.insert(state.entries.begin() + static_cast<std::ptrdiff_t>(insertIndex), std::move(entry));
         }
         ++insertIndex;
@@ -227,8 +283,7 @@ inline ReorderResult Reorder(std::vector<DockEntry>& entries, std::vector<size_t
     size_t insertIndex, const Services& services, bool preserveCapturedOrder = false)
 {
     std::erase_if(indices, [&](size_t index) {
-        return index >= entries.size() ||
-            (!services.freeItemOrder && entries[index].type == DockEntryType::QuickSearch);
+        return index >= entries.size() || IsTrailingControl(entries[index], services);
     });
     if (!preserveCapturedOrder) std::sort(indices.begin(), indices.end());
     std::unordered_set<size_t> seen;
@@ -270,7 +325,7 @@ inline ReorderResult Reorder(std::vector<DockEntry>& entries, std::vector<size_t
     }
     const size_t mainEnd = static_cast<size_t>(std::count_if(entries.begin(), entries.end(),
         [&](const auto& entry) { return GroupOf(entry, services) == dock_folder_rules::EntryGroup::Main; }));
-    const size_t folderEnd = entries.size();
+    const size_t folderEnd = SortableEnd(entries, services);
     // Insert the later partition first: the main insertion then shifts the
     // complete file section while preserving each partition's captured order.
     const auto mainInsert = std::min(insertIndex, mainEnd);
