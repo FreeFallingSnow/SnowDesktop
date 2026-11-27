@@ -170,9 +170,9 @@ inline constexpr auto Fields<GeneralSettings> = std::to_array<Description>({
     {"gridPreviewHotkeyEnabled", "Enables the desktop grid overlay shortcut. It is a visual preview of the grid."},
     {"gridPreviewHotkeyModifiers", "Sets the Windows modifier mask for the desktop grid preview shortcut."},
     {"gridPreviewHotkeyVirtualKey", "Sets the Windows virtual key for the desktop grid preview shortcut."},
-    {"touchSimulationEnabled", "Enables system-wide mouse-to-touch simulation while the configured chord is held. Left click and drag simulate a contact and the wheel simulates pinch. Requires a binding and is restored at startup."},
-    {"touchSimulationModifiers", "Sets the Windows MOD_* mask of additional modifiers to hold. A standalone modifier is recorded as the virtual key itself, so its own mask bit must be omitted. Change together with touchSimulationKey when replacing a binding."},
-    {"touchSimulationKey", "Sets the Windows virtual-key code to hold before clicking or scrolling. The default is Right Shift (161). Set the key and modifiers to zero and disable simulation to clear the binding."},
+    {"touchSimulationEnabled", "Enables system-wide mouse-to-touch simulation while the binding is held. Physical mouse movement and buttons are intercepted during conversion. Aim with the separate pointer, click or drag with the left button for touch, and scroll to pinch. The enabled setting is restored at startup."},
+    {"touchSimulationModifiers", "Sets the Windows MOD_* mask of modifiers to hold with the main key or mouse button. A standalone modifier is recorded as the virtual key itself, so its own mask bit must be omitted. Change together with touchSimulationKey when replacing a binding."},
+    {"touchSimulationKey", "Sets the Windows virtual-key code of the held trigger. Keyboard keys and the right, middle and two extended mouse buttons are supported. The default is Right Shift (161). Set the key and modifiers to zero and disable simulation to clear the binding."},
 });
 
 template<>

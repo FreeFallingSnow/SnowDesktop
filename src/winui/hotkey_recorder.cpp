@@ -1,7 +1,9 @@
 #include "pch.h"
 
 #include "hotkey_recorder.h"
+#include "ui/input/touch_simulator.h"
 
+#include <winrt/Microsoft.UI.Input.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.Peers.h>
 #include <winrt/Microsoft.UI.Xaml.Media.h>
@@ -115,10 +117,16 @@ std::vector<std::wstring> ChordParts(
         parts.push_back(text.shift);
     if ((chord.modifiers & HotkeyRecorderRules::ModifierWindows) != 0)
         parts.push_back(text.windows);
-    if (chord.virtualKey == VK_MENU)
-        parts.push_back(text.alt);
-    else if (!chord.Empty())
-        parts.push_back(VirtualKeyName(chord.virtualKey));
+    switch (chord.virtualKey)
+    {
+    case 0: break;
+    case VK_MENU: parts.push_back(text.alt); break;
+    case VK_RBUTTON: parts.push_back(text.mouseRight); break;
+    case VK_MBUTTON: parts.push_back(text.mouseMiddle); break;
+    case VK_XBUTTON1: parts.push_back(text.mouseBack); break;
+    case VK_XBUTTON2: parts.push_back(text.mouseForward); break;
+    default: parts.push_back(VirtualKeyName(chord.virtualKey)); break;
+    }
     return parts;
 }
 
@@ -350,12 +358,14 @@ struct HotkeyRecorderState
     bool alive = true;
     bool lastActionCleared = false;
     bool dialogOpen = false;
+    HWND bindingCaptureWindow = nullptr;
     HotkeyChord defaultValue;
     bool hasDefaultValue = false;
 
     winrt::event_token clickToken{};
     winrt::event_token keyDownToken{};
     winrt::event_token keyUpToken{};
+    winrt::event_token pointerPressedToken{}, pointerMovedToken{};
     winrt::event_token dialogOpenedToken{};
     winrt::event_token editToken{};
     winrt::event_token restoreDefaultToken{};
@@ -365,6 +375,25 @@ struct HotkeyRecorderState
 
 namespace
 {
+void ClearTouchBindingCapture(HotkeyRecorderState& state) noexcept
+{
+    if (const HWND window = std::exchange(state.bindingCaptureWindow, nullptr))
+        RemovePropW(window, touch_simulation::BindingCaptureProperty);
+}
+
+UINT MouseBindingKey(winrt::Microsoft::UI::Input::PointerUpdateKind change) noexcept
+{
+    using Kind = winrt::Microsoft::UI::Input::PointerUpdateKind;
+    switch (change)
+    {
+    case Kind::RightButtonPressed: return VK_RBUTTON;
+    case Kind::MiddleButtonPressed: return VK_MBUTTON;
+    case Kind::XButton1Pressed: return VK_XBUTTON1;
+    case Kind::XButton2Pressed: return VK_XBUTTON2;
+    default: return 0;
+    }
+}
+
 std::wstring StatusWithDetails(
     const std::wstring& status,
     const std::wstring& details)
@@ -628,9 +657,29 @@ winrt::fire_and_forget ShowShortcutDialog(
 
     try
     {
-        state->dialog.XamlRoot(state->root.XamlRoot());
+        const auto xamlRoot = state->root.XamlRoot();
+        state->dialog.XamlRoot(xamlRoot);
+        if (state->heldBindingMode)
+        {
+            HWND window = nullptr;
+            if (const auto environment = xamlRoot ? xamlRoot.ContentIslandEnvironment() : nullptr)
+            {
+                const HWND island = winrt::Microsoft::UI::GetWindowFromWindowId(environment.AppWindowId());
+                window = GetAncestor(island, GA_ROOT);
+            }
+            if (!window)
+            {
+                const HWND foreground = GetForegroundWindow();
+                DWORD process = 0;
+                GetWindowThreadProcessId(foreground, &process);
+                if (process == GetCurrentProcessId()) window = foreground;
+            }
+            if (window && SetPropW(window, touch_simulation::BindingCaptureProperty, reinterpret_cast<HANDLE>(1)))
+                state->bindingCaptureWindow = window;
+        }
         state->dialog.RequestedTheme(state->root.ActualTheme());
         const auto result = co_await state->dialog.ShowAsync();
+        ClearTouchBindingCapture(*state);
         if (!state->alive)
             co_return;
 
@@ -649,6 +698,7 @@ winrt::fire_and_forget ShowShortcutDialog(
     }
     catch (...)
     {
+        ClearTouchBindingCapture(*state);
         if (state->alive && state->rules.Active())
             ApplyTransition(state, state->rules.CancelCapture());
     }
@@ -797,6 +847,17 @@ HotkeyRecorder::HotkeyRecorder()
                 virtualKey);
             args.Handled(true);
         });
+    const auto captureMouseBinding = [weak](const auto&, const muxi::PointerRoutedEventArgs& args) {
+        const auto state = weak.lock();
+        if (!state || !state->alive || !state->heldBindingMode || !state->rules.Active() ||
+            args.Pointer().PointerDeviceType() != winrt::Microsoft::UI::Input::PointerDeviceType::Mouse) return;
+        const UINT key = MouseBindingKey(args.GetCurrentPoint(state->captureSurface).Properties().PointerUpdateKind());
+        if (!key) return;
+        args.Handled(true);
+        ApplyTransition(state, state->rules.KeyDown(key, SamplePhysicalModifiers(), false, true));
+    };
+    state_->pointerPressedToken = state_->captureSurface.PointerPressed(captureMouseBinding);
+    state_->pointerMovedToken = state_->captureSurface.PointerMoved(captureMouseBinding);
     state_->dialogOpenedToken = state_->dialog.Opened(
         [weak](const auto&, const auto&) {
             const auto state = weak.lock();
@@ -986,6 +1047,7 @@ void HotkeyRecorder::Close() noexcept
 {
     if (!state_ || !state_->alive) return;
     state_->alive = false;
+    ClearTouchBindingCapture(*state_);
     ++state_->committedRequestId;
     state_->rules.Close();
     try
@@ -995,6 +1057,8 @@ void HotkeyRecorder::Close() noexcept
         state_->button.Click(state_->clickToken);
         state_->captureSurface.KeyDown(state_->keyDownToken);
         state_->captureSurface.KeyUp(state_->keyUpToken);
+        state_->captureSurface.PointerPressed(state_->pointerPressedToken);
+        state_->captureSurface.PointerMoved(state_->pointerMovedToken);
         state_->dialog.Opened(state_->dialogOpenedToken);
         state_->edit.Click(state_->editToken);
         state_->restoreDefault.Click(state_->restoreDefaultToken);

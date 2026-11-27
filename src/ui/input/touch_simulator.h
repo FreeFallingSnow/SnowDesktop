@@ -6,6 +6,13 @@ namespace snowdesktop::touch_simulation
 {
 inline constexpr UINT DefaultKey = VK_RSHIFT;
 inline constexpr UINT ModifierMask = MOD_SHIFT | MOD_CONTROL | MOD_ALT | MOD_WIN;
+inline constexpr wchar_t BindingCaptureProperty[] = L"SnowDesktop.TouchSimulation.BindingCapture";
+
+constexpr bool IsMouseBinding(UINT key) noexcept
+{
+    return key == VK_RBUTTON || key == VK_MBUTTON || key == VK_XBUTTON1 || key == VK_XBUTTON2;
+}
+
 constexpr UINT KeyModifier(UINT key) noexcept
 {
     switch (key)
@@ -20,9 +27,10 @@ constexpr UINT KeyModifier(UINT key) noexcept
 constexpr bool ValidBinding(UINT modifiers, UINT key) noexcept
 {
     if (key == 0) return modifiers == 0;
-    return key >= VK_BACK && key <= 0xFE && key != VK_PROCESSKEY && key != VK_PACKET &&
-        key != VK_LWIN && key != VK_RWIN && key != VK_TAB && key != VK_ESCAPE && key != VK_RETURN &&
-        !(modifiers & (~ModifierMask | KeyModifier(key)));
+    return !(modifiers & (~ModifierMask | KeyModifier(key))) &&
+        (IsMouseBinding(key) || (key >= VK_BACK && key <= 0xFE &&
+            key != VK_PROCESSKEY && key != VK_PACKET && key != VK_LWIN && key != VK_RWIN &&
+            key != VK_TAB && key != VK_ESCAPE && key != VK_RETURN));
 }
 
 bool Configure(bool enabled, UINT modifiers, UINT key);

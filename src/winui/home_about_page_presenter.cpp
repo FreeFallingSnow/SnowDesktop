@@ -43,7 +43,8 @@ struct LinkEntry
 void InitializeSection(
     Section& section,
     const mux::Style& style,
-    const muxc::StackPanel& page)
+    const muxc::StackPanel& page,
+    bool paddedBody = true)
 {
     section.root = muxc::Border{};
     section.root.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
@@ -55,7 +56,7 @@ void InitializeSection(
         winrt::Windows::UI::Text::FontWeights::SemiBold());
     section.title.TextWrapping(mux::TextWrapping::Wrap);
     section.surface = presenter_controls::InitializeSettingsGroup(
-        section.root, section.title, section.content, style, true);
+        section.root, section.title, section.content, style, paddedBody);
     page.Children().Append(section.root);
 }
 
@@ -510,7 +511,7 @@ struct HomeAboutPagePresenter::Impl
         animationRow.text.Children().Append(animationStatus);
         animationSection.content.Children().Append(animationRow.root);
 
-        InitializeSection(touchSimulationSection, cardStyle, debugRoot);
+        InitializeSection(touchSimulationSection, cardStyle, debugRoot, false);
         touchSimulationSection.title.Visibility(mux::Visibility::Collapsed);
         touchSimulationToggle = muxc::ToggleSwitch{};
         touchSimulationToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
@@ -524,7 +525,7 @@ struct HomeAboutPagePresenter::Impl
         touchSimulationKeyRow.SetCompactEditor();
         touchSimulationKeyRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         touchSimulationSection.content.Children().Append(touchSimulationKeyRow.root);
-        presenter_controls::UpdateSettingsSubrows(touchSimulationSection.content);
+        presenter_controls::UpdateSettingsSubrows(touchSimulationSection.content, 0.0);
 
         InitializeSection(resetUnlockSection, cardStyle, debugRoot);
         resetUnlockSection.title.Visibility(mux::Visibility::Collapsed);
@@ -937,7 +938,13 @@ struct HomeAboutPagePresenter::Impl
         forceRestartChordRow.SetText(L("app.settings.hotkey"));
         forceRestartRecorder.SetText(HotkeyText(L("settings.debug.forceRestartHotkey")));
         touchSimulationKeyRow.SetText(L("app.settings.hotkey"));
-        touchSimulationRecorder.SetText(HotkeyText(L("settings.debug.touchSimulation.title")));
+        auto touchRecorderText = HotkeyText(L("settings.debug.touchSimulation.title"));
+        touchRecorderText.captureActive = L("settings.debug.touchSimulation.capture");
+        touchRecorderText.mouseRight = L("settings.debug.touchSimulation.mouseRight");
+        touchRecorderText.mouseMiddle = L("settings.debug.touchSimulation.mouseMiddle");
+        touchRecorderText.mouseBack = L("settings.debug.touchSimulation.mouseBack");
+        touchRecorderText.mouseForward = L("settings.debug.touchSimulation.mouseForward");
+        touchSimulationRecorder.SetText(std::move(touchRecorderText));
         muxa::AutomationProperties::SetAutomationId(touchSimulationToggle, L"debug.touchSimulation");
         muxa::AutomationProperties::SetAutomationId(touchSimulationRecorder.FocusTarget(), L"debug.touchSimulation.hotkey");
         SetSectionTitle(debugProfileSection, "settings.debug.profile.title", L"Debug environment");

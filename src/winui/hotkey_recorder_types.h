@@ -32,6 +32,10 @@ struct HotkeyRecorderText
     std::wstring alt = L"Alt";
     std::wstring shift = L"Shift";
     std::wstring windows = L"Win";
+    std::wstring mouseRight = L"Right mouse button";
+    std::wstring mouseMiddle = L"Middle mouse button";
+    std::wstring mouseBack = L"Mouse button 4";
+    std::wstring mouseForward = L"Mouse button 5";
     std::wstring apply = L"Apply";
     std::wstring cancel = L"Cancel";
     std::wstring edit = L"Edit";
