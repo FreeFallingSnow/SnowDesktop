@@ -509,6 +509,8 @@
 
 - **剪贴板接口续证（2026-11-20）**：Task `clipboard-original-size`、批次 `d1b98672072b4fc9999a870e52761ae0` 修订 0。两处 Lua 公共接口文件由同批 `ai-settings-disclosure` 编辑。对方就绪后，`claim -Add` 从活动归属冲突变为 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`。本任务将自有差异保存为可复原补丁并撤回自身编辑，允许前序冻结和提交后再认领；保留对方归属。共享文件仍缺少同批次按补丁交接的路径。
 
+- **Dock 设置说明交接续证（2026-11-27）**：Task `task-de8ccad35e8842a6b5b2eafc26ccc1de` 与 `dock-free-order-separators` 在批次 `b9eb9891e100492a9d9fcdc0eff60bfa` 修订 0 分别等待 `src/settings/control_settings_guidance.h` 和 `src/core/dock.cpp`。前者的 `claim -Add` 返回 `Active file edit conflicts with dock-free-order-separators`，本地交接记于 issue `7535d730dc024ca0a1a582ce899c8339`。票据 `ad92614c39a04c6ae2d4e7971705adac` 返回 `eligible` 后，本任务核对对方已撤回、目标文件与 HEAD 一致，重新认领成功。未接手对方差异或重复构建。后续可评估对互等路径提供显式交接，保留各自变更和归属记录。
+
 - **Dock 层级修复续证（2026-11-20）**：Task `dock-reserve-stay-awake` 的 `watch wait --condition files` 票据 `68703a138607be8614812c5feae02916` 对 `src/app/shell/app_shell_menu.cpp` 返回 `eligible`，Git 仍显示前序 DSH 任务的未提交修改，批次 `c425238ece434a098799197476e18115`、Run `8defbaff90b44d84a3f2aafef62cc329` 当时仍在构建。沿原 Run 等待结果，用户授权接手后复用原验证回执提交 `eb4e3fa5`，再认领本次续修路径。文件票据仍需反映未提交的前序改动。
 
 - **Dock 渐隐裁剪续证（2026-11-19）** Task `wgc-shadow-layering` 的票据 `e26ac202cc4a260223ea486d6bb06177` 对 `src/core/dock.cpp` 和状态栏视图返回 `eligible`。Git 仍显示前序阴影任务的 Dock 改动未提交。按实际归属先修改状态栏，待 `9ff48b4f2` 保存前序改动后认领 Dock，在批次 `cf0af9d5f44b4dc6b28381a62a4aa308` 合并验证。文件观察仍需区分窗口可用和路径可安全认领。
