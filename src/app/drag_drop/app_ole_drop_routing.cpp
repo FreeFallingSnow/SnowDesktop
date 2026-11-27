@@ -34,8 +34,11 @@ bool DesktopApp::DeliverLuaFileDrop(POINT point, const std::vector<std::wstring>
     if (!content) return false;
     const std::wstring instanceId = content->id;
     const RECT frame = GetStandaloneWidgetFrameRect(widgets_[index]);
-    return widgetEngine_->InvokeFileDrop(instanceId,
+    const bool touch = !snowdesktop::private_pointer::Active() && snowdesktop::touch_input::IsCurrentTouchInput();
+    const bool accepted = widgetEngine_->InvokeFileDrop(instanceId,
         point.x - frame.left, point.y - frame.top, paths);
+    if (accepted && touch) SelectWidgetInteractionOwner(instanceId);
+    return accepted;
 }
 
 std::optional<DesktopApp::LuaTextDropSurface> DesktopApp::FindLuaTextDropSurface(
@@ -246,6 +249,7 @@ bool DesktopApp::HandleWidgetTextDragHover(
 std::optional<bool> DesktopApp::DeliverWidgetTextDrop(
     POINT point, IDataObject* source, bool copyAllowed)
 {
+    const bool touch = !snowdesktop::private_pointer::Active() && snowdesktop::touch_input::IsCurrentTouchInput();
     std::optional<RECT> popupFrame;
     if (auto* view = FindNativeSearchTextDropSurface(point, popupFrame))
     {
@@ -270,7 +274,8 @@ std::optional<bool> DesktopApp::DeliverWidgetTextDrop(
                 other->SetSearchFocused(false);
         if (dockFolderPopupContainer_ && dockFolderPopupContainer_.get() != view)
             dockFolderPopupContainer_->SetSearchFocused(false);
-        if (!popup)
+        if (touch) SelectWidgetInteractionOwner(GetContainerWidgetId(view));
+        else if (!popup)
         {
             const size_t index = FindWidgetIndexById(widgetId);
             if (index < widgets_.size()) SelectWidgetOnly(index);
@@ -300,7 +305,8 @@ std::optional<bool> DesktopApp::DeliverWidgetTextDrop(
             current->widgetId, *target, current->local, current->surface, text, move))
         return false;
 
-    if (current->surface == "desktop") ClearSelection();
+    if (touch) SelectWidgetInteractionOwner(current->widgetId);
+    else if (current->surface == "desktop") ClearSelection();
     UpdateHostInputImePosition();
     return true;
 }

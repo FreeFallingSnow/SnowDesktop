@@ -682,6 +682,9 @@ void DesktopApp::RestoreFolderPreviewHome(bool present)
     folderReadWork_.Cancel(snowdesktop::folder_preview::kResolveWorkKey);
     const auto previousPopup = present && !folderPreview_->inlineBounds
         ? std::optional{GetPresentedCollectionPopupGeometry()} : std::nullopt;
+    const auto* component = present ? GetFolderPreviewComponent() : nullptr;
+    const auto selectedOwner = component && component->showOnHoverOnly && component->selected
+        ? component->id : std::wstring{};
     if (folderPreview_->inlineBounds)
         CancelInlineFolderPreviewIconLoads(folderPreview_->hostWidgetId);
     if (dockFolderPopupContainer_) dockFolderPopupContainer_->SetSearchFocused(false);
@@ -704,8 +707,8 @@ void DesktopApp::RestoreFolderPreviewHome(bool present)
     bool restoreDesktopSelection = false;
     if (present)
     {
-        restoreDesktopSelection = ClearSelection() || !session.selectedDesktopKeys.empty() ||
-            !session.selectedFolderPaths.empty();
+        restoreDesktopSelection = SelectWidgetInteractionOwner(selectedOwner) || ClearSelection() ||
+            !session.selectedDesktopKeys.empty() || !session.selectedFolderPaths.empty();
         for (const auto& key : session.selectedDesktopKeys)
         {
             const size_t index = FindItemIndexByKey(key);

@@ -69,6 +69,7 @@ struct ScrollTarget
     bool lua = false;
     bool moveWidget = false;
     bool directWidgetDrag = false;
+    std::wstring widgetId;
     std::wstring stackId;
 };
 
@@ -298,12 +299,14 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
         if (window == hwnd_) ActivateInlineFolderPreviewAtPoint(desktop);
         ScrollTarget target;
         const auto nativeTarget = [&](WidgetContainer& view, bool desktopOwner = false) {
+            const auto& owner = *view.GetWidgetData();
+            target.widgetId = GetContainerWidgetId(&view);
             const WidgetHit hit = view.HitTestWidget(desktop);
             target.directWidgetDrag = desktopOwner &&
                 (hit == WidgetHit::MoveHandle || hit == WidgetHit::IconTitle);
             target.moveWidget = desktopOwner && hit == WidgetHit::CollectionOpenBtn;
-            if (view.IsCollapsed() || (view.GetWidgetData()->showOnHoverOnly &&
-                !view.GetWidgetData()->selected)) return;
+            if (view.IsCollapsed() || (owner.showOnHoverOnly && !owner.selected &&
+                !RetainsInlineFolderPreview(owner) && !HasSelectedFilesInWidget(FindWidgetIndexById(owner.id)))) return;
             auto* scrolling = dynamic_cast<ScrollingItemWidget*>(&view);
             const bool onTab = hit == WidgetHit::CategoryTab || hit == WidgetHit::SourceTab;
             target.horizontal = scrolling && scrolling->TryScrollTabs(desktop, 0);
@@ -335,8 +338,9 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
         if (luaWidgetPanelAnimation_.IsInteractive() && !luaWidgetPanelRequest_.widgetId.empty())
         {
             const RECT content = GetLuaWidgetPanelContentRect();
-            if (PtInRect(&content, desktop))
-                luaTarget(luaWidgetPanelRequest_.widgetId, content, luaWidgetPanelRequest_.surface);
+            if (PtInRect(&content, desktop) &&
+                luaTarget(luaWidgetPanelRequest_.widgetId, content, luaWidgetPanelRequest_.surface))
+                target.widgetId = luaWidgetPanelRequest_.widgetId;
         }
         else if (auto* popup = GetOpenPopupWidget(); popup && IsPointInsideOpenPopup(desktop) &&
             IsCollectionPopupInteractive())
@@ -346,6 +350,8 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
             auto* categorized = group ? group : GetCategorizedPopupView();
             CategorizedPopupScope scope(categorized, GetCategorizedPopupFrame(bounds));
             if (categorized) nativeTarget(*categorized);
+            else if (const auto* component = GetFolderPreviewComponent()) target.widgetId = component->id;
+            else target.widgetId = popup->id;
             const RECT content = GetCollectionPopupContentRect(bounds);
             if (folderPreview_ && folderPreview_->inlineBounds &&
                 PtInRect(&folderPreview_->inlineTitleBar, desktop))
@@ -406,6 +412,7 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
                     widgetEngine_->EnsureWidgetLoaded(content->id, content->packageId);
                     if (luaTarget(content->id, GetStandaloneWidgetFrameRect(owner), "desktop"))
                     {
+                        target.widgetId = owner.id;
                         target.moveWidget = !target.draggable;
                         if (owner.type == DesktopWidgetType::LuaStack && owner.childWidgetIds.size() > 1)
                             target.stackId = owner.id;
@@ -471,7 +478,10 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
         else if (changesPage)
             gesture.action = Action::Swipe;
         else if (ownsScroll)
+        {
             gesture.action = Action::Pan;
+            SelectWidgetInteractionOwner(gesture.target.widgetId, true);
+        }
         else gesture.action = Action::Consumed;
     }
     if (gesture.action == Action::Pan)

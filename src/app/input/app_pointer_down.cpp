@@ -48,6 +48,7 @@ bool NextDetailsSortAscending(
 
 void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
+    const bool touchPress = !snowdesktop::private_pointer::Active() && snowdesktop::touch_input::IsCurrentTouchInput();
     desktopCollectionOpenPressHandled_ = false;
     ClearDesktopSurfaceKeyboardFocus();
     luaPanelOutsidePressGeneration_ = 0;
@@ -223,8 +224,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     const bool popupOwnedByPointDock =
         collectionPopupDockHost_ == pointDockHost;
     const bool pointInDock = pointDock != nullptr;
-    if (!snowdesktop::private_pointer::Active() && snowdesktop::touch_input::RecentlyPressed() &&
-        !IsPointOccludedByOpenPopup(pt) && !quickNavigation_->open)
+    if (touchPress && !IsPointOccludedByOpenPopup(pt) && !quickNavigation_->open)
     {
         size_t hit = widgets_.size();
         if (!pointInDock)
@@ -384,6 +384,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             }
             if (view->BeginCategoryTabDrag(pt))
             {
+                if (touchPress) SelectWidgetInteractionOwner(GetContainerWidgetId(view), true);
                 view->SetSearchFocused(false);
                 view->GetWidgetData()->activeCategoryId = view->CategoryIdAtPoint(pt);
                 popupScrollOffset_ = 0;
@@ -411,7 +412,10 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     PtInRect(&popup, pt) != FALSE,
                     popupOwnedByPointDock))
         {
-            CloseCollectionPopup();
+            const RECT ownerFrame = GetStandaloneWidgetFrameRect(widgets_[popupWidgetIndex_]);
+            const bool touchingOwner = touchPress && widgets_[popupWidgetIndex_].showOnHoverOnly &&
+                widgets_[popupWidgetIndex_].selected && PtInRect(&ownerFrame, pt);
+            CloseCollectionPopup(!touchingOwner);
             collectionPopupClosedByPointerDown = true;
         }
     }
@@ -1151,6 +1155,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     geometry, pt.y, pt.x, viewport.right,
                     wc->GetCellScale()))
             {
+                if (touchPress) SelectWidgetInteractionOwner(widgets_[wi].id, true);
                 widgetScrollbarDragging_ = true;
                 widgetScrollbarDragContainer_ = wc;
                 widgetScrollbarDragStartY_ = pt.y;
@@ -1422,8 +1427,12 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 const size_t childIndex =
                     FindWidgetIndexById(id);
                 UpdateWidgetControlSelection(&widgets_[wi], [&] {
-                    ClearSelection();
-                    if (childIndex < widgets_.size()) widgets_[childIndex].selected = true;
+                    if (touchPress) SelectWidgetOnly(wi);
+                    else
+                    {
+                        ClearSelection();
+                        if (childIndex < widgets_.size()) widgets_[childIndex].selected = true;
+                    }
                 });
                 mouseDownWidgetIndex_ = wi;
                 mouseDownHit_ =
@@ -1478,8 +1487,12 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                         const size_t childIndex =
                             FindWidgetIndexById(id);
                         UpdateWidgetControlSelection(&widgets_[wi], [&] {
-                            ClearSelection();
-                            if (childIndex < widgets_.size()) widgets_[childIndex].selected = true;
+                            if (touchPress) SelectWidgetOnly(wi);
+                            else
+                            {
+                                ClearSelection();
+                                if (childIndex < widgets_.size()) widgets_[childIndex].selected = true;
+                            }
                         });
                         mouseDownWidgetIndex_ = wi;
                         mouseDownHit_ =
@@ -1492,6 +1505,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     }
                     else
                     {
+                        if (touchPress) SelectWidgetInteractionOwner(widgets_[wi].id, true);
                         if (auto* fileGroup =
                                 dynamic_cast<FileGroup*>(wc))
                             fileGroup->

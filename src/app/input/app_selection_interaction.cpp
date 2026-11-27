@@ -7,6 +7,7 @@
 #include "shell/shell_extension_service.h"
 #include "drag_drop/drag_input_rules.h"
 #include "widgets/single_cell_widget_rules.h"
+#include "widgets/lua_logical_slot.h"
 
 // Selection projection, keyboard focus sync and marquee selection.
 
@@ -1049,6 +1050,36 @@ bool DesktopApp::SelectWidgetOnly(size_t index)
     if (widgetEngine_ && content && widgetEngine_->EnsureWidgetLoaded(content->id, content->packageId))
         widgetEngine_->InvokeSelected(content->id);
     return otherSelectionChanged;
+}
+
+std::wstring DesktopApp::GetContainerWidgetId(const Container* target)
+{
+    if (!target) return {};
+    if (const auto* logical = dynamic_cast<const LuaLogicalSlotContainer*>(target))
+        return logical->WidgetId();
+    if (target == dockFolderPopupContainer_.get())
+    {
+        if (const auto* component = GetFolderPreviewComponent()) return component->id;
+        return dockFolderPopupMappingWidgetId_;
+    }
+    const auto* view = dynamic_cast<const WidgetContainer*>(target);
+    return view && view->GetWidgetData() ? view->GetWidgetData()->id : std::wstring{};
+}
+
+bool DesktopApp::SelectWidgetInteractionOwner(const std::wstring& widgetId, bool hoverOnly)
+{
+    if (widgetId.empty()) return false;
+    auto index = FindWidgetIndexById(widgetId);
+    if (index >= widgets_.size()) return false;
+    const auto collectionGroup = FindCollectionGroupIndexForChild(widgetId);
+    const auto fileGroup = FindFileGroupIndexForChild(widgetId);
+    if (collectionGroup < widgets_.size()) index = collectionGroup;
+    else if (fileGroup < widgets_.size()) index = fileGroup;
+    const auto& owner = ResolveLuaWidgetFrameOwner(widgets_[index]);
+    if (hoverOnly && (!owner.showOnHoverOnly || owner.selected)) return false;
+    SelectWidgetOnly(index);
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
 }
 
 /**

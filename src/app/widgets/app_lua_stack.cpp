@@ -458,7 +458,12 @@ bool DesktopApp::HandleLuaStackIndicatorPointer(POINT point, bool pressed)
         snowdesktop::private_pointer::ReleasePointerCapture();
         luaStackWheel_.Hold(luaStackIndicator_.stackId, GetTickCount64());
         const auto stackId = luaStackIndicator_.stackId;
-        if (activate && SelectLuaStackMember(stackId, id)) UpdateLuaStackIndicator(point, stackId);
+        const bool touch = !snowdesktop::private_pointer::Active() && snowdesktop::touch_input::IsCurrentTouchInput();
+        if (activate && SelectLuaStackMember(stackId, id))
+        {
+            if (touch) SelectWidgetInteractionOwner(stackId);
+            UpdateLuaStackIndicator(point, stackId);
+        }
         else UpdateLuaStackIndicator(point);
     }
     return true;

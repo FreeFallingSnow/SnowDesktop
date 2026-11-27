@@ -178,7 +178,7 @@ void DesktopApp::DrawStaticBackground(
         const bool interactionVisible =
             snowdesktop::widget_visibility_rules::ShouldRenderWidget(
                 widgetData.showOnHoverOnly,
-                dragSession_.IsActive(),
+                dragSession_.HasContext(),
                 dragDropController_.IsExternalDragActive(),
                 widgetAction_ == WidgetAction::Move,
                 widgetData.selected,

@@ -1773,6 +1773,8 @@ private:
     void SelectOnly(int index);
     /** @brief 仅选中指定索引的部件。 @param index 部件索引 */
     bool SelectWidgetOnly(size_t index);
+    std::wstring GetContainerWidgetId(const Container* target);
+    bool SelectWidgetInteractionOwner(const std::wstring& widgetId, bool hoverOnly = false);
     /** @brief 切换指定桌面项的选择状态。 @param index 桌面项索引 */
     void ToggleSelection(int index);
     std::vector<SelectionController::Target> GetDesktopSelectionTargets(

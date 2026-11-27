@@ -1,5 +1,7 @@
 #include "app/app.h"
 #include "member_drop_layout.h"
+#include "ui/input/private_pointer.h"
+#include "ui/input/touch_input.h"
 
 DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allowed)
 {
@@ -12,6 +14,10 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
     const auto region = dragSession_.TargetRegion();
     const bool removeDockPin = !GetDockDragOutRemovalHint(point).empty();
     const bool canDrop = target && region != HitRegion::None && region != HitRegion::Blocked;
+    const bool touch = !snowdesktop::private_pointer::Active() &&
+        snowdesktop::touch_input::IsCurrentTouchInput();
+    // A commit can rebuild the containers, so carry the destination by its stable ID.
+    const auto dropWidgetId = touch && canDrop && !removeDockPin ? GetContainerWidgetId(target) : std::wstring{};
     const bool handoff = canDrop && region == HitRegion::Handoff;
     const bool dockInsertion = canDrop && !handoff && dynamic_cast<DockContainer*>(target);
     const auto sources = dragSession_.SourceList();
@@ -82,7 +88,9 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
 
     if (effect && dockInsertion) DockContainer::FinishFreeOrderForDrag(*this, true);
     if (effect && save) RequestLayoutSave();
-    if (canDrop || removeDockPin) ClearSelection();
+    const bool selectedDestination = effect && !dropWidgetId.empty() && SelectWidgetInteractionOwner(dropWidgetId);
+    if (!selectedDestination && (canDrop || removeDockPin) && (effect || !touch))
+        ClearSelection();
     if (dragSession_.HasContext()) EndDragSession();
     if (effect && refreshPopup && dockFolderPopupOpen_) RefreshDockFolderPopup();
     if (effect && reload)

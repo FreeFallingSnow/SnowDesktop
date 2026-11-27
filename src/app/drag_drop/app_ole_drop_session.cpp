@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "ui/input/touch_input.h"
 #include "app/app.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
@@ -812,6 +813,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
     const RightDragMenuPresenter& presentMenu)
 {
     if (!effect) return E_POINTER;
+    const bool touchDrop = !snowdesktop::private_pointer::Active() && snowdesktop::touch_input::IsCurrentTouchInput();
     CancelPendingExternalOleDragLeave();
     if (dragSession_.IsActive())
     {
@@ -937,13 +939,17 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                 if (fileSource.available && index < widgets_.size())
                 {
                     const RECT frame = GetStandaloneWidgetFrameRect(widgets_[index]);
+                    const auto* widget = ResolveLuaWidgetContent(&widgets_[index]);
+                    const std::wstring widgetId = widget ? widget->id : std::wstring{};
                     ExternalSlotDestination destination;
                     destination.preview.action = DropAction::Copy;
-                    destination.fileDropTarget = widgetEngine_->CaptureFileDropTarget(
-                        widgets_[index].id, clientPoint.x - frame.left, clientPoint.y - frame.top);
+                    if (!widgetId.empty())
+                        destination.fileDropTarget = widgetEngine_->CaptureFileDropTarget(
+                            widgetId, clientPoint.x - frame.left, clientPoint.y - frame.top);
                     if (destination.fileDropTarget)
                         acceptedEffect = DropExternalSlotContent(dataObject, destination,
                             *effect, fileSource.asynchronous, fileSource.paths);
+                    if (touchDrop && acceptedEffect) SelectWidgetInteractionOwner(widgetId);
                 }
             }
         }
@@ -977,6 +983,11 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         EndDragSession();
         return S_OK;
     }
+    const auto touchedWidgetId = touchDrop ? GetContainerWidgetId(dragSession_.TargetContainer()) : std::wstring{};
+    const auto keepAcceptedTouchTarget = [&](DWORD acceptedEffect) {
+        if (!touchedWidgetId.empty() && (acceptedEffect & (DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK)))
+            SelectWidgetInteractionOwner(touchedWidgetId);
+    };
 
     // ── External drop ──────────────────────────────────────────
     if (externalContent)
@@ -1070,6 +1081,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
     if (auto nativeEffect = TryDropShellNamespaceFiles(dataObject, clientPoint, keyState, *effect))
     {
         *effect = *nativeEffect;
+        keepAcceptedTouchTarget(*effect);
         EndDragSession();
         return S_OK;
     }
@@ -1085,6 +1097,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             sourceUsesAsyncMode, dropPaths);
         if (*effect && destination->preview.pinMaterializedItemsToDock)
             DockContainer::FinishFreeOrderForDrag(*this, true);
+        keepAcceptedTouchTarget(*effect);
         EndDragSession();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return S_OK;
@@ -1160,6 +1173,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                 refreshTargetPopup))
         {
             *effect = ChooseDropEffect(keyState, *effect);
+            keepAcceptedTouchTarget(*effect);
             EndDragSession();
             return S_OK;
         }
@@ -1244,6 +1258,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             *effect = !sourceSupportsAsync &&
                     action == DropAction::Move
                 ? DROPEFFECT_NONE : selectedEffect;
+            keepAcceptedTouchTarget(selectedEffect);
             EndDragSession();
             return S_OK;
         }
@@ -1257,6 +1272,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                 refreshTargetPopup))
         {
             *effect = ChooseDropEffect(keyState, *effect);
+            keepAcceptedTouchTarget(*effect);
             EndDragSession();
             return S_OK;
         }
@@ -1293,8 +1309,9 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             POINTL spl{ point.x, point.y };
             dt->DragEnter(dataObject, keyState, spl, &le);
             dt->DragOver(keyState, spl, &le);
-            dt->Drop(dataObject, keyState, spl, &le);
+            const HRESULT result = dt->Drop(dataObject, keyState, spl, &le);
             *effect = le;
+            if (SUCCEEDED(result)) keepAcceptedTouchTarget(le);
             EndDragSession();
             if (dockFolderPopupTarget)
                 RefreshDockFolderPopup();
@@ -1336,6 +1353,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             queuePopupDrop())
         {
             *effect = ChooseDropEffect(keyState, *effect);
+            keepAcceptedTouchTarget(*effect);
             EndDragSession();
             return S_OK;
         }
@@ -1405,6 +1423,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             *effect = !sourceSupportsAsync &&
                     action == DropAction::Move
                 ? DROPEFFECT_NONE : selectedEffect;
+            keepAcceptedTouchTarget(selectedEffect);
             EndDragSession();
             return S_OK;
         }
@@ -1413,6 +1432,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             queuePopupDrop())
         {
             *effect = ChooseDropEffect(keyState, *effect);
+            keepAcceptedTouchTarget(*effect);
             EndDragSession();
             return S_OK;
         }
@@ -1451,6 +1471,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                     screenPoint,
                     &shellEffect);
                 *effect = shellEffect;
+                if (SUCCEEDED(dropResult)) keepAcceptedTouchTarget(shellEffect);
                 EndDragSession();
                 if (SUCCEEDED(dropResult) &&
                     shellEffect != DROPEFFECT_NONE)

@@ -37,6 +37,13 @@ inline bool IsPromotedTouch(ULONG_PTR extraInfo) noexcept
 
 inline bool IsPromotedTouch() noexcept { return IsPromotedTouch(GetMessageExtraInfo()); }
 
+inline bool IsCurrentTouchInput() noexcept
+{
+    INPUT_MESSAGE_SOURCE source{};
+    return routingTouch || IsPromotedTouch() ||
+        (GetCurrentInputMessageSource(&source) && source.deviceType == IMDT_TOUCH);
+}
+
 inline bool Observe(UINT message, WPARAM pointer = 0) noexcept
 {
     if (IsPointerMessage(message))
