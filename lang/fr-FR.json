@@ -2964,5 +2964,8 @@
   "app.widget.placeholder.image_quota_single": "Une image décodée dépasse 64 Mio.",
   "app.widget.placeholder.image_quota_pixels": "Le total des images décodées dépasse 128 Mio.",
   "app.widget.placeholder.image_quota_encoded": "Le total des fichiers image en mémoire dépasse 128 Mio.",
-  "app.widget.placeholder.ignore_image_quota": "Toujours ignorer"
+  "app.widget.placeholder.ignore_image_quota": "Toujours ignorer",
+  "settings.debug.touchSimulation.title": "Simuler le toucher avec la souris",
+  "settings.debug.touchSimulation.description": "Maintenez le raccourci enfoncé et cliquez ou faites glisser avec le bouton gauche. Utilisez la molette pour zoomer à deux doigts. Pour un second point de contact pendant le glissement, ajoutez la première touche inutilisée parmi Ctrl, Maj et Alt, dans cet ordre.",
+  "settings.debug.touchSimulation.unavailable": "La simulation tactile n’a pas pu démarrer. Désactivez-la, puis réactivez-la pour réessayer."
 }

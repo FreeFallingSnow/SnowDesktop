@@ -2964,5 +2964,8 @@
   "app.widget.placeholder.image_quota_single": "画像1枚のデコード後のサイズが64 MiBを超えました。",
   "app.widget.placeholder.image_quota_pixels": "デコード済み画像の合計が128 MiBを超えました。",
   "app.widget.placeholder.image_quota_encoded": "メモリに保持した画像ファイルの合計が128 MiBを超えました。",
-  "app.widget.placeholder.ignore_image_quota": "常に無視"
+  "app.widget.placeholder.ignore_image_quota": "常に無視",
+  "settings.debug.touchSimulation.title": "マウスでタッチをシミュレート",
+  "settings.debug.touchSimulation.description": "ショートカットを押しながら左クリックまたはドラッグすると、タッチを再現できます。ホイールでピンチ操作を行えます。ドラッグ中に 2 点目を追加するには、Ctrl、Shift、Alt の順に、ショートカットで使っていない最初のキーを押します。",
+  "settings.debug.touchSimulation.unavailable": "タッチのシミュレーションを開始できませんでした。オフにしてからもう一度オンにしてください。"
 }

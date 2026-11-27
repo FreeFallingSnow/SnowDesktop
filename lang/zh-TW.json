@@ -2964,5 +2964,8 @@
   "app.widget.placeholder.image_quota_single": "單張圖片解碼後超過 64 MiB。",
   "app.widget.placeholder.image_quota_pixels": "圖片像素總量超過 128 MiB。",
   "app.widget.placeholder.image_quota_encoded": "保留在記憶體中的圖片檔案總量超過 128 MiB。",
-  "app.widget.placeholder.ignore_image_quota": "一律忽略"
+  "app.widget.placeholder.ignore_image_quota": "一律忽略",
+  "settings.debug.touchSimulation.title": "用滑鼠模擬觸控",
+  "settings.debug.touchSimulation.description": "按住快速鍵，以左鍵點按或拖曳來模擬單指觸控，滾動滾輪來模擬雙指縮放。拖曳時，依 Ctrl、Shift、Alt 的順序選擇快速鍵未使用的第一個輔助鍵，即可加入第二個觸點。",
+  "settings.debug.touchSimulation.unavailable": "無法啟動觸控模擬。關閉後重新開啟即可重試。"
 }

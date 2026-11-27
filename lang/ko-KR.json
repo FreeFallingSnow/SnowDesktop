@@ -2964,5 +2964,8 @@
   "app.widget.placeholder.image_quota_single": "디코딩된 이미지 한 장이 64 MiB를 초과했습니다.",
   "app.widget.placeholder.image_quota_pixels": "디코딩된 이미지의 합계가 128 MiB를 초과했습니다.",
   "app.widget.placeholder.image_quota_encoded": "메모리에 보관한 이미지 파일의 합계가 128 MiB를 초과했습니다.",
-  "app.widget.placeholder.ignore_image_quota": "항상 무시"
+  "app.widget.placeholder.ignore_image_quota": "항상 무시",
+  "settings.debug.touchSimulation.title": "마우스로 터치 시뮬레이션",
+  "settings.debug.touchSimulation.description": "단축키를 누른 채 왼쪽 버튼을 클릭하거나 끌어서 터치를 시뮬레이션합니다. 휠을 굴리면 두 손가락 확대·축소가 됩니다. 끄는 동안 Ctrl, Shift, Alt 순서로 단축키에 쓰이지 않는 첫 키를 누르면 두 번째 터치 지점이 추가됩니다.",
+  "settings.debug.touchSimulation.unavailable": "터치 시뮬레이션을 시작하지 못했습니다. 껐다가 다시 켜서 시도하세요."
 }

@@ -2964,5 +2964,8 @@
   "app.widget.placeholder.image_quota_single": "One decoded image exceeds 64 MiB.",
   "app.widget.placeholder.image_quota_pixels": "Decoded images exceed 128 MiB in total.",
   "app.widget.placeholder.image_quota_encoded": "Image files held in memory exceed 128 MiB in total.",
-  "app.widget.placeholder.ignore_image_quota": "Always ignore"
+  "app.widget.placeholder.ignore_image_quota": "Always ignore",
+  "settings.debug.touchSimulation.title": "Simulate touch with the mouse",
+  "settings.debug.touchSimulation.description": "Hold the shortcut and click or drag to simulate touch. Scroll to pinch. For a second contact while dragging, add the first of Ctrl, Shift or Alt that your shortcut does not use.",
+  "settings.debug.touchSimulation.unavailable": "Touch simulation could not start. Turn it off and on again to retry."
 }

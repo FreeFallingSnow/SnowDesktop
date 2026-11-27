@@ -2964,5 +2964,8 @@
   "app.widget.placeholder.image_quota_single": "单张图片解码后超过 64 MiB。",
   "app.widget.placeholder.image_quota_pixels": "图片像素总量超过 128 MiB。",
   "app.widget.placeholder.image_quota_encoded": "保留在内存中的图片文件总量超过 128 MiB。",
-  "app.widget.placeholder.ignore_image_quota": "始终忽略"
+  "app.widget.placeholder.ignore_image_quota": "始终忽略",
+  "settings.debug.touchSimulation.title": "用鼠标模拟触屏",
+  "settings.debug.touchSimulation.description": "按住快捷键，用左键点按或拖动来模拟单指触摸，滚动滚轮来模拟双指缩放。拖动时，按 Ctrl、Shift、Alt 的顺序选一个快捷键未占用的修饰键，即可添加第二个触点。",
+  "settings.debug.touchSimulation.unavailable": "触屏模拟未能启动。关闭后重新开启可重试。"
 }

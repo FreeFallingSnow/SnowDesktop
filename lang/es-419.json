@@ -2964,5 +2964,8 @@
   "app.widget.placeholder.image_quota_single": "Una imagen decodificada supera los 64 MiB.",
   "app.widget.placeholder.image_quota_pixels": "Las imágenes decodificadas superan los 128 MiB en total.",
   "app.widget.placeholder.image_quota_encoded": "Los archivos de imagen en memoria superan los 128 MiB en total.",
-  "app.widget.placeholder.ignore_image_quota": "Ignorar siempre"
+  "app.widget.placeholder.ignore_image_quota": "Ignorar siempre",
+  "settings.debug.touchSimulation.title": "Simular el tacto con el mouse",
+  "settings.debug.touchSimulation.description": "Mantén presionado el atajo y haz clic o arrastra con el botón izquierdo. Usa la rueda para simular el zoom con dos dedos. Para agregar un segundo punto al arrastrar, presiona la primera tecla que no uses en el atajo, en este orden: Ctrl, Mayús, Alt.",
+  "settings.debug.touchSimulation.unavailable": "No se pudo iniciar la simulación táctil. Desactívala y vuelve a activarla para reintentar."
 }
