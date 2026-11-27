@@ -3000,5 +3000,5 @@
   "app.launcher.role.webView": "WebView2-Komponente für eingebettete Webseiten",
   "app.launcher.role.windowsAI": "KI- und Machine-Learning-Komponenten des Windows App SDK",
   "app.launcher.role.windowsServices": "Dienste des Windows App SDK wie Suche, Widgets, Benachrichtigungen und App-Neustart",
-  "app.launcher.role.windowsRuntimeStartup": "Initialisiert das Windows App SDK und WinRT-Komponenten beim Programmstart"
+  "app.launcher.role.windowsRuntimeStartup": "Initialisiert das Windows App SDK und WinRT-Komponenten beim Start von SnowDesktop"
 }
