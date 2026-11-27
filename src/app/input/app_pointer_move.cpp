@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "ui/input/touch_input.h"
 #include "app/app.h"
 #include "app/drag_drop/desktop_drop_feedback.h"
 #include "app/navigation/quick_navigation_state.h"
@@ -358,10 +359,15 @@ void DesktopApp::OnMouseMoveAt(
         snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
         return;
     }
-    UpdateListTitleHover();
-    UpdatePopupHover(current);
-    // Let the pointer batch finish before painting the new widget frame.
-    UpdateWidgetHoverExpansion(current);
+    const bool canHover = snowdesktop::touch_input::CanHover() ||
+        snowdesktop::private_pointer::Active();
+    if (canHover)
+    {
+        UpdateListTitleHover();
+        UpdatePopupHover(current);
+        // Let the pointer batch finish before painting the new widget frame.
+        UpdateWidgetHoverExpansion(current);
+    }
     if (HandleUsageGuidePointerMove(current)) return;
     if (IsUsageGuideVisible())
         for (const auto bounds : {usageGuidePauseRect_, usageGuideSettingsRect_,
@@ -371,7 +377,7 @@ void DesktopApp::OnMouseMoveAt(
     if (IsPointInUsageGuide(current) && !mouseDown_ && widgetAction_ == WidgetAction::None &&
         !dragSession_.HasContext() && !dragDropController_.IsTransportActive()) return;
     if (HandleLargeIconPointerMove(current)) return;
-    UpdateLargeIconHover();
+    if (canHover) UpdateLargeIconHover();
     const bool activeWidgetGesture =
         (widgetAction_ == WidgetAction::Move ||
          widgetAction_ == WidgetAction::Resize) &&
@@ -384,9 +390,9 @@ void DesktopApp::OnMouseMoveAt(
         // hover routing and popup dwell state cannot consume this sample.
         // Keep them out of the per-pixel component drag path; the transition
         // into Move/Resize clears their last visible state once below.
-        UpdateDockWindowPreview(current);
+        if (canHover) UpdateDockWindowPreview(current);
 
-        if (widgetEngine_)
+        if (widgetEngine_ && canHover)
         {
             bool interactionHoverRouted = false;
             const bool luaPanelInteractive = !luaWidgetPanelRequest_.widgetId.empty() &&

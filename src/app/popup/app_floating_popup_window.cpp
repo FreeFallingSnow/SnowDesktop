@@ -1,12 +1,14 @@
 #include "floating_popup_composition.h"
 
 #include "ui/input/private_pointer.h"
+#include "ui/input/touch_input.h"
 #include "app/app.h"
 #include "popup_resize_transition.h"
 #include "diagnostics/diagnostic_log.h"
 #include "common/utils.h"
 #include "layout/floating_popup_rules.h"
 #include "app/dock/persistent_dock_host.h"
+#include "dock/dock_window_preview.h"
 #include "ui/render/ui_presentation_scope.h"
 #include "drag_drop/drag_input_rules.h"
 #include "popup_window_pair_z_order.h"
@@ -405,6 +407,30 @@ void DesktopApp::HandleFloatingPopupExternalPointerDown(
             luaWidgetPanelRequest_.widgetId,
             "external-pointer");
     }
+}
+
+void DesktopApp::DismissTouchPopupsOnExternalActivation(HWND foreground, DWORD tick)
+{
+    if (!foreground || foreground != GetForegroundWindow() ||
+        snowdesktop::private_pointer::Active() || HasActiveContextMenuSession() ||
+        dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
+        IsFolderPreviewSearchImeWindow(foreground)) return;
+    DWORD process = 0;
+    if (!GetWindowThreadProcessId(foreground, &process) || !process ||
+        (process == GetCurrentProcessId() && !IsSettingsApplicationWindow(foreground))) return;
+
+    if (dockWindowPreview_ && dockWindowPreview_->TouchOpened() &&
+        !dockWindowPreview_->RetainsCloseForeground(foreground))
+        HideDockWindowPreview();
+    if (!floatingPopupHwnd_ || !IsWindowVisible(floatingPopupHwnd_) ||
+        static_cast<LONG>(tick - floatingPopupPointerGenerationStartedAt_) <= 0) return;
+    if (IsCollectionPopupHostedByFloatingWindow())
+    {
+        pendingCollectionPopupOpen_.reset();
+        CloseCollectionPopup();
+    }
+    if (IsLuaPanelHostedByFloatingWindow() && luaWidgetPanelRequest_.dismissOnOutside)
+        CloseLuaWidgetPanel(luaWidgetPanelRequest_.widgetId, "external-activation");
 }
 
 RECT DesktopApp::GetFloatingCollectionPopupRegion() const
@@ -1628,7 +1654,9 @@ void DesktopApp::SyncPopupMouseLeaveTimer()
 
 void DesktopApp::UpdatePopupCloseOnMouseLeave(POINT point)
 {
-    if (folderPreview_ || !personalizationSettings_.popupCloseOnMouseLeave ||
+    if ((!snowdesktop::touch_input::CanHover() && !snowdesktop::private_pointer::Active() &&
+            !dragSession_.HasContext() && !dragDropController_.IsTransportActive()) ||
+        folderPreview_ || !personalizationSettings_.popupCloseOnMouseLeave ||
         !IsCollectionPopupInteractive())
     {
         popupMouseLeaveController_.Reset();
@@ -1703,6 +1731,7 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg, wp, lp)) return 0;
+    ObserveDesktopTouch(hwnd, msg, wp, lp);
     const snowdesktop::UiImmediatePresentationScope immediatePresentation;
     struct NativeMenuPresentationScope final
     {
@@ -1749,6 +1778,26 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         break;
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
+    case WM_POINTERACTIVATE:
+        return PA_NOACTIVATE;
+    case WM_GESTURENOTIFY:
+        if (IsCollectionPopupInteractive())
+            snowdesktop::touch_input::ConfigureVerticalPan(hwnd);
+        break;
+    case WM_GESTURE:
+    {
+        static thread_local snowdesktop::touch_input::VerticalPan pan;
+        POINT origin{};
+        int delta = 0;
+        if (!IsCollectionPopupInteractive() || !pan.Read(lp, origin, delta)) break;
+        if (delta)
+        {
+            const snowdesktop::touch_input::RoutedTouch centered(origin, false);
+            OnMouseWheel(MAKEWPARAM(0, std::clamp(delta * 2, -32768, 32767)),
+                MAKELPARAM(origin.x, origin.y));
+        }
+        return 0;
+    }
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
     {
@@ -1944,6 +1993,15 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
     case WM_RBUTTONDBLCLK:
         OnRightButtonDown(nullptr, desktopPoint());
         return 0;
+    case WM_CONTEXTMENU:
+        if (!snowdesktop::touch_input::CanHover() && lp != -1 && !HasActiveContextMenuSession())
+        {
+            POINT point = snowdesktop::touch_input::ScreenPoint(lp);
+            if (hwnd_ && ScreenToClient(hwnd_, &point))
+                OnRightButtonUp(MAKELPARAM(point.x, point.y));
+            return 0;
+        }
+        break;
     case WM_RBUTTONUP:
         OnRightButtonUp(desktopLParam());
         UpdateFloatingPopupWindowBounds();

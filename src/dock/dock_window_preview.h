@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ui/input/touch_input.h"
+
 #include "dock_layout_settings.h"
 #include "dock_window_preview_types.h"
 #include "dock_window_pin.h"
@@ -67,7 +69,7 @@ public:
     void PrepareToolbars(const std::vector<DockWindowPreviewItem>& items);
     void Show(const std::vector<DockWindowPreviewItem>& items,
         RECT anchorScreen, DockPosition dockPosition, bool lightTheme,
-        HWND dockLayerOwner = nullptr);
+        HWND dockLayerOwner = nullptr, bool touchOpened = false);
     void UpdateAnchor(RECT anchorScreen, DockPosition dockPosition);
     void SetPinBorderAppearance(const PersonalizationSettings& settings) { windowPins_.SetAppearance(settings); }
     void SetPeekAnchorResolver(std::function<HWND(HWND)> resolver) { peekAnchorResolver_ = std::move(resolver); }
@@ -89,7 +91,8 @@ public:
     bool RetainsCloseForeground(HWND foreground);
     void ReleaseCloseRetention() { closeRetentionUntil_ = 0; }
     bool IsAwaitingPointerEntry() const
-    { return !slideClosing_ && IsVisible() && pointerSession_ == PointerSession::AwaitingEntry; }
+    { return !touchOpened_ && !slideClosing_ && IsVisible() && pointerSession_ == PointerSession::AwaitingEntry; }
+    bool TouchOpened() const { return touchOpened_ && IsVisible() && !slideClosing_; }
     void ScheduleHide();
     void ScheduleDockHide();
     void KeepVisible();
@@ -207,6 +210,8 @@ private:
     ULONGLONG closeRetentionUntil_ = 0;
     enum class PointerSession { AwaitingEntry, Entered };
     PointerSession pointerSession_ = PointerSession::AwaitingEntry;
+    bool touchOpened_ = false;
+    snowdesktop::touch_input::Contact touchContact_;
     POINT entryOriginScreen_{};
     bool entryOriginKnown_ = false;
     DockPosition dockPosition_ = DockPosition::Bottom;

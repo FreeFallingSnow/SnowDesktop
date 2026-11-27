@@ -26,7 +26,11 @@
 #include "desktop/folder_mapping_visibility_rules.h"
 #include "app/shell/shell_icon_request.h"
 
-namespace { constexpr UINT kContextNamespaceActionFirst = 42000; }
+namespace
+{
+constexpr UINT kContextNamespaceActionFirst = 42000;
+constexpr UINT kContextFilePreview = 42100;
+}
 
 // Desktop-item and Shell-backed context menus.
 
@@ -388,6 +392,13 @@ void DesktopApp::ShowItemContextMenu(
     }
     AppendMenuW(menu, canOpen ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextOpenCommand, _LW("app.menu.open"));
+    if (selectedCount == 1 && canOpen && canFile && !namespaceItem && !dockEntryIndex &&
+        !dockFrequentItem && !dockApplicationItem && !filePreview_.Current().providers.empty())
+    {
+        const DWORD attributes = GetFileAttributesW(itemPath.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY))
+            AppendMenuW(menu, MF_STRING, kContextFilePreview, _LW("app.menu.preview"));
+    }
     if (canOpen && !keepQuickNavigationOpen && !dockEntryIndex && !dockMappingEntryIndex &&
         !dockFrequentItem && !dockApplicationItem && !namespaceItem)
         AppendFolderPreviewOpenMenuItem(menu, clientPoint, menuParsingPath);
@@ -944,6 +955,9 @@ void DesktopApp::ShowItemContextMenu(
         break;
     case kContextFolderPreviewOpen:
         TryFolderPreviewDoubleClick(clientPoint, 0, menuParsingPath);
+        return;
+    case kContextFilePreview:
+        TryOpenFilePreview(itemPath);
         return;
     case kContextOpenCommand:
     {

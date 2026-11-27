@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "ui/input/touch_input.h"
 #include "app/app.h"
 #include "dock/dock_window_transition.h"
 #include "diagnostics/diagnostic_log.h"
@@ -365,6 +366,8 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg, wp, lp)) return 0;
+    ObserveDesktopTouch(hwnd, msg, wp, lp);
+    if (HandleDockTouch(hwnd, msg, wp, lp) || HandleDesktopTouchEdge(hwnd, msg, wp, lp)) return 0;
     const snowdesktop::UiImmediatePresentationScope immediatePresentation;
     if (host.active && host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect) &&
         (msg == WM_NCHITTEST || msg == WM_MOUSEACTIVATE || msg == WM_LBUTTONDOWN) &&
@@ -449,6 +452,8 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
             PreserveModernMenuHostZOrder(
                 hwnd, *reinterpret_cast<WINDOWPOS*>(lp));
         break;
+    case WM_POINTERACTIVATE:
+        return PA_NOACTIVATE;
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
     case WM_NCHITTEST:
@@ -641,6 +646,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
             handlingFloatingDockInput_ = true;
             handlingPersistentDockHost_ = &host;
             OnLeftButtonUpAt(wp, point);
+            if (!snowdesktop::touch_input::CanHover()) OnMouseLeave();
             handlingFloatingDockInput_ = false;
             handlingPersistentDockHost_ = nullptr;
             promotionPresented = presentation && presentation->promotionPresented;
@@ -700,6 +706,18 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         handlingPersistentDockHost_ = nullptr;
         InvalidateFloatingDockWindow(host, true);
         return 0;
+    case WM_CONTEXTMENU:
+        if (!snowdesktop::touch_input::CanHover() && lp != -1 && !HasActiveContextMenuSession())
+        {
+            POINT point = snowdesktop::touch_input::ScreenPoint(lp);
+            if (hwnd_ && ScreenToClient(hwnd_, &point))
+            {
+                SelectPersistentDockHost(&host);
+                OnRightButtonUp(MAKELPARAM(point.x, point.y));
+            }
+            return 0;
+        }
+        break;
     case WM_MOUSEWHEEL:
         SelectPersistentDockHost(&host);
         handlingFloatingDockInput_ = true;

@@ -26,6 +26,7 @@
 #include "status_bar_presentation.h"
 #include "status_bar_notification.h"
 #include "ui/render/native_tooltip.h"
+#include "ui/input/touch_input.h"
 #include "status_bar_tooltip.h"
 #include "settings/animation_settings.h"
 #include "ui/render/composition_motion_curve.h"
@@ -753,6 +754,7 @@ struct StatusBar::Impl
             if (mergedDockHeight || fullscreenObserved || !owner.settings.showOnlyWhenSummoned) return;
             if (!owner.presentationEnabled || closing || failed || !positioned)
             { revealState.Reset(); return; }
+            if (!touch_input::CanHover()) return;
             MONITORINFO info{sizeof(info)};
             POINT pointer{};
             if (!GetMonitorInfoW(monitor, &info) || !GetCursorPos(&pointer)) return;
@@ -1909,6 +1911,10 @@ struct StatusBar::Impl
             }
             if (!self) return DefWindowProcW(window, message, wp, lp);
             if (self->closing) return DefWindowProcW(window, message, wp, lp);
+            const bool touched = touch_input::Observe(message, wp);
+            if (touched && (message == WM_POINTERDOWN || message == WM_POINTERCAPTURECHANGED ||
+                message == WM_LBUTTONDOWN || message == WM_LBUTTONUP))
+                self->UpdateInteraction([&] { self->ClearHover(); });
             if (!self->InputAvailable() &&
                 ((message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) || message == WM_CONTEXTMENU ||
                     message == WM_KEYDOWN || message == WM_KEYUP || message == WM_CHAR ||
@@ -2093,6 +2099,7 @@ struct StatusBar::Impl
                         self->mergedPresentation.insertAfter, true);
                 self->PaintInteraction(); break;
             case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
+            case WM_POINTERACTIVATE: return PA_NOACTIVATE;
             case WM_ERASEBKGND: return 1;
             case WM_PAINT:
             {
@@ -2224,6 +2231,7 @@ struct StatusBar::Impl
                     }
                     return 0;
                 }
+                if (touched) return 0;
                 std::string hoveredKey;
                 std::optional<std::size_t> hover;
                 self->tooltipControlPart.reset();
@@ -2924,6 +2932,31 @@ bool StatusBar::HasTemporaryReveal(HMONITOR monitor) const
             return window->fullscreenState.Revealed() || window->revealState.Revealed();
     }
     return false;
+}
+bool StatusBar::CanRevealFromTouch(HMONITOR monitor) const
+{
+    if (impl_->removingWindows || !impl_->settings.showOnlyWhenSummoned) return false;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (window && window->monitor == monitor && !window->mergedDockHeight &&
+            window->positioned && !window->closing && !window->failed && !window->fullscreenObserved &&
+            !window->revealState.Revealed()) return true;
+    }
+    return false;
+}
+void StatusBar::RevealFromTouch(HMONITOR monitor)
+{
+    if (!CanRevealFromTouch(monitor)) return;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (window && window->monitor == monitor && !window->mergedDockHeight)
+        {
+            window->revealState.Reveal();
+            window->CheckFullscreen();
+        }
+    }
 }
 void StatusBar::DismissTemporaryReveal(HMONITOR monitor)
 {

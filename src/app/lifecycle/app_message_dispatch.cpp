@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "ui/input/touch_input.h"
 #include "app/app.h"
 #include "app/input/grid_preview_shortcut.h"
 #include "widget/view/widget_surface_renderer.h"
@@ -96,6 +97,8 @@ bool DesktopApp::HandleShellContextMenuMessage(
 LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg, wp, lp)) return 0;
+    ObserveDesktopTouch(hwnd, msg, wp, lp);
+    if (HandleDockTouch(hwnd, msg, wp, lp) || HandleDesktopTouchEdge(hwnd, msg, wp, lp)) return 0;
     // The runtime maintenance timer delivers background widget changes. A
     // nested pointer or keyboard message still takes its own immediate scope.
     const snowdesktop::UiImmediatePresentationScope immediatePresentation(
@@ -466,6 +469,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
         snowdesktop::performance::Scope pointerScope("desktop.input", "mouse.move");
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (!snowdesktop::touch_input::CanHover() && !(wp & (MK_LBUTTON | MK_RBUTTON))) return 0;
         // The guide owns its captured gesture, including moves outside its
         // bounds. Handle it before passive-hover filtering can discard them.
         if (HandleUsageGuidePointerMove(pt)) return 0;
@@ -692,6 +696,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             !luaWidgetPanelMouseDown_)
             return 0;
         OnLeftButtonUpAt(wp, pt);
+        if (!snowdesktop::touch_input::CanHover()) OnMouseLeave();
         InvalidateFloatingDockWindow(true);
         return 0;
     }
@@ -725,6 +730,14 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (IsPointInUsageGuide({GET_X_LPARAM(lp), GET_Y_LPARAM(lp)})) return 0;
         OnRightButtonDown(nullptr, {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
         return 0;
+    case WM_CONTEXTMENU:
+        if (!snowdesktop::touch_input::CanHover() && lp != -1 && !HasActiveContextMenuSession())
+        {
+            POINT point = snowdesktop::touch_input::ScreenPoint(lp);
+            if (ScreenToClient(hwnd, &point)) OnRightButtonUp(MAKELPARAM(point.x, point.y));
+            return 0;
+        }
+        break;
     case WM_RBUTTONUP:
     {
         const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
@@ -1526,6 +1539,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         OnUrlDropDownloadCompleted(lp);
         return 0;
     case kForegroundInteractionChangedMessage:
+        DismissTouchPopupsOnExternalActivation(
+            reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
         HandleDockForegroundInteractionChanged(
             reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
         return 0;

@@ -222,6 +222,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/input/widget_search_context_menu.h
     src/app/input/app_pointer_down.cpp
     src/app/input/app_pointer_move.cpp
+    src/app/input/app_touch_input.cpp
     src/app/input/native_item_drag_source.h
     src/app/input/app_pointer_release.cpp
     src/app/popup/app_popup_geometry.cpp

@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "ui/input/touch_input.h"
 #include "ui/render/app_font.h"
 #include "app/render/desktop_backdrop_compositor.h"
 #include "modern_menu.h"
@@ -125,6 +126,9 @@ struct Popup
     int hoveredItem = -1;
     int keyboardItem = -1;
     int scrollOffset = 0;
+    snowdesktop::touch_input::Contact touchContact;
+    int touchStartScroll = 0;
+    bool touchPanning = false;
     int scrollBand = 0;
     int scrollTopBand = 0, scrollBottomBand = 0;
     int scrollHover = 0;
@@ -424,6 +428,8 @@ public:
                     break;
                 }
                 const bool pointerPress =
+                    (message.message == WM_POINTERDOWN &&
+                        snowdesktop::touch_input::IsTouchPointer(message.wParam)) ||
                     message.message == WM_LBUTTONDOWN ||
                     message.message == WM_RBUTTONDOWN ||
                     message.message == WM_MBUTTONDOWN ||
@@ -525,10 +531,64 @@ public:
         UINT message, WPARAM wParam, LPARAM lParam)
     {
         if (!snowdesktop::private_pointer::MessageAllowed(hwnd, message, wParam, lParam)) return 0;
+        namespace touch = snowdesktop::touch_input;
+        const bool touched = touch::Observe(message, wParam);
+        if (touch::IsPointerMessage(message))
+        {
+            const POINT screen = touch::ScreenPoint(lParam);
+            POINT point = screen;
+            ScreenToClient(hwnd, &point);
+            auto& contact = popup.touchContact;
+            if (message == WM_POINTERDOWN && touched && IS_POINTER_PRIMARY_WPARAM(wParam))
+            {
+                const int index = HitTest(popup, point);
+                if (index >= 0 && (*popup.items)[index].textInput)
+                    return DefWindowProcW(hwnd, message, wParam, lParam);
+                contact.Begin(wParam, screen);
+                popup.touchStartScroll = popup.scrollOffset;
+                popup.touchPanning = false;
+                popup.scrollHover = 0;
+                SetHoveredItem(popup, -1, false, false);
+                KillTimer(hwnd, kSubmenuOpenTimer);
+                KillTimer(hwnd, kSubmenuCloseTimer);
+                return 0;
+            }
+            if (contact.Owns(wParam))
+            {
+                if (message == WM_POINTERCAPTURECHANGED || touch::IsCanceled(wParam))
+                {
+                    contact.Reset();
+                    pointerPressed_ = false;
+                    return 0;
+                }
+                if (message == WM_POINTERUPDATE || message == WM_POINTERUP)
+                {
+                    const int slop = touch::Dips(8, options_.dpi);
+                    const int delta = screen.y - contact.start.y;
+                    if (std::abs(delta) >= slop && std::abs(delta) >= std::abs(screen.x - contact.start.x))
+                        popup.touchPanning = true;
+                    if (popup.touchPanning)
+                        ScrollTo(popup, popup.touchStartScroll - delta, false);
+                    if (message == WM_POINTERUP)
+                    {
+                        const bool tap = !popup.touchPanning && !contact.Moved(screen, slop);
+                        contact.Reset();
+                        pointerPressed_ = false;
+                        if (tap)
+                        {
+                            if (const int direction = ScrollHintDirection(popup, point)) Scroll(popup, direction);
+                            else ActivateItem(popup, HitTest(popup, point), false);
+                        }
+                    }
+                }
+                return 0;
+            }
+        }
         switch (message)
         {
         case WM_MOUSEMOVE:
         {
+            if (touched) return 0;
             TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE, hwnd, 0 };
             snowdesktop::private_pointer::TrackLeave(&tracking);
             const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
@@ -2693,16 +2753,21 @@ private:
 
     void Scroll(Popup& popup, int direction)
     {
+        ScrollTo(popup, popup.scrollOffset + direction * metrics_.rowHeight * 2,
+            snowdesktop::touch_input::CanHover());
+    }
+
+    void ScrollTo(Popup& popup, int offset, bool restoreHover)
+    {
         const int oldOffset = popup.scrollOffset;
-        popup.scrollOffset = std::clamp(
-            popup.scrollOffset + direction * metrics_.rowHeight * 2,
-            0, MaxScroll(popup));
+        popup.scrollOffset = std::clamp(offset, 0, MaxScroll(popup));
         if (popup.scrollOffset != oldOffset)
         {
             SetScrollViewport(popup);
             CloseFromDepth(popup.depth + 1);
             popup.hoveredItem = popup.keyboardItem = -1;
-            ReportHoverAfterScroll(popup);
+            if (restoreHover) ReportHoverAfterScroll(popup);
+            else ReportHoveredItem(popup, -1, false);
             Render(popup);
         }
     }

@@ -12,6 +12,7 @@
 #include "theme/personalization.h"
 #include "ui/render/scroll_content_clip.h"
 #include "ui/render/ui_animation_scheduler.h"
+#include "ui/input/touch_input.h"
 #include "widget/runtime/widget_host_requests.h"
 #include <d2d1_1.h>
 #include <dcomp.h>
@@ -153,6 +154,9 @@ struct State
     POINT tabDragStartPoint{};
     bool tabDragging = false;
     bool scrollbarDragging = false;
+    snowdesktop::touch_input::Contact touchContact;
+    int touchStartScroll = 0;
+    bool touchPanning = false;
     int scrollbarDragStartY = 0;
     int scrollbarDragThumbTop = 0;
     int scrollbarDragStartOffset = 0;

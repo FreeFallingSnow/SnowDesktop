@@ -119,6 +119,76 @@ void DesktopApp::UpdateQuickNavigationTabHover(POINT point, bool allowSwitch)
 LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg, wp, lp)) return 0;
+    namespace touch = snowdesktop::touch_input;
+    ObserveDesktopTouch(hwnd, msg, wp, lp);
+    const bool touched = touch::Observe(msg, wp);
+    auto& navigation = *quickNavigation_;
+    if (!navigation.open || msg == WM_CANCELMODE || msg == WM_NCDESTROY)
+        navigation.touchContact.Reset();
+    if (touch::IsPointerMessage(msg) && navigation.open)
+    {
+        const POINT screen = touch::ScreenPoint(lp);
+        const POINT point{screen.x - virtualLeft_, screen.y - virtualTop_};
+        auto& contact = navigation.touchContact;
+        if (msg == WM_POINTERDOWN && touched && IS_POINTER_PRIMARY_WPARAM(wp) &&
+            !navigation.animation.IsAnimating() && !navigation.initialJumpOpen &&
+            !HasActiveContextMenuSession())
+        {
+            const RECT content = GetQuickNavigationContentRect(navigation.rect);
+            RECT track{}, thumb{};
+            int maximum = 0, height = 0;
+            const bool onScrollbar = GetQuickNavigationScrollbarGeometry(
+                navigation.rect, track, thumb, maximum, height) && PtInRect(&track, point);
+            if (PtInRect(&content, point) && !onScrollbar)
+            {
+                CancelQuickNavigationTabHover();
+                navigation.pointerTarget = {};
+                navigation.lastMousePoint = {LONG_MIN, LONG_MIN};
+                navigation.scrollbarHovered = false;
+                navigation.touchStartScroll = navigation.scrollOffset;
+                navigation.touchPanning = false;
+                contact.Begin(wp, screen);
+                InvalidateQuickNavigationWindow(true);
+                return 0;
+            }
+        }
+        if (contact.Owns(wp))
+        {
+            if (msg == WM_POINTERCAPTURECHANGED || touch::IsCanceled(wp))
+            {
+                contact.Reset();
+                navigation.touchPanning = false;
+                return 0;
+            }
+            if (msg == WM_POINTERUPDATE || msg == WM_POINTERUP)
+            {
+                const int slop = touch::Dips(8, GetDpiForWindow(hwnd));
+                const int deltaY = screen.y - contact.start.y;
+                const int deltaX = screen.x - contact.start.x;
+                if (std::abs(deltaY) >= slop && std::abs(deltaY) >= std::abs(deltaX))
+                    navigation.touchPanning = true;
+                if (navigation.touchPanning && !renameController_.BlocksScrolling())
+                {
+                    navigation.scrollOffset = std::clamp(navigation.touchStartScroll - deltaY,
+                        0, GetQuickNavigationMaxScrollOffset(navigation.rect));
+                    InvalidateQuickNavigationWindow(true);
+                }
+                if (msg == WM_POINTERUP)
+                {
+                    const bool activate = !navigation.touchPanning && !contact.Moved(screen, slop);
+                    const bool held = contact.Held();
+                    contact.Reset();
+                    navigation.touchPanning = false;
+                    if (activate)
+                    {
+                        if (held) HandleQuickNavigationRightClick(point, screen);
+                        else HandleQuickNavigationClick(point);
+                    }
+                }
+            }
+            return 0;
+        }
+    }
     struct NativeMenuPresentationScope final
     {
         DesktopApp& app;
@@ -363,6 +433,8 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
     }
     case WM_MOUSEMOVE:
     {
+        if (touched && !navigation.scrollbarDragging &&
+            navigation.tabDragIndex == static_cast<size_t>(-1)) return 0;
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         POINT appPoint{
             pt.x + quickNavigation_->hostRect.left,
@@ -466,15 +538,14 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
     {
         if (quickNavigation_->scrollbarDragging)
         {
-            snowdesktop::private_pointer::ReleasePointerCapture();
             quickNavigation_->scrollbarDragging = false;
+            snowdesktop::private_pointer::ReleasePointerCapture();
             InvalidateQuickNavigationWindow();
             return 0;
         }
 
         if (quickNavigation_->tabDragIndex != static_cast<size_t>(-1))
         {
-            snowdesktop::private_pointer::ReleasePointerCapture();
             size_t dragTab = quickNavigation_->tabDragIndex;
 
             if (quickNavigation_->tabDragging)
@@ -510,6 +581,8 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             quickNavigation_->tabDragIndex = static_cast<size_t>(-1);
             quickNavigation_->tabDragDeltaX = 0;
             quickNavigation_->tabDragging = false;
+            if (snowdesktop::private_pointer::Capture() == hwnd)
+                snowdesktop::private_pointer::ReleasePointerCapture();
             InvalidateQuickNavigationWindow();
             return 0;
         }
@@ -522,6 +595,20 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
         CancelQuickNavigationTabHover();
+        if (msg == WM_CANCELMODE && snowdesktop::private_pointer::Capture() == hwnd)
+            snowdesktop::private_pointer::ReleasePointerCapture();
+        if (msg == WM_CANCELMODE || (reinterpret_cast<HWND>(lp) != hwnd &&
+            (navigation.scrollbarDragging || navigation.tabDragIndex != static_cast<size_t>(-1))))
+        {
+            navigation.scrollbarDragging = false;
+            navigation.tabDragIndex = static_cast<size_t>(-1);
+            navigation.tabDragDeltaX = 0;
+            navigation.tabDragging = false;
+            navigation.pointerTarget = {};
+            navigation.scrollbarHovered = false;
+            navigation.lastMousePoint = {LONG_MIN, LONG_MIN};
+            InvalidateQuickNavigationWindow(true);
+        }
         break;
     case WM_COMMAND:
         if (renameInputWindow_ && reinterpret_cast<HWND>(lp) == renameInputWindow_ &&

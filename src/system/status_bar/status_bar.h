@@ -102,6 +102,8 @@ public:
     void PrepareDockReveal(HMONITOR monitor, HWND fullscreenSource);
     // Independent edge/fullscreen reveals dismiss from their own interaction.
     bool HasTemporaryReveal(HMONITOR monitor) const;
+    bool CanRevealFromTouch(HMONITOR monitor) const;
+    void RevealFromTouch(HMONITOR monitor);
     void DismissTemporaryReveal(HMONITOR monitor);
     void SetDockStateProvider(std::function<StatusBarDockState(HMONITOR)> provider);
     // Session queries must not evaluate Dock geometry (which queries visibility).

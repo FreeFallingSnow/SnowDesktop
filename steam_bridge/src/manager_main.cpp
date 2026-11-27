@@ -6,6 +6,7 @@
 #endif
 #include <windows.h>
 #include "platform/application_version.h"
+#include "ui/input/touch_input.h"
 #include <shellapi.h>
 #include <shobjidl.h>
 #include <shlobj.h>
@@ -3462,6 +3463,28 @@ bool IsManagerInteractionMessage(UINT message)
 LRESULT CALLBACK WindowProcedure(HWND window, UINT message,
     WPARAM wParam, LPARAM lParam)
 {
+    namespace touch = snowdesktop::touch_input;
+    if (message == WM_GESTURENOTIFY && ImGui::GetCurrentContext())
+        touch::ConfigureVerticalPan(window);
+    if (message == WM_GESTURE && ImGui::GetCurrentContext())
+    {
+        static thread_local touch::VerticalPan pan;
+        POINT origin{};
+        int delta = 0;
+        if (pan.Read(lParam, origin, delta))
+        {
+            if (delta && ScreenToClient(window, &origin))
+            {
+                auto& io = ImGui::GetIO();
+                io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
+                io.AddMousePosEvent(static_cast<float>(origin.x), static_cast<float>(origin.y));
+                io.AddMouseWheelEvent(0, static_cast<float>(delta) /
+                    (std::max)(1.f, static_cast<float>(touch::Dips(42, GetDpiForWindow(window)))));
+                RequestManagerFrame();
+            }
+            return 0;
+        }
+    }
     if (IsManagerInteractionMessage(message)) RequestManagerFrame();
     if (ImGui_ImplWin32_WndProcHandler(window, message, wParam, lParam))
         return TRUE;

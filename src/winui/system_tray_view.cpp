@@ -42,7 +42,7 @@ struct SystemTrayView::Impl : std::enable_shared_from_this<Impl>
         c::SymbolIcon fallback{c::Symbol::AllApps};
         c::ToolTip tip;
         winrt::Windows::Foundation::Point pressed{};
-        bool pointer = false, dragging = false, releasedPointer = false;
+        bool pointer = false, dragging = false, releasedPointer = false, hovering = false, touchTap = false;
     };
     SystemTrayActions actions;
     StatusBarSettings settings;
@@ -150,6 +150,13 @@ struct SystemTrayView::Impl : std::enable_shared_from_this<Impl>
         row->activate.AddHandler(x::UIElement::PointerPressedEvent(), winrt::box_value(x::Input::PointerEventHandler(
             [weak, item](const auto&, const x::Input::PointerRoutedEventArgs& args) {
                 const auto self = weak.lock(); const auto row = item.lock(); if (!self || self->closed || !row) return;
+                row->touchTap = args.Pointer().PointerDeviceType() == winrt::Microsoft::UI::Input::PointerDeviceType::Touch;
+                if (row->touchTap)
+                {
+                    row->tip.IsOpen(false);
+                    if (std::exchange(row->hovering, false)) self->Activate(row, tray::Activation::Leave);
+                    return;
+                }
                 if (args.GetCurrentPoint(row->activate).Properties().IsLeftButtonPressed())
                 {
                     row->pointer = true; row->dragging = false; row->releasedPointer = false;
@@ -159,7 +166,13 @@ struct SystemTrayView::Impl : std::enable_shared_from_this<Impl>
             })), true);
         row->activate.Click([weak, item](const auto&, const auto&) {
             const auto self = weak.lock(); const auto row = item.lock(); if (!self || self->closed || !row) return;
-            if (!row->pointer && !std::exchange(row->releasedPointer, false)) self->Activate(row, tray::Activation::Keyboard);
+            if (std::exchange(row->touchTap, false))
+            {
+                self->Activate(row, tray::Activation::LeftDown);
+                self->Activate(row, tray::Activation::LeftUp);
+            }
+            else if (!row->pointer && !std::exchange(row->releasedPointer, false))
+                self->Activate(row, tray::Activation::Keyboard);
         });
         row->activate.AddHandler(x::UIElement::PointerMovedEvent(), winrt::box_value(x::Input::PointerEventHandler(
             [weak, item](const auto&, const x::Input::PointerRoutedEventArgs& args) {
@@ -190,12 +203,18 @@ struct SystemTrayView::Impl : std::enable_shared_from_this<Impl>
                     { self->Activate(row, tray::Activation::LeftDown); self->Activate(row, tray::Activation::LeftUp); }
                 }
             })), true);
-        row->activate.PointerCaptureLost([item](const auto&, const auto&) {
-            if (const auto row = item.lock()) { row->pointer = row->dragging = false; row->activate.Opacity(1); }
-        });
-        row->activate.PointerCanceled([item](const auto&, const auto&) {
-            if (const auto row = item.lock()) { row->pointer = row->dragging = false; row->activate.Opacity(1); }
-        });
+        const auto clearPointer = [weak, item](const auto&, const auto&) {
+            if (const auto row = item.lock())
+            {
+                row->pointer = row->dragging = row->touchTap = false;
+                row->activate.Opacity(1);
+                row->tip.IsOpen(false);
+                if (std::exchange(row->hovering, false))
+                    if (const auto self = weak.lock()) self->Activate(row, tray::Activation::Leave);
+            }
+        };
+        row->activate.PointerCaptureLost(clearPointer);
+        row->activate.PointerCanceled(clearPointer);
         row->activate.DoubleTapped([weak, item](const auto&, const auto&) {
             if (const auto self = weak.lock()) if (const auto row = item.lock()) self->Activate(row, tray::Activation::DoubleClick);
         });
@@ -209,14 +228,20 @@ struct SystemTrayView::Impl : std::enable_shared_from_this<Impl>
                 (args.Key() == winrt::Windows::System::VirtualKey::F10 && (GetKeyState(VK_SHIFT) & 0x8000)))
             { self->Activate(row, tray::Activation::ContextKeyboard); args.Handled(true); }
         });
-        row->activate.PointerEntered([weak, item](const auto&, const auto&) {
-            if (const auto self = weak.lock()) if (const auto row = item.lock()) self->Activate(row, tray::Activation::Hover);
+        row->activate.PointerEntered([weak, item](const auto&, const x::Input::PointerRoutedEventArgs& args) {
+            if (args.Pointer().PointerDeviceType() == winrt::Microsoft::UI::Input::PointerDeviceType::Touch) return;
+            if (const auto self = weak.lock()) if (const auto row = item.lock())
+            {
+                row->hovering = true;
+                self->Activate(row, tray::Activation::Hover);
+            }
         });
         row->activate.PointerExited([weak, item](const auto&, const auto&) {
             if (const auto row = item.lock())
             {
                 if (!(GetKeyState(VK_LBUTTON) & 0x8000)) row->pointer = false;
-                if (const auto self = weak.lock()) self->Activate(row, tray::Activation::Leave);
+                if (std::exchange(row->hovering, false))
+                    if (const auto self = weak.lock()) self->Activate(row, tray::Activation::Leave);
             }
         });
         Update(row, icon, true); return row;

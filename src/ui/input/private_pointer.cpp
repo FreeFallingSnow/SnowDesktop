@@ -1,4 +1,5 @@
 #include "private_pointer.h"
+#include "touch_input.h"
 
 #include <algorithm>
 #include <chrono>
@@ -588,6 +589,11 @@ ForwardScope::~ForwardScope()
 }
 BOOL CursorPosition(LPPOINT point) noexcept
 {
+    if (touch_input::routingTouch && point)
+    {
+        *point = touch_input::routedPoint;
+        return TRUE;
+    }
     if (!Active()) return GetCursorPos(point);
     if (!point) return FALSE;
     *point = current->state.point; return TRUE;
@@ -600,6 +606,8 @@ SHORT KeyState(int key) noexcept
 }
 SHORT AsyncKeyState(int key) noexcept
 {
+    if (touch_input::routingTouch && key == VK_LBUTTON)
+        return touch_input::routedContactDown ? static_cast<SHORT>(0x8000) : 0;
     if (!Active()) return GetAsyncKeyState(key);
     if (GetSystemMetrics(SM_SWAPBUTTON))
     {

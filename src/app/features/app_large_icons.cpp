@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "ui/input/touch_input.h"
 #include "common/json_value.h"
 #include "theme/personalization.h"
 #include "common/l10n.h"
@@ -668,7 +669,8 @@ bool DesktopApp::IsLargeIconVisible(const DesktopItem& item, POINT pointer, bool
     const auto frame = GetLargeIconFrameRect(item);
     const bool onDesktop = !IsRectEmptyRect(item.bounds) && !IsRectEmptyRect(frame) &&
         item.gridCell.pageId != kDockPageId && !IsItemInAnyWidget(item) && FindGridPage(gridPages_, item.gridCell.pageId);
-    const bool retained = (largeIconGesture_ && largeIconGesture_->key == item.layoutKey) ||
+    const bool retained = !snowdesktop::touch_input::CanHover() ||
+        (largeIconGesture_ && largeIconGesture_->key == item.layoutKey) ||
         (keyboardNavVisualFocus_ && item.selected);
     return snowdesktop::large_icon_visibility_rules::Visible(config, hidden, onDesktop,
         PtInRect(&frame, pointer) != FALSE, item.selected,

@@ -2911,7 +2911,7 @@ struct DockPagePresenter::Impl
         SetContinuousText(edgeHoverDelayMs,
             "settings.dock.edgeHoverDelay", L"Hover delay");
         windowPreviewsRow.SetText(L("settings.dock.windowPreviews", L"Task thumbnails"),
-            L("settings.dock.windowPreviews.description", L"Show open windows when hovering over an app."));
+            L("settings.dock.windowPreviews.description", L"Hover over an app icon or swipe from it toward the screen content to see its open windows."));
         muxa::AutomationProperties::SetName(edgeRevealGesture, edgeRevealGestureRow.label.Text());
         muxa::AutomationProperties::SetName(windowPreviews, windowPreviewsRow.label.Text());
         fullscreenPolicyRow.SetText(

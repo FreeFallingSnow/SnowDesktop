@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "ui/input/touch_input.h"
 #include "app/input/grid_preview_shortcut.h"
 #include "dock/dock_window_transition.h"
 #include "layout/collection_popup_layout.h"
@@ -175,7 +176,7 @@ void DesktopApp::DrawStaticBackground(
             : GetDesktopWidgetHoverFrameRect(widgetData, widgetFrame);
         const bool interactionVisible =
             snowdesktop::widget_visibility_rules::ShouldRenderWidget(
-                widgetData.showOnHoverOnly,
+                widgetData.showOnHoverOnly && snowdesktop::touch_input::CanHover(),
                 dragSession_.IsActive(),
                 dragDropController_.IsExternalDragActive(),
                 widgetAction_ == WidgetAction::Move,

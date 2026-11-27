@@ -16,6 +16,7 @@
 #include "diagnostics/performance_trace.h"
 #include "system/tray/tray_hover_popup.h"
 #include "ui/render/native_tooltip.h"
+#include "ui/input/touch_input.h"
 #include "ui/render/native_tooltip_preferences.h"
 #include "widget/view/widget_accessibility_provider.h"
 #include <d2d1_1helper.h>
@@ -136,6 +137,9 @@ struct SystemPanel::Impl
     bool trayPreview=false;std::optional<D2D1_RECT_F> dropIndicator;
     DWORD trayLayerTraceStarted=0,trayLayerTraceLast=0;unsigned trayLayerTraceCount=0;
     std::vector<RECT> cards;float scale=1;int width=0,height=0;bool showing=false,closing=false,modal=false,destroying=false;tray::MenuRetentionSession context;WPARAM closeGeneration=0;
+    touch_input::Contact touchContact;
+    float touchStartScroll = 0;
+    bool touchPanning = false;
     Impl(SettingsChanged c,SystemCalendarActions dates,std::function<bool(std::string_view,POINT)> drop,UiAnimationScheduler* timing,IDCompositionDesktopDevice* graphics,IDWriteFactory* fonts,Background draw)
         :changed(std::move(c)),calendar(std::move(dates)),dropOutside(std::move(drop)),background(std::move(draw)),scheduler(timing),composition(graphics),text(fonts){}
     ~Impl(){lifetime->alive=false;destroying=true;HideNow();calendarInputs.reset();tooltip.Close();if(accessibility)accessibility->DetachWindow(window);backdrop.Reset();surface.Reset();visual.Reset();target.Reset();if(window)DestroyWindow(window);}
@@ -306,7 +310,8 @@ struct SystemPanel::Impl
         bool covered = false;
         const bool located=GetCursorPos(&screen)!=FALSE;
         if(located)pointerHover.Observe(screen);
-        if(showing&&!closing&&!modal&&!slide.IsAnimating()&&!context.process&&pointerHover.Enabled()&&model&&input.Pressed().empty()&&!scrollbarDragging&&located)
+        if(showing&&!closing&&!modal&&!slide.IsAnimating()&&!context.process&&pointerHover.Enabled()&&
+            touch_input::CanHover()&&model&&input.Pressed().empty()&&!scrollbarDragging&&located)
         {
             const auto pointerWindow=WindowFromPoint(screen);
             covered = (activatingTrayPreview && GetAncestor(pointerWindow, GA_ROOT) == activatingTrayPreview) ||
@@ -1162,7 +1167,72 @@ struct SystemPanel::Impl
             }
             // Opening uses translated visuals; controls become interactive only
             // once their drawn, hit-test and accessibility coordinates coincide.
+            const bool touched = touch_input::Observe(m, wp);
+            if (touched && (m == WM_POINTERDOWN || m == WM_LBUTTONDOWN || m == WM_LBUTTONUP ||
+                m == WM_POINTERCAPTURECHANGED))
+            {
+                self->ClearPointerHover();
+                self->Paint();
+            }
             if(self->slide.IsAnimating()&&((m>=WM_MOUSEFIRST&&m<=WM_MOUSELAST)||m==WM_KEYDOWN))return 0;
+            if (touch_input::IsPointerMessage(m) && !self->slide.IsAnimating())
+            {
+                const POINT screen = touch_input::ScreenPoint(lp);
+                POINT client = screen;
+                ScreenToClient(w, &client);
+                const auto point = self->ModelPoint(client.x, client.y);
+                auto& contact = self->touchContact;
+                if (m == WM_POINTERDOWN && touched && IS_POINTER_PRIMARY_WPARAM(wp) &&
+                    self->model->MaximumScroll() > 0)
+                {
+                    const auto viewport = self->model->ScrollViewport();
+                    const auto* node = self->model->View().Hit(point);
+                    if (point.x >= viewport.left && point.x < viewport.right && point.y >= viewport.top &&
+                        point.y < viewport.bottom && (!node || node->role != ui::Role::Slider))
+                    {
+                        contact.Begin(wp, screen);
+                        self->touchStartScroll = self->model->ScrollOffset();
+                        self->touchPanning = false;
+                        return 0;
+                    }
+                }
+                if (contact.Owns(wp))
+                {
+                    if (m == WM_POINTERCAPTURECHANGED || touch_input::IsCanceled(wp))
+                    {
+                        contact.Reset();
+                        return 0;
+                    }
+                    if (m == WM_POINTERUPDATE || m == WM_POINTERUP)
+                    {
+                        const int slop = touch_input::Dips(8, GetDpiForWindow(w));
+                        const int delta = screen.y - contact.start.y;
+                        if (std::abs(delta) >= slop && std::abs(delta) >= std::abs(screen.x - contact.start.x))
+                            self->touchPanning = true;
+                        if (self->touchPanning)
+                        {
+                            self->model->Scroll(self->touchStartScroll - delta / self->scale - self->model->ScrollOffset());
+                            self->Arrange();
+                            self->Paint();
+                        }
+                        if (m == WM_POINTERUP)
+                        {
+                            const bool tap = !self->touchPanning && !contact.Moved(screen, slop);
+                            const bool held = contact.Held();
+                            const POINT origin = contact.start;
+                            contact.Reset();
+                            if (tap)
+                            {
+                                touch_input::RouteMouse(w, held ? WM_RBUTTONDOWN : WM_LBUTTONDOWN,
+                                    origin, held ? MK_RBUTTON : MK_LBUTTON);
+                                if (life->alive)
+                                    touch_input::RouteMouse(w, held ? WM_RBUTTONUP : WM_LBUTTONUP, screen);
+                            }
+                        }
+                    }
+                    return 0;
+                }
+            }
             if(self->calendarInputs&&self->calendarInputs->HandlePointer(m,wp,{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)}))
             {self->Paint();return 0;}
             if(m==WM_MBUTTONDOWN||m==WM_MBUTTONUP||m==WM_MBUTTONDBLCLK)
@@ -1215,6 +1285,8 @@ struct SystemPanel::Impl
             }
             if(m==WM_CAPTURECHANGED||m==WM_CANCELMODE)
             {
+                self->touchContact.Reset();
+                self->ClearPointerHover();
                 self->middleTrayPress.reset();self->lastMiddleTray.reset();
                 const bool wasPressed=!self->input.Pressed().empty();
                 self->EndDragFeedback();self->input.Cancel();self->scrollbarDragging=false;

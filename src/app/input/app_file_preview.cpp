@@ -71,6 +71,18 @@ std::wstring DesktopApp::GetSelectedFilePreviewPath()
     return {};
 }
 
+bool DesktopApp::TryOpenFilePreview(const std::wstring& path)
+{
+    if (path.empty()) return false;
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) return false;
+    const auto available = filePreview_.Current();
+    if (available.providers.empty() ||
+        !filePreview_.Request(available.providers.front().shortcut, path, false)) return false;
+    CancelRenameClick();
+    return true;
+}
+
 bool DesktopApp::TryHandleFilePreviewKey(WPARAM key, bool repeated)
 {
     using namespace snowdesktop::file_preview;

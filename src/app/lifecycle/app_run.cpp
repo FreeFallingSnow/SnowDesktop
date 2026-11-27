@@ -816,6 +816,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
         const bool down = event.message == WM_LBUTTONDOWN || event.message == WM_RBUTTONDOWN ||
             event.message == WM_MBUTTONDOWN || event.message == WM_XBUTTONDOWN;
+        if (down && dockWindowPreview_ && dockWindowPreview_->TouchOpened() &&
+            !dockWindowPreview_->ContainsInteractionPoint(event.point) &&
+            !PtInRect(&dockWindowPreviewAnchorScreen_, event.point))
+            HideDockWindowPreview();
         if (down && floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_) &&
             static_cast<LONG>(event.time - floatingPopupPointerGenerationStartedAt_) > 0)
             HandleFloatingPopupExternalPointerDown(floatingPopupMouseHookGeneration_,
@@ -823,6 +827,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     });
     uiAnimationScheduler_.ScheduleInterval(25, [](snowdesktop::UiScheduleToken) {
         snowdesktop::window_support::WindowSupport().Poll();
+    });
+    uiAnimationScheduler_.ScheduleInterval(400, [this](snowdesktop::UiScheduleToken) {
+        SyncTouchEdgeWindows();
     });
     taskbarRestartMsg_ = RegisterWindowMessageW(L"TaskbarCreated");
     systemTaskbarTaskViewStateMsg_ = RegisterWindowMessageW(

@@ -423,6 +423,14 @@ private:
      * @return 消息处理结果
      */
     LRESULT HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+    void ObserveDesktopTouch(HWND window, UINT message, WPARAM pointer, LPARAM position);
+    bool HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPARAM position);
+    bool HandleDesktopTouchEdge(HWND window, UINT message, WPARAM pointer, LPARAM position);
+    static LRESULT CALLBACK TouchEdgeWndProc(HWND window, UINT message, WPARAM wp, LPARAM lp);
+    void SyncTouchEdgeWindows();
+    void DestroyTouchEdgeWindows();
+    void DismissTouchPopupsOnExternalActivation(HWND foreground, DWORD tick);
+    std::vector<HWND> touchEdgeWindows_;
     LRESULT HandleFloatingDockMessage(
         PersistentDockHost& host,
         HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
@@ -1072,9 +1080,9 @@ private:
         POINT clientPoint, DockWindowPreviewTarget& target);
     void UpdateDockWindowPreview(POINT clientPoint);
     void OnDockWindowPreviewHoverTimer();
-    bool TryOpenDockWindowPicker(POINT clientPoint);
+    bool TryOpenDockWindowPicker(POINT clientPoint, bool byTouch = false);
     void ShowDockWindowPreview(DockWindowPreviewTarget target, POINT clientPoint,
-        const std::vector<DockWindowPreviewItem>& previewItems);
+        const std::vector<DockWindowPreviewItem>& previewItems, bool byTouch = false);
     void RefreshDockWindowPreviewItems();
     void HideDockWindowPreview();
     void DismissDockWindowPreviewUntilLeave();
@@ -1610,6 +1618,7 @@ private:
     /** @brief 处理键盘按键消息。 @return 消息是否由应用消费。 */
     bool OnKeyDown(WPARAM key, bool repeated = false);
     bool TryHandleFilePreviewKey(WPARAM key, bool repeated = false);
+    bool TryOpenFilePreview(const std::wstring& path);
     std::wstring GetSelectedFilePreviewPath();
     /** @brief 在当前桌面、容器或弹出窗口中按名称前缀定位文件。 */
     bool TryHandleTypeToSelectChar(wchar_t ch, bool repeated = false);

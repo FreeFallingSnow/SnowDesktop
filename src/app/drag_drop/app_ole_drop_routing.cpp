@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "ui/input/touch_input.h"
 #include "app/app.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "app/popup/categorized_popup_scope.h"
@@ -482,6 +483,8 @@ bool DesktopApp::IsDesktopInteractionSurfaceWindow(
 bool DesktopApp::TryGetDesktopHoverPointFromCursor(
     POINT& point) const
 {
+    if (!snowdesktop::private_pointer::Active() && !snowdesktop::touch_input::CanHover() &&
+        !dragSession_.HasContext() && !dragDropController_.IsTransportActive()) return false;
     POINT screenPoint{};
     if (!hwnd_ || !IsWindow(hwnd_) ||
         !snowdesktop::private_pointer::CursorPosition(&screenPoint))

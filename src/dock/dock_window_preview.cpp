@@ -1,5 +1,6 @@
 #include "ui/render/app_font.h"
 #include "dock_window_preview.h"
+#include "ui/input/touch_input.h"
 #include "dock_window_preview_layout.h"
 
 #include "ui/menu/menu_fluent_glyphs.h"
@@ -804,10 +805,12 @@ bool DockWindowPreview::EnsureWindows(size_t count)
 void DockWindowPreview::Show(
     const std::vector<DockWindowPreviewItem>& items,
     RECT anchorScreen, DockPosition dockPosition, bool lightTheme,
-    HWND dockLayerOwner)
+    HWND dockLayerOwner, bool touchOpened)
 {
     snowdesktop::performance::Scope trace("dock.preview", "show");
     const bool wasVisible = IsVisible();
+    touchOpened_ = touchOpened;
+    touchContact_.Reset();
     const bool newAnchor = dockPosition_ != dockPosition ||
         !EqualRect(&anchorScreen_, &anchorScreen);
     const bool startSlide = !wasVisible || newAnchor || slideClosing_;
@@ -953,7 +956,7 @@ void DockWindowPreview::Show(
     if (startSlide) StartSlide();
     if (!wasVisible && IsVisible() && visibilityChanged_) visibilityChanged_();
     UpdateToolbarTooltips();
-    RefreshPointerTracking(true);
+    if (!touchOpened_) RefreshPointerTracking(true);
 }
 
 void DockWindowPreview::UpdateItems(const std::vector<DockWindowPreviewItem>& items)
@@ -1760,8 +1763,8 @@ void DockWindowPreview::OnPeekTimer()
         CancelPeek();
         return;
     }
-    POINT pointer{};
-    if (GetCursorPos(&pointer))
+    POINT pointer = touchContact_.last;
+    if (touchContact_.Active() || GetCursorPos(&pointer))
         if (const HWND card = PointerWindowAt(pointer); card && ScreenToClient(card, &pointer) &&
             ToolbarRegionAtPoint(ToLayoutPoint(card, pointer)) >= 0)
         {
@@ -2107,7 +2110,7 @@ void DockWindowPreview::ArmHideTimer(UINT delay)
 
 void DockWindowPreview::HideIfPointerOutside(bool fromTimer)
 {
-    if (slideClosing_ || !IsVisible()) return;
+    if (TouchOpened() || slideClosing_ || !IsVisible()) return;
     POINT pointer{};
     if (!GetCursorPos(&pointer))
     {
@@ -2225,8 +2228,63 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
         return 1;
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
+    case WM_POINTERACTIVATE:
+        return PA_NOACTIVATE;
+    case WM_POINTERDOWN:
+    case WM_POINTERUPDATE:
+    case WM_POINTERUP:
+    case WM_POINTERCAPTURECHANGED:
+    case WM_POINTERENTER:
+    case WM_POINTERLEAVE:
+    {
+        namespace touch = snowdesktop::touch_input;
+        const bool touched = touch::Observe(message, wParam);
+        auto& contact = preview->touchContact_;
+        const POINT screen = touch::ScreenPoint(lParam);
+        POINT client = screen;
+        ScreenToClient(window, &client);
+        const POINT point = preview->ToLayoutPoint(window, client);
+        if (message == WM_POINTERDOWN && touched && IS_POINTER_PRIMARY_WPARAM(wParam))
+        {
+            const int index = preview->CardIndexAtPoint(point);
+            if (index < 0 || preview->CloseButtonIndexAtPoint(point) >= 0 ||
+                preview->PinButtonIndexAtPoint(point) >= 0 || preview->ToolbarRegionAtPoint(point) >= 0)
+                break;
+            contact.Begin(wParam, screen);
+            preview->CancelPeek();
+            preview->UpdatePeekTarget(preview->items_[index].window);
+            return 0;
+        }
+        if (!contact.Owns(wParam)) break;
+        if (message == WM_POINTERCAPTURECHANGED || touch::IsCanceled(wParam))
+        {
+            contact.Reset();
+            preview->CancelPeek(true);
+            return 0;
+        }
+        if (message == WM_POINTERUPDATE || message == WM_POINTERUP)
+        {
+            contact.last = screen;
+            const bool moved = contact.Moved(screen, touch::Dips(8, GetDpiForWindow(window)));
+            if (moved && preview->peekCandidate_.window) preview->CancelPeek(true);
+            if (message == WM_POINTERUP)
+            {
+                const bool held = contact.Held() || preview->windowPeek_.Active();
+                contact.Reset();
+                preview->CancelPeek(true);
+                if (!moved && !held)
+                {
+                    preview->RecordPointerInteraction(WM_LBUTTONUP);
+                    preview->OnLeftButtonUp(point);
+                }
+            }
+        }
+        return 0;
+    }
     case WM_MOUSEMOVE:
     {
+        if (snowdesktop::touch_input::Observe(message)) return 0;
+        preview->touchOpened_ = false;
         preview->pointerReconcilePending_ = false;
         // Reflow can leave queued client coordinates from the old geometry.
         // Only a live hit may complete the new generation's initial entry.
@@ -2241,6 +2299,7 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
         return 0;
     case WM_LBUTTONDOWN:
     {
+        if (snowdesktop::touch_input::Observe(message)) preview->CancelPeek(true);
         preview->RecordPointerInteraction(message);
         const POINT point = preview->ToLayoutPoint(window, {
             GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
@@ -2269,6 +2328,7 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
         preview->CancelPeek(true);
         return 0;
     case WM_LBUTTONUP:
+        snowdesktop::touch_input::Observe(message);
         preview->RecordPointerInteraction(message);
         preview->OnLeftButtonUp(preview->ToLayoutPoint(window, {
             GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)
