@@ -675,9 +675,14 @@ void DesktopApp::OnMouseMoveAt(
         mouseDownHit_ &&
         dynamic_cast<DockEntryItem*>(mouseDownHit_) &&
         dockPressedEntry_ < dockEntries_.size();
+    // Touch selects the group so a hover-only widget stays visible. The
+    // pressed tab still supplies the drag source independently of selection.
+    const bool pressedTouchGroupTab = mouseDown_ &&
+        (dynamic_cast<CollectionGroupEntryItem*>(mouseDownHit_) ||
+         dynamic_cast<FileGroupEntryItem*>(mouseDownHit_)) &&
+        !snowdesktop::private_pointer::Active() && snowdesktop::touch_input::IsCurrentTouchInput();
     if (!dragSession_.IsActive() && mouseDown_ && mouseDownHit_ &&
-        (mouseDownHit_->IsSelected() ||
-            pressedDockEntryWithoutSelection))
+        (mouseDownHit_->IsSelected() || pressedDockEntryWithoutSelection || pressedTouchGroupTab))
     {
         if (!snowdesktop::native_item_drag_source::CanStart(mouseDownHit_))
             return;
@@ -693,7 +698,8 @@ void DesktopApp::OnMouseMoveAt(
             if (pendingWidgetButtonAction_ == WidgetHit::CollectionOpenBtn)
                 pendingWidgetButtonAction_ = WidgetHit::None;
             auto capturedSource = snowdesktop::native_item_drag_source::Capture(mouseDownHit_,
-                pressedDockEntryWithoutSelection, [this](Container* source) {
+                pressedDockEntryWithoutSelection, [this, pressedTouchGroupTab](Container* source) {
+                    if (pressedTouchGroupTab) return std::vector<Item*>{mouseDownHit_};
                     return source == dockFolderPopupContainer_.get() ? GetDockFolderPopupSelectedItems()
                         : source ? source->GetSelectedItems() : std::vector<Item*>{};
                 });
