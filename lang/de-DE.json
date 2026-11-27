@@ -2966,6 +2966,11 @@
   "app.widget.placeholder.image_quota_encoded": "Bilddateien im Speicher belegen mehr als 128 MiB.",
   "app.widget.placeholder.ignore_image_quota": "Immer ignorieren",
   "settings.debug.touchSimulation.title": "Touch mit der Maus simulieren",
-  "settings.debug.touchSimulation.description": "Halten Sie die Tastenkombination gedrückt und klicken oder ziehen Sie mit der linken Maustaste. Mit dem Mausrad simulieren Sie das Zoomen mit zwei Fingern. Halten Sie beim Ziehen für einen zweiten Berührungspunkt zusätzlich die erste freie Taste in der Reihenfolge Strg, Umschalt, Alt gedrückt.",
-  "settings.debug.touchSimulation.unavailable": "Die Touch-Simulation konnte nicht gestartet werden. Schalten Sie sie aus und wieder ein."
+  "settings.debug.touchSimulation.description": "Halten Sie die Belegung gedrückt und zielen Sie mit dem separaten Zeiger. Klicken oder ziehen Sie links, um Touch zu simulieren, oder zoomen Sie mit dem Mausrad. Drücken Sie vor dem Ziehen für einen zweiten Kontakt zusätzlich die erste freie Taste in der Reihenfolge Strg, Umschalt, Alt.",
+  "settings.debug.touchSimulation.unavailable": "Die Touch-Simulation konnte nicht gestartet werden. Schalten Sie sie aus und wieder ein.",
+  "settings.debug.touchSimulation.capture": "Drücken Sie ein Tastenkürzel oder klicken Sie im Eingabebereich mit einer seitlichen, der mittleren oder der rechten Maustaste. Wählen Sie dann Anwenden.",
+  "settings.debug.touchSimulation.mouseRight": "Rechte Maustaste",
+  "settings.debug.touchSimulation.mouseMiddle": "Mittlere Maustaste",
+  "settings.debug.touchSimulation.mouseBack": "Seitliche Maustaste 1",
+  "settings.debug.touchSimulation.mouseForward": "Seitliche Maustaste 2"
 }

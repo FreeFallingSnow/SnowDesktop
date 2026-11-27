@@ -2966,6 +2966,11 @@
   "app.widget.placeholder.image_quota_encoded": "保留在記憶體中的圖片檔案總量超過 128 MiB。",
   "app.widget.placeholder.ignore_image_quota": "一律忽略",
   "settings.debug.touchSimulation.title": "用滑鼠模擬觸控",
-  "settings.debug.touchSimulation.description": "按住快速鍵，以左鍵點按或拖曳來模擬單指觸控，滾動滾輪來模擬雙指縮放。拖曳時，依 Ctrl、Shift、Alt 的順序選擇快速鍵未使用的第一個輔助鍵，即可加入第二個觸點。",
-  "settings.debug.touchSimulation.unavailable": "無法啟動觸控模擬。關閉後重新開啟即可重試。"
+  "settings.debug.touchSimulation.description": "按住綁定的鍵或滑鼠按鈕，移動獨立游標瞄準。用左鍵點按或拖曳模擬觸控，滾動滾輪模擬雙指縮放。拖曳前再按住 Ctrl、Shift、Alt 中第一個未被綁定使用的鍵，即可加入第二個觸點。",
+  "settings.debug.touchSimulation.unavailable": "無法啟動觸控模擬。關閉後重新開啟即可重試。",
+  "settings.debug.touchSimulation.capture": "按下鍵盤快速鍵，或在錄製區域點按滑鼠側鍵、中鍵或右鍵，再選擇「套用」。",
+  "settings.debug.touchSimulation.mouseRight": "滑鼠右鍵",
+  "settings.debug.touchSimulation.mouseMiddle": "滑鼠中鍵",
+  "settings.debug.touchSimulation.mouseBack": "滑鼠側鍵 1",
+  "settings.debug.touchSimulation.mouseForward": "滑鼠側鍵 2"
 }

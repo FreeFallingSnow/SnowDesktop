@@ -2966,6 +2966,11 @@
   "app.widget.placeholder.image_quota_encoded": "保留在内存中的图片文件总量超过 128 MiB。",
   "app.widget.placeholder.ignore_image_quota": "始终忽略",
   "settings.debug.touchSimulation.title": "用鼠标模拟触屏",
-  "settings.debug.touchSimulation.description": "按住快捷键，用左键点按或拖动来模拟单指触摸，滚动滚轮来模拟双指缩放。拖动时，按 Ctrl、Shift、Alt 的顺序选一个快捷键未占用的修饰键，即可添加第二个触点。",
-  "settings.debug.touchSimulation.unavailable": "触屏模拟未能启动。关闭后重新开启可重试。"
+  "settings.debug.touchSimulation.description": "按住绑定的键或鼠标按钮，移动独立光标来瞄准。用左键点按或拖动模拟触摸，滚动滚轮模拟双指缩放。起拖前再按住 Ctrl、Shift、Alt 中第一个未被绑定占用的键，可添加第二个触点。",
+  "settings.debug.touchSimulation.unavailable": "触屏模拟未能启动。关闭后重新开启可重试。",
+  "settings.debug.touchSimulation.capture": "按下键盘快捷键，或在录入区域点按鼠标侧键、中键或右键，然后选择「应用」。",
+  "settings.debug.touchSimulation.mouseRight": "鼠标右键",
+  "settings.debug.touchSimulation.mouseMiddle": "鼠标中键",
+  "settings.debug.touchSimulation.mouseBack": "鼠标侧键 1",
+  "settings.debug.touchSimulation.mouseForward": "鼠标侧键 2"
 }

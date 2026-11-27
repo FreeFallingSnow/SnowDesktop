@@ -2966,6 +2966,11 @@
   "app.widget.placeholder.image_quota_encoded": "Los archivos de imagen en memoria superan los 128 MiB en total.",
   "app.widget.placeholder.ignore_image_quota": "Ignorar siempre",
   "settings.debug.touchSimulation.title": "Simular el tacto con el ratón",
-  "settings.debug.touchSimulation.description": "Mantén pulsado el atajo y haz clic o arrastra con el botón izquierdo. Usa la rueda para simular el zoom con dos dedos. Para añadir un segundo punto al arrastrar, mantén pulsada la primera tecla que no uses en el atajo, por este orden: Ctrl, Mayús, Alt.",
-  "settings.debug.touchSimulation.unavailable": "No se ha podido iniciar la simulación táctil. Desactívala y vuelve a activarla para intentarlo de nuevo."
+  "settings.debug.touchSimulation.description": "Mantén pulsado el atajo y apunta con el puntero independiente. Haz clic o arrastra con el botón izquierdo para simular el tacto, o gira la rueda para ampliar y reducir. Para añadir un segundo punto, pulsa la primera tecla libre entre Ctrl, Mayús y Alt antes de arrastrar.",
+  "settings.debug.touchSimulation.unavailable": "No se ha podido iniciar la simulación táctil. Desactívala y vuelve a activarla para intentarlo de nuevo.",
+  "settings.debug.touchSimulation.capture": "Pulsa un atajo de teclado o haz clic en el área de grabación con un botón lateral, central o derecho del ratón. Después, selecciona Aplicar.",
+  "settings.debug.touchSimulation.mouseRight": "Botón derecho del ratón",
+  "settings.debug.touchSimulation.mouseMiddle": "Botón central del ratón",
+  "settings.debug.touchSimulation.mouseBack": "Botón lateral 1 del ratón",
+  "settings.debug.touchSimulation.mouseForward": "Botón lateral 2 del ratón"
 }

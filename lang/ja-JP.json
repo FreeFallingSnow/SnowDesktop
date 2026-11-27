@@ -2966,6 +2966,11 @@
   "app.widget.placeholder.image_quota_encoded": "メモリに保持した画像ファイルの合計が128 MiBを超えました。",
   "app.widget.placeholder.ignore_image_quota": "常に無視",
   "settings.debug.touchSimulation.title": "マウスでタッチをシミュレート",
-  "settings.debug.touchSimulation.description": "ショートカットを押しながら左クリックまたはドラッグすると、タッチを再現できます。ホイールでピンチ操作を行えます。ドラッグ中に 2 点目を追加するには、Ctrl、Shift、Alt の順に、ショートカットで使っていない最初のキーを押します。",
-  "settings.debug.touchSimulation.unavailable": "タッチのシミュレーションを開始できませんでした。オフにしてからもう一度オンにしてください。"
+  "settings.debug.touchSimulation.description": "割り当てたキーやボタンを押しながら、専用ポインターで位置を合わせます。左クリックやドラッグでタッチ、ホイールでピンチを再現します。ドラッグ前に Ctrl、Shift、Alt の順で未使用の最初のキーを押すと、2 点目を追加できます。",
+  "settings.debug.touchSimulation.unavailable": "タッチのシミュレーションを開始できませんでした。オフにしてからもう一度オンにしてください。",
+  "settings.debug.touchSimulation.capture": "キーボードショートカットを押すか、録画領域でマウスのサイドボタン、中央ボタン、または右ボタンを押して、「適用」を選択してください。",
+  "settings.debug.touchSimulation.mouseRight": "マウスの右ボタン",
+  "settings.debug.touchSimulation.mouseMiddle": "マウスの中央ボタン",
+  "settings.debug.touchSimulation.mouseBack": "マウスのサイドボタン 1",
+  "settings.debug.touchSimulation.mouseForward": "マウスのサイドボタン 2"
 }

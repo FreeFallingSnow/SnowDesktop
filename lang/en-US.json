@@ -2966,6 +2966,11 @@
   "app.widget.placeholder.image_quota_encoded": "Image files held in memory exceed 128 MiB in total.",
   "app.widget.placeholder.ignore_image_quota": "Always ignore",
   "settings.debug.touchSimulation.title": "Simulate touch with the mouse",
-  "settings.debug.touchSimulation.description": "Hold the shortcut and click or drag to simulate touch. Scroll to pinch. For a second contact while dragging, add the first of Ctrl, Shift or Alt that your shortcut does not use.",
-  "settings.debug.touchSimulation.unavailable": "Touch simulation could not start. Turn it off and on again to retry."
+  "settings.debug.touchSimulation.description": "Hold the binding and move the separate pointer to aim. Left-click or drag to simulate touch, or scroll to pinch. To add a second contact, hold the first unused key from Ctrl, Shift, and Alt before dragging.",
+  "settings.debug.touchSimulation.unavailable": "Touch simulation could not start. Turn it off and on again to retry.",
+  "settings.debug.touchSimulation.capture": "Press a keyboard shortcut, or click a side, middle, or right mouse button in the recording area. Then select Apply.",
+  "settings.debug.touchSimulation.mouseRight": "Right mouse button",
+  "settings.debug.touchSimulation.mouseMiddle": "Middle mouse button",
+  "settings.debug.touchSimulation.mouseBack": "Mouse side button 1",
+  "settings.debug.touchSimulation.mouseForward": "Mouse side button 2"
 }

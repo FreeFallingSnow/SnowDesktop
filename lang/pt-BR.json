@@ -2966,6 +2966,11 @@
   "app.widget.placeholder.image_quota_encoded": "Os arquivos de imagem mantidos na memória excedem 128 MiB no total.",
   "app.widget.placeholder.ignore_image_quota": "Sempre ignorar",
   "settings.debug.touchSimulation.title": "Simular toque com o mouse",
-  "settings.debug.touchSimulation.description": "Mantenha o atalho pressionado e clique ou arraste com o botão esquerdo. Use a roda para simular o zoom com dois dedos. Para adicionar um segundo ponto ao arrastar, pressione a primeira tecla que não faz parte do atalho, nesta ordem: Ctrl, Shift, Alt.",
-  "settings.debug.touchSimulation.unavailable": "Não foi possível iniciar a simulação de toque. Desative e reative a opção para tentar novamente."
+  "settings.debug.touchSimulation.description": "Mantenha o atalho pressionado e aponte com o cursor separado. Clique ou arraste com o botão esquerdo para simular o toque, ou use a roda para controlar o zoom. Para adicionar um segundo contato, antes de arrastar pressione a primeira tecla livre entre Ctrl, Shift e Alt.",
+  "settings.debug.touchSimulation.unavailable": "Não foi possível iniciar a simulação de toque. Desative e reative a opção para tentar novamente.",
+  "settings.debug.touchSimulation.capture": "Pressione um atalho de teclado ou clique na área de gravação com um botão lateral, central ou direito do mouse. Em seguida, selecione Aplicar.",
+  "settings.debug.touchSimulation.mouseRight": "Botão direito do mouse",
+  "settings.debug.touchSimulation.mouseMiddle": "Botão central do mouse",
+  "settings.debug.touchSimulation.mouseBack": "Botão lateral 1 do mouse",
+  "settings.debug.touchSimulation.mouseForward": "Botão lateral 2 do mouse"
 }

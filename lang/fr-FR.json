@@ -2966,6 +2966,11 @@
   "app.widget.placeholder.image_quota_encoded": "Le total des fichiers image en mémoire dépasse 128 Mio.",
   "app.widget.placeholder.ignore_image_quota": "Toujours ignorer",
   "settings.debug.touchSimulation.title": "Simuler le toucher avec la souris",
-  "settings.debug.touchSimulation.description": "Maintenez le raccourci enfoncé et cliquez ou faites glisser avec le bouton gauche. Utilisez la molette pour zoomer à deux doigts. Pour un second point de contact pendant le glissement, ajoutez la première touche inutilisée parmi Ctrl, Maj et Alt, dans cet ordre.",
-  "settings.debug.touchSimulation.unavailable": "La simulation tactile n’a pas pu démarrer. Désactivez-la, puis réactivez-la pour réessayer."
+  "settings.debug.touchSimulation.description": "Maintenez le raccourci et visez avec le pointeur dédié. Cliquez avec le bouton gauche ou faites glisser pour simuler le toucher. Utilisez la molette pour zoomer à deux doigts. Pour un second contact, maintenez la première touche libre parmi Ctrl, Maj et Alt avant de faire glisser.",
+  "settings.debug.touchSimulation.unavailable": "La simulation tactile n’a pas pu démarrer. Désactivez-la, puis réactivez-la pour réessayer.",
+  "settings.debug.touchSimulation.capture": "Appuyez sur un raccourci clavier ou cliquez dans la zone d’enregistrement avec un bouton latéral, central ou droit de la souris. Sélectionnez ensuite Appliquer.",
+  "settings.debug.touchSimulation.mouseRight": "Bouton droit de la souris",
+  "settings.debug.touchSimulation.mouseMiddle": "Bouton central de la souris",
+  "settings.debug.touchSimulation.mouseBack": "Bouton latéral 1 de la souris",
+  "settings.debug.touchSimulation.mouseForward": "Bouton latéral 2 de la souris"
 }
