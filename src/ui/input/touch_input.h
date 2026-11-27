@@ -7,6 +7,7 @@
 namespace snowdesktop::touch_input
 {
 inline thread_local bool touchMode = false;
+inline thread_local ULONGLONG lastTouchPress = 0;
 inline thread_local bool routingTouch = false;
 inline thread_local bool routedContactDown = false;
 inline thread_local POINT routedPoint{};
@@ -36,23 +37,35 @@ inline bool Observe(UINT message, WPARAM pointer = 0) noexcept
     if (IsPointerMessage(message))
     {
         if (!IsTouchPointer(pointer)) return false;
-        if (message == WM_POINTERDOWN || message == WM_POINTERUPDATE) touchMode = true;
+        if (message == WM_POINTERDOWN || message == WM_POINTERUPDATE || message == WM_POINTERUP)
+            touchMode = true;
+        if (message == WM_POINTERDOWN || message == WM_POINTERUP) lastTouchPress = GetTickCount64();
         return true;
     }
+    if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN) lastTouchPress = 0;
     if (message < WM_MOUSEFIRST || message > WM_MOUSELAST) return false;
     INPUT_MESSAGE_SOURCE source{};
     const bool sourceKnown = GetCurrentInputMessageSource(&source) != FALSE;
     if (routingTouch || IsPromotedTouch() || (sourceKnown && source.deviceType == IMDT_TOUCH))
     {
         touchMode = true;
+        if (message == WM_LBUTTONDOWN || message == WM_LBUTTONUP) lastTouchPress = GetTickCount64();
         return true;
     }
     if (sourceKnown && (source.deviceType == IMDT_MOUSE || source.deviceType == IMDT_PEN ||
-        source.deviceType == IMDT_TOUCHPAD)) touchMode = false;
+        source.deviceType == IMDT_TOUCHPAD))
+    {
+        touchMode = false;
+        lastTouchPress = 0;
+    }
     return false;
 }
 
 inline bool CanHover() noexcept { return !touchMode; }
+inline bool RecentlyPressed() noexcept
+{
+    return lastTouchPress && GetTickCount64() - lastTouchPress <= 700;
+}
 
 class RoutedTouch final
 {

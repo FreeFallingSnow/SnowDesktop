@@ -111,8 +111,9 @@ void DesktopApp::ObserveDesktopTouch(HWND window, UINT message, WPARAM pointer, 
         visualTouchMode = touch::touchMode;
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
     }
-    if (!touched || touch::routingTouch) return;
-    if (message != WM_POINTERDOWN && message != WM_LBUTTONDOWN &&
+    const bool touchCaptureEnded = message == WM_POINTERCAPTURECHANGED && !touch::CanHover();
+    if ((!touched && !touchCaptureEnded) || touch::routingTouch) return;
+    if (message != WM_POINTERDOWN && message != WM_POINTERUP && message != WM_LBUTTONDOWN &&
         message != WM_LBUTTONUP && message != WM_POINTERCAPTURECHANGED) return;
 
     OnMouseLeave();
@@ -280,6 +281,7 @@ LRESULT CALLBACK DesktopApp::TouchEdgeWndProc(HWND window, UINT message, WPARAM 
             edge->contact.id = sample.dwID;
             edge->contact.start = edge->contact.last = point;
             edge->contact.started = GetTickCount64();
+            touch::lastTouchPress = GetTickCount64();
             edge->app->OnMouseLeave();
         }
         if (edge->contact.id != sample.dwID || (sample.dwFlags & TOUCHEVENTF_UP) == 0) continue;

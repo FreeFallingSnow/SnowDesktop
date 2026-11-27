@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "dock/dock_window_rules.h"
 #include "dock/dock_window_preview.h"
+#include "ui/input/touch_input.h"
 #include "dock/dock_window_transition.h"
 #include "common/utils.h"
 #include "dock_platform_helpers.h"
@@ -521,7 +522,8 @@ bool DesktopApp::TryOpenDockWindowPicker(POINT clientPoint, bool byTouch)
     // A click can reopen the same group after choosing a window suppressed its hover.
     KillTimer(hwnd_, kDockWindowPreviewHoverTimerId);
     dockWindowPreviewHover_.Reset();
-    ShowDockWindowPreview(std::move(target), clientPoint, previewItems, byTouch);
+    ShowDockWindowPreview(std::move(target), clientPoint, previewItems,
+        byTouch || snowdesktop::touch_input::RecentlyPressed());
     if (dockWindowPreview_->IsVisible()) dockWindowPreview_->KeepVisible();
     return true;
 }

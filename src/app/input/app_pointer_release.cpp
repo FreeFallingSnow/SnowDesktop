@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "ui/input/touch_input.h"
 #include "dock/dock_tray_rules.h"
 #include "dock/floating_dock_rules.h"
 #include "app/app.h"
@@ -245,6 +246,27 @@ bool DesktopApp::PresentCollectionPopupHoverChange(POINT previousHover, bool all
 void DesktopApp::OnMouseLeave()
 {
     snowdesktop::performance::Scope trace("input", "hover.mouse_leave");
+    if (!snowdesktop::touch_input::CanHover() && !snowdesktop::private_pointer::Active())
+    {
+        const POINT previous = lastMousePoint_;
+        lastMousePoint_ = {LONG_MIN, LONG_MIN};
+        CancelPopupHover();
+        ClearListTitleHover();
+        SetPageNavHotEdgeHover(0);
+        navAutoFlipDir_ = 0;
+        navAutoFlipTick_ = 0;
+        floatingDockHoverHandoffPending_ = false;
+        floatingDockHoverHandoffRect_ = {};
+        DockTrayPopupPointerMove(lastMousePoint_);
+        UpdateLuaStackIndicator(lastMousePoint_);
+        dockTitleTooltip_.Hide();
+        luaWidgetTooltip_.Hide();
+        if (widgetEngine_) widgetEngine_->ClearInteractionHover();
+        if (dockWindowPreview_ && !dockWindowPreview_->TouchOpened()) HideDockWindowPreview();
+        if (!PresentCollectionPopupHoverChange(previous)) PresentPassiveHoverVisualChange(previous);
+        UpdateLargeIconHover();
+        return;
+    }
     if (!largeIconSettingsPickKeys_.empty()) HideDragHintWindow();
     UpdateLuaStackIndicator(POINT{LONG_MIN, LONG_MIN});
     POINT popupPoint{};
@@ -1859,7 +1881,10 @@ cleanup:
     dockFolderPopupMarqueeInitialSelection_.clear();
     pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
     pendingCtrlToggleWidgetItem_ = nullptr;
-    RefreshPageNavHotEdgeHoverAt(upPoint);
+    if (snowdesktop::touch_input::CanHover() || snowdesktop::private_pointer::Active())
+        RefreshPageNavHotEdgeHoverAt(upPoint);
+    else
+        SetPageNavHotEdgeHover(0);
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
     mouseDown_ = false;

@@ -19,7 +19,7 @@ struct BooleanField
     const char* description;
 };
 constexpr BooleanField kBooleans[]{
-    {"showOnHoverOnly", &NativeWidgetConfiguration::showOnHoverOnly, "Conceals the component until the pointer enters its hover area. Global hover visibility animation preferences affect the transition."},
+    {"showOnHoverOnly", &NativeWidgetConfiguration::showOnHoverOnly, "Conceals the component until the mouse enters its hover area. On a touchscreen, tap its area to select and reveal the component, or tap elsewhere to clear the selection. Global hover visibility animation preferences affect the transition."},
     {"keepWhenDesktopHidden", &NativeWidgetConfiguration::keepWhenDesktopHidden, "Keeps this component eligible for display when SnowDesktop hides desktop icons."},
     {"privacyMode", &NativeWidgetConfiguration::privacyMode, "Uses the component's privacy presentation to conceal its contents until revealed. Use normal membership operations to change what it contains."},
     {"singleCellIconMode", &NativeWidgetConfiguration::singleCellIconMode, "Uses the compact icon presentation for an eligible one-cell desktop component. Availability depends on the current span and page."},

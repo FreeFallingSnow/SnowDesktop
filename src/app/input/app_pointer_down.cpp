@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "ui/input/touch_input.h"
 #include "app/app.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_rules.h"
@@ -222,6 +223,42 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     const bool popupOwnedByPointDock =
         collectionPopupDockHost_ == pointDockHost;
     const bool pointInDock = pointDock != nullptr;
+    if (!snowdesktop::private_pointer::Active() && snowdesktop::touch_input::RecentlyPressed() &&
+        !IsPointOccludedByOpenPopup(pt) && !quickNavigation_->open)
+    {
+        size_t hit = widgets_.size();
+        if (!pointInDock)
+        {
+            for (size_t index = widgets_.size(); index > 0; --index)
+            {
+                const auto& widget = widgets_[index - 1];
+                if (IsGroupedWidget(widget) || IsRectEmpty(&widget.bounds) ||
+                    (desktopIconsHidden_ && !widget.keepWhenDesktopHidden)) continue;
+                const RECT visible = GetStandaloneWidgetFrameRect(widget);
+                const RECT frame = widget.showOnHoverOnly && !widget.selected
+                    ? GetDesktopWidgetHoverFrameRect(widget, visible) : visible;
+                if (PtInRect(&frame, pt))
+                {
+                    hit = index - 1;
+                    break;
+                }
+            }
+        }
+        if (hit < widgets_.size() && widgets_[hit].showOnHoverOnly && !widgets_[hit].selected &&
+            !HasSelectedFilesInWidget(hit))
+        {
+            RestoreInteractionInputFocus(true);
+            SelectWidgetOnly(hit);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            PresentDesktopPointerUpdate();
+            return;
+        }
+        const bool clearHiddenSelection = std::ranges::any_of(widgets_, [&](const auto& widget) {
+            return widget.showOnHoverOnly && widget.selected &&
+                (hit >= widgets_.size() || &widget != &widgets_[hit]);
+        });
+        if (clearHiddenSelection && ClearSelection()) InvalidateRect(hwnd_, nullptr, FALSE);
+    }
     size_t pressedDockCollectionWidgetIndex =
         static_cast<size_t>(-1);
     bool pressedOpenPopupFolderToggle = false;

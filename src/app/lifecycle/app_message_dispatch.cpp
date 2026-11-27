@@ -469,7 +469,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
         snowdesktop::performance::Scope pointerScope("desktop.input", "mouse.move");
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-        if (!snowdesktop::touch_input::CanHover() && !(wp & (MK_LBUTTON | MK_RBUTTON))) return 0;
+        if (!snowdesktop::touch_input::CanHover() && !snowdesktop::private_pointer::Active() &&
+            !(wp & (MK_LBUTTON | MK_RBUTTON))) return 0;
         // The guide owns its captured gesture, including moves outside its
         // bounds. Handle it before passive-hover filtering can discard them.
         if (HandleUsageGuidePointerMove(pt)) return 0;

@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "ui/input/private_pointer.h"
 #include "ui/input/touch_input.h"
 #include "app/input/grid_preview_shortcut.h"
 #include "dock/dock_window_transition.h"
@@ -176,14 +177,15 @@ void DesktopApp::DrawStaticBackground(
             : GetDesktopWidgetHoverFrameRect(widgetData, widgetFrame);
         const bool interactionVisible =
             snowdesktop::widget_visibility_rules::ShouldRenderWidget(
-                widgetData.showOnHoverOnly && snowdesktop::touch_input::CanHover(),
+                widgetData.showOnHoverOnly,
                 dragSession_.IsActive(),
                 dragDropController_.IsExternalDragActive(),
                 widgetAction_ == WidgetAction::Move,
                 widgetData.selected,
                 HasSelectedFilesInWidget(widgetIndex),
                 interactionRetained,
-                PtInRect(&hoverFrame, lastMousePoint_) != FALSE);
+                (snowdesktop::touch_input::CanHover() || snowdesktop::private_pointer::Active()) &&
+                    PtInRect(&hoverFrame, lastMousePoint_) != FALSE);
         const bool surfaceAvailable =
             !desktopPassthroughActive_ &&
             snowdesktop::widget_visibility_rules::IsDesktopSurfaceVisible(

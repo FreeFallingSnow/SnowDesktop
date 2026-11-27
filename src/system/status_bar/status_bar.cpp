@@ -285,6 +285,7 @@ struct StatusBar::Impl
         bool lastDockInteraction = false, lastDockPromoted = false;
         StatusBarFullscreenState fullscreenState;
         StatusBarRevealState revealState;
+        std::optional<POINT> touchRevealCursor;
         quick_navigation_animation_rules::State independentSlide;
         bool independentSlideAttached = false;
         HWND slideFullscreenSource = nullptr;
@@ -754,10 +755,14 @@ struct StatusBar::Impl
             if (mergedDockHeight || fullscreenObserved || !owner.settings.showOnlyWhenSummoned) return;
             if (!owner.presentationEnabled || closing || failed || !positioned)
             { revealState.Reset(); return; }
-            if (!touch_input::CanHover()) return;
             MONITORINFO info{sizeof(info)};
             POINT pointer{};
             if (!GetMonitorInfoW(monitor, &info) || !GetCursorPos(&pointer)) return;
+            if (touchRevealCursor && revealState.Revealed())
+            {
+                if (pointer.x == touchRevealCursor->x && pointer.y == touchRevealCursor->y) return;
+                touchRevealCursor.reset();
+            }
             const bool interacting = (owner.interactionSessionProvider && owner.interactionSessionProvider(monitor)) ||
                 GetCapture() == hwnd || GetFocus() == hwnd;
             if (revealState.Update(pointer, info.rcMonitor, placedBounds, owner.settings.position,
@@ -2954,6 +2959,8 @@ void StatusBar::RevealFromTouch(HMONITOR monitor)
         if (window && window->monitor == monitor && !window->mergedDockHeight)
         {
             window->revealState.Reveal();
+            POINT cursor{};
+            if (GetCursorPos(&cursor)) window->touchRevealCursor = cursor;
             window->CheckFullscreen();
         }
     }
@@ -2967,6 +2974,7 @@ void StatusBar::DismissTemporaryReveal(HMONITOR monitor)
         if (!window || window->monitor != monitor || window->mergedDockHeight ||
             (!window->fullscreenState.Revealed() && !window->revealState.Revealed())) continue;
         window->revealState.Dismiss();
+        window->touchRevealCursor.reset();
         window->fullscreenState.DismissReveal();
         // Let the existing popup close path consume the outside down first.
         QueueFullscreen(window->hwnd);

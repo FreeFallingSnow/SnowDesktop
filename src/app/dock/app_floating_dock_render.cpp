@@ -486,6 +486,8 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return 0;
     case WM_MOUSEMOVE:
     {
+        if (!snowdesktop::touch_input::CanHover() && !snowdesktop::private_pointer::Active() &&
+            !(wp & (MK_LBUTTON | MK_RBUTTON))) return 0;
         snowdesktop::performance::Scope pointerScope("dock.input", "mouse.move");
         POINT livePointer{};
         const bool cursorKnown = snowdesktop::private_pointer::CursorPosition(&livePointer) != FALSE;

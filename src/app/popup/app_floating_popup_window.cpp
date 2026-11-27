@@ -36,6 +36,8 @@ constexpr UINT_PTR kPopupPresentationRetryTimerId = 2;
 constexpr UINT kPopupPresentationRetryIntervalMs = 100;
 constexpr unsigned kPopupPresentationRetryLimit = 5;
 constexpr UINT kRefreshPopupBoundsMessage = WM_APP + 0x477;
+constexpr UINT kTouchPopupDeactivatedMessage = WM_APP + 0x478;
+constexpr wchar_t kTouchPopupActivation[] = L"SnowDesktop.TouchPopupActivation";
 
 RECT UnionRects(const RECT& first, const RECT& second)
 {
@@ -1596,6 +1598,22 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
         ApplyFloatingPopupLayerPolicy();
     }
     ApplyDragPreviewLayerPolicy();
+    if (!snowdesktop::private_pointer::Active() && snowdesktop::touch_input::RecentlyPressed() &&
+        IsWindowVisible(floatingPopupHwnd_) && !HasActiveContextMenuSession() &&
+        !dragSession_.HasContext() && !dragDropController_.IsTransportActive() &&
+        (IsCollectionPopupHostedByFloatingWindow() ||
+            (IsLuaPanelHostedByFloatingWindow() && luaWidgetPanelRequest_.dismissOnOutside)))
+    {
+        const auto generation = reinterpret_cast<HANDLE>(
+            static_cast<ULONG_PTR>(floatingPopupMouseHookGeneration_));
+        if (generation && GetPropW(floatingPopupHwnd_, kTouchPopupActivation) != generation &&
+            SetPropW(floatingPopupHwnd_, kTouchPopupActivation, generation))
+        {
+            // A touch-opened popup can now receive native deactivation when the
+            // previous foreground app handles touch without mouse promotion.
+            SetForegroundWindow(floatingPopupHwnd_);
+        }
+    }
     SyncPopupMouseLeaveTimer();
 }
 
@@ -1778,6 +1796,14 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         break;
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
+    case WM_ACTIVATE:
+        if (LOWORD(wp) == WA_INACTIVE && GetPropW(hwnd, kTouchPopupActivation))
+            PostMessageW(hwnd, kTouchPopupDeactivatedMessage, floatingPopupMouseHookGeneration_, 0);
+        break;
+    case kTouchPopupDeactivatedMessage:
+        if (wp == floatingPopupMouseHookGeneration_ && GetForegroundWindow() != hwnd)
+            DismissTouchPopupsOnExternalActivation(GetForegroundWindow(), GetTickCount());
+        return 0;
     case WM_POINTERACTIVATE:
         return PA_NOACTIVATE;
     case WM_GESTURENOTIFY:
@@ -1851,6 +1877,8 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         return 0;
     case WM_MOUSEMOVE:
     {
+        if (!snowdesktop::touch_input::CanHover() && !snowdesktop::private_pointer::Active() &&
+            !(wp & (MK_LBUTTON | MK_RBUTTON))) return 0;
         TRACKMOUSEEVENT tracking{ sizeof(tracking) };
         tracking.dwFlags = TME_LEAVE;
         tracking.hwndTrack = hwnd;

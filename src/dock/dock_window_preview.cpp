@@ -956,7 +956,9 @@ void DockWindowPreview::Show(
     if (startSlide) StartSlide();
     if (!wasVisible && IsVisible() && visibilityChanged_) visibilityChanged_();
     UpdateToolbarTooltips();
-    if (!touchOpened_) RefreshPointerTracking(true);
+    if (touchOpened_ && hwnd_ && IsWindowVisible(hwnd_))
+        SetForegroundWindow(hwnd_);
+    else if (!touchOpened_) RefreshPointerTracking(true);
 }
 
 void DockWindowPreview::UpdateItems(const std::vector<DockWindowPreviewItem>& items)
@@ -2228,6 +2230,20 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
         return 1;
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
+    case WM_ACTIVATE:
+        if (LOWORD(wParam) == WA_INACTIVE && window == preview->hwnd_ && preview->TouchOpened())
+            PostMessageW(window, WM_APP + 0x33D, 0, 0);
+        break;
+    case WM_APP + 0x33D:
+    {
+        const HWND foreground = GetForegroundWindow();
+        DWORD process = 0;
+        if (foreground && foreground != window && GetWindowThreadProcessId(foreground, &process) &&
+            process != GetCurrentProcessId() && preview->TouchOpened() &&
+            !preview->RetainsCloseForeground(foreground))
+            preview->Dismiss();
+        return 0;
+    }
     case WM_POINTERACTIVATE:
         return PA_NOACTIVATE;
     case WM_POINTERDOWN:
