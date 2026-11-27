@@ -9,6 +9,7 @@ namespace
 constexpr wchar_t relayClass[] = L"SnowDesktop.TouchDragRelay";
 constexpr ULONG_PTR relayMouse = 0x53444f4c;
 constexpr UINT_PTR startTimer = 1;
+constexpr UINT_PTR releaseTimer = 2;
 constexpr int relayRadius = 2;
 
 bool SendMouse(POINT point, DWORD buttons, bool move = true) noexcept
@@ -33,19 +34,17 @@ bool SendMouse(POINT point, DWORD buttons, bool move = true) noexcept
     return SendInput(1, &input, sizeof(input)) == 1;
 }
 
-enum class State { Idle, Starting, Running, FinishingContact };
+enum class State { Idle, Starting, Running };
 
 struct Relay
 {
     HWND owner = nullptr;
     HWND window = nullptr;
-    UINT32 pointerId = 0;
     POINT point{};
     State state = State::Idle;
     bool buttonDown = false;
-    bool released = false;
     bool canceled = false;
-    std::function<bool(POINT)> runOle;
+    std::function<void(bool)> complete;
 
     ~Relay() { Reset(); }
 
@@ -60,16 +59,29 @@ struct Relay
         ReleaseButton(false);
         if (const HWND old = std::exchange(window, nullptr)) DestroyWindow(old);
         owner = nullptr;
-        pointerId = 0;
         state = State::Idle;
-        canceled = released = false;
-        runOle = {};
+        canceled = false;
+        complete = {};
     }
 
-    void StopRunning() noexcept
+    void CancelStart() noexcept
     {
+        const bool notify = IsWindow(owner) != FALSE;
+        auto callback = std::move(complete);
+        Reset();
+        if (notify && callback)
+            try { callback(false); } catch (...) {}
+    }
+
+    void FinishMouseInput() noexcept
+    {
+        ReleaseButton(true);
+        if (!buttonDown)
+        {
+            KillTimer(window, releaseTimer);
+            return;
+        }
         canceled = true;
-        ReleaseButton(false);
         if (const HWND capture = GetCapture()) PostMessageW(capture, WM_KEYDOWN, VK_ESCAPE, 0);
     }
 
@@ -77,29 +89,27 @@ struct Relay
     {
         if (state != State::Starting) return;
         KillTimer(window, startTimer);
-        // Keep an active window on the OLE thread for mouse capture while
-        // letting the real drop target participate in hit testing.
-        const auto style = GetWindowLongPtrW(window, GWL_EXSTYLE);
-        SetWindowLongPtrW(window, GWL_EXSTYLE, style | WS_EX_TRANSPARENT);
-        SetWindowPos(window, nullptr, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        // Keep the active window for OLE mouse capture, but remove its hit
+        // region once it has received the down event.
+        const HRGN emptyRegion = CreateRectRgn(0, 0, 0, 0);
+        if (!emptyRegion || !SetWindowRgn(window, emptyRegion, TRUE))
+        {
+            if (emptyRegion) DeleteObject(emptyRegion);
+            CancelStart();
+            return;
+        }
+        if (!IsWindow(owner) || WindowFromPoint(point) == window || !SetTimer(window, releaseTimer, 40, nullptr))
+        {
+            CancelStart();
+            return;
+        }
+
+        // The real touch has already ended. Release the mouse from the OLE
+        // pump even if it never receives another WM_POINTER message.
         state = State::Running;
-        bool resume = false;
-        try
-        {
-            resume = IsWindow(owner) != FALSE;
-            if (resume && WindowFromPoint(point) != window && SendMouse(point, 0))
-                resume = runOle(point);
-        }
-        catch (...) { canceled = true; }
-        ReleaseButton(false);
-        if (!released && !resume)
-        {
-            if (const HWND old = std::exchange(window, nullptr)) DestroyWindow(old);
-            state = State::FinishingContact;
-            runOle = {};
-        }
-        else Reset();
+        auto callback = std::move(complete);
+        try { callback(true); } catch (...) {}
+        Reset();
     }
 };
 
@@ -116,7 +126,9 @@ LRESULT CALLBACK RelayProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp)
     {
     case WM_MOUSEACTIVATE: return MA_ACTIVATE;
     case WM_TIMER:
-        if (wp == startTimer && window == relay.window && relay.state == State::Starting) relay.Reset();
+        if (window != relay.window) return 0;
+        if (wp == startTimer && relay.state == State::Starting) relay.CancelStart();
+        if (wp == releaseTimer && relay.state == State::Running) relay.FinishMouseInput();
         return 0;
     case WM_LBUTTONDOWN:
         if (window == relay.window && IsRelayMouseMessage(message)) relay.MouseDown();
@@ -126,11 +138,11 @@ LRESULT CALLBACK RelayProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp)
 }
 }
 
-bool Start(HWND owner, UINT32 pointerId, POINT screen, std::function<bool(POINT)> runOle)
+bool StartDrop(HWND owner, POINT screen, std::function<void(bool)> complete)
 {
     auto& relay = Current();
     RECT clip{};
-    if (relay.state != State::Idle || relay.buttonDown || !owner || !pointerId ||
+    if (relay.state != State::Idle || relay.buttonDown || !owner || !complete || GetCapture() ||
         (GetAsyncKeyState(VK_LBUTTON) & 0x8000) || !GetClipCursor(&clip) || !PtInRect(&clip, screen)) return false;
 
     const HINSTANCE instance = GetModuleHandleW(nullptr);
@@ -140,21 +152,26 @@ bool Start(HWND owner, UINT32 pointerId, POINT screen, std::function<bool(POINT)
     windowClass.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
     windowClass.lpszClassName = relayClass;
     if (!RegisterClassW(&windowClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
-    relay.window = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW, relayClass, nullptr,
+    relay.window = CreateWindowExW(WS_EX_TOOLWINDOW, relayClass, nullptr,
         WS_POPUP, screen.x - relayRadius, screen.y - relayRadius, 2 * relayRadius + 1, 2 * relayRadius + 1,
         nullptr, nullptr, instance, nullptr);
     if (!relay.window) return false;
     relay.owner = owner;
-    relay.pointerId = pointerId;
     relay.point = screen;
-    relay.runOle = std::move(runOle);
+    relay.complete = std::move(complete);
     relay.state = State::Starting;
 
-    // The injected down must hit an owned window, never the drop target.
-    if (!SetLayeredWindowAttributes(relay.window, 0, 1, LWA_ALPHA) ||
-        !SetWindowPos(relay.window, HWND_TOPMOST, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW) ||
-        WindowFromPoint(screen) != relay.window || !SetTimer(relay.window, startTimer, 250, nullptr) ||
+    if (!SetWindowPos(relay.window, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW))
+    {
+        relay.Reset();
+        return false;
+    }
+
+    // Another topmost window can keep the hit until ours is activated.
+    // Verify ownership before injecting the down event.
+    if (WindowFromPoint(screen) != relay.window) SetForegroundWindow(relay.window);
+    if (WindowFromPoint(screen) != relay.window || !SetTimer(relay.window, startTimer, 250, nullptr) ||
         !SendMouse(screen, MOUSEEVENTF_LEFTDOWN))
     {
         relay.Reset();
@@ -170,47 +187,10 @@ bool IsRelayMouseMessage(UINT message) noexcept
         message == WM_LBUTTONDBLCLK) && GetMessageExtraInfo() == relayMouse;
 }
 
-bool Owns(HWND owner, UINT32 pointerId) noexcept
-{
-    const auto& relay = Current();
-    return relay.state != State::Idle && relay.owner == owner && relay.pointerId == pointerId;
-}
-
-bool Update(POINT screen, bool released) noexcept
+void CancelPending() noexcept
 {
     auto& relay = Current();
-    relay.point = screen;
-    if (relay.state == State::Running)
-    {
-        relay.released |= released;
-        if (released)
-        {
-            relay.ReleaseButton(true);
-            if (relay.buttonDown) relay.StopRunning();
-        }
-        else if (!SendMouse(screen, 0)) relay.StopRunning();
-    }
-    else if (released)
-    {
-        const bool transferred = relay.state == State::FinishingContact;
-        relay.Reset();
-        return transferred;
-    }
-    return true;
-}
-
-bool Cancel() noexcept
-{
-    auto& relay = Current();
-    if (relay.state == State::Running)
-    {
-        relay.released = true;
-        relay.StopRunning();
-        return true;
-    }
-    const bool transferred = relay.state == State::FinishingContact;
-    relay.Reset();
-    return transferred;
+    if (relay.state == State::Starting) relay.CancelStart();
 }
 
 bool ShouldCancel(bool escapePressed) noexcept

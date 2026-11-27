@@ -52,13 +52,15 @@ bool IsNewContact(UINT message, WPARAM pointer)
         touch::IsTouchPointer(pointer);
 }
 
-bool ForwardTouchOle(HWND window, UINT message, WPARAM pointer, POINT screen, bool canceled)
+template <typename Gesture>
+void RetireLostTouch(Gesture& gesture, touch::TapSequence& taps, WPARAM pointer)
 {
-    if (!touchOle::Owns(window, GET_POINTERID_WPARAM(pointer))) return false;
-    if (canceled) return touchOle::Cancel();
-    if (message == WM_POINTERUPDATE || message == WM_POINTERUP)
-        return touchOle::Update(screen, message == WM_POINTERUP);
-    return true;
+    if (!gesture.contact.Active() ||
+        (gesture.contact.Owns(pointer) && !IS_POINTER_NEW_WPARAM(pointer))) return;
+    const HWND oldWindow = gesture.action == touch::GestureAction::Drag ? gesture.window : nullptr;
+    gesture = {};
+    taps.Reset();
+    if (IsWindow(oldWindow)) SendMessageW(oldWindow, WM_CANCELMODE, 0, 0);
 }
 
 struct DockTouch
@@ -162,6 +164,7 @@ void DesktopApp::ObserveDesktopTouch(HWND window, UINT message, WPARAM pointer, 
     UpdateLargeIconHover();
 
     if (message != WM_POINTERDOWN || !IS_POINTER_PRIMARY_WPARAM(pointer)) return;
+    touchOle::CancelPending();
     const POINT screen = touch::ScreenPoint(position);
     if (widgetEngine_)
     {
@@ -186,21 +189,27 @@ void DesktopApp::ObserveDesktopTouch(HWND window, UINT message, WPARAM pointer, 
             snowdesktop::floating_popup_rules::PackScreenPoint(screen));
 }
 
-void DesktopApp::TryBeginTouchFileDrag(HWND window, WPARAM pointer, POINT screen)
+bool DesktopApp::TryDropTouchFileOutside(POINT screen)
 {
-    if (!hwnd_ || !dragSession_.IsActive() || dragDropController_.IsTransportActive() || dockRunningDrag_) return;
+    if (!hwnd_ || !dragSession_.IsActive() || dragDropController_.IsTransportActive() || dockRunningDrag_) return false;
     POINT desktop = screen;
     if (!ScreenToClient(hwnd_, &desktop) || !IsExternalDropWindowAt(desktop) ||
-        DropPayload::From(dragSession_.Items()).filePaths.empty()) return;
+        DropPayload::From(dragSession_.Items()).filePaths.empty()) return false;
 
-    touchOle::Start(window, GET_POINTERID_WPARAM(pointer), screen, [this](POINT point) {
-        if (!hwnd_ || !dragSession_.IsActive() || !ScreenToClient(hwnd_, &point)) return false;
-        if (IsExternalDropWindowAt(point))
+    // The mouse capture belongs to the gesture's original window. Release it
+    // before injecting the relay button-down so that the relay receives it.
+    ReleaseCapturePreservingPointerState();
+    return touchOle::StartDrop(hwnd_, screen, [this, screen](bool ready) {
+        if (!dragSession_.IsActive()) return;
+        POINT point = screen;
+        if (ready && hwnd_ && ScreenToClient(hwnd_, &point) && IsExternalDropWindowAt(point))
         {
             OnMouseMoveAt(MK_LBUTTON, point);
-            PresentPointerInteractionFrame();
         }
-        return dragSession_.IsActive();
+        // There is no original touch to resume, even if OLE returned to an
+        // in-process target or failed before creating a data object.
+        if (dragSession_.IsActive()) CancelActiveItemDrag();
+        PresentPointerInteractionFrame();
     });
 }
 
@@ -212,12 +221,11 @@ bool DesktopApp::HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPAR
     static thread_local DockTouch gesture;
     static thread_local touch::TapSequence taps;
     if (gesture.window && !IsWindow(gesture.window)) gesture = {};
-    if (message == WM_NCDESTROY && touchOle::Owns(window, gesture.contact.id))
-        touchOle::Cancel();
     if (!touch::IsPointerMessage(message)) return false;
     const POINT screen = touch::ScreenPoint(position);
     if (IsNewContact(message, pointer))
     {
+        RetireLostTouch(gesture, taps, pointer);
         if (gesture.contact.Active() || !hwnd_ || HasActiveContextMenuSession()) return false;
         POINT desktop = screen;
         if (!ScreenToClient(hwnd_, &desktop)) return false;
@@ -243,13 +251,7 @@ bool DesktopApp::HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPAR
         return true;
     }
     if (gesture.window != window || !gesture.contact.Owns(pointer)) return false;
-    const bool canceled = message == WM_POINTERCAPTURECHANGED || touch::IsCanceled(pointer);
-    if (ForwardTouchOle(window, message, pointer, screen, canceled))
-    {
-        if (canceled || message == WM_POINTERUP) gesture = {};
-        return true;
-    }
-    if (canceled)
+    if (message == WM_POINTERCAPTURECHANGED || touch::IsCanceled(pointer))
     {
         const bool dragging = gesture.action == Action::Drag;
         gesture = {};
@@ -289,16 +291,15 @@ bool DesktopApp::HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPAR
             if (pixels) OnMouseWheel(touch::PanWheel(pixels), MAKELPARAM(contact.start.x, contact.start.y));
         }
         contact.last = screen;
-        if (gesture.action == Action::Drag)
-        {
-            touch::RouteMouse(window, WM_MOUSEMOVE, screen, MK_LBUTTON);
-            if (message == WM_POINTERUPDATE) TryBeginTouchFileDrag(window, pointer, screen);
-        }
+        if (gesture.action == Action::Drag) touch::RouteMouse(window, WM_MOUSEMOVE, screen, MK_LBUTTON);
         if (message != WM_POINTERUP) return true;
 
         const DockTouch released = gesture;
         gesture = {};
-        if (released.action == Action::Drag) touch::RouteMouse(window, WM_LBUTTONUP, screen);
+        if (released.action == Action::Drag)
+        {
+            if (!TryDropTouchFileOutside(screen)) touch::RouteMouse(window, WM_LBUTTONUP, screen);
+        }
         else if (released.action == Action::Swipe)
         {
             POINT origin = released.contact.start;
@@ -332,15 +333,12 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
     static thread_local touch::TapSequence taps;
     if (gesture.window && !IsWindow(gesture.window)) gesture = {};
     if (gesture.window == window && (message == WM_CANCELMODE || message == WM_NCDESTROY))
-    {
-        const bool external = touchOle::Owns(window, gesture.contact.id);
-        if (message == WM_NCDESTROY && external) touchOle::Cancel();
-        if (message == WM_NCDESTROY || !external) gesture = {};
-    }
+        gesture = {};
     if (!touch::IsPointerMessage(message)) return false;
     const POINT screen = touch::ScreenPoint(position);
     if (IsNewContact(message, pointer))
     {
+        RetireLostTouch(gesture, taps, pointer);
         if (gesture.contact.Active() || !hwnd_ || HasActiveContextMenuSession() ||
             quickNavigation_->open || dragSession_.HasContext()) return false;
         POINT desktop = screen;
@@ -496,13 +494,7 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
         return true;
     }
     if (gesture.window != window || !gesture.contact.Owns(pointer)) return false;
-    const bool canceled = message == WM_POINTERCAPTURECHANGED || touch::IsCanceled(pointer);
-    if (ForwardTouchOle(window, message, pointer, screen, canceled))
-    {
-        if (canceled || message == WM_POINTERUP) gesture = {};
-        return true;
-    }
-    if (canceled)
+    if (message == WM_POINTERCAPTURECHANGED || touch::IsCanceled(pointer))
     {
         const bool dragging = gesture.action == Action::Drag;
         gesture = {};
@@ -552,19 +544,17 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
         }
     }
     contact.last = screen;
-    if (gesture.action == Action::Drag)
-    {
-        touch::RouteMouse(window, WM_MOUSEMOVE, screen,
-            gesture.target.moveWidget ? MK_MBUTTON : MK_LBUTTON);
-        if (message == WM_POINTERUPDATE && !gesture.target.moveWidget)
-            TryBeginTouchFileDrag(window, pointer, screen);
-    }
+    if (gesture.action == Action::Drag) touch::RouteMouse(window, WM_MOUSEMOVE, screen,
+        gesture.target.moveWidget ? MK_MBUTTON : MK_LBUTTON);
     if (message != WM_POINTERUP) return true;
 
     ScrollTouch released = std::move(gesture);
     gesture = {};
     if (released.action == Action::Drag)
-        touch::RouteMouse(window, released.target.moveWidget ? WM_MBUTTONUP : WM_LBUTTONUP, screen);
+    {
+        if (released.target.moveWidget || !TryDropTouchFileOutside(screen))
+            touch::RouteMouse(window, released.target.moveWidget ? WM_MBUTTONUP : WM_LBUTTONUP, screen);
+    }
     else if (released.action == Action::Swipe)
     {
         const int travel = released.horizontal ? dx : dy;

@@ -5,12 +5,10 @@
 
 namespace snowdesktop::touch_ole_drag
 {
-// The callback runs from the relay's native button-down. It reports whether
-// the original local drag is still active after OLE returns.
-bool Start(HWND owner, UINT32 pointerId, POINT screen, std::function<bool(POINT)> runOle);
+// A successful start delivers exactly one callback. True means the OLE
+// source can start now. False means the pending handoff was canceled.
+bool StartDrop(HWND owner, POINT screen, std::function<void(bool)> complete);
 bool IsRelayMouseMessage(UINT message) noexcept;
-bool Owns(HWND owner, UINT32 pointerId) noexcept;
-bool Update(POINT screen, bool released) noexcept;
-bool Cancel() noexcept;
+void CancelPending() noexcept;
 bool ShouldCancel(bool escapePressed) noexcept;
 }
