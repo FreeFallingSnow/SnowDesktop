@@ -2980,6 +2980,6 @@
   "app.dock.remove_separator": "区切り線を削除",
   "core.drag.dock_section_redirect": "{0}（スペースキーを押すと「自由に並べ替え」がオンになります）",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "ウインドウをアプリケーションアイコンにしまう",
-  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "オフにすると、開いているすべてのウインドウがDockのタスク領域にサムネイルで個別に表示されます。固定したアイコンはショートカットとして使えます。",
+  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "オフにすると、最小化したウィンドウが Dock のタスク領域に個別のサムネイルとして表示されます。",
   "app.settings.icon_shadow_dock_thumbnail_badge": "Dock サムネイルのバッジ"
 }

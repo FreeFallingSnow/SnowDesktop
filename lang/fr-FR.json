@@ -2980,6 +2980,6 @@
   "app.dock.remove_separator": "Supprimer le séparateur",
   "core.drag.dock_section_redirect": "{0} (appuyez sur la barre d’espace pour activer « Ordre libre »)",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "Réduire les fenêtres dans les icônes des applications",
-  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Désactivez cette option pour afficher chaque fenêtre ouverte sous forme de miniature dans la zone des tâches du Dock. Les icônes épinglées servent de raccourcis.",
+  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Lorsque cette option est désactivée, les fenêtres réduites apparaissent sous forme de miniatures distinctes dans la zone des tâches du Dock.",
   "app.settings.icon_shadow_dock_thumbnail_badge": "Icônes sur les miniatures du Dock"
 }

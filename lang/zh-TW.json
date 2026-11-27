@@ -2980,6 +2980,6 @@
   "app.dock.remove_separator": "移除分隔線",
   "core.drag.dock_section_redirect": "{0}（按空白鍵開啟自由排列）",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "將視窗最小化至應用程式圖像",
-  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "關閉後，所有執行中的視窗都會在 Dock 的工作區個別顯示為縮圖。固定的圖像可作為捷徑。",
+  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "關閉後，最小化的視窗會在 Dock 執行區個別顯示為縮圖。",
   "app.settings.icon_shadow_dock_thumbnail_badge": "Dock 縮圖角標"
 }

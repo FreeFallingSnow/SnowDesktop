@@ -2980,6 +2980,6 @@
   "app.dock.remove_separator": "Trennlinie entfernen",
   "core.drag.dock_section_redirect": "{0} (Leertaste drücken, um „Freie Anordnung“ zu aktivieren)",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "Fenster im Programmsymbol minimieren",
-  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Bei deaktivierter Option erscheinen alle geöffneten Fenster einzeln als Miniaturen im Aufgabenbereich des Docks. Angeheftete Symbole dienen als Verknüpfungen.",
+  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Wenn diese Option deaktiviert ist, erscheinen minimierte Fenster als separate Miniaturansichten im Aufgabenbereich des Docks.",
   "app.settings.icon_shadow_dock_thumbnail_badge": "Symbole auf Dock-Miniaturansichten"
 }
