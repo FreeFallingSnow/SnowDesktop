@@ -121,7 +121,6 @@ constexpr OptionalRuntimeModule kOptionalRuntimeModules[] = {
     {L"SnowDesktop.Runtime/Microsoft.Graphics.Display.dll", RuntimeFileRole::WinUI},
     {L"SnowDesktop.Runtime/Microsoft.Graphics.Imaging.dll", RuntimeFileRole::WinUI},
     {L"SnowDesktop.Runtime/Microsoft.InputStateManager.dll", RuntimeFileRole::WinUI},
-    {L"SnowDesktop.Runtime/Microsoft.Internal.FrameworkUdk.dll", RuntimeFileRole::WinUI},
     {L"SnowDesktop.Runtime/Microsoft.UI.Composition.OSSupport.dll", RuntimeFileRole::WinUI},
     {L"SnowDesktop.Runtime/Microsoft.UI.Designer.dll", RuntimeFileRole::WinUI},
     {L"SnowDesktop.Runtime/Microsoft.UI.dll", RuntimeFileRole::WinUI},
@@ -154,7 +153,6 @@ constexpr OptionalRuntimeModule kOptionalRuntimeModules[] = {
     {L"SnowDesktop.Runtime/Microsoft.Windows.Workloads.Resources_ec.dll", RuntimeFileRole::WindowsServices},
     {L"SnowDesktop.Runtime/Microsoft.Windows.Workloads.Resources.dll", RuntimeFileRole::WindowsServices},
     {L"SnowDesktop.Runtime/Microsoft.WindowsAppRuntime.Bootstrap.dll", RuntimeFileRole::WindowsServices},
-    {L"SnowDesktop.Runtime/Microsoft.WindowsAppRuntime.dll", RuntimeFileRole::WindowsServices},
     {L"SnowDesktop.Runtime/PerceptiveStreaming.dll", RuntimeFileRole::WindowsServices},
     {L"SnowDesktop.Runtime/PushNotificationsLongRunningTask.ProxyStub.dll", RuntimeFileRole::WindowsServices},
     {L"SnowDesktop.Runtime/RestartAgent.exe", RuntimeFileRole::WindowsServices},
@@ -2057,6 +2055,11 @@ RuntimeFileRole GetRuntimeFileRole(const std::filesystem::path& relative)
     const auto key = ExactPathKey(relative);
     if (key == L"snowdesktop.exe")
         return RuntimeFileRole::Desktop;
+    // The SDK's registration-free WinRT initializer runs before wWinMain
+    // and loads WindowsAppRuntime, which imports FrameworkUdk.
+    if (key == L"snowdesktop.runtime/microsoft.windowsappruntime.dll" ||
+        key == L"snowdesktop.runtime/microsoft.internal.frameworkudk.dll")
+        return RuntimeFileRole::WindowsRuntimeStartup;
     if (key == L"snowdesktop.steam.json" || key == kRuntimeManifestFilename ||
         key == kCompleteFilename || key == L"snowdesktop.runtime-context.json" ||
         key == L"snowdesktop.runtime/snowdesktop.runtime.manifest")

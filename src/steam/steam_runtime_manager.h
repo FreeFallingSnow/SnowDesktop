@@ -15,7 +15,7 @@ enum class RuntimeFileRole
 {
     Required, Desktop, RuntimeManifest, Shell, Dock, Wallpaper32, Wallpaper64,
     WindowSupport, Steam, Workshop, WidgetTool, WinUI, WebView, WindowsAI,
-    WindowsServices, Count,
+    WindowsServices, WindowsRuntimeStartup, Count,
 };
 
 [[nodiscard]] RuntimeFileRole GetRuntimeFileRole(const std::filesystem::path& relative);

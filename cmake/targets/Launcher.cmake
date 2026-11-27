@@ -17,7 +17,8 @@ set(launcher_role_keys
     "app.launcher.role.winui"
     "app.launcher.role.webView"
     "app.launcher.role.windowsAI"
-    "app.launcher.role.windowsServices")
+    "app.launcher.role.windowsServices"
+    "app.launcher.role.windowsRuntimeStartup")
 list(LENGTH launcher_role_keys launcher_role_count)
 set(SNOWDESKTOP_LAUNCHER_MESSAGES "#pragma once\nstruct LauncherMessage { const char* language; const wchar_t* message; const wchar_t* pending; const wchar_t* warning; const wchar_t* startup; const wchar_t* securitySoftwareHint; const wchar_t* startupPrivileges; const wchar_t* startAnyway; const wchar_t* cancel; const wchar_t* missingFilesHint; const wchar_t* optionalFiles; const wchar_t* startPreviousRuntime; const wchar_t* fileRoles[${launcher_role_count}]; };\ninline constexpr LauncherMessage kLauncherMessages[] = {\n")
 foreach(catalog IN LISTS SNOWDESKTOP_LAUNCHER_CATALOGS)
