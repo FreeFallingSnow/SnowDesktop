@@ -1927,8 +1927,12 @@ bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
             const double progress = windowMotion->progress;
             // Make room before landing and collapse as the window expands.
             // The thumbnail picture and card scale together.
-            app.presence.SetTransitionAmount(std::lerp(app.thumbnailMotion->fromAmount, target,
-                smooth(progress / (restoring ? 0.70 : 0.82))));
+            const float amount = std::lerp(app.thumbnailMotion->fromAmount, target,
+                smooth(progress / (restoring ? 0.70 : 0.82)));
+            // The helper can clear its clock before the host receives its
+            // inactive status. Keep the already displayed size on that tick.
+            app.presence.SetTransitionAmount(restoring ? std::min(previousAmount, amount)
+                                                       : std::max(previousAmount, amount));
         }
         else if (app.thumbnailMotion)
         {
