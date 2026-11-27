@@ -28,6 +28,7 @@ constexpr UINT kDockStatusBarSettingsCommand = 1;
 constexpr UINT kDockTaskManagerCommand = 2;
 constexpr UINT kDockAddSeparator = 41896;
 constexpr UINT kDockRemoveSeparator = 41897;
+constexpr UINT kDockFreeItemOrder = 41898;
 constexpr UINT kDockMonitorScopeFirst = 41830;
 constexpr UINT kDockScaleFirst = 41840;
 constexpr int kDockScalePercent[]{50, 75, 100, 125, 150, 175, 200};
@@ -225,6 +226,8 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
         L"\uF690", true, true); // search_20
     addToggle(menu, kContextDockSingleClickLaunch, _LW("app.dock.single_click_launch"),
         dockSettings_.singleClickLaunchItems, L"\uE445"); // cursor_click_20
+    addToggle(menu, kDockFreeItemOrder, _LW("settings.dock.freeItemOrder"),
+        dockSettings_.freeItemOrder, L"\uF18D", settingsController_ != nullptr); // arrow_swap_20_regular
     addToggle(menu, kContextDockShowOnlyWhenSummoned, _LW("settings.dock.showOnlyWhenSummoned"),
         dockSettings_.showOnlyWhenSummoned, L"\uE5F2"); // eye_20
     addToggle(menu, kContextDockWindowPreviews, _LW("settings.dock.windowPreviews"),
@@ -381,18 +384,21 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint, bool powerUserMenu)
         return;
     }
     PrepareMenuIconsForPoint(screenPoint);
-    HMENU menu = separatorId.empty() ? CreateDockContextMenu(merged) : CreatePopupMenu();
+    HMENU menu = CreateDockContextMenu(merged);
     if (!menu) { ClearMenuIcons(); return; }
+    const bool horizontalDivider = dock && dock->GetInsertionStyle() == BarStyle::HBar;
+    if (separatorPosition || !separatorId.empty()) AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     if (separatorPosition)
     {
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kDockAddSeparator, _LW("app.dock.add_separator"));
-        SetMenuItemIcon(menu, kDockAddSeparator, L"\uF371", MenuIconFont::FluentRegular); // divider_tall_24_regular
+        SetMenuItemIcon(menu, kDockAddSeparator,
+            horizontalDivider ? L"\uEB59" : L"\uEB60", MenuIconFont::FluentRegular); // split_horizontal/vertical_20_regular
     }
     if (!separatorId.empty())
     {
         AppendMenuW(menu, MF_STRING, kDockRemoveSeparator, _LW("app.dock.remove_separator"));
-        SetMenuItemIcon(menu, kDockRemoveSeparator, L"\uE74D");
+        SetMenuItemIcon(menu, kDockRemoveSeparator,
+            horizontalDivider ? L"\uEC10" : L"\uEC0C", MenuIconFont::FluentRegular); // table_delete_row/column_20_regular
     }
     if (powerUserMenu)
     {
@@ -442,18 +448,19 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint, bool powerUserMenu)
 
 void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
 {
-    bool DockSettings::* iconBorder = nullptr;
+    bool DockSettings::* setting = nullptr;
     switch (command)
     {
-    case kDockStartIconBorder: iconBorder = &DockSettings::startIconBorder; break;
-    case kDockSearchIconBorder: iconBorder = &DockSettings::quickSearchIconBorder; break;
-    case kContextDockRecycleBinIconBorder: iconBorder = &DockSettings::recycleBinIconBorder; break;
+    case kDockStartIconBorder: setting = &DockSettings::startIconBorder; break;
+    case kDockSearchIconBorder: setting = &DockSettings::quickSearchIconBorder; break;
+    case kContextDockRecycleBinIconBorder: setting = &DockSettings::recycleBinIconBorder; break;
+    case kDockFreeItemOrder: setting = &DockSettings::freeItemOrder; break;
     }
-    if (iconBorder)
+    if (setting)
     {
         if (!settingsController_) return;
         auto updated = settingsController_->Snapshot()->values.dock;
-        updated.*iconBorder = !(updated.*iconBorder);
+        updated.*setting = !(updated.*setting);
         settingsController_->UpdateDock(std::move(updated), snowdesktop::SettingsUpdateMode::Commit);
         const auto result = settingsController_->FlushPending();
         if (!result.Succeeded())

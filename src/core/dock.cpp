@@ -3548,12 +3548,20 @@ std::wstring DockContainer::GetDragHint(Slot* slot, HitRegion region,
         return _LW("core.drag.dock_full");
     const DragSourceList source = app_
         ? app_->BuildDragSourceList(sourceItems, origin) : DragSourceList{};
-    return _LW(snowdesktop::drag_hint_rules::DockInsertionHintKey(
+    const auto hint = _LW(snowdesktop::drag_hint_rules::DockInsertionHintKey(
         origin == this,
         app_ && app_->dragDropController_.IsExternalDragActive(),
         source.hasWidgets || source.hasCollectionGroupEntries ||
             source.hasFileGroupSourceLabels,
         (mods & MK_CONTROL) != 0));
+    if (app_ && !app_->dockSettings_.freeItemOrder && app_->dragSession_.HasContext())
+    {
+        const bool belongsToFiles = HasOnlyFolderDragSource() || HasOnlyRecycleBinDragSource();
+        const bool overFiles = GetSectionAtPoint(app_->dragSession_.CurrentPoint()) == DockEntrySection::Files;
+        if (overFiles != belongsToFiles || HasMixedFolderDragSource())
+            return _LFW("core.drag.dock_section_redirect", hint);
+    }
+    return hint;
 }
 
 void DockContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion region)
