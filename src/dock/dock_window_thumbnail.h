@@ -80,8 +80,8 @@ private:
         bool foreground, HWND notifyWindow, UINT message);
     void SaveForSession(const std::shared_ptr<Thumbnail>& thumbnail, HWND notifyWindow, UINT message);
 
-    // PrintWindow is synchronous and an unresponsive app can stall its caller.
-    // Keep it off the UI thread and out of the Shell metadata queue.
+    // Frame acquisition and GPU readback can wait for composition. Keep them
+    // off the UI thread and out of the Shell metadata queue.
     BackgroundWork work_{2, 64};
     std::unordered_map<HWND, std::shared_ptr<Thumbnail>> windows_;
     std::uint64_t epoch_ = 1;

@@ -428,18 +428,8 @@ Pixels CaptureVisibleWindow(WindowIdentity source)
     return {};
 }
 
-Pixels PrintWindowPixels(WindowIdentity source, bool iconic, bool composedThumbnail = false)
+Pixels ReadComposedThumbnailPixels(HWND destination, int width, int height)
 {
-    if (!AllowsPreview(source)) return {};
-    DWORD_PTR reply = 0;
-    if (!SendMessageTimeoutW(source.window, WM_NULL, 0, 0,
-            SMTO_BLOCK | SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT, 100, &reply))
-        return {};
-    const SIZE sourceSize = ReadWindowSize(source.window, iconic);
-    const int width = static_cast<int>(sourceSize.cx);
-    const int height = static_cast<int>(sourceSize.cy);
-    if (!IsUsableSize(width, height)) return {};
-
     WindowDib dib;
     if (!dib.dc) return {};
     BITMAPINFO info{};
@@ -455,15 +445,13 @@ Pixels PrintWindowPixels(WindowIdentity source, bool iconic, bool composedThumbn
     dib.previous = SelectObject(dib.dc, dib.bitmap);
     if (!dib.previous || dib.previous == HGDI_ERROR) return {};
     auto* pixels = static_cast<std::uint32_t*>(buffer);
-    // Render-full-content handles composed windows. Some Win32 windows
-    // still require the ordinary WM_PRINT path to draw their client area.
-    constexpr UINT printModes[]{PW_RENDERFULLCONTENT, PW_RENDERFULLCONTENT | PW_CLIENTONLY, 0};
+    // Include the DWM thumbnail composed into our off-screen destination.
+    constexpr UINT printModes[]{PW_RENDERFULLCONTENT, PW_RENDERFULLCONTENT | PW_CLIENTONLY};
     for (const UINT flags : printModes)
     {
         std::fill_n(pixels, static_cast<size_t>(width) * height, 0u);
-        if (!PrintWindow(source.window, dib.dc, flags) || !GdiFlush()) continue;
-        if (!AllowsPreview(source)) return {};
-        auto result = SamplePixels(buffer, static_cast<size_t>(width) * sizeof(*pixels), width, height, composedThumbnail);
+        if (!PrintWindow(destination, dib.dc, flags) || !GdiFlush()) continue;
+        auto result = SamplePixels(buffer, static_cast<size_t>(width) * sizeof(*pixels), width, height, true);
         if (!result.data.empty()) return result;
     }
     return {};
@@ -508,7 +496,7 @@ Pixels CaptureComposedThumbnail(WindowIdentity source, bool iconic)
     if (FAILED(DwmFlush()) || !AllowsRedirectedSurface(source) ||
         (IsIconic(source.window) != FALSE) != iconic)
         return {};
-    auto pixels = PrintWindowPixels(WindowIdentity::Capture(image.window), false, true);
+    auto pixels = ReadComposedThumbnailPixels(image.window, width, height);
     if (!AllowsRedirectedSurface(source)) return {};
     return pixels;
 }
@@ -517,22 +505,13 @@ Pixels CapturePixels(WindowIdentity source, bool allowExtraCapture)
 {
     if (!AllowsPreview(source)) return {};
     const bool iconic = IsIconic(source.window) != FALSE;
-    auto result = iconic ? CaptureRedirectedSurface(source, true) : PrintWindowPixels(source, false);
-    if (!result.data.empty()) return result;
-    if (iconic)
-    {
-        if (allowExtraCapture)
-        {
-            result = CaptureComposedThumbnail(source, true);
-            if (!result.data.empty()) return result;
-        }
-        return PrintWindowPixels(source, true);
-    }
-    result = CaptureRedirectedSurface(source, false);
-    if (!result.data.empty()) return result;
-    if (!allowExtraCapture) return {};
-    result = CaptureComposedThumbnail(source, false);
-    return result.data.empty() ? CaptureVisibleWindow(source) : std::move(result);
+    // A newly shown or restored window may still be presenting its first frame.
+    // Read composed content without requesting a repaint from the source HWND.
+    auto result = CaptureRedirectedSurface(source, iconic);
+    if (!result.data.empty() || !allowExtraCapture) return result;
+    result = CaptureComposedThumbnail(source, iconic);
+    if (!result.data.empty() || iconic) return result;
+    return CaptureVisibleWindow(source);
 }
 }
 
