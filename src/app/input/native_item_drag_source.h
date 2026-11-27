@@ -12,7 +12,9 @@ namespace snowdesktop::native_item_drag_source
 // payload that the actual pointer-start route would refuse to capture.
 inline bool CanStart(const Item* pressed)
 {
-    return pressed && !dynamic_cast<const DockRunningItem*>(pressed);
+    if (!pressed || dynamic_cast<const DockRunningItem*>(pressed)) return false;
+    if (const auto* entry = dynamic_cast<const DockEntryItem*>(pressed)) return entry->CanStartDrag();
+    return true;
 }
 struct Captured
 {
@@ -26,6 +28,8 @@ Captured Capture(Item* pressed, bool pressedDockEntryWithoutSelection, ReadSelec
     if (!CanStart(pressed)) return result;
     result.source = pressed->GetContainer();
     result.items = std::forward<ReadSelected>(selected)(result.source);
+    if (dynamic_cast<const DockContainer*>(result.source))
+        std::erase_if(result.items, [](const Item* item) { return !CanStart(item); });
     if (result.items.empty() && pressedDockEntryWithoutSelection) result.items.push_back(pressed);
     return result;
 }

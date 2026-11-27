@@ -320,6 +320,13 @@ ComPtr<IDataObject> DockFrequentItem::CreateDataObject()
 DockEntryItem::DockEntryItem(DesktopApp* app, Container* container, size_t entryIndex)
     : app_(app), container_(container), entryIndex_(entryIndex) {}
 
+bool DockEntryItem::CanStartDrag() const
+{
+    namespace model = snowdesktop::dock_drop_model;
+    const auto* entry = Entry();
+    return entry && !model::IsTrailingControl(*entry, app_->dockSettings_.freeItemOrder, model::IsRecycleBinEntry);
+}
+
 const DockEntry* DockEntryItem::Entry() const
 {
     return app_ && entryIndex_ < app_->dockEntries_.size()

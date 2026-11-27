@@ -42,10 +42,15 @@ inline dock_folder_rules::EntryGroup GroupOf(const DockEntry& entry, const Servi
     return recycle || services.folder(entry) ? Group::Folder : Group::Main;
 }
 
+template <typename IsRecycle>
+inline bool IsTrailingControl(const DockEntry& entry, bool freeItemOrder, const IsRecycle& recycle)
+{
+    return !freeItemOrder && (entry.type == DockEntryType::QuickSearch || recycle(entry));
+}
+
 inline bool IsTrailingControl(const DockEntry& entry, const Services& services)
 {
-    return !services.freeItemOrder &&
-        (entry.type == DockEntryType::QuickSearch || services.recycle(entry));
+    return IsTrailingControl(entry, services.freeItemOrder, services.recycle);
 }
 
 inline bool IsRecycleBinEntry(const DockEntry& entry)
@@ -58,8 +63,7 @@ template <typename IsRecycle>
 inline size_t SortableEnd(const std::vector<DockEntry>& entries, bool freeItemOrder, IsRecycle recycle)
 {
     size_t end = entries.size();
-    if (freeItemOrder) return end;
-    while (end > 0 && (entries[end - 1].type == DockEntryType::QuickSearch || recycle(entries[end - 1])))
+    while (end > 0 && IsTrailingControl(entries[end - 1], freeItemOrder, recycle))
         --end;
     return end;
 }

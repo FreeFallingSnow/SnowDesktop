@@ -91,6 +91,7 @@ public:
     size_t GetEntryIndex() const { return entryIndex_; }
     DockEntryType GetEntryType() const;
     std::wstring GetReference() const;
+    bool CanStartDrag() const;
 
 private:
     const DockEntry* Entry() const;
