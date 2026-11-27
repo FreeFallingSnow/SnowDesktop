@@ -116,7 +116,7 @@ bool DesktopApp::BeginDockRunningDrag(POINT point)
 {
     const auto found = std::find_if(dockUnpinnedRunningApps_.begin(), dockUnpinnedRunningApps_.end(),
         [&](const auto& app) { return app.presence.Interactive() && app.identityKey == dockPressedRunningAppKey_; });
-    if (found == dockUnpinnedRunningApps_.end() || !mouseDownHit_) return false;
+    if (found == dockUnpinnedRunningApps_.end() || found->minimizedThumbnail || !mouseDownHit_) return false;
     auto state = std::make_shared<DockRunningDragState>();
     state->running = *found;
     // The snapshot only identifies the application. The live model remains

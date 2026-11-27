@@ -318,6 +318,11 @@ void DesktopApp::DrainBackgroundShellWork()
     iconWork_.Drain();
     dockIconWork_.Drain();
     dockIdentityWork_.Drain();
+    if (dockMinimizedThumbnails_.Drain())
+    {
+        InvalidateDragStaticScene(false);
+        InvalidateDockRects();
+    }
     shellVisualWork_.Drain();
     shellModelWork_.Drain();
     appIndexWork_.Drain();

@@ -1524,6 +1524,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     ReadBoolField(text, "recycleBinIconBorder", settings.recycleBinIconBorder);
     ReadBoolField(text, "showRunningApps", settings.showRunningApps);
     ReadBoolField(text, "showWindowPreviews", settings.showWindowPreviews);
+    ReadBoolField(text, "minimizeWindowsIntoApplicationIcon", settings.minimizeWindowsIntoApplicationIcon);
     ReadBoolField(text, "singleClickLaunchItems",
         settings.singleClickLaunchItems);
     ReadBoolField(text, "freeItemOrder", settings.freeItemOrder);
@@ -1745,6 +1746,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     // every saved configuration to the unconditional feature behavior.
     file << "  \"showRunningApps\": true,\n";
     file << "  \"showWindowPreviews\": " << (settings.showWindowPreviews ? "true" : "false") << ",\n";
+    file << "  \"minimizeWindowsIntoApplicationIcon\": " << (settings.minimizeWindowsIntoApplicationIcon ? "true" : "false") << ",\n";
     file << "  \"singleClickLaunchItems\": "
          << (settings.singleClickLaunchItems ? "true" : "false") << ",\n";
     file << "  \"freeItemOrder\": " << (settings.freeItemOrder ? "true" : "false") << ",\n";

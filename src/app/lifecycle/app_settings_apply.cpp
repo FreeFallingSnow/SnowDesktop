@@ -1091,6 +1091,7 @@ public:
             const bool committedTaskbarSuppression = app_.dockSettings_.suppressSystemTaskbar;
             const bool committedTaskbarSuppressionAllMonitors = app_.dockSettings_.suppressSystemTaskbarAllMonitors;
             const bool committedFreeItemOrder = app_.dockSettings_.freeItemOrder;
+            RefreshDockMinimizedWindowMode(snapshot.values.dock.minimizeWindowsIntoApplicationIcon);
             app_.dockSettings_ = snapshot.values.dock;
             app_.dockSettings_.freeItemOrder = committedFreeItemOrder;
             app_.dockSettings_.systemTaskbarAutoHide = committedTaskbarAutoHide;
@@ -1285,6 +1286,7 @@ public:
         if (dockCommitted)
         {
             const bool dockOrderChanged = app_.dockSettings_.freeItemOrder != requestedDockSettings.freeItemOrder;
+            RefreshDockMinimizedWindowMode(requestedDockSettings.minimizeWindowsIntoApplicationIcon);
             app_.dockSettings_ = requestedDockSettings;
             if (dockOrderChanged)
             {
@@ -1369,6 +1371,9 @@ public:
             app_.ApplyFloatingDockHotkey();
             if (dockEnabledChanged)
             {
+                if (!app_.generalSettings_.dockEnabled)
+                    app_.dockMinimizedThumbnails_.Clear();
+                app_.dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
                 if (app_.settingsController_)
                 {
                     auto desktop = snapshot.values.desktop;
@@ -1950,6 +1955,14 @@ private:
 
         UnregisterHotKey(probeWindow, kSettingsHotkeyProbeId);
         return { true, HotkeyTarget::None };
+    }
+
+    void RefreshDockMinimizedWindowMode(bool groupMinimizedWindows)
+    {
+        if (app_.dockSettings_.minimizeWindowsIntoApplicationIcon == groupMinimizedWindows) return;
+        app_.dockMinimizedThumbnails_.Clear();
+        app_.HideDockWindowPreview();
+        app_.dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
     }
 
     DesktopApp& app_;

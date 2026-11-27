@@ -2469,7 +2469,10 @@ snowdesktop::dock_running_drag::Target DockContainer::GetRunningDragTarget(POINT
         // running application and must not become part of its sort order.
         if (!IsPointInScrollViewport(pt)) return {};
         begin = count;
-        limit = count + runningCount;
+        const auto& apps = app_->dockUnpinnedRunningApps_;
+        const auto firstThumbnail = std::find_if(apps.begin(), apps.end(),
+            [](const auto& app) { return app.minimizedThumbnail != nullptr; });
+        limit = count + static_cast<size_t>(firstThumbnail - apps.begin());
     }
     else if (result.area == running::Area::Files)
     {

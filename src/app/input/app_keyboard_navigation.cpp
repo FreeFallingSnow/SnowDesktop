@@ -379,8 +379,12 @@ bool DesktopApp::ActivateDesktopSurfaceKeyboardFocus(bool repeated)
             break;
         case Kind::Running:
             if (focused->index < dockUnpinnedRunningApps_.size())
-                ActivateOrToggleDockWindow(dockUnpinnedRunningApps_[focused->index].window,
-                    std::nullopt, nullptr, anchor);
+            {
+                const auto& app = dockUnpinnedRunningApps_[focused->index];
+                std::optional<snowdesktop::dock_window_rules::DockClickAction> action;
+                if (app.minimizedThumbnail) action = snowdesktop::dock_window_rules::DockClickAction::Restore;
+                ActivateOrToggleDockWindow(app.window, action, nullptr, anchor);
+            }
             break;
         case Kind::Frequent:
             ActivateOrToggleDockItem(focused->index, std::nullopt, nullptr, anchor);

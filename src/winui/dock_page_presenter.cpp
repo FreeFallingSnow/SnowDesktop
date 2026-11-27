@@ -375,6 +375,7 @@ struct DockPagePresenter::Impl
     muxc::ToggleSwitch floatingEdgeSwipeToggle{nullptr};
     muxc::ComboBox edgeRevealGesture{nullptr};
     muxc::ToggleSwitch windowPreviews{nullptr};
+    muxc::ToggleSwitch minimizeWindowsIntoApplicationIcon{nullptr};
     muxc::ToggleSwitch singleClickLaunchItems{nullptr};
     muxc::ToggleSwitch freeItemOrder{nullptr};
     muxc::ComboBox fullscreenPolicyCombo{nullptr};
@@ -480,6 +481,7 @@ struct DockPagePresenter::Impl
     SettingRow monitorScopeRow;
     SettingRow floatingEdgeSwipeRow;
     SettingRow edgeRevealGestureRow, windowPreviewsRow;
+    SettingRow minimizeWindowsIntoApplicationIconRow;
     SettingRow singleClickLaunchItemsRow;
     SettingRow freeItemOrderRow;
     SettingRow fullscreenPolicyRow;
@@ -547,6 +549,7 @@ struct DockPagePresenter::Impl
     winrt::event_token floatingShortcutToken{};
     winrt::event_token floatingEdgeSwipeToken{};
     winrt::event_token edgeRevealGestureToken{}, windowPreviewsToken{};
+    winrt::event_token minimizeWindowsIntoApplicationIconToken{};
     winrt::event_token singleClickLaunchItemsToken{};
     winrt::event_token freeItemOrderToken{};
     winrt::event_token fullscreenPolicyToken{};
@@ -688,6 +691,7 @@ struct DockPagePresenter::Impl
         floatingEdgeSwipeToggle = muxc::ToggleSwitch{};
         edgeRevealGesture = NewCombo();
         windowPreviews = muxc::ToggleSwitch{};
+        minimizeWindowsIntoApplicationIcon = muxc::ToggleSwitch{};
         singleClickLaunchItems = muxc::ToggleSwitch{};
         freeItemOrder = muxc::ToggleSwitch{};
         fullscreenPolicyCombo = NewCombo();
@@ -722,6 +726,8 @@ struct DockPagePresenter::Impl
         edgeRevealGestureRow.Initialize(edgeRevealGesture);
         windowPreviewsRow.Initialize(windowPreviews);
         windowPreviewsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        minimizeWindowsIntoApplicationIconRow.Initialize(minimizeWindowsIntoApplicationIcon);
+        minimizeWindowsIntoApplicationIconRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         singleClickLaunchItemsRow.Initialize(singleClickLaunchItems);
         singleClickLaunchItemsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         freeItemOrderRow.Initialize(freeItemOrder);
@@ -864,6 +870,7 @@ struct DockPagePresenter::Impl
         itemsCard.content.Children().Append(showFrequentItemsRow.root);
         itemsCard.content.Children().Append(frequentItemCount.root);
         itemsCard.content.Children().Append(windowPreviewsRow.root);
+        itemsCard.content.Children().Append(minimizeWindowsIntoApplicationIconRow.root);
         itemsCard.content.Children().Append(singleClickLaunchItemsRow.root);
         itemsCard.content.Children().Append(freeItemOrderRow.root);
         trayEditor = std::make_unique<DockTraySettingsEditor>(
@@ -1445,6 +1452,11 @@ struct DockPagePresenter::Impl
             const bool value = windowPreviews.IsOn();
             EmitDock(SettingsUpdateMode::PreviewAndCommit,
                 [value](DockSettings& settings) { settings.showWindowPreviews = value; });
+        });
+        minimizeWindowsIntoApplicationIconToken = minimizeWindowsIntoApplicationIcon.Toggled([this](const auto&, const auto&) {
+            const bool value = minimizeWindowsIntoApplicationIcon.IsOn();
+            EmitDock(SettingsUpdateMode::PreviewAndCommit,
+                [value](DockSettings& settings) { settings.minimizeWindowsIntoApplicationIcon = value; });
         });
         singleClickLaunchItemsToken = singleClickLaunchItems.Toggled([this](const auto&, const auto&) {
             const bool value = singleClickLaunchItems.IsOn();
@@ -2048,6 +2060,7 @@ struct DockPagePresenter::Impl
             static_cast<int>(settings.monitorScope), 0, 2));
         edgeRevealGesture.SelectedIndex(settings.edgeRevealGesture);
         windowPreviews.IsOn(settings.showWindowPreviews);
+        minimizeWindowsIntoApplicationIcon.IsOn(settings.minimizeWindowsIntoApplicationIcon);
         singleClickLaunchItems.IsOn(settings.singleClickLaunchItems);
         freeItemOrder.IsOn(settings.freeItemOrder);
         floatingShortcutToggle.IsOn(settings.floatingShortcutMode);
@@ -2172,6 +2185,7 @@ struct DockPagePresenter::Impl
             ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         edgeHoverDelayMs.row.SetEnabled(dockEnabled && floatingEdgeSwipeToggle.IsOn());
         windowPreviewsRow.SetEnabled(dockEnabled);
+        minimizeWindowsIntoApplicationIconRow.SetEnabled(dockEnabled);
         singleClickLaunchItemsRow.SetEnabled(dockEnabled);
         freeItemOrderRow.SetEnabled(dockEnabled);
         frequentItemCount.root.Visibility(showFrequentItemsToggle.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
@@ -2928,6 +2942,11 @@ struct DockPagePresenter::Impl
             L("settings.dock.windowPreviews.description", L"Hover over an app icon or swipe from it toward the screen content to see its open windows."));
         muxa::AutomationProperties::SetName(edgeRevealGesture, edgeRevealGestureRow.label.Text());
         muxa::AutomationProperties::SetName(windowPreviews, windowPreviewsRow.label.Text());
+        minimizeWindowsIntoApplicationIconRow.SetText(
+            L("settings.dock.minimizeWindowsIntoApplicationIcon", L"Minimize windows into application icons"),
+            L("settings.dock.minimizeWindowsIntoApplicationIcon.description", L"Turn off to show each minimized window separately in the Dock task area."));
+        muxa::AutomationProperties::SetName(minimizeWindowsIntoApplicationIcon,
+            minimizeWindowsIntoApplicationIconRow.label.Text());
         fullscreenPolicyRow.SetText(
             L("settings.dock.fullscreenDefaultPolicy", L"Default protection"),
             L("settings.dock.fullscreenPolicy.description",
@@ -3324,6 +3343,7 @@ struct DockPagePresenter::Impl
             return dockTarget(edgeRevealGesture);
         }
         if (id == "dock.showWindowPreviews") return dockTarget(windowPreviews);
+        if (id == "dock.minimizeWindowsIntoApplicationIcon") return dockTarget(minimizeWindowsIntoApplicationIcon);
         if (id == "dock.singleClickLaunchItems") return dockTarget(singleClickLaunchItems);
         if (id == "dock.freeItemOrder") return dockTarget(freeItemOrder);
         if (id == "dock.trayApplications") return dockTarget(trayEditor->FocusTarget());
@@ -3517,6 +3537,7 @@ struct DockPagePresenter::Impl
             floatingEdgeSwipeToggle.Toggled(floatingEdgeSwipeToken);
             edgeRevealGesture.SelectionChanged(edgeRevealGestureToken);
             windowPreviews.Toggled(windowPreviewsToken);
+            minimizeWindowsIntoApplicationIcon.Toggled(minimizeWindowsIntoApplicationIconToken);
             singleClickLaunchItems.Toggled(singleClickLaunchItemsToken);
             freeItemOrder.Toggled(freeItemOrderToken);
             fullscreenPolicyCombo.SelectionChanged(fullscreenPolicyToken);

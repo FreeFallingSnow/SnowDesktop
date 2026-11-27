@@ -354,6 +354,7 @@ set(SNOWDESKTOP_SOURCES
     src/data/atomic_file.cpp
     src/data/folder_preview_sort.cpp
     src/data/folder_preview_view_state.cpp
+    src/dock/dock_minimized_window_thumbnail.cpp
     src/dock/dock_window_preview.cpp
     src/dock/dock_window_preview_toolbar.cpp
     src/dock/dock_thumbnail_toolbar.cpp

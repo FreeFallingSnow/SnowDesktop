@@ -607,6 +607,45 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
     };
     const bool lt = (CurrentDockAppearance(dockMonitor).contentTheme == 1);
     const bool useDemoIdentity = generalSettings_.demoModeEnabled && demoIdentityAssetsAvailable_;
+    if (app.minimizedThumbnail)
+    {
+        const float edge = static_cast<float>(iconSize);
+        auto* thumbnail = app.minimizedThumbnail->Bitmap(*ctx);
+        const auto source = thumbnail ? thumbnail->GetSize() : D2D1::SizeF(4.0f, 3.0f);
+        const float scale = edge / std::max(source.width, source.height);
+        const float width = source.width * scale;
+        const float height = source.height * scale;
+        const float left = (iconRect.left + iconRect.right - width) * 0.5f;
+        const float top = (iconRect.top + iconRect.bottom - height) * 0.5f;
+        const auto frame = D2D1::RectF(left, top, left + width, top + height);
+        if (thumbnail)
+            ctx->DrawBitmap(thumbnail, &frame, presence, D2D1_INTERPOLATION_MODE_LINEAR, nullptr, nullptr);
+        else
+        {
+            ComPtr<ID2D1SolidColorBrush> fill;
+            const float surface = lt ? 0.88f : 0.20f;
+            if (SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(surface, surface, surface, 0.84f * presence), &fill)))
+            {
+                const float radius = edge * 0.07f;
+                ctx->FillRoundedRectangle(D2D1::RoundedRect(frame, radius, radius), fill.Get());
+                const float detail = lt ? 0.47f : 0.68f;
+                fill->SetColor(D2D1::ColorF(detail, detail, detail, 0.7f * presence));
+                ctx->DrawLine(D2D1::Point2F(left + width * 0.16f, top + height * 0.22f),
+                    D2D1::Point2F(left + width * 0.84f, top + height * 0.22f), fill.Get());
+            }
+        }
+        const long badgeSize = std::max(1L, std::lround(edge * 0.40f));
+        const long badgeRight = std::min(iconRect.right, std::lround(frame.right) + badgeSize / 5);
+        const long badgeBottom = std::min(iconRect.bottom, std::lround(frame.bottom) + badgeSize / 5);
+        const RECT badge{badgeRight - badgeSize, badgeBottom - badgeSize, badgeRight, badgeBottom};
+        if (auto* appIcon = GetOrCreateD2DBitmap(app.iconBitmap, false))
+            DrawIconBitmap(ctx, appIcon, badge, presence, reinterpret_cast<std::uintptr_t>(&app), true);
+        else
+            DrawPlaceholderIcon(ctx, -1, badge, presence, true);
+        if (state == 2) DrawDockSelectionIndicator(ctx, iconRect, lt);
+        return;
+    }
+
     auto* bitmap = useDemoIdentity ? nullptr : GetOrCreateD2DBitmap(app.iconBitmap);
     const auto drawIcon = [&](ID2D1DeviceContext* drawing) {
         if (useDemoIdentity)

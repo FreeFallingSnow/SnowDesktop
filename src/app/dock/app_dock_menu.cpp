@@ -653,7 +653,7 @@ void DesktopApp::ShowDockRunningAppContextMenu(
 
     const DockRunningAppInfo running =
         dockUnpinnedRunningApps_[runningIndex];
-    if (!running.presence.Interactive()) return;
+    if (!running.presence.Interactive() || running.minimizedThumbnail) return;
     const bool explorer = snowdesktop::shortcut_application_rules::
         IsExplorerExecutable(running.executablePath) &&
         snowdesktop::dock_explorer_pin::IsFolderWindow(running.window);

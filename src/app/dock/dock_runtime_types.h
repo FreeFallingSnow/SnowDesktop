@@ -3,9 +3,12 @@
 #include "dock/dock_app_identity_rules.h"
 #include "dock/dock_running_animation.h"
 #include <windows.h>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
+
+namespace snowdesktop::dock_minimized_window { class Thumbnail; }
 
 enum class DockWindowVisualState
 {
@@ -69,5 +72,6 @@ struct DockRunningAppInfo
     bool minimized = false;
     bool foreground = false;
     bool selected = false;
+    std::shared_ptr<snowdesktop::dock_minimized_window::Thumbnail> minimizedThumbnail;
     std::vector<HWND> trackedWindows;
 };

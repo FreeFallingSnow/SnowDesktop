@@ -339,6 +339,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
         {
             const DockRunningAppInfo& app =
                 dockUnpinnedRunningApps_[index];
+            if (app.minimizedThumbnail) return false;
             target.identity.executablePath = app.executablePath;
             target.identity.appUserModelId = app.appUserModelId;
             target.identity.kind =

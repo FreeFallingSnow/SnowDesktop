@@ -22,6 +22,7 @@
 #include "icons/icon_shadow_settings.h"
 #include "app/render/demo_icon_load_types.h"
 #include "app/dock/dock_runtime_types.h"
+#include "dock/dock_minimized_window_thumbnail.h"
 #include "app/lifecycle/auto_start_result.h"
 #include "app/render/drag_render_cache.h"
 #include "app/navigation/quick_navigation_models.h"
@@ -3936,6 +3937,7 @@ private:
     DWORD desktopHoverForegroundObservedTick_ = 0;
     DWORD dockRunningWindowsStateTick_ = 0;
     DWORD dockRunningWindowsRefreshTick_ = 0;
+    snowdesktop::dock_minimized_window::ThumbnailCache dockMinimizedThumbnails_;
     snowdesktop::UiScheduleToken dockDiscoveryRetryToken_ = 0;
     double dockDiscoveryDeferUntil_ = 0.0;
     bool dockProcessSnapshotPending_ = false;
