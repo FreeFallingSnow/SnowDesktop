@@ -215,6 +215,8 @@ set(SNOWDESKTOP_SOURCES
     src/app/render/app_navigation_render.cpp
     src/app/drag_drop/app_ole_drop_routing.cpp
     src/app/drag_drop/app_ole_drop_session.cpp
+    src/drag_drop/touch_ole_drag.cpp
+    src/drag_drop/touch_ole_drag.h
     src/app/render/app_overlay_render.cpp
     src/app/layout/app_page_grid.cpp
     src/app/render/app_paint.cpp

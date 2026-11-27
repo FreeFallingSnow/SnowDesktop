@@ -6,6 +6,7 @@
 #include "desktop/desktop_source.h"
 #include "drag_drop/drop_image_data.h"
 #include "drag_drop/ole_drag_rules.h"
+#include "drag_drop/touch_ole_drag.h"
 #include "drag_drop/drag_input_rules.h"
 #include "drag_drop/virtual_file_drop.h"
 #include "drag_drop/external_drop_content.h"
@@ -2441,6 +2442,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
 HRESULT DesktopApp::HandleOleQueryContinueDrag(
     BOOL escapePressed, DWORD keyState)
 {
+    if (snowdesktop::touch_ole_drag::ShouldCancel(escapePressed != FALSE)) return DRAGDROP_S_CANCEL;
     if (widgetTextDragSource_ || widgetImageDragActive_)
         return escapePressed ? DRAGDROP_S_CANCEL :
             (keyState & MK_LBUTTON) ? S_OK : DRAGDROP_S_DROP;

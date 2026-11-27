@@ -427,7 +427,7 @@ private:
     void ObserveDesktopTouch(HWND window, UINT message, WPARAM pointer, LPARAM position);
     bool HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPARAM position);
     bool HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LPARAM position);
-    bool HandleTouchDragCompatibility(HWND window, UINT message, WPARAM buttons, LPARAM position);
+    void TryBeginTouchFileDrag(HWND window, WPARAM pointer, POINT screen);
     bool HandleDesktopTouchEdge(HWND window, UINT message, WPARAM pointer, LPARAM position);
     bool TryRevealTouchEdge(POINT start, std::optional<POINT> end = std::nullopt);
     bool HandleSimulatedTouchEdge(POINT start, POINT end);

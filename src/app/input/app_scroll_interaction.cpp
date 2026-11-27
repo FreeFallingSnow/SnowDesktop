@@ -298,7 +298,8 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             }
             if (UsesCollectionPopupFan(*popupWidget))
             {
-                ScrollCollectionPopupFan(-static_cast<double>(delta) / WHEEL_DELTA);
+                const double steps = static_cast<double>(delta) / WHEEL_DELTA;
+                ScrollCollectionPopupFan(snowdesktop::touch_input::routingTouch ? steps : -steps);
                 (void)refreshDragAfterScroll();
                 return;
             }
