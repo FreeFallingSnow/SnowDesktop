@@ -34,6 +34,39 @@
 
 namespace
 {
+const DragSourceEntry* DraggedSeparator(const DragSourceList& sources)
+{
+    if (sources.entries.size() != 1) return nullptr;
+    const auto& source = sources.entries.front();
+    return source.fromDock && source.dockEntryType == DockEntryType::Separator ? &source : nullptr;
+}
+
+struct DockSeparatorMove
+{
+    size_t source;
+    size_t boundary;
+    LONG width;
+
+    void Shift(RECT& rect, size_t index, bool vertical) const
+    {
+        LONG offset = 0;
+        if (index > source && index < boundary) offset = -width;
+        if (index >= boundary && index < source) offset = width;
+        if (offset) OffsetRect(&rect, vertical ? 0 : offset, vertical ? offset : 0);
+    }
+};
+
+std::optional<DockSeparatorMove> PreviewSeparatorMove(const DragSourceEntry* drag,
+    const std::vector<DockEntry>& entries, snowdesktop::dock_folder_rules::InsertRange range,
+    size_t boundary, LONG width)
+{
+    if (!drag) return std::nullopt;
+    for (size_t i = range.begin; i < range.end && i < entries.size(); ++i)
+        if (entries[i].type == DockEntryType::Separator && entries[i].reference == drag->dockReference)
+            return DockSeparatorMove{i, boundary, width};
+    return std::nullopt;
+}
+
 void DrawDockSeparator(ID2D1DeviceContext* context, float x, float y, bool vertical, bool light, float opacity)
 {
     ComPtr<ID2D1SolidColorBrush> brush;
@@ -367,6 +400,10 @@ void DockEntryItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
         if (entry->type == DockEntryType::Separator)
         {
             if (!dock) return;
+            const auto& session = app_->dragSession_;
+            const auto* dragged = session.IsActive() ? DraggedSeparator(session.SourceList()) : nullptr;
+            if (dragged && dragged->dockReference == entry->reference &&
+                dynamic_cast<DockContainer*>(session.TargetContainer())) return;
             const bool vertical = dock->GetInsertionStyle() == BarStyle::HBar;
             const bool light = app_->CurrentDockAppearance(dock->GetMonitor()).contentTheme == 1;
             // The stroke stays centered in the Dock and uses the same artwork as an automatic divider.
@@ -2561,7 +2598,8 @@ void DockContainer::DrawPartitionInsertionPreview(ID2D1DeviceContext* context, s
     // The insertion line follows the same animated slot edges as hit testing.
     // Fixed pitch arithmetic would leave it behind the magnified icons.
     const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
-    const POINT pointer = app_->lastMousePoint_;
+    const auto& session = app_->dragSession_;
+    const POINT pointer = session.HasContext() ? session.CurrentPoint() : app_->lastMousePoint_;
     RECT boundary = slots.empty() ? bounds : slots.back()->GetBounds();
     bool after = false;
     if (insertIndex < end && insertIndex < slots.size() && slots[insertIndex])
@@ -2670,6 +2708,50 @@ void DockContainer::DrawPartitionInsertionPreview(ID2D1DeviceContext* context, s
     float axis = static_cast<float>(IsVertical()
         ? (after ? boundary.bottom : boundary.top)
         : (after ? boundary.right : boundary.left));
+    const auto* dragged = session.IsActive() ? DraggedSeparator(session.SourceList()) : nullptr;
+    const auto dividerMove = entries_ ? PreviewSeparatorMove(dragged, *entries_, range, insertIndex, ScaledSeparatorGap()) : std::nullopt;
+    const bool vertical = IsVertical();
+    struct Neighbor
+    {
+        RECT base, visual;
+        float leading, trailing;
+    };
+    const auto neighborAt = [&](size_t index) -> std::optional<Neighbor> {
+        RECT cell = slots[index]->GetBounds();
+        if (IsRectEmpty(&cell)) return std::nullopt;
+        const auto& entry = (*entries_)[index];
+        const bool divider = entry.type == DockEntryType::Separator;
+        if (divider && dragged && entry.reference == dragged->dockReference) return std::nullopt;
+        RECT painted = GetElementVisualRect(cell, pointer);
+        if (dividerMove) dividerMove->Shift(painted, index, vertical);
+        const float center = (vertical ? painted.top + painted.bottom : painted.left + painted.right) * 0.5f;
+        const float halfWidth = divider ? 1.0f : GetElementIconSize(cell, painted) * 0.5f;
+        return Neighbor{cell, painted, center - halfWidth, center + halfWidth};
+    };
+    const bool validRange = entries_ && end <= entries_->size() && end <= slots.size();
+    const bool dividerBoundary = validRange && (dragged ||
+        (insertIndex > begin && (*entries_)[insertIndex - 1].type == DockEntryType::Separator) ||
+        (insertIndex < end && (*entries_)[insertIndex].type == DockEntryType::Separator));
+    std::optional<Neighbor> preceding, following;
+    if (dividerBoundary)
+    {
+        for (size_t index = insertIndex; index > begin && !preceding;)
+            preceding = neighborAt(--index);
+        for (size_t index = insertIndex; index < end && !following; ++index)
+            following = neighborAt(index);
+    }
+    if (dividerBoundary)
+    {
+        const float padding = (ScaledSpacing() + (dividerMove ? dividerMove->width : 0)) * 0.5f;
+        if (preceding && following) axis = (preceding->trailing + following->leading) * 0.5f;
+        else if (preceding) axis = preceding->trailing + padding;
+        else if (following) axis = following->leading - padding;
+        else if (dividerMove)
+        {
+            const auto sourceRect = GetElementVisualRect(slots[dividerMove->source]->GetBounds(), pointer);
+            axis = (vertical ? sourceRect.top + sourceRect.bottom : sourceRect.left + sourceRect.right) * 0.5f;
+        }
+    }
     // Match DrawContents: animated cells may extend beyond their base lane
     // while it fits. Only an actually scrolling lane owns a viewport clip;
     // file items are fixed outside that clip in either layout.
@@ -2682,12 +2764,22 @@ void DockContainer::DrawPartitionInsertionPreview(ID2D1DeviceContext* context, s
     }
     // Either adjacent icon can own the hover; use the larger growth budget so
     // a line after the focused icon also extends in single-icon hover mode.
-    if (insertIndex > begin && insertIndex - 1 < slots.size())
+    if (following) { base = following->base; visual = following->visual; }
+    if (preceding && DockPreviewScale(preceding->base, preceding->visual, ItemIconSize()) >
+            DockPreviewScale(base, visual, ItemIconSize()))
+    {
+        base = preceding->base;
+        visual = preceding->visual;
+    }
+    else if (!dividerBoundary && insertIndex > begin && insertIndex - 1 < slots.size())
     {
         const RECT previousBase = slots[insertIndex - 1]->GetBounds();
         const RECT previousVisual = GetElementVisualRect(previousBase, pointer);
         if (DockPreviewScale(previousBase, previousVisual, ItemIconSize()) > DockPreviewScale(base, visual, ItemIconSize()))
-        { base = previousBase; visual = previousVisual; }
+        {
+            base = previousBase;
+            visual = previousVisual;
+        }
     }
     DrawDockInsertionIndicator(context, base, visual, axis, IsVertical(), ItemIconSize());
 }
@@ -2807,6 +2899,16 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     const size_t folderBegin = FolderEntryBegin();
     const size_t folderCount = FolderEntryCount();
     const size_t folderEnd = folderBegin + folderCount;
+    const auto& session = app_->dragSession_;
+    const auto* dragged = session.IsActive() && session.TargetContainer() == this
+        ? DraggedSeparator(session.SourceList()) : nullptr;
+    std::optional<DockSeparatorMove> separatorMove;
+    if (dragged && entries_)
+    {
+        const auto point = session.CurrentPoint();
+        separatorMove = PreviewSeparatorMove(dragged, *entries_, GetDragInsertRange(point),
+            GetDropInsertIndex(session.TargetSlot(), session.TargetRegion()), ScaledSeparatorGap());
+    }
     const bool hasRecycleBin = HasTrailingRecycleBin();
     const auto monitor = GetMonitor();
     const bool lt = app_->CurrentDockAppearance(monitor).contentTheme == 1;
@@ -2989,7 +3091,10 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         const bool hovered = isFocused(itemBounds);
         if (hovered != focusedPass)
             return;
-        const RECT visualBounds = visualRectFor(itemBounds);
+        RECT visualBounds = visualRectFor(itemBounds);
+        if (separatorMove)
+            if (const auto* entry = dynamic_cast<const DockEntryItem*>(item))
+                separatorMove->Shift(visualBounds, entry->GetEntryIndex(), IsVertical());
         item->Draw(context, visualBounds, item->IsSelected() ? 2 : 0);
     };
     auto drawScrollablePass = [&](bool focusedPass) {
@@ -3118,7 +3223,9 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                 const RECT itemBounds = slots[i]->GetBounds();
                 const bool hovered = isFocused(itemBounds);
                 if (hovered != focusedPass) continue;
-                item->Draw(context, visualRectFor(itemBounds), item->IsSelected() ? 2 : 0);
+                RECT visual = visualRectFor(itemBounds);
+                if (separatorMove) separatorMove->Shift(visual, i, IsVertical());
+                item->Draw(context, visual, item->IsSelected() ? 2 : 0);
             }
         };
         drawFixedFolderPass(false);
@@ -3141,7 +3248,9 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
 
     if (!IsRectEmpty(&search))
     {
-        const RECT searchVisual = visualRectFor(search);
+        RECT searchVisual = visualRectFor(search);
+        if (separatorMove && app_->dockSettings_.freeItemOrder)
+            separatorMove->Shift(searchVisual, quickSearchEntryIndex_, IsVertical());
         const int backgroundSize = GetElementIconSize(search, searchVisual);
         RECT searchBackground{
             searchVisual.left +
