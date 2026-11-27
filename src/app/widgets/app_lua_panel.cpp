@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "ui/input/touch_input.h"
 #include "app/app.h"
 #include "app/popup/popup_resize_transition.h"
 #include "diagnostics/diagnostic_log.h"
@@ -58,6 +59,14 @@ void DesktopApp::OpenLuaWidgetPanel(
     if (request.widgetId.empty())
         return;
     const auto resolveAnchor = [&]() {
+        if (request.hasAnchor)
+            return POINT{(request.anchorRect.left + request.anchorRect.right) / 2,
+                (request.anchorRect.top + request.anchorRect.bottom) / 2};
+        if (request.desktopGesture && snowdesktop::touch_input::routingTouch)
+        {
+            POINT touchPoint = snowdesktop::touch_input::routedPoint;
+            if (ScreenToClient(hwnd_, &touchPoint)) return touchPoint;
+        }
         POINT anchor = lastMousePoint_;
         const auto source = std::find_if(widgets_.begin(), widgets_.end(),
             [&](const DesktopWidget& widget) { return widget.id == request.widgetId; });
@@ -67,9 +76,6 @@ void DesktopApp::OpenLuaWidgetPanel(
             if (!PtInRect(&frame, anchor))
                 anchor = {(frame.left + frame.right) / 2, (frame.top + frame.bottom) / 2};
         }
-        if (request.hasAnchor)
-            anchor = {(request.anchorRect.left + request.anchorRect.right) / 2,
-                (request.anchorRect.top + request.anchorRect.bottom) / 2};
         return anchor;
     };
     // Distinct desktop elements may open panels with the same title. A repeat
@@ -104,23 +110,19 @@ void DesktopApp::OpenLuaWidgetPanel(
             luaWidgetPanelRequest_.widgetId.empty() ? 0 : 1);
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Widgets, message);
     }
-    if (luaWidgetPanelFinalizing_)
+    const POINT anchor = resolveAnchor();
+    if (luaWidgetPanelFinalizing_ || !luaWidgetPanelRequest_.widgetId.empty())
     {
         pendingLuaWidgetPanelOpen_ = request;
-        return;
-    }
-    if (!luaWidgetPanelRequest_.widgetId.empty())
-    {
-        pendingLuaWidgetPanelOpen_ = request;
+        if (!request.hasAnchor)
+        {
+            // Retain the opener while the previous panel finishes closing.
+            pendingLuaWidgetPanelOpen_->hasAnchor = true;
+            pendingLuaWidgetPanelOpen_->anchorRect = {anchor.x, anchor.y, anchor.x, anchor.y};
+        }
+        if (luaWidgetPanelFinalizing_) return;
         if ((sameWidget && !samePanel) || luaWidgetPanelAnimation_.IsClosing())
         {
-            // A later pointer move must not relocate the queued popup.
-            if (!request.hasAnchor)
-            {
-                const POINT anchor = resolveAnchor();
-                pendingLuaWidgetPanelOpen_->hasAnchor = true;
-                pendingLuaWidgetPanelOpen_->anchorRect = {anchor.x, anchor.y, anchor.x, anchor.y};
-            }
             // The close completion opens the latest queued request. An
             // existing close keeps running when another opener is pressed.
             CloseLuaWidgetPanel(luaWidgetPanelRequest_.widgetId, "switch");
@@ -134,7 +136,7 @@ void DesktopApp::OpenLuaWidgetPanel(
         widgetEngine_->PrepareWidgetPanelFocus(request.widgetId);
     AdvanceFloatingPopupContentGeneration();
     luaWidgetPanelRequest_ = request;
-    luaWidgetPanelAnchorPoint_ = resolveAnchor();
+    luaWidgetPanelAnchorPoint_ = anchor;
     luaWidgetPanelRect_ = GetLuaWidgetPanelRect();
     luaWidgetPanelMouseDown_ = false;
     luaWidgetPanelAnimation_.ResetHidden();

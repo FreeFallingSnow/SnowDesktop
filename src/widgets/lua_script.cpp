@@ -22,6 +22,8 @@
 #include "widget/runtime/widget_instance_manifest.h"
 #include "widget/preview/widget_preview_scene.h"
 #include "diagnostics/performance_trace.h"
+#include "ui/input/private_pointer.h"
+#include "ui/input/touch_input.h"
 #include <optional>
 
 namespace
@@ -187,7 +189,9 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         (ownsPopup || (presentation.selected && retainSelectionOutline));
     const POINT renderPointer = preview
         ? GetRenderPointer() : app_->lastMousePoint_;
-    const bool hovered = PtInRect(&frame, renderPointer) != FALSE;
+    const bool touchSelection = !preview && !snowdesktop::touch_input::CanHover() &&
+        !snowdesktop::private_pointer::Active();
+    const bool hovered = touchSelection ? presentation.selected : PtInRect(&frame, renderPointer) != FALSE;
     const bool lightTheme = app_->IsLightContentTheme();
 
     // Seed the widget-local layout context before package evaluation so

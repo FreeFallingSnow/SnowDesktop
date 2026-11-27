@@ -36,13 +36,6 @@ int InwardTravel(DockPosition position, POINT start, POINT end)
     return 0;
 }
 
-int EdgeDistance(DockPosition position, const RECT& bounds, POINT point)
-{
-    return InwardTravel(position, {
-        position == DockPosition::Right ? bounds.right - 1 : bounds.left,
-        position == DockPosition::Bottom ? bounds.bottom - 1 : bounds.top}, point);
-}
-
 bool IsOutwardSwipe(DockPosition position, POINT start, POINT end, int threshold)
 {
     const int alongBar = IsVertical(position) ? std::abs(end.y - start.y) :
@@ -553,7 +546,8 @@ bool DesktopApp::TryRevealTouchEdge(POINT start, std::optional<POINT> end)
     UINT dpi = 96;
     if (UINT x = 0, y = 0; SUCCEEDED(GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &x, &y))) dpi = x;
     const auto qualifies = [&](DockPosition position) {
-        return EdgeDistance(position, info.rcMonitor, start) < touch::Dips(8, dpi) &&
+        const RECT bounds = TouchEdgeBounds(info.rcMonitor, position, dpi);
+        return PtInRect(&bounds, start) &&
             (!end || IsOutwardSwipe(position, start, *end, touch::Dips(24, dpi)));
     };
     const bool dock = qualifies(dockSettings_.position) && CanRevealDockFromTouch(monitor);
@@ -663,7 +657,6 @@ void DesktopApp::SyncTouchEdgeWindows()
             dockSettings_.showOnlyWhenSummoned, dockSettings_.floatingEdgeSwipeEnabled);
     const bool status = enabled && statusBar_ && generalSettings_.statusBar.showOnlyWhenSummoned;
     if (!dock && !status) { DestroyTouchEdgeWindows(); return; }
-    snowdesktop::touch_simulation::SetEdgeGestureTarget(generalSettings_.touchSimulationEnabled ? hwnd_ : nullptr);
 
     struct Target { HMONITOR monitor; DockPosition edge; RECT bounds; };
     std::vector<HMONITOR> monitors;
@@ -672,22 +665,32 @@ void DesktopApp::SyncTouchEdgeWindows()
         return TRUE;
     }, reinterpret_cast<LPARAM>(&monitors));
     std::vector<Target> targets;
-    for (const auto monitor : monitors)
+    if (!HasActiveContextMenuSession() && !dragSession_.HasContext() && !dragDropController_.IsTransportActive())
     {
-        MONITORINFO info{sizeof(info)};
-        if (!GetMonitorInfoW(monitor, &info)) continue;
-        UINT dpi = 96;
-        if (UINT x = 0, y = 0; SUCCEEDED(GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &x, &y))) dpi = x;
-        const bool dockEligible = dock && CanRevealDockFromTouch(monitor);
-        const auto add = [&](DockPosition edge) {
-            const RECT bounds = TouchEdgeBounds(info.rcMonitor, edge, dpi);
-            if (!IsRectEmpty(&bounds)) targets.push_back({monitor, edge, bounds});
-        };
-        if (dockEligible) add(dockSettings_.position);
-        if (status && statusBar_->CanRevealFromTouch(monitor) &&
-            (!dockEligible || generalSettings_.statusBar.position != dockSettings_.position))
-            add(generalSettings_.statusBar.position);
+        for (const auto monitor : monitors)
+        {
+            MONITORINFO info{sizeof(info)};
+            if (!GetMonitorInfoW(monitor, &info)) continue;
+            UINT dpi = 96;
+            if (UINT x = 0, y = 0; SUCCEEDED(GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &x, &y))) dpi = x;
+            const bool dockEligible = dock && CanRevealDockFromTouch(monitor);
+            const auto add = [&](DockPosition edge) {
+                const RECT bounds = TouchEdgeBounds(info.rcMonitor, edge, dpi);
+                if (!IsRectEmpty(&bounds)) targets.push_back({monitor, edge, bounds});
+            };
+            if (dockEligible) add(dockSettings_.position);
+            if (status && statusBar_->CanRevealFromTouch(monitor) &&
+                (!dockEligible || generalSettings_.statusBar.position != dockSettings_.position))
+                add(generalSettings_.statusBar.position);
+        }
     }
+    std::vector<RECT> simulatedZones;
+    if (generalSettings_.touchSimulationEnabled)
+    {
+        simulatedZones.reserve(targets.size());
+        for (const auto& target : targets) simulatedZones.push_back(target.bounds);
+    }
+    snowdesktop::touch_simulation::SetEdgeGestureTargets(hwnd_, std::move(simulatedZones));
 
     std::erase_if(touchEdgeWindows_, [&](HWND window) {
         const auto* edge = reinterpret_cast<TouchEdgeWindow*>(GetWindowLongPtrW(window, GWLP_USERDATA));
@@ -735,7 +738,7 @@ void DesktopApp::SyncTouchEdgeWindows()
 
 void DesktopApp::DestroyTouchEdgeWindows()
 {
-    snowdesktop::touch_simulation::SetEdgeGestureTarget(nullptr);
+    snowdesktop::touch_simulation::SetEdgeGestureTargets(nullptr);
     for (const HWND window : touchEdgeWindows_) DestroyWindow(window);
     touchEdgeWindows_.clear();
 }

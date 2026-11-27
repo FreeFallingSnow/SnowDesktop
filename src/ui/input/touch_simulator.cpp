@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <utility>
 
@@ -26,10 +27,21 @@ constexpr int kPinchMinRadius = 12;
 constexpr int kPinchMaxRadius = 72;
 constexpr auto kContact = POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT;
 constexpr ULONG_PTR kPointerSignature = 0xFF515700;
-std::atomic<HWND> edgeGestureTarget = nullptr;
+std::mutex edgeGestureMutex;
+HWND edgeGestureTarget = nullptr;
+std::vector<RECT> edgeGestureZones;
 using Points = std::array<POINT, 2>;
 
 struct ButtonEvent { UINT key = 0; bool up = false; };
+struct EdgeDrag { HWND target; POINT origin; };
+
+HWND EdgeGestureTargetAt(POINT point)
+{
+    const std::lock_guard lock(edgeGestureMutex);
+    return std::ranges::any_of(edgeGestureZones, [point](const RECT& zone) {
+        return PtInRect(&zone, point);
+    }) ? edgeGestureTarget : nullptr;
+}
 
 ButtonEvent MouseButton(WPARAM message, DWORD data) noexcept
 {
@@ -153,7 +165,6 @@ private:
     {
         auto& self = Current();
         self.End(true);
-        self.singleDragOrigin_.reset();
         self.blockedButtons_ = 0;
         self.aimActive_ = false;
         self.paintedAim_.reset();
@@ -299,7 +310,6 @@ private:
             return 0;
         case WM_DISPLAYCHANGE:
             self.End(true);
-            self.singleDragOrigin_.reset();
             return 0;
         }
         return DefWindowProcW(window, message, wp, lp);
@@ -338,6 +348,15 @@ private:
     void BeginDrag(POINT point, bool twoContacts) noexcept
     {
         End(true);
+        if (!twoContacts)
+        {
+            if (const HWND target = EdgeGestureTargetAt(point))
+            {
+                // Reserve the whole contact before Windows can recognize a Shell swipe.
+                edgeDrag_ = EdgeDrag{target, point};
+                return;
+            }
+        }
         Points points{point, point};
         if (twoContacts)
         {
@@ -346,22 +365,22 @@ private:
                 (std::min)(point.x + 20, bounds.right - 1);
         }
         Begin(points, twoContacts ? 2 : 1);
-        singleDragOrigin_ = twoContacts ? std::nullopt : std::optional{point};
     }
 
     void EndDrag(POINT point) noexcept
     {
-        const auto origin = std::exchange(singleDragOrigin_, std::nullopt);
+        if (const auto edge = std::exchange(edgeDrag_, std::nullopt))
+        {
+            PostMessageW(edge->target, EdgeSwipeMessage,
+                MAKEWPARAM(edge->origin.x, edge->origin.y), MAKELPARAM(point.x, point.y));
+            return;
+        }
         if (count_ && !pinching_)
         {
             dragPoint_ = point;
             Frame();
             End(false);
         }
-        // Shell gestures can take injected contacts before an app sees them.
-        // Report completed simulated swipes to SnowDesktop's own receiver too.
-        if (const HWND target = edgeGestureTarget.load(); target && origin)
-            PostMessageW(target, EdgeSwipeMessage, MAKEWPARAM(origin->x, origin->y), MAKELPARAM(point.x, point.y));
     }
 
     Points PinchPoints(int radius) const noexcept
@@ -416,7 +435,11 @@ private:
 
     void End(bool cancelled) noexcept
     {
-        if (cancelled) queuedPinch_.reset();
+        if (cancelled)
+        {
+            queuedPinch_.reset();
+            edgeDrag_.reset();
+        }
         if (count_)
         {
             if (!aimActive_) KillTimer(window_, kFrameTimer);
@@ -437,7 +460,7 @@ private:
     UINT count_ = 0;
     Points sentPoints_{};
     POINT dragPoint_{};
-    std::optional<POINT> singleDragOrigin_;
+    std::optional<EdgeDrag> edgeDrag_;
     bool pinching_ = false;
     POINT pinchCenter_{};
     RECT pinchBounds_{};
@@ -450,7 +473,12 @@ private:
 }
 
 bool Configure(bool enabled, UINT modifiers, UINT key) { return Simulator::Current().Configure(enabled, modifiers, key); }
-void SetEdgeGestureTarget(HWND window) noexcept { edgeGestureTarget.store(window); }
+void SetEdgeGestureTargets(HWND window, std::vector<RECT> zones)
+{
+    const std::lock_guard lock(edgeGestureMutex);
+    edgeGestureTarget = window;
+    edgeGestureZones = std::move(zones);
+}
 bool Enabled() noexcept { return Simulator::Current().Enabled(); }
 void Stop() noexcept { Simulator::Current().Stop(); }
 }

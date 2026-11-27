@@ -1,6 +1,7 @@
 #pragma once
 
 #include <windows.h>
+#include <vector>
 
 namespace snowdesktop::touch_simulation
 {
@@ -35,7 +36,7 @@ constexpr bool ValidBinding(UINT modifiers, UINT key) noexcept
 }
 
 bool Configure(bool enabled, UINT modifiers, UINT key);
-void SetEdgeGestureTarget(HWND window) noexcept;
+void SetEdgeGestureTargets(HWND window, std::vector<RECT> zones = {});
 bool Enabled() noexcept;
 void Stop() noexcept;
 }

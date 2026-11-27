@@ -105,6 +105,14 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         msg != WM_TIMER || wp != kWidgetRefreshTimerId);
     if (HandleDockTouch(hwnd, msg, wp, lp) || HandleDesktopTouchEdge(hwnd, msg, wp, lp) ||
         HandleTouchScroll(hwnd, msg, wp, lp)) return 0;
+    std::optional<snowdesktop::touch_input::RoutedTouch> promotedContact;
+    if ((msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP) &&
+        !snowdesktop::touch_input::routingTouch && !snowdesktop::private_pointer::Active() &&
+        snowdesktop::touch_input::IsPromotedTouch())
+    {
+        POINT screen{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (ClientToScreen(hwnd, &screen)) promotedContact.emplace(screen, wp);
+    }
     if (msg >= 0xC000 &&
         msg == snowdesktop::widget_runtime::WidgetSurfaceRenderer::ReadyMessage())
     {
@@ -476,8 +484,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
         snowdesktop::performance::Scope pointerScope("desktop.input", "mouse.move");
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        const bool touchWidgetMove = snowdesktop::touch_input::routingTouch &&
+            middleButtonWidgetMove_ && (wp & MK_MBUTTON);
         if (!snowdesktop::touch_input::CanHover() && !snowdesktop::private_pointer::Active() &&
-            !(wp & (MK_LBUTTON | MK_RBUTTON))) return 0;
+            !(wp & (MK_LBUTTON | MK_RBUTTON)) && !touchWidgetMove) return 0;
         // The guide owns its captured gesture, including moves outside its
         // bounds. Handle it before passive-hover filtering can discard them.
         if (HandleUsageGuidePointerMove(pt)) return 0;
