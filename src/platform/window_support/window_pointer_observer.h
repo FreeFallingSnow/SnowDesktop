@@ -1,7 +1,9 @@
 #pragma once
 
 #include "window_support_protocol.h"
+#include "window_support_pointer_metadata.h"
 #include "ui/input/low_level_mouse_hook.h"
+#include "ui/input/touch_input.h"
 #include <atomic>
 #include <mutex>
 
@@ -72,8 +74,10 @@ private:
                         --observer->count_;
                     }
                     const auto index = (observer->head_ + observer->count_) % observer->events_.size();
+                    const auto flags = value.flags |
+                        (msg == WM_LBUTTONDOWN && touch_input::IsPromotedTouch(value.dwExtraInfo) ? PointerTouchPress : 0u);
                     observer->events_[index] = {++observer->sequence_, value.pt, msg,
-                        value.time, value.mouseData, value.flags, observer->buttons_};
+                        value.time, value.mouseData, flags, observer->buttons_};
                     ++observer->count_;
                 }
             }

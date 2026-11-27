@@ -1,8 +1,10 @@
 #include "platform/force_restart_hotkey.h"
+#include "ui/input/touch_input.h"
 #include "ui/input/touch_simulator.h"
 #include "platform/application_version.h"
 #include "diagnostics/debug_profile.h"
 #include "platform/window_support/window_support_runtime.h"
+#include "platform/window_support/window_support_pointer_metadata.h"
 #include "settings/settings_search_catalog.h"
 #include "settings/bar_settings_rules.h"
 #include "app/app.h"
@@ -32,9 +34,11 @@
 #include "app/features/app_control_runtime.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "app/input/grid_preview_shortcut.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "ui/menu/modern_menu.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "system/controls/system_control_prompt.h"
+#include "shell/native_start_menu.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "startup_animation.h"
 #include "startup_diagnostics.h"
@@ -788,6 +792,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
     SetPropW(controlHwnd_, L"SnowDesktop.DebugProfile",
         reinterpret_cast<HANDLE>(static_cast<INT_PTR>(snowdesktop::debug_profile::Enabled() ? 1 : 2)));
+    snowdesktop::touch_simulation::SetTouchPressTarget(controlHwnd_);
     if (snowdesktop::debug_profile::Enabled())
         SetPropW(controlHwnd_, (L"SnowDesktop.DebugEnvironment." +
             snowdesktop::debug_profile::Current().configuration.selectedEnvironment).c_str(),
@@ -804,10 +809,11 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     windowSupport.SetPointerCallback([this](const snowdesktop::window_support::protocol::PointerEvent& event) {
         if (snowdesktop::private_pointer::Active()) return;
         floatingDockEdgeSwipeMouseActivity_.store(true, std::memory_order_relaxed);
+        const bool touchPress = (event.flags & snowdesktop::window_support::PointerTouchPress) != 0;
         // Local events only wake the original live sampler. Replaying their
         // queued positions/buttons can turn a completed gesture into a fresh
         // outside click. Remote events supply otherwise inaccessible input.
-        if (snowdesktop::window_support::WindowSupport().Resolve(
+        if (!touchPress && snowdesktop::window_support::WindowSupport().Resolve(
             snowdesktop::window_support::Capability::PointerObservation).provider ==
             snowdesktop::window_support::Provider::Helper)
         {
@@ -824,6 +830,34 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             static_cast<LONG>(event.time - floatingPopupPointerGenerationStartedAt_) > 0)
             HandleFloatingPopupExternalPointerDown(floatingPopupMouseHookGeneration_,
                 snowdesktop::floating_popup_rules::PackScreenPoint(event.point));
+
+        if (!touchPress || dragSession_.HasContext() || dragDropController_.IsTransportActive()) return;
+        const HWND target = snowdesktop::private_pointer::WindowAtPoint(event.point);
+        if (!target || IsDesktopInteractionSurfaceWindow(target) || IsFolderPreviewSearchImeWindow(target) ||
+            filePreview_.IsPreviewWindow(target) || quickNavigation_->externalDialogActive) return;
+        const HWND owner = GetAncestor(target, GA_ROOTOWNER);
+        DWORD process = 0, ownerProcess = 0;
+        GetWindowThreadProcessId(target, &process);
+        if (owner) GetWindowThreadProcessId(owner, &ownerProcess);
+        if (!process || ((process == GetCurrentProcessId() || ownerProcess == GetCurrentProcessId()) &&
+            !IsSettingsApplicationWindow(target))) return;
+
+        const HMONITOR monitor = MonitorFromPoint(event.point, MONITOR_DEFAULTTONULL);
+        if ((systemPanel_ && systemPanel_->RetainsExternalTouch(target, event.point)) ||
+            (monitor && statusBar_ && statusBar_->ContainsTrayMenuPoint(monitor, event.point)) ||
+            (dockStartMenu_ && dockStartMenu_->ContainsPoint(event.point))) return;
+
+        if (HasActiveContextMenuSession()) DismissActiveContextMenuForPopupTransition();
+        const snowdesktop::touch_input::RoutedTouch contact(event.point, MK_LBUTTON);
+        if (dockWindowPreview_ && dockWindowPreview_->TouchOpened()) HideDockWindowPreview();
+        OnMouseLeave();
+        // The observer still owns this sample, including its touch position and press state.
+        UpdateFloatingDockEdgeSwipe();
+        if (statusBar_) statusBar_->DismissTemporaryReveal(nullptr);
+        CancelStatusBarActivation(nullptr, false);
+        if (quickNavigation_->open) CloseQuickNavigation(false);
+        if (dockStartMenu_ && dockStartMenu_->Active()) dockStartMenu_->Cancel(true);
+        ClearSelectionForExternalWindow(target);
     });
     uiAnimationScheduler_.ScheduleInterval(25, [](snowdesktop::UiScheduleToken) {
         snowdesktop::window_support::WindowSupport().Poll();

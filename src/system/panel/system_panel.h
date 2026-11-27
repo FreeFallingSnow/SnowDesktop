@@ -35,6 +35,7 @@ public:
     bool IsOpenForMonitor(HMONITOR monitor) const;
     // Includes visible cards and the active prompt/retained tray menu.
     bool ContainsPoint(POINT screen) const;
+    bool RetainsExternalTouch(HWND target, POINT screen) const;
     void UpdateSettings(const StatusBarSettings&);
     void SetAppearance(const PersonalizationSettings&);
     bool PreTranslateMessage(MSG*);

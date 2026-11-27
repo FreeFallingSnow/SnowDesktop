@@ -7,6 +7,8 @@ namespace snowdesktop::window_support
 // Private semantic metadata; the low bits retain MSLLHOOKSTRUCT flags. The
 // packet layout remains compatible with installed v1/v2 providers.
 inline constexpr std::uint32_t PointerMinimizeIntent = 0x80000000u;
+inline constexpr std::uint32_t PointerTouchPress = 0x40000000u;
+inline constexpr std::uint32_t PointerSimulatedTouchPress = 0x20000000u;
 inline UINT BeforeNativeMinimizeMessage() noexcept
 {
     static const UINT message = RegisterWindowMessageW(L"SnowDesktop.WindowSupport.BeforeMinimize.v1");

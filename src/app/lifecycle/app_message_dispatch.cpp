@@ -1557,8 +1557,6 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         OnUrlDropDownloadCompleted(lp);
         return 0;
     case kForegroundInteractionChangedMessage:
-        DismissTouchPopupsOnExternalActivation(
-            reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
         HandleDockForegroundInteractionChanged(
             reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
         return 0;

@@ -3029,7 +3029,7 @@ void StatusBar::DismissTemporaryReveal(HMONITOR monitor)
     for (const auto& [id, window] : impl_->windows)
     {
         (void)id;
-        if (!window || window->monitor != monitor || window->mergedDockHeight ||
+        if (!window || (monitor && window->monitor != monitor) || window->mergedDockHeight ||
             (!window->fullscreenState.Revealed() && !window->revealState.Revealed())) continue;
         window->revealState.Dismiss();
         window->touchRevealCursor.reset();

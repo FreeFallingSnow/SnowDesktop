@@ -32,6 +32,7 @@ public:
     std::optional<std::uint32_t> PointerButtons() const;
     std::uint32_t PointerPresses() const;
     bool PointerPosition(POINT& point) const;
+    void QueueSimulatedTouchPress(POINT point, DWORD time);
     void SetPinAppearance(protocol::PinAppearance appearance);
     void SetPinPeek(HWND target);
     void SetPointerCallback(PointerCallback callback);

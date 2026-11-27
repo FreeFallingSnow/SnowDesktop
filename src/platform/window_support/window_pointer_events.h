@@ -12,10 +12,18 @@ public:
     {
         if (now - event.time > 250) return false;
         const auto duplicate = [&](const auto& old) {
-            return old.time == event.time && old.message == event.message && old.mouseData == event.mouseData &&
+            if (old.point.x != event.point.x || old.point.y != event.point.y || old.message != event.message)
+                return false;
+            if ((event.flags & old.flags & PointerTouchPress) &&
+                ((event.flags ^ old.flags) & PointerSimulatedTouchPress))
+            {
+                // Injection may also produce a compatibility mouse press at the same point.
+                const LONG difference = static_cast<LONG>(event.time - old.time);
+                if (difference >= -40 && difference <= 40) return true;
+            }
+            return old.time == event.time && old.mouseData == event.mouseData &&
                 (old.flags & ~(LLMHF_LOWER_IL_INJECTED | PointerMinimizeIntent)) ==
-                    (event.flags & ~(LLMHF_LOWER_IL_INJECTED | PointerMinimizeIntent)) &&
-                old.point.x == event.point.x && old.point.y == event.point.y;
+                    (event.flags & ~(LLMHF_LOWER_IL_INJECTED | PointerMinimizeIntent));
         };
         if (std::any_of(events_.begin(), events_.begin() + count_, duplicate)) return false;
         events_[next_++ % events_.size()] = event;

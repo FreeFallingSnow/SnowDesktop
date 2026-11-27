@@ -27,6 +27,7 @@ constexpr int kPinchMinRadius = 12;
 constexpr int kPinchMaxRadius = 72;
 constexpr auto kContact = POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT;
 constexpr ULONG_PTR kPointerSignature = 0xFF515700;
+std::atomic<HWND> touchPressTarget = nullptr;
 std::mutex edgeGestureMutex;
 HWND edgeGestureTarget = nullptr;
 std::vector<RECT> edgeGestureZones;
@@ -364,7 +365,11 @@ private:
             points[0].x = point.x - bounds.left > 20 ? point.x - 20 :
                 (std::min)(point.x + 20, bounds.right - 1);
         }
+        const DWORD pressedAt = GetTickCount();
         Begin(points, twoContacts ? 2 : 1);
+        // Pointer-aware apps can consume injected touch without emitting a mouse press.
+        if (const HWND target = touchPressTarget.load(); target && count_ == 1)
+            PostMessageW(target, TouchPressMessage, pressedAt, MAKELPARAM(point.x, point.y));
     }
 
     void EndDrag(POINT point) noexcept
@@ -479,6 +484,16 @@ void SetEdgeGestureTargets(HWND window, std::vector<RECT> zones)
     edgeGestureTarget = window;
     edgeGestureZones = std::move(zones);
 }
+void ReleaseEdgeGestureAt(POINT point)
+{
+    const std::lock_guard lock(edgeGestureMutex);
+    std::erase_if(edgeGestureZones, [point](const RECT& zone) { return PtInRect(&zone, point); });
+}
 bool Enabled() noexcept { return Simulator::Current().Enabled(); }
-void Stop() noexcept { Simulator::Current().Stop(); }
+void SetTouchPressTarget(HWND window) noexcept { touchPressTarget.store(window); }
+void Stop() noexcept
+{
+    SetTouchPressTarget(nullptr);
+    Simulator::Current().Stop();
+}
 }

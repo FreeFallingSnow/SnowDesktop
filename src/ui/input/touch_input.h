@@ -28,12 +28,14 @@ inline bool IsTouchPointer(WPARAM pointer) noexcept
     return GetPointerType(GET_POINTERID_WPARAM(pointer), &type) && type == PT_TOUCH;
 }
 
-inline bool IsPromotedTouch() noexcept
+inline bool IsPromotedTouch(ULONG_PTR extraInfo) noexcept
 {
     constexpr ULONG_PTR mask = 0xffffff80;
     constexpr ULONG_PTR touchSignature = 0xff515780;
-    return (static_cast<ULONG_PTR>(GetMessageExtraInfo()) & mask) == touchSignature;
+    return (extraInfo & mask) == touchSignature;
 }
+
+inline bool IsPromotedTouch() noexcept { return IsPromotedTouch(GetMessageExtraInfo()); }
 
 inline bool Observe(UINT message, WPARAM pointer = 0) noexcept
 {

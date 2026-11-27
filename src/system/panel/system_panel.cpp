@@ -1375,6 +1375,11 @@ void SystemPanel::CloseThen(std::function<void()> next, HWND destinationOwner)
 bool SystemPanel::IsOpen()const{return impl_->showing||impl_->modal||impl_->transition.Releasing()||impl_->transition.Pending()||impl_->afterClose;}
 bool SystemPanel::IsInputMethodOpen()const
 {return impl_->showing&&impl_->current&&impl_->current->action==StatusBarAction::InputMethodPanel;}
+bool SystemPanel::RetainsExternalTouch(HWND target, POINT screen) const
+{
+    return impl_->modal || impl_->context.ContainsPoint(screen) ||
+        (target && (target == impl_->activatingTrayPreview || impl_->trayHoverPopup.IsActivatingPreview(target)));
+}
 bool SystemPanel::IsOpenForMonitor(HMONITOR monitor)const
 {
     if(!monitor)return false;

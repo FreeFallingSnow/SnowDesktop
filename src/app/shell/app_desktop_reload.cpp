@@ -23,6 +23,8 @@
 #include "layout/popup_icon_load_rules.h"
 #include "dock/dock_minimize_protocol.h"
 #include "platform/window_support/window_support_pointer_metadata.h"
+#include "platform/window_support/window_support_runtime.h"
+#include "ui/input/touch_simulator.h"
 #include "desktop/desktop_membership_recovery.h"
 #include "desktop/folder_mapping_visibility_rules.h"
 #include "icons/icon_render_rules.h"
@@ -571,6 +573,10 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     case kForegroundInteractionChangedMessage:
         HandleDockForegroundInteractionChanged(
             reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
+        return 0;
+    case snowdesktop::touch_simulation::TouchPressMessage:
+        snowdesktop::window_support::WindowSupport().QueueSimulatedTouchPress(
+            {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)}, static_cast<DWORD>(wp));
         return 0;
     case kDockWindowListChangedMessage:
         if (generalSettings_.dockEnabled && !reloading_)

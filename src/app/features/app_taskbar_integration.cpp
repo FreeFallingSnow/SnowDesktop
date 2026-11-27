@@ -162,6 +162,7 @@ bool DesktopApp::IsShellDesktopForegroundWindow(HWND window) const
 
 void DesktopApp::HandleDockForegroundInteractionChanged(HWND window, DWORD eventTime)
 {
+    DismissTouchPopupsOnExternalActivation(window, eventTime);
     if (window && statusBar_) statusBar_->ObserveForeground(window, eventTime);
     ClearSelectionForExternalWindow(GetForegroundWindow());
     ReconcileDesktopHoverState();

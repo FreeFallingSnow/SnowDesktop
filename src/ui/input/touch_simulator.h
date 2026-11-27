@@ -9,6 +9,7 @@ inline constexpr UINT DefaultKey = VK_RSHIFT;
 inline constexpr UINT ModifierMask = MOD_SHIFT | MOD_CONTROL | MOD_ALT | MOD_WIN;
 inline constexpr wchar_t BindingCaptureProperty[] = L"SnowDesktop.TouchSimulation.BindingCapture";
 inline constexpr UINT EdgeSwipeMessage = WM_APP + 0x5a0;
+inline constexpr UINT TouchPressMessage = WM_APP + 0x5a1;
 
 constexpr bool IsMouseBinding(UINT key) noexcept
 {
@@ -37,6 +38,8 @@ constexpr bool ValidBinding(UINT modifiers, UINT key) noexcept
 
 bool Configure(bool enabled, UINT modifiers, UINT key);
 void SetEdgeGestureTargets(HWND window, std::vector<RECT> zones = {});
+void ReleaseEdgeGestureAt(POINT point);
+void SetTouchPressTarget(HWND window) noexcept;
 bool Enabled() noexcept;
 void Stop() noexcept;
 }

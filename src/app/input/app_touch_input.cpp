@@ -118,6 +118,15 @@ RECT TouchEdgeBounds(RECT bounds, DockPosition side, UINT dpi)
     }
     return bounds;
 }
+
+bool CanRevealStatusBarAtEdge(const snowdesktop::StatusBar* bar, HMONITOR monitor,
+    bool sharedWithDock, const auto& dockHosts)
+{
+    if (!bar || !bar->CanRevealFromTouch(monitor) || bar->HasTemporaryReveal(monitor)) return false;
+    return !sharedWithDock || !std::ranges::any_of(dockHosts, [monitor](const auto& host) {
+        return host && host->monitor == monitor && host->active && host->promoted;
+    });
+}
 }
 
 void DesktopApp::ObserveDesktopTouch(HWND window, UINT message, WPARAM pointer, LPARAM position)
@@ -530,6 +539,8 @@ bool DesktopApp::CanRevealDockFromTouch(HMONITOR monitor) const
         !snowdesktop::dock_settings_rules::IsFloatingEdgeSwipeEnabled(
             dockSettings_.showOnlyWhenSummoned, dockSettings_.floatingEdgeSwipeEnabled) ||
         FullscreenBlocksDockReveal(DockRevealSource::Gesture, monitor)) return false;
+    if (statusBar_ && dockSettings_.position == generalSettings_.statusBar.position &&
+        statusBar_->HasTemporaryReveal(monitor)) return false;
     const auto* dock = SelectFloatingDockContainerForMonitor(monitor);
     if (!dock || dock->GetMonitor() != monitor) return false;
     const auto* host = FindPersistentDockHost(dock);
@@ -551,13 +562,17 @@ bool DesktopApp::TryRevealTouchEdge(POINT start, std::optional<POINT> end)
             (!end || IsOutwardSwipe(position, start, *end, touch::Dips(24, dpi)));
     };
     const bool dock = qualifies(dockSettings_.position) && CanRevealDockFromTouch(monitor);
-    const bool status = statusBar_ && qualifies(generalSettings_.statusBar.position) &&
-        statusBar_->CanRevealFromTouch(monitor);
+    const bool status = qualifies(generalSettings_.statusBar.position) &&
+        CanRevealStatusBarAtEdge(statusBar_.get(), monitor,
+            dockSettings_.position == generalSettings_.statusBar.position, persistentDockHosts_);
     if (end && (dock || status))
     {
+        // Release the simulator's reservation before presenting the revealed surface.
+        snowdesktop::touch_simulation::ReleaseEdgeGestureAt(start);
         touch::touchMode = true;
         if (dock) ShowFloatingDock(monitor, DockRevealSource::Gesture);
         if (status && statusBar_) statusBar_->RevealFromTouch(monitor);
+        SyncTouchEdgeWindows();
     }
     return dock || status;
 }
@@ -642,7 +657,8 @@ LRESULT CALLBACK DesktopApp::TouchEdgeWndProc(HWND window, UINT message, WPARAM 
         if (edge->contact.id != sample.dwID || (sample.dwFlags & TOUCHEVENTF_UP) == 0) continue;
         const auto released = edge->contact;
         edge->contact.Reset();
-        if (released.Active()) (void)edge->app->TryRevealTouchEdge(released.start, point);
+        // Revealing can destroy this receiver while synchronizing edge windows.
+        if (released.Active() && edge->app->TryRevealTouchEdge(released.start, point)) return 0;
     }
     return 0;
 }
@@ -679,7 +695,8 @@ void DesktopApp::SyncTouchEdgeWindows()
                 if (!IsRectEmpty(&bounds)) targets.push_back({monitor, edge, bounds});
             };
             if (dockEligible) add(dockSettings_.position);
-            if (status && statusBar_->CanRevealFromTouch(monitor) &&
+            if (status && CanRevealStatusBarAtEdge(statusBar_.get(), monitor,
+                    dockSettings_.position == generalSettings_.statusBar.position, persistentDockHosts_) &&
                 (!dockEligible || generalSettings_.statusBar.position != dockSettings_.position))
                 add(generalSettings_.statusBar.position);
         }

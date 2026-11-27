@@ -476,7 +476,7 @@ std::uint32_t Runtime::PointerPresses() const
     if (!impl_->currentPointer) return 0;
     switch (impl_->currentPointer->message)
     {
-    case WM_LBUTTONDOWN: return 1u | (impl_->currentPointer->flags & PointerMinimizeIntent);
+    case WM_LBUTTONDOWN: return 1u | (impl_->currentPointer->flags & (PointerMinimizeIntent | PointerTouchPress));
     case WM_RBUTTONDOWN: return 2;
     case WM_MBUTTONDOWN: return 4;
     default: return 0;
@@ -486,6 +486,13 @@ bool Runtime::PointerPosition(POINT& point) const
 {
     if (impl_->currentPointer) { point = impl_->currentPointer->point; return true; }
     return GetCursorPos(&point) != FALSE;
+}
+void Runtime::QueueSimulatedTouchPress(POINT point, DWORD time)
+{
+    std::lock_guard guard(impl_->mutex);
+    if (impl_->remotePointer.size() == 128) impl_->remotePointer.pop_front();
+    impl_->remotePointer.push_back({0, point, WM_LBUTTONDOWN, time, 0,
+        PointerTouchPress | PointerSimulatedTouchPress, 1});
 }
 void Runtime::Poll()
 {
@@ -507,8 +514,11 @@ void Runtime::Poll()
     impl_->pointer.Collect(local);
     // Use the established provider's complete observation. An earlier local
     // copy must not race the helper's caption/minimize classification.
-    if (Resolve(Capability::PointerObservation).provider != Provider::Helper)
-        for (std::size_t i = 0; i < local.pointerCount; ++i) pointer.push_back(local.pointerEvents[i]);
+    const bool helperPointer = Resolve(Capability::PointerObservation).provider == Provider::Helper;
+    for (std::size_t i = 0; i < local.pointerCount; ++i)
+        // Older helpers preserve the packet layout but omit touch metadata.
+        if (!helperPointer || (local.pointerEvents[i].flags & PointerTouchPress))
+            pointer.push_back(local.pointerEvents[i]);
     std::stable_sort(pointer.begin(), pointer.end(), [](const auto& a, const auto& b) {
         return static_cast<LONG>(a.time - b.time) < 0;
     });
