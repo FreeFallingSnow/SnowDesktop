@@ -25,6 +25,8 @@
 #include "platform/window_support/window_support_pointer_metadata.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "ui/input/touch_simulator.h"
+#include "ui/input/touchscreen_observer.h"
+#include "ui/input/private_pointer.h"
 #include "desktop/desktop_membership_recovery.h"
 #include "desktop/folder_mapping_visibility_rules.h"
 #include "icons/icon_render_rules.h"
@@ -552,6 +554,16 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     }
     switch (msg)
     {
+    case WM_INPUT:
+        if (!exitRequested_ && !snowdesktop::private_pointer::Active())
+        {
+            if (const auto point = snowdesktop::touch_input::ReadTouchscreenPress(reinterpret_cast<HRAWINPUT>(lp)))
+                snowdesktop::window_support::WindowSupport().QueueHardwareTouchPress(*point, static_cast<DWORD>(GetMessageTime()));
+        }
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    case WM_INPUT_DEVICE_CHANGE:
+        if (wp == GIDC_REMOVAL) snowdesktop::touch_input::ForgetTouchscreenDevice(reinterpret_cast<HANDLE>(lp));
+        return 0;
     case WM_POWERBROADCAST:
         HandleScreenTimePower(wp, lp);
         return TRUE;

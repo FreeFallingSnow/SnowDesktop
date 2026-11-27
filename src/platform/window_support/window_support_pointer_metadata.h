@@ -9,6 +9,7 @@ namespace snowdesktop::window_support
 inline constexpr std::uint32_t PointerMinimizeIntent = 0x80000000u;
 inline constexpr std::uint32_t PointerTouchPress = 0x40000000u;
 inline constexpr std::uint32_t PointerSimulatedTouchPress = 0x20000000u;
+inline constexpr std::uint32_t PointerHardwareTouchPress = 0x10000000u;
 inline UINT BeforeNativeMinimizeMessage() noexcept
 {
     static const UINT message = RegisterWindowMessageW(L"SnowDesktop.WindowSupport.BeforeMinimize.v1");

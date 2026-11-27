@@ -1185,8 +1185,8 @@ void DesktopApp::OnMouseMoveAt(
             SyncDragPreviewWindow();
             if (dragPreviewSynced) *dragPreviewSynced = true;
         }
-        // This sample belongs to WM_POINTER capture. The modal mouse OLE loop
-        // cannot release that contact through the custom gesture dispatcher.
+        // Touch drag handoff comes from User32's promoted WM_MOUSEMOVE.
+        // Samples sent directly by the gesture dispatcher stay local.
         const bool overExternal = !snowdesktop::touch_input::routingTouch &&
             IsExternalDropWindowAt(current);
 

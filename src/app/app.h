@@ -427,14 +427,18 @@ private:
     void ObserveDesktopTouch(HWND window, UINT message, WPARAM pointer, LPARAM position);
     bool HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPARAM position);
     bool HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LPARAM position);
+    bool HandleTouchDragCompatibility(HWND window, UINT message, WPARAM buttons, LPARAM position);
     bool HandleDesktopTouchEdge(HWND window, UINT message, WPARAM pointer, LPARAM position);
     bool TryRevealTouchEdge(POINT start, std::optional<POINT> end = std::nullopt);
+    bool HandleSimulatedTouchEdge(POINT start, POINT end);
     bool CanRevealDockFromTouch(HMONITOR monitor) const;
     static LRESULT CALLBACK TouchEdgeWndProc(HWND window, UINT message, WPARAM wp, LPARAM lp);
     void SyncTouchEdgeWindows();
     void DestroyTouchEdgeWindows();
     void DismissTouchPopupsOnExternalActivation(HWND foreground, DWORD tick);
     std::vector<HWND> touchEdgeWindows_;
+    POINT touchEdgeReplayOrigin_{};
+    ULONGLONG touchEdgeReplayUntil_ = 0;
     LRESULT HandleFloatingDockMessage(
         PersistentDockHost& host,
         HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);

@@ -72,7 +72,7 @@ function(snowdesktop_configure_host target)
         SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
         SnowDesktopSearchVisibility
         comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
-        advapi32 bcrypt crypt32 delayimp imm32 iphlpapi mfuuid ole32 oleacc oleaut32 pdh propsys runtimeobject shcore shell32 shlwapi uiautomationcore urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32 xmllite
+        advapi32 bcrypt crypt32 delayimp hid imm32 iphlpapi mfuuid ole32 oleacc oleaut32 pdh propsys runtimeobject shcore shell32 shlwapi uiautomationcore urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32 xmllite
         version wbemuuid taskschd wtsapi32
     )
 

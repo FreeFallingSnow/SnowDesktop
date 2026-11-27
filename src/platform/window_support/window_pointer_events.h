@@ -12,16 +12,19 @@ public:
     {
         if (now - event.time > 250) return false;
         const auto duplicate = [&](const auto& old) {
-            if (old.point.x != event.point.x || old.point.y != event.point.y || old.message != event.message)
-                return false;
+            if (old.message != event.message) return false;
+            const LONG dx = event.point.x - old.point.x, dy = event.point.y - old.point.y;
+            constexpr auto directSources = PointerSimulatedTouchPress | PointerHardwareTouchPress;
             if ((event.flags & old.flags & PointerTouchPress) &&
-                ((event.flags ^ old.flags) & PointerSimulatedTouchPress))
+                ((event.flags & directSources) == 0) != ((old.flags & directSources) == 0))
             {
-                // Injection may also produce a compatibility mouse press at the same point.
+                // Raw HID coordinates and the calibrated cursor can differ by a few pixels.
+                const LONG tolerance = ((event.flags | old.flags) & PointerHardwareTouchPress) ? 12 : 0;
                 const LONG difference = static_cast<LONG>(event.time - old.time);
-                if (difference >= -40 && difference <= 40) return true;
+                if (difference >= -40 && difference <= 40 && dx >= -tolerance && dx <= tolerance &&
+                    dy >= -tolerance && dy <= tolerance) return true;
             }
-            return old.time == event.time && old.mouseData == event.mouseData &&
+            return !dx && !dy && old.time == event.time && old.mouseData == event.mouseData &&
                 (old.flags & ~(LLMHF_LOWER_IL_INJECTED | PointerMinimizeIntent)) ==
                     (event.flags & ~(LLMHF_LOWER_IL_INJECTED | PointerMinimizeIntent));
         };

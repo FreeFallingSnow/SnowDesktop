@@ -1,6 +1,7 @@
 #include "platform/force_restart_hotkey.h"
 #include "ui/input/touch_input.h"
 #include "ui/input/touch_simulator.h"
+#include "ui/input/touchscreen_observer.h"
 #include "platform/application_version.h"
 #include "diagnostics/debug_profile.h"
 #include "platform/window_support/window_support_runtime.h"
@@ -793,6 +794,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     SetPropW(controlHwnd_, L"SnowDesktop.DebugProfile",
         reinterpret_cast<HANDLE>(static_cast<INT_PTR>(snowdesktop::debug_profile::Enabled() ? 1 : 2)));
     snowdesktop::touch_simulation::SetTouchPressTarget(controlHwnd_);
+    snowdesktop::touch_input::RegisterTouchscreenObserver(controlHwnd_);
     if (snowdesktop::debug_profile::Enabled())
         SetPropW(controlHwnd_, (L"SnowDesktop.DebugEnvironment." +
             snowdesktop::debug_profile::Current().configuration.selectedEnvironment).c_str(),

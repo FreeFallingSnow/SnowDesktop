@@ -494,6 +494,13 @@ void Runtime::QueueSimulatedTouchPress(POINT point, DWORD time)
     impl_->remotePointer.push_back({0, point, WM_LBUTTONDOWN, time, 0,
         PointerTouchPress | PointerSimulatedTouchPress, 1});
 }
+void Runtime::QueueHardwareTouchPress(POINT point, DWORD time)
+{
+    std::lock_guard guard(impl_->mutex);
+    if (impl_->remotePointer.size() == 128) impl_->remotePointer.pop_front();
+    impl_->remotePointer.push_back({0, point, WM_LBUTTONDOWN, time, 0,
+        PointerTouchPress | PointerHardwareTouchPress, 1});
+}
 void Runtime::Poll()
 {
     if (impl_->polling) return;

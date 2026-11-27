@@ -365,9 +365,15 @@ private:
             points[0].x = point.x - bounds.left > 20 ? point.x - 20 :
                 (std::min)(point.x + 20, bounds.right - 1);
         }
+        BeginContact(points, twoContacts ? 2 : 1);
+    }
+
+    void BeginContact(const Points& points, UINT count) noexcept
+    {
         const DWORD pressedAt = GetTickCount();
-        Begin(points, twoContacts ? 2 : 1);
+        Begin(points, count);
         // Pointer-aware apps can consume injected touch without emitting a mouse press.
+        const POINT point = points[0];
         if (const HWND target = touchPressTarget.load(); target && count_ == 1)
             PostMessageW(target, TouchPressMessage, pressedAt, MAKELPARAM(point.x, point.y));
     }
@@ -376,9 +382,11 @@ private:
     {
         if (const auto edge = std::exchange(edgeDrag_, std::nullopt))
         {
-            PostMessageW(edge->target, EdgeSwipeMessage,
-                MAKEWPARAM(edge->origin.x, edge->origin.y), MAKELPARAM(point.x, point.y));
-            return;
+            DWORD_PTR handled = 0;
+            if (!SendMessageTimeoutW(edge->target, EdgeSwipeMessage,
+                MAKEWPARAM(edge->origin.x, edge->origin.y), MAKELPARAM(point.x, point.y),
+                SMTO_ABORTIFHUNG | SMTO_BLOCK, 150, &handled) || handled) return;
+            BeginContact({edge->origin, edge->origin}, 1);
         }
         if (count_ && !pinching_)
         {

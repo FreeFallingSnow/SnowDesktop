@@ -216,9 +216,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
     case snowdesktop::touch_simulation::EdgeSwipeMessage:
         if (snowdesktop::touch_simulation::Enabled() && !snowdesktop::private_pointer::Active())
-            (void)TryRevealTouchEdge(snowdesktop::touch_input::ScreenPoint(static_cast<LPARAM>(wp)),
+            return HandleSimulatedTouchEdge(snowdesktop::touch_input::ScreenPoint(static_cast<LPARAM>(wp)),
                 snowdesktop::touch_input::ScreenPoint(lp));
-        return 0;
+        return 1;
     case WM_COMMAND:
         if (renameInputWindow_ && reinterpret_cast<HWND>(lp) == renameInputWindow_ &&
             HIWORD(wp) == EN_UPDATE)
