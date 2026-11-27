@@ -3000,5 +3000,6 @@
   "app.launcher.role.webView": "내장 웹 페이지를 표시하는 WebView2 구성 요소",
   "app.launcher.role.windowsAI": "Windows App SDK의 AI 및 기계 학습 구성 요소",
   "app.launcher.role.windowsServices": "검색, 위젯, 알림, 앱 재시작 등의 Windows App SDK 서비스",
-  "app.launcher.role.windowsRuntimeStartup": "SnowDesktop 시작 시 Windows App SDK와 WinRT 구성 요소를 초기화"
+  "app.launcher.role.windowsRuntimeStartup": "SnowDesktop 시작 시 Windows App SDK와 WinRT 구성 요소를 초기화",
+  "app.lua_stack.switch_to": "전환 대상"
 }

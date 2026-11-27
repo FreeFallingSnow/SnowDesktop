@@ -3000,5 +3000,6 @@
   "app.launcher.role.webView": "用來顯示內嵌網頁的 WebView2 模組",
   "app.launcher.role.windowsAI": "Windows App SDK 的 AI 和機器學習元件",
   "app.launcher.role.windowsServices": "Windows App SDK 的系統服務，例如搜尋、小工具、通知和重新啟動應用程式",
-  "app.launcher.role.windowsRuntimeStartup": "在 SnowDesktop 啟動時初始化 Windows App SDK 和 WinRT 元件"
+  "app.launcher.role.windowsRuntimeStartup": "在 SnowDesktop 啟動時初始化 Windows App SDK 和 WinRT 元件",
+  "app.lua_stack.switch_to": "切換到"
 }
