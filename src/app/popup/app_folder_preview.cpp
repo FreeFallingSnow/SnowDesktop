@@ -9,6 +9,7 @@
 #include "layout/folder_preview_header_layout.h"
 #include "settings/animation_settings.h"
 #include "ui/input/private_pointer.h"
+#include "ui/input/touch_input.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "widget/runtime/widget_engine.h"
 #include "widget/runtime/widget_item_layout.h"
@@ -271,6 +272,8 @@ bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const 
     using namespace snowdesktop::folder_preview;
     const bool duringDrag = dragRequest != 0;
     const bool fromMenu = !menuPath.empty();
+    const bool touchActivation = !duringDrag && !snowdesktop::private_pointer::Active() &&
+        (snowdesktop::touch_input::routingTouch || snowdesktop::touch_input::RecentlyPressed());
     if (!fromMenu && (keyState & MK_SHIFT)) return false;
     const bool clearTriggerSelection = !fromMenu && (keyState & MK_CONTROL);
     const bool forcePreview = duringDrag || fromMenu || clearTriggerSelection;
@@ -285,7 +288,7 @@ bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const 
     const auto dockFolderSourceId = dockFolderPopupOpen_ ? dockFolderPopupSourceId_ : std::wstring{};
     const auto popupGeneration = floatingPopupMouseHookGeneration_;
     const auto finish = [this, target, expectedPopupPath, forcePreview, clearTriggerSelection, fromMenu, keyboard,
-                            dockFolderSourceId, popupGeneration, duringDrag, dragRequest]
+                            dockFolderSourceId, popupGeneration, duringDrag, dragRequest, touchActivation]
         (snowdesktop::item_location::FolderTarget resolved) {
         const auto& sourceId = target.sourceId;
         const auto& hostId = target.hostId;
@@ -423,6 +426,11 @@ bool DesktopApp::TryFolderPreviewActivation(POINT point, WPARAM keyState, const 
             folderPreview_.emplace(std::move(session));
             if (!duringDrag) ClearSelection();
         }
+        if (touchActivation)
+        {
+            if (const auto* component = GetFolderPreviewComponent(); component && !component->selected)
+                SelectWidgetOnly(FindWidgetIndexById(component->id));
+        }
         OpenFolderPreviewPath(resolved.path, fromFan, keyboard);
         if (duringDrag)
         {
@@ -517,6 +525,13 @@ void DesktopApp::ShowFolderPreviewDirectory(const std::wstring& path, bool fromF
     const RECT previous = popupRect_;
     const bool keepTemporaryDisplay = folderPreview_->IsTemporary() && dockFolderPopupOpen_;
     ClearFolderPreviewHeaderFocus();
+    if (present && !dragSession_.HasContext() && !dragDropController_.IsTransportActive() &&
+        (keyboard ||
+            (!snowdesktop::private_pointer::Active() && snowdesktop::touch_input::RecentlyPressed())))
+    {
+        if (const auto* component = GetFolderPreviewComponent(); component && !component->selected)
+            SelectWidgetOnly(FindWidgetIndexById(component->id));
+    }
     if (keyboard && folderPreview_->keyboardFocused)
     {
         // Hold the surface open during loading and keep restored scroll positions.

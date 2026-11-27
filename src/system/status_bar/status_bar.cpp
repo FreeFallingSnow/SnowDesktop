@@ -1852,12 +1852,14 @@ struct StatusBar::Impl
             const int slop = touch_input::Dips(8, dpi);
             if (trayTouchAction == Action::Pending && trayTouch.Moved(screen, slop))
             {
-                if (trayTouchDraggable && trayTouch.Held())
+                const bool scroll = trayScroll.Maximum() > 0 &&
+                    std::abs(screen.x - trayTouch.start.x) >= std::abs(screen.y - trayTouch.start.y);
+                if (trayTouchDraggable && (trayTouch.Held() || !scroll))
                 {
                     trayTouchAction = Action::Drag;
                     touch_input::RouteMouse(hwnd, WM_LBUTTONDOWN, trayTouch.start, MK_LBUTTON);
                 }
-                else if (std::abs(screen.x - trayTouch.start.x) >= std::abs(screen.y - trayTouch.start.y))
+                else if (scroll)
                     trayTouchAction = Action::Pan;
                 else trayTouchAction = Action::Consumed;
             }

@@ -160,7 +160,9 @@ bool DesktopApp::SelectDockFolderPopupKeyboardItem(size_t visibleIndex, bool pre
     const size_t index = GetPopupFolderEntryIndex(popup, visibleIndex);
     if (index >= popup.folderEntries.size()) return false;
     if (auto* view = GetCategorizedPopupView()) view->SetSearchFocused(false);
-    ClearSelection();
+    if (const auto* component = GetFolderPreviewComponent(); component && component->selected)
+        SelectWidgetOnly(FindWidgetIndexById(component->id));
+    else ClearSelection();
     for (auto& entry : popup.folderEntries) entry.selected = false;
     popup.folderEntries[index].selected = true;
     keyboardNavWidgetIndex_ = FindWidgetIndexById(dockFolderPopupMappingWidgetId_);

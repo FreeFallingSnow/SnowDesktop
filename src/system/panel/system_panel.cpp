@@ -1217,13 +1217,15 @@ struct SystemPanel::Impl
                         const int delta = screen.y - contact.start.y;
                         if (self->touchAction == TouchAction::Pending && contact.Moved(screen, slop))
                         {
-                            if (self->touchDraggable && contact.Held())
+                            const bool scroll = self->model->MaximumScroll() > 0 &&
+                                std::abs(delta) >= std::abs(screen.x - contact.start.x);
+                            if (self->touchDraggable && (contact.Held() || !scroll))
                             {
                                 self->touchAction = TouchAction::Drag;
                                 touch_input::RouteMouse(w, WM_LBUTTONDOWN, contact.start, MK_LBUTTON);
                                 if (!life->alive) return 0;
                             }
-                            else if (std::abs(delta) >= std::abs(screen.x - contact.start.x))
+                            else if (scroll)
                                 self->touchAction = TouchAction::Pan;
                             else self->touchAction = TouchAction::Consumed;
                         }

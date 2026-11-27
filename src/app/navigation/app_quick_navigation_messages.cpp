@@ -174,13 +174,17 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                 const int deltaX = screen.x - contact.start.x;
                 if (navigation.touchAction == TouchAction::Pending && contact.Moved(screen, slop))
                 {
-                    if (navigation.touchTabDraggable && contact.Held())
+                    const bool onScrollAxis = navigation.touchOverTabs
+                        ? std::abs(deltaX) >= std::abs(deltaY) : std::abs(deltaY) >= std::abs(deltaX);
+                    const bool canScroll = navigation.touchOverTabs
+                        ? GetQuickNavigationMaxTabScrollOffset(navigation.rect) > 0
+                        : GetQuickNavigationMaxScrollOffset(navigation.rect) > 0;
+                    if (navigation.touchTabDraggable && (contact.Held() || !onScrollAxis || !canScroll))
                     {
                         navigation.touchAction = TouchAction::Drag;
                         touch::RouteMouse(hwnd, WM_LBUTTONDOWN, contact.start, MK_LBUTTON);
                     }
-                    else if (navigation.touchOverTabs ? std::abs(deltaX) >= std::abs(deltaY) :
-                        std::abs(deltaY) >= std::abs(deltaX))
+                    else if (onScrollAxis && canScroll)
                         navigation.touchAction = TouchAction::Pan;
                     else navigation.touchAction = TouchAction::Consumed;
                 }

@@ -3,6 +3,7 @@
 #include "app/navigation/quick_navigation_state.h"
 #include "app/popup/categorized_popup_scope.h"
 #include "dock/dock_window_preview.h"
+#include "layout/collection_popup_layout.h"
 #include "layout/floating_popup_rules.h"
 #include "system/status_bar/status_bar.h"
 #include "ui/input/private_pointer.h"
@@ -185,7 +186,8 @@ bool DesktopApp::HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPAR
         if (!ScreenToClient(hwnd_, &desktop)) return false;
         DockContainer* dock = GetDockContainerAtPoint(desktop);
         if (!dock || IsPointOccludedByOpenPopup(desktop) ||
-            dock->IsWindowsButtonPoint(desktop) || dock->IsSearchPoint(desktop))
+            dock->IsWindowsButtonPoint(desktop) ||
+            (!dockSettings_.freeItemOrder && dock->IsSearchPoint(desktop)))
         {
             taps.Reset();
             return false;
@@ -222,14 +224,18 @@ bool DesktopApp::HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPAR
         if (gesture.action == Action::Pending && contact.Moved(screen, slop))
         {
             taps.Reset();
-            if (gesture.draggable && contact.Held())
+            const bool openPreview = gesture.preview &&
+                IsOutwardSwipe(dockSettings_.position, contact, screen, slop);
+            const bool scrollAlongDock = gesture.scrollable &&
+                (vertical ? std::abs(dy) >= std::abs(dx) : std::abs(dx) >= std::abs(dy));
+            if (gesture.draggable && (contact.Held() || (!openPreview && !scrollAlongDock)))
             {
                 gesture.action = Action::Drag;
                 touch::RouteMouse(window, WM_LBUTTONDOWN, contact.start, MK_LBUTTON);
             }
-            else if (gesture.preview && IsOutwardSwipe(dockSettings_.position, contact, screen, slop))
+            else if (openPreview)
                 gesture.action = Action::Swipe;
-            else if (gesture.scrollable && (vertical ? std::abs(dy) >= std::abs(dx) : std::abs(dx) >= std::abs(dy)))
+            else if (scrollAlongDock)
                 gesture.action = Action::Pan;
             else gesture.action = Action::Consumed;
         }
@@ -287,6 +293,7 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
             quickNavigation_->open || dragSession_.HasContext()) return false;
         POINT desktop = screen;
         if (!ScreenToClient(hwnd_, &desktop)) return false;
+        if (window == hwnd_) ActivateInlineFolderPreviewAtPoint(desktop);
         ScrollTarget target;
         const auto nativeTarget = [&](WidgetContainer& view, bool desktopOwner = false) {
             const WidgetHit hit = view.HitTestWidget(desktop);
@@ -340,7 +347,11 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
             const bool fan = UsesCollectionPopupFan(*popup);
             if (!target.horizontal && (fan || PtInRect(&content, desktop)))
             {
-                target.vertical = target.vertical || fan || GetCollectionPopupMaxScrollOffset(*popup, bounds) > 0;
+                const bool popupScrolls = fan
+                    ? snowdesktop::collection_popup_layout::FanMaximumScroll(
+                        GetPopupItemCount(*popup), GetCollectionPopupFanVisibleCount(bounds)) > 0
+                    : GetCollectionPopupMaxScrollOffset(*popup, bounds) > 0;
+                target.vertical |= popupScrolls;
                 if (!group && !target.draggable && !dockTrayPopup_)
                 {
                     const size_t count = GetPopupItemCount(*popup);
@@ -422,14 +433,17 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
         taps.Reset();
         gesture.horizontal = std::abs(dx) > std::abs(dy);
         const bool ownsScroll = gesture.horizontal ? gesture.target.horizontal : gesture.target.vertical;
-        if ((gesture.target.draggable || gesture.target.moveWidget) && contact.Held())
+        const bool changesPage = !ownsScroll && !gesture.target.stackId.empty();
+        const bool dragItem = gesture.target.draggable &&
+            (contact.Held() || (!ownsScroll && !changesPage));
+        if (dragItem || (gesture.target.moveWidget && contact.Held()))
         {
             gesture.action = Action::Drag;
             if (gesture.target.moveWidget && widgetEngine_) widgetEngine_->ClearDesktopTouchHoverUnless();
             touch::RouteMouse(window, gesture.target.moveWidget ? WM_MBUTTONDOWN : WM_LBUTTONDOWN,
                 contact.start, gesture.target.moveWidget ? MK_MBUTTON : MK_LBUTTON);
         }
-        else if (!ownsScroll && !gesture.target.stackId.empty())
+        else if (changesPage)
             gesture.action = Action::Swipe;
         else if (ownsScroll)
             gesture.action = Action::Pan;
@@ -509,7 +523,9 @@ bool DesktopApp::HandleDesktopTouchEdge(HWND window, UINT message, WPARAM pointe
         UINT dpi = GetDpiForWindow(window);
         if (UINT x = 0, y = 0; SUCCEEDED(GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &x, &y))) dpi = x;
         const int band = touch::Dips(8, dpi);
+        const auto* monitorDock = SelectFloatingDockContainerForMonitor(monitor);
         const bool dock = generalSettings_.dockEnabled && dockSettings_.showOnlyWhenSummoned &&
+            monitorDock && monitorDock->GetMonitor() == monitor &&
             EdgeDistance(dockSettings_.position, info.rcMonitor, screen) < band &&
             !FullscreenBlocksDockReveal(DockRevealSource::Gesture, monitor);
         const bool status = statusBar_ && statusBar_->CanRevealFromTouch(monitor) &&
@@ -547,6 +563,7 @@ LRESULT CALLBACK DesktopApp::TouchEdgeWndProc(HWND window, UINT message, WPARAM 
 {
     auto* edge = reinterpret_cast<TouchEdgeWindow*>(GetWindowLongPtrW(window, GWLP_USERDATA));
     if (!edge) return DefWindowProcW(window, message, wp, lp);
+    // The registered window receives WM_TOUCH even with a transparent mouse hit.
     if (message == WM_NCHITTEST) return HTTRANSPARENT;
     if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
     if (message == WM_POINTERACTIVATE) return PA_NOACTIVATE;
@@ -590,8 +607,9 @@ LRESULT CALLBACK DesktopApp::TouchEdgeWndProc(HWND window, UINT message, WPARAM 
         if (!released.Active() || !IsOutwardSwipe(edge->edge, released, point, touch::Dips(24, edge->dpi)))
             continue;
         auto& app = *edge->app;
+        const auto* dock = app.SelectFloatingDockContainerForMonitor(edge->monitor);
         if (app.generalSettings_.dockEnabled && app.dockSettings_.showOnlyWhenSummoned &&
-            app.dockSettings_.position == edge->edge)
+            app.dockSettings_.position == edge->edge && dock && dock->GetMonitor() == edge->monitor)
             app.ShowFloatingDock(edge->monitor, DockRevealSource::Gesture);
         if (app.statusBar_ && app.generalSettings_.statusBar.position == edge->edge)
             app.statusBar_->RevealFromTouch(edge->monitor);
@@ -621,7 +639,9 @@ void DesktopApp::SyncTouchEdgeWindows()
         if (!GetMonitorInfoW(monitor, &info)) continue;
         UINT dpi = 96;
         if (UINT x = 0, y = 0; SUCCEEDED(GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &x, &y))) dpi = x;
-        const bool dockEligible = dock && !FullscreenBlocksDockReveal(DockRevealSource::Gesture, monitor) &&
+        const auto* monitorDock = dock ? SelectFloatingDockContainerForMonitor(monitor) : nullptr;
+        const bool dockEligible = monitorDock && monitorDock->GetMonitor() == monitor &&
+            !FullscreenBlocksDockReveal(DockRevealSource::Gesture, monitor) &&
             (!floatingDockVisible_ || !floatingDockHost_ || floatingDockHost_->monitor != monitor);
         const auto add = [&](DockPosition edge) {
             const RECT bounds = TouchEdgeBounds(info.rcMonitor, edge, dpi);
@@ -659,7 +679,7 @@ void DesktopApp::SyncTouchEdgeWindows()
         const auto& bounds = target.bounds;
         if (!window)
         {
-            window = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            window = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
                 kTouchEdgeWindowClass, nullptr, WS_POPUP, bounds.left, bounds.top,
                 bounds.right - bounds.left, bounds.bottom - bounds.top, nullptr, nullptr, instance_, nullptr);
             if (!window) continue;

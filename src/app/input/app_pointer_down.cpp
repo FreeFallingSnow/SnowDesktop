@@ -593,6 +593,11 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 const std::wstring selectionKey = L"folder:" +
                     dockFolderPopupWidget_.id + L":" +
                     ToUpperInvariant(entries[entryIndex].fullPath);
+                const auto clearPreviewFileSelection = [this] {
+                    if (const auto* component = GetFolderPreviewComponent(); component && component->selected)
+                        SelectWidgetOnly(FindWidgetIndexById(component->id));
+                    else ClearSelection();
+                };
                 if (shift)
                 {
                     if (ctrl) ClearSelectionOutsideWidget(static_cast<size_t>(-1));
@@ -601,19 +606,19 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 }
                 else if (ctrl)
                 {
-                    ClearSelection();
+                    clearPreviewFileSelection();
                     entries[entryIndex].selected =
                         !entries[entryIndex].selected;
                 }
                 else if (!entries[entryIndex].selected)
                 {
-                    ClearSelection();
+                    clearPreviewFileSelection();
                     for (auto& entry : entries)
                         entry.selected = false;
                     entries[entryIndex].selected = true;
                 }
                 else
-                    ClearSelection();
+                    clearPreviewFileSelection();
                 if (!shift)
                     selectionController_.RememberAnchor(selectionScope, selectionKey);
                 popupMouseDownItem_ =
@@ -807,7 +812,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
-            if (dock->IsSearchPoint(pt))
+            if (dock->IsSearchPoint(pt) &&
+                (!dockSettings_.freeItemOrder || quickNavigationDismissedByThisPress))
             {
                 mouseDown_ = false;
                 if (IsOwnedPointerCaptureWindow(snowdesktop::private_pointer::Capture()))
