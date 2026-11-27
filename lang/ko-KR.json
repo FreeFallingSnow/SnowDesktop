@@ -2980,5 +2980,6 @@
   "app.dock.remove_separator": "구분선 제거",
   "core.drag.dock_section_redirect": "{0} (스페이스바를 눌러 ‘자유롭게 정렬’ 켜기)",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "윈도우를 응용 프로그램 아이콘으로 최소화",
-  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "끄면 열려 있는 모든 창이 Dock의 작업 영역에 개별 썸네일로 표시됩니다. 고정된 아이콘은 바로 가기로 사용됩니다."
+  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "끄면 열려 있는 모든 창이 Dock의 작업 영역에 개별 썸네일로 표시됩니다. 고정된 아이콘은 바로 가기로 사용됩니다.",
+  "app.settings.icon_shadow_dock_thumbnail_badge": "Dock 미리 보기 배지"
 }

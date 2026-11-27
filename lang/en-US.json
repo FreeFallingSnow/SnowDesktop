@@ -2980,5 +2980,6 @@
   "app.dock.remove_separator": "Remove separator",
   "core.drag.dock_section_redirect": "{0} (Press Space to enable Free item order)",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "Minimize windows into application icons",
-  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Turn off to show every open window as a thumbnail in the Dock task area. Pinned icons act as shortcuts."
+  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Turn off to show every open window as a thumbnail in the Dock task area. Pinned icons act as shortcuts.",
+  "app.settings.icon_shadow_dock_thumbnail_badge": "Dock thumbnail badges"
 }

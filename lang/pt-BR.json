@@ -2980,5 +2980,6 @@
   "app.dock.remove_separator": "Remover separador",
   "core.drag.dock_section_redirect": "{0} (pressione a barra de espaço para ativar «Ordem livre»)",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "Minimizar janelas nos ícones dos aplicativos",
-  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Desative para exibir cada janela aberta como uma miniatura na área de tarefas do Dock. Os ícones fixados funcionam como atalhos."
+  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Desative para exibir cada janela aberta como uma miniatura na área de tarefas do Dock. Os ícones fixados funcionam como atalhos.",
+  "app.settings.icon_shadow_dock_thumbnail_badge": "Ícones nas miniaturas do Dock"
 }

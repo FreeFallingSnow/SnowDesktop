@@ -2980,5 +2980,6 @@
   "app.dock.remove_separator": "Quitar separador",
   "core.drag.dock_section_redirect": "{0} (pulsa la barra espaciadora para activar «Orden libre»)",
   "settings.dock.minimizeWindowsIntoApplicationIcon": "Minimizar ventanas en los iconos de las aplicaciones",
-  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Desactiva esta opción para mostrar cada ventana abierta como miniatura en el área de tareas del Dock. Los iconos fijados funcionan como accesos directos."
+  "settings.dock.minimizeWindowsIntoApplicationIcon.description": "Desactiva esta opción para mostrar cada ventana abierta como miniatura en el área de tareas del Dock. Los iconos fijados funcionan como accesos directos.",
+  "app.settings.icon_shadow_dock_thumbnail_badge": "Iconos sobre las miniaturas del Dock"
 }
