@@ -359,7 +359,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         }
         drawDesktopItem(ctx, items_[index], iconRect, nullptr, true);
         const auto running = dockRunningWindows_.find(DockItemWindowKey(items_[index]));
-        if (dockSettings_.minimizeWindowsIntoApplicationIcon && running != dockRunningWindows_.end() &&
+        if (running != dockRunningWindows_.end() &&
             dockWindowAttention_.HasAny(
                 running->second.window, running->second.trackedWindows))
             DrawDockAttentionDot(ctx, iconRect);
@@ -368,8 +368,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         if (launchTransformApplied)
             ctx->SetTransform(previousTransform);
 
-        const DockWindowVisualState windowState = dockSettings_.minimizeWindowsIntoApplicationIcon
-            ? GetDockWindowVisualState(index) : DockWindowVisualState::Closed;
+        const DockWindowVisualState windowState = GetDockWindowVisualState(index);
         if (windowState != DockWindowVisualState::Closed && state != 2)
         {
             const bool minimized = windowState == DockWindowVisualState::Minimized;
@@ -611,48 +610,42 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
     const bool lt = (CurrentDockAppearance(dockMonitor).contentTheme == 1);
     const bool verticalDock = dockSettings_.position == DockPosition::Left ||
         dockSettings_.position == DockPosition::Right;
-    RECT attentionRect = iconRect;
     if (app.minimizedThumbnail)
     {
         const float edge = static_cast<float>(iconSize);
         auto* thumbnail = app.minimizedThumbnail->Bitmap(*ctx);
-        const float ratio = app.minimizedThumbnail->LayoutAspectRatio();
-        const auto source = thumbnail ? thumbnail->GetSize()
-            : D2D1::SizeF(verticalDock ? 4.0f / 3.0f : ratio, 1.0f);
-        const float widthLimit = verticalDock ? edge : std::min(
+        constexpr float ratio = snowdesktop::dock_window_thumbnail::kHorizontalCardAspectRatio;
+        const float width = verticalDock ? edge : std::min(
             edge * ratio,
             static_cast<float>(std::max(1L, rect.right - rect.left)));
-        const float scale = std::min(widthLimit / source.width, edge / source.height);
-        const bool resize = !verticalDock && app.minimizedThumbnail->IsLayoutAnimating();
-        const float width = resize ? widthLimit : source.width * scale;
-        const float height = resize ? edge : source.height * scale;
+        const float height = verticalDock ? edge / ratio : edge;
         const float left = (iconRect.left + iconRect.right - width) * 0.5f;
         const float top = (iconRect.top + iconRect.bottom - height) * 0.5f;
         const auto frame = D2D1::RectF(left, top, left + width, top + height);
+
+        ComPtr<ID2D1SolidColorBrush> fill;
+        const float surface = lt ? 0.88f : 0.20f;
+        if (SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(surface, surface, surface, 0.84f * presence), &fill)))
+        {
+            const float radius = edge * 0.07f;
+            ctx->FillRoundedRectangle(D2D1::RoundedRect(frame, radius, radius), fill.Get());
+        }
         if (thumbnail)
         {
-            const float sourceWidth = std::min(source.width, source.height * width / height);
-            const float sourceHeight = std::min(source.height, source.width * height / width);
-            const float sourceLeft = (source.width - sourceWidth) * 0.5f;
-            const float sourceTop = (source.height - sourceHeight) * 0.5f;
-            const auto clip = D2D1::RectF(sourceLeft, sourceTop,
-                sourceLeft + sourceWidth, sourceTop + sourceHeight);
-            ctx->DrawBitmap(thumbnail, &frame, presence, D2D1_INTERPOLATION_MODE_LINEAR,
-                resize ? &clip : nullptr, nullptr);
+            const auto source = thumbnail->GetSize();
+            const float scale = std::min(width / source.width, height / source.height);
+            const float xMargin = (width - source.width * scale) * 0.5f;
+            const float yMargin = (height - source.height * scale) * 0.5f;
+            const auto image = D2D1::RectF(frame.left + xMargin, frame.top + yMargin,
+                frame.right - xMargin, frame.bottom - yMargin);
+            ctx->DrawBitmap(thumbnail, &image, presence, D2D1_INTERPOLATION_MODE_LINEAR, nullptr, nullptr);
         }
-        else
+        else if (fill)
         {
-            ComPtr<ID2D1SolidColorBrush> fill;
-            const float surface = lt ? 0.88f : 0.20f;
-            if (SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(surface, surface, surface, 0.84f * presence), &fill)))
-            {
-                const float radius = edge * 0.07f;
-                ctx->FillRoundedRectangle(D2D1::RoundedRect(frame, radius, radius), fill.Get());
-                const float detail = lt ? 0.47f : 0.68f;
-                fill->SetColor(D2D1::ColorF(detail, detail, detail, 0.7f * presence));
-                ctx->DrawLine(D2D1::Point2F(left + width * 0.16f, top + height * 0.22f),
-                    D2D1::Point2F(left + width * 0.84f, top + height * 0.22f), fill.Get());
-            }
+            const float detail = lt ? 0.47f : 0.68f;
+            fill->SetColor(D2D1::ColorF(detail, detail, detail, 0.7f * presence));
+            ctx->DrawLine(D2D1::Point2F(left + width * 0.16f, top + height * 0.22f),
+                D2D1::Point2F(left + width * 0.84f, top + height * 0.22f), fill.Get());
         }
         const long badgeSize = std::max(1L, std::lround(edge * 0.40f));
         const long badgeRight = std::min(verticalDock ? iconRect.right : rect.right,
@@ -669,34 +662,29 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         DrawIconShadow(ctx, badge, GetItemLayoutScale(badge),
             iconShadows_.DockThumbnailBadgeStrength(), 0, drawBadge, {appIcon, presence});
         drawBadge(ctx);
-        if (!verticalDock)
-            attentionRect = {std::lround(frame.left), std::lround(frame.top),
-                std::lround(frame.right), std::lround(frame.bottom)};
-    }
-    else
-    {
-        const bool useDemoIdentity = generalSettings_.demoModeEnabled && demoIdentityAssetsAvailable_;
-        auto* bitmap = useDemoIdentity ? nullptr : GetOrCreateD2DBitmap(app.iconBitmap);
-        const auto drawIcon = [&](ID2D1DeviceContext* drawing) {
-            if (useDemoIdentity)
-            {
-                const std::wstring_view identity = app.identityKey.empty()
-                    ? std::wstring_view(app.executablePath)
-                    : std::wstring_view(app.identityKey);
-                DrawDemoIdentityIcon(drawing, identity, iconRect);
-            }
-            else if (bitmap)
-                DrawIconBitmap(drawing, bitmap, iconRect,
-                    presence, reinterpret_cast<std::uintptr_t>(&app));
-            else
-                DrawPlaceholderIcon(drawing, -1, iconRect, presence, true);
-        };
-        DrawIconWithShadows(ctx, iconRect, GetItemLayoutScale(iconRect), iconShadows_.DockStrength(),
-            drawIcon, {bitmap, presence});
+        return;
     }
 
+    const bool useDemoIdentity = generalSettings_.demoModeEnabled && demoIdentityAssetsAvailable_;
+    auto* bitmap = useDemoIdentity ? nullptr : GetOrCreateD2DBitmap(app.iconBitmap);
+    const auto drawIcon = [&](ID2D1DeviceContext* drawing) {
+        if (useDemoIdentity)
+        {
+            const std::wstring_view identity = app.identityKey.empty()
+                ? std::wstring_view(app.executablePath)
+                : std::wstring_view(app.identityKey);
+            DrawDemoIdentityIcon(drawing, identity, iconRect);
+        }
+        else if (bitmap)
+            DrawIconBitmap(drawing, bitmap, iconRect,
+                presence, reinterpret_cast<std::uintptr_t>(&app));
+        else
+            DrawPlaceholderIcon(drawing, -1, iconRect, presence, true);
+    };
+    DrawIconWithShadows(ctx, iconRect, GetItemLayoutScale(iconRect), iconShadows_.DockStrength(),
+        drawIcon, {bitmap, presence});
     if (dockWindowAttention_.HasAny(app.window, app.trackedWindows))
-        DrawDockAttentionDot(ctx, attentionRect, presence);
+        DrawDockAttentionDot(ctx, iconRect, presence);
     if (state == 2)
     {
         DrawDockSelectionIndicator(ctx, iconRect, lt);

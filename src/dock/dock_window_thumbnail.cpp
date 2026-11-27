@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <bit>
-#include <cmath>
 #include <d3d11.h>
 #include <dxgi1_4.h>
 #include <utility>
@@ -15,7 +14,6 @@ struct Pixels
 {
     D2D1_SIZE_U size{};
     std::vector<std::uint32_t> data;
-    float aspectRatio = 0.0f;
 };
 
 struct WindowDib
@@ -60,12 +58,6 @@ SIZE ReadWindowSize(HWND window, bool iconic) noexcept
     return {bounds.right - bounds.left, bounds.bottom - bounds.top};
 }
 
-float WindowAspectRatio(SIZE size) noexcept
-{
-    return size.cx > 0 && size.cy > 0
-        ? static_cast<float>(size.cx) / static_cast<float>(size.cy) : 0.0f;
-}
-
 bool IsUsableSize(int width, int height)
 {
     constexpr int maxSourcePixels = 16 * 1024 * 1024;
@@ -78,7 +70,7 @@ Pixels SamplePixels(const void* buffer, size_t rowPitch, int width, int height)
     const int divisor = std::max({width, height, maxThumbnailEdge});
     const auto targetWidth = static_cast<UINT32>(std::max(1, width * maxThumbnailEdge / divisor));
     const auto targetHeight = static_cast<UINT32>(std::max(1, height * maxThumbnailEdge / divisor));
-    Pixels result{{targetWidth, targetHeight}, {}, WindowAspectRatio({width, height})};
+    Pixels result{{targetWidth, targetHeight}, {}};
     result.data.resize(static_cast<size_t>(targetWidth) * targetHeight);
     const auto* bytes = static_cast<const unsigned char*>(buffer);
     bool hasContent = false;
@@ -238,52 +230,6 @@ std::wstring WindowIdentity::Key() const
         L":" + std::to_wstring(process) + L":" + std::to_wstring(thread);
 }
 
-Thumbnail::Thumbnail(WindowIdentity source) : source_(source)
-{
-    if (!source.IsCurrent()) return;
-    const bool iconic = IsIconic(source.window) != FALSE;
-    const SIZE size = ReadWindowSize(source.window, iconic);
-    if (!iconic) liveSize_ = size;
-    const float measured = WindowAspectRatio(size);
-    if (measured > 0.0f) aspectRatio_ = measured;
-    layoutFrom_ = layoutTo_ = TargetLayoutAspectRatio();
-}
-
-float Thumbnail::LayoutAspectRatio() const noexcept
-{
-    return std::lerp(layoutFrom_, layoutTo_, layoutProgress_.Amount());
-}
-
-float Thumbnail::TargetLayoutAspectRatio() const noexcept
-{
-    // Keep very narrow windows easy to hit and bound the space a single
-    // panoramic window can occupy. The image still fits without distortion.
-    return std::clamp(aspectRatio_, 0.55f, 4.0f);
-}
-
-void Thumbnail::RetargetLayout(double now, bool animate, double durationScale)
-{
-    const float target = TargetLayoutAspectRatio();
-    if (target == layoutTo_ && animate) return;
-    layoutFrom_ = LayoutAspectRatio();
-    layoutTo_ = target;
-    layoutProgress_ = {};
-    layoutProgress_.SetVisible(true, now, animate && layoutFrom_ != target, durationScale);
-}
-
-void Thumbnail::AdvanceLayout(double now, bool animate)
-{
-    if (animate)
-        layoutProgress_.Advance(now);
-    else
-        layoutProgress_.SetVisible(true, now, false);
-}
-
-bool Thumbnail::IsLayoutAnimating() const
-{
-    return layoutProgress_.IsAnimating();
-}
-
 ID2D1Bitmap1* Thumbnail::Bitmap(ID2D1DeviceContext& context)
 {
     if (pixels_.empty()) return nullptr;
@@ -302,6 +248,44 @@ ID2D1Bitmap1* Thumbnail::Bitmap(ID2D1DeviceContext& context)
             &properties, bitmap_.ReleaseAndGetAddressOf());
     }
     return bitmap_.Get();
+}
+
+void ThumbnailCache::SetTrackedWindows(std::span<const TrackedWindow> windows)
+{
+    decltype(windows_) tracked;
+    tracked.reserve(windows.size());
+    for (const auto& [source, minimized] : windows)
+    {
+        auto cached = Find(source.window);
+        if (!cached || cached->source_ != source)
+            cached = std::make_shared<Thumbnail>(source);
+        cached->minimizedInDock_ = minimized;
+        tracked.emplace(source.window, std::move(cached));
+    }
+    windows_.swap(tracked);
+}
+
+std::shared_ptr<Thumbnail> ThumbnailCache::Find(HWND window) const
+{
+    const auto found = windows_.find(window);
+    return found != windows_.end() ? found->second : nullptr;
+}
+
+bool ThumbnailCache::Refresh(HWND foreground, HWND notifyWindow, UINT message)
+{
+    bool stateChanged = false;
+    const auto refresh = [&](const auto& thumbnail, bool active) {
+        if (!thumbnail->source_.IsCurrent()) return;
+        const bool minimized = IsIconic(thumbnail->source_.window) != FALSE;
+        stateChanged |= minimized != thumbnail->minimizedInDock_;
+        Refresh(thumbnail, minimized, active, notifyWindow, message);
+    };
+    if (auto foregroundThumbnail = Find(foreground))
+        refresh(foregroundThumbnail, true);
+    for (const auto& [window, thumbnail] : windows_)
+        if (window != foreground)
+            refresh(thumbnail, false);
+    return stateChanged;
 }
 
 void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool minimized,
@@ -345,7 +329,7 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
         {
             state.pixels_.clear();
             state.bitmap_.Reset();
-            changes_.repaint = true;
+            changed_ |= state.minimized_;
             PostMessageW(notifyWindow, message, 0, 0);
         }
         return;
@@ -364,21 +348,18 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
             target->pending_ = false;
             if (!AllowsPreview(source))
             {
-                changes_.repaint |= !target->pixels_.empty();
+                changed_ |= target->minimized_ && !target->pixels_.empty();
                 target->pixels_.clear();
                 target->bitmap_.Reset();
                 return;
             }
             if (pixels.data.empty() || (minimized && !target->minimized_)) return;
-            const float previousLayoutAspect = target->TargetLayoutAspectRatio();
-            target->aspectRatio_ = pixels.aspectRatio;
-            changes_.layoutChanged |= target->TargetLayoutAspectRatio() != previousLayoutAspect;
             if (target->size_.width == pixels.size.width && target->size_.height == pixels.size.height &&
                 target->pixels_ == pixels.data) return;
             target->size_ = pixels.size;
             target->pixels_ = std::move(pixels.data);
             target->bitmap_.Reset();
-            changes_.repaint = true;
+            changed_ |= target->minimized_;
         }, notifyWindow, message);
     if (state.pending_) state.refreshNeeded_ = false;
 }
@@ -386,13 +367,14 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
 void ThumbnailCache::Clear()
 {
     work_.Cancel();
+    windows_.clear();
     ++epoch_;
-    changes_ = {};
+    changed_ = false;
 }
 
-ThumbnailCache::Changes ThumbnailCache::Drain()
+bool ThumbnailCache::Drain()
 {
     work_.Drain();
-    return std::exchange(changes_, {});
+    return std::exchange(changed_, false);
 }
 }

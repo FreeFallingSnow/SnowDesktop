@@ -411,7 +411,7 @@ void DesktopApp::InitializeDockWindowTransition()
                                     matches = state.presence.Interactive() && tracks(state);
                                 }
                             }
-                            else if (dockSettings_.minimizeWindowsIntoApplicationIcon)
+                            else
                             {
                                 size_t index = items_.size();
                                 if (const auto* entry = dynamic_cast<const DockEntryItem*>(item))

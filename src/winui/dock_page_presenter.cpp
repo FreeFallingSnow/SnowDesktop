@@ -2944,7 +2944,7 @@ struct DockPagePresenter::Impl
         muxa::AutomationProperties::SetName(windowPreviews, windowPreviewsRow.label.Text());
         minimizeWindowsIntoApplicationIconRow.SetText(
             L("settings.dock.minimizeWindowsIntoApplicationIcon", L"Minimize windows into application icons"),
-            L("settings.dock.minimizeWindowsIntoApplicationIcon.description", L"Turn off to show every open window as a thumbnail in the Dock task area. Pinned icons act as shortcuts."));
+            L("settings.dock.minimizeWindowsIntoApplicationIcon.description", L"When off, minimized windows appear as separate thumbnails in the Dock task area."));
         muxa::AutomationProperties::SetName(minimizeWindowsIntoApplicationIcon,
             minimizeWindowsIntoApplicationIconRow.label.Text());
         fullscreenPolicyRow.SetText(

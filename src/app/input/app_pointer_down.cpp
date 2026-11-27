@@ -861,9 +861,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                         dockEntries_[dockPressedEntry_].reference);
                     if (itemIndex < items_.size())
                     {
-                        const DockWindowVisualState state =
-                            dockSettings_.minimizeWindowsIntoApplicationIcon
-                            ? GetDockWindowVisualState(itemIndex) : DockWindowVisualState::Closed;
+                        const DockWindowVisualState state = GetDockWindowVisualState(itemIndex);
                         dockPressedWindowAction_ =
                             snowdesktop::dock_window_rules::
                                 ResolveDockClickAction(
@@ -909,11 +907,11 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                         hasLiveWindow
                         ? IsIconic(running->window) != FALSE
                         : running->minimized;
-                    dockPressedWindowAction_ =
-                        snowdesktop::dock_window_rules::
-                            ResolveDockClickAction(
-                                true, minimized,
-                                running->foreground);
+                    using snowdesktop::dock_window_rules::DockClickAction;
+                    dockPressedWindowAction_ = running->minimizedThumbnail
+                        ? (minimized ? DockClickAction::Restore : DockClickAction::Activate)
+                        : snowdesktop::dock_window_rules::ResolveDockClickAction(
+                            true, minimized, running->foreground);
                     if (hasLiveWindow)
                         dockPressedTargetWindow_ =
                             running->window;
@@ -931,9 +929,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 dockPressedFrequentItem_ = frequentItem->GetItemIndex();
                 if (dockPressedFrequentItem_ < items_.size())
                 {
-                    const DockWindowVisualState state =
-                        dockSettings_.minimizeWindowsIntoApplicationIcon
-                        ? GetDockWindowVisualState(dockPressedFrequentItem_) : DockWindowVisualState::Closed;
+                    const DockWindowVisualState state = GetDockWindowVisualState(dockPressedFrequentItem_);
                     dockPressedWindowAction_ =
                         snowdesktop::dock_window_rules::
                             ResolveDockClickAction(

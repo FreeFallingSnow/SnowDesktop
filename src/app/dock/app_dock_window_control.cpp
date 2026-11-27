@@ -333,7 +333,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
     RECT anchor{};
     bool found = false;
     const auto resolveDesktopItem = [&](size_t itemIndex, RECT bounds) {
-        if (!dockSettings_.minimizeWindowsIntoApplicationIcon || itemIndex >= items_.size() ||
+        if (itemIndex >= items_.size() ||
             GetDockWindowVisualState(itemIndex) == DockWindowVisualState::Closed)
             return false;
         target.identity = ResolveDockAppIdentity(itemIndex);
