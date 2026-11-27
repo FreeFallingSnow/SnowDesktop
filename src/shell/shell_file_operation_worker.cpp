@@ -915,7 +915,14 @@ bool ShellFileOperationWorker::Execute(
             if (FAILED(status))
             {
                 allSucceeded = false;
-                record(incompleteStep(step), static_cast<DWORD>(status));
+                // The confirmation can be dismissed or time out before the
+                // Shell deletes anything. Completion still reconciles any
+                // sources that left before a multi-item request was stopped.
+                const auto code = static_cast<DWORD>(status);
+                if (!isCancellation(code) && status != COPYENGINE_E_CANCELLED &&
+                    status != HRESULT_FROM_WIN32(ERROR_TIMEOUT) &&
+                    status != HRESULT_FROM_WIN32(WAIT_TIMEOUT))
+                    record(incompleteStep(step), code);
             }
             continue;
         }
@@ -975,7 +982,9 @@ bool ShellFileOperationWorker::Execute(
             // SHFileOperation has its own legacy error values. Keep their raw
             // number instead of incorrectly translating them as Win32 codes.
             if (operation.fAnyOperationsAborted || result == 0x75 || result == ERROR_CANCELLED)
-                record(incompleteStep(step), ERROR_CANCELLED);
+            {
+                if (step.function != FO_DELETE) record(incompleteStep(step), ERROR_CANCELLED);
+            }
             else if (result != 0 &&
                 (step.flags & FOF_NOERRORUI))
                 record(step.sources.front() + L"\n" + step.destination +

@@ -196,6 +196,9 @@ bool DesktopApp::QueueShellFileOperation(
         return false;
     }
 
+    const bool deferRemoval = std::ranges::any_of(request.steps, [](const auto& step) {
+        return step.function == FO_DELETE;
+    });
     std::vector<std::wstring> removedPaths;
     std::vector<DockEntry> removalPins;
     std::shared_ptr<ShellRemovalSources> removal;
@@ -206,27 +209,32 @@ bool DesktopApp::QueueShellFileOperation(
     {
         removal = std::make_shared<ShellRemovalSources>();
         removal->paths = std::move(removedPaths);
-        for (size_t i = 0; i < dockEntries_.size(); ++i)
+        if (!deferRemoval)
         {
-            const auto& entry = dockEntries_[i];
-            if (entry.type != DockEntryType::DesktopItem || IsRecycleBinDockEntry(entry)) continue;
-            const auto itemIndex = FindItemIndexByKey(entry.reference);
-            const auto& path = itemIndex < items_.size() ? items_[itemIndex].parsingName : entry.reference;
-            if (std::none_of(removal->paths.begin(), removal->paths.end(), [&](const auto& removed) {
-                    return _wcsicmp(path.c_str(), removed.c_str()) == 0;
-                })) continue;
-            removalPins.push_back(entry);
-            for (const auto& container : containers_)
-                if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
-                    dock->PrepareEntryRemoval(i);
+            for (size_t i = 0; i < dockEntries_.size(); ++i)
+            {
+                const auto& entry = dockEntries_[i];
+                if (entry.type != DockEntryType::DesktopItem || IsRecycleBinDockEntry(entry)) continue;
+                const auto itemIndex = FindItemIndexByKey(entry.reference);
+                const auto& path = itemIndex < items_.size() ? items_[itemIndex].parsingName : entry.reference;
+                if (std::none_of(removal->paths.begin(), removal->paths.end(), [&](const auto& removed) {
+                        return _wcsicmp(path.c_str(), removed.c_str()) == 0;
+                    })) continue;
+                removalPins.push_back(entry);
+                for (const auto& container : containers_)
+                    if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+                        dock->PrepareEntryRemoval(i);
+            }
         }
         auto callback = std::move(result->callback);
-        result->callback = [this, removal, removalPins,
+        result->callback = [this, removal, removalPins, deferRemoval,
             callback = std::move(callback)](bool succeeded) {
-            FinishFileRemovalVisibility(removal->paths, removal->departed);
-            // A cancelled/failed operation must retain its original ownership.
-            // Successful user deletions/moves must not become recoverable gaps.
-            if (succeeded) RemoveDesktopKeysFromWidgets(removal->departed);
+            // A delete may wait for Shell confirmation. Hide only the items
+            // observed to have departed, and let the refresh retire their pins.
+            const auto& hiddenPaths = deferRemoval ? removal->departed : removal->paths;
+            if (deferRemoval) BeginFileRemovalVisibility(hiddenPaths);
+            FinishFileRemovalVisibility(hiddenPaths, removal->departed);
+            if (succeeded || deferRemoval) RemoveDesktopKeysFromWidgets(removal->departed);
             else
                 for (const auto& container : containers_)
                     if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
@@ -258,7 +266,7 @@ bool DesktopApp::QueueShellFileOperation(
     ++shellFileOperationInFlight_;
     shellRefreshRevision_.Invalidate();
     readyShellRefresh_.reset();
-    if (removal) BeginFileRemovalVisibility(removal->paths);
+    if (removal && !deferRemoval) BeginFileRemovalVisibility(removal->paths);
     ApplyFloatingDockLayerPolicy();
     return true;
 }
