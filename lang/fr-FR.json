@@ -2975,8 +2975,7 @@
   "settings.debug.touchSimulation.mouseForward": "Bouton latéral 2 de la souris",
   "app.dock.add_icon_border": "Ajouter une bordure",
   "settings.dock.freeItemOrder": "Ordre libre",
-  "settings.dock.freeItemOrder.description": "Faites glisser les éléments épinglés, les fichiers et la Corbeille pour les placer dans l’ordre souhaité.",
-  "app.dock.separator": "Séparateur",
+  "settings.dock.freeItemOrder.description": "Déplacez les éléments entre les zones Épinglés et Fichiers. Vous pouvez déplacer la recherche rapide dans la zone Fichiers.",
   "app.dock.add_separator": "Ajouter un séparateur",
   "app.dock.remove_separator": "Supprimer le séparateur"
 }

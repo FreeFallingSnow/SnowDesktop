@@ -2975,8 +2975,7 @@
   "settings.debug.touchSimulation.mouseForward": "Botón lateral 2 del mouse",
   "app.dock.add_icon_border": "Agregar borde",
   "settings.dock.freeItemOrder": "Orden libre",
-  "settings.dock.freeItemOrder.description": "Arrastra los elementos anclados, los archivos y la Papelera de reciclaje para ponerlos en el orden que quieras.",
-  "app.dock.separator": "Separador",
+  "settings.dock.freeItemOrder.description": "Arrastra elementos entre la sección de anclados y la de archivos. Puedes mover la búsqueda rápida dentro de la sección de archivos.",
   "app.dock.add_separator": "Agregar separador",
   "app.dock.remove_separator": "Quitar separador"
 }

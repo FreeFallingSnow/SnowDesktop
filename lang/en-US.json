@@ -2975,8 +2975,7 @@
   "settings.debug.touchSimulation.mouseForward": "Mouse side button 2",
   "app.dock.add_icon_border": "Add border",
   "settings.dock.freeItemOrder": "Free item order",
-  "settings.dock.freeItemOrder.description": "Drag pinned items, files, and Recycle Bin into any order.",
-  "app.dock.separator": "Separator",
+  "settings.dock.freeItemOrder.description": "Drag items between the pinned and file sections. Quick Search can be reordered in the file section.",
   "app.dock.add_separator": "Add separator",
   "app.dock.remove_separator": "Remove separator"
 }

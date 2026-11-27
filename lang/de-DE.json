@@ -2975,8 +2975,7 @@
   "settings.debug.touchSimulation.mouseForward": "Seitliche Maustaste 2",
   "app.dock.add_icon_border": "Rahmen hinzufügen",
   "settings.dock.freeItemOrder": "Freie Anordnung",
-  "settings.dock.freeItemOrder.description": "Ziehen Sie angeheftete Elemente, Dateien und den Papierkorb in eine beliebige Reihenfolge.",
-  "app.dock.separator": "Trennlinie",
+  "settings.dock.freeItemOrder.description": "Ziehen Sie Einträge zwischen dem Bereich für angeheftete Elemente und dem Dateibereich. Die Schnellsuche kann innerhalb des Dateibereichs verschoben werden.",
   "app.dock.add_separator": "Trennlinie hinzufügen",
   "app.dock.remove_separator": "Trennlinie entfernen"
 }

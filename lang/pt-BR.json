@@ -2975,8 +2975,7 @@
   "settings.debug.touchSimulation.mouseForward": "Botão lateral 2 do mouse",
   "app.dock.add_icon_border": "Adicionar borda",
   "settings.dock.freeItemOrder": "Ordem livre",
-  "settings.dock.freeItemOrder.description": "Arraste os itens fixados, os arquivos e a Lixeira para colocá-los na ordem desejada.",
-  "app.dock.separator": "Separador",
+  "settings.dock.freeItemOrder.description": "Arraste itens entre as áreas de itens fixados e arquivos. A Busca Rápida pode ser movida dentro da área de arquivos.",
   "app.dock.add_separator": "Adicionar separador",
   "app.dock.remove_separator": "Remover separador"
 }

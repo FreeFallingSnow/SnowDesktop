@@ -2975,8 +2975,7 @@
   "settings.debug.touchSimulation.mouseForward": "滑鼠側鍵 2",
   "app.dock.add_icon_border": "新增外框",
   "settings.dock.freeItemOrder": "自由排列",
-  "settings.dock.freeItemOrder.description": "拖曳釘選項目、檔案和資源回收筒，自由調整順序。",
-  "app.dock.separator": "分隔線",
+  "settings.dock.freeItemOrder.description": "在釘選區和檔案區之間拖曳項目，快速搜尋可在檔案區內調整位置。",
   "app.dock.add_separator": "新增分隔線",
   "app.dock.remove_separator": "移除分隔線"
 }
