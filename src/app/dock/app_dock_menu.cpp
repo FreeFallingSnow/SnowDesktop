@@ -29,6 +29,7 @@ constexpr UINT kDockTaskManagerCommand = 2;
 constexpr UINT kDockAddSeparator = 41896;
 constexpr UINT kDockRemoveSeparator = 41897;
 constexpr UINT kDockFreeItemOrder = 41898;
+constexpr UINT kDockMinimizeWindowsIntoApplicationIcon = 41899;
 constexpr UINT kDockMonitorScopeFirst = 41830;
 constexpr UINT kDockScaleFirst = 41840;
 constexpr int kDockScalePercent[]{50, 75, 100, 125, 150, 175, 200};
@@ -232,6 +233,9 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
         dockSettings_.showOnlyWhenSummoned, L"\uE5F2"); // eye_20
     addToggle(menu, kContextDockWindowPreviews, _LW("settings.dock.windowPreviews"),
         dockSettings_.showWindowPreviews, L"\uF8B5"); // window_20
+    addToggle(menu, kDockMinimizeWindowsIntoApplicationIcon,
+        _LW("settings.dock.minimizeWindowsIntoApplicationIcon"), dockSettings_.minimizeWindowsIntoApplicationIcon,
+        L"\uF165", settingsController_ != nullptr); // arrow_minimize_20_regular
     addToggle(independentMenu, kDockReserveDesktop, _LW("settings.dock.allowDesktopContentOverlap"),
         !dockSettings_.allowDesktopContentOverlap, L"\uF359");
     addToggle(independentMenu, kDockReserveMaximized, _LW("settings.dock.reserveScreenSpace"),
@@ -455,6 +459,7 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
     case kDockSearchIconBorder: setting = &DockSettings::quickSearchIconBorder; break;
     case kContextDockRecycleBinIconBorder: setting = &DockSettings::recycleBinIconBorder; break;
     case kDockFreeItemOrder: setting = &DockSettings::freeItemOrder; break;
+    case kDockMinimizeWindowsIntoApplicationIcon: setting = &DockSettings::minimizeWindowsIntoApplicationIcon; break;
     }
     if (setting)
     {
