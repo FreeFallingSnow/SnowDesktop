@@ -33,6 +33,7 @@
 #include <limits>
 #include <optional>
 #include <shlwapi.h>
+#include <utility>
 
 namespace
 {
@@ -42,6 +43,14 @@ float RunningItemSlotUnits(const DockRunningAppInfo& running, float iconFraction
         ? 1.0f + iconFraction * (running.minimizedThumbnail->LayoutAspectRatio() - 1.0f)
         : 1.0f;
     return units * running.presence.Amount();
+}
+
+float RunningDividerAmount(const std::vector<DockRunningAppInfo>& runningApps)
+{
+    float icons = 0.0f, thumbnails = 0.0f;
+    for (const auto& app : runningApps)
+        (app.minimizedThumbnail ? thumbnails : icons) += app.presence.Amount();
+    return std::min({1.0f, icons, thumbnails});
 }
 
 size_t SortableFileEnd(const std::vector<DockEntry>* entries, bool freeOrder)
@@ -803,12 +812,12 @@ int DockContainer::ScaledSeparatorGap() const
 float DockContainer::RunningSlotUnits() const
 {
     if (!app_) return 0.0f;
-    const float iconFraction = !IsVertical() && !app_->dockSettings_.minimizeWindowsIntoApplicationIcon
-        ? static_cast<float>(ItemIconSize()) / ItemPitch() : 0.0f;
+    const int pitch = ItemPitch();
+    const float iconFraction = IsVertical() ? 0.0f : static_cast<float>(ItemIconSize()) / pitch;
     float units = 0.0f;
     for (const auto& running : app_->dockUnpinnedRunningApps_)
         units += RunningItemSlotUnits(running, iconFraction);
-    return units;
+    return units + RunningDividerAmount(app_->dockUnpinnedRunningApps_) * ScaledSeparatorGap() / pitch;
 }
 
 int DockContainer::EdgeMargin() const
@@ -2167,8 +2176,7 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
     const int pitch = ItemPitch();
     const int spacing = ScaledSpacing();
     const int halfGap = spacing / 2;
-    const float runningIconFraction = app_ && !IsVertical() && !app_->dockSettings_.minimizeWindowsIntoApplicationIcon
-        ? static_cast<float>(pitch - spacing) / pitch : 0.0f;
+    const float runningIconFraction = IsVertical() ? 0.0f : static_cast<float>(pitch - spacing) / pitch;
     const auto makeCell = [&](size_t group, float begin, float amount = 1.0f) {
         const auto& offset = axis.groups[group];
         const int start = motion::AxisLength(offset.begin + begin, pitch) +
@@ -2250,9 +2258,13 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
         slots.push_back(std::move(slot));
     }
     float runningBegin = 0.0f;
+    float runningDivider = app_ ? RunningDividerAmount(app_->dockUnpinnedRunningApps_) * ScaledSeparatorGap() / pitch : 0.0f;
     for (size_t i = 0; i < runningCount; ++i)
     {
-        const float amount = RunningItemSlotUnits(app_->dockUnpinnedRunningApps_[i], runningIconFraction);
+        const auto& running = app_->dockUnpinnedRunningApps_[i];
+        if (running.minimizedThumbnail)
+            runningBegin += std::exchange(runningDivider, 0.0f);
+        const float amount = RunningItemSlotUnits(running, runningIconFraction);
         const RECT cell = makeCell(2, runningBegin, amount);
         runningBegin += amount;
         auto slot = std::make_unique<Slot>(this, cell, count + i);
@@ -3133,7 +3145,17 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     groups[4].units = FolderEntryUnits();
     for (size_t i = 0; i < fixedCount && i < slots.size(); ++i)
         if (slots[i]) include(groups[1], slots[i]->GetBounds());
-    for (const auto& item : runningItems_) if (item) include(groups[2], item->GetBounds());
+    Boundary runningIcons, minimizedThumbnails;
+    for (const auto& item : runningItems_)
+    {
+        if (!item) continue;
+        const RECT bounds = item->GetBounds();
+        include(groups[2], bounds);
+        const auto index = item->GetRunningIndex();
+        if (index >= app_->dockUnpinnedRunningApps_.size()) continue;
+        include(app_->dockUnpinnedRunningApps_[index].minimizedThumbnail
+            ? minimizedThumbnails : runningIcons, bounds);
+    }
     for (const auto& item : frequentItems_) if (item) include(groups[3], item->GetBounds());
     for (size_t i = folderBegin; i < folderEnd && i < slots.size(); ++i)
         if (slots[i]) include(groups[4], slots[i]->GetBounds());
@@ -3161,6 +3183,9 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             if (i != 0) precedingUnits = std::max(precedingUnits, groups[i].units);
         }
     };
+    const float runningDivider = RunningDividerAmount(app_->dockUnpinnedRunningApps_);
+    if (runningDivider > 0.0f)
+        drawSeparatorBetween(runningIcons.last, minimizedThumbnails.first, runningDivider, false, true);
     drawBoundaries(true);
     overflowMaskLayer.reset();
     if (scrollClipPushed) context->PopAxisAlignedClip();
