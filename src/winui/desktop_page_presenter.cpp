@@ -657,11 +657,13 @@ struct DesktopPagePresenter::Impl
         presenter_controls::CoalescedPreviewTimer<int> strengthUpdate;
         winrt::event_token clicked{}, changed{}, resetClicked{};
     };
-    std::array<ShadowOption, 7> shadowOptions{{
+    std::array<ShadowOption, 8> shadowOptions{{
         {&IconShadowSettings::fan, &IconShadowSettings::fanStrength,
             "app.settings.icon_shadow_fan", L"Icons in fan view"},
         {&IconShadowSettings::dock, &IconShadowSettings::dockStrength,
             "app.settings.icon_shadow_dock", L"Dock icons"},
+        {&IconShadowSettings::dockThumbnailBadge, &IconShadowSettings::dockThumbnailBadgeStrength,
+            "app.settings.icon_shadow_dock_thumbnail_badge", L"Dock thumbnail badges"},
         {&IconShadowSettings::exposedWidget, &IconShadowSettings::exposedWidgetStrength,
             "app.settings.icon_shadow_exposed_widget", L"Exposed widget icons"},
         {&IconShadowSettings::desktop, &IconShadowSettings::desktopStrength,

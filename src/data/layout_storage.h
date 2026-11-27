@@ -172,6 +172,7 @@ struct Document
     std::optional<bool> beautifyFileThumbnails;
     std::optional<bool> iconShadowFan;
     std::optional<bool> iconShadowDock;
+    std::optional<bool> iconShadowDockThumbnailBadge;
     std::optional<bool> iconShadowExposedWidget;
     std::optional<bool> iconShadowDesktop;
     std::optional<bool> iconShadowPopup;
@@ -180,6 +181,7 @@ struct Document
     std::optional<bool> iconShadowStrengthsAreRelative;
     std::optional<int> iconShadowFanStrength;
     std::optional<int> iconShadowDockStrength;
+    std::optional<int> iconShadowDockThumbnailBadgeStrength;
     std::optional<int> iconShadowExposedWidgetStrength;
     std::optional<int> iconShadowDesktopStrength;
     std::optional<int> iconShadowPopupStrength;

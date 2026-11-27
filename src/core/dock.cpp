@@ -13,6 +13,7 @@
 #include "dock/dock_magnification.h"
 #include "dock/dock_settings.h"
 #include "dock/dock_window_preview.h"
+#include "dock/dock_window_thumbnail.h"
 #include "dock/merged_dock_presentation.h"
 #include "drag_drop/drag_hint_rules.h"
 #include "system/status_bar/status_bar_appearance.h"
@@ -34,6 +35,14 @@
 
 namespace
 {
+float RunningItemSlotUnits(const DockRunningAppInfo& running, float iconFraction)
+{
+    const float units = iconFraction > 0.0f && running.minimizedThumbnail
+        ? 1.0f + iconFraction * (running.minimizedThumbnail->LayoutAspectRatio() - 1.0f)
+        : 1.0f;
+    return units * running.presence.Amount();
+}
+
 const DragSourceEntry* DraggedSeparator(const DragSourceList& sources)
 {
     if (sources.entries.size() != 1) return nullptr;
@@ -782,10 +791,12 @@ int DockContainer::ScaledSeparatorGap() const
 
 float DockContainer::RunningSlotUnits() const
 {
+    if (!app_) return 0.0f;
+    const float iconFraction = !IsVertical() && !app_->dockSettings_.minimizeWindowsIntoApplicationIcon
+        ? static_cast<float>(ItemIconSize()) / ItemPitch() : 0.0f;
     float units = 0.0f;
-    if (app_)
-        for (const auto& running : app_->dockUnpinnedRunningApps_)
-            units += running.presence.Amount();
+    for (const auto& running : app_->dockUnpinnedRunningApps_)
+        units += RunningItemSlotUnits(running, iconFraction);
     return units;
 }
 
@@ -2143,7 +2154,10 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
         fixedUnits, RunningSlotUnits(), static_cast<float>(frequentCount),
         folderUnits);
     const int pitch = ItemPitch();
-    const int halfGap = ScaledSpacing() / 2;
+    const int spacing = ScaledSpacing();
+    const int halfGap = spacing / 2;
+    const float runningIconFraction = app_ && !IsVertical() && !app_->dockSettings_.minimizeWindowsIntoApplicationIcon
+        ? static_cast<float>(pitch - spacing) / pitch : 0.0f;
     const auto makeCell = [&](size_t group, float begin, float amount = 1.0f) {
         const auto& offset = axis.groups[group];
         const int start = motion::AxisLength(offset.begin + begin, pitch) +
@@ -2227,7 +2241,7 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
     float runningBegin = 0.0f;
     for (size_t i = 0; i < runningCount; ++i)
     {
-        const float amount = app_->dockUnpinnedRunningApps_[i].presence.Amount();
+        const float amount = RunningItemSlotUnits(app_->dockUnpinnedRunningApps_[i], runningIconFraction);
         const RECT cell = makeCell(2, runningBegin, amount);
         runningBegin += amount;
         auto slot = std::make_unique<Slot>(this, cell, count + i);

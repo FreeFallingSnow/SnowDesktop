@@ -67,7 +67,7 @@ inline constexpr auto Fields<DesktopDisplaySettings> = std::to_array<Description
     {"titleEllipsis", "Enables ellipsis trimming in title layouts when the full caption exceeds the available text area."},
     {"groupComponentBadges", "Shows component-type badges on eligible item icons in a group. The renderer only draws badges for supported component types."},
     {"beautifyFileThumbnails", "Includes rendered file thumbnails in the global icon beautification treatment. The icon appearance settings still determine the treatment."},
-    {"iconShadows", "Independent drop-shadow settings for ordinary item icons on each supported surface and for the subject inside an icon."},
+    {"iconShadows", "Independent drop-shadow settings for ordinary icons by surface, Dock task thumbnail badges, and the subject inside a beautified icon."},
 });
 
 template<>
@@ -86,6 +86,8 @@ inline constexpr auto Fields<IconShadowSettings> = std::to_array<Description>({
     {"popupStrength", "Set shadow strength for popup icons when popup shadows are enabled."},
     {"quickNavigationStrength", "Set shadow strength for Quick Navigation icons when their shadows are enabled."},
     {"subjectStrength", "Set shadow strength for the extracted icon subject when subject shadows are enabled."},
+    {"dockThumbnailBadge", "Enable the drop shadow behind the application badge at the lower right of each Dock task thumbnail. The default is on. This setting applies when the Dock shows separate window thumbnails and works independently of the ordinary Dock icon shadow."},
+    {"dockThumbnailBadgeStrength", "Set the Dock task thumbnail badge shadow strength as a percentage from 20 to 200, with 100 as the default. The saved strength takes effect when dockThumbnailBadge is enabled."},
 });
 
 template<>

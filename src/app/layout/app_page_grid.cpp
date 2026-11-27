@@ -1273,7 +1273,8 @@ void DesktopApp::SetIconShadows(snowdesktop::IconShadowSettings settings)
     const bool subjectChanged = subjectAvailabilityChanged ||
         settings.subjectStrength != iconShadows_.subjectStrength;
     const bool dockChanged = subjectChanged || settings.dock != iconShadows_.dock ||
-        settings.dockStrength != iconShadows_.dockStrength;
+        settings.dockStrength != iconShadows_.dockStrength ||
+        settings.DockThumbnailBadgeStrength() != iconShadows_.DockThumbnailBadgeStrength();
     const bool popupChanged = subjectChanged || settings.fan != iconShadows_.fan ||
         settings.fanStrength != iconShadows_.fanStrength || settings.popup != iconShadows_.popup ||
         settings.popupStrength != iconShadows_.popupStrength;

@@ -254,6 +254,8 @@ void DesktopApp::LoadLayoutSlots()
         shadowStrength(document.iconShadowPopupStrength),
         shadowStrength(document.iconShadowQuickNavigationStrength),
         shadowStrength(document.iconShadowSubjectStrength),
+        document.iconShadowDockThumbnailBadge.value_or(shadowDefaults.dockThumbnailBadge),
+        document.iconShadowDockThumbnailBadgeStrength.value_or(shadowDefaults.dockThumbnailBadgeStrength),
     };
     iconShadows_.Normalize();
 
@@ -1136,6 +1138,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure, bool background)
          << ",\n  \"beautifyFileThumbnails\": " << (beautifyFileThumbnails_ ? "true" : "false")
          << ",\n  \"iconShadowFan\": " << (iconShadows_.fan ? "true" : "false")
          << ",\n  \"iconShadowDock\": " << (iconShadows_.dock ? "true" : "false")
+         << ",\n  \"iconShadowDockThumbnailBadge\": " << (iconShadows_.dockThumbnailBadge ? "true" : "false")
          << ",\n  \"iconShadowExposedWidget\": " << (iconShadows_.exposedWidget ? "true" : "false")
          << ",\n  \"iconShadowDesktop\": " << (iconShadows_.desktop ? "true" : "false")
          << ",\n  \"iconShadowPopup\": " << (iconShadows_.popup ? "true" : "false")
@@ -1144,6 +1147,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure, bool background)
          << ",\n  \"iconShadowStrengthsAreRelative\": true"
          << ",\n  \"iconShadowFanStrength\": " << iconShadows_.fanStrength
          << ",\n  \"iconShadowDockStrength\": " << iconShadows_.dockStrength
+         << ",\n  \"iconShadowDockThumbnailBadgeStrength\": " << iconShadows_.dockThumbnailBadgeStrength
          << ",\n  \"iconShadowExposedWidgetStrength\": " << iconShadows_.exposedWidgetStrength
          << ",\n  \"iconShadowDesktopStrength\": " << iconShadows_.desktopStrength
          << ",\n  \"iconShadowPopupStrength\": " << iconShadows_.popupStrength

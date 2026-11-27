@@ -1,9 +1,11 @@
 #include "app/app.h"
 #include "app/navigation/quick_navigation_state.h"
+#include "dock/dock_window_thumbnail.h"
 #include "dock/dock_window_transition.h"
 #include "diagnostics/diagnostic_log.h"
 #include "widget/runtime/widget_engine.h"
 #include "settings/general_settings.h"
+#include "settings/animation_settings.h"
 #include "app/shell/icon_load_task.h"
 #include "common/utils.h"
 #include "icons/shell_icon_bitmap.h"
@@ -21,6 +23,8 @@
 
 #include "layout/popup_icon_load_rules.h"
 #include "shell/shortcut_application_rules.h"
+
+#include <algorithm>
 
 namespace shellCalls = snowdesktop::shell_call_diagnostics;
 
@@ -318,7 +322,36 @@ void DesktopApp::DrainBackgroundShellWork()
     iconWork_.Drain();
     dockIconWork_.Drain();
     dockIdentityWork_.Drain();
-    if (dockWindowThumbnails_.Drain())
+    const auto thumbnailChanges = dockWindowThumbnails_.Drain();
+    const bool dockLayoutChanged = thumbnailChanges.layoutChanged &&
+        !dockSettings_.minimizeWindowsIntoApplicationIcon &&
+        (dockSettings_.position == DockPosition::Bottom || dockSettings_.position == DockPosition::Top);
+    const bool animateDockLayout = dockLayoutChanged && snowdesktop::animation::RuntimeAnimationsEnabled();
+    if (thumbnailChanges.layoutChanged)
+    {
+        const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+        const double durationScale = snowdesktop::animation::RuntimeDurationScale();
+        for (const auto& app : dockUnpinnedRunningApps_)
+            if (app.minimizedThumbnail)
+                app.minimizedThumbnail->RetargetLayout(now, animateDockLayout, durationScale);
+        if (animateDockLayout) EnsureUiAnimationFrame();
+    }
+    if (dockLayoutChanged && !animateDockLayout)
+    {
+        const bool hasDesktopDock = std::any_of(containers_.begin(), containers_.end(),
+            [this](const auto& container) {
+                auto* dock = dynamic_cast<DockContainer*>(container.get());
+                return dock && !IsDockHostedByPersistentHost(dock);
+            });
+        InvalidateDockContainers();
+        InvalidateDragStaticScene(hasDesktopDock);
+        UpdateFloatingDockWindowBounds(false);
+        // A centered Dock can shrink on either side. Erase its old envelope
+        // as well as repainting the new bounds.
+        if (hasDesktopDock && hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        InvalidateDockRects();
+    }
+    else if (thumbnailChanges.repaint)
     {
         InvalidateDragStaticScene(false);
         InvalidateDockRects();

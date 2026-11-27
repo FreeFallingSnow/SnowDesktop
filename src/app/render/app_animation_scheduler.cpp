@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_transition.h"
+#include "dock/dock_window_thumbnail.h"
 #include "layout/collection_popup_layout.h"
 #include "layout/list_detail_rules.h"
 #include "platform/runtime_module_policy.h"
@@ -333,7 +334,10 @@ void DesktopApp::EnsureUiAnimationFrame()
 
     if (!dockRunningAnimationFrameToken_ &&
         (std::any_of(dockUnpinnedRunningApps_.begin(), dockUnpinnedRunningApps_.end(),
-            [](const auto& app) { return app.presence.IsAnimating(); }) ||
+            [](const auto& app) {
+                return app.presence.IsAnimating() ||
+                    (app.minimizedThumbnail && app.minimizedThumbnail->IsLayoutAnimating());
+            }) ||
          std::any_of(containers_.begin(), containers_.end(), [](const auto& container) {
             const auto* dock = dynamic_cast<const DockContainer*>(container.get());
             return dock && dock->IsEntryRemovalAnimating();

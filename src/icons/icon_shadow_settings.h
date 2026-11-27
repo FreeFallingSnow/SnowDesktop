@@ -45,6 +45,8 @@ struct IconShadowSettings
     int popupStrength = kDefaultIconShadowStrength;
     int quickNavigationStrength = kDefaultIconShadowStrength;
     int subjectStrength = kDefaultIconShadowStrength;
+    bool dockThumbnailBadge = true;
+    int dockThumbnailBadgeStrength = kDefaultIconShadowStrength;
 
     void Normalize() noexcept
     {
@@ -55,9 +57,12 @@ struct IconShadowSettings
         popupStrength = std::clamp(popupStrength, kMinIconShadowStrength, kMaxIconShadowStrength);
         quickNavigationStrength = std::clamp(quickNavigationStrength, kMinIconShadowStrength, kMaxIconShadowStrength);
         subjectStrength = std::clamp(subjectStrength, kMinIconShadowStrength, kMaxIconShadowStrength);
+        dockThumbnailBadgeStrength = std::clamp(
+            dockThumbnailBadgeStrength, kMinIconShadowStrength, kMaxIconShadowStrength);
     }
 
     int DockStrength() const noexcept { return dock ? dockStrength : 0; }
+    int DockThumbnailBadgeStrength() const noexcept { return dockThumbnailBadge ? dockThumbnailBadgeStrength : 0; }
     int WidgetStrength() const noexcept { return exposedWidget ? exposedWidgetStrength : 0; }
     int PopupStrength() const noexcept { return popup ? popupStrength : 0; }
     int NavigationStrength() const noexcept { return quickNavigation ? quickNavigationStrength : 0; }

@@ -1811,13 +1811,19 @@ bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
     for (const auto& container : containers_)
         if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
             keep |= dock->AdvanceEntryRemovalAnimation(nowMilliseconds);
+    const bool animationsEnabled = snowdesktop::animation::RuntimeAnimationsEnabled();
     for (auto& app : dockUnpinnedRunningApps_)
     {
-        if (snowdesktop::animation::RuntimeAnimationsEnabled())
+        if (animationsEnabled)
             app.presence.Advance(nowMilliseconds);
         else
             app.presence.SetVisible(app.presence.Visible(), nowMilliseconds, false);
         keep |= app.presence.IsAnimating();
+        if (app.minimizedThumbnail && app.minimizedThumbnail->IsLayoutAnimating())
+        {
+            app.minimizedThumbnail->AdvanceLayout(nowMilliseconds, animationsEnabled);
+            keep |= app.minimizedThumbnail->IsLayoutAnimating();
+        }
         if (app.presence.IsHidden() && app.iconBitmap)
         {
             EraseD2DIconCacheForBitmap(app.iconBitmap);

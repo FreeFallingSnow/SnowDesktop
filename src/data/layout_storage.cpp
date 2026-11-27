@@ -808,6 +808,7 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.beautifyFileThumbnails, error) ||
         !ReadOptionalRootBoolean(root, "iconShadowFan", decoded.iconShadowFan, error) ||
         !ReadOptionalRootBoolean(root, "iconShadowDock", decoded.iconShadowDock, error) ||
+        !ReadOptionalRootBoolean(root, "iconShadowDockThumbnailBadge", decoded.iconShadowDockThumbnailBadge, error) ||
         !ReadOptionalRootBoolean(root, "iconShadowExposedWidget", decoded.iconShadowExposedWidget, error) ||
         !ReadOptionalRootBoolean(root, "iconShadowDesktop", decoded.iconShadowDesktop, error) ||
         !ReadOptionalRootBoolean(root, "iconShadowPopup", decoded.iconShadowPopup, error) ||
@@ -818,6 +819,8 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.iconShadowFanStrength, error) ||
         !ReadOptionalInteger(root, "iconShadowDockStrength", "iconShadowDockStrength",
             decoded.iconShadowDockStrength, error) ||
+        !ReadOptionalInteger(root, "iconShadowDockThumbnailBadgeStrength", "iconShadowDockThumbnailBadgeStrength",
+            decoded.iconShadowDockThumbnailBadgeStrength, error) ||
         !ReadOptionalInteger(root, "iconShadowExposedWidgetStrength", "iconShadowExposedWidgetStrength",
             decoded.iconShadowExposedWidgetStrength, error) ||
         !ReadOptionalInteger(root, "iconShadowDesktopStrength", "iconShadowDesktopStrength",

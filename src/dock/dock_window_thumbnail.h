@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/background_work.h"
+#include "dock_running_animation.h"
 
 #include <d2d1_1.h>
 #include <wrl/client.h>
@@ -26,12 +27,23 @@ struct WindowIdentity
 class Thumbnail final
 {
 public:
-    explicit Thumbnail(WindowIdentity source) : source_(source) {}
+    explicit Thumbnail(WindowIdentity source);
     ID2D1Bitmap1* Bitmap(ID2D1DeviceContext& context);
+    float LayoutAspectRatio() const noexcept;
+    void RetargetLayout(double now, bool animate, double durationScale);
+    void AdvanceLayout(double now, bool animate);
+    bool IsLayoutAnimating() const;
 
 private:
     friend class ThumbnailCache;
+    float TargetLayoutAspectRatio() const noexcept;
+
     WindowIdentity source_;
+    float aspectRatio_ = 4.0f / 3.0f;
+    float layoutFrom_ = aspectRatio_;
+    float layoutTo_ = aspectRatio_;
+    dock_running_animation::Presence layoutProgress_;
+    SIZE liveSize_{};
     D2D1_SIZE_U size_{};
     std::vector<std::uint32_t> pixels_;
     Microsoft::WRL::ComPtr<ID2D1Device> device_;
@@ -47,16 +59,22 @@ private:
 class ThumbnailCache final
 {
 public:
+    struct Changes
+    {
+        bool repaint = false;
+        bool layoutChanged = false;
+    };
+
     void Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool minimized,
         bool foreground, HWND notifyWindow, UINT message);
     void Clear();
-    bool Drain();
+    Changes Drain();
 
 private:
     // PrintWindow is synchronous and an unresponsive app can stall its caller.
     // Keep it off the UI thread and out of the Shell metadata queue.
     BackgroundWork work_{2, 64};
     std::uint64_t epoch_ = 1;
-    bool repaint_ = false;
+    Changes changes_;
 };
 }
