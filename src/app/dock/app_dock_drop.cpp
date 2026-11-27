@@ -131,7 +131,10 @@ DropReceipt DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         }
     }
 
-    if (dynamic_cast<DockContainer*>(origin))
+    const bool fromDock = dynamic_cast<DockContainer*>(origin) != nullptr;
+    const bool pinFrequent = fromDock && std::all_of(sourceItems.begin(), sourceItems.end(),
+        [](const Item* item) { return dynamic_cast<const DockFrequentItem*>(item) != nullptr; });
+    if (fromDock && !pinFrequent)
     {
         if (!(allowed & DROPEFFECT_MOVE)) return {};
         std::vector<size_t> indices;
@@ -172,10 +175,21 @@ DropReceipt DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         return DropReceipt::Submitted(ExecuteDropPipeline(sourceList, preview), DropAction::Link);
     }
 
-    const bool keepSource = (mods & MK_CONTROL) != 0;
+    const bool keepSource = pinFrequent || (mods & MK_CONTROL) != 0;
     std::vector<DockEntry> additions;
     for (Item* source : sourceItems)
     {
+        if (pinFrequent)
+        {
+            const size_t index = static_cast<const DockFrequentItem*>(source)->GetItemIndex();
+            if (index >= items_.size() || items_[index].layoutKey.empty()) return {};
+            const auto key = ToUpperInvariant(items_[index].layoutKey);
+            if (std::none_of(dockEntries_.begin(), dockEntries_.end(), [&](const auto& entry) {
+                return entry.type == DockEntryType::DesktopItem && PathsEqualInsensitive(entry.reference, key);
+            }))
+                additions.push_back({DockEntryType::DesktopItem, key, true});
+            continue;
+        }
         if (auto* icon = dynamic_cast<DesktopIcon*>(source))
         {
             DesktopItem* item = icon->GetDesktopItem();

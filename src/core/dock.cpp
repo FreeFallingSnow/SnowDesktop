@@ -76,6 +76,11 @@ size_t SortableFileEnd(const std::vector<DockEntry>* entries, bool freeOrder)
     return entries ? model::SortableEnd(*entries, freeOrder, model::IsRecycleBinEntry) : 0;
 }
 
+bool IsDockFrequentDrag(const std::vector<Item*>& items)
+{
+    return !items.empty() && dynamic_cast<const DockFrequentItem*>(items.front()) != nullptr;
+}
+
 const DragSourceEntry* DraggedSeparator(const DragSourceList& sources)
 {
     if (sources.entries.size() != 1) return nullptr;
@@ -710,10 +715,14 @@ bool DockContainer::IsFolderDragSource(Item* source) const
             (app_->widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping ||
              app_->widgets_[widgetIndex].type == DesktopWidgetType::FileCategories);
     }
-    if (auto* icon = dynamic_cast<DesktopIcon*>(source))
+    const DesktopItem* item = nullptr;
+    if (const auto* icon = dynamic_cast<const DesktopIcon*>(source))
+        item = icon->GetDesktopItem();
+    else if (const auto* frequent = dynamic_cast<const DockFrequentItem*>(source);
+        frequent && frequent->GetItemIndex() < app_->items_.size())
+        item = &app_->items_[frequent->GetItemIndex()];
+    if (item)
     {
-        const DesktopItem* item = icon->GetDesktopItem();
-        if (!item) return false;
         const std::wstring& reference =
             item->layoutKey.empty()
             ? item->parsingName
@@ -3444,8 +3453,9 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
     const bool pointInScrollViewport = IsPointInScrollViewport(pt);
     const bool freeOrder = app_->dockSettings_.freeItemOrder;
     const auto& sources = app_->dragSession_.SourceList().entries;
-    const bool layoutSource = std::any_of(sources.begin(), sources.end(),
-        [](const auto& source) { return source.fromDock && IsDockLayoutEntry(source.dockEntryType); });
+    const bool insertionOnly = IsDockFrequentDrag(app_->dragSession_.Items()) ||
+        std::any_of(sources.begin(), sources.end(),
+            [](const auto& source) { return source.fromDock && IsDockLayoutEntry(source.dockEntryType); });
     const auto& slots = GetSlots();
     for (const auto& slot : slots)
     {
@@ -3478,7 +3488,7 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
 
         RECT handoffRect = bounds;
         InflateRect(&handoffRect, -16, -10);
-        if (recycleBinSlot && !layoutSource &&
+        if (recycleBinSlot && !insertionOnly &&
             (!freeOrder || (!dynamic_cast<DockContainer*>(app_->dragSession_.Source()) && PtInRect(&handoffRect, pt))))
         {
             resetDwell();
@@ -3516,7 +3526,7 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
         const bool collectionTarget =
             folderDockItem &&
             IsLogicalDockEntryType(folderDockItem->GetEntryType());
-        const bool canHandoff = !layoutSource && !dockMetadataReorder &&
+        const bool canHandoff = !insertionOnly && !dockMetadataReorder &&
             !(freeOrder && dynamic_cast<DockContainer*>(app_->dragSession_.Source())) &&
             targetItem && !targetItem->IsSelected() &&
             (groupAcceptsSource || (!groupTarget && snowdesktop::dock_drop_rules::
@@ -3622,12 +3632,13 @@ std::wstring DockContainer::GetDragHint(Slot* slot, HitRegion region,
         return _LW("core.drag.dock_full");
     const DragSourceList source = app_
         ? app_->BuildDragSourceList(sourceItems, origin) : DragSourceList{};
+    const bool pinFrequent = IsDockFrequentDrag(sourceItems);
     const auto hint = _LW(snowdesktop::drag_hint_rules::DockInsertionHintKey(
-        origin == this,
+        origin == this && !pinFrequent,
         app_ && app_->dragDropController_.IsExternalDragActive(),
         source.hasWidgets || source.hasCollectionGroupEntries ||
             source.hasFileGroupSourceLabels,
-        (mods & MK_CONTROL) != 0));
+        pinFrequent || (mods & MK_CONTROL) != 0));
     if (app_ && !app_->dockSettings_.freeItemOrder && app_->dragSession_.HasContext())
     {
         const bool belongsToFiles = HasOnlyFolderDragSource();

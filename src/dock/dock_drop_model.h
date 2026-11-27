@@ -191,6 +191,8 @@ inline bool Pin(State state, const std::vector<DockEntry>& additions, size_t ins
             ++genuinelyNew;
     if (!services.capacity(genuinelyNew)) return false;
 
+    size_t fixedInsert = insertIndex;
+    size_t fileInsert = insertIndex;
     for (const auto& addition : additions)
     {
         auto existing = std::find_if(state.entries.begin(), state.entries.end(), [&](const auto& entry) { return matches(entry, addition); });
@@ -217,6 +219,18 @@ inline bool Pin(State state, const std::vector<DockEntry>& additions, size_t ins
         else if (IsTrailingControl(addition, services))
         {
             state.entries.push_back(addition);
+        }
+        else if (!services.freeItemOrder)
+        {
+            const bool files = GroupOf(addition, services) == dock_folder_rules::EntryGroup::Folder;
+            const auto range = SectionRange(state.entries, files ? DockEntrySection::Files : DockEntrySection::Fixed, services);
+            auto& next = files ? fileInsert : fixedInsert;
+            const size_t boundary = std::clamp(next, range.begin, range.end);
+            // Anchor to a rank in the destination section, including at its
+            // end where the next section may have an earlier saved rank.
+            InsertInSection(state.entries, boundary, range, addition);
+            next = boundary + 1;
+            if (!files && boundary <= fileInsert) ++fileInsert;
         }
         else
         {

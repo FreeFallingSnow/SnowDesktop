@@ -301,7 +301,7 @@ inline constexpr auto Fields<DockSettings> = std::to_array<Description>({
     {"freeItemOrder", "Lets entries move between the pinned and file sections. Quick Search is sortable within the file section, including relative to Recycle Bin and separators. Off returns ordinary entries to their default sections, keeps separators in their current sections, and locks Quick Search and Recycle Bin in the last two positions of the file section in that order. The resulting order becomes the current layout and is used when free item order is turned on again."},
     {"startMenuKeepTaskbarHidden", "Keeps the Windows taskbar hidden for the applicable Start menu invocation path."},
     {"startMenuKeepTaskbarHiddenOnWinKey", "Extends taskbar hiding to the Windows-key Start menu path when applicable."},
-    {"showFrequentItems", "Displays frequently used items along with the Dock's other entries. frequentItemCount limits their count."},
+    {"showFrequentItems", "Displays frequently used items along with the Dock's other entries. frequentItemCount limits their count. Dragging a frequent item to a Dock insertion point pins it and keeps the original desktop entry."},
     {"keepWhenDesktopHidden", "Keeps the Dock eligible when SnowDesktop hides desktop items."},
     {"allowDesktopContentOverlap", "Allows desktop content to occupy the Dock area where the layout otherwise avoids it."},
     {"showOnlyWhenSummoned", "Keeps the Dock hidden until summoned. On a touchscreen, swipe inward from its edge; Windows can reserve its own system edge gestures."},

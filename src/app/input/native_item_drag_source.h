@@ -22,15 +22,21 @@ struct Captured
     std::vector<Item*> items;
 };
 template<class ReadSelected>
-Captured Capture(Item* pressed, bool pressedDockEntryWithoutSelection, ReadSelected&& selected)
+Captured Capture(Item* pressed, bool allowUnselectedDockItem, ReadSelected&& selected)
 {
     Captured result;
     if (!CanStart(pressed)) return result;
     result.source = pressed->GetContainer();
     result.items = std::forward<ReadSelected>(selected)(result.source);
     if (dynamic_cast<const DockContainer*>(result.source))
-        std::erase_if(result.items, [](const Item* item) { return !CanStart(item); });
-    if (result.items.empty() && pressedDockEntryWithoutSelection) result.items.push_back(pressed);
+    {
+        // Pin generated launchers as a group. Saved entries use the reorder path.
+        const bool frequent = dynamic_cast<const DockFrequentItem*>(pressed) != nullptr;
+        std::erase_if(result.items, [frequent](const Item* item) {
+            return !CanStart(item) || (dynamic_cast<const DockFrequentItem*>(item) != nullptr) != frequent;
+        });
+    }
+    if (result.items.empty() && allowUnselectedDockItem) result.items.push_back(pressed);
     return result;
 }
 }
