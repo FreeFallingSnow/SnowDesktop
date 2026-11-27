@@ -316,6 +316,8 @@
 
 ### CF-015 模块计划无法声明临时定向验证
 
+- **正式和临时检查无法同报（2026-11-27）**：Task `launcher-optional-missing`、批次 `1b12c09908f947d4b0787a0128b328ce` 修订 0 同时需要本地化、启动契约及隔离 Steam 目录探针。首次 `plan -Scope module -Suites selected -TemporaryVerification …` 返回 `TemporaryVerification describes the separate observation for a module plan with -Suites none.`，修正为在同一计划理由中记录临时探针，继续保留两项正式检查。未由此新增构建。临时探针暂无结构化的计划引用，后续可允许同一模块计划同时声明正式测试和独立临时观察。
+
 - **回收站残留条目定向检查（2026-11-23）**：Task `task-0212c99954704458993d627aa509e214`、批次 `74d22d949fe64effbf3ada760c2a8824` 修订 0、Run `39140a8c11d347a78e659349e84db21b` 的标准 Release 和激活已通过。计划登记了 `-TemporaryVerification`，单独编译同一检测源码的临时程序时，`Enter-BuildEntry` 在调用编译器前返回 `Shared output busy: batch 3ed56a6376dd4a589c7d38240b62d9b3 / editing`。该程序只需在忽略目录写入临时产物，首次检查仍须等待新批次让出执行权。保留首次拒绝，复用已激活候选。待支持把无共享产物写入的临时检查随原批次调度。
 
 - **状态栏排序配置续证（2026-11-20）**：Task `statusbar-metric-reorder`、批次 `81a988b0c92145f38e0b889aff7a0d00` 修订 0、Run `ee1a5ae299294e158f9377dd01b1490b`。产品日志记录 Release 配置 2.9 秒、生成 3.4 秒，测试日志对同一候选目录另记配置 3.1 秒、生成 2.9 秒。定向选择 `behavior_settings`，通过 Release、激活和设置存储回归。产品与测试阶段配置能否复用仍待核对，未为记录另行构建或测试。

@@ -5,8 +5,10 @@
 #include "launcher_messages.h"
 
 #include <windows.h>
+#include <commctrl.h>
 #include <shellapi.h>
 
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -16,6 +18,47 @@
 namespace
 {
 bool retryRequested = false;
+enum class IncompleteLaunchChoice { Cancel, Start, Previous };
+constexpr std::size_t kRuntimeFileRoleCount =
+    static_cast<std::size_t>(snowdesktop::steam_runtime::RuntimeFileRole::Count);
+static_assert(std::size(kLauncherMessages[0].fileRoles) == kRuntimeFileRoleCount);
+
+std::wstring DescribeMissingModules(const LauncherMessage& messages,
+    const std::vector<std::filesystem::path>& files)
+{
+    std::array<std::vector<std::filesystem::path>, kRuntimeFileRoleCount> byRole;
+    for (const auto& file : files)
+        byRole[static_cast<std::size_t>(snowdesktop::steam_runtime::GetRuntimeFileRole(file))]
+            .push_back(file.filename());
+
+    std::wstring result;
+    constexpr std::size_t maxVisibleNames = 5;
+    std::size_t shown = 0;
+    for (std::size_t role = 0; role < byRole.size(); ++role)
+    {
+        const auto& names = byRole[role];
+        if (names.empty())
+            continue;
+        result += L"\n\n" + std::wstring(messages.fileRoles[role]);
+        if (shown == maxVisibleNames)
+            continue;
+        result += L"\n";
+        for (std::size_t index = 0; index < names.size(); ++index)
+        {
+            if (index != 0)
+                result += L", ";
+            if (shown == maxVisibleNames)
+            {
+                result += L"…";
+                break;
+            }
+            result += names[index].wstring();
+            ++shown;
+        }
+    }
+    return result;
+}
+
 std::filesystem::path CurrentExecutableDirectory()
 {
     std::wstring path(32768, L'\0');
@@ -82,8 +125,12 @@ void AppendLauncherLog(const std::filesystem::path& installRoot,
     stream << prefix << message << '\n';
 }
 
-void ShowLaunchFailure(const std::filesystem::path& installRoot,
-    std::string_view detail, bool pending = false, bool warning = false)
+IncompleteLaunchChoice ShowLaunchFailure(const std::filesystem::path& installRoot,
+    std::string_view detail, bool pending = false, bool warning = false,
+    bool missingFile = false,
+    const std::vector<std::filesystem::path>& missingOptionalFiles = {},
+    bool canStartPrevious = false,
+    const std::filesystem::path& missingFilePath = {})
 {
     wchar_t localeName[LOCALE_NAME_MAX_LENGTH]{};
     GetUserDefaultLocaleName(localeName, LOCALE_NAME_MAX_LENGTH);
@@ -97,27 +144,65 @@ void ShowLaunchFailure(const std::filesystem::path& installRoot,
         languages, localeUtf8);
     if (language.empty())
         language = "en-US";
-    std::wstring message;
+    const LauncherMessage* messages = &kLauncherMessages[0];
     for (const auto& entry : kLauncherMessages)
         if (language == entry.language)
-        {
-            message = pending ? entry.pending : warning ? entry.warning : entry.message;
-            // An observed sharing/lock violation is actionable. Do not blame
-            // antivirus software for unrelated path, schema or permission errors.
-            if (detail.find("Win32 error 32") != std::string_view::npos ||
-                detail.find("Win32 error 33") != std::string_view::npos)
-                message += L"\n\n" + std::wstring(entry.securitySoftwareHint);
-        }
+            messages = &entry;
+    std::wstring message = pending ? messages->pending :
+        warning ? messages->warning : messages->message;
+    if (missingFile)
+    {
+        message += L"\n\n" + std::wstring(messages->missingFilesHint);
+        if (!missingFilePath.empty())
+            message += DescribeMissingModules(*messages, {missingFilePath});
+    }
+    else if (detail.find("Win32 error 32") != std::string_view::npos ||
+        detail.find("Win32 error 33") != std::string_view::npos)
+        message += L"\n\n" + std::wstring(messages->securitySoftwareHint);
     const int length = MultiByteToWideChar(CP_UTF8, 0, detail.data(),
         static_cast<int>(detail.size()), nullptr, 0);
     std::wstring wideDetail(static_cast<std::size_t>(length), L'\0');
     if (length > 0)
         MultiByteToWideChar(CP_UTF8, 0, detail.data(),
             static_cast<int>(detail.size()), wideDetail.data(), length);
-    message += L"\n\n" + wideDetail;
     if (!installRoot.empty())
-        message += L"\n\n" + (installRoot / L".snowdesktop" /
+        wideDetail += L"\n\n" + (installRoot / L".snowdesktop" /
             L"launcher.log").wstring();
+
+    if (!missingOptionalFiles.empty())
+    {
+        const std::wstring content = messages->missingFilesHint +
+            DescribeMissingModules(*messages, missingOptionalFiles);
+        constexpr int startAnywayId = 100;
+        constexpr int startPreviousId = 101;
+        const TASKDIALOG_BUTTON buttons[]{
+            {startAnywayId, messages->startAnyway},
+            {startPreviousId, messages->startPreviousRuntime},
+        };
+        TASKDIALOGCONFIG dialog{};
+        dialog.cbSize = sizeof(dialog);
+        dialog.dwCommonButtons = TDCBF_RETRY_BUTTON | TDCBF_CANCEL_BUTTON;
+        dialog.nDefaultButton = startAnywayId;
+        dialog.pszWindowTitle = L"SnowDesktop";
+        dialog.pszMainIcon = TD_WARNING_ICON;
+        dialog.pszMainInstruction = messages->optionalFiles;
+        dialog.pszContent = content.c_str();
+        dialog.pszExpandedInformation = wideDetail.c_str();
+        dialog.cButtons = canStartPrevious ? 2u : 1u;
+        dialog.pButtons = buttons;
+        int action = IDCANCEL;
+        if (SUCCEEDED(TaskDialogIndirect(&dialog, &action, nullptr, nullptr)))
+        {
+            retryRequested = action == IDRETRY;
+            if (action == startAnywayId)
+                return IncompleteLaunchChoice::Start;
+            if (action == startPreviousId && canStartPrevious)
+                return IncompleteLaunchChoice::Previous;
+            return IncompleteLaunchChoice::Cancel;
+        }
+    }
+
+    message += L"\n\n" + wideDetail;
     const bool canRetry = !pending && !warning;
     const int action = MessageBoxW(nullptr, message.c_str(), L"SnowDesktop",
         (canRetry ? MB_RETRYCANCEL : MB_OK) |
@@ -126,6 +211,7 @@ void ShowLaunchFailure(const std::filesystem::path& installRoot,
     // whole transaction after the user releases a lock, never duplicates a
     // host that is still running or bypasses a failed copy/hash operation.
     retryRequested = canRetry && action == IDRETRY;
+    return IncompleteLaunchChoice::Cancel;
 }
 
 bool LaunchRuntime(const std::filesystem::path& executable,
@@ -297,28 +383,55 @@ int RunLauncher(bool& maintenance, bool currentPrivilegesAccepted)
     if (pruneOnly)
         return 0;
 
-    auto applied =
-        snowdesktop::steam_runtime::ApplyDistribution(installRoot, applyOnly);
+    auto preparation =
+        snowdesktop::steam_runtime::ApplyDistribution(installRoot, applyOnly, !maintenance);
+    auto& applied = preparation.runtime;
     if (!applied.error.empty())
         AppendLauncherLog(installRoot, applied.error);
     if (!applied.ok)
     {
         if (!maintenance)
-            ShowLaunchFailure(installRoot, applied.error);
+            ShowLaunchFailure(installRoot, applied.error, false, false, applied.missingFile,
+                {}, false, applied.missingFilePath);
         return ERROR_INSTALL_FAILURE;
     }
     if (applyOnly)
         return 0;
+
+    const bool offeredIncomplete = !applied.missingOptionalFiles.empty();
+    bool chosePrevious = false;
+    if (offeredIncomplete)
+    {
+        std::string missing = "optional Steam runtime files missing:";
+        for (const auto& path : applied.missingOptionalFiles)
+        {
+            const auto utf8 = path.generic_u8string();
+            missing += " " + std::string(utf8.begin(), utf8.end());
+        }
+        AppendLauncherLog(installRoot, missing);
+        const auto choice = ShowLaunchFailure(installRoot, applied.error, false, false,
+            applied.missingFile, applied.missingOptionalFiles, preparation.previousRuntime.has_value());
+        if (choice == IncompleteLaunchChoice::Cancel)
+            return ERROR_CANCELLED;
+        chosePrevious = choice == IncompleteLaunchChoice::Previous;
+        if (chosePrevious)
+            applied = std::move(*preparation.previousRuntime);
+        AppendLauncherLog(installRoot, chosePrevious ?
+            "user chose to start the preserved version" :
+            "user chose to start without optional runtime files");
+    }
 
     for (unsigned attempt = 0; attempt < 2; ++attempt)
     {
         snowdesktop::steam_runtime::LaunchAttempt launchAttempt;
         std::string recordError;
         if (!snowdesktop::steam_runtime::BeginRuntimeLaunch(
-                installRoot, applied.executable, launchAttempt, recordError))
+                installRoot, applied, launchAttempt, recordError, chosePrevious))
         {
             AppendLauncherLog(installRoot, recordError);
-            if (!maintenance) ShowLaunchFailure(installRoot, recordError);
+            if (!maintenance)
+                ShowLaunchFailure(installRoot, recordError, false, false, applied.missingFile,
+                    {}, false, applied.missingFilePath);
             return ERROR_INSTALL_FAILURE;
         }
         DWORD launchError = ERROR_SUCCESS;
@@ -328,23 +441,28 @@ int RunLauncher(bool& maintenance, bool currentPrivilegesAccepted)
         if (LaunchRuntime(applied.executable, forwarded, applied.launcherProtocol,
                 launchError, ready, canRecover, pending, currentPrivilegesAccepted))
         {
-            if (ready)
+            if (ready && applied.missingOptionalFiles.empty())
             {
                 std::string confirmationError;
                 if (snowdesktop::steam_runtime::ConfirmRuntimeStarted(
                         installRoot, applied.executable, confirmationError))
                 {
-                    const auto pruned = snowdesktop::steam_runtime::PruneInactiveRuntimes(
-                        installRoot, applied.executable);
-                    if (!pruned.error.empty()) AppendLauncherLog(installRoot, pruned.error);
-                    if (pruned.retained != 0)
-                        AppendLauncherLog(installRoot, "occupied inactive runtimes retained until a later launch");
+                    if (!offeredIncomplete)
+                    {
+                        const auto pruned = snowdesktop::steam_runtime::PruneInactiveRuntimes(
+                            installRoot, applied.executable);
+                        if (!pruned.error.empty()) AppendLauncherLog(installRoot, pruned.error);
+                        if (pruned.retained != 0)
+                            AppendLauncherLog(installRoot, "occupied inactive runtimes retained until a later launch");
+                    }
                 }
                 else
                     AppendLauncherLog(installRoot, confirmationError);
             }
-            if (!maintenance && !applied.error.empty())
-                ShowLaunchFailure(installRoot, applied.error, false, true);
+            if (!maintenance && !chosePrevious &&
+                applied.missingOptionalFiles.empty() && !applied.error.empty())
+                ShowLaunchFailure(installRoot, applied.error, false, true, applied.missingFile,
+                    {}, false, applied.missingFilePath);
             return 0;
         }
         std::string detail = pending
@@ -352,10 +470,10 @@ int RunLauncher(bool& maintenance, bool currentPrivilegesAccepted)
             : "runtime startup failed (Win32/exit code " + std::to_string(launchError) + "); " +
                 (canRecover ? "before data access" : "after data access; automatic downgrade disabled");
         AppendLauncherLog(installRoot, detail);
-        if (canRecover && attempt == 0)
+        if (canRecover && attempt == 0 && !chosePrevious)
         {
             auto recovered = snowdesktop::steam_runtime::RecoverAfterLaunchFailure(
-                installRoot, applied.executable, launchAttempt);
+                installRoot, applied, launchAttempt);
             AppendLauncherLog(installRoot, recovered.error);
             if (recovered.ok)
             {
