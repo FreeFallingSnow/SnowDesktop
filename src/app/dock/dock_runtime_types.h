@@ -40,7 +40,6 @@ struct DockWindowPreviewTarget
     DockAppIdentity identity;
     std::wstring identityKey;
     std::wstring targetToken;
-    std::wstring windowKey;
     RECT anchorScreen{};
     bool floatingLayer = false;
     // Borrowed from the running snapshot for synchronous toolbar prefetch.

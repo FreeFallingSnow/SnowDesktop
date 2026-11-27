@@ -978,7 +978,7 @@ void DesktopApp::RefreshDockRunningWindows(
                     candidate.score = score;
                 }
             };
-            if (!pinned && !showThumbnail)
+            if (!pinned)
                 addCandidate(snowdesktop::dock_app_identity_rules::RunningWindowIdentity(
                     pathIt->second, appUserModelId, reinterpret_cast<UINT_PTR>(window), processId, threadId), false);
             if (showThumbnail) addCandidate(source.Key(), true);
@@ -1251,6 +1251,30 @@ void DesktopApp::RefreshDockRunningWindows(
     RefreshDockWindowPreviewItems();
 }
 
+std::optional<RECT> DesktopApp::ResolveDockThumbnailTransitionAnchor(HWND window,
+    std::optional<RECT> requestedAnchor, bool restoring) const
+{
+    if (dockSettings_.minimizeWindowsIntoApplicationIcon || !dockWindowThumbnails_.Find(window))
+        return std::nullopt;
+    const HMONITOR preferredMonitor = requestedAnchor
+        ? MonitorFromRect(&*requestedAnchor, MONITOR_DEFAULTTONEAREST)
+        : MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+    std::optional<RECT> fallback;
+    for (const auto& container : containers_)
+    {
+        const auto* dock = dynamic_cast<const DockContainer*>(container.get());
+        if (!dock) continue;
+        const auto* host = FindPersistentDockHost(dock);
+        if ((!host || !host->active) && (!customDesktopVisible_ || desktopIconsHidden_)) continue;
+        RECT anchor = dock->GetMinimizedThumbnailAnchor(window, lastMousePoint_, restoring);
+        if (IsRectEmpty(&anchor)) continue;
+        MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&anchor), 2);
+        if (dock->GetMonitor() == preferredMonitor) return anchor;
+        if (!fallback) fallback = anchor;
+    }
+    return fallback;
+}
+
 bool DesktopApp::ActivateOrToggleDockItem(
     size_t itemIndex,
     std::optional<snowdesktop::dock_window_rules::DockClickAction>
@@ -1358,6 +1382,10 @@ bool DesktopApp::ActivateOrToggleDockItem(
         (action == DockClickAction::Restore ||
          (action == DockClickAction::Minimize && dockSettings_.summonOnAppMinimize)))
         KeepDockTopmostForAction(*pressedAnchorScreen);
+    if (pressedAnchorScreen && (action == DockClickAction::Minimize || action == DockClickAction::Restore))
+        if (const auto card = ResolveDockThumbnailTransitionAnchor(
+                target, pressedAnchorScreen, action == DockClickAction::Restore))
+            pressedAnchorScreen = card;
     const HWND transitionKeepBelowWindow =
         floatingDockHost_ &&
             IsPersistentDockHostEffectivelyFloating(
@@ -1492,6 +1520,10 @@ bool DesktopApp::ActivateOrToggleDockWindow(
         (action == DockClickAction::Restore ||
          (action == DockClickAction::Minimize && dockSettings_.summonOnAppMinimize)))
         KeepDockTopmostForAction(*pressedAnchorScreen);
+    if (pressedAnchorScreen && (action == DockClickAction::Minimize || action == DockClickAction::Restore))
+        if (const auto card = ResolveDockThumbnailTransitionAnchor(
+                target, pressedAnchorScreen, action == DockClickAction::Restore))
+            pressedAnchorScreen = card;
     const HWND transitionKeepBelowWindow =
         floatingDockHost_ &&
             IsPersistentDockHostEffectivelyFloating(
@@ -1590,11 +1622,8 @@ void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
         ActivateDockWindowFromPreview(window);
         return;
     }
-    // Reuse the exact Dock-icon command path: restoring plays the icon-to-
-    // window transition, activating moves the window to the foreground and
-    // clicking a foreground window minimizes it back into the Dock. The
-    // preview keeps the icon anchor fresh while visible; read it before the
-    // dismissal inside the command path clears it.
+    // Reuse the Dock command path, which selects the animation anchor.
+    // Read the live preview's icon anchor before dismissal clears it.
     //
     // Unlike a Dock icon, a preview card targets one concrete window, so the
     // action must be resolved per-window: a background card of a multi-window

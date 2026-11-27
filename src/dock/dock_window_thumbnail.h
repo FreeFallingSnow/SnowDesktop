@@ -14,6 +14,8 @@
 namespace snowdesktop::dock_window_thumbnail
 {
 inline constexpr float kHorizontalCardAspectRatio = 16.0f / 10.0f;
+D2D1_RECT_F CardFrame(RECT cell, int edge, bool vertical);
+RECT CardAnchor(RECT cell, int edge, bool vertical);
 
 struct WindowIdentity
 {
@@ -32,7 +34,6 @@ class Thumbnail final
 public:
     explicit Thumbnail(WindowIdentity source) : source_(source) {}
     ID2D1Bitmap1* Bitmap(ID2D1DeviceContext& context);
-    float LayoutAspectRatio() const noexcept { return kHorizontalCardAspectRatio; }
 
 private:
     friend class ThumbnailCache;
@@ -44,6 +45,7 @@ private:
     Microsoft::WRL::ComPtr<ID2D1Bitmap1> bitmap_;
     std::uint64_t epoch_ = 0;
     ULONGLONG nextAttempt_ = 0;
+    ULONGLONG nextGraphicsCapture_ = 0;
     bool minimizedInDock_ = false;
     bool minimized_ = false;
     bool foreground_ = false;

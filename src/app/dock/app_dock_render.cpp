@@ -614,14 +614,9 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
     {
         const float edge = static_cast<float>(iconSize);
         auto* thumbnail = app.minimizedThumbnail->Bitmap(*ctx);
-        constexpr float ratio = snowdesktop::dock_window_thumbnail::kHorizontalCardAspectRatio;
-        const float width = verticalDock ? edge : std::min(
-            edge * ratio,
-            static_cast<float>(std::max(1L, rect.right - rect.left)));
-        const float height = verticalDock ? edge / ratio : edge;
-        const float left = (iconRect.left + iconRect.right - width) * 0.5f;
-        const float top = (iconRect.top + iconRect.bottom - height) * 0.5f;
-        const auto frame = D2D1::RectF(left, top, left + width, top + height);
+        const auto frame = snowdesktop::dock_window_thumbnail::CardFrame(rect, iconSize, verticalDock);
+        const float width = frame.right - frame.left;
+        const float height = frame.bottom - frame.top;
 
         ComPtr<ID2D1SolidColorBrush> fill;
         const float surface = lt ? 0.88f : 0.20f;
@@ -644,8 +639,8 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         {
             const float detail = lt ? 0.47f : 0.68f;
             fill->SetColor(D2D1::ColorF(detail, detail, detail, 0.7f * presence));
-            ctx->DrawLine(D2D1::Point2F(left + width * 0.16f, top + height * 0.22f),
-                D2D1::Point2F(left + width * 0.84f, top + height * 0.22f), fill.Get());
+            ctx->DrawLine(D2D1::Point2F(frame.left + width * 0.16f, frame.top + height * 0.22f),
+                D2D1::Point2F(frame.left + width * 0.84f, frame.top + height * 0.22f), fill.Get());
         }
         const long badgeSize = std::max(1L, std::lround(edge * 0.40f));
         const long badgeRight = std::min(verticalDock ? iconRect.right : rect.right,

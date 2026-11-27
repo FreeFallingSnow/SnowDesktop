@@ -1031,6 +1031,8 @@ private:
         HWND pressedTarget = nullptr,
         std::optional<RECT> pressedAnchorScreen =
             std::nullopt);
+    std::optional<RECT> ResolveDockThumbnailTransitionAnchor(HWND window,
+        std::optional<RECT> requestedAnchor, bool restoring) const;
     void ActivateDockWindowFromPreview(HWND window);
     void ActivateDockWindowFromPreviewAnimated(HWND window);
     struct DockWindowActivationOutcome
@@ -1084,8 +1086,6 @@ private:
         const DockAppIdentity& identity,
         bool includeCloaked = false,
         bool preferTaskbarDocumentProxies = true);
-    std::vector<DockWindowPreviewItem> CollectDockPresentationPreviewItems(
-        const DockAppIdentity& identity, std::wstring_view windowKey);
     void CloseDockWindowFromPreview(HWND window);
     void CloseDockApplicationWindows(
         const DockAppIdentity& identity);
@@ -1093,7 +1093,7 @@ private:
         POINT clientPoint, DockWindowPreviewTarget& target);
     void UpdateDockWindowPreview(POINT clientPoint);
     void OnDockWindowPreviewHoverTimer();
-    bool TryOpenDockWindowPicker(POINT clientPoint, bool byTouch = false, bool allowSingleWindow = false);
+    bool TryOpenDockWindowPicker(POINT clientPoint, bool byTouch = false);
     void ShowDockWindowPreview(DockWindowPreviewTarget target, POINT clientPoint,
         const std::vector<DockWindowPreviewItem>& previewItems, bool byTouch = false);
     void RefreshDockWindowPreviewItems();
@@ -3917,7 +3917,6 @@ private:
         dockLaunchBounces_;
     DockPreviewHoverController dockWindowPreviewHover_;
     std::wstring dockWindowPreviewKey_;
-    std::wstring dockWindowPreviewWindowKey_;
     DockAppIdentity dockWindowPreviewIdentity_;
     RECT dockWindowPreviewAnchorScreen_{};
     DWORD systemTaskbarBackdropRefreshTick_ = 0;

@@ -2,9 +2,16 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstdlib>
 #include <d3d11.h>
 #include <dxgi1_4.h>
+#include <windows.graphics.capture.interop.h>
+#include <windows.graphics.directx.direct3d11.interop.h>
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Metadata.h>
+#include <winrt/Windows.Graphics.Capture.h>
+#include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
 #include <utility>
 
 namespace snowdesktop::dock_window_thumbnail
@@ -28,6 +35,20 @@ struct WindowDib
         if (previous && previous != HGDI_ERROR) SelectObject(dc, previous);
         if (bitmap) DeleteObject(bitmap);
         if (dc) DeleteDC(dc);
+    }
+};
+
+namespace capture = winrt::Windows::Graphics::Capture;
+
+struct WindowCapture
+{
+    capture::Direct3D11CaptureFramePool pool{nullptr};
+    capture::GraphicsCaptureSession session{nullptr};
+
+    ~WindowCapture()
+    {
+        try { if (session) session.Close(); } catch (...) {}
+        try { if (pool) pool.Close(); } catch (...) {}
     }
 };
 
@@ -110,7 +131,38 @@ Pixels SamplePixels(const void* buffer, size_t rowPitch, int width, int height)
     return result;
 }
 
-Pixels CaptureRedirectedSurface(WindowIdentity source)
+Pixels ReadTexture(ID3D11Texture2D& texture, ID3D11Device& device, ID3D11DeviceContext& context,
+    int width, int height)
+{
+    D3D11_TEXTURE2D_DESC desc{};
+    texture.GetDesc(&desc);
+    constexpr UINT restricted = D3D11_RESOURCE_MISC_RESTRICTED_CONTENT |
+        D3D11_RESOURCE_MISC_RESTRICT_SHARED_RESOURCE | D3D11_RESOURCE_MISC_RESTRICT_SHARED_RESOURCE_DRIVER |
+        D3D11_RESOURCE_MISC_HW_PROTECTED;
+    if ((desc.MiscFlags & restricted) || desc.SampleDesc.Count != 1 ||
+        (desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM && desc.Format != DXGI_FORMAT_B8G8R8X8_UNORM) ||
+        !IsUsableSize(width, height) ||
+        desc.Width < static_cast<UINT>(width) || desc.Height < static_cast<UINT>(height))
+        return {};
+
+    desc.Width = static_cast<UINT>(width);
+    desc.Height = static_cast<UINT>(height);
+    desc.MipLevels = desc.ArraySize = 1;
+    desc.Usage = D3D11_USAGE_STAGING;
+    desc.BindFlags = desc.MiscFlags = 0;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> staging;
+    if (FAILED(device.CreateTexture2D(&desc, nullptr, &staging))) return {};
+    const D3D11_BOX bounds{0, 0, 0, desc.Width, desc.Height, 1};
+    context.CopySubresourceRegion(staging.Get(), 0, 0, 0, 0, &texture, 0, &bounds);
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(context.Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) return {};
+    Pixels pixels = SamplePixels(mapped.pData, mapped.RowPitch, width, height);
+    context.Unmap(staging.Get(), 0);
+    return pixels;
+}
+
+Pixels CaptureRedirectedSurface(WindowIdentity source, bool iconic)
 {
     // An optional DWM surface may still be available when the application
     // cannot paint a minimized window. Require explicit capture permission.
@@ -146,29 +198,79 @@ Pixels CaptureRedirectedSurface(WindowIdentity source)
     if (FAILED(device->OpenSharedResource(sharedHandle, IID_PPV_ARGS(&texture)))) return {};
     D3D11_TEXTURE2D_DESC desc{};
     texture->GetDesc(&desc);
-    constexpr UINT restricted = D3D11_RESOURCE_MISC_RESTRICTED_CONTENT |
-        D3D11_RESOURCE_MISC_RESTRICT_SHARED_RESOURCE | D3D11_RESOURCE_MISC_RESTRICT_SHARED_RESOURCE_DRIVER |
-        D3D11_RESOURCE_MISC_HW_PROTECTED;
-    if ((desc.MiscFlags & restricted) || desc.SampleDesc.Count != 1 ||
-        (desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM && desc.Format != DXGI_FORMAT_B8G8R8X8_UNORM) ||
-        !IsUsableSize(static_cast<int>(desc.Width), static_cast<int>(desc.Height)) ||
-        !AllowsRedirectedSurface(source))
-        return {};
-
-    desc.MipLevels = desc.ArraySize = 1;
-    desc.Usage = D3D11_USAGE_STAGING;
-    desc.BindFlags = desc.MiscFlags = 0;
-    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    ComPtr<ID3D11Texture2D> staging;
-    if (FAILED(device->CreateTexture2D(&desc, nullptr, &staging))) return {};
-    context->CopySubresourceRegion(staging.Get(), 0, 0, 0, 0, texture.Get(), 0, nullptr);
-    D3D11_MAPPED_SUBRESOURCE mapped{};
-    if (FAILED(context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) return {};
-    Pixels pixels = SamplePixels(mapped.pData, mapped.RowPitch,
-        static_cast<int>(desc.Width), static_cast<int>(desc.Height));
-    context->Unmap(staging.Get(), 0);
+    const int width = static_cast<int>(desc.Width);
+    const int height = static_cast<int>(desc.Height);
+    if (iconic || IsIconic(source.window))
+    {
+        // DWM can retain just the minimized title bar as a redirected
+        // surface. Text and caption buttons still contain color detail.
+        const SIZE expected = ReadWindowSize(source.window, true);
+        if (width < expected.cx / 2 || height < expected.cy / 2) return {};
+    }
+    if (!AllowsRedirectedSurface(source)) return {};
+    auto pixels = ReadTexture(*texture.Get(), *device.Get(), *context.Get(), width, height);
     if (!AllowsRedirectedSurface(source)) return {};
     return pixels;
+}
+
+Pixels CaptureVisibleWindow(WindowIdentity source)
+{
+    namespace directx = winrt::Windows::Graphics::DirectX;
+    if (!IsWindowVisible(source.window) || IsIconic(source.window) || !AllowsRedirectedSurface(source))
+        return {};
+    try
+    {
+        if (!capture::GraphicsCaptureSession::IsSupported()) return {};
+        capture::GraphicsCaptureItem item{nullptr};
+        const auto interop = winrt::get_activation_factory<capture::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
+        if (FAILED(interop->CreateForWindow(source.window,
+                winrt::guid_of<capture::GraphicsCaptureItem>(), winrt::put_abi(item))) || !item)
+            return {};
+        const auto size = item.Size();
+        if (!IsUsableSize(size.Width, size.Height)) return {};
+
+        winrt::com_ptr<ID3D11Device> device;
+        winrt::com_ptr<ID3D11DeviceContext> context;
+        if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
+                device.put(), nullptr, context.put()))) return {};
+        winrt::com_ptr<IInspectable> inspectable;
+        winrt::check_hresult(CreateDirect3D11DeviceFromDXGIDevice(
+            device.as<IDXGIDevice>().get(), inspectable.put()));
+        const auto graphicsDevice = inspectable.as<directx::Direct3D11::IDirect3DDevice>();
+        WindowCapture captureWork;
+        captureWork.pool = capture::Direct3D11CaptureFramePool::CreateFreeThreaded(
+            graphicsDevice, directx::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size);
+        captureWork.session = captureWork.pool.CreateCaptureSession(item);
+        if (winrt::Windows::Foundation::Metadata::ApiInformation::IsPropertyPresent(
+                L"Windows.Graphics.Capture.GraphicsCaptureSession", L"IsCursorCaptureEnabled"))
+            captureWork.session.IsCursorCaptureEnabled(false);
+        if (!AllowsRedirectedSurface(source) || IsIconic(source.window)) return {};
+        captureWork.session.StartCapture();
+        const ULONGLONG deadline = GetTickCount64() + 180;
+        do
+        {
+            if (!AllowsRedirectedSurface(source) || IsIconic(source.window)) return {};
+            if (auto frame = captureWork.pool.TryGetNextFrame())
+            {
+                const auto content = frame.ContentSize();
+                const auto surface = frame.Surface().as<
+                    ::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();
+                winrt::com_ptr<ID3D11Texture2D> texture;
+                winrt::check_hresult(surface->GetInterface(__uuidof(ID3D11Texture2D), texture.put_void()));
+                auto pixels = ReadTexture(
+                    *texture.get(), *device.get(), *context.get(), content.Width, content.Height);
+                frame.Close();
+                if (!pixels.data.empty() && AllowsRedirectedSurface(source)) return pixels;
+            }
+            Sleep(8);
+        } while (GetTickCount64() < deadline);
+    }
+    catch (const winrt::hresult_error&)
+    {
+        // Capture availability and permission can change with the window.
+    }
+    return {};
 }
 
 Pixels PrintWindowPixels(WindowIdentity source, bool iconic)
@@ -212,14 +314,34 @@ Pixels PrintWindowPixels(WindowIdentity source, bool iconic)
     return {};
 }
 
-Pixels CapturePixels(WindowIdentity source)
+Pixels CapturePixels(WindowIdentity source, bool allowGraphicsCapture)
 {
     if (!AllowsPreview(source)) return {};
     const bool iconic = IsIconic(source.window) != FALSE;
-    auto result = iconic ? CaptureRedirectedSurface(source) : PrintWindowPixels(source, false);
+    auto result = iconic ? CaptureRedirectedSurface(source, true) : PrintWindowPixels(source, false);
     if (!result.data.empty()) return result;
-    return iconic ? PrintWindowPixels(source, true) : CaptureRedirectedSurface(source);
+    result = iconic ? PrintWindowPixels(source, true) : CaptureRedirectedSurface(source, false);
+    if (!result.data.empty()) return result;
+    return !iconic && allowGraphicsCapture ? CaptureVisibleWindow(source) : Pixels{};
 }
+}
+
+D2D1_RECT_F CardFrame(RECT cell, int edge, bool vertical)
+{
+    const float size = static_cast<float>(edge);
+    const float width = vertical ? size : std::min(size * kHorizontalCardAspectRatio,
+        static_cast<float>(std::max(1L, cell.right - cell.left)));
+    const float height = vertical ? size / kHorizontalCardAspectRatio : size;
+    const float left = (cell.left + cell.right - width) * 0.5f;
+    const float top = (cell.top + cell.bottom - height) * 0.5f;
+    return D2D1::RectF(left, top, left + width, top + height);
+}
+
+RECT CardAnchor(RECT cell, int edge, bool vertical)
+{
+    const auto frame = CardFrame(cell, edge, vertical);
+    return {std::lround(frame.left), std::lround(frame.top),
+        std::lround(frame.right), std::lround(frame.bottom)};
 }
 
 WindowIdentity WindowIdentity::Capture(HWND window) noexcept
@@ -309,11 +431,13 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
         state.pending_ = false;
         state.refreshNeeded_ = true;
         state.nextAttempt_ = 0;
+        state.nextGraphicsCapture_ = 0;
     }
     if (state.minimized_ != minimized || (foreground && !state.foreground_))
     {
         state.refreshNeeded_ = true;
         state.nextAttempt_ = 0;
+        if (state.minimized_ && !minimized) state.nextGraphicsCapture_ = 0;
     }
     state.minimized_ = minimized;
     state.foreground_ = foreground;
@@ -348,10 +472,12 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
     const auto source = state.source_;
     const auto epoch = epoch_;
     const auto weak = std::weak_ptr{thumbnail};
+    const bool allowGraphicsCapture = !minimized && state.pixels_.empty() &&
+        now >= state.nextGraphicsCapture_ && (foreground || state.nextGraphicsCapture_ == 0);
     state.pending_ = work_.Submit(source.Key() + L":" +
         std::to_wstring(reinterpret_cast<UINT_PTR>(thumbnail.get())),
-        [source, weak] {
-            return weak.expired() ? Pixels{} : CapturePixels(source);
+        [source, weak, allowGraphicsCapture] {
+            return weak.expired() ? Pixels{} : CapturePixels(source, allowGraphicsCapture);
         }, [this, source, minimized, weak, epoch](Pixels pixels) {
             const auto target = weak.lock();
             if (!target || epoch != epoch_) return;
@@ -371,7 +497,11 @@ void ThumbnailCache::Refresh(const std::shared_ptr<Thumbnail>& thumbnail, bool m
             target->bitmap_.Reset();
             changed_ |= target->minimized_;
         }, notifyWindow, message);
-    if (state.pending_) state.refreshNeeded_ = false;
+    if (state.pending_)
+    {
+        state.refreshNeeded_ = false;
+        if (allowGraphicsCapture) state.nextGraphicsCapture_ = now + 5000;
+    }
 }
 
 void ThumbnailCache::Clear()

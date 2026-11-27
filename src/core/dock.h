@@ -159,6 +159,7 @@ public:
     RECT GetWindowsButtonRect() const;
     RECT GetSearchRect() const;
     RECT GetInteractiveBounds() const;
+    RECT GetMinimizedThumbnailAnchor(HWND window, POINT pointer, bool restoring) const;
     HMONITOR GetMonitor() const;
     RECT GetAnimationVisualBounds(bool reserveForLaunch = false) const;
     std::vector<RECT> GetOcclusionRects(POINT pointer) const;
@@ -249,6 +250,7 @@ private:
     int ScaledSpacing() const;
     int ScaledSeparatorGap() const;
     float RunningSlotUnits() const;
+    RECT BoundsForRunningUnits(float runningUnits) const;
     std::vector<std::wstring> EntryRemovalKeys() const;
     void ReconcileEntryRemovals() const;
     float EntryRemovalUnits(bool folder) const;
@@ -282,9 +284,11 @@ private:
         int tooltipHeight) const;
     bool IsFocusedElementRect(const RECT& baseRect, POINT pointer) const;
     RECT GetScrollViewport(const RECT& bounds) const;
+    RECT GetScrollViewport(const RECT& bounds, float runningUnits) const;
     RECT GetVisualScrollViewport(POINT pointer) const;
     // Grouped files and utility controls keep their trailing layout.
     int GetMaxScrollOffset(const RECT& bounds) const;
+    int GetMaxScrollOffset(const RECT& bounds, float runningUnits) const;
     bool IsPointInScrollViewport(POINT point) const;
     size_t InsertIndexFor(Slot* slot, HitRegion region) const;
     HitRegion RedirectDragToNearestInsertion(

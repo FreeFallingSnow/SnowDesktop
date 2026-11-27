@@ -37,12 +37,29 @@
 
 namespace
 {
+float ThumbnailSlotUnits(float iconFraction)
+{
+    return 1.0f + iconFraction *
+        (snowdesktop::dock_window_thumbnail::kHorizontalCardAspectRatio - 1.0f);
+}
+
 float RunningItemSlotUnits(const DockRunningAppInfo& running, float iconFraction)
 {
-    const float units = iconFraction > 0.0f && running.minimizedThumbnail
-        ? 1.0f + iconFraction * (running.minimizedThumbnail->LayoutAspectRatio() - 1.0f)
-        : 1.0f;
+    const float units = running.minimizedThumbnail ? ThumbnailSlotUnits(iconFraction) : 1.0f;
     return units * running.presence.Amount();
+}
+
+RECT DockAxisCell(const RECT& bounds, bool vertical, int pitch, int spacing,
+    int separatorGap, int scrollOffset, const snowdesktop::dock_entry_removal::AxisGroup& offset,
+    float begin, float amount)
+{
+    using snowdesktop::dock_running_animation::AxisLength;
+    const int start = spacing / 2 + AxisLength(offset.begin + begin, pitch) +
+        AxisLength(offset.gaps, separatorGap) - scrollOffset;
+    const int length = AxisLength(begin + amount, pitch) - AxisLength(begin, pitch);
+    if (vertical)
+        return {bounds.left, bounds.top + start, bounds.right, bounds.top + start + length};
+    return {bounds.left + start, bounds.top, bounds.left + start + length, bounds.bottom};
 }
 
 float RunningDividerAmount(const std::vector<DockRunningAppInfo>& runningApps)
@@ -890,7 +907,11 @@ size_t DockContainer::EmptyRunningDragFileSlots() const
 RECT DockContainer::GetBounds() const
 {
     ReconcileEntryRemovals();
-    const float runningUnits = RunningSlotUnits();
+    return BoundsForRunningUnits(RunningSlotUnits());
+}
+
+RECT DockContainer::BoundsForRunningUnits(float runningUnits) const
+{
     const size_t frequentCount = app_
         ? app_->GetFrequentDockItemIndices().size() : 0;
     const bool showWindowsButton = app_ && ShowDockWindowsButton(app_->dockSettings_);
@@ -1978,10 +1999,14 @@ RECT DockContainer::GetVisualScrollViewport(POINT pointer) const
 
 RECT DockContainer::GetScrollViewport(const RECT& bounds) const
 {
+    return GetScrollViewport(bounds, RunningSlotUnits());
+}
+
+RECT DockContainer::GetScrollViewport(const RECT& bounds, float runningUnits) const
+{
     RECT viewport = bounds;
     const int halfGap = ScaledSpacing() / 2;
     const bool showWindows = app_ && ShowDockWindowsButton(app_->dockSettings_);
-    const float runningUnits = RunningSlotUnits();
     const size_t frequentCount = app_
         ? app_->GetFrequentDockItemIndices().size() : 0;
     const float fixedUnits = FixedEntryUnits() + static_cast<float>(EmptyRunningDragFixedSlots()) + AdditionalSlotUnits(false);
@@ -2014,18 +2039,104 @@ RECT DockContainer::GetScrollViewport(const RECT& bounds) const
 
 int DockContainer::GetMaxScrollOffset(const RECT& bounds) const
 {
+    return GetMaxScrollOffset(bounds, RunningSlotUnits());
+}
+
+int DockContainer::GetMaxScrollOffset(const RECT& bounds, float runningUnits) const
+{
     const size_t frequentCount = app_
         ? app_->GetFrequentDockItemIndices().size() : 0;
     const auto axis = snowdesktop::dock_entry_removal::LayoutAxis({FixedEntryUnits() + static_cast<float>(EmptyRunningDragFixedSlots()) + AdditionalSlotUnits(false),
-        RunningSlotUnits(), static_cast<float>(frequentCount), 0.0f});
+        runningUnits, static_cast<float>(frequentCount), 0.0f});
     const long long contentExtent = snowdesktop::dock_running_animation::AxisLength(axis.units, ItemPitch()) +
         snowdesktop::dock_running_animation::AxisLength(axis.gaps, ScaledSeparatorGap());
-    const RECT viewport = GetScrollViewport(bounds);
+    const RECT viewport = GetScrollViewport(bounds, runningUnits);
     const int viewportExtent = std::max(0, IsVertical()
         ? static_cast<int>(viewport.bottom - viewport.top)
         : static_cast<int>(viewport.right - viewport.left));
     return static_cast<int>(std::clamp<long long>(
         contentExtent - viewportExtent, 0, std::numeric_limits<int>::max()));
+}
+
+RECT DockContainer::GetMinimizedThumbnailAnchor(HWND window, POINT pointer, bool restoring) const
+{
+    if (!app_ || !window) return {};
+    const bool vertical = IsVertical();
+    const int pitch = ItemPitch();
+    const int spacing = ScaledSpacing();
+    const int separatorGap = ScaledSeparatorGap();
+    const int iconSize = ItemIconSize();
+    const float cardUnits = ThumbnailSlotUnits(vertical ? 0.0f : static_cast<float>(iconSize) / pitch);
+    namespace thumbnails = snowdesktop::dock_window_thumbnail;
+    if (restoring)
+    {
+        for (const auto& slot : const_cast<DockContainer*>(this)->GetSlots())
+        {
+            if (!slot) continue;
+            const auto* item = dynamic_cast<const DockRunningItem*>(slot->GetItem());
+            if (!item || item->GetRunningIndex() >= app_->dockUnpinnedRunningApps_.size()) continue;
+            const auto& app = app_->dockUnpinnedRunningApps_[item->GetRunningIndex()];
+            if (!app.minimizedThumbnail || app.window != window || !app.presence.Interactive()) continue;
+            const RECT base = item->GetBounds();
+            const RECT visual = GetElementVisualRect(base, pointer);
+            const int edge = std::max(1, static_cast<int>(std::lround(
+                GetElementIconSize(base, visual) * app.presence.Amount())));
+            const RECT card = thumbnails::CardAnchor(visual, edge, vertical);
+            const RECT viewport = GetVisualScrollViewport(pointer);
+            RECT clipped{};
+            if (IntersectRect(&clipped, &card, &viewport)) return clipped;
+            break;
+        }
+        return {};
+    }
+
+    float icons = 0.0f;
+    float cards = 0.0f;
+    std::optional<float> beforeCard;
+    for (const auto& app : app_->dockUnpinnedRunningApps_)
+    {
+        if (app.minimizedThumbnail && app.window == window)
+        {
+            beforeCard = cards;
+            cards += cardUnits;
+        }
+        else if (app.presence.Visible())
+        {
+            if (app.minimizedThumbnail) cards += cardUnits;
+            else icons += 1.0f;
+        }
+    }
+    // New cards append after existing cards. Project the settled layout
+    // without inserting a task or changing the live Dock's scroll position.
+    if (!beforeCard)
+    {
+        beforeCard = cards;
+        cards += cardUnits;
+    }
+    const float divider = icons > 0.0f ? static_cast<float>(separatorGap) / pitch : 0.0f;
+    const float runningUnits = icons + divider + cards;
+    const RECT bounds = BoundsForRunningUnits(runningUnits);
+    const int maxOffset = GetMaxScrollOffset(bounds, runningUnits);
+    const auto axis = snowdesktop::dock_entry_removal::LayoutDockAxis(
+        ShowDockWindowsButton(app_->dockSettings_),
+        FixedEntryUnits() + static_cast<float>(EmptyRunningDragFixedSlots()) + AdditionalSlotUnits(false),
+        runningUnits, static_cast<float>(app_->GetFrequentDockItemIndices().size()), FolderEntryUnits());
+    const RECT cell = DockAxisCell(bounds, vertical, pitch, spacing, separatorGap,
+        std::clamp(scrollOffset_, 0, maxOffset), axis.groups[2], icons + divider + *beforeCard, cardUnits);
+    const RECT card = thumbnails::CardAnchor(cell, iconSize, vertical);
+    const RECT viewport = GetScrollViewport(bounds, runningUnits);
+    RECT clipped{};
+    if (IntersectRect(&clipped, &card, &viewport) &&
+        clipped.right - clipped.left > 1 && clipped.bottom - clipped.top > 1) return clipped;
+    if (viewport.right - viewport.left < 2 || viewport.bottom - viewport.top < 2) return {};
+    // A scrolled-out card enters at the edge of the scrollable section.
+    if (vertical)
+    {
+        const LONG edge = cell.top < viewport.top ? viewport.top : viewport.bottom - 2;
+        return {card.left, edge, card.right, edge + 2};
+    }
+    const LONG edge = cell.left < viewport.left ? viewport.left : viewport.right - 2;
+    return {edge, card.top, edge + 2, card.bottom};
 }
 
 bool DockContainer::IsPointInScrollViewport(POINT point) const
@@ -2178,13 +2289,8 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
     const int halfGap = spacing / 2;
     const float runningIconFraction = IsVertical() ? 0.0f : static_cast<float>(pitch - spacing) / pitch;
     const auto makeCell = [&](size_t group, float begin, float amount = 1.0f) {
-        const auto& offset = axis.groups[group];
-        const int start = motion::AxisLength(offset.begin + begin, pitch) +
-            motion::AxisLength(offset.gaps, ScaledSeparatorGap()) - scrollOffset_;
-        const int length = motion::AxisLength(begin + amount, pitch) - motion::AxisLength(begin, pitch);
-        if (IsVertical())
-            return RECT{bounds.left, bounds.top + halfGap + start, bounds.right, bounds.top + halfGap + start + length};
-        return RECT{bounds.left + halfGap + start, bounds.top, bounds.left + halfGap + start + length, bounds.bottom};
+        return DockAxisCell(bounds, IsVertical(), pitch, spacing, ScaledSeparatorGap(),
+            scrollOffset_, axis.groups[group], begin, amount);
     };
     const auto trailingCell = [&](float before, float amount = 1.0f) {
         const int start = motion::AxisLength(before, pitch);

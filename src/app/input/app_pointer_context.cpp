@@ -758,14 +758,12 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             if (runningIndex <
                 dockUnpinnedRunningApps_.size())
             {
+                if (dockUnpinnedRunningApps_[runningIndex].minimizedThumbnail) return;
                 ClearSelection();
                 DismissDockWindowPreviewUntilLeave();
                 InvalidateRect(
                     hwnd_, nullptr, FALSE);
-                if (dockUnpinnedRunningApps_[runningIndex].minimizedThumbnail)
-                    (void)TryOpenDockWindowPicker(pt, false, true);
-                else
-                    ShowDockRunningAppContextMenu(screenPt, runningIndex);
+                ShowDockRunningAppContextMenu(screenPt, runningIndex);
                 return;
             }
         }

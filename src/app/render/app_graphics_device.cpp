@@ -383,7 +383,9 @@ void DesktopApp::InitializeDockWindowTransition()
                 -> std::optional<DockWindowTransition::MinimizeTarget> {
                 if (!generalSettings_.dockEnabled || reloading_) return std::nullopt;
                 RECT anchor = requestedAnchor.value_or(RECT{});
-                if (!requestedAnchor)
+                if (const auto card = ResolveDockThumbnailTransitionAnchor(window, requestedAnchor, false))
+                    anchor = *card;
+                else if (!requestedAnchor)
                 {
                     const HMONITOR sourceMonitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
                     bool foundOnMonitor = false;
