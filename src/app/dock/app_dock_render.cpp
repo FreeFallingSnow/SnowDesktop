@@ -608,7 +608,6 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         rect.top + (rect.bottom - rect.top + iconSize) / 2
     };
     const bool lt = (CurrentDockAppearance(dockMonitor).contentTheme == 1);
-    const bool useDemoIdentity = generalSettings_.demoModeEnabled && demoIdentityAssetsAvailable_;
     if (app.minimizedThumbnail)
     {
         const float edge = static_cast<float>(iconSize);
@@ -640,40 +639,33 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         const long badgeRight = std::min(iconRect.right, std::lround(frame.right) + badgeSize / 5);
         const long badgeBottom = std::min(iconRect.bottom, std::lround(frame.bottom) + badgeSize / 5);
         const RECT badge{badgeRight - badgeSize, badgeBottom - badgeSize, badgeRight, badgeBottom};
-        if (auto* appIcon = GetOrCreateD2DBitmap(app.iconBitmap, false))
-            DrawIconBitmap(ctx, appIcon, badge, presence, reinterpret_cast<std::uintptr_t>(&app), true);
+        if (auto* appIcon = GetOrCreateD2DBitmap(app.iconBitmap))
+            DrawIconBitmap(ctx, appIcon, badge, presence, reinterpret_cast<std::uintptr_t>(&app));
         else
             DrawPlaceholderIcon(ctx, -1, badge, presence, true);
-        if (app.foreground)
-        {
-            const float tone = lt ? 0.12f : 0.96f;
-            ComPtr<ID2D1SolidColorBrush> focus;
-            if (SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(tone, tone, tone, 0.72f * presence), &focus)))
-                ctx->DrawRectangle(frame, focus.Get(), std::max(1.0f, edge * 0.04f));
-        }
-        if (dockWindowAttention_.HasAny(app.window, app.trackedWindows))
-            DrawDockAttentionDot(ctx, iconRect, presence);
-        if (state == 2) DrawDockSelectionIndicator(ctx, iconRect, lt);
-        return;
+    }
+    else
+    {
+        const bool useDemoIdentity = generalSettings_.demoModeEnabled && demoIdentityAssetsAvailable_;
+        auto* bitmap = useDemoIdentity ? nullptr : GetOrCreateD2DBitmap(app.iconBitmap);
+        const auto drawIcon = [&](ID2D1DeviceContext* drawing) {
+            if (useDemoIdentity)
+            {
+                const std::wstring_view identity = app.identityKey.empty()
+                    ? std::wstring_view(app.executablePath)
+                    : std::wstring_view(app.identityKey);
+                DrawDemoIdentityIcon(drawing, identity, iconRect);
+            }
+            else if (bitmap)
+                DrawIconBitmap(drawing, bitmap, iconRect,
+                    presence, reinterpret_cast<std::uintptr_t>(&app));
+            else
+                DrawPlaceholderIcon(drawing, -1, iconRect, presence, true);
+        };
+        DrawIconWithShadows(ctx, iconRect, GetItemLayoutScale(iconRect), iconShadows_.DockStrength(),
+            drawIcon, {bitmap, presence});
     }
 
-    auto* bitmap = useDemoIdentity ? nullptr : GetOrCreateD2DBitmap(app.iconBitmap);
-    const auto drawIcon = [&](ID2D1DeviceContext* drawing) {
-        if (useDemoIdentity)
-        {
-            const std::wstring_view identity = app.identityKey.empty()
-                ? std::wstring_view(app.executablePath)
-                : std::wstring_view(app.identityKey);
-            DrawDemoIdentityIcon(drawing, identity, iconRect);
-        }
-        else if (bitmap)
-            DrawIconBitmap(drawing, bitmap, iconRect,
-                presence, reinterpret_cast<std::uintptr_t>(&app));
-        else
-            DrawPlaceholderIcon(drawing, -1, iconRect, presence, true);
-    };
-    DrawIconWithShadows(ctx, iconRect, GetItemLayoutScale(iconRect), iconShadows_.DockStrength(),
-        drawIcon, {bitmap, presence});
     if (dockWindowAttention_.HasAny(app.window, app.trackedWindows))
         DrawDockAttentionDot(ctx, iconRect, presence);
     if (state == 2)
