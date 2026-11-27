@@ -2999,5 +2999,6 @@
   "app.launcher.role.winui": "設定ウィンドウとステータスバーのシステムパネルの UI ランタイム",
   "app.launcher.role.webView": "埋め込み Web ページを表示する WebView2 コンポーネント",
   "app.launcher.role.windowsAI": "Windows App SDK の AI および機械学習コンポーネント",
-  "app.launcher.role.windowsServices": "検索、ウィジェット、通知、アプリの再起動などの Windows App SDK サービス"
+  "app.launcher.role.windowsServices": "検索、ウィジェット、通知、アプリの再起動などの Windows App SDK サービス",
+  "app.launcher.role.windowsRuntimeStartup": "SnowDesktop の起動時に Windows App SDK と WinRT コンポーネントを初期化"
 }

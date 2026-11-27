@@ -2999,5 +2999,6 @@
   "app.launcher.role.winui": "设置窗口和状态栏系统面板的界面运行时",
   "app.launcher.role.webView": "用于显示嵌入网页的 WebView2 模块",
   "app.launcher.role.windowsAI": "Windows App SDK 的 AI 和机器学习组件",
-  "app.launcher.role.windowsServices": "Windows App SDK 的系统服务，例如搜索、小组件、通知和应用重启"
+  "app.launcher.role.windowsServices": "Windows App SDK 的系统服务，例如搜索、小组件、通知和应用重启",
+  "app.launcher.role.windowsRuntimeStartup": "在 SnowDesktop 启动时初始化 Windows App SDK 和 WinRT 组件"
 }

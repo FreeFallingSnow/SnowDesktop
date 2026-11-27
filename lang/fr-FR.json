@@ -2999,5 +2999,6 @@
   "app.launcher.role.winui": "Environnement d’interface pour la fenêtre des paramètres et le panneau système de la barre d’état",
   "app.launcher.role.webView": "Composant WebView2 permettant d’afficher des pages web intégrées",
   "app.launcher.role.windowsAI": "Composants d’IA et d’apprentissage automatique du SDK d’application Windows",
-  "app.launcher.role.windowsServices": "Services du SDK d’application Windows, dont la recherche, les widgets, les notifications et le redémarrage des applications"
+  "app.launcher.role.windowsServices": "Services du SDK d’application Windows, dont la recherche, les widgets, les notifications et le redémarrage des applications",
+  "app.launcher.role.windowsRuntimeStartup": "Initialise le SDK d’application Windows et les composants WinRT au démarrage de SnowDesktop"
 }
