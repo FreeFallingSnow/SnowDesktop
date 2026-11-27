@@ -2973,5 +2973,10 @@
   "settings.debug.touchSimulation.mouseMiddle": "マウスの中央ボタン",
   "settings.debug.touchSimulation.mouseBack": "マウスのサイドボタン 1",
   "settings.debug.touchSimulation.mouseForward": "マウスのサイドボタン 2",
-  "app.dock.add_icon_border": "枠線を追加"
+  "app.dock.add_icon_border": "枠線を追加",
+  "settings.dock.freeItemOrder": "自由に並べ替え",
+  "settings.dock.freeItemOrder.description": "ピン留めした項目、ファイル、ごみ箱をドラッグして、好きな順序に並べ替えます。",
+  "app.dock.separator": "区切り線",
+  "app.dock.add_separator": "区切り線を追加",
+  "app.dock.remove_separator": "区切り線を削除"
 }

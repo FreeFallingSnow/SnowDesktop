@@ -2973,5 +2973,10 @@
   "settings.debug.touchSimulation.mouseMiddle": "鼠标中键",
   "settings.debug.touchSimulation.mouseBack": "鼠标侧键 1",
   "settings.debug.touchSimulation.mouseForward": "鼠标侧键 2",
-  "app.dock.add_icon_border": "添加边框"
+  "app.dock.add_icon_border": "添加边框",
+  "settings.dock.freeItemOrder": "自由排列",
+  "settings.dock.freeItemOrder.description": "拖动固定项、文件和回收站，自由调整顺序。",
+  "app.dock.separator": "分割线",
+  "app.dock.add_separator": "添加分割线",
+  "app.dock.remove_separator": "删除分割线"
 }

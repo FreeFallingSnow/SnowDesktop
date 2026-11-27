@@ -2973,5 +2973,10 @@
   "settings.debug.touchSimulation.mouseMiddle": "Botón central del ratón",
   "settings.debug.touchSimulation.mouseBack": "Botón lateral 1 del ratón",
   "settings.debug.touchSimulation.mouseForward": "Botón lateral 2 del ratón",
-  "app.dock.add_icon_border": "Añadir borde"
+  "app.dock.add_icon_border": "Añadir borde",
+  "settings.dock.freeItemOrder": "Orden libre",
+  "settings.dock.freeItemOrder.description": "Arrastra los elementos anclados, los archivos y la Papelera de reciclaje para ponerlos en el orden que quieras.",
+  "app.dock.separator": "Separador",
+  "app.dock.add_separator": "Añadir separador",
+  "app.dock.remove_separator": "Quitar separador"
 }
