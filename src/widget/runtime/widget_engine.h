@@ -1042,6 +1042,8 @@ public:
     void UpdateInteractionHover(const std::wstring& widgetId, int x, int y,
         std::string_view surface = "desktop");
     void ClearInteractionHover(std::string_view surface = {});
+    void SetDesktopTouchHover(const std::wstring& widgetId, int x, int y);
+    bool ClearDesktopTouchHoverUnless(std::wstring_view widgetId = {});
     void EnableHostedInteractionTooltips() { hostedInteractionTooltips_ = true; }
     bool UsesHostedInteractionTooltips() const { return hostedInteractionTooltips_; }
     bool MeasureHoveredInteractionTooltip(const std::wstring& widgetId,
@@ -1406,6 +1408,7 @@ private:
      * @return 找到返回索引，否则返回 -1
      */
     bool hostedInteractionTooltips_ = false;
+    std::wstring desktopTouchHoverWidgetId_;
     int FindWidget(const std::wstring& widgetId) const;
     bool PackageImageQuotaIgnored(const std::wstring& widgetId) const;
     bool PersistPackageImageQuotaOverride(const std::wstring& widgetId);

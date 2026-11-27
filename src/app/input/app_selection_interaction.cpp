@@ -251,6 +251,12 @@ bool DesktopApp::IsMarqueePointerGesturePendingOrActive() const
 
 bool DesktopApp::ClearSelection(const DesktopWidget* localWidget)
 {
+    if (widgetEngine_)
+    {
+        const auto* retained = localWidget && IsLuaDesktopSurface(*localWidget)
+            ? ResolveLuaWidgetContent(localWidget) : nullptr;
+        widgetEngine_->ClearDesktopTouchHoverUnless(retained ? std::wstring_view(retained->id) : std::wstring_view{});
+    }
     bool changed = ClearDesktopSurfaceKeyboardFocus() || keyboardNavVisualFocus_;
     changed |= ClearFolderPreviewHeaderFocus();
     for (const auto& container : containers_)

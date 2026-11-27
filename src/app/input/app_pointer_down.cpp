@@ -1042,7 +1042,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         }
 
         // An input field owns its pointer interaction and editing focus.
-        const bool otherSelectionChanged = hostInputArea
+        const bool touch = !snowdesktop::touch_input::CanHover() && !snowdesktop::private_pointer::Active();
+        const bool otherSelectionChanged = hostInputArea && !touch
             ? ClearSelection(&ResolveLuaWidgetFrameOwner(widgets_[wi]))
             : SelectWidgetOnly(wi);
         mouseDownWidgetIndex_ = wi;
@@ -1054,6 +1055,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 luaFrame = GetStandaloneWidgetFrameRect(widgets_[wi]);
             int localX = pt.x - luaFrame.left;
             int localY = pt.y - luaFrame.top;
+            if (touch) widgetEngine_->SetDesktopTouchHover(luaContent->id, localX, localY);
             if (!widgetEngine_->HandleHostUiPointer(
                     luaContent->id, localX, localY, 0, false))
                 widgetEngine_->InvokeMouseEvent(luaContent->id, "onMouseDown",

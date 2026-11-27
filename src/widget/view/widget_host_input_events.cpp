@@ -501,6 +501,20 @@ void WidgetEngine::UpdateInteractionHover(
     }
 }
 
+void WidgetEngine::SetDesktopTouchHover(const std::wstring& widgetId, int x, int y)
+{
+    desktopTouchHoverWidgetId_ = widgetId;
+    UpdateInteractionHover(widgetId, x, y, "desktop");
+}
+
+bool WidgetEngine::ClearDesktopTouchHoverUnless(std::wstring_view widgetId)
+{
+    if (desktopTouchHoverWidgetId_.empty() || desktopTouchHoverWidgetId_ == widgetId) return false;
+    desktopTouchHoverWidgetId_.clear();
+    ClearInteractionHover("desktop");
+    return true;
+}
+
 void WidgetEngine::ClearInteractionHover(std::string_view surface)
 {
     for (auto& widget : widgets_)
@@ -521,7 +535,7 @@ void WidgetEngine::ClearInteractionHover(std::string_view surface)
         };
         if (surface.empty())
         {
-            clearSurface("desktop");
+            if (widget.widgetId != desktopTouchHoverWidgetId_) clearSurface("desktop");
             if (widget.panelActive)
                 clearSurface(widget.panelSurface);
         }

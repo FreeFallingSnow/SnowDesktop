@@ -70,6 +70,7 @@ struct ScrollTarget
     bool draggable = false;
     bool doubleTap = false;
     bool lua = false;
+    bool moveWidget = false;
     std::wstring stackId;
 };
 
@@ -133,6 +134,7 @@ void DesktopApp::ObserveDesktopTouch(HWND window, UINT message, WPARAM pointer, 
     if (visualTouchMode != touch::touchMode)
     {
         visualTouchMode = touch::touchMode;
+        if (!visualTouchMode && widgetEngine_) widgetEngine_->ClearDesktopTouchHoverUnless();
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
     }
     const bool touchCaptureEnded = message == WM_POINTERCAPTURECHANGED && !touch::CanHover();
@@ -145,6 +147,21 @@ void DesktopApp::ObserveDesktopTouch(HWND window, UINT message, WPARAM pointer, 
 
     if (message != WM_POINTERDOWN || !IS_POINTER_PRIMARY_WPARAM(pointer)) return;
     const POINT screen = touch::ScreenPoint(position);
+    if (widgetEngine_)
+    {
+        POINT desktop = screen;
+        const DesktopWidget* content = nullptr;
+        if (window == hwnd_ && ScreenToClient(hwnd_, &desktop) && !GetDockContainerAtPoint(desktop) &&
+            !IsPointOccludedByOpenPopup(desktop) && !IsPointInUsageGuide(desktop))
+        {
+            const bool onIndicator = IsLuaStackIndicatorVisible() && PtInRect(&luaStackIndicator_.bounds, desktop);
+            const size_t index = onIndicator ? FindWidgetIndexById(luaStackIndicator_.stackId) :
+                HitTestStandaloneWidgetIndex(desktop);
+            if (index < widgets_.size()) content = ResolveLuaWidgetContent(&widgets_[index]);
+        }
+        if (widgetEngine_->ClearDesktopTouchHoverUnless(content ? std::wstring_view(content->id) : std::wstring_view{}) &&
+            ClearSelection()) InvalidateRect(hwnd_, nullptr, FALSE);
+    }
     if (dockWindowPreview_ && dockWindowPreview_->TouchOpened() &&
         !dockWindowPreview_->ContainsInteractionPoint(screen) &&
         !PtInRect(&dockWindowPreviewAnchorScreen_, screen)) HideDockWindowPreview();
@@ -271,8 +288,10 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
         POINT desktop = screen;
         if (!ScreenToClient(hwnd_, &desktop)) return false;
         ScrollTarget target;
-        const auto nativeTarget = [&](WidgetContainer& view) {
+        const auto nativeTarget = [&](WidgetContainer& view, bool desktopOwner = false) {
             const WidgetHit hit = view.HitTestWidget(desktop);
+            target.moveWidget = desktopOwner && (hit == WidgetHit::MoveHandle ||
+                hit == WidgetHit::IconTitle || hit == WidgetHit::CollectionOpenBtn);
             if (view.IsCollapsed() || (view.GetWidgetData()->showOnHoverOnly &&
                 !view.GetWidgetData()->selected)) return;
             auto* scrolling = dynamic_cast<ScrollingItemWidget*>(&view);
@@ -289,17 +308,19 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
                 return slot->GetItem() && PtInRect(&bounds, desktop);
             });
             target.doubleTap = target.draggable;
+            target.moveWidget = desktopOwner && !target.draggable;
         };
         const auto luaTarget = [&](const std::wstring& id, RECT bounds, std::string_view surface) {
             if (!widgetEngine_) return false;
             const int x = desktop.x - bounds.left;
             const int y = desktop.y - bounds.top;
-            if (widgetEngine_->IsSurfaceSliderAt(id, x, y, surface)) return false;
+            if (widgetEngine_->IsSurfaceSliderAt(id, x, y, surface) ||
+                widgetEngine_->IsHostInputAt(id, x, y, surface)) return false;
             target.lua = true;
             target.horizontal = widgetEngine_->OwnsSurfaceWheel(id, x, y, 0, surface, true);
             target.vertical = widgetEngine_->OwnsSurfaceWheel(id, x, y, 0, surface, false);
             target.draggable = widgetEngine_->OwnsSurfaceDrag(id, x, y, surface);
-            return !widgetEngine_->IsHostInputAt(id, x, y, surface);
+            return true;
         };
         if (luaWidgetPanelAnimation_.IsInteractive() && !luaWidgetPanelRequest_.widgetId.empty())
         {
@@ -332,19 +353,29 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
                 }
             }
         }
-        else if (window == hwnd_)
+        else if (window == hwnd_ && !IsPointInUsageGuide(desktop))
         {
-            const size_t index = HitTestStandaloneWidgetIndex(desktop);
-            if (index < widgets_.size() && HitTestStandaloneWidget(index, desktop) == WidgetHit::Content)
+            const bool onIndicator = IsLuaStackIndicatorVisible() && PtInRect(&luaStackIndicator_.bounds, desktop);
+            const size_t index = onIndicator ? FindWidgetIndexById(luaStackIndicator_.stackId) :
+                HitTestStandaloneWidgetIndex(desktop);
+            if (index < widgets_.size())
             {
                 auto& owner = widgets_[index];
-                auto* content = ResolveLuaWidgetContent(&owner);
-                if (content && widgetEngine_ && (!content->showOnHoverOnly || owner.selected))
+                const auto hit = onIndicator ? WidgetHit::None : HitTestStandaloneWidget(index, desktop);
+                if (onIndicator)
+                    target.stackId = owner.id;
+                else if (hit == WidgetHit::MoveHandle)
+                    target.moveWidget = true;
+                else if (auto* content = ResolveLuaWidgetContent(&owner);
+                    hit == WidgetHit::Content && content && widgetEngine_)
                 {
                     widgetEngine_->EnsureWidgetLoaded(content->id, content->packageId);
-                    const bool canTurnStack = luaTarget(content->id, GetStandaloneWidgetFrameRect(owner), "desktop");
-                    if (canTurnStack && owner.type == DesktopWidgetType::LuaStack && owner.childWidgetIds.size() > 1)
-                        target.stackId = owner.id;
+                    if (luaTarget(content->id, GetStandaloneWidgetFrameRect(owner), "desktop"))
+                    {
+                        target.moveWidget = !target.draggable;
+                        if (owner.type == DesktopWidgetType::LuaStack && owner.childWidgetIds.size() > 1)
+                            target.stackId = owner.id;
+                    }
                 }
             }
             else
@@ -355,12 +386,12 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
                     if (!view || !view->GetWidgetData() ||
                         (desktopIconsHidden_ && !IsRetainedContainer(view)) ||
                         view->HitTestWidget(desktop) == WidgetHit::None) continue;
-                    nativeTarget(*view);
+                    nativeTarget(*view, true);
                     break;
                 }
             }
         }
-        if (!target.horizontal && !target.vertical && !target.draggable && target.stackId.empty())
+        if (!target.horizontal && !target.vertical && !target.draggable && !target.moveWidget && target.stackId.empty())
         {
             taps.Reset();
             return false;
@@ -390,14 +421,17 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
     {
         taps.Reset();
         gesture.horizontal = std::abs(dx) > std::abs(dy);
-        if (gesture.target.draggable && contact.Held())
+        const bool ownsScroll = gesture.horizontal ? gesture.target.horizontal : gesture.target.vertical;
+        if ((gesture.target.draggable || gesture.target.moveWidget) && contact.Held())
         {
             gesture.action = Action::Drag;
-            touch::RouteMouse(window, WM_LBUTTONDOWN, contact.start, MK_LBUTTON);
+            if (gesture.target.moveWidget && widgetEngine_) widgetEngine_->ClearDesktopTouchHoverUnless();
+            touch::RouteMouse(window, gesture.target.moveWidget ? WM_MBUTTONDOWN : WM_LBUTTONDOWN,
+                contact.start, gesture.target.moveWidget ? MK_MBUTTON : MK_LBUTTON);
         }
-        else if (gesture.horizontal && !gesture.target.horizontal && !gesture.target.stackId.empty())
+        else if (!ownsScroll && !gesture.target.stackId.empty())
             gesture.action = Action::Swipe;
-        else if (gesture.horizontal ? gesture.target.horizontal : gesture.target.vertical)
+        else if (ownsScroll)
             gesture.action = Action::Pan;
         else gesture.action = Action::Consumed;
     }
@@ -412,14 +446,37 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
         }
     }
     contact.last = screen;
-    if (gesture.action == Action::Drag) touch::RouteMouse(window, WM_MOUSEMOVE, screen, MK_LBUTTON);
+    if (gesture.action == Action::Drag) touch::RouteMouse(window, WM_MOUSEMOVE, screen,
+        gesture.target.moveWidget ? MK_MBUTTON : MK_LBUTTON);
     if (message != WM_POINTERUP) return true;
 
     ScrollTouch released = std::move(gesture);
     gesture = {};
-    if (released.action == Action::Drag) touch::RouteMouse(window, WM_LBUTTONUP, screen);
-    else if (released.action == Action::Swipe && std::abs(dx) >= touch::Dips(28, GetDpiForWindow(window)))
-        (void)StepLuaWidgetStack(released.target.stackId, dx < 0 ? 1 : -1);
+    if (released.action == Action::Drag)
+        touch::RouteMouse(window, released.target.moveWidget ? WM_MBUTTONUP : WM_LBUTTONUP, screen);
+    else if (released.action == Action::Swipe)
+    {
+        const int travel = released.horizontal ? dx : dy;
+        if (std::abs(travel) >= touch::Dips(28, GetDpiForWindow(window)) &&
+            StepLuaWidgetStack(released.target.stackId, travel < 0 ? 1 : -1))
+        {
+            const auto index = FindWidgetIndexById(released.target.stackId);
+            if (index < widgets_.size())
+            {
+                const auto ownerId = widgets_[index].id;
+                SelectWidgetOnly(index);
+                POINT desktop = released.contact.start;
+                const auto current = FindWidgetIndexById(ownerId);
+                if (current < widgets_.size() && widgetEngine_ && ScreenToClient(hwnd_, &desktop))
+                {
+                    const auto* content = ResolveLuaWidgetContent(&widgets_[current]);
+                    const RECT frame = GetStandaloneWidgetFrameRect(widgets_[current]);
+                    if (content) widgetEngine_->SetDesktopTouchHover(content->id, desktop.x - frame.left, desktop.y - frame.top);
+                }
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
+        }
+    }
     else if (released.action == Action::Pending)
     {
         if (released.contact.Held())
