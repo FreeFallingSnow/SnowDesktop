@@ -528,41 +528,8 @@ struct DockContainer::PresentationMotion
 {
     struct HoverMotion
     {
-        static constexpr double kResponseMilliseconds = 24.0;
         RECT focus{};
-        double axis = 0.0, requested = 0.0, sampledAt = 0.0;
-        bool tracking = false;
-
-        bool Moving() const { return std::abs(axis - requested) >= .25; }
-
-        void Advance(double now, double response)
-        {
-            if (!Moving() || now <= sampledAt) return;
-            axis = std::lerp(axis, requested, 1.0 - std::exp(-(now - sampledAt) / response));
-            if (!Moving()) axis = requested;
-            sampledAt = now;
-        }
-
-        void Observe(const RECT& bounds, int pointerAxis, double now, double response, bool resume)
-        {
-            if (IsRectEmpty(&bounds))
-            {
-                tracking = false;
-                return;
-            }
-            if (IsRectEmpty(&focus) || (!tracking && !resume)) axis = requested = pointerAxis;
-            else Advance(now, response);
-            requested = pointerAxis;
-            sampledAt = now;
-            focus = bounds;
-            tracking = true;
-        }
-
-        float AxisOr(int pointerAxis) const
-        { return IsRectEmpty(&focus) ? static_cast<float>(pointerAxis) : static_cast<float>(axis); }
-
-        float AnchorOr(int pointerAxis) const
-        { return IsRectEmpty(&focus) ? static_cast<float>(pointerAxis) : static_cast<float>(requested); }
+        int axis = 0;
     };
 
     struct Group
@@ -1444,11 +1411,9 @@ struct DockContainer::MagnificationLayout
     struct TrackFrame
     {
         std::vector<RECT> cells, painted;
-        MagnificationZone zone = MagnificationZone::None;
-        float pointer = 0.f, anchor = 0.f, scale = 0.f;
-        bool isolatedStart = false;
+        float pointer = 0.f, scale = 0.f;
     };
-    mutable TrackFrame track;
+    mutable std::array<TrackFrame, 3> tracks;
 
     std::span<const RECT> ForZone(MagnificationZone zone) const
     {
@@ -1559,7 +1524,7 @@ bool DockContainer::IsTitleTransitioning() const
 bool DockContainer::IsMagnificationAnimating() const
 {
     return magnificationEntry_.IsAnimating() || singleMagnification_.IsAnimating() ||
-        titleMarqueeAnimating_ || IsTitleTransitioning() || presentationMotion_->hover.Moving();
+        titleMarqueeAnimating_ || IsTitleTransitioning();
 }
 
 bool DockContainer::AdvanceMagnificationAnimation(double nowMilliseconds)
@@ -1591,9 +1556,6 @@ bool DockContainer::AdvanceMagnificationAnimation(double nowMilliseconds)
                 entry.second.presence.Advance(nowMilliseconds);
             InvalidateSlots();
         }
-        presentationMotion_->hover.Advance(nowMilliseconds,
-            PresentationMotion::HoverMotion::kResponseMilliseconds *
-                std::max(.01, snowdesktop::animation::RuntimeDurationScale()));
         ResolveMagnificationFocusRect(app_->lastMousePoint_, GetMagnificationLayout());
         magnificationEntry_.Advance(nowMilliseconds);
         singleMagnification_.Advance(nowMilliseconds);
@@ -1698,22 +1660,23 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer, const Magnifica
                 std::numeric_limits<long long>::max();
             int nearestAxisDistance =
                 std::numeric_limits<int>::max();
+            const bool vertical = IsVertical();
+            const int axis = vertical ? pointer.y : pointer.x;
+            const bool mixedWidths = !layout.wideItems.empty();
             for (const RECT& candidate : candidates)
             {
                 if (!pointerVisibleFor(candidate)) continue;
-                const int candidateAxisCenter =
-                    IsVertical()
-                        ? (candidate.top +
-                            candidate.bottom) / 2
-                        : (candidate.left +
-                            candidate.right) / 2;
-                const int axisDistance = std::abs(
-                    candidateAxisCenter -
-                    (IsVertical()
-                        ? pointer.y : pointer.x));
+                const int start = vertical ? candidate.top : candidate.left;
+                const int end = vertical ? candidate.bottom : candidate.right;
+                const int axisDistance = mixedWidths
+                    ? std::max({0, start - axis, axis - end})
+                    : std::abs(start + (end - start) / 2 - axis);
                 const long long distance =
                     centerDistanceSquared(candidate);
-                if (distance < nearestDistance)
+                const bool nearer = mixedWidths
+                    ? std::pair{axisDistance, distance} < std::pair{nearestAxisDistance, nearestDistance}
+                    : distance < nearestDistance;
+                if (nearer)
                 {
                     nearest = candidate;
                     nearestDistance = distance;
@@ -1816,9 +1779,9 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer, const Magnifica
         const int pointerAxis = IsVertical() ? pointer.y : pointer.x;
         auto& motion = presentationMotion_->hover;
         if (wideItemMotion)
-            motion.Observe(nextFocus, pointerAxis, now,
-                PresentationMotion::HoverMotion::kResponseMilliseconds * std::max(.01, duration),
-                magnificationEntry_.IsAnimating() || singleMagnification_.IsAnimating());
+        {
+            if (!IsRectEmpty(&nextFocus)) motion = {nextFocus, pointerAxis};
+        }
         else motion = {};
         magnificationEntry_.SetHovered(!IsRectEmpty(&nextFocus) && settings.hoverEffect == 2 && enabled,
             now, duration, wideItemMotion);
@@ -1888,24 +1851,20 @@ RECT DockContainer::MagnifyElementRect(const RECT& baseRect, const RECT& focusRe
     {
         const RECT& owner = single ? singleMagnification_.CurrentRect() : waveFocus;
         const float scale = single ? singleMagnification_.Scale() : GetCurrentMagnificationScale();
-        if (IsRectEmpty(&owner) || scale <= 1.f ||
-            (layout.edgeAnchored && (zone == MagnificationZone::None || zone != layout.ZoneOf(owner))))
+        if (IsRectEmpty(&owner) || scale <= 1.f || (layout.edgeAnchored && zone == MagnificationZone::None))
             return baseRect;
-        const bool start = hasOverflow && EqualRect(&owner, &layout.windowsButton);
-        if (hasOverflow && (EqualRect(&baseRect, &layout.windowsButton) != FALSE) != start) return baseRect;
-        const int rawAxis = vertical ? pointer.y : pointer.x;
-        const float axis = motion.AxisOr(rawAxis);
-        const float anchor = motion.AnchorOr(rawAxis);
-        auto& track = layout.track;
-        if (track.scale != scale || track.pointer != axis || track.anchor != anchor ||
-            track.zone != zone || track.isolatedStart != start)
+        const bool start = hasOverflow && EqualRect(&baseRect, &layout.windowsButton);
+        const bool trailingBand = zone == MagnificationZone::Trailing;
+        // Only the exit keeps its last pointer. During a sweep, placement and
+        // gain must use the same sample, including the first frame over a gap.
+        const float axis = static_cast<float>(IsRectEmpty(&focusRect) && !IsRectEmpty(&motion.focus)
+            ? motion.axis : (vertical ? pointer.y : pointer.x));
+        auto& track = layout.tracks[start ? 0 : trailingBand ? 2 : 1];
+        if (track.scale != scale || track.pointer != axis)
         {
-            track = {};
             track.scale = scale;
             track.pointer = axis;
-            track.anchor = anchor;
-            track.zone = zone;
-            track.isolatedStart = start;
+            track.cells.clear();
             const auto cells = layout.edgeAnchored ? layout.ForZone(zone) : std::span<const RECT>(layout.candidates);
             for (const auto& cell : cells)
                 if (!hasOverflow || (EqualRect(&cell, &layout.windowsButton) != FALSE) == start)
@@ -1920,25 +1879,44 @@ RECT DockContainer::MagnifyElementRect(const RECT& baseRect, const RECT& focusRe
             options.pitch = ItemPitch();
             options.scale = scale;
             options.pointer = axis;
-            options.anchor = anchor;
             options.safeStart = static_cast<float>(leading(area_) + spacing / 2);
             options.safeEnd = static_cast<float>(trailing(area_) - (spacing + 1) / 2);
             options.single = single;
             if (layout.edgeAnchored)
             {
-                const bool towardEnd = zone == MagnificationZone::Leading;
-                if (!hasOverflow)
+                // The hit owner can switch at any pixel during a sweep. Fade
+                // across stable resting boundaries, irrespective of that owner.
+                const auto mixAcross = [&](float boundary) {
+                    return magnification::SmoothStep(.5f + (axis - boundary) / options.pitch);
+                };
+                float startMix = 1.f;
+                float endMix = 0.f;
+                if (hasOverflow && !IsRectEmpty(&layout.windowsButton))
+                    startMix = mixAcross(std::lerp(static_cast<float>(trailing(layout.windowsButton)),
+                        static_cast<float>(leading(layout.viewport)), .5f));
+                const auto firstBand = layout.ForZone(MagnificationZone::Leading);
+                const auto lastBand = layout.ForZone(MagnificationZone::Trailing);
+                if (!firstBand.empty() && !lastBand.empty())
                 {
-                    for (const auto& cell : layout.ForZone(towardEnd ? MagnificationZone::Trailing : MagnificationZone::Leading))
+                    const float boundary = std::lerp(
+                        static_cast<float>(hasOverflow ? trailing(layout.viewport) :
+                            trailing(*std::ranges::max_element(firstBand, {}, trailing))),
+                        static_cast<float>(leading(*std::ranges::min_element(lastBand, {}, leading))), .5f);
+                    endMix = mixAcross(boundary);
+                    if (!hasOverflow)
                     {
-                        if (towardEnd)
-                            options.safeEnd = std::min(options.safeEnd, static_cast<float>(leading(cell) - spacing));
+                        if (trailingBand)
+                            options.safeStart = std::max(options.safeStart, boundary + spacing * .5f);
                         else
-                            options.safeStart = std::max(options.safeStart, static_cast<float>(trailing(cell) + spacing));
+                            options.safeEnd = std::min(options.safeEnd, boundary - spacing * .5f);
                     }
                 }
+                else if (trailingBand) endMix = 1.f;
+                const float coverage = start ? 1.f - startMix : startMix * (trailingBand ? endMix : 1.f - endMix);
+                options.scale = std::lerp(1.f, scale, coverage);
                 options.scrolls = inScrollLane;
-                options.clampPointer = hasOverflow && zone == MagnificationZone::Trailing;
+                options.clampPointer = hasOverflow && trailingBand;
+                options.shiftAtBounds = true;
             }
             track.painted = magnification::ResolveVariableTrack(track.cells, options);
         }

@@ -16,12 +16,15 @@
 #include "widget/preview/widget_preview_scene.h"
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <fstream>
+#include <iterator>
 #include <thread>
 #include <unordered_map>
 #include <set>
 #include <cstring>
 #include <stdexcept>
+#include <utility>
 
 snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePreview(
     const snowdesktop::native_component_preview::Request& request)
@@ -173,14 +176,30 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
             const LONG left = (request.canvasWidth - width) / 2;
             if (motionPreview)
             {
+                const bool vertical = request.canvasHeight > request.canvasWidth;
+                if (vertical)
+                {
+                    dockSettings_.position = DockPosition::Right;
+                    dockSettings_.edgeAttached = true;
+                }
                 const RECT area{left, 24, left + width, request.canvasHeight - 16};
                 DockContainer dock(this, &dockEntries_, area);
-                const RECT resting = dock.GetSlots().front()->GetBounds();
-                const LONG middle = (resting.left + resting.right) / 2;
-                const LONG y = (resting.top + resting.bottom) / 2;
+                const auto& slots = dock.GetSlots();
+                const RECT resting = slots.front()->GetBounds();
+                const RECT adjacent = slots[1]->GetBounds();
+                const RECT end = slots.back()->GetBounds();
+                const RECT start = dock.GetWindowsButtonRect();
+                const auto leading = [vertical](RECT rect) { return vertical ? rect.top : rect.left; };
+                const auto trailing = [vertical](RECT rect) { return vertical ? rect.bottom : rect.right; };
+                const auto center = [&](RECT rect) { return leading(rect) + (trailing(rect) - leading(rect)) / 2; };
+                const LONG cross = vertical ? (resting.left + resting.right) / 2 : (resting.top + resting.bottom) / 2;
                 const LONG leadingInset = kDockSpacing / 2;
                 const LONG trailingInset = (kDockSpacing + 1) / 2;
-                const LONG route[]{resting.left + leadingInset, middle, resting.right + 40};
+                const std::pair<int, LONG> route[]{
+                    {0, center(start)}, {12, center(start)}, {52, center(resting)}, {64, center(resting)},
+                    {102, center(adjacent)}, {114, center(adjacent)}, {159, center(end)}, {171, center(end)},
+                    {210, center(adjacent)}, {222, center(adjacent)},
+                };
                 ComPtr<ID2D1SolidColorBrush> cursor;
                 require(context->CreateSolidColorBrush(D2D1::ColorF(0xff6684), &cursor));
                 ComPtr<ID2D1Bitmap1> readback;
@@ -188,15 +207,16 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
                     D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW, format, 96, 96), &readback));
 
                 constexpr int fps = 60;
-                constexpr int frames = 132;
+                const int frames = route[std::size(route) - 1].first + 1;
                 const auto frameDirectory = request.outputDirectory / "frames";
                 std::filesystem::create_directories(frameDirectory);
                 std::ofstream trace(request.outputDirectory / "geometry.tsv");
                 if (!trace) throw std::runtime_error("could not create Dock motion trace");
-                trace << "frame\tms\tpointer\tresting_left\tresting_right\tpainted_left\tpainted_right\tpainted_height\ticon_size\n";
+                trace << "frame\tms\tpointer\titem\tresting_start\tresting_end\tpainted_start\tpainted_end\ticon_size\n";
                 std::vector<std::vector<std::uint32_t>> images;
                 images.reserve(frames);
                 const auto started = std::chrono::steady_clock::now();
+                size_t leg = 1;
                 for (int index = 0; index < frames; ++index)
                 {
                     std::this_thread::sleep_until(started + std::chrono::microseconds(index * 1000000 / fps));
@@ -206,26 +226,32 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
                         context->BeginDraw();
                         context->DrawBitmap(backdrop.Get());
                     }
-                    const float first = std::clamp((index - 12) / 44.f, 0.f, 1.f);
-                    const float second = std::clamp((index - 76) / 44.f, 0.f, 1.f);
-                    const LONG x = std::lround(std::lerp(static_cast<float>(route[0]), static_cast<float>(route[1]), first) +
-                        (route[2] - route[1]) * second);
-                    lastMousePoint_ = {x, y};
+                    if (index > route[leg].first) ++leg;
+                    const auto [fromFrame, from] = route[leg - 1];
+                    const auto [toFrame, to] = route[leg];
+                    const float progress = static_cast<float>(index - fromFrame) / (toFrame - fromFrame);
+                    const LONG axis = std::lround(std::lerp(static_cast<float>(from), static_cast<float>(to), progress));
+                    lastMousePoint_ = vertical ? POINT{cross, axis} : POINT{axis, cross};
                     dock.GetVisualPanelBounds(lastMousePoint_);
                     dock.AdvanceMagnificationAnimation(UiAnimationScheduler::MonotonicMilliseconds());
 
                     const RECT panel = dock.GetVisualPanelBounds(lastMousePoint_);
-                    material(panel, appearance, appearance.cornerRadius);
+                    material(panel, appearance, vertical ? 0.f : appearance.cornerRadius);
                     dock.DrawChrome(context.Get(), lastMousePoint_);
                     dock.DrawContents(context.Get());
-                    const RECT painted = dock.GetElementVisualRect(resting, lastMousePoint_);
                     const auto milliseconds = std::chrono::duration<double, std::milli>(
                         std::chrono::steady_clock::now() - started).count();
-                    trace << index << '\t' << milliseconds << '\t' << x << '\t' << resting.left + leadingInset <<
-                        '\t' << resting.right - trailingInset << '\t' << painted.left + leadingInset <<
-                        '\t' << painted.right - trailingInset << '\t' << painted.bottom - painted.top << '\t' <<
-                        dock.GetElementIconSize(resting, painted) << '\n';
-                    const auto cursorPoint = D2D1::Point2F(static_cast<float>(x), static_cast<float>(resting.top - 36));
+                    for (const auto& [name, cell] : {std::pair{"start", start}, std::pair{"wide", resting},
+                        std::pair{"adjacent", adjacent}, std::pair{"end", end}})
+                    {
+                        const RECT painted = dock.GetElementVisualRect(cell, lastMousePoint_);
+                        trace << index << '\t' << milliseconds << '\t' << axis << '\t' << name << '\t' <<
+                            leading(cell) + leadingInset << '\t' << trailing(cell) - trailingInset << '\t' <<
+                            leading(painted) + leadingInset << '\t' << trailing(painted) - trailingInset << '\t' <<
+                            dock.GetElementIconSize(cell, painted) << '\n';
+                    }
+                    const auto cursorPoint = vertical ? D2D1::Point2F(static_cast<float>(resting.left - 28), static_cast<float>(axis)) :
+                        D2D1::Point2F(static_cast<float>(axis), static_cast<float>(std::max(6L, resting.top - 12)));
                     context->FillEllipse(D2D1::Ellipse(cursorPoint, 4.f, 4.f), cursor.Get());
                     require(context->EndDraw());
                     context->SetTarget(nullptr);

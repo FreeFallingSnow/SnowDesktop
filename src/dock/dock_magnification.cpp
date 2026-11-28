@@ -234,29 +234,42 @@ std::vector<RECT> ResolveVariableTrack(std::span<const RECT> input, const Variab
 
     // Keep the pointer at the same fraction of the cell's axis. Through a
     // gap, the growth before the cursor is the same at both edges.
-    const auto next = std::upper_bound(cells.begin(), cells.end(), options.anchor,
+    const auto next = std::upper_bound(cells.begin(), cells.end(), options.pointer,
         [](float value, const TrackCell& cell) { return value < cell.start; });
     const auto anchorIndex = next == cells.begin() ? 0 : static_cast<size_t>(next - cells.begin() - 1);
     const auto& cell = cells[anchorIndex];
     const float visibleStart = cell.start + std::floor(spacing * .5f);
     const float visibleLength = std::max(1.f, cell.end - cell.start - spacing);
-    const float fraction = std::clamp((options.anchor - visibleStart) / visibleLength, 0.f, 1.f);
+    const float fraction = std::clamp((options.pointer - visibleStart) / visibleLength, 0.f, 1.f);
     const float leadingGrowth = std::lerp(prefix[anchorIndex], prefix[anchorIndex + 1], fraction);
     const float trailingGrowth = prefix.back() - leadingGrowth;
     float factor = 1.f;
+    float shift = leadingGrowth;
     if (!options.scrolls)
     {
-        if (leadingGrowth > 0.f)
-            factor = std::min(factor, std::max(0.f, cells.front().start - options.safeStart) / leadingGrowth);
-        if (trailingGrowth > 0.f)
-            factor = std::min(factor, std::max(0.f, options.safeEnd - cells.back().end) / trailingGrowth);
+        const float leadingRoom = std::max(0.f, cells.front().start - options.safeStart);
+        const float trailingRoom = std::max(0.f, options.safeEnd - cells.back().end);
+        if (options.shiftAtBounds && prefix.back() > 0.f)
+        {
+            // A pinned edge can have zero outward room for the entire band.
+            // Use its inward room before reducing the growth of every item.
+            factor = std::min(1.f, (leadingRoom + trailingRoom) / prefix.back());
+            const float minimumShift = std::clamp(prefix.back() * factor - trailingRoom, 0.f, leadingRoom);
+            shift = std::clamp(leadingGrowth * factor,
+                minimumShift, leadingRoom);
+        }
+        else
+        {
+            if (leadingGrowth > 0.f) factor = std::min(factor, leadingRoom / leadingGrowth);
+            if (trailingGrowth > 0.f) factor = std::min(factor, trailingRoom / trailingGrowth);
+            shift *= factor;
+        }
     }
-    const float anchor = leadingGrowth * factor;
     for (size_t i = 0; i < cells.size(); ++i)
     {
         auto& rect = output[cells[i].index];
-        const LONG start = std::lround(cells[i].start + prefix[i] * factor - anchor);
-        const LONG end = std::lround(cells[i].end + prefix[i + 1] * factor - anchor);
+        const LONG start = std::lround(cells[i].start + prefix[i] * factor - shift);
+        const LONG end = std::lround(cells[i].end + prefix[i + 1] * factor - shift);
         const LONG cross = std::lround(options.iconSize * gains[i] * factor);
         if (vertical) { rect.top = start; rect.bottom = end; }
         else { rect.left = start; rect.right = end; }

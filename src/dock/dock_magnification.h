@@ -148,11 +148,12 @@ struct VariableTrackOptions
 {
     DockPosition position = DockPosition::Bottom;
     int iconSize = 0, pitch = 0;
-    float scale = 1.f, pointer = 0.f, anchor = 0.f;
+    float scale = 1.f, pointer = 0.f;
     float safeStart = 0.f, safeEnd = 0.f;
     bool single = false;
     bool scrolls = false;
     bool clampPointer = false;
+    bool shiftAtBounds = false;
 };
 
 // Returns painted cells in input order. Width and placement stay fractional
