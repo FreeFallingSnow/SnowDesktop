@@ -726,7 +726,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         (dockExternalMinimize_ && dockWindowTransition_ &&
         !dockWindowTransition_->IsActive() &&
         snowdesktop::animation::RuntimeAnimationsEnabled() &&
-        snowdesktop::animation::RuntimeWindowEffect() != snowdesktop::animation::NoEffect &&
+        HasDockWindowAnimation() &&
         dockExternalMinimize_->IsMinimizeButtonPress(
             GetAncestor(snowdesktop::private_pointer::WindowAtPoint(cursor), GA_ROOT), cursor)));
     if (minimizeButtonPress) floatingDockOutsidePress_.Cancel();
@@ -860,7 +860,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             if (!externalTouchPress && !deferredOutsidePress && buttonsDown == leftButtonBit &&
                 !floatingDockOutsidePress_.Source() && sourceProcess && sourceProcess != GetCurrentProcessId() &&
                 dockWindowTransition_ && snowdesktop::animation::RuntimeAnimationsEnabled() &&
-                snowdesktop::animation::RuntimeWindowEffect() != snowdesktop::animation::NoEffect &&
+                HasDockWindowAnimation() &&
                 snowdesktop::window_support::WindowSupport().Resolve(
                     snowdesktop::window_support::Capability::MinimizeAnimation, source).Available() &&
                 dockWindowTransition_->ResolveMinimizeTarget(source))

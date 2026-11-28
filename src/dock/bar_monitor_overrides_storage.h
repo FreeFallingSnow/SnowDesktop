@@ -34,7 +34,7 @@ bool ReadBarMonitorOverride(const JsonValue& root, const char* key, Override& re
         }
         else
         {
-            constexpr int maximum = std::is_same_v<Value, DockPosition> ? 3 : 1;
+            constexpr int maximum = std::is_same_v<Value, DockPosition> ? 3 : (std::numeric_limits<int>::max)();
             if (field->IsNumber() && field->number >= 0 && field->number <= maximum &&
                 std::floor(field->number) == field->number)
                 value = static_cast<Value>(static_cast<int>(field->number));

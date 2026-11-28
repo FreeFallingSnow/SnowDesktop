@@ -759,7 +759,10 @@ private:
     DockContainer* GetDockContainer() const;
     void RefreshBarMonitorRoles();
     BarMonitorRole BarRoleForMonitor(HMONITOR monitor) const;
-    DockLayoutSettings DockLayoutForMonitor(HMONITOR monitor) const;
+    DockMonitorLayout DockLayoutForMonitor(HMONITOR monitor) const;
+    int DockWindowEffectForMonitor(HMONITOR monitor) const;
+    bool HasDockWindowAnimation() const;
+    bool HasDockLaunchAnimation() const;
     DockContainer* GetDockContainerAtPoint(POINT point) const;
     void InvalidateDockContainers();
     void InvalidateDockRects(BOOL erase = FALSE, bool immediate = true);
@@ -1020,8 +1023,8 @@ private:
         HWND owner, const std::wstring& path);
     bool StartDockLaunchBounce(size_t itemIndex);
     float GetDockLaunchBounceOffset(
-        size_t itemIndex, int iconSize) const;
-    float GetDockLaunchPulseScale(size_t itemIndex) const;
+        size_t itemIndex, int iconSize, HMONITOR monitor = nullptr) const;
+    float GetDockLaunchPulseScale(size_t itemIndex, HMONITOR monitor = nullptr) const;
     void ApplyAnimationPreferences(bool systemChanged = false);
     std::vector<RECT> GetDockWindowTransitionOcclusionRects() const;
     void OnDockLaunchBounceTimer();

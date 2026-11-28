@@ -307,7 +307,7 @@ void DesktopApp::RebuildContainersAndItems()
                         previous->focusRect.left, previous->focusRect.top,
                         previous->focusRect.right, previous->focusRect.bottom,
                         previous->entry.FocusScale(snowdesktop::dock_magnification::
-                            ResolveFocusScale(dockSettings_.hoverEffect, dockSettings_.hoverScale,
+                            ResolveFocusScale(dock->MonitorLayout().hoverEffect, dock->MonitorLayout().hoverScale,
                                 snowdesktop::animation::RuntimeAnimationsEnabled())),
                         previous->single.Scale(), dock->IsMagnificationAnimating() ? 1 : 0,
                         lastMousePoint_.x, lastMousePoint_.y);

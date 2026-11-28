@@ -96,7 +96,7 @@ GenieSourceBand ResolveGenieSourceBand(SIZE size, snowdesktop::dock_genie::Edge 
     return ResolveSourceBand(size, clip);
 }
 
-bool SystemWindowAnimationsEnabled()
+bool SystemWindowAnimationsEnabled(int effect)
 {
     BOOL compositionEnabled = FALSE;
     if (FAILED(DwmIsCompositionEnabled(&compositionEnabled)) ||
@@ -104,7 +104,7 @@ bool SystemWindowAnimationsEnabled()
         return false;
 
     return snowdesktop::animation::RuntimeAnimationsEnabled() &&
-        snowdesktop::animation::RuntimeWindowEffect() != 0;
+        effect != 0;
 }
 
 double TransitionDuration(int effect) noexcept
@@ -663,12 +663,19 @@ struct DockWindowTransition::RestoreCloak
     HRESULT result = E_ABORT;
     std::atomic<bool> completed{false};
 };
+DockWindowTransition::AnimationPreferences DockWindowTransition::AnimationPreferencesFor(const RECT& anchor) const
+{
+    if (animationPreferencesProvider_) return animationPreferencesProvider_(anchor);
+    return {snowdesktop::animation::RuntimeWindowEffect(), snowdesktop::animation::RuntimeDockPosition()};
+}
+
 bool DockWindowTransition::StartHelperAnimation(HWND source, RECT anchor, HWND below, bool restore, RestoreCallback callback)
 {
     namespace support = snowdesktop::window_support;
     namespace wire = support::protocol;
     auto& runtime = support::WindowSupport();
-    if (!snowdesktop::animation::RuntimeAnimationsEnabled() || snowdesktop::animation::RuntimeWindowEffect() == 0) return false;
+    const auto preferences = AnimationPreferencesFor(anchor);
+    if (!snowdesktop::animation::RuntimeAnimationsEnabled() || preferences.effect == 0) return false;
     if (!helperRouting_ || runtime.Resolve(support::Capability::MinimizeAnimation, source).provider != support::Provider::Helper)
         return false;
     if (IsActive() && !remoteAnimation_) Cancel();
@@ -679,11 +686,11 @@ bool DockWindowTransition::StartHelperAnimation(HWND source, RECT anchor, HWND b
     request.command = restore ? wire::Command::StartRestore : wire::Command::StartMinimize;
     request.target = wire::Capture(source);
     request.animation = {request.target, anchor, reinterpret_cast<UINT_PTR>(below),
-        static_cast<std::uint32_t>(snowdesktop::animation::RuntimeWindowEffect()),
+        static_cast<std::uint32_t>(preferences.effect),
         snowdesktop::animation::RuntimeAnimationsEnabled() ? 1u : 0u,
         static_cast<std::uint32_t>(snowdesktop::animation::detail::speed.load()),
         static_cast<std::uint32_t>(snowdesktop::animation::detail::frameLimit.load()),
-        static_cast<std::uint32_t>(snowdesktop::animation::detail::dockPosition.load())};
+        static_cast<std::uint32_t>(preferences.position)};
     if (!runtime.Submit(request, [weak = std::weak_ptr<RemoteAnimation>(state), callback = std::move(callback), identity = request.target](const auto& response) {
         const auto active = weak.lock();
         if (!active) return;
@@ -884,7 +891,8 @@ bool DockWindowTransition::Start(
 {
     snowdesktop::performance::Scope performanceScope("dock.transition", "prepare");
     nativeFallbackRequested_ = false;
-    if (!SystemWindowAnimationsEnabled() ||
+    const auto preferences = AnimationPreferencesFor(dockRect);
+    if (!SystemWindowAnimationsEnabled(preferences.effect) ||
         !sourceWindow || !IsWindow(sourceWindow) ||
         !IsUsableRect(dockRect))
         return false;
@@ -981,12 +989,12 @@ bool DockWindowTransition::Start(
     direction_ = direction;
     transitionStartTimeMs_ = MonotonicTimeMilliseconds();
     restoreCallback_ = std::move(restoreCallback);
-    effect_ = snowdesktop::animation::RuntimeWindowEffect();
+    effect_ = preferences.effect;
     const int requestedEffect = effect_;
     imageSource_ = L"unavailable";
     imageResult_ = S_OK;
     genieEdge_ = static_cast<snowdesktop::dock_genie::Edge>(
-        std::clamp(snowdesktop::animation::RuntimeDockPosition(), 0, 3));
+        std::clamp(preferences.position, 0, 3));
 
     RECT windowRect{};
     if (direction_ == DockWindowTransitionDirection::Minimize)

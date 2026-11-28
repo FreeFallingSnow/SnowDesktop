@@ -175,7 +175,7 @@ public:
     RECT GetDesktopItemVisualRect(
         size_t itemIndex, POINT pointer) const;
     void SetReservedArea(RECT area);
-    DockLayoutSettings MonitorLayout() const;
+    DockMonitorLayout MonitorLayout() const;
     DockPosition Position() const;
     bool ShowsRunningArea() const;
     std::span<const HWND> EntryTitleWindows(size_t index) const;

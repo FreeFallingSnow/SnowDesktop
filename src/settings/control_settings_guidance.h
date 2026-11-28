@@ -356,6 +356,10 @@ inline constexpr auto Fields<DockMonitorOverride> = std::to_array<Description>({
     {"showFrequentItems", "Shows the Dock entries for frequently used items on this role. Null inherits the first monitor."},
     {"keepWhenDesktopHidden", "Keeps this role's Dock visible when SnowDesktop hides desktop items. Null inherits the first monitor."},
     {"showRunningArea", "Shows running application entries, their window titles and separate minimized thumbnails on this role. False keeps the Dock's launcher entries. Null follows the first monitor, where the running area is always enabled."},
+    {"hoverEffect", "Chooses the Dock hover effect for this role. 0 is off, 1 magnifies one icon, and 2 uses wave magnification. Null inherits the first monitor."},
+    {"hoverScale", "Sets the maximum wave magnification from 1 through 2. Null inherits the first monitor."},
+    {"launchEffect", "Selects the application launch effect displayed on this role's Dock. 0 is off, 1 is bounce, and 2 is gentle scale. Null inherits the first monitor."},
+    {"windowEffect", "Selects this Dock's minimize and restore animation when it is the animation destination. The supported values match dock.windowEffect. Null inherits the first monitor. Runtime animation policy and window support determine availability."},
 });
 
 template<>

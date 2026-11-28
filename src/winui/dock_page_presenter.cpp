@@ -477,7 +477,7 @@ struct DockPagePresenter::Impl
     muxc::InfoBar taskbarAutoHideWarning{nullptr};
 
     SettingRow dockEnabledRow;
-    std::unique_ptr<BarMonitorOverridesEditor<DockMonitorOverride, DockLayoutSettings>> monitorOverrides;
+    std::unique_ptr<BarMonitorOverridesEditor<DockMonitorOverride, DockMonitorLayout>> monitorOverrides;
     muxc::ComboBox edgeAlignment{nullptr};
     muxc::ToggleSwitch windowTitles{nullptr};
     SettingRow edgeAlignmentRow, windowTitlesRow;
@@ -688,14 +688,14 @@ struct DockPagePresenter::Impl
             kDockMaximumEdgeDistanceScale * 100.0, 1.0, nullptr, 100.0);
         layoutCard.content.Children().Append(edgeDistanceScale.root);
         layoutCard.content.Children().Append(thicknessScale.root);
-        monitorOverrides = std::make_unique<BarMonitorOverridesEditor<DockMonitorOverride, DockLayoutSettings>>(
+        monitorOverrides = std::make_unique<BarMonitorOverridesEditor<DockMonitorOverride, DockMonitorLayout>>(
             localize, actions, [this](BarMonitorRole role, auto edit) {
                 EmitDock(SettingsUpdateMode::PreviewAndCommit, [role, edit = std::move(edit)](DockSettings& settings) {
                     edit(role == BarMonitorRole::Last ? settings.lastMonitorOverride : settings.otherMonitorOverride);
                 });
             });
         using Override = DockMonitorOverride;
-        using Layout = DockLayoutSettings;
+        using Layout = DockMonitorLayout;
         monitorOverrides->AddChoice<DockPosition>("app.settings.dock_position", &Override::position, &Layout::position,
             {{DockPosition::Bottom, "app.dock.bottom"}, {DockPosition::Top, "app.dock.top"},
              {DockPosition::Left, "app.dock.left"}, {DockPosition::Right, "app.dock.right"}});
@@ -711,6 +711,18 @@ struct DockPagePresenter::Impl
         monitorOverrides->AddToggle("app.dock.show_frequent_items", &Override::showFrequentItems, &Layout::showFrequentItems);
         monitorOverrides->AddToggle("app.dock.keep_when_hidden", &Override::keepWhenDesktopHidden, &Layout::keepWhenDesktopHidden);
         monitorOverrides->AddToggle("settings.dock.showRunningArea", &Override::showRunningArea, &Layout::showRunningArea);
+        monitorOverrides->AddChoice<int>("settings.animation.hover", &Override::hoverEffect, &Layout::hoverEffect,
+            {{0, "settings.animation.option.noMagnification"}, {1, "settings.animation.option.singleIcon"},
+             {2, "settings.animation.option.wave"}});
+        monitorOverrides->AddPercentage("settings.animation.hoverScale", &Override::hoverScale, &Layout::hoverScale,
+            100, 200, false, [](const Layout& layout) { return layout.hoverEffect == 2; });
+        monitorOverrides->AddChoice<int>("settings.animation.launch", &Override::launchEffect, &Layout::launchEffect,
+            {{0, "settings.animation.option.off"}, {1, "settings.animation.option.bounce"},
+             {2, "settings.animation.option.gentleScale"}});
+        monitorOverrides->AddChoice<int>("settings.animation.window", &Override::windowEffect, &Layout::windowEffect,
+            {{0, "settings.animation.option.systemDefault"}, {1, "settings.animation.option.scale"},
+             {2, "settings.animation.option.fade"}, {3, "settings.animation.option.genie"},
+             {4, "settings.animation.option.attraction"}});
         layoutCard.content.Children().Append(monitorOverrides->Content());
         mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
         mergedCard.content.Children().Append(mergedHeight->Content());
@@ -2105,7 +2117,7 @@ struct DockPagePresenter::Impl
         layoutCombo.SelectedIndex(settings.edgeAttached ? 1 : 0);
         edgeAlignment.SelectedIndex(settings.edgeCentered ? 1 : 0);
         windowTitles.IsOn(settings.showWindowTitles);
-        monitorOverrides->Update(settings.lastMonitorOverride, settings.otherMonitorOverride, settings,
+        monitorOverrides->Update(settings.lastMonitorOverride, settings.otherMonitorOverride, settings.MonitorLayout(BarMonitorRole::First),
             settings.MonitorLayout(BarMonitorRole::Last), settings.MonitorLayout(BarMonitorRole::Other));
         monitorScopeCombo.SelectedIndex(std::clamp(
             static_cast<int>(settings.monitorScope), 0, 2));

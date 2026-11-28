@@ -20,7 +20,7 @@ void DesktopApp::UpdateDockExternalMinimizeTargets()
     const bool moduleAllowed = snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::WindowMinimize);
     const bool animate = moduleAllowed && generalSettings_.dockEnabled && dockWindowTransition_ &&
         snowdesktop::animation::RuntimeAnimationsEnabled() &&
-        snowdesktop::animation::RuntimeWindowEffect() != snowdesktop::animation::NoEffect;
+        HasDockWindowAnimation();
     if (!moduleAllowed || (!protectTaskbar && !animate))
     {
         snowdesktop::window_support::protocol::Request clear;
@@ -97,14 +97,18 @@ void DesktopApp::UpdateDockExternalMinimizeTargets()
         if (helperTargets.targetCount == helperTargets.targets.size()) continue;
         wire::Target target;
         target.identity = wire::Capture(window);
-        target.animate = animate ? 1u : 0u;
-        target.effect = static_cast<std::uint32_t>(snowdesktop::animation::RuntimeWindowEffect());
         target.speed = static_cast<std::uint32_t>(snowdesktop::animation::detail::speed.load());
         target.frameLimit = static_cast<std::uint32_t>(snowdesktop::animation::detail::frameLimit.load());
-        target.dockPosition = static_cast<std::uint32_t>(snowdesktop::animation::detail::dockPosition.load());
         if (dockWindowTransition_)
             if (const auto resolved = dockWindowTransition_->ResolveMinimizeTarget(window))
-            { target.anchor = resolved->anchor; target.keepBelow = reinterpret_cast<UINT_PTR>(resolved->dock); }
+            {
+                target.anchor = resolved->anchor;
+                target.keepBelow = reinterpret_cast<UINT_PTR>(resolved->dock);
+                const auto monitor = MonitorFromRect(&target.anchor, MONITOR_DEFAULTTONEAREST);
+                target.effect = static_cast<std::uint32_t>(DockWindowEffectForMonitor(monitor));
+                target.dockPosition = static_cast<std::uint32_t>(DockLayoutForMonitor(monitor).position);
+                target.animate = animate && target.effect ? 1u : 0u;
+            }
         helperTargets.targets[helperTargets.targetCount++] = target;
         administratorTargets.push_back(window);
         if (dockWindowTransition_) dockWindowTransition_->ObserveNativeMinimize(window);
@@ -157,7 +161,7 @@ bool DesktopApp::HandleDockExternalMinimize(HWND window, DWORD deadline)
         !dockExternalMinimize_->OwnsTarget(window) || !dockWindowTransition_ ||
         dockWindowTransition_->IsActive() || !IsWindowVisible(window) || IsIconic(window) ||
         !snowdesktop::animation::RuntimeAnimationsEnabled() ||
-        snowdesktop::animation::RuntimeWindowEffect() == snowdesktop::animation::NoEffect)
+        !HasDockWindowAnimation())
         return false;
 
     const auto target = [&] {
@@ -166,6 +170,8 @@ bool DesktopApp::HandleDockExternalMinimize(HWND window, DWORD deadline)
     }();
     if (expired(L"external-anchor") || !target) return false;
     const RECT anchor = target->anchor;
+    if (DockWindowEffectForMonitor(MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST)) == 0)
+        return false;
     HWND keepBelow = target->dock && IsWindowVisible(target->dock) ? target->dock : nullptr;
     if (dockSettings_.summonOnAppMinimize)
         if (const HWND promotedDock = KeepDockTopmostForAction(anchor))

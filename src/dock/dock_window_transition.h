@@ -134,6 +134,11 @@ public:
         HWND keepBelowWindow = nullptr);
     bool StartExternalMinimize(HWND sourceWindow, RECT dockRect, DWORD deadline,
         HWND keepBelowWindow = nullptr);
+    struct AnimationPreferences { int effect, position; };
+    void SetAnimationPreferencesProvider(std::function<AnimationPreferences(const RECT&)> provider)
+    {
+        animationPreferencesProvider_ = std::move(provider);
+    }
     void CancelExternalMinimize(HWND sourceWindow, DWORD deadline);
     using MinimizeTarget = snowdesktop::dock_minimize_completion::Target;
     using MinimizeTargetProvider = std::function<std::optional<MinimizeTarget>(HWND, std::optional<RECT>)>;
@@ -176,6 +181,8 @@ public:
 
 private:
     struct RemoteAnimation;
+    AnimationPreferences AnimationPreferencesFor(const RECT& anchor) const;
+    std::function<AnimationPreferences(const RECT&)> animationPreferencesProvider_;
     bool StartHelperAnimation(HWND source, RECT anchor, HWND below, bool restore, RestoreCallback callback = {});
     bool helperRouting_ = false;
     std::shared_ptr<RemoteAnimation> remoteAnimation_;

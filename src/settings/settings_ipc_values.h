@@ -44,7 +44,8 @@ SD_IPC_FIELDS(DockFullscreenApplication, v.name, v.executable);
 SD_IPC_FIELDS(DockTrayRule, v.executable, v.matchPath, v.enabled, v.doubleClick);
 SD_IPC_FIELDS(DockMonitorOverride, v.position, v.edgeAttached, v.edgeCentered, v.thicknessScale,
     v.showOnlyWhenSummoned, v.allowDesktopContentOverlap, v.reserveScreenSpace,
-    v.showFrequentItems, v.keepWhenDesktopHidden, v.showRunningArea);
+    v.showFrequentItems, v.keepWhenDesktopHidden, v.showRunningArea,
+    v.hoverEffect, v.hoverScale, v.launchEffect, v.windowEffect);
 SD_IPC_FIELDS(StatusBarMonitorOverride, v.position, v.scale, v.showOnlyWhenSummoned, v.edgeRevealGesture);
 SD_IPC_FIELDS(DockSettings,
     v.position, v.edgeAttached, v.edgeDistanceScale, v.floatingShortcutMode, v.floatingHotkeyModifiers,

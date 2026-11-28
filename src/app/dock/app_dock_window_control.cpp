@@ -376,7 +376,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
         return false;
     // Keep window previews anchored to the slot in single-icon mode, even
     // while the icon grows or shifts during the hover animation.
-    const RECT visual = dockSettings_.hoverEffect == 1 ? anchor : dock->GetElementVisualRect(anchor, clientPoint);
+    const RECT visual = dock->MonitorLayout().hoverEffect == 1 ? anchor : dock->GetElementVisualRect(anchor, clientPoint);
     anchor = dock->WindowTitleIconRect(anchor, visual, titleCount);
     target.identityKey = DockWindowPreviewIdentityKey(target.identity);
     if (target.identityKey.empty())

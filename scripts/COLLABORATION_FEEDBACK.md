@@ -158,6 +158,8 @@
 
 ### CF-010 等待结束回执过大
 
+- **语言键提交回执续证（2026-11-28）** Task `dock-monitor-profiles-window-titles` 在批次 `2abe74f6be4b498697f23067d98501df`、Run `a38a8b67819f4e22a5ad8468d63051f2` 用 `scripts/build.bat commit -ResourceRequests …` 成功保存 10 种语言。工具返回 838 行，逐个展开 160 个 `resourceKeys` 条目，客户端截断输出。通常只需提交哈希、文件数、键数和完整回执位置。资源提交精简投影待补，原命令和完整回执可用于审计。
+
 - **构建与测试的验证字段（2026-11-20）**：Task `large-icon-help-path`、批次 `c4a3cb381983459c9fdbff318af30b72` 修订 0、Run `95d055f943c04757b323f8426ce2450e`。精简回执显示本地化契约测试通过。为核对 Release 和激活，Agent 随后投影批次结果中的整个 `coverage`，内嵌执行上下文使输出截断。仅读取 `productBuild.exitCode`、`activation.status` 和 `coverage.completed` 后确认构建、激活及一次测试通过。该测试的依赖报告仍含 `source-report-not-in-generated-project`，本轮未尝试复用测试证据。
 
 - **产品编译失败回执（2026-11-19）**：Task `task-d303abaaffbb4e0cafd904a0798290d0` 的批次 `f95ea11f31334d0281b6f1a887568d84`、Run `2fab5ae480d342bc8c1899901d9f6e61` 经 `ready-and-wait` 返回失败，精简回执的 `error` 为空。归档 JSON 顶层 `logPath` 指向不存在的批次测试日志，实际 C2039 诊断在 `productBuild.logPath` 所指的 `.log.product.log`。本任务按产品日志完成定向续修。后续可在产品失败终态返回实际失败阶段及可读日志路径。未为反馈另跑构建。

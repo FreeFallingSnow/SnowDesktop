@@ -19,7 +19,7 @@ bool DesktopApp::StartDockLaunchBounce(size_t itemIndex)
     if (!hwnd_ || !IsWindow(hwnd_) ||
         itemIndex >= items_.size() ||
         !generalSettings_.dockEnabled ||
-        dockSettings_.launchEffect == 0 ||
+        !HasDockLaunchAnimation() ||
         !snowdesktop::animation::RuntimeAnimationsEnabled())
         return false;
 
@@ -35,15 +35,14 @@ bool DesktopApp::StartDockLaunchBounce(size_t itemIndex)
                         DockEntryType::DesktopItem &&
                     ToUpperInvariant(entry.reference) == key;
             });
-    bool frequent = false;
-    if (!fixed)
-    {
-        const std::vector<size_t> frequentItems =
-            GetFrequentDockItemIndices();
-        frequent = std::find(
-            frequentItems.begin(), frequentItems.end(),
-            itemIndex) != frequentItems.end();
-    }
+    const bool frequent = !fixed && std::ranges::any_of(containers_, [&](const auto& container) {
+        const auto* dock = dynamic_cast<const DockContainer*>(container.get());
+        if (!dock) return false;
+        const auto layout = dock->MonitorLayout();
+        if (layout.launchEffect == 0) return false;
+        const auto items = GetFrequentDockItemIndices(layout);
+        return std::ranges::find(items, itemIndex) != items.end();
+    });
     if (!fixed && !frequent)
         return false;
 
@@ -60,9 +59,9 @@ bool DesktopApp::StartDockLaunchBounce(size_t itemIndex)
 }
 
 float DesktopApp::GetDockLaunchBounceOffset(
-    size_t itemIndex, int iconSize) const
+    size_t itemIndex, int iconSize, HMONITOR monitor) const
 {
-    if (itemIndex >= items_.size() || dockSettings_.launchEffect != 1 ||
+    if (itemIndex >= items_.size() || DockLayoutForMonitor(monitor).launchEffect != 1 ||
         !snowdesktop::animation::RuntimeAnimationsEnabled())
         return 0.0f;
     const auto found = dockLaunchBounces_.find(
@@ -79,9 +78,9 @@ float DesktopApp::GetDockLaunchBounceOffset(
             iconSize);
 }
 
-float DesktopApp::GetDockLaunchPulseScale(size_t itemIndex) const
+float DesktopApp::GetDockLaunchPulseScale(size_t itemIndex, HMONITOR monitor) const
 {
-    if (itemIndex >= items_.size() || dockSettings_.launchEffect != 2 ||
+    if (itemIndex >= items_.size() || DockLayoutForMonitor(monitor).launchEffect != 2 ||
         !snowdesktop::animation::RuntimeAnimationsEnabled())
         return 1.0f;
     const auto found = dockLaunchBounces_.find(
@@ -111,7 +110,7 @@ void DesktopApp::OnDockLaunchBounceTimer()
     // last translated pixels are cleared by the same coalesced paint.
     InvalidateDockLaunchBounceRects();
 
-    if (!generalSettings_.dockEnabled || dockSettings_.launchEffect == 0 ||
+    if (!generalSettings_.dockEnabled || !HasDockLaunchAnimation() ||
         !snowdesktop::animation::RuntimeAnimationsEnabled())
     {
         dockLaunchBounces_.clear();

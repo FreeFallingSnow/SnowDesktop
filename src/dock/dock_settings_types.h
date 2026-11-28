@@ -49,11 +49,14 @@ struct DockSettings : DockLayoutSettings
     DockMonitorOverride lastMonitorOverride, otherMonitorOverride;
     bool showWindowTitles = false;
 
-    DockLayoutSettings MonitorLayout(BarMonitorRole role) const
+    DockMonitorLayout MonitorLayout(BarMonitorRole role) const
     {
-        if (role == BarMonitorRole::First) return *this;
-        return ApplyDockMonitorOverride(*this,
-            role == BarMonitorRole::Last ? lastMonitorOverride : otherMonitorOverride);
+        if (role == BarMonitorRole::First)
+            return {*this, hoverEffect, hoverScale, launchEffect, windowEffect};
+        const auto& value = role == BarMonitorRole::Last ? lastMonitorOverride : otherMonitorOverride;
+        return {ApplyDockMonitorOverride(*this, value), value.hoverEffect.value_or(hoverEffect),
+            value.hoverScale.value_or(hoverScale), value.launchEffect.value_or(launchEffect),
+            value.windowEffect.value_or(windowEffect)};
     }
     bool operator==(const DockSettings&) const = default;
 

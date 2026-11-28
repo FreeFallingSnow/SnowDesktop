@@ -136,6 +136,13 @@ void NormalizeDockSettings(DockSettings& settings)
     settings.hoverScale = snowdesktop::animation::NormalizeHoverScale(settings.hoverScale);
     settings.launchEffect = snowdesktop::animation::NormalizeLaunchEffect(settings.launchEffect);
     settings.windowEffect = snowdesktop::animation::NormalizeWindowEffect(settings.windowEffect);
+    for (auto* monitor : {&settings.lastMonitorOverride, &settings.otherMonitorOverride})
+    {
+        if (monitor->hoverEffect) monitor->hoverEffect = snowdesktop::animation::NormalizeHoverEffect(*monitor->hoverEffect);
+        if (monitor->hoverScale) monitor->hoverScale = snowdesktop::animation::NormalizeHoverScale(*monitor->hoverScale);
+        if (monitor->launchEffect) monitor->launchEffect = snowdesktop::animation::NormalizeLaunchEffect(*monitor->launchEffect);
+        if (monitor->windowEffect) monitor->windowEffect = snowdesktop::animation::NormalizeWindowEffect(*monitor->windowEffect);
+    }
     settings.edgeRevealGesture = settings.edgeRevealGesture == 1 ? 1 : 0;
     settings.edgeHoverDelayMs = snowdesktop::dock_settings_rules::NormalizeEdgeHoverDelayMs(settings.edgeHoverDelayMs);
     settings.fullscreenPolicy = snowdesktop::dock_fullscreen::Normalize(static_cast<int>(settings.fullscreenPolicy));
@@ -1482,6 +1489,13 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         return true;
     };
 
+    const auto readBaseNumber = [&](const char* key, double& value) {
+        const auto* field = gradientDocument.Find(key);
+        if (!field || !field->IsNumber()) return false;
+        value = field->number;
+        return true;
+    };
+
     double value = 0.0;
     if (const auto* field = gradientDocument.Find("position"); field && field->IsNumber())
         settings.position = static_cast<DockPosition>(static_cast<int>(std::clamp(field->number, 0.0, 3.0)));
@@ -1581,13 +1595,13 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     settings.mergedIconScale = ClampMergedDockIconScale(settings.thicknessScale);
     if (ReadDoubleField(text, "mergedIconScale", value))
         settings.mergedIconScale = ClampMergedDockIconScale(static_cast<float>(value));
-    if (ReadDoubleField(text, "hoverEffect", value) && std::isfinite(value) && value >= 0 && value <= 2 && std::floor(value) == value)
+    if (readBaseNumber("hoverEffect", value) && std::isfinite(value) && value >= 0 && value <= 2 && std::floor(value) == value)
         settings.hoverEffect = static_cast<int>(value);
-    if (ReadDoubleField(text, "hoverScale", value))
+    if (readBaseNumber("hoverScale", value))
         settings.hoverScale = snowdesktop::animation::NormalizeHoverScale(static_cast<float>(value));
-    if (ReadDoubleField(text, "launchEffect", value) && std::isfinite(value) && value >= 0 && value <= 2 && std::floor(value) == value)
+    if (readBaseNumber("launchEffect", value) && std::isfinite(value) && value >= 0 && value <= 2 && std::floor(value) == value)
         settings.launchEffect = static_cast<int>(value);
-    if (ReadDoubleField(text, "windowEffect", value) && std::isfinite(value) && value >= 0 && value <= 4 && std::floor(value) == value)
+    if (readBaseNumber("windowEffect", value) && std::isfinite(value) && value >= 0 && value <= 4 && std::floor(value) == value)
         settings.windowEffect = static_cast<int>(value);
     ReadBoolField(text, "systemTaskbarAutoHide", settings.systemTaskbarAutoHide);
     ReadBoolField(text, "suppressSystemTaskbar", settings.suppressSystemTaskbar);

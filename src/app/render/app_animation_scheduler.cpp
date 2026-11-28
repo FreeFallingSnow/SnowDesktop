@@ -92,7 +92,7 @@ void DesktopApp::ApplyAnimationPreferences(bool systemChanged)
         widgetEngine_->ApplyHostAnimationPreferences();
     if (windowChanged && dockWindowTransition_)
         dockWindowTransition_->CompleteImmediately();
-    if (!motion::RuntimeAnimationsEnabled() || dockSettings_.launchEffect == 0)
+    if (!motion::RuntimeAnimationsEnabled() || !HasDockLaunchAnimation())
     {
         dockLaunchBounces_.clear();
         if (dockBounceAnimationFrameToken_)

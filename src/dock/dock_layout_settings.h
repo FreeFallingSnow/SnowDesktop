@@ -77,6 +77,8 @@ struct DockMonitorOverride
     std::optional<float> thicknessScale;
     std::optional<bool> showOnlyWhenSummoned, allowDesktopContentOverlap, reserveScreenSpace;
     std::optional<bool> showFrequentItems, keepWhenDesktopHidden, showRunningArea;
+    std::optional<int> hoverEffect, launchEffect, windowEffect;
+    std::optional<float> hoverScale;
 
     template <typename Self, typename Visitor>
     static void Visit(Self& value, Visitor&& visit)
@@ -91,7 +93,19 @@ struct DockMonitorOverride
         visit("showFrequentItems", value.showFrequentItems);
         visit("keepWhenDesktopHidden", value.keepWhenDesktopHidden);
         visit("showRunningArea", value.showRunningArea);
+        visit("hoverEffect", value.hoverEffect);
+        visit("hoverScale", value.hoverScale);
+        visit("launchEffect", value.launchEffect);
+        visit("windowEffect", value.windowEffect);
     }
+};
+
+struct DockMonitorLayout : DockLayoutSettings
+{
+    int hoverEffect = 2;
+    float hoverScale = 1.28f;
+    int launchEffect = 1;
+    int windowEffect = 1;
 };
 
 DockLayoutSettings ApplyDockMonitorOverride(DockLayoutSettings base, const DockMonitorOverride& value);

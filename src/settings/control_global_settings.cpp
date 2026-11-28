@@ -105,7 +105,13 @@ void Enrich(Value& schema, const std::string& path)
         ReadOnly(schema, "showRunningApps", "Always enabled by the current product");
     }
     if (path == "dock.lastMonitorOverride" || path == "dock.otherMonitorOverride")
+    {
         Range(schema, "thicknessScale", .5, 2);
+        Range(schema, "hoverScale", 1, 2);
+        Choices(schema, "hoverEffect", {0, 1, 2});
+        Choices(schema, "launchEffect", {0, 1, 2});
+        Choices(schema, "windowEffect", {0, 1, 2, 3, 4});
+    }
     if (path == "general.statusBar.lastMonitorOverride" || path == "general.statusBar.otherMonitorOverride")
     {
         Range(schema, "scale", .75, 3);

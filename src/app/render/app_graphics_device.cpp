@@ -378,6 +378,11 @@ void DesktopApp::InitializeDockWindowTransition()
     if (dockWindowTransition_)
     {
         dockWindowTransition_->EnableHelperRouting();
+        dockWindowTransition_->SetAnimationPreferencesProvider([this](const RECT& anchor) {
+            const auto monitor = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
+            return DockWindowTransition::AnimationPreferences{
+                DockWindowEffectForMonitor(monitor), static_cast<int>(DockLayoutForMonitor(monitor).position)};
+        });
         dockWindowTransition_->SetMinimizeCompletionCallbacks(
             [this](HWND window, std::optional<RECT> requestedAnchor)
                 -> std::optional<DockWindowTransition::MinimizeTarget> {
@@ -404,6 +409,7 @@ void DesktopApp::InitializeDockWindowTransition()
                             if (!slot || !slot->GetItem()) continue;
                             const Item* item = slot->GetItem();
                             bool matches = false;
+                            size_t titleCount = 0;
                             if (const auto* running = dynamic_cast<const DockRunningItem*>(item))
                             {
                                 const size_t index = running->GetRunningIndex();
@@ -411,6 +417,7 @@ void DesktopApp::InitializeDockWindowTransition()
                                 {
                                     const auto& state = dockUnpinnedRunningApps_[index];
                                     matches = state.presence.Interactive() && tracks(state);
+                                    titleCount = dock->RunningTitleWindows(index).size();
                                 }
                             }
                             else
@@ -419,7 +426,10 @@ void DesktopApp::InitializeDockWindowTransition()
                                 if (const auto* entry = dynamic_cast<const DockEntryItem*>(item))
                                 {
                                     if (entry->GetEntryType() == DockEntryType::DesktopItem)
+                                    {
                                         index = FindItemIndexByKey(entry->GetReference());
+                                        titleCount = dock->EntryTitleWindows(entry->GetEntryIndex()).size();
+                                    }
                                 }
                                 else if (const auto* frequent = dynamic_cast<const DockFrequentItem*>(item))
                                     index = frequent->GetItemIndex();
@@ -430,7 +440,9 @@ void DesktopApp::InitializeDockWindowTransition()
                                 }
                             }
                             if (!matches) continue;
-                            RECT candidate = dock->GetElementVisualRect(item->GetBounds(), lastMousePoint_);
+                            const RECT base = item->GetBounds();
+                            RECT candidate = dock->WindowTitleIconRect(base,
+                                dock->GetElementVisualRect(base, lastMousePoint_), titleCount);
                             RECT intersection{};
                             const RECT viewport = dock->GetInteractiveBounds();
                             if (!IntersectRect(&intersection, &candidate, &viewport)) continue;

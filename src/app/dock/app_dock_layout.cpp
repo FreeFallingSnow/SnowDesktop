@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "dock/dock_settings_rules.h"
+#include "platform/runtime_module_policy.h"
 #include "common/utils.h"
 #include "dock/dock_appbar.h"
 #include "dock/dock_work_area_reservation.h"
@@ -28,9 +29,33 @@ BarMonitorRole DesktopApp::BarRoleForMonitor(HMONITOR monitor) const
     return found == barMonitorRoles_.end() ? BarMonitorRole::First : found->second;
 }
 
-DockLayoutSettings DesktopApp::DockLayoutForMonitor(HMONITOR monitor) const
+DockMonitorLayout DesktopApp::DockLayoutForMonitor(HMONITOR monitor) const
 {
     return dockSettings_.MonitorLayout(BarRoleForMonitor(monitor));
+}
+
+int DesktopApp::DockWindowEffectForMonitor(HMONITOR monitor) const
+{
+    return snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::WindowMinimize)
+        ? DockLayoutForMonitor(monitor).windowEffect : 0;
+}
+
+bool DesktopApp::HasDockWindowAnimation() const
+{
+    if (!snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::WindowMinimize))
+        return false;
+    return std::ranges::any_of(containers_, [](const auto& container) {
+        const auto* dock = dynamic_cast<const DockContainer*>(container.get());
+        return dock && dock->MonitorLayout().windowEffect != 0;
+    });
+}
+
+bool DesktopApp::HasDockLaunchAnimation() const
+{
+    return std::ranges::any_of(containers_, [](const auto& container) {
+        const auto* dock = dynamic_cast<const DockContainer*>(container.get());
+        return dock && dock->MonitorLayout().launchEffect != 0;
+    });
 }
 
 DockContainer* DesktopApp::GetDockContainer() const

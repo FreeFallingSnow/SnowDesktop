@@ -265,13 +265,13 @@ bool DesktopApp::HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPAR
         const int slop = touch::Dips(12, GetDpiForWindow(window));
         const int dx = screen.x - contact.start.x;
         const int dy = screen.y - contact.start.y;
-        const auto position = DockLayoutForMonitor(MonitorFromPoint(contact.start, MONITOR_DEFAULTTONEAREST)).position;
-        const bool vertical = IsVertical(position);
+        const auto dockPosition = DockLayoutForMonitor(MonitorFromPoint(contact.start, MONITOR_DEFAULTTONEAREST)).position;
+        const bool vertical = IsVertical(dockPosition);
         if (gesture.action == Action::Pending && contact.Moved(screen, slop))
         {
             taps.Reset();
             const bool openPreview = gesture.preview &&
-                IsOutwardSwipe(position, contact.start, screen, slop);
+                IsOutwardSwipe(dockPosition, contact.start, screen, slop);
             const bool scrollAlongDock = gesture.scrollable &&
                 (vertical ? std::abs(dy) >= std::abs(dx) : std::abs(dx) >= std::abs(dy));
             if (gesture.draggable && (contact.Held() || (!openPreview && !scrollAlongDock)))

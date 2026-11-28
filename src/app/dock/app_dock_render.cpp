@@ -320,8 +320,8 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
             return;
         }
         const float launchOffset =
-            GetDockLaunchBounceOffset(index, iconSize);
-        const float launchScale = GetDockLaunchPulseScale(index);
+            GetDockLaunchBounceOffset(index, iconSize, dockMonitor);
+        const float launchScale = GetDockLaunchPulseScale(index, dockMonitor);
         float launchOffsetX = 0.0f;
         float launchOffsetY = 0.0f;
         switch (layout.position)

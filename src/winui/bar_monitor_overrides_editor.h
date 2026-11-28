@@ -110,7 +110,8 @@ public:
     }
 
     void AddPercentage(const char* key, std::optional<float> Override::* member,
-        float Layout::* baseMember, double minimum, double maximum)
+        float Layout::* baseMember, double minimum, double maximum, bool appendUnit = true,
+        std::function<bool(const Layout&)> applicable = {})
     {
         using namespace presenter_controls;
         for (auto& group : groups_)
@@ -125,9 +126,10 @@ public:
             row.Initialize(number);
             row.SetControlAlignment(mux::HorizontalAlignment::Right);
             group.fields.Children().Append(row.root);
-            group.refresh.emplace_back([this, row, number, key, member, baseMember](
-                const Override& value, const Layout& base, const Layout&) mutable {
-                const auto label = localize_(key) + L" (%)";
+            group.refresh.emplace_back([this, row, number, key, member, baseMember, appendUnit, applicable](
+                const Override& value, const Layout& base, const Layout& effective) mutable {
+                const auto label = localize_(key) + (appendUnit ? L" (%)" : L"");
+                row.root.Visibility(!applicable || applicable(effective) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
                 row.SetText(label);
                 winrt::Microsoft::UI::Xaml::Automation::AutomationProperties::SetName(number, label);
                 number.PlaceholderText(localize_("settings.bar.monitorOverrides.follow") +
