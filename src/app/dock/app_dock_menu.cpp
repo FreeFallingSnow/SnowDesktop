@@ -302,11 +302,9 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar, HMONITOR monitor)
     const auto windowTitleFlags = MF_STRING | (settingsController_ ? 0 : MF_GRAYED);
     const auto windowTitlesLabel = toggleLabel(_LW("settings.dock.showWindowTitles"), dockSettings_.showWindowTitles);
     AppendMenuW(menu, windowTitleFlags, kDockShowWindowTitles, windowTitlesLabel.c_str());
-    SetMenuItemIcon(menu, kDockShowWindowTitles, snowdesktop::menu_fluent_glyphs::kContentLayout, MenuIconFont::FluentRegular);
     AppendMenuW(menu, windowTitleFlags, kDockWindowTitleScope,
         _LW(dockSettings_.windowTitlesOnlyMultiple ? "settings.dock.windowTitles.multiple" : "settings.dock.windowTitles.all"));
-    SetMenuItemInlineAction(menu, kDockShowWindowTitles, kDockShowWindowTitles, false, false, true);
-    SetMenuItemInlineAction(menu, kDockWindowTitleScope, kDockShowWindowTitles, true, false, true);
+    dockActionIcons.emplace_back(kDockShowWindowTitles, snowdesktop::menu_fluent_glyphs::kContentLayout);
     addToggle(menu, kDockMinimizeWindowsIntoApplicationIcon,
         _LW("settings.dock.minimizeWindowsIntoApplicationIcon"), dockSettings_.minimizeWindowsIntoApplicationIcon,
         L"\uF165", settingsController_ != nullptr); // arrow_minimize_20_regular
@@ -358,7 +356,11 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar, HMONITOR monitor)
             : snowdesktop::menu_fluent_glyphs::kHideFrequent);
     dockActionIcons.emplace_back(keepToggleCommand,
         snowdesktop::menu_fluent_glyphs::kKeepWhenDesktopHidden);
-    const auto bindFinalDockIcons = [&] {
+    const auto bindFinalDockPresentation = [&] {
+        // The merged bar inserts rows before the Dock actions. Both icons and
+        // inline groups are stored by position and must use the final indices.
+        SetMenuItemInlineAction(menu, kDockShowWindowTitles, kDockShowWindowTitles, false, false, true);
+        SetMenuItemInlineAction(menu, kDockWindowTitleScope, kDockShowWindowTitles, true, false, true);
         SetMenuItemInlineAction(menu, kDockStartButton, kDockStartButton, startIconMenu != nullptr, false, startIconMenu != nullptr);
         if (startIconMenu)
         {
@@ -371,8 +373,6 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar, HMONITOR monitor)
             SetMenuItemInlineAction(menu, reinterpret_cast<UINT_PTR>(searchIconMenu), kDockQuickSearchButton);
             SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(searchIconMenu), L"\uF690", MenuIconFont::FluentRegular);
         }
-        // Icon metadata is indexed by HMENU row. Leading insertions below
-        // shift those rows, so bind Dock actions after the final structure.
         for (const auto& [command, glyph] : dockActionIcons)
             SetMenuItemIcon(menu, command, glyph, MenuIconFont::FluentRegular);
         if (revealParent == menu)
@@ -432,10 +432,10 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar, HMONITOR monitor)
         SetMenuItemIcon(mergedMenu, reinterpret_cast<UINT_PTR>(independentMenu), L"\uF133", MenuIconFont::FluentRegular);
         SetMenuItemIcon(appearanceMenu, reinterpret_cast<UINT_PTR>(heightMenu), L"\uF8C4", MenuIconFont::FluentRegular);
         SetMenuItemIcon(appearanceMenu, reinterpret_cast<UINT_PTR>(iconMenu), L"\uF133", MenuIconFont::FluentRegular);
-        bindFinalDockIcons();
+        bindFinalDockPresentation();
         return root;
     }
-    bindFinalDockIcons();
+    bindFinalDockPresentation();
     return menu;
 }
 
