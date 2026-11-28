@@ -1045,6 +1045,7 @@ private:
         std::optional<RECT> requestedAnchor, bool restoring) const;
     void ActivateDockWindowFromPreview(HWND window);
     void ActivateDockWindowFromPreviewAnimated(HWND window);
+    void ActivateOrToggleDockTaskWindow(HWND window, RECT anchorScreen);
     struct DockWindowActivationOutcome
     {
         bool restored = false;
@@ -1095,7 +1096,7 @@ private:
     std::vector<DockWindowPreviewItem> CollectDockWindowPreviewItems(
         const DockAppIdentity& identity,
         bool includeCloaked = false,
-        bool preferTaskbarDocumentProxies = true);
+        bool preferTaskbarDocumentProxies = true, HWND onlyWindow = nullptr);
     void CloseDockWindowFromPreview(HWND window);
     void CloseDockApplicationWindows(
         const DockAppIdentity& identity);
@@ -1866,8 +1867,9 @@ private:
     void ExecuteDockContextMenuCommand(UINT command, HWND owner, HMONITOR monitor);
     bool BarMonitorOverrideAvailable() const;
     bool CanEditBarMonitorOverrides() const;
-    bool ConfirmBarMonitorOverride(HMONITOR monitor, BarMonitorRole role,
-        bool inherited, const wchar_t* setting);
+    enum class BarMonitorEditTarget { Cancel, Independent, Shared };
+    BarMonitorEditTarget ConfirmBarMonitorOverride(HMONITOR monitor, BarMonitorRole role,
+        bool inherited, const wchar_t* setting, bool allowShared = true);
     /** @brief 显示 Dock 运行区应用上下文菜单。 */
     void ShowDockRunningAppContextMenu(
         POINT screenPoint, size_t runningIndex);
@@ -2889,10 +2891,12 @@ private:
     void RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
         float opacity, std::uintptr_t ownerKey, const snowdesktop::IconBeautifySettings* style = nullptr);
     void DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
-        D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth, std::uintptr_t ownerKey = 0);
+        D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth, std::uintptr_t ownerKey = 0,
+        bool roundedRectangle = false, float opacity = 1.0f);
     void DrawPrivacyFaIcon(ID2D1DeviceContext* ctx, RECT rect, bool directory);
     bool DrawDockControlBackground(ID2D1DeviceContext* ctx, RECT rect, int state,
-        bool forceWhiteStyle = false, std::uintptr_t ownerKey = 0, HMONITOR dockMonitor = nullptr);
+        bool forceWhiteStyle = false, std::uintptr_t ownerKey = 0, HMONITOR dockMonitor = nullptr,
+        bool titleGroup = false, float opacity = 1.0f);
     void DrawDockSelectionIndicator(
         ID2D1DeviceContext* ctx, RECT iconRect, bool lightTheme, HMONITOR monitor = nullptr);
     void DrawDockRunningApp(ID2D1DeviceContext* ctx,
@@ -3939,6 +3943,7 @@ private:
     DockPreviewHoverController dockWindowPreviewHover_;
     std::wstring dockWindowPreviewKey_;
     DockAppIdentity dockWindowPreviewIdentity_;
+    HWND dockWindowPreviewWindow_ = nullptr;
     RECT dockWindowPreviewAnchorScreen_{};
     DWORD systemTaskbarBackdropRefreshTick_ = 0;
     DWORD windowObservationTick_ = 0;

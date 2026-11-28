@@ -33,6 +33,7 @@ constexpr UINT kDockFreeItemOrder = 41898;
 constexpr UINT kDockMinimizeWindowsIntoApplicationIcon = 41899;
 constexpr UINT kDockMonitorScopeFirst = 41830;
 constexpr UINT kDockEdgeSpread = 41937, kDockEdgeCenter = 41938, kDockRunningArea = 41939;
+constexpr UINT kDockShowWindowTitles = 41940;
 constexpr UINT kDockScaleFirst = 41840;
 constexpr int kDockScalePercent[]{50, 75, 100, 125, 150, 175, 200};
 constexpr UINT kMergedDockScaleFirst = 41850;
@@ -58,10 +59,12 @@ constexpr char const* kDesktopStyleAnimations[]{nullptr, nullptr, "settings.desk
 static_assert(std::size(kDesktopStyles) == std::size(kDesktopStyleLabels) &&
     std::size(kDesktopStyles) == std::size(kDesktopStyleAnimations));
 
-bool ConfirmBarMenuAction(HWND owner, const wchar_t* title, const wchar_t* message,
-    const wchar_t* accept, const wchar_t* cancel)
+int ChooseBarMenuAction(HWND owner, const wchar_t* title, const wchar_t* message,
+    const wchar_t* accept, const wchar_t* cancel, const wchar_t* shared = nullptr)
 {
-    const TASKDIALOG_BUTTON buttons[]{{IDYES, accept}, {IDCANCEL, cancel}};
+    std::vector<TASKDIALOG_BUTTON> buttons{{IDYES, accept}};
+    if (shared) buttons.push_back({IDNO, shared});
+    buttons.push_back({IDCANCEL, cancel});
     POINT anchor{};
     snowdesktop::private_pointer::CursorPosition(&anchor);
     TASKDIALOGCONFIG dialog{};
@@ -72,7 +75,7 @@ bool ConfirmBarMenuAction(HWND owner, const wchar_t* title, const wchar_t* messa
     dialog.pszMainInstruction = title;
     dialog.pszContent = message;
     dialog.cButtons = static_cast<UINT>(std::size(buttons));
-    dialog.pButtons = buttons;
+    dialog.pButtons = buttons.data();
     dialog.nDefaultButton = IDCANCEL;
     dialog.lpCallbackData = reinterpret_cast<LONG_PTR>(&anchor);
     dialog.pfCallback = +[](HWND window, UINT notification, WPARAM, LPARAM, LONG_PTR data) -> HRESULT {
@@ -95,7 +98,13 @@ bool ConfirmBarMenuAction(HWND owner, const wchar_t* title, const wchar_t* messa
         return S_OK;
     };
     int selected = IDCANCEL;
-    return SUCCEEDED(snowdesktop::operation_feedback::ShowTaskDialog(&dialog, &selected, nullptr, nullptr)) && selected == IDYES;
+    return SUCCEEDED(snowdesktop::operation_feedback::ShowTaskDialog(&dialog, &selected, nullptr, nullptr)) ? selected : IDCANCEL;
+}
+
+bool ConfirmBarMenuAction(HWND owner, const wchar_t* title, const wchar_t* message,
+    const wchar_t* accept, const wchar_t* cancel)
+{
+    return ChooseBarMenuAction(owner, title, message, accept, cancel) == IDYES;
 }
 }
 
@@ -109,29 +118,36 @@ bool DesktopApp::CanEditBarMonitorOverrides() const
     return BarMonitorOverrideAvailable() && steamEntitlementService_->Current().registered;
 }
 
-bool DesktopApp::ConfirmBarMonitorOverride(HMONITOR monitor, BarMonitorRole role,
-    bool inherited, const wchar_t* setting)
+DesktopApp::BarMonitorEditTarget DesktopApp::ConfirmBarMonitorOverride(HMONITOR monitor,
+    BarMonitorRole role, bool inherited, const wchar_t* setting, bool allowShared)
 {
-    if (role == BarMonitorRole::First) return true;
-    if (!BarMonitorOverrideAvailable()) return false;
-    if (!CanEditBarMonitorOverrides())
+    using Target = BarMonitorEditTarget;
+    if (role == BarMonitorRole::First) return Target::Shared;
+    if (!BarMonitorOverrideAvailable()) return Target::Cancel;
+    int selected = IDYES;
+    if (inherited)
     {
+        const bool last = role == BarMonitorRole::Last;
+        const auto count = std::ranges::count_if(barMonitorRoles_, [role](const auto& entry) {
+            return entry.second == role;
+        });
+        const std::wstring message = last ? std::wstring(setting) :
+            std::wstring(setting) + L"\n" + _LFW("settings.bar.monitorOverrides.otherCount", std::to_wstring(count));
+        selected = ChooseBarMenuAction(hwnd_,
+            _LW(last ? "settings.bar.monitorOverrides.lastPrompt" : "settings.bar.monitorOverrides.otherPrompt"),
+            message.c_str(),
+            _LW(last ? "settings.bar.monitorOverrides.applyLast" : "settings.bar.monitorOverrides.applyOther"),
+            _LW("settings.dialog.cancel"),
+            allowShared ? _LW("settings.bar.monitorOverrides.applyShared") : nullptr);
+    }
+    if (BarRoleForMonitor(monitor) != role) return Target::Cancel;
+    if (selected == IDNO && allowShared) return Target::Shared;
+    if (selected != IDYES) return Target::Cancel;
+    if (CanEditBarMonitorOverrides()) return Target::Independent;
+    if (BarMonitorOverrideAvailable())
         ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
             snowdesktop::SettingsPage::General, "general.advancedFeatures.unlockRequired"));
-        return false;
-    }
-    if (!inherited) return true;
-    const bool last = role == BarMonitorRole::Last;
-    const auto count = std::ranges::count_if(barMonitorRoles_, [role](const auto& entry) {
-        return entry.second == role;
-    });
-    const std::wstring message = last ? std::wstring(setting) :
-        std::wstring(setting) + L"\n" + _LFW("settings.bar.monitorOverrides.otherCount", std::to_wstring(count));
-    return ConfirmBarMenuAction(hwnd_,
-        _LW(last ? "settings.bar.monitorOverrides.lastPrompt" : "settings.bar.monitorOverrides.otherPrompt"),
-        message.c_str(),
-        _LW(last ? "settings.bar.monitorOverrides.applyLast" : "settings.bar.monitorOverrides.applyOther"),
-        _LW("settings.dialog.cancel")) && CanEditBarMonitorOverrides() && BarRoleForMonitor(monitor) == role;
+    return Target::Cancel;
 }
 
 HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar, HMONITOR monitor)
@@ -281,6 +297,8 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar, HMONITOR monitor)
         dockSettings_.freeItemOrder, L"\uF18D", settingsController_ != nullptr); // arrow_swap_20_regular
     if (canShowLayout) addToggle(menu, kContextDockShowOnlyWhenSummoned, _LW("settings.dock.showOnlyWhenSummoned"),
         layout.showOnlyWhenSummoned, L"\uE5F2"); // eye_20
+    addToggle(menu, kDockShowWindowTitles, _LW("settings.dock.showWindowTitles"),
+        dockSettings_.showWindowTitles, snowdesktop::menu_fluent_glyphs::kContentLayout, settingsController_ != nullptr);
     addToggle(menu, kContextDockWindowPreviews, _LW("settings.dock.windowPreviews"),
         dockSettings_.showWindowPreviews, L"\uF8B5"); // window_20
     addToggle(menu, kDockMinimizeWindowsIntoApplicationIcon,
@@ -522,6 +540,7 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner, HMONITO
     case kDockSearchIconBorder: setting = &DockSettings::quickSearchIconBorder; break;
     case kContextDockRecycleBinIconBorder: setting = &DockSettings::recycleBinIconBorder; break;
     case kDockFreeItemOrder: setting = &DockSettings::freeItemOrder; break;
+    case kDockShowWindowTitles: setting = &DockSettings::showWindowTitles; break;
     case kDockMinimizeWindowsIntoApplicationIcon: setting = &DockSettings::minimizeWindowsIntoApplicationIcon; break;
     }
     if (setting)
@@ -593,20 +612,28 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner, HMONITO
     {
         const auto layout = DockLayoutForMonitor(monitor);
         const auto& stored = role == BarMonitorRole::Last ? dockSettings_.lastMonitorOverride : dockSettings_.otherMonitorOverride;
-        const auto apply = [&](const wchar_t* setting, bool inherited, auto edit, bool restoring = false) {
-            if (!restoring && !ConfirmBarMonitorOverride(monitor, role, inherited, setting)) return;
-            auto dock = settingsController_->Snapshot()->values.dock;
-            edit(role == BarMonitorRole::Last ? dock.lastMonitorOverride : dock.otherMonitorOverride);
+        using Target = BarMonitorEditTarget;
+        const auto commit = [&](DockSettings dock) {
             settingsController_->UpdateDock(std::move(dock), snowdesktop::SettingsUpdateMode::PreviewAndCommit);
             (void)settingsController_->FlushPending();
         };
-        const auto set = [&](const wchar_t* setting, auto member, auto value) {
-            apply(setting, !(stored.*member).has_value(), [member, value](DockMonitorOverride& row) { row.*member = value; });
+        const auto choose = [&](const wchar_t* setting, bool inherited, auto editOverride, auto editShared) {
+            const auto target = ConfirmBarMonitorOverride(monitor, role, inherited, setting);
+            if (target == Target::Cancel) return;
+            auto dock = settingsController_->Snapshot()->values.dock;
+            if (target == Target::Shared) editShared(dock);
+            else editOverride(role == BarMonitorRole::Last ? dock.lastMonitorOverride : dock.otherMonitorOverride);
+            commit(std::move(dock));
+        };
+        const auto set = [&](const wchar_t* setting, auto member, auto sharedMember, auto value) {
+            choose(setting, !(stored.*member).has_value(),
+                [member, value](DockMonitorOverride& row) { row.*member = value; },
+                [sharedMember, value](DockSettings& dock) { dock.*sharedMember = value; });
         };
         if (command >= kContextDockPositionBottom && command <= kContextDockPositionRight)
         {
             const auto position = static_cast<DockPosition>(command - kContextDockPositionBottom);
-            if (layout.position != position) set(_LW("app.dock.position"), &DockMonitorOverride::position, position);
+            if (layout.position != position) set(_LW("app.dock.position"), &DockMonitorOverride::position, &DockLayoutSettings::position, position);
             return;
         }
         if (command == kContextDockLayoutIsland || command == kContextDockLayoutEdge ||
@@ -616,44 +643,50 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner, HMONITO
             const bool chooseAlignment = command == kDockEdgeSpread || command == kDockEdgeCenter;
             const bool centered = command == kDockEdgeCenter;
             if (layout.edgeAttached != attached || (chooseAlignment && layout.edgeCentered != centered))
-                apply(_LW("app.dock.layout"), !stored.edgeAttached || (chooseAlignment && !stored.edgeCentered),
-                    [attached, chooseAlignment, centered](DockMonitorOverride& row) {
-                        row.edgeAttached = attached;
-                        if (chooseAlignment) row.edgeCentered = centered;
-                    });
+            {
+                const auto setStyle = [attached, chooseAlignment, centered](auto& row) {
+                    row.edgeAttached = attached;
+                    if (chooseAlignment) row.edgeCentered = centered;
+                };
+                choose(_LW("app.dock.layout"), !stored.edgeAttached || (chooseAlignment && !stored.edgeCentered),
+                    setStyle, setStyle);
+            }
             return;
         }
         if (command >= kDockScaleFirst && command < kDockScaleFirst + std::size(kDockScalePercent))
         {
             const auto scale = ClampDockScale(kDockScalePercent[command - kDockScaleFirst] / 100.f);
-            if (layout.thicknessScale != scale) set(_LW("app.settings.dock_thickness"), &DockMonitorOverride::thicknessScale, scale);
+            if (layout.thicknessScale != scale) set(_LW("app.settings.dock_thickness"), &DockMonitorOverride::thicknessScale, &DockLayoutSettings::thicknessScale, scale);
             return;
         }
         switch (command)
         {
         case kContextDockShowOnlyWhenSummoned:
-            set(_LW("settings.dock.showOnlyWhenSummoned"), &DockMonitorOverride::showOnlyWhenSummoned, !layout.showOnlyWhenSummoned);
+            set(_LW("settings.dock.showOnlyWhenSummoned"), &DockMonitorOverride::showOnlyWhenSummoned, &DockLayoutSettings::showOnlyWhenSummoned, !layout.showOnlyWhenSummoned);
             return;
         case kDockReserveDesktop:
-            set(_LW("settings.dock.allowDesktopContentOverlap"), &DockMonitorOverride::allowDesktopContentOverlap, !layout.allowDesktopContentOverlap);
+            set(_LW("settings.dock.allowDesktopContentOverlap"), &DockMonitorOverride::allowDesktopContentOverlap, &DockLayoutSettings::allowDesktopContentOverlap, !layout.allowDesktopContentOverlap);
             return;
         case kDockReserveMaximized:
-            set(_LW("settings.dock.reserveScreenSpace"), &DockMonitorOverride::reserveScreenSpace, !layout.reserveScreenSpace);
+            set(_LW("settings.dock.reserveScreenSpace"), &DockMonitorOverride::reserveScreenSpace, &DockLayoutSettings::reserveScreenSpace, !layout.reserveScreenSpace);
             return;
         case kContextDockShowFrequentItems:
-            set(_LW("app.dock.show_frequent_items"), &DockMonitorOverride::showFrequentItems, !layout.showFrequentItems);
+            set(_LW("app.dock.show_frequent_items"), &DockMonitorOverride::showFrequentItems, &DockLayoutSettings::showFrequentItems, !layout.showFrequentItems);
             return;
         case kContextDockKeepWhenHiddenOn:
         case kContextDockKeepWhenHiddenOff:
-            set(_LW("app.dock.keep_when_hidden"), &DockMonitorOverride::keepWhenDesktopHidden, !layout.keepWhenDesktopHidden);
+            set(_LW("app.dock.keep_when_hidden"), &DockMonitorOverride::keepWhenDesktopHidden, &DockLayoutSettings::keepWhenDesktopHidden, !layout.keepWhenDesktopHidden);
             return;
         case kDockRunningArea:
-            if (layout.showRunningArea)
-                set(_LW("settings.dock.showRunningArea"), &DockMonitorOverride::showRunningArea, false);
-            else
-                apply(_LW("settings.dock.showRunningArea"), false,
-                    [](DockMonitorOverride& row) { row.showRunningArea.reset(); }, true);
+        {
+            if (layout.showRunningArea && ConfirmBarMonitorOverride(monitor, role, !stored.showRunningArea,
+                _LW("settings.dock.showRunningArea"), false) != Target::Independent) return;
+            auto dock = settingsController_->Snapshot()->values.dock;
+            auto& row = role == BarMonitorRole::Last ? dock.lastMonitorOverride : dock.otherMonitorOverride;
+            row.showRunningArea = layout.showRunningArea ? std::optional{false} : std::nullopt;
+            commit(std::move(dock));
             return;
+        }
         default: break;
         }
     }

@@ -237,10 +237,11 @@ bool DesktopApp::HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPAR
             taps.Reset();
             return false;
         }
-        const bool draggable = dock->EntryAtPoint(desktop) || dock->RunningItemAtPoint(desktop) ||
-            dock->FrequentItemAtPoint(desktop);
+        const bool overTitle = dock->WindowTitleAtPoint(desktop) != nullptr;
+        const bool draggable = !overTitle && (dock->EntryAtPoint(desktop) || dock->RunningItemAtPoint(desktop) ||
+            dock->FrequentItemAtPoint(desktop));
         const bool scrollable = dock->CanScrollAt(desktop);
-        if (!draggable && !scrollable) return false;
+        if (!overTitle && !draggable && !scrollable) return false;
         gesture = {};
         gesture.window = window;
         gesture.draggable = draggable;

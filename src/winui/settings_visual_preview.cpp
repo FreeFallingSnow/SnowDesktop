@@ -1094,6 +1094,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         }
         return conflict;
     };
+    const auto previewAdvancedStatus = general.queryAdvancedFeatureStatus;
     shell->SetGeneralPageActions(std::move(general));
     WidgetsPageActions widgetActions;
     widgetActions.invoke = [](std::uint64_t, WidgetsPageRequest) {};
@@ -1157,7 +1158,10 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     appearance.listFonts = [] { return std::vector<app_fonts::Choice>{{{}, L"Segoe UI", L"Segoe UI"}}; };
     appearance.appliedFont = [] { return app_fonts::Selection{}; };
     shell->SetPersonalizationPageActions(std::move(appearance));
-    DockPageActions dock; dock.themeLibrary = themeLibrary; shell->SetDockPageActions(std::move(dock));
+    DockPageActions dock;
+    dock.themeLibrary = themeLibrary;
+    dock.advancedFeatureStatus = previewAdvancedStatus;
+    shell->SetDockPageActions(std::move(dock));
     const auto modulePreviewPolicy = std::make_shared<runtime_modules::Policy>();
     shell->SetRuntimeModulesQuery([modulePreviewPolicy](RuntimeModulesQueryScope scope, auto completed) {
         runtime_modules::Snapshot snapshot;

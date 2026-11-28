@@ -1663,6 +1663,11 @@ bool DesktopApp::ActivateOrToggleDockWindow(
 
 void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
 {
+    ActivateOrToggleDockTaskWindow(window, dockWindowPreviewAnchorScreen_);
+}
+
+void DesktopApp::ActivateOrToggleDockTaskWindow(HWND window, RECT anchorScreen)
+{
     if (!window || !IsWindow(window))
         return;
     if (IsDockTaskbarDocumentProxyCandidate(window))
@@ -1674,13 +1679,7 @@ void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
         ActivateDockWindowFromPreview(window);
         return;
     }
-    // Reuse the Dock command path, which selects the animation anchor.
-    // Read the live preview's icon anchor before dismissal clears it.
-    //
-    // Unlike a Dock icon, a preview card targets one concrete window, so the
-    // action must be resolved per-window: a background card of a multi-window
-    // app must activate its window instead of being read as app-foreground
-    // and minimized.
+    // Window titles and preview cards resolve foreground state per window.
     HWND target = GetAncestor(window, GA_ROOT);
     if (!target)
         target = window;
@@ -1691,11 +1690,9 @@ void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
             ResolveDockWindowPreviewClickAction(
                 IsIconic(target) != FALSE,
                 windowForeground);
-    const RECT anchor = dockWindowPreviewAnchorScreen_;
-    if (!IsRectEmpty(&anchor) &&
-        ActivateOrToggleDockWindow(window, action, nullptr, anchor))
-        return;
-    ActivateDockWindowFromPreview(window);
+    const auto anchor = IsRectEmpty(&anchorScreen) ? std::nullopt : std::optional{anchorScreen};
+    if (!ActivateOrToggleDockWindow(window, action, nullptr, anchor))
+        ActivateDockWindowFromPreview(window);
 }
 
 void DesktopApp::ActivateDockWindowFromPreview(HWND window)

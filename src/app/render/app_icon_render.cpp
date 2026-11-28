@@ -463,7 +463,7 @@ void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT iconRect,
 namespace
 {
 ComPtr<ID2D1PathGeometry> CreateIconPlateGeometry(
-    ID2D1RenderTarget* ctx, RECT rect, snowdesktop::IconBeautifyShape shape)
+    ID2D1RenderTarget* ctx, RECT rect, snowdesktop::IconBeautifyShape shape, bool preserveCorners = false)
 {
     if (!ctx || IsRectEmptyRect(rect)) return {};
     ComPtr<ID2D1Factory> factory;
@@ -486,9 +486,11 @@ ComPtr<ID2D1PathGeometry> CreateIconPlateGeometry(
     if (outline.empty())
         return {};
     const auto toPoint = [&](const snowdesktop::icon_beautify::ShapePoint& point) {
+        if (!preserveCorners) return D2D1::Point2F(left + point.x * width, top + point.y * height);
+        const float side = std::min(width, height);
         return D2D1::Point2F(
-            left + point.x * width,
-            top + point.y * height);
+            point.x <= .5f ? left + point.x * side : right - (1.f - point.x) * side,
+            point.y <= .5f ? top + point.y * side : bottom - (1.f - point.y) * side);
     };
     sink->BeginFigure(toPoint(outline.front()), D2D1_FIGURE_BEGIN_FILLED);
     for (size_t index = 1; index < outline.size(); ++index)
@@ -522,12 +524,15 @@ void DesktopApp::DrawDockControlSubjectShadow(ID2D1DeviceContext* target, RECT b
 }
 
 void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
-    D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth, std::uintptr_t ownerKey)
+    D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth, std::uintptr_t ownerKey,
+    bool roundedRectangle, float opacity)
 {
-    const auto shape = iconBeautifySettings_.enabled
+    const auto shape = iconBeautifySettings_.enabled && !roundedRectangle
         ? iconBeautifySettings_.shape
         : snowdesktop::IconBeautifyShape::LegacyRounded;
-    const auto geometry = CreateIconPlateGeometry(ctx, rect, shape);
+    const auto geometry = CreateIconPlateGeometry(ctx, rect, shape, roundedRectangle);
+    fill.a *= opacity;
+    border.a *= opacity;
     if (!geometry) return;
 
     ComPtr<ID2D1SolidColorBrush> fillBrush;
@@ -538,8 +543,12 @@ void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
         SUCCEEDED(ctx->CreateSolidColorBrush(border, &borderBrush)) && borderBrush)
         ctx->DrawGeometry(geometry.Get(), borderBrush.Get(), strokeWidth);
     if (iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled)
-        RegisterIconBackdrop(ctx, rect, fill.a > 0.0f ? 1.0f : 0.0f, ownerKey);
-    if (!iconBeautifySettings_.enabled || !iconBeautifySettings_.edgeHighlightEnabled) return;
+    {
+        auto material = iconBeautifySettings_;
+        material.shape = shape;
+        RegisterIconBackdrop(ctx, rect, fill.a > 0.0f ? opacity : 0.0f, ownerKey, &material);
+    }
+    if (roundedRectangle || !iconBeautifySettings_.enabled || !iconBeautifySettings_.edgeHighlightEnabled) return;
     const int pixelWidth = rect.right - rect.left, pixelHeight = rect.bottom - rect.top;
     const auto key = (static_cast<std::uint64_t>(pixelWidth) << 32) |
         static_cast<std::uint32_t>(pixelHeight);

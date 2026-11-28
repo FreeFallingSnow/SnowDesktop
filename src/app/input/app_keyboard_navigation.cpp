@@ -393,7 +393,7 @@ bool DesktopApp::ActivateDesktopSurfaceKeyboardFocus(bool repeated)
             ActivateOrToggleDockItem(focused->index, std::nullopt, nullptr, anchor);
             break;
         case Kind::WindowTitle:
-            ActivateDockWindowFromPreview(reinterpret_cast<HWND>(focused->index));
+            ActivateOrToggleDockTaskWindow(reinterpret_cast<HWND>(focused->index), anchor);
             break;
         case Kind::Entry:
             if (focused->index < dockEntries_.size())

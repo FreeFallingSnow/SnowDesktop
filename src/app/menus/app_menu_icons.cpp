@@ -685,7 +685,7 @@ UINT DesktopApp::ShowModernMenu(
                 corners[0].x, corners[0].y,
                 corners[1].x, corners[1].y,
             };
-            switch (dockSettings_.position)
+            switch (dock->Position())
             {
             case DockPosition::Top:
                 options.rootPlacement = snowdesktop::modern_menu::
@@ -747,7 +747,7 @@ UINT DesktopApp::ShowModernMenu(
             // placement clamps at the work-area edge without flipping a whole
             // menu width to the left of the clicked status-bar control.
             options.anchorRect = {screenPoint.x, barBounds.top, screenPoint.x, barBounds.bottom};
-            options.rootPlacement = generalSettings_.statusBar.position == DockPosition::Bottom
+            options.rootPlacement = generalSettings_.statusBar.MonitorLayout(BarRoleForMonitor(statusBarMenuMonitor_)).position == DockPosition::Bottom
                 ? snowdesktop::modern_menu::RootPlacement::AboveAnchorRect
                 : snowdesktop::modern_menu::RootPlacement::BelowAnchorRect;
         }

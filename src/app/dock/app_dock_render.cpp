@@ -80,7 +80,7 @@ void DesktopApp::OnDockFolderIconLoaded(const std::wstring& iconCacheKey,
 
 bool DesktopApp::DrawDockControlBackground(
     ID2D1DeviceContext* ctx, RECT rect, int state, bool forceWhiteStyle, std::uintptr_t ownerKey,
-    HMONITOR dockMonitor)
+    HMONITOR dockMonitor, bool titleGroup, float opacity)
 {
     if (!ctx || IsRectEmptyRect(rect) || drawingIconAppearanceSource_) return false;
     const PersonalizationSettings appearance = CurrentDockAppearance(dockMonitor);
@@ -108,7 +108,7 @@ bool DesktopApp::DrawDockControlBackground(
     const int height = std::max(1, static_cast<int>(rect.bottom - rect.top));
     const float scale = static_cast<float>(std::min(width, height)) / 52.0f;
     float strokeWidth = (active ? 1.6f : 1.0f) * std::max(0.75f, scale);
-    if (!active && iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled)
+    if (!active && iconBeautifySettings_.enabled && (iconBeautifySettings_.glassEnabled || titleGroup))
     {
         // Controls share the icon material; their former fixed 11% fill and
         // 20% outline made search/folder tiles heavier than neighboring icons.
@@ -122,7 +122,7 @@ bool DesktopApp::DrawDockControlBackground(
         strokeWidth = iconBeautifySettings_.outlineWidth * scale;
     }
     DrawBeautifiedIconPlate(ctx, rect, fill, border,
-        strokeWidth, ownerKey);
+        strokeWidth, ownerKey, titleGroup, opacity);
     return lightSurface;
 }
 

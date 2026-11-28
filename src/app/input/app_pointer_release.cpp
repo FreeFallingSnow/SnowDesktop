@@ -865,8 +865,12 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     if (!dock) return false;
     if (const HWND title = std::exchange(dockPressedTitleWindow_, nullptr))
     {
-        if (dock->WindowTitleAtPoint(point) == title && IsWindow(title))
-            ActivateDockWindowFromPreview(title);
+        RECT anchor{};
+        if (dock->WindowTitleAtPoint(point, &anchor) == title && IsWindow(title))
+        {
+            MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&anchor), 2);
+            ActivateOrToggleDockTaskWindow(title, anchor);
+        }
         ClearDockPressedState();
         return true;
     }

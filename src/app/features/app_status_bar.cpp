@@ -1035,18 +1035,22 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             {
                 using Override = snowdesktop::StatusBarMonitorOverride;
                 const auto& stored = monitorRole == BarMonitorRole::Last ? bar.lastMonitorOverride : bar.otherMonitorOverride;
-                const auto set = [&](const wchar_t* title, auto member, auto value) {
-                    if (!ConfirmBarMonitorOverride(monitor, monitorRole, !(stored.*member).has_value(), title)) return;
+                const auto set = [&](const wchar_t* title, auto member, auto sharedMember, auto value) {
+                    using Target = BarMonitorEditTarget;
+                    const auto target = ConfirmBarMonitorOverride(monitor, monitorRole, !(stored.*member).has_value(), title);
+                    if (target == Target::Cancel) return;
                     auto general = settingsController_->Snapshot()->values.general;
                     auto& layout = monitorRole == BarMonitorRole::Last ?
                         general.statusBar.lastMonitorOverride : general.statusBar.otherMonitorOverride;
-                    layout.*member = value;
+                    if (target == Target::Shared) general.statusBar.*sharedMember = value;
+                    else layout.*member = value;
                     if constexpr (std::is_same_v<decltype(value), DockPosition>)
                         if (merged)
                         {
                             auto dock = settingsController_->Snapshot()->values.dock;
                             auto& dockOverride = monitorRole == BarMonitorRole::Last ? dock.lastMonitorOverride : dock.otherMonitorOverride;
-                            dockOverride.position = value;
+                            if (target == Target::Shared) dock.position = value;
+                            else dockOverride.position = value;
                             settingsController_->UpdateDock(std::move(dock), snowdesktop::SettingsUpdateMode::PreviewAndCommit);
                         }
                     settingsController_->UpdateGeneral(std::move(general), snowdesktop::SettingsUpdateMode::PreviewAndCommit);
@@ -1056,26 +1060,26 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 {
                     const auto position = command == positionBase ? DockPosition::Top : DockPosition::Bottom;
                     if (position != currentLayout.position)
-                        set(_LW("statusBar.position"), &Override::position, position);
+                        set(_LW("statusBar.position"), &Override::position, &snowdesktop::StatusBarSettings::position, position);
                     return;
                 }
                 if (command >= scaleBase && command < scaleBase + 6)
                 {
                     constexpr float scales[]{.75f, 1.f, 1.25f, 1.5f, 2.f, 3.f};
                     if (scales[command - scaleBase] != currentLayout.scale)
-                        set(_LW("statusBar.scale"), &Override::scale, scales[command - scaleBase]);
+                        set(_LW("statusBar.scale"), &Override::scale, &snowdesktop::StatusBarSettings::scale, scales[command - scaleBase]);
                     return;
                 }
                 if (command == summonOnlyCommand)
                 {
-                    set(_LW("settings.dock.showOnlyWhenSummoned"), &Override::showOnlyWhenSummoned, !currentLayout.showOnlyWhenSummoned);
+                    set(_LW("settings.dock.showOnlyWhenSummoned"), &Override::showOnlyWhenSummoned, &snowdesktop::StatusBarSettings::showOnlyWhenSummoned, !currentLayout.showOnlyWhenSummoned);
                     return;
                 }
                 if (command == revealGestureBase || command == revealGestureBase + 1)
                 {
                     const int gesture = static_cast<int>(command - revealGestureBase);
                     if (gesture != currentLayout.edgeRevealGesture)
-                        set(_LW("settings.dock.edgeRevealGesture"), &Override::edgeRevealGesture, gesture);
+                        set(_LW("settings.dock.edgeRevealGesture"), &Override::edgeRevealGesture, &snowdesktop::StatusBarSettings::edgeRevealGesture, gesture);
                     return;
                 }
             }

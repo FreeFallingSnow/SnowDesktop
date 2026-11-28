@@ -183,7 +183,7 @@ public:
     RECT DrawWindowTitleGroup(ID2D1DeviceContext* context, RECT base, RECT visual,
         std::span<const HWND> windows, float opacity = 1.f) const;
     RECT WindowTitleIconRect(RECT base, RECT visual, size_t count) const;
-    HWND WindowTitleAtPoint(POINT point) const;
+    HWND WindowTitleAtPoint(POINT point, RECT* titleRect = nullptr) const;
     // Stable layout relationship, including while the bar is fullscreen-hidden.
     bool IsMergedWithStatusBar() const;
     // Shared chrome is a layout relationship, independent of animation/input.
@@ -234,7 +234,8 @@ private:
     bool UsesEdgeAnchoredMagnification() const;
     bool UsesSpreadEdge() const;
     float WindowTitleSlotUnits(size_t count) const;
-    RECT WindowTitleSegment(RECT base, RECT visual, size_t index) const;
+    RECT WindowTitleSegment(RECT visual, size_t count, size_t index) const;
+    RECT EdgeChromeBounds(RECT bounds) const;
     float GetMaximumMagnificationScale() const;
     float GetCurrentMagnificationScale() const;
     int GetLaunchAnimationPadding(bool reserveForLaunch = false) const;

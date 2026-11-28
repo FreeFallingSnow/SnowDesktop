@@ -143,9 +143,21 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
             popupScrollbarDragging_ = false;
             popupWidgetIndex_ = static_cast<std::size_t>(-1);
         }
-        else if (request.component == "dock")
+        else if (request.component == "dock" || request.component == "dock-window-titles")
         {
+            const bool windowTitles = request.component == "dock-window-titles";
             dockSettings_ = {}; dockSettings_.followComponentAppearance = false;
+            dockSettings_.showWindowTitles = windowTitles;
+            if (windowTitles)
+            {
+                const auto first = reinterpret_cast<HWND>(static_cast<UINT_PTR>(1));
+                const auto second = reinterpret_cast<HWND>(static_cast<UINT_PTR>(2));
+                const auto third = reinterpret_cast<HWND>(static_cast<UINT_PTR>(3));
+                dockTaskWindowTitles_ = {{first, L"Project notes"}, {second, L"Settings and configuration"}, // l10n-allow: isolated Dock preview window titles.
+                    {third, L"Roadmap and release checklist for the next version"}}; // l10n-allow: isolated Dock preview window title.
+                dockRunningWindows_[DockItemWindowKey(items_[0])] = {first, false, true, false, {first, second}};
+                dockRunningWindows_[DockItemWindowKey(items_[1])] = {third, false, true, false, {third}};
+            }
             dockSettings_.appearancePreset = kAppearancePresetCustom; dockSettings_.customAppearance = appearance;
             dockSettings_.position = DockPosition::Bottom; dockSettings_.thicknessScale = .75f;
             const LONG width = std::min(896, request.canvasWidth - 64), left = (request.canvasWidth - width) / 2;
@@ -161,6 +173,8 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
                 DrawD2DTextEllipsis(context.Get(), _LW(labels[row]), {left + 8, y, left + width, y + 28},
                     labelFormat.Get(), light ? D2D1::ColorF(0x17202a) : D2D1::ColorF(0xf0f3f7));
                 dockSettings_.edgeAttached = row != 0;
+                dockSettings_.edgeCentered = windowTitles && row == 1;
+                iconBeautifySettings_.enabled = windowTitles && row == 2;
                 RECT area{left, y + 40, left + width, y + 132};
                 if (row == 2)
                 {
@@ -175,7 +189,8 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
                 else
                 {
                     DockContainer dock(this, &dockEntries_, area);
-                    const auto frame = dock.GetBounds(); material(frame, appearance, row ? 0.f : appearance.cornerRadius);
+                    const auto frame = dock.GetVisualPanelBounds(lastMousePoint_);
+                    material(frame, appearance, row ? 0.f : appearance.cornerRadius);
                     dock.DrawChrome(context.Get(), lastMousePoint_); dock.DrawContents(context.Get());
                 }
             }

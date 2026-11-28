@@ -43,6 +43,7 @@ struct DockWindowPreviewTarget
     std::wstring targetToken;
     RECT anchorScreen{};
     bool floatingLayer = false;
+    HWND window = nullptr;
     // Borrowed from the running snapshot for synchronous toolbar prefetch.
     std::span<const HWND> trackedWindows;
 };

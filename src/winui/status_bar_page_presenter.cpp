@@ -240,7 +240,7 @@ struct StatusBarPagePresenter::Impl
         using Layout = StatusBarMonitorLayout;
         monitorOverrides->AddChoice<DockPosition>("statusBar.position", &Override::position, &Layout::position,
             {{DockPosition::Top, "app.dock.top"}, {DockPosition::Bottom, "app.dock.bottom"}});
-        monitorOverrides->AddPercentage("statusBar.scale", &Override::scale, &Layout::scale, 75, 300);
+        monitorOverrides->AddPercentage("statusBar.scale", &Override::scale, &Layout::scale, 75, 300, 5, 100);
         monitorOverrides->AddToggle("settings.dock.showOnlyWhenSummoned", &Override::showOnlyWhenSummoned, &Layout::showOnlyWhenSummoned);
         monitorOverrides->AddChoice<int>("settings.dock.edgeRevealGesture", &Override::edgeRevealGesture, &Layout::edgeRevealGesture,
             {{0, "settings.dock.gestureSwipe"}, {1, "settings.dock.gestureHover"}});

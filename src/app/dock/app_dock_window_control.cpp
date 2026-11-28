@@ -111,7 +111,7 @@ std::vector<DockWindowPreviewItem>
 DesktopApp::CollectDockWindowPreviewItems(
     const DockAppIdentity& identity,
     bool includeCloaked,
-    bool preferTaskbarDocumentProxies)
+    bool preferTaskbarDocumentProxies, HWND onlyWindow)
 {
     snowdesktop::performance::Scope trace("dock.preview", "windows.collect");
     PruneDockPendingCloseWindows();
@@ -134,6 +134,7 @@ DesktopApp::CollectDockWindowPreviewItems(
             pendingCloseWindows = nullptr;
         bool includeCloaked = false;
         bool preferTaskbarDocumentProxies = false;
+        HWND onlyWindow = nullptr;
         std::optional<DockProcessParentMap> processParents = std::nullopt;
     };
 
@@ -142,13 +143,14 @@ DesktopApp::CollectDockWindowPreviewItems(
     PreviewEnumerationContext context{
         this, &identity, &regularItems, &proxyCohorts,
         &dockPendingCloseWindows_, includeCloaked,
-        preferTaskbarDocumentProxies
+        preferTaskbarDocumentProxies && !onlyWindow, onlyWindow
     };
     EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
         auto* context = reinterpret_cast<
             PreviewEnumerationContext*>(parameter);
         if (!context || !context->identity ||
             !context->regularItems || !context->proxyCohorts ||
+            (context->onlyWindow && window != context->onlyWindow) ||
             (context->pendingCloseWindows &&
              context->pendingCloseWindows->contains(window)))
             return TRUE;
@@ -312,8 +314,10 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
     target = {};
 
     DockContainer* dock = GetDockContainerAtPoint(clientPoint);
-    if (!dock || !dock->ContainsInteractivePoint(clientPoint) || dock->WindowTitleAtPoint(clientPoint))
+    if (!dock || !dock->ContainsInteractivePoint(clientPoint))
         return false;
+    RECT titleBounds{};
+    target.window = dock->WindowTitleAtPoint(clientPoint, &titleBounds);
     target.floatingLayer =
         IsDockContainerEffectivelyFloating(dock);
 
@@ -374,10 +378,14 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
 
     if (!found)
         return false;
-    // Keep window previews anchored to the slot in single-icon mode, even
-    // while the icon grows or shifts during the hover animation.
-    const RECT visual = dock->MonitorLayout().hoverEffect == 1 ? anchor : dock->GetElementVisualRect(anchor, clientPoint);
-    anchor = dock->WindowTitleIconRect(anchor, visual, titleCount);
+    if (target.window)
+        anchor = titleBounds;
+    else
+    {
+        // Keep app previews anchored to the slot in single-icon mode.
+        const RECT visual = dock->MonitorLayout().hoverEffect == 1 ? anchor : dock->GetElementVisualRect(anchor, clientPoint);
+        anchor = dock->WindowTitleIconRect(anchor, visual, titleCount);
+    }
     target.identityKey = DockWindowPreviewIdentityKey(target.identity);
     if (target.identityKey.empty())
         return false;
@@ -385,8 +393,9 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
     target.anchorScreen = anchor;
     MapWindowPoints(hwnd_, nullptr,
         reinterpret_cast<POINT*>(&target.anchorScreen), 2);
-    target.targetToken = DockWindowPreviewTargetToken(
-        target.identityKey);
+    target.targetToken = DockWindowPreviewTargetToken(target.identityKey);
+    if (target.window)
+        target.targetToken += L":title:" + std::to_wstring(reinterpret_cast<ULONG_PTR>(target.window));
     return !target.targetToken.empty();
 }
 
@@ -441,9 +450,13 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
             // Warm up the first preview's toolbars during the hover delay.
             // An open preview still needs its own toolbar targets.
             std::vector<DockWindowPreviewItem> toolbarTargets;
-            toolbarTargets.reserve(target.trackedWindows.size());
-            for (const HWND window : target.trackedWindows)
-                toolbarTargets.push_back({window, {}});
+            if (target.window) toolbarTargets.push_back({target.window, {}});
+            else
+            {
+                toolbarTargets.reserve(target.trackedWindows.size());
+                for (const HWND window : target.trackedWindows)
+                    toolbarTargets.push_back({window, {}});
+            }
             dockWindowPreview_->PrepareToolbars(toolbarTargets);
         }
         const UINT delay = previewVisible
@@ -508,7 +521,7 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
         return;
     }
 
-    const auto previewItems = CollectDockWindowPreviewItems(target.identity);
+    const auto previewItems = CollectDockWindowPreviewItems(target.identity, false, true, target.window);
     if (!previewItems.empty())
         ShowDockWindowPreview(std::move(target), cursorClient, previewItems);
 }
@@ -518,7 +531,7 @@ bool DesktopApp::TryOpenDockWindowPicker(POINT clientPoint, bool byTouch)
     DockWindowPreviewTarget target;
     if (!dockWindowPreview_ || !ResolveDockWindowPreviewTarget(clientPoint, target))
         return false;
-    const auto previewItems = CollectDockWindowPreviewItems(target.identity);
+    const auto previewItems = CollectDockWindowPreviewItems(target.identity, false, true, target.window);
     if (previewItems.size() < (byTouch ? 1u : 2u))
         return false;
 
@@ -557,6 +570,7 @@ void DesktopApp::ShowDockWindowPreview(
     }
     dockWindowPreviewKey_ = target.targetToken;
     dockWindowPreviewIdentity_ = target.identity;
+    dockWindowPreviewWindow_ = target.window;
     dockWindowPreviewAnchorScreen_ = target.anchorScreen;
     dockWindowPreview_->Show(
         previewItems, target.anchorScreen, DockLayoutForMonitor(MonitorFromRect(&target.anchorScreen, MONITOR_DEFAULTTONEAREST)).position,
@@ -572,7 +586,7 @@ void DesktopApp::RefreshDockWindowPreviewItems()
 {
     if (!dockWindowPreview_ || !dockWindowPreview_->IsVisible() ||
         dockWindowPreviewIdentity_.kind == DockAppIdentityKind::None) return;
-    dockWindowPreview_->UpdateItems(CollectDockWindowPreviewItems(dockWindowPreviewIdentity_));
+    dockWindowPreview_->UpdateItems(CollectDockWindowPreviewItems(dockWindowPreviewIdentity_, false, true, dockWindowPreviewWindow_));
 }
 
 void DesktopApp::HideDockWindowPreview()
@@ -593,6 +607,7 @@ void DesktopApp::HideDockWindowPreview()
     dockWindowPreviewHover_.Reset();
     dockWindowPreviewKey_.clear();
     dockWindowPreviewIdentity_ = {};
+    dockWindowPreviewWindow_ = nullptr;
     dockWindowPreviewAnchorScreen_ = {};
 }
 
@@ -605,6 +620,7 @@ void DesktopApp::DismissDockWindowPreviewUntilLeave()
         dockWindowPreview_->Dismiss();
     dockWindowPreviewKey_.clear();
     dockWindowPreviewIdentity_ = {};
+    dockWindowPreviewWindow_ = nullptr;
     dockWindowPreviewAnchorScreen_ = {};
 }
 

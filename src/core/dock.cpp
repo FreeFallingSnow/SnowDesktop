@@ -248,7 +248,7 @@ void DockRunningItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
             dock->DrawWindowTitleGroup(context, bounds_, rect, windows, running.presence.Amount());
         const int iconSize = dock ? dock->GetElementIconSize(bounds_, rect) : 0;
         app_->DrawDockRunningApp(context, running, icon, state,
-            windows.empty() ? iconSize : std::max(1, iconSize * 2 / 3), dock ? dock->GetMonitor() : nullptr);
+            iconSize, dock ? dock->GetMonitor() : nullptr);
     }
 }
 
@@ -495,7 +495,7 @@ void DockEntryItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
         const RECT icon = windows.empty() ? rect : dock->DrawWindowTitleGroup(context, bounds_, rect, windows);
         const int iconSize = dock ? dock->GetElementIconSize(bounds_, rect) : 0;
         app_->DrawDockEntry(context, *entry, icon, state,
-            windows.empty() ? iconSize : std::max(1, iconSize * 2 / 3),
+            iconSize,
             nullptr, nullptr, dock ? dock->GetMonitor() : nullptr);
     }
 }
@@ -561,7 +561,7 @@ float DockContainer::WindowTitleSlotUnits(size_t count) const
 {
     if (!count) return 0.f;
     const int icon = ItemIconSize();
-    const int stride = IsVertical() ? std::max(18, icon / 2 + ScaledSpacing()) : std::max(84, icon * 3);
+    const int stride = IsVertical() ? std::max(18, icon / 2 + ScaledSpacing()) : std::clamp(icon * 5 / 2, 84, 158);
     return static_cast<float>(count) * stride / ItemPitch();
 }
 
@@ -579,18 +579,17 @@ RECT DockContainer::WindowTitleIconRect(RECT base, RECT visual, size_t count) co
     return visual;
 }
 
-RECT DockContainer::WindowTitleSegment(RECT base, RECT visual, size_t index) const
+RECT DockContainer::WindowTitleSegment(RECT visual, size_t count, size_t index) const
 {
+    if (index >= count) return {};
     RECT result = visual;
     const bool vertical = IsVertical();
-    const float baseAxis = static_cast<float>(vertical ? base.bottom - base.top : base.right - base.left);
-    if (baseAxis <= 0) return {};
-    const float scale = static_cast<float>(vertical ? visual.bottom - visual.top : visual.right - visual.left) / baseAxis;
-    const float pitch = ItemPitch() * scale;
-    const float stride = WindowTitleSlotUnits(1) * pitch;
+    const float axis = static_cast<float>(vertical ? visual.bottom - visual.top : visual.right - visual.left);
+    const float iconExtent = axis / (1.f + WindowTitleSlotUnits(count));
+    const float stride = (axis - iconExtent) / static_cast<float>(count);
     const LONG leading = vertical ? visual.top : visual.left;
-    const LONG begin = leading + std::lround(pitch + stride * index);
-    const LONG end = leading + std::lround(pitch + stride * (index + 1));
+    const LONG begin = leading + std::lround(iconExtent + stride * index);
+    const LONG end = leading + std::lround(iconExtent + stride * (index + 1));
     if (vertical)
     {
         result.top = begin;
@@ -604,7 +603,7 @@ RECT DockContainer::WindowTitleSegment(RECT base, RECT visual, size_t index) con
     return result;
 }
 
-HWND DockContainer::WindowTitleAtPoint(POINT point) const
+HWND DockContainer::WindowTitleAtPoint(POINT point, RECT* titleRect) const
 {
     if (!app_ || !app_->dockSettings_.showWindowTitles || !ShowsRunningArea() ||
         !IsPointInScrollViewport(point)) return nullptr;
@@ -613,8 +612,12 @@ HWND DockContainer::WindowTitleAtPoint(POINT point) const
         const RECT visual = GetElementVisualRect(base, point);
         for (size_t index = 0; index < windows.size(); ++index)
         {
-            const RECT segment = WindowTitleSegment(base, visual, index);
-            if (PtInRect(&segment, point)) return windows[index];
+            const RECT segment = WindowTitleSegment(visual, windows.size(), index);
+            if (PtInRect(&segment, point))
+            {
+                if (titleRect) *titleRect = segment;
+                return windows[index];
+            }
         }
         return nullptr;
     };
@@ -630,16 +633,24 @@ RECT DockContainer::DrawWindowTitleGroup(ID2D1DeviceContext* context, RECT base,
 {
     if (!context || !app_ || !app_->dwriteFactory_ || windows.empty() || IsRectEmpty(&visual)) return visual;
     const bool vertical = IsVertical();
-    const auto theme = app_->CurrentDockAppearance(GetMonitor()).contentTheme;
-    const float ink = theme == 1 ? .96f : .12f;
-    const float fill = theme == 1 ? 1.f : 0.f;
+    const auto monitor = GetMonitor();
+    const auto appearance = app_->CurrentDockAppearance(monitor);
+    const bool light = appearance.contentTheme == 1;
+    const auto& beauty = app_->iconBeautifySettings_;
+    const float surface = light ? .9f : .13f;
+    const float material = beauty.backgroundStartR * .2126f + beauty.backgroundStartG * .7152f +
+        beauty.backgroundStartB * .0722f;
+    const bool lightPlate = beauty.enabled ? std::lerp(surface, material, beauty.backgroundOpacity * opacity) > .52f : light;
+    const float ink = lightPlate ? .07f : .98f;
+    const float fill = lightPlate ? 0.f : 1.f;
+    RECT background = visual;
+    const int inset = std::max(2, ScaledSpacing() / 4);
+    InflateRect(&background, -inset, -inset);
+    app_->DrawDockControlBackground(context, background, 0, !light,
+        reinterpret_cast<std::uintptr_t>(windows.front()), monitor, true, opacity);
     ComPtr<ID2D1SolidColorBrush> brush;
-    if (FAILED(context->CreateSolidColorBrush(D2D1::ColorF(fill, fill, fill, .09f * opacity), &brush)))
-        return visual;
-    auto background = D2D1::RectF(static_cast<float>(visual.left + 2), static_cast<float>(visual.top + 2),
-        static_cast<float>(visual.right - 2), static_cast<float>(visual.bottom - 2));
-    if (background.right > background.left && background.bottom > background.top)
-        context->FillRoundedRectangle(D2D1::RoundedRect(background, 6.f, 6.f), brush.Get());
+    if (FAILED(context->CreateSolidColorBrush(D2D1::ColorF(ink, ink, ink, opacity), &brush)))
+        return WindowTitleIconRect(base, visual, windows.size());
     const HWND foreground = app_->ResolveDockSemanticForegroundWindow();
     const POINT pointer = app_->lastMousePoint_;
     for (size_t index = 0; index < windows.size(); ++index)
@@ -647,7 +658,7 @@ RECT DockContainer::DrawWindowTitleGroup(ID2D1DeviceContext* context, RECT base,
         const HWND window = windows[index];
         const auto title = app_->dockTaskWindowTitles_.find(window);
         if (title == app_->dockTaskWindowTitles_.end() || title->second.empty()) continue;
-        RECT bounds = WindowTitleSegment(base, visual, index);
+        RECT bounds = WindowTitleSegment(visual, windows.size(), index);
         if (IsRectEmpty(&bounds)) continue;
         if (window == foreground)
         {
@@ -684,7 +695,7 @@ RECT DockContainer::DrawWindowTitleGroup(ID2D1DeviceContext* context, RECT base,
             ComPtr<IDWriteTextFormat> format;
             auto* factory = app_->dwriteFactory_.Get();
             if (SUCCEEDED(factory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
-                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &format)))
+                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"en-US", &format)))
             {
                 format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
                 format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -1800,9 +1811,26 @@ int DockContainer::GetElementIconSize(const RECT& baseRect, const RECT& visualRe
         baseRect, visualRect, ItemIconSize());
 }
 
+RECT DockContainer::EdgeChromeBounds(RECT bounds) const
+{
+    if (!IsEdgeAttached() || IsMergedWithStatusBar()) return bounds;
+    if (IsVertical())
+    {
+        bounds.top = area_.top;
+        bounds.bottom = area_.bottom;
+    }
+    else
+    {
+        bounds.left = area_.left;
+        bounds.right = area_.right;
+    }
+    return bounds;
+}
+
 RECT DockContainer::GetVisualPanelBounds(POINT pointer) const
 {
-    RECT panel = GetBounds();
+    const RECT content = GetBounds();
+    RECT panel = EdgeChromeBounds(content);
     if (IsMagnificationSuppressed())
         return panel;
 
@@ -1810,8 +1838,8 @@ RECT DockContainer::GetVisualPanelBounds(POINT pointer) const
     if (IsRectEmpty(&focus) && IsRectEmpty(&singleMagnification_.CurrentRect()))
         return panel;
 
-    const bool hasOverflow = GetMaxScrollOffset(panel) > 0;
-    const RECT viewport = GetScrollViewport(panel);
+    const bool hasOverflow = GetMaxScrollOffset(content) > 0;
+    const RECT viewport = GetScrollViewport(content);
     const RECT windowsButton = GetWindowsButtonRect();
     for (const RECT& candidate : GetElementBaseRects())
     {
@@ -2121,7 +2149,7 @@ bool DockContainer::ContainsInteractivePoint(POINT pt) const
 
 RECT DockContainer::GetInteractiveBounds() const
 {
-    const RECT bounds = GetBounds();
+    const RECT bounds = EdgeChromeBounds(GetBounds());
     if (IsMagnificationSuppressed())
         return bounds;
     return snowdesktop::dock_magnification::ExpandInteractionBounds(
@@ -2455,7 +2483,7 @@ std::vector<DockContainer::KeyboardTarget> DockContainer::KeyboardTargets(bool a
         {
             const auto handle = reinterpret_cast<std::uintptr_t>(windows[index]);
             add(Kind::WindowTitle, handle, L"title:" + std::to_wstring(handle),
-                WindowTitleSegment(bounds, bounds, index), true);
+                WindowTitleSegment(bounds, windows.size(), index), true);
         }
     };
     add(Kind::Start, 0, L"start", GetWindowsButtonRect(), false);
@@ -3174,7 +3202,7 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     if (!context || SharesStatusBarAppearance()) return;
     RECT bounds = GetVisualPanelBounds(mousePt);
     const auto p = app_ ? app_->CurrentDockAppearance(GetMonitor()) : PersonalizationSettings::DarkPreset();
-    const float panelRadius = UsesSpreadEdge() ? 0.0f : p.cornerRadius;
+    const float panelRadius = IsEdgeAttached() ? 0.0f : p.cornerRadius;
     const D2D1_COLOR_F fill = D2D1::ColorF(
         p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
     const D2D1_COLOR_F border = D2D1::ColorF(
@@ -3195,7 +3223,7 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         ComPtr<ID2D1SolidColorBrush> borderBrush;
         if (SUCCEEDED(context->CreateSolidColorBrush(border, &borderBrush)) && borderBrush)
         {
-            if (UsesSpreadEdge())
+            if (IsEdgeAttached())
             {
                 D2D1_POINT_2F start{};
                 D2D1_POINT_2F end{};

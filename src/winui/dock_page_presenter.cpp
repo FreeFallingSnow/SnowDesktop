@@ -703,27 +703,26 @@ struct DockPagePresenter::Impl
             {{false, "app.dock.island"}, {true, "app.dock.edge"}});
         monitorOverrides->AddChoice<bool>("settings.dock.edgeAlignment", &Override::edgeCentered, &Layout::edgeCentered,
             {{false, "settings.dock.edgeSpread"}, {true, "settings.dock.edgeCenter"}}, [](const Layout& layout) { return layout.edgeAttached; });
-        monitorOverrides->AddPercentage("app.settings.dock_thickness", &Override::thicknessScale, &Layout::thicknessScale, 50, 200);
+        monitorOverrides->AddPercentage("app.settings.dock_thickness", &Override::thicknessScale, &Layout::thicknessScale, 50, 200, 1, 100);
         monitorOverrides->AddToggle("settings.dock.showOnlyWhenSummoned", &Override::showOnlyWhenSummoned, &Layout::showOnlyWhenSummoned);
-        monitorOverrides->AddChoice<bool>("settings.dock.allowDesktopContentOverlap", &Override::allowDesktopContentOverlap,
-            &Layout::allowDesktopContentOverlap, {{false, "app.interact.on"}, {true, "app.interact.off"}});
+        monitorOverrides->AddToggle("settings.dock.allowDesktopContentOverlap", &Override::allowDesktopContentOverlap,
+            &Layout::allowDesktopContentOverlap, true);
         monitorOverrides->AddToggle("settings.dock.reserveScreenSpace", &Override::reserveScreenSpace, &Layout::reserveScreenSpace);
         monitorOverrides->AddToggle("app.dock.show_frequent_items", &Override::showFrequentItems, &Layout::showFrequentItems);
         monitorOverrides->AddToggle("app.dock.keep_when_hidden", &Override::keepWhenDesktopHidden, &Layout::keepWhenDesktopHidden);
         monitorOverrides->AddToggle("settings.dock.showRunningArea", &Override::showRunningArea, &Layout::showRunningArea);
         monitorOverrides->AddChoice<int>("settings.animation.hover", &Override::hoverEffect, &Layout::hoverEffect,
             {{0, "settings.animation.option.noMagnification"}, {1, "settings.animation.option.singleIcon"},
-             {2, "settings.animation.option.wave"}});
+             {2, "settings.animation.option.wave"}}, {}, 2);
         monitorOverrides->AddPercentage("settings.animation.hoverScale", &Override::hoverScale, &Layout::hoverScale,
-            100, 200, false, [](const Layout& layout) { return layout.hoverEffect == 2; });
+            100, 200, 1, 128, [](const Layout& layout) { return layout.hoverEffect == 2; });
         monitorOverrides->AddChoice<int>("settings.animation.launch", &Override::launchEffect, &Layout::launchEffect,
             {{0, "settings.animation.option.off"}, {1, "settings.animation.option.bounce"},
-             {2, "settings.animation.option.gentleScale"}});
+             {2, "settings.animation.option.gentleScale"}}, {}, 1);
         monitorOverrides->AddChoice<int>("settings.animation.window", &Override::windowEffect, &Layout::windowEffect,
             {{0, "settings.animation.option.systemDefault"}, {1, "settings.animation.option.scale"},
              {2, "settings.animation.option.fade"}, {3, "settings.animation.option.genie"},
-             {4, "settings.animation.option.attraction"}});
-        layoutCard.content.Children().Append(monitorOverrides->Content());
+             {4, "settings.animation.option.attraction"}}, {}, 1);
         mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
         mergedCard.content.Children().Append(mergedHeight->Content());
         InitializeContinuousControl(mergedIconScale,
@@ -733,6 +732,7 @@ struct DockPagePresenter::Impl
         homeSizeRow.Initialize(homeSize);
         homeSizeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         layoutCard.content.Children().Append(homeSizeRow.root);
+        layoutCard.content.Children().Append(monitorOverrides->Content());
         homeSizeToken = homeSize.Toggled([this](const auto&, const auto&) {
             const bool enabled = homeSize.IsOn();
             EmitDock(SettingsUpdateMode::PreviewAndCommit, [enabled](DockSettings& value) { value.lastMonitorUseHomeSize = enabled; });

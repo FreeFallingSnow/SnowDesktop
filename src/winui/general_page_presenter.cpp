@@ -222,7 +222,8 @@ struct GeneralPagePresenter::Impl
     muxc::TextBlock advancedFeatureName{nullptr};
     muxc::TextBlock advancedFeatureDescription{nullptr};
     muxc::TextBlock advancedFeatureUsage{nullptr};
-    muxc::ContentControl advancedFeatureIconHost{nullptr};
+    muxc::ContentControl advancedFeatureIconHost{nullptr}, monitorProfilesIcon{nullptr};
+    muxc::TextBlock monitorProfilesName{nullptr}, monitorProfilesDescription{nullptr};
     muxc::Button advancedFeatureUpdateButton{nullptr};
     muxc::Flyout advancedFeatureUpdateFlyout{nullptr};
     muxc::TextBlock advancedFeatureUpdateInstructions{nullptr};
@@ -551,6 +552,10 @@ struct GeneralPagePresenter::Impl
         featureList.Spacing(8.0);
         featureList.Children().Append(featureRow(advancedFeatureIconHost, advancedFeatureName,
             advancedFeatureDescription, advancedFeatureUsage, muxc::Button{nullptr}));
+        muxc::TextBlock monitorProfilesUsage{nullptr};
+        featureList.Children().Append(featureRow(monitorProfilesIcon, monitorProfilesName,
+            monitorProfilesDescription, monitorProfilesUsage, muxc::Button{nullptr}));
+        monitorProfilesUsage.Visibility(mux::Visibility::Collapsed);
         featureList.Children().Append(steamRoomFeatureRow);
         advancedFeatureExpander.Content(featureList);
         // Header sizing is owned by the native template's star column. Only
@@ -1271,6 +1276,7 @@ struct GeneralPagePresenter::Impl
         };
         setIcon(advancedFeatureIconHost,
             L"ms-appx:///Assets/Settings/Icons/appearance-icon-beautification.svg", L"\xE793");
+        setIcon(monitorProfilesIcon, L"ms-appx:///Assets/Settings/Icons/dock.svg", L"\xE7F4");
         setIcon(steamRoomFeatureIcon, L"ms-appx:///Assets/Settings/Icons/steam-multiplayer.svg", L"\xE716");
     }
 
@@ -1305,6 +1311,8 @@ struct GeneralPagePresenter::Impl
             L("settings.general.advancedFeatures"));
         advancedFeatureName.Text(L("settings.general.advancedFeatures.largeIcons"));
         advancedFeatureDescription.Text(L("settings.general.advancedFeatures.largeIconsDescription"));
+        monitorProfilesName.Text(L("settings.general.advancedFeatures.monitorProfiles"));
+        monitorProfilesDescription.Text(L("settings.general.advancedFeatures.monitorProfilesDescription"));
         steamRoomFeatureName.Text(L("settings.general.steamRoom"));
         steamRoomFeatureDescription.Text(L("settings.general.steamRoom.description"));
         steamRoomFeatureUsage.Text(L("settings.general.steamRoom.usage"));

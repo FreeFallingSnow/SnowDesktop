@@ -338,8 +338,8 @@ inline constexpr auto Fields<DockSettings> = std::to_array<Description>({
     {"blurReservedSpace", "Adds the reserved strip's backdrop for a detached, persistent Dock that reserves work area."},
     {"maximizedWindow", "Defines the Dock appearance override for a maximized application window."},
     {"appWindow", "Defines the Dock appearance override for the normal application-window scene."},
-    {"edgeCentered", "When edgeAttached is enabled, centers the Dock along that edge and sizes it to its contents. False uses the spread layout."},
-    {"showWindowTitles", "Shows one selectable title per window next to its Dock application icon where the running area is visible. Long titles scroll on hover."},
+    {"edgeCentered", "When edgeAttached is enabled, groups Dock contents at the center while the background spans the screen edge. False spreads the contents across the same edge."},
+    {"showWindowTitles", "Shows one title per window beside its original-size application icon where the Dock running area is visible. Clicking switches or minimizes that window. Hovering scrolls long titles and shows the window thumbnail when previews are enabled."},
     {"lastMonitorOverride", "Overrides selected Dock fields for the last monitor in SnowDesktop's monitor order. Null fields follow the first monitor's settings. Editing requires Advanced Features."},
     {"otherMonitorOverride", "Overrides selected Dock fields for every monitor between the first and the last. Null fields follow the first monitor's settings. Editing requires Advanced Features."},
 });
@@ -348,7 +348,7 @@ template<>
 inline constexpr auto Fields<DockMonitorOverride> = std::to_array<Description>({
     {"position", "Places this role's Dock on the bottom, top, left or right using values 0 through 3. Null inherits the first monitor."},
     {"edgeAttached", "Selects an edge-attached Dock when true or an island when false. Null inherits the first monitor."},
-    {"edgeCentered", "Centers an edge-attached Dock when true. False spreads it along the edge. Null inherits the first monitor."},
+    {"edgeCentered", "Centers the contents of an edge-attached Dock while retaining the full edge background. False spreads the contents along the edge. Null inherits the first monitor."},
     {"thicknessScale", "Scales the standalone Dock on this role from 0.5 through 2. Null inherits the first monitor."},
     {"showOnlyWhenSummoned", "Hides the Dock until invoked on this role. Its standalone Dock reserves no work area while using this setting. Null inherits the first monitor."},
     {"allowDesktopContentOverlap", "Allows desktop content to occupy the Dock area on this role. Null inherits the first monitor."},
