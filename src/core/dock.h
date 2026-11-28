@@ -108,7 +108,7 @@ private:
 /** 单台显示器边缘的 Dock 容器；多个实例共享同一份 Dock 数据。 */
 class DockContainer final : public Container
 {
-    struct TitleTransitions;
+    struct PresentationMotion;
 
 public:
     DockContainer(DesktopApp* app, std::vector<DockEntry>* entries, RECT area);
@@ -216,7 +216,7 @@ public:
         snowdesktop::dock_magnification::HoverEntryAnimation entry;
         snowdesktop::dock_magnification::SingleFocusAnimation single;
         std::shared_ptr<EntryRemovalTimeline> removals;
-        std::shared_ptr<TitleTransitions> titles;
+        std::shared_ptr<PresentationMotion> motion;
         std::wstring keyboardFocusKey;
     };
     PresentationState CapturePresentationState() const;
@@ -370,7 +370,7 @@ private:
         Microsoft::WRL::ComPtr<IDWriteTextLayout> full;
     };
     mutable std::unordered_map<HWND, WindowTitleLayout> windowTitleLayouts_;
-    std::shared_ptr<TitleTransitions> titleTransitions_;
+    std::shared_ptr<PresentationMotion> presentationMotion_;
     // Magnification is a continuous pointer-distance field, but the semantic
     // hover owner needs spatial hysteresis at item and Dock boundaries.
     mutable RECT magnificationFocusRect_{};

@@ -91,7 +91,7 @@ int GrowthForScale(float scale, int baseIconSize)
 
 SingleFocusGeometry ResolveSingleFocusGeometry(
     const std::vector<RECT>& candidates, bool vertical,
-    int pointerAxis, int baseIconSize, float focusScale, std::span<const RECT> titleGroups)
+    int pointerAxis, int baseIconSize, float focusScale, std::span<const RECT> wideItems)
 {
     SingleFocusGeometry result;
     result.vertical = vertical;
@@ -115,14 +115,14 @@ SingleFocusGeometry ResolveSingleFocusGeometry(
     }
     else if (!IsRectEmpty(&result.trailing))
     {
-        const auto hasTitle = [&](const RECT& cell) {
-            return std::ranges::any_of(titleGroups, [&](const RECT& title) { return EqualRect(&cell, &title); });
+        const auto hasWideItem = [&](const RECT& cell) {
+            return std::ranges::any_of(wideItems, [&](const RECT& title) { return EqualRect(&cell, &title); });
         };
         int start = result.Center(result.leading);
         int end = result.Center(result.trailing);
-        if (hasTitle(result.leading))
+        if (hasWideItem(result.leading))
             start = std::max(start, static_cast<int>(vertical ? result.leading.bottom : result.leading.right) - baseIconSize / 3);
-        if (hasTitle(result.trailing))
+        if (hasWideItem(result.trailing))
             end = std::min(end, static_cast<int>(vertical ? result.trailing.top : result.trailing.left) + baseIconSize / 3);
         const float progress = static_cast<float>(pointerAxis - start) / std::max(1, end - start);
         result.trailingGrowth = static_cast<int>(std::lround(

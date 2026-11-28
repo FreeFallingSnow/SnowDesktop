@@ -164,29 +164,31 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
             dockSettings_.appearancePreset = kAppearancePresetCustom; dockSettings_.customAppearance = appearance;
             dockSettings_.position = DockPosition::Bottom; dockSettings_.thicknessScale = .75f;
             const LONG width = std::min(896, request.canvasWidth - 64), left = (request.canvasWidth - width) / 2;
-            const int rows = windowTitles ? 5 : 3;
+            const int rows = windowTitles ? 6 : 3;
             const LONG top = std::max(24, (request.canvasHeight - rows * 144) / 2);
             bounds = {left, top, left + width, top + rows * 144};
             ComPtr<IDWriteTextFormat> labelFormat;
             require(app_fonts::CreateTextFormat(dwriteFactory_.Get(), L"Segoe UI", DWRITE_FONT_WEIGHT_NORMAL,
                 DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 18, L"en-US", &labelFormat));
             const char* labels[]{"app.dock.island", "app.dock.edge", "settings.desktopStyle.merged.title",
-                "settings.animation.option.wave", "settings.dock.showWindowTitles"};
+                "settings.animation.option.wave", "settings.animation.option.wave", "settings.dock.showWindowTitles"};
             for (int row = 0; row < rows; ++row)
             {
                 const LONG y = top + row * 144;
                 std::wstring label = _LW(labels[row]);
                 if (windowTitles && row == 1)
                     label += L" · " + std::wstring(_LW("settings.dock.windowTitles.multiple"));
-                if (windowTitles && (row == 2 || row == 3))
+                const bool waveSample = windowTitles && row >= 2 && row <= 4;
+                const wchar_t* waveMarkers[]{L" ◂", L" ●", L" ▸"};
+                if (waveSample)
                     label = std::wstring(_LW("app.settings.icon_beautify")) + L" · " + _LW("settings.animation.option.wave") +
-                        (row == 2 ? L" ◂" : L" ▸");
+                        waveMarkers[row - 2];
                 DrawD2DTextEllipsis(context.Get(), label, {left + 8, y, left + width, y + 28},
                     labelFormat.Get(), D2D1::ColorF(0xf0f3f7));
                 dockSettings_.edgeAttached = windowTitles ? row == 1 : row != 0;
                 dockSettings_.edgeCentered = windowTitles && row == 1;
                 dockSettings_.windowTitlesOnlyMultiple = windowTitles && row == 1;
-                iconBeautifySettings_.enabled = windowTitles && (row == 2 || row == 3);
+                iconBeautifySettings_.enabled = waveSample;
                 iconBeautifySettings_.outlineEnabled = iconBeautifySettings_.enabled;
                 RECT area{left, y + 40, left + width, y + 132};
                 if (row == 2 && !windowTitles)
@@ -202,7 +204,7 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
                 else
                 {
                     DockContainer dock(this, &dockEntries_, area);
-                    if (windowTitles && row == 4)
+                    if (windowTitles && row == 5)
                     {
                         dockSettings_.showWindowTitles = false;
                         dock.GetSlots();
@@ -211,7 +213,7 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
                         dock.GetSlots();
                         dock.AdvanceMagnificationAnimation(UiAnimationScheduler::MonotonicMilliseconds() + 48.0);
                     }
-                    if (windowTitles && (row == 2 || row == 3))
+                    if (waveSample)
                     {
                         const auto targets = dock.KeyboardTargets();
                         const auto title = std::ranges::find_if(targets, [](const auto& target) {
@@ -220,7 +222,8 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
                         if (title != targets.end())
                         {
                             const RECT cell = title->bounds;
-                            lastMousePoint_ = {row == 2 ? cell.left + 3 : cell.right - 3, (cell.top + cell.bottom) / 2};
+                            const LONG positions[]{cell.left + 3, (cell.left + cell.right) / 2, cell.right - 3};
+                            lastMousePoint_ = {positions[row - 2], (cell.top + cell.bottom) / 2};
                             dock.GetVisualPanelBounds(lastMousePoint_);
                             dock.AdvanceMagnificationAnimation(UiAnimationScheduler::MonotonicMilliseconds() + 1000.0);
                         }

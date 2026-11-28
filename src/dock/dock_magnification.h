@@ -142,7 +142,7 @@ struct SingleFocusGeometry
 SingleFocusGeometry ResolveSingleFocusGeometry(
     const std::vector<RECT>& candidates, bool vertical,
     int pointerAxis, int baseIconSize, float focusScale,
-    std::span<const RECT> titleGroups = {});
+    std::span<const RECT> wideItems = {});
 
 float ScaleForAxisDistance(
     float centerDistance, int itemPitch, float focusScale = kFocusScale);
