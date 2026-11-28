@@ -136,7 +136,7 @@ namespace
 {
 struct TrackCell
 {
-    float start, end, visibleStart, visibleEnd;
+    float start, end, visibleStart, visibleEnd, peak;
     size_t index;
 };
 }
@@ -147,6 +147,8 @@ std::vector<RECT> ResolveVariableTrack(std::span<const RECT> input, const Variab
     if (input.empty() || options.scale <= 1.f || options.iconSize <= 0 || options.pitch <= 0) return output;
     const bool vertical = options.position == DockPosition::Left || options.position == DockPosition::Right;
     const int spacing = std::max(0, options.pitch - options.iconSize);
+    const float iconPeak = options.iconSize * (options.scale - 1.f);
+    constexpr float kMaximumPeakMultiplier = 3.5f;
     std::vector<TrackCell> cells;
     cells.reserve(input.size());
     for (size_t i = 0; i < input.size(); ++i)
@@ -155,65 +157,78 @@ std::vector<RECT> ResolveVariableTrack(std::span<const RECT> input, const Variab
         const float start = static_cast<float>(vertical ? input[i].top : input[i].left);
         const float end = static_cast<float>(vertical ? input[i].bottom : input[i].right);
         const float insetScale = std::clamp((end - start - 1.f) / std::max(1, spacing), 0.f, 1.f);
-        cells.push_back({start, end, start + (spacing / 2) * insetScale,
-            end - ((spacing + 1) / 2) * insetScale, i});
+        const float visibleStart = start + (spacing / 2) * insetScale;
+        const float visibleEnd = end - ((spacing + 1) / 2) * insetScale;
+        // Let longer cells grow more without letting their length determine
+        // how far the rest of the Dock has to travel.
+        const float extentRatio = std::max(1.f, (visibleEnd - visibleStart) / options.iconSize);
+        const float peak = iconPeak * std::min(kMaximumPeakMultiplier, std::pow(extentRatio, .65f));
+        cells.push_back({start, end, visibleStart, visibleEnd, peak, i});
     }
     if (cells.empty()) return output;
     std::ranges::stable_sort(cells, {}, &TrackCell::start);
-    const float peak = options.iconSize * (options.scale - 1.f);
-    // A shared growth budget limits how far a long item can displace the
-    // other items. With edgeGrowth >= 4 * centerBonus, f * growth(f) is
-    // nondecreasing and (1-f) * growth(f) is nonincreasing.
-    const float edgeGrowth = .82f * peak;
-    const float centerBonus = peak - edgeGrowth;
-    const float tail = options.single ? 0.f : .32f * peak;
+    // With edgeGrowth >= 4 * centerBonus, f * growth(f) is nondecreasing
+    // and (1-f) * growth(f) is nonincreasing for every cell's own peak.
+    constexpr float kEdgeFraction = .82f;
+    const float tail = options.single ? 0.f : .32f * iconPeak;
     const float radius = 2.f * options.pitch;
-    const auto pastCell = [&](float distanceToEnd, float length) {
+    const auto pastCell = [&](float distanceToEnd, const TrackCell& cell) {
+        const float length = cell.visibleEnd - cell.visibleStart;
+        const float edgeGrowth = kEdgeFraction * cell.peak;
         if (distanceToEnd >= length)
             return edgeGrowth + tail * SmoothStep((distanceToEnd - length) / radius);
         const float fraction = distanceToEnd / length;
-        return fraction * (edgeGrowth + centerBonus * 4.f * fraction * (1.f - fraction));
+        return fraction * (edgeGrowth + (cell.peak - edgeGrowth) * 4.f * fraction * (1.f - fraction));
     };
     const auto outsideTrack = [&](float distance) {
-        return edgeGrowth * SmoothStep(distance / options.pitch) +
+        return kEdgeFraction * iconPeak * SmoothStep(distance / options.pitch) +
             tail * SmoothStep((distance - options.pitch) / radius);
     };
-    const float minimum = options.scrolls ? -peak - tail : std::min(0.f, options.safeStart - cells.front().start);
-    const float maximum = options.scrolls ? peak + tail : std::max(0.f, options.safeEnd - cells.back().end);
+    const float maximumShift = kEdgeFraction * kMaximumPeakMultiplier * iconPeak + tail;
+    const float minimum = options.scrolls ? -maximumShift : std::min(0.f, options.safeStart - cells.front().start);
+    const float maximum = options.scrolls ? maximumShift : std::max(0.f, options.safeEnd - cells.back().end);
     const auto boundary = [&](size_t i) {
         const auto* previous = i > 0 ? &cells[i - 1] : nullptr;
         const auto* next = i < cells.size() ? &cells[i] : nullptr;
         const float afterPrevious = previous ? options.pointer - previous->visibleEnd : 0.f;
         const float beforeNext = next ? next->visibleStart - options.pointer : 0.f;
-        float shift = 0.f;
-        if (afterPrevious < 0.f)
-            shift = pastCell(-afterPrevious, previous->visibleEnd - previous->visibleStart);
-        else if (beforeNext < 0.f)
-            shift = -pastCell(-beforeNext, next->visibleEnd - next->visibleStart);
-        else if (!previous)
-            shift = outsideTrack(beforeNext);
-        else if (!next)
-            shift = -outsideTrack(afterPrevious);
-        return std::clamp(shift, minimum, maximum);
+        const float trailing = previous
+            ? pastCell(std::max(0.f, -afterPrevious), *previous) : outsideTrack(beforeNext);
+        const float leading = next
+            ? pastCell(std::max(0.f, -beforeNext), *next) : outsideTrack(afterPrevious);
+        return trailing - leading;
     };
 
-    // Each boundary is nonincreasing as the pointer moves towards the end.
-    // Adjacent cells share it, so the gap moves with them and cannot recoil
-    // from a change in which item owns the hover. A constant edge clamp
-    // preserves this ordering while allowing a pinned edge to grow inward.
-    float startShift = boundary(0);
+    // Carry displacement outward so a wide cell cannot squeeze a narrower
+    // neighbor. Running extrema of nonincreasing functions are themselves
+    // nonincreasing, and both sides of each gap still share one displacement.
+    std::vector<float> requested(cells.size() + 1), shifts(requested.size());
+    float trailing = 0.f;
+    for (size_t i = 0; i < requested.size(); ++i)
+    {
+        requested[i] = boundary(i);
+        trailing = std::max(trailing, requested[i]);
+        shifts[i] = trailing;
+    }
+    float leading = 0.f;
+    for (size_t i = shifts.size(); i > 0; --i)
+    {
+        leading = std::min(leading, requested[i - 1]);
+        shifts[i - 1] = std::clamp(shifts[i - 1] + leading, minimum, maximum);
+    }
     for (size_t i = 0; i < cells.size(); ++i)
     {
+        const auto& cell = cells[i];
         auto& rect = output[cells[i].index];
-        const float endShift = boundary(i + 1);
-        const LONG start = static_cast<LONG>(cells[i].start) + std::lround(startShift);
-        const LONG end = static_cast<LONG>(cells[i].end) + std::lround(endShift);
-        const float extent = std::max(static_cast<float>(options.iconSize), cells[i].visibleEnd - cells[i].visibleStart);
-        const float growth = std::max(0.f, endShift - startShift);
+        const LONG startGrowth = std::lround(shifts[i]);
+        const LONG endGrowth = std::lround(shifts[i + 1]);
+        const LONG start = static_cast<LONG>(cell.start) + startGrowth;
+        const LONG end = static_cast<LONG>(cell.end) + endGrowth;
+        const float extent = std::max(static_cast<float>(options.iconSize), cell.visibleEnd - cell.visibleStart);
+        const float growth = static_cast<float>(endGrowth - startGrowth);
         // Grow both axes by the same fraction of their resting size. Adding
         // the same pixel count to both axes would distort a wide capsule.
         const LONG cross = std::lround(growth * options.iconSize / extent);
-        startShift = endShift;
         if (vertical) { rect.top = start; rect.bottom = end; }
         else { rect.left = start; rect.right = end; }
         if (options.single)
