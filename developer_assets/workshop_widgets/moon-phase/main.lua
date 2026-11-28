@@ -82,24 +82,26 @@ local function menu(_context, _model, request)
     })
 end
 
-local function quarterName(quarter)
-    if quarter == 0 then return l10n.tr("lua_widget.moon_phase.new") end
-    if quarter == 1 then return l10n.tr("lua_widget.moon_phase.first") end
-    if quarter == 2 then return l10n.tr("lua_widget.moon_phase.full") end
-    return l10n.tr("lua_widget.moon_phase.last")
+local function phaseName(phase)
+    if phase == 0 then return l10n.tr("lua_widget.moon_phase.new") end
+    if phase == 1 then return l10n.tr("lua_widget.moon_phase.waxing_crescent") end
+    if phase == 2 then return l10n.tr("lua_widget.moon_phase.first") end
+    if phase == 3 then return l10n.tr("lua_widget.moon_phase.waxing_gibbous") end
+    if phase == 4 then return l10n.tr("lua_widget.moon_phase.full") end
+    if phase == 5 then return l10n.tr("lua_widget.moon_phase.waning_gibbous") end
+    if phase == 6 then return l10n.tr("lua_widget.moon_phase.last") end
+    if phase == 7 then return l10n.tr("lua_widget.moon_phase.waning_crescent") end
+    return l10n.tr("lua_widget.moon_phase.out_of_range")
 end
 
 local function refresh(model)
     local now = tonumber(storage.get("previewEpochMs")) or time.now()
-    local frame, quarter, quarterTime = moon.at(now)
-    local date
-    if quarterTime then
-        local parts = time.parts(quarterTime, "local")
-        date = l10n.tr("lua_widget.moon_phase.date", tostring(parts.month), tostring(parts.day))
-    end
+    local frame, phase = moon.at(now)
+    local parts = time.parts(now, "local")
+    local date = l10n.tr("lua_widget.moon_phase.date", tostring(parts.month), tostring(parts.day))
 
-    if frame ~= model.frame or quarter ~= model.quarter or date ~= model.date then
-        model.frame, model.quarter, model.date = frame, quarter, date
+    if frame ~= model.frame or phase ~= model.phase or date ~= model.date then
+        model.frame, model.phase, model.date = frame, phase, date
         widget.invalidate()
     end
 end
@@ -158,15 +160,10 @@ local function render(context, model)
     draw.line(inset, footerY - side * 0.023, width - inset, footerY - side * 0.023, 1, color, 0.30)
 
     local footerWidth = width - inset * 2
-    if model.date then
-        local dateWidth = draw.measureText(model.date, footerFont).width + 1
-        draw.text(width - inset - dateWidth, footerY, model.date, footerFont, color, dateWidth, false, true)
-        draw.text(inset, footerY, quarterName(model.quarter), footerFont, color,
-            math.max(1, footerWidth - dateWidth - inset / 2), false, true)
-    else
-        draw.text(inset, footerY, l10n.tr("lua_widget.moon_phase.out_of_range"), footerFont, color,
-            footerWidth, false, true)
-    end
+    local dateWidth = draw.measureText(model.date, footerFont).width + 1
+    draw.text(width - inset - dateWidth, footerY, model.date, footerFont, color, dateWidth, false, true)
+    draw.text(inset, footerY, phaseName(model.phase), footerFont, color,
+        math.max(1, footerWidth - dateWidth - inset / 2), false, true)
 end
 
 return widget.define({
@@ -192,7 +189,7 @@ return widget.define({
                 label = l10n.tr("lua_widget.moon_phase.moon_only"),
                 type = "bool",
                 default = false,
-                agentDescription = "Shows a larger lunar disc on a transparent surface. Turning it off restores the previous Follow Global setting and any appearance values overridden by Moon Only, along with the title and next phase date. The component menu changes this same per-instance setting.",
+                agentDescription = "Shows a larger lunar disc on a transparent surface. Turning it off restores the previous Follow Global setting and any appearance values overridden by Moon Only, along with the title, current phase name, and today's local date. The component menu changes this same per-instance setting.",
             },
         },
     },

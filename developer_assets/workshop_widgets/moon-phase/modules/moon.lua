@@ -12,21 +12,6 @@ local function angleSample(index)
     return digits[high] * 64 + digits[low]
 end
 
-local function nextQuarter(now)
-    local minute = now / 60000
-    local times = data.quarterMinutes
-    local low, high = 1, #times
-    while low < high do
-        local middle = (low + high) // 2
-        if times[middle] > minute then
-            high = middle
-        else
-            low = middle + 1
-        end
-    end
-    return (data.firstQuarter + low - 1) % 4, times[low] * 60000
-end
-
 local moon = { frameCount = 32 }
 
 function moon.at(now)
@@ -42,8 +27,9 @@ function moon.at(now)
     local difference = (nextAngle - angle + 1800) % 3600 - 1800
     local interpolated = (angle + (position - index) * difference) % 3600
     local frame = math.floor(interpolated * moon.frameCount / 3600 + 0.5) % moon.frameCount
-    local quarter, quarterTime = nextQuarter(now)
-    return frame, quarter, quarterTime
+    -- Center the eight named phases on multiples of 45 degrees, starting at new moon.
+    local phase = math.floor(interpolated / 450 + 0.5) % 8
+    return frame, phase
 end
 
 return moon
