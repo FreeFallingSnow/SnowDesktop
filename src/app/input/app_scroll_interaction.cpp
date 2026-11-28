@@ -192,6 +192,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp, std::optional<bool> touchFan
     const bool popupInteractive = popupWidget && IsCollectionPopupInteractive() &&
         (!desktopIconsHidden_ || IsOpenPopupRetained());
     const bool fan = popupInteractive && UsesCollectionPopupFan(*popupWidget);
+    // The fan owns its layout rectangle, including the space between items.
     if (touchFanTarget.value_or(false) || (fan && !touchFanTarget.has_value() &&
             HitTestCollectionPopupFanScroll(GetCollectionPopupRect(*popupWidget), pt)))
     {
@@ -261,8 +262,6 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp, std::optional<bool> touchFan
         }
     }
 
-    // Only a regular panel owns its whole frame. A fan miss reaches the
-    // desktop widgets even when the floating window delivered the wheel event.
     if (popupInteractive && !fan && !touchFanTarget.has_value())
     {
         RECT popup =

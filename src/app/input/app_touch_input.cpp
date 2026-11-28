@@ -389,9 +389,8 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
         const bool luaInteractive = luaWidgetPanelAnimation_.IsInteractive() && !luaWidgetPanelRequest_.widgetId.empty();
         const RECT luaPanel = luaInteractive ? GetLuaWidgetPanelRect() : RECT{};
         auto* popup = GetOpenPopupWidget();
-        const bool inPopup = popup && IsPointInsideOpenPopup(desktop);
-        const bool inFanFrame = inPopup && UsesCollectionPopupFan(*popup);
-        const RECT bounds = inPopup ? GetCollectionPopupRect(*popup) : RECT{};
+        const bool fan = popup && IsCollectionPopupInteractive() && UsesCollectionPopupFan(*popup);
+        const RECT fanBounds = fan ? GetCollectionPopupRect(*popup) : RECT{};
         if (luaInteractive && (luaWidgetPanelRequest_.modal || PtInRect(&luaPanel, desktop)))
         {
             const RECT content = GetLuaWidgetPanelContentRect();
@@ -399,9 +398,11 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
                 luaTarget(luaWidgetPanelRequest_.widgetId, content, luaWidgetPanelRequest_.surface))
                 target.widgetId = luaWidgetPanelRequest_.widgetId;
         }
-        else if (inPopup && (!inFanFrame || HitTestCollectionPopupFanScroll(bounds, desktop)))
+        else if (popup && (fan ? HitTestCollectionPopupFanScroll(fanBounds, desktop)
+                             : IsPointInsideOpenPopup(desktop)))
         {
-            if (inFanFrame) target.fanScrollTarget = true;
+            if (fan) target.fanScrollTarget = true;
+            const RECT bounds = fan ? fanBounds : GetCollectionPopupRect(*popup);
             auto* group = GetGroupPopupView();
             auto* categorized = group ? group : GetCategorizedPopupView();
             CategorizedPopupScope scope(categorized, GetCategorizedPopupFrame(bounds));
@@ -426,9 +427,9 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
                         break;
                     }
             }
-            if (!target.horizontal && (inFanFrame || PtInRect(&content, desktop)))
+            if (!target.horizontal && (fan || PtInRect(&content, desktop)))
             {
-                const bool popupScrolls = inFanFrame
+                const bool popupScrolls = fan
                     ? snowdesktop::collection_popup_layout::FanMaximumScroll(
                         FileDropMemberLayout(*popup, nullptr).Count(GetPopupItemCount(*popup)),
                         GetCollectionPopupFanVisibleCount(bounds)) > 0
@@ -449,10 +450,9 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
                     target.moveWidget = true;
             }
         }
-        else if ((window == hwnd_ || (inFanFrame && window == floatingPopupHwnd_)) &&
-            !IsPointInUsageGuide(desktop))
+        else if (window == hwnd_ && !IsPointInUsageGuide(desktop))
         {
-            if (inFanFrame) target.fanScrollTarget = false;
+            if (fan) target.fanScrollTarget = false;
             const bool onIndicator = IsLuaStackIndicatorVisible() && PtInRect(&luaStackIndicator_.bounds, desktop);
             const size_t index = onIndicator ? FindWidgetIndexById(luaStackIndicator_.stackId) :
                 HitTestStandaloneWidgetIndex(desktop);
@@ -488,12 +488,6 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
                     nativeTarget(*view, true);
                     break;
                 }
-            }
-            if (inFanFrame)
-            {
-                // The transparent part of a fan permits background
-                // scrolling while leaving click and drag ownership intact.
-                target.draggable = target.doubleTap = target.moveWidget = target.directWidgetDrag = false;
             }
         }
         if (!target.horizontal && !target.vertical && !target.draggable &&

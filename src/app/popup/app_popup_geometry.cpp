@@ -373,64 +373,10 @@ bool DesktopApp::HitTestCollectionPopupItem(const RECT& popup, size_t index, POI
 
 bool DesktopApp::HitTestCollectionPopupFanScroll(const RECT& popup, POINT point) const
 {
-    namespace layout = snowdesktop::collection_popup_layout;
-    const auto* widget = GetOpenPopupWidget();
-    const auto visual = popupAnimation_.GetVisual();
-    if (!widget || !visual.visible || !PtInRect(&popup, point)) return false;
-
-    const size_t count = GetPopupItemCount(*widget);
-    const auto& pending = FileDropMemberLayout(*widget, nullptr);
-    const size_t displayCount = pending.Count(count);
-    const size_t capacity = GetCollectionPopupFanVisibleCount(popup);
-    const double offset = GetCollectionPopupFanScrollOffset(popup);
-    const auto& popupKeys = GetPopupItemKeysView(*widget);
-    const bool unfolding = visual.progress < 1.0f &&
-        snowdesktop::animation::RuntimePopupEffect() != snowdesktop::animation::Fade;
-    const auto hit = [&](const layout::FanItem& item, double slot, float opacity, bool labelOnly) {
-        const float progress = unfolding ? layout::FanRevealProgress(visual.progress,
-            static_cast<float>(slot / static_cast<double>(std::max<size_t>(1, capacity)))) : 1.0f;
-        if (progress * opacity * visual.opacity <= 0.001f) return false;
-        const layout::FanPoint origin = popupHasAnchor_
-            ? layout::FanPoint{static_cast<float>(popupAnchorPoint_.x), static_cast<float>(popupAnchorPoint_.y)}
-            : layout::FanPoint{item.center.x,
-                static_cast<float>(CollectionPopupFanRootAbove() ? popup.top : popup.bottom)};
-        const auto center = layout::FanUnfoldCenter(origin, item.center, progress);
-        const auto local = layout::RotateFanPoint(
-            {static_cast<float>(point.x) - (center.x - item.center.x),
-                static_cast<float>(point.y) - (center.y - item.center.y)},
-            item.center, -item.angle * progress);
-        const auto contains = [&](const RECT& rect) {
-            return local.x >= rect.left && local.x < rect.right &&
-                local.y >= rect.top && local.y < rect.bottom;
-        };
-        return contains(item.label) || (!labelOnly && contains(item.icon));
-    };
-
-    const auto range = layout::FanVisibleRange(offset, capacity, displayCount);
-    const auto [first, end] = pending.ModelRange({range.first, range.end}, count);
-    for (size_t i = first; i < end; ++i)
-    {
-        const auto position = pending.Member(i);
-        if (!position) continue;
-        const double slot = static_cast<double>(*position) - offset;
-        const float opacity = layout::FanItemOpacity(slot, capacity);
-        if (opacity <= 0.001f) continue;
-        if (widget->type != DesktopWidgetType::FolderMapping && !initialShellReadPending_ &&
-            (i >= popupKeys.size() || FindItemIndexByKey(popupKeys[i]) >= items_.size()))
-            continue;
-        if (hit(GetCollectionPopupFanItem(popup, i), slot, opacity, false)) return true;
-    }
-    const FolderEntry placeholder;
-    for (const auto& gap : pending.gaps)
-    {
-        const double slot = static_cast<double>(gap.position) - offset;
-        const float opacity = layout::FanItemOpacity(slot, capacity);
-        if (opacity > 0.001f && hit(GetCollectionPopupFanItem(popup, gap.position,
-                gap.file ? gap.file.get() : &placeholder), slot, opacity, false))
-            return true;
-    }
-    return hit(GetCollectionPopupFanItem(popup, count), static_cast<double>(capacity),
-        1.0f, displayCount == 0);
+    RECT viewport = GetCollectionPopupContentRect(popup);
+    if (const auto* motion = GetCollectionPopupResizeTransition())
+        viewport = motion->Content(viewport, popup);
+    return PtInRect(&viewport, point) != FALSE;
 }
 
 double DesktopApp::GetCollectionPopupFanScrollOffset(const RECT& popup) const
