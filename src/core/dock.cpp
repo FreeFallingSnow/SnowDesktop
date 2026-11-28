@@ -2164,7 +2164,6 @@ RECT DockContainer::PositionTitleTooltipBounds(
 
 RECT DockContainer::GetHoveredTitleBounds(POINT pointer) const
 {
-    if (WindowTitleAtPoint(pointer)) return {};
     if (!app_ || IsMagnificationSuppressed() || app_->IsPointOccludedByOpenPopup(pointer) ||
         app_->dragSession_.IsActive() || app_->dragDropController_.IsTransportActive() ||
         app_->widgetAction_ == DesktopApp::WidgetAction::Move ||
@@ -2179,6 +2178,7 @@ RECT DockContainer::GetHoveredTitleBounds(POINT pointer) const
 
     std::wstring title;
     RECT baseBounds{};
+    WindowTitleGroup titleGroup;
     if (DockEntryItem* entry = EntryAtPoint(pointer))
     {
         const bool popupVisible = app_->popupAnimation_.IsInteractive() ||
@@ -2217,12 +2217,14 @@ RECT DockContainer::GetHoveredTitleBounds(POINT pointer) const
         }
         title = entry->GetTitle();
         baseBounds = entry->GetBounds();
+        titleGroup = EntryTitleGroup(entry->GetEntryIndex());
     }
     else if (DockRunningItem* running =
         RunningItemAtPoint(pointer))
     {
         title = running->GetTitle();
         baseBounds = running->GetBounds();
+        titleGroup = RunningTitleGroup(running->GetRunningIndex());
     }
     else if (DockFrequentItem* frequent =
         FrequentItemAtPoint(pointer))
@@ -2252,8 +2254,10 @@ RECT DockContainer::GetHoveredTitleBounds(POINT pointer) const
             return RECT{};
     }
 
-    const RECT visualBounds =
-        GetElementVisualRect(baseBounds, pointer);
+    const RECT visualBounds = titleGroup.Visible()
+        ? WindowTitlePreviewAnchor(baseBounds, titleGroup)
+        : GetElementVisualRect(baseBounds, pointer);
+    if (IsRectEmpty(&visualBounds)) return {};
 
     const int position = static_cast<int>(
         Position());
