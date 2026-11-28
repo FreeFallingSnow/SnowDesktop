@@ -281,8 +281,9 @@ bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destinat
         return BuildExternalDesktopPreviewList(anchor, count);
     };
     services.canPinExisting = [this](const auto& files) { return CanPinExistingDesktopPaths(files); };
-    services.pinExisting = [this, section = destination.preview.dockSection](const auto& files, size_t index) {
-        return AddMaterializedItemsToDock(files, index, true, section);
+    const auto selectionRevision = paths.size() > 1 ? destination.selectionRevision : std::nullopt;
+    services.pinExisting = [this, section = destination.preview.dockSection, selectionRevision](const auto& files, size_t index) {
+        return AddMaterializedItemsToDock(files, index, true, section, selectionRevision);
     };
     services.dockHasCapacity = [this](size_t count) {
         const auto* dock = GetDockContainer();
@@ -290,19 +291,22 @@ bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destinat
     };
     services.afterPin = [this] { RequestLayoutSave(); RequestShellRefresh(); };
     services.fileName = FileNameFromPath;
-    services.execute = [this](const DragSourceList& sources, const DropPreviewList& preview,
+    services.execute = [this, selectionRevision](const DragSourceList& sources, const DropPreviewList& preview,
         FileOperationCompletion done, bool sync, auto outputs) {
-        return ExecuteDropPipeline(sources, preview, std::move(done), sync, std::move(outputs));
+        auto capturedSources = sources;
+        capturedSources.dropSelectionRevision = selectionRevision;
+        return ExecuteDropPipeline(capturedSources, preview, std::move(done), sync, std::move(outputs));
     };
     return snowdesktop::external_file_destination::Commit(destination, paths, owned, copyOnly,
         std::move(completion), synchronously, std::move(result), services);
 }
 
 DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
-    const ExternalSlotDestination& destination, DWORD allowedEffects,
+    ExternalSlotDestination destination, DWORD allowedEffects,
     bool asynchronousSource, const std::vector<std::wstring>& knownPaths)
 {
     if (!dataObject) return DROPEFFECT_NONE;
+    destination.selectionRevision = selectionController_.InteractionRevision();
     const bool volumeDefault = destination.volumeDefault &&
         (allowedEffects & (DROPEFFECT_MOVE | DROPEFFECT_COPY)) == (DROPEFFECT_MOVE | DROPEFFECT_COPY) &&
         (!knownPaths.empty() || content::ProbeFileSource(dataObject).available);

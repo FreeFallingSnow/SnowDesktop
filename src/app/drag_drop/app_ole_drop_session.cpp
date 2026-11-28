@@ -328,6 +328,8 @@ std::optional<DWORD> DesktopApp::TryDropShellNamespaceFiles(
         preview.action = effect == DROPEFFECT_MOVE ? DropAction::Move : DropAction::Copy;
         landing = BuildPendingLandingCache(sources, preview, existing);
     }
+    if (sources.entries.size() > 1)
+        landing.dropSelectionRevision = selectionController_.InteractionRevision();
     const auto ticket = BeginFileDropVisual(std::move(landing), true, &sources,
         effect == DROPEFFECT_MOVE ? DropAction::Move : DropAction::Copy);
     auto result = std::make_shared<snowdesktop::ShellFileOperationResult>();
@@ -345,7 +347,7 @@ std::optional<DWORD> DesktopApp::TryDropShellNamespaceFiles(
     --shellFileOperationInFlight_;
     // Preserve actual successful outputs even when the user cancelled a later
     // item; never invent paths by diffing a directory shared with other copies.
-    snowdesktop::pending_drop::Complete(pendingLandingCaches_, TakeFileDropVisual(ticket), *result);
+    snowdesktop::pending_drop::Complete(pendingLandingCaches_, TakeFileDropVisual(ticket), *result, !destination);
     if (effect == DROPEFFECT_MOVE)
         ReportPerformedDropEffect(dataObject, DROPEFFECT_NONE);
     if (FAILED(status))
@@ -972,6 +974,8 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         *effect = CommitInternalDragRelease(clientPoint, keyState, *effect);
         return S_OK;
     }
+    selectionController_.BeginInteraction();
+    const auto selectionRevision = selectionController_.InteractionRevision();
     ResolveCurrentDragTargetAt(clientPoint, true);
     ResolveFolderPreviewOverflowDrop(clientPoint);
     if (dragSession_.TargetRegion() == HitRegion::Blocked)
@@ -1244,12 +1248,22 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                     finished, asyncCompletion);
             if (!sourceSupportsAsync)
                 DwmFlush();
-            const bool handled = MaterializeFilesToFolder(
-                fileSources, targetPath, action,
-                sourceSupportsAsync
-                    ? std::move(asyncCompletion)
-                    : std::move(finished),
-                !sourceSupportsAsync);
+            FileOperationCompletion completion = sourceSupportsAsync
+                ? std::move(asyncCompletion) : FileOperationCompletion(finished);
+            bool handled = false;
+            if (auto* view = fileSources.entries.size() > 1 ? FindFolderDropSelectionTarget(targetPath) : nullptr)
+            {
+                fileSources.dropSelectionRevision = selectionRevision;
+                DropPreviewList preview;
+                preview.targetKind = DropTargetKind::FolderMapping;
+                preview.targetWidget = view;
+                preview.fileBacked = true;
+                preview.action = action;
+                preview.insertIndex = view->folderEntries.size();
+                handled = ExecuteFileBackedDropPlan(fileSources, preview, std::move(completion), !sourceSupportsAsync);
+            }
+            else
+                handled = MaterializeFilesToFolder(fileSources, targetPath, action, std::move(completion), !sourceSupportsAsync);
             if (!handled)
             {
                 *effect = DROPEFFECT_NONE;
@@ -1410,6 +1424,8 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             preview.insertIndex = popupInsertIndex;
             preview.fileBacked = true;
             preview.action = action;
+            if (fileSources.entries.size() > 1)
+                fileSources.dropSelectionRevision = selectionRevision;
             FileOperationCompletion asyncCompletion;
             const bool sourceSupportsAsync = PrepareOleAsyncFileOperation(dataObject,
                 action == DropAction::Move ? DROPEFFECT_NONE : selectedEffect, {}, asyncCompletion);
@@ -1755,7 +1771,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
 
             const auto readVisual = BeginFileDropRead(BuildExternalDesktopPreviewList(delayedFileTargetCell, 1), false);
             auto completed = [
-                this, readVisual, desktopDirectory,
+                this, readVisual, desktopDirectory, selectionRevision,
                 previousDirectoryPaths,
                 existingDesktopKeys, delayedFileTargetCell,
                 bareDesktopUrl, bareDesktopUrls,
@@ -2026,6 +2042,8 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                         if (!sourceList.entries.empty() &&
                             !requestedPreview.Empty())
                         {
+                            if (sourceList.entries.size() > 1)
+                                sourceList.dropSelectionRevision = selectionRevision;
                             StorePendingLandingCache(
                                 sourceList,
                                 requestedPreview,
@@ -2054,6 +2072,8 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                         fallbackSources.entries.push_back(
                             std::move(entry));
                     }
+                    if (fallbackSources.entries.size() > 1)
+                        fallbackSources.dropSelectionRevision = selectionRevision;
                     auto contentCompletion = [
                         this, preflightState,
                         replacementShortcuts,
@@ -2265,6 +2285,8 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         }
 
         DragSourceList sourceList = BuildDragSourceList(sourceItems, nullptr);
+        if (sourceList.entries.size() > 1)
+            sourceList.dropSelectionRevision = selectionRevision;
         Container* target = dragSession_.TargetContainer() ? dragSession_.TargetContainer() : GetDesktopGrid();
         HitRegion targetRegion = dragSession_.TargetRegion() != HitRegion::None ? dragSession_.TargetRegion() : HitRegion::Empty;
 
@@ -2303,7 +2325,8 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             {
                 const auto mappingEffect = snowdesktop::dock_drop_rules::ChooseExternalMappingEffect(*effect);
                 const bool pinned = mappingEffect != DROPEFFECT_NONE &&
-                    AddMaterializedItemsToDock(dropPaths, externalDockInsertIndex, true, externalDockSection);
+                    AddMaterializedItemsToDock(dropPaths, externalDockInsertIndex, true, externalDockSection,
+                        sourceList.dropSelectionRevision);
                 if (pinned)
                 {
                     DockContainer::FinishFreeOrderForDrag(*this, true);

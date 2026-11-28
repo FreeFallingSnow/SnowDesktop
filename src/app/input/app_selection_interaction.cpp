@@ -261,6 +261,12 @@ bool DesktopApp::ClearSelection(const DesktopWidget* localWidget)
     }
     bool changed = ClearDesktopSurfaceKeyboardFocus() || keyboardNavVisualFocus_;
     changed |= ClearFolderPreviewHeaderFocus();
+    return ClearSelectionModel(localWidget) || changed;
+}
+
+bool DesktopApp::ClearSelectionModel(const DesktopWidget* localWidget)
+{
+    bool changed = false;
     for (const auto& container : containers_)
         if (const auto* view = dynamic_cast<const ScrollingItemWidget*>(container.get()); view && view->folderSearch_)
             for (const auto& row : view->folderSearch_->rows)
@@ -293,8 +299,18 @@ void DesktopApp::ClearItemSelection()
 
 bool DesktopApp::BeginDropResultSelection(std::optional<std::uint64_t> revision)
 {
-    if (!revision || *revision != selectionController_.Revision()) return false;
-    ClearItemSelection();
+    if (!revision) return false;
+    const auto first = selectionController_.BeginDropResult(*revision);
+    if (!first) return false;
+    if (*first)
+    {
+        // Result delivery can be inside model refresh. Clear selection flags
+        // without dispatching widget hover callbacks or presenting another frame.
+        ClearSelectionModel();
+        ClearFolderPreviewHeaderFocus();
+        for (auto& entry : dockFolderPopupWidget_.folderEntries)
+            entry.selected = false;
+    }
     return true;
 }
 
@@ -384,6 +400,8 @@ void DesktopApp::ClearSelectionForExternalWindow(HWND window)
     if (revision == selectionController_.Revision() &&
         !keyboardFocus && !popupSelection && !previewSearchBlurred && !previewHeaderBlurred)
         return;
+    if (shellFileOperationInFlight_ == 0)
+        selectionController_.BeginInteraction();
 
     // Expanded selected titles and keyboard frames can extend beyond their
     // ordinary bounds, including projections into a separate Dock or popup.

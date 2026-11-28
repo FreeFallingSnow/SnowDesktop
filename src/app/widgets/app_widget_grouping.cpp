@@ -955,11 +955,13 @@ DropReceipt DesktopApp::DropDesktopWidgetIconsIntoGroup(WidgetContainer* group, 
         wrappers.push_back(std::make_unique<Widget>(&widgets_[index], this));
         members.push_back(wrappers.back().get());
     }
-    return MoveWidgetSourcesToGroup(members, targetIndex, insertIndex) ? DropReceipt{DropAction::Move} : submittedFiles;
+    return MoveWidgetSourcesToGroup(members, targetIndex, insertIndex, drop.sources.dropSelectionRevision)
+        ? DropReceipt{DropAction::Move} : submittedFiles;
 }
 
 bool DesktopApp::MoveWidgetSourcesToGroup(
-    const std::vector<Item*>& sourceItems, size_t groupIndex, size_t insertIndex)
+    const std::vector<Item*>& sourceItems, size_t groupIndex, size_t insertIndex,
+    std::optional<std::uint64_t> selectionRevision)
 {
     if (sourceItems.empty() ||
         groupIndex >= widgets_.size() ||
@@ -1025,6 +1027,12 @@ bool DesktopApp::MoveWidgetSourcesToGroup(
 
     if (!snowdesktop::widget_group_drop::Apply(widgets_, dockEntries_, groupIndex, movingIds, insertIndex))
         return false;
+    if (BeginDropResultSelection(selectionRevision))
+        for (const auto& id : movingIds)
+        {
+            const auto index = FindWidgetIndexById(id);
+            if (index < widgets_.size()) widgets_[index].selected = true;
+        }
 
     NormalizeDockRecycleBinPosition();
     RefreshCollectedKeysCache();

@@ -245,7 +245,15 @@ DropReceipt DesktopGrid::OnItemsDropped(const ItemDrop& drop)
                 app->CellFromPointForDrag(drop.point);
             bool changed = false;
             for (const auto& id : mappingIds)
-                if (app->ReleaseWidgetFromFileGroup(id, target)) changed = true;
+            {
+                if (!app->ReleaseWidgetFromFileGroup(id, target)) continue;
+                changed = true;
+                if (app->BeginDropResultSelection(drop.sources.dropSelectionRevision))
+                {
+                    const auto index = app->FindWidgetIndexById(id);
+                    if (index < app->widgets_.size()) app->widgets_[index].selected = true;
+                }
+            }
             if (changed)
             {
                 app->EnsureNavTabOrder();

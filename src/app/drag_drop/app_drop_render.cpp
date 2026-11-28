@@ -25,7 +25,7 @@ std::uint64_t DesktopApp::BeginFileDropRead(const DropPreviewList& preview, bool
     {
         PendingFolderPlacement folder;
         folder.widgetId = popup ? dockFolderPopupMappingWidgetId_ : widgetId;
-        folder.popupSourceId = popup ? dockFolderPopupSourceId_ : std::wstring{};
+        folder.popupSourceId = popup ? PendingFolderPopupId() : std::wstring{};
         folder.sourceFolderPath = folderPath;
         folder.insertIndex = preview.insertIndex;
         folder.sourcePaths = knownPaths;
@@ -75,7 +75,8 @@ std::uint64_t DesktopApp::BeginFileDropRead(const DropPreviewList& preview, bool
 std::uint64_t DesktopApp::BeginFileDropVisual(PendingLandingCache cache, bool present,
     const DragSourceList* sources, DropAction action)
 {
-    if (cache.entries.empty() && cache.folderPlacements.empty() && !cache.dockMonitor) return 0;
+    if (cache.entries.empty() && cache.folderPlacements.empty() && !cache.dockMonitor &&
+        !cache.dropSelectionRevision) return 0;
     const auto id = ++nextFileDropVisual_;
     const bool dock = cache.dockMonitor != nullptr;
     cache.visualId = id;
@@ -151,10 +152,11 @@ void DesktopApp::InvalidateFileDropVisual(const PendingLandingCache& cache, bool
         }
         else owners.insert(entry.widgetId);
     }
+    const auto popupId = cache.folderPlacements.empty() ? std::wstring{} : PendingFolderPopupId();
     for (const auto& folder : cache.folderPlacements)
     {
         owners.insert(folder.widgetId);
-        popup |= !folder.popupSourceId.empty() && folder.popupSourceId == dockFolderPopupSourceId_;
+        popup |= !folder.popupSourceId.empty() && folder.popupSourceId == popupId;
     }
     if (const auto* open = GetOpenPopupWidget()) popup |= owners.contains(open->id);
     if (popup && folderPreview_ && folderPreview_->inlineBounds) owners.insert(folderPreview_->hostWidgetId);
@@ -248,23 +250,26 @@ bool DesktopApp::ApplyPendingFolderPlacements(
     const std::wstring& popupSourceId)
 {
     const bool livePopup = &targetWidget == &dockFolderPopupWidget_;
-    const auto livePopupId = folderPreview_
-        ? L"folder-preview:" + snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath)
-        : dockFolderPopupSourceId_;
     // A pinned mapping and its popup share an ordering model. Apply a drop
     // made into the popup to that view first so its icons get the selection.
     if (cache.dropSelectionRevision && !livePopup && !widgetId.empty() && dockFolderPopupOpen_ &&
         std::ranges::any_of(cache.folderPlacements, [&](const auto& placement) {
-            return !placement.popupSourceId.empty() && placement.popupSourceId == livePopupId &&
+            return !placement.popupSourceId.empty() && placement.popupSourceId == PendingFolderPopupId() &&
                 PathsEqualInsensitive(placement.sourceFolderPath, dockFolderPopupWidget_.sourceFolderPath);
         })) return false;
     return snowdesktop::pending_drop::ApplyFolder(cache, targetWidget, widgetId, popupSourceId,
         MatchPendingName, ToUpperInvariant, PathsEqualInsensitive, [&](const auto& paths) {
-            if ((!livePopup && widgetId.empty()) || !BeginDropResultSelection(cache.dropSelectionRevision)) return;
+            if (!cache.dropSelectionRevision || (!livePopup && widgetId.empty())) return;
+            std::unordered_set<std::wstring> outputPaths;
+            for (const auto& path : paths) outputPaths.insert(ToUpperInvariant(path));
+            std::vector<FolderEntry*> selected;
             for (auto& entry : targetWidget.folderEntries)
-                entry.selected = std::ranges::any_of(paths, [&](const auto& path) {
-                    return PathsEqualInsensitive(entry.fullPath, path);
-                });
+                if (outputPaths.contains(ToUpperInvariant(entry.fullPath))) selected.push_back(&entry);
+            if (selected.empty() || !BeginDropResultSelection(cache.dropSelectionRevision)) return;
+            for (auto* entry : selected) entry->selected = true;
+            // Clearing the source selection can also change pixels outside
+            // the target directory's normal refresh bounds.
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
         });
 }
 
@@ -387,7 +392,9 @@ bool DesktopApp::ApplyPendingPlacement(bool desktopOnly, std::vector<std::wstrin
         [](const auto& cache) {
             return cache.active && !cache.waitingForFiles && !cache.entries.empty() &&
                 (cache.dockMonitor || std::any_of(cache.entries.begin(), cache.entries.end(),
-                    [](const auto& entry) { return entry.kind != DropLandingKind::DesktopCell; }));
+                    [](const auto& entry) {
+                        return entry.kind != DropLandingKind::DesktopCell && entry.kind != DropLandingKind::None;
+                    }));
         })) return false;
 
     fileDropLayouts_.clear();

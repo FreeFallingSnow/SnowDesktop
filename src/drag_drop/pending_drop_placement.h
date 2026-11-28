@@ -161,16 +161,17 @@ inline bool ApplyEntries(PendingLandingCache& cache, std::vector<DesktopWidget>&
             const auto key = normalizeKey(item.layoutKey);
             if (key.empty() || claimed.contains(key)) continue;
             const bool existing = cache.existingDesktopKeys.contains(key);
-            if (existing && (!cache.dropSelectionRevision || landing.createdPath.empty() ||
-                landing.kind != DropLandingKind::DesktopCell)) continue;
+            const bool selectExactDesktopOutput = cache.dropSelectionRevision && !landing.createdPath.empty() &&
+                (landing.kind == DropLandingKind::DesktopCell || landing.kind == DropLandingKind::None);
+            if (existing && !selectExactDesktopOutput) continue;
             const bool matches = !landing.createdPath.empty()
                 ? MatchesExactPath(item.parsingName, landing.createdPath)
                 : matchesLegacyName(item, landing.sourceName);
             if (!matches) continue;
             const bool wasSelected = item.selected;
-            if (existing)
+            if (existing || landing.kind == DropLandingKind::None)
             {
-                // An overwrite replaces the contents at the same position.
+                // Keep the position of overwritten and unplanned outputs.
                 selectOutput(item, landing, wasSelected);
                 claimed.insert(key);
                 break;
@@ -185,7 +186,7 @@ inline bool ApplyEntries(PendingLandingCache& cache, std::vector<DesktopWidget>&
             }
             else if (landing.kind == DropLandingKind::DesktopCell)
             {
-                if (!placeDesktop(item, landing)) break;
+                if (!placeDesktop(item, landing) && !selectExactDesktopOutput) break;
             }
             else break;
             selectOutput(item, landing, wasSelected);

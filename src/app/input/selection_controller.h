@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -147,7 +148,20 @@ public:
     }
 
     std::uint64_t Revision() const { return revision_; }
-    void BeginInteraction() { AdvanceRevisionIf(true); }
+    std::uint64_t InteractionRevision() const { return interactionRevision_; }
+    void BeginInteraction()
+    {
+        ++interactionRevision_;
+        dropResultStarted_ = false;
+    }
+
+    std::optional<bool> BeginDropResult(std::uint64_t revision)
+    {
+        if (revision != interactionRevision_) return std::nullopt;
+        const bool firstResult = !dropResultStarted_;
+        dropResultStarted_ = true;
+        return firstResult;
+    }
 
 private:
     template <typename Value>
@@ -178,6 +192,8 @@ private:
     }
 
     std::uint64_t revision_ = 0;
+    std::uint64_t interactionRevision_ = 0;
+    bool dropResultStarted_ = false;
     std::wstring anchorScope_;
     std::wstring anchorKey_;
 };

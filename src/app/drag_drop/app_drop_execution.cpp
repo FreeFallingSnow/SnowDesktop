@@ -711,10 +711,18 @@ void DesktopApp::StorePendingLandingCache(const DragSourceList& sourceList,
     const std::unordered_map<size_t, std::wstring>* createdPathsBySource)
 {
     auto cache = BuildPendingLandingCache(sourceList, preview, existingKeys, createdPathsBySource);
+    if (createdPathsBySource) cache.dropSelectionRevision = sourceList.dropSelectionRevision;
     cache.visualId = ++nextFileDropVisual_;
     CaptureFileDropAppearance(cache, sourceList);
     fileDropLayouts_.clear();
     snowdesktop::pending_drop::Publish(pendingLandingCaches_, std::move(cache));
+}
+
+std::wstring DesktopApp::PendingFolderPopupId() const
+{
+    return folderPreview_
+        ? L"folder-preview:" + snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath)
+        : dockFolderPopupSourceId_;
 }
 
 PendingFolderPlacement DesktopApp::BuildPendingFolderPlacement(
@@ -724,12 +732,13 @@ PendingFolderPlacement DesktopApp::BuildPendingFolderPlacement(
 {
     const bool popup = targetWidget.id == kDockFolderPopupWidgetId;
     const bool capturedPreview = popup && &targetWidget != &dockFolderPopupWidget_;
+    const bool directoryPreview = popup && (capturedPreview || folderPreview_);
     auto placement = snowdesktop::pending_drop::BuildFolder(targetWidget, insertIndex, sourceList,
-        capturedPreview ? std::wstring{} : popup ? dockFolderPopupMappingWidgetId_ : targetWidget.id,
-        capturedPreview ? L"folder-preview:" + snowdesktop::shell_refresh::FolderKey(targetWidget.sourceFolderPath)
-                        : popup ? dockFolderPopupSourceId_ : std::wstring{},
+        directoryPreview ? std::wstring{} : popup ? dockFolderPopupMappingWidgetId_ : targetWidget.id,
+        directoryPreview ? L"folder-preview:" + snowdesktop::shell_refresh::FolderKey(targetWidget.sourceFolderPath)
+                        : popup ? PendingFolderPopupId() : std::wstring{},
         ToUpperInvariant, FileNameFromPath);
-    if (popup && (capturedPreview || folderPreview_))
+    if (directoryPreview)
         placement.previewSortAtDrop = PendingFolderPlacement::PreviewSort{
             targetWidget.folderSortMode, targetWidget.folderSortAscending};
     return placement;

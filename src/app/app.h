@@ -2537,6 +2537,7 @@ private:
     void StorePendingLandingCache(const DragSourceList& sourceList, const DropPreviewList& preview,
         const std::unordered_set<std::wstring>& existingKeys,
         const std::unordered_map<size_t, std::wstring>* createdPathsBySource = nullptr);
+    std::wstring PendingFolderPopupId() const;
     PendingFolderPlacement BuildPendingFolderPlacement(
         const DesktopWidget& targetWidget,
         size_t insertIndex,
@@ -3163,7 +3164,8 @@ private:
     bool AddWidgetToFileGroup(size_t childIndex, size_t groupIndex,
         size_t insertIndex = static_cast<size_t>(-1));
     bool MoveWidgetSourcesToGroup(
-        const std::vector<Item*>& sourceItems, size_t groupIndex, size_t insertIndex);
+        const std::vector<Item*>& sourceItems, size_t groupIndex, size_t insertIndex,
+        std::optional<std::uint64_t> selectionRevision = {});
     DropReceipt DropDesktopWidgetIconsIntoGroup(WidgetContainer* group, const ItemDrop& drop);
     bool ReleaseWidgetFromFileGroup(const std::wstring& childId,
         GridCell preferredCell);
@@ -4312,6 +4314,7 @@ private:
     POINT lastMousePoint_{ LONG_MIN, LONG_MIN };
     SelectionController selectionController_;
     std::wstring pendingPlainSelectionScope_;
+    bool ClearSelectionModel(const DesktopWidget* localWidget = nullptr);
     void ClearItemSelection();
     bool CompleteItemSelectionClick(WPARAM keys, POINT point);
     bool BeginDropResultSelection(std::optional<std::uint64_t> revision);
@@ -4501,13 +4504,14 @@ private:
         size_t insertIndex = 0;
         bool dockFolderPopup = false;
         std::optional<PendingFolderPlacement::PreviewSort> folderPreviewSort;
+        std::optional<std::uint64_t> selectionRevision;
         bool volumeDefault = false;
         std::optional<snowdesktop::widget_runtime::WidgetFileDropTarget> fileDropTarget;
     };
     std::optional<ExternalSlotDestination> CaptureExternalSlotDestination(
         POINT point, DWORD keyState);
     DWORD DropExternalSlotContent(IDataObject* dataObject,
-        const ExternalSlotDestination& destination, DWORD allowedEffects,
+        ExternalSlotDestination destination, DWORD allowedEffects,
         bool asynchronousSource, const std::vector<std::wstring>& knownPaths);
     bool CommitExternalSlotPaths(const ExternalSlotDestination& destination,
         const std::vector<std::wstring>& paths, bool owned, bool copyOnly,
@@ -4589,7 +4593,9 @@ private:
     /** @brief 判断两个窗口是否位于同一窗口树中。 @param parent 父窗口 @param window 子窗口 @return 是则返回 true */
     static bool IsSameWindowTree(HWND parent, HWND window);
     DWORD CommitInternalDragRelease(POINT clientPoint, DWORD keyState, DWORD allowedEffects);
-    DWORD CommitItemHandoff(Item* targetItem, const ItemDrop& drop, DWORD keyState, bool refreshPopup);
+    DesktopWidget* FindFolderDropSelectionTarget(const std::wstring& path);
+    DWORD CommitItemHandoff(Item* targetItem, const ItemDrop& drop, DWORD keyState,
+        bool refreshPopup, bool& selectResults);
     /**
      * @brief 根据键盘状态和允许的效果选择拖放效果。
      * @param keyState 键盘修饰键状态

@@ -45,6 +45,7 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
     bool layout = false;
     bool save = true;
     bool refreshPopup = false;
+    bool selectResults = false;
     if (removeDockPin && (allowed & DROPEFFECT_MOVE))
     {
         layout = RemoveDockDragOutItems(items);
@@ -55,12 +56,10 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
     {
         auto* item = slot ? slot->GetItem() : nullptr;
         if (!item && handoff && target == GetDesktopGrid()) item = HitTestIcon(point);
-        const auto* dockItem = dynamic_cast<DockEntryItem*>(item);
-        const bool landsOnSurface = handoff
-            ? dockItem && IsLogicalDockEntryType(dockItem->GetEntryType())
-            : target->GetSlotSurfaceKind() != snowdesktop::slot_contract::SlotSurfaceKind::LuaLogicalSlot;
-        if (retainDropSelection && landsOnSurface && !settingsSource)
-            sources.dropSelectionRevision = selectionController_.Revision();
+        const bool logical = target->GetSlotSurfaceKind() == snowdesktop::slot_contract::SlotSurfaceKind::LuaLogicalSlot;
+        if (retainDropSelection && !logical && !settingsSource)
+            sources.dropSelectionRevision = selectionController_.InteractionRevision();
+        selectResults = sources.dropSelectionRevision.has_value() && !handoff;
         refreshPopup = IsOpenDockFolderPopupDropTarget(target, item) ||
             (dockFolderPopupOpen_ && sources.origin == dockFolderPopupContainer_.get());
         const ItemDrop drop{items, sources, preview, slot, region, mods, point, allowed};
@@ -74,15 +73,16 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
         }
         else if (handoff)
         {
-            effect = CommitItemHandoff(item, drop, keys, refreshPopup);
+            effect = CommitItemHandoff(item, drop, keys, refreshPopup, selectResults);
             // The asynchronous file callback refreshes the popup when its contents change.
             refreshPopup = false;
         }
         else
         {
-            const bool logical = target->GetSlotSurfaceKind() == snowdesktop::slot_contract::SlotSurfaceKind::LuaLogicalSlot;
             save = !logical;
-            reload = target->NeedsShellReloadAfterDrop();
+            // File completion refreshes the actual outputs. Rebuilding here
+            // would invalidate live slots and icons against the old directory.
+            reload = !preview.fileBacked && target->NeedsShellReloadAfterDrop();
             const bool dockReorder = dynamic_cast<DockContainer*>(target) && dynamic_cast<DockContainer*>(sources.origin) &&
                 std::none_of(items.begin(), items.end(), [](const Item* source) {
                     return dynamic_cast<const DockFrequentItem*>(source) != nullptr;
@@ -98,7 +98,7 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
 
     if (effect && dockInsertion) DockContainer::FinishFreeOrderForDrag(*this, true);
     if (effect && save) RequestLayoutSave();
-    if (!sources.dropSelectionRevision)
+    if (!selectResults)
     {
         const bool selectedDestination = effect && !dropWidgetId.empty() && SelectWidgetInteractionOwner(dropWidgetId);
         if (!selectedDestination && (canDrop || removeDockPin) && (effect || !touch))
@@ -116,7 +116,7 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
         if (!removeDockPin) ApplyPageMapping();
         LayoutItems();
     }
-    if (effect && sources.dropSelectionRevision)
+    if (effect && selectResults)
     {
         if (folderPreview_ && folderPreview_->inlineBounds)
             (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
@@ -126,7 +126,23 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
     return effect;
 }
 
-DWORD DesktopApp::CommitItemHandoff(Item* item, const ItemDrop& drop, DWORD keys, bool refreshPopup)
+DesktopWidget* DesktopApp::FindFolderDropSelectionTarget(const std::wstring& path)
+{
+    if (dockFolderPopupOpen_ && PathsEqualInsensitive(dockFolderPopupWidget_.sourceFolderPath, path))
+        return &dockFolderPopupWidget_;
+    DesktopWidget* result = nullptr;
+    for (auto& widget : widgets_)
+    {
+        if (widget.type != DesktopWidgetType::FolderMapping || widget.gridCell.pageId == kDockPageId ||
+            !PathsEqualInsensitive(widget.sourceFolderPath, path)) continue;
+        if (result) return nullptr;
+        result = &widget;
+    }
+    return result;
+}
+
+DWORD DesktopApp::CommitItemHandoff(Item* item, const ItemDrop& drop, DWORD keys,
+    bool refreshPopup, bool& selectResults)
 {
     if (!item) return DROPEFFECT_NONE;
     const auto& items = drop.items;
@@ -148,6 +164,7 @@ DWORD DesktopApp::CommitItemHandoff(Item* item, const ItemDrop& drop, DWORD keys
         }
         if (IsLogicalDockEntryType(dock->GetEntryType()))
         {
+            selectResults = sources.dropSelectionRevision.has_value();
             const auto receipt = DropItemsIntoDockCollection(drop, dock);
             if (receipt.action)
             {
@@ -177,9 +194,25 @@ DWORD DesktopApp::CommitItemHandoff(Item* item, const ItemDrop& drop, DWORD keys
         refreshFolder(succeeded);
     };
     const DWORD attributes = targetPath->empty() ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(targetPath->c_str());
-    if (!paths.empty() && attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) &&
-        MaterializeFilesToFolder(sources, *targetPath, DropActionFromClipboardEffect(selected), finished))
-        return selected;
+    if (!paths.empty() && attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY))
+    {
+        const auto action = DropActionFromClipboardEffect(selected);
+        if (auto* view = sources.dropSelectionRevision ? FindFolderDropSelectionTarget(*targetPath) : nullptr)
+        {
+            DropPreviewList preview;
+            preview.targetKind = DropTargetKind::FolderMapping;
+            preview.targetWidget = view;
+            preview.fileBacked = true;
+            preview.action = action;
+            preview.insertIndex = view->folderEntries.size();
+            if (ExecuteFileBackedDropPlan(sources, preview))
+            {
+                selectResults = true;
+                return selected;
+            }
+        }
+        else if (MaterializeFilesToFolder(sources, *targetPath, action, finished)) return selected;
+    }
 
     ClientToScreen(hwnd_, &point);
     const POINTL screen{point.x, point.y};

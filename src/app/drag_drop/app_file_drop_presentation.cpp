@@ -260,6 +260,7 @@ const Layout& DesktopApp::FileDropMemberLayout(const DesktopWidget& widget, cons
         return popup;
     }();
     std::unordered_set<std::wstring> removed;
+    const auto popupId = model->id == kDockFolderPopupWidgetId ? PendingFolderPopupId() : std::wstring{};
     for (const auto& [key, state] : fileRemovalVisibility_) removed.insert(key);
     for (const auto& request : pendingLandingCaches_)
     {
@@ -281,7 +282,7 @@ const Layout& DesktopApp::FileDropMemberLayout(const DesktopWidget& widget, cons
                 if (!members.ContainsOwner(group.widgetId)) continue;
             }
             else if (model->type != DesktopWidgetType::FolderMapping || !PathsEqualInsensitive(group.sourceFolderPath, model->sourceFolderPath) ||
-                (model->id == kDockFolderPopupWidgetId ? group.popupSourceId != dockFolderPopupSourceId_ :
+                (model->id == kDockFolderPopupWidgetId ? group.popupSourceId != popupId :
                     group.widgetId != model->id)) continue;
             const auto start = members.VisibleBoundary(group.insertIndex, group.widgetId);
             if (request.files.empty()) layout.gaps.push_back({start, nullptr});

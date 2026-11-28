@@ -1892,7 +1892,8 @@ DropReceipt FileGroup::OnItemsDropped(const ItemDrop& drop)
         return app_->DropDesktopWidgetIconsIntoGroup(this, drop);
     if (drop.sources.UsesFileGroupSourceInsertion())
         return DropReceipt::Submitted(drop.Allows(DropAction::Move) && app_->MoveWidgetSourcesToGroup(drop.items,
-            app_->FindWidgetIndexById(data_->id), drop.preview.groupInsertIndex), DropAction::Move);
+            app_->FindWidgetIndexById(data_->id), drop.preview.groupInsertIndex,
+            drop.sources.dropSelectionRevision), DropAction::Move);
     return WidgetContainer::OnItemsDropped(drop);
 }
 

@@ -55,6 +55,7 @@ inline bool Execute(const DragSourceList& sources, const DropPreviewList& previe
     auto committed = std::make_shared<bool>(false);
     auto operationCompletion = [&placements, services, result, completed, committed, ticket,
         entries = sources.entries, action = preview.action,
+        desktopTarget = preview.targetKind == DropTargetKind::Desktop,
         pinToDock = preview.pinMaterializedItemsToDock, dockInsertIndex = preview.dockInsertIndex,
         completion = std::move(completion)](bool succeeded) mutable {
         if (completed->exchange(true)) return;
@@ -71,7 +72,7 @@ inline bool Execute(const DragSourceList& sources, const DropPreviewList& previe
                 else succeeded = false;
             }
             else
-                pending_drop::Complete(placements, std::move(placement), *result);
+                pending_drop::Complete(placements, std::move(placement), *result, desktopTarget);
             if (action == DropAction::Move)
             {
                 std::vector<std::wstring> movedKeys;

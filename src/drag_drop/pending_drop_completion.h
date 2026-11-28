@@ -83,7 +83,7 @@ inline void Publish(Queue& queue, PendingLandingCache cache)
 // Completion reconciles only files actually produced by this request. A
 // rejected/failed request has no outputs and cannot erase another completion.
 inline void Complete(Queue& queue, PendingLandingCache cache,
-    const ShellFileOperationResult& result)
+    const ShellFileOperationResult& result, bool desktopTarget = false)
 {
     std::unordered_map<std::wstring, const std::wstring*> destinations;
     for (const auto& output : result.outputs)
@@ -99,6 +99,22 @@ inline void Complete(Queue& queue, PendingLandingCache cache,
         entry.createdPath = *output->second;
         return false;
     });
+    if (desktopTarget && cache.dropSelectionRevision)
+    {
+        std::unordered_set<std::wstring> plannedPaths;
+        for (const auto& entry : cache.entries)
+            plannedPaths.insert(ToUpperInvariant(entry.createdPath));
+        for (const auto& output : result.outputs)
+        {
+            if (output.destination.empty() || !plannedPaths.insert(ToUpperInvariant(output.destination)).second)
+                continue;
+            // Enumeration positioned this output without a preview cell.
+            PendingLandingEntry entry;
+            entry.kind = DropLandingKind::None;
+            entry.createdPath = output.destination;
+            cache.entries.push_back(std::move(entry));
+        }
+    }
     for (auto& placement : cache.folderPlacements)
     {
         if (placement.sourcePaths.empty())

@@ -360,7 +360,8 @@ DropReceipt DesktopApp::DropItemsIntoDockCollection(const ItemDrop& drop, DockEn
             sources.SlotPayloadKind() == snowdesktop::slot_contract::DragPayloadKind::CollectionWidget ||
             sources.hasCollectionGroupEntries))
             return DropReceipt::Submitted((allowed & DROPEFFECT_MOVE) &&
-                MoveWidgetSourcesToGroup(sourceItems, index, model.childWidgetIds.size()), DropAction::Move);
+                MoveWidgetSourcesToGroup(sourceItems, index, model.childWidgetIds.size(),
+                    sources.dropSelectionRevision), DropAction::Move);
         for (const auto& container : containers_)
             if (auto* group = dynamic_cast<WidgetContainer*>(container.get()); group && group->GetWidgetData() == &model)
                 return commit(*group);
