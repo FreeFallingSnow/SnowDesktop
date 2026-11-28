@@ -246,21 +246,17 @@ bool DesktopApp::UsesCollectionPopupFan(const DesktopWidget& widget) const
     if ((folderPreview_ && &widget == &dockFolderPopupWidget_) ||
         IsGroupWidgetType(widget.type)) return false;
     namespace layout = snowdesktop::collection_popup_layout;
+    if (!popupAnchoredToDock_ || !layout::SupportsFanOnDock(popupDockPosition_) ||
+        !widget.fanPopup || popupFanShowAll_)
+        return false;
     // The fan always previews the full source. Search/category preferences
     // apply to its Show all view and must not change the chosen presentation.
     const size_t sourceCount = widget.type == DesktopWidgetType::FolderMapping
         ? widget.folderEntries.size() : widget.itemKeys.size();
     // Loading/empty directories retain the chosen presentation. Entry arrivals
     // must not turn a rectangular opening snapshot into a fan at completion.
-    if (layout::ResolveView(popupAnchoredToDock_, widget.fanPopup,
-            widget.listMode, popupFanShowAll_) != layout::View::Fan ||
-        !snowdesktop::dock_folder_popup_read::HasFanContent(
+    if (!snowdesktop::dock_folder_popup_read::HasFanContent(
             widget.type == DesktopWidgetType::FolderMapping, sourceCount))
-        return false;
-    // A vertical side Dock has no native fan counterpart. Use the existing
-    // grid there, and when there is insufficient space for an anchored fan.
-    if (popupAnchoredToDock_ &&
-        (popupDockPosition_ == DockPosition::Left || popupDockPosition_ == DockPosition::Right))
         return false;
     const auto metrics = GetCollectionPopupLayoutMetrics(widget);
     const auto work = GetCollectionPopupFanWorkArea(widget);
@@ -273,9 +269,7 @@ bool DesktopApp::UsesCollectionPopupList(const DesktopWidget& widget) const
     if (folderPreview_ && &widget == &dockFolderPopupWidget_) return widget.listMode;
     if (IsGroupWidgetType(widget.type))
         return ResolveWidgetContentViewData(&widget)->listMode;
-    namespace layout = snowdesktop::collection_popup_layout;
-    return layout::ResolveView(popupAnchoredToDock_, widget.fanPopup,
-        widget.listMode, popupFanShowAll_) == layout::View::List;
+    return widget.listMode && !UsesCollectionPopupFan(widget);
 }
 
 size_t DesktopApp::GetCollectionPopupFanVisibleCount(const RECT& popup) const

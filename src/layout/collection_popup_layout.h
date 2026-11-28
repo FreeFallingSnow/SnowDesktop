@@ -1,6 +1,7 @@
 #pragma once
 
 #include "collection_popup_types.h"
+#include "dock/dock_layout_settings.h"
 #include "layout_spacing_rules.h"
 #include "ui/render/font_cu_rules.h"
 #include "list_detail_rules.h"
@@ -38,16 +39,9 @@ inline float ResolveControlFontSize(float scale)
     return 14.0f * ResolveChromeScale(scale);
 }
 
-enum class View { Grid, List, Fan };
-
-// Retain the preference when moving a widget off the Dock, but never let it
-// change a desktop popup or suppress that widget's list preference. Showing all
-// items temporarily restores that preference without changing the saved fan flag.
-inline View ResolveView(bool anchoredToDock, bool fanPopup, bool listMode,
-    bool showAllItems = false)
+inline constexpr bool SupportsFanOnDock(DockPosition position)
 {
-    if (anchoredToDock && fanPopup && !showAllItems) return View::Fan;
-    return listMode ? View::List : View::Grid;
+    return position == DockPosition::Top || position == DockPosition::Bottom;
 }
 
 

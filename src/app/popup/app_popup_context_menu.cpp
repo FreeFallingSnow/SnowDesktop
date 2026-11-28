@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "common/l10n.h"
+#include "layout/collection_popup_layout.h"
 #include "layout/list_detail_rules.h"
 #include "settings/animation_settings.h"
 #include "ui/menu/menu_fluent_glyphs.h"
@@ -19,7 +20,8 @@ void DesktopApp::AppendDockFolderPopupDisplayMenu(HMENU menu)
     append(kContextWidgetOpenFolder,
         _LW(folderPreview_ ? "app.interact.open_in_explorer" : "app.interact.open_folder"),
         nullptr, L"\uF42E");
-    if (!folderPreview_)
+    if (!folderPreview_ && popupAnchoredToDock_ &&
+        snowdesktop::collection_popup_layout::SupportsFanOnDock(popupDockPosition_))
         append(kContextPopupFan, _LW("app.interact.popup_fan"),
             widget.fanPopup ? _LW("app.interact.on") : _LW("app.interact.off"),
             snowdesktop::menu_fluent_glyphs::kFanExpansion);
@@ -121,7 +123,12 @@ bool DesktopApp::ExecuteDockFolderPopupDisplayCommand(UINT command)
         command == kContextWidgetToggleFileCategories)) return false;
     switch (command)
     {
-    case kContextPopupFan: widget.fanPopup = !widget.fanPopup; break;
+    case kContextPopupFan:
+        if (!popupAnchoredToDock_ ||
+            !snowdesktop::collection_popup_layout::SupportsFanOnDock(popupDockPosition_))
+            return false;
+        widget.fanPopup = !widget.fanPopup;
+        break;
     case kContextWidgetToggleListMode: widget.listMode = !widget.listMode; break;
     case kContextWidgetToggleSearchBox: widget.showSearchBox = !widget.showSearchBox; break;
     case kContextWidgetToggleFileCategories: widget.showFileCategories = !widget.showFileCategories; break;

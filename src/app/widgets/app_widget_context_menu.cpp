@@ -10,6 +10,7 @@
 #include "app/menus/sort_menu.h"
 #include "app/menus/background_menu_order.h"
 #include "platform/demo_collection_rules.h"
+#include "layout/collection_popup_layout.h"
 #include "layout/collection_titleless_rules.h"
 #include "layout/list_detail_rules.h"
 #include "ui/menu/menu_fluent_glyphs.h"
@@ -590,8 +591,16 @@ void DesktopApp::ShowWidgetContextMenu(
         widget.scrollContainerMode
             ? _LW("app.interact.popup_container")
             : _LW("app.interact.large_folder"));
-    const auto appendFanToggle = [&]() {
-        if (widget.gridCell.pageId != kDockPageId && popupWidgetIndex_ != widgetIndex) return;
+    const auto canToggleFan = [&] {
+        using snowdesktop::collection_popup_layout::SupportsFanOnDock;
+        if (dockRenameAnchor && widgets_[widgetIndex].gridCell.pageId == kDockPageId)
+            return SupportsFanOnDock(
+                DockLayoutForMonitor(MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST)).position);
+        return popupWidgetIndex_ == widgetIndex && popupAnchoredToDock_ &&
+            SupportsFanOnDock(popupDockPosition_);
+    };
+    const auto appendFanToggle = [&] {
+        if (!canToggleFan()) return;
         const auto label = statusLabel(_LW("app.interact.popup_fan"),
             widget.fanPopup ? _LW("app.interact.on") : _LW("app.interact.off"));
         AppendMenuW(menu, MF_STRING, kContextPopupFan, label.c_str());
@@ -1395,7 +1404,8 @@ void DesktopApp::ShowWidgetContextMenu(
                 hwnd_, widgets_[effectiveSourceIndex].sourceFolderPath);
         break;
     case kContextPopupFan:
-        (void)applyNativeSettings(snowdesktop::control::Object({{"fanPopup", snowdesktop::control::Boolean(!widgets_[widgetIndex].fanPopup)}}));
+        if (canToggleFan())
+            (void)applyNativeSettings(snowdesktop::control::Object({{"fanPopup", snowdesktop::control::Boolean(!widgets_[widgetIndex].fanPopup)}}));
         break;
     case kContextWidgetListColumnsFirst:
     case kContextWidgetListColumnsFirst + 1:

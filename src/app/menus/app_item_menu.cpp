@@ -9,6 +9,7 @@
 #include "shell/shell_item_visibility.h"
 #include "desktop/desktop_item_reference_migration.h"
 #include "icons/large_icon_assets.h"
+#include "layout/collection_popup_layout.h"
 #include "layout/list_detail_rules.h"
 #include "steam/steam_entitlement.h"
 #include "app/input/widget_search_context_menu.h"
@@ -142,6 +143,10 @@ void DesktopApp::ShowItemContextMenu(
     DockEntry* dockFolderEntry = directDockFolder
         ? &dockEntries_[*dockEntryIndex]
         : nullptr;
+    const auto canToggleDockFolderFan = [&] {
+        return dockFolderEntry && snowdesktop::collection_popup_layout::SupportsFanOnDock(
+            DockLayoutForMonitor(MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST)).position);
+    };
 
     int selectedCount = 0;
     size_t selectedFileCount = 0;
@@ -471,10 +476,13 @@ void DesktopApp::ShowItemContextMenu(
     AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     if (dockFolderEntry)
     {
-        std::wstring fanLabel = _LW("app.interact.popup_fan");
-        fanLabel += L"\t";
-        fanLabel += dockFolderEntry->fanPopup ? _LW("app.interact.on") : _LW("app.interact.off");
-        AppendMenuW(menu, MF_STRING, kContextPopupFan, fanLabel.c_str());
+        if (canToggleDockFolderFan())
+        {
+            std::wstring fanLabel = _LW("app.interact.popup_fan");
+            fanLabel += L"\t";
+            fanLabel += dockFolderEntry->fanPopup ? _LW("app.interact.on") : _LW("app.interact.off");
+            AppendMenuW(menu, MF_STRING, kContextPopupFan, fanLabel.c_str());
+        }
         auto optionLabel = [](const wchar_t* title, bool enabled) {
             return std::wstring(title) + L"\t" + (enabled ? _LW("app.interact.on") : _LW("app.interact.off"));
         };
@@ -1021,7 +1029,7 @@ void DesktopApp::ShowItemContextMenu(
         if (!searchResultMenu && selectedCount == 1 && canFile) FetchWebsiteIcon(itemPath);
         break;
     case kContextPopupFan:
-        if (dockFolderEntry)
+        if (canToggleDockFolderFan())
         {
             dockFolderEntry->fanPopup = !dockFolderEntry->fanPopup;
             applyDockFolderDisplayChange();

@@ -34,7 +34,7 @@ constexpr BooleanField kBooleans[]{
     {"detailShowSize", &NativeWidgetConfiguration::detailShowSize, "Shows file size in the single-column detailed list. Enabling it uses one list column and may normalize saved metadata dividers."},
     {"dateHeaders", &NativeWidgetConfiguration::dateHeaders, "Groups visible entries under date headings in supported file views. Filtering by search can change how those headings appear."},
     {"showFileCategories", &NativeWidgetConfiguration::showFileCategories, "Shows the file category controls in a supported file view. In a group, the effective content settings apply to its active source."},
-    {"fanPopup", &NativeWidgetConfiguration::fanPopup, "Shows the contents as a fan when opening an eligible Dock collection or folder mapping. The owner must be on the Dock."},
+    {"fanPopup", &NativeWidgetConfiguration::fanPopup, "Prefers a fan for eligible collections and folder mappings on the top or bottom Dock when there is room. The left and right Dock use the saved grid or list view and retain this preference for horizontal Docks."},
     {"sortAscending", &NativeWidgetConfiguration::sortAscending, "Sorts the effective content owner in ascending order for the selected sortColumn. Folder mappings use their own folder sort state."},
     {"autoCollect", &NativeWidgetConfiguration::autoCollect, "Automatically collects eligible desktop items into the effective File Categories source. Category ownership is enforced across competing components, and applying this can change collection membership immediately."}};
 struct PositionField
