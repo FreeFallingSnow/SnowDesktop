@@ -1100,7 +1100,7 @@ private:
     std::vector<DockWindowPreviewItem> CollectDockWindowPreviewItems(
         const DockAppIdentity& identity,
         bool includeCloaked = false,
-        bool preferTaskbarDocumentProxies = true, HWND onlyWindow = nullptr);
+        bool preferTaskbarDocumentProxies = true);
     void CloseDockWindowFromPreview(HWND window);
     void CloseDockApplicationWindows(
         const DockAppIdentity& identity);
@@ -3949,8 +3949,8 @@ private:
     DockPreviewHoverController dockWindowPreviewHover_;
     std::wstring dockWindowPreviewKey_;
     DockAppIdentity dockWindowPreviewIdentity_;
-    HWND dockWindowPreviewWindow_ = nullptr;
     RECT dockWindowPreviewAnchorScreen_{};
+    RECT dockWindowPreviewActionAnchorScreen_{};
     DWORD systemTaskbarBackdropRefreshTick_ = 0;
     DWORD windowObservationTick_ = 0;
     DWORD systemTaskbarBackdropForegroundTick_ = 0;

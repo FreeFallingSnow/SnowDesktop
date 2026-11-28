@@ -1762,7 +1762,7 @@ void DesktopApp::QueueDockDocumentSelection(HWND proxy, HWND frame)
 
 void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
 {
-    ActivateOrToggleDockTaskWindow(window, dockWindowPreviewAnchorScreen_);
+    ActivateOrToggleDockTaskWindow(window, dockWindowPreviewActionAnchorScreen_);
 }
 
 void DesktopApp::ActivateOrToggleDockTaskWindow(HWND window, RECT anchorScreen)

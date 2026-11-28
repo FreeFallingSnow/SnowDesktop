@@ -208,7 +208,11 @@ std::vector<RECT> ResolveVariableTrack(std::span<const RECT> input, const Variab
         const float endShift = boundary(i + 1);
         const LONG start = static_cast<LONG>(cells[i].start) + std::lround(startShift);
         const LONG end = static_cast<LONG>(cells[i].end) + std::lround(endShift);
-        const LONG cross = std::lround(std::max(0.f, endShift - startShift));
+        const float extent = std::max(static_cast<float>(options.iconSize), cells[i].visibleEnd - cells[i].visibleStart);
+        const float growth = std::max(0.f, endShift - startShift);
+        // Grow both axes by the same fraction of their resting size. Adding
+        // the same pixel count to both axes would distort a wide capsule.
+        const LONG cross = std::lround(growth * options.iconSize / extent);
         startShift = endShift;
         if (vertical) { rect.top = start; rect.bottom = end; }
         else { rect.left = start; rect.right = end; }

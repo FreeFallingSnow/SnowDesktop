@@ -192,6 +192,7 @@ public:
     WindowTitleGroup RunningTitleGroup(size_t index) const;
     RECT DrawWindowTitleGroup(ID2D1DeviceContext* context, RECT base, RECT visual, WindowTitleGroup group) const;
     RECT WindowTitleIconRect(RECT base, RECT visual, WindowTitleGroup group) const;
+    RECT WindowTitlePreviewAnchor(RECT base, WindowTitleGroup group) const;
     HWND WindowTitleAtPoint(POINT point, RECT* titleRect = nullptr) const;
     // Stable layout relationship, including while the bar is fullscreen-hidden.
     bool IsMergedWithStatusBar() const;

@@ -112,7 +112,7 @@ std::vector<DockWindowPreviewItem>
 DesktopApp::CollectDockWindowPreviewItems(
     const DockAppIdentity& identity,
     bool includeCloaked,
-    bool preferTaskbarDocumentProxies, HWND onlyWindow)
+    bool preferTaskbarDocumentProxies)
 {
     snowdesktop::performance::Scope trace("dock.preview", "windows.collect");
     PruneDockPendingCloseWindows();
@@ -126,7 +126,6 @@ DesktopApp::CollectDockWindowPreviewItems(
             pendingCloseWindows = nullptr;
         bool includeCloaked = false;
         bool preferTaskbarDocumentProxies = false;
-        HWND onlyWindow = nullptr;
         std::optional<DockProcessParentMap> processParents = std::nullopt;
     };
 
@@ -135,14 +134,13 @@ DesktopApp::CollectDockWindowPreviewItems(
     PreviewEnumerationContext context{
         this, &identity, &regularItems, &proxyCohorts,
         &dockPendingCloseWindows_, includeCloaked,
-        preferTaskbarDocumentProxies, onlyWindow
+        preferTaskbarDocumentProxies
     };
     EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
         auto* context = reinterpret_cast<
             PreviewEnumerationContext*>(parameter);
         if (!context || !context->identity ||
             !context->regularItems || !context->proxyCohorts ||
-            (context->onlyWindow && window != context->onlyWindow) ||
             (context->pendingCloseWindows &&
              context->pendingCloseWindows->contains(window)))
             return TRUE;
@@ -185,7 +183,7 @@ DesktopApp::CollectDockWindowPreviewItems(
                 QueryDockWindowExecutablePath(window);
             title = PathFindFileNameW(executablePath.c_str());
         }
-        if (taskbarDocumentProxyCandidate && !context->onlyWindow)
+        if (taskbarDocumentProxyCandidate)
             context->proxyCohorts->Add(window, processId, std::move(title));
         else
             context->regularItems->push_back({window, std::move(title)});
@@ -232,8 +230,6 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
     DockContainer* dock = GetDockContainerAtPoint(clientPoint);
     if (!dock || !dock->ContainsInteractivePoint(clientPoint))
         return false;
-    RECT titleBounds{};
-    target.window = dock->WindowTitleAtPoint(clientPoint, &titleBounds);
     target.floatingLayer =
         IsDockContainerEffectivelyFloating(dock);
 
@@ -294,24 +290,30 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
 
     if (!found)
         return false;
-    if (target.window)
-        anchor = titleBounds;
+    if (titleGroup.Visible())
+    {
+        const RECT icon = dock->WindowTitleIconRect(anchor, anchor, titleGroup);
+        anchor = dock->WindowTitlePreviewAnchor(anchor, titleGroup);
+        if (!IntersectRect(&target.actionAnchorScreen, &icon, &anchor))
+            target.actionAnchorScreen = anchor;
+        if (titleGroup.interactive) target.trackedWindows = titleGroup.windows;
+    }
     else
     {
         // Keep app previews anchored to the slot in single-icon mode.
-        const RECT visual = dock->MonitorLayout().hoverEffect == 1 ? anchor : dock->GetElementVisualRect(anchor, clientPoint);
-        anchor = dock->WindowTitleIconRect(anchor, visual, titleGroup);
+        if (dock->MonitorLayout().hoverEffect != 1) anchor = dock->GetElementVisualRect(anchor, clientPoint);
+        target.actionAnchorScreen = anchor;
     }
     target.identityKey = DockWindowPreviewIdentityKey(target.identity);
-    if (target.identityKey.empty())
+    if (target.identityKey.empty() || IsRectEmpty(&anchor))
         return false;
 
     target.anchorScreen = anchor;
     MapWindowPoints(hwnd_, nullptr,
         reinterpret_cast<POINT*>(&target.anchorScreen), 2);
+    MapWindowPoints(hwnd_, nullptr,
+        reinterpret_cast<POINT*>(&target.actionAnchorScreen), 2);
     target.targetToken = DockWindowPreviewTargetToken(target.identityKey);
-    if (target.window)
-        target.targetToken += L":title:" + std::to_wstring(reinterpret_cast<ULONG_PTR>(target.window));
     return !target.targetToken.empty();
 }
 
@@ -344,6 +346,7 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
     if (transition.keepPreviewVisible)
     {
         dockWindowPreview_->KeepVisible();
+        dockWindowPreviewActionAnchorScreen_ = target.actionAnchorScreen;
         const bool anchorChanged =
             EqualRect(&dockWindowPreviewAnchorScreen_,
                 &target.anchorScreen) == FALSE;
@@ -366,13 +369,9 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
             // Warm up the first preview's toolbars during the hover delay.
             // An open preview still needs its own toolbar targets.
             std::vector<DockWindowPreviewItem> toolbarTargets;
-            if (target.window) toolbarTargets.push_back({target.window, {}});
-            else
-            {
-                toolbarTargets.reserve(target.trackedWindows.size());
-                for (const HWND window : target.trackedWindows)
-                    toolbarTargets.push_back({window, {}});
-            }
+            toolbarTargets.reserve(target.trackedWindows.size());
+            for (const HWND window : target.trackedWindows)
+                toolbarTargets.push_back({window, {}});
             dockWindowPreview_->PrepareToolbars(toolbarTargets);
         }
         const UINT delay = previewVisible
@@ -437,7 +436,7 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
         return;
     }
 
-    const auto previewItems = CollectDockWindowPreviewItems(target.identity, false, true, target.window);
+    const auto previewItems = CollectDockWindowPreviewItems(target.identity);
     if (!previewItems.empty())
         ShowDockWindowPreview(std::move(target), cursorClient, previewItems);
 }
@@ -447,7 +446,7 @@ bool DesktopApp::TryOpenDockWindowPicker(POINT clientPoint, bool byTouch)
     DockWindowPreviewTarget target;
     if (!dockWindowPreview_ || !ResolveDockWindowPreviewTarget(clientPoint, target))
         return false;
-    const auto previewItems = CollectDockWindowPreviewItems(target.identity, false, true, target.window);
+    const auto previewItems = CollectDockWindowPreviewItems(target.identity);
     if (previewItems.size() < (byTouch ? 1u : 2u))
         return false;
 
@@ -486,8 +485,8 @@ void DesktopApp::ShowDockWindowPreview(
     }
     dockWindowPreviewKey_ = target.targetToken;
     dockWindowPreviewIdentity_ = target.identity;
-    dockWindowPreviewWindow_ = target.window;
     dockWindowPreviewAnchorScreen_ = target.anchorScreen;
+    dockWindowPreviewActionAnchorScreen_ = target.actionAnchorScreen;
     dockWindowPreview_->Show(
         previewItems, target.anchorScreen, DockLayoutForMonitor(MonitorFromRect(&target.anchorScreen, MONITOR_DEFAULTTONEAREST)).position,
         IsLightContentTheme(),
@@ -502,7 +501,7 @@ void DesktopApp::RefreshDockWindowPreviewItems()
 {
     if (!dockWindowPreview_ || !dockWindowPreview_->IsVisible() ||
         dockWindowPreviewIdentity_.kind == DockAppIdentityKind::None) return;
-    dockWindowPreview_->UpdateItems(CollectDockWindowPreviewItems(dockWindowPreviewIdentity_, false, true, dockWindowPreviewWindow_));
+    dockWindowPreview_->UpdateItems(CollectDockWindowPreviewItems(dockWindowPreviewIdentity_));
 }
 
 void DesktopApp::HideDockWindowPreview()
@@ -523,8 +522,8 @@ void DesktopApp::HideDockWindowPreview()
     dockWindowPreviewHover_.Reset();
     dockWindowPreviewKey_.clear();
     dockWindowPreviewIdentity_ = {};
-    dockWindowPreviewWindow_ = nullptr;
     dockWindowPreviewAnchorScreen_ = {};
+    dockWindowPreviewActionAnchorScreen_ = {};
 }
 
 void DesktopApp::DismissDockWindowPreviewUntilLeave()
@@ -536,8 +535,8 @@ void DesktopApp::DismissDockWindowPreviewUntilLeave()
         dockWindowPreview_->Dismiss();
     dockWindowPreviewKey_.clear();
     dockWindowPreviewIdentity_ = {};
-    dockWindowPreviewWindow_ = nullptr;
     dockWindowPreviewAnchorScreen_ = {};
+    dockWindowPreviewActionAnchorScreen_ = {};
 }
 
 std::wstring DockItemWindowKey(const DesktopItem& item)

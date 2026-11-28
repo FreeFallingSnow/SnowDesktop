@@ -737,6 +737,21 @@ RECT DockContainer::WindowTitleIconRect(RECT base, RECT visual, WindowTitleGroup
     return LayoutWindowTitleGroup(base, visual, group).icon;
 }
 
+RECT DockContainer::WindowTitlePreviewAnchor(RECT base, WindowTitleGroup group) const
+{
+    // Hovering a different title can move the painted capsule by a few pixels.
+    // Anchor the shared preview to its resting center, or to the visible part
+    // of that resting capsule in the scroll lane.
+    const RECT plate = LayoutWindowTitleGroup(base, base, group).plate;
+    const float units = RunningSlotUnits();
+    const RECT bounds = BoundsForRunningUnits(units);
+    if (GetMaxScrollOffset(bounds, units) <= 0) return plate;
+    const RECT viewport = GetScrollViewport(bounds, units);
+    RECT visible{};
+    IntersectRect(&visible, &plate, &viewport);
+    return visible;
+}
+
 std::vector<RECT> DockContainer::WindowTitleSegments(
     const WindowTitleGeometry& geometry, WindowTitleGroup group) const
 {
