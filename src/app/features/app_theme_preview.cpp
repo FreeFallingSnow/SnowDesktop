@@ -189,6 +189,15 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
                 const RECT adjacent = slots[1]->GetBounds();
                 const RECT end = slots.back()->GetBounds();
                 const RECT start = dock.GetWindowsButtonRect();
+                std::vector<std::pair<std::string, RECT>> subjects{{"start", start}};
+                for (size_t index = 0; index < slots.size(); ++index)
+                {
+                    const RECT cell = slots[index]->GetBounds();
+                    if (IsRectEmpty(&cell)) continue;
+                    const auto name = index == 0 ? "wide" : index == 1 ? "adjacent" :
+                        index + 1 == slots.size() ? "end" : "slot-" + std::to_string(index);
+                    subjects.emplace_back(name, cell);
+                }
                 const auto leading = [vertical](RECT rect) { return vertical ? rect.top : rect.left; };
                 const auto trailing = [vertical](RECT rect) { return vertical ? rect.bottom : rect.right; };
                 const auto center = [&](RECT rect) { return leading(rect) + (trailing(rect) - leading(rect)) / 2; };
@@ -198,7 +207,7 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
                 const std::pair<int, LONG> route[]{
                     {0, center(start)}, {12, center(start)}, {52, center(resting)}, {64, center(resting)},
                     {102, center(adjacent)}, {114, center(adjacent)}, {159, center(end)}, {171, center(end)},
-                    {210, center(adjacent)}, {222, center(adjacent)},
+                    {248, center(start)}, {260, center(start)},
                 };
                 ComPtr<ID2D1SolidColorBrush> cursor;
                 require(context->CreateSolidColorBrush(D2D1::ColorF(0xff6684), &cursor));
@@ -241,8 +250,7 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
                     dock.DrawContents(context.Get());
                     const auto milliseconds = std::chrono::duration<double, std::milli>(
                         std::chrono::steady_clock::now() - started).count();
-                    for (const auto& [name, cell] : {std::pair{"start", start}, std::pair{"wide", resting},
-                        std::pair{"adjacent", adjacent}, std::pair{"end", end}})
+                    for (const auto& [name, cell] : subjects)
                     {
                         const RECT painted = dock.GetElementVisualRect(cell, lastMousePoint_);
                         trace << index << '\t' << milliseconds << '\t' << axis << '\t' << name << '\t' <<

@@ -152,8 +152,6 @@ struct VariableTrackOptions
     float safeStart = 0.f, safeEnd = 0.f;
     bool single = false;
     bool scrolls = false;
-    bool clampPointer = false;
-    bool shiftAtBounds = false;
 };
 
 // Returns painted cells in input order. Width and placement stay fractional

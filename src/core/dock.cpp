@@ -44,6 +44,12 @@ float ThumbnailSlotUnits(float iconFraction)
         (snowdesktop::dock_window_thumbnail::kHorizontalCardAspectRatio - 1.0f);
 }
 
+int FitMergedTitlePlateInset(int wanted, int cellHeight, int iconSize, int spacing)
+{
+    const int outerGap = std::max(1, spacing / 4);
+    return std::clamp((cellHeight - iconSize) / 2 - outerGap, 0, wanted);
+}
+
 float RunningItemSlotUnits(const DockRunningAppInfo& running, float iconFraction)
 {
     const float units = running.minimizedThumbnail ? ThumbnailSlotUnits(iconFraction) : 1.0f;
@@ -670,7 +676,10 @@ DockContainer::WindowTitleLayout* DockContainer::MeasureWindowTitle(HWND window,
 
 int DockContainer::WindowTitlePadding() const
 {
-    return std::clamp(ScaledSpacing() / 2, 3, 6);
+    const int spacing = ScaledSpacing();
+    const int inset = std::clamp(spacing / 2, 3, 6);
+    return IsMergedWithStatusBar()
+        ? FitMergedTitlePlateInset(inset, area_.bottom - area_.top, ItemIconSize(), spacing) : inset;
 }
 
 float DockContainer::WindowTitleWidthLimit() const
@@ -703,7 +712,9 @@ DockContainer::WindowTitleGeometry DockContainer::LayoutWindowTitleGroup(
     const float zoom = static_cast<float>(magnifiedIcon) / ItemIconSize();
     const int size = std::max(1, static_cast<int>(std::lround(magnifiedIcon * group.itemPresence)));
     const int spacing = static_cast<int>(std::lround((ItemPitch() - ItemIconSize()) * group.itemPresence));
-    const int padding = static_cast<int>(std::lround(WindowTitlePadding() * zoom * group.amount * group.itemPresence));
+    int padding = static_cast<int>(std::lround(WindowTitlePadding() * zoom * group.amount * group.itemPresence));
+    if (IsMergedWithStatusBar())
+        padding = FitMergedTitlePlateInset(padding, visual.bottom - visual.top, size, ScaledSpacing());
     // The slot supplies the same external gap as every icon-only item.
     // The capsule then owns the icon's internal inset on all three exposed edges.
     if (IsVertical())
@@ -1882,42 +1893,22 @@ RECT DockContainer::MagnifyElementRect(const RECT& baseRect, const RECT& focusRe
             options.safeStart = static_cast<float>(leading(area_) + spacing / 2);
             options.safeEnd = static_cast<float>(trailing(area_) - (spacing + 1) / 2);
             options.single = single;
-            if (layout.edgeAnchored)
+            if (layout.edgeAnchored && !hasOverflow)
             {
-                // The hit owner can switch at any pixel during a sweep. Fade
-                // across stable resting boundaries, irrespective of that owner.
-                const auto mixAcross = [&](float boundary) {
-                    return magnification::SmoothStep(.5f + (axis - boundary) / options.pitch);
-                };
-                float startMix = 1.f;
-                float endMix = 0.f;
-                if (hasOverflow && !IsRectEmpty(&layout.windowsButton))
-                    startMix = mixAcross(std::lerp(static_cast<float>(trailing(layout.windowsButton)),
-                        static_cast<float>(leading(layout.viewport)), .5f));
                 const auto firstBand = layout.ForZone(MagnificationZone::Leading);
                 const auto lastBand = layout.ForZone(MagnificationZone::Trailing);
                 if (!firstBand.empty() && !lastBand.empty())
                 {
                     const float boundary = std::lerp(
-                        static_cast<float>(hasOverflow ? trailing(layout.viewport) :
-                            trailing(*std::ranges::max_element(firstBand, {}, trailing))),
+                        static_cast<float>(trailing(*std::ranges::max_element(firstBand, {}, trailing))),
                         static_cast<float>(leading(*std::ranges::min_element(lastBand, {}, leading))), .5f);
-                    endMix = mixAcross(boundary);
-                    if (!hasOverflow)
-                    {
-                        if (trailingBand)
-                            options.safeStart = std::max(options.safeStart, boundary + spacing * .5f);
-                        else
-                            options.safeEnd = std::min(options.safeEnd, boundary - spacing * .5f);
-                    }
+                    if (trailingBand)
+                        options.safeStart = std::max(options.safeStart, boundary + spacing * .5f);
+                    else
+                        options.safeEnd = std::min(options.safeEnd, boundary - spacing * .5f);
                 }
-                else if (trailingBand) endMix = 1.f;
-                const float coverage = start ? 1.f - startMix : startMix * (trailingBand ? endMix : 1.f - endMix);
-                options.scale = std::lerp(1.f, scale, coverage);
-                options.scrolls = inScrollLane;
-                options.clampPointer = hasOverflow && trailingBand;
-                options.shiftAtBounds = true;
             }
+            options.scrolls = inScrollLane;
             track.painted = magnification::ResolveVariableTrack(track.cells, options);
         }
         for (size_t i = 0; i < track.cells.size(); ++i)

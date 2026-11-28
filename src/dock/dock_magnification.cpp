@@ -136,52 +136,9 @@ namespace
 {
 struct TrackCell
 {
-    float start, end, center, logical, extent;
+    float start, end, visibleStart, visibleEnd;
     size_t index;
 };
-
-struct TrackBracket
-{
-    size_t first, second;
-    float progress;
-};
-
-TrackBracket TrackInterval(std::span<const TrackCell> cells, float coordinate)
-{
-    const auto next = std::upper_bound(cells.begin(), cells.end(), coordinate,
-        [](float value, const TrackCell& cell) { return value < cell.logical; });
-    if (next == cells.begin()) return {0, 0, 0.f};
-    const size_t first = static_cast<size_t>(next - cells.begin() - 1);
-    if (next == cells.end()) return {first, first, 0.f};
-    return {first, first + 1, (coordinate - cells[first].logical) /
-        (cells[first + 1].logical - cells[first].logical)};
-}
-
-float ProjectTrackPointer(std::span<const TrackCell> cells, std::span<const float> centers,
-    float pointer, bool clampPointer)
-{
-    const auto slope = [&](size_t i) {
-        return (cells[i + 1].logical - cells[i].logical) / (centers[i + 1] - centers[i]);
-    };
-    const auto tangent = [&](size_t i) {
-        if (centers.size() == 1) return 1.f;
-        if (i == 0) return slope(0);
-        if (i + 1 == centers.size()) return slope(i - 1);
-        const float a = slope(i - 1), b = slope(i);
-        return 2.f * a * b / (a + b);
-    };
-    if (pointer <= centers.front())
-        return cells.front().logical + (clampPointer ? 0.f : (pointer - centers.front()) * tangent(0));
-    if (pointer >= centers.back())
-        return cells.back().logical + (clampPointer ? 0.f : (pointer - centers.back()) * tangent(centers.size() - 1));
-
-    const size_t i = static_cast<size_t>(std::upper_bound(centers.begin(), centers.end(), pointer) - centers.begin() - 1);
-    const float width = centers[i + 1] - centers[i];
-    const float t = (pointer - centers[i]) / width;
-    const float blend = SmoothStep(t);
-    return std::lerp(cells[i].logical, cells[i + 1].logical, blend) +
-        width * t * (1.f - t) * ((1.f - t) * tangent(i) - t * tangent(i + 1));
-}
 }
 
 std::vector<RECT> ResolveVariableTrack(std::span<const RECT> input, const VariableTrackOptions& options)
@@ -189,7 +146,7 @@ std::vector<RECT> ResolveVariableTrack(std::span<const RECT> input, const Variab
     std::vector<RECT> output(input.begin(), input.end());
     if (input.empty() || options.scale <= 1.f || options.iconSize <= 0 || options.pitch <= 0) return output;
     const bool vertical = options.position == DockPosition::Left || options.position == DockPosition::Right;
-    const float spacing = static_cast<float>(options.pitch - options.iconSize);
+    const int spacing = std::max(0, options.pitch - options.iconSize);
     std::vector<TrackCell> cells;
     cells.reserve(input.size());
     for (size_t i = 0; i < input.size(); ++i)
@@ -197,80 +154,62 @@ std::vector<RECT> ResolveVariableTrack(std::span<const RECT> input, const Variab
         if (IsRectEmpty(&input[i])) continue;
         const float start = static_cast<float>(vertical ? input[i].top : input[i].left);
         const float end = static_cast<float>(vertical ? input[i].bottom : input[i].right);
-        const float center = (start + end) * .5f;
-        cells.push_back({start, end, center, center,
-            std::max(static_cast<float>(options.iconSize), end - start - spacing), i});
+        const float insetScale = std::clamp((end - start - 1.f) / std::max(1, spacing), 0.f, 1.f);
+        cells.push_back({start, end, start + (spacing / 2) * insetScale,
+            end - ((spacing + 1) / 2) * insetScale, i});
     }
     if (cells.empty()) return output;
-    std::ranges::stable_sort(cells, {}, &TrackCell::center);
-    float compression = 0.f;
-    for (auto& cell : cells)
-    {
-        const float extra = std::max(0.f, cell.end - cell.start - options.pitch);
-        cell.logical -= compression + extra * .5f;
-        if (&cell != &cells.front()) cell.logical = std::max((&cell - 1)->logical + .25f, cell.logical);
-        compression += extra;
-    }
-    const auto projected = std::span(cells);
-    std::vector<float> centers;
-    centers.reserve(cells.size());
-    for (const auto& cell : cells) centers.push_back(cell.center);
-    const float coordinate = ProjectTrackPointer(projected, centers, options.pointer, options.clampPointer);
-    const auto interval = TrackInterval(projected, coordinate);
-    const float blend = SmoothStep(interval.progress);
-    std::vector<float> gains(cells.size()), prefix(cells.size() + 1);
-    for (size_t i = 0; i < cells.size(); ++i)
-    {
-        if (options.single)
-        {
-            const float amount = interval.first == interval.second ? (i == interval.first ? 1.f : 0.f) :
-                (i == interval.first ? 1.f - blend : i == interval.second ? blend : 0.f);
-            gains[i] = (options.scale - 1.f) * amount;
-        }
-        else
-            gains[i] = ScaleForAxisDistance(cells[i].logical - coordinate, options.pitch, options.scale) - 1.f;
-        prefix[i + 1] = prefix[i] + gains[i] * cells[i].extent;
-    }
+    std::ranges::stable_sort(cells, {}, &TrackCell::start);
+    const float peak = options.iconSize * (options.scale - 1.f);
+    // A shared growth budget limits how far a long item can displace the
+    // other items. With edgeGrowth >= 4 * centerBonus, f * growth(f) is
+    // nondecreasing and (1-f) * growth(f) is nonincreasing.
+    const float edgeGrowth = .82f * peak;
+    const float centerBonus = peak - edgeGrowth;
+    const float tail = options.single ? 0.f : .32f * peak;
+    const float radius = 2.f * options.pitch;
+    const auto pastCell = [&](float distanceToEnd, float length) {
+        if (distanceToEnd >= length)
+            return edgeGrowth + tail * SmoothStep((distanceToEnd - length) / radius);
+        const float fraction = distanceToEnd / length;
+        return fraction * (edgeGrowth + centerBonus * 4.f * fraction * (1.f - fraction));
+    };
+    const auto outsideTrack = [&](float distance) {
+        return edgeGrowth * SmoothStep(distance / options.pitch) +
+            tail * SmoothStep((distance - options.pitch) / radius);
+    };
+    const float minimum = options.scrolls ? -peak - tail : std::min(0.f, options.safeStart - cells.front().start);
+    const float maximum = options.scrolls ? peak + tail : std::max(0.f, options.safeEnd - cells.back().end);
+    const auto boundary = [&](size_t i) {
+        const auto* previous = i > 0 ? &cells[i - 1] : nullptr;
+        const auto* next = i < cells.size() ? &cells[i] : nullptr;
+        const float afterPrevious = previous ? options.pointer - previous->visibleEnd : 0.f;
+        const float beforeNext = next ? next->visibleStart - options.pointer : 0.f;
+        float shift = 0.f;
+        if (afterPrevious < 0.f)
+            shift = pastCell(-afterPrevious, previous->visibleEnd - previous->visibleStart);
+        else if (beforeNext < 0.f)
+            shift = -pastCell(-beforeNext, next->visibleEnd - next->visibleStart);
+        else if (!previous)
+            shift = outsideTrack(beforeNext);
+        else if (!next)
+            shift = -outsideTrack(afterPrevious);
+        return std::clamp(shift, minimum, maximum);
+    };
 
-    // Keep the pointer at the same fraction of the cell's axis. Through a
-    // gap, the growth before the cursor is the same at both edges.
-    const auto next = std::upper_bound(cells.begin(), cells.end(), options.pointer,
-        [](float value, const TrackCell& cell) { return value < cell.start; });
-    const auto anchorIndex = next == cells.begin() ? 0 : static_cast<size_t>(next - cells.begin() - 1);
-    const auto& cell = cells[anchorIndex];
-    const float visibleStart = cell.start + std::floor(spacing * .5f);
-    const float visibleLength = std::max(1.f, cell.end - cell.start - spacing);
-    const float fraction = std::clamp((options.pointer - visibleStart) / visibleLength, 0.f, 1.f);
-    const float leadingGrowth = std::lerp(prefix[anchorIndex], prefix[anchorIndex + 1], fraction);
-    const float trailingGrowth = prefix.back() - leadingGrowth;
-    float factor = 1.f;
-    float shift = leadingGrowth;
-    if (!options.scrolls)
-    {
-        const float leadingRoom = std::max(0.f, cells.front().start - options.safeStart);
-        const float trailingRoom = std::max(0.f, options.safeEnd - cells.back().end);
-        if (options.shiftAtBounds && prefix.back() > 0.f)
-        {
-            // A pinned edge can have zero outward room for the entire band.
-            // Use its inward room before reducing the growth of every item.
-            factor = std::min(1.f, (leadingRoom + trailingRoom) / prefix.back());
-            const float minimumShift = std::clamp(prefix.back() * factor - trailingRoom, 0.f, leadingRoom);
-            shift = std::clamp(leadingGrowth * factor,
-                minimumShift, leadingRoom);
-        }
-        else
-        {
-            if (leadingGrowth > 0.f) factor = std::min(factor, leadingRoom / leadingGrowth);
-            if (trailingGrowth > 0.f) factor = std::min(factor, trailingRoom / trailingGrowth);
-            shift *= factor;
-        }
-    }
+    // Each boundary is nonincreasing as the pointer moves towards the end.
+    // Adjacent cells share it, so the gap moves with them and cannot recoil
+    // from a change in which item owns the hover. A constant edge clamp
+    // preserves this ordering while allowing a pinned edge to grow inward.
+    float startShift = boundary(0);
     for (size_t i = 0; i < cells.size(); ++i)
     {
         auto& rect = output[cells[i].index];
-        const LONG start = std::lround(cells[i].start + prefix[i] * factor - shift);
-        const LONG end = std::lround(cells[i].end + prefix[i + 1] * factor - shift);
-        const LONG cross = std::lround(options.iconSize * gains[i] * factor);
+        const float endShift = boundary(i + 1);
+        const LONG start = static_cast<LONG>(cells[i].start) + std::lround(startShift);
+        const LONG end = static_cast<LONG>(cells[i].end) + std::lround(endShift);
+        const LONG cross = std::lround(std::max(0.f, endShift - startShift));
+        startShift = endShift;
         if (vertical) { rect.top = start; rect.bottom = end; }
         else { rect.left = start; rect.right = end; }
         if (options.single)
