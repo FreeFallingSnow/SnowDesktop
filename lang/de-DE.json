@@ -3017,5 +3017,9 @@
   "settings.bar.monitorOverrides.otherPrompt": "Diese Option für die übrigen Bildschirme separat einstellen?",
   "settings.bar.monitorOverrides.applyLast": "Auf letzten Bildschirm anwenden",
   "settings.bar.monitorOverrides.applyOther": "Auf übrige Bildschirme anwenden",
-  "settings.bar.monitorOverrides.otherCount": "Diese Änderung gilt für {0} Bildschirme."
+  "settings.bar.monitorOverrides.otherCount": "Diese Änderung gilt für {0} Bildschirme.",
+  "settings.bar.monitorOverrides.followToggle": "Übernehmen",
+  "settings.bar.monitorOverrides.applyShared": "Gemeinsame Einstellung ändern",
+  "settings.general.advancedFeatures.monitorProfiles": "Bildschirmprofile für Dock und Statusleiste",
+  "settings.general.advancedFeatures.monitorProfilesDescription": "Passe Position, Layout und Verhalten des Docks und der Statusleiste für den letzten und die übrigen Bildschirme getrennt an."
 }

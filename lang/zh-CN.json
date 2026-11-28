@@ -3017,5 +3017,9 @@
   "settings.bar.monitorOverrides.otherPrompt": "为其余屏单独设置此选项？",
   "settings.bar.monitorOverrides.applyLast": "仅应用到末屏",
   "settings.bar.monitorOverrides.applyOther": "应用到其余屏",
-  "settings.bar.monitorOverrides.otherCount": "此更改会应用到 {0} 台显示器。"
+  "settings.bar.monitorOverrides.otherCount": "此更改会应用到 {0} 台显示器。",
+  "settings.bar.monitorOverrides.followToggle": "跟随",
+  "settings.bar.monitorOverrides.applyShared": "更改共用设置",
+  "settings.general.advancedFeatures.monitorProfiles": "Dock 与状态栏分屏配置",
+  "settings.general.advancedFeatures.monitorProfilesDescription": "为末屏和其余屏分别设置 Dock 与状态栏的位置、布局和显示行为。"
 }

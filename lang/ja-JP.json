@@ -3017,5 +3017,9 @@
   "settings.bar.monitorOverrides.otherPrompt": "その他の画面にこのオプションを個別に設定しますか？",
   "settings.bar.monitorOverrides.applyLast": "最後の画面に適用",
   "settings.bar.monitorOverrides.applyOther": "その他の画面に適用",
-  "settings.bar.monitorOverrides.otherCount": "この変更は {0} 台の画面に適用されます。"
+  "settings.bar.monitorOverrides.otherCount": "この変更は {0} 台の画面に適用されます。",
+  "settings.bar.monitorOverrides.followToggle": "合わせる",
+  "settings.bar.monitorOverrides.applyShared": "共通設定を変更",
+  "settings.general.advancedFeatures.monitorProfiles": "Dock とステータスバーの画面別設定",
+  "settings.general.advancedFeatures.monitorProfilesDescription": "Dock とステータスバーの位置、レイアウト、動作を、最後の画面とその他の画面で個別に設定できます。"
 }

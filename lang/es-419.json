@@ -3017,5 +3017,9 @@
   "settings.bar.monitorOverrides.otherPrompt": "¿Configurar esta opción por separado para las otras pantallas?",
   "settings.bar.monitorOverrides.applyLast": "Aplicar a la última pantalla",
   "settings.bar.monitorOverrides.applyOther": "Aplicar a las otras pantallas",
-  "settings.bar.monitorOverrides.otherCount": "Este cambio se aplica a {0} pantallas."
+  "settings.bar.monitorOverrides.otherCount": "Este cambio se aplica a {0} pantallas.",
+  "settings.bar.monitorOverrides.followToggle": "Seguir",
+  "settings.bar.monitorOverrides.applyShared": "Cambiar el ajuste compartido",
+  "settings.general.advancedFeatures.monitorProfiles": "Perfiles de pantalla para el Dock y la barra de estado",
+  "settings.general.advancedFeatures.monitorProfilesDescription": "Ajusta por separado la posición, el diseño y el comportamiento del Dock y de la barra de estado para la última pantalla y las demás."
 }

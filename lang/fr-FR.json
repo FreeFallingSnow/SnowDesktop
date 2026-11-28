@@ -3017,5 +3017,9 @@
   "settings.bar.monitorOverrides.otherPrompt": "Définir cette option séparément pour les autres écrans ?",
   "settings.bar.monitorOverrides.applyLast": "Appliquer au dernier écran",
   "settings.bar.monitorOverrides.applyOther": "Appliquer aux autres écrans",
-  "settings.bar.monitorOverrides.otherCount": "Cette modification s’applique à {0} écrans."
+  "settings.bar.monitorOverrides.otherCount": "Cette modification s’applique à {0} écrans.",
+  "settings.bar.monitorOverrides.followToggle": "Suivre",
+  "settings.bar.monitorOverrides.applyShared": "Modifier le réglage commun",
+  "settings.general.advancedFeatures.monitorProfiles": "Profils d’écran pour le Dock et la barre d’état",
+  "settings.general.advancedFeatures.monitorProfilesDescription": "Réglez séparément la position, la disposition et le comportement du Dock et de la barre d’état pour le dernier écran et les autres écrans."
 }
