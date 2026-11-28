@@ -1041,6 +1041,8 @@ private:
         HWND pressedTarget = nullptr,
         std::optional<RECT> pressedAnchorScreen = std::nullopt,
         HWND documentProxy = nullptr);
+    void CancelDockDocumentSelection();
+    void QueueDockDocumentSelection(HWND proxy, HWND frame);
     std::optional<RECT> ResolveDockThumbnailTransitionAnchor(HWND window,
         std::optional<RECT> requestedAnchor, bool restoring) const;
     void ActivateDockWindowFromPreview(HWND window);
@@ -3593,6 +3595,7 @@ private:
     snowdesktop::UiScheduleToken dockBounceAnimationFrameToken_ = 0;
     snowdesktop::UiScheduleToken dockRunningAnimationFrameToken_ = 0;
     snowdesktop::UiScheduleToken dockMagnificationAnimationFrameToken_ = 0;
+    snowdesktop::UiScheduleToken dockDocumentSelectionToken_ = 0;
     RECT dockAnimationDesktopDirty_{};
     snowdesktop::UiScheduleToken pageNotifyAnimationFrameToken_ = 0;
     float pageNotifyOpacity_ = 0.f;

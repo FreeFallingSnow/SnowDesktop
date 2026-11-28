@@ -511,6 +511,8 @@
 
 ### CF-025 文件观察提前结束
 
+- **交接后计划输入再次变更（2026-11-28）**：Task `dock-monitor-profiles-window-titles`、批次 `2164b91d5c5a4e009d4c33ea7d637563` 修订 0。已就绪来源交接 `src/core/dock.cpp` 后，同批成员另一次就绪计划仍把该文件列为读入依赖。接手方完成合法编辑，首次共同冻结返回 `Declared inputs changed after ready for dock-edge-folder-layout; reopen and update plan.`，未创建 Run。来源成员重开修订并重报计划后，同一批次产生 Run `62751a034269475499a9fde5de1996cf`。保留交接问题 `f932d98d86c446cc91866ab5058bbbb6`。后续评估就绪计划声明读入仍在编辑的交接文件时，能否保留冻结前自动复核并提前提示。未开额外编译槽。
+
 - **桌面落位续证（2026-11-24）**：Task `desktop-icon-drop-edge` 首次在 `349720808e0f4fb98eff77d3602bf38a` 修订 0 认领 `app_internal_drop_release.cpp`，因前序 Run `ae7256273f10455ea111b272e9f44f74` 的改动待提交，收到 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`。文件票据 `45b8c443ec5e8040d7e3b08c3f46a283` 在前序提交后返回 `eligible`，随后同一文件被 `large-icon-drag-copy` 认领以修正 C4456，第二次认领因活动冲突被拒。两次均撤回本任务的空编辑登记，避免阻塞共享批次。警告修订 Run `820a4fe7f0ef43019f11df693798f314` 完成后，另用只读 Git 观察等到 `e1bee0329` 写入，再安全认领；文件观察目前仍无法等待前序已冻结改动提交。
 
 - **剪贴板接口续证（2026-11-20）**：Task `clipboard-original-size`、批次 `d1b98672072b4fc9999a870e52761ae0` 修订 0。两处 Lua 公共接口文件由同批 `ai-settings-disclosure` 编辑。对方就绪后，`claim -Add` 从活动归属冲突变为 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`。本任务将自有差异保存为可复原补丁并撤回自身编辑，允许前序冻结和提交后再认领；保留对方归属。共享文件仍缺少同批次按补丁交接的路径。

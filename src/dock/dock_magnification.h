@@ -74,14 +74,13 @@ float SmoothStep(float progress);
 float InterpolateScale(
     float from, float to, float progress);
 
-// Only the entry amplitude is animated. The wave center continues to follow
-// each pointer sample immediately, including while the entry is in progress.
+// Track the wave amplitude independently of its moving center.
 class HoverEntryAnimation
 {
 public:
     static constexpr double kDurationMilliseconds = 160.0;
 
-    void SetHovered(bool hovered, double now, double durationScale);
+    void SetHovered(bool hovered, double now, double durationScale, bool easeOut = false);
 
     bool IsAnimating() const;
 
@@ -93,7 +92,7 @@ private:
     bool hovered_ = false;
     double started_ = 0.0;
     double duration_ = kDurationMilliseconds;
-    float progress_ = 0.0f;
+    float progress_ = 0.0f, from_ = 0.0f;
 };
 
 // Animate only entry/exit amplitude. Pointer movement transfers that amplitude
@@ -142,7 +141,8 @@ struct SingleFocusGeometry
 
 SingleFocusGeometry ResolveSingleFocusGeometry(
     const std::vector<RECT>& candidates, bool vertical,
-    int pointerAxis, int baseIconSize, float focusScale);
+    int pointerAxis, int baseIconSize, float focusScale,
+    std::span<const RECT> titleGroups = {});
 
 float ScaleForAxisDistance(
     float centerDistance, int itemPitch, float focusScale = kFocusScale);

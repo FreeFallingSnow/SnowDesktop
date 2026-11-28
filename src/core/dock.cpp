@@ -526,6 +526,41 @@ ComPtr<IDataObject> DockEntryItem::CreateDataObject()
 
 struct DockContainer::TitleTransitions
 {
+    struct HoverMotion
+    {
+        RECT focus{};
+        double axis = 0.0, requested = 0.0, sampledAt = 0.0;
+        bool tracking = false;
+
+        bool Moving() const { return std::abs(axis - requested) >= .25; }
+
+        void Advance(double now, double response)
+        {
+            if (!Moving() || now <= sampledAt) return;
+            axis = std::lerp(axis, requested, 1.0 - std::exp(-(now - sampledAt) / response));
+            if (!Moving()) axis = requested;
+            sampledAt = now;
+        }
+
+        void Observe(const RECT& bounds, int pointerAxis, double now, double response, bool resume)
+        {
+            if (IsRectEmpty(&bounds))
+            {
+                tracking = false;
+                return;
+            }
+            if (IsRectEmpty(&focus) || (!tracking && !resume)) axis = requested = pointerAxis;
+            else Advance(now, response);
+            requested = pointerAxis;
+            sampledAt = now;
+            focus = bounds;
+            tracking = true;
+        }
+
+        int AxisOr(int pointerAxis) const
+        { return IsRectEmpty(&focus) ? pointerAxis : static_cast<int>(std::lround(axis)); }
+    };
+
     struct Group
     {
         std::vector<HWND> windows;
@@ -535,6 +570,7 @@ struct DockContainer::TitleTransitions
     std::unordered_map<std::wstring, Group> groups;
     std::uint64_t layoutRevision = 0;
     float widestTitleUnits = 0.f;
+    HoverMotion hover;
     bool primed = false;
 };
 
@@ -933,6 +969,7 @@ void DockContainer::SetReservedArea(RECT area)
     magnificationFocusRect_ = {};
     magnificationEntry_ = {};
     singleMagnification_ = {};
+    titleTransitions_->hover = {};
 }
 
 RECT DockContainer::GetDesktopItemVisualRect(
@@ -1513,7 +1550,7 @@ bool DockContainer::IsTitleTransitioning() const
 bool DockContainer::IsMagnificationAnimating() const
 {
     return magnificationEntry_.IsAnimating() || singleMagnification_.IsAnimating() ||
-        titleMarqueeAnimating_ || IsTitleTransitioning();
+        titleMarqueeAnimating_ || IsTitleTransitioning() || titleTransitions_->hover.Moving();
 }
 
 bool DockContainer::AdvanceMagnificationAnimation(double nowMilliseconds)
@@ -1529,6 +1566,7 @@ bool DockContainer::AdvanceMagnificationAnimation(double nowMilliseconds)
         magnificationFocusRect_ = {};
         magnificationEntry_ = {};
         singleMagnification_ = {};
+        titleTransitions_->hover = {};
         if (IsTitleTransitioning())
         {
             for (auto& entry : titleTransitions_->groups)
@@ -1544,6 +1582,8 @@ bool DockContainer::AdvanceMagnificationAnimation(double nowMilliseconds)
                 entry.second.presence.Advance(nowMilliseconds);
             InvalidateSlots();
         }
+        titleTransitions_->hover.Advance(nowMilliseconds,
+            48.0 * std::max(.01, snowdesktop::animation::RuntimeDurationScale()));
         ResolveMagnificationFocusRect(app_->lastMousePoint_, GetMagnificationLayout());
         magnificationEntry_.Advance(nowMilliseconds);
         singleMagnification_.Advance(nowMilliseconds);
@@ -1570,6 +1610,7 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer, const Magnifica
         magnificationFocusRect_ = {};
         magnificationEntry_ = {};
         singleMagnification_ = {};
+        titleTransitions_->hover = {};
         return RECT{};
     }
 
@@ -1748,13 +1789,20 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer, const Magnifica
     if (app_ && pointer.x == app_->lastMousePoint_.x &&
         pointer.y == app_->lastMousePoint_.y)
     {
-        magnificationEntry_.SetHovered(
-            !IsRectEmpty(&nextFocus) &&
-                MonitorLayout().hoverEffect == 2 &&
-                GetMaximumMagnificationScale() > 1.0f,
-            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(),
-            snowdesktop::animation::RuntimeDurationScale());
-        if (MonitorLayout().hoverEffect == 1 && GetMaximumMagnificationScale() > 1.0f)
+        const auto settings = MonitorLayout();
+        const bool enabled = GetMaximumMagnificationScale() > 1.f;
+        const bool capsuleMotion = enabled && !layout.titleGroups.empty();
+        const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+        const double duration = snowdesktop::animation::RuntimeDurationScale();
+        const int pointerAxis = IsVertical() ? pointer.y : pointer.x;
+        auto& motion = titleTransitions_->hover;
+        if (capsuleMotion)
+            motion.Observe(nextFocus, pointerAxis, now, 48.0 * std::max(.01, duration),
+                magnificationEntry_.IsAnimating() || singleMagnification_.IsAnimating());
+        else motion = {};
+        magnificationEntry_.SetHovered(!IsRectEmpty(&nextFocus) && settings.hoverEffect == 2 && enabled,
+            now, duration * (capsuleMotion ? 1.4 : 1.0), capsuleMotion);
+        if (settings.hoverEffect == 1 && enabled)
         {
             // Retarget a relaid-out live hover through SetTarget, preserving
             // its amplitude/deadline. Only an absent replacement drops an
@@ -1763,10 +1811,8 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer, const Magnifica
             if (IsRectEmpty(&nextFocus) && !IsRectEmpty(&visualOwner) && std::none_of(candidates.begin(), candidates.end(),
                 [&](const RECT& candidate) { return EqualRect(&candidate, &visualOwner) != FALSE; }))
                 singleMagnification_ = {};
-            singleMagnification_.SetTarget(nextFocus,
-                snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(),
-                snowdesktop::animation::RuntimeDurationScale(),
-                IsVertical() ? pointer.y : pointer.x);
+            singleMagnification_.SetTarget(nextFocus, now, duration * (capsuleMotion ? 1.75 : 1.0),
+                motion.AxisOr(pointerAxis));
         }
         else singleMagnification_ = {};
         if (IsMagnificationAnimating())
@@ -1799,8 +1845,8 @@ DockContainer::GetSingleMagnificationGeometry(
         });
     }
     return snowdesktop::dock_magnification::ResolveSingleFocusGeometry(
-        candidates, IsVertical(), singleMagnification_.PointerAxis(),
-        ItemIconSize(), singleMagnification_.Scale());
+        candidates, IsVertical(), titleTransitions_->hover.AxisOr(singleMagnification_.PointerAxis()),
+        ItemIconSize(), singleMagnification_.Scale(), layout.titleGroups);
 }
 
 RECT DockContainer::MagnifyElementRect(const RECT& baseRect, const RECT& focusRect,
@@ -1844,16 +1890,20 @@ RECT DockContainer::MagnifyElementRect(const RECT& baseRect, const RECT& focusRe
             scale, iconSize, shift, true, axisGrowth);
     }
 
-    if (IsRectEmpty(&focusRect)) return baseRect;
+    const auto& motion = titleTransitions_->hover;
+    const RECT& waveFocus = IsRectEmpty(&focusRect) && magnificationEntry_.IsAnimating() ? motion.focus : focusRect;
+    if (IsRectEmpty(&waveFocus)) return baseRect;
     const float focusScale = GetCurrentMagnificationScale();
     if (focusScale <= 1.0f) return baseRect;
     const int pitch = ItemPitch();
-    int pointerAxis = vertical ? pointer.y : pointer.x;
+    int pointerAxis = motion.AxisOr(vertical ? pointer.y : pointer.x);
     const auto scaleFor = [&](const RECT& candidate) {
-        const bool focused = EqualRect(&candidate, &focusRect) != FALSE;
-        if (focused && layout.HasTitleGroup(candidate)) return focusScale;
-        return magnification::ScaleForEffect(settings.hoverEffect, focused,
-            static_cast<float>(center(candidate) - pointerAxis), pitch, focusScale);
+        if (layout.HasTitleGroup(candidate))
+        {
+            const auto distance = std::max({0L, leading(candidate) - pointerAxis, pointerAxis - trailing(candidate)});
+            return magnification::ScaleForAxisDistance(static_cast<float>(distance), pitch, focusScale);
+        }
+        return magnification::ScaleForAxisDistance(static_cast<float>(center(candidate) - pointerAxis), pitch, focusScale);
     };
     if (!layout.edgeAnchored)
     {
@@ -1861,26 +1911,27 @@ RECT DockContainer::MagnifyElementRect(const RECT& baseRect, const RECT& focusRe
         if (layout.titleGroups.empty())
         {
             const int shift = magnification::IslandAxisShift(settings.hoverEffect,
-                center(baseRect), center(focusRect), pointerAxis, pitch, iconSize, focusScale);
+                center(baseRect), center(waveFocus), pointerAxis, pitch, iconSize, focusScale);
             return magnification::MagnifyRect(baseRect, settings.position, scale, iconSize, shift);
         }
         const int axisGrowth = growthFor(baseRect, scale);
         int shift = axisGrowth / 2;
-        // Pack the full cells around the actual pointer. Interpolating its
-        // location within a cell lets the wave flow across the title area.
+        // Use the resting rail as the packing anchor. The live wave changes
+        // local growth without adding a pointer-dependent translation to every item.
+        const LONG pivot = center(layout.bounds);
         for (const auto& candidate : layout.candidates)
         {
             const int growth = growthFor(candidate, scaleFor(candidate));
             if (center(candidate) < center(baseRect)) shift += growth;
             const auto length = std::max(1L, trailing(candidate) - leading(candidate));
-            const float progress = static_cast<float>(pointerAxis - leading(candidate)) / length;
+            const float progress = static_cast<float>(pivot - leading(candidate)) / length;
             shift -= static_cast<int>(std::lround(growth * magnification::SmoothStep(progress)));
         }
         return magnification::MagnifyRect(baseRect, settings.position, scale, iconSize, shift, false, axisGrowth);
     }
 
-    if (zone == MagnificationZone::None || zone != layout.ZoneOf(focusRect)) return baseRect;
-    const bool startFocused = EqualRect(&focusRect, &layout.windowsButton) != FALSE;
+    if (zone == MagnificationZone::None || zone != layout.ZoneOf(waveFocus)) return baseRect;
+    const bool startFocused = EqualRect(&waveFocus, &layout.windowsButton) != FALSE;
     const auto inFocusLane = [&](const RECT& candidate) {
         return !hasOverflow || (EqualRect(&candidate, &layout.windowsButton) != FALSE) == startFocused;
     };
@@ -1955,7 +2006,8 @@ RECT DockContainer::GetVisualPanelBounds(POINT pointer) const
 RECT DockContainer::GetVisualPanelBounds(POINT pointer, const MagnificationLayout& layout, const RECT& focus) const
 {
     RECT panel = EdgeChromeBounds(layout.bounds);
-    if (IsRectEmpty(&focus) && IsRectEmpty(&singleMagnification_.CurrentRect()))
+    if (IsRectEmpty(&focus) && IsRectEmpty(&singleMagnification_.CurrentRect()) &&
+        !magnificationEntry_.IsAnimating())
         return panel;
 
     const bool hasOverflow = layout.maxScrollOffset > 0;

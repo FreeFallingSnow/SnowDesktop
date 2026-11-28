@@ -567,7 +567,12 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
     {
         if (!dockSettings_.showWindowTitles) return;
         const auto found = dockTaskWindowTitles_.find(window);
-        if (found == dockTaskWindowTitles_.end()) return;
+        if (found == dockTaskWindowTitles_.end())
+        {
+            if (IsDockTaskbarDocumentProxyCandidate(window))
+                dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
         const int length = std::clamp(GetWindowTextLengthW(window), 0, 4096);
         if (length <= 0) { dockRunningWindowsRefreshTick_ = 0; return; }
         std::wstring updated(static_cast<size_t>(length) + 1, L'\0');
@@ -1292,7 +1297,7 @@ void DesktopApp::RefreshDockRunningWindows(
     std::stable_partition(runningApps.begin(), runningApps.end(),
         [](const auto& app) { return !app.minimizedThumbnail; });
 
-    bool runningLayoutChanged = runningApps.size() != dockUnpinnedRunningApps_.size() ||
+    bool runningLayoutChanged = titleChanged || runningApps.size() != dockUnpinnedRunningApps_.size() ||
         (dockSettings_.showWindowTitles && pinnedMembershipChanged);
     bool runningVisualChanged = runningLayoutChanged;
     if (!runningLayoutChanged)
@@ -1335,7 +1340,7 @@ void DesktopApp::RefreshDockRunningWindows(
         UpdateFloatingDockWindowBounds(false);
     }
 
-    if ((changed || runningVisualChanged || runningLayoutChanged || titleChanged) && invalidateChanged && hwnd_)
+    if ((changed || runningVisualChanged || runningLayoutChanged) && invalidateChanged && hwnd_)
     {
         // Titles also change the host's input/visible region. Preserve its
         // existing asynchronous content presentation even at identical bounds.
@@ -1573,6 +1578,7 @@ bool DesktopApp::ActivateOrToggleDockWindow(
     std::optional<RECT> pressedAnchorScreen,
     HWND documentProxy)
 {
+    CancelDockDocumentSelection();
     DismissDockWindowPreviewUntilLeave();
     HWND requestedTarget =
         pressedTarget && IsWindow(pressedTarget)
@@ -1689,7 +1695,7 @@ bool DesktopApp::ActivateOrToggleDockWindow(
                 [this, documentProxy](HWND restoreTarget, DockWindowRestoreTransitionPhase phase) {
                     HandleDockWindowRestoreTransition(restoreTarget, phase);
                     if (phase != DockWindowRestoreTransitionPhase::RequestRestore)
-                        snowdesktop::dock_document_proxies::SelectDocument(documentProxy, restoreTarget);
+                        QueueDockDocumentSelection(documentProxy, restoreTarget);
                 },
                 transitionKeepBelowWindow))
         {
@@ -1700,7 +1706,7 @@ bool DesktopApp::ActivateOrToggleDockWindow(
         }
         const DockWindowActivationOutcome outcome =
             RequestDockWindowActivation(target, minimized);
-        snowdesktop::dock_document_proxies::SelectDocument(documentProxy, target);
+        QueueDockDocumentSelection(documentProxy, target);
         nowMinimized = !outcome.restored;
         nowForeground = outcome.foreground;
     }
@@ -1718,6 +1724,40 @@ bool DesktopApp::ActivateOrToggleDockWindow(
     }
     InvalidateDockRects();
     return true;
+}
+
+void DesktopApp::CancelDockDocumentSelection()
+{
+    if (dockDocumentSelectionToken_)
+        uiAnimationScheduler_.Cancel(std::exchange(dockDocumentSelectionToken_, 0));
+}
+
+void DesktopApp::QueueDockDocumentSelection(HWND proxy, HWND frame)
+{
+    if (!proxy) return;
+    CancelDockDocumentSelection();
+    using namespace snowdesktop::dock_document_proxies;
+    const ULONGLONG deadline = GetTickCount64() + 1000;
+    dockDocumentSelectionToken_ = uiAnimationScheduler_.StartAnimation(snowdesktop::UiAnimationSurface::FloatingDock,
+        [this, proxy, frame, deadline](double) {
+            if (GetTickCount64() >= deadline || !IsWindow(frame) ||
+                !IsDockTaskbarDocumentProxyCandidate(proxy) || !SharesProcess(proxy, frame) ||
+                IsDockWindowClosePending(proxy) || IsDockWindowClosePending(frame))
+            {
+                dockDocumentSelectionToken_ = 0;
+                return false;
+            }
+            const HWND foreground = ResolveDockSemanticForegroundWindow();
+            if (IsIconic(frame) || (dockWindowTransition_ && dockWindowTransition_->IsActiveFor(frame)) ||
+                !DockWindowsShareActivationGroup(frame, foreground))
+                return true;
+
+            // Restoration can already reopen the requested document. Let the
+            // application settle its foreground frame before requesting a tab switch.
+            dockDocumentSelectionToken_ = 0;
+            if (!IsActiveDocument(frame, proxy)) SelectDocument(proxy, frame);
+            return false;
+        });
 }
 
 void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
@@ -1766,6 +1806,7 @@ void DesktopApp::ActivateOrToggleDockTaskWindow(HWND window, RECT anchorScreen)
 
 void DesktopApp::ActivateDockWindowFromPreview(HWND window)
 {
+    CancelDockDocumentSelection();
     if (!window || !IsWindow(window))
         return;
     HWND target = GetAncestor(window, GA_ROOT);

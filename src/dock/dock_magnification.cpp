@@ -91,7 +91,7 @@ int GrowthForScale(float scale, int baseIconSize)
 
 SingleFocusGeometry ResolveSingleFocusGeometry(
     const std::vector<RECT>& candidates, bool vertical,
-    int pointerAxis, int baseIconSize, float focusScale)
+    int pointerAxis, int baseIconSize, float focusScale, std::span<const RECT> titleGroups)
 {
     SingleFocusGeometry result;
     result.vertical = vertical;
@@ -115,8 +115,16 @@ SingleFocusGeometry ResolveSingleFocusGeometry(
     }
     else if (!IsRectEmpty(&result.trailing))
     {
-        const float progress = static_cast<float>(pointerAxis - result.Center(result.leading)) /
-            static_cast<float>(result.Center(result.trailing) - result.Center(result.leading));
+        const auto hasTitle = [&](const RECT& cell) {
+            return std::ranges::any_of(titleGroups, [&](const RECT& title) { return EqualRect(&cell, &title); });
+        };
+        int start = result.Center(result.leading);
+        int end = result.Center(result.trailing);
+        if (hasTitle(result.leading))
+            start = std::max(start, static_cast<int>(vertical ? result.leading.bottom : result.leading.right) - baseIconSize / 3);
+        if (hasTitle(result.trailing))
+            end = std::min(end, static_cast<int>(vertical ? result.trailing.top : result.trailing.left) + baseIconSize / 3);
+        const float progress = static_cast<float>(pointerAxis - start) / std::max(1, end - start);
         result.trailingGrowth = static_cast<int>(std::lround(
             static_cast<float>(growth) * SmoothStep(progress)));
     }
@@ -588,29 +596,31 @@ RECT ExtendPanelAlongDockAxis(
     return panel;
 }
 
-void HoverEntryAnimation::SetHovered(bool hovered, double now, double durationScale)
+void HoverEntryAnimation::SetHovered(bool hovered, double now, double durationScale, bool easeOut)
 {
-    if (!hovered)
+    if (!hovered && !easeOut)
     {
         *this = {};
         return;
     }
-    if (hovered_)
-        return;
-    hovered_ = true;
+    if (hovered_ == hovered) return;
+    Advance(now);
+    hovered_ = hovered;
     started_ = now;
-    duration_ = kDurationMilliseconds * std::max(0.01, durationScale);
-    progress_ = 0.0f;
+    from_ = progress_;
+    const float target = hovered_ ? 1.0f : 0.0f;
+    duration_ = kDurationMilliseconds * std::max(0.01, durationScale) * std::abs(target - from_);
 }
 
 bool HoverEntryAnimation::IsAnimating() const
-{ return hovered_ && progress_ < 1.0f; }
+{ return progress_ != (hovered_ ? 1.0f : 0.0f); }
 
 void HoverEntryAnimation::Advance(double now)
 {
-    if (IsAnimating())
-        progress_ = std::max(progress_, static_cast<float>(
-            std::clamp((now - started_) / duration_, 0.0, 1.0)));
+    if (!IsAnimating()) return;
+    const float amount = static_cast<float>(std::clamp((now - started_) / duration_, 0.0, 1.0));
+    const float next = std::lerp(from_, hovered_ ? 1.0f : 0.0f, amount);
+    progress_ = hovered_ ? std::max(progress_, next) : std::min(progress_, next);
 }
 
 float HoverEntryAnimation::FocusScale(float maximumScale) const
