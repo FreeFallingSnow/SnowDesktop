@@ -33,6 +33,7 @@
 #include <limits>
 #include <optional>
 #include <shlwapi.h>
+#include <span>
 #include <utility>
 
 namespace
@@ -126,7 +127,7 @@ void DrawDockSeparator(ID2D1DeviceContext* context, float x, float y, bool verti
 }
 
 int ClampPointerAxisToCenters(
-    int pointerAxis, const std::vector<RECT>& rects, bool vertical)
+    int pointerAxis, std::span<const RECT> rects, bool vertical)
 {
     if (rects.empty()) return pointerAxis;
     int first = std::numeric_limits<int>::max();
@@ -1238,94 +1239,81 @@ RECT DockContainer::BoundsForRunningUnits(float runningUnits) const
     return RECT{ left, top, left + length, top + thickness };
 }
 
-std::vector<RECT> DockContainer::GetLeadingMagnificationRects() const
+// Keep the slot geometry local to this query. Hit testing and drawing can
+// inspect every element without re-enumerating the model for each one.
+struct DockContainer::MagnificationLayout
 {
+    RECT bounds{}, viewport{}, windowsButton{};
+    int maxScrollOffset = 0;
+    bool edgeAnchored = false;
     std::vector<RECT> candidates;
-    const RECT windowsButton = GetWindowsButtonRect();
-    if (!IsRectEmpty(&windowsButton))
-        candidates.push_back(windowsButton);
+    size_t leadingCount = 0;
 
+    std::span<const RECT> ForZone(MagnificationZone zone) const
+    {
+        const std::span<const RECT> rects = candidates;
+        return zone == MagnificationZone::Leading
+            ? rects.first(leadingCount) : rects.subspan(leadingCount);
+    }
+
+    MagnificationZone ZoneOf(const RECT& rect) const
+    {
+        for (const auto zone : {MagnificationZone::Leading, MagnificationZone::Trailing})
+            if (std::ranges::any_of(ForZone(zone), [&](const RECT& candidate) {
+                    return EqualRect(&candidate, &rect) != FALSE;
+                }))
+                return zone;
+        return MagnificationZone::None;
+    }
+};
+
+DockContainer::MagnificationLayout DockContainer::GetMagnificationLayout() const
+{
     const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
+    MagnificationLayout layout;
+    layout.bounds = GetBounds();
+    const float runningUnits = RunningSlotUnits();
+    layout.viewport = GetScrollViewport(layout.bounds, runningUnits);
+    layout.maxScrollOffset = GetMaxScrollOffset(layout.bounds, runningUnits);
+    layout.windowsButton = GetWindowsButtonRect(layout.bounds);
+    layout.edgeAnchored = layout.maxScrollOffset > 0 ||
+        snowdesktop::dock_magnification::UsesEdgeAnchoredMagnification(
+            UsesSpreadEdge(), IsMergedWithStatusBar());
+
+    auto& candidates = layout.candidates;
     const size_t fixedCount = SortableEntryCount();
-    candidates.reserve(candidates.size() + fixedCount +
-        runningItems_.size() + frequentItems_.size());
-    const RECT viewport = GetScrollViewport(GetBounds());
-    const bool hasOverflow = GetMaxScrollOffset(GetBounds()) > 0;
+    const size_t folderBegin = FolderEntryBegin();
+    const size_t folderEnd = folderBegin + FolderEntryCount();
+    candidates.reserve(slots.size() + 1);
+    if (!IsRectEmpty(&layout.windowsButton))
+        candidates.push_back(layout.windowsButton);
     const auto includeVisible = [&](const RECT& bounds) {
         RECT visible{};
         if (!IsRectEmpty(&bounds) &&
-            (!hasOverflow || IntersectRect(&visible, &bounds, &viewport)))
+            (layout.maxScrollOffset <= 0 || IntersectRect(&visible, &bounds, &layout.viewport)))
             candidates.push_back(bounds);
     };
-    for (size_t index = 0;
-        index < fixedCount && index < slots.size(); ++index)
-    {
-        if (!slots[index]) continue;
-        const RECT bounds = slots[index]->GetBounds();
-        includeVisible(bounds);
-    }
+    for (size_t index = 0; index < fixedCount && index < slots.size(); ++index)
+        if (slots[index])
+            includeVisible(slots[index]->GetBounds());
     for (const auto& item : runningItems_)
-    {
-        if (!item) continue;
-        if (!app_ || item->GetRunningIndex() >= app_->dockUnpinnedRunningApps_.size() ||
-            !app_->dockUnpinnedRunningApps_[item->GetRunningIndex()].presence.Interactive()) continue;
-        const RECT bounds = item->GetBounds();
-        includeVisible(bounds);
-    }
+        if (item && app_ && item->GetRunningIndex() < app_->dockUnpinnedRunningApps_.size() &&
+            app_->dockUnpinnedRunningApps_[item->GetRunningIndex()].presence.Interactive())
+            includeVisible(item->GetBounds());
     for (const auto& item : frequentItems_)
-    {
-        if (!item) continue;
-        const RECT bounds = item->GetBounds();
-        includeVisible(bounds);
-    }
-    return candidates;
-}
+        if (item)
+            includeVisible(item->GetBounds());
 
-std::vector<RECT> DockContainer::GetTrailingMagnificationRects() const
-{
-    std::vector<RECT> candidates;
-    const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
-    const size_t folderBegin = FolderEntryBegin();
-    const size_t folderEnd = folderBegin + FolderEntryCount();
-    candidates.reserve(FolderEntryCount());
-    for (size_t index = folderBegin;
-         index < folderEnd && index < slots.size(); ++index)
+    layout.leadingCount = candidates.size();
+    for (size_t index = folderBegin; index < folderEnd && index < slots.size(); ++index)
     {
         if (!slots[index]) continue;
         const RECT bounds = slots[index]->GetBounds();
-        if (!IsRectEmpty(&bounds))
-            candidates.push_back(bounds);
+        if (!IsRectEmpty(&bounds)) candidates.push_back(bounds);
     }
     if (HasImplicitSearchSlot() && !slots.empty())
         candidates.push_back(slots.back()->GetBounds());
-    return candidates;
-}
-
-DockContainer::MagnificationZone
-DockContainer::GetMagnificationZone(const RECT& baseRect) const
-{
-    for (const RECT& candidate : GetLeadingMagnificationRects())
-    {
-        if (EqualRect(&candidate, &baseRect))
-            return MagnificationZone::Leading;
-    }
-    for (const RECT& candidate : GetTrailingMagnificationRects())
-    {
-        if (EqualRect(&candidate, &baseRect))
-            return MagnificationZone::Trailing;
-    }
-    return MagnificationZone::None;
-}
-
-std::vector<RECT> DockContainer::GetElementBaseRects() const
-{
-    std::vector<RECT> candidates =
-        GetLeadingMagnificationRects();
-    std::vector<RECT> trailing =
-        GetTrailingMagnificationRects();
-    candidates.insert(candidates.end(),
-        trailing.begin(), trailing.end());
-    return candidates;
+    return layout;
 }
 
 bool DockContainer::IsMagnificationSuppressed() const
@@ -1337,14 +1325,6 @@ bool DockContainer::IsMagnificationSuppressed() const
             app_->widgetAction_ ==
                 DesktopApp::WidgetAction::Resize,
             app_->IsDockContainerInteractionVisible(this));
-}
-
-bool DockContainer::UsesEdgeAnchoredMagnification() const
-{
-    // Overflow has fixed controls at both ends even inside shared bar chrome.
-    return GetMaxScrollOffset(GetBounds()) > 0 ||
-        snowdesktop::dock_magnification::UsesEdgeAnchoredMagnification(
-            UsesSpreadEdge(), IsMergedWithStatusBar());
 }
 
 float DockContainer::GetMaximumMagnificationScale() const
@@ -1385,7 +1365,7 @@ bool DockContainer::AdvanceMagnificationAnimation(double nowMilliseconds)
     }
     else
     {
-        ResolveMagnificationFocusRect(app_->lastMousePoint_);
+        ResolveMagnificationFocusRect(app_->lastMousePoint_, GetMagnificationLayout());
         magnificationEntry_.Advance(nowMilliseconds);
         singleMagnification_.Advance(nowMilliseconds);
     }
@@ -1404,7 +1384,7 @@ int DockContainer::GetLaunchAnimationPadding(bool reserveForLaunch) const
         !app_->dockLaunchBounces_.empty(), reserveForLaunch);
 }
 
-RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
+RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer, const MagnificationLayout& layout) const
 {
     if (IsMagnificationSuppressed())
     {
@@ -1414,33 +1394,17 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
         return RECT{};
     }
 
-    const std::vector<RECT> candidates = GetElementBaseRects();
-    RECT viewport = GetScrollViewport(GetBounds());
-    const RECT windowsButton = GetWindowsButtonRect();
-    const bool hasOverflow = GetMaxScrollOffset(GetBounds()) > 0;
-    if (hasOverflow)
-    {
-        // Use the current painted fixed controls as occluders. Querying the
-        // public visual accessor here would recursively resolve hover.
-        const RECT leadingVisual = IsRectEmpty(&windowsButton) ? RECT{} :
-            MagnifyElementRect(windowsButton, magnificationFocusRect_, pointer);
-        const auto trailing = GetTrailingMagnificationRects();
-        const RECT trailingVisual = trailing.empty() ? RECT{} :
-            MagnifyElementRect(trailing.front(), magnificationFocusRect_, pointer);
-        viewport = snowdesktop::dock_magnification::FitOverflowViewportToFixedVisuals(
-            viewport, Position(), leadingVisual, trailingVisual, ScaledSeparatorGap());
-        if (!IsRectEmpty(&leadingVisual))
-        {
-            if (IsVertical()) viewport.top = std::min(viewport.bottom, leadingVisual.bottom + ScaledSeparatorGap() / 2);
-            else viewport.left = std::min(viewport.right, leadingVisual.right + ScaledSeparatorGap() / 2);
-        }
-    }
+    const auto& candidates = layout.candidates;
+    const auto& windowsButton = layout.windowsButton;
+    const bool hasOverflow = layout.maxScrollOffset > 0;
+    // The currently painted fixed controls can occlude the scrolling lane.
+    const RECT viewport = GetVisualScrollViewport(pointer, layout, magnificationFocusRect_);
+    const bool pointerInViewport = IsVertical()
+        ? pointer.y >= viewport.top && pointer.y < viewport.bottom
+        : pointer.x >= viewport.left && pointer.x < viewport.right;
     const auto pointerVisibleFor = [&](const RECT& candidate) {
-        if (!hasOverflow || EqualRect(&candidate, &windowsButton) ||
-            GetMagnificationZone(candidate) == MagnificationZone::Trailing)
-            return true;
-        return IsVertical() ? pointer.y >= viewport.top && pointer.y < viewport.bottom
-            : pointer.x >= viewport.left && pointer.x < viewport.right;
+        return !hasOverflow || pointerInViewport || EqualRect(&candidate, &windowsButton) ||
+            layout.ZoneOf(candidate) == MagnificationZone::Trailing;
     };
     const auto previous = std::find_if(
         candidates.begin(), candidates.end(),
@@ -1482,7 +1446,7 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
         const RECT separatorHoverBounds =
             snowdesktop::dock_magnification::
                 ResolveFocusInteractionBounds(
-                    GetBounds(),
+                    layout.bounds,
                     Position(),
                     ItemIconSize(),
                     magnificationActive,
@@ -1521,7 +1485,7 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
                 ItemPitch() / 2 +
                 ScaledSeparatorGap();
             if (!IsRectEmpty(&nearest) &&
-                (!UsesEdgeAnchoredMagnification() ||
+                (!layout.edgeAnchored ||
                     nearestAxisDistance <=
                         separatorReach))
             {
@@ -1538,7 +1502,7 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
         const RECT interactive =
             snowdesktop::dock_magnification::
                 ExpandInteractionBounds(
-                    GetBounds(),
+                    layout.bounds,
                     Position(),
                     ItemIconSize(),
                     GetMaximumMagnificationScale(), MonitorLayout().hoverEffect == 1);
@@ -1548,7 +1512,7 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
         for (const RECT& candidate : candidates)
         {
             if (!pointerVisibleFor(candidate)) continue;
-            const RECT magnified = MagnifyElementRect(candidate, candidate, pointer);
+            const RECT magnified = MagnifyElementRect(candidate, candidate, pointer, layout);
             if (!PtInRect(&magnified, pointer))
                 continue;
             const long long distance =
@@ -1568,7 +1532,7 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
     {
         if (IsRectEmpty(&nextFocus))
         {
-            const RECT previousVisual = MagnifyElementRect(*previous, *previous, pointer);
+            const RECT previousVisual = MagnifyElementRect(*previous, *previous, pointer, layout);
             const RECT retention =
                 snowdesktop::dock_magnification::
                     ExpandFocusRetentionBounds(
@@ -1576,7 +1540,7 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
             if (PtInRect(&retention, pointer))
                 nextFocus = *previous;
         }
-        else if (GetMagnificationZone(*previous) == GetMagnificationZone(nextFocus) &&
+        else if (layout.ZoneOf(*previous) == layout.ZoneOf(nextFocus) &&
             (!hasOverflow || (EqualRect(&*previous, &windowsButton) != FALSE) ==
                 (EqualRect(&nextFocus, &windowsButton) != FALSE)))
         {
@@ -1633,22 +1597,22 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
 }
 
 snowdesktop::dock_magnification::SingleFocusGeometry
-DockContainer::GetSingleMagnificationGeometry(const RECT& baseRect) const
+DockContainer::GetSingleMagnificationGeometry(
+    const RECT& baseRect, const MagnificationLayout& layout) const
 {
     const RECT visualOwner = singleMagnification_.CurrentRect();
     if (IsRectEmpty(&visualOwner) || GetMaximumMagnificationScale() <= 1.0f) return {};
-    std::vector<RECT> candidates;
-    if (UsesEdgeAnchoredMagnification())
+    std::span<const RECT> zoneRects = layout.candidates;
+    if (layout.edgeAnchored)
     {
-        const auto zone = GetMagnificationZone(baseRect);
-        if (zone == MagnificationZone::None || zone != GetMagnificationZone(visualOwner)) return {};
-        candidates = zone == MagnificationZone::Leading
-            ? GetLeadingMagnificationRects() : GetTrailingMagnificationRects();
+        const auto zone = layout.ZoneOf(baseRect);
+        if (zone == MagnificationZone::None || zone != layout.ZoneOf(visualOwner)) return {};
+        zoneRects = layout.ForZone(zone);
     }
-    else candidates = GetElementBaseRects();
-    if (GetMaxScrollOffset(GetBounds()) > 0)
+    std::vector<RECT> candidates(zoneRects.begin(), zoneRects.end());
+    if (layout.maxScrollOffset > 0)
     {
-        const RECT start = GetWindowsButtonRect();
+        const RECT start = layout.windowsButton;
         const bool startOwner = EqualRect(&visualOwner, &start) != FALSE;
         if ((EqualRect(&baseRect, &start) != FALSE) != startOwner) return {};
         std::erase_if(candidates, [&](const RECT& candidate) {
@@ -1660,140 +1624,69 @@ DockContainer::GetSingleMagnificationGeometry(const RECT& baseRect) const
         ItemIconSize(), singleMagnification_.Scale());
 }
 
-float DockContainer::GetMagnificationScale(
-    const RECT& baseRect, const RECT& focusRect,
-    POINT pointer) const
-{
-    if (!app_)
-        return 1.0f;
-    if (MonitorLayout().hoverEffect == 1)
-        return GetSingleMagnificationGeometry(baseRect).ScaleFor(baseRect, ItemIconSize());
-    if (IsRectEmpty(&focusRect))
-        return 1.0f;
-    int pointerAxis = IsVertical() ? pointer.y : pointer.x;
-    if (GetMaxScrollOffset(GetBounds()) > 0)
-    {
-        const RECT start = GetWindowsButtonRect();
-        if ((EqualRect(&baseRect, &start) != FALSE) !=
-            (EqualRect(&focusRect, &start) != FALSE)) return 1.0f;
-    }
-    if (UsesEdgeAnchoredMagnification())
-    {
-        const MagnificationZone baseZone =
-            GetMagnificationZone(baseRect);
-        const MagnificationZone focusZone =
-            GetMagnificationZone(focusRect);
-        if (baseZone == MagnificationZone::None ||
-            baseZone != focusZone)
-            return 1.0f;
-        // Keep the fixed file lane expanded while the pointer crosses its
-        // painted leading edge, rather than exposing applications beneath it.
-        if (baseZone == MagnificationZone::Trailing &&
-            GetMaxScrollOffset(GetBounds()) > 0)
-            pointerAxis = ClampPointerAxisToCenters(
-                pointerAxis, GetTrailingMagnificationRects(), IsVertical());
-    }
-    const int baseCenter = IsVertical()
-        ? (baseRect.top + baseRect.bottom) / 2
-        : (baseRect.left + baseRect.right) / 2;
-    return snowdesktop::dock_magnification::ScaleForEffect(
-        MonitorLayout().hoverEffect,
-        EqualRect(&baseRect, &focusRect) != FALSE,
-        static_cast<float>(
-            baseCenter - pointerAxis),
-        ItemPitch(), GetCurrentMagnificationScale());
-}
-
-int DockContainer::GetMagnificationAxisShift(
-    const RECT& baseRect, const RECT& focusRect,
-    POINT pointer) const
-{
-    if (!app_) return 0;
-    if (MonitorLayout().hoverEffect == 1)
-        return GetSingleMagnificationGeometry(baseRect).AxisShiftFor(baseRect);
-    if (IsRectEmpty(&focusRect) ||
-        GetCurrentMagnificationScale() <= 1.0f)
-        return 0;
-    if (UsesEdgeAnchoredMagnification())
-    {
-        const MagnificationZone baseZone =
-            GetMagnificationZone(baseRect);
-        const MagnificationZone focusZone =
-            GetMagnificationZone(focusRect);
-        if (baseZone == MagnificationZone::None ||
-            baseZone != focusZone)
-            return 0;
-
-        std::vector<RECT> zoneRects =
-            baseZone == MagnificationZone::Leading
-            ? GetLeadingMagnificationRects()
-            : GetTrailingMagnificationRects();
-        if (GetMaxScrollOffset(GetBounds()) > 0)
-        {
-            const RECT start = GetWindowsButtonRect();
-            const bool startOwner = EqualRect(&focusRect, &start) != FALSE;
-            if ((EqualRect(&baseRect, &start) != FALSE) != startOwner) return 0;
-            std::erase_if(zoneRects, [&](const RECT& candidate) {
-                return (EqualRect(&candidate, &start) != FALSE) != startOwner;
-            });
-        }
-        const auto baseIt = std::find_if(
-            zoneRects.begin(), zoneRects.end(),
-            [&](const RECT& candidate) {
-                return EqualRect(&candidate, &baseRect) != FALSE;
-            });
-        if (baseIt == zoneRects.end())
-            return 0;
-
-        int pointerAxis =
-            IsVertical() ? pointer.y : pointer.x;
-        if (baseZone == MagnificationZone::Trailing &&
-            GetMaxScrollOffset(GetBounds()) > 0)
-            pointerAxis = ClampPointerAxisToCenters(
-                pointerAxis, zoneRects, IsVertical());
-        std::vector<float> scales;
-        scales.reserve(zoneRects.size());
-        for (const RECT& candidate : zoneRects)
-        {
-            const int candidateCenter = IsVertical()
-                ? (candidate.top + candidate.bottom) / 2
-                : (candidate.left + candidate.right) / 2;
-            scales.push_back(
-                snowdesktop::dock_magnification::
-                    ScaleForEffect(
-                        MonitorLayout().hoverEffect,
-                        EqualRect(&candidate, &focusRect) != FALSE,
-                        static_cast<float>(
-                            candidateCenter -
-                            pointerAxis),
-                        ItemPitch(), GetCurrentMagnificationScale()));
-        }
-        return snowdesktop::dock_magnification::PackedAxisShift(
-            scales,
-            static_cast<size_t>(
-                std::distance(zoneRects.begin(), baseIt)),
-            ItemIconSize(),
-            baseZone == MagnificationZone::Leading);
-    }
-    const int baseCenter = IsVertical()
-        ? (baseRect.top + baseRect.bottom) / 2
-        : (baseRect.left + baseRect.right) / 2;
-    const int focusCenter = IsVertical()
-        ? (focusRect.top + focusRect.bottom) / 2
-        : (focusRect.left + focusRect.right) / 2;
-    return snowdesktop::dock_magnification::IslandAxisShift(
-        MonitorLayout().hoverEffect, baseCenter, focusCenter,
-        IsVertical() ? pointer.y : pointer.x, ItemPitch(), ItemIconSize(),
-        GetCurrentMagnificationScale());
-}
-
-RECT DockContainer::MagnifyElementRect(const RECT& baseRect, const RECT& focusRect, POINT pointer) const
+RECT DockContainer::MagnifyElementRect(const RECT& baseRect, const RECT& focusRect,
+    POINT pointer, const MagnificationLayout& layout) const
 {
     if (!app_) return baseRect;
-    return snowdesktop::dock_magnification::MagnifyRect(
-        baseRect, Position(),
-        GetMagnificationScale(baseRect, focusRect, pointer), ItemIconSize(),
-        GetMagnificationAxisShift(baseRect, focusRect, pointer), MonitorLayout().hoverEffect == 1);
+    const auto settings = MonitorLayout();
+    if (settings.hoverEffect == 0) return baseRect;
+    namespace magnification = snowdesktop::dock_magnification;
+    const int iconSize = ItemIconSize();
+    if (settings.hoverEffect == 1)
+    {
+        const auto geometry = GetSingleMagnificationGeometry(baseRect, layout);
+        return magnification::MagnifyRect(baseRect, settings.position,
+            geometry.ScaleFor(baseRect, iconSize), iconSize, geometry.AxisShiftFor(baseRect), true);
+    }
+
+    if (IsRectEmpty(&focusRect)) return baseRect;
+    const float focusScale = GetCurrentMagnificationScale();
+    if (focusScale <= 1.0f) return baseRect;
+    const bool vertical = IsVertical();
+    const int pitch = ItemPitch();
+    const auto center = [vertical](const RECT& rect) {
+        return vertical ? (rect.top + rect.bottom) / 2 : (rect.left + rect.right) / 2;
+    };
+    int pointerAxis = vertical ? pointer.y : pointer.x;
+    const auto scaleFor = [&](const RECT& candidate) {
+        return magnification::ScaleForEffect(settings.hoverEffect, EqualRect(&candidate, &focusRect) != FALSE,
+            static_cast<float>(center(candidate) - pointerAxis), pitch, focusScale);
+    };
+    if (!layout.edgeAnchored)
+    {
+        const int shift = magnification::IslandAxisShift(settings.hoverEffect,
+            center(baseRect), center(focusRect), pointerAxis, pitch, iconSize, focusScale);
+        return magnification::MagnifyRect(baseRect, settings.position, scaleFor(baseRect), iconSize, shift);
+    }
+
+    const auto zone = layout.ZoneOf(baseRect);
+    if (zone == MagnificationZone::None || zone != layout.ZoneOf(focusRect)) return baseRect;
+    const bool hasOverflow = layout.maxScrollOffset > 0;
+    const bool startFocused = EqualRect(&focusRect, &layout.windowsButton) != FALSE;
+    const auto inFocusLane = [&](const RECT& candidate) {
+        return !hasOverflow || (EqualRect(&candidate, &layout.windowsButton) != FALSE) == startFocused;
+    };
+    if (!inFocusLane(baseRect)) return baseRect;
+
+    const auto candidates = layout.ForZone(zone);
+    // Keep the file lane expanded while the pointer crosses its painted edge.
+    if (hasOverflow && zone == MagnificationZone::Trailing)
+        pointerAxis = ClampPointerAxisToCenters(pointerAxis, candidates, vertical);
+
+    std::vector<float> scales;
+    scales.reserve(candidates.size());
+    size_t baseIndex = candidates.size();
+    for (const RECT& candidate : candidates)
+    {
+        if (!inFocusLane(candidate)) continue;
+        if (baseIndex == candidates.size() && EqualRect(&candidate, &baseRect))
+            baseIndex = scales.size();
+        scales.push_back(scaleFor(candidate));
+    }
+    if (baseIndex >= scales.size()) return baseRect;
+    const int shift = magnification::PackedAxisShift(scales, baseIndex, iconSize,
+        zone == MagnificationZone::Leading);
+    return magnification::MagnifyRect(baseRect, settings.position, scales[baseIndex], iconSize, shift);
 }
 
 RECT DockContainer::GetElementVisualRect(
@@ -1802,7 +1695,8 @@ RECT DockContainer::GetElementVisualRect(
     // Hidden controls retain a zero-sized logical insertion boundary. They
     // must not acquire growth, displacement or an invisible drag hit area.
     if (IsRectEmpty(&baseRect)) return baseRect;
-    return MagnifyElementRect(baseRect, ResolveMagnificationFocusRect(pointer), pointer);
+    const auto layout = GetMagnificationLayout();
+    return MagnifyElementRect(baseRect, ResolveMagnificationFocusRect(pointer, layout), pointer, layout);
 }
 
 int DockContainer::GetElementIconSize(const RECT& baseRect, const RECT& visualRect) const
@@ -1829,23 +1723,26 @@ RECT DockContainer::EdgeChromeBounds(RECT bounds) const
 
 RECT DockContainer::GetVisualPanelBounds(POINT pointer) const
 {
-    const RECT content = GetBounds();
-    RECT panel = EdgeChromeBounds(content);
     if (IsMagnificationSuppressed())
-        return panel;
+        return EdgeChromeBounds(GetBounds());
+    const auto layout = GetMagnificationLayout();
+    return GetVisualPanelBounds(pointer, layout, ResolveMagnificationFocusRect(pointer, layout));
+}
 
-    const RECT focus = ResolveMagnificationFocusRect(pointer);
+RECT DockContainer::GetVisualPanelBounds(POINT pointer, const MagnificationLayout& layout, const RECT& focus) const
+{
+    RECT panel = EdgeChromeBounds(layout.bounds);
     if (IsRectEmpty(&focus) && IsRectEmpty(&singleMagnification_.CurrentRect()))
         return panel;
 
-    const bool hasOverflow = GetMaxScrollOffset(content) > 0;
-    const RECT viewport = GetScrollViewport(content);
-    const RECT windowsButton = GetWindowsButtonRect();
-    for (const RECT& candidate : GetElementBaseRects())
+    const bool hasOverflow = layout.maxScrollOffset > 0;
+    const RECT& viewport = layout.viewport;
+    const RECT& windowsButton = layout.windowsButton;
+    for (const RECT& candidate : layout.candidates)
     {
-        RECT visual = MagnifyElementRect(candidate, focus, pointer);
+        RECT visual = MagnifyElementRect(candidate, focus, pointer, layout);
         if (hasOverflow && !EqualRect(&candidate, &windowsButton) &&
-            GetMagnificationZone(candidate) == MagnificationZone::Leading)
+            layout.ZoneOf(candidate) == MagnificationZone::Leading)
         {
             // The panel encloses painted content, not the hidden part of a
             // scrolled cell. Fixed controls can still grow at either end.
@@ -2127,12 +2024,18 @@ void DockContainer::ShowHoveredTitle(POINT pointer, HWND owner, snowdesktop::Nat
 bool DockContainer::IsFocusedElementRect(
     const RECT& baseRect, POINT pointer) const
 {
-    const RECT focus = ResolveMagnificationFocusRect(pointer);
+    const auto layout = GetMagnificationLayout();
+    return IsFocusedElementRect(baseRect, pointer, layout, ResolveMagnificationFocusRect(pointer, layout));
+}
+
+bool DockContainer::IsFocusedElementRect(const RECT& baseRect, POINT pointer,
+    const MagnificationLayout& layout, const RECT& focus) const
+{
     if (IsRectEmpty(&focus))
         return PtInRect(&baseRect, pointer) != FALSE;
     if (EqualRect(&baseRect, &focus) == FALSE)
         return false;
-    const RECT visualRect = GetElementVisualRect(baseRect, pointer);
+    const RECT visualRect = MagnifyElementRect(baseRect, focus, pointer, layout);
     return PtInRect(&visualRect, pointer) != FALSE;
 }
 
@@ -2172,30 +2075,31 @@ std::vector<RECT> DockContainer::GetOcclusionRects(POINT pointer) const
     std::vector<RECT> result;
     if (!app_ || !app_->IsDockContainerInteractionVisible(this))
         return result;
-    const RECT panel = GetVisualPanelBounds(pointer);
+    const auto layout = GetMagnificationLayout();
+    const RECT focus = ResolveMagnificationFocusRect(pointer, layout);
+    const RECT panel = GetVisualPanelBounds(pointer, layout, focus);
     if (IsRectEmpty(&panel))
         return result;
     result.push_back(panel);
-    const RECT focus = ResolveMagnificationFocusRect(pointer);
-    const RECT viewport = GetVisualScrollViewport(pointer);
-    const bool hasOverflow = GetMaxScrollOffset(GetBounds()) > 0;
+    const RECT viewport = GetVisualScrollViewport(pointer, layout, focus);
+    const bool hasOverflow = layout.maxScrollOffset > 0;
     RECT visualViewport = snowdesktop::dock_magnification::
         ExpandPerpendicularBounds(viewport, Position(),
             ItemIconSize(), GetMaximumMagnificationScale(), MonitorLayout().hoverEffect == 1);
     if (const int launchPadding = GetLaunchAnimationPadding(); launchPadding > 0)
         visualViewport = snowdesktop::dock_magnification::ExpandPerpendicularBounds(
             visualViewport, Position(), launchPadding, 2.0f);
-    const RECT windowsButton = GetWindowsButtonRect();
+    const RECT windowsButton = layout.windowsButton;
     const RECT search = GetSearchRect();
-    for (const RECT& base : GetElementBaseRects())
+    for (const RECT& base : layout.candidates)
     {
         const bool control = EqualRect(&base, &windowsButton) ||
             EqualRect(&base, &search);
-        const bool fixed = control || GetMagnificationZone(base) == MagnificationZone::Trailing;
+        const bool fixed = control || layout.ZoneOf(base) == MagnificationZone::Trailing;
         RECT intersection{};
         if (!fixed && !IntersectRect(&intersection, &base, &viewport))
             continue;
-        const RECT visual = MagnifyElementRect(base, focus, pointer);
+        const RECT visual = MagnifyElementRect(base, focus, pointer, layout);
         const int iconSize = GetElementIconSize(base, visual);
         RECT icon{
             visual.left + (visual.right - visual.left - iconSize) / 2,
@@ -2257,16 +2161,25 @@ std::vector<RECT> DockContainer::GetOcclusionRects(POINT pointer) const
 
 RECT DockContainer::GetVisualScrollViewport(POINT pointer) const
 {
-    RECT viewport = GetScrollViewport(GetBounds());
-    if (GetMaxScrollOffset(GetBounds()) <= 0)
+    const auto layout = GetMagnificationLayout();
+    if (layout.maxScrollOffset <= 0)
+        return layout.viewport;
+    return GetVisualScrollViewport(pointer, layout, ResolveMagnificationFocusRect(pointer, layout));
+}
+
+RECT DockContainer::GetVisualScrollViewport(
+    POINT pointer, const MagnificationLayout& layout, const RECT& focus) const
+{
+    RECT viewport = layout.viewport;
+    if (layout.maxScrollOffset <= 0)
         return viewport;
-    const RECT windowsButton = GetWindowsButtonRect();
-    const RECT leadingVisual = IsRectEmpty(&windowsButton)
-        ? RECT{} : GetElementVisualRect(windowsButton, pointer);
-    const RECT trailingFixed = FirstVisibleFileSlot();
+    const RECT leadingVisual = IsRectEmpty(&layout.windowsButton)
+        ? RECT{} : MagnifyElementRect(layout.windowsButton, focus, pointer, layout);
+    const auto trailing = layout.ForZone(MagnificationZone::Trailing);
+    const RECT trailingVisual = trailing.empty() || IsRectEmpty(&trailing.front())
+        ? RECT{} : MagnifyElementRect(trailing.front(), focus, pointer, layout);
     viewport = snowdesktop::dock_magnification::FitOverflowViewportToFixedVisuals(
-        viewport, Position(), leadingVisual,
-        GetElementVisualRect(trailingFixed, pointer), ScaledSeparatorGap());
+        viewport, Position(), leadingVisual, trailingVisual, ScaledSeparatorGap());
 
     // Begin the fade at the Start separator, rather than after the entire
     // separator gap. Its fixed boundary must not follow an off-screen item.
@@ -2428,7 +2341,11 @@ RECT DockContainer::GetMinimizedThumbnailAnchor(HWND window, POINT pointer, bool
 
 bool DockContainer::IsPointInScrollViewport(POINT point) const
 {
-    RECT viewport = GetVisualScrollViewport(point);
+    return IsPointInScrollViewport(point, GetVisualScrollViewport(point));
+}
+
+bool DockContainer::IsPointInScrollViewport(POINT point, RECT viewport) const
+{
     if (!IsMagnificationSuppressed())
     {
         viewport = snowdesktop::dock_magnification::
@@ -2441,11 +2358,14 @@ bool DockContainer::IsPointInScrollViewport(POINT point) const
 
 bool DockContainer::ScrollByWheelDelta(POINT pointer, int wheelDelta)
 {
-    const RECT bounds = GetBounds();
-    if (!IsPointInScrollViewport(pointer))
+    const auto layout = GetMagnificationLayout();
+    const int maxOffset = layout.maxScrollOffset;
+    const RECT viewport = maxOffset > 0
+        ? GetVisualScrollViewport(pointer, layout, ResolveMagnificationFocusRect(pointer, layout))
+        : layout.viewport;
+    if (!IsPointInScrollViewport(pointer, viewport))
         return false;
 
-    const int maxOffset = GetMaxScrollOffset(bounds);
     if (maxOffset <= 0)
     {
         if (scrollOffset_ != 0)
@@ -3305,17 +3225,18 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     }
     const auto monitor = GetMonitor();
     const bool lt = app_->CurrentDockAppearance(monitor).contentTheme == 1;
-    const RECT magnificationFocus =
-        ResolveMagnificationFocusRect(app_->lastMousePoint_);
+    const auto layout = GetMagnificationLayout();
+    const POINT pointer = app_->lastMousePoint_;
+    const RECT magnificationFocus = ResolveMagnificationFocusRect(pointer, layout);
     auto isFocused = [&](const RECT& rect) {
         return !IsRectEmpty(&magnificationFocus) &&
             EqualRect(&rect, &magnificationFocus) != FALSE;
     };
     auto visualRectFor = [&](const RECT& rect) {
-        return MagnifyElementRect(rect, magnificationFocus, app_->lastMousePoint_);
+        return MagnifyElementRect(rect, magnificationFocus, pointer, layout);
     };
 
-    const RECT windowsButton = GetWindowsButtonRect();
+    const RECT windowsButton = layout.windowsButton;
     if (!IsRectEmpty(&windowsButton))
     {
         const RECT windowsVisual = visualRectFor(windowsButton);
@@ -3371,12 +3292,12 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     }
 
     const RECT search = GetSearchRect();
-    const int maxScrollOffset = GetMaxScrollOffset(GetBounds());
+    const int maxScrollOffset = layout.maxScrollOffset;
     const bool hasOverflow = maxScrollOffset > 0;
     // Keep the image in the Dock surface when its scroll opacity mask applies.
     if (auto* host = app_->renderingPersistentDockHost_; host && host->container == this)
         host->drawLiveThumbnails = !hasOverflow;
-    const RECT scrollViewport = GetVisualScrollViewport(app_->lastMousePoint_);
+    const RECT scrollViewport = GetVisualScrollViewport(pointer, layout, magnificationFocus);
     RECT scrollVisualViewport = snowdesktop::dock_magnification::
         ExpandPerpendicularBounds(scrollViewport, Position(),
             ItemIconSize(), GetMaximumMagnificationScale(), MonitorLayout().hoverEffect == 1);
@@ -3994,7 +3915,13 @@ RECT DockContainer::GetWindowsButtonRect() const
 {
     if (!app_ || !ShowDockWindowsButton(app_->dockSettings_))
         return RECT{};
-    const RECT bounds = GetBounds();
+    return GetWindowsButtonRect(GetBounds());
+}
+
+RECT DockContainer::GetWindowsButtonRect(const RECT& bounds) const
+{
+    if (!app_ || !ShowDockWindowsButton(app_->dockSettings_))
+        return RECT{};
     const int halfGap = ScaledSpacing() / 2;
     const int slotLength = ItemPitch();
     if (IsVertical())
@@ -4020,12 +3947,14 @@ DockEntryItem* DockContainer::EntryAtPoint(POINT pt) const
 {
     const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
     const size_t fixedCount = SortableEntryCount();
-    if (IsPointInScrollViewport(pt))
+    const auto layout = GetMagnificationLayout();
+    const RECT focus = ResolveMagnificationFocusRect(pt, layout);
+    if (IsPointInScrollViewport(pt, GetVisualScrollViewport(pt, layout, focus)))
     {
         for (size_t i = 0; i < fixedCount && i < slots.size(); ++i)
         {
             RECT bounds = slots[i]->GetBounds();
-            if (IsFocusedElementRect(bounds, pt))
+            if (IsFocusedElementRect(bounds, pt, layout, focus))
                 return dynamic_cast<DockEntryItem*>(slots[i]->GetItem());
         }
     }
@@ -4035,7 +3964,7 @@ DockEntryItem* DockContainer::EntryAtPoint(POINT pt) const
              i < end && i < slots.size(); ++i)
         {
             RECT bounds = slots[i]->GetBounds();
-            if (IsFocusedElementRect(bounds, pt))
+            if (IsFocusedElementRect(bounds, pt, layout, focus))
                 return dynamic_cast<DockEntryItem*>(slots[i]->GetItem());
         }
     }
@@ -4044,28 +3973,30 @@ DockEntryItem* DockContainer::EntryAtPoint(POINT pt) const
 
 DockRunningItem* DockContainer::RunningItemAtPoint(POINT pt) const
 {
-    if (!IsPointInScrollViewport(pt)) return nullptr;
-    const_cast<DockContainer*>(this)->GetSlots();
+    const auto layout = GetMagnificationLayout();
+    const RECT focus = ResolveMagnificationFocusRect(pt, layout);
+    if (!IsPointInScrollViewport(pt, GetVisualScrollViewport(pt, layout, focus))) return nullptr;
     for (const auto& item : runningItems_)
     {
         if (!item) continue;
         if (!app_ || item->GetRunningIndex() >= app_->dockUnpinnedRunningApps_.size() ||
             !app_->dockUnpinnedRunningApps_[item->GetRunningIndex()].presence.Interactive()) continue;
         RECT bounds = item->GetBounds();
-        if (IsFocusedElementRect(bounds, pt)) return item.get();
+        if (IsFocusedElementRect(bounds, pt, layout, focus)) return item.get();
     }
     return nullptr;
 }
 
 DockFrequentItem* DockContainer::FrequentItemAtPoint(POINT pt) const
 {
-    if (!IsPointInScrollViewport(pt)) return nullptr;
-    const_cast<DockContainer*>(this)->GetSlots();
+    const auto layout = GetMagnificationLayout();
+    const RECT focus = ResolveMagnificationFocusRect(pt, layout);
+    if (!IsPointInScrollViewport(pt, GetVisualScrollViewport(pt, layout, focus))) return nullptr;
     for (const auto& item : frequentItems_)
     {
         if (!item) continue;
         RECT bounds = item->GetBounds();
-        if (IsFocusedElementRect(bounds, pt)) return item.get();
+        if (IsFocusedElementRect(bounds, pt, layout, focus)) return item.get();
     }
     return nullptr;
 }

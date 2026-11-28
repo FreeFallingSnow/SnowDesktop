@@ -230,8 +230,9 @@ private:
         Trailing,
     };
 
+    struct MagnificationLayout;
+
     bool IsMagnificationSuppressed() const;
-    bool UsesEdgeAnchoredMagnification() const;
     bool UsesSpreadEdge() const;
     float WindowTitleSlotUnits(size_t count) const;
     RECT WindowTitleSegment(RECT visual, size_t count, size_t index) const;
@@ -273,21 +274,14 @@ private:
     float EntryRemovalUnits(bool folder) const;
     void DrawEntryRemovals(ID2D1DeviceContext* context, bool fixedFolders) const;
     int EdgeMargin() const;
-    std::vector<RECT> GetLeadingMagnificationRects() const;
-    std::vector<RECT> GetTrailingMagnificationRects() const;
-    MagnificationZone GetMagnificationZone(
-        const RECT& baseRect) const;
-    std::vector<RECT> GetElementBaseRects() const;
-    RECT ResolveMagnificationFocusRect(POINT pointer) const;
-    snowdesktop::dock_magnification::SingleFocusGeometry
-        GetSingleMagnificationGeometry(const RECT& baseRect) const;
-    float GetMagnificationScale(
-        const RECT& baseRect, const RECT& focusRect,
-        POINT pointer) const;
-    int GetMagnificationAxisShift(
-        const RECT& baseRect, const RECT& focusRect,
-        POINT pointer) const;
-    RECT MagnifyElementRect(const RECT& baseRect, const RECT& focusRect, POINT pointer) const;
+    MagnificationLayout GetMagnificationLayout() const;
+    RECT GetWindowsButtonRect(const RECT& bounds) const;
+    RECT ResolveMagnificationFocusRect(POINT pointer, const MagnificationLayout& layout) const;
+    snowdesktop::dock_magnification::SingleFocusGeometry GetSingleMagnificationGeometry(
+        const RECT& baseRect, const MagnificationLayout& layout) const;
+    RECT MagnifyElementRect(const RECT& baseRect, const RECT& focusRect,
+        POINT pointer, const MagnificationLayout& layout) const;
+    RECT GetVisualPanelBounds(POINT pointer, const MagnificationLayout& layout, const RECT& focus) const;
     RECT GetHoveredTitleBounds(POINT pointer) const;
     float TitleTooltipScale() const;
     RECT CalculateTitleTooltipBounds(
@@ -300,13 +294,17 @@ private:
         int tooltipWidth,
         int tooltipHeight) const;
     bool IsFocusedElementRect(const RECT& baseRect, POINT pointer) const;
+    bool IsFocusedElementRect(const RECT& baseRect, POINT pointer,
+        const MagnificationLayout& layout, const RECT& focus) const;
     RECT GetScrollViewport(const RECT& bounds) const;
     RECT GetScrollViewport(const RECT& bounds, float runningUnits) const;
     RECT GetVisualScrollViewport(POINT pointer) const;
+    RECT GetVisualScrollViewport(POINT pointer, const MagnificationLayout& layout, const RECT& focus) const;
     // Grouped files and utility controls keep their trailing layout.
     int GetMaxScrollOffset(const RECT& bounds) const;
     int GetMaxScrollOffset(const RECT& bounds, float runningUnits) const;
     bool IsPointInScrollViewport(POINT point) const;
+    bool IsPointInScrollViewport(POINT point, RECT viewport) const;
     size_t InsertIndexFor(Slot* slot, HitRegion region) const;
     HitRegion RedirectDragToNearestInsertion(
         POINT point, Slot*& outSlot);
