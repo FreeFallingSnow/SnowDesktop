@@ -2254,9 +2254,31 @@ RECT DockContainer::GetHoveredTitleBounds(POINT pointer) const
             return RECT{};
     }
 
-    const RECT visualBounds = titleGroup.Visible()
-        ? WindowTitlePreviewAnchor(baseBounds, titleGroup)
-        : GetElementVisualRect(baseBounds, pointer);
+    RECT visualBounds{};
+    if (titleGroup.Visible())
+    {
+        // Use the pointer sample and geometry used to paint the whole capsule.
+        const POINT paintedPointer = app_->lastMousePoint_;
+        const auto layout = GetMagnificationLayout();
+        const RECT focus = ResolveMagnificationFocusRect(paintedPointer, layout);
+        const RECT painted = MagnifyElementRect(baseBounds, focus, paintedPointer, layout);
+        visualBounds = LayoutWindowTitleGroup(baseBounds, painted, titleGroup).plate;
+        if (layout.maxScrollOffset > 0)
+        {
+            const RECT viewport = GetVisualScrollViewport(paintedPointer, layout, focus);
+            if (IsVertical())
+            {
+                visualBounds.top = std::max(visualBounds.top, viewport.top);
+                visualBounds.bottom = std::min(visualBounds.bottom, viewport.bottom);
+            }
+            else
+            {
+                visualBounds.left = std::max(visualBounds.left, viewport.left);
+                visualBounds.right = std::min(visualBounds.right, viewport.right);
+            }
+        }
+    }
+    else visualBounds = GetElementVisualRect(baseBounds, pointer);
     if (IsRectEmpty(&visualBounds)) return {};
 
     const int position = static_cast<int>(
