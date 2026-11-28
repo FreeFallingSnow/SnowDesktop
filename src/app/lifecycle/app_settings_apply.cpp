@@ -1286,7 +1286,9 @@ public:
         if (dockCommitted)
         {
             const bool dockOrderChanged = app_.dockSettings_.freeItemOrder != requestedDockSettings.freeItemOrder;
-            const bool windowTitlesChanged = requestedDockSettings.showWindowTitles != app_.dockSettings_.showWindowTitles;
+            const bool windowTitlesChanged = requestedDockSettings.showWindowTitles != app_.dockSettings_.showWindowTitles ||
+                (requestedDockSettings.showWindowTitles &&
+                 requestedDockSettings.windowTitlesOnlyMultiple != app_.dockSettings_.windowTitlesOnlyMultiple);
             if (windowTitlesChanged || (requestedDockSettings.showWindowTitles && app_.dockTaskWindowTitles_.empty()))
                 app_.dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
             RefreshDockMinimizedWindowMode(requestedDockSettings.minimizeWindowsIntoApplicationIcon);

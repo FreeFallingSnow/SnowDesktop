@@ -442,7 +442,7 @@ void DesktopApp::InitializeDockWindowTransition()
                             if (!matches) continue;
                             const RECT base = item->GetBounds();
                             RECT candidate = dock->WindowTitleIconRect(
-                                dock->GetElementVisualRect(base, lastMousePoint_), titleWindows);
+                                base, dock->GetElementVisualRect(base, lastMousePoint_), titleWindows);
                             RECT intersection{};
                             const RECT viewport = dock->GetInteractiveBounds();
                             if (!IntersectRect(&intersection, &candidate, &viewport)) continue;

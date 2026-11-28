@@ -182,7 +182,7 @@ public:
     std::span<const HWND> RunningTitleWindows(size_t index) const;
     RECT DrawWindowTitleGroup(ID2D1DeviceContext* context, RECT base, RECT visual,
         std::span<const HWND> windows, float opacity = 1.f) const;
-    RECT WindowTitleIconRect(RECT visual, std::span<const HWND> windows) const;
+    RECT WindowTitleIconRect(RECT base, RECT visual, std::span<const HWND> windows) const;
     HWND WindowTitleAtPoint(POINT point, RECT* titleRect = nullptr) const;
     // Stable layout relationship, including while the bar is fullscreen-hidden.
     bool IsMergedWithStatusBar() const;
@@ -236,9 +236,9 @@ private:
     bool UsesSpreadEdge() const;
     struct WindowTitleLayout;
     WindowTitleLayout* MeasureWindowTitle(HWND window, int icon) const;
-    float WindowTitleExtent(HWND window, int icon, int spacing, bool vertical) const;
+    float WindowTitleExtent(HWND window, int icon, int spacing, bool vertical, bool first) const;
     float WindowTitleSlotUnits(std::span<const HWND> windows) const;
-    std::vector<RECT> WindowTitleSegments(RECT visual, std::span<const HWND> windows) const;
+    std::vector<RECT> WindowTitleSegments(RECT visual, RECT iconCell, std::span<const HWND> windows) const;
     RECT EdgeChromeBounds(RECT bounds) const;
     float GetMaximumMagnificationScale() const;
     float GetCurrentMagnificationScale() const;
@@ -346,8 +346,7 @@ private:
         std::wstring title;
         std::uint64_t fontRevision = 0;
         float fontSize = 0, fullWidth = 0;
-        Microsoft::WRL::ComPtr<IDWriteTextFormat> format;
-        Microsoft::WRL::ComPtr<IDWriteTextLayout> trimmed, full;
+        Microsoft::WRL::ComPtr<IDWriteTextLayout> full;
     };
     mutable std::unordered_map<HWND, WindowTitleLayout> windowTitleLayouts_;
     // Magnification is a continuous pointer-distance field, but the semantic

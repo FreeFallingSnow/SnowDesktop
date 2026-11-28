@@ -4,9 +4,20 @@
 #include "ui/render/icon_backdrop_clip.h"
 
 #include <d2d1helper.h>
+#include <algorithm>
 
 namespace snowdesktop
 {
+
+inline D2D1_POINT_2F IconOutlinePoint(const icon_beautify::ShapePoint& point,
+    float width, float height, bool preserveCorners) noexcept
+{
+    if (!preserveCorners) return D2D1::Point2F(point.x * width, point.y * height);
+    const float side = (std::min)(width, height);
+    return D2D1::Point2F(
+        point.x <= .5f ? point.x * side : width - (1.f - point.x) * side,
+        point.y <= .5f ? point.y * side : height - (1.f - point.y) * side);
+}
 
 // Keep the original icon silhouette and position. Cropping its frame before
 // constructing the silhouette would squash a partly visible circle or shield.
@@ -28,8 +39,8 @@ inline HRESULT CreateIconBackdropGeometry(ID2D1Factory* fallbackFactory,
     if (FAILED(hr)) return hr;
     const auto& outline = icon_beautify::ShapeOutline(shape);
     const auto point = [&](const auto& p) {
-        return D2D1::Point2F(p.x * static_cast<float>(frame.right - frame.left),
-            p.y * static_cast<float>(frame.bottom - frame.top));
+        return IconOutlinePoint(p, static_cast<float>(frame.right - frame.left),
+            static_cast<float>(frame.bottom - frame.top), clip && clip->preserveCorners);
     };
     sink->BeginFigure(point(outline.front()), D2D1_FIGURE_BEGIN_FILLED);
     for (std::size_t i = 1; i < outline.size(); ++i) sink->AddLine(point(outline[i]));

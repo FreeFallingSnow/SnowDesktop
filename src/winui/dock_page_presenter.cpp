@@ -480,8 +480,9 @@ struct DockPagePresenter::Impl
     std::unique_ptr<BarMonitorOverridesEditor<DockMonitorOverride, DockMonitorLayout>> monitorOverrides;
     muxc::ComboBox edgeAlignment{nullptr};
     muxc::ToggleSwitch windowTitles{nullptr};
-    SettingRow edgeAlignmentRow, windowTitlesRow;
-    winrt::event_token edgeAlignmentToken{}, windowTitlesToken{};
+    muxc::ComboBox windowTitleScope{nullptr};
+    SettingRow edgeAlignmentRow, windowTitlesRow, windowTitleScopeRow;
+    winrt::event_token edgeAlignmentToken{}, windowTitlesToken{}, windowTitleScopeToken{};
     SettingRow positionRow;
     SettingRow layoutRow;
     SettingRow monitorScopeRow;
@@ -928,6 +929,17 @@ struct DockPagePresenter::Impl
         windowTitlesToken = windowTitles.Toggled([this](const auto&, const auto&) {
             const bool value = windowTitles.IsOn();
             EmitDock(SettingsUpdateMode::PreviewAndCommit, [value](DockSettings& settings) { settings.showWindowTitles = value; });
+        });
+        windowTitleScope = NewCombo();
+        windowTitleScopeRow.Initialize(windowTitleScope);
+        windowTitleScopeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        itemsCard.content.Children().Append(windowTitleScopeRow.root);
+        windowTitleScopeToken = windowTitleScope.SelectionChanged([this](const auto&, const auto&) {
+            const int index = windowTitleScope.SelectedIndex();
+            if (index >= 0)
+                EmitDock(SettingsUpdateMode::PreviewAndCommit, [index](DockSettings& settings) {
+                    settings.windowTitlesOnlyMultiple = index == 0;
+                });
         });
         itemsCard.content.Children().Append(minimizeWindowsIntoApplicationIconRow.root);
         itemsCard.content.Children().Append(singleClickLaunchItemsRow.root);
@@ -2118,6 +2130,7 @@ struct DockPagePresenter::Impl
         layoutCombo.SelectedIndex(settings.edgeAttached ? 1 : 0);
         edgeAlignment.SelectedIndex(settings.edgeCentered ? 1 : 0);
         windowTitles.IsOn(settings.showWindowTitles);
+        windowTitleScope.SelectedIndex(settings.windowTitlesOnlyMultiple ? 0 : 1);
         monitorOverrides->Update(settings.lastMonitorOverride, settings.otherMonitorOverride, settings.MonitorLayout(BarMonitorRole::First),
             settings.MonitorLayout(BarMonitorRole::Last), settings.MonitorLayout(BarMonitorRole::Other));
         monitorScopeCombo.PlaceholderText(L("app.settings.custom", L"Custom"));
@@ -2979,8 +2992,14 @@ struct DockPagePresenter::Impl
         edgeAlignment.Items().Append(winrt::box_value(L("settings.dock.edgeCenter", L"Centered")));
         edgeAlignment.SelectedIndex(std::max(0, selectedAlignment));
         muxa::AutomationProperties::SetName(edgeAlignment, edgeAlignmentRow.label.Text());
-        windowTitlesRow.SetText(L("settings.dock.showWindowTitles", L"Show window titles in Dock"));
+        windowTitlesRow.SetText(L("settings.dock.showWindowTitles", L"Show window titles"));
         muxa::AutomationProperties::SetName(windowTitles, windowTitlesRow.label.Text());
+        windowTitleScopeRow.SetText(L("settings.dock.windowTitles.scope", L"Window title scope"));
+        muxa::AutomationProperties::SetName(windowTitleScope, windowTitleScopeRow.label.Text());
+        ReplaceComboItems(windowTitleScope, {
+            {"settings.dock.windowTitles.multiple", L"Multiple windows only"},
+            {"settings.dock.windowTitles.all", L"All"},
+        });
         monitorOverrides->Refresh();
         muxa::AutomationProperties::SetName(
             layoutCombo, layoutRow.label.Text());
@@ -3421,6 +3440,7 @@ struct DockPagePresenter::Impl
             return dockTarget(edgeRevealGesture);
         }
         if (id == "dock.showWindowTitles") return dockTarget(windowTitles);
+        if (id == "dock.windowTitlesOnlyMultiple") return dockTarget(windowTitleScope);
         if (id == "dock.edgeCentered") return dockTarget(layoutCombo.SelectedIndex() == 1
             ? edgeAlignment.as<mux::FrameworkElement>()
             : prerequisiteTarget(layoutCombo, "choice", layoutRow.label.Text().c_str()));
@@ -3616,6 +3636,7 @@ struct DockPagePresenter::Impl
             layoutCombo.SelectionChanged(layoutToken);
             edgeAlignment.SelectionChanged(edgeAlignmentToken);
             windowTitles.Toggled(windowTitlesToken);
+            windowTitleScope.SelectionChanged(windowTitleScopeToken);
             monitorScopeCombo.SelectionChanged(monitorScopeToken);
             floatingShortcutToggle.Toggled(floatingShortcutToken);
             floatingEdgeSwipeToggle.Toggled(floatingEdgeSwipeToken);

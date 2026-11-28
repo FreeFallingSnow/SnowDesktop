@@ -1502,6 +1502,8 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     readBaseBool("edgeAttached", settings.edgeAttached);
     readBaseBool("edgeCentered", settings.edgeCentered);
     readBaseBool("showWindowTitles", settings.showWindowTitles);
+    if (!readBaseBool("windowTitlesOnlyMultiple", settings.windowTitlesOnlyMultiple))
+        settings.windowTitlesOnlyMultiple = !settings.showWindowTitles; // Preserve the earlier behavior of enabled titles.
     settings.monitorVisibility = kDefaultBarMonitorVisibility;
     if (readBaseNumber("monitorVisibility", value) && value >= 0 &&
         value <= kAllBarMonitorRoles && std::floor(value) == value)
@@ -1734,6 +1736,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << (settings.edgeAttached ? "true" : "false") << ",\n";
     file << "  \"edgeCentered\": " << (settings.edgeCentered ? "true" : "false") << ",\n";
     file << "  \"showWindowTitles\": " << (settings.showWindowTitles ? "true" : "false") << ",\n";
+    file << "  \"windowTitlesOnlyMultiple\": " << (settings.windowTitlesOnlyMultiple ? "true" : "false") << ",\n";
     file << "  \"lastMonitorOverride\": ";
     snowdesktop::WriteBarMonitorOverride(file, settings.lastMonitorOverride);
     file << ",\n  \"otherMonitorOverride\": ";

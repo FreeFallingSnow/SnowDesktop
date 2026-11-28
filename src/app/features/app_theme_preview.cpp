@@ -14,6 +14,7 @@
 #include "demo/artifact_io.h"
 #include "ui/preview/video_writer.h"
 #include "widget/preview/widget_preview_scene.h"
+#include <algorithm>
 #include <unordered_map>
 #include <set>
 #include <cstring>
@@ -170,11 +171,16 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
             for (int row = 0; row < 3; ++row)
             {
                 const LONG y = top + row * 144;
-                const char* label = windowTitles && row == 2 ? "app.settings.icon_beautify" : labels[row];
-                DrawD2DTextEllipsis(context.Get(), _LW(label), {left + 8, y, left + width, y + 28},
+                std::wstring label = _LW(labels[row]);
+                if (windowTitles && row == 1)
+                    label += L" · " + std::wstring(_LW("settings.dock.windowTitles.multiple"));
+                if (windowTitles && row == 2)
+                    label = std::wstring(_LW("app.settings.icon_beautify")) + L" · " + _LW("settings.animation.option.wave");
+                DrawD2DTextEllipsis(context.Get(), label, {left + 8, y, left + width, y + 28},
                     labelFormat.Get(), light ? D2D1::ColorF(0x17202a) : D2D1::ColorF(0xf0f3f7));
                 dockSettings_.edgeAttached = windowTitles ? row == 1 : row != 0;
                 dockSettings_.edgeCentered = windowTitles && row == 1;
+                dockSettings_.windowTitlesOnlyMultiple = windowTitles && row == 1;
                 iconBeautifySettings_.enabled = windowTitles && row == 2;
                 iconBeautifySettings_.outlineEnabled = iconBeautifySettings_.enabled;
                 RECT area{left, y + 40, left + width, y + 132};
@@ -191,9 +197,24 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
                 else
                 {
                     DockContainer dock(this, &dockEntries_, area);
+                    if (windowTitles && row == 2)
+                    {
+                        const auto targets = dock.KeyboardTargets();
+                        const auto firstIcon = std::ranges::find_if(targets, [](const auto& target) {
+                            return target.kind == DockContainer::KeyboardTarget::Kind::Entry && target.index == 0;
+                        });
+                        if (firstIcon != targets.end())
+                        {
+                            const RECT cell = firstIcon->bounds;
+                            lastMousePoint_ = {(cell.left + cell.right) / 2, (cell.top + cell.bottom) / 2};
+                            dock.GetVisualPanelBounds(lastMousePoint_);
+                            dock.AdvanceMagnificationAnimation(UiAnimationScheduler::MonotonicMilliseconds() + 1000.0);
+                        }
+                    }
                     const auto frame = dock.GetVisualPanelBounds(lastMousePoint_);
                     material(frame, appearance, dockSettings_.edgeAttached ? 0.f : appearance.cornerRadius);
                     dock.DrawChrome(context.Get(), lastMousePoint_); dock.DrawContents(context.Get());
+                    lastMousePoint_ = {LONG_MIN, LONG_MIN};
                 }
             }
         }

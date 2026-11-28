@@ -59,7 +59,7 @@ SD_IPC_FIELDS(DockSettings,
     v.followComponentAppearance, v.customAppearance, v.appearancePreset, v.classicTaskbarSystemTheme, v.trayApplications,
     v.followComponentCornerRadius, v.cornerRadius, v.attentionDotSizeScale, v.attentionDotOffset,
     v.blurReservedSpace, v.maximizedWindow, v.appWindow,
-    v.edgeCentered, v.showWindowTitles, v.lastMonitorOverride, v.otherMonitorOverride);
+    v.edgeCentered, v.showWindowTitles, v.windowTitlesOnlyMultiple, v.lastMonitorOverride, v.otherMonitorOverride);
 SD_IPC_FIELDS(NavigationSettings,
     v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode, v.lastCollapsed, v.layout, v.prefixes, v.defaultEngine, v.engines, v.colors,
     v.mappingViewMode, v.widgetSortByInitial, v.appSuggestionsEnabled, v.favoritesEnabled, v.favorites);

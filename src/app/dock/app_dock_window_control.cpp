@@ -384,7 +384,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
     {
         // Keep app previews anchored to the slot in single-icon mode.
         const RECT visual = dock->MonitorLayout().hoverEffect == 1 ? anchor : dock->GetElementVisualRect(anchor, clientPoint);
-        anchor = dock->WindowTitleIconRect(visual, titleWindows);
+        anchor = dock->WindowTitleIconRect(anchor, visual, titleWindows);
     }
     target.identityKey = DockWindowPreviewIdentityKey(target.identity);
     if (target.identityKey.empty())

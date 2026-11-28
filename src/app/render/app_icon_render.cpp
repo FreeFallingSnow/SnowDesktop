@@ -7,6 +7,7 @@
 #include "data/data_paths.h"
 #include "diagnostics/performance_trace.h"
 #include "icons/icon_render_rules.h"
+#include "icons/icon_backdrop_geometry.h"
 #include "icons/icon_loading_placeholder.h"
 #include "platform/demo_mode_rules.h"
 #include "platform/demo_collection_rules.h"
@@ -486,11 +487,8 @@ ComPtr<ID2D1PathGeometry> CreateIconPlateGeometry(
     if (outline.empty())
         return {};
     const auto toPoint = [&](const snowdesktop::icon_beautify::ShapePoint& point) {
-        if (!preserveCorners) return D2D1::Point2F(left + point.x * width, top + point.y * height);
-        const float side = std::min(width, height);
-        return D2D1::Point2F(
-            point.x <= .5f ? left + point.x * side : right - (1.f - point.x) * side,
-            point.y <= .5f ? top + point.y * side : bottom - (1.f - point.y) * side);
+        const auto local = snowdesktop::IconOutlinePoint(point, width, height, preserveCorners);
+        return D2D1::Point2F(left + local.x, top + local.y);
     };
     sink->BeginFigure(toPoint(outline.front()), D2D1_FIGURE_BEGIN_FILLED);
     for (size_t index = 1; index < outline.size(); ++index)
@@ -546,6 +544,8 @@ void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
     {
         auto material = iconBeautifySettings_;
         material.shape = shape;
+        std::optional<snowdesktop::ScopedIconBackdropClip> plateClip;
+        if (roundedRectangle) plateClip.emplace(ctx, rect, nullptr, true);
         RegisterIconBackdrop(ctx, rect, fill.a > 0.0f ? opacity : 0.0f, ownerKey, &material);
     }
     if (roundedRectangle || !iconBeautifySettings_.enabled || !iconBeautifySettings_.edgeHighlightEnabled) return;

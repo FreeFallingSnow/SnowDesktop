@@ -34,6 +34,7 @@ constexpr UINT kDockMinimizeWindowsIntoApplicationIcon = 41899;
 constexpr UINT kDockMonitorScopeFirst = 41830;
 constexpr UINT kDockEdgeSpread = 41937, kDockEdgeCenter = 41938, kDockRunningArea = 41939;
 constexpr UINT kDockShowWindowTitles = 41940;
+constexpr UINT kDockWindowTitleScope = 41941;
 constexpr UINT kDockScaleFirst = 41840;
 constexpr int kDockScalePercent[]{50, 75, 100, 125, 150, 175, 200};
 constexpr UINT kMergedDockScaleFirst = 41850;
@@ -298,10 +299,14 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar, HMONITOR monitor)
         dockSettings_.freeItemOrder, L"\uF18D", settingsController_ != nullptr); // arrow_swap_20_regular
     if (canShowLayout) addToggle(menu, kContextDockShowOnlyWhenSummoned, _LW("settings.dock.showOnlyWhenSummoned"),
         layout.showOnlyWhenSummoned, L"\uE5F2"); // eye_20
-    addToggle(menu, kDockShowWindowTitles, _LW("settings.dock.showWindowTitles"),
-        dockSettings_.showWindowTitles, snowdesktop::menu_fluent_glyphs::kContentLayout, settingsController_ != nullptr);
-    addToggle(menu, kContextDockWindowPreviews, _LW("settings.dock.windowPreviews"),
-        dockSettings_.showWindowPreviews, L"\uF8B5"); // window_20
+    const auto windowTitleFlags = MF_STRING | (settingsController_ ? 0 : MF_GRAYED);
+    const auto windowTitlesLabel = toggleLabel(_LW("settings.dock.showWindowTitles"), dockSettings_.showWindowTitles);
+    AppendMenuW(menu, windowTitleFlags, kDockShowWindowTitles, windowTitlesLabel.c_str());
+    SetMenuItemIcon(menu, kDockShowWindowTitles, snowdesktop::menu_fluent_glyphs::kContentLayout, MenuIconFont::FluentRegular);
+    AppendMenuW(menu, windowTitleFlags, kDockWindowTitleScope,
+        _LW(dockSettings_.windowTitlesOnlyMultiple ? "settings.dock.windowTitles.multiple" : "settings.dock.windowTitles.all"));
+    SetMenuItemInlineAction(menu, kDockShowWindowTitles, kDockShowWindowTitles, false, false, true);
+    SetMenuItemInlineAction(menu, kDockWindowTitleScope, kDockShowWindowTitles, true, false, true);
     addToggle(menu, kDockMinimizeWindowsIntoApplicationIcon,
         _LW("settings.dock.minimizeWindowsIntoApplicationIcon"), dockSettings_.minimizeWindowsIntoApplicationIcon,
         L"\uF165", settingsController_ != nullptr); // arrow_minimize_20_regular
@@ -542,6 +547,7 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner, HMONITO
     case kContextDockRecycleBinIconBorder: setting = &DockSettings::recycleBinIconBorder; break;
     case kDockFreeItemOrder: setting = &DockSettings::freeItemOrder; break;
     case kDockShowWindowTitles: setting = &DockSettings::showWindowTitles; break;
+    case kDockWindowTitleScope: setting = &DockSettings::windowTitlesOnlyMultiple; break;
     case kDockMinimizeWindowsIntoApplicationIcon: setting = &DockSettings::minimizeWindowsIntoApplicationIcon; break;
     }
     if (setting)
@@ -702,7 +708,7 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner, HMONITO
             return;
         case kDockRunningArea:
         {
-            if (layout.showRunningArea && ConfirmBarMonitorOverride(monitor, role, !stored.showRunningArea,
+            if (layout.showRunningArea && ConfirmBarMonitorOverride(monitor, role, false,
                 _LW("settings.dock.showRunningArea"), false) != Target::Independent) return;
             auto dock = settingsController_->Snapshot()->values.dock;
             auto& row = role == BarMonitorRole::Last ? dock.lastMonitorOverride : dock.otherMonitorOverride;
@@ -763,11 +769,6 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner, HMONITO
     case kContextDockShowOnlyWhenSummoned:
         updated.showOnlyWhenSummoned = !updated.showOnlyWhenSummoned;
         layoutChanged = true;
-        break;
-    case kContextDockWindowPreviews:
-        updated.showWindowPreviews = !updated.showWindowPreviews;
-        if (!updated.showWindowPreviews)
-            HideDockWindowPreview();
         break;
     case kContextDockKeepWhenHiddenOn:
         updated.keepWhenDesktopHidden = true;

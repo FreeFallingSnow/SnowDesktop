@@ -339,7 +339,8 @@ inline constexpr auto Fields<DockSettings> = std::to_array<Description>({
     {"maximizedWindow", "Defines the Dock appearance override for a maximized application window."},
     {"appWindow", "Defines the Dock appearance override for the normal application-window scene."},
     {"edgeCentered", "When edgeAttached is enabled, groups Dock contents at the center while the background spans the screen edge. False spreads the contents across the same edge."},
-    {"showWindowTitles", "Shows one title per window beside its original-size application icon where the Dock running area is visible. Clicking switches or minimizes that window. Hovering scrolls long titles and shows the window thumbnail when previews are enabled."},
+    {"showWindowTitles", "Shows one title per eligible window beside its application icon on Docks with a running area. Long titles fade at the clipped edge and loop while hovered. Clicking activates, restores, or minimizes that window. Hovering also shows its thumbnail when window previews are enabled."},
+    {"windowTitlesOnlyMultiple", "Limits Dock titles to applications with at least two tracked windows when showWindowTitles is enabled. New settings default to true. False shows titles for single-window applications as well. The choice is saved even while titles are off and applies to every Dock with a running area."},
     {"lastMonitorOverride", "Overrides selected Dock fields for the last monitor in SnowDesktop's monitor order. Null fields follow the first monitor's settings. Editing requires Advanced Features."},
     {"otherMonitorOverride", "Overrides selected Dock fields for every monitor between the first and the last. Null fields follow the first monitor's settings. Editing requires Advanced Features."},
 });

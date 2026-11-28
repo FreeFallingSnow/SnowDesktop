@@ -8,6 +8,7 @@
 #include "theme/personalization_types.h"
 
 #include <windows.h>
+#include <cstddef>
 #include <vector>
 
 enum class SystemTaskbarThemeMode
@@ -49,6 +50,12 @@ struct DockSettings : DockLayoutSettings
     DockMonitorOverride lastMonitorOverride, otherMonitorOverride;
     int monitorVisibility = kDefaultBarMonitorVisibility;
     bool showWindowTitles = false;
+    bool windowTitlesOnlyMultiple = true;
+
+    [[nodiscard]] bool ShowsWindowTitles(std::size_t windowCount) const noexcept
+    {
+        return showWindowTitles && windowCount > (windowTitlesOnlyMultiple ? 1u : 0u);
+    }
 
     DockMonitorLayout MonitorLayout(BarMonitorRole role) const
     {

@@ -23,6 +23,7 @@ struct IconBackdropClip
     RECT bounds{};
     std::shared_ptr<const IconBackdropGeometryClip> geometry;
     POINT geometryOffset{};
+    bool preserveCorners = false;
 };
 
 inline bool SameIconBackdropClip(const std::optional<IconBackdropClip>& left,
@@ -30,7 +31,8 @@ inline bool SameIconBackdropClip(const std::optional<IconBackdropClip>& left,
 {
     if (left.has_value() != right.has_value()) return false;
     if (!left) return true;
-    if (!EqualRect(&left->bounds, &right->bounds)) return false;
+    if (!EqualRect(&left->bounds, &right->bounds) ||
+        left->preserveCorners != right->preserveCorners) return false;
     if (left->geometryOffset.x != right->geometryOffset.x ||
         left->geometryOffset.y != right->geometryOffset.y) return false;
     auto a = left->geometry;
@@ -48,10 +50,11 @@ class ScopedIconBackdropClip
 {
 public:
     ScopedIconBackdropClip(ID2D1RenderTarget* target, const RECT& bounds,
-        ID2D1Geometry* geometry = nullptr)
+        ID2D1Geometry* geometry = nullptr, bool preserveCorners = false)
         : target_(target), previous_(current_)
     {
         clip_ = Current(target).value_or(IconBackdropClip{bounds, {}});
+        clip_.preserveCorners |= preserveCorners;
         RECT intersection{};
         IntersectRect(&intersection, &clip_.bounds, &bounds);
         clip_.bounds = intersection;
