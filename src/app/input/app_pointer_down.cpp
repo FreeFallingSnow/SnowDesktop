@@ -821,6 +821,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             {
                 dockPressedTitleWindow_ = title;
                 mouseDownHit_ = nullptr;
+                mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+                snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                 return;
             }
             if (dock->IsWindowsButtonPoint(pt))

@@ -327,6 +327,11 @@ void DesktopApp::OnMouseMoveAt(
 {
     if (dragPreviewSynced)
         *dragPreviewSynced = false;
+    if (dockPressedTitleWindow_)
+    {
+        lastMousePoint_ = current;
+        return;
+    }
     // This updater is also called after button-up was dequeued and by keyboard,
     // dwell and OLE resampling. Only the native move entry above can infer a
     // missing release; doing so here discards the gesture before its commit.

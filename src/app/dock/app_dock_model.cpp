@@ -394,7 +394,16 @@ void DesktopApp::RecordDockItemUsage(size_t itemIndex)
 
 std::vector<size_t> DesktopApp::GetFrequentDockItemIndices()
 {
-    return GetFrequentDockItemIndices(dockSettings_);
+    bool hasDock = false;
+    for (const auto& container : containers_)
+    {
+        const auto* dock = dynamic_cast<const DockContainer*>(container.get());
+        if (!dock) continue;
+        hasDock = true;
+        const auto layout = dock->MonitorLayout();
+        if (layout.showFrequentItems) return GetFrequentDockItemIndices(layout);
+    }
+    return hasDock ? std::vector<size_t>{} : GetFrequentDockItemIndices(dockSettings_);
 }
 
 std::vector<size_t> DesktopApp::GetFrequentDockItemIndices(const DockLayoutSettings& layout)

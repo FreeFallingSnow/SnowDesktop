@@ -61,9 +61,10 @@ struct DockSettings : DockLayoutSettings
     }
     bool operator==(const DockSettings&) const = default;
 
-    [[nodiscard]] bool UsesReservedSpaceBackdrop() const noexcept
+    [[nodiscard]] bool UsesReservedSpaceBackdrop(BarMonitorRole role = BarMonitorRole::First) const noexcept
     {
-        return blurReservedSpace && reserveScreenSpace && !edgeAttached && !showOnlyWhenSummoned;
+        const auto layout = MonitorLayout(role);
+        return blurReservedSpace && layout.reserveScreenSpace && !layout.edgeAttached && !layout.showOnlyWhenSummoned;
     }
 
     bool blurReservedSpace = false;

@@ -863,17 +863,6 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     DockContainer* dock = dockPressedContainer_;
     if (!dock) dock = GetDockContainerAtPoint(point);
     if (!dock) return false;
-    if (const HWND title = std::exchange(dockPressedTitleWindow_, nullptr))
-    {
-        RECT anchor{};
-        if (dock->WindowTitleAtPoint(point, &anchor) == title && IsWindow(title))
-        {
-            MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&anchor), 2);
-            ActivateOrToggleDockTaskWindow(title, anchor);
-        }
-        ClearDockPressedState();
-        return true;
-    }
     PersistentDockHost* requestedDockHost =
         FindPersistentDockHost(dock);
 
@@ -1189,6 +1178,25 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
     if (DockTrayPopupPointerUp(upPoint)) return;
     if (!snowdesktop::drag_input_rules::IsItemDragRelease(
             rightDrop, rightButtonRelease)) return;
+    if (!rightButtonRelease && dockPressedTitleWindow_)
+    {
+        const HWND title = dockPressedTitleWindow_;
+        auto* dock = GetDockContainerAtPoint(upPoint);
+        RECT anchor{};
+        const bool activate = dock && dock == dockPressedContainer_ &&
+            dock->WindowTitleAtPoint(upPoint, &anchor) == title && IsWindow(title);
+        mouseDown_ = false;
+        mouseDownHit_ = nullptr;
+        ClearDockPressedState();
+        if (IsOwnedPointerCaptureWindow(snowdesktop::private_pointer::Capture()))
+            ReleaseCapturePreservingPointerState();
+        if (activate)
+        {
+            MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&anchor), 2);
+            ActivateOrToggleDockTaskWindow(title, anchor);
+        }
+        return;
+    }
     const bool collapsedSelection = !rightButtonRelease && CompleteItemSelectionClick(wp, upPoint);
     if (auto* view = GetCategorizedPopupView(); view &&
         (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))

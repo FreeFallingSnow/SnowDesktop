@@ -49,12 +49,13 @@ void DesktopApp::ConfigureQuickNavigationAnimation()
         quickNavigationDockHost_->container &&
         !IsRectEmptyRect(quickNavigationDockHost_->container->GetSearchRect()) &&
         !IsRectEmpty(&quickNavigation_->animationDockRect);
+    const int dockEffect = dockSource ? DockWindowEffectForMonitor(quickNavigationDockHost_->monitor) : motion::NoEffect;
     auto effect = rules::ResolveEffect(motion::RuntimeAnimationsEnabled(), dockSource,
-        motion::RuntimeWindowEffect(), motion::RuntimePopupEffect());
+        dockEffect, motion::RuntimePopupEffect());
     if (rules::IsDeformationEffect(effect) && quickNavigation_->deformationFailed)
         effect = rules::Effect::Scale;
     quickNavigation_->animation.Configure(effect, motion::RuntimeDurationScale(),
-        dockSource && motion::RuntimeWindowEffect() != 0, !dockSource);
+        dockSource && dockEffect != motion::NoEffect, !dockSource);
 }
 
 // Quick-navigation hotkey, window, search edit and positioning lifecycle.
@@ -1164,6 +1165,7 @@ void DesktopApp::OpenQuickNavigation(
     POINT requestedOpenPoint = lastMousePoint_;
     POINT requestedAnchorPoint = requestedOpenPoint;
     RECT requestedDockRect{};
+    DockPosition requestedDockEdge = DockPosition::Bottom;
     float requestedDpiScale = quickNavigation_->dpiScale;
     PersistentDockHost* requestedDockHost = nullptr;
     if (invocationScreenPoint)
@@ -1192,8 +1194,8 @@ void DesktopApp::OpenQuickNavigation(
                 GetDockContainerAtPoint(requestedOpenPoint);
             dock && dock->IsSearchPoint(requestedOpenPoint))
         {
-            requestedDockHost =
-                FindPersistentDockHost(dock);
+            requestedDockHost = FindPersistentDockHost(dock);
+            requestedDockEdge = dock->Position();
             const RECT searchRect = dock->GetElementVisualRect(
                 dock->GetSearchRect(), requestedOpenPoint);
             if (!IsRectEmptyRect(searchRect))
@@ -1240,7 +1242,7 @@ void DesktopApp::OpenQuickNavigation(
         quickNavigation_->animationAnchorPoint =
             requestedAnchorPoint;
         quickNavigation_->animationDockRect = requestedDockRect;
-        quickNavigation_->animationDockEdge = static_cast<int>(dockSettings_.position);
+        quickNavigation_->animationDockEdge = static_cast<int>(requestedDockEdge);
         ConfigureQuickNavigationAnimation();
         quickNavigation_->dpiScale = requestedDpiScale;
         EnsureQuickNavTextFormats();
@@ -1277,7 +1279,7 @@ void DesktopApp::OpenQuickNavigation(
     quickNavigation_->animationAnchorPoint =
         requestedAnchorPoint;
     quickNavigation_->animationDockRect = requestedDockRect;
-    quickNavigation_->animationDockEdge = static_cast<int>(dockSettings_.position);
+    quickNavigation_->animationDockEdge = static_cast<int>(requestedDockEdge);
     if (!reversingClose)
         quickNavigation_->deformationFailed = false;
     ConfigureQuickNavigationAnimation();
@@ -1471,12 +1473,14 @@ void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus, bool returnKeybo
     {
         const auto* dock = quickNavigationDockHost_->container;
         const RECT anchor = dock->GetElementVisualRect(dock->GetSearchRect(), lastMousePoint_);
-        if (!IsRectEmpty(&anchor) && !EqualRect(&anchor, &quickNavigation_->animationDockRect))
+        const int dockEdge = static_cast<int>(dock->Position());
+        if (!IsRectEmpty(&anchor) && (!EqualRect(&anchor, &quickNavigation_->animationDockRect) ||
+            dockEdge != quickNavigation_->animationDockEdge))
         {
             quickNavigation_->animationDockRect = anchor;
             quickNavigation_->animationAnchorPoint = {
                 (anchor.left + anchor.right) / 2, (anchor.top + anchor.bottom) / 2};
-            quickNavigation_->animationDockEdge = static_cast<int>(dockSettings_.position);
+            quickNavigation_->animationDockEdge = dockEdge;
             animationAnchorChanged = true;
         }
     }

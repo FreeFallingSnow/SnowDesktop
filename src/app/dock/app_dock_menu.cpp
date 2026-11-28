@@ -589,10 +589,15 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner, HMONITO
         if (clickedRole != BarMonitorRole::First)
         {
             const bool independent = snowdesktop::HasDesktopStyleMonitorOverrides(settings->values.general, settings->values.dock);
-            const auto target = ConfirmBarMonitorOverride(monitor, clickedRole, true, _LW(kDesktopStyleLabels[index]),
-                true, independent ? _LW("app.dock.first_screen") : nullptr);
-            if (target == BarMonitorEditTarget::Cancel) return;
-            if (target == BarMonitorEditTarget::Independent) request.desktopStyleMonitorRole = clickedRole;
+            const wchar_t* shared = _LW(independent ? "app.dock.first_screen" : "settings.bar.monitorOverrides.applyShared");
+            if (BarMonitorOverrideAvailable())
+            {
+                const auto target = ConfirmBarMonitorOverride(monitor, clickedRole, true, _LW(kDesktopStyleLabels[index]), true, shared);
+                if (target == BarMonitorEditTarget::Cancel) return;
+                if (target == BarMonitorEditTarget::Independent) request.desktopStyleMonitorRole = clickedRole;
+            }
+            else if (!ConfirmBarMenuAction(dialogOwner, _LW("settings.desktopStyle.applyLayout"), _LW(kDesktopStyleLabels[index]),
+                shared, _LW("settings.dialog.cancel"))) return;
         }
         const auto role = snowdesktop::DesktopStyleMonitorTarget(settings->values.general, settings->values.dock,
             request.desktopStyleMonitorRole);

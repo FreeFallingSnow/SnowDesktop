@@ -42,7 +42,7 @@ void DesktopApp::RefreshWindowObservations()
         });
     if (sceneChanged) ++monitorSceneRevision_;
     if (sceneChanged && desktop && generalSettings_.dockEnabled &&
-        dockSettings_.UsesReservedSpaceBackdrop() && dockAppBars_)
+        dockSettings_.blurReservedSpace && dockAppBars_)
     {
         const auto maximized = [](const auto& monitors, HMONITOR monitor) {
             const auto found = monitors.find(monitor);
@@ -51,8 +51,8 @@ void DesktopApp::RefreshWindowObservations()
         for (const auto& page : pages)
         {
             const auto monitor = MonitorFromRect(&page, MONITOR_DEFAULTTONULL);
-            if (!monitor || maximized(observedMonitorWindows_, monitor) ==
-                maximized(snapshot.monitors, monitor))
+            if (!monitor || !dockSettings_.UsesReservedSpaceBackdrop(BarRoleForMonitor(monitor)) ||
+                maximized(observedMonitorWindows_, monitor) == maximized(snapshot.monitors, monitor))
                 continue;
             if (auto area = dockAppBars_->ApprovedArea(monitor))
             {

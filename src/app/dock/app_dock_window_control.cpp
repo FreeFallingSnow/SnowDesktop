@@ -322,7 +322,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
         IsDockContainerEffectivelyFloating(dock);
 
     RECT anchor{};
-    size_t titleCount = 0;
+    std::span<const HWND> titleWindows;
     bool found = false;
     const auto resolveDesktopItem = [&](size_t itemIndex, RECT bounds) {
         if (itemIndex >= items_.size() ||
@@ -353,7 +353,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
                 : DockAppIdentityKind::Executable;
             target.trackedWindows = app.trackedWindows;
             anchor = running->GetBounds();
-            titleCount = dock->RunningTitleWindows(index).size();
+            titleWindows = dock->RunningTitleWindows(index);
             found = true;
         }
     }
@@ -367,7 +367,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
             const size_t itemIndex = FindItemIndexByKey(
                 dockEntries_[entryIndex].reference);
             found = resolveDesktopItem(itemIndex, entry->GetBounds());
-            titleCount = dock->EntryTitleWindows(entryIndex).size();
+            titleWindows = dock->EntryTitleWindows(entryIndex);
         }
     }
     else if (DockFrequentItem* frequent =
@@ -384,7 +384,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
     {
         // Keep app previews anchored to the slot in single-icon mode.
         const RECT visual = dock->MonitorLayout().hoverEffect == 1 ? anchor : dock->GetElementVisualRect(anchor, clientPoint);
-        anchor = dock->WindowTitleIconRect(anchor, visual, titleCount);
+        anchor = dock->WindowTitleIconRect(visual, titleWindows);
     }
     target.identityKey = DockWindowPreviewIdentityKey(target.identity);
     if (target.identityKey.empty())

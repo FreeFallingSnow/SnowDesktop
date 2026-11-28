@@ -249,11 +249,12 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
 
     KeepDesktopWidgetBackdropPanels();
     std::vector<RECT> dockBackdropFrames;
-    if (generalSettings_.dockEnabled && dockSettings_.UsesReservedSpaceBackdrop() && dockAppBars_)
+    if (generalSettings_.dockEnabled && dockSettings_.blurReservedSpace && dockAppBars_)
     {
         for (const auto& [monitor, state] : observedMonitorWindows_)
         {
-            if (!state.maximized) continue;
+            if (!state.maximized || !dockSettings_.UsesReservedSpaceBackdrop(BarRoleForMonitor(monitor)))
+                continue;
             auto area = dockAppBars_->ApprovedArea(monitor);
             if (!area) continue;
             OffsetRect(&*area, -virtualLeft_, -virtualTop_);

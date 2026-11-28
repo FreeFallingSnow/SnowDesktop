@@ -153,7 +153,7 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
                 const auto first = reinterpret_cast<HWND>(static_cast<UINT_PTR>(1));
                 const auto second = reinterpret_cast<HWND>(static_cast<UINT_PTR>(2));
                 const auto third = reinterpret_cast<HWND>(static_cast<UINT_PTR>(3));
-                dockTaskWindowTitles_ = {{first, L"Project notes"}, {second, L"Settings and configuration"}, // l10n-allow: isolated Dock preview window titles.
+                dockTaskWindowTitles_ = {{first, L"设置"}, {second, L"Settings and configuration"}, // l10n-allow: isolated Dock preview window titles.
                     {third, L"Roadmap and release checklist for the next version"}}; // l10n-allow: isolated Dock preview window title.
                 dockRunningWindows_[DockItemWindowKey(items_[0])] = {first, false, true, false, {first, second}};
                 dockRunningWindows_[DockItemWindowKey(items_[1])] = {third, false, true, false, {third}};

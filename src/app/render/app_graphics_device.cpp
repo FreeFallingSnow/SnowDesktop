@@ -409,7 +409,7 @@ void DesktopApp::InitializeDockWindowTransition()
                             if (!slot || !slot->GetItem()) continue;
                             const Item* item = slot->GetItem();
                             bool matches = false;
-                            size_t titleCount = 0;
+                            std::span<const HWND> titleWindows;
                             if (const auto* running = dynamic_cast<const DockRunningItem*>(item))
                             {
                                 const size_t index = running->GetRunningIndex();
@@ -417,7 +417,7 @@ void DesktopApp::InitializeDockWindowTransition()
                                 {
                                     const auto& state = dockUnpinnedRunningApps_[index];
                                     matches = state.presence.Interactive() && tracks(state);
-                                    titleCount = dock->RunningTitleWindows(index).size();
+                                    titleWindows = dock->RunningTitleWindows(index);
                                 }
                             }
                             else
@@ -428,7 +428,7 @@ void DesktopApp::InitializeDockWindowTransition()
                                     if (entry->GetEntryType() == DockEntryType::DesktopItem)
                                     {
                                         index = FindItemIndexByKey(entry->GetReference());
-                                        titleCount = dock->EntryTitleWindows(entry->GetEntryIndex()).size();
+                                        titleWindows = dock->EntryTitleWindows(entry->GetEntryIndex());
                                     }
                                 }
                                 else if (const auto* frequent = dynamic_cast<const DockFrequentItem*>(item))
@@ -441,8 +441,8 @@ void DesktopApp::InitializeDockWindowTransition()
                             }
                             if (!matches) continue;
                             const RECT base = item->GetBounds();
-                            RECT candidate = dock->WindowTitleIconRect(base,
-                                dock->GetElementVisualRect(base, lastMousePoint_), titleCount);
+                            RECT candidate = dock->WindowTitleIconRect(
+                                dock->GetElementVisualRect(base, lastMousePoint_), titleWindows);
                             RECT intersection{};
                             const RECT viewport = dock->GetInteractiveBounds();
                             if (!IntersectRect(&intersection, &candidate, &viewport)) continue;

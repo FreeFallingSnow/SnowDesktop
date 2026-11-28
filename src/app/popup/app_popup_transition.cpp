@@ -419,7 +419,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
             {
                 RECT itemBounds = dock->GetElementVisualRect(
                     dockItem->GetBounds(), anchorPoint);
-                popupDockPosition_ = dockSettings_.position;
+                popupDockPosition_ = dock->Position();
                 popupAnchoredToDock_ = true;
                 collectionPopupDockHost_ =
                     FindPersistentDockHost(dock);
