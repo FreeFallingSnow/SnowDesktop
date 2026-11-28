@@ -154,7 +154,7 @@ bool IsSupportedComponent(std::string_view component)
         component == "collection-group" ||
         component == "file-group" ||
         component == "file-categories" ||
-        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "resource-panel" || component == "status-bar" || component == "quick-navigation" || component == "dock" || component == "dock-window-titles" || component == "taskbar" || component == "popup" || component == "popup-group" || component == "demo-scene" || component == "all" || component == "storage-hover" || component == "storage-privacy";
+        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "resource-panel" || component == "status-bar" || component == "quick-navigation" || component == "dock" || component == "dock-window-titles" || component == "dock-window-motion" || component == "taskbar" || component == "popup" || component == "popup-group" || component == "demo-scene" || component == "all" || component == "storage-hover" || component == "storage-privacy";
 }
 
 std::optional<IconBeautifyPreset> ResolveIconPreset(std::string_view preset)
@@ -366,7 +366,7 @@ DesktopApp::ExportNativeComponentPreviews(
             });
 
     if (request.component == "quick-navigation") return ExportQuickNavigationPreviews(request);
-    if (request.component == "dock" || request.component == "dock-window-titles" || request.component == "taskbar" || request.component == "popup" || request.component == "popup-group" || request.component == "demo-scene")
+    if (request.component == "dock" || request.component == "dock-window-titles" || request.component == "dock-window-motion" || request.component == "taskbar" || request.component == "popup" || request.component == "popup-group" || request.component == "demo-scene")
         return ExportThemeSurfacePreview(request);
 
     const float scale = static_cast<float>(request.dpi) /

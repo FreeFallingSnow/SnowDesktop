@@ -132,6 +132,153 @@ SingleFocusGeometry ResolveSingleFocusGeometry(
     return result;
 }
 
+namespace
+{
+struct TrackCell
+{
+    float start, end, center, logical, extent;
+    size_t index;
+};
+
+struct TrackBracket
+{
+    size_t first, second;
+    float progress;
+};
+
+TrackBracket TrackInterval(std::span<const TrackCell> cells, float coordinate)
+{
+    const auto next = std::upper_bound(cells.begin(), cells.end(), coordinate,
+        [](float value, const TrackCell& cell) { return value < cell.logical; });
+    if (next == cells.begin()) return {0, 0, 0.f};
+    const size_t first = static_cast<size_t>(next - cells.begin() - 1);
+    if (next == cells.end()) return {first, first, 0.f};
+    return {first, first + 1, (coordinate - cells[first].logical) /
+        (cells[first + 1].logical - cells[first].logical)};
+}
+
+float ProjectTrackPointer(std::span<const TrackCell> cells, std::span<const float> centers,
+    float pointer, bool clampPointer)
+{
+    const auto slope = [&](size_t i) {
+        return (cells[i + 1].logical - cells[i].logical) / (centers[i + 1] - centers[i]);
+    };
+    const auto tangent = [&](size_t i) {
+        if (centers.size() == 1) return 1.f;
+        if (i == 0) return slope(0);
+        if (i + 1 == centers.size()) return slope(i - 1);
+        const float a = slope(i - 1), b = slope(i);
+        return 2.f * a * b / (a + b);
+    };
+    if (pointer <= centers.front())
+        return cells.front().logical + (clampPointer ? 0.f : (pointer - centers.front()) * tangent(0));
+    if (pointer >= centers.back())
+        return cells.back().logical + (clampPointer ? 0.f : (pointer - centers.back()) * tangent(centers.size() - 1));
+
+    const size_t i = static_cast<size_t>(std::upper_bound(centers.begin(), centers.end(), pointer) - centers.begin() - 1);
+    const float width = centers[i + 1] - centers[i];
+    const float t = (pointer - centers[i]) / width;
+    const float blend = SmoothStep(t);
+    return std::lerp(cells[i].logical, cells[i + 1].logical, blend) +
+        width * t * (1.f - t) * ((1.f - t) * tangent(i) - t * tangent(i + 1));
+}
+}
+
+std::vector<RECT> ResolveVariableTrack(std::span<const RECT> input, const VariableTrackOptions& options)
+{
+    std::vector<RECT> output(input.begin(), input.end());
+    if (input.empty() || options.scale <= 1.f || options.iconSize <= 0 || options.pitch <= 0) return output;
+    const bool vertical = options.position == DockPosition::Left || options.position == DockPosition::Right;
+    const float spacing = static_cast<float>(options.pitch - options.iconSize);
+    std::vector<TrackCell> cells;
+    cells.reserve(input.size());
+    for (size_t i = 0; i < input.size(); ++i)
+    {
+        if (IsRectEmpty(&input[i])) continue;
+        const float start = static_cast<float>(vertical ? input[i].top : input[i].left);
+        const float end = static_cast<float>(vertical ? input[i].bottom : input[i].right);
+        const float center = (start + end) * .5f;
+        cells.push_back({start, end, center, center,
+            std::max(static_cast<float>(options.iconSize), end - start - spacing), i});
+    }
+    if (cells.empty()) return output;
+    std::ranges::stable_sort(cells, {}, &TrackCell::center);
+    float compression = 0.f;
+    for (auto& cell : cells)
+    {
+        const float extra = std::max(0.f, cell.end - cell.start - options.pitch);
+        cell.logical -= compression + extra * .5f;
+        if (&cell != &cells.front()) cell.logical = std::max((&cell - 1)->logical + .25f, cell.logical);
+        compression += extra;
+    }
+    const auto projected = std::span(cells);
+    std::vector<float> centers;
+    centers.reserve(cells.size());
+    for (const auto& cell : cells) centers.push_back(cell.center);
+    const float coordinate = ProjectTrackPointer(projected, centers, options.pointer, options.clampPointer);
+    const auto interval = TrackInterval(projected, coordinate);
+    const float blend = SmoothStep(interval.progress);
+    std::vector<float> gains(cells.size()), prefix(cells.size() + 1);
+    for (size_t i = 0; i < cells.size(); ++i)
+    {
+        if (options.single)
+        {
+            const float amount = interval.first == interval.second ? (i == interval.first ? 1.f : 0.f) :
+                (i == interval.first ? 1.f - blend : i == interval.second ? blend : 0.f);
+            gains[i] = (options.scale - 1.f) * amount;
+        }
+        else
+            gains[i] = ScaleForAxisDistance(cells[i].logical - coordinate, options.pitch, options.scale) - 1.f;
+        prefix[i + 1] = prefix[i] + gains[i] * cells[i].extent;
+    }
+
+    // Keep the pointer at the same fraction of the cell's axis. Through a
+    // gap, the growth before the cursor is the same at both edges.
+    const auto next = std::upper_bound(cells.begin(), cells.end(), options.anchor,
+        [](float value, const TrackCell& cell) { return value < cell.start; });
+    const auto anchorIndex = next == cells.begin() ? 0 : static_cast<size_t>(next - cells.begin() - 1);
+    const auto& cell = cells[anchorIndex];
+    const float visibleStart = cell.start + std::floor(spacing * .5f);
+    const float visibleLength = std::max(1.f, cell.end - cell.start - spacing);
+    const float fraction = std::clamp((options.anchor - visibleStart) / visibleLength, 0.f, 1.f);
+    const float leadingGrowth = std::lerp(prefix[anchorIndex], prefix[anchorIndex + 1], fraction);
+    const float trailingGrowth = prefix.back() - leadingGrowth;
+    float factor = 1.f;
+    if (!options.scrolls)
+    {
+        if (leadingGrowth > 0.f)
+            factor = std::min(factor, std::max(0.f, cells.front().start - options.safeStart) / leadingGrowth);
+        if (trailingGrowth > 0.f)
+            factor = std::min(factor, std::max(0.f, options.safeEnd - cells.back().end) / trailingGrowth);
+    }
+    const float anchor = leadingGrowth * factor;
+    for (size_t i = 0; i < cells.size(); ++i)
+    {
+        auto& rect = output[cells[i].index];
+        const LONG start = std::lround(cells[i].start + prefix[i] * factor - anchor);
+        const LONG end = std::lround(cells[i].end + prefix[i + 1] * factor - anchor);
+        const LONG cross = std::lround(options.iconSize * gains[i] * factor);
+        if (vertical) { rect.top = start; rect.bottom = end; }
+        else { rect.left = start; rect.right = end; }
+        if (options.single)
+        {
+            if (vertical) { rect.left -= cross / 2; rect.right += cross - cross / 2; }
+            else { rect.top -= cross / 2; rect.bottom += cross - cross / 2; }
+        }
+        else
+        {
+            switch (options.position)
+            {
+            case DockPosition::Left: rect.right += cross; break;
+            case DockPosition::Right: rect.left -= cross; break;
+            case DockPosition::Top: rect.bottom += cross; break;
+            case DockPosition::Bottom: rect.top -= cross; break;
+            }
+        }
+    }
+    return output;
+}
+
 float ScaleForAxisDistance(
     float centerDistance, int itemPitch, float focusScale)
 {

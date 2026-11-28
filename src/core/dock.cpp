@@ -528,6 +528,7 @@ struct DockContainer::PresentationMotion
 {
     struct HoverMotion
     {
+        static constexpr double kResponseMilliseconds = 24.0;
         RECT focus{};
         double axis = 0.0, requested = 0.0, sampledAt = 0.0;
         bool tracking = false;
@@ -557,8 +558,11 @@ struct DockContainer::PresentationMotion
             tracking = true;
         }
 
-        int AxisOr(int pointerAxis) const
-        { return IsRectEmpty(&focus) ? pointerAxis : static_cast<int>(std::lround(axis)); }
+        float AxisOr(int pointerAxis) const
+        { return IsRectEmpty(&focus) ? static_cast<float>(pointerAxis) : static_cast<float>(axis); }
+
+        float AnchorOr(int pointerAxis) const
+        { return IsRectEmpty(&focus) ? static_cast<float>(pointerAxis) : static_cast<float>(requested); }
     };
 
     struct Group
@@ -1437,24 +1441,14 @@ struct DockContainer::MagnificationLayout
     std::vector<RECT> wideItems;
     size_t leadingCount = 0;
 
-    bool HasWideItem(const RECT& candidate) const
+    struct TrackFrame
     {
-        return std::ranges::any_of(wideItems, [&](const RECT& group) { return EqualRect(&group, &candidate); });
-    }
-
-    float WaveAxis(LONG coordinate, bool vertical, int pitch) const
-    {
-        float axis = static_cast<float>(coordinate);
-        for (const auto& group : wideItems)
-        {
-            const LONG start = vertical ? group.top : group.left;
-            const LONG length = (vertical ? group.bottom : group.right) - start;
-            if (length <= pitch || coordinate <= start) continue;
-            const float fraction = std::min(1.f, static_cast<float>(coordinate - start) / length);
-            axis -= (length - pitch) * fraction;
-        }
-        return axis;
-    }
+        std::vector<RECT> cells, painted;
+        MagnificationZone zone = MagnificationZone::None;
+        float pointer = 0.f, anchor = 0.f, scale = 0.f;
+        bool isolatedStart = false;
+    };
+    mutable TrackFrame track;
 
     std::span<const RECT> ForZone(MagnificationZone zone) const
     {
@@ -1598,7 +1592,8 @@ bool DockContainer::AdvanceMagnificationAnimation(double nowMilliseconds)
             InvalidateSlots();
         }
         presentationMotion_->hover.Advance(nowMilliseconds,
-            48.0 * std::max(.01, snowdesktop::animation::RuntimeDurationScale()));
+            PresentationMotion::HoverMotion::kResponseMilliseconds *
+                std::max(.01, snowdesktop::animation::RuntimeDurationScale()));
         ResolveMagnificationFocusRect(app_->lastMousePoint_, GetMagnificationLayout());
         magnificationEntry_.Advance(nowMilliseconds);
         singleMagnification_.Advance(nowMilliseconds);
@@ -1661,8 +1656,18 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer, const Magnifica
     };
     const auto resolveRawFocus = [&]() {
         RECT best{};
-        long long bestDistance =
-            std::numeric_limits<long long>::max();
+        long long bestDistance = std::numeric_limits<long long>::max();
+        if (!layout.wideItems.empty() && previous != candidates.end())
+        {
+            // The current item can extend over its resting neighbors.
+            // Match the painted cells while the pointer is inside the Dock.
+            for (const RECT& candidate : candidates)
+            {
+                if (!pointerVisibleFor(candidate)) continue;
+                const RECT painted = MagnifyElementRect(candidate, *previous, pointer, layout);
+                if (PtInRect(&painted, pointer)) return candidate;
+            }
+        }
         for (const RECT& candidate : candidates)
         {
             if (!pointerVisibleFor(candidate) || !PtInRect(&candidate, pointer))
@@ -1775,7 +1780,7 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer, const Magnifica
             if (PtInRect(&retention, pointer))
                 nextFocus = *previous;
         }
-        else if (layout.ZoneOf(*previous) == layout.ZoneOf(nextFocus) &&
+        else if (layout.wideItems.empty() && layout.ZoneOf(*previous) == layout.ZoneOf(nextFocus) &&
             (!hasOverflow || (EqualRect(&*previous, &windowsButton) != FALSE) ==
                 (EqualRect(&nextFocus, &windowsButton) != FALSE)))
         {
@@ -1798,12 +1803,11 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer, const Magnifica
         }
     }
 
-    magnificationFocusRect_ = nextFocus;
-    // Hit testing also queries the previous mouse point to find dirty bounds.
-    // Those historical queries must not restart or cancel the entry timeline.
+    // Dirty-bound probes for an earlier sample must leave the live owner alone.
     if (app_ && pointer.x == app_->lastMousePoint_.x &&
         pointer.y == app_->lastMousePoint_.y)
     {
+        magnificationFocusRect_ = nextFocus;
         const auto settings = MonitorLayout();
         const bool enabled = GetMaximumMagnificationScale() > 1.f;
         const bool wideItemMotion = enabled && !layout.wideItems.empty();
@@ -1812,11 +1816,12 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer, const Magnifica
         const int pointerAxis = IsVertical() ? pointer.y : pointer.x;
         auto& motion = presentationMotion_->hover;
         if (wideItemMotion)
-            motion.Observe(nextFocus, pointerAxis, now, 48.0 * std::max(.01, duration),
+            motion.Observe(nextFocus, pointerAxis, now,
+                PresentationMotion::HoverMotion::kResponseMilliseconds * std::max(.01, duration),
                 magnificationEntry_.IsAnimating() || singleMagnification_.IsAnimating());
         else motion = {};
         magnificationEntry_.SetHovered(!IsRectEmpty(&nextFocus) && settings.hoverEffect == 2 && enabled,
-            now, duration * (wideItemMotion ? 1.4 : 1.0), wideItemMotion);
+            now, duration, wideItemMotion);
         if (settings.hoverEffect == 1 && enabled)
         {
             // Retarget a relaid-out live hover through SetTarget, preserving
@@ -1826,8 +1831,7 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer, const Magnifica
             if (IsRectEmpty(&nextFocus) && !IsRectEmpty(&visualOwner) && std::none_of(candidates.begin(), candidates.end(),
                 [&](const RECT& candidate) { return EqualRect(&candidate, &visualOwner) != FALSE; }))
                 singleMagnification_ = {};
-            singleMagnification_.SetTarget(nextFocus, now, duration * (wideItemMotion ? 1.75 : 1.0),
-                motion.AxisOr(pointerAxis));
+            singleMagnification_.SetTarget(nextFocus, now, duration, pointerAxis);
         }
         else singleMagnification_ = {};
         if (IsMagnificationAnimating())
@@ -1860,8 +1864,7 @@ DockContainer::GetSingleMagnificationGeometry(
         });
     }
     return snowdesktop::dock_magnification::ResolveSingleFocusGeometry(
-        candidates, IsVertical(), presentationMotion_->hover.AxisOr(singleMagnification_.PointerAxis()),
-        ItemIconSize(), singleMagnification_.Scale(), layout.wideItems);
+        candidates, IsVertical(), singleMagnification_.PointerAxis(), ItemIconSize(), singleMagnification_.Scale());
 }
 
 RECT DockContainer::MagnifyElementRect(const RECT& baseRect, const RECT& focusRect,
@@ -1873,139 +1876,105 @@ RECT DockContainer::MagnifyElementRect(const RECT& baseRect, const RECT& focusRe
     namespace magnification = snowdesktop::dock_magnification;
     const int iconSize = ItemIconSize();
     const bool vertical = IsVertical();
-    const auto leading = [vertical](const RECT& rect) { return vertical ? rect.top : rect.left; };
-    const auto trailing = [vertical](const RECT& rect) { return vertical ? rect.bottom : rect.right; };
-    const auto center = [&](const RECT& rect) { return (leading(rect) + trailing(rect)) / 2; };
-    const auto growthFor = [&](const RECT& rect, float scale) {
-        const int iconGrowth = magnification::GrowthForScale(scale, iconSize);
-        if (iconGrowth == 0 || !layout.HasWideItem(rect)) return iconGrowth;
-        const LONG length = std::max(1L, trailing(rect) - leading(rect) - ScaledSpacing());
-        return std::max(iconGrowth, static_cast<int>(std::lround(length * static_cast<float>(iconGrowth) / iconSize)));
-    };
+    const bool single = settings.hoverEffect == 1;
     const bool hasOverflow = layout.maxScrollOffset > 0;
-    const auto packIsland = [&](const auto& scaleFor, bool centered) {
-        const float scale = scaleFor(baseRect);
-        // Pack actual pixel widths around the resting rail. If the wave
-        // reaches an end, fit it inside the available axis before drawing.
-        const LONG pivot = center(layout.bounds);
-        const LONG baseCenter = center(baseRect);
-        const auto limitedGrowth = [&](const RECT& cell, float cellScale, float factor) {
-            if (magnification::GrowthForScale(std::lerp(1.f, cellScale, factor), iconSize) == 0) return 0;
-            return static_cast<int>(growthFor(cell, cellScale) * factor);
-        };
-        struct Packing
-        {
-            LONG first = LONG_MAX, last = LONG_MIN;
-            int total = 0, beforeBase = 0, beforePivot = 0;
-        };
-        const auto measure = [&](float factor) {
-            Packing packing;
-            for (const auto& candidate : layout.candidates)
-            {
-                const LONG start = leading(candidate);
-                const LONG end = trailing(candidate);
-                packing.first = std::min(packing.first, start);
-                packing.last = std::max(packing.last, end);
-                const int growth = limitedGrowth(candidate, scaleFor(candidate), factor);
-                packing.total += growth;
-                if (center(candidate) < baseCenter) packing.beforeBase += growth;
-                const float fraction = static_cast<float>(pivot - start) / std::max(1L, end - start);
-                packing.beforePivot += static_cast<int>(std::lround(growth * magnification::SmoothStep(fraction)));
-            }
-            return packing;
-        };
-        const LONG safeStart = leading(area_) + ScaledSpacing() / 2;
-        const LONG safeEnd = trailing(area_) - (ScaledSpacing() + 1) / 2;
-        auto packing = measure(1.f);
-        const LONG budget = std::max(0L, safeEnd - safeStart - (packing.last - packing.first));
-        const float factor = packing.total > budget ? static_cast<float>(budget) / packing.total : 1.f;
-        if (factor < 1.f) packing = measure(factor);
-        const LONG minimumAnchor = packing.last + packing.total - safeEnd;
-        const LONG maximumAnchor = packing.first - safeStart;
-        const LONG anchor = minimumAnchor <= maximumAnchor
-            ? std::clamp(static_cast<LONG>(packing.beforePivot), minimumAnchor, maximumAnchor) : packing.beforePivot;
-        const int axisGrowth = limitedGrowth(baseRect, scale, factor);
-        const int shift = packing.beforeBase + axisGrowth / 2 - static_cast<int>(anchor);
-        return magnification::MagnifyRect(baseRect, settings.position, std::lerp(1.f, scale, factor),
-            iconSize, shift, centered, axisGrowth);
-    };
     const auto zone = layout.edgeAnchored ? layout.ZoneOf(baseRect) : MagnificationZone::None;
     const bool inScrollLane = hasOverflow && zone == MagnificationZone::Leading &&
         !EqualRect(&baseRect, &layout.windowsButton);
-    const bool fitEdge = layout.edgeAnchored && !hasOverflow && !layout.wideItems.empty() &&
-        zone != MagnificationZone::None;
-    const auto edgeGrowthFactor = [&](int growth) {
-        if (!fitEdge || growth <= 0) return 1.f;
-        const bool towardEnd = zone == MagnificationZone::Leading;
-        const auto otherZone = towardEnd ? MagnificationZone::Trailing : MagnificationZone::Leading;
-        LONG limit = towardEnd ? trailing(area_) : leading(area_);
-        for (const auto& candidate : layout.ForZone(otherZone))
-            limit = towardEnd ? std::min(limit, leading(candidate)) : std::max(limit, trailing(candidate));
-        LONG end = towardEnd ? trailing(baseRect) : leading(baseRect);
-        for (const auto& candidate : layout.ForZone(zone))
-            end = towardEnd ? std::max(end, trailing(candidate)) : std::min(end, leading(candidate));
-        const LONG budget = std::max(0L, (towardEnd ? limit - end : end - limit) - ScaledSpacing());
-        return std::min(1.f, static_cast<float>(budget) / growth);
-    };
-    if (settings.hoverEffect == 1)
-    {
-        auto geometry = GetSingleMagnificationGeometry(baseRect, layout);
-        if (!layout.edgeAnchored && !layout.wideItems.empty())
-        {
-            return packIsland([&](const RECT& candidate) { return geometry.ScaleFor(candidate, iconSize); }, true);
-        }
-        const float scale = geometry.ScaleFor(baseRect, iconSize);
-        const float leadingScale = geometry.ScaleFor(geometry.leading, iconSize);
-        const float trailingScale = geometry.ScaleFor(geometry.trailing, iconSize);
-        const int leadingGrowth = growthFor(geometry.leading, leadingScale);
-        const int trailingGrowth = growthFor(geometry.trailing, trailingScale);
-        const float factor = edgeGrowthFactor(leadingGrowth + trailingGrowth);
-        const auto fitGrowth = [&](int growth, float cellScale) {
-            return magnification::GrowthForScale(std::lerp(1.f, cellScale, factor), iconSize) > 0
-                ? static_cast<int>(growth * factor) : 0;
-        };
-        geometry.leadingGrowth = fitGrowth(leadingGrowth, leadingScale);
-        geometry.trailingGrowth = fitGrowth(trailingGrowth, trailingScale);
-        const int axisGrowth = geometry.GrowthFor(baseRect);
-        int shift = geometry.AxisShiftFor(baseRect);
-        if (fitEdge)
-        {
-            const int total = geometry.leadingGrowth + geometry.trailingGrowth;
-            shift += zone == MagnificationZone::Leading ? total / 2 : -(total - total / 2);
-        }
-        if (inScrollLane)
-        {
-            const int growth = geometry.leadingGrowth + geometry.trailingGrowth;
-            shift += FitScrollMagnificationShift(growth / 2, growth - growth / 2,
-                scrollOffset_, layout.maxScrollOffset);
-        }
-        return magnification::MagnifyRect(baseRect, settings.position,
-            std::lerp(1.f, scale, factor), iconSize, shift, true, axisGrowth);
-    }
-
     const auto& motion = presentationMotion_->hover;
     const RECT& waveFocus = IsRectEmpty(&focusRect) && magnificationEntry_.IsAnimating() ? motion.focus : focusRect;
+
+    if (!layout.wideItems.empty())
+    {
+        const RECT& owner = single ? singleMagnification_.CurrentRect() : waveFocus;
+        const float scale = single ? singleMagnification_.Scale() : GetCurrentMagnificationScale();
+        if (IsRectEmpty(&owner) || scale <= 1.f ||
+            (layout.edgeAnchored && (zone == MagnificationZone::None || zone != layout.ZoneOf(owner))))
+            return baseRect;
+        const bool start = hasOverflow && EqualRect(&owner, &layout.windowsButton);
+        if (hasOverflow && (EqualRect(&baseRect, &layout.windowsButton) != FALSE) != start) return baseRect;
+        const int rawAxis = vertical ? pointer.y : pointer.x;
+        const float axis = motion.AxisOr(rawAxis);
+        const float anchor = motion.AnchorOr(rawAxis);
+        auto& track = layout.track;
+        if (track.scale != scale || track.pointer != axis || track.anchor != anchor ||
+            track.zone != zone || track.isolatedStart != start)
+        {
+            track = {};
+            track.scale = scale;
+            track.pointer = axis;
+            track.anchor = anchor;
+            track.zone = zone;
+            track.isolatedStart = start;
+            const auto cells = layout.edgeAnchored ? layout.ForZone(zone) : std::span<const RECT>(layout.candidates);
+            for (const auto& cell : cells)
+                if (!hasOverflow || (EqualRect(&cell, &layout.windowsButton) != FALSE) == start)
+                    track.cells.push_back(cell);
+
+            const auto leading = [vertical](const RECT& cell) { return vertical ? cell.top : cell.left; };
+            const auto trailing = [vertical](const RECT& cell) { return vertical ? cell.bottom : cell.right; };
+            const int spacing = ScaledSpacing();
+            magnification::VariableTrackOptions options;
+            options.position = settings.position;
+            options.iconSize = iconSize;
+            options.pitch = ItemPitch();
+            options.scale = scale;
+            options.pointer = axis;
+            options.anchor = anchor;
+            options.safeStart = static_cast<float>(leading(area_) + spacing / 2);
+            options.safeEnd = static_cast<float>(trailing(area_) - (spacing + 1) / 2);
+            options.single = single;
+            if (layout.edgeAnchored)
+            {
+                const bool towardEnd = zone == MagnificationZone::Leading;
+                if (!hasOverflow)
+                {
+                    for (const auto& cell : layout.ForZone(towardEnd ? MagnificationZone::Trailing : MagnificationZone::Leading))
+                    {
+                        if (towardEnd)
+                            options.safeEnd = std::min(options.safeEnd, static_cast<float>(leading(cell) - spacing));
+                        else
+                            options.safeStart = std::max(options.safeStart, static_cast<float>(trailing(cell) + spacing));
+                    }
+                }
+                options.scrolls = inScrollLane;
+                options.clampPointer = hasOverflow && zone == MagnificationZone::Trailing;
+            }
+            track.painted = magnification::ResolveVariableTrack(track.cells, options);
+        }
+        for (size_t i = 0; i < track.cells.size(); ++i)
+            if (EqualRect(&track.cells[i], &baseRect)) return track.painted[i];
+        return baseRect;
+    }
+
+    if (single)
+    {
+        const auto geometry = GetSingleMagnificationGeometry(baseRect, layout);
+        int shift = geometry.AxisShiftFor(baseRect);
+        if (inScrollLane)
+        {
+            const int total = geometry.leadingGrowth + geometry.trailingGrowth;
+            shift += FitScrollMagnificationShift(total / 2, total - total / 2, scrollOffset_, layout.maxScrollOffset);
+        }
+        return magnification::MagnifyRect(baseRect, settings.position, geometry.ScaleFor(baseRect, iconSize), iconSize, shift, true);
+    }
+
     if (IsRectEmpty(&waveFocus)) return baseRect;
     const float focusScale = GetCurrentMagnificationScale();
     if (focusScale <= 1.0f) return baseRect;
+    const auto center = [vertical](const RECT& rect) {
+        return vertical ? (rect.top + rect.bottom) / 2 : (rect.left + rect.right) / 2;
+    };
     const int pitch = ItemPitch();
-    int pointerAxis = motion.AxisOr(vertical ? pointer.y : pointer.x);
-    float waveAxis = layout.WaveAxis(pointerAxis, vertical, pitch);
+    int pointerAxis = vertical ? pointer.y : pointer.x;
     const auto scaleFor = [&](const RECT& candidate) {
-        // A wide cell contributes one item's distance to the wave.
-        const float distance = layout.WaveAxis(center(candidate), vertical, pitch) - waveAxis;
-        return magnification::ScaleForAxisDistance(distance, pitch, focusScale);
+        return magnification::ScaleForAxisDistance(static_cast<float>(center(candidate) - pointerAxis), pitch, focusScale);
     };
     if (!layout.edgeAnchored)
     {
-        const float scale = scaleFor(baseRect);
-        if (layout.wideItems.empty())
-        {
-            const int shift = magnification::IslandAxisShift(settings.hoverEffect,
-                center(baseRect), center(waveFocus), pointerAxis, pitch, iconSize, focusScale);
-            return magnification::MagnifyRect(baseRect, settings.position, scale, iconSize, shift);
-        }
-        return packIsland(scaleFor, false);
+        const int shift = magnification::IslandAxisShift(settings.hoverEffect,
+            center(baseRect), center(waveFocus), pointerAxis, pitch, iconSize, focusScale);
+        return magnification::MagnifyRect(baseRect, settings.position, scaleFor(baseRect), iconSize, shift);
     }
 
     if (zone == MagnificationZone::None || zone != layout.ZoneOf(waveFocus)) return baseRect;
@@ -2014,44 +1983,24 @@ RECT DockContainer::MagnifyElementRect(const RECT& baseRect, const RECT& focusRe
         return !hasOverflow || (EqualRect(&candidate, &layout.windowsButton) != FALSE) == startFocused;
     };
     if (!inFocusLane(baseRect)) return baseRect;
-
     const auto candidates = layout.ForZone(zone);
-    // Keep the file lane expanded while the pointer crosses its painted edge.
     if (hasOverflow && zone == MagnificationZone::Trailing)
-    {
         pointerAxis = ClampPointerAxisToCenters(pointerAxis, candidates, vertical);
-        waveAxis = layout.WaveAxis(pointerAxis, vertical, pitch);
-    }
-
-    std::vector<int> growth;
-    growth.reserve(candidates.size());
+    std::vector<float> scales;
+    scales.reserve(candidates.size());
     size_t baseIndex = candidates.size();
     int totalGrowth = 0;
     for (const RECT& candidate : candidates)
     {
         if (!inFocusLane(candidate)) continue;
-        if (baseIndex == candidates.size() && EqualRect(&candidate, &baseRect))
-            baseIndex = growth.size();
-        const int amount = growthFor(candidate, scaleFor(candidate));
-        growth.push_back(amount);
-        totalGrowth += amount;
+        if (EqualRect(&candidate, &baseRect)) baseIndex = scales.size();
+        scales.push_back(scaleFor(candidate));
+        totalGrowth += magnification::GrowthForScale(scales.back(), iconSize);
     }
-    if (baseIndex >= growth.size()) return baseRect;
-    const float factor = edgeGrowthFactor(totalGrowth);
-    if (factor < 1.f)
-    {
-        for (size_t index = 0; index < growth.size(); ++index)
-        {
-            const float fittedScale = std::lerp(1.f, scaleFor(candidates[index]), factor);
-            growth[index] = magnification::GrowthForScale(fittedScale, iconSize) > 0
-                ? static_cast<int>(growth[index] * factor) : 0;
-        }
-    }
-    int shift = magnification::PackedAxisShift(growth, baseIndex, zone == MagnificationZone::Leading);
-    if (inScrollLane)
-        shift += FitScrollMagnificationShift(0, totalGrowth, scrollOffset_, layout.maxScrollOffset);
-    return magnification::MagnifyRect(baseRect, settings.position, std::lerp(1.f, scaleFor(baseRect), factor), iconSize,
-        shift, false, growth[baseIndex]);
+    if (baseIndex >= scales.size()) return baseRect;
+    int shift = magnification::PackedAxisShift(scales, baseIndex, iconSize, zone == MagnificationZone::Leading);
+    if (inScrollLane) shift += FitScrollMagnificationShift(0, totalGrowth, scrollOffset_, layout.maxScrollOffset);
+    return magnification::MagnifyRect(baseRect, settings.position, scales[baseIndex], iconSize, shift);
 }
 
 RECT DockContainer::GetElementVisualRect(

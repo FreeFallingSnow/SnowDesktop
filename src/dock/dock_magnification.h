@@ -144,6 +144,21 @@ SingleFocusGeometry ResolveSingleFocusGeometry(
     int pointerAxis, int baseIconSize, float focusScale,
     std::span<const RECT> wideItems = {});
 
+struct VariableTrackOptions
+{
+    DockPosition position = DockPosition::Bottom;
+    int iconSize = 0, pitch = 0;
+    float scale = 1.f, pointer = 0.f, anchor = 0.f;
+    float safeStart = 0.f, safeEnd = 0.f;
+    bool single = false;
+    bool scrolls = false;
+    bool clampPointer = false;
+};
+
+// Returns painted cells in input order. Width and placement stay fractional
+// until the final screen rectangles are produced.
+std::vector<RECT> ResolveVariableTrack(std::span<const RECT> cells, const VariableTrackOptions& options);
+
 float ScaleForAxisDistance(
     float centerDistance, int itemPitch, float focusScale = kFocusScale);
 

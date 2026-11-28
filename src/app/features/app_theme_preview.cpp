@@ -15,6 +15,9 @@
 #include "ui/preview/video_writer.h"
 #include "widget/preview/widget_preview_scene.h"
 #include <algorithm>
+#include <chrono>
+#include <fstream>
+#include <thread>
 #include <unordered_map>
 #include <set>
 #include <cstring>
@@ -144,9 +147,10 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
             popupScrollbarDragging_ = false;
             popupWidgetIndex_ = static_cast<std::size_t>(-1);
         }
-        else if (request.component == "dock" || request.component == "dock-window-titles")
+        else if (request.component == "dock" || request.component == "dock-window-titles" || request.component == "dock-window-motion")
         {
-            const bool windowTitles = request.component == "dock-window-titles";
+            const bool motionPreview = request.component == "dock-window-motion";
+            const bool windowTitles = request.component != "dock";
             dockSettings_ = {}; dockSettings_.followComponentAppearance = false;
             dockSettings_.showWindowTitles = windowTitles;
             if (windowTitles)
@@ -162,8 +166,95 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
                 dockRunningWindows_[DockItemWindowKey(items_[1])] = {third, false, true, false, {third}, {}};
             }
             dockSettings_.appearancePreset = kAppearancePresetCustom; dockSettings_.customAppearance = appearance;
-            dockSettings_.position = DockPosition::Bottom; dockSettings_.thicknessScale = .75f;
-            const LONG width = std::min(896, request.canvasWidth - 64), left = (request.canvasWidth - width) / 2;
+            dockSettings_.position = DockPosition::Bottom;
+            dockSettings_.thicknessScale = motionPreview ? 1.f : .75f;
+            dockSettings_.windowTitlesOnlyMultiple = false;
+            const LONG width = motionPreview ? request.canvasWidth - 64 : std::min(896, request.canvasWidth - 64);
+            const LONG left = (request.canvasWidth - width) / 2;
+            if (motionPreview)
+            {
+                const RECT area{left, 24, left + width, request.canvasHeight - 16};
+                DockContainer dock(this, &dockEntries_, area);
+                const RECT resting = dock.GetSlots().front()->GetBounds();
+                const LONG middle = (resting.left + resting.right) / 2;
+                const LONG y = (resting.top + resting.bottom) / 2;
+                const LONG leadingInset = kDockSpacing / 2;
+                const LONG trailingInset = (kDockSpacing + 1) / 2;
+                const LONG route[]{resting.left + leadingInset, middle, resting.right + 40};
+                ComPtr<ID2D1SolidColorBrush> cursor;
+                require(context->CreateSolidColorBrush(D2D1::ColorF(0xff6684), &cursor));
+                ComPtr<ID2D1Bitmap1> readback;
+                require(context->CreateBitmap(size, nullptr, 0,
+                    D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW, format, 96, 96), &readback));
+
+                constexpr int fps = 60;
+                constexpr int frames = 132;
+                const auto frameDirectory = request.outputDirectory / "frames";
+                std::filesystem::create_directories(frameDirectory);
+                std::ofstream trace(request.outputDirectory / "geometry.tsv");
+                if (!trace) throw std::runtime_error("could not create Dock motion trace");
+                trace << "frame\tms\tpointer\tresting_left\tresting_right\tpainted_left\tpainted_right\tpainted_height\ticon_size\n";
+                std::vector<std::vector<std::uint32_t>> images;
+                images.reserve(frames);
+                const auto started = std::chrono::steady_clock::now();
+                for (int index = 0; index < frames; ++index)
+                {
+                    std::this_thread::sleep_until(started + std::chrono::microseconds(index * 1000000 / fps));
+                    if (index > 0)
+                    {
+                        context->SetTarget(target.Get());
+                        context->BeginDraw();
+                        context->DrawBitmap(backdrop.Get());
+                    }
+                    const float first = std::clamp((index - 12) / 44.f, 0.f, 1.f);
+                    const float second = std::clamp((index - 76) / 44.f, 0.f, 1.f);
+                    const LONG x = std::lround(std::lerp(static_cast<float>(route[0]), static_cast<float>(route[1]), first) +
+                        (route[2] - route[1]) * second);
+                    lastMousePoint_ = {x, y};
+                    dock.GetVisualPanelBounds(lastMousePoint_);
+                    dock.AdvanceMagnificationAnimation(UiAnimationScheduler::MonotonicMilliseconds());
+
+                    const RECT panel = dock.GetVisualPanelBounds(lastMousePoint_);
+                    material(panel, appearance, appearance.cornerRadius);
+                    dock.DrawChrome(context.Get(), lastMousePoint_);
+                    dock.DrawContents(context.Get());
+                    const RECT painted = dock.GetElementVisualRect(resting, lastMousePoint_);
+                    const auto milliseconds = std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - started).count();
+                    trace << index << '\t' << milliseconds << '\t' << x << '\t' << resting.left + leadingInset <<
+                        '\t' << resting.right - trailingInset << '\t' << painted.left + leadingInset <<
+                        '\t' << painted.right - trailingInset << '\t' << painted.bottom - painted.top << '\t' <<
+                        dock.GetElementIconSize(resting, painted) << '\n';
+                    const auto cursorPoint = D2D1::Point2F(static_cast<float>(x), static_cast<float>(resting.top - 36));
+                    context->FillEllipse(D2D1::Ellipse(cursorPoint, 4.f, 4.f), cursor.Get());
+                    require(context->EndDraw());
+                    context->SetTarget(nullptr);
+                    require(readback->CopyFromBitmap(nullptr, target.Get(), nullptr));
+                    D2D1_MAPPED_RECT mapped{};
+                    require(readback->Map(D2D1_MAP_OPTIONS_READ, &mapped));
+                    auto& image = images.emplace_back(static_cast<std::size_t>(request.canvasWidth) * request.canvasHeight);
+                    for (int row = 0; row < request.canvasHeight; ++row)
+                        std::memcpy(image.data() + static_cast<std::size_t>(row) * request.canvasWidth,
+                            mapped.bits + static_cast<std::size_t>(row) * mapped.pitch, static_cast<std::size_t>(request.canvasWidth) * 4);
+                    readback->Unmap();
+                }
+                context->SetTarget(nullptr);
+                for (size_t index = 0; index < images.size(); ++index)
+                {
+                    const auto path = frameDirectory / ("frame-" + std::to_string(1000 + index).substr(1) + ".png");
+                    if (!preview_png::Save(path, request.canvasWidth, request.canvasHeight, images[index], result.error))
+                        return result;
+                }
+                const auto path = request.outputDirectory / "dock-window-motion.mp4";
+                video_writer::Mp4 video(path, request.canvasWidth, request.canvasHeight, fps);
+                for (const auto& image : images) video.Write(image);
+                video.Finish();
+                result.outputs.push_back({request.component, "theme", path});
+                result.ok = true;
+                result.stage = "complete";
+                return result;
+            }
+
             const int rows = windowTitles ? 6 : 3;
             const LONG top = std::max(24, (request.canvasHeight - rows * 144) / 2);
             bounds = {left, top, left + width, top + rows * 144};
