@@ -3006,7 +3006,7 @@
   "settings.dock.edgeSpread": "Spread",
   "settings.dock.edgeCenter": "Centered",
   "settings.dock.showRunningArea": "Show running area",
-  "settings.dock.showWindowTitles": "Show window titles in Dock",
+  "settings.dock.showWindowTitles": "Show window titles",
   "settings.bar.monitorOverrides": "Monitor overrides (advanced)",
   "settings.bar.monitorOverrides.last": "Last monitor",
   "settings.bar.monitorOverrides.other": "Other monitors",
@@ -3021,5 +3021,8 @@
   "settings.bar.monitorOverrides.followToggle": "Follow",
   "settings.bar.monitorOverrides.applyShared": "Change shared setting",
   "settings.general.advancedFeatures.monitorProfiles": "Monitor profiles for Dock and status bar",
-  "settings.general.advancedFeatures.monitorProfilesDescription": "Set the position, layout, and behavior of the Dock and status bar separately for the last and other monitors."
+  "settings.general.advancedFeatures.monitorProfilesDescription": "Set the position, layout, and behavior of the Dock and status bar separately for the last and other monitors.",
+  "settings.dock.windowTitles.scope": "Window title scope",
+  "settings.dock.windowTitles.all": "All",
+  "settings.dock.windowTitles.multiple": "Multiple windows only"
 }

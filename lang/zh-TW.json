@@ -3006,7 +3006,7 @@
   "settings.dock.edgeSpread": "分散",
   "settings.dock.edgeCenter": "置中",
   "settings.dock.showRunningArea": "顯示執行區",
-  "settings.dock.showWindowTitles": "在 Dock 中顯示視窗標題",
+  "settings.dock.showWindowTitles": "顯示視窗標題",
   "settings.bar.monitorOverrides": "依螢幕覆寫（進階）",
   "settings.bar.monitorOverrides.last": "末螢幕",
   "settings.bar.monitorOverrides.other": "其餘螢幕",
@@ -3021,5 +3021,8 @@
   "settings.bar.monitorOverrides.followToggle": "跟隨",
   "settings.bar.monitorOverrides.applyShared": "變更共用設定",
   "settings.general.advancedFeatures.monitorProfiles": "Dock 與狀態列分螢幕設定",
-  "settings.general.advancedFeatures.monitorProfilesDescription": "為末螢幕和其餘螢幕分別設定 Dock 與狀態列的位置、版面配置及顯示行為。"
+  "settings.general.advancedFeatures.monitorProfilesDescription": "為末螢幕和其餘螢幕分別設定 Dock 與狀態列的位置、版面配置及顯示行為。",
+  "settings.dock.windowTitles.scope": "視窗標題顯示範圍",
+  "settings.dock.windowTitles.all": "全部",
+  "settings.dock.windowTitles.multiple": "僅多視窗"
 }

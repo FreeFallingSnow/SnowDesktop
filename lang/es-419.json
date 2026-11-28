@@ -3006,7 +3006,7 @@
   "settings.dock.edgeSpread": "Distribuida",
   "settings.dock.edgeCenter": "Centrada",
   "settings.dock.showRunningArea": "Mostrar el área de aplicaciones abiertas",
-  "settings.dock.showWindowTitles": "Mostrar los títulos de las ventanas en el Dock",
+  "settings.dock.showWindowTitles": "Mostrar títulos de ventanas",
   "settings.bar.monitorOverrides": "Configuración por pantalla (avanzada)",
   "settings.bar.monitorOverrides.last": "Última pantalla",
   "settings.bar.monitorOverrides.other": "Otras pantallas",
@@ -3021,5 +3021,8 @@
   "settings.bar.monitorOverrides.followToggle": "Seguir",
   "settings.bar.monitorOverrides.applyShared": "Cambiar el ajuste compartido",
   "settings.general.advancedFeatures.monitorProfiles": "Perfiles de pantalla para el Dock y la barra de estado",
-  "settings.general.advancedFeatures.monitorProfilesDescription": "Ajusta por separado la posición, el diseño y el comportamiento del Dock y de la barra de estado para la última pantalla y las demás."
+  "settings.general.advancedFeatures.monitorProfilesDescription": "Ajusta por separado la posición, el diseño y el comportamiento del Dock y de la barra de estado para la última pantalla y las demás.",
+  "settings.dock.windowTitles.scope": "Mostrar títulos de ventanas para",
+  "settings.dock.windowTitles.all": "Todas",
+  "settings.dock.windowTitles.multiple": "Solo con varias ventanas"
 }

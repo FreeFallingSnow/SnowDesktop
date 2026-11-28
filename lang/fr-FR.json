@@ -3006,7 +3006,7 @@
   "settings.dock.edgeSpread": "Réparti",
   "settings.dock.edgeCenter": "Centré",
   "settings.dock.showRunningArea": "Afficher la zone des applications ouvertes",
-  "settings.dock.showWindowTitles": "Afficher les titres des fenêtres dans le Dock",
+  "settings.dock.showWindowTitles": "Afficher les titres des fenêtres",
   "settings.bar.monitorOverrides": "Réglages par écran (avancés)",
   "settings.bar.monitorOverrides.last": "Dernier écran",
   "settings.bar.monitorOverrides.other": "Autres écrans",
@@ -3021,5 +3021,8 @@
   "settings.bar.monitorOverrides.followToggle": "Suivre",
   "settings.bar.monitorOverrides.applyShared": "Modifier le réglage commun",
   "settings.general.advancedFeatures.monitorProfiles": "Profils d’écran pour le Dock et la barre d’état",
-  "settings.general.advancedFeatures.monitorProfilesDescription": "Réglez séparément la position, la disposition et le comportement du Dock et de la barre d’état pour le dernier écran et les autres écrans."
+  "settings.general.advancedFeatures.monitorProfilesDescription": "Réglez séparément la position, la disposition et le comportement du Dock et de la barre d’état pour le dernier écran et les autres écrans.",
+  "settings.dock.windowTitles.scope": "Fenêtres dont le titre s’affiche",
+  "settings.dock.windowTitles.all": "Toutes",
+  "settings.dock.windowTitles.multiple": "Seulement avec plusieurs fenêtres"
 }

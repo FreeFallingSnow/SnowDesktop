@@ -3006,7 +3006,7 @@
   "settings.dock.edgeSpread": "分散",
   "settings.dock.edgeCenter": "中央揃え",
   "settings.dock.showRunningArea": "実行中のアプリの領域を表示",
-  "settings.dock.showWindowTitles": "Dock にウィンドウのタイトルを表示",
+  "settings.dock.showWindowTitles": "ウィンドウのタイトルを表示",
   "settings.bar.monitorOverrides": "画面別の設定（詳細）",
   "settings.bar.monitorOverrides.last": "最後の画面",
   "settings.bar.monitorOverrides.other": "その他の画面",
@@ -3021,5 +3021,8 @@
   "settings.bar.monitorOverrides.followToggle": "合わせる",
   "settings.bar.monitorOverrides.applyShared": "共通設定を変更",
   "settings.general.advancedFeatures.monitorProfiles": "Dock とステータスバーの画面別設定",
-  "settings.general.advancedFeatures.monitorProfilesDescription": "Dock とステータスバーの位置、レイアウト、動作を、最後の画面とその他の画面で個別に設定できます。"
+  "settings.general.advancedFeatures.monitorProfilesDescription": "Dock とステータスバーの位置、レイアウト、動作を、最後の画面とその他の画面で個別に設定できます。",
+  "settings.dock.windowTitles.scope": "タイトルの表示対象",
+  "settings.dock.windowTitles.all": "すべて",
+  "settings.dock.windowTitles.multiple": "複数ウィンドウのみ"
 }

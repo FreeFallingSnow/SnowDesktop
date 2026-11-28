@@ -3006,7 +3006,7 @@
   "settings.dock.edgeSpread": "분산",
   "settings.dock.edgeCenter": "가운데 정렬",
   "settings.dock.showRunningArea": "실행 중인 앱 영역 표시",
-  "settings.dock.showWindowTitles": "Dock에 창 제목 표시",
+  "settings.dock.showWindowTitles": "창 제목 표시",
   "settings.bar.monitorOverrides": "화면별 설정(고급)",
   "settings.bar.monitorOverrides.last": "마지막 화면",
   "settings.bar.monitorOverrides.other": "나머지 화면",
@@ -3021,5 +3021,8 @@
   "settings.bar.monitorOverrides.followToggle": "따르기",
   "settings.bar.monitorOverrides.applyShared": "공통 설정 변경",
   "settings.general.advancedFeatures.monitorProfiles": "Dock 및 상태 표시줄의 화면별 설정",
-  "settings.general.advancedFeatures.monitorProfilesDescription": "마지막 화면과 나머지 화면에서 Dock 및 상태 표시줄의 위치, 배치, 동작을 각각 설정합니다."
+  "settings.general.advancedFeatures.monitorProfilesDescription": "마지막 화면과 나머지 화면에서 Dock 및 상태 표시줄의 위치, 배치, 동작을 각각 설정합니다.",
+  "settings.dock.windowTitles.scope": "창 제목 표시 범위",
+  "settings.dock.windowTitles.all": "모두",
+  "settings.dock.windowTitles.multiple": "창이 여러 개일 때만"
 }

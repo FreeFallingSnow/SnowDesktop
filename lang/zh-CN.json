@@ -3006,7 +3006,7 @@
   "settings.dock.edgeSpread": "分散",
   "settings.dock.edgeCenter": "居中",
   "settings.dock.showRunningArea": "显示运行区",
-  "settings.dock.showWindowTitles": "在 Dock 中显示窗口标题",
+  "settings.dock.showWindowTitles": "显示窗口标题",
   "settings.bar.monitorOverrides": "按屏幕覆盖（高级）",
   "settings.bar.monitorOverrides.last": "末屏",
   "settings.bar.monitorOverrides.other": "其余屏",
@@ -3021,5 +3021,8 @@
   "settings.bar.monitorOverrides.followToggle": "跟随",
   "settings.bar.monitorOverrides.applyShared": "更改共用设置",
   "settings.general.advancedFeatures.monitorProfiles": "Dock 与状态栏分屏配置",
-  "settings.general.advancedFeatures.monitorProfilesDescription": "为末屏和其余屏分别设置 Dock 与状态栏的位置、布局和显示行为。"
+  "settings.general.advancedFeatures.monitorProfilesDescription": "为末屏和其余屏分别设置 Dock 与状态栏的位置、布局和显示行为。",
+  "settings.dock.windowTitles.scope": "窗口标题显示范围",
+  "settings.dock.windowTitles.all": "全部",
+  "settings.dock.windowTitles.multiple": "仅多窗口"
 }
