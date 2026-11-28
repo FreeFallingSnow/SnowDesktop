@@ -1477,6 +1477,7 @@ struct DockPagePresenter::Impl
                     [value](DockSettings& settings) {
                         settings.monitorScope = static_cast<DockMonitorScope>(
                             std::clamp(value, 0, 2));
+                        settings.monitorVisibility = kDefaultBarMonitorVisibility;
                     });
             });
         floatingShortcutToken = floatingShortcutToggle.Toggled(
@@ -2119,8 +2120,9 @@ struct DockPagePresenter::Impl
         windowTitles.IsOn(settings.showWindowTitles);
         monitorOverrides->Update(settings.lastMonitorOverride, settings.otherMonitorOverride, settings.MonitorLayout(BarMonitorRole::First),
             settings.MonitorLayout(BarMonitorRole::Last), settings.MonitorLayout(BarMonitorRole::Other));
-        monitorScopeCombo.SelectedIndex(std::clamp(
-            static_cast<int>(settings.monitorScope), 0, 2));
+        monitorScopeCombo.PlaceholderText(L("app.settings.custom", L"Custom"));
+        monitorScopeCombo.SelectedIndex(settings.monitorVisibility == kDefaultBarMonitorVisibility ?
+            static_cast<int>(settings.monitorScope) : -1);
         edgeRevealGesture.SelectedIndex(settings.edgeRevealGesture);
         windowPreviews.IsOn(settings.showWindowPreviews);
         minimizeWindowsIntoApplicationIcon.IsOn(settings.minimizeWindowsIntoApplicationIcon);

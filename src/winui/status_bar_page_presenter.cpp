@@ -421,7 +421,10 @@ struct StatusBarPagePresenter::Impl
         revoke.push_back([control = edge, token] { control.SelectionChanged(token); });
         token = monitors.SelectionChanged([this](const auto&, const auto&) {
             const auto selected = monitors.SelectedIndex();
-            if (selected >= 0) Emit([selected](auto& settings) { settings.monitorScope = static_cast<DockMonitorScope>(selected); });
+            if (selected >= 0) Emit([selected](auto& settings) {
+                settings.monitorScope = static_cast<DockMonitorScope>(selected);
+                settings.monitorVisibility = kDefaultBarMonitorVisibility;
+            });
         });
         revoke.push_back([control = monitors, token] { control.SelectionChanged(token); });
         scalePreview.Initialize([this](double percent) {
@@ -487,7 +490,9 @@ struct StatusBarPagePresenter::Impl
     {
         syncing = true;
         for (auto& toggle : toggles) toggle->control.IsOn(value.*(toggle->member));
-        edge.SelectedIndex(static_cast<int>(value.position)); monitors.SelectedIndex(static_cast<int>(value.monitorScope));
+        edge.SelectedIndex(static_cast<int>(value.position));
+        monitors.PlaceholderText(L("app.settings.custom"));
+        monitors.SelectedIndex(value.monitorVisibility == kDefaultBarMonitorVisibility ? static_cast<int>(value.monitorScope) : -1);
         edgeRevealGesture.SelectedIndex(value.edgeRevealGesture);
         clockPanel.SelectedIndex(value.clockSystemPanel ? 1 : 0);
         controlPanel.SelectedIndex(systemQuickSettings && value.controlCenterSystemPanel ? 1 : 0);

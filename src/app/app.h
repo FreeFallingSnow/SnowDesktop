@@ -1085,6 +1085,8 @@ private:
     void HandleDockShellHook(WPARAM event, HWND window);
     void PruneDockWindowAttention(HWND acknowledgedWindow = nullptr);
     void HandleDockWindowListChanged(HWND window, DWORD event);
+    void RetireDockWindowTitle(HWND window);
+    void UpdateDockWindowTitleGeometry();
     void RefreshDockRunningWindows(bool invalidateChanged = true,
         HWND preferredWindow = nullptr);
     void RefreshDockTaskThumbnails();
@@ -1869,7 +1871,7 @@ private:
     bool CanEditBarMonitorOverrides() const;
     enum class BarMonitorEditTarget { Cancel, Independent, Shared };
     BarMonitorEditTarget ConfirmBarMonitorOverride(HMONITOR monitor, BarMonitorRole role,
-        bool inherited, const wchar_t* setting, bool allowShared = true);
+        bool inherited, const wchar_t* setting, bool allowShared = true, const wchar_t* sharedLabel = nullptr);
     /** @brief 显示 Dock 运行区应用上下文菜单。 */
     void ShowDockRunningAppContextMenu(
         POINT screenPoint, size_t runningIndex);

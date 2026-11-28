@@ -11,9 +11,9 @@ namespace snowdesktop::control_settings
 inline constexpr auto DesktopStyleAction = "apply-desktop-style";
 inline constexpr auto DesktopStyleAnimationAction = "apply-style-animations";
 inline constexpr auto DesktopStyleActionDescription =
-    "Apply a desktop layout preset to the Dock, status bar and Windows taskbar. Compare the preset's bar positions, taskbar behavior and reserved space before applying.";
+    "Apply a desktop layout preset. When either bar has monitor overrides, the preset changes the first monitor's SnowDesktop bars and preserves the other monitors and the shared Windows taskbar settings.";
 inline constexpr auto DesktopStyleAnimationActionDescription =
-    "Apply the selected desktop style's recommended Dock icon hover and launch animations. Window minimize and restore effects are controlled separately by dock.windowEffect.";
+    "Apply the selected desktop style's recommended Dock icon hover and launch animations. Monitor overrides limit this action to the first monitor. Window minimize and restore remain controlled by dock.windowEffect.";
 
 struct RuntimeSettingsContext
 {

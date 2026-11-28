@@ -1502,6 +1502,10 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     readBaseBool("edgeAttached", settings.edgeAttached);
     readBaseBool("edgeCentered", settings.edgeCentered);
     readBaseBool("showWindowTitles", settings.showWindowTitles);
+    settings.monitorVisibility = kDefaultBarMonitorVisibility;
+    if (readBaseNumber("monitorVisibility", value) && value >= 0 &&
+        value <= kAllBarMonitorRoles && std::floor(value) == value)
+        settings.monitorVisibility = static_cast<int>(value);
     ReadBoolField(text, "floatingShortcutMode", settings.floatingShortcutMode);
     if (ReadDoubleField(text, "floatingHotkeyModifiers", value))
     {
@@ -1765,6 +1769,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << ",\n";
     file << "  \"monitorScope\": "
          << static_cast<int>(settings.monitorScope) << ",\n";
+    if (settings.monitorVisibility != kDefaultBarMonitorVisibility)
+        file << "  \"monitorVisibility\": " << settings.monitorVisibility << ",\n";
     file << "  \"showWindowsButton\": "
          << (settings.showWindowsButton ? "true" : "false") << ",\n";
     file << "  \"startMenuKeepTaskbarHidden\": "

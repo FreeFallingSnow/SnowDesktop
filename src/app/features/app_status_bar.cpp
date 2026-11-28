@@ -938,7 +938,9 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             {
                 const char* labels[]{"app.dock.first_screen", "app.dock.last_screen", "app.dock.all_screens"};
                 for (UINT index = 0; index < std::size(labels); ++index)
-                    addChoice(scope, monitorBase + index, _LW(labels[index]), static_cast<UINT>(currentSettings.monitorScope) == index);
+                    addChoice(scope, monitorBase + index, _LW(labels[index]),
+                        currentSettings.monitorVisibility == kDefaultBarMonitorVisibility &&
+                        static_cast<UINT>(currentSettings.monitorScope) == index);
             }
             HMENU independentStatus = merged ? CreatePopupMenu() : settingsMenu;
             if (const auto visibility = canShowMonitorLayout && independentStatus ? submenu(independentStatus, "settings.dock.visibilityAndSummon") : nullptr)
@@ -1092,7 +1094,10 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             else if (command == positionBase || command == positionBase + 1)
                 bar.position = command == positionBase ? DockPosition::Top : DockPosition::Bottom;
             else if (command >= monitorBase && command < monitorBase + 3)
+            {
                 bar.monitorScope = static_cast<DockMonitorScope>(command - monitorBase);
+                bar.monitorVisibility = kDefaultBarMonitorVisibility;
+            }
             else if (command >= scaleBase && command < scaleBase + 6)
             {
                 constexpr float scales[]{.75f, 1.f, 1.25f, 1.5f, 2.f, 3.f};
@@ -1124,7 +1129,11 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     // pending snapshot, preserving fusion on every monitor.
                     auto dock = settingsController_->Snapshot()->values.dock;
                     if (command == positionBase || command == positionBase + 1) dock.position = bar.position;
-                    else dock.monitorScope = bar.monitorScope;
+                    else
+                    {
+                        dock.monitorScope = bar.monitorScope;
+                        dock.monitorVisibility = kDefaultBarMonitorVisibility;
+                    }
                     settingsController_->UpdateDock(std::move(dock), snowdesktop::SettingsUpdateMode::PreviewAndCommit);
                 }
                 settingsController_->UpdateGeneral(std::move(settings), snowdesktop::SettingsUpdateMode::PreviewAndCommit);
@@ -1399,35 +1408,25 @@ void DesktopApp::SyncStatusBar()
             return scene;
         });
     }
-    auto order = BuildMonitorRenderOrder();
-    if (order.size() > 1)
-    {
-        if (generalSettings_.statusBar.monitorScope == DockMonitorScope::First)
-            order.erase(order.begin() + 1, order.end());
-        else if (generalSettings_.statusBar.monitorScope == DockMonitorScope::Last)
-            order.erase(order.begin(), order.end() - 1);
-    }
+    const auto order = BuildMonitorRenderOrder();
+    const auto& bar = generalSettings_.statusBar;
     std::vector<snowdesktop::StatusBarMonitor> monitors;
-    auto dockOrder = BuildMonitorRenderOrder();
-    if (dockOrder.size() > 1)
+    for (size_t index = 0; index < order.size(); ++index)
     {
-        if (dockSettings_.monitorScope == DockMonitorScope::First) dockOrder.resize(1);
-        else if (dockSettings_.monitorScope == DockMonitorScope::Last) dockOrder.erase(dockOrder.begin(), dockOrder.end() - 1);
-    }
-    for (const auto index : order)
-    {
-        const auto& page = gridPages_[index];
+        const auto role = GetBarMonitorRole(index, order.size());
+        if (!BarMonitorVisible(bar.monitorScope, bar.monitorVisibility, role, order.size()))
+            continue;
+        const auto& page = gridPages_[order[index]];
         RECT screen = page.bounds;
         OffsetRect(&screen, virtualLeft_, virtualTop_);
         if (auto monitor = MonitorFromRect(&screen, MONITOR_DEFAULTTONULL))
         {
-            const auto role = BarRoleForMonitor(monitor);
             const auto dockLayout = dockSettings_.MonitorLayout(role);
             const auto barLayout = generalSettings_.statusBar.MonitorLayout(role);
             int mergedHeight = 0;
             if (generalSettings_.dockEnabled && dockLayout.edgeAttached &&
                 dockLayout.position == barLayout.position &&
-                std::find(dockOrder.begin(), dockOrder.end(), index) != dockOrder.end())
+                BarMonitorVisible(dockSettings_.monitorScope, dockSettings_.monitorVisibility, role, order.size()))
             {
                 UINT dpiX = 96, dpiY = 96;
                 if (FAILED(GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY))) dpiX = 96;

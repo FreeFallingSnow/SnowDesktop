@@ -447,8 +447,13 @@ struct DesktopStylePagePresenter::Impl
         const std::vector<std::string> monitorOptions{
             "app.dock.first_screen", "app.dock.last_screen", "app.dock.all_screens"};
         AddChoice(dockCard, "settings.dock.monitor", "", "desktopStyle.dock.monitor", monitorOptions,
-            [](const auto&, const auto& value) { return static_cast<int>(value.monitorScope); },
-            [this](int index) { EmitDock([index](auto& value) { value.monitorScope = static_cast<DockMonitorScope>(index); }); }, DockEnabled);
+            [](const auto&, const auto& value) {
+                return value.monitorVisibility == kDefaultBarMonitorVisibility ? static_cast<int>(value.monitorScope) : -1;
+            },
+            [this](int index) { EmitDock([index](auto& value) {
+                value.monitorScope = static_cast<DockMonitorScope>(index);
+                value.monitorVisibility = kDefaultBarMonitorVisibility;
+            }); }, DockEnabled);
 
         AddDockToggle(dockCard, "settings.dock.reserveScreenSpace", "settings.dock.reserveScreenSpace.description",
             "desktopStyle.dock.reserveScreenSpace", &DockSettings::reserveScreenSpace,
@@ -477,8 +482,14 @@ struct DesktopStylePagePresenter::Impl
             [](const auto& value, const auto&) { return static_cast<int>(value.statusBar.position); },
             [this](int index) { EmitGeneral([index](auto& value) { value.statusBar.position = static_cast<DockPosition>(index); }); }, BarEnabled);
         AddChoice(barCard, "settings.dock.monitor", "", "desktopStyle.statusBar.monitor", monitorOptions,
-            [](const auto& value, const auto&) { return static_cast<int>(value.statusBar.monitorScope); },
-            [this](int index) { EmitGeneral([index](auto& value) { value.statusBar.monitorScope = static_cast<DockMonitorScope>(index); }); }, BarEnabled);
+            [](const auto& value, const auto&) {
+                const auto& bar = value.statusBar;
+                return bar.monitorVisibility == kDefaultBarMonitorVisibility ? static_cast<int>(bar.monitorScope) : -1;
+            },
+            [this](int index) { EmitGeneral([index](auto& value) {
+                value.statusBar.monitorScope = static_cast<DockMonitorScope>(index);
+                value.statusBar.monitorVisibility = kDefaultBarMonitorVisibility;
+            }); }, BarEnabled);
 
         const auto taskbarCard = AddSection(style, "settings.nav.taskbar");
         AddChoice(taskbarCard, "settings.bars.taskbarMode", "", "desktopStyle.taskbar.displayMode",
@@ -925,6 +936,7 @@ struct DesktopStylePagePresenter::Impl
         }
         for (const auto& choice : choices)
         {
+            choice->control.PlaceholderText(L("app.settings.custom"));
             choice->control.SelectedIndex(choice->read(general, dock));
             if (choice->focus == "desktopStyle.taskbar.displayMode" && choice->control.Items().Size() == 4)
             {

@@ -712,7 +712,8 @@ void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
     {
         DWORD ownerProcess = 0;
         if (window) GetWindowThreadProcessId(window, &ownerProcess);
-        if (ownerProcess == GetCurrentProcessId())
+        if (ownerProcess == GetCurrentProcessId() &&
+            event != EVENT_OBJECT_DESTROY && event != EVENT_OBJECT_HIDE)
         {
             snowdesktop::performance::Value("shared.taskbar", "dirty.dock_filtered_self", {}, 1);
             return;

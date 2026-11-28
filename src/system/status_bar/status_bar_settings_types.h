@@ -54,6 +54,7 @@ struct StatusBarSettings
     int edgeRevealGesture = 1; // 0=swipe, 1=hover; independent bars default to hover.
     float scale = 1.0f;
     StatusBarMonitorOverride lastMonitorOverride, otherMonitorOverride;
+    int monitorVisibility = kDefaultBarMonitorVisibility;
     SurfaceTheme theme;
     StatusBarAppearanceRule appWindow, maximizedWindow;
     // Retired scenes round-trip under their original JSON keys.

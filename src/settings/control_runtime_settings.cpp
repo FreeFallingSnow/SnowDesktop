@@ -230,10 +230,15 @@ Value HandleRuntimeSettings(std::string_view method, const Value& params,
         if (arguments.Find("dockAttached")) request.desktopStyleDockAttached = BooleanField(arguments, "dockAttached");
         auto general = snapshot->values.general;
         auto dock = snapshot->values.dock;
-        const bool valid = layout ? ApplyDesktopStylePreset(request.value, general, dock, request.desktopStyleDockPosition, request.desktopStyleDockAttached)
-            : ApplyDesktopStyleAnimations(request.value, dock);
+        const auto role = DesktopStyleMonitorTarget(general, dock, request.desktopStyleMonitorRole);
+        const auto count = request.desktopStyleMonitorCount ? request.desktopStyleMonitorCount :
+            static_cast<std::size_t>(std::max(1, GetSystemMetrics(SM_CMONITORS)));
+        const bool wasVisible = DesktopStyleDockVisible(general, dock, role, count);
+        const bool valid = layout ? ApplyScopedDesktopStylePreset(request.value, general, dock,
+            request.desktopStyleDockPosition, request.desktopStyleDockAttached, role, count)
+            : ApplyScopedDesktopStyleAnimations(request.value, general, dock, role);
         if (!valid) throw Error("invalid_params", "Unknown desktop style or animation preset", -32602);
-        if (layout && snapshot->values.general.dockEnabled && !general.dockEnabled && !request.boolValue)
+        if (layout && wasVisible && !DesktopStyleDockVisible(general, dock, role, count) && !request.boolValue)
             throw Error("confirmation_required", "This style disables Dock; retry with arguments.confirmed:true");
         const auto result = context.controller.InvokeHostAction(request);
         if (!result.Succeeded()) return HostResult(target, result);

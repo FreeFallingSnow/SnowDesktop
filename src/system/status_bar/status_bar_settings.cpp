@@ -102,6 +102,12 @@ bool DecodeStatusBarSettings(const JsonValue& input, StatusBarSettings& output)
             std::floor(field->number) != field->number) return false;
         value.monitorScope = static_cast<DockMonitorScope>(static_cast<int>(field->number));
     }
+    if (const auto* field = input.Find("monitorVisibility"))
+    {
+        if (!field->IsNumber() || field->number < 0 || field->number > kAllBarMonitorRoles ||
+            std::floor(field->number) != field->number) return false;
+        value.monitorVisibility = static_cast<int>(field->number);
+    }
     if (const auto* field = input.Find("scale"))
     {
         if (!field->IsNumber() || !std::isfinite(field->number)) return false;
@@ -175,6 +181,8 @@ std::string EncodeStatusBarSettings(StatusBarSettings value)
          << ",\"monitorScope\":" << static_cast<int>(value.monitorScope)
          << ",\"edgeRevealGesture\":" << value.edgeRevealGesture
          << ",\"scale\":" << value.scale << ",\"theme\":" << theme;
+    if (value.monitorVisibility != kDefaultBarMonitorVisibility)
+        text << ",\"monitorVisibility\":" << value.monitorVisibility;
     text << ",\"lastMonitorOverride\":";
     WriteBarMonitorOverride(text, value.lastMonitorOverride);
     text << ",\"otherMonitorOverride\":";

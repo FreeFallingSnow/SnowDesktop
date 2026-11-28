@@ -398,6 +398,11 @@ Value HandleGlobalSettings(std::string_view method, const Value& params, const T
     ValidatePatch(changes, schema, target.kind == "global" ? "" : target.kind);
     Value allChanges = target.kind == "global" ? changes : Object({{target.kind, changes}});
     auto candidate = current->values; PatchValue(candidate, allChanges);
+    if (const auto* dock = allChanges.Find("dock"); dock && dock->Find("monitorScope"))
+        candidate.dock.monitorVisibility = kDefaultBarMonitorVisibility;
+    if (const auto* general = allChanges.Find("general"))
+        if (const auto* bar = general->Find("statusBar"); bar && bar->Find("monitorScope"))
+            candidate.general.statusBar.monitorVisibility = kDefaultBarMonitorVisibility;
     if (!context.canEditBarMonitorOverrides || !context.canEditBarMonitorOverrides())
     {
         const auto addingOverride = [](const Value* domain) {

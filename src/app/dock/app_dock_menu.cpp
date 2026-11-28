@@ -119,7 +119,7 @@ bool DesktopApp::CanEditBarMonitorOverrides() const
 }
 
 DesktopApp::BarMonitorEditTarget DesktopApp::ConfirmBarMonitorOverride(HMONITOR monitor,
-    BarMonitorRole role, bool inherited, const wchar_t* setting, bool allowShared)
+    BarMonitorRole role, bool inherited, const wchar_t* setting, bool allowShared, const wchar_t* sharedLabel)
 {
     using Target = BarMonitorEditTarget;
     if (role == BarMonitorRole::First) return Target::Shared;
@@ -138,7 +138,7 @@ DesktopApp::BarMonitorEditTarget DesktopApp::ConfirmBarMonitorOverride(HMONITOR 
             message.c_str(),
             _LW(last ? "settings.bar.monitorOverrides.applyLast" : "settings.bar.monitorOverrides.applyOther"),
             _LW("settings.dialog.cancel"),
-            allowShared ? _LW("settings.bar.monitorOverrides.applyShared") : nullptr);
+            allowShared ? (sharedLabel ? sharedLabel : _LW("settings.bar.monitorOverrides.applyShared")) : nullptr);
     }
     if (BarRoleForMonitor(monitor) != role) return Target::Cancel;
     if (selected == IDNO && allowShared) return Target::Shared;
@@ -226,7 +226,8 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar, HMONITOR monitor)
     for (UINT index = 0; index < std::size(monitorLabels); ++index)
     {
         addChoice(monitorMenu, kDockMonitorScopeFirst + index, _LW(monitorLabels[index]),
-            static_cast<UINT>(dockSettings_.monitorScope) == index,
+            dockSettings_.monitorVisibility == kDefaultBarMonitorVisibility &&
+                static_cast<UINT>(dockSettings_.monitorScope) == index,
             index == 2 ? L"\uEB96" : L"\uF359");
     }
     for (UINT index = 0; index < std::size(kDockScalePercent); ++index)
@@ -582,7 +583,21 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner, HMONITO
         snowdesktop::SettingsHostActions::Request request;
         request.action = snowdesktop::SettingsHostActions::Action::ApplyDesktopStylePreset;
         request.value = preset;
-        if (preset == L"native" && settingsController_->Snapshot()->values.general.dockEnabled)
+        request.desktopStyleMonitorCount = barMonitorRoles_.size();
+        const auto settings = settingsController_->Snapshot();
+        const auto clickedRole = BarRoleForMonitor(monitor);
+        if (clickedRole != BarMonitorRole::First)
+        {
+            const bool independent = snowdesktop::HasDesktopStyleMonitorOverrides(settings->values.general, settings->values.dock);
+            const auto target = ConfirmBarMonitorOverride(monitor, clickedRole, true, _LW(kDesktopStyleLabels[index]),
+                true, independent ? _LW("app.dock.first_screen") : nullptr);
+            if (target == BarMonitorEditTarget::Cancel) return;
+            if (target == BarMonitorEditTarget::Independent) request.desktopStyleMonitorRole = clickedRole;
+        }
+        const auto role = snowdesktop::DesktopStyleMonitorTarget(settings->values.general, settings->values.dock,
+            request.desktopStyleMonitorRole);
+        if (preset == L"native" && snowdesktop::DesktopStyleDockVisible(settings->values.general,
+            settings->values.dock, role, request.desktopStyleMonitorCount))
         {
             if (!ConfirmBarMenuAction(dialogOwner, _LW("settings.dock.disableConfirm.title"),
                 _LW("settings.dock.disableConfirm.description"), _LW("settings.desktopStyle.applyLayout"),
@@ -593,7 +608,10 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner, HMONITO
         if (result.Succeeded()) result = settingsController_->FlushPending();
         if (!result.Succeeded())
         { snowdesktop::operation_feedback::ShowMessageBox(dialogOwner, result.message.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR); return; }
-        if (snowdesktop::NeedsDesktopStyleAnimations(preset, settingsController_->Snapshot()->values.dock))
+        const auto applied = settingsController_->Snapshot();
+        auto recommended = applied->values.dock;
+        if (snowdesktop::ApplyScopedDesktopStyleAnimations(preset, applied->values.general, recommended,
+            request.desktopStyleMonitorRole) && recommended != applied->values.dock)
         {
             const auto description = std::wstring(_LW("settings.desktopStyle.animationPrompt.description")) + L"\n\n" + _LW(kDesktopStyleAnimations[index]);
             if (ConfirmBarMenuAction(dialogOwner, _LW("settings.desktopStyle.animationPrompt.title"), description.c_str(),
@@ -780,7 +798,9 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner, HMONITO
         else if (command >= kDockMonitorScopeFirst && command < kDockMonitorScopeFirst + 3)
         {
             updated.monitorScope = static_cast<DockMonitorScope>(command - kDockMonitorScopeFirst);
-            layoutChanged = updated.monitorScope != dockSettings_.monitorScope;
+            updated.monitorVisibility = kDefaultBarMonitorVisibility;
+            layoutChanged = updated.monitorScope != dockSettings_.monitorScope ||
+                updated.monitorVisibility != dockSettings_.monitorVisibility;
         }
         else if (command >= kDockScaleFirst && command < kDockScaleFirst + std::size(kDockScalePercent))
         {

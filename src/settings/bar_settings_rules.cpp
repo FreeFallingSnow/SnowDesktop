@@ -12,17 +12,13 @@ BarSettingsAvailability ResolveBarSettingsAvailability(bool dockEnabled,
 {
     BarSettingsAvailability result;
     monitorCount = std::max(1, monitorCount);
-    const auto contains = [monitorCount](DockMonitorScope scope, int index) {
-        return scope == DockMonitorScope::All ||
-            (scope == DockMonitorScope::First ? index == 0 : index == monitorCount - 1);
-    };
     int docks = 0, bars = 0, merged = 0;
     for (int index = 0; index < monitorCount; ++index)
     {
-        const bool hasDock = dockEnabled && contains(dock.monitorScope, index);
-        const bool hasBar = bar.enabled && contains(bar.monitorScope, index);
-        docks += hasDock; bars += hasBar;
         const auto role = GetBarMonitorRole(static_cast<size_t>(index), static_cast<size_t>(monitorCount));
+        const bool hasDock = dockEnabled && BarMonitorVisible(dock.monitorScope, dock.monitorVisibility, role, monitorCount);
+        const bool hasBar = bar.enabled && BarMonitorVisible(bar.monitorScope, bar.monitorVisibility, role, monitorCount);
+        docks += hasDock; bars += hasBar;
         const auto dockLayout = dock.MonitorLayout(role);
         const auto barLayout = bar.MonitorLayout(role);
         merged += hasDock && hasBar && dockLayout.edgeAttached && dockLayout.position == barLayout.position;

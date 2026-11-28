@@ -34,6 +34,32 @@ enum class DockMonitorScope
 
 enum class BarMonitorRole { First, Last, Other };
 
+inline constexpr int kDefaultBarMonitorVisibility = -1;
+inline constexpr int kAllBarMonitorRoles = 7;
+
+constexpr int BarMonitorRoleBit(BarMonitorRole role) noexcept
+{
+    return 1 << static_cast<int>(role);
+}
+
+constexpr int BarMonitorVisibility(DockMonitorScope scope, int mask) noexcept
+{
+    if (mask >= 0) return mask;
+    switch (scope)
+    {
+    case DockMonitorScope::First: return BarMonitorRoleBit(BarMonitorRole::First);
+    case DockMonitorScope::Last: return BarMonitorRoleBit(BarMonitorRole::Last);
+    default: return kAllBarMonitorRoles;
+    }
+}
+
+constexpr bool BarMonitorVisible(DockMonitorScope scope, int mask, BarMonitorRole role,
+    std::size_t monitorCount) noexcept
+{
+    return (mask == kDefaultBarMonitorVisibility && monitorCount == 1) ||
+        (BarMonitorVisibility(scope, mask) & BarMonitorRoleBit(role)) != 0;
+}
+
 constexpr BarMonitorRole GetBarMonitorRole(std::size_t index, std::size_t count) noexcept
 {
     if (index == 0) return BarMonitorRole::First;

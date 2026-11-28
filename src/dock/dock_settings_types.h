@@ -47,6 +47,7 @@ struct DockAppearanceRule
 struct DockSettings : DockLayoutSettings
 {
     DockMonitorOverride lastMonitorOverride, otherMonitorOverride;
+    int monitorVisibility = kDefaultBarMonitorVisibility;
     bool showWindowTitles = false;
 
     DockMonitorLayout MonitorLayout(BarMonitorRole role) const

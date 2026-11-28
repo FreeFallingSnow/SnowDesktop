@@ -447,6 +447,8 @@ void DesktopApp::HandleDockShellHook(WPARAM event, HWND window)
     // ordinary discovery pass so an already visible task is reclassified too.
     if (event == HSHELL_WINDOWCREATED || event == HSHELL_WINDOWDESTROYED)
         dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
+    if (event == HSHELL_WINDOWDESTROYED)
+        RetireDockWindowTitle(window);
 
     if (event == HSHELL_FLASH)
     {
@@ -532,6 +534,24 @@ void DesktopApp::RefreshDockTaskThumbnails()
         EnsureUiAnimationFrame();
 }
 
+void DesktopApp::UpdateDockWindowTitleGeometry()
+{
+    InvalidateDockContainers();
+    InvalidateDragStaticScene(false);
+    UpdateFloatingDockWindowBounds(false);
+    InvalidateDockRects();
+}
+
+void DesktopApp::RetireDockWindowTitle(HWND window)
+{
+    if (!dockSettings_.showWindowTitles || !dockTaskWindowTitles_.erase(window)) return;
+    for (auto& [key, state] : dockRunningWindows_)
+        std::erase(state.trackedWindows, window);
+    for (auto& state : dockUnpinnedRunningApps_)
+        std::erase(state.trackedWindows, window);
+    UpdateDockWindowTitleGeometry();
+}
+
 void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
 {
     snowdesktop::performance::Scope performanceScope("dock", "running.notification");
@@ -548,7 +568,7 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
         if (!updated.empty() && updated != found->second)
         {
             found->second = std::move(updated);
-            InvalidateDockRects();
+            UpdateDockWindowTitleGeometry();
         }
         return;
     }
@@ -560,6 +580,13 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
     // must not repeat global discovery before the remaining cards get input.
     const bool closePending = dockPendingCloseWindows_.contains(window);
     const bool windowRemoved = event == EVENT_OBJECT_HIDE || event == EVENT_OBJECT_DESTROY;
+    if (event == EVENT_OBJECT_DESTROY ||
+        (event == EVENT_OBJECT_HIDE && !IsWindowVisible(window) && !IsIconic(window)))
+    {
+        if (dockTaskWindowTitles_.contains(window))
+            dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
+        RetireDockWindowTitle(window);
+    }
     // Fallback for programmatic minimization and applications which have not
     // yet acquired a synchronous CBT hook. Existing requests are deduplicated.
     if (event == EVENT_SYSTEM_MINIMIZESTART && IsDockTaskWindow(window) &&

@@ -583,11 +583,15 @@ SettingsActionResult SettingsController::InvokeHostAction(
         auto general = state_->values_.general;
         auto dock = state_->values_.dock;
         const bool layout = request.action == SettingsHostActions::Action::ApplyDesktopStylePreset;
-        const bool valid = layout ? ApplyDesktopStylePreset(request.value, general, dock,
-            request.desktopStyleDockPosition, request.desktopStyleDockAttached)
-            : ApplyDesktopStyleAnimations(request.value, dock);
+        const auto role = DesktopStyleMonitorTarget(general, dock, request.desktopStyleMonitorRole);
+        const auto count = request.desktopStyleMonitorCount ? request.desktopStyleMonitorCount :
+            static_cast<std::size_t>(std::max(1, GetSystemMetrics(SM_CMONITORS)));
+        const bool wasVisible = DesktopStyleDockVisible(general, dock, role, count);
+        const bool valid = layout ? ApplyScopedDesktopStylePreset(request.value, general, dock,
+            request.desktopStyleDockPosition, request.desktopStyleDockAttached, role, count)
+            : ApplyScopedDesktopStyleAnimations(request.value, general, dock, role);
         if (!valid) return SettingsActionResult::Failure(L"Unknown desktop style preset.");
-        if (layout && state_->values_.general.dockEnabled && !general.dockEnabled && !request.boolValue)
+        if (layout && wasVisible && !DesktopStyleDockVisible(general, dock, role, count) && !request.boolValue)
             return SettingsActionResult::Busy(L"Confirm before disabling Dock.");
         state_->systemTaskbarAutoHideEdited_ = state_->systemTaskbarAutoHideEdited_ ||
             dock.systemTaskbarAutoHide != state_->values_.dock.systemTaskbarAutoHide;

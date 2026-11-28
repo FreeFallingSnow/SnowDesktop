@@ -288,7 +288,7 @@ inline constexpr auto Fields<DockSettings> = std::to_array<Description>({
     {"edgeHoverDelayMs", "Sets the dwell time in milliseconds for the hover reveal gesture."},
     {"fullscreenPolicy", "Controls Dock behavior in fullscreen. 0 permits it, 1 blocks gesture invocation, and 2 applies full protection. Per-executable exceptions can override it."},
     {"fullscreenExceptions", "Overrides Dock fullscreen protection for individual executables."},
-    {"monitorScope", "Selects the eligible monitor scope. 0 is the first monitor, 1 the last, and 2 all eligible monitors."},
+    {"monitorScope", "Selects the eligible monitor scope. 0 is the first monitor, 1 the last, and 2 all eligible monitors. Writing this field replaces custom visibility created by a scoped layout preset."},
     {"showWindowsButton", "Shows the Windows or Start button in the Dock."},
     {"showQuickSearchButton", "Shows the Quick Navigation button in the Dock."},
     {"startIconBorder", "Adds a border and insets the default Dock Start icon while icon beautification is off for it. Turn off to draw the default icon at the full Dock icon size. Defaults to on."},
@@ -467,7 +467,7 @@ template<>
 inline constexpr auto Fields<StatusBarSettings> = std::to_array<Description>({
     {"enabled", "Shows the SnowDesktop status bar on the selected monitor scope. Its merged layout depends on the active desktop style and Dock."},
     {"position", "Places the standalone status bar at the bottom with 0 or top with 1. Merged positioning follows the combined bar."},
-    {"monitorScope", "Chooses first, last or all eligible monitors with values 0, 1 or 2."},
+    {"monitorScope", "Chooses first, last or all eligible monitors with values 0, 1 or 2. Writing this field replaces custom visibility created by a scoped layout preset."},
     {"scale", "Scales standalone status bar presentation. The merged bar height comes from dock.mergedBarHeight."},
     {"theme", "Selects the base status bar appearance when no enabled scene override applies."},
     {"clock", "Shows the status bar clock and its click target."},

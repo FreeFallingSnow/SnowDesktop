@@ -208,24 +208,12 @@ void DesktopApp::ApplyDockWorkAreaReservation()
         targetPages.resize(gridPages_.size());
         std::iota(targetPages.begin(), targetPages.end(), size_t{ 0 });
     }
-    if (targetPages.size() > 1)
+    for (size_t index = 0; index < targetPages.size(); ++index)
     {
-        switch (dockSettings_.monitorScope)
-        {
-        case DockMonitorScope::Last:
-            targetPages.erase(targetPages.begin(), targetPages.end() - 1);
-            break;
-        case DockMonitorScope::First:
-            targetPages.erase(targetPages.begin() + 1, targetPages.end());
-            break;
-        case DockMonitorScope::All:
-        default:
-            break;
-        }
-    }
-
-    for (size_t pageIndex : targetPages)
-    {
+        const auto role = GetBarMonitorRole(index, targetPages.size());
+        if (!BarMonitorVisible(dockSettings_.monitorScope, dockSettings_.monitorVisibility, role, targetPages.size()))
+            continue;
+        const auto pageIndex = targetPages[index];
         if (pageIndex >= gridPages_.size()) continue;
         GridPage& targetPage = gridPages_[pageIndex];
         RECT screen = targetPage.bounds;

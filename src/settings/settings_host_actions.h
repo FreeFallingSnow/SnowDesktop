@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace snowdesktop
@@ -87,6 +88,8 @@ public:
         // Host-private desktop style draft, applied atomically with the preset.
         DockPosition desktopStyleDockPosition = DockPosition::Bottom;
         bool desktopStyleDockAttached = false;
+        std::optional<BarMonitorRole> desktopStyleMonitorRole;
+        std::size_t desktopStyleMonitorCount = 0;
     };
 
     virtual ~SettingsHostActions() = default;
