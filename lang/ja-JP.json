@@ -3001,5 +3001,21 @@
   "app.launcher.role.windowsAI": "Windows App SDK の AI および機械学習コンポーネント",
   "app.launcher.role.windowsServices": "検索、ウィジェット、通知、アプリの再起動などの Windows App SDK サービス",
   "app.launcher.role.windowsRuntimeStartup": "SnowDesktop の起動時に Windows App SDK と WinRT コンポーネントを初期化",
-  "app.lua_stack.switch_to": "切り替え先"
+  "app.lua_stack.switch_to": "切り替え先",
+  "settings.dock.edgeAlignment": "端に配置したときの整列",
+  "settings.dock.edgeSpread": "分散",
+  "settings.dock.edgeCenter": "中央揃え",
+  "settings.dock.showRunningArea": "実行中のアプリの領域を表示",
+  "settings.dock.showWindowTitles": "Dock にウィンドウのタイトルを表示",
+  "settings.bar.monitorOverrides": "画面別の設定（詳細）",
+  "settings.bar.monitorOverrides.last": "最後の画面",
+  "settings.bar.monitorOverrides.other": "その他の画面",
+  "settings.bar.monitorOverrides.follow": "最初の画面に合わせる",
+  "settings.bar.monitorOverrides.custom": "個別設定済み",
+  "settings.bar.monitorOverrides.reset": "最初の画面の設定に戻す",
+  "settings.bar.monitorOverrides.lastPrompt": "最後の画面にこのオプションを個別に設定しますか？",
+  "settings.bar.monitorOverrides.otherPrompt": "その他の画面にこのオプションを個別に設定しますか？",
+  "settings.bar.monitorOverrides.applyLast": "最後の画面に適用",
+  "settings.bar.monitorOverrides.applyOther": "その他の画面に適用",
+  "settings.bar.monitorOverrides.otherCount": "この変更は {0} 台の画面に適用されます。"
 }

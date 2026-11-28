@@ -3001,5 +3001,21 @@
   "app.launcher.role.windowsAI": "KI- und Machine-Learning-Komponenten des Windows App SDK",
   "app.launcher.role.windowsServices": "Dienste des Windows App SDK wie Suche, Widgets, Benachrichtigungen und App-Neustart",
   "app.launcher.role.windowsRuntimeStartup": "Initialisiert das Windows App SDK und WinRT-Komponenten beim Start von SnowDesktop",
-  "app.lua_stack.switch_to": "Wechseln zu"
+  "app.lua_stack.switch_to": "Wechseln zu",
+  "settings.dock.edgeAlignment": "Ausrichtung am Rand",
+  "settings.dock.edgeSpread": "Verteilt",
+  "settings.dock.edgeCenter": "Zentriert",
+  "settings.dock.showRunningArea": "Bereich für laufende Apps anzeigen",
+  "settings.dock.showWindowTitles": "Fenstertitel im Dock anzeigen",
+  "settings.bar.monitorOverrides": "Bildschirmspezifische Einstellungen (erweitert)",
+  "settings.bar.monitorOverrides.last": "Letzter Bildschirm",
+  "settings.bar.monitorOverrides.other": "Übrige Bildschirme",
+  "settings.bar.monitorOverrides.follow": "Ersten Bildschirm übernehmen",
+  "settings.bar.monitorOverrides.custom": "Individuell eingestellt",
+  "settings.bar.monitorOverrides.reset": "Einstellungen des ersten Bildschirms übernehmen",
+  "settings.bar.monitorOverrides.lastPrompt": "Diese Option für den letzten Bildschirm separat einstellen?",
+  "settings.bar.monitorOverrides.otherPrompt": "Diese Option für die übrigen Bildschirme separat einstellen?",
+  "settings.bar.monitorOverrides.applyLast": "Auf letzten Bildschirm anwenden",
+  "settings.bar.monitorOverrides.applyOther": "Auf übrige Bildschirme anwenden",
+  "settings.bar.monitorOverrides.otherCount": "Diese Änderung gilt für {0} Bildschirme."
 }
