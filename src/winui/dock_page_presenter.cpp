@@ -6,6 +6,7 @@
 #include "settings/settings_snapshot.h"
 
 #include "dock_page_presenter.h"
+#include "bar_monitor_overrides_editor.h"
 #include "settings_presenter_controls.h"
 #include "appearance_sections.h"
 #include "panel_gradient_editor.h"
@@ -476,6 +477,11 @@ struct DockPagePresenter::Impl
     muxc::InfoBar taskbarAutoHideWarning{nullptr};
 
     SettingRow dockEnabledRow;
+    std::unique_ptr<BarMonitorOverridesEditor<DockMonitorOverride, DockLayoutSettings>> monitorOverrides;
+    muxc::ComboBox edgeAlignment{nullptr};
+    muxc::ToggleSwitch windowTitles{nullptr};
+    SettingRow edgeAlignmentRow, windowTitlesRow;
+    winrt::event_token edgeAlignmentToken{}, windowTitlesToken{};
     SettingRow positionRow;
     SettingRow layoutRow;
     SettingRow monitorScopeRow;
@@ -667,12 +673,45 @@ struct DockPagePresenter::Impl
         layoutCard.content.Children().Append(positionRow.root);
         layoutCard.content.Children().Append(monitorScopeRow.root);
         layoutCard.content.Children().Append(layoutRow.root);
+        edgeAlignment = NewCombo();
+        edgeAlignmentRow.Initialize(edgeAlignment);
+        edgeAlignmentRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        layoutCard.content.Children().Append(edgeAlignmentRow.root);
+        edgeAlignmentToken = edgeAlignment.SelectionChanged([this](const auto&, const auto&) {
+            const int index = edgeAlignment.SelectedIndex();
+            if (index >= 0)
+                EmitDock(SettingsUpdateMode::PreviewAndCommit, [index](DockSettings& value) { value.edgeCentered = index == 1; });
+        });
         InitializeContinuousControl(edgeDistanceScale,
             ContinuousField::EdgeDistanceScale,
             kDockMinimumEdgeDistanceScale * 100.0f,
             kDockMaximumEdgeDistanceScale * 100.0, 1.0, nullptr, 100.0);
         layoutCard.content.Children().Append(edgeDistanceScale.root);
         layoutCard.content.Children().Append(thicknessScale.root);
+        monitorOverrides = std::make_unique<BarMonitorOverridesEditor<DockMonitorOverride, DockLayoutSettings>>(
+            localize, actions, [this](BarMonitorRole role, auto edit) {
+                EmitDock(SettingsUpdateMode::PreviewAndCommit, [role, edit = std::move(edit)](DockSettings& settings) {
+                    edit(role == BarMonitorRole::Last ? settings.lastMonitorOverride : settings.otherMonitorOverride);
+                });
+            });
+        using Override = DockMonitorOverride;
+        using Layout = DockLayoutSettings;
+        monitorOverrides->AddChoice<DockPosition>("app.settings.dock_position", &Override::position, &Layout::position,
+            {{DockPosition::Bottom, "app.dock.bottom"}, {DockPosition::Top, "app.dock.top"},
+             {DockPosition::Left, "app.dock.left"}, {DockPosition::Right, "app.dock.right"}});
+        monitorOverrides->AddChoice<bool>("app.dock.layout", &Override::edgeAttached, &Layout::edgeAttached,
+            {{false, "app.dock.island"}, {true, "app.dock.edge"}});
+        monitorOverrides->AddChoice<bool>("settings.dock.edgeAlignment", &Override::edgeCentered, &Layout::edgeCentered,
+            {{false, "settings.dock.edgeSpread"}, {true, "settings.dock.edgeCenter"}}, [](const Layout& layout) { return layout.edgeAttached; });
+        monitorOverrides->AddPercentage("app.settings.dock_thickness", &Override::thicknessScale, &Layout::thicknessScale, 50, 200);
+        monitorOverrides->AddToggle("settings.dock.showOnlyWhenSummoned", &Override::showOnlyWhenSummoned, &Layout::showOnlyWhenSummoned);
+        monitorOverrides->AddChoice<bool>("settings.dock.allowDesktopContentOverlap", &Override::allowDesktopContentOverlap,
+            &Layout::allowDesktopContentOverlap, {{false, "app.interact.on"}, {true, "app.interact.off"}});
+        monitorOverrides->AddToggle("settings.dock.reserveScreenSpace", &Override::reserveScreenSpace, &Layout::reserveScreenSpace);
+        monitorOverrides->AddToggle("app.dock.show_frequent_items", &Override::showFrequentItems, &Layout::showFrequentItems);
+        monitorOverrides->AddToggle("app.dock.keep_when_hidden", &Override::keepWhenDesktopHidden, &Layout::keepWhenDesktopHidden);
+        monitorOverrides->AddToggle("settings.dock.showRunningArea", &Override::showRunningArea, &Layout::showRunningArea);
+        layoutCard.content.Children().Append(monitorOverrides->Content());
         mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
         mergedCard.content.Children().Append(mergedHeight->Content());
         InitializeContinuousControl(mergedIconScale,
@@ -870,6 +909,14 @@ struct DockPagePresenter::Impl
         itemsCard.content.Children().Append(showFrequentItemsRow.root);
         itemsCard.content.Children().Append(frequentItemCount.root);
         itemsCard.content.Children().Append(windowPreviewsRow.root);
+        windowTitles = muxc::ToggleSwitch{};
+        windowTitlesRow.Initialize(windowTitles);
+        windowTitlesRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        itemsCard.content.Children().Append(windowTitlesRow.root);
+        windowTitlesToken = windowTitles.Toggled([this](const auto&, const auto&) {
+            const bool value = windowTitles.IsOn();
+            EmitDock(SettingsUpdateMode::PreviewAndCommit, [value](DockSettings& settings) { settings.showWindowTitles = value; });
+        });
         itemsCard.content.Children().Append(minimizeWindowsIntoApplicationIconRow.root);
         itemsCard.content.Children().Append(singleClickLaunchItemsRow.root);
         itemsCard.content.Children().Append(freeItemOrderRow.root);
@@ -2056,6 +2103,10 @@ struct DockPagePresenter::Impl
         positionCombo.SelectedIndex(std::clamp(
             static_cast<int>(settings.position), 0, 3));
         layoutCombo.SelectedIndex(settings.edgeAttached ? 1 : 0);
+        edgeAlignment.SelectedIndex(settings.edgeCentered ? 1 : 0);
+        windowTitles.IsOn(settings.showWindowTitles);
+        monitorOverrides->Update(settings.lastMonitorOverride, settings.otherMonitorOverride, settings,
+            settings.MonitorLayout(BarMonitorRole::Last), settings.MonitorLayout(BarMonitorRole::Other));
         monitorScopeCombo.SelectedIndex(std::clamp(
             static_cast<int>(settings.monitorScope), 0, 2));
         edgeRevealGesture.SelectedIndex(settings.edgeRevealGesture);
@@ -2152,6 +2203,9 @@ struct DockPagePresenter::Impl
         positionRow.SetEnabled(dockEnabled);
         monitorScopeRow.SetEnabled(dockEnabled);
         layoutRow.SetEnabled(dockEnabled);
+        edgeAlignmentRow.root.Visibility(layoutCombo.SelectedIndex() == 1 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        edgeAlignmentRow.SetEnabled(dockEnabled);
+        windowTitlesRow.SetEnabled(dockEnabled);
         thicknessScale.row.SetEnabled(dockEnabled);
         edgeDistanceScale.root.Visibility(layoutCombo.SelectedIndex() == 0
             ? mux::Visibility::Visible : mux::Visibility::Collapsed);
@@ -2904,6 +2958,16 @@ struct DockPagePresenter::Impl
             {"app.dock.right", L"Right"},
         });
         layoutRow.SetText(L("app.dock.layout", L"Dock Style"));
+        edgeAlignmentRow.SetText(L("settings.dock.edgeAlignment", L"Edge alignment"));
+        const int selectedAlignment = edgeAlignment.SelectedIndex();
+        edgeAlignment.Items().Clear();
+        edgeAlignment.Items().Append(winrt::box_value(L("settings.dock.edgeSpread", L"Spread")));
+        edgeAlignment.Items().Append(winrt::box_value(L("settings.dock.edgeCenter", L"Centered")));
+        edgeAlignment.SelectedIndex(std::max(0, selectedAlignment));
+        muxa::AutomationProperties::SetName(edgeAlignment, edgeAlignmentRow.label.Text());
+        windowTitlesRow.SetText(L("settings.dock.showWindowTitles", L"Show window titles in Dock"));
+        muxa::AutomationProperties::SetName(windowTitles, windowTitlesRow.label.Text());
+        monitorOverrides->Refresh();
         muxa::AutomationProperties::SetName(
             layoutCombo, layoutRow.label.Text());
         ReplaceComboItems(layoutCombo, {
@@ -3342,6 +3406,10 @@ struct DockPagePresenter::Impl
             }
             return dockTarget(edgeRevealGesture);
         }
+        if (id == "dock.showWindowTitles") return dockTarget(windowTitles);
+        if (id == "dock.edgeCentered") return dockTarget(layoutCombo.SelectedIndex() == 1
+            ? edgeAlignment.as<mux::FrameworkElement>()
+            : prerequisiteTarget(layoutCombo, "choice", layoutRow.label.Text().c_str()));
         if (id == "dock.showWindowPreviews") return dockTarget(windowPreviews);
         if (id == "dock.minimizeWindowsIntoApplicationIcon") return dockTarget(minimizeWindowsIntoApplicationIcon);
         if (id == "dock.singleClickLaunchItems") return dockTarget(singleClickLaunchItems);
@@ -3532,6 +3600,8 @@ struct DockPagePresenter::Impl
             dockEnabledToggle.Toggled(dockEnabledToken);
             positionCombo.SelectionChanged(positionToken);
             layoutCombo.SelectionChanged(layoutToken);
+            edgeAlignment.SelectionChanged(edgeAlignmentToken);
+            windowTitles.Toggled(windowTitlesToken);
             monitorScopeCombo.SelectionChanged(monitorScopeToken);
             floatingShortcutToggle.Toggled(floatingShortcutToken);
             floatingEdgeSwipeToggle.Toggled(floatingEdgeSwipeToken);
@@ -3726,7 +3796,7 @@ void DockPagePresenter::Activate() noexcept
     {
         impl_->active = true;
         impl_->confirmationGate->active = true;
-        try { impl_->runtimeTimer.Start(); impl_->RefreshTaskbarRuntimeState(); } catch (...) {}
+        try { impl_->runtimeTimer.Start(); impl_->RefreshTaskbarRuntimeState(); impl_->monitorOverrides->Refresh(); } catch (...) {}
     }
 }
 

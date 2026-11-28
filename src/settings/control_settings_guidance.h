@@ -338,6 +338,24 @@ inline constexpr auto Fields<DockSettings> = std::to_array<Description>({
     {"blurReservedSpace", "Adds the reserved strip's backdrop for a detached, persistent Dock that reserves work area."},
     {"maximizedWindow", "Defines the Dock appearance override for a maximized application window."},
     {"appWindow", "Defines the Dock appearance override for the normal application-window scene."},
+    {"edgeCentered", "When edgeAttached is enabled, centers the Dock along that edge and sizes it to its contents. False uses the spread layout."},
+    {"showWindowTitles", "Shows one selectable title per window next to its Dock application icon where the running area is visible. Long titles scroll on hover."},
+    {"lastMonitorOverride", "Overrides selected Dock fields for the last monitor in SnowDesktop's monitor order. Null fields follow the first monitor's settings. Editing requires Advanced Features."},
+    {"otherMonitorOverride", "Overrides selected Dock fields for every monitor between the first and the last. Null fields follow the first monitor's settings. Editing requires Advanced Features."},
+});
+
+template<>
+inline constexpr auto Fields<DockMonitorOverride> = std::to_array<Description>({
+    {"position", "Places this role's Dock on the bottom, top, left or right using values 0 through 3. Null inherits the first monitor."},
+    {"edgeAttached", "Selects an edge-attached Dock when true or an island when false. Null inherits the first monitor."},
+    {"edgeCentered", "Centers an edge-attached Dock when true. False spreads it along the edge. Null inherits the first monitor."},
+    {"thicknessScale", "Scales the standalone Dock on this role from 0.5 through 2. Null inherits the first monitor."},
+    {"showOnlyWhenSummoned", "Hides the Dock until invoked on this role. Its standalone Dock reserves no work area while using this setting. Null inherits the first monitor."},
+    {"allowDesktopContentOverlap", "Allows desktop content to occupy the Dock area on this role. Null inherits the first monitor."},
+    {"reserveScreenSpace", "Reserves work area for the persistent Dock on this role when applicable. Null inherits the first monitor."},
+    {"showFrequentItems", "Shows the Dock entries for frequently used items on this role. Null inherits the first monitor."},
+    {"keepWhenDesktopHidden", "Keeps this role's Dock visible when SnowDesktop hides desktop items. Null inherits the first monitor."},
+    {"showRunningArea", "Shows running application entries, their window titles and separate minimized thumbnails on this role. False keeps the Dock's launcher entries. Null follows the first monitor, where the running area is always enabled."},
 });
 
 template<>
@@ -493,6 +511,16 @@ inline constexpr auto Fields<StatusBarSettings> = std::to_array<Description>({
     {"foregroundAppNameCentered", "Centers the foreground application name. The clock and notification layout adjusts around it."},
     {"appWindow", "Overrides the bar appearance for the eligible non-maximized application-window scene when enabled."},
     {"metricOrder", "Orders the CPU, memory, GPU and traffic counters. Only enabled counters appear."},
+    {"lastMonitorOverride", "Overrides selected status bar fields for the last monitor. Null fields follow the first monitor's settings. Editing requires Advanced Features."},
+    {"otherMonitorOverride", "Overrides selected status bar fields for all monitors between the first and last. Null fields follow the first monitor's settings. Editing requires Advanced Features."},
+});
+
+template<>
+inline constexpr auto Fields<StatusBarMonitorOverride> = std::to_array<Description>({
+    {"position", "Places this role's status bar at the bottom with 0 or at the top with 1. An attached Dock on the same edge merges with it. Null inherits the first monitor."},
+    {"scale", "Scales this role's standalone status bar from 0.75 through 3. A merged bar uses the common merged height. Null inherits the first monitor."},
+    {"showOnlyWhenSummoned", "Hides this role's standalone status bar until summoned. A merged status bar follows the Dock. Null inherits the first monitor."},
+    {"edgeRevealGesture", "Chooses swipe with 0 or hover with 1 for the standalone status bar on this role. Null inherits the first monitor."},
 });
 
 template<>

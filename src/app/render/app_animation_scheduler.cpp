@@ -303,7 +303,7 @@ void DesktopApp::EnsureUiAnimationFrame()
                     {
                         RECT dirty = snowdesktop::floating_dock_rules::
                             ExpandHostForTitleLayer(dock->GetInteractiveBounds(),
-                                dockSettings_.position);
+                                dock->Position());
                         InflateRect(&dirty, 4, 4);
                         UnionRect(&desktopDirty, &desktopDirty, &dirty);
                     }

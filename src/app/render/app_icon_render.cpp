@@ -824,7 +824,7 @@ void DesktopApp::InvalidateSystemIconConsumers(std::uint64_t key)
                 {
                     if (IsWindowVisible(host->hwnd)) InvalidateFloatingDockWindow(*host, false);
                 }
-                else if (hwnd_ && (!desktopIconsHidden_ || dockSettings_.keepWhenDesktopHidden))
+                else if (hwnd_ && (!desktopIconsHidden_ || dock->MonitorLayout().keepWhenDesktopHidden))
                 {
                     const RECT bounds = dock->GetAnimationVisualBounds(true);
                     if (!IsRectEmpty(&bounds)) InvalidateRect(hwnd_, &bounds, FALSE);

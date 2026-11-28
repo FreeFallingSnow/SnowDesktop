@@ -536,6 +536,22 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
 {
     snowdesktop::performance::Scope performanceScope("dock", "running.notification");
     if (!window) return;
+    if (event == EVENT_OBJECT_NAMECHANGE)
+    {
+        if (!dockSettings_.showWindowTitles) return;
+        const auto found = dockTaskWindowTitles_.find(window);
+        if (found == dockTaskWindowTitles_.end()) return;
+        const int length = std::clamp(GetWindowTextLengthW(window), 0, 4096);
+        if (length <= 0) { dockRunningWindowsRefreshTick_ = 0; return; }
+        std::wstring updated(static_cast<size_t>(length) + 1, L'\0');
+        updated.resize(static_cast<size_t>(GetWindowTextW(window, updated.data(), length + 1)));
+        if (!updated.empty() && updated != found->second)
+        {
+            found->second = std::move(updated);
+            InvalidateDockRects();
+        }
+        return;
+    }
     // A create notification begins a new HWND lifetime, including a recycled
     // handle whose previous window had an accepted close request.
     if (event == EVENT_OBJECT_CREATE) dockPendingCloseWindows_.erase(window);
@@ -724,7 +740,7 @@ void DesktopApp::RefreshDockRunningWindows(
     const auto visualBounds = [this](DockContainer& dock) {
         const RECT content = dock.GetAnimationVisualBounds();
         RECT bounds = snowdesktop::floating_dock_rules::ExpandHostForTitleLayer(
-            content, dockSettings_.position);
+            content, dock.Position());
         // A constrained reserved area can be thinner than its actual icons.
         // Include their paint and the largest running/selection indicator,
         // while excluding scroll slots far outside the displayed Dock.
@@ -850,6 +866,7 @@ void DesktopApp::RefreshDockRunningWindows(
         std::unordered_map<DWORD, std::wstring> processAppIds;
         bool separateMinimizedWindows = false;
         std::vector<snowdesktop::dock_window_thumbnail::ThumbnailCache::TrackedWindow> thumbnailSources;
+        std::unordered_map<HWND, std::wstring> titles;
     };
     DockProcessParentMap processParents;
     if (useBackgroundSnapshot && preparedProcessSnapshot)
@@ -952,12 +969,16 @@ void DesktopApp::RefreshDockRunningWindows(
                     identity.steamInstallDirectory, pathIt->second, appUserModelId,
                     ancestorIt->second, identity.validatedPayloadPaths);
             });
-            if (pinned && !showThumbnail) return TRUE;
-            wchar_t titleBuffer[512]{};
-            GetWindowTextW(window, titleBuffer, static_cast<int>(std::size(titleBuffer)));
-            std::wstring title = titleBuffer;
+            if (pinned && !showThumbnail && !context->owner->dockSettings_.showWindowTitles) return TRUE;
+            const int maximumTitle = context->owner->dockSettings_.showWindowTitles
+                ? std::clamp(GetWindowTextLengthW(window), 511, 4096) : 511;
+            std::wstring title(static_cast<size_t>(maximumTitle) + 1, L'\0');
+            title.resize(static_cast<size_t>(GetWindowTextW(window, title.data(), maximumTitle + 1)));
             if (title.empty())
                 title = PathFindFileNameW(pathIt->second.c_str());
+            if (context->owner->dockSettings_.showWindowTitles)
+                context->titles.emplace(window, title);
+            if (pinned && !showThumbnail) return TRUE;
 
             const bool foreground = !minimized && DockWindowsShareActivationGroup(window, context->actualForeground);
             const auto addCandidate = [&](std::wstring identityKey, bool thumbnail) {
@@ -992,6 +1013,8 @@ void DesktopApp::RefreshDockRunningWindows(
         }, reinterpret_cast<LPARAM>(&context));
     }
     dockWindowThumbnails_.SetTrackedWindows(context.thumbnailSources);
+    const bool titleChanged = dockTaskWindowTitles_ != context.titles;
+    dockTaskWindowTitles_ = std::move(context.titles);
 
     std::unordered_map<std::wstring, DockWindowInfo> updated;
     for (DockWindowTarget& target : targets)
@@ -1001,23 +1024,32 @@ void DesktopApp::RefreshDockRunningWindows(
         // indicator follows a matched window only.
         if (!target.best.window)
             continue;
+        if (dockSettings_.showWindowTitles)
+            snowdesktop::dock_window_order::Current().SortWindows(target.trackedWindows);
         target.best.trackedWindows = std::move(target.trackedWindows);
         updated[target.key] = std::move(target.best);
     }
 
-    bool changed = updated.size() != dockRunningWindows_.size();
-    if (!changed)
+    bool pinnedMembershipChanged = updated.size() != dockRunningWindows_.size();
+    bool changed = pinnedMembershipChanged;
+    if (!pinnedMembershipChanged)
     {
         for (const auto& [key, state] : updated)
         {
             const auto old = dockRunningWindows_.find(key);
-            if (old == dockRunningWindows_.end() || old->second.window != state.window ||
+            if (old == dockRunningWindows_.end())
+            {
+                pinnedMembershipChanged = changed = true;
+                continue;
+            }
+            if (dockSettings_.showWindowTitles && old->second.trackedWindows != state.trackedWindows)
+                pinnedMembershipChanged = true;
+            if (old->second.window != state.window ||
                 old->second.minimized != state.minimized ||
                 old->second.running != state.running ||
                 old->second.foreground != state.foreground)
             {
                 changed = true;
-                break;
             }
         }
     }
@@ -1077,6 +1109,8 @@ void DesktopApp::RefreshDockRunningWindows(
         info.window = candidate.window;
         info.minimized = candidate.minimized;
         info.foreground = candidate.foreground;
+        if (dockSettings_.showWindowTitles && !candidate.thumbnail)
+            snowdesktop::dock_window_order::Current().SortWindows(candidate.trackedWindows);
         info.trackedWindows = std::move(candidate.trackedWindows);
         if (candidate.thumbnail)
             info.minimizedThumbnail = dockWindowThumbnails_.Find(info.window);
@@ -1198,7 +1232,8 @@ void DesktopApp::RefreshDockRunningWindows(
     std::stable_partition(runningApps.begin(), runningApps.end(),
         [](const auto& app) { return !app.minimizedThumbnail; });
 
-    bool runningLayoutChanged = runningApps.size() != dockUnpinnedRunningApps_.size();
+    bool runningLayoutChanged = runningApps.size() != dockUnpinnedRunningApps_.size() ||
+        (dockSettings_.showWindowTitles && pinnedMembershipChanged);
     bool runningVisualChanged = runningLayoutChanged;
     if (!runningLayoutChanged)
     {
@@ -1206,7 +1241,8 @@ void DesktopApp::RefreshDockRunningWindows(
         {
             const DockRunningAppInfo& old = dockUnpinnedRunningApps_[i];
             const DockRunningAppInfo& current = runningApps[i];
-            if (old.identityKey != current.identityKey)
+            if (old.identityKey != current.identityKey ||
+                (dockSettings_.showWindowTitles && old.trackedWindows != current.trackedWindows))
                 runningLayoutChanged = true;
             if (old.presence.Amount() != current.presence.Amount())
                 runningLayoutChanged = true;
@@ -1238,7 +1274,7 @@ void DesktopApp::RefreshDockRunningWindows(
         UpdateFloatingDockWindowBounds(false);
     }
 
-    if ((changed || runningVisualChanged || runningLayoutChanged) && invalidateChanged && hwnd_)
+    if ((changed || runningVisualChanged || runningLayoutChanged || titleChanged) && invalidateChanged && hwnd_)
     {
         // Titles also change the host's input/visible region. Preserve its
         // existing asynchronous content presentation even at identical bounds.
@@ -1835,7 +1871,7 @@ bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
         {
             hasDesktopDock = true;
             RECT bounds = snowdesktop::floating_dock_rules::ExpandHostForTitleLayer(
-                dock->GetAnimationVisualBounds(), dockSettings_.position);
+                dock->GetAnimationVisualBounds(), dock->Position());
             UnionRect(&desktopDirty, &desktopDirty, &bounds);
         }
     const auto windowMotion = generalSettings_.dockEnabled &&
@@ -1970,7 +2006,7 @@ bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
             else
             {
                 RECT bounds = snowdesktop::floating_dock_rules::ExpandHostForTitleLayer(
-                    dock->GetAnimationVisualBounds(), dockSettings_.position);
+                    dock->GetAnimationVisualBounds(), dock->Position());
                 UnionRect(&desktopDirty, &desktopDirty, &bounds);
             }
         }

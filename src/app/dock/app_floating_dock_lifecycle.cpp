@@ -123,7 +123,9 @@ void DesktopApp::ApplyFloatingDockHotkey()
     const bool edgeSwipeEnabled =
         snowdesktop::dock_settings_rules::
             IsFloatingEdgeSwipeEnabled(
-                dockSettings_.showOnlyWhenSummoned,
+                dockSettings_.showOnlyWhenSummoned ||
+                    dockSettings_.lastMonitorOverride.showOnlyWhenSummoned.value_or(false) ||
+                    dockSettings_.otherMonitorOverride.showOnlyWhenSummoned.value_or(false),
                 dockSettings_.floatingEdgeSwipeEnabled);
     const auto inputPolicy =
         snowdesktop::floating_dock_rules::ResolveFloatingDockInputPolicy(
@@ -325,7 +327,7 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
                     cursorScreen,
                     monitorInfo.rcMonitor,
                     edgeScreenRect,
-                    dockSettings_.position,
+                    host.container->Position(),
                     edgeBand);
         const bool passiveDragRevealRequested =
             snowdesktop::floating_dock_rules::
@@ -340,7 +342,7 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
                     cursorScreen,
                     monitorInfo.rcMonitor,
                     edgeScreenRect,
-                    dockSettings_.position);
+                    host.container->Position());
 
         const bool keepPassiveDragReveal =
             host.HasActiveAssociatedSurface() || pointerInEdgeCorridor ||
@@ -890,11 +892,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     }
 
     RefreshFloatingDockPromotionInputs();
-    if (!generalSettings_.dockEnabled ||
-        !snowdesktop::dock_settings_rules::
-            IsFloatingEdgeSwipeEnabled(
-                dockSettings_.showOnlyWhenSummoned,
-                dockSettings_.floatingEdgeSwipeEnabled))
+    if (!generalSettings_.dockEnabled)
     {
         floatingDockEdgeSwipeDetector_.Reset();
         return;
@@ -953,7 +951,8 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     // gesture to a Dock on another display.
     DockContainer* dock =
         SelectFloatingDockContainerForMonitor(monitor);
-    if (!dock)
+    if (!dock || !snowdesktop::dock_settings_rules::IsFloatingEdgeSwipeEnabled(
+        dock->MonitorLayout().showOnlyWhenSummoned, dockSettings_.floatingEdgeSwipeEnabled))
     {
         floatingDockEdgeSwipeDetector_.Reset();
         return;
@@ -993,7 +992,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     const bool triggered =
         floatingDockEdgeSwipeDetector_.Update(
             cursor, monitorInfo.rcMonitor,
-            dockSettings_.position,
+            dock->Position(),
             GetTickCount(), edgeBand,
             requiredTravel,
             snowdesktop::floating_dock_rules::kEdgeSwipeMaximumDurationMs,
@@ -1006,7 +1005,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             !IsPersistentDockHostPromoted(*targetHost)))
     {
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, L"Floating Dock edge gesture received");
-        if (dockSettings_.showOnlyWhenSummoned && dockSettings_.edgeRevealGesture == 1 && targetHost)
+        if (dock->MonitorLayout().showOnlyWhenSummoned && dockSettings_.edgeRevealGesture == 1 && targetHost)
         {
             targetHost->edgeHoverRequested = true;
             UpdatePassiveDragRevealHosts(cursor);

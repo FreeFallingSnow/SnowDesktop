@@ -48,6 +48,14 @@ public:
         });
     }
 
+    void SortWindows(std::vector<HWND>& windows)
+    {
+        for (auto window : windows) Observe(window);
+        std::stable_sort(windows.begin(), windows.end(), [this](HWND left, HWND right) {
+            return Order(left) < Order(right);
+        });
+    }
+
 private:
     struct Entry
     {

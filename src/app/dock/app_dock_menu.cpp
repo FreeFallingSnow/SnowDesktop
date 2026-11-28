@@ -18,6 +18,7 @@
 #include "desktop/desktop_source.h"
 #include "desktop/desktop_style_presets.h"
 #include "layout/logical_slot_picker_rules.h"
+#include "steam/steam_entitlement.h"
 #include <commctrl.h>
 
 // Dock and running-application context menus.
@@ -31,6 +32,7 @@ constexpr UINT kDockRemoveSeparator = 41897;
 constexpr UINT kDockFreeItemOrder = 41898;
 constexpr UINT kDockMinimizeWindowsIntoApplicationIcon = 41899;
 constexpr UINT kDockMonitorScopeFirst = 41830;
+constexpr UINT kDockEdgeSpread = 41937, kDockEdgeCenter = 41938, kDockRunningArea = 41939;
 constexpr UINT kDockScaleFirst = 41840;
 constexpr int kDockScalePercent[]{50, 75, 100, 125, 150, 175, 200};
 constexpr UINT kMergedDockScaleFirst = 41850;
@@ -97,8 +99,46 @@ bool ConfirmBarMenuAction(HWND owner, const wchar_t* title, const wchar_t* messa
 }
 }
 
-HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
+bool DesktopApp::BarMonitorOverrideAvailable() const
 {
+    return steamEntitlementService_ && steamEntitlementService_->Current().bridgeAvailable;
+}
+
+bool DesktopApp::CanEditBarMonitorOverrides() const
+{
+    return BarMonitorOverrideAvailable() && steamEntitlementService_->Current().registered;
+}
+
+bool DesktopApp::ConfirmBarMonitorOverride(HMONITOR monitor, BarMonitorRole role,
+    bool inherited, const wchar_t* setting)
+{
+    if (role == BarMonitorRole::First) return true;
+    if (!BarMonitorOverrideAvailable()) return false;
+    if (!CanEditBarMonitorOverrides())
+    {
+        ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
+            snowdesktop::SettingsPage::General, "general.advancedFeatures.unlockRequired"));
+        return false;
+    }
+    if (!inherited) return true;
+    const bool last = role == BarMonitorRole::Last;
+    const auto count = std::ranges::count_if(barMonitorRoles_, [role](const auto& entry) {
+        return entry.second == role;
+    });
+    const std::wstring message = last ? std::wstring(setting) :
+        std::wstring(setting) + L"\n" + _LFW("settings.bar.monitorOverrides.otherCount", std::to_wstring(count));
+    return ConfirmBarMenuAction(hwnd_,
+        _LW(last ? "settings.bar.monitorOverrides.lastPrompt" : "settings.bar.monitorOverrides.otherPrompt"),
+        message.c_str(),
+        _LW(last ? "settings.bar.monitorOverrides.applyLast" : "settings.bar.monitorOverrides.applyOther"),
+        _LW("settings.dialog.cancel")) && CanEditBarMonitorOverrides() && BarRoleForMonitor(monitor) == role;
+}
+
+HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar, HMONITOR monitor)
+{
+    const auto role = BarRoleForMonitor(monitor);
+    const auto layout = DockLayoutForMonitor(monitor);
+    const bool canShowLayout = role == BarMonitorRole::First || BarMonitorOverrideAvailable();
     HMENU menu = CreatePopupMenu();
     HMENU positionMenu = CreatePopupMenu();
     HMENU layoutMenu = CreatePopupMenu();
@@ -136,19 +176,29 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
             AppendMenuW(styles, MF_STRING, kDesktopStyleFirst + index, _LW(kDesktopStyleLabels[index]));
         }
     };
-    addChoice(positionMenu, kContextDockPositionBottom, _LW("app.dock.bottom"), dockSettings_.position == DockPosition::Bottom, L"\uF148");
-    addChoice(positionMenu, kContextDockPositionTop, _LW("app.dock.top"), dockSettings_.position == DockPosition::Top, L"\uF19B");
-    addChoice(positionMenu, kContextDockPositionLeft, _LW("app.dock.left"), dockSettings_.position == DockPosition::Left, L"\uF15B");
-    addChoice(positionMenu, kContextDockPositionRight, _LW("app.dock.right"), dockSettings_.position == DockPosition::Right, L"\uF181");
-    addChoice(layoutMenu, kContextDockLayoutIsland, _LW("app.dock.island"), !dockSettings_.edgeAttached, L"\uF8B5");
-    addChoice(layoutMenu, kContextDockLayoutEdge, _LW("app.dock.edge"), dockSettings_.edgeAttached, L"\uF359");
+    addChoice(positionMenu, kContextDockPositionBottom, _LW("app.dock.bottom"), layout.position == DockPosition::Bottom, L"\uF148");
+    addChoice(positionMenu, kContextDockPositionTop, _LW("app.dock.top"), layout.position == DockPosition::Top, L"\uF19B");
+    addChoice(positionMenu, kContextDockPositionLeft, _LW("app.dock.left"), layout.position == DockPosition::Left, L"\uF15B");
+    addChoice(positionMenu, kContextDockPositionRight, _LW("app.dock.right"), layout.position == DockPosition::Right, L"\uF181");
+    addChoice(layoutMenu, kContextDockLayoutIsland, _LW("app.dock.island"), !layout.edgeAttached, L"\uF8B5");
+    addChoice(layoutMenu, kContextDockLayoutEdge, _LW("app.dock.edge"), false, L"\uF359");
+    AppendMenuW(layoutMenu, MF_STRING, kDockEdgeSpread, _LW("settings.dock.edgeSpread"));
+    AppendMenuW(layoutMenu, MF_STRING, kDockEdgeCenter, _LW("settings.dock.edgeCenter"));
+    SetMenuItemInlineAction(layoutMenu, kContextDockLayoutEdge, kDockEdgeSpread);
+    SetMenuItemInlineAction(layoutMenu, kDockEdgeSpread, kDockEdgeSpread, true, false, true);
+    SetMenuItemInlineAction(layoutMenu, kDockEdgeCenter, kDockEdgeSpread, true, false, true);
+    if (layout.edgeAttached)
+        CheckMenuItem(layoutMenu, layout.edgeCentered ? kDockEdgeCenter : kDockEdgeSpread, MF_BYCOMMAND | MF_CHECKED);
 
-    AppendMenuW(independentMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(positionMenu), _LW("app.dock.position"));
-    AppendMenuW(independentMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), _LW("app.dock.layout"));
+    if (canShowLayout)
+    {
+        AppendMenuW(independentMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(positionMenu), _LW("app.dock.position"));
+        AppendMenuW(independentMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), _LW("app.dock.layout"));
+    }
     AppendMenuW(independentMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(monitorMenu), _LW("settings.dock.monitor"));
-    AppendMenuW(independentMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(scaleMenu), _LW("app.settings.dock_thickness"));
+    if (canShowLayout) AppendMenuW(independentMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(scaleMenu), _LW("app.settings.dock_thickness"));
     const bool edgeRevealEnabled = snowdesktop::dock_settings_rules::IsFloatingEdgeSwipeEnabled(
-        dockSettings_.showOnlyWhenSummoned, dockSettings_.floatingEdgeSwipeEnabled);
+        layout.showOnlyWhenSummoned, dockSettings_.floatingEdgeSwipeEnabled);
     const HMENU revealParent = includeStatusBar && !edgeRevealEnabled ? independentMenu : menu;
     AppendMenuW(revealParent, MF_POPUP,
         reinterpret_cast<UINT_PTR>(revealMenu), _LW("settings.dock.edgeRevealGesture"));
@@ -167,7 +217,7 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     {
         const auto label = std::to_wstring(kDockScalePercent[index]) + L"%";
         addChoice(scaleMenu, kDockScaleFirst + index, label.c_str(),
-            std::abs(dockSettings_.thicknessScale * 100 - kDockScalePercent[index]) < .5f, L"\uF8C4");
+            std::abs(layout.thicknessScale * 100 - kDockScalePercent[index]) < .5f, L"\uF8C4");
     }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     auto toggleLabel = [](const wchar_t* title, bool enabled) {
@@ -180,7 +230,7 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     };
     const std::wstring frequentLabel = toggleLabel(
         _LW("app.dock.show_frequent"),
-        dockSettings_.showFrequentItems);
+        layout.showFrequentItems);
     std::vector<std::pair<UINT_PTR, const wchar_t*>> dockActionIcons;
     const auto addToggle = [&](HMENU target, UINT command, const wchar_t* title, bool enabled,
                                const wchar_t* glyph, bool available = true, bool visibility = false) {
@@ -229,30 +279,33 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
         dockSettings_.singleClickLaunchItems, L"\uE445"); // cursor_click_20
     addToggle(menu, kDockFreeItemOrder, _LW("settings.dock.freeItemOrder"),
         dockSettings_.freeItemOrder, L"\uF18D", settingsController_ != nullptr); // arrow_swap_20_regular
-    addToggle(menu, kContextDockShowOnlyWhenSummoned, _LW("settings.dock.showOnlyWhenSummoned"),
-        dockSettings_.showOnlyWhenSummoned, L"\uE5F2"); // eye_20
+    if (canShowLayout) addToggle(menu, kContextDockShowOnlyWhenSummoned, _LW("settings.dock.showOnlyWhenSummoned"),
+        layout.showOnlyWhenSummoned, L"\uE5F2"); // eye_20
     addToggle(menu, kContextDockWindowPreviews, _LW("settings.dock.windowPreviews"),
         dockSettings_.showWindowPreviews, L"\uF8B5"); // window_20
     addToggle(menu, kDockMinimizeWindowsIntoApplicationIcon,
         _LW("settings.dock.minimizeWindowsIntoApplicationIcon"), dockSettings_.minimizeWindowsIntoApplicationIcon,
         L"\uF165", settingsController_ != nullptr); // arrow_minimize_20_regular
-    addToggle(independentMenu, kDockReserveDesktop, _LW("settings.dock.allowDesktopContentOverlap"),
-        !dockSettings_.allowDesktopContentOverlap, L"\uF359");
-    addToggle(independentMenu, kDockReserveMaximized, _LW("settings.dock.reserveScreenSpace"),
-        dockSettings_.reserveScreenSpace, L"\uF8B5");
+    if (canShowLayout) addToggle(independentMenu, kDockReserveDesktop, _LW("settings.dock.allowDesktopContentOverlap"),
+        !layout.allowDesktopContentOverlap, L"\uF359");
+    if (canShowLayout) addToggle(independentMenu, kDockReserveMaximized, _LW("settings.dock.reserveScreenSpace"),
+        layout.reserveScreenSpace, L"\uF8B5");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING,
+    if (canShowLayout) AppendMenuW(menu, MF_STRING,
         kContextDockShowFrequentItems, frequentLabel.c_str());
 
     const UINT keepToggleCommand =
-        dockSettings_.keepWhenDesktopHidden
+        layout.keepWhenDesktopHidden
             ? kContextDockKeepWhenHiddenOff
             : kContextDockKeepWhenHiddenOn;
     const std::wstring keepLabel = toggleLabel(
         _LW("app.dock.keep_when_hidden"),
-        dockSettings_.keepWhenDesktopHidden);
-    AppendMenuW(menu, MF_STRING,
+        layout.keepWhenDesktopHidden);
+    if (canShowLayout) AppendMenuW(menu, MF_STRING,
         keepToggleCommand, keepLabel.c_str());
+    if (role != BarMonitorRole::First && (canShowLayout || !layout.showRunningArea))
+        addToggle(menu, kDockRunningArea, _LW("settings.dock.showRunningArea"),
+            layout.showRunningArea, L"\uF8B5");
 
     if (!includeStatusBar)
     {
@@ -261,13 +314,22 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
         AppendMenuW(menu, MF_STRING, kContextDockDetailedSettings, _LW("app.dock.detailed"));
         SetMenuItemIcon(menu, kContextDockDetailedSettings, L"\uF6A9", MenuIconFont::FluentRegular);
     }
-    SetMenuItemIcon(independentMenu, reinterpret_cast<UINT_PTR>(positionMenu), L"\uF8E5", MenuIconFont::FluentRegular);
-    SetMenuItemIcon(independentMenu, reinterpret_cast<UINT_PTR>(layoutMenu), L"\uF587", MenuIconFont::FluentRegular);
+    if (canShowLayout)
+    {
+        SetMenuItemIcon(independentMenu, reinterpret_cast<UINT_PTR>(positionMenu), L"\uF8E5", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(independentMenu, reinterpret_cast<UINT_PTR>(layoutMenu), L"\uF587", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(independentMenu, reinterpret_cast<UINT_PTR>(scaleMenu), L"\uF8C4", MenuIconFont::FluentRegular);
+    }
+    else
+    {
+        DestroyMenu(positionMenu);
+        DestroyMenu(layoutMenu);
+        DestroyMenu(scaleMenu);
+    }
     SetMenuItemIcon(independentMenu, reinterpret_cast<UINT_PTR>(monitorMenu), L"\uF359", MenuIconFont::FluentRegular);
-    SetMenuItemIcon(independentMenu, reinterpret_cast<UINT_PTR>(scaleMenu), L"\uF8C4", MenuIconFont::FluentRegular);
     SetMenuItemIcon(revealParent, reinterpret_cast<UINT_PTR>(revealMenu), L"\uE445", MenuIconFont::FluentRegular);
     dockActionIcons.emplace_back(kContextDockShowFrequentItems,
-        dockSettings_.showFrequentItems
+        layout.showFrequentItems
             ? snowdesktop::menu_fluent_glyphs::kShowFrequent
             : snowdesktop::menu_fluent_glyphs::kHideFrequent);
     dockActionIcons.emplace_back(keepToggleCommand,
@@ -388,7 +450,8 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint, bool powerUserMenu)
         return;
     }
     PrepareMenuIconsForPoint(screenPoint);
-    HMENU menu = CreateDockContextMenu(merged);
+    const HMONITOR monitor = MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST);
+    HMENU menu = CreateDockContextMenu(merged, monitor);
     if (!menu) { ClearMenuIcons(); return; }
     const bool horizontalDivider = dock && dock->GetInsertionStyle() == BarStyle::HBar;
     if (separatorPosition || !separatorId.empty()) AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -447,10 +510,10 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint, bool powerUserMenu)
         return;
     }
     if (!powerUserMenu || !snowdesktop::power_user_menu::Execute(command, ShellLaunchOwnerHwnd(hwnd_)))
-        ExecuteDockContextMenuCommand(command, hwnd_);
+        ExecuteDockContextMenuCommand(command, hwnd_, monitor);
 }
 
-void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
+void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner, HMONITOR monitor)
 {
     bool DockSettings::* setting = nullptr;
     switch (command)
@@ -525,6 +588,76 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
         }
         return;
     }
+    const auto role = BarRoleForMonitor(monitor);
+    if (role != BarMonitorRole::First && settingsController_)
+    {
+        const auto layout = DockLayoutForMonitor(monitor);
+        const auto& stored = role == BarMonitorRole::Last ? dockSettings_.lastMonitorOverride : dockSettings_.otherMonitorOverride;
+        const auto apply = [&](const wchar_t* setting, bool inherited, auto edit, bool restoring = false) {
+            if (!restoring && !ConfirmBarMonitorOverride(monitor, role, inherited, setting)) return;
+            auto dock = settingsController_->Snapshot()->values.dock;
+            edit(role == BarMonitorRole::Last ? dock.lastMonitorOverride : dock.otherMonitorOverride);
+            settingsController_->UpdateDock(std::move(dock), snowdesktop::SettingsUpdateMode::PreviewAndCommit);
+            (void)settingsController_->FlushPending();
+        };
+        const auto set = [&](const wchar_t* setting, auto member, auto value) {
+            apply(setting, !(stored.*member).has_value(), [member, value](DockMonitorOverride& row) { row.*member = value; });
+        };
+        if (command >= kContextDockPositionBottom && command <= kContextDockPositionRight)
+        {
+            const auto position = static_cast<DockPosition>(command - kContextDockPositionBottom);
+            if (layout.position != position) set(_LW("app.dock.position"), &DockMonitorOverride::position, position);
+            return;
+        }
+        if (command == kContextDockLayoutIsland || command == kContextDockLayoutEdge ||
+            command == kDockEdgeSpread || command == kDockEdgeCenter)
+        {
+            const bool attached = command != kContextDockLayoutIsland;
+            const bool chooseAlignment = command == kDockEdgeSpread || command == kDockEdgeCenter;
+            const bool centered = command == kDockEdgeCenter;
+            if (layout.edgeAttached != attached || (chooseAlignment && layout.edgeCentered != centered))
+                apply(_LW("app.dock.layout"), !stored.edgeAttached || (chooseAlignment && !stored.edgeCentered),
+                    [attached, chooseAlignment, centered](DockMonitorOverride& row) {
+                        row.edgeAttached = attached;
+                        if (chooseAlignment) row.edgeCentered = centered;
+                    });
+            return;
+        }
+        if (command >= kDockScaleFirst && command < kDockScaleFirst + std::size(kDockScalePercent))
+        {
+            const auto scale = ClampDockScale(kDockScalePercent[command - kDockScaleFirst] / 100.f);
+            if (layout.thicknessScale != scale) set(_LW("app.settings.dock_thickness"), &DockMonitorOverride::thicknessScale, scale);
+            return;
+        }
+        switch (command)
+        {
+        case kContextDockShowOnlyWhenSummoned:
+            set(_LW("settings.dock.showOnlyWhenSummoned"), &DockMonitorOverride::showOnlyWhenSummoned, !layout.showOnlyWhenSummoned);
+            return;
+        case kDockReserveDesktop:
+            set(_LW("settings.dock.allowDesktopContentOverlap"), &DockMonitorOverride::allowDesktopContentOverlap, !layout.allowDesktopContentOverlap);
+            return;
+        case kDockReserveMaximized:
+            set(_LW("settings.dock.reserveScreenSpace"), &DockMonitorOverride::reserveScreenSpace, !layout.reserveScreenSpace);
+            return;
+        case kContextDockShowFrequentItems:
+            set(_LW("app.dock.show_frequent_items"), &DockMonitorOverride::showFrequentItems, !layout.showFrequentItems);
+            return;
+        case kContextDockKeepWhenHiddenOn:
+        case kContextDockKeepWhenHiddenOff:
+            set(_LW("app.dock.keep_when_hidden"), &DockMonitorOverride::keepWhenDesktopHidden, !layout.keepWhenDesktopHidden);
+            return;
+        case kDockRunningArea:
+            if (layout.showRunningArea)
+                set(_LW("settings.dock.showRunningArea"), &DockMonitorOverride::showRunningArea, false);
+            else
+                apply(_LW("settings.dock.showRunningArea"), false,
+                    [](DockMonitorOverride& row) { row.showRunningArea.reset(); }, true);
+            return;
+        default: break;
+        }
+    }
+
     DockSettings updated = dockSettings_;
     bool layoutChanged = false;
     switch (command)
@@ -542,8 +675,12 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
         layoutChanged = updated.edgeAttached != dockSettings_.edgeAttached;
         break;
     case kContextDockLayoutEdge:
+    case kDockEdgeSpread:
+    case kDockEdgeCenter:
         updated.edgeAttached = true;
-        layoutChanged = updated.edgeAttached != dockSettings_.edgeAttached;
+        if (command != kContextDockLayoutEdge) updated.edgeCentered = command == kDockEdgeCenter;
+        layoutChanged = updated.edgeAttached != dockSettings_.edgeAttached ||
+            updated.edgeCentered != dockSettings_.edgeCentered;
         break;
     case kContextDockShowFrequentItems:
         updated.showFrequentItems = !updated.showFrequentItems;

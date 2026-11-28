@@ -2,6 +2,7 @@
 #include "common/json_value.h"
 #include <sstream>
 #include "dock_settings.h"
+#include "bar_monitor_overrides_storage.h"
 #include "dock_settings_rules.h"
 #include "dock_minimize_protocol.h"
 #include "dock_fullscreen_policy.h"
@@ -1472,10 +1473,21 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     const std::string text = stream.str();
     if (text.empty()) return false;
 
+    JsonValue gradientDocument;
+    if (!ParseJson(text, gradientDocument) || !gradientDocument.IsObject()) return false;
+    const auto readBaseBool = [&](const char* key, bool& value) {
+        const auto* field = gradientDocument.Find(key);
+        if (!field || !field->IsBoolean()) return false;
+        value = field->boolean;
+        return true;
+    };
+
     double value = 0.0;
-    if (ReadDoubleField(text, "position", value))
-        settings.position = static_cast<DockPosition>(std::clamp(static_cast<int>(value), 0, 3));
-    ReadBoolField(text, "edgeAttached", settings.edgeAttached);
+    if (const auto* field = gradientDocument.Find("position"); field && field->IsNumber())
+        settings.position = static_cast<DockPosition>(static_cast<int>(std::clamp(field->number, 0.0, 3.0)));
+    readBaseBool("edgeAttached", settings.edgeAttached);
+    readBaseBool("edgeCentered", settings.edgeCentered);
+    readBaseBool("showWindowTitles", settings.showWindowTitles);
     ReadBoolField(text, "floatingShortcutMode", settings.floatingShortcutMode);
     if (ReadDoubleField(text, "floatingHotkeyModifiers", value))
     {
@@ -1528,18 +1540,18 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     ReadBoolField(text, "singleClickLaunchItems",
         settings.singleClickLaunchItems);
     ReadBoolField(text, "freeItemOrder", settings.freeItemOrder);
-    ReadBoolField(text, "showFrequentItems", settings.showFrequentItems);
-    ReadBoolField(text, "keepWhenDesktopHidden",
+    readBaseBool("showFrequentItems", settings.showFrequentItems);
+    readBaseBool("keepWhenDesktopHidden",
         settings.keepWhenDesktopHidden);
-    ReadBoolField(text, "allowDesktopContentOverlap",
+    readBaseBool("allowDesktopContentOverlap",
         settings.allowDesktopContentOverlap);
-    ReadBoolField(text, "reserveScreenSpace", settings.reserveScreenSpace);
+    readBaseBool("reserveScreenSpace", settings.reserveScreenSpace);
     ReadBoolField(text, "blurReservedSpace", settings.blurReservedSpace);
     ReadBoolField(text, "lastMonitorUseHomeSize", settings.lastMonitorUseHomeSize);
     if (ReadDoubleField(text, "mergedBarHeight", value) && std::isfinite(value))
         settings.mergedBarHeight = static_cast<int>(std::clamp(value, 32., 96.));
     bool loadedLegacyAutoHide = false;
-    if (!ReadBoolField(text, "showOnlyWhenSummoned",
+    if (!readBaseBool("showOnlyWhenSummoned",
             settings.showOnlyWhenSummoned))
     {
         // Compatibility with development builds that briefly described this
@@ -1561,8 +1573,8 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
             settings.floatingEdgeSwipeEnabled);
     if (ReadDoubleField(text, "frequentItemCount", value))
         settings.frequentItemCount = std::clamp(static_cast<int>(value), 1, 8);
-    if (ReadDoubleField(text, "thicknessScale", value))
-        settings.thicknessScale = ClampDockScale(static_cast<float>(value));
+    if (const auto* field = gradientDocument.Find("thicknessScale"); field && field->IsNumber())
+        settings.thicknessScale = ClampDockScale(static_cast<float>(field->number));
     if (ReadDoubleField(text, "edgeDistanceScale", value))
         settings.edgeDistanceScale = ClampDockEdgeDistanceScale(static_cast<float>(value));
     // Preserve the previous shared scale when opening an older settings file.
@@ -1616,9 +1628,10 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.systemTaskbarMaximizedWindow);
     ReadDynamicRule(text, "systemTaskbarShellUi",
         settings.systemTaskbarShellUi);
-    JsonValue gradientDocument;
-    if (!ParseJson(text, gradientDocument) ||
-        !snowdesktop::ReadTaskbarGradients(gradientDocument, settings)) return false;
+    if (!snowdesktop::ReadTaskbarGradients(gradientDocument, settings)) return false;
+    if (!snowdesktop::ReadBarMonitorOverride(gradientDocument, "lastMonitorOverride", settings.lastMonitorOverride) ||
+        !snowdesktop::ReadBarMonitorOverride(gradientDocument, "otherMonitorOverride", settings.otherMonitorOverride))
+        return false;
     if (!snowdesktop::ReadTaskbarMaterials(gradientDocument, settings)) return false;
     if (taskbarStyle.backgroundPreset == kAppearancePresetTaskbarTransparent)
         taskbarStyle = MakeTransparentTaskbarAppearance();
@@ -1701,6 +1714,13 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"position\": " << static_cast<int>(settings.position) << ",\n";
     file << "  \"edgeAttached\": "
          << (settings.edgeAttached ? "true" : "false") << ",\n";
+    file << "  \"edgeCentered\": " << (settings.edgeCentered ? "true" : "false") << ",\n";
+    file << "  \"showWindowTitles\": " << (settings.showWindowTitles ? "true" : "false") << ",\n";
+    file << "  \"lastMonitorOverride\": ";
+    snowdesktop::WriteBarMonitorOverride(file, settings.lastMonitorOverride);
+    file << ",\n  \"otherMonitorOverride\": ";
+    snowdesktop::WriteBarMonitorOverride(file, settings.otherMonitorOverride);
+    file << ",\n";
     file << "  \"floatingShortcutMode\": "
          << (settings.floatingShortcutMode ? "true" : "false") << ",\n";
     file << "  \"floatingHotkeyModifiers\": "

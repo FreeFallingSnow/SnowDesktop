@@ -805,6 +805,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     dockPressedWindowAction_ =
         snowdesktop::dock_window_rules::DockClickAction::None;
     dockPressedTargetWindow_ = nullptr;
+    dockPressedTitleWindow_ = nullptr;
     const RECT popupGroupFrame = popupGroup ? popupGroup->GetFrameRect() : RECT{};
     if (popupGroup && !PtInRect(&popupGroupFrame, pt))
     {
@@ -816,6 +817,12 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     {
         if (dock->ContainsInteractivePoint(pt))
         {
+            if (const HWND title = dock->WindowTitleAtPoint(pt))
+            {
+                dockPressedTitleWindow_ = title;
+                mouseDownHit_ = nullptr;
+                return;
+            }
             if (dock->IsWindowsButtonPoint(pt))
             {
                 mouseDown_ = false;

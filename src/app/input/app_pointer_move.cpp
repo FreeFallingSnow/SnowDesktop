@@ -1956,7 +1956,7 @@ void DesktopApp::OnMouseMoveAt(
                         snowdesktop::floating_dock_rules::
                             ExpandHostForTitleLayer(
                                 dock->GetInteractiveBounds(),
-                                dockSettings_.position);
+                                dock->Position());
                     if (IsRectEmptyRect(foregroundDirty))
                         foregroundDirty = hoverEnvelope;
                     else

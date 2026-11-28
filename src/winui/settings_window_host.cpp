@@ -2376,6 +2376,15 @@ struct SettingsWindowHost::Impl
         shell->SetDesktopPageActions(std::move(desktop));
 
         DockPageActions dock;
+        dock.advancedFeatureStatus = [weak] {
+            const auto state = weak.lock();
+            return state && state->alive.load() && state->owner && state->owner->options.advancedFeatureStatus
+                ? state->owner->options.advancedFeatureStatus() : GeneralAdvancedFeatureStatus{};
+        };
+        dock.openAdvancedFeatureUnlock = [weak] {
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+                state->owner->RequestRoute(SettingsRoute::ForPage(SettingsPage::General, "general.advancedFeatures.unlockRequired"));
+        };
         dock.themeLibrary = [weak](std::uint64_t generation, const ThemeLibraryRequest& request) {
             const auto state = weak.lock();
             return state && state->alive.load() && state->owner ? state->owner->ThemeOperation(generation, request) : ThemeLibraryResult{};

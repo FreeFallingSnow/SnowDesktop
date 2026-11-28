@@ -309,8 +309,8 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         {
             const RECT base = host.container->GetBounds();
             const RECT visual = host.container->GetVisualPanelBounds(lastMousePoint_);
-            const bool vertical = dockSettings_.position == DockPosition::Left ||
-                dockSettings_.position == DockPosition::Right;
+            const bool vertical = host.container->Position() == DockPosition::Left ||
+                host.container->Position() == DockPosition::Right;
             snowdesktop::performance::Value("dock", "floating.panel_axis_scale", diagnosticOwner,
                 vertical ? static_cast<double>(visual.bottom - visual.top) / std::max<LONG>(1, base.bottom - base.top)
                     : static_cast<double>(visual.right - visual.left) / std::max<LONG>(1, base.right - base.left), revision);

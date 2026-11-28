@@ -312,12 +312,13 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
     target = {};
 
     DockContainer* dock = GetDockContainerAtPoint(clientPoint);
-    if (!dock || !dock->ContainsInteractivePoint(clientPoint))
+    if (!dock || !dock->ContainsInteractivePoint(clientPoint) || dock->WindowTitleAtPoint(clientPoint))
         return false;
     target.floatingLayer =
         IsDockContainerEffectivelyFloating(dock);
 
     RECT anchor{};
+    size_t titleCount = 0;
     bool found = false;
     const auto resolveDesktopItem = [&](size_t itemIndex, RECT bounds) {
         if (itemIndex >= items_.size() ||
@@ -348,6 +349,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
                 : DockAppIdentityKind::Executable;
             target.trackedWindows = app.trackedWindows;
             anchor = running->GetBounds();
+            titleCount = dock->RunningTitleWindows(index).size();
             found = true;
         }
     }
@@ -361,6 +363,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
             const size_t itemIndex = FindItemIndexByKey(
                 dockEntries_[entryIndex].reference);
             found = resolveDesktopItem(itemIndex, entry->GetBounds());
+            titleCount = dock->EntryTitleWindows(entryIndex).size();
         }
     }
     else if (DockFrequentItem* frequent =
@@ -373,8 +376,8 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
         return false;
     // Keep window previews anchored to the slot in single-icon mode, even
     // while the icon grows or shifts during the hover animation.
-    if (dockSettings_.hoverEffect != 1)
-        anchor = dock->GetElementVisualRect(anchor, clientPoint);
+    const RECT visual = dockSettings_.hoverEffect == 1 ? anchor : dock->GetElementVisualRect(anchor, clientPoint);
+    anchor = dock->WindowTitleIconRect(anchor, visual, titleCount);
     target.identityKey = DockWindowPreviewIdentityKey(target.identity);
     if (target.identityKey.empty())
         return false;
@@ -425,7 +428,7 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
                     anchorChanged))
         {
             dockWindowPreview_->UpdateAnchor(
-                target.anchorScreen, dockSettings_.position);
+                target.anchorScreen, DockLayoutForMonitor(MonitorFromRect(&target.anchorScreen, MONITOR_DEFAULTTONEAREST)).position);
             dockWindowPreviewAnchorScreen_ =
                 target.anchorScreen;
         }
@@ -556,7 +559,7 @@ void DesktopApp::ShowDockWindowPreview(
     dockWindowPreviewIdentity_ = target.identity;
     dockWindowPreviewAnchorScreen_ = target.anchorScreen;
     dockWindowPreview_->Show(
-        previewItems, target.anchorScreen, dockSettings_.position,
+        previewItems, target.anchorScreen, DockLayoutForMonitor(MonitorFromRect(&target.anchorScreen, MONITOR_DEFAULTTONEAREST)).position,
         IsLightContentTheme(),
         target.floatingLayer
             ? floatingDockHwnd_ : nullptr, byTouch);
@@ -658,6 +661,12 @@ void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
     if (event >= EVENT_OBJECT_CREATE &&
         (objectId != OBJID_WINDOW || childId != CHILDID_SELF))
         return;
+    if (event == EVENT_OBJECT_NAMECHANGE)
+    {
+        if (const HWND target = dockForegroundNotificationWindow_.load())
+            PostMessageW(target, kDockWindowListChangedMessage, event, reinterpret_cast<LPARAM>(window));
+        return;
+    }
     if (event == EVENT_OBJECT_LOCATIONCHANGE)
     {
         const auto placement = snowdesktop::window_observation::ObservePlacement(window);

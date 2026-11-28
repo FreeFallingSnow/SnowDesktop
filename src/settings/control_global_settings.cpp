@@ -104,6 +104,14 @@ void Enrich(Value& schema, const std::string& path)
         Choices(schema, "classicTaskbarSystemTheme", {-1, 0, 1});
         ReadOnly(schema, "showRunningApps", "Always enabled by the current product");
     }
+    if (path == "dock.lastMonitorOverride" || path == "dock.otherMonitorOverride")
+        Range(schema, "thicknessScale", .5, 2);
+    if (path == "general.statusBar.lastMonitorOverride" || path == "general.statusBar.otherMonitorOverride")
+    {
+        Range(schema, "scale", .75, 3);
+        Choices(schema, "position", {0, 1});
+        Choices(schema, "edgeRevealGesture", {0, 1});
+    }
     if (path == "general")
     {
         Choices(schema, "animationMode", {0, 1, 2}); Choices(schema, "popupAnimationEffect", {0, 1, 2});
@@ -384,6 +392,20 @@ Value HandleGlobalSettings(std::string_view method, const Value& params, const T
     ValidatePatch(changes, schema, target.kind == "global" ? "" : target.kind);
     Value allChanges = target.kind == "global" ? changes : Object({{target.kind, changes}});
     auto candidate = current->values; PatchValue(candidate, allChanges);
+    if (!context.canEditBarMonitorOverrides || !context.canEditBarMonitorOverrides())
+    {
+        const auto addingOverride = [](const Value* domain) {
+            if (!domain) return false;
+            for (const auto* name : {"lastMonitorOverride", "otherMonitorOverride"})
+                if (const auto* row = domain->Find(name); row && row->IsObject())
+                    for (const auto& [key, field] : row->object)
+                        if (!field.IsNull()) return true;
+            return false;
+        };
+        const auto* general = allChanges.Find("general");
+        if (addingOverride(allChanges.Find("dock")) || addingOverride(general ? general->Find("statusBar") : nullptr))
+            throw Error("feature_locked", "Unlock advanced features to configure bars per monitor");
+    }
     if (const auto* general = allChanges.Find("general"); general && general->Find("dockEnabled"))
         candidate.desktop.dockEnabled = candidate.general.dockEnabled;
     CheckCorrelatedValues(candidate, allChanges, context);

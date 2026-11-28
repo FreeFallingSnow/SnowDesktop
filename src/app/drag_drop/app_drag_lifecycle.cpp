@@ -857,6 +857,7 @@ void DesktopApp::ClearDockPressedState()
     dockPressedWindowAction_ =
         snowdesktop::dock_window_rules::DockClickAction::None;
     dockPressedTargetWindow_ = nullptr;
+    dockPressedTitleWindow_ = nullptr;
     dockPressedContainer_ = nullptr;
     dockPressedClosedCollectionPopup_ = false;
 }

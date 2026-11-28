@@ -259,6 +259,7 @@ struct StatusBar::Impl
         HWND hwnd = nullptr;
         HMONITOR monitor = nullptr;
         StatusBarAppBar appbar;
+        StatusBarMonitorLayout monitorLayout;
         DesktopBackdropCompositor backdrop;
         ComPtr<IDCompositionTarget> target;
         ComPtr<IDCompositionVisual2> visual;
@@ -359,7 +360,7 @@ struct StatusBar::Impl
             bool presented = false;
             bool resolvePreviewKey = false;
         };
-        float TrayScale() const { return dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale); }
+        float TrayScale() const { return dpi / 96.f * (mergedDockHeight ? 1.f : monitorLayout.scale); }
         void StopTrayScroll()
         {
             scrollDragKey.clear();
@@ -520,7 +521,7 @@ struct StatusBar::Impl
             {
                 const auto part = *tooltipControlPart;
                 key += "/" + std::to_string(part); body = item.controlTips[part];
-                const float scale = dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale);
+                const float scale = dpi / 96.f * (mergedDockHeight ? 1.f : monitorLayout.scale);
                 if (part == 0) anchor.right = std::min(anchor.right, anchor.left + static_cast<LONG>(std::lround(28 * scale)));
                 else if (part == 1)
                 {
@@ -533,7 +534,7 @@ struct StatusBar::Impl
             }
             MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&anchor), 2);
             tooltip.SetTarget(std::move(key), std::move(body), anchor,
-                owner.settings.position == DockPosition::Bottom ? NativeTooltipPlacement::Above : NativeTooltipPlacement::Below,
+                monitorLayout.position == DockPosition::Bottom ? NativeTooltipPlacement::Above : NativeTooltipPlacement::Below,
                 immediate);
         }
         bool PointerOverTrayPopup() const
@@ -598,7 +599,7 @@ struct StatusBar::Impl
         }
         bool NeedsIndependentPresentationRecovery() const
         {
-            return !mergedDockHeight && !owner.settings.showOnlyWhenSummoned &&
+            return !mergedDockHeight && !monitorLayout.showOnlyWhenSummoned &&
                 !hidingWindow && WantsPresentation() &&
                 (!IsWindowVisible(hwnd) || IsIconic(hwnd) || !IsPresentationTopmost());
         }
@@ -708,7 +709,7 @@ struct StatusBar::Impl
             const HWND source = fullscreenState.Source();
             const bool replacedDockFullscreen = slideFullscreenSource && source && slideFullscreenSource != source;
             const bool interacting = dock.interacting && !replacedDockFullscreen;
-            const bool summonOnly = !fullscreenObserved && owner.settings.showOnlyWhenSummoned;
+            const bool summonOnly = !fullscreenObserved && monitorLayout.showOnlyWhenSummoned;
             const bool next = HideIndependentStatusBar(fullscreenState.ShouldHide(interacting),
                 summonOnly, revealState.Revealed(), interacting);
             const bool changed = next != fullscreen;
@@ -755,7 +756,7 @@ struct StatusBar::Impl
         }
         void PollReveal()
         {
-            if (mergedDockHeight || fullscreenObserved || !owner.settings.showOnlyWhenSummoned) return;
+            if (mergedDockHeight || fullscreenObserved || !monitorLayout.showOnlyWhenSummoned) return;
             if (!owner.presentationEnabled || closing || failed || !positioned)
             { revealState.Reset(); return; }
             MONITORINFO info{sizeof(info)};
@@ -768,8 +769,8 @@ struct StatusBar::Impl
             }
             const bool interacting = (owner.interactionSessionProvider && owner.interactionSessionProvider(monitor)) ||
                 GetCapture() == hwnd || GetFocus() == hwnd;
-            if (revealState.Update(pointer, info.rcMonitor, placedBounds, owner.settings.position,
-                GetTickCount(), dpi, owner.settings.edgeRevealGesture, interacting))
+            if (revealState.Update(pointer, info.rcMonitor, placedBounds, monitorLayout.position,
+                GetTickCount(), dpi, monitorLayout.edgeRevealGesture, interacting))
                 CheckFullscreen();
         }
         bool OwnsPointer(POINT clientPoint) const
@@ -943,7 +944,7 @@ struct StatusBar::Impl
             auto frame = MergedDockPresentationFrame(independentSlide);
             // Keep the HWND and AppBar reservation fixed. The complete
             // precomposed strip slides through its own window's bounds.
-            PositionDockRevealFrame(frame, owner.settings.position, placedBounds, placedBounds);
+            PositionDockRevealFrame(frame, monitorLayout.position, placedBounds, placedBounds);
             if (show && !IsWindowVisible(hwnd))
             {
                 Paint(true);
@@ -1011,10 +1012,10 @@ struct StatusBar::Impl
             UINT dpiY = 96;
             if (FAILED(GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpi, &dpiY))) dpi = 96;
             if(dpi!=previousDpi){surface.Reset();backgroundSurface.Reset();appearanceDirty=backgroundDirty=paintDirty=true;}
-            const UINT edge = Edge(owner.settings.position);
+            const UINT edge = Edge(monitorLayout.position);
             const bool vertical = edge == ABE_LEFT || edge == ABE_RIGHT;
             const int thickness = mergedDockHeight > 0 ? mergedDockHeight : static_cast<int>(std::lround(
-                (vertical ? 48.f : 32.f) * owner.settings.scale * dpi / 96.f));
+                (vertical ? 48.f : 32.f) * monitorLayout.scale * dpi / 96.f));
             bool placed = false;
             const bool restoringRegistration = reserveSpace && !appbar.Registered();
             if (reserveSpace)
@@ -1433,15 +1434,15 @@ struct StatusBar::Impl
                 background->Clear(D2D1::ColorF(0, 0.f));
                 DesktopBackdropCompositor::SrgbSceneRecording scene(background.Get());
                 if (hc) background->Clear(SystemColor(COLOR_WINDOW));
-                if (!hc && owner.drawBackground) owner.drawBackground(background.Get(), client, a, dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale));
+                if (!hc && owner.drawBackground) owner.drawBackground(background.Get(), client, a, dpi / 96.f * (mergedDockHeight ? 1.f : monitorLayout.scale));
                 if (!hc)
                 {
                     RECT adjacentClient = adjacentDockBounds;
                     RECT screenFrame{};
                     GetWindowRect(hwnd, &screenFrame);
                     OffsetRect(&adjacentClient, -screenFrame.left, -screenFrame.top);
-                    DrawStatusBarEdge(background.Get(), client, a, dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale),
-                        owner.settings.position, adjacentClient);
+                    DrawStatusBarEdge(background.Get(), client, a, dpi / 96.f * (mergedDockHeight ? 1.f : monitorLayout.scale),
+                        monitorLayout.position, adjacentClient);
                 }
                 const auto recorded = scene.Finish();
                 const bool prepared = SUCCEEDED(recorded) && backdrop.PublishSrgbScene(
@@ -1482,7 +1483,7 @@ struct StatusBar::Impl
             const auto drawnInteraction = InteractionVisual();
             if (focusFrame) retainedFrameValid = focusFrame->layoutReusable;
             const auto contentResult = DrawStatusBarContent(context.Get(), owner.text.Get(), items, w, h,
-                dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale), a, palette, drawnInteraction.hovered,
+                dpi / 96.f * (mergedDockHeight ? 1.f : monitorLayout.scale), a, palette, drawnInteraction.hovered,
                 drawnInteraction.focused.has_value(), drawnInteraction.focused.value_or(0),
                 mergedDockHeight > 0, owner.settings.timeNotificationRightAligned, &trayScroll,
                 dockQuickSearch, scrollFrame || focusFrame ? &client : nullptr, &drawResources,
@@ -1676,7 +1677,7 @@ struct StatusBar::Impl
             }
             bool changed = ArmTrayMenu(key);
             bool accepted = false;
-            const tray::FocusOrigin origin{hwnd, hwnd, owner.settings.position == DockPosition::Bottom};
+            const tray::FocusOrigin origin{hwnd, hwnd, monitorLayout.position == DockPosition::Bottom};
             if (leftClick) accepted = owner.tray->Activate(key, tray::Activation::LeftDown, point, origin);
             accepted = owner.tray->Activate(key, action, point, origin, {}, expectedIdentity) || accepted;
             if (!accepted) changed = CancelTrayMenu() || changed;
@@ -2124,7 +2125,7 @@ struct StatusBar::Impl
                 // request settles instead of inside its notification.
                 if (!wp && !self->hidingWindow && !self->mergedDockHeight &&
                     self->WantsPresentation() &&
-                    (self->owner.systemShowDesktopActive || !self->owner.settings.showOnlyWhenSummoned))
+                    (self->owner.systemShowDesktopActive || !self->monitorLayout.showOnlyWhenSummoned))
                     self->QueuePresentationCheck();
                 break;
             case WM_WINDOWPOSCHANGING:
@@ -2280,7 +2281,7 @@ struct StatusBar::Impl
                                 {
                                     self->trayPreview = true;
                                     self->owner.dragFeedback.begin(window,*item.icon,screen,
-                                        static_cast<UINT>(std::lround(24*self->dpi/96.f*(self->mergedDockHeight ? 1.f : self->owner.settings.scale))));
+                                        static_cast<UINT>(std::lround(24*self->dpi/96.f*(self->mergedDockHeight ? 1.f : self->monitorLayout.scale))));
                                     break;
                                 }
                         }
@@ -2303,7 +2304,7 @@ struct StatusBar::Impl
                     if (item.key == "controlCenter" && item.glyph.empty())
                     {
                         const auto part = StatusBarControlPart((point.x - item.bounds.left) /
-                            (self->dpi / 96.f * (self->mergedDockHeight ? 1.f : self->owner.settings.scale)), !item.controlGlyphs[2].empty());
+                            (self->dpi / 96.f * (self->mergedDockHeight ? 1.f : self->monitorLayout.scale)), !item.controlGlyphs[2].empty());
                         self->tooltipControlPart = part;
                     }
                     if (item.icon) hoveredKey = item.icon->key;
@@ -2324,7 +2325,7 @@ struct StatusBar::Impl
                         RECT row{};
                         GetWindowRect(window, &row);
                         self->owner.tray->BeginHover(hoveredKey, window, window, bounds, row,
-                            self->owner.settings.position == DockPosition::Bottom, self->trayHoverPopup);
+                            self->monitorLayout.position == DockPosition::Bottom, self->trayHoverPopup);
                     }
                     self->hoveredTray = std::move(hoveredKey);
                 }
@@ -2360,7 +2361,7 @@ struct StatusBar::Impl
                 for (const auto& item : self->items)
                     if (item.key == "controlCenter" && item.glyph.empty() && PtInRect(&item.bounds, point))
                     {
-                        const float x = (point.x - item.bounds.left) / (self->dpi / 96.f * (self->mergedDockHeight ? 1.f : self->owner.settings.scale));
+                        const float x = (point.x - item.bounds.left) / (self->dpi / 96.f * (self->mergedDockHeight ? 1.f : self->monitorLayout.scale));
                         if (StatusBarControlPart(x, !item.controlGlyphs[2].empty()) != 1) return 0;
                         const bool canceledMenu = self->CancelTrayMenu();
                         const auto sample = self->owner.data->AudioOutputVolume();
@@ -2998,12 +2999,12 @@ bool StatusBar::HasTemporaryReveal(HMONITOR monitor) const
 }
 bool StatusBar::CanRevealFromTouch(HMONITOR monitor) const
 {
-    if (impl_->removingWindows || !impl_->settings.showOnlyWhenSummoned) return false;
+    if (impl_->removingWindows) return false;
     for (const auto& [id, window] : impl_->windows)
     {
         (void)id;
         if (window && window->monitor == monitor && !window->mergedDockHeight &&
-            window->positioned && !window->closing && !window->failed && !window->fullscreenObserved &&
+            window->monitorLayout.showOnlyWhenSummoned && window->positioned && !window->closing && !window->failed && !window->fullscreenObserved &&
             !window->revealState.Revealed()) return true;
     }
     return false;
@@ -3100,7 +3101,7 @@ std::optional<RECT> StatusBar::MergedDockArea(HMONITOR monitor) const
             !window->positioned) continue;
         const auto bounds = window->placedBounds;
         auto center = MergedStatusBarCenter(bounds.right - bounds.left, bounds.bottom - bounds.top,
-            window->dpi / 96.f * impl_->settings.scale);
+            window->dpi / 96.f * window->monitorLayout.scale);
         OffsetRect(&center, bounds.left, bounds.top); return center;
     }
     return {};
@@ -3186,10 +3187,11 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
             const auto found = self.windows.find(monitor.id);
             if (found == self.windows.end() || !found->second) return false;
             const auto& window = *found->second;
-            return window.positioned && window.monitor == monitor.monitor &&
+            const auto layout = settings.MonitorLayout(monitor.role);
+            return window.positioned && window.monitor == monitor.monitor && window.monitorLayout == layout &&
                 window.mergedDockHeight == monitor.mergedDockHeight &&
                 window.reserveSpace == ReserveIndependentStatusBarSpace(monitor.mergedDockHeight != 0,
-                    monitor.reserveSpace, settings.showOnlyWhenSummoned);
+                    monitor.reserveSpace, layout.showOnlyWhenSummoned);
         }))
     {
         auto comparable = self.settings;
@@ -3204,8 +3206,6 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
         }
     }
     const bool changed = settings != self.settings || global != self.globalAppearance;
-    const bool revealChanged = settings.showOnlyWhenSummoned != self.settings.showOnlyWhenSummoned ||
-        settings.edgeRevealGesture != self.settings.edgeRevealGesture || settings.position != self.settings.position;
     self.settings = std::move(settings);
     self.globalAppearance = global;
     self.tooltipAppearance = nextTooltip;
@@ -3287,11 +3287,17 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
          window->surface.Reset();window->backgroundSurface.Reset();window->appearanceDirty=window->backgroundDirty=window->paintDirty=true;}
         window->monitor = monitor.monitor;
         window->tooltip.Configure(window->hwnd, composition, text, self.tooltipAppearance, self.drawTooltipBackground);
+        const auto layout = self.settings.MonitorLayout(monitor.role);
+        const bool revealChanged = layout.position != window->monitorLayout.position ||
+            layout.showOnlyWhenSummoned != window->monitorLayout.showOnlyWhenSummoned ||
+            layout.edgeRevealGesture != window->monitorLayout.edgeRevealGesture;
+        const bool layoutChanged = layout != window->monitorLayout;
+        window->monitorLayout = layout;
         const bool reserveSpace = ReserveIndependentStatusBarSpace(monitor.mergedDockHeight != 0,
-            monitor.reserveSpace, self.settings.showOnlyWhenSummoned);
+            monitor.reserveSpace, layout.showOnlyWhenSummoned);
         const bool mergedChanged = window->mergedDockHeight != monitor.mergedDockHeight || window->reserveSpace != reserveSpace;
         const bool mergedModeChanged = (window->mergedDockHeight > 0) != (monitor.mergedDockHeight > 0);
-        if (mergedChanged || changed)
+        if (mergedChanged || changed || layoutChanged)
         {
             window->EndDragFeedback(); window->ClearHover(); window->interaction.CancelPointer();
             window->pressedTray.clear(); window->trayDragging = false;
@@ -3300,7 +3306,7 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
         window->mergedDockHeight = monitor.mergedDockHeight;
         window->reserveSpace = reserveSpace;
         if (revealChanged || mergedModeChanged) window->revealState.Reset();
-        if (!monitor.mergedDockHeight && self.settings.showOnlyWhenSummoned)
+        if (!monitor.mergedDockHeight && layout.showOnlyWhenSummoned)
             SetTimer(window->hwnd, kRevealTimer, 30, nullptr);
         else KillTimer(window->hwnd, kRevealTimer);
         if (mergedModeChanged)

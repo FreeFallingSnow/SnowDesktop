@@ -128,7 +128,8 @@ bool DesktopApp::TryActivateDockTray(const std::wstring& executable, size_t item
     dockTrayPopup_ = state;
     popupWidgetIndex_ = static_cast<size_t>(-1); popupScrollOffset_ = 0;
     popupHasAnchor_ = popupAnchoredToDock_ = true;
-    popupDockPosition_ = dockSettings_.position;
+    popupDockPosition_ = dock ? dock->Position() :
+        DockLayoutForMonitor(MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST)).position;
     collectionPopupDockHost_ = FindPersistentDockHost(dock);
     RECT desktopAnchor = anchor;
     MapWindowPoints(nullptr, hwnd_, reinterpret_cast<POINT*>(&desktopAnchor), 2);

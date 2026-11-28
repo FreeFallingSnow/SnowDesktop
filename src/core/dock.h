@@ -4,6 +4,7 @@
 #include "item.h"
 #include "common/types.h"
 #include "dock/dock_magnification.h"
+#include "dock/dock_layout_settings.h"
 #include "dock/dock_running_drag_rules.h"
 #include "dock/dock_folder_rules.h"
 #include "dock/dock_entry_removal.h"
@@ -11,6 +12,8 @@
 
 #include <memory>
 #include <optional>
+#include <span>
+#include <unordered_map>
 #include <vector>
 
 struct DragSourceList;
@@ -140,7 +143,7 @@ public:
     }
     struct KeyboardTarget
     {
-        enum class Kind { Start, Search, Entry, Running, Frequent };
+        enum class Kind { Start, Search, Entry, Running, Frequent, WindowTitle };
         Kind kind;
         size_t index;
         std::wstring key;
@@ -172,6 +175,15 @@ public:
     RECT GetDesktopItemVisualRect(
         size_t itemIndex, POINT pointer) const;
     void SetReservedArea(RECT area);
+    DockLayoutSettings MonitorLayout() const;
+    DockPosition Position() const;
+    bool ShowsRunningArea() const;
+    std::span<const HWND> EntryTitleWindows(size_t index) const;
+    std::span<const HWND> RunningTitleWindows(size_t index) const;
+    RECT DrawWindowTitleGroup(ID2D1DeviceContext* context, RECT base, RECT visual,
+        std::span<const HWND> windows, float opacity = 1.f) const;
+    RECT WindowTitleIconRect(RECT base, RECT visual, size_t count) const;
+    HWND WindowTitleAtPoint(POINT point) const;
     // Stable layout relationship, including while the bar is fullscreen-hidden.
     bool IsMergedWithStatusBar() const;
     // Shared chrome is a layout relationship, independent of animation/input.
@@ -220,6 +232,9 @@ private:
 
     bool IsMagnificationSuppressed() const;
     bool UsesEdgeAnchoredMagnification() const;
+    bool UsesSpreadEdge() const;
+    float WindowTitleSlotUnits(size_t count) const;
+    RECT WindowTitleSegment(RECT base, RECT visual, size_t index) const;
     float GetMaximumMagnificationScale() const;
     float GetCurrentMagnificationScale() const;
     int GetLaunchAnimationPadding(bool reserveForLaunch = false) const;
@@ -321,6 +336,16 @@ private:
     mutable bool hoveredTitleBoundsCacheLightTheme_ = false;
     mutable float hoveredTitleBoundsCacheFontSize_ = 0;
     mutable snowdesktop::NativeTooltipTextLayout hoveredTitleLayout_;
+    mutable HWND titleMarqueeWindow_ = nullptr;
+    mutable ULONGLONG titleMarqueeStart_ = 0;
+    mutable bool titleMarqueeAnimating_ = false;
+    struct WindowTitleLayout
+    {
+        std::wstring title;
+        float width = 0, height = 0, fontSize = 0, fullWidth = 0;
+        Microsoft::WRL::ComPtr<IDWriteTextLayout> trimmed, full;
+    };
+    mutable std::unordered_map<HWND, WindowTitleLayout> windowTitleLayouts_;
     // Magnification is a continuous pointer-distance field, but the semantic
     // hover owner needs spatial hysteresis at item and Dock boundaries.
     mutable RECT magnificationFocusRect_{};

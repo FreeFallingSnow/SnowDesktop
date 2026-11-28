@@ -42,6 +42,7 @@ struct StatusBarMonitor
     HMONITOR monitor = nullptr;
     int mergedDockHeight = 0; // Physical pixels; zero means separate.
     bool reserveSpace = true; // Summon-only merged Dock keeps geometry without a Shell reservation.
+    BarMonitorRole role = BarMonitorRole::First;
 };
 struct StatusBarDockState
 {

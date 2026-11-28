@@ -18,6 +18,33 @@ struct StatusBarAppearanceRule
     friend bool operator==(const StatusBarAppearanceRule&, const StatusBarAppearanceRule&) = default;
 };
 
+struct StatusBarMonitorOverride
+{
+    bool operator==(const StatusBarMonitorOverride&) const = default;
+    std::optional<DockPosition> position;
+    std::optional<float> scale;
+    std::optional<bool> showOnlyWhenSummoned;
+    std::optional<int> edgeRevealGesture;
+
+    template <typename Self, typename Visitor>
+    static void Visit(Self& value, Visitor&& visit)
+    {
+        visit("position", value.position);
+        visit("scale", value.scale);
+        visit("showOnlyWhenSummoned", value.showOnlyWhenSummoned);
+        visit("edgeRevealGesture", value.edgeRevealGesture);
+    }
+};
+
+struct StatusBarMonitorLayout
+{
+    DockPosition position = DockPosition::Top;
+    float scale = 1.f;
+    bool showOnlyWhenSummoned = false;
+    int edgeRevealGesture = 1;
+    bool operator==(const StatusBarMonitorLayout&) const = default;
+};
+
 struct StatusBarSettings
 {
     bool enabled = false;
@@ -26,6 +53,7 @@ struct StatusBarSettings
     bool showOnlyWhenSummoned = false;
     int edgeRevealGesture = 1; // 0=swipe, 1=hover; independent bars default to hover.
     float scale = 1.0f;
+    StatusBarMonitorOverride lastMonitorOverride, otherMonitorOverride;
     SurfaceTheme theme;
     StatusBarAppearanceRule appWindow, maximizedWindow;
     // Retired scenes round-trip under their original JSON keys.
@@ -58,6 +86,16 @@ struct StatusBarSettings
     std::vector<std::string> rightOrder = {"tray", "cpu", "memory", "gpu", "traffic", "network", "volume", "battery", "controlCenter"};
     std::vector<std::string> metricOrder = {"cpu", "memory", "gpu", "traffic"};
     friend bool operator==(const StatusBarSettings&, const StatusBarSettings&) = default;
+
+    StatusBarMonitorLayout MonitorLayout(BarMonitorRole role) const
+    {
+        const StatusBarMonitorLayout base{position, scale, showOnlyWhenSummoned, edgeRevealGesture};
+        if (role == BarMonitorRole::First) return base;
+        const auto& value = role == BarMonitorRole::Last ? lastMonitorOverride : otherMonitorOverride;
+        return {value.position.value_or(position), value.scale.value_or(scale),
+            value.showOnlyWhenSummoned.value_or(showOnlyWhenSummoned),
+            value.edgeRevealGesture.value_or(edgeRevealGesture)};
+    }
 };
 
 }

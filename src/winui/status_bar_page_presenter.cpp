@@ -3,6 +3,7 @@
 #include "theme/surface_theme.h"
 #include "settings/settings_snapshot.h"
 #include "status_bar_page_presenter.h"
+#include "bar_monitor_overrides_editor.h"
 #include "settings_presenter_controls.h"
 #include "system/status_bar/status_bar_shell_shortcut.h"
 #include "panel_appearance_editor.h"
@@ -21,6 +22,7 @@ struct StatusBarPagePresenter::Impl
     DockPageActions actions;
     std::function<void(SettingsRoute)> navigate;
     std::unique_ptr<MergedBarHeightEditor> mergedHeight;
+    std::unique_ptr<BarMonitorOverridesEditor<StatusBarMonitorOverride, StatusBarMonitorLayout>> monitorOverrides;
     BarSettingsAvailability availability;
     int monitorCount = 0;
     muxc::TextBlock relatedTitle;
@@ -228,6 +230,21 @@ struct StatusBarPagePresenter::Impl
         muxc::Grid::SetColumn(scaleReset, 3); editor.Children().Append(scaleReset);
         scaleRow.Initialize(editor);
         for (auto row : {edgeRow.root, monitorsRow.root, scaleRow.root}) layout.Children().Append(row);
+        monitorOverrides = std::make_unique<BarMonitorOverridesEditor<StatusBarMonitorOverride, StatusBarMonitorLayout>>(
+            localize, actions, [this](BarMonitorRole role, auto edit) {
+                Emit([role, edit = std::move(edit)](StatusBarSettings& settings) {
+                    edit(role == BarMonitorRole::Last ? settings.lastMonitorOverride : settings.otherMonitorOverride);
+                });
+            });
+        using Override = StatusBarMonitorOverride;
+        using Layout = StatusBarMonitorLayout;
+        monitorOverrides->AddChoice<DockPosition>("statusBar.position", &Override::position, &Layout::position,
+            {{DockPosition::Top, "app.dock.top"}, {DockPosition::Bottom, "app.dock.bottom"}});
+        monitorOverrides->AddPercentage("statusBar.scale", &Override::scale, &Layout::scale, 75, 300);
+        monitorOverrides->AddToggle("settings.dock.showOnlyWhenSummoned", &Override::showOnlyWhenSummoned, &Layout::showOnlyWhenSummoned);
+        monitorOverrides->AddChoice<int>("settings.dock.edgeRevealGesture", &Override::edgeRevealGesture, &Layout::edgeRevealGesture,
+            {{0, "settings.dock.gestureSwipe"}, {1, "settings.dock.gestureHover"}});
+        layout.Children().Append(monitorOverrides->Content());
         mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
         muxc::StackPanel mergedContent;
         mergedContent.Children().Append(mergedHeight->Content());
@@ -682,6 +699,9 @@ void StatusBarPagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
     impl_->defaultTheme.themes->SetGeneration(snapshot.generation);
     for (auto& rule : impl_->rules) rule->theme.themes->SetGeneration(snapshot.generation);
     impl_->value = snapshot.values.general.statusBar;
+    const auto& bar = impl_->value;
+    impl_->monitorOverrides->Update(bar.lastMonitorOverride, bar.otherMonitorOverride, bar.MonitorLayout(BarMonitorRole::First),
+        bar.MonitorLayout(BarMonitorRole::Last), bar.MonitorLayout(BarMonitorRole::Other));
     impl_->availability = ResolveBarSettingsAvailability(snapshot.values.general.dockEnabled, snapshot.values.dock,
         snapshot.values.general.statusBar, monitorCount);
     impl_->monitorCount = monitorCount;
@@ -702,12 +722,13 @@ void StatusBarPagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
 }
 void StatusBarPagePresenter::RefreshLocalizedText()
 {
-    impl_->Localize(); impl_->defaultTheme.themes->LocalizeText();
+    impl_->Localize(); impl_->monitorOverrides->Refresh(); impl_->defaultTheme.themes->LocalizeText();
     for (auto& rule : impl_->rules) rule->theme.themes->LocalizeText();
 }
 void StatusBarPagePresenter::Activate(std::string_view focusId)
 {
     impl_->active = true;
+    impl_->monitorOverrides->Refresh();
     impl_->defaultTheme.themes->Refresh();
     for (auto& rule : impl_->rules) rule->theme.themes->Refresh();
     (void)focusId;

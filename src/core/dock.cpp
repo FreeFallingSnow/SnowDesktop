@@ -242,9 +242,13 @@ void DockRunningItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     if (app_ && index < app_->dockUnpinnedRunningApps_.size())
     {
         const auto* dock = dynamic_cast<const DockContainer*>(container_);
-        app_->DrawDockRunningApp(
-            context, app_->dockUnpinnedRunningApps_[index], rect, state,
-            dock ? dock->GetElementIconSize(bounds_, rect) : 0, dock ? dock->GetMonitor() : nullptr);
+        const auto& running = app_->dockUnpinnedRunningApps_[index];
+        const auto windows = dock ? dock->RunningTitleWindows(index) : std::span<const HWND>{};
+        const RECT icon = windows.empty() ? rect :
+            dock->DrawWindowTitleGroup(context, bounds_, rect, windows, running.presence.Amount());
+        const int iconSize = dock ? dock->GetElementIconSize(bounds_, rect) : 0;
+        app_->DrawDockRunningApp(context, running, icon, state,
+            windows.empty() ? iconSize : std::max(1, iconSize * 2 / 3), dock ? dock->GetMonitor() : nullptr);
     }
 }
 
@@ -487,8 +491,12 @@ void DockEntryItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
                 return;
             }
         }
-        app_->DrawDockEntry(context, *entry, rect, state,
-            dock ? dock->GetElementIconSize(bounds_, rect) : 0, nullptr, nullptr, dock ? dock->GetMonitor() : nullptr);
+        const auto windows = dock ? dock->EntryTitleWindows(entryIndex_) : std::span<const HWND>{};
+        const RECT icon = windows.empty() ? rect : dock->DrawWindowTitleGroup(context, bounds_, rect, windows);
+        const int iconSize = dock ? dock->GetElementIconSize(bounds_, rect) : 0;
+        app_->DrawDockEntry(context, *entry, icon, state,
+            windows.empty() ? iconSize : std::max(1, iconSize * 2 / 3),
+            nullptr, nullptr, dock ? dock->GetMonitor() : nullptr);
     }
 }
 
@@ -511,6 +519,218 @@ HMONITOR DockContainer::GetMonitor() const
     RECT screen = area_;
     OffsetRect(&screen, app_->virtualLeft_, app_->virtualTop_);
     return MonitorFromRect(&screen, MONITOR_DEFAULTTONEAREST);
+}
+
+DockLayoutSettings DockContainer::MonitorLayout() const
+{
+    return app_ ? app_->DockLayoutForMonitor(GetMonitor()) : DockLayoutSettings{};
+}
+
+DockPosition DockContainer::Position() const
+{
+    return MonitorLayout().position;
+}
+
+bool DockContainer::ShowsRunningArea() const
+{
+    return MonitorLayout().showRunningArea;
+}
+
+std::span<const HWND> DockContainer::EntryTitleWindows(size_t index) const
+{
+    if (!app_ || !app_->dockSettings_.showWindowTitles || app_->dockTaskWindowTitles_.empty() || !ShowsRunningArea() ||
+        !entries_ || index >= SortableEntryCount() || (*entries_)[index].type != DockEntryType::DesktopItem)
+        return {};
+    const auto item = app_->FindItemIndexByKey((*entries_)[index].reference);
+    if (item >= app_->items_.size()) return {};
+    const auto state = app_->dockRunningWindows_.find(DockItemWindowKey(app_->items_[item]));
+    if (state == app_->dockRunningWindows_.end()) return {};
+    return state->second.trackedWindows;
+}
+
+std::span<const HWND> DockContainer::RunningTitleWindows(size_t index) const
+{
+    if (!app_ || !app_->dockSettings_.showWindowTitles || app_->dockTaskWindowTitles_.empty() || !ShowsRunningArea() ||
+        index >= app_->dockUnpinnedRunningApps_.size()) return {};
+    const auto& running = app_->dockUnpinnedRunningApps_[index];
+    if (running.minimizedThumbnail) return {};
+    return running.trackedWindows;
+}
+
+float DockContainer::WindowTitleSlotUnits(size_t count) const
+{
+    if (!count) return 0.f;
+    const int icon = ItemIconSize();
+    const int stride = IsVertical() ? std::max(18, icon / 2 + ScaledSpacing()) : std::max(84, icon * 3);
+    return static_cast<float>(count) * stride / ItemPitch();
+}
+
+RECT DockContainer::WindowTitleIconRect(RECT base, RECT visual, size_t count) const
+{
+    if (!count) return visual;
+    const bool vertical = IsVertical();
+    const float proportion = 1.f / (1.f + WindowTitleSlotUnits(count));
+    const int start = vertical ? visual.top : visual.left;
+    const int end = vertical ? visual.bottom : visual.right;
+    const int baseLength = vertical ? base.bottom - base.top : base.right - base.left;
+    const int axis = baseLength > 0 ? std::max(1, static_cast<int>(std::lround((end - start) * proportion))) : 0;
+    if (vertical) visual.bottom = visual.top + axis;
+    else visual.right = visual.left + axis;
+    return visual;
+}
+
+RECT DockContainer::WindowTitleSegment(RECT base, RECT visual, size_t index) const
+{
+    RECT result = visual;
+    const bool vertical = IsVertical();
+    const float baseAxis = static_cast<float>(vertical ? base.bottom - base.top : base.right - base.left);
+    if (baseAxis <= 0) return {};
+    const float scale = static_cast<float>(vertical ? visual.bottom - visual.top : visual.right - visual.left) / baseAxis;
+    const float pitch = ItemPitch() * scale;
+    const float stride = WindowTitleSlotUnits(1) * pitch;
+    const LONG leading = vertical ? visual.top : visual.left;
+    const LONG begin = leading + std::lround(pitch + stride * index);
+    const LONG end = leading + std::lround(pitch + stride * (index + 1));
+    if (vertical)
+    {
+        result.top = begin;
+        result.bottom = std::min(end, visual.bottom);
+    }
+    else
+    {
+        result.left = begin;
+        result.right = std::min(end, visual.right);
+    }
+    return result;
+}
+
+HWND DockContainer::WindowTitleAtPoint(POINT point) const
+{
+    if (!app_ || !app_->dockSettings_.showWindowTitles || !ShowsRunningArea() ||
+        !IsPointInScrollViewport(point)) return nullptr;
+    const auto hit = [&](RECT base, std::span<const HWND> windows) -> HWND {
+        if (windows.empty()) return nullptr;
+        const RECT visual = GetElementVisualRect(base, point);
+        for (size_t index = 0; index < windows.size(); ++index)
+        {
+            const RECT segment = WindowTitleSegment(base, visual, index);
+            if (PtInRect(&segment, point)) return windows[index];
+        }
+        return nullptr;
+    };
+    if (const auto* entry = EntryAtPoint(point))
+        return hit(entry->GetBounds(), EntryTitleWindows(entry->GetEntryIndex()));
+    if (const auto* running = RunningItemAtPoint(point))
+        return hit(running->GetBounds(), RunningTitleWindows(running->GetRunningIndex()));
+    return nullptr;
+}
+
+RECT DockContainer::DrawWindowTitleGroup(ID2D1DeviceContext* context, RECT base, RECT visual,
+    std::span<const HWND> windows, float opacity) const
+{
+    if (!context || !app_ || !app_->dwriteFactory_ || windows.empty() || IsRectEmpty(&visual)) return visual;
+    const bool vertical = IsVertical();
+    const auto theme = app_->CurrentDockAppearance(GetMonitor()).contentTheme;
+    const float ink = theme == 1 ? .96f : .12f;
+    const float fill = theme == 1 ? 1.f : 0.f;
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(context->CreateSolidColorBrush(D2D1::ColorF(fill, fill, fill, .09f * opacity), &brush)))
+        return visual;
+    auto background = D2D1::RectF(static_cast<float>(visual.left + 2), static_cast<float>(visual.top + 2),
+        static_cast<float>(visual.right - 2), static_cast<float>(visual.bottom - 2));
+    if (background.right > background.left && background.bottom > background.top)
+        context->FillRoundedRectangle(D2D1::RoundedRect(background, 6.f, 6.f), brush.Get());
+    const HWND foreground = app_->ResolveDockSemanticForegroundWindow();
+    const POINT pointer = app_->lastMousePoint_;
+    for (size_t index = 0; index < windows.size(); ++index)
+    {
+        const HWND window = windows[index];
+        const auto title = app_->dockTaskWindowTitles_.find(window);
+        if (title == app_->dockTaskWindowTitles_.end() || title->second.empty()) continue;
+        RECT bounds = WindowTitleSegment(base, visual, index);
+        if (IsRectEmpty(&bounds)) continue;
+        if (window == foreground)
+        {
+            brush->SetColor(D2D1::ColorF(fill, fill, fill, .18f * opacity));
+            const auto segment = D2D1::RectF(static_cast<float>(bounds.left + 2), static_cast<float>(bounds.top + 3),
+                static_cast<float>(bounds.right - 2), static_cast<float>(bounds.bottom - 3));
+            if (segment.right > segment.left && segment.bottom > segment.top)
+                context->FillRoundedRectangle(D2D1::RoundedRect(segment, 4, 4), brush.Get());
+        }
+        if (index > 0)
+        {
+            brush->SetColor(D2D1::ColorF(ink, ink, ink, .24f * opacity));
+            if (vertical && bounds.right - bounds.left > 10)
+                context->DrawLine(D2D1::Point2F(static_cast<float>(bounds.left + 5), static_cast<float>(bounds.top)),
+                    D2D1::Point2F(static_cast<float>(bounds.right - 5), static_cast<float>(bounds.top)), brush.Get());
+            if (!vertical && bounds.bottom - bounds.top > 12)
+                context->DrawLine(D2D1::Point2F(static_cast<float>(bounds.left), static_cast<float>(bounds.top + 6)),
+                    D2D1::Point2F(static_cast<float>(bounds.left), static_cast<float>(bounds.bottom - 6)), brush.Get());
+        }
+        const bool hovered = PtInRect(&bounds, pointer) && IsPointInScrollViewport(pointer);
+        InflateRect(&bounds, -5, 0);
+        const float width = static_cast<float>(bounds.right - bounds.left);
+        const float height = static_cast<float>(bounds.bottom - bounds.top);
+        if (width < 4 || height < 8) continue;
+        const float fontSize = std::clamp(height * (vertical ? .62f : .32f), 10.f, 20.f);
+        auto& text = windowTitleLayouts_[window];
+        if (text.title != title->second || text.width != width || text.height != height || text.fontSize != fontSize)
+        {
+            text = {};
+            text.title = title->second;
+            text.width = width;
+            text.height = height;
+            text.fontSize = fontSize;
+            ComPtr<IDWriteTextFormat> format;
+            auto* factory = app_->dwriteFactory_.Get();
+            if (SUCCEEDED(factory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &format)))
+            {
+                format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                const auto length = static_cast<UINT32>(text.title.size());
+                if (SUCCEEDED(factory->CreateTextLayout(text.title.c_str(), length, format.Get(), width, height, &text.trimmed)))
+                {
+                    const DWRITE_TRIMMING trim{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+                    ComPtr<IDWriteInlineObject> sign;
+                    if (SUCCEEDED(factory->CreateEllipsisTrimmingSign(format.Get(), &sign)))
+                        text.trimmed->SetTrimming(&trim, sign.Get());
+                }
+                if (SUCCEEDED(factory->CreateTextLayout(text.title.c_str(), length, format.Get(), 32768.f, height, &text.full)))
+                {
+                    DWRITE_TEXT_METRICS metrics{};
+                    if (SUCCEEDED(text.full->GetMetrics(&metrics))) text.fullWidth = metrics.width;
+                }
+            }
+        }
+        auto* layout = text.trimmed.Get();
+        if (!layout) continue;
+        float offset = 0.f;
+        const auto now = GetTickCount64();
+        if (hovered && text.full && text.fullWidth > width + 1.f)
+        {
+            if (titleMarqueeWindow_ != window)
+            {
+                titleMarqueeWindow_ = window;
+                titleMarqueeStart_ = now;
+            }
+            const float elapsed = static_cast<float>(now - titleMarqueeStart_);
+            const float distance = text.fullWidth - width;
+            if (elapsed >= 500.f)
+            {
+                layout = text.full.Get();
+                offset = std::min(distance, (elapsed - 500.f) * .045f);
+            }
+            titleMarqueeAnimating_ = elapsed < 500.f + distance / .045f;
+            if (titleMarqueeAnimating_) app_->EnsureUiAnimationFrame();
+        }
+        brush->SetColor(D2D1::ColorF(ink, ink, ink, opacity));
+        context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(bounds.left), static_cast<float>(bounds.top),
+            static_cast<float>(bounds.right), static_cast<float>(bounds.bottom)), D2D1_ANTIALIAS_MODE_ALIASED);
+        context->DrawTextLayout(D2D1::Point2F(bounds.left - offset, static_cast<float>(bounds.top)), layout, brush.Get());
+        context->PopAxisAlignedClip();
+    }
+    return WindowTitleIconRect(base, visual, windows.size());
 }
 
 DockContainer::PresentationState DockContainer::CapturePresentationState() const
@@ -577,13 +797,19 @@ RECT DockContainer::GetDesktopItemVisualRect(
 
 bool DockContainer::IsVertical() const
 {
-    return app_ && (app_->dockSettings_.position == DockPosition::Left ||
-        app_->dockSettings_.position == DockPosition::Right);
+    return app_ && (Position() == DockPosition::Left ||
+        Position() == DockPosition::Right);
 }
 
 bool DockContainer::IsEdgeAttached() const
 {
-    return app_ && app_->dockSettings_.edgeAttached;
+    return app_ && MonitorLayout().edgeAttached;
+}
+
+bool DockContainer::UsesSpreadEdge() const
+{
+    const auto layout = MonitorLayout();
+    return layout.edgeAttached && !layout.edgeCentered;
 }
 
 bool DockContainer::IsMergedWithStatusBar() const
@@ -632,7 +858,11 @@ void DockContainer::RefreshEntryGroupCounts() const
 float DockContainer::FixedEntryUnits() const
 {
     RefreshEntryGroupCounts();
-    return static_cast<float>(mainEntryCount_) - static_cast<float>(separatorEntryCount_) * (1.0f - SeparatorSlotUnits());
+    float units = static_cast<float>(mainEntryCount_) - static_cast<float>(separatorEntryCount_) * (1.0f - SeparatorSlotUnits());
+    if (app_ && app_->dockSettings_.showWindowTitles && ShowsRunningArea())
+        for (size_t index = 0; index < mainEntryCount_; ++index)
+            units += WindowTitleSlotUnits(EntryTitleWindows(index).size());
+    return units;
 }
 
 float DockContainer::FolderEntryUnits() const
@@ -811,7 +1041,7 @@ int DockContainer::ItemIconSize() const
         const int height = static_cast<int>(area_.bottom - area_.top);
         const int padding = snowdesktop::MergedDockVerticalPadding(height, ScaledSpacing());
         const int available = std::max(1, height - 2 * padding);
-        return std::max(1, static_cast<int>(std::round(available * ClampMergedDockIconScale(app_->dockSettings_.mergedIconScale))));
+        return std::max(1, static_cast<int>(std::round(available * ClampMergedDockIconScale(MonitorLayout().mergedIconScale))));
     }
     const POINT center{
         (area_.left + area_.right) / 2,
@@ -820,7 +1050,7 @@ int DockContainer::ItemIconSize() const
     const GridPage* page = app_->GridPageFromPoint(center);
     const int baseIconSize = page ? app_->GetDockPageItemIconSize(*page) : kIconSize;
     return std::max(1, static_cast<int>(std::round(
-        baseIconSize * ClampDockScale(app_->dockSettings_.thicknessScale))));
+        baseIconSize * ClampDockScale(MonitorLayout().thicknessScale))));
 }
 
 int DockContainer::ItemPitch() const
@@ -831,25 +1061,29 @@ int DockContainer::ItemPitch() const
 int DockContainer::ScaledSpacing() const
 {
     const float scale = app_
-        ? ResolveDockScale(app_->dockSettings_, IsMergedWithStatusBar()) : 1.0f;
+        ? ResolveDockScale(MonitorLayout(), IsMergedWithStatusBar()) : 1.0f;
     return std::max(1, static_cast<int>(std::round(kDockSpacing * scale)));
 }
 
 int DockContainer::ScaledSeparatorGap() const
 {
     const float scale = app_
-        ? ResolveDockScale(app_->dockSettings_, IsMergedWithStatusBar()) : 1.0f;
+        ? ResolveDockScale(MonitorLayout(), IsMergedWithStatusBar()) : 1.0f;
     return std::max(1, static_cast<int>(std::round(kDockSeparatorGap * scale)));
 }
 
 float DockContainer::RunningSlotUnits() const
 {
-    if (!app_) return 0.0f;
+    if (!app_ || !ShowsRunningArea()) return 0.0f;
     const int pitch = ItemPitch();
     const float iconFraction = IsVertical() ? 0.0f : static_cast<float>(ItemIconSize()) / pitch;
     float units = 0.0f;
-    for (const auto& running : app_->dockUnpinnedRunningApps_)
-        units += RunningItemSlotUnits(running, iconFraction);
+    for (size_t index = 0; index < app_->dockUnpinnedRunningApps_.size(); ++index)
+    {
+        const auto& running = app_->dockUnpinnedRunningApps_[index];
+        units += RunningItemSlotUnits(running, iconFraction) +
+            WindowTitleSlotUnits(RunningTitleWindows(index).size()) * running.presence.Amount();
+    }
     return units + RunningDividerAmount(app_->dockUnpinnedRunningApps_) * ScaledSeparatorGap() / pitch;
 }
 
@@ -866,7 +1100,7 @@ int DockContainer::EdgeMargin() const
             return app_->GetDockPageEdgeMargin(*page, IsVertical());
     }
     return ScaleDockEdgeDistance(IsVertical() ? kGridMarginX : kGridMarginY,
-        app_ ? app_->dockSettings_.edgeDistanceScale : 1.0f);
+        app_ ? MonitorLayout().edgeDistanceScale : 1.0f);
 }
 
 BarStyle DockContainer::GetInsertionStyle() const
@@ -929,7 +1163,7 @@ RECT DockContainer::GetBounds() const
 RECT DockContainer::BoundsForRunningUnits(float runningUnits) const
 {
     const size_t frequentCount = app_
-        ? app_->GetFrequentDockItemIndices().size() : 0;
+        ? app_->GetFrequentDockItemIndices(MonitorLayout()).size() : 0;
     const bool showWindowsButton = app_ && ShowDockWindowsButton(app_->dockSettings_);
     const auto axis = snowdesktop::dock_entry_removal::LayoutDockAxis(
         showWindowsButton, FixedEntryUnits() + static_cast<float>(EmptyRunningDragFixedSlots()) + AdditionalSlotUnits(false),
@@ -958,31 +1192,36 @@ RECT DockContainer::BoundsForRunningUnits(float runningUnits) const
     }
     if (IsEdgeAttached())
     {
-        switch (app_->dockSettings_.position)
+        const int leading = vertical ? area_.top : area_.left;
+        const int trailing = vertical ? area_.bottom : area_.right;
+        const int centered = leading + (trailing - leading - length) / 2;
+        const int start = UsesSpreadEdge() ? leading : centered;
+        const int end = UsesSpreadEdge() ? trailing : centered + length;
+        switch (Position())
         {
         case DockPosition::Top:
-            return RECT{ area_.left, area_.top, area_.right, area_.top + thickness };
+            return RECT{ start, area_.top, end, area_.top + thickness };
         case DockPosition::Left:
-            return RECT{ area_.left, area_.top, area_.left + thickness, area_.bottom };
+            return RECT{ area_.left, start, area_.left + thickness, end };
         case DockPosition::Right:
-            return RECT{ area_.right - thickness, area_.top, area_.right, area_.bottom };
+            return RECT{ area_.right - thickness, start, area_.right, end };
         case DockPosition::Bottom:
         default:
-            return RECT{ area_.left, area_.bottom - thickness, area_.right, area_.bottom };
+            return RECT{ start, area_.bottom - thickness, end, area_.bottom };
         }
     }
     const int edgeDistance = EdgeMargin();
     const int innerGap = 0;
     if (vertical)
     {
-        const int left = app_ && app_->dockSettings_.position == DockPosition::Left
+        const int left = app_ && Position() == DockPosition::Left
             ? area_.left + edgeDistance
             : area_.left + innerGap;
         const int top = area_.top + (areaHeight - length) / 2;
         return RECT{ left, top, left + thickness, top + length };
     }
     const int left = area_.left + (areaWidth - length) / 2;
-    const int top = app_ && app_->dockSettings_.position == DockPosition::Top
+    const int top = app_ && Position() == DockPosition::Top
         ? area_.top + edgeDistance
         : area_.top + innerGap;
     return RECT{ left, top, left + length, top + thickness };
@@ -1094,7 +1333,7 @@ bool DockContainer::UsesEdgeAnchoredMagnification() const
     // Overflow has fixed controls at both ends even inside shared bar chrome.
     return GetMaxScrollOffset(GetBounds()) > 0 ||
         snowdesktop::dock_magnification::UsesEdgeAnchoredMagnification(
-            IsEdgeAttached(), IsMergedWithStatusBar());
+            UsesSpreadEdge(), IsMergedWithStatusBar());
 }
 
 float DockContainer::GetMaximumMagnificationScale() const
@@ -1116,7 +1355,7 @@ float DockContainer::GetCurrentMagnificationScale() const
 
 bool DockContainer::IsMagnificationAnimating() const
 {
-    return magnificationEntry_.IsAnimating() || singleMagnification_.IsAnimating();
+    return magnificationEntry_.IsAnimating() || singleMagnification_.IsAnimating() || titleMarqueeAnimating_;
 }
 
 bool DockContainer::AdvanceMagnificationAnimation(double nowMilliseconds)
@@ -1127,6 +1366,8 @@ bool DockContainer::AdvanceMagnificationAnimation(double nowMilliseconds)
     // frame, even if the pointer stopped moving after entering the Dock.
     if (!app_ || !app_->IsDockContainerInteractionVisible(this))
     {
+        titleMarqueeAnimating_ = false;
+        titleMarqueeWindow_ = nullptr;
         magnificationFocusRect_ = {};
         magnificationEntry_ = {};
         singleMagnification_ = {};
@@ -1176,7 +1417,7 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
         const RECT trailingVisual = trailing.empty() ? RECT{} :
             MagnifyElementRect(trailing.front(), magnificationFocusRect_, pointer);
         viewport = snowdesktop::dock_magnification::FitOverflowViewportToFixedVisuals(
-            viewport, app_->dockSettings_.position, leadingVisual, trailingVisual, ScaledSeparatorGap());
+            viewport, Position(), leadingVisual, trailingVisual, ScaledSeparatorGap());
         if (!IsRectEmpty(&leadingVisual))
         {
             if (IsVertical()) viewport.top = std::min(viewport.bottom, leadingVisual.bottom + ScaledSeparatorGap() / 2);
@@ -1231,7 +1472,7 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
             snowdesktop::dock_magnification::
                 ResolveFocusInteractionBounds(
                     GetBounds(),
-                    app_->dockSettings_.position,
+                    Position(),
                     ItemIconSize(),
                     magnificationActive,
                     GetMaximumMagnificationScale());
@@ -1287,7 +1528,7 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
             snowdesktop::dock_magnification::
                 ExpandInteractionBounds(
                     GetBounds(),
-                    app_->dockSettings_.position,
+                    Position(),
                     ItemIconSize(),
                     GetMaximumMagnificationScale(), app_->dockSettings_.hoverEffect == 1);
         if (!PtInRect(&interactive, pointer))
@@ -1539,7 +1780,7 @@ RECT DockContainer::MagnifyElementRect(const RECT& baseRect, const RECT& focusRe
 {
     if (!app_) return baseRect;
     return snowdesktop::dock_magnification::MagnifyRect(
-        baseRect, app_->dockSettings_.position,
+        baseRect, Position(),
         GetMagnificationScale(baseRect, focusRect, pointer), ItemIconSize(),
         GetMagnificationAxisShift(baseRect, focusRect, pointer), app_->dockSettings_.hoverEffect == 1);
 }
@@ -1594,7 +1835,7 @@ RECT DockContainer::GetVisualPanelBounds(POINT pointer) const
         }
         panel = snowdesktop::dock_magnification::
             ExtendPanelAlongDockAxis(
-                panel, visual, app_->dockSettings_.position,
+                panel, visual, Position(),
                 ScaledSpacing() / 2);
     }
     if (!IsMergedWithStatusBar())
@@ -1654,7 +1895,7 @@ RECT DockContainer::PositionTitleTooltipBounds(
     RECT tooltip = snowdesktop::dock_magnification::
         AnchorTooltipBounds(
             hoveredBounds,
-            app_->dockSettings_.position,
+            Position(),
             tooltipWidth,
             tooltipHeight,
             tooltipGap);
@@ -1699,6 +1940,7 @@ RECT DockContainer::PositionTitleTooltipBounds(
 
 RECT DockContainer::GetHoveredTitleBounds(POINT pointer) const
 {
+    if (WindowTitleAtPoint(pointer)) return {};
     if (!app_ || IsMagnificationSuppressed() || app_->IsPointOccludedByOpenPopup(pointer) ||
         app_->dragSession_.IsActive() || app_->dragDropController_.IsTransportActive() ||
         app_->widgetAction_ == DesktopApp::WidgetAction::Move ||
@@ -1790,7 +2032,7 @@ RECT DockContainer::GetHoveredTitleBounds(POINT pointer) const
         GetElementVisualRect(baseBounds, pointer);
 
     const int position = static_cast<int>(
-        app_->dockSettings_.position);
+        Position());
     const bool lightTheme =
         (app_->CurrentDockAppearance(GetMonitor()).contentTheme == 1);
     const float tooltipFontSize = snowdesktop::NativeTooltipFontSize() * TitleTooltipScale();
@@ -1883,7 +2125,7 @@ RECT DockContainer::GetInteractiveBounds() const
     if (IsMagnificationSuppressed())
         return bounds;
     return snowdesktop::dock_magnification::ExpandInteractionBounds(
-        bounds, app_->dockSettings_.position, ItemIconSize(),
+        bounds, Position(), ItemIconSize(),
         GetMaximumMagnificationScale(), app_->dockSettings_.hoverEffect == 1);
 }
 
@@ -1894,7 +2136,7 @@ RECT DockContainer::GetAnimationVisualBounds(bool reserveForLaunch) const
     if (padding <= 0)
         return bounds;
     return snowdesktop::dock_magnification::ExpandPerpendicularBounds(
-        bounds, app_->dockSettings_.position, padding, 2.0f);
+        bounds, Position(), padding, 2.0f);
 }
 
 std::vector<RECT> DockContainer::GetOcclusionRects(POINT pointer) const
@@ -1910,11 +2152,11 @@ std::vector<RECT> DockContainer::GetOcclusionRects(POINT pointer) const
     const RECT viewport = GetVisualScrollViewport(pointer);
     const bool hasOverflow = GetMaxScrollOffset(GetBounds()) > 0;
     RECT visualViewport = snowdesktop::dock_magnification::
-        ExpandPerpendicularBounds(viewport, app_->dockSettings_.position,
+        ExpandPerpendicularBounds(viewport, Position(),
             ItemIconSize(), GetMaximumMagnificationScale(), app_->dockSettings_.hoverEffect == 1);
     if (const int launchPadding = GetLaunchAnimationPadding(); launchPadding > 0)
         visualViewport = snowdesktop::dock_magnification::ExpandPerpendicularBounds(
-            visualViewport, app_->dockSettings_.position, launchPadding, 2.0f);
+            visualViewport, Position(), launchPadding, 2.0f);
     const RECT windowsButton = GetWindowsButtonRect();
     const RECT search = GetSearchRect();
     for (const RECT& base : GetElementBaseRects())
@@ -1963,10 +2205,10 @@ std::vector<RECT> DockContainer::GetOcclusionRects(POINT pointer) const
             const float centerX = (icon.left + icon.right) * 0.5f;
             const float centerY = (icon.top + icon.bottom) * 0.5f;
             const float offset = app_->GetDockLaunchBounceOffset(launchIndex, iconSize);
-            const float offsetX = app_->dockSettings_.position == DockPosition::Left
-                ? offset : app_->dockSettings_.position == DockPosition::Right ? -offset : 0.0f;
-            const float offsetY = app_->dockSettings_.position == DockPosition::Top
-                ? offset : app_->dockSettings_.position == DockPosition::Bottom ? -offset : 0.0f;
+            const float offsetX = Position() == DockPosition::Left
+                ? offset : Position() == DockPosition::Right ? -offset : 0.0f;
+            const float offsetY = Position() == DockPosition::Top
+                ? offset : Position() == DockPosition::Bottom ? -offset : 0.0f;
             icon = RECT{
                 static_cast<LONG>(std::floor(centerX + (icon.left - centerX) * pulse + offsetX)),
                 static_cast<LONG>(std::floor(centerY + (icon.top - centerY) * pulse + offsetY)),
@@ -1995,7 +2237,7 @@ RECT DockContainer::GetVisualScrollViewport(POINT pointer) const
         ? RECT{} : GetElementVisualRect(windowsButton, pointer);
     const RECT trailingFixed = FirstVisibleFileSlot();
     viewport = snowdesktop::dock_magnification::FitOverflowViewportToFixedVisuals(
-        viewport, app_->dockSettings_.position, leadingVisual,
+        viewport, Position(), leadingVisual,
         GetElementVisualRect(trailingFixed, pointer), ScaledSeparatorGap());
 
     // Begin the fade at the Start separator, rather than after the entire
@@ -2024,7 +2266,7 @@ RECT DockContainer::GetScrollViewport(const RECT& bounds, float runningUnits) co
     const int halfGap = ScaledSpacing() / 2;
     const bool showWindows = app_ && ShowDockWindowsButton(app_->dockSettings_);
     const size_t frequentCount = app_
-        ? app_->GetFrequentDockItemIndices().size() : 0;
+        ? app_->GetFrequentDockItemIndices(MonitorLayout()).size() : 0;
     const float fixedUnits = FixedEntryUnits() + static_cast<float>(EmptyRunningDragFixedSlots()) + AdditionalSlotUnits(false);
     const float folderUnits = FolderEntryUnits();
     const float firstUnits = fixedUnits > 0 ? fixedUnits : runningUnits > 0 ? runningUnits :
@@ -2061,7 +2303,7 @@ int DockContainer::GetMaxScrollOffset(const RECT& bounds) const
 int DockContainer::GetMaxScrollOffset(const RECT& bounds, float runningUnits) const
 {
     const size_t frequentCount = app_
-        ? app_->GetFrequentDockItemIndices().size() : 0;
+        ? app_->GetFrequentDockItemIndices(MonitorLayout()).size() : 0;
     const auto axis = snowdesktop::dock_entry_removal::LayoutAxis({FixedEntryUnits() + static_cast<float>(EmptyRunningDragFixedSlots()) + AdditionalSlotUnits(false),
         runningUnits, static_cast<float>(frequentCount), 0.0f});
     const long long contentExtent = snowdesktop::dock_running_animation::AxisLength(axis.units, ItemPitch()) +
@@ -2076,7 +2318,7 @@ int DockContainer::GetMaxScrollOffset(const RECT& bounds, float runningUnits) co
 
 RECT DockContainer::GetMinimizedThumbnailAnchor(HWND window, POINT pointer, bool restoring) const
 {
-    if (!app_ || !window) return {};
+    if (!app_ || !window || !ShowsRunningArea()) return {};
     const bool vertical = IsVertical();
     const int pitch = ItemPitch();
     const int spacing = ScaledSpacing();
@@ -2109,8 +2351,9 @@ RECT DockContainer::GetMinimizedThumbnailAnchor(HWND window, POINT pointer, bool
     float icons = 0.0f;
     float cards = 0.0f;
     std::optional<float> beforeCard;
-    for (const auto& app : app_->dockUnpinnedRunningApps_)
+    for (size_t index = 0; index < app_->dockUnpinnedRunningApps_.size(); ++index)
     {
+        const auto& app = app_->dockUnpinnedRunningApps_[index];
         if (app.minimizedThumbnail && app.window == window)
         {
             beforeCard = cards;
@@ -2119,7 +2362,7 @@ RECT DockContainer::GetMinimizedThumbnailAnchor(HWND window, POINT pointer, bool
         else if (app.presence.Visible())
         {
             if (app.minimizedThumbnail) cards += cardUnits;
-            else icons += 1.0f;
+            else icons += 1.0f + WindowTitleSlotUnits(RunningTitleWindows(index).size());
         }
     }
     // New cards append after existing cards. Project the settled layout
@@ -2136,7 +2379,7 @@ RECT DockContainer::GetMinimizedThumbnailAnchor(HWND window, POINT pointer, bool
     const auto axis = snowdesktop::dock_entry_removal::LayoutDockAxis(
         ShowDockWindowsButton(app_->dockSettings_),
         FixedEntryUnits() + static_cast<float>(EmptyRunningDragFixedSlots()) + AdditionalSlotUnits(false),
-        runningUnits, static_cast<float>(app_->GetFrequentDockItemIndices().size()), FolderEntryUnits());
+        runningUnits, static_cast<float>(app_->GetFrequentDockItemIndices(MonitorLayout()).size()), FolderEntryUnits());
     const RECT cell = DockAxisCell(bounds, vertical, pitch, spacing, separatorGap,
         std::clamp(scrollOffset_, 0, maxOffset), axis.groups[2], icons + divider + *beforeCard, cardUnits);
     const RECT card = thumbnails::CardAnchor(cell, iconSize, vertical);
@@ -2162,7 +2405,7 @@ bool DockContainer::IsPointInScrollViewport(POINT point) const
     {
         viewport = snowdesktop::dock_magnification::
             ExpandPerpendicularBounds(viewport,
-                app_->dockSettings_.position, ItemIconSize(),
+                Position(), ItemIconSize(),
                 GetMaximumMagnificationScale(), app_->dockSettings_.hoverEffect == 1);
     }
     return PtInRect(&viewport, point) != FALSE;
@@ -2207,6 +2450,14 @@ std::vector<DockContainer::KeyboardTarget> DockContainer::KeyboardTargets(bool a
         const bool focused = key == keyboardFocusKey_;
         targets.push_back({kind, index, std::move(key), bounds, focused, scrollable});
     };
+    const auto addTitles = [&](RECT bounds, std::span<const HWND> windows) {
+        for (size_t index = 0; index < windows.size(); ++index)
+        {
+            const auto handle = reinterpret_cast<std::uintptr_t>(windows[index]);
+            add(Kind::WindowTitle, handle, L"title:" + std::to_wstring(handle),
+                WindowTitleSegment(bounds, bounds, index), true);
+        }
+    };
     add(Kind::Start, 0, L"start", GetWindowsButtonRect(), false);
     add(Kind::Search, 0, L"search", GetSearchRect(), false);
     const size_t fixedCount = SortableEntryCount();
@@ -2218,15 +2469,23 @@ std::vector<DockContainer::KeyboardTarget> DockContainer::KeyboardTargets(bool a
         {
             if (IsDockLayoutEntry(entry->GetEntryType())) continue;
             const size_t index = entry->GetEntryIndex();
+            const auto windows = EntryTitleWindows(index);
             add(Kind::Entry, index, L"entry:" + std::to_wstring(static_cast<int>(entry->GetEntryType())) +
-                L":" + ToUpperInvariant(entry->GetReference()), bounds, index < fixedCount);
+                L":" + ToUpperInvariant(entry->GetReference()),
+                WindowTitleIconRect(bounds, bounds, windows.size()), index < fixedCount);
+            addTitles(bounds, windows);
         }
         else if (const auto* running = dynamic_cast<const DockRunningItem*>(slot->GetItem()))
         {
             const size_t index = running->GetRunningIndex();
             if (index < app_->dockUnpinnedRunningApps_.size() &&
                 app_->dockUnpinnedRunningApps_[index].presence.Interactive())
-                add(Kind::Running, index, L"running:" + running->GetIdentityKey(), bounds, true);
+            {
+                const auto windows = RunningTitleWindows(index);
+                add(Kind::Running, index, L"running:" + running->GetIdentityKey(),
+                    WindowTitleIconRect(bounds, bounds, windows.size()), true);
+                addTitles(bounds, windows);
+            }
         }
         else if (const auto* frequent = dynamic_cast<const DockFrequentItem*>(slot->GetItem()))
         {
@@ -2290,8 +2549,8 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
     const size_t fixedCount = SortableEntryCount();
     const size_t folderCount = FolderEntryCount();
     const size_t folderBegin = FolderEntryBegin();
-    const size_t runningCount = app_ ? app_->dockUnpinnedRunningApps_.size() : 0;
-    const auto frequentIndices = app_ ? app_->GetFrequentDockItemIndices() : std::vector<size_t>{};
+    const size_t runningCount = app_ && ShowsRunningArea() ? app_->dockUnpinnedRunningApps_.size() : 0;
+    const auto frequentIndices = app_ ? app_->GetFrequentDockItemIndices(MonitorLayout()) : std::vector<size_t>{};
     const size_t frequentCount = frequentIndices.size();
     const bool showWindowsButton = app_ && ShowDockWindowsButton(app_->dockSettings_);
     const float fixedUnits = FixedEntryUnits() + static_cast<float>(EmptyRunningDragFixedSlots()) + AdditionalSlotUnits(false);
@@ -2354,6 +2613,7 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
                 const auto type = (*entries_)[cell.modelIndex].type;
                 if (type == DockEntryType::Separator) amount = SeparatorSlotUnits();
                 else if (type == DockEntryType::QuickSearch && !app_->dockSettings_.showQuickSearchButton) amount = 0.0f;
+                else if (!folder) amount += WindowTitleSlotUnits(EntryTitleWindows(cell.modelIndex).size());
             }
             while (cell.modelIndex != removal::kNoIndex && inserted < incoming.size() && incoming[inserted].first <= cell.modelIndex)
             {
@@ -2386,7 +2646,8 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
         const auto& running = app_->dockUnpinnedRunningApps_[i];
         if (running.minimizedThumbnail)
             runningBegin += std::exchange(runningDivider, 0.0f);
-        const float amount = RunningItemSlotUnits(running, runningIconFraction);
+        const float amount = RunningItemSlotUnits(running, runningIconFraction) +
+            WindowTitleSlotUnits(RunningTitleWindows(i).size()) * running.presence.Amount();
         const RECT cell = makeCell(2, runningBegin, amount);
         runningBegin += amount;
         auto slot = std::make_unique<Slot>(this, cell, count + i);
@@ -2556,7 +2817,7 @@ snowdesktop::dock_running_drag::Target DockContainer::GetRunningDragTarget(POINT
         return PtInRect(&visual, pt) != FALSE;
     })) return {};
     const size_t count = ModelEntryCount();
-    const size_t runningCount = app_->dockUnpinnedRunningApps_.size();
+    const size_t runningCount = ShowsRunningArea() ? app_->dockUnpinnedRunningApps_.size() : 0;
     if (!runningCount || count + runningCount > slots.size()) return {};
     const auto start = [&](const RECT& rect) { return IsVertical() ? rect.top : rect.left; };
     const auto end = [&](const RECT& rect) { return IsVertical() ? rect.bottom : rect.right; };
@@ -2657,7 +2918,7 @@ void DockContainer::DrawInsertionPreview(ID2D1DeviceContext* context, size_t ins
         const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
         const size_t count = ModelEntryCount();
         const size_t main = SortableEntryCount();
-        const size_t runningEnd = count + app_->dockUnpinnedRunningApps_.size();
+        const size_t runningEnd = count + (ShowsRunningArea() ? app_->dockUnpinnedRunningApps_.size() : 0);
         const bool files = target.section == DockEntrySection::Files || target.area == running::Area::Files;
         const size_t begin = target.area == running::Area::Running ? count :
             files ? main : 0;
@@ -2913,7 +3174,7 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     if (!context || SharesStatusBarAppearance()) return;
     RECT bounds = GetVisualPanelBounds(mousePt);
     const auto p = app_ ? app_->CurrentDockAppearance(GetMonitor()) : PersonalizationSettings::DarkPreset();
-    const float panelRadius = IsEdgeAttached() ? 0.0f : p.cornerRadius;
+    const float panelRadius = UsesSpreadEdge() ? 0.0f : p.cornerRadius;
     const D2D1_COLOR_F fill = D2D1::ColorF(
         p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
     const D2D1_COLOR_F border = D2D1::ColorF(
@@ -2934,11 +3195,11 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         ComPtr<ID2D1SolidColorBrush> borderBrush;
         if (SUCCEEDED(context->CreateSolidColorBrush(border, &borderBrush)) && borderBrush)
         {
-            if (IsEdgeAttached())
+            if (UsesSpreadEdge())
             {
                 D2D1_POINT_2F start{};
                 D2D1_POINT_2F end{};
-                switch (app_->dockSettings_.position)
+                switch (Position())
                 {
                 case DockPosition::Top:
                     start = D2D1::Point2F(static_cast<float>(bounds.left),
@@ -2987,6 +3248,15 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 
 void DockContainer::DrawContents(ID2D1DeviceContext* context)
 {
+    if (titleMarqueeWindow_ && (!app_ || WindowTitleAtPoint(app_->lastMousePoint_) != titleMarqueeWindow_))
+    {
+        titleMarqueeWindow_ = nullptr;
+        titleMarqueeAnimating_ = false;
+    }
+    if (app_ && !windowTitleLayouts_.empty())
+        std::erase_if(windowTitleLayouts_, [this](const auto& entry) {
+            return !app_->dockTaskWindowTitles_.contains(entry.first);
+        });
     if (!context || !app_) return;
     snowdesktop::SystemIconPlaceholderDemand::Paint placeholderPaint(app_->systemIconDemand_,
         snowdesktop::SystemIconPlaceholderDemand::Host::Dock, this);
@@ -3080,11 +3350,11 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         host->drawLiveThumbnails = !hasOverflow;
     const RECT scrollViewport = GetVisualScrollViewport(app_->lastMousePoint_);
     RECT scrollVisualViewport = snowdesktop::dock_magnification::
-        ExpandPerpendicularBounds(scrollViewport, app_->dockSettings_.position,
+        ExpandPerpendicularBounds(scrollViewport, Position(),
             ItemIconSize(), GetMaximumMagnificationScale(), app_->dockSettings_.hoverEffect == 1);
     if (const int launchPadding = GetLaunchAnimationPadding(); launchPadding > 0)
         scrollVisualViewport = snowdesktop::dock_magnification::ExpandPerpendicularBounds(
-            scrollVisualViewport, app_->dockSettings_.position, launchPadding, 2.0f);
+            scrollVisualViewport, Position(), launchPadding, 2.0f);
     const D2D1_RECT_F scrollVisualViewportF = D2D1::RectF(
         static_cast<float>(scrollVisualViewport.left),
         static_cast<float>(scrollVisualViewport.top),
@@ -3309,7 +3579,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             if (i != 0) precedingUnits = std::max(precedingUnits, groups[i].units);
         }
     };
-    const float runningDivider = RunningDividerAmount(app_->dockUnpinnedRunningApps_);
+    const float runningDivider = ShowsRunningArea() ? RunningDividerAmount(app_->dockUnpinnedRunningApps_) : 0.f;
     if (runningDivider > 0.0f)
         drawSeparatorBetween(runningIcons.last, minimizedThumbnails.first, runningDivider, false, true);
     drawBoundaries(true);

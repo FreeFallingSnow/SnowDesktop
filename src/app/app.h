@@ -757,6 +757,9 @@ private:
     /** @brief 将已重算的预留区域应用到现有 Dock 容器。 */
     bool SynchronizeDockContainerAreas();
     DockContainer* GetDockContainer() const;
+    void RefreshBarMonitorRoles();
+    BarMonitorRole BarRoleForMonitor(HMONITOR monitor) const;
+    DockLayoutSettings DockLayoutForMonitor(HMONITOR monitor) const;
     DockContainer* GetDockContainerAtPoint(POINT point) const;
     void InvalidateDockContainers();
     void InvalidateDockRects(BOOL erase = FALSE, bool immediate = true);
@@ -1160,6 +1163,7 @@ private:
         bool keepOnDesktop = false);
     void AdoptDockRunningPresentation(const std::wstring& runningKey, size_t itemIndex);
     std::vector<size_t> GetFrequentDockItemIndices();
+    std::vector<size_t> GetFrequentDockItemIndices(const DockLayoutSettings& layout);
     bool SuppressDesktopWidgetDragTargets() const;
     std::wstring GetDockDragOutRemovalHint(POINT point) const;
     bool FindDockReturnCell(std::unordered_set<std::wstring>& usedSlots,
@@ -1855,8 +1859,12 @@ private:
         bool hovered, std::string_view creationPresetId = {});
     /** @brief 显示 Dock 栏体上下文菜单。 @param screenPoint 屏幕坐标 */
     void ShowDockContextMenu(POINT screenPoint, bool powerUserMenu = false);
-    HMENU CreateDockContextMenu(bool includeStatusBar);
-    void ExecuteDockContextMenuCommand(UINT command, HWND owner);
+    HMENU CreateDockContextMenu(bool includeStatusBar, HMONITOR monitor);
+    void ExecuteDockContextMenuCommand(UINT command, HWND owner, HMONITOR monitor);
+    bool BarMonitorOverrideAvailable() const;
+    bool CanEditBarMonitorOverrides() const;
+    bool ConfirmBarMonitorOverride(HMONITOR monitor, BarMonitorRole role,
+        bool inherited, const wchar_t* setting);
     /** @brief 显示 Dock 运行区应用上下文菜单。 */
     void ShowDockRunningAppContextMenu(
         POINT screenPoint, size_t runningIndex);
@@ -2883,7 +2891,7 @@ private:
     bool DrawDockControlBackground(ID2D1DeviceContext* ctx, RECT rect, int state,
         bool forceWhiteStyle = false, std::uintptr_t ownerKey = 0, HMONITOR dockMonitor = nullptr);
     void DrawDockSelectionIndicator(
-        ID2D1DeviceContext* ctx, RECT iconRect, bool lightTheme);
+        ID2D1DeviceContext* ctx, RECT iconRect, bool lightTheme, HMONITOR monitor = nullptr);
     void DrawDockRunningApp(ID2D1DeviceContext* ctx,
         const DockRunningAppInfo& app, RECT rect, int state, int requestedIconSize = 0,
         HMONITOR dockMonitor = nullptr);
@@ -3898,6 +3906,7 @@ private:
     std::unordered_map<std::wstring, DockUsageRecord> dockUsageStats_;
     snowdesktop::dock_refresh_cache::Cache<DockAppIdentity> dockAppIdentityCache_;
     std::unordered_map<std::wstring, DockWindowInfo> dockRunningWindows_;
+    std::unordered_map<HWND, std::wstring> dockTaskWindowTitles_;
     snowdesktop::dock_window_attention::Tracker dockWindowAttention_;
     UINT dockShellHookMessage_ = 0;
     HWND dockShellHookWindow_ = nullptr;
@@ -3980,10 +3989,9 @@ private:
     UINT systemTaskbarTaskViewStateMsg_ = 0;
     std::vector<RECT> dockAreas_;
     std::unique_ptr<snowdesktop::DockAppBars> dockAppBars_;
-    std::vector<RECT> dockReservedAreas_; // Excludes the AppBar's own reservation.
+    std::vector<std::pair<RECT, UINT>> dockReservedAreas_; // Excludes the AppBar's own reservation.
+    std::unordered_map<HMONITOR, BarMonitorRole> barMonitorRoles_;
     bool dockWorkAreaReservationApplied_ = false;
-    DockPosition dockWorkAreaReservationPosition_ =
-        DockPosition::Bottom;
     DockContainer* dockPressedContainer_ = nullptr;
     size_t dockPressedEntry_ = static_cast<size_t>(-1);
     size_t dockPressedFrequentItem_ = static_cast<size_t>(-1);
@@ -3994,6 +4002,7 @@ private:
         dockPressedWindowAction_ =
             snowdesktop::dock_window_rules::DockClickAction::None;
     HWND dockPressedTargetWindow_ = nullptr;
+    HWND dockPressedTitleWindow_ = nullptr;
     bool dockPressedClosedCollectionPopup_ = false;
     size_t dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
     size_t dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);

@@ -554,6 +554,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.dock.edgeRevealGesture", "settings.dock.edgeRevealGesture.description"},
     {SettingsPage::Dock, "dock.edgeHoverDelayMs",
         "settings.dock.edgeHoverDelay", "settings.dock.edgeRevealGesture"},
+    {SettingsPage::Dock, "dock.showWindowTitles", "settings.dock.showWindowTitles", ""},
+    {SettingsPage::Dock, "dock.edgeCentered", "settings.dock.edgeAlignment", ""},
     {SettingsPage::Dock, "dock.showWindowPreviews",
         "settings.dock.windowPreviews", "settings.dock.windowPreviews.description"},
     {SettingsPage::Dock, "dock.minimizeWindowsIntoApplicationIcon",

@@ -304,7 +304,7 @@ bool DesktopApp::BeginDockAnchoredRename(
         snowdesktop::dock_rename_layout::
             CalculateAdjacentEditRect(
                 anchorScreen, monitorInfo.rcWork,
-                dockSettings_.position,
+                DockLayoutForMonitor(monitor).position,
                 desiredWidth, desiredHeight,
                 gap, monitorMargin);
 
@@ -346,9 +346,9 @@ bool DesktopApp::BeginDockAnchoredRename(
         &DesktopApp::RenameEditSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
     using snowdesktop::rename_edit_layout::HeightAnchor;
-    const auto heightAnchor = dockSettings_.position == DockPosition::Bottom
+    const auto heightAnchor = DockLayoutForMonitor(monitor).position == DockPosition::Bottom
         ? HeightAnchor::Bottom
-        : dockSettings_.position == DockPosition::Top
+        : DockLayoutForMonitor(monitor).position == DockPosition::Top
             ? HeightAnchor::Top : HeightAnchor::Center;
     snowdesktop::text_input::SetAccessibleName(renameInputWindow_, _LW("app.menu.rename"));
     renameEditLayout_.Begin(renameInputWindow_, heightAnchor);

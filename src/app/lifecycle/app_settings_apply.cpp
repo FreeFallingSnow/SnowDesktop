@@ -1286,6 +1286,9 @@ public:
         if (dockCommitted)
         {
             const bool dockOrderChanged = app_.dockSettings_.freeItemOrder != requestedDockSettings.freeItemOrder;
+            if (requestedDockSettings.showWindowTitles != app_.dockSettings_.showWindowTitles ||
+                (requestedDockSettings.showWindowTitles && app_.dockTaskWindowTitles_.empty()))
+                app_.dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
             RefreshDockMinimizedWindowMode(requestedDockSettings.minimizeWindowsIntoApplicationIcon);
             app_.dockSettings_ = requestedDockSettings;
             if (dockOrderChanged)
@@ -2637,12 +2640,10 @@ void DesktopApp::ToggleDesktopIconsVisibility(bool automatic)
 bool DesktopApp::HasRetainedElements() const
 {
     for (const auto& item : items_) if (IsRetainedLargeIcon(item)) return true;
-    if (dockSettings_.keepWhenDesktopHidden)
-    {
-        for (const auto& container : containers_)
-            if (dynamic_cast<DockContainer*>(container.get()))
-                return true;
-    }
+    for (const auto& container : containers_)
+        if (const auto* dock = dynamic_cast<const DockContainer*>(container.get());
+            dock && dock->MonitorLayout().keepWhenDesktopHidden)
+            return true;
     for (const auto& widgetData : widgets_)
         if (widgetData.keepWhenDesktopHidden &&
             !IsRectEmptyRect(widgetData.bounds))
@@ -2664,10 +2665,13 @@ bool DesktopApp::IsOpenPopupRetained() const
         return host < widgets_.size() && widgets_[host].keepWhenDesktopHidden;
     }
     if (dockFolderPopupOpen_ || popupAnchoredToDock_)
-        return dockSettings_.keepWhenDesktopHidden ||
-            (collectionPopupDockHost_ &&
-                IsPersistentDockHostEffectivelyFloating(
-                    *collectionPopupDockHost_));
+    {
+        if (collectionPopupDockHost_)
+            return DockLayoutForMonitor(collectionPopupDockHost_->monitor).keepWhenDesktopHidden ||
+                IsPersistentDockHostEffectivelyFloating(*collectionPopupDockHost_);
+        const POINT screen{popupAnchorPoint_.x + virtualLeft_, popupAnchorPoint_.y + virtualTop_};
+        return DockLayoutForMonitor(MonitorFromPoint(screen, MONITOR_DEFAULTTONEAREST)).keepWhenDesktopHidden;
+    }
     return popupWidgetIndex_ < widgets_.size() &&
         widgets_[popupWidgetIndex_].keepWhenDesktopHidden;
 }
@@ -2695,20 +2699,17 @@ bool DesktopApp::IsRetainedContainer(
                 IsRetainedLargeIcon(*icon->GetDesktopItem());
         });
     }
-    if (dynamic_cast<const DockContainer*>(container))
-        return dockSettings_.keepWhenDesktopHidden ||
-            IsDockContainerEffectivelyFloating(
-                static_cast<const DockContainer*>(container));
+    if (const auto* dock = dynamic_cast<const DockContainer*>(container))
+        return dock->MonitorLayout().keepWhenDesktopHidden || IsDockContainerEffectivelyFloating(dock);
     if (container == dockFolderPopupContainer_.get())
-        return dockSettings_.keepWhenDesktopHidden;
+        return IsOpenPopupRetained();
     const auto* widget =
         dynamic_cast<const WidgetContainer*>(container);
     const DesktopWidget* widgetData = widget
         ? widget->GetWidgetData()
         : nullptr;
     if (widgetData && popupAnchoredToDock_ &&
-        dockSettings_.keepWhenDesktopHidden &&
-        GetOpenPopupWidget() == widgetData)
+        GetOpenPopupWidget() == widgetData && IsOpenPopupRetained())
         return true;
     return widgetData && widgetData->keepWhenDesktopHidden;
 }
@@ -2727,7 +2728,7 @@ bool DesktopApp::IsPointOnRetainedElement(POINT pt) const
     if (const DockContainer* dock =
             GetDockContainerAtPoint(pt);
         dock &&
-        (dockSettings_.keepWhenDesktopHidden ||
+        (dock->MonitorLayout().keepWhenDesktopHidden ||
             IsDockContainerEffectivelyFloating(dock)))
         return true;
     for (const auto& widgetData : widgets_)

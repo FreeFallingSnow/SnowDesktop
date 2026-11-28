@@ -8,7 +8,7 @@ namespace snowdesktop
 {
 
 BarSettingsAvailability ResolveBarSettingsAvailability(bool dockEnabled,
-    const DockLayoutSettings& dock, const StatusBarSettings& bar, int monitorCount)
+    const DockSettings& dock, const StatusBarSettings& bar, int monitorCount)
 {
     BarSettingsAvailability result;
     monitorCount = std::max(1, monitorCount);
@@ -22,7 +22,10 @@ BarSettingsAvailability ResolveBarSettingsAvailability(bool dockEnabled,
         const bool hasDock = dockEnabled && contains(dock.monitorScope, index);
         const bool hasBar = bar.enabled && contains(bar.monitorScope, index);
         docks += hasDock; bars += hasBar;
-        merged += hasDock && hasBar && dock.edgeAttached && dock.position == bar.position;
+        const auto role = GetBarMonitorRole(static_cast<size_t>(index), static_cast<size_t>(monitorCount));
+        const auto dockLayout = dock.MonitorLayout(role);
+        const auto barLayout = bar.MonitorLayout(role);
+        merged += hasDock && hasBar && dockLayout.edgeAttached && dockLayout.position == barLayout.position;
         if (index == monitorCount - 1) result.dockOnLastMonitor = hasDock;
     }
     result.anyMerged = merged > 0;

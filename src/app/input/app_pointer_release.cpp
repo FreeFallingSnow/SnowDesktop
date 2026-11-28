@@ -88,7 +88,7 @@ RECT DesktopApp::GetDesktopHoverDamage(POINT point, const DockContainer* dock) c
     }
     if (dock && !IsDockHostedByPersistentHost(dock))
         include(snowdesktop::floating_dock_rules::ExpandHostForTitleLayer(
-            dock->GetInteractiveBounds(), dockSettings_.position), 4);
+            dock->GetInteractiveBounds(), dock->Position()), 4);
     if (GetOpenPopupWidget() && !IsCollectionPopupHostedByFloatingWindow() && PtInRect(&popupRect_, point))
         include(popupRect_, 6);
     if (!luaWidgetPanelRequest_.widgetId.empty() && !ShouldShowFloatingPopupWindow() &&
@@ -863,6 +863,13 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     DockContainer* dock = dockPressedContainer_;
     if (!dock) dock = GetDockContainerAtPoint(point);
     if (!dock) return false;
+    if (const HWND title = std::exchange(dockPressedTitleWindow_, nullptr))
+    {
+        if (dock->WindowTitleAtPoint(point) == title && IsWindow(title))
+            ActivateDockWindowFromPreview(title);
+        ClearDockPressedState();
+        return true;
+    }
     PersistentDockHost* requestedDockHost =
         FindPersistentDockHost(dock);
 

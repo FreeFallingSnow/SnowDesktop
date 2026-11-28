@@ -10,6 +10,7 @@
 #include <vector>
 #include "settings/settings_host_actions.h"
 #include "theme_library_actions.h"
+#include "general_advanced_feature_status.h"
 #include "icons/icon_library.h"
 
 namespace snowdesktop::winui
@@ -21,6 +22,8 @@ struct DockPageActions
     std::function<void(std::wstring)> editIconAppearance;
     ThemeLibraryAction themeLibrary;
     ThemeLibraryAsyncAction themeAsync;
+    std::function<GeneralAdvancedFeatureStatus()> advancedFeatureStatus;
+    std::function<void()> openAdvancedFeatureUnlock;
     using GeneralEdit = std::function<void(GeneralSettings&)>;
     using DockEdit = std::function<void(DockSettings&)>;
     using ConfirmationCompletion = std::function<void(bool confirmed)>;

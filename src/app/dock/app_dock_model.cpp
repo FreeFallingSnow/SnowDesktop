@@ -382,7 +382,9 @@ void DesktopApp::RecordDockItemUsage(size_t itemIndex)
         : record.lastUsed;
     SaveDockUsageStats();
 
-    if (dockSettings_.showFrequentItems)
+    if (dockSettings_.showFrequentItems ||
+        dockSettings_.lastMonitorOverride.showFrequentItems.value_or(false) ||
+        dockSettings_.otherMonitorOverride.showFrequentItems.value_or(false))
     {
         InvalidateDockContainers();
         InvalidateDragStaticScene();
@@ -392,8 +394,13 @@ void DesktopApp::RecordDockItemUsage(size_t itemIndex)
 
 std::vector<size_t> DesktopApp::GetFrequentDockItemIndices()
 {
+    return GetFrequentDockItemIndices(dockSettings_);
+}
+
+std::vector<size_t> DesktopApp::GetFrequentDockItemIndices(const DockLayoutSettings& layout)
+{
     std::vector<size_t> result;
-    if (!dockSettings_.showFrequentItems || dockSettings_.frequentItemCount <= 0)
+    if (!layout.showFrequentItems || layout.frequentItemCount <= 0)
         return result;
 
     std::unordered_set<std::wstring> fixedKeys;
@@ -430,11 +437,11 @@ std::vector<size_t> DesktopApp::GetFrequentDockItemIndices()
         });
 
     const size_t limit = static_cast<size_t>(
-        std::clamp(dockSettings_.frequentItemCount, 1, 8));
+        std::clamp(layout.frequentItemCount, 1, 8));
     for (const Candidate& candidate : candidates)
     {
         const DockAppIdentity identity = ResolveDockAppIdentity(candidate.itemIndex);
-        const bool isShownAsRunning =
+        const bool isShownAsRunning = layout.showRunningArea &&
             std::any_of(dockUnpinnedRunningApps_.begin(),
             dockUnpinnedRunningApps_.end(), [&](const DockRunningAppInfo& running) {
                 return snowdesktop::dock_app_identity_rules::

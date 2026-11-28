@@ -120,12 +120,12 @@ bool DesktopApp::IsPersistentDockHostEffectivelyFloating(
             IsDockEffectivelyPromoted(
                 host.promoted,
                 host.passivelyRevealed,
-                dockSettings_.showOnlyWhenSummoned);
+                DockLayoutForMonitor(host.monitor).showOnlyWhenSummoned);
 }
 
 bool DesktopApp::PersistentDockHost::ShouldKeepReservedFloatingLayer() const
 {
-    const auto& settings = owner->dockSettings_;
+    const auto settings = owner->DockLayoutForMonitor(monitor);
     return settings.reserveScreenSpace && owner->generalSettings_.dockEnabled &&
         !owner->desktopStartupPresentationPending_ && container && !container->IsMergedWithStatusBar() &&
         snowdesktop::floating_dock_rules::ShouldShowPersistentDockHost(
@@ -140,18 +140,18 @@ bool DesktopApp::ShouldShowPersistentDockHost(
         return statusBar_ && host.monitor && statusBar_->MergedDockArea(host.monitor) &&
             snowdesktop::floating_dock_rules::ShouldShowMergedStatusBarDockHost(
                 host.active && generalSettings_.dockEnabled,
-                IsPersistentDockHostEffectivelyFloating(host), dockSettings_.showOnlyWhenSummoned,
-                customDesktopVisible_, desktopIconsHidden_, dockSettings_.keepWhenDesktopHidden,
+                IsPersistentDockHostEffectivelyFloating(host), DockLayoutForMonitor(host.monitor).showOnlyWhenSummoned,
+                customDesktopVisible_, desktopIconsHidden_, DockLayoutForMonitor(host.monitor).keepWhenDesktopHidden,
                 desktopPassthroughActive_, statusBar_->IsFullscreen(host.monitor),
                 statusBar_->HasInteractionSession(host.monitor));
     return snowdesktop::floating_dock_rules::
         ShouldShowPersistentDockHost(
             host.active,
             IsPersistentDockHostEffectivelyFloating(host),
-            dockSettings_.showOnlyWhenSummoned,
+            DockLayoutForMonitor(host.monitor).showOnlyWhenSummoned,
             customDesktopVisible_,
             desktopIconsHidden_,
-            dockSettings_.keepWhenDesktopHidden,
+            DockLayoutForMonitor(host.monitor).keepWhenDesktopHidden,
             desktopPassthroughActive_);
 }
 
@@ -215,7 +215,7 @@ bool DesktopApp::EnterOccludedFloatingPresentation(
     // this reveal timeline for every transition.
     if (!host.active || !host.hwnd || !IsWindow(host.hwnd)) return false;
     if (host.container && host.container->IsMergedWithStatusBar()) return false;
-    if (dockSettings_.showOnlyWhenSummoned) return false;
+    if (DockLayoutForMonitor(host.monitor).showOnlyWhenSummoned) return false;
     // A dismissal only re-decides for something that is actually floating.
     if (transition ==
             snowdesktop::floating_dock_rules::OccludedFloatingTransition::Dismissal &&
@@ -604,7 +604,7 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
         }
     } promotionInput{*this, host.hwnd};
     const bool merged = host.container && host.container->IsMergedWithStatusBar();
-    if (host.occludedFloatingPresentation && (merged || dockSettings_.showOnlyWhenSummoned))
+    if (host.occludedFloatingPresentation && (merged || DockLayoutForMonitor(host.monitor).showOnlyWhenSummoned))
     {
         host.occludedFloatingPresentation = false;
         ResetMergedDockPresentation(host);
@@ -616,14 +616,14 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
     // pass. The still-visible dismissal entry is excluded on purpose: its
     // collapse animation has not started yet.
     if (host.occludedFloatingPresentation && !merged &&
-        !dockSettings_.showOnlyWhenSummoned &&
+        !DockLayoutForMonitor(host.monitor).showOnlyWhenSummoned &&
         !IsPersistentDockHostEffectivelyFloating(host) &&
         !host.mergedAnimation.IsAnimating() && !IsWindowVisible(host.hwnd))
     {
         host.occludedFloatingPresentation = false;
         ResetMergedDockPresentation(host);
     }
-    if (merged || dockSettings_.showOnlyWhenSummoned ||
+    if (merged || DockLayoutForMonitor(host.monitor).showOnlyWhenSummoned ||
         host.occludedFloatingPresentation)
     {
         host.updatingMergedPresentation = true;
@@ -643,7 +643,7 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
         // its collapse animates from the visible pose; a session already
         // presenting never re-hides its revealed frame.
         if (host.occludedFloatingPresentation && !merged &&
-            !dockSettings_.showOnlyWhenSummoned &&
+            !DockLayoutForMonitor(host.monitor).showOnlyWhenSummoned &&
             IsPersistentDockHostEffectivelyFloating(host) &&
             !host.mergedPresentation.visible && IsWindowVisible(host.hwnd))
         {
@@ -655,7 +655,7 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
             // visible pose so its collapse animates away; every other
             // activation starts hidden for the reveal.
             if (host.occludedFloatingPresentation && !merged &&
-                !dockSettings_.showOnlyWhenSummoned && IsWindowVisible(host.hwnd))
+                !DockLayoutForMonitor(host.monitor).showOnlyWhenSummoned && IsWindowVisible(host.hwnd))
                 host.mergedAnimation.ShowImmediately();
             else
                 host.mergedAnimation.ResetHidden();
@@ -837,7 +837,7 @@ void DesktopApp::ApplyMergedDockPresentationFrame(PersistentDockHost& host)
         frame.topmost = host.mergedPresentation.topmost;
         frame.insertAfter = host.hwnd;
         if (positioned)
-            snowdesktop::PositionDockRevealFrame(frame, dockSettings_.position, motionBounds, monitorInfo.rcMonitor);
+            snowdesktop::PositionDockRevealFrame(frame, DockLayoutForMonitor(host.monitor).position, motionBounds, monitorInfo.rcMonitor);
         return frame;
     };
     auto frame = sample();
@@ -1067,12 +1067,12 @@ CalculateFloatingDockStableSourceRect(
                     floating_dock_rules::
                         ExpandHostForTitleLayer(
                             dockRect,
-                            dockSettings_.position,
+                            DockLayoutForMonitor(host.monitor).position,
                             static_cast<int>(std::ceil(300.f * tooltipScale)),
                             static_cast<int>(std::ceil(96.f * tooltipScale))),
                 visualEdgeWidth);
 
-    if (dockSettings_.showOnlyWhenSummoned || host.occludedFloatingPresentation ||
+    if (DockLayoutForMonitor(host.monitor).showOnlyWhenSummoned || host.occludedFloatingPresentation ||
         host.container->IsMergedWithStatusBar())
     {
         MONITORINFO monitor{sizeof(monitor)};
@@ -1080,7 +1080,7 @@ CalculateFloatingDockStableSourceRect(
         {
             // Include the island's gap to its edge in the stable allocation,
             // so a sliding card is not clipped at its resting rectangle.
-            switch (dockSettings_.position)
+            switch (DockLayoutForMonitor(host.monitor).position)
             {
             case DockPosition::Left: sourceRect.left = std::min(sourceRect.left, monitor.rcMonitor.left - virtualLeft_); break;
             case DockPosition::Right: sourceRect.right = std::max(sourceRect.right, monitor.rcMonitor.right - virtualLeft_); break;
@@ -1096,9 +1096,7 @@ CalculateFloatingDockStableSourceRect(
 std::vector<RECT> DesktopApp::GetDockWindowTransitionOcclusionRects() const
 {
     std::vector<RECT> result;
-    if (!generalSettings_.dockEnabled || !hwnd_ || !IsWindowVisible(hwnd_) ||
-        ((!customDesktopVisible_ || desktopIconsHidden_) &&
-            !dockSettings_.keepWhenDesktopHidden))
+    if (!generalSettings_.dockEnabled || !hwnd_ || !IsWindowVisible(hwnd_))
         return result;
     if (IsUsageGuideVisible() && !IsRectEmpty(&usageGuideFrame_))
     {
@@ -1126,6 +1124,8 @@ std::vector<RECT> DesktopApp::GetDockWindowTransitionOcclusionRects() const
             // If Windows refused to restack an independent Host, mask just its
             // visible content instead of sinking the whole effect to desktop.
         }
+        else if ((!customDesktopVisible_ || desktopIconsHidden_) && !dock->MonitorLayout().keepWhenDesktopHidden)
+            continue;
         const auto appearance = CurrentDockAppearance(dock->GetMonitor());
         const float borderWidth = appearance.widgetEdgeHighlightEnabled
             ? std::max(appearance.widgetBorderWidth, appearance.widgetEdgeHighlightWidth)

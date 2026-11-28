@@ -265,12 +265,13 @@ bool DesktopApp::HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPAR
         const int slop = touch::Dips(12, GetDpiForWindow(window));
         const int dx = screen.x - contact.start.x;
         const int dy = screen.y - contact.start.y;
-        const bool vertical = IsVertical(dockSettings_.position);
+        const auto position = DockLayoutForMonitor(MonitorFromPoint(contact.start, MONITOR_DEFAULTTONEAREST)).position;
+        const bool vertical = IsVertical(position);
         if (gesture.action == Action::Pending && contact.Moved(screen, slop))
         {
             taps.Reset();
             const bool openPreview = gesture.preview &&
-                IsOutwardSwipe(dockSettings_.position, contact.start, screen, slop);
+                IsOutwardSwipe(position, contact.start, screen, slop);
             const bool scrollAlongDock = gesture.scrollable &&
                 (vertical ? std::abs(dy) >= std::abs(dx) : std::abs(dx) >= std::abs(dy));
             if (gesture.draggable && (contact.Held() || (!openPreview && !scrollAlongDock)))
@@ -303,7 +304,8 @@ bool DesktopApp::HandleDockTouch(HWND window, UINT message, WPARAM pointer, LPAR
         else if (released.action == Action::Swipe)
         {
             POINT origin = released.contact.start;
-            if (IsOutwardSwipe(dockSettings_.position, released.contact.start, screen, slop) &&
+            if (IsOutwardSwipe(DockLayoutForMonitor(MonitorFromPoint(released.contact.start, MONITOR_DEFAULTTONEAREST)).position,
+                    released.contact.start, screen, slop) &&
                 ScreenToClient(hwnd_, &origin)) (void)TryOpenDockWindowPicker(origin, true);
         }
         else if (released.action == Action::Pending)
@@ -597,11 +599,13 @@ bool DesktopApp::HandleTouchScroll(HWND window, UINT message, WPARAM pointer, LP
 
 bool DesktopApp::CanRevealDockFromTouch(HMONITOR monitor) const
 {
+    const auto layout = DockLayoutForMonitor(monitor);
+    const auto status = generalSettings_.statusBar.MonitorLayout(BarRoleForMonitor(monitor));
     if (!generalSettings_.dockEnabled ||
         !snowdesktop::dock_settings_rules::IsFloatingEdgeSwipeEnabled(
-            dockSettings_.showOnlyWhenSummoned, dockSettings_.floatingEdgeSwipeEnabled) ||
+            layout.showOnlyWhenSummoned, dockSettings_.floatingEdgeSwipeEnabled) ||
         FullscreenBlocksDockReveal(DockRevealSource::Gesture, monitor)) return false;
-    if (statusBar_ && dockSettings_.position == generalSettings_.statusBar.position &&
+    if (statusBar_ && layout.position == status.position &&
         statusBar_->HasTemporaryReveal(monitor)) return false;
     const auto* dock = SelectFloatingDockContainerForMonitor(monitor);
     if (!dock || dock->GetMonitor() != monitor) return false;
@@ -623,10 +627,12 @@ bool DesktopApp::TryRevealTouchEdge(POINT start, std::optional<POINT> end)
         return PtInRect(&bounds, start) &&
             (!end || IsOutwardSwipe(position, start, *end, touch::Dips(24, dpi)));
     };
-    const bool dock = qualifies(dockSettings_.position) && CanRevealDockFromTouch(monitor);
-    const bool status = qualifies(generalSettings_.statusBar.position) &&
+    const auto dockPosition = DockLayoutForMonitor(monitor).position;
+    const auto statusPosition = generalSettings_.statusBar.MonitorLayout(BarRoleForMonitor(monitor)).position;
+    const bool dock = qualifies(dockPosition) && CanRevealDockFromTouch(monitor);
+    const bool status = qualifies(statusPosition) &&
         CanRevealStatusBarAtEdge(statusBar_.get(), monitor,
-            dockSettings_.position == generalSettings_.statusBar.position, persistentDockHosts_);
+            dockPosition == statusPosition, persistentDockHosts_);
     if (end && (dock || status))
     {
         // Release the simulator's reservation before presenting the revealed surface.
@@ -753,10 +759,8 @@ void DesktopApp::SyncTouchEdgeWindows()
     const bool enabled = hwnd_ && !exitRequested_ && !desktopPassthroughActive_ &&
         ((GetSystemMetrics(SM_DIGITIZER) & (NID_INTEGRATED_TOUCH | NID_EXTERNAL_TOUCH)) ||
             generalSettings_.touchSimulationEnabled);
-    const bool dock = enabled && generalSettings_.dockEnabled &&
-        snowdesktop::dock_settings_rules::IsFloatingEdgeSwipeEnabled(
-            dockSettings_.showOnlyWhenSummoned, dockSettings_.floatingEdgeSwipeEnabled);
-    const bool status = enabled && statusBar_ && generalSettings_.statusBar.showOnlyWhenSummoned;
+    const bool dock = enabled && generalSettings_.dockEnabled;
+    const bool status = enabled && statusBar_;
     if (!dock && !status) { DestroyTouchEdgeWindows(); return; }
 
     struct Target { HMONITOR monitor; DockPosition edge; RECT bounds; };
@@ -779,11 +783,13 @@ void DesktopApp::SyncTouchEdgeWindows()
                 const RECT bounds = TouchEdgeBounds(info.rcMonitor, edge, dpi);
                 if (!IsRectEmpty(&bounds)) targets.push_back({monitor, edge, bounds});
             };
-            if (dockEligible) add(dockSettings_.position);
+            const auto dockPosition = DockLayoutForMonitor(monitor).position;
+            const auto statusPosition = generalSettings_.statusBar.MonitorLayout(BarRoleForMonitor(monitor)).position;
+            if (dockEligible) add(dockPosition);
             if (status && CanRevealStatusBarAtEdge(statusBar_.get(), monitor,
-                    dockSettings_.position == generalSettings_.statusBar.position, persistentDockHosts_) &&
-                (!dockEligible || generalSettings_.statusBar.position != dockSettings_.position))
-                add(generalSettings_.statusBar.position);
+                    dockPosition == statusPosition, persistentDockHosts_) &&
+                (!dockEligible || statusPosition != dockPosition))
+                add(statusPosition);
         }
     }
     std::vector<RECT> simulatedZones;

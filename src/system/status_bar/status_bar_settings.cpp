@@ -1,4 +1,5 @@
 #include "status_bar_settings.h"
+#include "dock/bar_monitor_overrides_storage.h"
 #include "theme/surface_theme.h"
 #include "system/controls/system_quick_controls.h"
 #include "common/json_value.h"
@@ -19,6 +20,15 @@ void NormalizeStatusBarSettings(StatusBarSettings& value)
     value.monitorScope = static_cast<DockMonitorScope>(std::clamp(static_cast<int>(value.monitorScope), 0, 2));
     value.edgeRevealGesture = value.edgeRevealGesture == 0 ? 0 : 1;
     value.scale = std::isfinite(value.scale) ? std::clamp(value.scale, .75f, 3.0f) : 1.0f;
+    for (auto* monitor : {&value.lastMonitorOverride, &value.otherMonitorOverride})
+    {
+        if (monitor->position && *monitor->position != DockPosition::Bottom && *monitor->position != DockPosition::Top)
+            monitor->position = DockPosition::Top;
+        if (monitor->scale)
+            monitor->scale = std::isfinite(*monitor->scale) ? std::clamp(*monitor->scale, .75f, 3.f) : 1.f;
+        if (monitor->edgeRevealGesture)
+            monitor->edgeRevealGesture = *monitor->edgeRevealGesture == 0 ? 0 : 1;
+    }
     const StatusBarSettings defaults;
     const auto normalizeOrder = [](auto& items, const auto& supported) {
         std::vector<std::string> result;
@@ -62,6 +72,9 @@ bool DecodeStatusBarSettings(const JsonValue& input, StatusBarSettings& output)
 {
     if (!input.IsObject()) return false;
     StatusBarSettings value;
+    if (!ReadBarMonitorOverride(input, "lastMonitorOverride", value.lastMonitorOverride) ||
+        !ReadBarMonitorOverride(input, "otherMonitorOverride", value.otherMonitorOverride))
+        return false;
     bool valid = true;
     int sceneVersion = 1;
     if (const auto* version = input.Find("sceneRulesVersion"))
@@ -162,6 +175,10 @@ std::string EncodeStatusBarSettings(StatusBarSettings value)
          << ",\"monitorScope\":" << static_cast<int>(value.monitorScope)
          << ",\"edgeRevealGesture\":" << value.edgeRevealGesture
          << ",\"scale\":" << value.scale << ",\"theme\":" << theme;
+    text << ",\"lastMonitorOverride\":";
+    WriteBarMonitorOverride(text, value.lastMonitorOverride);
+    text << ",\"otherMonitorOverride\":";
+    WriteBarMonitorOverride(text, value.otherMonitorOverride);
     bool valid = true;
     VisitStatusBarStoredAppearanceRules([&](const char* key, auto member) {
         const auto& rule = value.*member;

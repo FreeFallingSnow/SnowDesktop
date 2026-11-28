@@ -754,7 +754,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         const DockContainer* contextDock = merged && hwnd_ && ScreenToClient(hwnd_, &dockPoint)
             ? GetDockContainerAtPoint(dockPoint) : nullptr;
         const bool powerUserMenu = contextDock && contextDock->IsWindowsButtonPoint(dockPoint);
-        HMENU menu = merged ? CreateDockContextMenu(true) : CreatePopupMenu();
+        HMENU menu = merged ? CreateDockContextMenu(true, monitor) : CreatePopupMenu();
         if (!menu) { ClearMenuIcons(); return; }
         if (!merged)
         {
@@ -793,6 +793,9 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             controlDisplayBase = 42240, summonOnlyCommand = 42250, revealGestureBase = 42260, appNamePositionBase = 42270;
         constexpr std::size_t controlFlagsBegin = 13;
         const Settings currentSettings = generalSettings_.statusBar;
+        const auto monitorRole = BarRoleForMonitor(monitor);
+        const auto barLayout = currentSettings.MonitorLayout(monitorRole);
+        const bool canShowMonitorLayout = monitorRole == BarMonitorRole::First || BarMonitorOverrideAvailable();
         const auto addChoice = [&](HMENU target, UINT command, const wchar_t* label, bool selected, bool disabled = false) {
             std::wstring text = label;
             if (selected) { text += L"\t"; text += _LW("statusBar.menu.current"); }
@@ -926,10 +929,10 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         if (settingsMenu)
         {
             const HMENU positionAndAppearance = merged ? GetSubMenu(settingsMenu, 0) : settingsMenu;
-            if (const auto edge = positionAndAppearance ? submenu(positionAndAppearance, "statusBar.position") : nullptr)
+            if (const auto edge = canShowMonitorLayout && positionAndAppearance ? submenu(positionAndAppearance, "statusBar.position") : nullptr)
             {
-                addChoice(edge, positionBase, _LW("app.dock.top"), currentSettings.position == DockPosition::Top);
-                addChoice(edge, positionBase + 1, _LW("app.dock.bottom"), currentSettings.position == DockPosition::Bottom);
+                addChoice(edge, positionBase, _LW("app.dock.top"), barLayout.position == DockPosition::Top);
+                addChoice(edge, positionBase + 1, _LW("app.dock.bottom"), barLayout.position == DockPosition::Bottom);
             }
             if (const auto scope = positionAndAppearance ? submenu(positionAndAppearance, "settings.dock.monitor") : nullptr)
             {
@@ -938,24 +941,24 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     addChoice(scope, monitorBase + index, _LW(labels[index]), static_cast<UINT>(currentSettings.monitorScope) == index);
             }
             HMENU independentStatus = merged ? CreatePopupMenu() : settingsMenu;
-            if (const auto visibility = independentStatus ? submenu(independentStatus, "settings.dock.visibilityAndSummon") : nullptr)
+            if (const auto visibility = canShowMonitorLayout && independentStatus ? submenu(independentStatus, "settings.dock.visibilityAndSummon") : nullptr)
             {
                 const std::wstring label = std::wstring(_LW("settings.dock.showOnlyWhenSummoned")) + L"\t" +
-                    _LW(currentSettings.showOnlyWhenSummoned ? "app.interact.on" : "app.interact.off");
+                    _LW(barLayout.showOnlyWhenSummoned ? "app.interact.on" : "app.interact.off");
                 AppendMenuW(visibility, MF_STRING, summonOnlyCommand, label.c_str());
                 SetMenuItemIcon(visibility, summonOnlyCommand, L"\uE5F2", MenuIconFont::FluentRegular);
                 if (const auto gesture = submenu(visibility, "settings.dock.edgeRevealGesture"))
                 {
-                    addChoice(gesture, revealGestureBase, _LW("settings.dock.gestureSwipe"), currentSettings.edgeRevealGesture == 0);
-                    addChoice(gesture, revealGestureBase + 1, _LW("settings.dock.gestureHover"), currentSettings.edgeRevealGesture == 1);
+                    addChoice(gesture, revealGestureBase, _LW("settings.dock.gestureSwipe"), barLayout.edgeRevealGesture == 0);
+                    addChoice(gesture, revealGestureBase + 1, _LW("settings.dock.gestureHover"), barLayout.edgeRevealGesture == 1);
                 }
             }
-            if (const auto scale = independentStatus ? submenu(independentStatus, "statusBar.scale") : nullptr)
+            if (const auto scale = canShowMonitorLayout && independentStatus ? submenu(independentStatus, "statusBar.scale") : nullptr)
                 for (UINT index = 0; index < 6; ++index)
                 {
                     constexpr int percent[]{75, 100, 125, 150, 200, 300};
                     const auto label = std::to_wstring(percent[index]) + L"%";
-                    addChoice(scale, scaleBase + index, label.c_str(), std::abs(currentSettings.scale * 100 - percent[index]) < .5f);
+                    addChoice(scale, scaleBase + index, label.c_str(), std::abs(barLayout.scale * 100 - percent[index]) < .5f);
                 }
             if (!merged) AppendMenuW(settingsMenu, MF_SEPARATOR, 0, nullptr);
             const char* labels[]{"statusBar.barItems", "statusBar.controlCenterContent"};
@@ -1027,6 +1030,55 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         {
             auto settings = settingsController_->Snapshot()->values.general;
             auto& bar = settings.statusBar;
+            const auto currentLayout = bar.MonitorLayout(monitorRole);
+            if (monitorRole != BarMonitorRole::First)
+            {
+                using Override = snowdesktop::StatusBarMonitorOverride;
+                const auto& stored = monitorRole == BarMonitorRole::Last ? bar.lastMonitorOverride : bar.otherMonitorOverride;
+                const auto set = [&](const wchar_t* title, auto member, auto value) {
+                    if (!ConfirmBarMonitorOverride(monitor, monitorRole, !(stored.*member).has_value(), title)) return;
+                    auto general = settingsController_->Snapshot()->values.general;
+                    auto& layout = monitorRole == BarMonitorRole::Last ?
+                        general.statusBar.lastMonitorOverride : general.statusBar.otherMonitorOverride;
+                    layout.*member = value;
+                    if constexpr (std::is_same_v<decltype(value), DockPosition>)
+                        if (merged)
+                        {
+                            auto dock = settingsController_->Snapshot()->values.dock;
+                            auto& dockOverride = monitorRole == BarMonitorRole::Last ? dock.lastMonitorOverride : dock.otherMonitorOverride;
+                            dockOverride.position = value;
+                            settingsController_->UpdateDock(std::move(dock), snowdesktop::SettingsUpdateMode::PreviewAndCommit);
+                        }
+                    settingsController_->UpdateGeneral(std::move(general), snowdesktop::SettingsUpdateMode::PreviewAndCommit);
+                    (void)settingsController_->FlushPending();
+                };
+                if (command == positionBase || command == positionBase + 1)
+                {
+                    const auto position = command == positionBase ? DockPosition::Top : DockPosition::Bottom;
+                    if (position != currentLayout.position)
+                        set(_LW("statusBar.position"), &Override::position, position);
+                    return;
+                }
+                if (command >= scaleBase && command < scaleBase + 6)
+                {
+                    constexpr float scales[]{.75f, 1.f, 1.25f, 1.5f, 2.f, 3.f};
+                    if (scales[command - scaleBase] != currentLayout.scale)
+                        set(_LW("statusBar.scale"), &Override::scale, scales[command - scaleBase]);
+                    return;
+                }
+                if (command == summonOnlyCommand)
+                {
+                    set(_LW("settings.dock.showOnlyWhenSummoned"), &Override::showOnlyWhenSummoned, !currentLayout.showOnlyWhenSummoned);
+                    return;
+                }
+                if (command == revealGestureBase || command == revealGestureBase + 1)
+                {
+                    const int gesture = static_cast<int>(command - revealGestureBase);
+                    if (gesture != currentLayout.edgeRevealGesture)
+                        set(_LW("settings.dock.edgeRevealGesture"), &Override::edgeRevealGesture, gesture);
+                    return;
+                }
+            }
             bool changed = true;
             if (command >= flagBase && command < flagBase + std::size(flags))
             {
@@ -1078,7 +1130,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 return;
             }
         }
-        ExecuteDockContextMenuCommand(command, owner);
+        ExecuteDockContextMenuCommand(command, owner, monitor);
     }
     else if (action == Action::QuickSearch)
     {
@@ -1212,6 +1264,7 @@ void DesktopApp::HandleStatusBarPointerPressed()
 
 void DesktopApp::SyncStatusBar()
 {
+    RefreshBarMonitorRoles();
     const bool dockTrayRequired = generalSettings_.dockEnabled &&
         std::any_of(dockSettings_.trayApplications.begin(), dockSettings_.trayApplications.end(),
             [](const auto& rule) { return rule.enabled; });
@@ -1302,7 +1355,7 @@ void DesktopApp::SyncStatusBar()
                 if (!host || !host->active || host->monitor != monitor || !host->container ||
                     !host->hwnd || !IsWindow(host->hwnd)) continue;
                 state.promoted = host->promoted;
-                if (dockSettings_.edgeAttached && !host->container->IsMergedWithStatusBar() &&
+                if (host->container->MonitorLayout().edgeAttached && !host->container->IsMergedWithStatusBar() &&
                     IsWindowVisible(host->hwnd) && IsDockContainerInteractionVisible(host->container))
                 {
                     state.adjacentDockBounds = host->container->GetVisualPanelBounds(lastMousePoint_);
@@ -1364,17 +1417,20 @@ void DesktopApp::SyncStatusBar()
         OffsetRect(&screen, virtualLeft_, virtualTop_);
         if (auto monitor = MonitorFromRect(&screen, MONITOR_DEFAULTTONULL))
         {
+            const auto role = BarRoleForMonitor(monitor);
+            const auto dockLayout = dockSettings_.MonitorLayout(role);
+            const auto barLayout = generalSettings_.statusBar.MonitorLayout(role);
             int mergedHeight = 0;
-            if (generalSettings_.dockEnabled && dockSettings_.edgeAttached &&
-                dockSettings_.position == generalSettings_.statusBar.position &&
+            if (generalSettings_.dockEnabled && dockLayout.edgeAttached &&
+                dockLayout.position == barLayout.position &&
                 std::find(dockOrder.begin(), dockOrder.end(), index) != dockOrder.end())
             {
                 UINT dpiX = 96, dpiY = 96;
                 if (FAILED(GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY))) dpiX = 96;
-                mergedHeight = MulDiv(std::clamp(dockSettings_.mergedBarHeight, 32, 96), static_cast<int>(dpiX), 96);
+                mergedHeight = MulDiv(std::clamp(dockLayout.mergedBarHeight, 32, 96), static_cast<int>(dpiX), 96);
             }
             monitors.push_back({page.monitorId, monitor, mergedHeight,
-            snowdesktop::ReserveStatusBarSpace(mergedHeight != 0, dockSettings_.showOnlyWhenSummoned)});
+            snowdesktop::ReserveStatusBarSpace(mergedHeight != 0, dockLayout.showOnlyWhenSummoned), role});
         }
     }
     statusBar_->SetPresentationEnabled(!desktopStartupPresentationPending_);

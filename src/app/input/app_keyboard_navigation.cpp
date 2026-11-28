@@ -174,12 +174,12 @@ void DesktopApp::NavigateDesktopGrid(WPARAM arrowKey)
     auto targets = gridTargets();
     struct DockTarget { DockContainer* dock; DockContainer::KeyboardTarget target; };
     std::vector<DockTarget> dockTargets;
-    const bool verticalDock = dockSettings_.position == DockPosition::Left ||
-        dockSettings_.position == DockPosition::Right;
     for (const auto& container : containers_)
     {
         auto* dock = dynamic_cast<DockContainer*>(container.get());
         if (!dock) continue;
+        const auto position = dock->Position();
+        const bool verticalDock = position == DockPosition::Left || position == DockPosition::Right;
         for (auto& target : dock->KeyboardTargets(horizontal != verticalDock))
         {
             targets.push_back({DesktopDirectionSurface::Dock, dockTargets.size(),
@@ -391,6 +391,9 @@ bool DesktopApp::ActivateDesktopSurfaceKeyboardFocus(bool repeated)
             break;
         case Kind::Frequent:
             ActivateOrToggleDockItem(focused->index, std::nullopt, nullptr, anchor);
+            break;
+        case Kind::WindowTitle:
+            ActivateDockWindowFromPreview(reinterpret_cast<HWND>(focused->index));
             break;
         case Kind::Entry:
             if (focused->index < dockEntries_.size())

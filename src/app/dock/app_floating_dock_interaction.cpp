@@ -396,7 +396,7 @@ EnsureFloatingDockVisibleForAssociatedSurface(
         !GetOpenPopupWidget() && !IsWindowVisible(floatingPopupHwnd_) &&
         host.frameReady && host.dcompSurface && host.dcompVisual && IsWindowVisible(host.hwnd) &&
         !host.revealPending && !host.mergedPresentationActive && !host.occludedFloatingPresentation &&
-        !host.container->IsMergedWithStatusBar() && !dockSettings_.showOnlyWhenSummoned &&
+        !host.container->IsMergedWithStatusBar() && !DockLayoutForMonitor(host.monitor).showOnlyWhenSummoned &&
         !host.compositionPaintInProgress && !host.compositionRenderRecoveryPending &&
         !host.backdropRecoveryPending && !graphicsDeviceRecovery_.Pending() &&
         !IsPersistentDockDesktopBandOccluded(host))
@@ -722,7 +722,7 @@ void DesktopApp::ToggleFloatingDock()
     // Keep the anchor visible while its popup is open. Check the current
     // desktop band because a covering window can change after the summon.
     if (host.HasActiveAssociatedSurface() &&
-        (dockSettings_.showOnlyWhenSummoned ||
+        (DockLayoutForMonitor(host.monitor).showOnlyWhenSummoned ||
             (host.container && !host.container->IsMergedWithStatusBar() &&
                 IsPersistentDockDesktopBandOccluded(host))))
         return;

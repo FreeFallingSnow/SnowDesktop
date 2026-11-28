@@ -107,7 +107,7 @@ snowdesktop::control::Value DesktopApp::HandleControlSettings(
             }, [fonts](const app_fonts::Selection& selection) {
                 const auto choices = fonts();
                 return std::any_of(choices.begin(), choices.end(), [&](const auto& choice) { return choice.selection == selection; });
-            }};
+            }, [this] { return CanEditBarMonitorOverrides(); }};
         return HandleGlobalSettings(method, params, target, context);
     }
     if (target.kind == "widget")

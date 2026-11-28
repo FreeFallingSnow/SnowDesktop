@@ -127,7 +127,7 @@ bool DesktopApp::DrawDockControlBackground(
 }
 
 void DesktopApp::DrawDockSelectionIndicator(
-    ID2D1DeviceContext* ctx, RECT iconRect, bool lightTheme)
+    ID2D1DeviceContext* ctx, RECT iconRect, bool lightTheme, HMONITOR monitor)
 {
     if (!ctx || IsRectEmptyRect(iconRect))
         return;
@@ -142,7 +142,7 @@ void DesktopApp::DrawDockSelectionIndicator(
     D2D1_POINT_2F tip{};
     D2D1_POINT_2F baseA{};
     D2D1_POINT_2F baseB{};
-    switch (dockSettings_.position)
+    switch (DockLayoutForMonitor(monitor).position)
     {
     case DockPosition::Top:
     {
@@ -231,8 +231,9 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     const DesktopWidget* widgetSource, snowdesktop::WidgetPreviewScene* previewScene, HMONITOR dockMonitor)
 {
     if (!ctx) return;
+    const auto layout = DockLayoutForMonitor(dockMonitor);
     const int scaledSpacing = std::max(1, static_cast<int>(std::round(
-        kDockSpacing * ClampDockScale(dockSettings_.thicknessScale))));
+        kDockSpacing * ClampDockScale(layout.thicknessScale))));
     const int iconSize = requestedIconSize > 0 ? requestedIconSize :
         std::max(1, static_cast<int>(std::min(
             rect.right - rect.left, rect.bottom - rect.top)) - scaledSpacing);
@@ -323,7 +324,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         const float launchScale = GetDockLaunchPulseScale(index);
         float launchOffsetX = 0.0f;
         float launchOffsetY = 0.0f;
-        switch (dockSettings_.position)
+        switch (layout.position)
         {
         case DockPosition::Top:
             launchOffsetY = launchOffset;
@@ -365,7 +366,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 running->second.window, running->second.trackedWindows))
             DrawDockAttentionDot(ctx, iconRect);
         if (state == 2)
-            DrawDockSelectionIndicator(ctx, iconRect, lt);
+            DrawDockSelectionIndicator(ctx, iconRect, lt, dockMonitor);
         if (launchTransformApplied)
             ctx->SetTransform(previousTransform);
 
@@ -374,12 +375,12 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         {
             const bool minimized = windowState == DockWindowVisualState::Minimized;
             const bool foreground = windowState == DockWindowVisualState::Foreground;
-            const bool verticalDock = dockSettings_.position == DockPosition::Left ||
-                dockSettings_.position == DockPosition::Right;
+            const bool verticalDock = layout.position == DockPosition::Left ||
+                layout.position == DockPosition::Right;
             const float dotRadius = std::max(1.7f, iconSize * 0.038f);
             const float indicatorGap = std::max(3.0f, iconSize * 0.06f);
             D2D1_POINT_2F center{};
-            switch (dockSettings_.position)
+            switch (layout.position)
             {
             case DockPosition::Top:
                 center = D2D1::Point2F((rect.left + rect.right) * 0.5f,
@@ -455,7 +456,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
             drawDockIcon(iconRect, [&](auto* drawing) {
                 DrawIconBitmap(drawing, custom, iconRect, 1.f, reinterpret_cast<std::uintptr_t>(&widget));
             });
-            if (state == 2) DrawDockSelectionIndicator(ctx, iconRect, lt);
+            if (state == 2) DrawDockSelectionIndicator(ctx, iconRect, lt, dockMonitor);
             return;
         }
         if (previewScene)
@@ -508,7 +509,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         drawDockIcon(iconRect, drawFolderIcon);
         if (state == 2)
             DrawDockSelectionIndicator(
-                ctx, iconRect, lt);
+                ctx, iconRect, lt, dockMonitor);
         return;
     }
     auto* custom = widget.dockIconAssetId.empty() ? nullptr : GetDockCustomIcon(ctx, widget.dockIconAssetId, iconSize, L"widget:" + widget.id);
@@ -587,17 +588,18 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     };
     drawDockIcon(iconRect, drawCollectionIcon);
     if (state == 2)
-        DrawDockSelectionIndicator(ctx, iconRect, lt);
+        DrawDockSelectionIndicator(ctx, iconRect, lt, dockMonitor);
 }
 
 void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
     const DockRunningAppInfo& app, RECT rect, int state, int requestedIconSize, HMONITOR dockMonitor)
 {
     if (!ctx) return;
+    const auto layout = DockLayoutForMonitor(dockMonitor);
     const float presence = app.presence.Amount();
     if (presence <= 0.0f) return;
     const int scaledSpacing = std::max(1, static_cast<int>(std::round(
-        kDockSpacing * ClampDockScale(dockSettings_.thicknessScale))));
+        kDockSpacing * ClampDockScale(layout.thicknessScale))));
     const int baseIconSize = requestedIconSize > 0 ? requestedIconSize :
         std::max(1, static_cast<int>(std::min(
             rect.right - rect.left, rect.bottom - rect.top)) - scaledSpacing);
@@ -609,8 +611,8 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         rect.top + (rect.bottom - rect.top + iconSize) / 2
     };
     const bool darkText = CurrentDockAppearance(dockMonitor).contentTheme == 1;
-    const bool verticalDock = dockSettings_.position == DockPosition::Left ||
-        dockSettings_.position == DockPosition::Right;
+    const bool verticalDock = layout.position == DockPosition::Left ||
+        layout.position == DockPosition::Right;
     if (app.minimizedThumbnail)
     {
         const float edge = static_cast<float>(iconSize);
@@ -710,14 +712,14 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         DrawDockAttentionDot(ctx, iconRect, presence);
     if (state == 2)
     {
-        DrawDockSelectionIndicator(ctx, iconRect, darkText);
+        DrawDockSelectionIndicator(ctx, iconRect, darkText, dockMonitor);
         return;
     }
 
     const float dotRadius = std::max(1.7f, iconSize * 0.038f);
     const float indicatorGap = std::max(3.0f, iconSize * 0.06f);
     D2D1_POINT_2F center{};
-    switch (dockSettings_.position)
+    switch (layout.position)
     {
     case DockPosition::Top:
         center = D2D1::Point2F((rect.left + rect.right) * 0.5f,

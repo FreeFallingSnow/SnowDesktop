@@ -42,6 +42,10 @@ SD_IPC_FIELDS(DockAppearanceRule, v.enabled, v.appearancePreset, v.appearance);
 SD_IPC_FIELDS(DockFullscreenException, v.executable, v.policy);
 SD_IPC_FIELDS(DockFullscreenApplication, v.name, v.executable);
 SD_IPC_FIELDS(DockTrayRule, v.executable, v.matchPath, v.enabled, v.doubleClick);
+SD_IPC_FIELDS(DockMonitorOverride, v.position, v.edgeAttached, v.edgeCentered, v.thicknessScale,
+    v.showOnlyWhenSummoned, v.allowDesktopContentOverlap, v.reserveScreenSpace,
+    v.showFrequentItems, v.keepWhenDesktopHidden, v.showRunningArea);
+SD_IPC_FIELDS(StatusBarMonitorOverride, v.position, v.scale, v.showOnlyWhenSummoned, v.edgeRevealGesture);
 SD_IPC_FIELDS(DockSettings,
     v.position, v.edgeAttached, v.edgeDistanceScale, v.floatingShortcutMode, v.floatingHotkeyModifiers,
     v.floatingHotkeyVirtualKey, v.floatingEdgeSwipeEnabled, v.summonOnAppMinimize, v.edgeRevealGesture, v.edgeHoverDelayMs, v.fullscreenPolicy, v.fullscreenExceptions, v.monitorScope, v.showWindowsButton,
@@ -53,7 +57,8 @@ SD_IPC_FIELDS(DockSettings,
     v.systemTaskbarShellUi, v.hoverEffect, v.hoverScale, v.launchEffect, v.windowEffect,
     v.followComponentAppearance, v.customAppearance, v.appearancePreset, v.classicTaskbarSystemTheme, v.trayApplications,
     v.followComponentCornerRadius, v.cornerRadius, v.attentionDotSizeScale, v.attentionDotOffset,
-    v.blurReservedSpace, v.maximizedWindow, v.appWindow);
+    v.blurReservedSpace, v.maximizedWindow, v.appWindow,
+    v.edgeCentered, v.showWindowTitles, v.lastMonitorOverride, v.otherMonitorOverride);
 SD_IPC_FIELDS(NavigationSettings,
     v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode, v.lastCollapsed, v.layout, v.prefixes, v.defaultEngine, v.engines, v.colors,
     v.mappingViewMode, v.widgetSortByInitial, v.appSuggestionsEnabled, v.favoritesEnabled, v.favorites);
@@ -79,7 +84,8 @@ SD_IPC_FIELDS(StatusBarSettings,
     v.legacyShellUi, v.maximizedWindow, v.legacyVisibleWindow, v.noWindow, v.inputMethod,
     v.quickControlOrder, v.hiddenQuickControls, v.clockShowSeconds, v.timeNotificationRightAligned, v.batteryPercentage, v.showDesktop,
     v.controlCenterSingleIcon, v.notifications, v.showOnlyWhenSummoned, v.edgeRevealGesture,
-    v.foregroundAppName, v.foregroundAppNameCentered, v.appWindow, v.metricOrder);
+    v.foregroundAppName, v.foregroundAppNameCentered, v.appWindow, v.metricOrder,
+    v.lastMonitorOverride, v.otherMonitorOverride);
 SD_IPC_FIELDS(app_fonts::Selection, v.package, v.family);
 SD_IPC_FIELDS(PopupAppearanceRule, v.enabled, v.theme);
 SD_IPC_FIELDS(runtime_modules::Target, v.process, v.name, v.explorer, v.access, v.hook32);

@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstddef>
+#include <optional>
+
 inline constexpr bool kDefaultDockEnabled = false;
 inline constexpr float kDockMinimumScale = 0.50f;
 inline constexpr float kDockMaximumScale = 2.00f;
@@ -29,6 +32,14 @@ enum class DockMonitorScope
     All = 2
 };
 
+enum class BarMonitorRole { First, Last, Other };
+
+constexpr BarMonitorRole GetBarMonitorRole(std::size_t index, std::size_t count) noexcept
+{
+    if (index == 0) return BarMonitorRole::First;
+    return index + 1 == count ? BarMonitorRole::Last : BarMonitorRole::Other;
+}
+
 // The layout-owned part of Dock settings. Appearance, animation, invocation
 // shortcuts and Windows taskbar preferences remain independent of layouts.
 struct DockLayoutSettings
@@ -37,6 +48,7 @@ struct DockLayoutSettings
 
     DockPosition position = DockPosition::Bottom;
     bool edgeAttached = false;
+    bool edgeCentered = false;
     // Island-only multiplier; 100% preserves the desktop component margin.
     float edgeDistanceScale = 1.0f;
     DockMonitorScope monitorScope = DockMonitorScope::First;
@@ -53,6 +65,35 @@ struct DockLayoutSettings
     int frequentItemCount = 3;
     float thicknessScale = 1.0f;
     float mergedIconScale = 1.0f;
+    // Only monitor overrides can disable the running area.
+    bool showRunningArea = true;
 };
+
+struct DockMonitorOverride
+{
+    bool operator==(const DockMonitorOverride&) const = default;
+    std::optional<DockPosition> position;
+    std::optional<bool> edgeAttached, edgeCentered;
+    std::optional<float> thicknessScale;
+    std::optional<bool> showOnlyWhenSummoned, allowDesktopContentOverlap, reserveScreenSpace;
+    std::optional<bool> showFrequentItems, keepWhenDesktopHidden, showRunningArea;
+
+    template <typename Self, typename Visitor>
+    static void Visit(Self& value, Visitor&& visit)
+    {
+        visit("position", value.position);
+        visit("edgeAttached", value.edgeAttached);
+        visit("edgeCentered", value.edgeCentered);
+        visit("thicknessScale", value.thicknessScale);
+        visit("showOnlyWhenSummoned", value.showOnlyWhenSummoned);
+        visit("allowDesktopContentOverlap", value.allowDesktopContentOverlap);
+        visit("reserveScreenSpace", value.reserveScreenSpace);
+        visit("showFrequentItems", value.showFrequentItems);
+        visit("keepWhenDesktopHidden", value.keepWhenDesktopHidden);
+        visit("showRunningArea", value.showRunningArea);
+    }
+};
+
+DockLayoutSettings ApplyDockMonitorOverride(DockLayoutSettings base, const DockMonitorOverride& value);
 
 float ResolveDockScale(const DockLayoutSettings& settings, bool merged);

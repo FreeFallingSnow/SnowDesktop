@@ -1,6 +1,5 @@
 #pragma once
 
-struct DockLayoutSettings;
 struct DockSettings;
 
 namespace snowdesktop
@@ -17,7 +16,7 @@ struct BarSettingsAvailability
 };
 
 BarSettingsAvailability ResolveBarSettingsAvailability(bool dockEnabled,
-    const DockLayoutSettings& dock, const StatusBarSettings& bar, int monitorCount);
+    const DockSettings& dock, const StatusBarSettings& bar, int monitorCount);
 int TaskbarDisplayMode(const DockSettings& dock);
 bool CanSelectTaskbarDisplayMode(int mode, bool dockEnabled, bool taskbarAllowed) noexcept;
 void SetTaskbarDisplayMode(DockSettings& dock, int mode);

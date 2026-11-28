@@ -46,6 +46,15 @@ struct DockAppearanceRule
 
 struct DockSettings : DockLayoutSettings
 {
+    DockMonitorOverride lastMonitorOverride, otherMonitorOverride;
+    bool showWindowTitles = false;
+
+    DockLayoutSettings MonitorLayout(BarMonitorRole role) const
+    {
+        if (role == BarMonitorRole::First) return *this;
+        return ApplyDockMonitorOverride(*this,
+            role == BarMonitorRole::Last ? lastMonitorOverride : otherMonitorOverride);
+    }
     bool operator==(const DockSettings&) const = default;
 
     [[nodiscard]] bool UsesReservedSpaceBackdrop() const noexcept

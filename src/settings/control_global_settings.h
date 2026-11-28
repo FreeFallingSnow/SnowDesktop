@@ -12,6 +12,7 @@ struct GlobalSettingsContext
     ISettingsController& controller;
     std::function<bool(std::string_view)> languageAvailable;
     std::function<bool(const app_fonts::Selection&)> fontAvailable;
+    std::function<bool()> canEditBarMonitorOverrides;
 };
 bool IsGlobalSettingsTarget(const Target& target);
 Value HandleGlobalSettings(std::string_view method, const Value& params,

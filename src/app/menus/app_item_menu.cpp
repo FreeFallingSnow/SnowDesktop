@@ -836,7 +836,7 @@ void DesktopApp::ShowItemContextMenu(
     switch (command)
     {
     case kContextDockRecycleBinIconBorder:
-        ExecuteDockContextMenuCommand(command, menuOwner);
+        ExecuteDockContextMenuCommand(command, menuOwner, MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST));
         return;
     case kContextAddFolderMappingWidget:
     {

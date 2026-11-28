@@ -91,6 +91,7 @@ JsonValue EncodeDockLayout(const DockLayoutSettings& settings)
     encoded.object = {
         {"position", NumberValue(static_cast<int>(settings.position))},
         {"edgeAttached", BooleanValue(settings.edgeAttached)},
+        {"edgeCentered", BooleanValue(settings.edgeCentered)},
         {"edgeDistanceScale", NumberValue(settings.edgeDistanceScale)},
         {"monitorScope", NumberValue(static_cast<int>(settings.monitorScope))},
         {"showWindowsButton", BooleanValue(settings.showWindowsButton)},
@@ -656,6 +657,7 @@ bool DecodeDockLayout(const JsonValue& root, Document& document,
         !ReadOptionalFloat(*value, "edgeDistanceScale", "dockLayout.edgeDistanceScale", edgeDistanceScale, error) ||
         !ReadOptionalFloat(*value, "mergedIconScale", "dockLayout.mergedIconScale", mergedIconScale, error) ||
         !ReadBoolean(*value, "edgeAttached", "dockLayout.edgeAttached", decoded.edgeAttached, error) ||
+        !ReadBoolean(*value, "edgeCentered", "dockLayout.edgeCentered", decoded.edgeCentered, error) ||
         !ReadBoolean(*value, "showWindowsButton", "dockLayout.showWindowsButton", decoded.showWindowsButton, error) ||
         !ReadBoolean(*value, "showQuickSearchButton", "dockLayout.showQuickSearchButton", decoded.showQuickSearchButton, error) ||
         !ReadBoolean(*value, "showFrequentItems", "dockLayout.showFrequentItems", decoded.showFrequentItems, error) ||

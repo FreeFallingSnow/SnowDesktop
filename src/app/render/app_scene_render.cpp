@@ -323,7 +323,7 @@ void DesktopApp::DrawDesktopForeground(
     {
         auto* dock = dynamic_cast<DockContainer*>(container.get());
         if (!dock ||
-            (hiddenMode && !dockSettings_.keepWhenDesktopHidden) ||
+            (hiddenMode && !dock->MonitorLayout().keepWhenDesktopHidden) ||
             IsDockHostedByPersistentHost(dock))
         {
             continue;
@@ -357,7 +357,7 @@ void DesktopApp::DrawDesktopForeground(
                         const auto appearance = CurrentDockAppearance(dock->GetMonitor());
                         if (appearance.glassEnabled)
                             (void)desktopBackdropCompositor_.AddPanel(panel,
-                                dockSettings_.edgeAttached ? 0.0f : appearance.cornerRadius,
+                                dock->MonitorLayout().edgeAttached && !dock->MonitorLayout().edgeCentered ? 0.0f : appearance.cornerRadius,
                                 appearance.glassBlurRadius, reinterpret_cast<std::uintptr_t>(dock), true);
                     }
                     continue;

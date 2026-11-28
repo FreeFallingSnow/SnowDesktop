@@ -278,9 +278,10 @@ void DesktopApp::SyncDockTitleTooltip()
             return;
         }
     }
-    if ((!desktopIconsHidden_ || dockSettings_.keepWhenDesktopHidden) && IsBaseDesktopHoverSurfaceWindow(hit))
+    if (IsBaseDesktopHoverSurfaceWindow(hit))
     {
-        if (auto* dock = GetDockContainerAtPoint(point); dock && !IsDockHostedByPersistentHost(dock))
+        if (auto* dock = GetDockContainerAtPoint(point);
+            dock && IsRetainedContainer(dock) && !IsDockHostedByPersistentHost(dock))
         {
             dock->ShowHoveredTitle(point, hwnd_, dockTitleTooltip_);
             return;
