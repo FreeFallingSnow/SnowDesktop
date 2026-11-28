@@ -170,13 +170,15 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
             for (int row = 0; row < 3; ++row)
             {
                 const LONG y = top + row * 144;
-                DrawD2DTextEllipsis(context.Get(), _LW(labels[row]), {left + 8, y, left + width, y + 28},
+                const char* label = windowTitles && row == 2 ? "app.settings.icon_beautify" : labels[row];
+                DrawD2DTextEllipsis(context.Get(), _LW(label), {left + 8, y, left + width, y + 28},
                     labelFormat.Get(), light ? D2D1::ColorF(0x17202a) : D2D1::ColorF(0xf0f3f7));
-                dockSettings_.edgeAttached = row != 0;
+                dockSettings_.edgeAttached = windowTitles ? row == 1 : row != 0;
                 dockSettings_.edgeCentered = windowTitles && row == 1;
                 iconBeautifySettings_.enabled = windowTitles && row == 2;
+                iconBeautifySettings_.outlineEnabled = iconBeautifySettings_.enabled;
                 RECT area{left, y + 40, left + width, y + 132};
-                if (row == 2)
+                if (row == 2 && !windowTitles)
                 {
                     const RECT strip{left, y + 68, left + width, y + 132};
                     stripMaterial(strip, DockPosition::Bottom); statusContent(strip, true);
@@ -190,7 +192,7 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
                 {
                     DockContainer dock(this, &dockEntries_, area);
                     const auto frame = dock.GetVisualPanelBounds(lastMousePoint_);
-                    material(frame, appearance, row ? 0.f : appearance.cornerRadius);
+                    material(frame, appearance, dockSettings_.edgeAttached ? 0.f : appearance.cornerRadius);
                     dock.DrawChrome(context.Get(), lastMousePoint_); dock.DrawContents(context.Get());
                 }
             }
