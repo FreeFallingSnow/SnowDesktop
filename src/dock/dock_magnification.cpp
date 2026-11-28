@@ -261,16 +261,10 @@ int IslandAxisShift(
         baseCenter - pointerAxis, itemPitch, baseIconSize, focusScale);
 }
 
-int PackedAxisShift(
-    const std::vector<float>& scales, size_t index,
-    int baseIconSize, bool towardPositiveAxis)
+static int PackedAxisShift(size_t count, size_t index, bool towardPositiveAxis,
+    const auto& growthAt)
 {
-    if (index >= scales.size())
-        return 0;
-
-    const auto growthAt = [&](size_t candidate) {
-        return GrowthForScale(scales[candidate], baseIconSize);
-    };
+    if (index >= count) return 0;
     const int currentGrowth = growthAt(index);
     if (towardPositiveAxis)
     {
@@ -281,8 +275,7 @@ int PackedAxisShift(
     }
 
     int followingGrowth = 0;
-    for (size_t candidate = index + 1;
-        candidate < scales.size(); ++candidate)
+    for (size_t candidate = index + 1; candidate < count; ++candidate)
     {
         followingGrowth += growthAt(candidate);
     }
@@ -290,9 +283,23 @@ int PackedAxisShift(
         (currentGrowth - currentGrowth / 2));
 }
 
+int PackedAxisShift(
+    const std::vector<float>& scales, size_t index,
+    int baseIconSize, bool towardPositiveAxis)
+{
+    return PackedAxisShift(scales.size(), index, towardPositiveAxis,
+        [&](size_t candidate) { return GrowthForScale(scales[candidate], baseIconSize); });
+}
+
+int PackedAxisShift(std::span<const int> growth, size_t index, bool towardPositiveAxis)
+{
+    return PackedAxisShift(growth.size(), index, towardPositiveAxis,
+        [&](size_t candidate) { return growth[candidate]; });
+}
+
 RECT MagnifyRect(
     RECT base, DockPosition position, float scale, int baseIconSize,
-    int axisShift, bool centered)
+    int axisShift, bool centered, int axisGrowth)
 {
     const bool vertical = position == DockPosition::Left ||
         position == DockPosition::Right;
@@ -303,12 +310,17 @@ RECT MagnifyRect(
     if (growth == 0)
         return base;
 
-    const int leadingGrowth = growth / 2;
-    const int trailingGrowth = growth - leadingGrowth;
+    if (axisGrowth < 0) axisGrowth = growth;
+    const int leadingGrowth = axisGrowth / 2;
+    const int trailingGrowth = axisGrowth - leadingGrowth;
     if (centered)
     {
-        base.left -= leadingGrowth; base.right += trailingGrowth;
-        base.top -= leadingGrowth; base.bottom += trailingGrowth;
+        const int crossLeading = growth / 2;
+        const int crossTrailing = growth - crossLeading;
+        base.left -= vertical ? crossLeading : leadingGrowth;
+        base.right += vertical ? crossTrailing : trailingGrowth;
+        base.top -= vertical ? leadingGrowth : crossLeading;
+        base.bottom += vertical ? trailingGrowth : crossTrailing;
         return base;
     }
     switch (position)

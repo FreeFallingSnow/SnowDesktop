@@ -154,21 +154,24 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
                 const auto first = reinterpret_cast<HWND>(static_cast<UINT_PTR>(1));
                 const auto second = reinterpret_cast<HWND>(static_cast<UINT_PTR>(2));
                 const auto third = reinterpret_cast<HWND>(static_cast<UINT_PTR>(3));
+                const auto fourth = reinterpret_cast<HWND>(static_cast<UINT_PTR>(4));
                 dockTaskWindowTitles_ = {{first, L"设置"}, {second, L"Settings and configuration"}, // l10n-allow: isolated Dock preview window titles.
-                    {third, L"Roadmap and release checklist for the next version"}}; // l10n-allow: isolated Dock preview window title.
-                dockRunningWindows_[DockItemWindowKey(items_[0])] = {first, false, true, false, {first, second}};
-                dockRunningWindows_[DockItemWindowKey(items_[1])] = {third, false, true, false, {third}};
+                    {third, L"Roadmap and release checklist for the next version"}, // l10n-allow: isolated Dock preview window title.
+                    {fourth, L"项目配置和下一版本的发布检查清单"}}; // l10n-allow: isolated Dock preview window title.
+                dockRunningWindows_[DockItemWindowKey(items_[0])] = {first, false, true, false, {first, second, fourth}, {}};
+                dockRunningWindows_[DockItemWindowKey(items_[1])] = {third, false, true, false, {third}, {}};
             }
             dockSettings_.appearancePreset = kAppearancePresetCustom; dockSettings_.customAppearance = appearance;
             dockSettings_.position = DockPosition::Bottom; dockSettings_.thicknessScale = .75f;
             const LONG width = std::min(896, request.canvasWidth - 64), left = (request.canvasWidth - width) / 2;
-            const LONG top = std::max(32, (request.canvasHeight - 432) / 2);
-            bounds = {left, top, left + width, top + 432};
+            const int rows = windowTitles ? 4 : 3;
+            const LONG top = std::max(24, (request.canvasHeight - rows * 144) / 2);
+            bounds = {left, top, left + width, top + rows * 144};
             ComPtr<IDWriteTextFormat> labelFormat;
             require(app_fonts::CreateTextFormat(dwriteFactory_.Get(), L"Segoe UI", DWRITE_FONT_WEIGHT_NORMAL,
                 DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 18, L"en-US", &labelFormat));
-            const char* labels[]{"app.dock.island", "app.dock.edge", "settings.desktopStyle.merged.title"};
-            for (int row = 0; row < 3; ++row)
+            const char* labels[]{"app.dock.island", "app.dock.edge", "settings.desktopStyle.merged.title", "settings.dock.showWindowTitles"};
+            for (int row = 0; row < rows; ++row)
             {
                 const LONG y = top + row * 144;
                 std::wstring label = _LW(labels[row]);
@@ -177,7 +180,7 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
                 if (windowTitles && row == 2)
                     label = std::wstring(_LW("app.settings.icon_beautify")) + L" · " + _LW("settings.animation.option.wave");
                 DrawD2DTextEllipsis(context.Get(), label, {left + 8, y, left + width, y + 28},
-                    labelFormat.Get(), light ? D2D1::ColorF(0x17202a) : D2D1::ColorF(0xf0f3f7));
+                    labelFormat.Get(), D2D1::ColorF(0xf0f3f7));
                 dockSettings_.edgeAttached = windowTitles ? row == 1 : row != 0;
                 dockSettings_.edgeCentered = windowTitles && row == 1;
                 dockSettings_.windowTitlesOnlyMultiple = windowTitles && row == 1;
@@ -197,15 +200,24 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
                 else
                 {
                     DockContainer dock(this, &dockEntries_, area);
+                    if (windowTitles && row == 3)
+                    {
+                        dockSettings_.showWindowTitles = false;
+                        dock.GetSlots();
+                        dockSettings_.showWindowTitles = true;
+                        dock.InvalidateSlots();
+                        dock.GetSlots();
+                        dock.AdvanceMagnificationAnimation(UiAnimationScheduler::MonotonicMilliseconds() + 48.0);
+                    }
                     if (windowTitles && row == 2)
                     {
                         const auto targets = dock.KeyboardTargets();
-                        const auto firstIcon = std::ranges::find_if(targets, [](const auto& target) {
-                            return target.kind == DockContainer::KeyboardTarget::Kind::Entry && target.index == 0;
+                        const auto title = std::ranges::find_if(targets, [](const auto& target) {
+                            return target.kind == DockContainer::KeyboardTarget::Kind::WindowTitle && target.index == 2;
                         });
-                        if (firstIcon != targets.end())
+                        if (title != targets.end())
                         {
-                            const RECT cell = firstIcon->bounds;
+                            const RECT cell = title->bounds;
                             lastMousePoint_ = {(cell.left + cell.right) / 2, (cell.top + cell.bottom) / 2};
                             dock.GetVisualPanelBounds(lastMousePoint_);
                             dock.AdvanceMagnificationAnimation(UiAnimationScheduler::MonotonicMilliseconds() + 1000.0);

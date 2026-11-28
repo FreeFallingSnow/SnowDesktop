@@ -56,6 +56,7 @@ struct DockWindowInfo
     bool foreground = false;
     // All identity-matched task windows, including non-representative siblings.
     std::vector<HWND> trackedWindows;
+    std::vector<HWND> documentWindows;
 };
 
 struct DockRunningAppInfo
@@ -83,4 +84,5 @@ struct DockRunningAppInfo
     };
     std::optional<ThumbnailMotion> thumbnailMotion;
     std::vector<HWND> trackedWindows;
+    std::vector<HWND> documentWindows;
 };

@@ -108,6 +108,8 @@ private:
 /** 单台显示器边缘的 Dock 容器；多个实例共享同一份 Dock 数据。 */
 class DockContainer final : public Container
 {
+    struct TitleTransitions;
+
 public:
     DockContainer(DesktopApp* app, std::vector<DockEntry>* entries, RECT area);
 
@@ -178,17 +180,25 @@ public:
     DockMonitorLayout MonitorLayout() const;
     DockPosition Position() const;
     bool ShowsRunningArea() const;
-    std::span<const HWND> EntryTitleWindows(size_t index) const;
-    std::span<const HWND> RunningTitleWindows(size_t index) const;
-    RECT DrawWindowTitleGroup(ID2D1DeviceContext* context, RECT base, RECT visual,
-        std::span<const HWND> windows, float opacity = 1.f) const;
-    RECT WindowTitleIconRect(RECT base, RECT visual, std::span<const HWND> windows) const;
+    struct WindowTitleGroup
+    {
+        std::span<const HWND> windows;
+        float amount = 0.f;
+        float itemPresence = 1.f;
+        bool interactive = false;
+        bool Visible() const { return !windows.empty() && amount > 0.f; }
+    };
+    WindowTitleGroup EntryTitleGroup(size_t index) const;
+    WindowTitleGroup RunningTitleGroup(size_t index) const;
+    RECT DrawWindowTitleGroup(ID2D1DeviceContext* context, RECT base, RECT visual, WindowTitleGroup group) const;
+    RECT WindowTitleIconRect(RECT base, RECT visual, WindowTitleGroup group) const;
     HWND WindowTitleAtPoint(POINT point, RECT* titleRect = nullptr) const;
     // Stable layout relationship, including while the bar is fullscreen-hidden.
     bool IsMergedWithStatusBar() const;
     // Shared chrome is a layout relationship, independent of animation/input.
     bool SharesStatusBarAppearance() const;
     bool IsMagnificationAnimating() const;
+    bool IsTitleTransitioning() const;
     bool AdvanceMagnificationAnimation(double nowMilliseconds);
     void PrepareEntryRemoval(size_t entryIndex);
     void CancelEntryRemoval(const DockEntry& entry);
@@ -206,6 +216,7 @@ public:
         snowdesktop::dock_magnification::HoverEntryAnimation entry;
         snowdesktop::dock_magnification::SingleFocusAnimation single;
         std::shared_ptr<EntryRemovalTimeline> removals;
+        std::shared_ptr<TitleTransitions> titles;
         std::wstring keyboardFocusKey;
     };
     PresentationState CapturePresentationState() const;
@@ -236,9 +247,19 @@ private:
     bool UsesSpreadEdge() const;
     struct WindowTitleLayout;
     WindowTitleLayout* MeasureWindowTitle(HWND window, int icon) const;
-    float WindowTitleExtent(HWND window, int icon, int spacing, bool vertical, bool first) const;
-    float WindowTitleSlotUnits(std::span<const HWND> windows) const;
-    std::vector<RECT> WindowTitleSegments(RECT visual, RECT iconCell, std::span<const HWND> windows) const;
+    WindowTitleGroup ResolveTitleGroup(const std::wstring& key, std::span<const HWND> windows,
+        float itemPresence = 1.f) const;
+    int WindowTitlePadding() const;
+    float WindowTitleWidthLimit() const;
+    float WindowTitleExtent(HWND window) const;
+    float WindowTitleSlotUnits(WindowTitleGroup group) const;
+    struct WindowTitleGeometry
+    {
+        RECT plate{}, icon{}, titles{};
+        float zoom = 1.f;
+    };
+    WindowTitleGeometry LayoutWindowTitleGroup(RECT base, RECT visual, WindowTitleGroup group) const;
+    std::vector<RECT> WindowTitleSegments(const WindowTitleGeometry& geometry, WindowTitleGroup group) const;
     RECT EdgeChromeBounds(RECT bounds) const;
     float GetMaximumMagnificationScale() const;
     float GetCurrentMagnificationScale() const;
@@ -349,6 +370,7 @@ private:
         Microsoft::WRL::ComPtr<IDWriteTextLayout> full;
     };
     mutable std::unordered_map<HWND, WindowTitleLayout> windowTitleLayouts_;
+    std::shared_ptr<TitleTransitions> titleTransitions_;
     // Magnification is a continuous pointer-distance field, but the semantic
     // hover owner needs spatial hysteresis at item and Dock boundaries.
     mutable RECT magnificationFocusRect_{};

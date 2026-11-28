@@ -258,9 +258,8 @@ void DockRunningItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     {
         const auto* dock = dynamic_cast<const DockContainer*>(container_);
         const auto& running = app_->dockUnpinnedRunningApps_[index];
-        const auto windows = dock ? dock->RunningTitleWindows(index) : std::span<const HWND>{};
-        const RECT icon = windows.empty() ? rect :
-            dock->DrawWindowTitleGroup(context, bounds_, rect, windows, running.presence.Amount());
+        const auto titles = dock ? dock->RunningTitleGroup(index) : DockContainer::WindowTitleGroup{};
+        const RECT icon = titles.Visible() ? dock->DrawWindowTitleGroup(context, bounds_, rect, titles) : rect;
         const int iconSize = dock ? dock->GetElementIconSize(bounds_, rect) : 0;
         app_->DrawDockRunningApp(context, running, icon, state,
             iconSize, dock ? dock->GetMonitor() : nullptr);
@@ -506,8 +505,8 @@ void DockEntryItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
                 return;
             }
         }
-        const auto windows = dock ? dock->EntryTitleWindows(entryIndex_) : std::span<const HWND>{};
-        const RECT icon = windows.empty() ? rect : dock->DrawWindowTitleGroup(context, bounds_, rect, windows);
+        const auto titles = dock ? dock->EntryTitleGroup(entryIndex_) : DockContainer::WindowTitleGroup{};
+        const RECT icon = titles.Visible() ? dock->DrawWindowTitleGroup(context, bounds_, rect, titles) : rect;
         const int iconSize = dock ? dock->GetElementIconSize(bounds_, rect) : 0;
         app_->DrawDockEntry(context, *entry, icon, state,
             iconSize,
@@ -525,8 +524,23 @@ ComPtr<IDataObject> DockEntryItem::CreateDataObject()
     return icon.CreateDataObject();
 }
 
+struct DockContainer::TitleTransitions
+{
+    struct Group
+    {
+        std::vector<HWND> windows;
+        snowdesktop::dock_running_animation::Presence presence;
+        std::uint64_t layoutRevision = 0;
+    };
+    std::unordered_map<std::wstring, Group> groups;
+    std::uint64_t layoutRevision = 0;
+    float widestTitleUnits = 0.f;
+    bool primed = false;
+};
+
 DockContainer::DockContainer(DesktopApp* app, std::vector<DockEntry>* entries, RECT area)
-    : app_(app), entries_(entries), area_(area) {}
+    : app_(app), entries_(entries), area_(area),
+      titleTransitions_(std::make_shared<TitleTransitions>()) {}
 
 HMONITOR DockContainer::GetMonitor() const
 {
@@ -551,33 +565,77 @@ bool DockContainer::ShowsRunningArea() const
     return MonitorLayout().showRunningArea;
 }
 
-std::span<const HWND> DockContainer::EntryTitleWindows(size_t index) const
+DockContainer::WindowTitleGroup DockContainer::ResolveTitleGroup(const std::wstring& key,
+    std::span<const HWND> windows, float itemPresence) const
 {
-    if (!app_ || !app_->dockSettings_.showWindowTitles || app_->dockTaskWindowTitles_.empty() || !ShowsRunningArea() ||
+    auto& transitions = *titleTransitions_;
+    const bool visible = !windows.empty();
+    auto found = transitions.groups.find(key);
+    if (found == transitions.groups.end())
+    {
+        if (!visible) return {};
+        found = transitions.groups.try_emplace(key).first;
+    }
+    auto& state = found->second;
+    state.layoutRevision = transitions.layoutRevision;
+    if (visible && !std::ranges::equal(state.windows, windows))
+        state.windows.assign(windows.begin(), windows.end());
+
+    const bool animate = transitions.primed && snowdesktop::animation::RuntimeAnimationsEnabled() &&
+        app_->IsDockContainerInteractionVisible(this);
+    if (state.presence.Visible() != visible || (!animate && state.presence.IsAnimating()))
+    {
+        state.presence.SetVisible(visible, snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(),
+            animate, snowdesktop::animation::RuntimeDurationScale());
+        if (state.presence.IsAnimating()) app_->EnsureUiAnimationFrame();
+    }
+    if (state.presence.IsHidden()) return {};
+    return {state.windows, state.presence.Amount(), itemPresence, state.presence.Interactive()};
+}
+
+DockContainer::WindowTitleGroup DockContainer::EntryTitleGroup(size_t index) const
+{
+    if (!app_ || !ShowsRunningArea() ||
+        (!app_->dockSettings_.showWindowTitles && titleTransitions_->groups.empty()) ||
         !entries_ || index >= SortableEntryCount() || (*entries_)[index].type != DockEntryType::DesktopItem)
         return {};
     const auto item = app_->FindItemIndexByKey((*entries_)[index].reference);
     if (item >= app_->items_.size()) return {};
-    const auto state = app_->dockRunningWindows_.find(DockItemWindowKey(app_->items_[item]));
-    if (state == app_->dockRunningWindows_.end() || !app_->dockSettings_.ShowsWindowTitles(state->second.trackedWindows.size()))
-        return {};
-    return state->second.trackedWindows;
+    const auto key = DockItemWindowKey(app_->items_[item]);
+    const auto state = app_->dockRunningWindows_.find(key);
+    std::span<const HWND> windows;
+    if (state != app_->dockRunningWindows_.end() && !app_->dockTaskWindowTitles_.empty())
+    {
+        const auto& candidates = state->second.documentWindows.empty() ?
+            state->second.trackedWindows : state->second.documentWindows;
+        if (app_->dockSettings_.ShowsWindowTitles(candidates.size())) windows = candidates;
+    }
+    return ResolveTitleGroup(key, windows);
 }
 
-std::span<const HWND> DockContainer::RunningTitleWindows(size_t index) const
+DockContainer::WindowTitleGroup DockContainer::RunningTitleGroup(size_t index) const
 {
-    if (!app_ || !app_->dockSettings_.showWindowTitles || app_->dockTaskWindowTitles_.empty() || !ShowsRunningArea() ||
+    if (!app_ || !ShowsRunningArea() ||
+        (!app_->dockSettings_.showWindowTitles && titleTransitions_->groups.empty()) ||
         index >= app_->dockUnpinnedRunningApps_.size()) return {};
     const auto& running = app_->dockUnpinnedRunningApps_[index];
-    if (running.minimizedThumbnail || !app_->dockSettings_.ShowsWindowTitles(running.trackedWindows.size())) return {};
-    return running.trackedWindows;
+    if (running.minimizedThumbnail) return {};
+    std::span<const HWND> windows;
+    const auto& candidates = running.documentWindows.empty() ? running.trackedWindows : running.documentWindows;
+    if (!app_->dockTaskWindowTitles_.empty() && app_->dockSettings_.ShowsWindowTitles(candidates.size()))
+        windows = candidates;
+    return ResolveTitleGroup(running.identityKey, windows, running.presence.Amount());
 }
 
 DockContainer::WindowTitleLayout* DockContainer::MeasureWindowTitle(HWND window, int icon) const
 {
     if (!app_ || !app_->dwriteFactory_) return nullptr;
     const auto found = app_->dockTaskWindowTitles_.find(window);
-    if (found == app_->dockTaskWindowTitles_.end() || found->second.empty()) return nullptr;
+    if (found == app_->dockTaskWindowTitles_.end() || found->second.empty())
+    {
+        const auto cached = windowTitleLayouts_.find(window);
+        return cached != windowTitleLayouts_.end() && cached->second.full ? &cached->second : nullptr;
+    }
     const float fontSize = std::clamp(icon * .29f, 10.f, 20.f);
     const auto revision = snowdesktop::app_fonts::revision.load();
     auto& text = windowTitleLayouts_[window];
@@ -603,74 +661,90 @@ DockContainer::WindowTitleLayout* DockContainer::MeasureWindowTitle(HWND window,
     return &text;
 }
 
-static int WindowTitleLeadingPadding(int spacing, bool first) noexcept
+int DockContainer::WindowTitlePadding() const
 {
-    return first ? std::clamp(spacing / 4, 1, 3) : std::max(5, spacing);
+    return std::clamp(ScaledSpacing() / 2, 3, 6);
 }
 
-float DockContainer::WindowTitleExtent(HWND window, int icon, int spacing, bool vertical, bool first) const
+float DockContainer::WindowTitleWidthLimit() const
 {
-    if (vertical) return static_cast<float>(std::max(18, icon / 2 + spacing));
+    return static_cast<float>(std::clamp(ItemIconSize() * 5 / 2, 84, 158) - 2 * WindowTitlePadding());
+}
+
+float DockContainer::WindowTitleExtent(HWND window) const
+{
+    const int icon = ItemIconSize();
+    if (IsVertical()) return static_cast<float>(std::max(18, icon / 2 + ScaledSpacing()));
     const auto* text = MeasureWindowTitle(window, icon);
-    const int padding = WindowTitleLeadingPadding(spacing, first) + std::max(5, spacing);
-    const float measured = text ? std::ceil(text->fullWidth) : 0.f;
-    return std::min(measured + padding + 2.f,
-        static_cast<float>(std::clamp(icon * 5 / 2, 84, 158)));
+    const float width = text ? std::ceil(text->fullWidth) : 0.f;
+    return std::min(width, WindowTitleWidthLimit()) + 2 * WindowTitlePadding();
 }
 
-float DockContainer::WindowTitleSlotUnits(std::span<const HWND> windows) const
+float DockContainer::WindowTitleSlotUnits(WindowTitleGroup group) const
 {
-    if (windows.empty()) return 0.f;
-    const int icon = ItemIconSize();
-    const int spacing = ScaledSpacing();
-    const bool vertical = IsVertical();
-    float extent = 0.f;
-    for (size_t index = 0; index < windows.size(); ++index)
-        extent += WindowTitleExtent(windows[index], icon, spacing, vertical, index == 0);
-    return extent / ItemPitch();
+    if (!group.Visible()) return 0.f;
+    float extent = static_cast<float>(2 * WindowTitlePadding());
+    for (const auto window : group.windows) extent += WindowTitleExtent(window);
+    return extent * group.amount / ItemPitch();
 }
 
-RECT DockContainer::WindowTitleIconRect(RECT base, RECT visual, std::span<const HWND> windows) const
+DockContainer::WindowTitleGeometry DockContainer::LayoutWindowTitleGroup(
+    RECT base, RECT visual, WindowTitleGroup group) const
 {
-    if (windows.empty()) return visual;
-    const bool vertical = IsVertical();
-    const LONG baseLength = vertical ? base.bottom - base.top : base.right - base.left;
-    const LONG visualLength = vertical ? visual.bottom - visual.top : visual.right - visual.left;
-    if (baseLength <= 0 || visualLength <= 0) return visual;
-    const LONG baseIconExtent = std::lround(baseLength / (1.f + WindowTitleSlotUnits(windows)));
-    // Only the icon slot grows with magnification; title segments retain their hit widths.
-    const LONG iconExtent = std::clamp(baseIconExtent + visualLength - baseLength, 0L, visualLength);
-    if (vertical) visual.bottom = visual.top + iconExtent;
-    else visual.right = visual.left + iconExtent;
-    return visual;
-}
-
-std::vector<RECT> DockContainer::WindowTitleSegments(RECT visual, RECT iconCell, std::span<const HWND> windows) const
-{
-    if (windows.empty() || IsRectEmpty(&visual)) return {};
-    const bool vertical = IsVertical();
-    const int icon = ItemIconSize();
-    const int spacing = ScaledSpacing();
-    std::vector<float> lengths;
-    lengths.reserve(windows.size());
-    float total = 0.f;
-    for (size_t index = 0; index < windows.size(); ++index)
+    if (!group.Visible() || IsRectEmpty(&visual)) return {{}, visual, {}, 1.f};
+    const int magnifiedIcon = GetElementIconSize(base, visual);
+    const float zoom = static_cast<float>(magnifiedIcon) / ItemIconSize();
+    const int size = std::max(1, static_cast<int>(std::lround(magnifiedIcon * group.itemPresence)));
+    const int spacing = static_cast<int>(std::lround((ItemPitch() - ItemIconSize()) * group.itemPresence));
+    const int padding = static_cast<int>(std::lround(WindowTitlePadding() * zoom * group.amount * group.itemPresence));
+    // The slot supplies the same external gap as every icon-only item.
+    // The capsule then owns the icon's internal inset on all three exposed edges.
+    if (IsVertical())
     {
-        lengths.push_back(WindowTitleExtent(windows[index], icon, spacing, vertical, index == 0));
+        const LONG left = visual.left + (visual.right - visual.left - size) / 2;
+        const LONG top = visual.top + spacing / 2;
+        const RECT plate{left - padding, top, left + size + padding, visual.bottom - (spacing + 1) / 2};
+        const RECT icon{left, top + padding, left + size, top + padding + size};
+        return {plate, icon, {plate.left, icon.bottom, plate.right, plate.bottom - padding}, zoom};
+    }
+    const LONG top = visual.top + (visual.bottom - visual.top - size) / 2;
+    const LONG left = visual.left + spacing / 2;
+    const RECT plate{left, top - padding, visual.right - (spacing + 1) / 2, top + size + padding};
+    const RECT icon{left + padding, top, left + padding + size, top + size};
+    return {plate, icon, {icon.right, plate.top, plate.right - padding, plate.bottom}, zoom};
+}
+
+RECT DockContainer::WindowTitleIconRect(RECT base, RECT visual, WindowTitleGroup group) const
+{
+    return LayoutWindowTitleGroup(base, visual, group).icon;
+}
+
+std::vector<RECT> DockContainer::WindowTitleSegments(
+    const WindowTitleGeometry& geometry, WindowTitleGroup group) const
+{
+    if (!group.Visible() || IsRectEmpty(&geometry.titles)) return {};
+    const auto& area = geometry.titles;
+    const bool vertical = IsVertical();
+    std::vector<float> lengths;
+    lengths.reserve(group.windows.size());
+    float total = 0.f;
+    for (const auto window : group.windows)
+    {
+        lengths.push_back(WindowTitleExtent(window));
         total += lengths.back();
     }
-    const LONG leading = vertical ? iconCell.bottom : iconCell.right;
-    const float scale = (vertical ? visual.bottom - leading : visual.right - leading) / total;
+    const LONG leading = vertical ? area.top : area.left;
+    const float scale = (vertical ? area.bottom - leading : area.right - leading) / total;
     float position = 0.f;
     std::vector<RECT> segments;
-    segments.reserve(windows.size());
+    segments.reserve(group.windows.size());
     for (const float length : lengths)
     {
         const LONG begin = leading + std::lround(position * scale);
         position += length;
         const LONG end = leading + std::lround(position * scale);
-        if (vertical) segments.push_back({visual.left, begin, visual.right, end});
-        else segments.push_back({begin, visual.top, end, visual.bottom});
+        if (vertical) segments.push_back({area.left, begin, area.right, end});
+        else segments.push_back({begin, area.top, end, area.bottom});
     }
     return segments;
 }
@@ -679,69 +753,65 @@ HWND DockContainer::WindowTitleAtPoint(POINT point, RECT* titleRect) const
 {
     if (!app_ || !app_->dockSettings_.showWindowTitles || !ShowsRunningArea() ||
         !IsPointInScrollViewport(point)) return nullptr;
-    const auto hit = [&](RECT base, std::span<const HWND> windows) -> HWND {
-        if (windows.empty()) return nullptr;
+    const auto hit = [&](RECT base, WindowTitleGroup group) -> HWND {
+        if (!group.interactive) return nullptr;
         const RECT visual = GetElementVisualRect(base, point);
-        const auto segments = WindowTitleSegments(visual, WindowTitleIconRect(base, visual, windows), windows);
+        const auto segments = WindowTitleSegments(LayoutWindowTitleGroup(base, visual, group), group);
         for (size_t index = 0; index < segments.size(); ++index)
         {
             const RECT segment = segments[index];
             if (PtInRect(&segment, point))
             {
                 if (titleRect) *titleRect = segment;
-                return windows[index];
+                return group.windows[index];
             }
         }
         return nullptr;
     };
     if (const auto* entry = EntryAtPoint(point))
-        return hit(entry->GetBounds(), EntryTitleWindows(entry->GetEntryIndex()));
+        return hit(entry->GetBounds(), EntryTitleGroup(entry->GetEntryIndex()));
     if (const auto* running = RunningItemAtPoint(point))
-        return hit(running->GetBounds(), RunningTitleWindows(running->GetRunningIndex()));
+        return hit(running->GetBounds(), RunningTitleGroup(running->GetRunningIndex()));
     return nullptr;
 }
 
 RECT DockContainer::DrawWindowTitleGroup(ID2D1DeviceContext* context, RECT base, RECT visual,
-    std::span<const HWND> windows, float opacity) const
+    WindowTitleGroup group) const
 {
-    if (!context || !app_ || !app_->dwriteFactory_ || windows.empty() || IsRectEmpty(&visual)) return visual;
+    if (!context || !app_ || !app_->dwriteFactory_ || !group.Visible() || IsRectEmpty(&visual)) return visual;
+    const auto geometry = LayoutWindowTitleGroup(base, visual, group);
     const bool vertical = IsVertical();
     const auto monitor = GetMonitor();
     const auto appearance = app_->CurrentDockAppearance(monitor);
     const bool light = appearance.contentTheme == 1;
     const auto& beauty = app_->iconBeautifySettings_;
+    const float opacity = group.itemPresence * group.amount;
     const float surface = light ? .9f : .13f;
     const float material = beauty.backgroundStartR * .2126f + beauty.backgroundStartG * .7152f +
         beauty.backgroundStartB * .0722f;
     const bool lightPlate = beauty.enabled ? std::lerp(surface, material, beauty.backgroundOpacity * opacity) > .52f : light;
     const float ink = lightPlate ? .07f : .98f;
-    const RECT iconCell = WindowTitleIconRect(base, visual, windows);
-    const int iconSize = std::max(1, std::min({GetElementIconSize(base, visual),
-        static_cast<int>(iconCell.right - iconCell.left), static_cast<int>(iconCell.bottom - iconCell.top)}));
-    const int gap = std::clamp(ScaledSpacing() / 2, 2, 5);
-    const LONG iconLeft = iconCell.left + (iconCell.right - iconCell.left - iconSize) / 2;
-    const LONG iconTop = iconCell.top + (iconCell.bottom - iconCell.top - iconSize) / 2;
-    const RECT background{
-        iconLeft - gap, iconTop - gap,
-        vertical ? iconLeft + iconSize + gap : visual.right - gap,
-        vertical ? visual.bottom - gap : iconTop + iconSize + gap};
-    app_->DrawDockControlBackground(context, background, 0, !light,
-        reinterpret_cast<std::uintptr_t>(windows.front()), monitor, true, opacity);
+    app_->DrawDockControlBackground(context, geometry.plate, 0, !light,
+        reinterpret_cast<std::uintptr_t>(group.windows.front()), monitor, true, opacity);
     ComPtr<ID2D1SolidColorBrush> brush;
-    if (FAILED(context->CreateSolidColorBrush(D2D1::ColorF(ink, ink, ink, opacity), &brush)))
-        return iconCell;
+    const auto color = D2D1::ColorF(ink, ink, ink, opacity);
+    if (FAILED(context->CreateSolidColorBrush(color, &brush))) return geometry.icon;
+
     const POINT pointer = app_->lastMousePoint_;
-    const auto segments = WindowTitleSegments(visual, iconCell, windows);
-    const int spacing = ScaledSpacing();
-    const int textPadding = std::max(5, spacing);
+    const auto segments = WindowTitleSegments(geometry, group);
+    const int textPadding = static_cast<int>(std::lround(WindowTitlePadding() * geometry.zoom));
     const int baseIconSize = ItemIconSize();
+    D2D1_MATRIX_3X2_F transform{};
+    context->GetTransform(&transform);
     for (size_t index = 0; index < segments.size(); ++index)
     {
-        const HWND window = windows[index];
+        const HWND window = group.windows[index];
+        if (!group.interactive && app_->dockSettings_.showWindowTitles && !app_->dockTaskWindowTitles_.contains(window))
+            continue;
         auto* text = MeasureWindowTitle(window, baseIconSize);
         if (!text) continue;
-        RECT bounds{};
-        if (!IntersectRect(&bounds, &segments[index], &background)) continue;
+        RECT bounds = segments[index];
+        if (IsRectEmpty(&bounds)) continue;
         if (index > 0)
         {
             brush->SetColor(D2D1::ColorF(ink, ink, ink, .23f * opacity));
@@ -752,16 +822,22 @@ RECT DockContainer::DrawWindowTitleGroup(ID2D1DeviceContext* context, RECT base,
                 context->DrawLine(D2D1::Point2F(static_cast<float>(bounds.left), static_cast<float>(bounds.top + 6)),
                     D2D1::Point2F(static_cast<float>(bounds.left), static_cast<float>(bounds.bottom - 6)), brush.Get());
         }
-        const bool hovered = PtInRect(&segments[index], pointer) && IsPointInScrollViewport(pointer);
-        bounds.left += vertical ? textPadding : WindowTitleLeadingPadding(spacing, index == 0);
-        bounds.right -= index + 1 == segments.size() && !vertical ? std::max(0, textPadding - gap) : textPadding;
-        const float width = static_cast<float>(bounds.right - bounds.left);
+        const bool hovered = group.interactive && group.amount >= .98f &&
+            PtInRect(&bounds, pointer) && IsPointInScrollViewport(pointer);
+        bounds.left += textPadding;
+        bounds.right -= textPadding;
+        const float width = std::min(static_cast<float>(bounds.right - bounds.left),
+            WindowTitleWidthLimit() * geometry.zoom);
         const float height = static_cast<float>(bounds.bottom - bounds.top);
         if (width < 4.f || height < 8.f) continue;
+
+        const float zoom = geometry.zoom;
+        const float unscaledHeight = height / zoom;
         auto* layout = text->full.Get();
-        if (layout->GetMaxHeight() != height) layout->SetMaxHeight(height);
-        const float overflow = text->fullWidth - width;
-        const float cycle = text->fullWidth + std::max(16.f, 2.f * text->fontSize);
+        if (layout->GetMaxHeight() != unscaledHeight) layout->SetMaxHeight(unscaledHeight);
+        const float fullWidth = text->fullWidth * zoom;
+        const float overflow = fullWidth - width;
+        const float cycle = fullWidth + std::max(16.f, 2.f * text->fontSize) * zoom;
         float travel = 0.f;
         if (hovered && overflow > 1.f)
         {
@@ -772,9 +848,9 @@ RECT DockContainer::DrawWindowTitleGroup(ID2D1DeviceContext* context, RECT base,
                 titleMarqueeStart_ = now;
             }
             constexpr float delayMs = 500.f;
-            constexpr float speed = .045f; // Pixels per millisecond.
+            constexpr float speed = .045f; // Pixels per millisecond at the normal size.
             const float elapsed = static_cast<float>(now - titleMarqueeStart_);
-            travel = std::max(0.f, elapsed - delayMs) * speed;
+            travel = std::max(0.f, elapsed - delayMs) * speed * zoom;
             titleMarqueeAnimating_ = true;
             app_->EnsureUiAnimationFrame();
         }
@@ -784,41 +860,43 @@ RECT DockContainer::DrawWindowTitleGroup(ID2D1DeviceContext* context, RECT base,
             titleMarqueeAnimating_ = false;
         }
         const float offset = std::fmod(travel, cycle);
-        const auto color = D2D1::ColorF(ink, ink, ink, opacity);
         brush->SetColor(color);
         const float left = static_cast<float>(bounds.left);
         const float top = static_cast<float>(bounds.top);
+        const float centerOffset = vertical ? std::max(0.f, width - fullWidth) * .5f : 0.f;
+        const float origin = left + centerOffset - offset;
         ComPtr<ID2D1LinearGradientBrush> fade;
         if (overflow > 1.f)
         {
-            const float ramp = std::min(12.f, width * .25f) / width;
+            const float ramp = std::min(12.f * zoom, width * .25f) / width;
             auto leading = color;
             auto trailing = color;
-            leading.a *= 1.f - std::min(1.f, travel / 3.f);
-            trailing.a *= 1.f - std::min(1.f, (overflow + travel) / 3.f);
+            leading.a *= 1.f - std::min(1.f, travel / (3.f * zoom));
+            trailing.a *= 1.f - std::min(1.f, (overflow + travel) / (3.f * zoom));
             const D2D1_GRADIENT_STOP stops[]{{0.f, leading}, {ramp, color},
                 {1.f - ramp, color}, {1.f, trailing}};
             ComPtr<ID2D1GradientStopCollection> collection;
             if (SUCCEEDED(context->CreateGradientStopCollection(stops, ARRAYSIZE(stops), &collection)))
                 context->CreateLinearGradientBrush(D2D1::LinearGradientBrushProperties(
-                    D2D1::Point2F(left, top), D2D1::Point2F(left + width, top)), collection.Get(), &fade);
+                    D2D1::Point2F((left - origin) / zoom, 0.f),
+                    D2D1::Point2F((left + width - origin) / zoom, 0.f)), collection.Get(), &fade);
         }
-        const float centerOffset = vertical ? std::max(0.f, width - text->fullWidth) * .5f : 0.f;
         context->PushAxisAlignedClip(D2D1::RectF(left, top, left + width, top + height), D2D1_ANTIALIAS_MODE_ALIASED);
+        context->SetTransform(D2D1::Matrix3x2F::Scale(zoom, zoom) * D2D1::Matrix3x2F::Translation(origin, top) * transform);
         ID2D1Brush* inkBrush = fade ? static_cast<ID2D1Brush*>(fade.Get()) : brush.Get();
-        const float origin = left + centerOffset - offset;
-        context->DrawTextLayout(D2D1::Point2F(origin, top), layout, inkBrush);
+        context->DrawTextLayout(D2D1::Point2F(0.f, 0.f), layout, inkBrush);
         if (offset + width > cycle)
-            context->DrawTextLayout(D2D1::Point2F(origin + cycle, top), layout, inkBrush);
+            context->DrawTextLayout(D2D1::Point2F(cycle / zoom, 0.f), layout, inkBrush);
+        context->SetTransform(transform);
         context->PopAxisAlignedClip();
     }
-    return iconCell;
+    return geometry.icon;
 }
 
 DockContainer::PresentationState DockContainer::CapturePresentationState() const
 {
     return {area_, magnificationFocusRect_, scrollOffset_,
-        magnificationEntry_, singleMagnification_, entryRemovals_, keyboardFocusKey_};
+        magnificationEntry_, singleMagnification_, entryRemovals_, titleTransitions_, keyboardFocusKey_};
 }
 
 bool DockContainer::RestorePresentationState(const PresentationState& state)
@@ -834,6 +912,7 @@ bool DockContainer::RestorePresentationState(const PresentationState& state)
     magnificationEntry_ = state.entry;
     singleMagnification_ = state.single;
     if (state.removals) entryRemovals_ = state.removals;
+    if (state.titles) titleTransitions_ = state.titles;
     keyboardFocusKey_ = state.keyboardFocusKey;
     ReconcileEntryRemovals();
     return true;
@@ -941,9 +1020,10 @@ float DockContainer::FixedEntryUnits() const
 {
     RefreshEntryGroupCounts();
     float units = static_cast<float>(mainEntryCount_) - static_cast<float>(separatorEntryCount_) * (1.0f - SeparatorSlotUnits());
-    if (app_ && app_->dockSettings_.showWindowTitles && ShowsRunningArea())
+    if (app_ && ShowsRunningArea() &&
+        (app_->dockSettings_.showWindowTitles || !titleTransitions_->groups.empty()))
         for (size_t index = 0; index < mainEntryCount_; ++index)
-            units += WindowTitleSlotUnits(EntryTitleWindows(index));
+            units += WindowTitleSlotUnits(EntryTitleGroup(index));
     return units;
 }
 
@@ -1164,7 +1244,7 @@ float DockContainer::RunningSlotUnits() const
     {
         const auto& running = app_->dockUnpinnedRunningApps_[index];
         units += RunningItemSlotUnits(running, iconFraction) +
-            WindowTitleSlotUnits(RunningTitleWindows(index)) * running.presence.Amount();
+            WindowTitleSlotUnits(RunningTitleGroup(index)) * running.presence.Amount();
     }
     return units + RunningDividerAmount(app_->dockUnpinnedRunningApps_) * ScaledSeparatorGap() / pitch;
 }
@@ -1317,14 +1397,12 @@ struct DockContainer::MagnificationLayout
     int maxScrollOffset = 0;
     bool edgeAnchored = false;
     std::vector<RECT> candidates;
-    std::vector<std::pair<RECT, RECT>> titleIcons;
+    std::vector<RECT> titleGroups;
     size_t leadingCount = 0;
 
-    const RECT& IconCell(const RECT& bounds) const
+    bool HasTitleGroup(const RECT& candidate) const
     {
-        for (const auto& [group, icon] : titleIcons)
-            if (EqualRect(&group, &bounds)) return icon;
-        return bounds;
+        return std::ranges::any_of(titleGroups, [&](const RECT& group) { return EqualRect(&group, &candidate); });
     }
 
     std::span<const RECT> ForZone(MagnificationZone zone) const
@@ -1365,22 +1443,22 @@ DockContainer::MagnificationLayout DockContainer::GetMagnificationLayout() const
     candidates.reserve(slots.size() + 1);
     if (!IsRectEmpty(&layout.windowsButton))
         candidates.push_back(layout.windowsButton);
-    const auto includeVisible = [&](const RECT& bounds, std::span<const HWND> titles = {}) {
+    const auto includeVisible = [&](const RECT& bounds, WindowTitleGroup titles = {}) {
         RECT visible{};
         if (!IsRectEmpty(&bounds) &&
             (layout.maxScrollOffset <= 0 || IntersectRect(&visible, &bounds, &layout.viewport)))
         {
             candidates.push_back(bounds);
-            if (!titles.empty()) layout.titleIcons.emplace_back(bounds, WindowTitleIconRect(bounds, bounds, titles));
+            if (titles.Visible()) layout.titleGroups.push_back(bounds);
         }
     };
     for (size_t index = 0; index < fixedCount && index < slots.size(); ++index)
         if (slots[index])
-            includeVisible(slots[index]->GetBounds(), EntryTitleWindows(index));
+            includeVisible(slots[index]->GetBounds(), EntryTitleGroup(index));
     for (const auto& item : runningItems_)
         if (item && app_ && item->GetRunningIndex() < app_->dockUnpinnedRunningApps_.size() &&
             app_->dockUnpinnedRunningApps_[item->GetRunningIndex()].presence.Interactive())
-            includeVisible(item->GetBounds(), RunningTitleWindows(item->GetRunningIndex()));
+            includeVisible(item->GetBounds(), RunningTitleGroup(item->GetRunningIndex()));
     for (const auto& item : frequentItems_)
         if (item)
             includeVisible(item->GetBounds());
@@ -1425,9 +1503,17 @@ float DockContainer::GetCurrentMagnificationScale() const
         ? magnificationEntry_.FocusScale(maximum) : maximum;
 }
 
+bool DockContainer::IsTitleTransitioning() const
+{
+    return std::ranges::any_of(titleTransitions_->groups, [](const auto& entry) {
+        return entry.second.presence.IsAnimating();
+    });
+}
+
 bool DockContainer::IsMagnificationAnimating() const
 {
-    return magnificationEntry_.IsAnimating() || singleMagnification_.IsAnimating() || titleMarqueeAnimating_;
+    return magnificationEntry_.IsAnimating() || singleMagnification_.IsAnimating() ||
+        titleMarqueeAnimating_ || IsTitleTransitioning();
 }
 
 bool DockContainer::AdvanceMagnificationAnimation(double nowMilliseconds)
@@ -1443,9 +1529,21 @@ bool DockContainer::AdvanceMagnificationAnimation(double nowMilliseconds)
         magnificationFocusRect_ = {};
         magnificationEntry_ = {};
         singleMagnification_ = {};
+        if (IsTitleTransitioning())
+        {
+            for (auto& entry : titleTransitions_->groups)
+                entry.second.presence.SetVisible(entry.second.presence.Visible(), nowMilliseconds, false);
+            InvalidateSlots();
+        }
     }
     else
     {
+        if (IsTitleTransitioning())
+        {
+            for (auto& entry : titleTransitions_->groups)
+                entry.second.presence.Advance(nowMilliseconds);
+            InvalidateSlots();
+        }
         ResolveMagnificationFocusRect(app_->lastMousePoint_, GetMagnificationLayout());
         magnificationEntry_.Advance(nowMilliseconds);
         singleMagnification_.Advance(nowMilliseconds);
@@ -1713,13 +1811,28 @@ RECT DockContainer::MagnifyElementRect(const RECT& baseRect, const RECT& focusRe
     if (settings.hoverEffect == 0) return baseRect;
     namespace magnification = snowdesktop::dock_magnification;
     const int iconSize = ItemIconSize();
+    const bool vertical = IsVertical();
+    const auto leading = [vertical](const RECT& rect) { return vertical ? rect.top : rect.left; };
+    const auto trailing = [vertical](const RECT& rect) { return vertical ? rect.bottom : rect.right; };
+    const auto center = [&](const RECT& rect) { return (leading(rect) + trailing(rect)) / 2; };
+    const auto growthFor = [&](const RECT& rect, float scale) {
+        const int iconGrowth = magnification::GrowthForScale(scale, iconSize);
+        if (iconGrowth == 0 || !layout.HasTitleGroup(rect)) return iconGrowth;
+        const LONG length = std::max(1L, trailing(rect) - leading(rect) - ScaledSpacing());
+        return std::max(iconGrowth, static_cast<int>(std::lround(length * static_cast<float>(iconGrowth) / iconSize)));
+    };
     const bool hasOverflow = layout.maxScrollOffset > 0;
     const auto zone = layout.edgeAnchored ? layout.ZoneOf(baseRect) : MagnificationZone::None;
     const bool inScrollLane = hasOverflow && zone == MagnificationZone::Leading &&
         !EqualRect(&baseRect, &layout.windowsButton);
     if (settings.hoverEffect == 1)
     {
-        const auto geometry = GetSingleMagnificationGeometry(baseRect, layout);
+        auto geometry = GetSingleMagnificationGeometry(baseRect, layout);
+        const float scale = geometry.ScaleFor(baseRect, iconSize);
+        const int axisGrowth = growthFor(baseRect, scale);
+        const int leadingGrowth = growthFor(geometry.leading, geometry.ScaleFor(geometry.leading, iconSize));
+        geometry.trailingGrowth = growthFor(geometry.trailing, geometry.ScaleFor(geometry.trailing, iconSize));
+        geometry.leadingGrowth = leadingGrowth;
         int shift = geometry.AxisShiftFor(baseRect);
         if (inScrollLane)
         {
@@ -1728,32 +1841,42 @@ RECT DockContainer::MagnifyElementRect(const RECT& baseRect, const RECT& focusRe
                 scrollOffset_, layout.maxScrollOffset);
         }
         return magnification::MagnifyRect(baseRect, settings.position,
-            geometry.ScaleFor(baseRect, iconSize), iconSize, shift, true);
+            scale, iconSize, shift, true, axisGrowth);
     }
 
     if (IsRectEmpty(&focusRect)) return baseRect;
     const float focusScale = GetCurrentMagnificationScale();
     if (focusScale <= 1.0f) return baseRect;
-    const bool vertical = IsVertical();
     const int pitch = ItemPitch();
-    const auto center = [&](const RECT& group) {
-        const RECT& icon = layout.IconCell(group);
-        return vertical ? (icon.top + icon.bottom) / 2 : (icon.left + icon.right) / 2;
-    };
     int pointerAxis = vertical ? pointer.y : pointer.x;
-    const RECT& focusIcon = layout.IconCell(focusRect);
-    // A long title can own hover without dragging the wave away from its icon.
-    if (&focusIcon != &focusRect)
-        pointerAxis = std::min(pointerAxis, static_cast<int>(vertical ? focusIcon.bottom : focusIcon.right));
     const auto scaleFor = [&](const RECT& candidate) {
-        return magnification::ScaleForEffect(settings.hoverEffect, EqualRect(&candidate, &focusRect) != FALSE,
+        const bool focused = EqualRect(&candidate, &focusRect) != FALSE;
+        if (focused && layout.HasTitleGroup(candidate)) return focusScale;
+        return magnification::ScaleForEffect(settings.hoverEffect, focused,
             static_cast<float>(center(candidate) - pointerAxis), pitch, focusScale);
     };
     if (!layout.edgeAnchored)
     {
-        const int shift = magnification::IslandAxisShift(settings.hoverEffect,
-            center(baseRect), center(focusRect), pointerAxis, pitch, iconSize, focusScale);
-        return magnification::MagnifyRect(baseRect, settings.position, scaleFor(baseRect), iconSize, shift);
+        const float scale = scaleFor(baseRect);
+        if (layout.titleGroups.empty())
+        {
+            const int shift = magnification::IslandAxisShift(settings.hoverEffect,
+                center(baseRect), center(focusRect), pointerAxis, pitch, iconSize, focusScale);
+            return magnification::MagnifyRect(baseRect, settings.position, scale, iconSize, shift);
+        }
+        const int axisGrowth = growthFor(baseRect, scale);
+        int shift = axisGrowth / 2;
+        // Pack the full cells around the actual pointer. Interpolating its
+        // location within a cell lets the wave flow across the title area.
+        for (const auto& candidate : layout.candidates)
+        {
+            const int growth = growthFor(candidate, scaleFor(candidate));
+            if (center(candidate) < center(baseRect)) shift += growth;
+            const auto length = std::max(1L, trailing(candidate) - leading(candidate));
+            const float progress = static_cast<float>(pointerAxis - leading(candidate)) / length;
+            shift -= static_cast<int>(std::lround(growth * magnification::SmoothStep(progress)));
+        }
+        return magnification::MagnifyRect(baseRect, settings.position, scale, iconSize, shift, false, axisGrowth);
     }
 
     if (zone == MagnificationZone::None || zone != layout.ZoneOf(focusRect)) return baseRect;
@@ -1768,26 +1891,25 @@ RECT DockContainer::MagnifyElementRect(const RECT& baseRect, const RECT& focusRe
     if (hasOverflow && zone == MagnificationZone::Trailing)
         pointerAxis = ClampPointerAxisToCenters(pointerAxis, candidates, vertical);
 
-    std::vector<float> scales;
-    scales.reserve(candidates.size());
+    std::vector<int> growth;
+    growth.reserve(candidates.size());
     size_t baseIndex = candidates.size();
     int totalGrowth = 0;
     for (const RECT& candidate : candidates)
     {
         if (!inFocusLane(candidate)) continue;
         if (baseIndex == candidates.size() && EqualRect(&candidate, &baseRect))
-            baseIndex = scales.size();
-        const float scale = scaleFor(candidate);
-        scales.push_back(scale);
-        if (inScrollLane)
-            totalGrowth += magnification::GrowthForScale(scale, iconSize);
+            baseIndex = growth.size();
+        const int amount = growthFor(candidate, scaleFor(candidate));
+        growth.push_back(amount);
+        totalGrowth += amount;
     }
-    if (baseIndex >= scales.size()) return baseRect;
-    int shift = magnification::PackedAxisShift(scales, baseIndex, iconSize,
-        zone == MagnificationZone::Leading);
+    if (baseIndex >= growth.size()) return baseRect;
+    int shift = magnification::PackedAxisShift(growth, baseIndex, zone == MagnificationZone::Leading);
     if (inScrollLane)
         shift += FitScrollMagnificationShift(0, totalGrowth, scrollOffset_, layout.maxScrollOffset);
-    return magnification::MagnifyRect(baseRect, settings.position, scales[baseIndex], iconSize, shift);
+    return magnification::MagnifyRect(baseRect, settings.position, scaleFor(baseRect), iconSize,
+        shift, false, growth[baseIndex]);
 }
 
 RECT DockContainer::GetElementVisualRect(
@@ -2156,9 +2278,13 @@ RECT DockContainer::GetInteractiveBounds() const
     const RECT bounds = EdgeChromeBounds(GetBounds());
     if (IsMagnificationSuppressed())
         return bounds;
-    return snowdesktop::dock_magnification::ExpandInteractionBounds(
-        bounds, Position(), ItemIconSize(),
-        GetMaximumMagnificationScale(), MonitorLayout().hoverEffect == 1);
+    const float scale = GetMaximumMagnificationScale();
+    RECT expanded = snowdesktop::dock_magnification::ExpandInteractionBounds(
+        bounds, Position(), ItemIconSize(), scale, MonitorLayout().hoverEffect == 1);
+    const int titleReach = static_cast<int>(std::ceil(titleTransitions_->widestTitleUnits * ItemPitch() * (scale - 1.f)));
+    if (!IsEdgeAttached() && titleReach > 0)
+        InflateRect(&expanded, IsVertical() ? 0 : titleReach, IsVertical() ? titleReach : 0);
+    return expanded;
 }
 
 RECT DockContainer::GetAnimationVisualBounds(bool reserveForLaunch) const
@@ -2404,7 +2530,7 @@ RECT DockContainer::GetMinimizedThumbnailAnchor(HWND window, POINT pointer, bool
         else if (app.presence.Visible())
         {
             if (app.minimizedThumbnail) cards += cardUnits;
-            else icons += 1.0f + WindowTitleSlotUnits(RunningTitleWindows(index));
+            else icons += 1.0f + WindowTitleSlotUnits(RunningTitleGroup(index));
         }
     }
     // New cards append after existing cards. Project the settled layout
@@ -2499,11 +2625,12 @@ std::vector<DockContainer::KeyboardTarget> DockContainer::KeyboardTargets(bool a
         const bool focused = key == keyboardFocusKey_;
         targets.push_back({kind, index, std::move(key), bounds, focused, scrollable});
     };
-    const auto addTitles = [&](RECT bounds, std::span<const HWND> windows) {
-        const auto segments = WindowTitleSegments(bounds, WindowTitleIconRect(bounds, bounds, windows), windows);
+    const auto addTitles = [&](RECT bounds, WindowTitleGroup group) {
+        if (!group.interactive) return;
+        const auto segments = WindowTitleSegments(LayoutWindowTitleGroup(bounds, bounds, group), group);
         for (size_t index = 0; index < segments.size(); ++index)
         {
-            const auto handle = reinterpret_cast<std::uintptr_t>(windows[index]);
+            const auto handle = reinterpret_cast<std::uintptr_t>(group.windows[index]);
             add(Kind::WindowTitle, handle, L"title:" + std::to_wstring(handle),
                 segments[index], true);
         }
@@ -2519,7 +2646,7 @@ std::vector<DockContainer::KeyboardTarget> DockContainer::KeyboardTargets(bool a
         {
             if (IsDockLayoutEntry(entry->GetEntryType())) continue;
             const size_t index = entry->GetEntryIndex();
-            const auto windows = EntryTitleWindows(index);
+            const auto windows = EntryTitleGroup(index);
             add(Kind::Entry, index, L"entry:" + std::to_wstring(static_cast<int>(entry->GetEntryType())) +
                 L":" + ToUpperInvariant(entry->GetReference()),
                 WindowTitleIconRect(bounds, bounds, windows), index < fixedCount);
@@ -2531,7 +2658,7 @@ std::vector<DockContainer::KeyboardTarget> DockContainer::KeyboardTargets(bool a
             if (index < app_->dockUnpinnedRunningApps_.size() &&
                 app_->dockUnpinnedRunningApps_[index].presence.Interactive())
             {
-                const auto windows = RunningTitleWindows(index);
+                const auto windows = RunningTitleGroup(index);
                 add(Kind::Running, index, L"running:" + running->GetIdentityKey(),
                     WindowTitleIconRect(bounds, bounds, windows), true);
                 addTitles(bounds, windows);
@@ -2591,6 +2718,9 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
     runningItems_.clear();
     frequentItems_.clear();
     entryRemovalCells_.clear();
+    auto& transitions = *titleTransitions_;
+    ++transitions.layoutRevision;
+    transitions.widestTitleUnits = 0.f;
     const RECT bounds = GetBounds();
     scrollOffset_ = std::clamp(scrollOffset_, 0, GetMaxScrollOffset(bounds));
     const size_t count = ModelEntryCount();
@@ -2663,7 +2793,12 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
                 const auto type = (*entries_)[cell.modelIndex].type;
                 if (type == DockEntryType::Separator) amount = SeparatorSlotUnits();
                 else if (type == DockEntryType::QuickSearch && !app_->dockSettings_.showQuickSearchButton) amount = 0.0f;
-                else if (!folder) amount += WindowTitleSlotUnits(EntryTitleWindows(cell.modelIndex));
+                else if (!folder)
+                {
+                    const float titleUnits = WindowTitleSlotUnits(EntryTitleGroup(cell.modelIndex));
+                    transitions.widestTitleUnits = std::max(transitions.widestTitleUnits, titleUnits);
+                    amount += titleUnits;
+                }
             }
             while (cell.modelIndex != removal::kNoIndex && inserted < incoming.size() && incoming[inserted].first <= cell.modelIndex)
             {
@@ -2696,8 +2831,9 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
         const auto& running = app_->dockUnpinnedRunningApps_[i];
         if (running.minimizedThumbnail)
             runningBegin += std::exchange(runningDivider, 0.0f);
-        const float amount = RunningItemSlotUnits(running, runningIconFraction) +
-            WindowTitleSlotUnits(RunningTitleWindows(i)) * running.presence.Amount();
+        const float titleUnits = WindowTitleSlotUnits(RunningTitleGroup(i)) * running.presence.Amount();
+        transitions.widestTitleUnits = std::max(transitions.widestTitleUnits, titleUnits);
+        const float amount = RunningItemSlotUnits(running, runningIconFraction) + titleUnits;
         const RECT cell = makeCell(2, runningBegin, amount);
         runningBegin += amount;
         auto slot = std::make_unique<Slot>(this, cell, count + i);
@@ -2721,6 +2857,10 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
     // shares the empty insertion anchor used by the hosted Dock.
     slots.push_back(std::make_unique<Slot>(this, trailingCell(implicitSearchUnits, implicitSearchUnits),
         count + runningCount + frequentCount));
+    transitions.primed = true;
+    std::erase_if(transitions.groups, [&](const auto& entry) {
+        return entry.second.layoutRevision != transitions.layoutRevision || entry.second.presence.IsHidden();
+    });
     return slots;
 }
 
@@ -3303,7 +3443,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         titleMarqueeWindow_ = nullptr;
         titleMarqueeAnimating_ = false;
     }
-    if (app_ && !windowTitleLayouts_.empty())
+    if (app_ && !windowTitleLayouts_.empty() && !IsTitleTransitioning())
         std::erase_if(windowTitleLayouts_, [this](const auto& entry) {
             return !app_->dockTaskWindowTitles_.contains(entry.first);
         });

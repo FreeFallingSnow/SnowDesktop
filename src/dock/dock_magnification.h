@@ -3,6 +3,7 @@
 #include "dock_layout_settings.h"
 
 #include <cstddef>
+#include <span>
 #include <vector>
 #include <windows.h>
 
@@ -171,9 +172,11 @@ int PackedAxisShift(
     const std::vector<float>& scales, size_t index,
     int baseIconSize, bool towardPositiveAxis);
 
+int PackedAxisShift(std::span<const int> growth, size_t index, bool towardPositiveAxis);
+
 RECT MagnifyRect(
     RECT base, DockPosition position, float scale, int baseIconSize,
-    int axisShift = 0, bool centered = false);
+    int axisShift = 0, bool centered = false, int axisGrowth = -1);
 
 // The cell can be shorter than icon+spacing in a compact fused bar. Preserve
 // its logical icon size and apply only the growth of the actual visual frame;

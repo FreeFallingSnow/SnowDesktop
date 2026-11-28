@@ -291,9 +291,11 @@ void DesktopApp::EnsureUiAnimationFrame()
                 for (const auto& container : containers_)
                 {
                     auto* dock = dynamic_cast<DockContainer*>(container.get());
-                    if (!dock || !dock->AdvanceMagnificationAnimation(nowMilliseconds))
-                        continue;
-                    if (FindPersistentDockHost(dock))
+                    if (!dock || !dock->IsMagnificationAnimating()) continue;
+                    const bool hosted = FindPersistentDockHost(dock) != nullptr;
+                    const RECT previous = !hosted && dock->IsTitleTransitioning() ? dock->GetInteractiveBounds() : RECT{};
+                    if (!dock->AdvanceMagnificationAnimation(nowMilliseconds)) continue;
+                    if (hosted)
                     {
                         // Refresh the title/input region and backdrop together
                         // with the changing icon and panel geometry.
@@ -301,9 +303,10 @@ void DesktopApp::EnsureUiAnimationFrame()
                     }
                     else
                     {
+                        RECT bounds = dock->GetInteractiveBounds();
+                        UnionRect(&bounds, &bounds, &previous);
                         RECT dirty = snowdesktop::floating_dock_rules::
-                            ExpandHostForTitleLayer(dock->GetInteractiveBounds(),
-                                dock->Position());
+                            ExpandHostForTitleLayer(bounds, dock->Position());
                         InflateRect(&dirty, 4, 4);
                         UnionRect(&desktopDirty, &desktopDirty, &dirty);
                     }

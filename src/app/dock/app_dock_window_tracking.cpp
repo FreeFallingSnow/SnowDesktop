@@ -14,6 +14,7 @@
 #include "dock/dock_window_order.h"
 #include "dock/dock_window_source_cloak.h"
 #include "dock_platform_helpers.h"
+#include "dock_document_proxies.h"
 #include "dock_taskbar_diagnostics.h"
 #include "app/shell/initial_icon_bitmap.h"
 #include "drag_drop/drag_input_rules.h"
@@ -546,9 +547,15 @@ void DesktopApp::RetireDockWindowTitle(HWND window)
 {
     if (!dockSettings_.showWindowTitles || !dockTaskWindowTitles_.erase(window)) return;
     for (auto& [key, state] : dockRunningWindows_)
+    {
         std::erase(state.trackedWindows, window);
+        std::erase(state.documentWindows, window);
+    }
     for (auto& state : dockUnpinnedRunningApps_)
+    {
         std::erase(state.trackedWindows, window);
+        std::erase(state.documentWindows, window);
+    }
     UpdateDockWindowTitleGeometry();
 }
 
@@ -827,6 +834,7 @@ void DesktopApp::RefreshDockRunningWindows(
         int score = -1;
         std::vector<HWND> trackedWindows;
         bool thumbnail = false;
+        std::vector<HWND> documentWindows;
     };
 
     std::unordered_set<size_t> itemIndices;
@@ -894,6 +902,7 @@ void DesktopApp::RefreshDockRunningWindows(
         bool separateMinimizedWindows = false;
         std::vector<snowdesktop::dock_window_thumbnail::ThumbnailCache::TrackedWindow> thumbnailSources;
         std::unordered_map<HWND, std::wstring> titles;
+        snowdesktop::dock_document_proxies::Cohorts documentProxies;
     };
     DockProcessParentMap processParents;
     if (useBackgroundSnapshot && preparedProcessSnapshot)
@@ -912,10 +921,12 @@ void DesktopApp::RefreshDockRunningWindows(
         EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
             auto* context = reinterpret_cast<EnumContext*>(parameter);
             snowdesktop::dock_source_cloak::RecoverStale(window);
-            if (!IsDockTaskWindow(window) ||
-                (context->pendingCloseWindows &&
-                 context->pendingCloseWindows->contains(window)))
+            if (context->pendingCloseWindows && context->pendingCloseWindows->contains(window))
                 return TRUE;
+            const bool taskWindow = IsDockTaskWindow(window);
+            const bool documentProxy = !taskWindow && context->owner->dockSettings_.showWindowTitles &&
+                snowdesktop::dock_document_proxies::IsUncloakedProxy(window);
+            if (!taskWindow && !documentProxy) return TRUE;
 
             DWORD processId = 0;
             const DWORD threadId = GetWindowThreadProcessId(window, &processId);
@@ -932,8 +943,13 @@ void DesktopApp::RefreshDockRunningWindows(
             {
                 return TRUE;
             }
-            auto [pathIt, inserted] = context->processPaths.try_emplace(processId);
             snowdesktop::dock_window_order::Current().Observe(window);
+            if (documentProxy)
+            {
+                context->documentProxies.Add(window, processId, snowdesktop::dock_document_proxies::ReadCaption(window));
+                return TRUE;
+            }
+            auto [pathIt, inserted] = context->processPaths.try_emplace(processId);
             if (inserted)
                 pathIt->second = QueryDockWindowExecutablePath(window);
             auto [ancestorIt, ancestorsInserted] =
@@ -1016,7 +1032,7 @@ void DesktopApp::RefreshDockRunningWindows(
                 {
                     context->runningCandidates->push_back({std::move(identityKey), title, pathIt->second,
                         appUserModelId, ancestorIt->second, window, minimized, foreground, score,
-                        {window}, thumbnail});
+                        {window}, thumbnail, {}});
                     return;
                 }
                 RunningWindowCandidate& candidate =
@@ -1040,6 +1056,21 @@ void DesktopApp::RefreshDockRunningWindows(
         }, reinterpret_cast<LPARAM>(&context));
     }
     dockWindowThumbnails_.SetTrackedWindows(context.thumbnailSources);
+    if (dockSettings_.showWindowTitles)
+    {
+        const auto collectDocuments = [&](std::span<const HWND> hosts, std::vector<HWND>& documents) {
+            if (hosts.empty()) return;
+            for (const auto& document : context.documentProxies.Preferred(hosts))
+            {
+                documents.push_back(document.window);
+                context.titles.emplace(document.window, document.title);
+            }
+            snowdesktop::dock_window_order::Current().SortWindows(documents);
+        };
+        for (auto& target : targets) collectDocuments(target.trackedWindows, target.best.documentWindows);
+        for (auto& candidate : runningCandidates)
+            if (!candidate.thumbnail) collectDocuments(candidate.trackedWindows, candidate.documentWindows);
+    }
     const bool titleChanged = dockTaskWindowTitles_ != context.titles;
     dockTaskWindowTitles_ = std::move(context.titles);
 
@@ -1069,7 +1100,8 @@ void DesktopApp::RefreshDockRunningWindows(
                 pinnedMembershipChanged = changed = true;
                 continue;
             }
-            if (dockSettings_.showWindowTitles && old->second.trackedWindows != state.trackedWindows)
+            if (dockSettings_.showWindowTitles && (old->second.trackedWindows != state.trackedWindows ||
+                old->second.documentWindows != state.documentWindows))
                 pinnedMembershipChanged = true;
             if (old->second.window != state.window ||
                 old->second.minimized != state.minimized ||
@@ -1139,6 +1171,7 @@ void DesktopApp::RefreshDockRunningWindows(
         if (dockSettings_.showWindowTitles && !candidate.thumbnail)
             snowdesktop::dock_window_order::Current().SortWindows(candidate.trackedWindows);
         info.trackedWindows = std::move(candidate.trackedWindows);
+        info.documentWindows = std::move(candidate.documentWindows);
         if (candidate.thumbnail)
             info.minimizedThumbnail = dockWindowThumbnails_.Find(info.window);
         bool refineIdentityArtwork = false;
@@ -1269,7 +1302,8 @@ void DesktopApp::RefreshDockRunningWindows(
             const DockRunningAppInfo& old = dockUnpinnedRunningApps_[i];
             const DockRunningAppInfo& current = runningApps[i];
             if (old.identityKey != current.identityKey ||
-                (dockSettings_.showWindowTitles && old.trackedWindows != current.trackedWindows))
+                (dockSettings_.showWindowTitles && (old.trackedWindows != current.trackedWindows ||
+                    old.documentWindows != current.documentWindows)))
                 runningLayoutChanged = true;
             if (old.presence.Amount() != current.presence.Amount())
                 runningLayoutChanged = true;
@@ -1511,11 +1545,8 @@ bool DesktopApp::ActivateOrToggleDockItem(
             pressedAnchorScreen &&
             dockWindowTransition_->StartRestore(
                 target, *pressedAnchorScreen,
-                [this](
-                    HWND restoreTarget,
-                    DockWindowRestoreTransitionPhase phase) {
-                    HandleDockWindowRestoreTransition(
-                        restoreTarget, phase);
+                [this](HWND restoreTarget, DockWindowRestoreTransitionPhase phase) {
+                    HandleDockWindowRestoreTransition(restoreTarget, phase);
                 },
                 transitionKeepBelowWindow))
         {
@@ -1539,7 +1570,8 @@ bool DesktopApp::ActivateOrToggleDockWindow(
     std::optional<snowdesktop::dock_window_rules::DockClickAction>
         pressedAction,
     HWND pressedTarget,
-    std::optional<RECT> pressedAnchorScreen)
+    std::optional<RECT> pressedAnchorScreen,
+    HWND documentProxy)
 {
     DismissDockWindowPreviewUntilLeave();
     HWND requestedTarget =
@@ -1654,11 +1686,10 @@ bool DesktopApp::ActivateOrToggleDockWindow(
             animateRestore &&
             dockWindowTransition_->StartRestore(
                 target, *pressedAnchorScreen,
-                [this](
-                    HWND restoreTarget,
-                    DockWindowRestoreTransitionPhase phase) {
-                    HandleDockWindowRestoreTransition(
-                        restoreTarget, phase);
+                [this, documentProxy](HWND restoreTarget, DockWindowRestoreTransitionPhase phase) {
+                    HandleDockWindowRestoreTransition(restoreTarget, phase);
+                    if (phase != DockWindowRestoreTransitionPhase::RequestRestore)
+                        snowdesktop::dock_document_proxies::SelectDocument(documentProxy, restoreTarget);
                 },
                 transitionKeepBelowWindow))
         {
@@ -1669,6 +1700,7 @@ bool DesktopApp::ActivateOrToggleDockWindow(
         }
         const DockWindowActivationOutcome outcome =
             RequestDockWindowActivation(target, minimized);
+        snowdesktop::dock_document_proxies::SelectDocument(documentProxy, target);
         nowMinimized = !outcome.restored;
         nowForeground = outcome.foreground;
     }
@@ -1699,10 +1731,20 @@ void DesktopApp::ActivateOrToggleDockTaskWindow(HWND window, RECT anchorScreen)
         return;
     if (IsDockTaskbarDocumentProxyCandidate(window))
     {
-        // Registered MDI/TDI tab proxies are hidden by design. Activating the
-        // proxy asks its owner application to select and reveal the matching
-        // document; the ordinary path would incorrectly show the 0x0 helper
-        // window before trying to foreground it.
+        using namespace snowdesktop::dock_document_proxies;
+        using snowdesktop::dock_window_rules::DockClickAction;
+        const HWND frame = ResolveFrame(window);
+        const auto anchor = IsRectEmpty(&anchorScreen) ? std::nullopt : std::optional{anchorScreen};
+        if (frame && (IsIconic(frame) ||
+            (dockWindowTransition_ && dockWindowTransition_->IsActiveFor(frame) &&
+             dockWindowTransition_->GetDirection() == DockWindowTransitionDirection::Minimize)))
+        {
+            if (ActivateOrToggleDockWindow(frame, DockClickAction::Restore, nullptr, anchor, window)) return;
+        }
+        else if (frame && ResolveDockSemanticForegroundWindow() == frame && IsActiveDocument(frame, window))
+        {
+            if (ActivateOrToggleDockWindow(frame, DockClickAction::Minimize, nullptr, anchor)) return;
+        }
         ActivateDockWindowFromPreview(window);
         return;
     }

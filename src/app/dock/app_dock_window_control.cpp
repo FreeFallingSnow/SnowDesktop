@@ -5,6 +5,7 @@
 #include "dock/dock_window_transition.h"
 #include "common/utils.h"
 #include "dock_platform_helpers.h"
+#include "dock_document_proxies.h"
 #include "dock_taskbar_diagnostics.h"
 #include "dock/dock_window_order.h"
 #include "diagnostics/performance_trace.h"
@@ -115,21 +116,12 @@ DesktopApp::CollectDockWindowPreviewItems(
 {
     snowdesktop::performance::Scope trace("dock.preview", "windows.collect");
     PruneDockPendingCloseWindows();
-    struct TaskbarDocumentProxyCohort
-    {
-        DWORD processId = 0;
-        std::wstring className;
-        LONG_PTR windowStyle = 0;
-        LONG_PTR extendedStyle = 0;
-        std::vector<DockWindowPreviewItem> items;
-        std::vector<std::wstring> distinctTitles;
-    };
     struct PreviewEnumerationContext
     {
         DesktopApp* owner = nullptr;
         const DockAppIdentity* identity = nullptr;
         std::vector<DockWindowPreviewItem>* regularItems = nullptr;
-        std::vector<TaskbarDocumentProxyCohort>* proxyCohorts = nullptr;
+        snowdesktop::dock_document_proxies::Cohorts* proxyCohorts = nullptr;
         const std::unordered_map<HWND, ULONGLONG>*
             pendingCloseWindows = nullptr;
         bool includeCloaked = false;
@@ -139,11 +131,11 @@ DesktopApp::CollectDockWindowPreviewItems(
     };
 
     std::vector<DockWindowPreviewItem> regularItems;
-    std::vector<TaskbarDocumentProxyCohort> proxyCohorts;
+    snowdesktop::dock_document_proxies::Cohorts proxyCohorts;
     PreviewEnumerationContext context{
         this, &identity, &regularItems, &proxyCohorts,
         &dockPendingCloseWindows_, includeCloaked,
-        preferTaskbarDocumentProxies && !onlyWindow, onlyWindow
+        preferTaskbarDocumentProxies, onlyWindow
     };
     EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
         auto* context = reinterpret_cast<
@@ -159,7 +151,8 @@ DesktopApp::CollectDockWindowPreviewItems(
             window, context->includeCloaked);
         const bool taskbarDocumentProxyCandidate =
             !taskWindow && context->preferTaskbarDocumentProxies &&
-            IsDockTaskbarDocumentProxyCandidate(window);
+            (context->includeCloaked ? IsDockTaskbarDocumentProxyCandidate(window) :
+                snowdesktop::dock_document_proxies::IsUncloakedProxy(window));
         if (!taskWindow && !taskbarDocumentProxyCandidate)
             return TRUE;
 
@@ -177,24 +170,13 @@ DesktopApp::CollectDockWindowPreviewItems(
                     applicationLevelWindow))
             return TRUE;
 
-        // Document proxies bypass ordinary task-window presentation rules.
-        // They still need the cloak filter unless collecting all windows to close.
-        DWORD cloaked = 0;
-        if (taskbarDocumentProxyCandidate && !context->includeCloaked &&
-            SUCCEEDED(DwmGetWindowAttribute(
-                window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) &&
-            cloaked != 0)
-            return TRUE;
         if (!MatchesTrackedDockApp(window, *context->identity, &context->processParents,
                 [owner = context->owner](HWND candidate) {
                     return owner->GetDockWindowAppUserModelIdAsync(candidate);
                 }))
             return TRUE;
 
-        wchar_t titleBuffer[512]{};
-        GetWindowTextW(window, titleBuffer,
-            static_cast<int>(std::size(titleBuffer)));
-        std::wstring title = titleBuffer;
+        std::wstring title = snowdesktop::dock_document_proxies::ReadCaption(window);
         if (taskbarDocumentProxyCandidate && title.empty())
             return TRUE;
         if (title.empty())
@@ -203,81 +185,15 @@ DesktopApp::CollectDockWindowPreviewItems(
                 QueryDockWindowExecutablePath(window);
             title = PathFindFileNameW(executablePath.c_str());
         }
-        if (taskbarDocumentProxyCandidate)
-        {
-            wchar_t classNameBuffer[256]{};
-            if (!GetClassNameW(
-                    window, classNameBuffer,
-                    static_cast<int>(std::size(classNameBuffer))))
-                return TRUE;
-            const std::wstring className = classNameBuffer;
-            const LONG_PTR windowStyle =
-                GetWindowLongPtrW(window, GWL_STYLE);
-            const LONG_PTR extendedStyle =
-                GetWindowLongPtrW(window, GWL_EXSTYLE);
-            auto cohort = std::find_if(
-                context->proxyCohorts->begin(),
-                context->proxyCohorts->end(),
-                [processId, &className,
-                 windowStyle, extendedStyle](const auto& item) {
-                    return item.processId == processId &&
-                        item.windowStyle == windowStyle &&
-                        item.extendedStyle == extendedStyle &&
-                        _wcsicmp(
-                            item.className.c_str(),
-                            className.c_str()) == 0;
-                });
-            if (cohort == context->proxyCohorts->end())
-            {
-                context->proxyCohorts->push_back({
-                    processId, className,
-                    windowStyle, extendedStyle
-                });
-                cohort = context->proxyCohorts->end() - 1;
-            }
-            const bool distinctTitle = std::none_of(
-                cohort->distinctTitles.begin(),
-                cohort->distinctTitles.end(),
-                [&title](const std::wstring& existing) {
-                    return _wcsicmp(
-                        existing.c_str(), title.c_str()) == 0;
-                });
-            if (distinctTitle)
-                cohort->distinctTitles.push_back(title);
-            cohort->items.push_back(
-                { window, std::move(title) });
-        }
+        if (taskbarDocumentProxyCandidate && !context->onlyWindow)
+            context->proxyCohorts->Add(window, processId, std::move(title));
         else
-        {
-            context->regularItems->push_back(
-                { window, std::move(title) });
-        }
+            context->regularItems->push_back({window, std::move(title)});
         return TRUE;
     }, reinterpret_cast<LPARAM>(&context));
 
-    TaskbarDocumentProxyCohort* selectedCohort = nullptr;
-    std::size_t qualifyingCohortCount = 0;
-    for (TaskbarDocumentProxyCohort& cohort : proxyCohorts)
-    {
-        if (!snowdesktop::dock_window_rules::
-                IsTaskbarDocumentProxyCohortEligible(
-                    cohort.items.size(),
-                    cohort.distinctTitles.size()))
-        {
-            continue;
-        }
-        ++qualifyingCohortCount;
-        if (!selectedCohort)
-            selectedCohort = &cohort;
-    }
-    if (selectedCohort &&
-        snowdesktop::dock_window_rules::
-            ShouldPreferTaskbarDocumentProxyCohort(
-                qualifyingCohortCount))
-    {
-        snowdesktop::dock_window_order::Current().Sort(selectedCohort->items);
-        return std::move(selectedCohort->items);
-    }
+    if (const auto preferred = proxyCohorts.Preferred(); !preferred.empty())
+        regularItems.assign(preferred.begin(), preferred.end());
     snowdesktop::dock_window_order::Current().Sort(regularItems);
     return regularItems;
 }
@@ -322,7 +238,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
         IsDockContainerEffectivelyFloating(dock);
 
     RECT anchor{};
-    std::span<const HWND> titleWindows;
+    DockContainer::WindowTitleGroup titleGroup;
     bool found = false;
     const auto resolveDesktopItem = [&](size_t itemIndex, RECT bounds) {
         if (itemIndex >= items_.size() ||
@@ -353,7 +269,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
                 : DockAppIdentityKind::Executable;
             target.trackedWindows = app.trackedWindows;
             anchor = running->GetBounds();
-            titleWindows = dock->RunningTitleWindows(index);
+            titleGroup = dock->RunningTitleGroup(index);
             found = true;
         }
     }
@@ -367,7 +283,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
             const size_t itemIndex = FindItemIndexByKey(
                 dockEntries_[entryIndex].reference);
             found = resolveDesktopItem(itemIndex, entry->GetBounds());
-            titleWindows = dock->EntryTitleWindows(entryIndex);
+            titleGroup = dock->EntryTitleGroup(entryIndex);
         }
     }
     else if (DockFrequentItem* frequent =
@@ -384,7 +300,7 @@ bool DesktopApp::ResolveDockWindowPreviewTarget(
     {
         // Keep app previews anchored to the slot in single-icon mode.
         const RECT visual = dock->MonitorLayout().hoverEffect == 1 ? anchor : dock->GetElementVisualRect(anchor, clientPoint);
-        anchor = dock->WindowTitleIconRect(anchor, visual, titleWindows);
+        anchor = dock->WindowTitleIconRect(anchor, visual, titleGroup);
     }
     target.identityKey = DockWindowPreviewIdentityKey(target.identity);
     if (target.identityKey.empty())

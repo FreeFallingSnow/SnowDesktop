@@ -1039,8 +1039,8 @@ private:
         std::optional<snowdesktop::dock_window_rules::DockClickAction>
             pressedAction = std::nullopt,
         HWND pressedTarget = nullptr,
-        std::optional<RECT> pressedAnchorScreen =
-            std::nullopt);
+        std::optional<RECT> pressedAnchorScreen = std::nullopt,
+        HWND documentProxy = nullptr);
     std::optional<RECT> ResolveDockThumbnailTransitionAnchor(HWND window,
         std::optional<RECT> requestedAnchor, bool restoring) const;
     void ActivateDockWindowFromPreview(HWND window);
