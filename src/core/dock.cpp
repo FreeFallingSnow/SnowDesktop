@@ -142,6 +142,20 @@ int ClampPointerAxisToCenters(
     return std::clamp(pointerAxis, first, last);
 }
 
+int FitScrollMagnificationShift(int leadingGrowth, int trailingGrowth,
+    int offset, int maximum)
+{
+    // Use the hidden distance to absorb growth while there is room to scroll.
+    // At an endpoint, grow inward so the end item remains inside the clip.
+    const int leading = std::max(0, leadingGrowth - offset);
+    const int trailing = std::max(0, trailingGrowth - (maximum - offset));
+    if (leading == 0 || trailing == 0) return leading - trailing;
+    // A lane with only a few pixels of overflow can need room at both ends.
+    const float progress = static_cast<float>(offset) / static_cast<float>(maximum);
+    return static_cast<int>(std::lround(std::lerp(
+        static_cast<float>(leading), -static_cast<float>(trailing), progress)));
+}
+
 float DockPreviewScale(const RECT& base, const RECT& visual, int iconSize)
 {
     return static_cast<float>(snowdesktop::dock_magnification::
@@ -1632,11 +1646,22 @@ RECT DockContainer::MagnifyElementRect(const RECT& baseRect, const RECT& focusRe
     if (settings.hoverEffect == 0) return baseRect;
     namespace magnification = snowdesktop::dock_magnification;
     const int iconSize = ItemIconSize();
+    const bool hasOverflow = layout.maxScrollOffset > 0;
+    const auto zone = layout.edgeAnchored ? layout.ZoneOf(baseRect) : MagnificationZone::None;
+    const bool inScrollLane = hasOverflow && zone == MagnificationZone::Leading &&
+        !EqualRect(&baseRect, &layout.windowsButton);
     if (settings.hoverEffect == 1)
     {
         const auto geometry = GetSingleMagnificationGeometry(baseRect, layout);
+        int shift = geometry.AxisShiftFor(baseRect);
+        if (inScrollLane)
+        {
+            const int growth = geometry.leadingGrowth + geometry.trailingGrowth;
+            shift += FitScrollMagnificationShift(growth / 2, growth - growth / 2,
+                scrollOffset_, layout.maxScrollOffset);
+        }
         return magnification::MagnifyRect(baseRect, settings.position,
-            geometry.ScaleFor(baseRect, iconSize), iconSize, geometry.AxisShiftFor(baseRect), true);
+            geometry.ScaleFor(baseRect, iconSize), iconSize, shift, true);
     }
 
     if (IsRectEmpty(&focusRect)) return baseRect;
@@ -1659,9 +1684,7 @@ RECT DockContainer::MagnifyElementRect(const RECT& baseRect, const RECT& focusRe
         return magnification::MagnifyRect(baseRect, settings.position, scaleFor(baseRect), iconSize, shift);
     }
 
-    const auto zone = layout.ZoneOf(baseRect);
     if (zone == MagnificationZone::None || zone != layout.ZoneOf(focusRect)) return baseRect;
-    const bool hasOverflow = layout.maxScrollOffset > 0;
     const bool startFocused = EqualRect(&focusRect, &layout.windowsButton) != FALSE;
     const auto inFocusLane = [&](const RECT& candidate) {
         return !hasOverflow || (EqualRect(&candidate, &layout.windowsButton) != FALSE) == startFocused;
@@ -1676,16 +1699,22 @@ RECT DockContainer::MagnifyElementRect(const RECT& baseRect, const RECT& focusRe
     std::vector<float> scales;
     scales.reserve(candidates.size());
     size_t baseIndex = candidates.size();
+    int totalGrowth = 0;
     for (const RECT& candidate : candidates)
     {
         if (!inFocusLane(candidate)) continue;
         if (baseIndex == candidates.size() && EqualRect(&candidate, &baseRect))
             baseIndex = scales.size();
-        scales.push_back(scaleFor(candidate));
+        const float scale = scaleFor(candidate);
+        scales.push_back(scale);
+        if (inScrollLane)
+            totalGrowth += magnification::GrowthForScale(scale, iconSize);
     }
     if (baseIndex >= scales.size()) return baseRect;
-    const int shift = magnification::PackedAxisShift(scales, baseIndex, iconSize,
+    int shift = magnification::PackedAxisShift(scales, baseIndex, iconSize,
         zone == MagnificationZone::Leading);
+    if (inScrollLane)
+        shift += FitScrollMagnificationShift(0, totalGrowth, scrollOffset_, layout.maxScrollOffset);
     return magnification::MagnifyRect(baseRect, settings.position, scales[baseIndex], iconSize, shift);
 }
 
@@ -3320,10 +3349,30 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         scrollGlassClip.emplace(context, scrollVisualViewport);
     }
 
-    const bool hasLeadingOverflow =
+    bool hasLeadingOverflow =
         hasOverflow && scrollOffset_ > 0;
-    const bool hasTrailingOverflow =
+    bool hasTrailingOverflow =
         hasOverflow && scrollOffset_ < maxScrollOffset;
+    if (hasOverflow && (!hasLeadingOverflow || !hasTrailingOverflow))
+    {
+        const bool vertical = IsVertical();
+        const auto begin = [vertical](const RECT& rect) { return vertical ? rect.top : rect.left; };
+        const auto end = [vertical](const RECT& rect) { return vertical ? rect.bottom : rect.right; };
+        const RECT* first = nullptr;
+        const RECT* last = nullptr;
+        for (const RECT& candidate : layout.ForZone(MagnificationZone::Leading))
+        {
+            if (EqualRect(&candidate, &windowsButton)) continue;
+            if (!first || begin(candidate) < begin(*first)) first = &candidate;
+            if (!last || end(candidate) > end(*last)) last = &candidate;
+        }
+        // The fixed controls can reduce the painted viewport during hover,
+        // even at a logical scroll endpoint.
+        if (!hasLeadingOverflow && first)
+            hasLeadingOverflow = begin(visualRectFor(*first)) < begin(scrollViewport);
+        if (!hasTrailingOverflow && last)
+            hasTrailingOverflow = end(visualRectFor(*last)) > end(scrollViewport);
+    }
     ComPtr<ID2D1LinearGradientBrush> overflowMask;
     std::optional<snowdesktop::ScopedContentOpacityLayer> overflowMaskLayer;
     if (hasLeadingOverflow || hasTrailingOverflow)
