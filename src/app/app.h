@@ -3280,6 +3280,7 @@ private:
     snowdesktop::collection_popup_layout::FanItem GetCollectionPopupFanItem(
         const RECT& popup, size_t index, const FolderEntry* pendingFile = nullptr) const;
     bool HitTestCollectionPopupItem(const RECT& popup, size_t index, POINT point) const;
+    bool HitTestCollectionPopupFanScroll(const RECT& popup, POINT point) const;
     void ShowAllCollectionPopupItems();
     double GetCollectionPopupFanScrollOffset(const RECT& popup) const;
     bool IsCollectionPopupFanItemVisible(const RECT& popup, size_t index) const;
@@ -3439,8 +3440,8 @@ private:
     RECT GetCollectionPopupFanDragBounds(const Item* item) const;
     bool HitTestCollectionPopupHandoff(const RECT& popup, size_t index, POINT point) const;
     RECT GetCollectionPopupItemTextRect(const RECT& itemRect) const;
-    /** @brief 处理鼠标滚轮消息。 @param wp WPARAM @param lp LPARAM */
-    void OnMouseWheel(WPARAM wp, LPARAM lp);
+    /** @brief 处理滚轮消息，触屏平移可指定开始时命中的扇形或下层。 */
+    void OnMouseWheel(WPARAM wp, LPARAM lp, std::optional<bool> touchFanTarget = std::nullopt);
     /**
      * @brief 在鼠标坐标处刷新拖拽目标状态。
      * @param clientPoint 客户端坐标

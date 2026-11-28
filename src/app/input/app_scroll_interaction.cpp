@@ -54,7 +54,7 @@ void DesktopApp::InvalidateWidgetControls(const WidgetContainer& owner, bool imm
     if (popupOwner) InvalidateCollectionPopupControls(immediate);
 }
 
-void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
+void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp, std::optional<bool> touchFanTarget)
 {
     CancelRenameClick();
     if (renameController_.BlocksScrolling())
@@ -181,6 +181,29 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         }
     }
 
+    const auto refreshDragAfterScroll = [&]() -> bool
+    {
+        if (!dragSession_.IsActive()) return false;
+        RefreshDragTargetAt(pt, currentMods);
+        InvalidateDragStaticScene();
+        return true;
+    };
+    auto* popupWidget = GetOpenPopupWidget();
+    const bool popupInteractive = popupWidget && IsCollectionPopupInteractive() &&
+        (!desktopIconsHidden_ || IsOpenPopupRetained());
+    const bool fan = popupInteractive && UsesCollectionPopupFan(*popupWidget);
+    if (touchFanTarget.value_or(false) || (fan && !touchFanTarget.has_value() &&
+            HitTestCollectionPopupFanScroll(GetCollectionPopupRect(*popupWidget), pt)))
+    {
+        if (fan)
+        {
+            const double steps = static_cast<double>(GET_WHEEL_DELTA_WPARAM(wp)) / WHEEL_DELTA;
+            ScrollCollectionPopupFan(snowdesktop::touch_input::routingTouch ? steps : -steps);
+            (void)refreshDragAfterScroll();
+        }
+        return;
+    }
+
     if (overStackIndicator)
     {
         (void)ScrollLuaWidgetStack(luaStackIndicator_.stackId, GET_WHEEL_DELTA_WPARAM(wp));
@@ -224,14 +247,6 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         return;
     }
 
-    auto refreshDragAfterScroll = [&]() -> bool
-    {
-        if (!dragSession_.IsActive()) return false;
-        RefreshDragTargetAt(pt, currentMods);
-        InvalidateDragStaticScene();
-        return true;
-    };
-
     const bool insideFolderPreview = folderPreview_ && IsPointInsideOpenPopup(pt);
     if (DockContainer* dock = insideFolderPreview ? nullptr : GetDockContainerAtPoint(pt))
     {
@@ -246,11 +261,9 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         }
     }
 
-    if (DesktopWidget* popupWidget =
-            GetOpenPopupWidget();
-        IsCollectionPopupInteractive() &&
-        (!desktopIconsHidden_ || IsOpenPopupRetained()) &&
-        popupWidget)
+    // Only a regular panel owns its whole frame. A fan miss reaches the
+    // desktop widgets even when the floating window delivered the wheel event.
+    if (popupInteractive && !fan && !touchFanTarget.has_value())
     {
         RECT popup =
             GetCollectionPopupRect(*popupWidget);
@@ -295,13 +308,6 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                     if (tabsChanged) InvalidateWidgetControls(*view, true);
                     return;
                 }
-            }
-            if (UsesCollectionPopupFan(*popupWidget))
-            {
-                const double steps = static_cast<double>(delta) / WHEEL_DELTA;
-                ScrollCollectionPopupFan(snowdesktop::touch_input::routingTouch ? steps : -steps);
-                (void)refreshDragAfterScroll();
-                return;
             }
             int maxScroll =
                 GetCollectionPopupMaxScrollOffset(
