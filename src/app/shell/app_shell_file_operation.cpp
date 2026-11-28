@@ -827,7 +827,11 @@ void DesktopApp::RefreshShellItemsAsync()
         const size_t metadataHits = snapshot->metadata.hits;
         const size_t metadataQueries = snapshot->metadata.queries;
         shellMetadataCache_ = std::move(snapshot->metadata);
+        const bool pendingDesktopSelection = std::ranges::any_of(pendingLandingCaches_, [](const auto& cache) {
+            return cache.dropSelectionRevision && !cache.waitingForFiles && !cache.entries.empty();
+        });
         const bool contentOnly = desktopItemsReady_ && !layoutReload_.Pending() && !HasPendingDesktopNewItems() &&
+            !pendingDesktopSelection &&
             snowdesktop::shell_refresh::ApplyDesktopContentRefresh(items_, *snapshot,
                 [this](const DesktopItem& item) {
                     IconLoadTask task;

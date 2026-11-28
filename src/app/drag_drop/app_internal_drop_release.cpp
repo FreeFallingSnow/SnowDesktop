@@ -20,7 +20,8 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
     const auto dropWidgetId = touch && canDrop && !removeDockPin ? GetContainerWidgetId(target) : std::wstring{};
     const bool handoff = canDrop && region == HitRegion::Handoff;
     const bool dockInsertion = canDrop && !handoff && dynamic_cast<DockContainer*>(target);
-    const auto sources = dragSession_.SourceList();
+    auto sources = dragSession_.SourceList();
+    const bool retainDropSelection = sources.entries.size() > 1 && canDrop && !removeDockPin;
     const auto items = dragSession_.Items();
     const auto* targetIcon = handoff && target == GetDesktopGrid() ? HitTestIcon(point) : nullptr;
     const auto* targetDesktopItem = targetIcon ? targetIcon->GetDesktopItem() : nullptr;
@@ -54,6 +55,12 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
     {
         auto* item = slot ? slot->GetItem() : nullptr;
         if (!item && handoff && target == GetDesktopGrid()) item = HitTestIcon(point);
+        const auto* dockItem = dynamic_cast<DockEntryItem*>(item);
+        const bool landsOnSurface = handoff
+            ? dockItem && IsLogicalDockEntryType(dockItem->GetEntryType())
+            : target->GetSlotSurfaceKind() != snowdesktop::slot_contract::SlotSurfaceKind::LuaLogicalSlot;
+        if (retainDropSelection && landsOnSurface && !settingsSource)
+            sources.dropSelectionRevision = selectionController_.Revision();
         refreshPopup = IsOpenDockFolderPopupDropTarget(target, item) ||
             (dockFolderPopupOpen_ && sources.origin == dockFolderPopupContainer_.get());
         const ItemDrop drop{items, sources, preview, slot, region, mods, point, allowed};
@@ -91,9 +98,12 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
 
     if (effect && dockInsertion) DockContainer::FinishFreeOrderForDrag(*this, true);
     if (effect && save) RequestLayoutSave();
-    const bool selectedDestination = effect && !dropWidgetId.empty() && SelectWidgetInteractionOwner(dropWidgetId);
-    if (!selectedDestination && (canDrop || removeDockPin) && (effect || !touch))
-        ClearSelection();
+    if (!sources.dropSelectionRevision)
+    {
+        const bool selectedDestination = effect && !dropWidgetId.empty() && SelectWidgetInteractionOwner(dropWidgetId);
+        if (!selectedDestination && (canDrop || removeDockPin) && (effect || !touch))
+            ClearSelection();
+    }
     if (dragSession_.HasContext()) EndDragSession();
     if (effect && refreshPopup && dockFolderPopupOpen_) RefreshDockFolderPopup();
     if (effect && reload)
@@ -105,6 +115,12 @@ DWORD DesktopApp::CommitInternalDragRelease(POINT point, DWORD keys, DWORD allow
     {
         if (!removeDockPin) ApplyPageMapping();
         LayoutItems();
+    }
+    if (effect && sources.dropSelectionRevision)
+    {
+        if (folderPreview_ && folderPreview_->inlineBounds)
+            (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+        if (ShouldShowFloatingPopupWindow()) InvalidateFloatingPopupWindow(false);
     }
     InvalidateRect(hwnd_, nullptr, FALSE);
     return effect;

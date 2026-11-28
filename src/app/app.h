@@ -981,15 +981,19 @@ private:
     DropReceipt CommitDockDrop(const std::vector<Item*>& sourceItems, Container* origin,
         DockContainer* targetDock, size_t insertIndex, int mods,
         DWORD allowed = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK,
-        std::optional<DockEntrySection> section = {});
+        std::optional<DockEntrySection> section = {}, std::optional<std::uint64_t> selectionRevision = {});
     snowdesktop::dock_desktop_return::Services DockDesktopReturnServices() const;
     std::vector<snowdesktop::dock_desktop_return::Landing> PlanDockDesktopReturn(
         const std::vector<Item*>& sourceItems, GridCell target) const;
-    bool MoveDockItemsToDesktop(const std::vector<Item*>& sourceItems, GridCell targetCell);
+    bool MoveDockItemsToDesktop(const std::vector<Item*>& sourceItems, GridCell targetCell,
+        std::optional<std::uint64_t> selectionRevision = {});
     void RestoreDockEntriesToDesktop();
     bool AddMaterializedItemsToDock(
         const std::vector<std::wstring>& createdPaths,
-        size_t insertIndex, bool keepOnDesktop = false, std::optional<DockEntrySection> section = {});
+        size_t insertIndex, bool keepOnDesktop = false, std::optional<DockEntrySection> section = {},
+        std::optional<std::uint64_t> selectionRevision = {});
+    void SelectDockDropResults(const std::vector<DockEntry>& destinations,
+        std::optional<std::uint64_t> selectionRevision);
     bool CanPinExistingDesktopPaths(const std::vector<std::wstring>& paths) const;
     bool LaunchDesktopItem(
         size_t itemIndex, bool animateDockLaunch = false, bool allowDockTray = true);
@@ -2393,6 +2397,8 @@ private:
      * @return 操作是否成功
      */
     bool ExecuteInternalDropPlan(const DragSourceList& sourceList, const DropPreviewList& preview);
+    void SelectInternalDropResults(const DragSourceList& sources, const DropPreviewList& preview,
+        const std::wstring& widgetId);
     /**
      * @brief 执行基于文件的拖拽放置计划（来自外部或内部文件）。
      * @param sourceList 拖拽源列表
@@ -4305,6 +4311,10 @@ private:
     // first frame spuriously hover whatever happens to occupy (0, 0).
     POINT lastMousePoint_{ LONG_MIN, LONG_MIN };
     SelectionController selectionController_;
+    std::wstring pendingPlainSelectionScope_;
+    void ClearItemSelection();
+    bool CompleteItemSelectionClick(WPARAM keys, POINT point);
+    bool BeginDropResultSelection(std::optional<std::uint64_t> revision);
     // 组件统一调度令牌：token -> widgetId（manifest 刷新与命名定时器共用）
     std::unordered_map<UINT_PTR, std::wstring> widgetTimerIds_;
     bool mouseDown_ = false;

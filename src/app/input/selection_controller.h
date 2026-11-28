@@ -147,6 +147,7 @@ public:
     }
 
     std::uint64_t Revision() const { return revision_; }
+    void BeginInteraction() { AdvanceRevisionIf(true); }
 
 private:
     template <typename Value>

@@ -150,6 +150,8 @@ bool DesktopApp::ShowHostInputContextMenu(
 void DesktopApp::OnRightButtonDown(
     PersistentDockHost* dockHost, POINT point)
 {
+    selectionController_.BeginInteraction();
+    pendingPlainSelectionScope_.clear();
     ClearDesktopSurfaceKeyboardFocus();
     if (folderPreview_ && point.x != LONG_MIN && point.y != LONG_MIN)
     {

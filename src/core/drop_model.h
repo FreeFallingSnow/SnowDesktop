@@ -270,6 +270,7 @@ struct DragSourceList
     bool hasFileGroupSourceLabels = false;
     bool hasSearchResults = false;
     std::wstring searchViewId;
+    std::optional<std::uint64_t> dropSelectionRevision;
 
     bool Empty() const { return entries.empty(); }
 
@@ -596,6 +597,7 @@ struct PendingLandingCache
     // A visible file request has two phases: waiting for Shell, then waiting
     // for its exact outputs to appear in the refreshed model.
     std::uint64_t visualId = 0;
+    std::optional<std::uint64_t> dropSelectionRevision;
     bool waitingForFiles = false;
     HMONITOR dockMonitor = nullptr;
     size_t dockInsertIndex = 0;
@@ -616,6 +618,7 @@ struct PendingLandingCache
         originWidgetId.clear();
         movingFiles = false;
         visualId = 0;
+        dropSelectionRevision.reset();
         waitingForFiles = false;
         dockMonitor = nullptr;
         dockInsertIndex = 0;

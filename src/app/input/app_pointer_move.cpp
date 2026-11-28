@@ -742,9 +742,9 @@ void DesktopApp::OnMouseMoveAt(
         const bool dockItem = dynamic_cast<DockContainer*>(
             mouseDownHit_->GetContainer()) != nullptr;
         const int thresholdX = dockItem
-            ? std::max(8, GetSystemMetrics(SM_CXDRAG)) : 3;
+            ? std::max(8, GetSystemMetrics(SM_CXDRAG)) : snowdesktop::drag_input_rules::kDesktopItemDragThreshold;
         const int thresholdY = dockItem
-            ? std::max(8, GetSystemMetrics(SM_CYDRAG)) : 3;
+            ? std::max(8, GetSystemMetrics(SM_CYDRAG)) : snowdesktop::drag_input_rules::kDesktopItemDragThreshold;
         if (std::abs(current.x - mouseDownPoint_.x) > thresholdX ||
             std::abs(current.y - mouseDownPoint_.y) > thresholdY)
         {
@@ -848,6 +848,7 @@ void DesktopApp::OnMouseMoveAt(
             // From this point the drag session owns the logical interaction.
             // Do not retain the original wrapper pointer across object rebuilds.
             mouseDownHit_ = nullptr;
+            pendingPlainSelectionScope_.clear();
             ClearDockPressedState();
             pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
             pendingCtrlToggleWidgetItem_ = nullptr;
@@ -1457,7 +1458,6 @@ void DesktopApp::OnMouseMoveAt(
                 else
                 {
                     RequestLayoutSave();
-                    ClearSelection();
                     CancelActiveItemDrag();
                     InvalidateRect(hwnd_, nullptr, FALSE);
                 }

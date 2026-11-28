@@ -110,7 +110,7 @@ snowdesktop::dock_drop_model::Services DesktopApp::DockDropServices()
 
 DropReceipt DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
     Container* origin, DockContainer* targetDock, size_t insertIndex, int mods, DWORD allowed,
-    std::optional<DockEntrySection> section)
+    std::optional<DockEntrySection> section, std::optional<std::uint64_t> selectionRevision)
 {
     if (!targetDock || sourceItems.empty()) return {};
     auto services = DockDropServices();
@@ -126,7 +126,7 @@ DropReceipt DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         }
         if (files.size() != sourceItems.size())
         {
-            if (!files.empty()) return CommitDockDrop(files, origin, targetDock, insertIndex, mods, allowed, section);
+            if (!files.empty()) return CommitDockDrop(files, origin, targetDock, insertIndex, mods, allowed, section, selectionRevision);
             return {};
         }
     }
@@ -138,11 +138,16 @@ DropReceipt DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
     {
         if (!(allowed & DROPEFFECT_MOVE)) return {};
         std::vector<size_t> indices;
+        std::vector<DockEntry> destinations;
         for (Item* item : sourceItems)
             if (auto* dockItem = dynamic_cast<DockEntryItem*>(item))
             {
                 const size_t index = dockItem->GetEntryIndex();
-                if (index < dockEntries_.size()) indices.push_back(index);
+                if (index < dockEntries_.size())
+                {
+                    indices.push_back(index);
+                    if (selectionRevision) destinations.push_back(dockEntries_[index]);
+                }
             }
         const auto result = snowdesktop::dock_drop_model::Reorder(dockEntries_, std::move(indices), insertIndex, services, true);
         if (result != snowdesktop::dock_drop_model::ReorderResult::Changed)
@@ -150,6 +155,7 @@ DropReceipt DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
             if (result == snowdesktop::dock_drop_model::ReorderResult::MixedSections) MessageBeep(MB_ICONWARNING);
             return {};
         }
+        SelectDockDropResults(destinations, selectionRevision);
         InvalidateDockContainers();
         return {DropAction::Move};
     }
@@ -171,6 +177,7 @@ DropReceipt DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         }
         DragSourceList sourceList =
             BuildDragSourceList(sourceItems, origin);
+        sourceList.dropSelectionRevision = selectionRevision;
         const auto preview = targetDock->FilePinPreview(sourceList, insertIndex, dragSession_.CurrentPoint());
         return DropReceipt::Submitted(ExecuteDropPipeline(sourceList, preview), DropAction::Link);
     }
@@ -238,6 +245,7 @@ DropReceipt DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         MessageBeep(MB_ICONWARNING);
         return {};
     }
+    SelectDockDropResults(additions, selectionRevision);
     RefreshCollectedKeysCache();
     InvalidateDockContainers();
     InvalidateDragStaticScene();
@@ -246,16 +254,35 @@ DropReceipt DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
 
 bool DesktopApp::AddMaterializedItemsToDock(
     const std::vector<std::wstring>& createdPaths,
-    size_t insertIndex, bool keepOnDesktop, std::optional<DockEntrySection> section)
+    size_t insertIndex, bool keepOnDesktop, std::optional<DockEntrySection> section,
+    std::optional<std::uint64_t> selectionRevision)
 {
     auto services = DockDropServices();
     services.dropSection = section;
     if (!snowdesktop::dock_drop_model::AddMaterialized({dockEntries_, widgets_}, createdPaths,
             insertIndex, keepOnDesktop, services)) return false;
+    if (selectionRevision)
+    {
+        std::vector<DockEntry> destinations;
+        for (const auto& path : createdPaths)
+            destinations.push_back({DockEntryType::DesktopItem, path});
+        SelectDockDropResults(destinations, selectionRevision);
+    }
     RefreshCollectedKeysCache();
     InvalidateDockContainers();
     InvalidateDragStaticScene();
     return true;
+}
+
+void DesktopApp::SelectDockDropResults(const std::vector<DockEntry>& destinations,
+    std::optional<std::uint64_t> selectionRevision)
+{
+    if (destinations.empty() || !BeginDropResultSelection(selectionRevision)) return;
+    for (auto& entry : dockEntries_)
+        if (std::ranges::any_of(destinations, [&](const DockEntry& destination) {
+                return entry.type == destination.type && PathsEqualInsensitive(entry.reference, destination.reference);
+            }))
+            entry.selected = true;
 }
 
 bool DesktopApp::CanPinExistingDesktopPaths(const std::vector<std::wstring>& paths) const
@@ -370,7 +397,8 @@ std::vector<snowdesktop::dock_desktop_return::Landing> DesktopApp::PlanDockDeskt
 }
 
 bool DesktopApp::MoveDockItemsToDesktop(
-    const std::vector<Item*>& sourceItems, GridCell targetCell)
+    const std::vector<Item*>& sourceItems, GridCell targetCell,
+    std::optional<std::uint64_t> selectionRevision)
 {
     const auto landings = PlanDockDesktopReturn(sourceItems, std::move(targetCell));
     // Delete-key/menu returns may animate. A drag already supplies its own
@@ -381,6 +409,23 @@ bool DesktopApp::MoveDockItemsToDesktop(
                 if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
                     dock->PrepareEntryRemoval(landing.entryIndex);
     if (!snowdesktop::dock_desktop_return::Apply(dockEntries_, widgets_, items_, landings, DockDesktopReturnServices())) return false;
+    if (BeginDropResultSelection(selectionRevision))
+    {
+        for (const auto& landing : landings)
+        {
+            if (!landing.accepted) continue;
+            if (landing.type == DockEntryType::DesktopItem)
+            {
+                const auto index = FindItemIndexByKey(landing.reference);
+                if (index < items_.size()) items_[index].selected = true;
+            }
+            else
+            {
+                const auto index = FindWidgetIndexById(landing.reference);
+                if (index < widgets_.size()) widgets_[index].selected = true;
+            }
+        }
+    }
     NormalizeDockRecycleBinPosition();
     LayoutItems();
     return true;

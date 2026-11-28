@@ -4,6 +4,8 @@
 
 namespace snowdesktop::drag_input_rules
 {
+inline constexpr int kDesktopItemDragThreshold = 3;
+
 constexpr bool IsNativeDragActive(
     bool dragSessionActive,
     bool dragTransportActive)

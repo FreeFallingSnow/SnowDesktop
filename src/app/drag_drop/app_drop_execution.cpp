@@ -142,11 +142,63 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
     services.files = [this](const auto& sources, const auto& preview, auto done, bool sync, auto outputs) {
         return ExecuteFileBackedDropPlan(sources, preview, std::move(done), sync, std::move(outputs));
     };
-    services.internal = [this](const auto& sources, const auto& preview) { return ExecuteInternalDropPlan(sources, preview); };
+    services.internal = [this](const DragSourceList& sources, const DropPreviewList& preview) {
+        const auto widgetId = sources.dropSelectionRevision && preview.targetWidget
+            ? preview.targetWidget->id : std::wstring{};
+        if (!ExecuteInternalDropPlan(sources, preview)) return false;
+        if (sources.dropSelectionRevision) SelectInternalDropResults(sources, preview, widgetId);
+        return true;
+    };
     services.collectionTitle = _LW("widget.collection");
     services.filesTitle = _LW("widget.desktop_files");
     return snowdesktop::drop_pipeline::Execute(sourceList, requestedPreview, widgets_, dockEntries_, services,
         std::move(completion), executeSynchronously, std::move(result));
+}
+
+void DesktopApp::SelectInternalDropResults(const DragSourceList& sources,
+    const DropPreviewList& preview, const std::wstring& widgetId)
+{
+    DesktopWidget* target = nullptr;
+    if (widgetId == kDockFolderPopupWidgetId && dockFolderPopupOpen_)
+        target = &dockFolderPopupWidget_;
+    else if (!widgetId.empty())
+    {
+        const auto index = FindWidgetIndexById(widgetId);
+        if (index < widgets_.size()) target = &widgets_[index];
+    }
+    std::vector<bool*> results;
+    for (const auto& landing : preview.landings)
+    {
+        const auto source = std::ranges::find(sources.entries, landing.sourceIndex, &DragSourceEntry::sourceIndex);
+        if (source == sources.entries.end()) continue;
+        if (preview.targetKind == DropTargetKind::FolderMapping)
+        {
+            if (!target || source->filePath.empty()) continue;
+            const auto entry = std::ranges::find_if(target->folderEntries, [&](const FolderEntry& entry) {
+                return PathsEqualInsensitive(entry.fullPath, source->filePath);
+            });
+            if (entry != target->folderEntries.end()) results.push_back(&entry->selected);
+        }
+        else if (!source->desktopKey.empty())
+        {
+            const auto index = FindItemIndexByKey(source->desktopKey);
+            if (index >= items_.size()) continue;
+            if (preview.targetKind == DropTargetKind::Desktop ||
+                (target && std::ranges::any_of(target->itemKeys, [&](const auto& key) {
+                    return PathsEqualInsensitive(key, source->desktopKey);
+                })))
+                results.push_back(&items_[index].selected);
+        }
+        else if (!source->widgetId.empty() && (preview.targetKind == DropTargetKind::Desktop ||
+            (target && std::ranges::find(target->childWidgetIds, source->widgetId) != target->childWidgetIds.end())))
+        {
+            const auto index = FindWidgetIndexById(source->widgetId);
+            if (index < widgets_.size()) results.push_back(&widgets_[index].selected);
+        }
+    }
+    if (results.empty() || !BeginDropResultSelection(sources.dropSelectionRevision)) return;
+    for (bool* selected : results) *selected = true;
+    SyncKeyboardNavFromSelection();
 }
 
 /**
@@ -705,10 +757,11 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
     std::shared_ptr<snowdesktop::ShellFileOperationResult> result)
 {
     snowdesktop::file_drop_execution::Services services;
-    services.beginPlacement = [this, dockTarget = preview.pinMaterializedItemsToDock,
+    services.beginPlacement = [this, revision = sourceList.dropSelectionRevision, dockTarget = preview.pinMaterializedItemsToDock,
         desktopTarget = preview.targetKind == DropTargetKind::Desktop,
         monitor = preview.dockMonitor, index = preview.dockInsertIndex, section = preview.dockSection](PendingLandingCache cache,
             const DragSourceList& sources, DropAction action) {
+        cache.dropSelectionRevision = revision;
         if (dockTarget)
         {
             auto* dock = GetDockContainer();
@@ -735,8 +788,8 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
         auto done, bool sync, auto outputs) {
         return MaterializeFilesToFolder(sources, path, action, std::move(done), sync, std::move(outputs));
     };
-    services.pin = [this, section = preview.dockSection](const auto& paths, size_t index) {
-        return AddMaterializedItemsToDock(paths, index, false, section);
+    services.pin = [this, section = preview.dockSection, revision = sourceList.dropSelectionRevision](const auto& paths, size_t index) {
+        return AddMaterializedItemsToDock(paths, index, false, section, revision);
     };
     services.savePins = [this] { RequestLayoutSave(); };
     services.forgetMovedKeys = [this](const auto& keys) { RemoveDesktopKeysFromWidgets(keys); };

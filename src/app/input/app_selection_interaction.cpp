@@ -8,6 +8,7 @@
 #include "drag_drop/drag_input_rules.h"
 #include "widgets/single_cell_widget_rules.h"
 #include "widgets/lua_logical_slot.h"
+#include "ui/input/private_pointer.h"
 
 // Selection projection, keyboard focus sync and marquee selection.
 
@@ -280,6 +281,53 @@ bool DesktopApp::ClearSelection(const DesktopWidget* localWidget)
     keyboardNavCollectionGroupTabs_ = false;
     keyboardNavFileGroupCategoryTabs_ = false;
     return changed;
+}
+
+void DesktopApp::ClearItemSelection()
+{
+    ClearSelection();
+    if (dockFolderPopupOpen_)
+        for (auto& entry : dockFolderPopupWidget_.folderEntries)
+            entry.selected = false;
+}
+
+bool DesktopApp::BeginDropResultSelection(std::optional<std::uint64_t> revision)
+{
+    if (!revision || *revision != selectionController_.Revision()) return false;
+    ClearItemSelection();
+    return true;
+}
+
+bool DesktopApp::CompleteItemSelectionClick(WPARAM keys, POINT point)
+{
+    const auto scope = std::exchange(pendingPlainSelectionScope_, {});
+    const bool dock = scope == L"dock";
+    constexpr int dragThreshold = snowdesktop::drag_input_rules::kDesktopItemDragThreshold;
+    const int thresholdX = dock ? std::max(8, GetSystemMetrics(SM_CXDRAG)) : dragThreshold;
+    const int thresholdY = dock ? std::max(8, GetSystemMetrics(SM_CYDRAG)) : dragThreshold;
+    if (scope.empty() || !mouseDown_ || !mouseDownHit_ ||
+        !mouseDownHit_->IsSelected() || dragSession_.HasContext() || marqueeActive_ ||
+        (keys & (MK_CONTROL | MK_SHIFT | MK_RBUTTON | MK_MBUTTON)) ||
+        (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) ||
+        std::abs(point.x - mouseDownPoint_.x) > thresholdX ||
+        std::abs(point.y - mouseDownPoint_.y) > thresholdY)
+        return false;
+    const auto key = GetItemSelectionKey(mouseDownHit_);
+    if (!dock && key.empty()) return false;
+    auto* item = mouseDownHit_;
+    ClearItemSelection();
+    item->SetSelected(true);
+    if (!dock) selectionController_.RememberAnchor(scope, key);
+    else InvalidateFloatingDockWindow(false);
+    SyncKeyboardNavFromSelection();
+    if (dockFolderPopupOpen_)
+    {
+        if (folderPreview_ && folderPreview_->inlineBounds)
+            (void)QueueDesktopWidgetComposition(folderPreview_->hostWidgetId);
+        else if (ShouldShowFloatingPopupWindow())
+            InvalidateFloatingPopupWindow(true);
+    }
+    return true;
 }
 
 void DesktopApp::ClearInlineFolderPreviewSelectionOutside(POINT point)

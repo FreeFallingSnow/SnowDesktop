@@ -2904,7 +2904,8 @@ DropReceipt DockContainer::OnItemsDropped(const ItemDrop& drop)
         return DropReceipt::Submitted(app_->ExecuteDropPipeline(drop.sources, drop.preview), DropAction::Link);
     }
     return app_->CommitDockDrop(drop.items, drop.sources.origin, this,
-        drop.preview.dockInsertIndex, drop.modifiers, drop.allowedEffects, drop.preview.dockSection);
+        drop.preview.dockInsertIndex, drop.modifiers, drop.allowedEffects, drop.preview.dockSection,
+        drop.sources.dropSelectionRevision);
 }
 
 void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)

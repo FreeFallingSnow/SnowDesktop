@@ -198,7 +198,7 @@ DropReceipt DesktopGrid::OnItemsDropped(const ItemDrop& drop)
         const auto submitted = snowdesktop::desktop_drop_dispatch::Dock(true, drop.sources, drop.modifiers,
             [&] {
                 return drop.Allows(action) && app_->MoveDockItemsToDesktop(sourceItems,
-                    app_->ResolveDesktopRequestCell(drop.sources, drop.point));
+                    app_->ResolveDesktopRequestCell(drop.sources, drop.point), drop.sources.dropSelectionRevision);
             }, [&](const auto& sources, int) {
                 action = drop.preview.action;
                 return drop.Allows(action) && app_->ExecuteDropPipeline(sources, drop.preview);

@@ -247,8 +247,25 @@ bool DesktopApp::ApplyPendingFolderPlacements(
     const std::wstring& widgetId,
     const std::wstring& popupSourceId)
 {
+    const bool livePopup = &targetWidget == &dockFolderPopupWidget_;
+    const auto livePopupId = folderPreview_
+        ? L"folder-preview:" + snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath)
+        : dockFolderPopupSourceId_;
+    // A pinned mapping and its popup share an ordering model. Apply a drop
+    // made into the popup to that view first so its icons get the selection.
+    if (cache.dropSelectionRevision && !livePopup && !widgetId.empty() && dockFolderPopupOpen_ &&
+        std::ranges::any_of(cache.folderPlacements, [&](const auto& placement) {
+            return !placement.popupSourceId.empty() && placement.popupSourceId == livePopupId &&
+                PathsEqualInsensitive(placement.sourceFolderPath, dockFolderPopupWidget_.sourceFolderPath);
+        })) return false;
     return snowdesktop::pending_drop::ApplyFolder(cache, targetWidget, widgetId, popupSourceId,
-        MatchPendingName, ToUpperInvariant, PathsEqualInsensitive);
+        MatchPendingName, ToUpperInvariant, PathsEqualInsensitive, [&](const auto& paths) {
+            if ((!livePopup && widgetId.empty()) || !BeginDropResultSelection(cache.dropSelectionRevision)) return;
+            for (auto& entry : targetWidget.folderEntries)
+                entry.selected = std::ranges::any_of(paths, [&](const auto& path) {
+                    return PathsEqualInsensitive(entry.fullPath, path);
+                });
+        });
 }
 
 void DesktopApp::ApplyPendingFolderPreviewPlacements(
@@ -283,6 +300,10 @@ void DesktopApp::ApplyPendingFolderPreviewPlacements(
         }
         std::erase_if(pendingLandingCaches_, [](const auto& cache) { return !cache.active; });
     }
+    // The active directory preview uses the same reconciliation on its live
+    // model. Inactive previews only need the stored order.
+    if (folderPreview_ && dockFolderPopupOpen_ &&
+        PathsEqualInsensitive(dockFolderPopupWidget_.sourceFolderPath, snapshot.path)) return;
 
     DesktopWidget target;
     target.sourceFolderPath = snapshot.path;
@@ -426,6 +447,7 @@ bool DesktopApp::ApplyPendingPlacement(PendingLandingCache& cache,
     // Only their fresh enumeration can reconcile folder placements. Using
     // the current widget entries here could consume a batch before its files
     // appear in that old directory list.
+    std::optional<bool> selectResults;
     return snowdesktop::pending_drop::ApplyEntries(cache, widgets_, items_, claimed,
         ToUpperInvariant,
         [](const DesktopItem& item, const std::wstring& sourceName) {
@@ -471,6 +493,12 @@ bool DesktopApp::ApplyPendingPlacement(PendingLandingCache& cache,
         [&](const std::wstring& id) {
             RefreshCollectedKeysCache();
             if (auto* widget = findWidgetContainer(id)) widget->InvalidateSlots();
+        },
+        [&](DesktopItem& item, const PendingLandingEntry& landing, bool wasSelected) {
+            if (!cache.dropSelectionRevision || landing.createdPath.empty()) return;
+            if (!selectResults)
+                selectResults = BeginDropResultSelection(cache.dropSelectionRevision);
+            item.selected = *selectResults || wasSelected;
         });
 }
 

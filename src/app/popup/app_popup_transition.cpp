@@ -623,9 +623,6 @@ void DesktopApp::RefreshDockFolderPopup(
     ClearPopupDragTarget();
     dockFolderPopupDragItems_.clear();
     dockFolderPopupMarqueeInitialSelection_.clear();
-    if (!snapshot)
-        for (auto& entry : dockFolderPopupWidget_.folderEntries)
-            entry.selected = false;
     if (!dockFolderPopupMappingWidgetId_.empty())
     {
         const size_t widgetIndex =
@@ -708,9 +705,17 @@ void DesktopApp::RefreshDockFolderPopup(
         [this](const auto& path) { QueueFolderRead(path); },
         [this, fileOperationActive](const auto& folder) {
             EnumerateFolderMappingEntries(dockFolderPopupWidget_, true, &folder);
-            if (!fileOperationActive && !folderPreview_ && dockFolderPopupAvailable_ && !dragSession_.HasContext() &&
-                !dragDropController_.IsTransportActive() && ApplyPendingFolderPlacements(
-                    dockFolderPopupWidget_, dockFolderPopupMappingWidgetId_, dockFolderPopupSourceId_))
+            if (fileOperationActive || !folder.complete || !dockFolderPopupAvailable_ || dragSession_.HasContext() ||
+                dragDropController_.IsTransportActive()) return;
+            if (folderPreview_)
+            {
+                const auto key = snowdesktop::shell_refresh::FolderKey(folder.path);
+                if (ApplyPendingFolderPlacements(dockFolderPopupWidget_, {}, L"folder-preview:" + key) &&
+                    !folderPreviewSort_.Set(key, {dockFolderPopupWidget_.folderSortMode,
+                        dockFolderPopupWidget_.folderSortAscending, dockFolderPopupWidget_.itemKeys}))
+                    MessageBeep(MB_ICONWARNING);
+            }
+            else if (ApplyPendingFolderPlacements(dockFolderPopupWidget_, dockFolderPopupMappingWidgetId_, dockFolderPopupSourceId_))
                 CommitDockFolderPopupStateToSource();
         }, targetPending);
     if (!accepted) return;

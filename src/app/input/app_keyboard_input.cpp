@@ -188,6 +188,8 @@ bool DesktopApp::SelectDockFolderPopupKeyboardItem(size_t visibleIndex, bool pre
 
 bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
 {
+    if (key != VK_SHIFT && key != VK_CONTROL && key != VK_MENU)
+        selectionController_.BeginInteraction();
     if (key == VK_ESCAPE && repeated) return true;
     if (key == VK_ESCAPE && nativeMenuSession_)
     {

@@ -28,10 +28,11 @@ inline bool PlaceDesktop(DesktopItem& item, const PendingLandingEntry& landing,
 // Reconcile actual operation outputs against a freshly enumerated model. The
 // caller supplies locale/path comparisons and acceptance/rendering services;
 // matching, stable target selection, membership and insertion are shared.
-template<class MatchName, class NormalizeKey, class PathsEqual>
+template<class MatchName, class NormalizeKey, class PathsEqual, class SelectOutputs>
 inline bool ApplyFolder(PendingLandingCache& cache, DesktopWidget& targetWidget,
     const std::wstring& widgetId, const std::wstring& popupSourceId,
-    MatchName matchName, NormalizeKey normalizeKey, PathsEqual pathsEqual)
+    MatchName matchName, NormalizeKey normalizeKey, PathsEqual pathsEqual,
+    SelectOutputs selectOutputs)
 {
     if (!cache.active || cache.waitingForFiles ||
         cache.folderPlacements.empty())
@@ -77,6 +78,7 @@ inline bool ApplyFolder(PendingLandingCache& cache, DesktopWidget& targetWidget,
             continue;
         }
 
+        if (!placement.createdPaths.empty()) selectOutputs(placement.createdPaths);
         std::vector<FolderEntry> inserted =
             snowdesktop::pending_drop_rules::ExtractMatching(
                 targetWidget.folderEntries,
@@ -144,11 +146,11 @@ inline bool ApplyFolder(PendingLandingCache& cache, DesktopWidget& targetWidget,
 }
 
 template<class NormalizeKey, class MatchesLegacyName, class AllowsKey,
-    class PlaceDesktop, class KeyCommitted>
+    class PlaceDesktop, class KeyCommitted, class SelectOutput>
 inline bool ApplyEntries(PendingLandingCache& cache, std::vector<DesktopWidget>& widgets,
     std::vector<DesktopItem>& items, std::unordered_set<std::wstring>& claimed,
     NormalizeKey normalizeKey, MatchesLegacyName matchesLegacyName, AllowsKey allowsKey,
-    PlaceDesktop placeDesktop, KeyCommitted keyCommitted)
+    PlaceDesktop placeDesktop, KeyCommitted keyCommitted, SelectOutput selectOutput)
 {
     if (!cache.active || cache.waitingForFiles) return false;
     bool changed = false;
@@ -157,11 +159,22 @@ inline bool ApplyEntries(PendingLandingCache& cache, std::vector<DesktopWidget>&
         for (auto& item : items)
         {
             const auto key = normalizeKey(item.layoutKey);
-            if (key.empty() || claimed.contains(key) || cache.existingDesktopKeys.contains(key)) continue;
+            if (key.empty() || claimed.contains(key)) continue;
+            const bool existing = cache.existingDesktopKeys.contains(key);
+            if (existing && (!cache.dropSelectionRevision || landing.createdPath.empty() ||
+                landing.kind != DropLandingKind::DesktopCell)) continue;
             const bool matches = !landing.createdPath.empty()
                 ? MatchesExactPath(item.parsingName, landing.createdPath)
                 : matchesLegacyName(item, landing.sourceName);
             if (!matches) continue;
+            const bool wasSelected = item.selected;
+            if (existing)
+            {
+                // An overwrite replaces the contents at the same position.
+                selectOutput(item, landing, wasSelected);
+                claimed.insert(key);
+                break;
+            }
             if (landing.kind == DropLandingKind::WidgetIndex && !landing.widgetId.empty())
             {
                 const auto target = std::find_if(widgets.begin(), widgets.end(),
@@ -175,6 +188,7 @@ inline bool ApplyEntries(PendingLandingCache& cache, std::vector<DesktopWidget>&
                 if (!placeDesktop(item, landing)) break;
             }
             else break;
+            selectOutput(item, landing, wasSelected);
             claimed.insert(key);
             changed = true;
             break;

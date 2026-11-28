@@ -48,6 +48,8 @@ bool NextDetailsSortAscending(
 
 void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
+    selectionController_.BeginInteraction();
+    pendingPlainSelectionScope_.clear();
     const bool touchPress = !snowdesktop::private_pointer::Active() && snowdesktop::touch_input::IsCurrentTouchInput();
     desktopCollectionOpenPressHandled_ = false;
     ClearDesktopSurfaceKeyboardFocus();
@@ -446,6 +448,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
     bool ctrl = (wp & MK_CONTROL) != 0;
     const bool shift = (wp & MK_SHIFT) != 0;
+    const bool alt = (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) != 0;
 
     if (IsCollectionPopupInteractive() && !inlinePreviewChromePress)
     {
@@ -602,6 +605,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                         SelectWidgetOnly(FindWidgetIndexById(component->id));
                     else ClearSelection();
                 };
+                bool deferCtrlToggle = false;
                 if (shift)
                 {
                     if (ctrl) ClearSelectionOutsideWidget(static_cast<size_t>(-1));
@@ -611,8 +615,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 else if (ctrl)
                 {
                     clearPreviewFileSelection();
-                    entries[entryIndex].selected =
-                        !entries[entryIndex].selected;
+                    deferCtrlToggle = entries[entryIndex].selected;
+                    entries[entryIndex].selected = true;
                 }
                 else if (!entries[entryIndex].selected)
                 {
@@ -622,7 +626,10 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     entries[entryIndex].selected = true;
                 }
                 else
+                {
                     clearPreviewFileSelection();
+                    if (!alt) pendingPlainSelectionScope_ = selectionScope;
+                }
                 if (!shift)
                     selectionController_.RememberAnchor(selectionScope, selectionKey);
                 popupMouseDownItem_ =
@@ -633,6 +640,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 popupMouseDownItem_->SetBounds(itemRect);
                 mouseDownHit_ =
                     popupMouseDownItem_.get();
+                if (deferCtrlToggle) pendingCtrlToggleWidgetItem_ = mouseDownHit_;
                 clickedPopupItem = true;
                 break;
             }
@@ -737,6 +745,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 const std::wstring selectionScope = GetPopupSelectionScope();
                 const std::wstring selectionKey =
                     L"item:" + ToUpperInvariant(items_[itemIndex].layoutKey);
+                bool deferCtrlToggle = false;
                 if (shift)
                 {
                     if (ctrl) ClearSelectionOutsideWidget(popupWidgetIndex_);
@@ -746,7 +755,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 else if (ctrl)
                 {
                     ClearSelectionOutsideWidget(popupWidgetIndex_);
-                    ToggleSelection(static_cast<int>(itemIndex));
+                    deferCtrlToggle = items_[itemIndex].selected;
+                    if (!deferCtrlToggle) ToggleSelection(static_cast<int>(itemIndex));
                 }
                 else if (!items_[itemIndex].selected)
                 {
@@ -755,6 +765,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 else
                 {
                     ClearSelectionOutsideWidget(popupWidgetIndex_);
+                    if (!alt) pendingPlainSelectionScope_ = selectionScope;
                 }
                 if (!shift)
                     selectionController_.RememberAnchor(selectionScope, selectionKey);
@@ -768,6 +779,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 popupMouseDownItem_ = std::make_unique<DesktopIcon>(&items_[itemIndex], wc, this);
                 popupMouseDownItem_->SetBounds(itemRect);
                 mouseDownHit_ = popupMouseDownItem_.get();
+                if (deferCtrlToggle) pendingCtrlToggleWidgetItem_ = mouseDownHit_;
                 clickedPopupItem = true;
             }
             break;
@@ -833,7 +845,10 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             }
             if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
             {
-                const bool selectionCleared = !ctrl && ClearSelection();
+                const bool keepDockGroup = dockItem->IsSelected() &&
+                    std::ranges::count(dockEntries_, true, &DockEntry::selected) > 1;
+                const bool selectionCleared = !ctrl && !keepDockGroup && ClearSelection();
+                if (keepDockGroup && !ctrl && !shift && !alt) pendingPlainSelectionScope_ = L"dock";
                 bool popupEntryOnDockHost = false;
                 dockPressedEntry_ = dockItem->GetEntryIndex();
                 // Popup toggles and single-click launches are actions, so do
@@ -1121,7 +1136,11 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 ClearSelection();
                 widget.selected = true;
             }
-            else ClearSelectionOutsideDesktop();
+            else
+            {
+                ClearSelectionOutsideDesktop();
+                if (!alt) pendingPlainSelectionScope_ = scope;
+            }
             if (!shift) selectionController_.RememberAnchor(scope, key);
             pendingWidgetButtonAction_ = wh == WidgetHit::CollectionOpenBtn &&
                 !ctrl && !shift
@@ -1301,6 +1320,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 else
                 {
                     ClearSelectionOutsideWidget(wi);
+                    if (!alt) pendingPlainSelectionScope_ = selectionScope;
                 }
                 if (!shift)
                     selectionController_.RememberAnchor(selectionScope, selectionKey);
@@ -1591,6 +1611,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         else
         {
             ClearSelectionOutsideDesktop();
+            if (!alt) pendingPlainSelectionScope_ = selectionScope;
         }
         if (!shift)
             selectionController_.RememberAnchor(selectionScope, selectionKey);

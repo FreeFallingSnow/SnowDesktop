@@ -1178,6 +1178,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
     if (DockTrayPopupPointerUp(upPoint)) return;
     if (!snowdesktop::drag_input_rules::IsItemDragRelease(
             rightDrop, rightButtonRelease)) return;
+    const bool collapsedSelection = !rightButtonRelease && CompleteItemSelectionClick(wp, upPoint);
     if (auto* view = GetCategorizedPopupView(); view &&
         (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))
     {
@@ -1691,7 +1692,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
 
     if (!dragSession_.IsActive())
     {
-        if (HandleDockClickRelease(upPoint))
+        if (!collapsedSelection && HandleDockClickRelease(upPoint))
             return;
         const bool previewMarquee = folderPreview_ && marqueeActive_ && marqueeDockFolderPopup_;
         if (previewMarquee) UpdateMarqueeSelection(upPoint);
@@ -1709,7 +1710,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                 inlinePreviewSelected = true;
             }
         }
-        const bool otherSelectionDamage = inlinePreviewSelected || marqueeActive_ || dockPressedContainer_ ||
+        const bool otherSelectionDamage = collapsedSelection || inlinePreviewSelected || marqueeActive_ || dockPressedContainer_ ||
             pendingCtrlToggleDesktopIndex_ < items_.size() || pendingCtrlToggleWidgetItem_;
         // The opening press already updated the selection and published the
         // popup. Its release may arrive through either HWND.
